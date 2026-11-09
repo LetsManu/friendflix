@@ -28,6 +28,14 @@ class AudioFxAttachTest {
         assertTrue(AudioFxAttach(28).supported())
     }
 
+    @Test fun processesInShortFramesForLittleAudioDelay() {
+        for (mode in listOf("voices", "night", "both")) {
+            val c = AudioFxAttach.config(mode)!!
+            assertEquals(DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION, c.variant)
+            assertEquals(10f, c.preferredFrameDuration)
+        }
+    }
+
     @Test fun nightConfigHasTheWebValues() {
         val c = AudioFxAttach.config("night")!!
         val mbc = c.getMbcBandByChannelIndex(0, 0)

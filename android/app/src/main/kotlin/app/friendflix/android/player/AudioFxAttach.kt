@@ -16,6 +16,10 @@ import app.friendflix.android.player.panels.TracksPanel
  * [DynamicsProcessing] (Android 9, API 28, and newer): the mode's [fxConfig] as pre-EQ (3 bands), a one-band multi-band
  * compressor, the limiter and the input gain. One effect at a time; a new session or mode releases the old one first.
  * [open] creates the effect (a seam for tests) and returns its release; a device that refuses the effect keeps playing without it.
+ *
+ * A/V sync: the effect's own delay is not part of the AudioTrack timestamps ExoPlayer syncs the picture to, so the processing runs
+ * in short frames ([FRAME_MS], time-resolution variant) to keep that delay small. With both modes off no effect is attached at all
+ * (the plain audio path, unlike the web, where a captured element needs a fresh one).
  */
 class AudioFxAttach(
     private val sdk: Int = Build.VERSION.SDK_INT,
@@ -60,6 +64,9 @@ class AudioFxAttach(
         private const val VOICES_KNEE_DB = 12f
         private const val NIGHT_KNEE_DB = 18f
         private const val NOISE_GATE_DB = -90f
+        /** processing frame: short frames = little added audio delay (the frequency-resolution variant buffers far longer) */
+        internal const val FRAME_MS = 10f
+        internal const val VARIANT = DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION
 
         /** the [DynamicsProcessing] configuration of [mode], or null for no processing */
         @RequiresApi(Build.VERSION_CODES.P)
@@ -67,9 +74,10 @@ class AudioFxAttach(
             val p = fxConfig(mode) ?: return null
             val eqBands = p.preEq.size.coerceAtLeast(1)
             val b = DynamicsProcessing.Config.Builder(
-                DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION, CHANNELS,
+                VARIANT, CHANNELS,
                 p.preEq.isNotEmpty(), eqBands, p.compressor != null, 1, false, 1, p.limiter != null,
             )
+            b.setPreferredFrameDuration(FRAME_MS)
             if (p.preEq.isNotEmpty()) {
                 val eq = DynamicsProcessing.Eq(true, true, p.preEq.size)
                 p.preEq.forEachIndexed { i, (hz, db) -> eq.setBand(i, DynamicsProcessing.EqBand(true, hz, db)) }

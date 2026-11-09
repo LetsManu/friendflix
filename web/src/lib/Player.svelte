@@ -45,7 +45,8 @@
   import { hasPeople, loadCastInfo, type CastInfoData } from '#lib/player/castinfo';
   import { chapterIndexAt, chapterLabel, chapterMarks, normalizeChapters, trickFrame, usefulChapters, type Chapter } from '#lib/player/chapters';
   import { applyRate, reapplyRate } from '#lib/player/rate';
-  import { AudioFxEngine, fxActive, fxBlocked, fxFromPref, fxToPref, loadFx, saveFx, type AudioFx } from '#lib/player/audiofx';
+  import { AudioFxEngine, fxActive, fxBlocked, fxFromPref, fxToPref, loadFx, plainPathDue, saveFx, type AudioFx } from '#lib/player/audiofx';
+  import { frameShown, snapshotFrame, swapAllowed } from '#lib/player/freshvideo';
   import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
   import { castBody, castConfigEnabled, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastInfo } from '#lib/cast';
@@ -359,7 +360,7 @@
     ? { itemId, playSessionId: airInfo.playSessionId, mediaSourceId: airInfo.mediaSourceId, positionTicks: secToTicks(video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: 'Transcode' }
     : {
       itemId, playSessionId: info!.playSessionId, mediaSourceId: info!.mediaSourceId,
-      positionTicks: secToTicks(video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: mode === 'direct' ? 'DirectPlay' : 'Transcode',
+      positionTicks: secToTicks(swapping ? lastPos : video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: mode === 'direct' ? 'DirectPlay' : 'Transcode',
     };
   let lastSent = 0;
   /** the latest stop report (also one sent earlier, e.g. at the end of the film): leaving the player holds prefetches on it */
@@ -367,6 +368,7 @@
   const send = (kind: 'start' | 'progress' | 'stop', keepalive = false) => {
     if (kind === 'stop') reportTiming();
     if (handedOff) return undefined; // the cast engine reports for the handed-over session
+    if (swapping && kind === 'progress') return undefined; // the fresh element is still on its way to the position
     lastSent = Date.now();
     const r = report && info && api(`/api/playback/${kind}`, { method: 'POST', body: body(), keepalive }).catch(() => undefined);
     if (kind === 'stop') lastStop = r;
@@ -481,17 +483,25 @@
   }
 
   let attachSeq = 0;
-  async function attach(startSec: number) {
+  /** `swap`: the same stream again on a fresh element (restorePlain): no new start, no reports, the viewer's tracks stay */
+  async function attach(startSec: number, swap = false) {
     if (!video || !info || airInfo || handedOff) return; // AirPlay plays its own token stream
     const my = ++attachSeq, cur = info;
     sampleFrames(); // the counters restart with the new stream
-    sessionPlaying = false; resetStall(); // the first buffering of each stream is a start, not a stall
+    if (!swap) { sessionPlaying = false; resetStall(); } // the first buffering of each stream is a start, not a stall
     hls?.destroy(); hls = null;
     cancelFirstFrame();
+    // sound modes off but the sound still runs through Web Audio (extra latency): the new stream starts on a fresh element
+    if (plainPathDue(Boolean(fxEngine?.routed), fx) && !air) {
+      await freshVideo();
+      if (my !== attachSeq || info !== cur || !video) return;
+    }
     const useDirect = info.directUrl && audioIndex === undefined && !rec.forcedHls && video.canPlayType('video/mp4');
     mode = useDirect ? 'direct' : 'hls';
-    timing.mode(useDirect ? 'direct' : 'hls');
-    timing.stream({ reason: info.transcodeReason ?? null });
+    if (!swap) {
+      timing.mode(useDirect ? 'direct' : 'hls');
+      timing.stream({ reason: info.transcodeReason ?? null });
+    }
     const seek = () => { if (startSec > 1) video!.currentTime = startSec; };
     // hls.js is loaded lazily, only on this path (and usually already prefetched by the play button)
     let H: typeof Hls | null = null;
@@ -503,7 +513,7 @@
       video.src = info.directUrl!;
       video.addEventListener('loadedmetadata', seek, { once: true });
       // LG: an original the TV cannot decode may stay black without an error; no picture in time -> the converted stream, once
-      if (isTvApp() && !rec.forcedHls) cancelFirstFrame = watchFirstFrame(video, firstFrameMs(), () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos(), true); }, { running: wantAutoplay });
+      if (isTvApp() && !rec.forcedHls && !swap) cancelFirstFrame = watchFirstFrame(video, firstFrameMs(), () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos(), true); }, { running: wantAutoplay });
     } else if (H?.isSupported()) {
       const HC = H;
       hls = new HC(hlsConfig(startSec));
@@ -529,6 +539,7 @@
       video.addEventListener('loadedmetadata', seek, { once: true });
       video.addEventListener('loadedmetadata', () => timing.manifest(), { once: true }); // native: no playlist events, the metadata is the closest
     }
+    if (swap) { const keep = subIndex; tickDom().then(() => { if (my === attachSeq) setSubtitle(keep, false); }); return; }
     stopped = false; started = false;
     dispatch('ready', { info });
     // detail-page pick > this series' saved choice (when the episode has that language) > my global default
@@ -602,7 +613,7 @@
   }
   /** waiting -> start timing; playing -> the stall is over. Seeks and the first buffering after a (re)start are no stalls. */
   function onWaiting() {
-    if (handedOff) return;
+    if (handedOff || swapping) return;
     waiting = true;
     timing.waiting(video?.seeking ?? false);
     if (!video || airOn || !started || stopped || !sessionPlaying || video.seeking || waitSince) return;
@@ -1054,10 +1065,53 @@
     saveAudioFx(fxToPref(fx)).catch(() => undefined); // offline / failed: still remembered in this browser
     const name = tr(k === 'voice' ? 'scenes.audio.voice' : 'scenes.audio.night');
     flash(tr(fx[k] ? 'scenes.audio.on' : 'scenes.audio.off', { name }), 1400);
-    void applyFx();
+    void applyFx().then(() => { if (paused) restorePlainSoon(); });
   }
   /** a remembered mode needs a running AudioContext: the first key / tap after an autoplayed start switches it on */
   function fxGesture() { if (fxNote === 'suspended' && fxActive(fx)) void applyFx(true); }
+
+  // ---- the plain sound path back (lib/player/freshvideo.ts): Web Audio cannot be taken off an element, so with both modes off
+  //      the film moves to a fresh <video>: while paused (seamless: the current frame is its poster) or at the next stream start ----
+  let videoGen = 0, swapShot = '', swapping = false, swapT: ReturnType<typeof setTimeout> | undefined;
+  /** replaces the element (the caller already detached the stream); volume, mute and speed carry over */
+  async function freshVideo() {
+    const old = video;
+    if (!old) return;
+    sampleFrames();
+    fxEngine?.destroy(); fxEngine = null;
+    // emptied BEFORE it leaves the page: the load algorithm pauses it silently (removing a playing element would fire `pause`)
+    try { old.removeAttribute('src'); old.load(); } catch { /* already empty */ }
+    videoGen++;
+    await tickDom();
+    if (!video || video === old) return;
+    if (volOk) video.volume = volume;
+    video.muted = muted;
+    if (!partyMode) applyRate(video, rate);
+    if (video) pipOk = Boolean(document.pictureInPictureEnabled) && !video.disablePictureInPicture;
+  }
+  /** while paused: the same position on a fresh element, the current frame held as its poster until the new one is there */
+  async function restorePlain() {
+    clearTimeout(swapT);
+    if (!video || !info || !plainPathDue(Boolean(fxEngine?.routed), fx)) return;
+    if (!swapAllowed({ paused: video.paused, party: partyMode, remote: remote || casting || airOn || Boolean(airInfo) || handedOff, airplay: Boolean(air), busy: swapping || switching || Boolean(reconnecting) || Boolean(error) || waiting || !started, creditsCorner: credits === 'corner' || credOut })) return;
+    const shot = snapshotFrame(video);
+    if (!shot) return; // no picture to hold: the next stream start brings the plain path back
+    const pos = video.currentTime;
+    swapping = true;
+    try {
+      // decoded before the swap, so the new element paints the poster at once (never a black frame in between)
+      try { const img = new Image(); img.src = shot; await img.decode(); } catch { /* shown when ready */ }
+      if (!video?.paused || !plainPathDue(Boolean(fxEngine?.routed), fx)) return; // played on / modes back on meanwhile
+      swapShot = shot;
+      await attach(pos, true);
+      if (video) await frameShown(video, pos);
+    } finally {
+      swapping = false; swapShot = '';
+      syncTime();
+    }
+  }
+  /** after a pause: swap once the pause has settled (a quick pause / play does not reload anything) */
+  function restorePlainSoon() { clearTimeout(swapT); if (plainPathDue(Boolean(fxEngine?.routed), fx)) swapT = setTimeout(() => void restorePlain(), 800); }
 
   // ---- find subtitles (Jellyfin remote providers) ----
   async function searchSubs() {
@@ -1370,7 +1424,7 @@
   function lockKey(e: KeyboardEvent) { if (locked && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); locked = false; lockHint = false; unlockedAt = Date.now(); wake(); flash(tr('player.lock.unlocked'), 900); } }
 
   const syncTime = () => {
-    if (!video || handedOff) return; // remote: the position comes from the engine's session
+    if (!video || handedOff || swapping) return; // remote: the position comes from the engine's session; a swap holds the old position
     current = video.currentTime; duration = Number.isFinite(video.duration) ? video.duration : duration;
     if (current > 0 && !reconnecting && !error) lastPos = current;
     if ((rec.networkTries || rec.mediaRecovered) && current > errPos + 8) rec = freshRecovery(); // stable again: new error budget
@@ -1478,7 +1532,7 @@
     pnlObs?.disconnect();
     cancelFirstFrame();
     clearInterval(tvTick);
-    clearTimeout(peekT); clearTimeout(posterT); clearTimeout(spT); clearTimeout(probeT); fxEngine?.destroy();
+    clearTimeout(peekT); clearTimeout(posterT); clearTimeout(spT); clearTimeout(probeT); clearTimeout(swapT); fxEngine?.destroy();
     persistEstimate(); clearInterval(abrTimer); clearInterval(bwTimer); clearTimeout(stallT);
     clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); clearTimeout(retryT); clearTimeout(spinT); clearTimeout(pendingTap); clearTimeout(hudT); clearTimeout(rippleT); clearTimeout(lockT); clearTimeout(unlockT); nowPlaying.set(null);
     if (!handedOff && started && !stopped) { stopped = true; send('stop'); }
@@ -1498,16 +1552,18 @@
 <div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar}{picVar};--rcard-h:{rCardH}px" bind:this={stage} bind:clientWidth={stW} bind:clientHeight={stH} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
-  <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
+  {#key videoGen}
+  <video bind:this={video} playsinline crossorigin="use-credentials" poster={swapShot || undefined} style:filter={brightness < 1 ? `brightness(${brightness})` : null}
     on:error={onVideoError}
-    on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff) return; paused = true; resetStall(); const quiet = hiddenPause; hiddenPause = false; if (!castBusy && !stopped && !quiet) send('progress'); }} on:seeked={() => { timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
+    on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff || swapping) return; paused = true; resetStall(); restorePlainSoon(); const quiet = hiddenPause; hiddenPause = false; if (!castBusy && !stopped && !quiet) send('progress'); }} on:seeked={() => { if (swapping) return; timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
     on:ended={() => { postFireTv('keepAwake:0'); if (handedOff) return; stopped = true; paused = true; send('stop'); }}
     on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={() => { reapplyRate(video, rate, partyMode); syncTime(); }}
-    on:waiting={onWaiting} on:seeking={() => { resetStall(); timing.seeking(); }} on:playing={onPlaying} on:loadeddata={firstFrame} on:canplay={() => { if (handedOff) return; waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
+    on:waiting={onWaiting} on:seeking={() => { if (swapping) return; resetStall(); timing.seeking(); }} on:playing={onPlaying} on:loadeddata={firstFrame} on:canplay={() => { if (handedOff) return; waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
     on:volumechange={() => { if (video) { muted = video.muted; } }}
     on:play on:pause on:seeked on:seeking on:waiting on:playing on:canplay on:timeupdate on:ended>
     {#if info}{#each info.subtitles as s}<track id="sub-{s.index}" kind="subtitles" src={s.url} srclang={s.language?.slice(0, 2) ?? 'xx'} label={s.title} />{/each}{/if}
   </video>
+  {/key}
   {#if posterOn && poster}
     <!-- pointer-events: none -> clicks, double clicks, wheel and gestures reach the stage as over the video -->
     <div class="poster ff-poster" class:out={posterOut} aria-hidden="true">

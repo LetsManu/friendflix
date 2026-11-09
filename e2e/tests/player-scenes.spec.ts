@@ -141,6 +141,61 @@ test.describe('player: scenes, cast & info, sound', () => {
     await expect(page.getByRole('switch', { name: /Klare Stimmen/ })).toHaveAttribute('aria-checked', 'false');
   });
 
+  test('sound modes off: nothing runs through Web Audio any more; the film moves to a fresh element at the next pause, without a jump', async ({ page }) => {
+    // count the Web Audio captures and remember the context options (latency hint)
+    await page.addInitScript(() => {
+      const w = window as unknown as { __fx: { sources: number; opts: unknown[] }; AudioContext: typeof AudioContext };
+      w.__fx = { sources: 0, opts: [] };
+      const AC = w.AudioContext;
+      w.AudioContext = class extends AC {
+        constructor(o?: AudioContextOptions) { super(o); w.__fx.opts.push(o ?? null); }
+        createMediaElementSource(el: HTMLMediaElement) { w.__fx.sources++; el.dataset.routed = '1'; return super.createMediaElementSource(el); }
+      } as typeof AudioContext;
+    });
+    await page.goto('/watch/' + MOVIE.id);
+    await videoReady(page);
+    await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')!.currentTime)).toBeGreaterThan(0.3);
+    const fx = () => page.evaluate(() => (window as unknown as { __fx: { sources: number; opts: unknown[] } }).__fx);
+    expect((await fx()).sources).toBe(0); // both modes off: the sound is not taken over
+    await page.keyboard.press('>'); // 1.25x: must survive the new element
+    await page.getByRole('button', { name: 'Audio und Untertitel' }).click();
+    const menu = page.getByRole('dialog', { name: 'Audio und Untertitel' });
+    await menu.getByRole('switch', { name: /Klare Stimmen/ }).click();
+    await expect.poll(async () => (await fx()).sources).toBe(1);
+    expect((await fx()).opts).toEqual([{ latencyHint: 'interactive' }]);
+    await menu.getByRole('switch', { name: /Klare Stimmen/ }).click(); // off again while playing
+    await expect(menu.getByRole('switch', { name: /Klare Stimmen/ })).toHaveAttribute('aria-checked', 'false');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(1500);
+    expect(await page.evaluate(() => document.querySelector('video')!.dataset.routed)).toBe('1'); // playing: no swap now
+    expect(await page.evaluate(() => document.querySelector('video')!.paused)).toBe(false);
+
+    // pause: record the shown position (seek bar) while the swap runs; it must never move
+    const t = await page.evaluate(() => {
+      const v = document.querySelector('video')!;
+      v.pause();
+      const w = window as unknown as { __pos: string[] };
+      w.__pos = [];
+      const bar = document.querySelector('[role="slider"][aria-label="Position"]');
+      if (bar) new MutationObserver(() => w.__pos.push(bar.getAttribute('aria-valuenow') ?? '')).observe(bar, { attributes: true, attributeFilter: ['aria-valuenow'] });
+      return v.currentTime;
+    });
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')!.dataset.routed ?? 'fresh'), { timeout: 10_000 }).toBe('fresh');
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')!.hasAttribute('poster')), { timeout: 10_000 }).toBe(false); // swap done
+    const v = await page.evaluate(() => { const e = document.querySelector('video')!; return { paused: e.paused, t: e.currentTime, rate: e.playbackRate, n: document.querySelectorAll('.stage video:not(.airprobe)').length }; });
+    expect(v.paused).toBe(true);
+    expect(Math.abs(v.t - t)).toBeLessThan(1);
+    expect(v.rate).toBe(1.25);
+    expect(v.n).toBe(1);
+    const shown = await page.evaluate(() => (window as unknown as { __pos: string[] }).__pos.map(Number));
+    for (const p of shown) expect(Math.abs(p - t)).toBeLessThan(1.5); // the seek bar never jumped
+    // plays on from there, still without Web Audio
+    await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
+    await expect.poll(() => page.evaluate(() => document.querySelector('video')!.currentTime)).toBeGreaterThan(t + 0.3);
+    expect((await fx()).sources).toBe(1);
+  });
+
   test('sound modes are off and explained where Web Audio is missing', async ({ page }) => {
     await page.addInitScript(() => { delete (window as { AudioContext?: unknown }).AudioContext; delete (window as { webkitAudioContext?: unknown }).webkitAudioContext; });
     await page.goto('/watch/' + MOVIE.id);
