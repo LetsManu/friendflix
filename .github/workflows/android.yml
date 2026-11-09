@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Manuel Weißböck
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Android app CI: lint, unit tests and an unsigned release build (APK uploaded as artifact) on every PR (and push to main) that touches the
-# app, the web bridge it talks to, or this workflow. The instrumented tests run on an API 34 emulator (GitHub only; there is
+# apps (phone and Fire TV, android/firetv: also its APK as artifact, its manifest checked, no Google Play services), the web bridge it talks to, or this workflow. The instrumented tests run on an API 34 emulator (GitHub only; there is
 # no emulator in the local sandbox). Signing keys live only in GitHub secrets and are used by android-release.yml (v* tags,
 # called from ci.yml), never here.
 # The app version comes from ../version.json at build time (android/buildSrc), so release bumps need no Android change.
@@ -39,8 +39,21 @@ jobs:
       - uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       # Gradle cache; the wrapper's distributionSha256Sum is verified by Gradle itself.
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-      - name: Lint, unit tests, unsigned release build (APK + AAB)
-        run: ./gradlew lint testDebugUnitTest assembleRelease bundleRelease
+      # All modules (phone app and Fire TV app); the AAB only for the phone app.
+      - name: Lint, unit tests, unsigned release build (APKs + phone AAB)
+        run: ./gradlew lint testDebugUnitTest assembleRelease :app:bundleRelease
+      # Fire OS has no Google Play services: the Fire TV app must not depend on them.
+      - name: "Fire TV: no Google Play services"
+        run: |
+          set -euo pipefail
+          ./gradlew -q :firetv:dependencies --configuration releaseRuntimeClasspath > "$RUNNER_TEMP/firetv-deps.txt"
+          if grep -q 'com.google.android.gms' "$RUNNER_TEMP/firetv-deps.txt"; then
+            grep 'com.google.android.gms' "$RUNNER_TEMP/firetv-deps.txt"
+            echo "::error::the Fire TV app's release runtime classpath contains Google Play services (com.google.android.gms)"; exit 1
+          fi
+      # Package, leanback launcher, banner, touchscreen not required, permissions, no Play services in manifest or dex.
+      - name: "Fire TV: check the APK"
+        run: bash firetv/check-apk.sh firetv/build/outputs/apk/release/firetv-release-unsigned.apk
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: friendflix-android-unsigned-apk
@@ -51,6 +64,12 @@ jobs:
         with:
           name: friendflix-android-unsigned-aab
           path: android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: friendflix-firetv-unsigned-apk
+          path: android/firetv/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 14
   instrumented:
