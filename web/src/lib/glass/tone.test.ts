@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AA, AMB_PEAK, BLUR_BRIGHTNESS, cachedTone, clearTones, contrast, DARK_BASE, frostComposite, luminance, MILK_RGB, SCRIM_LIGHT, SCRIM_MAX, SCRIM_MIN,
   MILK_TOP, SCRIM_RGB, SCRIM_SAFE, scrimFor, tintColor, TINT_LUM_MAX, toneFor, toneOf, toneVars, type RGB,
-  BD, SCRIM_SAFE_DIM, TEXT_DIM, textContrast,
+  BD, SCRIM_SAFE_DIM, TEXT_DIM, textContrast, menuScrim, SCRIM_MENU, SEL_A, GRAIN_LIFT, MENU_SCRIM_MAX,
 } from './tone';
 
 const WHITE: RGB = [255, 255, 255];
@@ -280,6 +280,21 @@ describe('dim text on glass (secondary lines, inactive tabs)', () => {
     // the plain-white scrim is too light for it
     expect(textContrast(frostComposite(WHITE, SCRIM_SAFE), TEXT_DIM)).toBeLessThan(AA);
     expect(scrimFor(WHITE, null, AA, 0.5)).toBe(SCRIM_MAX); // nothing passes: the heaviest
+  });
+  it('SCRIM_MENU: white rows on the light pill and TEXT_DIM notes pass AA over any grey', () => {
+    expect(SEL_A).toBe(0.13);
+    expect(SCRIM_MENU).toBe(menuScrim(WHITE));
+    expect(SCRIM_MENU).toBeGreaterThanOrEqual(SCRIM_SAFE_DIM); // the pill needs more than the dim text alone
+    expect(SCRIM_MENU).toBeGreaterThan(SCRIM_MAX - 0.01);
+    expect(SCRIM_MENU).toBeLessThanOrEqual(MENU_SCRIM_MAX);
+    const sel = (c: RGB): RGB => c.map((x) => Math.min(255, x * (1 - SEL_A) + 255 * SEL_A + GRAIN_LIFT)) as RGB;
+    for (let c = 0; c <= 255; c += 15) {
+      const comp = frostComposite([c, c, c], SCRIM_MENU);
+      expect(textContrast(sel(comp))).toBeGreaterThanOrEqual(AA);
+      expect(textContrast(comp, TEXT_DIM)).toBeGreaterThanOrEqual(AA);
+    }
+    expect(menuScrim(DARK_BASE)).toBe(SCRIM_MIN); // over the dark base the light scrim does
+    expect(menuScrim(WHITE, 0.5)).toBe(MENU_SCRIM_MAX); // nothing passes: the heaviest
   });
   it('SCRIM_SAFE_DIM: the safe scrim for TEXT_DIM surfaces over unsampled artwork', () => {
     expect(SCRIM_SAFE_DIM).toBe(scrimFor(WHITE, tintColor(WHITE), AA, TEXT_DIM));

@@ -55,6 +55,8 @@ interface Entry extends Toast { onClose?: (r: CloseReason) => void; timer: Retur
 const list = writable<Toast[]>([]);
 let entries: Entry[] = [];
 let seq = 0;
+/** pointer or focus on the toasts: timers hold, also for toasts that arrive meanwhile (resume() starts them) */
+let paused = false;
 const publish = () => list.set(entries.map(({ id, kind, message, action, duration, key, started, left }) => ({ id, kind, message, action, duration, key, started, left })));
 
 function arm(e: Entry) {
@@ -70,7 +72,7 @@ export function show(kind: ToastKind, message: string, opts: ToastOptions = {}):
   const e: Entry = { id: ++seq, kind, message, action: opts.action, duration, key: opts.key, onClose: opts.onClose, timer: null, left: duration, started: 0 };
   entries = [...entries, e];
   while (entries.length > MAX_VISIBLE) close(entries[0]!.id, 'replaced');
-  arm(e);
+  if (!paused) arm(e);
   publish();
   return e.id;
 }
@@ -96,12 +98,14 @@ export function runToastAction(id: number): void {
 
 /** Pauses all timers (pointer/focus inside the toast region). */
 export function pause(): void {
+  paused = true;
   let changed = false;
   for (const e of entries) if (e.timer) { clearTimeout(e.timer); e.timer = null; e.left = Math.max(0, e.left - (Date.now() - e.started)); changed = true; }
   if (changed) publish();
 }
 /** Resumes paused timers (a toast never closes in less than 1.5 s after resuming). */
 export function resume(): void {
+  paused = false;
   let changed = false;
   for (const e of entries) if (!e.timer && e.duration) { e.left = Math.max(e.left, 1500); arm(e); changed = true; }
   if (changed) publish();
@@ -113,6 +117,8 @@ export function timeLeft(id: number, now = Date.now()): number {
   return e.timer ? Math.max(0, e.left - (now - e.started)) : e.left;
 }
 export function dismissAll(): void { for (const e of [...entries]) close(e.id, 'replaced'); }
+/** test hook: back to the initial state (not paused) */
+export function resetToasts(): void { dismissAll(); paused = false; }
 
 /** visible toasts, oldest first */
 export const toasts: Readable<Toast[]> = { subscribe: list.subscribe };

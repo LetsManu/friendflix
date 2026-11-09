@@ -6,7 +6,8 @@
   import { addToList, createList, itemLists, removeFromList, type PickerList } from '#lib/lists';
   import { placePopover, placedStyle } from '#lib/popover';
   import { t, tr } from '#lib/i18n';
-  import { growFrom } from '#lib/glass/fx';
+  import { growBoth } from '#lib/glass/fx';
+  import { SCRIM_MENU } from '#lib/glass/tone';
 
   /** Jellyfin id of the movie / series to add (episodes are normalised server-side). */
   export let itemId: string;
@@ -101,7 +102,7 @@
 </span>
 {#if open}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div class="pop lm-pop frost frost-menu frost-safe" class:up bind:this={pop} use:portal {style} in:growFrom={{ trigger: btn, dir: 'in' }} out:growFrom={{ trigger: btn, dir: 'out' }} tabindex="-1" role="dialog" aria-label={$t('detail.lists.add')} on:keydown={popKey} on:focusout={onFocusOut} on:mouseleave={popLeave}>
+  <div class="pop lm-pop frost frost-menu frost-safe" class:up bind:this={pop} use:portal style={`--fr-scrim-safe:${SCRIM_MENU};${style}`} transition:growBoth={{ trigger: btn }} tabindex="-1" role="dialog" aria-label={$t('detail.lists.add')} on:keydown={popKey} on:focusout={onFocusOut} on:mouseleave={popLeave}>
     {#if lists === null}<p class="muted">{$t('detail.lists.loading')}</p>
     {:else}
       {#if !lists.length}<p class="muted">{$t('detail.lists.none')}</p>{/if}
@@ -141,8 +142,10 @@
   .new:hover:not(:disabled) { background: var(--fr-sel); }
   form { display: flex; gap: .4rem; padding: 4px; }
   form input { flex: 1; min-width: 0; }
-  .muted { color: rgba(255,255,255,.75); margin: 6px 12px; }
-  .err { color: var(--err, #e5646e); margin: 6px 12px 0; }
+  /* on glass (scrim SCRIM_MENU): notes are .9 white, rows white (also on the light pill); an error is white with a red dot */
+  .muted { color: rgba(255,255,255,.9); margin: 6px 12px; }
+  .err { display: flex; align-items: center; gap: 8px; color: #fff; margin: 6px 12px 0; }
+  .err::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: #ff9d9d; }
   @media (pointer: coarse) {
     label input { width: 22px; height: 22px; flex: none; }
     form input, form button { min-height: 44px; }

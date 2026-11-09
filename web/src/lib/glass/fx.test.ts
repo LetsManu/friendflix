@@ -7,8 +7,8 @@ vi.mock('#lib/preview', () => ({ motionAllowed: () => m.allowed }));
 vi.mock('#lib/tv/motion', () => ({ motionLevel: () => m.level }));
 
 import {
-  COUNT_MS, countAt, cubicBezier, fxMode, grow, growFrom, GROW_IN_MS, GROW_OUT_MS, growOrigin, inEase, outEase, PILL_MID, pillParts,
-  REDUCED_MS, rippleBox, scrimFade, SHEET_IN_MS, SHEET_OUT_MS, sheetSlide, springEase, TOAST_IN_MS, TOAST_OUT_MS, toastRise,
+  COUNT_MS, countAt, cubicBezier, fxMode, grow, growBoth, growFrom, GROW_IN_MS, GROW_OUT_MS, growOrigin, inEase, outEase, PILL_MID, pillParts,
+  REDUCED_MS, rippleBox, scrimFade, twoWay, SHEET_IN_MS, SHEET_OUT_MS, sheetSlide, springEase, TOAST_IN_MS, TOAST_OUT_MS, toastRise,
 } from './fx';
 
 const node = {} as Element;
@@ -120,6 +120,22 @@ describe('growFrom, sheetSlide, toastRise, scrimFade', () => {
     expect(growFrom(other, { mode: 'full' }).css(1, 0)).toContain('transform-origin:50% 0');
     expect(growFrom(other, { trigger: null, mode: 'reduced' }).duration).toBe(160);
     expect(growFrom(other).duration).toBe(380);
+  });
+
+  it('twoWay / growBoth pick the config once the direction is known', () => {
+    const make = vi.fn((dir: 'in' | 'out') => grow(node, { dir, mode: 'full' }));
+    const t = twoWay(make);
+    expect(make).not.toHaveBeenCalled();
+    expect(t({ direction: 'in' }).duration).toBe(380);
+    expect(t({ direction: 'out' }).duration).toBe(200);
+    expect(t({ direction: 'both' }).duration).toBe(380);
+    expect(t({}).duration).toBe(380);
+    expect(t().duration).toBe(380);
+    const el = { getBoundingClientRect: () => ({ left: 0, top: 50, width: 200, height: 100 }) } as unknown as Element;
+    const g = growBoth(el, { trigger: box(80, 0, 40, 40), mode: 'full' });
+    expect(g({ direction: 'in' }).css(1, 0)).toContain('transform-origin:100px 0px');
+    expect(g({ direction: 'out' }).easing).toBe(inEase);
+    expect(growBoth(el)({ direction: 'in' }).duration).toBe(380);
   });
 
   it('sheetSlide per mode', () => {

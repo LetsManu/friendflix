@@ -9,6 +9,7 @@
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import { fxMode, toastRise } from '#lib/glass/fx';
+  import { SCRIM_MENU } from '#lib/glass/tone';
   import { close, pause, resume, RING_LEN, runToastAction, timeLeft, toasts, type Toast } from './toast';
   let inside = false;
   function enter() { if (!inside) { inside = true; pause(); } }
@@ -49,7 +50,7 @@
 <section class="toasts" aria-label={$t('ui.notifications')} on:mouseenter={enter} on:mouseleave={() => leave()} on:focusin={enter} on:focusout={leave} on:keydown={onKey}>
   <ol aria-live="polite" aria-relevant="additions text">
     {#each $toasts as m (m.id)}
-      <li class="toast frost frost-pill frost-safe {m.kind}" animate:flip={{ duration: flipMs() }} in:toastRise={{ dir: 'in' }} out:toastRise={{ dir: 'out' }} data-toast={m.id}>
+      <li class="toast frost frost-pill frost-safe {m.kind}" animate:flip={{ duration: flipMs() }} in:toastRise={{ dir: 'in' }} out:toastRise={{ dir: 'out' }} style="--fr-scrim-safe:{SCRIM_MENU}" data-toast={m.id}>
         <span class="dot {m.kind}" aria-hidden="true"></span>
         <p class="msg">{#if m.kind === 'error'}<span class="sr-only">{$t('ui.errorPrefix')} </span>{/if}{m.message}</p>
         {#if m.action}<button type="button" class="act" on:click={() => runToastAction(m.id)}>{m.action.label}</button>{/if}
@@ -69,16 +70,18 @@
   .toast { pointer-events: auto; display: flex; align-items: center; gap: 10px; max-width: 100%; box-sizing: border-box; padding: 4px 4px 4px 18px; min-height: 52px; font-weight: 700; }
   .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--mut); }
   .dot.success { background: var(--ok); box-shadow: 0 0 12px var(--ok); }
-  .dot.error { background: var(--err); box-shadow: 0 0 12px var(--err); }
-  .dot.info { background: var(--info); box-shadow: 0 0 12px var(--info); }
+  /* (error and info lightened so the dot keeps 3:1 on the glass over a white backdrop; success already does) */
+  .dot.error { background: #ff9d9d; box-shadow: 0 0 12px var(--err); }
+  .dot.info { background: #73c6cf; box-shadow: 0 0 12px var(--info); }
   .msg { flex: 1; margin: 0; font-size: .93rem; line-height: 1.35; overflow-wrap: anywhere; }
-  .act { flex: none; min-height: 44px; background: transparent; color: #ff8aa0; padding: 0 8px; font-weight: 800; border-radius: var(--fr-r-pill); }
+  /* the action is white text (AA on glass over any backdrop); its colour is the coral countdown ring beside it */
+  .act { flex: none; min-height: 44px; background: transparent; color: #fff; padding: 0 8px; font-weight: 800; border-radius: var(--fr-r-pill); text-decoration: underline; text-decoration-color: #ff9cad; text-decoration-thickness: 2px; text-underline-offset: 4px; }
   .act:hover:not(:disabled) { background: var(--fr-sel); }
   .ring { flex: none; width: 28px; height: 28px; transform: rotate(-90deg); }
   .ring circle { fill: none; stroke-width: 3; }
   .ring .bg { stroke: rgba(255, 255, 255, .2); }
-  .ring .fg { stroke: var(--acc, #ff4f6d); stroke-linecap: round; }
-  .x { flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; background: transparent; color: rgba(255, 255, 255, .8); border-radius: 50%; }
+  .ring .fg { stroke: #ff9cad; stroke-linecap: round; } /* light coral: 3:1 on the glass over a white backdrop */
+  .x { flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; background: transparent; color: rgba(255, 255, 255, .9); border-radius: 50%; }
   .x:hover:not(:disabled) { background: var(--fr-sel); color: #fff; }
   @media (max-width: 720px) {
     /* above the phone tab bar (and the cast bar on it) */

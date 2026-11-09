@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ACTION_DURATION, MAX_VISIBLE, RING_LEN, close, dismissAll, pause, resume, runToastAction, timeLeft, toast, toasts } from './toast';
+import { ACTION_DURATION, MAX_VISIBLE, RING_LEN, close, pause, resetToasts, resume, runToastAction, timeLeft, toast, toasts } from './toast';
 
 beforeEach(() => { vi.useFakeTimers(); });
-afterEach(() => { dismissAll(); vi.useRealTimers(); });
+afterEach(() => { resetToasts(); vi.useRealTimers(); });
 
 describe('toast store', () => {
   it('shows and auto-dismisses after the kind default', () => {
@@ -102,6 +102,21 @@ describe('toast store', () => {
     runToastAction(id);
     await Promise.resolve(); await Promise.resolve();
     expect(get(toasts)).toHaveLength(0);
+  });
+  it('a toast that arrives while paused waits for resume', () => {
+    const onClose = vi.fn();
+    toast.info('first');
+    pause();
+    const id = toast.success('later', { action: { label: 'Rückgängig', run: () => undefined }, onClose });
+    expect(timeLeft(id)).toBe(5000);
+    vi.advanceTimersByTime(20_000);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(timeLeft(id)).toBe(5000);
+    resume();
+    vi.advanceTimersByTime(4999);
+    expect(onClose).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onClose).toHaveBeenCalledWith('timeout');
   });
   it('sticky toasts report 0', () => {
     const id = toast.info('sticky', { duration: 0 });

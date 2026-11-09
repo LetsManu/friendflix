@@ -39,7 +39,8 @@
   import { decodeFade } from '#lib/tv/motion';
   import { tilt } from '#lib/glass/pointer';
   import { toneFor } from '#lib/glass/tone';
-  import { scrimFade, sheetSlide } from '#lib/glass/fx';
+  import { scrimFade, sheetSlide, twoWay } from '#lib/glass/fx';
+  import { SCRIM_MENU } from '#lib/glass/tone';
 
   export let item: Item;
   /** shows a remove (X) button and emits `remove` (used for Weiterschauen) */
@@ -141,7 +142,7 @@
     clearTimeout(closeT);
     if (!open || h) return;
     // grace period so the pointer can travel from the card onto the pop-out; stay open while a list picker is open
-    const check = () => { if (held) return; if (document.querySelector('.lm-pop, .ma-pop')) { closeT = setTimeout(check, 400); return; } closePreview(); };
+    const check = () => { if (held) return; if (document.querySelector('.lm-pop:not([inert]), .ma-pop:not([inert])')) { closeT = setTimeout(check, 400); return; } closePreview(); };
     closeT = setTimeout(check, wide ? HOVER_CLOSE_MS : 120);
   }
   $: if ($hoverOwner !== uid && hp) { hp = false; overPrev = false; focusPrev = false; if (wide) shutWide(); }
@@ -204,7 +205,7 @@
   async function openSheet() { sheet = true; await tick(); sheetEl?.querySelector<HTMLElement>('a[href],button')?.focus(); }
   function closeSheet(refocus = true) { sheet = false; if (refocus) moreBtn?.focus(); }
   /** the glass sheet slides up and back down (glass spec §5); on TV (a centred dialog) it appears at once, as before */
-  const sheetT = (node: Element, p: { dir: 'in' | 'out' }) => sheetSlide(node, { dir: p.dir, mode: tvMode() ? 'still' : undefined });
+  const sheetT = (node: Element) => twoWay((dir) => sheetSlide(node, { dir, mode: tvMode() ? 'still' : undefined })); // reverses mid-flight
   const scrimT = (node: Element) => scrimFade(node, { mode: tvMode() ? 'still' : undefined });
   function sheetKey(e: KeyboardEvent) {
     if (e.key === 'Escape' || (tvMode() && isBackKey(e))) { e.preventDefault(); e.stopPropagation(); closeSheet(); return; }
@@ -280,8 +281,8 @@
 
 {#if sheet}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="scrim" use:portal on:click={() => closeSheet()} role="presentation" in:scrimT out:scrimT></div>
-  <div class="sheet tvsheet frost frost-sheet frost-safe" tabindex="-1" use:portal bind:this={sheetEl} in:sheetT={{ dir: 'in' }} out:sheetT={{ dir: 'out' }} role="dialog" aria-modal="true" aria-label={$t('home.card.actionsFor', { name: item.name })} on:keydown={sheetKey}>
+  <div class="scrim" use:portal on:click={() => closeSheet()} role="presentation" transition:scrimT></div>
+  <div class="sheet tvsheet frost frost-sheet frost-safe" tabindex="-1" use:portal bind:this={sheetEl} transition:sheetT style="--fr-scrim-safe:{SCRIM_MENU}" role="dialog" aria-modal="true" aria-label={$t('home.card.actionsFor', { name: item.name })} on:keydown={sheetKey}>
     <p class="st">{item.name}</p>
     <a class="act" href={href} on:click={() => closeSheet(false)}><Icon name="play" size={20} />{$t('home.card.play')}</a>
     <button type="button" class="act" aria-haspopup={$deskActive ? undefined : 'dialog'} on:pointerenter={prefetchModal} on:click={(e) => { if (item.type !== 'Episode') primeItem(item); moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />{$t('home.card.moreInfo')}</button>
@@ -380,5 +381,6 @@
   .st { margin: .2rem 1rem .5rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .act { display: flex; gap: .8rem; align-items: center; min-height: 48px; padding: 0 1rem; border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; text-align: left; width: 100%; text-decoration: none; }
   .act:hover, .act:focus-visible { background: var(--fr-sel); }
-  .cancel { justify-content: center; color: rgba(255,255,255,.8); margin-top: .2rem; }
+  .cancel { justify-content: center; color: rgba(255,255,255,.9); margin-top: .2rem; }
+  .cancel:hover, .cancel:focus-visible { color: #fff; } /* on the light pill: white */
 </style>

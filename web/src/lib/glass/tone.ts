@@ -114,6 +114,29 @@ export const TEXT_DIM = 0.9;
  */
 export const SCRIM_SAFE_DIM = scrimFor(WHITE, tintColor(WHITE), AA, TEXT_DIM);
 
+/** the light pill (`--fr-sel`) a hovered, focused or selected menu row draws over the glass: white at this alpha */
+export const SEL_A = 0.13;
+/** the brightest the glass grain (overlay, `--fr-grain-a`) lifts a pixel, in 8-bit levels (measured on screen over white) */
+export const GRAIN_LIFT = 4;
+/** menus may go past SCRIM_MAX: their light pill over a white backdrop needs it */
+export const MENU_SCRIM_MAX = 0.9;
+/**
+ * The scrim a menu, sheet or toast (glass spec §5) needs over `bright`: its row text is white on the light pill (`SEL_A`, with the
+ * grain's brightest lift, as the pill brings the text closest to the limit) and its dimmest text (non-interactive notes, never
+ * on the pill) white at `dim`; both pass AA. No tint (menus are not tinted). The smallest such scrim in
+ * `SCRIM_MIN…MENU_SCRIM_MAX` (steps of .02), else `MENU_SCRIM_MAX`.
+ */
+export function menuScrim(bright: RGB, dim = TEXT_DIM): number {
+  for (let i = 0; ; i++) {
+    const s = Math.round((SCRIM_MIN + i * 0.02) * 100) / 100;
+    if (s > MENU_SCRIM_MAX) return MENU_SCRIM_MAX;
+    const c = frostComposite(bright, s);
+    const pill = over(c, WHITE, SEL_A).map((x) => Math.min(255, x + GRAIN_LIFT)) as RGB;
+    if (textContrast(pill) >= AA && textContrast(c, dim) >= AA) return s;
+  }
+}
+export const SCRIM_MENU = menuScrim(WHITE);
+
 /** a sampled picture's tone: the tint colour, its bright end, and the scrim white text needs over it */
 export type Tone = { tint: RGB; bright: RGB; scrim: number };
 

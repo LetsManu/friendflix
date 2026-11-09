@@ -220,7 +220,7 @@
 
   // ---- closing: Escape, scroll, resize, navigation ----
   function onKey(e: KeyboardEvent) {
-    if (e.key !== 'Escape' || document.querySelector('.lm-pop, .ma-pop')) return;
+    if (e.key !== 'Escape' || document.querySelector('.lm-pop:not([inert]), .ma-pop:not([inert])')) return;
     e.stopPropagation(); // one Esc closes the preview only (not also the search field or a bar menu behind it)
     dispatch('close', { refocus: Boolean(el?.contains(document.activeElement)) });
   }

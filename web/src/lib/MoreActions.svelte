@@ -24,7 +24,8 @@
   import { placePopover, placedStyle } from '#lib/popover';
   import { holdBillboard } from '#lib/preview';
   import { t } from '#lib/i18n';
-  import { growFrom, scrimFade, sheetSlide } from '#lib/glass/fx';
+  import { growFrom, scrimFade, sheetSlide, twoWay } from '#lib/glass/fx';
+  import { SCRIM_MENU } from '#lib/glass/tone';
 
   /**
    * "⋯ Mehr": one trigger that opens a menu (desktop popover) or a bottom sheet (touch / narrow screens).
@@ -72,8 +73,9 @@
   }
   const toggle = () => (open ? close() : void show());
   /** the popover grows out of the trigger and folds back into it; the phone sheet slides up and back down (glass spec §5, §8.3) */
-  function popT(node: Element, p: { dir: 'in' | 'out' }) {
-    return asSheet ? sheetSlide(node, p) : growFrom(node, { trigger: btn, dir: p.dir });
+  // (bidirectional: a close mid-open shrinks from where it is, a reopen mid-close grows from there)
+  function popT(node: Element) {
+    return twoWay((dir) => (asSheet ? sheetSlide(node, { dir }) : growFrom(node, { trigger: btn, dir })));
   }
 
   async function runAction(a: MoreAction, e: MouseEvent) {
@@ -128,9 +130,9 @@
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="ma-wrap" class:modal={asSheet} use:portal role="presentation">
-    {#if asSheet}<div class="scrim" role="presentation" on:click={() => close()} in:scrimFade|global out:scrimFade|global></div>{/if}
+    {#if asSheet}<div class="scrim" role="presentation" on:click={() => close()} transition:scrimFade|global></div>{/if}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class={asSheet ? 'sheet ma-pop frost frost-sheet frost-safe' : 'pop ma-pop frost frost-menu frost-safe'} bind:this={panel} in:popT={{ dir: 'in' }} out:popT={{ dir: 'out' }} style={asSheet ? undefined : style} tabindex="-1" role="dialog" aria-modal={asSheet ? 'true' : undefined} aria-label={title || shown} on:keydown={onKey} on:focusout={onFocusOut}>
+    <div class={asSheet ? 'sheet ma-pop frost frost-sheet frost-safe' : 'pop ma-pop frost frost-menu frost-safe'} bind:this={panel} transition:popT style={`--fr-scrim-safe:${SCRIM_MENU};` + (asSheet ? '' : style)} tabindex="-1" role="dialog" aria-modal={asSheet ? 'true' : undefined} aria-label={title || shown} on:keydown={onKey} on:focusout={onFocusOut}>
       {#if asSheet}<span class="grab" aria-hidden="true"></span>{/if}
       {#if title}<p class="ttl">{title}</p>{/if}
       {#if actions.length}
@@ -166,7 +168,8 @@
   .ma.pill:hover:not(:disabled) { background: rgba(112,124,138,.35); }
   .ma:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   /* glass card (glass spec §5): .frost .frost-menu (20 px corners, 8 px padding), 44 px rows with 12 px corners; hover, focus and
-     a pressed toggle are the light pill; the safe scrim, as artwork or video can sit behind it */
+     a pressed toggle are the light pill; the safe scrim for white text on that pill and .9 notes (SCRIM_MENU), as artwork or video can
+     sit behind it */
   .pop { position: fixed; z-index: 88; box-sizing: border-box; overflow: auto; overscroll-behavior: contain; outline: none; padding: 8px; text-align: left; font-size: .92rem; font-weight: 400; }
   .ttl { margin: .35rem .7rem .45rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   ul { list-style: none; margin: 0; padding: 0; }
@@ -174,7 +177,10 @@
   .mi:hover:not(:disabled), .mi:focus-visible, .mi[aria-pressed='true'] { background: var(--fr-sel); outline: none; }
   .mi:focus-visible { box-shadow: inset 0 0 0 2px #fff; }
   .mi:active:not(:disabled) { transform: none; }
-  .mi.danger { color: var(--err, #e5646e); }
+  /* a destructive row: white text (AA on glass over any backdrop), the colour only on its icon or a dot */
+  .mi.danger :global(svg) { color: #ff9d9d; } /* a light red: 3:1 on the glass over a white backdrop */
+  .mi.danger .sp { display: grid; place-items: center; }
+  .mi.danger .sp::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #ff9d9d; }
   .mi .sp { width: 20px; flex: none; }
   .chk { margin-left: auto; color: var(--ok, #4ade80); }
   .slot { border-top: 1px solid rgba(255,255,255,.1); margin-top: 6px; padding-top: 6px; }
@@ -187,6 +193,7 @@
   .sheet { position: absolute; left: 0; right: 0; bottom: 0; max-width: 560px; max-height: 82vh; margin: 0 auto; overflow: auto; overscroll-behavior: contain; outline: none; border-bottom: 0; border-radius: var(--fr-r-sheet) var(--fr-r-sheet) 0 0; padding: .4rem .6rem calc(.6rem + var(--safe-bottom)); }
   .grab { display: block; width: 40px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.3); margin: .3rem auto .5rem; }
   .sheet .mi { min-height: 48px; padding: 0 1rem; }
-  .cancel { justify-content: center; color: rgba(255,255,255,.8); margin-top: .3rem; }
+  .cancel { justify-content: center; color: rgba(255,255,255,.9); margin-top: .3rem; }
+  .cancel:hover:not(:disabled), .cancel:focus-visible { color: #fff; } /* on the light pill: white */
   @media (pointer: coarse) { .mi { min-height: 48px; } }
 </style>

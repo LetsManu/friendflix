@@ -83,7 +83,8 @@ export function grow(_node: Element, p: { origin?: string; dir?: 'in' | 'out'; m
 const grown = new WeakMap<Element, string>();
 /**
  * grow() out of a trigger (menus, §5): the origin is the trigger's centre against the popover's placed box, measured once when
- * the popover first opens (unscaled) and kept for its close and for a reopen mid-close, which reverse from where it is.
+ * the popover first opens (unscaled) and kept for its close and for a reopen mid-close (a box measured mid-flight is scaled).
+ * The reversal itself comes from using it as a bidirectional transition (`growBoth` with Svelte's `transition:`).
  */
 export function growFrom(node: Element, p: { trigger?: Element | null; dir?: 'in' | 'out'; mode?: FxMode } = {}): ReturnType<typeof grow> {
   let origin = grown.get(node);
@@ -92,6 +93,21 @@ export function growFrom(node: Element, p: { trigger?: Element | null; dir?: 'in
     grown.set(node, origin);
   }
   return grow(node, { origin, dir: p.dir, mode: p.mode });
+}
+
+export type Dir = 'in' | 'out';
+type Cfg = ReturnType<typeof grow>;
+/**
+ * A bidirectional Svelte transition (`transition:`) built from one-way ones: Svelte calls the returned function once it knows
+ * the direction, and a close mid-open (or a reopen mid-close) continues from the current point with the new direction's
+ * duration and curve, so nothing jumps (glass spec §8.3).
+ */
+export function twoWay(make: (dir: Dir) => Cfg): (o?: { direction?: 'in' | 'out' | 'both' }) => Cfg {
+  return (o) => make(o?.direction === 'out' ? 'out' : 'in');
+}
+/** growFrom as a bidirectional transition: `transition:growBoth={{ trigger }}` */
+export function growBoth(node: Element, p: { trigger?: Element | null; mode?: FxMode } = {}): (o?: { direction?: 'in' | 'out' | 'both' }) => Cfg {
+  return twoWay((dir) => growFrom(node, { ...p, dir }));
 }
 
 export const SHEET_IN_MS = 380;

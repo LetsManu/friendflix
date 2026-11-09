@@ -6,7 +6,7 @@
   import { focusIndex, nextThumb, RATING_OPTIONS, toThumb, type Thumb } from '#lib/rating';
   import { t } from '#lib/i18n';
   import { isBackKey } from '#lib/spatial';
-  import { growFrom } from '#lib/glass/fx';
+  import { growBoth } from '#lib/glass/fx';
 
   /**
    * Rating: one round thumb button that expands (hover / click / keyboard focus / tap) into
@@ -126,7 +126,7 @@
     <!-- .at places the pill (centred over the trigger, or above it); the pill itself grows out of the trigger (TV: its own slide) -->
     <span class="at" class:up>
     <span class="pill" class:frost={!tv} class:frost-menu={!tv} class:frost-safe={!tv} role="group" aria-label={$t('common.rating.rate')} data-scope={tv ? '' : undefined}
-      in:growFrom={{ trigger, dir: 'in', mode: tv ? 'still' : undefined }} out:growFrom={{ trigger, dir: 'out', mode: tv ? 'still' : undefined }}>
+      transition:growBoth={{ trigger, mode: tv ? 'still' : undefined }}>
       {#each RATING_OPTIONS as o, i (o.value)}
         <button
           bind:this={opts[i]} type="button" class="opt" class:tv-btn={tv} class:on={v === o.value} aria-pressed={v === o.value}

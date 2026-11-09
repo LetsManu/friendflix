@@ -24,7 +24,8 @@
   import { animateTo, glide, halt, motionLevel, motionTripped, placeAt } from '#lib/tv/motion';
   import { alphaOf, pillSolid, SHADE_MS } from './bar';
   import { sheen } from '#lib/glass/pointer';
-  import { growFrom } from '#lib/glass/fx';
+  import { growBoth } from '#lib/glass/fx';
+  import { SCRIM_MENU } from '#lib/glass/tone';
   import { getActiveProfile } from '#lib/api';
   import { pushRecent } from '#lib/discovery';
   import SearchSheet from './SearchSheet.svelte';
@@ -360,7 +361,7 @@
       <div class="pop-anchor" class:gone={collapse}>
         <button type="button" class="tab cbtn" aria-haspopup="true" aria-expanded={cats} bind:this={catBtn} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>
         {#if cats}
-          <div class="drop catdrop frost frost-menu frost-safe" role="region" aria-label={$t('shell.cats.title')} tabindex="-1" in:growFrom={{ trigger: catBtn, dir: 'in' }} out:growFrom={{ trigger: catBtn, dir: 'out' }}>
+          <div class="drop catdrop frost frost-menu frost-safe" role="region" aria-label={$t('shell.cats.title')} tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: catBtn }}>
             <div class="cseg">
               <div class="seg" role="group" aria-label={$t('shell.cats.kind')}>
                 <button type="button" class:on={catKind === 'movies'} aria-pressed={catKind === 'movies'} on:click={() => (catKind = 'movies')}>{$t('common.movies')}</button>
@@ -397,7 +398,7 @@
         <span class="sclip" aria-hidden="true"></span><Icon name="bell" size={20} />{#if unread}<span class="dot">{unread}</span>{/if}
       </button>
       {#if bell}
-        <div class="drop wide frost frost-menu frost-safe" role="menu" tabindex="-1" in:growFrom={{ trigger: bellBtn, dir: 'in' }} out:growFrom={{ trigger: bellBtn, dir: 'out' }}>
+        <div class="drop wide frost frost-menu frost-safe" role="menu" tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: bellBtn }}>
           {#each notes as n}{#if n.link}<a href={n.link} class:muted={n.read} role="menuitem">{n.title}</a>{:else}<span class="note" class:muted={n.read} role="none">{n.title}</span>{/if}{:else}<span class="muted pad">{$t('shell.bell.empty')}</span>{/each}
         </div>
       {/if}
@@ -405,7 +406,7 @@
     <div class="pop-anchor">
       <button type="button" class="avatar" aria-label={who ? $t('shell.account.labelWho', { name: who }) : $t('shell.account.label')} aria-haspopup="menu" aria-expanded={menu} disabled={!me} bind:this={acctBtn} on:click={toggleMenu}><span class="face" style={faceStyle}>{initial(who)}</span></button>
       {#if menu && me}
-        <div class="drop acct frost frost-menu frost-safe" role="menu" aria-label={$t('shell.account.label')} tabindex="-1" in:growFrom={{ trigger: acctBtn, dir: 'in' }} out:growFrom={{ trigger: acctBtn, dir: 'out' }}>
+        <div class="drop acct frost frost-menu frost-safe" role="menu" aria-label={$t('shell.account.label')} tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: acctBtn }}>
           {#if multi}
             {#if others === null}<span class="muted pad" role="status">{$t('shell.account.loadingProfiles')}</span>{/if}
             {#each others ?? [] as p (p.id)}<a class="prof" href={switchHref(p.id)} role="menuitem" data-sveltekit-reload><span class="face xs" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}</span>{p.name}{#if p.hasPin}<Icon name="lock" size={14} label={$t('shell.account.withPin')} />{/if}</a>{/each}
@@ -521,15 +522,17 @@
   .avatar[aria-expanded='true'] .face { box-shadow: 0 0 0 2px #fff; }
 
   /* ---- dropdowns: glass cards (glass spec §5: .frost .frost-menu, 8 px padding, 44 px rows with 12 px corners, hover = the light
-     pill, 1 px separators) that grow out of their button (growFrom); the safe scrim, as the billboard can sit behind them ---- */
+     pill, 1 px separators) that grow out of their button (growBoth); the safe scrim for white rows on the light pill and .9 notes
+     (SCRIM_MENU), as the billboard can sit behind them ---- */
   .pop-anchor { position: relative; }
   .drop { position: absolute; right: 0; top: calc(100% + 10px); min-width: 220px; padding: 8px; box-sizing: border-box; display: flex; flex-direction: column; outline: none;
     max-height: calc(100vh - var(--nav-total) - 16px); max-height: calc(100dvh - var(--nav-total) - 16px); overflow-y: auto; overscroll-behavior: contain; }
   .drop hr { border: 0; border-top: 1px solid rgba(255, 255, 255, .1); margin: 6px 8px; width: auto; align-self: stretch; }
   .drop.wide { width: min(340px, 90vw); }
-  .drop .note { display: block; padding: 8px 14px; font-size: .9rem; color: #e5e5e5; }
-  .drop .note.muted { color: var(--mut); }
-  .drop a, .drop .plain { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-radius: 12px; font-size: .9rem; font-weight: 600; color: #e5e5e5; min-height: 44px; box-sizing: border-box; }
+  .drop .note { display: block; padding: 8px 14px; font-size: .9rem; color: #fff; }
+  .drop .muted, .drop .note.muted { color: rgba(255, 255, 255, .9); }
+  .drop a, .drop .plain { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-radius: 12px; font-size: .9rem; font-weight: 600; color: #fff; min-height: 44px; box-sizing: border-box; }
+  .drop a.muted { color: rgba(255, 255, 255, .9); font-weight: 500; } /* a read notification */
   .drop a:hover, .drop .plain:hover:not(:disabled) { background: var(--fr-sel); color: #fff; text-decoration: none; }
   .drop a:focus-visible, .drop .plain:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
   .plain { background: transparent; border-radius: 0; justify-content: flex-start; font-weight: 400; width: 100%; }
@@ -542,12 +545,12 @@
   .catdrop > .cseg, .catdrop > .ccols { padding: 8px 12px; }
   .cseg { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
   .seg { display: inline-flex; border: 1px solid rgba(255, 255, 255, .18); border-radius: 99px; overflow: hidden; }
-  .seg button { background: transparent; border-radius: 0; min-height: 36px; padding: 0 16px; color: #ddd; font-weight: 600; }
-  .seg button:hover:not(:disabled) { background: rgba(255, 255, 255, .1); }
+  .seg button { background: transparent; border-radius: 0; min-height: 36px; padding: 0 16px; color: rgba(255, 255, 255, .9); font-weight: 600; }
+  .seg button:hover:not(:disabled) { background: var(--fr-sel); color: #fff; }
   .seg button.on, .seg button.on:hover:not(:disabled) { background: #fff; color: #000; }
   .catdrop .coll { font-weight: 600; color: #fff; padding: 0 12px; min-height: 44px; display: inline-flex; align-items: center; border-radius: 999px; }
   .ccols { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
-  .ch { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); margin: 0 0 4px; font-weight: 600; }
+  .ch { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: rgba(255, 255, 255, .9); margin: 0 0 4px; font-weight: 600; }
   .glist { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
   .ccols section:last-child .glist { grid-template-columns: 1fr; }
   .catdrop .glist a { min-height: 40px; padding: 0; font-size: .9rem; }
