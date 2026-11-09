@@ -76,6 +76,10 @@ android {
 }
 
 dependencies {
+    constraints {
+        implementation(libs.guava.android)
+        testImplementation(libs.guava.jre)
+    }
     implementation(project(":shell-core"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.ktx)
