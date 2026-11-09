@@ -87,6 +87,83 @@ test('a panel opens from its button; Esc closes it and focus returns', async ({ 
   await expect(opener).toBeFocused();
 });
 
+type Box = { x: number; y: number; width: number; height: number };
+/** two boxes share pixels */
+const meets = (a: Box, b: Box) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+const box = async (page: Page, sel: string) => (await page.locator(sel).first().boundingBox())!;
+const titleShown = (page: Page) => page.locator('.stage.desk .ttlblock').evaluate((e) => { const s = getComputedStyle(e); return s.visibility !== 'hidden' && Number(s.opacity) > 0; });
+
+test('cast & info never covers the title block or the timeline', async ({ page, api: _api }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page);
+  for (const size of [{ width: 1440, height: 900 }, { width: 1024, height: 700 }]) {
+    await page.setViewportSize(size);
+    await page.locator('.stage').hover();
+    const btn = page.locator('.stage.desk .pill').getByRole('button', { name: 'Besetzung & Infos', exact: true });
+    if (!(await page.locator('.ci').count())) { await btn.click(); await btn.click(); } // playing: the peek first, then the panel
+    await expect(page.locator('.ci')).toBeVisible();
+    const ci = await box(page, '.ci');
+    expect(meets(ci, await box(page, '.stage.desk .ttlblock')), `panel vs title at ${size.width}`).toBe(false);
+    expect(meets(ci, await box(page, '.stage.desk .tlrow')), `panel vs timeline at ${size.width}`).toBe(false);
+    expect(await titleShown(page)).toBe(true); // the title stays: the panel sits above it
+  }
+});
+
+test('the tools\' cards stop above the timeline; the title block fades while one is open', async ({ page, api: _api }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page);
+  await page.locator('.stage').hover();
+  const tl = await box(page, '.stage.desk .tlrow');
+  for (const [name, sel] of [['Audio und Untertitel', '.menu.tracks'], ['Mehr', '.menu.more']] as const) {
+    await page.locator('.stage.desk .pill').getByRole('button', { name, exact: true }).click();
+    await expect(page.locator(sel)).toBeVisible();
+    const card = await box(page, sel);
+    expect(meets(card, tl), `${name} vs timeline`).toBe(false);
+    expect(card.y + card.height).toBeLessThanOrEqual(tl.y);
+    // a wide card can reach the title's column: the title is gone (opacity and visibility) while the card is open
+    await expect.poll(() => titleShown(page)).toBe(false);
+    await page.keyboard.press('Escape');
+    await expect(page.locator(sel)).toHaveCount(0);
+    await expect.poll(() => titleShown(page)).toBe(true);
+  }
+});
+
+test('the audio & subtitles card is glass with the menu scrim; its headings have no box of their own', async ({ page, api: _api }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.addInitScript(() => { (window as unknown as { __ffDeskGuard: unknown }).__ffDeskGuard = { slowMs: 1000, frames: 8 }; });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page);
+  await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
+  await page.locator('.stage').hover();
+  await page.locator('.stage.desk .pill').getByRole('button', { name: 'Audio und Untertitel', exact: true }).click();
+  const menu = page.locator('.menu.tracks');
+  await expect(menu).toBeVisible();
+  await expect(menu).toHaveClass(/(^|\s)frost(\s|$)/);
+  await expect(menu).toHaveClass(/(^|\s)frost-menu(\s|$)/);
+  await expect(menu).toHaveClass(/(^|\s)frost-safe(\s|$)/);
+  const look = await menu.evaluate((e) => {
+    const s = getComputedStyle(e);
+    const h = [...e.querySelectorAll('h3')].map((x) => { const c = getComputedStyle(x); return { bg: c.backgroundColor, img: c.backgroundImage, pos: c.position, color: c.color }; });
+    const rows = [...e.querySelectorAll('.mi')].map((x) => getComputedStyle(x).color);
+    const notes = [...e.querySelectorAll('.fxl small')].map((x) => getComputedStyle(x).color);
+    return { scrim: s.getPropertyValue('--fr-scrim').trim(), bg: s.backgroundColor, blur: s.backdropFilter, h, rows, notes };
+  });
+  // the heavy menu scrim over video (tone.ts SCRIM_MENU: white rows on the light pill and .9 notes pass AA over pure white)
+  expect(Number(look.scrim)).toBeGreaterThanOrEqual(0.82);
+  expect(look.bg).toBe(`rgba(18, 16, 24, ${look.scrim})`);
+  expect(look.blur).toContain('blur(38px)');
+  expect(look.h.length).toBeGreaterThanOrEqual(2);
+  for (const h of look.h) {
+    expect(h.bg).toBe('rgba(0, 0, 0, 0)');
+    expect(h.img).toBe('none');
+    expect(h.pos).not.toBe('sticky');
+    expect(h.color).toBe('rgb(255, 255, 255)');
+  }
+  for (const c of look.rows) expect(c).toBe('rgb(255, 255, 255)');
+  expect(look.notes.length).toBeGreaterThan(0);
+  for (const c of look.notes) expect(c).toBe('rgba(255, 255, 255, 0.9)');
+});
+
 test('Tab reaches both pills', async ({ page, api: _api }) => {
   await open(page);
   await page.locator('.stage').hover();
