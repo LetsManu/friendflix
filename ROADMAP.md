@@ -2,22 +2,25 @@
 
 What the maintainer plans for FriendFlix over roughly the next 12 months. This is a **plan, not a promise**: FriendFlix has a single maintainer, priorities shift with bug reports and free time, and items may move, shrink or be dropped. Day-to-day work is tracked in [GitHub issues](https://github.com/LetsManu/friendflix/issues); finished work is listed in the [CHANGELOG](CHANGELOG.md).
 
+## Done recently
+
+Shipped since the last roadmap (details in the [CHANGELOG](CHANGELOG.md)): admin care (health, disk, errors, hygiene), **Plex support built in** since 2.0 (`MEDIA_SERVER=plex`, [docs/plex.md](docs/plex.md); the separate friendflix-plex project is archived), coverage reporting with high thresholds, tagged releases with codenames and signed images, SPDX license headers, the 3.0 redesign (desktop, phone, TV, glass look), apps for Android, Fire TV, LG webOS, Samsung Tizen and Windows, and the 3.1 reliability and accessibility pass.
+
 ## Planned
 
-1. **Block 22: admin care.** Make the admin area tell you when something needs attention:
-   health status of the stack, disk usage, errors and transcodes, a warning banner for admins, library hygiene, and a per-user overview.
-2. **Plex fork parity.** FriendFlix talks to its media server through one interface ([docs/architecture.md](docs/architecture.md), "Media server seam"); only Jellyfin is implemented in this repository. The goal is to keep that seam clean so that a fork can add another media server without touching shared code, and to bring features that exist only in such a fork back in a media-server-neutral way where it makes sense.
-3. **AirPlay and cast receiver compatibility hardening.** More testing across Apple TV, AirPlay 2 TVs and Chromecast receivers, better diagnostics on the Diagnose page, and fewer surprises when a receiver cannot load its stream ([docs/cast.md](docs/cast.md)).
-4. **Test coverage reporting, then higher coverage.** First make coverage visible in CI, then raise it, starting with security-relevant code (authentication, sessions, cast tokens, the gateway).
-5. **Accessibility review.** A structured pass over the web app (keyboard, screen reader, contrast, reduced motion, TV mode) and fixes for what it finds.
-6. **First tagged releases.** Cut real releases with the *Release* workflow: SemVer versions, a cinema-snack codename per major version, release notes from the changelog, signed images ([SECURITY.md](SECURITY.md), "Supported versions").
-7. **Possibly: SPDX license headers** in source files (`SPDX-License-Identifier: AGPL-3.0-or-later`), if the maintenance cost stays low.
+1. **Cast and AirPlay.** Fixes across Chromecast and AirPlay receivers, a redesigned cast screen, a token gate for "next episode" on the receiver, and continuous AirPlay streaming where receivers allow it; better diagnostics on the Diagnose page.
+2. **Downloads on desktop and TV.** Offline downloads in the desktop app like on Android, and on TVs where the platform allows enough storage (Fire TV first; LG webOS and Samsung Tizen after a storage check).
+3. **Profiles and household.** A PIN to leave the kids profile, "who's watching" on the TV apps, viewing-time limits for kids.
+4. **Watch party 2.0.** Reactions on the timeline, a shared queue, smoother sync.
+5. **Smarter home.** "Because you watched …" rows that say why, an optional weekly "new for you" notice, and "resume on TV" from the phone.
+6. **Admin media insights.** Which titles force a conversion and why, with suggestions that make them play directly.
+7. **Security hygiene.** A CI check of the Gradle wrapper, fuzz tests for the security-relevant parsers (invite codes, cast tokens), and the desktop app's move to a GTK 4 based toolkit once it is stable.
 
 ## Out of scope
 
 - **Public multi-tenant hosting.** FriendFlix is for one household or friend group on a server you run yourself, not a service for strangers.
 - **DRM.** There is no copy protection; downloads are for trusted people (see the README, "Privacy and safety").
-- **A transcoding engine of its own.** Transcoding stays the job of the media server (Jellyfin); FriendFlix only chooses and caps what it asks for.
+- **A transcoding engine of its own.** Transcoding stays the job of the media server (Jellyfin or Plex); FriendFlix only chooses and caps what it asks for.
 
 ## Influence the plan
 
