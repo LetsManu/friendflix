@@ -17,7 +17,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License: AGPL-3.0"></a>
 </p>
 
-<p align="center"><img src="docs/images/en/hero.jpg" alt="FriendFlix home page with a large billboard and rows of titles" width="900"></p>
+<p align="center"><img src="docs/images/en/hero.jpg" alt="FriendFlix home page with a large billboard under the frosted glass top bar and rows of titles" width="900"></p>
 
 FriendFlix is a private streaming portal that sits in front of **Jellyfin** (your media) and an optional request service. Your friends get a polished, familiar streaming experience on their laptop, phone and TV – with profiles, downloads, watch parties and recommendations from each other. They never see Jellyfin or the request service directly, and you stay in control of who gets in.
 
@@ -79,26 +79,28 @@ What friends see step by step: [docs/setup.md, What a friend sees](docs/setup.md
 
 Watching · Discovering · Together · Family and kids · Phone and TV · Admin
 
+**The look:** dark, with surfaces of milky frosted glass – the top bar, the hover card, the detail panel, menus, notices, the phone's tab bar and sheets, and the admin area – that let the colours of the artwork shine through. Menus grow out of the button you pressed, a pill slides between tabs, and a notice with *Undo* shows a small ring that counts down. Calm mode, the system setting *reduce motion* or a device that cannot keep up turn every glass surface into a solid panel and stop the motion; TVs and kids profiles always use the solid look.
+
 ### Watching
 
 #### A home page that feels like a real streaming service
 
-A large billboard with the title logo, then rows such as *Continue Watching*, *Next Episode*, *Recommended by friends*, *Rated by friends*, *Popular this week*, *Because you watched …*, *Top 10* and *Watchlist*. On desktop the billboard plays the trailer (unless calm mode, data saver or your trailer setting says otherwise), the top bar is a floating pill with the menu and a search that grows out of it, and each row pages with arrows and dots. Hover over a card and a wide preview opens with the most important actions: play, add to your list, rate, more info.
+A large billboard with the title logo, then rows such as *Continue Watching*, *Next Episode*, *Recommended by friends*, *Rated by friends*, *Popular this week*, *Because you watched …*, *Top 10* and *Watchlist*. On desktop the billboard plays the trailer (unless calm mode, data saver or your trailer setting says otherwise), the top bar is a floating pill of frosted glass with the menu and a search that grows out of it, and each row pages with arrows and dots. Rest the pointer on a card and a glass card grows out of it, with a bigger picture and the most important actions: play, add to your list, rate, more info.
 
 Small **labels** on the cards tell you what is new – *New*, *New episode*, *New season*, *Season finale*, *New series*. When the admin knows that a title is about to leave the library, its card says "Only 6 days left" and a **Leaving soon** row collects those titles; everyone who has one on their list or in *Continue Watching* gets a reminder a week and a day before. Nothing is deleted – the date is only an announcement.
 
 <p align="center"><img src="docs/images/en/home.jpg" alt="Home page rows with a themed list, new and leaving-soon labels and a Leaving soon row" width="900"></p>
 
-<p align="center"><img src="docs/images/en/popout.jpg" alt="A card pops out on hover with play, list and rating buttons and picture and sound chips" width="900"></p>
+<p align="center"><img src="docs/images/en/popout.jpg" alt="A glass hover card grows out of a poster, with play, list and rating buttons and picture and sound chips" width="900"></p>
 
 #### Everything about a title in one place
 
-On desktop, the detail view is a full page with tabs (and the card glides into it); on phones a tap opens a preview sheet and the full page with tabs is one swipe up. It shows the description, audio and subtitle languages, cast, which friends recommended or watched it, and – for shows – every season and episode with progress bars. Pick up exactly where you left off. Small chips tell you the **picture and sound** before you press play (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 surround). When a new season is about to start, or you have been away for a few weeks, **The story so far** gives a short recap and where you stopped – and you can hide the card. An **Extras** tab collects trailers and special features from Jellyfin, and every episode has its own **comments** from your friends: comments on an episode you have not seen yet stay blurred until you choose "Spoiler – show anyway".
+On desktop, the detail view is a full page (the card glides into it): title, facts and buttons sit on a glass panel over the backdrop, and a pill slides between the tabs; on phones a tap opens a preview sheet and the full page with tabs is one swipe up. It shows the description, audio and subtitle languages, cast, which friends recommended or watched it, and – for shows – every season and episode with progress bars. Pick up exactly where you left off. Small chips tell you the **picture and sound** before you press play (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 surround). When a new season is about to start, or you have been away for a few weeks, **The story so far** gives a short recap and where you stopped – and you can hide the card. An **Extras** tab collects trailers and special features from Jellyfin, and every episode has its own **comments** from your friends: comments on an episode you have not seen yet stay blurred until you choose "Spoiler – show anyway".
 
 <table>
   <tr>
-    <td><img src="docs/images/en/detail.jpg" alt="Detail view of a series with a new-season label, quality chips and the story so far card" width="440"></td>
-    <td><img src="docs/images/en/detail-episodes.jpg" alt="Story so far card and the episode list with progress and descriptions" width="440"></td>
+    <td><img src="docs/images/en/detail.jpg" alt="Detail page of a series: a glass panel over the backdrop with a new-season label, quality chips and buttons, and the tabs below" width="440"></td>
+    <td><img src="docs/images/en/detail-episodes.jpg" alt="The tab pill on Episodes, the story so far card and episode tiles with progress and descriptions" width="440"></td>
   </tr>
 </table>
 
@@ -115,7 +117,7 @@ On phones the player has the same look: the title bottom left, the timeline with
 - **Clear voices** and **Night mode** in the sound menu: bring dialogue forward, or keep loud scenes from waking the house.
 - **Smooth streaming**: *Auto* quality adapts to your connection and steps down when the picture stalls (a chip says why); outside your home network each role has its own bitrate limit, and the player starts from a poster of the title instead of a black screen.
 
-<p align="center"><img src="docs/images/en/player.jpg" alt="Player with the Cast and info panel open next to the picture" width="900"></p>
+<p align="center"><img src="docs/images/en/player.jpg" alt="Player with the episode list open and the controls in two glass pills" width="900"></p>
 
 <p align="center"><img src="docs/images/en/player-scenes.jpg" alt="Player with the Scenes panel showing a thumbnail for every chapter" width="900"></p>
 
@@ -143,7 +145,7 @@ Up to five profiles per account, each with its own history, list, favourites, la
 
 **Kids profiles** get a bright home of their own with big tiles, a simple search and an age limit (0, 6 or 12) that the server enforces on every list, search and title. Nothing social is shown – no friends, reactions, ratings, comments, watch parties, shared lists, requests or stats – and the settings only offer language and playback languages. Leaving a kids profile needs the PIN of the target profile, or the owner's PIN if the target has none; a TV paired from a kids profile stays on that kids profile. Pinned themed lists (a "Cosy autumn" for the little ones) show up there too.
 
-**Calm mode** (per profile, also for kids) keeps everything quiet: no trailer in the billboard, no preview on hover, no sound, and less motion across the whole app.
+**Calm mode** (per profile, also for kids) keeps everything quiet: no trailer in the billboard, no preview on hover, no sound, less motion across the whole app, and solid panels instead of glass.
 
 <table>
   <tr>
@@ -154,12 +156,12 @@ Up to five profiles per account, each with its own history, list, favourites, la
 
 ### Phone and TV
 
-An app-like layout with a floating tab bar (Home, New, My list, Downloads), a swipe carousel of recommended titles on the home page, a preview sheet when you tap a poster, a detail page with tabs one swipe away, a search page with popular titles and genre tiles, and a cinema player that works held sideways either way round or upright. FriendFlix can be installed to the home screen (PWA) – with long-press **shortcuts** (Continue Watching, Watchlist, Search, Downloads), an icon **badge** with your unread notifications and the app name and description in your language.
+An app-like layout with a frosted top bar and a floating glass tab bar (Home, New, My list, Downloads), buttons that answer a tap with a short press effect, a swipe carousel of recommended titles on the home page, a glass preview sheet when you tap a poster, a detail page with tabs one swipe away, a search page with popular titles and genre tiles, and a cinema player that works held sideways either way round or upright. FriendFlix can be installed to the home screen (PWA) – with long-press **shortcuts** (Continue Watching, Watchlist, Search, Downloads), an icon **badge** with your unread notifications and the app name and description in your language.
 
 <table>
   <tr>
-    <td><img src="docs/images/en/phone-home.jpg" alt="Phone home page" width="260"></td>
-    <td><img src="docs/images/en/phone-preview.jpg" alt="Phone preview sheet" width="260"></td>
+    <td><img src="docs/images/en/phone-home.jpg" alt="Phone home page with the swipe carousel and the floating glass tab bar" width="260"></td>
+    <td><img src="docs/images/en/phone-preview.jpg" alt="Phone preview sheet in frosted glass over the home page" width="260"></td>
     <td><img src="docs/images/en/phone-detail.jpg" alt="Phone detail page with quality chips" width="260"></td>
   </tr>
 </table>
@@ -186,7 +188,7 @@ An app-like layout with a floating tab bar (Home, New, My list, Downloads), a sw
 
 ### Admin
 
-A tidy admin area with a sidebar (People, Content, Operations) and an **overview** that shows system health, what is waiting for you – approve or decline a wish or a new device right there –, recent activity in plain sentences, counts and storage. Everything gives feedback: no pop-up boxes, risky actions ask first, small ones offer **Undo**. On the phone the same area is a simple list with big touch targets.
+A tidy admin area in dense glass with a sidebar (People, Content, Operations) and an **overview** that shows system health as status tiles, what is waiting for you – approve or decline a wish or a new device right there –, recent activity in plain sentences, counts and storage. Everything gives feedback: no pop-up boxes, risky actions ask first, small ones offer **Undo**, numbers count up and a saved setting shows a short check. On the phone the same area is a simple grouped list with big touch targets.
 
 **Setup in the browser:** a new install starts with a setup wizard that is unlocked by a one-time code from the server log; it connects Jellyfin and sets up Authentik automatically, and every setting lives in *Admin → Settings* afterwards, tested before it is saved.
 
@@ -198,8 +200,8 @@ Also in the admin area: invitations and roles, **brand hubs**, featured and them
 
 <table>
   <tr>
-    <td><img src="docs/images/en/admin.jpg" alt="Admin overview with system health, requests and devices waiting for approval and recent activity" width="600"></td>
-    <td><img src="docs/images/en/phone-admin.jpg" alt="Admin area on the phone as a grouped list" width="260"></td>
+    <td><img src="docs/images/en/admin.jpg" alt="Admin overview in dense glass with the sidebar, system health tiles, requests and devices waiting for approval and recent activity" width="600"></td>
+    <td><img src="docs/images/en/phone-admin.jpg" alt="Admin area on the phone as grouped glass lists" width="260"></td>
   </tr>
 </table>
 
@@ -397,7 +399,7 @@ npm run e2e                                     # Playwright: builds the web app
 | Fire TV app: install, remote keys, probe, Amazon Appstore steps | [docs/firetv.md](docs/firetv.md) |
 | Search and discovery API, labels, leaving soon, quality, kids rules | [docs/discovery.md](docs/discovery.md) |
 | Themed lists, calm mode, sound in the player, phone shortcuts and badge | [docs/personal.md](docs/personal.md) |
-| UI kit and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |
+| UI kit, glass look and admin shell | [docs/ui-kit.md](docs/ui-kit.md) |
 | Languages and translations | [docs/i18n.md](docs/i18n.md) |
 | Changes | [CHANGELOG.md](CHANGELOG.md) |
 
@@ -424,4 +426,4 @@ FriendFlix is free software: you can redistribute it and/or modify it under the 
 
 ### Trademarks
 
-Netflix, Disney+, Prime Video, Crunchyroll, Plex, Jellyfin, TMDB, OMDb, IMDb, Rotten Tomatoes, Metacritic, TVDB, Trakt and other names are trademarks of their respective owners. FriendFlix is an independent open-source project and is not affiliated with, sponsored or endorsed by any of them. This product uses the TMDB API but is not endorsed or certified by TMDB.
+Disney+, Prime Video, Crunchyroll, Plex, Jellyfin, TMDB, OMDb, IMDb, Rotten Tomatoes, Metacritic, TVDB, Trakt and other names are trademarks of their respective owners. FriendFlix is an independent open-source project and is not affiliated with, sponsored or endorsed by any of them. This product uses the TMDB API but is not endorsed or certified by TMDB.

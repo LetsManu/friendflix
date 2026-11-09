@@ -60,6 +60,7 @@
   import { deskActive } from '#lib/desk/bar';
   import { deskPauseDue, deskPlayer } from '#lib/player/desk/logic';
   import DeskPauseScreen from '#lib/player/desk/DeskPauseScreen.svelte';
+  import { SCRIM_MENU } from '#lib/glass/tone';
   import PhonePauseScreen from '#lib/player/phone/PhonePauseScreen.svelte';
   import { grow, springAt } from '#lib/player/desk/grow';
   import { motionAllowed } from '#lib/preview';
@@ -215,14 +216,17 @@
   /** the speed button sits in the bar (desktop, phone player in landscape); otherwise speed is a sub-view of More */
   $: speedBtn = phoneUi ? tools.includes('speed') : !coarse;
   /** desktop: heights of the timeline row and the pill row (the skip button sits just above the timeline, not above the title) */
-  let tlH = 0, rowH = 0;
+  let tlH = 0, rowH = 0, ttlH = 0;
   $: ccOn = phone && !phoneUi && showUi && !locked && !error && !reconnecting && !(posterOn && !posterOut);
   $: phoneChip = phone && Boolean(info && mode && !remote);
   /** height of the bottom bar: panels, the skip button and the page's cards sit above it (phones only; elsewhere the old fixed offsets apply) */
   $: barVar = (phone && ctlH ? `;--bar-h:${ctlH}px` : '') + (ctlH ? `;--ctl-h:${ctlH}px` : '')
-    + ((desk || phoneUi) && tlH && rowH ? `;--tl-h:${tlH}px;--row-h:${rowH}px` : '');
+    + ((desk || phoneUi) && tlH && rowH ? `;--tl-h:${tlH}px;--row-h:${rowH}px` : '') + (desk && ttlH ? `;--ttl-h:${ttlH}px` : '');
   // ---- desktop layout (spec 2026-11-08 §1–2): title block, timeline row with both times, two glass pills; never TV, phone or kids ----
   $: desk = deskPlayer({ desk: $deskActive, tv: tvUi, phone });
+  /** desktop cards (not the bare episodes / scenes panels) are glass over video nobody sampled: the menu scrim (glass spec §5) */
+  $: deskGlass = desk ? ' frost frost-menu frost-safe' : '';
+  $: deskScrim = desk ? `--fr-scrim-safe:${SCRIM_MENU}` : undefined;
   /** glass blur only with full motion (calm mode, reduced motion or a tripped frame guard: plain fill) */
   const fullMotion = (_calm: unknown, _tripped: boolean) => motionLevel() === 'full'; // re-read when the prefs (calm mode) arrive or the frame guard trips
   $: blur = (desk || phoneUi) && fullMotion($prefs, $motionTripped);
@@ -1642,7 +1646,7 @@
   <div class="ui ctl" data-nav inert={credits === 'corner'} bind:offsetHeight={ctlH} class:hide={!showUi || (posterOn && !posterOut)} class:blur class:dock={phoneUi} on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
     {#if desk}
       <!-- desktop: chapter eyebrow, title, episode line above the timeline -->
-      <div class="ttlblock">
+      <div class="ttlblock" class:off={menu !== ''} bind:offsetHeight={ttlH}>
         {#if nowChapter}<em>{nowChapter}</em>{/if}
         <b title={barTitle || title}>{barTitle || title}</b>
         {#if barSub}<span>{barSub}</span>{/if}
@@ -1725,22 +1729,22 @@
           <div class="mwrap">
             <button class="ic" aria-label={$t('player.controls.tracks')} data-label={desk ? $t('player.controls.tracks') : undefined} title={$t('player.controls.tracksKey')} aria-expanded={menu === 'tracks'} on:click={() => toggleMenu('tracks')}><Icon name="subtitles" size={ICON} /></button>
             {#if menu === 'tracks'}
-              <div class="menu tracks" data-nav data-scope role="dialog" aria-label={$t('player.controls.tracks')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
+              <div class="menu tracks{deskGlass}" style={deskScrim} data-nav data-scope role="dialog" aria-label={$t('player.controls.tracks')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
                 {#if audioOpts.length > 1}
-                  <div><h3>{$t('player.controls.audio')}</h3>
+                  <div><h3>{$t('player.controls.audio')}</h3><div class="opts">
                     {#each audioOpts as a}<button class="mi" class:on={audioIndex === a.index || (audioIndex === undefined && a.isDefault)} on:click={() => { menu = ''; changeAudio(a.index); }}>{#if audioIndex === a.index || (audioIndex === undefined && a.isDefault)}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{a.title}</button>{/each}
-                  </div>
+                  </div></div>
                 {/if}
-                <div><h3>{$t('player.subs.title')}</h3>
+                <div><h3>{$t('player.subs.title')}</h3><div class="opts">
                   <button class="mi" class:on={subIndex === -1} on:click={() => { setSubtitle(-1); menu = ''; }}>{#if subIndex === -1}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('common.off')}</button>
                   {#if $serverCaps.subtitleSearch && info}<button class="mi" on:click={() => { menu = ''; subDlg = true; subResults = null; subMsg = ''; }}><Icon name="search" size={16} />{$t('player.subs.searchMenu')}</button>{/if}
                   {#each subOpts as s}<button class="mi" class:on={subIndex === s.index} on:click={() => { setSubtitle(s.index); menu = ''; }}>{#if subIndex === s.index}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{s.title}</button>{/each}
-                </div>
-                <div class="fxcol"><h3>{$t('scenes.audio.title')}</h3>
+                </div></div>
+                <div class="fxcol"><h3>{$t('scenes.audio.title')}</h3><div class="opts">
                   {#each FX_OPTS as o (o.k)}<button class="mi fx" class:on={fx[o.k] && !fxDisabled} role="switch" aria-checked={fx[o.k]} disabled={Boolean(fxDisabled)} on:click={() => toggleFx(o.k)}>{#if fx[o.k] && !fxDisabled}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}<span class="fxl">{$t(o.label)}<small>{$t(o.hint)}</small></span></button>{/each}
                   {#if fxDisabled}<p class="fxnote">{$t(fxDisabled === 'casting' ? 'scenes.audio.casting' : 'scenes.audio.unsupported')}</p>
                   {:else if fxNote === 'suspended' && fxActive(fx)}<p class="fxnote">{$t('scenes.audio.needsTap', { name: $t(fx.voice ? 'scenes.audio.voice' : 'scenes.audio.night') })}</p>{/if}
-                </div>
+                </div></div>
               </div>
             {/if}
           </div>
@@ -1749,7 +1753,7 @@
           <div class="mwrap">
             {#if speedBtn}<button class="ic" aria-label={$t('player.speed.aria', { r: speedLabel(rate, $t) })} data-label={desk ? $t('player.speed.aria', { r: speedLabel(rate, $t) }) : undefined} title={$t('player.speed.short')} aria-expanded={menu === 'speed'} on:click={() => toggleMenu('speed')}><Icon name="gauge" size={ICON} />{#if rate !== 1}<span class="ratebadge" aria-hidden="true">{$t('player.speed.rate', { r: rate })}</span>{/if}</button>{/if}
             {#if menu === 'speed'}
-              <div class="menu speed" data-nav data-scope role="dialog" aria-label={$t('player.speed.title')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
+              <div class="menu speed{deskGlass}" style={deskScrim} data-nav data-scope role="dialog" aria-label={$t('player.speed.title')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
                 <h3>{#if !speedBtn}<button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{/if}{$t('player.speed.title')}</h3>
                 <div class="speeds" role="group" aria-label={$t('player.speed.short')}>
                   {#each SPEEDS as r}<button class="sp-opt" class:on={rate === r} aria-pressed={rate === r} on:click={() => setRate(r)}><span class="dot" aria-hidden="true"></span>{speedLabel(r, $t)}</button>{/each}
@@ -1764,7 +1768,7 @@
             {#if sleepAt}<span class="sleepdot" title={$t('player.sleep.left', { t: sleepLeft })}></span>{/if}
           </button>
           {#if menu === 'more'}
-            <div class="menu more" data-nav data-scope role="dialog" aria-label={$t('player.controls.more')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
+            <div class="menu more{deskGlass}" style={deskScrim} data-nav data-scope role="dialog" aria-label={$t('player.controls.more')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
               {#if coarse && !partyMode && (!phoneUi || extras.includes('speed'))}<button class="mi" on:click={() => (menu = 'speed')}><Icon name="gauge" size={20} />{$t('player.speed.title')}{#if rate !== 1}<span class="muted"> · {$t('player.speed.rate', { r: rate })}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>{/if}
               {#if extras.includes('next')}<button class="mi" on:click={goNext}><Icon name="skip-next" size={20} />{$t('player.controls.next')}</button>{/if}
               {#if coarse && showScenes}<button class="mi" on:click={() => (menu = 'chapters')}><Icon name="film" size={20} />{$t('scenes.chapters.open')}<span class="chev" aria-hidden="true">›</span></button>{/if}
@@ -1780,7 +1784,7 @@
               {#if modeLabel}<p class="modeinfo"><Icon name="info" size={16} /><span>{$t('player.mode.label', { mode: modeLabel })}</span></p>{/if}
             </div>
           {:else if menu === 'scenes'}
-            <div class="menu scenes" data-nav data-scope role="dialog" aria-label={$t('player.bookmark.scenesAria')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
+            <div class="menu scenes{deskGlass}" style={deskScrim} data-nav data-scope role="dialog" aria-label={$t('player.bookmark.scenesAria')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
               <h3><button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{$t('player.bookmark.scenes')}</h3>
               <button class="mi" on:click={shareScene}><Icon name="share" size={18} />{$t('player.bookmark.share', { t: fmtClock(shown) })}</button>
               <form class="addnote" on:submit|preventDefault={addBookmark}><input bind:value={noteText} maxlength="140" placeholder={$t('player.bookmark.note')} aria-label={$t('player.bookmark.noteAria')} /><button aria-label={$t('player.bookmark.add')}><Icon name="bookmark" size={18} /></button></form>
@@ -1789,19 +1793,19 @@
               {:else}<p class="muted pad">{$t('player.bookmark.none')}</p>{/each}
             </div>
           {:else if menu === 'settings'}
-            <div class="menu tracks" data-nav data-scope role="dialog" aria-label={$t('player.controls.settings')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
-              <div><h3><button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{$t('player.quality.title')}</h3>
+            <div class="menu tracks{deskGlass}" style={deskScrim} data-nav data-scope role="dialog" aria-label={$t('player.controls.settings')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
+              <div><h3><button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{$t('player.quality.title')}</h3><div class="opts">
                 <button class="mi" class:on={shownQ === 0} on:click={() => changeQuality(0)}>{#if shownQ === 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('player.quality.auto')}</button>
                 {#each qualityOptions as [label, bps]}<button class="mi" class:on={shownQ === bps} on:click={() => changeQuality(bps)}>{#if shownQ === bps}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{label}</button>{/each}
-              </div>
+              </div></div>
               {#if !partyMode}
-                <div><h3>{$t('player.sleep.title')}</h3>
+                <div><h3>{$t('player.sleep.title')}</h3><div class="opts">
                   <button class="mi" class:on={!sleepAt && !sleepAfterEpisode} on:click={() => setSleep(0)}>{#if !sleepAt && !sleepAfterEpisode}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('common.off')}</button>
                   {#each [15, 30, 45, 60] as m}<button class="mi" class:on={sleepMin === m && sleepAt > 0} on:click={() => setSleep(m)}>{#if sleepMin === m && sleepAt > 0}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('common.duration.m', { m })}{#if sleepMin === m && sleepAt > 0}<span class="muted"> ({sleepLeft})</span>{/if}</button>{/each}
                   <button class="mi" class:on={sleepAfterEpisode} on:click={() => setSleep('end')}>{#if sleepAfterEpisode}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}{$t('player.sleep.afterEpisodeOption')}</button>
-                </div>
+                </div></div>
               {/if}
-              {#if !coarse}<div><h3>{$t('player.controls.help')}</h3><button class="mi" on:click={() => { menu = ''; help = true; }}><Icon name="keyboard" size={16} />{$t('player.shortcuts.menu')}</button></div>{/if}
+              {#if !coarse}<div><h3>{$t('player.controls.help')}</h3><div class="opts"><button class="mi" on:click={() => { menu = ''; help = true; }}><Icon name="keyboard" size={16} />{$t('player.shortcuts.menu')}</button></div></div>{/if}
             </div>
           {/if}
         </div>
@@ -1992,7 +1996,9 @@
   .sp-opt.on .dot { width: 24px; height: 24px; margin-top: 3px; background: #fff; box-shadow: 0 0 0 4px rgba(255,255,255,.25); }
   .sp-opt:hover:not(:disabled) { background: rgba(255,255,255,.08); color: #fff; }
   .mwrap { position: relative; }
-  .menu { position: absolute; right: 0; bottom: 64px; background: rgba(16,20,24,.97); border: 1px solid #323a43; border-radius: 6px; padding: .6rem .3rem; min-width: 190px; box-shadow: 0 12px 30px #000; z-index: 20; }
+  .menu { position: absolute; right: 0; bottom: 64px; padding: .6rem .3rem; min-width: 190px; z-index: 20; }
+  /* the plain card (phones and the older layouts); the desktop's cards are glass (.frost, below) and take its fill and edge */
+  .menu:where(:not(.frost)) { background: rgba(16,20,24,.97); border: 1px solid #323a43; border-radius: 6px; box-shadow: 0 12px 30px #000; }
   .menu.tracks { display: flex; gap: 1rem; padding: .8rem; min-width: 360px; max-width: min(94vw, 720px); }
   .menu.tracks > div { flex: 1; min-width: 118px; }
   /* long track lists (many audio / subtitle languages) never grow past the top of the window: the menu is capped to the
@@ -2253,7 +2259,7 @@
   :is(.stage.desk, .stage.pui) .knob { width: 14px; height: 14px; margin: -7px 0 0 -7px; background: #fff; box-shadow: 0 0 0 3px rgba(255,79,109,.35); }
   .stage.desk .row { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
   .pill { flex-wrap: nowrap; gap: .15rem; padding: .25rem .4rem; border-radius: 99px; background: rgba(20,20,24,.62); border: 1px solid rgba(255,255,255,.12); }
-  .ctl.blur .pill, .ctl.blur .menu:not(.bare) { -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+  .ctl.blur .pill, .ctl.blur.dock .menu:not(.bare) { -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
   .pill .ic { width: 48px; min-height: 48px; }
   .pill .ic.big { width: 56px; min-height: 56px; }
   .pill :global(.chipwrap) { margin: 0 .3rem; }
@@ -2277,9 +2283,30 @@
   .pill .vslider { opacity: 0; transform: translate(-10px, -50%); pointer-events: none; }
   .pill .vol:hover .vslider, .pill .vol:focus-within .vslider { opacity: 1; transform: translate(0, -50%); pointer-events: auto; }
   .pill .vol:hover::after { content: ''; position: absolute; left: 100%; top: 0; bottom: 0; width: 1.2rem; } /* hover bridge to the slider */
-  /* panels: glass cards above their button */
-  .stage.desk .menu:not(.bare) { background: rgba(20,20,24,.62); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; box-shadow: 0 18px 40px rgba(0,0,0,.55); }
-  .stage.desk .menu.tracks h3 { background: rgba(20,20,24,.92); }
+  /* panels never cover the title block or the timeline. The tools' cards: glass above their button and above the timeline row;
+     the title block fades out while one is open (a wide card can reach it), as on phones. --dpnl-b: from the stage's bottom to
+     8 px above the timeline (bottom padding + pill row + gap + timeline + 8 px); a card's bottom is that point measured from its
+     button's box (centred in the row). Cast & info, on the title's side: above the title block (--ttl-h, measured), which stays.
+     The cards are .frost .frost-menu .frost-safe with the menu scrim (SCRIM_MENU): video nobody sampled sits behind them, so
+     rows are white (also on the light pill) and the dimmest text white .9 (lib/glass/tone.ts menuScrim) */
+  .stage.desk { --dpnl-b: calc(1.4rem + var(--row-h, 3.5rem) + .7rem + var(--tl-h, 2rem) + 8px); --menu-gap: calc(var(--dpnl-b) + 4.8rem + 8px + var(--safe-top)); }
+  .stage.desk .menu { bottom: calc((var(--row-h, 3.5rem) + 100%) / 2 + .7rem + var(--tl-h, 2rem) + 8px); }
+  .stage.desk .menu.bare :global(:is(.eps, .scn)) { max-height: min(640px, calc(100dvh - var(--menu-gap))); }
+  .stage.desk .cihost :global(.ci) { bottom: calc(var(--dpnl-b) + var(--ttl-h, 5.2rem) + .7rem); }
+  .ttlblock { transition: opacity 200ms ease, visibility 0s linear 0s; }
+  .ttlblock.off { opacity: 0; visibility: hidden; transition: opacity 200ms ease, visibility 0s linear 200ms; }
+  :global(html.m-still) .ttlblock { transition: none; }
+  .stage.desk .menu.frost { --mut: rgba(255,255,255,.9); }
+  .stage.desk .menu.frost .mi { color: #fff; border-radius: 12px; }
+  .stage.desk .menu.frost .mi:is(:hover, :focus-visible):not(:disabled), .stage.desk .menu.frost .sp-opt:is(:hover, :focus-visible):not(:disabled) { background: var(--fr-sel); color: #fff; --mut: #fff; }
+  .stage.desk .menu.frost .sp-opt { color: rgba(255,255,255,.9); border-radius: 12px; }
+  .stage.desk .menu.frost .sp-opt.on { color: #fff; }
+  .stage.desk .menu.frost .modeinfo { border-top-color: rgba(255,255,255,.16); }
+  /* the column headings sit on the card (no box of their own): the heading stays, the list under it scrolls */
+  .stage.desk .menu.tracks { width: max-content; } /* the columns take their entries' width (up to the card's max-width), no cut labels */
+  .stage.desk .menu.tracks > div { flex: 1 1 auto; display: flex; flex-direction: column; overflow: hidden; }
+  .stage.desk .menu.tracks h3 { position: static; flex: none; background: none; }
+  .stage.desk .menu.tracks .opts { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
   .stage.desk .skipbtn { right: max(clamp(1.5rem, 3vw, 3rem), var(--safe-right)); bottom: calc(var(--row-h, 3.5rem) + var(--tl-h, 2rem) + .7rem + 1.4rem + 12px); } /* bottom padding + row + gap + timeline + 12 px */
   /* narrow desktop windows (721–960 px): smaller tools, and the tools pill wraps onto its own line (right-aligned) instead of being clipped */
   @media (max-width: 960px) {
@@ -2288,5 +2315,5 @@
     .stage.desk .pill .ic { width: 40px; min-width: 40px; min-height: 40px; }
     .stage.desk .pill .ic.big { width: 48px; min-width: 48px; min-height: 48px; }
   }
-  @media (prefers-reduced-motion: reduce) { .stage.desk .ctl, .bars, .stage.desk .track :is(.buf, .seg, .played, .chap), .pill button.ic::after, .pill .vslider { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .stage.desk .ctl, .ttlblock, .bars, .stage.desk .track :is(.buf, .seg, .played, .chap), .pill button.ic::after, .pill .vslider { transition: none; } }
 </style>
