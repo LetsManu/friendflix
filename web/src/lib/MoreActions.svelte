@@ -24,6 +24,7 @@
   import { placePopover, placedStyle } from '#lib/popover';
   import { holdBillboard } from '#lib/preview';
   import { t } from '#lib/i18n';
+  import { growFrom, scrimFade, sheetSlide } from '#lib/glass/fx';
 
   /**
    * "⋯ Mehr": one trigger that opens a menu (desktop popover) or a bottom sheet (touch / narrow screens).
@@ -70,6 +71,10 @@
     if (refocus) btn?.focus({ preventScroll: true });
   }
   const toggle = () => (open ? close() : void show());
+  /** the popover grows out of the trigger and folds back into it; the phone sheet slides up and back down (glass spec §5, §8.3) */
+  function popT(node: Element, p: { dir: 'in' | 'out' }) {
+    return asSheet ? sheetSlide(node, p) : growFrom(node, { trigger: btn, dir: p.dir });
+  }
 
   async function runAction(a: MoreAction, e: MouseEvent) {
     if (a.disabled) { e.preventDefault(); return; }
@@ -123,9 +128,9 @@
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="ma-wrap" class:modal={asSheet} use:portal role="presentation">
-    {#if asSheet}<div class="scrim" role="presentation" on:click={() => close()}></div>{/if}
+    {#if asSheet}<div class="scrim" role="presentation" on:click={() => close()} in:scrimFade|global out:scrimFade|global></div>{/if}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class={asSheet ? 'sheet ma-pop' : 'pop ma-pop'} bind:this={panel} style={asSheet ? undefined : style} tabindex="-1" role="dialog" aria-modal={asSheet ? 'true' : undefined} aria-label={title || shown} on:keydown={onKey} on:focusout={onFocusOut}>
+    <div class={asSheet ? 'sheet ma-pop frost frost-sheet frost-safe' : 'pop ma-pop frost frost-menu frost-safe'} bind:this={panel} in:popT={{ dir: 'in' }} out:popT={{ dir: 'out' }} style={asSheet ? undefined : style} tabindex="-1" role="dialog" aria-modal={asSheet ? 'true' : undefined} aria-label={title || shown} on:keydown={onKey} on:focusout={onFocusOut}>
       {#if asSheet}<span class="grab" aria-hidden="true"></span>{/if}
       {#if title}<p class="ttl">{title}</p>{/if}
       {#if actions.length}
@@ -160,29 +165,28 @@
   .ma.pill { background: rgba(112,124,138,.55); border-radius: 4px; padding: .6rem 1rem; gap: .5rem; }
   .ma.pill:hover:not(:disabled) { background: rgba(112,124,138,.35); }
   .ma:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-  .pop { position: fixed; z-index: 88; box-sizing: border-box; overflow: auto; overscroll-behavior: contain; outline: none; background: #1b2127; color: var(--fg, #fff); border: 1px solid rgba(255,255,255,.16); border-radius: 6px; padding: .35rem; box-shadow: 0 14px 34px rgba(0,0,0,.7); text-align: left; font-size: .92rem; font-weight: 400; animation: ma-pop 120ms var(--ease, ease-out) both; }
+  /* glass card (glass spec §5): .frost .frost-menu (20 px corners, 8 px padding), 44 px rows with 12 px corners; hover, focus and
+     a pressed toggle are the light pill; the safe scrim, as artwork or video can sit behind it */
+  .pop { position: fixed; z-index: 88; box-sizing: border-box; overflow: auto; overscroll-behavior: contain; outline: none; padding: 8px; text-align: left; font-size: .92rem; font-weight: 400; }
   .ttl { margin: .35rem .7rem .45rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   ul { list-style: none; margin: 0; padding: 0; }
-  .mi { display: flex; gap: .8rem; align-items: center; width: 100%; min-height: 40px; padding: 0 .7rem; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; font-weight: 500; text-align: left; text-decoration: none; justify-content: flex-start; }
-  .mi:hover:not(:disabled), .mi:focus-visible { background: rgba(255,255,255,.1); outline: none; }
+  .mi { display: flex; gap: .8rem; align-items: center; width: 100%; min-height: 44px; padding: 0 14px; border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; font-weight: 600; text-align: left; text-decoration: none; justify-content: flex-start; }
+  .mi:hover:not(:disabled), .mi:focus-visible, .mi[aria-pressed='true'] { background: var(--fr-sel); outline: none; }
   .mi:focus-visible { box-shadow: inset 0 0 0 2px #fff; }
   .mi:active:not(:disabled) { transform: none; }
   .mi.danger { color: var(--err, #e5646e); }
   .mi .sp { width: 20px; flex: none; }
   .chk { margin-left: auto; color: var(--ok, #4ade80); }
-  .slot { border-top: 1px solid rgba(255,255,255,.1); margin-top: .3rem; padding-top: .3rem; }
+  .slot { border-top: 1px solid rgba(255,255,255,.1); margin-top: 6px; padding-top: 6px; }
   /* rows from nested pickers (ListMenu variant="row") line up with the menu items */
-  .pop .slot :global(.rowbtn) { min-height: 40px; padding: 0 .7rem; border-radius: 4px; font-weight: 500; }
+  .pop .slot :global(.rowbtn) { min-height: 44px; padding: 0 14px; border-radius: 12px; font-weight: 600; }
   .slot:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
   .ma-wrap.modal { position: fixed; inset: 0; z-index: 88; }
-  .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.6); animation: ma-fade 160ms ease-out both; }
-  .sheet { position: absolute; left: 0; right: 0; bottom: 0; max-width: 560px; max-height: 82vh; margin: 0 auto; overflow: auto; overscroll-behavior: contain; outline: none; background: var(--surface, #161b21); color: var(--fg, #fff); border-radius: 14px 14px 0 0; padding: .4rem .6rem calc(.6rem + var(--safe-bottom)); box-shadow: 0 -10px 40px rgba(0,0,0,.7); animation: ma-up 200ms var(--ease, ease-out) both; }
+  .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.6); }
+  /* phone: a glass bottom sheet (top corners 26 px) that slides up (sheetSlide) */
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; max-width: 560px; max-height: 82vh; margin: 0 auto; overflow: auto; overscroll-behavior: contain; outline: none; border-bottom: 0; border-radius: var(--fr-r-sheet) var(--fr-r-sheet) 0 0; padding: .4rem .6rem calc(.6rem + var(--safe-bottom)); }
   .grab { display: block; width: 40px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.3); margin: .3rem auto .5rem; }
-  .sheet .mi { min-height: 48px; padding: 0 1rem; border-radius: 8px; }
-  .cancel { justify-content: center; color: var(--mut); margin-top: .3rem; }
-  @keyframes ma-pop { from { opacity: 0; transform: translateY(-4px); } }
-  @keyframes ma-up { from { transform: translateY(100%); } }
-  @keyframes ma-fade { from { opacity: 0; } }
+  .sheet .mi { min-height: 48px; padding: 0 1rem; }
+  .cancel { justify-content: center; color: rgba(255,255,255,.8); margin-top: .3rem; }
   @media (pointer: coarse) { .mi { min-height: 48px; } }
-  @media (prefers-reduced-motion: reduce) { .pop, .sheet, .scrim { animation: none; } }
 </style>

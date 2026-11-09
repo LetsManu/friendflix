@@ -80,6 +80,59 @@ export function grow(_node: Element, p: { origin?: string; dir?: 'in' | 'out'; m
   };
 }
 
+const grown = new WeakMap<Element, string>();
+/**
+ * grow() out of a trigger (menus, §5): the origin is the trigger's centre against the popover's placed box, measured once when
+ * the popover first opens (unscaled) and kept for its close and for a reopen mid-close, which reverse from where it is.
+ */
+export function growFrom(node: Element, p: { trigger?: Element | null; dir?: 'in' | 'out'; mode?: FxMode } = {}): ReturnType<typeof grow> {
+  let origin = grown.get(node);
+  if (!origin && p.trigger) {
+    origin = growOrigin(p.trigger.getBoundingClientRect(), node.getBoundingClientRect());
+    grown.set(node, origin);
+  }
+  return grow(node, { origin, dir: p.dir, mode: p.mode });
+}
+
+export const SHEET_IN_MS = 380;
+export const SHEET_OUT_MS = 200;
+/**
+ * Svelte transition: a phone bottom sheet slides up from below the window (translateY 100 % → 0, 380 ms spring) and back down
+ * (200 ms GLASS_IN). Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
+ */
+export function sheetSlide(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
+  const mode = p.mode ?? fxMode();
+  if (mode === 'still') return { duration: 0, delay: 0, easing: linear, css: () => '' };
+  if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
+  const out = p.dir === 'out';
+  return { duration: out ? SHEET_OUT_MS : SHEET_IN_MS, delay: 0, easing: out ? inEase : springEase, css: (_t, u) => `transform:translateY(${Math.round(u * 1000) / 10}%)` };
+}
+
+export const TOAST_IN_MS = 420;
+export const TOAST_OUT_MS = 260;
+/**
+ * Svelte transition: a toast rises in (translateY 140 % → 0 and opacity, 420 ms spring) and slides out (260 ms GLASS_IN), §8.5.
+ * Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
+ */
+export function toastRise(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
+  const mode = p.mode ?? fxMode();
+  if (mode === 'still') return { duration: 0, delay: 0, easing: linear, css: () => '' };
+  if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
+  const out = p.dir === 'out';
+  return {
+    duration: out ? TOAST_OUT_MS : TOAST_IN_MS,
+    delay: 0,
+    easing: out ? inEase : springEase,
+    css: (t, u) => `transform:translateY(${Math.round(u * 1400) / 10}%);opacity:${Math.min(1, Math.max(0, t))}`,
+  };
+}
+
+/** Svelte transition: a sheet's scrim fades (200 ms; the reduced set's 160 ms; instant when still) */
+export function scrimFade(_node: Element, p: { mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number) => string } {
+  const mode = p.mode ?? fxMode();
+  return { duration: mode === 'still' ? 0 : mode === 'reduced' ? REDUCED_MS : 200, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
+}
+
 /** the sliding pill's middle part is this many px wide before scaling */
 export const PILL_MID = 100;
 /** the sliding pill's three transforms (left cap, scaled middle, right cap) for a target box; caps are `h` wide */

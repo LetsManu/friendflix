@@ -24,6 +24,7 @@
   import { animateTo, glide, halt, motionLevel, motionTripped, placeAt } from '#lib/tv/motion';
   import { alphaOf, pillSolid, SHADE_MS } from './bar';
   import { sheen } from '#lib/glass/pointer';
+  import { growFrom } from '#lib/glass/fx';
   import { getActiveProfile } from '#lib/api';
   import { pushRecent } from '#lib/discovery';
   import SearchSheet from './SearchSheet.svelte';
@@ -64,11 +65,19 @@
 
   // ---- dropdowns: categories, notifications, account ----
   let menu = false, bell = false, cats = false;
+  let catBtn: HTMLButtonElement, bellBtn: HTMLButtonElement, acctBtn: HTMLButtonElement;
+  /** an opened dropdown takes the focus (its first link or button, else itself); Esc gives it back to its button */
+  async function focusInto(sel: string) {
+    await tick();
+    const d = root?.querySelector<HTMLElement>(sel);
+    (d?.querySelector<HTMLElement>('a[href], button:not([disabled])') ?? d)?.focus({ preventScroll: true });
+  }
   $: if (path) { menu = false; bell = false; cats = false; }
   let catKind: Kind = 'movies', catGenres: string[] | null = null, catLangs: string[] | null = null;
   async function toggleCats() {
     cats = !cats; menu = false; bell = false;
     if (!cats) return;
+    void focusInto('.catdrop');
     catKind = kindFromPath(path);
     if (!catGenres) { try { catGenres = ((await api('/api/library/genres')).genres as string[]) ?? []; } catch { catGenres = []; } }
     if (!catLangs) { try { catLangs = (((await api('/api/library/languages')).audio ?? []) as Array<{ code: string }>).map((l) => l.code).slice(0, 12); } catch { catLangs = []; } }
@@ -76,6 +85,7 @@
   let notesTimer: ReturnType<typeof setTimeout> | undefined;
   async function toggleBell() {
     bell = !bell; menu = false; cats = false;
+    if (bell) void focusInto('.drop.wide');
     if (bell && unread) {
       await api('/api/notifications/read', { method: 'POST' });
       clearTimeout(notesTimer);
@@ -85,6 +95,7 @@
   let others: Array<{ id: string; name: string; avatar: string; hasPin: boolean }> | null = null;
   async function toggleMenu() {
     menu = !menu; bell = false; cats = false;
+    if (menu) void focusInto('.drop.acct');
     if (menu && multi && others === null) {
       try { others = ((await api('/api/profiles')).profiles as Array<{ id: string; name: string; avatar: string; hasPin: boolean; active: boolean }>).filter((p) => !p.active && p.id !== me?.profile?.id).slice(0, 4); }
       catch { others = []; }
@@ -347,9 +358,9 @@
       <span class="fill" aria-hidden="true" bind:this={fill}><i class="cap"></i><i class="mid" bind:this={mid}></i><i class="cap" bind:this={capR}></i></span>
       {#each HEADER_TABS as [href, label] (href)}<a {href} class="tab" class:active={isTabActive(href, path)} class:gone={collapse && !isTabActive(href, path)} aria-current={isTabActive(href, path) ? 'page' : undefined}>{$t(label)}</a>{/each}
       <div class="pop-anchor" class:gone={collapse}>
-        <button type="button" class="tab cbtn" aria-haspopup="true" aria-expanded={cats} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>
+        <button type="button" class="tab cbtn" aria-haspopup="true" aria-expanded={cats} bind:this={catBtn} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>
         {#if cats}
-          <div class="drop catdrop" role="region" aria-label={$t('shell.cats.title')}>
+          <div class="drop catdrop frost frost-menu frost-safe" role="region" aria-label={$t('shell.cats.title')} tabindex="-1" in:growFrom={{ trigger: catBtn, dir: 'in' }} out:growFrom={{ trigger: catBtn, dir: 'out' }}>
             <div class="cseg">
               <div class="seg" role="group" aria-label={$t('shell.cats.kind')}>
                 <button type="button" class:on={catKind === 'movies'} aria-pressed={catKind === 'movies'} on:click={() => (catKind = 'movies')}>{$t('common.movies')}</button>
@@ -382,19 +393,19 @@
   </nav>
   <div class="right">
     <div class="pop-anchor">
-      <button type="button" class="round frost" class:frost-safe={safe} aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-expanded={bell} on:click={toggleBell} use:clipSheen>
+      <button type="button" class="round frost" class:frost-safe={safe} aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-expanded={bell} bind:this={bellBtn} on:click={toggleBell} use:clipSheen>
         <span class="sclip" aria-hidden="true"></span><Icon name="bell" size={20} />{#if unread}<span class="dot">{unread}</span>{/if}
       </button>
       {#if bell}
-        <div class="drop wide" role="menu">
+        <div class="drop wide frost frost-menu frost-safe" role="menu" tabindex="-1" in:growFrom={{ trigger: bellBtn, dir: 'in' }} out:growFrom={{ trigger: bellBtn, dir: 'out' }}>
           {#each notes as n}{#if n.link}<a href={n.link} class:muted={n.read} role="menuitem">{n.title}</a>{:else}<span class="note" class:muted={n.read} role="none">{n.title}</span>{/if}{:else}<span class="muted pad">{$t('shell.bell.empty')}</span>{/each}
         </div>
       {/if}
     </div>
     <div class="pop-anchor">
-      <button type="button" class="avatar" aria-label={who ? $t('shell.account.labelWho', { name: who }) : $t('shell.account.label')} aria-haspopup="menu" aria-expanded={menu} disabled={!me} on:click={toggleMenu}><span class="face" style={faceStyle}>{initial(who)}</span></button>
+      <button type="button" class="avatar" aria-label={who ? $t('shell.account.labelWho', { name: who }) : $t('shell.account.label')} aria-haspopup="menu" aria-expanded={menu} disabled={!me} bind:this={acctBtn} on:click={toggleMenu}><span class="face" style={faceStyle}>{initial(who)}</span></button>
       {#if menu && me}
-        <div class="drop acct" role="menu" aria-label={$t('shell.account.label')}>
+        <div class="drop acct frost frost-menu frost-safe" role="menu" aria-label={$t('shell.account.label')} tabindex="-1" in:growFrom={{ trigger: acctBtn, dir: 'in' }} out:growFrom={{ trigger: acctBtn, dir: 'out' }}>
           {#if multi}
             {#if others === null}<span class="muted pad" role="status">{$t('shell.account.loadingProfiles')}</span>{/if}
             {#each others ?? [] as p (p.id)}<a class="prof" href={switchHref(p.id)} role="menuitem" data-sveltekit-reload><span class="face xs" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}</span>{p.name}{#if p.hasPin}<Icon name="lock" size={14} label={$t('shell.account.withPin')} />{/if}</a>{/each}
@@ -509,17 +520,17 @@
   .face { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, #ff6b81, #9a2440); font-weight: 800; color: #fff; box-shadow: 0 0 0 1px rgba(255, 255, 255, .14); }
   .avatar[aria-expanded='true'] .face { box-shadow: 0 0 0 2px #fff; }
 
-  /* ---- dropdowns (today's menus, restyled to match the pill) ---- */
+  /* ---- dropdowns: glass cards (glass spec §5: .frost .frost-menu, 8 px padding, 44 px rows with 12 px corners, hover = the light
+     pill, 1 px separators) that grow out of their button (growFrom); the safe scrim, as the billboard can sit behind them ---- */
   .pop-anchor { position: relative; }
-  .drop { position: absolute; right: 0; top: calc(100% + 10px); background: rgba(18, 20, 24, .97); border: 1px solid rgba(255, 255, 255, .1); border-radius: 16px; min-width: 220px; padding: 8px 0; display: flex; flex-direction: column;
-    box-shadow: 0 16px 40px rgba(0, 0, 0, .55); max-height: calc(100vh - var(--nav-total) - 16px); max-height: calc(100dvh - var(--nav-total) - 16px); overflow-y: auto; overscroll-behavior: contain; animation: drop-in 180ms var(--ease); }
-  @keyframes drop-in { from { opacity: 0; transform: translateY(-4px); } }
-  .drop hr { border: 0; border-top: 1px solid rgba(255, 255, 255, .08); margin: 4px 0; width: 100%; }
+  .drop { position: absolute; right: 0; top: calc(100% + 10px); min-width: 220px; padding: 8px; box-sizing: border-box; display: flex; flex-direction: column; outline: none;
+    max-height: calc(100vh - var(--nav-total) - 16px); max-height: calc(100dvh - var(--nav-total) - 16px); overflow-y: auto; overscroll-behavior: contain; }
+  .drop hr { border: 0; border-top: 1px solid rgba(255, 255, 255, .1); margin: 6px 8px; width: auto; align-self: stretch; }
   .drop.wide { width: min(340px, 90vw); }
-  .drop .note { display: block; padding: 8px 16px; font-size: .9rem; color: #e5e5e5; }
+  .drop .note { display: block; padding: 8px 14px; font-size: .9rem; color: #e5e5e5; }
   .drop .note.muted { color: var(--mut); }
-  .drop a, .drop .plain { display: flex; gap: 12px; align-items: center; padding: 8px 16px; font-size: .9rem; color: #e5e5e5; min-height: 44px; box-sizing: border-box; }
-  .drop a:hover, .drop .plain:hover { background: rgba(255, 255, 255, .06); text-decoration: none; }
+  .drop a, .drop .plain { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-radius: 12px; font-size: .9rem; font-weight: 600; color: #e5e5e5; min-height: 44px; box-sizing: border-box; }
+  .drop a:hover, .drop .plain:hover:not(:disabled) { background: var(--fr-sel); color: #fff; text-decoration: none; }
   .drop a:focus-visible, .drop .plain:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
   .plain { background: transparent; border-radius: 0; justify-content: flex-start; font-weight: 400; width: 100%; }
   .pad { padding: 12px 16px; }
@@ -527,7 +538,8 @@
   .acct .prof { font-weight: 500; }
   .face.xs { width: 28px; height: 28px; border-radius: 8px; font-size: .8rem; flex: none; }
   .acct .out { justify-content: center; }
-  .catdrop { left: 50%; right: auto; margin-left: calc(min(560px, 80vw) / -2); width: min(560px, 80vw); padding: 16px 20px; box-sizing: border-box; }
+  .catdrop { left: 50%; right: auto; margin-left: calc(min(560px, 80vw) / -2); width: min(560px, 80vw); }
+  .catdrop > .cseg, .catdrop > .ccols { padding: 8px 12px; }
   .cseg { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
   .seg { display: inline-flex; border: 1px solid rgba(255, 255, 255, .18); border-radius: 99px; overflow: hidden; }
   .seg button { background: transparent; border-radius: 0; min-height: 36px; padding: 0 16px; color: #ddd; font-weight: 600; }
@@ -546,6 +558,5 @@
   @media (max-width: 900px) { .track > a.tab { display: none; } }
   @media (prefers-reduced-motion: reduce) {
     .fill, .fill .mid, .desk > .scrim, .psearch input, .x, .track > *, .caret { transition: none; }
-    .drop { animation: none; }
   }
 </style>

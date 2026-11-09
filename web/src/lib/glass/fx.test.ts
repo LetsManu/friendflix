@@ -7,8 +7,8 @@ vi.mock('#lib/preview', () => ({ motionAllowed: () => m.allowed }));
 vi.mock('#lib/tv/motion', () => ({ motionLevel: () => m.level }));
 
 import {
-  COUNT_MS, countAt, cubicBezier, fxMode, grow, GROW_IN_MS, GROW_OUT_MS, growOrigin, inEase, outEase, PILL_MID, pillParts,
-  REDUCED_MS, rippleBox, springEase,
+  COUNT_MS, countAt, cubicBezier, fxMode, grow, growFrom, GROW_IN_MS, GROW_OUT_MS, growOrigin, inEase, outEase, PILL_MID, pillParts,
+  REDUCED_MS, rippleBox, scrimFade, SHEET_IN_MS, SHEET_OUT_MS, sheetSlide, springEase, TOAST_IN_MS, TOAST_OUT_MS, toastRise,
 } from './fx';
 
 const node = {} as Element;
@@ -98,6 +98,93 @@ describe('grow', () => {
     m.allowed = false;
     expect(grow(node, { dir: 'out' }).duration).toBe(0);
     m.allowed = true; m.level = 'full';
+  });
+});
+
+describe('growFrom, sheetSlide, toastRise, scrimFade', () => {
+  const box = (left: number, top: number, width: number, height: number) => ({ getBoundingClientRect: () => ({ left, top, width, height }) }) as unknown as Element;
+
+  it('growFrom measures the origin once (open) and keeps it for the close and a reverse', () => {
+    let pop = { left: 100, top: 100, width: 300, height: 200 };
+    const el = { getBoundingClientRect: () => pop } as unknown as Element;
+    const trig = box(180, 60, 40, 40);
+    const fin = growFrom(el, { trigger: trig, mode: 'full' });
+    expect(fin.duration).toBe(380);
+    expect(fin.css(1, 0)).toContain('transform-origin:100px 0px');
+    pop = { left: 40, top: 40, width: 120, height: 80 }; // scaled mid-flight: not measured again
+    const fout = growFrom(el, { trigger: trig, dir: 'out', mode: 'full' });
+    expect(fout.duration).toBe(200);
+    expect(fout.css(0.5, 0.5)).toContain('transform-origin:100px 0px');
+    // no trigger and nothing measured: grow()'s default origin; the mode passes through
+    const other = box(0, 0, 10, 10);
+    expect(growFrom(other, { mode: 'full' }).css(1, 0)).toContain('transform-origin:50% 0');
+    expect(growFrom(other, { trigger: null, mode: 'reduced' }).duration).toBe(160);
+    expect(growFrom(other).duration).toBe(380);
+  });
+
+  it('sheetSlide per mode', () => {
+    const fin = sheetSlide(node, { mode: 'full' });
+    expect(fin.duration).toBe(SHEET_IN_MS);
+    expect(fin.duration).toBe(380);
+    expect(fin.delay).toBe(0);
+    expect(fin.easing).toBe(springEase);
+    expect(fin.css(0, 1)).toBe('transform:translateY(100%)');
+    expect(fin.css(1, 0)).toBe('transform:translateY(0%)');
+    expect(fin.css(0.5, 0.5)).toBe('transform:translateY(50%)');
+    const fout = sheetSlide(node, { dir: 'out', mode: 'full' });
+    expect(fout.duration).toBe(SHEET_OUT_MS);
+    expect(fout.duration).toBe(200);
+    expect(fout.easing).toBe(inEase);
+    expect(fout.css(0.25, 0.75)).toBe('transform:translateY(75%)');
+    const red = sheetSlide(node, { mode: 'reduced' });
+    expect(red.duration).toBe(160);
+    expect(red.easing(0.3)).toBe(0.3);
+    expect(red.css(0.5, 0.5)).toBe('opacity:0.5');
+    const still = sheetSlide(node, { dir: 'out', mode: 'still' });
+    expect(still.duration).toBe(0);
+    expect(still.css(0, 1)).toBe('');
+    expect(still.easing(0.4)).toBe(0.4);
+    m.allowed = true; m.level = 'full';
+    expect(sheetSlide(node).duration).toBe(380);
+    m.allowed = false;
+    expect(sheetSlide(node).duration).toBe(0);
+    m.allowed = true;
+  });
+
+  it('toastRise per mode', () => {
+    const fin = toastRise(node, { mode: 'full' });
+    expect(fin.duration).toBe(TOAST_IN_MS);
+    expect(fin.duration).toBe(420);
+    expect(fin.easing).toBe(springEase);
+    expect(fin.css(0, 1)).toBe('transform:translateY(140%);opacity:0');
+    expect(fin.css(1, 0)).toBe('transform:translateY(0%);opacity:1');
+    expect(fin.css(1.1, -0.1)).toBe('transform:translateY(-14%);opacity:1'); // the spring overshoots up; opacity stays ≤ 1
+    expect(fin.css(-0.1, 1.1)).toContain('opacity:0');
+    const fout = toastRise(node, { dir: 'out', mode: 'full' });
+    expect(fout.duration).toBe(TOAST_OUT_MS);
+    expect(fout.duration).toBe(260);
+    expect(fout.easing).toBe(inEase);
+    const red = toastRise(node, { mode: 'reduced' });
+    expect(red.duration).toBe(160);
+    expect(red.css(0.5, 0.5)).toBe('opacity:0.5');
+    expect(red.easing(0.2)).toBe(0.2);
+    const still = toastRise(node, { mode: 'still' });
+    expect(still.duration).toBe(0);
+    expect(still.css(0, 1)).toBe('');
+    expect(still.easing(0.7)).toBe(0.7);
+    m.level = 'reduced';
+    expect(toastRise(node).duration).toBe(160);
+    m.level = 'full';
+  });
+
+  it('scrimFade per mode', () => {
+    expect(scrimFade(node, { mode: 'full' }).duration).toBe(200);
+    expect(scrimFade(node, { mode: 'reduced' }).duration).toBe(160);
+    expect(scrimFade(node, { mode: 'still' }).duration).toBe(0);
+    const f = scrimFade(node);
+    expect(f.duration).toBe(200);
+    expect(f.css(0.3)).toBe('opacity:0.3');
+    expect(f.easing(0.3)).toBe(0.3);
   });
 });
 

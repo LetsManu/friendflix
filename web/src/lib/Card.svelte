@@ -39,6 +39,7 @@
   import { decodeFade } from '#lib/tv/motion';
   import { tilt } from '#lib/glass/pointer';
   import { toneFor } from '#lib/glass/tone';
+  import { scrimFade, sheetSlide } from '#lib/glass/fx';
 
   export let item: Item;
   /** shows a remove (X) button and emits `remove` (used for Weiterschauen) */
@@ -202,6 +203,9 @@
   function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
   async function openSheet() { sheet = true; await tick(); sheetEl?.querySelector<HTMLElement>('a[href],button')?.focus(); }
   function closeSheet(refocus = true) { sheet = false; if (refocus) moreBtn?.focus(); }
+  /** the glass sheet slides up and back down (glass spec §5); on TV (a centred dialog) it appears at once, as before */
+  const sheetT = (node: Element, p: { dir: 'in' | 'out' }) => sheetSlide(node, { dir: p.dir, mode: tvMode() ? 'still' : undefined });
+  const scrimT = (node: Element) => scrimFade(node, { mode: tvMode() ? 'still' : undefined });
   function sheetKey(e: KeyboardEvent) {
     if (e.key === 'Escape' || (tvMode() && isBackKey(e))) { e.preventDefault(); e.stopPropagation(); closeSheet(); return; }
     if (e.key !== 'Tab') return;
@@ -276,8 +280,8 @@
 
 {#if sheet}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="scrim" use:portal on:click={() => closeSheet()} role="presentation"></div>
-  <div class="sheet tvsheet" tabindex="-1" use:portal bind:this={sheetEl} role="dialog" aria-modal="true" aria-label={$t('home.card.actionsFor', { name: item.name })} on:keydown={sheetKey}>
+  <div class="scrim" use:portal on:click={() => closeSheet()} role="presentation" in:scrimT out:scrimT></div>
+  <div class="sheet tvsheet frost frost-sheet frost-safe" tabindex="-1" use:portal bind:this={sheetEl} in:sheetT={{ dir: 'in' }} out:sheetT={{ dir: 'out' }} role="dialog" aria-modal="true" aria-label={$t('home.card.actionsFor', { name: item.name })} on:keydown={sheetKey}>
     <p class="st">{item.name}</p>
     <a class="act" href={href} on:click={() => closeSheet(false)}><Icon name="play" size={20} />{$t('home.card.play')}</a>
     <button type="button" class="act" aria-haspopup={$deskActive ? undefined : 'dialog'} on:pointerenter={prefetchModal} on:click={(e) => { if (item.type !== 'Episode') primeItem(item); moreBtn?.focus(); openModal(e, detail); closeSheet(false); }}><Icon name="chevron-down" size={20} />{$t('home.card.moreInfo')}</button>
@@ -368,12 +372,13 @@
   :global(html.tv) .newep { left: .625rem; top: .625rem; }
   :global(html.tv) .brand { left: .625rem; top: .625rem; }
   .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 84; }
-  .sheet { outline: none; position: fixed; z-index: 85; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto; background: var(--surface); border-radius: 14px 14px 0 0; padding: .6rem .6rem calc(.6rem + var(--safe-bottom)); box-shadow: 0 -10px 40px rgba(0,0,0,.7); display: flex; flex-direction: column; gap: .1rem; }
+  /* a glass bottom sheet (glass spec §5: .frost .frost-sheet, top corners 26 px) */
+  .sheet { outline: none; position: fixed; z-index: 85; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto; border-bottom: 0; border-radius: var(--fr-r-sheet) var(--fr-r-sheet) 0 0; padding: .6rem .6rem calc(.6rem + var(--safe-bottom)); display: flex; flex-direction: column; gap: .1rem; }
   /* TV: the card's actions (OK held) as a centred dialog instead of a bottom sheet */
-  :global(html.tv) .sheet { top: 50%; bottom: auto; left: 50%; right: auto; width: min(36rem, 80vw); transform: translate(-50%, -50%); border-radius: 14px; padding: 1rem; }
+  :global(html.tv) .sheet { top: 50%; bottom: auto; left: 50%; right: auto; width: min(36rem, 80vw); transform: translate(-50%, -50%); border-radius: 14px; border-bottom: 1px solid var(--fr-line); padding: 1rem; }
   :global(html.tv) .act { min-height: 56px; font-size: 1.1rem; justify-content: flex-start; }
   .st { margin: .2rem 1rem .5rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .act { display: flex; gap: .8rem; align-items: center; min-height: 48px; padding: 0 1rem; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; width: 100%; text-decoration: none; }
-  .act:hover, .act:focus-visible { background: rgba(255,255,255,.08); }
-  .cancel { justify-content: center; color: var(--mut); margin-top: .2rem; }
+  .act { display: flex; gap: .8rem; align-items: center; min-height: 48px; padding: 0 1rem; border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; text-align: left; width: 100%; text-decoration: none; }
+  .act:hover, .act:focus-visible { background: var(--fr-sel); }
+  .cancel { justify-content: center; color: rgba(255,255,255,.8); margin-top: .2rem; }
 </style>

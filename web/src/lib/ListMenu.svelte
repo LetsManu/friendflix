@@ -6,6 +6,7 @@
   import { addToList, createList, itemLists, removeFromList, type PickerList } from '#lib/lists';
   import { placePopover, placedStyle } from '#lib/popover';
   import { t, tr } from '#lib/i18n';
+  import { growFrom } from '#lib/glass/fx';
 
   /** Jellyfin id of the movie / series to add (episodes are normalised server-side). */
   export let itemId: string;
@@ -100,7 +101,7 @@
 </span>
 {#if open}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div class="pop lm-pop" class:up bind:this={pop} use:portal {style} tabindex="-1" role="dialog" aria-label={$t('detail.lists.add')} on:keydown={popKey} on:focusout={onFocusOut} on:mouseleave={popLeave}>
+  <div class="pop lm-pop frost frost-menu frost-safe" class:up bind:this={pop} use:portal {style} in:growFrom={{ trigger: btn, dir: 'in' }} out:growFrom={{ trigger: btn, dir: 'out' }} tabindex="-1" role="dialog" aria-label={$t('detail.lists.add')} on:keydown={popKey} on:focusout={onFocusOut} on:mouseleave={popLeave}>
     {#if lists === null}<p class="muted">{$t('detail.lists.loading')}</p>
     {:else}
       {#if !lists.length}<p class="muted">{$t('detail.lists.none')}</p>{/if}
@@ -129,19 +130,21 @@
   .round { width: 34px; min-height: 34px; height: 34px; padding: 0; border-radius: 50%; background: rgba(42,42,42,.6); border: 2px solid rgba(255,255,255,.5); color: #fff; display: grid; place-items: center; }
   .round:hover:not(:disabled) { border-color: #fff; background: rgba(42,42,42,.9); }
   /* position: fixed on <body> (see place()): not clipped by overflow:hidden / transformed ancestors, always inside the viewport */
-  .pop { position: fixed; z-index: 90; box-sizing: border-box; overflow: auto; overscroll-behavior: contain; outline: none; background: var(--surface); color: var(--fg, #fff); border: 1px solid rgba(255,255,255,.18); border-radius: var(--radius); padding: .6rem .7rem; box-shadow: 0 14px 28px rgba(0,0,0,.6); text-align: left; font-size: .9rem; font-weight: 400; }
-  ul { list-style: none; margin: 0 0 .4rem; padding: 0; max-height: 220px; overflow: auto; }
-  label { display: flex; gap: .55rem; align-items: center; padding: .3rem 0; cursor: pointer; }
+  /* a glass card (glass spec §5): .frost .frost-menu, 8 px padding, 44 px rows with 12 px corners, hover = the light pill */
+  .pop { position: fixed; z-index: 90; box-sizing: border-box; overflow: auto; overscroll-behavior: contain; outline: none; padding: 8px; text-align: left; font-size: .9rem; font-weight: 400; }
+  ul { list-style: none; margin: 0 0 6px; padding: 0 0 6px; max-height: 220px; overflow: auto; border-bottom: 1px solid rgba(255,255,255,.1); }
+  ul:empty { display: none; }
+  label { display: flex; gap: .55rem; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 12px; cursor: pointer; }
+  label:hover, label:has(:focus-visible) { background: var(--fr-sel); }
   label:has(:disabled) { opacity: .6; cursor: progress; }
-  .new { display: flex; gap: .4rem; align-items: center; background: none; border: 0; color: inherit; padding: .3rem 0; min-height: 0; cursor: pointer; }
-  form { display: flex; gap: .4rem; }
+  .new { display: flex; gap: .4rem; align-items: center; width: 100%; background: none; border: 0; border-radius: 12px; color: inherit; padding: 0 12px; min-height: 44px; cursor: pointer; }
+  .new:hover:not(:disabled) { background: var(--fr-sel); }
+  form { display: flex; gap: .4rem; padding: 4px; }
   form input { flex: 1; min-width: 0; }
-  .muted { color: var(--mut); margin: 0 0 .4rem; }
-  .err { color: var(--err, #e5646e); margin: .4rem 0 0; }
+  .muted { color: rgba(255,255,255,.75); margin: 6px 12px; }
+  .err { color: var(--err, #e5646e); margin: 6px 12px 0; }
   @media (pointer: coarse) {
-    label { min-height: 44px; padding: 0; }
     label input { width: 22px; height: 22px; flex: none; }
-    .new { min-height: 44px; }
     form input, form button { min-height: 44px; }
   }
 </style>

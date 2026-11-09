@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ACTION_DURATION, MAX_VISIBLE, close, dismissAll, pause, resume, runToastAction, toast, toasts } from './toast';
+import { ACTION_DURATION, MAX_VISIBLE, RING_LEN, close, dismissAll, pause, resume, runToastAction, timeLeft, toast, toasts } from './toast';
 
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { dismissAll(); vi.useRealTimers(); });
@@ -64,5 +64,48 @@ describe('toast store', () => {
     expect(onClose).toHaveBeenLastCalledWith('dismiss');
     close(id); // already gone: no-op
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+  it('actions default to 5 s', () => {
+    expect(ACTION_DURATION).toBe(5000);
+    expect(RING_LEN).toBe(69.1);
+    const onClose = vi.fn();
+    toast.success('Hinzugefügt', { action: { label: 'Rückgängig', run: () => undefined }, onClose });
+    expect(get(toasts)[0]!.duration).toBe(5000);
+    vi.advanceTimersByTime(4999);
+    expect(onClose).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onClose).toHaveBeenCalledWith('timeout');
+  });
+  it('timeLeft while running, paused and after resume', () => {
+    vi.setSystemTime(1_000_000);
+    const id = toast.success('Hinzugefügt', { action: { label: 'Rückgängig', run: () => undefined } });
+    expect(timeLeft(id)).toBe(5000);
+    expect(get(toasts)[0]).toMatchObject({ started: 1_000_000, left: 5000 });
+    vi.advanceTimersByTime(2000);
+    expect(timeLeft(id)).toBe(3000);
+    expect(timeLeft(id, Date.now() + 10_000)).toBe(0); // never below 0
+    pause();
+    expect(get(toasts)[0]).toMatchObject({ left: 3000 }); // republished on pause
+    vi.advanceTimersByTime(1000);
+    expect(timeLeft(id)).toBe(3000);
+    pause(); // nothing running: no change
+    resume();
+    expect(get(toasts)[0]).toMatchObject({ started: Date.now(), left: 3000 }); // republished on resume
+    expect(timeLeft(id)).toBeGreaterThanOrEqual(3000);
+    vi.advanceTimersByTime(500);
+    expect(timeLeft(id)).toBe(2500);
+    resume(); // all running: no change
+    expect(timeLeft(id)).toBe(2500);
+  });
+  it('an action that throws does not break the queue', async () => {
+    const id = toast.info('x', { action: { label: 'Undo', run: () => { throw new Error('boom'); } } });
+    runToastAction(id);
+    await Promise.resolve(); await Promise.resolve();
+    expect(get(toasts)).toHaveLength(0);
+  });
+  it('sticky toasts report 0', () => {
+    const id = toast.info('sticky', { duration: 0 });
+    expect(timeLeft(id)).toBe(0);
+    expect(timeLeft(9999)).toBe(0); // unknown
   });
 });

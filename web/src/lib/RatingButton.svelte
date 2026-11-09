@@ -6,6 +6,7 @@
   import { focusIndex, nextThumb, RATING_OPTIONS, toThumb, type Thumb } from '#lib/rating';
   import { t } from '#lib/i18n';
   import { isBackKey } from '#lib/spatial';
+  import { growFrom } from '#lib/glass/fx';
 
   /**
    * Rating: one round thumb button that expands (hover / click / keyboard focus / tap) into
@@ -122,7 +123,10 @@
     {#if showLabel || tv}<span class="tx">{current ? $t(current.key) : $t('common.rating.rate')}</span>{/if}
   </button>
   {#if open}
-    <span class="pill" class:up role="group" aria-label={$t('common.rating.rate')} data-scope={tv ? '' : undefined}>
+    <!-- .at places the pill (centred over the trigger, or above it); the pill itself grows out of the trigger (TV: its own slide) -->
+    <span class="at" class:up>
+    <span class="pill" class:frost={!tv} class:frost-menu={!tv} class:frost-safe={!tv} role="group" aria-label={$t('common.rating.rate')} data-scope={tv ? '' : undefined}
+      in:growFrom={{ trigger, dir: 'in', mode: tv ? 'still' : undefined }} out:growFrom={{ trigger, dir: 'out', mode: tv ? 'still' : undefined }}>
       {#each RATING_OPTIONS as o, i (o.value)}
         <button
           bind:this={opts[i]} type="button" class="opt" class:tv-btn={tv} class:on={v === o.value} aria-pressed={v === o.value}
@@ -133,6 +137,7 @@
           {#if tv}<span class="otx">{$t(o.key)}</span>{:else}<span class="tip" aria-hidden="true">{$t(o.key)}</span>{/if}
         </button>
       {/each}
+    </span>
     </span>
   {/if}
   <span class="msg" role="status">{#if msg}<span>{msg}</span>{/if}</span>
@@ -160,20 +165,18 @@
   .lab .trig::after { display: none; }
   .tx { font-size: .75rem; font-weight: 500; color: var(--mut); white-space: nowrap; }
   .lab .trig.hid { opacity: 1; }
-  /* option pill: centred over the trigger, grows out of it */
-  .pill { position: absolute; z-index: 30; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; gap: .25rem; padding: .3rem; border-radius: 999px; background: #1d2329; box-shadow: 0 6px 22px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.1); animation: rb-in 140ms var(--ease, ease-out) both; }
-  .pill.up { top: auto; bottom: calc(100% + 6px); transform: translateX(-50%); animation-name: rb-up; }
+  /* option pill: centred over the trigger (or above it), a glass card (glass spec §5) that grows out of the trigger */
+  .at { position: absolute; z-index: 30; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  .at.up { top: auto; bottom: calc(100% + 6px); transform: translateX(-50%); }
+  .pill { display: flex; gap: .25rem; padding: 8px; }
   .opt { border-color: transparent; background: transparent; }
-  .opt:hover:not(:disabled) { background: rgba(255,255,255,.14); }
-  .opt.on { color: #fff; background: rgba(255,255,255,.18); }
+  .opt:hover:not(:disabled), .opt.on { color: #fff; background: var(--fr-sel); }
   .opt svg { transition: transform 120ms var(--ease, ease-out); }
   .opt:hover svg, .opt:focus-visible svg { transform: scale(1.15); }
   .tip { position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); white-space: nowrap; padding: .3rem .6rem; border-radius: 4px; background: #e6e6e6; color: #101418; font-size: .78rem; font-weight: 700; pointer-events: none; opacity: 0; transition: opacity 100ms; }
   .opt:hover .tip, .opt:focus-visible .tip { opacity: 1; }
   .msg { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 31; pointer-events: none; }
   .msg span { display: block; white-space: nowrap; padding: .2rem .55rem; border-radius: 6px; background: rgba(16,20,24,.94); border: 1px solid var(--err, #e5646e); color: #fff; font-size: .75rem; font-weight: 600; }
-  @keyframes rb-in { from { opacity: 0; transform: translate(-50%, -50%) scale(.6); } }
-  @keyframes rb-up { from { opacity: 0; transform: translateX(-50%) translateY(6px); } }
   /* TV (detail page button list): the trigger is a labelled .tv-btn row (look from app.css); the options replace it in place */
   .tvm { display: flex; flex-direction: column; align-items: stretch; width: 100%; }
   .tvm .trig, .tvm .opt { width: auto; height: auto; min-height: 2.8rem; border-radius: var(--tv-radius); justify-content: flex-start; display: flex; padding: 0 1.4rem; font-size: 1.1rem; } /* R16: literal 1080p list rows */
@@ -184,7 +187,8 @@
   .tvm .tx { font: inherit; color: inherit; }
   .tvm .trig.on .ic { color: var(--acc); }
   .tvm .trig.on:focus-visible .ic { color: inherit; }
-  .tvm .pill { left: 0; top: 0; transform: none; gap: .6rem; padding: 0; border-radius: 0; background: none; box-shadow: none; animation: rb-tv-in var(--tv-d-s, 200ms) var(--tv-emph-out, ease-out) both; }
+  .tvm .at { left: 0; top: 0; transform: none; }
+  .tvm .pill { gap: .6rem; padding: 0; animation: rb-tv-in var(--tv-d-s, 200ms) var(--tv-emph-out, ease-out) both; }
   .tvm .opt { background: var(--tv-btn-rest); white-space: nowrap; transform-origin: center; }
   .tvm .opt.on { background: rgba(255, 255, 255, .28); }
   .tvm .opt:focus-visible { background: #fff; color: #000; }
@@ -196,5 +200,5 @@
     .opt { width: 44px; height: 44px; min-height: 44px; }
     .tip { display: none; }
   }
-  @media (prefers-reduced-motion: reduce) { .pill { animation: none; } .opt svg { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .tvm .pill { animation: none; } .opt svg { transition: none; } }
 </style>

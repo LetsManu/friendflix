@@ -8,7 +8,8 @@
  *   toast.info(msg, { duration: 0 });   // stays until closed
  *
  * At most MAX_VISIBLE toasts are shown; a new one pushes the oldest out (its onClose runs with reason 'replaced').
- * Timers pause while the pointer or focus is on a toast (host calls pause/resume).
+ * Timers pause while the pointer or focus is on a toast (host calls pause/resume). A toast with an action shows a countdown ring
+ * (glass spec §8.5) drawn from timeLeft().
  */
 import { writable, type Readable } from 'svelte/store';
 
@@ -22,7 +23,7 @@ export interface ToastAction {
   run: () => unknown;
 }
 export interface ToastOptions {
-  /** ms until auto-dismiss; 0 = sticky. Default: 5 s (success/info), 8 s (error), 6 s with an action */
+  /** ms until auto-dismiss; 0 = sticky. Default: 5 s (success/info), 8 s (error), 5 s with an action */
   duration?: number;
   action?: ToastAction;
   /** called exactly once when the toast leaves */
@@ -37,18 +38,24 @@ export interface Toast {
   action?: ToastAction;
   duration: number;
   key?: string;
+  /** Date.now() when its timer last started (0: never ran) */
+  started: number;
+  /** ms left on its timer when it last (re)started or paused */
+  left: number;
 }
 
 export const MAX_VISIBLE = 3;
 export const DURATION: Record<ToastKind, number> = { success: 5000, info: 5000, error: 8000 };
-export const ACTION_DURATION = 6000;
+export const ACTION_DURATION = 5000;
+/** the countdown ring's circumference (r 11) */
+export const RING_LEN = 69.1;
 
-interface Entry extends Toast { onClose?: (r: CloseReason) => void; timer: ReturnType<typeof setTimeout> | null; left: number; started: number }
+interface Entry extends Toast { onClose?: (r: CloseReason) => void; timer: ReturnType<typeof setTimeout> | null }
 
 const list = writable<Toast[]>([]);
 let entries: Entry[] = [];
 let seq = 0;
-const publish = () => list.set(entries.map(({ id, kind, message, action, duration, key }) => ({ id, kind, message, action, duration, key })));
+const publish = () => list.set(entries.map(({ id, kind, message, action, duration, key, started, left }) => ({ id, kind, message, action, duration, key, started, left })));
 
 function arm(e: Entry) {
   if (!e.duration || e.left <= 0) return;
@@ -89,11 +96,21 @@ export function runToastAction(id: number): void {
 
 /** Pauses all timers (pointer/focus inside the toast region). */
 export function pause(): void {
-  for (const e of entries) if (e.timer) { clearTimeout(e.timer); e.timer = null; e.left = Math.max(0, e.left - (Date.now() - e.started)); }
+  let changed = false;
+  for (const e of entries) if (e.timer) { clearTimeout(e.timer); e.timer = null; e.left = Math.max(0, e.left - (Date.now() - e.started)); changed = true; }
+  if (changed) publish();
 }
 /** Resumes paused timers (a toast never closes in less than 1.5 s after resuming). */
 export function resume(): void {
-  for (const e of entries) if (!e.timer && e.duration) { e.left = Math.max(e.left, 1500); arm(e); }
+  let changed = false;
+  for (const e of entries) if (!e.timer && e.duration) { e.left = Math.max(e.left, 1500); arm(e); changed = true; }
+  if (changed) publish();
+}
+/** ms left before the toast closes by itself: frozen while paused, counting down while running; 0 when unknown or sticky */
+export function timeLeft(id: number, now = Date.now()): number {
+  const e = entries.find((x) => x.id === id);
+  if (!e?.duration) return 0;
+  return e.timer ? Math.max(0, e.left - (now - e.started)) : e.left;
 }
 export function dismissAll(): void { for (const e of [...entries]) close(e.id, 'replaced'); }
 
