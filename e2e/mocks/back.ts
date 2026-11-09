@@ -34,8 +34,8 @@ async function toCredits(page: Page, playing: boolean, frozen = false) {
 }
 
 /**
- * "Nächste Folge" of the next-up card: phones keep the card (`.next`), desktop and TV show the credits sequence's chip
- * (`.cs .chip`, spec 2026-11-08 §4), which gives way to the corner beat after 2 s - `toCredits(page, false, true)` paused the
+ * "Nächste Folge" of the next-up card: kids profiles and narrow desktop windows keep the card (`.next`), desktop, TV and phones
+ * show the credits sequence's chip (`.cs .chip`, spec 2026-11-08 §4), which gives way to the corner beat after 2 s - `toCredits(page, false, true)` paused the
  * page clock before the seek; it runs again after the click
  */
 async function clickNext(page: Page) {

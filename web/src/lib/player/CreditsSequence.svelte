@@ -12,15 +12,19 @@
   import { CHIP_MS, creditPicks, type CreditsBeat } from '#lib/player/desk/logic';
   import { ringOffset } from '#lib/player/nextup';
   import type { PostplayRow } from '#lib/postplay';
+  import type { PhoneOrient } from '#lib/player/phone/logic';
 
   /**
-   * Credits sequence (spec 2026-11-08 §4, desktop and TV) in three beats instead of a cut. The watch page owns the timing
+   * Credits sequence (spec 2026-11-08 §4, desktop, TV and phones) in three beats instead of a cut. The watch page owns the timing
    * (`creditsBeat`) and the countdown; the Player glides the picture (stage `.cred`).
    * - 'chip': "Watch credits" and "Next episode" (filling over CHIP_MS) rise in at the bottom right; a film offers "More like this".
    * - 'corner': the picture sits small in the top-left corner; the next episode (title, synopsis, Play with a countdown ring)
    *   rises in at the right - for a film or the last episode the post-play headline instead, without a countdown - and below it
    *   "More like this" (the first post-play row, five titles), 40 ms apart once the picture has glided (250 ms).
-   * TV: everything is a `data-nav` focusable; on entering 'corner' Play (a film: the first suggestion) takes the focus once.
+   * Phones (`phone`: the orientation): the chip sits at the end-side bottom above the home indicator; in the corner beat the next
+ *   episode and the suggestions form one column right of the small picture (landscape) or below it (portrait, the suggestions as
+ *   a row), each scrolling when short, everything inside the safe areas and every button at least 44 px.
+ * TV: everything is a `data-nav` focusable; on entering 'corner' Play (a film: the first suggestion) takes the focus once.
    * 'off': the page keeps this component mounted, so backing out plays the layer's outro (opacity / transform, 200 ms).
    */
   export let beat: CreditsBeat;
@@ -32,6 +36,10 @@
   export let seconds: number;
   export let total: number;
   export let tv: boolean;
+  /** the phone player's orientation ('off': desktop / TV) */
+  export let phone: 'off' | PhoneOrient = 'off';
+  /** px kept free at the bottom (phones, portrait: the page's post-play card sits there) */
+  export let reserve = 0;
 
   const dispatch = createEventDispatcher<{ play: void; credits: void; pick: { item: Item }; more: void }>();
   const RING = 2 * Math.PI * 10;
@@ -82,9 +90,9 @@
   function pick(e: MouseEvent, item: Item) { e.preventDefault(); dispatch('pick', { item }); }
 </script>
 
-<!-- mounted by the watch page for the whole title (desktop / TV): beat 'off' takes the layer away with an outro, never a cut -->
+<!-- mounted by the watch page for the whole title (desktop / TV / phones): beat 'off' takes the layer away with an outro, never a cut -->
 {#if beat !== 'off'}
-<div class="cs" class:tv data-beat={beat} out:leave>
+<div class="cs" class:tv class:ph={phone !== 'off'} class:ph-land={phone === 'landscape'} class:ph-port={phone === 'portrait'} class:mo={motion} style:--cs-res="{reserve}px" data-beat={beat} out:leave>
   {#if beat === 'chip'}
     <div class="chip" bind:this={chipEl} data-nav role="group" aria-label={episode ? $t('player.watch.next') : $t('player.watch.more')} in:rise out:out>
       <button type="button" class="sec" on:click|stopPropagation={() => dispatch('credits')}>{$t('player.watch.watchCredits')}</button>
@@ -96,6 +104,8 @@
     </div>
   {:else if beat === 'corner'}
     <button type="button" class="wc" data-nav bind:this={wc} on:click|stopPropagation={() => dispatch('credits')}>{$t('player.watch.watchCredits')}</button>
+    <!-- desktop / TV: no box of its own (display: contents); phones: the scrolling column beside / below the small picture -->
+    <div class="col">
     <section class="up" data-nav bind:this={up} aria-label={episode ? $t('player.credits.upNext') : headline} out:out>
       {#if episode && next}
         <small>{$t('player.credits.upNext')}</small>
@@ -120,6 +130,7 @@
             <span class="mt">{m.name}</span></a></li>{/each}</ul>
       </section>
     {/if}
+    </div>
   {/if}
 </div>
 {/if}
@@ -168,4 +179,35 @@
   .tv .go:not(:focus-visible) { background: var(--tv-btn-rest, rgba(255, 255, 255, .2)); color: #fff; }
   .tv .sugg a:focus-visible { outline: none; }
   .tv .sugg a:focus-visible img { box-shadow: 0 0 0 4px #fff; }
+  .col { display: contents; }
+  /* ---- phones (spec 2026-11-08 §4): inside the safe areas, nothing over the small picture but the "Watch credits" pill ---- */
+  /* beat 1: end-side bottom above the home indicator; while the dock shows (a tap) the chip rides above it, never on it */
+  .ph .chip { right: calc(var(--safe-right) + 16px); bottom: calc(var(--safe-bottom) + 16px + var(--cs-res, 0px)); max-width: calc(100% - var(--safe-left) - var(--safe-right) - 32px); }
+  /* (never above the top bar: on a short landscape phone it stops 8 px below it; --sh2: half the stage height, set by the Player) */
+  :global(.stage:not(.idle)) .ph .chip { transform: translate3d(0, max(calc(var(--safe-bottom) + 8px - var(--ctl-h, 0px)),
+    calc(var(--safe-top) + var(--safe-bottom) + 120px + var(--cs-res, 0px) - 2 * var(--sh2, 50vh))), 0); }
+  .ph.mo .chip { transition: transform 250ms var(--m-emph-out, ease-out); }
+  .ph .chip button { padding: .55rem 1rem; }
+  /* "Watch credits" over the picture's top-start corner (landscape: the picture starts 6 px past safe-left, 12 px down; portrait:
+     scale .92 leaves 4 % at the side, 12 px below the status bar) */
+  .ph .wc { min-height: 44px; padding: .4rem 1rem; font-size: .85rem; }
+  .ph-land .wc { left: calc(var(--safe-left) + 6px + 10px); top: calc(var(--safe-top) + 12px + 10px); }
+  .ph-port .wc { left: calc(var(--safe-left) + 4% + 10px); top: calc(var(--safe-top) + 12px + 10px); }
+  /* beat 3: one column, scrolls when short; only it takes the pointer (the small picture beside / above it backs out) */
+  .ph .col { position: absolute; display: flex; flex-direction: column; gap: 1rem; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; scrollbar-width: none; }
+  .ph .col::-webkit-scrollbar { display: none; }
+  .ph .up, .ph .sugg { position: static; width: auto; inset: auto; flex: none; }
+  .ph .up { gap: .45rem; }
+  .ph .up h3 { font-size: 1.25rem; }
+  .ph .up p { font-size: .9rem; }
+  .ph .acts .go { min-height: 44px; }
+  /* landscape: right of the picture (its end edge: safe-left + 6 px + 42 %, then 16 px) to the end-side inset */
+  .ph-land .col { left: calc(var(--safe-left) + max(44vw, 42vw + 22px)); right: calc(var(--safe-right) + 16px); top: calc(var(--safe-top) + 12px); bottom: calc(var(--safe-bottom) + 16px); }
+  .ph-land .sugg ul { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; }
+  /* portrait: below the small picture (its bottom: safe-top + 12 px + the picture's height x .92), the suggestions as a row */
+  .ph-port .col { left: calc(var(--safe-left) + 16px); right: calc(var(--safe-right) + 16px); top: calc(var(--safe-top) + 100vw / var(--va, 1.7778) * .92 + 28px);
+    bottom: calc(var(--safe-bottom) + 16px + var(--cs-res, 0px)); }
+  .ph-port .sugg ul { display: flex; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; gap: .6rem; }
+  .ph-port .sugg ul::-webkit-scrollbar { display: none; }
+  .ph-port .sugg li { flex: none; width: 42vw; }
 </style>

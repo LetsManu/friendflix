@@ -114,8 +114,8 @@
   /** the playing item (watch page): the TV pause screen's logo, episode line and synopsis */
   export let item: Item | null = null;
   /**
-   * credits sequence beat (desktop and TV, spec 2026-11-08 §4; the watch page computes it): 'corner' glides the picture into
-   * the top-left corner (stage `.cred`) and hides the bar; a click on the small picture, Esc or TV Back dispatch `credits`
+   * credits sequence beat (desktop, TV and phones, spec 2026-11-08 §4; the watch page computes it): 'corner' glides the picture
+   * into the top-start corner (stage `.cred`) and hides the bar; a click or tap on the small picture, Esc or TV Back dispatch `credits`
    */
   export let credits: 'off' | 'chip' | 'corner' = 'off';
   /** bind: the viewer is busy in the player (menu, scrubbing, a dialog, cast & info, paused before the end): the page holds the chip */
@@ -296,10 +296,18 @@
   $: phonePause = phoneUi && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked || cardOn });
   $: phoneMotion = phoneUi && motionAllowed();
   $: deskMotion = desk && motionAllowed();
-  /** credits glide: spring transform (desk / TV with motion); a tripped frame guard (html.tv-motion-reduced) crossfades in CSS */
-  $: credMotion = (desk || tvUi) && motionAllowed();
-  /** leaving the corner: for 300 ms `.credout` lets a tripped frame guard crossfade the picture back to full screen (CSS) */
+  /** credits glide: spring transform (desk / TV / phone with motion); a tripped frame guard (html.tv-motion-reduced) crossfades in CSS */
+  $: credMotion = (desk || tvUi || phoneUi) && motionAllowed();
+  /**
+   * leaving the corner: for 300 ms `.credout` lets a tripped frame guard crossfade the picture back to full screen (CSS). Phones keep
+   * it until the 750 ms spring has landed: in portrait the picture's box is cut to the picture while `.cred` / `.credout` holds.
+   */
   let credOut = false, credWas: typeof credits = 'off', credOutT: ReturnType<typeof setTimeout> | undefined;
+  /** the picture's aspect ratio (phones, portrait corner: the video box is cut to it, so the light edge frames the picture) */
+  let picAspect = 16 / 9;
+  /** a short landscape phone (under 360 px) during the credits chip: the chip rides above the dock where the title block sits - it fades */
+  $: chipCrowds = credits === 'chip' && orient === 'landscape' && winH < 360;
+  $: picVar = phoneUi ? `;--va:${picAspect.toFixed(4)};--sh2:${Math.round(winH / 2)}px` : '';
   $: credHold = menu !== '' || scrubbing || sp.active || subDlg || help || showXray || (paused && !stopped);
   $: onCreditsBeat(credits);
   function onCreditsBeat(c: typeof credits) {
@@ -308,8 +316,9 @@
     const left = credWas === 'corner';
     credWas = c;
     clearTimeout(credOutT);
+    if (c === 'corner' && video?.videoWidth && video.videoHeight) picAspect = video.videoWidth / video.videoHeight;
     credOut = left;
-    if (left) credOutT = setTimeout(() => (credOut = false), 300);
+    if (left) credOutT = setTimeout(() => (credOut = false), phoneUi ? 800 : 300);
   }
   $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
@@ -1273,6 +1282,8 @@
     if (cur.axis === 'scrub') { seekTo(cur.target); announce(tr('player.position', { t: fmtClock(cur.target) })); showHud(hud, 500); return; }
     if (cur.axis) { announce(hud?.text ?? ''); showHud(hud, 700); return; }
     if (cur.moved || Math.hypot(e.clientX - cur.x, e.clientY - cur.y) > 12) { showHud(null); return; }
+    // credits corner (phones): a tap on the small picture backs out to full screen (the click after a touch never reaches onSurfaceClick)
+    if (credits === 'corner' && !locked) { if (e.target === video) dispatch('credits'); return; }
     handleTap(e.clientX - cur.left, cur.w);
   }
   function gCancel(e: PointerEvent) { if (g && e.pointerId === g.id) { g = null; showHud(null); } }
@@ -1414,7 +1425,7 @@
 </script>
 
 <svelte:window bind:innerWidth={winW} bind:innerHeight={winH} on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar}{picVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -1604,7 +1615,7 @@
       </div>
     {:else if phoneUi}
       <!-- phone: chapter, title and episode line; the skip button at the row's end (landscape) or below (portrait) -->
-      <PhoneTitle chapter={nowChapter} title={barTitle || title} sub={phoneSub(item, $t)} {orient} hidden={menu !== '' || showXray || extPanel}>
+      <PhoneTitle chapter={nowChapter} title={barTitle || title} sub={phoneSub(item, $t)} {orient} hidden={menu !== '' || showXray || extPanel || chipCrowds}>
         <svelte:fragment slot="skip">
           {#if skip && !locked && credits !== 'corner'}<button class="skipbtn light" aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: motionAllowed() ? 250 : 0, easing: springAt }} out:fade={{ duration: motionAllowed() ? 150 : 0 }}>{segText($t, skip.type, 'skip')}</button>{/if}
         </svelte:fragment>
@@ -2175,6 +2186,16 @@
   @keyframes ff-cred-fade { from { opacity: 0; } to { opacity: 1; } }
   /* same frames under another name: the class swap cred -> credout restarts the animation */
   @keyframes ff-cred-fade-out { from { opacity: 0; } to { opacity: 1; } }
+  /* phones (spec 2026-11-08 §4): the picture glides into the top-start corner inside the safe area, its light edge clear of the
+     cut-out. Landscape: scale .42, 6 px past safe-left (its end edge stays left of the middle on an 844 px phone with a 59 px
+     cut-out), 12 px below the top. */
+  .stage.pui.cred > video { transform: translate(calc(-29% + var(--safe-left) + 6px), calc(-29% + var(--safe-top) + 12px)) scale(.42); }
+  /* portrait: while `.cred` / `.credout` holds, the video box is cut to the letterboxed picture (same place, same size: the swap is
+     invisible), so the box - and its light edge - frame the picture; it rises to just below the status bar at scale .92.
+     --va: the picture's aspect, --sh2: half the stage height (both set by the script) */
+  .stage.pui.port:is(.cred, .credout) > video:not(.airprobe) { position: absolute; left: 0; top: 50%; height: auto; max-height: none;
+    aspect-ratio: var(--va, 1.7778); margin-top: calc(-50% / var(--va, 1.7778)); }
+  .stage.pui.port.cred > video { transform: translateY(calc(var(--safe-top) + 12px + 46% - var(--sh2, 50vh))) scale(.92); }
   /* casting: the remote screen's card sits above the taller desk bar (its measured height, gradient padding included); otherwise the
      bar's box covers the card's buttons */
   .stage.desk .remote { padding-bottom: calc(var(--ctl-h, 7.5rem) + 1rem + var(--safe-bottom)); }

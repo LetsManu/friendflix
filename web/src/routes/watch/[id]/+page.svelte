@@ -25,7 +25,7 @@
   import { CHIP_MS, creditsBeat, deskPlayer } from '#lib/player/desk/logic';
   import { deskActive } from '#lib/desk/bar';
   import { kidsMode } from '#lib/kids';
-  import { phonePlayer } from '#lib/player/phone/logic';
+  import { creditsOn, phonePlayer, type PhoneOrient } from '#lib/player/phone/logic';
   import { dropLayers } from '#lib/player/phone/backlayer';
 
   let video: HTMLVideoElement | null = null;
@@ -49,16 +49,26 @@
   $: ppWanted = postplayWanted({ type: item?.type, hasNextEpisode: Boolean(nextEp), feature: $features.postplay, pref: $prefs.postplay, remote });
   $: ppCard = ppWanted && !ppCardClosed && !ppOpen && Number.isFinite(postplayAt) && curTime >= postplayAt;
   $: if (ppCard && !ppData && !ppLoading) prefetchPostplay(id);
-  /** one of the cards in the Player's slot is up (the branches below): the phone pause screen must not cover it */
-  $: cardOn = Boolean(visible && askStill && nextEp) || (!csOn && (Boolean(visible && kind === 'episode' && nextEp) || ppCard || Boolean(visible && kind === 'movie' && similar.length && !ppWanted)));
+  /**
+   * what the Player's slot shows (the template's {#if} chain reads this, so the two cannot drift): "still watching?", the credits
+   * sequence (desktop, TV, phones; with the post-play card beside it), else the next-up card, the post-play card or "More like this"
+   */
+  $: slot = (visible && askStill && nextEp ? 'still' : csOn ? 'cs' : visible && kind === 'episode' && nextEp ? 'next' : ppCard ? 'pp'
+    : visible && kind === 'movie' && similar.length && !ppWanted ? 'more' : 'none') as 'still' | 'cs' | 'next' | 'pp' | 'more' | 'none';
+  /** one of the cards in the slot is up (the post-play card also beside the credits sequence): the phone pause screen must not cover it */
+  $: cardOn = slot === 'still' || slot === 'next' || slot === 'more' || ((slot === 'cs' || slot === 'pp') && ppCard);
 
-  // ---- credits sequence (spec 2026-11-08 §4): desktop and TV replace the next-up / "More like this" cards; phones keep them ----
+  // ---- credits sequence (spec 2026-11-08 §4): desktop, TV and phones replace the next-up / "More like this" cards ----
   // `tvUi` / `coarse` follow html.tv and the pointer the same way the Player does
   let tvUi = false, coarse = false;
-  // kids profiles keep today's next-up card (also on a TV)
-  $: csOn = !$kidsMode && (tvUi || deskPlayer({ desk: $deskActive, tv: tvUi, phone: coarse && !tvUi }));
   /** the phone player (spec 2026-11-08, block 4): the top bar keeps only the back button (title and episode line sit in its dock) */
   $: phoneUi = phonePlayer({ coarse, tv: tvUi, kids: $kidsMode });
+  // kids profiles keep today's next-up card (also on a TV and a phone)
+  $: csOn = creditsOn({ kids: $kidsMode, tv: tvUi, desk: deskPlayer({ desk: $deskActive, tv: tvUi, phone: coarse && !tvUi }), phone: phoneUi });
+  /** the phone player's orientation (bound from the Player): the sequence lays out for it */
+  let orient: PhoneOrient = 'landscape';
+  /** the post-play card's height (phones, portrait: the sequence keeps clear of it at the bottom) */
+  let ppH = 0;
   /** a film, or the last episode with the post-play screen on: suggestions (and the post-play headline) take the next episode's place */
   $: csKind = (kind === 'episode' ? 'episode' : kind === 'movie' || (item?.type === 'Episode' && ppWanted) ? 'movie' : 'none') as 'episode' | 'movie' | 'none';
   /** when the credits were reached (null = before them); `now` ticks every 250 ms only while in the credits */
@@ -74,7 +84,7 @@
     if (inCredits && enteredAt === null) { enteredAt = now = Date.now(); clearInterval(credT); credT = setInterval(tickCredits, 250); }
     else if (!inCredits && enteredAt !== null) { enteredAt = null; clearInterval(credT); credT = undefined; } // seeking back: the picture grows back
   }
-  // casting, "still watching?" and phones: no sequence (a watch party plays on its own route without these cards); the post-play
+  // casting and "still watching?": no sequence (a watch party plays on its own route without these cards); the post-play
   // screen takes its place once open (otherwise the player's Esc would back out of the hidden sequence instead of closing the screen)
   $: beat = creditsBeat({ current: curTime, start: creditsAt, enteredAt, now, dismissed, kind: csKind, blocked: remote || askStill || !csOn || ppOpen });
   let lastBeat: typeof beat = 'off';
@@ -148,7 +158,7 @@
     if (kind === 'movie') { if (!ppWanted) void loadSimilar(id); return; }
     if (kind !== 'episode') return;
     if ($prefs.autoplayNext && !sleepAfterEpisode && shouldAsk(Date.now(), $prefs)) { askStill = true; return; } // nobody there for a while: do not autoplay on
-    if (csOn) return; // desktop / TV: the countdown starts with the corner beat (onBeat)
+    if (csOn) return; // desktop / TV / phones: the countdown starts with the corner beat (onBeat)
     if (mayAutoplay({ kind, autoplayNext: $prefs.autoplayNext, sleepAfterEpisode, askStill })) startCountdown();
   }
   function leaveCard() { entered = false; stopCountdown(); askStill = false; }
@@ -238,7 +248,7 @@
   function onEnded() {
     if (ppWanted) { openPostplay(); return; }
     if (kind !== 'episode') return;
-    // phones: a dismissed card comes back at the end; desktop / TV: "Watch credits" holds for this episode (spec §4)
+    // kids (the card): a dismissed card comes back at the end; desktop / TV / phones: "Watch credits" holds for this episode (spec §4)
     if (dismissed && !csOn) { dismissed = false; entered = false; }
     if (tvMode()) tick().then(() => document.querySelector<HTMLElement>('.cs .up .go, .next .go')?.focus()); // TV: after the end OK starts the next episode
   }
@@ -264,28 +274,29 @@
   <!-- the overlay covers the player: while it is open the player's controls are out of the tab order (inert, not a focus trap) -->
   <div class="stagewrap" inert={ppOpen}>
   {#key id}
-    <Player itemId={id} {poster} item={item && item.id === id ? item : null} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote credits={beat} {cardOn} bind:credHold on:credits={watchCredits} hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded} on:back={back}>
+    <Player itemId={id} {poster} item={item && item.id === id ? item : null} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote bind:orient credits={beat} {cardOn} bind:credHold on:credits={watchCredits} hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded} on:back={back}>
       <div slot="top" class="top" class:pui={phoneUi}>
         <button class="icon-btn" aria-label={$t('player.watch.back')} on:click={back}><Icon name="arrow-left" size={phoneUi ? 24 : 30} /></button>
         {#if item && !phoneUi}<div class="ttl phone"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}
       </div>
-      {#if visible && askStill && nextEp}
+      {#if slot === 'still' && nextEp}
         <div class="next still ui" data-nav role="dialog" aria-label={$t('player.watch.stillTitle')}>
           <div class="nt"><b>{$t('player.watch.stillTitle')}</b><span class="muted">{$t('player.watch.stillText', { ep: `S${nextEp.parentIndexNumber}:E${nextEp.indexNumber} · ${nextEp.name}` })}</span></div>
           <div class="flex"><button class="btn light go" on:click={stillGo}><Icon name="play" size={20} />{$t('player.watch.keepWatching')}</button><button class="sec" on:click={back}>{$t('player.watch.back')}</button></div>
         </div>
-      {:else if csOn}
-        <!-- desktop / TV: the credits sequence replaces the next-up and "More like this" cards; the post-play card stays -->
+      {:else if slot === 'cs'}
+        <!-- desktop / TV / phones: the credits sequence replaces the next-up and "More like this" cards; the post-play card stays -->
         <!-- always mounted here: beat 'off' plays its outro (backing out reverses, never cuts) -->
         <CreditsSequence {beat} kind={csKind === 'episode' ? 'episode' : 'movie'} next={nextEp} rows={csRows} headline={csHead} seconds={secondsLeft(elapsed)} total={counting ? COUNTDOWN_SECONDS : 0} tv={tvUi}
+          phone={phoneUi ? orient : 'off'} reserve={phoneUi && orient === 'portrait' && ppCard && ppH ? ppH + 12 : 0}
           on:play={go} on:credits={watchCredits} on:pick={csPick} on:more={csMore} />
         {#if ppCard}
-          <div class="next pp ui" class:aside={beat !== 'off'} data-nav role="region" aria-label={$t('postplay.card.title')} data-testid="postplay-card">
+          <div class="next pp ui" class:aside={beat !== 'off'} bind:offsetHeight={ppH} data-nav role="region" aria-label={$t('postplay.card.title')} data-testid="postplay-card">
             <div class="mhead"><b>{$t('postplay.card.title')}</b><button class="icon-btn" aria-label={$t('postplay.card.close')} on:click={() => (ppCardClosed = true)}><Icon name="x" size={20} /></button></div>
             <div class="flex"><button class="btn light go" on:click={openPostplay}>{$t('postplay.card.open')}</button></div>
           </div>
         {/if}
-      {:else if visible && kind === 'episode' && nextEp}
+      {:else if slot === 'next' && nextEp}
         <div class="next ui" data-nav role="dialog" aria-label={$t('player.watch.next')}>
           <div class="nrow">
             <div class="nthumb">
@@ -300,12 +311,12 @@
           <div class="flex"><button class="btn light go" on:click={go}><Icon name="play" size={20} />{$t('player.watch.next')}</button><button class="sec" on:click={watchCredits}>{$t('player.watch.watchCredits')}</button></div>
           <span class="sr" role="status">{counting ? $t('player.watch.startsIn', { n: secondsLeft(elapsed) }) : ''}</span>
         </div>
-      {:else if ppCard}
+      {:else if slot === 'pp'}
         <div class="next pp ui" data-nav role="region" aria-label={$t('postplay.card.title')} data-testid="postplay-card">
           <div class="mhead"><b>{$t('postplay.card.title')}</b><button class="icon-btn" aria-label={$t('postplay.card.close')} on:click={() => (ppCardClosed = true)}><Icon name="x" size={20} /></button></div>
           <div class="flex"><button class="btn light go" on:click={openPostplay}>{$t('postplay.card.open')}</button></div>
         </div>
-      {:else if visible && kind === 'movie' && similar.length && !ppWanted}
+      {:else if slot === 'more'}
         <div class="next more ui" data-nav role="dialog" aria-label={$t('player.watch.more')}>
           <div class="mhead"><b>{$t('player.watch.more')}</b><button class="icon-btn" aria-label={$t('common.close')} on:click={watchCredits}><Icon name="x" size={20} /></button></div>
           <ul>{#each similar.slice(0, 3) as m (m.id)}
@@ -381,4 +392,18 @@
   /* desktop / TV during the credits sequence: the post-play card moves to the left under the small picture (the chip and the
      next-episode column hold the right side, the suggestions the bottom) */
   .next.pp.aside { right: auto; left: max(clamp(1.5rem, 3vw, 3rem), var(--safe-left)); top: 52%; bottom: auto; }
+  /* phones during the sequence: the post-play card sits at the start-side bottom above the home indicator - in landscape under the
+     small picture, left of the end-side column (it starts at safe-left + max(44vw, 42vw + 22px)); in portrait full width below
+     the sequence (which keeps clear of it). While the dock shows (beat 1) it rides above the dock with the chip. */
+  :global(.stage.pui) .next.pp.aside { left: calc(var(--safe-left) + 16px); right: auto; top: auto; bottom: calc(var(--safe-bottom) + 16px);
+    width: calc(max(44vw, 42vw + 22px) - 32px); max-width: none; max-height: calc(100% - var(--safe-top) - 60px - var(--safe-bottom) - 16px);
+    flex-direction: column; align-items: stretch; }
+  :global(.stage.pui.port) .next.pp.aside { width: auto; right: calc(var(--safe-right) + 16px); }
+  /* landscape corner: below the small picture (its bottom: safe-top + 12 px + 42 % of the height), 16 px apart; scrolls when short */
+  :global(.stage.pui.cred:not(.port)) .next.pp.aside { max-height: calc(100% - var(--safe-top) - 12px - 42% - 16px - var(--safe-bottom) - 16px); }
+  /* beat 1 with the dock up: above the dock, below the top bar (portrait: the chip sits on top of the card, 56 px more) */
+  :global(.stage.pui:not(.idle):not(.cred)) .next.pp.aside { transform: translate3d(0, calc(var(--safe-bottom) + 8px - var(--ctl-h, 0px)), 0);
+    max-height: max(0px, calc(100% - var(--ctl-h, 8rem) - 16px - var(--safe-top) - 52px)); }
+  :global(.stage.pui.port:not(.idle):not(.cred)) .next.pp.aside { max-height: max(0px, calc(100% - var(--ctl-h, 8rem) - 16px - var(--safe-top) - 52px - 56px)); }
+  :global(.stage.pui.cmo) .next.pp.aside { transition: transform 250ms var(--m-emph-out, ease-out); }
 </style>

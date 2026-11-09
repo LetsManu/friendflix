@@ -35,8 +35,8 @@ async function wake(page: Page) {
   await expect(page.locator('.ctl.hide')).toHaveCount(0);
 }
 /**
- * the "Next episode" card: phones and narrow windows keep the card (`.next`); desktop and TV show the credits sequence's chip
- * (`.cs .chip`, spec 2026-11-08 §4), which gives way to the corner beat after 2 s - the page clock is frozen for the probe
+ * the "Next episode" card: kids profiles and narrow windows keep the card (`.next`); desktop, TV and phones show the credits
+ * sequence's chip (`.cs .chip`, spec 2026-11-08 §4), which gives way to the corner beat after 2 s - the page clock is frozen for the probe
  */
 const NEXT_CARD = '.cs .chip, .next', NEXT_GO = '.cs .chip .go, .next .go', NEXT_SEC = '.cs .chip .sec, .next .sec';
 async function freezeClock(page: Page) {
