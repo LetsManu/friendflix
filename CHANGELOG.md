@@ -10,6 +10,11 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ### Fixed
 - **Top bar glass evenly frosted.** The top bar now has one continuous frost: no darker band or seam over bright pictures, and the frost no longer disappears after the light follows the mouse across the bar.
+- **Sound modes no longer delay the sound.** *Clear voices* and *Night mode* only take over the sound while one of them is on. After you switch both off, the sound is back in step with the picture at the next pause (nothing visibly changes) or the next start of the stream. Before, the sound could lag behind the picture until the page was reloaded, most with Bluetooth headphones. On Android the sound modes add less delay.
+- **Downloads stay in sync to the end.** A download whose preparation paused while others were watching could have its sound shifted from that point on. The server now checks where the parts meet and prepares the file again if they do not line up.
+- **Playback speed stays as chosen** after an audio track or quality switch. Before, the film fell back to normal speed while the speed button still showed the old one.
+- **Watch parties correct less often.** The shared clock no longer jumps with every message from the room, so playback speeds up, slows down or skips less.
+- **Admins see more about sync problems.** The start-time measurements under *Admin → Playback* now also show how each stream was delivered, the sound mode, dropped frames and how many seeks, switches and reconnects happened. They stay anonymous and are deleted after 14 days.
 
 ## [3.0.2] – Churros – 2026-11-09
 
