@@ -50,3 +50,15 @@ export async function pixelCols(page: Page, x: number, y: number, width: number,
 }
 /** the mean of `row[from..to)` */
 export const meanOf = (row: number[], from: number, to: number): number => row.slice(from, to).reduce((a, b) => a + b, 0) / (to - from);
+/**
+ * The largest step along a row of column values: the mean of each `k` columns against the mean of the next `k` (evens out
+ * the glass grain, so a soft gradient reads as no step and a hard edge as its full height); `at` is where it sits.
+ */
+export function worstStep(cols: number[], k = 6): { step: number; at: number } {
+  let step = 0, at = -1;
+  for (let x = k; x + k <= cols.length; x++) {
+    const d = Math.abs(meanOf(cols, x - k, x) - meanOf(cols, x, x + k));
+    if (d > step) { step = d; at = x; }
+  }
+  return { step: Math.round(step * 10) / 10, at };
+}

@@ -260,6 +260,28 @@ export function glide(el: HTMLElement, axis: Axis, jump: () => number): void {
 }
 
 /**
+ * Plays on `el` a translation derived frame by frame from the springs that run on `of` right now (each one's position on
+ * `axis`, its resting value when none runs): `combine` turns their positions into `el`'s. For a part that must stay exactly
+ * where other sliding parts put it (a clip window that follows a glass half), with no spring of its own that could drift
+ * apart from theirs. Call it in the same task as the glides it follows, so their timelines start together; a call while
+ * one runs replaces it from the new springs (which start where the old ones were). Reduced motion: the end value at once.
+ */
+export function follow(el: HTMLElement, axis: Axis, of: HTMLElement[], combine: (xs: number[]) => number): void {
+  halt(el);
+  const tracks = of.map((o) => { const r = runs.get(o); return r?.anim ? r.samples.map((s) => s.x) : [rest.get(o) ?? 0]; });
+  const n = Math.max(...tracks.map((t) => t.length));
+  const at = (i: number) => combine(tracks.map((t) => t[Math.min(i, t.length - 1)]!));
+  if (n < 2 || motionLevel() === 'reduced' || typeof el.animate !== 'function') { put(el, axis, at(n - 1)); return; }
+  const samples = Array.from({ length: n }, (_, i) => ({ x: at(i), v: 0 }));
+  const r: Run = { axis, samples };
+  runs.set(el, r);
+  put(el, axis, samples[n - 1]!.x);
+  const anim = el.animate(samples.map((s) => ({ transform: tf(axis, s.x) })), { duration: (n - 1) * FRAME, easing: 'linear' });
+  r.anim = anim;
+  anim.onfinish = () => { if (runs.get(el) === r) runs.delete(el); anim.cancel(); };
+}
+
+/**
  * TV rows: brings `el` into its row's view (nearest, inside the track's scroll padding: the same resting place as
  * `scrollIntoView({ inline: 'nearest' })`) and glides the row's strip there. False when `el` is not in a glide row or the
  * browser cannot animate (the caller falls back to native scrolling).
