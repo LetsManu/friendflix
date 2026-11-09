@@ -375,7 +375,7 @@ test.describe('desktop search sheet', () => {
     test('bar pill and round buttons are glass with the sheen', async ({ page }) => {
       await ready(page);
       await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
-      const half = page.locator('[data-desk-bar] .pbg .half i.blur').first();
+      const half = page.locator('[data-desk-bar] .pbg .bwin > i.blur');
       expect(await half.evaluate((e) => getComputedStyle(e).backdropFilter)).toContain('blur(38px)');
       expect(await page.locator('[data-desk-bar] .round').evaluate((e) => getComputedStyle(e).backdropFilter)).toContain('blur(38px)');
       const pill = page.locator('[data-desk-bar] .pill');

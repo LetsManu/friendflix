@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { ME } from '../mocks/fixtures.js';
 import { expect, test } from '../fixtures.js';
-import { meanOf, pixelCols, redPixels } from '../helpers.js';
+import { meanOf, pixelCols, redPixels, worstStep } from '../helpers.js';
 
 /** Desktop top bar (spec desktop browse §1): logo, a floating pill with the tabs, search that stretches open, bell, avatar. */
 test.describe('desktop pill bar', () => {
@@ -89,6 +89,72 @@ test.describe('desktop pill bar', () => {
       const mid = pb.x + pb.width / 2;
       const strip = await pixelCols(page, mid - 24, pb.y + 4, 48, 4);
       expect(Math.abs(meanOf(strip, 0, 20) - meanOf(strip, 28, 48))).toBeLessThan(4);
+    });
+
+    // regression (v3.0.2): the pill's blur was two blurring halves whose boxes overlap (each reaches far over the other, for
+    // the slide): the later one blurs the earlier one's output again, a step at the middle that a busy picture shows plainly
+    // (a flat backdrop hides it). And the sheen's blend mode reached out to the whole bar, so Chrome dropped the blur under
+    // the sheen's box (a band without blur where the pointer last was), here: everywhere. So: a sharp, bright, busy picture
+    // under the bar (as the billboard); its shade hidden (on the pages without a billboard it would cover the picture)
+    test('one blur under the pill: no step along the glass or across the active tab\'s light over a busy picture, at rest and mid-morph', async ({ page }) => {
+      await page.addInitScript(() => { (window as unknown as { __ffDeskGuard: unknown }).__ffDeskGuard = { slowMs: 1000, frames: 8 }; });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto('/');
+      await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
+      await page.addStyleTag({ content: '#busy { position: fixed; inset: 0; z-index: 49; pointer-events: none; background: repeating-linear-gradient(90deg, #f2e600 0 22px, #2fae3a 22px 44px, #fffbe0 44px 52px, #0b3d12 52px 60px); } [data-desk-bar] > .scrim { display: none; }' });
+      await page.evaluate(() => { const d = document.createElement('div'); d.id = 'busy'; document.body.append(d); });
+      const bar = page.locator('[data-desk-bar]');
+      const pill = bar.locator('.pill');
+      /** the glass's ends on screen (each half's outer end, wherever they are mid-flight) and how many blurs cover each point */
+      const shape = () => pill.evaluate((p) => {
+        const l = p.querySelector('.pbg .l > i.frost')!.getBoundingClientRect(), r = p.querySelector('.pbg .r > i.frost')!.getBoundingClientRect();
+        const blurs = [...document.querySelectorAll('*')].flatMap((e) => [null, '::before', '::after'].map((ps) => ({ e, ps })))
+          .filter(({ e, ps }) => { const v = getComputedStyle(e, ps).backdropFilter; return !!v && v !== 'none'; }).map(({ e }) => e.getBoundingClientRect());
+        let most = 0, least = Infinity;
+        for (let x = l.left + 1; x < r.right - 1; x += 4) for (const y of [l.top + 2, l.top + l.height / 2, l.bottom - 2]) {
+          const n = blurs.filter((b) => x >= b.left && x <= b.right && y >= b.top && y <= b.bottom).length;
+          most = Math.max(most, n); least = Math.min(least, n);
+        }
+        return { left: l.left, right: r.right, top: l.top, height: l.height, most, least };
+      });
+      /** the glass along a row in its bottom padding (under the labels and the tab light; the round ends left out) */
+      const glassStep = async () => {
+        const s = await shape();
+        expect({ most: s.most, least: s.least }, 'blurs over each point of the pill').toEqual({ most: 1, least: 1 });
+        return worstStep(await pixelCols(page, s.left + 20, s.top + s.height - 5, s.right - s.left - 40, 3), 8);
+      };
+      for (const name of ['Start', 'Serien', 'Filme', 'Neu & demnächst', 'Merkliste']) {
+        if (name !== 'Start') await pill.getByRole('link', { name }).click();
+        await expect(pill.locator('[aria-current="page"]')).toHaveText(name);
+        await page.mouse.move(720, 800); // the pointer away from the bar
+        await expect.poll(() => page.evaluate(() => document.getAnimations().length)).toBe(0);
+        await expect.poll(() => pill.locator('.fill').evaluate((e) => getComputedStyle(e).opacity)).toBe('0.13');
+        expect((await glassStep()).step, `glass, ${name} active`).toBeLessThan(4);
+        // across the active tab's light, below its label (its round ends left out)
+        const f = await pill.locator('.fill').evaluate((e) => { const b = e.getBoundingClientRect(); return { x: b.left, y: b.top, w: Math.max(...[...e.children].map((c) => c.getBoundingClientRect().right)) - b.left }; });
+        expect(worstStep(await pixelCols(page, f.x + 9, f.y + 28, f.w - 18, 3), 8).step, `tab light, ${name} active`).toBeLessThan(4);
+      }
+      // mid-morph: the field opens (both ends spring out) and closes; every animation held at a few moments of the spring
+      // (the pointer is on the magnifier, so the sheen is out of the way: its soft light is a slope, not a seam; the sheen's
+      // effect on the blur was checked above, at rest)
+      await page.addStyleTag({ content: '[data-desk-bar] .pill > .sclip { display: none; }' });
+      /** once the pill's glass has started to slide: every animation held `t` ms in */
+      const holdAt = (t: number) => page.evaluate(async (t) => {
+        const half = document.querySelector('[data-desk-bar] .pbg .l > i.frost')!;
+        await new Promise<void>((res) => { const f = () => (half.getAnimations().length ? res() : requestAnimationFrame(f)); f(); });
+        for (const a of document.getAnimations()) { a.pause(); a.currentTime = t; }
+      }, t);
+      for (const t of [32, 96, 180]) {
+        await pill.locator('.mag').click();
+        await holdAt(t);
+        expect((await glassStep()).step, `glass opening, ${t} ms`).toBeLessThan(4);
+        await page.evaluate(() => { for (const a of document.getAnimations()) a.finish(); });
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur()); // the focus leaves the field: it closes
+        await holdAt(t);
+        expect((await glassStep()).step, `glass closing, ${t} ms`).toBeLessThan(4);
+        await page.evaluate(() => { for (const a of document.getAnimations()) a.finish(); });
+        await page.mouse.move(720, 800);
+      }
     });
   });
 
