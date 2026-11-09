@@ -30,6 +30,7 @@
   import { pushRecent } from '#lib/discovery';
   import SearchSheet from './SearchSheet.svelte';
   import { nextId } from './searchSheet';
+  import { menuKeys } from '#lib/ui/menuKeys';
 
   export let path: string;
   /** a page that starts with a billboard: the pill stays see-through at the very top */
@@ -121,6 +122,15 @@
     const anchor = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('.pop-anchor');
     menu = bell = cats = false;
     if (anchor && root?.contains(anchor)) anchor.querySelector<HTMLElement>(':scope > button')?.focus();
+  }
+  /**
+   * the keyboard left a dropdown (Tab past its last link, Shift+Tab past its button): it closes, it never stays open over the
+   * page. A pointer press elsewhere (no new focus target) is the window click's job.
+   */
+  function onAnchorOut(e: FocusEvent) {
+    const to = e.relatedTarget as Node | null;
+    if (!to || (e.currentTarget as HTMLElement).contains(to)) return;
+    menu = bell = cats = false;
   }
   function onWindowClick(e: MouseEvent) {
     const el = e.target as HTMLElement | null;
@@ -364,10 +374,11 @@
     <div class="track" bind:this={track}>
       <span class="fill" aria-hidden="true" bind:this={fill}><i class="cap"></i><i class="mid" bind:this={mid}></i><i class="cap" bind:this={capR}></i></span>
       {#each HEADER_TABS as [href, label] (href)}<a {href} class="tab" class:active={isTabActive(href, path)} class:gone={collapse && !isTabActive(href, path)} aria-current={isTabActive(href, path) ? 'page' : undefined}>{$t(label)}</a>{/each}
-      <div class="pop-anchor" class:gone={collapse}>
-        <button type="button" class="tab cbtn" aria-haspopup="true" aria-expanded={cats} bind:this={catBtn} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>
+      <div class="pop-anchor" class:gone={collapse} on:focusout={onAnchorOut}>
+        <!-- a disclosure (links and filters in a region), not a menu: no aria-haspopup -->
+        <button type="button" class="tab cbtn" aria-expanded={cats} aria-controls={cats ? 'ff-cats' : undefined} bind:this={catBtn} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>
         {#if cats}
-          <div class="drop catdrop frost frost-menu frost-safe" role="region" aria-label={$t('shell.cats.title')} tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: catBtn }}>
+          <div class="drop catdrop frost frost-menu frost-safe" id="ff-cats" role="region" aria-label={$t('shell.cats.title')} tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: catBtn }}>
             <div class="cseg">
               <div class="seg" role="group" aria-label={$t('shell.cats.kind')}>
                 <button type="button" class:on={catKind === 'movies'} aria-pressed={catKind === 'movies'} on:click={() => (catKind = 'movies')}>{$t('common.movies')}</button>
@@ -399,36 +410,37 @@
     </form>
   </nav>
   <div class="right">
-    <div class="pop-anchor">
-      <button type="button" class="round frost" class:frost-safe={safe} aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-expanded={bell} bind:this={bellBtn} on:click={toggleBell} use:clipSheen>
+    <div class="pop-anchor" on:focusout={onAnchorOut}>
+      <!-- the notifications are a disclosure (a labelled list of links and texts), not a menu -->
+      <button type="button" class="round frost" class:frost-safe={safe} aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-expanded={bell} aria-controls={bell ? 'ff-notes' : undefined} bind:this={bellBtn} on:click={toggleBell} use:clipSheen>
         <span class="sclip" aria-hidden="true"></span><Icon name="bell" size={20} />{#if unread}<span class="dot">{unread}</span>{/if}
       </button>
       {#if bell}
-        <div class="drop wide frost frost-menu frost-safe" role="menu" tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: bellBtn }}>
-          {#each notes as n}{#if n.link}<a href={n.link} class:muted={n.read} role="menuitem">{n.title}</a>{:else}<span class="note" class:muted={n.read} role="none">{n.title}</span>{/if}{:else}<span class="muted pad">{$t('shell.bell.empty')}</span>{/each}
+        <div class="drop wide frost frost-menu frost-safe" id="ff-notes" role="region" aria-label={$t('shell.bell.label')} tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: bellBtn }}>
+          {#each notes as n}{#if n.link}<a href={n.link} class:muted={n.read}>{n.title}</a>{:else}<span class="note" class:muted={n.read}>{n.title}</span>{/if}{:else}<span class="muted pad">{$t('shell.bell.empty')}</span>{/each}
         </div>
       {/if}
     </div>
-    <div class="pop-anchor">
-      <button type="button" class="avatar" aria-label={who ? $t('shell.account.labelWho', { name: who }) : $t('shell.account.label')} aria-haspopup="menu" aria-expanded={menu} disabled={!me} bind:this={acctBtn} on:click={toggleMenu}><span class="face" style={faceStyle}>{initial(who)}</span></button>
+    <div class="pop-anchor" on:focusout={onAnchorOut}>
+      <button type="button" class="avatar" aria-label={who ? $t('shell.account.labelWho', { name: who }) : $t('shell.account.label')} aria-haspopup="menu" aria-expanded={menu} disabled={!me} bind:this={acctBtn} on:click={toggleMenu}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span></button>
       {#if menu && me}
-        <div class="drop acct frost frost-menu frost-safe" role="menu" aria-label={$t('shell.account.label')} tabindex="-1" style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: acctBtn }}>
+        <div class="drop acct frost frost-menu frost-safe" role="menu" aria-label={$t('shell.account.label')} tabindex="-1" use:menuKeys={{ close: () => (menu = false), trigger: acctBtn }} style="--fr-scrim-safe:{SCRIM_MENU}" transition:growBoth={{ trigger: acctBtn }}>
           {#if multi}
             {#if others === null}<span class="muted pad" role="status">{$t('shell.account.loadingProfiles')}</span>{/if}
-            {#each others ?? [] as p (p.id)}<a class="prof" href={switchHref(p.id)} role="menuitem" data-sveltekit-reload><span class="face xs" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}</span>{p.name}{#if p.hasPin}<Icon name="lock" size={14} label={$t('shell.account.withPin')} />{/if}</a>{/each}
+            {#each others ?? [] as p (p.id)}<a class="prof" href={switchHref(p.id)} role="menuitem" tabindex="-1" data-sveltekit-reload><span class="face xs" style="background:{avatarBg(p.avatar)}" aria-hidden="true">{initial(p.name)}</span>{p.name}{#if p.hasPin}<Icon name="lock" size={14} label={$t('shell.account.withPin')} />{/if}</a>{/each}
           {/if}
-          <a href="/profiles?manage=1" role="menuitem"><Icon name="users" size={18} />{$t('shell.account.manageProfiles')}</a>
+          <a href="/profiles?manage=1" role="menuitem" tabindex="-1"><Icon name="users" size={18} />{$t('shell.account.manageProfiles')}</a>
           <hr />
-          <a href="/me" role="menuitem"><Icon name="user" size={18} />{$t('shell.menu.me')}</a>
-          <a href="/settings" role="menuitem"><Icon name="settings" size={18} />{$t('shell.menu.accountSettings')}</a>
-          <a href="/devices" role="menuitem"><Icon name="monitor" size={18} />{$t('shell.menu.devices')}</a>
-          {#if canDownload}<a href="/downloads" role="menuitem"><Icon name="download" size={18} />{$t('shell.menu.downloads')}</a>{/if}
-          <button class="plain" role="menuitem" on:click={surprise}><Icon name="shuffle" size={18} />{$t('shell.menu.surprise')}</button>
-          <button class="plain" role="menuitem" on:click={openHelp}><Icon name="info" size={18} />{$t('shell.menu.help')}</button>
-          {#if admin}<a href="/admin" role="menuitem"><Icon name="shield" size={18} />{$t('shell.menu.admin')}</a>{/if}
+          <a href="/me" role="menuitem" tabindex="-1"><Icon name="user" size={18} />{$t('shell.menu.me')}</a>
+          <a href="/settings" role="menuitem" tabindex="-1"><Icon name="settings" size={18} />{$t('shell.menu.accountSettings')}</a>
+          <a href="/devices" role="menuitem" tabindex="-1"><Icon name="monitor" size={18} />{$t('shell.menu.devices')}</a>
+          {#if canDownload}<a href="/downloads" role="menuitem" tabindex="-1"><Icon name="download" size={18} />{$t('shell.menu.downloads')}</a>{/if}
+          <button class="plain" role="menuitem" tabindex="-1" on:click={surprise}><Icon name="shuffle" size={18} />{$t('shell.menu.surprise')}</button>
+          <button class="plain" role="menuitem" tabindex="-1" on:click={openHelp}><Icon name="info" size={18} />{$t('shell.menu.help')}</button>
+          {#if admin}<a href="/admin" role="menuitem" tabindex="-1"><Icon name="shield" size={18} />{$t('shell.menu.admin')}</a>{/if}
           <hr />
-          {#if lgApp}<button class="plain" role="menuitem" on:click={changeServer}>{$t('shell.account.changeServer')}</button>{/if}
-          <button class="plain out" role="menuitem" on:click={logout}>{$t('shell.account.logout')}</button>
+          {#if lgApp}<button class="plain" role="menuitem" tabindex="-1" on:click={changeServer}>{$t('shell.account.changeServer')}</button>{/if}
+          <button class="plain out" role="menuitem" tabindex="-1" on:click={logout}>{$t('shell.account.logout')}</button>
         </div>
       {/if}
     </div>
@@ -493,7 +505,7 @@
   .tab { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 16px; border-radius: 999px; font-size: .9rem; font-weight: 500; color: rgba(255, 255, 255, .78); white-space: nowrap; transition: color 160ms ease-out; }
   .tab:hover { color: #fff; }
   .tab.active { color: #fff; font-weight: 600; }
-  .tab:focus-visible { outline: 2px solid #fff; outline-offset: 0; }
+  .tab:focus-visible { outline: 2px solid #fff; outline-offset: 0; --ring-o: 0px; }
   .cbtn, .cbtn:hover:not(:disabled) { background: transparent; border: 0; font: inherit; font-size: .9rem; font-weight: 500; }
   .cbtn[aria-expanded='true'] { color: #fff; }
   .caret { width: 0; height: 0; border: 4px solid transparent; border-top-color: currentColor; border-bottom: 0; transition: transform 160ms ease-out; }
@@ -509,12 +521,12 @@
   .mag:hover:not(:disabled), .x:hover:not(:disabled) { background: transparent; color: #fff; }
   .mag:active:not(:disabled), .x:active:not(:disabled) { transform: none; }
   .pill.open:not(.compact) .mag { color: #fff; }
-  .mag:focus-visible, .x:focus-visible { outline: 2px solid #fff; outline-offset: 0; }
+  .mag:focus-visible, .x:focus-visible { outline: 2px solid #fff; outline-offset: 0; --ring-o: 0px; }
   .psearch input, .x { position: absolute; top: 0; opacity: 0; visibility: hidden; pointer-events: none; transform: translate3d(-8px, 0, 0);
     transition: opacity 90ms ease-in, transform 200ms var(--ease), visibility 0s linear 90ms; }
   .psearch input { left: 36px; width: calc(var(--fwc) - 36px); height: 36px; min-height: 36px; padding: 0 4px; box-sizing: border-box; border: 0; border-radius: 0; background: transparent; color: #fff; font: inherit; font-size: .9rem; }
   .psearch input::placeholder { color: rgba(255, 255, 255, .5); }
-  .psearch input:focus-visible { outline: none; }
+  .psearch input:focus-visible { outline: none; box-shadow: none; } /* the pill shows the open field */
   .psearch input::-webkit-search-cancel-button { display: none; }
   .x { left: var(--fwc); }
   .pill.open:not(.compact) .psearch input, .pill.open:not(.compact) .x { opacity: 1; visibility: visible; pointer-events: auto; transform: none;
@@ -531,12 +543,14 @@
     border-color: rgba(255, 255, 255, .42); box-shadow: inset 0 1px 0 var(--fr-hi), inset 0 0 0 1px rgba(255, 255, 255, .14), var(--fr-shadow-card); }
   :global(html:not(.m-glass)) .round:hover:not(:disabled) { background: var(--fr-solid-hover); }
   .round .sclip { border-radius: 50%; }
-  .round:focus-visible, .avatar:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .round:focus-visible, .avatar:focus-visible { outline: 2px solid #fff; outline-offset: 2px; --ring-o: 2px; }
+  :global(html:not(.tv)) .round:focus-visible { box-shadow: 0 0 0 6px var(--ring-dark); } /* the two-tone ring (app.css) over the glass button's own shadow */
   .dot { position: absolute; z-index: 2; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box; border-radius: 99px; display: grid; place-items: center; background: var(--acc-fill); color: #fff; font-size: .68rem; font-weight: 700; font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px rgba(18, 20, 24, .9); }
 
   .avatar { display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; padding: 0; background: transparent; border-radius: 10px; }
   .avatar:hover:not(:disabled) { background: transparent; }
-  .face { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, #ff6b81, #9a2440); font-weight: 800; color: #fff; box-shadow: 0 0 0 1px rgba(255, 255, 255, .14); }
+  /* the initial is large bold text (19 px, 800): 3:1 is the bar over the lighter avatar colours (WCAG 1.4.3) */
+  .face { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, #ff6b81, #9a2440); font-size: 1.2rem; font-weight: 800; color: #fff; box-shadow: 0 0 0 1px rgba(255, 255, 255, .14); }
   .avatar[aria-expanded='true'] .face { box-shadow: 0 0 0 2px #fff; }
 
   /* ---- dropdowns: glass cards (glass spec §5: .frost .frost-menu, 8 px padding, 44 px rows with 12 px corners, hover = the light
@@ -552,7 +566,7 @@
   .drop a, .drop .plain { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-radius: 12px; font-size: .9rem; font-weight: 600; color: #fff; min-height: 44px; box-sizing: border-box; }
   .drop a.muted { color: rgba(255, 255, 255, .9); font-weight: 500; } /* a read notification */
   .drop a:hover, .drop .plain:hover:not(:disabled) { background: var(--fr-sel); color: #fff; text-decoration: none; }
-  .drop a:focus-visible, .drop .plain:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
+  .drop a:focus-visible, .drop .plain:focus-visible { outline: 2px solid #fff; outline-offset: -2px; box-shadow: inset 0 0 0 4px var(--ring-dark), 0 0 0 2px var(--ring-dark); }
   .plain { background: transparent; border-radius: 0; justify-content: flex-start; font-weight: 400; width: 100%; }
   .pad { padding: 12px 16px; }
   .acct { min-width: 248px; }
