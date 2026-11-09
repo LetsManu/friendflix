@@ -816,17 +816,18 @@ export const MIGRATIONS: string[] = [
   `,
   // 43: A/V-sync facts of the anonymous playback timing (playtiming.ts): how the stream was delivered, whether the server copied the
   // video, the sound mode and Web Audio routing, dropped / total frames and the A/V-affecting events. Still no user, profile or title.
+  // Rerunnable (if not exists): tests rewind schema_migrations past 42 and migrate again.
   `
   alter table playback_timings
-    add column delivery text check (delivery in ('direct','remux','transcode')),
-    add column video_copy boolean,
-    add column sound_mode text check (sound_mode in ('off','voices','night','both')),
-    add column audio_routed boolean,
-    add column dropped_frames int,
-    add column total_frames int,
-    add column track_switch boolean not null default false,
-    add column reconnects int not null default 0,
-    add column av_events int not null default 0;
+    add column if not exists delivery text check (delivery in ('direct','remux','transcode')),
+    add column if not exists video_copy boolean,
+    add column if not exists sound_mode text check (sound_mode in ('off','voices','night','both')),
+    add column if not exists audio_routed boolean,
+    add column if not exists dropped_frames int,
+    add column if not exists total_frames int,
+    add column if not exists track_switch boolean not null default false,
+    add column if not exists reconnects int not null default 0,
+    add column if not exists av_events int not null default 0;
   `,
 ];
 
