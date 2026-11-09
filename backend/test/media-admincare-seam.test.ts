@@ -87,9 +87,9 @@ describe('transcodeSessions', () => {
       sessionId: 'sess1', serverUserId: id('1'), deviceId: 'ff-dev123', client: 'FriendFlix', deviceName: 'Portal',
       item: { id: ITEM, name: 'Ashfall', type: 'Movie' }, playSessionId: 'ps-1',
       playMethod: 'Transcode', reasons: ['videoCodec', 'other'], videoCodec: 'h264', audioCodec: 'aac', hardware: true,
-      bitrate: 8_000_000, progressPct: 25, paused: false,
+      bitrate: 8_000_000, progressPct: 25, paused: false, videoDirect: false,
     });
-    expect(list[1]).toMatchObject({ playMethod: 'DirectPlay', reasons: [], paused: true, progressPct: 50, client: 'Infuse', item: { id: FOREIGN, name: 'Pilot', seriesName: 'Show', type: 'Episode' } });
+    expect(list[1]).toMatchObject({ playMethod: 'DirectPlay', reasons: [], paused: true, progressPct: 50, client: 'Infuse', item: { id: FOREIGN, name: 'Pilot', seriesName: 'Show', type: 'Episode' }, videoDirect: true });
     expect(list[1]!.hardware).toBeUndefined();
     expect(list[2]).toMatchObject({ playMethod: 'Transcode', reasons: ['network', 'audioCodec'], hardware: false });
     const call = env.jfCalls.find((c) => c.path === '/Sessions')!;

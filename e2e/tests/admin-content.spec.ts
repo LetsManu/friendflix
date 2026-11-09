@@ -309,6 +309,15 @@ test.describe('admin content pages (desktop)', () => {
       await expect(recent.getByRole('row')).toHaveCount(4);
       await expect(recent).toContainText('Qualitätswechsel');
       await expect(recent).toContainText(/5[.,]6\ss/);
+      // the A/V-sync facts of each start (picture & sound)
+      const sync = page.getByTestId('timing-sync');
+      await expect(sync.nth(0)).toContainText('Bild kopiert, Ton umgewandelt');
+      await expect(sync.nth(0)).toContainText('Nachtmodus über Web Audio · 0,1 % Bilder verworfen · 3 A/V-Ereignisse');
+      await expect(sync.nth(0)).toContainText('Tonspurwechsel');
+      await expect(sync.nth(1)).toContainText('Umgewandelt');
+      await expect(sync.nth(1)).toContainText('0 % Bilder verworfen · 2 A/V-Ereignisse');
+      await expect(sync.nth(2)).toContainText('Art unbekannt');
+      await expect(sync.nth(2)).toContainText('– · 0 A/V-Ereignisse');
     });
 
     test('the health check lists failures without raw ids', async ({ page }) => {

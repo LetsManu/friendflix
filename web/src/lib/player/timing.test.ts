@@ -1,13 +1,59 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from 'vitest';
-import { createTiming, deviceClass, effectiveType, formatTiming, readLocalTimings, sendTiming, TIMING_ENDPOINT, TIMING_LOCAL_KEY, TIMING_LOCAL_MAX, type TimingReport } from './timing';
+import { createTiming, deliveryOf, deviceClass, effectiveType, formatTiming, readLocalTimings, sendTiming, TIMING_ENDPOINT, TIMING_LOCAL_KEY, TIMING_LOCAL_MAX, type StoredTiming, type TimingReport } from './timing';
 
 const clock = () => { const c = { t: 1000, now: () => c.t, at: (ms: number) => { c.t = 1000 + ms; } }; return c; };
 function fakeStorage() {
   const m = new Map<string, string>();
   return { m, getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) };
 }
+
+describe('sync facts (A/V)', () => {
+  it('delivery: the server answer wins over the transcode reason guess', () => {
+    expect(deliveryOf('direct', 'audioCodec', false)).toBe('direct');
+    expect(deliveryOf(null, 'audioCodec', null)).toBeNull();
+    expect(deliveryOf('hls', 'audioCodec', null)).toBe('remux');
+    expect(deliveryOf('hls', 'container', null)).toBe('remux');
+    expect(deliveryOf('hls', 'network', null)).toBe('transcode');
+    expect(deliveryOf('hls', 'height', null)).toBe('transcode');
+    expect(deliveryOf('hls', 'other', null)).toBeNull();
+    expect(deliveryOf('hls', undefined, null)).toBeNull();
+    expect(deliveryOf('hls', 'network', true)).toBe('remux');
+    expect(deliveryOf('hls', 'audioCodec', false)).toBe('transcode');
+  });
+
+  it('records delivery, sound, frames across element restarts and the A/V events', () => {
+    const c = clock(), t = createTiming(c.now);
+    t.stream({ reason: 'audioCodec' }); t.sound('night', true); t.frames(1, 1); t.reconnect(); // outside a session: ignored
+    t.begin(false, true);
+    t.stream({ reason: 'audioCodec' }); // before the mode: no guess yet
+    t.mode('hls');
+    t.stream({ reason: 'audioCodec' });
+    t.sound('voices', true);
+    t.sound('off', false); // switched off later: the session still ran through Web Audio
+    t.frames(2, 100);
+    t.frames(5, 400);
+    t.frames(0, 50); // a new stream attach restarted the counters
+    t.frames(1, 300);
+    t.frames(Number.NaN, -1); // broken reading: ignored
+    c.at(100); t.playing();
+    c.at(200); t.seeking(); c.at(300); t.playing();
+    t.reconnect(); t.reconnect();
+    t.stream({ videoCopy: false }); // the server converted the picture after all
+    expect(t.finish({ device: 'pc' })).toMatchObject({
+      delivery: 'transcode', videoCopy: false, soundMode: 'off', audioRouted: true, droppedFrames: 6, totalFrames: 700,
+      trackSwitch: true, qualitySwitch: false, reconnects: 2, seeks: 1, avEvents: 4,
+    });
+  });
+
+  it('a quality switch counts as one A/V event and is never also a track switch; direct play is direct without an answer', () => {
+    const t = createTiming(clock().now);
+    t.begin(true, true);
+    t.mode('direct');
+    expect(t.finish({ device: 'tv' })).toMatchObject({ qualitySwitch: true, trackSwitch: false, avEvents: 1, delivery: 'direct', droppedFrames: null });
+  });
+});
 
 describe('createTiming', () => {
   it('records the phases relative to the start of loading (hls.js path)', () => {
@@ -25,6 +71,7 @@ describe('createTiming', () => {
     expect(r).toEqual({
       device: 'phone', mode: 'hls', qualitySwitch: false, bitrate: 8_000_000, targetDuration: 6, infoMs: 320, manifestMs: 900, firstFragMs: 2600,
       firstFragBytes: 3_900_000, firstFragDlMs: 1500, firstFrameMs: 3100, seeks: 0, seekMedianMs: null, seekMaxMs: null, stalls: 0, stallMs: 0, effectiveType: '4g',
+      delivery: null, videoCopy: null, soundMode: 'off', audioRouted: false, droppedFrames: null, totalFrames: null, trackSwitch: false, reconnects: 0, avEvents: 0,
     });
     expect(t.active).toBe(false);
     expect(t.finish({ device: 'phone' })).toBeNull(); // once per session
@@ -119,7 +166,8 @@ describe('helpers', () => {
 
 const report = (over: Partial<TimingReport> = {}): TimingReport => ({
   device: 'phone', mode: 'hls', qualitySwitch: false, bitrate: 8_000_000, targetDuration: 6, infoMs: 300, manifestMs: 700, firstFragMs: 2500, firstFragBytes: 4_096_000,
-  firstFragDlMs: 1500, firstFrameMs: 3000, seeks: 2, seekMedianMs: 900, seekMaxMs: 1500, stalls: 1, stallMs: 2000, effectiveType: '4g', ...over,
+  firstFragDlMs: 1500, firstFrameMs: 3000, seeks: 2, seekMedianMs: 900, seekMaxMs: 1500, stalls: 1, stallMs: 2000, effectiveType: '4g',
+  delivery: 'remux', videoCopy: true, soundMode: 'night', audioRouted: true, droppedFrames: 12, totalFrames: 14_400, trackSwitch: true, reconnects: 1, avEvents: 4, ...over,
 });
 
 describe('sendTiming / local copy', () => {
@@ -172,5 +220,15 @@ describe('sendTiming / local copy', () => {
     expect(bare).toContain('info – ·');
     expect(bare).toContain('(– in');
     expect(bare).not.toContain('segment');
+  });
+
+  it('formatTiming: the sync line (and none for reports stored before it existed)', () => {
+    expect(formatTiming({ ...report(), at: 0 })).toContain('  sync: remux (video copied) · sound night, Web Audio · dropped 12/14400 frames · A/V events 4 (1 reconnect, track switch)');
+    const plain = formatTiming({ ...report({ delivery: null, videoCopy: null, soundMode: 'off', audioRouted: false, droppedFrames: null, totalFrames: null, trackSwitch: false, reconnects: 2, avEvents: 2 }), at: 0 });
+    expect(plain).toContain('  sync: ? · sound off · dropped – frames · A/V events 2 (2 reconnects)');
+    expect(formatTiming({ ...report({ delivery: 'transcode', videoCopy: false, reconnects: 0, trackSwitch: false }), at: 0 })).toContain('sync: transcode (video converted)');
+    const old = { ...report(), at: 0 } as Partial<StoredTiming>;
+    delete old.avEvents;
+    expect(formatTiming(old as StoredTiming)).not.toContain('sync:');
   });
 });

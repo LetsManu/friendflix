@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { healthTick } from '../src/health.js';
 import { pruneTimings, timingBody } from '../src/playtiming.js';
+import { resetStreamsMemoForTests } from '../src/playstats.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
@@ -66,6 +67,60 @@ describe('POST /api/playback/timing', () => {
     for (let i = 0; i < 119; i++) await env.kv.incr(`ptiming:h:${(await me(friend)).id}`, 3600);
     expect((await post(friend, base)).statusCode).toBe(429);
     expect(await rows()).toHaveLength(0);
+  });
+});
+
+describe('A/V-sync facts', () => {
+  const sync = { delivery: 'remux', videoCopy: true, soundMode: 'night', audioRouted: true, droppedFrames: 12, totalFrames: 14_400, trackSwitch: true, reconnects: 1, avEvents: 4 };
+
+  it('stores delivery, video copy, sound mode, frames and the A/V events; an older player without them still works', async () => {
+    expect((await post(friend, { ...base, ...sync })).statusCode).toBe(204);
+    expect((await post(friend, base)).statusCode).toBe(204);
+    const [a, b] = await rows();
+    expect(a).toMatchObject({ delivery: 'remux', video_copy: true, sound_mode: 'night', audio_routed: true, dropped_frames: 12, total_frames: 14_400, track_switch: true, reconnects: 1, av_events: 4 });
+    expect(b).toMatchObject({ delivery: null, video_copy: null, sound_mode: null, audio_routed: null, dropped_frames: null, total_frames: null, track_switch: false, reconnects: 0, av_events: 0 });
+  });
+
+  it('drops unknown values instead of failing, clamps the counts, and drops a frame reading with more dropped than total', async () => {
+    expect((await post(friend, { ...base, ...sync, delivery: 'magic', soundMode: 'loud', videoCopy: 'yes', avEvents: 1e9, reconnects: -3 })).statusCode).toBe(204);
+    expect((await post(friend, { ...base, droppedFrames: 50, totalFrames: 10 })).statusCode).toBe(204);
+    const [a, b] = await rows();
+    expect(a).toMatchObject({ delivery: null, sound_mode: null, video_copy: null, av_events: 100_000, reconnects: 0 });
+    expect(b).toMatchObject({ dropped_frames: null, total_frames: null });
+  });
+
+  it('the admin view lists them in the recent rows', async () => {
+    await post(friend, { ...base, ...sync });
+    const v = (await env.app.inject({ url: '/api/admin/playback/timing', cookies: admin.cookies })).json();
+    expect(v.recent[0]).toMatchObject({ delivery: 'remux', videoCopy: true, soundMode: 'night', audioRouted: true, droppedFrames: 12, totalFrames: 14_400, trackSwitch: true, reconnects: 1, avEvents: 4 });
+  });
+});
+
+describe('GET /api/playback/stream (video copied?)', () => {
+  const session = (ps: string, serverUserId: string, videoDirect?: boolean) => ({
+    sessionId: `s-${ps}`, serverUserId, item: { id: 'a'.repeat(32), name: 'x' }, playSessionId: ps, playMethod: 'Transcode' as const, reasons: [], paused: false,
+    ...(videoDirect === undefined ? {} : { videoDirect }),
+  });
+  const ask = (s: Sess | null, ps: string) => env.app.inject({ url: `/api/playback/stream?ps=${encodeURIComponent(ps)}`, cookies: s?.cookies ?? {} });
+
+  it("answers only for the caller's own play session; never stores anything", async () => {
+    const mine = (await env.pool.query('select jellyfin_user_id from users where id = $1', [(await me(admin)).id])).rows[0].jellyfin_user_id as string;
+    expect(mine).toMatch(/^[0-9a-f-]{32,36}$/);
+    const orig = env.ctx.jf.admin.transcodeSessions;
+    env.ctx.jf.admin.transcodeSessions = async () => [session('ps-mine', mine.toUpperCase(), true), session('ps-other', 'someone-else', false), session('ps-unknown', mine)];
+    resetStreamsMemoForTests();
+    try {
+      expect((await ask(admin, 'ps-mine')).json()).toEqual({ videoDirect: true });
+      expect((await ask(admin, 'ps-other')).json()).toEqual({ videoDirect: null }); // not mine
+      expect((await ask(admin, 'ps-unknown')).json()).toEqual({ videoDirect: null }); // not reported
+      expect((await ask(admin, 'ps-gone')).json()).toEqual({ videoDirect: null });
+      expect((await ask(friend, 'bad id!')).statusCode).toBe(400);
+      expect((await ask(null, 'ps-mine')).statusCode).toBe(401);
+      expect(await rows()).toHaveLength(0);
+    } finally {
+      env.ctx.jf.admin.transcodeSessions = orig;
+      resetStreamsMemoForTests();
+    }
   });
 });
 

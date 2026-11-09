@@ -81,8 +81,8 @@ export function resetStreamsMemoForTests() {
   memo = new WeakMap();
 }
 
-/** One transcodeSessions() call per 5 s (3 s limit); null when absent or failing. */
-function serverSessions(ctx: Ctx): Promise<ServerSession[] | null> {
+/** One transcodeSessions() call per 5 s (3 s limit); null when absent or failing. Shared with the player's stream probe (playtiming.ts). */
+export function serverSessions(ctx: Ctx): Promise<ServerSession[] | null> {
   const fn = ctx.jf.admin.transcodeSessions?.bind(ctx.jf.admin);
   if (!fn) return Promise.resolve(null);
   const hit = memo.get(ctx);

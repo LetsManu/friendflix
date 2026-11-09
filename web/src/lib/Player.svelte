@@ -376,11 +376,36 @@
   // ---- start-time measurement per playback session (lib/player/timing.ts): sent once on stop / pagehide / end; never in a
   //      watch party, while casting / AirPlay or for a stream handed to the cast engine (offline playback has its own player) ----
   const timing = createTiming();
+  /** dropped / total frames of the element right now (the timing keeps them across element / stream restarts) */
+  function sampleFrames() {
+    try { const q = video?.getVideoPlaybackQuality?.(); if (q) timing.frames(q.droppedVideoFrames, q.totalVideoFrames); } catch { /* not supported */ }
+  }
   function reportTiming() {
     try {
+      sampleFrames();
+      timing.sound(fxToPref(fx), Boolean(fxEngine?.routed));
       const r = timing.finish({ device: deviceClass({ coarse, tv: tvMode() }), effectiveType: effectiveType(navigator) });
       if (r && !partyMode && !remote && !handedOff && !airInfo && !airOn) sendTiming(r, { csrf: getCsrf(), profile: getActiveProfile() });
     } catch { /* measuring must never break playback */ }
+  }
+
+  /**
+   * A/V-sync telemetry: a few seconds into an HLS session, ask the server once whether it copies the video of this play session
+   * (remux) or converts it; the answer only goes into this session's anonymous timing report.
+   */
+  const STREAM_PROBE_MS = 4000;
+  let probeT: ReturnType<typeof setTimeout> | undefined, probedPs = '', trackSwitching = false;
+  function probeStream() {
+    const ps = info?.playSessionId;
+    if (!ps || probedPs === ps || mode !== 'hls' || !timing.active || partyMode || remote || airOn || airInfo || handedOff) return;
+    probedPs = ps;
+    clearTimeout(probeT);
+    probeT = setTimeout(() => {
+      if (info?.playSessionId !== ps || !timing.active) return;
+      api<{ videoDirect?: boolean | null } | null>(`/api/playback/stream?ps=${encodeURIComponent(ps)}`)
+        .then((r) => { if (info?.playSessionId === ps && typeof r?.videoDirect === 'boolean') timing.stream({ videoCopy: r.videoDirect }); })
+        .catch(() => undefined);
+    }, STREAM_PROBE_MS);
   }
 
   // ---- per-series audio / subtitle choice ("anime pack"): remembered per profile, applied before the global defaults ----
@@ -414,7 +439,7 @@
     cancelFirstFrame();
     error = ''; errNote = '';
     // a retry / track reload continues the running session (its clock keeps going); a quality switch starts a new one, flagged
-    if (!timing.active && !partyMode && !remote) timing.begin(switching);
+    if (!timing.active && !partyMode && !remote) timing.begin(switching, trackSwitching);
     if (startSec !== undefined) { lastPos = startSec; posKnown = true; }
     // first start: the saved quality + audio language go into this same request (no second round trip)
     const first = !prefsApplied && !partyMode;
@@ -459,12 +484,14 @@
   async function attach(startSec: number) {
     if (!video || !info || airInfo || handedOff) return; // AirPlay plays its own token stream
     const my = ++attachSeq, cur = info;
+    sampleFrames(); // the counters restart with the new stream
     sessionPlaying = false; resetStall(); // the first buffering of each stream is a start, not a stall
     hls?.destroy(); hls = null;
     cancelFirstFrame();
     const useDirect = info.directUrl && audioIndex === undefined && !rec.forcedHls && video.canPlayType('video/mp4');
     mode = useDirect ? 'direct' : 'hls';
     timing.mode(useDirect ? 'direct' : 'hls');
+    timing.stream({ reason: info.transcodeReason ?? null });
     const seek = () => { if (startSec > 1) video!.currentTime = startSec; };
     // hls.js is loaded lazily, only on this path (and usually already prefetched by the play button)
     let H: typeof Hls | null = null;
@@ -521,6 +548,7 @@
   function forceHls(pos: number, keepIntent = false) { rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = keepIntent ? wantAutoplay || !paused : !paused; void load(pos); }
   function recover(kind: ErrorKind, viaLoad = false) {
     if (handedOff || airOn || airInfo || airState.busy) return;
+    timing.reconnect();
     retryViaLoad = viaLoad;
     cancelFirstFrame();
     // the first retry already failed: the line is the problem, not a hiccup -> a lower rung (none = cooldown or 360p: the usual retries go on and end in giveUp)
@@ -593,7 +621,7 @@
   function onPlaying() {
     if (handedOff) return;
     postFireTv('keepAwake:1'); // the Fire TV app keeps the screen on while a picture plays (no-op elsewhere)
-    waiting = false; sessionPlaying = true; firstFrame(); timing.playing();
+    waiting = false; sessionPlaying = true; firstFrame(); timing.playing(); probeStream();
     if (waitSince) { const ms = performance.now() - waitSince, done = stallHandled; resetStall(); if (!done && ms > 0) onStall(ms); }
     if (reconnecting) { reconnecting = 0; flash(tr('player.reconnected'), 1500); }
   }
@@ -791,7 +819,8 @@
     const pos = video?.currentTime ?? 0;
     await send('stop');
     audioIndex = i;
-    await load(pos);
+    trackSwitching = true; // the next timing session exists because of this switch
+    try { await load(pos); } finally { trackSwitching = false; }
     video?.play().catch(() => undefined);
   }
   /** the last subtitle track that was on (-1 = none yet): the LG red key turns this one back on */
@@ -1001,6 +1030,7 @@
     fxEngine ??= new AudioFxEngine(video);
     const r = await fxEngine.apply(fx);
     fxNote = r === 'unsupported' ? 'unsupported' : r === 'suspended' ? 'suspended' : '';
+    timing.sound(fxToPref(fx), Boolean(fxEngine?.routed));
     if (r === 'unsupported' && !quiet) flash(tr('scenes.audio.unsupported'), 2500);
   }
   const FX_OPTS = [
@@ -1391,6 +1421,7 @@
     // every 5 s: direct-play bandwidth sample + step-up check; every 30 s the estimate is remembered
     abrTimer = setInterval(() => {
       sampleDirect();
+      sampleFrames();
       if (!abr || handedOff || airOn || airInfo || switching || !started || stopped || paused || waiting || reconnecting || error) return;
       applyAbr(abr.onTick({ estimate: est.estimate, bufferSec: Math.max(0, buffered - current) }));
     }, 5000);
@@ -1447,7 +1478,7 @@
     pnlObs?.disconnect();
     cancelFirstFrame();
     clearInterval(tvTick);
-    clearTimeout(peekT); clearTimeout(posterT); clearTimeout(spT); fxEngine?.destroy();
+    clearTimeout(peekT); clearTimeout(posterT); clearTimeout(spT); clearTimeout(probeT); fxEngine?.destroy();
     persistEstimate(); clearInterval(abrTimer); clearInterval(bwTimer); clearTimeout(stallT);
     clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); clearTimeout(retryT); clearTimeout(spinT); clearTimeout(pendingTap); clearTimeout(hudT); clearTimeout(rippleT); clearTimeout(lockT); clearTimeout(unlockT); nowPlaying.set(null);
     if (!handedOff && started && !stopped) { stopped = true; send('stop'); }

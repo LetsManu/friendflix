@@ -121,6 +121,12 @@ const dict: Translation<typeof de> = {
     modes: { direct: 'Diretto', hls: 'HLS' },
     segment: 'Durata segmento',
     fragSize: 'Primo segmento: dimensione / caricamento',
+    sync: 'Immagine e audio',
+    delivery: { direct: 'Originale', remux: 'Video copiato, audio convertito', transcode: 'Convertito', unknown: 'Modalità sconosciuta' },
+    webAudio: 'tramite Web Audio',
+    dropped: '{pct} % di fotogrammi persi',
+    avEvents: '{n} eventi A/V',
+    trackTag: 'Cambio traccia audio',
   },
   digest: {
     settings: 'Impostazioni',
