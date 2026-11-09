@@ -32,15 +32,16 @@
   .chipwrap { position: relative; display: inline-flex; margin-left: .6rem; }
   .chip { background: rgba(255, 255, 255, .14); color: #e8e8e8; border: 0; border-radius: 999px; padding: .2rem .7rem; font-size: .8rem; line-height: 1.3; cursor: pointer; white-space: nowrap; min-height: 28px; }
   .chip:hover { background: rgba(255, 255, 255, .24); }
-  .chip:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .chip:focus-visible { outline: 2px solid #fff; outline-offset: 2px; --ring-o: 2px; }
   .why { position: absolute; left: 0; bottom: calc(100% + .5rem); width: max-content; max-width: min(18rem, 80vw); background: rgba(20, 20, 24, .96); color: #fff; border-radius: 8px; padding: .5rem .75rem; font-size: .85rem; line-height: 1.35; box-shadow: 0 4px 18px rgba(0, 0, 0, .5); }
   :global(html.tv) .chip { font-size: 1.05rem; min-height: 48px; padding: .3rem 1rem; }
   :global(html.tv) .chip:focus-visible { background: rgba(255, 255, 255, .22); box-shadow: 0 0 0 4px #fff; outline: none; }
   :global(html.tv) .why { font-size: 1.1rem; }
   .chipwrap.compact { margin-left: 0; }
   .compact .chip, .compact .chip:hover { background: transparent; padding: 0; min-height: 44px; min-width: 44px; display: inline-grid; place-items: center; font-size: .75rem; }
-  .pill { display: block; background: rgba(255, 255, 255, .16); border-radius: 999px; padding: .2rem .6rem; line-height: 1.3; }
-  .compact .chip:hover .pill { background: rgba(255, 255, 255, .26); }
+  /* a dark fill: the pill sits over the picture, white text keeps AA over a bright frame (lib/a11y/contrast.test.ts) */
+  .pill { display: block; background: rgba(0, 0, 0, .6); color: #fff; border-radius: 999px; padding: .2rem .6rem; line-height: 1.3; }
+  .compact .chip:hover .pill { background: rgba(0, 0, 0, .75); }
   .compact .why { left: auto; right: 0; bottom: auto; top: calc(100% + .25rem); z-index: 9; }
   @media (max-width: 720px) { .chipwrap { margin-left: .2rem; } .chip { font-size: .72rem; padding: .15rem .55rem; } }
 </style>

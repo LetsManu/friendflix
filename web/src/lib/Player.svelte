@@ -302,7 +302,7 @@
   $: tvSub = item?.seriesName && item.indexNumber !== undefined && item.indexNumber !== null
     ? $t('tv.player.episode', { s: item.parentIndexNumber ?? 1, e: item.indexNumber, name: item.name }) : barSub;
   /** desktop and phone pause screens (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
-  $: pauseBlocked = menu !== '' || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
+  $: pauseBlocked = ctlFocus || menu !== '' || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
   $: deskPause = desk && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked });
   $: phonePause = phoneUi && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked || cardOn });
   $: phoneMotion = phoneUi && motionAllowed();
@@ -340,7 +340,7 @@
     if (left) credOutT = setTimeout(() => (credOut = false), phoneUi ? 800 : 300);
   }
   // phones: an open panel (a menu, Cast & info, the party host's settings) keeps the controls up (spec 2026-11-08 §1)
-  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || menu !== '' || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
+  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || ctlFocus || menu !== '' || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
@@ -1181,6 +1181,34 @@
 
   // ---- activity / keyboard / touch ----
   function wake() { lastActive = Date.now(); tick = lastActive; }
+  /**
+   * desktop: keyboard focus (focus-visible) inside the controls keeps them up (WCAG 2.4.7 / 2.4.11) - the bar never fades
+   * from under the focused button. A mouse click focuses without focus-visible, so pointer users keep the idle hide; phones
+   * and TV keep their own rules (TV drops the focus when the bar hides).
+   */
+  let ctlFocus = false;
+  function syncCtlFocus() {
+    if (tvUi || phoneUi || tvMode() || typeof document === 'undefined') { ctlFocus = false; return; }
+    const a = document.activeElement;
+    ctlFocus = Boolean(a && stage?.querySelector('.ctl')?.contains(a) && a.matches(':focus-visible'));
+  }
+  const onStageFocus = (e: FocusEvent) => {
+    if (e.type === 'focusout') popFocusOut(e);
+    setTimeout(syncCtlFocus, 0);
+  };
+  /**
+   * desktop popovers (audio & subtitles, speed, more, scenes; role=dialog): the keyboard leaving one (Tab past its last item or
+   * onto another control) closes it, it never stays open behind the focus (WCAG 2.4.3). A pointer press elsewhere (no new focus
+   * target) has its own close.
+   */
+  function popFocusOut(e: FocusEvent) {
+    const to = e.relatedTarget as Node | null;
+    if (!to || !menu || tvUi || phoneUi || tvMode()) return;
+    const pop = stage?.querySelector('.menu[role="dialog"]');
+    const opener = stage?.querySelector('.ctl [aria-expanded="true"]');
+    if (!pop || pop.contains(to) || opener?.contains(to)) return;
+    menu = '';
+  }
   const overlayOpen = () => Boolean(menu || subDlg || help || (xray && showXray));
   function act(a: KeyAction) {
     // credits corner (TV): the bar is hidden and inert; a key that would bring it (an arrow at the edge of the sequence) only wakes
@@ -1298,11 +1326,18 @@
       if (e.key.startsWith('Arrow')) e.stopPropagation();
       return;
     }
+    wake(); // any key brings the controls back (the bar may swallow the event before the window handler sees it)
     const native = (t.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) || (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'range' && e.key.startsWith('Arrow'));
     if (native) e.stopPropagation();
   };
   $: if (help || error) tickDom().then(() => stage?.querySelector<HTMLElement>('.help [data-autofocus], .errbox [data-autofocus]')?.focus());
-  $: if (menu && typeof document !== 'undefined' && tvMode()) tickDom().then(() => stage?.querySelector<HTMLElement>('.menu .mi.on, .menu .mi')?.focus());
+  // an opened popover takes the focus (its chosen item, else the first): on TV always, on desktop when the keyboard opened it
+  // (the button had focus-visible; a mouse click leaves the focus where it was, WCAG 2.4.3)
+  $: if (menu && typeof document !== 'undefined' && (tvMode() || keyOpened())) tickDom().then(() => stage?.querySelector<HTMLElement>('.menu .mi.on, .menu .mi')?.focus());
+  function keyOpened() {
+    const a = document.activeElement;
+    return !phoneUi && Boolean(a && stage?.querySelector('.ctl')?.contains(a) && a.matches(':focus-visible'));
+  }
   // long lists scroll inside the menu: open each column at the current choice, not at the top
   $: if (menu && typeof document !== 'undefined') tickDom().then(() => stage?.querySelectorAll<HTMLElement>('.menu .mi.on').forEach((el) => el.scrollIntoView?.({ block: 'nearest' })));
 
@@ -1549,8 +1584,10 @@
 </script>
 
 <svelte:window bind:innerWidth={winW} bind:innerHeight={winH} on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar}{picVar};--rcard-h:{rCardH}px" bind:this={stage} bind:clientWidth={stW} bind:clientHeight={stH} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar}{picVar};--rcard-h:{rCardH}px" bind:this={stage} bind:clientWidth={stW} bind:clientHeight={stH} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:focusin={onStageFocus} on:focusout={onStageFocus} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
+  <!-- the page heading (WCAG 1.3.1 / 2.4.6): the title, for heading navigation; the visible title block is styled text -->
+  <h1 class="sr-only">{barTitle || title}</h1>
   <!-- svelte-ignore a11y_media_has_caption -->
   {#key videoGen}
   <video bind:this={video} playsinline crossorigin="use-credentials" poster={swapShot || undefined} style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -1928,7 +1965,7 @@
     .pbar i { animation: ff-pbar-calm 1.6s ease-in-out infinite alternate; transform: none; width: 100%; }
     @keyframes ff-pbar-calm { from { opacity: .25; } to { opacity: .7; } }
   }
-  .stage :global(button:focus-visible), .stage :global(a:focus-visible), .stage :global([role=slider]:focus-visible) { outline: 3px solid #fff; outline-offset: 2px; }
+  .stage :global(button:focus-visible), .stage :global(a:focus-visible), .stage :global([role=slider]:focus-visible) { outline: 3px solid #fff; outline-offset: 2px; --ring-o: 2px; }
   .stage.idle { cursor: none; }
   .stage :global(video) { display: block; width: 100%; height: 100%; max-height: 100%; object-fit: contain; background: #000; }
   /* AirPlay availability probe: rendered (WebKit may skip hidden elements) but invisible and inert */
@@ -2227,7 +2264,7 @@
   .ctl.dock { right: 0; display: flex; flex-direction: column; gap: 10px; background: none; transition: none;
     padding: 0 calc(var(--safe-right) + 16px + var(--inset, 0px)) calc(var(--safe-bottom) + 12px) calc(var(--safe-left) + 16px); }
   .ctl.dock::before { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: calc(100% + 72px); z-index: -1; pointer-events: none;
-    background: linear-gradient(transparent, rgba(0,0,0,.5) 40%, rgba(0,0,0,.85)); transition: opacity 250ms ease; }
+    background: linear-gradient(transparent, rgba(0,0,0,.62) 64px, rgba(0,0,0,.72) 60%, rgba(0,0,0,.88)); transition: opacity 250ms ease; }
   /* hidden: the dock box stays (pointer-events off), its parts fade; the skip button stays visible and tappable */
   .ctl.dock.hide { opacity: 1; }
   .ctl.dock > :global(*) { transition: opacity 250ms ease; }
@@ -2331,11 +2368,12 @@
      bar's box covers the card's buttons */
   .stage.desk .remote { padding-bottom: calc(var(--ctl-h, 7.5rem) + 1rem + var(--safe-bottom)); }
   .stage.desk .ctl { display: grid; gap: .7rem; padding: 4.5rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-right)) 1.4rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-left));
-    background: linear-gradient(transparent, rgba(0,0,0,.45) 35%, rgba(0,0,0,.82)); transition: opacity 250ms ease; }
+    background: linear-gradient(transparent, rgba(0,0,0,.62) 4.5rem, rgba(0,0,0,.72) 60%, rgba(0,0,0,.88)); transition: opacity 250ms ease; }
   .ttlblock { display: grid; gap: .15rem; min-width: 0; max-width: min(60%, 46rem); text-shadow: 0 1px 10px rgba(0,0,0,.5); }
-  .ttlblock em { font-style: normal; color: var(--acc, #ff4f6d); font-weight: 700; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* white with a coral bar: coral text sank to 1:1 over a bright frame (WCAG 1.4.3) */
+  .ttlblock em { font-style: normal; color: #fff; border-left: 3px solid var(--acc, #ff4f6d); padding-left: .45rem; justify-self: start; font-weight: 700; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ttlblock b { font-size: 2.1em; font-weight: 800; line-height: 1.05; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ttlblock span { color: #d4d4da; font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ttlblock span { color: #e8e8ec; font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tlrow { gap: .9rem; }
   .tlrow .el, .tlrow .rem { min-width: 3.4rem; font-size: .9rem; color: #e8e8ec; font-variant-numeric: tabular-nums; }
   .tlrow .el { text-align: left; }

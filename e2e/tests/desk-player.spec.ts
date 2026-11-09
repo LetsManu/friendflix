@@ -255,3 +255,51 @@ test('Space resumes from the pause screen', async ({ page, api: _api }) => {
   await page.keyboard.press(' ');
   await expect.poll(() => page.evaluate(() => document.querySelector('video')!.paused)).toBe(false);
 });
+
+test.describe('keyboard (accessibility audit 2026-11-09)', () => {
+  test('keyboard focus in the bar keeps it up past the idle time; any key brings a hidden bar back (WCAG 2.4.7 / 2.4.11)', async ({ page, api: _api }) => {
+    await page.clock.install();
+    await open(page);
+    await page.keyboard.press('Shift'); // keyboard modality: the scripted focus below is focus-visible, as a Tab would be
+    const tracks = page.getByRole('button', { name: 'Audio und Untertitel' });
+    await tracks.focus();
+    expect(await tracks.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
+    await page.clock.runFor(8000); // well past the 3 s idle hide
+    await expect(page.locator('.ctl')).not.toHaveClass(/\bhide\b/);
+    await expect(page.locator('.stage')).not.toHaveClass(/\bidle\b/);
+    expect(await tracks.evaluate((el) => { let o = 1; for (let e: Element | null = el; e; e = e.parentElement) o *= Number(getComputedStyle(e).opacity); return o; })).toBeGreaterThan(0.9);
+    // focus leaves the bar: the idle hide is back; a key press (no pointer) shows the bar again
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    await page.clock.runFor(3500);
+    await expect(page.locator('.ctl')).toHaveClass(/\bhide\b/);
+    await page.keyboard.press('Shift');
+    await expect(page.locator('.ctl')).not.toHaveClass(/\bhide\b/);
+  });
+
+  test('a popover opened from the keyboard takes the focus, and Tabbing out of it closes it (WCAG 2.4.3)', async ({ page, api: _api }) => {
+    await open(page);
+    await page.keyboard.press('Shift');
+    const tracks = page.getByRole('button', { name: 'Audio und Untertitel' });
+    await tracks.focus();
+    await page.keyboard.press('Enter');
+    const pop = page.getByRole('dialog', { name: 'Audio und Untertitel' });
+    await expect(pop).toBeVisible();
+    await expect.poll(() => pop.evaluate((p) => p.contains(document.activeElement))).toBe(true);
+    // Shift+Tab until the focus is neither in the popover nor on its button: the popover has closed
+    for (let i = 0; i < 40; i++) {
+      await page.keyboard.press('Shift+Tab');
+      const out = await page.evaluate(() => { const a = document.activeElement; return !a?.closest('.menu') && a?.getAttribute('aria-expanded') !== 'true'; });
+      if (out) break;
+    }
+    await expect(pop).toHaveCount(0);
+  });
+
+  test('a popover opened with the mouse leaves the focus on its button', async ({ page, api: _api }) => {
+    await open(page);
+    await page.locator('.stage').hover();
+    const tracks = page.getByRole('button', { name: 'Audio und Untertitel' });
+    await tracks.click();
+    await expect(page.getByRole('dialog', { name: 'Audio und Untertitel' })).toBeVisible();
+    await expect(tracks).toBeFocused();
+  });
+});
