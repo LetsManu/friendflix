@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [3.0.0] – Churros – 2026-11-09
+
 ### Desktop
 Part of the desktop redesign that ships with v3.0.0.
 - **Pill top bar.** The header is a floating pill with logo, navigation and profile; search grows out of the pill (Esc closes it).
