@@ -44,6 +44,7 @@
   import ScenesPanel from '#lib/player/ScenesPanel.svelte';
   import { hasPeople, loadCastInfo, type CastInfoData } from '#lib/player/castinfo';
   import { chapterIndexAt, chapterLabel, chapterMarks, normalizeChapters, trickFrame, usefulChapters, type Chapter } from '#lib/player/chapters';
+  import { applyRate, reapplyRate } from '#lib/player/rate';
   import { AudioFxEngine, fxActive, fxBlocked, fxFromPref, fxToPref, loadFx, saveFx, type AudioFx } from '#lib/player/audiofx';
   import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
@@ -1046,7 +1047,7 @@
     } catch { subMsg = tr('player.subs.downloadFailed'); }
     subBusy = false;
   }
-  function setRate(r: number, keepMenu = false) { if (!video) return; rate = r; video.playbackRate = r; if (!keepMenu) menu = ''; flash(r === 1 ? tr('player.speed.normalToast') : tr('player.speed.rate', { r })); }
+  function setRate(r: number, keepMenu = false) { if (!video) return; rate = r; applyRate(video, r); if (!keepMenu) menu = ''; flash(r === 1 ? tr('player.speed.normalToast') : tr('player.speed.rate', { r })); }
   /** < / > : one step along the speed list, clamped at both ends (no wrap); not in a watch party (the drift correction owns the rate) */
   function speedBy(delta: 1 | -1) {
     if (partyMode || !video) return;
@@ -1470,7 +1471,7 @@
     on:error={onVideoError}
     on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff) return; paused = true; resetStall(); const quiet = hiddenPause; hiddenPause = false; if (!castBusy && !stopped && !quiet) send('progress'); }} on:seeked={() => { timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
     on:ended={() => { postFireTv('keepAwake:0'); if (handedOff) return; stopped = true; paused = true; send('stop'); }}
-    on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={syncTime}
+    on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={() => { reapplyRate(video, rate, partyMode); syncTime(); }}
     on:waiting={onWaiting} on:seeking={() => { resetStall(); timing.seeking(); }} on:playing={onPlaying} on:loadeddata={firstFrame} on:canplay={() => { if (handedOff) return; waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
     on:volumechange={() => { if (video) { muted = video.muted; } }}
     on:play on:pause on:seeked on:seeking on:waiting on:playing on:canplay on:timeupdate on:ended>
