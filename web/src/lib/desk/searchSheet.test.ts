@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import type { Item } from '#lib/api';
-import { cascadeKey, GENRE_N, hitIds, marks, nextId, PEOPLE_N, POSTER_N, sheetModel, TOP_N, type Person, type SearchResult } from './searchSheet';
+import { AMB_PEAK, contrast, DARK_BASE, frostComposite, SCRIM_SAFE, type RGB } from '#lib/glass/tone';
+import { cascadeKey, DIM_A, DIM_RGB, GENRE_N, hitIds, MARK_CSS, MARK_RGB, marks, nextId, PEOPLE_N, POSTER_N, SEL_A, sheetModel, TOP_N, type Person, type SearchResult } from './searchSheet';
 
 const item = (id: string, type = 'Movie'): Item => ({ id, name: `T${id}`, type, genres: [], image: true, backdrop: true, logo: false, played: false, favorite: false, positionTicks: 0 });
 const items = (n: number, p: string, type?: string) => Array.from({ length: n }, (_, i) => item(`${p}${i}`, type));
@@ -99,5 +100,20 @@ describe('keyboard order', () => {
     expect(nextId(ids, 'ds-hit-0', -1)).toBe('ds-all');
     expect(nextId(ids, 'ds-hit-9', 1)).toBe('ds-hit-0');
     expect(nextId([], null, 1)).toBeNull();
+  });
+});
+
+describe('mark colour', () => {
+  const over = (b: RGB, t: RGB, a: number): RGB => [0, 1, 2].map((i) => Math.round(b[i]! * (1 - a) + t[i]! * a)) as RGB;
+  it('passes AA on the sheet and on its selected row over the dimmed page (dark base and the ambient peak)', () => {
+    for (const page of [DARK_BASE, AMB_PEAK]) {
+      const sheet = frostComposite(over(page, DIM_RGB, DIM_A), SCRIM_SAFE);
+      const selected = over(sheet, [255, 255, 255], SEL_A);
+      expect(contrast(MARK_RGB, sheet)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(MARK_RGB, selected)).toBeGreaterThanOrEqual(4.5);
+      // the plain brand coral does not (why the mark is lighter)
+      expect(contrast([255, 79, 109], selected)).toBeLessThan(4.5);
+    }
+    expect(MARK_CSS).toBe('rgb(255, 195, 205)');
   });
 });

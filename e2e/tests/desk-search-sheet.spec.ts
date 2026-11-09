@@ -55,7 +55,12 @@ test.describe('desktop search sheet', () => {
     for (const h of ['Beste Treffer', 'Personen', 'Filme & Serien', 'Nach Genre stöbern']) await expect(sheet(page).getByRole('heading', { name: h })).toBeVisible();
     const mark = sheet(page).locator('#ds-hit-0 mark');
     await expect(mark).toHaveText('Har');
-    expect(await mark.evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 79, 109)');
+    // a lighter coral than the brand's (#ff4f6d): AA on the sheet and its selected row (searchSheet.test.ts)
+    expect(await mark.evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 195, 205)');
+    // above the bar's scroll shade (on, on /watchlist): just inside the sheet's top edge is the sheet itself
+    const hit = await page.evaluate(([x, y]) => !!document.elementFromPoint(x!, y!)?.closest('#ds-sheet'), [sb.x + sb.width / 2, sb.y + 4]);
+    expect(hit).toBe(true);
+    expect(await sheet(page).evaluate((e) => +getComputedStyle(e).zIndex)).toBeGreaterThan(await page.locator('[data-desk-bar]').evaluate((e) => +getComputedStyle(e).zIndex));
     await expect(sheet(page)).toHaveAttribute('role', 'region');
     await expect(sheet(page)).toHaveAttribute('aria-label', 'Suchergebnisse');
     await expect(sheet(page).locator('#ds-all')).toHaveText('Alle Ergebnisse');
@@ -96,13 +101,18 @@ test.describe('desktop search sheet', () => {
     await page.keyboard.type('har', { delay: 30 });
     await expect(sheet(page).locator('#ds-hit-0')).toBeVisible();
     await expect(input).toHaveAttribute('role', 'combobox');
-    await expect(input).toHaveAttribute('aria-controls', 'ds-sheet');
+    // the combobox controls the listbox; All results is its option too (owned from the other column)
+    await expect(input).toHaveAttribute('aria-controls', 'ds-list');
+    await expect(sheet(page).locator('#ds-list')).toHaveAttribute('role', 'listbox');
+    await expect(sheet(page).locator('#ds-list')).toHaveAttribute('aria-owns', 'ds-all');
+    await expect(sheet(page).locator('#ds-all')).toHaveAttribute('role', 'option');
     await input.press('ArrowDown');
     await expect(input).toHaveAttribute('aria-activedescendant', 'ds-hit-0');
     await expect(sheet(page).locator('#ds-hit-0')).toHaveAttribute('aria-selected', 'true');
     // ↑ from the first wraps to All results, ↓ comes back
     await input.press('ArrowUp');
     await expect(input).toHaveAttribute('aria-activedescendant', 'ds-all');
+    await expect(sheet(page).locator('#ds-all')).toHaveAttribute('aria-selected', 'true');
     await input.press('ArrowDown');
     await expect(input).toHaveAttribute('aria-activedescendant', 'ds-hit-0');
     const href = await sheet(page).locator('#ds-hit-0').getAttribute('href');
@@ -144,6 +154,80 @@ test.describe('desktop search sheet', () => {
     await expect(sheet(page)).toHaveCount(0);
     await expect(page.locator('[data-desk-bar] .pill')).not.toHaveClass(/\bopen\b/);
     await expect(page.locator('.frost-dim')).toHaveCount(0);
+  });
+
+  test('a late answer for an older query never shows', async ({ page }) => {
+    await page.route('**/api/search?*', async (r) => {
+      if (new URL(r.request().url()).searchParams.get('q') === 'har') await new Promise((res) => setTimeout(res, 600));
+      await r.fallback();
+    });
+    await ready(page);
+    const input = page.locator('#hq');
+    await page.keyboard.press('/');
+    // record whether a "har" hit ever appears
+    await page.evaluate(() => {
+      const w = window as unknown as { __harSeen: boolean };
+      w.__harSeen = false;
+      new MutationObserver(() => { if (document.querySelector('#ds-sheet mark')?.textContent?.toLowerCase() === 'har') w.__harSeen = true; }).observe(document.body, { subtree: true, childList: true, characterData: true });
+    });
+    const asked = page.waitForRequest((r) => r.url().includes('/api/search?q=har'));
+    await page.keyboard.type('har', { delay: 30 });
+    await asked;
+    await input.fill('xyz');
+    await expect(sheet(page).getByText('Keine Treffer für „xyz“')).toBeVisible();
+    await page.waitForTimeout(800); // the "har" answer has landed by now
+    await expect(sheet(page).getByText('Keine Treffer für „xyz“')).toBeVisible();
+    expect(await page.evaluate(() => (window as unknown as { __harSeen: boolean }).__harSeen)).toBe(false);
+  });
+
+  test.describe('a failed search', () => {
+    test.use({ allowedConsole: /status of 500/ });
+    test('says so in the sheet', async ({ page }) => {
+      await page.route('**/api/search?*', (r) => r.fulfill({ status: 500, json: { error: 'boom' } }));
+      await ready(page);
+      await page.keyboard.press('/');
+      await page.keyboard.type('har', { delay: 30 });
+      await expect(sheet(page).getByRole('status')).toHaveText('Suche gerade nicht möglich');
+    });
+  });
+
+  test('Tab moves through the sheet and closes it on the way out; clicking its empty space keeps typing in the field', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('ff-recent-search:p1', JSON.stringify(['nolan', 'dahl'])));
+    await ready(page);
+    const input = page.locator('#hq');
+    await page.keyboard.press('/');
+    await expect(sheet(page).getByRole('button', { name: 'nolan' })).toBeVisible();
+    await expect(sheet(page).locator('.posters a')).toHaveCount(5);
+    // a press on empty space (a heading) keeps the focus in the field
+    await sheet(page).getByRole('heading', { name: 'Beliebt hier' }).click();
+    await expect(input).toBeFocused();
+    await page.keyboard.type('n');
+    await expect(input).toHaveValue('n');
+    await input.fill('');
+    // field → ✕ → the sheet's first control (Clear), then on through its chips, posters and genres
+    await page.keyboard.press('Tab');
+    await expect(page.locator('[data-desk-bar] button.x')).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(sheet(page).getByRole('button', { name: 'Verlauf löschen' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(sheet(page).getByRole('button', { name: 'nolan' })).toBeFocused();
+    // Shift+Tab off the first control: back to the field, the sheet stays
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Shift+Tab');
+    await expect(input).toBeFocused();
+    await expect(sheet(page)).toBeVisible();
+    // all the way through: the sheet closes and the focus moves on to the bell
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab');
+    const n = await sheet(page).evaluate((s) => s.querySelectorAll('a[href]:not([tabindex="-1"]), button:not(:disabled)').length);
+    for (let i = 1; i < n; i++) {
+      await page.keyboard.press('Tab');
+      expect(await page.evaluate(() => !!document.activeElement?.closest('#ds-sheet'))).toBe(true);
+    }
+    await expect(sheet(page)).toBeVisible();
+    await page.keyboard.press('Tab');
+    await expect(sheet(page)).toHaveCount(0);
+    await expect(page.locator('[data-desk-bar] .right button').first()).toBeFocused();
   });
 
   test('on /search the sheet never opens', async ({ page }) => {
@@ -220,6 +304,31 @@ test.describe('desktop search sheet', () => {
       await page.mouse.move(pb.x + pb.width / 2, pb.y + pb.height / 2, { steps: 4 });
       await expect(pill.locator('.frost-sheen.on')).toHaveCount(1);
       await expect(page.locator('[data-desk-bar] .round .frost-sheen')).toHaveCount(1);
+      // the bell's hover lights its edge; the milk stays as it is (glass spec §1.3)
+      const round = page.locator('[data-desk-bar] .round');
+      const bg = await round.evaluate((e) => getComputedStyle(e).backgroundImage);
+      await round.hover();
+      await expect.poll(() => round.evaluate((e) => getComputedStyle(e).borderTopColor)).toBe('rgba(255, 255, 255, 0.42)');
+      expect(await round.evaluate((e) => getComputedStyle(e).backgroundImage)).toBe(bg);
+    });
+
+    test('over the billboard the bar keeps the safe scrim until the shade is in', async ({ page }) => {
+      await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+      await page.goto('/');
+      const bar = page.locator('[data-desk-bar]');
+      const half = bar.locator('.pbg .half i').first();
+      await expect(half).toHaveClass(/frost-safe/);
+      await expect(bar.locator('.round')).toHaveClass(/frost-safe/);
+      // scrolled: the safe scrim stays while the shade fades in (240 ms), then the light one over the shade
+      const kept = await page.evaluate(async () => {
+        window.scrollTo(0, 60);
+        await new Promise((r) => setTimeout(r, 120));
+        return document.querySelector('[data-desk-bar] .pbg .half i')!.classList.contains('frost-safe');
+      });
+      expect(kept).toBe(true);
+      await expect(half).not.toHaveClass(/frost-safe/);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await expect(half).toHaveClass(/frost-safe/);
     });
   });
 });

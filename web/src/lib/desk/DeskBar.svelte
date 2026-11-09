@@ -22,7 +22,7 @@
   import { prefs } from '#lib/stores';
   import { t } from '#lib/i18n';
   import { animateTo, glide, halt, motionLevel, motionTripped, placeAt } from '#lib/tv/motion';
-  import { pillSolid } from './bar';
+  import { alphaOf, pillSolid, SHADE_MS } from './bar';
   import { sheen } from '#lib/glass/pointer';
   import { getActiveProfile } from '#lib/api';
   import { pushRecent } from '#lib/discovery';
@@ -50,6 +50,14 @@
   // ---- solid pill once scrolled (24 px) or on pages without a billboard ----
   let scrollY = 0;
   $: solid = pillSolid(scrollY, heroPage);
+  // the glass over the billboard takes the safe scrim; turning solid, it keeps it until the bar's shade has faded in behind it
+  let safe = !solid, safeT: ReturnType<typeof setTimeout> | undefined;
+  $: setSafe(solid);
+  function setSafe(s: boolean) {
+    clearTimeout(safeT);
+    if (!s) safe = true;
+    else if (safe) safeT = setTimeout(() => (safe = false), SHADE_MS);
+  }
   /** the full motion set (the glass blur itself comes from html.m-glass; calm mode, reduced motion or a slow device: none) */
   const fullMotion = (_calm: unknown, _tripped: boolean) => motionLevel() === 'full'; // re-read when the prefs (calm mode) arrive or the frame guard trips
   $: still = !fullMotion($prefs, $motionTripped); // calm mode / reduced motion: the field's fades are off too (the springs check motionLevel themselves)
@@ -179,6 +187,8 @@
     magBtn?.focus();
   }
   function onSearchKey(e: KeyboardEvent) {
+    // Tab off the field's last control (✕) moves into the sheet's controls (it closes when the focus leaves the sheet)
+    if (e.key === 'Tab' && !e.shiftKey && sheetOpen && e.target === xBtn && sheetCmp?.focusFirst()) { e.preventDefault(); return; }
     if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && sheetOpen && e.target === searchEl) {
       e.preventDefault();
       activeId = nextId(sheetIds, activeId, e.key === 'ArrowDown' ? 1 : -1);
@@ -215,9 +225,11 @@
     leaveField(false);
   }
   /** Esc inside the sheet: the focus goes back to the field; the dim: close */
-  function onSheetClose(e: CustomEvent<{ refocus: boolean }>) {
-    if (e.detail.refocus) searchEl?.focus();
-    else leaveField(false);
+  function onSheetClose(e: CustomEvent<{ focus: 'field' | 'after' | null }>) {
+    if (e.detail.focus === 'field') { searchEl?.focus(); return; }
+    // Tab off the sheet's last control: close, and the focus goes on to what follows the field (the bell)
+    leaveField(false);
+    if (e.detail.focus === 'after') root?.querySelector<HTMLElement>('.right button')?.focus();
   }
   /** a recent search chip: into the field */
   function onSheetFill(e: CustomEvent<{ q: string }>) {
@@ -307,7 +319,10 @@
     void placeFill(true);
   }
 
+  let sheetCmp: SearchSheet | undefined, selA: number | null = null;
   onMount(() => {
+    // the tab fill's light is the --fr-sel token: drawn opaque, the token's alpha as the group opacity (overlaps never add up)
+    selA = alphaOf(getComputedStyle(pill).getPropertyValue('--fr-sel'));
     // a retarget, not a jump: a slide in flight keeps going
     sync(false);
     const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { void placeFill(true); sync(false); }) : null;
@@ -315,7 +330,7 @@
     ro?.observe(root);
     return () => ro?.disconnect();
   });
-  onDestroy(() => { clearTimeout(st); clearTimeout(notesTimer); clearTimeout(blurT); });
+  onDestroy(() => { clearTimeout(st); clearTimeout(notesTimer); clearTimeout(blurT); clearTimeout(safeT); });
 </script>
 
 <svelte:window bind:scrollY on:keydown={onWindowKey} on:click={onWindowClick} on:focusin={onWindowFocusIn} />
@@ -323,10 +338,10 @@
 <header class="nav desk" class:solid class:still data-desk-bar bind:this={root}>
   <span class="scrim" aria-hidden="true"></span>
   <a class="logo" href="/" aria-label={$t('shell.nav.homeLink')}><Logo wordmark size={30} /></a>
-  <nav class="pill" class:on={fillOn} class:open class:compact class:collapse aria-label={$t('shell.nav.main')} bind:this={pill} style:--fw="{fw}px" style:--fwc="{open ? fw : lastFw}px" use:clipSheen>
+  <nav class="pill" class:on={fillOn} class:open class:compact class:collapse aria-label={$t('shell.nav.main')} bind:this={pill} style:--fw="{fw}px" style:--fwc="{open ? fw : lastFw}px" style:--sel-a={selA ?? undefined} use:clipSheen>
     <!-- the background: two glass halves, each clipped at the middle, that slide (never scale) when the pill changes size;
          over the billboard (not yet scrolled) with the safe scrim -->
-    <span class="pbg" aria-hidden="true"><span class="half l"><i class="frost" class:frost-safe={!solid} bind:this={bgL}></i></span><span class="half r"><i class="frost" class:frost-safe={!solid} bind:this={bgR}></i></span></span>
+    <span class="pbg" aria-hidden="true"><span class="half l"><i class="frost" class:frost-safe={safe} bind:this={bgL}></i></span><span class="half r"><i class="frost" class:frost-safe={safe} bind:this={bgR}></i></span></span>
     <span class="sclip" aria-hidden="true"></span>
     <div class="track" bind:this={track}>
       <span class="fill" aria-hidden="true" bind:this={fill}><i class="cap"></i><i class="mid" bind:this={mid}></i><i class="cap" bind:this={capR}></i></span>
@@ -360,14 +375,14 @@
     <form class="psearch" role="search" bind:this={form} on:submit|preventDefault={submitSearch} on:focusin={onFocusIn} on:focusout={onFocusOut}>
       <button type="button" class="mag" bind:this={magBtn} aria-label={open && !compact ? $t('shell.search.submit') : $t('shell.search.open')} on:mousedown|preventDefault on:click={onMag}><Icon name="search" size={18} /></button>
       <input id="hq" type="search" bind:this={searchEl} bind:value={q} autocomplete="off" enterkeyhint="search" placeholder={$t('shell.search.placeholder')} aria-label={$t('shell.search.label')} tabindex={open && !compact ? 0 : -1}
-        role="combobox" aria-expanded={sheetOpen} aria-controls="ds-sheet" aria-autocomplete="list" aria-activedescendant={sheetOpen && activeId ? activeId : undefined}
+        role="combobox" aria-expanded={sheetOpen} aria-controls={sheetIds.length ? 'ds-list' : 'ds-sheet'} aria-autocomplete="list" aria-activedescendant={sheetOpen && activeId ? activeId : undefined}
         on:input={onSearchInput} on:keydown={onSearchKey} />
       <button type="button" class="x" bind:this={xBtn} aria-label={$t('desk.bar.close')} tabindex={open && !compact ? 0 : -1} on:mousedown|preventDefault on:click={onClose} on:keydown={onSearchKey}><Icon name="x" size={16} /></button>
     </form>
   </nav>
   <div class="right">
     <div class="pop-anchor">
-      <button type="button" class="round frost" class:frost-safe={!solid} aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-expanded={bell} on:click={toggleBell} use:clipSheen>
+      <button type="button" class="round frost" class:frost-safe={safe} aria-label={unread ? $t('shell.bell.unread', { n: unread }) : $t('shell.bell.label')} aria-expanded={bell} on:click={toggleBell} use:clipSheen>
         <span class="sclip" aria-hidden="true"></span><Icon name="bell" size={20} />{#if unread}<span class="dot">{unread}</span>{/if}
       </button>
       {#if bell}
@@ -402,7 +417,7 @@
   </div>
 </header>
 
-<SearchSheet {q} open={sheetOpen} anchor={pill} {activeId} on:items={onSheetItems} on:pick={onSheetPick} on:close={onSheetClose} on:fill={onSheetFill} />
+<SearchSheet bind:this={sheetCmp} {q} open={sheetOpen} anchor={pill} {activeId} on:items={onSheetItems} on:pick={onSheetPick} on:close={onSheetClose} on:fill={onSheetFill} />
 
 <style>
   /* the bar itself never paints: no band across the page, only the pill and the round buttons carry a fill */
@@ -426,11 +441,12 @@
   .pill { position: relative; display: flex; align-items: center; gap: 0; padding: 4px; border-radius: 999px; border: 1px solid transparent; }
   .pbg { position: absolute; inset: -1px; pointer-events: none; }
   /* each half is a clip window from the pill's middle outwards (far past the edge, so a larger shape mid-flight is not cut) */
-  .half { position: absolute; top: 0; bottom: 0; overflow: hidden; }
+  /* (each window reaches above and below the pill, so the glass's drop shadow is not clipped away) */
+  .half { position: absolute; top: -50px; bottom: -70px; overflow: hidden; }
   .half.l { left: -100vw; right: 50%; }
   .half.r { left: 50%; right: -100vw; }
   /* each half is glass (.frost: milk, grain via ::before, the light edge; the blur from the html.m-glass rule; solid without it) */
-  .half i { position: absolute; top: 0; bottom: 0; width: 100vw; box-sizing: border-box; }
+  .half i { position: absolute; top: 50px; bottom: 70px; width: 100vw; box-sizing: border-box; }
   .half.l i { left: 100vw; border-radius: 999px 0 0 999px; border-right: 0; }
   .half.r i { right: 100vw; border-radius: 0 999px 999px 0; border-left: 0; }
   /* the pill's sheen (lib/glass/pointer.ts), clipped to the pill's shape here (the pill itself does not clip) */
@@ -438,8 +454,9 @@
   .pill.open:not(.compact):focus-within .half i { border-color: rgba(255, 255, 255, .6); } /* the field's focus ring (the input has no outline) */
   .track { position: relative; display: flex; align-items: center; height: 36px; }
   .fill { position: absolute; left: 0; top: 0; width: 36px; height: 36px; opacity: 0; transition: opacity 160ms ease-out; pointer-events: none; }
-  /* the selection light (--fr-sel, white at .13): drawn opaque and faded as a group, so the overlapping parts never add up */
-  .pill.on .fill { opacity: .13; }
+  /* the selection light (--fr-sel): drawn opaque and faded as a group to the token's alpha (--sel-a, read from --fr-sel on
+     mount), so the overlapping parts never add up */
+  .pill.on .fill { opacity: var(--sel-a, 0); }
   .fill i { position: absolute; top: 0; left: 0; height: 36px; background: #fff; }
   .fill .cap { width: 36px; border-radius: 50%; }
   .fill .mid { left: 18px; width: 100px; transform-origin: left center; transition: transform 340ms var(--ease); }
@@ -479,7 +496,9 @@
   .right { justify-self: end; display: flex; align-items: center; gap: 8px; }
   /* glass round buttons (.frost: the look; the blur from html.m-glass, solid without it); hover: the milk a little brighter */
   .round { position: relative; z-index: 1; display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; color: #fff; box-shadow: inset 0 1px 0 var(--fr-hi), var(--fr-shadow-card); }
-  .round:hover:not(:disabled) { background: linear-gradient(180deg, rgba(var(--fr-milk-top), calc(var(--fr-milk-a2) + .07)), rgba(var(--fr-milk), calc(var(--fr-milk-a1) + .07))), rgba(var(--fr-scrim-rgb), var(--fr-scrim)); }
+  /* hover lights the edge (never more milk over the same scrim, glass spec §1.3; as .frost-btn:hover) */
+  .round:hover:not(:disabled) { background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim));
+    border-color: rgba(255, 255, 255, .42); box-shadow: inset 0 1px 0 var(--fr-hi), inset 0 0 0 1px rgba(255, 255, 255, .14), var(--fr-shadow-card); }
   :global(html:not(.m-glass)) .round:hover:not(:disabled) { background: var(--fr-solid-hover); }
   .round .sclip { border-radius: 50%; }
   .round:focus-visible, .avatar:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }

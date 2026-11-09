@@ -15,7 +15,7 @@
   import { t } from '#lib/i18n';
   import { fxMode, grow, growOrigin, REDUCED_MS } from '#lib/glass/fx';
   import { GLASS_OUT } from '#lib/tv/motion';
-  import { CASCADE_GAP, CASCADE_MS, cascadeKey, hitIds, marks, MIN_Q, sheetModel, type SearchResult } from './searchSheet';
+  import { CASCADE_GAP, CASCADE_MS, cascadeKey, hitIds, MARK_CSS, marks, MIN_Q, sheetModel, type SearchResult } from './searchSheet';
 
   export let q: string;
   export let open: boolean;
@@ -24,7 +24,11 @@
   /** the hit the field's arrow keys made active (aria-activedescendant) */
   export let activeId: string | null;
 
-  const dispatch = createEventDispatcher<{ close: { refocus: boolean }; pick: { href: string }; items: { ids: string[] }; fill: { q: string } }>();
+  /**
+   * close: `focus` 'field' = back to the field (Esc inside the sheet, Clear, Shift+Tab off its first control; the sheet stays
+   * open); 'after' = Tab off its last control (close, focus to what follows the field); null = the dim (close)
+   */
+  const dispatch = createEventDispatcher<{ close: { focus: 'field' | 'after' | null }; pick: { href: string }; items: { ids: string[] }; fill: { q: string } }>();
 
   // ---- idle content: recent searches (re-read on each open), Popular here (not on kids profiles) and the genres (once) ----
   let recent: string[] = [], popular: Item[] = [], genres: string[] = [], idleLoaded = false;
@@ -36,17 +40,17 @@
     api('/api/library/genres').then((r) => (genres = (r.genres as string[]) ?? [])).catch(() => {});
   }
   /** Clear: the list goes, the focus back to the field (the button it was on is gone) */
-  function forget() { clearRecent(getActiveProfile()); recent = []; dispatch('close', { refocus: true }); }
+  function forget() { clearRecent(getActiveProfile()); recent = []; dispatch('close', { focus: 'field' }); }
 
   // ---- results: 250 ms after the last keystroke; a newer query aborts the older one, and a late answer (older sequence, or
   // after the sheet closed) is dropped ----
-  let res: SearchResult | null = null, seq = 0, ctl: AbortController | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+  let res: SearchResult | null = null, failed = false, seq = 0, ctl: AbortController | undefined, timer: ReturnType<typeof setTimeout> | undefined;
   let wasOpen = false;
   $: onOpen(open);
   function onOpen(o: boolean) {
     if (o === wasOpen) return;
     wasOpen = o;
-    if (o) { res = null; loadIdle(); }
+    if (o) { res = null; failed = false; idleShown = false; loadIdle(); }
   }
   $: schedule(q, open);
   function schedule(query: string, isOpen: boolean) {
@@ -55,7 +59,7 @@
     const my = ++seq;
     if (!isOpen || s.length < MIN_Q) {
       ctl?.abort();
-      if (isOpen) res = null; // (a closing sheet keeps what it shows while it folds away)
+      if (isOpen) { res = null; failed = false; } // (a closing sheet keeps what it shows while it folds away)
       return;
     }
     timer = setTimeout(async () => {
@@ -63,8 +67,11 @@
       const c = (ctl = new AbortController());
       try {
         const r = await api<SearchResult>(`/api/search?q=${encodeURIComponent(s)}`, { signal: c.signal });
-        if (my === seq && open) res = r;
-      } catch { /* aborted or failed: the sheet keeps what it shows */ }
+        if (my === seq && open) { res = r; failed = false; }
+      } catch (e) {
+        // aborted: a newer query or the close took over; failed: a short line says so (the last results stay)
+        if (my === seq && open && (e as { name?: string } | null)?.name !== 'AbortError') failed = true;
+      }
     }, 250);
   }
   onDestroy(() => { clearTimeout(timer); ctl?.abort(); });
@@ -109,10 +116,14 @@
     return { duration: mode === 'still' ? 0 : mode === 'reduced' ? REDUCED_MS : 200, css: (u: number) => `opacity:${u}` };
   }
 
-  // ---- the cascade (§8.6): when what is shown changes, each [data-cascade] item rises in, 45 ms after the one before ----
-  let shownKey = '', running: Animation[] = [];
+  // ---- the cascade (§8.6): when the results change, each [data-cascade] item rises in, 45 ms after the one before; the idle
+  // content cascades once per open (not again as Popular here and the genres arrive) ----
+  let shownKey = '', running: Animation[] = [], idleShown = false;
   $: key = open ? cascadeKey(model) : '';
-  $: if (key !== shownKey) { shownKey = key; if (key) void tick().then(cascade); }
+  $: if (key !== shownKey) {
+    shownKey = key;
+    if (key && !(model.kind === 'idle' && idleShown)) { if (model.kind === 'idle') idleShown = true; void tick().then(cascade); }
+  }
   function cascade() {
     running.forEach((a) => a.cancel());
     running = [];
@@ -126,11 +137,33 @@
   // the active hit stays in view
   $: if (activeId && el) el.querySelector(`#${activeId}`)?.scrollIntoView?.({ block: 'nearest' });
 
-  /** Esc with the focus inside the sheet: back to the field (it then clears and closes as usual) */
+  /** the controls Tab moves through (the top hits are reached with the arrows from the field) */
+  const tabbable = () => (el ? [...el.querySelectorAll<HTMLElement>('a[href]:not([tabindex="-1"]), button:not(:disabled)')] : []);
+  /** puts the focus on the sheet's first control (Tab from the field); false when there is none */
+  export function focusFirst(): boolean {
+    const f = tabbable()[0];
+    f?.focus();
+    return !!f;
+  }
+  /**
+   * Esc with the focus inside the sheet: back to the field (it then clears and closes as usual). Tab moves through the sheet's
+   * controls; off its last one the sheet closes and the focus goes on past the field, Shift+Tab off its first one goes back.
+   */
   function onKey(e: KeyboardEvent) {
-    if (e.key !== 'Escape') return;
-    e.preventDefault(); e.stopPropagation();
-    dispatch('close', { refocus: true });
+    if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      dispatch('close', { focus: 'field' });
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const list = tabbable();
+    const i = list.indexOf(document.activeElement as HTMLElement);
+    if (e.shiftKey && i <= 0) { e.preventDefault(); dispatch('close', { focus: 'field' }); }
+    else if (!e.shiftKey && i === list.length - 1) { e.preventDefault(); dispatch('close', { focus: 'after' }); }
+  }
+  /** a press on the sheet's empty space keeps the focus (and typing) in the field */
+  function onDown(e: MouseEvent) {
+    if (!(e.target as Element | null)?.closest?.('a[href], button')) e.preventDefault();
   }
 
   function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
@@ -141,26 +174,26 @@
 {#if open}
   <!-- one root node (portalled to <body>): the dim and the sheet -->
   <div class="ds-layer" use:portal>
-    <div class="frost-dim ds-dim" role="presentation" in:dimT out:dimT on:click={() => dispatch('close', { refocus: false })}></div>
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions (Esc inside the sheet; the field is the combobox) -->
-    <div id="ds-sheet" class="frost frost-sheet frost-safe ds" role="region" aria-label={$t('desk.search.sheet')} tabindex="-1" bind:this={el}
-      style:left="{box.left}px" style:top="{box.top}px" style:width="{box.width}px" style:max-height="calc(100vh - {box.top + 16}px)"
-      in:growT={{ dir: 'in' }} out:growT={{ dir: 'out' }} on:keydown={onKey}>
+    <div class="frost-dim ds-dim" role="presentation" in:dimT out:dimT on:click={() => dispatch('close', { focus: null })}></div>
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions (Esc / Tab inside the sheet; a press on its empty space keeps the field's focus; the field is the combobox) -->
+    <div id="ds-sheet" class="frost frost-sheet frost-safe ds" role="region" aria-label={$t('desk.search.sheet')} bind:this={el}
+      style:left="{box.left}px" style:top="{box.top}px" style:width="{box.width}px" style:max-height="calc(100vh - {box.top + 16}px)" style:--ds-mark={MARK_CSS}
+      in:growT={{ dir: 'in' }} out:growT={{ dir: 'out' }} on:keydown={onKey} on:mousedown={onDown}>
+      {#if failed}<p class="err" role="status">{$t('home.search.errorTitle')}</p>{/if}
       {#if model.kind === 'results' && model.empty}
         <p class="none" data-cascade>{$t('home.search.noHits', { term })}</p>
       {:else if model.kind === 'results'}
         <div class="col">
-          {#if model.top.length}
-            <h2 class="h">{$t('desk.search.top')}</h2>
-            <div class="hits" role="listbox" aria-label={$t('desk.search.top')}>
+          <!-- the combobox's listbox: the top hits, and All results (in the other column) through aria-owns -->
+          {#if model.top.length}<h2 class="h">{$t('desk.search.top')}</h2>{/if}
+          <div class="hits" id="ds-list" role="listbox" aria-label={$t('desk.search.top')} aria-owns="ds-all">
               {#each model.top as it, i (it.id)}
                 <a class="hit" class:on={activeId === `ds-hit-${i}`} id="ds-hit-{i}" role="option" aria-selected={activeId === `ds-hit-${i}`} tabindex="-1" href={itemPath(it)} data-cascade on:click={() => pick(itemPath(it))}>
                   <img src={thumb(it)} alt="" loading="lazy" width="96" height="54" />
                   <span class="ht"><b>{#each marks(it.name, q) as p}{#if p.m}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}</b>{#if meta(it)}<small>{meta(it)}</small>{/if}</span>
                 </a>
               {/each}
-            </div>
-          {/if}
+          </div>
           {#if model.people.length}
             <h2 class="h">{$t('home.search.people')}</h2>
             <ul class="ppl">{#each model.people as p (p.id)}
@@ -177,9 +210,9 @@
           {/if}
           {#if model.genres.length}
             <h2 class="h">{$t('home.search.byGenre')}</h2>
-            <ul class="chips">{#each model.genres as g (g)}<li data-cascade><a class="chip" href={categoryHref('movies', g)} on:click={() => pick(categoryHref('movies', g))}>{g}</a></li>{/each}</ul>
+            <ul class="chips">{#each model.genres as g (g)}<li data-cascade><a class="frost-btn chip" href={categoryHref('movies', g)} on:click={() => pick(categoryHref('movies', g))}>{g}</a></li>{/each}</ul>
           {/if}
-          <a id="ds-all" class="all" class:on={activeId === 'ds-all'} href={allHref} data-cascade on:click={() => pick(allHref)}>{$t('desk.search.all')}</a>
+          <a id="ds-all" class="all" class:on={activeId === 'ds-all'} role="option" aria-selected={activeId === 'ds-all'} href={allHref} data-cascade on:click={() => pick(allHref)}>{$t('desk.search.all')}</a>
         </div>
       {:else}
         <div class="col">
@@ -199,7 +232,7 @@
           {/if}
           {#if model.genres.length}
             <h2 class="h">{$t('home.search.byGenre')}</h2>
-            <ul class="chips">{#each model.genres as g (g)}<li data-cascade><a class="chip" href={categoryHref('movies', g)} on:click={() => pick(categoryHref('movies', g))}>{g}</a></li>{/each}</ul>
+            <ul class="chips">{#each model.genres as g (g)}<li data-cascade><a class="frost-btn chip" href={categoryHref('movies', g)} on:click={() => pick(categoryHref('movies', g))}>{g}</a></li>{/each}</ul>
           {/if}
         </div>
       {/if}
@@ -209,13 +242,15 @@
 
 <style>
   .ds-dim { z-index: 48; }
-  /* the sheet (glass spec §2): 26 px radius (.frost-sheet), 22 px padding, two columns; under the bar (z 50), over the dim */
-  .ds { position: fixed; z-index: 49; box-sizing: border-box; padding: 22px; display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); gap: 24px; align-content: start;
+  /* the sheet (glass spec §2): 26 px radius (.frost-sheet), 22 px padding, two columns; over the dim and over the bar (z 50),
+     so the bar's scroll shade never darkens its top (it starts below the pill, so nothing of the bar is covered) */
+  .ds { position: fixed; z-index: 51; box-sizing: border-box; padding: 22px; display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); gap: 24px; align-content: start;
     overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
   .ds:focus { outline: none; }
   .col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
   .col > .h ~ .h { margin-top: 8px; }
   .h { margin: 0; font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: rgba(255, 255, 255, .72); }
+  .err { grid-column: 1 / -1; margin: 0; font-size: .9rem; font-weight: 700; color: #fff; }
   .none, .hint { grid-column: 1 / -1; margin: 0; color: rgba(255, 255, 255, .8); }
   .hint { grid-column: auto; font-size: .9rem; }
 
@@ -227,7 +262,8 @@
   .ht { min-width: 0; }
   .ht b { display: block; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ht small { display: block; margin-top: 3px; font-size: 12px; color: rgba(255, 255, 255, .72); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  mark { background: none; color: var(--acc); }
+  /* the matched letters: a lighter coral that passes AA on the sheet and on the selected row (searchSheet.ts MARK_RGB) */
+  mark { background: none; color: var(--ds-mark); }
 
   ul { list-style: none; margin: 0; padding: 0; }
   .ppl { display: flex; gap: 10px; }
@@ -242,9 +278,11 @@
   .posters span { position: absolute; left: 6px; right: 6px; bottom: 6px; font-size: 11px; font-weight: 800; line-height: 1.2; text-shadow: 0 1px 8px rgba(0, 0, 0, .8); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
 
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-  .chip { display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border-radius: 999px; font: inherit; font-size: 13px; font-weight: 700; color: #fff; text-decoration: none;
-    background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .16); }
-  .chip:hover:not(:disabled) { background: rgba(255, 255, 255, .2); text-decoration: none; }
+  .chip { display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border-radius: 999px; font: inherit; font-size: 13px; font-weight: 700; color: #fff; text-decoration: none; }
+  /* recent searches: light chips; the genre chips are glass pills (.frost-btn, its edge-light hover and solid fallback) */
+  .chip:not(.frost-btn) { background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .16); }
+  .chip:not(.frost-btn):hover:not(:disabled) { background: rgba(255, 255, 255, .2); }
+  .chip:hover { text-decoration: none; }
   .rhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .clr { min-height: 32px; padding: 0 10px; border-radius: 999px; background: transparent; color: rgba(255, 255, 255, .8); font-size: 12px; font-weight: 700; }
   .clr:hover:not(:disabled) { background: rgba(255, 255, 255, .12); }
