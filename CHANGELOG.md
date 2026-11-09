@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [3.1.0] – Churros – 2026-11-09
+
 ### Security
 - **Dependency updates.** The file-pattern matching library used by the development tooling (minimatch) is updated to a release that fixes a denial-of-service weakness. It only runs while building and linting, not in the running app.
 - **Android and Fire TV apps:** the Guava library is updated to a release that fixes a known high-severity weakness.
