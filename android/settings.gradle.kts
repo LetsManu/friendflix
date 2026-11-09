@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "friendflix-android"
 include(":app")
+include(":shell-core")
