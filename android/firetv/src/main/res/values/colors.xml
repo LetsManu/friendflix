@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Manuel Weißböck
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<!-- The LG app's start screen colours, with the web UI's coral accent. -->
+<resources>
+    <color name="ic_launcher_background">#14161C</color>
+    <color name="tv_background">#0B0B10</color>
+    <color name="tv_text">#FFFFFF</color>
+    <color name="tv_muted">#B9B9C6</color>
+    <color name="tv_hint">#8A8A99</color>
+    <color name="tv_accent">#FF4F6D</color>
+    <!-- the focus glow around a focused field or button (accent at 35 %) -->
+    <color name="tv_accent_glow">#59FF4F6D</color>
+    <color name="tv_field">#181821</color>
+    <color name="tv_field_border">#3A3A4A</color>
+    <color name="tv_button">#2B2B3A</color>
+    <color name="tv_button_disabled">#802B2B3A</color>
+    <color name="tv_error">#FF8A8A</color>
+</resources>
