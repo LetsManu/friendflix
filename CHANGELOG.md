@@ -4,6 +4,9 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Fixed
+- **Audio and picture stay together** after a stall, reconnect, seek, resume or audio/quality switch. Before, a title whose video plays as is while its sound is converted could jump back about a second and then play the sound ahead of the picture.
+
 ### Glass
 - **Frosted glass everywhere.** Desktop, phone and the admin panel share one frosted-glass look; calm mode, reduced motion and TV get solid panels with the same shapes.
 - **Hover card always fits.** The preview is the same size on every card and nothing is cut off.
