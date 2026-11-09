@@ -4,7 +4,7 @@
   /**
    * The desktop search sheet (glass spec §2): one frosted sheet below the top-bar pill while its field is open (off /search).
    * Idle (fewer than two characters): recent searches, Popular here and the genres. Typing: top results (matched letters
-   * coral), people, posters, genre chips and All results. It grows out of the field and folds back into it (§8.3), the page
+   * underlined in coral), people, posters, genre chips and All results. It grows out of the field and folds back into it (§8.3), the page
    * behind dims, and new results cascade in (§8.6). The field in the bar stays the combobox; this is its popup.
    */
   import { createEventDispatcher, onDestroy, tick } from 'svelte';
@@ -13,9 +13,10 @@
   import { kidsMode } from '#lib/kids';
   import { categoryHref, itemPath, runtimeLabel } from '#lib/mobile';
   import { t } from '#lib/i18n';
-  import { fxMode, grow, growOrigin, REDUCED_MS } from '#lib/glass/fx';
+  import { fxMode, growFrom, REDUCED_MS, twoWay } from '#lib/glass/fx';
+  import { SCRIM_MENU } from '#lib/glass/tone';
   import { GLASS_OUT } from '#lib/tv/motion';
-  import { CASCADE_GAP, CASCADE_MS, cascadeKey, hitIds, MARK_CSS, marks, MIN_Q, sheetModel, type SearchResult } from './searchSheet';
+  import { CASCADE_GAP, CASCADE_MS, cascadeKey, hitIds, marks, MIN_Q, sheetModel, type SearchResult } from './searchSheet';
 
   export let q: string;
   export let open: boolean;
@@ -104,16 +105,16 @@
   $: { ro?.disconnect(); ro = open && anchor && typeof ResizeObserver === 'function' ? new ResizeObserver(() => place()) : undefined; if (ro && anchor) ro.observe(anchor); }
   onDestroy(() => ro?.disconnect());
 
-  /** grows out of the field and folds back into it (the pill's field, else the pill) */
-  function growT(node: Element, p: { dir: 'in' | 'out' }) {
-    const field = anchor?.querySelector<HTMLElement>('.psearch') ?? anchor;
-    const r = node.getBoundingClientRect();
-    return grow(node, { dir: p.dir, origin: field ? growOrigin(field.getBoundingClientRect(), r) : undefined });
-  }
-  /** the page dim: an opacity fade (200 ms; the reduced set's crossfade; instant when still) */
+  /**
+   * grows out of the field and folds back into it (the pill's field, else the pill). Bidirectional (`transition:`): a reopen
+   * while it folds away (or a close while it grows) turns around from where it is (glass spec §8.3). The origin is measured
+   * once per open, while the sheet is unscaled (growFrom caches it per node), so a turn mid-flight keeps it.
+   */
+  const sheetT = (node: Element) => twoWay((dir) => growFrom(node, { trigger: anchor?.querySelector<HTMLElement>('.psearch') ?? anchor, dir }));
+  /** the page dim: an opacity fade (200 ms; the reduced set's crossfade; instant when still), reversible like the sheet */
   function dimT(_node: Element) {
     const mode = fxMode();
-    return { duration: mode === 'still' ? 0 : mode === 'reduced' ? REDUCED_MS : 200, css: (u: number) => `opacity:${u}` };
+    return { duration: mode === 'still' ? 0 : mode === 'reduced' ? REDUCED_MS : 200, css: (t: number) => `opacity:${t}` };
   }
 
   // ---- the cascade (§8.6): when the results change, each [data-cascade] item rises in, 45 ms after the one before; the idle
@@ -174,11 +175,11 @@
 {#if open}
   <!-- one root node (portalled to <body>): the dim and the sheet -->
   <div class="ds-layer" use:portal>
-    <div class="frost-dim ds-dim" role="presentation" in:dimT out:dimT on:click={() => dispatch('close', { focus: null })}></div>
+    <div class="frost-dim ds-dim" role="presentation" transition:dimT on:click={() => dispatch('close', { focus: null })}></div>
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions (Esc / Tab inside the sheet; a press on its empty space keeps the field's focus; the field is the combobox) -->
     <div id="ds-sheet" class="frost frost-sheet frost-safe ds" role="region" aria-label={$t('desk.search.sheet')} bind:this={el}
-      style:left="{box.left}px" style:top="{box.top}px" style:width="{box.width}px" style:max-height="calc(100vh - {box.top + 16}px)" style:--ds-mark={MARK_CSS}
-      in:growT={{ dir: 'in' }} out:growT={{ dir: 'out' }} on:keydown={onKey} on:mousedown={onDown}>
+      style:left="{box.left}px" style:top="{box.top}px" style:width="{box.width}px" style:max-height="calc(100vh - {box.top + 16}px)" style:--fr-scrim-safe={SCRIM_MENU}
+      transition:sheetT on:keydown={onKey} on:mousedown={onDown}>
       {#if failed}<p class="err" role="status">{$t('home.search.errorTitle')}</p>{/if}
       {#if model.kind === 'results' && model.empty}
         <p class="none" data-cascade>{$t('home.search.noHits', { term })}</p>
@@ -217,8 +218,8 @@
       {:else}
         <div class="col">
           {#if model.recent.length}
-            <div class="rhead"><h2 class="h">{$t('home.search.recent')}</h2><button type="button" class="clr" on:click={forget}>{$t('home.search.clearRecent')}</button></div>
-            <ul class="chips">{#each model.recent as r (r)}<li data-cascade><button type="button" class="chip" on:click={() => dispatch('fill', { q: r })}>{r}</button></li>{/each}</ul>
+            <div class="rhead"><h2 class="h">{$t('home.search.recent')}</h2><button type="button" class="clr fill-hover" on:click={forget}>{$t('home.search.clearRecent')}</button></div>
+            <ul class="chips">{#each model.recent as r (r)}<li data-cascade><button type="button" class="chip edge-hover" on:click={() => dispatch('fill', { q: r })}>{r}</button></li>{/each}</ul>
           {:else}
             <p class="hint">{$t('home.search.hint')}</p>
           {/if}
@@ -249,21 +250,21 @@
   .ds:focus { outline: none; }
   .col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
   .col > .h ~ .h { margin-top: 8px; }
-  .h { margin: 0; font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: rgba(255, 255, 255, .72); }
+  .h { margin: 0; font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: rgba(255, 255, 255, .9); }
   .err { grid-column: 1 / -1; margin: 0; font-size: .9rem; font-weight: 700; color: #fff; }
-  .none, .hint { grid-column: 1 / -1; margin: 0; color: rgba(255, 255, 255, .8); }
+  .none, .hint { grid-column: 1 / -1; margin: 0; color: rgba(255, 255, 255, .9); }
   .hint { grid-column: auto; font-size: .9rem; }
 
-  /* top results: a 96×54 thumbnail, the title (matched letters coral) and a meta line */
+  /* top results: a 96×54 thumbnail, the title (matched letters underlined in coral) and a meta line */
   .hits { display: flex; flex-direction: column; gap: 2px; }
   .hit { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; align-items: center; padding: 8px; border-radius: 14px; color: #fff; text-decoration: none; }
   .hit:hover, .hit.on { background: var(--fr-sel); text-decoration: none; }
   .hit img { width: 96px; height: 54px; border-radius: 9px; object-fit: cover; background: rgba(255, 255, 255, .08); }
   .ht { min-width: 0; }
   .ht b { display: block; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ht small { display: block; margin-top: 3px; font-size: 12px; color: rgba(255, 255, 255, .72); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* the matched letters: a lighter coral that passes AA on the sheet and on the selected row (searchSheet.ts MARK_RGB) */
-  mark { background: none; color: var(--ds-mark); }
+  .ht small { display: block; margin-top: 3px; font-size: 12px; color: rgba(255, 255, 255, .9); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* the matched letters: white (AA wherever the title is) with a 2 px brand-coral underline */
+  mark { background: none; color: #fff; text-decoration: underline; text-decoration-color: var(--acc); text-decoration-thickness: 2px; text-underline-offset: 3px; }
 
   ul { list-style: none; margin: 0; padding: 0; }
   .ppl { display: flex; gap: 10px; }
@@ -278,14 +279,14 @@
   .posters span { position: absolute; left: 6px; right: 6px; bottom: 6px; font-size: 11px; font-weight: 800; line-height: 1.2; text-shadow: 0 1px 8px rgba(0, 0, 0, .8); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
 
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-  .chip { display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border-radius: 999px; font: inherit; font-size: 13px; font-weight: 700; color: #fff; text-decoration: none; }
-  /* recent searches: light chips; the genre chips are glass pills (.frost-btn, its edge-light hover and solid fallback) */
-  .chip:not(.frost-btn) { background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .16); }
-  .chip:not(.frost-btn):hover:not(:disabled) { background: rgba(255, 255, 255, .2); }
+  .chip { position: relative; display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border-radius: 999px; font: inherit; font-size: 13px; font-weight: 700; color: #fff; text-decoration: none; }
+  /* recent searches: light chips whose hover lights the edge (.edge-hover; more fill would cost the text its AA); the genre
+     chips are glass pills (.frost-btn, its edge-light hover and solid fallback) */
+  .chip:not(.frost-btn), .chip:not(.frost-btn):hover:not(:disabled) { background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .16); }
   .chip:hover { text-decoration: none; }
   .rhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .clr { min-height: 32px; padding: 0 10px; border-radius: 999px; background: transparent; color: rgba(255, 255, 255, .8); font-size: 12px; font-weight: 700; }
-  .clr:hover:not(:disabled) { background: rgba(255, 255, 255, .12); }
+  /* Clear: its hover fades in a darker fill (.fill-hover: only adds contrast) */
+  .clr, .clr:hover:not(:disabled) { min-height: 32px; padding: 0 10px; border-radius: 999px; background: transparent; color: rgba(255, 255, 255, .9); font-size: 12px; font-weight: 700; }
   .all { align-self: flex-start; display: inline-flex; align-items: center; min-height: 40px; margin-top: 4px; padding: 0 16px; border-radius: 999px; font-weight: 800; font-size: 14px; color: #fff; text-decoration: none; }
   .all:hover, .all.on { background: var(--fr-sel); text-decoration: none; }
   .ds a:focus-visible, .ds button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }

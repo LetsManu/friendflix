@@ -55,8 +55,9 @@ test.describe('desktop search sheet', () => {
     for (const h of ['Beste Treffer', 'Personen', 'Filme & Serien', 'Nach Genre stöbern']) await expect(sheet(page).getByRole('heading', { name: h })).toBeVisible();
     const mark = sheet(page).locator('#ds-hit-0 mark');
     await expect(mark).toHaveText('Har');
-    // a lighter coral than the brand's (#ff4f6d): AA on the sheet and its selected row (searchSheet.test.ts)
-    expect(await mark.evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 195, 205)');
+    // white (AA on the sheet and its selected row, searchSheet.test.ts) with a 2 px brand-coral underline
+    const mk = await mark.evaluate((e) => { const c = getComputedStyle(e); return [c.color, c.textDecorationLine, c.textDecorationThickness, c.textDecorationColor]; });
+    expect(mk).toEqual(['rgb(255, 255, 255)', 'underline', '2px', 'rgb(255, 79, 109)']);
     // above the bar's scroll shade (on, on /watchlist): just inside the sheet's top edge is the sheet itself
     const hit = await page.evaluate(([x, y]) => !!document.elementFromPoint(x!, y!)?.closest('#ds-sheet'), [sb.x + sb.width / 2, sb.y + 4]);
     expect(hit).toBe(true);
@@ -276,10 +277,89 @@ test.describe('desktop search sheet', () => {
       await page.keyboard.press('/');
       await expect(sheet(page)).toBeVisible();
       await expect.poll(() => sheet(page).evaluate((s) => s.getAnimations().length)).toBe(0); // grown in
+      // a per-frame watcher, started before the Esc: did a frame show the sheet still attached and folding back?
+      // (installed in the page before the key is sent, awaited after it)
+      await page.evaluate(() => {
+        (window as unknown as { __folded: Promise<boolean> }).__folded = new Promise<boolean>((res) => {
+          const t0 = performance.now();
+          const f = () => {
+            const s = document.getElementById('ds-sheet');
+            if (s?.getAnimations().length) return res(true);
+            if (!s || performance.now() - t0 > 4000) return res(false);
+            requestAnimationFrame(f);
+          };
+          requestAnimationFrame(f);
+        });
+      });
       await page.locator('#hq').press('Escape');
-      const n = await page.evaluate(() => document.getElementById('ds-sheet')?.getAnimations().length ?? -1);
-      expect(n).toBeGreaterThan(0); // folding back up, not cut
+      expect(await page.evaluate(() => (window as unknown as { __folded: Promise<boolean> }).__folded)).toBe(true); // folding back up, not cut
       await expect(sheet(page)).toHaveCount(0);
+    });
+
+    test('toggle fast: open, close mid-open, reopen mid-close (within ~100 ms) turns around without a jump', async ({ page }) => {
+      await ready(page);
+      type S = { n: number; s: number; o: number; d: number };
+      const run = () => page.evaluate(async () => {
+        const frame = () => new Promise((r) => requestAnimationFrame(r));
+        const at = (): S | null => {
+          const all = document.querySelectorAll<HTMLElement>('#ds-sheet');
+          if (!all.length) return null;
+          const cs = getComputedStyle(all[0]!);
+          const dim = document.querySelector<HTMLElement>('.ds-dim');
+          return { n: all.length, s: cs.transform === 'none' ? 1 : new DOMMatrixReadOnly(cs.transform).a, o: Number(cs.opacity), d: dim ? Number(getComputedStyle(dim).opacity) : -1 };
+        };
+        const key = (el: Element | null, k: string) => (el ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+        const out: Array<S | null> = [];
+        const until = async (ok: (v: S | null) => boolean, ms = 2000) => {
+          const t0 = performance.now();
+          for (;;) { await frame(); const v = at(); out.push(v); if (ok(v) || performance.now() - t0 > ms) return v; }
+        };
+        const gone = () => until((v) => !v);
+        // condition-driven (a loaded host has long frames): close once the sheet is visibly growing, reopen as soon as it is
+        // visibly folding back. Svelte hands a turn over a frame or two later (the running half goes on until then), so a stall
+        // can let the fold reach its end before the reopen takes over (then it rightly grows from there): such a try is
+        // retried. A real restart (back to scale .4 / opacity 0, or a new sheet) looks like that every time, so it still fails.
+        const settledOpen = (v: S | null) => !v || (v.o === 1 && v.s === 1 && !document.getElementById('ds-sheet')!.getAnimations().length);
+        for (let tries = 0; tries < 5; tries++) {
+          out.length = 0;
+          key(document.activeElement, '/'); // open
+          const a = await until((v) => !!v && v.o >= 0.3);
+          if (!a || a.o > 0.9) { key(document.getElementById('hq'), 'Escape'); await gone(); continue; } // overshot
+          const closeAt = out.length;
+          key(document.getElementById('hq'), 'Escape'); // close mid-open (the field is empty: it closes)
+          let peak = 0;
+          const b = await until((v) => { if (v) peak = Math.max(peak, v.o); return !v || v.o <= peak - 0.05; });
+          if (!b || b.o < 0.2) { await gone(); continue; } // stalled: (nearly) gone before the reopen
+          const reopenAt = out.length;
+          key(document.activeElement, '/'); // reopen mid-close
+          await until(settledOpen);
+          if (out.slice(reopenAt).some((v) => !v || v.o === 0)) { await until(settledOpen); key(document.getElementById('hq'), 'Escape'); await gone(); continue; } // stalled
+          return { out: out as S[], closeAt, reopenAt };
+        }
+        return { out: out as S[], closeAt: -1, reopenAt: -1 }; // (the last try's samples, gaps included)
+      });
+      const r = await run();
+      const dump = JSON.stringify(r.out.map((x) => (x ? [+x.s.toFixed(3), +x.o.toFixed(2), +x.d.toFixed(2)] : null)));
+      expect(r.reopenAt, dump).toBeGreaterThan(0);
+      const fall = r.out.slice(r.closeAt, r.reopenAt), rise = r.out.slice(r.reopenAt);
+      // one sheet at all times, and never a frame at opacity 0 once it showed (a restart would drop to scale .4, opacity 0)
+      expect(r.out.every((x) => x.n === 1), dump).toBe(true);
+      expect(r.out.slice(r.closeAt).some((x) => x.o === 0), dump).toBe(false);
+      expect(Math.min(...rise.map((x) => x.s)), dump).toBeGreaterThan(0.45);
+      // the close turns around within a frame or two and only fades from there; the reopen likewise only rises
+      const top = fall.findIndex((x) => x.o === Math.max(...fall.map((y) => y.o)));
+      expect(top, dump).toBeLessThanOrEqual(3);
+      for (let k = top + 1; k < fall.length; k++) expect(fall[k]!.o, dump).toBeLessThanOrEqual(fall[k - 1]!.o + 0.001);
+      const low = rise.findIndex((x) => x.o === Math.min(...rise.map((y) => y.o)));
+      expect(low, dump).toBeLessThanOrEqual(3);
+      for (let k = low + 1; k < rise.length; k++) expect(rise[k]!.o, dump).toBeGreaterThanOrEqual(rise[k - 1]!.o - 0.001);
+      // the dim turns with it (its fade is shorter, so it may reach its end first): after its lowest point it only rises
+      const dlow = rise.findIndex((x) => x.d === Math.min(...rise.map((y) => y.d)));
+      expect(dlow, dump).toBeLessThanOrEqual(3);
+      for (let k = dlow + 1; k < rise.length; k++) expect(rise[k]!.d, dump).toBeGreaterThanOrEqual(rise[k - 1]!.d - 0.001);
+      await expect.poll(() => page.locator('.ds-dim').evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
+      await expect(sheet(page)).toHaveCount(1);
+      await expect(page.locator('#hq')).toHaveAttribute('aria-expanded', 'true');
     });
 
     test('calm mode: closing is instant', async ({ page }) => {

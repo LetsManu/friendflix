@@ -18,19 +18,11 @@ export const GENRE_N = 8;
 /** below this many characters the sheet shows its idle content (recent, popular, genres) */
 export const MIN_Q = 2;
 
-/**
- * The matched letters' colour: the brand coral lightened (mixed toward white) until it passes AA (4.5:1) on the sheet's
- * selected row (--fr-sel, white at .13) where the sheet sits over the dimmed page at the ambient background's brightest point;
- * plain coral (#ff4f6d) gives about 3:1 there. Accessibility over the mockup's exact colour (controller ruling).
- */
-export const MARK_RGB: [number, number, number] = [255, 195, 205];
-export const MARK_CSS = `rgb(${MARK_RGB.join(', ')})`;
-/** the page dim behind the sheet (app.css .frost-dim) and the selected row's light (--fr-sel): for the contrast check */
+/** the page dim behind the sheet (app.css .frost-dim): for the contrast check */
 export const DIM_RGB: [number, number, number] = [8, 7, 11];
 export const DIM_A = 0.45;
-export const SEL_A = 0.13;
 
-/** a part of a title: `m` = matched letters (drawn in MARK_RGB) */
+/** a part of a title: `m` = matched letters (white with a 2 px coral underline) */
 export type Mark = { t: string; m: boolean };
 
 /** case- and accent-insensitive form of a string (NFD, marks stripped, lower case) */

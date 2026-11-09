@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import type { Item } from '#lib/api';
-import { AMB_PEAK, contrast, DARK_BASE, frostComposite, SCRIM_SAFE, type RGB } from '#lib/glass/tone';
-import { cascadeKey, DIM_A, DIM_RGB, GENRE_N, hitIds, MARK_CSS, MARK_RGB, marks, nextId, PEOPLE_N, POSTER_N, SEL_A, sheetModel, TOP_N, type Person, type SearchResult } from './searchSheet';
+import { AA, AMB_PEAK, DARK_BASE, frostComposite, GRAIN_LIFT, SCRIM_MENU, SEL_A, textContrast, TEXT_DIM, type RGB } from '#lib/glass/tone';
+import { cascadeKey, DIM_A, DIM_RGB, GENRE_N, hitIds, marks, nextId, PEOPLE_N, POSTER_N, sheetModel, TOP_N, type Person, type SearchResult } from './searchSheet';
 
 const item = (id: string, type = 'Movie'): Item => ({ id, name: `T${id}`, type, genres: [], image: true, backdrop: true, logo: false, played: false, favorite: false, positionTicks: 0 });
 const items = (n: number, p: string, type?: string) => Array.from({ length: n }, (_, i) => item(`${p}${i}`, type));
@@ -103,17 +103,26 @@ describe('keyboard order', () => {
   });
 });
 
-describe('mark colour', () => {
-  const over = (b: RGB, t: RGB, a: number): RGB => [0, 1, 2].map((i) => Math.round(b[i]! * (1 - a) + t[i]! * a)) as RGB;
-  it('passes AA on the sheet and on its selected row over the dimmed page (dark base and the ambient peak)', () => {
-    for (const page of [DARK_BASE, AMB_PEAK]) {
-      const sheet = frostComposite(over(page, DIM_RGB, DIM_A), SCRIM_SAFE);
-      const selected = over(sheet, [255, 255, 255], SEL_A);
-      expect(contrast(MARK_RGB, sheet)).toBeGreaterThanOrEqual(4.5);
-      expect(contrast(MARK_RGB, selected)).toBeGreaterThanOrEqual(4.5);
-      // the plain brand coral does not (why the mark is lighter)
-      expect(contrast([255, 79, 109], selected)).toBeLessThan(4.5);
-    }
-    expect(MARK_CSS).toBe('rgb(255, 195, 205)');
-  });
+describe('sheet text contrast (AA)', () => {
+  const over = (b: RGB, t: RGB, a: number): RGB => [0, 1, 2].map((i) => b[i]! * (1 - a) + t[i]! * a) as RGB;
+  const WHITE: RGB = [255, 255, 255];
+  /** the light pill (--fr-sel) with the grain's brightest lift: where text is closest to the limit */
+  const pill = (c: RGB): RGB => over(c, WHITE, SEL_A).map((x) => Math.min(255, x + GRAIN_LIFT)) as RGB;
+  /**
+   * The sheet is .frost-safe at SCRIM_MENU over the dimmed page: the dark base, the ambient background's brightest point and
+   * the billboard (unsampled bright artwork, modelled as pure white).
+   */
+  for (const [name, page] of [['dark base', DARK_BASE], ['ambient peak', AMB_PEAK], ['bright billboard', WHITE]] as const) {
+    it(`passes over the dimmed ${name}`, () => {
+      const sheet = frostComposite(over(page, DIM_RGB, DIM_A), SCRIM_MENU);
+      // headers, meta lines, hints and Clear: white at TEXT_DIM (.9), on the sheet and (meta) on the hovered / active row
+      expect(textContrast(sheet, TEXT_DIM)).toBeGreaterThanOrEqual(AA);
+      expect(textContrast(pill(sheet), TEXT_DIM)).toBeGreaterThanOrEqual(AA);
+      // titles and their matched letters (white; the coral underline is a supplementary cue) on the sheet and the active row
+      expect(textContrast(sheet)).toBeGreaterThanOrEqual(AA);
+      expect(textContrast(pill(sheet))).toBeGreaterThanOrEqual(AA);
+      // a recent chip (white .12 fill; its hover lights the edge, never the fill)
+      expect(textContrast(over(sheet, WHITE, 0.12))).toBeGreaterThanOrEqual(AA);
+    });
+  }
 });
