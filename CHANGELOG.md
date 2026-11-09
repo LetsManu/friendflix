@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [3.0.1] – Churros – 2026-11-09
+
 ### Fixed
 - **Desktop player cards stay clear of the title and timeline.** Cast & info sits above the title; the audio & subtitles, speed and more cards end above the timeline, are frosted glass that stays readable over bright scenes, and the title fades while one is open.
 - **Audio and picture stay together** after a stall, reconnect, seek, resume or audio/quality switch. Before, a title whose video plays as is while its sound is converted could jump back about a second and then play the sound ahead of the picture.
