@@ -3,9 +3,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const lg = vi.hoisted(() => ({ on: false }));
+const fire = vi.hoisted(() => ({ on: false, height: 1080 }));
 vi.mock('./detect', () => ({ isLgApp: () => lg.on }));
+vi.mock('#lib/firetv/detect', () => ({ isFireTvApp: () => fire.on, fireTvDisplayHeight: () => fire.height }));
 import { APP_VERSION } from '#lib/version/codenames';
-import { _resetLgCaps, buildLgCaps, confirmedTypes, lgCaps, type MediaProbe } from './caps';
+import { _resetAppCaps, appCaps, buildLgCaps, buildTvCaps, confirmedTypes, type MediaProbe } from './caps';
 
 const all: MediaProbe = { canPlayType: () => 'probably', isTypeSupported: () => true };
 const none: MediaProbe = { canPlayType: () => '', isTypeSupported: () => false };
@@ -53,26 +55,81 @@ describe('buildLgCaps', () => {
   });
 });
 
-describe('lgCaps', () => {
-  afterEach(() => { lg.on = false; _resetLgCaps(); vi.unstubAllGlobals(); });
+describe('buildTvCaps', () => {
+  // a WebView that denies matroska (what Chrome answers): LG would add mkv anyway, Fire TV must not
+  const noMkv: MediaProbe = { canPlayType: (t) => (t === 'video/x-matroska' ? '' : 'probably'), isTypeSupported: (t) => t !== 'video/x-matroska' };
+  it('Fire TV: client firetv, maxHeight from the display, no assumed mkv', () => {
+    const c = buildTvCaps(noMkv, { client: 'firetv', appVersion: '1.2.3', maxHeight: 1080, assumed: [] })!;
+    expect(c.client).toBe('firetv');
+    expect(c.appVersion).toBe('1.2.3');
+    expect(c.video.every((v) => v.maxHeight === 1080)).toBe(true);
+    expect(c.containers).toEqual(['mp4', 'm4v', 'mov', 'ts', 'webm']);
+    expect(c.audio).toEqual(['aac', 'ac3', 'eac3', 'mp3', 'flac', 'opus', 'vorbis']);
+  });
+  it('Fire TV keeps mkv when its WebView confirms it', () => {
+    expect(buildTvCaps(all, { client: 'firetv', appVersion: '1.2.3', maxHeight: 2160, assumed: [] })!.containers).toEqual(['mkv', 'mp4', 'm4v', 'mov', 'ts', 'webm']);
+    expect(buildLgCaps(noMkv, '1.2.3')!.containers).toEqual(['mkv', 'mp4', 'm4v', 'mov', 'ts', 'webm']);
+  });
+  it('LG through buildTvCaps equals buildLgCaps', () => {
+    expect(buildTvCaps(all, { client: 'webos', appVersion: '1.0.0', maxHeight: 2160, assumed: ['mkv'] })).toEqual(buildLgCaps(all, '1.0.0'));
+  });
+  it('nothing confirmed gives null', () => {
+    expect(buildTvCaps(none, { client: 'firetv', appVersion: '1.0.0', maxHeight: 2160, assumed: [] })).toBeNull();
+  });
+});
+
+describe('appCaps', () => {
+  afterEach(() => { lg.on = false; fire.on = false; fire.height = 1080; _resetAppCaps(); vi.unstubAllGlobals(); });
   const stub = () => {
-    vi.stubGlobal('window', { MediaSource: { isTypeSupported: () => true } });
-    vi.stubGlobal('document', { createElement: () => ({ canPlayType: () => 'maybe' }) });
+    vi.stubGlobal('window', { MediaSource: { isTypeSupported: (t: string) => t !== 'video/x-matroska' } });
+    vi.stubGlobal('document', { createElement: () => ({ canPlayType: (t: string) => (t === 'video/x-matroska' ? '' : 'maybe') }) });
   };
 
-  it('is null outside the LG app', () => {
-    stub(); _resetLgCaps();
-    expect(lgCaps()).toBeNull();
+  it('is null without a window', () => {
+    lg.on = true; _resetAppCaps();
+    expect(appCaps()).toBeNull();
   });
 
-  it('builds the block in the LG app and caches it until reset', () => {
-    stub(); lg.on = true; _resetLgCaps();
-    const a = lgCaps()!;
+  it('is null in a browser (neither app)', () => {
+    stub(); _resetAppCaps();
+    expect(appCaps()).toBeNull();
+  });
+
+  it('builds the LG block in the LG app and caches it until reset', () => {
+    stub(); lg.on = true; _resetAppCaps();
+    const a = appCaps()!;
     expect(a.client).toBe('webos');
     expect(a.appVersion).toBe(APP_VERSION);
-    expect(lgCaps()).toBe(a);
-    _resetLgCaps();
-    expect(lgCaps()).not.toBe(a);
+    expect(a.containers).toContain('mkv');
+    expect(a.video.every((v) => v.maxHeight === 2160)).toBe(true);
+    expect(appCaps()).toBe(a);
+    _resetAppCaps();
+    expect(appCaps()).not.toBe(a);
+  });
+
+  it('builds the Fire TV block with the display height and no assumed containers', () => {
+    stub(); fire.on = true; fire.height = 2160; _resetAppCaps();
+    const a = appCaps()!;
+    expect(a.client).toBe('firetv');
+    expect(a.appVersion).toBe(APP_VERSION);
+    expect(a.video.every((v) => v.maxHeight === 2160)).toBe(true);
+    expect(a.containers).not.toContain('mkv');
+    fire.height = 1080; _resetAppCaps();
+    expect(appCaps()!.video.every((v) => v.maxHeight === 1080)).toBe(true);
+  });
+
+  it('without a media element (or MediaSource) the TV confirms nothing: null', () => {
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('document', { createElement: () => { throw new Error('no video'); } });
+    fire.on = true; _resetAppCaps();
+    expect(appCaps()).toBeNull();
+  });
+
+  it('works without MediaSource', () => {
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('document', { createElement: () => ({ canPlayType: () => 'maybe' }) });
+    fire.on = true; _resetAppCaps();
+    expect(appCaps()!.client).toBe('firetv');
   });
 });
 

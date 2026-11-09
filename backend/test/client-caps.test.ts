@@ -19,6 +19,10 @@ describe('parseClientCaps', () => {
       video: [{ codec: 'h264' }, { codec: 'hevc', maxHeight: 2160, profiles: ['main', 'main 10'] }], audio: ['aac', 'eac3'], subtitles: ['srt', 'ass'],
     });
   });
+  it('accepts the Fire TV app', () => {
+    const c = parseClientCaps({ client: 'firetv', appVersion: '3.0.0', containers: ['mp4'], video: [{ codec: 'h264', maxHeight: 1080 }], audio: ['aac'], subtitles: ['vtt'] });
+    expect(c?.client).toBe('firetv');
+  });
   it('ignores any other client, malformed shapes and non-strict versions', () => {
     for (const bad of [undefined, null, 'x', 5, [], caps({ client: 'ios' }), caps({ client: undefined }), caps({ appVersion: 'v2.0.0' }), caps({ appVersion: '2.0' }), caps({ appVersion: '2.0.0-beta' }),
       caps({ appVersion: 2 }), caps({ appVersion: `1.${'0'.repeat(40)}.0` }), caps({ containers: 'mp4' }), caps({ video: {} }), caps({ audio: undefined }), caps({ subtitles: null })]) expect(parseClientCaps(bad)).toBeNull();

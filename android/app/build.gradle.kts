@@ -76,6 +76,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":shell-core"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.datastore.preferences)

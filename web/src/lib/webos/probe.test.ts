@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./caps', async (orig) => ({ ...(await orig<typeof import('./caps')>()), lgCaps: vi.fn(() => null) }));
+vi.mock('./caps', async (orig) => ({ ...(await orig<typeof import('./caps')>()), appCaps: vi.fn(() => null) }));
 import { fetchProbeTarget } from '#lib/tvprobe/target';
-import { CANDIDATES, lgCaps } from './caps';
+import { appCaps, CANDIDATES } from './caps';
 import { endLgProbe, failedLgProbeLine, formatLgProbe, realLgDeps, runLgProbe, shouldLgProbe, type LgProbeDeps, type LgProbeStage, type ProbeVideo } from './probe';
 import { HOME_HINT_KEY, rememberLgProbeHome } from './probehome';
 
@@ -42,6 +42,8 @@ function mk(o: {
   let t = 1000;
   const hlsMode = o.hls ?? 'ok';
   const deps: LgProbeDeps = {
+    tv: 'webos',
+    screen: '1920x1080',
     media: { canPlayType: (m) => ((o.media ?? [CANDIDATES.video.h264[2]!.mime, CANDIDATES.audio.aac, CANDIDATES.containers.mp4]).includes(m) ? 'maybe' : '') },
     os: '25',
     palm: true,
@@ -83,7 +85,7 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 const SPEC = {
-  os: '25', direct: 'ok:1840ms', hls: 'ok', nativehls: 'ok', palm: 'yes', home: 'ok', keys: 'ok',
+  tv: 'webos', screen: '1920x1080', os: '25', direct: 'ok:1840ms', hls: 'ok', nativehls: 'ok', palm: 'yes', home: 'ok', keys: 'ok',
   video: ['h264', 'hevc', 'av1', 'vp9'], audio: ['aac', 'ac3', 'eac3', 'mp3', 'flac', 'opus'], containers: ['mkv', 'mp4', 'ts', 'webm'],
 } as const;
 
@@ -100,6 +102,21 @@ describe('formatLgProbe', () => {
   });
   it('an empty list prints -', () => {
     expect(formatLgProbe({ ...SPEC, video: [], audio: [], containers: [] })).toMatch(/ video=- audio=- containers=-$/);
+  });
+  it('LG line is unchanged (no screen token)', () => {
+    expect(formatLgProbe({ ...SPEC, video: [], audio: [], containers: [] })).not.toContain('screen=');
+    expect(formatLgProbe({ ...SPEC, video: [], audio: [], containers: [] })).toMatch(/^FFPROBE v1 tv=webos os=25 /);
+  });
+  it('Fire TV: tv=firetv and the screen at the end', () => {
+    expect(formatLgProbe({ ...SPEC, tv: 'firetv', os: '9/AFTMM', palm: 'no', home: 'skipped', keys: 'skipped', video: ['h264'], audio: ['aac'], containers: ['mp4'] })).toBe(
+      'FFPROBE v1 tv=firetv os=9/AFTMM direct=ok:1840ms hls=ok nativehls=ok palm=no home=skipped keys=skipped video=h264 audio=aac containers=mp4 screen=1920x1080',
+    );
+  });
+  it('a crashed probe in the Fire TV app prints tv=firetv, its os and screen', () => {
+    expect(failedLgProbeLine({ navigator: { userAgent: 'Mozilla/5.0 (Linux; Android 9; AFTMM Build/PS7633; wv) FriendFlixFireTV/3.0.0 FFDisplay/1080' }, innerWidth: 1920, innerHeight: 1080 })).toBe(
+      'FFPROBE v1 tv=firetv os=9/AFTMM direct=error:unknown hls=skipped nativehls=skipped palm=no home=skipped keys=skipped video=- audio=- containers=- screen=1920x1080',
+    );
+    expect(failedLgProbeLine({ navigator: { userAgent: 'Mozilla/5.0 FriendFlixFireTV/3.0.0' } })).toMatch(/ os=\? .* screen=\?x\?$/);
   });
   it('a crashed probe still shows a line', () => {
     expect(failedLgProbeLine({ navigator: { userAgent: 'Web0S webOSTV/6.0' }, PalmSystem: {} })).toBe(
@@ -215,6 +232,13 @@ describe('runLgProbe', () => {
     expect(m.deps.fetchTarget).not.toHaveBeenCalled();
     expect(m.deps.goHome).not.toHaveBeenCalled();
   });
+  it('a stored result keeps its tv and screen (older stored results read as LG without a screen)', async () => {
+    const a = mk({ search: '', stored: { 'ff.lgProbe': JSON.stringify({ ...SPEC, tv: 'firetv', screen: '960x540', stage: 'done' }) } });
+    expect(await runLgProbe(a.deps, a.onStage)).toMatchObject({ tv: 'firetv', screen: '960x540' });
+    const { tv: _t, screen: _s, ...old } = SPEC;
+    const b = mk({ search: '', stored: { 'ff.lgProbe': JSON.stringify({ ...old, stage: 'done' }) } });
+    expect(await runLgProbe(b.deps, b.onStage)).toMatchObject({ tv: 'webos', screen: '?' });
+  });
   it('landing on a server page instead of the start page (stored, still waiting, no home=ok) gives home=fail', async () => {
     const stored = { ...SPEC, home: 'fail', stage: 'home' };
     const m = mk({ search: '', stored: { 'ff.lgProbe': JSON.stringify(stored) } });
@@ -235,6 +259,22 @@ describe('runLgProbe', () => {
     expect(r.home).toBe('ok');
     expect(r.direct).toBe('ok:1840ms');
     expect(m.deps.goHome).not.toHaveBeenCalled();
+  });
+  it('Fire TV: plays, skips keys and home, prints tv=firetv and screen', async () => {
+    const m = mk();
+    const r = await runLgProbe({ ...m.deps, tv: 'firetv', screen: '1920x1080', os: '9/AFTMM', palm: false }, m.onStage);
+    expect(m.deps.waitKey).not.toHaveBeenCalled();
+    expect(m.deps.goHome).not.toHaveBeenCalled();
+    expect(m.store.size).toBe(0);
+    expect(m.report).toHaveBeenCalledTimes(1);
+    expect(m.stages).toEqual(['formats', 'direct', 'hls', 'hls:native', 'done']);
+    expect(formatLgProbe(r)).toMatch(/^FFPROBE v1 tv=firetv os=9\/AFTMM direct=ok:\d+ms hls=ok nativehls=ok palm=no home=skipped keys=skipped video=.* screen=1920x1080$/);
+  });
+  it('LG result carries tv=webos and no screen token', async () => {
+    const r = await run(mk());
+    expect(r.tv).toBe('webos');
+    expect(formatLgProbe(r)).not.toContain('screen=');
+    expect(formatLgProbe(r)).toMatch(/^FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=fail keys=ok /);
   });
   it('an unpaired TV reports it on all three playbacks and skips the keys and the home stage', async () => {
     const m = mk({ target: 'unpaired' });
@@ -276,6 +316,12 @@ describe('shouldLgProbe', () => {
     expect(shouldLgProbe(w({ ua: LG, search: '?probe=1' }))).toBe(false); // the LG browser is not the app
     expect(shouldLgProbe(w({ search: '?ff_app=webos&probe=1' }))).toBe(false);
   });
+  it('runs in the Fire TV app too (marker only)', () => {
+    const FIRE = 'Mozilla/5.0 (Linux; Android 9; AFTMM Build/PS7633; wv) FriendFlixFireTV/3.0.0 FFDisplay/1080';
+    expect(shouldLgProbe(w({ ua: FIRE, search: '?ff_app=firetv&probe=1' }))).toBe(true);
+    expect(shouldLgProbe(w({ ua: FIRE, search: '?ff_app=firetv' }))).toBe(false);
+    expect(shouldLgProbe(w({ ua: 'Mozilla/5.0 (Linux; Android 9; AFTMM)', search: '?ff_app=firetv&probe=1' }))).toBe(false);
+  });
 });
 
 describe('rememberLgProbeHome', () => {
@@ -312,9 +358,9 @@ describe('rememberLgProbeHome', () => {
 });
 
 describe('realLgDeps', () => {
-  it('fetchTarget sends the lgCaps() block in the /api/playback/info body', async () => {
+  it('fetchTarget sends the appCaps() block in the /api/playback/info body', async () => {
     const caps = { client: 'webos', appVersion: '1.0.0', containers: ['mp4'], video: [{ codec: 'h264' }], audio: ['aac'], subtitles: ['srt'] };
-    vi.mocked(lgCaps).mockReturnValue(caps as any);
+    vi.mocked(appCaps).mockReturnValue(caps as any);
     const json = (status: number, body: unknown) => ({ status, ok: status < 400, json: async () => body });
     const bodies: Record<string, unknown> = {};
     const fetchImpl = (async (path: string, init: any) => {
@@ -334,6 +380,26 @@ describe('realLgDeps', () => {
     const t = await deps.fetchTarget();
     expect(t.direct).toBe(true);
     expect(bodies['/api/playback/info']).toEqual({ itemId: 'i1', reasonHint: 'network', caps });
-    vi.mocked(lgCaps).mockReturnValue(null);
+    vi.mocked(appCaps).mockReturnValue(null);
+  });
+  it('in the Fire TV app: tv=firetv, the Android os token, no palm, the page size', () => {
+    const win = {
+      location: { origin: 'https://friend.example.com', search: '?ff_app=firetv&probe=1' },
+      navigator: { userAgent: 'Mozilla/5.0 (Linux; Android 9; AFTMM Build/PS7633; wv) Chrome/130 FriendFlixFireTV/3.0.0 FFDisplay/1080' },
+      document: { createElement: () => ({ canPlayType: () => '' }) },
+      sessionStorage: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined },
+      innerWidth: 1920, innerHeight: 1080, PalmSystem: {},
+    } as any;
+    const deps = realLgDeps(win, (async () => ({})) as unknown as typeof fetch);
+    expect(deps).toMatchObject({ tv: 'firetv', os: '9/AFTMM', palm: false, screen: '1920x1080' });
+  });
+  it('in the LG app: tv=webos', () => {
+    const win = {
+      location: { origin: 'https://friend.example.com', search: '?ff_app=webos' },
+      navigator: { userAgent: 'Mozilla/5.0 (Web0S; Linux/SmartTV) webOSTV/6.0' },
+      document: { createElement: () => ({ canPlayType: () => '' }) },
+      innerWidth: 1920, innerHeight: 1080, PalmSystem: {},
+    } as any;
+    expect(realLgDeps(win, (async () => ({})) as unknown as typeof fetch)).toMatchObject({ tv: 'webos', os: '6.0', palm: true, screen: '1920x1080' });
   });
 });

@@ -36,6 +36,19 @@ Die [LG-TV-App](webos.md) versteht im Player zusätzlich diese Tasten (außerhal
 
 Der Zeiger der Magic Remote bewegt den Fokus: Fährst du über eine Kachel, springt der Fokusrahmen dorthin, die Pfeiltasten machen von da aus weiter. Im Seitenmenü unter **Konto** gibt es **Server wechseln**; beim Start öffnet die blaue Taste, solange das Logo zu sehen ist, das Adressformular.
 
+### Fire-TV-App
+Die [Fire-TV-App](firetv.md) gibt diese Tasten an den TV-Modus weiter:
+
+| Taste | Aktion |
+|---|---|
+| Zurück | überall eine Ebene zurück; **auf der Startseite des TV-Modus öffnet es zuerst das Seitenmenü, ein zweites Zurück beendet die App**; in einem Textfeld verlässt es nur das Feld |
+| Play/Pause | abspielen / pausieren |
+| Play · Pause | abspielen · pausieren |
+| Vorspulen · Zurückspulen | +30 s · −30 s |
+| Weiter | nächste Folge, wo es eine gibt |
+
+Im Seitenmenü unter **Konto** gibt es **Server wechseln**.
+
 Startet der Browser die Wiedergabe ohne vorherigen Tastendruck (z. B. wenn das Handy etwas schickt), beginnt sie **stumm** mit Hinweis; die erste Taste schaltet den Ton ein.
 
 ## Fernbedienung am Handy

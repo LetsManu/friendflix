@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Manuel Weißböck
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# The signed Android app for a release: on a vX.Y.Z tag, build the AAB (for the Play Console) and the APK (fallback download),
-# both signed with the upload key, and attach them plus their SHA-256 sums to that tag's GitHub Release (created by release.yml).
+# The signed Android app for a release: on a vX.Y.Z tag, build the AAB (for the Play Console), the APK (fallback download) and the
+# Fire TV APK, all signed with the upload key, and attach them plus their SHA-256 sums to that tag's GitHub Release (created by release.yml).
 # Called by CI for v* tags (push, or release.yml's dispatch), after its tests, e2e and the secret scan passed. workflow_dispatch on a tag is the
 # manual retry (e.g. after adding the secrets to an existing release); on anything but a v* tag the job does not run.
 # Signing: the upload key lives only in three repository secrets (docs/android.md "Owner steps"):
@@ -17,6 +17,9 @@
 # $RUNNER_TEMP (mode 600) for the Gradle run and deleted right after it; nothing prints a secret. Gradle reads the signing
 # config from environment variables only (android/app/build.gradle.kts), so PR builds and local builds stay unsigned.
 # Play App Signing re-signs what Google Play delivers; the APK on the release keeps the upload key's signature.
+# The Fire TV app (android/firetv) is built in the same Gradle run, signed with the same upload key, checked
+# (android/firetv/check-apk.sh) and attached as friendflix-firetv-<version>.apk + .sha256. It is never uploaded to Google Play
+# (Fire OS has no Play services); the owner submits it to the Amazon Appstore by hand (docs/firetv.md).
 # versionName / versionCode come from version.json (android/buildSrc); the job refuses a tag that does not match it.
 name: Android release
 on:
@@ -71,17 +74,17 @@ jobs:
           umask 077
           printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
           echo "ANDROID_UPLOAD_KEYSTORE_FILE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
-      - name: Lint, unit tests, signed AAB + APK
+      - name: Lint, unit tests, signed AAB + APK, signed Fire TV APK
         if: env.HAS_KEY == 'true'
         working-directory: android
         env:
           ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
           ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
-        run: ./gradlew --no-build-cache lint testDebugUnitTest bundleRelease assembleRelease
+        run: ./gradlew --no-build-cache lint testDebugUnitTest :app:bundleRelease assembleRelease
       - name: Delete the upload key
         if: always()
         run: rm -f "$RUNNER_TEMP/upload.jks"
-      - name: Check the signatures, name the files, checksums
+      - name: Check the signatures and the Fire TV APK, name the files, checksums
         if: env.HAS_KEY == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -89,14 +92,19 @@ jobs:
           set -euo pipefail
           apk=android/app/build/outputs/apk/release/app-release.apk
           aab=android/app/build/outputs/bundle/release/app-release.aab
+          tvapk=android/firetv/build/outputs/apk/release/firetv-release.apk
           tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
           "$tools/apksigner" verify "$apk"
           jarsigner -verify "$aab" | grep -q '^jar verified' || { echo "::error::the AAB is not signed"; exit 1; }
+          "$tools/apksigner" verify "$tvapk"
+          bash android/firetv/check-apk.sh "$tvapk"
           mkdir -p "$RUNNER_TEMP/dist"
           cp "$apk" "$RUNNER_TEMP/dist/friendflix-android-$VERSION.apk"
           cp "$aab" "$RUNNER_TEMP/dist/friendflix-android-$VERSION.aab"
+          cp "$tvapk" "$RUNNER_TEMP/dist/friendflix-firetv-$VERSION.apk"
           (cd "$RUNNER_TEMP/dist" && sha256sum friendflix-android-* > "friendflix-android-$VERSION.sha256")
-          cat "$RUNNER_TEMP/dist/friendflix-android-$VERSION.sha256"
+          (cd "$RUNNER_TEMP/dist" && sha256sum friendflix-firetv-*.apk > "friendflix-firetv-$VERSION.sha256")
+          cat "$RUNNER_TEMP/dist/friendflix-android-$VERSION.sha256" "$RUNNER_TEMP/dist/friendflix-firetv-$VERSION.sha256"
       # release.yml creates the GitHub Release right after pushing the tag; a run that started from that push may get here first
       - name: Attach to the GitHub Release
         if: env.HAS_KEY == 'true'
@@ -115,6 +123,7 @@ jobs:
           {
             echo "### Android app $GITHUB_REF_NAME"
             echo "Signed AAB + APK attached to the release (upload the AAB in the Play Console's closed testing track)."
+            echo "Signed Fire TV APK attached (Amazon Appstore: docs/firetv.md)."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Google Play key present?
         if: env.HAS_KEY == 'true' && env.HAS_PLAY != 'true'

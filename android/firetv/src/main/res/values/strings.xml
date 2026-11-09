@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Manuel Weißböck
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<resources>
+    <string name="app_name" translatable="false">FriendFlix</string>
+    <!-- a placeholder host (never a real one) -->
+    <string name="tv_setup_example" translatable="false">friend.example.com</string>
+    <string name="tv_setup_label">Server address</string>
+    <string name="tv_setup_connect">Connect</string>
+    <string name="tv_setup_checking">Checking…</string>
+    <string name="tv_setup_hint">Press Select (the centre button) on the field to type with the remote. Up and Down move between the field and Connect.</string>
+    <string name="tv_opening">Opening %1$s</string>
+    <string name="tv_retry">Retry</string>
+    <string name="tv_change_server">Change server</string>
+    <string name="tv_error_empty">Enter the address of your FriendFlix server.</string>
+    <string name="tv_error_insecure">Plain http:// addresses are not allowed. Use an https:// address.</string>
+    <string name="tv_error_invalid">That does not look like a server address. Try something like friend.example.com.</string>
+    <string name="tv_error_unreachable">Cannot reach that server. Check the address, the network and that the server is running.</string>
+    <string name="tv_error_not_friendflix">That address answered, but it is not a FriendFlix server.</string>
+    <string name="tv_error_tls">The secure connection failed. The server\'s certificate is not trusted.</string>
+    <string name="tv_error_app_too_old">This app is too old for the server. Update FriendFlix on this Fire TV.</string>
+    <string name="tv_error_server_too_old">The server is too old for this app. Update FriendFlix on the server.</string>
+</resources>

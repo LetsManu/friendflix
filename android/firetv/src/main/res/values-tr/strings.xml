@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Manuel Weißböck
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<resources>
+    <string name="tv_setup_label">Sunucu adresi</string>
+    <string name="tv_setup_connect">Bağlan</string>
+    <string name="tv_setup_checking">Kontrol ediliyor…</string>
+    <string name="tv_setup_hint">Kumandayla yazmak için alanda orta tuşa bas. Yukarı ve Aşağı tuşları alan ile Bağlan arasında geçiş yapar.</string>
+    <string name="tv_opening">%1$s açılıyor</string>
+    <string name="tv_retry">Yeniden dene</string>
+    <string name="tv_change_server">Sunucuyu değiştir</string>
+    <string name="tv_error_empty">FriendFlix sunucunun adresini gir.</string>
+    <string name="tv_error_insecure">Şifrelenmemiş http:// adreslerine izin verilmiyor. Bir https:// adresi kullan.</string>
+    <string name="tv_error_invalid">Bu bir sunucu adresine benzemiyor. friend.example.com gibi bir şey dene.</string>
+    <string name="tv_error_unreachable">Sunucuya ulaşılamıyor. Adresi, ağı ve sunucunun çalışıp çalışmadığını kontrol et.</string>
+    <string name="tv_error_not_friendflix">Bu adres yanıt veriyor ama bir FriendFlix sunucusu değil.</string>
+    <string name="tv_error_tls">Güvenli bağlantı kurulamadı. Sunucunun sertifikasına güvenilmiyor.</string>
+    <string name="tv_error_app_too_old">Bu uygulama sunucu için çok eski. Bu Fire TV\'deki FriendFlix\'i güncelle.</string>
+    <string name="tv_error_server_too_old">Sunucu bu uygulama için çok eski. Sunucudaki FriendFlix\'i güncelle.</string>
+</resources>

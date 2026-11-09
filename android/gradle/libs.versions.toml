@@ -54,3 +54,4 @@ androidx-test-espresso-intents = { module = "androidx.test.espresso:espresso-int
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }

@@ -13,6 +13,8 @@
   import { nowPlaying } from '#lib/remote';
   import { isBackKey } from '#lib/spatial';
   import { isLgApp } from '#lib/webos/detect';
+  import { isTvApp } from '#lib/tvapp';
+  import { pauseWhenHidden, postFireTv } from '#lib/firetv/detect';
   import { normaliseLgKey } from '#lib/webos/keys';
   import { isTypingTarget, nextSubtitle, resolveKey, SHORTCUTS, toggleSubtitle, type KeyAction } from '#lib/player/keymap';
   import { BRIGHTNESS_MIN, brightnessPct, classifyMove, levelFromDrag, registerTap, scrubTarget, TAP_WINDOW, volumeSettable, zoneOf, type Axis, type TapState, type Zone } from '#lib/player/gestures';
@@ -31,7 +33,7 @@
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
   import { speedLabel, SPEEDS } from '#lib/player/bar';
-  import { lgCaps } from '#lib/webos/caps';
+  import { appCaps } from '#lib/webos/caps';
   import { firstFrameMs, watchFirstFrame } from '#lib/player/firstframe';
   import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
   import { holdPrefetch, takePrefetched } from '#lib/player/prefetch';
@@ -418,7 +420,7 @@
     const audioLang = fr?.body.audioLang;
     if (first) reqHint = quality ? 'manual' : 'network'; // a saved quality is a pick, otherwise the network chooses
     const sentBps = wantBps();
-    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: lgCaps() });
+    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: appCaps() });
     const ask = () => api<Info | null>('/api/playback/info', { method: 'POST', body });
     // hovered/focused play button: its request is (usually) already answered; a failed prefetch is simply asked again
     const pre = first ? takePrefetched(itemId, body) : null;
@@ -469,7 +471,7 @@
       video.src = info.directUrl!;
       video.addEventListener('loadedmetadata', seek, { once: true });
       // LG: an original the TV cannot decode may stay black without an error; no picture in time -> the converted stream, once
-      if (isLgApp() && !rec.forcedHls) cancelFirstFrame = watchFirstFrame(video, firstFrameMs(), () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos(), true); }, { running: wantAutoplay });
+      if (isTvApp() && !rec.forcedHls) cancelFirstFrame = watchFirstFrame(video, firstFrameMs(), () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos(), true); }, { running: wantAutoplay });
     } else if (H?.isSupported()) {
       const HC = H;
       hls = new HC(hlsConfig(startSec));
@@ -555,6 +557,7 @@
   function retryManually() { rec = freshRecovery(); reconnecting = 0; error = ''; errNote = ''; waiting = true; wantAutoplay = true; void load(posKnown ? resumePos() : undefined); }
   function leave() { if (history.length > 1) history.back(); else location.href = '/'; }
   function onVideoError() {
+    postFireTv('keepAwake:0');
     if (handedOff) return; // the engine's element: its controller handles errors
     if (airState.ready && !airOn) { if (video?.error && video.error.code !== 1) air?.videoError(video.error.code, video.error.message); return; } // the phone plays the AirPlay token stream: back to normal
     if (airOn) { if (video?.error && video.error.code !== 1) air?.videoError(video.error.code, video.error.message); return; } // the TV's token stream failed: Retry, never the cookie URL
@@ -578,8 +581,13 @@
     if (!abr || handedOff || airOn || airInfo || switching || reconnecting || error) return;
     applyAbr(abr.onStall(ms)); // 'fail' needs nothing here: a stall at the lowest rung just keeps buffering
   }
+  /** Fire TV keep-awake: `playing` turns it on; pause, end, a media error, an error screen and unmount turn it off (no-op elsewhere) */
+  $: if (error) postFireTv('keepAwake:0');
+  /** the next pause event comes from pauseWhenHidden (no second progress report) */
+  let hiddenPause = false;
   function onPlaying() {
     if (handedOff) return;
+    postFireTv('keepAwake:1'); // the Fire TV app keeps the screen on while a picture plays (no-op elsewhere)
     waiting = false; sessionPlaying = true; firstFrame(); timing.playing();
     if (waitSince) { const ms = performance.now() - waitSince, done = stallHandled; resetStall(); if (!done && ms > 0) onStall(ms); }
     if (reconnecting) { reconnecting = 0; flash(tr('player.reconnected'), 1500); }
@@ -1399,6 +1407,9 @@
     const pipOn = () => { inPip = true; }, pipOff = () => { inPip = false; };
     window.addEventListener('online', online);
     document.addEventListener('visibilitychange', vis);
+    // Fire TV: Home hides the page; pause so no sound keeps playing behind the launcher (no-op elsewhere)
+    // the visibility handler above already sent the (keepalive) progress report: the pause it causes sends none
+    const stopHidden = pauseWhenHidden(() => { if (handedOff || !video) return; wantAutoplay = false; if (!video.paused) { hiddenPause = true; video.pause(); } });
     video?.addEventListener('enterpictureinpicture', pipOn); video?.addEventListener('leavepictureinpicture', pipOff);
     const fs = () => {
       fullscreen = Boolean(document.fullscreenElement);
@@ -1420,12 +1431,14 @@
       window.removeEventListener('pointerdown', touched, true); window.removeEventListener('keydown', touched, true); window.removeEventListener('ff-remote', touched);
       window.removeEventListener('pagehide', bye); document.removeEventListener('fullscreenchange', fs); window.removeEventListener('click', onOutsideClick, true);
       window.removeEventListener('online', online); document.removeEventListener('visibilitychange', vis);
+      stopHidden();
       video?.removeEventListener('enterpictureinpicture', pipOn); video?.removeEventListener('leavepictureinpicture', pipOff);
       narrow.removeEventListener?.('change', setIcon);
       window.removeEventListener('ff-remote', onRemote); window.removeEventListener('keydown', unmuteOnGesture, true); window.removeEventListener('pointerdown', unmuteOnGesture, true);
     };
   });
   onDestroy(() => {
+    postFireTv('keepAwake:0');
     pnlObs?.disconnect();
     cancelFirstFrame();
     clearInterval(tvTick);
@@ -1451,8 +1464,8 @@
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
     on:error={onVideoError}
-    on:play={onPlay} on:pause={() => { if (handedOff) return; paused = true; resetStall(); if (!castBusy && !stopped) send('progress'); }} on:seeked={() => { timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
-    on:ended={() => { if (handedOff) return; stopped = true; paused = true; send('stop'); }}
+    on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff) return; paused = true; resetStall(); const quiet = hiddenPause; hiddenPause = false; if (!castBusy && !stopped && !quiet) send('progress'); }} on:seeked={() => { timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
+    on:ended={() => { postFireTv('keepAwake:0'); if (handedOff) return; stopped = true; paused = true; send('stop'); }}
     on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={syncTime}
     on:waiting={onWaiting} on:seeking={() => { resetStall(); timing.seeking(); }} on:playing={onPlaying} on:loadeddata={firstFrame} on:canplay={() => { if (handedOff) return; waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}
     on:volumechange={() => { if (video) { muted = video.muted; } }}

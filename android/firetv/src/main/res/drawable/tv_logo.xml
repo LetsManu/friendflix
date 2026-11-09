@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Manuel Weißböck
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+    <group>
+        <!-- the FriendFlix mark (web/static/logo-icon.svg): coral tile, an "F" whose middle bar is a play button -->
+        <path android:pathData="M17,2 H47 A15,15 0 0 1 62,17 V47 A15,15 0 0 1 47,62 H17 A15,15 0 0 1 2,47 V17 A15,15 0 0 1 17,2 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:endX="56"
+                    android:endY="62"
+                    android:startX="8"
+                    android:startY="2"
+                    android:type="linear">
+                    <item android:color="#FFFF6B81" android:offset="0" />
+                    <item android:color="#FFE23C5B" android:offset="1" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M19,18a4,4 0,0 1,4 -4h23a4,4 0,0 1,0 8H28v28a4.5,4.5 0,0 1,-9 0z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M33.5,29.5 L45.5,36 L33.5,42.5 Z"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineJoin="round"
+            android:strokeWidth="3" />
+    </group>
+</vector>

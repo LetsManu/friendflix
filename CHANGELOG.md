@@ -4,6 +4,14 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Fire TV
+- **FriendFlix on Fire TV.** A new app for Fire TV sticks, cubes and TVs (Fire OS 7 and newer) opens your server's TV mode: side menu, big tiles, detail pages and the TV player with the credits sequence, paired with a code or QR code like the LG app.
+- **Server address on first start.** The app asks for your server's address and checks it; *Change server* sits under Account in the side menu.
+- **Fire TV remote.** Arrows and OK move and open, Back steps back and opens the side menu, a second Back on the home screen leaves the app; Play/Pause, Rewind and Fast-forward work in the player. Your phone remote works as on every TV.
+- **Direct play where the device can.** The app tells the server which formats this Fire TV plays itself (4K only on a 4K display); the server converts the rest. A one-line check on first start shows what plays directly.
+- **No Google services.** No Chromecast, downloads or notifications on Fire TV; the screen stays awake while a title plays.
+- **Download.** The APK is attached to every release (`friendflix-firetv-<version>.apk`); the owner publishes it in the Amazon Appstore ([docs/firetv.md](docs/firetv.md)).
+
 ## [3.0.0] – Churros – 2026-11-09
 
 ### Desktop

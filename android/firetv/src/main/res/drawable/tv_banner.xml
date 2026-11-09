@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Manuel Weißböck
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<!-- The Fire TV launcher banner (320×180 dp, 16:9): the FriendFlix mark and wordmark (docs/images/logo-dark.svg) on the dark surface. -->
+<!-- 320×180 dp is the size the TV launcher asks for; minSdk 28 draws vectors natively (no raster fallback, hence VectorRaster off). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180"
+    tools:ignore="VectorRaster">
+    <path
+        android:fillColor="#0B0B10"
+        android:pathData="M0,0 H320 V180 H0 Z" />
+    <!-- the 250×64 lockup scaled by 1.1 and centred: (320 - 275) / 2, (180 - 70.4) / 2 -->
+    <group
+        android:scaleX="1.1"
+        android:scaleY="1.1"
+        android:translateX="22.5"
+        android:translateY="54.8">
+        <!-- the FriendFlix mark (web/static/logo-icon.svg): coral tile, an "F" whose middle bar is a play button -->
+        <path android:pathData="M17,2 H47 A15,15 0 0 1 62,17 V47 A15,15 0 0 1 47,62 H17 A15,15 0 0 1 2,47 V17 A15,15 0 0 1 17,2 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:endX="56"
+                    android:endY="62"
+                    android:startX="8"
+                    android:startY="2"
+                    android:type="linear">
+                    <item android:color="#FFFF6B81" android:offset="0" />
+                    <item android:color="#FFE23C5B" android:offset="1" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M19,18a4,4 0,0 1,4 -4h23a4,4 0,0 1,0 8H28v28a4.5,4.5 0,0 1,-9 0z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M33.5,29.5 L45.5,36 L33.5,42.5 Z"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineJoin="round"
+            android:strokeWidth="3" />
+        <!-- the wordmark "FriendFlix" as outlines (no font needed) -->
+        <group
+            android:translateX="78"
+            android:translateY="44.5">
+            <!-- Fr -->
+            <path
+                android:fillColor="#FFFFFF"
+                android:pathData="M1.93 0H7.79V-9H17.66V-13.68H7.79V-19.96H18.74V-24.74H1.93ZM21.47 0H27.27V-10.13C27.27 -12.35 28.85 -13.85 30.99 -13.85C31.68 -13.85 32.73 -13.73 33.28 -13.55V-18.59C32.8 -18.71 32.18 -18.79 31.63 -18.79C29.59 -18.79 27.97 -17.61 27.3 -15.17H27.1V-18.56H21.47Z" />
+            <!-- ie -->
+            <path
+                android:fillColor="#FFFFFF"
+                android:pathData="M35.41 0H41.21V-18.56H35.41ZM38.3 -20.74C39.96 -20.74 41.31 -21.98 41.31 -23.52C41.31 -25.07 39.96 -26.31 38.3 -26.31C36.66 -26.31 35.31 -25.07 35.31 -23.52C35.31 -21.98 36.66 -20.74 38.3 -20.74ZM53.35 0.35C57.85 0.35 60.89 -1.69 61.82 -4.91L56.65 -5.76C56.19 -4.52 55.01 -3.85 53.45 -3.85C51.26 -3.85 49.78 -5.18 49.68 -7.87H62.08V-9.33C62.08 -15.46 58.35 -18.79 53.13 -18.79C47.56 -18.79 43.99 -14.94 43.99 -9.21C43.99 -3.27 47.52 0.35 53.35 0.35ZM49.71 -11.24C49.93 -13.28 51.14 -14.59 53.18 -14.59C55.21 -14.59 56.36 -13.35 56.59 -11.24Z" />
+            <!-- nd -->
+            <path
+                android:fillColor="#FFFFFF"
+                android:pathData="M70.57 -10.59C70.57 -12.75 71.85 -14.03 73.75 -14.03C75.64 -14.03 76.77 -12.78 76.77 -10.69V0H82.56V-11.82C82.56 -16.02 80.02 -18.79 76.14 -18.79C73.13 -18.79 71.31 -17.13 70.33 -14.56L70.23 -18.56H64.78V0H70.57ZM92.76 0.27C95.59 0.27 97.25 -1.33 97.98 -3H98.17V0H103.89V-24.74H98.11V-15.37H97.98C97.28 -17.05 95.68 -18.79 92.71 -18.79C88.81 -18.79 85.33 -15.77 85.33 -9.26C85.33 -2.97 88.63 0.27 92.76 0.27ZM94.74 -4.25C92.5 -4.25 91.29 -6.24 91.29 -9.26C91.29 -12.29 92.5 -14.26 94.74 -14.26C96.95 -14.26 98.24 -12.33 98.24 -9.26C98.24 -6.23 96.93 -4.25 94.74 -4.25Z" />
+            <!-- Flix -->
+            <path
+                android:fillColor="#FFFFFF"
+                android:pathData="M107.4 0H113.26V-9H123.14V-13.68H113.26V-19.96H124.21V-24.74H107.4ZM132.74 -24.74H126.95V0H132.74ZM136.24 0H142.03V-18.56H136.24ZM139.12 -20.74C140.78 -20.74 142.13 -21.98 142.13 -23.52C142.13 -25.07 140.78 -26.31 139.12 -26.31C137.48 -26.31 136.14 -25.07 136.14 -23.52C136.14 -21.98 137.48 -20.74 139.12 -20.74ZM144.16 0H150.19L151.95 -3.22C152.58 -4.4 153.11 -5.61 153.63 -6.81C154.17 -5.61 154.74 -4.4 155.37 -3.22L157.16 0H163.27L157.46 -9.5L163.02 -18.56H156.98L155.48 -15.9C154.84 -14.74 154.29 -13.51 153.76 -12.32C153.23 -13.51 152.7 -14.73 152.08 -15.9L150.65 -18.56H144.51L149.92 -9.53Z" />
+        </group>
+    </group>
+</vector>

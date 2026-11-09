@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Manuel Weißböck
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<resources>
+    <string name="tv_setup_label">Dirección del servidor</string>
+    <string name="tv_setup_connect">Conectar</string>
+    <string name="tv_setup_checking">Comprobando…</string>
+    <string name="tv_setup_hint">Pulsa el botón central en el campo para escribir con el mando. Arriba y Abajo cambian entre el campo y Conectar.</string>
+    <string name="tv_opening">Abriendo %1$s</string>
+    <string name="tv_retry">Reintentar</string>
+    <string name="tv_change_server">Cambiar de servidor</string>
+    <string name="tv_error_empty">Introduce la dirección de tu servidor FriendFlix.</string>
+    <string name="tv_error_insecure">No se permiten direcciones http:// sin cifrar. Usa una dirección https://.</string>
+    <string name="tv_error_invalid">Eso no parece una dirección de servidor. Prueba algo como friend.example.com.</string>
+    <string name="tv_error_unreachable">No se puede conectar con ese servidor. Comprueba la dirección, la red y que el servidor esté en marcha.</string>
+    <string name="tv_error_not_friendflix">Esa dirección responde, pero no es un servidor FriendFlix.</string>
+    <string name="tv_error_tls">La conexión segura ha fallado. El certificado del servidor no es de confianza.</string>
+    <string name="tv_error_app_too_old">Esta app es demasiado antigua para el servidor. Actualiza FriendFlix en este Fire TV.</string>
+    <string name="tv_error_server_too_old">El servidor es demasiado antiguo para esta app. Actualiza FriendFlix en el servidor.</string>
+</resources>

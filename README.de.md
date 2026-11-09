@@ -182,6 +182,8 @@ App-artige Oberfläche mit schwebender Tab-Leiste (Start, Neu, Meine Liste, Down
 
 **LG-TV-App:** FriendFlix für LG-Smart-TVs (webOS 22 und neuer), vom PC aus über den Entwicklermodus mit einem Installationsskript installiert, ohne Zertifikat. Sie öffnet deinen TV-Modus im Vollbild und sagt dem Server, was der Fernseher abspielen kann, damit Dateien, die der Fernseher selbst kann, nicht umgewandelt werden. Einrichtung, Fernbedienungstasten und Test-App: [docs/de/webos.md](docs/de/webos.md).
 
+**Fire-TV-App:** FriendFlix für Amazon Fire TV Sticks, Cubes und Fernseher (Fire OS 7 und neuer), aus dem Amazon Appstore oder als APK an jedem Release. Sie öffnet deinen TV-Modus im Vollbild, lässt sich mit der Fire-TV-Fernbedienung und deinem Handy als Fernbedienung steuern und sagt dem Server, was das Gerät abspielen kann, damit Dateien, die es selbst kann, nicht umgewandelt werden. Ohne Google-Dienste, ohne Downloads. Installation, Fernbedienungstasten und die Appstore-Schritte für den Betreiber: [docs/de/firetv.md](docs/de/firetv.md).
+
 <p align="center"><img src="docs/images/de/downloads.jpg" alt="Downloads-Seite mit fertigen, pausierten und vorbereiteten Downloads" width="700"></p>
 
 **Sieben Sprachen:** Die Oberfläche spricht **Deutsch, Englisch, Französisch, Spanisch, Italienisch, Türkisch und Polnisch**. Jedes Profil wählt seine eigene Sprache; beim ersten Login fragt FriendFlix einmal nach und schlägt die Browsersprache vor. Der Admin legt die Standardsprache der ganzen Instanz fest.
@@ -398,6 +400,7 @@ npm run e2e                                     # Playwright: baut die Web-App u
 | Windows-App: Installation, Player-Tasten, Updates, Fehlersuche, Update-Signatur | [docs/de/windows.md](docs/de/windows.md) |
 | Samsung-TV-App: Entwicklermodus, Zertifikat, Installationsskript, Probe | [docs/de/tizen.md](docs/de/tizen.md) |
 | LG-TV-App: Entwicklermodus, Installationsskript, Fernbedienungstasten, Test-App | [docs/de/webos.md](docs/de/webos.md) |
+| Fire-TV-App: Installation, Fernbedienung, Test, Amazon-Appstore-Schritte | [docs/de/firetv.md](docs/de/firetv.md) |
 | Such- und Entdecken-API, Labels, Bald weg, Qualität, Regeln für Kinderprofile | [docs/discovery.md](docs/discovery.md) |
 | Themenlisten, Ruhiger Modus, Klang im Player, Handy-Verknüpfungen und Badge | [docs/personal.md](docs/personal.md) |
 | UI-Kit und Admin-Rahmen | [docs/ui-kit.md](docs/ui-kit.md) |
