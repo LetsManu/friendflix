@@ -251,8 +251,9 @@
             {#if row.qualitySwitch}<StatusPill tone="muted" label={$t('adminContent.timing.switchTag')} />{/if}</span>
         {:else if col.key === 'sync'}
           {@const f = syncFacts(row)}
+          {@const sound = [f.sound.map((k) => $t(`scenes.audio.${k}`)).join(' + '), f.webAudio ? $t('adminContent.timing.webAudio') : ''].filter(Boolean).join(' ')}
           <span class="steps" data-testid="timing-sync"><span>{$t(`adminContent.timing.delivery.${f.delivery}`)}</span>
-            <span class="muted small">{#if f.sound.length}{f.sound.map((k) => $t(`scenes.audio.${k}`)).join(' + ')}{#if f.webAudio}{' '}{$t('adminContent.timing.webAudio')}{/if} · {:else if f.webAudio}{$t('adminContent.timing.webAudio')} · {/if}{f.droppedPct === null ? '–' : $t('adminContent.timing.dropped', { pct: fmtNumber(f.droppedPct) })} · {$t('adminContent.timing.avEvents', { n: f.avEvents })}</span>
+            <span class="muted small">{[sound, f.droppedPct === null ? '–' : $t('adminContent.timing.dropped', { pct: fmtNumber(f.droppedPct) }), $t('adminContent.timing.avEvents', { n: f.avEvents })].filter(Boolean).join(' · ')}</span>
             {#if f.trackSwitch}<StatusPill tone="muted" label={$t('adminContent.timing.trackTag')} />{/if}</span>
         {:else if col.key === 'steps'}
           {@const st = rowSteps(row)}
