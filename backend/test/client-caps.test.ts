@@ -95,7 +95,7 @@ describe('POST /api/playback/info with a capability block', () => {
     expect(profiles[0]).toEqual({
       Name: 'FriendFlix Web', MaxStreamingBitrate: 60_000_000, CodecProfiles: [],
       DirectPlayProfiles: [{ Container: 'mp4,m4v,webm', Type: 'Video', VideoCodec: 'h264,vp9,av1', AudioCodec: 'aac,mp3,opus,flac' }],
-      TranscodingProfiles: [{ Container: 'ts', Type: 'Video', AudioCodec: 'aac,mp3', VideoCodec: 'h264', Protocol: 'hls', Context: 'Streaming', MaxAudioChannels: '2', MinSegments: 1, BreakOnNonKeyFrames: true }],
+      TranscodingProfiles: [{ Container: 'ts', Type: 'Video', AudioCodec: 'aac,mp3', VideoCodec: 'h264', Protocol: 'hls', Context: 'Streaming', MaxAudioChannels: '2', MinSegments: 1, BreakOnNonKeyFrames: false }],
       SubtitleProfiles: [{ Format: 'vtt', Method: 'External' }, { Format: 'srt', Method: 'External' }, { Format: 'ass', Method: 'External' }],
     });
   });

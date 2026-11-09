@@ -125,7 +125,9 @@ export function toPlaybackDto(args: {
   hls.set('AudioCodec', cast ? 'aac' : 'aac,mp3');
   hls.set('SegmentContainer', 'ts');
   hls.set('MinSegments', '1');
-  hls.set('BreakOnNonKeyFrames', 'true');
+  // segments start on a keyframe: a restarted transcode (seek, resume, reconnect, track switch) with copied video would
+  // otherwise snap the picture back to the previous keyframe while the re-encoded audio starts at the exact time (A/V offset)
+  hls.set('BreakOnNonKeyFrames', 'false');
   hls.set('TranscodingMaxAudioChannels', '2');
   hls.set('MaxStreamingBitrate', String(maxBitrate));
   if (audioIndex !== undefined) hls.set('AudioStreamIndex', String(audioIndex));

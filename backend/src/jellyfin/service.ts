@@ -577,7 +577,7 @@ export class JellyfinService implements MediaServer {
       // Chromecast: never direct play; always HLS/TS with H.264 + stereo AAC
       DirectPlayProfiles: opts.cast || opts.noDirect ? [] : [directPlayProfile(caps)],
       TranscodingProfiles: [
-        { Container: 'ts', Type: 'Video', AudioCodec: opts.cast ? 'aac' : 'aac,mp3', VideoCodec: 'h264', Protocol: 'hls', Context: 'Streaming', MaxAudioChannels: '2', MinSegments: 1, BreakOnNonKeyFrames: true },
+        { Container: 'ts', Type: 'Video', AudioCodec: opts.cast ? 'aac' : 'aac,mp3', VideoCodec: 'h264', Protocol: 'hls', Context: 'Streaming', MaxAudioChannels: '2', MinSegments: 1, BreakOnNonKeyFrames: false },
       ],
       SubtitleProfiles: [
         { Format: 'vtt', Method: 'External' },
