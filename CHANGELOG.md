@@ -4,6 +4,9 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Fixed
+- **Top bar glass evenly frosted.** The top bar now has one continuous frost: no darker band or seam over bright pictures, and the frost no longer disappears after the light follows the mouse across the bar.
+
 ## [3.0.2] – Churros – 2026-11-09
 
 ### Fixed
