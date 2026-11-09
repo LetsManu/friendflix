@@ -16,8 +16,7 @@
   import { mobile } from '#lib/viewport';
   import { alreadyWished, clearRecent, isYear, loadRecent, pushRecent, wishCandidates, type SeerrHit } from '#lib/discovery';
 
-  interface Person { id: string; name: string; image: boolean }
-  interface Result { q: string; titles: Item[]; episodes: Item[]; people: Person[]; genres: string[]; partial: boolean }
+  import type { SearchResult as Result } from '#lib/desk/searchSheet';
 
   let input = '', term = '', pushed: string | null = null, seenUrl: string | null = null, status: 'idle' | 'loading' | 'error' | 'done' = 'idle';
   let res: Result | null = null, recent: string[] = [], timer: ReturnType<typeof setTimeout>, seq = 0, ctl: AbortController | undefined, inputEl: HTMLInputElement;

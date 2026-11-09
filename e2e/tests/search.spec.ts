@@ -37,13 +37,14 @@ test.describe('search', () => {
     await expect(page.getByRole('heading', { level: 2, name: 'Zuletzt gesucht' })).toBeVisible();
   });
 
-  test('typing in the header search from another page opens /search and keeps typing', async ({ page }) => {
+  test('typing in the header search from another page and pressing Enter opens /search and keeps typing', async ({ page }) => {
     await page.goto('/watchlist');
     await expect(page.getByRole('navigation', { name: 'Hauptnavigation' })).toBeVisible();
     await page.keyboard.press('/');
     const input = page.locator('#hq');
     await expect(input).toBeFocused();
     await page.keyboard.type('nolan', { delay: 40 });
+    await page.keyboard.press('Enter'); // off /search typing fills the search sheet; Enter opens the page
     await expect(page).toHaveURL(/\/search\?q=nolan$/);
     await expect(page.getByRole('heading', { level: 2, name: 'Personen' })).toBeVisible();
     await expect(input).toHaveValue('nolan');

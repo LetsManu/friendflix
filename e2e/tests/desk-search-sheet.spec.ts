@@ -1,0 +1,225 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import type { Page } from '@playwright/test';
+import { byName, hex, ME } from '../mocks/fixtures.js';
+import { expect, test } from '../fixtures.js';
+
+/**
+ * The desktop search sheet (glass spec §2): typing in the top-bar pill opens one frosted sheet below it (no navigation), the
+ * page dims, results cascade in (§8.6); the field is a combobox (arrows, Enter, Esc); on /search the pill drives the page.
+ */
+
+/** no brand intro over the page; the frame guard with a budget no test host misses */
+async function quiet(page: Page) {
+  await page.addInitScript(() => {
+    sessionStorage.setItem('ff-intro-seen', '1');
+    localStorage.setItem('ff-intro:p1', JSON.stringify({ show: false, sound: false }));
+    (window as unknown as { __ffDeskGuard: unknown }).__ffDeskGuard = { slowMs: 1000, frames: 8 };
+  });
+}
+async function calm(page: Page) {
+  await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { calm: true } } }));
+  await page.addInitScript(() => localStorage.setItem('ff_calm:p1', '1'));
+}
+/** calm mode is on (the prefs arrived) */
+const calmOn = (page: Page) => expect(page.locator('html')).toHaveClass(/m-still/);
+/** /watchlist with the bar ready ("/" before /api/me answered has no bar to open) */
+async function ready(page: Page) {
+  await page.goto('/watchlist');
+  await expect(page.locator('[data-desk-bar] .pill')).toHaveClass(/\bon\b/);
+}
+const sheet = (page: Page) => page.locator('#ds-sheet');
+const box = async (page: Page, sel: string) => (await page.locator(sel).boundingBox())!;
+
+test.describe('desktop search sheet', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, tv: false } }));
+    await quiet(page);
+  });
+
+  test('typing in the pill opens one frosted sheet below it; the page dims; the URL stays', async ({ page }) => {
+    await page.route('**/api/search?*', (r) => r.fulfill({ json: {
+      q: 'har', titles: [byName('Pulse Harbor'), byName('Strange Harbor'), byName('The Wharf')], episodes: [],
+      people: [{ id: hex(310), name: 'Ida Harlow', image: false }], genres: ['Drama', 'Krimi'], partial: false,
+    } }));
+    await ready(page);
+    await page.keyboard.press('/');
+    await page.keyboard.type('har', { delay: 30 });
+    await expect(sheet(page)).toBeVisible();
+    await expect(sheet(page).getByRole('heading', { name: 'Beste Treffer' })).toBeVisible();
+    const pb = await box(page, '[data-desk-bar] .pill'), sb = await box(page, '#ds-sheet');
+    expect(sb.y).toBeGreaterThan(pb.y + pb.height);
+    expect(Math.abs(sb.x + sb.width / 2 - (pb.x + pb.width / 2))).toBeLessThanOrEqual(2);
+    await expect(page.locator('.frost-dim')).toBeVisible();
+    expect(page.url()).not.toContain('/search');
+    for (const h of ['Beste Treffer', 'Personen', 'Filme & Serien', 'Nach Genre stöbern']) await expect(sheet(page).getByRole('heading', { name: h })).toBeVisible();
+    const mark = sheet(page).locator('#ds-hit-0 mark');
+    await expect(mark).toHaveText('Har');
+    expect(await mark.evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 79, 109)');
+    await expect(sheet(page)).toHaveAttribute('role', 'region');
+    await expect(sheet(page)).toHaveAttribute('aria-label', 'Suchergebnisse');
+    await expect(sheet(page).locator('#ds-all')).toHaveText('Alle Ergebnisse');
+    await expect(page.locator('#hq')).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  test('before typing: recent, popular and genres in the same sheet', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('ff-recent-search:p1', JSON.stringify(['nolan', 'dahl'])));
+    await ready(page);
+    await page.keyboard.press('/');
+    await expect(sheet(page)).toBeVisible();
+    await expect(sheet(page).getByRole('heading', { name: 'Zuletzt gesucht' })).toBeVisible();
+    await expect(sheet(page).getByRole('button', { name: 'nolan' })).toBeVisible();
+    await expect(sheet(page).getByRole('heading', { name: 'Beliebt hier' })).toBeVisible();
+    await expect(sheet(page).locator('.posters a')).toHaveCount(5);
+    await expect(sheet(page).getByRole('link', { name: 'Krimi' })).toBeVisible();
+    const before = await box(page, '#ds-sheet');
+    await page.keyboard.type('ha', { delay: 30 });
+    await expect(sheet(page).getByRole('heading', { name: 'Beste Treffer' })).toBeVisible();
+    const after = await box(page, '#ds-sheet');
+    expect(Math.round(after.x)).toBe(Math.round(before.x));
+    expect(Math.round(after.width)).toBe(Math.round(before.width));
+    // a recent chip goes into the field; Clear empties the list
+    await page.keyboard.press('Escape');
+    await sheet(page).getByRole('button', { name: 'dahl' }).click();
+    await expect(page.locator('#hq')).toHaveValue('dahl');
+    await expect(page.locator('#hq')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await sheet(page).getByRole('button', { name: 'Verlauf löschen' }).click();
+    await expect(sheet(page).getByRole('button', { name: 'nolan' })).toHaveCount(0);
+    await expect(page.locator('#hq')).toBeFocused();
+  });
+
+  test('keyboard: arrows move the active hit, Enter opens it, Enter without one goes to /search', async ({ page }) => {
+    await ready(page);
+    const input = page.locator('#hq');
+    await page.keyboard.press('/');
+    await page.keyboard.type('har', { delay: 30 });
+    await expect(sheet(page).locator('#ds-hit-0')).toBeVisible();
+    await expect(input).toHaveAttribute('role', 'combobox');
+    await expect(input).toHaveAttribute('aria-controls', 'ds-sheet');
+    await input.press('ArrowDown');
+    await expect(input).toHaveAttribute('aria-activedescendant', 'ds-hit-0');
+    await expect(sheet(page).locator('#ds-hit-0')).toHaveAttribute('aria-selected', 'true');
+    // ↑ from the first wraps to All results, ↓ comes back
+    await input.press('ArrowUp');
+    await expect(input).toHaveAttribute('aria-activedescendant', 'ds-all');
+    await input.press('ArrowDown');
+    await expect(input).toHaveAttribute('aria-activedescendant', 'ds-hit-0');
+    const href = await sheet(page).locator('#ds-hit-0').getAttribute('href');
+    expect(href).toMatch(/^\/item\/[0-9a-f]{32}$/);
+    await input.press('Enter');
+    await expect(page).toHaveURL(new RegExp(`${href}$`));
+    await expect(sheet(page)).toHaveCount(0);
+    // the pick is remembered as a recent search
+    expect(await page.evaluate(() => localStorage.getItem('ff-recent-search:p1'))).toContain('har');
+
+    await page.keyboard.press('/');
+    await expect(input).toBeFocused();
+    await page.keyboard.type('har', { delay: 30 });
+    await expect(sheet(page).locator('#ds-hit-0')).toBeVisible();
+    await input.press('Enter');
+    await expect(page).toHaveURL(/\/search\?q=har$/);
+  });
+
+  test('Esc clears, then closes; outside click closes; a late answer does not reopen', async ({ page }) => {
+    await page.route('**/api/search?*', async (r) => { await new Promise((res) => setTimeout(res, 600)); await r.fallback(); });
+    await ready(page);
+    const input = page.locator('#hq');
+    await page.keyboard.press('/');
+    const asked = page.waitForRequest('**/api/search?*');
+    await page.keyboard.type('har', { delay: 30 });
+    await asked;
+    await input.press('Escape');
+    await expect(input).toHaveValue('');
+    await expect(sheet(page)).toBeVisible(); // cleared: the idle sheet
+    await input.press('Escape');
+    await expect(sheet(page)).toHaveCount(0);
+    await expect(page.locator('[data-desk-bar] button.mag')).toBeFocused(); // the focus comes back to the magnifier
+    await page.waitForTimeout(800);
+    await expect(sheet(page)).toHaveCount(0);
+
+    await page.keyboard.press('/');
+    await expect(sheet(page)).toBeVisible();
+    await page.mouse.click(5, 700);
+    await expect(sheet(page)).toHaveCount(0);
+    await expect(page.locator('[data-desk-bar] .pill')).not.toHaveClass(/\bopen\b/);
+    await expect(page.locator('.frost-dim')).toHaveCount(0);
+  });
+
+  test('on /search the sheet never opens', async ({ page }) => {
+    await page.goto('/search?q=har');
+    const input = page.locator('#hq');
+    await expect(input).toHaveValue('har');
+    await input.fill('harb');
+    await expect(page).toHaveURL(/\/search\?q=harb$/);
+    await expect(page.locator('section[aria-labelledby="st"] article.card')).toHaveCount(2); // Pulse Harbor, Strange Harbor
+    await expect(sheet(page)).toHaveCount(0);
+    await expect(input).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('calm: no cascade, and closing is instant', async ({ page }) => {
+    await calm(page);
+    await ready(page);
+    await calmOn(page);
+    await page.keyboard.press('/');
+    await page.keyboard.type('har', { delay: 30 });
+    await expect(sheet(page).locator('#ds-hit-0')).toBeVisible();
+    await page.waitForTimeout(100);
+    expect(await sheet(page).evaluate((s) => [...s.querySelectorAll('[data-cascade]')].reduce((n, e) => n + e.getAnimations().length, 0))).toBe(0);
+    await page.locator('#hq').press('Escape');
+    await page.locator('#hq').press('Escape');
+    await expect(sheet(page)).toHaveCount(0, { timeout: 100 });
+  });
+
+  test.describe('with motion', () => {
+    test.use({ reducedMotion: 'no-preference' });
+
+    test('results cascade 45 ms apart (full motion)', async ({ page }) => {
+      await ready(page);
+      await page.keyboard.press('/');
+      await page.keyboard.type('har', { delay: 30 });
+      const delays = await page.waitForFunction(() => {
+        const els = [...document.querySelectorAll('#ds-sheet [data-cascade]')].slice(0, 3);
+        if (els.length < 3 || els[0]!.id !== 'ds-hit-0') return null;
+        const d = els.map((e) => e.getAnimations()[0]?.effect?.getTiming().delay);
+        return d.every((x) => x !== undefined) ? d : null;
+      }, null, { polling: 'raf' });
+      expect(await delays.jsonValue()).toEqual([0, 45, 90]);
+    });
+
+    test('closing animates (full) and is instant in calm', async ({ page }) => {
+      await ready(page);
+      await page.keyboard.press('/');
+      await expect(sheet(page)).toBeVisible();
+      await expect.poll(() => sheet(page).evaluate((s) => s.getAnimations().length)).toBe(0); // grown in
+      await page.locator('#hq').press('Escape');
+      const n = await page.evaluate(() => document.getElementById('ds-sheet')?.getAnimations().length ?? -1);
+      expect(n).toBeGreaterThan(0); // folding back up, not cut
+      await expect(sheet(page)).toHaveCount(0);
+    });
+
+    test('calm mode: closing is instant', async ({ page }) => {
+      await calm(page);
+      await ready(page);
+      await calmOn(page);
+      await page.keyboard.press('/');
+      await expect(sheet(page)).toBeVisible();
+      await page.locator('#hq').press('Escape');
+      await expect(sheet(page)).toHaveCount(0, { timeout: 100 });
+    });
+
+    test('bar pill and round buttons are glass with the sheen', async ({ page }) => {
+      await ready(page);
+      await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
+      const half = page.locator('[data-desk-bar] .pbg .half i').first();
+      expect(await half.evaluate((e) => getComputedStyle(e).backdropFilter)).toContain('blur(38px)');
+      expect(await page.locator('[data-desk-bar] .round').evaluate((e) => getComputedStyle(e).backdropFilter)).toContain('blur(38px)');
+      const pill = page.locator('[data-desk-bar] .pill');
+      const pb = (await pill.boundingBox())!;
+      await page.mouse.move(pb.x + 20, pb.y + pb.height / 2);
+      await page.mouse.move(pb.x + pb.width / 2, pb.y + pb.height / 2, { steps: 4 });
+      await expect(pill.locator('.frost-sheen.on')).toHaveCount(1);
+      await expect(page.locator('[data-desk-bar] .round .frost-sheen')).toHaveCount(1);
+    });
+  });
+});

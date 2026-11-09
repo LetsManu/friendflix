@@ -11,6 +11,11 @@ export default {
   bar: {
     close: 'Suche schließen',
   },
+  search: {
+    top: 'Beste Treffer',
+    all: 'Alle Ergebnisse',
+    sheet: 'Suchergebnisse',
+  },
   detail: {
     back: 'Zurück',
     extras: 'Trailer & Extras',
