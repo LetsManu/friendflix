@@ -8,6 +8,14 @@ beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { resetToasts(); vi.useRealTimers(); });
 
 describe('toast store', () => {
+  it('a pause held when the last toast closes does not keep later toasts from timing out', () => {
+    const id = toast.info('a', { action: { label: 'Undo', run: () => undefined } });
+    pause(); // focus on the toast's button
+    runToastAction(id); // the focused toast goes away: no focusout reaches the host
+    toast.success('b');
+    vi.advanceTimersByTime(5000);
+    expect(get(toasts)).toHaveLength(0);
+  });
   it('shows and auto-dismisses after the kind default', () => {
     const onClose = vi.fn();
     toast.success('Gespeichert.', { onClose });

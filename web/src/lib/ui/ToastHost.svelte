@@ -7,11 +7,18 @@
    */
   import { flip } from 'svelte/animate';
   import Icon from '#lib/Icon.svelte';
+  import { tick } from 'svelte';
   import { t } from '#lib/i18n';
   import { fxMode, toastRise } from '#lib/glass/fx';
   import { SCRIM_MENU } from '#lib/glass/tone';
   import { close, pause, resume, RING_LEN, runToastAction, timeLeft, toasts, type Toast } from './toast';
   let inside = false;
+  let region: HTMLElement | undefined;
+  /** a removed toast that held focus fires no focusout: after every change, lift the pause when neither pointer nor focus is still inside */
+  function recheck() {
+    if (inside && region && !region.matches(':hover') && !region.contains(document.activeElement)) leave();
+  }
+  $: if ($toasts) void tick().then(recheck);
   function enter() { if (!inside) { inside = true; pause(); } }
   function leave(e?: FocusEvent) {
     const to = e?.relatedTarget as Node | null;
@@ -47,7 +54,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions (hover/focus pause the timers; Escape closes the focused toast) -->
-<section class="toasts" aria-label={$t('ui.notifications')} on:mouseenter={enter} on:mouseleave={() => leave()} on:focusin={enter} on:focusout={leave} on:keydown={onKey}>
+<section bind:this={region} class="toasts" aria-label={$t('ui.notifications')} on:mouseenter={enter} on:mouseleave={() => leave()} on:focusin={enter} on:focusout={leave} on:keydown={onKey}>
   <ol aria-live="polite" aria-relevant="additions text">
     {#each $toasts as m (m.id)}
       <li class="toast frost frost-pill frost-safe {m.kind}" animate:flip={{ duration: flipMs() }} in:toastRise={{ dir: 'in' }} out:toastRise={{ dir: 'out' }} style="--fr-scrim-safe:{SCRIM_MENU}" data-toast={m.id}>

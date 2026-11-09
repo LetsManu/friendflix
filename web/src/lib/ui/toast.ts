@@ -83,6 +83,8 @@ export function close(id: number, reason: CloseReason = 'dismiss'): void {
   if (!e) return;
   if (e.timer) clearTimeout(e.timer);
   entries = entries.filter((x) => x !== e);
+  // nothing left to hover or focus: a pause can no longer be lifted by the host, so drop it (the next toast is armed)
+  if (!entries.length) paused = false;
   publish();
   try { e.onClose?.(reason); } catch { /* a callback must not break the queue */ }
 }
