@@ -47,6 +47,8 @@ test.describe('LG app', () => {
     await expect(page.locator('html.tv')).toHaveCount(1);
     const rail = page.locator('nav.rail');
     await expect(rail.locator('a.who')).toBeVisible(); // the profile is loaded: the shell listens
+    // the TV home puts the focus on its first control once it has loaded; a Back before that races the focus move, which closes the rail
+    await expect.poll(() => page.evaluate(() => document.activeElement?.tagName ?? '')).not.toBe('BODY');
     await press(page, 461);
     await expect(rail).toHaveClass(/open/);
     expect(await lg.backCalls()).toBe(0);

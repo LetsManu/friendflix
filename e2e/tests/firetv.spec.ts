@@ -97,20 +97,39 @@ test.describe('Fire TV app, paired', () => {
   });
 
   test('Home hides the page: the player pauses (the WebView alone may keep the sound)', async ({ page, api: _api }) => {
-    await asFireTvApp(page);
+    const ftv = await asFireTvApp(page);
     await playerWithInfo(page);
+    const progress: string[] = [];
+    page.on('request', (r) => { if (r.url().endsWith('/api/playback/progress')) progress.push(r.url()); });
     await page.goto('/watch/' + MOVIE.id + '?ff_app=firetv');
     await videoReady(page);
     await expect.poll(() => isPaused(page)).toBe(false);
+    await page.waitForTimeout(300); // reports of the start (seek, first progress) are over
+    progress.length = 0;
     await page.evaluate(() => {
       Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
       Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
       document.dispatchEvent(new Event('visibilitychange'));
     });
     await expect.poll(() => isPaused(page)).toBe(true);
+    await expect.poll(async () => (await ftv.messages()).at(-1)).toBe('keepAwake:0');
+    await page.waitForTimeout(300);
+    expect(progress).toHaveLength(1); // the visibility report only, not a second one for the pause it caused
+  });
+
+  test.describe('error screen', () => {
+    test.use({ allowedConsole: /status of 403 \(Forbidden\)/ }); // the mocked playback info refusal
+    test('an error screen lets the screen sleep', async ({ page, api: _api }) => {
+      const ftv = await asFireTvApp(page);
+      await mockPlayer(page);
+      await page.route('**/api/playback/info', (r) => r.fulfill({ status: 403, json: { error: 'forbidden' } }));
+      await page.goto('/watch/' + MOVIE.id + '?ff_app=firetv');
+      await expect(page.locator('.errbox')).toBeVisible();
+      await expect.poll(ftv.messages).toContain('keepAwake:0');
+      expect(await ftv.messages()).not.toContain('keepAwake:1');
+    });
   });
 });
-
 
 test('a plain browser keeps playing when the page is hidden (only the Fire TV app pauses)', async ({ page, api: _api }) => {
   await pairedTv(page);

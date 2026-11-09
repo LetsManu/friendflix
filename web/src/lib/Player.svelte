@@ -581,6 +581,10 @@
     if (!abr || handedOff || airOn || airInfo || switching || reconnecting || error) return;
     applyAbr(abr.onStall(ms)); // 'fail' needs nothing here: a stall at the lowest rung just keeps buffering
   }
+  /** Fire TV keep-awake: `playing` turns it on; pause, end, a media error, an error screen and unmount turn it off (no-op elsewhere) */
+  $: if (error) postFireTv('keepAwake:0');
+  /** the next pause event comes from pauseWhenHidden (no second progress report) */
+  let hiddenPause = false;
   function onPlaying() {
     if (handedOff) return;
     postFireTv('keepAwake:1'); // the Fire TV app keeps the screen on while a picture plays (no-op elsewhere)
@@ -1404,7 +1408,8 @@
     window.addEventListener('online', online);
     document.addEventListener('visibilitychange', vis);
     // Fire TV: Home hides the page; pause so no sound keeps playing behind the launcher (no-op elsewhere)
-    const stopHidden = pauseWhenHidden(() => { if (handedOff || !video) return; wantAutoplay = false; if (!video.paused) video.pause(); });
+    // the visibility handler above already sent the (keepalive) progress report: the pause it causes sends none
+    const stopHidden = pauseWhenHidden(() => { if (handedOff || !video) return; wantAutoplay = false; if (!video.paused) { hiddenPause = true; video.pause(); } });
     video?.addEventListener('enterpictureinpicture', pipOn); video?.addEventListener('leavepictureinpicture', pipOff);
     const fs = () => {
       fullscreen = Boolean(document.fullscreenElement);
@@ -1459,7 +1464,7 @@
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
     on:error={onVideoError}
-    on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff) return; paused = true; resetStall(); if (!castBusy && !stopped) send('progress'); }} on:seeked={() => { timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
+    on:play={onPlay} on:pause={() => { postFireTv('keepAwake:0'); if (handedOff) return; paused = true; resetStall(); const quiet = hiddenPause; hiddenPause = false; if (!castBusy && !stopped && !quiet) send('progress'); }} on:seeked={() => { timing.seeked(video?.paused ?? true); if (!handedOff && started) send('progress'); }}
     on:ended={() => { postFireTv('keepAwake:0'); if (handedOff) return; stopped = true; paused = true; send('stop'); }}
     on:timeupdate={() => { syncTime(); reportTick(); }} on:progress={syncTime} on:loadedmetadata={syncTime}
     on:waiting={onWaiting} on:seeking={() => { resetStall(); timing.seeking(); }} on:playing={onPlaying} on:loadeddata={firstFrame} on:canplay={() => { if (handedOff) return; waiting = false; if (wantAutoplay) { wantAutoplay = false; playSafe(); } }}

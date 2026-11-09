@@ -32,8 +32,9 @@
   });
   /** Fire TV: the app opens its server screen; LG: back to the app's start page */
   function changeServer() {
-    if (isFireTvApp()) postFireTv('changeServer');
-    else changeServerViaHome(() => toast.info($t('shell.account.changeServerBlue')));
+    const stuck = () => toast.info($t('shell.account.changeServerBlue'));
+    if (isFireTvApp()) { if (!postFireTv('changeServer')) stuck(); } // no message port: never silently nothing
+    else changeServerViaHome(stuck);
   }
   async function removeResume(id: string) {
     const prev = resume;
