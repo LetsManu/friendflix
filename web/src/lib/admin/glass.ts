@@ -5,7 +5,7 @@
  * string of digits with optional thousands separators as `fmtNumber` writes them in any locale (`'2.431'`, `'2,431'`,
  * `'2 431'`, with a narrow or plain no-break space too). Units, decimals, dashes and `null` do not count (`'3 GB'`, `'–'`).
  */
-const GROUPED = /^\d{1,3}(?:([.,'   ])\d{3})?(?:\1\d{3})*$/;
+const GROUPED = /^\d{1,3}(?:([.,' \u00a0\u202f])\d{3})?(?:\1\d{3})*$/;
 
 export function countable(v: string | number | null | undefined): number | null {
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
