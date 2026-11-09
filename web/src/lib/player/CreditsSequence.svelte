@@ -22,9 +22,9 @@
    *   rises in at the right - for a film or the last episode the post-play headline instead, without a countdown - and below it
    *   "More like this" (the first post-play row, five titles), 40 ms apart once the picture has glided (250 ms).
    * Phones (`phone`: the orientation): the chip sits at the end-side bottom above the home indicator; in the corner beat the next
- *   episode and the suggestions form one column right of the small picture (landscape) or below it (portrait, the suggestions as
- *   a row), each scrolling when short, everything inside the safe areas and every button at least 44 px.
- * TV: everything is a `data-nav` focusable; on entering 'corner' Play (a film: the first suggestion) takes the focus once.
+   *   episode and the suggestions form one column right of the small picture (landscape) or below it (portrait, the suggestions as
+   *   a row), each scrolling when short, everything inside the safe areas and every button at least 44 px.
+   * TV: everything is a `data-nav` focusable; on entering 'corner' Play (a film: the first suggestion) takes the focus once.
    * 'off': the page keeps this component mounted, so backing out plays the layer's outro (opacity / transform, 200 ms).
    */
   export let beat: CreditsBeat;
@@ -188,10 +188,10 @@
     calc(var(--safe-top) + var(--safe-bottom) + 120px + var(--cs-res, 0px) - 2 * var(--sh2, 50vh))), 0); }
   .ph.mo .chip { transition: transform 250ms var(--m-emph-out, ease-out); }
   .ph .chip button { padding: .55rem 1rem; }
-  /* "Watch credits" over the picture's top-start corner (landscape: the picture starts 6 px past safe-left, 12 px down; portrait:
+  /* "Watch credits" over the picture's top-start corner (landscape: the picture starts 12 px past safe-left, 12 px down; portrait:
      scale .92 leaves 4 % at the side, 12 px below the status bar) */
   .ph .wc { min-height: 44px; padding: .4rem 1rem; font-size: .85rem; }
-  .ph-land .wc { left: calc(var(--safe-left) + 6px + 10px); top: calc(var(--safe-top) + 12px + 10px); }
+  .ph-land .wc { left: calc(var(--safe-left) + 12px + 10px); top: calc(var(--safe-top) + 12px + 10px); }
   .ph-port .wc { left: calc(var(--safe-left) + 4% + 10px); top: calc(var(--safe-top) + 12px + 10px); }
   /* beat 3: one column, scrolls when short; only it takes the pointer (the small picture beside / above it backs out) */
   .ph .col { position: absolute; display: flex; flex-direction: column; gap: 1rem; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; scrollbar-width: none; }
@@ -201,8 +201,9 @@
   .ph .up h3 { font-size: 1.25rem; }
   .ph .up p { font-size: .9rem; }
   .ph .acts .go { min-height: 44px; }
-  /* landscape: right of the picture (its end edge: safe-left + 6 px + 42 %, then 16 px) to the end-side inset */
-  .ph-land .col { left: calc(var(--safe-left) + max(44vw, 42vw + 22px)); right: calc(var(--safe-right) + 16px); top: calc(var(--safe-top) + 12px); bottom: calc(var(--safe-bottom) + 16px); }
+  /* landscape: right of the picture (its end edge: safe-left + 12 px + .42 x the picture's width --pw, set by the Player; then 20 px)
+     to the end-side inset */
+  .ph-land .col { left: calc(var(--safe-left) + 32px + .42 * var(--pw, 100vw)); right: calc(var(--safe-right) + 16px); top: calc(var(--safe-top) + 12px); bottom: calc(var(--safe-bottom) + 16px); }
   .ph-land .sugg ul { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; }
   /* portrait: below the small picture (its bottom: safe-top + 12 px + the picture's height x .92), the suggestions as a row */
   .ph-port .col { left: calc(var(--safe-left) + 16px); right: calc(var(--safe-right) + 16px); top: calc(var(--safe-top) + 100vw / var(--va, 1.7778) * .92 + 28px);

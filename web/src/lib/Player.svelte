@@ -202,6 +202,8 @@
    * glass circles, one bottom dock (title, timeline, two glass pills); everything follows `orient` and CSS, rotation needs no reload.
    */
   let winW = 0, winH = 0;
+  /** the stage's own size (phones: the credits corner measures from it, not from the window) */
+  let stW = 0, stH = 0;
   $: phoneUi = phonePlayer({ coarse, tv: tvUi, kids: $kidsMode });
   $: orient = phoneOrient(winW, winH);
   $: toolF = { next: hasNext, episodes: Boolean(seriesId), tracks: Boolean(info || tvSession), speed: !partyMode };
@@ -268,8 +270,9 @@
   $: if (phoneUi && winW && winH) void tickDom().then(measurePanel);
   /** the open panel's history entry (phone player): Back closes it */
   let menuLayer: BackLayer | undefined;
-  /** closes the panel and takes its history entry off first (before a navigation that replaces this entry: one Back still leaves) */
+  /** every panel closes (Back popped the panel's entry, or a tap outside on a phone) */
   function closePanels() { menu = ''; extPanel = false; if (xray) closeCastInfo(); }
+  /** closes the panel and takes its history entry off first (before a navigation that replaces this entry: one Back still leaves) */
   async function leaveMenu(): Promise<void> {
     await menuLayer?.drop();
     menu = '';
@@ -307,7 +310,15 @@
   let picAspect = 16 / 9;
   /** a short landscape phone (under 360 px) during the credits chip: the chip rides above the dock where the title block sits - it fades */
   $: chipCrowds = credits === 'chip' && orient === 'landscape' && winH < 360;
-  $: picVar = phoneUi ? `;--va:${picAspect.toFixed(4)};--sh2:${Math.round(winH / 2)}px` : '';
+  /**
+   * phones, credits corner: --va the picture's aspect, --sw2 / --sh2 half the stage, --pw / --ph the letterboxed picture's box
+   * (object-fit: contain) - the video box is cut to it, so the light edge frames the picture, not the black bars
+   */
+  $: picVar = phoneUi ? picVars(picAspect, stW || winW, stH || winH) : '';
+  function picVars(va: number, w: number, h: number): string {
+    const pw = Math.min(w, h * va), r = (n: number) => Math.round(n * 10) / 10;
+    return `;--va:${va.toFixed(4)};--sw2:${r(w / 2)}px;--sh2:${r(h / 2)}px;--pw:${r(pw)}px;--ph:${r(pw / va)}px`;
+  }
   $: credHold = menu !== '' || scrubbing || sp.active || subDlg || help || showXray || (paused && !stopped);
   $: onCreditsBeat(credits);
   function onCreditsBeat(c: typeof credits) {
@@ -320,7 +331,8 @@
     credOut = left;
     if (left) credOutT = setTimeout(() => (credOut = false), phoneUi ? 800 : 300);
   }
-  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
+  // phones: an open panel (a menu, Cast & info, the party host's settings) keeps the controls up (spec 2026-11-08 §1)
+  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || menu !== '' || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
@@ -1210,7 +1222,13 @@
   }
   /** a click outside the open menu (and not on its opener, which toggles itself) closes it; focus returns to the opener. A click on the picture only closes. */
   function onOutsideClick(e: MouseEvent) {
-    if (extPanel && !(e.target as HTMLElement | null)?.closest?.('.menu, [aria-expanded="true"]')) extPanel = false;
+    // phones: the party host's settings and Cast & info close on a tap outside them too (desktop keeps its own toggles)
+    if (phoneUi && extPanel && !(e.target as HTMLElement | null)?.closest?.('.menu, [aria-expanded="true"]')) extPanel = false;
+    if (phoneUi && xray && !(e.target as HTMLElement | null)?.closest?.('.cihost')) {
+      const onPicture = Boolean(stage?.contains(e.target as Node)) && !(e.target as HTMLElement).closest(NO_GESTURE);
+      closeCastInfo();
+      if (onPicture) { e.stopPropagation(); return; } // a tap on the picture only closes
+    }
     if (!menu || !stage) return;
     const t = e.target as HTMLElement | null;
     if (!t || t.closest('.menu, .tvov, .ctl .list, [aria-expanded="true"]')) return;
@@ -1255,6 +1273,7 @@
   }
   function gMove(e: PointerEvent) {
     if (!g || e.pointerId !== g.id || locked) return;
+    if (credits === 'corner') return; // the corner beat: no scrub / volume / brightness (a tap on the small picture still backs out)
     const dx = e.clientX - g.x, dy = e.clientY - g.y;
     if (!g.axis) {
       g.axis = classifyMove(dx, dy, g.x - g.left, g.w, { volumeOk: volOk });
@@ -1290,6 +1309,7 @@
   function handleTap(x: number, w: number) {
     if (locked) { showLockBtn(); return; }
     if (menu || help || extPanel) { menu = ''; help = false; extPanel = false; return; }
+    if (phoneUi && showXray) { closeCastInfo(); return; } // phones: a tap outside Cast & info closes it, like any panel
     const zone = zoneOf(x, w), r = registerTap(tapState, Date.now(), zone);
     tapState = r.state;
     clearTimeout(pendingTap);
@@ -1299,7 +1319,8 @@
   }
   // lock: hides all controls and turns gestures off until the lock icon is held for 0.6 s
   function showLockBtn() { lockHint = true; clearTimeout(lockT); lockT = setTimeout(() => (lockHint = false), 3000); }
-  function lockNow() { locked = true; menu = ''; flash(tr('player.lock.locked'), 2500); showLockBtn(); }
+  // phones: every panel closes (its Back entry comes off with it)
+  function lockNow() { locked = true; menu = ''; if (phoneUi) { extPanel = false; if (xray) closeCastInfo(); } flash(tr('player.lock.locked'), 2500); showLockBtn(); }
   let unlockT: ReturnType<typeof setTimeout>, unlockedAt = 0;
   function unlockDown() { lockHold = true; clearTimeout(unlockT); unlockT = setTimeout(() => { lockHold = false; locked = false; lockHint = false; unlockedAt = Date.now(); wake(); flash(tr('player.lock.unlocked'), 900); }, 600); }
   function unlockUp() { if (lockHold) { lockHold = false; clearTimeout(unlockT); flash(tr('player.lock.hold'), 1500); showLockBtn(); } }
@@ -1425,7 +1446,7 @@
 </script>
 
 <svelte:window bind:innerWidth={winW} bind:innerHeight={winH} on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar}{picVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar}{picVar};--rcard-h:{rCardH}px" bind:this={stage} bind:clientWidth={stW} bind:clientHeight={stH} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -2187,9 +2208,12 @@
   /* same frames under another name: the class swap cred -> credout restarts the animation */
   @keyframes ff-cred-fade-out { from { opacity: 0; } to { opacity: 1; } }
   /* phones (spec 2026-11-08 §4): the picture glides into the top-start corner inside the safe area, its light edge clear of the
-     cut-out. Landscape: scale .42, 6 px past safe-left (its end edge stays left of the middle on an 844 px phone with a 59 px
-     cut-out), 12 px below the top. */
-  .stage.pui.cred > video { transform: translate(calc(-29% + var(--safe-left) + 6px), calc(-29% + var(--safe-top) + 12px)) scale(.42); }
+     cut-out. Landscape: while `.cred` / `.credout` holds, the video box is cut to the letterboxed picture (same place, same size: the
+     swap is invisible), so the light edge frames the picture, not the pillarbox; at scale .42 it sits 12 px past safe-left and
+     below safe-top (21% = half the scaled box). --pw / --ph: the picture's box, --sw2 / --sh2: half the stage (set by the script) */
+  .stage.pui:not(.port):is(.cred, .credout) > video:not(.airprobe) { position: absolute; width: var(--pw, 100%); height: var(--ph, 100%);
+    max-height: none; left: calc(50% - var(--pw, 100%) / 2); top: calc(50% - var(--ph, 100%) / 2); }
+  .stage.pui.cred > video { transform: translate(calc(var(--safe-left) + 12px + 21% - var(--sw2, 50vw)), calc(var(--safe-top) + 12px + 21% - var(--sh2, 50vh))) scale(.42); }
   /* portrait: while `.cred` / `.credout` holds, the video box is cut to the letterboxed picture (same place, same size: the swap is
      invisible), so the box - and its light edge - frame the picture; it rises to just below the status bar at scale .92.
      --va: the picture's aspect, --sh2: half the stage height (both set by the script) */

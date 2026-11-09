@@ -163,6 +163,7 @@ test.describe('phone player, portrait', () => {
   });
 
   test('double tap right seeks, lock in the top bar holds until hold-to-unlock', async ({ page, api: _api }) => {
+    await page.clock.install(); // runs on; the unlock hold below steps it past the 600 ms instead of sleeping
     await openPhoneEpisode(page);
     await page.evaluate(() => document.querySelector('video')!.pause());
     await showControls(page);
@@ -193,7 +194,7 @@ test.describe('phone player, portrait', () => {
     const v = (await unlock.boundingBox())!;
     await page.mouse.move(v.x + v.width / 2, v.y + v.height / 2);
     await page.mouse.down();
-    await page.waitForTimeout(800);
+    await page.clock.runFor(700);
     await page.mouse.up();
     await expect(page.locator('.stage.locked')).toHaveCount(0);
   });
@@ -606,6 +607,62 @@ test.describe('phone panels: Back and navigation', () => {
     await page.goBack();
     await expect.poll(() => path(page)).toBe('/');
   });
+
+  // the in-app ‹ takes the open panel's entry off first: one tap leaves the player, never just the panel
+  test('‹ with a menu open leaves the player in one tap', async ({ page, api: _api }) => {
+    await openPanelEpisode(page, true);
+    await tool(page, 'Audio und Untertitel').tap();
+    await expect(page.getByRole('dialog', { name: 'Audio und Untertitel' })).toBeVisible();
+    await page.locator('.top .icon-btn').first().tap();
+    await expect.poll(() => path(page)).toBe('/');
+  });
+
+  test('‹ with Cast & info open leaves the player in one tap', async ({ page, api: _api }) => {
+    await openPanelEpisode(page, true);
+    await openCastInfo(page);
+    await page.locator('.top .icon-btn').first().tap();
+    await expect.poll(() => path(page)).toBe('/');
+  });
+});
+
+test.describe('phone panels: Cast & info holds the controls', () => {
+  test.use({ viewport: { width: 844, height: 390 } });
+  test('the controls stay while it is open; a tap outside closes it and takes its Back entry off', async ({ page, api: _api }) => {
+    await page.clock.install();
+    await forceSafeArea(page, LAND_L);
+    await openPanelEpisode(page, true);
+    const id = path(page);
+    await openCastInfo(page);
+    await runSettled(page, 4000); // past the 3 s the bar hides after
+    await expect(page.locator('.ci')).toBeVisible();
+    await expect(page.locator('.ctl.hide')).toHaveCount(0);
+    expect(await page.evaluate(() => document.querySelector('video')!.paused)).toBe(false);
+    // the start side of the picture, clear of the card (end side), the top bar and the dock
+    const c = (await page.locator('.ci').boundingBox())!;
+    expect(c.x).toBeGreaterThan(300);
+    const t0 = await page.evaluate(() => document.querySelector('video')!.currentTime);
+    await page.touchscreen.tap(200, 150);
+    await expect(page.locator('.ci')).toHaveCount(0);
+    await expect(page.locator('.ctl.hide')).toHaveCount(0); // the tap only closes: the controls do not toggle away
+    await page.clock.runFor(400); // no deferred double-tap seek either
+    expect(await page.evaluate(() => document.querySelector('video')!.currentTime)).toBeLessThan(t0 + 5);
+    expect(path(page)).toBe(id);
+    await page.goBack();
+    await expect.poll(() => path(page)).toBe('/');
+  });
+
+  test('locking closes Cast & info and takes its Back entry off', async ({ page, api: _api }) => {
+    await forceSafeArea(page, LAND_L);
+    await openPanelEpisode(page, true);
+    const id = path(page);
+    await openCastInfo(page);
+    await page.locator('.ptop').getByRole('button', { name: 'Bedienung sperren' }).tap();
+    await expect(page.locator('.stage.locked')).toHaveCount(1);
+    await expect(page.locator('.ci')).toHaveCount(0);
+    expect(path(page)).toBe(id);
+    await page.goBack();
+    await expect.poll(() => path(page)).toBe('/');
+  });
 });
 
 test.describe('phone panels: pill Next with a panel open', () => {
@@ -624,11 +681,11 @@ test.describe('phone panels: pill Next with a panel open', () => {
 });
 
 /** a watch party on a phone, this viewer the host (its settings menu lives in the dock) */
-async function openParty(page: Page) {
+async function openParty(page: Page, playing = false) {
   await forceSafeArea(page, PORTRAIT);
   await mockPlayer(page);
   await page.routeWebSocket(/\/ws\/party\//, (ws) => {
-    ws.send(JSON.stringify({ t: 'welcome', you: 'u1', hostId: 'u1', mode: 'host', itemId: items[0]!.id, title: 'Testfilm', members: [{ id: 'u1', name: 'Mia', buffering: false }, { id: 'u2', name: 'Ben', buffering: false }], state: { playing: false, position: 0, at: Date.now(), hold: false }, serverNow: Date.now() }));
+    ws.send(JSON.stringify({ t: 'welcome', you: 'u1', hostId: 'u1', mode: 'host', itemId: items[0]!.id, title: 'Testfilm', members: [{ id: 'u1', name: 'Mia', buffering: false }, { id: 'u2', name: 'Ben', buffering: false }], state: { playing, position: 0, at: Date.now(), hold: false }, serverNow: Date.now() }));
     ws.onMessage((m) => { const msg = JSON.parse(String(m)); if (msg.t === 'ping') ws.send(JSON.stringify({ t: 'pong', c: msg.c, s: Date.now() })); });
   });
   await page.goto('/');
@@ -652,6 +709,21 @@ test.describe('phone party panels', () => {
     await expect.poll(() => path(page)).toBe('/party/room1');
     await expect.poll(() => ptxOpacity(page)).toBe('1');
     await page.goBack();
+    await expect.poll(() => path(page)).toBe('/');
+  });
+
+  test('the host settings hold the controls while open; ‹ leaves the party in one tap', async ({ page, api: _api }) => {
+    await page.clock.install();
+    await openParty(page, true);
+    await expect.poll(() => page.evaluate(() => !document.querySelector('video')!.paused)).toBe(true);
+    await showControls(page);
+    await page.locator('.pill.tp').getByRole('button', { name: 'Party-Einstellungen' }).tap();
+    const dlg = page.getByRole('dialog', { name: 'Wer darf steuern?' });
+    await expect(dlg).toBeVisible();
+    await runSettled(page, 4000); // past the 3 s the bar hides after
+    await expect(dlg).toBeVisible();
+    await expect(page.locator('.ctl.hide')).toHaveCount(0);
+    await page.locator('.top .icon-btn').first().tap(); // ‹ with the settings open: one tap leaves the party
     await expect.poll(() => path(page)).toBe('/');
   });
 

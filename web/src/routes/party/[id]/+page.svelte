@@ -12,6 +12,7 @@
   import { fade } from 'svelte/transition';
   import { grow } from '#lib/player/desk/grow';
   import { growOrigin, panelAnchor } from '#lib/player/phone/logic';
+  import { dropLayers } from '#lib/player/phone/backlayer';
   import { motionAllowed } from '#lib/preview';
   import { t, tr, fmtList } from '#lib/i18n';
 
@@ -118,7 +119,8 @@
   async function shareLink() { if (navigator.share) { try { await navigator.share({ title: tr('social.party.shareTitle', { title }), url: location.href }); return; } catch { /* cancelled */ } } copyLink(); }
   // alone in a fresh room: show the invitation right away (that is what you want to do next)
   $: if (ready && isHost && members.length === 1 && !autoShown) { autoShown = true; openInvite(); }
-  const back = () => (history.length > 1 ? history.back() : goto('/party'));
+  // an open phone panel's shallow entry comes off first (and any back of its own lands): one tap on ‹ leaves the party
+  const back = async () => { await dropLayers(); return history.length > 1 ? history.back() : goto('/party'); };
   const initial = (s: string) => s.slice(0, 1).toUpperCase();
 
   onMount(() => {

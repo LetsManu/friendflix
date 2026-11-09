@@ -3,7 +3,7 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { ME } from '../mocks/fixtures.js';
-import { CREDITS_AT, NEXT, openEpisode, openMovie, seekPlaying, toChip } from '../mocks/credits.js';
+import { CREDITS_AT, EP_NEXT, NEXT, openEpisode, openMovie, seekPlaying, toChip } from '../mocks/credits.js';
 import { forceSafeArea, LAND_L, PORTRAIT, setSafeArea, type Insets } from '../mocks/phone.js';
 
 /**
@@ -164,6 +164,63 @@ for (const L of LAYOUTS) {
     });
   });
 }
+
+test.describe('phone credits, the corner beat', () => {
+  test.use({ viewport: { width: 844, height: 390 } });
+  test.beforeEach(async ({ page }) => { await forceSafeArea(page, LAND_L); });
+
+  test('More like this never repeats the next episode', async ({ page, api: _api }) => {
+    const row = EP_NEXT.rows[0]!;
+    await openEpisode(page, { ...EP_NEXT, rows: [{ ...row, items: [NEXT, ...row.items] }] }); // the row leads with the next episode
+    await toChip(page);
+    await page.clock.runFor(2100);
+    await expect(page.locator('.cs .up')).toContainText(NEXT.name);
+    const links = page.locator('.cs .sugg a');
+    await expect(links).toHaveCount(5);
+    const hrefs = await links.evaluateAll((as) => as.map((a) => a.getAttribute('href')));
+    expect(hrefs).not.toContain(`/item/${NEXT.id}`);
+    await expect(page.locator('.cs .sugg')).not.toContainText(NEXT.name);
+  });
+
+  test('the light edge frames the picture, 12 px into the safe area', async ({ page, api: _api }) => {
+    await openEpisode(page);
+    await toChip(page);
+    await page.clock.runFor(2100);
+    await cornerChecks(page, LAND_L);
+    const v = await box(page, 'video');
+    // the box is the 16:9 picture itself (no pillarbox inside the edge), 12 px past the cut-out and below the top
+    const va = await page.evaluate(() => { const e = document.querySelector('video')!; return e.videoWidth / e.videoHeight; });
+    expect(Math.abs(v.width / v.height - va)).toBeLessThan(0.02);
+    expect(Math.abs(v.x - (LAND_L.left + 12))).toBeLessThanOrEqual(1);
+    expect(Math.abs(v.y - (LAND_L.top + 12))).toBeLessThanOrEqual(1);
+  });
+
+  test('no scrub, volume or brightness swipes; a tap on the small picture still backs out', async ({ page, api: _api }) => {
+    await openEpisode(page);
+    await toChip(page);
+    await page.clock.runFor(2100);
+    await expect(page.locator('.stage.cred')).toHaveCount(1);
+    const v = await box(page, 'video');
+    const cdp = await page.context().newCDPSession(page);
+    const swipe = async (from: { x: number; y: number }, to: { x: number; y: number }) => {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [from] });
+      for (let i = 1; i <= 10; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: from.x + ((to.x - from.x) * i) / 10, y: from.y + ((to.y - from.y) * i) / 10 }] });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    };
+    const y = v.y + v.height * 0.75;
+    const vol = await page.evaluate(() => document.querySelector('video')!.volume);
+    await swipe({ x: v.x + v.width - 10, y }, { x: v.x + 10, y }); // a scrub back would land before the credits
+    await swipe({ x: v.x + v.width * 0.8, y: v.y + v.height - 10 }, { x: v.x + v.width * 0.8, y: v.y + 30 }); // volume (end side)
+    await swipe({ x: v.x + v.width * 0.2, y: v.y + v.height - 10 }, { x: v.x + v.width * 0.2, y: v.y + 30 }); // brightness
+    await expect(page.locator('.hud')).toHaveCount(0);
+    expect(await page.evaluate(() => document.querySelector('video')!.currentTime)).toBeGreaterThanOrEqual(CREDITS_AT);
+    expect(await page.evaluate(() => document.querySelector('video')!.volume)).toBe(vol);
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector('video')!).filter)).not.toMatch(/brightness/);
+    await expect(page.locator('.stage.cred')).toHaveCount(1);
+    await page.touchscreen.tap(v.x + v.width / 2, v.y + v.height / 2);
+    await expect(page.locator('.stage.cred')).toHaveCount(0);
+  });
+});
 
 test.describe('phone credits, rotation', () => {
   test.use({ viewport: { width: 390, height: 844 } });

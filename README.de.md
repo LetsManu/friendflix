@@ -160,7 +160,7 @@ Der **Ruhige Modus** (pro Profil, auch für Kinder) hält alles still: kein Trai
 
 ### Handy und TV
 
-App-artige Oberfläche mit schwebender Tab-Leiste (Start, Neu, Meine Liste, Downloads), einem Wisch-Karussell mit Empfehlungen auf der Startseite, einer Vorschau beim Antippen eines Posters, einer Detailseite mit Tabs nur einen Wisch entfernt einer Suche mit beliebten Titeln und Genre-Kacheln und einem Kino-Player, der quer in beide Richtungen und hochkant funktioniert. FriendFlix lässt sich auf dem Home-Bildschirm installieren (PWA) – mit **Verknüpfungen** per langem Druck (Weiterschauen, Merkliste, Suche, Downloads), einem **Badge** mit deinen ungelesenen Benachrichtigungen auf dem Symbol und Name und Beschreibung der App in deiner Sprache.
+App-artige Oberfläche mit schwebender Tab-Leiste (Start, Neu, Meine Liste, Downloads), einem Wisch-Karussell mit Empfehlungen auf der Startseite, einer Vorschau beim Antippen eines Posters, einer Detailseite mit Tabs nur einen Wisch entfernt, einer Suche mit beliebten Titeln und Genre-Kacheln und einem Kino-Player, der quer in beide Richtungen und hochkant funktioniert. FriendFlix lässt sich auf dem Home-Bildschirm installieren (PWA) – mit **Verknüpfungen** per langem Druck (Weiterschauen, Merkliste, Suche, Downloads), einem **Badge** mit deinen ungelesenen Benachrichtigungen auf dem Symbol und Name und Beschreibung der App in deiner Sprache.
 
 <table>
   <tr>

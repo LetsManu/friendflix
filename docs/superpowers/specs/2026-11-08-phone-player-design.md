@@ -45,7 +45,7 @@ Owner choices (2026-11-08): direction A "Kino"; Play and ±10 s stay in the left
 
 - The desktop/TV credits sequence (`CreditsSequence`, `creditsBeat`, `creditPicks`) also runs on phones (not kids, not in a party, not casting), replacing the phone's next-up card: beat 1 chip ("Watch credits", "Next episode" filling 2 s), beat 2 the picture glides into the top-start corner (landscape scale .42, portrait: the letterboxed picture moves to the top), beat 3 up next with the countdown ring and "More like this" (only other titles).
 - Landscape: up next and suggestions in the end-side column. Portrait: below the small picture. All within the safe areas; the small picture keeps its light edge.
-- Back out ("Watch credits", a tap on the small picture, Back) reverses the glide; never a cut.
+- Back out ("Watch credits", a tap on the small picture, Esc / TV Back) reverses the glide; never a cut. A phone's system Back is not intercepted during the credits sequence: it leaves the player, as browser Back does on desktop (an entry pushed without a user gesture, as the corner beat would need, may be skipped by the browser).
 
 ## Motion
 

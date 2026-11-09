@@ -116,7 +116,7 @@
     // only a change on the TV counts: a title opened here is sent to the TV by its own Player (then the ids match)
     if (!changed || !itemId || !remote || itemId === id) return;
     followedTv = true;
-    void goto(`/watch/${itemId}`, { replaceState: true });
+    void toEpisode(`/watch/${itemId}`); // an open phone panel's entry comes off first: one Back still leaves
   }
   const RING = 2 * Math.PI * 20;
   // no view transition running (no API, reduced motion): the page fades in instead of cutting; TV: no transition at all
@@ -147,7 +147,8 @@
   }
   $: loadItem(id);
 
-  const back = () => (history.length > 1 ? history.back() : goto('/'));
+  // an open phone panel's shallow entry comes off first (and any back of its own lands): one tap on ‹ leaves the player
+  const back = async () => { await dropLayers(); return history.length > 1 ? history.back() : goto('/'); };
   const nextHref = () => `/watch/${nextEp!.id}${langQ ? '?' + langQ : ''}`;
   /** moving on to another episode inside the player replaces the history entry: one Back leaves the player, however many episodes ran */
   // an open phone panel's shallow entry comes off first (and any back of its own lands), so the replace hits the watch entry itself
@@ -393,14 +394,16 @@
      next-episode column hold the right side, the suggestions the bottom) */
   .next.pp.aside { right: auto; left: max(clamp(1.5rem, 3vw, 3rem), var(--safe-left)); top: 52%; bottom: auto; }
   /* phones during the sequence: the post-play card sits at the start-side bottom above the home indicator - in landscape under the
-     small picture, left of the end-side column (it starts at safe-left + max(44vw, 42vw + 22px)); in portrait full width below
+     small picture as wide as it, left of the end-side column (that starts at safe-left + 32 px + .42 x the picture's width --pw, set
+     by the Player); in portrait full width below
      the sequence (which keeps clear of it). While the dock shows (beat 1) it rides above the dock with the chip. */
   :global(.stage.pui) .next.pp.aside { left: calc(var(--safe-left) + 16px); right: auto; top: auto; bottom: calc(var(--safe-bottom) + 16px);
-    width: calc(max(44vw, 42vw + 22px) - 32px); max-width: none; max-height: calc(100% - var(--safe-top) - 60px - var(--safe-bottom) - 16px);
+    width: calc(.42 * var(--pw, 100vw)); max-width: none; max-height: calc(100% - var(--safe-top) - 60px - var(--safe-bottom) - 16px);
     flex-direction: column; align-items: stretch; }
   :global(.stage.pui.port) .next.pp.aside { width: auto; right: calc(var(--safe-right) + 16px); }
-  /* landscape corner: below the small picture (its bottom: safe-top + 12 px + 42 % of the height), 16 px apart; scrolls when short */
-  :global(.stage.pui.cred:not(.port)) .next.pp.aside { max-height: calc(100% - var(--safe-top) - 12px - 42% - 16px - var(--safe-bottom) - 16px); }
+  /* landscape corner: below the small picture (its bottom: safe-top + 12 px + .42 x the picture's height --ph), 16 px apart; scrolls
+     when short */
+  :global(.stage.pui.cred:not(.port)) .next.pp.aside { max-height: calc(100% - var(--safe-top) - 12px - .42 * var(--ph, 100%) - 16px - var(--safe-bottom) - 16px); }
   /* beat 1 with the dock up: above the dock, below the top bar (portrait: the chip sits on top of the card, 56 px more) */
   :global(.stage.pui:not(.idle):not(.cred)) .next.pp.aside { transform: translate3d(0, calc(var(--safe-bottom) + 8px - var(--ctl-h, 0px)), 0);
     max-height: max(0px, calc(100% - var(--ctl-h, 8rem) - 16px - var(--safe-top) - 52px)); }
