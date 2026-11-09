@@ -236,6 +236,7 @@ html:root :is(.frost, .frost-flat, .panel) .panel::before { display: none; }
 .fill-hover:hover::after { opacity: 1; }
 .edge-hover::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; border: 1px solid rgba(255, 255, 255, .42); opacity: 0; pointer-events: none; transition: opacity var(--t-fast); }
 .edge-hover:hover::after { opacity: 1; }
+html.m-still :is(.fill-hover, .edge-hover)::after { transition: none; } /* calm mode / reduced motion: at once */
 /* §8.9 phone press feedback (lib/glass/press.ts): squeeze in 80 ms, spring back in 350 ms; a ripple from the touch point
    (twice the larger side, clipped by the node). .pressed is set with full motion only. */
 html:root .ff-press { position: relative; overflow: hidden; -webkit-tap-highlight-color: transparent; transition: transform 350ms var(--fr-spring), opacity 150ms; }

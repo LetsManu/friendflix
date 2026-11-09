@@ -858,6 +858,7 @@
   .nav { position: fixed; top: 0; left: 0; right: 0; height: var(--nav-total); z-index: 50; display: flex; align-items: center; gap: .5rem; padding: var(--safe-top) max(var(--pad-x), var(--safe-right)) 0 max(var(--pad-x), var(--safe-left)); background: linear-gradient(to bottom, rgba(0,0,0,.9), rgba(0,0,0,.55) 55%, transparent); }
   /* solid: the page colour fades in over the bar's own background as a layer (opacity only; no background transition) */
   .nav::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--bg); opacity: 0; pointer-events: none; transition: opacity var(--t-med); }
+  :global(html.m-still) .nav::before { transition: none; }
   .nav.solid::before { opacity: 1; }
   .sp { flex: 1; }
   .dot { position: absolute; top: 4px; right: 2px; background: var(--acc-fill); font-size: .65rem; min-width: 1.1rem; height: 1.1rem; border-radius: 99px; display: grid; place-items: center; font-weight: 700; }
