@@ -108,7 +108,7 @@
   .meta { margin: .15rem 0 0; font-size: .88rem; }
   .opts { list-style: none; margin: 0; padding: 0; display: grid; gap: .8rem; }
   .opts li { display: grid; gap: .3rem; padding: .55rem .7rem; border-radius: 6px; background: rgba(255,255,255,.03); border: 1px solid transparent; }
-  .opts li.win { border-color: rgba(70, 211, 105, .45); background: var(--tone-ok); }
+  .opts li.win { border-color: rgba(70, 211, 105, .45); background: var(--wash-ok); } /* the wash over the dark fill: its .72 text passes AA */
   .oh { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
   .ot { flex: 1 1 8rem; min-width: 0; display: inline-flex; align-items: center; gap: .4rem; font-weight: 600; overflow-wrap: anywhere; }
   .acts { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: auto; }

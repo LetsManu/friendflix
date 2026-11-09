@@ -1,5 +1,10 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<script lang="ts" module>
+  /** tiles that already counted during this visit (by label): coming back to a page shows their values at once */
+  const counted = new Set<string>();
+</script>
+
 <script lang="ts">
   /**
    * Number tile for dashboards (the value is not a heading).
@@ -30,16 +35,19 @@
   let shown: string | number | null = value;
   function stop() { if (raf) cancelAnimationFrame(raf); raf = 0; }
   function sync(v: string | number | null, inView: boolean) {
+    if (used || counted.has(label)) used = true;
     if (used || v === null) { stop(); shown = v; return; }
     const to = countable(v);
     if (to === null || to === 0 || typeof requestAnimationFrame === 'undefined' || fxMode() === 'still') { used = true; shown = v; return; }
     if (!inView) { shown = fmtNumber(0); return; }
     used = true;
+    counted.add(label);
     shown = fmtNumber(0);
     const t0 = performance.now();
     const frame = (now: number) => {
       const ms = now - t0;
-      if (ms >= COUNT_MS) { raf = 0; shown = v; return; }
+      // done, or calm mode / reduced motion turned on meanwhile: the value at once
+      if (ms >= COUNT_MS || fxMode() === 'still') { raf = 0; shown = v; return; }
       shown = fmtNumber(countAt(to, ms));
       raf = requestAnimationFrame(frame);
     };
@@ -60,7 +68,7 @@
 </script>
 
 {#if toggle}
-<button type="button" bind:this={el} aria-pressed={pressed} class="tile frost-flat frost-text {tone} link toggle" class:on={pressed} on:click>
+<button type="button" bind:this={el} aria-pressed={pressed} class="tile frost-flat frost-text edge-hover {tone} link toggle" class:on={pressed} on:click>
   {#if icon}<span class="ic" aria-hidden="true"><Icon name={icon} size={20} /></span>{/if}
   <span class="txt">
     <span class="val" style:min-width={minW} aria-hidden={hide ? 'true' : undefined}>{#if shown === null}<Skeleton w="3rem" h="1.6rem" />{:else}{shown}{/if}</span>{#if hide}<span class="sr-only">{value}</span>{/if}
@@ -69,7 +77,7 @@
   </span>
 </button>
 {:else}
-<svelte:element this={href ? 'a' : 'div'} bind:this={el} {href} class="tile frost-flat frost-text {tone}" class:link={!!href}>
+<svelte:element this={href ? 'a' : 'div'} bind:this={el} {href} class="tile frost-flat frost-text {tone}" class:link={!!href} class:edge-hover={!!href}>
   {#if icon}<span class="ic" aria-hidden="true"><Icon name={icon} size={20} /></span>{/if}
   <span class="txt">
     <span class="val" style:min-width={minW} aria-hidden={hide ? 'true' : undefined}>{#if shown === null}<Skeleton w="3rem" h="1.6rem" />{:else}{shown}{/if}</span>{#if hide}<span class="sr-only">{value}</span>{/if}
@@ -81,10 +89,9 @@
 {/if}
 
 <style>
-  /* a glass tile (frost-flat; 18 px corners, 16 px in the dense admin): hover lights the edge, never the fill (more milk would
-     drop the dim text under AA); a selected filter tile carries a coral ring */
-  .tile { display: flex; align-items: flex-start; gap: .8rem; padding: 16px 18px; border-radius: var(--fr-r-tile); min-width: 0; transition: border-color var(--t-fast), box-shadow var(--t-fast); }
-  .link:hover { border-color: rgba(255, 255, 255, .42); }
+  /* a glass tile (frost-flat; 18 px corners, 16 px in the dense admin): hover fades in a lit edge (.edge-hover, opacity only),
+     never more fill (more milk would drop the dim text under AA); a selected filter tile carries a coral ring (instant) */
+  .tile { display: flex; align-items: flex-start; gap: .8rem; padding: 16px 18px; border-radius: var(--fr-r-tile); min-width: 0; }
   .toggle { width: 100%; min-height: 44px; font: inherit; font-weight: 400; color: inherit; text-align: left; justify-content: flex-start; cursor: pointer; }
   .toggle:hover:not(:disabled) { background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim)); }
   .toggle.on, .toggle.on:hover { border-color: var(--acc); box-shadow: inset 0 0 0 1px var(--acc), inset 0 1px 0 var(--fr-hi); }

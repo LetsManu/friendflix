@@ -85,12 +85,15 @@ test.describe('dense glass admin (desktop)', () => {
     // tabular figures in a box as wide as the final value: the tile does not move while it counts
     expect(await css(val, 'font-variant-numeric')).toBe('tabular-nums');
     expect(await css(val, 'min-width')).not.toBe('0px');
-    const w0 = (await tile.boundingBox())!.width;
+    // the figures' box keeps the final value's width and the label below does not move
+    const w0 = (await val.boundingBox())!.width;
+    const lx0 = (await tile.locator('.lbl').boundingBox())!.x;
     await page.clock.runFor(550);
     const mid = num(await val.textContent());
     expect(mid).toBeGreaterThan(0);
     expect(mid).toBeLessThan(final);
-    expect((await tile.boundingBox())!.width).toBe(w0);
+    expect((await val.boundingBox())!.width).toBe(w0);
+    expect((await tile.locator('.lbl').boundingBox())!.x).toBe(lx0);
     await page.clock.runFor(650);
     await expect(val).toHaveText(finalText);
     await expect(val).not.toHaveAttribute('aria-hidden', 'true');
@@ -132,11 +135,13 @@ test.describe('dense glass admin (desktop)', () => {
     const card = page.locator('section', { has: page.getByRole('heading', { level: 2, name: 'Downloads', exact: true }) });
     await page.getByRole('group', { name: 'Downloads pro Stunde', exact: true }).getByRole('spinbutton').fill('7');
     await card.getByRole('button', { name: 'Speichern' }).click();
-    expect(api.settings.puts).toEqual([{ values: { DOWNLOAD_CREATE_PER_HOUR: 7 } }]);
+    await expect.poll(() => api.settings.puts).toEqual([{ values: { DOWNLOAD_CREATE_PER_HOUR: 7 } }]);
     const btn = card.locator('button[type="submit"]');
     await expect(btn).toContainText('Gespeichert');
     await expect(btn.locator('svg.chk path')).toHaveAttribute('d', 'M5 12.5l4.5 4.5L19 7.5');
-    expect(await css(btn, 'background-color')).toBe('rgb(255, 255, 255)');
+    // the fill switches at once (no colour transition): white straight away
+    await expect.poll(() => css(btn, 'background-color')).toBe('rgb(255, 255, 255)');
+    expect(await css(btn, 'transition-property')).not.toMatch(/background|color/);
     await page.waitForTimeout(2400);
     await expect(btn).toHaveText('Speichern');
     await expect(btn).toBeDisabled();
@@ -148,12 +153,13 @@ test.describe('dense glass admin (desktop)', () => {
     await expect(table.locator('tbody tr').first()).toBeVisible();
     await expect(table).toHaveClass(/frost-flat/);
     for (const h of await table.locator('tbody tr').evaluateAll((rs) => rs.map((r) => r.getBoundingClientRect().height))) expect(h).toBeGreaterThanOrEqual(40);
-    // a status pill: icon and text, the tone over a dark fill
-    const pill = table.locator('.pill').first();
-    if (await pill.count()) {
-      await expect(pill.locator('svg')).toHaveCount(1);
-      expect(await css(pill, 'background-image')).toContain('linear-gradient');
-    }
+    // status pills: every one carries a text (the "you" pill drops its icon on purpose, icon=""), the state pills an icon
+    // too; the tone sits over a dark fill
+    const pills = table.locator('.pill');
+    for (const t of await pills.allTextContents()) expect(t.trim()).not.toBe('');
+    const withIcon = table.locator('.pill:has(svg)');
+    await expect(withIcon.first()).toBeVisible();
+    expect(await css(withIcon.first(), 'background-image')).toContain('linear-gradient');
 
     await page.goto('/admin/settings');
     const card = page.locator('.adm .panel').first();

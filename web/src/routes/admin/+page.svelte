@@ -110,7 +110,7 @@
     {#each health as h, i (i)}
       <li>
         {#if h}
-          <a class="frost-flat frost-text" href={h.href}><span class="hi" aria-hidden="true"><Icon name={h.icon} size={18} /></span><span class="hl">{h.label}</span><StatusPill tone={h.tone} label={h.text} /></a>
+          <a class="frost-flat frost-text edge-hover" href={h.href}><span class="hi" aria-hidden="true"><Icon name={h.icon} size={18} /></span><span class="hl">{h.label}</span><StatusPill tone={h.tone} label={h.text} /></a>
         {:else}<span class="hsk frost-flat" aria-hidden="true"><Skeleton w="60%" h=".9rem" /><Skeleton w="5rem" h="1.3rem" radius="99px" /></span>{/if}
       </li>
     {/each}
@@ -238,10 +238,9 @@
 
   .health { margin-bottom: 1.4rem; }
   .health ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: .6rem; }
-  /* glass tiles (frost-flat): hover lights the edge, never the fill */
-  .health a, .hsk { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; min-height: 64px; padding: .7rem .9rem; border-radius: 16px; transition: border-color var(--t-fast); }
+  /* glass tiles (frost-flat): hover fades in a lit edge (.edge-hover), never more fill */
+  .health a, .hsk { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; min-height: 64px; padding: .7rem .9rem; border-radius: 16px; }
   .hsk { flex-direction: column; align-items: flex-start; justify-content: center; }
-  .health a:hover { border-color: rgba(255, 255, 255, .42); }
   .hi { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,.08); flex: none; }
   .hl { flex: 1; min-width: 6rem; font-weight: 600; font-size: .92rem; }
 

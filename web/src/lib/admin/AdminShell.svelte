@@ -39,14 +39,14 @@
     <!-- the light pill glides to the current page (glass spec §7); entries sit above it -->
     <SlidePill host={sideEl} selector={'.ni[aria-current="page"]'} tone="light" />
     <nav aria-label={$t('admin.nav.label')}>
-      <a class="ni" href={OVERVIEW.href} aria-current={overview ? 'page' : undefined}><Icon name={OVERVIEW.icon} size={20} /><span class="nl">{$t(OVERVIEW.label)}</span></a>
+      <a class="ni fill-hover" href={OVERVIEW.href} aria-current={overview ? 'page' : undefined}><Icon name={OVERVIEW.icon} size={20} /><span class="nl">{$t(OVERVIEW.label)}</span></a>
       {#each groups as g (g.id)}
         <h2 class="gh" id="adm-g-{g.id}">{$t(g.label)}</h2>
         <ul aria-labelledby="adm-g-{g.id}">
           {#each g.items as it (it.href)}
             {@const n = badgeCount($summary, it.badge)}
             <li>
-              <a class="ni" href={it.href} aria-current={item === it ? 'page' : undefined}>
+              <a class="ni fill-hover" href={it.href} aria-current={item === it ? 'page' : undefined}>
                 <Icon name={it.icon} size={20} /><span class="nl">{$t(it.label)}</span>
                 {#if n && it.badge}<span class="cnt {badgeTone(it.badge)}" aria-hidden="true">{n}</span><span class="sr-only">({badgeTone(it.badge) === 'err' ? $t('admin.nav.failing', { n }) : $t('admin.nav.pending', { n })})</span>{/if}
               </a>
@@ -75,7 +75,7 @@
             <ul class="lst frost-flat frost-text">
               {#each g.items as it (it.href)}
                 {@const n = badgeCount($summary, it.badge)}
-                <li><a href={it.href}><Icon name={it.icon} size={20} /><span class="nl">{$t(it.label)}</span>
+                <li><a class="fill-hover" href={it.href}><Icon name={it.icon} size={20} /><span class="nl">{$t(it.label)}</span>
                   {#if n && it.badge}<span class="cnt {badgeTone(it.badge)}" aria-hidden="true">{n}</span><span class="sr-only">({badgeTone(it.badge) === 'err' ? $t('admin.nav.failing', { n }) : $t('admin.nav.pending', { n })})</span>{/if}
                   <Icon name="chevron-right" size={18} /></a></li>
               {/each}
@@ -107,31 +107,31 @@
   .back:hover { background: rgba(255,255,255,.08); }
 
   /* sidebar: a glass panel (frost-flat, no blur: a static card) with the sliding light pill on the current page. Links are
-     white .75 (the mockup's nav level), the current one white on the pill; hover draws a darker fill (only adds contrast,
-     lib/admin/glass.test.ts) */
-  .side nav { position: relative; z-index: 1; }
+     white .75 (the mockup's nav level), the current one white on the pill; hover fades in a darker fill (.fill-hover: only
+     adds contrast, lib/admin/glass.test.ts). The entries' offsetParent is .side itself (nothing between them is positioned),
+     the box SlidePill draws in. One weight for every entry: the label does not change width under the gliding pill. */
   .gh { margin: 1.1rem 0 .3rem .9rem; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); }
   .side ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-  .ni { position: relative; z-index: 1; display: flex; align-items: center; gap: .75rem; min-height: 44px; padding: .45rem .9rem; border-radius: 14px; color: rgba(255, 255, 255, .75); font-weight: 600; font-size: .92rem; transition: background-color var(--t-fast); }
-  .ni:hover { background: rgba(var(--fr-scrim-rgb), .3); color: #fff; }
-  .ni[aria-current='page'], .ni[aria-current='page']:hover { background: transparent; color: #fff; font-weight: 700; }
+  .ni { position: relative; z-index: 1; display: flex; align-items: center; gap: .75rem; min-height: 44px; padding: .45rem .9rem; border-radius: 14px; color: rgba(255, 255, 255, .75); font-weight: 600; font-size: .92rem; }
+  .ni:hover { color: #fff; }
+  .ni[aria-current='page'] { color: #fff; }
+  .ni[aria-current='page']::after { opacity: 0; }
   .nl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cnt { flex: none; min-width: 1.5rem; height: 1.5rem; padding: 0 .4rem; border-radius: 99px; display: inline-grid; place-items: center; font-size: .75rem; font-weight: 800; font-variant-numeric: tabular-nums; }
   .cnt.warn { background: var(--warn); color: #1a1200; }
   .cnt.err { background: var(--err); color: #200; }
 
-  /* phone list (like /me): one glass card per group, rows 12 px corners with a darker hover */
+  /* phone list (like /me): one glass card per group, rows 12 px corners with a darker hover (.fill-hover) */
   .plist { margin-bottom: 1.6rem; }
   .plist section { margin-bottom: 1.2rem; }
   .pgh { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); margin: 0 0 .3rem .2rem; font-weight: 700; }
   .lst { list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px; }
-  .lst a { display: flex; align-items: center; gap: .8rem; min-height: 48px; padding: .5rem 1rem; border-radius: 12px; transition: background-color var(--t-fast); }
-  .lst a:hover { background: rgba(var(--fr-scrim-rgb), .3); }
+  .lst a { display: flex; align-items: center; gap: .8rem; min-height: 48px; padding: .5rem 1rem; border-radius: 12px; }
   .lst a > :global(svg:last-child) { color: var(--mut); }
 
   /* the dense admin look (glass spec §7): cards, tiles and lists 16 px corners, 16 px 18 px padding */
-  .adm :global(.panel), .adm :global(.tile), .adm :global(.lst) { border-radius: 16px; }
-  .adm :global(.panel), .adm :global(.tile) { padding: 16px 18px; }
+  .adm :global(.panel), .adm :global(.tile.frost-flat), .adm :global(.lst) { border-radius: 16px; }
+  .adm :global(.panel), .adm :global(.tile.frost-flat) { padding: 16px 18px; }
 
   @media (min-width: 900px) {
     .adm { grid-template-columns: 248px minmax(0, 1fr); gap: 2rem; }

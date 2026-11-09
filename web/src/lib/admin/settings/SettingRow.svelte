@@ -145,6 +145,6 @@
   .note { margin: 0; color: var(--warn); font-size: .9rem; }
   .small { font-size: .85rem; }
   .error { margin: 0; font-size: .85rem; color: var(--err); font-weight: 600; }
-  .moved { margin: 0; font-size: .88rem; padding: .5rem .7rem; border-radius: 6px; background: var(--tone-info); color: var(--fg); overflow-wrap: anywhere; }
+  .moved { margin: 0; font-size: .88rem; padding: .5rem .7rem; border-radius: 6px; background: var(--wash-info); color: var(--fg); overflow-wrap: anywhere; }
   input { width: 100%; max-width: 100%; }
 </style>

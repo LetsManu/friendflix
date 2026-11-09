@@ -51,7 +51,8 @@
   .block { width: 100%; }
   [aria-disabled='true'] { opacity: .75; }
   /* saved: white with the green drawn check (#1a8f4c on white) */
-  .done, .done:hover:not(:disabled) { background: #fff; color: #111; box-shadow: none; }
+  /* the fill switches at once (the global button rule transitions background; only transform / opacity may animate) */
+  .done, .done:hover:not(:disabled) { background: #fff; color: #111; box-shadow: none; transition: transform var(--t-fast), opacity var(--t-fast); }
   .chk { flex: none; fill: none; stroke: #1a8f4c; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
   .chk path { stroke-dasharray: 24; stroke-dashoffset: 0; }
   :global(html.tv) .sm { min-height: 48px; }

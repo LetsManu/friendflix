@@ -302,12 +302,12 @@
   h3 { font-size: .95rem; margin: 1.2rem 0 .6rem; }
   .sumline { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; margin: 0; }
   .fails { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; gap: .6rem; }
-  .fails li { padding: .7rem .9rem; border: 1px solid rgba(255,107,107,.35); background: var(--tone-err); border-radius: 6px; display: grid; gap: .35rem; }
+  .fails li { padding: .7rem .9rem; border: 1px solid rgba(255,107,107,.35); background: var(--wash-err); border-radius: 6px; display: grid; gap: .35rem; }
   .fh { display: flex; gap: .6rem; flex-wrap: wrap; align-items: baseline; }
   .fh b { overflow-wrap: anywhere; }
   code { display: block; font-size: .82rem; color: var(--err); word-break: break-all; white-space: pre-wrap; }
   .small { font-size: .85rem; margin: 0; }
-  .hint { display: flex; gap: .5rem; align-items: flex-start; margin: .8rem 0 0; padding: .7rem .9rem; border-radius: 6px; background: var(--tone-err); color: var(--fg); }
+  .hint { display: flex; gap: .5rem; align-items: flex-start; margin: .8rem 0 0; padding: .7rem .9rem; border-radius: 6px; background: var(--wash-err); color: var(--fg); }
   .hint :global(svg) { color: var(--err); flex: none; margin-top: .1rem; }
   .oks { margin-top: 1rem; }
   .oks summary { cursor: pointer; min-height: 36px; display: flex; align-items: center; color: var(--mut); }
@@ -320,7 +320,7 @@
   .state p { margin: 0; } .state :global(svg) { color: var(--err); }
   time { white-space: nowrap; color: var(--mut); font-size: .9rem; }
   .win { min-width: 10rem; }
-  .hint.warn { margin: 0 0 .8rem; background: var(--tone-warn); }
+  .hint.warn { margin: 0 0 .8rem; background: var(--wash-warn); }
   .hint.warn :global(svg) { color: var(--warn); }
   .tscroll { overflow-x: auto; position: relative; } /* contains the visually hidden labels (else they widen the page) */
   @media (max-width: 720px) { .ttab thead th { white-space: normal; } }

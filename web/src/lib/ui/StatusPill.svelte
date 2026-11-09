@@ -23,9 +23,9 @@
   /* the tone over a dark scrim fill (glass spec §7): on the light glass cards over the brightest glow the plain tone washes
      left the status text under AA; with the scrim under them every pill passes (lib/admin/glass.test.ts). The text and the
      icon say the state, the colour only repeats it. */
-  .ok { background: linear-gradient(var(--tone-ok), var(--tone-ok)), rgba(var(--fr-scrim-rgb), .35); color: var(--ok); }
-  .warn { background: linear-gradient(var(--tone-warn), var(--tone-warn)), rgba(var(--fr-scrim-rgb), .35); color: var(--warn); }
-  .err { background: linear-gradient(var(--tone-err), var(--tone-err)), rgba(var(--fr-scrim-rgb), .35); color: var(--err); }
-  .info { background: linear-gradient(var(--tone-info), var(--tone-info)), rgba(var(--fr-scrim-rgb), .35); color: var(--info); }
-  .muted { background: linear-gradient(var(--tone-muted), var(--tone-muted)), rgba(var(--fr-scrim-rgb), .35); color: var(--mut); }
+  .ok { background: var(--wash-ok); color: var(--ok); }
+  .warn { background: var(--wash-warn); color: var(--warn); }
+  .err { background: var(--wash-err); color: var(--err); }
+  .info { background: var(--wash-info); color: var(--info); }
+  .muted { background: var(--wash-muted); color: var(--mut); }
 </style>

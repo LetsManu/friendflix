@@ -300,8 +300,8 @@
   code { overflow-wrap: anywhere; }
   .probe { margin: .4rem 0 0; padding: .6rem .8rem; border-radius: 6px; display: grid; gap: .4rem; justify-items: start; }
   .probe p { margin: 0; }
-  .probe.ok { background: var(--tone-ok); color: var(--ok); }
-  .probe.err { background: var(--tone-err); color: var(--fg); }
+  .probe.ok { background: var(--wash-ok); color: var(--ok); } /* tone washes over the dark fill: AA on the glass card */
+  .probe.err { background: var(--wash-err); color: var(--fg); }
   .server { margin: 0; display: grid; gap: .5rem; }
   .server div { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .3rem .8rem; padding: .35rem 0; border-top: 1px solid var(--line); }
   .server div:first-child { border-top: 0; }

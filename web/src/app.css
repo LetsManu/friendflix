@@ -120,6 +120,13 @@ table { width: 100%; border-collapse: collapse; } td, th { text-align: left; pad
   --tone-err: rgba(255, 107, 107, .15);
   --tone-info: rgba(84, 185, 197, .15);
   --tone-muted: rgba(255, 255, 255, .08);
+  /* a tone wash over a dark scrim fill: what status text sits on over glass (the plain wash alone leaves it under AA on the
+     light card over the brightest glow; lib/admin/glass.test.ts) */
+  --wash-ok: linear-gradient(var(--tone-ok), var(--tone-ok)), rgba(var(--fr-scrim-rgb), .35);
+  --wash-warn: linear-gradient(var(--tone-warn), var(--tone-warn)), rgba(var(--fr-scrim-rgb), .35);
+  --wash-err: linear-gradient(var(--tone-err), var(--tone-err)), rgba(var(--fr-scrim-rgb), .35);
+  --wash-info: linear-gradient(var(--tone-info), var(--tone-info)), rgba(var(--fr-scrim-rgb), .35);
+  --wash-muted: linear-gradient(var(--tone-muted), var(--tone-muted)), rgba(var(--fr-scrim-rgb), .35);
   --danger: #c4202f;
   --shadow-pop: 0 14px 44px rgba(0, 0, 0, .6);
 }
@@ -211,6 +218,14 @@ html.amb { --acc-text: #ff8aa0; }
 html:root :is(.frost, .frost-flat, .panel) .panel { background: none; border-color: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none;
   --mut: inherit; --hint: inherit; --ok: inherit; --warn: inherit; --err: inherit; --link: inherit; --info: inherit; --acc-text: inherit; }
 html:root :is(.frost, .frost-flat, .panel) .panel::before { display: none; }
+/* hover feedback on glass that moves only opacity (owner rule): .fill-hover fades in a darker fill under the content (only adds
+   contrast), .edge-hover lights the edge; the element must be positioned (the glass classes are). Calm mode and reduced
+   motion flatten the fade. */
+.fill-hover { position: relative; isolation: isolate; }
+.fill-hover::after { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: rgba(var(--fr-scrim-rgb), .3); opacity: 0; pointer-events: none; transition: opacity var(--t-fast); }
+.fill-hover:hover::after { opacity: 1; }
+.edge-hover::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; border: 1px solid rgba(255, 255, 255, .42); opacity: 0; pointer-events: none; transition: opacity var(--t-fast); }
+.edge-hover:hover::after { opacity: 1; }
 /* §8.9 phone press feedback (lib/glass/press.ts): squeeze in 80 ms, spring back in 350 ms; a ripple from the touch point
    (twice the larger side, clipped by the node). .pressed is set with full motion only. */
 html:root .ff-press { position: relative; overflow: hidden; -webkit-tap-highlight-color: transparent; transition: transform 350ms var(--fr-spring), opacity 150ms; }

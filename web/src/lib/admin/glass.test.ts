@@ -70,7 +70,8 @@ describe('admin glass: text contrast (B′)', () => {
   it('sidebar: group headings (.72), links (.75), the current link white on the light pill, hover on the darker fill', () => {
     expect(shell).toMatch(/class="side frost-flat frost-panel frost-text"/);
     expect(shell).toContain('color: rgba(255, 255, 255, .75)');
-    expect(shell).toContain('background: rgba(var(--fr-scrim-rgb), .3)');
+    expect(shell).toContain('class="ni fill-hover"');
+    expect(appCss).toMatch(/\.fill-hover::after \{[^}]*background: rgba\(var\(--fr-scrim-rgb\), \.3\);/);
     for (const bg of ON_GLASS) {
       expect(textContrast(bg, MUT)).toBeGreaterThanOrEqual(AA);
       expect(textContrast(bg, NAV)).toBeGreaterThanOrEqual(AA);
@@ -102,7 +103,10 @@ describe('admin glass: text contrast (B′)', () => {
   });
 
   it('status pills: every tone\'s text on its wash over the scrim fill passes; the plain wash alone would not', () => {
-    for (const k of Object.keys(TONES)) expect(pill).toContain(`linear-gradient(var(--tone-${k}), var(--tone-${k})), rgba(var(--fr-scrim-rgb), ${String(PILL_FILL).slice(1)})`);
+    for (const k of Object.keys(TONES)) {
+      expect(appCss).toContain(`--wash-${k}: linear-gradient(var(--tone-${k}), var(--tone-${k})), rgba(var(--fr-scrim-rgb), ${String(PILL_FILL).slice(1)});`);
+      expect(pill).toContain(`background: var(--wash-${k});`);
+    }
     for (const [k, [c, a, text]] of Object.entries(TONES)) for (const bg of ON_GLASS) {
       expect(cr(text, over(over(bg, SCRIM_RGB, PILL_FILL), c, a)), `${k} on ${bg}`).toBeGreaterThanOrEqual(AA);
     }
@@ -110,6 +114,42 @@ describe('admin glass: text contrast (B′)', () => {
     for (const k of ['ok', 'warn', 'err', 'info'] as const) { const [c, a, text] = TONES[k]!; expect(cr(text, over(CARD_PEAK, c, a))).toBeLessThan(AA); }
     // and the pill never says it by colour alone: an icon per tone and a text
     expect(pill).toMatch(/TONE_ICON: Record<Tone, string> = \{ ok: 'check', warn: 'clock', err: 'alert', info: 'info', muted: 'x' \}/);
+  });
+
+  it('tone washes inside the glass cards sit on the dark fill too: settings probe, poll winner, hub tags, playback, devices', () => {
+    const wash = (k: keyof typeof TONES, bg: RGB) => { const [c, a] = TONES[k]!; return over(over(bg, SCRIM_RGB, PILL_FILL), c, a); };
+    const src = (rel: string) => read(rel);
+    expect(src('../../routes/admin/settings/+page.svelte')).toMatch(/\.probe\.ok \{ background: var\(--wash-ok\); color: var\(--ok\); \}/);
+    expect(src('../../routes/admin/settings/+page.svelte')).toMatch(/\.probe\.err \{ background: var\(--wash-err\); color: var\(--fg\); \}/);
+    expect(src('../../routes/admin/polls/+page.svelte')).toMatch(/\.opts li\.win \{[^}]*background: var\(--wash-ok\);/);
+    expect(src('../../routes/admin/hubs/+page.svelte')).toMatch(/\.tag \{[^}]*color: var\(--mut\); background: var\(--wash-muted\);/);
+    expect(src('../../routes/admin/playback/+page.svelte')).toMatch(/\.fails li \{[^}]*background: var\(--wash-err\);/);
+    expect(src('../../routes/admin/devices/+page.svelte')).toMatch(/\.waiting \{[^}]*background: var\(--wash-warn\); color: var\(--warn\);/);
+    expect(src('./settings/SettingRow.svelte')).toMatch(/\.moved \{[^}]*background: var\(--wash-info\); color: var\(--fg\);/);
+    for (const bg of ON_GLASS) {
+      expect(cr(GLASS.ok, wash('ok', bg)), 'probe ok').toBeGreaterThanOrEqual(AA);
+      expect(textContrast(wash('err', bg)), 'probe err').toBeGreaterThanOrEqual(AA);
+      expect(cr(MUT, wash('ok', bg)), 'poll winner .72').toBeGreaterThanOrEqual(AA);
+      expect(textContrast(wash('ok', bg)), 'poll winner title').toBeGreaterThanOrEqual(AA);
+      expect(cr(MUT, wash('muted', bg)), 'hub tag').toBeGreaterThanOrEqual(AA);
+      expect(cr(MUT, wash('err', bg)), 'playback .72').toBeGreaterThanOrEqual(AA);
+      expect(cr(GLASS.warn, wash('warn', bg)), 'devices waiting').toBeGreaterThanOrEqual(AA);
+      expect(textContrast(wash('info', bg)), 'moved hint').toBeGreaterThanOrEqual(AA);
+    }
+    // why: the plain washes on the card over the peak (the review's figures)
+    const [okC, okA] = TONES.ok!, [muC, muA] = TONES.muted!;
+    expect(cr(GLASS.ok, over(CARD_PEAK, okC, okA))).toBeLessThan(AA);
+    expect(cr(MUT, over(CARD_PEAK, okC, okA))).toBeLessThan(AA);
+    expect(cr(MUT, over(CARD_PEAK, muC, muA))).toBeLessThan(AA);
+  });
+
+  it('hovers move only opacity: no colour property in any transition of the admin glass', () => {
+    const files = ['./AdminShell.svelte', '../ui/StatTile.svelte', './ServiceLights.svelte', '../../routes/admin/+page.svelte', '../ui/DataTable.svelte', '../ui/Field.svelte', '../ui/Select.svelte', '../ui/StatusPill.svelte'];
+    for (const f of files) for (const m of read(f).matchAll(/transition:([^;}]*)/g)) expect(m[1], f).not.toMatch(/color|background|border|shadow/);
+    expect(appCss).toMatch(/\.fill-hover::after \{[^}]*opacity: 0;[^}]*transition: opacity var\(--t-fast\); \}/);
+    expect(appCss).toMatch(/\.edge-hover::after \{[^}]*opacity: 0;[^}]*transition: opacity var\(--t-fast\); \}/);
+    // the sidebar pill measures from .side: nothing between it and the entries is positioned
+    expect(shell).not.toMatch(/\.side nav \{/);
   });
 
   it('fields and selects: white text and the error colour on the darker glass fill', () => {

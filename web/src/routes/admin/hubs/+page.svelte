@@ -271,6 +271,6 @@
   .state[role='alert'] { color: var(--fg); } .state[role='alert'] :global(svg) { color: var(--err); }
   .chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .5rem; }
   .chip { border-radius: 99px; padding: .3rem .9rem; gap: .5rem; }
-  .tag { font-size: .75rem; color: var(--mut); background: var(--tone-muted); border-radius: 99px; padding: 0 .5rem; }
+  .tag { font-size: .75rem; color: var(--mut); background: var(--wash-muted); border-radius: 99px; padding: 0 .5rem; }
   @media (max-width: 560px) { .row { padding: .6rem; } .acts { width: 100%; justify-content: space-between; } }
 </style>

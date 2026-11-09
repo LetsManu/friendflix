@@ -177,7 +177,7 @@
   .bar { height: auto; background: none; overflow: visible; display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: .8rem; }
   .search { position: relative; display: flex; align-items: center; flex: 1 1 240px; max-width: 420px; color: var(--mut); }
   .search :global(svg) { position: absolute; left: .75rem; pointer-events: none; }
-  .search input { width: 100%; padding-left: 2.4rem; border-radius: 12px; background: rgba(var(--fr-scrim-rgb), .35); border: 1px solid var(--fr-line); color: #fff; }
+  .search input { width: 100%; padding-left: 2.4rem; border-radius: 12px; background: rgba(var(--fr-scrim-rgb), .35); border: 1px solid var(--fr-line); color: #fff; transition: none; }
   /* a glass card (frost-flat, 16 px corners; glass spec §7). The sticky header is solid (rows scroll under it) and the row
      hover a darker fill: both only add contrast (lib/admin/glass.test.ts). Dense rows: at least 40 px, 44 px for touch. */
   table.glass { width: 100%; border-collapse: separate; border-spacing: 0; border-radius: 16px; }
@@ -192,8 +192,11 @@
   @media (pointer: coarse) { tbody tr { height: 44px; } }
   tbody tr:last-child td { border-bottom: 0; }
   tbody tr:last-child td:first-child { border-bottom-left-radius: 15px; } tbody tr:last-child td:last-child { border-bottom-right-radius: 15px; }
-  tbody tr { transition: background-color var(--t-fast), opacity var(--t-fast); }
-  tbody tr:not(.sk):hover td { background: rgba(var(--fr-scrim-rgb), .3); }
+  tbody tr { transition: opacity var(--t-fast); }
+  /* the row hover: a darker fill fading in under each cell (opacity only) */
+  td { position: relative; isolation: isolate; }
+  td::after { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: rgba(var(--fr-scrim-rgb), .3); opacity: 0; pointer-events: none; transition: opacity var(--t-fast); }
+  tbody tr:not(.sk):hover td::after { opacity: 1; }
   tr.busy { opacity: .6; }
   td.primary { font-weight: 600; }
   .al-end { text-align: right; } .al-center { text-align: center; }
@@ -219,7 +222,7 @@
     tbody { display: flex; flex-direction: column; gap: .6rem; }
     /* each row a card: a darker fill over the glass or the ambient (only adds contrast), 16 px corners, ≥ 44 px */
     tbody tr { position: relative; height: auto; min-height: 44px; background: rgba(var(--fr-scrim-rgb), .3); border: 1px solid var(--fr-line); border-radius: 16px; padding: .7rem .9rem; }
-    tbody tr:not(.sk):hover td { background: none; }
+    td::after { display: none; }
     td { display: flex; gap: .8rem; justify-content: space-between; align-items: center; padding: .3rem 0; border: 0; text-align: right; min-height: 0; }
     td::before { content: attr(data-label); color: var(--mut); font-size: .85rem; text-align: left; flex: none; max-width: 45%; }
     td.primary { display: block; text-align: left; font-size: 1.02rem; padding-right: 3.2rem; }
