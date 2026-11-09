@@ -17,7 +17,7 @@
   import { detailTabs, type DetailTab } from '#lib/desk/tabs';
   import { canGoBack } from '#lib/desk/back';
   import { EMPH_IN, EMPH_OUT, motionLevel } from '#lib/tv/motion';
-  import { cachedTone, SCRIM_SAFE, toneFor, toneVars, type Tone } from '#lib/glass/tone';
+  import { AA, BD, cachedTone, SCRIM_SAFE_DIM, scrimFor, TEXT_DIM, toneFor, toneVars, type Tone } from '#lib/glass/tone';
   import { sheen } from '#lib/glass/pointer';
   import SlidePill from '#lib/glass/SlidePill.svelte';
   import Icon from '#lib/Icon.svelte';
@@ -129,41 +129,45 @@
   // the backdrop has nothing to wait for when there is none (the trailer may still start)
   function bgGone() { bgFailed = true; loaded = true; }
 
-  // ---- the glass info panel's tone (glass spec §4, §8.2): the backdrop's colour as a tint, and the scrim white text needs ----
-  // Without a tone the panel keeps the safe scrim (.frost-safe, passes AA over pure white). A tone the card sampled before
-  // (same key as the hover card: the series for an episode) applies at once. Otherwise the backdrop is sampled once it
-  // loaded: its tint crossfades in, and its scrim applies only while the panel is not on screen yet (no jump under the text).
-  // The card's tone came from the card's picture, not this backdrop: the backdrop is sampled too, and a brighter one raises
-  // the scrim (contrast first). While the trailer plays (frames nobody sampled) the scrim is at least the safe one.
+  // ---- the glass info panel's tone (glass spec §4, §8.2): the backdrop's colour as a tint, and the scrim its text needs ----
+  // The panel's dimmest text is white at TEXT_DIM (secondary lines), so every scrim here is solved for it, and its safe scrim
+  // is SCRIM_SAFE_DIM (set as the panel's --fr-scrim-safe; .frost-safe uses it): AA over pure white without a tone.
+  // A tone the card sampled before (same key as the hover card: the series for an episode) applies at once. The backdrop is
+  // always sampled too, from the loaded <img> itself, under its own key (BD + id): without a card tone its tint crossfades in,
+  // and its scrim applies only while the panel is not on screen yet (no jump under the text); with a card tone (another
+  // picture) a backdrop needing more raises the scrim, and one that cannot be read lifts it to the safe one (contrast first).
+  // While the trailer plays (frames nobody sampled) the scrim is at least the safe one.
   const toneKey = (i: Item) => i.seriesId ?? i.id;
   const tintOf = (x: Tone) => x.tint.join(', ');
+  /** the scrim the panel's dimmest text needs over this tone */
+  const need = (x: Tone) => Math.max(x.scrim, scrimFor(x.bright, x.tint, AA, TEXT_DIM));
+  let shownRaf = 0;
   let tone: Tone | null = null, scrim: number | null = null, tints: [string, string] = ['', ''], front = 0, cardTone = false, toneId = '', panelShown = false;
   function toneReset(i: Item) {
     toneId = i.id;
     const c = cachedTone(toneKey(i));
     cardTone = Boolean(c);
-    tone = c ?? null; scrim = c ? c.scrim : null; tints = [c ? tintOf(c) : '', '']; front = 0;
+    tone = c ?? null; scrim = c ? need(c) : null; tints = [c ? tintOf(c) : '', '']; front = 0;
   }
   $: if (item.id !== toneId) toneReset(item);
-  $: scrimNow = scrim === null ? null : playing ? Math.max(scrim, SCRIM_SAFE) : scrim;
-  $: panelStyle = tone && scrimNow !== null ? toneVars({ ...tone, scrim: scrimNow }) : tone ? `--fr-tint:${tintOf(tone)}` : '';
+  $: scrimNow = scrim === null ? null : playing ? Math.max(scrim, SCRIM_SAFE_DIM) : scrim;
+  $: panelStyle = [`--fr-scrim-safe:${SCRIM_SAFE_DIM}`, tone && scrimNow !== null ? toneVars({ ...tone, scrim: scrimNow }) : tone ? `--fr-tint:${tintOf(tone)}` : ''].filter(Boolean).join(';');
   function bgLoaded(e: Event) {
     loaded = true;
-    const im = e.currentTarget as HTMLImageElement, src = im.currentSrc || im.src, id = item.id;
-    if (!src) return;
-    if (cardTone) {
-      void toneFor('bd:' + id, src).then((b) => { if (b && id === item.id && scrim !== null && b.scrim > scrim) scrim = b.scrim; });
-      return;
-    }
-    // a picture that could not be read before (cached null) is not asked again under the shared key
-    const key = cachedTone(toneKey(item)) === null ? 'bd:' + id : toneKey(item);
-    void toneFor(key, src).then((t) => {
-      if (!t || id !== item.id) return;
+    const im = e.currentTarget as HTMLImageElement, id = item.id;
+    if (!(im.currentSrc || im.src)) return;
+    void toneFor(BD + id, im).then((b) => {
+      if (id !== item.id) return;
+      if (cardTone) {
+        if (scrim !== null) scrim = Math.max(scrim, b ? need(b) : SCRIM_SAFE_DIM);
+        return;
+      }
+      if (!b) return; // .frost-safe stays
       const back = 1 - front;
-      tints[back] = tintOf(t);
+      tints[back] = tintOf(b);
       front = back;
-      tone = t;
-      if (!panelShown) scrim = t.scrim;
+      tone = b;
+      if (!panelShown) scrim = need(b);
     });
   }
   /** the light sheen, clipped by its own layer (the panel itself does not clip: the rating pill grows past it) */
@@ -280,7 +284,7 @@
     ro.disconnect(); ro.observe(tabsEl); roOn = tabsEl;
   }
   onMount(() => {
-    requestAnimationFrame(() => (panelShown = true)); // painted: a tone arriving later only crossfades the tint
+    shownRaf = requestAnimationFrame(() => (panelShown = true)); // painted: a tone arriving later only crossfades the tint
     addEventListener('scroll', onScroll, { passive: true });
     addEventListener('resize', onScroll);
     shade();
@@ -288,7 +292,7 @@
   onDestroy(() => {
     if (typeof window === 'undefined') return;
     removeEventListener('scroll', onScroll); removeEventListener('resize', onScroll);
-    cancelAnimationFrame(raf); ro?.disconnect(); synRo?.disconnect(); fadeOut?.cancel(); switchSeq++;
+    cancelAnimationFrame(raf); cancelAnimationFrame(shownRaf); ro?.disconnect(); synRo?.disconnect(); fadeOut?.cancel(); switchSeq++;
   });
 
   // ---- trailer: mute state follows the video ----
@@ -381,7 +385,7 @@
       <div class="tabbar" aria-hidden="true"><div class="tabsk"></div></div>
     {:else}
     <div class="tabbar">
-      <div class="tabs frost frost-pill frost-safe" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" bind:this={tabsEl} on:keydown={tabKeys}>
+      <div class="tabs frost frost-pill frost-safe" style="--fr-scrim-safe:{SCRIM_SAFE_DIM}" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" bind:this={tabsEl} on:keydown={tabKeys}>
         {#each tabs as n (n)}
           <button type="button" role="tab" id="dd-tab-{n}" class="tab" class:on={cur === n} aria-selected={cur === n} aria-controls={cur === n ? 'dd-panel-' + n : undefined}
             tabindex={cur === n ? 0 : -1} on:click={() => select(n)}>{tabLabel(n)}</button>
@@ -438,22 +442,27 @@
   /* the glass info panel (glass spec §4): one frost surface over the backdrop, as wide as the column was; .frost-safe until
      the backdrop's tone is known (inline toneVars win); its sheen sits in a clip layer (the panel does not clip its content) */
   .col { margin-top: auto; width: 42vw; min-width: 440px; max-width: 720px; box-sizing: border-box; padding: 28px; border-radius: var(--fr-r-sheet); }
+  /* the dimmest text on the panel is white at .9 (lib/glass/tone.ts TEXT_DIM; the scrim is solved for it). The eyebrow is the
+     light coral (#ff8aa0, as the hover card's reason line) on a dark underlay (scrim colour at .5, like the hover card's text
+     part): the milk alone lightens the panel past what coral can pass, even over a black backdrop (tone.test.ts,
+     desk-detail.spec.ts "contrast fallback") */
+  .col { --mut: rgba(255, 255, 255, .9); }
   .pclip { position: absolute; inset: 0; z-index: 1; border-radius: inherit; overflow: hidden; pointer-events: none; }
   .top { position: relative; }
-  .eyebrow { margin: 0 0 12px; color: var(--acc); font-size: 13px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; line-height: 16px; }
+  .eyebrow { width: fit-content; margin: 0 0 12px; padding: 2px 8px; border-radius: 999px; background: rgba(var(--fr-scrim-rgb), .5); color: #ff8aa0; font-size: 13px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; line-height: 16px; }
   .title { margin: 0 0 16px; font-size: min(4.5vw, 80px); font-weight: 900; letter-spacing: -.035em; line-height: .98; text-wrap: balance; overflow-wrap: anywhere; }
   .title.haslogo { line-height: 0; }
   .tlogo { display: block; max-width: min(100%, 480px); max-height: clamp(88px, 18vh, 168px); object-fit: contain; object-position: left bottom; }
   .facts { margin: 0 0 16px; }
-  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 16px; font-weight: 500; line-height: 24px; color: rgba(255, 255, 255, .86); font-variant-numeric: tabular-nums; }
+  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 16px; font-weight: 500; line-height: 24px; color: rgba(255, 255, 255, .9); font-variant-numeric: tabular-nums; }
   .match { color: var(--ok); font-weight: 700; }
   .age { border: 1px solid rgba(255, 255, 255, .55); border-radius: 4px; padding: 0 6px; font-size: 13px; line-height: 20px; }
   .meta :global(.qc) { margin: 0; gap: 6px; }
   .meta :global(.qc li) { font-size: 12px; line-height: 20px; padding: 0 6px; border-color: rgba(255, 255, 255, .55); border-radius: 4px; }
-  .until { font-size: 14px; color: rgba(255, 255, 255, .7); }
+  .until { font-size: 14px; color: rgba(255, 255, 255, .9); }
   .lead { margin-top: 8px; display: flow-root; }
   .lead :global(.rl) { margin: 0; }
-  .tagline { margin: 4px 0 0; font-style: italic; color: rgba(255, 255, 255, .78); line-height: 1.45; }
+  .tagline { margin: 4px 0 0; font-style: italic; color: rgba(255, 255, 255, .9); line-height: 1.45; }
   .synbox { margin: 0 0 24px; max-width: 36rem; }
   .syn { margin: 0; font-size: 17px; line-height: 1.5; color: rgba(255, 255, 255, .92); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
   .syn.open { display: block; -webkit-line-clamp: unset; line-clamp: none; }
@@ -477,12 +486,16 @@
     background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim));
     border-color: rgba(255, 255, 255, .42); box-shadow: inset 0 1px 0 var(--fr-hi), inset 0 0 0 1px rgba(255, 255, 255, .14);
   }
-  :global(html:not(.m-glass)) .acts :global(.rb .trig), :global(html:not(.m-glass)) .acts :global(.ma.ring) { background: var(--fr-solid); }
-  :global(html:not(.m-glass)) .acts :global(.rb .trig:hover:not(:disabled)), :global(html:not(.m-glass)) .acts :global(.ma.ring:hover) { background: var(--fr-solid-hover); }
+  :global(html:not(.m-glass)) .acts :global(.rb .trig), :global(html:not(.m-glass)) .acts :global(.ma.ring),
+  :global(html.tv) .acts :global(.rb .trig), :global(html.tv) .acts :global(.ma.ring),
+  :global(html.kids) .acts :global(.rb .trig), :global(html.kids) .acts :global(.ma.ring) { background: var(--fr-solid); }
+  :global(html:not(.m-glass)) .acts :global(.rb .trig:hover:not(:disabled)), :global(html:not(.m-glass)) .acts :global(.ma.ring:hover),
+  :global(html.tv) .acts :global(.rb .trig:hover:not(:disabled)), :global(html.tv) .acts :global(.ma.ring:hover),
+  :global(html.kids) .acts :global(.rb .trig:hover:not(:disabled)), :global(html.kids) .acts :global(.ma.ring:hover) { background: var(--fr-solid-hover); }
   .play:focus-visible, .rb:focus-visible, .dback:focus-visible, .lnk:focus-visible, .tab:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
   .mslot { display: grid; gap: .6rem; padding: .3rem .4rem .4rem; }
   .mslot :global(.status), .mslot :global(.lang) { margin: 0; }
-  .resume { display: flex; align-items: center; gap: 12px; margin: 16px 0 0; font-size: 14px; font-weight: 600; color: rgba(255, 255, 255, .86); font-variant-numeric: tabular-nums; }
+  .resume { display: flex; align-items: center; gap: 12px; margin: 16px 0 0; font-size: 14px; font-weight: 600; color: rgba(255, 255, 255, .9); font-variant-numeric: tabular-nums; }
   .bar { position: relative; flex: none; width: 120px; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .25); overflow: hidden; }
   .bar span { position: absolute; inset: 0; background: var(--acc); transform-origin: left center; }
 
@@ -500,7 +513,7 @@
   .tabs { display: inline-flex; max-width: 100%; box-sizing: border-box; gap: 4px; padding: 6px; overflow-x: auto; scrollbar-width: none; vertical-align: top; }
   .tabs::-webkit-scrollbar { display: none; }
   /* 40 px tall in a 52 px bar; the hit area is 44 px (::after) */
-  .tab { position: relative; z-index: 1; flex: none; height: 40px; min-height: 40px; padding: 0 18px; background: transparent; border: 0; border-radius: 999px; color: rgba(255, 255, 255, .72); font-size: 15px; font-weight: 700; white-space: nowrap; }
+  .tab { position: relative; z-index: 1; flex: none; height: 40px; min-height: 40px; padding: 0 18px; background: transparent; border: 0; border-radius: 999px; color: rgba(255, 255, 255, .9); font-size: 15px; font-weight: 700; white-space: nowrap; }
   .tab::after { content: ''; position: absolute; inset: -2px; border-radius: inherit; }
   .tab:hover:not(:disabled) { background: transparent; color: #fff; }
   .tab.on, .tab.on:hover:not(:disabled) { color: #111; }

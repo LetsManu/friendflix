@@ -47,6 +47,7 @@
   import TvSub, { type TvSubId } from '#lib/detail/TvSub.svelte';
   import Safe from '#lib/detail/Safe.svelte';
   import SlidePill from '#lib/glass/SlidePill.svelte';
+  import { SCRIM_SAFE_DIM } from '#lib/glass/tone';
   import { toPeople } from '#lib/detail/safe';
   import { forgetFacts, loadFacts, type Facts } from '#lib/fresh';
 
@@ -676,7 +677,7 @@
       <Safe name="cast" key={item.id}><CastRow id={item.id} {people} /></Safe>
 
       <!-- ================= tabs (always shown); the panels stay mounted and switch with `hidden` ================= -->
-      <div class="tabs frost frost-pill frost-safe" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" on:keydown={tabKeys} bind:this={tabsEl}>
+      <div class="tabs frost frost-pill frost-safe" style="--fr-scrim-safe:{SCRIM_SAFE_DIM}" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" on:keydown={tabKeys} bind:this={tabsEl}>
         {#each tabs as n (n)}
           <button type="button" role="tab" id="dv-tab-{n}" class="tab" class:on={curTab === n} aria-selected={curTab === n} aria-controls="dv-panel-{n}" tabindex={curTab === n || tvOn ? 0 : -1}
             on:click={() => pick(n)} on:focus={() => onTabFocus(n)}>{tabLabel(n)}</button>
@@ -792,10 +793,11 @@
   .sl { height: 1.1rem; margin: .8rem 0; }
 
   .extras { padding-top: 1.4rem; }
-  /* tabs: a glass segment bar (glass spec §4), the selected tab on a sliding white pill (SlidePill); .frost-safe: titles scroll under it */
+  /* tabs: a glass segment bar (glass spec §4), the selected tab on a sliding white pill (SlidePill); .frost-safe: titles scroll
+     under it, with the safe scrim for its dimmest label (white .9, lib/glass/tone.ts TEXT_DIM / SCRIM_SAFE_DIM) */
   .tabs { display: flex; width: max-content; max-width: 100%; box-sizing: border-box; gap: 4px; margin-top: 2.2rem; padding: 6px; overflow-x: auto; scrollbar-width: none; }
   .tabs::-webkit-scrollbar { display: none; }
-  .tab { position: relative; z-index: 1; flex: none; min-height: 40px; padding: 0 1.1rem; background: transparent; color: rgba(255, 255, 255, .72); border: 0; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+  .tab { position: relative; z-index: 1; flex: none; min-height: 40px; padding: 0 1.1rem; background: transparent; color: rgba(255, 255, 255, .9); border: 0; border-radius: 999px; font-weight: 700; white-space: nowrap; }
   .tab:hover:not(:disabled) { background: transparent; color: #fff; }
   .tab.on, .tab.on:hover:not(:disabled) { color: #111; }
   /* the label colour follows the pill in 250 ms (the named exception), with full motion only */

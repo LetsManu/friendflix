@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AA, AMB_PEAK, BLUR_BRIGHTNESS, cachedTone, clearTones, contrast, DARK_BASE, frostComposite, luminance, MILK_RGB, SCRIM_LIGHT, SCRIM_MAX, SCRIM_MIN,
   MILK_TOP, SCRIM_RGB, SCRIM_SAFE, scrimFor, tintColor, TINT_LUM_MAX, toneFor, toneOf, toneVars, type RGB,
+  BD, SCRIM_SAFE_DIM, TEXT_DIM, textContrast,
 } from './tone';
 
 const WHITE: RGB = [255, 255, 255];
@@ -215,11 +216,95 @@ describe('toneFor', () => {
     expect(cachedTone('k1')).not.toBeUndefined();
     expect(cachedTone('k32')).not.toBeUndefined();
   });
+
+  it('backdrop keys (BD) have their own small cache: they never push card tones out', async () => {
+    for (let i = 0; i < 32; i++) await toneFor(`k${i}`, '/a.jpg');
+    for (let i = 0; i < 9; i++) await toneFor(`${BD}${i}`, '/bd.jpg');
+    expect(cachedTone('k0')).not.toBeUndefined();
+    expect(cachedTone(`${BD}0`)).toBeUndefined(); // the 9th backdrop evicts the first
+    expect(cachedTone(`${BD}8`)).not.toBeUndefined();
+    expect(cachedTone(`${BD}1`)).not.toBeUndefined();
+    clearTones();
+    expect(cachedTone(`${BD}8`)).toBeUndefined();
+  });
+
+  it('an <img> that has loaded is drawn as it is (no second load); one still loading loads its currentSrc', async () => {
+    let drawn: unknown = null;
+    vi.stubGlobal('document', {
+      createElement: () => ({ width: 0, height: 0, getContext: () => ({ drawImage: (i: unknown) => { drawn = i; }, getImageData: () => ({ data: pixels }) }) }),
+    });
+    const done = { complete: true, naturalWidth: 640, currentSrc: '/x.jpg', src: '/x.jpg' } as unknown as HTMLImageElement;
+    expect(await toneFor(`${BD}done`, done)).toEqual(toneOf(pixels));
+    expect(drawn).toBe(done);
+    expect(loads).toBe(0);
+    const busy = { complete: false, naturalWidth: 0, currentSrc: '/y.jpg', src: '/y-fallback.jpg' } as unknown as HTMLImageElement;
+    expect(await toneFor(`${BD}busy`, busy)).toEqual(toneOf(pixels));
+    expect(loads).toBe(1);
+    expect(drawn).toBeInstanceOf(FakeImage);
+    const noCur = { complete: true, naturalWidth: 0, currentSrc: '', src: '/broken.jpg' } as unknown as HTMLImageElement; // a failed picture
+    expect(await toneFor(`${BD}nocur`, noCur)).toBeNull();
+    expect(loads).toBe(2);
+  });
 });
 
 describe('toneVars', () => {
   it('toneVars', () => {
     expect(toneVars(null)).toBe('');
     expect(toneVars({ tint: [1, 2, 3], bright: WHITE, scrim: 0.42 })).toBe('--fr-tint:1, 2, 3;--fr-scrim:0.42');
+  });
+  it('toneVars solves the scrim for the dimmest text when asked, never lighter than the tone\'s own', () => {
+    const t = toneOf(px([576, [255, 255, 255], 255]))!;
+    const want = scrimFor(t.bright, t.tint, AA, TEXT_DIM);
+    expect(want).toBeGreaterThan(t.scrim);
+    expect(toneVars(t, TEXT_DIM)).toBe(`--fr-tint:${t.tint.join(', ')};--fr-scrim:${want}`);
+    // a dark picture: the light scrim is enough for dim text too (the tone's scrim stays)
+    const d = toneOf(px([576, [20, 18, 26], 255]))!;
+    expect(toneVars(d, TEXT_DIM)).toBe(toneVars(d));
+    expect(toneVars({ tint: [1, 2, 3], bright: [0, 0, 0], scrim: 0.6 }, TEXT_DIM)).toBe('--fr-tint:1, 2, 3;--fr-scrim:0.6');
+  });
+});
+
+describe('dim text on glass (secondary lines, inactive tabs)', () => {
+  it('textContrast: white at an alpha over a colour; alpha 1 is plain white', () => {
+    expect(textContrast([60, 60, 60])).toBeCloseTo(contrast(WHITE, [60, 60, 60]), 6);
+    expect(textContrast([60, 60, 60], 0.5)).toBeLessThan(textContrast([60, 60, 60]));
+    expect(textContrast([60, 60, 60], 0)).toBeCloseTo(1, 6);
+  });
+  it('scrimFor with TEXT_DIM: the dim text passes AA over pure white (worst tint too); .72 white cannot at any scrim', () => {
+    const tint = tintColor(WHITE);
+    const s = scrimFor(WHITE, tint, AA, TEXT_DIM);
+    expect(s).toBeLessThan(SCRIM_MAX);
+    expect(textContrast(frostComposite(WHITE, s), TEXT_DIM)).toBeGreaterThanOrEqual(AA);
+    expect(textContrast(frostComposite(WHITE, s, tint), TEXT_DIM)).toBeGreaterThanOrEqual(AA);
+    expect(textContrast(frostComposite(WHITE, SCRIM_MAX), 0.72)).toBeLessThan(AA); // why the dim colours went up to .9
+    // the plain-white scrim is too light for it
+    expect(textContrast(frostComposite(WHITE, SCRIM_SAFE), TEXT_DIM)).toBeLessThan(AA);
+    expect(scrimFor(WHITE, null, AA, 0.5)).toBe(SCRIM_MAX); // nothing passes: the heaviest
+  });
+  it('SCRIM_SAFE_DIM: the safe scrim for TEXT_DIM surfaces over unsampled artwork', () => {
+    expect(SCRIM_SAFE_DIM).toBe(scrimFor(WHITE, tintColor(WHITE), AA, TEXT_DIM));
+    expect(SCRIM_SAFE_DIM).toBeGreaterThan(SCRIM_SAFE);
+    for (let c = 0; c <= 255; c += 15) {
+      const back: RGB = [c, c, c];
+      expect(textContrast(frostComposite(back, SCRIM_SAFE_DIM), TEXT_DIM)).toBeGreaterThanOrEqual(AA);
+      expect(textContrast(frostComposite(back, SCRIM_SAFE_DIM, tintColor(WHITE)), TEXT_DIM)).toBeGreaterThanOrEqual(AA);
+    }
+  });
+  it('the light coral (#ff8aa0) eyebrow: on the bare panel it fails over bright artwork, on its .5 scrim underlay it passes', () => {
+    const coral: RGB = [255, 138, 160];
+    const under = (c: RGB, a: number): RGB => c.map((v, i) => Math.round(v * (1 - a) + SCRIM_RGB[i]! * a)) as RGB;
+    // the bare panel: only over a near-black backdrop (the milk lightens what is behind it); the coral accent not even there
+    expect(contrast(coral, frostComposite([20, 19, 24], SCRIM_SAFE_DIM))).toBeGreaterThanOrEqual(AA);
+    expect(contrast(coral, frostComposite(WHITE, SCRIM_MAX))).toBeLessThan(AA);
+    expect(contrast([255, 79, 109], frostComposite([20, 19, 24], SCRIM_SAFE))).toBeLessThan(AA);
+    // DetailDesk .eyebrow: the scrim colour at .5 under it passes over any grey backdrop, with the worst tint, at the scrims the
+    // panel can have there (solved for its dim text, or the safe one)
+    for (let c = 0; c <= 255; c += 15) {
+      const back: RGB = [c, c, c];
+      for (const s of [scrimFor(back, tintColor(WHITE), AA, TEXT_DIM), SCRIM_SAFE_DIM, SCRIM_MAX]) {
+        expect(contrast(coral, under(frostComposite(back, s), 0.5))).toBeGreaterThanOrEqual(AA);
+        expect(contrast(coral, under(frostComposite(back, s, tintColor(WHITE)), 0.5))).toBeGreaterThanOrEqual(AA);
+      }
+    }
   });
 });

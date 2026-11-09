@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { episodes, items, MOVIE, SERIES } from '../mocks/fixtures.js';
 import { expect, test } from '../fixtures.js';
 import { openPopout, row } from '../helpers.js';
@@ -147,7 +147,8 @@ test.describe('desktop detail page', () => {
     await page.goto('/item/' + SERIES.id);
     const eb = desk(page).locator('.eyebrow');
     await expect(eb).toHaveText('Neue Staffel');
-    expect(await eb.evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 79, 109)');
+    // the light coral (on its dark underlay: AA on the glass panel, see the contrast test below)
+    expect(await eb.evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 138, 160)');
     await expect(desk(page).locator('.col [data-st]').first()).toHaveClass(/eyebrow/);
   });
 
@@ -589,38 +590,135 @@ test.describe('desktop detail glass', () => {
     expect(await eps.first().locator('.bar i').evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 79, 109)');
   });
 
-  test('contrast fallback: a pure white backdrop', async ({ page }) => {
-    const white = png(64, 36, [255, 255, 255]);
-    await page.route(`**/media/Items/${INTERLACE.id}/Images/**`, (r) => r.fulfill({ status: 200, contentType: 'image/png', body: white }));
+  // ---- contrast (glass spec §1.3): the maths of lib/glass/tone.ts frostComposite, copied (e2e cannot import web code) ----
+  const over = (back: number[], top: number[], a: number) => back.map((v, i) => v * (1 - a) + top[i]! * a);
+  const lin = (v: number) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  const lum = (c: number[]) => 0.2126 * lin(c[0]!) + 0.7152 * lin(c[1]!) + 0.0722 * lin(c[2]!);
+  const ratio = (a: number[], b: number[]) => { const [x, y] = [lum(a), lum(b)]; return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const rgba = (s: string) => [...s.matchAll(/rgba?\(([^)]+)\)/g)].map((m) => m[1]!.split(',').map(Number)).map(([r, g, b, a]) => ({ c: [r!, g!, b!], a: a ?? 1 }));
+  /** the alphas of the white text inside a surface (each element with text of its own, `skip` excepted), dimmest first */
+  const whiteTexts = (surface: Locator, skip = '') => surface.evaluate((root, skipSel) => {
+    const out = new Set<number>();
+    for (const e of [root, ...root.querySelectorAll('*')]) {
+      if (skipSel && e.closest(skipSel)) continue;
+      if (![...e.childNodes].some((n) => n.nodeType === 3 && n.textContent!.trim())) continue;
+      const r = getComputedStyle(e);
+      if (r.visibility === 'hidden' || Number(r.opacity) === 0) continue;
+      const m = /rgba?\((\d+), (\d+), (\d+)(?:, ([\d.]+))?\)/.exec(r.color);
+      if (m && m[1] === '255' && m[2] === '255' && m[3] === '255') out.add(m[4] === undefined ? 1 : Number(m[4]));
+    }
+    return [...out].sort();
+  }, skip);
+  /** white at each alpha over a surface's composite on a pure white backdrop (brightened by the blur), its scrim and both milk stops */
+  async function passesOverWhite(surface: Locator, alphas: number[]) {
+    const bg = await surface.evaluate((e) => ({ image: getComputedStyle(e).backgroundImage, color: getComputedStyle(e).backgroundColor }));
+    const [scrim] = rgba(bg.color);
+    const milks = rgba(bg.image);
+    expect(milks.length).toBe(2);
+    expect(alphas.length).toBeGreaterThan(0);
+    for (const milk of milks) {
+      const c = over(over([255, 255, 255].map((v) => Math.min(255, v * 1.05)), scrim!.c, scrim!.a), milk.c, milk.a).map(Math.round);
+      for (const a of alphas) expect(ratio(over(c, [255, 255, 255], a), c), `white at ${a} on ${c.join(',')} (scrim ${scrim!.a})`).toBeGreaterThanOrEqual(4.5);
+    }
+    return scrim!.a;
+  }
+  /** a pure white picture for every image of an item */
+  const whiteArt = (page: Page, id: string) => page.route(`**/media/Items/${id}/Images/**`, (r) => r.fulfill({ status: 200, contentType: 'image/png', body: png(64, 36, [255, 255, 255]) }));
+  /** home → rest on the "Weil du" row's first card (its tone gets sampled and cached, glass spec §1.3) → its detail page */
+  async function fromCard(page: Page) {
     await page.goto('/');
     await glassOn(page);
-    // from its card: resting on it samples the artwork's tone (glass spec §1.3), the detail page reads it from the cache
     const card = row(page, 'Weil du „Inkwell“ gesehen hast').locator('article.card').first();
     await card.scrollIntoViewIfNeeded();
     await card.locator('a.thumb').hover();
     await page.waitForTimeout(300);
     await card.locator('a.thumb').click();
     await expect(page).toHaveURL(new RegExp(`/item/${INTERLACE.id}$`));
+    await expect(desk(page).locator('img.bg')).toHaveClass(/loaded/);
+  }
+  const scrimOf = (l: Locator) => l.evaluate((e) => Number(getComputedStyle(e).getPropertyValue('--fr-scrim')));
+
+  test('contrast fallback: a pure white backdrop', async ({ page }) => {
+    await whiteArt(page, INTERLACE.id);
+    await page.route('**/api/discover/badges', (r) => r.fulfill({ json: { badges: { [INTERLACE.id]: { fresh: 'newSeason' } } } }));
+    await page.route('**/api/items/*/facts', (r) => r.fulfill({ json: { fresh: null, leaving: { days: 5, leavesAt: '2026-11-14', note: '' }, traits: null } }));
+    await fromCard(page);
+    const col = panel(page);
+    await expect.poll(() => scrimOf(col)).toBeGreaterThanOrEqual(0.66);
+    await expect(col.locator('.until')).toHaveCount(1);
+    // every white text on the panel (secondary lines at .9 included) and every tab label not on the white pill
+    const panelInks = await whiteTexts(col, '.acts');
+    expect(panelInks[0]).toBeLessThan(1); // the secondary lines are part of it
+    await passesOverWhite(col, panelInks);
+    const tabs = tablist(page);
+    const tabInks = await whiteTexts(tabs, '[aria-selected="true"]');
+    expect(tabInks).toEqual([0.9]);
+    await passesOverWhite(tabs, tabInks);
+
+    // the coloured inks (the light coral eyebrow, the green match score) on screen, where the panel really sits over the white
+    // backdrop: with the ink hidden, the brightest pixel under it (the shade, the blur, scrim, milk, grain and tint all drawn)
+    const eb = col.locator('.eyebrow');
+    await expect(eb).toBeVisible();
+    expect(await eb.evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 138, 160)');
+    await page.mouse.move(1, 1);
+    await page.waitForTimeout(400); // the sheen fades out, the tint has crossfaded
+    for (const [sel, ink] of [['.eyebrow', [255, 138, 160]], ['.match', [74, 222, 128]]] as const) {
+      const el = col.locator(sel);
+      await el.evaluate((e) => { (e as HTMLElement).style.color = 'transparent'; (e as HTMLElement).style.transition = 'none'; });
+      // the text's box (inside the eyebrow's rounded underlay: its padding, past the round ends)
+      const b = await el.evaluate((e) => {
+        const r = e.getBoundingClientRect(), cs = getComputedStyle(e), pl = parseFloat(cs.paddingLeft), pr = parseFloat(cs.paddingRight);
+        const end = Math.min(r.height / 2, parseFloat(cs.borderTopLeftRadius) || 0);
+        const x0 = r.left + Math.max(pl, end), x1 = r.right - Math.max(pr, end);
+        return { x: x0, y: r.top + parseFloat(cs.paddingTop), width: x1 - x0, height: r.height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) };
+      });
+      const shot = await page.screenshot({ clip: b });
+      const brightest = await page.evaluate(async (b64) => {
+        const im = new Image();
+        im.src = `data:image/png;base64,${b64}`;
+        await im.decode();
+        const c = document.createElement('canvas');
+        c.width = im.naturalWidth; c.height = im.naturalHeight;
+        const g = c.getContext('2d')!;
+        g.drawImage(im, 0, 0);
+        const d = g.getImageData(0, 0, c.width, c.height).data;
+        let best = [0, 0, 0], bl = -1;
+        for (let i = 0; i < d.length; i += 4) { const l = d[i]! * 0.2126 + d[i + 1]! * 0.7152 + d[i + 2]! * 0.0722; if (l > bl) { bl = l; best = [d[i]!, d[i + 1]!, d[i + 2]!]; } }
+        return best;
+      }, shot.toString('base64'));
+      expect(ratio([...ink], brightest), `${sel} on ${brightest.join(',')}`).toBeGreaterThanOrEqual(4.5);
+      await el.evaluate((e) => { (e as HTMLElement).style.color = ''; });
+    }
+  });
+
+  test('no tone yet (deep link): the panel keeps its safe scrim for the dim text; the late tone only crossfades the tint', async ({ page }) => {
+    await whiteArt(page, MOVIE.id);
+    await page.goto('/item/' + MOVIE.id);
+    await glassOn(page);
     const col = panel(page);
     await expect(desk(page).locator('img.bg')).toHaveClass(/loaded/);
-    await expect.poll(async () => Number(await col.evaluate((e) => getComputedStyle(e).getPropertyValue('--fr-scrim')))).toBeGreaterThanOrEqual(0.66);
-    // white text over the composite of the backdrop (white, 5 % brighter through the blur), the scrim and the milk's
-    // lightest stop (lib/glass/tone.ts frostComposite, copied: e2e cannot import web code)
-    const bg = await col.evaluate((e) => ({ image: getComputedStyle(e).backgroundImage, color: getComputedStyle(e).backgroundColor }));
-    const rgba = (s: string) => [...s.matchAll(/rgba?\(([^)]+)\)/g)].map((m) => m[1]!.split(',').map(Number)).map(([r, g, b, a]) => ({ c: [r!, g!, b!], a: a ?? 1 }));
-    const [scrim] = rgba(bg.color);
-    const milks = rgba(bg.image);
-    expect(scrim!.a).toBeGreaterThanOrEqual(0.66);
-    expect(milks.length).toBe(2);
-    const over = (back: number[], top: number[], a: number) => back.map((v, i) => v * (1 - a) + top[i]! * a);
-    const lin = (v: number) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
-    const lum = (c: number[]) => 0.2126 * lin(c[0]!) + 0.7152 * lin(c[1]!) + 0.0722 * lin(c[2]!);
-    for (const milk of milks) {
-      let c = [255, 255, 255].map((v) => Math.min(255, v * 1.05));
-      c = over(c, scrim!.c, scrim!.a);
-      c = over(c, milk.c, milk.a).map(Math.round);
-      expect((1 + 0.05) / (lum(c) + 0.05), `white on ${c.join(',')}`).toBeGreaterThanOrEqual(4.5);
-    }
+    await expect(col).toHaveClass(/(^|\s)frost-safe(\s|$)/);
+    // the backdrop's tone lands after the panel was painted: the tint crossfades in, the scrim stays the safe one
+    await expect(col.locator('.frost-tint i.on')).toHaveCount(1);
+    expect(await col.evaluate((e) => e.style.getPropertyValue('--fr-tint'))).toMatch(/^\d+, \d+, \d+$/);
+    expect(await col.evaluate((e) => e.style.getPropertyValue('--fr-scrim'))).toBe('');
+    const safe = await col.evaluate((e) => Number(getComputedStyle(e).getPropertyValue('--fr-scrim-safe')));
+    expect(safe).toBeGreaterThan(0.7); // above the plain-white safe scrim: solved for white at .9
+    expect(await scrimOf(col)).toBe(safe);
+    await passesOverWhite(col, await whiteTexts(col, '.acts'));
+  });
+
+  test('the trailer lifts a light scrim to the safe one while it plays', async ({ page }) => {
+    await fakeMedia(page);
+    await itemIs(page, { ...INTERLACE, trailers: 1 });
+    await page.route(`**/media/Items/${INTERLACE.id}/Images/**`, (r) => r.fulfill({ status: 200, contentType: 'image/png', body: png(64, 36, [20, 18, 26]) }));
+    await fromCard(page);
+    const col = panel(page);
+    // a dark picture: the light scrim
+    await expect.poll(() => scrimOf(col)).toBeLessThan(0.5);
+    const safe = await col.evaluate((e) => Number(getComputedStyle(e).getPropertyValue('--fr-scrim-safe')));
+    await expect(desk(page).locator('[data-vt-art] video')).toHaveClass(/on/, { timeout: 10_000 });
+    await expect.poll(() => scrimOf(col)).toBe(safe);
   });
 
   test('calm: the panel and tabs are solid, the pill jumps', async ({ page }) => {

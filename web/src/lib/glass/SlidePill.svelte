@@ -9,7 +9,8 @@
    * `transform`, so the pill glides to the selected entry and seems to change width without animating `width`. It sits
    * absolutely inside `host` (which must be positioned, e.g. `.frost`) under the entries (give them `position: relative`).
    * It follows the entry `selector` matches: on mount, when the host resizes and when the selection changes (`aria-selected`,
-   * `aria-current` or `class` on any element inside the host, or entries added / removed). The glide (450 ms, the spring)
+   * `aria-current` or `class` on any element inside the host but the pill, entries added / removed, or a label's text changed:
+   * the host's width is capped, so a longer label does not always resize it). The glide (450 ms, the spring)
    * runs only with full motion off TV and kids (`html.m-glass`); otherwise, and on the first placement, it jumps.
    */
   export let host: HTMLElement | undefined;
@@ -17,7 +18,7 @@
   /** 'white': a solid white pill (the selected label is then #111); 'light': the light selected fill (`--fr-sel`) */
   export let tone: 'light' | 'white' = 'light';
 
-  let l = '', m = '', r = '', h = 0, y = 0, on = false, ready = false;
+  let l = '', m = '', r = '', h = 0, y = 0, on = false, ready = false, raf = 0, sp: HTMLSpanElement | undefined;
   function place() {
     const el = host?.querySelector<HTMLElement>(selector);
     if (!el || !el.offsetWidth) { on = false; return; }
@@ -25,7 +26,7 @@
     ({ l, mid: m, r } = pillParts({ x: el.offsetLeft, w: el.offsetWidth }, h));
     on = true;
     // the first placement does not glide in: transitions turn on after it was painted
-    if (!ready) requestAnimationFrame(() => requestAnimationFrame(() => (ready = true)));
+    if (!ready && !raf) raf = requestAnimationFrame(() => { raf = requestAnimationFrame(() => { raf = 0; ready = true; }); });
   }
 
   let ro: ResizeObserver | undefined, mo: MutationObserver | undefined, bound: HTMLElement | undefined;
@@ -37,17 +38,18 @@
     place();
     if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(place); ro.observe(node); }
     if (typeof MutationObserver !== 'undefined') {
-      mo = new MutationObserver(place);
-      mo.observe(node, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-selected', 'aria-current', 'class'] });
+      // the pill's own class flips (on, ready) are not a change of the selection; a label's text is (a new language)
+      mo = new MutationObserver((list) => { if (list.some((x) => !sp?.contains(x.target))) place(); });
+      mo.observe(node, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['aria-selected', 'aria-current', 'class'] });
     }
   }
   $: bind(host);
   /** a new selector (another entry kind) is measured again */
   $: if (bound && selector) place();
-  onDestroy(() => { ro?.disconnect(); mo?.disconnect(); });
+  onDestroy(() => { ro?.disconnect(); mo?.disconnect(); if (raf) cancelAnimationFrame(raf); });
 </script>
 
-<span class="sp" class:ready class:on class:white={tone === 'white'} aria-hidden="true" style="--sp-h:{h}px;--sp-y:{y}px">
+<span class="sp" bind:this={sp} class:ready class:on class:white={tone === 'white'} aria-hidden="true" style="--sp-h:{h}px;--sp-y:{y}px">
   <i class="l" style="transform:{l}"></i><i class="m" style="transform:{m}"></i><i class="r" style="transform:{r}"></i>
 </span>
 

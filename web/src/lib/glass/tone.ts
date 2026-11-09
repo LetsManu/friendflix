@@ -83,19 +83,36 @@ export function frostComposite(back: RGB, scrim: number, tint: RGB | null = null
   return [Math.round(c[0]), Math.round(c[1]), Math.round(c[2])];
 }
 
+/** white text at `alpha` over `c`, and its contrast against `c` (alpha 1: plain white) */
+export function textContrast(c: RGB, alpha = 1): number {
+  return contrast(over(c, WHITE, alpha), c);
+}
+
 /**
- * The lightest scrim in `SCRIM_MIN…SCRIM_MAX` (steps of .02) that gives white text `target` contrast; `SCRIM_MAX` if none does.
- * The tint wash is a radial gradient that fades out towards the far corner, so text can sit where it is at its peak or where
- * it is gone: with a tint both composites must pass (the worst case decides; a dark tint never lowers the scrim).
+ * The lightest scrim in `SCRIM_MIN…SCRIM_MAX` (steps of .02) that gives the surface's dimmest text, white at `text` alpha,
+ * `target` contrast; `SCRIM_MAX` if none does. The tint wash is a radial gradient that fades out towards the far corner, so
+ * text can sit where it is at its peak or where it is gone: with a tint both composites must pass (the worst case decides; a
+ * dark tint never lowers the scrim).
  */
-export function scrimFor(bright: RGB, tint: RGB | null = null, target = AA): number {
-  const ok = (s: number) => contrast(WHITE, frostComposite(bright, s)) >= target && (!tint || contrast(WHITE, frostComposite(bright, s, tint)) >= target);
+export function scrimFor(bright: RGB, tint: RGB | null = null, target = AA, text = 1): number {
+  const ok = (s: number) => textContrast(frostComposite(bright, s), text) >= target && (!tint || textContrast(frostComposite(bright, s, tint), text) >= target);
   for (let i = 0; ; i++) {
     const s = Math.round((SCRIM_MIN + i * 0.02) * 100) / 100;
     if (s > SCRIM_MAX) return SCRIM_MAX;
     if (ok(s)) return s;
   }
 }
+
+/**
+ * The dimmest text on glass over artwork (the detail panel's secondary lines, inactive tab labels): white at this alpha. Such
+ * surfaces solve their scrim for it (`scrimFor(…, TEXT_DIM)`, `toneVars(t, TEXT_DIM)`) instead of for plain white.
+ */
+export const TEXT_DIM = 0.9;
+/**
+ * The safe scrim for surfaces with `TEXT_DIM` text over unsampled artwork: their dimmest text passes AA over pure white with
+ * the brightest possible tint (set it as the surface's `--fr-scrim-safe`; `.frost-safe` then uses it).
+ */
+export const SCRIM_SAFE_DIM = scrimFor(WHITE, tintColor(WHITE), AA, TEXT_DIM);
 
 /** a sampled picture's tone: the tint colour, its bright end, and the scrim white text needs over it */
 export type Tone = { tint: RGB; bright: RGB; scrim: number };
@@ -119,49 +136,71 @@ export function toneOf(px: Uint8ClampedArray): Tone | null {
   return { tint, bright, scrim: scrimFor(bright, tint) };
 }
 
-/** sampled tones per item (oldest out after `CACHE_MAX`); null is cached too (a picture that cannot be read stays unread) */
+/**
+ * Sampled tones per key (oldest out after `CACHE_MAX`); null is cached too (a picture that cannot be read stays unread).
+ * Card and hover-card tones (item keys) and detail backdrops (keys starting with `BD`) keep separate caches, so the backdrops
+ * of a few detail visits never push the cards' tones out.
+ */
 const CACHE_MAX = 32;
-const cache = new Map<string, Tone | null>();
+const BD_CACHE_MAX = 8;
+/** the key prefix of a detail page's backdrop tone */
+export const BD = 'bd:';
+const cache = new Map<string, Tone | null>(), bdCache = new Map<string, Tone | null>();
+const cacheOf = (key: string) => (key.startsWith(BD) ? bdCache : cache);
 function remember(key: string, t: Tone | null) {
-  cache.delete(key);
-  cache.set(key, t);
-  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!);
+  const c = cacheOf(key), max = c === bdCache ? BD_CACHE_MAX : CACHE_MAX;
+  c.delete(key);
+  c.set(key, t);
+  while (c.size > max) c.delete(c.keys().next().value!);
 }
 
 /** the tone sampled for `key` before: undefined when it never was */
-export const cachedTone = (key: string): Tone | null | undefined => cache.get(key);
+export const cachedTone = (key: string): Tone | null | undefined => cacheOf(key).get(key);
 
-/** samples `src` (same origin) on a 24×24 canvas once per `key`; null on load or taint errors */
+/** the tone of a decoded picture, drawn on a 24×24 canvas; null without a 2D context or when the canvas is tainted */
+function sample(img: CanvasImageSource): Tone | null {
+  try {
+    const c = document.createElement('canvas');
+    c.width = c.height = 24;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    if (!g) return null;
+    g.drawImage(img, 0, 0, 24, 24);
+    return toneOf(g.getImageData(0, 0, 24, 24).data);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Samples a picture (same origin) once per `key`; null on load or taint errors. `src` is a URL (loaded and decoded here) or an
+ * `<img>` on the page: one that has finished loading is drawn as it is (no second load or decode), else its `currentSrc` loads.
+ */
 const pending = new Map<string, Promise<Tone | null>>();
-export function toneFor(key: string, src: string): Promise<Tone | null> {
-  if (cache.has(key)) return Promise.resolve(cache.get(key)!);
+export function toneFor(key: string, src: string | HTMLImageElement): Promise<Tone | null> {
+  const c = cacheOf(key);
+  if (c.has(key)) return Promise.resolve(c.get(key)!);
   const busy = pending.get(key);
   if (busy) return busy; // the hover card and the detail page asking at once: one load, one sample
-  const p = new Promise<Tone | null>((resolve) => {
+  const loaded = typeof src !== 'string' && src.complete && src.naturalWidth > 0;
+  const p = (loaded ? Promise.resolve(sample(src)) : new Promise<Tone | null>((resolve) => {
     const img = new Image();
-    img.onload = () => {
-      try {
-        const c = document.createElement('canvas');
-        c.width = c.height = 24;
-        const g = c.getContext('2d', { willReadFrequently: true });
-        if (!g) return resolve(null);
-        g.drawImage(img, 0, 0, 24, 24);
-        resolve(toneOf(g.getImageData(0, 0, 24, 24).data));
-      } catch {
-        resolve(null);
-      }
-    };
+    img.onload = () => resolve(sample(img));
     img.onerror = () => resolve(null);
-    img.src = src;
-  }).then((t) => { pending.delete(key); remember(key, t); return t; });
+    img.src = typeof src === 'string' ? src : src.currentSrc || src.src;
+  })).then((t) => { pending.delete(key); remember(key, t); return t; });
   pending.set(key, p);
   return p;
 }
 
-/** inline custom properties for a surface (`style=`): the tint triple and the scrim; '' without a tone */
-export function toneVars(t: Tone | null): string {
-  return t ? `--fr-tint:${t.tint[0]}, ${t.tint[1]}, ${t.tint[2]};--fr-scrim:${t.scrim}` : '';
+/**
+ * Inline custom properties for a surface (`style=`): the tint triple and the scrim; '' without a tone. `text` is the alpha of
+ * the surface's dimmest white text (default plain white): below 1 the scrim is solved for it (never lighter than the tone's).
+ */
+export function toneVars(t: Tone | null, text = 1): string {
+  if (!t) return '';
+  const scrim = text < 1 ? Math.max(t.scrim, scrimFor(t.bright, t.tint, AA, text)) : t.scrim;
+  return `--fr-tint:${t.tint[0]}, ${t.tint[1]}, ${t.tint[2]};--fr-scrim:${scrim}`;
 }
 
 /** test hook: forget every sampled tone */
-export function clearTones(): void { cache.clear(); pending.clear(); }
+export function clearTones(): void { cache.clear(); bdCache.clear(); pending.clear(); }

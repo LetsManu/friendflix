@@ -12,6 +12,7 @@
   import { kidsMode } from '#lib/kids';
   import { playPrefetch } from '#lib/player/prefetch';
   import { playOrCast } from '#lib/cast/playOrCast';
+  import { SCRIM_SAFE_DIM } from '#lib/glass/tone';
 
   /** series id (for the per-episode download buttons) */
   export let seriesId: string;
@@ -59,7 +60,7 @@
         {@const pct = e.positionTicks && e.runtimeTicks ? Math.min(100, (e.positionTicks / e.runtimeTicks) * 100) : 0}
         <li class="eprow" class:cur={current(e)}>
           <div class="epmain">
-          <a class="ep frost-flat frost-tile" class:frost-safe={layout === 'row'} href="/watch/{e.id}{qs ? '?' + qs : ''}" aria-current={current(e) ? 'true' : undefined} data-play-scope use:playPrefetch on:click={(ev) => playOrCast(ev, e, trackOpts(qs))}>
+          <a class="ep frost-flat frost-tile" class:frost-safe={layout === 'row'} style={layout === 'row' ? `--fr-scrim-safe:${SCRIM_SAFE_DIM}` : undefined} href="/watch/{e.id}{qs ? '?' + qs : ''}" aria-current={current(e) ? 'true' : undefined} data-play-scope use:playPrefetch on:click={(ev) => playOrCast(ev, e, trackOpts(qs))}>
             <span class="n" aria-hidden="true">{e.indexNumber ?? ''}</span>
             <span class="th" data-play-art>
               {#if e.image}<img class:spoil={hidden(e, revealed)} loading="lazy" src={img(e.id, 320)} alt="" />{/if}
@@ -137,6 +138,8 @@
   .row .eprow { flex: 0 0 clamp(240px, 21vw, 320px); scroll-snap-align: start; display: flex; flex-direction: column; }
   .row .epmain { flex: 1; display: flex; flex-direction: column; }
   .row .ep { flex: 1; display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+  /* over the backdrop (desk): the safe scrim for the dimmest text, white .9 (lib/glass/tone.ts TEXT_DIM) */
+  .row .ep { --mut: rgba(255, 255, 255, .9); }
   .row .n { display: none; }
   .row .th { width: 100%; }
   .row .ep:hover img { opacity: .86; }
