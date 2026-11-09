@@ -375,7 +375,7 @@ test.describe('desktop search sheet', () => {
     test('bar pill and round buttons are glass with the sheen', async ({ page }) => {
       await ready(page);
       await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
-      const half = page.locator('[data-desk-bar] .pbg .half i').first();
+      const half = page.locator('[data-desk-bar] .pbg .half i.blur').first();
       expect(await half.evaluate((e) => getComputedStyle(e).backdropFilter)).toContain('blur(38px)');
       expect(await page.locator('[data-desk-bar] .round').evaluate((e) => getComputedStyle(e).backdropFilter)).toContain('blur(38px)');
       const pill = page.locator('[data-desk-bar] .pill');
@@ -396,14 +396,14 @@ test.describe('desktop search sheet', () => {
       await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
       await page.goto('/');
       const bar = page.locator('[data-desk-bar]');
-      const half = bar.locator('.pbg .half i').first();
+      const half = bar.locator('.pbg .half i.frost').first();
       await expect(half).toHaveClass(/frost-safe/);
       await expect(bar.locator('.round')).toHaveClass(/frost-safe/);
       // scrolled: the safe scrim stays while the shade fades in (240 ms), then the light one over the shade
       const kept = await page.evaluate(async () => {
         window.scrollTo(0, 60);
         await new Promise((r) => setTimeout(r, 120));
-        return document.querySelector('[data-desk-bar] .pbg .half i')!.classList.contains('frost-safe');
+        return document.querySelector('[data-desk-bar] .pbg .half i.frost')!.classList.contains('frost-safe');
       });
       expect(kept).toBe(true);
       await expect(half).not.toHaveClass(/frost-safe/);

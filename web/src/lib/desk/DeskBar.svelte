@@ -279,7 +279,7 @@
   }
 
   // ---- the pill's shape: applied state (what the markup shows) vs. what it should be; changes go through morph() ----
-  let track: HTMLElement, form: HTMLElement, bgL: HTMLElement, bgR: HTMLElement;
+  let track: HTMLElement, form: HTMLElement, bgL: HTMLElement, bgR: HTMLElement, blurL: HTMLElement, blurR: HTMLElement;
   /** open: the field shows; fw: its width (input + ✕); collapse: tabs folded away for the focused field; compact: magnifier only */
   let open = false, fw = 0, lastFw = 0, collapse = false, compact = false;
   const MAG = 36, FMAX = 280, FMIN = 200, FTINY = 120, COLGAP = 16, CHROME = 10; // CHROME: the pill's padding + border
@@ -316,7 +316,7 @@
    * each clipped at the pill's middle: they slide, nothing scales, so the round ends keep their shape and text never stretches.
    */
   function morph(change: () => void, animate: boolean) {
-    const parts = [bgL, bgR, track, form, ...(track ? [...track.children].filter((c) => !c.classList.contains('fill')) as HTMLElement[] : [])].filter(Boolean);
+    const parts = [blurL, blurR, bgL, bgR, track, form, ...(track ? [...track.children].filter((c) => !c.classList.contains('fill')) as HTMLElement[] : [])].filter(Boolean);
     if (!animate || motionLevel() === 'reduced' || !pill) {
       parts.forEach((p) => halt(p));
       change(); flushSync();
@@ -352,8 +352,10 @@
   <a class="logo" href="/" aria-label={$t('shell.nav.homeLink')}><Logo wordmark size={30} /></a>
   <nav class="pill" class:on={fillOn} class:open class:compact class:collapse aria-label={$t('shell.nav.main')} bind:this={pill} style:--fw="{fw}px" style:--fwc="{open ? fw : lastFw}px" style:--sel-a={selA ?? undefined} use:clipSheen>
     <!-- the background: two glass halves, each clipped at the middle, that slide (never scale) when the pill changes size;
-         over the billboard (not yet scrolled) with the safe scrim -->
-    <span class="pbg" aria-hidden="true"><span class="half l"><i class="frost" class:frost-safe={safe} bind:this={bgL}></i></span><span class="half r"><i class="frost" class:frost-safe={safe} bind:this={bgR}></i></span></span>
+         over the billboard (not yet scrolled) with the safe scrim. The blur is its own pair of halves painted under both glass
+         halves: a backdrop-filter reads everything painted before it inside its box, so a blurring right half (its box reaches
+         far over the left half, for the slide) would also blur the left half's milk into a light band at the middle -->
+    <span class="pbg" aria-hidden="true"><span class="half l"><i class="blur" bind:this={blurL}></i></span><span class="half r"><i class="blur" bind:this={blurR}></i></span><span class="half l"><i class="frost" class:frost-safe={safe} bind:this={bgL}></i></span><span class="half r"><i class="frost" class:frost-safe={safe} bind:this={bgR}></i></span></span>
     <span class="sclip" aria-hidden="true"></span>
     <div class="track" bind:this={track}>
       <span class="fill" aria-hidden="true" bind:this={fill}><i class="cap"></i><i class="mid" bind:this={mid}></i><i class="cap" bind:this={capR}></i></span>
@@ -457,13 +459,17 @@
   .half { position: absolute; top: -50px; bottom: -70px; overflow: hidden; }
   .half.l { left: -100vw; right: 50%; }
   .half.r { left: 50%; right: -100vw; }
-  /* each half is glass (.frost: milk, grain via ::before, the light edge; the blur from the html.m-glass rule; solid without it) */
+  /* each half is glass (.frost: milk, grain via ::before, the light edge; solid without html.m-glass) over its blur half */
   .half i { position: absolute; top: 50px; bottom: 70px; width: 100vw; box-sizing: border-box; }
   .half.l i { left: 100vw; border-radius: 999px 0 0 999px; border-right: 0; }
   .half.r i { right: 100vw; border-radius: 0 999px 999px 0; border-left: 0; }
+  /* the blur (glass spec §1.2, only with full motion) sits on the .blur halves, painted before both glass halves: the glass
+     halves must not blur themselves, or the later one blurs the earlier one's milk (a light band at the pill's middle) */
+  :global(html) .pbg .half > i.frost { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  :global(html.m-glass:not(.tv):not(.kids)) .half > i.blur { -webkit-backdrop-filter: var(--fr-blur); backdrop-filter: var(--fr-blur); }
   /* the pill's sheen (lib/glass/pointer.ts), clipped to the pill's shape here (the pill itself does not clip) */
   .sclip { position: absolute; inset: -1px; border-radius: 999px; overflow: hidden; pointer-events: none; }
-  .pill.open:not(.compact):focus-within .half i { border-color: rgba(255, 255, 255, .6); } /* the field's focus ring (the input has no outline) */
+  .pill.open:not(.compact):focus-within .half i.frost { border-color: rgba(255, 255, 255, .6); } /* the field's focus ring (the input has no outline) */
   .track { position: relative; display: flex; align-items: center; height: 36px; }
   .fill { position: absolute; left: 0; top: 0; width: 36px; height: 36px; opacity: 0; transition: opacity 160ms ease-out; pointer-events: none; }
   /* the selection light (--fr-sel): drawn opaque and faded as a group to the token's alpha (--sel-a, read from --fr-sel on
