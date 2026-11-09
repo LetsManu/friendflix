@@ -52,9 +52,11 @@ test.describe('phone glass', () => {
     await expect(bar).toHaveClass(/(^|\s)frost(\s|$)/);
     expect(await css(bar, 'backdrop-filter')).toContain('blur(38px)');
     expect(parseFloat(await css(bar, 'border-top-left-radius'))).toBeGreaterThanOrEqual(30);
-    // the safe scrim, solved for the .9 labels (above .7)
-    expect(parseFloat(await css(bar, '--fr-scrim'))).toBeGreaterThan(0.7);
-    expect(await css(bar.getByRole('link').last(), 'color')).toBe('rgba(255, 255, 255, 0.9)');
+    // its own safe scrim (.84): the .72 labels and the white label on the .13 light pill pass AA over pure white
+    expect(parseFloat(await css(bar, '--fr-scrim'))).toBeCloseTo(0.84, 5);
+    expect(await css(bar.getByRole('link').last(), 'color')).toBe('rgba(255, 255, 255, 0.72)');
+    expect(await css(bar.locator('a.active'), 'color')).toBe('rgb(255, 255, 255)');
+    expect(await css(bar.locator('.hl'), 'background-color')).toBe('rgba(255, 255, 255, 0.13)');
     for (const b of await bar.getByRole('link').evaluateAll((as) => as.map((a) => a.getBoundingClientRect().height))) expect(b).toBeGreaterThanOrEqual(44);
 
     const g = page.locator('.mc .btn.g');
@@ -83,6 +85,11 @@ test.describe('phone glass', () => {
     await expect(sheet.locator('.frost-tint i')).toHaveClass(/(^|\s)on(\s|$)/);
     // the scrim never drops under the safe one (the page behind the sheet is unsampled)
     expect(parseFloat(await css(sheet, '--fr-scrim'))).toBeGreaterThan(0.7);
+    // the sticky handle is opaque (what scrolls under it never shows through): the milk over the full scrim colour
+    const grab = sheet.locator('.grab');
+    expect(await css(grab, 'position')).toBe('sticky');
+    expect(await css(grab, 'background-color')).toBe('rgb(18, 16, 24)');
+    expect(await css(grab, 'background-image')).toContain('linear-gradient');
   });
 
   test('press feedback: a tap scales the button and leaves a ripple from the touch point', async ({ page }) => {
@@ -122,6 +129,7 @@ test.describe('phone glass', () => {
     expect(await css(bar, 'background-image')).toBe('none');
     const sheet = await openSheet(page);
     expect(await css(sheet, 'background-color')).toBe('rgb(28, 26, 33)');
+    expect(await css(sheet.locator('.grab'), 'background-color')).toBe('rgb(28, 26, 33)');
     const play = sheet.locator('a.play');
     await touchDown(play, 30, 20);
     await expect(play.locator('.ripple')).toHaveCount(0);

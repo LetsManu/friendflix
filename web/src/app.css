@@ -18,6 +18,8 @@
   --ok: #4ade80;
   --warn: #f5a623;
   --err: #ff6b6b;
+  --link: #54b9c5;      /* links in running text (light glass surfaces use a lighter one, below) */
+  --acc-text: #ff4f6d;  /* coral text (lighter straight on the ambient background and on light glass, below) */
   --line: #2a323b;
   --pad-x: clamp(1rem, 4vw, 3.6rem);
   --nav-h: 68px;
@@ -167,11 +169,12 @@ button[aria-busy='true'] { cursor: progress; }
 /* the page dim behind a sheet (faded by opacity) */
 .frost-dim { position: fixed; inset: 0; background: rgba(8, 7, 11, .45); transition: opacity 200ms var(--fr-out); }
 html.m-still .frost-dim { transition: none; } /* calm mode / reduced motion: at once */
-/* the still ambient background for pages without artwork (never animated) */
+/* the still ambient background for pages without artwork (never animated). The glow alphas are the demo's at 0.6 (owner
+   ruling B′; lib/glass/tone.ts AMB_* mirrors them and tone.test.ts checks both agree) */
 .frost-amb { position: fixed; inset: 0; z-index: -1; pointer-events: none; background:
-  radial-gradient(60% 55% at 78% 22%, rgba(214, 92, 64, .55), transparent 70%),
-  radial-gradient(45% 50% at 20% 85%, rgba(78, 64, 190, .42), transparent 70%),
-  radial-gradient(40% 40% at 55% 60%, rgba(255, 79, 109, .22), transparent 70%), #0a090d; }
+  radial-gradient(60% 55% at 78% 22%, rgba(214, 92, 64, .33), transparent 70%),
+  radial-gradient(45% 50% at 20% 85%, rgba(78, 64, 190, .25), transparent 70%),
+  radial-gradient(40% 40% at 55% 60%, rgba(255, 79, 109, .13), transparent 70%), #0a090d; }
 /* §8.1 light sheen (lib/glass/pointer.ts sheen): follows the pointer, fades in / out */
 .frost-sheen { position: absolute; left: 0; top: 0; width: 240px; height: 240px; margin: -120px 0 0 -120px; border-radius: 50%; pointer-events: none; z-index: 1;
   background: radial-gradient(closest-side, rgba(255, 255, 255, .35), rgba(255, 255, 255, .08) 55%, transparent);
@@ -196,15 +199,20 @@ html:not(.m-glass) .panel::before, html.tv .panel::before, html.kids .panel::bef
 html:not(.m-glass) .frost-btn::before, html.tv .frost-btn::before, html.kids .frost-btn::before { display: none; }
 html.m-still .frost-sheen, html.m-still .frost-tint, html.tv .frost-sheen, html.kids .frost-sheen { display: none; }
 /* text on the light glass over the ambient background (.panel and the .frost-text surfaces: settings, /me, phone search):
-   the brightest ambient glow under the light scrim leaves room only for near-white text, so the dim text is white at TEXT_DIM
-   (.9) and the status colours are their pale tints (all AA there and on the solid fallback: lib/glass/pages.test.ts) */
-.panel, .frost-text { --mut: rgba(255, 255, 255, .9); --ok: #c4f7d4; --warn: #ffe9c2; --err: #ffe8e8; --link: #cdf3f7; }
-/* pages on the ambient background (html.amb, +layout.svelte): dim text straight on it is a lighter grey (AA over its glow) */
-html.amb { --mut: #d6dadf; }
+   the mockup's hierarchy, AA on the light card over the brightest glow, on the raw ambient and on the solid fallback
+   (lib/glass/pages.test.ts): dim text white .72, hints white .66, the status colours a step lighter, links and coral text lighter */
+.panel, .frost-text { --mut: rgba(255, 255, 255, .72); --hint: rgba(255, 255, 255, .66); --ok: #4ade80; --warn: #f7b344; --err: #ffa8a8; --link: #80cbd4; --acc-text: #ffa7b6; }
+/* pages on the ambient background (html.amb, +layout.svelte): the usual greys and status colours pass straight on it; coral
+   text needs the lighter coral */
+html.amb { --acc-text: #ff8aa0; }
+/* glass never nests: a .panel inside a glass surface (the recommend form in the detail panel) is part of it, not a second
+   layer of scrim and milk (that would drop the outer surface's text under AA) */
+html:root :is(.frost, .frost-flat, .panel) .panel { background: none; border-color: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+html:root :is(.frost, .frost-flat, .panel) .panel::before { display: none; }
 /* §8.9 phone press feedback (lib/glass/press.ts): squeeze in 80 ms, spring back in 350 ms; a ripple from the touch point
    (twice the larger side, clipped by the node). .pressed is set with full motion only. */
 html:root .ff-press { position: relative; overflow: hidden; -webkit-tap-highlight-color: transparent; transition: transform 350ms var(--fr-spring), opacity 150ms; }
-html:root .ff-press.pressed { transform: scale(.92); transition: transform 80ms var(--fr-out), opacity 150ms; }
+html:root .ff-press.pressed { transform: scale(.92); transition: transform 80ms var(--fr-spring), opacity 150ms; }
 .ripple { position: absolute; border-radius: 50%; background: rgba(255, 255, 255, .35); transform: scale(0); opacity: 0; pointer-events: none; }
 
 video { width: 100%; background: #000; }

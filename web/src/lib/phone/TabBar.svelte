@@ -5,11 +5,12 @@
   import { t, type TKey } from '#lib/i18n';
   import { phoneTabs, type PhoneTab } from '#lib/phone/logic';
   import { press } from '#lib/glass/press';
-  import { SCRIM_SAFE_DIM } from '#lib/glass/tone';
+  import { SCRIM_TAB } from '#lib/glass/tone';
 
   /**
-   * Phone tab bar (not kids): a floating glass pill (the glass material with the safe scrim, solved for its dim labels at
-   * white .9: posters and artwork scroll under it; glass spec §6, press feedback §8.9) above the home indicator with Home, New, My list and (where the
+   * Phone tab bar (not kids): a floating glass pill (the glass material with its own safe scrim, SCRIM_TAB: the inactive labels
+   * at white .72 and the active one on the light pill pass AA over pure white, as posters and artwork scroll under it; glass
+   * spec §6, press feedback §8.9) above the home indicator with Home, New, My list and (where the
    * account may download) Downloads. A highlight springs to the active tab (transform only). Visible only on phones;
    * hidden on wider screens here and in TV mode by app.css (`html.tv .tabbar`).
    */
@@ -29,7 +30,7 @@
   $: active = tabs.findIndex((tab) => isOn(tab.href, path));
 </script>
 
-<nav class="tabbar frost frost-pill frost-safe" aria-label={$t('shell.mobile.tabbar')} style="--n:{tabs.length};--i:{Math.max(0, active)};--fr-scrim-safe:{SCRIM_SAFE_DIM}">
+<nav class="tabbar frost frost-pill frost-safe" aria-label={$t('shell.mobile.tabbar')} style="--n:{tabs.length};--i:{Math.max(0, active)};--fr-scrim-safe:{SCRIM_TAB}">
   <span class="hl" class:off={active < 0} aria-hidden="true"></span>
   {#each tabs as tab, k (tab.key)}
     {@const full = $t(LABEL[tab.key][0])}
@@ -48,13 +49,13 @@
     }
     .hl {
       position: absolute; top: 5px; bottom: 5px; left: 5px; width: calc((100% - 10px) / var(--n)); border-radius: 24px;
-      background: rgba(255,255,255,.1); pointer-events: none; /* .1, not .13: the white label stays AA over the glass (lib/glass/pages.test.ts) */ transform: translateX(calc(var(--i) * 100%));
+      background: var(--fr-sel); pointer-events: none; /* the light pill (.13): the white label stays AA on it (lib/glass/pages.test.ts) */ transform: translateX(calc(var(--i) * 100%));
       transition: transform var(--m-d-spring) var(--m-spring), opacity var(--m-d-s) ease-out;
     }
     .hl.off { opacity: 0; }
     a {
       position: relative; flex: 1 1 0; min-width: 0; min-height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 2px; padding: 0 2px; border-radius: 24px; font-size: .66rem; font-weight: 600; letter-spacing: -.005em; color: rgba(255,255,255,.9);
+      gap: 2px; padding: 0 2px; border-radius: 24px; font-size: .66rem; font-weight: 600; letter-spacing: -.005em; color: rgba(255,255,255,.72);
     }
     a.active { color: #fff; }
     .ico { flex: none; width: 24px; height: 24px; display: grid; place-items: center; }

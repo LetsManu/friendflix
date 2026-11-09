@@ -74,6 +74,48 @@ test.describe('glass settings side navigation (desktop, in the app)', () => {
     await nav.getByRole('link', { name: 'Empfehlungen' }).click();
     await expect(nav.getByRole('link', { name: 'Empfehlungen' })).toHaveAttribute('aria-current', 'location');
     await expect.poll(() => page.locator('#reco').evaluate((e) => Math.round(e.getBoundingClientRect().top))).toBeLessThan(140);
+    // the mockup's levels: links white .75, the current one white
+    expect(await css(nav.getByRole('link', { name: 'Intro' }), 'color')).toBe('rgba(255, 255, 255, 0.75)');
+    expect(await css(nav.getByRole('link', { name: 'Empfehlungen' }), 'color')).toBe('rgb(255, 255, 255)');
+
+    // a short section near the end: the page bottoms out before it reaches the spy's line, it stays marked all the same
+    await nav.getByRole('link', { name: 'Intro' }).click();
+    await expect(nav.getByRole('link', { name: 'Intro' })).toHaveAttribute('aria-current', 'location');
+    await expect.poll(() => page.evaluate(() => { const y = scrollY; return new Promise((r) => setTimeout(() => r(scrollY === y), 300)); })).toBe(true); // settled
+    await expect(nav.getByRole('link', { name: 'Intro' })).toHaveAttribute('aria-current', 'location');
+    await expect(nav.locator('[aria-current]')).toHaveCount(1);
+  });
+
+  test('keyboard: Enter on a side-nav link moves the focus into that section', async ({ page }) => {
+    await fakeNativeApp(page);
+    await page.goto('/settings');
+    const nav = page.getByRole('navigation', { name: 'Einstellungsbereiche' });
+    await nav.getByRole('link', { name: 'Intro' }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('intro');
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('tabindex'))).toBe('-1');
+    await expect(nav.getByRole('link', { name: 'Intro' })).toHaveAttribute('aria-current', 'location');
+    // the next Tab goes on inside the section (its first switch), not to the next nav link
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => Boolean(document.activeElement?.closest('#intro')))).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('role'))).toBe('switch');
+    await nav.getByRole('link', { name: 'Sprache' }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('language');
+  });
+});
+
+test.describe('glass settings below 1100 px', () => {
+  test.use({ viewport: { width: 1099, height: 800 } });
+  test.beforeEach(({ page }) => fullMotion(page));
+
+  test('no side navigation: the sections take the whole width', async ({ page }) => {
+    await page.goto('/settings');
+    await expect(page.locator('#language')).toBeVisible();
+    await expect(page.locator('.snav')).toBeHidden();
+    expect(await css(page.locator('.snav'), 'display')).toBe('none');
+    await page.setViewportSize({ width: 1100, height: 800 });
+    await expect(page.locator('.snav')).toBeVisible();
   });
 });
 
@@ -106,6 +148,28 @@ test.describe('glass settings (desktop)', () => {
     await page.keyboard.press('Space');
     await expect(auto).toBeChecked();
     expect(await css(track, 'outline-style')).toBe('solid');
+    // the mockup's hierarchy on the glass card: hints white .66 under the white label
+    const row = page.locator('.sw-row', { has: auto });
+    expect(await css(row.locator('small.muted'), 'color')).toBe('rgba(255, 255, 255, 0.66)');
+    expect(await css(row.locator('b'), 'color')).toBe('rgb(245, 245, 245)');
+  });
+
+  test('glass never nests: a .panel inside a glass surface draws no second layer', async ({ page }) => {
+    await page.goto('/settings');
+    await expect(page.locator('#language')).toBeVisible();
+    const inner = await page.evaluate(() => {
+      const host = document.createElement('div');
+      host.className = 'frost frost-panel';
+      host.innerHTML = '<div class="panel" id="nested">x</div>';
+      document.body.append(host);
+      const cs = getComputedStyle(document.getElementById('nested')!), before = getComputedStyle(document.getElementById('nested')!, '::before');
+      const r = { bg: cs.backgroundImage, color: cs.backgroundColor, shadow: cs.boxShadow, grain: before.display };
+      host.remove();
+      return r;
+    });
+    expect(inner).toEqual({ bg: 'none', color: 'rgba(0, 0, 0, 0)', shadow: 'none', grain: 'none' });
+    // a top-level panel keeps its glass
+    expect(await css(page.locator('#language'), 'background-image')).toContain('linear-gradient');
   });
 
   test('save draws the checkmark, then returns', async ({ page }) => {
@@ -164,8 +228,9 @@ test.describe('glass /me and secondary pages (desktop)', () => {
     expect(await css(row, 'border-top-left-radius')).toBe('12px');
     await row.hover();
     await expect.poll(() => css(row, 'background-color')).toBe('rgba(18, 16, 24, 0.3)');
-    // dim text on glass is white at .9 (AA over the brightest glow)
-    expect(await css(page.locator('.gh').first(), 'color')).toBe('rgba(255, 255, 255, 0.9)');
+    // dim text on glass is the mockup's white .72 (AA over the brightest, dimmed glow), links the lighter teal
+    expect(await css(page.locator('.gh').first(), 'color')).toBe('rgba(255, 255, 255, 0.72)');
+    expect(await css(page.locator('.swap').first(), 'color')).toBe('rgb(128, 203, 212)');
   });
 
   test('admin-free secondary page (/devices) has the ambient layer; the home page does not', async ({ page }) => {
@@ -174,6 +239,10 @@ test.describe('glass /me and secondary pages (desktop)', () => {
     await expect(page.locator('html')).toHaveClass(/(^|\s)amb(\s|$)/);
     expect(await css(page.locator('.frost-amb'), 'position')).toBe('fixed');
     expect(await css(page.locator('.frost-amb'), 'z-index')).toBe('-1');
+    // the glows at 0.6 of the demo's alphas (lib/glass/tone.ts AMB_*), and no grey override on these pages
+    const amb = await css(page.locator('.frost-amb'), 'background-image');
+    for (const g of ['rgba(214, 92, 64, 0.33)', 'rgba(78, 64, 190, 0.25)', 'rgba(255, 79, 109, 0.13)']) expect(amb).toContain(g);
+    expect((await css(page.locator('html'), '--mut')).trim()).toBe('#b3bac2');
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'Weiterschauen' })).toBeVisible();
     await expect(page.locator('.frost-amb')).toHaveCount(0);

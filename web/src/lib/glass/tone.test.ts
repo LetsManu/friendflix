@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  AA, AMB_PEAK, BLUR_BRIGHTNESS, cachedTone, clearTones, contrast, DARK_BASE, frostComposite, luminance, MILK_RGB, SCRIM_LIGHT, SCRIM_MAX, SCRIM_MIN,
+  AA, AMB_CORAL, AMB_CORAL_A, AMB_ORANGE, AMB_ORANGE_A, AMB_PEAK, AMB_VIOLET, AMB_VIOLET_A, BLUR_BRIGHTNESS, cachedTone, clearTones, contrast, DARK_BASE, frostComposite, luminance, MILK_RGB, SCRIM_LIGHT, SCRIM_MAX, SCRIM_MIN,
   MILK_TOP, SCRIM_RGB, SCRIM_SAFE, scrimFor, tintColor, TINT_LUM_MAX, toneFor, toneOf, toneVars, type RGB,
   BD, SCRIM_SAFE_DIM, TEXT_DIM, textContrast, menuScrim, SCRIM_MENU, SEL_A, GRAIN_LIFT, MENU_SCRIM_MAX,
 } from './tone';
@@ -323,3 +325,36 @@ describe('dim text on glass (secondary lines, inactive tabs)', () => {
     }
   });
 });
+
+describe('the ambient background (AMB_*)', () => {
+  const css = readFileSync(fileURLToPath(new URL('../../app.css', import.meta.url)), 'utf8');
+  const amb = css.slice(css.indexOf('.frost-amb {'), css.indexOf('}', css.indexOf('.frost-amb {')));
+  /** the glows as app.css paints them (top first): colour, alpha, centre and radii (fractions of the box) */
+  const glows = [...amb.matchAll(/radial-gradient\((\d+)% (\d+)% at (\d+)% (\d+)%, rgba\((\d+), (\d+), (\d+), ([\d.]+)\), transparent 70%\)/g)]
+    .map((m) => ({ rx: +m[1]! / 100, ry: +m[2]! / 100, x: +m[3]! / 100, y: +m[4]! / 100, c: [+m[5]!, +m[6]!, +m[7]!] as RGB, a: +m[8]! }));
+
+  it('app.css paints the glows AMB_* describes (0.6 of the demo\'s alphas)', () => {
+    expect(glows.map((g) => [g.c, g.a])).toEqual([[AMB_ORANGE, AMB_ORANGE_A], [AMB_VIOLET, AMB_VIOLET_A], [AMB_CORAL, AMB_CORAL_A]]);
+    expect([AMB_ORANGE_A, AMB_VIOLET_A, AMB_CORAL_A]).toEqual([0.33, 0.25, 0.13]);
+    expect(amb).toContain('#0a090d');
+  });
+
+  it('AMB_PEAK is the brightest point of the real gradients (the orange centre)', () => {
+    const at = (x: number, y: number): RGB => {
+      let c: RGB = [...DARK_BASE] as RGB;
+      for (const g of [...glows].reverse()) { // painted bottom → top
+        const t = Math.hypot((x - g.x) / g.rx, (y - g.y) / g.ry);
+        if (t < 0.7) c = [0, 1, 2].map((i) => c[i]! * (1 - g.a * (1 - t / 0.7)) + g.c[i]! * g.a * (1 - t / 0.7)) as RGB;
+      }
+      return c;
+    };
+    let best = 0, where = [0, 0];
+    for (let i = 0; i <= 200; i++) for (let j = 0; j <= 200; j++) { const l = luminance(at(i / 200, j / 200)); if (l > best) { best = l; where = [i / 200, j / 200]; } }
+    expect(where).toEqual([0.78, 0.22]);
+    expect(luminance(AMB_PEAK)).toBeCloseTo(best, 6);
+    expect(AMB_PEAK.map(Math.round)).toEqual([77, 36, 30]);
+    // the light card over it: white far above AA
+    expect(contrast(WHITE, frostComposite(AMB_PEAK, SCRIM_LIGHT))).toBeGreaterThan(8);
+  });
+});
+

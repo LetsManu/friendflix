@@ -35,10 +35,21 @@ export const AA = 4.5;
 /** the ambient app background's base (`.frost-amb`, #0a090d) */
 export const DARK_BASE: RGB = [10, 9, 13];
 /**
- * The brightest point of the ambient background (`.frost-amb`): its warm orange glow (214,92,64 at .55) over the base with
- * the coral glow (255,79,109 at .22) on top, as if both peaked at the same spot. The light scrim must pass over this too.
+ * The ambient background's glows (`.frost-amb` in app.css, painted coral → violet → orange over `DARK_BASE`): colour and
+ * peak alpha. The alphas are the demo's scaled to 0.6 (owner ruling 2026-11-09, B′): with them the mockup's text hierarchy
+ * (dim white .72, hints .66, the plain status colours) reaches AA on the light glass cards over the brightest glow.
  */
-export const AMB_PEAK: RGB = over(over(DARK_BASE, [214, 92, 64], 0.55), [255, 79, 109], 0.22);
+export const AMB_ORANGE: RGB = [214, 92, 64];
+export const AMB_ORANGE_A = 0.33;
+export const AMB_VIOLET: RGB = [78, 64, 190];
+export const AMB_VIOLET_A = 0.25;
+export const AMB_CORAL: RGB = [255, 79, 109];
+export const AMB_CORAL_A = 0.13;
+/**
+ * The brightest point of the ambient background: the centre of the orange glow (78 % 22 %). The coral and violet glows end
+ * (their 70 % stop) before they reach it, so nothing stacks there (a sweep of the real gradients agrees).
+ */
+export const AMB_PEAK: RGB = over(DARK_BASE, AMB_ORANGE, AMB_ORANGE_A);
 
 const WHITE: RGB = [255, 255, 255];
 const lin = (v: number) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
@@ -116,6 +127,13 @@ export const SCRIM_SAFE_DIM = scrimFor(WHITE, tintColor(WHITE), AA, TEXT_DIM);
 
 /** the light pill (`--fr-sel`) a hovered, focused or selected menu row draws over the glass: white at this alpha */
 export const SEL_A = 0.13;
+/**
+ * The phone tab bar (lib/phone/TabBar.svelte): its inactive labels are white at `TAB_DIM` (the mockup's dim text), the active
+ * one white on the light pill (`SEL_A`). `SCRIM_TAB` is the lightest scrim (steps of .01) with which both pass AA over pure
+ * white (posters scroll under the bar unsampled).
+ */
+export const TAB_DIM = 0.72;
+export const SCRIM_TAB = 0.84;
 /** the brightest the glass grain (overlay, `--fr-grain-a`) lifts a pixel, in 8-bit levels (measured on screen over white) */
 export const GRAIN_LIFT = 4;
 /** menus may go past SCRIM_MAX: their light pill over a white backdrop needs it */

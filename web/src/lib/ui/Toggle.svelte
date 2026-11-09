@@ -43,5 +43,5 @@
   :global(html.m-still) .knob { transition: none; }
   .txt { display: flex; flex-direction: column; padding-top: .55rem; min-width: 0; }
   label { color: var(--fg); font-size: .95rem; cursor: pointer; }
-  .hint { font-size: .82rem; color: var(--mut); overflow-wrap: anywhere; } /* long example URLs wrap at 320 px */
+  .hint { font-size: .82rem; color: var(--hint, var(--mut)); overflow-wrap: anywhere; } /* long example URLs wrap at 320 px */
 </style>

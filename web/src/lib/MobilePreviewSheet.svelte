@@ -152,7 +152,11 @@
   .sheet:global(.dragging) { transition: none; }
   .sheet.out { transform: translateY(100%); transition: transform 280ms var(--m-emph-in); pointer-events: none; }
   :global(html.m-still) .sheet, :global(html.m-still) .dim { animation: none; transition: none; }
-  .grab { position: sticky; top: 0; z-index: 2; touch-action: none; cursor: grab; padding: 8px 0 12px; margin: 0 calc(var(--pad-x) * -1); }
+  /* the sticky handle covers what scrolls under it: an opaque fill, the sheet's milk over the full scrim colour (the sheet over
+     the dimmed page is about this colour); solid like the sheet without glass */
+  .grab { position: sticky; top: 0; z-index: 2; touch-action: none; cursor: grab; padding: 8px 0 12px; margin: 0 calc(var(--pad-x) * -1);
+    background: linear-gradient(rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk-top), var(--fr-milk-a2))), rgb(var(--fr-scrim-rgb)); }
+  :global(html:not(.m-glass)) .grab, :global(html.kids) .grab { background: var(--fr-solid); }
   .handle { display: block; width: 38px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.3); margin: 0 auto; }
   .why { margin: 0 0 .45rem; font-size: .78rem; color: rgba(255,255,255,.9); overflow-wrap: anywhere; }
   .hd { display: grid; grid-template-columns: 92px minmax(0, 1fr) 28px; gap: 12px; align-items: start; }
