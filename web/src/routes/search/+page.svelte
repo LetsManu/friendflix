@@ -14,6 +14,7 @@
   import { kidsMode } from '#lib/kids';
   import { features } from '#lib/capabilities';
   import { mobile } from '#lib/viewport';
+  import { press } from '#lib/glass/press';
   import { alreadyWished, clearRecent, isYear, loadRecent, pushRecent, wishCandidates, type SeerrHit } from '#lib/discovery';
 
   import type { SearchResult as Result } from '#lib/desk/searchSheet';
@@ -137,7 +138,7 @@
   {#if term.length === 0 && recent.length}
     <section aria-labelledby="rc">
       <div class="flex rhead"><h2 id="rc" class="muted">{$t('home.search.recent')}</h2><button type="button" class="sec small" on:click={forget}>{$t('home.search.clearRecent')}</button></div>
-      <ul class="chips">{#each recent as r (r)}<li><button type="button" class="chip" on:click={() => pick(r)}>{r}</button></li>{/each}</ul>
+      <ul class="chips">{#each recent as r (r)}<li><button type="button" class="chip" class:frost-btn={$mobile} use:press on:click={() => pick(r)}>{r}</button></li>{/each}</ul>
     </section>
   {/if}
   {#if term.length === 0}
@@ -160,7 +161,7 @@
     <section aria-labelledby="bg" class="genres">
       <h2 id="bg" class="sh">{$t('home.search.byGenre')}</h2>
       <ul class="gt">{#each genreList as g (g)}
-        <li><a href={categoryHref('movies', g)} style="--gc:{genreColor(g)}"><span>{g}</span></a></li>
+        <li><a class="frost-flat frost-tile" href={categoryHref('movies', g)} style="--gc:{genreColor(g)}" use:press><i class="gw" aria-hidden="true"></i><span>{g}</span></a></li>
       {/each}</ul>
     </section>
     {/if}
@@ -184,7 +185,7 @@
     {/if}
     {#if res.genres.length}
       <section aria-labelledby="sg"><h2 id="sg" class="sh">{$t('home.search.genres')}</h2>
-        <ul class="chips">{#each res.genres as g (g)}<li><a class="chip" href="/browse/movies?genre={encodeURIComponent(g)}">{g}</a></li>{/each}</ul>
+        <ul class="chips">{#each res.genres as g (g)}<li><a class="chip" class:frost-btn={$mobile} use:press href="/browse/movies?genre={encodeURIComponent(g)}">{g}</a></li>{/each}</ul>
       </section>
     {/if}
     {#if res.titles.length}
@@ -227,9 +228,11 @@
   .pl { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; border: 2px solid #fff; padding-left: 2px; margin-left: .5rem; }
   .pl:active { opacity: .7; }
   .gt { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
-  .gt a { display: flex; align-items: flex-end; height: 74px; padding: .6rem .8rem; border-radius: 12px; background: linear-gradient(135deg, var(--gc), #12161b 135%); color: #fff; font-weight: 700; overflow: hidden; }
+  /* glass genre tiles (glass spec §6): the genre's colour as a wash from the lower left over the glass (white stays AA at any
+     strength of the wash: lib/glass/pages.test.ts); a touch gets the press feedback */
+  .gt a { display: flex; align-items: flex-end; height: 74px; padding: .6rem .8rem; color: #fff; font-weight: 700; overflow: hidden; }
+  .gw { position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: radial-gradient(130% 130% at 0% 100%, var(--gc), transparent 75%); pointer-events: none; }
   .gt a span { overflow-wrap: anywhere; line-height: 1.15; }
-  .gt a:active { opacity: .8; transform: scale(.98); }
   .hint { margin: 0 0 .5rem; }
   .big { width: 100%; max-width: 640px; font-size: 1.2rem; min-height: 54px; margin-bottom: 1.5rem; }
   @media (max-width: 720px) { .big { min-height: 44px; border-radius: 12px; margin-bottom: 1rem; } }
@@ -248,8 +251,10 @@
   .small { padding: .3rem .9rem; font-size: .85rem; }
   ul { list-style: none; padding: 0; margin: 0; }
   .chips { display: flex; flex-wrap: wrap; gap: .5rem; }
-  .chip { display: inline-flex; align-items: center; min-height: 44px; padding: 0 1rem; border-radius: 99px; background: var(--surface-2); color: var(--fg); font-weight: 500; border: 0; cursor: pointer; }
-  .chip:hover { background: #323a43; }
+  .chip { display: inline-flex; align-items: center; min-height: 44px; padding: 0 1rem; border-radius: 99px; color: var(--fg); font-weight: 500; cursor: pointer; }
+  /* phone: glass chips (.frost-btn: its hover lights the edge; solid without full motion) */
+  .chip:not(.frost-btn) { background: var(--surface-2); border: 0; }
+  .chip:not(.frost-btn):hover { background: #323a43; }
   .people { display: flex; gap: 1rem; overflow-x: auto; padding-bottom: .5rem; }
   .people a { display: flex; flex-direction: column; align-items: center; gap: .4rem; width: 96px; min-height: 44px; text-align: center; }
   .av { width: 80px; height: 80px; border-radius: 50%; overflow: hidden; background: var(--surface-2); display: grid; place-items: center; font-weight: 700; font-size: 1.4rem; color: var(--mut); }

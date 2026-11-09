@@ -11,7 +11,7 @@ const dict: Translation<typeof de> = {
   },
   calm: {
     title: 'Modo tranquilo',
-    hint: 'Nada empieza por sí solo: sin tráiler en el banner principal, sin avance al pasar el ratón, sin avance automático en la ficha, sin sonido – y menos movimiento en toda la aplicación. Se aplica a este perfil.',
+    hint: 'Nada empieza por sí solo: sin tráiler en el banner principal, sin avance al pasar el ratón, sin avance automático en la ficha, sin sonido – y menos movimiento en toda la aplicación. Los paneles son opacos en lugar de cristal. Se aplica a este perfil.',
   },
   themed: {
     eyebrow: 'Lista temática',

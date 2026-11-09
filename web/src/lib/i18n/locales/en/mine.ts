@@ -11,7 +11,7 @@ const dict: Translation<typeof de> = {
   },
   calm: {
     title: 'Calm mode',
-    hint: 'Nothing starts by itself: no trailer in the main banner, no preview when you hover a title, no automatic preview on the detail page, no sound with them – and less motion across the whole app. Applies to this profile.',
+    hint: 'Nothing starts by itself: no trailer in the main banner, no preview when you hover a title, no automatic preview on the detail page, no sound with them – and less motion across the whole app. Panels are solid instead of glass. Applies to this profile.',
   },
   themed: {
     eyebrow: 'Themed list',

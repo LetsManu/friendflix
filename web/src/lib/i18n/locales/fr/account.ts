@@ -81,6 +81,8 @@ const fr: Translation<typeof de> = {
     savedTo: 'Langue enregistrée.',
   },
   settings: {
+    /** the settings page's side navigation (wide screens) */
+    sections: 'Sections des réglages',
     pageTitle: 'Paramètres',
     app: { title: 'Application sur cet appareil', hint: 'L’emplacement des téléchargements, le Wi-Fi uniquement, le son en arrière-plan, les notifications et la déconnexion de cet appareil se règlent dans l’application.', open: 'Ouvrir les réglages de l’application' },
     title: 'Paramètres de lecture',

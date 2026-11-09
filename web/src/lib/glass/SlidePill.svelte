@@ -49,14 +49,15 @@
   onDestroy(() => { ro?.disconnect(); mo?.disconnect(); if (raf) cancelAnimationFrame(raf); });
 </script>
 
-<span class="sp" bind:this={sp} class:ready class:on class:white={tone === 'white'} aria-hidden="true" style="--sp-h:{h}px;--sp-y:{y}px">
-  <i class="l" style="transform:{l}"></i><i class="m" style="transform:{m}"></i><i class="r" style="transform:{r}"></i>
+<!-- the entry's top is a translateY on each part too, so a vertical list (the settings side navigation) glides as well -->
+<span class="sp" bind:this={sp} class:ready class:on class:white={tone === 'white'} aria-hidden="true" style="--sp-h:{h}px">
+  <i class="l" style="transform:translateY({y}px) {l}"></i><i class="m" style="transform:translateY({y}px) {m}"></i><i class="r" style="transform:translateY({y}px) {r}"></i>
 </span>
 
 <style>
   .sp { position: absolute; inset: 0; z-index: 0; pointer-events: none; opacity: 0; }
   .sp.on { opacity: 1; }
-  .sp i { position: absolute; left: 0; top: var(--sp-y); height: var(--sp-h); background: var(--fr-sel); transform-origin: 0 50%; }
+  .sp i { position: absolute; left: 0; top: 0; height: var(--sp-h); background: var(--fr-sel); transform-origin: 0 50%; }
   .sp.white i { background: #fff; }
   /* the caps are circles cut in half, reaching 1 px over the middle part: the scaled middle part's edges are resampled (soft),
      so the overlap hides the seam (a translucent fill shows a hairline there at most); the middle part is 100 px before scaling */

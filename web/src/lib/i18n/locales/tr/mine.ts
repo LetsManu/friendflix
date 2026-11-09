@@ -11,7 +11,7 @@ const dict: Translation<typeof de> = {
   },
   calm: {
     title: 'Sakin mod',
-    hint: 'Hiçbir şey kendiliğinden başlamaz: ana bannerda fragman, üzerine gelince önizleme, ayrıntı sayfasında otomatik önizleme ve ses yoktur – tüm uygulamada hareket de azalır. Bu profil için geçerlidir.',
+    hint: 'Hiçbir şey kendiliğinden başlamaz: ana bannerda fragman, üzerine gelince önizleme, ayrıntı sayfasında otomatik önizleme ve ses yoktur – tüm uygulamada hareket de azalır. Paneller cam yerine düz ve koyudur. Bu profil için geçerlidir.',
   },
   themed: {
     eyebrow: 'Tema listesi',

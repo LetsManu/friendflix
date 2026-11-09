@@ -92,7 +92,7 @@ label { color: var(--mut); font-size: .9rem; }
 
 /* ---- Generic content blocks (admin & secondary pages) ---- */
 .page { padding: calc(var(--nav-total) + 1.5rem) var(--pad-x) 4rem; max-width: 1500px; margin: 0 auto; }
-.panel { background: var(--surface); border-radius: 8px; padding: 1.1rem 1.3rem; margin-bottom: 1rem; border: 1px solid var(--line); }
+.panel { border-radius: var(--fr-r-panel); padding: 22px 24px; margin-bottom: 1rem; } /* the glass .frost-flat look (glass rules below) */
 .muted { color: var(--mut); } .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
 .flex { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; }
 .badge { background: var(--surface-2); border-radius: 99px; padding: .1rem .7rem; font-size: .8rem; color: var(--fg); }
@@ -134,7 +134,7 @@ button[aria-busy='true'] { cursor: progress; }
 /* ---- Glass (glass spec §1.2, lib/glass): one material for the web app. Blur only with full motion (html.m-glass, off TV and
    kids); without it (calm mode, reduced motion, a tripped frame guard), on TV and on kids profiles every surface is a solid
    panel with the same shape, border, highlight and shadow. ---- */
-.frost, .frost-flat, .frost-btn {
+.frost, .frost-flat, .frost-btn, .panel {
   position: relative; isolation: isolate; color: #fff;
   /* milk gradient over the scrim (spelled out here, not as a :root token, so a surface's own --fr-scrim takes effect) */
   background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim));
@@ -143,7 +143,7 @@ button[aria-busy='true'] { cursor: progress; }
 }
 .frost-btn { box-shadow: inset 0 1px 0 var(--fr-hi); }
 /* matte grain (under the content, over the tint) */
-.frost::before, .frost-flat::before, .frost-btn::before {
+.frost::before, .frost-flat::before, .frost-btn::before, .panel::before {
   content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: -1;
   background-image: var(--fr-grain); opacity: var(--fr-grain-a); mix-blend-mode: overlay;
 }
@@ -187,12 +187,25 @@ html.m-glass:not(.tv):not(.kids) .frost { -webkit-backdrop-filter: var(--fr-blur
 /* solid fallback: calm mode / reduced motion / a tripped frame guard (no html.m-glass), TV, kids */
 html:not(.m-glass) .frost, html.tv .frost, html.kids .frost,
 html:not(.m-glass) .frost-flat, html.tv .frost-flat, html.kids .frost-flat,
+html:not(.m-glass) .panel, html.tv .panel, html.kids .panel,
 html:not(.m-glass) .frost-btn, html.tv .frost-btn, html.kids .frost-btn { background: var(--fr-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
 html:not(.m-glass) .frost-btn:hover:not(:disabled), html.tv .frost-btn:hover:not(:disabled), html.kids .frost-btn:hover:not(:disabled) { background: var(--fr-solid-hover); }
 html:not(.m-glass) .frost::before, html.tv .frost::before, html.kids .frost::before,
 html:not(.m-glass) .frost-flat::before, html.tv .frost-flat::before, html.kids .frost-flat::before,
+html:not(.m-glass) .panel::before, html.tv .panel::before, html.kids .panel::before,
 html:not(.m-glass) .frost-btn::before, html.tv .frost-btn::before, html.kids .frost-btn::before { display: none; }
 html.m-still .frost-sheen, html.m-still .frost-tint, html.tv .frost-sheen, html.kids .frost-sheen { display: none; }
+/* text on the light glass over the ambient background (.panel and the .frost-text surfaces: settings, /me, phone search):
+   the brightest ambient glow under the light scrim leaves room only for near-white text, so the dim text is white at TEXT_DIM
+   (.9) and the status colours are their pale tints (all AA there and on the solid fallback: lib/glass/pages.test.ts) */
+.panel, .frost-text { --mut: rgba(255, 255, 255, .9); --ok: #c4f7d4; --warn: #ffe9c2; --err: #ffe8e8; --link: #cdf3f7; }
+/* pages on the ambient background (html.amb, +layout.svelte): dim text straight on it is a lighter grey (AA over its glow) */
+html.amb { --mut: #d6dadf; }
+/* §8.9 phone press feedback (lib/glass/press.ts): squeeze in 80 ms, spring back in 350 ms; a ripple from the touch point
+   (twice the larger side, clipped by the node). .pressed is set with full motion only. */
+html:root .ff-press { position: relative; overflow: hidden; -webkit-tap-highlight-color: transparent; transition: transform 350ms var(--fr-spring), opacity 150ms; }
+html:root .ff-press.pressed { transform: scale(.92); transition: transform 80ms var(--fr-out), opacity 150ms; }
+.ripple { position: absolute; border-radius: 50%; background: rgba(255, 255, 255, .35); transform: scale(0); opacity: 0; pointer-events: none; }
 
 video { width: 100%; background: #000; }
 

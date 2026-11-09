@@ -20,6 +20,8 @@
   import type { Thumb } from '#lib/rating';
   import { dragClose } from '#lib/phone/dragClose';
   import { t, tr } from '#lib/i18n';
+  import { press } from '#lib/glass/press';
+  import { AA, cachedTone, scrimFor, SCRIM_SAFE_DIM, TEXT_DIM, toneFor, type Tone } from '#lib/glass/tone';
 
   /**
    * Bottom sheet that opens when a poster is tapped (phone layout; spec 2026-11-08 §3). Mounted once in +layout.svelte while the
@@ -70,6 +72,20 @@
   $: downloadable = canDownload && !!item && (item.type === 'Movie' || item.type === 'Episode');
   $: why = reasonText(item?.reason, $t);
 
+  // ---- the poster's tone (glass spec §6, §8.2): its colour tints the sheet. Only the tint comes from the poster: the page
+  // behind the sheet is unsampled (other posters, artwork), so the scrim is the one the sheet's dimmest text (white at
+  // TEXT_DIM) needs over pure white with this tint, never lighter than SCRIM_SAFE_DIM. The key is the hover card's and the
+  // detail page's (seriesId ?? id), so a sampled tone is applied before the sheet shows.
+  let tone: Tone | null = null;
+  $: toneKey = item ? item.seriesId ?? item.id : '';
+  $: tone = toneKey ? cachedTone(toneKey) ?? null : null;
+  function sample(e: Event) {
+    const key = toneKey;
+    if (!key || cachedTone(key) !== undefined) return;
+    void toneFor(key, e.currentTarget as HTMLImageElement).then((tn) => { if (toneKey === key) tone = tn; });
+  }
+  $: sheetStyle = tone ? `--fr-tint:${tone.tint.join(', ')};--fr-scrim:${Math.max(SCRIM_SAFE_DIM, scrimFor([255, 255, 255], tone.tint, AA, TEXT_DIM))}` : `--fr-scrim-safe:${SCRIM_SAFE_DIM}`;
+
   function say(msg: string) { note = msg; clearTimeout(noteT); noteT = setTimeout(() => (note = ''), 3500); }
   async function share() {
     if (!item) return;
@@ -95,11 +111,12 @@
   {#key shown}
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div class="dim" class:out={leaving} on:click={() => close()}></div>
-    <div class="sheet" class:out={leaving} inert={leaving || undefined} role="dialog" aria-modal="true" aria-label={$t('home.card.preview', { name: item.name })} tabindex="-1" bind:this={sheetEl} use:dialogKeys={{ close: () => close() }} use:dragClose={{ close: () => close(), open: details }} on:transitionend={outEnd}>
+    <div class="sheet frost frost-sheet frost-safe" style={sheetStyle} class:out={leaving} inert={leaving || undefined} role="dialog" aria-modal="true" aria-label={$t('home.card.preview', { name: item.name })} tabindex="-1" bind:this={sheetEl} use:dialogKeys={{ close: () => close() }} use:dragClose={{ close: () => close(), open: details }} on:transitionend={outEnd}>
+      <span class="frost-tint" aria-hidden="true"><i class:on={Boolean(tone)}></i></span>
       <div class="grab"><span class="handle" aria-hidden="true"></span></div>
       {#if why}<p class="why">{why}</p>{/if}
       <div class="hd">
-        {#if hasPoster}<img class="poster" src={img(posterId, 240)} alt="" width="92" height="138" />{:else}<span class="poster none" aria-hidden="true"></span>{/if}
+        {#if hasPoster}<img class="poster" src={img(posterId, 240)} alt="" width="92" height="138" on:load={sample} />{:else}<span class="poster none" aria-hidden="true"></span>{/if}
         <div class="info">
           <h2>{item.type === 'Episode' && item.seriesName ? item.seriesName : item.name}</h2>
           <p class="meta">
@@ -113,14 +130,14 @@
         <button type="button" class="close" aria-label={$t('common.close')} on:click={() => close()}><Icon name="x" size={16} /></button>
       </div>
       <div class="acts">
-        <a class="play" href={playPath(item)} on:click={play}><Icon name="play" size={20} />{item.positionTicks ? $t('home.card.resume') : $t('home.card.play')}</a>
+        <a class="play" href={playPath(item)} use:press on:click={play}><Icon name="play" size={20} />{item.positionTicks ? $t('home.card.resume') : $t('home.card.play')}</a>
         {#if downloadable}<span class="dlw"><DownloadButton itemId={item.id} seriesId={item.seriesId ?? ''} block /></span>{/if}
       </div>
       <div class="row">
-        <button type="button" class="act" aria-pressed={inList} on:click={list}><Icon name={inList ? 'check' : 'plus'} size={22} /><small>{$t('home.card.myList')}</small></button>
+        <button type="button" class="act" use:press aria-pressed={inList} on:click={list}><Icon name={inList ? 'check' : 'plus'} size={22} /><small>{$t('home.card.myList')}</small></button>
         {#if item.type !== 'BoxSet'}<span class="act rate"><RatingButton itemId={listId} bind:value={thumb} size={44} showLabel up on:error={() => say(tr('home.card.saveFailed'))} /></span>{/if}
-        {#if !$kidsMode}<button type="button" class="act" on:click={share}><Icon name="share" size={22} /><small>{$t('home.card.share')}</small></button>{/if}
-        <a class="act details" href={itemPath(item)}><Icon name="info" size={22} /><small>{$t('detail.view.details')}</small></a>
+        {#if !$kidsMode}<button type="button" class="act" use:press on:click={share}><Icon name="share" size={22} /><small>{$t('home.card.share')}</small></button>{/if}
+        <a class="act details" href={itemPath(item)} use:press><Icon name="info" size={22} /><small>{$t('detail.view.details')}</small></a>
       </div>
       <p class="note" role="status">{note}</p>
     </div>
@@ -131,42 +148,43 @@
   /* spring in (the shared --m-spring), leave at the release point with the emphasised ease-in; html.m-still: no motion */
   .dim { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.55); animation: fade 300ms ease-out; }
   .dim.out { opacity: 0; transition: opacity 280ms var(--m-emph-in); pointer-events: none; }
-  .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 91; max-width: 560px; margin: 0 auto; max-height: min(88dvh, calc(100dvh - var(--safe-top) - .5rem)); overflow-y: auto; overscroll-behavior: contain; outline: none; background: #18181c; border-radius: 22px 22px 0 0; padding: 0 max(var(--pad-x), var(--safe-right)) calc(1.2rem + var(--safe-bottom)) max(var(--pad-x), var(--safe-left)); box-shadow: 0 -10px 40px rgba(0,0,0,.5); animation: rise var(--m-d-spring) var(--m-spring); transition: transform var(--m-d-spring) var(--m-spring); }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 91; max-width: 560px; margin: 0 auto; max-height: min(88dvh, calc(100dvh - var(--safe-top) - .5rem)); overflow-y: auto; overscroll-behavior: contain; outline: none; border-radius: var(--fr-r-sheet) var(--fr-r-sheet) 0 0; border-bottom: 0; padding: 0 max(var(--pad-x), var(--safe-right)) calc(1.2rem + var(--safe-bottom)) max(var(--pad-x), var(--safe-left)); box-shadow: 0 -10px 40px rgba(0,0,0,.5); animation: rise var(--m-d-spring) var(--m-spring); transition: transform var(--m-d-spring) var(--m-spring); }
   .sheet:global(.dragging) { transition: none; }
   .sheet.out { transform: translateY(100%); transition: transform 280ms var(--m-emph-in); pointer-events: none; }
   :global(html.m-still) .sheet, :global(html.m-still) .dim { animation: none; transition: none; }
-  .grab { position: sticky; top: 0; z-index: 2; touch-action: none; cursor: grab; padding: 8px 0 12px; margin: 0 calc(var(--pad-x) * -1); background: #18181c; }
+  .grab { position: sticky; top: 0; z-index: 2; touch-action: none; cursor: grab; padding: 8px 0 12px; margin: 0 calc(var(--pad-x) * -1); }
   .handle { display: block; width: 38px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.3); margin: 0 auto; }
-  .why { margin: 0 0 .45rem; font-size: .78rem; color: var(--mut); overflow-wrap: anywhere; }
+  .why { margin: 0 0 .45rem; font-size: .78rem; color: rgba(255,255,255,.9); overflow-wrap: anywhere; }
   .hd { display: grid; grid-template-columns: 92px minmax(0, 1fr) 28px; gap: 12px; align-items: start; }
   .poster { width: 92px; height: auto; aspect-ratio: 2 / 3; border-radius: 8px; object-fit: cover; background: #242b33; display: block; }
   .info { min-width: 0; }
   h2 { font-size: 1.15rem; font-weight: 800; letter-spacing: -.01em; margin: 0 0 .25rem; line-height: 1.2; overflow-wrap: anywhere; }
-  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .4rem; margin: 0 0 .35rem; color: #d2d2d2; font-size: .82rem; }
-  .dot { color: var(--mut); }
-  .age { border: 1px solid #8a8a8a; padding: 0 .3rem; border-radius: 3px; font-size: .72rem; line-height: 1.45; }
-  .ep { margin: 0 0 .3rem; color: var(--mut); font-size: .8rem; }
-  .ov { margin: 0; font-size: .82rem; line-height: 1.4; color: #cfcfd6; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .4rem; margin: 0 0 .35rem; color: rgba(255,255,255,.9); font-size: .82rem; }
+  .dot { color: rgba(255,255,255,.9); }
+  .age { border: 1px solid rgba(255,255,255,.6); padding: 0 .3rem; border-radius: 3px; font-size: .72rem; line-height: 1.45; }
+  .ep { margin: 0 0 .3rem; color: rgba(255,255,255,.9); font-size: .8rem; }
+  .ov { margin: 0; font-size: .82rem; line-height: 1.4; color: rgba(255,255,255,.9); display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   /* 28px circle, 44px hit area */
   .close { position: relative; width: 28px; min-height: 28px; height: 28px; padding: 0; border-radius: 50%; background: rgba(255,255,255,.12); color: #fff; display: grid; place-items: center; }
   .close::after { content: ''; position: absolute; inset: -8px; }
   .close:hover:not(:disabled) { background: rgba(255,255,255,.22); }
   .acts { display: flex; gap: 8px; margin: 14px 0 12px; }
   .acts > * { flex: 1 1 0; min-width: 0; }
-  .play { display: inline-flex; align-items: center; justify-content: center; gap: .45rem; min-height: 44px; background: #fff; color: #0b0b0d; font-weight: 700; font-size: .95rem; border-radius: 8px; padding: 0 .8rem; white-space: nowrap; }
+  .play { display: inline-flex; align-items: center; justify-content: center; gap: .45rem; min-height: 44px; background: #fff; color: #0b0b0d; font-weight: 700; font-size: .95rem; border-radius: 999px; padding: 0 .8rem; white-space: nowrap; }
   .play:hover { background: rgba(255,255,255,.85); }
   .dlw { display: flex; }
-  .dlw :global(.dlb) { min-height: 44px; border-radius: 8px; background: rgba(255,255,255,.17); font-size: .95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dlw :global(.dlb) { min-height: 44px; border-radius: 999px; background: rgba(var(--fr-scrim-rgb), .35); box-shadow: inset 0 0 0 1px var(--fr-line); font-size: .95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* (a lighter fill would lower the white label under AA over the glass; the edge marks the button instead) */
   .dlw:not(:has(:global(.dlb))) { display: none; } /* unsupported here: DownloadButton renders nothing */
-  .row { display: flex; justify-content: space-around; padding-top: 10px; border-top: 1px solid #26262c; }
+  .row { display: flex; justify-content: space-around; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.1); }
   .act { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 4px; background: transparent; border: 0; border-radius: 6px; padding: 4px 0; min-height: 48px; line-height: 1; color: #fff; font-weight: 500; text-decoration: none; }
   .act:hover:not(:disabled) { background: transparent; }
-  .act small { font-size: .7rem; font-weight: 500; color: #c4c4cc; line-height: 1.15; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .act small { font-size: .7rem; font-weight: 500; color: rgba(255,255,255,.9); line-height: 1.15; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
   .rate { padding: 0; }
   .rate :global(.trig) { padding: 4px 0; gap: 4px; color: #fff; min-height: 48px; justify-content: flex-start; }
   .rate :global(.trig .ic) { width: 22px; height: 22px; }
-  .rate :global(.trig .tx) { font-size: .7rem; color: #c4c4cc; font-weight: 500; }
-  .note { min-height: 1.2em; margin: .4rem 0 0; font-size: .82rem; color: var(--mut); text-align: center; }
+  .rate :global(.trig .tx) { font-size: .7rem; color: rgba(255,255,255,.9); font-weight: 500; }
+  .note { min-height: 1.2em; margin: .4rem 0 0; font-size: .82rem; color: rgba(255,255,255,.9); text-align: center; }
   @keyframes rise { from { transform: translateY(100%); } to { transform: none; } }
   @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 </style>

@@ -81,6 +81,8 @@ const tr: Translation<typeof de> = {
     savedTo: 'Dil kaydedildi.',
   },
   settings: {
+    /** the settings page's side navigation (wide screens) */
+    sections: 'Ayar bölümleri',
     pageTitle: 'Ayarlar',
     app: { title: 'Bu cihazdaki uygulama', hint: 'İndirmelerin konumu, yalnızca Wi-Fi, arka planda ses, bildirimler ve bu cihazda oturumu kapatma uygulamada ayarlanır.', open: 'Uygulama ayarlarını aç' },
     title: 'Oynatma ayarları',

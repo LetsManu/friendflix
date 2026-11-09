@@ -54,7 +54,7 @@
 
 <svelte:head><title>{$t('common.pageTitle', { page: $t('account.me.title') })}</title></svelte:head>
 <h1 class="sr-only">{$t('account.me.title')}</h1>
-<div class="me">
+<div class="me frost-text">
   <header class="prof">
     <span class="face" style={me?.profile ? `background:${avatarBg(me.profile.avatar)}` : undefined} aria-hidden="true">{me ? initial(me.profile?.name ?? me.name) : ''}</span>
     <div class="who">
@@ -64,7 +64,7 @@
   </header>
 
   <ul class="tiles2" aria-label={$t('account.me.quick')}>
-    {#each tiles as [href, label, icon] (href)}<li><a {href}><span class="ti"><Icon name={icon} size={24} /></span><span class="tl">{$t(label)}</span></a></li>{/each}
+    {#each tiles as [href, label, icon] (href)}<li><a class="frost-flat frost-tile" {href}><span class="ti"><Icon name={icon} size={24} /></span><span class="tl">{$t(label)}</span></a></li>{/each}
   </ul>
 
   <section aria-labelledby="h-notes">
@@ -72,7 +72,7 @@
     {#if notes === null}<div class="skeleton nsk"></div>
     {:else if !notes.length}<p class="muted pad">{$t('account.me.noNotifications')}</p>
     {:else}
-      <ul class="notes">
+      <ul class="notes frost-flat frost-tile">
         {#each shown as n (n.id)}
           <li class:muted={n.read}>{#if n.link}<a href={n.link}><span class="nd" class:unread={!n.read} aria-hidden="true"></span><span class="nt">{n.title}</span><Icon name="chevron-right" size={18} /></a>{:else}<span class="plainn"><span class="nd" class:unread={!n.read} aria-hidden="true"></span><span class="nt">{n.title}</span></span>{/if}</li>
         {/each}
@@ -90,7 +90,7 @@
       {#if g.items.length || isAcc}
         <section class="grp" aria-label={$t(g.title)}>
           <h2 class="gh">{$t(g.title)}</h2>
-          <ul class="lst">
+          <ul class="lst frost-flat frost-tile">
             {#if g.title === 'shell.menu.groups.discover'}<li><button type="button" class="rowbtn" on:click={surprise}><Icon name="shuffle" size={20} />{$t('shell.menu.surprise')}<Icon name="chevron-right" size={18} /></button></li>{/if}
             {#each g.items as [href, label, icon] (href)}<li><a {href}><Icon name={icon} size={20} />{$t(label)}<Icon name="chevron-right" size={18} /></a></li>{/each}
             {#if isAcc && owner}<li><a href="/me/account"><Icon name="user" size={20} />{$t('account.account.title')}<Icon name="chevron-right" size={18} /></a></li>{/if}
@@ -104,8 +104,8 @@
     {/each}
   </div>
 
-  {#if tvApp}<button type="button" class="out srv" on:click={changeServer}><Icon name="tv" size={20} />{$t('shell.account.changeServer')}</button>{/if}
-  <button type="button" class="out" on:click={() => logout(me?.tv)}><Icon name="log-out" size={20} />{$t('account.me.logout')}</button>
+  {#if tvApp}<button type="button" class="out srv frost-btn" on:click={changeServer}><Icon name="tv" size={20} />{$t('shell.account.changeServer')}</button>{/if}
+  <button type="button" class="out frost-btn" on:click={() => logout(me?.tv)}><Icon name="log-out" size={20} />{$t('account.me.logout')}</button>
 </div>
 
 <style>
@@ -115,42 +115,42 @@
   .who { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; gap: .1rem; }
   .who b { font-size: 1.4rem; line-height: 1.2; overflow-wrap: anywhere; }
   .sk { width: 9rem; height: 1.6rem; }
-  .swap { display: inline-flex; align-items: center; gap: .4rem; min-height: 44px; color: #54b9c5; font-weight: 600; }
+  .swap { display: inline-flex; align-items: center; gap: .4rem; min-height: 44px; color: var(--link); font-weight: 600; }
   .swap:hover { text-decoration: underline; }
   .tiles2 { list-style: none; margin: 0 0 1.6rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(78px, 1fr)); gap: .5rem; }
   @media (min-width: 721px) { .tiles2 { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
-  .tiles2 a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .45rem; min-height: 86px; padding: .5rem .25rem; background: var(--surface-2); border-radius: 8px; font-size: .8rem; font-weight: 600; text-align: center; white-space: nowrap; transition: background var(--t-fast); }
+  .tiles2 a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .45rem; min-height: 86px; padding: .5rem .25rem; font-size: .8rem; font-weight: 600; text-align: center; white-space: nowrap; transition: border-color var(--t-fast); }
   .tiles2 li { min-width: 0; }
   .tiles2 .tl { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .pl { display: flex; flex-wrap: wrap; column-gap: 1.2rem; }
-  .rowbtn { width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: .8rem; min-height: 48px; padding: .5rem 1rem; background: transparent; border-radius: 0; font-weight: 400; color: inherit; }
-  .rowbtn:hover:not(:disabled) { background: rgba(255,255,255,.05); }
+  .rowbtn { width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: .8rem; min-height: 48px; padding: .5rem 1rem; background: transparent; border-radius: 12px; font-weight: 400; color: inherit; transition: none; }
+  .rowbtn:hover:not(:disabled) { background: var(--row-hover); }
   .rowbtn :global(svg:last-child) { margin-left: auto; color: var(--mut); }
-  .tiles2 a:hover { background: #2e363f; }
+  /* hover lights the edge, never the fill (more milk would cost the text its contrast) */
+  .tiles2 a:hover { border-color: rgba(255,255,255,.42); }
   .ti { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.08); }
   section { margin-bottom: 1.4rem; }
   .sech { display: flex; align-items: baseline; justify-content: space-between; }
   h2 { font-size: 1.1rem; font-weight: 700; margin: 0 0 .5rem; }
   .gh { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--mut); margin: 0 0 .3rem .2rem; }
-  .lnk { background: transparent; color: #54b9c5; padding: 0 .4rem; font-weight: 600; }
+  .lnk { background: transparent; color: var(--link); padding: 0 .4rem; font-weight: 600; }
   .lnk:hover:not(:disabled) { background: transparent; text-decoration: underline; }
   .pad { padding: .4rem 0; margin: 0; }
-  .notes, .lst { list-style: none; margin: 0; padding: 0; background: var(--surface); border-radius: 8px; border: 1px solid var(--line); overflow: hidden; }
-  .notes li + li, .lst li + li { border-top: 1px solid var(--line); }
-  .notes a, .plainn, .lst a { display: flex; align-items: center; gap: .8rem; min-height: 48px; padding: .5rem 1rem; }
-  .notes a:hover, .lst a:hover { background: rgba(255,255,255,.05); }
+  /* glass cards (glass spec §6); a row on hover: 12 px corners on a darker fill (a lighter one would cost the text its AA) */
+  .notes, .lst { --row-hover: rgba(var(--fr-scrim-rgb), .3); list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px; box-shadow: inset 0 1px 0 var(--fr-hi), var(--fr-shadow-card); }
+  .notes a, .plainn, .lst a { display: flex; align-items: center; gap: .8rem; min-height: 48px; padding: .5rem 1rem; border-radius: 12px; }
+  .notes a:hover, .lst a:hover { background: var(--row-hover); }
   .nt { flex: 1; min-width: 0; font-size: .93rem; }
   .nd { flex: none; width: 8px; height: 8px; border-radius: 50%; background: transparent; }
   .nd.unread { background: var(--acc); }
   li.muted { color: var(--mut); }
-  .nsk { height: 120px; border-radius: 8px; }
+  .nsk { height: 120px; border-radius: var(--fr-r-tile); }
   .lst a :global(svg:last-child) { margin-left: auto; color: var(--mut); }
   .notes a :global(svg:last-child) { color: var(--mut); }
   .bleed { margin: 0 calc(var(--pad-x) * -1) 1.4rem; }
   .groups { display: grid; grid-template-columns: 1fr; gap: 0; }
   @media (min-width: 900px) { .groups { grid-template-columns: repeat(3, 1fr); gap: 1.2rem; align-items: start; } }
-  .out { width: 100%; justify-content: flex-start; gap: .8rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; min-height: 52px; padding: 0 1rem; color: #fff; margin-top: .2rem; }
-  .out:hover:not(:disabled) { background: #20262d; }
+  .out { width: 100%; justify-content: flex-start; gap: .8rem; min-height: 52px; padding: 0 1.2rem; font-weight: 600; margin-top: .2rem; }
   .srv { margin-bottom: .6rem; }
   @media (min-width: 900px) { .out { width: auto; } }
 </style>

@@ -180,6 +180,9 @@
   $: profilesPage = path === '/profiles' || path === '/welcome'; // full-screen pages without navigation (picker, onboarding)
   $: heroPage = path === '/' || path.startsWith('/item/');
   $: kidsPage = path === '/kids' || path.startsWith('/kids/'); // full-bleed bright kids pages (own background and spacing)
+  /** pages without artwork that are not the player, TV, kids or full-screen pages: the still ambient background (glass spec §6) */
+  $: ambPage = !heroPage && !watchPage && !kidsUi && !tv && !profilesPage && !publicPage && !kidsPage;
+  $: if (typeof document !== 'undefined') document.documentElement.classList.toggle('amb', pageReady && ambPage);
   // Block 22: warning banner for an admin on the owner profile; never in TV mode, on player/party/profile/public pages or kids profiles
   $: showBanner = admin && !tv && !watchPage && !profilesPage && !publicPage && !kidsUi && !pending;
   let stopBanner: (() => void) | null = null;
@@ -737,6 +740,7 @@
 {#if publicPage}
   <slot />
 {:else if pageReady}
+  {#if ambPage}<div class="frost-amb" aria-hidden="true"></div>{/if}
   {#if !watchPage && !profilesPage && kidsUi}
     <header class="nav kidsnav" class:solid={scrolled || !path.startsWith('/kids')}>
       <a class="klogo" href="/kids" aria-label={$t('kids.nav.home')}><Logo wordmark={!$mobile} size={$mobile ? 30 : 32} label="" /><span class="kbadge">{$t('kids.badge')}</span></a>
@@ -899,8 +903,13 @@
   .mbg { position: absolute; inset: 0; z-index: -1; pointer-events: none; transition: transform 300ms var(--m-emph-out); }
   .mbg::before, .mbg::after { content: ''; position: absolute; inset: 0; transition: opacity 250ms ease-out; }
   .mbg::before { background: linear-gradient(to bottom, rgba(0,0,0,.7), transparent); }
-  .mbg::after { background: rgba(10,10,12,.94); opacity: 0; }
-  :global(html.m-glass) .mbg::after { background: rgba(10,10,12,.78); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); }
+  /* scrolled: the glass material (glass spec §6) with the safe scrim (titles and artwork scroll under it); solid without
+     full motion, as every surface */
+  .mbg::after { background: var(--fr-solid); border-bottom: 1px solid var(--fr-line); box-shadow: var(--fr-shadow); opacity: 0; }
+  :global(html.m-glass:not(.tv):not(.kids)) .mbg::after {
+    background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim-safe));
+    -webkit-backdrop-filter: var(--fr-blur); backdrop-filter: var(--fr-blur);
+  }
   .nav.m.solid .mbg::before { opacity: 0; }
   .nav.m.solid .mbg::after { opacity: 1; }
   .nav.m.tuck .mbg { transform: translateY(-48px); } /* the chip bar's height: the glass ends under the top row */

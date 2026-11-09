@@ -9,7 +9,7 @@ export default {
   },
   calm: {
     title: 'Ruhiger Modus',
-    hint: 'Nichts startet von selbst: kein Trailer im Hauptbild, keine Vorschau beim Überfahren, keine automatische Vorschau in der Detailansicht, kein Ton dazu – und weniger Bewegung auf der ganzen Seite. Gilt für dieses Profil.',
+    hint: 'Nichts startet von selbst: kein Trailer im Hauptbild, keine Vorschau beim Überfahren, keine automatische Vorschau in der Detailansicht, kein Ton dazu – und weniger Bewegung auf der ganzen Seite. Statt Glas gibt es feste, dunkle Flächen. Gilt für dieses Profil.',
   },
   themed: {
     eyebrow: 'Themenliste',
