@@ -9,6 +9,11 @@
   import Icon from '#lib/Icon.svelte';
   import { api } from '#lib/api';
   import Player from '#lib/Player.svelte';
+  import { fade } from 'svelte/transition';
+  import { grow } from '#lib/player/desk/grow';
+  import { growOrigin, panelAnchor } from '#lib/player/phone/logic';
+  import { dropLayers } from '#lib/player/phone/backlayer';
+  import { motionAllowed } from '#lib/preview';
   import { t, tr, fmtList } from '#lib/i18n';
 
   const EMOJIS = ['😂', '😮', '❤️', '👍', '😢', '🔥']; // same whitelist as the server (backend/src/party.ts)
@@ -92,6 +97,15 @@
     if (emoji && e.key.length === 1) react(emoji);
   }
   const setMode = (v: 'host' | 'everyone') => send({ t: 'mode', value: v });
+  /** the host's settings menu in the phone player's dock is a panel: it grows out of its button and fades out (never a cut) */
+  const inDock = (n: Element) => Boolean(n.closest('.ctl.dock'));
+  function menuIn(node: Element) {
+    if (!inDock(node)) return grow(node, { origin: 'bottom right', on: false });
+    const btn = node.parentElement?.querySelector('button.ic')?.getBoundingClientRect(), card = node.getBoundingClientRect();
+    const anchor = panelAnchor(node.closest('.stage.port') ? 'portrait' : 'landscape', 'end');
+    return grow(node, { origin: growOrigin({ anchor, btnX: btn ? btn.left + btn.width / 2 : card.right, left: card.left, width: card.width }), on: true });
+  }
+  const menuOut = (node: Element) => fade(node, { duration: inDock(node) && motionAllowed() ? 120 : 0 });
   function togglePanel() { panel = !panel; settings = false; if (panel) { unread = 0; tick().then(() => chatEl && (chatEl.scrollTop = chatEl.scrollHeight)); } }
   async function copyLink() { try { await navigator.clipboard.writeText(location.href); copied = true; setTimeout(() => (copied = false), 1800); } catch { /* ignore */ } }
   // ---- one tap invitation: pick friends (they get a notification) or share the link ----
@@ -105,7 +119,8 @@
   async function shareLink() { if (navigator.share) { try { await navigator.share({ title: tr('social.party.shareTitle', { title }), url: location.href }); return; } catch { /* cancelled */ } } copyLink(); }
   // alone in a fresh room: show the invitation right away (that is what you want to do next)
   $: if (ready && isHost && members.length === 1 && !autoShown) { autoShown = true; openInvite(); }
-  const back = () => (history.length > 1 ? history.back() : goto('/party'));
+  // an open phone panel's shallow entry comes off first (and any back of its own lands): one tap on ‹ leaves the party
+  const back = async () => { await dropLayers(); return history.length > 1 ? history.back() : goto('/party'); };
   const initial = (s: string) => s.slice(0, 1).toUpperCase();
 
   onMount(() => {
@@ -122,7 +137,7 @@
 <div class="wrap">
   {#if error}<div class="fatal"><p class="err">{error}</p><a class="btn" href="/party">{$t('social.party.backToList')}</a></div>{/if}
   {#if itemId}
-    <Player itemId={itemId} bind:video partyMode {canControl} inset={panel && innerWidth > 720 ? 340 : 0} denyHint={$t('social.party.denyHint')} on:ready={onReady}>
+    <Player itemId={itemId} bind:video bind:extPanel={settings} partyMode {canControl} inset={panel && innerWidth > 720 ? 340 : 0} denyHint={$t('social.party.denyHint')} on:ready={onReady}>
       <div slot="top" class="top">
         <button class="icon-btn" aria-label={$t('social.party.leave')} on:click={back}><Icon name="arrow-left" size={30} /></button>
         <div class="ttl"><b>{title}</b><span>{$t('social.party.title')}{#if countdown}{' · '}{countdown}{/if}</span></div>
@@ -176,7 +191,7 @@
           <div class="mwrap">
             <button class="ic" aria-label={$t('social.party.settings')} aria-expanded={settings} on:click|stopPropagation={() => { settings = !settings; }}><Icon name={mode === 'everyone' ? 'users' : 'lock'} size={26} /></button>
             {#if settings}
-              <div class="menu" role="dialog" tabindex="-1" aria-label={$t('social.party.whoControls')} on:click|stopPropagation on:keydown|stopPropagation>
+              <div class="menu" role="dialog" tabindex="-1" aria-label={$t('social.party.whoControls')} in:menuIn out:menuOut on:click|stopPropagation on:keydown|stopPropagation>
                 <h3>{$t('social.party.whoControls')}</h3>
                 <button class="mi" class:on={mode === 'host'} on:click={() => setMode('host')}>{#if mode === 'host'}<Icon name="check" size={16} />{:else}<span class="sp2"></span>{/if}{$t('social.party.onlyMe')}</button>
                 <button class="mi" class:on={mode === 'everyone'} on:click={() => setMode('everyone')}>{#if mode === 'everyone'}<Icon name="check" size={16} />{:else}<span class="sp2"></span>{/if}{$t('social.party.everyone')}</button>
@@ -236,6 +251,19 @@
   .ic { background: transparent; padding: 0; width: 48px; min-height: 48px; border-radius: 50%; color: #fff; position: relative; } .ic:hover:not(:disabled) { background: rgba(255,255,255,.14); }
   .roleinfo { display: grid; place-items: center; width: 40px; color: var(--mut); }
   .mwrap { position: relative; }
+  /* the phone player's dock: the host's settings button shrinks with the tools pill and its menu is a panel like the player's:
+     directly above the timeline row, never over the top bar (the player measures --pnl-* on its stage; the pill holds the menu) */
+  :global(.ctl.dock) .mwrap { display: contents; }
+  :global(.ctl.dock) .ic { flex: 0 1 48px; min-width: 44px; }
+  :global(.ctl.dock) .menu { bottom: calc(var(--pnl-b, calc(var(--row-h, 66px) + 18px + var(--tl-h, 31px))) - var(--pill-b, 0px)); max-height: var(--pnl-h, none); overflow-y: auto;
+    background: rgba(20,20,24,.78); border-color: rgba(255,255,255,.12); border-radius: 14px; }
+  /* the panel box's sides: the end side (≤ 380 px) in landscape, the dock's width in portrait (the pill is the containing block) */
+  :global(.ctl.dock) .menu { left: auto; right: calc(var(--safe-right) + 16px + var(--inset, 0px) - var(--pill-r, 0px)); width: min(380px, var(--dock-w, 380px)); min-width: 0; }
+  :global(.stage.pui.port .ctl.dock) .menu { left: calc(var(--safe-left) + 16px - var(--pill-l, 0px)); right: calc(var(--safe-right) + 16px - var(--pill-r, 0px)); width: auto; }
+  :global(.ctl.dock.blur) .menu { -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+  :global(.ctl.dock) .mi { min-height: 44px; }
+  /* the phone player's top strip: only the buttons take taps, the title, spacer and avatars let them through to the picture */
+  :global(.stage.pui) .top > :is(.ttl, .sp, .avatars), :global(.stage.pui) .top > :is(.ttl, .avatars) :global(*) { pointer-events: none; }
   .em { background: transparent; font-size: 1.6rem; width: 48px; padding: 0; } .em:hover:not(:disabled) { background: rgba(255,255,255,.12); transform: scale(1.15); }
   .menu { position: absolute; right: 0; bottom: 58px; background: rgba(16,20,24,.97); border: 1px solid #323a43; border-radius: 6px; padding: .6rem .3rem; min-width: 210px; z-index: 20; }
   .menu h3 { font-size: 1rem; margin: 0 .6rem .4rem; }

@@ -35,8 +35,8 @@ async function wake(page: Page) {
   await expect(page.locator('.ctl.hide')).toHaveCount(0);
 }
 /**
- * the "Next episode" card: phones and narrow windows keep the card (`.next`); desktop and TV show the credits sequence's chip
- * (`.cs .chip`, spec 2026-11-08 §4), which gives way to the corner beat after 2 s - the page clock is frozen for the probe
+ * the "Next episode" card: kids profiles and narrow windows keep the card (`.next`); desktop, TV and phones show the credits
+ * sequence's chip (`.cs .chip`, spec 2026-11-08 §4), which gives way to the corner beat after 2 s - the page clock is frozen for the probe
  */
 const NEXT_CARD = '.cs .chip, .next', NEXT_GO = '.cs .chip .go, .next .go', NEXT_SEC = '.cs .chip .sec, .next .sec';
 async function freezeClock(page: Page) {
@@ -138,7 +138,13 @@ for (const v of viewports) {
     test('control-bar next button: edges hit it', async ({ page, api: _api }) => {
       await open(page, false);
       await wake(page);
-      const sel = '.ctl button[aria-label^="Nächste"]';
+      let sel = '.ctl button[aria-label^="Nächste"]';
+      // phones in portrait (spec 2026-11-08 block 4): the next episode is an entry of More - that entry must be fully hittable
+      if (!(await page.locator(sel).count())) {
+        await page.getByRole('button', { name: 'Mehr', exact: true }).click();
+        await page.getByRole('dialog', { name: 'Mehr' }).getByRole('button', { name: 'Nächste Folge', exact: true }).evaluate((el) => el.setAttribute('data-probe', 'next'));
+        sel = '[data-probe="next"]';
+      }
       const { bad } = await probe(page, sel);
       expect(bad).toEqual([]);
     });

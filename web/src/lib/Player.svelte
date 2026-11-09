@@ -58,9 +58,16 @@
   import { deskActive } from '#lib/desk/bar';
   import { deskPauseDue, deskPlayer } from '#lib/player/desk/logic';
   import DeskPauseScreen from '#lib/player/desk/DeskPauseScreen.svelte';
+  import PhonePauseScreen from '#lib/player/phone/PhonePauseScreen.svelte';
   import { grow, springAt } from '#lib/player/desk/grow';
   import { motionAllowed } from '#lib/preview';
   import { motionLevel, motionTripped } from '#lib/tv/motion';
+  import { kidsMode } from '#lib/kids';
+  import { growOrigin, moreExtras, panelAnchor, panelBox, phoneOrient, phonePlayer, phoneSub, phoneTools, type PhoneOrient } from '#lib/player/phone/logic';
+  import BackLayer from '#lib/player/phone/BackLayer.svelte';
+  import PhoneTitle from '#lib/player/phone/PhoneTitle.svelte';
+  import PhoneTopBar from '#lib/player/phone/PhoneTopBar.svelte';
+  import ProgressLine from '#lib/player/phone/ProgressLine.svelte';
 
   export let itemId: string;
   /** shown on the phone's remote while this plays */
@@ -107,12 +114,18 @@
   /** the playing item (watch page): the TV pause screen's logo, episode line and synopsis */
   export let item: Item | null = null;
   /**
-   * credits sequence beat (desktop and TV, spec 2026-11-08 §4; the watch page computes it): 'corner' glides the picture into
-   * the top-left corner (stage `.cred`) and hides the bar; a click on the small picture, Esc or TV Back dispatch `credits`
+   * credits sequence beat (desktop, TV and phones, spec 2026-11-08 §4; the watch page computes it): 'corner' glides the picture
+   * into the top-start corner (stage `.cred`) and hides the bar; a click or tap on the small picture, Esc or TV Back dispatch `credits`
    */
   export let credits: 'off' | 'chip' | 'corner' = 'off';
   /** bind: the viewer is busy in the player (menu, scrubbing, a dialog, cast & info, paused before the end): the page holds the chip */
   export let credHold = false;
+  /** bind: the phone's orientation (from the window size; 'landscape' elsewhere) */
+  export let orient: PhoneOrient = 'landscape';
+  /** the page shows a card in the default slot (next up, "still watching?", post-play, more like this): the phone pause screen waits */
+  export let cardOn = false;
+  /** a panel of the page's own in the dock is open (the party host's settings): the title fades, Back and an outside tap close it */
+  export let extPanel = false;
   const dispatch = createEventDispatcher();
 
   type Info = PlaybackDto;
@@ -184,25 +197,87 @@
    * (time · seek bar · time, then a row of icons), everything inside the safe areas (--safe-* tokens). Desktop and TV keep their bar.
    */
   let phone = false, ctlH = 0;
+  /**
+   * Phone player (spec 2026-11-08, block 4): touch, not the TV, not a kids profile (kids phones keep the layout above). Top bar with
+   * glass circles, one bottom dock (title, timeline, two glass pills); everything follows `orient` and CSS, rotation needs no reload.
+   */
+  let winW = 0, winH = 0;
+  /** the stage's own size (phones: the credits corner measures from it, not from the window) */
+  let stW = 0, stH = 0;
+  $: phoneUi = phonePlayer({ coarse, tv: tvUi, kids: $kidsMode });
+  $: orient = phoneOrient(winW, winH);
+  $: toolF = { next: hasNext, episodes: Boolean(seriesId), tracks: Boolean(info || tvSession), speed: !partyMode };
+  $: tools = phoneTools(orient, toolF);
+  /** what More lists on top on the phone player (portrait: speed and next episode) */
+  $: extras = phoneUi ? moreExtras(orient, toolF) : [];
+  /** the speed button sits in the bar (desktop, phone player in landscape); otherwise speed is a sub-view of More */
+  $: speedBtn = phoneUi ? tools.includes('speed') : !coarse;
   /** desktop: heights of the timeline row and the pill row (the skip button sits just above the timeline, not above the title) */
   let tlH = 0, rowH = 0;
-  $: ccOn = phone && showUi && !locked && !error && !reconnecting && !(posterOn && !posterOut);
+  $: ccOn = phone && !phoneUi && showUi && !locked && !error && !reconnecting && !(posterOn && !posterOut);
   $: phoneChip = phone && Boolean(info && mode && !remote);
   /** height of the bottom bar: panels, the skip button and the page's cards sit above it (phones only; elsewhere the old fixed offsets apply) */
   $: barVar = (phone && ctlH ? `;--bar-h:${ctlH}px` : '') + (ctlH ? `;--ctl-h:${ctlH}px` : '')
-    + (desk && tlH && rowH ? `;--tl-h:${tlH}px;--row-h:${rowH}px` : '');
+    + ((desk || phoneUi) && tlH && rowH ? `;--tl-h:${tlH}px;--row-h:${rowH}px` : '');
   // ---- desktop layout (spec 2026-11-08 §1–2): title block, timeline row with both times, two glass pills; never TV, phone or kids ----
   $: desk = deskPlayer({ desk: $deskActive, tv: tvUi, phone });
   /** glass blur only with full motion (calm mode, reduced motion or a tripped frame guard: plain fill) */
   const fullMotion = (_calm: unknown, _tripped: boolean) => motionLevel() === 'full'; // re-read when the prefs (calm mode) arrive or the frame guard trips
-  $: blur = desk && fullMotion($prefs, $motionTripped);
+  $: blur = (desk || phoneUi) && fullMotion($prefs, $motionTripped);
   /** the card shown before the current one ('' = none was open): opening grows out of the button, switching crossfades */
   let menuWas = '', menuFrom = '';
   $: if (menu !== menuWas) { menuFrom = menuWas; menuWas = menu; }
+  /** desktop and the phone player: cards grow in and fade out (never a cut); elsewhere they appear as before */
+  $: cardMo = desk || phoneUi;
   function cardIn(node: Element, o: { origin: string }) {
-    return desk && menuFrom !== '' ? fade(node, { duration: motionAllowed() ? 200 : 0 }) : grow(node, { origin: o.origin, on: desk });
+    return cardMo && menuFrom !== '' ? fade(node, { duration: motionAllowed() ? 200 : 0 }) : grow(node, { origin: phoneUi ? panelOrigin(node) : o.origin, on: cardMo });
   }
-  const cardOut = (node: Element) => fade(node, { duration: desk && motionAllowed() ? 120 : 0 });
+  /** phone panels grow out of their button: the end corner (landscape) or the opener's x along the full-width card (portrait) */
+  function panelOrigin(node: Element): string {
+    const btn = stage?.querySelector<HTMLElement>('.ctl .pill [aria-expanded="true"]')?.getBoundingClientRect();
+    const card = node.getBoundingClientRect();
+    return growOrigin({ anchor: panelAnchor(orient, 'end'), btnX: btn ? btn.left + btn.width / 2 : card.right, left: card.left, width: card.width });
+  }
+  /**
+   * Phone panels (spec 2026-11-08 §2) sit directly above the timeline row and below the top bar (`panelBox`). Measured on the stage
+   * whenever the dock or the stage changes size (rotation, a wrapping pill row, the party's tools) and when a panel opens:
+   * --pnl-b / --pnl-h (stage-relative), --pill-b / --pill-l / --pill-r (the tools pill is the menus' containing block).
+   */
+  let pnlVar = '', pnlObs: ResizeObserver | null = null;
+  function measurePanel() {
+    if (!phoneUi || !stage) { pnlVar = ''; return; }
+    const s = stage.getBoundingClientRect();
+    const tl = stage.querySelector('.ctl.dock .tlrow')?.getBoundingClientRect();
+    if (!tl || !s.height) return;
+    const top = stage.querySelector('.ovl')?.getBoundingClientRect();
+    // the containing block is the pill's padding box (inside its 1 px border)
+    const pillEl = stage.querySelector<HTMLElement>('.ctl.dock .pill.tp'), pr = pillEl?.getBoundingClientRect();
+    const pill = pillEl && pr ? { left: pr.left + pillEl.clientLeft, right: pr.left + pillEl.clientLeft + pillEl.clientWidth, bottom: pr.top + pillEl.clientTop + pillEl.clientHeight } : null;
+    const box = panelBox({ stageH: s.height, tlTop: tl.top - s.top, topBottom: top ? Math.max(0, top.bottom - s.top) : 0 });
+    const r = (n: number) => Math.round(n * 10) / 10;
+    pnlVar = `;--pnl-b:${r(box.bottom)}px;--pnl-h:${r(box.maxH)}px`
+      + (pill ? `;--pill-b:${r(s.bottom - pill.bottom)}px;--pill-l:${r(pill.left - s.left)}px;--pill-r:${r(s.right - pill.right)}px` : '');
+  }
+  $: if (typeof window !== 'undefined') watchPanel(phoneUi, stage);
+  function watchPanel(on: boolean, st: HTMLElement | null) {
+    pnlObs?.disconnect(); pnlObs = null;
+    if (!on || !st || typeof ResizeObserver === 'undefined') { pnlVar = ''; return; }
+    pnlObs = new ResizeObserver(() => measurePanel());
+    pnlObs.observe(st);
+    void tickDom().then(() => { for (const el of st.querySelectorAll('.ctl.dock, .ctl.dock .row, .ovl')) pnlObs?.observe(el); measurePanel(); });
+  }
+  $: if (phoneUi && (menu !== '' || showXray || extPanel) && typeof window !== 'undefined') void tickDom().then(measurePanel);
+  $: if (phoneUi && winW && winH) void tickDom().then(measurePanel);
+  /** the open panel's history entry (phone player): Back closes it */
+  let menuLayer: BackLayer | undefined;
+  /** every panel closes (Back popped the panel's entry, or a tap outside on a phone) */
+  function closePanels() { menu = ''; extPanel = false; if (xray) closeCastInfo(); }
+  /** closes the panel and takes its history entry off first (before a navigation that replaces this entry: one Back still leaves) */
+  async function leaveMenu(): Promise<void> {
+    await menuLayer?.drop();
+    menu = '';
+  }
+  const cardOut = (node: Element) => fade(node, { duration: cardMo && motionAllowed() ? 120 : 0 });
   let hud: { icon: string; text: string; pct: number } | null = null, hudT: ReturnType<typeof setTimeout>;
   let ripple: { zone: Zone; total: number; n: number } | null = null, rippleT: ReturnType<typeof setTimeout>;
   let help = false, live = '', liveN = 0;
@@ -218,14 +293,32 @@
   $: tvButtons = tvPlayerButtons({ isEpisode: Boolean(seriesId), hasNext });
   $: tvSub = item?.seriesName && item.indexNumber !== undefined && item.indexNumber !== null
     ? $t('tv.player.episode', { s: item.parentIndexNumber ?? 1, e: item.indexNumber, name: item.name }) : barSub;
-  /** desktop pause screen (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
-  $: deskBlocked = menu !== '' || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
-  $: deskPause = desk && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: deskBlocked });
+  /** desktop and phone pause screens (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
+  $: pauseBlocked = menu !== '' || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
+  $: deskPause = desk && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked });
+  $: phonePause = phoneUi && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked || cardOn });
+  $: phoneMotion = phoneUi && motionAllowed();
   $: deskMotion = desk && motionAllowed();
-  /** credits glide: spring transform (desk / TV with motion); a tripped frame guard (html.tv-motion-reduced) crossfades in CSS */
-  $: credMotion = (desk || tvUi) && motionAllowed();
-  /** leaving the corner: for 300 ms `.credout` lets a tripped frame guard crossfade the picture back to full screen (CSS) */
+  /** credits glide: spring transform (desk / TV / phone with motion); a tripped frame guard (html.tv-motion-reduced) crossfades in CSS */
+  $: credMotion = (desk || tvUi || phoneUi) && motionAllowed();
+  /**
+   * leaving the corner: for 300 ms `.credout` lets a tripped frame guard crossfade the picture back to full screen (CSS). Phones keep
+   * it until the 750 ms spring has landed: in portrait the picture's box is cut to the picture while `.cred` / `.credout` holds.
+   */
   let credOut = false, credWas: typeof credits = 'off', credOutT: ReturnType<typeof setTimeout> | undefined;
+  /** the picture's aspect ratio (phones, portrait corner: the video box is cut to it, so the light edge frames the picture) */
+  let picAspect = 16 / 9;
+  /** a short landscape phone (under 360 px) during the credits chip: the chip rides above the dock where the title block sits - it fades */
+  $: chipCrowds = credits === 'chip' && orient === 'landscape' && winH < 360;
+  /**
+   * phones, credits corner: --va the picture's aspect, --sw2 / --sh2 half the stage, --pw / --ph the letterboxed picture's box
+   * (object-fit: contain) - the video box is cut to it, so the light edge frames the picture, not the black bars
+   */
+  $: picVar = phoneUi ? picVars(picAspect, stW || winW, stH || winH) : '';
+  function picVars(va: number, w: number, h: number): string {
+    const pw = Math.min(w, h * va), r = (n: number) => Math.round(n * 10) / 10;
+    return `;--va:${va.toFixed(4)};--sw2:${r(w / 2)}px;--sh2:${r(h / 2)}px;--pw:${r(pw)}px;--ph:${r(pw / va)}px`;
+  }
   $: credHold = menu !== '' || scrubbing || sp.active || subDlg || help || showXray || (paused && !stopped);
   $: onCreditsBeat(credits);
   function onCreditsBeat(c: typeof credits) {
@@ -234,10 +327,12 @@
     const left = credWas === 'corner';
     credWas = c;
     clearTimeout(credOutT);
+    if (c === 'corner' && video?.videoWidth && video.videoHeight) picAspect = video.videoWidth / video.videoHeight;
     credOut = left;
-    if (left) credOutT = setTimeout(() => (credOut = false), 300);
+    if (left) credOutT = setTimeout(() => (credOut = false), phoneUi ? 800 : 300);
   }
-  $: showUi = !locked && !pauseOn && !deskPause && credits !== 'corner' && (paused || menu !== '' || scrubbing || sp.active || tick - lastActive < hideMs);
+  // phones: an open panel (a menu, Cast & info, the party host's settings) keeps the controls up (spec 2026-11-08 §1)
+  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || menu !== '' || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
@@ -741,7 +836,7 @@
   /** the TV button row */
   function tvButton(b: TvButton) {
     wake();
-    if (b === 'next') { if (hasNext && allowed()) goNext(); return; }
+    if (b === 'next') { if (hasNext && allowed()) void goNext(); return; }
     menu = menu === b ? '' : b;
   }
   /** what Back peels next (overlay -> seek preview -> controls -> leave) */
@@ -759,7 +854,7 @@
     else if (m.action === 'toggle') { if (paused) { if (allowed()) playSafe(); } else if (allowed()) doPause(); }
     else if (m.action === 'audio' && typeof m.value === 'number') { if (info?.audioTracks.some((a) => a.index === m.value)) changeAudio(m.value); }
     else if (m.action === 'sub' && typeof m.value === 'number') { if (m.value === -1 || info?.subtitles.some((x) => x.index === m.value)) setSubtitle(m.value); }
-    else if (m.action === 'next') { if (hasNext && allowed()) goNext(); else flash(tr('player.noNext')); }
+    else if (m.action === 'next') { if (hasNext && allowed()) void goNext(); else flash(tr('player.noNext')); }
     else if (m.action === 'seekBy' && typeof m.value === 'number') seekBy(m.value);
   }
 
@@ -774,12 +869,13 @@
     if (!video || !allowed()) return; video.currentTime = Math.max(0, Math.min(duration || t, t)); }
   function seekBy(d: number, quiet = false) { if (!video || !allowed()) return; seekTo((remote ? current : video.currentTime) + d); if (quiet) announce(d > 0 ? tr('player.secondsForward', { n: d }) : tr('player.secondsBack', { n: -d })); else flash(d > 0 ? `+${d} s` : `−${-d} s`, 700); }
   /** next episode: as a remote the engine moves the TV on (its next(); the watch page follows the TV), else the page navigates */
-  function goNext() { if (remote) void castEngine.next(); else dispatch('next'); }
+  /** the panel's history entry comes off first: the page replaces this entry with the next episode (one Back still leaves) */
+  async function goNext() { await leaveMenu(); if (remote) void castEngine.next(); else dispatch('next'); }
   function doSkip() {
     if (!skip) return;
     const key = segKey(skip.type, 'skipped');
     // a preview at the very end is the teaser of the next episode: go there instead of seeking into nothing
-    if (skip.type === 'preview' && duration && skip.end >= duration - 3 && hasNext) { if (allowed()) goNext(); return; }
+    if (skip.type === 'preview' && duration && skip.end >= duration - 3 && hasNext) { if (allowed()) void goNext(); return; }
     seekTo(skip.end);
     if (key) announce(tr(key));
   }
@@ -849,7 +945,7 @@
   }
   $: if (paused && started) { clearTimeout(pauseT); pauseT = setTimeout(() => { pausedLong = true; ensureInfo(); }, 1200); } else { clearTimeout(pauseT); pausedLong = false; infoDismissed = false; }
   // automatic (pause): only with something to show; explicit: also while loading / after an error
-  $: showXray = (xray || (pausedLong && !tvUi && !desk && !infoDismissed && Boolean(castData && (hasPeople(castData) || castData.studios.length || castData.genres.length)))) && menu === '' && !subDlg && !help && !error && !locked;
+  $: showXray = (xray || (pausedLong && !tvUi && !desk && !phoneUi && !infoDismissed && Boolean(castData && (hasPeople(castData) || castData.studios.length || castData.genres.length)))) && menu === '' && !subDlg && !help && !error && !locked;
   $: if (showXray) peek = false;
   /** quick peek: does not pause, hides by itself after a few seconds */
   function openPeek() {
@@ -951,9 +1047,11 @@
   $: castLabel = casting ? $t('player.cast.stopOn', { name: $castState.deviceName || 'Chromecast' }) : $castState.connected ? $t('player.cast.playOn', { name: $castState.deviceName || 'Chromecast' }) : $t('player.cast.castTo');
   $: modeLabel = casting ? 'Chromecast' : airOn ? 'AirPlay' : mode === 'direct' ? $t('player.mode.direct') : mode ? $t('player.mode.hls') : '';
   const toggleMenu = (m: typeof menu) => (menu = menu === m ? '' : m);
+  /** a sub-view reached through More is open (phones: speed when it has no own button, chapters) */
+  $: moreSub = coarse && ((menu === 'speed' && !speedBtn) || menu === 'chapters');
   /** Large control icons (~40px); smaller on phones */
   let ICON = 36;
-  function pickEpisode(e: CustomEvent<{ id: string }>) { menu = ''; dispatch('episode', e.detail); }
+  async function pickEpisode(e: CustomEvent<{ id: string }>) { await leaveMenu(); dispatch('episode', e.detail); }
   /** "Folgen" panel closed (✕ or the playing episode): focus goes back to its trigger */
   let epBtn: HTMLButtonElement | undefined, moreBtn: HTMLButtonElement | undefined;
   function closeEpisodes() { menu = ''; void tickDom().then(() => epBtn?.focus()); }
@@ -1002,7 +1100,7 @@
       case 'subtitles': cycleSubtitles(); break;
       case 'subtitleToggle': toggleSubtitles(); break;
       case 'skip': if (skip && allowed()) doSkip(); break;
-      case 'next': if (hasNext && allowed()) goNext(); else flash(tr('player.noNext')); break;
+      case 'next': if (hasNext && allowed()) void goNext(); else flash(tr('player.noNext')); break;
       case 'help': help = !help; break;
       case 'speed': speedBy(a.delta); break;
       case 'pip': if (pipOk && !remote) void pip(); break;
@@ -1124,6 +1222,13 @@
   }
   /** a click outside the open menu (and not on its opener, which toggles itself) closes it; focus returns to the opener. A click on the picture only closes. */
   function onOutsideClick(e: MouseEvent) {
+    // phones: the party host's settings and Cast & info close on a tap outside them too (desktop keeps its own toggles)
+    if (phoneUi && extPanel && !(e.target as HTMLElement | null)?.closest?.('.menu, [aria-expanded="true"]')) extPanel = false;
+    if (phoneUi && xray && !(e.target as HTMLElement | null)?.closest?.('.cihost')) {
+      const onPicture = Boolean(stage?.contains(e.target as Node)) && !(e.target as HTMLElement).closest(NO_GESTURE);
+      closeCastInfo();
+      if (onPicture) { e.stopPropagation(); return; } // a tap on the picture only closes
+    }
     if (!menu || !stage) return;
     const t = e.target as HTMLElement | null;
     if (!t || t.closest('.menu, .tvov, .ctl .list, [aria-expanded="true"]')) return;
@@ -1168,6 +1273,7 @@
   }
   function gMove(e: PointerEvent) {
     if (!g || e.pointerId !== g.id || locked) return;
+    if (credits === 'corner') return; // the corner beat: no scrub / volume / brightness (a tap on the small picture still backs out)
     const dx = e.clientX - g.x, dy = e.clientY - g.y;
     if (!g.axis) {
       g.axis = classifyMove(dx, dy, g.x - g.left, g.w, { volumeOk: volOk });
@@ -1195,12 +1301,15 @@
     if (cur.axis === 'scrub') { seekTo(cur.target); announce(tr('player.position', { t: fmtClock(cur.target) })); showHud(hud, 500); return; }
     if (cur.axis) { announce(hud?.text ?? ''); showHud(hud, 700); return; }
     if (cur.moved || Math.hypot(e.clientX - cur.x, e.clientY - cur.y) > 12) { showHud(null); return; }
+    // credits corner (phones): a tap on the small picture backs out to full screen (the click after a touch never reaches onSurfaceClick)
+    if (credits === 'corner' && !locked) { if (e.target === video) dispatch('credits'); return; }
     handleTap(e.clientX - cur.left, cur.w);
   }
   function gCancel(e: PointerEvent) { if (g && e.pointerId === g.id) { g = null; showHud(null); } }
   function handleTap(x: number, w: number) {
     if (locked) { showLockBtn(); return; }
-    if (menu || help) { menu = ''; help = false; return; }
+    if (menu || help || extPanel) { menu = ''; help = false; extPanel = false; return; }
+    if (phoneUi && showXray) { closeCastInfo(); return; } // phones: a tap outside Cast & info closes it, like any panel
     const zone = zoneOf(x, w), r = registerTap(tapState, Date.now(), zone);
     tapState = r.state;
     clearTimeout(pendingTap);
@@ -1210,7 +1319,8 @@
   }
   // lock: hides all controls and turns gestures off until the lock icon is held for 0.6 s
   function showLockBtn() { lockHint = true; clearTimeout(lockT); lockT = setTimeout(() => (lockHint = false), 3000); }
-  function lockNow() { locked = true; menu = ''; flash(tr('player.lock.locked'), 2500); showLockBtn(); }
+  // phones: every panel closes (its Back entry comes off with it)
+  function lockNow() { locked = true; menu = ''; if (phoneUi) { extPanel = false; if (xray) closeCastInfo(); } flash(tr('player.lock.locked'), 2500); showLockBtn(); }
   let unlockT: ReturnType<typeof setTimeout>, unlockedAt = 0;
   function unlockDown() { lockHold = true; clearTimeout(unlockT); unlockT = setTimeout(() => { lockHold = false; locked = false; lockHint = false; unlockedAt = Date.now(); wake(); flash(tr('player.lock.unlocked'), 900); }, 600); }
   function unlockUp() { if (lockHold) { lockHold = false; clearTimeout(unlockT); flash(tr('player.lock.hold'), 1500); showLockBtn(); } }
@@ -1316,6 +1426,7 @@
     };
   });
   onDestroy(() => {
+    pnlObs?.disconnect();
     cancelFirstFrame();
     clearInterval(tvTick);
     clearTimeout(peekT); clearTimeout(posterT); clearTimeout(spT); fxEngine?.destroy();
@@ -1334,8 +1445,8 @@
   });
 </script>
 
-<svelte:window on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone class:desk class:dpause={deskPause} class:dmo={deskMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar};--rcard-h:{rCardH}px" bind:this={stage} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
+<svelte:window bind:innerWidth={winW} bind:innerHeight={winH} on:keydown={onKey} on:keydown|capture={onBackCapture} />
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar}{picVar};--rcard-h:{rCardH}px" bind:this={stage} bind:clientWidth={stW} bind:clientHeight={stH} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -1457,11 +1568,19 @@
   {/if}
 
   <!-- overlays from the page (back button, next episode card, party chat/reactions) -->
-  <div class="ovl" class:hide={!showUi} class:withchip={phoneChip}>
+  <div class="ovl" class:hide={!showUi} class:withchip={phoneChip && !phoneUi} class:blur={blur && phoneUi}>
     {#if !tvUi}<slot name="top" />{/if}
-    {#if phoneChip && info}<div class="qtop"><QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} /></div>{/if}
+    {#if phoneUi}
+      <!-- phone player: quality chip, Cast, AirPlay and lock at the end of the top bar (they leave the pill and More) -->
+      <PhoneTopBar {blur} lock={!remote}
+        cast={!partyMode && ($castState.available || $castState.connected) ? { on: casting, label: castLabel } : null}
+        airplay={air && (airState.available || airOn || airState.ready || airState.busy) ? { on: airOn, busy: airState.busy, label: $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') } : null}
+        on:cast={castClick} on:airplay={() => air?.pick()} on:lock={lockNow}>
+        {#if phoneChip && info}<QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
+      </PhoneTopBar>
+    {:else if phoneChip && info}<div class="qtop"><QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} /></div>{/if}
   </div>
-  {#if phone && !locked && !error && !reconnecting}
+  {#if phone && !phoneUi && !locked && !error && !reconnecting}
     <!-- phones: play / pause between -10 and +10 in the middle of the picture (shown and hidden with the bar) -->
     <div class="cc" class:hide={!ccOn}>
       <button class="ic ccs" class:locked={!canControl} aria-label={$t('player.controls.back10')} on:click|stopPropagation={() => seekBy(-10)}><Icon name="rewind10" size={34} /></button>
@@ -1471,10 +1590,10 @@
   {/if}
   <slot />
 
-  {#if skip && !locked && credits !== 'corner'}<button class="skipbtn light" class:tv-btn={tvUi} aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: desk && motionAllowed() ? 250 : 0, easing: springAt }}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
+  {#if skip && !locked && credits !== 'corner' && !phoneUi}<button class="skipbtn light" class:tv-btn={tvUi} aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: desk && motionAllowed() ? 250 : 0, easing: springAt }}>{segText($t, skip.type, 'skip')}{tvMode() ? $t('player.skipOk') : ''}</button>{/if}
 
   {#if showXray}
-    <div class="cihost" class:hide={!showUi && !xray}><CastInfoPanel data={castData} failed={castFailed} autofocus={infoFocus} on:close={closeCastInfo} /></div>
+    <div class="cihost" class:hide={!showUi && !xray} out:fade={{ duration: phoneUi && motionAllowed() ? 120 : 0 }}><CastInfoPanel data={castData} failed={castFailed} autofocus={infoFocus} on:close={closeCastInfo} /></div>
   {:else if peek && !locked && menu === '' && !remote}
     <CastPeek data={castData} hint={tvMode() ? 'tv' : coarse ? 'none' : 'key'} on:more={() => openCastInfo(false)} />
   {/if}
@@ -1493,6 +1612,9 @@
   {#if deskPause}
     <DeskPauseScreen title={barTitle || title} sub={tvSub} overview={item?.overview ?? ''} on:castinfo={() => openCastInfo(true)} />
   {/if}
+  {#if phonePause}
+    <PhonePauseScreen title={barTitle || title} sub={phoneSub(item, $t)} overview={item?.overview ?? ''} {orient} />
+  {/if}
   {#if tvUi}
     {#if menu === 'tracks' && (info || tvSession)}
       <TvTracks audio={audioOpts} subs={subOpts} {audioIndex} {subIndex} {fx} fxDisabled={fxDisabled}
@@ -1504,7 +1626,7 @@
       buttons={tvButtons} airplay={air && (airState.available || airOn || airState.ready || airState.busy) ? { on: airOn, label: $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') } : null} {menu} {rate} qualities={qualityOptions} quality={shownQ} {canControl} inert={credits === 'corner'} bind:height={ctlH}
       on:keydown={ctlKey} on:back={() => dispatch('back')} on:button={(e) => tvButton(e.detail)} on:speed={(e) => setRate(e.detail)} on:quality={(e) => void changeQuality(e.detail)} on:airplay={() => air?.pick()} />
   {:else}
-  <div class="ui ctl" data-nav inert={credits === 'corner'} bind:offsetHeight={ctlH} class:hide={!showUi || (posterOn && !posterOut)} class:blur on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
+  <div class="ui ctl" data-nav inert={credits === 'corner'} bind:offsetHeight={ctlH} class:hide={!showUi || (posterOn && !posterOut)} class:blur class:dock={phoneUi} on:click|stopPropagation on:keydown={ctlKey} role="toolbar" tabindex="-1" aria-label={$t('player.controls.toolbar')}>
     {#if desk}
       <!-- desktop: chapter eyebrow, title, episode line above the timeline -->
       <div class="ttlblock">
@@ -1512,15 +1634,22 @@
         <b title={barTitle || title}>{barTitle || title}</b>
         {#if barSub}<span>{barSub}</span>{/if}
       </div>
+    {:else if phoneUi}
+      <!-- phone: chapter, title and episode line; the skip button at the row's end (landscape) or below (portrait) -->
+      <PhoneTitle chapter={nowChapter} title={barTitle || title} sub={phoneSub(item, $t)} {orient} hidden={menu !== '' || showXray || extPanel || chipCrowds}>
+        <svelte:fragment slot="skip">
+          {#if skip && !locked && credits !== 'corner'}<button class="skipbtn light" aria-keyshortcuts="S" on:click|stopPropagation={doSkip} in:fly={{ y: 12, duration: motionAllowed() ? 250 : 0, easing: springAt }} out:fade={{ duration: motionAllowed() ? 150 : 0 }}>{segText($t, skip.type, 'skip')}</button>{/if}
+        </svelte:fragment>
+      </PhoneTitle>
     {/if}
-    <div class="timeline" class:tlrow={desk} bind:offsetHeight={tlH}>
-      {#if phone}<span class="cur" aria-hidden="true">{fmtClock(shown)}</span>{/if}
-      {#if desk}<span class="el" aria-hidden="true">{fmtClock(shown)}</span>{/if}
+    <div class="timeline" class:tlrow={desk || phoneUi} bind:offsetHeight={tlH}>
+      {#if phone && !phoneUi}<span class="cur" aria-hidden="true">{fmtClock(shown)}</span>{/if}
+      {#if desk || phoneUi}<span class="el" aria-hidden="true">{fmtClock(shown)}</span>{/if}
       <div class="track" bind:this={trackEl} class:locked={!canControl} class:scrub={scrubbing} role="slider" tabindex="0" aria-label={$t('player.positionLabel')} aria-valuemin="0" aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(shown)}
         aria-valuetext={$t('player.valueText', { a: fmtClock(shown), b: fmtClock(duration) })}
         on:pointermove={onTrackMove} on:pointerleave={() => (hoverX = -1)} on:pointerdown={onTrackDown} on:pointerup={onTrackUp} on:pointercancel={onTrackUp} on:keydown={onTrackKey}>
         <!-- desktop: .bars is the rail; it and the bars on it grow 3 → 6 px by scaleY (transform only), knob, bookmarks and tip stay unscaled -->
-        {#if desk}<div class="bars"></div>{/if}
+        {#if desk || phoneUi}<div class="bars"></div>{/if}
         <div class="buf" style="width:{bufPct}%"></div>
         {#each segments as sg}{#if duration && sg.end > sg.start}<span class="seg {sg.type}" style="left:{(sg.start / duration) * 100}%;width:{((sg.end - sg.start) / duration) * 100}%" title={segText($t, sg.type, 'segment')} aria-hidden="true"></span>{/if}{/each}
         <div class="played" style="width:{pct}%"></div>
@@ -1535,21 +1664,26 @@
           </div>
         {/if}
       </div>
-      {#if desk}
+      {#if desk || phoneUi}
         <span class="rem" role="timer" aria-label={duration ? $t('player.controls.remaining', { time: fmtClock(Math.max(0, duration - shown)) }) : undefined}>{duration ? `−${fmtClock(Math.max(0, duration - shown))}` : '–'}</span>
       {:else}
         <span class="rem" aria-hidden="true">{duration ? `${phone ? '−' : ''}${fmtClock(Math.max(0, duration - shown))}` : '–'}</span>
       {/if}
     </div>
     <div class="row" bind:offsetHeight={rowH}>
-      <div class="grp" class:pill={desk}>
+      <div class="grp" class:pill={desk || phoneUi} class:lp={phoneUi} role={phoneUi ? 'group' : undefined} aria-label={phoneUi ? $t('player.phone.playback') : undefined}>
+        {#if phoneUi}
+          <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.back10')} on:click={() => seekBy(-10)}><Icon name="rewind10" size={28} /></button>
+          <button class="ic big" class:locked={!canControl} class:busy={spin && waiting && !remote} aria-label={paused ? $t('player.controls.play') : $t('player.controls.pause')} on:click={togglePlay}><Icon name={paused ? 'play' : 'pause'} size={34} /></button>
+          <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.forward10')} on:click={() => seekBy(10)}><Icon name="forward10" size={28} /></button>
+        {/if}
         {#if !phone}
           <button class="ic" class:big={desk} class:locked={!canControl} aria-label={paused ? $t('player.controls.play') : $t('player.controls.pause')} data-label={desk ? (paused ? $t('player.controls.play') : $t('player.controls.pause')) : undefined} on:click={togglePlay}><Icon name={paused ? 'play' : 'pause'} size={ICON} /></button>
           <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.back10')} data-label={desk ? $t('player.controls.back10') : undefined} on:click={() => seekBy(-10)}><Icon name="rewind10" size={ICON} /></button>
           <button class="ic" class:locked={!canControl} aria-label={$t('player.controls.forward10')} data-label={desk ? $t('player.controls.forward10') : undefined} on:click={() => seekBy(10)}><Icon name="forward10" size={ICON} /></button>
         {/if}
         {#if desk && info && mode && !remote}<QualityChip bind:open={chipOpen} direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
-        {#if (!phone || volOk) && tvSession?.kind !== 'airplay'}<div class="vol">
+        {#if !phoneUi && (!phone || volOk) && tvSession?.kind !== 'airplay'}<div class="vol">
           <button class="ic" aria-label={muted ? $t('player.unmute') : $t('player.mute')} data-label={desk ? (muted ? $t('player.unmute') : $t('player.mute')) : undefined} on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : volume < 0.5 ? 'volume-low' : 'volume'} size={ICON} /></button>
           {#if !phone}<input class="vslider" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} aria-label={$t('player.volume.label')} on:input={(e) => setVolume(Number(e.currentTarget.value))} />{/if}
         </div>{/if}
@@ -1557,13 +1691,13 @@
         {#if info && mode && !remote && !phone && !desk}<QualityChip bind:open={chipOpen} direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
       </div>
       {#if !phone && !desk}<div class="mid" title={barSub ? `${barTitle} · ${barSub}` : barTitle}>{#if barTitle}<b>{barTitle}</b>{#if barSub}<span>{barSub}</span>{/if}{/if}</div>{/if}
-      <div class="grp right" class:pill={desk}>
+      <div class="grp right" class:pill={desk || phoneUi} class:tp={phoneUi} role={phoneUi ? 'group' : undefined} aria-label={phoneUi ? $t('player.phone.tools') : undefined}>
         <slot name="extra" />
-        {#if hasNext}<button class="ic" aria-label={$t('player.controls.next')} data-label={desk ? $t('player.controls.next') : undefined} title={$t('player.controls.nextKey')} on:click={goNext}><Icon name="skip-next" size={ICON} /></button>{/if}
+        {#if hasNext && (!phoneUi || tools.includes('next'))}<button class="ic" aria-label={$t('player.controls.next')} data-label={desk ? $t('player.controls.next') : undefined} title={$t('player.controls.nextKey')} on:click={goNext}><Icon name="skip-next" size={ICON} /></button>{/if}
         {#if seriesId}
           <div class="mwrap">
             <button class="ic" bind:this={epBtn} aria-label={$t('player.controls.episodes')} data-label={desk ? $t('player.controls.episodes') : undefined} title={$t('player.controls.episodes')} aria-expanded={menu === 'episodes'} on:click={() => toggleMenu('episodes')}><Icon name="list" size={ICON} /></button>
-            {#if menu === 'episodes'}<div class="menu bare" in:cardIn={{ origin: 'bottom right' }} out:cardOut><EpisodesPanel {seriesId} {seasonId} currentId={itemId} on:pick={pickEpisode} on:close={closeEpisodes} /></div>{/if}
+            {#if menu === 'episodes'}<div class="menu bare" in:cardIn={{ origin: 'bottom right' }} out:cardOut><EpisodesPanel {seriesId} {seasonId} currentId={itemId} synopsis={phoneUi} on:pick={pickEpisode} on:close={closeEpisodes} /></div>{/if}
           </div>
         {/if}
         {#if showScenes}
@@ -1572,8 +1706,8 @@
             {#if menu === 'chapters'}<div class="menu bare" in:cardIn={{ origin: 'bottom right' }} out:cardOut><ScenesPanel {chapters} current={shown} {duration} trickplay={info?.trickplay} on:seek={(e) => { seekTo(e.detail.time); closeScenes(); }} on:close={closeScenes} /></div>{/if}
           </div>
         {/if}
-        {#if air && (airState.available || airOn || airState.ready || airState.busy)}<button class="ic" class:on={airOn} class:airbusy={airState.busy} aria-pressed={airOn} aria-busy={airState.busy} data-testid="airplay" aria-label={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} data-label={desk ? $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') : undefined} title={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} on:click={() => air?.pick()}><Icon name="airplay" size={ICON} /></button>{/if}
-        <button class="ic" class:on={showXray || peek} bind:this={castBtn} aria-label={$t('scenes.info.open')} data-label={desk ? $t('scenes.info.open') : undefined} title={$t(coarse ? 'scenes.info.open' : 'scenes.info.openKey')} aria-pressed={showXray} on:click={castButton}><Icon name="users" size={ICON} /></button>
+        {#if !phoneUi && air && (airState.available || airOn || airState.ready || airState.busy)}<button class="ic" class:on={airOn} class:airbusy={airState.busy} aria-pressed={airOn} aria-busy={airState.busy} data-testid="airplay" aria-label={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} data-label={desk ? $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') : undefined} title={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} on:click={() => air?.pick()}><Icon name="airplay" size={ICON} /></button>{/if}
+        {#if !phoneUi}<button class="ic" class:on={showXray || peek} bind:this={castBtn} aria-label={$t('scenes.info.open')} data-label={desk ? $t('scenes.info.open') : undefined} title={$t(coarse ? 'scenes.info.open' : 'scenes.info.openKey')} aria-pressed={showXray} on:click={castButton}><Icon name="users" size={ICON} /></button>{/if}
         {#if info || tvSession}
           <div class="mwrap">
             <button class="ic" aria-label={$t('player.controls.tracks')} data-label={desk ? $t('player.controls.tracks') : undefined} title={$t('player.controls.tracksKey')} aria-expanded={menu === 'tracks'} on:click={() => toggleMenu('tracks')}><Icon name="subtitles" size={ICON} /></button>
@@ -1600,10 +1734,10 @@
         {/if}
         {#if !partyMode}
           <div class="mwrap">
-            {#if !coarse}<button class="ic" aria-label={$t('player.speed.aria', { r: speedLabel(rate, $t) })} data-label={desk ? $t('player.speed.aria', { r: speedLabel(rate, $t) }) : undefined} title={$t('player.speed.short')} aria-expanded={menu === 'speed'} on:click={() => toggleMenu('speed')}><Icon name="gauge" size={ICON} />{#if rate !== 1}<span class="ratebadge" aria-hidden="true">{$t('player.speed.rate', { r: rate })}</span>{/if}</button>{/if}
+            {#if speedBtn}<button class="ic" aria-label={$t('player.speed.aria', { r: speedLabel(rate, $t) })} data-label={desk ? $t('player.speed.aria', { r: speedLabel(rate, $t) }) : undefined} title={$t('player.speed.short')} aria-expanded={menu === 'speed'} on:click={() => toggleMenu('speed')}><Icon name="gauge" size={ICON} />{#if rate !== 1}<span class="ratebadge" aria-hidden="true">{$t('player.speed.rate', { r: rate })}</span>{/if}</button>{/if}
             {#if menu === 'speed'}
               <div class="menu speed" data-nav data-scope role="dialog" aria-label={$t('player.speed.title')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
-                <h3>{#if coarse}<button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{/if}{$t('player.speed.title')}</h3>
+                <h3>{#if !speedBtn}<button class="back" aria-label={$t('player.controls.backToMore')} on:click={() => (menu = 'more')}>‹</button>{/if}{$t('player.speed.title')}</h3>
                 <div class="speeds" role="group" aria-label={$t('player.speed.short')}>
                   {#each SPEEDS as r}<button class="sp-opt" class:on={rate === r} aria-pressed={rate === r} on:click={() => setRate(r)}><span class="dot" aria-hidden="true"></span>{speedLabel(r, $t)}</button>{/each}
                 </div>
@@ -1612,19 +1746,22 @@
           </div>
         {/if}
         <div class="mwrap">
-          <button class="ic" aria-label={$t('player.controls.more')} data-label={desk ? $t('player.controls.more') : undefined} title={$t('player.controls.more')} bind:this={moreBtn} aria-expanded={menu === 'more' || menu === 'scenes' || menu === 'settings' || (coarse && (menu === 'speed' || menu === 'chapters'))} on:click={() => (menu = menu === '' || (menu !== 'more' && menu !== 'scenes' && menu !== 'settings' && !(coarse && (menu === 'speed' || menu === 'chapters'))) ? 'more' : '')}>
+          <button class="ic" aria-label={$t('player.controls.more')} data-label={desk ? $t('player.controls.more') : undefined} title={$t('player.controls.more')} bind:this={moreBtn} aria-expanded={menu === 'more' || menu === 'scenes' || menu === 'settings' || moreSub} on:click={() => (menu = menu === '' || (menu !== 'more' && menu !== 'scenes' && menu !== 'settings' && !moreSub) ? 'more' : '')}>
             <svg width={ICON} height={ICON} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
             {#if sleepAt}<span class="sleepdot" title={$t('player.sleep.left', { t: sleepLeft })}></span>{/if}
           </button>
           {#if menu === 'more'}
             <div class="menu more" data-nav data-scope role="dialog" aria-label={$t('player.controls.more')} in:cardIn={{ origin: 'bottom right' }} out:cardOut>
-              {#if coarse && !partyMode}<button class="mi" on:click={() => (menu = 'speed')}><Icon name="gauge" size={20} />{$t('player.speed.title')}{#if rate !== 1}<span class="muted"> · {$t('player.speed.rate', { r: rate })}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>{/if}
+              {#if coarse && !partyMode && (!phoneUi || extras.includes('speed'))}<button class="mi" on:click={() => (menu = 'speed')}><Icon name="gauge" size={20} />{$t('player.speed.title')}{#if rate !== 1}<span class="muted"> · {$t('player.speed.rate', { r: rate })}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>{/if}
+              {#if extras.includes('next')}<button class="mi" on:click={goNext}><Icon name="skip-next" size={20} />{$t('player.controls.next')}</button>{/if}
               {#if coarse && showScenes}<button class="mi" on:click={() => (menu = 'chapters')}><Icon name="film" size={20} />{$t('scenes.chapters.open')}<span class="chev" aria-hidden="true">›</span></button>{/if}
               <button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />{$t('player.bookmark.menu')}<span class="chev" aria-hidden="true">›</span></button>
               <button class="mi" class:on={showXray} aria-pressed={showXray} on:click={() => { if (showXray) { menu = ''; closeCastInfo(); } else openCastInfo(tvMode()); }}><Icon name="users" size={20} />{$t('scenes.info.open')}</button>
-              {#if !partyMode && ($castState.available || $castState.connected)}<button class="mi" class:on={casting} aria-pressed={casting} on:click={castClick}><Icon name="cast" size={20} />{castLabel}</button>{/if}
-              {#if phone && !remote}<button class="mi" on:click={lockNow}><Icon name="lock" size={20} />{$t('player.lock.lockAria')}</button>{/if}
+              {#if !phoneUi && !partyMode && ($castState.available || $castState.connected)}<button class="mi" class:on={casting} aria-pressed={casting} on:click={castClick}><Icon name="cast" size={20} />{castLabel}</button>{/if}
+              {#if phone && !phoneUi && !remote}<button class="mi" on:click={lockNow}><Icon name="lock" size={20} />{$t('player.lock.lockAria')}</button>{/if}
               {#if pipOk && !remote}<button class="mi" class:on={inPip} aria-pressed={inPip} aria-keyshortcuts="P" on:click={() => { menu = ''; void pip(); }}><Icon name="pip" size={20} />{$t('player.controls.pip')}</button>{/if}
+              {#if phoneUi && volOk && tvSession?.kind !== 'airplay'}<button class="mi" on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : 'volume'} size={20} />{muted ? $t('player.unmute') : $t('player.mute')}</button>{/if}
+              {#if phoneUi && !tvSession}<button class="mi" on:click={() => { menu = ''; toggleFullscreen(); }}><Icon name={fullscreen ? 'fullscreen-exit' : 'fullscreen'} size={20} />{fullscreen ? $t('player.controls.exitFullscreen') : $t('player.controls.fullscreen')}</button>{/if}
               <button class="mi" on:click={() => (menu = 'settings')}><Icon name="settings" size={20} />{$t('player.controls.settings')}{#if sleepAt}<span class="muted"> · {$t('player.sleep.left', { t: sleepLeft })}</span>{/if}<span class="chev" aria-hidden="true">›</span></button>
               {#if coarse && !tvMode() && !remote && !airOn && !airState.available && !$castState.available}<p class="modeinfo tvhint" data-testid="tv-hint"><Icon name="tv" size={16} /><span>{$t('player.airplay.tvHint', { url: `${location.host}/tv` })}</span></p>{/if}
               {#if modeLabel}<p class="modeinfo"><Icon name="info" size={16} /><span>{$t('player.mode.label', { mode: modeLabel })}</span></p>{/if}
@@ -1655,10 +1792,13 @@
             </div>
           {/if}
         </div>
-        {#if !tvSession}<button class="ic" aria-label={fullscreen ? $t('player.controls.exitFullscreen') : $t('player.controls.fullscreen')} data-label={desk ? (fullscreen ? $t('player.controls.exitFullscreen') : $t('player.controls.fullscreen')) : undefined} title={$t('player.controls.fullscreenKey')} on:click={toggleFullscreen}><Icon name={fullscreen ? 'fullscreen-exit' : 'fullscreen'} size={ICON} /></button>{/if}
+        {#if !tvSession && !phoneUi}<button class="ic" aria-label={fullscreen ? $t('player.controls.exitFullscreen') : $t('player.controls.fullscreen')} data-label={desk ? (fullscreen ? $t('player.controls.exitFullscreen') : $t('player.controls.fullscreen')) : undefined} title={$t('player.controls.fullscreenKey')} on:click={toggleFullscreen}><Icon name={fullscreen ? 'fullscreen-exit' : 'fullscreen'} size={ICON} /></button>{/if}
       </div>
     </div>
   </div>
+  {#if phoneUi}<ProgressLine {pct} shown={!showUi && !locked && credits !== 'corner'} />{/if}
+  <!-- one entry for whatever panel is open (a menu, Cast & info opened by the viewer, the page's own): Back closes it -->
+  <BackLayer open={phoneUi && (menu !== '' || xray || extPanel)} key="panel" on:back={closePanels} bind:this={menuLayer} />
   {/if}
 </div>
 
@@ -1895,7 +2035,7 @@
   .stage.phone .cc .ccp { width: 76px; min-width: 76px; min-height: 76px; }
   .stage.phone .cc .ic:hover:not(:disabled) { transform: none; background: rgba(0,0,0,.55); }
   .cc.hide { opacity: 0; pointer-events: none; } .cc.hide .ic { pointer-events: none; }
-  .ccp.busy::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 4px solid rgba(255,255,255,.2); border-top-color: var(--acc); animation: sp .9s linear infinite; pointer-events: none; }
+  .ccp.busy::after, .pill .ic.big.busy::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 4px solid rgba(255,255,255,.2); border-top-color: var(--acc); animation: sp .9s linear infinite; pointer-events: none; }
   /* bottom: time · seek bar · time, then one row of evenly spaced icons; reaches the screen edge, padded by the home indicator */
   .stage.phone .ctl { padding: 2rem max(.75rem, var(--safe-right)) calc(.2rem + var(--safe-bottom)) max(.75rem, var(--safe-left)); }
   .stage.phone .timeline { gap: .75rem; min-height: 44px; }
@@ -1917,37 +2057,37 @@
   .stage.phone .menu.bare :global(.eps), .stage.phone .menu.bare :global(.scn) { width: 100%; max-height: calc(100dvh - var(--menu-gap)); }
   .stage.phone .skipbtn { right: calc(max(.8rem, var(--safe-right)) + var(--inset, 0px)); bottom: calc(var(--bar-h, 7rem) + .5rem); }
   /* locked: the unlock button alone, centred above the home indicator */
-  .stage.phone .lockbtn { top: auto; left: 50%; transform: translateX(-50%); bottom: calc(1.5rem + var(--safe-bottom)); width: 56px; min-height: 56px; }
+  :is(.stage.phone, .stage.pui) .lockbtn { top: auto; left: 50%; transform: translateX(-50%); bottom: calc(1.5rem + var(--safe-bottom)); width: 56px; min-height: 56px; }
   /* casting: the device line moves up, the centre keeps play / ±10 for the receiver */
-  .stage.phone .castov.center { place-items: start center; padding-top: calc(4.6rem + var(--safe-top)); }
+  :is(.stage.phone, .stage.pui) .castov.center { place-items: start center; padding-top: calc(4.6rem + var(--safe-top)); }
   /* the cast screen on a phone: the card in the upper half (play / ±10 sit in the centre), smaller as the height shrinks */
   /* the cast screen on a phone: card and play / ±10 as one group, centred between the device row and the progress bar
      (--rcard-h = the card's height, measured; 76px = the play button) */
-  .stage.phone.rmt {
+  :is(.stage.phone, .stage.pui).rmt {
     --r-top: calc(4.2rem + var(--safe-top) + 44px + .8rem);
     --r-free: calc(100% - var(--bar-h, 8.6rem) - var(--r-top));
     --r-grp: calc(var(--rcard-h, 0px) + 1rem + 76px);
     --r-gtop: calc(var(--r-top) + max(0px, (var(--r-free) - var(--r-grp)) / 2));
   }
-  .stage.phone .remote { padding-top: calc(4.2rem + var(--safe-top)); }
-  .stage.phone .rmid { position: static; }
-  .stage.phone .rcard { position: absolute; top: var(--r-gtop); left: max(16px, var(--safe-left)); right: max(16px, var(--safe-right)); margin: 0 auto; width: auto; max-width: 420px; padding: .8rem; }
+  :is(.stage.phone, .stage.pui) .remote { padding-top: calc(4.2rem + var(--safe-top)); }
+  :is(.stage.phone, .stage.pui) .rmid { position: static; }
+  :is(.stage.phone, .stage.pui) .rcard { position: absolute; top: var(--r-gtop); left: max(16px, var(--safe-left)); right: max(16px, var(--safe-right)); margin: 0 auto; width: auto; max-width: 420px; padding: .8rem; }
   .stage.phone.rmt .cc { top: calc(var(--r-gtop) + var(--rcard-h, 0px) + 1rem + 38px); }
   /* < 600 px: stacked, the still full width on top (the hero), the lines centred below */
-  .stage.phone .rthumb { width: min(100%, max(9rem, calc((100dvh - 31rem) * 16 / 9))); justify-self: center; }
-  .stage.phone .racts { width: 100%; flex-wrap: nowrap; }
-  .stage.phone .racts button { flex: 1 1 0; min-width: 0; justify-content: center; }
-  .stage.phone .ron { font-size: .84rem; }
+  :is(.stage.phone, .stage.pui) .rthumb { width: min(100%, max(9rem, calc((100dvh - 31rem) * 16 / 9))); justify-self: center; }
+  :is(.stage.phone, .stage.pui) .racts { width: 100%; flex-wrap: nowrap; }
+  :is(.stage.phone, .stage.pui) .racts button { flex: 1 1 0; min-width: 0; justify-content: center; }
+  :is(.stage.phone, .stage.pui) .ron { font-size: .84rem; }
   /* from 600 px: the still beside the titles, the buttons below */
   @media (min-width: 600px) {
-    .stage.phone .rcard { grid-template-columns: 9rem minmax(0, 1fr); column-gap: .9rem; row-gap: .15rem; justify-items: start; align-items: center; text-align: left; max-width: 520px; }
-    .stage.phone .rthumb { width: 100%; grid-row: 1 / span 4; margin: 0; align-self: start; }
-    .stage.phone .rcard > :not(.rthumb):not(.racts):not(.sr) { grid-column: 2; }
-    .stage.phone .racts { grid-column: 1 / -1; margin-top: .5rem; }
+    :is(.stage.phone, .stage.pui) .rcard { grid-template-columns: 9rem minmax(0, 1fr); column-gap: .9rem; row-gap: .15rem; justify-items: start; align-items: center; text-align: left; max-width: 520px; }
+    :is(.stage.phone, .stage.pui) .rthumb { width: 100%; grid-row: 1 / span 4; margin: 0; align-self: start; }
+    :is(.stage.phone, .stage.pui) .rcard > :not(.rthumb):not(.racts):not(.sr) { grid-column: 2; }
+    :is(.stage.phone, .stage.pui) .racts { grid-column: 1 / -1; margin-top: .5rem; }
   }
-  @media (max-height: 560px) { .stage.phone .rthumb { display: none; } }
-  .stage.phone .castbox { grid-auto-flow: column; align-items: center; gap: .7rem; font-size: .9rem; }
-  .stage.phone .castbox button { padding: .4rem .9rem; min-height: 44px; }
+  @media (max-height: 560px) { :is(.stage.phone, .stage.pui) .rthumb { display: none; } }
+  :is(.stage.phone, .stage.pui) .castbox { grid-auto-flow: column; align-items: center; gap: .7rem; font-size: .9rem; }
+  :is(.stage.phone, .stage.pui) .castbox button { padding: .4rem .9rem; min-height: 44px; }
   /* landscape phone: seek row and icons on one line when they fit (else the icons wrap below), tighter spacing = more picture */
   @media (orientation: landscape) and (max-height: 540px) {
     .stage.phone .ctl { display: flex; flex-wrap: wrap; align-items: center; column-gap: .75rem; padding-top: 1.4rem; }
@@ -1956,13 +2096,94 @@
     .stage.phone .menu, .stage.phone .menu.tracks, .stage.phone .menu.more, .stage.phone .menu.scenes, .stage.phone .menu.speed, .stage.phone .menu.bare { left: auto; width: min(34rem, calc(100vw - 1rem - var(--safe-left) - var(--safe-right) - var(--inset, 0px))); }
     .stage.phone .menu.tracks { flex-direction: row; overflow: hidden; }
     .stage.phone .menu.tracks > div { max-height: calc(100dvh - var(--menu-gap) - 1.6rem); overflow-y: auto; }
-    .stage.phone .castov.center { padding-top: calc(3.6rem + var(--safe-top)); }
-    .stage.phone.rmt { --r-top: calc(3.4rem + var(--safe-top) + 44px + .5rem); }
-    .stage.phone .remote { padding-top: calc(3.4rem + var(--safe-top)); }
-    .stage.phone .ron { display: none; }
+    :is(.stage.phone, .stage.pui) .castov.center { padding-top: calc(3.6rem + var(--safe-top)); }
+    :is(.stage.phone, .stage.pui).rmt { --r-top: calc(3.4rem + var(--safe-top) + 44px + .5rem); }
+    :is(.stage.phone, .stage.pui) .remote { padding-top: calc(3.4rem + var(--safe-top)); }
+    :is(.stage.phone, .stage.pui) .ron { display: none; }
     .stage.phone .cc .ccs { width: 56px; min-width: 56px; min-height: 56px; }
     .stage.phone .cc .ccp { width: 68px; min-width: 68px; min-height: 68px; }
   }
+
+  /* ---- phone player (pui: touch, not TV, not kids; spec 2026-11-08 block 4 §1): top bar of glass circles, one bottom dock
+     (title, timeline, two glass pills) laid out with flex column + gap, so nothing can overlap whatever the title, language or
+     rotation. Every side follows its safe-area inset; hiding fades opacity (250 ms), never a cut. ---- */
+  .stage.pui { --dock-w: calc(100vw - var(--safe-left) - var(--safe-right) - 32px - var(--inset, 0px)); }
+  /* the cast screen: no centre play button on the phone player, the card alone is centred */
+  .stage.pui.rmt { --r-grp: var(--rcard-h, 0px); }
+  /* the page's top slot (watch, party): .ovl already holds the safe-area padding and the scrim, so the slot brings neither */
+  .stage.pui .ovl > :global(.top) { padding: 0; background: none; flex: 1 1 auto; min-width: 0; }
+  /* scrubbing on touch: the 3 px rail keeps a hit area of at least 44 px (3 + 2 × 21) */
+  .stage.pui .track::before { top: -21px; bottom: -21px; }
+  .stage.pui .ovl { right: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; transition: opacity 250ms ease;
+    padding: calc(var(--safe-top) + 8px) calc(var(--safe-right) + 16px + var(--inset, 0px)) 0 calc(var(--safe-left) + 16px); }
+  .stage.pui .ovl::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: calc(100% + 72px); z-index: -1; pointer-events: none; background: linear-gradient(rgba(0,0,0,.62), rgba(0,0,0,.25) 60%, transparent); }
+  .ctl.dock { right: 0; display: flex; flex-direction: column; gap: 10px; background: none; transition: none;
+    padding: 0 calc(var(--safe-right) + 16px + var(--inset, 0px)) calc(var(--safe-bottom) + 12px) calc(var(--safe-left) + 16px); }
+  .ctl.dock::before { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: calc(100% + 72px); z-index: -1; pointer-events: none;
+    background: linear-gradient(transparent, rgba(0,0,0,.5) 40%, rgba(0,0,0,.85)); transition: opacity 250ms ease; }
+  /* hidden: the dock box stays (pointer-events off), its parts fade; the skip button stays visible and tappable */
+  .ctl.dock.hide { opacity: 1; }
+  .ctl.dock > :global(*) { transition: opacity 250ms ease; }
+  .ctl.dock.hide::before, .ctl.dock.hide > :global(*:not(.ptitle)), .ctl.dock.hide :global(.ptx) { opacity: 0; }
+  .ctl.dock.hide .skipbtn { pointer-events: auto; }
+  .ctl.dock .skipbtn { position: static; z-index: auto; min-height: 44px; padding: .6rem 1.1rem; border-radius: 10px; font-weight: 800; white-space: nowrap; }
+  .ctl.dock .skipbtn:active:not(:disabled) { transform: none; } /* no press shrink: a tap at its rounded corner must not slip off before the release */
+  .ctl.dock .tlrow { gap: 12px; }
+  .ctl.dock .tlrow .el, .ctl.dock .tlrow .rem { min-width: 2.9rem; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.85); }
+  .stage.pui .knob { transform: scale(1); }
+  /* both pills share the row's height (stretch); with many tools (a party adds its own) the buttons give up to 4 px each and,
+     when even that does not fit (320 px), the tools pill moves to its own line, end-aligned: never off screen */
+  .ctl.dock .row { display: flex; flex-wrap: wrap; align-items: stretch; justify-content: space-between; gap: 8px; }
+  .ctl.dock .grp { gap: .15rem; flex-wrap: nowrap; flex: 0 1 auto; min-width: 0; }
+  .ctl.dock .pill.tp { margin-left: auto; }
+  /* menus hang off the tools pill (position: relative; a blurred pill is their containing block either way) */
+  .ctl.dock .pill { position: relative; }
+  .ctl.dock .mwrap { display: contents; } /* its button is a flex item of the pill (shrinks with the others) */
+  .ctl.dock .pill .ic { flex: 0 1 48px; width: 48px; min-width: 44px; min-height: 48px; }
+  .ctl.dock .pill .ic.big { flex: 0 1 56px; width: 56px; min-width: 48px; min-height: 56px; }
+  .ctl.dock .ic:hover:not(:disabled) { transform: none; }
+  .ctl.dock .pill button.ic::after { display: none; } /* no hover label chips on touch */
+  /* panels (spec §2): one glass card directly above the timeline row (its top − 8 px) and below the top bar, scrolling inside
+     (--pnl-b / --pnl-h from panelBox, measured on the stage). The tools pill is the cards' containing block (it is positioned, and
+     its blur would make it one anyway), so its distance from the stage edges (--pill-*) is taken off. Landscape: the end side,
+     at most 380 px wide; portrait: full width minus the side insets. */
+  .ctl.dock .menu, .ctl.dock .menu.tracks, .ctl.dock .menu.more, .ctl.dock .menu.scenes, .ctl.dock .menu.speed, .ctl.dock .menu.bare {
+    position: absolute; bottom: calc(var(--pnl-b, 0px) - var(--pill-b, 0px)); max-height: var(--pnl-h, 50vh); overflow-y: auto; overscroll-behavior: contain;
+    left: auto; right: calc(var(--safe-right) + 16px + var(--inset, 0px) - var(--pill-r, 0px));
+    width: min(380px, var(--dock-w)); min-width: 0; max-width: none; }
+  .stage.pui.port .ctl.dock :is(.menu, .menu.tracks, .menu.more, .menu.scenes, .menu.speed, .menu.bare) {
+    left: calc(var(--safe-left) + 16px - var(--pill-l, 0px)); right: calc(var(--safe-right) + 16px - var(--pill-r, 0px)); width: auto; }
+  /* glass card like the desk menus (hairline, 14 px radius; the blur rule is .ctl.blur's). Denser fill than the desk's .62: the
+     card sits inside the blurred pill (its backdrop root), so over sharp video the fill carries the contrast */
+  .ctl.dock .menu:not(.bare) { background: rgba(20,20,24,.78); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; box-shadow: 0 18px 40px rgba(0,0,0,.55); }
+  .ctl.dock .menu.tracks h3 { background: rgba(20,20,24,.94); }
+  /* audio & subtitles: two columns in landscape (the effects below them), sections in portrait; the card scrolls as one */
+  .ctl.dock .menu.tracks { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .4rem 1rem; }
+  .stage.pui.port .ctl.dock .menu.tracks { grid-template-columns: 1fr; }
+  .ctl.dock .menu.tracks > div { min-width: 0; max-height: none; overflow: visible; }
+  .ctl.dock .menu.tracks .mi { white-space: normal; overflow-wrap: anywhere; }
+  .ctl.dock .menu.bare { overflow: visible; }
+  .ctl.dock .menu.bare :global(.eps), .ctl.dock .menu.bare :global(.scn) { width: 100%; max-height: var(--pnl-h, 50vh); border-radius: 14px; border-color: rgba(255,255,255,.12); }
+  /* Cast & info (opened from More, or by itself after a pause): the same panel box, never over the top bar, scrolling inside */
+  .stage.pui .cihost :global(.ci) { top: auto; bottom: var(--pnl-b, 50%); max-height: var(--pnl-h, 50%); height: auto;
+    left: auto; right: calc(var(--safe-right) + 16px + var(--inset, 0px)); width: min(380px, var(--dock-w)); border-radius: 14px; }
+  .stage.pui.port .cihost :global(.ci) { left: calc(var(--safe-left) + 16px); right: calc(var(--safe-right) + 16px); width: auto; }
+  /* it enters from its own side: from the end side in landscape, rising in portrait; instant without motion (calm, reduced) */
+  .stage.pui .cihost :global(.ci) { animation-name: ff-pnl-ci-end; }
+  .stage.pui.port .cihost :global(.ci) { animation-name: ff-pnl-ci-up; }
+  .stage.pui:not(.pmo) .cihost :global(.ci) { animation: none; }
+  @keyframes -global-ff-pnl-ci-end { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+  @keyframes -global-ff-pnl-ci-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+  /* the page's top slot spans the bar's free middle: only its own controls take taps, the rest goes to the picture (double-tap seek) */
+  .stage.pui .ovl > :global(.top) { pointer-events: none; }
+  .ctl.dock .speeds { flex-wrap: wrap; justify-content: center; } .ctl.dock .speeds::before { display: none; } .ctl.dock .sp-opt { min-width: 64px; }
+  /* narrow phones (320 px): three tools and the playback pill still fit side by side, every target stays ≥ 44 px */
+  @media (max-width: 359px) {
+    .ctl.dock .pill { padding: .2rem .1rem; gap: 0; }
+    .ctl.dock .pill .ic { flex-basis: 44px; width: 44px; min-width: 44px; min-height: 44px; }
+    .ctl.dock .pill .ic.big { flex-basis: 48px; width: 48px; min-width: 48px; min-height: 48px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .stage.pui .ovl, .ctl.dock::before, .ctl.dock > :global(*) { transition: none; } }
 
   /* ---- desktop layout (desk: desktop width, not TV / phone / kids; spec 2026-11-08 §1–2) ----
      title block bottom left, the timeline row with both times, then two glass pills (playback left, tools right).
@@ -1970,6 +2191,12 @@
   /* desktop pause screen: the picture darkens and zooms a little (transform / filter only, no motion in calm mode) */
   .stage.dpause > video { filter: brightness(.35); transform: scale(1.03); }
   .stage.desk.dmo > video { transition: filter 500ms var(--m-emph-out, ease-out), transform 500ms var(--m-emph-out, ease-out); }
+  /* phone pause screen: the zoom only; the dimming is the screen's own opacity layer (the brightness gesture owns the inline filter) */
+  .stage.ppause > video { transform: scale(1.03); }
+  .stage.pui.pmo:not(.cred):not(.credout) > video { transition: transform 500ms var(--m-emph-out, ease-out); }
+  /* the skip button that stays with hidden controls fades too: it would sit in the pause screen's text */
+  .stage.ppause .ctl.dock.hide > :global(.ptitle) { opacity: 0; }
+  .stage.ppause .ctl.dock.hide .skipbtn { pointer-events: none; }
   /* credits sequence (spec 2026-11-08 §4): the picture glides into the top-left corner on a spring and gains rounded corners and a
      shadow; transform / opacity only. Calm mode / reduced motion: no transition; a tripped frame guard: an opacity crossfade instead */
   .stage.cred > video { transform: translate(-27%, -24%) scale(.42); border-radius: 14px; box-shadow: 0 0 0 2.5px rgba(255, 255, 255, .2), 0 24px 64px rgba(0, 0, 0, .6); }
@@ -1980,6 +2207,19 @@
   @keyframes ff-cred-fade { from { opacity: 0; } to { opacity: 1; } }
   /* same frames under another name: the class swap cred -> credout restarts the animation */
   @keyframes ff-cred-fade-out { from { opacity: 0; } to { opacity: 1; } }
+  /* phones (spec 2026-11-08 §4): the picture glides into the top-start corner inside the safe area, its light edge clear of the
+     cut-out. Landscape: while `.cred` / `.credout` holds, the video box is cut to the letterboxed picture (same place, same size: the
+     swap is invisible), so the light edge frames the picture, not the pillarbox; at scale .42 it sits 12 px past safe-left and
+     below safe-top (21% = half the scaled box). --pw / --ph: the picture's box, --sw2 / --sh2: half the stage (set by the script) */
+  .stage.pui:not(.port):is(.cred, .credout) > video:not(.airprobe) { position: absolute; width: var(--pw, 100%); height: var(--ph, 100%);
+    max-height: none; left: calc(50% - var(--pw, 100%) / 2); top: calc(50% - var(--ph, 100%) / 2); }
+  .stage.pui.cred > video { transform: translate(calc(var(--safe-left) + 12px + 21% - var(--sw2, 50vw)), calc(var(--safe-top) + 12px + 21% - var(--sh2, 50vh))) scale(.42); }
+  /* portrait: while `.cred` / `.credout` holds, the video box is cut to the letterboxed picture (same place, same size: the swap is
+     invisible), so the box - and its light edge - frame the picture; it rises to just below the status bar at scale .92.
+     --va: the picture's aspect, --sh2: half the stage height (both set by the script) */
+  .stage.pui.port:is(.cred, .credout) > video:not(.airprobe) { position: absolute; left: 0; top: 50%; height: auto; max-height: none;
+    aspect-ratio: var(--va, 1.7778); margin-top: calc(-50% / var(--va, 1.7778)); }
+  .stage.pui.port.cred > video { transform: translateY(calc(var(--safe-top) + 12px + 46% - var(--sh2, 50vh))) scale(.92); }
   /* casting: the remote screen's card sits above the taller desk bar (its measured height, gradient padding included); otherwise the
      bar's box covers the card's buttons */
   .stage.desk .remote { padding-bottom: calc(var(--ctl-h, 7.5rem) + 1rem + var(--safe-bottom)); }
@@ -1992,12 +2232,12 @@
   .tlrow { gap: .9rem; }
   .tlrow .el, .tlrow .rem { min-width: 3.4rem; font-size: .9rem; color: #e8e8ec; font-variant-numeric: tabular-nums; }
   .tlrow .el { text-align: left; }
-  .stage.desk .track, .stage.desk .track:hover, .stage.desk .track:focus-visible { height: 3px; margin: 14px 0; background: transparent; transition: none; }
+  :is(.stage.desk, .stage.pui) .track, :is(.stage.desk, .stage.pui) .track:hover, :is(.stage.desk, .stage.pui) .track:focus-visible { height: 3px; margin: 14px 0; background: transparent; transition: none; }
   .bars { position: absolute; inset: 0; border-radius: 99px; background: rgba(255,255,255,.22); transform-origin: center; transition: transform 150ms var(--m-emph-out, ease-out); }
-  .stage.desk .track :is(.buf, .seg, .played, .chap) { transition: transform 150ms var(--m-emph-out, ease-out); }
-  .stage.desk .track:is(:hover, :focus-visible, .scrub) :is(.bars, .buf, .seg, .played, .chap) { transform: scaleY(2); }
-  .stage.desk .mark { top: -4px; }
-  .stage.desk .knob { width: 14px; height: 14px; margin: -7px 0 0 -7px; background: #fff; box-shadow: 0 0 0 3px rgba(255,79,109,.35); }
+  :is(.stage.desk, .stage.pui) .track :is(.buf, .seg, .played, .chap) { transition: transform 150ms var(--m-emph-out, ease-out); }
+  :is(.stage.desk, .stage.pui) .track:is(:hover, :focus-visible, .scrub) :is(.bars, .buf, .seg, .played, .chap) { transform: scaleY(2); }
+  :is(.stage.desk, .stage.pui) .mark { top: -4px; }
+  :is(.stage.desk, .stage.pui) .knob { width: 14px; height: 14px; margin: -7px 0 0 -7px; background: #fff; box-shadow: 0 0 0 3px rgba(255,79,109,.35); }
   .stage.desk .row { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
   .pill { flex-wrap: nowrap; gap: .15rem; padding: .25rem .4rem; border-radius: 99px; background: rgba(20,20,24,.62); border: 1px solid rgba(255,255,255,.12); }
   .ctl.blur .pill, .ctl.blur .menu:not(.bare) { -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }

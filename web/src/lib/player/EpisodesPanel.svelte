@@ -17,6 +17,8 @@
   export let seriesId: string;
   export let seasonId = '';
   export let currentId: string;
+  /** phone player: every row shows its overview on one line (the playing one too) */
+  export let synopsis = false;
   const dispatch = createEventDispatcher<{ pick: { id: string }; close: void }>();
 
   let seasons: Item[] = seasonCache.get(seriesId) ?? [], season = seasonId, episodes: Item[] | null = null, failed = false, list: HTMLUListElement;
@@ -55,7 +57,7 @@
   const pct = (e: Item) => (e.played ? 100 : e.runtimeTicks && e.positionTicks ? Math.min(100, (e.positionTicks / e.runtimeTicks) * 100) : 0);
 </script>
 
-<div class="eps" role="dialog" aria-label={$t('player.episodes.title')} data-nav data-scope bind:this={root}>
+<div class="eps" class:syn={synopsis} role="dialog" aria-label={$t('player.episodes.title')} data-nav data-scope bind:this={root}>
   <header>
     {#if seasons.length > 1}
       <label class="sel"><span class="sr">{$t('player.episodes.season')}</span>
@@ -82,7 +84,7 @@
             {/if}
             <span class="tx">
               <b>{e.name}</b>
-              {#if cur}<small class="now">{$t('player.episodes.playing')}{e.runtimeTicks ? ' · ' + mins(e.runtimeTicks) : ''}</small>{#if e.overview}<small class="ov">{e.overview}</small>{/if}{:else if e.runtimeTicks}<small>{mins(e.runtimeTicks)}</small>{/if}
+              {#if cur}<small class="now">{$t('player.episodes.playing')}{e.runtimeTicks ? ' · ' + mins(e.runtimeTicks) : ''}</small>{#if e.overview}<small class="ov">{e.overview}</small>{/if}{:else}{#if e.runtimeTicks}<small>{mins(e.runtimeTicks)}</small>{/if}{#if synopsis && e.overview}<small class="ov">{e.overview}</small>{/if}{/if}
             </span>
             {#if !cur && pct(e)}<span class="bar" aria-hidden="true"><i style="width:{pct(e)}%"></i></span>{/if}
           </button>
@@ -115,6 +117,8 @@
   small { color: var(--mut); font-size: .8rem; }
   .now { color: #fff; }
   .ov { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35; }
+  .syn .ov { -webkit-line-clamp: 1; line-clamp: 1; }
+  .syn .th { width: 80px; } /* phone panels are short (568×320 leaves ~120 px): the playing row stays compact */
   .bar { position: absolute; left: 3rem; right: .7rem; bottom: .3rem; height: 3px; background: rgba(255,255,255,.2); border-radius: 2px; overflow: hidden; }
   .bar i { bottom: 0; top: 0; height: auto; }
   .pad { padding: 1rem; margin: 0; }
