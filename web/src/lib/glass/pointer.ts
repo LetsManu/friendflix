@@ -35,7 +35,11 @@ export function sheen(node: HTMLElement): { destroy(): void } {
   s.setAttribute('aria-hidden', 'true');
   node.appendChild(s);
   let raf = 0, x = 0, y = 0;
-  const paint = () => { raf = 0; s.style.transform = sheenAt(node.getBoundingClientRect(), x, y); };
+  const paint = () => {
+    raf = 0;
+    if (!fxLive()) { s.classList.remove('on'); return; } // calm mode / reduced motion / a tripped guard mid-hover: off at once
+    s.style.transform = sheenAt(node.getBoundingClientRect(), x, y);
+  };
   const enter = (e: PointerEvent) => {
     if (!fxLive()) return;
     x = e.clientX; y = e.clientY;
@@ -44,6 +48,7 @@ export function sheen(node: HTMLElement): { destroy(): void } {
   };
   const move = (e: PointerEvent) => {
     if (!s.classList.contains('on')) return;
+    if (!fxLive()) { s.classList.remove('on'); return; }
     x = e.clientX; y = e.clientY;
     if (!raf) raf = requestAnimationFrame(paint);
   };
@@ -100,45 +105,68 @@ export function tiltStyles(s: TiltState, max = TILT_MAX): { card: string; band: 
  * and marks the row (`.tilt-row`) so siblings step back. `o` names the child selectors. Without `fxLive()` nothing moves.
  */
 export function tilt(node: HTMLElement, o: { card: string; glare: string; band: string; shadow: string; row?: string }): { destroy(): void } {
-  let cur: TiltState = { x: 0, y: 0, lift: 0 }, to: TiltState = { x: 0, y: 0, lift: 0 };
-  let gx = 0, gy = 0, raf = 0;
-  const q = (sel: string) => node.querySelector<HTMLElement>(sel);
-  const row = () => (o.row ? node.closest<HTMLElement>(o.row) : null);
+  const REST: TiltState = { x: 0, y: 0, lift: 0 };
+  let cur: TiltState = { ...REST }, to: TiltState = { ...REST };
+  let gx = 0, gy = 0, raf = 0, px = 0, py = 0, aimed = true, on = false;
+  /** the parts and the row, looked up once per hover (on enter), not on every frame */
+  let parts: Record<'card' | 'glare' | 'band' | 'shadow', HTMLElement | null> = { card: null, glare: null, band: null, shadow: null };
+  let rowEl: HTMLElement | null = null;
+  const paint = (s: TiltState) => {
+    const st = tiltStyles(s);
+    if (parts.card) parts.card.style.transform = st.card;
+    if (parts.band) parts.band.style.transform = st.band;
+    if (parts.shadow) parts.shadow.style.transform = `translateX(${st.shadowX}px) scale(${st.shadowScale})`;
+    if (parts.glare) parts.glare.style.transform = `translate(${Math.round(gx)}px, ${Math.round(gy)}px)`;
+  };
+  const unmark = () => { node.classList.remove('tilt-on'); rowEl?.classList.remove('tilt-row'); };
+  /** calm mode, reduced motion or a tripped guard mid-hover: everything back to rest at once, no loop, no guard pulses */
+  const halt = () => {
+    on = false;
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    cur = { ...REST }; to = { ...REST };
+    paint(cur);
+    unmark();
+  };
   const frame = () => {
     raf = 0;
+    if (!fxLive()) return halt();
+    if (!aimed) {
+      // one layout read per frame, only after the pointer moved
+      aimed = true;
+      const t = tiltTarget(node.getBoundingClientRect(), px, py);
+      to = { x: t.x, y: t.y, lift: 1 };
+      gx = t.gx; gy = t.gy;
+    }
     const { next, done } = tiltStep(cur, to);
     cur = next;
-    const st = tiltStyles(cur);
-    const card = q(o.card), glare = q(o.glare), band = q(o.band), shadow = q(o.shadow);
-    if (card) card.style.transform = st.card;
-    if (band) band.style.transform = st.band;
-    if (shadow) shadow.style.transform = `translateX(${st.shadowX}px) scale(${st.shadowScale})`;
-    if (glare) glare.style.transform = `translate(${Math.round(gx)}px, ${Math.round(gy)}px)`;
+    paint(cur);
     watchFrames();
     if (!done) raf = requestAnimationFrame(frame);
   };
   const run = () => { if (!raf) raf = requestAnimationFrame(frame); };
-  const aim = (e: PointerEvent) => {
-    const t = tiltTarget(node.getBoundingClientRect(), e.clientX, e.clientY);
-    to = { x: t.x, y: t.y, lift: 1 };
-    gx = t.gx; gy = t.gy;
-  };
-  let on = false;
   const enter = (e: PointerEvent) => {
     if (!fxLive()) return;
     on = true;
+    parts = { card: node.querySelector<HTMLElement>(o.card), glare: node.querySelector<HTMLElement>(o.glare), band: node.querySelector<HTMLElement>(o.band), shadow: node.querySelector<HTMLElement>(o.shadow) };
+    rowEl = o.row ? node.closest<HTMLElement>(o.row) : null;
     node.classList.add('tilt-on');
-    row()?.classList.add('tilt-row');
-    aim(e);
+    rowEl?.classList.add('tilt-row');
+    px = e.clientX; py = e.clientY; aimed = false;
     run();
   };
-  const move = (e: PointerEvent) => { if (on) { aim(e); run(); } };
+  const move = (e: PointerEvent) => {
+    if (!on) return;
+    if (!fxLive()) return halt();
+    px = e.clientX; py = e.clientY; aimed = false;
+    run();
+  };
   const leave = () => {
     if (!on) return;
     on = false;
-    to = { x: 0, y: 0, lift: 0 };
-    node.classList.remove('tilt-on');
-    row()?.classList.remove('tilt-row');
+    aimed = true;
+    to = { ...REST };
+    unmark();
     run();
   };
   node.addEventListener('pointerenter', enter);
@@ -150,8 +178,7 @@ export function tilt(node: HTMLElement, o: { card: string; glare: string; band: 
       node.removeEventListener('pointerenter', enter);
       node.removeEventListener('pointermove', move);
       node.removeEventListener('pointerleave', leave);
-      node.classList.remove('tilt-on');
-      row()?.classList.remove('tilt-row');
+      unmark();
     },
   };
 }

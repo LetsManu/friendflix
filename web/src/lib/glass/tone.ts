@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Glass contrast and artwork tone (glass spec §1.3). A frost surface is, from back to front: whatever is behind it (the
- * backdrop) → the dark scrim (`--fr-scrim-rgb` at alpha `--fr-scrim`) → the tint wash (artwork colour at `.5`, §8.2) → the
- * milk (`--fr-milk` at its lighter top alpha). White text sits on that composite and must reach WCAG AA (4.5:1).
+ * Glass contrast and artwork tone (glass spec §1.3). A frost surface paints, from back to front: whatever is behind it (the
+ * backdrop, 5 % brighter through the blur's `brightness(1.05)`) → the dark scrim (`--fr-scrim-rgb` at alpha `--fr-scrim`) →
+ * the milk (`--fr-milk` at its lighter top alpha; scrim and milk are the element's background) → the tint wash (`.frost-tint`,
+ * artwork colour at `.5`, §8.2). White text sits on that composite and must reach WCAG AA (4.5:1).
  *
  * Two kinds of backdrop (owner ruling 2026-11-09): over the dark ambient app background the composite is dark anyway, so
  * surfaces keep a light scrim (`SCRIM_LIGHT`) and stay milky. Where bright content nobody sampled can sit behind (artwork,
@@ -66,11 +67,19 @@ export function tintColor(c: RGB): RGB {
   return at(k);
 }
 
-/** what white text sits on: backdrop → scrim at `scrim` → tint at `TINT_PEAK` (if any) → milk at `MILK_TOP`, rounded */
-export function frostComposite(back: RGB, scrim: number, tint: RGB | null = null): RGB {
-  let c = over(back, SCRIM_RGB, scrim);
+/** the `brightness()` in `--fr-blur`: the blurred backdrop is 5 % brighter than the picture behind it */
+export const BLUR_BRIGHTNESS = 1.05;
+
+/**
+ * What white text sits on, in the painted order: the backdrop (brightened by `BLUR_BRIGHTNESS`, clamped) → the scrim at
+ * `scrim` → the milk at `milk` (the element's own background) → the tint wash at `TINT_PEAK` (if any; `.frost-tint` paints
+ * above the background), rounded.
+ */
+export function frostComposite(back: RGB, scrim: number, tint: RGB | null = null, milk = MILK_TOP): RGB {
+  let c = back.map((v) => Math.min(255, v * BLUR_BRIGHTNESS)) as RGB;
+  c = over(c, SCRIM_RGB, scrim);
+  c = over(c, MILK_RGB, milk);
   if (tint) c = over(c, tint, TINT_PEAK);
-  c = over(c, MILK_RGB, MILK_TOP);
   return [Math.round(c[0]), Math.round(c[1]), Math.round(c[2])];
 }
 
@@ -123,9 +132,12 @@ function remember(key: string, t: Tone | null) {
 export const cachedTone = (key: string): Tone | null | undefined => cache.get(key);
 
 /** samples `src` (same origin) on a 24×24 canvas once per `key`; null on load or taint errors */
+const pending = new Map<string, Promise<Tone | null>>();
 export function toneFor(key: string, src: string): Promise<Tone | null> {
   if (cache.has(key)) return Promise.resolve(cache.get(key)!);
-  return new Promise<Tone | null>((resolve) => {
+  const busy = pending.get(key);
+  if (busy) return busy; // the hover card and the detail page asking at once: one load, one sample
+  const p = new Promise<Tone | null>((resolve) => {
     const img = new Image();
     img.onload = () => {
       try {
@@ -141,7 +153,9 @@ export function toneFor(key: string, src: string): Promise<Tone | null> {
     };
     img.onerror = () => resolve(null);
     img.src = src;
-  }).then((t) => { remember(key, t); return t; });
+  }).then((t) => { pending.delete(key); remember(key, t); return t; });
+  pending.set(key, p);
+  return p;
 }
 
 /** inline custom properties for a surface (`style=`): the tint triple and the scrim; '' without a tone */
@@ -150,4 +164,4 @@ export function toneVars(t: Tone | null): string {
 }
 
 /** test hook: forget every sampled tone */
-export function clearTones(): void { cache.clear(); }
+export function clearTones(): void { cache.clear(); pending.clear(); }

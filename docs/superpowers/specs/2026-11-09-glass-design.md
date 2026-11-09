@@ -17,7 +17,7 @@ Owner choices (2026-11-09): the approved look is the mockup's tokens (§1). Play
 - **TV** (`html.tv`): solid panels with the same shapes. No backdrop blur and no grain (the existing `html.tv` rule already removes `backdrop-filter`). No pointer effects.
 - **Kids UI** keeps its look. Shared components on a kids profile (toasts, menus) use the solid fallback with the new shapes.
 - Own look: coral `#ff4f6d`, FriendFlix logo, Inter. Never another streaming service's name or a look-alike of one.
-- **Contrast.** White text on glass meets WCAG AA (4.5:1), also over bright artwork. A dark scrim layer is part of every text-bearing glass surface. It defaults to a value that passes over pure white. Over sampled artwork it is lowered only as far as the maths allows (§1.3).
+- **Contrast.** White text on glass meets WCAG AA (4.5:1), also over bright artwork. A dark scrim layer is part of every text-bearing glass surface. Over the dark ambient app background it is light (`.2`), which keeps the milky look and passes AA by far. Where bright content nobody sampled can sit behind (artwork, video) the surface takes the safe scrim `.70` (`.frost-safe`), which passes over pure white. Over sampled artwork the maths picks the scrim (§1.3).
 - Touch targets are at least 44×44 px. Every new or changed string exists in all seven locales (en, de, pl, es, fr, it, tr), with `de` as the type source.
 - **Owner rules.** Implementers write the tests and CI runs them. Implementers run the root `npm run typecheck`. Web vitest coverage stays at statements 94 % and branches 89 %, and every `web/src/**/*.ts` file counts, so pure helpers live in fully tested `.ts` files. Every commit ends with the two trailer lines (`Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`, `Claude-Session: https://claude.ai/code/session_016uMXgkH3UD9V4XN9PEeaKN`).
 
@@ -32,7 +32,8 @@ Owner choices (2026-11-09): the approved look is the mockup's tokens (§1). Play
 | `--fr-line` | `rgba(255,255,255,.2)` | 1 px border |
 | `--fr-hi` | `rgba(255,255,255,.28)` | inner top highlight (`inset 0 1px 0`) |
 | `--fr-blur` | `blur(38px) saturate(115%) brightness(1.05)` | backdrop filter |
-| `--fr-scrim-rgb` / `--fr-scrim` | `18, 16, 24` / `.70` | dark scrim under the milk; `.70` passes AA over pure white |
+| `--fr-scrim-rgb` / `--fr-scrim` | `18, 16, 24` / `.2` (`--fr-scrim-light`) | dark scrim under the milk; light over the dark ambient base (owner ruling 2026-11-09) |
+| `--fr-scrim-safe` | `.70` | the heavy scrim (`.frost-safe`) over unsampled artwork or video; passes AA over pure white |
 | `--fr-grain` | the mockup's 160 px `feTurbulence` SVG data URI | matte grain (`img-src` allows `data:`) |
 | `--fr-grain-a` | `.22` | grain opacity (`mix-blend-mode: overlay`) |
 | `--fr-shadow` / `--fr-shadow-card` | `0 18px 50px rgba(0,0,0,.35)` / `0 10px 30px rgba(0,0,0,.35)` | surfaces / artwork cards |
@@ -54,9 +55,10 @@ Curves (in `#lib/tv/motion` and as CSS tokens): `GLASS_SPRING = cubic-bezier(.34
 
 ### 1.3 Contrast and artwork tint
 
-- `tone.ts` computes the composite a person sees behind white text. The layers are, in order: backdrop → scrim (`--fr-scrim-rgb` at alpha `s`) → tint wash (tint colour at its peak alpha `.5`, §8.2) → milk (`--fr-milk` at `.19`, the lighter top). `scrimFor(bright, tint)` returns the smallest `s` in `.30….80` (steps of .02) for which white has a contrast of at least 4.5:1. The input `bright` is the mean of the brightest 10 % of the sampled pixels, so highlights count.
+- `tone.ts` computes the composite a person sees behind white text, in the painted order: backdrop (brightened by the blur's `brightness(1.05)`, clamped) → scrim (`--fr-scrim-rgb` at alpha `s`) → milk (`--fr-milk` at `.19`, the lighter top) → tint wash (tint colour at its peak alpha `.5`, §8.2). `scrimFor(bright, tint)` returns the smallest `s` in `.20….80` (steps of .02) for which white has a contrast of at least 4.5:1, both with the tint and without it (the wash fades out towards the far corner). The input `bright` is the mean of the brightest 10 % of the sampled pixels, so highlights count. A dark backdrop gets the light `.20`, pure white `.70`.
+- **Scrim model (owner ruling 2026-11-09).** Surfaces over the dark ambient app background keep the light scrim `.2` (`--fr-scrim` default): white text has 12:1 over the base `#0a090d` and 5.7:1 over the ambient's brightest glow. Surfaces where bright, unsampled content can sit behind them (artwork, the billboard, video) add `.frost-safe` (`.70`). Surfaces over sampled artwork set the computed scrim inline (`toneVars`), which wins over both. Hover states never add milk over the same scrim (that drops white text under AA); glass buttons light their edge instead.
 - The tint colour is the sampled artwork colour, kept to the same hue and darkened to a relative luminance of at most .18. With that limit, a solution always exists.
-- Tone is applied only to surfaces over known artwork: the hover card, the detail info panel and the phone preview sheet. Every other surface (menus, toasts, search sheet, bars) keeps the safe default `.70`.
+- Tone is applied only to surfaces over known artwork: the hover card, the detail info panel and the phone preview sheet. Every other surface uses the light default over the ambient background, and `.frost-safe` wherever it can sit over artwork or video (the top bar and search sheet over the billboard, menus and toasts on detail pages and over the player, phone sheets).
 - Samples are taken from same-origin images on a 24×24 canvas. They are cached per item id (up to 32 entries), so the detail page reuses what the hover card sampled.
 
 ## 2. Top bar and search (desktop)

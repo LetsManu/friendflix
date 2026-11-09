@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  AA, AMB_PEAK, cachedTone, clearTones, contrast, DARK_BASE, frostComposite, luminance, MILK_RGB, SCRIM_LIGHT, SCRIM_MAX, SCRIM_MIN,
-  SCRIM_RGB, SCRIM_SAFE, scrimFor, tintColor, TINT_LUM_MAX, toneFor, toneOf, toneVars, type RGB,
+  AA, AMB_PEAK, BLUR_BRIGHTNESS, cachedTone, clearTones, contrast, DARK_BASE, frostComposite, luminance, MILK_RGB, SCRIM_LIGHT, SCRIM_MAX, SCRIM_MIN,
+  MILK_TOP, SCRIM_RGB, SCRIM_SAFE, scrimFor, tintColor, TINT_LUM_MAX, toneFor, toneOf, toneVars, type RGB,
 } from './tone';
 
 const WHITE: RGB = [255, 255, 255];
@@ -20,7 +20,29 @@ describe('tone maths', () => {
     expect(luminance([2, 2, 2])).toBeCloseTo(2 / 255 / 12.92, 8); // the linear segment
   });
 
-  it('frostComposite layers backdrop, scrim, tint and milk in order', () => {
+  it('frostComposite brightens the backdrop like the blur does (brightness 1.05, clamped)', () => {
+    expect(BLUR_BRIGHTNESS).toBe(1.05);
+    expect(frostComposite([100, 100, 100], 0)).toEqual([0, 1, 2].map((i) => Math.round(105 * 0.81 + MILK_RGB[i]! * 0.19)));
+    expect(frostComposite([250, 250, 250], 0)).toEqual(frostComposite(WHITE, 0)); // 262.5 clamps to 255
+  });
+
+  it('what scrimFor picks passes AA on screen for mid and light greys (brightness included)', () => {
+    // an independent model of the painted surface: brightened backdrop, scrim, milk at its top alpha
+    const onScreen = (c: number, s: number): RGB => {
+      const b = Math.min(255, c * 1.05);
+      return [0, 1, 2].map((i) => Math.round((b * (1 - s) + SCRIM_RGB[i]! * s) * (1 - MILK_TOP) + MILK_RGB[i]! * MILK_TOP)) as RGB;
+    };
+    for (let c = 120; c <= 230; c += 5) expect(contrast(WHITE, onScreen(c, scrimFor([c, c, c])))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('a glass button hover must not add milk over the same scrim (app.css .frost-btn:hover lights the edge instead)', () => {
+    expect(contrast(WHITE, frostComposite(WHITE, SCRIM_SAFE))).toBeGreaterThanOrEqual(AA);
+    expect(contrast(WHITE, frostComposite(WHITE, SCRIM_SAFE, null, MILK_TOP + 0.07))).toBeLessThan(AA);
+    // nor would raising the scrim along with it keep every computed scrim passing
+    expect(contrast(WHITE, frostComposite([180, 180, 180], scrimFor([180, 180, 180]) + 0.04, null, MILK_TOP + 0.07))).toBeLessThan(AA);
+  });
+
+  it('frostComposite paints backdrop, scrim, milk, then the tint', () => {
     // no scrim, no tint: only the milk over the backdrop
     expect(frostComposite(BLACK, 0)).toEqual(MILK_RGB.map((c) => Math.round(c * 0.19)));
     // a full scrim hides the backdrop
@@ -29,6 +51,8 @@ describe('tone maths', () => {
     // the tint wash sits between them at .5
     const tinted = frostComposite(BLACK, 1, [200, 0, 0]);
     expect(tinted[0]).toBeGreaterThan(frostComposite(BLACK, 1)[0]);
+    // the tint is the top layer: half of it shows over whatever is under it
+    expect(frostComposite(BLACK, 1, [200, 0, 0])).toEqual(frostComposite(BLACK, 1).map((c, i) => Math.round(c * 0.5 + [200, 0, 0][i]! * 0.5)));
   });
 
   it('the safe default passes over pure white', () => {
@@ -166,10 +190,15 @@ describe('toneFor', () => {
     expect(await toneFor('a', '/other.jpg')).toBe(t); // from the cache, no second load
     expect(loads).toBe(1);
 
+    // two callers for one key at once: one load, one result
+    const [p1, p2] = [toneFor('both', '/b.jpg'), toneFor('both', '/b.jpg')];
+    expect(p2).toBe(p1);
+    expect(await p1).toEqual(t);
+    expect(loads).toBe(2);
     expect(await toneFor('broken', '/broken.jpg')).toBeNull();
     expect(cachedTone('broken')).toBeNull(); // null is cached too
     expect(await toneFor('broken', '/broken.jpg')).toBeNull();
-    expect(loads).toBe(2);
+    expect(loads).toBe(3);
 
     noContext = true;
     expect(await toneFor('noctx', '/a.jpg')).toBeNull();

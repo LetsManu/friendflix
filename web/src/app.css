@@ -156,13 +156,17 @@ button[aria-busy='true'] { cursor: progress; }
 .frost-panel { border-radius: var(--fr-r-panel); }
 .frost-sheet { border-radius: var(--fr-r-sheet); }
 /* a glass pill button (44 px), .round: a 44 px circle; it clips its sheen */
-.frost-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 44px; padding: 0 20px; border-radius: var(--fr-r-pill); font-weight: 800; overflow: hidden; }
+/* (no background transition from the global button rule: calm mode and the frame guard switch it to solid at once) */
+.frost-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 44px; padding: 0 20px; border-radius: var(--fr-r-pill); font-weight: 800; overflow: hidden; transition: transform var(--t-fast), opacity var(--t-fast); }
 .frost-btn.round { width: 44px; height: 44px; padding: 0; border-radius: 50%; }
-.frost-btn:hover:not(:disabled) { background: linear-gradient(180deg, rgba(var(--fr-milk-top), calc(var(--fr-milk-a2) + .07)), rgba(var(--fr-milk), calc(var(--fr-milk-a1) + .07))), rgba(var(--fr-scrim-rgb), var(--fr-scrim)); }
+/* hover lights the edge, not the fill: more milk over the same scrim would drop white text under AA (lib/glass/tone.test.ts);
+   the fill is restated so the global coral button:hover does not win */
+.frost-btn:hover:not(:disabled) { background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim)); border-color: rgba(255, 255, 255, .42); box-shadow: inset 0 1px 0 var(--fr-hi), inset 0 0 0 1px rgba(255, 255, 255, .14); }
 /* the selected light pill (rows, tabs, entries) */
 .frost-sel { background: var(--fr-sel); color: #fff; border-radius: var(--fr-r-pill); }
 /* the page dim behind a sheet (faded by opacity) */
 .frost-dim { position: fixed; inset: 0; background: rgba(8, 7, 11, .45); transition: opacity 200ms var(--fr-out); }
+html.m-still .frost-dim { transition: none; } /* calm mode / reduced motion: at once */
 /* the still ambient background for pages without artwork (never animated) */
 .frost-amb { position: fixed; inset: 0; z-index: -1; pointer-events: none; background:
   radial-gradient(60% 55% at 78% 22%, rgba(214, 92, 64, .55), transparent 70%),
@@ -173,7 +177,7 @@ button[aria-busy='true'] { cursor: progress; }
   background: radial-gradient(closest-side, rgba(255, 255, 255, .35), rgba(255, 255, 255, .08) 55%, transparent);
   mix-blend-mode: soft-light; opacity: 0; transition: opacity 300ms; }
 .frost-sheen.on { opacity: 1; }
-/* §8.2 artwork tint: two stacked layers (each sets --t, an rgb triple); the new one fades to .5 while the old one fades out */
+/* §8.2 artwork tint (painted above the milk and scrim, under the grain): two stacked layers (each sets --t, an rgb triple); the new one fades to .5 while the old one fades out */
 .frost-tint { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; z-index: -2; }
 .frost-tint i { position: absolute; inset: 0; opacity: 0; transition: opacity 600ms var(--fr-out);
   background: radial-gradient(120% 120% at 0% 100%, rgb(var(--t, var(--fr-tint))), transparent 70%); }

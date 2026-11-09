@@ -214,6 +214,71 @@ describe('sheen and tilt actions', () => {
     expect(row.classList.contains('tilt-row')).toBe(false);
   });
 
+  it('tilt looks its parts up once per hover and reads the box at most once per frame', () => {
+    const { node } = card();
+    let lookups = 0, reads = 0;
+    const qs = node.querySelector.bind(node), rect = node.getBoundingClientRect.bind(node);
+    node.querySelector = (sel: string) => { lookups++; return qs(sel); };
+    node.getBoundingClientRect = () => { reads++; return rect(); };
+    const a = tilt(node as unknown as HTMLElement, sel);
+    node.fire('pointerenter', 200, 0);
+    expect(lookups).toBe(4);
+    node.fire('pointermove', 150, 10);
+    node.fire('pointermove', 160, 20);
+    node.fire('pointermove', 170, 30);
+    expect(reads).toBe(0); // moves only note the point
+    flush(1);
+    expect(reads).toBe(1);
+    flush(5); // frames without a new move: no reads
+    expect(reads).toBe(1);
+    expect(lookups).toBe(4);
+    a.destroy();
+  });
+
+  it('calm mode or a tripped guard mid-hover stops tilt and sheen at once', () => {
+    const { row, node, parts } = card();
+    const a = tilt(node as unknown as HTMLElement, sel);
+    node.fire('pointerenter', 200, 0);
+    flush(3);
+    expect(parts.card.style.transform).not.toContain('scale(1)');
+    m.level = 'reduced'; // the guard trips
+    const watched = m.watched;
+    flush();
+    expect(m.watched).toBe(watched); // no more guard pulses
+    expect(frames).toHaveLength(0);
+    expect(parts.card.style.transform).toBe('translate3d(0, 0px, 0) rotateX(0deg) rotateY(0deg) scale(1)');
+    expect(node.classList.contains('tilt-on')).toBe(false);
+    expect(row.classList.contains('tilt-row')).toBe(false);
+    node.fire('pointermove', 10, 10); // stays off
+    node.fire('pointerleave');
+    expect(frames).toHaveLength(0);
+    // a move notices it too (before any frame runs)
+    m.level = 'full';
+    node.fire('pointerenter', 200, 0);
+    m.level = 'reduced';
+    node.fire('pointermove', 10, 10);
+    expect(frames).toHaveLength(0);
+    expect(node.classList.contains('tilt-on')).toBe(false);
+    a.destroy();
+
+    m.level = 'full';
+    const host = new El('host');
+    const b = sheen(host as unknown as HTMLElement);
+    const sp = host.children[0]!;
+    host.fire('pointerenter', 10, 10);
+    host.fire('pointermove', 20, 20);
+    m.level = 'reduced';
+    flush(); // the pending frame sees it
+    expect(sp.classList.contains('on')).toBe(false);
+    m.level = 'full';
+    host.fire('pointerenter', 10, 10);
+    m.level = 'reduced';
+    host.fire('pointermove', 20, 20); // and so does a move
+    expect(sp.classList.contains('on')).toBe(false);
+    expect(frames).toHaveLength(0);
+    b.destroy();
+  });
+
   it('tilt does nothing without fxLive(); missing parts and no row are fine', () => {
     m.level = 'reduced';
     const { row, node, parts } = card();
