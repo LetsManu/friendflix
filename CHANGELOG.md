@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [3.0.2] – Churros – 2026-11-09
+
 ### Fixed
 - **Glass highlights without seams.** The top bar no longer shows a lighter stripe across the middle of its glass pill, and the sliding selection in the admin sidebar and the settings menu no longer shows thin bright lines at its ends.
 
