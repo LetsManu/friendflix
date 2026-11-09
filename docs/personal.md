@@ -22,6 +22,7 @@ Profil-Einstellung `calm` (`PUT /api/prefs`, Einstellungen → „Ruhiger Modus�
 - `playPreview()` startet im ruhigen Modus nichts (Billboard-Trailer, Hover-Vorschau, Vorschau der Detailansicht) – nur ein ausdrücklicher Klick (`explicit = true`, „Trailer abspielen“) spielt noch.
 - `autoStartAllowed()` (`detail/autostart.ts`) kennt `calm`.
 - `html.calm` (gesetzt in `web/src/lib/stores.ts`) dämpft alle CSS-Animationen und Übergänge, wie `prefers-reduced-motion`; das System-Setting wird zusätzlich über `motionAllowed()` beachtet.
+- Glas wird fest: im ruhigen Modus und bei `prefers-reduced-motion` setzt die App `html.m-still`; alle Milchglas-Flächen (Kopfzeile, Vorschaukarte, Detail-Panel, Menüs, Hinweise, Admin) werden feste Panels gleicher Form, ohne Unschärfe, und Zustände wechseln sofort ([ui-kit.md, Glass](ui-kit.md#glass)).
 
 - Das Marken-Intro beim Kaltstart entfällt im ruhigen Modus (wie bei `prefers-reduced-motion`). Weil `/api/prefs` erst danach antwortet, merkt sich der Browser den Wert je Profil (`localStorage` `ff_calm:<profil>`, `cachedCalm()` in `stores.ts`, bei jedem Laden/Speichern aktualisiert); ohne diese Kopie (erster Besuch auf dem Gerät) wird ein laufendes Intro abgebrochen, sobald die Einstellungen `calm` melden. Das Intro nach der Profilwahl zeigt dann nur die ruhige Überblendung.
 

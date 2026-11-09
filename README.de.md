@@ -17,7 +17,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/Lizenz-AGPL--3.0-blue" alt="Lizenz: AGPL-3.0"></a>
 </p>
 
-<p align="center"><img src="docs/images/de/hero.jpg" alt="FriendFlix-Startseite mit großem Billboard und Titelreihen" width="900"></p>
+<p align="center"><img src="docs/images/de/hero.jpg" alt="FriendFlix-Startseite mit großem Billboard unter der Kopfzeile aus Milchglas und Titelreihen" width="900"></p>
 
 FriendFlix ist ein privates Streaming-Portal vor **Jellyfin** (deine Medien) und einem optionalen Wunsch-Dienst. Deine Freunde bekommen ein schickes, vertrautes Streaming-Erlebnis auf Laptop, Handy und Fernseher – mit Profilen, Downloads, Watch-Partys und Empfehlungen untereinander. Jellyfin und den Wunsch-Dienst sehen sie nie direkt, und du bestimmst, wer hineinkommt.
 
@@ -85,26 +85,28 @@ Was Freunde Schritt für Schritt sehen: [docs/de/setup.md, Was ein Freund sieht]
 
 Schauen · Entdecken · Gemeinsam · Familie und Kinder · Handy und TV · Admin
 
+**Der Look:** dunkel, mit Flächen aus milchigem Glas – Kopfzeile, Vorschaukarte, Detail-Panel, Menüs, Hinweise, die Tab-Leiste und Blätter am Handy und der Admin-Bereich –, durch die die Farben der Bilder scheinen. Menüs wachsen aus dem Knopf, den du gedrückt hast, zwischen Tabs gleitet eine Pille, und ein Hinweis mit *Rückgängig* zeigt einen kleinen Ring, der herunterzählt. Ruhiger Modus, die Systemeinstellung *Bewegung reduzieren* oder ein Gerät, das nicht hinterherkommt, machen aus jeder Glasfläche ein festes Panel und halten die Bewegung an; Fernseher und Kinderprofile zeigen immer die feste Variante.
+
 ### Schauen
 
 #### Eine Startseite wie bei einem echten Streamingdienst
 
-Ein großes Billboard mit Titel-Logo, darunter Reihen wie *Weiterschauen*, *Nächste Folge*, *Von Freunden empfohlen*, *Freunde haben bewertet*, *Diese Woche bei uns*, *Weil du … gesehen hast*, *Top 10* und *Merkliste*. Am Desktop spielt das Billboard den Trailer (außer bei ruhigem Modus, Datensparmodus oder abgeschaltetem Trailer), die Kopfzeile ist eine schwebende Pille mit Menü und einer Suche, die aus ihr herauswächst, und jede Reihe blättert mit Pfeilen und Punkten. Fährst du mit der Maus über eine Karte, öffnet sich eine breite Vorschau mit den wichtigsten Aktionen: abspielen, auf die Liste, bewerten, mehr Infos.
+Ein großes Billboard mit Titel-Logo, darunter Reihen wie *Weiterschauen*, *Nächste Folge*, *Von Freunden empfohlen*, *Freunde haben bewertet*, *Diese Woche bei uns*, *Weil du … gesehen hast*, *Top 10* und *Merkliste*. Am Desktop spielt das Billboard den Trailer (außer bei ruhigem Modus, Datensparmodus oder abgeschaltetem Trailer), die Kopfzeile ist eine schwebende Pille aus Milchglas mit Menü und einer Suche, die aus ihr herauswächst, und jede Reihe blättert mit Pfeilen und Punkten. Bleibst du mit der Maus auf einer Karte, wächst eine Glaskarte aus ihr heraus, mit größerem Bild und den wichtigsten Aktionen: abspielen, auf die Liste, bewerten, mehr Infos.
 
 Kleine **Labels** auf den Karten zeigen, was neu ist – *Neu*, *Neue Folge*, *Neue Staffel*, *Staffelfinale*, *Neue Serie*. Weiß der Admin, dass ein Titel bald die Bibliothek verlässt, steht auf seiner Karte „Nur noch 6 Tage“, und eine Reihe **Bald nicht mehr verfügbar** sammelt diese Titel; wer einen davon auf der Liste oder in *Weiterschauen* hat, bekommt eine Woche und einen Tag vorher eine Erinnerung. Gelöscht wird nichts – das Datum ist nur eine Ankündigung.
 
 <p align="center"><img src="docs/images/de/home.jpg" alt="Startseite mit Themenlisten, Neu- und Bald-weg-Labels und der Reihe „Bald nicht mehr verfügbar“" width="900"></p>
 
-<p align="center"><img src="docs/images/de/popout.jpg" alt="Aufgeklappte Karte mit Abspielen, Liste und Bewertung sowie Bild- und Ton-Chips" width="900"></p>
+<p align="center"><img src="docs/images/de/popout.jpg" alt="Glaskarte, die aus einem Poster wächst, mit Abspielen, Liste und Bewertung sowie Bild- und Ton-Chips" width="900"></p>
 
 #### Alles zu einem Titel an einem Ort
 
-Am Desktop ist die Detailansicht eine eigene Seite mit Tabs (die Karte gleitet hinein), am Handy öffnet ein Tippen erst eine Vorschau, die ganze Seite mit Tabs liegt einen Wisch nach oben entfernt. Sie zeigt Beschreibung, Ton- und Untertitelsprachen, Besetzung, welche Freunde den Titel empfohlen oder gesehen haben und – bei Serien – alle Staffeln und Folgen mit Fortschrittsbalken. Weiterschauen genau dort, wo du aufgehört hast. Kleine Chips verraten vor dem Start **Bild und Ton** (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 Surround). Steht eine neue Staffel an oder warst du ein paar Wochen weg, fasst **Die Geschichte bisher** kurz zusammen, was passiert ist und wo du stehengeblieben bist – die Karte lässt sich ausblenden. Ein Tab **Extras** sammelt Trailer und Bonusmaterial aus Jellyfin, und jede Folge hat ihre eigenen **Kommentare** von Freunden: Kommentare zu einer Folge, die du noch nicht gesehen hast, bleiben verschwommen, bis du „Spoiler – trotzdem zeigen“ wählst.
+Am Desktop ist die Detailansicht eine eigene Seite (die Karte gleitet hinein): Titel, Fakten und Knöpfe liegen auf einem Glas-Panel über dem Hintergrundbild, und zwischen den Tabs gleitet eine Pille; am Handy öffnet ein Tippen erst eine Vorschau, die ganze Seite mit Tabs liegt einen Wisch nach oben entfernt. Sie zeigt Beschreibung, Ton- und Untertitelsprachen, Besetzung, welche Freunde den Titel empfohlen oder gesehen haben und – bei Serien – alle Staffeln und Folgen mit Fortschrittsbalken. Weiterschauen genau dort, wo du aufgehört hast. Kleine Chips verraten vor dem Start **Bild und Ton** (4K, HDR, Dolby Vision, Dolby Atmos, 5.1 Surround). Steht eine neue Staffel an oder warst du ein paar Wochen weg, fasst **Die Geschichte bisher** kurz zusammen, was passiert ist und wo du stehengeblieben bist – die Karte lässt sich ausblenden. Ein Tab **Extras** sammelt Trailer und Bonusmaterial aus Jellyfin, und jede Folge hat ihre eigenen **Kommentare** von Freunden: Kommentare zu einer Folge, die du noch nicht gesehen hast, bleiben verschwommen, bis du „Spoiler – trotzdem zeigen“ wählst.
 
 <table>
   <tr>
-    <td><img src="docs/images/de/detail.jpg" alt="Detailansicht einer Serie mit Neue-Staffel-Label, Qualitäts-Chips und „Die Geschichte bisher“" width="440"></td>
-    <td><img src="docs/images/de/detail-episodes.jpg" alt="Karte „Die Geschichte bisher“ und Folgenliste mit Fortschritt und Beschreibungen" width="440"></td>
+    <td><img src="docs/images/de/detail.jpg" alt="Detailseite einer Serie: Glas-Panel über dem Hintergrundbild mit Neue-Staffel-Label, Qualitäts-Chips und Knöpfen, darunter die Tabs" width="440"></td>
+    <td><img src="docs/images/de/detail-episodes.jpg" alt="Tab-Pille auf „Folgen“, die Karte „Die Geschichte bisher“ und Folgen-Kacheln mit Fortschritt und Beschreibungen" width="440"></td>
   </tr>
 </table>
 
@@ -121,7 +123,7 @@ Am Handy sieht der Player genauso aus: Titel unten links, Zeitleiste mit beiden 
 - **Klare Stimmen** und **Nachtmodus** im Klang-Menü: Dialoge hervorheben oder dafür sorgen, dass laute Szenen nicht das ganze Haus wecken.
 - **Ruckelfreies Streaming**: Die Qualität „Automatisch“ passt sich deiner Verbindung an und sinkt, wenn das Bild hängt (ein Chip erklärt den Grund). Unterwegs, also außerhalb des Heimnetzes, gilt je Rolle ein Bitraten-Limit; der Player startet mit einem Poster des Titels statt mit einem schwarzen Bild.
 
-<p align="center"><img src="docs/images/de/player.jpg" alt="Player mit geöffnetem Fenster „Besetzung & Infos“ neben dem Bild" width="900"></p>
+<p align="center"><img src="docs/images/de/player.jpg" alt="Player mit geöffneter Folgenliste und der Bedienung in zwei Glas-Pillen" width="900"></p>
 
 <p align="center"><img src="docs/images/de/player-scenes.jpg" alt="Player mit dem Szenen-Fenster und einem Vorschaubild je Kapitel" width="900"></p>
 
@@ -149,7 +151,7 @@ Bis zu fünf Profile pro Konto, jedes mit eigenem Verlauf, eigener Liste, Favori
 
 **Kinderprofile** bekommen eine eigene, bunte Startseite mit großen Kacheln, eine einfache Suche und eine Altersgrenze (0, 6 oder 12), die der Server bei jeder Liste, Suche und jedem Titel durchsetzt. Soziales gibt es dort nicht – keine Freunde, Reaktionen, Bewertungen, Kommentare, Watch-Partys, geteilten Listen, Wünsche oder Statistiken –, und die Einstellungen bieten nur Sprache und Wiedergabesprachen. Ein Kinderprofil verlässt man nur mit der PIN des Zielprofils oder, wenn dieses keine hat, mit der PIN des Hauptprofils; ein Fernseher, der aus einem Kinderprofil gekoppelt wurde, bleibt auf diesem Kinderprofil. Angeheftete Themenlisten („Gemütlicher Herbst“ für die Kleinen) erscheinen dort ebenfalls.
 
-Der **Ruhige Modus** (pro Profil, auch für Kinder) hält alles still: kein Trailer im Billboard, keine Vorschau beim Darüberfahren, kein Ton und weniger Bewegung in der ganzen App.
+Der **Ruhige Modus** (pro Profil, auch für Kinder) hält alles still: kein Trailer im Billboard, keine Vorschau beim Darüberfahren, kein Ton, weniger Bewegung in der ganzen App und feste Panels statt Glas.
 
 <table>
   <tr>
@@ -160,12 +162,12 @@ Der **Ruhige Modus** (pro Profil, auch für Kinder) hält alles still: kein Trai
 
 ### Handy und TV
 
-App-artige Oberfläche mit schwebender Tab-Leiste (Start, Neu, Meine Liste, Downloads), einem Wisch-Karussell mit Empfehlungen auf der Startseite, einer Vorschau beim Antippen eines Posters, einer Detailseite mit Tabs nur einen Wisch entfernt, einer Suche mit beliebten Titeln und Genre-Kacheln und einem Kino-Player, der quer in beide Richtungen und hochkant funktioniert. FriendFlix lässt sich auf dem Home-Bildschirm installieren (PWA) – mit **Verknüpfungen** per langem Druck (Weiterschauen, Merkliste, Suche, Downloads), einem **Badge** mit deinen ungelesenen Benachrichtigungen auf dem Symbol und Name und Beschreibung der App in deiner Sprache.
+App-artige Oberfläche mit Kopfzeile aus Milchglas und schwebender Glas-Tab-Leiste (Start, Neu, Meine Liste, Downloads), Knöpfen, die auf ein Tippen mit einem kurzen Druck-Effekt antworten, einem Wisch-Karussell mit Empfehlungen auf der Startseite, einer Glas-Vorschau beim Antippen eines Posters, einer Detailseite mit Tabs nur einen Wisch entfernt, einer Suche mit beliebten Titeln und Genre-Kacheln und einem Kino-Player, der quer in beide Richtungen und hochkant funktioniert. FriendFlix lässt sich auf dem Home-Bildschirm installieren (PWA) – mit **Verknüpfungen** per langem Druck (Weiterschauen, Merkliste, Suche, Downloads), einem **Badge** mit deinen ungelesenen Benachrichtigungen auf dem Symbol und Name und Beschreibung der App in deiner Sprache.
 
 <table>
   <tr>
-    <td><img src="docs/images/de/phone-home.jpg" alt="Startseite auf dem Handy" width="260"></td>
-    <td><img src="docs/images/de/phone-preview.jpg" alt="Vorschau auf dem Handy" width="260"></td>
+    <td><img src="docs/images/de/phone-home.jpg" alt="Startseite auf dem Handy mit Wisch-Karussell und schwebender Glas-Tab-Leiste" width="260"></td>
+    <td><img src="docs/images/de/phone-preview.jpg" alt="Vorschau aus Milchglas über der Startseite auf dem Handy" width="260"></td>
     <td><img src="docs/images/de/phone-detail.jpg" alt="Detailseite auf dem Handy mit Qualitäts-Chips" width="260"></td>
   </tr>
 </table>
@@ -192,7 +194,7 @@ App-artige Oberfläche mit schwebender Tab-Leiste (Start, Neu, Meine Liste, Down
 
 ### Admin
 
-Ein aufgeräumter Admin-Bereich mit Seitenleiste (Personen, Inhalte, Betrieb) und einer **Übersicht**, die Systemzustand, offene Entscheidungen – einen Wunsch oder ein neues Gerät gleich dort freigeben oder ablehnen –, die letzte Aktivität in ganzen Sätzen, Zahlen und Speicher zeigt. Alles meldet sich zurück: keine Pop-up-Fenster, riskante Aktionen fragen vorher, kleine bieten **Rückgängig**. Auf dem Handy ist derselbe Bereich eine einfache Liste mit großen Tippflächen.
+Ein aufgeräumter Admin-Bereich in dichtem Glas mit Seitenleiste (Personen, Inhalte, Betrieb) und einer **Übersicht**, die den Systemzustand als Kacheln, offene Entscheidungen – einen Wunsch oder ein neues Gerät gleich dort freigeben oder ablehnen –, die letzte Aktivität in ganzen Sätzen, Zahlen und Speicher zeigt. Alles meldet sich zurück: keine Pop-up-Fenster, riskante Aktionen fragen vorher, kleine bieten **Rückgängig**, Zahlen zählen hoch und eine gespeicherte Einstellung zeigt kurz einen Haken. Auf dem Handy ist derselbe Bereich eine einfache, gegliederte Liste mit großen Tippflächen.
 
 **Einrichtung im Browser:** eine neue Installation beginnt mit einem Einrichtungsassistenten, den ein einmaliger Code aus dem Server-Log freischaltet; er verbindet Jellyfin und richtet Authentik automatisch ein, und jede Einstellung liegt danach unter *Admin → Einstellungen*, vor dem Speichern geprüft.
 
@@ -204,8 +206,8 @@ Außerdem im Admin-Bereich: Einladungen und Rollen, **Marken-Hubs**, hervorgehob
 
 <table>
   <tr>
-    <td><img src="docs/images/de/admin.jpg" alt="Admin-Übersicht mit Systemzustand, offenen Wünschen und Geräten und der letzten Aktivität" width="600"></td>
-    <td><img src="docs/images/de/phone-admin.jpg" alt="Admin-Bereich auf dem Handy als gegliederte Liste" width="260"></td>
+    <td><img src="docs/images/de/admin.jpg" alt="Admin-Übersicht in dichtem Glas mit Seitenleiste, Kacheln zum Systemzustand, offenen Wünschen und Geräten und der letzten Aktivität" width="600"></td>
+    <td><img src="docs/images/de/phone-admin.jpg" alt="Admin-Bereich auf dem Handy als gegliederte Glas-Listen" width="260"></td>
   </tr>
 </table>
 
@@ -403,7 +405,7 @@ npm run e2e                                     # Playwright: baut die Web-App u
 | Fire-TV-App: Installation, Fernbedienung, Test, Amazon-Appstore-Schritte | [docs/de/firetv.md](docs/de/firetv.md) |
 | Such- und Entdecken-API, Labels, Bald weg, Qualität, Regeln für Kinderprofile | [docs/discovery.md](docs/discovery.md) |
 | Themenlisten, Ruhiger Modus, Klang im Player, Handy-Verknüpfungen und Badge | [docs/personal.md](docs/personal.md) |
-| UI-Kit und Admin-Rahmen | [docs/ui-kit.md](docs/ui-kit.md) |
+| UI-Kit, Glas-Look und Admin-Rahmen | [docs/ui-kit.md](docs/ui-kit.md) |
 | Sprachen und Übersetzungen | [docs/i18n.md](docs/i18n.md) |
 | Änderungen | [CHANGELOG.md](CHANGELOG.md) |
 
