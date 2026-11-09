@@ -7,7 +7,7 @@
     <string name="tv_setup_label">Adres serwera</string>
     <string name="tv_setup_connect">Połącz</string>
     <string name="tv_setup_checking">Sprawdzanie…</string>
-    <string name="tv_setup_hint">Naciśnij OK na polu, aby pisać pilotem. Strzałki w górę i w dół przełączają między polem a przyciskiem Połącz.</string>
+    <string name="tv_setup_hint">Naciśnij środkowy przycisk na polu, aby pisać pilotem. Strzałki w górę i w dół przełączają między polem a przyciskiem Połącz.</string>
     <string name="tv_opening">Otwieranie %1$s</string>
     <string name="tv_retry">Spróbuj ponownie</string>
     <string name="tv_change_server">Zmień serwer</string>

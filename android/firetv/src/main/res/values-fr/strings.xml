@@ -7,7 +7,7 @@
     <string name="tv_setup_label">Adresse du serveur</string>
     <string name="tv_setup_connect">Se connecter</string>
     <string name="tv_setup_checking">Vérification…</string>
-    <string name="tv_setup_hint">Appuie sur OK sur le champ pour saisir avec la télécommande. Haut et Bas passent du champ au bouton Se connecter.</string>
+    <string name="tv_setup_hint">Appuie sur le bouton central dans le champ pour saisir avec la télécommande. Haut et Bas passent du champ au bouton Se connecter.</string>
     <string name="tv_opening">Ouverture de %1$s</string>
     <string name="tv_retry">Réessayer</string>
     <string name="tv_change_server">Changer de serveur</string>

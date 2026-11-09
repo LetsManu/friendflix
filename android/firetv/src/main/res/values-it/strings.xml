@@ -7,7 +7,7 @@
     <string name="tv_setup_label">Indirizzo del server</string>
     <string name="tv_setup_connect">Connetti</string>
     <string name="tv_setup_checking">Verifica in corso…</string>
-    <string name="tv_setup_hint">Premi OK sul campo per scrivere con il telecomando. Su e Giù passano dal campo a Connetti.</string>
+    <string name="tv_setup_hint">Premi il tasto centrale sul campo per scrivere con il telecomando. Su e Giù passano dal campo a Connetti.</string>
     <string name="tv_opening">Apertura di %1$s</string>
     <string name="tv_retry">Riprova</string>
     <string name="tv_change_server">Cambia server</string>

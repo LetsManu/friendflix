@@ -37,9 +37,11 @@
             </intent-filter>
         </activity>
 
-        <!-- The server's TV interface; the WebView survives configuration changes (no reload). -->
+        <!-- The server's TV interface; the WebView survives configuration changes (no reload). One instance only (singleTask): a stray
+             second start brings the running page to the front instead of a second WebView. -->
         <activity
             android:name=".shell.TvShellActivity"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"
             android:exported="false" />
     </application>

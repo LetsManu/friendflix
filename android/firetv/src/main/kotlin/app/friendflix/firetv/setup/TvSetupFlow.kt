@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.firetv.setup
 
+import android.content.Intent
 import androidx.annotation.StringRes
 import app.friendflix.android.setup.ProbeResult
 import app.friendflix.android.shell.ServerAddress
@@ -41,4 +42,8 @@ object TvSetupFlow {
         ProbeResult.ServerTooOld -> R.string.tv_error_server_too_old
         ProbeResult.Unreachable -> R.string.tv_error_unreachable
     }
+
+    /** The home screen's start of the app (MAIN with the launcher or leanback launcher category), not an in-app hand-over. */
+    fun isLauncherIntent(action: String?, categories: Set<String>?): Boolean =
+        action == Intent.ACTION_MAIN && categories.orEmpty().any { it == Intent.CATEGORY_LAUNCHER || it == Intent.CATEGORY_LEANBACK_LAUNCHER }
 }

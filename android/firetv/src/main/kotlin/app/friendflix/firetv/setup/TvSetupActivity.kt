@@ -52,6 +52,12 @@ class TvSetupActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Launched from the home screen while the app's task already runs (the shell, or this screen mid-check): the task comes to the
+        // front as it is; no second check and no second shell.
+        if (!isTaskRoot && TvSetupFlow.isLauncherIntent(intent.action, intent.categories)) {
+            finish()
+            return
+        }
         setContentView(R.layout.activity_tv_setup)
         settings = TvSettings.from(applicationContext)
         limitWidth()
@@ -90,7 +96,7 @@ class TvSetupActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putBoolean(STATE_FORM, form.isVisible)
+        if (::form.isInitialized) outState.putBoolean(STATE_FORM, form.isVisible)
     }
 
     /** The content column is at most 1100dp wide and centred (the LG page's 1100px column). */
@@ -167,8 +173,8 @@ class TvSetupActivity : ComponentActivity() {
         }
     }
 
+    /** The button says "Checking…" but stays enabled and focused (a disabled button would drop the D-pad focus); [submit] ignores it meanwhile. */
     private fun setBusy(busy: Boolean) {
-        connect.isEnabled = !busy
         connect.setText(if (busy) R.string.tv_setup_checking else R.string.tv_setup_connect)
     }
 

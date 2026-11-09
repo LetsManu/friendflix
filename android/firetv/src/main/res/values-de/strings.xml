@@ -7,7 +7,7 @@
     <string name="tv_setup_label">Serveradresse</string>
     <string name="tv_setup_connect">Verbinden</string>
     <string name="tv_setup_checking">Wird geprüft…</string>
-    <string name="tv_setup_hint">Drücke OK auf dem Feld, um mit der Fernbedienung zu tippen. Hoch und Runter wechseln zwischen Feld und Verbinden.</string>
+    <string name="tv_setup_hint">Drücke auf dem Feld die mittlere Taste, um mit der Fernbedienung zu tippen. Hoch und Runter wechseln zwischen Feld und Verbinden.</string>
     <string name="tv_opening">%1$s wird geöffnet</string>
     <string name="tv_retry">Erneut versuchen</string>
     <string name="tv_change_server">Server wechseln</string>

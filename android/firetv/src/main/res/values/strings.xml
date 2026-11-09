@@ -10,7 +10,7 @@
     <string name="tv_setup_label">Server address</string>
     <string name="tv_setup_connect">Connect</string>
     <string name="tv_setup_checking">Checking…</string>
-    <string name="tv_setup_hint">Press OK on the field to type with the remote. Up and Down move between the field and Connect.</string>
+    <string name="tv_setup_hint">Press Select (the centre button) on the field to type with the remote. Up and Down move between the field and Connect.</string>
     <string name="tv_opening">Opening %1$s</string>
     <string name="tv_retry">Retry</string>
     <string name="tv_change_server">Change server</string>

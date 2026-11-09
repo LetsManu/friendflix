@@ -7,7 +7,7 @@
     <string name="tv_setup_label">Sunucu adresi</string>
     <string name="tv_setup_connect">Bağlan</string>
     <string name="tv_setup_checking">Kontrol ediliyor…</string>
-    <string name="tv_setup_hint">Kumandayla yazmak için alanda OK tuşuna bas. Yukarı ve Aşağı tuşları alan ile Bağlan arasında geçiş yapar.</string>
+    <string name="tv_setup_hint">Kumandayla yazmak için alanda orta tuşa bas. Yukarı ve Aşağı tuşları alan ile Bağlan arasında geçiş yapar.</string>
     <string name="tv_opening">%1$s açılıyor</string>
     <string name="tv_retry">Yeniden dene</string>
     <string name="tv_change_server">Sunucuyu değiştir</string>

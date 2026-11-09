@@ -9,7 +9,9 @@ import app.friendflix.android.shell.origin
 import app.friendflix.firetv.R
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TvSetupFlowTest {
@@ -49,5 +51,12 @@ class TvSetupFlowTest {
         assertEquals("https://192.0.2.7", TvSetupFlow.prefill("https://friend.example.com".toHttpUrl(), "https://192.0.2.7"))
         assertEquals("https://friend.example.com", TvSetupFlow.prefill("https://friend.example.com".toHttpUrl(), null))
         assertEquals("", TvSetupFlow.prefill(null, null))
+    }
+
+    @Test fun onlyTheHomeScreenStartIsALauncherIntent() {
+        assertTrue(TvSetupFlow.isLauncherIntent("android.intent.action.MAIN", setOf("android.intent.category.LAUNCHER")))
+        assertTrue(TvSetupFlow.isLauncherIntent("android.intent.action.MAIN", setOf("android.intent.category.LEANBACK_LAUNCHER")))
+        assertFalse(TvSetupFlow.isLauncherIntent(null, null)) // the shell's Change server / the guard's hand-over
+        assertFalse(TvSetupFlow.isLauncherIntent("android.intent.action.MAIN", null))
     }
 }

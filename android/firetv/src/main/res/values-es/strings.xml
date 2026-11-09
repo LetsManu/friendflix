@@ -7,7 +7,7 @@
     <string name="tv_setup_label">Dirección del servidor</string>
     <string name="tv_setup_connect">Conectar</string>
     <string name="tv_setup_checking">Comprobando…</string>
-    <string name="tv_setup_hint">Pulsa OK en el campo para escribir con el mando. Arriba y Abajo cambian entre el campo y Conectar.</string>
+    <string name="tv_setup_hint">Pulsa el botón central en el campo para escribir con el mando. Arriba y Abajo cambian entre el campo y Conectar.</string>
     <string name="tv_opening">Abriendo %1$s</string>
     <string name="tv_retry">Reintentar</string>
     <string name="tv_change_server">Cambiar de servidor</string>
