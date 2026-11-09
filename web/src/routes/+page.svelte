@@ -254,6 +254,8 @@
   <DeskBillboard item={hero} rank={heroRank} />
   <BrandHubs {hubs} />
 {:else if phone && (picks.length || picksPending)}
+  <!-- the phone home's page heading (the carousel has no title of its own; WCAG 1.3.1 / 2.4.6) -->
+  <h1 class="sr-only">{$t('common.appName')}</h1>
   <Carousel items={picks} />
   <BrandHubs {hubs} />
 {:else}

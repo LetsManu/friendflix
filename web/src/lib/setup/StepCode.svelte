@@ -5,7 +5,7 @@
    * Step 1: the one-time setup code from the backend's log opens the setup session. The code lives only in the input and the request:
    * the field is emptied after every attempt, and it is never stored.
    */
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, tick } from 'svelte';
   import { t } from '#lib/i18n';
   import Button from '#lib/ui/Button.svelte';
   import { uid } from '#lib/ui/ids';
@@ -16,7 +16,7 @@
   export let expired = false;
   const dispatch = createEventDispatcher<{ unlocked: void; complete: void }>();
   const id = uid('code');
-  let code = '', busy = false, msg = '';
+  let code = '', busy = false, msg = '', input: HTMLInputElement;
 
   async function submit() {
     if (!code.trim() || busy) return;
@@ -34,6 +34,8 @@
       code = ''; // never kept, not even for a retry
       busy = false;
     }
+    // a refused code: the emptied field takes the focus (the submit button it was on is now disabled, the focus fell to the page)
+    if (msg) { await tick(); input?.focus(); }
   }
 </script>
 
@@ -44,7 +46,7 @@
 <form novalidate on:submit|preventDefault={submit}>
   <div class="field">
     <label for={id}>{$t('setup.code.label')}</label>
-    <input {id} bind:value={code} type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength={64}
+    <input {id} bind:this={input} bind:value={code} type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength={64}
       inputmode="text" aria-describedby="{id}-h{msg ? ` ${id}-e` : ''}" aria-invalid={msg ? 'true' : undefined} />
     <span class="hint" id="{id}-h">{$t('setup.code.hint')}</span>
   </div>

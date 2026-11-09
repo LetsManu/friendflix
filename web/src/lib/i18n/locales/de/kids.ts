@@ -6,6 +6,8 @@ export default {
   nav: {
     label: 'Kids-Navigation',
     home: 'Kids-Start',
+    /** the logo link: starts with its visible text (the wordmark and badge) for voice control */
+    homeLink: 'FriendFlix Kids – Start',
     search: 'Suchen',
     switchProfile: 'Profil wechseln (gerade: {name})',
   },

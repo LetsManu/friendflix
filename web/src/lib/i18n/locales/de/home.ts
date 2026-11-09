@@ -56,6 +56,11 @@ export default {
     moreInfo: 'Weitere Infos',
     replay: 'Vorschau erneut abspielen',
     replayTitle: 'Erneut abspielen',
+    /** the billboard trailer's pause / resume button (WCAG 2.2.2) */
+    pausePreview: 'Vorschau anhalten',
+    resumePreview: 'Vorschau fortsetzen',
+    /** the billboard sound toggle: a fixed name, its state is aria-pressed */
+    sound: 'Ton',
   },
   /** phone home: the swipe carousel at the top */
   carousel: {

@@ -117,6 +117,9 @@
   .rail::before { content: ''; position: absolute; inset: 0; width: 460px; background: linear-gradient(to right, rgba(0, 0, 0, .96) 0, rgba(0, 0, 0, .88) 50%, rgba(0, 0, 0, .5) 75%, rgba(0, 0, 0, 0)); opacity: 0; transition: opacity calc(var(--tv-d-s, 200ms) * .7) var(--tv-emph-in, ease); pointer-events: none; z-index: -1; }
   .rail:not(.open)::before { width: 96px; opacity: .65; }
   .rail.open::before { opacity: 1; transition: opacity var(--tv-d-s, 200ms) var(--tv-emph-out, ease); }
+  /* open: near-opaque under the labels (to 72 %, past the 280 px links), so the page's title and synopsis do not show through and
+     fight the rail's words (WCAG 1.4.3); then the soft fade. The collapsed edge keeps its gradient. */
+  .rail.open::before { background: linear-gradient(to right, rgba(0, 0, 0, .96) 0, rgba(0, 0, 0, .92) 72%, rgba(0, 0, 0, .5) 86%, rgba(0, 0, 0, 0)); }
   ul { list-style: none; margin: auto 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
   li { display: block; position: relative; }
   a { position: relative; display: flex; align-items: center; height: 56px; width: 56px; overflow: hidden; border-radius: var(--tv-radius, 6px); color: rgba(255, 255, 255, .55); text-decoration: none; transform-origin: left center; transition: transform calc(var(--tv-d-spring, 420ms) * .7) var(--tv-emph-out, ease); }

@@ -743,11 +743,11 @@
   {#if ambPage}<div class="frost-amb" aria-hidden="true"></div>{/if}
   {#if !watchPage && !profilesPage && kidsUi}
     <header class="nav kidsnav" class:solid={scrolled || !path.startsWith('/kids')}>
-      <a class="klogo" href="/kids" aria-label={$t('kids.nav.home')}><Logo wordmark={!$mobile} size={$mobile ? 30 : 32} label="" /><span class="kbadge">{$t('kids.badge')}</span></a>
+      <a class="klogo" href="/kids" aria-label={$t('kids.nav.homeLink')}><Logo wordmark={!$mobile} size={$mobile ? 30 : 32} label="" /> <span class="kbadge">{$t('kids.badge')}</span></a>
       <span class="sp"></span>
       <nav class="knav" aria-label={$t('kids.nav.label')}>
         <a class="kbtn" href="/kids/search" aria-label={$t('kids.nav.search')} aria-current={path.startsWith('/kids/search') ? 'page' : undefined}><Icon name="search" size={26} /></a>
-        <a class="kav" href="/profiles" aria-label={$t('kids.nav.switchProfile', { name: who })}><span class="face" style={faceStyle}>{initial(who)}</span></a>
+        <a class="kav" href="/profiles" aria-label={$t('kids.nav.switchProfile', { name: who })}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span></a>
       </nav>
     </header>
   {:else if !watchPage && !profilesPage}
@@ -757,10 +757,10 @@
       <header class="nav m" class:solid={mSolid || !heroPage} class:chips class:tuck={chips && mTucked}>
         <span class="mbg" aria-hidden="true"></span>
         <div class="mrow">
-          <a class="mlogo" href="/" aria-label={$t('shell.mobile.home')} aria-current={path === '/' ? 'page' : undefined}><Logo size={28} label="" /><span class="wm" aria-hidden="true">FriendFlix</span></a>
+          <a class="mlogo" href="/" aria-label={$t('shell.nav.homeLink')} aria-current={path === '/' ? 'page' : undefined}><Logo size={28} label="" /><span class="wm" aria-hidden="true">FriendFlix</span></a>
           <span class="sp"></span>
           <a class="icon-btn" href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>
-          <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle}>{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
+          <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
         </div>
         {#if chips}
           <nav class="chipbar" class:tucked={mTucked} aria-label={$t('shell.cats.title')} inert={mTucked || undefined}>
@@ -861,7 +861,7 @@
   :global(html.m-still) .nav::before { transition: none; }
   .nav.solid::before { opacity: 1; }
   .sp { flex: 1; }
-  .dot { position: absolute; top: 4px; right: 2px; background: var(--acc-fill); font-size: .65rem; min-width: 1.1rem; height: 1.1rem; border-radius: 99px; display: grid; place-items: center; font-weight: 700; }
+  .dot { position: absolute; top: 4px; right: 2px; background: var(--acc-fill); color: #fff; font-size: .65rem; min-width: 1.1rem; height: 1.1rem; border-radius: 99px; display: grid; place-items: center; font-weight: 700; }
   .avatar { width: auto; min-height: 44px; height: 44px; padding: 0 .1rem; background: transparent; gap: .45rem; border-radius: 4px; }
   .avatar:hover:not(:disabled) { background: transparent; }
   .face { width: 34px; height: 34px; border-radius: 24%; display: grid; place-items: center; background: linear-gradient(135deg, #ff6b81, #9a2440); font-weight: 800; box-shadow: 0 0 0 1px rgba(255,255,255,.12); }
@@ -869,12 +869,12 @@
   .kidsnav { background: linear-gradient(100deg, #4f6bed, #7b5cff); color: #fff; } /* always solid: the white wordmark stays readable */
   .kidsnav.solid { box-shadow: 0 2px 14px rgba(32,35,58,.25); }
   .klogo { display: inline-flex; align-items: center; gap: .6rem; min-height: 48px; color: #fff; }
-  .kbadge { display: inline-grid; place-items: center; min-height: 30px; padding: 0 .8rem; border-radius: 99px; background: linear-gradient(135deg, #ff5d8f, #ffb703); color: #fff; font-weight: 900; font-size: .95rem; letter-spacing: .04em; }
+  .kbadge { display: inline-grid; place-items: center; min-height: 30px; padding: 0 .8rem; border-radius: 99px; background: linear-gradient(135deg, #ff5d8f, #ffb703); color: #20233a; font-weight: 900; font-size: .95rem; letter-spacing: .04em; }
   .knav { display: flex; align-items: center; gap: .5rem; }
   .kbtn, .kav { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; color: #20233a; }
   .kbtn { background: #fff; box-shadow: 0 2px 8px rgba(32,35,58,.15); }
   .kbtn:focus-visible, .kav:focus-visible, .klogo:focus-visible { outline: 4px solid #ffb703; outline-offset: 2px; }
-  .kav .face { width: 46px; height: 46px; border-radius: 50%; font-size: 1.1rem; color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.85); }
+  .kav .face { width: 46px; height: 46px; border-radius: 50%; font-size: 1.2rem; color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.85); }
   .top-sentinel { position: absolute; top: 0; left: 0; width: 1px; height: 10px; pointer-events: none; visibility: hidden; }
   .hov { position: fixed; inset: 0; z-index: 96; background: rgba(0,0,0,.7); display: grid; place-items: center; padding: max(1rem, var(--safe-top)) 1rem max(1rem, var(--safe-bottom)); animation: fade .2s ease-out; }
   .hbox { background: #161b21; border: 1px solid #2b333c; border-radius: 8px; width: min(560px, 100%); max-height: 90dvh; overflow-y: auto; padding: 1.2rem 1.4rem 1.4rem; box-shadow: 0 20px 60px rgba(0,0,0,.8); }
