@@ -38,9 +38,8 @@
   import { tvFocus } from '#lib/tv/focus';
   import { decodeFade } from '#lib/tv/motion';
   import { tilt } from '#lib/glass/pointer';
-  import { toneFor } from '#lib/glass/tone';
+  import { SCRIM_MENU, toneFor } from '#lib/glass/tone';
   import { scrimFade, sheetSlide, twoWay } from '#lib/glass/fx';
-  import { SCRIM_MENU } from '#lib/glass/tone';
 
   export let item: Item;
   /** shows a remove (X) button and emits `remove` (used for Weiterschauen) */
@@ -316,7 +315,7 @@
   /* desktop rows (glass spec §8.7): glass-era cards (12 px radius, soft shadow) that lean toward the pointer. The tilt action moves
      the thumb, the glare, the band and the shadow by transform; the row's other cards step back while one tilts. */
   :global(section.row.dk) .media::before, :global(section.row.dk) .thumb, :global(section.row.dk) .thumb:focus-visible { border-radius: var(--fr-r-card); }
-  :global(section.row.dk) .thumb { box-shadow: var(--fr-shadow-card); transform-style: preserve-3d; transition: filter var(--t-fast); }
+  :global(section.row.dk) .thumb { box-shadow: var(--fr-shadow-card); transform-style: preserve-3d; transition: none; }
   /* the caption floats above the art only while the card tilts (a 3D layer per caption on the whole page would cost memory) */
   :global(section.row.dk .tw.tilt-on) .cap { transform: translateZ(28px); }
   :global(section.row.dk) .tw { position: relative; perspective: 650px; }
@@ -345,9 +344,10 @@
   .progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.3); z-index: 2; }
   .progress i { display: block; height: 100%; background: var(--acc); }
   .rm { display: none; position: absolute; right: .4rem; top: .4rem; z-index: 3; width: 28px; min-height: 28px; height: 28px; padding: 0; border-radius: 50%; background: rgba(16,20,24,.7); border: 1.5px solid rgba(255,255,255,.6); color: #fff; place-items: center; }
-  /* desktop: the card stays static; the pop-out (HoverPreview) is rendered in <body>. Subtle brightness only. */
+  /* desktop: the card stays static; the pop-out (HoverPreview) is rendered in <body>. Subtle brightness only (switched at once:
+     only transform / opacity animate) */
   @media (hover: hover) and (pointer: fine) {
-    .thumb { transition: transform var(--t-fast) var(--ease), filter var(--t-fast); }
+    .thumb { transition: transform var(--t-fast) var(--ease); }
     .card:hover .thumb { filter: brightness(1.12); }
   }
   .mb { display: none; position: absolute; right: 0; bottom: 0; z-index: 3; width: 44px; min-height: 44px; height: 44px; padding: 0; background: none; border: 0; color: #fff; place-items: center; }

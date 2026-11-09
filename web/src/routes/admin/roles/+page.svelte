@@ -171,7 +171,7 @@
 <style>
   .intro { color: var(--mut); margin: 0 0 1rem; max-width: 60ch; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; align-items: start; }
-  .card { margin-bottom: 0; display: flex; flex-direction: column; gap: 1rem; min-width: 0; transition: border-color var(--t-fast); }
+  .card { margin-bottom: 0; display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
   .card.dirty { border-color: var(--warn); }
   header { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
   h2 { margin: 0; font-size: 1.15rem; }

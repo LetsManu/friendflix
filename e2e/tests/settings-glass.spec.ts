@@ -177,6 +177,16 @@ test.describe('glass settings (desktop)', () => {
   });
 
   test('save draws the checkmark, then returns', async ({ page }) => {
+    // record the animations the checkmark asks for as they start (the 420 ms draw may be over before a later read)
+    await page.addInitScript(() => {
+      const w = window as unknown as { __chk: number[] };
+      w.__chk = [];
+      const orig = Element.prototype.animate;
+      Element.prototype.animate = function (this: Element, k: Keyframe[] | PropertyIndexedKeyframes | null, o?: number | KeyframeAnimationOptions) {
+        if (this.closest?.('svg.chk')) w.__chk.push(typeof o === 'number' ? o : Number(o?.duration));
+        return orig.call(this, k, o);
+      };
+    });
     const sent = await echoPrefs(page);
     await page.goto('/settings');
     const save = page.locator('#prefs').getByRole('button', { name: 'Speichern', exact: true });
@@ -186,7 +196,7 @@ test.describe('glass settings (desktop)', () => {
     await expect(done).toContainText('Gespeichert');
     const path = done.locator('svg.chk path');
     await expect(path).toHaveAttribute('d', 'M5 12.5l4.5 4.5L19 7.5');
-    expect(await path.evaluate((e) => e.getAnimations().map((a) => a.effect!.getTiming().duration))).toEqual([420]);
+    expect(await page.evaluate(() => (window as unknown as { __chk: number[] }).__chk)).toEqual([420]);
     await expect(page.locator('#prefs [role="status"]')).toHaveText('Gespeichert');
     await page.waitForTimeout(2300);
     await expect(done).toHaveText('Speichern');
@@ -227,11 +237,21 @@ test.describe('glass /me and secondary pages (desktop)', () => {
     const lists = page.locator('.groups ul.lst');
     await expect(lists.first()).toBeVisible();
     for (const l of await lists.all()) await expect(l).toHaveClass(/frost-flat/);
-    // a row on hover: 12 px corners, a darker fill
+    // a row on hover: 12 px corners, a darker fill that fades in as a layer (.fill-hover, opacity only; as in the admin)
     const row = lists.first().getByRole('link').first();
     expect(await css(row, 'border-top-left-radius')).toBe('12px');
+    const after = (l: typeof row, p: string) => l.evaluate((e, q) => getComputedStyle(e, '::after').getPropertyValue(q), p);
+    expect(await after(row, 'background-color')).toBe('rgba(18, 16, 24, 0.3)');
+    expect(await after(row, 'opacity')).toBe('0');
     await row.hover();
-    await expect.poll(() => css(row, 'background-color')).toBe('rgba(18, 16, 24, 0.3)');
+    await expect.poll(() => after(row, 'opacity')).toBe('1');
+    expect(await css(row, 'background-color')).toBe('rgba(0, 0, 0, 0)');
+    // a tile's hover lights its edge the same way (.edge-hover); no colour transition anywhere on it
+    const tile = tiles.first();
+    expect(await css(tile, 'transition-property')).not.toMatch(/color|background|border/);
+    await tile.hover();
+    await expect.poll(() => after(tile, 'opacity')).toBe('1');
+    expect(await after(tile, 'border-top-color')).toBe('rgba(255, 255, 255, 0.42)');
     // dim text on glass is the mockup's white .72 (AA over the brightest, dimmed glow), links the lighter teal
     expect(await css(page.locator('.gh').first(), 'color')).toBe('rgba(255, 255, 255, 0.72)');
     expect(await css(page.locator('.swap').first(), 'color')).toBe('rgb(128, 203, 212)');

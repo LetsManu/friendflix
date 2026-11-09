@@ -145,7 +145,7 @@
   /* on glass (scrim SCRIM_MENU): notes are .9 white, rows white (also on the light pill); an error is white with a red dot */
   .muted { color: rgba(255,255,255,.9); margin: 6px 12px; }
   .err { display: flex; align-items: center; gap: 8px; color: #fff; margin: 6px 12px 0; }
-  .err::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: #ff9d9d; }
+  .err::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--err-mark); }
   @media (pointer: coarse) {
     label input { width: 22px; height: 22px; flex: none; }
     form input, form button { min-height: 44px; }

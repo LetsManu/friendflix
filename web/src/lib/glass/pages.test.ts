@@ -64,7 +64,8 @@ describe('glass pages: text contrast (B′)', () => {
     const root = vars(':root');
     for (const k of ['--mut', '--ok', '--warn', '--err', '--link']) for (const bg of ON_AMB_BG) expect(contrast(hex(root[k]!), bg), k).toBeGreaterThanOrEqual(AA);
     expect(root['--link']).toBe('#54b9c5');
-    expect(vars('html.amb')).toEqual({ '--acc-text': '#ff8aa0' }); // no grey override any more
+    expect(vars('html.amb')).toEqual({ '--acc-text': 'var(--acc-light)' }); // no grey override any more
+    expect(root['--acc-light']).toBe('#ff8aa0');
     for (const bg of ON_AMB_BG) expect(contrast(hex('#ff8aa0'), bg)).toBeGreaterThanOrEqual(AA);
     expect(contrast(hex(root['--acc-text']!), AMB_PEAK)).toBeLessThan(AA); // the brand coral does not
   });

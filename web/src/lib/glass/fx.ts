@@ -5,7 +5,7 @@
  * the sliding pill's three parts, the count-up and the press ripple. Everything moves `transform` / `opacity` only.
  */
 import { motionAllowed } from '#lib/preview';
-import { motionLevel } from '#lib/tv/motion';
+import { motionLevel, watchFrames } from '#lib/tv/motion';
 
 /** a CSS cubic-bezier as a function of time (Newton steps, bisection when they stall); f(0) = 0, f(1) = 1 */
 export function cubicBezier(x1: number, y1: number, x2: number, y2: number): (t: number) => number {
@@ -42,6 +42,14 @@ export const outEase = cubicBezier(0.22, 1, 0.36, 1);
 
 /** 'still': calm mode or reduced motion (instant); 'reduced': the frame guard tripped (opacity only); 'full' */
 export type FxMode = 'full' | 'reduced' | 'still';
+/**
+ * A full-motion glass transition is built (it starts now): the frame guard watches the next second, so the most expensive glass
+ * moments (a sheet, a menu or a toast moving over blurred content) can trip it too (glass spec, Constraints).
+ */
+function watched(mode: FxMode): FxMode {
+  if (mode === 'full') watchFrames();
+  return mode;
+}
 export function fxMode(): FxMode {
   if (!motionAllowed()) return 'still';
   return motionLevel() === 'reduced' ? 'reduced' : 'full';
@@ -67,7 +75,7 @@ const linear = (t: number) => t;
  * the way in, back with GLASS_IN (200 ms) on the way out. Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
  */
 export function grow(_node: Element, p: { origin?: string; dir?: 'in' | 'out'; mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
-  const mode = p.mode ?? fxMode();
+  const mode = watched(p.mode ?? fxMode());
   const origin = p.origin ?? '50% 0';
   if (mode === 'still') return { duration: 0, delay: 0, easing: linear, css: () => '' };
   if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
@@ -117,7 +125,7 @@ export const SHEET_OUT_MS = 200;
  * (200 ms GLASS_IN). Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
  */
 export function sheetSlide(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
-  const mode = p.mode ?? fxMode();
+  const mode = watched(p.mode ?? fxMode());
   if (mode === 'still') return { duration: 0, delay: 0, easing: linear, css: () => '' };
   if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
   const out = p.dir === 'out';
@@ -131,7 +139,7 @@ export const TOAST_OUT_MS = 260;
  * Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
  */
 export function toastRise(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
-  const mode = p.mode ?? fxMode();
+  const mode = watched(p.mode ?? fxMode());
   if (mode === 'still') return { duration: 0, delay: 0, easing: linear, css: () => '' };
   if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
   const out = p.dir === 'out';

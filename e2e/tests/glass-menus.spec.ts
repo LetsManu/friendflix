@@ -177,11 +177,24 @@ test.describe('glass menus', () => {
     const pop = page.locator('.ma-pop');
     await settled(pop);
     const r = (await pop.boundingBox())!;
+    // a per-frame watcher started before the Esc (the fold lasts 200 ms; a read after the key's round trip can miss it): the
+    // first frame with an animation on the still attached popover reports its duration (-1: gone without one, a cut)
+    await page.evaluate(() => {
+      (window as unknown as { __fold: Promise<number> }).__fold = new Promise<number>((res) => {
+        const t0 = performance.now();
+        const f = () => {
+          const p = document.querySelector('.ma-pop');
+          const a = p?.getAnimations().find((x) => Number(x.effect?.getTiming().duration) > 0);
+          if (a) return res(Number(a.effect!.getTiming().duration));
+          if (!p || performance.now() - t0 > 4000) return res(-1);
+          requestAnimationFrame(f);
+        };
+        requestAnimationFrame(f);
+      });
+    });
     await page.keyboard.press('Escape');
-    expect(await pop.count()).toBe(1); // still there: it folds back
-    expect((await anim(pop)).duration).toBe(200);
+    expect(await page.evaluate(() => (window as unknown as { __fold: Promise<number> }).__fold)).toBe(200); // it folds back
     await expect(more).toBeFocused();
-    await page.waitForTimeout(400);
     await expect(pop).toHaveCount(0);
     expect(await page.evaluate(([x, y]) => !!document.elementFromPoint(x!, y!)?.closest('.ma-pop'), [r.x + r.width / 2, r.y + r.height / 2])).toBe(false);
   });
@@ -362,8 +375,12 @@ test.describe('glass menus', () => {
     expect(Math.abs(ring.duration - 5000)).toBeLessThanOrEqual(100); // the time left when it started (≈ 5 s)
     await toast.locator('.msg').hover();
     await expect.poll(() => fg.evaluate((e) => e.getAnimations()[0]?.playState)).toBe('paused');
+    const stopped = await fg.evaluate((e) => parseFloat(getComputedStyle(e).strokeDashoffset));
     await page.mouse.move(640, 300);
     await expect.poll(() => fg.evaluate((e) => e.getAnimations()[0]?.playState)).toBe('running');
+    // it runs on from where it stopped (the time left may have been raised to 1.5 s: slower, never back)
+    const from = await fg.evaluate((e) => parseFloat(String((e.getAnimations()[0]!.effect as KeyframeEffect).getKeyframes()[0]!.strokeDashoffset)));
+    expect(Math.abs(from - stopped)).toBeLessThan(0.5);
   });
 
   test('toast rises in and slides out; calm is instant', async ({ page, api }) => {

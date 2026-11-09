@@ -20,6 +20,10 @@
   --err: #ff6b6b;
   --link: #54b9c5;      /* links in running text (light glass surfaces use a lighter one, below) */
   --acc-text: #ff4f6d;  /* coral text (lighter straight on the ambient background and on light glass, below) */
+  /* the light corals and reds of the glass (one place for the next contrast re-tune): coral text straight on the ambient
+     background and on a glass surface's dark underlay (AA); coral lines (underlines, the toast ring) and light-red marks
+     (danger icons, error dots) on glass (3:1 over a white backdrop); the info dot */
+  --acc-light: #ff8aa0; --acc-line: #ff9cad; --err-mark: #ff9d9d; --info-mark: #73c6cf;
   --line: #2a323b;
   --pad-x: clamp(1rem, 4vw, 3.6rem);
   --nav-h: 68px;
@@ -72,8 +76,9 @@ img { max-width: 100%; }
 .skip { position: fixed; left: 1rem; top: -4rem; background: #fff; color: #000; padding: .6rem 1rem; border-radius: 4px; z-index: 100; transition: top var(--t-fast); }
 .skip:focus { top: calc(1rem + var(--safe-top)); }
 
-/* ---- Buttons (min 44px touch target) ---- */
-button, .btn { font: inherit; font-weight: 600; background: var(--acc-fill); color: #fff; border: 0; border-radius: 4px; padding: .6rem 1.2rem; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: .5rem; transition: background var(--t-fast), transform var(--t-fast), opacity var(--t-fast); }
+/* ---- Buttons (min 44px touch target). Only transform / opacity animate (owner rule): fills and colours switch at once;
+   a glass control that wants a fading fill or edge uses .fill-hover / .edge-hover (below) ---- */
+button, .btn { font: inherit; font-weight: 600; background: var(--acc-fill); color: #fff; border: 0; border-radius: 4px; padding: .6rem 1.2rem; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: .5rem; transition: transform var(--t-fast), opacity var(--t-fast); }
 button:hover:not(:disabled), .btn:hover { background: var(--acc-fill-hover); }
 button:active:not(:disabled), .btn:active { transform: scale(.97); }
 button.sec, .btn.sec { background: rgba(112, 124, 138, .55); }
@@ -87,10 +92,19 @@ button.light:hover:not(:disabled), .btn.light:hover { background: rgba(255, 255,
 button:disabled { opacity: .5; cursor: default; }
 .icon-btn { background: transparent; padding: 0; width: 44px; min-height: 44px; border-radius: 50%; color: #fff; }
 .icon-btn:hover:not(:disabled) { background: rgba(255, 255, 255, .12); }
-input, select, textarea { background: #2b333c; color: var(--fg); border: 1px solid transparent; border-radius: 4px; padding: .6rem .8rem; min-height: 44px; font: inherit; transition: border-color var(--t-fast); }
+input, select, textarea { background: #2b333c; color: var(--fg); border: 1px solid transparent; border-radius: 4px; padding: .6rem .8rem; min-height: 44px; font: inherit; }
 input:hover, select:hover { border-color: #6a7480; }
 input[type='checkbox'] { min-height: 0; width: 1.1rem; height: 1.1rem; accent-color: var(--acc); }
 label { color: var(--mut); font-size: .9rem; }
+
+/* the dense glass admin's fields (glass spec §7, as the settings page; ui/Field and ui/Select): 12 px corners on a darker glass
+   fill (darker keeps the white text over AA, lib/admin/glass.test.ts); the hover lights the border, an error colours it (both at
+   once: only transform / opacity animate) */
+.adm .field :is(input:not([type='checkbox']):not([type='radio']), select, textarea) { border-radius: 12px; background: rgba(var(--fr-scrim-rgb), .35); border: 1px solid var(--fr-line); color: #fff; }
+.adm .field :is(input:not([type='checkbox']):not([type='radio']), select, textarea):hover { border-color: rgba(255, 255, 255, .42); }
+.adm .field select option { background: var(--fr-solid); color: #fff; }
+.adm .field.has-err :is(input:not([type='checkbox']):not([type='radio']), select, textarea),
+.adm .field.has-err :is(input:not([type='checkbox']):not([type='radio']), select, textarea):hover { border-color: var(--err); }
 
 /* ---- Generic content blocks (admin & secondary pages) ---- */
 .page { padding: calc(var(--nav-total) + 1.5rem) var(--pad-x) 4rem; max-width: 1500px; margin: 0 auto; }
@@ -159,20 +173,16 @@ button[aria-busy='true'] { cursor: progress; }
 /* where bright content nobody sampled can sit behind (artwork, video): the safe scrim (an inline toneVars() still wins) */
 .frost-safe { --fr-scrim: var(--fr-scrim-safe); }
 .frost-pill { border-radius: var(--fr-r-pill); }
-.frost-card { border-radius: var(--fr-r-card); }
 .frost-tile { border-radius: var(--fr-r-tile); }
 .frost-menu { border-radius: var(--fr-r-menu); }
 .frost-panel { border-radius: var(--fr-r-panel); }
 .frost-sheet { border-radius: var(--fr-r-sheet); }
 /* a glass pill button (44 px), .round: a 44 px circle; it clips its sheen */
-/* (no background transition from the global button rule: calm mode and the frame guard switch it to solid at once) */
 .frost-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 44px; padding: 0 20px; border-radius: var(--fr-r-pill); font-weight: 800; overflow: hidden; transition: transform var(--t-fast), opacity var(--t-fast); }
 .frost-btn.round { width: 44px; height: 44px; padding: 0; border-radius: 50%; }
 /* hover lights the edge, not the fill: more milk over the same scrim would drop white text under AA (lib/glass/tone.test.ts);
    the fill is restated so the global coral button:hover does not win */
 .frost-btn:hover:not(:disabled) { background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim)); border-color: rgba(255, 255, 255, .42); box-shadow: inset 0 1px 0 var(--fr-hi), inset 0 0 0 1px rgba(255, 255, 255, .14); }
-/* the selected light pill (rows, tabs, entries) */
-.frost-sel { background: var(--fr-sel); color: #fff; border-radius: var(--fr-r-pill); }
 /* the page dim behind a sheet (faded by opacity) */
 .frost-dim { position: fixed; inset: 0; background: rgba(8, 7, 11, .45); transition: opacity 200ms var(--fr-out); }
 html.m-still .frost-dim { transition: none; } /* calm mode / reduced motion: at once */
@@ -211,7 +221,7 @@ html.m-still .frost-sheen, html.m-still .frost-tint, html.tv .frost-sheen, html.
 .panel, .frost-text { --mut: rgba(255, 255, 255, .72); --hint: rgba(255, 255, 255, .66); --ok: #4ade80; --warn: #f7b344; --err: #ffa8a8; --link: #80cbd4; --info: #80cbd4; --acc-text: #ffa7b6; }
 /* pages on the ambient background (html.amb, +layout.svelte): the usual greys and status colours pass straight on it; coral
    text needs the lighter coral */
-html.amb { --acc-text: #ff8aa0; }
+html.amb { --acc-text: var(--acc-light); }
 /* glass never nests: a .panel inside a glass surface (the recommend form in the detail panel) is part of it, not a second
    layer of scrim and milk (that would drop the outer surface's text under AA), and it keeps the surface's text levels (the
    block above would reset them to the light card's .72 / .66, which the desk detail column's .9 contract cannot afford) */

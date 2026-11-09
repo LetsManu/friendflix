@@ -178,9 +178,9 @@
   .mi:focus-visible { box-shadow: inset 0 0 0 2px #fff; }
   .mi:active:not(:disabled) { transform: none; }
   /* a destructive row: white text (AA on glass over any backdrop), the colour only on its icon or a dot */
-  .mi.danger :global(svg) { color: #ff9d9d; } /* a light red: 3:1 on the glass over a white backdrop */
+  .mi.danger :global(svg) { color: var(--err-mark); } /* a light red: 3:1 on the glass over a white backdrop */
   .mi.danger .sp { display: grid; place-items: center; }
-  .mi.danger .sp::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #ff9d9d; }
+  .mi.danger .sp::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--err-mark); }
   .mi .sp { width: 20px; flex: none; }
   .chk { margin-left: auto; color: var(--ok, #4ade80); }
   .slot { border-top: 1px solid rgba(255,255,255,.1); margin-top: 6px; padding-top: 6px; }

@@ -108,7 +108,7 @@
       <Button variant="secondary" icon="refresh" on:click={() => dispatch('retry')}>{$t('ui.retry')}</Button>
     </div>
   {:else}
-    <table id="{id}-t" class="glass frost-flat frost-text" aria-busy={rows === null ? 'true' : undefined} aria-rowcount={rows === null ? undefined : count}>
+    <table id="{id}-t" class="dt-glass frost-flat frost-text" aria-busy={rows === null ? 'true' : undefined} aria-rowcount={rows === null ? undefined : count}>
       <caption class:sr-only={!showCaption}>{caption}</caption>
       <thead>
         <tr>
@@ -180,10 +180,10 @@
   .search input { width: 100%; padding-left: 2.4rem; border-radius: 12px; background: rgba(var(--fr-scrim-rgb), .35); border: 1px solid var(--fr-line); color: #fff; transition: none; }
   /* a glass card (frost-flat, 16 px corners; glass spec §7). The sticky header is solid (rows scroll under it) and the row
      hover a darker fill: both only add contrast (lib/admin/glass.test.ts). Dense rows: at least 40 px, 44 px for touch. */
-  table.glass { width: 100%; border-collapse: separate; border-spacing: 0; border-radius: 16px; }
+  table.dt-glass { width: 100%; border-collapse: separate; border-spacing: 0; border-radius: 16px; }
   /* glass never nests: inside a glass card the table is part of it */
-  :global(:is(.frost, .frost-flat, .panel)) table.glass { background: none; border-color: transparent; box-shadow: none; }
-  :global(:is(.frost, .frost-flat, .panel)) table.glass::before { display: none; }
+  :global(:is(.frost, .frost-flat, .panel)) table.dt-glass { background: none; border-color: transparent; box-shadow: none; }
+  :global(:is(.frost, .frost-flat, .panel)) table.dt-glass::before { display: none; }
   caption.sr-only { position: absolute; }
   th { position: sticky; top: var(--nav-total); z-index: 2; background: var(--fr-solid); text-align: left; padding: .55rem .9rem; font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--mut); border-bottom: 1px solid var(--fr-line); white-space: nowrap; }
   th:first-child { border-top-left-radius: 15px; } th:last-child { border-top-right-radius: 15px; }
@@ -216,8 +216,8 @@
   /* phone: every row is a card (label: value); the primary column is the title, actions sit top-right */
   @media (max-width: 720px) {
     table, tbody, tr, td { display: block; width: 100%; }
-    table.glass, :global(:is(.frost, .frost-flat, .panel)) table.glass { background: none; border: 0; box-shadow: none; }
-    table.glass::before { display: none; }
+    table.dt-glass, :global(:is(.frost, .frost-flat, .panel)) table.dt-glass { background: none; border: 0; box-shadow: none; }
+    table.dt-glass::before { display: none; }
     thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
     tbody { display: flex; flex-direction: column; gap: .6rem; }
     /* each row a card: a darker fill over the glass or the ambient (only adds contrast), 16 px corners, ≥ 44 px */

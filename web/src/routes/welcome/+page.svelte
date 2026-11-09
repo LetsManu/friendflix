@@ -153,7 +153,7 @@
   .brand { position: absolute; top: calc(1.2rem + var(--safe-top)); left: max(var(--pad-x), var(--safe-left)); display: inline-flex; }
   .step { margin: 0; color: var(--mut); font-size: .9rem; letter-spacing: .06em; text-transform: uppercase; }
   .dots { display: flex; gap: .4rem; margin: .5rem 0 1.4rem; }
-  .dots i { width: 28px; height: 4px; border-radius: 99px; background: #3b444e; transition: background var(--t-med); }
+  .dots i { width: 28px; height: 4px; border-radius: 99px; background: #3b444e; }
   .dots i.on { background: var(--acc); }
   .card { width: min(520px, 100%); display: flex; flex-direction: column; align-items: center; gap: .7rem; animation: rise .35s var(--ease); }
   .card.wide { width: min(1040px, 100%); }

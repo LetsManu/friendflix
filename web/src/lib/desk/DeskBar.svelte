@@ -487,7 +487,7 @@
   /* the field: the magnifier stays where it is (the pill's last item), input and ✕ fade and slide in to its right while the
      pill's right end springs out; closing, they fade first (they keep their width, --fwc, while the pill shrinks under them) */
   .psearch { position: relative; flex: none; display: flex; align-items: center; width: calc(36px + var(--fw, 0px)); height: 36px; }
-  .mag, .x { display: grid; place-items: center; flex: none; width: 36px; height: 36px; min-height: 36px; padding: 0; border-radius: 50%; background: transparent; color: rgba(255, 255, 255, .78); transition: color 160ms ease-out; }
+  .mag, .x { display: grid; place-items: center; flex: none; width: 36px; height: 36px; min-height: 36px; padding: 0; border-radius: 50%; background: transparent; color: rgba(255, 255, 255, .78); transition: none; }
   .mag:hover:not(:disabled), .x:hover:not(:disabled) { background: transparent; color: #fff; }
   .mag:active:not(:disabled), .x:active:not(:disabled) { transform: none; }
   .pill.open:not(.compact) .mag { color: #fff; }

@@ -34,7 +34,8 @@
 
   /**
    * The countdown ring's front circle: stroke-dashoffset runs from the time used to the full length over the time left (linear),
-   * paused while the toasts are paused and restarted from the time left when they resume. Calm mode / reduced motion: no
+   * paused while the toasts are paused, and on resume it runs on from where it stopped to the full length over the time left
+   * (which may have been raised to 1.5 s: the ring then slows down, it never jumps back). Calm mode / reduced motion: no
    * animation, the ring stays full.
    */
   function ring(el: SVGCircleElement, p: { m: Toast; paused: boolean }) {
@@ -43,9 +44,12 @@
       if (typeof el.animate !== 'function' || fxMode() === 'still' || !m.duration) { anim?.cancel(); anim = null; return; }
       if (paused) { anim?.pause(); return; }
       if (anim?.playState === 'running') return; // the same countdown, still running
-      anim?.cancel();
       const left = timeLeft(m.id);
-      anim = el.animate([{ strokeDashoffset: RING_LEN * (1 - left / m.duration) }, { strokeDashoffset: RING_LEN }], { duration: Math.max(1, left), easing: 'linear', fill: 'forwards' });
+      // where the paused ring stands now (its forwards fill), else the time used so far
+      const at = anim ? parseFloat(getComputedStyle(el).strokeDashoffset) : NaN;
+      const from = Number.isFinite(at) ? at : RING_LEN * (1 - left / m.duration);
+      anim?.cancel();
+      anim = el.animate([{ strokeDashoffset: from }, { strokeDashoffset: RING_LEN }], { duration: Math.max(1, left), easing: 'linear', fill: 'forwards' });
     }
     run(p);
     return { update: run, destroy() { anim?.cancel(); } };
@@ -78,16 +82,16 @@
   .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--mut); }
   .dot.success { background: var(--ok); box-shadow: 0 0 12px var(--ok); }
   /* (error and info lightened so the dot keeps 3:1 on the glass over a white backdrop; success already does) */
-  .dot.error { background: #ff9d9d; box-shadow: 0 0 12px var(--err); }
-  .dot.info { background: #73c6cf; box-shadow: 0 0 12px var(--info); }
+  .dot.error { background: var(--err-mark); box-shadow: 0 0 12px var(--err); }
+  .dot.info { background: var(--info-mark); box-shadow: 0 0 12px var(--info); }
   .msg { flex: 1; margin: 0; font-size: .93rem; line-height: 1.35; overflow-wrap: anywhere; }
   /* the action is white text (AA on glass over any backdrop); its colour is the coral countdown ring beside it */
-  .act { flex: none; min-height: 44px; background: transparent; color: #fff; padding: 0 8px; font-weight: 800; border-radius: var(--fr-r-pill); text-decoration: underline; text-decoration-color: #ff9cad; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+  .act { flex: none; min-height: 44px; background: transparent; color: #fff; padding: 0 8px; font-weight: 800; border-radius: var(--fr-r-pill); text-decoration: underline; text-decoration-color: var(--acc-line); text-decoration-thickness: 2px; text-underline-offset: 4px; }
   .act:hover:not(:disabled) { background: var(--fr-sel); }
   .ring { flex: none; width: 28px; height: 28px; transform: rotate(-90deg); }
   .ring circle { fill: none; stroke-width: 3; }
   .ring .bg { stroke: rgba(255, 255, 255, .2); }
-  .ring .fg { stroke: #ff9cad; stroke-linecap: round; } /* light coral: 3:1 on the glass over a white backdrop */
+  .ring .fg { stroke: var(--acc-line); stroke-linecap: round; } /* light coral: 3:1 on the glass over a white backdrop */
   .x { flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; background: transparent; color: rgba(255, 255, 255, .9); border-radius: 50%; }
   .x:hover:not(:disabled) { background: var(--fr-sel); color: #fff; }
   @media (max-width: 720px) {

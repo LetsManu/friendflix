@@ -21,7 +21,7 @@
   import { reasonText } from '#lib/reason';
   import { autoplayAllowed, holdBillboard, previewOwner, stopPreview, playPreview, toggleSound } from '#lib/preview';
   import { artClick as openFromArt, clipEnv, hoverClipAllowed, portal, previewActions, ratingLoader, releaseClick as release, saveFavorite } from '#lib/hoverShared';
-  import { EMPH_OUT, GLASS_IN } from '#lib/tv/motion';
+  import { EMPH_OUT, GLASS_IN, watchFrames } from '#lib/tv/motion';
   import { HOVER_MARGIN, INFO_UNDERLAY, hoverBox, hoverWidth, type HoverBox } from '#lib/desk/preview';
   import { cachedTone, toneFor, toneVars, type Tone } from '#lib/glass/tone';
   import { sheen } from '#lib/glass/pointer';
@@ -139,7 +139,10 @@
       const mode = fxMode();
       if (!box || !el?.animate || mode === 'still') return;
       if (mode === 'reduced') grow = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: REDUCED_MS, easing: 'linear' });
-      else grow = el.animate([{ transform: `scale(${Math.max(0.1, r.width / box.width)})`, opacity: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 260, easing: EMPH_OUT });
+      else {
+        watchFrames(); // the frame guard measures the grow (the card's blur is the most expensive glass moment)
+        grow = el.animate([{ transform: `scale(${Math.max(0.1, r.width / box.width)})`, opacity: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 260, easing: EMPH_OUT });
+      }
     });
     startT = setTimeout(startVideo, 1000);
     if (!ep) primeItem(item);
@@ -174,6 +177,7 @@
       const ox = growing ? box.ox : Math.min(box.width, Math.max(0, cx)), oy = growing ? box.oy : Math.min(box.height, Math.max(0, cy));
       if (!growing) { org = `${Math.round(ox)}px ${Math.round(oy)}px`; await tick(); }
       const s = Math.max(0.1, (r.width || box.width * 0.2) / box.width);
+      watchFrames();
       shrink = el.animate([from, { transform: `translate(${Math.round(cx - ox)}px, ${Math.round(cy - oy)}px) scale(${s})`, opacity: 0 }], { duration: 180, easing: GLASS_IN, fill: 'forwards' });
     }
     try { await shrink.finished; } catch { /* cancelled: closed all the same */ }
@@ -345,6 +349,6 @@
   .dpv-age { border: 1px solid rgba(255, 255, 255, .45); padding: 0 5px; line-height: 1.4; border-radius: 6px; font-size: .75rem; font-weight: 700; }
   .dpv-ep { margin: 0; font-size: .95rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dpv-syn { margin: 0; font-size: .875rem; line-height: 1.45; color: rgba(255, 255, 255, .9); display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .dpv-why { margin: 0; font-size: .8125rem; line-height: 1.35; font-weight: 700; color: #ff8aa0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dpv-why { margin: 0; font-size: .8125rem; line-height: 1.35; font-weight: 700; color: var(--acc-light); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   :global(html.tv) .dpv { display: none; }
 </style>

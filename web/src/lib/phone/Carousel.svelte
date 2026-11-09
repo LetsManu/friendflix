@@ -278,8 +278,8 @@
   .genres { font-size: .8rem; font-weight: 600; color: #e6e6e6; text-shadow: 0 1px 6px rgba(0, 0, 0, .8); }
   /* each dot is a fixed 20 px pill shown at 30 % width; the current one grows to full width (transform only) */
   .dots { position: relative; z-index: 1; display: flex; justify-content: center; height: 6px; margin: 14px 0 12px; }
-  .dots i { flex: none; width: 20px; height: 6px; margin: 0 -2px; border-radius: 99px; background: rgba(255, 255, 255, .3); transform: scaleX(.3); transition: transform .35s var(--m-spring), background-color .3s; }
-  .dots i.on { transform: none; background: #fff; }
+  .dots i { flex: none; width: 20px; height: 6px; margin: 0 -2px; border-radius: 99px; background: #fff; opacity: .3; transform: scaleX(.3); transition: transform .35s var(--m-spring), opacity .3s; }
+  .dots i.on { transform: none; opacity: 1; }
   @media (prefers-reduced-motion: reduce) { .dots i, .btn { transition: none; } }
   .acts { position: relative; z-index: 1; display: flex; gap: 8px; padding: 0 22px; }
   /* the same space as the dots row (14 + 6 + 12 px): one card, several or the placeholders, the carousel keeps its height */

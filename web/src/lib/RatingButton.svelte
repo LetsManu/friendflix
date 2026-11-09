@@ -169,6 +169,9 @@
   .at { position: absolute; z-index: 30; left: 50%; top: 50%; transform: translate(-50%, -50%); }
   .at.up { top: auto; bottom: calc(100% + 6px); transform: translateX(-50%); }
   .pill { display: flex; gap: .25rem; padding: 8px; }
+  /* glass never nests: inside the hover card or the detail panel (a glass surface, the backdrop root) a second blur would only
+     blur that surface; the pill keeps its look and scrim and drops the blur */
+  :global(html:root :is(.frost, .frost-flat, .panel)) .pill.frost { -webkit-backdrop-filter: none; backdrop-filter: none; }
   .opt { border-color: transparent; background: transparent; }
   .opt:hover:not(:disabled), .opt.on { color: #fff; background: var(--fr-sel); }
   .opt svg { transition: transform 120ms var(--ease, ease-out); }

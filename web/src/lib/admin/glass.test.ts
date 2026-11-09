@@ -6,7 +6,8 @@
  * ambient background (AMB_PEAK): a light glass card over it, the raw ambient, a card over the dark base and the solid
  * fallback (calm mode, TV, kids).
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { countable } from './glass';
@@ -59,7 +60,7 @@ const cr = (t: string | number, bg: RGB) => (typeof t === 'number' ? textContras
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const appCss = read('../../app.css'), shell = read('./AdminShell.svelte'), pill = read('../ui/StatusPill.svelte');
-const table = read('../ui/DataTable.svelte'), tile = read('../ui/StatTile.svelte'), field = read('../ui/Field.svelte');
+const table = read('../ui/DataTable.svelte'), tile = read('../ui/StatTile.svelte'), field = read('../ui/Field.svelte'), select = read('../ui/Select.svelte');
 
 describe('admin glass: text contrast (B′)', () => {
   it('the glass text tokens include the lighter info colour', () => {
@@ -152,8 +153,49 @@ describe('admin glass: text contrast (B′)', () => {
     expect(shell).not.toMatch(/\.side nav \{/);
   });
 
+  /**
+   * App-wide (owner rule, final review ruling I3): no colour, background, border or filter in any transition anywhere in web/src
+   * (app.css, auth.css and every component's <style>). Fills and colours switch at once; a fading fill or edge is an opacity
+   * layer (.fill-hover / .edge-hover). The allowlist holds only what must stay, each with its reason.
+   */
+  it('no colour, background, border or filter transition anywhere in the web app (explicit allowlist)', () => {
+    const root = fileURLToPath(new URL('../../', import.meta.url));
+    const ALLOW: Array<{ file: string; sel: RegExp; why: string }> = [
+      // glass spec Constraints / §8.4: "the text colour of a selected tab or segment label" is the named exception
+      { file: 'lib/detail/DetailDesk.svelte', sel: /\.tab\b/, why: 'detail tab label colour follows the sliding pill (named exception)' },
+      { file: 'lib/detail/DetailView.svelte', sel: /\.tab\b/, why: 'detail tab label colour follows the sliding pill (named exception)' },
+      { file: 'lib/desk/DeskBar.svelte', sel: /\.tab\b|\.gone\b/, why: 'top-bar tab label colour follows the sliding fill (named exception)' },
+      // the player (spec 2026-11-08 §3-§4), not a glass surface: the pause screen dims the video itself (filter on <video>, the
+      // controls sit above it) and the letterbox takes the page colour while the loading poster shows; replacing these needs
+      // a new layer between the video and the controls (left for the player's own follow-up)
+      { file: 'lib/Player.svelte', sel: /^\s*\.stage\b/, why: 'player pause dim / credits glide / loading letterbox (player spec)' },
+    ];
+    const files = (readdirSync(root, { recursive: true }) as string[]).filter((f) => /\.(svelte|css)$/.test(f)).map((f) => f.split(sep).join('/'));
+    expect(files.length).toBeGreaterThan(100);
+    const bad: string[] = [];
+    let seen = 0;
+    for (const f of files) {
+      const src = readFileSync(join(root, f), 'utf8');
+      const css = f.endsWith('.css') ? src : [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n');
+      for (const [, sel, body] of css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+        for (const [, v] of body!.matchAll(/transition(?:-property)?\s*:([^;]*)/g)) {
+          seen++;
+          if (!/color|background|border|filter|\ball\b/.test(v!)) continue;
+          if (ALLOW.some((a) => a.file === f && a.sel.test(sel!))) continue;
+          bad.push(`${f}: ${sel!.trim()} { transition:${v} }`);
+        }
+      }
+    }
+    expect(seen).toBeGreaterThan(100);
+    expect(bad).toEqual([]);
+    // the global button and field rules move transform / opacity only
+    expect(appCss).toMatch(/button, \.btn \{[^}]*transition: transform var\(--t-fast\), opacity var\(--t-fast\); \}/);
+    expect(appCss).not.toMatch(/input, select, textarea \{[^}]*transition/);
+  });
+
   it('fields and selects: white text and the error colour on the darker glass fill', () => {
-    expect(field).toContain('background: rgba(var(--fr-scrim-rgb), .35)');
+    expect(appCss).toMatch(/\.adm \.field :is\(input[^{]*\{[^}]*background: rgba\(var\(--fr-scrim-rgb\), \.35\);/);
+    for (const c of [field, select]) expect(c).not.toContain('.35)');
     for (const bg of ON_GLASS) {
       const f = over(bg, SCRIM_RGB, 0.35);
       expect(textContrast(f)).toBeGreaterThanOrEqual(AA);

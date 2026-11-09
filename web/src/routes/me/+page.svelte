@@ -64,7 +64,7 @@
   </header>
 
   <ul class="tiles2" aria-label={$t('account.me.quick')}>
-    {#each tiles as [href, label, icon] (href)}<li><a class="frost-flat frost-tile" {href}><span class="ti"><Icon name={icon} size={24} /></span><span class="tl">{$t(label)}</span></a></li>{/each}
+    {#each tiles as [href, label, icon] (href)}<li><a class="frost-flat frost-tile edge-hover" {href}><span class="ti"><Icon name={icon} size={24} /></span><span class="tl">{$t(label)}</span></a></li>{/each}
   </ul>
 
   <section aria-labelledby="h-notes">
@@ -74,7 +74,7 @@
     {:else}
       <ul class="notes frost-flat frost-tile">
         {#each shown as n (n.id)}
-          <li class:muted={n.read}>{#if n.link}<a href={n.link}><span class="nd" class:unread={!n.read} aria-hidden="true"></span><span class="nt">{n.title}</span><Icon name="chevron-right" size={18} /></a>{:else}<span class="plainn"><span class="nd" class:unread={!n.read} aria-hidden="true"></span><span class="nt">{n.title}</span></span>{/if}</li>
+          <li class:muted={n.read}>{#if n.link}<a class="fill-hover" href={n.link}><span class="nd" class:unread={!n.read} aria-hidden="true"></span><span class="nt">{n.title}</span><Icon name="chevron-right" size={18} /></a>{:else}<span class="plainn"><span class="nd" class:unread={!n.read} aria-hidden="true"></span><span class="nt">{n.title}</span></span>{/if}</li>
         {/each}
       </ul>
     {/if}
@@ -91,13 +91,13 @@
         <section class="grp" aria-label={$t(g.title)}>
           <h2 class="gh">{$t(g.title)}</h2>
           <ul class="lst frost-flat frost-tile">
-            {#if g.title === 'shell.menu.groups.discover'}<li><button type="button" class="rowbtn" on:click={surprise}><Icon name="shuffle" size={20} />{$t('shell.menu.surprise')}<Icon name="chevron-right" size={18} /></button></li>{/if}
-            {#each g.items as [href, label, icon] (href)}<li><a {href}><Icon name={icon} size={20} />{$t(label)}<Icon name="chevron-right" size={18} /></a></li>{/each}
-            {#if isAcc && owner}<li><a href="/me/account"><Icon name="user" size={20} />{$t('account.account.title')}<Icon name="chevron-right" size={18} /></a></li>{/if}
-            {#if isAcc}<li><a href="/settings#language"><Icon name="globe" size={20} />{$t('account.me.language', { name: localeName($locale) })}<Icon name="chevron-right" size={18} /></a></li>{/if}
-            {#if isAcc}<li><button type="button" class="rowbtn" on:click={() => window.dispatchEvent(new Event('ff-help'))}><Icon name="info" size={20} />{$t('shell.menu.help')}<Icon name="chevron-right" size={18} /></button></li>{/if}
-            {#if isAcc && admin}<li><a href="/admin"><Icon name="shield" size={20} />{$t('shell.menu.admin')}<Icon name="chevron-right" size={18} /></a></li>{/if}
-            {#if isAcc && admin}<li><a href="/diagnose" data-testid="me-diagnose"><Icon name="info" size={20} />{$t('diagnose.title')}<Icon name="chevron-right" size={18} /></a></li>{/if}
+            {#if g.title === 'shell.menu.groups.discover'}<li><button type="button" class="rowbtn fill-hover" on:click={surprise}><Icon name="shuffle" size={20} />{$t('shell.menu.surprise')}<Icon name="chevron-right" size={18} /></button></li>{/if}
+            {#each g.items as [href, label, icon] (href)}<li><a class="fill-hover" {href}><Icon name={icon} size={20} />{$t(label)}<Icon name="chevron-right" size={18} /></a></li>{/each}
+            {#if isAcc && owner}<li><a class="fill-hover" href="/me/account"><Icon name="user" size={20} />{$t('account.account.title')}<Icon name="chevron-right" size={18} /></a></li>{/if}
+            {#if isAcc}<li><a class="fill-hover" href="/settings#language"><Icon name="globe" size={20} />{$t('account.me.language', { name: localeName($locale) })}<Icon name="chevron-right" size={18} /></a></li>{/if}
+            {#if isAcc}<li><button type="button" class="rowbtn fill-hover" on:click={() => window.dispatchEvent(new Event('ff-help'))}><Icon name="info" size={20} />{$t('shell.menu.help')}<Icon name="chevron-right" size={18} /></button></li>{/if}
+            {#if isAcc && admin}<li><a class="fill-hover" href="/admin"><Icon name="shield" size={20} />{$t('shell.menu.admin')}<Icon name="chevron-right" size={18} /></a></li>{/if}
+            {#if isAcc && admin}<li><a class="fill-hover" href="/diagnose" data-testid="me-diagnose"><Icon name="info" size={20} />{$t('diagnose.title')}<Icon name="chevron-right" size={18} /></a></li>{/if}
           </ul>
         </section>
       {/if}
@@ -119,15 +119,14 @@
   .swap:hover { text-decoration: underline; }
   .tiles2 { list-style: none; margin: 0 0 1.6rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(78px, 1fr)); gap: .5rem; }
   @media (min-width: 721px) { .tiles2 { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
-  .tiles2 a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .45rem; min-height: 86px; padding: .5rem .25rem; font-size: .8rem; font-weight: 600; text-align: center; white-space: nowrap; transition: border-color var(--t-fast); }
+  .tiles2 a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .45rem; min-height: 86px; padding: .5rem .25rem; font-size: .8rem; font-weight: 600; text-align: center; white-space: nowrap; }
   .tiles2 li { min-width: 0; }
   .tiles2 .tl { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .pl { display: flex; flex-wrap: wrap; column-gap: 1.2rem; }
-  .rowbtn { width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: .8rem; min-height: 48px; padding: .5rem 1rem; background: transparent; border-radius: 12px; font-weight: 400; color: inherit; transition: none; }
-  .rowbtn:hover:not(:disabled) { background: var(--row-hover); }
+  .rowbtn { width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: .8rem; min-height: 48px; padding: .5rem 1rem; background: transparent; border-radius: 12px; font-weight: 400; color: inherit; }
+  .rowbtn:hover:not(:disabled) { background: transparent; }
   .rowbtn :global(svg:last-child) { margin-left: auto; color: var(--mut); }
-  /* hover lights the edge, never the fill (more milk would cost the text its contrast) */
-  .tiles2 a:hover { border-color: rgba(255,255,255,.42); }
+  /* the tiles' hover lights the edge (.edge-hover, faded by opacity), never the fill (more milk would cost the text its contrast) */
   .ti { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.08); }
   section { margin-bottom: 1.4rem; }
   .sech { display: flex; align-items: baseline; justify-content: space-between; }
@@ -136,10 +135,10 @@
   .lnk { background: transparent; color: var(--link); padding: 0 .4rem; font-weight: 600; }
   .lnk:hover:not(:disabled) { background: transparent; text-decoration: underline; }
   .pad { padding: .4rem 0; margin: 0; }
-  /* glass cards (glass spec §6); a row on hover: 12 px corners on a darker fill (a lighter one would cost the text its AA) */
-  .notes, .lst { --row-hover: rgba(var(--fr-scrim-rgb), .3); list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px; box-shadow: inset 0 1px 0 var(--fr-hi), var(--fr-shadow-card); }
+  /* glass cards (glass spec §6); a row on hover: 12 px corners on a darker fill that fades in (.fill-hover, as in the admin; a
+     lighter one would cost the text its AA) */
+  .notes, .lst { list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px; box-shadow: inset 0 1px 0 var(--fr-hi), var(--fr-shadow-card); }
   .notes a, .plainn, .lst a { display: flex; align-items: center; gap: .8rem; min-height: 48px; padding: .5rem 1rem; border-radius: 12px; }
-  .notes a:hover, .lst a:hover { background: var(--row-hover); }
   .nt { flex: 1; min-width: 0; font-size: .93rem; }
   .nd { flex: none; width: 8px; height: 8px; border-radius: 50%; background: transparent; }
   .nd.unread { background: var(--acc); }

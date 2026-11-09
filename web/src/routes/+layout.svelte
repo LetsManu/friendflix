@@ -855,8 +855,10 @@
   .offbar.notab { bottom: calc(var(--safe-bottom) + var(--castbar-h)); } /* no tab bar (kids profiles, profile picker) */
   @media (min-width: 721px) { .offbar, .offbar.notab { bottom: var(--castbar-h); } }
   .logo { display: inline-flex; align-items: center; }
-  .nav { position: fixed; top: 0; left: 0; right: 0; height: var(--nav-total); z-index: 50; display: flex; align-items: center; gap: .5rem; padding: var(--safe-top) max(var(--pad-x), var(--safe-right)) 0 max(var(--pad-x), var(--safe-left)); background: linear-gradient(to bottom, rgba(0,0,0,.9), rgba(0,0,0,.55) 55%, transparent); transition: background var(--t-med); }
-  .nav.solid { background: var(--bg); }
+  .nav { position: fixed; top: 0; left: 0; right: 0; height: var(--nav-total); z-index: 50; display: flex; align-items: center; gap: .5rem; padding: var(--safe-top) max(var(--pad-x), var(--safe-right)) 0 max(var(--pad-x), var(--safe-left)); background: linear-gradient(to bottom, rgba(0,0,0,.9), rgba(0,0,0,.55) 55%, transparent); }
+  /* solid: the page colour fades in over the bar's own background as a layer (opacity only; no background transition) */
+  .nav::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--bg); opacity: 0; pointer-events: none; transition: opacity var(--t-med); }
+  .nav.solid::before { opacity: 1; }
   .sp { flex: 1; }
   .dot { position: absolute; top: 4px; right: 2px; background: var(--acc-fill); font-size: .65rem; min-width: 1.1rem; height: 1.1rem; border-radius: 99px; display: grid; place-items: center; font-weight: 700; }
   .avatar { width: auto; min-height: 44px; height: 44px; padding: 0 .1rem; background: transparent; gap: .45rem; border-radius: 4px; }
@@ -899,6 +901,7 @@
   /* padding-top keeps the rows below the status bar / Dynamic Island; the background layer covers that strip too. Only
      transform and opacity move: the two background layers crossfade, the layer slides up by the chip bar when it tucks. */
   .nav.m, .nav.m.solid { height: auto; flex-direction: column; align-items: stretch; gap: 0; padding: var(--safe-top) var(--safe-right) 0 var(--safe-left); background: none; transition: none; pointer-events: none; }
+  .nav.m::before { content: none; }
   .nav.m > :not(.mbg) { pointer-events: auto; }
   .mbg { position: absolute; inset: 0; z-index: -1; pointer-events: none; transition: transform 300ms var(--m-emph-out); }
   .mbg::before, .mbg::after { content: ''; position: absolute; inset: 0; transition: opacity 250ms ease-out; }

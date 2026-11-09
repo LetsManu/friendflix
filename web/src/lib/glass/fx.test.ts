@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from 'vitest';
 
-const m = vi.hoisted(() => ({ allowed: true, level: 'full' as 'full' | 'reduced' }));
+const m = vi.hoisted(() => ({ allowed: true, level: 'full' as 'full' | 'reduced', watched: 0 }));
 vi.mock('#lib/preview', () => ({ motionAllowed: () => m.allowed }));
-vi.mock('#lib/tv/motion', () => ({ motionLevel: () => m.level }));
+vi.mock('#lib/tv/motion', () => ({ motionLevel: () => m.level, watchFrames: () => { m.watched++; } }));
 
 import {
   COUNT_MS, countAt, cubicBezier, fxMode, grow, growBoth, growFrom, GROW_IN_MS, GROW_OUT_MS, growOrigin, inEase, outEase, PILL_MID, pillParts,
@@ -226,5 +226,27 @@ describe('pill, count-up, ripple', () => {
   it('rippleBox', () => {
     expect(rippleBox({ left: 10, top: 20, width: 100, height: 40 }, 60, 40)).toEqual({ size: 200, left: -50, top: -80 });
     expect(rippleBox({ left: 0, top: 0, width: 30, height: 80 }, 0, 0)).toEqual({ size: 160, left: -80, top: -80 });
+  });
+});
+
+describe('the frame guard watches glass motion', () => {
+  it('grow, sheetSlide and toastRise pulse it when built with full motion, never in the reduced set or when still', () => {
+    for (const make of [grow, sheetSlide, toastRise]) {
+      m.watched = 0;
+      make(node, { mode: 'full' });
+      make(node, { dir: 'out', mode: 'full' });
+      expect(m.watched).toBe(2);
+      make(node, { mode: 'reduced' });
+      make(node, { mode: 'still' });
+      expect(m.watched).toBe(2);
+    }
+    // the mode from the page: full motion pulses, calm mode does not
+    m.allowed = true; m.level = 'full'; m.watched = 0;
+    grow(node);
+    expect(m.watched).toBe(1);
+    m.allowed = false;
+    grow(node);
+    expect(m.watched).toBe(1);
+    m.allowed = true;
   });
 });
