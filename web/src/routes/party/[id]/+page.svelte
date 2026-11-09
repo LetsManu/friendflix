@@ -15,6 +15,7 @@
   import { dropLayers } from '#lib/player/phone/backlayer';
   import { motionAllowed } from '#lib/preview';
   import { t, tr, fmtList } from '#lib/i18n';
+  import { freshClock, onPong, onServerStamp } from '#lib/player/partyclock';
 
   const EMOJIS = ['😂', '😮', '❤️', '👍', '😢', '🔥']; // same whitelist as the server (backend/src/party.ts)
   const FLOAT_MS = 2500;
@@ -27,14 +28,14 @@
   let chat: Array<{ id: number; name: string; text: string; mine: boolean }> = [], recent: typeof chat = [], text = '', unread = 0, panel = false, settings = false, copied = false;
   let floating: Array<{ id: number; emoji: string; left: number; name: string }> = [], liveMsg = '';
   let state = { playing: false, position: 0, at: 0, hold: false };
-  let offset = 0, bestRtt = Infinity, error = '', needClick = false, countdown = '', ready = false, n = 0, closing = false;
+  let clock = freshClock(), error = '', needClick = false, countdown = '', ready = false, n = 0, closing = false;
   let timers: ReturnType<typeof setInterval>[] = [], reconnect: ReturnType<typeof setTimeout> | undefined, bound: HTMLVideoElement | null = null;
   let suppressUntil = 0, chatEl: HTMLDivElement;
 
   $: isHost = you !== '' && you === hostId;
   $: canControl = isHost || mode === 'everyone';
   $: waitingFor = members.filter((m) => m.buffering).map((m) => m.name);
-  const serverNow = () => Date.now() + offset;
+  const serverNow = () => Date.now() + clock.offset;
   const expected = () => (state.playing && !state.hold ? state.position + (serverNow() - state.at) / 1000 : state.position);
   const send = (m: object) => ws?.readyState === 1 && ws.send(JSON.stringify(m));
 
@@ -60,9 +61,9 @@
     ws.onclose = (e) => { if (closing) return; if (e.code === 4404) error = tr('social.party.notFound'); else if (e.code === 4409) error = tr('social.party.full'); else if (e.code === 4401) error = tr('social.party.relogin'); else reconnect = setTimeout(connect, 2000); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.t === 'welcome') { ({ you, hostId, itemId, title, startAt } = m); mode = m.mode; members = m.members; state = m.state; offset = m.serverNow - Date.now(); }
+      if (m.t === 'welcome') { ({ you, hostId, itemId, title, startAt } = m); mode = m.mode; members = m.members; state = m.state; clock = onServerStamp(clock, m.serverNow, Date.now()); }
       else if (m.t === 'members') { hostId = m.hostId; mode = m.mode; members = m.members; }
-      else if (m.t === 'state') { state = m.state; offset = m.serverNow - Date.now(); apply(); }
+      else if (m.t === 'state') { state = m.state; clock = onServerStamp(clock, m.serverNow, Date.now()); apply(); } // the RTT-corrected offset stays
       else if (m.t === 'chat') {
         const msg = { id: ++n, name: m.name, text: m.text, mine: m.from === you };
         chat = [...chat.slice(-199), msg];
@@ -71,7 +72,7 @@
         tick().then(() => chatEl && (chatEl.scrollTop = chatEl.scrollHeight));
       }
       else if (m.t === 'react') { const id = ++n; floating = [...floating.slice(-23), { id, emoji: m.emoji, left: 6 + Math.random() * 80, name: m.name }]; liveMsg = tr('together.party.reacted', { name: m.name, emoji: m.emoji }); setTimeout(() => (floating = floating.filter((f) => f.id !== id)), FLOAT_MS); }
-      else if (m.t === 'pong') { const rtt = Date.now() - m.c; if (rtt < bestRtt || Math.random() < 0.1) { bestRtt = Math.min(rtt, bestRtt * 1.2); offset = m.s + rtt / 2 - Date.now(); } }
+      else if (m.t === 'pong') clock = onPong(clock, m.c, m.s, Date.now(), Math.random());
     };
   }
 
