@@ -325,7 +325,7 @@
   .acts { display: flex; gap: 10px; align-items: center; }
   .play { width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; background: #fff; color: #111; display: grid; place-items: center; position: relative; flex: none; transition: transform var(--t-fast), opacity var(--t-fast); }
   .play:hover { background: #fff; opacity: .88; }
-  .play:focus-visible, .acts .frost-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .play:focus-visible, .acts .frost-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; --ring-o: 2px; }
   .acts .frost-btn { color: #fff; flex: none; }
   /* the icon never is the click target: the page motion reads the clicked element (an HTMLElement) to find the morph source */
   .play :global(svg), .acts .frost-btn :global(svg) { pointer-events: none; }

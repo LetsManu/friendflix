@@ -61,7 +61,7 @@
   .field { display: flex; align-items: center; gap: .8rem; max-width: 720px; min-height: 72px; padding: 0 1.4rem; border-radius: 99px; background: #fff; box-shadow: 0 8px 20px rgba(32, 35, 58, .12); color: #5b6280; }
   .field:focus-within { box-shadow: 0 0 0 5px var(--k-focus), 0 8px 20px rgba(32, 35, 58, .12); }
   .field input { flex: 1; min-width: 0; border: 0; background: transparent; font-size: 1.4rem; font-weight: 700; color: var(--k-ink); min-height: 64px; padding: 0; }
-  .field input:focus-visible { outline: none; }
+  .field input:focus-visible { outline: none; box-shadow: none; } /* the field box shows the focus */
   .field input::placeholder { color: #9aa0b8; }
   .results { margin-top: 1.6rem; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 40vw), 1fr)); gap: 1.2rem; }

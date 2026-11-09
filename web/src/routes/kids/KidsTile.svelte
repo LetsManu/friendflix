@@ -33,6 +33,7 @@
   img, .noimg { display: block; width: 100%; aspect-ratio: 2 / 3; height: auto; object-fit: cover; border-radius: 24px; background: var(--k-card); box-shadow: 0 6px 18px rgba(0, 0, 0, .28); transition: transform var(--t-fast) var(--ease), box-shadow var(--t-fast); }
   .noimg { display: grid; place-items: center; padding: .8rem; text-align: center; font-size: 1.15rem; font-weight: 800; color: #fff; text-shadow: 0 1px 6px rgba(0, 0, 0, .35); }
   .tile:hover img, .tile:hover .noimg, .tile:focus-visible img, .tile:focus-visible .noimg { transform: translateY(-4px) scale(1.03); box-shadow: 0 0 0 5px var(--k-focus), 0 12px 26px rgba(0, 0, 0, .35); }
+  .tile:focus-visible { box-shadow: none; } /* the kids ring is on the picture (above), not around the tile */
   .nm { font-size: 1.05rem; font-weight: 700; line-height: 1.25; padding: 0 .3rem; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .art { position: relative; display: block; }
   .bar { position: absolute; left: 14px; right: 14px; bottom: 14px; height: 8px; border-radius: 99px; background: rgba(255, 255, 255, .55); overflow: hidden; }

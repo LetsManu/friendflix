@@ -60,7 +60,7 @@
     a.active { color: #fff; }
     .ico { flex: none; width: 24px; height: 24px; display: grid; place-items: center; }
     span:not(.ico):not(.hl) { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    a:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
+    a:focus-visible { outline: 2px solid #fff; outline-offset: -2px; box-shadow: inset 0 0 0 4px var(--ring-dark), 0 0 0 2px var(--ring-dark); }
     :global(html.m-still) .hl, :global(html.m-still) .tabbar a { transition: none; }
   }
 </style>

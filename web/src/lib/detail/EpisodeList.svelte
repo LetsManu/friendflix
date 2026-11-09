@@ -110,7 +110,7 @@
   .ep { display: grid; grid-template-columns: 2.6rem 160px 1fr auto; gap: 1rem; align-items: center; padding: 12px; color: var(--fg); text-decoration: none; box-shadow: inset 0 1px 0 var(--fr-hi), var(--fr-shadow-card); }
   .ep:hover { border-color: rgba(255, 255, 255, .42); }
   .eprow.cur .ep { border-color: var(--acc); box-shadow: inset 0 1px 0 var(--fr-hi), inset 0 0 0 1px var(--acc), var(--fr-shadow-card); }
-  .ep:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .ep:focus-visible { outline: 2px solid #fff; outline-offset: 2px; --ring-o: 2px; }
   .n { font-size: 1.6rem; color: var(--mut); text-align: center; font-weight: 300; }
   .th { position: relative; aspect-ratio: 16 / 9; background: #1c2228; border-radius: 10px; overflow: hidden; display: block; }
   .th img { width: 100%; height: 100%; object-fit: cover; display: block; }

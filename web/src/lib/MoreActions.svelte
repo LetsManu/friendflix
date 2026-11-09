@@ -166,7 +166,8 @@
   .ma.labelled:hover:not(:disabled) { background: rgba(255,255,255,.08); }
   .ma.pill { background: rgba(112,124,138,.55); border-radius: 4px; padding: .6rem 1rem; gap: .5rem; }
   .ma.pill:hover:not(:disabled) { background: rgba(112,124,138,.35); }
-  .ma:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .ma:focus-visible { outline: 2px solid #fff; outline-offset: 2px; --ring-o: 2px; }
+  :global(html:not(.tv)) .ma:focus-visible { box-shadow: 0 0 0 6px var(--ring-dark); } /* the two-tone ring (app.css) over the glass button's own edge */
   /* glass card (glass spec §5): .frost .frost-menu (20 px corners, 8 px padding), 44 px rows with 12 px corners; hover, focus and
      a pressed toggle are the light pill; the safe scrim for white text on that pill and .9 notes (SCRIM_MENU), as artwork or video can
      sit behind it */
@@ -175,7 +176,7 @@
   ul { list-style: none; margin: 0; padding: 0; }
   .mi { display: flex; gap: .8rem; align-items: center; width: 100%; min-height: 44px; padding: 0 14px; border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; font-weight: 600; text-align: left; text-decoration: none; justify-content: flex-start; }
   .mi:hover:not(:disabled), .mi:focus-visible, .mi[aria-pressed='true'] { background: var(--fr-sel); outline: none; }
-  .mi:focus-visible { box-shadow: inset 0 0 0 2px #fff; }
+  .mi:focus-visible { box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 4px var(--ring-dark), 0 0 0 2px var(--ring-dark); }
   .mi:active:not(:disabled) { transform: none; }
   /* a destructive row: white text (AA on glass over any backdrop), the colour only on its icon or a dot */
   .mi.danger :global(svg) { color: var(--err-mark); } /* a light red: 3:1 on the glass over a white backdrop */
