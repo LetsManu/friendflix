@@ -1,0 +1,68 @@
+<!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<script lang="ts">
+  import { onDestroy } from 'svelte';
+  import { pillParts } from '#lib/glass/fx';
+
+  /**
+   * The sliding selection pill (glass spec §8.4): a left cap, a middle part scaled on X and a right cap, all placed by
+   * `transform`, so the pill glides to the selected entry and seems to change width without animating `width`. It sits
+   * absolutely inside `host` (which must be positioned, e.g. `.frost`) under the entries (give them `position: relative`).
+   * It follows the entry `selector` matches: on mount, when the host resizes and when the selection changes (`aria-selected`,
+   * `aria-current` or `class` on any element inside the host, or entries added / removed). The glide (450 ms, the spring)
+   * runs only with full motion off TV and kids (`html.m-glass`); otherwise, and on the first placement, it jumps.
+   */
+  export let host: HTMLElement | undefined;
+  export let selector: string;
+  /** 'white': a solid white pill (the selected label is then #111); 'light': the light selected fill (`--fr-sel`) */
+  export let tone: 'light' | 'white' = 'light';
+
+  let l = '', m = '', r = '', h = 0, y = 0, on = false, ready = false;
+  function place() {
+    const el = host?.querySelector<HTMLElement>(selector);
+    if (!el || !el.offsetWidth) { on = false; return; }
+    h = el.offsetHeight; y = el.offsetTop;
+    ({ l, mid: m, r } = pillParts({ x: el.offsetLeft, w: el.offsetWidth }, h));
+    on = true;
+    // the first placement does not glide in: transitions turn on after it was painted
+    if (!ready) requestAnimationFrame(() => requestAnimationFrame(() => (ready = true)));
+  }
+
+  let ro: ResizeObserver | undefined, mo: MutationObserver | undefined, bound: HTMLElement | undefined;
+  function bind(node: HTMLElement | undefined) {
+    if (node === bound) return;
+    ro?.disconnect(); mo?.disconnect();
+    bound = node;
+    if (!node) return;
+    place();
+    if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(place); ro.observe(node); }
+    if (typeof MutationObserver !== 'undefined') {
+      mo = new MutationObserver(place);
+      mo.observe(node, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-selected', 'aria-current', 'class'] });
+    }
+  }
+  $: bind(host);
+  /** a new selector (another entry kind) is measured again */
+  $: if (bound && selector) place();
+  onDestroy(() => { ro?.disconnect(); mo?.disconnect(); });
+</script>
+
+<span class="sp" class:ready class:on class:white={tone === 'white'} aria-hidden="true" style="--sp-h:{h}px;--sp-y:{y}px">
+  <i class="l" style="transform:{l}"></i><i class="m" style="transform:{m}"></i><i class="r" style="transform:{r}"></i>
+</span>
+
+<style>
+  .sp { position: absolute; inset: 0; z-index: 0; pointer-events: none; opacity: 0; }
+  .sp.on { opacity: 1; }
+  .sp i { position: absolute; left: 0; top: var(--sp-y); height: var(--sp-h); background: var(--fr-sel); transform-origin: 0 50%; }
+  .sp.white i { background: #fff; }
+  /* the caps are circles cut in half, reaching 1 px over the middle part: the scaled middle part's edges are resampled (soft),
+     so the overlap hides the seam (a translucent fill shows a hairline there at most); the middle part is 100 px before scaling */
+  .sp .l, .sp .r { width: var(--sp-h); border-radius: 50%; }
+  .sp .l { clip-path: inset(0 calc(50% - 1px) 0 0); }
+  .sp .r { clip-path: inset(0 0 0 calc(50% - 1px)); }
+  .sp .m { width: 100px; }
+  /* the glide: full motion only (calm mode, reduced motion, a tripped frame guard, TV and kids: it jumps) */
+  :global(html.m-glass:not(.tv):not(.kids)) .sp.ready i { transition: transform 450ms var(--fr-spring); }
+  :global(html.m-still) .sp i { transition: none; }
+</style>

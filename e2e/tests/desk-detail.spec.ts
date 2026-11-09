@@ -4,6 +4,7 @@ import type { Page } from '@playwright/test';
 import { episodes, items, MOVIE, SERIES } from '../mocks/fixtures.js';
 import { expect, test } from '../fixtures.js';
 import { openPopout, row } from '../helpers.js';
+import { png } from '../mocks/png.js';
 
 /** Desktop full-page detail (spec desktop browse §3): cinematic backdrop, left column, tabs only with content. */
 
@@ -164,21 +165,24 @@ test.describe('desktop detail page', () => {
     expect((await syn.boundingBox())!.height).toBeGreaterThan(h0 + 20);
   });
 
-  test('tab change: coral underline moves, panel crossfades, arrow keys move between tabs', async ({ page }) => {
+  test('tab change: the white pill moves under the tab, panel crossfades, arrow keys move between tabs', async ({ page }) => {
     await page.goto('/item/' + SERIES.id);
     const tabs = tablist(page);
     await expect(tabs.getByRole('tab')).toHaveText(['Folgen', 'Mehr davon', 'Details']);
-    const ink = tabs.locator('.ink');
-    expect(await ink.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 79, 109)');
-    const inkX = () => ink.evaluate((e) => Math.round(e.getBoundingClientRect().left));
-    const tabX = (name: string) => tabs.getByRole('tab', { name }).evaluate((e) => Math.round(e.getBoundingClientRect().left));
-    await expect.poll(inkX).toBe(await tabX('Folgen'));
+    const pill = tabs.locator('.sp');
+    expect(await pill.locator('.m').evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 255, 255)');
+    const pillBox = () => pill.evaluate((sp) => {
+      const l = sp.querySelector('.l')!.getBoundingClientRect(), r = sp.querySelector('.r')!.getBoundingClientRect();
+      return [Math.round(l.left), Math.round(r.right)];
+    });
+    const tabBox = (name: string) => tabs.getByRole('tab', { name }).evaluate((e) => { const b = e.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.right)]; });
+    await expect.poll(pillBox).toEqual(await tabBox('Folgen'));
     await tabs.getByRole('tab', { name: 'Details' }).click();
-    await expect.poll(inkX).toBe(await tabX('Details'));
+    await expect.poll(pillBox).toEqual(await tabBox('Details'));
     await expect(page.getByRole('tabpanel', { name: 'Details' })).toBeVisible();
     await expect(page.getByRole('tabpanel', { name: 'Folgen' })).toHaveCount(0);
-    // the underline moves by transform only
-    expect(await ink.evaluate((e) => getComputedStyle(e).transform)).not.toBe('none');
+    // the pill moves by transform only
+    expect(await pill.locator('.m').evaluate((e) => getComputedStyle(e).transform)).not.toBe('none');
 
     // roving tabindex: only the selected tab is in the tab order; arrows move and select
     await expect(tabs.getByRole('tab', { name: 'Details' })).toHaveAttribute('tabindex', '0');
@@ -506,5 +510,135 @@ test.describe('desktop page motion', () => {
     await expect(desk(page).getByRole('heading', { level: 1 })).toHaveText(MOVIE.name);
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => (window as unknown as { __st: unknown[] }).__st.length)).toBe(0);
+  });
+});
+
+/** Glass detail page (glass spec §4): one glass info panel, a glass segment bar with a sliding white pill, glass episode tiles. */
+test.describe('desktop detail glass', () => {
+  test.use({ reducedMotion: 'no-preference' });
+  // full motion without the brand / profile intro over the page; the frame guard with a budget no test host misses (see above)
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      sessionStorage.setItem('ff-intro-seen', '1');
+      localStorage.setItem('ff-intro:p1', JSON.stringify({ show: false, sound: false }));
+      (window as unknown as { __ffDeskGuard: { slowMs: number; frames: number } }).__ffDeskGuard = { slowMs: 1000, frames: 8 };
+    });
+    await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} })); // no clips over the backdrop
+  });
+  const panel = (page: Page) => desk(page).locator('.col.frost');
+  const glassOn = (page: Page) => expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
+
+  test('one glass info panel holds title, facts, synopsis and actions; Play stays white', async ({ page }) => {
+    await page.goto('/item/' + MOVIE.id);
+    await glassOn(page);
+    const col = panel(page);
+    await expect(col).toHaveCount(1);
+    for (const part of ['h1', '.meta', '.syn', '.acts']) await expect(col.locator(part)).toHaveCount(1);
+    expect(await col.evaluate((e) => getComputedStyle(e).borderRadius)).toBe('26px');
+    expect(await col.evaluate((e) => getComputedStyle(e).backdropFilter)).toContain('blur(38px)');
+    const play = col.locator('.acts a.play');
+    expect(await play.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 255, 255)');
+    expect(parseFloat(await play.evaluate((e) => getComputedStyle(e).borderTopLeftRadius))).toBeGreaterThanOrEqual(22);
+    const rbs = col.locator('.acts > a.rb, .acts > button.rb');
+    expect(await rbs.count()).toBeGreaterThan(0);
+    for (const b of await rbs.all()) {
+      await expect(b).toHaveClass(/(^|\s)frost-btn(\s|$)/);
+      const box = (await b.boundingBox())!;
+      expect(box.width).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+    }
+  });
+
+  test('tabs: a glass segment bar with a sliding white pill', async ({ page }) => {
+    await page.goto('/item/' + SERIES.id);
+    await glassOn(page);
+    const tabs = tablist(page);
+    await expect(tabs).toHaveClass(/(^|\s)frost(\s|$)/);
+    await expect(tabs.getByRole('tab')).toHaveText(['Folgen', 'Mehr davon', 'Details']);
+    const mid = tabs.locator('.sp .m');
+    await expect(tabs.locator('.sp')).toHaveClass(/ready/); // placed (the first placement does not glide)
+    const before = await mid.evaluate((e) => getComputedStyle(e).transform);
+    // within 100 ms of the click the part glides (a running CSS transition on transform); timed in the page, so a busy test
+    // host's round trips do not count
+    await page.evaluate(() => {
+      const tab = document.querySelector<HTMLElement>('#dd-tab-more')!, m = document.querySelector('.dd .tabs .sp .m')!;
+      (window as unknown as { __glide: Promise<number> }).__glide = new Promise((done) => tab.addEventListener('click', () => {
+        const t0 = performance.now();
+        const look = () => { const t = performance.now() - t0; if (m.getAnimations().length || t > 1000) done(m.getAnimations().length ? t : Infinity); else setTimeout(look, 5); };
+        setTimeout(look, 0);
+      }, { once: true }));
+    });
+    await tabs.getByRole('tab', { name: 'Mehr davon' }).click();
+    expect(await page.evaluate(() => (window as unknown as { __glide: Promise<number> }).__glide)).toBeLessThan(100);
+    await page.waitForTimeout(300);
+    expect(await tabs.getByRole('tab', { name: 'Mehr davon' }).evaluate((e) => getComputedStyle(e).color)).toBe('rgb(17, 17, 17)');
+    await expect.poll(() => mid.evaluate((e) => getComputedStyle(e).transform)).not.toBe(before);
+    await expect.poll(() => mid.evaluate((e) => e.getAnimations().length)).toBe(0);
+  });
+
+  test('episodes are glass tiles with progress', async ({ page }) => {
+    await page.goto('/item/' + SERIES.id);
+    const eps = desk(page).locator('.tpanel .eps.row .ep');
+    await expect(eps).toHaveCount(episodes.length);
+    for (const ep of await eps.all()) {
+      await expect(ep).toHaveClass(/(^|\s)frost-tile(\s|$)/);
+      expect(await ep.evaluate((e) => getComputedStyle(e).borderTopLeftRadius)).toBe('18px');
+    }
+    expect(await eps.first().locator('.th').evaluate((e) => getComputedStyle(e).borderTopLeftRadius)).toBe('10px');
+    await expect(eps.first().locator('.bar i')).toHaveCount(1); // the coral progress line
+    expect(await eps.first().locator('.bar i').evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 79, 109)');
+  });
+
+  test('contrast fallback: a pure white backdrop', async ({ page }) => {
+    const white = png(64, 36, [255, 255, 255]);
+    await page.route(`**/media/Items/${INTERLACE.id}/Images/**`, (r) => r.fulfill({ status: 200, contentType: 'image/png', body: white }));
+    await page.goto('/');
+    await glassOn(page);
+    // from its card: resting on it samples the artwork's tone (glass spec §1.3), the detail page reads it from the cache
+    const card = row(page, 'Weil du „Inkwell“ gesehen hast').locator('article.card').first();
+    await card.scrollIntoViewIfNeeded();
+    await card.locator('a.thumb').hover();
+    await page.waitForTimeout(300);
+    await card.locator('a.thumb').click();
+    await expect(page).toHaveURL(new RegExp(`/item/${INTERLACE.id}$`));
+    const col = panel(page);
+    await expect(desk(page).locator('img.bg')).toHaveClass(/loaded/);
+    await expect.poll(async () => Number(await col.evaluate((e) => getComputedStyle(e).getPropertyValue('--fr-scrim')))).toBeGreaterThanOrEqual(0.66);
+    // white text over the composite of the backdrop (white, 5 % brighter through the blur), the scrim and the milk's
+    // lightest stop (lib/glass/tone.ts frostComposite, copied: e2e cannot import web code)
+    const bg = await col.evaluate((e) => ({ image: getComputedStyle(e).backgroundImage, color: getComputedStyle(e).backgroundColor }));
+    const rgba = (s: string) => [...s.matchAll(/rgba?\(([^)]+)\)/g)].map((m) => m[1]!.split(',').map(Number)).map(([r, g, b, a]) => ({ c: [r!, g!, b!], a: a ?? 1 }));
+    const [scrim] = rgba(bg.color);
+    const milks = rgba(bg.image);
+    expect(scrim!.a).toBeGreaterThanOrEqual(0.66);
+    expect(milks.length).toBe(2);
+    const over = (back: number[], top: number[], a: number) => back.map((v, i) => v * (1 - a) + top[i]! * a);
+    const lin = (v: number) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+    const lum = (c: number[]) => 0.2126 * lin(c[0]!) + 0.7152 * lin(c[1]!) + 0.0722 * lin(c[2]!);
+    for (const milk of milks) {
+      let c = [255, 255, 255].map((v) => Math.min(255, v * 1.05));
+      c = over(c, scrim!.c, scrim!.a);
+      c = over(c, milk.c, milk.a).map(Math.round);
+      expect((1 + 0.05) / (lum(c) + 0.05), `white on ${c.join(',')}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  test('calm: the panel and tabs are solid, the pill jumps', async ({ page }) => {
+    await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { calm: true } } }));
+    await page.addInitScript(() => localStorage.setItem('ff_calm:p1', '1'));
+    await page.goto('/item/' + SERIES.id);
+    await expect(page.locator('html')).toHaveClass(/m-still/);
+    await expect(page.locator('html')).not.toHaveClass(/(^|\s)m-glass(\s|$)/);
+    expect(await panel(page).evaluate((e) => getComputedStyle(e).backdropFilter)).toBe('none');
+    const tabs = tablist(page);
+    expect(await tabs.evaluate((e) => getComputedStyle(e).backdropFilter)).toBe('none');
+    expect(await tabs.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(28, 26, 33)'); // --fr-solid
+    const mid = tabs.locator('.sp .m');
+    await expect(tabs.locator('.sp')).toHaveClass(/ready/);
+    // no transition at all (calm mode's injected rule flattens every duration to .001 ms, so the duration reads ~0, not '0s')
+    expect(await mid.evaluate((e) => getComputedStyle(e).transitionProperty)).toBe('none');
+    expect(await mid.evaluate((e) => parseFloat(getComputedStyle(e).transitionDuration))).toBeLessThan(0.001);
+    await tabs.getByRole('tab', { name: 'Details' }).click();
+    expect(await mid.evaluate((e) => e.getAnimations().length)).toBe(0);
   });
 });

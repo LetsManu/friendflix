@@ -17,6 +17,9 @@
   import { detailTabs, type DetailTab } from '#lib/desk/tabs';
   import { canGoBack } from '#lib/desk/back';
   import { EMPH_IN, EMPH_OUT, motionLevel } from '#lib/tv/motion';
+  import { cachedTone, SCRIM_SAFE, toneFor, toneVars, type Tone } from '#lib/glass/tone';
+  import { sheen } from '#lib/glass/pointer';
+  import SlidePill from '#lib/glass/SlidePill.svelte';
   import Icon from '#lib/Icon.svelte';
   import QualityChips from '#lib/QualityChips.svelte';
   import RatingButton from '#lib/RatingButton.svelte';
@@ -126,6 +129,51 @@
   // the backdrop has nothing to wait for when there is none (the trailer may still start)
   function bgGone() { bgFailed = true; loaded = true; }
 
+  // ---- the glass info panel's tone (glass spec §4, §8.2): the backdrop's colour as a tint, and the scrim white text needs ----
+  // Without a tone the panel keeps the safe scrim (.frost-safe, passes AA over pure white). A tone the card sampled before
+  // (same key as the hover card: the series for an episode) applies at once. Otherwise the backdrop is sampled once it
+  // loaded: its tint crossfades in, and its scrim applies only while the panel is not on screen yet (no jump under the text).
+  // The card's tone came from the card's picture, not this backdrop: the backdrop is sampled too, and a brighter one raises
+  // the scrim (contrast first). While the trailer plays (frames nobody sampled) the scrim is at least the safe one.
+  const toneKey = (i: Item) => i.seriesId ?? i.id;
+  const tintOf = (x: Tone) => x.tint.join(', ');
+  let tone: Tone | null = null, scrim: number | null = null, tints: [string, string] = ['', ''], front = 0, cardTone = false, toneId = '', panelShown = false;
+  function toneReset(i: Item) {
+    toneId = i.id;
+    const c = cachedTone(toneKey(i));
+    cardTone = Boolean(c);
+    tone = c ?? null; scrim = c ? c.scrim : null; tints = [c ? tintOf(c) : '', '']; front = 0;
+  }
+  $: if (item.id !== toneId) toneReset(item);
+  $: scrimNow = scrim === null ? null : playing ? Math.max(scrim, SCRIM_SAFE) : scrim;
+  $: panelStyle = tone && scrimNow !== null ? toneVars({ ...tone, scrim: scrimNow }) : tone ? `--fr-tint:${tintOf(tone)}` : '';
+  function bgLoaded(e: Event) {
+    loaded = true;
+    const im = e.currentTarget as HTMLImageElement, src = im.currentSrc || im.src, id = item.id;
+    if (!src) return;
+    if (cardTone) {
+      void toneFor('bd:' + id, src).then((b) => { if (b && id === item.id && scrim !== null && b.scrim > scrim) scrim = b.scrim; });
+      return;
+    }
+    // a picture that could not be read before (cached null) is not asked again under the shared key
+    const key = cachedTone(toneKey(item)) === null ? 'bd:' + id : toneKey(item);
+    void toneFor(key, src).then((t) => {
+      if (!t || id !== item.id) return;
+      const back = 1 - front;
+      tints[back] = tintOf(t);
+      front = back;
+      tone = t;
+      if (!panelShown) scrim = t.scrim;
+    });
+  }
+  /** the light sheen, clipped by its own layer (the panel itself does not clip: the rating pill grows past it) */
+  function panelSheen(node: HTMLElement) {
+    const a = sheen(node);
+    const s = node.querySelector(':scope > .frost-sheen'), clip = node.querySelector(':scope > .pclip');
+    if (s && clip) clip.appendChild(s);
+    return a;
+  }
+
   // ---- synopsis: 4 lines, "More" only when the text is longer ----
   let synOpen = false, synClamped = false, synEl: HTMLParagraphElement | undefined, synRo: ResizeObserver | undefined;
   function measure() { if (synEl && !synOpen) synClamped = synEl.scrollHeight > synEl.clientHeight + 1; }
@@ -216,18 +264,6 @@
     void tick().then(() => tabsEl?.querySelector<HTMLElement>('#dd-tab-' + n)?.focus());
   }
 
-  // ---- the coral underline: one bar that slides (translateX + scaleX, transform only) under the selected tab ----
-  let inkX = 0, inkW = 0, inkReady = false;
-  function placeInk() {
-    const el = tabsEl?.querySelector<HTMLElement>('#dd-tab-' + cur);
-    if (!el) return;
-    inkX = el.offsetLeft; inkW = el.offsetWidth;
-    if (!inkReady && inkW) requestAnimationFrame(() => (inkReady = true)); // the first placement does not slide in
-  }
-  /** after the tab bar re-rendered (`_deps`: the selection, the set of tabs, the language) */
-  function placeLater(..._deps: unknown[]) { void tick().then(placeInk); }
-  $: if (tabsEl) placeLater(cur, tabs, $t);
-
   // ---- the backdrop darkens as the tabs climb to the top (opacity of one layer, rAF-throttled scroll) ----
   let dim = 0, raf = 0, ro: ResizeObserver | undefined, roOn: HTMLElement | undefined, lowerEl: HTMLDivElement | undefined;
   function shade() {
@@ -238,12 +274,13 @@
     dim = +(0.82 * t).toFixed(3);
   }
   const onScroll = () => { if (!raf) raf = requestAnimationFrame(shade); };
-  // the tab bar may arrive after the first paint (a movie waits for "More like this"): the underline follows its size
+  // the tab bar may arrive after the first paint (a movie waits for "More like this"): the shade follows its place
   $: if (tabsEl && tabsEl !== roOn && typeof ResizeObserver !== 'undefined') {
-    ro ??= new ResizeObserver(() => { placeInk(); onScroll(); });
+    ro ??= new ResizeObserver(() => onScroll());
     ro.disconnect(); ro.observe(tabsEl); roOn = tabsEl;
   }
   onMount(() => {
+    requestAnimationFrame(() => (panelShown = true)); // painted: a tone arriving later only crossfades the tint
     addEventListener('scroll', onScroll, { passive: true });
     addEventListener('resize', onScroll);
     shade();
@@ -263,7 +300,7 @@
   <div class="bd" data-vt-art="">
     {#if showBg}
       <img class="bg" data-play-art class:loaded src={backdrop(item.id, 1280)} srcset={srcset('Backdrop', item.id, HERO_WIDTHS)} sizes="100vw" alt="" fetchpriority="high"
-        on:load={() => (loaded = true)} on:error={bgGone} />
+        on:load={bgLoaded} on:error={bgGone} />
     {/if}
     <!-- svelte-ignore a11y_media_has_caption -->
     <video class="hv" class:on={playing} bind:this={video} {loop} playsinline aria-hidden="true" tabindex="-1"
@@ -274,7 +311,10 @@
 
   <div class="stage" bind:this={stage}>
     <a class="dback" href="/" on:click={back}><Icon name="chevron-left" size={20} /><span>{$t('desk.detail.back')}</span></a>
-    <div class="col top" bind:this={colEl}>
+    <div class="col frost frost-panel frost-safe" style={panelStyle} use:panelSheen>
+      <span class="frost-tint" aria-hidden="true"><i class:on={tints[0] && front === 0} style={tints[0] ? `--t:${tints[0]}` : undefined}></i><i class:on={tints[1] && front === 1} style={tints[1] ? `--t:${tints[1]}` : undefined}></i></span>
+      <span class="pclip" aria-hidden="true"></span>
+    <div class="top" bind:this={colEl}>
       {#if eyebrow}<p class="eyebrow" data-st>{eyebrow}</p>{/if}
       <h1 class="title" class:haslogo={logo} id={titleId} data-st>
         {#if logo}<span class="sr-only">{item.name}</span><img class="tlogo" src={logoUrl(item.id)} alt="" on:error={() => (logoFailed = true)} />{:else}{item.name}{/if}
@@ -301,17 +341,17 @@
       <div class="acts" data-st>
         <a class="play" data-autofocus href={playHref} use:playPrefetch on:click={onPlay}><Icon name="play" size={24} /><span>{deskPlay}</span></a>
         {#if restartHref}
-          <a class="rb" href={restartHref} use:playPrefetch aria-label={$t('tv.detail.restart')} title={$t('tv.detail.restart')}><Icon name="refresh" size={20} /></a>
+          <a class="rb frost-btn round" use:sheen href={restartHref} use:playPrefetch aria-label={$t('tv.detail.restart')} title={$t('tv.detail.restart')}><Icon name="refresh" size={20} /></a>
         {/if}
-        <button type="button" class="rb" class:on={inList} aria-pressed={inList} aria-label={inList ? $t('detail.view.removeFromList') : $t('detail.view.addToList')} title={$t('detail.view.myList')} on:click={onMyList}><Icon name={inList ? 'check' : 'plus'} size={22} /></button>
+        <button type="button" class="rb frost-btn round" use:sheen class:on={inList} aria-pressed={inList} aria-label={inList ? $t('detail.view.removeFromList') : $t('detail.view.addToList')} title={$t('detail.view.myList')} on:click={onMyList}><Icon name={inList ? 'check' : 'plus'} size={22} /></button>
         <RatingButton itemId={item.id} bind:value={thumb} size={44} on:change={onThumb} />
         {#if localTrailer}
-          <a class="rb" href={qs ? `/watch/${localTrailer.id}?${qs}` : `/watch/${localTrailer.id}`} aria-label={$t('detail.actions.trailer')} title={$t('detail.actions.trailer')}><Icon name="film" size={20} /></a>
+          <a class="rb frost-btn round" use:sheen href={qs ? `/watch/${localTrailer.id}?${qs}` : `/watch/${localTrailer.id}`} aria-label={$t('detail.actions.trailer')} title={$t('detail.actions.trailer')}><Icon name="film" size={20} /></a>
         {:else if canTrailer}
-          <button type="button" class="rb" aria-label={$t('detail.actions.trailer')} title={$t('detail.actions.trailer')} on:click={onTrailer}><Icon name="film" size={20} /></button>
+          <button type="button" class="rb frost-btn round" use:sheen aria-label={$t('detail.actions.trailer')} title={$t('detail.actions.trailer')} on:click={onTrailer}><Icon name="film" size={20} /></button>
         {/if}
         {#if playing}
-          <button type="button" class="rb" aria-label={muted ? $t('detail.view.soundOn') : $t('detail.view.soundOff')} aria-pressed={!muted} on:click={() => toggleSound(video)}><Icon name={muted ? 'volume-off' : 'volume'} size={20} /></button>
+          <button type="button" class="rb frost-btn round" use:sheen aria-label={muted ? $t('detail.view.soundOn') : $t('detail.view.soundOff')} aria-pressed={!muted} on:click={() => toggleSound(video)}><Icon name={muted ? 'volume-off' : 'volume'} size={20} /></button>
         {/if}
         <MoreActions actions={moreActions} variant="ring" size={44} title={item.name}>
           <div class="mslot">
@@ -326,8 +366,9 @@
       {/if}
       <slot />
     </div>
+    </div>
     {#if counting}
-      <div class="auto" role="status" bind:this={autoEl}>
+      <div class="auto frost frost-pill frost-safe" role="status" bind:this={autoEl}>
         <svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15" class="tr" /><circle cx="18" cy="18" r="15" class="pr" style="stroke-dashoffset:{(autoLeft / AUTOSTART_COUNTDOWN_S) * 94.25}" /></svg>
         <span>{countdownLabel(item.type === 'Series' ? 'episode' : 'movie', autoLeft)}</span>
         <button type="button" class="sec" on:click={onCancelAuto}>{$t('detail.view.cancel')}</button>
@@ -340,12 +381,12 @@
       <div class="tabbar" aria-hidden="true"><div class="tabsk"></div></div>
     {:else}
     <div class="tabbar">
-      <div class="tabs" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" bind:this={tabsEl} on:keydown={tabKeys}>
+      <div class="tabs frost frost-pill frost-safe" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" bind:this={tabsEl} on:keydown={tabKeys}>
         {#each tabs as n (n)}
           <button type="button" role="tab" id="dd-tab-{n}" class="tab" class:on={cur === n} aria-selected={cur === n} aria-controls={cur === n ? 'dd-panel-' + n : undefined}
             tabindex={cur === n ? 0 : -1} on:click={() => select(n)}>{tabLabel(n)}</button>
         {/each}
-        <span class="ink" class:ready={inkReady} aria-hidden="true" style="transform:translateX({inkX}px) scaleX({inkW / 100})"></span>
+        {#if tabsEl}<SlidePill host={tabsEl} selector={'[aria-selected="true"]'} tone="white" />{/if}
       </div>
     </div>
     {/if}
@@ -394,7 +435,11 @@
   .stage { position: relative; min-height: max(560px, 84vh); display: flex; flex-direction: column; padding: 88px var(--gutter) 40px; box-sizing: border-box; }
   .dback { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; height: 36px; padding: 0 12px 0 6px; margin-left: -6px; border-radius: 18px; color: rgba(255, 255, 255, .86); font-size: 15px; font-weight: 600; text-decoration: none; transition: background-color 160ms ease-out; }
   .dback:hover { background: rgba(255, 255, 255, .1); color: #fff; }
-  .col { margin-top: auto; width: 42vw; min-width: 440px; max-width: 720px; padding-top: 32px; }
+  /* the glass info panel (glass spec §4): one frost surface over the backdrop, as wide as the column was; .frost-safe until
+     the backdrop's tone is known (inline toneVars win); its sheen sits in a clip layer (the panel does not clip its content) */
+  .col { margin-top: auto; width: 42vw; min-width: 440px; max-width: 720px; box-sizing: border-box; padding: 28px; border-radius: var(--fr-r-sheet); }
+  .pclip { position: absolute; inset: 0; z-index: 1; border-radius: inherit; overflow: hidden; pointer-events: none; }
+  .top { position: relative; }
   .eyebrow { margin: 0 0 12px; color: var(--acc); font-size: 13px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; line-height: 16px; }
   .title { margin: 0 0 16px; font-size: min(4.5vw, 80px); font-weight: 900; letter-spacing: -.035em; line-height: .98; text-wrap: balance; overflow-wrap: anywhere; }
   .title.haslogo { line-height: 0; }
@@ -417,11 +462,23 @@
 
   /* ---- actions: Play (white) and a row of round buttons ---- */
   .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-  .play { display: inline-flex; align-items: center; gap: 10px; height: 48px; padding: 0 28px 0 22px; border-radius: 6px; background: #fff; color: #000; font-size: 18px; font-weight: 700; text-decoration: none; white-space: nowrap; font-variant-numeric: tabular-nums; transition: background-color 160ms ease-out; }
-  .play:hover { background: rgba(255, 255, 255, .78); }
-  .rb { display: inline-grid; place-items: center; width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; background: rgba(var(--ink), .4); border: 1.5px solid rgba(255, 255, 255, .7); color: #fff; text-decoration: none; transition: border-color 160ms ease-out, background-color 160ms ease-out; }
-  .rb:hover:not(:disabled) { border-color: #fff; background: rgba(255, 255, 255, .12); }
+  /* Play: a solid white pill; the round buttons are 44 px glass circles (.frost-btn.round, with the sheen) */
+  .play { display: inline-flex; align-items: center; gap: 10px; height: 48px; padding: 0 28px 0 22px; border-radius: 999px; background: #fff; color: #000; font-size: 18px; font-weight: 700; text-decoration: none; white-space: nowrap; font-variant-numeric: tabular-nums; transition: transform var(--t-fast), opacity var(--t-fast); }
+  .play:hover { background: #fff; opacity: .88; }
+  .rb { flex: none; color: #fff; text-decoration: none; }
   .rb.on { border-color: #fff; }
+  .rb :global(svg) { pointer-events: none; }
+  /* the shared round controls (rating, more) as the same glass circles (.frost-btn's look and its solid fallback) */
+  .acts :global(.rb .trig), .acts :global(.ma.ring) {
+    background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim));
+    border: 1px solid var(--fr-line); box-shadow: inset 0 1px 0 var(--fr-hi);
+  }
+  .acts :global(.rb .trig:hover:not(:disabled)), .acts :global(.ma.ring:hover), .acts :global(.ma.ring.on) {
+    background: linear-gradient(180deg, rgba(var(--fr-milk-top), var(--fr-milk-a2)), rgba(var(--fr-milk), var(--fr-milk-a1))), rgba(var(--fr-scrim-rgb), var(--fr-scrim));
+    border-color: rgba(255, 255, 255, .42); box-shadow: inset 0 1px 0 var(--fr-hi), inset 0 0 0 1px rgba(255, 255, 255, .14);
+  }
+  :global(html:not(.m-glass)) .acts :global(.rb .trig), :global(html:not(.m-glass)) .acts :global(.ma.ring) { background: var(--fr-solid); }
+  :global(html:not(.m-glass)) .acts :global(.rb .trig:hover:not(:disabled)), :global(html:not(.m-glass)) .acts :global(.ma.ring:hover) { background: var(--fr-solid-hover); }
   .play:focus-visible, .rb:focus-visible, .dback:focus-visible, .lnk:focus-visible, .tab:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
   .mslot { display: grid; gap: .6rem; padding: .3rem .4rem .4rem; }
   .mslot :global(.status), .mslot :global(.lang) { margin: 0; }
@@ -430,30 +487,32 @@
   .bar span { position: absolute; inset: 0; background: var(--acc); transform-origin: left center; }
 
   /* auto start countdown: bottom right of the first screen */
-  .auto { position: absolute; right: var(--gutter); bottom: 40px; display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 12px; border-radius: 6px; background: rgba(var(--ink), .9); font-weight: 600; }
+  .auto { position: absolute; right: var(--gutter); bottom: 40px; display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 12px; font-weight: 600; }
   .auto svg { width: 30px; height: 30px; transform: rotate(-90deg); }
   .auto circle { fill: none; stroke-width: 3.5; }
   .auto .tr { stroke: rgba(255, 255, 255, .25); }
   .auto .pr { stroke: #fff; stroke-dasharray: 94.25; transition: stroke-dashoffset 1s linear; }
   .auto .sec { min-height: 40px; padding: 4px 16px; font-size: 15px; }
 
-  /* ---- tabs: hairline under the bar, one coral underline that slides ---- */
+  /* ---- tabs: a glass segment bar; the selected tab sits on a sliding white pill (SlidePill, glass spec §8.4) ---- */
   .lower { position: relative; padding: 0 var(--gutter) 80px; }
-  .tabbar { border-bottom: 1px solid rgba(255, 255, 255, .14); margin-bottom: 24px; }
-  .tabs { position: relative; display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  .tabbar { margin-bottom: 24px; }
+  .tabs { display: inline-flex; max-width: 100%; box-sizing: border-box; gap: 4px; padding: 6px; overflow-x: auto; scrollbar-width: none; vertical-align: top; }
   .tabs::-webkit-scrollbar { display: none; }
-  .tab { position: relative; min-height: 48px; padding: 0 12px; background: transparent; border: 0; border-radius: 0; color: rgba(255, 255, 255, .62); font-size: 16px; font-weight: 600; white-space: nowrap; transition: color 160ms ease-out; }
+  /* 40 px tall in a 52 px bar; the hit area is 44 px (::after) */
+  .tab { position: relative; z-index: 1; flex: none; height: 40px; min-height: 40px; padding: 0 18px; background: transparent; border: 0; border-radius: 999px; color: rgba(255, 255, 255, .72); font-size: 15px; font-weight: 700; white-space: nowrap; }
+  .tab::after { content: ''; position: absolute; inset: -2px; border-radius: inherit; }
   .tab:hover:not(:disabled) { background: transparent; color: #fff; }
-  .tab.on { color: #fff; }
-  .tabsk { height: 48px; }
-  .ink { position: absolute; left: 0; bottom: 0; width: 100px; height: 3px; background: var(--acc); transform-origin: left center; pointer-events: none; }
-  .ink.ready { transition: transform 320ms cubic-bezier(.05, .7, .1, 1); }
+  .tab.on, .tab.on:hover:not(:disabled) { color: #111; }
+  /* the label colour follows the pill in 250 ms (the named exception), with full motion only */
+  :global(html.m-glass:not(.tv):not(.kids)) .tab { transition: color 250ms var(--fr-out); }
+  .tabsk { height: 54px; }
   .tpanel { outline: none; }
   .langs { margin: 0; color: var(--mut); font-size: 14px; }
   .tpanel :global(.cast) { margin-top: 0; }
   .tpanel > :global(* + *) { margin-top: 32px; }
 
   @media (prefers-reduced-motion: reduce) {
-    .bg, .hv, .ink.ready, .auto .pr { transition: none; }
+    .bg, .hv, .auto .pr { transition: none; }
   }
 </style>
