@@ -239,6 +239,11 @@
   .row.dk .hd { position: relative; z-index: 2; }
   .row.dk .track { padding-top: 16px; margin-top: -16px; }
   .row.dk .pg { top: 16px; } /* the edge areas still start at the cards */
+  /* and below them for its shadow (bottom −8 px, 14 px blur) and the tilted bottom edge: the track and the row (its paint is
+     contained by content-visibility) reach 28 px down, the margins give it back (layout unchanged) */
+  .row.dk .track { padding-bottom: 28px; margin-bottom: -28px; }
+  .row.dk .pg { bottom: 28px; }
+  .row.dk { padding-bottom: 28px; margin-bottom: calc(.6rem - 28px); }
   .row.dk .strip { display: flex; flex: none; gap: var(--gap); }
   /* 100cqw = the track's content box (inside the gutters): exactly n cards per page */
   .row.dk .slot { --sw: calc((100cqw - (var(--n) - 1) * var(--gap)) / var(--n)); flex: 0 0 var(--sw); }

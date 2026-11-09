@@ -22,7 +22,7 @@
   import { autoplayAllowed, holdBillboard, previewOwner, stopPreview, playPreview, toggleSound } from '#lib/preview';
   import { artClick as openFromArt, clipEnv, hoverClipAllowed, portal, previewActions, ratingLoader, releaseClick as release, saveFavorite } from '#lib/hoverShared';
   import { EMPH_OUT, GLASS_IN } from '#lib/tv/motion';
-  import { HOVER_MARGIN, hoverBox, hoverWidth, type HoverBox } from '#lib/desk/preview';
+  import { HOVER_MARGIN, INFO_UNDERLAY, hoverBox, hoverWidth, type HoverBox } from '#lib/desk/preview';
   import { cachedTone, toneFor, toneVars, type Tone } from '#lib/glass/tone';
   import { sheen } from '#lib/glass/pointer';
   import { fxMode, REDUCED_MS } from '#lib/glass/fx';
@@ -105,12 +105,22 @@
     org = `${Math.round(b.ox)}px ${Math.round(b.oy)}px`;
     return r;
   }
-  /** the text grew after the card showed (quality chips, a failed save): move up so it stays inside the window */
-  function refit() {
+  /** the text part's room is short (a 600–630 px window): the synopsis drops to 2 lines; last resort, the text part scrolls */
+  let tight = false, infoMax = 0;
+  /**
+   * Keeps the whole card inside the window when the text grows (the quality chips arrive late, a failed-save note): first the
+   * card moves up, then the synopsis drops a line, and as a last resort the text part gets a max height with its own scroll.
+   */
+  async function refit() {
     if (!box || closing || !info) return;
-    const h = box.picH + info.offsetHeight;
-    const top = Math.max(HOVER_MARGIN, Math.min(box.top, window.innerHeight - HOVER_MARGIN - h));
-    if (top !== box.top || h !== box.height) box = { ...box, top, height: h };
+    const avail = Math.floor(window.innerHeight - 2 * HOVER_MARGIN - box.picH);
+    let h = info.offsetHeight;
+    if (h > avail && !tight) { tight = true; await tick(); h = info.offsetHeight; }
+    if (h > avail && !infoMax) { infoMax = Math.max(0, avail); await tick(); h = info.offsetHeight; }
+    if (!box || closing) return;
+    const height = box.picH + h;
+    const top = Math.max(HOVER_MARGIN, Math.min(box.top, window.innerHeight - HOVER_MARGIN - height));
+    if (top !== box.top || height !== box.height) box = { ...box, top, height };
   }
 
   // the billboard trailer pauses while the preview is open (with or without a clip of its own) and comes back when it closes
@@ -118,16 +128,18 @@
   onMount(() => {
     releaseBillboard = holdBillboard();
     if (cachedTone(toneKey) === undefined && (startSrc || src)) void toneFor(toneKey, startSrc || src).then(toneArrived);
-    void tick().then(place).then((r) => {
+    void tick().then(place).then(async (r) => {
+      if (closing) return;
+      await refit(); // a short window: fit the text before the card shows
       if (closing) return;
       ready = true;
-      if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(refit); ro.observe(info); }
+      if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(() => void refit()); ro.observe(info); }
       // grow out of the card (transform + opacity only, origin = the card centre): full motion scales up from the card's width,
       // the reduced set fades in 160 ms, calm mode / reduced motion show it at once
       const mode = fxMode();
       if (!box || !el?.animate || mode === 'still') return;
-      if (mode === 'reduced') el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: REDUCED_MS, easing: 'linear' });
-      else el.animate([{ transform: `scale(${Math.max(0.1, r.width / box.width)})`, opacity: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 260, easing: EMPH_OUT });
+      if (mode === 'reduced') grow = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: REDUCED_MS, easing: 'linear' });
+      else grow = el.animate([{ transform: `scale(${Math.max(0.1, r.width / box.width)})`, opacity: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 260, easing: EMPH_OUT });
     });
     startT = setTimeout(startVideo, 1000);
     if (!ep) primeItem(item);
@@ -136,7 +148,7 @@
   onDestroy(() => { ro?.disconnect(); releaseBillboard?.(); clearTimeout(startT); clearTimeout(fbT); if (playing || $previewOwner === item.id) stopPreview(item.id); });
 
   // ---- closing: the card keeps this mounted until `leave` resolves (glass spec §3) ----
-  let shrink: Animation | null = null;
+  let shrink: Animation | null = null, grow: Animation | null = null;
   /**
    * Shrinks back into the card: 180 ms GLASS_IN toward the card's rect with opacity → 0 (the reduced set: a 160 ms fade; calm mode /
    * reduced motion: at once). The trailer stops right away.
@@ -148,16 +160,21 @@
     if (playing || $previewOwner === item.id) { stopPreview(item.id); playing = false; }
     const mode = fxMode();
     if (!ready || !box || !el?.animate || mode === 'still') return;
-    if (mode === 'reduced') shrink = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: REDUCED_MS, easing: 'linear', fill: 'forwards' });
+    // a close while it still grows reverses from where it is (no jump to full size first)
+    const growing = grow?.playState === 'running';
+    const cs = getComputedStyle(el);
+    const from = growing ? { transform: cs.transform, opacity: Number(cs.opacity) } : { transform: 'none', opacity: 1 };
+    if (growing) grow!.cancel();
+    if (mode === 'reduced') shrink = el.animate([{ opacity: from.opacity }, { opacity: 0 }], { duration: REDUCED_MS, easing: 'linear', fill: 'forwards' });
     else {
       // toward where the card is now (it may have scrolled): scale about its centre clamped into the box, then move the rest
+      // (mid-grow the origin stays the grow's, so the current transform is read about the same point)
       const r = anchor.getBoundingClientRect();
       const cx = r.left + r.width / 2 - box.left, cy = r.top + r.height / 2 - box.top;
-      const ox = Math.min(box.width, Math.max(0, cx)), oy = Math.min(box.height, Math.max(0, cy));
-      org = `${Math.round(ox)}px ${Math.round(oy)}px`;
-      await tick();
+      const ox = growing ? box.ox : Math.min(box.width, Math.max(0, cx)), oy = growing ? box.oy : Math.min(box.height, Math.max(0, cy));
+      if (!growing) { org = `${Math.round(ox)}px ${Math.round(oy)}px`; await tick(); }
       const s = Math.max(0.1, (r.width || box.width * 0.2) / box.width);
-      shrink = el.animate([{ transform: 'none', opacity: 1 }, { transform: `translate(${Math.round(cx - ox)}px, ${Math.round(cy - oy)}px) scale(${s})`, opacity: 0 }], { duration: 180, easing: GLASS_IN, fill: 'forwards' });
+      shrink = el.animate([from, { transform: `translate(${Math.round(cx - ox)}px, ${Math.round(cy - oy)}px) scale(${s})`, opacity: 0 }], { duration: 180, easing: GLASS_IN, fill: 'forwards' });
     }
     try { await shrink.finished; } catch { /* cancelled: closed all the same */ }
   }
@@ -243,7 +260,7 @@
     {#if playing}<button type="button" class="snd" aria-label={vmuted ? $t('home.card.soundOn') : $t('home.card.soundOff')} aria-pressed={!vmuted} on:click={(e) => { release(e); toggleSound(pv); }}><Icon name={vmuted ? 'volume-off' : 'volume'} size={16} /></button>{/if}
     {#if pct}<span class="dpv-progress"><i style="transform:scaleX({pct / 100})"></i></span>{/if}
   </div>
-  <div class="dpv-info" bind:this={info}>
+  <div class="dpv-info" class:tight bind:this={info} style="--dpv-under:{INFO_UNDERLAY};{infoMax ? `max-height:${infoMax}px;overflow-y:auto;` : ''}">
     <div class="acts">
       <a class="play" href={playHref} use:playPrefetch aria-label={$t('home.card.playName', { name: item.name })} title={$t('home.card.play')}><Icon name="play" size={18} fill /></a>
       <button type="button" class="frost-btn round" aria-label={inList ? $t('home.card.removeFromList') : $t('home.card.addToListLong')} title={$t('home.card.myList')} on:click={toggleInList}><Icon name={inList ? 'check' : 'plus'} size={18} /></button>
@@ -297,7 +314,10 @@
   .snd:hover { border-color: #fff; }
   .dpv-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, .22); }
   .dpv-progress i { display: block; height: 100%; background: var(--acc, #ff4f6d); transform-origin: left; }
-  .dpv-info { min-width: 0; padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 10px; }
+  /* the text part sits over page content nobody sampled (rows, Top 10 posters, the billboard): its own dark underlay, solved for a
+     pure white page behind (preview.ts INFO_UNDERLAY), above the tint and the milk; the picture part keeps the tone's glass */
+  .dpv-info { min-width: 0; padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 10px; background: rgba(var(--fr-scrim-rgb), var(--dpv-under, .76)); }
+  .dpv-info.tight .dpv-syn { -webkit-line-clamp: 2; line-clamp: 2; }
   .acts { display: flex; gap: 10px; align-items: center; }
   .play { width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; background: #fff; color: #111; display: grid; place-items: center; position: relative; flex: none; transition: transform var(--t-fast), opacity var(--t-fast); }
   .play:hover { background: #fff; opacity: .88; }
@@ -319,12 +339,12 @@
   .right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
   .fb:empty { display: none; }
   .fb span { display: inline-block; padding: .2rem .55rem; border-radius: 6px; background: rgba(16, 20, 24, .92); border: 1px solid var(--err, #e5646e); font-size: .78rem; font-weight: 600; }
-  .dpv-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: .85rem; color: rgba(255, 255, 255, .78); font-variant-numeric: tabular-nums; }
+  .dpv-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: .85rem; color: rgba(255, 255, 255, .9); font-variant-numeric: tabular-nums; }
   .dpv-meta :global(.qc) { margin: 0; }
   .dpv-match { color: var(--ok, #4ade80); font-weight: 800; }
   .dpv-age { border: 1px solid rgba(255, 255, 255, .45); padding: 0 5px; line-height: 1.4; border-radius: 6px; font-size: .75rem; font-weight: 700; }
   .dpv-ep { margin: 0; font-size: .95rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .dpv-syn { margin: 0; font-size: .875rem; line-height: 1.45; color: rgba(255, 255, 255, .78); display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .dpv-why { margin: 0; font-size: .8125rem; line-height: 1.35; font-weight: 700; color: #ff4f6d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dpv-syn { margin: 0; font-size: .875rem; line-height: 1.45; color: rgba(255, 255, 255, .9); display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .dpv-why { margin: 0; font-size: .8125rem; line-height: 1.35; font-weight: 700; color: #ff8aa0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   :global(html.tv) .dpv { display: none; }
 </style>

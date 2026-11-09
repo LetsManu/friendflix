@@ -312,13 +312,13 @@
      the thumb, the glare, the band and the shadow by transform; the row's other cards step back while one tilts. */
   :global(section.row.dk) .media::before, :global(section.row.dk) .thumb, :global(section.row.dk) .thumb:focus-visible { border-radius: var(--fr-r-card); }
   :global(section.row.dk) .thumb { box-shadow: var(--fr-shadow-card); transform-style: preserve-3d; transition: filter var(--t-fast); }
-  :global(section.row.dk) .cap { transform: translateZ(28px); }
+  /* the caption floats above the art only while the card tilts (a 3D layer per caption on the whole page would cost memory) */
+  :global(section.row.dk .tw.tilt-on) .cap { transform: translateZ(28px); }
   :global(section.row.dk) .tw { position: relative; perspective: 650px; }
   .tw-shadow, .tw-band, .tw-glare { display: none; }
-  :global(section.row.dk) .tw-shadow { display: block; position: absolute; left: 10%; right: 10%; bottom: -8px; height: 28px; border-radius: 50%; background: rgba(0, 0, 0, .65); filter: blur(14px); opacity: 0; transform: scale(.9); transition: opacity .3s; pointer-events: none; }
+  :global(section.row.dk) .tw-shadow { display: block; position: absolute; left: 10%; right: 10%; bottom: -8px; height: 28px; border-radius: 50%; background: rgba(0, 0, 0, .65); filter: blur(14px); opacity: .55; transform: scale(.9); pointer-events: none; }
   :global(section.row.dk) .tw-glare { display: block; position: absolute; left: 0; top: 0; z-index: 2; width: 220px; height: 220px; margin: -110px 0 0 -110px; border-radius: 50%; background: radial-gradient(closest-side, rgba(255, 255, 255, .42), rgba(255, 255, 255, .1) 55%, transparent); mix-blend-mode: soft-light; opacity: 0; transition: opacity .3s; pointer-events: none; }
   :global(section.row.dk) .tw-band { display: block; position: absolute; inset: -40% -60%; z-index: 2; background: linear-gradient(105deg, transparent 42%, rgba(255, 255, 255, .22) 50%, transparent 58%); opacity: 0; transition: opacity .3s; pointer-events: none; }
-  :global(section.row.dk .tw.tilt-on) .tw-shadow { opacity: .55; }
   :global(section.row.dk .tw.tilt-on) .tw-glare, :global(section.row.dk .tw.tilt-on) .tw-band { opacity: 1; }
   :global(html.m-still) .tw-shadow, :global(html.m-still) .tw-band, :global(html.m-still) .tw-glare,
   :global(html.tv) .tw-shadow, :global(html.tv) .tw-band, :global(html.tv) .tw-glare,

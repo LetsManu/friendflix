@@ -484,7 +484,7 @@
   // detail backdrop morph under the TV's shared name, then the detail text staggers in ----
   /** the picture that morphs: the hover preview's art, a card's / "More like this" tile's artwork, or the billboard backdrop */
   const deskArt = (el: Element | null | undefined): HTMLElement | null => {
-    if (!(el instanceof HTMLElement)) return null;
+    if (!(el instanceof Element)) return null; // any element: a click on an icon's <svg> still finds its card / preview
     const pv = el.closest('.dpv');
     const pic = pv ? pv.querySelector<HTMLElement>('.dpv-art img.hi.on') ?? pv.querySelector<HTMLElement>('.dpv-art img:not(.blur):not(.tlogo)')
       : el.closest('main .card')?.querySelector<HTMLElement>('.thumb img:not(.blur)')

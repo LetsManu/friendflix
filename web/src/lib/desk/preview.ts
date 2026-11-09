@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { DOMRectLike } from '#lib/glass/fx';
+import { AA, contrast, frostComposite, SCRIM_LIGHT, SCRIM_RGB, SCRIM_SAFE, type RGB } from '#lib/glass/tone';
 
 export const HOVER_DELAY_MS = 500;
 export const HOVER_CLOSE_MS = 150;
@@ -41,3 +42,34 @@ export function hoverBox(card: DOMRectLike, vp: { w: number; h: number }, bodyH:
   const top = clamp(cy - picH / 2, margin, Math.max(margin, vp.h - margin - height));
   return { left, top, width, picH, height, ox: clamp(cx - left, 0, width), oy: clamp(cy - top, 0, height) };
 }
+
+/**
+ * The inks on the hover card's text part (glass spec §3, contrast): white titles, white .9 for the meta line and synopsis, the
+ * green match score and the light coral reason (approved mockup `#ff8aa0`). `a` < 1 is drawn over the background.
+ */
+export const INFO_INKS: { rgb: RGB; a: number }[] = [
+  { rgb: [255, 255, 255], a: 1 },
+  { rgb: [255, 255, 255], a: 0.9 },
+  { rgb: [74, 222, 128], a: 1 }, // --ok
+  { rgb: [255, 138, 160], a: 1 }, // the reason line
+];
+
+const mix = (b: RGB, t: RGB, a: number): RGB => [0, 1, 2].map((i) => b[i]! * (1 - a) + t[i]! * a) as RGB;
+
+/**
+ * The dark underlay of the hover card's text part. That part sits over page content nobody sampled (rows, Top 10 posters, the
+ * billboard), so it is solved for the worst case: a pure white page behind the glass at its lightest scrim. The smallest alpha
+ * from `SCRIM_SAFE` (.70) up in steps of .02 that gives every ink `target` contrast; 1 if none does.
+ */
+export function infoUnderlay(inks = INFO_INKS, target = AA): number {
+  const glass = frostComposite([255, 255, 255], SCRIM_LIGHT);
+  for (let i = 0; ; i++) {
+    const a = Math.round((SCRIM_SAFE + i * 0.02) * 100) / 100;
+    if (a > 1) return 1;
+    const bg = mix(glass, SCRIM_RGB, a);
+    if (inks.every((k) => contrast(mix(bg, k.rgb, k.a), bg) >= target)) return a;
+  }
+}
+
+/** the underlay for the inks above (computed once) */
+export const INFO_UNDERLAY = infoUnderlay();

@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { HOVER_MARGIN, HOVER_MIN_HEIGHT, hoverAllowed, hoverBox, hoverWidth } from './preview';
+import { contrast, frostComposite, SCRIM_LIGHT, SCRIM_RGB, type RGB } from '#lib/glass/tone';
+import { HOVER_MARGIN, HOVER_MIN_HEIGHT, INFO_INKS, INFO_UNDERLAY, hoverAllowed, hoverBox, hoverWidth, infoUnderlay } from './preview';
 
 describe('hoverAllowed', () => {
   const ok = { width: 1280, height: 800, coarse: false, scrolling: false };
@@ -89,5 +90,24 @@ describe('hoverBox', () => {
 
   it('takes its own margin', () => {
     expect(hoverBox({ left: 0, top: 0, width: 240, height: 135 }, vp, 200, 20)).toMatchObject({ left: 20, top: 20 });
+  });
+});
+
+describe('infoUnderlay', () => {
+  const mix = (b: RGB, t: RGB, a: number): RGB => [0, 1, 2].map((i) => b[i]! * (1 - a) + t[i]! * a) as RGB;
+  const bgAt = (a: number) => mix(frostComposite([255, 255, 255], SCRIM_LIGHT), SCRIM_RGB, a);
+  it('every ink on the text part passes AA over a pure white page behind the lightest glass', () => {
+    expect(INFO_UNDERLAY).toBeGreaterThanOrEqual(0.7);
+    const bg = bgAt(INFO_UNDERLAY);
+    for (const k of INFO_INKS) expect(contrast(mix(bg, k.rgb, k.a), bg)).toBeGreaterThanOrEqual(4.5);
+  });
+  it('is the smallest such step (the light coral decides: .76)', () => {
+    expect(INFO_UNDERLAY).toBe(0.76);
+    const bg = bgAt(0.74);
+    expect(INFO_INKS.some((k) => contrast(mix(bg, k.rgb, k.a), bg) < 4.5)).toBe(true);
+  });
+  it('white text alone needs only the safe .70; an impossible ink gives 1', () => {
+    expect(infoUnderlay([{ rgb: [255, 255, 255], a: 1 }])).toBe(0.7);
+    expect(infoUnderlay([{ rgb: [100, 100, 100], a: 1 }])).toBe(1);
   });
 });
