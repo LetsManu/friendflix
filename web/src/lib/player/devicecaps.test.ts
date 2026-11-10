@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_VERSION } from '#lib/version/codenames';
 import {
   _resetDeviceCaps, buildDeviceCaps, CACHE_KEY, capsPending, confirmsType, decodeQueries, deviceCaps, inSafeMode, isFormatFailure, isProbedBlock, MIME, noteDirectFailure,
@@ -245,6 +245,21 @@ describe('this device: cache, sync claims, safe mode', () => {
     expect(capsPending()).toBeNull(); // probed: nothing to wait for
     fresh({ env: null });
     expect(capsPending()).toBeNull();
+  });
+
+  it('clients with their own caps (LG / Fire TV app): no probe starts and nothing is waited for; a browser is unchanged', async () => {
+    store = new Map(); now = 1_000_000;
+    const decodingInfo = vi.fn(async () => ({ supported: true }));
+    fresh({ ownCaps: true, env: env(all, { decodingInfo }) });
+    expect(capsPending()).toBeNull();
+    await warmDeviceCaps();
+    expect(decodingInfo).not.toHaveBeenCalled();
+    expect(store.get(CACHE_KEY)).toBeUndefined();
+    fresh({ ownCaps: false, env: env(all, { decodingInfo }) });
+    const w = capsPending();
+    expect(w).not.toBeNull();
+    await w;
+    expect(decodingInfo).toHaveBeenCalled();
   });
 
   it('blocked storage: still probes, nothing remembered, nothing thrown', async () => {

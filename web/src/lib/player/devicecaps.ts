@@ -17,6 +17,8 @@
  */
 import { APP_VERSION } from '#lib/version/codenames';
 import { isTizenApp } from '#lib/tizen/detect';
+import { isLgApp } from '#lib/webos/detect';
+import { isFireTvApp } from '#lib/firetv/detect';
 import type { ClientCapsBody } from '#lib/webos/caps';
 
 export interface DecodeQuery {
@@ -185,7 +187,9 @@ export function buildDeviceCaps(env: ProbeEnv, o: { client: ProbeClient; appVers
 
 /** `hdr`: the screen's HDR state at probe time (a switch to an SDR screen or HDR off must not keep the HDR claims) */
 interface Cached { v: number; ua: string; at: number; hdr?: boolean; caps: Out | null }
-export interface DeviceDeps { env: ProbeEnv | null; ua: string; storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null; now: () => number; tizen: boolean }
+export interface DeviceDeps { env: ProbeEnv | null; ua: string; storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null; now: () => number; tizen: boolean;
+  /** the LG webOS or Fire TV app: it sends its own caps (webos/caps.ts appCaps), so nothing is probed and nothing waits for a probe */
+  ownCaps?: boolean }
 
 function realDeps(): DeviceDeps {
   const w = typeof window === 'undefined' ? null : window;
@@ -209,7 +213,9 @@ function realDeps(): DeviceDeps {
   } catch { env = null; }
   let tizen: boolean;
   try { tizen = w ? isTizenApp() : false; } catch { tizen = false; }
-  return { env, ua: w?.navigator?.userAgent ?? '', storage, now: () => Date.now(), tizen };
+  let ownCaps: boolean;
+  try { ownCaps = w ? isLgApp() || isFireTvApp() : false; } catch { ownCaps = false; }
+  return { env, ua: w?.navigator?.userAgent ?? '', storage, now: () => Date.now(), tizen, ownCaps };
 }
 
 let deps: DeviceDeps | null = null;
@@ -242,7 +248,7 @@ function cached(): Out | null | undefined {
 /** starts the asynchronous probe once per page load (cheap to call again); its result is cached for the device */
 export function warmDeviceCaps(): Promise<void> {
   const env = d().env;
-  if (!env || probed !== undefined) return Promise.resolve();
+  if (!env || d().ownCaps || probed !== undefined) return Promise.resolve();
   if (cached() !== undefined) { probed = cached(); return Promise.resolve(); }
   running ??= runDecodeQueries(env).then((res) => {
     probed = buildDeviceCaps(env, opts(), res);
@@ -288,7 +294,7 @@ export function isFormatFailure(o: { watchdog: boolean; code?: number | null; re
 /** waits (bounded) for the decode probe when it still runs, so the play-button prefetch and the player send the same block; null = nothing to wait for */
 export function capsPending(ms = 400): Promise<void> | null {
   const env = d().env;
-  if (!env || inSafeMode() || probed !== undefined) return null;
+  if (!env || d().ownCaps || inSafeMode() || probed !== undefined) return null;
   if (cached() !== undefined) { probed = cached(); return null; }
   return Promise.race([warmDeviceCaps(), new Promise<void>((r) => setTimeout(r, ms))]);
 }
