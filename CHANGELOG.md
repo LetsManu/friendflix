@@ -4,6 +4,16 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Upgrade notes
+- **Passkeys and your reverse proxy.** The public proxy in front of Authentik must set `X-Forwarded-Host` itself and never pass on a value a visitor sent: Authentik builds links in its e-mails from that header. In Nginx Proxy Manager a header line in the *Advanced* box has no effect; set it in a custom location `/` and run the `curl` check of [docs/authentik.md](docs/authentik.md#23-reverse-proxy-nginx-proxy-manager) §2.3. For passkeys inside FriendFlix, the backend reaches Authentik under its public name over a direct route only it uses (split-horizon DNS or a network alias), as §10a step 5 describes. Installs with an internal `AUTHENTIK_URL` whose status card says *Passkeys: In FriendFlix* need no change; fix the issuer warning by giving the public name a direct route, never by sending the backend through the public proxy.
+
+### Fixed
+- **Passkeys stay in the FriendFlix sign-in window.** *Sign in with a passkey* no longer sends you to the identity provider's page. The button only appears when a passkey can really be used here, and while your device asks for your fingerprint, face or PIN the window shows a calm waiting card with *Choose another method*. A cancelled prompt, a timeout or an error says what happened and offers *Try again*. *Confirm with a passkey instead* in the sign-in dialog of the account page works the same way, without leaving the page.
+- **Passkeys made on the sign-in page.** Passkeys you created earlier on the identity provider's own page cannot work inside FriendFlix (a passkey belongs to one address). *Account → Security* now says so: add a new passkey there once.
+
+### Admin
+- **Passkey sign-in is checked and set up.** *Admin → Status → Sign-in* shows whether passkey sign-in is offered in FriendFlix and, if not, why and how to fix it: the missing passkey step at the identity provider, a forwarded host it ignores, or the wrong address. The setup wizard and *Repair Authentik setup* can add the missing passkey step for you when you tick *Offer passkey sign-in* (off by default, because it also offers passkeys to every other application using the identity provider's default sign-in; only where none is set, and it never stops the rest of the setup). [docs/authentik.md](docs/authentik.md#11-passkey-sign-in-on-the-friendflix-screen) now describes `AUTHENTIK_URL`, the forwarded host and the trusted proxies in one consistent way.
+
 ### Streaming
 - **Fewer conversions in browsers and on Samsung TVs.** The player now asks the browser (and the Samsung TV app) which video and sound formats it really decodes, including HEVC, AV1, 10-bit and HDR where the screen shows it, and the server plays those files directly instead of converting them. Only formats the device confirms are used; if one still fails to start, the player switches to the converted stream once and the device stays on the safe formats from then on.
 - **Remote viewers no longer all stall when the upload is full.** Admins can enter the server's upload speed (Admin → Settings → Playback). While it is nearly used up, a new stream from outside the home network starts at a lower quality (8, 4 or 1.5 Mbit/s) instead of every stream stalling. Running streams and viewers at home are never changed.
