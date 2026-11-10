@@ -44,18 +44,18 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     const ms = region(page, 'Noch nicht bei uns');
     await expect(ms.locator('li.c')).toHaveCount(4);
     await expect(ms.getByText('Nicht in der Bibliothek')).toHaveCount(4);
-    await expect(ms.getByText('Ähnlich wie „Inkwell“')).toHaveCount(2);
+    await expect(ms.getByText('Ähnlich wie „Inkwell“')).toHaveCount(1); // Tin Meadow shows its date instead of the reason
     await expect(ms.getByText('Erscheint am 5. Dezember')).toBeVisible();
     await expect(ms.getByRole('button', { name: /^Wünschen: / })).toHaveCount(3);
     await expect(ms.locator('li.c', { hasText: 'Foxglove Court' }).getByText('Angefragt')).toBeVisible(); // asked before: calm status, no button
     await expect(ms.locator('li.c', { hasText: 'Foxglove Court' }).getByRole('button')).toHaveCount(0);
 
     // Neue Folgen: one card per followed show; the freshness only (the card overlay names season and episode)
-    const eps = row(page, 'Neue Folgen');
-    await expect(eps.locator('article.card')).toHaveCount(2);
-    await expect(eps.locator('.note .meta')).toHaveCount(0);
+    const eps = region(page, 'Neue Folgen');
+    await expect(eps.locator('li')).toHaveCount(2);
     await expect(eps.getByText('Neu heute')).toBeVisible();
-    await expect(eps.locator('a.thumb').first()).toHaveAttribute('href', /^\/watch\//);
+    await expect(eps.locator('a.c').first()).toHaveAttribute('href', /^\/watch\//);
+    await expect(eps.getByRole('link', { name: 'Alle Folgen' })).toHaveAttribute('href', '/calendar');
     // the other tabs' sections are not on this tab
     await expect(row(page, 'Neue Serien')).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'Demnächst' })).toHaveCount(0);
@@ -65,7 +65,7 @@ test.describe('new & upcoming, variant B (desktop)', () => {
   test('engine v1: no "Für dich neu" (just the newest titles are no picks), the library tab is complete', async ({ page, api }) => {
     api.newPage.engine = 'v1';
     await page.goto('/new');
-    await expect(row(page, 'Neue Folgen')).toBeVisible();
+    await expect(region(page, 'Neue Folgen')).toBeVisible();
     await expect(region(page, 'Für dich neu')).toHaveCount(0);
     await tab(page, 'Neu in der Bibliothek').click();
     // nothing is taken away from the library list: Interlace, Dahlia and Meridian are all in it when they are new
@@ -80,7 +80,7 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     const card = region(page, 'Noch nicht bei uns').locator('li.c', { hasText: 'Lantern Row' });
     let release = () => {};
     const held = new Promise<void>((res) => { release = res; });
-    await page.route('**/api/requests', async (r) => { if (r.request().method() === 'POST') await held; await r.fallback(); });
+    await page.route('**/api/requests', async (r) => { if (r.request().method() === 'POST') { await held; api.newPage.mine = [{ title: 'Lantern Row', mediaType: 'tv', status: 'angefragt', createdAt: '2026-11-10T09:00:00Z' }]; } await r.fallback(); });
     await card.getByRole('button', { name: 'Wünschen: Lantern Row' }).click();
     await expect(card.getByRole('button', { name: 'Wird gewünscht …' })).toBeDisabled(); // not "requested" before the answer
     await expect(card.getByText('Angefragt')).toHaveCount(0);
@@ -88,9 +88,77 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     await expect(card.getByText('Angefragt')).toBeVisible();
     await expect(card.getByRole('status')).toHaveText('„Lantern Row“ wurde gewünscht.');
     expect(api.log.filter((l) => l.startsWith('POST /api/requests'))).toEqual(['POST /api/requests {"mediaType":"tv","tmdbId":31} -> 200']);
-    // the badge counts the wish once the own requests were read again
+    // the badge counts the wish once the own requests were read again (the service now lists it)
+    await expect(tab(page, /Wünsche & demnächst/)).toContainText('1');
     await tab(page, 'Wünsche & demnächst').click();
     await expect(page.getByRole('region', { name: 'Deine Wünsche' })).toBeVisible();
+  });
+
+  test('titles share one baseline, normal and with a used-up quota', async ({ page, api }) => {
+    api.newPage.suggestions = { ...SUGGESTIONS };
+    const tops = async () => {
+      await expect(region(page, 'Noch nicht bei uns').locator('li.c .nm')).toHaveCount(4);
+      return page.locator('.ms li.c .nm').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top));
+    };
+    await page.goto('/new');
+    await expect(region(page, 'Noch nicht bei uns').getByRole('button', { name: /^Wünschen: / })).toHaveCount(3);
+    let t = await tops();
+    expect(Math.max(...t) - Math.min(...t)).toBeLessThanOrEqual(0.5);
+    api.newPage.quota = { limit: 2, used: 2, resetsAt: '2026-12-01T00:00:00Z' };
+    await page.goto('/new');
+    await expect(region(page, 'Noch nicht bei uns').getByRole('button', { name: /^Kontingent erschöpft/ })).toHaveCount(3);
+    t = await tops();
+    expect(Math.max(...t) - Math.min(...t)).toBeLessThanOrEqual(0.5);
+  });
+
+  test('a wish by keyboard keeps the focus inside the card', async ({ page, api }) => {
+    api.newPage.suggestions = { ...SUGGESTIONS };
+    await page.goto('/new');
+    const card = region(page, 'Noch nicht bei uns').locator('li.c', { hasText: 'Lantern Row' });
+    const btn = card.getByRole('button', { name: 'Wünschen: Lantern Row' });
+    await btn.focus();
+    await page.keyboard.press('Enter');
+    await expect(card.getByText('Angefragt')).toBeVisible();
+    await expect(card.locator('[data-focus]')).toBeFocused();
+    expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
+  });
+
+  test('the request service is slow: Für dich and the library do not wait for it, and nothing moves when it gives up', async ({ page, api }) => {
+    test.setTimeout(40_000);
+    api.newPage.suggestions = { ...SUGGESTIONS };
+    api.newPage.hang.add('suggestions');
+    await page.goto('/new');
+    await expect(region(page, 'Für dich neu')).toBeVisible({ timeout: 1500 });
+    await expect(region(page, 'Neue Folgen')).toBeVisible({ timeout: 1500 });
+    const ms = region(page, 'Noch nicht bei uns');
+    await expect(ms.locator('li.skc')).toHaveCount(4); // the slot is there, as a placeholder
+    const y = async () => (await page.getByRole('heading', { level: 2, name: 'Neue Folgen' }).boundingBox())!.y;
+    const before = await y();
+    await expect(ms.getByRole('button', { name: /Etwas fehlt\?/ })).toBeVisible({ timeout: 8000 }); // given up: the filler takes the slot
+    expect(Math.abs((await y()) - before)).toBeLessThanOrEqual(0.5);
+    await page.goto('/new?tab=neu');
+    await expect(region(page, 'Neu in der Bibliothek')).toBeVisible({ timeout: 1500 });
+  });
+
+  test('a reload with /api/me answering late never shows the placeholder again after the content', async ({ page, api }) => {
+    api.newPage.suggestions = { ...SUGGESTIONS };
+    await page.goto('/new');
+    await expect(region(page, 'Noch nicht bei uns')).toBeVisible(); // remembers the request service for the next visit
+    await page.route('**/api/me', async (r) => { await new Promise((res) => setTimeout(res, 1500)); await r.fallback(); });
+    await page.addInitScript(() => {
+      const seen: string[] = [];
+      (window as unknown as { __frames: string[] }).__frames = seen;
+      const tick = () => {
+        const k = document.querySelector('.panel-body .sk') ? 'SK' : document.querySelector('.panel-body .fy') ? 'FY' : '-';
+        if (seen[seen.length - 1] !== k) seen.push(k);
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    await page.reload();
+    await expect(region(page, 'Noch nicht bei uns').locator('li.c:not(.skc)').first()).toBeVisible({ timeout: 10_000 });
+    const frames = await page.evaluate(() => (window as unknown as { __frames: string[] }).__frames);
+    expect(frames.join(',')).toMatch(/^(-,)?(SK,)?FY$/);
   });
 
   test.describe('a refused wish', () => {
@@ -245,15 +313,15 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     await group.getByRole('radio', { name: 'Serien' }).click();
     await expect(page).toHaveURL(/\/new\?type=series$/);
     await expect(region(page, 'Für dich neu').locator('li.c')).toHaveCount(1);
-    await expect(region(page, 'Noch nicht bei uns').locator('li.c')).toHaveCount(2); // the series suggestions only
-    await expect(row(page, 'Neue Folgen')).toBeVisible();
+    await expect(region(page, 'Noch nicht bei uns').locator('li.c:not(.fill)')).toHaveCount(2); // the series suggestions only
+    await expect(region(page, 'Neue Folgen')).toBeVisible();
     await page.reload();
     await expect(group.getByRole('radio', { name: 'Serien' })).toBeChecked();
 
     await group.getByRole('radio', { name: 'Filme' }).click();
     await expect(page).toHaveURL(/\/new\?type=movie$/);
-    await expect(row(page, 'Neue Folgen')).toHaveCount(0); // a section that becomes empty disappears
-    await expect(region(page, 'Noch nicht bei uns').locator('li.c')).toHaveCount(2);
+    await expect(region(page, 'Neue Folgen')).toHaveCount(0); // a section that becomes empty disappears
+    await expect(region(page, 'Noch nicht bei uns').locator('li.c:not(.fill)')).toHaveCount(2);
     await group.getByRole('radio', { name: 'Alles' }).click();
     await expect(page).toHaveURL(/\/new$/);
 
@@ -305,8 +373,10 @@ test.describe('new & upcoming, variant B (desktop)', () => {
       await page.goto('/new');
       await expect(page.getByRole('tab', { name: 'Neu in der Bibliothek' })).toBeVisible();
       await expect(region(page, 'Für dich neu')).toHaveCount(0);
-      await expect(region(page, 'Noch nicht bei uns')).toHaveCount(0);
-      await expect(row(page, 'Neue Folgen')).toHaveCount(0);
+      // the failed suggestions leave their slot to the "Etwas fehlt?" entry
+      await expect(region(page, 'Noch nicht bei uns').locator('li.c:not(.fill)')).toHaveCount(0);
+      await expect(region(page, 'Noch nicht bei uns').getByRole('button', { name: /Etwas fehlt\?/ })).toBeVisible();
+      await expect(region(page, 'Neue Folgen')).toHaveCount(0);
       await expect(page.locator('.skeleton')).toHaveCount(0);
       await tab(page, 'Neu in der Bibliothek').click();
       await expect(region(page, 'Neu in der Bibliothek')).toBeVisible();
@@ -320,7 +390,7 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     await page.goto('/new');
     await expect(page.locator('.sk')).toBeVisible();
     await expect(region(page, 'Für dich neu')).toBeVisible({ timeout: 15_000 });
-    await expect(row(page, 'Neue Folgen')).toHaveCount(0);
+    await expect(region(page, 'Neue Folgen')).toHaveCount(0);
     await expect(page.locator('.skeleton')).toHaveCount(0);
   });
 

@@ -10,12 +10,15 @@
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { fmtDate, hasKey, t, trDynamic } from '#lib/i18n';
-  import { quotaExhausted, quotaLeft, wishStateOf, type Up } from '#lib/newpage';
+  import { matchesFilter, quotaExhausted, quotaLeft, wishStateOf, type NewFilter, type Up } from '#lib/newpage';
   import UpcomingList from '#lib/new/UpcomingList.svelte';
   import RequestButton from '#lib/requests/RequestButton.svelte';
   import { loadMine, mine, quota } from '#lib/requests/wish';
+  import { mobile } from '#lib/viewport';
 
   export let upcoming: Up[];
+  /** the page's Alles / Serien / Filme filter: it narrows the own wishes and the search results as well */
+  export let filter: NewFilter = 'all';
   /** the header button led here: the search field takes the focus when the panel appears */
   export let autofocus = false;
 
@@ -38,18 +41,19 @@
   onMount(() => { if (!$mine) void reload(); if (autofocus) focusSearch(); });
 
   const label = (s: string): string => (hasKey(`social.requests.status.${s}`) ? trDynamic(`social.requests.status.${s}`) : s);
-  const cls: Record<string, string> = { verfuegbar: 'ok', in_arbeit: 'warn', angefragt: 'warn', teilweise: 'warn', abgelehnt: 'err' };
+  const cls: Record<string, string> = { verfuegbar: 'ok', in_arbeit: '', angefragt: 'warn', teilweise: '', abgelehnt: 'err' };
   const kind = (m: string) => (m === 'tv' ? $t('home.new.kind.series') : $t('home.new.kind.movie'));
   const OPEN = new Set(['angefragt', 'in_arbeit', 'teilweise']);
   /** open requests first, then the rest, newest first in each group; the page shows the first few */
-  $: list = [...($mine ?? [])].sort((a, b) => Number(OPEN.has(b.status)) - Number(OPEN.has(a.status)) || b.createdAt.localeCompare(a.createdAt)).slice(0, 8);
+  $: list = [...($mine ?? [])].filter((m) => matchesFilter(filter, m.mediaType)).sort((a, b) => Number(OPEN.has(b.status)) - Number(OPEN.has(a.status)) || b.createdAt.localeCompare(a.createdAt)).slice(0, 8);
   $: left = quotaLeft($quota);
+  $: shownHits = (hits ?? []).filter((h) => matchesFilter(filter, h.mediaType));
 </script>
 
 <div class="wp">
   <form class="find frost frost-pill frost-safe" role="search" aria-label={$t('home.new.searchLabel')} on:submit|preventDefault={search}>
     <Icon name="search" size={18} />
-    <input type="search" bind:this={input} bind:value={q} placeholder={$t('home.new.searchPlaceholder')} aria-label={$t('home.new.searchLabel')} autocomplete="off" />
+    <input type="search" bind:this={input} bind:value={q} placeholder={$t($mobile ? 'home.new.searchPlaceholderShort' : 'home.new.searchPlaceholder')} maxlength="100" aria-label={$t('home.new.searchLabel')} autocomplete="off" />
     <button type="submit" class="go" disabled={busy || q.trim().length < 2}>{$t('home.new.searchGo')}</button>
   </form>
   <p class="quota" class:full={quotaExhausted($quota)}>
@@ -58,12 +62,12 @@
     {/if}
   </p>
 
-  <div role="status">{#if searchErr}<p class="msg err">{$t('home.new.searchFailed')}</p>{:else if hits && !hits.length}<p class="msg">{$t('home.new.searchNone')}</p>{/if}</div>
-  {#if hits?.length}
+  <div role="status">{#if searchErr}<p class="msg err">{$t('home.new.searchFailed')}</p>{:else if hits && !shownHits.length}<p class="msg">{$t('home.new.searchNone')}</p>{/if}</div>
+  {#if shownHits.length}
     <section aria-label={$t('home.new.searchResults')}>
       <h2>{$t('home.new.searchResults')}<span class="term">„{searched}“</span></h2>
       <ul class="rows">
-        {#each hits as h (h.mediaType + h.tmdbId)}
+        {#each shownHits as h (h.mediaType + h.tmdbId)}
           <li>
             <div class="pst">{#if h.poster}<img src={h.poster} alt="" loading="lazy" decoding="async" />{/if}</div>
             <div class="tx"><b>{h.title}</b><span>{[kind(h.mediaType), h.year].filter(Boolean).join(' · ')}</span></div>
@@ -119,6 +123,7 @@
   .mine li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 56px; border-bottom: 1px solid var(--fr-line); }
   .pill-s { flex: none; padding: 4px 12px; border-radius: 999px; font-size: .8rem; font-weight: 700; box-shadow: inset 0 0 0 1px currentColor; }
   .pill-s.warn { color: var(--warn, #f7b344); }
+  .pill-s { color: rgba(255, 255, 255, .86); }
   .pill-s.ok { color: var(--ok, #4ade80); }
   .pill-s.err { color: var(--err, #ffa8a8); }
   .msg { margin: 0; font-size: .92rem; color: var(--mut); }

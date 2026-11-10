@@ -29,6 +29,7 @@
   } from '#lib/newpage';
   import FilterBar from '#lib/new/FilterBar.svelte';
   import LibraryGrid from '#lib/new/LibraryGrid.svelte';
+  import EpisodeCards from '#lib/new/EpisodeCards.svelte';
   import NewEpisodes from '#lib/new/NewEpisodes.svelte';
   import Spotlight from '#lib/new/Spotlight.svelte';
   import Suggestions from '#lib/new/Suggestions.svelte';
@@ -45,6 +46,8 @@
 
   /** a section that does not answer within this long is left out (never a skeleton forever) */
   const SECTION_TIMEOUT_MS = 8000;
+  /** the calls the first view waits for and the suggestions: given up sooner (the server keeps building and caches it for the next visit) */
+  const FAST_TIMEOUT_MS = 4000;
   let d: NewData = { forYou: null, newSeries: null, newMovies: null, episodes: null, week: null, upcoming: null, suggest: null };
   let now = Date.now();
   let mounted = false;
@@ -57,14 +60,14 @@
     if (e instanceof ApiError && e.body?.error === 'requests_disabled') features.update((f) => ({ ...f, requests: false }));
   }
   /** one call, null when it fails or takes too long */
-  async function fetchJson<R>(path: string): Promise<R | null> {
+  async function fetchJson<R>(path: string, ms = SECTION_TIMEOUT_MS): Promise<R | null> {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), SECTION_TIMEOUT_MS);
+    const timer = setTimeout(() => ctl.abort(), ms);
     try { return await api<R>(path, { signal: ctl.signal }); } catch (e) { serviceGone(e); return null; } finally { clearTimeout(timer); }
   }
   /** one section's list, or [] when the call fails or takes too long */
-  async function section<T>(path: string, pick: (r: any) => T[]): Promise<T[]> {
-    const r = await fetchJson<unknown>(path);
+  async function section<T>(path: string, pick: (r: any) => T[], ms = SECTION_TIMEOUT_MS): Promise<T[]> {
+    const r = await fetchJson<unknown>(path, ms);
     return (r ? pick(r) : null) ?? [];
   }
   const set = <K extends keyof NewData>(k: K, v: NonNullable<NewData[K]>) => { now = Date.now(); d = { ...d, [k]: v }; };
@@ -88,10 +91,10 @@
     document.addEventListener('visibilitychange', onFocus);
     void refreshFlags();
 
-    void section<Item>('/api/library/new-for-you', (r) => forYouItems(r)).then((v) => set('forYou', v));
+    void section<Item>('/api/library/new-for-you', (r) => forYouItems(r), FAST_TIMEOUT_MS).then((v) => set('forYou', v));
     void section<Item>(ITEMS('Series'), (r) => r.items).then((v) => set('newSeries', withinDays(v, NEW_TITLE_DAYS, Date.now())));
     void section<Item>(ITEMS('Movie'), (r) => r.items).then((v) => set('newMovies', withinDays(v, NEW_TITLE_DAYS, Date.now())));
-    void section<NewEpisode>('/api/library/new-episodes', (r) => r.items).then((v) => set('episodes', v));
+    void section<NewEpisode>('/api/library/new-episodes', (r) => r.items, FAST_TIMEOUT_MS).then((v) => set('episodes', v));
     // this week at ours: grown-ups only (the route refuses kids); it needs no feature flag
     if ($kidsMode) set('week', []);
     else void section<Item>('/api/library/trending', (r) => r.items).then((v) => set('week', v));
@@ -105,6 +108,11 @@
     wishStarted = true;
     void loadWishData();
   }
+  // the service went away while the tab was open: forget what it gave, so that it starts afresh when it comes back
+  $: if (!requests && wishStarted) {
+    wishStarted = false;
+    d = { ...d, suggest: null, upcoming: null };
+  }
   async function loadWishData() {
     void Promise.all([section<Up>('/api/seerr/upcoming?type=movie', (r) => r.results), section<Up>('/api/seerr/upcoming?type=tv', (r) => r.results)])
       .then(([m, s]) => set('upcoming', sortUpcoming([...m, ...s]).slice(0, 40)));
@@ -112,7 +120,7 @@
     if (tv) { set('suggest', []); return; }
     void loadMine();
     type Answer = { items: Suggestion[]; quota: { limit: number | null; used: number; resetsAt: string } | null };
-    const [m, s] = await Promise.all([fetchJson<Answer>('/api/library/request-suggestions?type=movie'), fetchJson<Answer>('/api/library/request-suggestions?type=series')]);
+    const [m, s] = await Promise.all([fetchJson<Answer>('/api/library/request-suggestions?type=movie', FAST_TIMEOUT_MS), fetchJson<Answer>('/api/library/request-suggestions?type=series', FAST_TIMEOUT_MS)]);
     const q = m?.quota ?? s?.quota ?? null;
     if (q) quota.set(q); else void loadQuota();
     set('suggest', mergeSuggestions(m?.items ?? [], s?.items ?? []));
@@ -127,7 +135,7 @@
   $: tabs = availableTabs({ requests: canWish });
   $: tab = parseTab($page.url.searchParams.get(TAB_PARAM), { requests: canWish });
   $: filter = parseFilter($page.url.searchParams.get(FILTER_PARAM));
-  const go = (t: NewTab, f: NewFilter, replace: boolean) => goto(pageSearch(t, f) || $page.url.pathname, { replaceState: replace, reset: false });
+  const go = (t: NewTab, f: NewFilter, replace: boolean) => goto(pageSearch(t, f) || $page.url.pathname, { replace, reset: false });
   const pickTab = (t: NewTab) => { void go(t, filter, false); };
   const pickFilter = (f: NewFilter) => { void go(tab, f, true); };
   async function wish() {
@@ -140,8 +148,11 @@
 
   // ---- what to show ----
   $: plan = planSections(d, filter, { requests: canWish });
-  /** the "new" sections (and, with a request service, the suggestions) have answered: until then one placeholder block, so nothing above the fold jumps */
-  $: topReady = d.forYou !== null && d.newSeries !== null && d.newMovies !== null && d.episodes !== null && (!requests || d.suggest !== null);
+  /** each tab waits only for its own library calls (never for the request service: the suggestions have a slot of their own) */
+  $: forYouReady = d.forYou !== null && d.episodes !== null;
+  $: libraryReady = d.newSeries !== null && d.newMovies !== null && d.week !== null;
+  $: tvReady = forYouReady && libraryReady;
+  $: slots = $mobile ? 3 : 4;
   $: episodeItems = plan.episodes.map(episodeItem);
   $: episodeFresh = new Map(plan.episodes.map((e) => [e.episode.id, e]));
   $: emptyForYou = !plan.forYou.length && !plan.suggestions.length && !plan.episodes.length;
@@ -173,6 +184,22 @@
   </div>
 {/snippet}
 
+{#snippet forYouSkeleton()}
+  <div class="sk fysk">
+    <span class="sr-only" role="status">{$t('common.loading')}</span>
+    <div class="skspot" aria-hidden="true">{#each Array($mobile ? 1 : 3) as _}<div class="skeleton"></div>{/each}</div>
+    {#if canWish}<Suggestions items={null} {slots} title={$t('home.new.missing')} sub={$t('home.new.missingSub')} />{/if}
+    <div class="skrow" aria-hidden="true"><div class="skeleton skh"></div><div class="ske">{#each Array($mobile ? 3 : 4) as _}<div class="skeleton"></div>{/each}</div></div>
+  </div>
+{/snippet}
+
+{#snippet libSkeleton()}
+  <div class="sk" role="status" aria-busy="true">
+    <span class="sr-only">{$t('common.loading')}</span>
+    <div class="skrow" aria-hidden="true"><div class="skeleton skh"></div><div class="sklib">{#each Array($mobile ? 6 : 12) as _}<div class="skeleton"></div>{/each}</div></div>
+  </div>
+{/snippet}
+
 {#snippet empty()}
   <section class="empty frost frost-panel frost-safe" aria-labelledby="np-empty">
     <span class="ic" aria-hidden="true"><Icon name="clock" size={26} /></span>
@@ -197,7 +224,7 @@
 
     {#if tv}
       <!-- television: the plain stacked rows, no tabs and no wishes -->
-      {#if !topReady}{@render skeleton()}
+      {#if !tvReady}{@render skeleton()}
       {:else}
         {#if plan.empty}{@render empty()}{/if}
         <div class="bleed"><Row title={$t('home.new.forYou')} sub={$t('home.new.forYouSub')} items={plan.forYou} portrait notes={forYouNote} /></div>
@@ -213,23 +240,25 @@
 
       <div id="np-panel" class="panel-body" role="tabpanel" aria-labelledby="np-tab-{tab}">
         {#if tab === 'wishes'}
-          <WishPanel bind:this={wp} upcoming={plan.upcoming} autofocus={wantFocus} />
-        {:else if !topReady}
-          {@render skeleton()}
+          <WishPanel bind:this={wp} upcoming={plan.upcoming} {filter} autofocus={wantFocus} />
+        {:else if tab === 'foryou' && !forYouReady}
+          {@render forYouSkeleton()}
+        {:else if tab === 'library' && !libraryReady}
+          {@render libSkeleton()}
         {:else if tab === 'foryou'}
           {#if emptyForYou}{@render empty()}{/if}
           {#if plan.forYou.length}
             <Spotlight items={plan.forYou} count={$mobile ? 1 : 3} title={$t('home.new.forYou')} sub={$mobile ? '' : $t('home.new.forYouSub')} />
             {#if $mobile && plan.forYou.length > 1}<div class="bleed"><Row title={$t('home.new.moreForYou')} items={plan.forYou.slice(1)} portrait notes={forYouNote} /></div>{/if}
           {/if}
-          {#if canWish && plan.suggestions.length}
-            <Suggestions items={plan.suggestions.slice(0, $mobile ? 4 : 8)} title={$t('home.new.missing')} sub={$t('home.new.missingSub')} />
+          {#if canWish}
+            <Suggestions items={d.suggest === null ? null : plan.suggestions.slice(0, slots)} {slots} title={$t('home.new.missing')} sub={$t('home.new.missingSub')} on:wish={wish} />
           {/if}
           {#if plan.episodes.length}
             {#if $mobile}<div class="bleed"><NewEpisodes title={$t('home.new.newEpisodes')} items={plan.episodes} {now} /></div>
-            {:else}<div class="bleed"><Row title={$t('home.new.newEpisodes')} sub={$t('home.new.newEpisodesSub')} items={episodeItems} notes={episodeNote} /></div>{/if}
+            {:else}<EpisodeCards title={$t('home.new.newEpisodes')} sub={$t('home.new.newEpisodesSub')} items={plan.episodes.slice(0, 4)} {now} />{/if}
           {/if}
-          {#if $mobile && canWish}
+          {#if $mobile && canWish && d.suggest !== null && plan.suggestions.length >= slots}
             <button type="button" class="bar frost frost-panel frost-safe" on:click={wish}>
               <span class="pl" aria-hidden="true"><Icon name="plus" size={20} /></span>
               <span class="bt"><b>{$t('home.new.barTitle')}</b><span>{$t('home.new.barSub')}</span></span>
@@ -279,9 +308,22 @@
   .skrow { display: grid; gap: .8rem; }
   .skh { width: 9rem; height: 1.3rem; border-radius: 6px; }
   .skcards { display: flex; gap: 8px; overflow: hidden; }
+  .fysk { margin-top: 0; gap: 2.2rem; }
+  .skspot { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .skspot > div { height: 280px; border-radius: 20px; }
+  .ske { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+  .ske > div { aspect-ratio: 16 / 9; border-radius: 16px; }
+  .sklib { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 24px 16px; }
+  .sklib > div { aspect-ratio: 2 / 3; border-radius: 12px; }
   .skc { flex: 0 0 calc((100% - 5 * 8px) / 6); aspect-ratio: 2 / 3; border-radius: 12px; }
   :global(html.tv) .skc { aspect-ratio: 16 / 9; border-radius: var(--tv-radius); }
-  @media (max-width: 720px) { .skc { flex-basis: calc((100% - 2 * 8px) / 3.2); } }
+  @media (max-width: 720px) {
+    .skc { flex-basis: calc((100% - 2 * 8px) / 3.2); }
+    .skspot { grid-template-columns: minmax(0, 1fr); }
+    .skspot > div { height: 340px; }
+    .ske { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .sklib { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 8px; }
+  }
 
   .empty { display: grid; justify-items: center; gap: .5rem; text-align: center; margin: .5rem auto 0; padding: 1.8rem 1.4rem; max-width: 34rem; border-radius: var(--fr-r-panel, 18px); }
   .ic { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--fr-sel); color: var(--acc-text); }

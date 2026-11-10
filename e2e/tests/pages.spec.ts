@@ -19,7 +19,7 @@ test.describe('account and news pages', () => {
     await expect(page.getByRole('radiogroup', { name: 'Anzeigen' }).getByRole('radio')).toHaveText(['Alles', 'Serien', 'Filme']);
     await expect(page.getByRole('tablist', { name: 'Bereiche' }).getByRole('tab')).toHaveCount(3);
     await expect(page.getByRole('region', { name: 'Für dich neu', exact: true })).toBeVisible();
-    await expect(row(page, 'Neue Folgen')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Neue Folgen', exact: true })).toBeVisible();
     await page.getByRole('tab', { name: 'Neu in der Bibliothek' }).click();
     await expect(page.getByRole('region', { name: 'Neu in der Bibliothek', exact: true })).toBeVisible();
     await expect(row(page, 'Diese Woche bei uns').locator('.rkn')).toHaveCount(5);

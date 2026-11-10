@@ -59,7 +59,7 @@ export interface MockState {
    * upcoming titles come per media type (empty by default, like the rest of the mock); `hang` = the call never answers
    */
   newPage: {
-    forYou: unknown[] | 'fail'; episodes: unknown[] | 'fail'; upcoming: { movie: unknown[]; tv: unknown[] }; hang: Set<'forYou' | 'episodes' | 'upcoming'>;
+    forYou: unknown[] | 'fail'; episodes: unknown[] | 'fail'; upcoming: { movie: unknown[]; tv: unknown[] }; hang: Set<'forYou' | 'episodes' | 'upcoming' | 'suggestions'>;
     /** the recommendation engine answered by new-for-you (v1 = just the newest titles: the page must not show them as "for you") */
     engine: 'v1' | 'v2';
     /** GET /api/library/request-suggestions by type; `error` answers 404 requests_disabled / a 500 instead */
@@ -321,6 +321,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (p === '/api/seerr/search') return J({ results: st.newPage.search });
     if (p === '/api/library/request-suggestions') {
       const np = st.newPage;
+      if (np.hang.has('suggestions')) return new Promise<void>(() => undefined);
       if (np.kids) return J({ error: 'kids_profile' }, 403);
       if (np.suggestions.error === 'disabled') return J({ error: 'requests_disabled' }, 404);
       if (np.suggestions.error === 'fail') return J({ error: 'boom' }, 500);

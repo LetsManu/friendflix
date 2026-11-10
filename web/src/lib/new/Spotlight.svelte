@@ -43,7 +43,8 @@
         <div class="tx">
           <span class="mt">{meta(it, big)}</span>
           <b class="nm">{it.name}</b>
-          {#if why}<span class="why"><Icon name="star" size={14} />{why}</span>{/if}
+          {#if big}{#if why}<span class="why"><Icon name="star" size={14} />{why}</span>{/if}
+          {:else}<span class="why" class:blank={!why} aria-hidden={why ? undefined : 'true'}>{#if why}<Icon name="star" size={14} />{why}{/if}</span>{/if}
           {#if big}
             <div class="bt">
               <a class="btn pill play" href={playPath(it)} on:click={(e) => it.type !== 'Series' && playOrCast(e, it)}><Icon name="play" size={18} />{$t('home.card.play')}</a>
@@ -77,6 +78,8 @@
   .nm { font-size: 1.35rem; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; }
   .big .nm { font-size: 2.4rem; letter-spacing: -.02em; }
   .why { display: inline-flex; align-items: flex-start; gap: .35rem; color: var(--acc-text); font-size: .9rem; font-weight: 600; line-height: 1.3; }
+  .why { min-height: 1.3em; }
+  .big .why { min-height: 0; }
   .why :global(svg) { flex: none; margin-top: 2px; }
   .bt { display: flex; gap: .6rem; margin-top: .7rem; flex-wrap: wrap; }
   .play { min-height: 44px; }
