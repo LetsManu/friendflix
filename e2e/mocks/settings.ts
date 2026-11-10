@@ -100,6 +100,7 @@ const GROUPS: Array<[string, Array<[string, Spec]>]> = [
     ['CAST_ENABLED', { kind: 'bool', source: 'default', value: true }],
     ['PREVIEW_WARM', { kind: 'bool', source: 'default', value: true }],
     ['HOME_NETWORKS', { kind: 'cidrList', source: 'default', value: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'] }],
+    ['UPLOAD_MBPS', { kind: 'number', source: 'unset', min: 1, max: 100000 }],
   ]],
   // the engine is saved (shadow, so the admin card shows the comparison); the reco card reads it (api.ts /api/admin/reco)
   ['recommendations', [

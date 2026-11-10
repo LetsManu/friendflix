@@ -185,7 +185,7 @@ const dict: Translation<typeof de> = {
     checkedAt: 'État à {time}',
     loadFailed: 'Impossible de charger l’état.',
     ms: '{n} ms',
-    svc: { media: 'Serveur multimédia', postgres: 'Base de données', redis: 'Cache', gateway: 'Passerelle multimédia', oidc: 'Connexion', requests: 'Service de demandes', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Test de lecture' },
+    svc: { media: 'Serveur multimédia', postgres: 'Base de données', redis: 'Cache', gateway: 'Passerelle multimédia', oidc: 'Connexion', requests: 'Service de demandes', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Test de lecture', encoder: 'Transcodage' },
     level: { ok: 'Fonctionne', warn: 'Limité', err: 'En panne', off: 'Désactivé' },
     playbackNever: 'Jamais exécuté',
     reason: {
@@ -208,6 +208,17 @@ const dict: Translation<typeof de> = {
       failed_playbacks: 'Lectures en échec',
       pending_approvals: 'Connexions en attente de validation',
       removed_env: 'Anciens noms de variable dans .env',
+      no_hw_accel: 'Sans accélération matérielle',
+      no_tonemap: 'Sans mappage des tons',
+      no_throttle: 'Sans limitation',
+      no_keyframes: 'Images clés MKV désactivées',
+    },
+    /** encoder row (Status): one line per gap in the media server's transcoding settings */
+    advice: {
+      no_hw_accel: 'L’accélération matérielle est désactivée : Jellyfin convertit avec le processeur, c’est lent et peu de lectures tiennent en même temps. Dans Jellyfin, choisissez l’unité graphique du serveur sous Tableau de bord → Lecture → Transcodage (p. ex. QSV, VAAPI, NVENC).',
+      no_tonemap: 'Le mappage des tons est désactivé : les films HDR paraissent pâles et gris une fois convertis. Dans Jellyfin, activez « Activer le mappage des tons » sous Transcodage.',
+      no_throttle: 'La limitation est désactivée : Jellyfin convertit chaque film jusqu’au bout aussi vite que possible et occupe l’unité graphique plus longtemps que nécessaire. Dans Jellyfin, activez « Limiter les transcodages » sous Transcodage.',
+      no_keyframes: 'L’extraction des images clés pour MKV est désactivée : les MKV remballés démarrent avec des segments de 6 secondes au lieu de 3. Dans Jellyfin, remettez « mkv » dans l’extraction des images clés sous Transcodage.',
     },
     disks: {
       title: 'Stockage',
@@ -244,7 +255,7 @@ const dict: Translation<typeof de> = {
       unknownTitle: 'Titre inconnu',
       last: 'dernière fois {time}',
     },
-    tc: { network: 'Connexion', remoteCap: 'Limite à distance', roleCap: 'Limite du rôle', container: 'Format de fichier', videoCodec: 'Format vidéo', audioCodec: 'Format audio', audioTrack: 'Piste audio', subtitles: 'Sous-titres', height: 'Résolution', manual: 'Manuel', misc: 'Autre' },
+    tc: { network: 'Connexion', remoteCap: 'Limite à distance', uploadCap: 'Limite d’envoi', roleCap: 'Limite du rôle', container: 'Format de fichier', videoCodec: 'Format vidéo', audioCodec: 'Format audio', audioTrack: 'Piste audio', subtitles: 'Sous-titres', height: 'Résolution', manual: 'Manuel', misc: 'Autre' },
     errors: {
       title: 'Erreurs (24 h)',
       none: 'Aucune erreur ces dernières 24 heures.',

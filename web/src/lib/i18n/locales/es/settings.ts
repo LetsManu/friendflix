@@ -158,6 +158,7 @@ const settings: Translation<typeof de> = {
     CAST_RECEIVER_APP_ID: { label: 'ID de la app receptora de Cast', help: 'Vacío: Chromecast usa el receptor predeterminado de Google. Con el ID de la app del receptor propio de FriendFlix (8 caracteres, de la Google Cast SDK Developer Console, dirección del receptor https://<tu dirección>/cast-receiver/) la TV muestra «Siguiente episodio» con cuenta atrás, «¿Sigues ahí?» y «Saltar intro», y guarda el progreso aunque el móvil esté en reposo. Ver docs/cast-receiver.md.' },
     PREVIEW_WARM: { label: 'Preparar vistas previas', help: 'Crea en reposo los clips de vista previa que faltan, uno por minuto.' },
     HOME_NETWORKS: { label: 'Redes de casa', help: 'Redes que cuentan como casa (sin límite de bitrate para fuera), separadas por comas, p. ej. 192.168.0.0/16.' },
+    UPLOAD_MBPS: { label: 'Subida del servidor (Mbit/s)', help: 'La velocidad de subida de tu conexión a internet. Cuando está casi agotada, las nuevas emisiones desde fuera empiezan con menos calidad en lugar de que todas se corten. Las emisiones en curso y la red de casa no cambian. Vacío = desactivado.' },
     GITHUB_TOKEN: { label: 'Token de GitHub', help: 'Opcional: límite de consultas más alto al buscar versiones nuevas.' },
     PORTAINER_WEBHOOK_URL: { label: 'Webhook del stack de Portainer', help: 'Dirección de webhook del stack para actualizar con un clic. La propia dirección es la clave.' },
     PORTAINER_URL: { label: 'Dirección de Portainer', help: 'En lugar del webhook: dirección de Portainer, con clave de API e ID del stack.' },

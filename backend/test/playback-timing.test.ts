@@ -89,6 +89,16 @@ describe('A/V-sync facts', () => {
     expect(b).toMatchObject({ dropped_frames: null, total_frames: null });
   });
 
+  it('stores whether the start used the prepared next-episode info (older players: false, junk: false)', async () => {
+    expect((await post(friend, { ...base, fromNext: true })).statusCode).toBe(204);
+    expect((await post(friend, { ...base, fromNext: 'yes' })).statusCode).toBe(204);
+    const [a, b] = await rows();
+    expect(a).toMatchObject({ from_next: true });
+    expect(b).toMatchObject({ from_next: false });
+    const v = (await env.app.inject({ url: '/api/admin/playback/timing', cookies: admin.cookies })).json();
+    expect(v.recent.map((r: { fromNext: boolean }) => r.fromNext)).toEqual([false, true]);
+  });
+
   it('the admin view lists them in the recent rows', async () => {
     await post(friend, { ...base, ...sync });
     const v = (await env.app.inject({ url: '/api/admin/playback/timing', cookies: admin.cookies })).json();

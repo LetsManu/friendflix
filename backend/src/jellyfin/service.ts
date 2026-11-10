@@ -14,11 +14,12 @@ import { toChapters, toCredits, toItemAbout, toProviderIds } from './dto.js'; //
 import { toHygieneFacts, toServerSession } from './dto.js'; // Block 22
 import { toItemFeatures } from './dto.js'; // R1
 import { MediaError } from '../media/types.js';
-import type { ClientCaps } from '../media/clientCaps.js';
+import type { CapRange, ClientCaps } from '../media/clientCaps.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, MediaCollection } from '../media/types.js'; // Block 17 P1, Block 21
 import type { HygieneFacts, ServerSession } from '../media/types.js'; // Block 22
 import type { ItemFeatures } from '../media/types.js'; // R1
 import type { SeriesStatus } from '../media/types.js'; // 1.1 post-play
+import type { CapReason, EncoderSettings } from '../media/types.js';
 
 const TOKEN_TTL = 6 * 3600;
 const BOXSET_INDEX_KEY = 'jf:boxsets:v1';
@@ -55,6 +56,26 @@ const REPORT_KIND = { start: 'Playing', progress: 'Playing/Progress', stop: 'Pla
  * stored (encrypted) password, caches the user token (encrypted, in Redis) and re-authenticates
  * on 401. The token never leaves the backend/gateway.
  */
+/** Jellyfin's EncodingOptions (GET /System/Configuration/encoding) -> the few facts the Health check advises on; nothing else is kept */
+export function encoderSettingsOf(o: Record<string, unknown> | null | undefined): EncoderSettings {
+  const hw = typeof o?.HardwareAccelerationType === 'string' && o.HardwareAccelerationType.trim() ? o.HardwareAccelerationType.trim().toLowerCase() : 'none';
+  const exts = Array.isArray(o?.AllowOnDemandMetadataBasedKeyframeExtractionForExtensions) ? (o.AllowOnDemandMetadataBasedKeyframeExtractionForExtensions as unknown[]) : null;
+  return {
+    hwAccel: /^[a-z0-9]{1,16}$/.test(hw) ? hw : 'other',
+    tonemap: o?.EnableTonemapping === true || o?.EnableVppTonemapping === true || o?.EnableVideoToolboxTonemapping === true,
+    throttle: o?.EnableThrottling === true,
+    // an older server without the field extracts keyframes for mkv by default
+    keyframeMkv: exts === null || exts.some((e) => typeof e === 'string' && e.trim().toLowerCase().replace(/^\./, '') === 'mkv'),
+  };
+}
+
+/** Jellyfin VideoRangeType values a stated range covers (a Dolby Vision file with a fallback layer plays as that layer) */
+const RANGE_TYPES: Record<CapRange, string[]> = {
+  sdr: ['SDR', 'DOVIWithSDR'], hdr10: ['HDR10', 'DOVIWithHDR10'], hlg: ['HLG', 'DOVIWithHLG'], hdr10plus: ['HDR10Plus', 'DOVIWithHDR10Plus'],
+  dovi: ['DOVI', 'DOVIWithSDR', 'DOVIWithHDR10', 'DOVIWithHLG', 'DOVIWithHDR10Plus'],
+};
+export const jellyfinRanges = (ranges: CapRange[]): string => [...new Set(ranges.flatMap((r) => RANGE_TYPES[r]))].join('|');
+
 /** The one direct-play entry of the Web profile; with an Android capability block its non-empty lists replace the browser's. */
 function directPlayProfile(caps: ClientCaps | null) {
   const list = (own: string[] | undefined, dflt: string) => (own?.length ? own.join(',') : dflt);
@@ -541,7 +562,7 @@ export class JellyfinService implements MediaServer {
     await this.mutate(user, () => this.compat(user, 'played' + on, [`/UserPlayedItems/${id}?userId=${uid}`, `/Users/${uid}/PlayedItems/${id}`], { method: on ? 'POST' : 'DELETE' }));
   }
 
-  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; capReason?: 'remoteCap' | 'roleCap' | 'manual' | 'network'; clientCaps?: ClientCaps | null }): Promise<PlaybackDto> {
+  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; capReason?: CapReason; clientCaps?: ClientCaps | null }): Promise<PlaybackDto> {
     const p = new URLSearchParams({ UserId: user.jellyfin_user_id, MaxStreamingBitrate: String(opts.maxBitrate), AutoOpenLiveStream: 'false' });
     if (opts.startTicks) p.set('StartTimeTicks', String(opts.startTicks));
     if (opts.audioIndex !== undefined) p.set('AudioStreamIndex', String(opts.audioIndex));
@@ -563,17 +584,20 @@ export class JellyfinService implements MediaServer {
     // The Android app's own capabilities (never for cast): they replace the browser lists for direct play and may only narrow further per
     // codec; the role's height cap above stays a separate, always applying CodecProfile and a role that must transcode keeps direct play off.
     const caps = opts.cast ? null : opts.clientCaps ?? null;
-    const capCodecProfiles = caps ? caps.video.filter((v) => v.maxHeight || v.profiles?.length).map((v) => ({
+    const capCodecProfiles = caps ? caps.video.filter((v) => v.maxHeight || v.profiles?.length || v.tags?.length).map((v) => ({
       Type: 'Video', Codec: v.codec,
       Conditions: [
         ...(v.maxHeight ? [{ Condition: 'LessThanEqual', Property: 'Height', Value: String(v.maxHeight), IsRequired: true }] : []),
         ...(v.profiles?.length ? [{ Condition: 'EqualsAny', Property: 'VideoProfile', Value: v.profiles.join('|'), IsRequired: false }] : []),
+        ...(v.tags?.length ? [{ Condition: 'EqualsAny', Property: 'VideoCodecTag', Value: v.tags.join('|'), IsRequired: false }] : []),
       ],
     })) : [];
+    // a block that states its ranges (probing browsers / Samsung TVs): HDR or Dolby Vision it cannot show is converted (tone mapped), not direct-played
+    const rangeProfile = caps?.ranges?.length ? [{ Type: 'Video', Conditions: [{ Condition: 'EqualsAny', Property: 'VideoRangeType', Value: jellyfinRanges(caps.ranges), IsRequired: false }] }] : [];
     const profile = {
       Name: opts.cast ? 'FriendFlix Cast' : caps ? 'FriendFlix Android' : 'FriendFlix Web',
       MaxStreamingBitrate: opts.maxBitrate,
-      CodecProfiles: [...(heightCond.length || castCond.length ? [{ Type: 'Video', Codec: opts.cast ? 'h264' : undefined, Conditions: [...heightCond, ...castCond] }] : []), ...capCodecProfiles],
+      CodecProfiles: [...(heightCond.length || castCond.length ? [{ Type: 'Video', Codec: opts.cast ? 'h264' : undefined, Conditions: [...heightCond, ...castCond] }] : []), ...capCodecProfiles, ...rangeProfile],
       // Chromecast: never direct play; always HLS/TS with H.264 + stereo AAC
       DirectPlayProfiles: opts.cast || opts.noDirect ? [] : [directPlayProfile(caps)],
       TranscodingProfiles: [
@@ -588,7 +612,9 @@ export class JellyfinService implements MediaServer {
     };
     const info = await this.json<Record<string, any>>(user, `/Items/${itemId}/PlaybackInfo?${p}`, {
       method: 'POST',
-      body: JSON.stringify({ DeviceProfile: profile }),
+      // SubtitleStreamIndex -1: without it Jellyfin picks the user's default subtitle (StreamBuilder.BuildVideoItem) and an image track
+      // (PGS, VobSub) it would have to burn in refuses direct play. FriendFlix shows text subtitles itself and never burns any in.
+      body: JSON.stringify({ DeviceProfile: profile, SubtitleStreamIndex: -1 }),
     });
     if (info.ErrorCode) throw new JellyfinError(403, `playback blocked: ${info.ErrorCode}`);
     // preferred audio language: our HLS URL carries AudioStreamIndex itself, so a non-default track needs no second PlaybackInfo
@@ -960,6 +986,7 @@ export class JellyfinService implements MediaServer {
       },
       libraries: async () => (await client.mediaFolders()).map((f) => ({ id: f.Id, name: f.Name })),
       ping: () => client.ping(),
+      encoderSettings: async () => encoderSettingsOf(await client.adminJson<Record<string, unknown>>('/System/Configuration/encoding')),
       /** sessions of other apps: FriendFlix' own devices ("ff-<id>") are tracked by the portal itself */
       externalSessions: async (): Promise<ExternalSession[]> => (await client.sessions())
         .filter((s) => s.NowPlayingItem && !String(s.DeviceId ?? '').startsWith('ff-'))

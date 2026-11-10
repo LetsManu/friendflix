@@ -51,6 +51,8 @@ export interface TimingReport {
   reconnects: number;
   /** seeks + reconnects + the track / quality switch that started this session */
   avEvents: number;
+  /** this start used the next episode's playback info prepared during the autoplay countdown (prefetch.ts prepareNext) */
+  fromNext: boolean;
 }
 export interface StoredTiming extends TimingReport { at: number }
 
@@ -66,7 +68,7 @@ const median = (xs: number[]): number | null => {
 const ms = (x: number) => Math.max(0, Math.round(x));
 
 /** transcode reasons that make the server convert the picture itself (a bitrate / height cap below the source, a codec the device lacks) */
-const VIDEO_REASONS = new Set(['videoCodec', 'height', 'network', 'remoteCap', 'roleCap', 'manual']);
+const VIDEO_REASONS = new Set(['videoCodec', 'height', 'network', 'remoteCap', 'uploadCap', 'roleCap', 'manual']);
 /** reasons where the picture is usually copied and only the audio or the container changes */
 const REMUX_REASONS = new Set(['audioCodec', 'audioTrack', 'container']);
 /**
@@ -106,7 +108,7 @@ export function createTiming(now: () => number = () => performance.now()) {
   let infoAt: number | null = null, manifestAt: number | null = null, fragAt: number | null = null, frameAt: number | null = null;
   let fragBytes: number | null = null, fragDl: number | null = null;
   let seekAt: number | null = null, seeks: number[] = [], seekCount = 0, stallAt: number | null = null, stalls = 0, stallMs = 0;
-  let trackSwitch = false, delivery: Delivery | null = null, videoCopy: boolean | null = null, soundMode: SoundMode = 'off', audioRouted = false, reconnects = 0;
+  let fromNext = false, trackSwitch = false, delivery: Delivery | null = null, videoCopy: boolean | null = null, soundMode: SoundMode = 'off', audioRouted = false, reconnects = 0;
   const frames = frameCounter();
   const rel = () => ms(now() - t0);
   const closeStall = () => { if (stallAt !== null) { stallMs += ms(now() - stallAt); stallAt = null; } };
@@ -120,12 +122,14 @@ export function createTiming(now: () => number = () => performance.now()) {
     begin(isSwitch = false, isTrack = false) {
       t0 = now(); on = true; qualitySwitch = isSwitch; mode = null; bitrate = null; targetDuration = null;
       infoAt = manifestAt = fragAt = frameAt = fragBytes = fragDl = seekAt = stallAt = null; seeks = []; seekCount = 0; stalls = 0; stallMs = 0;
-      trackSwitch = isTrack && !isSwitch; delivery = null; videoCopy = null; soundMode = 'off'; audioRouted = false; reconnects = 0; frames.reset();
+      fromNext = false; trackSwitch = isTrack && !isSwitch; delivery = null; videoCopy = null; soundMode = 'off'; audioRouted = false; reconnects = 0; frames.reset();
     },
     get active() { return on; },
     /** playback info received with the requested bitrate (first answer of the session only: a retry keeps the clock) */
     info(bps?: number) { if (on && infoAt === null) { infoAt = rel(); bitrate = bps && bps > 0 ? Math.round(bps) : null; } },
     mode(m: Mode) { if (on && mode === null) mode = m; },
+    /** the start used the prepared next-episode info */
+    next() { if (on) fromNext = true; },
     /** how the stream is delivered: the transcode reason's guess first, the server's transcode info (videoCopy) when it answers */
     stream(o: { reason?: string | null; videoCopy?: boolean | null }) {
       if (!on) return;
@@ -180,7 +184,7 @@ export function createTiming(now: () => number = () => performance.now()) {
         firstFragBytes: fragBytes, firstFragDlMs: fragDl, firstFrameMs: frameAt, seeks: seekCount, seekMedianMs: med === null ? null : ms(med),
         seekMaxMs: seeks.length ? Math.max(...seeks) : null, stalls, stallMs, effectiveType: env.effectiveType ?? null,
         delivery: delivery ?? deliveryOf(mode, null, videoCopy), videoCopy, soundMode, audioRouted, droppedFrames: frames.value.dropped, totalFrames: frames.value.total,
-        trackSwitch, reconnects, avEvents: seekCount + reconnects + (qualitySwitch || trackSwitch ? 1 : 0),
+        trackSwitch, reconnects, avEvents: seekCount + reconnects + (qualitySwitch || trackSwitch ? 1 : 0), fromNext,
       };
     },
     /** party / cast / AirPlay: this session is not reported */

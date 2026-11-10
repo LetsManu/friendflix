@@ -16,6 +16,7 @@ vi.mock('$app/navigation', () => ({ preloadCode: () => Promise.resolve() }));
 vi.mock('./hls', () => ({ loadHls: () => Promise.resolve() }));
 const markPlayArt = vi.fn();
 vi.mock('./transition', async (orig) => ({ ...(await orig<typeof import('./transition')>()), markPlayArt: (...a: unknown[]) => markPlayArt(...a) }));
+const { prepareNext, releaseNext, takeNext, WARM_GRACE_MS, WARM_MAX_RESUME_TICKS } = await import('./prefetch');
 const { HOLD_TIMEOUT_MS, holdPrefetch, playPrefetch, prefetchPlayback, takePrefetched, watchTarget, startSecond, _resetPrefetch, PREFETCH_TTL_MS } = await import('./prefetch');
 const { firstPlaybackRequest, playbackInfoBody, bodyKey } = await import('./infobody');
 const { entryFadeMs, playTransition } = await import('./transition');
@@ -258,5 +259,155 @@ describe('transition choice', () => {
     expect(entryFadeMs({ tv: false, reduced: false, viewTransition: true })).toBe(0);
     expect(entryFadeMs({ tv: false, reduced: true, viewTransition: false })).toBe(120);
     expect(entryFadeMs({ tv: false, reduced: false, viewTransition: false })).toBe(200);
+  });
+});
+
+describe('next episode: prepareNext / releaseNext / takeNext', () => {
+  const hlsInfo = (over: object = {}) => ({ playSessionId: 'ps-next-0001', hlsUrl: '/media/Videos/n1/master.m3u8?PlaySessionId=ps-next-0001', resumeTicks: 0, ...over });
+  let fetched: string[];
+  let aborted: boolean;
+  beforeEach(() => {
+    fetched = []; aborted = false;
+    vi.stubGlobal('fetch', vi.fn(async (u: URL, init: RequestInit) => {
+      init.signal?.addEventListener('abort', () => { aborted = true; });
+      fetched.push(u.pathname);
+      const text = u.pathname.endsWith('master.m3u8') ? '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nmain.m3u8?x=1\n' : u.pathname.endsWith('main.m3u8') ? '#EXTM3U\n#EXTINF:3,\nhls1/main/0.ts?x=1\n' : '';
+      return { text: async () => text, body: { cancel: async () => undefined } };
+    }));
+  });
+  // (window / location stay stubbed for the whole file: no unstubAllGlobals here; each test stubs fetch again)
+  const body = (id = 'n1') => playerBody(id);
+  const stops = () => api.mock.calls.filter((c) => c[0] === '/api/playback/warm/stop');
+
+  it('asks for the info and warms master, variant and the first segment; the player takes it once', async () => {
+    api.mockResolvedValue(hlsInfo());
+    prepareNext('n1', body(), { warm: true });
+    prepareNext('n1', body(), { warm: true }); // same item again: nothing new
+    await flush(); await flush(); await flush();
+    expect(api.mock.calls.filter((c) => c[0] === '/api/playback/info')).toHaveLength(1);
+    expect(fetched).toEqual(['/media/Videos/n1/master.m3u8', '/media/Videos/n1/main.m3u8', '/media/Videos/n1/hls1/main/0.ts']);
+    const p = takeNext('n1', body());
+    expect(await p).toMatchObject({ playSessionId: 'ps-next-0001' });
+    expect(takeNext('n1', body())).toBeNull();
+  });
+
+  it('a bitrate the network moved meanwhile still matches; another item, audio or profile does not', async () => {
+    api.mockResolvedValue(hlsInfo());
+    prepareNext('n1', body(), { warm: false });
+    expect(takeNext('n2', body('n2'))).toBeNull();
+    expect(takeNext('n1', { ...body(), audioLang: 'jpn' })).toBeNull();
+    profile = 'p2';
+    expect(takeNext('n1', body())).toBeNull();
+    profile = 'p1';
+    expect(takeNext('n1', { ...body(), maxBitrate: 8_000_000 })).not.toBeNull();
+  });
+
+  it('released and not taken within the grace: aborted and the warmed transcode stopped', async () => {
+    vi.useFakeTimers();
+    api.mockImplementation(async (path: string) => (path === '/api/playback/info' ? hlsInfo() : { ok: true }));
+    prepareNext('n1', body(), { warm: true });
+    await vi.advanceTimersByTimeAsync(0);
+    releaseNext();
+    await vi.advanceTimersByTimeAsync(WARM_GRACE_MS - 1);
+    expect(stops()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(stops()).toEqual([['/api/playback/warm/stop', { method: 'POST', body: { playSessionId: 'ps-next-0001' } }]]);
+    expect(aborted).toBe(true);
+    expect(takeNext('n1', body())).toBeNull();
+  });
+
+  it('taken within the grace: nothing is stopped', async () => {
+    vi.useFakeTimers();
+    api.mockImplementation(async () => hlsInfo());
+    prepareNext('n1', body(), { warm: true });
+    await vi.advanceTimersByTimeAsync(0);
+    releaseNext();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(takeNext('n1', body())).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(PREFETCH_TTL_MS);
+    expect(stops()).toHaveLength(0);
+  });
+
+  it('never taken: stopped after the prefetch lifetime even while the countdown still holds it', async () => {
+    vi.useFakeTimers();
+    api.mockImplementation(async (path: string) => (path === '/api/playback/info' ? hlsInfo() : { ok: true }));
+    prepareNext('n1', body(), { warm: true });
+    await vi.advanceTimersByTimeAsync(PREFETCH_TTL_MS);
+    expect(stops()).toHaveLength(1);
+  });
+
+  it('no warm for a direct play, a resume point far in, or without warm; nothing to stop then', async () => {
+    vi.useFakeTimers();
+    for (const info of [hlsInfo({ directUrl: '/media/Videos/n1/stream?static=true' }), hlsInfo({ resumeTicks: WARM_MAX_RESUME_TICKS + 1 })]) {
+      api.mockImplementation(async (path: string) => (path === '/api/playback/info' ? info : { ok: true }));
+      prepareNext('n1', body(), { warm: true });
+      await vi.advanceTimersByTimeAsync(PREFETCH_TTL_MS);
+    }
+    expect(fetched).toEqual([]);
+    expect(stops()).toHaveLength(0);
+  });
+
+  it('Plex (playbackPrefetch=false): never prepared', () => {
+    serverCaps.set(capsFrom({ playbackPrefetch: false }));
+    prepareNext('n1', body(), { warm: true });
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it('a 429 at the stream limit drops it; the player asks itself', async () => {
+    api.mockRejectedValue(new Error('429'));
+    prepareNext('n1', body(), { warm: true });
+    await flush(); await flush();
+    expect(takeNext('n1', body())).toBeNull();
+    expect(fetched).toEqual([]);
+  });
+
+  it('survives holdPrefetch of the episode that ends (the hold only concerns that title)', async () => {
+    api.mockResolvedValue(hlsInfo());
+    prepareNext('n1', body(), { warm: false });
+    holdPrefetch(Promise.resolve());
+    expect(takeNext('n1', body())).not.toBeNull();
+  });
+});
+
+describe('the probe and the prefetch (same body as the player)', () => {
+  it('a running decode probe is awaited (bounded) before the prefetch body is built, so the player body matches it', async () => {
+    const dc = await import('./devicecaps');
+    let answer: () => void = () => undefined;
+    const gate = new Promise<void>((r) => { answer = r; });
+    dc._resetDeviceCaps({
+      env: { canPlayType: (m) => (/codecs=/.test(m) ? 'probably' : 'maybe'), hdrDisplay: false, decodingInfo: async () => { await gate; return { supported: true }; } },
+      ua: 'UA/t', storage: null, now: () => Date.now(), tizen: false,
+    });
+    lgCapsMock.mockImplementation(() => dc.deviceCaps());
+    try {
+      api.mockResolvedValue({ playSessionId: 'x' });
+      prefetchPlayback('m1');
+      expect(api).not.toHaveBeenCalled(); // waits for the probe
+      answer();
+      await flush(); await flush(); await flush();
+      expect(api).toHaveBeenCalledTimes(1);
+      const sent = api.mock.calls[0]![1].body;
+      expect(sent.caps.video.map((v: { codec: string }) => v.codec)).toContain('hevc'); // the probed block, not the sync one
+      expect(takePrefetched('m1', playerBody('m1'))).not.toBeNull(); // the player builds the same body afterwards
+    } finally {
+      lgCapsMock.mockReset(); lgCapsMock.mockImplementation(() => null);
+      dc._resetDeviceCaps();
+    }
+  });
+});
+
+describe('next episode: the tab closes', () => {
+  it('pagehide stops an unused warm-up with a keepalive request', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (u: URL) => ({ text: async () => (u.pathname.endsWith('master.m3u8') ? 'main.m3u8\n' : u.pathname.endsWith('main.m3u8') ? 'hls1/main/0.ts\n' : ''), body: { cancel: async () => undefined } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const listeners: Record<string, () => void> = {};
+    vi.stubGlobal('addEventListener', (t: string, f: () => void) => { listeners[t] = f; });
+    api.mockImplementation(async (path: string) => (path === '/api/playback/info' ? { playSessionId: 'ps-next-0002', hlsUrl: '/media/Videos/n1/master.m3u8', resumeTicks: 0 } : { ok: true }));
+    prepareNext('n1', playerBody('n1'), { warm: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(typeof listeners.pagehide).toBe('function');
+    listeners.pagehide!();
+    expect(api.mock.calls.filter((c) => c[0] === '/api/playback/warm/stop')).toEqual([['/api/playback/warm/stop', { method: 'POST', body: { playSessionId: 'ps-next-0002' }, keepalive: true }]]);
   });
 });

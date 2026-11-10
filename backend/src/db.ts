@@ -829,6 +829,11 @@ export const MIGRATIONS: string[] = [
     add column if not exists reconnects int not null default 0,
     add column if not exists av_events int not null default 0;
   `,
+  // 44: the anonymous playback timing learns whether a start used the next episode's info prepared during the autoplay countdown
+  // (web/src/lib/player/prefetch.ts prepareNext): still no user, profile or title. Rerunnable.
+  `
+  alter table playback_timings add column if not exists from_next boolean not null default false;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

@@ -45,6 +45,7 @@ const tr: Translation<typeof de> = {
     directInfo: 'Doğrudan oynatma, dönüştürme yok',
     reasonNetwork: 'Bağlantı yavaş – kalite otomatik ayarlanır',
     reasonRemoteCap: 'Evin dışında kalite sınırlıdır',
+    reasonUploadCap: 'Sunucunun bağlantısı şu anda yoğun, bu yüzden yayın daha düşük kalitede başlıyor',
     reasonRoleCap: 'Hesabın kaliteyi sınırlıyor',
     reasonContainer: 'Bu cihaz dosya biçimini oynatamıyor',
     reasonVideoCodec: 'Bu cihaz video biçimini oynatamıyor',

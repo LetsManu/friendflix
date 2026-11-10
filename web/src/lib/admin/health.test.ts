@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { hasKey } from '#lib/i18n';
-import { REASONS, SERVICE_IDS, TC_REASONS, cleanCode, diskLabelKey, emptyHintOnTop, isEmptyMediaError, levelTone, reasonKey, serviceText, sortServices, tcKey, type ServiceHealth } from './health';
+import { ENCODER_ADVICE, REASONS, SERVICE_IDS, adviceKeys, TC_REASONS, cleanCode, diskLabelKey, emptyHintOnTop, isEmptyMediaError, levelTone, reasonKey, serviceText, sortServices, tcKey, type ServiceHealth } from './health';
 
 describe('health view helpers', () => {
   it('levelTone maps all four levels', () => {
@@ -33,6 +33,13 @@ describe('health view helpers', () => {
     for (const r of TC_REASONS) expect(hasKey(tcKey(r)), r).toBe(true);
     for (const d of ['downloads', 'previews', 'database'] as const) expect(hasKey(diskLabelKey({ id: d, level: 'ok', ownBytes: 0 }))).toBe(true);
     expect(diskLabelKey({ id: 'downloads', level: 'ok', ownBytes: 0, sharedWith: 'previews' })).toBe('adminContent.health.disks.shared');
+  });
+
+  it('encoder advice: every code has a long text, unknown codes are dropped, order kept', () => {
+    for (const a of ENCODER_ADVICE) expect(hasKey(`adminContent.health.advice.${a}`), a).toBe(true);
+    expect(adviceKeys({ advice: ['no_throttle', 'bogus' as never, 'no_hw_accel'] })).toEqual(['adminContent.health.advice.no_throttle', 'adminContent.health.advice.no_hw_accel']);
+    expect(adviceKeys({})).toEqual([]);
+    expect(serviceText({ id: 'encoder', level: 'warn', reason: 'no_tonemap' })).toBe('Ohne Tone-Mapping');
   });
 
   it('serviceText: reason text with numbers, level text without a reason', () => {
