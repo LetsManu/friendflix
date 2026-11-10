@@ -7,17 +7,21 @@
  */
 import { APP_VERSION } from '#lib/version/codenames';
 import { fireTvDisplayHeight, isFireTvApp } from '#lib/firetv/detect';
+import { deviceCaps } from '#lib/player/devicecaps';
 import { isLgApp } from './detect';
 
 export interface MediaProbe { canPlayType(t: string): string; isTypeSupported?: (t: string) => boolean }
 
 export interface ClientCapsBody {
-  client: 'webos' | 'firetv';
+  /** webos / firetv: this module; web / tizen: a probing browser or the Samsung TV app (lib/player/devicecaps.ts) */
+  client: 'webos' | 'firetv' | 'web' | 'tizen';
   appVersion: string;
   containers: string[];
-  video: Array<{ codec: string; maxHeight?: number; profiles?: string[] }>;
+  video: Array<{ codec: string; maxHeight?: number; profiles?: string[]; tags?: string[] }>;
   audio: string[];
   subtitles: string[];
+  /** dynamic ranges the device shows (only the probing browsers state them) */
+  ranges?: Array<'sdr' | 'hdr10' | 'hlg' | 'hdr10plus' | 'dovi'>;
 }
 
 interface Variant { profile: string; mime: string }
@@ -107,12 +111,15 @@ export function buildLgCaps(m: MediaProbe | null, appVersion: string): ClientCap
 
 let cached: ClientCapsBody | null | undefined;
 
-/** the block for this page load (probed once): LG app, Fire TV app; null in a browser or when the TV confirms nothing */
+/**
+ * the block for this page load: LG app, Fire TV app (probed once here); every other browser and the Samsung TV app probe themselves
+ * (lib/player/devicecaps.ts: strict claims, cached per device, safe profile after a failure); null without a media element
+ */
 export function appCaps(): ClientCapsBody | null {
   if (cached !== undefined) return cached;
   if (typeof window === 'undefined') return null;
   const lg = isLgApp();
-  if (!lg && !isFireTvApp()) return null;
+  if (!lg && !isFireTvApp()) return deviceCaps();
   let probe: MediaProbe | null = null;
   try {
     const v = document.createElement('video');

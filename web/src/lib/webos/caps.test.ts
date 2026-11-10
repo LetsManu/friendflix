@@ -6,6 +6,8 @@ const lg = vi.hoisted(() => ({ on: false }));
 const fire = vi.hoisted(() => ({ on: false, height: 1080 }));
 vi.mock('./detect', () => ({ isLgApp: () => lg.on }));
 vi.mock('#lib/firetv/detect', () => ({ isFireTvApp: () => fire.on, fireTvDisplayHeight: () => fire.height }));
+const dev = vi.hoisted(() => ({ block: null as unknown }));
+vi.mock('#lib/player/devicecaps', () => ({ deviceCaps: () => dev.block }));
 import { APP_VERSION } from '#lib/version/codenames';
 import { _resetAppCaps, appCaps, buildLgCaps, buildTvCaps, confirmedTypes, type MediaProbe } from './caps';
 
@@ -90,9 +92,12 @@ describe('appCaps', () => {
     expect(appCaps()).toBeNull();
   });
 
-  it('is null in a browser (neither app)', () => {
+  it('in a browser (neither app) the device probes itself (lib/player/devicecaps.ts), not cached here', () => {
     stub(); _resetAppCaps();
     expect(appCaps()).toBeNull();
+    dev.block = { client: 'web' };
+    expect(appCaps()).toEqual({ client: 'web' });
+    dev.block = null;
   });
 
   it('builds the LG block in the LG app and caches it until reset', () => {

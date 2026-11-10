@@ -5,6 +5,7 @@ import { get } from 'svelte/store';
 import { api, getActiveProfile } from '#lib/api';
 import { serverCaps } from '#lib/capabilities';
 import { prefs } from '#lib/stores';
+import { warmDeviceCaps } from './devicecaps';
 import { loadHls } from './hls';
 import { bodyKey, firstPlaybackRequest, type PlaybackDto } from './infobody';
 import { markPlayArt } from './transition';
@@ -22,6 +23,7 @@ export function prefetchPlayer(): void {
   if (typeof window === 'undefined') return;
   if (!codeDone) { codeDone = true; preloadCode('/watch/[id]').catch(() => { codeDone = false; }); }
   if (!hlsDone && !nativeHls()) { hlsDone = true; loadHls().catch(() => { hlsDone = false; }); }
+  void warmDeviceCaps(); // the decode probe (once per page load, cached per device) answers before the click in most cases
 }
 
 // ---- prefetched /api/playback/info: one entry, reused by the player for 30 s when its first request body is identical ----
