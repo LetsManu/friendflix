@@ -35,6 +35,30 @@ async function freezeClock(page: Page) {
   await page.clock.pauseAt(t0 + 1000);
 }
 
+test.describe('rating card', () => {
+  test('fades in with the hero, stays 4 s, fades out; reappears for the next title', async ({ page }) => {
+    await page.clock.install();
+    await page.goto('/');
+    const bb = page.locator('section.billboard');
+    const card = bb.locator('.rc');
+    await expect(card).toHaveText(/FSK 12/);
+    await expect(card).toHaveCSS('pointer-events', 'none');
+    await page.clock.runFor(100);
+    await expect(card).toHaveCSS('opacity', '1');
+    await page.clock.runFor(4600);
+    await expect(card).toHaveCSS('opacity', '0');
+    // it never moved the layout: the title sits where it did
+    await expect(bb.getByRole('heading', { level: 1 })).toBeVisible();
+  });
+
+  test('calm mode: no card at all', async ({ page }) => {
+    await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { calm: true } } }));
+    await page.goto('/');
+    await expect(page.locator('html')).toHaveClass(/(^|\s)calm(\s|$)/);
+    await expect(page.locator('section.billboard .rc')).toHaveCount(0);
+  });
+});
+
 test.describe('desktop billboard', () => {
   test('billboard: 80vh (min 520px), eyebrow only when a label exists, title logo or name, meta line, Play and More info', async ({ page }) => {
     await page.goto('/');
@@ -56,11 +80,8 @@ test.describe('desktop billboard', () => {
     await expect(play).toHaveAttribute('href', `/watch/${MOVIE.id}`);
     expect(await play.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 255, 255)');
     await expect(bb.getByRole('link', { name: 'Weitere Infos' })).toHaveAttribute('href', `/item/${MOVIE.id}`);
-    // the age badge sits flush against the right edge of the screen
-    const age = bb.locator('.side .agebadge');
-    await expect(age).toHaveText('FSK 12');
-    const box = (await age.boundingBox())!;
-    expect(Math.round(box.x + box.width)).toBe(1280);
+    // no edge flag any more: the rating is in the meta line and in the short-lived glass card
+    await expect(bb.locator('.agebadge')).toHaveCount(0);
 
     // the min height on a short window
     await page.setViewportSize({ width: 1280, height: 600 });
@@ -117,7 +138,7 @@ test.describe('desktop billboard', () => {
       await expect.poll(() => full.evaluate((e) => getComputedStyle(e).opacity)).toBe('0');
       await expect.poll(() => one.evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
       expect(await one.evaluate((e) => getComputedStyle(e).webkitLineClamp)).toBe('1');
-      // the mute toggle and the age badge, on the right edge, level with the buttons
+      // the mute toggle, on the right edge, level with the buttons
       // (a fixed name, the state is aria-pressed only: no "Ton aus, gedrückt")
       const mute = bb.getByRole('button', { name: 'Ton', exact: true });
       await expect(mute).toBeVisible();
@@ -126,8 +147,6 @@ test.describe('desktop billboard', () => {
       const muteBox = (await mute.boundingBox())!;
       expect(Math.abs((muteBox.y + muteBox.height / 2) - (playBox.y + playBox.height / 2))).toBeLessThanOrEqual(2);
       expect(muteBox.x).toBeGreaterThan(1000);
-      const ageBox = (await bb.locator('.side .agebadge').boundingBox())!;
-      expect(Math.round(ageBox.x + ageBox.width)).toBe(1280);
       await mute.click();
       await expect(mute).toHaveAttribute('aria-pressed', 'true');
       expect(await bb.locator('video.hv').evaluate((v: HTMLVideoElement) => v.muted)).toBe(false);

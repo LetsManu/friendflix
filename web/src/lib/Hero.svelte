@@ -6,6 +6,7 @@
   import { playPrefetch } from '#lib/player/prefetch';
   import { prefetchModal } from '#lib/lazy';
   import Icon from '#lib/Icon.svelte';
+  import RatingCard from '#lib/ui/RatingCard.svelte';
   import { openModal } from '#lib/modal';
   import { deskActive } from '#lib/desk/bar'; // desktop: "more info" navigates to the page (no popup)
   import { listIds, prefs, toggleList } from '#lib/stores';
@@ -152,6 +153,7 @@
         {#if more}<a class="btn glass" href="/item/{item.id}" aria-haspopup={$deskActive ? undefined : 'dialog'} on:pointerenter={prefetchModal} on:focus={prefetchModal} on:click={(e) => { if (item) primeItem(item); openModal(e, `/item/${item!.id}`); }}><Icon name="info" size={26} />{$t('home.hero.moreInfo')}</a>{/if}
       </div>
     </div>
+    {#key item.id}<RatingCard rating={item.rating ?? ''} ready={loaded || !item.backdrop} />{/key}
     <div class="side">
       {#if playing}<button class="snd" aria-label={vmuted ? $t('home.card.soundOn') : $t('home.card.soundOff')} aria-pressed={!vmuted} on:click={() => toggleSound(hv)}><Icon name={vmuted ? 'volume-off' : 'volume'} size={22} /></button>
       {:else if ended}<button class="snd" aria-label={$t('home.hero.replay')} title={$t('home.hero.replayTitle')} on:click={replay}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 12a8.5 8.5 0 102.6-6.1M3.5 4v4.5H8" /></svg></button>{/if}
@@ -163,7 +165,7 @@
 {/if}
 
 <style>
-  .hero { position: relative; height: clamp(460px, 88vh, 940px); margin-bottom: -9vw; overflow: hidden; background: var(--bg); }
+  .hero { --gutter: var(--pad-x); position: relative; height: clamp(460px, 88vh, 940px); margin-bottom: -9vw; overflow: hidden; background: var(--bg); }
   .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; opacity: 0; transition: opacity .18s linear; }
   .bg.loaded { opacity: 1; }
   /* the billboard does not rotate, so the still gets a very slow push-in instead */

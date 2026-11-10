@@ -9,6 +9,7 @@
   import { badges, wantBadge } from '#lib/fresh';
   import { fmtDuration, t } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
+  import RatingCard from '#lib/ui/RatingCard.svelte';
   import { openModal } from '#lib/modal';
   import { pageStore } from '#lib/page';
   import { playPrefetch } from '#lib/player/prefetch';
@@ -152,6 +153,7 @@
         <a class="b info" href="/item/{item.id}" on:click={more}><Icon name="info" size={24} />{$t('home.hero.moreInfo')}</a>
       </div>
     </div>
+    {#key item.id}<RatingCard rating={item.rating ?? ''} {ready} />{/key}
     <div class="side">
       {#if playing}
         <!-- the trailer moves by itself: a pause button (WCAG 2.2.2); its name says what it does, no pressed state -->
@@ -161,7 +163,6 @@
       {:else if ended}
         <button type="button" class="snd" aria-label={$t('home.hero.replay')} title={$t('home.hero.replayTitle')} on:click={replay}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 12a8.5 8.5 0 102.6-6.1M3.5 4v4.5H8" /></svg></button>
       {/if}
-      {#if item.rating}<span class="agebadge" aria-hidden="true">{item.rating}</span>{/if}
     </div>
   {:else}
     <div class="skeleton fill"></div>
@@ -219,11 +220,10 @@
   .info:hover { background: rgba(110, 110, 112, .42); }
   .b:focus-visible, .snd:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
 
-  /* ---- right edge, level with the buttons: mute / replay, then the age strip flush to the screen edge ---- */
+  /* ---- right edge, level with the buttons: mute / replay ---- */
   .side { position: absolute; right: 0; bottom: var(--foot); height: var(--btn-h); display: flex; align-items: center; gap: 16px; }
   .snd { width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; background: rgba(var(--ink), .3); border: 1.5px solid rgba(255, 255, 255, .7); color: #fff; }
   .snd:hover:not(:disabled) { background: rgba(255, 255, 255, .12); border-color: #fff; }
-  .agebadge { display: inline-flex; align-items: center; height: 36px; padding: 0 calc(var(--gutter) + 8px) 0 12px; border-left: 3px solid rgba(255, 255, 255, .8); background: rgba(51, 51, 51, .6); font-size: 16px; font-weight: 500; }
 
   @media (prefers-reduced-motion: reduce) {
     .bg, .hv, .head, .syn.full, .syn.one { transition: none; }
