@@ -5,6 +5,9 @@ import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { NEW_EPISODE_DAYS } from '../fresh.js';
 import { FOR_YOU_DAYS, newEpisodes, newForYou } from '../newpage.js';
+import { requireGrownUp } from '../kids.js';
+import { quota } from '../requestlimit.js';
+import { requestSuggestions } from '../requestSuggestions.js';
 import { requireUser } from '../session.js';
 import { perSession } from './discover.js';
 import { wrap } from './_shared.js';
@@ -31,4 +34,16 @@ export function newPageRoutes(app: FastifyInstance, ctx: Ctx) {
     const { type } = z.object({ type: z.enum(['movie', 'series']).optional() }).parse(req.query);
     return { windowDays: FOR_YOU_DAYS, ...(await newForYou(ctx, req.jfUser!, req.profile!.id, type)) };
   }, { zod: 'plain' }));
+
+  /**
+   * "Noch nicht bei uns": titles the profile might like that are not in the library, from the request service's recommendations for a few
+   * of the profile's seed titles, with the wish state and the account's request quota. `?type=movie|series`. Grown-ups only (kids profiles:
+   * 403 kids_profile); without a request service 404 requests_disabled. The quota is the one of POST /api/requests (null if it cannot be read).
+   */
+  app.get('/api/library/request-suggestions', { preHandler: requireGrownUp(ctx), config: perSession(30) }, wrap(async (req) => {
+    const { type } = z.object({ type: z.enum(['movie', 'series']).default('movie') }).parse(req.query);
+    const items = await requestSuggestions(ctx, req.jfUser!, req.user!, req.profile!.id, type);
+    const q = await quota(ctx, req.user!).then(({ limit, used, resetsAt }) => ({ limit, used, resetsAt }), () => null);
+    return { items, quota: q };
+  }, { zod: 'plain', seerr: true }));
 }

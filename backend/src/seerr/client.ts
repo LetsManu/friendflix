@@ -82,6 +82,10 @@ export class SeerrClient {
   upcoming(mediaType: 'movie' | 'tv', page = 1) {
     return this.json<{ results: any[]; totalPages: number }>(`/discover/${mediaType === 'movie' ? 'movies' : 'tv'}/upcoming?page=${page}&language=de`);
   }
+  /** TMDB recommendations for one title (Seerr /movie|tv/{id}/recommendations), first page */
+  recommendations(mediaType: 'movie' | 'tv', id: number) {
+    return this.json<{ results: any[]; totalPages: number }>(`/${mediaType}/${id}/recommendations?page=1&language=de`);
+  }
   details(mediaType: 'movie' | 'tv', id: number) {
     return this.json(`/${mediaType}/${id}?language=de`);
   }
