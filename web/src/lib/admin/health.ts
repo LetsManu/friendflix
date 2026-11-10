@@ -35,8 +35,13 @@ export function hevcLineText(h: HevcLine): string {
     ...(h.at ? [tr('adminContent.health.hevc.checked', { time: fmtTime(h.at) })] : []),
   ].join(' · ');
 }
-/** "Check HEVC now": the timed probe on the media server; 409 `busy` while someone watches, `already_running` while one runs */
-export const checkHevc = (): Promise<HevcLine> => api<HevcLine>('/api/admin/hevc-check', { method: 'POST' });
+/** "Check HEVC now": starts the timed probe in the background (202); 409 `busy` while someone watches, `already_running` while one runs */
+export const checkHevc = (): Promise<{ started: boolean }> => api<{ started: boolean }>('/api/admin/hevc-check', { method: 'POST' });
+/** the probe's progress: `running` until it has stored its result */
+export const loadHevcCheck = (): Promise<{ running: boolean }> => api<{ running: boolean }>('/api/admin/hevc-check');
+/** polling: every 2 s, give up after 3 minutes */
+export const HEVC_POLL_MS = 2000;
+export const HEVC_POLL_MAX_MS = 180_000;
 /** the advice lines of a row (only known codes) */
 export const adviceKeys = (s: Pick<ServiceHealth, 'advice'>): TKey[] => (s.advice ?? []).filter((a) => (ENCODER_ADVICE as readonly string[]).includes(a)).map((a) => `adminContent.health.advice.${a}` as TKey);
 export type DiskId = 'downloads' | 'previews' | 'database';

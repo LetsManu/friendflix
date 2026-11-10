@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /** Traffic light per dependency (Block 22): worst first, icon + text pill, a link to where it is handled. null = skeleton. */
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onDestroy } from 'svelte';
   import { ApiError } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { fmtNumber, t, type TKey } from '#lib/i18n';
@@ -10,16 +10,24 @@
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import StatusPill from '#lib/ui/StatusPill.svelte';
   import { toast } from '#lib/ui/toast';
-  import { adviceKeys, checkHevc, hevcLineText, levelIcon, levelTone, serviceText, sortServices, type ServiceHealth, type ServiceId } from './health';
+  import { adviceKeys, checkHevc, HEVC_POLL_MAX_MS, HEVC_POLL_MS, hevcLineText, loadHevcCheck, levelIcon, levelTone, serviceText, sortServices, type ServiceHealth, type ServiceId } from './health';
 
   export let services: ServiceHealth[] | null;
   const dispatch = createEventDispatcher<{ refresh: void }>();
   let hevcBusy = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => clearTimeout(timer));
+  const sleep = (ms: number) => new Promise<void>((res) => { timer = setTimeout(res, ms); });
   async function hevcNow() {
     if (hevcBusy) return;
     hevcBusy = true;
     try {
-      await checkHevc();
+      const r = await checkHevc();
+      // the probe runs in the background: ask every 2 s until it has stored its result (or 3 minutes passed)
+      for (let waited = 0; r.started && waited < HEVC_POLL_MAX_MS; waited += HEVC_POLL_MS) {
+        await sleep(HEVC_POLL_MS);
+        if (!(await loadHevcCheck()).running) break;
+      }
       dispatch('refresh');
     } catch (e) {
       const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;

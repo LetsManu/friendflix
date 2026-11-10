@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  HEVC_FAIL_COOLDOWN_MS, HEVC_GRANT_TTL_S, HEVC_SESSIONS_TIMEOUT_MS, effectiveLimit, fingerprint, hevcGate, hevcStateOf, hevcStatus, hevcTick, noteHevcFailure, probeHevcEncoder,
+  HEVC_FAIL_COOLDOWN_MS, HEVC_GRANT_TTL_S, HEVC_SESSIONS_TIMEOUT_MS, effectiveLimit, fingerprint, hevcBusy, hevcGate, hevcStateOf, hevcStatus, hevcTick, noteHevcFailure, probeHevcEncoder,
   type HevcProbeRecord,
 } from '../src/hevcenc.js';
+import { startPlaybackCheck, checkState } from '../src/healthcheck.js';
 import { setLive } from '../src/live.js';
-import type { EncoderSettings, ServerSession } from '../src/media/types.js';
+import type { EncoderSettings, MediaTraits, ServerSession } from '../src/media/types.js';
 import { previews } from '../src/previews.js';
 import type { UserRow } from '../src/types.js';
 import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -176,6 +177,86 @@ describe('gate', () => {
   });
 });
 
+describe('gate: more cases', () => {
+  const live = (ps: string, deviceId: string) => setLive(env.ctx, { userId: admin.id, userName: 'A', itemId: 'i', title: 't', positionTicks: 0, isPaused: false, playSessionId: ps, updatedAt: Date.now(), source: 'portal', deviceId });
+  const pbinfo = (ps: string, video: string) => env.kv.set(`pbinfo:${admin.id}:${ps}`, JSON.stringify({ reason: null, bitrate: 4_000_000, remote: true, video, audio: 'stereo' }), 600);
+  it('S1: two streams of one profile share one server session; the portal records still count (limit 2 refuses a third)', async () => {
+    await putProbe({ speed: 3.2 });
+    await live('ps-a', 'dev-a'); await pbinfo('ps-a', 'hevc');
+    await live('ps-b', 'dev-b'); await pbinfo('ps-b', 'hevc');
+    sessions = async () => [hevcSession('ps-b')]; // the server lists one of them only; ps-b is not counted twice
+    expect(await ask('dev-c')).toEqual({ ok: false, why: 'h264_busy' });
+    expect(await ask('dev-a')).toEqual({ ok: true }); // dev-a's own is replaced: ps-b only
+  });
+  it('S1: a live stream that copies the picture (pbinfo video copy) does not count', async () => {
+    await putProbe({ speed: 3.2 });
+    await live('ps-a', 'dev-a'); await pbinfo('ps-a', 'copy');
+    await live('ps-b', 'dev-b'); await pbinfo('ps-b', 'h264');
+    expect(await ask('dev-c', 'g1')).toEqual({ ok: true });
+    expect(await ask('dev-d', 'g2')).toEqual({ ok: true });
+    expect(await ask('dev-e', 'g3')).toEqual({ ok: false, why: 'h264_busy' });
+  });
+  it('N6: a grant whose session the server lists without codec info still counts', async () => {
+    await putProbe({ speed: 3.2 });
+    env.ctx.cfg = { ...cfg, HEVC_STREAMS: 1 };
+    expect(await ask('dev-a', 'g1')).toEqual({ ok: true });
+    const { bindHevcGrant } = await import('../src/hevcenc.js');
+    await bindHevcGrant(env.ctx, 'g1', 'ps-real');
+    sessions = async () => [hevcSession('ps-real', { videoCodec: undefined, videoDirect: undefined })];
+    expect(await ask('dev-b')).toEqual({ ok: false, why: 'h264_busy' });
+  });
+  it('S4: a slow settings read means unproven within about 800 ms', async () => {
+    await putProbe();
+    vi.useFakeTimers();
+    env.ctx.jf.admin.encoderSettings = () => new Promise(() => undefined);
+    const p = ask();
+    await vi.advanceTimersByTimeAsync(HEVC_SESSIONS_TIMEOUT_MS + 5);
+    expect(await p).toEqual({ ok: false, why: 'h264_unproven' });
+  });
+  it('N1: a lock held by another asker is retried once; a stale holder does not lose its lock to our release', async () => {
+    await putProbe({ speed: 3.2 });
+    await env.kv.set('hevcenc:gate', 'someone', 3);
+    setTimeout(() => void env.kv.del('hevcenc:gate'), 50);
+    expect(await ask('dev-a', 'g1')).toEqual({ ok: true });
+    await env.kv.set('hevcenc:gate', 'someone-else', 30);
+    expect(await ask('dev-b', 'g2')).toEqual({ ok: false, why: 'h264_busy' });
+    expect(await env.kv.get('hevcenc:gate')).toBe('someone-else');
+  });
+});
+
+describe('hevcBusy (N3)', () => {
+  it('a live portal stream, or any transcode on the media server (another app), or an unreadable list is busy', async () => {
+    expect(await hevcBusy(env.ctx)).toBe(false);
+    sessions = async () => [hevcSession('ps-native', { playMethod: 'DirectPlay' })];
+    expect(await hevcBusy(env.ctx)).toBe(false);
+    sessions = async () => [hevcSession('ps-native', { videoCodec: 'h264' })];
+    expect(await hevcBusy(env.ctx)).toBe(true);
+    sessions = async () => { throw new Error('x'); };
+    expect(await hevcBusy(env.ctx)).toBe(true);
+  });
+});
+
+describe('B1: nightly playback check', () => {
+  beforeEach(() => { vi.spyOn(env.ctx.jf, 'items').mockResolvedValue({ items: [], total: 0 }); });
+  const runCheck = async () => {
+    await env.pool.query('delete from playback_checks');
+    expect(await startPlaybackCheck(env.ctx)).toBe(true);
+    for (let i = 0; i < 200 && (await checkState(env.ctx)).running; i++) await new Promise((r) => setTimeout(r, 10));
+  };
+  it('no HEVC probe while a portal stream or a native transcode is live; with nobody watching it probes', async () => {
+    await setLive(env.ctx, { userId: admin.id, userName: 'A', itemId: 'i', title: 't', positionTicks: 0, isPaused: false, playSessionId: 'ps-live', updatedAt: Date.now(), source: 'portal' });
+    await runCheck();
+    expect(await env.kv.get('hevcenc:attempt')).toBeNull();
+    for (const k of await env.kv.keys('play:')) await env.kv.del(k);
+    sessions = async () => [hevcSession('ps-native', { videoCodec: 'h264' })];
+    await runCheck();
+    expect(await env.kv.get('hevcenc:attempt')).toBeNull();
+    sessions = async () => [];
+    await runCheck();
+    expect(await env.kv.get('hevcenc:attempt')).not.toBeNull();
+  });
+});
+
 describe('noteHevcFailure', () => {
   it('two devices pause HEVC; one device twice does not; Health state shows it', async () => {
     await putProbe();
@@ -198,8 +279,16 @@ describe('probe', () => {
   let paths: string[] = [];
   let mode: { init?: Buffer; fail?: string; segMs?: number; titles?: 'none' | 'series' | 'movie' } = {};
   const now = () => t;
+  const SDR_HD: MediaTraits = { resolution: 'hd', hdr: null, audio: null };
+  let traitsOf: Record<string, MediaTraits> = {};
+  let origTraits: typeof env.ctx.jf.mediaTraits;
+  beforeAll(() => { origTraits = env.ctx.jf.mediaTraits; });
+  afterEach(() => { env.ctx.jf.mediaTraits = origTraits; });
+  const titles = (...ids: string[]) => vi.spyOn(env.ctx.jf, 'items').mockResolvedValue({ items: ids.map((id) => ({ id: id.repeat(32), name: 'Dunmoor', type: 'Movie' })) as never, total: ids.length });
   beforeEach(() => {
     t = 1_000_000; stopped = []; paths = []; mode = {};
+    traitsOf = {};
+    env.ctx.jf.mediaTraits = async (_u, id) => traitsOf[id[0]!] ?? SDR_HD;
     vi.spyOn(env.ctx.jf, 'items').mockImplementation(async () => (mode.titles === 'none' ? { items: [], total: 0 } : { items: [{ id: 'm'.repeat(32), name: 'Dunmoor', type: mode.titles === 'series' ? 'Series' : 'Movie' }] as never, total: 1 }));
     vi.spyOn(env.ctx.jf, 'firstEpisode').mockResolvedValue({ id: 'e'.repeat(32) });
     vi.spyOn(env.ctx.jf, 'playbackInfo').mockResolvedValue({ playSessionId: 'ps-probe-1', hlsUrl: '/media/Videos/x/master.m3u8?PlaySessionId=ps-probe-1' } as never);
@@ -224,11 +313,11 @@ describe('probe', () => {
     expect((await hevcStatus(env.ctx)).state).toBe('ready');
     // master, variant, init, then segments 0..3 in order and no more
     expect(paths.map((p) => p.split('?')[0]!.split('/').pop())).toEqual(['master.m3u8', 'main.m3u8', '-1.mp4', '0.mp4', '1.mp4', '2.mp4', '3.mp4']);
-    expect(env.ctx.jf.clipTranscode).toHaveBeenCalledWith(user(), expect.anything(), { videoCodec: 'hevc', fmp4: true, videoBitrate: 6_000_000, audioBitrate: 128_000, maxWidth: 1920, segmentLength: 3 });
+    expect(env.ctx.jf.clipTranscode).toHaveBeenCalledWith(user(), expect.anything(), { videoCodec: 'hevc', fmp4: true, videoBitrate: 6_000_000, audioBitrate: 128_000, maxWidth: 1920, maxHeight: 1080, segmentLength: 3 });
   });
   it('a series is probed on its first episode', async () => {
     mode.titles = 'series';
-    expect((await probeHevcEncoder(env.ctx, user(), { now })).ok).toBe(true);
+    expect((await probeHevcEncoder(env.ctx, user(), { now }))?.ok).toBe(true);
     expect(env.ctx.jf.playbackInfo).toHaveBeenCalledWith(user(), 'e'.repeat(32), expect.anything());
   });
   it('slower than 1.5x: slow with the speed', async () => {
@@ -263,6 +352,36 @@ describe('probe', () => {
     settings = null;
     await probeHevcEncoder(env.ctx, user(), { now });
     expect(await env.kv.get('hevcenc:probe')).toBeNull();
+  });
+  it('B2: the real clipTranscode URL asks for 1080p (MaxHeight 1080, MaxWidth 1920), HEVC, fMP4, 3 s segments', async () => {
+    const real = Object.getPrototypeOf(env.ctx.jf).clipTranscode as (u: UserRow, i: never, o: never) => Promise<{ path: string }>;
+    vi.mocked(env.ctx.jf.clipTranscode).mockImplementation((u, i, o) => real.call(env.ctx.jf, u as never, i as never, o as never) as never);
+    vi.spyOn(env.ctx.jf, 'playbackInfo').mockResolvedValue({ playSessionId: 'ps-probe-1', hlsUrl: '/media/Videos/x/master.m3u8?PlaySessionId=ps-probe-1&MaxHeight=720&MaxWidth=1280&VideoCodec=h264' } as never);
+    await probeHevcEncoder(env.ctx, user(), { now });
+    const q = new URL(paths[0]!, 'http://x').searchParams;
+    expect([q.get('MaxHeight'), q.get('MaxWidth'), q.get('VideoCodec'), q.get('SegmentContainer'), q.get('SegmentLength'), q.get('VideoBitrate')]).toEqual(['1080', '1920', 'hevc', 'mp4', '3', '6000000']);
+    expect(await env.kv.get('hevcenc:probe')).not.toMatch(/Videos|PlaySession/);
+  });
+  it('B3: the first SDR 720-1080p title is probed; HDR, 4K and SD are skipped', async () => {
+    titles('h', 'k', 's', 'g');
+    traitsOf = { h: { resolution: 'hd', hdr: 'hdr10', audio: null }, k: { resolution: '4k', hdr: null, audio: null }, s: { resolution: 'sd', hdr: null, audio: null }, g: SDR_HD };
+    await probeHevcEncoder(env.ctx, user(), { now });
+    expect(env.ctx.jf.playbackInfo).toHaveBeenCalledWith(user(), 'g'.repeat(32), expect.anything());
+  });
+  it('B3: no suitable title: no_title, and nothing is converted', async () => {
+    titles('h', 'v');
+    traitsOf = { h: { resolution: 'hd', hdr: 'hdr10', audio: null }, v: { resolution: 'hd', hdr: 'dolbyvision', audio: null } };
+    expect(await probeHevcEncoder(env.ctx, user(), { now })).toMatchObject({ ok: false, reason: 'no_title' });
+    expect(env.ctx.jf.clipTranscode).not.toHaveBeenCalled();
+    expect(env.ctx.jf.playbackInfo).not.toHaveBeenCalled();
+    expect((await hevcStatus(env.ctx)).state).toBe('unproven');
+  });
+  it('S2: two concurrent probes: the second is refused, the encoder is started once; the slot is free again afterwards', async () => {
+    const [a, b] = await Promise.all([probeHevcEncoder(env.ctx, user(), { now }), probeHevcEncoder(env.ctx, user(), { now })]);
+    expect([a, b].filter((x) => x === null)).toHaveLength(1);
+    expect(env.ctx.jf.clipTranscode).toHaveBeenCalledTimes(1);
+    expect(await env.kv.get('hevcenc:running')).toBeNull();
+    expect(await probeHevcEncoder(env.ctx, user(), { now })).not.toBeNull();
   });
   it('previews are paused during the probe and the pause is lifted afterwards', async () => {
     const pv = previews(env.ctx);
@@ -304,20 +423,30 @@ describe('POST /api/admin/hevc-check', () => {
   let s: { cookies: Record<string, string>; csrf: string };
   beforeAll(async () => { s = await env.login(ADMIN); });
   const post = () => env.app.inject({ method: 'POST', url: '/api/admin/hevc-check', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf } });
+  const get = () => env.app.inject({ method: 'GET', url: '/api/admin/hevc-check', cookies: s.cookies });
   beforeEach(() => { vi.spyOn(env.ctx.jf, 'items').mockResolvedValue({ items: [], total: 0 }); });
-  it('409 busy while a portal stream is live; otherwise probes and answers the state', async () => {
+  it('409 busy while a portal stream is live', async () => {
     await setLive(env.ctx, { userId: admin.id, userName: 'A', itemId: 'i', title: 't', positionTicks: 0, isPaused: false, playSessionId: 'ps-live', updatedAt: Date.now(), source: 'portal' });
     const busy = await post();
     expect([busy.statusCode, busy.json()]).toEqual([409, { error: 'busy' }]);
-    for (const k of await env.kv.keys('play:')) await env.kv.del(k);
+  });
+  it('S3: answers 202 at once while the probe is still pending; GET shows running, then the state', async () => {
+    let release: () => void = () => undefined;
+    vi.spyOn(env.ctx.jf, 'items').mockImplementation(() => new Promise((res) => { release = () => res({ items: [], total: 0 }); }));
     const ok = await post();
-    expect([ok.statusCode, ok.json()]).toEqual([200, { ok: true, state: 'unproven' }]);
-    expect(env.ctx.jf.items).toHaveBeenCalled();
+    expect([ok.statusCode, ok.json()]).toEqual([202, { started: true }]);
+    expect((await get()).json()).toMatchObject({ running: true, state: 'unproven' });
+    const again = await post();
+    expect([again.statusCode, again.json()]).toEqual([409, { error: 'already_running' }]);
+    await vi.waitFor(() => expect(release).not.toBeUndefined());
+    for (let i = 0; i < 50; i++) { release(); await new Promise((r) => setTimeout(r, 10)); if (!(await get()).json().running) break; }
+    expect((await get()).json()).toMatchObject({ running: false, state: 'unproven' });
+    expect(await env.kv.get('hevcenc:running')).toBeNull();
   });
   it('a server with HEVC encoding off is not probed', async () => {
     settings = { ...E, hevcEncode: false };
     const r = await post();
-    expect(r.json()).toEqual({ ok: true, state: 'server_off' });
+    expect([r.statusCode, r.json()]).toEqual([200, { started: false, running: false, state: 'server_off' }]);
     expect(env.ctx.jf.items).not.toHaveBeenCalled();
   });
   it('is for admins only', async () => {
@@ -329,6 +458,7 @@ describe('POST /api/admin/hevc-check', () => {
     const sid = cb.cookies.find((x) => x.name === 'ff_sid')!.value;
     const f = { cookies: { ff_sid: sid }, csrf: (await env.app.inject({ url: '/api/me', cookies: { ff_sid: sid } })).json().csrfToken as string };
     expect((await env.app.inject({ method: 'POST', url: '/api/admin/hevc-check', cookies: f.cookies, headers: { 'x-csrf-token': f.csrf } })).statusCode).toBe(403);
+    expect((await env.app.inject({ method: 'GET', url: '/api/admin/hevc-check', cookies: f.cookies })).statusCode).toBe(403);
   });
 });
 
@@ -353,5 +483,6 @@ describe('POST /api/playback/info: fellBack', () => {
     expect(await failures()).toHaveLength(1);
     expect((await info({ fellBack: 'both', prevPs: 'ps-prev-hevc' })).statusCode).toBe(200);
     expect(await failures()).toHaveLength(2);
+    expect(JSON.stringify(await failures())).not.toMatch(/dev-|[0-9a-f]{8}-[0-9a-f]{4}-/); // hashed, no raw device id
   });
 });

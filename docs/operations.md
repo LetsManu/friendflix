@@ -315,7 +315,7 @@ Optional (Admin → Einstellungen → Wiedergabe, „Upload des Servers (Mbit/s)
 Beispiel: 30 Mbit/s Upload → 25,5 Mbit/s Budget. Laufen 8 + 8 + 4 Mbit/s, bleiben 5,5: der nächste Stream startet mit 4 Mbit/s (720p).
 
 ## HEVC-Umwandlung und Surround-Ton
-Zuschauer unterwegs, deren Gerät HEVC abspielt und deren Upload für das Original nicht reicht, bekommen statt H.264 eine HEVC-Umwandlung (gleiche Qualität bei etwa der Hälfte der Bitrate). Im Heimnetz, bei HDR-Quellen und ohne bestandenen Test wird **nie** in HEVC umgewandelt; HEVC-Dateien, die das Gerät kann, werden ohne Umwandlung ausgeliefert. Jellyfin kodiert, FriendFlix ändert keine seiner Einstellungen, sondern liest sie und gibt in Admin → Status Ratschläge. Folgendes schaltet der Admin in Jellyfin selbst ein (Dashboard → Wiedergabe → Transkodierung):
+Zuschauer unterwegs, deren Gerät HEVC abspielt und deren Upload für das Original nicht reicht, bekommen statt H.264 eine HEVC-Umwandlung (bei gleicher Bitrate ein sichtbar besseres Bild). Im Heimnetz, bei HDR-Quellen und ohne bestandenen Test wird **nie** in HEVC umgewandelt; HEVC-Dateien, die das Gerät kann, werden ohne Umwandlung ausgeliefert. Jellyfin kodiert, FriendFlix ändert keine seiner Einstellungen, sondern liest sie und gibt in Admin → Status Ratschläge. Folgendes schaltet der Admin in Jellyfin selbst ein (Dashboard → Wiedergabe → Transkodierung):
 
 1. **Hardware-Beschleunigung** (z. B. Intel QuickSync/QSV) und **„Hardware-Kodierung aktivieren“**.
 2. **„Kodierung im HEVC-Format erlauben“** (`AllowHevcEncoding`, standardmäßig aus). Ohne diesen Schalter lässt Jellyfin HEVC hinter H.264 zurückfallen.

@@ -129,6 +129,9 @@ describe('encoder advice (read-only)', () => {
     expect(await row({})).toMatchObject({ advice: ['hevc_slow'], hevc: { state: 'slow', speed: 1.2 } });
     await put({ ok: true, speed: 2.4 }); // ready, but below 3x: one at a time, and the line says so
     expect(await row({})).toMatchObject({ advice: ['hevc_limited'], hevc: { state: 'ready', speed: 2.4, at: '2026-11-10T03:10:00.000Z' } });
+    env.ctx.cfg = { ...cfg, HEVC_STREAMS: 1 }; // one allowed: nothing to say about a limit of one
+    expect(await row({})).toEqual({ id: 'encoder', level: 'ok', hevc: { state: 'ready', speed: 2.4, at: '2026-11-10T03:10:00.000Z' } });
+    env.ctx.cfg = { ...cfg, HEVC_STREAMS: 2 };
     await put({ ok: true, speed: 3.2 });
     expect(await row({})).toEqual({ id: 'encoder', level: 'ok', hevc: { state: 'ready', speed: 3.2, at: '2026-11-10T03:10:00.000Z' } });
     env.ctx.cfg = { ...cfg, HEVC_STREAMS: 0 };

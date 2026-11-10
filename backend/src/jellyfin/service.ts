@@ -152,6 +152,7 @@ export class JellyfinService implements MediaServer {
       ...(o.fmp4 ? { SegmentContainer: 'mp4', VideoCodec: o.videoCodec ?? 'h264', AudioCodec: 'aac' } : {}),
       AllowVideoStreamCopy: 'false', AllowAudioStreamCopy: 'false', VideoBitrate: String(o.videoBitrate), AudioBitrate: String(o.audioBitrate), MaxWidth: String(o.maxWidth),
       ...(o.stereo ? { TranscodingMaxAudioChannels: '2' } : {}),
+      ...(o.maxHeight ? { MaxHeight: String(o.maxHeight) } : {}),
       ...(o.segmentLength ? { SegmentLength: String(o.segmentLength) } : {}),
       ...(o.maxBitrate ? { MaxStreamingBitrate: String(o.maxBitrate) } : {}),
     };

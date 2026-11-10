@@ -139,24 +139,24 @@ async function playbackCheckProbe(ctx: Ctx): Promise<ServiceHealth> {
  * The media server's transcoding settings, read-only (Jellyfin; a server without MediaAdmin.encoderSettings has no row): hardware
  * acceleration, HDR tone mapping, throttling and Matroska keyframe extraction (3 s remux segments). Advice only, never a red light.
  */
-export function encoderAdvice(e: EncoderSettings, hevc?: HevcStatus): EncoderAdvice[] {
+export function encoderAdvice(e: EncoderSettings, hevc?: HevcStatus, streams = 2): EncoderAdvice[] {
   return [
     ...(e.hwAccel === 'none' ? ['no_hw_accel' as const] : []),
     ...(!e.tonemap ? ['no_tonemap' as const] : []),
     ...(!e.throttle ? ['no_throttle' as const] : []),
     ...(!e.keyframeMkv ? ['no_keyframes' as const] : []),
-    ...hevcAdvice(hevc),
+    ...hevcAdvice(hevc, streams),
     ...(e.downmix === 'none' ? ['downmix_plain' as const] : []),
   ];
 }
 /** HEVC advice, only while the conversion is switched on (HEVC_STREAMS > 0, which `off` stands for); `ready` below 3x real time says that one runs at a time */
-function hevcAdvice(h?: HevcStatus): EncoderAdvice[] {
+function hevcAdvice(h: HevcStatus | undefined, streams: number): EncoderAdvice[] {
   switch (h?.state) {
     case 'server_off': return ['hevc_server_off'];
     case 'no_hw': return ['hevc_no_hw'];
     case 'failed': return ['hevc_failed'];
     case 'slow': return ['hevc_slow'];
-    case 'ready': return h.speed !== undefined && h.speed < HEVC_SAFE_SPEED ? ['hevc_limited'] : [];
+    case 'ready': return streams > 1 && h.speed !== undefined && h.speed < HEVC_SAFE_SPEED ? ['hevc_limited'] : []; // with one allowed there is nothing to say
     default: return [];
   }
 }
@@ -166,7 +166,7 @@ async function encoderProbe(ctx: Ctx, timeoutMs: number): Promise<ServiceHealth 
   const o = await bounded(read, timeoutMs);
   if (!o.ok) return { id: 'encoder', level: 'off', reason: 'unavailable' };
   const hevc = await hevcStatus(ctx, o.v).catch((): HevcStatus => ({ state: 'off' }));
-  const advice = encoderAdvice(o.v, hevc);
+  const advice = encoderAdvice(o.v, hevc, ctx.cfg.HEVC_STREAMS);
   const line = hevc.state === 'off' ? {} : { hevc };
   return advice.length ? { id: 'encoder', level: 'warn', reason: advice[0], advice, ...line } : { id: 'encoder', level: 'ok', ...line };
 }

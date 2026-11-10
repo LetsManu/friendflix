@@ -353,7 +353,7 @@ export interface PlaybackOptions { maxBitrate: number; /** validated device capa
   /** asked only when the plan wants an HEVC conversion; absent = refused (h264_unproven) */
   hevcGate?: () => Promise<HevcGate> }
 /** Server-side transcode of a short clip / probe (preview clips, playback health check): forced re-encode at these limits. */
-export interface ClipTranscode { audioIndex?: number; fmp4?: boolean; videoBitrate: number; audioBitrate: number; maxWidth: number; stereo?: boolean; maxBitrate?: number; /** video codec of the conversion (default h264); the HEVC probe uses 'hevc' */ videoCodec?: 'h264' | 'hevc'; /** HLS segment length in seconds (SegmentLength) */ segmentLength?: number }
+export interface ClipTranscode { audioIndex?: number; fmp4?: boolean; videoBitrate: number; audioBitrate: number; maxWidth: number; stereo?: boolean; maxBitrate?: number; /** video codec of the conversion (default h264); the HEVC probe uses 'hevc' */ videoCodec?: 'h264' | 'hevc'; /** HLS segment length in seconds (SegmentLength) */ segmentLength?: number; /** height box of the conversion (MaxHeight); default: the one of the PlaybackInfo answer */ maxHeight?: number }
 
 /** Role/kids policy for one identity; the implementation maps it to the server's own access model. */
 export interface IdentityPolicy {
