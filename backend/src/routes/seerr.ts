@@ -14,6 +14,7 @@ import { requireAdmin } from '../session.js';
 import { limitFor, quota, release, reserve, resetsAt, usage } from '../requestlimit.js';
 import { checkSecret } from './internal.js';
 import { seerrHooks } from '../hooks.js';
+import { inPool } from '../discoverData.js';
 import { wrap as sharedWrap } from './_shared.js';
 
 const mediaType = z.enum(['movie', 'tv']);
@@ -104,6 +105,7 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     } finally {
       await release(ctx, slot);
     }
+    await ctx.kv.del(`reqmine:${req.user!.id}`).catch(() => undefined);
     await audit(ctx, req.user!.id, 'request.create', String(created.id), { title });
     await seerrHooks.run(ctx, { type: 'requested', user: req.user!, tmdbId: b.tmdbId, mediaType: b.mediaType });
     return { id: created.id, status: portalStatus(created.media?.status, created.status) };
@@ -111,10 +113,14 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/requests/quota', pre, wrap(async (req) => quota(ctx, req.user!)));
 
+  // one service call per request: at most 4 at a time, and the answer is kept for a few seconds (the page asks on every visit)
+  const MINE_TTL = 20;
   app.get('/api/requests/mine', pre, wrap(async (req) => {
+    const ck = `reqmine:${req.user!.id}`;
+    const hit = await ctx.kv.get(ck).catch(() => null);
+    if (hit) { try { return JSON.parse(hit); } catch { /* recompute */ } }
     const rows = (await ctx.db.query('select * from seerr_requests where user_id=$1 order by created_at desc limit 50', [req.user!.id])).rows;
-    const out = [];
-    for (const r of rows) {
+    const out = await inPool(rows, 4, async (r) => {
       let status = 'angefragt';
       try {
         const sr = await requestsClient(ctx).getRequest(r.seerr_request_id);
@@ -122,9 +128,11 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
       } catch (e) {
         if (e instanceof SeerrError && e.status === 404) status = 'entfernt';
       }
-      out.push({ id: r.seerr_request_id, title: r.title, mediaType: r.media_type, tmdbId: r.tmdb_id, poster: r.poster ? `/api/seerr/image${r.poster}` : undefined, status, createdAt: r.created_at });
-    }
-    return { requests: out };
+      return { id: r.seerr_request_id, title: r.title, mediaType: r.media_type, tmdbId: r.tmdb_id, poster: r.poster ? `/api/seerr/image${r.poster}` : undefined, status, createdAt: r.created_at };
+    });
+    const body = { requests: out };
+    await ctx.kv.set(ck, JSON.stringify(body), MINE_TTL).catch(() => undefined);
+    return body;
   }));
 
   // ---- admin approval ----
