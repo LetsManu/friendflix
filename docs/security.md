@@ -302,6 +302,18 @@ backend --signed request--> updater --(internal net)--> docker-proxy --ro--> /va
 
 **Disable** by adding `compose.no-updater.yaml` to the compose command (or `COMPOSE_FILE`) and removing the running `updater` and `docker-proxy` containers once ([setup.md, Turn it off](setup.md#updater)); nothing else depends on them.
 
+## Casts that outlive the tab
+
+A Chromecast cast keeps running when the tab is closed or reloaded (the browser no longer revokes on `pagehide`; AirPlay still does). What changes for the threat model:
+
+- **Still revoking:** *Stop casting* (bar, remote, detached bar), the TV or another sender ending the session, logout, **profile switch** (new: `POST /api/profiles/:id/select` revokes the device's cast tokens on the server, so it holds with no page open; selecting the active profile again changes nothing), joining a watch party, removing or blocking a device, "Sign out other sessions", disabling the account, and the account's third media token (the oldest is revoked). Stop on a detached bar revokes the cast and its queued successor by their public ids.
+- **Unchanged limits:** 45 minutes of sliding idle expiry (refreshed by the TV's own fetches), an absolute cap of the remaining runtime plus 1 hour (1 to 6 hours), two media tokens per account plus one queued token per device. An unattended stream therefore lives while the TV plays and ends 45 minutes after it stops fetching.
+- **New exposure:** a stream may run with no page open, and on Google's Default Media Receiver the token URL stays readable in the media status by any Cast sender on the LAN for longer. It is bounded by the address pin, the single-title scope, idle expiry, the cap, the token limit and the revoke paths above. The kill switch without the tab: open FriendFlix (the bar returns) and stop, or sign out other sessions.
+- **Re-adoption lookup** `GET /api/cast/session/:castId` (session cookie, 30 per minute, `no-store`): answers only for a media token of the caller's own account, profile and approved device, otherwise 404. The answer contains no token, no URL and no address: ids, expiry, title, subtitle list, whether progress was reported, whether a next episode is queued, the number of pinned addresses, the address families that were refused and the pinned family (`v4` or `v6`, never an address). A guessed castId (128 bits) is useless. The browser derives the castId from the receiver's content URL (`sha256` of the token, first 32 hex characters) and stores only that public handle (`ff-cast-hint`), never a token or URL. One tab per browser acts on a cast (Web Lock).
+- **Queued token hardening:** a queued next token is pinned at mint to the address its predecessor is pinned to, so another sender that reads the queue cannot take the pin first; a predecessor that was never fetched refuses the request (`409 cast_unpinned`). Its idle life is refreshed with the predecessor and its cap is `min(6 h, its own lifetime + the predecessor's remaining time)`.
+- **Diagnostics privacy:** the cast log and "Copy report" on `/diagnose` stay on the device and never contain tokens, URLs, castIds, item ids or IP addresses; device names are anonymised in the report.
+- **Without a page:** the own receiver reports start, progress and stop itself. With the Default Media Receiver, progress and "watched" stay where the page left them until a page picks the cast up again.
+
 ## Cast receiver
 
 FriendFlix's own Cast Web Receiver ([cast-receiver.md](cast-receiver.md), opt-in with `CAST_RECEIVER_APP_ID`) runs on a TV that has
