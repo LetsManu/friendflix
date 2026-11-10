@@ -384,9 +384,9 @@ export function noteHlsFailure(what: 'hevc' | 'surround' | 'both'): void {
   write(AVOID_KEY, next);
 }
 
-/** the channel count the device states before the stereo choice and the sound modes apply (Tizen: 6 when its Dolby probe passed) */
+/** the channel count the device states before the stereo choice and the sound modes apply (TV apps: 6 when its Dolby probe passed) */
 function statedChannels(c: Out): number {
-  if (c.client === 'tizen') return (c.hls?.surround.length ?? 0) > 0 ? 6 : 2;
+  if (c.client !== 'web') return (c.hls?.surround.length ?? 0) > 0 ? 6 : 2;
   const n = outputChannels();
   return n >= 6 ? Math.min(16, n) : 2;
 }
@@ -399,12 +399,19 @@ function statedChannels(c: Out): number {
  */
 export function deviceCaps(): Out | null {
   const c = baseCaps();
-  if (!c) return null;
+  return c ? withOutput(c) : null;
+}
+
+/** the output facts on top of a probed block (shared with the LG / Fire TV apps, whose block is built in lib/webos/caps.ts) */
+export function withOutput(c: Out): Out {
   const av = avoidedUntil();
   const stereo = stereoOnly() || soundModeOn();
   let hls = c.hls;
   if (hls) hls = { ...hls, video: av.hevc ? hls.video.filter((v) => v !== 'hevc') : hls.video, surround: stereo || av.surround ? [] : hls.surround };
-  return { ...c, ...(hls ? { hls } : {}), audioChannels: stereo ? 2 : statedChannels(hls ? { ...c, hls } : c) };
+  const { audioChannels: _a, ...rest } = c;
+  // a TV block without an hls claim (no MSE answer) states nothing about channels, like today
+  if (!hls && c.client !== 'web' && c.client !== 'tizen' && c.audioChannels === undefined) return rest;
+  return { ...rest, ...(hls ? { hls } : {}), audioChannels: stereo ? 2 : statedChannels(hls ? { ...c, hls } : c) };
 }
 
 /** what Diagnose shows (Task 4): the device's abilities before the stereo choice and the avoid memory, then those two */

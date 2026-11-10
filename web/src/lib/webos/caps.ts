@@ -7,7 +7,7 @@
  */
 import { APP_VERSION } from '#lib/version/codenames';
 import { fireTvDisplayHeight, isFireTvApp } from '#lib/firetv/detect';
-import { deviceCaps } from '#lib/player/devicecaps';
+import { deviceCaps, withOutput } from '#lib/player/devicecaps';
 import { isLgApp } from './detect';
 
 export interface MediaProbe { canPlayType(t: string): string; isTypeSupported?: (t: string) => boolean }
@@ -94,6 +94,25 @@ export function confirmedTypes(m: MediaProbe | null): { video: string[]; audio: 
 export const ASSUMED_CONTAINERS: readonly string[] = ['mkv'];
 
 /**
+ * What the TV plays INSIDE an HLS stream (hls.js on MSE): counted only on `isTypeSupported === true` (canPlayType 'maybe' is enough for the
+ * direct-play lists, not for hls.js). HEVC needs the hvc1 type and the file claim; surround is Dolby only (EAC3 / AC3 confirmed by MSE;
+ * AAC 5.1 is never claimed: nothing here proves it). Undefined without `isTypeSupported` or when MSE confirms neither video nor audio.
+ */
+export function hlsClaim(m: MediaProbe | null, hevcFiles: boolean): NonNullable<ClientCapsBody['hls']> | undefined {
+  const f = m?.isTypeSupported;
+  if (typeof f !== 'function') return undefined;
+  const mse = (mime: string) => { try { return f.call(m, mime) === true; } catch { return false; } };
+  const video: NonNullable<ClientCapsBody['hls']>['video'] = [];
+  if (mse(CANDIDATES.video.h264[3].mime)) video.push('h264');
+  if (hevcFiles && mse(CANDIDATES.video.hevc[0].mime)) video.push('hevc');
+  const audio: NonNullable<ClientCapsBody['hls']>['audio'] = [];
+  if (mse(CANDIDATES.audio.aac)) audio.push('aac');
+  for (const k of ['ac3', 'eac3'] as const) if (mse(CANDIDATES.audio[k])) audio.push(k);
+  if (!video.length && !audio.length) return undefined;
+  return { video, audio, surround: (['eac3', 'ac3'] as const).filter((k) => audio.includes(k)) };
+}
+
+/**
  * The block for one TV app: every confirmed video profile is capped at `maxHeight` (LG: 2160; Fire TV: its display), and the
  * `assumed` containers are added once anything else is confirmed (LG: mkv; Fire TV: none, its WebView plays only what it confirms).
  */
@@ -106,7 +125,11 @@ export function buildTvCaps(m: MediaProbe | null, o: { client: 'webos' | 'firetv
     if (profiles.length) video.push({ codec, maxHeight: o.maxHeight, profiles });
   }
   if (!video.length && !t.audio.length && !t.containers.length) return null;
-  return { client: o.client, appVersion: o.appVersion, containers: t.containers, video, audio: t.audio, subtitles: [...CANDIDATES.subtitles] };
+  const hls = hlsClaim(m, video.some((v) => v.codec === 'hevc'));
+  return {
+    client: o.client, appVersion: o.appVersion, containers: t.containers, video, audio: t.audio, subtitles: [...CANDIDATES.subtitles],
+    ...(hls ? { hls, ...(hls.surround.length ? { audioChannels: 6 } : {}) } : {}),
+  };
 }
 
 export function buildLgCaps(m: MediaProbe | null, appVersion: string): ClientCapsBody | null {
@@ -114,13 +137,14 @@ export function buildLgCaps(m: MediaProbe | null, appVersion: string): ClientCap
 }
 
 let cached: ClientCapsBody | null | undefined;
+/** the probe-time block of the TV apps; the output facts are applied on top at every call (not cached) */
 
 /**
  * the block for this page load: LG app, Fire TV app (probed once here); every other browser and the Samsung TV app probe themselves
  * (lib/player/devicecaps.ts: strict claims, cached per device, safe profile after a failure); null without a media element
  */
 export function appCaps(): ClientCapsBody | null {
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) return cached && withOutput(cached);
   if (typeof window === 'undefined') return null;
   const lg = isLgApp();
   if (!lg && !isFireTvApp()) return deviceCaps();
@@ -133,7 +157,7 @@ export function appCaps(): ClientCapsBody | null {
   cached = lg
     ? buildLgCaps(probe, APP_VERSION)
     : buildTvCaps(probe, { client: 'firetv', appVersion: APP_VERSION, maxHeight: fireTvDisplayHeight(), assumed: [] });
-  return cached;
+  return cached && withOutput(cached);
 }
 
 /** tests only */

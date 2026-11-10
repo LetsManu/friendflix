@@ -184,7 +184,7 @@ Die Test-App findet heraus, was dein Fernseher wirklich kann und welchen Weg der
 Die Zeile sieht so aus:
 
 ```
-FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok keys=ok video=h264,hevc+10,av1,vp9 audio=aac,ac3,eac3,mp3,flac,opus containers=mkv,mp4,ts,webm
+FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok keys=ok video=h264,hevc+10,av1,vp9 audio=aac,ac3,eac3,mp3,flac,opus containers=mkv,mp4,ts,webm hlsvideo=h264,hevc surround=eac3,ac3 ch=6
 ```
 
 | Feld | Werte | Bedeutung und was es entscheidet |
@@ -203,8 +203,15 @@ FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok 
 | `video` | Codecs | Die Videocodecs, die der Fernseher bestätigt hat; ein `+10` hinter einem Codec heißt: 10-Bit bestätigt; `-` heißt: nichts bestätigt. Entscheidet die **endgültige Formatliste**. |
 | `audio` | Codecs | Die Audiocodecs, die der Fernseher bestätigt hat (`-`: nichts bestätigt). Entscheidet die Formatliste. |
 | `containers` | Liste | Die Container, die der Fernseher bestätigt hat (`-`: nichts bestätigt). Entscheidet die Formatliste. |
+| `hlsvideo` | `h264,hevc`, `-` | Die Videocodecs, die der Fernseher **in einem umgewandelten Stream** (HLS) bekommen darf. Strenger als `video`: gezählt nur, wenn die Streaming-Engine des Fernsehers (MSE `isTypeSupported`) sie bestätigt, `hevc` nur mit dem Tag `hvc1`. `-`: keine Antwort der Streaming-Engine, Streams bleiben also H.264. (`hls` weiter oben ist die Wiedergabeprüfung, nicht diese Liste.) |
+| `surround` | `eac3,ac3`, `-` | Die Dolby-Surround-Codecs, die die Streaming-Engine bestätigt. Nur sie lassen den Server 5.1-Ton schicken; `-` heißt Stereo. |
+| `ch` | `6`, `2` | Die Kanäle, die die App meldet: `6`, wenn `surround` nicht leer ist, sonst `2`. |
 
 Was auch immer die Zeile sagt, schicke sie vollständig: Auch die übrigen Werte zeigen, welche Teile einen anderen Ansatz brauchen. Die Test-App bleibt bei jedem Release ein Diagnosewerkzeug.
+
+## HEVC-Streams und Raumklang
+
+Umgewandelte Streams können HEVC und Dolby-Raumklang (E-AC-3 / AC-3) enthalten, wenn die Streaming-Engine des Fernsehers sie bestätigt (`hlsvideo`, `surround` in der Zeile). Die App behauptet beides erst nach bestandener Prüfung; eine unbekannte Antwort heißt der gewohnte H.264-Stereo-Stream. Startet ein Stream mit HEVC oder Raumklang nicht, wechselt der Player einmal zu einem Stream, den dieses Gerät abspielt, und merkt sich das 30 Tage. Läuft ein Titel, aber die **Soundbar bleibt stumm** (der Fernseher nimmt 5.1 an, der ARC-Weg gibt nichts aus), schalte im Audio-Bereich des Players den Schalter **Raumklang** aus; der Fernseher bekommt dann Stereo. Auch Klangmodi erzwingen Stereo.
 
 ## Offene Punkte / Prüfungen beim ersten Start
 

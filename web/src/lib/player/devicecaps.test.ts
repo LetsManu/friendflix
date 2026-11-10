@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_VERSION } from '#lib/version/codenames';
 import {
   _resetDeviceCaps, avoidedUntil, AVOID_KEY, AVOID_MS, buildDeviceCaps, CACHE_KEY, capsPending, capsSummary, confirmsType, measureChannelsWith, remeasureOutput, decodeQueries, deviceCaps, inSafeMode, isFormatFailure, isProbedBlock, MIME,
-  noteDirectFailure, noteHlsFailure, outputChannels, PROBE_VERSION, runDecodeQueries, SAFE_KEY, SAFE_MS, setStereoOnly, STEREO_KEY, stereoOnly, warmDeviceCaps, type DecodeQuery, type DeviceDeps, type ProbeEnv,
+  noteDirectFailure, noteHlsFailure, outputChannels, withOutput, PROBE_VERSION, runDecodeQueries, SAFE_KEY, SAFE_MS, setStereoOnly, STEREO_KEY, stereoOnly, warmDeviceCaps, type DecodeQuery, type DeviceDeps, type ProbeEnv,
 } from './devicecaps';
 
 const O = { client: 'web' as const, appVersion: '3.1.0' };
@@ -407,6 +407,20 @@ describe('this device: output channels, stereo choice, avoid memory', () => {
     await fresh({ tizen: true, channels: () => 2, env: env(all, { isTypeSupported: () => true, decodingInfo: async (q) => ({ supported: !q.audio || q.type === 'file' }) }) });
     expect(deviceCaps()!.hls!.surround).toEqual([]);
     expect(deviceCaps()!.audioChannels).toBe(2);
+  });
+
+  it('withOutput (LG / Fire TV blocks): the TV states 6 from its claim, the switch and the avoid memory narrow it, no claim states nothing', () => {
+    reset(); _resetDeviceCaps(deps({ channels: () => 2 }));
+    const tv = { client: 'webos' as const, appVersion: '1', containers: [], video: [], audio: [], subtitles: [], audioChannels: 6,
+      hls: { video: ['h264', 'hevc'] as ('h264' | 'hevc')[], audio: ['eac3' as const], surround: ['eac3' as const] } };
+    expect(withOutput(tv)).toMatchObject({ audioChannels: 6, hls: { video: ['h264', 'hevc'], surround: ['eac3'] } });
+    setStereoOnly(true);
+    expect(withOutput(tv)).toMatchObject({ audioChannels: 2, hls: { surround: [] } });
+    setStereoOnly(false);
+    noteHlsFailure('hevc');
+    expect(withOutput(tv).hls!.video).toEqual(['h264']);
+    const { hls: _h, audioChannels: _a, ...bare } = tv;
+    expect('audioChannels' in withOutput(bare)).toBe(false);
   });
 
   it('the stereo choice or a sound mode gives audioChannels 2 and surround []', async () => {

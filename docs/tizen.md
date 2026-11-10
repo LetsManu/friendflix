@@ -204,6 +204,10 @@ The result that matters most is `avplay=ok play=ok:...`. Whatever the line says,
 
 The probe stays a diagnostic tool in the repository and on each release.
 
+## HEVC streams and surround sound
+
+The Samsung app uses the same checks as a browser: converted streams carry HEVC or Dolby surround (E-AC-3 / AC-3) only when the TV's streaming engine and its decode check confirm them. Nothing is claimed before that. If a stream with HEVC or surround does not start, the player switches once to a stream the TV plays and remembers it for 30 days. If the soundbar stays silent, turn off the **Surround sound** switch in the player's *Audio* panel. (The probe line above covers AVPlay only and is unchanged.)
+
 ## Updates
 
 The app does not update itself (a developer-mode app cannot). After a new release, run the install script again; it installs the new version over the old one. The version shown on the release is the server's version. The Samsung app store is out of scope.
