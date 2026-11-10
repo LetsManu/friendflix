@@ -28,6 +28,8 @@ export interface CastLookup {
   seriesName?: string;
   subtitles: Array<{ index: number; language?: string; title: string }>;
   pins: 0 | 1 | 2;
+  /** the family of the TV's pinned address (never the address); null while unpinned */
+  pinFamily: 'v4' | 'v6' | null;
   refused: { count: number; families: Array<'v4' | 'v6'> };
 }
 

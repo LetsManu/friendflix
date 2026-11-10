@@ -97,9 +97,17 @@ export function castReport(o: { rows: Array<[string, string]>; entries: CastLogE
     'AirPlay log',
     o.air ? scrub(o.air) : '(none)',
   ].join('\n');
-  const names = [...new Set(o.devices.map((d) => d.trim()).filter(Boolean))];
+  return anonymise(text, o.devices);
+}
+
+/** the events as plain text for "Copy" on Diagnose: one line each, scrubbed, TV names anonymised like the report */
+export const eventsText = (entries: CastLogEntry[], devices: string[]): string =>
+  anonymise(entries.map((e) => `${stamp(e.at)} ${e.level} ${e.tag} ${scrub(e.text)}`).join('\n'), devices);
+
+/** replaces every TV name in `text` with "TV 1", "TV 2" (numbered by first appearance); longest names first, so a name inside another never splits it */
+export function anonymise(text: string, devices: string[]): string {
+  const names = [...new Set(devices.map((d) => d.trim()).filter(Boolean))];
   if (!names.length) return text;
-  // longest names first, so a name inside another one never splits it; numbered by the first match in the text
   const re = new RegExp([...names].sort((a, b) => b.length - a.length).map(esc).join('|'), 'g');
   const label = new Map<string, string>();
   for (const m of text.matchAll(re)) if (!label.has(m[0])) label.set(m[0], `TV ${label.size + 1}`);

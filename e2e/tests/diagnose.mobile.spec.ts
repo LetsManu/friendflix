@@ -18,7 +18,7 @@ test.describe('/diagnose (phone)', () => {
     await expect(table.getByRole('row', { name: /innerWidth x innerHeight/ })).toContainText(inner);
 
     await page.getByRole('button', { name: 'Werte kopieren' }).click();
-    await expect(page.locator('.note[role=status]')).toContainText(/Kopiert|Kopieren nicht möglich/);
+    await expect(page.getByText(/^(Kopiert\.|Kopieren nicht möglich)/)).toBeVisible();
     const text = await page.evaluate(() => navigator.clipboard.readText()).catch(() => 'innerWidth x innerHeight: env(safe-area-inset-top)');
     expect(text).toContain('innerWidth x innerHeight');
     expect(text).toContain('env(safe-area-inset-top)');

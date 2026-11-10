@@ -97,7 +97,7 @@ describe('lookupToCastInfo', () => {
   const l: CastLookup = {
     castId: 'ab'.repeat(16), itemId: 'dunmoor-s1e5', mediaSourceId: 'ms1', playSessionId: 'ps1', expiresAt: 9_000, runtimeTicks: 27_000_000_000, via: 'chromecast',
     next: false, reported: true, title: 'Wrenfield Pier', seriesName: 'Dunmoor',
-    subtitles: [{ index: 3, language: 'deu', title: 'Deutsch' }, { index: 7, title: 'English' }], pins: 1, refused: { count: 0, families: [] },
+    subtitles: [{ index: 3, language: 'deu', title: 'Deutsch' }, { index: 7, title: 'English' }], pins: 1, pinFamily: 'v4', refused: { count: 0, families: [] },
   };
   it('rebuilds the CastInfo from the receiver URL', () => {
     expect(lookupToCastInfo(l, 'https://friend.example.com/media/c/T/x.m3u8')).toEqual({

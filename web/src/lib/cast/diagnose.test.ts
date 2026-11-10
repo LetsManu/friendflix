@@ -11,7 +11,7 @@ import type { CastLookup } from './resume';
 const NOW = Date.UTC(2026, 10, 10, 20, 0, 0);
 const state = (o: Partial<CastState> = {}): CastState => ({ available: true, connected: true, deviceName: 'Wohnzimmer-TV', state: 'playing', currentTime: 10, duration: 600, paused: false, volume: 1, muted: false, loaded: true, contentId: '', idleReason: null, castId: '', queue: [], ...o });
 const session = (o: Partial<CastSession> = {}) => ({ kind: 'chromecast', device: 'Wohnzimmer-TV', title: 'Dunmoor', subtitle: 'S1 E4', state: 'playing', ...o }) as CastSession;
-const lookup = (o: Partial<CastLookup> = {}): CastLookup => ({ castId: 'a'.repeat(32), itemId: 'i', mediaSourceId: 'm', playSessionId: 'p', expiresAt: NOW + (4 * 60 + 12) * 60_000 + 20_000, via: 'chromecast', next: false, reported: true, title: 'Dunmoor', subtitles: [], pins: 1, refused: { count: 0, families: [] }, ...o });
+const lookup = (o: Partial<CastLookup> = {}): CastLookup => ({ castId: 'a'.repeat(32), itemId: 'i', mediaSourceId: 'm', playSessionId: 'p', expiresAt: NOW + (4 * 60 + 12) * 60_000 + 20_000, via: 'chromecast', next: false, reported: true, title: 'Dunmoor', subtitles: [], pins: 1, pinFamily: 'v4', refused: { count: 0, families: [] }, ...o });
 const base = { capable: true, enabled: true, custom: true, state: state(), session: session(), lookup: lookup(), errors: 0, now: NOW, tf: tr };
 const val = (rows: Array<{ label: string; value: string }>, label: string) => rows.find((r) => r.label === label)?.value;
 
@@ -20,7 +20,7 @@ describe('chromecastRows', () => {
     const rows = chromecastRows(base);
     expect(val(rows, 'Cast-Unterstützung')).toBe('Bereit · FriendFlix-Empfänger');
     expect(val(rows, 'Sitzung')).toBe('Verbunden mit Wohnzimmer-TV');
-    expect(val(rows, 'Zugangspass')).toBe('Gültig 4 h 12 min, wird 10 Min. vor Ablauf erneuert');
+    expect(val(rows, 'Zugangspass')).toBe('Gültig 4 Std. 12 Min., wird 10 Min. vor Ablauf erneuert');
     expect(rows.find((r) => r.label === 'Cast-Unterstützung')?.tone).toBe('ok');
   });
   it('support variants', () => {
@@ -38,9 +38,13 @@ describe('chromecastRows', () => {
     expect(val(rows, 'Sitzung')).toBe('Wird von einem anderen Tab gesteuert');
     expect(chromecastRows({ ...base, session: null, lookup: null, state: state({ connected: false, deviceName: '' }), otherTab: false }).some((r) => r.value.includes('anderen Tab'))).toBe(false);
   });
+  it('playing row: title and episode code, not the episode name', () => {
+    const rows = chromecastRows({ ...base, session: session({ isEpisode: true, subtitle: 'S1:E4 The Lantern Road' }) });
+    expect(val(rows, 'Läuft')).toBe('Dunmoor · S1:E4');
+  });
   it('next episode and receiver errors', () => {
-    const rows = chromecastRows({ ...base, session: session({ next: { itemId: 'n', label: 'E5', startsAt: null } }), state: state({ queue: [{ itemId: 1, contentId: 'x', castId: '' }] }), errors: 2 });
-    expect(val(rows, 'Nächste Folge')).toBe('E5 auf dem Fernseher vorgemerkt');
+    const rows = chromecastRows({ ...base, session: session({ next: { itemId: 'n', label: 'S1:E5 · Wrenfield Pier', startsAt: null } }), state: state({ queue: [{ itemId: 1, contentId: 'x', castId: '' }] }), errors: 2 });
+    expect(val(rows, 'Nächste Folge')).toBe('S1:E5 auf dem Fernseher vorgemerkt');
     expect(val(chromecastRows(base), 'Nächste Folge')).toBe('Nicht vorgemerkt');
     expect(val(rows, 'Empfängerfehler')).toBe('2 in dieser Sitzung (siehe Ereignisse)');
     expect(rows.find((r) => r.label === 'Empfängerfehler')?.tone).toBe('warn');
@@ -59,39 +63,52 @@ describe('airplayRows', () => {
     expect(labels({ continuous: 'on' })).toHaveLength(2);
     expect(labels({ subsInStream: true })).toContain('Untertitel');
   });
-  it('network row only with a family other than the pinned one', () => {
+  it('network row only with a refused family other than the pinned one', () => {
     const l = (families: Array<'v4' | 'v6'>) => lookup({ via: 'airplay', pins: 1, refused: { count: 1, families } });
     expect(val(airplayRows({ ...air, lookup: l(['v6']), pinned: 'v4' }), 'Netzwerk')).toContain('2 Adressen');
     expect(val(airplayRows({ ...air, lookup: l(['v4']), pinned: 'v4' }), 'Netzwerk')).toBeUndefined();
     expect(airplayRows({ ...air, lookup: l(['v6']), pinned: 'v4' }).find((r) => r.label === 'Netzwerk')?.tone).toBe('warn');
-    expect(val(airplayRows({ ...air, lookup: lookup() }), 'Netzwerk')).toBeUndefined();
+    expect(val(airplayRows({ ...air, lookup: l(['v6']), pinned: null }), 'Netzwerk')).toBeUndefined(); // pinned family unknown
+    expect(val(airplayRows({ ...air, lookup: lookup(), pinned: 'v4' }), 'Netzwerk')).toBeUndefined();
   });
   it('last session row', () => {
     expect(val(airplayRows({ ...air, last: { at: NOW, episodes: 3, reconnects: 0 } }), 'Letzte Sitzung')).toMatch(/3 Folgen, 0 Neuverbindungen$/);
+    expect(val(airplayRows({ ...air, last: { at: NOW, episodes: 1, reconnects: 1 } }), 'Letzte Sitzung')).toMatch(/1 Folge, 1 Neuverbindung$/);
   });
 });
 
 describe('lastAirSession', () => {
-  const e = (at: number, text: string, tag: CastLogEntry['tag'] = 'session'): CastLogEntry => ({ at, level: 'info', tag, text });
-  it('three AirPlay loads and no reconnects', () => {
-    const log = [e(1000, 'session adopted · chromecast · S1 E4'), e(2000, 'session adopted · airplay · S1 E4'), e(3000, 'session adopted · airplay · S1 E5'), e(4000, 'session adopted · airplay · film'), e(5000, 'cast ended · stopped')];
-    expect(lastAirSession(log)).toEqual({ at: 4000, episodes: 3, reconnects: 0 });
+  const e = (at: number, text: string, tag: CastLogEntry['tag'] = 'session', level: CastLogEntry['level'] = 'info'): CastLogEntry => ({ at, level, tag, text });
+  // the texts the engine writes: adopt once, later episodes as `<label> · from …`, a lost route as a warning
+  it('counts the episodes and reconnects of the last AirPlay session from the engine texts', () => {
+    const log = [
+      e(100, 'session adopted · chromecast · S1 E1'),
+      e(1000, 'session adopted · airplay · S1 E4'),
+      e(1500, 'S1 E4 · from 0:00', 'load'),
+      e(2000, 'AirPlay route lost', 'session', 'warn'),
+      e(2500, 'reconnect tapped'),
+      e(3000, 'S1 E5 · from 0:00', 'load'),
+      e(4000, 'S1 E6 · from 0:00', 'load'),
+      e(5000, 'cast ended · stopped'),
+      e(6000, 'session adopted · chromecast · film'),
+    ];
+    expect(lastAirSession(log)).toEqual({ at: 1000, episodes: 3, reconnects: 2 });
   });
-  it('counts reconnects; null without AirPlay; an older session is not mixed in', () => {
+  it('a film is one episode; null without AirPlay; an earlier session is not mixed in', () => {
     expect(lastAirSession([e(1, 'session adopted · chromecast · film')])).toBeNull();
     expect(lastAirSession([])).toBeNull();
-    const h = 3_600_000;
-    const log = [e(0, 'session adopted · airplay · S1 E1'), e(20 * h, 'session adopted · airplay · S1 E2'), e(20 * h + 1, 'airplay route reconnected', 'network')];
-    expect(lastAirSession(log)).toEqual({ at: 20 * h, episodes: 1, reconnects: 1 });
+    expect(lastAirSession([e(1, 'session adopted · airplay · film')])).toEqual({ at: 1, episodes: 1, reconnects: 0 });
+    const log = [e(1, 'session adopted · airplay · S1 E1'), e(2, 'cast ended · stopped'), e(3, 'session adopted · airplay · S1 E2'), e(4, 'S1 E3 · from 0:00', 'load')];
+    expect(lastAirSession(log)).toEqual({ at: 3, episodes: 2, reconnects: 0 });
   });
 });
 
 describe('passLeft', () => {
   it('hours and minutes, minutes only, nothing left', () => {
-    expect(passLeft(NOW + (4 * 60 + 12) * 60_000 + 5000, NOW, tr)).toBe('4 h 12 min');
-    expect(passLeft(NOW + 59 * 60_000, NOW, tr)).toBe('59 min');
-    expect(passLeft(NOW + 2 * 3600_000, NOW, tr)).toBe('2 h 0 min');
-    expect(passLeft(NOW - 5, NOW, tr)).toBe('0 min');
+    expect(passLeft(NOW + (4 * 60 + 12) * 60_000 + 5000, NOW, tr)).toBe('4 Std. 12 Min.');
+    expect(passLeft(NOW + 59 * 60_000, NOW, tr)).toBe('59 Min.');
+    expect(passLeft(NOW + 2 * 3600_000, NOW, tr)).toBe('2 Std.');
+    expect(passLeft(NOW - 5, NOW, tr)).toBe('0 Min.');
   });
 });
 

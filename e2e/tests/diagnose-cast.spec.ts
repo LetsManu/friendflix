@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { castOn, fakeCastSdk } from '../mocks/cast.js';
 import { expect, test } from '../fixtures.js';
-import { chromecastRemote, DIAG_SHOTS, dunmoor, leaveRemoteTo, RECEIVER, seedCastLog, type LogSeed } from './cast-remote-setup.js';
+import { chromecastRemote, DIAG_SHOTS, hideFixed, dunmoor, leaveRemoteTo, RECEIVER, seedCastLog, type LogSeed } from './cast-remote-setup.js';
 
 /** /diagnose, casting section: the test video, the two cards, the event log and the copied report (desktop; phone in diagnose-cast.mobile). */
 dunmoor();
@@ -10,8 +10,9 @@ dunmoor();
 const T = Date.UTC(2026, 10, 9, 21, 14, 0);
 const LOG: LogSeed[] = [
   { at: T, level: 'info', tag: 'session', text: 'session adopted · airplay · S1 E4' },
-  { at: T + 60_000, level: 'info', tag: 'session', text: 'session adopted · airplay · S1 E5' },
-  { at: T + 120_000, level: 'info', tag: 'session', text: 'session adopted · airplay · S1 E6' },
+  { at: T + 60_000, level: 'info', tag: 'load', text: 'S1 E5 · from 0:00' },
+  { at: T + 90_000, level: 'warn', tag: 'session', text: 'AirPlay route lost' },
+  { at: T + 120_000, level: 'info', tag: 'load', text: 'S1 E6 · from 0:00' },
   { at: T + 180_000, level: 'info', tag: 'session', text: 'session started · Wohnzimmer-TV' },
   { at: T + 200_000, level: 'warn', tag: 'network', text: 'TV buffering for more than 2 s' },
   { at: T + 210_000, level: 'error', tag: 'load', text: 'token request refused · HTTP 429' },
@@ -47,8 +48,17 @@ test.describe('/diagnose casting', () => {
     await chromecastRemote(page, { queue: true });
     await leaveRemoteTo(page, '/diagnose');
     await expect(page.getByTestId('diagnose-cast-cc')).toContainText('Verbunden mit Wohnzimmer-TV');
+    await expect(page.getByTestId('diagnose-cast-cc')).toContainText('Dunmoor · S1:F4');
+    await expect(page.getByTestId('diagnose-cast-cc')).not.toContainText('The Lantern Road');
+    await expect(page.getByTestId('diagnose-cast-cc')).toContainText('S1:F5 auf dem Fernseher vorgemerkt');
+    await page.locator('.events').getByRole('button', { name: 'Kopieren', exact: true }).click(); // the events table's own copy
+    await expect(page.locator('.note[role=status]')).toContainText('Kopiert');
+    const ev = await page.evaluate(() => navigator.clipboard.readText());
+    expect(ev).toContain('session started · TV 1');
+    expect(ev).not.toContain('Wohnzimmer-TV');
+    expect(ev).not.toMatch(/https:|\/media\/c\/|192\.0\.2\.7|[0-9a-f]{32}/i);
     await page.getByRole('button', { name: 'Bericht kopieren' }).click();
-    await expect(page.getByTestId('diagnose-cast').getByRole('status')).toContainText('Kopiert');
+    await expect(page.getByTestId('cast-status')).toContainText('Kopiert');
     const text = await page.evaluate(() => navigator.clipboard.readText());
     expect(text).toContain('TV 1');
     expect(text).toContain('Verbunden mit TV 1');
@@ -59,13 +69,26 @@ test.describe('/diagnose casting', () => {
     expect(text).not.toMatch(/[0-9a-f]{32}/i);
   });
 
+  test('the report anonymises a TV known only from the last-used device', async ({ page, context, api: _api }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await castOn(page);
+    await page.addInitScript(() => localStorage.setItem('ff-cast-last', 'Küchen-TV'));
+    await seedCastLog(page, [{ at: T, level: 'info', tag: 'session', text: 'session started · Küchen-TV' }]);
+    await page.goto('/diagnose');
+    await page.getByRole('button', { name: 'Bericht kopieren' }).click();
+    await expect(page.getByTestId('cast-status')).toContainText('Kopiert');
+    const text = await page.evaluate(() => navigator.clipboard.readText());
+    expect(text).toContain('session started · TV 1');
+    expect(text).not.toContain('Küchen-TV');
+  });
+
   test('levels are text, not colour alone', async ({ page, api: _api }) => {
     await castOn(page);
     await seedCastLog(page, LOG);
     await page.goto('/diagnose');
     const events = page.getByTestId('cast-events');
     await expect(events.getByRole('row', { name: /network/ })).toContainText('Warnung');
-    await expect(events.getByRole('row', { name: /load/ })).toContainText('Fehler');
+    await expect(events.getByRole('row', { name: /token request/ })).toContainText('Fehler');
     await expect(events.getByRole('row', { name: /TV 1|session started/ })).toContainText('Info');
     await expect(events.getByRole('columnheader')).toHaveText(['Zeit', 'Stufe', 'Bereich', 'Ereignis']);
   });
@@ -76,7 +99,7 @@ test.describe('/diagnose casting', () => {
     await page.goto('/diagnose');
     const card = page.getByTestId('diagnose-cast-ap');
     await expect(card).toContainText('Hier nicht verfügbar (AirPlay braucht Safari)');
-    await expect(card).toContainText('3 Folgen, 0 Neuverbindungen');
+    await expect(card).toContainText('3 Folgen, 1 Neuverbindung');
     await expect(card).not.toContainText('Durchgehend');
   });
 
@@ -89,7 +112,7 @@ test.describe('/diagnose casting', () => {
     await expect(send).toBeDisabled();
     await expect(page.getByText('Beende zuerst die Übertragung.')).toBeVisible();
     await expect(send).toHaveAccessibleDescription('Beende zuerst die Übertragung.');
-    await expect(page.getByTestId('diagnose-cast-cc')).toContainText('Gültig 2 h');
+    await expect(page.getByTestId('diagnose-cast-cc')).toContainText('Gültig 2 Std.');
     await page.getByTestId('diagnose-cast').getByRole('button', { name: 'Leeren' }).click();
     await expect(page.getByTestId('cast-events-empty')).toHaveText('Noch keine Ereignisse.');
   });
@@ -123,7 +146,8 @@ test.describe('screenshots', () => {
     await seedCastLog(page, LOG, ['Wohnzimmer-TV']);
     await chromecastRemote(page, { queue: true });
     await leaveRemoteTo(page, '/diagnose');
-    await expect(page.getByTestId('diagnose-cast-cc')).toContainText('Gültig');
+    await expect(page.getByTestId('diagnose-cast-cc')).toContainText('S1:F5 auf dem Fernseher vorgemerkt');
+    await hideFixed(page);
     await page.waitForTimeout(500);
     await page.getByTestId('diagnose-cast').screenshot({ path: `${DIAG_SHOTS}/desktop-1440.png` });
   });

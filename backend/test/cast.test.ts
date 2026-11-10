@@ -894,6 +894,17 @@ describe('cast lookup (token-free, re-adoption and Diagnose)', () => {
     expect(text).not.toMatch(/https?:/);
     expect(text).not.toContain(hashToken(ct)); // not even the stored hash, only the public 128-bit handle
     expect(text).toContain(j.castId);
+    expect(text).not.toMatch(/\d+\.\d+\.\d+\.\d+/); // no IP literal either: the pin is only reported as a family
+  });
+
+  it('lookup names the pinned address family, never the address', async () => {
+    const { j, ct } = await create();
+    const w = await who(j.castId);
+    expect((await castLookup(env.ctx, w, j.castId))!.pinFamily).toBeNull();
+    expect((await authz({ ct, client: '192.0.2.10' })).statusCode).toBe(200);
+    const l = await castLookup(env.ctx, w, j.castId);
+    expect(l!.pinFamily).toBe('v4');
+    expect(JSON.stringify(l)).not.toContain('192.0.2');
   });
 
   it('lookup reports reported=true only after a start report', async () => {

@@ -267,7 +267,7 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
     const pin = await ctx.kv.get(pinKey(hash));
     if (pin) await ctx.kv.replace(pinKey(hash), pin, ttl);
   }
-  if (rec.kind !== 'img') await keepQueue(ctx, hash, rec, ttl);
+  if (rec.kind !== 'img') await keepQueue(ctx, hash, rec);
   if (rec.kind === 'img' || overlap) return; // a queued next episode's preload: the stream it follows is the counted one
   const cur = await getLive(ctx, rec.userId, rec.playSessionId);
   // its stop was reported just now (title switch / end): the receiver only drains buffered segments until the revoke, no ghost
@@ -283,7 +283,7 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
  * (`castnext:`) up to the successor's own cap, and a queued token refreshes its own pin (it was written at mint with the idle TTL).
  * Replace only: a revoked successor is never resurrected.
  */
-async function keepQueue(ctx: Ctx, hash: string, rec: CastRecord, _ttl: number) {
+async function keepQueue(ctx: Ctx, hash: string, rec: CastRecord) {
   const nk = nextKey(rec.userId, rec.playSessionId);
   const succ = await ctx.kv.get(nk);
   if (!succ) return;
@@ -433,6 +433,8 @@ export async function noteRefused(ctx: Ctx, hash: string, client: string, ttl: n
 export interface CastLookup {
   castId: string; itemId: string; mediaSourceId: string; playSessionId: string; expiresAt: number; runtimeTicks?: number; via: CastVia;
   next: boolean; reported: boolean; title: string; seriesName?: string; subtitles: CastSubtitleInfo[]; pins: 0 | 1 | 2;
+  /** the address family of the TV's pin (the second slot of an AirPlay token, else the first): the family only, never an address; null while unpinned */
+  pinFamily: 'v4' | 'v6' | null;
   refused: { count: number; families: Array<'v4' | 'v6'> };
 }
 
@@ -450,6 +452,7 @@ export async function castLookup(ctx: Ctx, who: { userId: string; profileId: str
   if (rec.userId !== who.userId || rec.profileId !== who.profileId || rec.deviceId !== who.deviceId) return null;
   const live = await getLive(ctx, rec.userId, rec.playSessionId);
   const pins = ((await ctx.kv.get(pinKey(idx.hash))) ? 1 : 0) + ((await ctx.kv.get(pin2Key(idx.hash))) ? 1 : 0);
+  const tvPin = (await ctx.kv.get(pin2Key(idx.hash))) ?? (await ctx.kv.get(pinKey(idx.hash)));
   const rf = await ctx.kv.get(refuseKey(idx.hash));
   const r = rf ? (JSON.parse(rf) as { n: number; v4: boolean; v6: boolean }) : { n: 0, v4: false, v6: false };
   return {
@@ -459,6 +462,7 @@ export async function castLookup(ctx: Ctx, who: { userId: string; profileId: str
     ...(rec.seriesName ? { seriesName: rec.seriesName } : {}),
     subtitles: (rec.subs ?? []).map((s) => ({ index: s.index, ...(s.language ? { language: s.language } : {}), title: s.title })),
     pins: pins as 0 | 1 | 2,
+    pinFamily: tvPin ? addrFamily(tvPin) : null,
     refused: { count: r.n, families: [...(r.v4 ? ['v4' as const] : []), ...(r.v6 ? ['v6' as const] : [])] },
   };
 }

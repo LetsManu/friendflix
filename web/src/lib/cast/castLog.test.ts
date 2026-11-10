@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { CAST_LOG_KEY, CAST_LOG_MAX, castLog, castLogDevices, castReport, clearCastLog, noteCastDevice, readCastLog, scrub } from './castLog';
+import { anonymise, eventsText, CAST_LOG_KEY, CAST_LOG_MAX, castLog, castLogDevices, castReport, clearCastLog, noteCastDevice, readCastLog, scrub } from './castLog';
 import type { Store } from './resume';
 
 const mem = (): Store & { data: Map<string, string> } => {
@@ -101,5 +101,11 @@ describe('report', () => {
     const r = castReport({ rows: [['Pass', 'https://friend.example.com/media/c/x']], entries: [], air: 'peer 192.0.2.4', devices: [] });
     expect(r).not.toMatch(/friend\.example|192\.0\.2/);
     expect(r).toContain('(none)');
+  });
+  it('eventsText anonymises device names like the report and scrubs', () => {
+    const t = eventsText([{ at: 0, level: 'info', tag: 'session', text: 'session started · Wohnzimmer-TV' }, { at: 1, level: 'info', tag: 'load', text: 'x https://friend.example.com/a' }], ['Wohnzimmer-TV']);
+    expect(t).toContain('session started · TV 1');
+    expect(t).not.toMatch(/Wohnzimmer|friend\.example/);
+    expect(anonymise('a b', [])).toBe('a b');
   });
 });

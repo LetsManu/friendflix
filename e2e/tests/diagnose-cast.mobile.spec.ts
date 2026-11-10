@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
-import { chromecastRemote, DIAG_SHOTS, dunmoor, leaveRemoteTo, seedCastLog, type LogSeed } from './cast-remote-setup.js';
+import { chromecastRemote, DIAG_SHOTS, hideFixed, dunmoor, leaveRemoteTo, seedCastLog, type LogSeed } from './cast-remote-setup.js';
 
 /** /diagnose, casting section on a phone: nothing overflows, targets are 44 px, the table reads as stacked rows. */
 dunmoor();
@@ -21,7 +21,7 @@ test.describe('/diagnose casting (phone)', () => {
     await chromecastRemote(page);
     await leaveRemoteTo(page, '/diagnose');
     const sec = page.getByTestId('diagnose-cast');
-    await expect(sec.getByTestId('diagnose-cast-cc')).toContainText('Gültig');
+    await expect(sec.getByTestId('diagnose-cast-cc')).toContainText('vorgemerkt');
     const m = await sec.evaluate((el) => {
       const vw = document.documentElement.clientWidth;
       const small = [...el.querySelectorAll<HTMLElement>('button')].map((b) => b.getBoundingClientRect()).filter((r) => r.width > 0 && (r.height < 44 || r.width < 44)).length;
@@ -39,9 +39,10 @@ test.describe('screenshots', () => {
   test('phone 390', async ({ page, api: _api }) => {
     test.setTimeout(45_000);
     await seedCastLog(page, LOG, ['Wohnzimmer-TV']);
-    await chromecastRemote(page);
+    await chromecastRemote(page, { queue: true });
     await leaveRemoteTo(page, '/diagnose');
-    await expect(page.getByTestId('diagnose-cast-cc')).toContainText('Gültig');
+    await expect(page.getByTestId('diagnose-cast-cc')).toContainText('vorgemerkt');
+    await hideFixed(page);
     await page.waitForTimeout(500);
     await page.getByTestId('diagnose-cast').screenshot({ path: `${DIAG_SHOTS}/phone-390.png` });
   });

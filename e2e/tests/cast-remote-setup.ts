@@ -173,3 +173,6 @@ export async function leaveRemoteTo(page: Page, path: string) {
   await expect(page).toHaveURL(/\/$/);
   await clientNav(page, path);
 }
+
+/** hides what is fixed on screen (header, tab bar, cast bar, skip link) so an element screenshot has no overlays mid-image */
+export const hideFixed = (page: Page) => page.addStyleTag({ content: 'header, .nav, .tabbar, .castbar, .skip, [data-testid=cast-bar] { visibility: hidden !important; }' });

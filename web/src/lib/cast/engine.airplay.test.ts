@@ -444,6 +444,7 @@ describe('cast engine: AirPlay route loss and reconnect', () => {
     expect(env.player.restore).not.toHaveBeenCalled();
     expect(get(env.out)).toMatchObject({ state: 'reconnect', position: 300, paused: true, buffering: false });
     expect(env.engineLog()).toEqual(['adopt', 'reconnect: route lost']);
+    expect(env.deps.log).toHaveBeenCalledWith({ level: 'warn', tag: 'session', text: 'AirPlay route lost' }); // Diagnose counts it as a reconnect
   });
 
   it('reconnect() calls pick synchronously and resumes on active', async () => {

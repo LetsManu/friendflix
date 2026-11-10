@@ -59,7 +59,7 @@ export const castIdOf = async (tok: string) => (await sha256Hex(tok)).slice(0, 3
 export const lookup = (castId: string, itemId: string, over: Partial<CastLookup> = {}): CastLookup => ({
   castId, itemId, mediaSourceId: `ms-${itemId}`, playSessionId: `ps-${itemId}`, expiresAt: T0 + 2 * 60 * 60_000, runtimeTicks: secToTicks(3000),
   via: 'chromecast', next: false, reported: true, title: 'The Lantern Road', seriesName: 'Dunmoor',
-  subtitles: [{ index: 3, language: 'de', title: 'Deutsch' }], pins: 1, refused: { count: 0, families: [] }, ...over,
+  subtitles: [{ index: 3, language: 'de', title: 'Deutsch' }], pins: 1, pinFamily: 'v4', refused: { count: 0, families: [] }, ...over,
 });
 
 /**

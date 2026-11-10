@@ -8,12 +8,12 @@
    * or address and anonymises every TV name (castLog.ts).
    */
   import { onMount } from 'svelte';
-  import { api } from '#lib/api';
+  import { api, cachedItem } from '#lib/api';
   import { castCapableBrowser, castConfigEnabled, castCustomReceiver, castState, castTestClip, initCast, requestCastSession, whenCastReady } from '#lib/cast';
   import Icon from '#lib/Icon.svelte';
   import { fmtTime, t } from '#lib/i18n';
   import { airLogStart, formatAirLog, readAirLog } from '#lib/player/airplayLog';
-  import { castLogDevices, castReport, clearCastLog, readCastLog, type CastLogEntry } from './castLog';
+  import { castLogDevices, castReport, clearCastLog, eventsText, readCastLog, type CastLogEntry } from './castLog';
   import { airplayRows, chromecastRows, lastAirSession, reportRows, resultLine, type DiagRow } from './diagnose';
   import { CAST_LOCK, castSession } from './engine';
   import { lastDevice, readHint, type CastLookup } from './resume';
@@ -28,6 +28,8 @@
   let busy = false;
   let result: { ok: boolean; text: string } | null = null;
   let note = '', eventsNote = '';
+  // one always-mounted live region: running, then the result, then "copied" (a region that mounts with its text is not announced)
+  $: status = busy ? { ok: null as boolean | null, text: $t('diagnose.cast.testRunning') } : note ? { ok: null, text: note } : result ?? { ok: null, text: '' };
   let eventsEl: HTMLElement;
 
   const store = (): Storage | null => { try { return localStorage; } catch { return null; } };
@@ -68,12 +70,13 @@
   });
 
   $: air = lastAirSession(entries);
-  $: errors = entries.filter((e) => e.tag === 'receiver' && e.level === 'error').length;
+  // receiver errors of this session: after the last entry that started, resumed or adopted one
+  $: errors = entries.slice(entries.findLastIndex((e) => e.tag === 'session' && /^session (started|resumed|adopted|found)/.test(e.text)) + 1).filter((e) => e.tag === 'receiver' && e.level === 'error').length;
   $: cc = chromecastRows({
     capable, enabled, custom, state: $castState, session: $castSession,
-    lookup: $castSession?.kind === 'chromecast' ? lookup : null, errors, now, tf: $t, otherTab: otherTab && !$castSession,
+    lookup: $castSession?.kind === 'chromecast' ? lookup : null, errors, now, tf: $t, otherTab: otherTab && !$castSession, item: $castSession ? cachedItem($castSession.itemId) : null,
   });
-  $: ap = airplayRows({ available: airAvailable, continuous: null, subsInStream: false, last: air, lookup: $castSession?.kind === 'airplay' ? lookup : null, tf: $t });
+  $: ap = airplayRows({ available: airAvailable, continuous: null, subsInStream: false, last: air, lookup: $castSession?.kind === 'airplay' ? lookup : null, pinned: lookup?.pinFamily, tf: $t });
 
   $: castBusy = $castSession !== null || otherTab;
   $: canTest = capable && enabled && ready && !busy && !castBusy;
@@ -82,6 +85,7 @@
     if (!canTest) return;
     busy = true;
     result = null;
+    note = '';
     try {
       const had = $castState.connected;
       if (!had && !(await requestCastSession())) return; // the picker was dismissed
@@ -118,9 +122,11 @@
     read();
     return copyText(castReport({ rows: [...withCard('Chromecast', cc), ...withCard('AirPlay', ap)], entries, air: formatAirLog(readAirLog(), airLogStart()), devices: anonymised() }), (s) => (note = s), eventsEl);
   }
-  const copyEvents = () => copyText(entries.map((e) => `${new Date(e.at).toISOString()} ${e.level} ${e.tag} ${e.text}`).join('\n'), (s) => (eventsNote = s), eventsEl);
+  const copyEvents = () => copyText(eventsText(entries, anonymised()), (s) => (eventsNote = s), eventsEl);
   function clearEvents() { clearCastLog(store()); read(); eventsNote = ''; }
 
+  // explicit table roles: on a phone the rows are laid out as flex boxes, which drops the native table semantics in WebKit
+  const ROLE = { table: { role: 'table' }, group: { role: 'rowgroup' }, row: { role: 'row' }, cell: { role: 'cell' }, head: { role: 'columnheader' } } as const;
   const icon = (tone: DiagRow['tone']) => (tone === 'ok' ? 'check' : tone === 'warn' ? 'alert' : tone === 'error' ? 'x' : '');
   const levelIcon = { info: 'info', warn: 'alert', error: 'x' } as const;
 </script>
@@ -136,9 +142,9 @@
     </div>
   </div>
   {#if castBusy}<p class="hint" id="dc-busy">{$t('diagnose.cast.testBusy')}</p>{/if}
-  {#if busy}<p class="line" role="status">{$t('diagnose.cast.testRunning')}</p>
-  {:else if result}<p class="line" class:okl={result.ok} class:errl={!result.ok} role="status" data-testid="cast-test-result"><Icon name={result.ok ? 'check' : 'x'} size={18} /><span>{result.text}</span></p>{/if}
-  {#if note}<p class="line" role="status">{note}</p>{/if}
+  <p class="line" class:okl={status.ok === true} class:errl={status.ok === false} role="status" aria-live="polite" data-testid="cast-status">
+    {#if status.text}<Icon name={status.ok === true ? 'check' : status.ok === false ? 'x' : 'info'} size={18} /><span data-testid={result && status.text === result.text ? 'cast-test-result' : undefined}>{status.text}</span>{/if}
+  </p>
 
   <div class="cards">
     {#each [{ id: 'cc', name: 'Chromecast', rows: cc }, { id: 'ap', name: 'AirPlay', rows: ap }] as card (card.id)}
@@ -167,20 +173,21 @@
       <div class="acts">
         <button type="button" class="light" on:click={copyEvents} disabled={!entries.length}>{$t('diagnose.airplayCopy')}</button>
         <button type="button" class="sec" on:click={clearEvents} disabled={!entries.length}>{$t('diagnose.airplayClear')}</button>
-        {#if eventsNote}<span class="note" role="status">{eventsNote}</span>{/if}
+        <span class="note" role="status" aria-live="polite">{eventsNote}</span>
       </div>
     </div>
     {#if entries.length}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (a scrollable region must be reachable by keyboard) -->
       <div class="evwrap" bind:this={eventsEl} role="region" aria-labelledby="dc-ev" tabindex="0">
-        <table data-testid="cast-events">
-          <thead><tr><th scope="col">{$t('diagnose.cast.colTime')}</th><th scope="col">{$t('diagnose.cast.colLevel')}</th><th scope="col">{$t('diagnose.cast.colTag')}</th><th scope="col">{$t('diagnose.cast.colText')}</th></tr></thead>
-          <tbody>
+        <table data-testid="cast-events" {...ROLE.table}>
+          <thead {...ROLE.group}><tr {...ROLE.row}><th scope="col" {...ROLE.head}>{$t('diagnose.cast.colTime')}</th><th scope="col" {...ROLE.head}>{$t('diagnose.cast.colLevel')}</th><th scope="col" {...ROLE.head}>{$t('diagnose.cast.colTag')}</th><th scope="col" {...ROLE.head}>{$t('diagnose.cast.colText')}</th></tr></thead>
+          <tbody {...ROLE.group}>
             {#each [...entries].reverse() as e, i (entries.length - i)}
-              <tr>
-                <td class="tm">{fmtTime(e.at, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td>
-                <td class="lv {e.level}"><Icon name={levelIcon[e.level]} size={16} /><span>{$t(`diagnose.cast.${e.level}`)}</span></td>
-                <td class="tg"><span class="tag">{e.tag}</span></td>
-                <td class="tx">{e.text}</td>
+              <tr {...ROLE.row}>
+                <td class="tm" {...ROLE.cell}>{fmtTime(e.at, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td>
+                <td class="lv {e.level}" {...ROLE.cell}><Icon name={levelIcon[e.level]} size={16} /><span>{$t(`diagnose.cast.${e.level}`)}</span></td>
+                <td class="tg" {...ROLE.cell}><span class="tag">{e.tag}</span></td>
+                <td class="tx" {...ROLE.cell}>{e.text}</td>
               </tr>
             {/each}
           </tbody>

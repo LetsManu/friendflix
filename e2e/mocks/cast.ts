@@ -73,7 +73,7 @@ export async function castSessions(page: Page, o: { fail?: () => boolean; castId
       if (!b) return r.fulfill({ status: 404, json: { error: 'not_found' } });
       return r.fulfill({ json: {
         castId: o.castId ?? 'c'.repeat(32), itemId: b.itemId, mediaSourceId: 'ms', playSessionId: 'air-ps', expiresAt: Date.now() + 3 * 3600_000, via: 'chromecast', next: false, reported: true,
-        title: 'Film', subtitles: [], pins: 1, refused: { count: 0, families: [] },
+        title: 'Film', subtitles: [], pins: 1, pinFamily: 'v4', refused: { count: 0, families: [] },
       } });
     }
     deleted.push(r.request().url().split('/').pop()!);
@@ -113,7 +113,7 @@ function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask'; pick?:
   const mediaSession = {
     editTracksInfo(_r: unknown, ok: () => void) { w.__castCalls.push('editTracksInfo'); ok(); },
     ...(opts.queue ? {
-      items: queued,
+      currentItemId: 0,
       queueInsertItems(req: Rec, ok: () => void) {
         for (const it of req.args[0] as Rec[]) queued.push({ itemId: queueId++, media: { contentId: (it.args[0] as Rec).args[0] } });
         w.__castCalls.push('queueInsert');
@@ -129,6 +129,8 @@ function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask'; pick?:
       queueNext(ok: () => void) { w.__castCalls.push('queueNext'); ok(); },
     } : {}),
   };
+  // like the SDK, the playing item comes first (`currentItemId` 0), the queued ones after it (live: read on every status update)
+  if (opts.queue) Object.defineProperty(mediaSession, 'items', { get: () => [{ itemId: 0, media: { contentId: String((w.__castLoads.at(-1) as Rec | undefined)?.contentId ?? '') } }, ...queued] });
   const session = {
     getCastDevice: () => ({ friendlyName: 'Wohnzimmer-TV' }),
     async loadMedia(req: Rec): Promise<string | undefined> {
