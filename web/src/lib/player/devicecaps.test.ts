@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_VERSION } from '#lib/version/codenames';
 import {
   _resetDeviceCaps, avoidedUntil, AVOID_KEY, AVOID_MS, buildDeviceCaps, CACHE_KEY, capsPending, capsSummary, confirmsType, measureChannelsWith, remeasureOutput, decodeQueries, deviceCaps, inSafeMode, isFormatFailure, isProbedBlock, MIME,
-  noteDirectFailure, noteHlsFailure, outputChannels, withOutput, PROBE_VERSION, runDecodeQueries, SAFE_KEY, SAFE_MS, setStereoOnly, STEREO_KEY, stereoOnly, warmDeviceCaps, type DecodeQuery, type DeviceDeps, type ProbeEnv,
+  noteDirectFailure, noteHlsFailure, outputChannels, withOutput, clientWhy, PROBE_VERSION, runDecodeQueries, SAFE_KEY, SAFE_MS, setStereoOnly, STEREO_KEY, stereoOnly, warmDeviceCaps, type DecodeQuery, type DeviceDeps, type ProbeEnv,
 } from './devicecaps';
 
 const O = { client: 'web' as const, appVersion: '3.1.0' };
@@ -303,7 +303,7 @@ describe('hls claim (buildDeviceCaps)', () => {
 
   it('hevc in streams needs MSE plus the media-source decode, and the file claim', () => {
     const c = buildDeviceCaps(full, O, decoded())!;
-    expect(c.hls).toEqual({ video: ['h264', 'hevc'], audio: ['aac', 'ac3', 'eac3'], surround: ['eac3', 'ac3', 'aac'] });
+    expect(c.hls).toEqual({ video: ['h264', 'hevc'], audio: ['aac', 'mp3', 'ac3', 'eac3'], surround: ['eac3', 'ac3', 'aac'] });
     // the media-source HEVC decode fails: no hevc stream, although the file claim stands
     const noDec = buildDeviceCaps(full, O, decodedExcept((q) => Boolean(q.video)))!;
     expect(codecs(noDec)).toContain('hevc');
@@ -337,10 +337,12 @@ describe('hls claim (buildDeviceCaps)', () => {
 
   it('ac3 / eac3 in hls.audio only with audio[] and MSE; aac needs MSE', () => {
     const c = buildDeviceCaps(env((m) => !/ac-3|ec-3/.test(m), { ...mse, ...withApi }), O, decoded())!;
-    expect(c.hls!.audio).toEqual(['aac']);
+    expect(c.hls!.audio).toEqual(['aac', 'mp3']);
     expect(c.hls!.surround).toEqual(['aac']); // surround is a subset of hls.audio
     const noMseEac3 = buildDeviceCaps(env(all, { ...withApi, isTypeSupported: (m) => !/ec-3/.test(m) }), O, decoded())!;
-    expect(noMseEac3.hls!.audio).toEqual(['aac', 'ac3']);
+    expect(noMseEac3.hls!.audio).toEqual(['aac', 'mp3', 'ac3']);
+    const noMp3 = buildDeviceCaps(env(all, { ...withApi, isTypeSupported: (m) => !/audio\/mpeg/.test(m) }), O, decoded())!;
+    expect(noMp3.hls!.audio).not.toContain('mp3');
   });
 
   it('S6: the hls claim may rest on ManagedMediaSource (iPhone); the direct-play claims do not', () => {
@@ -507,6 +509,18 @@ describe('this device: output channels, stereo choice, avoid memory', () => {
     await fresh();
     expect(deviceCaps()!.audio).toContain('opus');
     expect(JSON.parse(store.get(CACHE_KEY)!).v).toBe(2);
+  });
+
+  it('clientWhy: the clients own reasons replace the servers device reasons', () => {
+    const s = { hevcFiles: true, hevcStreams: true, surround: ['eac3'], channels: 6, stereoChoice: false, soundMode: false, avoided: {} };
+    const w = ['stereo_device', 'h264_device', 'hevc_remote'];
+    expect(clientWhy(w, s)).toEqual(w);
+    expect(clientWhy(w, { ...s, stereoChoice: true })).toEqual(['stereo_choice', 'h264_device', 'hevc_remote']);
+    expect(clientWhy(w, { ...s, stereoChoice: true, soundMode: true })[0]).toBe('stereo_choice');
+    expect(clientWhy(w, { ...s, soundMode: true })[0]).toBe('stereo_mode');
+    expect(clientWhy(w, { ...s, avoided: { surround: 1, hevc: 1 } })).toEqual(['avoided', 'avoided', 'hevc_remote']);
+    // a device that never could (2 channels, no HEVC streams) keeps the server's code
+    expect(clientWhy(w, { ...s, channels: 2, surround: [], hevcStreams: false, stereoChoice: true, avoided: { hevc: 1 } })).toEqual(w);
   });
 
   it('capsSummary(base): a TV app block states channels and surround from its own claim, not the browser probe', async () => {

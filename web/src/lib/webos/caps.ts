@@ -7,7 +7,7 @@
  */
 import { APP_VERSION } from '#lib/version/codenames';
 import { fireTvDisplayHeight, isFireTvApp } from '#lib/firetv/detect';
-import { deviceCaps, withOutput } from '#lib/player/devicecaps';
+import { capsSummary, deviceCaps, withOutput } from '#lib/player/devicecaps';
 import { isLgApp } from './detect';
 
 export interface MediaProbe { canPlayType(t: string): string; isTypeSupported?: (t: string) => boolean }
@@ -107,6 +107,7 @@ export function hlsClaim(m: MediaProbe | null, hevcFiles: boolean): NonNullable<
   if (hevcFiles && mse(CANDIDATES.video.hevc[0].mime)) video.push('hevc');
   const audio: NonNullable<ClientCapsBody['hls']>['audio'] = [];
   if (mse(CANDIDATES.audio.aac)) audio.push('aac');
+  if (mse(CANDIDATES.audio.mp3)) audio.push('mp3');
   for (const k of ['ac3', 'eac3'] as const) if (mse(CANDIDATES.audio[k])) audio.push(k);
   if (!video.length && !audio.length) return undefined;
   return { video, audio, surround: (['eac3', 'ac3'] as const).filter((k) => audio.includes(k)) };
@@ -168,6 +169,11 @@ export function tvBaseCaps(): ClientCapsBody | null {
     ? buildLgCaps(probe, APP_VERSION)
     : buildTvCaps(probe, { client: 'firetv', appVersion: APP_VERSION, maxHeight: fireTvDisplayHeight(), assumed: [] });
   return cached;
+}
+
+/** what the player and Diagnose read about this device's output: the TV app's own block in the LG / Fire TV app, else the browser probe */
+export function playerCapsSummary(): ReturnType<typeof capsSummary> {
+  return capsSummary(isLgApp() || isFireTvApp() ? tvBaseCaps() : undefined);
 }
 
 /** tests only */

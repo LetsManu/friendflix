@@ -33,8 +33,8 @@
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
   import { speedLabel, SPEEDS } from '#lib/player/bar';
-  import { appCaps } from '#lib/webos/caps';
-  import { avoidedUntil, capsPending, capsSummary, isFormatFailure, isProbedBlock, noteDirectFailure, noteHlsFailure, remeasureOutput, setStereoOnly, stereoOnly } from '#lib/player/devicecaps';
+  import { appCaps, playerCapsSummary } from '#lib/webos/caps';
+  import { avoidedUntil, capsPending, clientWhy, isFormatFailure, isProbedBlock, noteDirectFailure, noteHlsFailure, remeasureOutput, setStereoOnly, stereoOnly } from '#lib/player/devicecaps';
   import { firstFrameMs, watchFirstFrame } from '#lib/player/firstframe';
   import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
   import { holdPrefetch, prepareNext, releaseNext, takeNext, takePrefetched } from '#lib/player/prefetch';
@@ -528,7 +528,7 @@
     if (!swap) {
       timing.mode(useDirect ? 'direct' : 'hls');
       const dl = info.delivery;
-      timing.stream({ reason: info.transcodeReason ?? null, ...(dl && !useDirect ? { videoCopy: dl.video === 'copy', out: { video: dl.video, videoCodec: dl.videoCodec, audio: dl.audio, audioCodec: dl.audioCodec, channels: dl.channels, why: dl.why } } : {}) });
+      timing.stream({ reason: info.transcodeReason ?? null, ...(dl && !useDirect ? { videoCopy: dl.video === 'copy', out: { video: dl.video, videoCodec: dl.videoCodec, audio: dl.audio, audioCodec: dl.audioCodec, channels: dl.channels, why: clientWhy(dl.why, playerCapsSummary()) } } : {}) });
     }
     const seek = () => { if (startSec > 1) video!.currentTime = startSec; };
     // hls.js is loaded lazily, only on this path (and usually already prefetched by the play button)
@@ -1140,7 +1140,7 @@
   // ---- "Raumklang" (Surround sound): per device, stored in this browser (devicecaps.ts); off = the next stream is stereo ----
   let stereo = stereoOnly(), surroundShown = false;
   /** offered when the server offers surround and the device states 5.1 output (before the stereo choice applies); not while casting */
-  $: surroundShown = menu === 'tracks' && $features.surround && !remote && !airOn && !airInfo && capsSummary().channels >= 6 && capsSummary().surround.length > 0;
+  $: surroundShown = menu === 'tracks' && $features.surround && !remote && !airOn && !airInfo && ((s) => s.channels >= 6 && s.surround.length > 0)(playerCapsSummary());
   /** a sound mode keeps the output stereo whatever the switch says */
   $: surroundOn = !stereo && !fxActive(fx);
   async function toggleSurround() {

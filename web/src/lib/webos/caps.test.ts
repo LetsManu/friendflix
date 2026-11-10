@@ -9,7 +9,7 @@ vi.mock('#lib/firetv/detect', () => ({ isFireTvApp: () => fire.on, fireTvDisplay
 const dev = vi.hoisted(() => ({ block: null as unknown, out: (c: unknown): unknown => c }));
 vi.mock('#lib/player/devicecaps', () => ({ deviceCaps: () => dev.block, withOutput: (c: unknown) => dev.out(c) }));
 import { APP_VERSION } from '#lib/version/codenames';
-import { _resetAppCaps, appCaps, buildLgCaps, buildTvCaps, confirmedTypes, tvBaseCaps, type MediaProbe } from './caps';
+import { _resetAppCaps, appCaps, buildLgCaps, buildTvCaps, confirmedTypes, hlsClaim, tvBaseCaps, type MediaProbe } from './caps';
 
 const all: MediaProbe = { canPlayType: () => 'probably', isTypeSupported: () => true };
 const none: MediaProbe = { canPlayType: () => '', isTypeSupported: () => false };
@@ -85,7 +85,7 @@ describe('hls claim of the TV apps', () => {
   for (const client of ['webos', 'firetv'] as const) {
     it(`${client}: MSE confirms hvc1 and ec-3: hevc, surround [eac3, ac3], 6 channels`, () => {
       const c = buildTvCaps(mse(), { client, appVersion: '1', maxHeight: 2160, assumed: [] })!;
-      expect(c.hls).toEqual({ video: ['h264', 'hevc'], audio: ['aac', 'ac3', 'eac3'], surround: ['eac3', 'ac3'] });
+      expect(c.hls).toEqual({ video: ['h264', 'hevc'], audio: ['aac', 'mp3', 'ac3', 'eac3'], surround: ['eac3', 'ac3'] });
       expect(c.audioChannels).toBe(6);
     });
     it(`${client}: only ec-3 confirmed: surround [eac3]`, () => {
@@ -108,6 +108,10 @@ describe('hls claim of the TV apps', () => {
       expect(Object.keys(c).sort()).toEqual(['appVersion', 'audio', 'client', 'containers', 'subtitles', 'video']);
     });
   }
+  it('mp3 is in hls.audio only when MSE confirms audio/mpeg', () => {
+    expect(hlsClaim(mse(['mpeg']), true)!.audio).not.toContain('mp3');
+    expect(hlsClaim(mse(), true)!.audio).toContain('mp3');
+  });
   it('a throwing isTypeSupported counts as no', () => {
     const m: MediaProbe = { canPlayType: () => 'maybe', isTypeSupported: () => { throw new Error('x'); } };
     expect(buildTvCaps(m, { client: 'webos', appVersion: '1', maxHeight: 2160, assumed: [] })!.hls).toBeUndefined();

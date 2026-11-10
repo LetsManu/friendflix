@@ -214,6 +214,7 @@ export function buildDeviceCaps(env: ProbeEnv, o: { client: ProbeClient; appVers
     if (video.some((v) => v.codec === 'hevc') && mse(MIME.hevcMain) && (!api || dec(msKey(MIME.hevcMain, 1080)))) hv.push('hevc');
     const ha: NonNullable<Out['hls']>['audio'] = [];
     if (mse(MIME.audio.aac)) ha.push('aac');
+    if (audio.includes('mp3') && mse(MIME.audio.mp3)) ha.push('mp3');
     for (const k of ['ac3', 'eac3'] as const) if (audio.includes(k) && mse(MIME.audio[k])) ha.push(k);
     const surround = SURROUND_HLS.filter((k) => ha.includes(k) && api && dec(msKey(MIME.audio[k])));
     if (hv.length || ha.length) hls = { video: hv, audio: ha, surround };
@@ -426,6 +427,18 @@ export function capsSummary(base?: Out | null): { hevcFiles: boolean; hevcStream
     soundMode: soundModeOn(),
     avoided: avoidedUntil(),
   };
+}
+
+/**
+ * The server only sees the narrowed claim, so it answers `stereo_device` / `h264_device` where the device itself chose or remembered it:
+ * the three codes of the client's own (spec section 4) replace those two when the device's abilities say otherwise.
+ */
+export function clientWhy(why: string[], s: ReturnType<typeof capsSummary>): string[] {
+  return why.map((w) => {
+    if (w === 'stereo_device' && s.channels >= 6 && s.surround.length > 0) return s.stereoChoice ? 'stereo_choice' : s.soundMode ? 'stereo_mode' : s.avoided.surround ? 'avoided' : w;
+    if (w === 'h264_device' && s.hevcStreams && s.avoided.hevc) return 'avoided';
+    return w;
+  });
 }
 
 /** a direct play that relied on the probed claims did not start: for 7 days this device sends no block (an active period is not restarted) */

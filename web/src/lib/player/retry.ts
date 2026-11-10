@@ -82,17 +82,17 @@ export function avoidTarget(d: { sourceBufferName?: string; mimeType?: string },
 }
 
 /**
- * The variant to pin (hls.js `currentLevel`): Jellyfin adds SDR variants at the same bandwidth when it copies HDR video, so with more than
- * one level the player takes the highest-bitrate level of the planned codec (hvc1 / hev1 for HEVC, else avc1). -1 = no lock (one level,
- * or none of the planned codec).
- */
-/**
  * Native HLS (no hls.js, so no codec details): a media error counts as "the device cannot play what the stream carries" only after
  * metadata arrived or as a decode error. A code 4 before any metadata is also what an expired token or an HTTP error on the playlist looks like.
  */
 export const isNativeCodecFailure = (o: { code?: number | null; readyState: number }): boolean => o.code === 3 || o.readyState >= 1;
 
-/** (equal bandwidth: the first listed level wins, which relies on Jellyfin listing the planned variant first) */
+/**
+ * The variant to pin (hls.js `currentLevel`): Jellyfin adds SDR variants at the same bandwidth when it copies HDR video, so with more than
+ * one level the player takes the highest-bitrate level of the planned codec (hvc1 / hev1 for HEVC, else avc1). -1 = no lock (one level,
+ * or none of the planned codec).
+ * (equal bandwidth: the first listed level wins, which relies on Jellyfin listing the planned variant first)
+ */
 export function pickLockedLevel(levels: Array<{ bitrate: number; videoCodec?: string }>, hevc: boolean): number {
   if (levels.length < 2) return -1;
   const want = hevc ? /^(hvc1|hev1)/ : /^avc1/;
