@@ -35,6 +35,8 @@ describe('kids profiles', () => {
     expect(kidsRedirect({ kids: true }, '/')).toBe('/kids');
     expect(kidsRedirect({ kids: true }, '/party/abc')).toBe('/kids');
     expect(kidsRedirect({ kids: true }, '/watch/abc')).toBeNull();
+    expect(kidsRedirect({ kids: true }, '/new')).toBeNull(); // the new-titles page: what its endpoints return for kids
+    expect(kidsRedirect({ kids: true }, '/newsletter')).toBe('/kids');
     expect(kidsRedirect({ kids: false }, '/party/abc')).toBeNull();
     expect(kidsRedirect(null, '/admin')).toBeNull();
   });

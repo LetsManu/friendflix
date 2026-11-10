@@ -25,8 +25,8 @@ export interface BootHint {
 }
 
 // ---- kids profiles: only a small set of routes; everything else goes to the kids home ----
-/** routes a kids profile may open (the server also answers 403 kids_profile on every social API) */
-const KIDS_ALLOWED = /^\/(kids|item|watch|profiles|offline|welcome)(\/|$)|^\/(search|settings)\/?$/;
+/** routes a kids profile may open (the server also answers 403 kids_profile on every social API); /new shows what its endpoints return for a kids profile */
+const KIDS_ALLOWED = /^\/(kids|item|watch|profiles|offline|welcome)(\/|$)|^\/(search|settings|new)\/?$/;
 export const kidsAllowed = (path: string): boolean => KIDS_ALLOWED.test(path);
 /** where the layout sends a kids profile instead of `path`, or null when the route is fine */
 export const kidsRedirect = (me: Pick<GateMe, 'kids'> | null | undefined, path: string): string | null => (me?.kids && !kidsAllowed(path) ? '/kids' : null);

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { fmtDate, fmtDuration, intlLocale, tr, type TKey } from '#lib/i18n';
+import { fmtDate, fmtDuration, intlLocale, tr } from '#lib/i18n';
 import type { Item } from '#lib/api';
 
 /** "Spannend • Krimi • Drama" (max 3 genres) */
@@ -46,6 +46,3 @@ export function releaseLabel(iso: string | undefined): string {
 /** upcoming releases sorted by date (undated last) */
 export const sortUpcoming = <T extends { releaseDate?: string }>(l: T[]): T[] => [...l].sort((a, b) => (a.releaseDate ? Date.parse(a.releaseDate) : Infinity) - (b.releaseDate ? Date.parse(b.releaseDate) : Infinity));
 
-export type NewTab = 'soon' | 'week' | 'added';
-/** tab id + label key (translate when rendering: `$t(label)`) */
-export const NEW_TABS: Array<[NewTab, TKey]> = [['soon', 'home.new.soon'], ['week', 'home.new.week'], ['added', 'home.new.added']];

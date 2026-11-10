@@ -5,7 +5,7 @@ import { setLocale } from '#lib/i18n';
 import de from '#lib/i18n/locales/de/index';
 import en from '#lib/i18n/locales/en/index';
 import { lengthLabel, ratingBadge, fmtRuntime } from '#lib/hover';
-import { NEW_TABS, releaseLabel, runtimeLabel, shareData } from '#lib/mobile';
+import { releaseLabel, runtimeLabel, shareData } from '#lib/mobile';
 import { activeChips, parseBrowse } from '#lib/discovery';
 import { langLine } from '#lib/langs';
 import { roleLabel } from '#lib/lists';
@@ -33,7 +33,6 @@ describe('areas home + detail', () => {
     expect(ageText('FSK 12')).toBe('Ab 12 Jahren');
     expect(seasonLabel({ name: '', indexNumber: 2 })).toBe('Staffel 2');
     expect(roleLabel.owner).toBe('Besitzer');
-    expect(NEW_TABS.map(([id]) => id)).toEqual(['soon', 'week', 'added']);
   });
 
   it('helpers follow the UI language', async () => {
