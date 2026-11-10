@@ -21,7 +21,7 @@
   import { toast } from '#lib/ui/toast';
   import { prefs } from '#lib/stores';
   import { t } from '#lib/i18n';
-  import { animateTo, follow, glide, halt, motionLevel, motionTripped, placeAt } from '#lib/tv/motion';
+  import { animateTo, follow, glide, halt, motionLevel, motionTripped, moving, placeAt } from '#lib/tv/motion';
   import { alphaOf, pillSolid, SHADE_MS } from './bar';
   import { sheen } from '#lib/glass/pointer';
   import { growBoth } from '#lib/glass/fx';
@@ -289,7 +289,7 @@
   }
 
   // ---- the pill's shape: applied state (what the markup shows) vs. what it should be; changes go through morph() ----
-  let track: HTMLElement, form: HTMLElement, bgL: HTMLElement, bgR: HTMLElement, bwin: HTMLElement, blur: HTMLElement;
+  let track: HTMLElement, form: HTMLElement, pbg: HTMLElement, bgL: HTMLElement, bgR: HTMLElement, grainR: HTMLElement, bwin: HTMLElement, blur: HTMLElement;
   /** open: the field shows; fw: its width (input + ✕); collapse: tabs folded away for the focused field; compact: magnifier only */
   let open = false, fw = 0, lastFw = 0, collapse = false, compact = false;
   const MAG = 36, FMAX = 280, FMIN = 200, FTINY = 120, COLGAP = 16, CHROME = 10; // CHROME: the pill's padding + border
@@ -320,17 +320,26 @@
   const ownX = (el: HTMLElement) => { const tr = getComputedStyle(el).transform; return tr && tr !== 'none' ? new DOMMatrixReadOnly(tr).m41 : 0; };
   const layoutX = (el: HTMLElement) => el.getBoundingClientRect().left - ownX(el) - (el.parentElement === track ? track.getBoundingClientRect().left : 0);
   /**
-   * FLIP, transform only: the layout jumps to the new shape at once; every part that moved (the two background halves, the
-   * tab track, each tab, the field) keeps its place on screen through a translate that springs back to 0 (glide from
-   * lib/tv/motion: a change mid-flight carries on from where things are, with their speed). The background is two halves,
-   * each clipped at the pill's middle: they slide, nothing scales, so the round ends keep their shape and text never stretches.
-   * The one blur under them follows both halves exactly (follow: its window moves with the right half, the blur itself with
-   * the left half), so its ends are always the glass's ends.
+   * FLIP, transform only: the layout jumps to the new shape at once; every part that moved (the glass, the tab track, each
+   * tab, the field) keeps its place on screen through a translate that springs back to 0 (glide from lib/tv/motion: a change
+   * mid-flight carries on from where things are, with their speed). Nothing scales, so the round ends keep their shape and
+   * text never stretches.
+   * The glass: at rest ONE pill-sized surface (.whole), with no edge inside it. A slide needs its two ends to move apart or
+   * together, so for as long as one runs the glass is drawn by two halves instead (each one the whole material with one
+   * round end, the left one carrying the left end, the right one the right end). They do not meet in a cut: a cut that falls
+   * between two device pixels leaves that column with both halves or neither (a 1 px line, lighter or darker depending on the
+   * renderer, and moving layers are clipped to whole device pixels). Instead each fades out over the same few pixels in the
+   * middle while the other fades in, and the two are added up (plus-lighter): as they are the same material there, with the
+   * grain of both kept to the left end as the surface's is, the sum is the material itself, wherever the pixels fall. Both
+   * look exactly like the surface at either end of the slide, so the swap shows nothing. When the last spring has
+   * settled the surface comes back. The one blur under the glass follows both ends exactly (follow: its window moves with
+   * the right end, the blur itself with the left end), so its ends are always the glass's ends.
    */
   function morph(change: () => void, animate: boolean) {
     const parts = [bgL, bgR, track, form, ...(track ? [...track.children].filter((c) => !c.classList.contains('fill')) as HTMLElement[] : [])].filter(Boolean);
     if (!animate || motionLevel() === 'reduced' || !pill) {
-      [bwin, blur, ...parts].filter(Boolean).forEach((p) => halt(p));
+      [bwin, blur, grainR, ...parts].filter(Boolean).forEach((p) => halt(p));
+      splitGen++; split = false;
       change(); flushSync();
       void placeFill(false);
       return;
@@ -341,7 +350,25 @@
     const after = parts.map(layoutX);
     parts.forEach((p, i) => glide(p, 'x', () => before[i]! - after[i]!));
     if (bwin && blur) { follow(bwin, 'x', [bgR], ([r]) => r!); follow(blur, 'x', [bgL, bgR], ([l, r]) => l! - r!); }
+    if (grainR) follow(grainR, 'x', [bgL, bgR], ([l, r]) => l! - r!);
+    slideGlass();
     void placeFill(true);
+  }
+
+  // ---- the glass while it slides: two halves, from the first frame of a slide to the frame its last spring settles ----
+  let split = false, splitGen = 0;
+  /** the glass's width: the right half's grain offset (its grain starts where the surface's does) */
+  function measureGlass() {
+    if (pbg) pbg.style.setProperty('--pw', `${+pbg.getBoundingClientRect().width.toFixed(4)}px`);
+  }
+  function slideGlass() {
+    const gen = ++splitGen;
+    if (!bgL || !bgR || !(moving(bgL) || moving(bgR))) { split = false; return; } // nothing slides: the surface stays
+    measureGlass();
+    split = true; flushSync(); // (in this task: the frame that shows the new layout already shows the halves)
+    // checked before each frame is drawn, after the animations' own finish (the frame where they end shows the surface)
+    const wait = () => { if (gen !== splitGen) return; if (moving(bgL) || moving(bgR)) requestAnimationFrame(wait); else split = false; };
+    requestAnimationFrame(wait);
   }
 
   let sheetCmp: SearchSheet | undefined, selA: number | null = null;
@@ -350,12 +377,12 @@
     selA = alphaOf(getComputedStyle(pill).getPropertyValue('--fr-sel'));
     // a retarget, not a jump: a slide in flight keeps going
     sync(false);
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { void placeFill(true); sync(false); }) : null;
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { void placeFill(true); sync(false); if (split) measureGlass(); }) : null;
     ro?.observe(pill);
     ro?.observe(root);
     return () => ro?.disconnect();
   });
-  onDestroy(() => { clearTimeout(st); clearTimeout(notesTimer); clearTimeout(blurT); clearTimeout(safeT); });
+  onDestroy(() => { splitGen++; clearTimeout(st); clearTimeout(notesTimer); clearTimeout(blurT); clearTimeout(safeT); });
 </script>
 
 <svelte:window bind:scrollY on:keydown={onWindowKey} on:click={onWindowClick} on:focusin={onWindowFocusIn} />
@@ -364,12 +391,13 @@
   <span class="scrim" aria-hidden="true"></span>
   <a class="logo" href="/" aria-label={$t('shell.nav.homeLink')}><Logo wordmark size={30} /></a>
   <nav class="pill" class:on={fillOn} class:open class:compact class:collapse aria-label={$t('shell.nav.main')} bind:this={pill} style:--fw="{fw}px" style:--fwc="{open ? fw : lastFw}px" style:--sel-a={selA ?? undefined} use:clipSheen>
-    <!-- the background: two glass halves, each clipped at the middle, that slide (never scale) when the pill changes size;
-         over the billboard (not yet scrolled) with the safe scrim. Under them ONE blur, painted first: its own rounded left end
-         is the left half's end, its window's rounded right end the right half's (two blurs side by side or overlapping never
-         match: a backdrop-filter reads everything painted before it in its box, so a second one blurs the first one's output
-         again, and each one's edge reads only its own side: a step wherever they meet, plain over a busy picture) -->
-    <span class="pbg" aria-hidden="true"><span class="bwin" bind:this={bwin}><i class="blur" bind:this={blur}></i></span><span class="half l"><i class="frost" class:frost-safe={safe} bind:this={bgL}></i></span><span class="half r"><i class="frost" class:frost-safe={safe} bind:this={bgR}></i></span></span>
+    <!-- the background: at rest ONE glass surface the size of the pill (.whole, no edge inside it); while the pill changes size
+         two glass halves instead, each with one of its round ends, that slide (never scale) and cross-fade into each other in
+         the middle (see morph). Over the billboard (not yet scrolled) with the safe scrim. Under the glass ONE blur, painted
+         first: its own rounded left end is the glass's left end, its window's rounded right end the right end (two blurs side
+         by side or overlapping never match: a backdrop-filter reads everything painted before it in its box, so a second one
+         blurs the first one's output again, and each one's edge reads only its own side: a step wherever they meet) -->
+    <span class="pbg" class:split aria-hidden="true" bind:this={pbg}><span class="bwin" bind:this={bwin}><i class="blur" bind:this={blur}></i></span><i class="frost whole" class:frost-safe={safe}></i><span class="halves"><span class="half l"><i class="frost" class:frost-safe={safe} bind:this={bgL}></i></span><span class="half r"><i class="frost" class:frost-safe={safe} bind:this={bgR}><b class="grain" bind:this={grainR}></b></i></span></span></span>
     <span class="sclip" aria-hidden="true"></span>
     <div class="track" bind:this={track}>
       <span class="fill" aria-hidden="true" bind:this={fill}><i class="cap"></i><i class="mid" bind:this={mid}></i><i class="cap" bind:this={capR}></i></span>
@@ -470,30 +498,51 @@
      sliding that layer's two halves (transform only) while the content glides; the field lives at its right end ---- */
   .pill { position: relative; display: flex; align-items: center; gap: 0; padding: 4px; border-radius: 999px; border: 1px solid transparent; }
   .pbg { position: absolute; inset: -1px; pointer-events: none; }
-  /* each half is a clip window from the pill's middle outwards (far past the edge, so a larger shape mid-flight is not cut) */
+  /* at rest: the glass is one surface, the pill's own shape */
+  .pbg > .whole { position: absolute; inset: 0; box-sizing: border-box; border-radius: 999px; }
+  /* while it slides (.split, set by morph for exactly as long as the springs run): the two halves instead. Only one of the two
+     constructions is ever drawn, so nothing is painted twice */
+  .halves { position: absolute; inset: 0; visibility: hidden; isolation: isolate; }
+  .pbg.split > .halves { visibility: visible; }
+  .pbg.split > .whole { visibility: hidden; }
+  /* each half is a window from the middle outwards (far past the edge, so a larger shape mid-flight is not cut). The two
+     overlap by FADE in the middle, where each fades out (mask) as the other fades in, and add up (plus-lighter, inside their
+     own group): the same material at complementary strengths sums to the material, with no edge at any pixel position.
+     Each window reaches 4 px past its fade, so where it is clipped it is already transparent. */
   /* (each window reaches above and below the pill, so the glass's drop shadow is not clipped away) */
-  .half { position: absolute; top: -50px; bottom: -70px; overflow: hidden; }
-  .half.l { left: -100vw; right: 50%; }
-  .half.r { left: 50%; right: -100vw; }
-  /* each half is glass (.frost: milk, grain via ::before, the light edge; solid without html.m-glass) over the one blur */
+  .half { --fade: 16px; position: absolute; top: -50px; bottom: -70px; overflow: hidden; mix-blend-mode: plus-lighter; }
+  .half.l { left: -100vw; right: calc(50% - var(--fade) / 2 - 4px);
+    -webkit-mask-image: linear-gradient(to left, transparent 4px, #000 calc(var(--fade) + 4px)); mask-image: linear-gradient(to left, transparent 4px, #000 calc(var(--fade) + 4px)); }
+  .half.r { left: calc(50% - var(--fade) / 2 - 4px); right: -100vw;
+    -webkit-mask-image: linear-gradient(to right, transparent 4px, #000 calc(var(--fade) + 4px)); mask-image: linear-gradient(to right, transparent 4px, #000 calc(var(--fade) + 4px)); }
+  /* each half is glass (.frost: milk, grain, the light edge; solid without html.m-glass) over the one blur; both reach far past
+     the middle, so they are the same material where they fade into each other */
   .half i { position: absolute; top: 50px; bottom: 70px; width: 100vw; box-sizing: border-box; }
   .half.l i { left: 100vw; border-radius: 999px 0 0 999px; border-right: 0; }
-  .half.r i { right: 100vw; border-radius: 0 999px 999px 0; border-left: 0; }
-  /* the blur (glass spec §1.2, only with full motion) is one element under both glass halves; the halves never blur (the
-     later one would blur the earlier one's milk). Its window reaches far to the left and ends in the pill's rounded right
-     end (it moves with the right half); the blur inside starts with its own rounded end at the pill's left end (it moves
-     with the left half) and reaches far to the right. Chrome rounds a backdrop-filter by its own box and one clipping
+  .half.r i { right: 100vw; border-radius: 0 999px 999px 0; border-left: 0; overflow: hidden; }
+  /* the grain: the left half's (its ::before) starts at the glass's left end, as the surface's does; the right half's is its
+     own layer that keeps to the left end too (morph moves it by the left end's slide against the right one's; --pw: the
+     glass's width), so the grain is one sheet across the middle and the same as the surface's at either end of the slide */
+  .half.r > i::before { display: none; }
+  .grain { position: absolute; z-index: -1; top: 0; bottom: 0; left: 0; right: -100vw; pointer-events: none;
+    background-image: var(--fr-grain); background-position: calc(100vw - var(--pw, 100vw) + 1px) 0; opacity: var(--fr-grain-a); mix-blend-mode: overlay; }
+  :global(html:not(.m-glass)) .grain, :global(html.tv) .grain, :global(html.kids) .grain { display: none; }
+  /* the blur (glass spec §1.2, only with full motion) is one element under the glass (the surface or the halves); the glass
+     never blurs (a later layer would blur the earlier one's milk). Its window reaches far to the left and ends in the pill's
+     rounded right end (it moves with the right end); the blur inside starts with its own rounded end at the pill's left end
+     (it moves with the left end) and reaches far to the right. Chrome rounds a backdrop-filter by its own box and one clipping
      ancestor only (a second rounded clip is cut square), so each end gets exactly one of those. */
   .bwin { position: absolute; top: 0; bottom: 0; left: -100vw; right: 0; overflow: hidden; border-radius: 0 999px 999px 0; }
   .bwin > i { position: absolute; top: 0; bottom: 0; left: 100vw; width: 100vw; border-radius: 999px 0 0 999px; }
-  :global(html) .pbg .half > i.frost { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  /* the glass never blurs itself: the one blur sits under it (the selectors outweigh the html.m-glass .frost rule) */
+  :global(html) .pbg i.whole.frost, :global(html) .pbg .half > i.frost { -webkit-backdrop-filter: none; backdrop-filter: none; }
   :global(html.m-glass:not(.tv):not(.kids)) .bwin > i { -webkit-backdrop-filter: var(--fr-blur); backdrop-filter: var(--fr-blur); }
   /* the pill's sheen (lib/glass/pointer.ts), clipped to the pill's shape here (the pill itself does not clip) */
   /* (its own group: the sheen's blend mode would otherwise blend into the whole bar, and Chrome then drops the blur under
      the sheen, also while it is faded out: a darker band without blur where the pointer last was; headless, all of it) */
   .sclip { position: absolute; inset: -1px; border-radius: 999px; overflow: hidden; pointer-events: none; }
   .pill > .sclip { isolation: isolate; }
-  .pill.open:not(.compact):focus-within .half i.frost { border-color: rgba(255, 255, 255, .6); } /* the field's focus ring (the input has no outline) */
+  .pill.open:not(.compact):focus-within .pbg i.frost { border-color: rgba(255, 255, 255, .6); } /* the field's focus ring (the input has no outline) */
   .track { position: relative; display: flex; align-items: center; height: 36px; }
   .fill { position: absolute; left: 0; top: 0; width: 36px; height: 36px; opacity: 0; transition: opacity 160ms ease-out; pointer-events: none; }
   /* the selection light (--fr-sel): drawn opaque and faded as a group to the token's alpha (--sel-a, read from --fr-sel on
