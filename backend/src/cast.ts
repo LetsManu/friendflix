@@ -113,6 +113,7 @@ export const castTtlSeconds = (runtimeTicks: number | undefined, startTicks: num
 };
 
 /** Redis TTL of a token's keys: idle window, but never past the absolute cap (0 = already over). */
+/** Redis TTL of a token's keys: idle window, but never past the absolute cap (0 = already over). */
 /**
  * Absolute-cap TTL of a queued next episode's token: its own TTL plus what its predecessor has left beyond the 1 h that every
  * token already adds, capped at 6 h. Queued from the start of an episode, the token must outlive the episode it follows.
@@ -122,6 +123,8 @@ export function castNextTtlSeconds(ownTtl: number, predExp: number, now = Date.n
 }
 
 export const castKeyTtl = (exp: number, now = Date.now()) => Math.max(0, Math.min(CAST_IDLE_TTL, Math.ceil((exp - now) / 1000)));
+
+
 
 interface IdxEntry { hash: string; createdAt: number; deviceId?: string; kind?: 'media' | 'img'; imgHash?: string; /** a queued next episode's token */ next?: boolean }
 
@@ -149,7 +152,7 @@ export class CastUnpinnedError extends Error {
   constructor() { super('cast_unpinned'); }
 }
 
-/** the address a token is pinned to (slot 1), null while nobody fetched it */
+/** true once the token has a pin (slot 1) */
 export const castPinned = async (ctx: Ctx, hash: string): Promise<boolean> => Boolean(await ctx.kv.get(pinKey(hash)));
 
 /**
@@ -176,6 +179,8 @@ export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'create
     if (kind === 'media' && predPin) {
       await ctx.kv.set(pinKey(hash), predPin, ttl);
       await ctx.kv.set(nextKey(rec.userId, rec.afterPs!), hash, ttl);
+    } else if (kind === 'img' && predPin) {
+      await ctx.kv.set(pinKey(hash), predPin, ttl); // the queued poster is fetched by the same receiver
     }
     return { ct, hash };
   };
@@ -286,7 +291,7 @@ async function keepQueue(ctx: Ctx, hash: string, rec: CastRecord, ttl: number) {
   if (!succ) return;
   const raw = await ctx.kv.get(dataKey(succ));
   const r = raw ? (JSON.parse(raw) as CastRecord) : null;
-  const t = r ? Math.min(ttl, castKeyTtl(r.exp)) : 0;
+  const t = r ? castKeyTtl(r.exp) : 0; // its own idle window (<= its cap, which is never below the predecessor's)
   if (!r || t <= 0) { await ctx.kv.del(nk); return; }
   await ctx.kv.replace(dataKey(succ), raw!, t);
   for (const k of [idxKey(rec.userId, castIdOf(succ)), pinKey(succ), nk]) {
@@ -311,7 +316,9 @@ export async function resolveCast(ctx: Ctx, ct: string, client: string): Promise
   const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
   if (rec && rec.exp > Date.now()) {
     const owner = await liveOwner(ctx, rec);
-    const ok = owner && (await pinned(ctx, hash, client, rec.exp, rec.via === 'airplay' && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1, rec.via === 'airplay'));
+    // a queued next token never takes a pin of its own (0 slots): it only matches the pin it got at mint
+    const slots = rec.afterPs ? 0 : rec.via === 'airplay' && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1;
+    const ok = owner && (await pinned(ctx, hash, client, rec.exp, slots, rec.via === 'airplay'));
     const overlap = ok ? await nextOverlap(ctx, rec) : false;
     if (ok && owner && overlap !== null) {
       const { user, role, prof } = owner;
@@ -396,14 +403,14 @@ export async function resolveCastSubtitle(ctx: Ctx, r: CastSubtitleRef, sig: str
  * `slots` = 2 (AirPlay, early): the second distinct client takes a second pin the same way; a third one is refused.
  * `twoPins` (AirPlay, later): no new pin is taken any more, but an address pinned in either slot keeps working.
  */
-async function pinned(ctx: Ctx, hash: string, client: string, exp: number, slots: 1 | 2 = 1, twoPins = false): Promise<boolean> {
+async function pinned(ctx: Ctx, hash: string, client: string, exp: number, slots: 0 | 1 | 2 = 1, twoPins = false): Promise<boolean> {
   const ttl = Math.max(1, Math.ceil((exp - Date.now()) / 1000));
   const keys = twoPins ? [pinKey(hash), pin2Key(hash)] : [pinKey(hash)];
   for (const [i, key] of keys.entries()) {
     if (i < slots && (await ctx.kv.setnx(key, client, ttl))) return true;
     if ((await ctx.kv.get(key)) === client) return true;
   }
-  await noteRefused(ctx, hash, client, ttl);
+  await noteRefused(ctx, hash, client, Math.max(1, Math.min(CAST_IDLE_TTL, ttl))); // lives no longer than the token's idle window
   return false;
 }
 

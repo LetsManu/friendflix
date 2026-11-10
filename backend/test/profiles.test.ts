@@ -170,20 +170,29 @@ describe('profiles', () => {
   });
 
   it('switching profile revokes this device\'s cast tokens', async () => {
+    let psN = 1;
     const s = await mk({
-      'POST /Items/[^/]+/PlaybackInfo': () => ({ json: { PlaySessionId: 'ps-switch-1', MediaSources: [{ Id: 'b'.repeat(32), Container: 'mkv', SupportsDirectPlay: true, Bitrate: 4_000_000, RunTimeTicks: 3_000_000_000, MediaStreams: [{ Index: 0, Type: 'Video', Height: 1080 }, { Index: 1, Type: 'Audio' }] }] } }),
+      'POST /Items/[^/]+/PlaybackInfo': () => ({ json: { PlaySessionId: `ps-switch-${psN}`, MediaSources: [{ Id: 'b'.repeat(32), Container: 'mkv', SupportsDirectPlay: true, Bitrate: 4_000_000, RunTimeTicks: 3_000_000_000, MediaStreams: [{ Index: 0, Type: 'Video', Height: 1080 }, { Index: 1, Type: 'Audio' }] }] } }),
     });
     const p = await mkProfile(s, 'Kind');
     const owner = (await env.pool.query<{ id: string }>('select id from profiles where is_owner')).rows[0]!.id;
-    const mint = async (sess: Sess) => {
-      const r = await call(sess, 'POST', '/api/cast/session', { itemId: ITEM });
+    const mint = async (sess: Sess, body: Record<string, unknown> = {}) => {
+      const r = await call(sess, 'POST', '/api/cast/session', { itemId: ITEM, ...body });
       expect(r.statusCode).toBe(200);
-      return r.json().castId as string;
+      return r.json() as { castId: string; contentUrl: string };
     };
-    const castId = await mint(s);
+    const first = await mint(s);
+    const castId = first.castId;
+    // the receiver fetched it (pinned): now a queued next episode can follow
+    const ct = /\/media\/c\/([\w-]{43})\//.exec(first.contentUrl)![1]!;
+    const fetched = await env.app.inject({ method: 'POST', url: '/internal/authz', headers: { 'x-internal-secret': cfg.INTERNAL_SECRET }, payload: { ct, client: '198.51.100.1' } });
+    expect(fetched.statusCode).toBe(200);
+    psN = 2;
+    const queuedId = (await mint(s, { next: true, after: castId })).castId;
     const device = (await env.pool.query<{ device_id: string }>('select device_id from devices where user_id=$1', [await ownerId()])).rows[0]!.device_id;
     const who = { userId: await ownerId(), profileId: owner, deviceId: device };
     expect(await castLookup(env.ctx, who, castId)).not.toBeNull();
+    expect(await castLookup(env.ctx, who, queuedId)).not.toBeNull();
     // selecting the profile that is already active keeps the cast
     expect((await call(s, 'POST', `/api/profiles/${owner}/select`, {})).statusCode).toBe(200);
     expect(await castLookup(env.ctx, who, castId)).not.toBeNull();
@@ -192,8 +201,10 @@ describe('profiles', () => {
     expect(before).toBeGreaterThan(0);
     expect((await call(s, 'POST', `/api/profiles/${p.id}/select`, {})).statusCode).toBe(200);
     expect(await castLookup(env.ctx, who, castId)).toBeNull();
+    expect(await castLookup(env.ctx, who, queuedId)).toBeNull(); // the queued token goes too
     expect(await env.kv.keys('cast:')).toEqual([]);
     expect(await env.kv.keys('castidx:')).toEqual([]);
+    expect(await env.kv.keys('castpin:')).toEqual([]);
   });
 
   it('after select, Jellyfin calls and /internal/authz use the profile identity', async () => {

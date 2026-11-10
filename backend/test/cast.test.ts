@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AIRPLAY_PIN2_WINDOW_MS, CAST_IDLE_TTL, castKeyTtl, castLookup, castNextTtlSeconds, createCast, hashToken, NEXT_OVERLAP_MS } from '../src/cast.js';
+import { CastUnpinnedError, AIRPLAY_PIN2_WINDOW_MS, CAST_IDLE_TTL, castKeyTtl, castLookup, castNextTtlSeconds, createCast, hashToken, NEXT_OVERLAP_MS } from '../src/cast.js';
 import { revokeSessions } from '../src/devices.js';
 import { countLive, DRAIN_MS, getLive, setLive } from '../src/live.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -916,6 +916,8 @@ describe('cast lookup (token-free, re-adoption and Diagnose)', () => {
     const raw = (await env.kv.get(`castrefuse:${hashToken(ct)}`))!;
     expect(raw).not.toContain('192.0.2');
     expect(raw).not.toContain('2001');
+    const text = JSON.stringify(await castLookup(env.ctx, w, j.castId));
+    for (const a of ['192.0.2.10', '192.0.2.11', '2001:db8::1']) expect(text).not.toContain(a);
     // gone with the token
     await call(admin, 'DELETE', `/api/cast/session/${j.castId}`);
     expect(await env.kv.get(`castrefuse:${hashToken(ct)}`)).toBeNull();
@@ -1034,6 +1036,44 @@ describe('cast: the queued next token is pinned at mint and its life follows its
     expect(await env.kv.get(`cast:${hashToken(nx.ct)}`)).toBeNull();
     expect(await env.kv.get(`castpin:${hashToken(nx.ct)}`)).toBeNull();
     expect((await authz({ ct: nx.ct, client: TV })).statusCode).toBe(401);
+  });
+
+  it('a queued token never takes a pin of its own: no AirPlay queue, no re-pin after a lapse', async () => {
+    await fresh();
+    const { cur, nx } = await queued();
+    // the queue is Chromecast only
+    const r = await call(admin, 'POST', '/api/cast/session', { itemId: ID, next: true, via: 'airplay', after: cur.j.castId });
+    expect(r.statusCode).toBe(400);
+    // even a lapsed pin is not taken again by a foreign address
+    await env.kv.del(`castpin:${hashToken(nx.ct)}`);
+    expect((await authz({ ct: nx.ct, client: '203.0.113.66' })).statusCode).toBe(401);
+    expect(await env.kv.get(`castpin:${hashToken(nx.ct)}`)).toBeNull();
+    expect(await env.kv.get(`castpin2:${hashToken(nx.ct)}`)).toBeNull();
+  });
+
+  it('the queued poster token is pinned at mint too', async () => {
+    await fresh();
+    const { nx } = await queued();
+    const imgCt = /\/media\/c\/([\w-]{43})\/Items\//.exec(nx.j.imageUrl)![1]!;
+    expect(await env.kv.get(`castpin:${hashToken(imgCt)}`)).toBe(TV);
+    expect((await authz({ ct: imgCt, client: '203.0.113.66' })).statusCode).toBe(401);
+    expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200);
+  });
+
+  it('createCast refuses a queued token whose predecessor has no pin (nothing minted)', async () => {
+    await fresh();
+    const cur = await create(); // never fetched
+    const idx = (await env.kv.keys('castidx:')).length;
+    const me0 = await me();
+    const w = await (async () => {
+      const i = JSON.parse((await env.kv.get(`castidx:${me0}:${cur.j.castId}`))!) as { hash: string };
+      const rec = JSON.parse((await env.kv.get(`cast:${i.hash}`))!) as { profileId: string; deviceId: string };
+      return { hash: i.hash, profileId: rec.profileId, deviceId: rec.deviceId };
+    })();
+    const base = { userId: me0, profileId: w.profileId, deviceId: w.deviceId, itemId: ID, mediaSourceId: MS, playSessionId: 'ps-x-1', maxBitrate: 1_000_000, afterPs: cur.j.playSessionId };
+    await expect(createCast(env.ctx, base, 3600, false, { hash: w.hash })).rejects.toBeInstanceOf(CastUnpinnedError);
+    await expect(createCast(env.ctx, base, 3600)).rejects.toBeInstanceOf(CastUnpinnedError);
+    expect((await env.kv.keys('castidx:')).length).toBe(idx);
   });
 
   it('the queued token\'s cap follows the predecessor\'s remaining time', async () => {
