@@ -5,16 +5,28 @@ import { describe, expect, it, vi } from 'vitest';
 import { reauthLife } from './reauthLife';
 
 describe('reauthLife', () => {
-  it('closing while the first step is still loading cancels', async () => {
+  it('closing before any start was sent sends nothing (no cookie yet, the server would answer 403) and blocks the start', async () => {
     const cancel = vi.fn(async () => undefined);
     const life = reauthLife(cancel);
     await life.close();
+    expect(cancel).not.toHaveBeenCalled();
+    expect(life.starting()).toBe(false);
+  });
+
+  it('closing while the first start is in flight leaves the cancel to the start\'s return: exactly one', async () => {
+    const cancel = vi.fn(async () => undefined);
+    const life = reauthLife(cancel);
+    expect(life.starting()).toBe(true);
+    await life.close();
+    expect(cancel).not.toHaveBeenCalled();
+    expect(life.started()).toBe(false);
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it('closing after a refused passkey (no step, no passkey card) cancels: the password attempt is still open', async () => {
     const cancel = vi.fn(async () => undefined);
     const life = reauthLife(cancel);
+    expect(life.starting()).toBe(true);
     expect(life.started()).toBe(true);
     await life.close();
     expect(cancel).toHaveBeenCalledTimes(1);
@@ -23,8 +35,8 @@ describe('reauthLife', () => {
   it('a start that returns after the dialog was closed cancels the sessions it opened and shows nothing', async () => {
     const cancel = vi.fn(async () => undefined);
     const life = reauthLife(cancel);
+    expect(life.starting()).toBe(true);
     await life.close();
-    cancel.mockClear();
     expect(life.started()).toBe(false);
     expect(cancel).toHaveBeenCalledTimes(1);
   });
@@ -36,6 +48,8 @@ describe('reauthLife', () => {
     await done.close();
     expect(cancel).not.toHaveBeenCalled();
     const twice = reauthLife(cancel);
+    twice.starting();
+    twice.started();
     await twice.close();
     await twice.close();
     expect(cancel).toHaveBeenCalledTimes(1);
