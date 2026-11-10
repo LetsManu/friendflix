@@ -9,7 +9,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { AA, contrast, frostComposite, textContrast, type RGB } from '#lib/glass/tone';
+import { AA, contrast, frostComposite, SCRIM_BAR, textContrast, type RGB } from '#lib/glass/tone';
 
 const SRC = fileURLToPath(new URL('../../', import.meta.url));
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8');
@@ -171,5 +171,56 @@ describe('ranked strip over a bright poster (WCAG 1.4.3)', () => {
       expect(contrast(coral, back), file).toBeGreaterThanOrEqual(AA);
       expect(contrast(WHITE, back), file).toBeGreaterThanOrEqual(AA);
     }
+  });
+});
+
+describe('cast bar and remote text pairs pass 4.5:1', () => {
+  const SOLID = hex('#1c1a21');
+  const AMBIENT_BASE = hex('#0a090d');
+  // the remote screen sets the bar scrim on its root (.frost-safe's default .7 does not carry .72 text over white)
+  expect(read('lib/cast/RemoteScreen.svelte')).toMatch(/class="rs castov"[^>]*\n?[^>]*style="--fr-scrim-safe:\{SCRIM_BAR\}"/);
+  const SAFE = SCRIM_BAR;
+  /** .frost-safe over a white backdrop (the worst case), over the ambient peak, over the base, and the solid fallback */
+  const surfaces = [frostComposite(WHITE, SAFE), frostComposite(AMBIENT_BASE, SAFE), SOLID];
+  it('white .72 on .frost-safe over a white backdrop', () => {
+    expect(SAFE).toBeGreaterThanOrEqual(Number(/--fr-scrim-safe: ([.\d]+)/.exec(read('app.css'))![1]));
+    for (const bg of surfaces) expect(textContrast(bg, 0.72)).toBeGreaterThanOrEqual(AA);
+  });
+  it('the remote screen status line: amber and error text on .frost-safe (the bar inks; #f7b344 / #ffa8a8 gave 4.08 over white)', () => {
+    const remote = read('lib/cast/RemoteScreen.svelte');
+    expect(rule(remote, '.stat.warn')).toContain('color: #ffc56b');
+    expect(rule(remote, '.stat.error')).toContain('color: #ffbdbd');
+    for (const bg of surfaces) for (const c of ['#ffc56b', '#ffbdbd']) expect(contrast(hex(c), bg), c).toBeGreaterThanOrEqual(AA);
+    expect(textContrast(frostComposite(WHITE, SAFE), 0.9)).toBeGreaterThanOrEqual(AA); // the neutral status line
+  });
+  it('the remote eyebrow #ff8aa0 sits on the ambient base', () => {
+    expect(rule(read('lib/cast/RemoteScreen.svelte'), '.eyebrow')).toContain('color: #ff8aa0');
+    expect(contrast(hex('#ff8aa0'), AMBIENT_BASE)).toBeGreaterThanOrEqual(AA);
+  });
+  it('the volume hints (.78 white) and the coral text token on the solid fallback', () => {
+    const remote = read('lib/cast/RemoteScreen.svelte');
+    expect(remote).toContain('rgba(255, 255, 255, .78)');
+    expect(textContrast(SOLID, 0.78)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(hex('#ffa7b6'), SOLID)).toBeGreaterThanOrEqual(AA);
+  });
+});
+
+describe('receiver panel text pairs pass 4.5:1', () => {
+  const css = readFileSync(join(SRC, '../static/cast-receiver/receiver.css'), 'utf8');
+  const tok = (name: string) => hex(new RegExp(`--${name}: (#[0-9a-f]{6})`).exec(css)![1]!);
+  const CARD: [RGB, number] = [[16, 20, 24], 0.92];
+  it('card text (white, muted) on the next-up card over a white picture', () => {
+    const card = over(WHITE, CARD[0], CARD[1]);
+    expect(contrast(tok('fg'), card)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(tok('mut'), card)).toBeGreaterThanOrEqual(AA);
+  });
+  it('the still-watching dim (black .72 over a white frame): muted text and the white button label', () => {
+    const dim = over(WHITE, BLACK, 0.72);
+    expect(contrast(tok('mut'), dim)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(WHITE, tok('acc-fill'))).toBeGreaterThanOrEqual(AA); // the focused button
+  });
+  it('the skip pill (white on .78 dark over white) and the idle brand screen', () => {
+    expect(contrast(WHITE, over(WHITE, [16, 20, 24], 0.78))).toBeGreaterThanOrEqual(AA);
+    expect(contrast(tok('fg'), tok('bg'))).toBeGreaterThanOrEqual(AA);
   });
 });

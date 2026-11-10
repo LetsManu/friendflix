@@ -22,6 +22,7 @@
   import { fade } from 'svelte/transition';
   import { api, cachedItem, type Item } from '#lib/api';
   import { castSetVolume, castState, castToggleMute } from '#lib/cast';
+  import { SCRIM_BAR } from '#lib/glass/tone';
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
   import { motionAllowed } from '#lib/preview';
@@ -123,7 +124,7 @@
 
 {#if s && st}
   <section class="rs castov" class:phone class:wide={layout === 'wide'} class:stacked={layout === 'stacked'} class:air
-    data-testid={air ? 'airplay-active' : 'cast-active'} bind:clientWidth={w}>
+    style="--fr-scrim-safe:{SCRIM_BAR}" data-testid={air ? 'airplay-active' : 'cast-active'} bind:clientWidth={w}>
     {#if bgs[bgI]}<img class="bg" src={bgs[bgI]} alt="" aria-hidden="true" on:error={() => bgI++} />{/if}
     <div class="shade" aria-hidden="true"></div>
 
@@ -280,8 +281,8 @@
   .statrow { display: flex; align-items: center; gap: 12px; min-width: 0; }
   .stat { margin: 0; display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 44px; padding: 0 14px; border-radius: 999px; font-weight: 600; font-size: .95rem; color: rgba(255, 255, 255, .9); opacity: 0; transition: opacity 200ms ease; }
   .stat.on { opacity: 1; }
-  .stat.warn { color: #f7b344; }
-  .stat.error { color: #ffa8a8; }
+  .stat.warn { color: #ffc56b; }
+  .stat.error { color: #ffbdbd; }
   .act { flex: none; }
   .here { background: #fff; color: #000; border-radius: 999px; padding: 0 20px; font-weight: 800; }
   .here:hover:not(:disabled) { background: rgba(255, 255, 255, .82); }

@@ -246,3 +246,63 @@ describe('cast bar: text on its glass (cast spec §2)', () => {
     }
   });
 });
+
+/**
+ * Cast motion rule (cast plan, Global Constraints): animate transform and opacity only. Layout properties never appear in a
+ * transition or a @keyframes block of the cast components (progress fills are scaleX, panels grow with growBoth / sheetSlide).
+ */
+describe('cast surfaces: motion', () => {
+  const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+  /** every transition value and every @keyframes body of one stylesheet */
+  function motion(css: string): string[] {
+    const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const out: string[] = [];
+    for (const m of src.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) out.push(`transition:${m[1]}`);
+    for (const m of src.matchAll(/@keyframes\s+[\w-]+\s*\{/g)) {
+      let depth = 1, i = m.index! + m[0].length;
+      const start = i;
+      while (depth && i < src.length) { if (src[i] === '{') depth++; else if (src[i] === '}') depth--; i++; }
+      out.push(`@keyframes ${src.slice(start, i - 1)}`);
+    }
+    return out;
+  }
+  const styleOf = (src: string) => [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n');
+  const castDir = fileURLToPath(new URL('../cast/', import.meta.url));
+
+  it('the scan sees what it should (it refuses a width transition and a left keyframe)', () => {
+    expect(motion('.a { transition: width 1s; }').some((v) => LAYOUT.test(v))).toBe(true);
+    expect(motion('@keyframes k { from { left: 0; } to { left: 9px; } }').some((v) => LAYOUT.test(v))).toBe(true);
+    expect(motion('.a { transition: transform 1s, opacity 1s; transform-origin: left; width: 3px; }').some((v) => LAYOUT.test(v))).toBe(false);
+  });
+
+  it('cast surfaces animate transform and opacity only', () => {
+    const files = readdirSync(castDir).filter((f) => f.endsWith('.svelte'));
+    expect(files).toEqual(expect.arrayContaining(['CastBar.svelte', 'CastBarExpanded.svelte', 'CastScrubber.svelte', 'PlayOnSheet.svelte', 'RemoteScreen.svelte', 'DiagnoseCast.svelte', 'TrackChips.svelte', 'UpNextCard.svelte']));
+    let seen = 0;
+    const bad: string[] = [];
+    for (const f of files) {
+      for (const v of motion(styleOf(readFileSync(join(castDir, f), 'utf8')))) {
+        if (/transition:\s*none/.test(v)) continue;
+        seen++;
+        if (LAYOUT.test(v) || /\b(all)\b|color|background|border|filter|shadow/.test(v)) bad.push(`${f}: ${v.trim()}`);
+      }
+    }
+    expect(seen).toBeGreaterThan(8);
+    expect(bad).toEqual([]);
+  });
+
+  it('every cast component with motion switches it off in calm mode and for reduced motion', () => {
+    for (const f of ['CastBar', 'CastBarExpanded', 'CastScrubber', 'PlayOnSheet', 'RemoteScreen']) {
+      const src = read(`../cast/${f}.svelte`);
+      expect(src, f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+      expect(src, f).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+    }
+  });
+
+  it('the receiver css animates transform and opacity only', () => {
+    const css = readFileSync(fileURLToPath(new URL('../../../static/cast-receiver/receiver.css', import.meta.url)), 'utf8');
+    const vals = motion(css);
+    expect(vals.length).toBeGreaterThan(0); // the card's rise keyframes
+    expect(vals.filter((v) => LAYOUT.test(v) || /\ball\b/.test(v))).toEqual([]);
+  });
+});
