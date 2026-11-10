@@ -122,21 +122,27 @@ Follow the [official Docker Compose installation](https://docs.goauthentik.io/in
 | SSL | SSL Certificate | Request a new Let's Encrypt certificate |
 | | Force SSL, HTTP/2 Support, HSTS Enabled | on |
 | Advanced | Custom Nginx Configuration | empty (a header line here has no effect, see below) |
-| Custom locations | *Add location* | location `/`, the same scheme, forward host and port as under *Details*; in the location's gear field: `proxy_set_header X-Forwarded-Host $host;` |
+| Custom locations | *Add location* | location `/`. **The form starts with an empty forward hostname and port 80: enter scheme, forward hostname/IP and port exactly as on the *Details* tab, or the provider stops answering.** In the location's gear field: `proxy_set_header X-Forwarded-Host $host;` |
 
 NPM sets `Host`, `X-Forwarded-Proto` and `X-Forwarded-For`, but passes an `X-Forwarded-Host` that a visitor sent straight through. **That must not reach Authentik:** Authentik trusts this proxy, takes its request host from that header and builds e.g. its recovery-mail links from it, so any visitor could choose the host in those links. The custom location `/` replaces NPM's default location for this proxy host and sets the header to the host the visitor actually called. **A `proxy_set_header X-Forwarded-Host $host;` line in the *Advanced* box does nothing:** NPM puts that box at server level, its `location /` has `proxy_set_header` lines of its own, and nginx inherits server-level `proxy_set_header` lines only into a location that defines none. The header has to be set inside the location. With a plain nginx it is the same rule: put the line into the `location` that proxies to Authentik, next to its other `proxy_set_header` lines.
 
-**Check it** from outside your network (a phone without Wi-Fi is enough), with your own application slug:
+**Required, also for every install that already exists.** A default Nginx Proxy Manager proxy host is affected today, independently of FriendFlix: password-reset and recovery links can be poisoned through a forged `X-Forwarded-Host`. If the proxy host has other custom locations, each of them needs the same `proxy_set_header` line. Check it from any machine whose request goes through the proxy, with your own application slug (lowercase, `<slug>`):
 
 ```sh
-curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/friendflix/.well-known/openid-configuration
+curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
 ```
 
-The answer's `issuer` must read `https://auth.example.com/application/o/friendflix/`. If it reads `https://evil.example.com/…`, the proxy still passes a visitor's host through: fix the location before you go on.
+On Windows PowerShell (no `grep`):
+
+```powershell
+(Invoke-RestMethod -Uri "https://auth.example.com/application/o/<slug>/.well-known/openid-configuration" -Headers @{ "X-Forwarded-Host" = "evil.example.com" }).issuer
+```
+
+Good: the answer is the provider's own address, `https://auth.example.com/application/o/<slug>/`. Bad: it reads `https://evil.example.com/…`; the proxy still passes a visitor's host through, so fix the location before you go on. Afterwards sign in once and open the provider's admin page (`https://auth.example.com/if/admin/`) to confirm that nothing broke; its live updates use websockets.
 
 Authentik only trusts these headers from private networks (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` by default). If NPM connects from somewhere else, set `AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS` in `.env.authentik` ([reverse proxy docs](https://docs.goauthentik.io/install-config/reverse-proxy/)).
 
-DNS: `auth.example.com` must resolve to your proxy **from the Internet and from your LAN**, and from inside the FriendFlix backend container either to your proxy too (the backend fetches the OIDC discovery document and calls the API through the public URL) or, for passkeys inside FriendFlix, to the backend-only route of [§10a](#10a-in-app-sign-in) step 5. If your router has no NAT loopback, add a local DNS entry (router, Pi-hole, AdGuard) for both host names.
+DNS: `auth.example.com` must resolve to your proxy **from the Internet and from your LAN** (browsers and other devices). If your router has no NAT loopback, add a local DNS entry (router, Pi-hole, AdGuard) for both host names. The FriendFlix backend container is different: there `auth.example.com` resolves to the backend-only route of [§10a](#10a-in-app-sign-in) step 5 (split-horizon DNS, `extra_hosts` or a network alias, e.g. to `192.0.2.20`), never to the public proxy.
 
 ### 2.4 Initial admin account
 
@@ -656,6 +662,10 @@ From the Docker host:
 # 1. issuer and discovery (expect exactly OIDC_ISSUER)
 curl -s https://auth.example.com/application/o/friendflix/.well-known/openid-configuration | jq -r .issuer
 
+# 1b. REQUIRED behind Nginx Proxy Manager: a forged X-Forwarded-Host must not reach Authentik
+# (expect "issuer":"https://auth.example.com/..."; evil.example.com means fix §2.3; PowerShell form in §2.3)
+curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
+
 # 2. the backend can reach Authentik (inside the container; expect 200)
 docker compose -f compose.prod.yaml exec backend node -e \
   "fetch(process.env.OIDC_ISSUER+'.well-known/openid-configuration').then(r=>console.log(r.status))"
@@ -685,7 +695,7 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | Authentik page *Redirect URI Error* / `redirect_uri` mismatch | The provider's redirect URI is not exactly `${PUBLIC_URL}/auth/callback`. Check scheme, host, no trailing slash, *Strict* mode. |
 | Backend restarts in a loop, log `"response" body "issuer" property does not match the expected value` | `OIDC_ISSUER` without trailing slash, wrong slug, or *Issuer mode* set to global. |
 | Backend restarts, log mentions `only requests to HTTPS are allowed` or similar | `OIDC_ISSUER` uses `http://`. Use the public https URL (`OIDC_ALLOW_INSECURE` is for development only). |
-| Backend restarts, `fetch failed` / `ENOTFOUND` / timeout at start | The backend container cannot reach `auth.example.com` (DNS, NAT loopback, firewall). See [§2.3](#23-reverse-proxy-nginx-proxy-manager). |
+| Backend restarts, `fetch failed` / `ENOTFOUND` / timeout at start | The backend container cannot reach `auth.example.com` (backend-only route missing or wrong, firewall). See [§10a, step 5](#10a-in-app-sign-in). |
 | `{"error":"invalid_state"}` on `/auth/callback` | The login started on another host name than `PUBLIC_URL` (e.g. LAN IP), cookies blocked, or more than 10 min (enrollment: 30 min) between start and callback. Start again from `PUBLIC_URL`. |
 | `{"error":"login_failed"}` (401) | Token exchange or ID token check failed: wrong client secret, encryption key set on the provider, or the clocks of the hosts differ by more than 30 s (enable NTP on all hosts). Backend log line `oidc callback failed` has the details. |
 | After sign-in the person sees *Request sent* (`/pending`) | First login without a valid invite and not in `ADMIN_GROUP`: the request waits in *Admin → Users → Waiting for approval*. Admin who lands there: check the group name and that *Include claims in id_token* is on. Others: approve the request, or send an invite (with *already has an Authentik account* if they already signed up). |

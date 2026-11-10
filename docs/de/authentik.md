@@ -122,21 +122,27 @@ Der [offiziellen Docker-Compose-Anleitung](https://docs.goauthentik.io/install-c
 | SSL | SSL Certificate | Request a new Let's Encrypt certificate |
 | | Force SSL, HTTP/2 Support, HSTS Enabled | an |
 | Advanced | Custom Nginx Configuration | leer (eine Header-Zeile hier wirkt nicht, siehe unten) |
-| Custom locations | *Add location* | Location `/`, dasselbe Schema, Ziel und derselbe Port wie unter *Details*; im Zahnrad-Feld der Location: `proxy_set_header X-Forwarded-Host $host;` |
+| Custom locations | *Add location* | Location `/`. **Das Formular startet mit leerem Ziel (Forward Hostname) und Port 80: Schema, Forward Hostname/IP und Port genau wie auf dem Tab *Details* eintragen, sonst antwortet der Provider nicht mehr.** Im Zahnrad-Feld der Location: `proxy_set_header X-Forwarded-Host $host;` |
 
 NPM setzt `Host`, `X-Forwarded-Proto` und `X-Forwarded-For`, reicht ein vom Besucher mitgeschicktes `X-Forwarded-Host` aber unverändert durch. **Das darf Authentik nicht erreichen:** Authentik vertraut diesem Proxy, nimmt seinen Anfrage-Host aus diesem Header und baut daraus z. B. die Links seiner Wiederherstellungs-Mails, sonst könnte jeder Besucher den Host in diesen Links bestimmen. Die eigene Location `/` ersetzt die Standard-Location von NPM für diesen Proxy-Host und setzt den Header auf den Host, den der Besucher wirklich aufgerufen hat. **Eine Zeile `proxy_set_header X-Forwarded-Host $host;` im Feld *Advanced* wirkt nicht:** NPM setzt dieses Feld auf Server-Ebene, sein `location /` hat eigene `proxy_set_header`-Zeilen, und nginx vererbt `proxy_set_header` von der Server-Ebene nur in eine Location, die selbst keine definiert. Der Header muss in der Location gesetzt werden. Bei einem einfachen nginx gilt dieselbe Regel: die Zeile gehört in die `location`, die zu Authentik weiterleitet, neben deren übrige `proxy_set_header`-Zeilen.
 
-**Prüfen** von außerhalb deines Netzes (ein Handy ohne WLAN reicht), mit dem Slug deiner Anwendung:
+**Pflicht, auch für jede schon bestehende Installation.** Ein Nginx-Proxy-Manager-Proxy-Host mit Standardeinstellungen ist heute betroffen, unabhängig von FriendFlix: Links zum Zurücksetzen des Passworts und zur Wiederherstellung lassen sich über ein gefälschtes `X-Forwarded-Host` vergiften. Hat der Proxy-Host weitere Custom locations, braucht jede dieselbe `proxy_set_header`-Zeile. Prüfen von jedem Rechner, dessen Anfrage über den Proxy läuft, mit dem Slug deiner Anwendung (klein geschrieben, `<slug>`):
 
 ```sh
-curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/friendflix/.well-known/openid-configuration
+curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
 ```
 
-Der `issuer` in der Antwort muss `https://auth.example.com/application/o/friendflix/` lauten. Steht dort `https://evil.example.com/…`, reicht der Proxy den Host eines Besuchers noch durch: erst die Location korrigieren, dann weitermachen.
+In Windows PowerShell (ohne `grep`):
+
+```powershell
+(Invoke-RestMethod -Uri "https://auth.example.com/application/o/<slug>/.well-known/openid-configuration" -Headers @{ "X-Forwarded-Host" = "evil.example.com" }).issuer
+```
+
+Gut: Die Antwort ist die eigene Adresse des Providers, `https://auth.example.com/application/o/<slug>/`. Schlecht: Dort steht `https://evil.example.com/…`; der Proxy reicht den Host eines Besuchers noch durch, also erst die Location korrigieren, dann weitermachen. Danach einmal anmelden und die Admin-Seite des Providers (`https://auth.example.com/if/admin/`) öffnen, um zu sehen, dass nichts kaputtgegangen ist; deren Live-Updates nutzen Websockets.
 
 Authentik vertraut diesen Headern nur aus privaten Netzen (Standard: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`). Verbindet sich NPM von anderswo, `AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS` in `.env.authentik` setzen ([Reverse-Proxy-Doku](https://docs.goauthentik.io/install-config/reverse-proxy/)).
 
-DNS: `auth.example.com` muss **aus dem Internet und aus dem Heimnetz** auf deinen Proxy zeigen, und aus dem FriendFlix-Backend-Container heraus entweder ebenfalls auf deinen Proxy (das Backend holt das OIDC-Discovery-Dokument und ruft die API über die öffentliche URL auf) oder, für Passkeys in FriendFlix, auf den Weg nur für das Backend aus [§10a](#10a-anmeldung-in-der-app) Schritt 5. Kann dein Router seine eigene öffentliche IP nicht von innen erreichen (kein NAT-Loopback), für beide Hostnamen einen lokalen DNS-Eintrag anlegen (Router, Pi-hole, AdGuard).
+DNS: `auth.example.com` muss **aus dem Internet und aus dem Heimnetz** auf deinen Proxy zeigen (Browser und andere Geräte). Kann dein Router seine eigene öffentliche IP nicht von innen erreichen (kein NAT-Loopback), für beide Hostnamen einen lokalen DNS-Eintrag anlegen (Router, Pi-hole, AdGuard). Im FriendFlix-Backend-Container ist es anders: dort zeigt `auth.example.com` auf den Weg nur für das Backend aus [§10a](#10a-anmeldung-in-der-app) Schritt 5 (Split-Horizon-DNS, `extra_hosts` oder ein Netzwerk-Alias, z. B. auf `192.0.2.20`), nie auf den öffentlichen Proxy.
 
 ### 2.4 Erstes Admin-Konto
 
@@ -656,6 +662,10 @@ Auf dem Docker-Host:
 # 1. Issuer und Discovery (erwartet: genau OIDC_ISSUER)
 curl -s https://auth.example.com/application/o/friendflix/.well-known/openid-configuration | jq -r .issuer
 
+# 1b. PFLICHT hinter dem Nginx Proxy Manager: ein gefälschtes X-Forwarded-Host darf Authentik nicht erreichen
+# (erwartet "issuer":"https://auth.example.com/..."; evil.example.com heißt: §2.3 korrigieren; PowerShell-Form in §2.3)
+curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
+
 # 2. Backend erreicht Authentik (im Container; erwartet: 200)
 docker compose -f compose.prod.yaml exec backend node -e \
   "fetch(process.env.OIDC_ISSUER+'.well-known/openid-configuration').then(r=>console.log(r.status))"
@@ -685,7 +695,7 @@ Logs: `docker compose -f compose.prod.yaml logs backend | grep -i -E "oidc|authe
 | Authentik-Seite *Redirect URI Error* / `redirect_uri` passt nicht | Die Redirect-URI im Provider ist nicht exakt `${PUBLIC_URL}/auth/callback`. Schema, Host, kein Schrägstrich am Ende, Modus *Strict* prüfen. |
 | Backend startet in Schleife neu, Log `"response" body "issuer" property does not match the expected value` | `OIDC_ISSUER` ohne Schrägstrich am Ende, falscher Slug oder *Issuer mode* global. |
 | Backend startet neu, Log erwähnt `only requests to HTTPS are allowed` o. Ä. | `OIDC_ISSUER` mit `http://`. Die öffentliche https-URL verwenden (`OIDC_ALLOW_INSECURE` nur für die Entwicklung). |
-| Backend startet neu, `fetch failed` / `ENOTFOUND` / Timeout beim Start | Der Backend-Container erreicht `auth.example.com` nicht (DNS, NAT-Loopback, Firewall). Siehe [§2.3](#23-reverse-proxy-nginx-proxy-manager). |
+| Backend startet neu, `fetch failed` / `ENOTFOUND` / Timeout beim Start | Der Backend-Container erreicht `auth.example.com` nicht (Weg nur für das Backend fehlt oder ist falsch, Firewall). Siehe [§10a, Schritt 5](#10a-anmeldung-in-der-app). |
 | `{"error":"invalid_state"}` auf `/auth/callback` | Login auf einem anderen Hostnamen als `PUBLIC_URL` gestartet (z. B. LAN-IP), Cookies blockiert oder mehr als 10 min (Registrierung: 30 min) zwischen Start und Callback. Neu über `PUBLIC_URL` starten. |
 | `{"error":"login_failed"}` (401) | Token-Tausch oder ID-Token-Prüfung gescheitert: falsches Client-Secret, Encryption Key am Provider gesetzt oder Uhren der Hosts weichen um mehr als 30 s ab (NTP auf allen Hosts aktivieren). Details in der Backend-Logzeile `oidc callback failed`. |
 | Nach der Anmeldung sieht die Person *Anfrage gesendet* (`/pending`) | Erste Anmeldung ohne gültige Einladung und nicht in `ADMIN_GROUP`: Die Anfrage wartet unter *Admin → Nutzer → Warten auf Freigabe*. Landet ein Admin dort: Gruppenname prüfen und ob *Include claims in id_token* an ist. Andere: Anfrage freigeben oder eine Einladung senden (mit *hat schon ein Authentik-Konto*, wenn sie sich schon registriert haben). |
