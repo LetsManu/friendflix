@@ -72,7 +72,7 @@
   .sub1 { font-size: .85rem; font-weight: 600; color: var(--acc-text); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* the 44 px button plus the "Neues Kontingent ab ..." line (or the error line) are reserved on every card: the titles share one baseline */
   .act { margin-top: .55rem; height: 4.3rem; }
-  .c:not(.skc) { animation: ms-in .18s ease-out both; }
+  .c:not(.skc) { animation: ms-in .18s ease-out backwards; }
   @keyframes ms-in { from { opacity: 0; } }
   .c.skc { border: 0; background: #1b2127; }
   .skc::before { display: none; }

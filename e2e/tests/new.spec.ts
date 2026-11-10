@@ -326,6 +326,7 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     await expect(page).toHaveURL(/\/new$/);
 
     await group.getByRole('radio', { name: 'Serien' }).click();
+    await expect(page).toHaveURL(/\/new\?type=series$/); // the history entry is replaced only once the navigation has run: leave after that
     await page.goto('/browse/series');
     await page.goBack();
     await expect(page.getByRole('radiogroup', { name: 'Anzeigen' }).getByRole('radio', { name: 'Serien' })).toBeChecked();
