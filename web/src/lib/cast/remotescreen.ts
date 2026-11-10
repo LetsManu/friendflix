@@ -95,3 +95,19 @@ export function nowLine(s: Pick<CastSession, 'isEpisode' | 'subtitle'>, it: Pick
   }
   return [it.year ? String(it.year) : '', fmtRuntime(it.runtimeTicks)].filter(Boolean).join(' \u00b7 ') || s.subtitle;
 }
+
+/** the offer the up-next card shows: an episode's next one, from the credits on (playing) or after the end; never for films */
+export function upNextOf(s: Pick<CastSession, 'isEpisode' | 'state' | 'next'>): NonNullable<CastSession['next']> | null {
+  return s.isEpisode && (s.state === 'playing' || s.state === 'ended') ? s.next ?? null : null;
+}
+
+/**
+ * The card's status line: a running countdown, else "Starts by itself" (autoplay on) or "Plays when you choose". AirPlay adds the
+ * honest limit as a second sentence (if the iPhone locks, it starts at unlock; true whenever continuous play is off).
+ */
+export function upNextLine(s: Pick<CastSession, 'kind' | 'autoplay' | 'next'>, now: number, tf: TFn): string {
+  const secs = s.next ? nextSecondsLeft(s.next.startsAt, now) : null;
+  const first = secs !== null ? tf('player.castRemote.startsIn', { n: secs }) : tf(s.autoplay ? 'player.castRemote.startsBySelf' : 'player.castRemote.waits');
+  if (s.kind !== 'airplay') return first;
+  return `${first.endsWith('.') ? first : `${first}.`} ${tf('player.castRemote.onUnlock')}`;
+}

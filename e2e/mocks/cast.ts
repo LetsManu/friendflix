@@ -73,7 +73,7 @@ export const picks = (page: Page) => page.evaluate(() => (window as unknown as {
 export const srcAtPick = (page: Page) => page.evaluate(() => (window as unknown as { __srcAtPick: string }).__srcAtPick);
 
 /** runs in the page as the Cast sender SDK (same shape as `fakeSdk()` in web/src/lib/cast.test.ts) */
-function castSdkScript() {
+function castSdkScript(opts: { queue?: boolean } = {}) {
   type Rec = { args: unknown[] } & Record<string, unknown>;
   const w = window as unknown as Record<string, unknown> & { __castLoads: unknown[]; __castCalls: string[]; __castOptions: unknown; __castMsgs: unknown[]; __castLoadFails?: boolean; __onGCastApiAvailable?: (ok: boolean) => void; chrome?: Record<string, unknown> };
   w.__castLoads = []; w.__castCalls = []; w.__castOptions = null; w.__castMsgs = [];
@@ -91,7 +91,28 @@ function castSdkScript() {
     setVolumeLevel() { w.__castCalls.push(`volume:${player.volumeLevel}`); change({}); },
     muteOrUnmute() { w.__castCalls.push('muteOrUnmute'); change({ isMuted: !player.isMuted }); },
   };
-  const mediaSession = { editTracksInfo(_r: unknown, ok: () => void) { w.__castCalls.push('editTracksInfo'); ok(); } };
+  // the receiver queue (opt-in: without it `new QueueItem` throws and the engine's queue request counts as refused)
+  const queued: Array<{ itemId: number; media: { contentId: unknown } }> = [];
+  let queueId = 1;
+  const mediaSession = {
+    editTracksInfo(_r: unknown, ok: () => void) { w.__castCalls.push('editTracksInfo'); ok(); },
+    ...(opts.queue ? {
+      items: queued,
+      queueInsertItems(req: Rec, ok: () => void) {
+        for (const it of req.args[0] as Rec[]) queued.push({ itemId: queueId++, media: { contentId: (it.args[0] as Rec).args[0] } });
+        w.__castCalls.push('queueInsert');
+        ok();
+      },
+      queueRemoveItems(req: Rec, ok: () => void) {
+        const id = (req.args[0] as number[])[0]!;
+        const i = queued.findIndex((q) => q.itemId === id);
+        if (i >= 0) queued.splice(i, 1);
+        w.__castCalls.push(`queueRemove:${id}`);
+        ok();
+      },
+      queueNext(ok: () => void) { w.__castCalls.push('queueNext'); ok(); },
+    } : {}),
+  };
   const session = {
     getCastDevice: () => ({ friendlyName: 'Wohnzimmer-TV' }),
     async loadMedia(req: Rec): Promise<string | undefined> {
@@ -132,6 +153,7 @@ function castSdkScript() {
       DEFAULT_MEDIA_RECEIVER_APP_ID: 'CC1AD845',
       MediaInfo: class extends R {}, LoadRequest: class extends R {}, MovieMediaMetadata: class extends R {}, TvShowMediaMetadata: class extends R {},
       Track: class extends R {}, EditTracksInfoRequest: class extends R {},
+      ...(opts.queue ? { QueueItem: class extends R {}, QueueInsertItemsRequest: class extends R {}, QueueRemoveItemsRequest: class extends R {} } : {}),
       StreamType: { BUFFERED: 'BUFFERED' }, HlsSegmentFormat: { TS: 'ts' }, MetadataType: { MOVIE: 1, TV_SHOW: 2 }, TrackType: { TEXT: 'TEXT' }, TextTrackType: { SUBTITLES: 'SUBTITLES' },
     },
   };
@@ -163,10 +185,11 @@ function castSdkScript() {
  * `calls()` = controller / context calls (`playOrPause`, `seek:<sec>`, `endCurrentSession`, ...); `start()` = the user picked
  * `Wohnzimmer-TV`, `end()` = the session ended, `nearEnd()` = the receiver jumps to the last seconds, `finish()` = the media
  * finished on the receiver (the end only counts as finished after `nearEnd()`); `failLoads()` = every
- * later `loadMedia` rejects (the receiver cannot play the title).
+ * later `loadMedia` rejects (the receiver cannot play the title). `queue: true`: the receiver accepts queued titles
+ * (`queueInsert`, `queueRemove:<id>`, `queueNext` show up in `calls()`); without it the engine's queue request is refused.
  */
-export async function fakeCastSdk(page: Page) {
-  await page.route('https://www.gstatic.com/cv/js/sender/**', (r) => r.fulfill({ contentType: 'text/javascript', body: `(${castSdkScript.toString()})();` }));
+export async function fakeCastSdk(page: Page, o: { queue?: boolean } = {}) {
+  await page.route('https://www.gstatic.com/cv/js/sender/**', (r) => r.fulfill({ contentType: 'text/javascript', body: `(${castSdkScript.toString()})(${JSON.stringify({ queue: Boolean(o.queue) })});` }));
   type Fake = { start(): void; end(): void; finish(): void; nearEnd(): void };
   const ready = () => page.waitForFunction(() => Boolean((window as unknown as { __castFake?: unknown }).__castFake));
   const run = async (fn: keyof Fake) => {

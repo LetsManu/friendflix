@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { tr } from '#lib/i18n';
-import { applePlatform, nowLine, remoteLayout, scrubberTarget, segmentMarks, statusOf, timeLine, volumeLine } from './remotescreen';
+import { applePlatform, nowLine, upNextLine, upNextOf, remoteLayout, scrubberTarget, segmentMarks, statusOf, timeLine, volumeLine } from './remotescreen';
 
 const tf = tr;
 const base = { kind: 'chromecast' as const, device: 'Wohnzimmer-TV' };
@@ -92,5 +92,31 @@ describe('remote screen: the line under the title', () => {
   it('film: year and runtime', () => {
     expect(nowLine({ isEpisode: false, subtitle: '' }, { name: 'F', year: 2023, runtimeTicks: 112 * 600_000_000 }, tf)).toBe('2023 \u00b7 1 Std. 52 Min.');
     expect(nowLine({ isEpisode: false, subtitle: '' }, { name: 'F' }, tf)).toBe('');
+  });
+});
+
+describe('remote screen: up next', () => {
+  const next = (startsAt: number | null) => ({ itemId: 'e5', label: 'S1:E5 \u00b7 Wrenfield Pier', startsAt });
+  it('upNextLine: countdown, by itself, waits', () => {
+    expect(upNextLine({ kind: 'chromecast', autoplay: true, next: next(10_000) }, 3_500, tf)).toBe('Startet in 7 s');
+    expect(upNextLine({ kind: 'chromecast', autoplay: true, next: next(null) }, 0, tf)).toBe('Startet von selbst auf dem Fernseher.');
+    expect(upNextLine({ kind: 'chromecast', autoplay: false, next: next(null) }, 0, tf)).toBe('Startet, wenn du es willst.');
+  });
+  it('upNextLine: a countdown outranks the switch (it runs only while autoplay is on)', () => {
+    expect(upNextLine({ kind: 'chromecast', autoplay: false, next: next(5_000) }, 0, tf)).toBe('Startet in 5 s');
+    expect(upNextLine({ kind: 'chromecast', autoplay: true, next: next(0) }, 4_000, tf)).toBe('Startet in 0 s');
+  });
+  it('upNextLine: AirPlay adds the lock sentence as a second one', () => {
+    expect(upNextLine({ kind: 'airplay', autoplay: true, next: next(null) }, 0, tf)).toBe('Startet von selbst auf dem Fernseher. Ist das iPhone gesperrt, startet sie beim Entsperren.');
+    expect(upNextLine({ kind: 'airplay', autoplay: true, next: next(10_000) }, 0, tf)).toBe('Startet in 10 s. Ist das iPhone gesperrt, startet sie beim Entsperren.');
+    expect(upNextLine({ kind: 'airplay', autoplay: false, next: next(null) }, 0, tf)).toBe('Startet, wenn du es willst. Ist das iPhone gesperrt, startet sie beim Entsperren.');
+  });
+  it('upNextOf: episodes, from the credits or after the end; never films', () => {
+    const n = next(null);
+    expect(upNextOf({ isEpisode: true, state: 'playing', next: n })).toBe(n);
+    expect(upNextOf({ isEpisode: true, state: 'ended', next: n })).toBe(n);
+    expect(upNextOf({ isEpisode: true, state: 'playing', next: undefined })).toBeNull();
+    expect(upNextOf({ isEpisode: false, state: 'playing', next: n })).toBeNull();
+    expect(upNextOf({ isEpisode: true, state: 'reconnect', next: n })).toBeNull();
   });
 });

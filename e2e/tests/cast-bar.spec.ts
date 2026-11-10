@@ -160,14 +160,14 @@ test('episode end on the TV while the watch page is open: its next card counts d
   expect(infos).toBe(0);
 });
 
-test('closing the next card on the watch page stops the TV countdown', async ({ page, api: _api }) => {
+test('switching autoplay off on the watch page stops the TV countdown', async ({ page, api: _api }) => {
   const { sdk, sessions } = await castOnWatch(page, { id: episodes[0]!.id });
   await nextAfterFirst(page);
   await sdk.nearEnd();
   await expect.poll(() => page.getByRole('slider', { name: 'Position auf dem Fernseher' }).evaluate((el) => Number(el.getAttribute('aria-valuemax')) - Number(el.getAttribute('aria-valuenow')))).toBeLessThan(10);
   await sdk.finish();
   const card = page.getByRole('region', { name: 'Als Nächstes' });
-  await card.getByRole('button', { name: 'Abbrechen' }).click();
+  await card.getByRole('switch', { name: 'Nächste Folge automatisch abspielen' }).click();
   // the countdown stops; the episode stays offered (Play now), nothing starts by itself
   await expect(card).not.toContainText(/Startet in \d+ s/);
   await expect(card.getByRole('button', { name: 'Jetzt abspielen' })).toBeVisible();

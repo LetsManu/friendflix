@@ -30,12 +30,28 @@ async function clientNav(page: Page, path: string) {
 /** GET /api/items/{id}/next: episode 2 follows episode 1 */
 export const nextAfterFirst = (page: Page) => page.route('**/api/items/*/next', (r) => r.fulfill({ json: { item: r.request().url().includes(episodes[0]!.id) ? episodes[1] : null } }));
 
-/** Chromecast: episode 1 cast from its watch page, which stays open as the remote */
-export async function chromecastRemote(page: Page, o: { fail?: () => boolean } = {}) {
+/** the title's tracks (two audio, one subtitle) as the playback info offers them */
+const TRACKS = {
+  subtitles: [{ index: 3, title: 'Deutsch (SDH)', language: 'deu' }],
+  audioTracks: [{ index: 1, title: 'Deutsch', language: 'deu', isDefault: true }, { index: 2, title: 'English', language: 'eng', isDefault: false }],
+};
+/** GET /api/playback/info of the direct-play mock, with the tracks */
+const infoWithTracks = (page: Page) => page.route('**/api/playback/info', (r) => r.fulfill({ json: {
+  directUrl: '/media/p1test.webm', hlsUrl: '/media/p1test.webm', resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: 'ps1', maxBitrate: 60_000_000, roleMaxBitrate: 60_000_000, ...TRACKS,
+} }));
+
+/**
+ * Chromecast: episode 1 cast from its watch page, which stays open as the remote. `queue`: the receiver accepts a queued next
+ * episode (the engine queues episode 2 at the first position update); `tracks`: the title has two audio tracks and a subtitle.
+ * Returns the SDK fake plus `sessions` (POST /api/cast/session bodies) and `deleted` (revoked castIds).
+ */
+export async function chromecastRemote(page: Page, o: { fail?: () => boolean; queue?: boolean; tracks?: boolean } = {}) {
   await mockPlayer(page);
+  if (o.tracks) await infoWithTracks(page);
+  if (o.queue) await nextAfterFirst(page); // before the cast: the engine asks for the queue at the first position update
   await castOn(page);
-  const sdk = await fakeCastSdk(page);
-  await castSessions(page, o);
+  const sdk = await fakeCastSdk(page, { queue: o.queue });
+  const tokens = await castSessions(page, o);
   await page.goto('/');
   await page.waitForLoadState('networkidle');
   await clientNav(page, '/watch/' + episodes[0]!.id);
@@ -43,15 +59,19 @@ export async function chromecastRemote(page: Page, o: { fail?: () => boolean } =
   await sdk.start();
   await expect(page.getByTestId('cast-active')).toContainText('Wird auf Wohnzimmer-TV abgespielt');
   await nextAfterFirst(page);
-  return sdk;
+  return Object.assign(sdk, tokens);
 }
 
 /** AirPlay: episode 1 sent to the TV with the player's AirPlay button; the watch page stays the remote */
-export async function airplayRemote(page: Page) {
+export async function airplayRemote(page: Page, o: { tracks?: boolean } = {}) {
   await stubAirPlay(page, { pickTv: true });
   await mockPlayer(page);
   await castOn(page);
   await mockHls(page);
+  if (o.tracks) await page.route('**/api/playback/info', (r) => r.fulfill({ json: {
+    resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: 'ps1', roleMaxBitrate: 20_000_000, ...TRACKS,
+    hlsUrl: '/media/hls/4000000/out.m3u8', maxBitrate: 4_000_000, transcodeReason: 'network',
+  } }));
   await castSessions(page);
   await page.goto('/');
   await page.waitForLoadState('networkidle');

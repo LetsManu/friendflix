@@ -9,7 +9,7 @@
   import { createEventDispatcher, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { fade } from 'svelte/transition';
-  import { api, cachedItem, fmtClock, img } from '#lib/api';
+  import { api, cachedItem, fmtClock } from '#lib/api';
   import { castSetVolume, castState, castToggleMute } from '#lib/cast';
   import { segmentShown, serverCaps } from '#lib/capabilities';
   import Icon from '#lib/Icon.svelte';
@@ -17,10 +17,12 @@
   import type { Segment } from '#lib/player/nextup';
   import { motionAllowed } from '#lib/preview';
   import { confirm } from '#lib/ui/confirm';
-  import { nextSecondsLeft } from './bar';
   import { castEngine, castSession } from './engine';
+  import { HINT_SEEN_KEY } from './resume';
   import { castBackdrops, castThumbs, deviceLabel, playingLine } from './remoteview';
-  import { applePlatform, nowLine, remoteLayout, scrubberTarget, segmentMarks, statusOf, timeLine, volumeLine } from './remotescreen';
+  import { applePlatform, nowLine, remoteLayout, scrubberTarget, segmentMarks, statusOf, timeLine, upNextLine, upNextOf, volumeLine } from './remotescreen';
+  import TrackChips from './TrackChips.svelte';
+  import UpNextCard from './UpNextCard.svelte';
 
   const dispatch = createEventDispatcher<{ close: void; pick: void }>();
 
@@ -112,15 +114,21 @@
   // ---- intro / recap skip ----
   $: skip = live ? s?.skip ?? null : null;
 
-  // ---- next episode (the card's countdown ticks while it runs) ----
-  $: next = s && (s.state === 'playing' || s.state === 'ended') ? s.next ?? null : null;
-  let now = Date.now(), tick: ReturnType<typeof setInterval> | undefined;
-  $: counting = next?.startsAt != null;
-  $: if (counting && !tick) { now = Date.now(); tick = setInterval(() => (now = Date.now()), 250); } else if (!counting && tick) { clearInterval(tick); tick = undefined; }
-  onDestroy(() => clearInterval(tick));
-  $: secs = next ? nextSecondsLeft(next.startsAt, now) : null;
-  $: nextLine = secs !== null ? $t('player.castRemote.startsIn', { n: secs }) : $t('player.castRemote.waits');
-  let unImgFailed = '';
+  // ---- next episode: the card (UpNextCard) tells; here it is announced once, with its start time, not every second ----
+  $: next = s ? upNextOf(s) : null;
+  let said = '', saidFor = '';
+  $: if (s && next && next.itemId !== saidFor) { saidFor = next.itemId; said = `${tr('player.castRemote.upNext')}: ${next.label}. ${upNextLine(s, Date.now(), tr)}`; } else if (!next && saidFor) { saidFor = ''; said = ''; }
+
+  // ---- first-use hint (Chromecast: the cast outlives this tab). Dismissal is remembered per browser; the row fades and keeps its height for this visit ----
+  const seenAtOpen = (() => { try { return localStorage.getItem(HINT_SEEN_KEY) === '1'; } catch { return false; } })();
+  let hintOff = false;
+  function dismissHint() {
+    hintOff = true;
+    try { localStorage.setItem(HINT_SEEN_KEY, '1'); } catch { /* private mode: it shows again next time */ }
+    // the focused button fades away with its row: the focus goes to the title panel's next stop
+    (document.querySelector('.rs .chip') as HTMLElement | null)?.focus();
+  }
+  $: hasChips = s ? s.audioTracks.length > 0 || (!air && s.subtitles.length > 0) : false;
 </script>
 
 {#if s && tl && st}
@@ -129,6 +137,7 @@
     {#if bgs[bgI]}<img class="bg" src={bgs[bgI]} alt="" aria-hidden="true" on:error={() => bgI++} />{/if}
     <div class="shade" aria-hidden="true"></div>
 
+    <p class="sr-only" role="status" aria-live="polite">{said}</p>
     <div class="wrap">
       <div class="top" data-testid="cast-row">
         <button type="button" class="frost-btn round close" aria-label={$t('player.castRemote.close')} title={$t('player.castRemote.close')} on:click={() => dispatch('close')}>
@@ -153,27 +162,18 @@
             <p class="eyebrow">{playingLine(s, $t)}</p>
             <h1 class="title" id="rs-title">{s.title}</h1>
             {#if line}<p class="sub">{line}</p>{/if}
+            {#if !air && !seenAtOpen}
+              <div class="hint" class:off={hintOff} inert={hintOff}>
+                <p>{$t('player.castRemote.hint')}</p>
+                <button type="button" class="hx" aria-label={$t('player.castRemote.hintDismiss')} title={$t('player.castRemote.hintDismiss')} on:click={dismissHint}><Icon name="x" size={18} /></button>
+              </div>
+            {/if}
           </div>
         </section>
 
         {#if s.isEpisode}
           <div class="unslot">
-            {#if next}
-              <section class="un frost frost-safe frost-panel" aria-label={$t('player.castRemote.upNext')} transition:fade={{ duration: motionAllowed() ? 200 : 0 }}>
-                <div class="unthumb">
-                  {#if unImgFailed !== next.itemId}<img src={img(next.itemId, 320)} alt="" loading="lazy" on:error={() => (unImgFailed = next?.itemId ?? '')} />{:else}<span class="ph"><Icon name="film" size={26} /></span>{/if}
-                </div>
-                <div class="untxt">
-                  <p class="eyebrow">{$t('player.castRemote.upNext')}</p>
-                  <b class="ell unt">{next.label}</b>
-                  <span class="mut">{nextLine}</span>
-                </div>
-                <div class="unacts">
-                  {#if secs !== null}<button type="button" class="frost-btn" on:click={() => castEngine.cancelNext()}>{$t('common.cancel')}</button>{/if}
-                  <button type="button" class="frost-btn go" on:click={() => void castEngine.next()}><Icon name="play" size={18} />{$t('player.castRemote.playNow')}</button>
-                </div>
-              </section>
-            {/if}
+            {#if next}<div class="unfx" transition:fade={{ duration: motionAllowed() ? 200 : 0 }}><UpNextCard session={s} compact={phone} /></div>{/if}
           </div>
         {/if}
       </div>
@@ -212,6 +212,7 @@
         </div>
 
         <div class="ctrl">
+          {#if hasChips}<div class="cl"><TrackChips session={s} airplay={air} icons={w >= 1200} /></div>{/if}
           <div class="tp">
             {#if phone && !air}
               <button type="button" class="tb mute" aria-pressed={muted} aria-label={$t(muted ? 'player.castRemote.unmute' : 'player.castRemote.mute')} on:click={castToggleMute}>
@@ -256,7 +257,6 @@
   .shade { position: absolute; inset: 0; background: linear-gradient(rgba(0, 0, 0, .55), rgba(0, 0, 0, .25) 40%, rgba(0, 0, 0, .8)); pointer-events: none; }
   .wrap { position: relative; width: 100%; max-width: 1100px; margin: 0 auto; flex: 1 0 auto; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
   .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mut { color: rgba(255, 255, 255, .72); }
   .eyebrow { margin: 0; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #ff8aa0; }
 
   /* top row: close, device chip (truncates), Stop */
@@ -273,7 +273,7 @@
   .stacked .grid { grid-template-columns: minmax(0, 660px); }
   .now { display: flex; gap: 20px; align-items: center; padding: 18px; min-width: 0; }
   .thumb { flex: 0 0 min(42%, 280px); aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #1c2228; display: grid; place-items: center; }
-  .thumb img, .unthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .ph { color: #9aa4ad; }
   .txt { min-width: 0; display: grid; gap: 6px; }
   .title { margin: 0; font-size: clamp(28px, 3.4vw, 48px); line-height: 1.08; font-weight: 800; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -282,19 +282,20 @@
   .phone .title { font-size: 34px; }
 
   /* the up-next slot keeps its room (episodes), the card fades in (opacity only) */
-  .unslot { min-height: 156px; }
+  .unslot { min-height: 214px; }
+  .phone .unslot { min-height: 188px; }
+  .unfx { display: block; }
   .wide .unslot { min-height: 0; }
-  .un { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 4px 14px; align-items: center; padding: 14px; }
-  .unthumb { grid-row: 1; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: #1c2228; display: grid; place-items: center; }
-  .untxt { display: grid; gap: 2px; min-width: 0; }
-  .unt { font-size: 1rem; }
-  .unacts { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: nowrap; margin-top: 6px; }
-  .unacts .go { flex: 1 1 auto; }
-  .unacts :is(.go, .frost-btn) { white-space: nowrap; }
-  .phone .unacts .frost-btn { flex: 1 1 0; min-width: 0; }
   /* phone: the card docks under the controls, above the home indicator */
   .phone .grid { display: contents; }
   .phone .top { order: 0; } .phone .now { order: 1; } .phone .mid { order: 3; } .phone .cp { order: 4; } .phone .unslot { order: 5; }
+
+  /* first-use hint inside the panel: fades by opacity and keeps its room */
+  .hint { display: flex; align-items: center; gap: 8px; margin-top: 4px; transition: opacity 200ms ease; }
+  .hint p { margin: 0; font-size: .88rem; color: rgba(255, 255, 255, .8); }
+  .hint.off { opacity: 0; pointer-events: none; }
+  .hx { flex: none; width: 44px; height: 44px; padding: 0; border-radius: 50%; background: transparent; color: #fff; display: inline-grid; place-items: center; }
+  .hx:hover:not(:disabled) { background: rgba(255, 255, 255, .16); }
 
   /* status + skip: one reserved row above the control panel (nothing below it moves when either shows) */
   .mid { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; margin-top: auto; }
@@ -331,6 +332,7 @@
   .times { display: flex; justify-content: space-between; font-size: .85rem; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, .78); margin-top: -4px; }
 
   .ctrl { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; }
+  .cl { grid-column: 1; justify-self: start; min-width: 0; }
   .tp { grid-column: 2; display: flex; align-items: center; justify-content: center; gap: 12px; }
   .vol { grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 8px; min-width: 0; }
   .tb { width: 56px; height: 56px; min-height: 44px; padding: 0; border-radius: 50%; background: transparent; color: #fff; display: inline-grid; place-items: center; transition: transform var(--t-fast), opacity var(--t-fast), background var(--t-fast); }
@@ -354,6 +356,8 @@
   /* stacked and phone: the transport above, the volume row below */
   .stacked .ctrl, .phone .ctrl { grid-template-columns: 1fr; justify-items: center; }
   .stacked .tp, .phone .tp { grid-column: 1; }
+  .stacked .cl, .phone .cl { grid-column: 1; grid-row: 3; justify-self: stretch; }
+  .phone .cl { width: 100%; }
   .stacked .vol, .phone .vol { grid-column: 1; justify-self: center; }
   .phone .cp { padding: 4px 14px 12px; }
   .phone .tp { width: 100%; display: grid; grid-template-columns: 1fr 1fr 76px 1fr 1fr; justify-items: center; gap: 0; }

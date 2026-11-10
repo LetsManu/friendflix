@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { noHorizontalOverflow } from '../helpers.js';
 import { expect, test } from '../fixtures.js';
+import { episodes } from '../mocks/fixtures.js';
 import { airplayRemote, chromecastRemote, dunmoor, rowFits, SHOTS, targetsOk } from './cast-remote-setup.js';
 
 /** The watch page as the TV's remote on desktop (Dunmoor S1 E4 on Wohnzimmer-TV). */
@@ -97,6 +98,91 @@ test('Stop asks first', async ({ page, api: _api }) => {
   await expect.poll(async () => (await sdk.calls()).includes('endCurrentSession')).toBe(true);
 });
 
+test('up next card plays now and the switch stops autoplay', async ({ page, api: _api }) => {
+  const sdk = await chromecastRemote(page, { queue: true });
+  await expect.poll(async () => (await sdk.calls()).includes('queueInsert')).toBe(true); // episode 2 waits on the receiver
+  await sdk.nearEnd(); // the credits
+  const card = page.getByRole('region', { name: 'Als Nächstes' });
+  await expect(card).toContainText('S1:E5 · Wrenfield Pier');
+  await expect(card).toContainText(/Startet in \d+ s/);
+  const sw = card.getByRole('switch', { name: 'Nächste Folge automatisch abspielen' });
+  await expect(sw).toHaveAttribute('aria-checked', 'true');
+  await sw.click();
+  await expect(sw).toHaveAttribute('aria-checked', 'false');
+  await expect(card).toContainText('Startet, wenn du es willst.');
+  await expect.poll(async () => (await sdk.calls()).some((c) => c.startsWith('queueRemove:'))).toBe(true); // off: the queued episode leaves the receiver
+  await card.getByRole('button', { name: 'Jetzt abspielen' }).click();
+  await expect.poll(() => sdk.sessions.filter((b) => !b.next).map((b) => b.itemId)).toEqual([episodes[0]!.id, episodes[1]!.id]);
+  await expect(page.getByRole('region', { name: 'Dunmoor' })).toContainText('Wrenfield Pier');
+});
+
+test('the Next button plays the next episode', async ({ page, api: _api }) => {
+  const sdk = await chromecastRemote(page);
+  await sdk.nearEnd();
+  await expect(page.getByRole('region', { name: 'Als Nächstes' })).toBeVisible();
+  await page.getByRole('button', { name: 'Nächste Folge', exact: true }).click();
+  await expect.poll(() => sdk.sessions.filter((b) => !b.next).map((b) => b.itemId)).toEqual([episodes[0]!.id, episodes[1]!.id]);
+});
+
+test('audio chip opens a keyboard menu', async ({ page, api: _api }) => {
+  const sdk = await chromecastRemote(page, { tracks: true });
+  const chip = page.getByRole('button', { name: 'Audio: Deutsch' });
+  await expect(page.getByRole('button', { name: 'Untertitel: Aus' })).toBeVisible();
+  await chip.click();
+  const menu = page.getByRole('menu', { name: 'Audio' });
+  await expect(menu).toBeVisible();
+  await expect(chip).toHaveAttribute('aria-expanded', 'true');
+  await expect(menu.getByRole('menuitemradio', { name: 'Deutsch' })).toBeFocused(); // the current track
+  await expect(menu.getByRole('menuitemradio', { name: 'Deutsch' })).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(chip).toBeFocused();
+  await chip.click();
+  await page.keyboard.press('ArrowDown');
+  await expect(menu.getByRole('menuitemradio', { name: 'English' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => sdk.sessions.filter((b) => b.audioIndex === 2)).toHaveLength(1); // a new token with that track
+  await expect(page.getByRole('button', { name: 'Audio: English' })).toBeFocused();
+});
+
+test('subtitles chip switches the TV\'s track', async ({ page, api: _api }) => {
+  const sdk = await chromecastRemote(page, { tracks: true });
+  await page.getByRole('button', { name: 'Untertitel: Aus' }).click();
+  await page.getByRole('menuitemradio', { name: 'Deutsch (SDH)' }).click();
+  await expect(page.getByRole('button', { name: 'Untertitel: Deutsch (SDH)' })).toBeVisible();
+  expect(await sdk.calls()).toContain('editTracksInfo');
+});
+
+test('airplay: only the Audio chip', async ({ page, api: _api }) => {
+  await airplayRemote(page, { tracks: true });
+  const screen = page.getByTestId('airplay-active');
+  await expect(screen.getByRole('button', { name: 'Audio: Deutsch' })).toBeVisible();
+  await expect(screen.getByRole('button', { name: /^Untertitel/ })).toHaveCount(0);
+});
+
+test('hint is dismissed for good', async ({ page, api: _api }) => {
+  await chromecastRemote(page);
+  const hint = page.locator('.hint');
+  await expect(hint).toContainText('Das ist deine Fernbedienung. Du kannst diesen Tab schließen, der Fernseher spielt weiter.');
+  const h = (await hint.boundingBox())!.height;
+  await page.getByRole('button', { name: 'Hinweis ausblenden' }).click();
+  await expect(hint).toHaveCSS('opacity', '0'); // faded, its room stays for this visit
+  expect((await hint.boundingBox())!.height).toBe(h);
+  expect(await page.evaluate(() => localStorage.getItem('ff-cast-hint-seen'))).toBe('1');
+  // the remote opened again (attached, no new session): no hint
+  await page.getByRole('button', { name: 'Fernbedienung schließen' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.evaluate((id) => { const a = document.createElement('a'); a.href = '/watch/' + id; document.body.appendChild(a); a.click(); a.remove(); }, episodes[0]!.id);
+  await expect(page.getByTestId('cast-active')).toBeVisible();
+  await expect(page.locator('.hint')).toHaveCount(0);
+});
+
+test('airplay has no hint (it cannot outlive the tab)', async ({ page, api: _api }) => {
+  await airplayRemote(page);
+  await expect(page.getByTestId('airplay-active')).toBeVisible();
+  await expect(page.locator('.hint')).toHaveCount(0);
+});
+
 test.describe('1024 px', () => {
   test.use({ viewport: { width: 1024, height: 800 } });
   test('stacked layout at 1024 px has no overlap and no horizontal scroll', async ({ page, api: _api }) => {
@@ -129,13 +215,18 @@ test.describe('screenshots', () => {
   test.skip(!process.env.CAST_SHOTS, 'only with CAST_SHOTS=1');
   test.use({ viewport: { width: 1440, height: 900 } });
   test('desktop: playing, paused, connecting, AirPlay, up next', async ({ page, api: _api }) => {
-    const sdk = await chromecastRemote(page);
+    const sdk = await chromecastRemote(page, { tracks: true });
     await page.waitForTimeout(800);
     await page.screenshot({ path: `${SHOTS}/desktop-playing.png` });
     await page.getByRole('button', { name: 'Pause', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Abspielen', exact: true })).toBeVisible();
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${SHOTS}/desktop-paused.png` });
+    await page.getByRole('button', { name: 'Audio: Deutsch' }).click();
+    await expect(page.getByRole('menu', { name: 'Audio' })).toBeVisible();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/desktop-menu.png` });
+    await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Abspielen', exact: true }).click();
     await sdk.nearEnd();
     await expect(page.getByRole('region', { name: 'Als Nächstes' })).toContainText(/Startet in \d+ s/);
@@ -149,7 +240,7 @@ test.describe('screenshots', () => {
     await page.screenshot({ path: `${SHOTS}/desktop-connecting.png` });
   });
   test('desktop: AirPlay', async ({ page, api: _api }) => {
-    await airplayRemote(page);
+    await airplayRemote(page, { tracks: true });
     await page.waitForTimeout(800);
     await page.screenshot({ path: `${SHOTS}/desktop-airplay.png` });
   });

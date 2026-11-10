@@ -56,17 +56,46 @@ test('AirPlay remote shows the volume hint and no volume slider', async ({ page,
   expect(Math.abs(pause.x + pause.width / 2 - page.viewportSize()!.width / 2)).toBeLessThanOrEqual(2); // the empty slot keeps Pause centred
 });
 
+test('Play now never wraps', async ({ page, api: _api }) => {
+  const sdk = await chromecastRemote(page);
+  await sdk.nearEnd();
+  const card = page.getByRole('region', { name: 'Als Nächstes' });
+  const go = card.getByRole('button', { name: 'Jetzt abspielen' });
+  await expect(go).toBeVisible();
+  expect((await go.boundingBox())!.height).toBeLessThanOrEqual(44);
+  await expect(card.locator('.unt')).toHaveCSS('text-overflow', 'ellipsis');
+  await expect(card.getByRole('switch', { name: 'Nächste Folge automatisch abspielen' })).toBeVisible();
+  await targetsOk(page);
+  expect(await noHorizontalOverflow(page)).toBe(true);
+});
+
+test('the chips share one row; their menus stay inside the screen', async ({ page, api: _api }) => {
+  await chromecastRemote(page, { tracks: true });
+  const vw = page.viewportSize()!.width;
+  const subs = page.getByRole('button', { name: 'Untertitel: Aus' });
+  await subs.click();
+  const box = (await page.getByRole('menu', { name: 'Untertitel' }).boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(vw);
+  await targetsOk(page);
+});
+
 test.describe('screenshots', () => {
   test.skip(!process.env.CAST_SHOTS, 'only with CAST_SHOTS=1');
   test.use({ deviceScaleFactor: 1 });
   test('phone: playing, paused, up next', async ({ page, api: _api }) => {
-    const sdk = await chromecastRemote(page);
+    const sdk = await chromecastRemote(page, { tracks: true });
     await page.waitForTimeout(800);
     await page.screenshot({ path: `${SHOTS}/phone-playing.png` });
     await page.getByRole('button', { name: 'Pause', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Abspielen', exact: true })).toBeVisible();
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${SHOTS}/phone-paused.png` });
+    await page.getByRole('button', { name: 'Audio: Deutsch' }).click();
+    await expect(page.getByRole('menu', { name: 'Audio' })).toBeVisible();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/phone-menu.png` });
+    await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Abspielen', exact: true }).click();
     await sdk.nearEnd();
     await expect(page.getByRole('region', { name: 'Als Nächstes' })).toContainText(/Startet in \d+ s/);
@@ -80,7 +109,7 @@ test.describe('screenshots', () => {
     await page.screenshot({ path: `${SHOTS}/phone-connecting.png` });
   });
   test('phone: AirPlay', async ({ page, api: _api }) => {
-    await airplayRemote(page);
+    await airplayRemote(page, { tracks: true });
     await page.waitForTimeout(800);
     await page.screenshot({ path: `${SHOTS}/phone-airplay.png` });
   });

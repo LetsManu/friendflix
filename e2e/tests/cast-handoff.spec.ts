@@ -251,7 +251,7 @@ test('airplay: reopening the cast title attaches to the engine element', async (
   expect(infos).toBe(0);
 });
 
-test('airplay: the reopened remote offers "change device"', async ({ page, api: _api }) => {
+test('airplay: the reopened remote offers the session\'s audio tracks and "change device"', async ({ page, api: _api }) => {
   await stubAirPlay(page, { pickTv: true });
   await mockPlayer(page);
   await castOn(page);
@@ -261,7 +261,7 @@ test('airplay: the reopened remote offers "change device"', async ({ page, api: 
     audioTracks: [{ index: 1, title: 'Deutsch', language: 'deu', isDefault: true }, { index: 2, title: 'English', language: 'eng', isDefault: false }],
     hlsUrl: '/media/hls/4000000/out.m3u8', maxBitrate: 4_000_000, transcodeReason: 'network',
   } }));
-  await castSessions(page);
+  const { sessions } = await castSessions(page);
   await openWatch(page);
   await airPlayToTv(page);
   await leaveWatch(page);
@@ -271,6 +271,11 @@ test('airplay: the reopened remote offers "change device"', async ({ page, api: 
   const picks0 = await picks(page);
   await box.getByRole('button', { name: 'Läuft über AirPlay, Fernseher wechseln' }).click();
   expect(await picks(page)).toBe(picks0 + 1); // the engine's controller opened the picker inside the tap
+  await box.getByRole('button', { name: 'Audio: Deutsch' }).click();
+  await expect(box.getByRole('menuitemradio', { name: 'Deutsch (SDH)' })).toHaveCount(0); // AirPlay: audio only
+  await box.getByRole('menuitemradio', { name: 'English' }).click();
+  await expect.poll(() => sessions.length).toBe(2); // a new token with that track for the TV
+  expect(sessions[1]).toMatchObject({ itemId: MOVIE.id, audioIndex: 2, via: 'airplay' });
 });
 
 test.describe('party', () => {
