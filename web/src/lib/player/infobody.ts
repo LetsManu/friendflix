@@ -20,22 +20,31 @@ export interface PlaybackDto {
   audioIndex?: number;
   audioTracks: Array<{ index: number; title: string; isDefault: boolean; language?: string }>;
   subtitles: Array<{ index: number; title: string; url: string; language?: string; isDefault: boolean }>;
+  /** what the server planned for the HLS stream (absent on direct play, Plex and old servers): fixed codes only */
+  delivery?: StreamDelivery;
+}
+/** backend StreamDelivery: the picture / sound the HLS stream carries and why (`videoCodec` is the output codec, `channels` the output channels) */
+export interface StreamDelivery {
+  video: 'copy' | 'h264' | 'hevc'; videoCodec: 'h264' | 'hevc'; audio: 'copy' | 'stereo' | 'surround'; audioCodec: string; channels: number; why: string[];
 }
 
 export type ReasonHint = 'network' | 'manual';
-export interface InfoBody { itemId: string; startTicks?: number; audioIndex?: number; maxBitrate?: number; reasonHint: ReasonHint; audioLang?: string; caps?: ClientCapsBody }
+export interface InfoBody { itemId: string; startTicks?: number; audioIndex?: number; maxBitrate?: number; reasonHint: ReasonHint; audioLang?: string; caps?: ClientCapsBody;
+  /** the one automatic fallback: which feature the device gave up, and the play session that failed (the server counts HEVC failures) */
+  fellBack?: 'hevc' | 'surround' | 'both'; prevPs?: string }
 
 /** seconds -> Jellyfin ticks (same rounding as secToTicks in lib/api) */
 const ticks = (sec: number) => Math.floor(sec * 10_000_000);
 
 /** bps = Infinity asks for the original (no maxBitrate); undefined fields are left out, like JSON.stringify does */
-export function playbackInfoBody(o: { itemId: string; startSec?: number; audioIndex?: number; bps: number; hint: ReasonHint; audioLang?: string; caps?: ClientCapsBody | null }): InfoBody {
+export function playbackInfoBody(o: { itemId: string; startSec?: number; audioIndex?: number; bps: number; hint: ReasonHint; audioLang?: string; caps?: ClientCapsBody | null; fellBack?: InfoBody['fellBack']; prevPs?: string }): InfoBody {
   const b: InfoBody = { itemId: o.itemId, reasonHint: o.hint };
   if (o.startSec !== undefined) b.startTicks = ticks(o.startSec);
   if (o.audioIndex !== undefined) b.audioIndex = o.audioIndex;
   if (Number.isFinite(o.bps)) b.maxBitrate = o.bps;
   if (o.audioLang) b.audioLang = o.audioLang;
   if (o.caps) b.caps = o.caps;
+  if (o.fellBack) { b.fellBack = o.fellBack; if (o.prevPs) b.prevPs = o.prevPs; }
   return b;
 }
 

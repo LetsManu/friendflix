@@ -24,6 +24,7 @@ const pl: Translation<typeof de> = {
   attempt: 'Próba {n} z {max}',
   reconnected: 'Połączenie przywrócone',
   switchingTranscode: 'Przełączam na transkodowanie …',
+  switchingCompatible: 'Przełączam na strumień, który to urządzenie odtwarza',
   loading: 'Ładowanie',
   soundOff: 'Dźwięk wyłączony – naciśnij dowolny klawisz, aby go włączyć',
   noNext: 'Brak kolejnego odcinka',

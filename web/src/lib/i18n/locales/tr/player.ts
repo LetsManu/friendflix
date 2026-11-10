@@ -19,6 +19,7 @@ const tr: Translation<typeof de> = {
   attempt: 'Deneme {n} / {max}',
   reconnected: 'Bağlantı yeniden kuruldu',
   switchingTranscode: 'Dönüştürmeye geçiliyor …',
+  switchingCompatible: 'Bu cihazın oynattığı bir akışa geçiliyor',
   loading: 'Yükleniyor',
   soundOff: 'Ses kapalı – sesi açmak için herhangi bir tuşa bas',
   noNext: 'Başka bölüm yok',

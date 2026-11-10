@@ -10,6 +10,10 @@
  * - HEVC, AV1 and VP9 also need navigator.mediaCapabilities.decodingInfo to say `supported` where that API exists, and their height
  *   cap follows it (2160 when a 4K decode passes, else 1080); until the asynchronous probe has answered they are not claimed at all;
  * - HDR10 / HLG / HDR10+ only with an HDR display AND a passing 10-bit decode probe for that transfer; Dolby Vision never;
+ * - what plays INSIDE an HLS stream (`hls`: hls.js on MSE) is stricter still: MSE isTypeSupported plus the `media-source` decode probe
+ *   (HEVC at 1080p; eac3 / ac3 / aac with 6 channels). Surround and HEVC streams are never claimed before a positive answer;
+ * - the number of output channels is measured (AudioContext destination), the device's "Surround sound" switch and the sound modes force
+ *   stereo, and a failed HEVC / surround stream is remembered (`ff_devcaps_avoid`, 30 days or until the user agent changes);
  * - after a claimed format failed to start (player: a decode error, or metadata but no picture in time; then one retry as HLS), the
  *   device sends no block for 7 days or until its user agent changes: the server's fixed browser list of before applies.
  * The result is cached per device (localStorage, keyed by user agent and probe version, 7 days). No probing (no media element): null,
@@ -19,10 +23,13 @@ import { APP_VERSION } from '#lib/version/codenames';
 import { isTizenApp } from '#lib/tizen/detect';
 import { isLgApp } from '#lib/webos/detect';
 import { isFireTvApp } from '#lib/firetv/detect';
+import { getActiveProfile } from '#lib/api';
+import { fxActive, loadFx } from '#lib/player/audiofx';
 import type { ClientCapsBody } from '#lib/webos/caps';
 
 export interface DecodeQuery {
-  type: 'file';
+  /** 'file' = direct play of a file; 'media-source' = what an MSE player (hls.js) can append */
+  type: 'file' | 'media-source';
   video?: { contentType: string; width: number; height: number; bitrate: number; framerate: number; transferFunction?: string; colorGamut?: string; hdrMetadataType?: string };
   audio?: { contentType: string; channels: string; bitrate: number; samplerate: number };
 }
@@ -37,11 +44,18 @@ export type ProbeClient = 'web' | 'tizen';
 type Out = ClientCapsBody;
 
 /** bump when the claims change: cached results of an older probe are thrown away */
-export const PROBE_VERSION = 1;
+export const PROBE_VERSION = 2;
 export const CACHE_KEY = 'ff_devcaps';
 export const SAFE_KEY = 'ff_devcaps_safe';
 export const CACHE_MS = 7 * 86_400_000;
 export const SAFE_MS = 7 * 86_400_000;
+/** a failed HEVC / surround stream: `{ ua, hevc?: at, surround?: at }` */
+export const AVOID_KEY = 'ff_devcaps_avoid';
+export const AVOID_MS = 30 * 86_400_000;
+/** the device's "Surround sound" switch (player menu): '1' = stereo only */
+export const STEREO_KEY = 'ff_audio_stereo';
+/** what hls.js is asked to append: the H.264 level every browser plays, to see whether MSE works at all */
+const MSE_H264 = 'video/mp4; codecs="avc1.640028"';
 
 export const MIME = {
   h264: [
@@ -93,6 +107,9 @@ type Hdr = 'pq' | 'hlg' | 'pq+';
 const vKey = (mime: string, h: 2160 | 1080) => `${mime}@${h}`;
 const hdrKey = (mime: string, k: Hdr) => `${mime}@hdr:${k}`;
 const aKey = (mime: string) => `${mime}@6ch`;
+/** media-source queries (MSE): HEVC at 1080p, and a 6-channel audio decode per surround codec */
+const msKey = (mime: string, h?: 1080) => `${mime}@ms${h ?? '6ch'}`;
+const SURROUND_HLS = ['eac3', 'ac3', 'aac'] as const;
 
 /** all queries of one probe run: key -> query */
 export function decodeQueries(): Map<string, DecodeQuery> {
@@ -114,6 +131,11 @@ export function decodeQueries(): Map<string, DecodeQuery> {
   for (const k of SURROUND) {
     const mime = MIME.audio[k as 'ac3' | 'eac3'];
     q.set(aKey(mime), { type: 'file', audio: { contentType: mime, channels: '6', bitrate: 640_000, samplerate: 48_000 } });
+  }
+  q.set(msKey(MIME.hevcMain, 1080), { type: 'media-source', video: { contentType: MIME.hevcMain, width: 1920, height: 1080, bitrate: 8_000_000, framerate: 30 } });
+  for (const k of SURROUND_HLS) {
+    const mime = MIME.audio[k];
+    q.set(msKey(mime), { type: 'media-source', audio: { contentType: mime, channels: '6', bitrate: k === 'aac' ? 384_000 : 640_000, samplerate: 48_000 } });
   }
   return q;
 }
@@ -179,7 +201,22 @@ export function buildDeviceCaps(env: ProbeEnv, o: { client: ProbeClient; appVers
   const hdr = (k: Hdr) => env.hdrDisplay && api && decoded !== null && tenBit.some((m) => dec(hdrKey(m, k)));
   const ranges: NonNullable<Out['ranges']> = ['sdr', ...(hdr('pq') ? ['hdr10' as const] : []), ...(hdr('hlg') ? ['hlg' as const] : []), ...(hdr('pq+') ? ['hdr10plus' as const] : [])];
 
-  return { client: o.client, appVersion: o.appVersion, containers, video, audio, subtitles: [...SUBTITLES], ranges };
+  // what plays inside an HLS stream (hls.js): only with MSE; hevc also needs the file claim and (with the API) the media-source decode,
+  // surround needs the media-source 6-channel decode per codec (no API, no pending answer: no surround)
+  let hls: Out['hls'];
+  if (typeof env.isTypeSupported === 'function') {
+    const mse = (m: string) => { try { return env.isTypeSupported!(m) === true; } catch { return false; } };
+    const hv: NonNullable<Out['hls']>['video'] = [];
+    if (mse(MSE_H264)) hv.push('h264');
+    if (video.some((v) => v.codec === 'hevc') && mse(MIME.hevcMain) && (!api || dec(msKey(MIME.hevcMain, 1080)))) hv.push('hevc');
+    const ha: NonNullable<Out['hls']>['audio'] = [];
+    if (mse(MIME.audio.aac)) ha.push('aac');
+    for (const k of ['ac3', 'eac3'] as const) if (audio.includes(k) && mse(MIME.audio[k])) ha.push(k);
+    const surround = SURROUND_HLS.filter((k) => ha.includes(k) && api && dec(msKey(MIME.audio[k])));
+    if (hv.length || ha.length) hls = { video: hv, audio: ha, surround };
+  }
+
+  return { client: o.client, appVersion: o.appVersion, containers, video, audio, subtitles: [...SUBTITLES], ranges, ...(hls ? { hls } : {}) };
 }
 
 
@@ -187,7 +224,11 @@ export function buildDeviceCaps(env: ProbeEnv, o: { client: ProbeClient; appVers
 
 /** `hdr`: the screen's HDR state at probe time (a switch to an SDR screen or HDR off must not keep the HDR claims) */
 interface Cached { v: number; ua: string; at: number; hdr?: boolean; caps: Out | null }
-export interface DeviceDeps { env: ProbeEnv | null; ua: string; storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null; now: () => number; tizen: boolean;
+export interface DeviceDeps { env: ProbeEnv | null;
+  /** the output's channel count (default: AudioContext destination.maxChannelCount) */
+  channels?: () => number;
+  /** a sound mode ("Clear voices" / "Night mode") is on for the active profile (default: the player's stored preference) */
+  soundMode?: () => boolean; ua: string; storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null; now: () => number; tizen: boolean;
   /** the LG webOS or Fire TV app: it sends its own caps (webos/caps.ts appCaps), so nothing is probed and nothing waits for a probe */
   ownCaps?: boolean }
 
@@ -257,11 +298,8 @@ export function warmDeviceCaps(): Promise<void> {
   return running;
 }
 
-/**
- * The block for the next request (synchronous: the request body is built in one place, lib/player/infobody.ts): none after
- * a failure, else the probed (or cached) result, else the conservative synchronous claims while the probe still runs; null without probing.
- */
-export function deviceCaps(): Out | null {
+/** the probed (or cached, or conservative synchronous) block before the output facts are applied; null in safe mode and without probing */
+function baseCaps(): Out | null {
   const env = d().env;
   if (!env) return null;
   // after a failure: no block, so the server uses its fixed browser list of before this probe (never narrower than that); the player's
@@ -273,6 +311,94 @@ export function deviceCaps(): Out | null {
   void warmDeviceCaps();
   if (syncResult === undefined) syncResult = buildDeviceCaps(env, opts(), env.decodingInfo ? null : new Map());
   return syncResult;
+}
+
+// ---- the output: channels, the stereo choice, sound modes, the avoid memory ----
+let channels: number | undefined;
+let listening = false;
+function measureChannels(): number {
+  const AC = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
+    ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AC) return 2;
+  const ctx = new AC();
+  try { return ctx.destination.maxChannelCount; } finally { void ctx.close().catch(() => undefined); }
+}
+/** how many channels the output can play (2 when unknown or when measuring throws); measured once per page and again after a `devicechange` */
+export function outputChannels(): number {
+  if (channels !== undefined) return channels;
+  let n: number;
+  try { n = d().channels ? d().channels!() : measureChannels(); } catch { n = 2; }
+  channels = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 2;
+  if (!d().channels && !listening && typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
+    listening = true;
+    try { navigator.mediaDevices.addEventListener('devicechange', () => { channels = undefined; }); } catch { listening = false; }
+  }
+  return channels;
+}
+/** the device's "Surround sound" switch is off (stereo only) */
+export const stereoOnly = (): boolean => { try { return d().storage?.getItem(STEREO_KEY) === '1'; } catch { return false; } };
+export function setStereoOnly(on: boolean): void {
+  try { if (on) d().storage?.setItem(STEREO_KEY, '1'); else d().storage?.removeItem(STEREO_KEY); } catch { /* storage blocked: not remembered */ }
+}
+function soundModeOn(): boolean {
+  try { return d().soundMode ? d().soundMode!() : fxActive(loadFx(getActiveProfile())); } catch { return false; }
+}
+
+type AvoidRec = { ua: string; hevc?: number; surround?: number };
+/** until when each feature is left out on this device (ms timestamps); a different user agent or an old entry counts as nothing */
+export function avoidedUntil(): { hevc?: number; surround?: number } {
+  const a = read<AvoidRec>(AVOID_KEY);
+  const out: { hevc?: number; surround?: number } = {};
+  if (!a || a.ua !== d().ua) return out;
+  for (const k of ['hevc', 'surround'] as const) {
+    const at = a[k];
+    if (typeof at === 'number' && at <= d().now() && d().now() - at < AVOID_MS) out[k] = at + AVOID_MS;
+  }
+  return out;
+}
+/** an HEVC and / or surround stream did not start on this device: for 30 days (or until the user agent changes) it is not asked for again */
+export function noteHlsFailure(what: 'hevc' | 'surround' | 'both'): void {
+  const prev = read<AvoidRec>(AVOID_KEY);
+  const keep = prev && prev.ua === d().ua ? prev : { ua: d().ua };
+  const at = d().now();
+  write(AVOID_KEY, { ...keep, ...(what !== 'surround' ? { hevc: at } : {}), ...(what !== 'hevc' ? { surround: at } : {}) } satisfies AvoidRec);
+}
+
+/** the channel count the device states before the stereo choice and the sound modes apply (Tizen: 6 when its Dolby probe passed) */
+function statedChannels(c: Out): number {
+  if (c.client === 'tizen') return (c.hls?.surround.length ?? 0) > 0 ? 6 : 2;
+  const n = outputChannels();
+  return n >= 6 ? Math.min(16, n) : 2;
+}
+
+/**
+ * The block for the next request (synchronous: the request body is built in one place, lib/player/infobody.ts): none after
+ * a failure, else the probed (or cached) result, else the conservative synchronous claims while the probe still runs; null without probing.
+ * The output facts are applied here, not cached: `audioChannels` (stereo while the "Surround sound" switch is off or a sound mode is on,
+ * then also no surround codec) and the avoid memory (no hevc stream / no surround after a failed one).
+ */
+export function deviceCaps(): Out | null {
+  const c = baseCaps();
+  if (!c) return null;
+  const av = avoidedUntil();
+  const stereo = stereoOnly() || soundModeOn();
+  let hls = c.hls;
+  if (hls) hls = { ...hls, video: av.hevc ? hls.video.filter((v) => v !== 'hevc') : hls.video, surround: stereo || av.surround ? [] : hls.surround };
+  return { ...c, ...(hls ? { hls } : {}), audioChannels: stereo ? 2 : statedChannels(hls ? { ...c, hls } : c) };
+}
+
+/** what Diagnose shows (Task 4): the device's abilities before the stereo choice and the avoid memory, then those two */
+export function capsSummary(): { hevcFiles: boolean; hevcStreams: boolean; surround: string[]; channels: number; stereoChoice: boolean; soundMode: boolean; avoided: { hevc?: number; surround?: number } } {
+  const c = baseCaps();
+  return {
+    hevcFiles: Boolean(c?.video.some((v) => v.codec === 'hevc')),
+    hevcStreams: Boolean(c?.hls?.video.includes('hevc')),
+    surround: [...(c?.hls?.surround ?? [])],
+    channels: c ? statedChannels(c) : 2,
+    stereoChoice: stereoOnly(),
+    soundMode: soundModeOn(),
+    avoided: avoidedUntil(),
+  };
 }
 
 /** a direct play that relied on the probed claims did not start: for 7 days this device sends no block (an active period is not restarted) */
@@ -303,4 +429,4 @@ export function capsPending(ms = 400): Promise<void> | null {
 export const isProbedBlock = (c: { client?: string } | null | undefined): boolean => c?.client === 'web' || c?.client === 'tizen';
 
 /** tests only */
-export function _resetDeviceCaps(next: DeviceDeps | null = null): void { deps = next; probed = undefined; syncResult = undefined; running = null; }
+export function _resetDeviceCaps(next: DeviceDeps | null = null): void { deps = next; probed = undefined; syncResult = undefined; running = null; channels = undefined; }

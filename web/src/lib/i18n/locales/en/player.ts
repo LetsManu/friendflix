@@ -19,6 +19,7 @@ const en: Translation<typeof de> = {
   attempt: 'Attempt {n} of {max}',
   reconnected: 'Connection restored',
   switchingTranscode: 'Switching to transcoding …',
+  switchingCompatible: 'Switching to a stream this device plays',
   loading: 'Loading',
   soundOff: 'Sound off – press any key for sound',
   noNext: 'No next episode',

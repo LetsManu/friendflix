@@ -22,6 +22,10 @@ export interface ClientCapsBody {
   subtitles: string[];
   /** dynamic ranges the device shows (only the probing browsers state them) */
   ranges?: Array<'sdr' | 'hdr10' | 'hlg' | 'hdr10plus' | 'dovi'>;
+  /** what the device plays INSIDE an HLS stream (hls.js on MSE; Samsung / probing browsers): stricter than the direct-play lists; absent = H.264 + stereo AAC as before */
+  hls?: { video: Array<'h264' | 'hevc'>; audio: Array<'aac' | 'mp3' | 'ac3' | 'eac3'>; surround: Array<'eac3' | 'ac3' | 'aac'> };
+  /** output channels right now (an integer 1 to 16; absent counts as 2) */
+  audioChannels?: number;
 }
 
 interface Variant { profile: string; mime: string }

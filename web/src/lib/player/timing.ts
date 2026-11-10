@@ -54,6 +54,8 @@ export interface TimingReport {
   /** this start used the next episode's playback info prepared during the autoplay countdown (prefetch.ts prepareNext) */
   fromNext: boolean;
 }
+/** the server's `delivery` block as far as the session keeps it: fixed codes, no ids */
+export interface StreamOut { video: string; videoCodec: string; audio: string; audioCodec: string }
 export interface StoredTiming extends TimingReport { at: number }
 
 export const TIMING_ENDPOINT = '/api/playback/timing';
@@ -108,6 +110,7 @@ export function createTiming(now: () => number = () => performance.now()) {
   let infoAt: number | null = null, manifestAt: number | null = null, fragAt: number | null = null, frameAt: number | null = null;
   let fragBytes: number | null = null, fragDl: number | null = null;
   let seekAt: number | null = null, seeks: number[] = [], seekCount = 0, stallAt: number | null = null, stalls = 0, stallMs = 0;
+  let streamOut: StreamOut | null = null;
   let fromNext = false, trackSwitch = false, delivery: Delivery | null = null, videoCopy: boolean | null = null, soundMode: SoundMode = 'off', audioRouted = false, reconnects = 0;
   const frames = frameCounter();
   const rel = () => ms(now() - t0);
@@ -122,8 +125,10 @@ export function createTiming(now: () => number = () => performance.now()) {
     begin(isSwitch = false, isTrack = false) {
       t0 = now(); on = true; qualitySwitch = isSwitch; mode = null; bitrate = null; targetDuration = null;
       infoAt = manifestAt = fragAt = frameAt = fragBytes = fragDl = seekAt = stallAt = null; seeks = []; seekCount = 0; stalls = 0; stallMs = 0;
-      fromNext = false; trackSwitch = isTrack && !isSwitch; delivery = null; videoCopy = null; soundMode = 'off'; audioRouted = false; reconnects = 0; frames.reset();
+      fromNext = false; trackSwitch = isTrack && !isSwitch; delivery = null; videoCopy = null; streamOut = null; soundMode = 'off'; audioRouted = false; reconnects = 0; frames.reset();
     },
+    /** the server's plan for this stream (fixed codes; Task 4 reports it as video_out / audio_out) */
+    get out(): StreamOut | null { return streamOut; },
     get active() { return on; },
     /** playback info received with the requested bitrate (first answer of the session only: a retry keeps the clock) */
     info(bps?: number) { if (on && infoAt === null) { infoAt = rel(); bitrate = bps && bps > 0 ? Math.round(bps) : null; } },
@@ -131,8 +136,9 @@ export function createTiming(now: () => number = () => performance.now()) {
     /** the start used the prepared next-episode info */
     next() { if (on) fromNext = true; },
     /** how the stream is delivered: the transcode reason's guess first, the server's transcode info (videoCopy) when it answers */
-    stream(o: { reason?: string | null; videoCopy?: boolean | null }) {
+    stream(o: { reason?: string | null; videoCopy?: boolean | null; out?: StreamOut }) {
       if (!on) return;
+      if (o.out) streamOut = o.out;
       if (typeof o.videoCopy === 'boolean') videoCopy = o.videoCopy;
       delivery = deliveryOf(mode, o.reason, videoCopy) ?? delivery;
     },

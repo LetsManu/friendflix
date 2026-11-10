@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { backoffMs, decideRecovery, freshRecovery, kindOfMediaError, lowerQuality, networkStep } from './retry';
+import { avoidTarget, backoffMs, decideRecovery, freshRecovery, isCodecError, kindOfMediaError, lowerQuality, networkStep, pickLockedLevel } from './retry';
 import { AbrController } from './abr';
 import { parseVolume, stepVolume } from './volume';
 
@@ -27,6 +27,59 @@ describe('decideRecovery', () => {
     expect(decideRecovery('media', freshRecovery(), { isHls: false, canLowerQuality: true })).toEqual({ do: 'force-hls' });
   });
   it('other errors fail', () => expect(decideRecovery('other', freshRecovery(), hls)).toEqual({ do: 'fail' }));
+});
+
+describe('decideRecovery: avoid (HEVC / surround stream fallback)', () => {
+  const av = { isHls: true, canLowerQuality: true, avoidable: true, codecError: false };
+  it('a codec error avoids at once, once; then lower quality, then fail', () => {
+    const s = freshRecovery();
+    expect(decideRecovery('media', s, { ...av, codecError: true })).toEqual({ do: 'avoid' }); s.avoided = true;
+    expect(decideRecovery('media', s, { ...av, codecError: true })).toEqual({ do: 'lower-quality' }); s.loweredQuality = true;
+    expect(decideRecovery('media', s, { ...av, codecError: true })).toEqual({ do: 'fail' });
+    expect(decideRecovery('media', { ...freshRecovery(), avoided: true }, { ...av, canLowerQuality: false, codecError: true })).toEqual({ do: 'fail' });
+  });
+  it('a generic media error: recover-media, then avoid, then lower quality', () => {
+    const s = freshRecovery();
+    expect(decideRecovery('media', s, av)).toEqual({ do: 'recover-media' }); s.mediaRecovered = true;
+    expect(decideRecovery('media', s, av)).toEqual({ do: 'avoid' }); s.avoided = true;
+    expect(decideRecovery('media', s, av)).toEqual({ do: 'lower-quality' }); s.loweredQuality = true;
+    expect(decideRecovery('media', s, av)).toEqual({ do: 'fail' });
+  });
+  it('not avoidable (plain H.264 stereo stream): unchanged, a codec error still gets recoverMediaError first', () => {
+    const s = freshRecovery();
+    expect(decideRecovery('media', s, { ...av, avoidable: false, codecError: true })).toEqual({ do: 'recover-media' });
+    expect(decideRecovery('media', { ...s, mediaRecovered: true }, { ...av, avoidable: false })).toEqual({ do: 'lower-quality' });
+  });
+  it('network errors never avoid', () => { expect(decideRecovery('network', freshRecovery(), { ...av, codecError: true })).toEqual({ do: 'retry', attempt: 1, delay: 1000 }); });
+  it('a fresh state has not avoided', () => expect(freshRecovery().avoided).toBe(false));
+});
+
+describe('codec errors and the variant lock', () => {
+  it('hls.js codec error details', () => {
+    for (const d of ['bufferAddCodecError', 'bufferIncompatibleCodecsError', 'manifestIncompatibleCodecsError']) expect(isCodecError(d)).toBe(true);
+    for (const d of ['bufferStalledError', 'fragLoadError', undefined]) expect(isCodecError(d)).toBe(false);
+  });
+  it('avoidTarget: the audio buffer is surround, the video buffer hevc, anything else both; narrowed to what the stream carried', () => {
+    const both = { hevc: true, surround: true };
+    expect(avoidTarget({ sourceBufferName: 'audio' }, both)).toBe('surround');
+    expect(avoidTarget({ mimeType: 'audio/mp4;codecs=ec-3' }, both)).toBe('surround');
+    expect(avoidTarget({ sourceBufferName: 'video' }, both)).toBe('hevc');
+    expect(avoidTarget({ mimeType: 'video/mp4;codecs=hvc1.1.6.L153.B0' }, both)).toBe('hevc');
+    expect(avoidTarget({ sourceBufferName: 'audiovideo' }, both)).toBe('both');
+    expect(avoidTarget({}, both)).toBe('both');
+    expect(avoidTarget({}, { hevc: true, surround: false })).toBe('hevc');
+    expect(avoidTarget({}, { hevc: false, surround: true })).toBe('surround');
+    expect(avoidTarget({ sourceBufferName: 'audio' }, { hevc: true, surround: false })).toBe('both'); // the report does not match the plan: drop both
+  });
+  const lv = (bitrate: number, videoCodec: string | undefined) => ({ bitrate, videoCodec });
+  it('picks the highest-bitrate level of the planned codec; one level or no match: -1 (no lock)', () => {
+    const levels = [lv(8e6, 'avc1.640028'), lv(8e6, 'hvc1.1.6.L150.B0'), lv(7e6, 'hev1.1.6.L120.B0'), lv(6e6, 'avc1.4d401f')];
+    expect(pickLockedLevel(levels, true)).toBe(1);
+    expect(pickLockedLevel(levels, false)).toBe(0);
+    expect(pickLockedLevel([lv(1, 'hvc1.1')], true)).toBe(-1);
+    expect(pickLockedLevel([lv(8e6, 'avc1.640028'), lv(9e6, 'avc1.640028')], true)).toBe(-1);
+    expect(pickLockedLevel([lv(1, undefined), lv(2, 'avc1.64')], false)).toBe(1);
+  });
 });
 
 describe('helpers', () => {
