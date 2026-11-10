@@ -19,9 +19,11 @@ const DAY = 86_400_000;
 /** library items read per page of the "newest first" scan, and how many pages at most (a bulk import must not turn into a crawl) */
 const PAGE = 200;
 const MAX_PAGES = 5;
-/** series checked for "has the profile watched it" per request, and entries answered */
+/** series NOT on the Merkliste checked for "has the profile watched it" per cache miss (Merkliste series need no lookup), and entries answered */
 export const NEW_EPISODES_CANDIDATES = 60;
 export const NEW_EPISODES_MAX = 30;
+/** media-server lookups of "watched any" in flight at once */
+const WATCHED_PARALLEL = 4;
 /** cache lifetime (seconds) of one profile's answer; the key also carries the user-data version, so a watched episode shows up at once */
 export const NEW_EPISODES_TTL = 300;
 
@@ -39,7 +41,8 @@ export interface NewEpisodeEntry {
     imageTags?: ImageTags; image: boolean;
   };
 }
-interface Found extends NewEpisodeEntry { watched: boolean }
+/** `watched: null` = not checked (the series was on the Merkliste, so it needed no lookup, or it was beyond the lookup cap) */
+interface Found extends NewEpisodeEntry { watched: boolean | null }
 
 const ts = (i: ItemDto): number => (i.dateCreated ? Date.parse(i.dateCreated) : NaN);
 
@@ -90,15 +93,27 @@ export async function newEpisodes(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, user: JfUs
   const hit = await ctx.kv.get(key).catch(() => null);
   if (hit) { try { found = JSON.parse(hit) as Found[]; } catch { /* recompute */ } }
   if (!found) {
-    const groups = (await recentEpisodesBySeries(ctx, user, now)).slice(0, NEW_EPISODES_CANDIDATES);
-    const marks = await inPool(groups, 4, (g) => watchedAny(ctx, user, g.seriesId));
-    found = groups.map(({ newest: _n, ...g }, i): Found => ({ ...g, watched: marks[i]! }));
+    const groups = await recentEpisodesBySeries(ctx, user, now);
+    const listed = await listedAmong(ctx, profileId, groups.map((g) => g.seriesId));
+    // the Merkliste first (no media-server call at all), then the newest of the rest up to the cap; the cap never cuts a Merkliste show
+    const lookups = groups.filter((g) => !listed.has(g.seriesId)).slice(0, NEW_EPISODES_CANDIDATES);
+    const checked = new Map(lookups.map((g, i) => [g.seriesId, i]));
+    const marks = await inPool(lookups, WATCHED_PARALLEL, (g) => watchedAny(ctx, user, g.seriesId));
+    found = groups
+      .filter((g) => listed.has(g.seriesId) || checked.has(g.seriesId))
+      .map(({ newest: _n, ...g }): Found => ({ ...g, watched: checked.has(g.seriesId) ? marks[checked.get(g.seriesId)!]! : null }));
     await ctx.kv.set(key, JSON.stringify(found), NEW_EPISODES_TTL).catch(() => undefined);
   }
-  const listed = found.some((f) => !f.watched)
-    ? new Set((await ctx.db.query<{ item_id: string }>('select item_id from watchlist where profile_id=$1 and item_id = any($2::text[])', [profileId, found.map((f) => f.seriesId)])).rows.map((r) => r.item_id))
-    : new Set<string>();
-  return found.filter((f) => f.watched || listed.has(f.seriesId)).slice(0, NEW_EPISODES_MAX).map(({ watched: _w, ...e }) => e);
+  // the Merkliste is read live; an unchecked entry only shows while it is (still) on it
+  const listed = found.some((f) => f.watched !== true) ? await listedAmong(ctx, profileId, found.filter((f) => f.watched !== true).map((f) => f.seriesId)) : new Set<string>();
+  return found.filter((f) => f.watched === true || listed.has(f.seriesId)).slice(0, NEW_EPISODES_MAX).map(({ watched: _w, ...e }) => e);
+}
+
+/** Which of these series are on the profile's Merkliste (one query). */
+async function listedAmong(ctx: Pick<Ctx, 'db'>, profileId: string, seriesIds: string[]): Promise<Set<string>> {
+  if (!seriesIds.length) return new Set();
+  const r = await ctx.db.query<{ item_id: string }>('select item_id from watchlist where profile_id=$1 and item_id = any($2::text[])', [profileId, seriesIds]);
+  return new Set(r.rows.map((x) => x.item_id));
 }
 
 // ---------------------------------------------------------------- "Für dich neu"

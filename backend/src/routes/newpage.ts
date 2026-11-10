@@ -6,6 +6,7 @@ import type { Ctx } from '../ctx.js';
 import { NEW_EPISODE_DAYS } from '../fresh.js';
 import { FOR_YOU_DAYS, newEpisodes, newForYou } from '../newpage.js';
 import { requireUser } from '../session.js';
+import { perSession } from './discover.js';
 import { wrap } from './_shared.js';
 
 /** Routes of the "Neu & demnächst" page (the other sections come from the existing library, trending and request routes). */
@@ -16,7 +17,7 @@ export function newPageRoutes(app: FastifyInstance, ctx: Ctx) {
    * "Neue Folgen": series the profile follows (watched an episode, or on the Merkliste) with an episode added in the last 7 days.
    * One entry per series, newest first, at most 30. Library permissions and the kids age cap apply (the viewer's own media-server identity).
    */
-  app.get('/api/library/new-episodes', pre, wrap(async (req) => ({
+  app.get('/api/library/new-episodes', { ...pre, config: perSession(60) }, wrap(async (req) => ({
     windowDays: NEW_EPISODE_DAYS,
     items: await newEpisodes(ctx, req.jfUser!, req.profile!.id),
   })));

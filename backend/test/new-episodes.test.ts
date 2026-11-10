@@ -143,6 +143,61 @@ describe('GET /api/library/new-episodes (Jellyfin)', () => {
   });
 });
 
+describe('new episodes: bounded media-server work', () => {
+  const user = { jellyfin_user_id: 'u-bound', id: 'u-bound' } as never;
+  /** a stub seam: `total` series with one new episode each (newest first); counts the played-lookups and how many ran at once */
+  const seam = (total: number, playedSeries = new Set<string>()) => {
+    const st = { lookups: [] as string[], inFlight: 0, maxInFlight: 0 };
+    const jf = {
+      userDataVersion: async () => 1,
+      addedItems: async (_u: unknown, o: { start: number; limit: number }) => Array.from({ length: total }, (_, i) => ({
+        id: hex(5000 + i), name: `E${i}`, type: 'Episode', seriesId: hex(6000 + i), seriesName: `S${i}`, parentIndexNumber: 1, indexNumber: 1,
+        dateCreated: ago(1 + i / 1000), image: false,
+      })).slice(o.start, o.start + o.limit),
+      items: async (_u: unknown, o: { parentId: string }) => {
+        st.lookups.push(o.parentId);
+        st.maxInFlight = Math.max(st.maxInFlight, ++st.inFlight);
+        await new Promise((r) => setTimeout(r, 2));
+        st.inFlight--;
+        return { items: playedSeries.has(o.parentId) ? [{ id: 'x' }] : [], total: 0 };
+      },
+    };
+    return { st, ctx: { db: env.pool, kv: new MemoryKV(), jf: jf as never } };
+  };
+  const owner = async () => (await env.pool.query<{ id: string }>('select id from profiles where is_owner')).rows[0]!.id;
+
+  it('at most 60 lookups, at most 4 at a time, and the cap never cuts a Merkliste show beyond it', async () => {
+    const pid = await owner();
+    const listedSeries = hex(6000 + 150); // far beyond the 60 newest
+    await env.pool.query('delete from watchlist');
+    await env.pool.query('insert into watchlist(profile_id,user_id,item_id) select p.id, p.user_id, $1 from profiles p where p.is_owner', [listedSeries]);
+    const watched = new Set([hex(6000), hex(6059), hex(6060), hex(6100)]); // 6060 and 6100 are past the cap: never looked up
+    const { st, ctx } = seam(200, watched);
+    const out = await newEpisodes(ctx, user, pid);
+    expect(st.lookups.length).toBe(60);
+    expect(st.lookups).not.toContain(listedSeries); // the Merkliste needs no media-server call
+    expect(st.maxInFlight).toBeLessThanOrEqual(4);
+    expect(out.map((e) => e.seriesId)).toEqual([hex(6000), hex(6059), listedSeries]); // newest first
+    const n = st.lookups.length;
+    await newEpisodes(ctx, user, pid);
+    expect(st.lookups.length).toBe(n); // second answer from the cache
+  });
+
+  it('a Merkliste show that is taken off the list disappears from the cached answer, without a new lookup', async () => {
+    const pid = await owner();
+    const listedSeries = hex(6003);
+    await env.pool.query('delete from watchlist');
+    await env.pool.query('insert into watchlist(profile_id,user_id,item_id) select p.id, p.user_id, $1 from profiles p where p.is_owner', [listedSeries]);
+    const { st, ctx } = seam(10);
+    expect((await newEpisodes(ctx, user, pid)).map((e) => e.seriesId)).toEqual([listedSeries]);
+    const n = st.lookups.length;
+    expect(n).toBe(9); // the other nine were looked up, the listed one was not
+    await env.pool.query('delete from watchlist');
+    expect(await newEpisodes(ctx, user, pid)).toEqual([]);
+    expect(st.lookups.length).toBe(n);
+  });
+});
+
 describe('new episodes on the Plex path', () => {
   let p: PlexEnv;
   beforeAll(async () => { p = await plexEnv(); });
