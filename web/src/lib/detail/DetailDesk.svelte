@@ -495,6 +495,7 @@
   .play:focus-visible, .rb:focus-visible, .dback:focus-visible, .lnk:focus-visible, .tab:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
   .mslot { display: grid; gap: .6rem; padding: .3rem .4rem .4rem; }
   .mslot :global(.status), .mslot :global(.lang) { margin: 0; }
+  .mslot :global(.lm .rowbtn) { margin-inline: -.4rem; width: calc(100% + .8rem); } /* the menu row lines up with the other rows */
   .resume { display: flex; align-items: center; gap: 12px; margin: 16px 0 0; font-size: 14px; font-weight: 600; color: rgba(255, 255, 255, .9); font-variant-numeric: tabular-nums; }
   .bar { position: relative; flex: none; width: 120px; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .25); overflow: hidden; }
   .bar span { position: absolute; inset: 0; background: var(--acc); transform-origin: left center; }

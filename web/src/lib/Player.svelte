@@ -1999,7 +1999,7 @@
   @keyframes rip { from { opacity: 1; transform: scale(.7); } to { opacity: 0; transform: scale(1); } }
   .riplbl { position: absolute; top: 50%; transform: translateY(-50%); z-index: 6; pointer-events: none; display: grid; justify-items: center; gap: .1rem; text-shadow: 0 1px 6px #000; }
   .riplbl.left { left: 12%; } .riplbl.right { right: 12%; }
-  .hud { position: absolute; top: 12%; left: 50%; transform: translateX(-50%); z-index: 9; display: flex; align-items: center; gap: .6rem; padding: .55rem 1.1rem; border-radius: 999px; background: rgba(0,0,0,.72); font-weight: 600; pointer-events: none; font-variant-numeric: tabular-nums; position: absolute; overflow: hidden; }
+  .hud { position: absolute; top: 12%; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; align-items: center; gap: .6rem; padding: .55rem 1.1rem; border-radius: 999px; background: rgba(0,0,0,.72); font-weight: 600; pointer-events: none; font-variant-numeric: tabular-nums; position: absolute; overflow: hidden; }
   .hud i { position: absolute; left: 0; bottom: 0; height: 3px; width: var(--p); background: var(--acc); }
   /* .ic.lockbtn: .ic (position: relative) comes later in this sheet and would win over a plain .lockbtn */
   .ic.lockbtn { position: absolute; left: max(.8rem, var(--safe-left)); bottom: 8rem; z-index: 10; width: 48px; min-height: 48px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.5); }
@@ -2051,7 +2051,7 @@
   .airready .castbox { background: rgba(0,0,0,.72); padding: 1rem 1.4rem; border-radius: 14px; }
   .airready .airhint { opacity: .95; }
   .castbox button { pointer-events: auto; border: 1px solid #fff; padding: .6rem 1.4rem; }
-  .toast { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); background: rgba(0,0,0,.75); padding: .55rem 1.2rem; border-radius: 999px; z-index: 9; font-weight: 600; max-width: 90%; text-align: center; }
+  .toast { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); background: rgba(0,0,0,.75); padding: .55rem 1.2rem; border-radius: 999px; z-index: 10; font-weight: 600; max-width: 90%; text-align: center; }
   /* sits above the whole control bar box (its transparent gradient padding included, --ctl-h is its measured height) and on top of it in z-order, so no part of the button is covered by the bar */
   .skipbtn { position: absolute; right: calc(var(--pad-x) + var(--inset, 0px)); bottom: calc(var(--ctl-h, 7rem) + .5rem); z-index: 9; border: 1px solid #fff; padding: .7rem 1.5rem; }
   .ovl { position: absolute; inset: 0 var(--inset, 0px) auto 0; z-index: 7; pointer-events: none; transition: opacity var(--t-med); }

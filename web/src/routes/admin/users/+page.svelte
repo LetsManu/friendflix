@@ -319,8 +319,8 @@
       </svelte:fragment>
       <svelte:fragment slot="cell" let:row let:col>
         {#if col.key === 'select'}
-          <input type="checkbox" class="pick" aria-label={$t('adminPeople.users.select', { name: row.name })} checked={selected.has(row.id)} disabled={!selectable(row)}
-            on:change={(e) => toggle(row, e.currentTarget.checked)} />
+          <label class="pickhit"><input type="checkbox" class="pick" aria-label={$t('adminPeople.users.select', { name: row.name })} checked={selected.has(row.id)} disabled={!selectable(row)}
+            on:change={(e) => toggle(row, e.currentTarget.checked)} /></label>
         {:else if col.key === 'name'}
           <span class="who">
             <span class="av" style:background={avatarBg(undefined)} aria-hidden="true">{initial(row.name)}</span>
@@ -336,7 +336,7 @@
               </span>
             </span>
           </span>
-        {:else if col.key === 'email'}<span class="sub em">{row.email ?? ''}</span>
+        {:else if col.key === 'email'}<span class="sub em" title={row.email ?? undefined}>{row.email ?? ''}</span>
         {:else if col.key === 'role'}
           {#if row.role === null}<span class="sub">–</span>
           {:else}
@@ -384,14 +384,19 @@
   @media (min-width: 721px) {
     .ulist :global(th), .ulist :global(td) { padding-inline: .5rem; }
     .ulist :global(th) { white-space: normal; }
-    .rolecell { display: block; min-width: 8.5rem; }
-    .em { display: block; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+    .rolecell { display: block; min-width: 7.5rem; }
+    .ulist :global(td.primary) { min-width: 12rem; }
+    .em { display: block; max-width: 8.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
   }
   /* phone card: the selection cell is the first line, keep its box clear of the actions button (top right) */
   /* touch: the row checkbox gets a 44 px hit box around its 20 px glyph (no label to click) */
-  @media (pointer: coarse) { .pick { box-sizing: content-box; padding: 12px; margin: -12px; } }
+  .pickhit { display: inline-flex; align-items: center; justify-content: center; }
+  @media (pointer: coarse) {
+    .pickhit { min-width: 44px; min-height: 44px; margin: -12px; cursor: pointer; }
+    .ulist :global(td:has(> .pickhit)) { z-index: 1; } /* the 44 px box overhangs the next cell: keep it on top */
+  }
   @media (max-width: 720px) {
-    .pick { margin-right: 3.2rem; } .bulk { position: static; }
+    .pickhit { margin-right: 3.2rem; } .bulk { position: static; }
     :global(.dt .bar .field) { flex: 1 1 100%; } /* the three filters share one width */
     /* the tab strip scrolls: a fade at the right edge says there is more (the end padding keeps the last label clear of it) */
     .tabs { padding-inline-end: 1.5rem; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent); }
