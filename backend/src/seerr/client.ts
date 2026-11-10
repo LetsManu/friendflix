@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Ctx } from '../ctx.js';
+import { effectiveLanguage, FALLBACK_LANGUAGE, isLanguage, type Language } from '../i18n.js';
+
+/** Language code for the request service's `language` parameter: only the app's own UI languages (all valid TMDB codes), anything else is German. */
+export const upstreamLanguage = (lang: unknown): Language => (isLanguage(lang) ? lang : FALLBACK_LANGUAGE);
+/** The viewer's UI language (profile choice, else instance default, else German); the owner profile id equals the user id. */
+export const viewerLanguage = (ctx: Pick<Ctx, 'db'>, req: { profile?: { id: string } | null; user?: { id: string } | null }): Promise<Language> =>
+  effectiveLanguage(ctx, req.profile?.id ?? req.user?.id);
 
 export class SeerrError extends Error {
   constructor(public status: number, message: string) {
@@ -75,15 +82,19 @@ export class SeerrClient {
     return (t ? JSON.parse(t) : undefined) as T;
   }
 
-  search(query: string, page = 1) {
+  search(query: string, page = 1, lang: Language = FALLBACK_LANGUAGE) {
     // Seerr requires %20 (not +) for spaces
-    return this.json<{ results: any[]; totalPages: number }>(`/search?query=${encodeURIComponent(query)}&page=${page}&language=de`);
+    return this.json<{ results: any[]; totalPages: number }>(`/search?query=${encodeURIComponent(query)}&page=${page}&language=${upstreamLanguage(lang)}`);
   }
-  upcoming(mediaType: 'movie' | 'tv', page = 1) {
-    return this.json<{ results: any[]; totalPages: number }>(`/discover/${mediaType === 'movie' ? 'movies' : 'tv'}/upcoming?page=${page}&language=de`);
+  upcoming(mediaType: 'movie' | 'tv', page = 1, lang: Language = FALLBACK_LANGUAGE) {
+    return this.json<{ results: any[]; totalPages: number }>(`/discover/${mediaType === 'movie' ? 'movies' : 'tv'}/upcoming?page=${page}&language=${upstreamLanguage(lang)}`);
   }
-  details(mediaType: 'movie' | 'tv', id: number) {
-    return this.json(`/${mediaType}/${id}?language=de`);
+  /** TMDB recommendations for one title (Seerr /movie|tv/{id}/recommendations), first page */
+  recommendations(mediaType: 'movie' | 'tv', id: number, lang: Language = FALLBACK_LANGUAGE) {
+    return this.json<{ results: any[]; totalPages: number }>(`/${mediaType}/${id}/recommendations?page=1&language=${upstreamLanguage(lang)}`);
+  }
+  details(mediaType: 'movie' | 'tv', id: number, lang: Language = FALLBACK_LANGUAGE) {
+    return this.json(`/${mediaType}/${id}?language=${upstreamLanguage(lang)}`);
   }
   createRequest(body: { mediaType: 'movie' | 'tv'; mediaId: number; seasons?: number[] | 'all'; userId?: number }) {
     return this.json('/request', { method: 'POST', body: JSON.stringify(body) });

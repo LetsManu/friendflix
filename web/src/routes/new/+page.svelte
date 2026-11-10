@@ -1,173 +1,345 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<script lang="ts" module>
+  /** when the page last asked /api/me for the feature flags (a module value: it survives client-side navigation) */
+  let flagsAt = 0;
+</script>
+
 <script lang="ts">
-  import { onMount } from 'svelte';
+  /**
+   * "Neu & demnächst" (just "Neu" for kids and without a request service). Three tabs - Für dich (the engine's picks with their
+   * reason, suggestions that are not in the library yet with a Wünschen button, new episodes), Neu in der Bibliothek (everything
+   * added lately, this week at ours) and Wünsche & demnächst (search, own requests, announced titles). The tab (?tab=) and the
+   * Alles / Serien / Filme filter (?type=) live in the URL: a tab change is a history entry (back steps through tabs), a filter
+   * change replaces the entry (the filter is a view). Every section loads on its own and a failed or slow one is simply absent:
+   * nothing waits forever and one error never breaks the page. The television keeps the plain stacked rows (no tabs, no wishes).
+   */
+  import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { pageStore } from '#lib/page';
-  const page = pageStore();
-  import { api, backdrop, img, type Item } from '#lib/api';
+  import { api, ApiError, type Item } from '#lib/api';
+  import { features, featuresFrom, featuresKnown } from '#lib/capabilities';
+  import { kidsMode } from '#lib/kids';
   import Icon from '#lib/Icon.svelte';
-  import TrailerButton from '#lib/TrailerButton.svelte';
-  import { loadReminders, movieKey, remindKeys, toggleReminder } from '#lib/reminders';
-  import { openModal } from '#lib/modal';
-  import { openPreview } from '#lib/previewSheet';
+  import { t } from '#lib/i18n';
+  import { runtimeLabel, sortUpcoming } from '#lib/mobile';
+  import {
+    episodeItem, FILTER_PARAM, availableTabs, forYouItems, freshText, mergeSuggestions, NEW_TITLE_DAYS, openRequests, pageSearch, parseFilter, parseTab, planSections, quotaLeft, TAB_PARAM,
+    withinDays, type NewData, type NewEpisode, type NewFilter, type NewTab, type Suggestion, type Up,
+  } from '#lib/newpage';
+  import FilterBar from '#lib/new/FilterBar.svelte';
+  import LibraryGrid from '#lib/new/LibraryGrid.svelte';
+  import EpisodeCards from '#lib/new/EpisodeCards.svelte';
+  import NewEpisodes from '#lib/new/NewEpisodes.svelte';
+  import Spotlight from '#lib/new/Spotlight.svelte';
+  import Suggestions from '#lib/new/Suggestions.svelte';
+  import Tabs from '#lib/new/Tabs.svelte';
+  import UpcomingList from '#lib/new/UpcomingList.svelte';
+  import WishPanel from '#lib/new/WishPanel.svelte';
+  import { reasonText } from '#lib/reason';
+  import { loadMine, loadQuota, mine, quota } from '#lib/requests/wish';
+  import Row from '#lib/Row.svelte';
+  import type { RowNote } from '#lib/rowNote';
   import { mobile } from '#lib/viewport';
-  import { firstNonEmptyTab } from '#lib/home';
-  import { genreLine, NEW_TABS, dateBlock, releaseLabel, runtimeLabel, sortUpcoming, type NewTab } from '#lib/mobile';
-  import { t, tr } from '#lib/i18n';
 
-  type Up = { tmdbId: number; mediaType: string; title: string; releaseDate?: string; overview?: string; poster?: string; status: string };
-  let upcoming: Up[] | null = null, week: Item[] | null = null, added: Item[] | null = null, msg = '';
-  let availNow = new Set<number>();
+  const page = pageStore();
 
-  // without ?tab the page opens on the first tab that has something to show (e.g. "Diese Woche" when nothing is upcoming)
-  $: explicit = ((t) => (NEW_TABS.some(([id]) => id === t) ? (t as NewTab) : null))($page.url.searchParams.get('tab'));
-  $: auto = firstNonEmptyTab(NEW_TABS.map(([id]) => id), { soon: upcoming, week, added });
-  $: tab = explicit ?? auto ?? 'soon';
-  $: deciding = !explicit && auto === null;
-  const select = (t: NewTab) => goto(`?tab=${t}`, { replaceState: true, reset: false });
-  // roving arrow keys on the chip row
-  function chipKey(e: KeyboardEvent) {
-    const i = NEW_TABS.findIndex(([id]) => id === tab);
-    const n = e.key === 'ArrowRight' ? (i + 1) % NEW_TABS.length : e.key === 'ArrowLeft' ? (i + NEW_TABS.length - 1) % NEW_TABS.length : -1;
-    if (n < 0) return;
-    e.preventDefault(); select(NEW_TABS[n]![0]);
-    queueMicrotask(() => document.getElementById(`nt-${NEW_TABS[n]![0]}`)?.focus());
+  /** a section that does not answer within this long is left out (never a skeleton forever) */
+  const SECTION_TIMEOUT_MS = 8000;
+  /** the calls the first view waits for and the suggestions: given up sooner (the server keeps building and caches it for the next visit) */
+  const FAST_TIMEOUT_MS = 4000;
+  let d: NewData = { forYou: null, newSeries: null, newMovies: null, episodes: null, week: null, upcoming: null, suggest: null };
+  let now = Date.now();
+  let mounted = false;
+  let tv = false;
+  let wp: WishPanel | undefined;
+  let wantFocus = false;
+
+  /** a vanished request service (the admin removed it while this tab was open): the page drops everything that needs it */
+  function serviceGone(e: unknown) {
+    if (e instanceof ApiError && e.body?.error === 'requests_disabled') features.update((f) => ({ ...f, requests: false }));
+  }
+  /** one call, null when it fails or takes too long */
+  async function fetchJson<R>(path: string, ms = SECTION_TIMEOUT_MS): Promise<R | null> {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), ms);
+    try { return await api<R>(path, { signal: ctl.signal }); } catch (e) { serviceGone(e); return null; } finally { clearTimeout(timer); }
+  }
+  /** one section's list, or [] when the call fails or takes too long */
+  async function section<T>(path: string, pick: (r: any) => T[], ms = SECTION_TIMEOUT_MS): Promise<T[]> {
+    const r = await fetchJson<unknown>(path, ms);
+    return (r ? pick(r) : null) ?? [];
+  }
+  const set = <K extends keyof NewData>(k: K, v: NonNullable<NewData[K]>) => { now = Date.now(); d = { ...d, [k]: v }; };
+  const ITEMS = (type: 'Series' | 'Movie') => `/api/library/items?types=${type}&sort=DateCreated&desc=true&limit=30`;
+
+  /** the feature flags change when an admin connects or removes the request service: re-read them (at most every 30 s) */
+  async function refreshFlags(force = false) {
+    if (!force && Date.now() - flagsAt < 30_000) return;
+    flagsAt = Date.now();
+    try { features.set(featuresFrom((await api<{ features?: unknown }>('/api/me')).features)); } catch { /* keep what we know */ }
   }
 
   onMount(() => {
-    void loadReminders();
-    Promise.all([
-      api('/api/seerr/upcoming?type=movie').then((r) => r.results as Up[]).catch(() => [] as Up[]),
-      api('/api/seerr/upcoming?type=tv').then((r) => r.results as Up[]).catch(() => [] as Up[]),
-    ]).then(([m, t]) => (upcoming = sortUpcoming([...m, ...t]).slice(0, 40)));
-    api('/api/library/trending').then((r) => (week = (r.items as Item[]).map((i) => ({ ...i, caption: i.viewers ? tr('home.meta.watching', { n: i.viewers }) : i.caption })))).catch(() => (week = []));
-    api('/api/library/items?types=Movie,Series&sort=DateCreated&desc=true&limit=30').then((r) => (added = r.items)).catch(() => (added = []));
+    mounted = true;
+    const syncTv = () => { tv = document.documentElement.classList.contains('tv'); };
+    syncTv();
+    const mo = new MutationObserver(syncTv);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    const onFocus = () => { if (document.visibilityState === 'visible') void refreshFlags(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    void refreshFlags();
+
+    void section<Item>('/api/library/new-for-you', (r) => forYouItems(r), FAST_TIMEOUT_MS).then((v) => set('forYou', v));
+    void section<Item>(ITEMS('Series'), (r) => r.items).then((v) => set('newSeries', withinDays(v, NEW_TITLE_DAYS, Date.now())));
+    void section<Item>(ITEMS('Movie'), (r) => r.items).then((v) => set('newMovies', withinDays(v, NEW_TITLE_DAYS, Date.now())));
+    void section<NewEpisode>('/api/library/new-episodes', (r) => r.items, FAST_TIMEOUT_MS).then((v) => set('episodes', v));
+    // this week at ours: grown-ups only (the route refuses kids); it needs no feature flag
+    if ($kidsMode) set('week', []);
+    else void section<Item>('/api/library/trending', (r) => r.items).then((v) => set('week', v));
+    return () => { mo.disconnect(); window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onFocus); };
   });
 
-  async function remind(it: Up) {
-    const r = await toggleReminder(movieKey(it.mediaType, it.tmdbId), { mediaType: it.mediaType, tmdbId: it.tmdbId });
-    if (r === 'busy') return;
-    if (r === 'available') { availNow.add(it.tmdbId); availNow = availNow; msg = tr('home.upcoming.isAvailable', { title: it.title }); }
-    else if (r === 'error') msg = tr('home.upcoming.remindFailed');
-    else msg = r === 'on' ? tr('home.upcoming.remindSet', { title: it.title }) : tr('home.upcoming.remindRemoved');
+  // what needs the request service starts once /api/me has confirmed it (a page rendered from the last visit's hint must not call
+  // a service that may be gone): suggestions, the quota, the own requests, the announced titles
+  let wishStarted = false;
+  $: if (mounted && requests && !wishStarted) {
+    wishStarted = true;
+    void loadWishData();
   }
-  function open(e: MouseEvent, it: Item) {
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-    if ($mobile) { e.preventDefault(); openPreview(it, e.currentTarget as HTMLElement); } else openModal(e, `/item/${it.id}`);
+  // the service went away while the tab was open: forget what it gave, so that it starts afresh when it comes back
+  $: if (!requests && wishStarted) {
+    wishStarted = false;
+    d = { ...d, suggest: null, upcoming: null };
   }
-  $: list = tab === 'week' ? week : added;
+  async function loadWishData() {
+    void Promise.all([section<Up>('/api/seerr/upcoming?type=movie', (r) => r.results), section<Up>('/api/seerr/upcoming?type=tv', (r) => r.results)])
+      .then(([m, s]) => set('upcoming', sortUpcoming([...m, ...s]).slice(0, 40)));
+    // the television shows no wishes: only the announced titles
+    if (tv) { set('suggest', []); return; }
+    void loadMine();
+    type Answer = { items: Suggestion[]; quota: { limit: number | null; used: number; resetsAt: string } | null };
+    const [m, s] = await Promise.all([fetchJson<Answer>('/api/library/request-suggestions?type=movie', FAST_TIMEOUT_MS), fetchJson<Answer>('/api/library/request-suggestions?type=series', FAST_TIMEOUT_MS)]);
+    const q = m?.quota ?? s?.quota ?? null;
+    if (q) quota.set(q); else void loadQuota();
+    set('suggest', mergeSuggestions(m?.items ?? [], s?.items ?? []));
+  }
+
+  /** grown-up profile with a request service (as far as we know: the hint of the last visit until /api/me answered) */
+  $: canWish = $features.requests && !$kidsMode;
+  /** the same, confirmed by /api/me: only then the page calls the service */
+  $: requests = $featuresKnown && canWish;
+
+  // ---- tab and filter (URL) ----
+  $: tabs = availableTabs({ requests: canWish });
+  $: tab = parseTab($page.url.searchParams.get(TAB_PARAM), { requests: canWish });
+  $: filter = parseFilter($page.url.searchParams.get(FILTER_PARAM));
+  const go = (t: NewTab, f: NewFilter, replace: boolean) => goto(pageSearch(t, f) || $page.url.pathname, { replace, reset: false });
+  const pickTab = (t: NewTab) => { void go(t, filter, false); };
+  const pickFilter = (f: NewFilter) => { void go(tab, f, true); };
+  async function wish() {
+    if (tab === 'wishes') { wp?.focusSearch(); return; }
+    wantFocus = true;
+    await go('wishes', filter, false);
+    await tick();
+    wantFocus = false;
+  }
+
+  // ---- what to show ----
+  $: plan = planSections(d, filter, { requests: canWish });
+  /** each tab waits only for its own library calls (never for the request service: the suggestions have a slot of their own) */
+  $: forYouReady = d.forYou !== null && d.episodes !== null;
+  $: libraryReady = d.newSeries !== null && d.newMovies !== null && d.week !== null;
+  $: tvReady = forYouReady && libraryReady;
+  $: slots = $mobile ? 3 : 4;
+  $: episodeItems = plan.episodes.map(episodeItem);
+  $: episodeFresh = new Map(plan.episodes.map((e) => [e.episode.id, e]));
+  $: emptyForYou = !plan.forYou.length && !plan.suggestions.length && !plan.episodes.length;
+  $: open = openRequests($mine).length;
+  $: left = quotaLeft($quota);
+
+  const kindLabel = (it: Item) => (it.type === 'Movie' ? $t('home.meta.movie') : $t('home.meta.series'));
+  const join = (...p: Array<string | number | undefined | false>) => p.filter(Boolean).join(' · ');
+  const forYouNote = (it: Item): RowNote => ({ meta: join(kindLabel(it), it.year), reason: reasonText(it.reason, $t) });
+  const seriesNote = (it: Item): RowNote => ({ meta: join(runtimeLabel(it), it.year), fresh: freshText(it.dateCreated, now, $t) });
+  const movieNote = (it: Item): RowNote => ({ meta: join($t('home.meta.movie'), runtimeLabel(it)), fresh: freshText(it.dateCreated, now, $t) });
+  /** the card overlay already names season and episode on the desktop, so its note gives only the freshness; TV hides the overlay and keeps the code */
+  const episodeNote = (it: Item): RowNote => {
+    const e = episodeFresh.get(it.id);
+    const fresh = e ? freshText(e.episode.addedAt, now, $t) : '';
+    return tv ? { meta: $t('detail.view.episodeCode', { s: String(it.parentIndexNumber ?? '?'), e: String(it.indexNumber ?? '?') }), fresh } : { fresh };
+  };
+
+  $: heading = canWish ? $t('home.new.title') : $t('home.new.titleOnly');
+  $: recentHref = filter === 'series' ? '/browse/series?sort=DateCreated' : '/browse/movies?sort=DateCreated';
 </script>
 
-<svelte:head><title>{$t('common.pageTitle', { page: $t('home.new.title') })}</title></svelte:head>
-<h1 class="ph1">{$t('home.new.title')}</h1>
-<div class="chips" role="tablist" aria-label={$t('home.new.tabs')} tabindex="-1">
-  {#each NEW_TABS as [id, label] (id)}
-    <button type="button" role="tab" id="nt-{id}" class="chip" class:on={tab === id} aria-selected={tab === id} aria-controls="np" tabindex={tab === id ? 0 : -1} on:click={() => select(id)} on:keydown={chipKey}>{$t(label)}</button>
-  {/each}
-</div>
+<svelte:head><title>{$t('common.pageTitle', { page: heading })}</title></svelte:head>
 
-<div id="np" role="tabpanel" aria-labelledby="nt-{tab}" class="panel2" aria-busy={deciding}>
-  {#if deciding}
-    {#each Array(3) as _}<div class="entry plain"><div class="body"><div class="skeleton img"></div></div></div>{/each}
-  {:else if tab === 'soon'}
-    {#if upcoming === null}
-      {#each Array(3) as _}<div class="entry"><div class="skeleton dsk"></div><div class="body"><div class="skeleton img"></div></div></div>{/each}
-    {:else if !upcoming.length}
-      <p class="muted">{$t('home.new.noUpcoming')}</p>
+{#snippet skeleton()}
+  <div class="sk" role="status" aria-busy="true">
+    <span class="sr-only">{$t('common.loading')}</span>
+    {#each [0, 1] as _}<div class="skrow" aria-hidden="true"><div class="skeleton skh"></div><div class="skcards">{#each Array($mobile ? 3 : 6) as __}<div class="skeleton skc"></div>{/each}</div></div>{/each}
+  </div>
+{/snippet}
+
+{#snippet forYouSkeleton()}
+  <div class="sk fysk">
+    <span class="sr-only" role="status">{$t('common.loading')}</span>
+    <div class="skspot" aria-hidden="true">{#each Array($mobile ? 1 : 3) as _}<div class="skeleton"></div>{/each}</div>
+    {#if canWish}<Suggestions items={null} {slots} title={$t('home.new.missing')} sub={$t('home.new.missingSub')} />{/if}
+    <div class="skrow" aria-hidden="true"><div class="skeleton skh"></div><div class="ske">{#each Array($mobile ? 3 : 4) as _}<div class="skeleton"></div>{/each}</div></div>
+  </div>
+{/snippet}
+
+{#snippet libSkeleton()}
+  <div class="sk" role="status" aria-busy="true">
+    <span class="sr-only">{$t('common.loading')}</span>
+    <div class="skrow" aria-hidden="true"><div class="skeleton skh"></div><div class="sklib">{#each Array($mobile ? 6 : 12) as _}<div class="skeleton"></div>{/each}</div></div>
+  </div>
+{/snippet}
+
+{#snippet empty()}
+  <section class="empty frost frost-panel frost-safe" aria-labelledby="np-empty">
+    <span class="ic" aria-hidden="true"><Icon name="clock" size={26} /></span>
+    <h2 id="np-empty">{$t('home.new.emptyTitle')}</h2>
+    <p>{$t('home.new.emptyText')}</p>
+    <div class="btns">
+      <a class="btn pill" href={recentHref}>{$t('home.new.emptyRecent')}</a>
+      <a class="btn sec" href="/calendar"><Icon name="calendar" size={18} />{$t('home.new.emptyCalendar')}</a>
+    </div>
+  </section>
+{/snippet}
+
+<div class="np" class:tvp={tv}>
+  <div class="in">
+    <header class="top">
+      <h1>{heading}</h1>
+      <div class="ctl">
+        {#if !$mobile || tv}<FilterBar value={filter} on:change={(e) => pickFilter(e.detail)} />{/if}
+        {#if canWish && !tv}<button type="button" class="btn pill add" on:click={wish}><Icon name="plus" size={18} /><span>{$t('home.new.wishAction')}</span></button>{/if}
+      </div>
+    </header>
+
+    {#if tv}
+      <!-- television: the plain stacked rows, no tabs and no wishes -->
+      {#if !tvReady}{@render skeleton()}
+      {:else}
+        {#if plan.empty}{@render empty()}{/if}
+        <div class="bleed"><Row title={$t('home.new.forYou')} sub={$t('home.new.forYouSub')} items={plan.forYou} portrait notes={forYouNote} /></div>
+        <div class="bleed"><Row title={$t('home.new.newSeries')} sub={$t('home.new.newSeriesSub')} items={plan.newSeries} portrait notes={seriesNote} /></div>
+        {#if plan.episodes.length}<div class="bleed"><Row title={$t('home.new.newEpisodes')} sub={$t('home.new.newEpisodesSub')} items={episodeItems} notes={episodeNote} /></div>{/if}
+        <div class="bleed"><Row title={$t('home.new.newMovies')} sub={$t('home.new.newMoviesSub')} items={plan.newMovies} portrait notes={movieNote} /></div>
+        <div class="bleed"><Row title={$t('home.rows.trending')} items={plan.week} ranked /></div>
+        {#if plan.upcoming.length}<div class="upc"><UpcomingList items={plan.upcoming} /></div>{/if}
+      {/if}
     {:else}
-      <ul class="elist">
-        {#each upcoming as it (it.mediaType + it.tmdbId)}
-          {@const db = dateBlock(it.releaseDate)}
-          <li class="entry">
-            <div class="date" aria-hidden={db ? undefined : 'true'}>{#if db}<span class="mo">{db.month}</span><span class="dy">{db.day}</span>{/if}</div>
-            <div class="body">
-              <div class="img poster">
-                {#if it.poster}<img class="bl" loading="lazy" src={it.poster} alt="" aria-hidden="true" /><img class="pp" loading="lazy" src={it.poster} alt="" />{:else}<span class="noimg">{it.title}</span>{/if}
-              </div>
-              <h2>{it.title}</h2>
-              <p class="rel">{releaseLabel(it.releaseDate)} · {it.mediaType === 'tv' ? $t('home.meta.series') : $t('home.meta.movie')}</p>
-              {#if it.overview}<p class="ov">{it.overview}</p>{/if}
-              {#if it.status === 'verfuegbar'}<p class="ok">{$t('home.upcoming.available')}</p>
-              {:else}
-                <div class="btns">
-                  {#if availNow.has(it.tmdbId)}<span class="ok">{$t('home.upcoming.alreadyAvailable')}</span>
-                  {:else}<button type="button" class="sec" aria-pressed={$remindKeys[movieKey(it.mediaType, it.tmdbId)] !== undefined} on:click={() => remind(it)}><Icon name="bell" size={18} />{$remindKeys[movieKey(it.mediaType, it.tmdbId)] !== undefined ? $t('home.upcoming.reminderOn') : $t('home.upcoming.remind')}</button>{/if}
-                  <TrailerButton mediaType={it.mediaType} tmdbId={it.tmdbId} title={it.title} />
-                </div>
-              {/if}
-            </div>
-          </li>
-        {/each}
-      </ul>
-      {#if msg}<p class="muted" role="status">{msg}</p>{/if}
-      <p><a class="btn sec" href="/calendar">{$t('home.new.toCalendar')}</a></p>
+      <div class="tabrow"><Tabs {tabs} value={tab} {open} short={$mobile} on:change={(e) => pickTab(e.detail)} /></div>
+      {#if $mobile}<div class="chips"><FilterBar chips value={filter} on:change={(e) => pickFilter(e.detail)} /></div>{/if}
+
+      <div id="np-panel" class="panel-body" role="tabpanel" aria-labelledby="np-tab-{tab}">
+        {#if tab === 'wishes'}
+          <WishPanel bind:this={wp} upcoming={plan.upcoming} {filter} autofocus={wantFocus} />
+        {:else if tab === 'foryou' && !forYouReady}
+          {@render forYouSkeleton()}
+        {:else if tab === 'library' && !libraryReady}
+          {@render libSkeleton()}
+        {:else if tab === 'foryou'}
+          {#if emptyForYou}{@render empty()}{/if}
+          {#if plan.forYou.length}
+            <Spotlight items={plan.forYou} count={$mobile ? 1 : 3} title={$t('home.new.forYou')} sub={$mobile ? '' : $t('home.new.forYouSub')} />
+            {#if $mobile && plan.forYou.length > 1}<div class="bleed"><Row title={$t('home.new.moreForYou')} items={plan.forYou.slice(1)} portrait notes={forYouNote} /></div>{/if}
+          {/if}
+          {#if canWish}
+            <Suggestions items={d.suggest === null ? null : plan.suggestions.slice(0, slots)} {slots} title={$t('home.new.missing')} sub={$t('home.new.missingSub')} on:wish={wish} />
+          {/if}
+          {#if plan.episodes.length}
+            {#if $mobile}<div class="bleed"><NewEpisodes title={$t('home.new.newEpisodes')} items={plan.episodes} {now} /></div>
+            {:else}<EpisodeCards title={$t('home.new.newEpisodes')} sub={$t('home.new.newEpisodesSub')} items={plan.episodes.slice(0, 4)} {now} />{/if}
+          {/if}
+          {#if $mobile && canWish && d.suggest !== null && plan.suggestions.length >= slots}
+            <button type="button" class="bar frost frost-panel frost-safe" on:click={wish}>
+              <span class="pl" aria-hidden="true"><Icon name="plus" size={20} /></span>
+              <span class="bt"><b>{$t('home.new.barTitle')}</b><span>{$t('home.new.barSub')}</span></span>
+              {#if left !== null}<span class="lf">{$t('home.new.quotaLeftShort', { left })}</span>{/if}
+            </button>
+          {/if}
+        {:else}
+          {#if !plan.library.length}{@render empty()}
+          {:else}<LibraryGrid items={plan.library} {now} title={$t('home.new.libraryHead')} sub={$mobile ? '' : $t('home.new.libraryHeadSub')} />{/if}
+          {#if plan.week.length}<div class="bleed wk"><Row title={$t('home.rows.trending')} items={plan.week} ranked /></div>{/if}
+        {/if}
+      </div>
     {/if}
-  {:else if list === null}
-    {#each Array(3) as _}<div class="entry plain"><div class="body"><div class="skeleton img"></div></div></div>{/each}
-  {:else if !list.length}
-    <p class="muted">{$t('home.new.nothing')}</p>
-  {:else}
-    <ol class="elist" class:ranked={tab === 'week'}>
-      {#each list as it, i (it.id)}
-        <li class="entry plain">
-          {#if tab === 'week'}<span class="rank" aria-label={$t('home.row.rank', { n: i + 1 })}>{i + 1}</span>{/if}
-          <div class="body">
-            <a class="img" href="/item/{it.id}" aria-label={$t('home.new.details', { name: it.name })} on:click={(e) => open(e, it)}>
-              {#if it.backdrop}<img loading="lazy" src={backdrop(it.id, 780)} alt="" />{:else if it.image}<img class="bl" loading="lazy" src={img(it.id, 320)} alt="" aria-hidden="true" /><img class="pp" loading="lazy" src={img(it.id, 320)} alt="" />{:else}<span class="noimg">{it.name}</span>{/if}
-              <span class="playi" aria-hidden="true"><Icon name="play" size={20} /></span>
-            </a>
-            <h2><a href="/item/{it.id}" on:click={(e) => open(e, it)}>{it.name}</a></h2>
-            <p class="rel">{[it.caption, it.year ? String(it.year) : '', runtimeLabel(it), genreLine(it.genres, 2)].filter(Boolean).join(' · ')}</p>
-            {#if it.overview}<p class="ov">{it.overview}</p>{/if}
-          </div>
-        </li>
-      {/each}
-    </ol>
-  {/if}
+  </div>
 </div>
 
 <style>
-  .ph1 { margin-bottom: .6rem; }
-  .chips { position: sticky; top: var(--nav-total); z-index: 5; display: flex; gap: .5rem; overflow-x: auto; scrollbar-width: none; padding: .5rem 0 .6rem; margin: 0 calc(var(--pad-x) * -1) .6rem; padding-inline: var(--pad-x); background: linear-gradient(rgba(16, 20, 24, 0), rgba(16, 20, 24, .9) .5rem, rgba(16, 20, 24, .9) 70%, rgba(16, 20, 24, 0)); } /* fades out like the app bar's shade: no hard edge over the ambient glow */
-  .chips::-webkit-scrollbar { display: none; }
-  .chip::after { content: ''; position: absolute; inset: -2px 0; }
-  .chip { position: relative; flex: none; min-height: 40px; padding: 0 1rem; border-radius: 99px; background: transparent; border: 1px solid rgba(255,255,255,.5); color: #fff; font-weight: 500; font-size: .92rem; white-space: nowrap; }
-  .chip:hover:not(:disabled) { background: rgba(255,255,255,.12); }
-  .chip.on, .chip.on:hover:not(:disabled) { background: #fff; color: #000; border-color: #fff; font-weight: 700; }
-  .panel2 { max-width: 900px; padding-bottom: 3rem; }
-  .elist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1.8rem; }
-  .entry { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: .8rem; }
-  .entry.plain { grid-template-columns: minmax(0, 1fr); }
-  .elist.ranked .entry.plain { grid-template-columns: 44px minmax(0, 1fr); }
-  .date { display: flex; flex-direction: column; align-items: center; padding-top: .2rem; line-height: 1; }
-  .mo { font-size: .75rem; font-weight: 700; letter-spacing: .06em; color: var(--mut); }
-  .dy { font-size: 1.7rem; font-weight: 800; margin-top: .2rem; }
-  .rank { font-size: 2.6rem; font-weight: 900; line-height: 1; color: #fff; text-align: center; padding-top: .2rem; letter-spacing: -.04em; }
-  .body { min-width: 0; }
-  .img { position: relative; display: block; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: #1c2228; margin-bottom: .6rem; }
-  .img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .img.poster img.bl { position: absolute; inset: 0; filter: blur(18px) brightness(.7); transform: scale(1.3); }
-  .img img.pp { position: absolute; inset: 0; object-fit: contain; }
-  .img:not(.poster) img.pp { object-fit: contain; }
-  .img img.bl { position: absolute; inset: 0; filter: blur(18px) brightness(.7); transform: scale(1.3); }
-  .noimg { position: absolute; inset: 0; display: grid; place-items: center; padding: .6rem; text-align: center; font-weight: 700; background: linear-gradient(160deg, #252c34, #161b21); }
-  .playi { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; border: 2px solid rgba(255,255,255,.85); background: rgba(0,0,0,.5); display: grid; place-items: center; padding-left: 2px; }
-  h2 { font-size: 1.1rem; font-weight: 700; margin: 0 0 .15rem; }
-  h2 a:hover { text-decoration: underline; }
-  .rel { margin: 0 0 .4rem; color: var(--mut); font-size: .88rem; }
-  .ov { margin: 0 0 .7rem; font-size: .92rem; line-height: 1.45; color: #d6d6d6; display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-  .btns { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
-  .btns :global(button) { font-size: .9rem; }
-  .dsk { height: 3rem; }
-  .skeleton.img { aspect-ratio: 16 / 9; }
-  @media (min-width: 721px) {
-    .entry { grid-template-columns: 80px minmax(0, 1fr); gap: 1.4rem; }
-    .elist.ranked .entry.plain { grid-template-columns: 70px minmax(0, 1fr); }
-    .rank { font-size: 4rem; }
-    .dy { font-size: 2.2rem; } .mo { font-size: .85rem; }
-    .body { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); column-gap: 1.2rem; align-items: start; }
-    .body .img { grid-row: 1 / span 4; margin: 0; }
-    .body > :not(.img) { grid-column: 2; }
+  .np { padding-bottom: 3rem; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 1rem 2rem; flex-wrap: wrap; margin: 0 0 1rem; }
+  h1 { margin: 0; }
+  .ctl { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; min-width: 0; }
+  .add { min-height: 48px; padding-inline: 1.5rem; font-weight: 800; }
+  .add:focus-visible { outline: 2px solid #fff; outline-offset: 2px; box-shadow: 0 0 0 4px var(--ring-dark); }
+  .tabrow { margin: 0 0 1.4rem; }
+  .chips { margin: .8rem 0 1.2rem; overflow-x: auto; scrollbar-width: none; }
+  .panel-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2.2rem; min-width: 0; }
+  /* rows carry their own gutters: they run past the page's padding and give it back */
+  .bleed { margin: 0 calc(var(--pad-x) * -1); }
+  .bleed :global(section.row) { margin-top: 0; }
+  .bleed :global(section.row) { margin-bottom: 0; }
+  .upc { margin-top: 1.6rem; }
+
+  :global(html.tv) .in { --pad-x: var(--tv-gutter); }
+  :global(html.tv) .top { margin-bottom: 0; }
+  :global(html.tv) .np .bleed { margin: 0 calc(var(--pad-x) * -1); }
+  :global(html.tv) .bleed :global(section.row) { margin-top: 1.6rem; }
+  :global(html.tv) .upc { padding: 0; }
+  @media (max-width: 720px) {
+    .top { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .8rem; }
+    h1 { font-size: 1.35rem; line-height: 1.2; min-width: 0; }
+    .ctl { gap: .6rem; }
+    .add { min-height: 44px; padding-inline: 1.1rem; }
+    .panel-body { gap: 1.8rem; }
   }
+
+  .sk { margin-top: .5rem; display: grid; gap: 1.6rem; }
+  .skrow { display: grid; gap: .8rem; }
+  .skh { width: 9rem; height: 1.3rem; border-radius: 6px; }
+  .skcards { display: flex; gap: 8px; overflow: hidden; }
+  .fysk { margin-top: 0; gap: 2.2rem; }
+  .skspot { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .skspot > div { height: 280px; border-radius: 20px; }
+  .ske { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+  .ske > div { aspect-ratio: 16 / 9; border-radius: 16px; }
+  .sklib { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 24px 16px; }
+  .sklib > div { aspect-ratio: 2 / 3; border-radius: 12px; }
+  .skc { flex: 0 0 calc((100% - 5 * 8px) / 6); aspect-ratio: 2 / 3; border-radius: 12px; }
+  :global(html.tv) .skc { aspect-ratio: 16 / 9; border-radius: var(--tv-radius); }
+  @media (max-width: 720px) {
+    .skc { flex-basis: calc((100% - 2 * 8px) / 3.2); }
+    .skspot { grid-template-columns: minmax(0, 1fr); }
+    .skspot > div { height: 340px; }
+    .ske { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .sklib { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 8px; }
+  }
+
+  .empty { display: grid; justify-items: center; gap: .5rem; text-align: center; margin: .5rem auto 0; padding: 1.8rem 1.4rem; max-width: 34rem; border-radius: var(--fr-r-panel, 18px); }
+  .ic { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--fr-sel); color: var(--acc-text); }
+  .empty h2 { margin: .4rem 0 0; font-size: 1.25rem; font-weight: 800; line-height: 1.25; }
+  .empty p { margin: 0 0 .8rem; color: var(--mut); max-width: 28rem; }
+  .btns { display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem; }
+  :global(html.tv) .empty { max-width: 44rem; }
+  :global(html.tv) .empty h2 { font-size: 1.75rem; }
+  :global(html.tv) .empty p { font-size: 1.25rem; }
+
+  /* phone: "Etwas fehlt?" bar at the end of the first tab */
+  .bar { display: flex; align-items: center; gap: .9rem; width: 100%; min-height: 64px; padding: 10px 18px 10px 12px; text-align: left; color: #fff; font: inherit; border-radius: 22px; }
+  .bar .pl { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--acc-fill); }
+  .bar .bt { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; font-weight: 400; }
+  .bar .bt b { font-size: 1rem; }
+  .bar .bt span { font-size: .85rem; color: rgba(255, 255, 255, .8); }
+  .bar .lf { flex: none; color: var(--acc-text); font-weight: 700; font-size: .9rem; }
+  .bar:focus-visible { outline: 2px solid #fff; outline-offset: 2px; box-shadow: 0 0 0 4px var(--ring-dark); }
 </style>

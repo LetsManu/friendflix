@@ -14,6 +14,8 @@ export default {
     series: 'Serien',
     movies: 'Filme',
     new: 'Neu & demnächst',
+    /** label while no request service is set up */
+    newOnly: 'Neu',
     myList: 'Merkliste',
     categories: 'Kategorien',
   },
@@ -93,6 +95,7 @@ export default {
     myList: 'Merkliste',
     downloads: 'Downloads',
     newShort: 'Neu',
+    newOnly: 'Neu',
     downloadsShort: 'Downloads',
   },
   offline: {

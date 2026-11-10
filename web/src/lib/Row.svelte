@@ -6,6 +6,7 @@
 </script>
 
 <script lang="ts">
+  import type { RowNote } from '#lib/rowNote';
   import { onDestroy, onMount, tick } from 'svelte';
   import type { Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
@@ -36,6 +37,12 @@
   export let priority = false;
   /** recommendation row: reports one impression and its clicks as counts per row and engine (no titles) */
   export let reco: RecoTag | undefined = undefined;
+  /** 2:3 posters instead of 16:9 thumbnails (desktop; the phone always shows posters, TV always 16:9), with the ranked row's column count */
+  export let portrait = false;
+  /** small grey text after the heading (desktop only) */
+  export let sub = '';
+  /** text under a card: what the page knows about the title (kind and year, freshness, the reason of a recommendation); TV also names the title there */
+  export let notes: ((it: Item) => RowNote) | undefined = undefined;
   let track: HTMLDivElement | undefined, section: HTMLElement | undefined, strip: HTMLDivElement | undefined;
   let prevBtn: HTMLButtonElement | undefined, nextBtn: HTMLButtonElement | undefined;
   let canLeft = false, canRight = false, pages = 1, current = 0;
@@ -152,9 +159,9 @@
 </script>
 
 {#if items === null || items.length}
-  <section class="row" class:m={$mobile} class:dk={desk} class:land={landscape} class:near class:rk={ranked && !tvOn} bind:this={section} aria-label={title} aria-busy={items === null} on:pointerenter={() => !full && showAll()} on:focusin={() => !full && showAll()} use:recoTrack={reco}>
+  <section class="row" class:m={$mobile} class:dk={desk} class:land={landscape} class:near class:rk={(ranked || portrait) && !tvOn} class:hasnotes={!!notes} bind:this={section} aria-label={title} aria-busy={items === null} on:pointerenter={() => !full && showAll()} on:focusin={() => !full && showAll()} use:recoTrack={reco}>
     <div class="hd">
-      <h2>{#if href}<a {href}>{title}<span class="more"> {$t('home.row.showAll')}</span><Icon name="chevron-right" size={18} /></a>{:else}{title}{/if}</h2>
+      <h2>{#if href}<a {href}>{title}<span class="more"> {$t('home.row.showAll')}</span><Icon name="chevron-right" size={18} /></a>{:else}{title}{/if}{#if sub}<span class="sub">{sub}</span>{/if}</h2>
       {#if desk}
         {#if pages > 1}<ol class="pgdots" aria-label={$t('desk.row.pages')}>{#each Array(pages) as _, i}<li aria-current={i === current ? 'true' : undefined}><span class="sr-only">{$t('desk.row.page', { n: i + 1 })}</span></li>{/each}</ol>{/if}
       {:else if pages > 1 && !$mobile}<ol class="dots" aria-hidden="true">{#each Array(pages) as _, i}<li class:on={i === current}></li>{/each}</ol>{/if}
@@ -170,9 +177,9 @@
         <!-- the strip only exists as a box on TV and the desktop layout (the row glide / page turn moves it, lib/tv/motion.ts); elsewhere it is display: contents -->
         <div class="strip" data-glide={tvOn ? '' : undefined} bind:this={strip}>
         {#if items === null}
-          {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={(($mobile && !landscape) || ranked) && !tvOn}></div></div>{/each}
+          {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={(($mobile && !landscape) || ranked || portrait) && !tvOn}></div></div>{/each}
         {:else}
-          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem" on:focusin={() => rankFocus(it.id, idx + 1)}>{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} rank={ranked ? idx + 1 : 0} on:remove />{:else}<Card item={it} {removable} poster={ranked && !tvOn} {priority} rank={ranked ? idx + 1 : 0} on:remove />{/if}</div>{/if}{/each}
+          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem" on:focusin={() => rankFocus(it.id, idx + 1)}>{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} rank={ranked ? idx + 1 : 0} on:remove />{:else}<Card item={it} {removable} poster={(ranked || portrait) && !tvOn} {priority} rank={ranked ? idx + 1 : 0} on:remove />{/if}{#if notes}{@const n = notes(it)}<div class="note" class:ep={it.type === 'Episode'} data-testid="row-note"><span class="nm">{it.type === 'Episode' && it.seriesName ? it.seriesName : it.name}</span>{#if n.meta}<span class="meta">{n.meta}</span>{/if}{#if n.fresh}<span class="fresh">{n.fresh}</span>{/if}{#if n.reason}<span class="why">{n.reason}</span>{/if}</div>{/if}</div>{/if}{/each}
         {/if}
         </div>
       </div>
@@ -292,4 +299,31 @@
   :global(html.tv) .strip { display: flex; flex: none; gap: var(--gap); }
   :global(html.tv) .slot { flex: 0 0 var(--cw); }
   .row.m.land { --pw: calc((100vw - var(--pad-x)) / 2.15); }
+
+  /* ---- notes under the cards (the new-titles page): kind and year, freshness in coral, the reason of a recommendation ---- */
+  .sub { margin-left: .7rem; font-size: .8rem; font-weight: 500; letter-spacing: 0; color: var(--mut); }
+  .row.m .sub { display: none; }
+  .note { display: flex; flex-direction: column; gap: 1px; margin-top: .55rem; font-size: .78rem; line-height: 1.3; color: var(--mut); min-width: 0; }
+  .note > span { overflow-wrap: anywhere; }
+  .note .nm { display: none; }
+  .note .fresh { color: var(--acc-text); font-weight: 600; }
+  .note .why { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  /* the reason is the point of the line: phone and TV give it three lines before it is cut (the screen-reader text is always complete) */
+  .row.m .note .why, :global(html.tv) .note .why { -webkit-line-clamp: 3; line-clamp: 3; }
+  .row.dk .note { margin-top: .75rem; padding-inline: 2px; }
+  .row.m .note .nm { display: block; color: #fff; font-size: .82rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row.hasnotes { contain-intrinsic-size: auto calc(var(--sw) * .5625 + 96px); }
+  .row.hasnotes.rk { contain-intrinsic-size: auto calc(var(--sw) * 1.5 + 96px); }
+  .row.hasnotes.m { contain-intrinsic-size: auto calc(var(--pw) * 1.5 + 112px); }
+  /* TV: a solid panel under the thumbnail names the title (there is no focus tile on this page) */
+  :global(html.tv) .note { margin-top: 0; padding: .7rem .9rem .8rem; border-radius: 0 0 var(--tv-radius) var(--tv-radius); background: var(--fr-solid); font-size: 1.125rem; line-height: 1.3; gap: 2px; }
+  :global(html.tv) .note .nm { display: block; color: #fff; font-size: 1.25rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  :global(html.tv) .note .meta { display: none; }
+  /* an episode's code (S1:F2) is the one thing TV must keep: the title line names only the show */
+  :global(html.tv) .note.ep .meta { display: block; }
+  :global(html.tv) .note .why { color: var(--tv-white-78); }
+  :global(html.tv) .sub { display: none; }
+  /* four and a half cards across: the panels under them carry text */
+  :global(html.tv) .row.hasnotes { --cw: calc((100vw - var(--tv-left) - 5vw) / 4.5); }
+  :global(html.tv) .row.hasnotes { contain-intrinsic-size: auto calc(var(--cw) * .5625 + 12rem); }
 </style>

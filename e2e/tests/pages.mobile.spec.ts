@@ -13,11 +13,12 @@ test.describe('account and news pages (phone)', () => {
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 
-  test('/new renders the tabs and cards without horizontal overflow', async ({ page }) => {
+  test('/new renders the filter and the rows without horizontal overflow', async ({ page }) => {
     await page.goto('/new');
     await expect(page.getByRole('heading', { level: 1, name: 'Neu & demnächst' })).toBeVisible();
-    await expect(page.getByRole('tablist', { name: 'Bereich' }).getByRole('tab').first()).toBeVisible();
-    await expect(page.getByRole('tabpanel')).toBeVisible();
+    await expect(page.getByRole('radiogroup', { name: 'Anzeigen' }).getByRole('radio').first()).toBeVisible();
+    await page.getByRole('tab', { name: 'Neu', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Neu in der Bibliothek', exact: true })).toBeAttached();
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 });

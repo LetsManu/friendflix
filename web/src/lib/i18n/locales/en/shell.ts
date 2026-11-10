@@ -13,6 +13,8 @@ const en: Translation<typeof de> = {
     series: 'TV Shows',
     movies: 'Movies',
     new: 'New & Upcoming',
+    /** label while no request service is set up */
+    newOnly: 'New',
     myList: 'Watchlist',
     categories: 'Categories',
   },
@@ -91,6 +93,7 @@ const en: Translation<typeof de> = {
     myList: 'My list',
     downloads: 'Downloads',
     newShort: 'New',
+    newOnly: 'New',
     downloadsShort: 'Downloads',
   },
   offline: {

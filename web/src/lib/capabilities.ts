@@ -67,6 +67,11 @@ export function featuresFrom(raw: unknown): Features {
   return { requests: r.requests !== false, postplay: r.postplay !== false };
 }
 export const features = writable<Features>(featuresFrom(undefined));
+/**
+ * `features` holds what /api/me answered (true) or only the default / the last visit's boot hint (false). A page that renders early
+ * from the hint must not call a service on that guess: the request service may have been removed since (see UpcomingRow, /new).
+ */
+export const featuresKnown = writable(false);
 
 /** pages that only make sense with a capability or a feature (menus, footer, admin nav): href -> required flag */
 const NEEDS: Record<string, Exclude<keyof ServerCaps, 'segments'>> = { '/calendar': 'upcoming' };

@@ -14,6 +14,8 @@ const it: Translation<typeof de> = {
     series: 'Serie TV',
     movies: 'Film',
     new: 'Nuovi e in arrivo',
+    /** label while no request service is set up */
+    newOnly: 'Novità',
     myList: 'Watchlist',
     categories: 'Categorie',
   },
@@ -92,6 +94,7 @@ const it: Translation<typeof de> = {
     myList: 'La mia lista',
     downloads: 'Download',
     newShort: 'Novità',
+    newOnly: 'Novità',
     downloadsShort: 'Download',
   },
   offline: {

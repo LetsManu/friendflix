@@ -38,7 +38,10 @@ describe('railKey', () => {
 });
 
 describe('TV_RAIL', () => {
-  it('lists search, home, series, movies, my list', () => {
-    expect(TV_RAIL.map((r) => r[0])).toEqual(['/search', '/', '/browse/series', '/browse/movies', '/watchlist']);
+  it('lists search, home, series, movies, new, my list', () => {
+    expect(TV_RAIL.map((r) => r[0])).toEqual(['/search', '/', '/browse/series', '/browse/movies', '/new', '/watchlist']);
+  });
+  it('the new-titles page is a rail destination, so Back opens the rail there', () => {
+    expect(TV_RAIL.find((r) => r[0] === '/new')?.[1]).toBe('shell.nav.new');
   });
 });

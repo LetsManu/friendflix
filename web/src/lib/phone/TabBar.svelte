@@ -6,6 +6,7 @@
   import { phoneTabs, type PhoneTab } from '#lib/phone/logic';
   import { press } from '#lib/glass/press';
   import { SCRIM_TAB } from '#lib/glass/tone';
+  import { features } from '#lib/capabilities';
 
   /**
    * Phone tab bar (not kids): a floating glass pill (the glass material with its own safe scrim, SCRIM_TAB: the inactive labels
@@ -33,8 +34,9 @@
 <nav class="tabbar frost frost-pill frost-safe" aria-label={$t('shell.mobile.tabbar')} style="--n:{tabs.length};--i:{Math.max(0, active)};--fr-scrim-safe:{SCRIM_TAB}">
   <span class="hl" class:off={active < 0} aria-hidden="true"></span>
   {#each tabs as tab, k (tab.key)}
-    {@const full = $t(LABEL[tab.key][0])}
-    {@const short = $t(LABEL[tab.key][1])}
+    {@const only = tab.key === 'new' && !$features.requests}
+    {@const full = $t(only ? 'shell.tabs.newOnly' : LABEL[tab.key][0])}
+    {@const short = $t(only ? 'shell.tabs.newOnly' : LABEL[tab.key][1])}
     <a href={tab.href} use:press class:active={k === active} aria-current={k === active ? 'page' : undefined} aria-label={short !== full ? full : undefined}><span class="ico"><Icon name={tab.icon} size={22} /></span><span>{short}</span></a>
   {/each}
 </nav>

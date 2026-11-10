@@ -90,6 +90,8 @@ export interface Item {
   genres: string[]; rating?: string; communityRating?: number; premiereDate?: string; image: boolean; backdrop: boolean; logo: boolean; trailers?: number; caption?: string;
   played: boolean; favorite: boolean; positionTicks: number; playedPercentage?: number; lastPlayedDate?: string;
   langs?: { audio: string[]; subs: string[] };
+  /** when the title was added to the library (ISO; both media servers) – "Neu seit N Tagen" on the new-titles page */
+  dateCreated?: string;
   /** Jellyfin DateLastMediaAdded (ISO) – newest child for series */
   lastAdded?: string; childCount?: number; unplayedCount?: number;
   /** only on /api/library/trending: number of distinct viewers this week */

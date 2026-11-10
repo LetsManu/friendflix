@@ -6,7 +6,8 @@
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import { initial } from '#lib/avatars';
-  import { TV_RAIL, isTabActive } from '#lib/menu';
+  import { TV_RAIL, isTabActive, navLabel } from '#lib/menu';
+  import { features } from '#lib/capabilities';
   import { focusFirst, hasTarget } from '#lib/spatial';
   import { railKey, type RailAction, type RailInput } from './rail';
 
@@ -100,7 +101,7 @@
   on:keydown={onKeydown} on:focusin={onFocusin} on:focusout={onFocusout} on:click={onClick} on:pointermove={onPointerMove} on:pointerleave={onPointerLeave}>
   <ul>
     {#each TV_RAIL as [href, label, icon], i (href)}
-      <li class:cur={isTabActive(href, path)} style="--i:{i};--ri:{TV_RAIL.length - 1 - i}"><a {href} aria-current={isTabActive(href, path) ? 'page' : undefined} aria-label={open ? undefined : $t(label)}><span class="ic"><Icon name={icon} size={26} /></span><span class="lb">{$t(label)}</span></a></li>
+      <li class:cur={isTabActive(href, path)} style="--i:{i};--ri:{TV_RAIL.length - 1 - i}"><a {href} aria-current={isTabActive(href, path) ? 'page' : undefined} aria-label={open ? undefined : $t(navLabel(label, $features.requests))}><span class="ic"><Icon name={icon} size={26} /></span><span class="lb">{$t(navLabel(label, $features.requests))}</span></a></li>
     {/each}
     <!-- the active page's coral dot: one element that springs to the current item when the page changes (transform only) -->
     <li class="dot" class:on={cur >= 0} style="transform: translate3d(0, {Math.max(0, cur) * 66}px, 0)" aria-hidden="true"></li>
@@ -132,8 +133,8 @@
   .lb { white-space: nowrap; font-weight: 500; font-size: 1.375rem; opacity: 0; transform: translate3d(-12px, 0, 0); transition: opacity calc(var(--tv-d-s, 200ms) * .7) var(--tv-emph-in, ease) calc(var(--ri, 0) * 21ms), transform calc(var(--tv-d-s, 200ms) * .7) var(--tv-emph-in, ease) calc(var(--ri, 0) * 21ms); }
   .rail.open .lb { opacity: 1; transform: none; transition: opacity var(--tv-d-m, 320ms) var(--tv-emph-out, ease) calc(var(--i, 0) * 30ms), transform var(--tv-d-m, 320ms) var(--tv-emph-out, ease) calc(var(--i, 0) * 30ms); }
   .acct { margin-bottom: 10px; }
-  .acct .lb { --i: 5; --ri: 1; }
-  .who .lb { --i: 6; --ri: 0; }
+  .acct .lb { --i: 6; --ri: 1; }
+  .who .lb { --i: 7; --ri: 0; }
   :global(html.tv-motion-reduced) .lb { transition-delay: 0s !important; transform: none; }
   /* active page: 6 px coral dot, centred 14 px left of the 26 px icon (the icon starts 15 px into its 56 px cell); on the li so the link's clipping does not cut it */
   ul { position: relative; }

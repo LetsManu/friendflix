@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
-import { noHorizontalOverflow } from '../helpers.js';
+import { noHorizontalOverflow, row } from '../helpers.js';
 
 test.describe('account and news pages', () => {
   test('/me renders the quick links and notifications', async ({ page }) => {
@@ -13,12 +13,16 @@ test.describe('account and news pages', () => {
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 
-  test('/new renders the tabs and the week ranking', async ({ page }) => {
+  test('/new renders the filter, the tabs, the new-titles sections and the week ranking', async ({ page }) => {
     await page.goto('/new');
     await expect(page.getByRole('heading', { level: 1, name: 'Neu & demnächst' })).toBeVisible();
-    const tabs = page.getByRole('tablist', { name: 'Bereich' }).getByRole('tab');
-    await expect(tabs).not.toHaveCount(0);
-    await expect(page.getByRole('tabpanel')).toBeVisible();
+    await expect(page.getByRole('radiogroup', { name: 'Anzeigen' }).getByRole('radio')).toHaveText(['Alles', 'Serien', 'Filme']);
+    await expect(page.getByRole('tablist', { name: 'Bereiche' }).getByRole('tab')).toHaveCount(3);
+    await expect(page.getByRole('region', { name: 'Für dich neu', exact: true })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Neue Folgen', exact: true })).toBeVisible();
+    await page.getByRole('tab', { name: 'Neu in der Bibliothek' }).click();
+    await expect(page.getByRole('region', { name: 'Neu in der Bibliothek', exact: true })).toBeVisible();
+    await expect(row(page, 'Diese Woche bei uns').locator('.rkn')).toHaveCount(5);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 });

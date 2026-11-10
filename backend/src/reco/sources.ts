@@ -50,7 +50,7 @@ const transitionSource: CandidateSource = {
   },
 };
 
-const friendsSource: CandidateSource = {
+export const friendsSource: CandidateSource = {
   name: 'friends', social: true,
   async run({ ctx, profile, c, surface }) {
     if (profile.kids || !(c.surface[surface].friends > 0)) return [];
@@ -73,7 +73,7 @@ const friendsSource: CandidateSource = {
   },
 };
 
-const trendingSource: CandidateSource = {
+export const trendingSource: CandidateSource = {
   name: 'trending', social: true,
   async run({ ctx, user, profile, c, surface }) {
     if (profile.kids || !(c.surface[surface].trending > 0)) return [];
@@ -85,7 +85,7 @@ const trendingSource: CandidateSource = {
 
 /** Recently added titles the media server labels new (fresh.ts): new series, new films, and a new season of a series the profile watches. */
 const RECENT = 40;
-const freshSource: CandidateSource = {
+export const freshSource: CandidateSource = {
   name: 'fresh', social: false,
   async run({ ctx, user, taste, now }) {
     const recent = await ctx.jf.items(user, { types: 'Movie,Series', sort: 'DateLastContentAdded,DateCreated', desc: true, limit: RECENT }).then((r) => r.items).catch((): ItemDto[] => []);
