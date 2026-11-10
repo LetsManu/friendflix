@@ -47,7 +47,9 @@ test.describe('home + detail in English', () => {
     await page.goto('/new');
     await expect(page.getByRole('heading', { level: 1, name: 'New & Upcoming' })).toBeVisible();
     await expect(page.getByRole('radiogroup', { name: 'Show' }).getByRole('radio')).toHaveText(['All', 'Series', 'Movies']);
+    await expect(page.getByRole('tablist', { name: 'Sections' })).toBeVisible();
     await expect(page.getByRole('heading', { level: 2, name: 'New for you' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Wishes & coming soon' }).click();
     await expect(page.getByRole('region', { name: 'Coming soon' })).toBeVisible();
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/new-en.png` });
   });

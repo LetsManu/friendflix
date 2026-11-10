@@ -13,11 +13,15 @@ test.describe('account and news pages', () => {
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 
-  test('/new renders the filter, the new-titles rows and the week ranking', async ({ page }) => {
+  test('/new renders the filter, the tabs, the new-titles sections and the week ranking', async ({ page }) => {
     await page.goto('/new');
     await expect(page.getByRole('heading', { level: 1, name: 'Neu & demnächst' })).toBeVisible();
     await expect(page.getByRole('radiogroup', { name: 'Anzeigen' }).getByRole('radio')).toHaveText(['Alles', 'Serien', 'Filme']);
-    for (const title of ['Für dich neu', 'Neue Serien', 'Neue Folgen', 'Neue Filme', 'Diese Woche bei uns']) await expect(row(page, title)).toBeVisible();
+    await expect(page.getByRole('tablist', { name: 'Bereiche' }).getByRole('tab')).toHaveCount(3);
+    await expect(page.getByRole('region', { name: 'Für dich neu', exact: true })).toBeVisible();
+    await expect(row(page, 'Neue Folgen')).toBeVisible();
+    await page.getByRole('tab', { name: 'Neu in der Bibliothek' }).click();
+    await expect(page.getByRole('region', { name: 'Neu in der Bibliothek', exact: true })).toBeVisible();
     await expect(row(page, 'Diese Woche bei uns').locator('.rkn')).toHaveCount(5);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
