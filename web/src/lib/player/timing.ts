@@ -66,7 +66,7 @@ const median = (xs: number[]): number | null => {
 const ms = (x: number) => Math.max(0, Math.round(x));
 
 /** transcode reasons that make the server convert the picture itself (a bitrate / height cap below the source, a codec the device lacks) */
-const VIDEO_REASONS = new Set(['videoCodec', 'height', 'network', 'remoteCap', 'roleCap', 'manual']);
+const VIDEO_REASONS = new Set(['videoCodec', 'height', 'network', 'remoteCap', 'uploadCap', 'roleCap', 'manual']);
 /** reasons where the picture is usually copied and only the audio or the container changes */
 const REMUX_REASONS = new Set(['audioCodec', 'audioTrack', 'container']);
 /**

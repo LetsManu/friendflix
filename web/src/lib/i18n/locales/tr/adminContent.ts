@@ -244,7 +244,7 @@ const dict: Translation<typeof de> = {
       unknownTitle: 'Bilinmeyen başlık',
       last: 'son {time}',
     },
-    tc: { network: 'Bağlantı', remoteCap: 'Uzaktan sınır', roleCap: 'Rol sınırı', container: 'Dosya biçimi', videoCodec: 'Video biçimi', audioCodec: 'Ses biçimi', audioTrack: 'Ses parçası', subtitles: 'Altyazılar', height: 'Çözünürlük', manual: 'Elle', misc: 'Diğer' },
+    tc: { network: 'Bağlantı', remoteCap: 'Uzaktan sınır', uploadCap: 'Yükleme sınırı', roleCap: 'Rol sınırı', container: 'Dosya biçimi', videoCodec: 'Video biçimi', audioCodec: 'Ses biçimi', audioTrack: 'Ses parçası', subtitles: 'Altyazılar', height: 'Çözünürlük', manual: 'Elle', misc: 'Diğer' },
     errors: {
       title: 'Hatalar (24 sa.)',
       none: 'Son 24 saatte hata yok.',

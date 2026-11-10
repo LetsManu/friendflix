@@ -4,13 +4,14 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { parseClientCaps } from '../media/clientCaps.js';
-import { MediaError, type ItemDto, type TranscodeReason } from '../media/types.js';
+import { MediaError, type CapReason, type ItemDto, type TranscodeReason } from '../media/types.js';
 import type { JfUser, ProfileRow, UserRow } from '../types.js';
 import { methodOf } from '../playstats.js';
 import { clearLive, clearStopped, countLive, getLive, listLive, markStopped, setLive } from '../live.js';
 import { isHomeRequest } from '../netaddr.js';
 import { effectiveLimits } from '../limits.js';
 import { remoteBitrateCap } from '../roles.js';
+import { uploadCap } from '../uploadcap.js';
 import { requireGrownUp } from '../kids.js';
 import { requireUser } from '../session.js';
 import { playbackHooks } from '../hooks.js';
@@ -85,10 +86,12 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
   if (kind === 'Playing' || (kind !== 'Playing/Stopped' && !live.playMethod)) {
     // Block 22: play method (client) + the reason the server gave at /info time, device and server identity for the admin view
     const raw = await ctx.kv.get(`pbinfo:${user.id}:${b.playSessionId}`).catch(() => null);
-    let reason: TranscodeReason | undefined;
-    try { reason = (raw ? (JSON.parse(raw) as { reason: TranscodeReason | null }).reason : null) ?? undefined; } catch { reason = undefined; }
+    let rec: { reason?: TranscodeReason | null; bitrate?: unknown; remote?: unknown } = {};
+    try { rec = raw ? (JSON.parse(raw) as typeof rec) : {}; } catch { rec = {}; }
+    const reason = rec.reason ?? undefined;
     const playMethod = methodOf(b.playMethod, reason);
-    live = { ...live, playMethod, ...(playMethod === 'transcode' && reason ? { transcodeReason: reason } : {}), deviceId: who.deviceId, serverUserId: who.jfUser.jellyfin_user_id };
+    const load = typeof rec.bitrate === 'number' && rec.bitrate > 0 && typeof rec.remote === 'boolean' ? { bitrate: rec.bitrate, remote: rec.remote } : {};
+    live = { ...live, playMethod, ...(playMethod === 'transcode' && reason ? { transcodeReason: reason } : {}), deviceId: who.deviceId, serverUserId: who.jfUser.jellyfin_user_id, ...load };
   }
   await ctx.jf.report(who.jfUser, {
     event: kind === 'Playing' ? 'start' : kind === 'Playing/Stopped' ? 'stop' : 'progress',
@@ -334,8 +337,12 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     // outside the home networks the role's remote cap applies on top; the viewer may lower the quality, never raise it above the limit
     const remote = !isHomeRequest(req, ctx.cfg.HOME_NETWORKS);
     const ceiling = remote ? remoteBitrateCap(role) : role.maxBitrate; // the quality menu's upper bound (the client's own pick is not a ceiling)
-    const cap = Math.min(ceiling, b.maxBitrate ?? role.maxBitrate);
-    const capReason: 'remoteCap' | 'roleCap' | 'manual' | 'network' = b.maxBitrate !== undefined && b.maxBitrate < ceiling ? (b.reasonHint ?? 'network') : remote && ceiling < role.maxBitrate ? 'remoteCap' : 'roleCap';
+    // the server's upload is busy: a NEW remote stream starts lower (running streams keep theirs); off while UPLOAD_MBPS is unset
+    const upload = remote && ctx.cfg.UPLOAD_MBPS
+      ? uploadCap({ uploadMbps: ctx.cfg.UPLOAD_MBPS, remote, ceiling, deviceId: req.session?.deviceId, others: await listLive(ctx) })
+      : { cap: ceiling, limited: false };
+    const cap = Math.min(upload.cap, b.maxBitrate ?? role.maxBitrate);
+    const capReason: CapReason = b.maxBitrate !== undefined && b.maxBitrate < upload.cap ? (b.reasonHint ?? 'network') : upload.limited ? 'uploadCap' : remote && ceiling < role.maxBitrate ? 'remoteCap' : 'roleCap';
     // PlaybackInfo and the resume-position/trickplay lookup run in parallel (one Jellyfin /Items call instead of two sequential ones)
     const opts = { ...(clientCaps ? { clientCaps } : {}), maxBitrate: cap, capReason, maxHeight: role.maxHeight, startTicks: b.startTicks, audioIndex: b.audioIndex, audioLang: b.audioLang, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') };
     const [first, meta] = await Promise.all([ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts), ctx.jf.playMeta(req.jfUser!, b.itemId)]);
@@ -354,7 +361,8 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     info.trickplay = meta?.trickplay(info.mediaSourceId);
     // Block 22: remember the server's transcode reason for this play session; the stream is counted on "Playing" only
     // (the web prefetches info, Block 20), so a prefetch alone never counts
-    await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ reason: info.transcodeReason ?? null }), 6 * 3600).catch(() => undefined);
+    // (plus the granted cap and remote flag: the upload-aware cap counts live remote streams with them)
+    await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ reason: info.transcodeReason ?? null, bitrate: info.maxBitrate, remote }), 6 * 3600).catch(() => undefined);
     return info;
   }));
 

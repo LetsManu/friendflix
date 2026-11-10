@@ -45,6 +45,7 @@ const en: Translation<typeof de> = {
     directInfo: 'Direct playback, no conversion',
     reasonNetwork: 'Slow connection – quality adjusts automatically',
     reasonRemoteCap: 'Quality is limited while you are away',
+    reasonUploadCap: 'The server\'s connection is busy right now, so this stream starts at a lower quality',
     reasonRoleCap: 'Your account limits the quality',
     reasonContainer: 'This device cannot play the file format',
     reasonVideoCodec: 'This device cannot play the video format',

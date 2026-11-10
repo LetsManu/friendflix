@@ -6,6 +6,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ### Streaming
 - **Fewer conversions in browsers and on Samsung TVs.** The player now asks the browser (and the Samsung TV app) which video and sound formats it really decodes, including HEVC, AV1, 10-bit and HDR where the screen shows it, and the server plays those files directly instead of converting them. Only formats the device confirms are used; if one still fails to start, the player switches to the converted stream once and the device stays on the safe formats from then on.
+- **Remote viewers no longer all stall when the upload is full.** Admins can enter the server's upload speed (Admin → Settings → Playback). While it is nearly used up, a new stream from outside the home network starts at a lower quality (8, 4 or 1.5 Mbit/s) instead of every stream stalling. Running streams and viewers at home are never changed.
 - **Default image subtitles no longer force a conversion.** A file whose default subtitle track is a picture subtitle (PGS, VobSub) can now play directly; FriendFlix never showed those tracks anyway.
 
 ## [3.1.0] – Churros – 2026-11-09

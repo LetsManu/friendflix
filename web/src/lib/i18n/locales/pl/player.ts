@@ -60,6 +60,7 @@ const pl: Translation<typeof de> = {
     directInfo: 'Odtwarzanie bezpośrednie, bez konwersji',
     reasonNetwork: 'Wolne łącze – jakość dostosowuje się automatycznie',
     reasonRemoteCap: 'Poza domem jakość jest ograniczona',
+    reasonUploadCap: 'Łącze serwera jest teraz zajęte, więc strumień startuje w niższej jakości',
     reasonRoleCap: 'Twoje konto ogranicza jakość',
     reasonContainer: 'To urządzenie nie odtwarza formatu pliku',
     reasonVideoCodec: 'To urządzenie nie odtwarza formatu wideo',

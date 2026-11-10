@@ -142,7 +142,9 @@ export interface ImageTags {
   seriesPrimary?: string;
 }
 
-export type TranscodeReason = 'network' | 'remoteCap' | 'roleCap' | 'container' | 'videoCodec' | 'audioCodec' | 'audioTrack' | 'subtitles' | 'height' | 'manual' | 'other';
+export type TranscodeReason = 'network' | 'remoteCap' | 'uploadCap' | 'roleCap' | 'container' | 'videoCodec' | 'audioCodec' | 'audioTrack' | 'subtitles' | 'height' | 'manual' | 'other';
+/** the bitrate cap that applied (routes/media.ts): `uploadCap` = the server's upload was busy (uploadcap.ts) */
+export type CapReason = 'remoteCap' | 'uploadCap' | 'roleCap' | 'manual' | 'network';
 
 export interface PlaybackDto {
   itemId: string;
@@ -158,7 +160,7 @@ export interface PlaybackDto {
   roleMaxBitrate?: number;
   /**
    * Why this session is transcoded; undefined for direct play. Codec/container/height/subtitle/audio-track reasons come from the server,
-   * 'remoteCap' / 'roleCap' / 'manual' / 'network' from the bitrate cap that applied (the client's choice is 'manual' or 'network' via reasonHint).
+   * 'remoteCap' / 'uploadCap' / 'roleCap' / 'manual' / 'network' from the bitrate cap that applied (the client's choice is 'manual' or 'network' via reasonHint).
    */
   transcodeReason?: TranscodeReason;
   /** audio track baked into hlsUrl (explicit audioIndex or the matched audioLang); undefined = source default */
@@ -333,7 +335,7 @@ export interface MediaRuntime {
   dispatch(e: MediaEvent): Promise<void>;
   log: { warn(o: unknown, msg?: string): void; info(o: unknown, msg?: string): void };
 }
-export interface PlaybackOptions { maxBitrate: number; /** validated device capability block (Android app): says what the device itself can direct-play; the role caps above always win */ clientCaps?: ClientCaps | null; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; /** which cap is the lowest one, for PlaybackDto.transcodeReason */ capReason?: 'remoteCap' | 'roleCap' | 'manual' | 'network';
+export interface PlaybackOptions { maxBitrate: number; /** validated device capability block (Android app): says what the device itself can direct-play; the role caps above always win */ clientCaps?: ClientCaps | null; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; /** which cap is the lowest one, for PlaybackDto.transcodeReason */ capReason?: CapReason;
   /**
    * a queued next episode's cast (routes/cast.ts `next`): the play session of the running cast it follows, resolved
    * by castPredecessor() on the server (never taken from the client). A server that counts streams itself (Plex) lets the new

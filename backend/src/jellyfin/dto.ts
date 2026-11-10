@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Jellyfin JSON -> the server-neutral DTOs of ../media/types.ts (re-exported here for existing imports). */
-import { DOWNLOAD_PRESETS, maxWidthFor, type DownloadQuality, type DownloadSourceDto, type ImageTags, type ItemDto, type MediaTraits, type PlaybackDto, type TranscodeReason, type TrickplayDto } from '../media/types.js';
+import { DOWNLOAD_PRESETS, maxWidthFor, type DownloadQuality, type DownloadSourceDto, type ImageTags, type ItemDto, type MediaTraits, type PlaybackDto, type TranscodeReason, type TrickplayDto, type CapReason } from '../media/types.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, ProviderIds } from '../media/types.js'; // Block 17 P1
 import type { ItemFeatures } from '../media/types.js'; // R1
 import type { HygieneFacts, HygieneSource, HygieneStream, ServerSession } from '../media/types.js'; // Block 22
@@ -110,7 +110,7 @@ export function toPlaybackDto(args: {
   /** no direct URL (role with a height cap or without download rights: the gateway refuses direct streams for it) */
   noDirect?: boolean;
   /** which of our caps is the lowest one (bitrate reasons from the server are attributed to it) */
-  capReason?: 'remoteCap' | 'roleCap' | 'manual' | 'network';
+  capReason?: CapReason;
   /** containers the device itself direct-plays (Android capability block); replaces the browser list when non-empty */
   directContainers?: string[];
 }): PlaybackDto {

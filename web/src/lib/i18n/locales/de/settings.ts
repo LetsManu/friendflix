@@ -152,6 +152,7 @@ export default {
     CAST_RECEIVER_APP_ID: { label: 'Cast-Empfänger-App-ID', help: 'Leer: Chromecast nutzt Googles Standard-Empfänger. Mit der App-ID des eigenen FriendFlix-Empfängers (8 Zeichen, aus der Google Cast SDK Developer Console, Empfänger-Adresse https://<deine Adresse>/cast-receiver/) zeigt der Fernseher „Nächste Folge“ mit Countdown, „Noch da?“ und „Intro überspringen“ und meldet den Fortschritt, auch wenn das Handy schläft. Siehe docs/cast-receiver.md.' },
     PREVIEW_WARM: { label: 'Vorschauen vorbereiten', help: 'Erzeugt im Leerlauf fehlende Vorschau-Clips, einen pro Minute.' },
     HOME_NETWORKS: { label: 'Heimnetze', help: 'Netze, die als Zuhause gelten (keine Bitraten-Grenze für unterwegs), durch Kommas getrennt, z. B. 192.168.0.0/16.' },
+    UPLOAD_MBPS: { label: 'Upload des Servers (Mbit/s)', help: 'Die Upload-Geschwindigkeit deines Internetanschlusses. Ist sie fast ausgelastet, starten neue Streams von unterwegs mit weniger Qualität, statt dass alle ruckeln. Laufende Streams und das Heimnetz bleiben unberührt. Leer = aus.' },
     GITHUB_TOKEN: { label: 'GitHub-Token', help: 'Optional: höheres Abruflimit bei der Suche nach neuen Versionen.' },
     PORTAINER_WEBHOOK_URL: { label: 'Portainer-Stack-Webhook', help: 'Webhook-Adresse des Stacks für Updates mit einem Klick. Die Adresse ist selbst der Schlüssel.' },
     PORTAINER_URL: { label: 'Portainer-Adresse', help: 'Statt des Webhooks: Adresse von Portainer, mit API-Schlüssel und Stack-ID.' },

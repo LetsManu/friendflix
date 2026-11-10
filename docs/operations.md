@@ -290,6 +290,16 @@ Jede Rolle hat zusätzlich zur normalen Bitrate-Grenze ein **Limit unterwegs** (
 
 **Direct Play unterwegs:** Das Gateway kappt transkodierte Streams (HLS: fehlende `MaxStreamingBitrate`/`VideoBitrate` setzt es auf das Limit, höhere Werte senkt es). Den Originalstream (`/Videos/<id>/stream`) kann es nicht kappen, weil es die Bitrate der Datei nicht kennt: Rollen ohne Höhenbegrenzung dürfen ihn (mit dem Standard `DIRECT_PLAY_REQUIRES_DOWNLOAD=false`) auch unterwegs abrufen, etwa per Skript mit ihrem Cookie, und so mehr als das Limit unterwegs ziehen. Der Player selbst fordert unterwegs nur an, was das Backend-Limit erlaubt. Wer den Upload streng schützen muss, setzt `DIRECT_PLAY_REQUIRES_DOWNLOAD=true`: Dann bekommen nur Rollen mit Download-Recht den Originalstream (mehr Transcoding-Last, siehe [downloads.md](downloads.md)).
 
+## Upload-Grenze für neue Streams (`UPLOAD_MBPS`)
+Optional (Admin → Einstellungen → Wiedergabe, „Upload des Servers (Mbit/s)“; leer = aus). Trägt der Admin die Upload-Geschwindigkeit des Anschlusses ein, startet ein **neuer** Stream von unterwegs niedriger, wenn die Leitung schon voll ist, statt dass alle ruckeln. Die Regel (`backend/src/uploadcap.ts`):
+
+- `frei = 0,85 × Upload − Summe der Bitraten der anderen laufenden Streams von unterwegs` (15 % Reserve für Protokoll-Overhead und den eigenen Haushalt).
+- Reicht `frei` für das normale Limit unterwegs, ändert sich nichts. Sonst startet der Stream auf der höchsten Player-Stufe, die passt (8 / 4 / 1,5 Mbit/s), nie unter 1,5 Mbit/s. Grund im Qualitäts-Chip und in der Admin-Statistik: „Upload-Grenze“ (`uploadCap`).
+- Gezählt werden nur Portal-Streams von unterwegs mit der Bitrate, die ihnen beim Start zugeteilt wurde (Obergrenze; Direct Play liegt nie darüber), pausierte eingeschlossen. Streams aus dem Heimnetz, Streams anderer Apps am Medienserver und der eigene vorherige Stream desselben Geräts (Qualitätswechsel) zählen nicht.
+- Laufende Streams werden nie verändert; Zuschauer im Heimnetz nie begrenzt. Es wird nichts gemessen und nichts über Zuschauer gespeichert.
+
+Beispiel: 30 Mbit/s Upload → 25,5 Mbit/s Budget. Laufen 8 + 8 + 4 Mbit/s, bleiben 5,5: der nächste Stream startet mit 4 Mbit/s (720p).
+
 ## Plan B: NPM liefert /media/ direkt (auth_request)
 Standard ist das Node-Gateway. Wird es bei vielen parallelen Streams zum Engpass (CPU des `gateway`-Containers, `rate(friendflix_gateway_bytes_total)`), kann NPM/nginx `/media/` selbst ausliefern. Jede Anfrage wird vorher vom Backend freigegeben (`GET /internal/authz-nginx`).
 

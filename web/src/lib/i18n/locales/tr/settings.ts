@@ -157,6 +157,7 @@ const settings: Translation<typeof de> = {
     CAST_RECEIVER_APP_ID: { label: 'Cast alıcı uygulama kimliği', help: 'Boş: Chromecast, Google’ın varsayılan alıcısını kullanır. FriendFlix’in kendi alıcısının uygulama kimliğiyle (8 karakter, Google Cast SDK Developer Console’dan, alıcı adresi https://<adresiniz>/cast-receiver/) TV geri sayımlı “Sonraki bölüm”, “Hâlâ orada mısın?” ve “Girişi atla” gösterir ve telefon uykudayken bile ilerlemeyi kaydeder. Bkz. docs/cast-receiver.md.' },
     PREVIEW_WARM: { label: 'Önizlemeleri hazırla', help: 'Boştayken eksik önizleme kliplerini dakikada bir oluşturur.' },
     HOME_NETWORKS: { label: 'Ev ağları', help: 'Ev sayılan ağlar (dışarıdaki bit hızı sınırı yok), virgülle ayrılmış, ör. 192.168.0.0/16.' },
+    UPLOAD_MBPS: { label: 'Sunucu yükleme hızı (Mbit/s)', help: 'İnternet bağlantınızın yükleme hızı. Neredeyse dolduğunda, dışarıdan yeni yayınlar herkesin takılması yerine daha düşük kalitede başlar. Süren yayınlar ve ev ağı etkilenmez. Boş = kapalı.' },
     GITHUB_TOKEN: { label: 'GitHub token’ı', help: 'İsteğe bağlı: yeni sürümleri ararken daha yüksek sorgu sınırı.' },
     PORTAINER_WEBHOOK_URL: { label: 'Portainer stack webhook’u', help: 'Tek tıkla güncelleme için stack’in webhook adresi. Adresin kendisi anahtardır.' },
     PORTAINER_URL: { label: 'Portainer adresi', help: 'Webhook yerine: API anahtarı ve stack kimliğiyle Portainer adresi.' },

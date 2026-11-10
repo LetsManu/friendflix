@@ -159,6 +159,7 @@ const settings: Translation<typeof de> = {
     CAST_RECEIVER_APP_ID: { label: 'ID aplikacji odbiornika Cast', help: 'Puste: Chromecast używa domyślnego odbiornika Google. Z ID aplikacji własnego odbiornika FriendFlix (8 znaków, z Google Cast SDK Developer Console, adres odbiornika https://<twój adres>/cast-receiver/) telewizor pokazuje „Następny odcinek” z odliczaniem, „Nadal tu jesteś?” i „Pomiń intro” oraz zapisuje postęp także wtedy, gdy telefon śpi. Zobacz docs/cast-receiver.md.' },
     PREVIEW_WARM: { label: 'Przygotowuj podglądy', help: 'W czasie bezczynności tworzy brakujące klipy podglądu, jeden na minutę.' },
     HOME_NETWORKS: { label: 'Sieci domowe', help: 'Sieci uznawane za dom (bez limitu bitrate poza domem), oddzielone przecinkami, np. 192.168.0.0/16.' },
+    UPLOAD_MBPS: { label: 'Wysyłanie serwera (Mbit/s)', help: 'Prędkość wysyłania Twojego łącza internetowego. Gdy jest prawie wykorzystana, nowe strumienie spoza domu startują w niższej jakości, zamiast żeby wszystkie się zacinały. Trwające strumienie i sieć domowa się nie zmieniają. Puste = wyłączone.' },
     GITHUB_TOKEN: { label: 'Token GitHub', help: 'Opcjonalne: wyższy limit zapytań przy szukaniu nowych wersji.' },
     PORTAINER_WEBHOOK_URL: { label: 'Webhook stosu Portainer', help: 'Adres webhooka stosu do aktualizacji jednym kliknięciem. Sam adres jest kluczem.' },
     PORTAINER_URL: { label: 'Adres Portainer', help: 'Zamiast webhooka: adres Portainer, z kluczem API i ID stosu.' },
