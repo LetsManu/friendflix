@@ -592,7 +592,7 @@ describe('cast engine: AirPlay end and stop', () => {
     await env.adopt({ itemId: 'ep1', isEpisode: true });
     env.video.fire('ended');
     await flush();
-    expect(get(env.out)).toMatchObject({ state: 'ended', next: { itemId: 'ep2', label: 'S1:E2 · Second' } });
+    expect(get(env.out)).toMatchObject({ state: 'ended', next: { itemId: 'ep2', label: 'S1:F2 · Second' } });
     expect(get(env.out)?.next?.startsAt).not.toBeNull();
     await env.advance(10_000);
     expect(env.tokenPosts().at(-1)!.init.body).toMatchObject({ itemId: 'ep2', via: 'airplay' });

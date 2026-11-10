@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { tr } from '#lib/i18n';
-import { barLine, barLine1, barLine2, barLine2Full, barTitleFull, barProgress, barThumb, barVisible, CASTBAR_H, liveCast, minutesLeft, nextSecondsLeft } from './bar';
+import { barLine, barLine1, barLine2, barLine2Full, barTitleFull, splitLine, barProgress, barThumb, barVisible, CASTBAR_H, liveCast, minutesLeft, nextSecondsLeft } from './bar';
 import { img } from '#lib/api';
 import type { CastSession } from './engine';
 
@@ -50,7 +50,7 @@ describe('cast bar', () => {
   describe('line 2 (spec §2 states table)', () => {
     const live = { ...base, kind: 'chromecast' as const, state: 'playing' as const, position: 18 * 60 + 42, duration: 47 * 60 + 10 };
     it('playing: device and the minutes left, rounded up', () => {
-      expect(barLine2(live, 0, tr)).toEqual({ text: 'Auf Wohnzimmer-TV · noch 29 Min.', tone: 'none' });
+      expect(barLine2(live, 0, tr)).toEqual({ text: 'Auf Wohnzimmer-TV · noch 29 Min.', tone: 'none', device: 'Wohnzimmer-TV' });
       expect(barLine2({ ...live, position: 19 * 60 + 30 }, 0, tr).text).toBe('Auf Wohnzimmer-TV · noch 28 Min.');
       expect(barLine2({ ...live, position: live.duration - 1 }, 0, tr).text).toBe('Auf Wohnzimmer-TV · noch 1 Min.');
       expect(barLine2({ ...live, paused: true }, 0, tr).tone).toBe('none');
@@ -71,7 +71,7 @@ describe('cast bar', () => {
     });
     it('the offered next episode, with its countdown', () => {
       const next = { itemId: 'e5', label: 'S1:F5 · Wrenfield Pier', startsAt: 10_000 };
-      expect(barLine2({ ...live, next }, 4000, tr)).toEqual({ text: 'Auf Wohnzimmer-TV · Als Nächstes: S1:F5 · Wrenfield Pier · in 6 s', tone: 'none' });
+      expect(barLine2({ ...live, next }, 4000, tr)).toEqual({ text: 'Auf Wohnzimmer-TV · Als Nächstes: S1:F5 · Wrenfield Pier · in 6 s', tone: 'none', device: 'Wohnzimmer-TV', tail: ' · in 6 s' });
       expect(barLine2({ ...live, state: 'ended', next: { ...next, startsAt: null } }, 4000, tr).text).toBe('Auf Wohnzimmer-TV · Als Nächstes: S1:F5 · Wrenfield Pier');
     });
   });
@@ -105,10 +105,16 @@ describe('cast bar', () => {
       expect(barTitleFull({ ...base, title: 'Saltwater Almanac' }, null, tr)).toBe('Saltwater Almanac');
     });
     it('line 2 names the upcoming episode while one plays; else the collapsed line', () => {
-      const upcoming = { itemId: 'e5', label: 'S1:E5 · Wrenfield Pier' };
-      expect(barLine2Full({ ...ep, upcoming }, 0, tr)).toEqual({ text: 'Auf Wohnzimmer-TV · Als Nächstes: S1:E5 · Wrenfield Pier', tone: 'none' });
+      const upcoming = { itemId: 'e5', label: 'S1:F5 · Wrenfield Pier' };
+      expect(barLine2Full({ ...ep, upcoming }, 0, tr)).toEqual({ text: 'Auf Wohnzimmer-TV · Als Nächstes: S1:F5 · Wrenfield Pier', tone: 'none', device: 'Wohnzimmer-TV' });
       expect(barLine2Full(ep, 0, tr)).toEqual(barLine2(ep, 0, tr));
       expect(barLine2Full({ ...ep, upcoming, state: 'connecting' }, 0, tr).text).toBe('Verbinde mit Wohnzimmer-TV …');
     });
+  });
+
+  it('splitLine: the device name between its two ends, the countdown tail apart', () => {
+    expect(splitLine({ text: 'Auf Wohnzimmer-TV · noch 29 Min.', tone: 'none', device: 'Wohnzimmer-TV' })).toEqual({ pre: 'Auf ', dev: 'Wohnzimmer-TV', post: ' · noch 29 Min.', tail: '' });
+    expect(splitLine({ text: 'Auf TV · Als Nächstes: X · in 6 s', tone: 'none', device: 'TV', tail: ' · in 6 s' })).toEqual({ pre: 'Auf ', dev: 'TV', post: ' · Als Nächstes: X', tail: ' · in 6 s' });
+    expect(splitLine({ text: 'Verbindung verloren', tone: 'warn' })).toBeNull();
   });
 });

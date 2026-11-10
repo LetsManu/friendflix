@@ -158,7 +158,7 @@ export const BAR_OUT_MS = 180;
  * transform and opacity (cast spec §2). Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
  */
 export function barRise(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
-  const mode = p.mode ?? fxMode();
+  const mode = watched(p.mode ?? fxMode());
   if (mode === 'still') return { duration: 0, delay: 0, easing: linear, css: () => '' };
   if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
   const out = p.dir === 'out';

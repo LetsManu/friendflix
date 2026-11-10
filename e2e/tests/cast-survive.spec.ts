@@ -48,6 +48,8 @@ test('reload keeps the cast; the bar comes back; Stop ends it', async ({ page, a
   await page.getByRole('alertdialog').getByRole('button', { name: 'Wiedergabe auf Wohnzimmer-TV beenden', exact: true }).click();
   await expect(bar).toHaveCount(0);
   await expect.poll(() => deleted).toEqual(['c'.repeat(32)]);
+  await expect.poll(() => writes.filter((w) => w.endsWith('/api/playback/stop')).length).toBe(1); // exactly one stop report
+  expect(writes.filter((w) => w.startsWith('DELETE'))).toHaveLength(1);
 });
 
 test('no auto-join: detached bar, Reconnect asks the browser', async ({ page, api: _api }) => {

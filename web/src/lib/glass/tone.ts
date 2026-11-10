@@ -155,6 +155,22 @@ export function menuScrim(bright: RGB, dim = TEXT_DIM): number {
 }
 export const SCRIM_MENU = menuScrim(WHITE);
 
+/** the cast bar's text inks over the glass (`.72` white lines, amber warning, light-red error); the expanded panel's lighter ones are `.78` */
+export const BAR_INKS = { dim: 0.72, warn: [247, 179, 68] as RGB, error: [255, 168, 168] as RGB };
+/**
+ * The scrim of the floating cast bar (`.box`, `.exp`): it floats over any content (posters, white buttons), so its dimmest white
+ * line and its amber and error lines pass AA over pure white. The smallest scrim in `SCRIM_SAFE…MENU_SCRIM_MAX` (steps of .02).
+ */
+export function barScrim(bright: RGB = WHITE): number {
+  for (let i = 0; ; i++) {
+    const s = Math.round((SCRIM_SAFE + i * 0.02) * 100) / 100;
+    if (s >= MENU_SCRIM_MAX) return MENU_SCRIM_MAX;
+    const c = frostComposite(bright, s);
+    if (textContrast(c, BAR_INKS.dim) >= AA && contrast(BAR_INKS.warn, c) >= AA && contrast(BAR_INKS.error, c) >= AA) return s;
+  }
+}
+export const SCRIM_BAR = barScrim();
+
 /** a sampled picture's tone: the tint colour, its bright end, and the scrim white text needs over it */
 export type Tone = { tint: RGB; bright: RGB; scrim: number };
 

@@ -16,7 +16,8 @@
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
   import { confirm } from '#lib/ui/confirm';
-  import { barLine2Full, barTitleFull } from './bar';
+  import { SCRIM_BAR } from '#lib/glass/tone';
+  import { barLine2Full, barTitleFull, splitLine } from './bar';
   import { castEngine, castSession, type CastSession } from './engine';
   import CastScrubber from './CastScrubber.svelte';
   import { castThumbs } from './remoteview';
@@ -24,6 +25,8 @@
   import TrackChips from './TrackChips.svelte';
 
   export let session: CastSession;
+  /** the bar's once-a-second clock (the countdown ticks while no position updates arrive, e.g. after the end) */
+  export let now = Date.now();
   /** the More button it grows out of (its rectangle, measured when this opens) */
   export let trigger: Element | null = null;
 
@@ -40,7 +43,8 @@
   $: live = s.state === 'playing';
   $: it = cachedItem(s.itemId);
   $: line1 = barTitleFull(s, it, $t);
-  $: l2 = barLine2Full(s, Date.now(), $t);
+  $: l2 = barLine2Full(s, now, $t);
+  $: parts = splitLine(l2);
 
   // ---- artwork ----
   let thI = 0, artFor = '';
@@ -68,19 +72,25 @@
   $: hasChips = chipSession.audioTracks.length > 0 || (!air && chipSession.subtitles.length > 0);
 
   // ---- actions ----
-  function openRemote() { void goto('/watch/' + get(castSession)?.itemId); }
+  function openRemote() { const c = get(castSession); if (c) void goto('/watch/' + c.itemId); }
   async function stop() {
     const c = get(castSession);
     if (!c) return;
     asking = true;
     try {
-      if (await confirm({ title: tr('player.castBar.stopQuestion', { device: c.device }), danger: true, confirmLabel: tr('player.castBar.stop', { device: c.device }) })) await castEngine.stop();
+      if (await confirm({ title: tr('player.castBar.stopQuestion', { device: c.device }), danger: true, confirmLabel: tr('player.castBar.stop', { device: c.device }) })) {
+        await castEngine.stop();
+        document.getElementById('main')?.focus({ preventScroll: true }); // the bar is gone: the focus goes on to the page
+      }
     } finally { asking = false; }
   }
 
   // ---- closing ----
   function onKey(e: KeyboardEvent) {
     if (e.key !== 'Escape' || e.defaultPrevented || asking) return;
+    // only for keys meant for the bar (or for nothing): a page modal's or a field's Escape is not ours
+    const a = document.activeElement;
+    if (!(root?.contains(a) || a === document.body || a === null)) return;
     e.preventDefault();
     dispatch('collapse', { via: 'key' });
   }
@@ -94,12 +104,12 @@
 
 <svelte:window on:keydown={onKey} on:pointerdown={onPointer} />
 
-<div class="exp frost frost-safe frost-panel" bind:this={root} role="region" aria-label={$t('player.castBar.regionExpanded')} transition:growBoth|global={{ trigger }}>
+<div class="exp frost frost-safe frost-panel" style="--fr-scrim-safe:{SCRIM_BAR}" bind:this={root} role="region" aria-label={$t('player.castBar.regionExpanded')} transition:growBoth|global={{ trigger }}>
   <div class="head">
     <div class="thumb">{#if thumbs[thI]}<img src={thumbs[thI]} alt="" on:error={() => thI++} />{:else}<span class="ph"><Icon name="film" size={28} /></span>{/if}</div>
     <div class="txt">
       <p class="t1">{line1}</p>
-      <p class="t2" class:warn={l2.tone === 'warn'} class:error={l2.tone === 'error'}>{l2.text}</p>
+      <p class="t2" class:split={Boolean(parts)} class:warn={l2.tone === 'warn'} class:error={l2.tone === 'error'}>{#if parts}<span class="pre">{parts.pre}</span><span class="dev">{parts.dev}</span><span class="post" class:fit={parts.post.length > 24}>{parts.post}</span>{#if parts.tail}<span class="tail">{parts.tail}</span>{/if}{:else}{l2.text}{/if}</p>
     </div>
     <button type="button" class="frost-btn round" bind:this={collapseBtn} aria-label={$t('player.castBar.collapse')} title={$t('player.castBar.collapse')} on:click={() => dispatch('collapse', { via: 'button' })}>
       <Icon name="chevron-down" size={22} />
@@ -117,10 +127,13 @@
           <Icon name={muted ? 'volume-off' : 'volume'} size={22} />
         </button>
         <input class="vslider" type="range" min="0" max="100" step="5" value={muted ? 0 : vol} aria-label={$t('player.castRemote.volume')} aria-valuetext={$t('player.castRemote.volumeValue', { n: muted ? 0 : vol })}
-          style="--v:{muted ? 0 : vol}%" on:input={onVolume} on:keydown|stopPropagation />
+          style="--v:{muted ? 0 : vol}%" on:input={onVolume} on:keydown={(e) => { if (e.key !== 'Escape') e.stopPropagation(); }} />
       {/if}
     </div>
     <div class="tp">
+      {#if s.next?.startsAt != null}
+        <button type="button" class="tb" aria-label={$t('common.cancel')} title={$t('common.cancel')} on:click={() => castEngine.cancelNext()}><Icon name="x" size={22} /></button>
+      {/if}
       <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('player.controls.back10')} title={$t('player.controls.back10')} on:click={() => seekBy(-10)}><Icon name="rewind10" size={28} /></button>
       <button type="button" class="tb pp" aria-disabled={live ? undefined : 'true'} aria-busy={s.state === 'connecting' ? 'true' : undefined}
         aria-label={$t(s.paused ? 'player.controls.play' : 'player.controls.pause')} on:click={playPause}>
@@ -162,6 +175,11 @@
   .t1, .t2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .t1 { font-weight: 700; font-size: 1.02rem; }
   .t2 { font-size: .88rem; color: rgba(255, 255, 255, .72); }
+  .t2.split { display: flex; min-width: 0; }
+  .pre, .tail { flex: none; white-space: pre; }
+  .dev { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .post { flex: none; white-space: pre; } /* the minutes never shrink; a long "Up next" label may */
+  .post.fit { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .t2.warn { color: #f7b344; }
   .t2.error { color: #ffa8a8; }
 

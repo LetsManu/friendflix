@@ -32,10 +32,10 @@ describe('cast remote screen', () => {
     expect(playingLine({ kind: 'chromecast', device: 'Wohnzimmer-TV' }, tr)).toBe('Wird auf Wohnzimmer-TV abgespielt');
   });
 
-  it('episode line: the header\'s "S1:E1 · Name" format, the session subtitle as the fallback', () => {
-    expect(episodeLabel({ name: 'Folge 1', parentIndexNumber: 1, indexNumber: 1 })).toBe('S1:E1 · Folge 1');
+  it('episode line: the episode code in the app language ("S1:F1 · Name"), the session subtitle as the fallback', () => {
+    expect(episodeLabel({ name: 'Folge 1', parentIndexNumber: 1, indexNumber: 1 })).toBe('S1:F1 · Folge 1');
     expect(episodeLabel({ name: 'Special' })).toBe('Special');
-    expect(episodeLine({ isEpisode: true, subtitle: 'S1:F1 Folge 1' }, { name: 'Folge 1', parentIndexNumber: 1, indexNumber: 1 })).toBe('S1:E1 · Folge 1');
+    expect(episodeLine({ isEpisode: true, subtitle: 'S1:F1 Folge 1' }, { name: 'Folge 1', parentIndexNumber: 1, indexNumber: 1 })).toBe('S1:F1 · Folge 1');
     expect(episodeLine({ isEpisode: true, subtitle: 'S1:F1 Folge 1' }, undefined)).toBe('S1:F1 Folge 1');
     expect(episodeLine({ isEpisode: false, subtitle: '' }, { name: 'Film' })).toBe('');
   });

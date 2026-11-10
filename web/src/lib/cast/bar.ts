@@ -56,7 +56,19 @@ export function barLine1(s: Pick<CastSession, 'title' | 'isEpisode' | 'subtitle'
   return code ? `${s.title} \u00b7 ${code}` : s.title;
 }
 
-export interface BarLine2 { text: string; tone: 'none' | 'warn' | 'error' }
+export interface BarLine2 {
+  text: string; tone: 'none' | 'warn' | 'error';
+  /** the device name inside `text` (it is what shrinks when the line is too long) and the countdown tail ("in 8 s") that never does */
+  device?: string; tail?: string;
+}
+/** `text` cut at the device name and the tail: `pre`, `dev`, `post` (up to the tail) and `tail` (with its separator); null without a device */
+export function splitLine(l: BarLine2): { pre: string; dev: string; post: string; tail: string } | null {
+  const i = l.device ? l.text.indexOf(l.device) : -1;
+  if (!l.device || i < 0) return null;
+  const rest = l.text.slice(i + l.device.length);
+  const cut = l.tail && rest.endsWith(l.tail) ? rest.length - l.tail.length : rest.length;
+  return { pre: l.text.slice(0, i), dev: l.device, post: rest.slice(0, cut), tail: rest.slice(cut) };
+}
 /**
  * Second bar line, by state (spec §2 table): playing and paused "On {device} · {n} min left", the offered next episode, connecting,
  * connection lost (warn), could not play (error). `choose`: AirPlay waits for the TV to be picked in the system list.
@@ -72,10 +84,12 @@ export function barLine2(s: CastSession, now: number, tf: TFn, o: { choose?: boo
       if (s.next) {
         const secs = nextSecondsLeft(s.next.startsAt, now);
         const line = tf('player.castBar.upNextLine', { device, label: s.next.label });
-        return { text: secs !== null ? `${line} \u00b7 ${tf('player.castBar.nextIn', { n: secs })}` : line, tone: 'none' };
+        if (secs === null) return { text: line, tone: 'none', device };
+        const tail = ` \u00b7 ${tf('player.castBar.nextIn', { n: secs })}`;
+        return { text: line + tail, tone: 'none', device, tail };
       }
       const n = minutesLeft(s);
-      return { text: n === null ? tf('player.castBar.playingOn', { device }) : tf('player.castBar.onLeft', { device, n }), tone: 'none' };
+      return { text: n === null ? tf('player.castBar.playingOn', { device }) : tf('player.castBar.onLeft', { device, n }), tone: 'none', device };
     }
   }
 }
@@ -90,6 +104,6 @@ export function barTitleFull(s: Pick<CastSession, 'title' | 'isEpisode' | 'subti
 
 /** expanded bar, second line: as `barLine2`, and while an episode plays the one that follows ("On {device} · Up next: E5 · Wrenfield Pier") */
 export function barLine2Full(s: CastSession, now: number, tf: TFn, o: { choose?: boolean } = {}): BarLine2 {
-  if (s.state === 'playing' && !s.next && s.upcoming) return { text: tf('player.castBar.upNextLine', { device: s.device || deviceLabel(s), label: s.upcoming.label }), tone: 'none' };
+  if (s.state === 'playing' && !s.next && s.upcoming) return { text: tf('player.castBar.upNextLine', { device: s.device || deviceLabel(s), label: s.upcoming.label }), tone: 'none', device: s.device || deviceLabel(s) };
   return barLine2(s, now, tf, o);
 }

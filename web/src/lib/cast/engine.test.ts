@@ -827,7 +827,7 @@ describe('cast engine: next episode on the TV', () => {
     await episodeEnds(env);
     // queue refused by the receiver (q1 revoked), the credits' lookup, then the end
     expect(env.order).toEqual(['GET /api/items/ep1/next', 'POST /api/cast/session', 'DELETE /api/cast/session/q1', 'GET /api/items/ep1/next', 'POST /api/playback/stop', 'GET /api/items/ep1/next', 'DELETE /api/cast/session/c1']);
-    expect(get(env.out)).toMatchObject({ state: 'ended', next: { itemId: 'ep2', label: 'S1:E2 · Second', startsAt: T0 + COUNTDOWN_MS } });
+    expect(get(env.out)).toMatchObject({ state: 'ended', next: { itemId: 'ep2', label: 'S1:F2 · Second', startsAt: T0 + COUNTDOWN_MS } });
     await env.advance(COUNTDOWN_MS - 1);
     expect(env.tokenPosts()).toHaveLength(0);
     expect(env.cast.castStop).not.toHaveBeenCalled();
@@ -1085,7 +1085,7 @@ describe('cast engine: Netflix-like next episode (credits, receiver queue, skip)
     expect(get(env.out)?.next).toBeUndefined();
     env.state.set(playing({ currentTime: 1701 }));
     await flush();
-    expect(get(env.out)).toMatchObject({ state: 'playing', next: { itemId: 'ep2', label: 'S1:E2 · Second', startsAt: T0 + COUNTDOWN_MS } });
+    expect(get(env.out)).toMatchObject({ state: 'playing', next: { itemId: 'ep2', label: 'S1:F2 · Second', startsAt: T0 + COUNTDOWN_MS } });
     await env.advance(COUNTDOWN_MS);
     expect(env.tokenPosts().at(-1)!.init.body).toMatchObject({ itemId: 'ep2', startTicks: undefined });
     expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'connecting' });
@@ -1097,7 +1097,7 @@ describe('cast engine: Netflix-like next episode (credits, receiver queue, skip)
     await playingSession(env, ep1);
     env.state.set(playing({ currentTime: 30 }));
     await flush();
-    expect(get(env.out)).toMatchObject({ upcoming: { itemId: 'ep2', label: 'S1:E2 \u00b7 Second' } });
+    expect(get(env.out)).toMatchObject({ upcoming: { itemId: 'ep2', label: 'S1:F2 \u00b7 Second' } });
     expect(get(env.out)?.next).toBeUndefined(); // no countdown yet
     env.state.set(playing({ currentTime: 40 }));
     await flush();

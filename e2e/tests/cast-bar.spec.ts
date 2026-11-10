@@ -114,7 +114,7 @@ test('episode end on the TV shows "Als Nächstes" and switches after the countdo
   await sdk.nearEnd();
   await expect(bar.getByRole('progressbar')).toHaveAttribute('aria-valuenow', /^(99|100)$/); // the engine mirrors the receiver's position
   await sdk.finish();
-  await expect(bar).toContainText(`Als Nächstes: S1:E2 · ${episodes[1]!.name}`);
+  await expect(bar).toContainText(`Als Nächstes: S1:F2 · ${episodes[1]!.name}`);
   await expect(bar).toContainText(/in \d+ s/);
   expect(sessions).toHaveLength(1);
   await expect.poll(() => sessions.length, { timeout: 15_000 }).toBe(2);
@@ -130,7 +130,7 @@ test('credits on the TV: the bar counts down to the next episode while the TV pl
   const bar = castBar(page);
   await expect(bar.getByRole('button', { name: 'Nächste Folge' })).toBeVisible(); // next episode at any time
   await sdk.nearEnd(); // the last seconds: the credits (no segments: the last 25 s)
-  await expect(bar).toContainText(`Als Nächstes: S1:E2 · ${episodes[1]!.name}`);
+  await expect(bar).toContainText(`Als Nächstes: S1:F2 · ${episodes[1]!.name}`);
   await expect(bar).toContainText(/in \d+ s/);
   await bar.getByRole('button', { name: 'Abbrechen' }).click();
   await expect(bar).not.toContainText(/in \d+ s/);
@@ -366,7 +366,7 @@ test('keyboard focus stays in the bar when the focused button is replaced', asyn
   const bar = castBar(page);
   await sdk.nearEnd();
   await sdk.finish();
-  const next = bar.getByRole('button', { name: `Als Nächstes: S1:E2 · ${episodes[1]!.name}` });
+  const next = bar.getByRole('button', { name: `Als Nächstes: S1:F2 · ${episodes[1]!.name}` });
   await next.focus();
   await page.keyboard.press('Enter'); // the button gives way to the spinner, then to Pause
   await expect(next).toHaveCount(0);
@@ -627,6 +627,38 @@ test('height follows content', async ({ page, api: _api }) => {
   expect(Math.abs(box.x + box.width / 2 - page.viewportSize()!.width / 2)).toBeLessThanOrEqual(2);
 });
 
+test('Escape collapses from the volume slider too', async ({ page, api: _api }) => {
+  await castAndLeave(page);
+  await more(page).click();
+  await expandedRegion(page).getByRole('slider', { name: 'Fernseher-Lautstärke' }).focus();
+  await page.keyboard.press('Escape');
+  await expect(expandedRegion(page)).toHaveCount(0);
+  await expect(more(page)).toBeFocused();
+});
+
+test('the expanded bar offers Cancel during the next-episode countdown', async ({ page, api: _api }) => {
+  test.setTimeout(45_000);
+  const { sdk, sessions } = await castAndLeave(page, { id: episodes[0]!.id });
+  await nextAfterFirst(page);
+  await sdk.nearEnd();
+  await expect(castBar(page)).toContainText(/in \d+ s/);
+  await more(page).click();
+  const exp = expandedRegion(page);
+  await expect(exp).toContainText(/in \d+ s/);
+  await exp.getByRole('button', { name: 'Abbrechen' }).click();
+  await expect(exp).not.toContainText(/in \d+ s/);
+  await expect(exp.getByRole('button', { name: 'Abbrechen' })).toHaveCount(0);
+  await page.waitForTimeout(11_000);
+  expect(sessions.filter((b) => !b.next)).toHaveLength(1);
+});
+
+test('the status region is there before the bar appears', async ({ page, api: _api }) => {
+  await page.goto('/');
+  await page.waitForLoadState('networkidle');
+  await expect(page.locator('p.sr-only[role=status][aria-live=polite]').first()).toBeAttached();
+  await expect(castBar(page)).toHaveCount(0);
+});
+
 test.describe('expanded: Dunmoor with tracks and a next episode', () => {
   dunmoor();
   test('titles, up next, tracks and the skip row', async ({ page, api: _api }) => {
@@ -636,7 +668,7 @@ test.describe('expanded: Dunmoor with tracks and a next episode', () => {
     await more(page).click();
     const exp = expandedRegion(page);
     await expect(exp).toContainText('Dunmoor · S1:F4 · The Lantern Road');
-    await expect(exp).toContainText('Auf Wohnzimmer-TV · Als Nächstes: S1:E5 · Wrenfield Pier');
+    await expect(exp).toContainText('Auf Wohnzimmer-TV · Als Nächstes: S1:F5 · Wrenfield Pier');
     await expect(exp.getByRole('button', { name: 'Audio: Deutsch' })).toBeVisible();
     await expect(exp.getByRole('button', { name: 'Untertitel: Aus' })).toBeVisible();
     await exp.getByRole('button', { name: 'Audio: Deutsch' }).click();
@@ -650,6 +682,26 @@ test.describe('expanded: Dunmoor with tracks and a next episode', () => {
       expect(r.height, await b.innerText()).toBeGreaterThanOrEqual(44);
     }
   });
+});
+
+test.describe('line 2 keeps its minutes', () => {
+  test.use({ reducedMotion: 'no-preference' });
+  dunmoor();
+  for (const width of [1440, 800]) {
+    test(`at ${width} px the device name gives way, not the minutes`, async ({ page, api: _api }) => {
+      test.setTimeout(45_000);
+      await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+      await barIn(page, 'playing');
+      await page.setViewportSize({ width, height: 900 });
+      const t2 = castBar(page).locator('.t2');
+      await expect(t2).toContainText('Min.');
+      const ok = await t2.evaluate((el) => {
+        const post = el.querySelector('.post')!.getBoundingClientRect(), box = el.getBoundingClientRect();
+        return { inside: post.right <= box.right + 0.5, whole: el.querySelector<HTMLElement>('.post')!.scrollWidth <= el.querySelector<HTMLElement>('.post')!.clientWidth, oneLine: box.height < 22 };
+      });
+      expect(ok).toEqual({ inside: true, whole: true, oneLine: true });
+    });
+  }
 });
 
 test.describe('screenshots', () => {

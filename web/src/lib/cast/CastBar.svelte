@@ -17,7 +17,8 @@
   import { t, tr } from '#lib/i18n';
   import { motionAllowed } from '#lib/preview';
   import { confirm } from '#lib/ui/confirm';
-  import { barLine1, barLine2, barProgress, barThumb, nextSecondsLeft } from './bar';
+  import { SCRIM_BAR } from '#lib/glass/tone';
+  import { barLine1, barLine2, barProgress, barThumb, nextSecondsLeft, splitLine } from './bar';
   import CastBarExpanded from './CastBarExpanded.svelte';
   import { castEngine, castSession, type CastSession } from './engine';
 
@@ -57,6 +58,7 @@
   $: secs = nextSecondsLeft(startsAt, now);
 
   $: l2 = s ? barLine2(s, now, $t, { choose }) : { text: '', tone: 'none' as const };
+  $: parts = splitLine(l2);
   /** the state line crossfades when the kind of line changes, not with every minute or second that ticks in it */
   $: kind = `${state}|${next ? 'n' : ''}|${choose ? 'c' : ''}`;
   const fadeMs = () => (motionAllowed() ? 120 : 0);
@@ -118,20 +120,27 @@
   async function stop() {
     const c = get(castSession);
     if (!c) return;
-    if (await confirm({ title: tr('player.castBar.stopQuestion', { device: c.device }), danger: true, confirmLabel: tr('player.castBar.stop', { device: c.device }) })) await castEngine.stop();
+    const inBar = Boolean(region?.contains(document.activeElement));
+    if (await confirm({ title: tr('player.castBar.stopQuestion', { device: c.device }), danger: true, confirmLabel: tr('player.castBar.stop', { device: c.device }) })) {
+      await castEngine.stop();
+      // the bar is gone: the focus goes on to the page, not to <body>
+      if (inBar || document.activeElement === document.body) document.getElementById('main')?.focus({ preventScroll: true });
+    }
   }
 </script>
 
+<!-- announced politely when the state changes; always mounted, so a bar that appears in a state (connecting, lost) is heard too -->
+<p class="sr-only" role="status" aria-live="polite">{shown ? said : ''}</p>
+
 {#if shown && s}
   <div class="castbar" bind:this={region} class:phone class:notab={!tabbar} in:barRise out:barRise={{ dir: 'out' }} on:outroend={() => dispatch('gone')}>
-    <p class="sr-only" role="status" aria-live="polite">{said}</p>
     {#if expanded}
-      <CastBarExpanded session={s} trigger={origin} on:collapse={(e) => void collapse(e.detail.via)} />
+      <CastBarExpanded session={s} {now} trigger={origin} on:collapse={(e) => void collapse(e.detail.via)} />
     {:else}
-    <div class="box frost frost-safe frost-panel" role="region" aria-label={$t('player.castBar.region')} aria-busy={state === 'connecting' ? 'true' : undefined}>
+    <div class="box frost frost-safe frost-panel" style="--fr-scrim-safe:{SCRIM_BAR}" role="region" aria-label={$t('player.castBar.region')} aria-busy={state === 'connecting' ? 'true' : undefined}>
       <div class="line" role="progressbar" aria-label={$t('player.castBar.progress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><i style="transform:scaleX({progress / 100})"></i></div>
       {#snippet info()}
-        {#if still || state === 'connecting'}
+        {#if (still && !choose) || state === 'connecting'}
           <span class="slot" aria-hidden="true">
             {#if state === 'connecting'}<span class="spin"></span>{:else}<span class="mark" class:err={l2.tone === 'error'}><Icon name="alert" size={24} /></span>{/if}
           </span>
@@ -140,7 +149,7 @@
         {/if}
         <span class="txt" id="castbar-txt">
           <span class="t1" class:sr={phone && (still || state === 'connecting')}>{title}</span>
-          {#key kind}<span class="t2" class:warn={l2.tone === 'warn'} class:error={l2.tone === 'error'} in:fade={{ duration: fadeMs() }}>{l2.text}</span>{/key}
+          {#key kind}<span class="t2" class:split={Boolean(parts)} class:warn={l2.tone === 'warn'} class:error={l2.tone === 'error'} in:fade={{ duration: fadeMs() }}>{#if parts}<span class="pre">{parts.pre}</span><span class="dev">{parts.dev}</span><span class="post" class:fit={parts.post.length > 24}>{parts.post}</span>{#if parts.tail}<span class="tail">{parts.tail}</span>{/if}{:else}{l2.text}{/if}</span>{/key}
         </span>
       {/snippet}
       {#if still}
@@ -206,6 +215,12 @@
   .t1, .t2 { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .t1 { font-weight: 700; font-size: .95rem; }
   .t2 { font-size: .85rem; color: rgba(255, 255, 255, .72); }
+  /* the device name gives way first, then the rest of the line; the minutes and the countdown tail stay */
+  .t2.split { display: flex; min-width: 0; }
+  .pre, .tail { flex: none; white-space: pre; }
+  .dev { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .post { flex: none; white-space: pre; } /* the minutes never shrink; a long "Up next" label may */
+  .post.fit { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .t2.warn { color: #f7b344; }
   .t2.error { color: #ffa8a8; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -219,7 +234,7 @@
   .frost-btn.ic { width: 44px; padding: 0; }
   .here { flex: none; min-height: 44px; padding: 0 16px; border-radius: 999px; background: #fff; color: #000; font-weight: 800; white-space: nowrap; }
   .here:hover:not(:disabled) { background: rgba(255, 255, 255, .82); }
-  .spin { width: 24px; height: 24px; border: 3px solid rgba(255, 255, 255, .3); border-top-color: #fff; border-radius: 50%; animation: cb-spin .8s linear infinite; }
+  .spin { width: 24px; height: 24px; border: 3px solid rgba(255, 255, 255, .3); border-top-color: var(--acc); border-radius: 50%; animation: cb-spin .8s linear infinite; }
   @keyframes cb-spin { to { transform: rotate(360deg); } }
   button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   .open:focus-visible { outline-offset: -2px; }
@@ -230,7 +245,7 @@
   .phone .box { height: 68px; gap: 4px; padding: 0 8px 0 16px; }
   .phone .open { padding-bottom: 4px; gap: 10px; }
   .phone .slot { width: 28px; }
-  .phone .t2 { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
+  .phone .t2:not(.split) { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
   .phone .line { left: 20px; right: 20px; bottom: 5px; }
 
   /* calm mode and reduced motion: nothing moves (the panels are solid through the .frost rules) */
