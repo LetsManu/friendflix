@@ -433,6 +433,32 @@ describe('cast engine: session end, stop, pagehide (Chromecast)', () => {
     expect(env.hint()).toBeNull();
   });
 
+  it('Continue here (stop) after a refused queue token or with one on its way: each token is revoked exactly once', async () => {
+    // refused by the receiver: revoked at once; the stop then revokes only the live token
+    const env = setup();
+    await playingSession(env, { itemId: 'ep1', isEpisode: true, cast: ci(hex('c1')) });
+    await flush();
+    expect(env.queuePosts()).toHaveLength(1);
+    expect(env.deletes()).toEqual(['q1']);
+    await env.engine.stop();
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.deletes()).toEqual(['q1', hex('c1')]);
+    // the queue token still on its way when the stop comes: revoked once when it arrives, never by the stop as well
+    const env2 = setup();
+    env2.setQueue(() => 7);
+    const post = deferred<CastInfo>();
+    env2.queuePostAnswers.push(() => post.promise);
+    await playingSession(env2, { itemId: 'ep1', isEpisode: true, cast: ci(hex('c1')) });
+    const stopping = env2.engine.stop();
+    void env2.engine.stop(); // a second tap
+    post.resolve(ci('qx'));
+    await stopping;
+    await flush();
+    expect(env2.reports()).toEqual(['stop']);
+    expect(env2.deletes().sort()).toEqual([hex('c1'), 'qx'].sort());
+    expect(env2.queued).toEqual([]);
+  });
+
   it('hint follows the live token', async () => {
     const env = setup();
     await playingSession(env, { cast: ci(hex('c1')) });

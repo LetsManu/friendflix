@@ -53,15 +53,19 @@ export const wireless = (page: Page, on: boolean) => page.evaluate((on) => {
   document.querySelector('video')!.dispatchEvent(new Event('webkitcurrentplaybacktargetiswirelesschanged'));
 }, on);
 
+/** the castId the fake server gives a queued next episode's token */
+export const NEXT_CAST_ID = 'e'.repeat(32);
 /** POST /api/cast/session answers with a token URL (a test file the phone can play); `fail` -> 429 max_streams */
 export async function castSessions(page: Page, o: { fail?: () => boolean; castId?: string; report?: string } = {}) {
   const sessions: Array<Record<string, unknown>> = [];
   const deleted: string[] = [];
   await page.route('**/api/cast/session', (r) => {
-    sessions.push(r.request().postDataJSON());
+    const body = r.request().postDataJSON() as Record<string, unknown>;
+    sessions.push(body);
     if (o.fail?.()) return r.fulfill({ status: 429, json: { error: 'max_streams', max: 1 } });
     return r.fulfill({ json: {
-      castId: o.castId ?? 'c'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, playSessionId: 'air-ps', mediaSourceId: 'ms', startTime: 0,
+      // a queued next episode's token (`next: true`) has its own handle, as on the server: its revoke is not the playing one's
+      castId: body?.next ? NEXT_CAST_ID : o.castId ?? 'c'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, playSessionId: 'air-ps', mediaSourceId: 'ms', startTime: 0,
       contentUrl: `${new URL(page.url()).origin}/media/p1test.webm#airplay`, contentType: 'application/x-mpegURL', hlsSegmentFormat: 'ts', title: 'Film', subtitles: [],
       ...(o.report ? { report: o.report } : {}),
     } });

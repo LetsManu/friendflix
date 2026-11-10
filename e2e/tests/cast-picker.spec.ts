@@ -93,7 +93,10 @@ test('Continue here stops the cast and plays locally', async ({ page, api: _api 
   await here.click();
   await expect(page.getByTestId('cast-active')).toHaveCount(0);
   await expect.poll(() => infos).toBeGreaterThanOrEqual(1);
-  expect(sdk.deleted).toHaveLength(1);
+  // exactly one DELETE for the playing token (sent once its stop report is through); a queued next episode's token, when the
+  // engine asked for one, is revoked once as well, never twice
+  await expect.poll(() => sdk.deleted.filter((id) => id === 'c'.repeat(32))).toHaveLength(1);
+  expect(new Set(sdk.deleted).size).toBe(sdk.deleted.length);
   expect(await sdk.calls()).toContain('endCurrentSession');
   expect(stops).toBe(1); // exactly one stop report for the cast
   // plays on locally from where the TV was
