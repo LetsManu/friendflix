@@ -2,12 +2,20 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { t } from '#lib/i18n';
+  import { api } from '#lib/api';
+  import { fmtDate, t } from '#lib/i18n';
+  import { capsPending, capsSummary } from '#lib/player/devicecaps';
+  import { avRows, type Abilities, type CapsFacts } from '#lib/player/diagnoseav';
   import { airLogStart, clearAirLog, formatAirLog, readAirLog, type AirLogEntry } from '#lib/player/airplayLog';
   import { formatTiming, readLocalTimings, type StoredTiming } from '#lib/player/timing';
 
   type Row = [string, string];
   let rows: Row[] = [];
+  // "Picture and sound": the device's abilities (devicecaps), the server's coarse answer and the last stored playback
+  let caps: CapsFacts = { hevcFiles: false, hevcStreams: false, surround: [], channels: 2, stereoChoice: false, soundMode: false, avoided: {} };
+  let abilities: Abilities | null = null;
+  $: av = avRows({ caps, abilities, last: timings[0] ?? null, t: $t, date: (ms) => fmtDate(new Date(ms)) });
+  const readCaps = () => { try { caps = capsSummary(); } catch { /* an unreadable probe shows "no HEVC confirmed" */ } };
   let probe: HTMLElement, svh: HTMLElement, lvh: HTMLElement, dvh: HTMLElement, vh: HTMLElement;
   let table: HTMLElement;
   let note = '';
@@ -86,7 +94,7 @@
   }
 
   async function copy() {
-    const text = rows.map(([k, v]) => `${k}: ${v}`).join('\n');
+    const text = [...av, ...rows].map(([k, v]) => `${k}: ${v}`).join('\n');
     try {
       await navigator.clipboard.writeText(text);
       note = $t('diagnose.copied');
@@ -104,6 +112,10 @@
     measure();
     readAir();
     timings = readLocalTimings();
+    readCaps();
+    // the probe may still run: ask again when it answered (bounded wait)
+    void Promise.resolve(capsPending(2000)).then(readCaps, readCaps);
+    api<Abilities>('/api/playback/abilities').then((a) => { abilities = a; }, () => { abilities = null; });
     const id = setInterval(measure, 1000);
     window.addEventListener('resize', measure);
     window.addEventListener('orientationchange', measure);
@@ -124,6 +136,20 @@
   <p class="hint">{$t('diagnose.hint')}</p>
   <button type="button" on:click={copy}>{$t('diagnose.copy')}</button>
   {#if note}<span role="status" class="note">{note}</span>{/if}
+
+  <!-- below "Casting" once that section exists on this page; until then first -->
+  <section aria-labelledby="av-title" data-testid="av-section">
+    <h2 id="av-title">{$t('diagnose.avTitle')}</h2>
+    <p class="hint">{$t('diagnose.avHint')}</p>
+    <table data-testid="av-table">
+      <tbody>
+        {#each av as [k, v] (k)}
+          <tr><th scope="row">{k}</th><td>{v}</td></tr>
+        {/each}
+      </tbody>
+    </table>
+  </section>
+
   <table bind:this={table} data-testid="diagnose-table">
     <tbody>
       {#each rows as [k, v] (k)}
@@ -164,6 +190,7 @@
   th { font-weight: 600; color: #cfd6dd; width: 48%; }
   .note { margin-left: .8rem; }
   h2 { margin-top: 2rem; }
+  section > h2 { margin-top: 1.5rem; }
   .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
   .airlog { margin-top: 1rem; padding: .6rem; background: #12171c; border: 1px solid #2b333c; border-radius: 6px; font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; user-select: text; -webkit-user-select: text; }
   .probe { position: fixed; visibility: hidden; pointer-events: none; width: 0; height: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }

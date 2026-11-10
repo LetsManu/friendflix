@@ -53,9 +53,30 @@ export interface TimingReport {
   avEvents: number;
   /** this start used the next episode's playback info prepared during the autoplay countdown (prefetch.ts prepareNext) */
   fromNext: boolean;
+  /** what the picture / sound were given (fixed codes, sent to the server); null = not known (old report, no plan) */
+  videoOut: VideoOut | null;
+  audioOut: AudioOut | null;
+  /** Stays on this device (never sent): the server's reason codes, the sound codec and its channel count, for Diagnose */
+  why: string[];
+  audioCodec: string | null;
+  channels: number | null;
 }
+export type VideoOut = 'direct' | 'copy_h264' | 'copy_hevc' | 'h264' | 'hevc';
+export type AudioOut = 'direct' | 'copy' | 'stereo' | 'surround';
 /** the server's `delivery` block as far as the session keeps it: fixed codes, no ids */
-export interface StreamOut { video: string; videoCodec: string; audio: string; audioCodec: string }
+export interface StreamOut { video: string; videoCodec: string; audio: string; audioCodec: string; channels?: number; why?: string[] }
+/** the fields that stay on this device */
+const LOCAL_ONLY = ['why', 'audioCodec', 'channels'] as const;
+
+/** the server's picture / sound plan as the fixed codes of video_out / audio_out (copy + hevc = copy_hevc); anything unknown is null */
+export function outCodes(mode: Mode | null, o: StreamOut | null): { videoOut: VideoOut | null; audioOut: AudioOut | null } {
+  if (mode === 'direct') return { videoOut: 'direct', audioOut: 'direct' };
+  if (!o) return { videoOut: null, audioOut: null };
+  const hevc = o.videoCodec === 'hevc';
+  const videoOut: VideoOut | null = o.video === 'copy' ? (hevc ? 'copy_hevc' : 'copy_h264') : o.video === 'h264' ? 'h264' : o.video === 'hevc' ? 'hevc' : null;
+  const audioOut: AudioOut | null = o.audio === 'copy' || o.audio === 'stereo' || o.audio === 'surround' ? o.audio : null;
+  return { videoOut, audioOut };
+}
 export interface StoredTiming extends TimingReport { at: number }
 
 export const TIMING_ENDPOINT = '/api/playback/timing';
@@ -127,8 +148,6 @@ export function createTiming(now: () => number = () => performance.now()) {
       infoAt = manifestAt = fragAt = frameAt = fragBytes = fragDl = seekAt = stallAt = null; seeks = []; seekCount = 0; stalls = 0; stallMs = 0;
       fromNext = false; trackSwitch = isTrack && !isSwitch; delivery = null; videoCopy = null; streamOut = null; soundMode = 'off'; audioRouted = false; reconnects = 0; frames.reset();
     },
-    /** the server's plan for this stream (fixed codes; Task 4 reports it as video_out / audio_out) */
-    get out(): StreamOut | null { return streamOut; },
     get active() { return on; },
     /** playback info received with the requested bitrate (first answer of the session only: a retry keeps the clock) */
     info(bps?: number) { if (on && infoAt === null) { infoAt = rel(); bitrate = bps && bps > 0 ? Math.round(bps) : null; } },
@@ -191,6 +210,7 @@ export function createTiming(now: () => number = () => performance.now()) {
         seekMaxMs: seeks.length ? Math.max(...seeks) : null, stalls, stallMs, effectiveType: env.effectiveType ?? null,
         delivery: delivery ?? deliveryOf(mode, null, videoCopy), videoCopy, soundMode, audioRouted, droppedFrames: frames.value.dropped, totalFrames: frames.value.total,
         trackSwitch, reconnects, avEvents: seekCount + reconnects + (qualitySwitch || trackSwitch ? 1 : 0), fromNext,
+        ...outCodes(mode, streamOut), why: mode === 'direct' ? [] : [...(streamOut?.why ?? [])], audioCodec: streamOut?.audioCodec ?? null, channels: typeof streamOut?.channels === 'number' ? streamOut.channels : null,
       };
     },
     /** party / cast / AirPlay: this session is not reported */
@@ -235,8 +255,10 @@ export function sendTiming(r: TimingReport, env: TimingEnv): void {
   } catch { /* storage blocked / full */ }
   try {
     const f = env.fetch ?? globalThis.fetch;
+    const wire: Record<string, unknown> = { ...r };
+    for (const k of LOCAL_ONLY) delete wire[k]; // reasons and codec names are for this device's Diagnose only
     void f?.(TIMING_ENDPOINT, {
-      method: 'POST', keepalive: true, credentials: 'same-origin', body: JSON.stringify(r),
+      method: 'POST', keepalive: true, credentials: 'same-origin', body: JSON.stringify(wire),
       headers: { 'content-type': 'application/json', 'x-csrf-token': env.csrf, ...(env.profile ? { 'x-ff-profile': env.profile } : {}) },
     })?.catch?.(() => undefined);
   } catch { /* no fetch / refused */ }
@@ -251,6 +273,7 @@ export function formatTiming(s: StoredTiming): string {
     `  info ${v(s.infoMs)} · playlist ${v(s.manifestMs)} · 1st frag ${v(s.firstFragMs)} (${kb} in ${v(s.firstFragDlMs)}) · 1st frame ${v(s.firstFrameMs)}${s.targetDuration ? ` · segment ${s.targetDuration} s` : ''}`,
     `  seeks ${s.seeks} (median ${v(s.seekMedianMs)}, max ${v(s.seekMaxMs)}) · stalls ${s.stalls} (${v(s.stallMs)})`,
     ...(s.avEvents === undefined ? [] : [syncLine(s)]), // reports stored before the sync facts existed have none
+    ...(s.videoOut || s.audioOut ? [outLine(s)] : []),
   ].join('\n');
 }
 
@@ -260,4 +283,44 @@ function syncLine(s: StoredTiming): string {
   const frames = s.totalFrames === null ? '–' : `${s.droppedFrames ?? 0}/${s.totalFrames}`;
   const why = [s.reconnects ? `${s.reconnects} reconnect${s.reconnects === 1 ? '' : 's'}` : '', s.trackSwitch ? 'track switch' : ''].filter(Boolean).join(', ');
   return `  sync: ${how} · sound ${s.soundMode}${s.audioRouted ? ', Web Audio' : ''} · dropped ${frames} frames · A/V events ${s.avEvents}${why ? ` (${why})` : ''}`;
+}
+
+const chName = (n: number | null | undefined) => (n === 6 ? '5.1' : n === 2 ? 'stereo' : typeof n === 'number' && n > 0 ? `${n}ch` : '');
+/** "out: copy_hevc · eac3 5.1 (hevc_device, surround_device)" */
+function outLine(s: StoredTiming): string {
+  const sound = s.audioOut === 'direct' || !s.audioOut ? (s.audioOut ?? '?') : [s.audioCodec, chName(s.channels)].filter(Boolean).join(' ') || s.audioOut;
+  return `  out: ${s.videoOut ?? '?'} · ${sound}${s.why?.length ? ` (${s.why.join(', ')})` : ''}`;
+}
+
+/** the translator of the caller (the $t store or tr): the keys below exist in every locale */
+type Tr = (key: any, params?: any) => string;
+const CODEC_KEY: Record<string, string> = { eac3: 'diagnose.codec.eac3', ac3: 'diagnose.codec.ac3', aac: 'diagnose.codec.aac' };
+
+/**
+ * "HEVC (H.265) passed through unchanged" / "Dolby Digital Plus 5.1 passed through": what the last playback was given, in words
+ * (Diagnose). Only fixed codes go in; an unknown code reads as "not known".
+ */
+export function formatDelivery(o: { videoOut: string | null; audioOut: string | null; videoCodec?: string; audioCodec?: string; channels?: number }, t: Tr): { picture: string; sound: string } {
+  const picture = ((): string => {
+    switch (o.videoOut) {
+      case 'direct': return t('diagnose.out.direct');
+      case 'copy_hevc': return t('diagnose.out.pictureCopy', { what: t('diagnose.codec.hevc') });
+      case 'copy_h264': return t('diagnose.out.pictureCopy', { what: t('diagnose.codec.h264') });
+      case 'hevc': return t('diagnose.out.converted', { what: t('diagnose.codec.hevc') });
+      case 'h264': return t('diagnose.out.converted', { what: t('diagnose.codec.h264') });
+      default: return t('diagnose.out.unknown');
+    }
+  })();
+  const codec = o.audioCodec && CODEC_KEY[o.audioCodec] ? t(CODEC_KEY[o.audioCodec]!) : o.audioCodec && /^[a-z0-9]{2,8}$/.test(o.audioCodec) ? o.audioCodec.toUpperCase() : '';
+  const ch = o.channels === 6 ? t('diagnose.channels.surround') : o.channels === 2 ? t('diagnose.channels.stereo') : typeof o.channels === 'number' && o.channels > 0 ? (o.channels === 8 ? '7.1' : `${o.channels}ch`) : '';
+  const what = [codec, o.audioOut === 'stereo' ? t('diagnose.channels.stereo') : o.audioOut === 'surround' ? t('diagnose.channels.surround') : ch].filter(Boolean).join(' ');
+  const sound = ((): string => {
+    switch (o.audioOut) {
+      case 'direct': return t('diagnose.out.direct');
+      case 'copy': return what ? t('diagnose.out.soundCopy', { what }) : t('diagnose.out.soundCopyBare');
+      case 'stereo': case 'surround': return what ? t('diagnose.out.converted', { what }) : t('diagnose.out.convertedBare');
+      default: return t('diagnose.out.unknown');
+    }
+  })();
+  return { picture, sound };
 }

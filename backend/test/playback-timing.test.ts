@@ -168,6 +168,42 @@ describe('GET /api/admin/playback/timing', () => {
   });
 });
 
+describe('picture and sound out (video_out / audio_out)', () => {
+  // the per-IP limit (30/min) is already used up by the tests above: every post here comes from its own address
+  let n = 0;
+  const post = (s: Sess, payload: unknown) =>
+    env.app.inject({ method: 'POST', url: '/api/playback/timing', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: payload as object, remoteAddress: `198.51.100.${++n}` });
+  it('round trip of the allowlisted codes; an older player without them stores null', async () => {
+    expect((await post(friend, { ...base, videoOut: 'copy_hevc', audioOut: 'surround' })).statusCode).toBe(204);
+    expect((await post(friend, { ...base, videoOut: 'direct', audioOut: 'direct' })).statusCode).toBe(204);
+    expect((await post(friend, base)).statusCode).toBe(204);
+    const [a, b, c] = await rows();
+    expect(a).toMatchObject({ video_out: 'copy_hevc', audio_out: 'surround' });
+    expect(b).toMatchObject({ video_out: 'direct', audio_out: 'direct' });
+    expect(c).toMatchObject({ video_out: null, audio_out: null });
+  });
+  it('every allowed value is stored, anything else (also a URL or a title) is stored as null and never fails the report', async () => {
+    for (const v of ['direct', 'copy_h264', 'copy_hevc', 'h264', 'hevc']) await post(friend, { ...base, videoOut: v });
+    for (const a of ['direct', 'copy', 'stereo', 'surround']) await post(friend, { ...base, audioOut: a });
+    expect((await rows()).map((x) => [x.video_out, x.audio_out])).toEqual([...['direct', 'copy_h264', 'copy_hevc', 'h264', 'hevc'].map((v) => [v, null]), ...['direct', 'copy', 'stereo', 'surround'].map((a) => [null, a])]);
+    await env.pool.query('delete from playback_timings');
+    expect((await post(friend, { ...base, videoOut: 'copy', audioOut: 'eac3', why: ['hevc_device'] })).statusCode).toBe(204);
+    expect((await post(friend, { ...base, videoOut: '/media/hls/Dunmoor/master.m3u8', audioOut: { a: 1 } })).statusCode).toBe(204);
+    expect((await post(friend, { ...base, videoOut: 'HEVC' })).statusCode).toBe(204);
+    expect((await rows()).map((x) => [x.video_out, x.audio_out])).toEqual([[null, null], [null, null], [null, null]]);
+    expect(timingBody.parse({ ...base, videoOut: 7 }).videoOut).toBeNull();
+  });
+  it('the migration can be re-run and the admin view lists the codes', async () => {
+    const { migrate } = await import('../src/db.js');
+    await env.pool.query('delete from schema_migrations where version >= 45');
+    await migrate(env.pool);
+    await migrate(env.pool);
+    await post(friend, { ...base, videoOut: 'hevc', audioOut: 'stereo' });
+    const v = (await env.app.inject({ url: '/api/admin/playback/timing', cookies: admin.cookies })).json();
+    expect(v.recent[0]).toMatchObject({ videoOut: 'hevc', audioOut: 'stereo' });
+  });
+});
+
 describe('cleanup', () => {
   it('pruneTimings / healthTick delete rows older than 14 days', async () => {
     await env.pool.query("insert into playback_timings(home, device, mode, created_at) values (true, 'pc', 'hls', now() - interval '15 days'), (true, 'pc', 'hls', now() - interval '13 days')");

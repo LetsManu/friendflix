@@ -453,11 +453,14 @@
   let probedCaps = false;
   /** set by the one automatic fallback: the next request says what was given up and which play session failed (consumed by that request) */
   let pendingFallback: { what: AvoidWhat; prevPs: string } | null = null;
+  /** the fallback's reload re-starts the timing session like a quality switch (flagged, never a second start: "avoided < 2 % of starts" stays honest) */
+  let fallbackRestart = false;
   async function load(startSec?: number) {
     cancelFirstFrame();
     error = ''; errNote = '';
     // a retry / track reload continues the running session (its clock keeps going); a quality switch starts a new one, flagged
-    if (!timing.active && !partyMode && !remote) timing.begin(switching, trackSwitching);
+    if (!timing.active && !partyMode && !remote) timing.begin(switching || fallbackRestart, trackSwitching);
+    fallbackRestart = false;
     if (startSec !== undefined) { lastPos = startSec; posKnown = true; }
     // first start: the saved quality + audio language go into this same request (no second round trip)
     const first = !prefsApplied && !partyMode;
@@ -525,7 +528,7 @@
     if (!swap) {
       timing.mode(useDirect ? 'direct' : 'hls');
       const dl = info.delivery;
-      timing.stream({ reason: info.transcodeReason ?? null, ...(dl && !useDirect ? { videoCopy: dl.video === 'copy', out: { video: dl.video, videoCodec: dl.videoCodec, audio: dl.audio, audioCodec: dl.audioCodec } } : {}) });
+      timing.stream({ reason: info.transcodeReason ?? null, ...(dl && !useDirect ? { videoCopy: dl.video === 'copy', out: { video: dl.video, videoCodec: dl.videoCodec, audio: dl.audio, audioCodec: dl.audioCodec, channels: dl.channels, why: dl.why } } : {}) });
     }
     const seek = () => { if (startSec > 1) video!.currentTime = startSec; };
     // hls.js is loaded lazily, only on this path (and usually already prefetched by the play button)
@@ -619,6 +622,7 @@
     hls?.destroy(); hls = null; // late errors of the old stream must not start a second recovery
     flash(tr('player.switchingCompatible'), 2500);
     wantAutoplay = !paused || wantAutoplay;
+    fallbackRestart = true; // the stop below ends the failed session's timing; the reload continues it as a flagged re-start
     if (started && !stopped) { stopped = true; await send('stop'); } // frees the failed stream's slot and its conversion job
     void load(pos);
   }

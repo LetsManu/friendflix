@@ -18,7 +18,7 @@ import { playbackHooks } from '../hooks.js';
 import { bumpHome } from '../homegen.js';
 import { nextUpItems, resumeItems } from '../resumeRows.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { bindHevcGrant, hevcGate as gateHevc, noteHevcFailure } from '../hevcenc.js';
+import { bindHevcGrant, hevcGate as gateHevc, hevcStatus, noteHevcFailure, type HevcState } from '../hevcenc.js';
 import { itemsByIds, libraryBecause } from './discover.js';
 import { id32 as itemId, wrap as sharedWrap } from './_shared.js';
 
@@ -63,6 +63,10 @@ export interface PlaybackReporter { user: UserRow; jfUser: JfUser; profile?: Pro
  * start / progress / stop of a play session: live record (stream limit), media server report, statistics hooks.
  * Shared by /api/playback/* (session) and /api/cast/report (cast receiver, routes/cast.ts); same rules for both.
  */
+/** the server's HEVC state as the coarse answer of /api/playback/abilities */
+export const abilityOf = (st: HevcState): 'ready' | 'off' | 'unproven' | 'unhealthy' =>
+  st === 'ready' ? 'ready' : st === 'unproven' ? 'unproven' : st === 'failed' || st === 'slow' || st === 'runtime_failed' ? 'unhealthy' : 'off';
+
 export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackReportBody, who: PlaybackReporter): Promise<{ ok: true } | { error: 'max_streams'; max: number }> {
   const user = who.user;
   const ticks = Math.floor(b.positionTicks);
@@ -322,6 +326,11 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   }));
 
   // ---- Playback ----
+  /** coarse on purpose (Diagnose "Picture and sound"): no speed, no times, no settings, only the four states and the surround switch */
+  app.get('/api/playback/abilities', { ...pre, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, wrap(async () => {
+    const st = await hevcStatus(ctx).then((x) => x.state, (): HevcState => 'off');
+    return { hevc: abilityOf(st), surround: ctx.jf.kind === 'jellyfin' && ctx.cfg.SURROUND_AUDIO !== 'false' };
+  }));
   app.post('/api/playback/info', pre, wrap(async (req, reply) => {
     const b = z.object({
       itemId, startTicks: z.number().int().min(0).optional(), audioIndex: z.number().int().min(0).optional(), maxBitrate: z.number().int().min(300_000).max(200_000_000).optional(),

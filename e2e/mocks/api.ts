@@ -480,6 +480,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (/^\/api\/comments\/[^/]+$/.test(p) && m === 'DELETE') return J({ ok: true });
 
     // profiles (gate "Wer ist heute dabei?" and the avatar menu)
+    if (p === '/api/playback/abilities') return J({ hevc: 'off', surround: false }); // /diagnose "Picture and sound": the coarse server answer
     if (p === '/api/profiles') return J({ profiles: PROFILES, max: 5, activeId: 'p1' });
     if ((mm = p.match(/^\/api\/profiles\/([^/]+)\/select$/)) && m === 'POST') return J({ ok: true });
 

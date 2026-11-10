@@ -365,3 +365,52 @@ describe('request service settings (the 1.x names SEERR_* are removed in 2.0)', 
   });
 });
 
+
+describe('GET /api/playback/abilities (Diagnose: picture and sound)', () => {
+  const E = { hwAccel: 'qsv', tonemap: true, throttle: true, keyframeMkv: true, hevcEncode: true, hwEncode: true, lowPowerHevc: true, downmix: 'dave750' };
+  const fp = (e: typeof E) => [e.hwAccel, e.hevcEncode ? 1 : 0, e.hwEncode ? 1 : 0, e.lowPowerHevc ? 1 : 0].join('|');
+  const setup = async (e: typeof E | null, probe?: { ok: boolean; speed?: number; reason?: string }) => {
+    env.ctx.jf.admin.encoderSettings = async () => { if (!e) throw new Error('boom'); return e as never; };
+    await env.kv.del('hevcenc:probe'); await env.kv.del('hevcenc:failures');
+    if (e && probe) await env.kv.set('hevcenc:probe', JSON.stringify({ ...probe, fingerprint: fp(e), at: Date.now() - 1000 }), 3600);
+  };
+  const ask = async () => (await call('GET', '/api/playback/abilities')).json();
+
+  it('maps every state: ready / off / unproven / unhealthy', async () => {
+    await setup(E, { ok: true, speed: 3.2 });
+    expect(await ask()).toEqual({ hevc: 'ready', surround: true });
+    await setup({ ...E, hevcEncode: false });
+    expect((await ask()).hevc).toBe('off'); // server_off
+    await setup({ ...E, hwAccel: 'none' });
+    expect((await ask()).hevc).toBe('off'); // no_hw
+    await setup(E);
+    expect((await ask()).hevc).toBe('unproven');
+    await setup(null);
+    expect((await ask()).hevc).toBe('unproven'); // settings unreadable
+    await setup(E, { ok: false, reason: 'not_hevc' });
+    expect((await ask()).hevc).toBe('unhealthy'); // failed
+    await setup(E, { ok: false, reason: 'slow', speed: 1.1 });
+    expect((await ask()).hevc).toBe('unhealthy'); // slow
+    await setup(E, { ok: true, speed: 3.2 });
+    const now = Date.now();
+    await env.kv.set('hevcenc:failures', JSON.stringify([{ at: now - 120_000, device: 'a' }, { at: now - 60_000, device: 'b' }]), 3600);
+    expect((await ask()).hevc).toBe('unhealthy'); // runtime_failed
+  });
+
+  it('HEVC_STREAMS 0 is off; SURROUND_AUDIO false says surround false; only the two fields are answered', async () => {
+    await setup(E, { ok: true, speed: 3.2 });
+    const set = env.ctx.cfg;
+    env.ctx.cfg = { ...set, HEVC_STREAMS: 0, SURROUND_AUDIO: 'false' };
+    try { expect(await ask()).toEqual({ hevc: 'off', surround: false }); } finally { env.ctx.cfg = set; }
+  });
+
+  it('Plex is always off and has no surround switch; signed out is refused', async () => {
+    await setup(E, { ok: true, speed: 3.2 });
+    const kind = Object.getOwnPropertyDescriptor(env.ctx.jf, 'kind');
+    Object.defineProperty(env.ctx.jf, 'kind', { value: 'plex', configurable: true, writable: true });
+    try { expect(await ask()).toEqual({ hevc: 'off', surround: false }); } finally {
+      if (kind) Object.defineProperty(env.ctx.jf, 'kind', kind); else delete (env.ctx.jf as { kind?: string }).kind;
+    }
+    expect((await env.app.inject({ url: '/api/playback/abilities' })).statusCode).toBe(401);
+  });
+});

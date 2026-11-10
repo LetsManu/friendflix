@@ -168,4 +168,25 @@ test.describe('player: surround sound switch', () => {
     const i = order.indexOf('info', 1);
     expect(order.slice(0, i)).toContain('stop');
   });
+
+  test('S4: the fallback after playback started reloads like a quality switch: the timing has one start and a flagged re-start', async ({ page, api: _api }) => {
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    const calls = await mock(page, { hevc: true, corruptFrom: 3, gate });
+    await page.goto('/watch/' + MOVIE.id);
+    await playing(page);
+    open();
+    await expect.poll(() => calls.some((c) => c.fellBack), { timeout: 20_000 }).toBe(true);
+    const read = (): Promise<Array<{ qualitySwitch: boolean; avEvents: number }>> => page.evaluate(() => JSON.parse(localStorage.getItem('ff.playTimings') ?? '[]')).catch(() => []); // a page that is just navigating has no answer yet
+    // the failed session's report is written when its stop is sent (that is the real start); the reload is a flagged re-start, never a new start
+    await expect.poll(async () => (await read()).length).toBeGreaterThanOrEqual(1);
+    await page.goto('/diagnose'); // leaving the page ends the running session (pagehide writes its report)
+    await expect.poll(async () => (await read()).length, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
+    const rows = await read();
+    expect(rows.filter((r) => !r.qualitySwitch)).toHaveLength(1); // one start, however many re-starts followed
+    expect(rows.at(-1)!.qualitySwitch).toBe(false); // the oldest report is the real start
+    expect(rows[0]!.qualitySwitch).toBe(true);
+    expect(rows[0]!.avEvents).toBeGreaterThanOrEqual(1);
+    expect(JSON.stringify(rows)).not.toMatch(/\/media\/|ps-wren/); // only fixed codes
+  });
 });
