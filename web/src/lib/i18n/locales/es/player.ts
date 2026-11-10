@@ -45,6 +45,7 @@ const es: Translation<typeof de> = {
     directInfo: 'Reproducción directa, sin conversión',
     reasonNetwork: 'Conexión lenta: la calidad se ajusta automáticamente',
     reasonRemoteCap: 'La calidad está limitada fuera de casa',
+    reasonUploadCap: 'La conexión del servidor está ocupada ahora: la emisión empieza con menos calidad',
     reasonRoleCap: 'Tu cuenta limita la calidad',
     reasonContainer: 'Este dispositivo no reproduce el formato del archivo',
     reasonVideoCodec: 'Este dispositivo no reproduce el formato de vídeo',

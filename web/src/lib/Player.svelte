@@ -34,9 +34,10 @@
   import QualityChip from '#lib/player/QualityChip.svelte';
   import { speedLabel, SPEEDS } from '#lib/player/bar';
   import { appCaps } from '#lib/webos/caps';
+  import { capsPending, isFormatFailure, isProbedBlock, noteDirectFailure } from '#lib/player/devicecaps';
   import { firstFrameMs, watchFirstFrame } from '#lib/player/firstframe';
   import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
-  import { holdPrefetch, takePrefetched } from '#lib/player/prefetch';
+  import { holdPrefetch, prepareNext, releaseNext, takeNext, takePrefetched } from '#lib/player/prefetch';
   import { createTiming, deviceClass, effectiveType, sendTiming } from '#lib/player/timing';
   import EpisodesPanel from '#lib/player/EpisodesPanel.svelte';
   import CastInfoPanel from '#lib/player/CastInfoPanel.svelte';
@@ -131,6 +132,8 @@
   export let cardOn = false;
   /** a panel of the page's own in the dock is open (the party host's settings): the title fades, Back and an outside tap close it */
   export let extPanel = false;
+  /** the next episode's id while the page's autoplay countdown runs: its playback info is prepared and its transcoder warmed (prefetch.ts) */
+  export let prepNext: string | null = null;
   const dispatch = createEventDispatcher();
 
   type Info = PlaybackDto;
@@ -437,6 +440,17 @@
     return Boolean(i && typeof i.playSessionId === 'string' && typeof i.resumeTicks === 'number' && Array.isArray(i.audioTracks) && Array.isArray(i.subtitles) && (i.directUrl || i.hlsUrl));
   };
   let cancelFirstFrame = () => {};
+  // ---- next episode (autoplay countdown): the body its player will send first; same series, so the same audio choice applies ----
+  let preparedFor: string | null = null;
+  $: syncNext(prepNext);
+  function syncNext(id: string | null) {
+    if (id && id !== preparedFor && !partyMode && !remote) {
+      preparedFor = id;
+      prepareNext(id, firstPlaybackRequest(id, get(prefs), wantAudio || serPref.audio || animeAudio(animeDefault)).body, { warm: true });
+    } else if (!id && preparedFor) { preparedFor = null; releaseNext(); }
+  }
+  /** the last request carried a block this browser / Samsung TV probed itself: its direct plays are watched and a failure is remembered */
+  let probedCaps = false;
   async function load(startSec?: number) {
     cancelFirstFrame();
     error = ''; errNote = '';
@@ -452,10 +466,16 @@
     const audioLang = fr?.body.audioLang;
     if (first) reqHint = quality ? 'manual' : 'network'; // a saved quality is a pick, otherwise the network chooses
     const sentBps = wantBps();
+    // first start: the device's decode probe (bounded) answers first, so this body equals the play button's prefetch body
+    if (first) { const w = capsPending(); if (w) await w; }
     const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: appCaps() });
+    probedCaps = isProbedBlock(body.caps);
     const ask = () => api<Info | null>('/api/playback/info', { method: 'POST', body });
-    // hovered/focused play button: its request is (usually) already answered; a failed prefetch is simply asked again
-    const pre = first ? takePrefetched(itemId, body) : null;
+    // the next episode prepared during the countdown, else a hovered/focused play button: its request is (usually) already answered;
+    // a failed prefetch is simply asked again
+    const fromNext = first ? takeNext(itemId, body) : null;
+    if (fromNext) timing.next();
+    const pre = fromNext ?? (first ? takePrefetched(itemId, body) : null);
     try {
       const got = await (pre ? pre.catch(ask) : ask());
       // an empty/foreign answer (204, proxy page ...) has no playback session: show the error instead of crashing on it
@@ -513,7 +533,7 @@
       video.src = info.directUrl!;
       video.addEventListener('loadedmetadata', seek, { once: true });
       // LG: an original the TV cannot decode may stay black without an error; no picture in time -> the converted stream, once
-      if (isTvApp() && !rec.forcedHls && !swap) cancelFirstFrame = watchFirstFrame(video, firstFrameMs(), () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos(), true); }, { running: wantAutoplay });
+      if ((isTvApp() || probedCaps) && !rec.forcedHls && !swap) cancelFirstFrame = watchFirstFrame(video, firstFrameMs(), () => { if (my === attachSeq && !rec.forcedHls && !error && !reconnecting && !handedOff && !remote && !airOn) forceHls(resumePos(), true); }, { running: wantAutoplay });
     } else if (H?.isSupported()) {
       const HC = H;
       hls = new HC(hlsConfig(startSec));
@@ -556,7 +576,11 @@
   const lowerStep = () => lowerQuality(QUALITIES.map(([, b]) => b).filter((b) => b < (info?.roleMaxBitrate ?? Infinity)), quality, info?.maxBitrate ?? 0);
   let retryViaLoad = false;
   /** keepIntent: the first-frame watcher fires before `canplay` ever came (the element is still paused), so a pending play intent survives the switch */
-  function forceHls(pos: number, keepIntent = false) { rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = keepIntent ? wantAutoplay || !paused : !paused; void load(pos); }
+  function forceHls(pos: number, keepIntent = false) {
+    // a probed claim did not hold (devicecaps.ts isFormatFailure: a decode error, or metadata but no picture; an HTTP error or a slow
+    // line before any metadata is not the format): this retry is HLS (H.264), later starts of this device send no block for 7 days
+    if (mode === 'direct' && probedCaps && isFormatFailure({ watchdog: keepIntent, code: video?.error?.code, readyState: video?.readyState ?? 0 })) noteDirectFailure();
+    rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = keepIntent ? wantAutoplay || !paused : !paused; void load(pos); }
   function recover(kind: ErrorKind, viaLoad = false) {
     if (handedOff || airOn || airInfo || airState.busy) return;
     timing.reconnect();
@@ -1573,6 +1597,7 @@
     if (!handedOff && started && !stopped) { stopped = true; send('stop'); }
     reportTiming(); // also a start the viewer gave up on (no first frame yet)
     holdPrefetch(Promise.resolve(lastStop)); // no cached info survives the player; the next prefetch waits for this stop (resume position)
+    if (preparedFor) releaseNext(); // the next episode's warm-up: taken by its player within the grace, else stopped
     destroyed = true;
     clearTimeout(credOutT);
     // a handed-over cast keeps running (the engine owns token, element, controller and probe); otherwise AirPlay ends here

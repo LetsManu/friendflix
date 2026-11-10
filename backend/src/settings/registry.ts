@@ -135,6 +135,7 @@ export const SETTINGS: readonly SettingDef[] = [
   setting('CAST_RECEIVER_APP_ID', { kind: 'string', group: 'playback' }), // read per request (/api/cast/config, /api/cast/session)
   setting('PREVIEW_WARM', { kind: 'bool', group: 'playback' }),
   setting('HOME_NETWORKS', { kind: 'cidrList', group: 'playback' }),
+  setting('UPLOAD_MBPS', { kind: 'number', group: 'playback' }), // read per /api/playback/info request
   // recommendations: read per request from ctx.cfg (reco/engine.ts, recommend.ts, postplay.ts, routes/discover.ts, home.ts), so a save
   // applies at once; RECO_COEFFS and the RECO_W_* item index weights stay env-only (expert tuning)
   setting('RECO_ENGINE', { kind: 'enum', group: 'recommendations' }),

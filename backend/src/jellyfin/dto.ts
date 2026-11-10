@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Jellyfin JSON -> the server-neutral DTOs of ../media/types.ts (re-exported here for existing imports). */
-import { DOWNLOAD_PRESETS, maxWidthFor, type DownloadQuality, type DownloadSourceDto, type ImageTags, type ItemDto, type MediaTraits, type PlaybackDto, type TranscodeReason, type TrickplayDto } from '../media/types.js';
+import { DOWNLOAD_PRESETS, maxWidthFor, type DownloadQuality, type DownloadSourceDto, type ImageTags, type ItemDto, type MediaTraits, type PlaybackDto, type TranscodeReason, type TrickplayDto, type CapReason } from '../media/types.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, ProviderIds } from '../media/types.js'; // Block 17 P1
 import type { ItemFeatures } from '../media/types.js'; // R1
 import type { HygieneFacts, HygieneSource, HygieneStream, ServerSession } from '../media/types.js'; // Block 22
@@ -61,6 +61,14 @@ export function toItemDto(i: Record<string, any>): ItemDto {
 const TEXT_SUBS = new Set(['srt', 'subrip', 'ass', 'ssa', 'vtt', 'webvtt', 'mov_text', 'subviewer']);
 
 const AUDIO_BITRATE = 192_000;
+/** HLS segment length asked for where Jellyfin's playlist follows keyframes (see toPlaybackDto) */
+export const SEGMENT_SECONDS = 3;
+/** the file on the server is Matroska (path when Jellyfin names it, else the container) */
+export function isMatroskaSource(src: Record<string, any>): boolean {
+  const path = typeof src.Path === 'string' ? src.Path : '';
+  if (path) return /\.mkv$/i.test(path);
+  return /(^|,)\s*(mkv|matroska)\s*(,|$)/i.test(String(src.Container ?? ''));
+}
 const MIN_VIDEO_BITRATE = 300_000;
 
 const REASON_MAP: Record<string, TranscodeReason | 'bitrate'> = {
@@ -110,7 +118,7 @@ export function toPlaybackDto(args: {
   /** no direct URL (role with a height cap or without download rights: the gateway refuses direct streams for it) */
   noDirect?: boolean;
   /** which of our caps is the lowest one (bitrate reasons from the server are attributed to it) */
-  capReason?: 'remoteCap' | 'roleCap' | 'manual' | 'network';
+  capReason?: CapReason;
   /** containers the device itself direct-plays (Android capability block); replaces the browser list when non-empty */
   directContainers?: string[];
 }): PlaybackDto {
@@ -148,6 +156,11 @@ export function toPlaybackDto(args: {
     // the whole master on it (MEDIA_ERR_SRC_NOT_SUPPORTED, no variant fetched); the gateway strips it too (defence in depth)
     hls.set('EnableTrickplay', 'false');
   }
+  // 3 s segments where they are safe. Jellyfin already cuts 3 s when it re-encodes the video, but 6 s when it copies it (remux):
+  // copied video can only be cut at the source's keyframes, and Jellyfin's playlist follows them only for Matroska files (on-demand
+  // keyframe extraction, default extension list ["mkv"]; others get equal-length playlists). So: Matroska sources ask for 3 s; mp4
+  // remuxes keep Jellyfin's 6 s. The Health check warns when mkv was removed from that list (health.ts, encoder).
+  if (!cast && isMatroskaSource(src)) hls.set('SegmentLength', String(SEGMENT_SECONDS));
   const srcHeight = Number(streams.find((s) => s.Type === 'Video')?.Height ?? 0);
   const withinCap = !maxHeight || (srcHeight > 0 && srcHeight <= maxHeight); // direct play must not bypass the cap (unknown height = no direct)
 

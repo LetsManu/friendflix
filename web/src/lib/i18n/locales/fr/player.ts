@@ -45,6 +45,7 @@ const fr: Translation<typeof de> = {
     directInfo: 'Lecture directe, sans conversion',
     reasonNetwork: 'Connexion lente – la qualité s’ajuste automatiquement',
     reasonRemoteCap: 'La qualité est limitée hors de chez vous',
+    reasonUploadCap: 'La connexion du serveur est chargée en ce moment : la lecture démarre en qualité réduite',
     reasonRoleCap: 'Votre compte limite la qualité',
     reasonContainer: 'Cet appareil ne lit pas ce format de fichier',
     reasonVideoCodec: 'Cet appareil ne lit pas ce format vidéo',

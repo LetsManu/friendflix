@@ -185,7 +185,7 @@ const dict: Translation<typeof de> = {
     checkedAt: 'As of {time}',
     loadFailed: 'The health status could not be loaded.',
     ms: '{n} ms',
-    svc: { media: 'Media server', postgres: 'Database', redis: 'Cache', gateway: 'Media gateway', oidc: 'Sign-in', requests: 'Request service', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Playback check' },
+    svc: { media: 'Media server', postgres: 'Database', redis: 'Cache', gateway: 'Media gateway', oidc: 'Sign-in', requests: 'Request service', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Playback check', encoder: 'Transcoding' },
     level: { ok: 'Running', warn: 'Limited', err: 'Down', off: 'Off' },
     playbackNever: 'Never run',
     reason: {
@@ -208,6 +208,17 @@ const dict: Translation<typeof de> = {
       failed_playbacks: 'Playbacks failed',
       pending_approvals: 'Sign-ins waiting for approval',
       removed_env: 'Old variable names in .env',
+      no_hw_accel: 'No hardware acceleration',
+      no_tonemap: 'No tone mapping',
+      no_throttle: 'No throttling',
+      no_keyframes: 'MKV keyframes off',
+    },
+    /** encoder row (Status): one line per gap in the media server's transcoding settings */
+    advice: {
+      no_hw_accel: 'Hardware acceleration is off: Jellyfin converts with the processor, which is slow and handles few streams at once. In Jellyfin, choose the server’s graphics unit under Dashboard → Playback → Transcoding (for example QSV, VAAPI, NVENC).',
+      no_tonemap: 'Tone mapping is off: HDR films look pale and grey when converted. In Jellyfin, turn on “Enable tone mapping” under Transcoding.',
+      no_throttle: 'Throttling is off: Jellyfin converts each film to the end as fast as it can and keeps the graphics unit busy longer than needed. In Jellyfin, turn on “Throttle transcodes” under Transcoding.',
+      no_keyframes: 'Keyframe extraction for MKV is off: repackaged MKV files start with 6-second segments instead of 3. In Jellyfin, add “mkv” back to keyframe extraction under Transcoding.',
     },
     disks: {
       title: 'Storage',
@@ -244,7 +255,7 @@ const dict: Translation<typeof de> = {
       unknownTitle: 'Unknown title',
       last: 'last {time}',
     },
-    tc: { network: 'Connection', remoteCap: 'Remote limit', roleCap: 'Role limit', container: 'File format', videoCodec: 'Video format', audioCodec: 'Audio format', audioTrack: 'Audio track', subtitles: 'Subtitles', height: 'Resolution', manual: 'Manual', misc: 'Other' },
+    tc: { network: 'Connection', remoteCap: 'Remote limit', uploadCap: 'Upload limit', roleCap: 'Role limit', container: 'File format', videoCodec: 'Video format', audioCodec: 'Audio format', audioTrack: 'Audio track', subtitles: 'Subtitles', height: 'Resolution', manual: 'Manual', misc: 'Other' },
     errors: {
       title: 'Errors (24 h)',
       none: 'No errors in the last 24 hours.',

@@ -50,6 +50,8 @@ export const timingBody = z.object({
   trackSwitch: z.boolean().default(false),
   reconnects: num(10_000),
   avEvents: num(100_000),
+  /** the start used the next episode's info prepared during the autoplay countdown (older players: false) */
+  fromNext: z.boolean().default(false).catch(false),
 });
 export type TimingBody = z.infer<typeof timingBody>;
 
@@ -61,11 +63,11 @@ export async function recordTiming(ctx: Pick<Ctx, 'db'>, b: TimingBody, home: bo
   await ctx.db.query(
     `insert into playback_timings(home, device, mode, quality_switch, bitrate, target_duration, info_ms, manifest_ms, first_frag_ms, first_frag_bytes,
        first_frag_dl_ms, first_frame_ms, seeks, seek_median_ms, seek_max_ms, stalls, stall_ms, effective_type,
-       delivery, video_copy, sound_mode, audio_routed, dropped_frames, total_frames, track_switch, reconnects, av_events)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
+       delivery, video_copy, sound_mode, audio_routed, dropped_frames, total_frames, track_switch, reconnects, av_events, from_next)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
     [home, b.device, b.mode ?? null, b.qualitySwitch, b.bitrate ?? null, b.targetDuration ?? null, b.infoMs ?? null, b.manifestMs ?? null, b.firstFragMs ?? null,
       b.firstFragBytes ?? null, b.firstFragDlMs ?? null, b.firstFrameMs ?? null, b.seeks ?? 0, b.seekMedianMs ?? null, b.seekMaxMs ?? null, b.stalls ?? 0, b.stallMs ?? 0, b.effectiveType ?? null,
-      b.delivery ?? null, b.videoCopy ?? null, b.soundMode ?? null, b.audioRouted ?? null, frames.d, frames.t, b.trackSwitch, b.reconnects ?? 0, b.avEvents ?? 0],
+      b.delivery ?? null, b.videoCopy ?? null, b.soundMode ?? null, b.audioRouted ?? null, frames.d, frames.t, b.trackSwitch, b.reconnects ?? 0, b.avEvents ?? 0, b.fromNext],
   );
 }
 
@@ -99,7 +101,7 @@ export interface TimingRow {
   infoMs: number | null; manifestMs: number | null; firstFragMs: number | null; firstFragBytes: number | null; firstFragDlMs: number | null; firstFrameMs: number | null;
   seeks: number; seekMedianMs: number | null; seekMaxMs: number | null; stalls: number; stallMs: number; effectiveType: string | null;
   delivery: 'direct' | 'remux' | 'transcode' | null; videoCopy: boolean | null; soundMode: 'off' | 'voices' | 'night' | 'both' | null; audioRouted: boolean | null;
-  droppedFrames: number | null; totalFrames: number | null; trackSwitch: boolean; reconnects: number; avEvents: number;
+  droppedFrames: number | null; totalFrames: number | null; trackSwitch: boolean; reconnects: number; avEvents: number; fromNext: boolean;
 }
 export interface TimingView { day: TimingGroup[]; week: TimingGroup[]; recent: TimingRow[] }
 
@@ -146,7 +148,7 @@ export async function timingView(ctx: Pick<Ctx, 'db'>): Promise<TimingView> {
       firstFragDlMs: x.first_frag_dl_ms, firstFrameMs: x.first_frame_ms, seeks: x.seeks, seekMedianMs: x.seek_median_ms, seekMaxMs: x.seek_max_ms,
       stalls: x.stalls, stallMs: x.stall_ms, effectiveType: x.effective_type,
       delivery: x.delivery ?? null, videoCopy: x.video_copy ?? null, soundMode: x.sound_mode ?? null, audioRouted: x.audio_routed ?? null,
-      droppedFrames: x.dropped_frames ?? null, totalFrames: x.total_frames ?? null, trackSwitch: Boolean(x.track_switch), reconnects: x.reconnects ?? 0, avEvents: x.av_events ?? 0,
+      droppedFrames: x.dropped_frames ?? null, totalFrames: x.total_frames ?? null, trackSwitch: Boolean(x.track_switch), reconnects: x.reconnects ?? 0, avEvents: x.av_events ?? 0, fromNext: Boolean(x.from_next),
     })),
   };
 }

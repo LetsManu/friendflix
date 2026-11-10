@@ -190,7 +190,7 @@ const dict: Translation<typeof de> = {
     checkedAt: 'Stan z {time}',
     loadFailed: 'Nie udało się wczytać stanu.',
     ms: '{n} ms',
-    svc: { media: 'Serwer multimediów', postgres: 'Baza danych', redis: 'Pamięć podręczna', gateway: 'Brama multimediów', oidc: 'Logowanie', requests: 'Usługa życzeń', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Test odtwarzania' },
+    svc: { media: 'Serwer multimediów', postgres: 'Baza danych', redis: 'Pamięć podręczna', gateway: 'Brama multimediów', oidc: 'Logowanie', requests: 'Usługa życzeń', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Test odtwarzania', encoder: 'Transkodowanie' },
     level: { ok: 'Działa', warn: 'Ograniczone', err: 'Awaria', off: 'Wyłączone' },
     playbackNever: 'Jeszcze nie uruchomiono',
     reason: {
@@ -213,6 +213,17 @@ const dict: Translation<typeof de> = {
       failed_playbacks: 'Nieudane odtworzenia',
       pending_approvals: 'Logowania czekają na zatwierdzenie',
       removed_env: 'Stare nazwy zmiennych w .env',
+      no_hw_accel: 'Bez akceleracji sprzętowej',
+      no_tonemap: 'Bez mapowania tonów',
+      no_throttle: 'Bez dławienia',
+      no_keyframes: 'Klatki kluczowe MKV wyłączone',
+    },
+    /** encoder row (Status): one line per gap in the media server's transcoding settings */
+    advice: {
+      no_hw_accel: 'Akceleracja sprzętowa jest wyłączona: Jellyfin konwertuje procesorem, co jest wolne i pozwala na niewiele strumieni naraz. W Jellyfin wybierz układ graficzny serwera w Panel → Odtwarzanie → Transkodowanie (np. QSV, VAAPI, NVENC).',
+      no_tonemap: 'Mapowanie tonów jest wyłączone: filmy HDR po konwersji wyglądają blado i szaro. W Jellyfin włącz „Włącz mapowanie tonów” w sekcji Transkodowanie.',
+      no_throttle: 'Dławienie jest wyłączone: Jellyfin konwertuje każdy film do końca tak szybko, jak może, i zajmuje układ graficzny dłużej niż trzeba. W Jellyfin włącz „Dławienie transkodowania” w sekcji Transkodowanie.',
+      no_keyframes: 'Wyodrębnianie klatek kluczowych dla MKV jest wyłączone: przepakowane pliki MKV startują z 6-sekundowymi segmentami zamiast 3. W Jellyfin dodaj z powrotem „mkv” do wyodrębniania klatek kluczowych w sekcji Transkodowanie.',
     },
     disks: {
       title: 'Miejsce',
@@ -249,7 +260,7 @@ const dict: Translation<typeof de> = {
       unknownTitle: 'Nieznany tytuł',
       last: 'ostatnio {time}',
     },
-    tc: { network: 'Łącze', remoteCap: 'Limit zdalny', roleCap: 'Limit roli', container: 'Format pliku', videoCodec: 'Format wideo', audioCodec: 'Format dźwięku', audioTrack: 'Ścieżka dźwiękowa', subtitles: 'Napisy', height: 'Rozdzielczość', manual: 'Ręcznie', misc: 'Inne' },
+    tc: { network: 'Łącze', remoteCap: 'Limit zdalny', uploadCap: 'Limit wysyłania', roleCap: 'Limit roli', container: 'Format pliku', videoCodec: 'Format wideo', audioCodec: 'Format dźwięku', audioTrack: 'Ścieżka dźwiękowa', subtitles: 'Napisy', height: 'Rozdzielczość', manual: 'Ręcznie', misc: 'Inne' },
     errors: {
       title: 'Błędy (24 godz.)',
       none: 'Brak błędów w ciągu ostatnich 24 godzin.',

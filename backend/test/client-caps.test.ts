@@ -44,6 +44,20 @@ describe('parseClientCaps', () => {
     expect(c.video).toEqual([{ codec: 'hevc', profiles: ['main 10'] }, { codec: 'av1' }]);
     expect(JSON.stringify(c)).not.toContain('<');
   });
+  it('accepts a probing browser (web) with ranges and per-codec tags; SDR is always in a stated range list', () => {
+    const c = parseClientCaps(caps({ client: 'web', ranges: ['HDR10', 'dolby', 'hlg'], video: [{ codec: 'hevc', maxHeight: 1080, profiles: ['main'], tags: ['HVC1', 'x', 'hvc1'] }] }))!;
+    expect(c.client).toBe('web');
+    expect(c.ranges).toEqual(['sdr', 'hdr10', 'hlg']);
+    expect(c.video).toEqual([{ codec: 'hevc', maxHeight: 1080, profiles: ['main'], tags: ['hvc1'] }]);
+    expect(parseClientCaps(caps())!.ranges).toBeUndefined(); // the apps that do not state ranges keep today's behaviour
+    expect(parseClientCaps(caps({ ranges: [] }))!.ranges).toEqual(['sdr']);
+  });
+  it('a tag list with nothing valid drops that codec instead of widening it to every tag; an oversized range list is invalid', () => {
+    const c = parseClientCaps(caps({ video: [{ codec: 'h264' }, { codec: 'hevc', tags: ['<b>'] }] }))!;
+    expect(c.video).toEqual([{ codec: 'h264' }]);
+    expect(parseClientCaps(caps({ ranges: Array.from({ length: 17 }, () => 'sdr') }))).toBeNull();
+    expect(parseClientCaps(caps({ ranges: 'sdr' }))).toBeNull();
+  });
   it('a block with nothing usable left is null; an out-of-range height is dropped, not the block', () => {
     expect(parseClientCaps(caps({ containers: ['x'], video: [{ codec: 'x' }], audio: [] }))).toBeNull();
     expect(parseClientCaps(caps({ video: [{ codec: 'h264', maxHeight: 99999 }] }))!.video).toEqual([{ codec: 'h264' }]);
@@ -70,13 +84,14 @@ let env: TestEnv;
 let s: { cookies: Record<string, string>; csrf: string };
 let src: { Container: string; Height: number };
 let profiles: any[] = [];
+let bodies: any[] = [];
 let queries: string[] = [];
 
 beforeAll(async () => {
   env = await makeEnv({
     'GET /Items': () => ({ json: { Items: [{ Id: ID, Name: 'Film', Type: 'Movie' }], TotalRecordCount: 1 } }),
     'POST /Items/[^/]+/PlaybackInfo': (u, _i, body) => {
-      profiles.push(body.DeviceProfile); queries.push(u.search);
+      profiles.push(body.DeviceProfile); bodies.push(body); queries.push(u.search);
       return { json: { PlaySessionId: 'ps-12345678', MediaSources: [{ Id: 'ms1', Container: src.Container, SupportsDirectPlay: true, Bitrate: 6_000_000, RunTimeTicks: 1e9,
         MediaStreams: [{ Index: 0, Type: 'Video', Codec: 'hevc', Height: src.Height }] }] } };
     },
@@ -84,7 +99,7 @@ beforeAll(async () => {
   s = await env.login();
 });
 afterAll(() => env.close());
-beforeEach(() => { profiles = []; queries = []; src = { Container: 'mkv', Height: 2160 }; });
+beforeEach(() => { profiles = []; bodies = []; queries = []; src = { Container: 'mkv', Height: 2160 }; });
 
 const info = (extra: Record<string, unknown> = {}) =>
   env.app.inject({ method: 'POST', url: '/api/playback/info', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: { itemId: ID, ...extra } });
@@ -159,6 +174,25 @@ describe('POST /api/playback/info with a capability block', () => {
     await info({ caps: caps({ containers: [], audio: [], video: [{ codec: 'hevc' }] }) });
     expect(profiles.at(-1).DirectPlayProfiles).toEqual([{ Container: 'mp4,m4v,webm', Type: 'Video', VideoCodec: 'hevc', AudioCodec: 'aac,mp3,opus,flac' }]);
     expect(profiles.at(-1).CodecProfiles).toEqual([]);
+  });
+  it('a probing browser: the range condition covers every codec, the tag condition its codec; the subtitle default is switched off', async () => {
+    const r = await info({ caps: caps({ client: 'web', ranges: ['hdr10'], video: [{ codec: 'h264', profiles: ['high'] }, { codec: 'hevc', maxHeight: 2160, profiles: ['main 10'], tags: ['hvc1'] }] }) });
+    expect(r.statusCode).toBe(200);
+    const p = profiles.at(-1);
+    expect(p.CodecProfiles).toEqual([
+      { Type: 'Video', Codec: 'h264', Conditions: [{ Condition: 'EqualsAny', Property: 'VideoProfile', Value: 'high', IsRequired: false }] },
+      { Type: 'Video', Codec: 'hevc', Conditions: [
+        { Condition: 'LessThanEqual', Property: 'Height', Value: '2160', IsRequired: true },
+        { Condition: 'EqualsAny', Property: 'VideoProfile', Value: 'main 10', IsRequired: false },
+        { Condition: 'EqualsAny', Property: 'VideoCodecTag', Value: 'hvc1', IsRequired: false },
+      ] },
+      { Type: 'Video', Conditions: [{ Condition: 'EqualsAny', Property: 'VideoRangeType', Value: 'SDR|DOVIWithSDR|HDR10|DOVIWithHDR10', IsRequired: false }] },
+    ]);
+    expect(bodies.at(-1).SubtitleStreamIndex).toBe(-1);
+  });
+  it('every PlaybackInfo asks without a default subtitle (an image track would refuse direct play), also without caps', async () => {
+    await info();
+    expect(bodies.at(-1)).toEqual({ DeviceProfile: profiles.at(-1), SubtitleStreamIndex: -1 });
   });
   it('a matroska container name from the server matches the mkv cap', async () => {
     src.Container = 'matroska,webm';

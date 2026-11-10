@@ -57,6 +57,22 @@ test('the countdown plays the next episode', async ({ page, api: _api }) => {
   await expect(page).toHaveURL(new RegExp(`/watch/${NEXT.id}$`));
 });
 
+test('the countdown prepares the next episode once, and its player starts from that answer', async ({ page, api: _api }) => {
+  await openEpisode(page);
+  const asked: string[] = [];
+  page.on('request', (r) => { if (r.url().endsWith('/api/playback/info') && r.method() === 'POST') asked.push(String(r.postDataJSON()?.itemId)); });
+  await toChip(page);
+  expect(asked.filter((id) => id === NEXT.id)).toHaveLength(0); // the chip alone prepares nothing
+  await page.clock.runFor(2100); // corner: the countdown runs
+  await expect.poll(() => asked.filter((id) => id === NEXT.id).length).toBe(1);
+  await page.clock.runFor(10_500);
+  await page.clock.resume();
+  await expect(page).toHaveURL(new RegExp(`/watch/${NEXT.id}$`));
+  await expect(page.locator('video')).toHaveCount(1);
+  await page.waitForTimeout(500);
+  expect(asked.filter((id) => id === NEXT.id)).toHaveLength(1); // the next player reused the prepared answer
+});
+
 test('Watch credits backs out to full screen and the sequence does not return, not even when the episode ends', async ({ page, api: _api }) => {
   await openEpisode(page);
   await toChip(page);

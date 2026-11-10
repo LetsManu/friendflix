@@ -185,7 +185,7 @@ const dict: Translation<typeof de> = {
     checkedAt: 'Estado a las {time}',
     loadFailed: 'No se pudo cargar el estado.',
     ms: '{n} ms',
-    svc: { media: 'Servidor multimedia', postgres: 'Base de datos', redis: 'Caché', gateway: 'Pasarela multimedia', oidc: 'Inicio de sesión', requests: 'Servicio de peticiones', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Prueba de reproducción' },
+    svc: { media: 'Servidor multimedia', postgres: 'Base de datos', redis: 'Caché', gateway: 'Pasarela multimedia', oidc: 'Inicio de sesión', requests: 'Servicio de peticiones', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Prueba de reproducción', encoder: 'Transcodificación' },
     level: { ok: 'Funciona', warn: 'Limitado', err: 'Caído', off: 'Desactivado' },
     playbackNever: 'Nunca se ha ejecutado',
     reason: {
@@ -208,6 +208,17 @@ const dict: Translation<typeof de> = {
       failed_playbacks: 'Reproducciones fallidas',
       pending_approvals: 'Inicios de sesión esperando aprobación',
       removed_env: 'Nombres de variable antiguos en .env',
+      no_hw_accel: 'Sin aceleración por hardware',
+      no_tonemap: 'Sin mapeo de tonos',
+      no_throttle: 'Sin limitación',
+      no_keyframes: 'Fotogramas clave MKV desactivados',
+    },
+    /** encoder row (Status): one line per gap in the media server's transcoding settings */
+    advice: {
+      no_hw_accel: 'La aceleración por hardware está desactivada: Jellyfin convierte con el procesador, es lento y admite pocas emisiones a la vez. En Jellyfin, elige la unidad gráfica del servidor en Panel → Reproducción → Transcodificación (p. ej. QSV, VAAPI, NVENC).',
+      no_tonemap: 'El mapeo de tonos está desactivado: las películas HDR se ven pálidas y grises al convertirlas. En Jellyfin, activa «Habilitar mapeo de tonos» en Transcodificación.',
+      no_throttle: 'La limitación está desactivada: Jellyfin convierte cada película hasta el final lo más rápido posible y ocupa la unidad gráfica más de lo necesario. En Jellyfin, activa «Limitar transcodificaciones» en Transcodificación.',
+      no_keyframes: 'La extracción de fotogramas clave para MKV está desactivada: los MKV reempaquetados empiezan con segmentos de 6 segundos en lugar de 3. En Jellyfin, vuelve a añadir «mkv» a la extracción de fotogramas clave en Transcodificación.',
     },
     disks: {
       title: 'Almacenamiento',
@@ -244,7 +255,7 @@ const dict: Translation<typeof de> = {
       unknownTitle: 'Título desconocido',
       last: 'última vez {time}',
     },
-    tc: { network: 'Conexión', remoteCap: 'Límite remoto', roleCap: 'Límite del rol', container: 'Formato de archivo', videoCodec: 'Formato de vídeo', audioCodec: 'Formato de audio', audioTrack: 'Pista de audio', subtitles: 'Subtítulos', height: 'Resolución', manual: 'Manual', misc: 'Otro' },
+    tc: { network: 'Conexión', remoteCap: 'Límite remoto', uploadCap: 'Límite de subida', roleCap: 'Límite del rol', container: 'Formato de archivo', videoCodec: 'Formato de vídeo', audioCodec: 'Formato de audio', audioTrack: 'Pista de audio', subtitles: 'Subtítulos', height: 'Resolución', manual: 'Manual', misc: 'Otro' },
     errors: {
       title: 'Errores (24 h)',
       none: 'Ningún error en las últimas 24 horas.',

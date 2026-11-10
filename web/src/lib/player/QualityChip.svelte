@@ -11,7 +11,7 @@
   /** phone top bar: a 44 px tall tap target around the small pill, the explanation opens below it, right-aligned */
   export let compact = false;
   const REASONS = {
-    network: 'player.quality.reasonNetwork', remoteCap: 'player.quality.reasonRemoteCap', roleCap: 'player.quality.reasonRoleCap', container: 'player.quality.reasonContainer',
+    network: 'player.quality.reasonNetwork', remoteCap: 'player.quality.reasonRemoteCap', uploadCap: 'player.quality.reasonUploadCap', roleCap: 'player.quality.reasonRoleCap', container: 'player.quality.reasonContainer',
     videoCodec: 'player.quality.reasonVideoCodec', audioCodec: 'player.quality.reasonAudioCodec', audioTrack: 'player.quality.reasonAudioTrack', subtitles: 'player.quality.reasonSubtitles',
     height: 'player.quality.reasonHeight', manual: 'player.quality.reasonManual', other: 'player.quality.reasonOther',
   } as const satisfies Record<string, TKey>;

@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { stat as fsStat, statfs as fsStatfs } from 'node:fs/promises';
 import { REMOVED_ENV } from './config.js';
 import type { Ctx } from './ctx.js';
+import type { EncoderSettings } from './media/types.js';
 import { recentCount } from './errorlog.js';
 import { pruneTimings } from './playtiming.js';
 import { OMDB_DAILY_BUDGET, PAUSE_KEY, SOURCES, sourceStatus, type SourceName } from './sources/keys.js';
@@ -15,9 +16,12 @@ import { OMDB_DAILY_BUDGET, PAUSE_KEY, SOURCES, sourceStatus, type SourceName } 
  * Nothing in a snapshot carries a URL, path, key, token or exception text: reasons are codes the web translates.
  */
 export type Level = 'ok' | 'warn' | 'err' | 'off';
-export type ServiceId = 'media' | 'postgres' | 'redis' | 'gateway' | 'oidc' | 'requests' | 'tmdb' | 'omdb' | 'playbackCheck';
-export type Reason = 'slow' | 'down' | 'issuer_mismatch' | 'invalid_key' | 'paused' | 'budget' | 'not_set' | 'failed_titles' | 'unavailable' | 'full' | 'low_free' | 'cap' | 'large' | 'server_errors' | 'client_errors' | 'failed_playbacks' | 'empty_media' | 'pending_approvals' | 'removed_env';
-export interface ServiceHealth { id: ServiceId; level: Level; reason?: Reason; ms?: number; detail?: { n?: number; pct?: number } }
+export type ServiceId = 'media' | 'postgres' | 'redis' | 'gateway' | 'oidc' | 'requests' | 'tmdb' | 'omdb' | 'playbackCheck' | 'encoder';
+export type Reason = 'slow' | 'down' | 'issuer_mismatch' | 'invalid_key' | 'paused' | 'budget' | 'not_set' | 'failed_titles' | 'unavailable' | 'full' | 'low_free' | 'cap' | 'large' | 'server_errors' | 'client_errors' | 'failed_playbacks' | 'empty_media' | 'pending_approvals' | 'removed_env'
+  | EncoderAdvice;
+/** advice of the media server's transcoding settings (encoder row), most important first */
+export type EncoderAdvice = 'no_hw_accel' | 'no_tonemap' | 'no_throttle' | 'no_keyframes';
+export interface ServiceHealth { id: ServiceId; level: Level; reason?: Reason; ms?: number; detail?: { n?: number; pct?: number }; advice?: EncoderAdvice[] }
 export interface DiskHealth {
   id: 'downloads' | 'previews' | 'database'; level: Level; reason?: Reason; totalBytes?: number; freeBytes?: number; usedPct?: number; ownBytes: number; capBytes?: number;
   /** the other FriendFlix volume lives on the same filesystem: shown as one entry, with that volume's own bytes in sharedBytes */
@@ -127,10 +131,31 @@ async function playbackCheckProbe(ctx: Ctx): Promise<ServiceHealth> {
   }
 }
 
+/**
+ * The media server's transcoding settings, read-only (Jellyfin; a server without MediaAdmin.encoderSettings has no row): hardware
+ * acceleration, HDR tone mapping, throttling and Matroska keyframe extraction (3 s remux segments). Advice only, never a red light.
+ */
+export function encoderAdvice(e: EncoderSettings): EncoderAdvice[] {
+  return [
+    ...(e.hwAccel === 'none' ? ['no_hw_accel' as const] : []),
+    ...(!e.tonemap ? ['no_tonemap' as const] : []),
+    ...(!e.throttle ? ['no_throttle' as const] : []),
+    ...(!e.keyframeMkv ? ['no_keyframes' as const] : []),
+  ];
+}
+async function encoderProbe(ctx: Ctx, timeoutMs: number): Promise<ServiceHealth | null> {
+  const read = ctx.jf.admin.encoderSettings?.bind(ctx.jf.admin);
+  if (!read) return null;
+  const o = await bounded(read, timeoutMs);
+  if (!o.ok) return { id: 'encoder', level: 'off', reason: 'unavailable' };
+  const advice = encoderAdvice(o.v);
+  return advice.length ? { id: 'encoder', level: 'warn', reason: advice[0], advice } : { id: 'encoder', level: 'ok' };
+}
+
 async function services(ctx: Ctx, fetchImpl: typeof fetch, timeoutMs: number): Promise<ServiceHealth[]> {
   const gatewayUrl = `${trimSlash(ctx.cfg.GATEWAY_URL)}/health`;
   const seerr = ctx.seerr;
-  const [media, postgres, redis, gateway, oidc, requests, tmdb, omdb, check] = await Promise.all([
+  const [media, postgres, redis, gateway, oidc, requests, tmdb, omdb, check, encoder] = await Promise.all([
     bounded(() => ctx.jf.admin.ping(), timeoutMs).then((o) => timedService('media', o)),
     bounded(async () => { await ctx.db.query('select 1'); return true; }, timeoutMs).then((o) => timedService('postgres', o)),
     bounded(() => ctx.kv.ping(), timeoutMs).then((o) => timedService('redis', o)),
@@ -143,8 +168,9 @@ async function services(ctx: Ctx, fetchImpl: typeof fetch, timeoutMs: number): P
     bounded(() => sourceProbe(ctx, SOURCES[0]!), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'tmdb', level: 'off', reason: 'unavailable' })),
     bounded(() => sourceProbe(ctx, SOURCES[1]!), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'omdb', level: 'off', reason: 'unavailable' })),
     bounded(() => playbackCheckProbe(ctx), timeoutMs).then((o): ServiceHealth => (o.ok ? o.v : { id: 'playbackCheck', level: 'off', reason: 'unavailable' })),
+    encoderProbe(ctx, timeoutMs).catch(() => null),
   ]);
-  return [media, postgres, redis, gateway, oidc, requests, tmdb, omdb, check];
+  return [media, postgres, redis, gateway, oidc, requests, tmdb, omdb, check, ...(encoder ? [encoder] : [])];
 }
 
 interface Vol { total: number; free: number; dev: number | null }
@@ -234,7 +260,8 @@ function issuesOf(svcs: ServiceHealth[], dsks: DiskHealth[], errs: ErrorHealth, 
   const add = (id: string, level: Level, reason: Reason | undefined, detail?: HealthIssue['detail']) => {
     if ((level === 'warn' || level === 'err') && reason) out.push({ id, level, reason, fp: issueFp(id, level, reason), ...(detail ? { detail } : {}) });
   };
-  for (const s of svcs) add(`svc:${s.id}`, s.level, s.reason, s.detail);
+  // the encoder row is advice for the Status page, not a problem: no banner
+  for (const s of svcs) if (s.id !== 'encoder') add(`svc:${s.id}`, s.level, s.reason, s.detail);
   for (const d of dsks) {
     const pct = d.reason === 'cap' && d.capBytes ? Math.round((d.ownBytes / d.capBytes) * 100) : d.usedPct;
     add(`disk:${d.id}`, d.level, d.reason, pct !== undefined ? { pct } : undefined);
@@ -265,7 +292,7 @@ export async function buildSnapshot(ctx: Ctx, deps: HealthDeps = {}): Promise<He
   const d: DiskDeps = { statfs: deps.statfs ?? realStatfs, stat: deps.stat ?? realStat };
   const [svcs, dsks, errs, pending] = await Promise.all([services(ctx, fetchImpl, timeoutMs), disks(ctx, d, timeoutMs), errorHealth(ctx), pendingApprovals(ctx, timeoutMs)]);
   const issues = issuesOf(svcs, dsks, errs, pending, removedEnvCount(deps.env ?? process.env));
-  return { at: new Date().toISOString(), services: svcs, disks: dsks, errors: errs, issues, worst: worstOf([...svcs.map((s) => s.level), ...dsks.map((x) => x.level), errs.level]) };
+  return { at: new Date().toISOString(), services: svcs, disks: dsks, errors: errs, issues, worst: worstOf([...svcs.filter((s) => s.id !== 'encoder').map((s) => s.level), ...dsks.map((x) => x.level), errs.level]) };
 }
 
 // single flight per process (keyed by ctx: tests run several apps in one process)

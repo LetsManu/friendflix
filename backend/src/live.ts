@@ -25,6 +25,9 @@ export interface Live {
   deviceId?: string;
   /** the media server identity that plays (matches the server's own session list) */
   serverUserId?: string;
+  /** bits/s cap granted at /api/playback/info and whether the viewer was outside the home networks (upload-aware cap, uploadcap.ts) */
+  bitrate?: number;
+  remote?: boolean;
 }
 
 const TTL = 45;

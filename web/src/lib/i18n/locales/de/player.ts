@@ -45,6 +45,7 @@ export default {
     directInfo: 'Direkte Wiedergabe ohne Umwandlung',
     reasonNetwork: 'Leitung langsam – die Qualität passt sich automatisch an',
     reasonRemoteCap: 'Unterwegs ist die Qualität begrenzt',
+    reasonUploadCap: 'Der Server ist gerade ausgelastet: der Stream startet mit weniger Qualität',
     reasonRoleCap: 'Dein Konto begrenzt die Qualität',
     reasonContainer: 'Das Dateiformat wird von diesem Gerät nicht abgespielt',
     reasonVideoCodec: 'Das Videoformat wird von diesem Gerät nicht abgespielt',
