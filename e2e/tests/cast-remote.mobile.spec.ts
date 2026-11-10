@@ -44,7 +44,7 @@ test('phone remote centres Pause and keeps 44 px targets', async ({ page, api: _
   await targetsOk(page);
   expect(await noHorizontalOverflow(page)).toBe(true);
   await expect(page.getByRole('heading', { name: 'Dunmoor' })).toBeVisible();
-  await expect(page.getByTestId('cast-active')).toContainText('S1 · E4 · The Lantern Road');
+  await expect(page.getByTestId('cast-active')).toContainText('S1:F4 · The Lantern Road');
 });
 
 test('AirPlay remote shows the volume hint and no volume slider', async ({ page, api: _api }) => {
@@ -54,6 +54,22 @@ test('AirPlay remote shows the volume hint and no volume slider', async ({ page,
   await expect(screen.getByRole('slider', { name: 'Fernseher-Lautstärke' })).toHaveCount(0);
   const pause = (await screen.getByRole('button', { name: 'Pause', exact: true }).boundingBox())!;
   expect(Math.abs(pause.x + pause.width / 2 - page.viewportSize()!.width / 2)).toBeLessThanOrEqual(2); // the empty slot keeps Pause centred
+});
+
+test('nothing moves on the phone when the card fills, or while the chips wait for a switch', async ({ page, api: _api }) => {
+  const sdk = await chromecastRemote(page, { queue: true, tracks: true });
+  const card = page.getByRole('region', { name: 'Als Nächstes' });
+  await expect(card).toContainText('Startet von selbst');
+  const panel = page.getByRole('group', { name: 'Wiedergabesteuerung' });
+  const y0 = (await panel.boundingBox())!.y;
+  await sdk.nearEnd();
+  await expect(card).toContainText(/Startet in \d+ s/);
+  expect((await panel.boundingBox())!.y).toBe(y0);
+  await page.route('**/api/cast/session', async (r) => { await new Promise((ok) => setTimeout(ok, 60_000)); await r.fallback(); }); // the switch's token never comes
+  await page.getByRole('button', { name: 'Nächste Folge', exact: true }).click();
+  await expect(page.getByTestId('cast-active')).toContainText('Verbinde mit Wohnzimmer-TV');
+  expect((await panel.boundingBox())!.y).toBe(y0);
+  await expect(page.getByRole('button', { name: /^Audio:/ })).toHaveAttribute('aria-disabled', 'true');
 });
 
 test('Play now never wraps', async ({ page, api: _api }) => {

@@ -19,6 +19,10 @@
   export let airplay = false;
   /** below 1200 px the chips keep their values but drop the icon */
   export let icons = true;
+  /** phone: label over value, the chips share the row */
+  export let compact = false;
+  /** a switch is under way: the chips show, nothing opens */
+  export let disabled = false;
 
   type Which = 'audio' | 'subs';
   let open: Which | null = null;
@@ -39,6 +43,7 @@
   $: if (!showSubs && open === 'subs') open = null;
 
   async function toggle(w: Which) {
+    if (disabled) return;
     if (open === w) { open = null; return; }
     open = w;
     await tick();
@@ -71,12 +76,12 @@
 <svelte:window on:pointerdown={outside} />
 
 {#if showAudio || showSubs}
-  <div class="tc" role="group" aria-label={$t('player.controls.tracks')} on:focusout={out}>
+  <div class="tc" class:compact role="group" aria-label={$t('player.controls.tracks')} on:focusout={out}>
     {#each [['audio', showAudio], ['subs', showSubs]] as [w, on] (w)}
       {#if on}
         {@const which = w as Which}
         <div class="anchor" class:r={which === 'subs' && showAudio}>
-          <button type="button" class="frost-btn chip" bind:this={btn[which]} aria-haspopup="menu" aria-expanded={open === which}
+          <button type="button" class="frost-btn chip" bind:this={btn[which]} aria-haspopup="menu" aria-expanded={open === which} aria-disabled={disabled ? 'true' : undefined}
             aria-label={$t(which === 'audio' ? 'player.castRemote.audioChip' : 'player.castRemote.subsChip', { value: which === 'audio' ? audioValue : subValue })}
             on:click={() => toggle(which)}>
             {#if icons}<Icon name={which === 'audio' ? 'volume' : 'subtitles'} size={18} />{/if}
@@ -102,6 +107,7 @@
 <style>
   .tc { display: flex; gap: 10px; min-width: 0; }
   .anchor { position: relative; min-width: 0; }
+  .chip[aria-disabled='true'] { opacity: .6; cursor: default; }
   .chip { max-width: 100%; padding: 0 14px; font-size: .9rem; gap: 8px; }
   .val { display: flex; gap: 6px; min-width: 0; text-align: left; }
   .lbl { flex: none; font-weight: 600; color: rgba(255, 255, 255, .72); }
@@ -114,9 +120,9 @@
   .tick { flex: none; width: 18px; display: grid; place-items: center; }
   .nm { min-width: 0; overflow-wrap: anywhere; }
   /* phone: label over value ("Audio / English 5.1"), the two chips share the row */
-  :global(.phone) .tc { width: 100%; }
-  :global(.phone) .anchor { flex: 1 1 0; }
-  :global(.phone) .chip { width: 100%; justify-content: space-between; padding: 6px 14px; min-height: 52px; }
-  :global(.phone) .val { display: grid; gap: 0; }
-  :global(.phone) .lbl { font-size: .7rem; }
+  .tc.compact { width: 100%; }
+  .compact .anchor { flex: 1 1 0; }
+  .compact .chip { width: 100%; justify-content: space-between; padding: 6px 14px; min-height: 52px; }
+  .compact .val { display: grid; gap: 0; }
+  .compact .lbl { font-size: .7rem; }
 </style>

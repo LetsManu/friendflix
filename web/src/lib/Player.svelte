@@ -758,6 +758,10 @@
     lastRouteOn = s.kind === 'airplay' && Boolean(get(castEngine.airState)?.active);
     // reconnect / failed: this page stays the TV's remote, which shows "Connection lost" / "Could not play" with its own Reconnect /
     // Play here (the latter drops the session; the title then plays on here, from the TV's position)
+    if (s.state === 'reconnect' && s.kind === 'airplay' && !lastRouteOn) {
+      // the route is off (this device picked in Safari's picker, or the TV gone for good): AirPlay ends, the page plays on
+      queueMicrotask(() => void castEngine.stop()); return;
+    }
     lastTv = s;
   }
   $: followTv($castSession);

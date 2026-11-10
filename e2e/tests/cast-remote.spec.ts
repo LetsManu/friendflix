@@ -3,6 +3,7 @@
 import { noHorizontalOverflow } from '../helpers.js';
 import { expect, test } from '../fixtures.js';
 import { episodes } from '../mocks/fixtures.js';
+import { wireless } from '../mocks/cast.js';
 import { airplayRemote, chromecastRemote, dunmoor, rowFits, SHOTS, targetsOk } from './cast-remote-setup.js';
 
 /** The watch page as the TV's remote on desktop (Dunmoor S1 E4 on Wohnzimmer-TV). */
@@ -66,24 +67,40 @@ test('volume drives the TV', async ({ page, api: _api }) => {
 
 test.describe('failures', () => {
   test.use({ allowedConsole: /status of 429/ });
-  test('connection lost shows Reconnect', async ({ page, api: _api }) => {
+  test('connection lost shows Reconnect; the pill retries once', async ({ page, api: _api }) => {
     let fail = false;
-    await chromecastRemote(page, { fail: () => fail });
+    const sdk = await chromecastRemote(page, { fail: () => fail });
     fail = true;
     await page.getByRole('button', { name: 'Nächste Folge', exact: true }).click(); // the switch's token request fails
     const screen = page.getByTestId('cast-active');
     await expect(screen.getByRole('status').filter({ hasText: 'Verbindung verloren' })).toBeVisible();
-    await expect(screen.getByRole('button', { name: 'Neu verbinden' })).toBeVisible();
+    const posts = sdk.sessions.length;
+    fail = false;
+    await screen.getByRole('button', { name: 'Neu verbinden' }).click();
+    await expect.poll(() => sdk.sessions.length).toBe(posts + 1);
+    expect(sdk.sessions.at(-1)!.itemId).toBe(episodes[1]!.id);
+    await expect(screen.getByRole('status').filter({ hasText: 'Verbindung verloren' })).toHaveCount(0);
+    await expect(screen.getByRole('button', { name: 'Neu verbinden' })).toHaveCount(0);
   });
 });
 
-test('could not play shows Play here', async ({ page, api: _api }) => {
+test('could not play shows Play here; the pill drops the cast and the title plays on here', async ({ page, api: _api }) => {
   const sdk = await chromecastRemote(page);
   await sdk.failLoads();
   await page.getByRole('button', { name: 'Nächste Folge', exact: true }).click();
   const screen = page.getByTestId('cast-active');
   await expect(screen.getByRole('status').filter({ hasText: 'Konnte auf dem Fernseher nicht abspielen' })).toBeVisible();
-  await expect(screen.getByRole('button', { name: 'Hier abspielen' })).toBeVisible();
+  await screen.getByRole('button', { name: 'Hier abspielen' }).click();
+  await expect(page.getByTestId('cast-active')).toHaveCount(0);
+  await expect.poll(() => page.locator('.stage video').first().evaluate((v: HTMLVideoElement) => v.currentSrc)).not.toBe('');
+  expect(await page.locator('.stage video').first().evaluate((v: HTMLVideoElement) => v.currentSrc)).not.toContain('#airplay'); // not a cast URL
+});
+
+test('AirPlay route off (this device picked in Safari) ends the cast and the page plays on', async ({ page, api: _api }) => {
+  await airplayRemote(page);
+  await wireless(page, false);
+  await expect(page.getByTestId('airplay-active')).toHaveCount(0, { timeout: 12_000 });
+  await expect.poll(() => page.locator('.stage video').first().evaluate((v: HTMLVideoElement) => v.currentSrc), { timeout: 10_000 }).toMatch(/^blob:/);
 });
 
 test('Stop asks first', async ({ page, api: _api }) => {
@@ -111,9 +128,29 @@ test('up next card plays now and the switch stops autoplay', async ({ page, api:
   await expect(sw).toHaveAttribute('aria-checked', 'false');
   await expect(card).toContainText('Startet, wenn du es willst.');
   await expect.poll(async () => (await sdk.calls()).some((c) => c.startsWith('queueRemove:'))).toBe(true); // off: the queued episode leaves the receiver
+  await sw.click(); // on again: queued again
+  await expect(card).toContainText(/Startet in \d+ s|Startet von selbst/);
+  await expect.poll(async () => (await sdk.calls()).filter((c) => c === 'queueInsert').length).toBe(2);
+  await sw.click();
+  await expect(card).toContainText('Startet, wenn du es willst.');
   await card.getByRole('button', { name: 'Jetzt abspielen' }).click();
   await expect.poll(() => sdk.sessions.filter((b) => !b.next).map((b) => b.itemId)).toEqual([episodes[0]!.id, episodes[1]!.id]);
   await expect(page.getByRole('region', { name: 'Dunmoor' })).toContainText('Wrenfield Pier');
+});
+
+test('the card and the switch show from the start of the episode, and nothing moves when the credits come', async ({ page, api: _api }) => {
+  const sdk = await chromecastRemote(page, { queue: true });
+  const card = page.getByRole('region', { name: 'Als Nächstes' });
+  await expect(card).toContainText('S1:E5 · Wrenfield Pier');
+  await expect(card).toContainText('Startet von selbst auf dem Fernseher.');
+  await expect(card.getByRole('switch', { name: 'Nächste Folge automatisch abspielen' })).toBeVisible();
+  const panel = page.getByRole('group', { name: 'Wiedergabesteuerung' });
+  const before = (await panel.boundingBox())!, cardBefore = (await card.boundingBox())!;
+  await sdk.nearEnd();
+  await expect(card).toContainText(/Startet in \d+ s/);
+  const after = (await panel.boundingBox())!, cardAfter = (await card.boundingBox())!;
+  expect(after.y).toBe(before.y);
+  expect(cardAfter.y).toBe(cardBefore.y);
 });
 
 test('the Next button plays the next episode', async ({ page, api: _api }) => {

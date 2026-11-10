@@ -133,7 +133,6 @@ const fr: Translation<typeof de> = {
   /** the bar while a title plays on a TV (cast engine) */
   /** the watch page as the TV's remote (device chip, short stop, next episode) */
   castRemote: {
-    changeDevice: 'Changer d’appareil',
     stopShort: 'Arrêter',
     playNow: 'Lire maintenant',
     close: 'Fermer la télécommande',
