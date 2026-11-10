@@ -14,6 +14,8 @@ const pl: Translation<typeof de> = {
     series: 'Seriale',
     movies: 'Filmy',
     new: 'Nowe i nadchodzące',
+    /** label while no request service is set up */
+    newOnly: 'Nowe',
     myList: 'Do obejrzenia',
     categories: 'Kategorie',
   },
@@ -97,6 +99,7 @@ const pl: Translation<typeof de> = {
     myList: 'Moja lista',
     downloads: 'Pobrane',
     newShort: 'Nowe',
+    newOnly: 'Nowe',
     downloadsShort: 'Pobrane',
   },
   offline: {

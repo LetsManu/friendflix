@@ -43,6 +43,12 @@ export const FOOTER_COLUMNS: MenuLink[][] = [
 /** Slim desktop header: everything else sits in the avatar menu, the footer and on /me. */
 export const HEADER_TABS: Array<[href: string, label: TKey]> = [['/', 'shell.nav.home'], ['/browse/series', 'shell.nav.series'], ['/browse/movies', 'shell.nav.movies'], ['/new', 'shell.nav.new'], ['/watchlist', 'shell.nav.myList']];
 
+/**
+ * The label of a nav entry: the new-titles page is "Neu & demnächst" only while a request service gives it a "Demnächst" part
+ * (`features.requests`); without one it is just "Neu". Every surface (desktop bar, phone tab bar, TV side bar) asks here.
+ */
+export const navLabel = (label: TKey, requests: boolean): TKey => (label === 'shell.nav.new' && !requests ? 'shell.nav.newOnly' : label);
+
 /** true when `href` is the current section (Start only on "/") */
 export const isTabActive = (href: string, path: string) => (href === '/' ? path === '/' : path === href || path.startsWith(href + '/') || path.startsWith(href + '?'));
 

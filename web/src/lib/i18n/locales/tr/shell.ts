@@ -14,6 +14,8 @@ const tr: Translation<typeof de> = {
     series: 'Diziler',
     movies: 'Filmler',
     new: 'Yeni ve Yakında',
+    /** label while no request service is set up */
+    newOnly: 'Yeni',
     myList: 'İzleme listesi',
     categories: 'Kategoriler',
   },
@@ -92,6 +94,7 @@ const tr: Translation<typeof de> = {
     myList: 'Listem',
     downloads: 'İndirilenler',
     newShort: 'Yeni',
+    newOnly: 'Yeni',
     downloadsShort: 'İndirilen',
   },
   offline: {

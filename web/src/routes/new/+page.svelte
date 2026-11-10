@@ -11,7 +11,9 @@
   import { goto } from '$app/navigation';
   import { pageStore } from '#lib/page';
   import { api, type Item } from '#lib/api';
-      import Icon from '#lib/Icon.svelte';
+  import { features, featuresKnown } from '#lib/capabilities';
+  import { kidsMode } from '#lib/kids';
+  import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import { runtimeLabel, sortUpcoming } from '#lib/mobile';
   import { episodeItem, FILTER_PARAM, filterSearch, freshText, NEW_TITLE_DAYS, parseFilter, planSections, withinDays, type NewData, type NewEpisode, type NewFilter, type Up } from '#lib/newpage';
@@ -29,6 +31,7 @@
   const SECTION_TIMEOUT_MS = 8000;
   let d: NewData = { forYou: null, newSeries: null, newMovies: null, episodes: null, week: null, upcoming: null };
   let now = Date.now();
+  let mounted = false;
 
   /** one section's request: its list, or [] when the call fails or takes too long */
   async function section<T>(path: string, pick: (r: any) => T[]): Promise<T[]> {
@@ -40,14 +43,21 @@
   const ITEMS = (type: 'Series' | 'Movie') => `/api/library/items?types=${type}&sort=DateCreated&desc=true&limit=30`;
 
   onMount(() => {
+    mounted = true;
     void section<Item>('/api/library/new-for-you', (r) => r.items).then((v) => set('forYou', v));
     void section<Item>(ITEMS('Series'), (r) => r.items).then((v) => set('newSeries', withinDays(v, NEW_TITLE_DAYS, Date.now())));
     void section<Item>(ITEMS('Movie'), (r) => r.items).then((v) => set('newMovies', withinDays(v, NEW_TITLE_DAYS, Date.now())));
     void section<NewEpisode>('/api/library/new-episodes', (r) => r.items).then((v) => set('episodes', v));
     void section<Item>('/api/library/trending', (r) => r.items).then((v) => set('week', v));
+  });
+  // "Demnächst" exists only with a request service; /api/me can change that between visits, so the check is reactive and never cached
+  let upStarted = false;
+  $: if (mounted && $featuresKnown && $features.requests && !$kidsMode && !upStarted) {
+    upStarted = true;
     void Promise.all([section<Up>('/api/seerr/upcoming?type=movie', (r) => r.results), section<Up>('/api/seerr/upcoming?type=tv', (r) => r.results)])
       .then(([m, tv]) => set('upcoming', sortUpcoming([...m, ...tv]).slice(0, 40)));
-  });
+  }
+  $: requests = $featuresKnown && $features.requests && !$kidsMode;
 
   // ---- filter (URL) ----
   $: filter = parseFilter($page.url.searchParams.get(FILTER_PARAM));
@@ -57,10 +67,10 @@
   }
 
   // ---- what to show ----
-  $: plan = planSections(d, filter, { requests: true });
+  $: plan = planSections(d, filter, { requests });
   /** the four "new" sections have all answered: until then one placeholder block, so nothing above the fold jumps when sections resolve */
   $: topReady = d.forYou !== null && d.newSeries !== null && d.newMovies !== null && d.episodes !== null;
-  $: lowReady = d.week !== null && d.upcoming !== null;
+  $: lowReady = $featuresKnown && d.week !== null && (!requests || d.upcoming !== null);
   $: episodeItems = plan.episodes.map(episodeItem);
   $: episodeFresh = new Map(plan.episodes.map((e) => [e.episode.id, e]));
 
@@ -74,7 +84,7 @@
     return { meta: $t('detail.view.episodeCode', { s: String(it.parentIndexNumber ?? '?'), e: String(it.indexNumber ?? '?') }), fresh: e ? freshText(e.episode.addedAt, now, $t) : '' };
   };
 
-  $: heading = $t('home.new.title');
+  $: heading = $features.requests ? $t('home.new.title') : $t('home.new.titleOnly');
   $: recentHref = filter === 'series' ? '/browse/series?sort=DateCreated' : '/browse/movies?sort=DateCreated';
 </script>
 

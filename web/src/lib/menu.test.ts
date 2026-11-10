@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { FOOTER_COLUMNS, HEADER_TABS, MENU_LINKS, groupLinks, isRailTop, isTabActive, linksFor } from './menu';
+import { LOCALES, setLocale, tr } from '#lib/i18n';
+import { FOOTER_COLUMNS, HEADER_TABS, MENU_LINKS, groupLinks, isRailTop, isTabActive, linksFor, navLabel } from './menu';
 
 describe('menu', () => {
   it('every account link stays reachable on /me (grouped)', () => {
@@ -20,6 +21,27 @@ describe('menu', () => {
     expect(isTabActive('/browse/series', '/browse/series')).toBe(true);
     expect(isTabActive('/new', '/newsletter')).toBe(false);
     expect(isTabActive('/watchlist', '/watchlist')).toBe(true);
+  });
+});
+
+describe('navLabel (the new-titles entry reads "Neu" without a request service)', () => {
+  it('only the new entry changes, and only while requests are off', () => {
+    expect(navLabel('shell.nav.new', true)).toBe('shell.nav.new');
+    expect(navLabel('shell.nav.new', false)).toBe('shell.nav.newOnly');
+    expect(navLabel('shell.nav.series', false)).toBe('shell.nav.series');
+  });
+  it('every language words both: the short one is shorter, and neither is a key', async () => {
+    for (const { code } of LOCALES) {
+      await setLocale(code);
+      const full = tr(navLabel('shell.nav.new', true)), short = tr(navLabel('shell.nav.new', false));
+      expect(full, code).not.toMatch(/^shell\./);
+      expect(short, code).not.toMatch(/^shell\./);
+      expect(short.length, code).toBeLessThan(full.length);
+      expect(tr('shell.tabs.newOnly'), code).not.toMatch(/^shell\./);
+      expect(tr('home.new.titleOnly').length, code).toBeLessThan(tr('home.new.title').length);
+    }
+    await setLocale('de');
+    expect([tr('shell.nav.new'), tr('shell.nav.newOnly'), tr('shell.tabs.newOnly'), tr('home.new.titleOnly')]).toEqual(['Neu & demnächst', 'Neu', 'Neu', 'Neu']);
   });
 });
 
