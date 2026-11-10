@@ -7,7 +7,7 @@
  */
 import { APP_VERSION } from '#lib/version/codenames';
 import { fireTvDisplayHeight, isFireTvApp } from '#lib/firetv/detect';
-import { deviceCaps } from '#lib/player/devicecaps';
+import { capsSummary, deviceCaps, withOutput } from '#lib/player/devicecaps';
 import { isLgApp } from './detect';
 
 export interface MediaProbe { canPlayType(t: string): string; isTypeSupported?: (t: string) => boolean }
@@ -22,6 +22,10 @@ export interface ClientCapsBody {
   subtitles: string[];
   /** dynamic ranges the device shows (only the probing browsers state them) */
   ranges?: Array<'sdr' | 'hdr10' | 'hlg' | 'hdr10plus' | 'dovi'>;
+  /** what the device plays INSIDE an HLS stream (hls.js on MSE; Samsung / probing browsers): stricter than the direct-play lists; absent = H.264 + stereo AAC as before */
+  hls?: { video: Array<'h264' | 'hevc'>; audio: Array<'aac' | 'mp3' | 'ac3' | 'eac3'>; surround: Array<'eac3' | 'ac3' | 'aac'> };
+  /** output channels right now (an integer 1 to 16; absent counts as 2) */
+  audioChannels?: number;
 }
 
 interface Variant { profile: string; mime: string }
@@ -90,6 +94,26 @@ export function confirmedTypes(m: MediaProbe | null): { video: string[]; audio: 
 export const ASSUMED_CONTAINERS: readonly string[] = ['mkv'];
 
 /**
+ * What the TV plays INSIDE an HLS stream (hls.js on MSE): counted only on `isTypeSupported === true` (canPlayType 'maybe' is enough for the
+ * direct-play lists, not for hls.js). HEVC needs the hvc1 type and the file claim; surround is Dolby only (EAC3 / AC3 confirmed by MSE;
+ * AAC 5.1 is never claimed: nothing here proves it). Undefined without `isTypeSupported` or when MSE confirms neither video nor audio.
+ */
+export function hlsClaim(m: MediaProbe | null, hevcFiles: boolean): NonNullable<ClientCapsBody['hls']> | undefined {
+  const f = m?.isTypeSupported;
+  if (typeof f !== 'function') return undefined;
+  const mse = (mime: string) => { try { return f.call(m, mime) === true; } catch { return false; } };
+  const video: NonNullable<ClientCapsBody['hls']>['video'] = [];
+  if (mse(CANDIDATES.video.h264[3].mime)) video.push('h264');
+  if (hevcFiles && mse(CANDIDATES.video.hevc[0].mime)) video.push('hevc');
+  const audio: NonNullable<ClientCapsBody['hls']>['audio'] = [];
+  if (mse(CANDIDATES.audio.aac)) audio.push('aac');
+  if (mse(CANDIDATES.audio.mp3)) audio.push('mp3');
+  for (const k of ['ac3', 'eac3'] as const) if (mse(CANDIDATES.audio[k])) audio.push(k);
+  if (!video.length && !audio.length) return undefined;
+  return { video, audio, surround: (['eac3', 'ac3'] as const).filter((k) => audio.includes(k)) };
+}
+
+/**
  * The block for one TV app: every confirmed video profile is capped at `maxHeight` (LG: 2160; Fire TV: its display), and the
  * `assumed` containers are added once anything else is confirmed (LG: mkv; Fire TV: none, its WebView plays only what it confirms).
  */
@@ -102,13 +126,18 @@ export function buildTvCaps(m: MediaProbe | null, o: { client: 'webos' | 'firetv
     if (profiles.length) video.push({ codec, maxHeight: o.maxHeight, profiles });
   }
   if (!video.length && !t.audio.length && !t.containers.length) return null;
-  return { client: o.client, appVersion: o.appVersion, containers: t.containers, video, audio: t.audio, subtitles: [...CANDIDATES.subtitles] };
+  const hls = hlsClaim(m, video.some((v) => v.codec === 'hevc'));
+  return {
+    client: o.client, appVersion: o.appVersion, containers: t.containers, video, audio: t.audio, subtitles: [...CANDIDATES.subtitles],
+    ...(hls ? { hls, ...(hls.surround.length ? { audioChannels: 6 } : {}) } : {}),
+  };
 }
 
 export function buildLgCaps(m: MediaProbe | null, appVersion: string): ClientCapsBody | null {
   return buildTvCaps(m, { client: 'webos', appVersion, maxHeight: 2160, assumed: ASSUMED_CONTAINERS });
 }
 
+/** the probe-time block of the TV apps; the output facts are applied on top at every call (not cached) */
 let cached: ClientCapsBody | null | undefined;
 
 /**
@@ -116,10 +145,20 @@ let cached: ClientCapsBody | null | undefined;
  * (lib/player/devicecaps.ts: strict claims, cached per device, safe profile after a failure); null without a media element
  */
 export function appCaps(): ClientCapsBody | null {
+  const b = tvBaseCaps();
+  if (b) return withOutput(b);
+  return isLgApp() || isFireTvApp() ? null : typeof window === 'undefined' ? null : deviceCaps();
+}
+
+/**
+ * the probe-time block of the LG / Fire TV app (before the Surround switch, sound modes and the avoid memory); null outside those apps,
+ * without a window or when the TV confirms nothing. Diagnose reads it so it shows what the TV states, not the browser probe's guess.
+ */
+export function tvBaseCaps(): ClientCapsBody | null {
   if (cached !== undefined) return cached;
   if (typeof window === 'undefined') return null;
   const lg = isLgApp();
-  if (!lg && !isFireTvApp()) return deviceCaps();
+  if (!lg && !isFireTvApp()) return null;
   let probe: MediaProbe | null = null;
   try {
     const v = document.createElement('video');
@@ -130,6 +169,11 @@ export function appCaps(): ClientCapsBody | null {
     ? buildLgCaps(probe, APP_VERSION)
     : buildTvCaps(probe, { client: 'firetv', appVersion: APP_VERSION, maxHeight: fireTvDisplayHeight(), assumed: [] });
   return cached;
+}
+
+/** what the player and Diagnose read about this device's output: the TV app's own block in the LG / Fire TV app, else the browser probe */
+export function playerCapsSummary(): ReturnType<typeof capsSummary> {
+  return capsSummary(isLgApp() || isFireTvApp() ? tvBaseCaps() : undefined);
 }
 
 /** tests only */

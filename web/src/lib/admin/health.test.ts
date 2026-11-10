@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { hasKey } from '#lib/i18n';
-import { ENCODER_ADVICE, REASONS, SERVICE_IDS, adviceKeys, TC_REASONS, cleanCode, diskLabelKey, emptyHintOnTop, isEmptyMediaError, levelTone, reasonKey, serviceText, sortServices, tcKey, type ServiceHealth } from './health';
+import { HEVC_STATES, hevcLineText, ENCODER_ADVICE, REASONS, SERVICE_IDS, adviceKeys, TC_REASONS, cleanCode, diskLabelKey, emptyHintOnTop, isEmptyMediaError, levelTone, reasonKey, serviceText, sortServices, tcKey, type ServiceHealth } from './health';
 
 describe('health view helpers', () => {
   it('levelTone maps all four levels', () => {
@@ -40,6 +40,14 @@ describe('health view helpers', () => {
     expect(adviceKeys({ advice: ['no_throttle', 'bogus' as never, 'no_hw_accel'] })).toEqual(['adminContent.health.advice.no_throttle', 'adminContent.health.advice.no_hw_accel']);
     expect(adviceKeys({})).toEqual([]);
     expect(serviceText({ id: 'encoder', level: 'warn', reason: 'no_tonemap' })).toBe('Ohne Tone-Mapping');
+  });
+
+  it('the HEVC line: every state has a text; speed and time only when known; an unknown state gives nothing', () => {
+    for (const st of HEVC_STATES) expect(hasKey(`adminContent.health.hevc.state.${st}`), st).toBe(true);
+    for (const k of ['line', 'speed', 'checked', 'check', 'busy', 'running', 'failed']) expect(hasKey(`adminContent.health.hevc.${k}`), k).toBe(true);
+    expect(hevcLineText({ state: 'unproven' })).toBe('HEVC-Umwandlung: noch nicht getestet');
+    expect(hevcLineText({ state: 'ready', speed: 2.4, at: '2026-11-10T03:10:00Z' })).toMatch(/^HEVC-Umwandlung: bereit · 2,4-fache Echtzeit · geprüft um \d/);
+    expect(hevcLineText({ state: 'bogus' as never })).toBe('');
   });
 
   it('serviceText: reason text with numbers, level text without a reason', () => {

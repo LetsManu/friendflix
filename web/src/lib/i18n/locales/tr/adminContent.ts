@@ -212,6 +212,12 @@ const dict: Translation<typeof de> = {
       no_tonemap: 'Ton eşleme yok',
       no_throttle: 'Kısma yok',
       no_keyframes: 'MKV anahtar kareleri kapalı',
+      hevc_server_off: 'HEVC dönüştürme sunucuda kapalı',
+      hevc_no_hw: 'HEVC için donanım kodlaması gerekir',
+      hevc_failed: 'HEVC testi başarısız',
+      hevc_slow: 'HEVC çok yavaş',
+      hevc_limited: 'HEVC: aynı anda bir tane',
+      downmix_plain: 'Basit stereo karıştırma',
     },
     /** encoder row (Status): one line per gap in the media server's transcoding settings */
     advice: {
@@ -219,6 +225,24 @@ const dict: Translation<typeof de> = {
       no_tonemap: 'Ton eşleme kapalı: HDR filmler dönüştürülünce soluk ve gri görünür. Jellyfin’de Kod Dönüştürme altında “Ton eşlemeyi etkinleştir”i açın.',
       no_throttle: 'Kısma kapalı: Jellyfin her filmi sonuna kadar olabildiğince hızlı dönüştürür ve grafik birimini gereğinden uzun meşgul eder. Jellyfin’de Kod Dönüştürme altında “Kod dönüştürmeleri kıs”ı açın.',
       no_keyframes: 'MKV için anahtar kare çıkarma kapalı: yeniden paketlenen MKV dosyaları 3 yerine 6 saniyelik parçalarla başlar. Jellyfin’de Kod Dönüştürme altında anahtar kare çıkarmaya “mkv”yi yeniden ekleyin.',
+      hevc_server_off: 'Yükleme hızı düşük izleyicilere HEVC verilmez, çünkü Jellyfin buna izin vermiyor. Jellyfin’de Panel → Oynatma → Kod Dönüştürme altında “HEVC biçiminde kodlamaya izin ver” seçeneğini açın. O zamana kadar H.264 alırlar.',
+      hevc_no_hw: 'HEVC dönüştürme donanım kodlaması gerektirir. Jellyfin’de Kod Dönüştürme altında sunucunun grafik birimini seçin ve “Donanım kodlamasını etkinleştir” seçeneğini açın. O zamana kadar bu izleyiciler H.264 alır.',
+      hevc_failed: 'HEVC testi HEVC video üretmedi, bu yüzden herkes H.264 alır. Jellyfin’de Kod Dönüştürme altında “Intel düşük güç HEVC kodlayıcı” seçeneğini açın. Jasper Lake N5095 gibi Intel yongaları ayrıca yüklü GuC/HuC üretici yazılımı ister (işletim kılavuzuna bakın). Sonra “HEVC’yi şimdi denetle” çalıştırın.',
+      hevc_slow: 'HEVC testi gerçek zamanın 1,5 katından yavaş çalıştı, bu yüzden herkes H.264 alır. Kod Dönüştürme altında grafik birimini ve düşük güç kodlayıcı anahtarını denetleyin, sonra “HEVC’yi şimdi denetle” çalıştırın.',
+      hevc_limited: 'HEVC testi gerçek zamanın 3 katının altında kaldı, bu yüzden ayarlar kaç tanesine izin verirse versin aynı anda yalnızca bir HEVC dönüştürme çalışır. Diğer izleyiciler H.264 alır.',
+      downmix_plain: 'Stereo karıştırma basit: surround filmler stereoda kısık ve diyalogları boğuk gelebilir. Jellyfin’de Kod Dönüştürme altında “Stereo karıştırma algoritması” ayarını Dave750 yapın (cihazda kulakla denetleyin).',
+    },
+    /** encoder row (Status): the server's HEVC conversion line and its button */
+    hevc: {
+      line: 'HEVC dönüştürme: {state}',
+      speed: 'gerçek zamanın {n} katı',
+      checked: 'saat {time} denetlendi',
+      state: { server_off: 'sunucuda kapalı', no_hw: 'donanım kodlaması yok', unproven: 'henüz denenmedi', failed: 'test başarısız', slow: 'çok yavaş', runtime_failed: 'hatalardan sonra duraklatıldı', ready: 'hazır' },
+      check: 'HEVC’yi şimdi denetle',
+      busy: 'Biri izlerken olmaz.',
+      running: 'Bir denetim zaten çalışıyor.',
+      unknown: 'Medya sunucusunun akışları okunamadı; birazdan yeniden deneyin.',
+      failed: 'Denetim çalıştırılamadı.',
     },
     disks: {
       title: 'Depolama',

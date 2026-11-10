@@ -19,6 +19,7 @@ const fr: Translation<typeof de> = {
   attempt: 'Tentative {n} sur {max}',
   reconnected: 'Connexion rétablie',
   switchingTranscode: 'Passage au transcodage …',
+  switchingCompatible: 'Passage à un flux que cet appareil lit',
   loading: 'Chargement',
   soundOff: 'Son coupé – appuyez sur une touche pour l’activer',
   noNext: 'Pas d’autre épisode',

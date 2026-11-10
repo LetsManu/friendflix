@@ -161,6 +161,7 @@ Die Bereinigung macht das Gateway nur für Cast-Playlists (`/media/c/<token>/…
 Die Tests decken Backend und Gateway ab; folgendes lässt sich nur mit einem Chromecast prüfen:
 
 - Cast-Taste erscheint nur in Chromium, Geräteauswahl, Start an der gemerkten Position, Pause/Springen/Lautstärke, Untertitel an/aus und Wechsel der Audiospur.
+- HEVC- oder 5.1-Quelle auf den Default Media Receiver und per AirPlay: Es kommt unverändert H.264 in Stereo an. Raumklang und HEVC-Streams auf dem eigenen Empfänger von FriendFlix folgen in einem späteren Update (siehe [operations.md](operations.md#hevc-umwandlung-und-surround-ton)).
 - HLS/TS-Wiedergabe von Quellen mit HEVC, 10 Bit, H.264 Level über 4.1, 5.1-Ton und 4K (Jellyfin muss transkodieren; der Default Media Receiver verlangt H.264 bis Level 4.1 und AAC).
 - Die pfadbeschränkten CSP-Ausnahmen für `www.gstatic.com` (`/cv/js/sender/`, `/cast/sdk/libs/`) reichen für das SDK; lädt es weitere Skripte von anderen Pfaden (oder braucht `connect-src`/`frame-src`), nur genau diese ergänzen.
 - Der Chromecast nutzt für Playlist, Segmente und Poster dieselbe Client-Adresse (Adress-Bindung; z. B. kein Wechsel zwischen IPv4/IPv6 im laufenden Betrieb).

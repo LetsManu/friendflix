@@ -5,14 +5,14 @@
  * (`playstats.ts`) and the aggregated error log (`errorlog.ts`), plus the pure helpers the page and the overview use.
  */
 import { api } from '#lib/api';
-import { hasKey, tr, trDynamic, type TKey } from '#lib/i18n';
+import { fmtNumber, fmtTime, hasKey, tr, trDynamic, type TKey } from '#lib/i18n';
 import type { Tone } from '#lib/ui/StatusPill.svelte';
 
 export type Level = 'ok' | 'warn' | 'err' | 'off';
 export const SERVICE_IDS = ['media', 'postgres', 'redis', 'gateway', 'oidc', 'requests', 'tmdb', 'omdb', 'playbackCheck', 'encoder'] as const;
 export type ServiceId = (typeof SERVICE_IDS)[number];
 /** the encoder row's advice codes (backend health.ts encoderAdvice), most important first */
-export const ENCODER_ADVICE = ['no_hw_accel', 'no_tonemap', 'no_throttle', 'no_keyframes'] as const;
+export const ENCODER_ADVICE = ['no_hw_accel', 'no_tonemap', 'no_throttle', 'no_keyframes', 'hevc_server_off', 'hevc_no_hw', 'hevc_failed', 'hevc_slow', 'hevc_limited', 'downmix_plain'] as const;
 export type EncoderAdvice = (typeof ENCODER_ADVICE)[number];
 export const REASONS = [
   'slow', 'down', 'issuer_mismatch', 'invalid_key', 'paused', 'budget', 'not_set', 'failed_titles', 'unavailable',
@@ -21,7 +21,27 @@ export const REASONS = [
 ] as const;
 export type Reason = (typeof REASONS)[number];
 export interface Detail { n?: number; pct?: number }
-export interface ServiceHealth { id: ServiceId; level: Level; reason?: Reason; ms?: number; detail?: Detail; advice?: EncoderAdvice[] }
+/** the server's HEVC conversion (backend hevcenc.ts HevcState); `off` is never sent */
+export const HEVC_STATES = ['server_off', 'no_hw', 'unproven', 'failed', 'slow', 'runtime_failed', 'ready'] as const;
+export type HevcState = (typeof HEVC_STATES)[number];
+export interface HevcLine { state: HevcState; speed?: number; at?: string }
+export interface ServiceHealth { id: ServiceId; level: Level; reason?: Reason; ms?: number; detail?: Detail; advice?: EncoderAdvice[]; hevc?: HevcLine }
+/** "HEVC conversion: ready · 2.4× real time · checked 03:10" (state always, speed and time only when a probe is known) */
+export function hevcLineText(h: HevcLine): string {
+  if (!(HEVC_STATES as readonly string[]).includes(h.state)) return '';
+  return [
+    tr('adminContent.health.hevc.line', { state: tr(`adminContent.health.hevc.state.${h.state}` as TKey) }),
+    ...(typeof h.speed === 'number' ? [tr('adminContent.health.hevc.speed', { n: fmtNumber(h.speed, { maximumFractionDigits: 1 }) })] : []),
+    ...(h.at ? [tr('adminContent.health.hevc.checked', { time: fmtTime(h.at) })] : []),
+  ].join(' · ');
+}
+/** "Check HEVC now": starts the timed probe in the background (202); 409 `busy` while someone watches, `already_running` while one runs */
+export const checkHevc = (): Promise<{ started: boolean }> => api<{ started: boolean }>('/api/admin/hevc-check', { method: 'POST' });
+/** the probe's progress: `running` until it has stored its result */
+export const loadHevcCheck = (): Promise<{ running: boolean }> => api<{ running: boolean }>('/api/admin/hevc-check');
+/** polling: every 2 s, give up after 3 minutes */
+export const HEVC_POLL_MS = 2000;
+export const HEVC_POLL_MAX_MS = 180_000;
 /** the advice lines of a row (only known codes) */
 export const adviceKeys = (s: Pick<ServiceHealth, 'advice'>): TKey[] => (s.advice ?? []).filter((a) => (ENCODER_ADVICE as readonly string[]).includes(a)).map((a) => `adminContent.health.advice.${a}` as TKey);
 export type DiskId = 'downloads' | 'previews' | 'database';

@@ -19,6 +19,7 @@ const es: Translation<typeof de> = {
   attempt: 'Intento {n} de {max}',
   reconnected: 'Conexión restablecida',
   switchingTranscode: 'Cambiando a transcodificación …',
+  switchingCompatible: 'Cambiando a un stream que este dispositivo reproduce',
   loading: 'Cargando',
   soundOff: 'Sin sonido – pulsa cualquier tecla para activarlo',
   noNext: 'No hay más episodios',

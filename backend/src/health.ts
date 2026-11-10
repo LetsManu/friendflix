@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { stat as fsStat, statfs as fsStatfs } from 'node:fs/promises';
 import { REMOVED_ENV } from './config.js';
 import type { Ctx } from './ctx.js';
+import { hevcStatus, HEVC_SAFE_SPEED, type HevcStatus } from './hevcenc.js';
 import type { EncoderSettings } from './media/types.js';
 import { recentCount } from './errorlog.js';
 import { pruneTimings } from './playtiming.js';
@@ -20,8 +21,11 @@ export type ServiceId = 'media' | 'postgres' | 'redis' | 'gateway' | 'oidc' | 'r
 export type Reason = 'slow' | 'down' | 'issuer_mismatch' | 'invalid_key' | 'paused' | 'budget' | 'not_set' | 'failed_titles' | 'unavailable' | 'full' | 'low_free' | 'cap' | 'large' | 'server_errors' | 'client_errors' | 'failed_playbacks' | 'empty_media' | 'pending_approvals' | 'removed_env'
   | EncoderAdvice;
 /** advice of the media server's transcoding settings (encoder row), most important first */
-export type EncoderAdvice = 'no_hw_accel' | 'no_tonemap' | 'no_throttle' | 'no_keyframes';
-export interface ServiceHealth { id: ServiceId; level: Level; reason?: Reason; ms?: number; detail?: { n?: number; pct?: number }; advice?: EncoderAdvice[] }
+export type EncoderAdvice = 'no_hw_accel' | 'no_tonemap' | 'no_throttle' | 'no_keyframes'
+  | 'hevc_server_off' | 'hevc_no_hw' | 'hevc_failed' | 'hevc_slow' | 'hevc_limited' | 'downmix_plain';
+export interface ServiceHealth { id: ServiceId; level: Level; reason?: Reason; ms?: number; detail?: { n?: number; pct?: number }; advice?: EncoderAdvice[];
+  /** encoder row: the server's HEVC conversion (state, probe speed in x real time, probe time); absent while it is off */
+  hevc?: { state: HevcStatus['state']; speed?: number; at?: string } }
 export interface DiskHealth {
   id: 'downloads' | 'previews' | 'database'; level: Level; reason?: Reason; totalBytes?: number; freeBytes?: number; usedPct?: number; ownBytes: number; capBytes?: number;
   /** the other FriendFlix volume lives on the same filesystem: shown as one entry, with that volume's own bytes in sharedBytes */
@@ -135,21 +139,36 @@ async function playbackCheckProbe(ctx: Ctx): Promise<ServiceHealth> {
  * The media server's transcoding settings, read-only (Jellyfin; a server without MediaAdmin.encoderSettings has no row): hardware
  * acceleration, HDR tone mapping, throttling and Matroska keyframe extraction (3 s remux segments). Advice only, never a red light.
  */
-export function encoderAdvice(e: EncoderSettings): EncoderAdvice[] {
+export function encoderAdvice(e: EncoderSettings, hevc?: HevcStatus, streams = 2): EncoderAdvice[] {
   return [
     ...(e.hwAccel === 'none' ? ['no_hw_accel' as const] : []),
     ...(!e.tonemap ? ['no_tonemap' as const] : []),
     ...(!e.throttle ? ['no_throttle' as const] : []),
     ...(!e.keyframeMkv ? ['no_keyframes' as const] : []),
+    ...hevcAdvice(hevc, streams),
+    ...(e.downmix === 'none' ? ['downmix_plain' as const] : []),
   ];
+}
+/** HEVC advice, only while the conversion is switched on (HEVC_STREAMS > 0, which `off` stands for); `ready` below 3x real time says that one runs at a time */
+function hevcAdvice(h: HevcStatus | undefined, streams: number): EncoderAdvice[] {
+  switch (h?.state) {
+    case 'server_off': return ['hevc_server_off'];
+    case 'no_hw': return ['hevc_no_hw'];
+    case 'failed': return ['hevc_failed'];
+    case 'slow': return ['hevc_slow'];
+    case 'ready': return streams > 1 && h.speed !== undefined && h.speed < HEVC_SAFE_SPEED ? ['hevc_limited'] : []; // with one allowed there is nothing to say
+    default: return [];
+  }
 }
 async function encoderProbe(ctx: Ctx, timeoutMs: number): Promise<ServiceHealth | null> {
   const read = ctx.jf.admin.encoderSettings?.bind(ctx.jf.admin);
   if (!read) return null;
   const o = await bounded(read, timeoutMs);
   if (!o.ok) return { id: 'encoder', level: 'off', reason: 'unavailable' };
-  const advice = encoderAdvice(o.v);
-  return advice.length ? { id: 'encoder', level: 'warn', reason: advice[0], advice } : { id: 'encoder', level: 'ok' };
+  const hevc = await hevcStatus(ctx, o.v).catch((): HevcStatus => ({ state: 'off' }));
+  const advice = encoderAdvice(o.v, hevc, ctx.cfg.HEVC_STREAMS);
+  const line = hevc.state === 'off' ? {} : { hevc };
+  return advice.length ? { id: 'encoder', level: 'warn', reason: advice[0], advice, ...line } : { id: 'encoder', level: 'ok', ...line };
 }
 
 async function services(ctx: Ctx, fetchImpl: typeof fetch, timeoutMs: number): Promise<ServiceHealth[]> {

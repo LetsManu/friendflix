@@ -7,7 +7,7 @@
   import Icon from '#lib/Icon.svelte';
   import { get } from 'svelte/store';
   import { prefs, prefsLoaded, saveAudioFx } from '#lib/stores';
-  import { segmentShown, serverCaps } from '#lib/capabilities';
+  import { features, segmentShown, serverCaps } from '#lib/capabilities';
   import { subClasses } from '#lib/substyle';
   import { noteInteraction } from '#lib/stillwatching';
   import { nowPlaying } from '#lib/remote';
@@ -21,7 +21,7 @@
   import { creditsStart } from '#lib/player/nextup';
   import { postplayStart } from '#lib/postplay';
   import { reportPlayback } from '#lib/telemetry';
-  import { COOLDOWN_RETRY_MS, decideRecovery, freshRecovery, kindOfMediaError, lowerQuality, MAX_NETWORK_TRIES, networkStep, type ErrorKind } from '#lib/player/retry';
+  import { avoidTarget, COOLDOWN_RETRY_MS, decideRecovery, freshRecovery, isCodecError, isNativeCodecFailure, kindOfMediaError, lowerQuality, MAX_NETWORK_TRIES, networkStep, pickLockedLevel, type AvoidWhat, type ErrorKind } from '#lib/player/retry';
   import { TvWheelStepper, WheelAccumulator } from '#lib/player/wheel';
   import { parseVolume, stepVolume } from '#lib/player/volume';
   import { hlsConfig, loadHls } from '#lib/player/hls';
@@ -34,8 +34,8 @@
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
   import { speedLabel, SPEEDS } from '#lib/player/bar';
-  import { appCaps } from '#lib/webos/caps';
-  import { capsPending, isFormatFailure, isProbedBlock, noteDirectFailure } from '#lib/player/devicecaps';
+  import { appCaps, playerCapsSummary } from '#lib/webos/caps';
+  import { avoidedUntil, capsPending, clientWhy, isFormatFailure, isProbedBlock, noteDirectFailure, noteHlsFailure, remeasureOutput, setStereoOnly, stereoOnly } from '#lib/player/devicecaps';
   import { firstFrameMs, watchFirstFrame } from '#lib/player/firstframe';
   import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
   import { holdPrefetch, prepareNext, releaseNext, takeNext, takePrefetched } from '#lib/player/prefetch';
@@ -452,16 +452,22 @@
   }
   /** the last request carried a block this browser / Samsung TV probed itself: its direct plays are watched and a failure is remembered */
   let probedCaps = false;
+  /** set by the one automatic fallback: the next request says what was given up and which play session failed (consumed by that request) */
+  let pendingFallback: { what: AvoidWhat; prevPs: string } | null = null;
+  /** the fallback's reload re-starts the timing session like a quality switch (flagged, never a second start: "avoided < 2 % of starts" stays honest) */
+  let fallbackRestart = false;
   async function load(startSec?: number) {
     cancelFirstFrame();
     error = ''; errNote = '';
     // a retry / track reload continues the running session (its clock keeps going); a quality switch starts a new one, flagged
-    if (!timing.active && !partyMode && !remote) timing.begin(switching, trackSwitching);
+    if (!timing.active && !partyMode && !remote) timing.begin(switching || fallbackRestart, trackSwitching);
+    fallbackRestart = false;
     if (startSec !== undefined) { lastPos = startSec; posKnown = true; }
     // first start: the saved quality + audio language go into this same request (no second round trip)
     const first = !prefsApplied && !partyMode;
     if (first) await loadSerPref();
     // the first body is built like the play buttons' prefetch builds it (lib/player/infobody.ts), so that answer can be reused
+    if (first) remeasureOutput(); // the output may have changed since the last film (devicechange is not reliable without media permissions)
     const fr = first ? firstPlaybackRequest(itemId, get(prefs), wantAudio || serPref.audio || animeAudio(animeDefault), startSec) : null;
     if (fr?.quality && !quality) quality = fr.quality;
     const audioLang = fr?.body.audioLang;
@@ -469,7 +475,8 @@
     const sentBps = wantBps();
     // first start: the device's decode probe (bounded) answers first, so this body equals the play button's prefetch body
     if (first) { const w = capsPending(); if (w) await w; }
-    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: appCaps() });
+    const fell = pendingFallback; pendingFallback = null;
+    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: appCaps(), fellBack: fell?.what, prevPs: fell?.prevPs });
     probedCaps = isProbedBlock(body.caps);
     const ask = () => api<Info | null>('/api/playback/info', { method: 'POST', body });
     // the next episode prepared during the countdown, else a hovered/focused play button: its request is (usually) already answered;
@@ -521,7 +528,8 @@
     mode = useDirect ? 'direct' : 'hls';
     if (!swap) {
       timing.mode(useDirect ? 'direct' : 'hls');
-      timing.stream({ reason: info.transcodeReason ?? null });
+      const dl = info.delivery;
+      timing.stream({ reason: info.transcodeReason ?? null, ...(dl && !useDirect ? { videoCopy: dl.video === 'copy', out: { video: dl.video, videoCodec: dl.videoCodec, audio: dl.audio, audioCodec: dl.audioCodec, channels: dl.channels, why: clientWhy(dl.why, playerCapsSummary()) } } : {}) });
     }
     const seek = () => { if (startSec > 1) video!.currentTime = startSec; };
     // hls.js is loaded lazily, only on this path (and usually already prefetched by the play button)
@@ -546,10 +554,18 @@
         est.add(st.loaded, dl);
         if (d.frag.type === 'main' && d.frag.sn !== 'initSegment') timing.frag(st.loaded, dl);
       });
+      // Jellyfin adds SDR variants at the same bandwidth when it copies HDR video: with a plan, the player pins the variant it was promised
+      if (cur.delivery) hls.on(HC.Events.MANIFEST_PARSED, (_e, d) => {
+        const i = pickLockedLevel(d.levels, cur.delivery?.videoCodec === 'hevc');
+        if (i >= 0 && hls) hls.currentLevel = i;
+      });
       hls.on(HC.Events.ERROR, (_e, d) => {
-        if (!d.fatal) return;
+        // a codec the device cannot append (bufferAddCodecError is not fatal in hls.js) in an HEVC / surround stream: give that up at once
+        const codec = isCodecError(d.details) && mode === 'hls' && (activeFeatures().hevc || activeFeatures().surround);
+        if (!d.fatal && !codec) return;
         lastErrCode = String(d.details || d.type || 'hls');
-        recover(d.type === HC.ErrorTypes.NETWORK_ERROR ? 'network' : d.type === HC.ErrorTypes.MEDIA_ERROR ? 'media' : 'other');
+        const kind: ErrorKind = d.type === HC.ErrorTypes.NETWORK_ERROR ? 'network' : d.type === HC.ErrorTypes.MEDIA_ERROR ? 'media' : 'other';
+        recover(kind, false, codec ? { what: avoidTarget(d as { sourceBufferName?: string; mimeType?: string }, activeFeatures()) } : undefined);
       });
     } else if (!H && !video.canPlayType('application/vnd.apple.mpegurl')) {
       recover('network', true); // hls.js could not be loaded (offline): retry like a network error
@@ -559,6 +575,20 @@
       video.src = info.hlsUrl; // Safari: native HLS
       video.addEventListener('loadedmetadata', seek, { once: true });
       video.addEventListener('loadedmetadata', () => timing.manifest(), { once: true }); // native: no playlist events, the metadata is the closest
+    }
+    // an HEVC stream that shows no picture in time (the decoder accepted it, then nothing): the same one-time fallback as a codec error
+    // The clock starts at the metadata (the init segment and first data arrived), so a slow server, a conversion that is still starting
+    // or a slow line is never taken for an undecodable picture (that is the network path's job). Also after the fallback of the other feature.
+    if (!useDirect && !swap && cur.delivery?.videoCodec === 'hevc') {
+      const v = video;
+      const arm = () => {
+        if (my !== attachSeq || !video || v.readyState >= 2) return; // already showing a frame
+        cancelFirstFrame = watchFirstFrame(v, firstFrameMs(), () => {
+          if (my === attachSeq && !error && !reconnecting && !handedOff && !remote && !airOn && v.readyState >= 1 && mode === 'hls') recover('media', false, { what: 'hevc' });
+        }, { running: wantAutoplay });
+      };
+      if (v.readyState >= 1) arm();
+      else { v.addEventListener('loadedmetadata', arm, { once: true }); cancelFirstFrame = () => v.removeEventListener('loadedmetadata', arm); }
     }
     if (swap) { const keep = subIndex; tickDom().then(() => { if (my === attachSeq) setSubtitle(keep, false); }); return; }
     stopped = false; started = false;
@@ -582,7 +612,22 @@
     // line before any metadata is not the format): this retry is HLS (H.264), later starts of this device send no block for 7 days
     if (mode === 'direct' && probedCaps && isFormatFailure({ watchdog: keepIntent, code: video?.error?.code, readyState: video?.readyState ?? 0 })) noteDirectFailure();
     rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = keepIntent ? wantAutoplay || !paused : !paused; void load(pos); }
-  function recover(kind: ErrorKind, viaLoad = false) {
+  /** what the current HLS stream carries that can still be given up: an HEVC picture, 5.1 sound */
+  const activeFeatures = () => ({ hevc: info?.delivery?.videoCodec === 'hevc', surround: (info?.delivery?.channels ?? 2) > 2 });
+  const avoidable = () => mode === 'hls' && !rec.avoided && (activeFeatures().hevc || activeFeatures().surround);
+  /** the one automatic fallback of a session: ask again without HEVC / surround at the same position (remembered per device for 30 days) */
+  async function avoidStream(pos: number, what: AvoidWhat) {
+    rec.avoided = true; errPos = pos;
+    noteHlsFailure(what);
+    pendingFallback = { what, prevPs: info?.playSessionId ?? '' };
+    hls?.destroy(); hls = null; // late errors of the old stream must not start a second recovery
+    flash(tr('player.switchingCompatible'), 2500);
+    wantAutoplay = !paused || wantAutoplay;
+    fallbackRestart = true; // the stop below ends the failed session's timing; the reload continues it as a flagged re-start
+    if (started && !stopped) { stopped = true; await send('stop'); } // frees the failed stream's slot and its conversion job
+    void load(pos);
+  }
+  function recover(kind: ErrorKind, viaLoad = false, codec?: { what: AvoidWhat }) {
     if (handedOff || airOn || airInfo || airState.busy) return;
     timing.reconnect();
     retryViaLoad = viaLoad;
@@ -598,11 +643,12 @@
       return;
     }
     const pos = resumePos();
-    const d = decideRecovery(kind, rec, { isHls: Boolean(hls), canLowerQuality: lowerStep() !== null });
+    const d = decideRecovery(kind, rec, { isHls: Boolean(hls), canLowerQuality: lowerStep() !== null, avoidable: avoidable(), codecError: Boolean(codec) });
     if (d.do === 'retry') {
       rec.networkTries = d.attempt; reconnecting = d.attempt; errPos = pos; waiting = true;
       clearTimeout(retryT); retryT = setTimeout(() => retryNow(pos), d.delay);
     } else if (d.do === 'recover-media') { rec.mediaRecovered = true; errPos = pos; hls?.recoverMediaError(); }
+    else if (d.do === 'avoid') void avoidStream(pos, codec?.what ?? avoidTarget({}, activeFeatures()));
     else if (d.do === 'force-hls') forceHls(pos);
     else if (d.do === 'lower-quality') { rec.loweredQuality = true; errPos = pos; const q = lowerStep(); if (q) { wantAutoplay = !paused; abr = makeAbr(q, quality ? q : undefined); void changeQuality(q, 'abr', 3000, tr('player.quality.stepDown', { q: rungLabel(q) })); } else giveUp(); }
     else giveUp();
@@ -623,7 +669,7 @@
     if (hls && !retryViaLoad && reconnecting < MAX_NETWORK_TRIES) { if (hls.levels.length) hls.startLoad(pos); else if (info) hls.loadSource(info.hlsUrl); } // 1st/2nd retry: restart loading (or the manifest request)
     else void load(posKnown ? pos : undefined); // last retry (or direct play): new playback session, the old token may be dead
   }
-  function retryManually() { rec = freshRecovery(); reconnecting = 0; error = ''; errNote = ''; waiting = true; wantAutoplay = true; void load(posKnown ? resumePos() : undefined); }
+  function retryManually() { rec = { ...freshRecovery(), avoided: rec.avoided }; reconnecting = 0; error = ''; errNote = ''; waiting = true; wantAutoplay = true; void load(posKnown ? resumePos() : undefined); }
   function leave() { if (history.length > 1) history.back(); else location.href = '/'; }
   function onVideoError() {
     postFireTv('keepAwake:0');
@@ -634,7 +680,7 @@
     const kind = kindOfMediaError(video.error.code);
     if (video.error.code === 1) return; // aborted by us
     lastErrCode = `media_err_${video.error.code}`;
-    recover(kind);
+    recover(kind, false, kind === 'media' && avoidable() && isNativeCodecFailure({ code: video.error.code, readyState: video.readyState }) ? { what: avoidTarget({}, activeFeatures()) } : undefined); // native HLS (Safari): no codec details, a media error in an HEVC / surround stream
   }
   /** waiting -> start timing; playing -> the stall is over. Seeks and the first buffering after a (re)start are no stalls. */
   function onWaiting() {
@@ -1097,6 +1143,26 @@
     flash(tr(fx[k] ? 'scenes.audio.on' : 'scenes.audio.off', { name }), 1400);
     void applyFx().then(() => { if (paused) restorePlainSoon(); });
   }
+  // ---- "Raumklang" (Surround sound): per device, stored in this browser (devicecaps.ts); off = the next stream is stereo ----
+  let stereo = stereoOnly(), surroundShown = false;
+  /** offered when the server offers surround and the device states 5.1 output (before the stereo choice applies); not while casting */
+  $: surroundShown = menu === 'tracks' && $features.surround && !remote && !airOn && !airInfo && ((s) => s.channels >= 6 && s.surround.length > 0)(playerCapsSummary());
+  /** a sound mode keeps the output stereo whatever the switch says */
+  $: surroundOn = !stereo && !fxActive(fx);
+  async function toggleSurround() {
+    stereo = !stereo; setStereoOnly(stereo);
+    flash(tr(stereo ? 'scenes.audio.off' : 'scenes.audio.on', { name: tr('scenes.audio.surround') }), 1400);
+    if (remote || airInfo || !info || fxActive(fx) || mode === 'direct') return;
+    if (stereo && (info.delivery?.channels ?? 2) <= 2) return; // the stream is stereo anyway
+    // turning on cannot change a stream whose track is stereo, or when this device gave surround up after a failed start
+    if (!stereo && (info.delivery?.why.includes('stereo_source') || avoidedUntil().surround)) return;
+    // like an audio track change: a new stream at the current position
+    const pos = video?.currentTime ?? 0;
+    await send('stop');
+    trackSwitching = true;
+    try { await load(pos); } finally { trackSwitching = false; }
+    video?.play().catch(() => undefined);
+  }
   /** a remembered mode needs a running AudioContext: the first key / tap after an autoplayed start switches it on */
   function fxGesture() { if (fxNote === 'suspended' && fxActive(fx)) void applyFx(true); }
 
@@ -1494,7 +1560,7 @@
     if (!video || handedOff || swapping) return; // remote: the position comes from the engine's session; a swap holds the old position
     current = video.currentTime; duration = Number.isFinite(video.duration) ? video.duration : duration;
     if (current > 0 && !reconnecting && !error) lastPos = current;
-    if ((rec.networkTries || rec.mediaRecovered) && current > errPos + 8) rec = freshRecovery(); // stable again: new error budget
+    if ((rec.networkTries || rec.mediaRecovered) && current > errPos + 8) rec = { ...freshRecovery(), avoided: rec.avoided }; // stable again: new error budget
     const b = video.buffered; buffered = b.length ? b.end(b.length - 1) : 0;
   };
   /** progress report that does not depend on timers (those are throttled in background tabs / Picture-in-Picture) */
@@ -1755,8 +1821,8 @@
   {/if}
   {#if tvUi}
     {#if menu === 'tracks' && (info || tvSession)}
-      <TvTracks audio={audioOpts} subs={subOpts} {audioIndex} {subIndex} {fx} fxDisabled={fxDisabled}
-        on:audio={(e) => { wake(); if (e.detail !== audioIndex) void changeAudio(e.detail); }} on:sub={(e) => { wake(); setSubtitle(e.detail); }} on:fx={(e) => { wake(); toggleFx(e.detail); }} />
+      <TvTracks audio={audioOpts} subs={subOpts} {audioIndex} {subIndex} {fx} fxDisabled={fxDisabled} {surroundShown} {surroundOn} surroundLocked={fxActive(fx)}
+        on:surround={() => { wake(); void toggleSurround(); }} on:audio={(e) => { wake(); if (e.detail !== audioIndex) void changeAudio(e.detail); }} on:sub={(e) => { wake(); setSubtitle(e.detail); }} on:fx={(e) => { wake(); toggleFx(e.detail); }} />
     {:else if menu === 'episodes' && seriesId}
       <TvEpisodesOverlay {seriesId} {seasonId} currentId={itemId} seriesName={barTitle} on:pick={pickEpisode} on:close={() => { menu = ''; focusControls(); }} />
     {/if}
@@ -1863,6 +1929,7 @@
                 </div></div>
                 <div class="fxcol"><h3>{$t('scenes.audio.title')}</h3><div class="opts">
                   {#each FX_OPTS as o (o.k)}<button class="mi fx" class:on={fx[o.k] && !fxDisabled} role="switch" aria-checked={fx[o.k]} disabled={Boolean(fxDisabled)} on:click={() => toggleFx(o.k)}>{#if fx[o.k] && !fxDisabled}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}<span class="fxl">{$t(o.label)}<small>{$t(o.hint)}</small></span></button>{/each}
+                  {#if surroundShown}<button class="mi fx" class:on={surroundOn} role="switch" aria-checked={surroundOn} aria-disabled={fxActive(fx) ? 'true' : undefined} class:locked={fxActive(fx)} data-testid="surround-switch" on:click={() => { if (!fxActive(fx)) void toggleSurround(); }}>{#if surroundOn}<Icon name="check" size={16} />{:else}<span class="sp"></span>{/if}<span class="fxl">{$t('scenes.audio.surround')}<small>{$t(fxActive(fx) ? 'scenes.audio.surroundMode' : 'scenes.audio.surroundHint')}</small></span></button>{/if}
                   {#if fxDisabled}<p class="fxnote">{$t(fxDisabled === 'casting' ? 'scenes.audio.casting' : 'scenes.audio.unsupported')}</p>
                   {:else if fxNote === 'suspended' && fxActive(fx)}<p class="fxnote">{$t('scenes.audio.needsTap', { name: $t(fx.voice ? 'scenes.audio.voice' : 'scenes.audio.night') })}</p>{/if}
                 </div></div>
@@ -2051,6 +2118,7 @@
   .chn { display: block; max-width: 220px; margin: .1rem auto .15rem; font-weight: 700; font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .fxcol { min-width: 170px; } .mi.fx { white-space: normal; align-items: flex-start; } .mi.fx :global(svg), .mi.fx .sp { margin-top: .2rem; }
   .fxl { display: grid; line-height: 1.25; } .fxl small { color: var(--mut); font-weight: 400; font-size: .78rem; }
+  .mi.locked { opacity: .55; cursor: default; }
   .fxnote { margin: .3rem .6rem 0; font-size: .78rem; color: var(--mut); max-width: 220px; }
   .dlg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 12; background: rgba(16,20,24,.98); border: 1px solid #323a43; border-radius: 10px; padding: 1rem 1.2rem; width: min(520px, 92vw); max-height: 70%; overflow: auto; display: grid; gap: .8rem; }
   .dlg header { display: flex; justify-content: space-between; align-items: center; } .dlg ul { list-style: none; padding: 0; margin: 0; } .grow { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; }

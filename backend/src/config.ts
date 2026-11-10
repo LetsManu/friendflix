@@ -205,6 +205,10 @@ export const configSchema = z.object({
   DOWNLOAD_CREATE_PER_HOUR: z.coerce.number().int().positive().default(20),
   /** the server's upload in Mbit/s: new remote streams start lower while it is busy (uploadcap.ts); unset = off */
   UPLOAD_MBPS: z.preprocess(emptyAsUnset, z.coerce.number().min(1).max(100_000).optional()),
+  /** HEVC conversions at once (0 = off; remote viewers only, once the server's HEVC conversion is proven; hevcenc.ts); HEVC remux and direct play do not depend on it */
+  HEVC_STREAMS: z.coerce.number().int().min(0).max(4).default(2),
+  /** surround sound (5.1) for devices that state a 5.1 output; false = stereo for everyone */
+  SURROUND_AUDIO: z.enum(['true', 'false']).default('true'),
   /** comma-separated CIDRs counted as the home network (no remote bitrate cap); unknown/ambiguous addresses count as remote */
   HOME_NETWORKS: z.string().default('10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7,fe80::/10').transform((v, ctx) => {
     const list = v.split(',').map((c) => c.trim()).filter(Boolean);

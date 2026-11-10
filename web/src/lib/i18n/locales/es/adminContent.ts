@@ -212,6 +212,12 @@ const dict: Translation<typeof de> = {
       no_tonemap: 'Sin mapeo de tonos',
       no_throttle: 'Sin limitación',
       no_keyframes: 'Fotogramas clave MKV desactivados',
+      hevc_server_off: 'Conversión HEVC desactivada en el servidor',
+      hevc_no_hw: 'HEVC necesita codificación por hardware',
+      hevc_failed: 'Prueba HEVC fallida',
+      hevc_slow: 'HEVC demasiado lento',
+      hevc_limited: 'HEVC: una a la vez',
+      downmix_plain: 'Mezcla estéreo simple',
     },
     /** encoder row (Status): one line per gap in the media server's transcoding settings */
     advice: {
@@ -219,6 +225,24 @@ const dict: Translation<typeof de> = {
       no_tonemap: 'El mapeo de tonos está desactivado: las películas HDR se ven pálidas y grises al convertirlas. En Jellyfin, activa «Habilitar mapeo de tonos» en Transcodificación.',
       no_throttle: 'La limitación está desactivada: Jellyfin convierte cada película hasta el final lo más rápido posible y ocupa la unidad gráfica más de lo necesario. En Jellyfin, activa «Limitar transcodificaciones» en Transcodificación.',
       no_keyframes: 'La extracción de fotogramas clave para MKV está desactivada: los MKV reempaquetados empiezan con segmentos de 6 segundos en lugar de 3. En Jellyfin, vuelve a añadir «mkv» a la extracción de fotogramas clave en Transcodificación.',
+      hevc_server_off: 'Los espectadores con poca subida no reciben HEVC porque Jellyfin no lo permite. En Jellyfin, activa «Permitir la codificación en formato HEVC» en Panel → Reproducción → Transcodificación. Hasta entonces reciben H.264.',
+      hevc_no_hw: 'La conversión HEVC necesita codificación por hardware. En Jellyfin, elige la unidad gráfica del servidor y activa «Habilitar codificación por hardware» en Transcodificación. Hasta entonces estos espectadores reciben H.264.',
+      hevc_failed: 'La prueba HEVC no produjo vídeo HEVC, así que todos reciben H.264. En Jellyfin, activa «Codificador HEVC Intel de bajo consumo» en Transcodificación. Los chips Intel como el Jasper Lake N5095 también necesitan el firmware GuC/HuC cargado (consulta la guía de operación). Después ejecuta «Comprobar HEVC ahora».',
+      hevc_slow: 'La prueba HEVC fue más lenta que 1,5 veces el tiempo real, así que todos reciben H.264. Revisa la unidad gráfica y el interruptor del codificador de bajo consumo en Transcodificación y ejecuta «Comprobar HEVC ahora».',
+      hevc_limited: 'La prueba HEVC quedó por debajo de 3 veces el tiempo real, así que solo corre una conversión HEVC a la vez, sin importar cuántas permitan los ajustes. Los demás reciben H.264.',
+      downmix_plain: 'La mezcla estéreo es simple: las películas envolventes en estéreo pueden sonar bajas y con diálogos apagados. En Jellyfin, pon «Algoritmo de mezcla estéreo» en Dave750 en Transcodificación (a comprobar de oído en un dispositivo).',
+    },
+    /** encoder row (Status): the server's HEVC conversion line and its button */
+    hevc: {
+      line: 'Conversión HEVC: {state}',
+      speed: '{n}× tiempo real',
+      checked: 'comprobado a las {time}',
+      state: { server_off: 'desactivada en el servidor', no_hw: 'sin codificación por hardware', unproven: 'aún sin probar', failed: 'prueba fallida', slow: 'demasiado lenta', runtime_failed: 'en pausa tras errores', ready: 'lista' },
+      check: 'Comprobar HEVC ahora',
+      busy: 'No mientras alguien está viendo algo.',
+      running: 'Ya hay una comprobación en curso.',
+      unknown: 'No se pudieron leer las reproducciones del servidor multimedia; inténtalo de nuevo en un momento.',
+      failed: 'No se pudo ejecutar la comprobación.',
     },
     disks: {
       title: 'Almacenamiento',

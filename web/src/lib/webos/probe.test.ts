@@ -87,40 +87,46 @@ afterEach(() => vi.useRealTimers());
 const SPEC = {
   tv: 'webos', screen: '1920x1080', os: '25', direct: 'ok:1840ms', hls: 'ok', nativehls: 'ok', palm: 'yes', home: 'ok', keys: 'ok',
   video: ['h264', 'hevc', 'av1', 'vp9'], audio: ['aac', 'ac3', 'eac3', 'mp3', 'flac', 'opus'], containers: ['mkv', 'mp4', 'ts', 'webm'],
+  hlsVideo: ['h264', 'hevc'], surround: ['eac3', 'ac3'], ch: 6,
 } as const;
 
 describe('formatLgProbe', () => {
   it('prints the spec example line exactly', () => {
-    expect(formatLgProbe({ ...SPEC, video: [...SPEC.video], audio: [...SPEC.audio], containers: [...SPEC.containers] })).toBe(
-      'FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok keys=ok video=h264,hevc,av1,vp9 audio=aac,ac3,eac3,mp3,flac,opus containers=mkv,mp4,ts,webm',
+    expect(formatLgProbe({ ...SPEC, video: [...SPEC.video], audio: [...SPEC.audio], containers: [...SPEC.containers], hlsVideo: [...SPEC.hlsVideo], surround: [...SPEC.surround] })).toBe(
+      'FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok keys=ok video=h264,hevc,av1,vp9 audio=aac,ac3,eac3,mp3,flac,opus containers=mkv,mp4,ts,webm hlsvideo=h264,hevc surround=eac3,ac3 ch=6',
     );
   });
   it('prints the 10-bit suffix where the runner set it', () => {
-    expect(formatLgProbe({ ...SPEC, video: ['h264+10', 'hevc+10', 'av1', 'vp9'], audio: [...SPEC.audio], containers: [...SPEC.containers] })).toBe(
-      'FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok keys=ok video=h264+10,hevc+10,av1,vp9 audio=aac,ac3,eac3,mp3,flac,opus containers=mkv,mp4,ts,webm',
+    expect(formatLgProbe({ ...SPEC, video: ['h264+10', 'hevc+10', 'av1', 'vp9'], audio: [...SPEC.audio], containers: [...SPEC.containers], hlsVideo: [...SPEC.hlsVideo], surround: [...SPEC.surround] })).toBe(
+      'FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok keys=ok video=h264+10,hevc+10,av1,vp9 audio=aac,ac3,eac3,mp3,flac,opus containers=mkv,mp4,ts,webm hlsvideo=h264,hevc surround=eac3,ac3 ch=6',
     );
   });
   it('an empty list prints -', () => {
-    expect(formatLgProbe({ ...SPEC, video: [], audio: [], containers: [] })).toMatch(/ video=- audio=- containers=-$/);
+    expect(formatLgProbe({ ...SPEC, video: [], audio: [], containers: [], hlsVideo: [...SPEC.hlsVideo], surround: [...SPEC.surround] })).toMatch(/ video=- audio=- containers=- hlsvideo=h264,hevc surround=eac3,ac3 ch=6$/);
+  });
+  it('the HLS claim sits after containers: hlsvideo= surround= ch= (hls= stays the playback check)', () => {
+    const l = formatLgProbe({ ...SPEC, video: [], audio: [], containers: [], hlsVideo: ['h264', 'hevc'], surround: ['eac3', 'ac3'] });
+    expect(l).toContain(' hls=ok ');
+    expect(l).toMatch(/ hlsvideo=h264,hevc surround=eac3,ac3 ch=6$/);
   });
   it('LG line is unchanged (no screen token)', () => {
-    expect(formatLgProbe({ ...SPEC, video: [], audio: [], containers: [] })).not.toContain('screen=');
-    expect(formatLgProbe({ ...SPEC, video: [], audio: [], containers: [] })).toMatch(/^FFPROBE v1 tv=webos os=25 /);
+    expect(formatLgProbe({ ...SPEC, video: [], audio: [], containers: [], hlsVideo: [...SPEC.hlsVideo], surround: [...SPEC.surround] })).not.toContain('screen=');
+    expect(formatLgProbe({ ...SPEC, video: [], audio: [], containers: [], hlsVideo: [...SPEC.hlsVideo], surround: [...SPEC.surround] })).toMatch(/^FFPROBE v1 tv=webos os=25 /);
   });
   it('Fire TV: tv=firetv and the screen at the end', () => {
-    expect(formatLgProbe({ ...SPEC, tv: 'firetv', os: '9/AFTMM', palm: 'no', home: 'skipped', keys: 'skipped', video: ['h264'], audio: ['aac'], containers: ['mp4'] })).toBe(
-      'FFPROBE v1 tv=firetv os=9/AFTMM direct=ok:1840ms hls=ok nativehls=ok palm=no home=skipped keys=skipped video=h264 audio=aac containers=mp4 screen=1920x1080',
+    expect(formatLgProbe({ ...SPEC, tv: 'firetv', os: '9/AFTMM', palm: 'no', home: 'skipped', keys: 'skipped', video: ['h264'], audio: ['aac'], containers: ['mp4'], hlsVideo: [], surround: [], ch: 2 })).toBe(
+      'FFPROBE v1 tv=firetv os=9/AFTMM direct=ok:1840ms hls=ok nativehls=ok palm=no home=skipped keys=skipped video=h264 audio=aac containers=mp4 hlsvideo=- surround=- ch=2 screen=1920x1080',
     );
   });
   it('a crashed probe in the Fire TV app prints tv=firetv, its os and screen', () => {
     expect(failedLgProbeLine({ navigator: { userAgent: 'Mozilla/5.0 (Linux; Android 9; AFTMM Build/PS7633; wv) FriendFlixFireTV/3.0.0 FFDisplay/1080' }, innerWidth: 1920, innerHeight: 1080 })).toBe(
-      'FFPROBE v1 tv=firetv os=9/AFTMM direct=error:unknown hls=skipped nativehls=skipped palm=no home=skipped keys=skipped video=- audio=- containers=- screen=1920x1080',
+      'FFPROBE v1 tv=firetv os=9/AFTMM direct=error:unknown hls=skipped nativehls=skipped palm=no home=skipped keys=skipped video=- audio=- containers=- hlsvideo=- surround=- ch=2 screen=1920x1080',
     );
     expect(failedLgProbeLine({ navigator: { userAgent: 'Mozilla/5.0 FriendFlixFireTV/3.0.0' } })).toMatch(/ os=\? .* screen=\?x\?$/);
   });
   it('a crashed probe still shows a line', () => {
     expect(failedLgProbeLine({ navigator: { userAgent: 'Web0S webOSTV/6.0' }, PalmSystem: {} })).toBe(
-      'FFPROBE v1 tv=webos os=6.0 direct=error:unknown hls=skipped nativehls=skipped palm=yes home=skipped keys=skipped video=- audio=- containers=-',
+      'FFPROBE v1 tv=webos os=6.0 direct=error:unknown hls=skipped nativehls=skipped palm=yes home=skipped keys=skipped video=- audio=- containers=- hlsvideo=- surround=- ch=2',
     );
   });
 });
@@ -165,6 +171,19 @@ describe('runLgProbe', () => {
     const m = mk({ media: [v.h264[0]!.mime, v.h264[4]!.mime, v.hevc[1]!.mime, v.av1[0]!.mime, v.vp9[0]!.mime] });
     expect((await run(m)).video).toEqual(['h264+10', 'hevc+10', 'av1', 'vp9']);
   });
+  it('the HLS claim comes from strict MSE: hlsvideo= surround= ch=6', async () => {
+    const v = CANDIDATES.video, a = CANDIDATES.audio;
+    const m = mk({ media: [v.h264[2]!.mime, v.hevc[0]!.mime, a.aac, a.ac3, a.eac3] });
+    const all = new Set([v.h264[3]!.mime, v.hevc[0]!.mime, a.aac, a.ac3, a.eac3]);
+    m.deps.media = { canPlayType: m.deps.media!.canPlayType, isTypeSupported: (t) => all.has(t) };
+    const r = await run(m);
+    expect(r).toMatchObject({ hlsVideo: ['h264', 'hevc'], surround: ['eac3', 'ac3'], ch: 6 });
+    expect(formatLgProbe(r)).toMatch(/ hlsvideo=h264,hevc surround=eac3,ac3 ch=6$/);
+  });
+  it('without isTypeSupported the claim is empty and ch=2', async () => {
+    const r = await run(mk({}));
+    expect(r).toMatchObject({ hlsVideo: [], surround: [], ch: 2 });
+  });
   it('a media error gives its name', async () => {
     expect((await run(mk({ nativehls: 'error' }))).nativehls).toBe('error:decode');
   });
@@ -196,11 +215,16 @@ describe('runLgProbe', () => {
     expect((await p).home).toBe('fail');
     expect(JSON.parse(m.store.get('ff.lgProbe')!)).toMatchObject({ home: 'fail', stage: 'done' });
   });
+  it('an old stored result without the HLS claim prints hlsvideo=- surround=- ch=2', async () => {
+    const old = { tv: 'webos', screen: '1920x1080', os: '25', direct: 'ok:1840ms', hls: 'ok', nativehls: 'ok', palm: 'yes', home: 'fail', keys: 'ok', video: ['vp9'], audio: [], containers: ['webm'], stage: 'home' };
+    const m = mk({ search: '?probe=1&ff_app=webos&home=ok', stored: { 'ff.lgProbe': JSON.stringify(old) } });
+    expect(formatLgProbe(await runLgProbe(m.deps, m.onStage))).toMatch(/ containers=webm hlsvideo=- surround=- ch=2$/);
+  });
   it('home=ok in the URL with a stored result prints the restored line and runs no playback', async () => {
     const stored = { ...SPEC, home: 'fail', video: ['vp9'], audio: [], containers: ['webm'] };
     const m = mk({ search: '?probe=1&ff_app=webos&home=ok', stored: { 'ff.lgProbe': JSON.stringify(stored) } });
     const r = await runLgProbe(m.deps, m.onStage);
-    expect(formatLgProbe(r)).toBe('FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok keys=ok video=vp9 audio=- containers=webm');
+    expect(formatLgProbe(r)).toBe('FFPROBE v1 tv=webos os=25 direct=ok:1840ms hls=ok nativehls=ok palm=yes home=ok keys=ok video=vp9 audio=- containers=webm hlsvideo=h264,hevc surround=eac3,ac3 ch=6');
     expect(m.deps.fetchTarget).not.toHaveBeenCalled();
     expect(m.log).toEqual([]);
     expect(m.deps.waitKey).not.toHaveBeenCalled();

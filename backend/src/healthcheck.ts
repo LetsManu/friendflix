@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Ctx } from './ctx.js';
 import { broadcastLanguage, m, msg, type Text } from './i18n.js';
+import { hevcBusy, hevcProbeRunning, hevcProbeWanted, probeHevcEncoder } from './hevcenc.js';
 import { notify } from './notify.js';
 import { libraryItems, previews, serviceUser } from './previews.js';
 import type { UserRow } from './types.js';
@@ -51,6 +52,18 @@ export async function probe(ctx: Ctx, user: UserRow, item: { id: string; type: s
   }
 }
 
+/** The server's HEVC conversion is probed once the title check is through (it runs while previews are still paused); never fails the run. */
+async function hevcAfterCheck(ctx: Ctx, user: UserRow, pv: { whenIdle(): Promise<void> }): Promise<void> {
+  try {
+    // never next to a viewer; nothing to measure while HEVC is off here or at the server
+    if (await hevcProbeRunning(ctx) || await hevcBusy(ctx) || !(await hevcProbeWanted(ctx))) return;
+    await pv.whenIdle();
+    await probeHevcEncoder(ctx, user); // checks again for viewers once the previews are idle
+  } catch {
+    // the probe stores its own result; a failure here is only a missing one
+  }
+}
+
 async function run(ctx: Ctx, st: CheckState, user: UserRow): Promise<void> {
   const pv = previews(ctx);
   pv.paused = true;
@@ -64,6 +77,7 @@ async function run(ctx: Ctx, st: CheckState, user: UserRow): Promise<void> {
       st.results.push({ itemId: item.id, name: item.name, type: item.type, ms: Date.now() - t0, ...r });
       st.done++;
     }
+    await hevcAfterCheck(ctx, user, pv);
   } catch (e) {
     st.results.push({ itemId: '', name: msg(await broadcastLanguage(ctx).catch(() => 'de' as const), 'check.aborted'), type: '', ok: false, status: null, ms: 0, bytes: 0, error: String(e).slice(0, 200) });
   } finally {

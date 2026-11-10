@@ -153,6 +153,8 @@ export default {
     PREVIEW_WARM: { label: 'Vorschauen vorbereiten', help: 'Erzeugt im Leerlauf fehlende Vorschau-Clips, einen pro Minute.' },
     HOME_NETWORKS: { label: 'Heimnetze', help: 'Netze, die als Zuhause gelten (keine Bitraten-Grenze für unterwegs), durch Kommas getrennt, z. B. 192.168.0.0/16.' },
     UPLOAD_MBPS: { label: 'Upload des Servers (Mbit/s)', help: 'Die Upload-Geschwindigkeit deines Internetanschlusses. Ist sie fast ausgelastet, starten neue Streams von unterwegs mit weniger Qualität, statt dass alle ruckeln. Laufende Streams und das Heimnetz bleiben unberührt. Leer = aus.' },
+    HEVC_STREAMS: { label: 'HEVC-Umwandlungen gleichzeitig', help: 'Umgewandelte Streams für Geräte, die HEVC abspielen, nutzen HEVC statt H.264: besseres Bild beim gleichen Upload. Nur für Zuschauer außerhalb deines Heimnetzes und erst, wenn FriendFlix bestätigt hat, dass die Hardware des Servers HEVC schnell genug umwandelt (Status → Encoder). 0 = aus. HEVC-Dateien erreichen Geräte, die HEVC abspielen, weiterhin ohne Umwandlung.' },
+    SURROUND_AUDIO: { label: 'Raumklang', help: 'Geräte mit 5.1-Ausgabe (TV-Apps, Android an einer Anlage, Browser an einem 5.1-Ausgang) bekommen die Raumklang-Spur des Films oder eine 5.1-Umwandlung davon. Alle anderen bekommen Stereo. Aus = Stereo für alle.' },
     GITHUB_TOKEN: { label: 'GitHub-Token', help: 'Optional: höheres Abruflimit bei der Suche nach neuen Versionen.' },
     PORTAINER_WEBHOOK_URL: { label: 'Portainer-Stack-Webhook', help: 'Webhook-Adresse des Stacks für Updates mit einem Klick. Die Adresse ist selbst der Schlüssel.' },
     PORTAINER_URL: { label: 'Portainer-Adresse', help: 'Statt des Webhooks: Adresse von Portainer, mit API-Schlüssel und Stack-ID.' },

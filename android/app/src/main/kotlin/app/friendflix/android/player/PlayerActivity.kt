@@ -165,6 +165,12 @@ class PlayerActivity : FragmentActivity() {
     private var subIndex: Int? = null
     private var quality = 0L
     private var forcedHls = false
+    /** the one automatic fallback of this session happened (spec §9); a quality switch keeps it, a new title clears it */
+    private var avoided = false
+    /** the channels the audio output claimed at the last `/info` (2 = nothing to switch) */
+    private var outChannels = 2
+    /** set by the fallback for the next `/info` only: what was left out and the session it replaces */
+    private var fellBack: Pair<String, String>? = null
     private var retries = 0
     private var errorAt = 0L
     /** the title's start languages (detail pick, series choice, anime default, profile defaults); set by [loadTitle] */
@@ -344,6 +350,7 @@ class PlayerActivity : FragmentActivity() {
     }
 
     private fun startOnline(a: Args, first: Boolean, startMs: Long?) {
+        if (first) { avoided = false; fellBack = null }
         loadJob = lifecycleScope.launch {
             try {
                 val server = Downloads.get(applicationContext).api()
@@ -353,8 +360,19 @@ class PlayerActivity : FragmentActivity() {
                 castServer = CastServerApi(server, a.profileId, pa)
                 if (first) loadTitle(pa, a)
                 val audioLang = if (audioIndex == null) titleLangs(a).audioLang() else null
-                val caps = withContext(Dispatchers.IO) { DeviceProfile.build(applicationContext) }
-                val body = PlayerApi.infoBody(a.itemId, startMs, audioIndex, quality.takeIf { it > 0 }, manual = quality > 0, audioLang = audioLang, caps = caps)
+                val soundMode = fxMode != "off" && fx.supported()
+                // the audio route is read here, off the main thread, and also decides whether the track sheet offers the switch
+                val (caps, out) = withContext(Dispatchers.IO) {
+                    val o = AudioOut.current(applicationContext)
+                    DeviceProfile.build(applicationContext, soundMode, o) to o
+                }
+                outChannels = out.maxChannels
+                val fell = fellBack
+                fellBack = null
+                val body = PlayerApi.infoBody(
+                    a.itemId, startMs, audioIndex, quality.takeIf { it > 0 }, manual = quality > 0, audioLang = audioLang, caps = caps,
+                    fellBack = fell?.first, prevPs = fell?.second,
+                )
                 when (val r = withContext(Dispatchers.IO) { pa.info(body) }) {
                     is InfoAnswer.Ok -> attach(pa, r.info, startMs ?: (r.info.resumeTicks / TICKS_PER_MS))
                     is InfoAnswer.MaxStreams -> showError(resources.getQuantityString(R.plurals.player_error_max_streams, r.max, r.max), retry = true)
@@ -518,6 +536,13 @@ class PlayerActivity : FragmentActivity() {
         override fun onPlayerError(error: PlaybackException) { onError(error) }
     }
 
+    /** the sample MIME type of the renderer that failed, when ExoPlayer names it */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun failingMime(error: PlaybackException): String? =
+        (error as? androidx.media3.exoplayer.ExoPlaybackException)
+            ?.takeIf { it.type == androidx.media3.exoplayer.ExoPlaybackException.TYPE_RENDERER }
+            ?.rendererFormat?.sampleMimeType
+
     private fun onError(error: PlaybackException) {
         val pos = resumePos()
         Log.w(TAG, "playback error ${error.errorCodeName}")
@@ -535,6 +560,16 @@ class PlayerActivity : FragmentActivity() {
             // the device could not decode / parse the direct file after all: the server's HLS (transcode) instead, like the web
             forcedHls = true
             flash(getString(R.string.player_switching_transcode), 2_500)
+            reload(pos)
+            return
+        }
+        // an HLS stream with HEVC or surround the device cannot decode: once, the same stream without it, remembered for 30 days
+        val left = Fallback.feature(s?.info?.delivery, s?.direct ?: true, avoided, code, failingMime(error))
+        if (s != null && left != null) {
+            avoided = true
+            SurroundStore.of(applicationContext).avoid(left)
+            fellBack = left to s.info.playSessionId
+            flash(getString(R.string.player_switching_compatible), 2_500)
             reload(pos)
             return
         }
@@ -796,6 +831,9 @@ class PlayerActivity : FragmentActivity() {
                 canSearch = false,
                 fxMode = fxMode,
                 fxDisabledReason = null,
+                // only for an online stream on an output with 5.1 (a phone on speakers or headphones has nothing to switch)
+                surround = if (s != null && serverCaps.surround && outChannels >= 6) SurroundStore.of(applicationContext).enabled else null,
+                surroundLocked = fxMode != "off" && fx.supported(),
             )
         }
 
@@ -804,6 +842,7 @@ class PlayerActivity : FragmentActivity() {
             override fun subtitle(index: Int?) { setSubtitle(index, stream?.info?.subtitles?.firstOrNull { it.index == index }?.language) }
             override fun search() { openSubtitleSearch() }
             override fun fx(mode: String) { changeFx(mode) }
+            override fun surround(on: Boolean) { changeSurround(on) }
         }
 
         override fun qualities(): List<Pair<String, Long>>? {
@@ -888,6 +927,14 @@ class PlayerActivity : FragmentActivity() {
             }
         }
         fxToggle(old, mode)?.let { (name, on) -> flash(getString(if (on) R.string.player_fx_on else R.string.player_fx_off, getString(name)), 1_400) }
+    }
+
+    /** *Surround sound* flipped: kept on this device; an HLS stream restarts at the same position so that the change is heard (a silent AVR) */
+    private fun changeSurround(on: Boolean) {
+        SurroundStore.of(applicationContext).enabled = on
+        flash(getString(if (on) R.string.player_fx_on else R.string.player_fx_off, getString(R.string.player_surround)), 1_400)
+        val s = stream ?: return
+        if (!s.direct) reload(resumePos())
     }
 
     private fun setFx(mode: String) {

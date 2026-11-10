@@ -78,7 +78,7 @@
   {#if snapErr && !snap}
     <div class="state" role="alert"><Icon name="alert" size={22} /><p>{$t('adminContent.health.loadFailed')}</p><Button variant="secondary" icon="refresh" on:click={loadSnap}>{$t('ui.retry')}</Button></div>
   {:else}
-    <ServiceLights services={snap?.services ?? null} />
+    <ServiceLights services={snap?.services ?? null} on:refresh={() => void checkNow()} />
   {/if}
 </section>
 

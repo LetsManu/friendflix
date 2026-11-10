@@ -155,6 +155,8 @@ const settings: Translation<typeof de> = {
     PREVIEW_WARM: { label: 'Prepare previews', help: 'Creates missing preview clips while idle, one per minute.' },
     HOME_NETWORKS: { label: 'Home networks', help: 'Networks that count as home (no bitrate cap for away), separated by commas, e.g. 192.168.0.0/16.' },
     UPLOAD_MBPS: { label: 'Server upload (Mbit/s)', help: 'The upload speed of your internet connection. When it is nearly used up, new streams from away start at a lower quality instead of everyone stalling. Running streams and the home network are not affected. Empty = off.' },
+    HEVC_STREAMS: { label: 'HEVC conversions at once', help: 'Converted streams for devices that play HEVC use HEVC instead of H.264: a better picture for the same upload. Only for viewers outside your home network, and only after FriendFlix has confirmed that the server\'s hardware converts HEVC fast enough (Status → Encoder). 0 = off. HEVC files still reach devices that play HEVC unconverted.' },
+    SURROUND_AUDIO: { label: 'Surround sound', help: 'Devices with 5.1 output (TV apps, Android on a sound system, browsers on a 5.1 output) get the film\'s surround track, or a 5.1 conversion of it. All other devices get stereo. Off = stereo for everyone.' },
     GITHUB_TOKEN: { label: 'GitHub token', help: 'Optional: higher request limit when looking for new versions.' },
     PORTAINER_WEBHOOK_URL: { label: 'Portainer stack webhook', help: 'Webhook address of the stack for one-click updates. The address itself is the key.' },
     PORTAINER_URL: { label: 'Portainer address', help: 'Instead of the webhook: Portainer address, with API key and stack ID.' },

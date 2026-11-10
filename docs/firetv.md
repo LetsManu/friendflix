@@ -107,7 +107,7 @@ The first time the app opens a server (and again after you change to another ser
 **Please send the whole line to the project owner** (read it out or take a photo). **Back** closes the screen. The check never saves progress for the title it plays.
 
 ```
-FFPROBE v1 tv=firetv os=<android>/<model> direct=ok:1840ms hls=ok nativehls=ok palm=no home=skipped keys=skipped video=h264,hevc+10,av1 audio=aac,ac3,eac3,mp3,opus containers=mp4,ts,webm screen=1920x1080
+FFPROBE v1 tv=firetv os=<android>/<model> direct=ok:1840ms hls=ok nativehls=ok palm=no home=skipped keys=skipped video=h264,hevc+10,av1 audio=aac,ac3,eac3,mp3,opus containers=mp4,ts,webm hlsvideo=h264,hevc surround=eac3,ac3 ch=6 screen=1920x1080
 ```
 
 | Field | Meaning |
@@ -117,7 +117,14 @@ FFPROBE v1 tv=firetv os=<android>/<model> direct=ok:1840ms hls=ok nativehls=ok p
 | `hls`, `nativehls` | Whether the converted stream plays through the app's player script or through the TV's own HLS. |
 | `palm`, `home`, `keys` | Always `no`, `skipped`, `skipped` on Fire TV (they belong to the LG test). |
 | `video`, `audio`, `containers` | The formats the Fire TV confirms. |
+| `hlsvideo` | `h264,hevc`, `-` | The video codecs the TV may be given **inside a converted stream** (HLS). Stricter than `video`: counted only when the TV's streaming engine (MSE `isTypeSupported`) confirms them, and `hevc` only with the `hvc1` tag. `-`: no streaming answer, so streams stay H.264. (`hls` above is the playback check, not this list.) |
+| `surround` | `eac3,ac3`, `-` | The Dolby surround codecs the streaming engine confirms. Only these make the server send 5.1 sound; `-` means stereo. |
+| `ch` | `6`, `2` | The channels the app states with *Surround sound* on and no sound mode: `6` when `surround` is not empty, else `2`. |
 | `screen` | The size the page sees. It should read **`1920x1080`**; anything else means the layout is not scaled as designed, and the line is the thing to send back. |
+
+## HEVC streams and surround sound
+
+Converted streams can carry HEVC and Dolby surround (E-AC-3 / AC-3) when the TV's streaming engine confirms them (`hlsvideo`, `surround` in the line). The app never claims either before that check passes, and an unknown answer means the usual H.264 stereo stream. If a stream with HEVC or surround does not start, the player switches once to a stream this device plays and remembers that for 30 days. If a title plays but the **soundbar stays silent** (the TV accepts 5.1 but the ARC path plays nothing), turn off the **Surround sound** switch in the player's *Sound* panel; the TV then gets stereo. Sound modes also force stereo.
 
 ## Change server
 

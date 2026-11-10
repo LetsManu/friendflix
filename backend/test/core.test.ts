@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadConfig, removedEnvNames } from '../src/config.js';
 import { decrypt, encrypt } from '../src/crypto.js';
 import { mediaBrowserHeader } from '../src/jellyfin/client.js';
@@ -11,6 +11,8 @@ const ID = 'a'.repeat(32);
 const item = (id: string, extra = {}) => ({ Id: id, Name: 'Film ' + id.slice(0, 2), Type: 'Movie', ImageTags: { Primary: 'x' }, UserData: { Played: false, IsFavorite: false, PlaybackPositionTicks: 5_000_000 }, ...extra });
 
 let env: TestEnv;
+/** extra media streams of the PlaybackInfo answer (the stream plan reads the video and audio facts from them) */
+let extraStreams: Array<Record<string, unknown>> = [];
 let s: { cookies: Record<string, string>; csrf: string };
 
 beforeAll(async () => {
@@ -28,6 +30,7 @@ beforeAll(async () => {
           { Index: 2, Type: 'Audio', Language: 'eng', DisplayTitle: 'English' },
           { Index: 3, Type: 'Subtitle', Language: 'ger', Codec: 'subrip', IsTextSubtitleStream: true, DisplayTitle: 'Deutsch' },
           { Index: 4, Type: 'Subtitle', Codec: 'pgssub', IsTextSubtitleStream: false },
+          ...extraStreams,
         ] }],
       },
     }),
@@ -158,6 +161,100 @@ describe('playback', () => {
     const explicit = (await call('POST', '/api/playback/info', { itemId: ID, audioLang: 'eng', audioIndex: 1 })).json();
     expect(explicit.audioIndex).toBe(1);
   });
+  describe('stream plan', () => {
+    const webCaps = (hls: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+      client: 'web', appVersion: '3.3.0', containers: ['mp4'], video: [{ codec: 'h264' }, { codec: 'hevc', profiles: ['main'], tags: ['hvc1'] }], audio: ['aac', 'mp3'], subtitles: ['vtt'], ranges: ['sdr'], hls, ...extra,
+    });
+    const hevcCaps = webCaps({ video: ['h264', 'hevc'], audio: ['aac'], surround: [] });
+    const wrenfield = [
+      { Index: 10, Type: 'Video', Codec: 'hevc', Profile: 'Main', Width: 1920, Height: 1080, BitRate: 9_000_000, VideoRangeType: 'SDR' },
+    ];
+    const info = (remote: boolean, body: Record<string, unknown>) => env.app.inject({
+      method: 'POST', url: '/api/playback/info', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf, ...(remote ? { 'x-real-ip': '203.0.113.9' } : { 'x-real-ip': '192.168.1.10' }) }, payload: { itemId: ID, ...body },
+    });
+    /** replaces the gate the route passes with a spy that answers `answer` */
+    const spyGate = (answer: { ok: true } | { ok: false; why: 'h264_busy' }) => {
+      const gate = vi.fn(async () => answer);
+      const orig = env.ctx.jf.playbackInfo.bind(env.ctx.jf);
+      const spy = vi.spyOn(env.ctx.jf, 'playbackInfo').mockImplementation((u, i, o) => orig(u, i, { ...o, hevcGate: o.hevcGate ? gate : undefined }));
+      return { gate, restore: () => spy.mockRestore() };
+    };
+    it('a remote HEVC device whose stream is converted to fit the cap: the gate is asked exactly once and its answer shapes the plan', async () => {
+      extraStreams = wrenfield;
+      const g = spyGate({ ok: true });
+      try {
+        const r = await info(true, { caps: hevcCaps, maxBitrate: 4_000_000 });
+        expect(r.statusCode).toBe(200);
+        expect(g.gate).toHaveBeenCalledTimes(1);
+        expect(r.json().delivery).toMatchObject({ video: 'hevc', videoCodec: 'hevc', audio: 'stereo' });
+        expect(r.json().delivery.why).toContain('hevc_upload');
+        expect(new URL(r.json().hlsUrl, 'http://x').searchParams.get('VideoCodec')).toBe('hevc,h264');
+        expect(JSON.stringify(r.json())).not.toMatch(/tok-|adminkey/i);
+      } finally { g.restore(); extraStreams = []; }
+    });
+    it('a refusal keeps H.264 and names its reason; the stub gate of this step refuses with h264_unproven', async () => {
+      extraStreams = wrenfield;
+      const g = spyGate({ ok: false, why: 'h264_busy' });
+      try {
+        const r = await info(true, { caps: hevcCaps, maxBitrate: 4_000_000 });
+        expect(g.gate).toHaveBeenCalledTimes(1);
+        expect(r.json().delivery).toMatchObject({ video: 'h264' });
+        expect(r.json().delivery.why[0]).toBe('h264_busy');
+      } finally { g.restore(); }
+      const stub = await info(true, { caps: hevcCaps, maxBitrate: 4_000_000 });
+      expect(stub.json().delivery.why[0]).toBe('h264_unproven');
+      extraStreams = [];
+    });
+    it('a gate that throws synchronously counts as busy', async () => {
+      extraStreams = wrenfield;
+      const orig = env.ctx.jf.playbackInfo.bind(env.ctx.jf);
+      const spy = vi.spyOn(env.ctx.jf, 'playbackInfo').mockImplementation((u, i, o) => orig(u, i, { ...o, hevcGate: o.hevcGate ? (() => { throw new Error('x'); }) as never : undefined }));
+      try {
+        const r = await info(true, { caps: hevcCaps, maxBitrate: 4_000_000 });
+        expect([r.statusCode, r.json().delivery.why[0]]).toEqual([200, 'h264_busy']);
+      } finally { spy.mockRestore(); extraStreams = []; }
+    });
+    it('the gate is never asked at home, without a conversion need, without an hls claim, or while HEVC_STREAMS is 0', async () => {
+      extraStreams = wrenfield;
+      const g = spyGate({ ok: true });
+      try {
+        await info(false, { caps: hevcCaps, maxBitrate: 4_000_000 }); // at home
+        await info(true, { caps: hevcCaps }); // remote, but 9 Mbit/s fits the cap: remux
+        await info(true, { caps: { ...webCaps({ video: ['h264'], audio: ['aac'], surround: [] }) }, maxBitrate: 4_000_000 }); // device without HEVC
+        await info(true, { maxBitrate: 4_000_000 }); // no caps
+        expect(g.gate).not.toHaveBeenCalled();
+        const set = env.ctx.cfg;
+        env.ctx.cfg = { ...set, HEVC_STREAMS: 0 };
+        try {
+          const r = await info(true, { caps: hevcCaps, maxBitrate: 4_000_000 });
+          expect(g.gate).not.toHaveBeenCalled();
+          expect(r.json().delivery.why[0]).toBe('h264_off');
+        } finally { env.ctx.cfg = set; }
+      } finally { g.restore(); extraStreams = []; }
+    });
+    it('the answer carries delivery; a request without the new caps fields keeps today\'s HLS URL', async () => {
+      const r = (await info(false, {})).json();
+      expect(r.delivery).toMatchObject({ audio: 'stereo', why: expect.arrayContaining(['stereo_device']) });
+      const q = new URL(r.hlsUrl, 'http://x').searchParams;
+      expect([q.get('VideoCodec'), q.get('AudioCodec'), q.get('SegmentContainer'), q.get('AudioBitrate'), q.has('EnableAdaptiveBitrateStreaming')]).toEqual(['h264', 'aac,mp3', 'ts', '192000', false]);
+    });
+    it('fellBack and prevPs are accepted; anything else is a 400', async () => {
+      expect((await info(false, { fellBack: 'hevc', prevPs: 'ps-87654321' })).statusCode).toBe(200);
+      expect((await info(false, { fellBack: 'both' })).statusCode).toBe(200);
+      expect((await info(false, { fellBack: 'dts' })).statusCode).toBe(400);
+    });
+    it('the remembered play session keeps only the fixed video / audio codes', async () => {
+      const r = (await info(false, { caps: hevcCaps })).json();
+      const raw = JSON.parse((await env.kv.get(`pbinfo:${(await env.pool.query('select id from users')).rows[0].id}:${r.playSessionId}`))!);
+      expect([raw.video, raw.audio]).toEqual([r.delivery.video, r.delivery.audio]);
+    });
+    it('/api/me: features.surround follows SURROUND_AUDIO', async () => {
+      expect((await call('GET', '/api/me')).json().features.surround).toBe(true);
+      const set = env.ctx.cfg;
+      env.ctx.cfg = { ...set, SURROUND_AUDIO: 'false' };
+      try { expect((await call('GET', '/api/me')).json().features.surround).toBe(false); } finally { env.ctx.cfg = set; }
+    });
+  });
   it('next up: ?seriesId= is passed to Jellyfin (not filtered from the global top 20)', async () => {
     const SER = 'c'.repeat(32);
     expect((await call('GET', `/api/library/nextup?seriesId=${SER}`)).json()).toEqual({ items: [] });
@@ -268,3 +365,52 @@ describe('request service settings (the 1.x names SEERR_* are removed in 2.0)', 
   });
 });
 
+
+describe('GET /api/playback/abilities (Diagnose: picture and sound)', () => {
+  const E = { hwAccel: 'qsv', tonemap: true, throttle: true, keyframeMkv: true, hevcEncode: true, hwEncode: true, lowPowerHevc: true, downmix: 'dave750' };
+  const fp = (e: typeof E) => [e.hwAccel, e.hevcEncode ? 1 : 0, e.hwEncode ? 1 : 0, e.lowPowerHevc ? 1 : 0].join('|');
+  const setup = async (e: typeof E | null, probe?: { ok: boolean; speed?: number; reason?: string }) => {
+    env.ctx.jf.admin.encoderSettings = async () => { if (!e) throw new Error('boom'); return e as never; };
+    await env.kv.del('hevcenc:probe'); await env.kv.del('hevcenc:failures');
+    if (e && probe) await env.kv.set('hevcenc:probe', JSON.stringify({ ...probe, fingerprint: fp(e), at: Date.now() - 1000 }), 3600);
+  };
+  const ask = async () => (await call('GET', '/api/playback/abilities')).json();
+
+  it('maps every state: ready / off / unproven / unhealthy', async () => {
+    await setup(E, { ok: true, speed: 3.2 });
+    expect(await ask()).toEqual({ hevc: 'ready', surround: true });
+    await setup({ ...E, hevcEncode: false });
+    expect((await ask()).hevc).toBe('off'); // server_off
+    await setup({ ...E, hwAccel: 'none' });
+    expect((await ask()).hevc).toBe('off'); // no_hw
+    await setup(E);
+    expect((await ask()).hevc).toBe('unproven');
+    await setup(null);
+    expect((await ask()).hevc).toBe('unproven'); // settings unreadable
+    await setup(E, { ok: false, reason: 'not_hevc' });
+    expect((await ask()).hevc).toBe('unhealthy'); // failed
+    await setup(E, { ok: false, reason: 'slow', speed: 1.1 });
+    expect((await ask()).hevc).toBe('unhealthy'); // slow
+    await setup(E, { ok: true, speed: 3.2 });
+    const now = Date.now();
+    await env.kv.set('hevcenc:failures', JSON.stringify([{ at: now - 120_000, device: 'a' }, { at: now - 60_000, device: 'b' }]), 3600);
+    expect((await ask()).hevc).toBe('unhealthy'); // runtime_failed
+  });
+
+  it('HEVC_STREAMS 0 is off; SURROUND_AUDIO false says surround false; only the two fields are answered', async () => {
+    await setup(E, { ok: true, speed: 3.2 });
+    const set = env.ctx.cfg;
+    env.ctx.cfg = { ...set, HEVC_STREAMS: 0, SURROUND_AUDIO: 'false' };
+    try { expect(await ask()).toEqual({ hevc: 'off', surround: false }); } finally { env.ctx.cfg = set; }
+  });
+
+  it('Plex is always off and has no surround switch; signed out is refused', async () => {
+    await setup(E, { ok: true, speed: 3.2 });
+    const kind = Object.getOwnPropertyDescriptor(env.ctx.jf, 'kind');
+    Object.defineProperty(env.ctx.jf, 'kind', { value: 'plex', configurable: true, writable: true });
+    try { expect(await ask()).toEqual({ hevc: 'off', surround: false }); } finally {
+      if (kind) Object.defineProperty(env.ctx.jf, 'kind', kind); else delete (env.ctx.jf as { kind?: string }).kind;
+    }
+    expect((await env.app.inject({ url: '/api/playback/abilities' })).statusCode).toBe(401);
+  });
+});

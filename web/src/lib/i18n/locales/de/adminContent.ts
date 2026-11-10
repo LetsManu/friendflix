@@ -210,6 +210,12 @@ export default {
       no_tonemap: 'Ohne Tone-Mapping',
       no_throttle: 'Ohne Drosselung',
       no_keyframes: 'MKV-Keyframes aus',
+      hevc_server_off: 'HEVC-Umwandlung am Server aus',
+      hevc_no_hw: 'HEVC braucht Hardware-Encoding',
+      hevc_failed: 'HEVC-Test fehlgeschlagen',
+      hevc_slow: 'HEVC zu langsam',
+      hevc_limited: 'HEVC: nur eine zugleich',
+      downmix_plain: 'Einfacher Stereo-Downmix',
     },
     /** encoder row (Status): one line per gap in the media server's transcoding settings */
     advice: {
@@ -217,6 +223,24 @@ export default {
       no_tonemap: 'Tone-Mapping ist aus: HDR-Filme wirken beim Umwandeln blass und grau. In Jellyfin unter Transkodierung „Tone-Mapping aktivieren“ einschalten.',
       no_throttle: 'Drosselung ist aus: Jellyfin wandelt jeden Film so schnell wie möglich bis zum Ende um und belegt die Grafikeinheit länger als nötig. In Jellyfin unter Transkodierung „Transkodierung drosseln“ einschalten.',
       no_keyframes: 'Die Keyframe-Erkennung für MKV ist aus: umgepackte MKV-Dateien starten mit 6-Sekunden-Abschnitten statt 3 s. In Jellyfin „mkv“ bei der Keyframe-Extraktion (Transkodierung) wieder eintragen.',
+      hevc_server_off: 'Zuschauer mit schwacher Upload-Leitung bekommen kein HEVC, weil Jellyfin es nicht erlaubt. In Jellyfin unter Dashboard → Wiedergabe → Transkodierung „Kodierung im HEVC-Format erlauben“ einschalten. Bis dahin bekommen sie H.264.',
+      hevc_no_hw: 'Die HEVC-Umwandlung braucht Hardware-Encoding. In Jellyfin unter Transkodierung die Grafikeinheit des Servers wählen und „Hardware-Kodierung aktivieren“ einschalten. Bis dahin bekommen diese Zuschauer H.264.',
+      hevc_failed: 'Der HEVC-Test hat kein HEVC-Video geliefert, deshalb bekommen alle H.264. In Jellyfin unter Transkodierung „Intel-Low-Power-HEVC-Encoder“ einschalten. Intel-Chips wie der Jasper-Lake-N5095 brauchen außerdem die geladene GuC/HuC-Firmware (siehe Betriebsanleitung). Danach „HEVC jetzt prüfen“ ausführen.',
+      hevc_slow: 'Der HEVC-Test lief langsamer als 1,5-fache Echtzeit, deshalb bekommen alle H.264. Grafikeinheit und den Low-Power-Encoder-Schalter unter Transkodierung prüfen, dann „HEVC jetzt prüfen“ ausführen.',
+      hevc_limited: 'Der HEVC-Test lief unter 3-facher Echtzeit, deshalb läuft nur eine HEVC-Umwandlung zugleich, egal wie viele die Einstellungen erlauben. Weitere Zuschauer bekommen H.264.',
+      downmix_plain: 'Der Stereo-Downmix ist schlicht: Surround-Filme klingen in Stereo leise, die Dialoge dumpf. In Jellyfin unter Transkodierung „Stereo-Downmix-Algorithmus“ auf Dave750 stellen (am Gerät nach Gehör prüfen).',
+    },
+    /** encoder row (Status): the server's HEVC conversion line and its button */
+    hevc: {
+      line: 'HEVC-Umwandlung: {state}',
+      speed: '{n}-fache Echtzeit',
+      checked: 'geprüft um {time}',
+      state: { server_off: 'am Server aus', no_hw: 'keine Hardware-Kodierung', unproven: 'noch nicht getestet', failed: 'Test fehlgeschlagen', slow: 'zu langsam', runtime_failed: 'nach Fehlern pausiert', ready: 'bereit' },
+      check: 'HEVC jetzt prüfen',
+      busy: 'Nicht, während jemand schaut.',
+      running: 'Eine Prüfung läuft bereits.',
+      unknown: 'Die Streams des Medienservers konnten nicht gelesen werden; gleich noch einmal versuchen.',
+      failed: 'Die Prüfung konnte nicht ausgeführt werden.',
     },
     disks: {
       title: 'Speicher',

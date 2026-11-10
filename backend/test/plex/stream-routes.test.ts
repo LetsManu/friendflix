@@ -93,6 +93,7 @@ describe('through the routes (makeEnv server: plex)', () => {
     const info = r.json();
     expect(info.hlsUrl).toMatch(new RegExp(`^/media/Videos/${item(1)}/hls/[0-9a-f]{16}-[0-9a-f]{24}/index\\.m3u8$`));
     expect(info.audioIndex).toBe(2);
+    expect(info.delivery).toBeUndefined(); // the stream plan is Jellyfin only
     expect(tf.sessions.get(info.playSessionId)!.audio).toBe('3');
     expect(info.trickplay?.url).toContain(`/media/Videos/${item(1)}/${encodePlexId('part', 1)}/Trickplay/2000/{n}.jpg?sig=`);
     expect(r.body).not.toMatch(/\/library\/|\/video\/:|plex\.test|X-Plex/i);
