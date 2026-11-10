@@ -17,7 +17,7 @@ const SUGGESTIONS = {
   error: null as null,
 };
 const region = (page: Page, name: string) => page.getByRole('region', { name, exact: true });
-const seg = (page: Page, name: string) => page.getByRole('tablist', { name: 'Bereiche' }).getByRole('tab', { name });
+const seg = (page: Page, name: string | RegExp) => page.getByRole('tablist', { name: 'Bereiche' }).getByRole('tab', { name });
 
 test.describe('new & upcoming, variant B (phone)', () => {
   test('Für dich: header button, segmented tabs, spotlight, suggestions as list cards with 44 px buttons, the "Etwas fehlt?" bar', async ({ page, api }) => {
