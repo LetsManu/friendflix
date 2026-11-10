@@ -37,15 +37,18 @@ test.describe('home + detail in English', () => {
     await expect(page.getByText('Episode 1', { exact: false }).first()).toBeAttached();
   });
 
-  test('browse chips and search', async ({ page }) => {
+  test('browse chips and search', async ({ page, api }) => {
     await page.goto('/browse/movies?genre=Drama&decade=1990&minRating=7&audio=deu');
     await expect(page.getByRole('heading', { level: 1, name: 'Movies' })).toBeVisible();
     const chips = page.getByRole('list', { name: 'Active filters' });
     for (const label of ['1990s', '7+ stars', 'Audio: German']) await expect(chips.getByRole('button', { name: new RegExp(label.replace('+', '\\+')) })).toBeVisible();
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/browse-en.png` });
+    api.newPage.upcoming = { movie: [{ tmdbId: 11, mediaType: 'movie', title: 'Vesper Bay', releaseDate: '2026-11-28T00:00:00Z', status: 'nicht_angefragt' }], tv: [] };
     await page.goto('/new');
     await expect(page.getByRole('heading', { level: 1, name: 'New & Upcoming' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'Coming soon' })).toBeVisible();
+    await expect(page.getByRole('radiogroup', { name: 'Show' }).getByRole('radio')).toHaveText(['All', 'Series', 'Movies']);
+    await expect(page.getByRole('heading', { level: 2, name: 'New for you' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Coming soon' })).toBeVisible();
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/new-en.png` });
   });
 });

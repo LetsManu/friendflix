@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
-import { noHorizontalOverflow } from '../helpers.js';
+import { noHorizontalOverflow, row } from '../helpers.js';
 
 test.describe('account and news pages', () => {
   test('/me renders the quick links and notifications', async ({ page }) => {
@@ -13,12 +13,12 @@ test.describe('account and news pages', () => {
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 
-  test('/new renders the tabs and the week ranking', async ({ page }) => {
+  test('/new renders the filter, the new-titles rows and the week ranking', async ({ page }) => {
     await page.goto('/new');
     await expect(page.getByRole('heading', { level: 1, name: 'Neu & demnächst' })).toBeVisible();
-    const tabs = page.getByRole('tablist', { name: 'Bereich' }).getByRole('tab');
-    await expect(tabs).not.toHaveCount(0);
-    await expect(page.getByRole('tabpanel')).toBeVisible();
+    await expect(page.getByRole('radiogroup', { name: 'Anzeigen' }).getByRole('radio')).toHaveText(['Alles', 'Serien', 'Filme']);
+    for (const title of ['Für dich neu', 'Neue Serien', 'Neue Folgen', 'Neue Filme', 'Diese Woche bei uns']) await expect(row(page, title)).toBeVisible();
+    await expect(row(page, 'Diese Woche bei uns').locator('.rkn')).toHaveCount(5);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 });

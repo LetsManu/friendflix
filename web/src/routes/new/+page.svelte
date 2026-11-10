@@ -3,20 +3,27 @@
 <script lang="ts">
   /**
    * "Neu & demnächst" (just "Neu" without a request service): For you (engine picks with their reason), new series, new episodes of
-   * followed shows, new films, this week at ours and what is coming soon. A section without titles is left out. Every section loads on its own and a
+   * followed shows, new films, this week at ours and what is coming soon. The Alles / Serien / Filme filter lives in the URL
+   * (?type=series|movie) and applies to every section; a section without titles is left out. Every section loads on its own and a
    * failed or slow one is simply absent: nothing waits forever and one error never breaks the page.
    */
   import { onMount } from 'svelte';
-      import { api, type Item } from '#lib/api';
-        import { t } from '#lib/i18n';
+  import { goto } from '$app/navigation';
+  import { pageStore } from '#lib/page';
+  import { api, type Item } from '#lib/api';
+      import Icon from '#lib/Icon.svelte';
+  import { t } from '#lib/i18n';
   import { runtimeLabel, sortUpcoming } from '#lib/mobile';
-  import { episodeItem, freshText, NEW_TITLE_DAYS, planSections, withinDays, type NewData, type NewEpisode, type Up } from '#lib/newpage';
-    import NewEpisodes from '#lib/new/NewEpisodes.svelte';
+  import { episodeItem, FILTER_PARAM, filterSearch, freshText, NEW_TITLE_DAYS, parseFilter, planSections, withinDays, type NewData, type NewEpisode, type NewFilter, type Up } from '#lib/newpage';
+  import FilterBar from '#lib/new/FilterBar.svelte';
+  import NewEpisodes from '#lib/new/NewEpisodes.svelte';
   import UpcomingList from '#lib/new/UpcomingList.svelte';
   import { reasonText } from '#lib/reason';
   import Row from '#lib/Row.svelte';
   import type { RowNote } from '#lib/rowNote';
   import { mobile } from '#lib/viewport';
+
+  const page = pageStore();
 
   /** a section that does not answer within this long is left out (never a skeleton forever) */
   const SECTION_TIMEOUT_MS = 8000;
@@ -42,8 +49,15 @@
       .then(([m, tv]) => set('upcoming', sortUpcoming([...m, ...tv]).slice(0, 40)));
   });
 
+  // ---- filter (URL) ----
+  $: filter = parseFilter($page.url.searchParams.get(FILTER_PARAM));
+  function pick(f: NewFilter) {
+    const q = filterSearch(f);
+    void goto(q || $page.url.pathname, { replaceState: true, reset: false });
+  }
+
   // ---- what to show ----
-  $: plan = planSections(d, 'all', { requests: true });
+  $: plan = planSections(d, filter, { requests: true });
   /** the four "new" sections have all answered: until then one placeholder block, so nothing above the fold jumps when sections resolve */
   $: topReady = d.forYou !== null && d.newSeries !== null && d.newMovies !== null && d.episodes !== null;
   $: lowReady = d.week !== null && d.upcoming !== null;
@@ -60,14 +74,17 @@
     return { meta: $t('detail.view.episodeCode', { s: String(it.parentIndexNumber ?? '?'), e: String(it.indexNumber ?? '?') }), fresh: e ? freshText(e.episode.addedAt, now, $t) : '' };
   };
 
+  $: heading = $t('home.new.title');
+  $: recentHref = filter === 'series' ? '/browse/series?sort=DateCreated' : '/browse/movies?sort=DateCreated';
 </script>
 
-<svelte:head><title>{$t('common.pageTitle', { page: $t('home.new.title') })}</title></svelte:head>
+<svelte:head><title>{$t('common.pageTitle', { page: heading })}</title></svelte:head>
 
 <div class="np">
   <div class="in">
     <header class="top">
-      <h1>{$t('home.new.title')}</h1>
+      <h1>{heading}</h1>
+      <FilterBar value={filter} on:change={(e) => pick(e.detail)} />
     </header>
 
     {#if !topReady}
@@ -76,6 +93,17 @@
         {#each [0, 1] as _}<div class="skrow" aria-hidden="true"><div class="skeleton skh"></div><div class="skcards">{#each Array($mobile ? 3 : 6) as __}<div class="skeleton skc"></div>{/each}</div></div>{/each}
       </div>
     {:else}
+      {#if plan.empty}
+        <section class="empty frost frost-panel frost-safe" aria-labelledby="np-empty">
+          <span class="ic" aria-hidden="true"><Icon name="clock" size={26} /></span>
+          <h2 id="np-empty">{$t('home.new.emptyTitle')}</h2>
+          <p>{$t('home.new.emptyText')}</p>
+          <div class="btns">
+            <a class="btn pill" href={recentHref}>{$t('home.new.emptyRecent')}</a>
+            <a class="btn sec" href="/calendar"><Icon name="calendar" size={18} />{$t('home.new.emptyCalendar')}</a>
+          </div>
+        </section>
+      {/if}
       <Row title={$t('home.new.forYou')} sub={$t('home.new.forYouSub')} items={plan.forYou} portrait notes={forYouNote} />
       <Row title={$t('home.new.newSeries')} sub={$t('home.new.newSeriesSub')} items={plan.newSeries} portrait notes={seriesNote} />
       {#if plan.episodes.length}
@@ -113,6 +141,15 @@
   :global(html.tv) .skc { aspect-ratio: 16 / 9; border-radius: var(--tv-radius); }
   @media (max-width: 720px) { .skc { flex-basis: calc((100% - 2 * 8px) / 3.2); } }
 
+  .empty { display: grid; justify-items: center; gap: .5rem; text-align: center; margin: 1.5rem var(--pad-x) 0; padding: 1.8rem 1.4rem; max-width: 34rem; border-radius: var(--fr-r-panel, 18px); }
+  @media (min-width: 721px) { .empty { margin-inline: auto; } }
+  .ic { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--fr-sel); color: var(--acc-text); }
+  .empty h2 { margin: .4rem 0 0; font-size: 1.25rem; font-weight: 800; line-height: 1.25; }
+  .empty p { margin: 0 0 .8rem; color: var(--mut); max-width: 28rem; }
+  .btns { display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem; }
+  :global(html.tv) .empty { max-width: 44rem; }
+  :global(html.tv) .empty h2 { font-size: 1.75rem; }
+  :global(html.tv) .empty p { font-size: 1.25rem; }
 
   .split { display: block; }
   .upc { padding: 0 var(--pad-x); }
