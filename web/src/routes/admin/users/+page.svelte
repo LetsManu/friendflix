@@ -336,12 +336,12 @@
               </span>
             </span>
           </span>
-        {:else if col.key === 'email'}<span class="sub">{row.email ?? ''}</span>
+        {:else if col.key === 'email'}<span class="sub em">{row.email ?? ''}</span>
         {:else if col.key === 'role'}
           {#if row.role === null}<span class="sub">–</span>
           {:else}
-            <Select label={$t('adminPeople.users.roleOf', { name: row.name })} options={optionsFor(roleOptions, row.role)} value={row.role} hideLabel
-              disabled={row.id === meId || $busyKeys.has(`user:${row.id}`)} on:change={(e) => changeRole(row, (e.target as HTMLSelectElement).value)} />
+            <span class="rolecell"><Select label={$t('adminPeople.users.roleOf', { name: row.name })} options={optionsFor(roleOptions, row.role)} value={row.role} hideLabel
+              disabled={row.id === meId || $busyKeys.has(`user:${row.id}`)} on:change={(e) => changeRole(row, (e.target as HTMLSelectElement).value)} /></span>
           {/if}
         {:else if col.key === 'profiles'}<span class="num">{fmtNumber(row.profiles)}</span>
         {:else if col.key === 'devices'}<span class="num">{fmtNumber(row.devices)}</span>
@@ -384,6 +384,8 @@
   @media (min-width: 721px) {
     .ulist :global(th), .ulist :global(td) { padding-inline: .5rem; }
     .ulist :global(th) { white-space: normal; }
+    .rolecell { display: block; min-width: 8.5rem; }
+    .em { display: block; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
   }
   /* phone card: the selection cell is the first line, keep its box clear of the actions button (top right) */
   @media (max-width: 720px) { .pick { margin-right: 3.2rem; } .bulk { position: static; } }

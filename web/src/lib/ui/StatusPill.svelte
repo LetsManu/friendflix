@@ -18,7 +18,7 @@
 <span class="pill {tone}">{#if ic}<Icon name={ic} size={14} />{/if}<span>{label}<slot /></span></span>
 
 <style>
-  .pill { display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .6rem .15rem .45rem; border-radius: 99px; font-size: .8rem; font-weight: 600; line-height: 1.4; white-space: nowrap; max-width: 100%; }
+  .pill { display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .6rem .15rem .45rem; border-radius: 99px; font-size: .8rem; font-weight: 600; line-height: 1.4; white-space: nowrap; max-width: 100%; word-spacing: .12em; }
   .pill > span { overflow: hidden; text-overflow: ellipsis; }
   /* the tone over a dark scrim fill (glass spec §7): on the light glass cards over the brightest glow the plain tone washes
      left the status text under AA; with the scrim under them every pill passes (lib/admin/glass.test.ts). The text and the

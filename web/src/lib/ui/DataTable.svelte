@@ -199,11 +199,12 @@
   tbody tr:not(.sk):hover td::after { opacity: 1; }
   tr.busy { opacity: .6; }
   td.primary { font-weight: 600; }
-  .al-end { text-align: right; } .al-center { text-align: center; }
+  .al-end, th.al-end { text-align: right; } .al-center, th.al-center { text-align: center; }
   .act { width: 60px; text-align: right; }
   .sorter { background: transparent; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; padding: 0 .2rem; min-height: 32px; gap: .3rem; margin-left: -.2rem; border-radius: 4px; }
   .sorter:hover:not(:disabled) { background: rgba(255,255,255,.06); color: var(--fg); }
   .sorter.on { color: var(--fg); }
+  @media (pointer: coarse) { .sorter { min-height: 44px; } }
   .state { display: flex; flex-direction: column; align-items: center; gap: .6rem; text-align: center; padding: 2rem 1rem; color: var(--mut); background: var(--fr-solid); border: 1px solid var(--fr-line); border-top: 0; border-radius: 0 0 16px 16px; }
   .state p { margin: 0; }
   .state.err { border-top: 1px solid var(--fr-line); border-radius: 16px; color: var(--fg); }
