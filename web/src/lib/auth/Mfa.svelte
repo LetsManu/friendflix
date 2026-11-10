@@ -3,8 +3,8 @@
 <script lang="ts">
   /**
    * Screen 3, the second factor: 6 single-digit boxes for the authenticator app (submitted on the 6th digit; a paste fills all boxes),
-   * "Stattdessen Wiederherstellungscode nutzen" (one text field) and "Passkey verwenden" (in-app when the step carries options, else a
-   * link to the sign-in page). When a passkey is the only factor, the screen starts with the passkey button and no boxes.
+   * "Stattdessen Wiederherstellungscode nutzen" (one text field) and "Passkey verwenden" (in-app when the step carries options; a passkey
+   * for another host only as the clearly labelled link "Auf der Anmeldeseite mit Passkey anmelden"). When a passkey is the only factor, the screen starts with the passkey button and no boxes.
    * Never navigates: emits `next` / `done`; the sign-in page links use `classicHref`.
    */
   import { createEventDispatcher, onMount, tick } from 'svelte';
@@ -167,7 +167,7 @@
   {#if step.passkey}
     <button class={mode === 'passkey' ? 'af-pri' : 'af-sec'} type="button" disabled={busy} bind:this={passkeyBtn} on:click={usePasskey}><Icon name="key" size={20} />{$t('login.mfa.passkey')}</button>
   {:else if step.passkeyClassic}
-    <a class="af-link" href={classicHref}>{$t('login.mfa.passkey')}</a>
+    <a class="af-link" href={classicHref}>{$t('login.passkey.classic')}</a>
   {/if}
   {#if passkeyHint}
     <p class="af-hint" role="status">

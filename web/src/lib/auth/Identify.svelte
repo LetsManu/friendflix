@@ -4,10 +4,10 @@
   /**
    * Screen 1, identification: e-mail or username (plus the password when the flow asks for it on the same stage), "Mit Passkey
    * anmelden" and "Noch kein Konto? Einladung einlösen".
-   * Never navigates: it answers the step and emits `next` / `done`; `classic` (the sign-in page) and `invite` (a pasted invite token)
-   * are for the page to act on.
-   * Passkey: in-app when the step carries options (the RP ID is the app host), else the sign-in page. A cancelled or unmatched passkey
-   * shows the sign-in page's passkey link: passkeys made on Authentik's own pages only work there (plan Ruling 1, trade-off).
+   * Never navigates: it answers the step and emits `next` / `done`; `invite` (a pasted invite token) is for the page to act on.
+   * Passkey: offered only when the step carries usable WebAuthn options (the RP ID is the app host, checked by the backend); without
+   * them there is no passkey button at all, never one that leaves for the sign-in page. A cancelled or unmatched passkey shows the
+   * sign-in page's passkey link, clearly labelled: passkeys made on Authentik's own pages only work there (plan Ruling 1, trade-off).
    */
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import { t } from '#lib/i18n';
@@ -20,7 +20,7 @@
   /** the sign-in page (keeps a portal invite) */
   export let classicHref: string;
 
-  const dispatch = createEventDispatcher<{ next: FlowReply; done: { next: string }; classic: void; invite: { token: string } }>();
+  const dispatch = createEventDispatcher<{ next: FlowReply; done: { next: string }; invite: { token: string } }>();
   let identifier = '', password = '', busy = false;
   let passkeyHint: '' | 'cancelled' | 'unsupported' = '';
   let inviteOpen = false, inviteText = '', inviteBad = false;
@@ -53,11 +53,7 @@
   }
 
   async function withPasskey() {
-    if (busy) return;
-    if (!step.passkey) {
-      dispatch('classic');
-      return;
-    }
+    if (busy || !step.passkey) return;
     busy = true;
     passkeyHint = '';
     try {
@@ -100,8 +96,10 @@
   {/if}
   <Errors errors={step.errors ?? []} {classicHref} />
   <button class="af-pri" type="submit" disabled={busy}>{$t('login.identify.next')}</button>
-  <div class="af-or">{$t('login.identify.or')}</div>
-  <button class="af-sec" type="button" disabled={busy} on:click={withPasskey}><Icon name="key" size={20} />{$t('login.identify.passkey')}</button>
+  {#if step.passkey}
+    <div class="af-or">{$t('login.identify.or')}</div>
+    <button class="af-sec" type="button" disabled={busy} on:click={withPasskey}><Icon name="key" size={20} />{$t('login.identify.passkey')}</button>
+  {/if}
   {#if passkeyHint}
     <p class="af-hint" role="status">
       {passkeyHint === 'unsupported' ? $t('login.passkey.unsupported') : $t('login.passkey.noMatch')}

@@ -146,8 +146,10 @@ test.describe('in-app sign-in (/login)', () => {
   test('mfa step with passkeyClassic only links to the sign-in page', async ({ page }) => {
     await open(page, loginState({ starts: [{ body: mfa({ passkeyClassic: true }) }] }));
     await expect(h1(page, 'Bestätigungscode')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Passkey verwenden' })).toHaveAttribute('href', '/auth/login?classic=1');
+    // clearly labelled as the identity provider's page, never a "Passkey verwenden" that silently leaves
+    await expect(page.getByRole('link', { name: 'Auf der Anmeldeseite mit Passkey anmelden' })).toHaveAttribute('href', '/auth/login?classic=1');
     await expect(page.getByRole('button', { name: 'Passkey verwenden' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Passkey verwenden' })).toHaveCount(0);
   });
 
   test('passkey cancelled shows the classic passkey link', async ({ page }) => {
@@ -164,11 +166,13 @@ test.describe('in-app sign-in (/login)', () => {
     expect(answers(st)).toEqual([]);
   });
 
-  test('"Mit Passkey anmelden" without an in-app passkey goes to the sign-in page, keeping the invite', async ({ page }) => {
+  test('without usable passkey options there is no passkey button (and no "oder"): nothing that leaves for the sign-in page', async ({ page }) => {
     const st = loginState();
     await open(page, st, '/login?invite=inv-0001');
-    await page.getByRole('button', { name: 'Mit Passkey anmelden' }).click();
-    await expect(page).toHaveURL(/\/auth\/login\?classic=1&invite=inv-0001$/);
+    await expect(h1(page, 'Willkommen zurück')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Mit Passkey anmelden' })).toHaveCount(0);
+    await expect(page.getByText('oder', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /Passkey/ })).toHaveCount(0);
     expect(st.calls[0]).toMatchObject({ path: '/auth/flow/start', body: { kind: 'login', invite: 'inv-0001' } });
   });
 

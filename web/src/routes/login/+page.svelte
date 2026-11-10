@@ -108,7 +108,7 @@
     <Notice kind={notice} classicHref={classic} on:retry={() => begin(enrolling ? 'enroll' : 'login')} on:restart={() => begin(enrolling ? 'enroll' : 'login')} />
   {:else if view.stage === 'identify'}
     <Identify step={view} classicHref={classic} on:next={(e) => show(e.detail)} on:done={(e) => leave(safeNext(e.detail.next))}
-      on:classic={() => leave(classic)} on:invite={(e) => goto(`/invite/${encodeURIComponent(e.detail.token)}`)} />
+      on:invite={(e) => goto(`/invite/${encodeURIComponent(e.detail.token)}`)} />
   {:else if view.stage === 'password'}
     <Password step={view} classicHref={classic} recovery={cfg?.recovery ?? false} on:next={(e) => show(e.detail)} on:done={(e) => leave(safeNext(e.detail.next))}
       on:restart={() => begin('login')} on:forgot={(e) => begin('recovery', { identifier: e.detail.identifier || undefined })} />
