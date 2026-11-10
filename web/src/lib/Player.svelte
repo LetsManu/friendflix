@@ -2053,7 +2053,7 @@
   .castbox button { pointer-events: auto; border: 1px solid #fff; padding: .6rem 1.4rem; }
   .toast { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); background: rgba(0,0,0,.75); padding: .55rem 1.2rem; border-radius: 999px; z-index: 10; font-weight: 600; max-width: 90%; text-align: center; }
   /* sits above the whole control bar box (its transparent gradient padding included, --ctl-h is its measured height) and on top of it in z-order, so no part of the button is covered by the bar */
-  .skipbtn { position: absolute; right: calc(var(--pad-x) + var(--inset, 0px)); bottom: calc(var(--ctl-h, 7rem) + .5rem); z-index: 9; border: 1px solid #fff; padding: .7rem 1.5rem; }
+  .skipbtn { position: absolute; right: calc(var(--pad-x) + var(--inset, 0px)); bottom: calc(var(--ctl-h, 7rem) + .5rem); z-index: 10; /* above the cast info panel (9), which may overlap it in a narrow window */ border: 1px solid #fff; padding: .7rem 1.5rem; }
   .ovl { position: absolute; inset: 0 var(--inset, 0px) auto 0; z-index: 7; pointer-events: none; transition: opacity var(--t-med); }
   .ovl :global(*) { pointer-events: auto; }
   .ovl.hide { opacity: 0; } .ovl.hide :global(*) { pointer-events: none; }

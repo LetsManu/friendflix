@@ -385,15 +385,22 @@
     .ulist :global(th), .ulist :global(td) { padding-inline: .5rem; }
     .ulist :global(th) { white-space: normal; }
     .rolecell { display: block; min-width: 7.5rem; }
-    .ulist :global(td.primary) { min-width: 12rem; }
+    .ulist :global(td.primary) { min-width: 11rem; }
     .em { display: block; max-width: 8.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+  }
+  /* next to the admin sidebar, below 1500 px the table does not fit with all ten columns: the 2FA placeholder and the access end
+     (both on the user's page) give way, so the name keeps its room and the page never scrolls sideways */
+  @media (min-width: 721px) and (max-width: 1499px) {
+    .ulist :global(th:nth-child(8)), .ulist :global(td:nth-child(8)), .ulist :global(th:nth-child(9)), .ulist :global(td:nth-child(9)) { display: none; }
   }
   /* phone card: the selection cell is the first line, keep its box clear of the actions button (top right) */
   /* touch: the row checkbox gets a 44 px hit box around its 20 px glyph (no label to click) */
   .pickhit { display: inline-flex; align-items: center; justify-content: center; }
   @media (pointer: coarse) {
     .pickhit { min-width: 44px; min-height: 44px; margin: -12px; cursor: pointer; }
-    .ulist :global(td:has(> .pickhit)) { z-index: 1; } /* the 44 px box overhangs the next cell: keep it on top */
+  }
+  @media (pointer: coarse) and (min-width: 721px) {
+    .ulist :global(td:has(> .pickhit)) { z-index: 1; } /* table layout: the 44 px box overhangs the next cell, keep it on top (the phone card has its actions button there, which must stay on top) */
   }
   @media (max-width: 720px) {
     .pickhit { margin-right: 3.2rem; } .bulk { position: static; }
