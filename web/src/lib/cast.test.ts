@@ -590,6 +590,12 @@ describe('resume plumbing', () => {
     expect(log.map((e) => `${e.tag}:${e.level}`)).toEqual(['session:info', 'receiver:error', 'session:info']);
     expect(log[0]!.text).toContain('Living Room TV');
     expect(JSON.stringify(log)).not.toContain('friend.example.com');
+    expect(JSON.parse(store.get('ff-castlog-devices')!)).toEqual(['Living Room TV']);
+    // no session to name: the log says so, the fallback is never remembered as a device
+    sdk.context.current = null;
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_RESUMED' });
+    expect(JSON.parse(store.get('ff-castlog')!).at(-1).text).toContain('unknown device');
+    expect(JSON.parse(store.get('ff-castlog-devices')!)).toEqual(['Living Room TV']);
   });
 });
 
@@ -628,6 +634,17 @@ describe('castTestClip', () => {
     sdk.mediaSession.idleReason = 'FINISHED';
     sdk.change({ isMediaLoaded: false, playerState: 'IDLE', mediaInfo: null });
     expect(sdk.context.endCurrentSession).not.toHaveBeenCalled();
+  });
+
+  it('a clip the caller did not open leaves no watch timer behind', async () => {
+    vi.useFakeTimers();
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.change({ isConnected: true, playerState: 'IDLE' });
+    const p = C.castTestClip(CLIP, 't');
+    sdk.change({ isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: CLIP } });
+    expect(await p).toMatchObject({ ok: true });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('stops watching the clip when the TV stopped it, and after 60 s', async () => {

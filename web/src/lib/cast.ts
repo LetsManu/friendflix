@@ -320,7 +320,8 @@ function setup() {
 }
 /** the TV's name for a log line; remembered so the copied report can anonymise it later */
 const deviceName = () => {
-  const n = ctxT?.getCurrentSession()?.getCastDevice().friendlyName ?? 'unknown device';
+  const n = ctxT?.getCurrentSession()?.getCastDevice().friendlyName;
+  if (!n) return 'unknown device'; // only a real receiver name is remembered, never the fallback
   noteCastDevice(n);
   return n;
 };
@@ -483,17 +484,17 @@ export function castTestClip(url: string, title: string, opts: { endAfter?: bool
   lastMedia = null;
   return new Promise((resolve) => {
     let settled = false, playing = false, first = true;
+    let capTimer: ReturnType<typeof setTimeout> | undefined;
     const t0 = Date.now();
     const offStore = castState.subscribe((s) => {
       if (first) { first = false; return; } // the value at subscription time is not an update of this clip
       if (s.contentId && s.contentId !== abs) { if (playing) cleanup(); return; } // something else took over
-      if (!playing && s.state === 'playing') { playing = true; finish(true); capTimer = setTimeout(cleanup, TEST_CLIP_WATCH_MS); }
+      if (!playing && s.state === 'playing') { playing = true; finish(true); if (opts.endAfter) capTimer = setTimeout(cleanup, TEST_CLIP_WATCH_MS); }
       else if (playing && s.state === 'idle') { cleanup(); if (opts.endAfter && s.idleReason === 'FINISHED') ctxT?.endCurrentSession(true); }
       else if (!playing && s.idleReason === 'ERROR') finish(false);
     });
     const offEvents = onCastEvent((e) => { if (e === 'session-end') { if (!playing) finish(false); cleanup(); } });
     const timer = setTimeout(() => finish(false), TEST_CLIP_TIMEOUT_MS);
-    let capTimer: ReturnType<typeof setTimeout> | undefined;
     function cleanup() { clearTimeout(timer); clearTimeout(capTimer); offStore(); offEvents(); }
     function finish(ok: boolean) {
       if (settled) return;

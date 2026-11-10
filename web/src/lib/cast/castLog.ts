@@ -18,7 +18,7 @@ const IPV6 = new RegExp(`(?:${H}:){7}${H}|(?:${H}:){1,7}:(?:${H}(?::${H}){0,6})?
 export function scrub(text: string): string {
   return text
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, '…')
-    .replace(/(^|\s)\/\/\S+/g, '$1…')
+    .replace(/(^|[\s("'=,;])\/\/\S+/g, '$1…')
     .replace(/\/media\/c\/\S*/g, '…')
     .replace(/[A-Za-z0-9_-]{32,}/g, '…') // also covers 32+ hex ids
     .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '…')

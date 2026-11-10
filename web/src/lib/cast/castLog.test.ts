@@ -23,6 +23,10 @@ describe('scrub', () => {
   it('removes IPv4-mapped IPv6 literals and scheme-relative URLs', () => {
     const out = scrub('peer ::ffff:192.0.2.7 and //friend.example.com/x');
     expect(out).not.toMatch(/192\.0\.2|ffff|friend\.example/);
+    expect(scrub('fetch (//friend.example.com/x) failed')).toBe('fetch (… failed');
+    expect(scrub('src x=//friend.example.com/y')).toBe('src x=…');
+    expect(scrub("at '//friend.example.com/z', \"//friend.example.com/q\"; ,//friend.example.com/r")).not.toMatch(/friend\.example/);
+    expect(scrub('S1 E4 a/b//c')).toBe('S1 E4 a/b//c'); // a path inside a word is no URL start
   });
   it('removes full IPv6 literals', () => {
     expect(scrub('peer 2001:0db8:0000:0000:0000:0000:0000:0005 gone')).toBe('peer … gone');
