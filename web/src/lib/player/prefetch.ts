@@ -7,7 +7,7 @@ import { serverCaps } from '#lib/capabilities';
 import { prefs } from '#lib/stores';
 import { warmDeviceCaps } from './devicecaps';
 import { loadHls } from './hls';
-import { bodyKey, firstPlaybackRequest, type PlaybackDto } from './infobody';
+import { bodyKey, firstPlaybackRequest, type InfoBody, type PlaybackDto } from './infobody';
 import { markPlayArt } from './transition';
 
 /** true when this browser plays HLS itself (Safari/iOS): hls.js is never needed there */
@@ -82,6 +82,93 @@ export function takePrefetched(itemId: string, body: object): Promise<PlaybackDt
   return e.promise;
 }
 
+// ---- the next episode, prepared during the autoplay countdown (watch page -> Player prop prepNext) ----
+/**
+ * Once the autoplay countdown runs, the next episode's playback info is asked for (the same body its player sends first) and, where
+ * the stream will be converted and starts at the beginning, its transcoder is warmed: master playlist, variant playlist and the headers
+ * of the first segment, so Jellyfin has the first segments ready when the player asks for exactly this play session. Rules:
+ * - Jellyfin only (serverCaps.playbackPrefetch; Plex starts a transcode with every playback info), one entry at a time;
+ * - a 429 at the stream limit simply drops it (the info route counts nothing; the warm takes no stream slot either);
+ * - released (countdown stopped, player gone) -> stopped after WARM_GRACE_MS unless the next player took it in time; never taken ->
+ *   stopped PREFETCH_TTL_MS after it began. A stop aborts the requests and asks the server to end the warmed transcode
+ *   (POST /api/playback/warm/stop), so a second transcode never runs longer than that.
+ */
+export const WARM_GRACE_MS = 8_000;
+/** a resume point beyond this (ticks) starts elsewhere: warming segment 0 would be wasted */
+export const WARM_MAX_RESUME_TICKS = 10 * 10_000_000;
+interface Next {
+  itemId: string; key: string; profile: string | null; at: number; promise: Promise<PlaybackDto>; ac: AbortController;
+  /** play session of the answer; `sent` = a segment request went out (the transcoder may run) */
+  ps?: string; sent: boolean; taken: boolean; ttl?: ReturnType<typeof setTimeout>; grace?: ReturnType<typeof setTimeout>;
+}
+let next: Next | null = null;
+
+/** the comparison key of a next-episode body: the bitrate the network picked may move a rung meanwhile and is not compared */
+const nextKey = (b: InfoBody) => bodyKey({ ...b, maxBitrate: b.reasonHint === 'network' ? undefined : b.maxBitrate });
+
+/** the first URI line of a playlist, resolved against `base`; null when it leaves this origin */
+function firstUri(text: string, base: URL): URL | null {
+  const line = text.split(/\r?\n/).map((l) => l.trim()).find((l) => l && !l.startsWith('#'));
+  if (!line) return null;
+  const u = new URL(line, base);
+  return u.origin === base.origin ? u : null;
+}
+
+async function warm(n: Next, hlsUrl: string): Promise<void> {
+  const get = (u: URL) => fetch(u, { credentials: 'same-origin', signal: n.ac.signal });
+  const master = new URL(hlsUrl, location.origin);
+  if (master.origin !== location.origin) return;
+  const variant = firstUri(await (await get(master)).text(), master);
+  if (!variant || n.taken) return;
+  const seg = firstUri(await (await get(variant)).text(), variant);
+  if (!seg || n.taken) return;
+  n.sent = true;
+  const res = await get(seg);
+  await res.body?.cancel().catch(() => undefined); // the headers mean the segment is there; the bytes are not needed now
+}
+
+function stopNext(n: Next): void {
+  clearTimeout(n.ttl); clearTimeout(n.grace);
+  if (next === n) next = null;
+  if (n.taken) return;
+  n.ac.abort();
+  if (n.sent && n.ps) void api('/api/playback/warm/stop', { method: 'POST', body: { playSessionId: n.ps } }).catch(() => undefined);
+}
+
+/** prepares (and with `warm`, pre-starts) the next episode; again for the same item and body only cancels a pending release */
+export function prepareNext(itemId: string, body: InfoBody, o: { warm: boolean }): void {
+  if (typeof window === 'undefined' || !itemId || !get(serverCaps).playbackPrefetch) return;
+  const key = nextKey(body), profile = getActiveProfile();
+  if (next && next.itemId === itemId && next.key === key && next.profile === profile) { clearTimeout(next.grace); return; }
+  if (next) stopNext(next);
+  const n: Next = { itemId, key, profile, at: Date.now(), ac: new AbortController(), sent: false, taken: false, promise: api<PlaybackDto>('/api/playback/info', { method: 'POST', body }) };
+  next = n;
+  n.ttl = setTimeout(() => stopNext(n), PREFETCH_TTL_MS);
+  n.promise.then((info) => {
+    n.ps = info?.playSessionId;
+    if (!o.warm || n.taken || next !== n || !info || info.directUrl || (info.resumeTicks ?? 0) > WARM_MAX_RESUME_TICKS || !info.hlsUrl) return;
+    return warm(n, info.hlsUrl);
+  }).catch(() => { if (!n.sent && next === n) { clearTimeout(n.ttl); next = null; } }); // failed info: nothing runs; a failed warm keeps the info
+}
+
+/** the countdown stopped or the player went away: stop the warm-up unless the next player takes it within WARM_GRACE_MS */
+export function releaseNext(): void {
+  const n = next;
+  if (!n || n.taken) return;
+  clearTimeout(n.grace);
+  n.grace = setTimeout(() => stopNext(n), WARM_GRACE_MS);
+}
+
+/** the next episode's prepared answer for this item and body, once (the player then plays exactly the warmed play session); null otherwise */
+export function takeNext(itemId: string, body: InfoBody): Promise<PlaybackDto> | null {
+  const n = next;
+  if (!n || n.itemId !== itemId || n.key !== nextKey(body) || n.profile !== getActiveProfile() || Date.now() - n.at >= PREFETCH_TTL_MS) return null;
+  n.taken = true;
+  clearTimeout(n.ttl); clearTimeout(n.grace);
+  next = null;
+  return n.promise;
+}
+
 /** `/watch/<id>?audio=..&t=..` -> what the player will ask for (null = not a player link) */
 export function watchTarget(href: string | null | undefined): { id: string; audio?: string; startSec?: number } | null {
   if (!href || typeof location === 'undefined') return null;
@@ -137,4 +224,4 @@ export function playPrefetch(node: HTMLElement): { destroy(): void } {
 }
 
 /** tests only */
-export function _resetPrefetch(): void { entries.clear(); hold = null; }
+export function _resetPrefetch(): void { entries.clear(); hold = null; if (next) { clearTimeout(next.ttl); clearTimeout(next.grace); } next = null; }

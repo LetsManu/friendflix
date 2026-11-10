@@ -72,9 +72,19 @@ describe('createTiming', () => {
       device: 'phone', mode: 'hls', qualitySwitch: false, bitrate: 8_000_000, targetDuration: 6, infoMs: 320, manifestMs: 900, firstFragMs: 2600,
       firstFragBytes: 3_900_000, firstFragDlMs: 1500, firstFrameMs: 3100, seeks: 0, seekMedianMs: null, seekMaxMs: null, stalls: 0, stallMs: 0, effectiveType: '4g',
       delivery: null, videoCopy: null, soundMode: 'off', audioRouted: false, droppedFrames: null, totalFrames: null, trackSwitch: false, reconnects: 0, avEvents: 0,
+      fromNext: false,
     });
     expect(t.active).toBe(false);
     expect(t.finish({ device: 'phone' })).toBeNull(); // once per session
+  });
+
+  it('a start from the prepared next-episode info is flagged, and only for that session', () => {
+    const t = createTiming(clock().now);
+    t.next(); // no session yet: ignored
+    t.begin(); t.next();
+    expect(t.finish({ device: 'pc' })!.fromNext).toBe(true);
+    t.begin();
+    expect(t.finish({ device: 'pc' })!.fromNext).toBe(false);
   });
 
   it('a retry keeps the clock and the first values; direct play has no playlist or fragment', () => {
@@ -167,7 +177,7 @@ describe('helpers', () => {
 const report = (over: Partial<TimingReport> = {}): TimingReport => ({
   device: 'phone', mode: 'hls', qualitySwitch: false, bitrate: 8_000_000, targetDuration: 6, infoMs: 300, manifestMs: 700, firstFragMs: 2500, firstFragBytes: 4_096_000,
   firstFragDlMs: 1500, firstFrameMs: 3000, seeks: 2, seekMedianMs: 900, seekMaxMs: 1500, stalls: 1, stallMs: 2000, effectiveType: '4g',
-  delivery: 'remux', videoCopy: true, soundMode: 'night', audioRouted: true, droppedFrames: 12, totalFrames: 14_400, trackSwitch: true, reconnects: 1, avEvents: 4, ...over,
+  delivery: 'remux', videoCopy: true, soundMode: 'night', audioRouted: true, droppedFrames: 12, totalFrames: 14_400, trackSwitch: true, reconnects: 1, avEvents: 4, fromNext: false, ...over,
 });
 
 describe('sendTiming / local copy', () => {

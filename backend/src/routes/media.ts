@@ -371,6 +371,14 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       const r = await playbackReport(ctx, kind, reportBody.parse(req.body), { user: req.user!, jfUser: req.jfUser!, profile: req.profile, deviceId: req.session?.deviceId });
       return 'error' in r ? reply.code(429).send(r) : r;
     });
+  // the next episode's transcode the web player warmed during the autoplay countdown (web/src/lib/player/prefetch.ts) and nobody took:
+  // stopped on the media server. Only the caller's own device and play session; a session that started playing is never stopped here.
+  app.post('/api/playback/warm/stop', pre, wrap(async (req) => {
+    const b = z.object({ playSessionId: psId }).parse(req.body);
+    if (await getLive(ctx, req.user!.id, b.playSessionId)) return { ok: true, stopped: false };
+    await ctx.jf.stopEncoding(req.jfUser!, b.playSessionId);
+    return { ok: true, stopped: true };
+  }));
   app.post('/api/playback/start', pre, report('Playing'));
   app.post('/api/playback/progress', pre, report('Playing/Progress'));
   app.post('/api/playback/stop', pre, report('Playing/Stopped'));
