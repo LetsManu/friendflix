@@ -61,6 +61,11 @@ test.describe('TV: new & upcoming', () => {
     await expect(ranked.locator('.rkn').first()).toHaveText('1');
     await expect(ranked.locator('.rkt').first()).toBeHidden();
     await expect(page.getByRole('region', { name: 'Demnächst' })).toBeAttached();
+    // an episode card keeps its season and episode in the panel (the overlay is not shown on TV)
+    await expect(row(page, 'Neue Folgen').locator('.note.ep .meta').first()).toBeVisible();
+    await expect(row(page, 'Neue Folgen').locator('.note.ep .meta').first()).toHaveText(/S1:F2|Staffel 1/);
+    await expect(page.getByRole('tablist')).toHaveCount(0); // no tabs and no wishes on TV
+    await expect(page.getByRole('button', { name: /Wünschen/ })).toHaveCount(0);
   });
 
   test('D-pad: the filter selects with OK, Down reaches the cards with a focus ring, Back opens the side bar', async ({ page }) => {

@@ -58,7 +58,21 @@ export interface MockState {
    * the "Neu & demnächst" page: GET /api/library/new-for-you and /new-episodes answer these (`'fail'` = a 500), the request service's
    * upcoming titles come per media type (empty by default, like the rest of the mock); `hang` = the call never answers
    */
-  newPage: { forYou: unknown[] | 'fail'; episodes: unknown[] | 'fail'; upcoming: { movie: unknown[]; tv: unknown[] }; hang: Set<'forYou' | 'episodes' | 'upcoming'> };
+  newPage: {
+    forYou: unknown[] | 'fail'; episodes: unknown[] | 'fail'; upcoming: { movie: unknown[]; tv: unknown[] }; hang: Set<'forYou' | 'episodes' | 'upcoming'>;
+    /** the recommendation engine answered by new-for-you (v1 = just the newest titles: the page must not show them as "for you") */
+    engine: 'v1' | 'v2';
+    /** GET /api/library/request-suggestions by type; `error` answers 404 requests_disabled / a 500 instead */
+    suggestions: { movie: unknown[]; series: unknown[]; error: null | 'disabled' | 'fail' };
+    /** the quota of GET /api/requests/quota and of the suggestions (the mock does not count POSTs) */
+    quota: { limit: number | null; used: number; resetsAt: string } | null;
+    /** GET /api/requests/mine; GET /api/seerr/search */
+    mine: unknown[]; search: unknown[];
+    /** POST /api/requests: 'ok', 'limit' (429 request_limit), 'dup' (409), 'fail' (500) */
+    wish: 'ok' | 'limit' | 'dup' | 'fail';
+    /** a kids profile: trending, suggestions and requests refuse with 403 kids_profile (the spec also replaces /api/me) */
+    kids: boolean;
+  };
   /** 1.1 post-play counters the app sent (POST /api/postplay/event bodies) */
   postplayEvents: Array<Record<string, unknown>>;
   /** the setup wizard (mocks/setup.ts); while it is not complete, /api/me answers 503 setup_required */
@@ -116,7 +130,10 @@ export function freshState(): MockState {
     fav: new Set(items.filter((i) => i.favorite).map((i) => i.id)),
     log: [],
     postplayEvents: [],
-    newPage: { forYou: newForYou(), episodes: newEpisodes(), upcoming: { movie: [], tv: [] }, hang: new Set() },
+    newPage: {
+      forYou: newForYou(), episodes: newEpisodes(), upcoming: { movie: [], tv: [] }, hang: new Set(), engine: 'v2',
+      suggestions: { movie: [], series: [], error: null }, quota: { limit: 5, used: 1, resetsAt: '2026-12-01T00:00:00Z' }, mine: [], search: [], wish: 'ok', kids: false,
+    },
     unmocked: new Set(),
     clientErrors: [],
     reco: [],
@@ -273,6 +290,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (p === '/api/recommendations') return J({ items: items.slice(5, 10) });
     if (p === '/api/library/friends-rated') return J({ items: items.slice(2, 8) });
     if (p === '/api/library/trending') {
+      if (st.newPage.kids) return J({ error: 'kids_profile' }, 403);
       const ago = new Date(Date.now() - 3 * 864e5).toISOString();
       return J({ items: [{ ...items[0], viewers: 4 }, { ...items[8], lastAdded: ago, unplayedCount: 4, childCount: 2, playedPercentage: 30, viewers: 3 }, { ...items[1], viewers: 3 }, { ...items[2], viewers: 2 }, { ...items[5], viewers: 2 }] });
     }
@@ -300,21 +318,37 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     if ((mm = p.match(/^\/api\/people\/(.+)$/))) return J({ person: { id: mm[1], name: 'Carl Norden', overview: 'Britisch-amerikanischer Regisseur.', birthYear: 1970, image: true }, items: nolan });
     if (p === '/api/friends') return J({ friends: [{ id: 'u2', name: 'Anna', sharesHistory: true }, { id: 'u3', name: 'Ben', sharesHistory: false }] });
-    if (p === '/api/seerr/search') return J({ results: [] });
+    if (p === '/api/seerr/search') return J({ results: st.newPage.search });
+    if (p === '/api/library/request-suggestions') {
+      const np = st.newPage;
+      if (np.kids) return J({ error: 'kids_profile' }, 403);
+      if (np.suggestions.error === 'disabled') return J({ error: 'requests_disabled' }, 404);
+      if (np.suggestions.error === 'fail') return J({ error: 'boom' }, 500);
+      return J({ items: sp.get('type') === 'series' ? np.suggestions.series : np.suggestions.movie, quota: np.quota });
+    }
+    if (p === '/api/requests' && m === 'POST') {
+      const np = st.newPage;
+      if (np.kids) return J({ error: 'kids_profile' }, 403);
+      if (np.wish === 'limit') return J({ error: 'request_limit', limit: np.quota?.limit ?? 5, used: np.quota?.limit ?? 5, resetsAt: np.quota?.resetsAt ?? '2026-12-01T00:00:00Z' }, 429);
+      if (np.wish === 'dup') return J({ error: 'already_requested', status: 'angefragt' }, 409);
+      return np.wish === 'fail' ? J({ error: 'boom' }, 500) : J({ ok: true });
+    }
     if (p === '/api/seerr/upcoming') {
       if (st.newPage.hang.has('upcoming')) return new Promise<void>(() => undefined);
       return J({ results: sp.get('type') === 'tv' ? st.newPage.upcoming.tv : st.newPage.upcoming.movie });
     }
     if (p === '/api/library/new-for-you') {
       if (st.newPage.hang.has('forYou')) return new Promise<void>(() => undefined);
-      return st.newPage.forYou === 'fail' ? J({ error: 'boom' }, 500) : J({ windowDays: 14, engine: 'v2', items: st.newPage.forYou });
+      return st.newPage.forYou === 'fail' ? J({ error: 'boom' }, 500) : J({ windowDays: 14, engine: st.newPage.engine, items: st.newPage.forYou });
     }
     if (p === '/api/library/new-episodes') {
       if (st.newPage.hang.has('episodes')) return new Promise<void>(() => undefined);
       return st.newPage.episodes === 'fail' ? J({ error: 'boom' }, 500) : J({ windowDays: 7, items: st.newPage.episodes });
     }
-    if (p === '/api/requests/quota') return J({ limit: 5, used: 1, remaining: 4, resetsAt: '2026-11-01T00:00:00Z' });
-    if (p === '/api/requests/mine') return J({ requests: [] });
+    if (p === '/api/requests/quota') { const q = st.newPage.quota ?? { limit: null, used: 0, resetsAt: '2026-12-01T00:00:00Z' }; return J({ ...q, remaining: q.limit === null ? null : Math.max(0, q.limit - q.used) }); }
+    if (p === '/api/requests/mine') return J({ requests: st.newPage.mine });
+    if (p === '/api/reminders' && m === 'POST') return J({ id: 7, coveredByFollow: false });
+    if (p.startsWith('/api/reminders/') && m === 'DELETE') return J({ ok: true });
     if (p === '/api/reminders' || p === '/api/reminders/keys') return J(p.endsWith('keys') ? { keys: {} } : { reminders: [] });
     if (p === '/api/tv/status') return J({ tvOnline: false });
     // public pages (block 14 fixes): invite landing page and TV pairing carry the instance default language
