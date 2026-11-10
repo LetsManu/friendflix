@@ -629,7 +629,7 @@ export class JellyfinService implements MediaServer {
         caps: opts.clientCaps ?? null, cast: Boolean(opts.cast), remote: Boolean(opts.remote), maxBitrate: opts.maxBitrate, boxHeight: boxHeightFor(opts.maxBitrate, opts.maxHeight),
         src: sourceFacts(src0, audioIndex), surroundOn: Boolean(opts.surround), hevcStreams: opts.hevcGate ? 1 : 0, // the count itself is the gate's business (hevcenc.ts)
       });
-      if (plan.wantsHevcEncode) plan = applyGate(plan, await opts.hevcGate!().catch((): HevcGate => ({ ok: false, why: 'h264_busy' })));
+      if (plan.wantsHevcEncode) plan = applyGate(plan, await Promise.resolve().then(() => opts.hevcGate!()).catch((): HevcGate => ({ ok: false, why: 'h264_busy' })));
     }
     return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect, capReason: opts.capReason, directContainers: caps?.containers, plan });
   }

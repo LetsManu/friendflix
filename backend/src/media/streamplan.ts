@@ -20,18 +20,19 @@
  *  - `enableAdaptiveBitrateStreaming` exists on the master playlist endpoint (default true).
  */
 import type { CapRange, ClientCaps } from './clientCaps.js';
+import { maxWidthFor } from './types.js';
 
 export type VideoOut = 'copy' | 'h264' | 'hevc';
 export type AudioOut = 'copy' | 'stereo' | 'surround';
 export type PlanWhy = 'hevc_device' | 'hevc_upload' | 'h264_device' | 'h264_home' | 'h264_hdr' | 'h264_off' | 'h264_unproven' | 'h264_unhealthy' | 'h264_busy'
   | 'surround_device' | 'stereo_device' | 'stereo_bitrate' | 'stereo_off' | 'stereo_source';
 export type HevcGate = { ok: true } | { ok: false; why: 'h264_off' | 'h264_unproven' | 'h264_unhealthy' | 'h264_busy' };
-export interface SourceFacts { videoCodec: string; videoBitrate?: number; height: number; range: string; profile?: string; audio?: { codec: string; channels: number; bitrate?: number } }
+export interface SourceFacts { videoCodec: string; videoBitrate?: number; height: number; /** absent = not checked; 0 = unknown (the server refuses a copy then) */ width?: number; range: string; profile?: string; audio?: { codec: string; channels: number; bitrate?: number } }
 export interface PlanInput { caps: ClientCaps | null; cast: boolean; remote: boolean; maxBitrate: number; boxHeight: number; src: SourceFacts; surroundOn: boolean; hevcStreams: number }
 export interface StreamDelivery { video: VideoOut; videoCodec: 'h264' | 'hevc'; audio: AudioOut; audioCodec: string; channels: number; why: PlanWhy[] }
 export interface StreamPlan {
   segment: 'ts' | 'mp4'; videoCodecs: Array<'h264' | 'hevc'>; codecParams: Record<string, string>;
-  audioCodecs: string[]; audioChannels: 2 | 6; audioBitrate: number; wantsHevcEncode: boolean;
+  audioCodecs: string[]; audioChannels: 2 | 6; audioBitrate: number; /** the VideoBitrate parameter: max(300 kbit/s, cap - audioBitrate) */ videoBitrate: number; wantsHevcEncode: boolean;
   /** the container the plan needs whatever the gate says (HEVC copy or surround); applyGate falls back to it when an encode is refused */
   keepMp4: boolean;
   delivery: StreamDelivery;
@@ -83,7 +84,9 @@ export function planStream(i: PlanInput): StreamPlan {
     audioCodecs = [...surroundList];
     const srcCodec = a.codec.toLowerCase();
     const copy = (surroundList as string[]).includes(srcCodec) && a.channels <= 6;
-    const codec = copy ? srcCodec : surroundList[0]!;
+    // Jellyfin (ShiftAudioCodecsIfNeeded) moves ac3 / eac3 behind the others when the source has fewer than 6 channels and the list holds another codec
+    const encodes = a.channels < 6 ? surroundList.filter((c) => c !== 'ac3' && c !== 'eac3') : [];
+    const codec = copy ? srcCodec : (encodes[0] ?? surroundList[0]!);
     audioBitrate = Math.max(SURROUND_BUDGET[codec as keyof typeof SURROUND_BUDGET], copy ? a.bitrate ?? 0 : 0);
     audio = copy ? 'copy' : 'surround'; audioCodec = codec; channels = copy ? a.channels : 6;
   } else {
@@ -95,10 +98,14 @@ export function planStream(i: PlanInput): StreamPlan {
 
   // ---- video
   const budget = Math.max(MIN_VIDEO_BITRATE, i.maxBitrate - audioBitrate);
-  const hevcOk = Boolean(hls?.video.includes('hevc'));
+  // Jellyfin writes hvc1 for every HEVC output, whatever `hevc-codectag` says: a device whose hevc entry names tags without hvc1 gets no HEVC stream
+  const hevcTags = i.caps?.video.find((v) => v.codec === 'hevc')?.tags;
+  const hevcOk = Boolean(hls?.video.includes('hevc')) && (!hevcTags || hevcTags.includes('hvc1'));
   const srcCodec = i.src.videoCodec.toLowerCase();
   const entry = i.caps?.video.find((v) => v.codec === srcCodec);
-  const ranges = i.caps?.ranges ?? (['sdr'] as CapRange[]);
+  // Dolby Vision (profile 5 and the like) stays direct play: an HLS remux would carry dvh1, which the hls claim never stated.
+  // DOVIWithHDR10 / HLG / SDR still copy through Jellyfin's compatibility rule as plain hvc1.
+  const ranges = (i.caps?.ranges ?? (['sdr'] as CapRange[])).filter((r) => r !== 'dovi');
   const rangeSet = new Set(jellyfinRanges(ranges).split('|').map((r) => r.toLowerCase()));
   const claimedProfiles = (i.caps?.video.find((v) => v.codec === 'hevc')?.profiles ?? []).map(squash);
   const profiles = claimedProfiles.length ? claimedProfiles : ['main'];
@@ -107,7 +114,8 @@ export function planStream(i: PlanInput): StreamPlan {
     || (PROFILE_RANK[srcProfile] !== undefined && PROFILE_RANK[srcProfile]! <= Math.max(0, ...profiles.map((p) => PROFILE_RANK[p] ?? 0)));
   const codecOk = srcCodec === 'h264' || (srcCodec === 'hevc' && hevcOk);
   const rangeOk = !hls || rangeSet.has(i.src.range.toLowerCase());
-  const heightOk = i.src.height > 0 && i.src.height <= i.boxHeight && (!entry?.maxHeight || i.src.height <= entry.maxHeight);
+  const widthOk = i.src.width === undefined || (i.src.width > 0 && i.src.width <= maxWidthFor(i.boxHeight)); // the server refuses a copy wider than the box
+  const heightOk = widthOk && i.src.height > 0 && i.src.height <= i.boxHeight && (!entry?.maxHeight || i.src.height <= entry.maxHeight);
   const exceeds = i.src.videoBitrate !== undefined && i.src.videoBitrate > budget;
   const fits = i.src.videoBitrate !== undefined && !exceeds;
   const copyVideo = codecOk && profileOk && rangeOk && heightOk && fits;
@@ -126,19 +134,20 @@ export function planStream(i: PlanInput): StreamPlan {
   let videoWhy: PlanWhy[] = [];
   if (copyVideo) {
     video = 'copy';
-    videoWhy = srcCodec === 'hevc' ? ['hevc_device'] : hevcOk ? [] : ['h264_device'];
+    videoWhy = srcCodec === 'hevc' ? ['hevc_device'] : [];
   } else if (wantsHevcEncode) {
     videoWhy = ['h264_unproven']; // until the gate answers: never claim before a probe
   } else if (!hevcOk) videoWhy = ['h264_device'];
+  else if (i.src.range === 'Unknown') videoWhy = [];
   else if (i.src.range !== 'SDR') videoWhy = ['h264_hdr'];
-  else if (!exceeds) videoWhy = ['h264_device'];
+  else if (!exceeds) videoWhy = []; // some other device or source limit (profile, height, unknown bitrate, codec): no honest code
   else if (!i.remote) videoWhy = ['h264_home'];
   else videoWhy = ['h264_off'];
 
   const keepMp4 = surround || (srcCodec === 'hevc' && hevcOk);
   return {
     segment: keepMp4 || wantsHevcEncode ? 'mp4' : 'ts',
-    videoCodecs, codecParams, audioCodecs, audioChannels: surround ? 6 : 2, audioBitrate, wantsHevcEncode, keepMp4,
+    videoCodecs, codecParams, audioCodecs, audioChannels: surround ? 6 : 2, audioBitrate, videoBitrate: budget, wantsHevcEncode, keepMp4,
     delivery: { video, videoCodec: video === 'copy' && srcCodec === 'hevc' ? 'hevc' : 'h264', audio, audioCodec, channels, why: [...videoWhy, audioWhy] },
   };
 }

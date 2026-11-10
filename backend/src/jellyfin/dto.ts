@@ -4,7 +4,7 @@
 import { DOWNLOAD_PRESETS, maxWidthFor, type DownloadQuality, type DownloadSourceDto, type ImageTags, type ItemDto, type MediaTraits, type PlaybackDto, type TranscodeReason, type TrickplayDto, type CapReason } from '../media/types.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, ProviderIds } from '../media/types.js'; // Block 17 P1
 import type { ItemFeatures } from '../media/types.js'; // R1
-import { AUDIO_BITRATE, MIN_VIDEO_BITRATE, boxHeightFor, planStream, type SourceFacts, type StreamPlan } from '../media/streamplan.js';
+import { boxHeightFor, planStream, type SourceFacts, type StreamPlan } from '../media/streamplan.js';
 import type { HygieneFacts, HygieneSource, HygieneStream, ServerSession } from '../media/types.js'; // Block 22
 
 export { DOWNLOAD_PRESETS, maxWidthFor };
@@ -78,11 +78,11 @@ export function sourceFacts(src: Record<string, any>, audioIndex?: number): Sour
   const streams: Array<Record<string, any>> = src.MediaStreams ?? [];
   const v = streams.find((s) => s.Type === 'Video');
   const auds = streams.filter((s) => s.Type === 'Audio');
-  const a = (audioIndex !== undefined ? auds.find((s) => s.Index === audioIndex) : undefined) ?? auds.find((s) => s.IsDefault) ?? auds[0];
+  const a = (audioIndex !== undefined ? auds.find((s) => s.Index === audioIndex) : undefined) ?? [...auds].sort((x, y) => Number(x.Index) - Number(y.Index)).find((s) => Number(s.Channels) > 0) ?? auds[0]; // what Jellyfin streams without AudioStreamIndex (not IsDefault)
   const num = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : undefined);
   const range = typeof v?.VideoRangeType === 'string' && v.VideoRangeType ? v.VideoRangeType : String(v?.VideoRange ?? '').toUpperCase() === 'SDR' ? 'SDR' : 'Unknown';
   return {
-    videoCodec: String(v?.Codec ?? '').toLowerCase(), videoBitrate: num(v?.BitRate), height: Number(v?.Height ?? 0), range,
+    videoCodec: String(v?.Codec ?? '').toLowerCase(), videoBitrate: num(v?.BitRate), height: Number(v?.Height ?? 0), width: Number(v?.Width ?? 0), range,
     ...(typeof v?.Profile === 'string' && v.Profile ? { profile: v.Profile } : {}),
     ...(a ? { audio: { codec: String(a.Codec ?? '').toLowerCase(), channels: Number(a.Channels ?? 0), ...(num(a.BitRate) ? { bitrate: num(a.BitRate) } : {}) } } : {}),
   };
@@ -164,7 +164,7 @@ export function toPlaybackDto(args: {
   // Explicit budgets: otherwise Jellyfin subtracts the SOURCE audio bitrate (TrueHD / DTS-HD MA: several Mbit/s) and starves the video
   hls.set('AudioBitrate', String(plan.audioBitrate));
   hls.set('AudioChannels', String(plan.audioChannels));
-  hls.set('VideoBitrate', String(Math.max(MIN_VIDEO_BITRATE, maxBitrate - plan.audioBitrate)));
+  hls.set('VideoBitrate', String(plan.videoBitrate));
   const height = boxHeightFor(maxBitrate, maxHeight);
   hls.set('MaxHeight', String(height));
   hls.set('MaxWidth', String(maxWidthFor(height)));

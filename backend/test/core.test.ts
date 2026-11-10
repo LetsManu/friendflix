@@ -205,6 +205,15 @@ describe('playback', () => {
       expect(stub.json().delivery.why[0]).toBe('h264_unproven');
       extraStreams = [];
     });
+    it('a gate that throws synchronously counts as busy', async () => {
+      extraStreams = wrenfield;
+      const orig = env.ctx.jf.playbackInfo.bind(env.ctx.jf);
+      const spy = vi.spyOn(env.ctx.jf, 'playbackInfo').mockImplementation((u, i, o) => orig(u, i, { ...o, hevcGate: o.hevcGate ? (() => { throw new Error('x'); }) as never : undefined }));
+      try {
+        const r = await info(true, { caps: hevcCaps, maxBitrate: 4_000_000 });
+        expect([r.statusCode, r.json().delivery.why[0]]).toEqual([200, 'h264_busy']);
+      } finally { spy.mockRestore(); extraStreams = []; }
+    });
     it('the gate is never asked at home, without a conversion need, without an hls claim, or while HEVC_STREAMS is 0', async () => {
       extraStreams = wrenfield;
       const g = spyGate({ ok: true });

@@ -140,6 +140,8 @@ Shape: `backend/src/media/clientCaps.ts`. Only new optional fields are added, an
 
 ## 4. The server's plan (Jellyfin)
 
+> Footnote (Task 1 review): `hevc-rangetype` is mapped like `jellyfinRanges` but without a bare `dovi` range. Dolby Vision stays direct play only; an HLS remux never carries `dvh1`, because the `hls` claim never states it. A device's `dovi` range still counts for direct play. In the same way the plan gives no HEVC stream to a device whose hevc entry names tags without `hvc1`, since Jellyfin writes `hvc1` for every HEVC output.
+
 `backend/src/media/streamplan.ts` is a pure function from (caps, cast, remote, cap, height box, source facts, settings) to a plan:
 
 - the segment container (`ts` or `mp4`);

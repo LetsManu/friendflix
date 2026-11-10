@@ -36,7 +36,7 @@ describe('server capabilities', () => {
 });
 
 describe('instance features', () => {
-  it('default: everything on (before /api/me, older backends); only an explicit false turns requests off', () => {
+  it('default: everything on except surround (before /api/me, older backends); only an explicit false turns requests off', () => {
     expect(get(features)).toEqual(ALL_FEATURES);
     for (const raw of [undefined, null, 'x', {}, { requests: 'no' }, { requests: true }]) expect(featuresFrom(raw)).toEqual({ requests: true, postplay: true, surround: false });
     expect(featuresFrom({ requests: false })).toEqual({ requests: false, postplay: true, surround: false });

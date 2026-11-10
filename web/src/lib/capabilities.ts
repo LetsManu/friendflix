@@ -52,7 +52,7 @@ export const segmentShown = (c: ServerCaps, type: string) => c.segments.includes
 
 /**
  * Optional services of this instance (sent in /api/me as `features`, not a media server capability). Until /api/me answers - and
- * for older backends that send nothing - everything counts as on.
+ * for older backends that send nothing - everything counts as on, except `surround` (a feature only a server that offers it turns on).
  */
 export interface Features {
   /** a request service is set up: wishes, upcoming titles (the /requests page keeps its reminders without it) */
@@ -63,7 +63,7 @@ export interface Features {
   surround: boolean;
 }
 export const ALL_FEATURES: Features = { requests: true, postplay: true, surround: false };
-/** Lenient parse: only an explicit false turns a feature off. */
+/** Lenient parse: only an explicit false turns a feature off (`surround` is the reverse: only an explicit true turns it on). */
 export function featuresFrom(raw: unknown): Features {
   const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   return { requests: r.requests !== false, postplay: r.postplay !== false, surround: r.surround === true };
