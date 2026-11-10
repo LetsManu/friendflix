@@ -546,6 +546,11 @@ test('expanded bar: Stop asks first', async ({ page, api: _api }) => {
   await dlg.getByRole('button', { name: 'Wiedergabe auf Wohnzimmer-TV beenden', exact: true }).click();
   await expect(exp).toHaveCount(0);
   await expect.poll(() => deleted).toEqual(['c'.repeat(32)]);
+  // the focus went on to the page; a click on a blank area leaves it on <body> (main has no permanent tabindex)
+  await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('main');
+  await page.mouse.click(1270, 300);
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  expect(await page.evaluate(() => document.getElementById('main')!.hasAttribute('tabindex'))).toBe(false);
 });
 
 test('Escape collapses and returns focus', async ({ page, api: _api }) => {
@@ -586,10 +591,11 @@ test.describe('expanded: motion and size', () => {
       let el = find();
       for (let i = 0; i < 10 && !el; i++) { await raf(); el = find(); }
       if (!el) return { found: false } as const;
-      // the transform, frame by frame for the first 250 ms (a busy first frame under the blur may delay the start a little)
+      // the transform, frame by frame
       const seen: string[] = [];
       const t0 = performance.now();
-      while (performance.now() - t0 < 250) { seen.push(getComputedStyle(el).transform); await raf(); }
+      // until it moves, at most 500 ms (a first frame starved under load may start late)
+      while (performance.now() - t0 < 500) { seen.push(getComputedStyle(el).transform); if (seen.some((x) => x !== seen[0])) break; await raf(); }
       const a = seen[0]!, b = seen.find((x) => x !== a) ?? a;
       const props = new Set(el.getAnimations().flatMap((an) => (an.effect as KeyframeEffect).getKeyframes().flatMap((k) => Object.keys(k))));
       const cs = getComputedStyle(el);
@@ -636,18 +642,23 @@ test('Escape collapses from the volume slider too', async ({ page, api: _api }) 
   await expect(more(page)).toBeFocused();
 });
 
-test('the expanded bar offers Cancel during the next-episode countdown', async ({ page, api: _api }) => {
+test('the expanded bar offers Cancel during the next-episode countdown, without moving the transport', async ({ page, api: _api }) => {
   test.setTimeout(45_000);
   const { sdk, sessions } = await castAndLeave(page, { id: episodes[0]!.id });
   await nextAfterFirst(page);
-  await sdk.nearEnd();
-  await expect(castBar(page)).toContainText(/in \d+ s/);
   await more(page).click();
   const exp = expandedRegion(page);
+  await expect(exp).toBeVisible();
+  const pauseX = async () => (await exp.getByRole('button', { name: 'Pause', exact: true }).boundingBox())!.x;
+  await page.waitForTimeout(500);
+  const before = await pauseX();
+  await sdk.nearEnd();
   await expect(exp).toContainText(/in \d+ s/);
+  expect(await pauseX()).toBe(before); // the countdown starts: nothing in the transport row moves
   await exp.getByRole('button', { name: 'Abbrechen' }).click();
   await expect(exp).not.toContainText(/in \d+ s/);
-  await expect(exp.getByRole('button', { name: 'Abbrechen' })).toHaveCount(0);
+  await expect(exp.getByRole('button', { name: 'Abbrechen' })).toHaveAttribute('inert', ''); // its slot stays, inert and transparent again
+  expect(await pauseX()).toBe(before);
   await page.waitForTimeout(11_000);
   expect(sessions.filter((b) => !b.next)).toHaveLength(1);
 });

@@ -224,16 +224,16 @@ describe('cast bar: text on its glass (cast spec §2)', () => {
     expect(exp).toMatch(/class="exp frost frost-safe frost-panel" style="--fr-scrim-safe:\{SCRIM_BAR\}"/);
     for (const css of [bar, exp]) {
       expect(css).toContain('color: rgba(255, 255, 255, .72)');
-      expect(css).toContain('.t2.warn { color: #f7b344; }');
-      expect(css).toContain('.t2.error { color: #ffa8a8; }');
+      expect(css).toContain('.t2.warn { color: #ffc56b; }');
+      expect(css).toContain('.t2.error { color: #ffbdbd; }');
     }
     expect(exp).toContain('color: rgba(255, 255, 255, .78)'); // times / volume hint (CastScrubber, volhint)
   });
   it('white .72 / .78, amber and error text keep 4.5:1 on every surface', () => {
     for (const bg of SURFACES) {
       for (const a of [0.72, 0.78]) expect(textContrast(bg, a), String(a)).toBeGreaterThanOrEqual(AA);
-      expect(contrast(hex('#f7b344'), bg)).toBeGreaterThanOrEqual(AA);
-      expect(contrast(hex('#ffa8a8'), bg)).toBeGreaterThanOrEqual(AA);
+      expect(contrast(hex('#ffc56b'), bg)).toBeGreaterThanOrEqual(AA);
+      expect(contrast(hex('#ffbdbd'), bg)).toBeGreaterThanOrEqual(AA);
     }
   });
 });

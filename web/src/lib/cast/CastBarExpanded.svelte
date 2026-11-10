@@ -16,6 +16,7 @@
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
   import { confirm } from '#lib/ui/confirm';
+  import { focusMain } from '#lib/ui/focusMain';
   import { SCRIM_BAR } from '#lib/glass/tone';
   import { barLine2Full, barTitleFull, splitLine } from './bar';
   import { castEngine, castSession, type CastSession } from './engine';
@@ -56,6 +57,7 @@
   const seekBy = (d: number) => { if (live) castEngine.seek(Math.min(s.duration, Math.max(0, s.position + d))); };
   const goNext = () => { if (live || s.state === 'ended') void castEngine.next(); };
   $: skip = live ? s.skip ?? null : null;
+  $: counting = s.next?.startsAt != null;
   let lastSkip = 'intro';
   $: if (skip) lastSkip = skip.type;
 
@@ -80,7 +82,7 @@
     try {
       if (await confirm({ title: tr('player.castBar.stopQuestion', { device: c.device }), danger: true, confirmLabel: tr('player.castBar.stop', { device: c.device }) })) {
         await castEngine.stop();
-        document.getElementById('main')?.focus({ preventScroll: true }); // the bar is gone: the focus goes on to the page
+        focusMain(); // the bar is gone: the focus goes on to the page
       }
     } finally { asking = false; }
   }
@@ -131,9 +133,6 @@
       {/if}
     </div>
     <div class="tp">
-      {#if s.next?.startsAt != null}
-        <button type="button" class="tb" aria-label={$t('common.cancel')} title={$t('common.cancel')} on:click={() => castEngine.cancelNext()}><Icon name="x" size={22} /></button>
-      {/if}
       <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('player.controls.back10')} title={$t('player.controls.back10')} on:click={() => seekBy(-10)}><Icon name="rewind10" size={28} /></button>
       <button type="button" class="tb pp" aria-disabled={live ? undefined : 'true'} aria-busy={s.state === 'connecting' ? 'true' : undefined}
         aria-label={$t(s.paused ? 'player.controls.play' : 'player.controls.pause')} on:click={playPause}>
@@ -145,7 +144,9 @@
       {/if}
     </div>
     <div class="sk">
-      <button type="button" class="frost-btn skipb" class:on={Boolean(skip)} inert={!skip} on:click={() => castEngine.skipSegment()}>
+      <!-- the reserved right-hand slot: Skip (intro / recap) or Cancel (credits / end countdown); they never apply together, nothing else moves -->
+      <button type="button" class="tb cancelb" class:on={counting} inert={!counting} aria-label={$t('common.cancel')} title={$t('common.cancel')} on:click={() => castEngine.cancelNext()}><Icon name="x" size={22} /></button>
+      <button type="button" class="frost-btn skipb" class:on={Boolean(skip) && !counting} inert={!skip || counting} on:click={() => castEngine.skipSegment()}>
         {$t(lastSkip === 'recap' ? 'player.skip.recap' : 'player.skip.intro')}
       </button>
     </div>
@@ -180,14 +181,17 @@
   .dev { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .post { flex: none; white-space: pre; } /* the minutes never shrink; a long "Up next" label may */
   .post.fit { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .t2.warn { color: #f7b344; }
-  .t2.error { color: #ffa8a8; }
+  .t2.warn { color: #ffc56b; }
+  .t2.error { color: #ffbdbd; }
 
   .trow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; }
   .vol { justify-self: start; display: flex; align-items: center; gap: 4px; min-width: 0; }
   .volhint { margin: 0; display: flex; align-items: center; gap: 6px; font-size: .8rem; line-height: 1.25; color: rgba(255, 255, 255, .78); }
   .tp { display: flex; align-items: center; gap: 8px; }
-  .sk { justify-self: end; }
+  .sk { justify-self: end; display: grid; justify-items: end; }
+  .sk > * { grid-area: 1 / 1; }
+  .cancelb { opacity: 0; transition: opacity 200ms ease; pointer-events: none; }
+  .cancelb.on { opacity: 1; pointer-events: auto; }
   .tb { flex: none; width: 48px; height: 48px; min-height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #fff; display: inline-grid; place-items: center; cursor: pointer; }
   .tb:hover:not(:disabled) { background: rgba(255, 255, 255, .16); }
   .tb[aria-disabled='true'] { opacity: .45; cursor: default; }

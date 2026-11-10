@@ -48,7 +48,7 @@ export function minutesLeft(s: Pick<CastSession, 'position' | 'duration'>): numb
 function episodeCode(s: Pick<CastSession, 'subtitle'>, it: Pick<Item, 'parentIndexNumber' | 'indexNumber'> | null | undefined, tf: TFn): string {
   if (it && it.indexNumber != null) return it.parentIndexNumber != null ? tf('detail.view.episodeCode', { s: it.parentIndexNumber, e: it.indexNumber }) : tf('player.episodeOnly', { e: it.indexNumber });
   const lead = s.subtitle.split(' ')[0] ?? '';
-  return /^S\d+:[A-Z]\d+$/.test(lead) ? lead : '';
+  return /^[A-Z]\d+:[A-Z]\d+$/.test(lead) ? lead : '';
 }
 /** first bar line: the title; an episode adds its code ("Dunmoor · S1:E4"; the episode's name lives in the expanded bar) */
 export function barLine1(s: Pick<CastSession, 'title' | 'isEpisode' | 'subtitle'>, it: Pick<Item, 'parentIndexNumber' | 'indexNumber'> | null | undefined, tf: TFn): string {

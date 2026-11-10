@@ -88,6 +88,7 @@ describe('cast bar', () => {
     expect(barLine1({ ...base, title: 'Saltwater Almanac' }, null, tr)).toBe('Saltwater Almanac');
     expect(barLine1(ep, { parentIndexNumber: 1, indexNumber: 4 }, tr)).toBe('Dunmoor · S1:F4');
     expect(barLine1(ep, null, tr)).toBe('Dunmoor · S1:F4');
+    expect(barLine1({ ...ep, subtitle: 'T1:E4 La Calle del Farol' }, null, tr)).toBe('Dunmoor · T1:E4');
     expect(barLine1({ ...ep, subtitle: 'The Lantern Road' }, null, tr)).toBe('Dunmoor');
     expect(barLine1({ ...ep, subtitle: '2 Fast 2 Furious' }, null, tr)).toBe('Dunmoor');
     expect(barLine1({ ...ep, subtitle: '' }, { indexNumber: 4 }, tr)).toBe('Dunmoor · F4');

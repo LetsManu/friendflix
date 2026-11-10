@@ -17,6 +17,7 @@
   import { t, tr } from '#lib/i18n';
   import { motionAllowed } from '#lib/preview';
   import { confirm } from '#lib/ui/confirm';
+  import { focusMain } from '#lib/ui/focusMain';
   import { SCRIM_BAR } from '#lib/glass/tone';
   import { barLine1, barLine2, barProgress, barThumb, nextSecondsLeft, splitLine } from './bar';
   import CastBarExpanded from './CastBarExpanded.svelte';
@@ -124,7 +125,7 @@
     if (await confirm({ title: tr('player.castBar.stopQuestion', { device: c.device }), danger: true, confirmLabel: tr('player.castBar.stop', { device: c.device }) })) {
       await castEngine.stop();
       // the bar is gone: the focus goes on to the page, not to <body>
-      if (inBar || document.activeElement === document.body) document.getElementById('main')?.focus({ preventScroll: true });
+      if (inBar || document.activeElement === document.body) focusMain();
     }
   }
 </script>
@@ -209,8 +210,8 @@
   .open.static { cursor: default; }
   .thumb { flex: none; width: 80px; height: 45px; object-fit: cover; border-radius: 8px; background: #1c2228; }
   .slot { flex: none; width: 80px; height: 45px; display: grid; place-items: center; }
-  .mark { color: #f7b344; display: grid; }
-  .mark.err { color: #ffa8a8; }
+  .mark { color: #ffc56b; display: grid; }
+  .mark.err { color: #ffbdbd; }
   .txt { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .t1, .t2 { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .t1 { font-weight: 700; font-size: .95rem; }
@@ -221,8 +222,8 @@
   .dev { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .post { flex: none; white-space: pre; } /* the minutes never shrink; a long "Up next" label may */
   .post.fit { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .t2.warn { color: #f7b344; }
-  .t2.error { color: #ffa8a8; }
+  .t2.warn { color: #ffc56b; }
+  .t2.error { color: #ffbdbd; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   /* round 44 px buttons; glass pills for Stop and Reconnect */
   .tb { flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #fff; display: inline-grid; place-items: center; cursor: pointer; }

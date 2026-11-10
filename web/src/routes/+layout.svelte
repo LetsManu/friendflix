@@ -823,7 +823,7 @@
   {#if !online}<div class="offbar" class:notab={kidsUi || profilesPage} role="status">{$t('shell.offline.bar')} <a href="/offline" data-sveltekit-reload>{$t('shell.offline.toDownloads')}</a></div>{/if}
   {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:calc(5rem + var(--safe-top));left:50%;transform:translateX(-50%)"><b>{$t('shell.tvReplaced.text')}</b> <button on:click={() => location.reload()}>{$t('shell.tvReplaced.reconnect')}</button></div>{/if}
   {#if modalId && Modal}<svelte:component this={Modal} id={modalId} />{/if}
-  <main id="main" tabindex="-1" class:page={!heroPage && !watchPage && !profilesPage && !kidsPage} class:tvrail={showRail}>
+  <main id="main" class:page={!heroPage && !watchPage && !profilesPage && !kidsPage} class:tvrail={showRail}>
     {#if pending}
       <div class="page"><div class="panel pendp">
         <b class="warn">{$t('shell.pending.title')}</b>
