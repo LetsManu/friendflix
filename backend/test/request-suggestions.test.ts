@@ -83,9 +83,9 @@ describe('requestSuggestions (function level)', () => {
     expect(seerrCalls.filter((c) => c.path.endsWith('/recommendations')).length).toBeLessThanOrEqual(SUGGEST_SEEDS);
     await ask();
     expect(seerrCalls.length).toBe(n); // from the cache
-    expect(await env.kv.keys('reqsug:')).toEqual([`reqsug:${s.owner.id}:movie:x`]);
+    expect(await env.kv.keys('reqsug:')).toEqual([`reqsug:${s.owner.id}:movie:x:de`]);
     await ask('movie', { profile: s.kids.id }); // another profile: its own key, its own calls
-    expect((await env.kv.keys('reqsug:')).sort()).toEqual([`reqsug:${s.kids.id}:movie:x`, `reqsug:${s.owner.id}:movie:x`].sort());
+    expect((await env.kv.keys('reqsug:')).sort()).toEqual([`reqsug:${s.kids.id}:movie:x:de`, `reqsug:${s.owner.id}:movie:x:de`].sort());
   });
 
   it('the wish state follows the account\'s own requests even from the cache', async () => {
@@ -96,6 +96,31 @@ describe('requestSuggestions (function level)', () => {
     expect(seerrCalls.length).toBe(n);
   });
 
+  it('a request that was declined or deleted before the list was built does not show as requested; one made after the build does', async () => {
+    await ask(); // builds the list
+    await env.pool.query("insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title,created_at) values (8,$1,'movie',11,'Fiction 11', now() - interval '1 day')", [s.owner.user_id]);
+    expect((await ask())[0]!.request.state).toBe('none');
+    await env.pool.query("insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title) values (9,$1,'movie',11,'Fiction 11')", [s.owner.user_id]);
+    expect((await ask())[0]!.request.state).toBe('requested');
+  });
+
+  it('titles are asked for in the profile language, cached per language, and an unknown stored language falls back to German', async () => {
+    const langs = () => seerrCalls.filter((c) => c.path.endsWith('/recommendations')).map((c) => new URLSearchParams(c.search).get('language'));
+    await ask();
+    expect(langs()).toEqual(['de']);
+    await env.pool.query(`insert into profile_prefs(profile_id, data) values ($1, '{"language":"en"}') on conflict (profile_id) do update set data = profile_prefs.data || excluded.data`, [s.owner.id]);
+    seerrCalls.length = 0;
+    await ask();
+    expect(langs()).toEqual(['en']); // not served from the German cache entry
+    expect((await env.kv.keys('reqsug:')).sort()).toEqual([`reqsug:${s.owner.id}:movie:x:de`, `reqsug:${s.owner.id}:movie:x:en`]);
+    await env.pool.query(`update profile_prefs set data = data || '{"language":"xx&evil=1"}' where profile_id=$1`, [s.owner.id]);
+    for (const k of await env.kv.keys('reqsug:')) await env.kv.del(k);
+    seerrCalls.length = 0;
+    await ask();
+    expect(langs()).toEqual(['de']);
+    expect(seerrCalls.every((c) => !c.search.includes('evil'))).toBe(true);
+  });
+
   it('age cap: a role with a cap only gets titles with a known rating within it; without a cap no rating lookup happens', async () => {
     certs = { 11: 'FSK 12', 15: 'FSK 16' }; // 16 has no entry: unrated
     const guest = await ask('movie', { role: 'guest' });
@@ -104,12 +129,16 @@ describe('requestSuggestions (function level)', () => {
     seerrCalls.length = 0;
     expect((await ask('movie', { role: 'friend' })).map((i) => i.tmdbId)).toEqual([11, 15, 16]);
     expect(seerrCalls.some((c) => /\/movie\/\d+$/.test(c.path))).toBe(false);
-    expect(await env.kv.keys('reqsug:')).toContain(`reqsug:${s.owner.id}:movie:12`); // the cap is part of the key
+    expect(await env.kv.keys('reqsug:')).toContain(`reqsug:${s.owner.id}:movie:12:de`); // the cap is part of the key
   });
 
   it('a failing seed does not fail the answer (short cache), no seeds means an empty list', async () => {
     failSeed = 1001;
-    expect(await ask()).toEqual([]);
+    const ttls: number[] = [];
+    const realSet = env.kv.set.bind(env.kv);
+    env.kv.set = async (k: string, v: string, ttl: number) => { if (k.startsWith('reqsug:')) ttls.push(ttl); return realSet(k, v, ttl); };
+    try { expect(await ask()).toEqual([]); } finally { env.kv.set = realSet; }
+    expect(ttls).toEqual([120]); // the short cache, not the 6 hours
     await env.pool.query('delete from thumbs');
     for (const k of await env.kv.keys('reqsug:')) await env.kv.del(k);
     for (const k of await env.kv.keys('reco:')) await env.kv.del(k);

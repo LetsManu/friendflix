@@ -5,7 +5,7 @@
  * taste anchors (the titles the v2 engine seeds from: recent watches, thumbs, ratings); for each of a few seeds the request service
  * names recommended titles. Titles already in the library (by TMDB id, admin lookup, same for every viewer) or reported available by the
  * request service are dropped, as is adult material and, for a role with an age cap, everything without a known rating within the cap.
- * The list is cached per profile for 6 hours; the wish state is overlaid live from the account's own requests, the quota is never cached.
+ * The list is cached per profile for 6 hours; the wish state is overlaid live from the account's own requests made after the list was built (older ones are already in the service's state, a declined or deleted one must be wishable again), the quota is never cached.
  * Nothing here sees a media-server token or the request-service key (the client holds it server-side).
  */
 import type { Ctx } from './ctx.js';
@@ -16,6 +16,7 @@ import { tasteProfile } from './reco/profile.js';
 import { ratingAge } from './reco/score.js';
 import { loadIndex } from './reco/vectors.js';
 import { recoCoefficients, recoWeights } from './reco/weights.js';
+import { effectiveLanguage, type Language } from './i18n.js';
 import { effectiveRole } from './roles.js';
 import { portalStatus, requestsClient } from './seerr/client.js';
 import type { JfUser } from './types.js';
@@ -53,7 +54,7 @@ function certificationOf(mediaType: 'movie' | 'tv', d: any): string | null {
     : pick<any>(d?.contentRatings?.results, (x) => x.iso_3166_1, (x) => x.rating);
 }
 
-interface Cached { items: Array<Omit<Suggestion, 'request'> & { state: WishState }> }
+interface Cached { builtAt?: string; items: Array<Omit<Suggestion, 'request'> & { state: WishState }> }
 
 /** Seeds: the profile's top taste anchors of the asked type (title, TMDB id); a seed the media server cannot name or has no TMDB id for is skipped. */
 async function seedsFor(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf'>, user: JfUser, profileId: string, type: SuggestType): Promise<Array<{ name: string; tmdbId: number }>> {
@@ -79,14 +80,15 @@ async function seedsFor(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf'>, user: JfUser
   return out;
 }
 
-async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user: JfUser, profileId: string, type: SuggestType, ageCap: number | null): Promise<{ list: Cached; complete: boolean }> {
+async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user: JfUser, profileId: string, type: SuggestType, ageCap: number | null, lang: Language): Promise<{ list: Cached; complete: boolean }> {
+  const builtAt = new Date().toISOString();
   const seerr = requestsClient(ctx);
   const mt: 'movie' | 'tv' = type === 'movie' ? 'movie' : 'tv';
   const seeds = await seedsFor(ctx, user, profileId, type);
   let complete = true;
   const perSeed = await inPool(seeds, 2, async (s) => {
     try {
-      return (await seerr.recommendations(mt, s.tmdbId)).results.filter((x) => x && Number.isInteger(x.id) && !x.adult).slice(0, SUGGEST_PER_SEED).map((x) => ({ x, seed: s.name }));
+      return (await seerr.recommendations(mt, s.tmdbId, lang)).results.filter((x) => x && Number.isInteger(x.id) && !x.adult).slice(0, SUGGEST_PER_SEED).map((x) => ({ x, seed: s.name }));
     } catch {
       complete = false;
       return [];
@@ -111,7 +113,7 @@ async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user:
     // a role with an age cap: only titles whose rating is known and within the cap (the request service lists no ratings in its lists)
     const ok = await inPool(rest, PARALLEL, async (e) => {
       try {
-        const age = ratingAge(certificationOf(mt, await seerr.details(mt, e.x.id)));
+        const age = ratingAge(certificationOf(mt, await seerr.details(mt, e.x.id, lang)));
         return age !== null && age <= ageCap;
       } catch { complete = false; return false; }
     });
@@ -128,24 +130,25 @@ async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user:
       state: WISH[portalStatus(x.mediaInfo?.status, x.mediaInfo?.requests?.[0]?.status)] ?? 'none',
     };
   }).filter((i) => i.title);
-  return { list: { items }, complete };
+  return { list: { builtAt, items }, complete };
 }
 
 /** One profile's suggestions (cached 6 h per profile, type and age cap), with the wish state overlaid from the account's own requests. */
 export async function requestSuggestions(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr' | 'roles'>, user: JfUser, account: { id: string; role: string }, profileId: string, type: SuggestType): Promise<Suggestion[]> {
   requestsClient(ctx); // no request service: 404 requests_disabled, before anything is read
   const cap = (await effectiveRole(ctx, account.role))?.maxParentalRating ?? null;
-  const key = `reqsug:${profileId}:${type}:${cap ?? 'x'}`;
+  const lang = await effectiveLanguage(ctx, profileId);
+  const key = `reqsug:${profileId}:${type}:${cap ?? 'x'}:${lang}`; // titles come in the viewer's language
   let list: Cached | null = null;
   const hit = await ctx.kv.get(key).catch(() => null);
   if (hit) { try { list = JSON.parse(hit) as Cached; } catch { /* recompute */ } }
   if (!list) {
-    const b = await build(ctx, user, profileId, type, cap);
+    const b = await build(ctx, user, profileId, type, cap, lang);
     list = b.list;
     await ctx.kv.set(key, JSON.stringify(list), b.complete ? SUGGEST_TTL : PARTIAL_TTL).catch(() => undefined);
   }
   const mine = list.items.length
-    ? (await ctx.db.query<{ tmdb_id: number; media_type: string }>('select tmdb_id, media_type from seerr_requests where user_id=$1 and tmdb_id = any($2::int[])', [account.id, list.items.map((i) => i.tmdbId)])).rows
+    ? (await ctx.db.query<{ tmdb_id: number; media_type: string }>('select tmdb_id, media_type from seerr_requests where user_id=$1 and tmdb_id = any($2::int[]) and created_at >= $3', [account.id, list.items.map((i) => i.tmdbId), list.builtAt ?? '1970-01-01'])).rows
     : [];
   const asked = new Set(mine.map((r) => `${r.media_type}:${r.tmdb_id}`));
   return list.items.map(({ state, ...i }) => ({ ...i, request: { state: state === 'none' && asked.has(`${i.mediaType}:${i.tmdbId}`) ? 'requested' : state } }));

@@ -83,6 +83,7 @@ Die Seite setzt sich aus bestehenden und drei neuen Routen zusammen (die dritte,
 - **Neue Serien / Neue Filme:** `GET /api/library/items?types=Series` bzw. `types=Movie` mit `sort=DateCreated&desc=true&limit=30`. Jedes Item trägt `dateCreated` (ISO, Datum der Aufnahme in die Bibliothek); „neu“ heißt höchstens 14 Tage alt (gleiches Fenster wie die Badges „Neue Serie“ / „Neu“), der Client filtert darauf.
 - **Diese Woche bei uns:** `GET /api/library/trending` (siehe oben), nicht für Kinderprofile.
 - **Demnächst:** `GET /api/seerr/upcoming?type=movie|tv`, nur für Erwachsenenprofile und nur mit Anfragedienst.
+- **Sprache der Titel:** Suche, Demnächst, Empfehlungen, Details und Trailer des Anfragedienstes kommen in der Oberflächensprache des Profils (Profilwahl, sonst Instanzstandard, sonst Deutsch; erlaubt sind nur die sieben App-Sprachen, alles andere wird zu `de`). Die Vorschlagsliste („Noch nicht bei uns“) und der Trailer-Cache tragen die Sprache im Schlüssel.
 
 ### `GET /api/library/new-episodes`: „Neue Folgen“
 
