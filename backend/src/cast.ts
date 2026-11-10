@@ -112,8 +112,6 @@ export const castTtlSeconds = (runtimeTicks: number | undefined, startTicks: num
   return Math.min(MAX_TTL, Math.max(MIN_TTL, Math.ceil(remaining) + 3600));
 };
 
-/** Redis TTL of a token's keys: idle window, but never past the absolute cap (0 = already over). */
-/** Redis TTL of a token's keys: idle window, but never past the absolute cap (0 = already over). */
 /**
  * Absolute-cap TTL of a queued next episode's token: its own TTL plus what its predecessor has left beyond the 1 h that every
  * token already adds, capped at 6 h. Queued from the start of an episode, the token must outlive the episode it follows.
@@ -122,9 +120,8 @@ export function castNextTtlSeconds(ownTtl: number, predExp: number, now = Date.n
   return Math.min(MAX_TTL, ownTtl + Math.max(0, Math.ceil((predExp - now) / 1000) - 3600));
 }
 
+/** Redis TTL of a token's keys: idle window, but never past the absolute cap (0 = already over). */
 export const castKeyTtl = (exp: number, now = Date.now()) => Math.max(0, Math.min(CAST_IDLE_TTL, Math.ceil((exp - now) / 1000)));
-
-
 
 interface IdxEntry { hash: string; createdAt: number; deviceId?: string; kind?: 'media' | 'img'; imgHash?: string; /** a queued next episode's token */ next?: boolean }
 
@@ -265,6 +262,11 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
   const ik = idxKey(rec.userId, castIdOf(hash));
   const idx = await ctx.kv.get(ik);
   if (idx) await ctx.kv.replace(ik, idx, ttl);
+  // a queued token (and its poster token) never pins by itself: its mint-time pin lives as long as the token does
+  if (rec.afterPs) {
+    const pin = await ctx.kv.get(pinKey(hash));
+    if (pin) await ctx.kv.replace(pinKey(hash), pin, ttl);
+  }
   if (rec.kind !== 'img') await keepQueue(ctx, hash, rec, ttl);
   if (rec.kind === 'img' || overlap) return; // a queued next episode's preload: the stream it follows is the counted one
   const cur = await getLive(ctx, rec.userId, rec.playSessionId);
@@ -282,10 +284,6 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
  * Replace only: a revoked successor is never resurrected.
  */
 async function keepQueue(ctx: Ctx, hash: string, rec: CastRecord, ttl: number) {
-  if (rec.afterPs) {
-    const pin = await ctx.kv.get(pinKey(hash));
-    if (pin) await ctx.kv.replace(pinKey(hash), pin, ttl);
-  }
   const nk = nextKey(rec.userId, rec.playSessionId);
   const succ = await ctx.kv.get(nk);
   if (!succ) return;
@@ -294,9 +292,17 @@ async function keepQueue(ctx: Ctx, hash: string, rec: CastRecord, ttl: number) {
   const t = r ? castKeyTtl(r.exp) : 0; // its own idle window (<= its cap, which is never below the predecessor's)
   if (!r || t <= 0) { await ctx.kv.del(nk); return; }
   await ctx.kv.replace(dataKey(succ), raw!, t);
+  const sidx = await ctx.kv.get(idxKey(rec.userId, castIdOf(succ)));
+  const imgHash = sidx ? (JSON.parse(sidx) as IdxEntry).imgHash : undefined;
   for (const k of [idxKey(rec.userId, castIdOf(succ)), pinKey(succ), nk]) {
     const v = await ctx.kv.get(k);
     if (v) await ctx.kv.replace(k, v, t);
+  }
+  if (imgHash) { // its poster token lives as long
+    for (const k of [dataKey(imgHash), idxKey(rec.userId, castIdOf(imgHash)), pinKey(imgHash)]) {
+      const v = await ctx.kv.get(k);
+      if (v) await ctx.kv.replace(k, v, t);
+    }
   }
 }
 

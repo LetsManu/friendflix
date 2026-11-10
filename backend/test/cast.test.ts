@@ -1058,6 +1058,12 @@ describe('cast: the queued next token is pinned at mint and its life follows its
     expect(await env.kv.get(`castpin:${hashToken(imgCt)}`)).toBe(TV);
     expect((await authz({ ct: imgCt, client: '203.0.113.66' })).statusCode).toBe(401);
     expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200);
+    // its pin lives as long as the token: the TV is still served past the idle window while the predecessor is alive
+    skipClock(40 * 60_000);
+    expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200);
+    skipClock(10 * 60_000);
+    expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200);
+    expect((await authz({ ct: imgCt, client: '203.0.113.66' })).statusCode).toBe(401);
   });
 
   it('createCast refuses a queued token whose predecessor has no pin (nothing minted)', async () => {

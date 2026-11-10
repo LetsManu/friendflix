@@ -207,6 +207,24 @@ describe('profiles', () => {
     expect(await env.kv.keys('castpin:')).toEqual([]);
   });
 
+  it('a cast minted by a request that races a profile switch is taken back (409 profile_changed)', async () => {
+    const s = await mk({
+      'POST /Items/[^/]+/PlaybackInfo': () => ({ json: { PlaySessionId: 'ps-race-1', MediaSources: [{ Id: 'b'.repeat(32), Container: 'mkv', SupportsDirectPlay: true, Bitrate: 4_000_000, RunTimeTicks: 3_000_000_000, MediaStreams: [{ Index: 0, Type: 'Video', Height: 1080 }, { Index: 1, Type: 'Audio' }] }] } }),
+      'DELETE /Videos/ActiveEncodings': () => ({ status: 204 }),
+    });
+    const p = await mkProfile(s, 'Kind');
+    const jf = env.ctx.jf as unknown as { playbackInfo: (...a: unknown[]) => Promise<unknown> };
+    const orig = jf.playbackInfo.bind(env.ctx.jf);
+    // the switch lands while the mint is in flight (after its requireUser, before its token exists)
+    jf.playbackInfo = async (...a) => { const r = await orig(...a); await call(s, 'POST', `/api/profiles/${p.id}/select`, {}); return r; };
+    const r = await call(s, 'POST', '/api/cast/session', { itemId: ITEM });
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'profile_changed' });
+    expect(await env.kv.keys('cast:')).toEqual([]);
+    expect(await env.kv.keys('castidx:')).toEqual([]);
+    expect(env.jfCalls.some((c) => c.method === 'DELETE' && c.path === '/Videos/ActiveEncodings')).toBe(true);
+  });
+
   it('after select, Jellyfin calls and /internal/authz use the profile identity', async () => {
     const s = await mk();
     const p = await mkProfile(s, 'Kind');
