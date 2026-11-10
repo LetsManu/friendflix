@@ -1839,7 +1839,7 @@
         {#if seriesId}
           <div class="mwrap">
             <button class="ic" bind:this={epBtn} aria-label={$t('player.controls.episodes')} data-label={desk ? $t('player.controls.episodes') : undefined} title={$t('player.controls.episodes')} aria-expanded={menu === 'episodes'} on:click={() => toggleMenu('episodes')}><Icon name="list" size={ICON} /></button>
-            {#if menu === 'episodes'}<div class="menu bare" in:cardIn={{ origin: 'bottom right' }} out:cardOut><EpisodesPanel {seriesId} {seasonId} currentId={itemId} synopsis={phoneUi} on:pick={pickEpisode} on:close={closeEpisodes} /></div>{/if}
+            {#if menu === 'episodes'}<div class="menu bare" in:cardIn={{ origin: 'bottom right' }} out:cardOut><EpisodesPanel {seriesId} {seasonId} currentId={itemId} synopsis={phoneUi} glass={desk} on:pick={pickEpisode} on:close={closeEpisodes} /></div>{/if}
           </div>
         {/if}
         {#if showScenes}
@@ -2021,7 +2021,7 @@
     padding: calc(4.6rem + var(--safe-top)) max(16px, var(--safe-right)) calc(7.5rem + var(--safe-bottom)) max(16px, var(--safe-left)); }
   .rbg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: blur(16px) brightness(.5) saturate(1.1); transform: scale(1.08); }
   .rshade { position: absolute; inset: 0; background: linear-gradient(rgba(0,0,0,.62), rgba(0,0,0,.4) 45%, rgba(0,0,0,.82)); }
-  .rrow { position: relative; display: flex; align-items: center; gap: .5rem; width: 100%; max-width: 560px; min-width: 0; }
+  .rrow { position: relative; display: flex; align-items: center; gap: .5rem; width: 100%; max-width: 420px; min-width: 0; }
   .rrow button { pointer-events: auto; display: inline-flex; align-items: center; gap: .45rem; height: 44px; padding: 0 .9rem; border-radius: 999px; color: #fff; font: inherit; font-size: .9rem; white-space: nowrap; cursor: pointer; }
   .chip { flex: 0 1 auto; min-width: 0; margin-right: auto; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.3); }
   .chip span, .rstop span { overflow: hidden; text-overflow: ellipsis; }
@@ -2161,7 +2161,7 @@
     .menu.bare { overflow: visible; }
     .menu.bare :global(.eps), .menu.bare :global(.scn) { width: 100%; max-height: 60vh; }
     .ic.lockbtn { bottom: auto; top: calc(5.5rem + var(--safe-top)); } /* the two-row bar is taller on phones: keep the lock clear of the timeline */
-    .speeds { flex-wrap: wrap; justify-content: center; } .speeds::before { display: none; } .sp-opt { min-width: 64px; }
+    .speeds { display: grid; grid-template-columns: repeat(3, 1fr); justify-items: center; row-gap: .4rem; } .speeds::before { display: none; } .sp-opt { min-width: 64px; }
   }
   /* touch: every main-bar target is at least 48 px */
   @media (pointer: coarse) { .ic { min-width: 48px; min-height: 48px; } }
@@ -2300,7 +2300,8 @@
   /* glass card like the desk menus (hairline, 14 px radius; the blur rule is .ctl.blur's). Denser fill than the desk's .62: the
      card sits inside the blurred pill (its backdrop root), so over sharp video the fill carries the contrast */
   .ctl.dock .menu:not(.bare) { background: rgba(20,20,24,.78); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; box-shadow: 0 18px 40px rgba(0,0,0,.55); }
-  .ctl.dock .menu.tracks h3 { background: rgba(20,20,24,.94); }
+  /* plain section captions: a filled band read as a selected row */
+  .ctl.dock .menu.tracks h3 { position: static; background: none; font-size: .85rem; color: var(--mut); }
   /* audio & subtitles: two columns in landscape (the effects below them), sections in portrait; the card scrolls as one */
   .ctl.dock .menu.tracks { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .4rem 1rem; }
   .stage.pui.port .ctl.dock .menu.tracks { grid-template-columns: 1fr; }
@@ -2320,7 +2321,7 @@
   @keyframes -global-ff-pnl-ci-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
   /* the page's top slot spans the bar's free middle: only its own controls take taps, the rest goes to the picture (double-tap seek) */
   .stage.pui .ovl > :global(.top) { pointer-events: none; }
-  .ctl.dock .speeds { flex-wrap: wrap; justify-content: center; } .ctl.dock .speeds::before { display: none; } .ctl.dock .sp-opt { min-width: 64px; }
+  .ctl.dock .speeds { display: grid; grid-template-columns: repeat(3, 1fr); justify-items: center; row-gap: .4rem; } .ctl.dock .speeds::before { display: none; } .ctl.dock .sp-opt { min-width: 64px; }
   /* narrow phones (320 px): three tools and the playback pill still fit side by side, every target stays ≥ 44 px */
   @media (max-width: 359px) {
     .ctl.dock .pill { padding: .2rem .1rem; gap: 0; }
@@ -2398,6 +2399,8 @@
   /* the last tool's chip right-aligns: fullscreen, or without it (casting) the last wrapped tool ('Mehr') */
   .pill.right > button.ic:last-child::after, .pill.right > :last-child button.ic::after { left: auto; right: 0; transform: translate(0, 4px); }
   .pill.right > button.ic:last-child:is(:hover, :focus-visible)::after, .pill.right > :last-child button.ic:is(:hover, :focus-visible)::after { transform: translate(0, 0); }
+  /* the chip would cover the open menu and the remaining time: hide it while its menu is open (opacity only) */
+  .pill button.ic[aria-expanded='true']::after { opacity: 0; }
   /* hover: the icon grows, not the button (its label chip would scale with it) */
   .pill .ic:hover:not(:disabled) { transform: none; }
   .pill .ic > :global(svg) { transition: transform var(--t-fast); }
