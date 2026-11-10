@@ -7,7 +7,7 @@ import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { effectiveLanguage, m } from '../i18n.js';
 import { localizeStored, notify } from '../notify.js';
-import { portalStatus, RequestsDisabledError, requestsClient, requestsEnabled, requestStateKey, SeerrError } from '../seerr/client.js';
+import { portalStatus, RequestsDisabledError, requestsClient, requestsEnabled, requestStateKey, SeerrError, viewerLanguage } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireGrownUp } from '../kids.js';
 import { requireAdmin } from '../session.js';
@@ -49,7 +49,7 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/seerr/search', pre, wrap(async (req) => {
     const q = z.object({ q: z.string().min(2).max(100), page: z.coerce.number().int().min(1).max(10).default(1) }).parse(req.query);
-    const r = await requestsClient(ctx).search(q.q, q.page);
+    const r = await requestsClient(ctx).search(q.q, q.page, await viewerLanguage(ctx, req));
     return { results: r.results.filter((x) => x.mediaType === 'movie' || x.mediaType === 'tv').map(mapResult), totalPages: r.totalPages };
   }));
 
@@ -72,11 +72,12 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
   // Official trailer key from TMDB (via Seerr); only the validated YouTube key leaves the backend.
   app.get('/api/seerr/:type/:id/trailer', pre, wrap(async (req, reply) => {
     const p = z.object({ type: mediaType, id: z.coerce.number().int().positive() }).parse(req.params);
-    const ck = `trailer:${p.type}:${p.id}`;
+    const lang = await viewerLanguage(ctx, req);
+    const ck = `trailer:${p.type}:${p.id}:${lang}`; // the list of videos depends on the language
     const cached = await ctx.kv.get(ck); // '' = cached "no trailer"
     let key = cached ?? '';
     if (cached === null) {
-      const vids: any[] = ((await requestsClient(ctx).details(p.type, p.id)) as any).relatedVideos ?? [];
+      const vids: any[] = ((await requestsClient(ctx).details(p.type, p.id, lang)) as any).relatedVideos ?? [];
       const yt = Array.isArray(vids) ? vids.filter((v) => v?.site === 'YouTube' && typeof v.key === 'string' && /^[A-Za-z0-9_-]{6,20}$/.test(v.key)) : [];
       key = (yt.find((v) => v.type === 'Trailer') ?? yt.find((v) => v.type === 'Teaser'))?.key ?? '';
       await ctx.kv.set(ck, key, 24 * 3600);
@@ -87,7 +88,7 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/api/requests', pre, wrap(async (req, reply) => {
     const b = z.object({ mediaType, tmdbId: z.number().int().positive(), seasons: z.array(z.number().int().min(0).max(100)).optional() }).parse(req.body);
-    const d = await requestsClient(ctx).details(b.mediaType, b.tmdbId);
+    const d = await requestsClient(ctx).details(b.mediaType, b.tmdbId, await viewerLanguage(ctx, req)); // the title is stored for the account's request list
     const st = portalStatus(d.mediaInfo?.status, d.mediaInfo?.requests?.[0]?.status);
     if (st !== 'nicht_angefragt' && st !== 'abgelehnt') return reply.code(409).send({ error: 'already_requested', status: st });
     const limit = await limitFor(ctx, req.user!);
@@ -142,6 +143,7 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
       take: z.coerce.number().int().min(1).max(100).default(50),
       skip: z.coerce.number().int().min(0).max(100_000).default(0),
     }).parse(req.query);
+    const lang = await viewerLanguage(ctx, req);
     const r = await requestsClient(ctx).listRequests(q.filter, q.take, q.skip);
     const ids = r.results.map((x: any) => x.id);
     const owners = ids.length ? (await ctx.db.query('select s.seerr_request_id id, u.name from seerr_requests s join users u on u.id=s.user_id where s.seerr_request_id = any($1)', [ids])).rows : [];
@@ -149,7 +151,7 @@ export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
     const titles = await Promise.all(r.results.map(async (x: any) => {
       try {
         const m = x.media ?? {};
-        const d = await requestsClient(ctx).details(x.type ?? m.mediaType, m.tmdbId);
+        const d = await requestsClient(ctx).details(x.type ?? m.mediaType, m.tmdbId, lang);
         return String(d.title ?? d.name);
       } catch {
         return `#${x.media?.tmdbId}`;

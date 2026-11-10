@@ -16,6 +16,7 @@ import { tasteProfile } from './reco/profile.js';
 import { ratingAge } from './reco/score.js';
 import { loadIndex } from './reco/vectors.js';
 import { recoCoefficients, recoWeights } from './reco/weights.js';
+import { effectiveLanguage, type Language } from './i18n.js';
 import { effectiveRole } from './roles.js';
 import { portalStatus, requestsClient } from './seerr/client.js';
 import type { JfUser } from './types.js';
@@ -79,7 +80,7 @@ async function seedsFor(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf'>, user: JfUser
   return out;
 }
 
-async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user: JfUser, profileId: string, type: SuggestType, ageCap: number | null): Promise<{ list: Cached; complete: boolean }> {
+async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user: JfUser, profileId: string, type: SuggestType, ageCap: number | null, lang: Language): Promise<{ list: Cached; complete: boolean }> {
   const builtAt = new Date().toISOString();
   const seerr = requestsClient(ctx);
   const mt: 'movie' | 'tv' = type === 'movie' ? 'movie' : 'tv';
@@ -87,7 +88,7 @@ async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user:
   let complete = true;
   const perSeed = await inPool(seeds, 2, async (s) => {
     try {
-      return (await seerr.recommendations(mt, s.tmdbId)).results.filter((x) => x && Number.isInteger(x.id) && !x.adult).slice(0, SUGGEST_PER_SEED).map((x) => ({ x, seed: s.name }));
+      return (await seerr.recommendations(mt, s.tmdbId, lang)).results.filter((x) => x && Number.isInteger(x.id) && !x.adult).slice(0, SUGGEST_PER_SEED).map((x) => ({ x, seed: s.name }));
     } catch {
       complete = false;
       return [];
@@ -112,7 +113,7 @@ async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user:
     // a role with an age cap: only titles whose rating is known and within the cap (the request service lists no ratings in its lists)
     const ok = await inPool(rest, PARALLEL, async (e) => {
       try {
-        const age = ratingAge(certificationOf(mt, await seerr.details(mt, e.x.id)));
+        const age = ratingAge(certificationOf(mt, await seerr.details(mt, e.x.id, lang)));
         return age !== null && age <= ageCap;
       } catch { complete = false; return false; }
     });
@@ -136,12 +137,13 @@ async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user:
 export async function requestSuggestions(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr' | 'roles'>, user: JfUser, account: { id: string; role: string }, profileId: string, type: SuggestType): Promise<Suggestion[]> {
   requestsClient(ctx); // no request service: 404 requests_disabled, before anything is read
   const cap = (await effectiveRole(ctx, account.role))?.maxParentalRating ?? null;
-  const key = `reqsug:${profileId}:${type}:${cap ?? 'x'}`;
+  const lang = await effectiveLanguage(ctx, profileId);
+  const key = `reqsug:${profileId}:${type}:${cap ?? 'x'}:${lang}`; // titles come in the viewer's language
   let list: Cached | null = null;
   const hit = await ctx.kv.get(key).catch(() => null);
   if (hit) { try { list = JSON.parse(hit) as Cached; } catch { /* recompute */ } }
   if (!list) {
-    const b = await build(ctx, user, profileId, type, cap);
+    const b = await build(ctx, user, profileId, type, cap, lang);
     list = b.list;
     await ctx.kv.set(key, JSON.stringify(list), b.complete ? SUGGEST_TTL : PARTIAL_TTL).catch(() => undefined);
   }

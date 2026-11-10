@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { portalStatus } from '../src/seerr/client.js';
+import { portalStatus, SeerrClient, upstreamLanguage } from '../src/seerr/client.js';
+import { LANGUAGES } from '../src/i18n.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 let env: TestEnv;
@@ -49,6 +50,22 @@ describe('status mapping', () => {
   });
 });
 
+describe('request service language', () => {
+  it('allowlist: the seven UI languages pass, anything else is German', () => {
+    for (const l of LANGUAGES) expect(upstreamLanguage(l)).toBe(l);
+    for (const bad of ['xx', 'en&x=1', '', 'DE', null, undefined, 5, '../de']) expect(upstreamLanguage(bad)).toBe('de');
+  });
+  it('every text call carries the language; junk never reaches the URL; default is German', async () => {
+    const seen: string[] = [];
+    const f = (async (u: string) => { seen.push(String(u)); return new Response('{"results":[],"totalPages":1}', { status: 200 }); }) as unknown as typeof fetch;
+    const c = new SeerrClient('http://requests.example.com', 'k', f);
+    await c.search('lantern', 1, 'fr'); await c.upcoming('movie', 1, 'es'); await c.recommendations('tv', 5, 'pl'); await c.details('movie', 6, 'tr');
+    await c.details('movie', 7); await c.details('movie', 8, 'en&evil=1' as never);
+    expect(seen.map((u) => new URL(u).searchParams.get('language'))).toEqual(['fr', 'es', 'pl', 'tr', 'de', 'de']);
+    expect(seen.some((u) => u.includes('evil'))).toBe(false);
+  });
+});
+
 describe('seerr integration', () => {
   it('search hides persons, proxies posters, encodes spaces as %20', async () => {
     const r = (await call('GET', '/api/seerr/search?q=the%20matrix')).json();
@@ -56,6 +73,14 @@ describe('seerr integration', () => {
     expect(r.results[0]).toMatchObject({ title: 'The Lattice', status: 'verfuegbar', poster: '/api/seerr/image/abc123.jpg' });
     expect(env.seerrCalls.at(-1)!.search).toContain('query=the%20matrix');
     expect(env.seerrCalls.at(-1)!.auth).toBeUndefined(); // api key is a header, never in url/body
+  });
+  it('search and the trailer cache follow the profile language', async () => {
+    await env.pool.query(`insert into profile_prefs(profile_id, data) select id, '{"language":"it"}' from users on conflict (profile_id) do update set data = profile_prefs.data || excluded.data`);
+    await call('GET', '/api/seerr/search?q=lantern%20row');
+    expect(new URLSearchParams(env.seerrCalls.at(-1)!.search).get('language')).toBe('it');
+    await env.pool.query(`update profile_prefs set data = data - 'language'`);
+    await call('GET', '/api/seerr/search?q=lantern%20row');
+    expect(new URLSearchParams(env.seerrCalls.at(-1)!.search).get('language')).toBe('de');
   });
   it('rejects bad poster paths (SSRF guard)', async () => {
     expect((await call('GET', '/api/seerr/image/..%2F..%2Fx.jpg')).statusCode).toBe(400);

@@ -18,7 +18,7 @@ import { requireGrownUp } from '../kids.js';
 import { countFallback, recoProfileOf, v2Active, withReason, type EngineName } from '../reco/engine.js';
 import { recommend, shadowCompare } from '../reco/recommend.js';
 import { requireAdmin, requireUser } from '../session.js';
-import { portalStatus, requestsClient } from '../seerr/client.js';
+import { portalStatus, requestsClient, viewerLanguage } from '../seerr/client.js';
 import type { JfUser, UserRow } from '../types.js';
 import { id32, wrap as sharedWrap } from './_shared.js';
 
@@ -346,7 +346,7 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
   // ---- Upcoming (Seerr discover) with wish status ----
   app.get('/api/seerr/upcoming', grown, wrap(async (req) => {
     const type = z.enum(['movie', 'tv']).default('movie').parse((req.query as { type?: string }).type);
-    const r = await requestsClient(ctx).upcoming(type); // no request service: 404 requests_disabled
+    const r = await requestsClient(ctx).upcoming(type, 1, await viewerLanguage(ctx, req)); // no request service: 404 requests_disabled
     return {
       results: r.results.slice(0, 30).map((x: any) => ({
         tmdbId: x.id as number, mediaType: type, title: String(x.title ?? x.name ?? ''), releaseDate: (x.releaseDate ?? x.firstAirDate) as string | undefined,
