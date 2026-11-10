@@ -191,7 +191,7 @@ The client adds three of its own: `stereo_choice`, `stereo_mode` and `avoided`.
 
 | Key | Kind | Default | Meaning |
 |---|---|---|---|
-| `HEVC_STREAMS` | int 0–4 | **1** | HEVC conversions at once; 0 = off. HEVC remux and direct play do not depend on it. |
+| `HEVC_STREAMS` | int 0–4 | **2** | HEVC conversions at once; 0 = off. While the probe measures less than 3× real time, at most 1 runs regardless of this value. HEVC remux and direct play do not depend on it. |
 | `SURROUND_AUDIO` | bool | **true** | Surround for devices with 5.1 output; off = stereo for everyone (direct play unchanged). |
 
 Per-device switch (not stored on the server): **Surround sound** in the player's *Klang* section, shown only when the device states surround and the server has `features.surround` (Jellyfin with `SURROUND_AUDIO` on). Default: on.
@@ -297,8 +297,8 @@ Codec names shown: "HEVC (H.265)", "H.264", "Dolby Digital Plus", "Dolby Digital
 
 ## 12. Open questions for the owner
 
-- **Q1.** Should HEVC conversions also run **at home**? The default is *no*: there is no upload to save at home, and the single slot stays free for friends. A yes is one rule change in `streamplan.ts`.
-- **Q2.** Should `HEVC_STREAMS` default to **1** or **2** on your N5095? The probe measures the speed. Health suggests 2 only when the probe reaches at least 3× real time, and the default stays 1 until you decide.
+- **Q1 (answered 2026-11-10): no.** HEVC conversions never run at home; at home there is no upload to save.
+- **Q2 (answered 2026-11-10): 2.** `HEVC_STREAMS` defaults to 2 (the owner's usual load is 1–2 remote streams). Safety rule: while the probe measures less than 3× real time, the effective limit is 1; Health says so.
 
 ## 13. Decisions made here (owner may overrule)
 

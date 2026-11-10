@@ -81,7 +81,7 @@
     - info passes `remote`, `surround` and the gate (a stub returning `{ ok: false, why: 'h264_unproven' }` until Task 2);
     - body fields `fellBack?: 'hevc'|'surround'|'both'` and `prevPs?`;
     - pbinfo stores `video` / `audio`.
-- Modify (settings): `backend/src/config.ts` (`HEVC_STREAMS` int 0–4 default 1; `SURROUND_AUDIO` `'true'|'false'` default `'true'`), `backend/src/settings/registry.ts` (group playback, live), `compose.yaml` + `compose.prod.yaml` (generated block, `npm run compose:env` semantics), `backend/src/routes/auth.ts` (`features.surround`)
+- Modify (settings): `backend/src/config.ts` (`HEVC_STREAMS` int 0–4 default 2; `SURROUND_AUDIO` `'true'|'false'` default `'true'`), `backend/src/settings/registry.ts` (group playback, live), `compose.yaml` + `compose.prod.yaml` (generated block, `npm run compose:env` semantics), `backend/src/routes/auth.ts` (`features.surround`)
 - Modify (web settings): locales `settings.ts` ×7, `web/src/lib/admin/settings/settings.test.ts` (key list), `e2e/mocks/settings.ts`, `web/src/lib/capabilities.ts` (`Features.surround`)
 - Test: `backend/test/client-caps.test.ts` (extend), `backend/test/stream-plan.test.ts` (new), `backend/test/core.test.ts` (route)
 
@@ -192,7 +192,7 @@ export async function hevcTick(ctx: Ctx): Promise<boolean>;
   - State not `ready` → the matching refusal code.
   - Otherwise read `transcodeSessions()` (bounded at 800 ms; on failure or timeout `h264_busy`).
   - Count sessions with `videoCodec === 'hevc' && videoDirect === false`, minus the session of the requesting device's own live record, plus `hevcgrant:*` keys whose play session is not in that list.
-  - If the count is ≥ `HEVC_STREAMS`, refuse with `h264_busy`. Otherwise write `hevcgrant:<ps>` (TTL 30 s) and return ok.
+  - Effective limit = `HEVC_STREAMS`, but 1 while the last probe measured < 3× real time (owner decision Q2). If the count is ≥ the effective limit, refuse with `h264_busy`. Otherwise write `hevcgrant:<ps>` (TTL 30 s) and return ok.
 - **Probe:**
   - The first library title, as in `healthcheck.probe`, under `previews.whenIdle()` with previews paused.
   - `clipTranscode({ videoCodec: 'hevc', fmp4: true, videoBitrate: 6_000_000, audioBitrate: 128_000, maxWidth: 1920 })` plus `SegmentLength=3`.
