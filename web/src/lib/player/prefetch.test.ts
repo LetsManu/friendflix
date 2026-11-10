@@ -368,3 +368,46 @@ describe('next episode: prepareNext / releaseNext / takeNext', () => {
     expect(takeNext('n1', body())).not.toBeNull();
   });
 });
+
+describe('the probe and the prefetch (same body as the player)', () => {
+  it('a running decode probe is awaited (bounded) before the prefetch body is built, so the player body matches it', async () => {
+    const dc = await import('./devicecaps');
+    let answer: () => void = () => undefined;
+    const gate = new Promise<void>((r) => { answer = r; });
+    dc._resetDeviceCaps({
+      env: { canPlayType: (m) => (/codecs=/.test(m) ? 'probably' : 'maybe'), hdrDisplay: false, decodingInfo: async () => { await gate; return { supported: true }; } },
+      ua: 'UA/t', storage: null, now: () => Date.now(), tizen: false,
+    });
+    lgCapsMock.mockImplementation(() => dc.deviceCaps());
+    try {
+      api.mockResolvedValue({ playSessionId: 'x' });
+      prefetchPlayback('m1');
+      expect(api).not.toHaveBeenCalled(); // waits for the probe
+      answer();
+      await flush(); await flush(); await flush();
+      expect(api).toHaveBeenCalledTimes(1);
+      const sent = api.mock.calls[0]![1].body;
+      expect(sent.caps.video.map((v: { codec: string }) => v.codec)).toContain('hevc'); // the probed block, not the sync one
+      expect(takePrefetched('m1', playerBody('m1'))).not.toBeNull(); // the player builds the same body afterwards
+    } finally {
+      lgCapsMock.mockReset(); lgCapsMock.mockImplementation(() => null);
+      dc._resetDeviceCaps();
+    }
+  });
+});
+
+describe('next episode: the tab closes', () => {
+  it('pagehide stops an unused warm-up with a keepalive request', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (u: URL) => ({ text: async () => (u.pathname.endsWith('master.m3u8') ? 'main.m3u8\n' : u.pathname.endsWith('main.m3u8') ? 'hls1/main/0.ts\n' : ''), body: { cancel: async () => undefined } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const listeners: Record<string, () => void> = {};
+    vi.stubGlobal('addEventListener', (t: string, f: () => void) => { listeners[t] = f; });
+    api.mockImplementation(async (path: string) => (path === '/api/playback/info' ? { playSessionId: 'ps-next-0002', hlsUrl: '/media/Videos/n1/master.m3u8', resumeTicks: 0 } : { ok: true }));
+    prepareNext('n1', playerBody('n1'), { warm: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(typeof listeners.pagehide).toBe('function');
+    listeners.pagehide!();
+    expect(api.mock.calls.filter((c) => c[0] === '/api/playback/warm/stop')).toEqual([['/api/playback/warm/stop', { method: 'POST', body: { playSessionId: 'ps-next-0002' }, keepalive: true }]]);
+  });
+});

@@ -5,7 +5,7 @@ import { get } from 'svelte/store';
 import { api, getActiveProfile } from '#lib/api';
 import { serverCaps } from '#lib/capabilities';
 import { prefs } from '#lib/stores';
-import { warmDeviceCaps } from './devicecaps';
+import { capsPending, warmDeviceCaps } from './devicecaps';
 import { loadHls } from './hls';
 import { bodyKey, firstPlaybackRequest, type InfoBody, type PlaybackDto } from './infobody';
 import { markPlayArt } from './transition';
@@ -60,9 +60,13 @@ export function holdPrefetch(p: Promise<unknown>): void {
  * Servers whose playback info starts the transcode (capability playbackPrefetch=false, e.g. Plex) are never prefetched: every
  * hover would start a stream and take a stream slot.
  */
-export function prefetchPlayback(itemId: string, o: { audio?: string; startSec?: number } = {}): void {
+export function prefetchPlayback(itemId: string, o: { audio?: string; startSec?: number } = {}, waited = false): void {
   if (typeof window === 'undefined' || !itemId || !get(serverCaps).playbackPrefetch) return;
-  if (hold) { const h = hold; void h.then(() => { if (!hold) prefetchPlayback(itemId, o); }); return; } // never before the stop settled
+  if (hold) { const h = hold; void h.then(() => { if (!hold) prefetchPlayback(itemId, o, waited); }); return; } // never before the stop settled
+  // the decode probe still runs: wait for it (bounded, as the player does) so both bodies carry the same capability block
+  // (once, like the player: a probe slower than the bound is not waited for again)
+  const w = waited ? null : capsPending();
+  if (w) { void w.then(() => prefetchPlayback(itemId, o, true)); return; }
   const { body } = firstPlaybackRequest(itemId, get(prefs), o.audio ?? '', o.startSec);
   const key = bodyKey(body), profile = getActiveProfile(), now = Date.now();
   const cur = entries.get(itemId);
@@ -127,13 +131,20 @@ async function warm(n: Next, hlsUrl: string): Promise<void> {
   await res.body?.cancel().catch(() => undefined); // the headers mean the segment is there; the bytes are not needed now
 }
 
-function stopNext(n: Next): void {
+/** `keepalive`: the page is going away (the request must outlive it; api() sends the csrf header, which sendBeacon cannot) */
+function stopNext(n: Next, keepalive = false): void {
   clearTimeout(n.ttl); clearTimeout(n.grace);
   if (next === n) next = null;
   if (n.taken) return;
   n.ac.abort();
-  if (n.sent && n.ps) void api('/api/playback/warm/stop', { method: 'POST', body: { playSessionId: n.ps } }).catch(() => undefined);
+  if (n.sent && n.ps) void api('/api/playback/warm/stop', { method: 'POST', body: { playSessionId: n.ps }, ...(keepalive ? { keepalive: true } : {}) }).catch(() => undefined);
 }
+
+/** the tab closes or navigates away hard: an unused warm-up is stopped now, not by the media server's idle kill */
+export function stopNextOnHide(): void {
+  if (next) stopNext(next, true);
+}
+let hideHooked = false;
 
 /** prepares (and with `warm`, pre-starts) the next episode; again for the same item and body only cancels a pending release */
 export function prepareNext(itemId: string, body: InfoBody, o: { warm: boolean }): void {
@@ -141,6 +152,7 @@ export function prepareNext(itemId: string, body: InfoBody, o: { warm: boolean }
   const key = nextKey(body), profile = getActiveProfile();
   if (next && next.itemId === itemId && next.key === key && next.profile === profile) { clearTimeout(next.grace); return; }
   if (next) stopNext(next);
+  if (!hideHooked && typeof window.addEventListener === 'function') { hideHooked = true; window.addEventListener('pagehide', stopNextOnHide); }
   const n: Next = { itemId, key, profile, at: Date.now(), ac: new AbortController(), sent: false, taken: false, promise: api<PlaybackDto>('/api/playback/info', { method: 'POST', body }) };
   next = n;
   n.ttl = setTimeout(() => stopNext(n), PREFETCH_TTL_MS);

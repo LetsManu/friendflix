@@ -34,7 +34,7 @@
   import QualityChip from '#lib/player/QualityChip.svelte';
   import { speedLabel, SPEEDS } from '#lib/player/bar';
   import { appCaps } from '#lib/webos/caps';
-  import { isProbedBlock, noteDirectFailure } from '#lib/player/devicecaps';
+  import { capsPending, isFormatFailure, isProbedBlock, noteDirectFailure } from '#lib/player/devicecaps';
   import { firstFrameMs, watchFirstFrame } from '#lib/player/firstframe';
   import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
   import { holdPrefetch, prepareNext, releaseNext, takeNext, takePrefetched } from '#lib/player/prefetch';
@@ -466,6 +466,8 @@
     const audioLang = fr?.body.audioLang;
     if (first) reqHint = quality ? 'manual' : 'network'; // a saved quality is a pick, otherwise the network chooses
     const sentBps = wantBps();
+    // first start: the device's decode probe (bounded) answers first, so this body equals the play button's prefetch body
+    if (first) { const w = capsPending(); if (w) await w; }
     const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: appCaps() });
     probedCaps = isProbedBlock(body.caps);
     const ask = () => api<Info | null>('/api/playback/info', { method: 'POST', body });
@@ -575,9 +577,9 @@
   let retryViaLoad = false;
   /** keepIntent: the first-frame watcher fires before `canplay` ever came (the element is still paused), so a pending play intent survives the switch */
   function forceHls(pos: number, keepIntent = false) {
-    // a probed claim did not hold (a decode error, or metadata but no picture in time; a watchdog with no metadata at all can be a slow
-    // line, not the format): this retry is HLS (H.264), later starts of this device send the safe profile
-    if (mode === 'direct' && probedCaps && (!keepIntent || (video?.readyState ?? 0) >= 1)) noteDirectFailure();
+    // a probed claim did not hold (devicecaps.ts isFormatFailure: a decode error, or metadata but no picture; an HTTP error or a slow
+    // line before any metadata is not the format): this retry is HLS (H.264), later starts of this device send no block for 7 days
+    if (mode === 'direct' && probedCaps && isFormatFailure({ watchdog: keepIntent, code: video?.error?.code, readyState: video?.readyState ?? 0 })) noteDirectFailure();
     rec.forcedHls = true; errPos = pos; flash(tr('player.switchingTranscode'), 2500); wantAutoplay = keepIntent ? wantAutoplay || !paused : !paused; void load(pos); }
   function recover(kind: ErrorKind, viaLoad = false) {
     if (handedOff || airOn || airInfo || airState.busy) return;

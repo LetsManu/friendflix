@@ -392,19 +392,19 @@ test('a plain browser on the unpaired pairing page ignores the LG Back key', asy
   await expect(page).toHaveURL(/\/tv\?ff_app=webos$/);
 });
 
-test('a normal browser sends no caps, even with ff_app=webos', async ({ page, api: _api }) => {
+test('a normal browser sends its own probed caps (client web), never the LG block, even with ff_app=webos', async ({ page, api: _api }) => {
   await pairedTv(page);
   const bodies = await playerWithInfo(page);
   await page.goto('/watch/' + MOVIE.id + '?ff_app=webos');
   await videoReady(page);
   expect(bodies.length).toBeGreaterThan(0);
-  expect(bodies[0]).not.toHaveProperty('caps');
+  expect(bodies[0]?.caps?.client).toBe('web');
 });
 
-test('a plain desktop browser (no ff_app, no PalmSystem) sends no caps', async ({ page, api: _api }) => {
+test('a plain desktop browser (no ff_app, no PalmSystem) sends its own probed caps (client web)', async ({ page, api: _api }) => {
   const bodies = await playerWithInfo(page);
   await page.goto('/watch/' + MOVIE.id);
   await videoReady(page);
   expect(bodies.length).toBeGreaterThan(0);
-  expect(bodies[0]).not.toHaveProperty('caps');
+  expect(bodies[0]?.caps?.client).toBe('web');
 });

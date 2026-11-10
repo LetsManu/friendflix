@@ -3,8 +3,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { APP_VERSION } from '#lib/version/codenames';
 import {
-  _resetDeviceCaps, buildDeviceCaps, CACHE_KEY, confirmsType, decodeQueries, deviceCaps, inSafeMode, isProbedBlock, MIME, noteDirectFailure, PROBE_VERSION,
-  runDecodeQueries, SAFE_KEY, safeCaps, warmDeviceCaps, type DecodeQuery, type DeviceDeps, type ProbeEnv,
+  _resetDeviceCaps, buildDeviceCaps, CACHE_KEY, capsPending, confirmsType, decodeQueries, deviceCaps, inSafeMode, isFormatFailure, isProbedBlock, MIME, noteDirectFailure,
+  PROBE_VERSION, runDecodeQueries, SAFE_KEY, SAFE_MS, warmDeviceCaps, type DecodeQuery, type DeviceDeps, type ProbeEnv,
 } from './devicecaps';
 
 const O = { client: 'web' as const, appVersion: '3.1.0' };
@@ -44,7 +44,7 @@ describe('buildDeviceCaps', () => {
     expect(c.video[0]!.profiles).toEqual(['constrained baseline', 'baseline', 'main', 'high', 'high 10']);
     expect(c.video[1]).toMatchObject({ codec: 'hevc', profiles: ['main', 'main 10'], tags: ['hvc1', 'hev1'] });
     expect(c.audio).toEqual(['aac', 'mp3', 'opus', 'flac', 'vorbis', 'ac3', 'eac3']);
-    expect(c.containers).toEqual(['mp4', 'm4v', 'webm', 'mov', 'mkv', 'ts']);
+    expect(c.containers).toEqual(['mp4', 'm4v', 'webm', 'mov', 'mkv']); // never ts in a browser (only MSE plays it)
     expect(c.subtitles).toEqual(['srt', 'ass', 'ssa', 'vtt']);
     expect(c.ranges).toEqual(['sdr']); // no HDR claim without a decode probe
   });
@@ -55,6 +55,25 @@ describe('buildDeviceCaps', () => {
     expect(c.video[0]!.profiles).not.toContain('high 10');
     expect(c.audio).toEqual(['aac', 'mp3', 'opus', 'flac', 'vorbis']);
     expect(c.containers).toEqual(['mp4', 'm4v', 'webm']);
+  });
+
+  it('browsers: MKV / MOV only on probably for a codec-qualified type, a bare maybe is not enough; Tizen keeps the bare check', () => {
+    // Chromium: x-matroska -> maybe, x-matroska with avc1 -> probably
+    const chromium = (strictMkv: boolean): ProbeEnv => ({
+      canPlayType: (m) => (m === 'video/x-matroska' || m === 'video/quicktime' ? 'maybe' : m.startsWith('video/x-matroska;') ? (strictMkv ? 'probably' : 'maybe') : m.startsWith('video/quicktime;') ? '' : /codecs=/.test(m) ? 'probably' : 'maybe'),
+      hdrDisplay: false,
+    });
+    expect(buildDeviceCaps(chromium(true), O, new Map())!.containers).toEqual(['mp4', 'm4v', 'webm', 'mkv']);
+    expect(buildDeviceCaps(chromium(false), O, new Map())!.containers).toEqual(['mp4', 'm4v', 'webm']);
+    expect(buildDeviceCaps(chromium(false), { client: 'tizen', appVersion: '1.0.0' }, new Map())!.containers).toEqual(['mp4', 'm4v', 'webm', 'mov', 'mkv', 'ts']);
+  });
+
+  it('H.264 High 10 needs its decode probe where the API exists (not claimed while it is pending)', () => {
+    const high10 = `${MIME.h264[4]!.mime}@1080`;
+    expect(buildDeviceCaps(env(all, withApi), O, decoded((k) => k === high10))!.video[0]!.profiles).not.toContain('high 10');
+    expect(buildDeviceCaps(env(all, withApi), O, decoded())!.video[0]!.profiles).toContain('high 10');
+    expect(buildDeviceCaps(env(all, withApi), O, null)!.video[0]!.profiles).not.toContain('high 10');
+    expect(decodeQueries().has(high10)).toBe(true);
   });
 
   it('Safari-like: hvc1 yes, hev1 no -> the tag condition keeps hev1 files off direct play', () => {
@@ -113,6 +132,20 @@ describe('buildDeviceCaps', () => {
   });
 });
 
+describe('isFormatFailure (what arms the 7-day fallback)', () => {
+  it('a decode error, or any failure after metadata arrived, counts', () => {
+    expect(isFormatFailure({ watchdog: false, code: 3, readyState: 0 })).toBe(true);
+    expect(isFormatFailure({ watchdog: false, code: 4, readyState: 1 })).toBe(true);
+    expect(isFormatFailure({ watchdog: true, readyState: 2 })).toBe(true);
+  });
+  it('an HTTP error / network failure before any metadata (code 4 or 2, readyState 0) or a slow watchdog does not', () => {
+    expect(isFormatFailure({ watchdog: false, code: 4, readyState: 0 })).toBe(false);
+    expect(isFormatFailure({ watchdog: false, code: 2, readyState: 0 })).toBe(false);
+    expect(isFormatFailure({ watchdog: false, code: null, readyState: 0 })).toBe(false);
+    expect(isFormatFailure({ watchdog: true, readyState: 0 })).toBe(false);
+  });
+});
+
 describe('runDecodeQueries', () => {
   it('asks every query once; a rejection is "not supported"', async () => {
     const seen: DecodeQuery[] = [];
@@ -153,29 +186,65 @@ describe('this device: cache, sync claims, safe mode', () => {
 
   it('another user agent, another probe version or an old entry probes again', async () => {
     store = new Map(); now = 1_000_000;
-    store.set(CACHE_KEY, JSON.stringify({ v: PROBE_VERSION, ua: 'UA/0', at: now, caps: safeCaps(O) }));
+    store.set(CACHE_KEY, JSON.stringify({ v: PROBE_VERSION, ua: 'UA/0', at: now, caps: { ...buildDeviceCaps(env(all), O, new Map())!, audio: ['aac'] } }));
     fresh();
-    expect(codecs(deviceCaps())).toEqual(['h264']); // not the cached safe block of the other UA
-    store.set(CACHE_KEY, JSON.stringify({ v: PROBE_VERSION - 1, ua: 'UA/1', at: now, caps: safeCaps(O) }));
+    expect(codecs(deviceCaps())).toEqual(['h264']); // not the cached block of the other UA
+    store.set(CACHE_KEY, JSON.stringify({ v: PROBE_VERSION - 1, ua: 'UA/1', at: now, caps: { ...buildDeviceCaps(env(all), O, new Map())!, audio: ['aac'] } }));
     fresh();
     expect(deviceCaps()!.audio).toContain('opus');
-    store.set(CACHE_KEY, JSON.stringify({ v: PROBE_VERSION, ua: 'UA/1', at: now - 8 * 86_400_000, caps: safeCaps(O) }));
+    store.set(CACHE_KEY, JSON.stringify({ v: PROBE_VERSION, ua: 'UA/1', at: now - 8 * 86_400_000, caps: { ...buildDeviceCaps(env(all), O, new Map())!, audio: ['aac'] } }));
     fresh();
     expect(deviceCaps()!.audio).toContain('opus');
   });
 
-  it('after a failed direct play the device sends the safe profile for 30 days, until its user agent changes', () => {
+  it('after a failed direct play the device sends no block (the old server browser list) for 7 days, until its user agent changes', () => {
     store = new Map(); now = 1_000_000; fresh();
     expect(inSafeMode()).toBe(false);
     noteDirectFailure();
     expect(inSafeMode()).toBe(true);
-    expect(deviceCaps()).toEqual(safeCaps({ client: 'web', appVersion: APP_VERSION }));
-    expect(deviceCaps()!.video[0]!.profiles).not.toContain('high 10');
+    expect(deviceCaps()).toBeNull();
+    expect(capsPending()).toBeNull(); // nothing to wait for either
+    expect(SAFE_MS).toBe(7 * 86_400_000);
     fresh({ ua: 'UA/2' });
     expect(inSafeMode()).toBe(false);
     fresh();
-    now += 31 * 86_400_000;
+    now += 8 * 86_400_000;
     expect(inSafeMode()).toBe(false);
+  });
+
+  it('a new failure during the period does not restart it', () => {
+    store = new Map(); now = 1_000_000; fresh();
+    noteDirectFailure();
+    now += 6 * 86_400_000;
+    noteDirectFailure();
+    expect(JSON.parse(store.get(SAFE_KEY)!).at).toBe(1_000_000);
+    now += 2 * 86_400_000;
+    expect(inSafeMode()).toBe(false);
+  });
+
+  it('the cache follows the screen: HDR on/off at probe time differs -> probe again', async () => {
+    store = new Map(); now = 1_000_000;
+    fresh({ env: env(all, { ...withApi, hdrDisplay: true }) });
+    await warmDeviceCaps();
+    expect(deviceCaps()!.ranges).toContain('hdr10');
+    expect(JSON.parse(store.get(CACHE_KEY)!).hdr).toBe(true);
+    fresh({ env: env(all, { ...withApi, hdrDisplay: false }) });
+    expect(deviceCaps()!.ranges).toEqual(['sdr']); // not the cached HDR claims
+    fresh({ env: env(all, { ...withApi, hdrDisplay: true }) });
+    expect(deviceCaps()!.ranges).toContain('hdr10'); // same screen state: cache hit
+  });
+
+  it('capsPending waits (bounded) only while the probe runs', async () => {
+    store = new Map(); now = 1_000_000;
+    fresh({ env: env(all, { decodingInfo: () => new Promise(() => undefined) }) }); // never answers
+    const t0 = Date.now();
+    await capsPending(30);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(25);
+    fresh();
+    await capsPending();
+    expect(capsPending()).toBeNull(); // probed: nothing to wait for
+    fresh({ env: null });
+    expect(capsPending()).toBeNull();
   });
 
   it('blocked storage: still probes, nothing remembered, nothing thrown', async () => {
