@@ -171,7 +171,7 @@ const fr: Translation<typeof de> = {
     now: 'Maintenant',
     minutes: '{n} min',
     episodeOf: 'Épisode {n} sur {m}',
-    played: '{time} regardées',
+    played: '{time} regardé',
     left: 'encore {time}',
     prev: 'Épisode précédent',
     prevNone: 'Épisode précédent (aucun : c’est le premier)',

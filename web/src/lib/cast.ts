@@ -12,7 +12,7 @@
  */
 import { get, writable } from 'svelte/store';
 import { api } from '#lib/api';
-import { castLog } from '#lib/cast/castLog';
+import { castLog, noteCastDevice } from '#lib/cast/castLog';
 
 declare global {
   interface Window {
@@ -162,6 +162,7 @@ function queueOf(ms: MediaT | null): CastState['queue'] {
   const items = ms?.items ?? [];
   const id = ms?.currentItemId;
   const cur = id === undefined ? 0 : items.findIndex((q) => q.itemId === id);
+  if (cur < 0) return []; // the playing item is not in the list: do not mistake it for a queued one
   return items.slice(cur + 1).map((q) => ({ itemId: q.itemId, contentId: q.media?.contentId ?? '', castId: castIdOf(q.media) }));
 }
 
@@ -306,7 +307,12 @@ function setup() {
     emit('session-resume');
   }
 }
-const deviceName = () => ctxT?.getCurrentSession()?.getCastDevice().friendlyName ?? 'unknown device';
+/** the TV's name for a log line; remembered so the copied report can anonymise it later */
+const deviceName = () => {
+  const n = ctxT?.getCurrentSession()?.getCastDevice().friendlyName ?? 'unknown device';
+  noteCastDevice(n);
+  return n;
+};
 
 /** Opens the browser's device picker (must run from a click). Resolves when a session started or the picker was dismissed. */
 export async function requestCastSession(): Promise<boolean> {
@@ -442,6 +448,8 @@ export function castLeave() {
 
 /** a failed test clip is given up after this long */
 const TEST_CLIP_TIMEOUT_MS = 20_000;
+/** after the first frame the clip is watched this long for its end (the clip is 6 s) */
+const TEST_CLIP_WATCH_MS = 60_000;
 /**
  * Diagnose: loads a short MP4 (no tracks, no token) on the current session and measures LOAD -> first PLAYING.
  * `endAfter`: the caller opened the session for the test; it ends (the receiver app stops) when the clip is finished.
@@ -451,7 +459,8 @@ export function castTestClip(url: string, title: string, opts: { endAfter?: bool
   const sess = ctxT?.getCurrentSession(), ch = window.chrome?.cast;
   if (!sess || !ch) return Promise.resolve({ ok: false, firstFrameMs: null });
   const m = ch.media;
-  const media = new m.MediaInfo(url, 'video/mp4');
+  const abs = new URL(url, location.href).href; // the TV cannot resolve a relative path
+  const media = new m.MediaInfo(abs, 'video/mp4');
   media.streamType = m.StreamType.BUFFERED;
   const meta = new m.MovieMediaMetadata();
   meta.metadataType = m.MetadataType.MOVIE;
@@ -466,14 +475,15 @@ export function castTestClip(url: string, title: string, opts: { endAfter?: bool
     const t0 = Date.now();
     const offStore = castState.subscribe((s) => {
       if (first) { first = false; return; } // the value at subscription time is not an update of this clip
-      if (s.contentId && s.contentId !== url) return;
-      if (!playing && s.state === 'playing') { playing = true; finish(true); }
-      else if (playing && opts.endAfter && s.state === 'idle' && s.idleReason === 'FINISHED') { cleanup(); ctxT?.endCurrentSession(true); }
+      if (s.contentId && s.contentId !== abs) { if (playing) cleanup(); return; } // something else took over
+      if (!playing && s.state === 'playing') { playing = true; finish(true); capTimer = setTimeout(cleanup, TEST_CLIP_WATCH_MS); }
+      else if (playing && s.state === 'idle') { cleanup(); if (opts.endAfter && s.idleReason === 'FINISHED') ctxT?.endCurrentSession(true); }
       else if (!playing && s.idleReason === 'ERROR') finish(false);
     });
     const offEvents = onCastEvent((e) => { if (e === 'session-end') { if (!playing) finish(false); cleanup(); } });
     const timer = setTimeout(() => finish(false), TEST_CLIP_TIMEOUT_MS);
-    function cleanup() { clearTimeout(timer); offStore(); offEvents(); }
+    let capTimer: ReturnType<typeof setTimeout> | undefined;
+    function cleanup() { clearTimeout(timer); clearTimeout(capTimer); offStore(); offEvents(); }
     function finish(ok: boolean) {
       if (settled) return;
       settled = true;

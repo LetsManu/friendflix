@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { CAST_LOG_KEY, CAST_LOG_MAX, castLog, castReport, clearCastLog, readCastLog, scrub } from './castLog';
+import { CAST_LOG_KEY, CAST_LOG_MAX, castLog, castLogDevices, castReport, clearCastLog, noteCastDevice, readCastLog, scrub } from './castLog';
 import type { Store } from './resume';
 
 const mem = (): Store & { data: Map<string, string> } => {
@@ -12,13 +12,17 @@ const mem = (): Store & { data: Map<string, string> } => {
 describe('scrub', () => {
   it('scrub removes urls, tokens, ids and addresses', () => {
     const out = scrub(
-      'load https://friend.example.com/x failed, /media/c/AbC123_-/Videos/1/master.m3u8 id ' + 'a1'.repeat(16) + ' from 192.0.2.7 and 2001:db8::5 via ::1 ' + 'Zz9_-'.repeat(8),
+      'load https://friend.example.com/x wss://friend.example.com/socket failed, /media/c/AbC123_-/Videos/1/master.m3u8 id ' + 'a1'.repeat(16) + ' from 192.0.2.7 and 2001:db8::5 via ::1 ' + 'Zz9_-'.repeat(8),
     );
     for (const bad of ['friend.example.com', '/media/c/', 'AbC123', 'a1a1a1', '192.0.2.7', '2001:db8', '::1', 'Zz9_-Zz9_-']) expect(out, bad).not.toContain(bad);
     expect(out).toContain('…');
   });
   it('keeps ordinary event text, clock times and episode labels', () => {
     expect(scrub('loaded S1 E4 from 00:12:30, 2 reconnects')).toBe('loaded S1 E4 from 00:12:30, 2 reconnects');
+  });
+  it('removes IPv4-mapped IPv6 literals and scheme-relative URLs', () => {
+    const out = scrub('peer ::ffff:192.0.2.7 and //friend.example.com/x');
+    expect(out).not.toMatch(/192\.0\.2|ffff|friend\.example/);
   });
   it('removes full IPv6 literals', () => {
     expect(scrub('peer 2001:0db8:0000:0000:0000:0000:0000:0005 gone')).toBe('peer … gone');
@@ -66,6 +70,28 @@ describe('report', () => {
     expect(r).not.toContain('Wohnzimmer');
     expect(r).not.toContain('Küche');
     expect(r).toContain('Session: Connected to TV 1');
+  });
+  it('anonymises names of earlier sessions kept in the device list, longest name first', () => {
+    const s = mem();
+    noteCastDevice('Küche', s);
+    noteCastDevice('Wohnzimmer-TV', s);
+    noteCastDevice('TV', s);
+    noteCastDevice('Küche', s);
+    expect(castLogDevices(s)).toEqual(['Wohnzimmer-TV', 'TV', 'Küche']);
+    castLog({ level: 'info', tag: 'session', text: 'session started · Küche' }, 1, s);
+    const entries = readCastLog(s);
+    const r = castReport({ rows: [['Playing', 'on TV']], entries: [...entries, { at: 2, level: 'info', tag: 'session', text: 'Wohnzimmer-TV ok' }], air: '', devices: castLogDevices(s) });
+    expect(r).not.toContain('Küche');
+    expect(r).not.toContain('Wohnzimmer');
+    expect(r).toContain('Playing: on TV 1');
+    expect(r).toMatch(/session started · TV 2/);
+    expect(r).toMatch(/TV 3 ok/);
+    expect(r).toMatch(/times UTC[+-]\d\d:\d\d/);
+    clearCastLog(s);
+    expect(castLogDevices(s)).toEqual([]);
+    expect(() => noteCastDevice('x', null)).not.toThrow();
+    s.data.set('ff-castlog-devices', '{}');
+    expect(castLogDevices(s)).toEqual([]);
   });
   it('scrubs rows and the AirPlay log, and handles empty input', () => {
     const r = castReport({ rows: [['Pass', 'https://friend.example.com/media/c/x']], entries: [], air: 'peer 192.0.2.4', devices: [] });

@@ -17,10 +17,10 @@ const IPV6 = new RegExp(`(?:${H}:){7}${H}|(?:${H}:){1,7}:(?:${H}(?::${H}){0,6})?
 /** replaces everything that could identify a stream, an item or a network with `…` */
 export function scrub(text: string): string {
   return text
-    .replace(/https?:\/\/\S+/gi, '…')
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, '…')
+    .replace(/(^|\s)\/\/\S+/g, '$1…')
     .replace(/\/media\/c\/\S*/g, '…')
-    .replace(/\b[0-9a-f]{32,}\b/gi, '…')
-    .replace(/[A-Za-z0-9_-]{32,}/g, '…')
+    .replace(/[A-Za-z0-9_-]{32,}/g, '…') // also covers 32+ hex ids
     .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '…')
     .replace(IPV6, '…');
 }
@@ -52,8 +52,27 @@ export function castLog(e: Omit<CastLogEntry, 'at'>, now: number = Date.now(), s
     store.setItem(CAST_LOG_KEY, JSON.stringify(list.slice(-CAST_LOG_MAX)));
   } catch { /* storage full or blocked */ }
 }
+export const CAST_LOG_DEVICES_KEY = 'ff-castlog-devices';
+/** remembers a TV's name seen in the log (at most 20) so the copied report can anonymise names of earlier sessions too */
+export function noteCastDevice(name: string, store: Store = defaultStore()): void {
+  const n = name.trim().slice(0, 80);
+  if (!n || !store) return;
+  try {
+    const list = castLogDevices(store).filter((d) => d !== n);
+    list.push(n);
+    store.setItem(CAST_LOG_DEVICES_KEY, JSON.stringify(list.slice(-20)));
+  } catch { /* storage full or blocked */ }
+}
+export function castLogDevices(store: Store = defaultStore()): string[] {
+  try {
+    const a: unknown = JSON.parse(store?.getItem(CAST_LOG_DEVICES_KEY) ?? '[]');
+    return Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
 export function clearCastLog(store: Store = defaultStore()): void {
-  try { store?.removeItem(CAST_LOG_KEY); } catch { /* storage blocked */ }
+  try { store?.removeItem(CAST_LOG_KEY); store?.removeItem(CAST_LOG_DEVICES_KEY); } catch { /* storage blocked */ }
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -63,10 +82,12 @@ const stamp = (at: number) => {
 };
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** the plain-text report for a bug report: card rows, the events, the AirPlay log; device names become "TV 1", "TV 2" by first appearance */
+/** the plain-text report for a bug report (for maintainers: headings stay English; times are local, the header names the offset): card rows, the events, the AirPlay log; device names become "TV 1", "TV 2" by first appearance */
 export function castReport(o: { rows: Array<[string, string]>; entries: CastLogEntry[]; air: string; devices: string[] }): string {
+  const off = -new Date().getTimezoneOffset();
+  const zone = `UTC${off < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
   const text = [
-    'FriendFlix casting report',
+    `FriendFlix casting report (times ${zone})`,
     '',
     ...o.rows.map(([k, v]) => `${k}: ${scrub(v)}`),
     '',
@@ -78,10 +99,9 @@ export function castReport(o: { rows: Array<[string, string]>; entries: CastLogE
   ].join('\n');
   const names = [...new Set(o.devices.map((d) => d.trim()).filter(Boolean))];
   if (!names.length) return text;
-  // number by first appearance in the text; names that do not appear get the numbers after
-  const first = (n: string) => { const i = text.indexOf(n); return i < 0 ? Number.MAX_SAFE_INTEGER : i; };
-  const label = new Map<string, string>();
-  [...names].sort((a, b) => first(a) - first(b)).forEach((n, i) => label.set(n, `TV ${i + 1}`));
+  // longest names first, so a name inside another one never splits it; numbered by the first match in the text
   const re = new RegExp([...names].sort((a, b) => b.length - a.length).map(esc).join('|'), 'g');
-  return text.replace(re, (m) => label.get(m) ?? m);
+  const label = new Map<string, string>();
+  for (const m of text.matchAll(re)) if (!label.has(m[0])) label.set(m[0], `TV ${label.size + 1}`);
+  return text.replace(re, (m) => label.get(m)!);
 }

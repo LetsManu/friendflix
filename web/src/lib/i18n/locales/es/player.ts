@@ -142,7 +142,7 @@ const es: Translation<typeof de> = {
     hint: 'Este es tu mando. Puedes cerrar esta pestaña; la tele sigue reproduciendo.',
     hintDismiss: 'Ocultar la sugerencia',
     upNext: 'A continuación',
-    startsBySelf: 'Empieza sola en la tele.',
+    startsBySelf: 'Empieza solo en la tele.',
     startsIn: 'Empieza en {n} s',
     waits: 'Empieza cuando tú quieras.',
     onUnlock: 'Si el iPhone está bloqueado, empieza al desbloquearlo.',

@@ -142,7 +142,7 @@ const it: Translation<typeof de> = {
     hint: 'Questo è il tuo telecomando. Puoi chiudere questa scheda, il televisore continua a riprodurre.',
     hintDismiss: 'Nascondi il suggerimento',
     upNext: 'Prossimo',
-    startsBySelf: 'Parte da sola sul televisore.',
+    startsBySelf: 'Parte da solo sul televisore.',
     startsIn: 'Parte tra {n} s',
     waits: 'Parte quando vuoi.',
     onUnlock: 'Se l’iPhone è bloccato, parte quando lo sblocchi.',

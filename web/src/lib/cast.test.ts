@@ -88,7 +88,7 @@ beforeEach(async () => {
     head: { appendChild: (s: { src: string; async: boolean }) => scripts.push(s) },
   });
   vi.stubGlobal('window', win);
-  vi.stubGlobal('location', { pathname: '/', href: '/' });
+  vi.stubGlobal('location', { pathname: '/', href: 'https://friend.example.com/' });
   vi.stubGlobal('fetch', fetchMock);
   vi.resetModules();
   C = await import('./cast');
@@ -508,6 +508,15 @@ describe('resume plumbing', () => {
     expect(get(C.castState).castId).toBe('');
   });
 
+  it('an unknown currentItemId gives an empty queue, never the playing item', async () => {
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.mediaSession.items.push({ itemId: 1, media: { contentId: 'https://p/a.m3u8' } }, { itemId: 2, media: { contentId: 'https://p/b.m3u8' } });
+    sdk.mediaSession.currentItemId = 9;
+    sdk.change({ isConnected: true, isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: 'https://p/c.m3u8' } });
+    expect(get(C.castState).queue).toEqual([]);
+  });
+
   it('the first queue item counts as playing without a current item id', async () => {
     const sdk = await connectSdk();
     sdk.context.current = sdk.session;
@@ -586,6 +595,50 @@ describe('castTestClip', () => {
     sdk.change({ isMediaLoaded: false, playerState: 'IDLE' });
     expect(sdk.context.endCurrentSession).toHaveBeenCalledTimes(1);
     expect(sdk.context.endCurrentSession).toHaveBeenCalledWith(true);
+  });
+
+  it('does not end a later real cast after something else took over the receiver', async () => {
+    vi.useFakeTimers();
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.change({ isConnected: true, playerState: 'IDLE' });
+    const p = C.castTestClip(CLIP, 't', { endAfter: true });
+    sdk.change({ isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: CLIP } });
+    await p;
+    sdk.change({ mediaInfo: { contentId: 'https://friend.example.com/media/c/T/x.m3u8' } }); // a real title was loaded
+    sdk.mediaSession.idleReason = 'FINISHED';
+    sdk.change({ isMediaLoaded: false, playerState: 'IDLE', mediaInfo: null });
+    expect(sdk.context.endCurrentSession).not.toHaveBeenCalled();
+  });
+
+  it('stops watching the clip when the TV stopped it, and after 60 s', async () => {
+    vi.useFakeTimers();
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.change({ isConnected: true, playerState: 'IDLE' });
+    const p = C.castTestClip(CLIP, 't', { endAfter: true });
+    sdk.change({ isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: CLIP } });
+    await p;
+    sdk.mediaSession.idleReason = 'CANCELLED';
+    sdk.change({ isMediaLoaded: false, playerState: 'IDLE' });
+    sdk.mediaSession.idleReason = 'FINISHED';
+    sdk.change({ currentTime: 1 });
+    expect(sdk.context.endCurrentSession).not.toHaveBeenCalled();
+    const p2 = C.castTestClip(CLIP, 't', { endAfter: true });
+    sdk.change({ isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: CLIP } });
+    await p2;
+    await vi.advanceTimersByTimeAsync(60_000);
+    sdk.change({ isMediaLoaded: false, playerState: 'IDLE' });
+    expect(sdk.context.endCurrentSession).not.toHaveBeenCalled();
+  });
+
+  it('sends the TV an absolute URL for a relative path', async () => {
+    vi.stubGlobal('location', { pathname: '/', href: 'https://friend.example.com/diagnose' });
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    void C.castTestClip('/cast-test/clip.mp4', 't');
+    const req = sdk.session.loadMedia.mock.calls[0]![0];
+    expect(req.args[0].args[0]).toBe('https://friend.example.com/cast-test/clip.mp4');
   });
 
   it('leaves the session alone when the caller did not open it', async () => {
