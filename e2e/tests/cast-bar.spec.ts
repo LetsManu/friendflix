@@ -12,8 +12,7 @@ import type { Page } from '@playwright/test';
 /** a client-side navigation by a link click (a full page load would fire pagehide and end the cast) */
 const clientNav = (page: Page, path: string) => page.evaluate((path) => { const a = document.createElement('a'); a.href = path; document.body.appendChild(a); a.click(); a.remove(); }, path);
 async function leaveWatch(page: Page) {
-  await page.locator('.stage').hover();
-  await page.getByRole('button', { name: 'Zurück', exact: true }).click();
+  await page.getByRole('button', { name: 'Fernbedienung schließen' }).click();
   await expect(page).toHaveURL(/\/$/);
 }
 /**
@@ -146,11 +145,11 @@ test('episode end on the TV while the watch page is open: its next card counts d
   // the engine asks for the receiver-queue token of episode 2 at the first position update (the fake SDK refuses the queue)
   await expect.poll(() => sessions.filter((b) => b.next).map((b) => b.itemId)).toEqual([episodes[1]!.id]);
   await sdk.nearEnd();
-  await expect.poll(() => page.locator('.track[role=slider]').evaluate((el) => Number(el.getAttribute('aria-valuemax')) - Number(el.getAttribute('aria-valuenow')))).toBeLessThan(10);
+  await expect.poll(() => page.getByRole('slider', { name: 'Position auf dem Fernseher' }).evaluate((el) => Number(el.getAttribute('aria-valuemax')) - Number(el.getAttribute('aria-valuenow')))).toBeLessThan(10);
   await sdk.finish();
-  const card = page.getByRole('group', { name: 'Nächste Folge' });
+  const card = page.getByRole('region', { name: 'Als Nächstes' });
   await expect(card).toContainText(`S1:E2 · ${episodes[1]!.name}`);
-  await expect(card).toContainText(/in \d+ s/);
+  await expect(card).toContainText(/Startet in \d+ s/);
   await expect(page).toHaveURL(new RegExp('/watch/' + episodes[1]!.id), { timeout: 15_000 });
   await expect(page.locator('.castov')).toContainText('Wird auf Wohnzimmer-TV abgespielt');
   await expect(card).toHaveCount(0);
@@ -165,13 +164,12 @@ test('closing the next card on the watch page stops the TV countdown', async ({ 
   const { sdk, sessions } = await castOnWatch(page, { id: episodes[0]!.id });
   await nextAfterFirst(page);
   await sdk.nearEnd();
-  await expect.poll(() => page.locator('.track[role=slider]').evaluate((el) => Number(el.getAttribute('aria-valuemax')) - Number(el.getAttribute('aria-valuenow')))).toBeLessThan(10);
+  await expect.poll(() => page.getByRole('slider', { name: 'Position auf dem Fernseher' }).evaluate((el) => Number(el.getAttribute('aria-valuemax')) - Number(el.getAttribute('aria-valuenow')))).toBeLessThan(10);
   await sdk.finish();
-  const card = page.getByRole('group', { name: 'Nächste Folge' });
-  await page.locator('.stage').hover();
+  const card = page.getByRole('region', { name: 'Als Nächstes' });
   await card.getByRole('button', { name: 'Abbrechen' }).click();
   // the countdown stops; the episode stays offered (Play now), nothing starts by itself
-  await expect(card).not.toContainText(/in \d+ s/);
+  await expect(card).not.toContainText(/Startet in \d+ s/);
   await expect(card.getByRole('button', { name: 'Jetzt abspielen' })).toBeVisible();
   await page.waitForTimeout(11_000);
   expect(sessions.filter((b) => !b.next)).toHaveLength(1); // a `next` one is the receiver queue's (refused by the fake SDK, revoked)

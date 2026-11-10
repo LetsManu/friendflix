@@ -35,8 +35,7 @@ async function openWatch(page: Page, id = MOVIE.id) {
   await clientNav(page, '/watch/' + id);
 }
 async function leaveWatch(page: Page) {
-  await page.locator('.stage').hover();
-  await page.getByRole('button', { name: 'Zurück', exact: true }).click();
+  await page.getByRole('button', { name: 'Fernbedienung schließen' }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('.stage')).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { __sameDoc?: boolean }).__sameDoc)).toBe(true); // no page load in between
@@ -89,6 +88,7 @@ test('chromecast: Stop on the watch page ends the session and plays on locally',
   const box = page.locator('.castov');
   await expect(box).toContainText('Wird auf Wohnzimmer-TV abgespielt');
   await box.getByRole('button', { name: 'Übertragung beenden' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Wiedergabe auf Wohnzimmer-TV beenden', exact: true }).click(); // asks first
   await expect(box).toHaveCount(0);
   await expect.poll(() => sdk.calls()).toContain('endCurrentSession');
   await expect.poll(() => deleted).toEqual(['c'.repeat(32)]);
@@ -251,7 +251,7 @@ test('airplay: reopening the cast title attaches to the engine element', async (
   expect(infos).toBe(0);
 });
 
-test('airplay: the reopened remote offers the session\'s tracks and "change device"', async ({ page, api: _api }) => {
+test('airplay: the reopened remote offers "change device"', async ({ page, api: _api }) => {
   await stubAirPlay(page, { pickTv: true });
   await mockPlayer(page);
   await castOn(page);
@@ -261,7 +261,7 @@ test('airplay: the reopened remote offers the session\'s tracks and "change devi
     audioTracks: [{ index: 1, title: 'Deutsch', language: 'deu', isDefault: true }, { index: 2, title: 'English', language: 'eng', isDefault: false }],
     hlsUrl: '/media/hls/4000000/out.m3u8', maxBitrate: 4_000_000, transcodeReason: 'network',
   } }));
-  const { sessions } = await castSessions(page);
+  await castSessions(page);
   await openWatch(page);
   await airPlayToTv(page);
   await leaveWatch(page);
@@ -269,16 +269,8 @@ test('airplay: the reopened remote offers the session\'s tracks and "change devi
   const box = page.getByTestId('airplay-active');
   await expect(box).toContainText('Läuft über AirPlay');
   const picks0 = await picks(page);
-  await box.getByRole('button', { name: 'AirPlay-Gerät wechseln' }).click();
+  await box.getByRole('button', { name: 'Läuft über AirPlay, Fernseher wechseln' }).click();
   expect(await picks(page)).toBe(picks0 + 1); // the engine's controller opened the picker inside the tap
-  await page.locator('.stage').hover();
-  await page.getByRole('button', { name: 'Audio und Untertitel', exact: true }).click();
-  const menu = page.getByRole('dialog', { name: 'Audio und Untertitel' });
-  await expect(menu.getByRole('button', { name: 'Deutsch', exact: true })).toBeVisible();
-  await expect(menu.getByRole('button', { name: 'Deutsch (SDH)' })).toBeVisible();
-  await menu.getByRole('button', { name: 'English' }).click();
-  await expect.poll(() => sessions.length).toBe(2); // a new token with that track for the TV
-  expect(sessions[1]).toMatchObject({ itemId: MOVIE.id, audioIndex: 2, via: 'airplay' });
 });
 
 test.describe('party', () => {

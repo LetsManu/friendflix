@@ -23,8 +23,7 @@ test('Play on another title while casting keeps the page and updates the bar', a
   await videoReady(page);
   await sdk.start();
   await expect(page.locator('.castov')).toContainText('Wird auf Wohnzimmer-TV abgespielt');
-  await page.locator('.stage').hover();
-  await page.getByRole('button', { name: 'Zurück', exact: true }).click();
+  await page.getByRole('button', { name: 'Fernbedienung schließen' }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(castBar(page)).toContainText(MOVIE.name);
 

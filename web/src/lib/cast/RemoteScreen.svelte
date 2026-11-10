@@ -1,0 +1,374 @@
+<!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<script lang="ts">
+  /**
+   * The watch page while its title plays on a TV: the TV's remote (spec 2026-11-10 §1). It owns no media; it reads the engine's
+   * `castSession` and calls `castEngine`. The Player mounts it instead of its own controls and listens for `close` (back, like the
+   * Back button) and `pick` (the device chip: the picker).
+   */
+  import { createEventDispatcher, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
+  import { fade } from 'svelte/transition';
+  import { api, cachedItem, fmtClock, img } from '#lib/api';
+  import { castSetVolume, castState, castToggleMute } from '#lib/cast';
+  import { segmentShown, serverCaps } from '#lib/capabilities';
+  import Icon from '#lib/Icon.svelte';
+  import { t, tr } from '#lib/i18n';
+  import type { Segment } from '#lib/player/nextup';
+  import { motionAllowed } from '#lib/preview';
+  import { confirm } from '#lib/ui/confirm';
+  import { nextSecondsLeft } from './bar';
+  import { castEngine, castSession } from './engine';
+  import { castBackdrops, castThumbs, deviceLabel, playingLine } from './remoteview';
+  import { applePlatform, nowLine, remoteLayout, scrubberTarget, segmentMarks, statusOf, timeLine, volumeLine } from './remotescreen';
+
+  const dispatch = createEventDispatcher<{ close: void; pick: void }>();
+
+  $: s = $castSession;
+  $: air = s?.kind === 'airplay';
+  /** play / pause / seek only drive a TV that plays (connecting, reconnect, failed and ended have no live token) */
+  $: live = s?.state === 'playing';
+  let w = 0;
+  $: layout = remoteLayout(w || 1200);
+  $: phone = layout === 'phone';
+  $: st = s ? statusOf(s, $t) : null;
+
+  // ---- artwork: the fallback chain advances when an image fails ----
+  let bgI = 0, thI = 0, artFor = '';
+  $: bgs = s ? castBackdrops(s) : [];
+  $: thumbs = s ? castThumbs(s) : [];
+  $: if ((s?.itemId ?? '') !== artFor) { artFor = s?.itemId ?? ''; bgI = 0; thI = 0; }
+
+  // ---- what plays ----
+  $: item = s ? cachedItem(s.itemId) : undefined;
+  $: line = s ? nowLine(s, item, $t, phone) : '';
+
+  // ---- intro / recap marks on the track ----
+  let segs: Segment[] = [], segFor = '';
+  $: if (s && s.itemId !== segFor) { segFor = s.itemId; segs = []; void loadSegments(s.itemId); }
+  async function loadSegments(id: string) {
+    const caps = get(serverCaps);
+    if (!caps.segments.length) return;
+    try {
+      const r = await api<{ segments: Segment[] } | null>(`/api/items/${id}/segments`);
+      if (segFor === id) segs = (r?.segments ?? []).map((x) => ({ ...x, type: String(x.type).toLowerCase() })).filter((x) => segmentShown(caps, x.type));
+    } catch { /* no marks */ }
+  }
+  $: marks = s ? segmentMarks(segs, s.duration) : [];
+
+  // ---- scrubber ----
+  let railW = 0, drag: number | null = null, scrubEl: HTMLDivElement | undefined;
+  $: dur = s?.duration ?? 0;
+  $: pos = s?.position ?? 0;
+  $: frac = dur > 0 ? Math.min(1, Math.max(0, pos / dur)) : 0;
+  $: shown = drag ?? frac;
+  $: tl = s ? timeLine(drag === null ? s : { position: drag * dur, duration: dur }, $t) : null;
+  const BUBBLE_W = 64;
+  $: bubbleX = Math.min(Math.max(0, shown * railW - BUBBLE_W / 2), Math.max(0, railW - BUBBLE_W));
+  const fracAt = (e: PointerEvent): number => {
+    const r = scrubEl!.getBoundingClientRect();
+    return r.width > 0 ? Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) : 0;
+  };
+  function scrubDown(e: PointerEvent) {
+    if (!live || !(dur > 0) || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    scrubEl?.setPointerCapture(e.pointerId);
+    drag = fracAt(e);
+  }
+  function scrubMove(e: PointerEvent) { if (drag !== null) drag = fracAt(e); }
+  function scrubUp(e: PointerEvent) {
+    if (drag === null) return;
+    const f = fracAt(e);
+    drag = null;
+    castEngine.seek(f * dur);
+  }
+  function scrubKey(e: KeyboardEvent) {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const to = scrubberTarget(e.key, pos, dur);
+    if (to === null) return;
+    e.preventDefault();
+    e.stopPropagation(); // the Player's own seek keys would seek a second time
+    if (live) castEngine.seek(to);
+  }
+
+  // ---- transport ----
+  const playPause = () => { if (live) castEngine.playPause(); };
+  const seekBy = (d: number) => { if (live) castEngine.seek(Math.min(dur, Math.max(0, pos + d))); };
+  const goNext = () => { if (live || s?.state === 'ended') void castEngine.next(); };
+  async function stop() {
+    const c = get(castSession);
+    if (!c) return;
+    if (await confirm({ title: tr('player.castBar.stopQuestion', { device: c.device }), danger: true, confirmLabel: tr('player.castBar.stop', { device: c.device }) })) await castEngine.stop();
+  }
+  /** `reconnect` runs inside the tap (AirPlay opens the system picker, which needs the gesture) */
+  const reconnect = () => castEngine.reconnect();
+  const playHere = () => castEngine.release();
+
+  // ---- volume (Chromecast; AirPlay has the Apple device's own buttons) ----
+  $: vol = Math.round(Math.min(1, Math.max(0, $castState.volume)) * 100);
+  $: muted = $castState.muted;
+  const onVolume = (e: Event) => castSetVolume(Number((e.currentTarget as HTMLInputElement).value) / 100);
+  $: volHint = s ? volumeLine(s.kind, typeof navigator === 'undefined' ? null : applePlatform(navigator.userAgent, navigator.maxTouchPoints), $t) : null;
+
+  // ---- intro / recap skip ----
+  $: skip = live ? s?.skip ?? null : null;
+
+  // ---- next episode (the card's countdown ticks while it runs) ----
+  $: next = s && (s.state === 'playing' || s.state === 'ended') ? s.next ?? null : null;
+  let now = Date.now(), tick: ReturnType<typeof setInterval> | undefined;
+  $: counting = next?.startsAt != null;
+  $: if (counting && !tick) { now = Date.now(); tick = setInterval(() => (now = Date.now()), 250); } else if (!counting && tick) { clearInterval(tick); tick = undefined; }
+  onDestroy(() => clearInterval(tick));
+  $: secs = next ? nextSecondsLeft(next.startsAt, now) : null;
+  $: nextLine = secs !== null ? $t('player.castRemote.startsIn', { n: secs }) : $t('player.castRemote.waits');
+  let unImgFailed = '';
+</script>
+
+{#if s && tl && st}
+  <section class="rs castov" class:phone class:wide={layout === 'wide'} class:stacked={layout === 'stacked'} class:air
+    aria-busy={s.buffering || s.state === 'connecting' ? 'true' : undefined} data-testid={air ? 'airplay-active' : 'cast-active'} bind:clientWidth={w}>
+    {#if bgs[bgI]}<img class="bg" src={bgs[bgI]} alt="" aria-hidden="true" on:error={() => bgI++} />{/if}
+    <div class="shade" aria-hidden="true"></div>
+
+    <div class="wrap">
+      <div class="top" data-testid="cast-row">
+        <button type="button" class="frost-btn round close" aria-label={$t('player.castRemote.close')} title={$t('player.castRemote.close')} on:click={() => dispatch('close')}>
+          <Icon name={phone ? 'chevron-down' : 'chevron-left'} size={22} />
+        </button>
+        <button type="button" class="frost-btn chip" aria-label={air ? $t('player.castRemote.chipAirplay') : $t('player.castRemote.chip', { device: s.device })} title={air ? $t('player.castRemote.chipAirplay') : $t('player.castRemote.chip', { device: s.device })} on:click={() => dispatch('pick')}>
+          <Icon name={air ? 'airplay' : 'cast'} size={18} /><span class="ell">{deviceLabel(s)}</span><Icon name="chevron-down" size={16} />
+        </button>
+        <button type="button" class="frost-btn stopb" aria-label={$t('player.cast.stop')} title={$t('player.cast.stop')} on:click={stop}>
+          <Icon name="stop" size={18} /><span class="stoplbl">{$t(phone ? 'player.castRemote.stopShort' : 'player.cast.stop')}</span>
+        </button>
+      </div>
+
+      <div class="grid">
+        <section class="now frost frost-safe frost-panel" aria-labelledby="rs-title">
+          {#if !phone}
+            <div class="thumb">
+              {#if thumbs[thI]}<img src={thumbs[thI]} alt="" on:error={() => thI++} />{:else}<span class="ph"><Icon name="film" size={32} /></span>{/if}
+            </div>
+          {/if}
+          <div class="txt">
+            <p class="eyebrow">{playingLine(s, $t)}</p>
+            <h1 class="title" id="rs-title">{s.title}</h1>
+            {#if line}<p class="sub">{line}</p>{/if}
+          </div>
+        </section>
+
+        {#if s.isEpisode}
+          <div class="unslot">
+            {#if next}
+              <section class="un frost frost-safe frost-panel" aria-label={$t('player.castRemote.upNext')} transition:fade={{ duration: motionAllowed() ? 200 : 0 }}>
+                <div class="unthumb">
+                  {#if unImgFailed !== next.itemId}<img src={img(next.itemId, 320)} alt="" loading="lazy" on:error={() => (unImgFailed = next?.itemId ?? '')} />{:else}<span class="ph"><Icon name="film" size={26} /></span>{/if}
+                </div>
+                <div class="untxt">
+                  <p class="eyebrow">{$t('player.castRemote.upNext')}</p>
+                  <b class="ell unt">{next.label}</b>
+                  <span class="mut">{nextLine}</span>
+                </div>
+                <div class="unacts">
+                  {#if secs !== null}<button type="button" class="frost-btn" on:click={() => castEngine.cancelNext()}>{$t('common.cancel')}</button>{/if}
+                  <button type="button" class="frost-btn go" on:click={() => void castEngine.next()}><Icon name="play" size={18} />{$t('player.castRemote.playNow')}</button>
+                </div>
+              </section>
+            {/if}
+          </div>
+        {/if}
+      </div>
+
+      <div class="mid">
+        <div class="statrow">
+          <p class="stat" class:warn={st.tone === 'warn'} class:error={st.tone === 'error'} role="status">
+            {#if st.tone !== 'none'}<Icon name="alert" size={18} />{/if}{st.text}
+          </p>
+          {#if st.action === 'reconnect'}
+            <button type="button" class="frost-btn act" on:click={reconnect}><Icon name="refresh" size={18} />{$t('player.castRemote.reconnectBtn')}</button>
+          {:else if st.action === 'playHere'}
+            <button type="button" class="act here" on:click={playHere}><Icon name="play" size={18} />{$t('player.castBar.playHere')}</button>
+          {/if}
+        </div>
+        <button type="button" class="frost-btn skipb" class:on={Boolean(skip)} inert={!skip} on:click={() => castEngine.skipSegment()}>
+          {#if skip}{$t(skip.type === 'recap' ? 'player.skip.recap' : 'player.skip.intro')}{/if}
+        </button>
+      </div>
+
+      <div class="cp frost frost-safe frost-panel" role="group" aria-label={$t('player.controls.toolbar')}>
+        <div class="scrubwrap">
+          <div class="scrub" bind:this={scrubEl} bind:clientWidth={railW} role="slider" tabindex="0" aria-disabled={live ? undefined : 'true'}
+            aria-label={$t('player.castRemote.position')}
+            aria-valuemin={0} aria-valuemax={Math.floor(dur)} aria-valuenow={Math.floor(pos)} aria-valuetext={tl.valueText}
+            on:keydown={scrubKey} on:pointerdown={scrubDown} on:pointermove={scrubMove} on:pointerup={scrubUp} on:pointercancel={() => (drag = null)}>
+            <div class="rail"><i class="fill" style="transform:scaleX({shown})"></i></div>
+            <div class="markbar" aria-hidden="true">
+              {#each marks as m}<i class="mk" style="left:{m.left * 100}%;width:{m.width * 100}%"><b class="mkl">{$t(`player.segment.${m.type}`)}</b></i>{/each}
+            </div>
+            <div class="bufwrap" aria-hidden="true"><i class="buf" class:on={s.buffering}></i></div>
+            <i class="knob" aria-hidden="true" style="transform:translateX({shown * railW}px)"></i>
+            <span class="bubble" class:on={drag !== null} aria-hidden="true" style="transform:translateX({bubbleX}px)">{fmtClock(drag === null ? 0 : drag * dur)}</span>
+          </div>
+          <div class="times" aria-hidden="true"><span>{tl.elapsed}</span><span>{tl.remaining}</span></div>
+        </div>
+
+        <div class="ctrl">
+          <div class="tp">
+            {#if phone && !air}
+              <button type="button" class="tb mute" aria-pressed={muted} aria-label={$t(muted ? 'player.castRemote.unmute' : 'player.castRemote.mute')} on:click={castToggleMute}>
+                <Icon name={muted ? 'volume-off' : 'volume'} size={24} />
+              </button>
+            {:else if phone}<span class="gap" aria-hidden="true"></span>{/if}
+            <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('player.controls.back10')} title={$t('player.controls.back10')} on:click={() => seekBy(-10)}><Icon name="rewind10" size={30} /></button>
+            <button type="button" class="tb disc" aria-disabled={live ? undefined : 'true'} aria-busy={s.state === 'connecting' ? 'true' : undefined}
+              aria-label={$t(s.paused ? 'player.controls.play' : 'player.controls.pause')} on:click={playPause}>
+              {#if s.state === 'connecting'}<span class="spin" aria-hidden="true"></span>{:else}<Icon name={s.paused ? 'play' : 'pause'} size={phone ? 36 : 30} />{/if}
+            </button>
+            <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('player.controls.forward10')} title={$t('player.controls.forward10')} on:click={() => seekBy(10)}><Icon name="forward10" size={30} /></button>
+            {#if s.isEpisode}
+              <button type="button" class="tb" aria-disabled={live || s.state === 'ended' ? undefined : 'true'} aria-label={$t('player.controls.next')} title={$t('player.controls.next')} on:click={goNext}><Icon name="skip-next" size={28} /></button>
+            {:else if phone}<span class="gap" aria-hidden="true"></span>{/if}
+          </div>
+
+          <div class="vol">
+            {#if volHint}
+              <p class="volhint"><Icon name="airplay" size={16} />{volHint}</p>
+            {:else}
+              {#if !phone}
+                <button type="button" class="tb mute" aria-pressed={muted} aria-label={$t(muted ? 'player.castRemote.unmute' : 'player.castRemote.mute')} on:click={castToggleMute}>
+                  <Icon name={muted ? 'volume-off' : 'volume'} size={22} />
+                </button>
+              {/if}
+              <input class="vslider" type="range" min="0" max="100" step="5" value={muted ? 0 : vol} aria-label={$t('player.castRemote.volume')} aria-valuetext={$t('player.castRemote.volumeValue', { n: muted ? 0 : vol })}
+                style="--v:{muted ? 0 : vol}%" on:input={onVolume} on:keydown|stopPropagation />
+              <span class="vval" aria-hidden="true">{$t('player.castRemote.volumeValue', { n: muted ? 0 : vol })}</span>
+            {/if}
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+{/if}
+
+<style>
+  .rs { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; color: #fff; background: #000; overflow: hidden auto;
+    padding: calc(12px + var(--safe-top)) max(16px, var(--safe-right)) calc(16px + var(--safe-bottom)) max(16px, var(--safe-left)); }
+  .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: blur(16px) brightness(.5) saturate(1.1); transform: scale(1.08); }
+  .shade { position: absolute; inset: 0; background: linear-gradient(rgba(0, 0, 0, .55), rgba(0, 0, 0, .25) 40%, rgba(0, 0, 0, .8)); pointer-events: none; }
+  .wrap { position: relative; width: 100%; max-width: 1100px; margin: 0 auto; flex: 1 0 auto; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+  .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mut { color: rgba(255, 255, 255, .72); }
+  .eyebrow { margin: 0; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #ff8aa0; }
+
+  /* top row: close, device chip (truncates), Stop */
+  .top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .chip { flex: 0 1 auto; min-width: 76px; max-width: 100%; padding: 0 14px; }
+  .close { flex: none; }
+  .stopb { margin-left: auto; flex: none; }
+  :is(.close, .chip, .stopb) { font-size: .9rem; }
+  @media (max-width: 359px) { .stoplbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); } .stopb { padding: 0 12px; } }
+
+  /* the grid: now-playing left, up-next right (wide); stacked below 1100; one column on the phone */
+  .grid { display: grid; gap: 16px; align-items: start; grid-template-columns: minmax(0, 1fr); justify-content: center; }
+  .wide .grid { grid-template-columns: minmax(0, 660px) 380px; }
+  .stacked .grid { grid-template-columns: minmax(0, 660px); }
+  .now { display: flex; gap: 20px; align-items: center; padding: 18px; min-width: 0; }
+  .thumb { flex: 0 0 min(42%, 280px); aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #1c2228; display: grid; place-items: center; }
+  .thumb img, .unthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ph { color: #9aa4ad; }
+  .txt { min-width: 0; display: grid; gap: 6px; }
+  .title { margin: 0; font-size: clamp(28px, 3.4vw, 48px); line-height: 1.08; font-weight: 800; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .sub { margin: 0; color: rgba(255, 255, 255, .72); font-size: 1rem; overflow-wrap: anywhere; }
+  .phone .now { padding: 14px 16px; display: block; }
+  .phone .title { font-size: 34px; }
+
+  /* the up-next slot keeps its room (episodes), the card fades in (opacity only) */
+  .unslot { min-height: 156px; }
+  .wide .unslot { min-height: 0; }
+  .un { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 4px 14px; align-items: center; padding: 14px; }
+  .unthumb { grid-row: 1; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: #1c2228; display: grid; place-items: center; }
+  .untxt { display: grid; gap: 2px; min-width: 0; }
+  .unt { font-size: 1rem; }
+  .unacts { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: nowrap; margin-top: 6px; }
+  .unacts .go { flex: 1 1 auto; }
+  .unacts :is(.go, .frost-btn) { white-space: nowrap; }
+  .phone .unacts .frost-btn { flex: 1 1 0; min-width: 0; }
+  /* phone: the card docks under the controls, above the home indicator */
+  .phone .grid { display: contents; }
+  .phone .top { order: 0; } .phone .now { order: 1; } .phone .mid { order: 3; } .phone .cp { order: 4; } .phone .unslot { order: 5; }
+
+  /* status + skip: one reserved row above the control panel (nothing below it moves when either shows) */
+  .mid { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; margin-top: auto; }
+  .statrow { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .stat { margin: 0; display: flex; align-items: center; gap: 8px; min-width: 0; font-weight: 600; font-size: .95rem; color: rgba(255, 255, 255, .85); }
+  .stat.warn { color: #f7b344; }
+  .stat.error { color: #ffa8a8; }
+  .act { flex: none; }
+  .here { background: #fff; color: #000; border-radius: 999px; padding: 0 20px; font-weight: 800; }
+  .here:hover:not(:disabled) { background: rgba(255, 255, 255, .82); }
+  .skipb { flex: none; min-width: 44px; opacity: 0; transform: translateY(6px); transition: opacity 200ms ease, transform 200ms ease; pointer-events: none; }
+  .skipb.on { opacity: 1; transform: none; pointer-events: auto; }
+  .phone .stat { font-size: .85rem; line-height: 1.2; }
+
+  /* control panel */
+  .cp { padding: 6px 20px 16px; display: grid; gap: 4px; }
+  .scrubwrap { display: grid; }
+  .scrub { position: relative; height: 44px; display: flex; align-items: center; cursor: pointer; touch-action: pan-y; }
+  .scrub[aria-disabled='true'] { cursor: default; }
+  .rail { position: relative; width: 100%; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .28); overflow: hidden; }
+  .fill { position: absolute; inset: 0; background: var(--acc); transform-origin: left; }
+  .markbar { position: absolute; left: 0; right: 0; top: 50%; height: 5px; margin-top: -2.5px; pointer-events: none; }
+  .mk { position: absolute; top: 0; bottom: 0; background: rgba(255, 255, 255, .38); border-left: 2px solid rgba(255, 255, 255, .9); border-radius: 2px; }
+  .mkl { position: absolute; left: 0; bottom: 9px; font-size: .7rem; font-weight: 700; letter-spacing: .02em; color: rgba(255, 255, 255, .85); white-space: nowrap; }
+  .knob { position: absolute; left: -8px; top: 50%; margin-top: -8px; width: 16px; height: 16px; border-radius: 50%; background: var(--acc); box-shadow: 0 0 0 2px #fff; pointer-events: none; }
+  .scrub[aria-disabled='true'] .knob { opacity: .5; }
+  .scrub:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 8px; }
+  .bubble { position: absolute; left: 0; bottom: calc(100% + 2px); width: 64px; padding: 4px 0; text-align: center; border-radius: 8px; background: var(--fr-solid); border: 1px solid var(--fr-line); font-variant-numeric: tabular-nums; font-weight: 700; font-size: .85rem; opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+  .bubble.on { opacity: 1; }
+  .bufwrap { position: absolute; left: 0; right: 0; bottom: 8px; height: 2px; overflow: hidden; pointer-events: none; }
+  .buf { display: block; height: 2px; width: 100%; background: rgba(255, 255, 255, .85); opacity: 0; transform-origin: left; transform: scaleX(.3) translateX(-100%); }
+  .buf.on { opacity: .9; animation: rs-buf 1.3s ease-in-out infinite; }
+  @keyframes rs-buf { from { transform: scaleX(.3) translateX(-100%); } to { transform: scaleX(.3) translateX(333%); } }
+  .times { display: flex; justify-content: space-between; font-size: .85rem; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, .78); margin-top: -4px; }
+
+  .ctrl { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; }
+  .tp { grid-column: 2; display: flex; align-items: center; justify-content: center; gap: 12px; }
+  .vol { grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .tb { width: 56px; height: 56px; min-height: 44px; padding: 0; border-radius: 50%; background: transparent; color: #fff; display: inline-grid; place-items: center; transition: transform var(--t-fast), opacity var(--t-fast), background var(--t-fast); }
+  .tb:hover:not(:disabled) { background: rgba(255, 255, 255, .16); }
+  .tb[aria-disabled='true'] { opacity: .45; cursor: default; }
+  .tb[aria-busy='true'] { opacity: .85; }
+  .disc { width: 64px; height: 64px; background: #fff; color: #000; }
+  .disc:hover:not(:disabled) { background: rgba(255, 255, 255, .85); }
+  .disc:focus-visible { outline-color: #fff; outline-offset: 4px; }
+  .mute { width: 44px; height: 44px; }
+  .volhint { margin: 0; display: flex; align-items: center; gap: 8px; font-size: .9rem; color: rgba(255, 255, 255, .78); }
+  .vval { font-size: .85rem; color: rgba(255, 255, 255, .78); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .vslider { -webkit-appearance: none; appearance: none; width: 130px; height: 44px; margin: 0; background: transparent; cursor: pointer; }
+  .vslider::-webkit-slider-runnable-track { height: 5px; border-radius: 3px; background: linear-gradient(to right, var(--acc) var(--v), rgba(255, 255, 255, .28) var(--v)); }
+  .vslider::-moz-range-track { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .28); }
+  .vslider::-moz-range-progress { height: 5px; border-radius: 3px; background: var(--acc); }
+  .vslider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -5.5px; border-radius: 50%; background: var(--acc); border: 0; box-shadow: 0 0 0 2px #fff; }
+  .vslider::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--acc); border: 0; box-shadow: 0 0 0 2px #fff; }
+  .vslider:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 8px; }
+
+  /* stacked and phone: the transport above, the volume row below */
+  .stacked .ctrl, .phone .ctrl { grid-template-columns: 1fr; justify-items: center; }
+  .stacked .tp, .phone .tp { grid-column: 1; }
+  .stacked .vol, .phone .vol { grid-column: 1; justify-self: center; }
+  .phone .cp { padding: 4px 14px 12px; }
+  .phone .tp { width: 100%; display: grid; grid-template-columns: 1fr 1fr 76px 1fr 1fr; justify-items: center; gap: 0; }
+  .phone .disc { width: 76px; height: 76px; }
+  .phone .vol { width: 100%; justify-content: center; }
+  .phone .vslider { flex: 1 1 auto; width: auto; }
+
+  .spin { width: 28px; height: 28px; border-radius: 50%; border: 3px solid rgba(0, 0, 0, .25); border-top-color: #000; animation: rs-spin .9s linear infinite; }
+  @keyframes rs-spin { to { transform: rotate(360deg); } }
+
+  /* calm mode and reduced motion: nothing moves, panels are solid (the .frost rules) */
+  :global(html.m-still) .rs :is(*, *::before, *::after) { transition: none !important; animation: none !important; }
+  :global(html.m-still) .buf.on { transform: none; opacity: .5; }
+  @media (prefers-reduced-motion: reduce) {
+    .rs :is(*, *::before, *::after) { transition: none !important; animation: none !important; }
+    .buf.on { transform: none; opacity: .5; }
+  }
+</style>
