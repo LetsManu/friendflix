@@ -84,7 +84,14 @@
     noticeText = null;
     try {
       await flowConfig();
-      const r = await startFlow('reauth', then ? { then } : {});
+      if (!life.starting()) return; // closed before anything was started: nothing to cancel, nothing to send
+      let r: Awaited<ReturnType<typeof startFlow>>;
+      try {
+        r = await startFlow('reauth', then ? { then } : {});
+      } catch (e) {
+        life.started(); // a refused start opens nothing; a close meanwhile cancels what may be left
+        throw e;
+      }
       if (!life.started()) return; // closed while the start was in flight: its provider sessions are cancelled
       passkeyAlt = r.passkeyAlt === true;
       // fetched before any click: the passkey prompt then starts inside the click (Safari refuses one after a round trip)
@@ -119,11 +126,13 @@
     const ctrl = (ceremony = new AbortController());
     if (!pkStep) {
       let r: FlowReply | null = null;
+      if (!life.starting()) return;
       try {
         r = await startFlow('reauth', { ...(then ? { then } : {}), method: 'passkey' });
       } catch { /* refused (no usable options any more) or unreachable: the card says it did not work */ }
+      const alive = life.started(); // counts the start as back; false: closed meanwhile, its provider session is cancelled
       if (ceremony !== ctrl) return; // the person chose another method meanwhile
-      if (!life.started()) return; // closed while the start was in flight: its provider session is cancelled
+      if (!alive) return;
       if (r && r.stage === 'identify' && r.passkey) pkStep = r;
       else if (r && !('step' in r) && r.stage !== 'done') {
         ceremony = null;

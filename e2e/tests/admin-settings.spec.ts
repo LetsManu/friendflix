@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
-import { done, installLogin, loginState, password } from '../mocks/login.js';
+import { done, identify, installLogin, loginState, password } from '../mocks/login.js';
 import { LEAK } from '../mocks/settings.js';
 
 // Admin → Einstellungen (/admin/settings): the settings store (Block 25, spec Part I). Secrets are write-only, env rows are locked,
@@ -225,21 +225,45 @@ test.describe('admin: settings', () => {
     expect([generates, confirms]).toEqual([2, 1]);
   });
 
-  test('the dialog\'s "confirm with a passkey instead" goes through /auth/reauth back to this page, the change kept for it', async ({ page, api }) => {
+  test('the dialog\'s "confirm with a passkey instead" runs in the dialog when the provider offers one: the pending change is kept, saved once more, and it ends on this page', async ({ page, api }) => {
     api.settings.reauthRequired = true;
-    await installLogin(page.context(), loginState({ starts: [{ body: password('admin') }] }));
-    let next: string | null = null;
-    await page.route('**/auth/reauth?**', (r) => {
-      next = new URL(r.request().url()).searchParams.get('next');
-      return r.fulfill({ status: 200, contentType: 'text/html', body: '<p>sign in</p>' });
+    await page.addInitScript(() => {
+      navigator.credentials.get = () => Promise.resolve({ toJSON: () => ({ id: 'Y3JlZA', rawId: 'Y3JlZA', type: 'public-key', response: { clientDataJSON: 'e30', authenticatorData: 'YQ', signature: 'cw', userHandle: null } }) } as any);
     });
+    const opts = { challenge: 'ZmFrZS1jaGFsbGVuZ2U', rpId: 'localhost', allowCredentials: [], userVerification: 'required', timeout: 30000 };
+    const st = loginState({
+      starts: [{ body: { ...password('admin'), passkeyAlt: true, passkeyStep: identify({ passkey: opts }) } }],
+      answers: [() => { api.settings.reauthRequired = false; return { body: done('') }; }],
+    });
+    await installLogin(page.context(), st);
+    let redirected = false;
+    await page.route('**/auth/reauth?**', (r) => { redirected = true; return r.fulfill({ status: 200, contentType: 'text/html', body: '<p>left</p>' }); });
     await page.goto('/admin/settings');
     await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
     await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
-    const stash = page.evaluate(() => sessionStorage.getItem('ff_settings_pending'));
-    expect(await stash).toContain('ff-admins');
-    await page.getByRole('dialog', { name: 'Erneut anmelden' }).getByRole('button', { name: 'Stattdessen mit Passkey bestätigen' }).click();
-    await expect.poll(() => next).toBe('/admin/settings?resume=1');
+    const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    await dlg.getByRole('button', { name: 'Stattdessen mit Passkey bestätigen' }).click();
+    await expect(toasts(page).getByText('Einstellungen gespeichert.')).toBeVisible();
+    await expect(dlg).toHaveCount(0);
+    expect(st.calls.filter((c) => c.path === '/auth/flow/start').map((c) => c.body)).toEqual([{ kind: 'reauth' }]);
+    expect(st.calls.filter((c) => c.path === '/auth/flow/answer').map((c) => ({ stage: c.body.stage, alt: c.body.alt }))).toEqual([{ stage: 'identify', alt: true }]);
+    expect(api.settings.puts).toHaveLength(2);
+    expect(api.settings.puts[1]).toEqual(api.settings.puts[0]);
+    expect(JSON.stringify(api.settings.puts[1])).toContain('ff-admins');
+    await expect(page).toHaveURL(/\/admin\/settings$/);
+    expect(redirected).toBe(false);
+    expect(await page.evaluate(() => sessionStorage.getItem('ff_settings_pending'))).toBeNull();
+  });
+
+  test('the dialog offers no passkey option when the provider offers none (no passkeyAlt)', async ({ page, api }) => {
+    api.settings.reauthRequired = true;
+    await installLogin(page.context(), loginState({ starts: [{ body: password('admin') }] }));
+    await page.goto('/admin/settings');
+    await setting(page, 'Admin-Gruppe').getByRole('textbox').fill('ff-admins');
+    await card(page, 'Anmeldung').getByRole('button', { name: 'Speichern' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Erneut anmelden' });
+    await expect(dlg.getByLabel('Passwort', { exact: true })).toBeVisible();
+    await expect(dlg.getByRole('button', { name: 'Stattdessen mit Passkey bestätigen' })).toHaveCount(0);
   });
 
   test('each request opens a fresh dialog: closed once, the next save starts a new sign-in', async ({ page, api }) => {
