@@ -9,7 +9,7 @@
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
 
-  export let playon: { on: boolean; busy: boolean; label: string } | null = null;
+  export let playon: { on: boolean; busy: boolean; open: boolean; label: string } | null = null;
   export let lock = false;
   export let blur = false;
   const dispatch = createEventDispatcher<{ playon: HTMLElement; lock: void }>();
@@ -18,7 +18,7 @@
 <div class="ptop" class:blur>
   <slot />
   {#if playon}
-    <button type="button" class="gl" class:on={playon.on} class:busy={playon.busy} aria-haspopup="dialog" aria-busy={playon.busy} data-testid="playon" aria-label={playon.label} title={playon.label} on:click={(e) => dispatch('playon', e.currentTarget)}><Icon name="cast" size={22} /></button>
+    <button type="button" class="gl" class:on={playon.on} class:busy={playon.busy} aria-haspopup="dialog" aria-expanded={playon.open} aria-busy={playon.busy} data-testid="playon" aria-label={playon.label} title={playon.label} on:click={(e) => dispatch('playon', e.currentTarget)}><Icon name="cast" size={22} /></button>
   {/if}
   {#if lock}
     <button type="button" class="gl" aria-label={$t('player.lock.lockAria')} title={$t('player.lock.lockAria')} on:click={() => dispatch('lock')}><Icon name="lock" size={22} /></button>

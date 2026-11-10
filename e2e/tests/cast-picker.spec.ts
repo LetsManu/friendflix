@@ -79,19 +79,46 @@ test('without a remembered TV or an AirPlay target the sheet offers only another
 
 test('Continue here stops the cast and plays locally', async ({ page, api: _api }) => {
   const sdk = await chromecastRemote(page);
-  let infos = 0;
-  page.on('request', (r) => { if (r.url().endsWith('/api/playback/info')) infos++; });
+  let infos = 0, stops = 0;
+  page.on('request', (r) => { if (r.url().endsWith('/api/playback/info')) infos++; if (r.url().endsWith('/api/playback/stop')) stops++; });
+  const slider = page.getByRole('slider', { name: 'Position auf dem Fernseher' });
+  await expect.poll(async () => Number(await slider.getAttribute('aria-valuenow'))).toBeGreaterThan(1);
   await page.getByRole('button', { name: 'Läuft auf Wohnzimmer-TV, Fernseher wechseln' }).click();
   const dlg = playOnSheet(page);
   await expect(dlg).toBeVisible();
   await expect(dlg.getByRole('button', { name: /^Wohnzimmer-TV/ })).toHaveAttribute('aria-current', 'true');
   const here = dlg.getByRole('button', { name: /^Hier weiterschauen/ });
   await expect(here).toContainText('Dieser Computer');
+  const tvAt = Number(await slider.getAttribute('aria-valuenow'));
   await here.click();
   await expect(page.getByTestId('cast-active')).toHaveCount(0);
   await expect.poll(() => infos).toBeGreaterThanOrEqual(1);
   expect(sdk.deleted).toHaveLength(1);
   expect(await sdk.calls()).toContain('endCurrentSession');
+  expect(stops).toBe(1); // exactly one stop report for the cast
+  // plays on locally from where the TV was
+  await expect.poll(() => page.evaluate(() => document.querySelector('video')?.currentTime ?? -1)).toBeGreaterThanOrEqual(tvAt - 3);
+  expect(await page.evaluate(() => document.querySelector('video')!.currentTime)).toBeLessThanOrEqual(tvAt + 3 + 3);
+  // the focus did not fall to the body
+  await expect.poll(() => page.evaluate(() => Boolean(document.activeElement && document.activeElement !== document.body && document.querySelector('.stage')?.contains(document.activeElement)))).toBe(true);
+});
+
+test('targets that go away keep the rows, the sheet and the focus where they are', async ({ page, api: _api }) => {
+  await playOnPlayer(page);
+  await page.locator('.stage').hover();
+  await playOnButton(page).click();
+  const dlg = playOnSheet(page);
+  await expect(dlg).toBeVisible();
+  await page.waitForTimeout(500);
+  const rows = dlg.locator('.row');
+  const n = await rows.count();
+  const top = (await dlg.boundingBox())!.y;
+  await dlg.getByRole('button', { name: /^AirPlay …/ }).focus();
+  await page.evaluate(() => document.querySelector('video')!.dispatchEvent(Object.assign(new Event('webkitplaybacktargetavailabilitychanged'), { availability: 'not-available' })));
+  await page.waitForTimeout(300);
+  await expect(rows).toHaveCount(n);
+  expect(Math.abs((await dlg.boundingBox())!.y - top)).toBeLessThanOrEqual(1);
+  expect(await dlg.evaluate((d) => d.contains(document.activeElement))).toBe(true);
 });
 
 test('the chip of a running cast opens the sheet and Escape returns to the chip', async ({ page, api: _api }) => {

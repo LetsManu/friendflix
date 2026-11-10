@@ -745,13 +745,24 @@
   // ---- "Play on" (lib/cast/PlayOnSheet.svelte): the one entry for Chromecast, AirPlay and this device; the remote screen's device chip opens it too ----
   let playOnOpen = false, playOnTrigger: HTMLElement | null = null;
   function openPlayOn(el?: HTMLElement | null) { menu = ''; playOnTrigger = el ?? (document.activeElement as HTMLElement | null); playOnOpen = true; wake(); }
+  /** "Continue here": the cast stopped and the page plays on; the focus goes to the player instead of the body */
+  function onContinued() {
+    playOnOpen = false; wake();
+    let tries = 0;
+    const land = () => {
+      const el = stage?.querySelector<HTMLElement>('[data-testid="playon"], .ctl button, .ovl button');
+      if (el) { el.focus({ preventScroll: true }); return; }
+      if (++tries < 30 && !destroyed) setTimeout(land, 50); else if (stage) { stage.tabIndex = -1; stage.focus({ preventScroll: true }); }
+    };
+    void tickDom().then(land);
+  }
   /** the AirPlay row: the token-then-picker flow of the controller (the engine's picker while AirPlay already casts) */
   function airRow() { if (tvSession?.kind === 'airplay') changeAirPlay(); else air?.pick(); }
   $: airAvail = Boolean(air && (airState.available || airOn || airState.ready || airState.busy)) || tvSession?.kind === 'airplay';
   /** something to choose from: Cast devices in reach or an AirPlay target (the remote screen has its own chip) */
   $: playOnShown = !partyMode && !remote && (Boolean($castState.available || $castState.connected) || airAvail);
   $: playOnLabel = $t('player.castPicker.open');
-  $: playOnEp = item?.type === 'Episode' || item?.seriesId ? episodeCode({ subtitle: '' }, item, tr) : '';
+  $: playOnEp = item?.type === 'Episode' || item?.seriesId ? episodeCode({ subtitle: '' }, item, $t) : '';
 
   // ---- the cast screen (remote): lib/cast/RemoteScreen.svelte (it reads the engine's session; the Player keeps the page's side of it) ----
 
@@ -1699,7 +1710,7 @@
     {#if phoneUi}
       <!-- phone player: quality chip, Cast, AirPlay and lock at the end of the top bar (they leave the pill and More) -->
       <PhoneTopBar {blur} lock={!remote}
-        playon={playOnShown ? { on: casting || airOn, busy: airState.busy, label: playOnLabel } : null}
+        playon={playOnShown ? { on: casting || airOn, busy: airState.busy, open: playOnOpen, label: playOnLabel } : null}
         on:playon={(e) => openPlayOn(e.detail)} on:lock={lockNow}>
         {#if phoneChip && info}<QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
       </PhoneTopBar>
@@ -1722,8 +1733,8 @@
   {:else if peek && !locked && menu === '' && !remote}
     <CastPeek data={castData} hint={tvMode() ? 'tv' : coarse ? 'none' : 'key'} on:more={() => openCastInfo(false)} />
   {/if}
-  <PlayOnSheet open={playOnOpen} trigger={playOnTrigger} at={tvSession ? tvSession.position : current} title={tvSession ? tvSession.title : barTitle || title} episode={tvSession ? (tvSession.isEpisode ? episodeCode(tvSession, item, tr) : '') : playOnEp}
-    airplay={airAvail} sheet={phone} onAirPlay={airRow} onConnected={() => void startCast()} on:close={() => (playOnOpen = false)} />
+  <PlayOnSheet open={playOnOpen} trigger={playOnTrigger} at={tvSession ? tvSession.position : current} title={tvSession ? tvSession.title : barTitle || title} episode={tvSession ? (tvSession.isEpisode ? episodeCode(tvSession, item, $t) : '') : playOnEp}
+    airplay={airAvail} airplayActive={airOn && !tvSession} sheet={phone} onAirPlay={airRow} onConnected={() => void startCast()} on:close={() => (playOnOpen = false)} on:continued={onContinued} />
   {#if subDlg}
     <div class="dlg ui" data-nav data-scope role="dialog" tabindex="-1" aria-modal="true" aria-label={$t('player.subs.search')} on:click|stopPropagation on:keydown|stopPropagation>
       <header><b>{$t('player.subs.search')}</b><button class="icx" aria-label={$t('common.close')} on:click={() => (subDlg = false)}><Icon name="x" size={20} /></button></header>

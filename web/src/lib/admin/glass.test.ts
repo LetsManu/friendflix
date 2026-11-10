@@ -11,7 +11,7 @@ import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { countable } from './glass';
-import { AA, AMB_PEAK, contrast, DARK_BASE, frostComposite, SCRIM_LIGHT, SCRIM_BAR, SCRIM_RGB, SEL_A, textContrast, type RGB } from '#lib/glass/tone';
+import { AA, AMB_PEAK, contrast, DARK_BASE, frostComposite, SCRIM_LIGHT, SCRIM_BAR, SCRIM_MENU, GRAIN_LIFT, SCRIM_RGB, SEL_A, textContrast, type RGB } from '#lib/glass/tone';
 
 describe('countable', () => {
   it('takes finite numbers', () => {
@@ -61,6 +61,15 @@ const cr = (t: string | number, bg: RGB) => (typeof t === 'number' ? textContras
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const appCss = read('../../app.css'), shell = read('./AdminShell.svelte'), pill = read('../ui/StatusPill.svelte');
 const table = read('../ui/DataTable.svelte'), tile = read('../ui/StatTile.svelte'), field = read('../ui/Field.svelte'), select = read('../ui/Select.svelte');
+
+describe('Play on sheet: the selected / hovered row keeps white hints', () => {
+  it('hint text is white on the light pill, over the brightest picture', () => {
+    const sheet = read('../cast/PlayOnSheet.svelte');
+    expect(sheet).toMatch(/\.row\.on \.h, \.row:hover \.h \{ color: #fff; \}/);
+    const pill = over(frostComposite(WHITE, SCRIM_MENU), WHITE, SEL_A).map((x) => Math.min(255, x + GRAIN_LIFT)) as RGB;
+    expect(textContrast(pill)).toBeGreaterThanOrEqual(AA);
+  });
+});
 
 describe('admin glass: text contrast (B′)', () => {
   it('the glass text tokens include the lighter info colour', () => {

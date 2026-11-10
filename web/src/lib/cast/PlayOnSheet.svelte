@@ -8,7 +8,7 @@
    * tap: the browser's cast dialog, the Player's AirPlay flow (`onAirPlay`) or the engine's stop.
    * Mounted for as long as the Player lives, so the TV a session started on is remembered whichever way it was picked.
    */
-  import { createEventDispatcher, onDestroy, tick } from 'svelte';
+  import { afterUpdate, createEventDispatcher, onDestroy, tick } from 'svelte';
   import { castCapableBrowser, castState, onCastEvent, requestCastSession } from '#lib/cast';
   import { growBoth, scrimFade, sheetSlide, twoWay } from '#lib/glass/fx';
   import { SCRIM_MENU } from '#lib/glass/tone';
@@ -30,6 +30,8 @@
   export let episode = '';
   /** an AirPlay target is in reach (the Player's controller, or the engine's while AirPlay casts) */
   export let airplay = false;
+  /** the Player's own AirPlay controller plays on a TV (no engine session yet) */
+  export let airplayActive = false;
   /** phones: a bottom sheet; otherwise a popover */
   export let sheet = false;
   /** the Player's AirPlay tap (token, then the system picker); runs inside the click */
@@ -37,19 +39,22 @@
   /** the browser already holds a cast session: play on it without asking again */
   export let onConnected: (() => void) | null = null;
 
-  const dispatch = createEventDispatcher<{ close: void }>();
+  const dispatch = createEventDispatcher<{ close: void; continued: void }>();
   const store = typeof localStorage === 'undefined' ? null : localStorage;
   let last: string | null = null;
   let panel: HTMLDivElement | undefined;
   let pos = '';
 
   const form = typeof navigator === 'undefined' ? 'computer' : formFactor(navigator, typeof innerWidth === 'number' ? innerWidth : 1024);
-  $: casting = $castSession && $castSession.state !== 'detached' ? $castSession.kind : null;
+  $: casting = $castSession && $castSession.state !== 'detached' ? $castSession.kind : airplayActive ? 'airplay' as const : null;
   $: rows = playOnRows({
     chromecast: typeof navigator !== 'undefined' && castCapableBrowser(), devices: $castState.available || $castState.connected,
     airplay, apple: typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent), continuousAvailable: false,
     episode: episode !== '', last, casting, form, tf: $t,
   });
+  /** the row set is frozen while the sheet is open (a target going away must not move the rows under the finger); titles and ticks stay live */
+  let held: PlayOnRow[] = [];
+  $: shown = open && held.length ? held.map((h) => rows.find((r) => r.id === h.id) ?? h) : rows;
   $: what = whatLine({ title, episode: episode || undefined, at, tf: $t });
 
   // the TV picked in the browser's dialog is the usual one next time (name only)
@@ -68,7 +73,12 @@
     pos += `width:${w}px;`;
   }
   let was = false;
-  $: if (open !== was) { was = open; if (open) { place(); last = lastDevice(store); void tick().then(() => panel?.querySelector<HTMLElement>('.row')?.focus({ preventScroll: true })); } }
+  $: if (!open) held = [];
+  function opened() { place(); last = lastDevice(store); held = rows; void tick().then(() => panel?.querySelector<HTMLElement>('.row')?.focus({ preventScroll: true })); }
+  $: if (open !== was) { was = open; if (open) opened(); }
+
+  // a stale row must not take the focus with it: it stays inside the dialog
+  afterUpdate(() => { if (open && panel && !panel.contains(document.activeElement)) panel.focus({ preventScroll: true }); });
 
   function close(refocus = true) {
     if (!open) return;
@@ -86,7 +96,7 @@
       onAirPlay();
       close();
     } else if (id === 'here') {
-      if (casting) { void castEngine.stop(); close(false); } else close();
+      if (casting) { void castEngine.stop(); close(false); dispatch('continued'); } else close();
     }
   }
 
@@ -117,7 +127,7 @@
         <button type="button" class="frost-btn round x" aria-label={$t('common.close')} title={$t('common.close')} on:click={() => close()}><Icon name="x" size={20} /></button>
       </header>
       <ul>
-        {#each rows as r (r.id)}
+        {#each shown as r (r.id)}
           {#if r.id === 'here'}<li class="div" role="presentation"></li>{/if}
           <li>
             <button type="button" class="row" class:on={r.checked} class:sub={r.id === 'continuous'} aria-current={r.checked ? 'true' : undefined} data-row={r.id} on:click={() => choose(r.id)}>
@@ -154,6 +164,7 @@
   .tx { flex: 1; min-width: 0; display: grid; gap: 2px; }
   .t { font-weight: 700; font-size: .98rem; overflow-wrap: anywhere; }
   .h { font-size: .84rem; font-weight: 500; color: rgba(255, 255, 255, .9); }
+  .row.on .h, .row:hover .h { color: #fff; }
   .tick { flex: none; color: var(--acc-light, #ff8aa0); display: grid; place-items: center; }
   .badge { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: .72rem; font-weight: 800; background: rgba(255, 255, 255, .16); }
   /* calm mode and reduced motion: nothing moves */
