@@ -71,6 +71,8 @@ export interface CastSession {
   next?: { itemId: string; label: string; startsAt: number | null };
   /** the intro / recap segment the TV is in (`skipSegment()` seeks to its end) */
   skip?: { type: string; end: number };
+  /** the episode that follows this one, known from the start of an episode (the card and the switch show before the credits) */
+  upcoming?: { itemId: string; label: string };
   /** the session's autoplay switch: the next episode follows by itself (initially the profile's autoplay and no "sleep after") */
   autoplay: boolean;
   /** the live token's public handle (Diagnose); absent while switching, after the end and for AirPlay before a token plays */
@@ -233,6 +235,8 @@ interface Live {
   /** Chromecast: the next episode in the receiver's queue (its own token) and whether it was asked for this title */
   queued?: { ci: CastInfo; it: Item; qid: number; /** own receiver: it waits paused for a "still watching?" answer */ ask?: boolean };
   queueAsked: boolean;
+  /** the one lookup of this title's next episode (feeds `upcoming` and the receiver queue) */
+  upLookup?: Promise<Item | null>;
   /** the countdown (not the receiver alone) moved on: the autoplay is already counted */
   going: boolean;
   /** fallback timer while the receiver should move on to the queued episode */
@@ -512,6 +516,11 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       if (s.hide !== undefined) { timers.clear(s.hide); s.hide = undefined; }
       if (v.next) patch(s, { next: undefined });
     }
+    if (!s.upLookup) {
+      const my = seq;
+      s.upLookup = nextOf(v.itemId);
+      void s.upLookup.then((it) => { if (it && cur === s && my === seq) patch(s, { upcoming: { itemId: it.id, label: nextLabel(it) } }); });
+    }
     // queue from the start: once per title, as soon as it plays and its length is known (not with the autoplay switch off)
     if (!s.air && !s.queueAsked && s.autoSet !== false) { s.queueAsked = true; void prequeue(s); }
   }
@@ -572,7 +581,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     const unwanted = (id: string) => s.noAuto === id || s.autoSet === false;
     s.queueing = true;
     try {
-      const it = await nextOf(v.itemId);
+      const it = await (s.upLookup ?? nextOf(v.itemId));
       if (!it || stale() || unwanted(it.id)) return;
       let ci: CastInfo;
       try {
@@ -622,13 +631,13 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     // a queued episode that waits for "still watching?" (own receiver) is loaded paused: that counts as its start
     s.ci = q.ci; s.started = false; s.lastPaused = null; s.going = false; s.hold = Boolean(q.ask);
     s.audioIndex = undefined; s.subIndex = -1; s.sleepAfterEpisode = false; s.noAuto = undefined;
-    s.segs = []; s.credits = false; s.queueAsked = false; s.offered = undefined; s.unpinRetried = false;
+    s.segs = []; s.credits = false; s.queueAsked = false; s.upLookup = undefined; s.offered = undefined; s.unpinRetried = false;
     s.label = labelOf(q.it); s.loadAt = timers.now();
     log('info', 'queue', `queued episode started · ${s.label}`);
     const { title, sub } = barTitles(q.it);
     patch(s, { itemId: q.it.id, title, subtitle: sub, seriesId: q.it.seriesId, posterId: q.it.id, isEpisode: q.it.type === 'Episode', state: 'connecting',
       position: q.ci.startTime, ...(q.ci.runtimeTicks ? { duration: ticksToSec(q.ci.runtimeTicks) } : {}), paused: false, buffering: true,
-      next: undefined, skip: undefined, audioTracks: [], subtitles: subsOf(q.ci), audioIndex: undefined, subIndex: -1 });
+      next: undefined, upcoming: undefined, skip: undefined, audioTracks: [], subtitles: subsOf(q.ci), audioIndex: undefined, subIndex: -1 });
     hint(s);
     loadSegs(s);
     tvSync(s);
@@ -910,7 +919,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (s.requeue !== undefined) { timers.clear(s.requeue); s.requeue = undefined; }
     s.close = undefined;
     dequeue(s); // a new load replaces the receiver's queue; asked again for the new token
-    s.credits = false; s.queueAsked = false; s.offered = undefined; s.going = false; s.unpinRetried = false;
+    s.credits = false; s.queueAsked = false; s.upLookup = undefined; s.offered = undefined; s.going = false; s.unpinRetried = false;
     s.stallAt = undefined; s.stallLogged = false; s.loadAt = undefined;
     if (fresh) { s.segs = []; s.noAuto = undefined; }
     const old = s.ci;
@@ -918,7 +927,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     const stopped = s.stopping; // also a stop an earlier, superseded switch still waits for
     s.ci = null; s.busy = true; s.retry = null; s.lastPaused = null; s.hold = hold;
     if (fresh) { s.audioIndex = undefined; s.subIndex = -1; s.sleepAfterEpisode = false; } // "sleep after" meant the ended episode
-    patch(s, { itemId, state: 'connecting', position: startAt ?? 0, paused: hold, buffering: true, next: undefined, skip: undefined,
+    patch(s, { itemId, state: 'connecting', position: startAt ?? 0, paused: hold, buffering: true, next: undefined, upcoming: undefined, skip: undefined,
       ...(fresh ? { audioTracks: [], subtitles: [], audioIndex: undefined, subIndex: -1 } : {}) });
     const meta = fresh ? deps.item(itemId).catch(() => null) : Promise.resolve(null);
     const a = s.air;

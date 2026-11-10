@@ -1092,6 +1092,33 @@ describe('cast engine: Netflix-like next episode (credits, receiver queue, skip)
     expect(get(env.out)?.next).toBeUndefined();
   });
 
+  it('upcoming: the next episode is known from the start of an episode, long before its credits (once per title)', async () => {
+    const env = setup();
+    await playingSession(env, ep1);
+    env.state.set(playing({ currentTime: 30 }));
+    await flush();
+    expect(get(env.out)).toMatchObject({ upcoming: { itemId: 'ep2', label: 'S1:E2 \u00b7 Second' } });
+    expect(get(env.out)?.next).toBeUndefined(); // no countdown yet
+    env.state.set(playing({ currentTime: 40 }));
+    await flush();
+    expect(get(env.out)?.upcoming?.itemId).toBe('ep2');
+  });
+
+  it('upcoming: none for a film, and it goes with a switch (asked again for the new title)', async () => {
+    const env = setup();
+    await playingSession(env, { itemId: 'm1', title: 'A Film', subtitle: '', isEpisode: false });
+    env.state.set(playing({ currentTime: 30 }));
+    await flush();
+    expect(get(env.out)?.upcoming).toBeUndefined();
+    const env2 = setup();
+    await playingSession(env2, ep1);
+    env2.state.set(playing({ currentTime: 30 }));
+    await flush();
+    expect(get(env2.out)?.upcoming?.itemId).toBe('ep2');
+    void env2.engine.playOnTv('ep2', 0);
+    expect(get(env2.out)?.upcoming).toBeUndefined();
+  });
+
   it('credits: seeking back out of them withdraws the offer and its countdown', async () => {
     const env = setup();
     await playingSession(env, ep1);
