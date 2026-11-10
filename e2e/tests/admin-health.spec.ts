@@ -187,6 +187,19 @@ test.describe('admin health page', () => {
     await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Gespeichert.')).toBeVisible();
   });
 
+  test('sign-in card: passkey sign-in not offered names the missing stage and its fix; a wrong host names AUTHENTIK_URL', async ({ page, api }) => {
+    api.admin.loginCheck = { ...loginCheckOk(), passkeySignIn: 'no_stage', warnings: ['passkeys:no_stage'] };
+    await page.goto('/admin/status');
+    const card = page.getByRole('region', { name: 'Anmeldung', exact: true });
+    await expect(card.locator('[data-check="passkey-sign-in"]')).toHaveText('Nicht angeboten (Stage fehlt)');
+    await expect(card.getByText(/default-authentication-identification/)).toBeVisible();
+    await expect(card.getByText(/WebAuthn Authenticator Validation Stage/)).toBeVisible();
+    api.admin.loginCheck = { ...loginCheckOk(), passkeySignIn: 'rp_mismatch', warnings: ['passkeys:rp_mismatch'] };
+    await page.reload();
+    await expect(card.locator('[data-check="passkey-sign-in"]')).toHaveText('Nicht angeboten (falscher Host)');
+    await expect(card.getByText(/RP-ID passt nicht.*AUTHENTIK_URL/)).toBeVisible();
+  });
+
   test('sign-in card: a refused service token, the executor check, the last error and the one-click repair', async ({ page, api }) => {
     api.admin.loginCheck = {
       ...loginCheckOk(), warnings: ['token:invalid', 'executor:non_json'],

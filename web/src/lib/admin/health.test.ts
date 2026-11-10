@@ -77,7 +77,7 @@ describe('sign-in card texts', () => {
   it('every warning code the backend sends has a text; flow codes name the flow', async () => {
     const { loginWarningText } = await import('./health');
     const codes = ['unreachable', 'flow_missing:recovery', 'flow_unsupported:login', 'consent', 'auth_code_grant', 'issuer', 'passkeys:not_https', 'passkeys:forwarded_host_ignored',
-      'passkeys:unreachable', 'passkeys:probe_not_found', 'passkeys:not_configured', 'permission:provider', 'permission:validate_stage'];
+      'passkeys:unreachable', 'passkeys:probe_not_found', 'passkeys:not_configured', 'passkeys:no_stage', 'passkeys:rp_mismatch', 'passkeys:uv_not_required', 'permission:provider', 'permission:validate_stage'];
     for (const c of codes) expect(loginWarningText(c, name), c).not.toBe('');
     expect(loginWarningText('flow_missing:recovery', name)).toContain('<recovery>');
     expect(loginWarningText('something_new', name)).toBe('');

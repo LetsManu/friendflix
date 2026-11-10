@@ -109,6 +109,8 @@ export interface LoginCheck {
   issuerMatches: boolean;
   passkeys: 'in-app' | 'sign-in page';
   passkeysReason: string;
+  /** whether the sign-in screen can offer a passkey in FriendFlix (backend flowCheck.ts PasskeySignIn); null: not checked */
+  passkeySignIn?: 'ok' | 'no_stage' | 'rp_mismatch' | 'off' | 'unknown' | null;
   unreachable: boolean;
   /** the service token: accepted at all, and the read permissions Authentik refused */
   serviceToken?: { token: 'ok' | 'invalid' | 'unreachable'; missing: string[] } | null;
