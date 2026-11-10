@@ -96,6 +96,14 @@ describe('requestSuggestions (function level)', () => {
     expect(seerrCalls.length).toBe(n);
   });
 
+  it('a request that was declined or deleted before the list was built does not show as requested; one made after the build does', async () => {
+    await ask(); // builds the list
+    await env.pool.query("insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title,created_at) values (8,$1,'movie',11,'Fiction 11', now() - interval '1 day')", [s.owner.user_id]);
+    expect((await ask())[0]!.request.state).toBe('none');
+    await env.pool.query("insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title) values (9,$1,'movie',11,'Fiction 11')", [s.owner.user_id]);
+    expect((await ask())[0]!.request.state).toBe('requested');
+  });
+
   it('age cap: a role with a cap only gets titles with a known rating within it; without a cap no rating lookup happens', async () => {
     certs = { 11: 'FSK 12', 15: 'FSK 16' }; // 16 has no entry: unrated
     const guest = await ask('movie', { role: 'guest' });
@@ -109,7 +117,11 @@ describe('requestSuggestions (function level)', () => {
 
   it('a failing seed does not fail the answer (short cache), no seeds means an empty list', async () => {
     failSeed = 1001;
-    expect(await ask()).toEqual([]);
+    const ttls: number[] = [];
+    const realSet = env.kv.set.bind(env.kv);
+    env.kv.set = async (k: string, v: string, ttl: number) => { if (k.startsWith('reqsug:')) ttls.push(ttl); return realSet(k, v, ttl); };
+    try { expect(await ask()).toEqual([]); } finally { env.kv.set = realSet; }
+    expect(ttls).toEqual([120]); // the short cache, not the 6 hours
     await env.pool.query('delete from thumbs');
     for (const k of await env.kv.keys('reqsug:')) await env.kv.del(k);
     for (const k of await env.kv.keys('reco:')) await env.kv.del(k);
