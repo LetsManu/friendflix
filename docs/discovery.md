@@ -75,6 +75,41 @@ Ungültige Werte führen zu `400 {"error":"bad_request"}`.
 - Ein Titel erscheint nur mit mindestens 2 Zuschauern oder wenn du selbst dazugehörst. Unsichtbare Titel fehlen (Auflösung mit deinem Token). Sortiert nach `viewers`, dann Sekunden; höchstens 10, 10 Minuten pro Jellyfin-Konto und Betrachter gecacht.
 - Items tragen außerdem `lastAdded` (ISO, `DateLastMediaAdded`) für das Badge „Neue Folgen“.
 
+## „Neu & demnächst“: Daten der Seite
+
+Die Seite setzt sich aus bestehenden und zwei neuen Routen zusammen. Alle Titel werden mit der Identität des Profils beim Medienserver gelesen (Bibliotheksrechte und Altersgrenze von Kinderprofilen gelten), Jellyfin und Plex antworten gleich. Kein Token, keine Adresse und kein Schlüssel des Medien- oder Anfragedienstes erreicht den Client.
+
+- **Anfragedienst ja/nein:** `GET /api/me` liefert `features.requests` (Boolean). Es wird bei jedem Aufruf aus den gespeicherten Einstellungen abgeleitet: Verbindet oder entfernt der Admin den Dienst, ändert sich der Wert ohne Neustart. `false` heißt: Abschnitt „Demnächst“ und die Anfrage-Funktionen verschwinden, die Seite heißt „Neu“. Die Anfrage-Routen antworten dann 404 `requests_disabled`.
+- **Neue Serien / Neue Filme:** `GET /api/library/items?types=Series` bzw. `types=Movie` mit `sort=DateCreated&desc=true&limit=30`. Jedes Item trägt `dateCreated` (ISO, Datum der Aufnahme in die Bibliothek); „neu“ heißt höchstens 14 Tage alt (gleiches Fenster wie die Badges „Neue Serie“ / „Neu“), der Client filtert darauf.
+- **Diese Woche bei uns:** `GET /api/library/trending` (siehe oben), nicht für Kinderprofile.
+- **Demnächst:** `GET /api/seerr/upcoming?type=movie|tv`, nur für Erwachsenenprofile und nur mit Anfragedienst.
+
+### `GET /api/library/new-episodes`: „Neue Folgen“
+
+```json
+{ "windowDays": 7, "items": [{
+  "seriesId": "…", "seriesName": "…", "newCount": 3,
+  "episode": { "id": "…", "name": "…", "season": 2, "episode": 4, "addedAt": "2026-11-09T18:02:11.000Z", "image": true, "imageTags": { "seriesPrimary": "…" } }
+}] }
+```
+
+- Serien, denen das Profil folgt (mindestens eine Folge gesehen **oder** die Serie steht auf der Merkliste des Profils) und die in den letzten 7 Tagen eine Folge bekommen haben. Eine Zeile je Serie, neueste zuerst, höchstens 30; `episode` ist die neueste neue Folge, `newCount` die Zahl neuer Folgen im Fenster.
+- Quelle ist `addedItems()` der Medienserver-Schnittstelle (höchstens 5 Seiten à 200 Einträge, 60 Serien geprüft); „gesehen“ fragt `items({ parentId, types: 'Episode', filter: 'played' })` mit dem Token des Profils. Plex beantwortet beides aus seinem Spiegel, ohne Sonderweg.
+- 5 Minuten je Profil und Nutzerdaten-Version gecacht (eine gesehene Folge wirkt sofort); die Merkliste wird immer live gelesen. Auch für Kinderprofile (ihre Merkliste, ihre Altersgrenze).
+
+### `GET /api/library/new-for-you?type=movie|series`: „Für dich neu“
+
+```json
+{ "windowDays": 14, "engine": "v2", "items": [{ "id": "…", "name": "…", "type": "Series", "dateCreated": "…",
+  "reason": { "seed": { "id": "…", "name": "Dune" }, "traits": ["director:Denis Villeneuve", "genre:science fiction"] } }] }
+```
+
+- Titel, die in den letzten 14 Tagen in die Bibliothek kamen (nach `dateCreated`; eine ältere Serie mit neuer Folge gehört nicht dazu), nach dem v2-Geschmacksprofil des Profils gerankt: `recommend({ surface: 'home_rows' })` mit der Quelle `fresh` (siehe R3) plus den Signalen Freunde und Trend. Höchstens 20, schon gesehene oder mit Daumen nach unten bewertete fehlen. `type` ist optional (`movie` oder `series`, sonst 400).
+- `reason` ist dieselbe Erklärung wie in allen v2-Zeilen (`seed` darf `null` sein, `traits` leer, dann „Für dich ausgewählt“); der Client formuliert sie (`lib/reason.ts`). Freunde-Gründe nur im Rahmen der Freigaben.
+- Kinderprofile bekommen die Antwort ebenfalls: Die Engine führt für sie nie soziale Quellen aus (keine Freunde, kein Trend), und die Altersgrenze gilt.
+- Ohne `RECO_ENGINE=v2` (oder wenn v2 scheitert) kommen die neuesten Titel des Fensters ohne Begründung: `engine: "v1"`, `reason: null`.
+- 10 Minuten je Profil gecacht (Schlüssel mit Nutzerdaten-Version und Startseiten-Generation, wie die „Weil du …“-Zeilen); der Typfilter wirkt nach dem Cache.
+
 ## Reaktionen: `/api/items/:id/reactions`
 
 Nur für Filme und Folgen (Serie: 400 `unsupported_type`, unsichtbar: 404). „Gesehen“ heißt `played` oder mindestens 85 %.
