@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { episodes, ME, MOVIE, MOVIE2 } from '../mocks/fixtures.js';
 import { PROFILES } from '../mocks/api.js';
-import { available, castOn, castSessions, fakeCastSdk, mockHls, playOnAirPlay, stubAirPlay } from '../mocks/cast.js';
+import { available, castOn, castSessions, fakeCastSdk, mockHls, stubAirPlay } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
 import { BAR_SHOTS, barIn, chromecastRemote, dunmoor } from './cast-remote-setup.js';

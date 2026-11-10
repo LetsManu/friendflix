@@ -156,3 +156,20 @@ export async function playOnPlayer(page: Page, o: { remembered?: boolean; hls?: 
   await available(page);
   return Object.assign(sdk, tokens);
 }
+
+export const DIAG_SHOTS = '/tmp/claude-0/-home-user/65bf3c9c-0207-5176-a7cc-9841c5a17402/scratchpad/cast-shots/diagnose';
+export type LogSeed = { at: number; level: 'info' | 'warn' | 'error'; tag: string; text: string };
+/** puts entries into the on-device cast log (`ff-castlog`) and TV names into its device list before the page loads */
+export async function seedCastLog(page: Page, entries: LogSeed[], devices: string[] = []) {
+  await page.addInitScript(([e, d]) => {
+    if (localStorage.getItem('ff-castlog')) return; // a reload keeps what the page wrote since
+    localStorage.setItem('ff-castlog', JSON.stringify(e));
+    localStorage.setItem('ff-castlog-devices', JSON.stringify(d));
+  }, [entries, devices] as const);
+}
+/** the cast keeps playing while the remote closes and the app navigates (client-side) to `path` */
+export async function leaveRemoteTo(page: Page, path: string) {
+  await page.getByRole('button', { name: 'Fernbedienung schließen' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await clientNav(page, path);
+}

@@ -3,6 +3,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { t } from '#lib/i18n';
+  import DiagnoseCast from '#lib/cast/DiagnoseCast.svelte';
   import { airLogStart, clearAirLog, formatAirLog, readAirLog, type AirLogEntry } from '#lib/player/airplayLog';
   import { formatTiming, readLocalTimings, type StoredTiming } from '#lib/player/timing';
 
@@ -121,6 +122,7 @@
 
 <div class="page">
   <h1>{$t('diagnose.title')}</h1>
+  <DiagnoseCast />
   <p class="hint">{$t('diagnose.hint')}</p>
   <button type="button" on:click={copy}>{$t('diagnose.copy')}</button>
   {#if note}<span role="status" class="note">{note}</span>{/if}

@@ -1040,6 +1040,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   /** the receiver's media once its status is there (loaded, with a content URL); null after RESUME_WAIT_MS */
   function waitMedia(): Promise<CastState | null> {
     return new Promise((done) => {
+      // eslint-disable-next-line prefer-const -- assigned after `finish` is defined (it calls off)
       let fin = false, off: (() => void) | undefined;
       const finish = (v: CastState | null) => { if (fin) return; fin = true; timers.clear(t); off?.(); done(v); };
       const t = timers.set(() => finish(null), RESUME_WAIT_MS);

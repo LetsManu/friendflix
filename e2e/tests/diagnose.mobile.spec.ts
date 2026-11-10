@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { castOn } from '../mocks/cast.js';
 import { expect, test } from '../fixtures.js';
 
 test.describe('/diagnose (phone)', () => {
   test('shows the live viewport table and a copy button', async ({ page, context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await castOn(page); // the casting section asks for the cast config
     await page.goto('/diagnose');
     await expect(page.getByRole('heading', { level: 1, name: 'Anzeige-Diagnose' })).toBeVisible();
     const table = page.getByTestId('diagnose-table');
@@ -16,7 +18,7 @@ test.describe('/diagnose (phone)', () => {
     await expect(table.getByRole('row', { name: /innerWidth x innerHeight/ })).toContainText(inner);
 
     await page.getByRole('button', { name: 'Werte kopieren' }).click();
-    await expect(page.getByRole('status')).toContainText(/Kopiert|Kopieren nicht möglich/);
+    await expect(page.locator('.note[role=status]')).toContainText(/Kopiert|Kopieren nicht möglich/);
     const text = await page.evaluate(() => navigator.clipboard.readText()).catch(() => 'innerWidth x innerHeight: env(safe-area-inset-top)');
     expect(text).toContain('innerWidth x innerHeight');
     expect(text).toContain('env(safe-area-inset-top)');
@@ -26,6 +28,7 @@ test.describe('/diagnose (phone)', () => {
 test.describe('/diagnose link (phone)', () => {
   test('admins reach the diagnose page from Mein Bereich without typing a URL', async ({ page, api }) => {
     api.asAdmin = true;
+    await castOn(page);
     await page.goto('/me');
     await page.getByTestId('me-diagnose').click();
     await expect(page).toHaveURL(/\/diagnose$/);

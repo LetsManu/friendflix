@@ -283,7 +283,7 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
  * (`castnext:`) up to the successor's own cap, and a queued token refreshes its own pin (it was written at mint with the idle TTL).
  * Replace only: a revoked successor is never resurrected.
  */
-async function keepQueue(ctx: Ctx, hash: string, rec: CastRecord, ttl: number) {
+async function keepQueue(ctx: Ctx, hash: string, rec: CastRecord, _ttl: number) {
   const nk = nextKey(rec.userId, rec.playSessionId);
   const succ = await ctx.kv.get(nk);
   if (!succ) return;

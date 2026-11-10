@@ -85,7 +85,7 @@ export const picks = (page: Page) => page.evaluate(() => (window as unknown as {
 export const srcAtPick = (page: Page) => page.evaluate(() => (window as unknown as { __srcAtPick: string }).__srcAtPick);
 
 /** runs in the page as the Cast sender SDK (same shape as `fakeSdk()` in web/src/lib/cast.test.ts) */
-function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask' } = {}) {
+function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask'; pick?: boolean; playAfter?: number } = {}) {
   type Rec = { args: unknown[] } & Record<string, unknown>;
   const w = window as unknown as Record<string, unknown> & { __castLoads: unknown[]; __castCalls: string[]; __castOptions: unknown; __castMsgs: unknown[]; __castLoadFails?: boolean; __onGCastApiAvailable?: (ok: boolean) => void; chrome?: Record<string, unknown> };
   w.__castLoads = []; w.__castCalls = []; w.__castOptions = null; w.__castMsgs = [];
@@ -138,7 +138,7 @@ function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask' } = {})
       setTimeout(() => {
         change({ isMediaLoaded: true, isPaused: false, playerState: 'PLAYING', currentTime: Number(req.currentTime) || 0, duration: Number(media.duration) || 600, ...(opts.survive ? { mediaInfo: { contentId: String(media.args[0]), customData: media.customData ?? null } } : {}) });
         saveRx();
-      }, 0);
+      }, opts.playAfter ?? 0);
       return undefined;
     },
     getMediaSession: () => mediaSession,
@@ -153,6 +153,7 @@ function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask' } = {})
     addEventListener: (t: string, fn: (e: { castState?: string; sessionState?: string }) => void) => { ctxListeners.set(t, fn); },
     async requestSession(): Promise<string | undefined> {
       w.__castCalls.push('requestSession');
+      if (opts.pick) { start(); return undefined; }
       if (opts.survive !== 'ask' || !stored()) return 'cancel';
       join();
       return undefined;
@@ -226,8 +227,8 @@ function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask' } = {})
  * `'join'` = the SDK auto-joins it (SESSION_RESUMED), `'ask'` = nothing joins until `requestSession()` (the Reconnect button). `queue: true`: the receiver accepts queued titles
  * (`queueInsert`, `queueRemove:<id>`, `queueNext` show up in `calls()`); without it the engine's queue request is refused.
  */
-export async function fakeCastSdk(page: Page, o: { queue?: boolean; survive?: 'join' | 'ask' } = {}) {
-  await page.route('https://www.gstatic.com/cv/js/sender/**', (r) => r.fulfill({ contentType: 'text/javascript', body: `(${castSdkScript.toString()})(${JSON.stringify({ queue: Boolean(o.queue), ...(o.survive ? { survive: o.survive } : {}) })});` }));
+export async function fakeCastSdk(page: Page, o: { queue?: boolean; survive?: 'join' | 'ask'; pick?: boolean; playAfter?: number } = {}) {
+  await page.route('https://www.gstatic.com/cv/js/sender/**', (r) => r.fulfill({ contentType: 'text/javascript', body: `(${castSdkScript.toString()})(${JSON.stringify({ queue: Boolean(o.queue), ...(o.survive ? { survive: o.survive } : {}), ...(o.pick ? { pick: true } : {}), ...(o.playAfter ? { playAfter: o.playAfter } : {}) })});` }));
   type Fake = { start(): void; end(): void; finish(): void; nearEnd(): void };
   const ready = () => page.waitForFunction(() => Boolean((window as unknown as { __castFake?: unknown }).__castFake));
   const run = async (fn: keyof Fake) => {
