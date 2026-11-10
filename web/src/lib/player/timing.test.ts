@@ -271,6 +271,19 @@ describe('picture and sound out (Task 4)', () => {
     expect(t.finish({ device: 'tv' })).toMatchObject({ videoOut: 'direct', audioOut: 'direct', why: [] });
   });
 
+  it('a direct play that fell back to HLS reports the stream that played (mode keeps the first for the phases)', () => {
+    const t = createTiming(clock().now);
+    t.begin(); t.mode('direct'); t.mode('hls');
+    t.stream({ out: out({ videoCodec: 'h264', audio: 'stereo', audioCodec: 'aac', channels: 2, why: ['h264_device', 'stereo_device'] }) });
+    expect(t.finish({ device: 'pc' })).toMatchObject({ mode: 'direct', videoOut: 'copy_h264', audioOut: 'stereo', why: ['h264_device', 'stereo_device'] });
+  });
+
+  it('stored junk in why / audioCodec never reaches the out line', () => {
+    const line = formatTiming({ ...report({ why: ['hevc_device', 'http://x/y'] as string[], audioCodec: 'http://x/y' }), at: 0 });
+    expect(line).toContain('out: copy_hevc · 5.1 (hevc_device)');
+    expect(() => formatTiming({ ...report({ why: 'oops' as unknown as string[] }), at: 0 })).not.toThrow();
+  });
+
   it('formatTiming: the out line; a report stored without it renders as before', () => {
     const s = formatTiming({ ...report(), at: 0 });
     expect(s).toContain('  out: copy_hevc · eac3 5.1 (hevc_device, surround_device)');

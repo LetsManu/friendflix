@@ -26,7 +26,7 @@ async function mock(page: Page, o: { audioCodecFails?: boolean; hevc?: boolean; 
   await page.addInitScript((fail) => {
     Object.defineProperty(BaseAudioContext.prototype, 'destination', { configurable: true, get: () => ({ maxChannelCount: 6 }) });
     const mc = navigator.mediaCapabilities;
-    if (mc) mc.decodingInfo = (async () => ({ supported: true, smooth: true, powerEfficient: true })) as typeof mc.decodingInfo;
+    if (mc) mc.decodingInfo = (async () => ({ supported: true, smooth: true, powerEfficient: true })) as unknown as typeof mc.decodingInfo;
     if (fail) {
       // the audio source buffer of the 5.1 stream cannot be created: hls.js reports bufferAddCodecError
       const add = MediaSource.prototype.addSourceBuffer;

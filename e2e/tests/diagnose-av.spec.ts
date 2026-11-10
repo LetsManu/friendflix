@@ -19,7 +19,7 @@ async function setup(page: Page, o: { stereo?: boolean; last?: unknown; abilitie
     // a browser that decodes HEVC and states a 6-channel output (the probe itself is covered by devicecaps.test.ts)
     Object.defineProperty(BaseAudioContext.prototype, 'destination', { configurable: true, get: () => ({ maxChannelCount: 6 }) });
     const mc = navigator.mediaCapabilities;
-    if (mc) mc.decodingInfo = (async () => ({ supported: true, smooth: true, powerEfficient: true })) as typeof mc.decodingInfo;
+    if (mc) mc.decodingInfo = (async () => ({ supported: true, smooth: true, powerEfficient: true })) as unknown as typeof mc.decodingInfo;
     MediaSource.isTypeSupported = () => true;
     HTMLMediaElement.prototype.canPlayType = () => 'probably';
     if (stereo) localStorage.setItem('ff_audio_stereo', '1');

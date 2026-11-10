@@ -65,6 +65,14 @@ export type VideoOut = 'direct' | 'copy_h264' | 'copy_hevc' | 'h264' | 'hevc';
 export type AudioOut = 'direct' | 'copy' | 'stereo' | 'surround';
 /** the server's `delivery` block as far as the session keeps it: fixed codes, no ids */
 export interface StreamOut { video: string; videoCodec: string; audio: string; audioCodec: string; channels?: number; why?: string[] }
+/** the reason codes the server's plan may carry; anything else read from storage or the server is left out */
+export const WHY_CODES = ['hevc_device', 'hevc_upload', 'h264_device', 'h264_home', 'h264_hdr', 'h264_off', 'h264_unproven', 'h264_unhealthy', 'h264_busy',
+  'surround_device', 'stereo_device', 'stereo_choice', 'stereo_mode', 'stereo_bitrate', 'stereo_off', 'stereo_source', 'avoided'] as const;
+const KNOWN_WHY: ReadonlySet<string> = new Set(WHY_CODES);
+/** the known reason codes of a (possibly malformed) stored value */
+export const whyList = (w: unknown): string[] => (Array.isArray(w) ? w.filter((c): c is string => typeof c === 'string' && KNOWN_WHY.has(c)) : []);
+/** a short codec code (eac3, aac …) or null: never anything else */
+export const safeCodec = (c: unknown): string | null => (typeof c === 'string' && /^[a-z0-9]{2,8}$/.test(c) ? c : null);
 /** the fields that stay on this device */
 const LOCAL_ONLY = ['why', 'audioCodec', 'channels'] as const;
 
@@ -127,6 +135,7 @@ function frameCounter() {
 }
 
 export function createTiming(now: () => number = () => performance.now()) {
+  let outMode: Mode | null = null; // the mode of the stream that is playing now (a direct play that fell back to HLS: 'hls'); `mode` keeps the first for the phase statistics
   let t0 = 0, on = false, qualitySwitch = false, mode: Mode | null = null, bitrate: number | null = null, targetDuration: number | null = null;
   let infoAt: number | null = null, manifestAt: number | null = null, fragAt: number | null = null, frameAt: number | null = null;
   let fragBytes: number | null = null, fragDl: number | null = null;
@@ -144,14 +153,14 @@ export function createTiming(now: () => number = () => performance.now()) {
      * re-start for an audio track change)
      */
     begin(isSwitch = false, isTrack = false) {
-      t0 = now(); on = true; qualitySwitch = isSwitch; mode = null; bitrate = null; targetDuration = null;
+      t0 = now(); on = true; qualitySwitch = isSwitch; mode = null; outMode = null; bitrate = null; targetDuration = null;
       infoAt = manifestAt = fragAt = frameAt = fragBytes = fragDl = seekAt = stallAt = null; seeks = []; seekCount = 0; stalls = 0; stallMs = 0;
       fromNext = false; trackSwitch = isTrack && !isSwitch; delivery = null; videoCopy = null; streamOut = null; soundMode = 'off'; audioRouted = false; reconnects = 0; frames.reset();
     },
     get active() { return on; },
     /** playback info received with the requested bitrate (first answer of the session only: a retry keeps the clock) */
     info(bps?: number) { if (on && infoAt === null) { infoAt = rel(); bitrate = bps && bps > 0 ? Math.round(bps) : null; } },
-    mode(m: Mode) { if (on && mode === null) mode = m; },
+    mode(m: Mode) { if (!on) return; outMode = m; if (mode === null) mode = m; },
     /** the start used the prepared next-episode info */
     next() { if (on) fromNext = true; },
     /** how the stream is delivered: the transcode reason's guess first, the server's transcode info (videoCopy) when it answers */
@@ -210,7 +219,7 @@ export function createTiming(now: () => number = () => performance.now()) {
         seekMaxMs: seeks.length ? Math.max(...seeks) : null, stalls, stallMs, effectiveType: env.effectiveType ?? null,
         delivery: delivery ?? deliveryOf(mode, null, videoCopy), videoCopy, soundMode, audioRouted, droppedFrames: frames.value.dropped, totalFrames: frames.value.total,
         trackSwitch, reconnects, avEvents: seekCount + reconnects + (qualitySwitch || trackSwitch ? 1 : 0), fromNext,
-        ...outCodes(mode, streamOut), why: mode === 'direct' ? [] : [...(streamOut?.why ?? [])], audioCodec: streamOut?.audioCodec ?? null, channels: typeof streamOut?.channels === 'number' ? streamOut.channels : null,
+        ...outCodes(outMode, streamOut), why: outMode === 'direct' ? [] : whyList(streamOut?.why), audioCodec: safeCodec(streamOut?.audioCodec), channels: typeof streamOut?.channels === 'number' ? streamOut.channels : null,
       };
     },
     /** party / cast / AirPlay: this session is not reported */
@@ -288,8 +297,9 @@ function syncLine(s: StoredTiming): string {
 const chName = (n: number | null | undefined) => (n === 6 ? '5.1' : n === 2 ? 'stereo' : typeof n === 'number' && n > 0 ? `${n}ch` : '');
 /** "out: copy_hevc · eac3 5.1 (hevc_device, surround_device)" */
 function outLine(s: StoredTiming): string {
-  const sound = s.audioOut === 'direct' || !s.audioOut ? (s.audioOut ?? '?') : [s.audioCodec, chName(s.channels)].filter(Boolean).join(' ') || s.audioOut;
-  return `  out: ${s.videoOut ?? '?'} · ${sound}${s.why?.length ? ` (${s.why.join(', ')})` : ''}`;
+  const sound = s.audioOut === 'direct' || !s.audioOut ? (s.audioOut ?? '?') : [safeCodec(s.audioCodec), chName(s.channels)].filter(Boolean).join(' ') || s.audioOut;
+  const why = whyList(s.why);
+  return `  out: ${s.videoOut ?? '?'} · ${sound}${why.length ? ` (${why.join(', ')})` : ''}`;
 }
 
 /** the translator of the caller (the $t store or tr): the keys below exist in every locale */
