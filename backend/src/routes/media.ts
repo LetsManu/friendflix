@@ -375,6 +375,8 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
   // stopped on the media server. Only the caller's own device and play session; a session that started playing is never stopped here.
   app.post('/api/playback/warm/stop', pre, wrap(async (req) => {
     const b = z.object({ playSessionId: psId }).parse(req.body);
+    // ownership: /api/playback/info wrote this record for the caller's own play session (Jellyfin kills by play session id alone)
+    if (!(await ctx.kv.get(`pbinfo:${req.user!.id}:${b.playSessionId}`).catch(() => null))) return { ok: true, stopped: false };
     if (await getLive(ctx, req.user!.id, b.playSessionId)) return { ok: true, stopped: false };
     await ctx.jf.stopEncoding(req.jfUser!, b.playSessionId);
     return { ok: true, stopped: true };
