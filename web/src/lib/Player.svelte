@@ -730,7 +730,8 @@
    */
   function attachToCast(): boolean {
     const s = get(castSession);
-    if (partyMode || !s) return false;
+    // a detached cast (known only from the hint) has no remote: this page plays by itself, the bar offers Reconnect
+    if (partyMode || !s || s.state === 'detached') return false;
     handedOver();
     if (s.itemId !== itemId) void castEngine.playOnTv(itemId, startAt);
     else if (startAt !== undefined) castEngine.seek(startAt);

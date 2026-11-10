@@ -489,6 +489,25 @@ describe('resume plumbing', () => {
     expect(get(C.castState).deviceName).toBe('Living Room TV');
   });
 
+  it('whenCastReady runs after the setup (after its session-resume), at once once ready, never without the SDK', async () => {
+    const seen: string[] = [];
+    C.onCastEvent((e) => seen.push(e));
+    C.whenCastReady(() => seen.push('ready'));
+    C.whenCastReady(() => { throw new Error('one waiter'); });
+    C.whenCastReady(() => seen.push('ready 2'));
+    await C.initCast();
+    win.__onGCastApiAvailable(false); // unavailable: nobody is told it is ready
+    expect(seen).toEqual([]);
+    const sdk = fakeSdk();
+    sdk.context.current = sdk.session;
+    win.cast = { framework: sdk.framework };
+    win.chrome = { cast: sdk.chromeCast };
+    win.__onGCastApiAvailable(true);
+    expect(seen).toEqual(['session-resume', 'ready', 'ready 2']);
+    C.whenCastReady(() => seen.push('late'));
+    expect(seen.at(-1)).toBe('late');
+  });
+
   it('castState carries the own receiver castId and the queued items', async () => {
     const sdk = await connectSdk();
     sdk.context.current = sdk.session;

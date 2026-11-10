@@ -54,7 +54,7 @@
   }
 
   $: line2 = !s ? ''
-    : state === 'reconnect' ? (choose ? $t('player.airplay.chooseHint') : $t('player.castBar.reconnect'))
+    : state === 'reconnect' || state === 'detached' ? (choose ? $t('player.airplay.chooseHint') : $t('player.castBar.reconnect'))
     : next ? [$t('player.castBar.next', { label: next.label }), secs !== null ? $t('player.castBar.nextIn', { n: secs }) : ''].filter(Boolean).join(' · ')
     : barLine(s, $t);
 
@@ -79,7 +79,7 @@
   <div class="castbar" bind:this={region} class:notab={!tabbar} role="region" aria-label={$t('player.castBar.region')} aria-busy={state === 'connecting' ? 'true' : undefined}>
     <div class="box">
       <div class="line" role="progressbar" aria-label={$t('player.castBar.progress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style="width:{progress}%"></span></div>
-      {#if state === 'reconnect'}
+      {#if state === 'reconnect' || state === 'detached'}
         <!-- the whole bar (but Stop) is one button: the tap reconnects -->
         <button type="button" class="main" on:click={reconnect}>
           {#if thumb}<img class="thumb" src={thumb.src} alt="" style="aspect-ratio:{thumb.ratio}" />{/if}

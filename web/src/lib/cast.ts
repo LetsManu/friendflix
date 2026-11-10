@@ -270,6 +270,15 @@ function sync() {
   lastLoaded = loaded;
 }
 
+/** callbacks waiting for the SDK's setup (`whenCastReady`) */
+const readyFns: Array<() => void> = [];
+let ready = false;
+/** runs `fn` once the Cast SDK is set up (at once when it is; never when the SDK is not loaded or unavailable) */
+export function whenCastReady(fn: () => void) {
+  if (ready) fn();
+  else readyFns.push(fn);
+}
+
 function setup() {
   const fw = window.cast?.framework, ch = window.chrome?.cast;
   if (!fw || !ch) return;
@@ -306,6 +315,8 @@ function setup() {
     castLog({ level: 'info', tag: 'session', text: `session found at start · ${deviceName()}` });
     emit('session-resume');
   }
+  ready = true;
+  for (const fn of readyFns.splice(0)) { try { fn(); } catch { /* one waiter never breaks the others */ } }
 }
 /** the TV's name for a log line; remembered so the copied report can anonymise it later */
 const deviceName = () => {
