@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { listErrors } from '../src/errorlog.js';
 import { dispatchMediaEvent } from '../src/media/events.js';
 import type { ItemFeatures } from '../src/media/types.js';
@@ -285,8 +285,8 @@ describe('incremental pass via the media.event bus', () => {
     lib = [film(1), film(2)];
     await full();
     await dispatchMediaEvent(env.ctx, { type: 'itemRemoved', itemId: hex(1), itemType: 'Movie' });
-    await new Promise((r) => setTimeout(r, 50));
-    expect((await rows()).map((r) => r.item_id)).toEqual([hex(2)]);
+    // the listener deletes fire-and-forget (indexJob.ts: `void recoIndexRemoved`), so wait for the row to go instead of sleeping
+    await vi.waitFor(async () => expect((await rows()).map((r) => r.item_id)).toEqual([hex(2)]), { timeout: 5_000, interval: 20 });
   });
 });
 
