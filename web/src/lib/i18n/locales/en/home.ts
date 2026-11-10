@@ -136,7 +136,6 @@ const en: Translation<typeof de> = {
     emptyRecent: 'See recently added',
     emptyCalendar: 'Calendar',
     toCalendar: 'Go to calendar',
-    details: '{name}, details',
     tabs: 'Sections',
     tabForYou: 'For you',
     tabLibrary: 'New in the library',
@@ -170,6 +169,7 @@ const en: Translation<typeof de> = {
     barSub: 'Request a series or film',
     remindOn: 'Reminder on',
     kind: { series: 'Series', movie: 'Film' },
+    details: '{name}, details',
   },
   /** the "Wünschen" button (lib/requests/RequestButton.svelte) */
   wish: {
