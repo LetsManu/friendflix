@@ -85,7 +85,7 @@ test.describe('setup wizard', () => {
     await expect(plan.getByRole('listitem').filter({ hasText: 'Gruppen (Admins und Nutzer)' })).toContainText('wird angelegt');
     await expect(plan.getByRole('listitem').filter({ hasText: 'Flow für vergessene Passwörter' })).toContainText('vorhanden');
     await expect(page.getByText(/Ein vorhandener Provider „FriendFlix“ wird angepasst/)).toBeVisible();
-    expect(api.setup!.plans).toEqual([{ url: 'https://auth.example.com', token: 'ak-admin-placeholder' }]);
+    expect(api.setup!.plans).toEqual([{ url: 'https://auth.example.com', token: 'ak-admin-placeholder', passkeySignIn: false }]);
 
     // the environment sets the client id with another value: it was kept, and the page says so (key names only)
     api.setup!.apply = { status: 200, body: { ...api.setup!.apply.body, envKept: ['OIDC_CLIENT_ID'] } };
@@ -99,7 +99,7 @@ test.describe('setup wizard', () => {
     await expect(left.getByRole('listitem')).toHaveCount(3);
     await expect(left).toContainText('SMTP');
     await expect(left).toContainText('/templates');
-    expect(api.setup!.applies).toEqual([{ url: 'https://auth.example.com', token: 'ak-admin-placeholder', addMeToAdmins: true }]);
+    expect(api.setup!.applies).toEqual([{ url: 'https://auth.example.com', token: 'ak-admin-placeholder', addMeToAdmins: true, passkeySignIn: false }]);
     // the one-time token is gone from the page
     const values = await page.locator('input').evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value));
     expect(values.join('\n')).not.toContain('ak-admin-placeholder');

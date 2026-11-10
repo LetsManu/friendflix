@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# FriendFlix – passkey sign-in inside FriendFlix: a WebAuthn validation stage for the identification stage (docs/authentik.md §11).
+#
+# Import: the FriendFlix setup wizard ("Sign-in" → "Automatic") and Admin → Status → Sign-in → "Repair" import this file through the
+# Authentik API when "Offer passkey sign-in" is ticked (off by default), then set the new stage as "WebAuthn Authenticator Validation
+# Stage" of default-authentication-identification, but only when that field is still empty (an existing choice is never overwritten).
+# By hand: Flows and Stages → Flows → Import → "File upload" → this file, then Flows and Stages → Stages →
+# default-authentication-identification → Edit → "WebAuthn Authenticator Validation Stage" → friendflix-passkey-validation → Update.
+# Re-importing is safe (the stage is matched by its name and updated, not duplicated).
+#
+# Why: Authentik sends a passkey challenge on the identification stage only when this field is set. Without it the sign-in screen
+# cannot offer "Sign in with a passkey". The stage is bound to no flow; it only says how the passkey is checked: WebAuthn devices only,
+# and the authenticator must verify the person (fingerprint, face or PIN), because the passkey replaces the password here.
+# Note: the identification stage belongs to Authentik's default sign-in, so setting the field offers passkeys to every application
+# that uses it, not only FriendFlix.
+version: 1
+metadata:
+  name: FriendFlix - passkey sign-in
+  labels:
+    blueprints.goauthentik.io/description: "WebAuthn validation stage for passkey sign-in on the FriendFlix sign-in screen"
+entries:
+  - model: authentik_stages_authenticator_validate.authenticatorvalidatestage
+    identifiers:
+      name: friendflix-passkey-validation
+    attrs:
+      device_classes: [webauthn]
+      not_configured_action: deny
+      webauthn_user_verification: required

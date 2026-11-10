@@ -55,6 +55,11 @@ import { getUserById, getUserBySub, HttpError } from '../users.js';
 
 /** the flow id (httpOnly, only sent to /auth/flow) */
 export const FLOW_COOKIE = 'ff_flow';
+/**
+ * a re-authentication's prepared passkey attempt (httpOnly, /auth/flow): a second jar stopped at the identification with its passkey
+ * options, so the browser can run the passkey prompt right in the click (Safari wants the user gesture) instead of after a round trip
+ */
+export const FLOW_ALT_COOKIE = 'ff_flow_alt';
 /** the double-submit token, readable by the page */
 export const FLOW_CSRF_COOKIE = 'ff_flow_csrf';
 export const FLOW_CSRF_HEADER = 'x-ff-flow-csrf';
@@ -114,6 +119,11 @@ const StartBody = z.strictObject({
   /** reauth only: the flow that continues in the same Authentik session once the person is re-authenticated */
   then: z.enum(THEN_KINDS).optional(),
   invite: z.string().min(1).max(128).optional(),
+  /**
+   * reauth only: confirm with a passkey instead of the password. The identification stage is then not answered by the backend; the
+   * first step is the identification with its passkey options (app host only), which takes nothing but a passkey.
+   */
+  method: z.enum(['passkey']).optional(),
   /** recovery only: the name typed on the password screen ("Passwort vergessen?"), answered to the identification by the backend */
   identifier: z.string().trim().min(1).max(254).optional(),
 });
@@ -150,12 +160,16 @@ function movedOn(next: FlowStep | FlowInternal, answered: FlowStage): boolean {
   return 'step' in next && next.stage !== answered && next.stage !== 'identify';
 }
 
-/** an answer may only use what the shown step offered (an inline password, a passkey, a code); prompt answers only the shown fields */
-function checkOffered(shown: AnswerableStep, answer: Record<string, unknown>): void {
+/**
+ * an answer may only use what the shown step offered (an inline password, a passkey, a code); prompt answers only the shown fields.
+ * A re-authentication's identification takes a passkey only: the account is the session's, never a name typed into it.
+ */
+function checkOffered(shown: AnswerableStep, answer: Record<string, unknown>, jar: Pick<Jar, 'kind'>): void {
   const has = (k: string) => Object.hasOwn(answer, k);
   switch (shown.stage) {
     case 'identify':
       if ((has('passkey') && !shown.passkey) || (has('password') && !shown.passwordInline)) throw badRequest();
+      if (jar.kind === 'reauth' && !has('passkey')) throw badRequest();
       return;
     case 'mfa':
       if ((has('webauthn') && !shown.passkey) || (has('code') && !shown.totp && !shown.recovery)) throw badRequest();
@@ -350,6 +364,19 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
   const setFlowCookie = (reply: FastifyReply, flowId: string) =>
     reply.setCookie(FLOW_COOKIE, flowId, { httpOnly: true, secure: secure(), sameSite: 'strict', path: FLOW_PATH, maxAge: JAR_TTL_S });
   const clearFlowCookie = (reply: FastifyReply) => reply.clearCookie(FLOW_COOKIE, { path: FLOW_PATH });
+  const setAltCookie = (reply: FastifyReply, flowId: string) =>
+    reply.setCookie(FLOW_ALT_COOKIE, flowId, { httpOnly: true, secure: secure(), sameSite: 'strict', path: FLOW_PATH, maxAge: JAR_TTL_S });
+  const clearAltCookie = (reply: FastifyReply) => reply.clearCookie(FLOW_ALT_COOKIE, { path: FLOW_PATH });
+
+  /** ends a prepared passkey attempt (its Authentik session too) and clears its cookie; nothing when there is none */
+  async function forgetAlt(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const alt = req.cookies[FLOW_ALT_COOKIE];
+    if (!alt) return;
+    const jar = await loadJar(ctx, alt);
+    if (jar) await endAkSession(ctx, jar);
+    await dropJar(ctx, alt);
+    clearAltCookie(reply);
+  }
 
   /** the double-submit check: header and cookie present and equal (timing-safe) */
   function checkFlowCsrf(req: FastifyRequest): void {
@@ -476,9 +503,9 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!parsed.success) throw badRequest();
     const body = parsed.data;
     if (body.identifier !== undefined && body.kind !== 'recovery') throw badRequest();
-    if (body.then !== undefined && body.kind !== 'reauth') throw badRequest();
+    if ((body.then !== undefined || body.method !== undefined) && body.kind !== 'reauth') throw badRequest();
     if (loginUi(ctx.cfg) !== 'app') throw new HttpError(409, 'classic');
-    if (body.kind === 'reauth') return startReauth(req, reply, body.then);
+    if (body.kind === 'reauth') return startReauth(req, reply, body.then, body.method);
     let init: Partial<Pick<Jar, 'query' | 'invite'>> = {};
     if (body.kind === 'enroll') {
       // enrolment runs with the Authentik invitation of a portal invite; the invite also travels to the end of the flow (preflight P16)
@@ -490,7 +517,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
       if (!(await lookupInvite(ctx, body.invite))) throw new HttpError(410, 'invite_invalid');
       init = { invite: body.invite };
     }
-    const old = await forgetPrevious(req);
+    const old = await forgetPrevious(req, reply);
     const jar = await createJar(ctx, body.kind, { ...init, step: randomToken(16) });
     const flowId = randomToken();
     const { challenge } = await akExec(ctx, jar, 'GET', undefined, req.ip);
@@ -510,8 +537,14 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
    * person's Authentik username itself, so the first step is the password (or the second factor, or a passkey). With `then` the follow-up
    * flow is checked up front: a passkey setup needs passkeys in-app (else 409 `passkey_classic`: the web uses the classic page), an
    * e-mail change needs its flow in Authentik.
+   * Passkey instead of the password: when the identification carries passkey options for the app host that require user verification,
+   * the first step says so (`passkeyAlt: true`) and brings a prepared passkey attempt (`passkeyStep`, prepareAlt), so the browser can
+   * prompt inside the click. `method: 'passkey'` is the fallback without a prepared attempt: it starts anew without answering the
+   * identification; the step is the identification with those options, answered with the passkey only (checkOffered); no usable
+   * options, or no required user verification → 409 `passkey_unavailable`. Authentik verifies the assertion; the end of the flow
+   * still checks it is the session's own person (stampReauth).
    */
-  async function startReauth(req: FastifyRequest, reply: FastifyReply, then: (typeof THEN_KINDS)[number] | undefined) {
+  async function startReauth(req: FastifyRequest, reply: FastifyReply, then: (typeof THEN_KINDS)[number] | undefined, method?: 'passkey') {
     await requireOwner(ctx)(req, reply);
     if (reply.sent) return reply;
     const sent = req.headers['x-csrf-token'];
@@ -520,18 +553,60 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     if (then === 'setup-webauthn' && !(await passkeysInApp(ctx))) throw new HttpError(409, 'passkey_classic');
     if (then === 'change-email' && !(await akFlowExists(ctx, flowSlug(ctx.cfg, 'change-email')!))) throw new HttpError(409, 'flow_not_configured');
     const identifier = await reauthIdentifier(req, user);
-    const old = await forgetPrevious(req);
+    const old = await forgetPrevious(req, reply);
     const jar = await createJar(ctx, 'reauth', { userId: user.id, identifier, ...(then ? { then } : {}), step: randomToken(16) });
     const flowId = randomToken();
     let { challenge } = await akExec(ctx, jar, 'GET', undefined, req.ip);
-    // an identification stage with the password inline cannot be answered without it: the person sees it (the sub check at the end holds anyway)
-    if (challenge.component === 'ak-stage-identification' && challenge.password_fields !== true) {
+    const ident = challenge.component === 'ak-stage-identification';
+    // the passkey options pass the same checks as on the sign-in screen (toStep: the RP ID is the app host of a forwarding jar)
+    const first = ident ? toStep(challenge, jar, jar.step, appHost(ctx.cfg)) : null;
+    // a re-authentication proves presence of the person, not only of a device: offered only when Authentik demands user verification
+    // (fingerprint, face or PIN) for this passkey; a stage with `preferred` / `discouraged` keeps the password
+    const passkeyAlt = first !== null && 'stage' in first && first.stage === 'identify' && first.passkey !== null && first.passkey.userVerification === 'required';
+    if (method === 'passkey') {
+      if (!passkeyAlt) {
+        await endAkSession(ctx, jar);
+        if (old) clearFlowCookie(reply);
+        throw new HttpError(409, 'passkey_unavailable');
+      }
+    } else if (ident && challenge.password_fields !== true) {
+      // an identification stage with the password inline cannot be answered without it: the person sees it (the sub check at the end holds anyway)
       ({ challenge } = await akExec(ctx, jar, 'POST', { uid_field: identifier }, req.ip));
     }
     const { out, live } = await advance(req, reply, flowId, jar, challenge, true);
     if (live) setFlowCookie(reply, flowId);
     else if (old) clearFlowCookie(reply);
-    return out;
+    if (!(passkeyAlt && method !== 'passkey' && live)) return out;
+    const passkeyStep = await prepareAlt(req, reply, user.id, identifier, then);
+    return passkeyStep ? { ...out, passkeyAlt: true, passkeyStep } : { ...out, passkeyAlt: true };
+  }
+
+  /**
+   * The passkey path of a re-authentication, prepared next to the password step: a second jar (its own Authentik session) stopped at
+   * the identification, whose passkey options (app host, user verification required: the same checks) go to the browser at once. It is
+   * answered with `alt: true` (answerAlt). Best effort: when it cannot be used or kept, its Authentik session is ended at once, there
+   * is none, and the browser falls back to `method: 'passkey'`.
+   */
+  async function prepareAlt(req: FastifyRequest, reply: FastifyReply, userId: string, identifier: string, then: Jar['then']): Promise<FlowStep | null> {
+    const jar = await createJar(ctx, 'reauth', { userId, identifier, ...(then ? { then } : {}), step: randomToken(16) });
+    const flowId = randomToken();
+    try {
+      const { challenge } = await akExec(ctx, jar, 'GET', undefined, req.ip);
+      const step = challenge.component === 'ak-stage-identification' ? toStep(challenge, jar, jar.step, appHost(ctx.cfg)) : null;
+      if (step && 'stage' in step && step.stage === 'identify' && step.passkey?.userVerification === 'required') {
+        const { out, live } = await advance(req, reply, flowId, jar, challenge, true);
+        if (live) {
+          setAltCookie(reply, flowId);
+          return out;
+        }
+      }
+    } catch (err) {
+      req.log.warn({ route: req.routeOptions.url ?? 'unmatched', code: errCode(err) }, 'reauth passkey attempt not prepared');
+    }
+    // not usable, not live or failed: its Authentik session ends right away (best effort) and nothing of it stays
+    await endAkSession(ctx, jar);
+    await dropJar(ctx, flowId);
+    return null;
   }
 
   /**
@@ -562,7 +637,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     const parsed = ResumeBody.safeParse(req.body ?? {});
     if (!parsed.success) throw badRequest();
     if (loginUi(ctx.cfg) !== 'app') throw new HttpError(409, 'classic');
-    const old = await forgetPrevious(req);
+    const old = await forgetPrevious(req, reply);
     const expired = (): FlowStep => {
       if (old) clearFlowCookie(reply);
       return { stage: 'expired' };
@@ -616,8 +691,10 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw badRequest();
     const head = AnswerHead.safeParse(raw);
     if (!head.success) throw badRequest();
-    const { step: _s, stage: _st, ...given } = raw as Record<string, unknown>;
+    const { step: _s, stage: _st, alt, ...given } = raw as Record<string, unknown>;
+    if (alt !== undefined && alt !== true) throw badRequest();
     if (loginUi(ctx.cfg) !== 'app') throw new HttpError(409, 'classic');
+    if (alt === true) return answerAlt(req, reply, head.data.step, head.data.stage, given);
     const flowId = req.cookies[FLOW_COOKIE];
     // older than 600 s, never started, or already finished: nothing reaches Authentik
     const jar = flowId ? await loadJar(ctx, flowId) : null;
@@ -627,18 +704,61 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     await checkSessionCsrf(req, jar);
     if (!sameToken(head.data.step, jar.step)) throw new HttpError(409, 'step_used');
-    return answerStep(req, reply, flowId, jar, head.data.stage, given);
+    const out = await answerStep(req, reply, flowId, jar, head.data.stage, given);
+    // the password path moved on (or ended): a prepared passkey attempt is no longer needed
+    if (!('step' in out) || out.stage !== head.data.stage) await forgetAlt(req, reply);
+    return out;
   }));
+
+  /**
+   * The prepared passkey attempt of a re-authentication is answered (`alt: true`): only that session's jar, its current step, and on its
+   * identification only a passkey (checkOffered). The password attempt stays until Authentik has accepted the passkey: a refused
+   * passkey (the identification again, with errors) or a refused request keeps both, so the person can still use the password or try
+   * again. Once the flow moved past the identification, the passkey attempt becomes the attempt and the password attempt (with its
+   * Authentik session) ends; when it ended without success (denied, expired), only the passkey attempt is gone.
+   */
+  async function answerAlt(req: FastifyRequest, reply: FastifyReply, step: string, stage: string, given: Record<string, unknown>): Promise<Reply> {
+    const altId = req.cookies[FLOW_ALT_COOKIE];
+    const jar = altId ? await loadJar(ctx, altId) : null;
+    if (!altId || !jar?.last || jar.kind !== 'reauth') {
+      if (altId) clearAltCookie(reply);
+      return { stage: 'expired' };
+    }
+    await checkSessionCsrf(req, jar);
+    if (!sameToken(step, jar.step)) throw new HttpError(409, 'step_used');
+    const out = await answerStep(req, reply, altId, jar, stage, given, clearAltCookie);
+    if (out.stage === 'identify') return out; // refused (or rate limited): both attempts stay
+    const dropPrimary = async () => {
+      const primary = req.cookies[FLOW_COOKIE];
+      if (!primary || primary === altId) return;
+      const prev = await loadJar(ctx, primary);
+      if (prev) await endAkSession(ctx, prev);
+      await dropJar(ctx, primary);
+    };
+    if ('step' in out) {
+      await dropPrimary();
+      clearAltCookie(reply);
+      setFlowCookie(reply, altId);
+    } else if (out.stage === 'done') {
+      await dropPrimary();
+      clearFlowCookie(reply);
+    }
+    return out;
+  }
 
   /**
    * Answers the step a live jar shows: the answer route, and a recovery start with an identifier. Checked against the shown step, made
    * single use, rate limited (per account, and for e-mails per account and IP), then sent to Authentik; the next challenge is advanced.
    */
-  async function answerStep(req: FastifyRequest, reply: FastifyReply, flowId: string, jar: Jar, stage: string, given: Record<string, unknown>): Promise<Reply> {
+  async function answerStep(
+    req: FastifyRequest, reply: FastifyReply, flowId: string, jar: Jar, stage: string, given: Record<string, unknown>,
+    /** clears the cookie of this jar when it ends (the prepared passkey attempt has its own) */
+    clearCookie: (reply: FastifyReply) => void = clearFlowCookie,
+  ): Promise<Reply> {
     if (!jar.last) throw badRequest();
     const shown = jar.last.step;
     if (stage !== shown.stage) throw badRequest();
-    checkOffered(shown, given);
+    checkOffered(shown, given, jar);
     let answer = toAnswer(shown.stage, given, jar.last.raw); // 400 bad_request / password_mismatch, before anything is used up
     const typed = (answer as { uid_field?: unknown }).uid_field;
     const identifier = shown.stage === 'identify' && typeof typed === 'string' ? typed : jar.identifier;
@@ -649,7 +769,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     if (identifier !== undefined) jar.identifier = identifier;
     // only while the jar is still stored: an answer racing a cancel or a new start never brings it back
     if (!(await saveJar(ctx, flowId, jar, { existing: true }))) {
-      clearFlowCookie(reply);
+      clearCookie(reply);
       return { stage: 'expired' };
     }
     // e-mail change: the new address is checked before Authentik or a mail budget is touched (a refused address uses up nothing but the step)
@@ -707,7 +827,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     if (failKey && reserved && !errors.length && movedOn(toStep(challenge, jar, jar.step, appHost(ctx.cfg)), shown.stage)) await ctx.kv.decr(failKey);
     else if (failKey && !reserved && errors.length) await ctx.kv.incr(failKey, FLOW_FAIL_WINDOW_S);
     const { out, live } = await advance(req, reply, flowId, jar, challenge, false);
-    if (!live) clearFlowCookie(reply);
+    if (!live) clearCookie(reply);
     // a mail went out: the next resend waits a minute from now
     else if (mails && out.stage === 'email-sent') await ctx.kv.set(resendKey(flowId), '1', RESEND_GAP_S);
     return errors.length && 'step' in out ? { ...out, errors } : out;
@@ -766,7 +886,8 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
   }
 
   /** one attempt per browser: a new start or resume ends the previous attempt (its Authentik session too) and forgets its jar */
-  async function forgetPrevious(req: FastifyRequest): Promise<string | undefined> {
+  async function forgetPrevious(req: FastifyRequest, reply: FastifyReply): Promise<string | undefined> {
+    await forgetAlt(req, reply);
     const old = req.cookies[FLOW_COOKIE];
     if (old) {
       const prev = await loadJar(ctx, old);
@@ -777,7 +898,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
   }
 
   // The fallback of Ruling 1 (passkeys cannot run in-app): the person registers a passkey on Authentik's own page. A redirect to the
-  // browser-facing issuer origin (AUTHENTIK_URL may be internal), for the signed-in owner only.
+  // browser-facing issuer origin (akFlowUrl: the public name, which AUTHENTIK_URL shares), for the signed-in owner only.
   app.get('/auth/flow/classic/webauthn-setup', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, guarded(async (req, reply) => {
     await requireOwner(ctx)(req, reply);
     if (reply.sent) return reply;
@@ -797,6 +918,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
       await dropJar(ctx, flowId);
     }
     clearFlowCookie(reply);
+    await forgetAlt(req, reply);
     reply.clearCookie(FLOW_CSRF_COOKIE, { path: '/' });
     return { ok: true };
   }));

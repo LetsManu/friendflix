@@ -25,7 +25,7 @@ export interface SetupState {
   /** 'authentik' once the Authentik automation saved the sign-in (and no sign-in key was typed by hand since); absent on older backends */
   signinVia?: 'authentik' | null;
 }
-export type AkStepId = 'check' | 'groups' | 'provider' | 'serviceAccount' | 'enrollment' | 'recovery' | 'brand' | 'readback' | 'adminMember' | 'extraFlows';
+export type AkStepId = 'check' | 'groups' | 'provider' | 'serviceAccount' | 'enrollment' | 'recovery' | 'brand' | 'passkeys' | 'readback' | 'adminMember' | 'extraFlows';
 export interface AkStep { id: AkStepId; state: 'create' | 'update' | 'exists' | 'skip' | 'ok' | 'failed'; detail?: string }
 export type WizardGroup = 'general' | 'media' | 'signin';
 
@@ -95,7 +95,7 @@ export const mediaAuto = (input: { url: string; username: string; password: stri
   call('/api/setup/media/auto', { method: 'POST', body: input, timeoutMs: AUTO_TIMEOUT_MS });
 
 /** What the Authentik automation would do (read only). */
-export const akPlan = (input: { url: string; token: string }): Promise<{ steps: AkStep[] }> =>
+export const akPlan = (input: { url: string; token: string; passkeySignIn?: boolean }): Promise<{ steps: AkStep[] }> =>
   call('/api/setup/authentik/plan', { method: 'POST', body: input, timeoutMs: PLAN_TIMEOUT_MS });
 
 /**
@@ -103,7 +103,8 @@ export const akPlan = (input: { url: string; token: string }): Promise<{ steps: 
  * keys the environment sets with other values than Authentik now has (kept, not saved; key names only).
  */
 export interface AkResult { ok: boolean; steps: AkStep[]; envKept?: string[] }
-export const akApply = (input: { url: string; token: string; addMeToAdmins: boolean }): Promise<AkResult> =>
+/** `passkeySignIn`: the owner's opt-in (the passkey check on Authentik's default identification stage, for every application) */
+export const akApply = (input: { url: string; token: string; addMeToAdmins: boolean; passkeySignIn?: boolean }): Promise<AkResult> =>
   call('/api/setup/authentik/apply', { method: 'POST', body: input, timeoutMs: APPLY_TIMEOUT_MS });
 
 /** The step to open: the first one that still needs something (2 public URL, 3 media, 4 sign-in, else 5 first admin). */

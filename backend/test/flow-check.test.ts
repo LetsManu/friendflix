@@ -41,6 +41,11 @@ interface Opts {
   /** the login flow's executor answer (default: the identification challenge) */
   executor?: ReturnType<Handler>;
 }
+/** the identification stage with a WebAuthn validation stage set: Authentik sends a passkey challenge for the forwarded app host */
+const IDENT_WITH_PASSKEY = {
+  component: 'ak-stage-identification', user_fields: ['username', 'email'],
+  passkey_challenge: { challenge: 'fake-challenge-0021', rpId: 'friend.example.com', allowCredentials: [], userVerification: 'required', timeout: 60000 },
+};
 const PERM_PATHS: Record<string, string> = {
   view_user: '/api/v3/core/users/', view_flow: '/api/v3/flows/instances/', view_flowstagebinding: '/api/v3/flows/bindings/',
   view_emailstage: '/api/v3/stages/email/', view_invitation: '/api/v3/stages/invitation/invitations/', view_totpdevice: '/api/v3/authenticators/admin/totp/',
@@ -58,7 +63,7 @@ function setup(o: Opts = {}) {
   const routes: Record<string, Handler> = {
     ...lists,
     'GET /api/v3/core/users/me/': () => (o.tokenInvalid ? { status: 403, json: { detail: 'Token invalid/expired' } } : { json: { user: { pk: 9, username: 'friendflix-invites' } } }),
-    'GET /api/v3/flows/executor/default-authentication-flow/': () => o.executor ?? { json: { component: 'ak-stage-identification', user_fields: ['username', 'email'] } },
+    'GET /api/v3/flows/executor/default-authentication-flow/': () => o.executor ?? { json: IDENT_WITH_PASSKEY },
     'GET /api/v3/flows/instances/[^/]+/': (u) => {
       const slug = decodeURIComponent(u.pathname.split('/')[5]!);
       return stages[slug] ? { json: { pk: `pk-${slug}`, slug } } : { status: 404, json: { detail: 'no' } };
@@ -101,7 +106,7 @@ describe('checkLoginFlows', () => {
     const r = await checkLoginFlows(setup().ctx);
     expect(r).toMatchObject({
       mode: 'app', implicitConsent: true, authCodeGrant: true, issuerMatches: true, passkeys: 'in-app', passkeysReason: 'ok', unreachable: false, warnings: [],
-      serviceToken: { token: 'ok', missing: [] }, executor: { ok: true }, lastFailures: [],
+      serviceToken: { token: 'ok', missing: [] }, executor: { ok: true }, passkeySignIn: 'ok', lastFailures: [],
     });
     expect(r.flows.map((f) => [f.kind, f.state])).toEqual([
       ['login', 'ok'], ['recovery', 'ok'], ['invalidation', 'ok'], ['setup-totp', 'ok'], ['setup-static', 'ok'], ['setup-webauthn', 'ok'], ['change-password', 'ok'], ['change-email', 'ok'],
@@ -194,6 +199,39 @@ describe('checkLoginFlows', () => {
     const http = setup({ cfgOver: { PUBLIC_URL: 'http://friend.example.com' } });
     expect(await checkLoginFlows(http.ctx)).toMatchObject({ passkeys: 'sign-in page', passkeysReason: 'not_https' });
     expect(http.calls.some((c) => c.path.endsWith('openid-configuration'))).toBe(false);
+  });
+
+  it('passkey sign-in: no passkey challenge on the identification stage -> no_stage with its own warning, even while passkeys run in-app', async () => {
+    const r = await checkLoginFlows(setup({ executor: { json: { component: 'ak-stage-identification', user_fields: ['username'], passkey_challenge: null } } }).ctx);
+    expect(r).toMatchObject({ passkeys: 'in-app', passkeySignIn: 'no_stage', warnings: ['passkeys:no_stage'] });
+    // the forwarded host is ignored as well: both causes are named, each with its own fix
+    const both = await checkLoginFlows(setup({ issuer: 'https://auth.example.com/application/o/friendflix/', executor: { json: { component: 'ak-stage-identification', user_fields: ['username'] } } }).ctx);
+    expect(both.passkeySignIn).toBe('no_stage');
+    expect(both.warnings).toEqual(['passkeys:forwarded_host_ignored', 'passkeys:no_stage']);
+  });
+
+  it('passkey sign-in: a challenge for another RP ID while the host is forwarded -> rp_mismatch; host not forwarded -> off (the reason says why)', async () => {
+    const other = { json: { ...IDENT_WITH_PASSKEY, passkey_challenge: { ...IDENT_WITH_PASSKEY.passkey_challenge, rpId: 'auth.example.com' } } };
+    const r = await checkLoginFlows(setup({ executor: other }).ctx);
+    expect(r).toMatchObject({ passkeys: 'in-app', passkeySignIn: 'rp_mismatch', warnings: ['passkeys:rp_mismatch'] });
+    const off = await checkLoginFlows(setup({ executor: other, issuer: 'https://auth.example.com/application/o/friendflix/' }).ctx);
+    expect(off).toMatchObject({ passkeySignIn: 'off', warnings: ['passkeys:forwarded_host_ignored'] });
+    // PASSKEYS_IN_APP=off is the owner's choice: no warning at all
+    const disabled = await checkLoginFlows(setup({ cfgOver: { PASSKEYS_IN_APP: 'off' }, executor: { json: { component: 'ak-stage-identification', user_fields: ['username'] } } }).ctx);
+    expect(disabled).toMatchObject({ passkeySignIn: 'no_stage', warnings: [] });
+  });
+
+  it('passkey sign-in without required user verification: offered, but a warning (re-authentication with a passkey stays off)', async () => {
+    const weak = { json: { ...IDENT_WITH_PASSKEY, passkey_challenge: { ...IDENT_WITH_PASSKEY.passkey_challenge, userVerification: 'preferred' } } };
+    expect(await checkLoginFlows(setup({ executor: weak }).ctx)).toMatchObject({ passkeySignIn: 'ok', warnings: ['passkeys:uv_not_required'] });
+    expect(await checkLoginFlows(setup().ctx)).toMatchObject({ passkeySignIn: 'ok', warnings: [] });
+  });
+
+  it('passkey sign-in: a first stage that is no identification -> unknown, no warning; a failing executor -> null', async () => {
+    expect(await checkLoginFlows(setup({ executor: { json: { component: 'ak-stage-password' } } }).ctx)).toMatchObject({ passkeySignIn: 'unknown', warnings: [] });
+    const down = await checkLoginFlows(setup({ executor: { status: 500, json: {} } }).ctx);
+    expect(down.passkeySignIn).toBeNull();
+    expect(down.warnings.some((w) => w.startsWith('passkeys:'))).toBe(false);
   });
 
   it('no API -> mode authentik and flows []', async () => {

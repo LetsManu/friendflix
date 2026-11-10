@@ -26,8 +26,11 @@ export interface AkCall { method: string; url: URL; path: string; search: string
 export interface FakeStage {
   /** what the executor shows while this stage is current */
   challenge: RawChallenge;
-  /** checks an answer: true advances, a challenge (with response_errors) is answered with 200 and stays on this stage */
-  answer?: (body: any, call: AkCall) => true | RawChallenge;
+  /**
+   * checks an answer: true advances, 'end' skips the remaining stages (a passwordless passkey), a challenge (with response_errors) is
+   * answered with 200 and stays on this stage
+   */
+  answer?: (body: any, call: AkCall) => true | 'end' | RawChallenge;
   /** 302 hops after a valid answer (default 1: POST → 302 → GET → 200; 2 as recorded for the last stage) */
   hops?: number;
   /** extra Set-Cookie lines sent with the answer's first redirect */
@@ -57,10 +60,12 @@ const redirect = (to: string, setCookie: string[] = []) => {
 export const FINAL: RawChallenge = { component: 'xak-flow-redirect', to: '/', final_redirect: true };
 
 /** A fake executor walking through `stages`; any other path answers 404 unless `routes` has it ("METHOD /path" → handler). */
-export function fakeAuthentik(stages: FakeStage[], routes: Record<string, (call: AkCall) => Response | Promise<Response>> = {}): FakeAuthentik {
+export function fakeAuthentik(stages: FakeStage[], routes: Record<string, (call: AkCall) => Response | Promise<Response>> = {}, opts: { perSession?: boolean } = {}): FakeAuthentik {
   const fake: FakeAuthentik = { calls: [], state: { index: 0 }, fetch: undefined as unknown as typeof fetch };
   let session = 0;
   let pendingHops = 0;
+  /** `perSession`: every Authentik session walks the stages on its own (two attempts of one browser in parallel) */
+  const bySession = new Map<string, { index: number; hops: number }>();
   fake.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = new URL(typeof input === 'string' || input instanceof URL ? input.toString() : input.url);
     const headers = Object.fromEntries(Object.entries((init.headers ?? {}) as Record<string, string>).map(([k, v]) => [k.toLowerCase(), v]));
@@ -76,20 +81,28 @@ export function fakeAuthentik(stages: FakeStage[], routes: Record<string, (call:
     const cookies = headers.cookie ?? '';
     const fresh = !/authentik_session=/.test(cookies) ? [`authentik_session=s${++session}; HttpOnly; Path=/; SameSite=Lax`] : [];
     const self = `${url.pathname}${url.search}`;
-    if (pendingHops > 0) {
-      pendingHops--;
+    const sid = /authentik_session=([^;]+)/.exec(cookies)?.[1] ?? `s${session}`;
+    const st = opts.perSession ? (bySession.get(sid) ?? bySession.set(sid, { index: 0, hops: 0 }).get(sid)!) : null;
+    if (st ? st.hops > 0 : pendingHops > 0) {
+      if (st) st.hops--;
+      else pendingHops--;
       return redirect(self, fresh);
     }
-    const stage = stages[fake.state.index];
+    const stage = stages[st ? st.index : fake.state.index];
     if (!stage) {
       const login = /authentik_csrf=/.test(cookies) ? [] : ['authentik_csrf=c1; expires=Thu, 14 Oct 2027 07:11:37 GMT; Max-Age=31449600; Path=/; SameSite=Lax'];
       return json(FINAL, [...fresh, ...login]);
     }
     if (method === 'GET') return json(stage.challenge, fresh);
     const verdict = stage.answer ? stage.answer(call.body, call) : true;
-    if (verdict !== true) return json(verdict, fresh);
-    fake.state.index++;
-    pendingHops = (stage.hops ?? 1) - 1;
+    if (verdict !== true && verdict !== 'end') return json(verdict, fresh);
+    if (st) {
+      st.index = verdict === 'end' ? stages.length : st.index + 1;
+      st.hops = (stage.hops ?? 1) - 1;
+    } else {
+      fake.state.index = verdict === 'end' ? stages.length : fake.state.index + 1;
+      pendingHops = (stage.hops ?? 1) - 1;
+    }
     return redirect(self, [...fresh, ...(stage.setCookie ?? [])]);
   }) as typeof fetch;
   return fake;

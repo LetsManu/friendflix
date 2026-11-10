@@ -18,6 +18,12 @@ interface FakeOpts {
   /** pre-existing objects (an Authentik that has seen FriendFlix before) */
   groups?: string[]; provider?: Record<string, unknown> | null; app?: boolean; users?: string[]; flows?: string[];
   brandRecovery?: string | null; stageRecovery?: string | null;
+  /** the identification stage's WebAuthn validation stage (null: none set, so Authentik sends no passkey challenge) */
+  stageWebauthn?: string | null;
+  /** an older Authentik: the identification stage has no webauthn_stage field (`absent`), or a PATCH silently ignores it (`ignored`) */
+  webauthnField?: 'absent' | 'ignored';
+  /** the passkey blueprint import answers success: false */
+  failPasskeyImport?: boolean;
   /** 1-based index of the blueprint import that answers success: false */
   failImport?: number;
   issuer?: string;
@@ -37,7 +43,10 @@ function fakeAuthentik(o: FakeOpts = {}) {
   const users = new Set(o.users ?? []);
   const flows = new Map<string, string>((o.flows ?? []).map((s, i) => [s, `flow-${i}`]));
   const brand = { ...fixture('brand').results[0], flow_recovery: o.brandRecovery ?? null };
-  const stage = { ...fixture('identification-stage').results[0], recovery_flow: o.stageRecovery ?? null };
+  const stage: Record<string, any> = { ...fixture('identification-stage').results[0], recovery_flow: o.stageRecovery ?? null, webauthn_stage: o.stageWebauthn ?? null };
+  if (o.webauthnField === 'absent') delete stage.webauthn_stage;
+  /** validation stages by name (friendflix-passkey.yaml creates one) */
+  const validateStages = new Map<string, string>();
   const patches: Array<{ path: string; json: unknown }> = [];
   const added: Array<{ group: string; pk: unknown }> = [];
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -98,14 +107,21 @@ function fakeAuthentik(o: FakeOpts = {}) {
       return json(brand);
     }
     if (method === 'GET' && p === '/api/v3/stages/identification/') return list(q.get('name') === stage.name ? [stage] : []);
+    if (method === 'GET' && p === '/api/v3/stages/authenticator/validate/') {
+      const n = q.get('name')!;
+      return list(validateStages.has(n) ? [{ pk: validateStages.get(n), name: n, device_classes: ['webauthn'] }] : []);
+    }
     if (method === 'PATCH' && p === `/api/v3/stages/identification/${stage.pk}/`) {
       patches.push({ path: p, json: call.json });
       // Authentik 2026.8.3 validates user_fields / sources from the request only (seen live)
-      const b = call.json as { user_fields?: unknown[]; sources?: unknown[] };
+      const b = call.json as { user_fields?: unknown[]; sources?: unknown[]; webauthn_stage?: unknown };
       if (!b.user_fields?.length && !b.sources?.length) return json({ non_field_errors: ['When no user fields are selected, at least one source must be selected'] }, 400);
-      Object.assign(stage, call.json);
+      // DRF drops a field the serializer does not know (an older release), and still answers 200
+      const { webauthn_stage: wa, ...rest } = b;
+      Object.assign(stage, o.webauthnField ? rest : { ...rest, ...(wa !== undefined ? { webauthn_stage: wa } : {}) });
       return json(stage);
     }
+    if (method === 'GET' && p === `/api/v3/stages/identification/${stage.pk}/`) return json(stage);
     if (method === 'GET' && p === '/api/v3/core/tokens/friendflix-invites-token/view_key/') {
       return users.has('friendflix-invites') ? json({ key }) : json({ detail: 'Not found.' }, 404);
     }
@@ -118,7 +134,7 @@ function fakeAuthentik(o: FakeOpts = {}) {
         ...(form.get('context') ? { context: JSON.parse(String(form.get('context'))) as Record<string, string> } : {}),
       };
       imports.push(entry);
-      if (o.failImport === imports.length) return json({ success: false, logs: [{ event: 'Entry invalid', log_level: 'warning' }] });
+      if (o.failImport === imports.length || (o.failPasskeyImport && entry.file === 'friendflix-passkey.yaml')) return json({ success: false, logs: [{ event: 'Entry invalid', log_level: 'warning' }] });
       if (entry.file === 'friendflix-setup.yaml') {
         groups.set(entry.context!.admin_group!, 'g-admins');
         groups.set('friendflix-users', 'g-users');
@@ -128,7 +144,8 @@ function fakeAuthentik(o: FakeOpts = {}) {
       else if (entry.file === 'friendflix-blueprint.yaml') {
         users.add('friendflix-invites');
         flows.set('friendflix-enrollment', 'flow-enroll');
-      } else if (entry.path === 'example/flows-recovery-email-mfa-verification.yaml') flows.set('default-recovery-flow', 'flow-recovery');
+      } else if (entry.file === 'friendflix-passkey.yaml') validateStages.set('friendflix-passkey-validation', 'stage-passkey');
+      else if (entry.path === 'example/flows-recovery-email-mfa-verification.yaml') flows.set('default-recovery-flow', 'flow-recovery');
       return json({ success: true, logs: [] });
     }
     return json({ detail: 'Not found.' }, 404);
@@ -170,7 +187,7 @@ describe('planAuthentik', () => {
   it('plan on an empty Authentik → groups create, provider create, serviceAccount create, enrollment create, recovery create, brand create; plan makes only GET requests', async () => {
     const ak = fakeAuthentik();
     const steps = await planAuthentik(planInput, { fetchImpl: ak.fetchImpl });
-    expect(states(steps)).toEqual(['check:ok', 'groups:create', 'provider:create', 'serviceAccount:create', 'enrollment:create', 'recovery:create', 'brand:create', 'extraFlows:skip:template_missing']);
+    expect(states(steps)).toEqual(['check:ok', 'groups:create', 'provider:create', 'serviceAccount:create', 'enrollment:create', 'recovery:create', 'brand:create', 'passkeys:skip:not_chosen', 'extraFlows:skip:template_missing']);
     expect(ak.calls.length).toBeGreaterThan(8);
     expect(new Set(ak.calls.map((c) => c.method))).toEqual(new Set(['GET']));
     for (const c of ak.calls.filter((x) => x.path.startsWith('/api/'))) expect(c.auth).toBe(`Bearer ${ADMIN_TOKEN}`);
@@ -181,9 +198,13 @@ describe('planAuthentik', () => {
   });
 
   it('plan on a configured Authentik → exists / update; a provider with other settings → update', async () => {
-    const done = { groups: ['friendflix-admins', 'friendflix-users'], provider: fixture('provider'), app: true, users: ['friendflix-invites'], flows: ['friendflix-enrollment', 'default-recovery-flow'], brandRecovery: 'flow-x', stageRecovery: 'flow-x' };
+    const done = { groups: ['friendflix-admins', 'friendflix-users'], provider: fixture('provider'), app: true, users: ['friendflix-invites'], flows: ['friendflix-enrollment', 'default-recovery-flow'], brandRecovery: 'flow-x', stageRecovery: 'flow-x', stageWebauthn: 'stage-x' };
     const same = await planAuthentik({ ...planInput, publicUrl: 'https://tv.example.com' }, { fetchImpl: fakeAuthentik(done).fetchImpl });
-    expect(states(same)).toEqual(['check:ok', 'groups:exists', 'provider:exists', 'serviceAccount:update', 'enrollment:update', 'recovery:exists', 'brand:exists', 'extraFlows:skip:template_missing']);
+    expect(states(same)).toEqual(['check:ok', 'groups:exists', 'provider:exists', 'serviceAccount:update', 'enrollment:update', 'recovery:exists', 'brand:exists', 'passkeys:skip:not_chosen', 'extraFlows:skip:template_missing']);
+    // the passkey box ticked: what it would do (set already here; to create on a stock Authentik; not possible without the field)
+    expect(states(await planAuthentik({ ...planInput, passkeySignIn: true }, { fetchImpl: fakeAuthentik(done).fetchImpl }))).toContain('passkeys:exists');
+    expect(states(await planAuthentik({ ...planInput, passkeySignIn: true }, { fetchImpl: fakeAuthentik().fetchImpl }))).toContain('passkeys:create');
+    expect(states(await planAuthentik({ ...planInput, passkeySignIn: true }, { fetchImpl: fakeAuthentik({ webauthnField: 'absent' }).fetchImpl }))).toContain('passkeys:skip:unsupported_version');
     // grant types missing (an API-created provider), another redirect URI, or no application: the blueprint updates it
     const noGrant = await planAuthentik(planInput, { fetchImpl: fakeAuthentik({ ...done, provider: { ...fixture('provider'), grant_types: [] } }).fetchImpl });
     expect(noGrant.find((s) => s.id === 'provider')?.state).toBe('update');
@@ -210,7 +231,7 @@ describe('applyAuthentik', () => {
   it('apply posts three blueprint files then the recovery path import; the friendflix-setup import has context {"public_url":"https://tv.example.com","admin_group":"friendflix-admins"}', async () => {
     const ak = fakeAuthentik();
     const r = await applyAuthentik(applyInput, deps(ak.fetchImpl));
-    expect(states(r.steps)).toEqual(['check:ok', 'groups:ok', 'provider:ok', 'serviceAccount:ok', 'enrollment:ok', 'recovery:ok', 'brand:ok', 'readback:ok', 'adminMember:skip', 'extraFlows:skip:template_missing']);
+    expect(states(r.steps)).toEqual(['check:ok', 'groups:ok', 'provider:ok', 'serviceAccount:ok', 'enrollment:ok', 'recovery:ok', 'brand:ok', 'readback:ok', 'adminMember:skip', 'passkeys:skip:not_chosen', 'extraFlows:skip:template_missing']);
     expect(ak.imports.map((i) => i.file ?? `path:${i.path}`)).toEqual([
       'friendflix-setup.yaml', 'friendflix-service-account.yaml', 'friendflix-blueprint.yaml', 'path:example/flows-recovery-email-mfa-verification.yaml',
     ]);
@@ -225,6 +246,47 @@ describe('applyAuthentik', () => {
       { path: `/api/v3/core/brands/${ak.brand.brand_uuid}/`, json: { flow_recovery: 'flow-recovery' } },
       { path: `/api/v3/stages/identification/${ak.stage.pk}/`, json: { user_fields: ['email', 'username'], sources: [], recovery_flow: 'flow-recovery' } },
     ]);
+    // passkey sign-in is the owner's opt-in (it changes the default identification stage for every application): untouched by default
+    expect(ak.stage.webauthn_stage).toBeNull();
+    expect(ak.imports.map((i) => i.file)).not.toContain('friendflix-passkey.yaml');
+  });
+
+  it('passkey sign-in chosen: the validation stage is imported, set on the identification stage and read back, after the credentials', async () => {
+    const ak = fakeAuthentik();
+    const r = await applyAuthentik({ ...applyInput, passkeySignIn: true }, deps(ak.fetchImpl));
+    expect(states(r.steps)).toEqual(['check:ok', 'groups:ok', 'provider:ok', 'serviceAccount:ok', 'enrollment:ok', 'recovery:ok', 'brand:ok', 'readback:ok', 'adminMember:skip', 'passkeys:ok', 'extraFlows:skip:template_missing']);
+    expect(ak.imports.at(-1)!.file).toBe('friendflix-passkey.yaml');
+    // user fields sent back unchanged; the value is read back
+    expect(ak.patches.at(-1)).toEqual({ path: `/api/v3/stages/identification/${ak.stage.pk}/`, json: { user_fields: ['email', 'username'], sources: [], webauthn_stage: 'stage-passkey' } });
+    const patchAt = ak.calls.findLastIndex((c) => c.method === 'PATCH');
+    expect(ak.calls[patchAt + 1]).toMatchObject({ method: 'GET', path: `/api/v3/stages/identification/${ak.stage.pk}/` });
+    expect(ak.stage.webauthn_stage).toBe('stage-passkey');
+    expect(r.values).toBeDefined();
+  });
+
+  it('passkey step never fails the setup: no field (older Authentik) → unsupported_version, nothing imported; a PATCH that is ignored → not_applied; a refused import → its code', async () => {
+    const absent = fakeAuthentik({ webauthnField: 'absent' });
+    const r1 = await applyAuthentik({ ...applyInput, passkeySignIn: true }, deps(absent.fetchImpl));
+    expect(states(r1.steps)).toContain('passkeys:skip:unsupported_version');
+    expect(absent.imports.map((i) => i.file)).not.toContain('friendflix-passkey.yaml');
+    expect(r1.values).toBeDefined();
+    const ignored = fakeAuthentik({ webauthnField: 'ignored' });
+    const r2 = await applyAuthentik({ ...applyInput, passkeySignIn: true }, deps(ignored.fetchImpl));
+    expect(states(r2.steps)).toContain('passkeys:skip:not_applied');
+    expect(r2.values).toBeDefined();
+    const refused = fakeAuthentik({ failPasskeyImport: true });
+    const r3 = await applyAuthentik({ ...applyInput, passkeySignIn: true }, deps(refused.fetchImpl));
+    expect(states(r3.steps)).toEqual(expect.arrayContaining(['passkeys:skip:blueprint_invalid', 'extraFlows:skip:template_missing']));
+    expect(r3.values).toBeDefined(); // the credentials are saved all the same
+  });
+
+  it('an identification stage that already has a WebAuthn validation stage keeps it: passkeys exists, no import, no PATCH of it', async () => {
+    const ak = fakeAuthentik({ flows: ['default-recovery-flow'], brandRecovery: 'flow-other', stageRecovery: 'flow-other', stageWebauthn: 'stage-own' });
+    const r = await applyAuthentik({ ...applyInput, passkeySignIn: true }, deps(ak.fetchImpl));
+    expect(states(r.steps)).toContain('passkeys:exists');
+    expect(ak.imports.map((i) => i.file)).not.toContain('friendflix-passkey.yaml');
+    expect(ak.calls.some((c) => c.method === 'PATCH')).toBe(false);
+    expect(ak.stage.webauthn_stage).toBe('stage-own'); // never overwritten
   });
 
   it('recovery flow exists → recovery exists, no import; brand with flow_recovery set → brand exists, no PATCH', async () => {
@@ -427,6 +489,23 @@ describe('deploy/authentik/friendflix-setup.yaml', () => {
   });
 });
 
+describe('deploy/authentik/friendflix-passkey.yaml', () => {
+  const text = readFileSync(new URL('../../deploy/authentik/friendflix-passkey.yaml', import.meta.url), 'utf8');
+  const body = text.split('\n').filter((l) => !l.trimStart().startsWith('#')).join('\n');
+  it('creates one WebAuthn-only validation stage with user verification required, named as the setup looks it up', async () => {
+    const { PASSKEY_STAGE } = await import('../src/setup/authentikSetup.js');
+    expect(text.startsWith('# SPDX-FileCopyrightText: 2026 Manuel Weißböck\n# SPDX-License-Identifier: AGPL-3.0-or-later\n')).toBe(true);
+    expect(text).toMatch(/# Import/);
+    expect(body).toMatch(/^version: 1$/m);
+    expect(body).toContain('model: authentik_stages_authenticator_validate.authenticatorvalidatestage');
+    expect(body).toContain(`name: ${PASSKEY_STAGE}`);
+    expect(body).toMatch(/^ {6}device_classes: \[webauthn\]$/m);
+    expect(body).toMatch(/^ {6}webauthn_user_verification: required$/m);
+    expect(body).not.toMatch(/\t/);
+    expect(body.match(/- model:/g)).toHaveLength(1); // it never touches the identification stage itself: the setup patches only an empty field
+  });
+});
+
 describe('POST /api/setup/authentik/plan and /apply', () => {
   const logs: string[] = [];
   let env: TestEnv;
@@ -474,7 +553,7 @@ describe('POST /api/setup/authentik/plan and /apply', () => {
     ak = fakeAuthentik();
     const r = await post('plan', planInput);
     expect(r.statusCode).toBe(200);
-    expect(states(r.json().steps)).toEqual(['check:ok', 'groups:create', 'provider:create', 'serviceAccount:create', 'enrollment:create', 'recovery:create', 'brand:create', 'extraFlows:skip:template_missing']);
+    expect(states(r.json().steps)).toEqual(['check:ok', 'groups:create', 'provider:create', 'serviceAccount:create', 'enrollment:create', 'recovery:create', 'brand:create', 'passkeys:skip:not_chosen', 'extraFlows:skip:template_missing']);
     expect(new Set(ak.calls.map((c) => c.method))).toEqual(new Set(['GET']));
   });
 
@@ -659,11 +738,11 @@ describe('POST /api/setup/authentik/plan and /apply', () => {
 describe('repairAuthentik (Admin → Status → Sign-in → Repair)', () => {
   it('re-applies only the service account and the extra flows, then reads the service token back', async () => {
     const ak = fakeAuthentik({ users: ['friendflix-invites'], templates: ['friendflix-email-change.html'] });
-    const r = await repairAuthentik({ url: AK, token: ADMIN_TOKEN }, deps(ak.fetchImpl));
-    expect(states(r.steps)).toEqual(['check:ok', 'serviceAccount:ok', 'extraFlows:ok', 'readback:ok']);
-    expect(ak.imports.map((i) => i.file)).toEqual(['friendflix-service-account.yaml', 'friendflix-email-change.yaml']);
-    // groups, provider, enrollment and recovery are never touched, nothing is patched
-    expect(ak.patches).toEqual([]);
+    const r = await repairAuthentik({ url: AK, token: ADMIN_TOKEN, passkeySignIn: true }, deps(ak.fetchImpl));
+    expect(states(r.steps)).toEqual(['check:ok', 'serviceAccount:ok', 'passkeys:ok', 'extraFlows:ok', 'readback:ok']);
+    expect(ak.imports.map((i) => i.file)).toEqual(['friendflix-service-account.yaml', 'friendflix-passkey.yaml', 'friendflix-email-change.yaml']);
+    // groups, provider, enrollment and recovery are never touched; with the opt-in only the identification stage gets its passkey validation stage
+    expect(ak.patches).toEqual([{ path: `/api/v3/stages/identification/${ak.stage.pk}/`, json: { user_fields: ['email', 'username'], sources: [], webauthn_stage: 'stage-passkey' } }]);
     expect(r.values).toEqual({ AUTHENTIK_API_TOKEN: SERVICE_KEY });
     // the service account blueprint carries the phase 3 permissions
     const sa = ak.imports[0]!.content!;
@@ -673,7 +752,9 @@ describe('repairAuthentik (Admin → Status → Sign-in → Repair)', () => {
   it('a missing template skips the e-mail change only; a non-superuser token stops at check; the admin token never leaves in an answer', async () => {
     const ak = fakeAuthentik({ users: ['friendflix-invites'] });
     const r = await repairAuthentik({ url: AK, token: ADMIN_TOKEN }, deps(ak.fetchImpl));
-    expect(states(r.steps)).toEqual(['check:ok', 'serviceAccount:ok', 'extraFlows:skip:template_missing', 'readback:ok']);
+    // without the explicit opt-in Repair never touches the identification stage
+    expect(states(r.steps)).toEqual(['check:ok', 'serviceAccount:ok', 'passkeys:skip:not_chosen', 'extraFlows:skip:template_missing', 'readback:ok']);
+    expect(ak.patches).toEqual([]);
     const weak = fakeAuthentik({ superuser: false });
     const w = await repairAuthentik({ url: AK, token: ADMIN_TOKEN }, deps(weak.fetchImpl));
     expect(states(w.steps)).toEqual(['check:failed:not_superuser']);
@@ -722,7 +803,7 @@ describe('POST /api/admin/authentik/repair', () => {
     const r = await post({ token: ADMIN_TOKEN });
     expect(r.statusCode).toBe(200);
     expect(r.json()).toMatchObject({ ok: true, tokenSaved: true });
-    expect(states(r.json().steps)).toEqual(['check:ok', 'serviceAccount:ok', 'extraFlows:skip:template_missing', 'readback:ok']);
+    expect(states(r.json().steps)).toEqual(['check:ok', 'serviceAccount:ok', 'passkeys:skip:not_chosen', 'extraFlows:skip:template_missing', 'readback:ok']);
     expect(r.json().check).toMatchObject({ mode: expect.any(String) });
     await env.ctx.settings.reload();
     expect(env.ctx.cfg.AUTHENTIK_API_TOKEN).toBe(SERVICE_KEY);
@@ -747,5 +828,16 @@ describe('POST /api/admin/authentik/repair', () => {
     expect(r.json()).toEqual({ ok: false, steps: [{ id: 'check', state: 'failed', detail: 'not_superuser' }] });
     expect(env.ctx.settings.rev()).toBe(rev);
     expect((await post({})).statusCode).toBe(400);
+  });
+
+  it('passkey sign-in only with the explicit opt-in in the body; a non-boolean is refused', async () => {
+    ak = fakeAuthentik({ users: ['friendflix-invites'] });
+    await stamp(Date.now());
+    await env.ctx.settings.save({ AUTHENTIK_URL: AK }, null);
+    const r = await post({ token: ADMIN_TOKEN, passkeySignIn: true });
+    expect(r.statusCode).toBe(200);
+    expect(states(r.json().steps)).toContain('passkeys:ok');
+    expect(ak.stage.webauthn_stage).toBe('stage-passkey');
+    expect((await post({ token: ADMIN_TOKEN, passkeySignIn: 'yes' })).statusCode).toBe(400);
   });
 });

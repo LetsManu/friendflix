@@ -10,7 +10,7 @@ vi.mock('#lib/api', () => ({ getCsrf: () => csrf.token }));
 
 import {
   answer, artPaths, cancelFlow, classicHref, codeFromBoxes, credentialJSON, errorKey, fallbackArt, fieldLabel, flowConfig, inviteToken,
-  passkeyCreate, passkeyGet, pasteCode, resumeFlow, safeNext, startFlow, wallColumns,
+  passkeyCeremonies, passkeyCreate, passkeyGet, passkeyProblem, pasteCode, preparedPasskey, resumeFlow, runPasskey, safeNext, startFlow, wallColumns,
   type FlowStep, type PasskeyCreate, type PasskeyGet,
 } from './flow';
 
@@ -391,6 +391,67 @@ describe('passkeys', () => {
     await expect(passkeyGet(GET)).rejects.toThrow('passkey_unsupported');
     installWebAuthn({ get: async () => { throw Object.assign(new Error('boom'), { name: 'UnknownError' }); } });
     await expect(passkeyGet(GET)).rejects.toThrow('boom');
+  });
+
+  it('passkeyGet passes the abort signal; an aborted ceremony → passkey_aborted (the person chose another method)', async () => {
+    const { seen } = installWebAuthn();
+    const ctrl = new AbortController();
+    const calls: any[] = [];
+    vi.stubGlobal('navigator', { credentials: { get: vi.fn(async (o: unknown) => { calls.push(o); ctrl.abort(); throw Object.assign(new Error('x'), { name: 'AbortError' }); }) } });
+    await expect(passkeyGet(GET, ctrl.signal)).rejects.toThrow('passkey_aborted');
+    expect(calls[0].signal).toBe(ctrl.signal);
+    expect(seen.get).toBeUndefined();
+  });
+
+  it('passkeyProblem: aborted, unsupported, cancelled before the timeout, timeout once it ran out, failed otherwise', () => {
+    const err = (m: string) => new Error(m);
+    expect(passkeyProblem(err('passkey_aborted'), 10, 60000)).toBe('aborted');
+    expect(passkeyProblem(err('passkey_unsupported'), 10, 60000)).toBe('unsupported');
+    expect(passkeyProblem(err('passkey_cancelled'), 3000, 60000)).toBe('cancelled');
+    expect(passkeyProblem(err('passkey_cancelled'), 59500, 60000)).toBe('timeout');
+    expect(passkeyProblem(err('passkey_cancelled'), 600000)).toBe('cancelled'); // no timeout in the options: never guessed
+    expect(passkeyProblem(err('boom'), 10, 60000)).toBe('failed');
+    expect(passkeyProblem(null, 10)).toBe('failed');
+  });
+
+  it('runPasskey returns the credential or the problem, never throws', async () => {
+    installWebAuthn();
+    expect(await runPasskey(GET)).toMatchObject({ credential: { id: b64url([9, 8, 7]), type: 'public-key' } });
+    installWebAuthn({ get: async () => { throw Object.assign(new Error('x'), { name: 'NotAllowedError' }); } });
+    let t = 0;
+    expect(await runPasskey(GET, undefined, () => (t += 30000))).toEqual({ problem: 'cancelled' });
+    t = 0;
+    expect(await runPasskey(GET, undefined, () => (t += 60000))).toEqual({ problem: 'timeout' });
+    installWebAuthn({ get: async () => null });
+    expect(await runPasskey(GET)).toEqual({ problem: 'cancelled' });
+  });
+
+  it('passkeyCeremonies: a prompt aborted for another method or replaced by a newer one resolves null (stale); the current one its outcome', async () => {
+    const pending: Array<{ reject: (e: unknown) => void; resolve: (v: unknown) => void }> = [];
+    installWebAuthn({ get: (o: any) => new Promise((resolve, reject) => {
+      pending.push({ resolve, reject });
+      o.signal?.addEventListener('abort', () => setTimeout(() => reject(Object.assign(new Error('x'), { name: 'AbortError' })), 5));
+    }) });
+    const c = passkeyCeremonies();
+    const first = c.run(GET);
+    c.abort(); // "Andere Methode wählen"
+    expect(await first).toBeNull();
+    const second = c.run(GET);
+    const third = c.run(GET); // replaces the second
+    expect(await second).toBeNull();
+    pending.at(-1)!.resolve(rawAssertion());
+    expect(await third).toMatchObject({ credential: { type: 'public-key' } });
+    const fourth = c.run(GET);
+    pending.at(-1)!.reject(Object.assign(new Error('x'), { name: 'NotAllowedError' }));
+    expect(await fourth).toEqual({ problem: 'cancelled' });
+  });
+
+  it('preparedPasskey: only an identification step with passkey options', () => {
+    const step = { stage: 'identify', step: 's1', passwordInline: false, canRecover: false, canEnroll: false, passkey: GET };
+    expect(preparedPasskey({ stage: 'password', step: 'p', identity: 'anna', canRecover: false, passkeyStep: step })).toEqual(step);
+    expect(preparedPasskey({ stage: 'password', step: 'p', identity: 'anna', canRecover: false })).toBeNull();
+    expect(preparedPasskey({ stage: 'password', step: 'p', identity: 'anna', canRecover: false, passkeyStep: { ...step, passkey: null } })).toBeNull();
+    expect(preparedPasskey({ stage: 'password', step: 'p', identity: 'anna', canRecover: false, passkeyStep: { stage: 'mfa', step: 'x' } })).toBeNull();
   });
 
   it('uses the browser JSON helpers and toJSON where present, without publicKey and with empty clientExtensionResults', async () => {

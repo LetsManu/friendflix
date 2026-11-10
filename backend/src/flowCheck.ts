@@ -11,7 +11,7 @@
  */
 import { type AkFailure, type AkFailureSeen, AkUpstreamError, lastAkFailures } from './akdiag.js';
 import { akFlowStages, akOauthProvider, akServiceCheck, type FlowStages, type ServiceCheck } from './authentik.js';
-import { akExec, createJar, endAkSession, loginUi, flowSlug, passkeysStatus, type FlowKind, type PasskeysReason } from './akflow.js';
+import { akExec, appHost, createJar, endAkSession, loginUi, flowSlug, passkeysStatus, type FlowKind, type PasskeysReason, type RawChallenge } from './akflow.js';
 import type { Ctx } from './ctx.js';
 import { secretTag } from './crypto.js';
 
@@ -38,6 +38,14 @@ export interface LoginCheck {
   issuerMatches: boolean;
   passkeys: 'in-app' | 'sign-in page';
   passkeysReason: PasskeysReason;
+  /**
+   * whether the sign-in screen can offer "Sign in with a passkey" inside FriendFlix, read from the login flow's first challenge (the
+   * executor check): `ok`; `no_stage` (the identification stage has no WebAuthn validation stage, so Authentik sends no passkey
+   * challenge); `rp_mismatch` (the challenge names another RP ID than the app host although the host is forwarded); `off` (passkeys run
+   * on the sign-in page, `passkeysReason` says why); `unknown` (the first stage is no identification). Null without the API or when the
+   * executor check failed.
+   */
+  passkeySignIn: PasskeySignIn | null;
   /** Authentik did not answer (some rows are unknown); the card says so instead of calling flows missing */
   unreachable: boolean;
   /** the service token: accepted at all, and the read permissions Authentik refused (null: no API configured) */
@@ -51,6 +59,20 @@ export interface LoginCheck {
   lastFailures: AkFailureSeen[];
   /** codes of everything to look at; empty = all good */
   warnings: string[];
+}
+
+export type PasskeySignIn = 'ok' | 'no_stage' | 'rp_mismatch' | 'off' | 'unknown';
+
+/**
+ * The passkey sign-in state of the login flow's first challenge (only its shape is read: the challenge itself is never kept or logged).
+ * `forwarded`: the jar forwarded the app host; `host`: the app host (PUBLIC_URL).
+ */
+export function passkeySignInState(challenge: RawChallenge, forwarded: boolean, host: string | null): PasskeySignIn {
+  if (challenge.component !== 'ak-stage-identification') return 'unknown';
+  const pk = challenge.passkey_challenge as { rpId?: unknown; challenge?: unknown } | null | undefined;
+  if (!pk || typeof pk !== 'object' || typeof pk.challenge !== 'string' || typeof pk.rpId !== 'string') return 'no_stage';
+  if (!forwarded) return 'off';
+  return host !== null && pk.rpId === host ? 'ok' : 'rp_mismatch';
 }
 
 const TTL_S = 600;
@@ -89,18 +111,19 @@ export async function checkLoginFlows(ctx: CheckCtx, opts: { fresh?: boolean } =
  * The login flow's first executor call, made the way a sign-in makes it (createJar: the same slug and the same forwarded-host decision),
  * then the Authentik session it opened is ended. Nothing is answered: it shows only whether Authentik serves the flow to this backend.
  */
-async function executorCheck(ctx: CheckCtx): Promise<LoginCheck['executor']> {
+async function executorCheck(ctx: CheckCtx): Promise<{ executor: NonNullable<LoginCheck['executor']>; passkeySignIn: PasskeySignIn | null; passkeyUv?: boolean }> {
   try {
     const jar = await createJar(ctx, 'login');
-    await akExec(ctx, jar, 'GET');
+    const { challenge } = await akExec(ctx, jar, 'GET');
     await endAkSession(ctx, jar);
-    return { ok: true };
+    const uv = (challenge.passkey_challenge as { userVerification?: unknown } | null | undefined)?.userVerification;
+    return { executor: { ok: true }, passkeySignIn: passkeySignInState(challenge, jar.forwardHost, appHost(ctx.cfg)), passkeyUv: uv === 'required' };
   } catch (e) {
     if (e instanceof AkUpstreamError) {
       const { cls, status, endpoint } = e.failure;
-      return { ok: false, cls, endpoint, ...(status !== undefined ? { status } : {}) };
+      return { executor: { ok: false, cls, endpoint, ...(status !== undefined ? { status } : {}) }, passkeySignIn: null };
     }
-    return { ok: false, cls: 'network', endpoint: 'api/v3/flows/executor/' };
+    return { executor: { ok: false, cls: 'network', endpoint: 'api/v3/flows/executor/' }, passkeySignIn: null };
   }
 }
 
@@ -116,10 +139,13 @@ async function run(ctx: CheckCtx): Promise<LoginCheck> {
   };
   // no Authentik API: nothing to read, the classic sign-in page is the only mode
   if (!cfg.AUTHENTIK_URL || !cfg.AUTHENTIK_API_TOKEN) {
-    return { ...base, mode: 'authentik', flows: [], implicitConsent: null, authCodeGrant: null, unreachable: false, serviceToken: null, executor: null, lastFailures: [], warnings: [] };
+    return {
+      ...base, mode: 'authentik', flows: [], implicitConsent: null, authCodeGrant: null, unreachable: false, serviceToken: null, executor: null, passkeySignIn: null,
+      lastFailures: [], warnings: [],
+    };
   }
   const serviceToken = await akServiceCheck(ctx);
-  const executor = await executorCheck(ctx);
+  const { executor, passkeySignIn, passkeyUv } = await executorCheck(ctx);
   let unreachable = false;
   const flows: FlowCheckRow[] = [];
   for (const kind of KINDS) {
@@ -168,7 +194,11 @@ async function run(ctx: CheckCtx): Promise<LoginCheck> {
   if (authCodeGrant === false) warnings.push('auth_code_grant');
   if (!base.issuerMatches) warnings.push('issuer');
   if (base.passkeys === 'sign-in page' && passkeys.reason !== 'disabled') warnings.push(`passkeys:${passkeys.reason}`);
-  return { ...base, flows, implicitConsent, authCodeGrant, unreachable, serviceToken, executor, lastFailures: [], warnings };
+  // the passkey button needs Authentik to send a passkey challenge on the identification stage (its WebAuthn validation stage), for the app host
+  if (passkeys.reason !== 'disabled' && (passkeySignIn === 'no_stage' || passkeySignIn === 'rp_mismatch')) warnings.push(`passkeys:${passkeySignIn}`);
+  // a passkey that need not verify the person: sign-in works, but "confirm with a passkey" stays off (a device alone must not re-authenticate)
+  if (passkeys.reason !== 'disabled' && passkeySignIn === 'ok' && !passkeyUv) warnings.push('passkeys:uv_not_required');
+  return { ...base, flows, implicitConsent, authCodeGrant, unreachable, serviceToken, executor, passkeySignIn, lastFailures: [], warnings };
 }
 
 function row(kind: CheckedKind, slug: string, f: FlowStages): FlowCheckRow {
