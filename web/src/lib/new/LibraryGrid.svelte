@@ -43,5 +43,5 @@
   @media (max-width: 1200px) { ul { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
   @media (max-width: 1000px) { ul { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
   @media (max-width: 720px) { ul { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 8px; } .nm { font-size: .82rem; } }
-  @media (max-width: 420px) { ul { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 10px; } }
+  @media (max-width: 340px) { ul { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

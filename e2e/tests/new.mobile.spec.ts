@@ -14,8 +14,8 @@ const sug = (tmdbId: number, mediaType: 'movie' | 'tv', title: string, seed: str
 const SUGGESTIONS = {
   movie: [sug(22, 'movie', 'Copper Sky', 'Cedar Falls')],
   series: [sug(31, 'tv', 'Lantern Row', 'Inkwell'), sug(32, 'tv', 'Foxglove Court', 'Marrow Coast', 'requested')],
-  error: null,
-} as const;
+  error: null as null,
+};
 const region = (page: Page, name: string) => page.getByRole('region', { name, exact: true });
 const seg = (page: Page, name: string) => page.getByRole('tablist', { name: 'Bereiche' }).getByRole('tab', { name });
 

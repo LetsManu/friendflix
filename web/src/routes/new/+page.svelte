@@ -269,6 +269,7 @@
   :global(html.tv) .upc { padding: 0; }
   @media (max-width: 720px) {
     .top { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .8rem; }
+    h1 { font-size: 1.35rem; line-height: 1.2; min-width: 0; }
     .ctl { gap: .6rem; }
     .add { min-height: 44px; padding-inline: 1.1rem; }
     .panel-body { gap: 1.8rem; }

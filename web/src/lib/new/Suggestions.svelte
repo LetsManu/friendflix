@@ -56,6 +56,8 @@
   @media (max-width: 1100px) { ul { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   /* phone: list cards, the poster at the left (the board's NewSleekPhone) */
   @media (max-width: 720px) {
+    .hd { flex-direction: column; align-items: flex-start; gap: .15rem; }
+    .sub { color: var(--mut); font-weight: 400; }
     ul { grid-template-columns: minmax(0, 1fr); gap: 14px; }
     .c { display: grid; grid-template-columns: 96px minmax(0, 1fr); column-gap: 14px; min-height: 0; border: 0; background: none; overflow: visible; }
     .c::before { display: none; }

@@ -15,8 +15,8 @@ const sug = (tmdbId: number, mediaType: 'movie' | 'tv', title: string, seed: str
 const SUGGESTIONS = {
   movie: [sug(21, 'movie', 'Tin Meadow', 'Inkwell', 'none', { releaseDate: '2026-12-05' }), sug(22, 'movie', 'Copper Sky', 'Cedar Falls')],
   series: [sug(31, 'tv', 'Lantern Row', 'Inkwell'), sug(32, 'tv', 'Foxglove Court', 'Marrow Coast', 'requested')],
-  error: null,
-} as const;
+  error: null as null,
+};
 const MINE = [
   { title: 'Foxglove Court', mediaType: 'tv', status: 'angefragt', createdAt: '2026-11-08T10:00:00Z' },
   { title: 'Glass Orchard', mediaType: 'movie', status: 'in_arbeit', createdAt: '2026-11-05T10:00:00Z' },
