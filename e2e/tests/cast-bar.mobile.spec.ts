@@ -149,6 +149,13 @@ test('buttons are at least 44 px', async ({ page, api: _api }) => {
   }
 });
 
+test('the phone bar has no expand button and no Next', async ({ page, api: _api }) => {
+  await castAndLeave(page);
+  await expect(castBar(page).getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await expect(castBar(page).getByRole('button', { name: 'Weitere Steuerung' })).toHaveCount(0);
+  await expect(castBar(page).getByRole('button', { name: 'Nächste Folge' })).toHaveCount(0);
+});
+
 test.describe('screenshots', () => {
   test.skip(!process.env.CAST_SHOTS, 'only with CAST_SHOTS=1');
   test.use({ deviceScaleFactor: 1, reducedMotion: 'no-preference', allowedConsole: /status of 429/ });

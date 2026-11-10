@@ -18,6 +18,7 @@
   import { motionAllowed } from '#lib/preview';
   import { confirm } from '#lib/ui/confirm';
   import { barLine1, barLine2, barProgress, barThumb, nextSecondsLeft } from './bar';
+  import CastBarExpanded from './CastBarExpanded.svelte';
   import { castEngine, castSession, type CastSession } from './engine';
 
   /** the bar shows (the layout's `barVisible`); false: it rises out */
@@ -65,6 +66,27 @@
   $: still = state === 'reconnect' || state === 'detached' || state === 'failed';
 
   let region: HTMLDivElement | undefined;
+
+  // ---- expanded (desktop): grows out of "More controls", replaces the collapsed bar in place ----
+  let expanded = false;
+  let moreBtn: HTMLButtonElement | undefined;
+  /** the More button's rectangle at the tap: the button is gone once the expanded bar mounts, the grow still starts from it */
+  let origin: Element | null = null;
+  /** the expanded bar serves a TV that plays, connects or has just ended; a lost or failed one has its own collapsed state */
+  $: canExpand = !phone && (state === 'playing' || state === 'connecting' || state === 'ended');
+  $: if (expanded && (!canExpand || !shown)) expanded = false;
+  function expand() {
+    const r = moreBtn?.getBoundingClientRect();
+    origin = r ? ({ getBoundingClientRect: () => r } as Element) : null;
+    expanded = true;
+  }
+  /** back to the collapsed bar: the focus returns to More (after a click elsewhere only when nothing else took it) */
+  async function collapse(via: 'key' | 'button' | 'outside' = 'button') {
+    expanded = false;
+    await settled();
+    if (via === 'outside' && document.activeElement && document.activeElement !== document.body) return;
+    moreBtn?.focus();
+  }
   /**
    * A focused button can give way to another (Next -> spinner, reconnect -> playing): keyboard focus then moves to the
    * remote button (else "Play here" / Stop) instead of falling back to the page. Runs before the DOM update.
@@ -103,6 +125,9 @@
 {#if shown && s}
   <div class="castbar" bind:this={region} class:phone class:notab={!tabbar} in:barRise out:barRise={{ dir: 'out' }} on:outroend={() => dispatch('gone')}>
     <p class="sr-only" role="status" aria-live="polite">{said}</p>
+    {#if expanded}
+      <CastBarExpanded session={s} trigger={origin} on:collapse={(e) => void collapse(e.detail.via)} />
+    {:else}
     <div class="box frost frost-safe frost-panel" role="region" aria-label={$t('player.castBar.region')} aria-busy={state === 'connecting' ? 'true' : undefined}>
       <div class="line" role="progressbar" aria-label={$t('player.castBar.progress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><i style="transform:scaleX({progress / 100})"></i></div>
       {#snippet info()}
@@ -153,8 +178,12 @@
         <button type="button" class="tb stop" aria-label={$t('player.cast.stop')} title={$t('player.cast.stop')} on:click={stop}><Icon name="stop" size={22} /></button>
       {:else}
         <button type="button" class="frost-btn stop" on:click={stop}>{$t('player.cast.stop')}</button>
+        {#if canExpand}
+          <button type="button" class="tb more" bind:this={moreBtn} aria-expanded="false" aria-label={$t('player.castBar.more')} title={$t('player.castBar.more')} on:click={expand}><Icon name="chevron-down" size={22} /></button>
+        {/if}
       {/if}
     </div>
+    {/if}
   </div>
 {/if}
 
@@ -183,6 +212,7 @@
   /* round 44 px buttons; glass pills for Stop and Reconnect */
   .tb { flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #fff; display: inline-grid; place-items: center; cursor: pointer; }
   .tb:hover:not(:disabled) { background: rgba(255, 255, 255, .16); }
+  .more :global(svg) { transform: rotate(180deg); } /* the chevron points up: it opens upwards */
   .tb.pp, .tb.pp:hover:not(:disabled) { background: var(--acc-fill); }
   .tb.pp:hover:not(:disabled) { background: var(--acc-fill-hover); }
   .frost-btn.stop, .frost-btn.act { flex: none; padding: 0 14px; font-size: .85rem; white-space: nowrap; }

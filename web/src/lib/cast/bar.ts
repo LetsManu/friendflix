@@ -79,3 +79,17 @@ export function barLine2(s: CastSession, now: number, tf: TFn, o: { choose?: boo
     }
   }
 }
+
+/** expanded bar, first line: "Dunmoor · S1:E4 · The Lantern Road" (a film: its title) */
+export function barTitleFull(s: Pick<CastSession, 'title' | 'isEpisode' | 'subtitle'>, it: Pick<Item, 'name' | 'parentIndexNumber' | 'indexNumber'> | null | undefined, tf: TFn): string {
+  if (!s.isEpisode) return s.title;
+  const head = barLine1(s, it, tf);
+  const name = it?.name ?? s.subtitle.replace(/^\S*\d\S*\s+/, '');
+  return name && name !== s.title ? `${head} · ${name}` : head;
+}
+
+/** expanded bar, second line: as `barLine2`, and while an episode plays the one that follows ("On {device} · Up next: E5 · Wrenfield Pier") */
+export function barLine2Full(s: CastSession, now: number, tf: TFn, o: { choose?: boolean } = {}): BarLine2 {
+  if (s.state === 'playing' && !s.next && s.upcoming) return { text: tf('player.castBar.upNextLine', { device: s.device || deviceLabel(s), label: s.upcoming.label }), tone: 'none' };
+  return barLine2(s, now, tf, o);
+}

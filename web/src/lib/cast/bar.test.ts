@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { tr } from '#lib/i18n';
-import { barLine, barLine1, barLine2, barProgress, barThumb, barVisible, CASTBAR_H, liveCast, minutesLeft, nextSecondsLeft } from './bar';
+import { barLine, barLine1, barLine2, barLine2Full, barTitleFull, barProgress, barThumb, barVisible, CASTBAR_H, liveCast, minutesLeft, nextSecondsLeft } from './bar';
 import { img } from '#lib/api';
 import type { CastSession } from './engine';
 
@@ -95,5 +95,20 @@ describe('cast bar', () => {
 
   it('the room the layout reserves', () => {
     expect(CASTBAR_H).toEqual({ desktop: 92, phone: 76 });
+  });
+
+  describe('expanded bar lines', () => {
+    const ep = { ...base, title: 'Dunmoor', isEpisode: true, subtitle: 'S1:F4 The Lantern Road', kind: 'chromecast' as const, state: 'playing' as const, position: 600, duration: 2400 };
+    it('line 1 adds the episode name', () => {
+      expect(barTitleFull(ep, { name: 'The Lantern Road', parentIndexNumber: 1, indexNumber: 4 }, tr)).toBe('Dunmoor · S1:F4 · The Lantern Road');
+      expect(barTitleFull(ep, null, tr)).toBe('Dunmoor · S1:F4 · The Lantern Road');
+      expect(barTitleFull({ ...base, title: 'Saltwater Almanac' }, null, tr)).toBe('Saltwater Almanac');
+    });
+    it('line 2 names the upcoming episode while one plays; else the collapsed line', () => {
+      const upcoming = { itemId: 'e5', label: 'S1:E5 · Wrenfield Pier' };
+      expect(barLine2Full({ ...ep, upcoming }, 0, tr)).toEqual({ text: 'Auf Wohnzimmer-TV · Als Nächstes: S1:E5 · Wrenfield Pier', tone: 'none' });
+      expect(barLine2Full(ep, 0, tr)).toEqual(barLine2(ep, 0, tr));
+      expect(barLine2Full({ ...ep, upcoming, state: 'connecting' }, 0, tr).text).toBe('Verbinde mit Wohnzimmer-TV …');
+    });
   });
 });
