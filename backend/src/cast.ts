@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { isIPv6 } from 'node:net';
 import type { Ctx } from './ctx.js';
 import { jfUserFor, getProfile } from './profiles.js';
 import { effectiveRole } from './roles.js';
@@ -68,7 +69,14 @@ export interface CastRecord {
   seen?: number;
   /** a queued next episode's token: the play session it follows (the newest other media token of the same device) */
   afterPs?: string;
+  /** runtime of the item in ticks (lookup answer; not secret) */
+  runtimeTicks?: number;
+  /** series name for the lookup answer */
+  seriesName?: string;
+  /** the subtitle tracks of the cast (index, language, title; URLs are never stored here) */
+  subs?: CastSubtitleInfo[];
 }
+export interface CastSubtitleInfo { index: number; language?: string; title: string }
 
 export interface CastAuth {
   userId: string;
@@ -84,6 +92,8 @@ export const hashToken = (ct: string) => createHash('sha256').update(ct).digest(
 const dataKey = (hash: string) => `cast:${hash}`;
 const pinKey = (hash: string) => `castpin:${hash}`;
 const pin2Key = (hash: string) => `castpin2:${hash}`;
+/** counts of refused fetches of a token (never an address): { n, v4, v6 } */
+const refuseKey = (hash: string) => `castrefuse:${hash}`;
 const idxKey = (userId: string, castId: string) => `castidx:${userId}:${castId}`;
 /** start of the preload overlap of the queued next episode(s) after a play session (one window per predecessor, set once) */
 const ovlKey = (userId: string, ps: string) => `povl:${userId}:${ps}`;
@@ -110,6 +120,7 @@ async function dropByHash(ctx: Ctx, userId: string, hash: string, imgHash?: stri
     await ctx.kv.del(dataKey(h));
     await ctx.kv.del(pinKey(h));
     await ctx.kv.del(pin2Key(h));
+    await ctx.kv.del(refuseKey(h));
     await ctx.kv.del(idxKey(userId, castIdOf(h)));
   }
 }
@@ -339,7 +350,51 @@ async function pinned(ctx: Ctx, hash: string, client: string, exp: number, slots
     if (i < slots && (await ctx.kv.setnx(key, client, ttl))) return true;
     if ((await ctx.kv.get(key)) === client) return true;
   }
+  await noteRefused(ctx, hash, client, ttl);
   return false;
+}
+
+export const addrFamily = (client: string): 'v4' | 'v6' => (isIPv6(client) ? 'v6' : 'v4');
+
+/** Counts a refused fetch of a token (for Diagnose): how many, and from which address families; never the address itself. */
+export async function noteRefused(ctx: Ctx, hash: string, client: string, ttl: number): Promise<void> {
+  const raw = await ctx.kv.get(refuseKey(hash));
+  const cur = raw ? (JSON.parse(raw) as { n: number; v4: boolean; v6: boolean }) : { n: 0, v4: false, v6: false };
+  const fam = addrFamily(client);
+  await ctx.kv.set(refuseKey(hash), JSON.stringify({ n: Math.min(cur.n + 1, 1_000_000), v4: cur.v4 || fam === 'v4', v6: cur.v6 || fam === 'v6' }), ttl);
+}
+
+export interface CastLookup {
+  castId: string; itemId: string; mediaSourceId: string; playSessionId: string; expiresAt: number; runtimeTicks?: number; via: CastVia;
+  next: boolean; reported: boolean; title: string; seriesName?: string; subtitles: CastSubtitleInfo[]; pins: 0 | 1 | 2;
+  refused: { count: number; families: Array<'v4' | 'v6'> };
+}
+
+/**
+ * Token-free lookup of a device's running cast by its public handle (re-adoption after the tab was gone, Diagnose). Answers only for
+ * a media token of exactly this account, profile and device; the answer has no token, URL or address.
+ */
+export async function castLookup(ctx: Ctx, who: { userId: string; profileId: string; deviceId: string }, castId: string): Promise<CastLookup | null> {
+  const idxRaw = await ctx.kv.get(idxKey(who.userId, castId));
+  const idx = idxRaw ? (JSON.parse(idxRaw) as IdxEntry) : null;
+  if (!idx || idx.kind === 'img') return null;
+  const raw = await ctx.kv.get(dataKey(idx.hash));
+  const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
+  if (!rec || rec.exp <= Date.now() || (rec.kind ?? 'media') !== 'media') return null;
+  if (rec.userId !== who.userId || rec.profileId !== who.profileId || rec.deviceId !== who.deviceId) return null;
+  const live = await getLive(ctx, rec.userId, rec.playSessionId);
+  const pins = ((await ctx.kv.get(pinKey(idx.hash))) ? 1 : 0) + ((await ctx.kv.get(pin2Key(idx.hash))) ? 1 : 0);
+  const rf = await ctx.kv.get(refuseKey(idx.hash));
+  const r = rf ? (JSON.parse(rf) as { n: number; v4: boolean; v6: boolean }) : { n: 0, v4: false, v6: false };
+  return {
+    castId, itemId: rec.itemId, mediaSourceId: rec.mediaSourceId, playSessionId: rec.playSessionId, expiresAt: rec.exp,
+    ...(rec.runtimeTicks !== undefined ? { runtimeTicks: rec.runtimeTicks } : {}),
+    via: rec.via ?? 'chromecast', next: Boolean(rec.afterPs), reported: Boolean(live?.playMethod), title: rec.title ?? '',
+    ...(rec.seriesName ? { seriesName: rec.seriesName } : {}),
+    subtitles: (rec.subs ?? []).map((s) => ({ index: s.index, ...(s.language ? { language: s.language } : {}), title: s.title })),
+    pins: pins as 0 | 1 | 2,
+    refused: { count: r.n, families: [...(r.v4 ? ['v4' as const] : []), ...(r.v6 ? ['v6' as const] : [])] },
+  };
 }
 
 /**

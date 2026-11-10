@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
+import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, castLookup, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
 import type { Ctx } from '../ctx.js';
 import { MediaError } from '../media/types.js';
 import { countLive } from '../live.js';
@@ -65,6 +65,8 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       const rec = {
         userId: req.user!.id, profileId: req.profile!.id, deviceId, itemId: b.itemId, mediaSourceId: info.mediaSourceId, playSessionId: info.playSessionId, maxBitrate, title: item.name, via: b.via ?? 'chromecast',
         ...(pred ? { afterPs: pred.playSessionId } : {}),
+        runtimeTicks: info.runtimeTicks, ...(item.seriesName ? { seriesName: item.seriesName } : {}),
+        subs: info.subtitles.map((s) => ({ index: s.index, ...(s.language ? { language: s.language } : {}), title: s.title })),
       } as const;
       const { ct, imgCt, castId, expiresAt } = await createCast(ctx, rec, ttl, Boolean(item.image));
       const report = b.receiver && rec.via === 'chromecast' && castReceiverAppId(ctx) ? castReportToken(ctx, rec, { castId, expiresAt }) : undefined;
@@ -152,6 +154,15 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       if (e instanceof MediaError) return reply.code(e.status === 404 || e.status === 403 ? 404 : 502).send({ error: 'jellyfin', status: e.status });
       throw e;
     }
+  });
+
+  // token-free lookup of this device's running cast by its public handle (re-adoption, Diagnose): account, profile and device must match
+  app.get('/api/cast/session/:castId', { ...pre, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { castId } = z.object({ castId: z.string().regex(/^[0-9a-f]{32}$/) }).parse(req.params);
+    const deviceId = req.session!.deviceId;
+    const found = deviceId ? await castLookup(ctx, { userId: req.user!.id, profileId: req.profile!.id, deviceId }, castId) : null;
+    return found ?? reply.code(404).send({ error: 'not_found' });
   });
 
   app.delete('/api/cast/session/:castId', pre, async (req, reply) => {

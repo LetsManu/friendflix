@@ -3,6 +3,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
+import { revokeCasts } from '../cast.js';
 import { secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { hashPin, verifyPin } from '../crypto.js';
@@ -200,6 +201,8 @@ export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
       }
     }
     // The gateway caches the media token per sid: rotate the sid so the previous profile's token can never be served again.
+    // a cast belongs to one profile: leaving it ends this device's cast tokens, server-side, so it holds with no page open
+    if (req.profile?.id !== p.id && req.session!.deviceId) await revokeCasts(ctx, req.user!.id, req.session!.deviceId);
     const oldSid = req.sid!;
     const newSid = rand();
     const s = { ...req.session!, profileId: p.id, touchedAt: Date.now() };

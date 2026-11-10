@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { AIRPLAY_PIN2_WINDOW_MS, CAST_IDLE_TTL, castKeyTtl, hashToken, NEXT_OVERLAP_MS } from '../src/cast.js';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AIRPLAY_PIN2_WINDOW_MS, CAST_IDLE_TTL, castKeyTtl, castLookup, createCast, hashToken, NEXT_OVERLAP_MS } from '../src/cast.js';
 import { revokeSessions } from '../src/devices.js';
 import { countLive, DRAIN_MS, getLive, setLive } from '../src/live.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -852,5 +852,96 @@ describe('cast: own receiver and its report token', () => {
       await rep(`${j.report.slice(0, -2)}xx`, 'progress');
       expect(lines.join('\n')).not.toContain(j.report.split('.')[1]);
     } finally { spies.forEach((s) => s.mockRestore()); }
+  });
+});
+
+describe('cast lookup (token-free, re-adoption and Diagnose)', () => {
+  const who = async (castId: string) => {
+    const idx = JSON.parse((await env.kv.get(`castidx:${await uid()}:${castId}`))!) as { hash: string };
+    const rec = JSON.parse((await env.kv.get(`cast:${idx.hash}`))!) as { userId: string; profileId: string; deviceId: string };
+    return { userId: rec.userId, profileId: rec.profileId, deviceId: rec.deviceId };
+  };
+  const uid = async () => (await call(admin, 'GET', '/api/me')).json().id as string;
+  let k = 0;
+  // every case its own play session: the fixed default one keeps a live record from earlier tests
+  beforeEach(() => { psNext = `ps-lookup-${++k}`; });
+  afterEach(() => { psNext = null; });
+
+  it('lookup is scoped to account, profile and approved device', async () => {
+    const { j } = await create();
+    const w = await who(j.castId);
+    const a = await castLookup(env.ctx, w, j.castId);
+    expect(a).toMatchObject({ castId: j.castId, itemId: ID, mediaSourceId: MS, playSessionId: j.playSessionId, expiresAt: j.expiresAt, runtimeTicks: runtime, via: 'chromecast', next: false, reported: false, title: 'Film', pins: 0, refused: { count: 0, families: [] } });
+    expect(a!.subtitles).toEqual([{ index: 2, language: 'ger', title: expect.any(String) }]);
+    expect(await castLookup(env.ctx, { ...w, userId: 'u2' }, j.castId)).toBeNull();
+    expect(await castLookup(env.ctx, { ...w, profileId: 'p2' }, j.castId)).toBeNull();
+    expect(await castLookup(env.ctx, { ...w, deviceId: 'd2' }, j.castId)).toBeNull();
+    expect(await castLookup(env.ctx, w, 'f'.repeat(32))).toBeNull();
+    // the poster token's handle is no cast
+    const imgCastId = hashToken(/\/media\/c\/([\w-]{43})\/Items\//.exec(j.imageUrl)![1]!).slice(0, 32);
+    expect(await castLookup(env.ctx, w, imgCastId)).toBeNull();
+    // revoked
+    expect((await call(admin, 'DELETE', `/api/cast/session/${j.castId}`)).statusCode).toBe(200);
+    expect(await castLookup(env.ctx, w, j.castId)).toBeNull();
+  });
+
+  it('lookup answer carries no token or URL', async () => {
+    const { j, ct } = await create();
+    const text = JSON.stringify(await castLookup(env.ctx, await who(j.castId), j.castId));
+    expect(text).not.toMatch(/media\/c\//);
+    expect(text).not.toContain(ct);
+    expect(text).not.toMatch(/https?:/);
+    expect(text).not.toContain(hashToken(ct)); // not even the stored hash, only the public 128-bit handle
+    expect(text).toContain(j.castId);
+  });
+
+  it('lookup reports reported=true only after a start report', async () => {
+    const { j } = await create();
+    const w = await who(j.castId);
+    expect((await castLookup(env.ctx, w, j.castId))!.reported).toBe(false);
+    const r = await call(admin, 'POST', '/api/playback/start', { itemId: ID, playSessionId: j.playSessionId, mediaSourceId: MS, positionTicks: 0, isPaused: false, playMethod: 'Transcode' });
+    expect(r.statusCode).toBe(200);
+    expect((await castLookup(env.ctx, w, j.castId))!.reported).toBe(true);
+  });
+
+  it('refused counter stores families, never addresses', async () => {
+    const { j, ct } = await create();
+    const w = await who(j.castId);
+    expect((await authz({ ct, client: '192.0.2.10' })).statusCode).toBe(200);
+    expect((await castLookup(env.ctx, w, j.castId))).toMatchObject({ pins: 1, refused: { count: 0, families: [] } });
+    expect((await authz({ ct, client: '192.0.2.11' })).statusCode).toBe(401);
+    expect((await authz({ ct, client: '2001:db8::1' })).statusCode).toBe(401);
+    expect((await castLookup(env.ctx, w, j.castId))!.refused).toEqual({ count: 2, families: ['v4', 'v6'] });
+    const raw = (await env.kv.get(`castrefuse:${hashToken(ct)}`))!;
+    expect(raw).not.toContain('192.0.2');
+    expect(raw).not.toContain('2001');
+    // gone with the token
+    await call(admin, 'DELETE', `/api/cast/session/${j.castId}`);
+    expect(await env.kv.get(`castrefuse:${hashToken(ct)}`)).toBeNull();
+  });
+
+  it('GET /api/cast/session/:castId returns the lookup for the caller\'s cast', async () => {
+    const { j } = await create();
+    const r = await call(admin, 'GET', `/api/cast/session/${j.castId}`);
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['cache-control']).toBe('no-store');
+    expect(r.json()).toMatchObject({ castId: j.castId, itemId: ID, via: 'chromecast', next: false, reported: false, pins: 0 });
+    expect((await call(admin, 'GET', '/api/cast/session/zz')).statusCode).toBe(400);
+    expect((await env.app.inject({ method: 'GET', url: `/api/cast/session/${j.castId}` })).statusCode).toBe(401);
+  });
+
+  it('GET /api/cast/session/:castId returns 404 for another device\'s cast', async () => {
+    const me = await uid();
+    const w = { userId: me, profileId: (await env.pool.query('select id from profiles where user_id=$1 and is_owner', [me])).rows[0].id as string, deviceId: 'other-device-lookup' };
+    await env.pool.query("insert into devices(user_id, device_id, label, approved) values ($1,$2,'x',true) on conflict do nothing", [me, w.deviceId]);
+    const c = await createCast(env.ctx, { ...w, itemId: ID, mediaSourceId: MS, playSessionId: 'ps-other-dev', maxBitrate: 1_000_000, title: 'Other' }, 3600);
+    expect((await castLookup(env.ctx, w, c.castId))!.title).toBe('Other');
+    const r = await call(admin, 'GET', `/api/cast/session/${c.castId}`);
+    expect(r.statusCode).toBe(404);
+    expect(r.json()).toEqual({ error: 'not_found' });
+    // 30 per minute
+    const codes: number[] = [];
+    for (let i = 0; i < 32; i++) codes.push((await env.app.inject({ method: 'GET', url: `/api/cast/session/${c.castId}`, cookies: admin.cookies, headers: { 'x-forwarded-for': '203.0.113.31' } })).statusCode);
+    expect(codes.filter((x) => x === 429).length).toBeGreaterThanOrEqual(2);
   });
 });

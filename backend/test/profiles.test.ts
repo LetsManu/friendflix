@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
+import { castLookup } from '../src/cast.js';
 import { hashPin, verifyPin } from '../src/crypto.js';
 import { MemoryKV } from '../src/kv.js';
 import { reapplyPoliciesOnce, reapplyRole } from '../src/users.js';
@@ -166,6 +167,33 @@ describe('profiles', () => {
     expect((await call(kid, 'PUT', `/api/profiles/${p.id}/pin`, { pin: null })).statusCode).toBe(403);
     expect((await call(kid, 'PUT', `/api/profiles/${p.id}/pin`, { pin: null, currentPin: '2222' })).statusCode).toBe(200);
     expect((await call(kid, 'PUT', `/api/profiles/${p.id}/pin`, { pin: 'abcd' })).statusCode).toBe(400);
+  });
+
+  it('switching profile revokes this device\'s cast tokens', async () => {
+    const s = await mk({
+      'POST /Items/[^/]+/PlaybackInfo': () => ({ json: { PlaySessionId: 'ps-switch-1', MediaSources: [{ Id: 'b'.repeat(32), Container: 'mkv', SupportsDirectPlay: true, Bitrate: 4_000_000, RunTimeTicks: 3_000_000_000, MediaStreams: [{ Index: 0, Type: 'Video', Height: 1080 }, { Index: 1, Type: 'Audio' }] }] } }),
+    });
+    const p = await mkProfile(s, 'Kind');
+    const owner = (await env.pool.query<{ id: string }>('select id from profiles where is_owner')).rows[0]!.id;
+    const mint = async (sess: Sess) => {
+      const r = await call(sess, 'POST', '/api/cast/session', { itemId: ITEM });
+      expect(r.statusCode).toBe(200);
+      return r.json().castId as string;
+    };
+    const castId = await mint(s);
+    const device = (await env.pool.query<{ device_id: string }>('select device_id from devices where user_id=$1', [await ownerId()])).rows[0]!.device_id;
+    const who = { userId: await ownerId(), profileId: owner, deviceId: device };
+    expect(await castLookup(env.ctx, who, castId)).not.toBeNull();
+    // selecting the profile that is already active keeps the cast
+    expect((await call(s, 'POST', `/api/profiles/${owner}/select`, {})).statusCode).toBe(200);
+    expect(await castLookup(env.ctx, who, castId)).not.toBeNull();
+    // switching to another profile revokes the device's tokens (media and poster), server-side
+    const before = (await env.kv.keys('cast:')).length;
+    expect(before).toBeGreaterThan(0);
+    expect((await call(s, 'POST', `/api/profiles/${p.id}/select`, {})).statusCode).toBe(200);
+    expect(await castLookup(env.ctx, who, castId)).toBeNull();
+    expect(await env.kv.keys('cast:')).toEqual([]);
+    expect(await env.kv.keys('castidx:')).toEqual([]);
   });
 
   it('after select, Jellyfin calls and /internal/authz use the profile identity', async () => {
