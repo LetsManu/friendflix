@@ -87,6 +87,8 @@ data class ServerCaps(
     val postplay: Boolean = true,
     val segments: Set<String> = PlayerApi.ALL_SEGMENTS,
     val role: String? = null,
+    /** `features.surround`: Jellyfin with *Surround sound* on (false from an old server: the switch is not offered) */
+    val surround: Boolean = false,
 )
 
 data class Season(val id: String, val name: String, val index: Int?)
@@ -205,6 +207,7 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
             postplay = flag(me.optJSONObject("features"), "postplay"),
             segments = if (seg == null) ALL_SEGMENTS else (0 until seg.length()).mapNotNull { seg.optString(it).takeIf { s -> s.isNotEmpty() }?.lowercase() }.toSet(),
             role = role,
+            surround = me.optJSONObject("features")?.optBoolean("surround", false) ?: false,
         )
     }
 
@@ -402,6 +405,8 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
         private val ID = Regex("[A-Za-z0-9_-]{1,64}")
         private fun validId(id: String) = ID.matches(id)
 
+        /** the server's `psId` (`^[\w-]{8,64}$`): a shorter id would fail the whole body */
+        private val PS_ID = Regex("[A-Za-z0-9_-]{8,64}")
         private val FELL_BACK = setOf("hevc", "surround", "both")
 
         val ALL_SEGMENTS = setOf("intro", "outro", "recap", "preview")
@@ -492,7 +497,7 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
                 audioLang?.takeIf { it.isNotEmpty() && it.length <= 16 }?.let { put("audioLang", it) }
                 put("caps", caps.toJson())
                 // only on the one automatic fallback (`hevc | surround | both`) and the session it replaces (spec §9)
-                if (fellBack in FELL_BACK && prevPs != null && ID.matches(prevPs)) {
+                if (fellBack in FELL_BACK && prevPs != null && PS_ID.matches(prevPs)) {
                     put("fellBack", fellBack)
                     put("prevPs", prevPs)
                 }

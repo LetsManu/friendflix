@@ -39,15 +39,16 @@ class SurroundTest {
     }
 
     @Test fun infoBodyCarriesTheFallback() {
-        val b = PlayerApi.infoBody("ep1", null, null, null, manual = false, audioLang = null, caps = caps, fellBack = "both", prevPs = "ps-1_a")
+        val b = PlayerApi.infoBody("ep1", null, null, null, manual = false, audioLang = null, caps = caps, fellBack = "both", prevPs = "ps-1_abc")
         assertEquals("both", b.getString("fellBack"))
-        assertEquals("ps-1_a", b.getString("prevPs"))
+        assertEquals("ps-1_abc", b.getString("prevPs"))
     }
 
     @Test fun infoBodyDropsAnIncompleteOrUnknownFallback() {
         assertFalse(PlayerApi.infoBody("ep1", null, null, null, false, null, caps, fellBack = "hevc", prevPs = null).has("fellBack"))
         assertFalse(PlayerApi.infoBody("ep1", null, null, null, false, null, caps, fellBack = "dts", prevPs = "ps1").has("fellBack"))
         assertFalse(PlayerApi.infoBody("ep1", null, null, null, false, null, caps, fellBack = "hevc", prevPs = "a b").has("prevPs"))
+        assertFalse("the server wants 8 to 64 characters", PlayerApi.infoBody("ep1", null, null, null, false, null, caps, fellBack = "hevc", prevPs = "ps1").has("fellBack"))
     }
 
     // ---- the delivery block of /info
@@ -93,6 +94,13 @@ class SurroundTest {
         assertNull(Fallback.feature(hevcSurround, false, false, PlaybackException.ERROR_CODE_TIMEOUT))
     }
 
+    @Test fun aNamedRendererDecidesTheFeature() {
+        val c = PlaybackException.ERROR_CODE_DECODING_FAILED
+        assertEquals("surround", Fallback.feature(hevcSurround, false, false, c, "audio/eac3"))
+        assertEquals("hevc", Fallback.feature(hevcSurround, false, false, c, "video/hevc"))
+        assertNull("an H.264 error drops nothing", Fallback.feature(Delivery("copy", "h264", "copy", "ac3", 6), false, false, c, "video/avc"))
+    }
+
     // ---- the store: the switch and the 30 days
 
     @Test fun surroundIsOnUntilSwitchedOff() {
@@ -113,6 +121,15 @@ class SurroundTest {
         assertTrue(s.avoidsHevc())
         clock += 1
         assertFalse(s.avoidsHevc())
+    }
+
+    @Test fun anotherBuildForgetsTheMemory() {
+        val ctx = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = ctx.getSharedPreferences("surround_test_build", Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        SurroundStore(prefs, { clock }, "build-a").avoid("hevc")
+        assertTrue(SurroundStore(prefs, { clock }, "build-a").avoidsHevc())
+        assertFalse(SurroundStore(prefs, { clock }, "build-b").avoidsHevc())
     }
 
     @Test fun bothMarksBothAndAClockGoingBackwardsForgets() {

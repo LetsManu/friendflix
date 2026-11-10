@@ -151,7 +151,8 @@ object DeviceProfile {
 
         val hlsVideo = listOf("h264") + (if (!avoidHevc && video.any { it.codec == "hevc" }) listOf("hevc") else emptyList())
         val hlsAudio = listOf("aac", "mp3") + dolby
-        val surround = if (stereo || avoidSurround) emptyList() else dolby + (if (audio.maxChannels >= 6) listOf("aac") else emptyList())
+        // AAC 5.1 decodes to multichannel PCM: only a route that takes 6 PCM channels proves it (Dolby passthrough does not)
+        val surround = if (stereo || avoidSurround) emptyList() else dolby + (if (audio.pcmChannels >= 6) listOf("aac") else emptyList())
         val channels = if (!stereo && !avoidSurround && audio.maxChannels >= 6 && surround.isNotEmpty()) audio.maxChannels.coerceAtMost(16) else 2
         return ClientCaps(strictVersion(versionName), CONTAINERS, video, audioList, SUBTITLES, HlsCaps(hlsVideo, hlsAudio, surround), channels)
     }

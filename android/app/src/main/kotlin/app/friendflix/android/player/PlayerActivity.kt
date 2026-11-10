@@ -358,7 +358,7 @@ class PlayerActivity : FragmentActivity() {
                 castServer = CastServerApi(server, a.profileId, pa)
                 if (first) loadTitle(pa, a)
                 val audioLang = if (audioIndex == null) titleLangs(a).audioLang() else null
-                val soundMode = fxMode != "off"
+                val soundMode = fxMode != "off" && fx.supported()
                 val caps = withContext(Dispatchers.IO) { DeviceProfile.build(applicationContext, soundMode) }
                 val fell = fellBack
                 fellBack = null
@@ -529,6 +529,13 @@ class PlayerActivity : FragmentActivity() {
         override fun onPlayerError(error: PlaybackException) { onError(error) }
     }
 
+    /** the sample MIME type of the renderer that failed, when ExoPlayer names it */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun failingMime(error: PlaybackException): String? =
+        (error as? androidx.media3.exoplayer.ExoPlaybackException)
+            ?.takeIf { it.type == androidx.media3.exoplayer.ExoPlaybackException.TYPE_RENDERER }
+            ?.rendererFormat?.sampleMimeType
+
     private fun onError(error: PlaybackException) {
         val pos = resumePos()
         Log.w(TAG, "playback error ${error.errorCodeName}")
@@ -550,7 +557,7 @@ class PlayerActivity : FragmentActivity() {
             return
         }
         // an HLS stream with HEVC or surround the device cannot decode: once, the same stream without it, remembered for 30 days
-        val left = Fallback.feature(s?.info?.delivery, s?.direct ?: true, avoided, code)
+        val left = Fallback.feature(s?.info?.delivery, s?.direct ?: true, avoided, code, failingMime(error))
         if (s != null && left != null) {
             avoided = true
             SurroundStore.of(applicationContext).avoid(left)
@@ -818,7 +825,7 @@ class PlayerActivity : FragmentActivity() {
                 fxMode = fxMode,
                 fxDisabledReason = null,
                 // only for an online stream on an output with 5.1 (a phone on speakers or headphones has nothing to switch)
-                surround = if (s != null && AudioOut.current(applicationContext).maxChannels >= 6) SurroundStore.of(applicationContext).enabled else null,
+                surround = if (s != null && serverCaps.surround && AudioOut.current(applicationContext).maxChannels >= 6) SurroundStore.of(applicationContext).enabled else null,
             )
         }
 
@@ -917,6 +924,7 @@ class PlayerActivity : FragmentActivity() {
     /** *Surround sound* flipped: kept on this device; an HLS stream restarts at the same position so that the change is heard (a silent AVR) */
     private fun changeSurround(on: Boolean) {
         SurroundStore.of(applicationContext).enabled = on
+        flash(getString(if (on) R.string.player_fx_on else R.string.player_fx_off, getString(R.string.player_surround)), 1_400)
         val s = stream ?: return
         if (!s.direct) reload(resumePos())
     }

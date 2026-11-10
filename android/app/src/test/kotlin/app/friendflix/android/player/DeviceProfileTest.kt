@@ -189,4 +189,28 @@ class DeviceProfileTest {
         assertFalse(j.has("hls"))
         assertFalse(j.has("audioChannels"))
     }
+
+    @Test fun passthroughAloneClaimsDolbyButNotAac() {
+        val out = AudioOut.of(2, setOf("eac3", "ac3"))
+        assertEquals(6, out.maxChannels)
+        val caps = DeviceProfile.fromDecoders(softwareOnly, "2.0.0", out)
+        assertEquals(listOf("eac3", "ac3"), caps.hls!!.surround)
+        assertEquals(6, caps.audioChannels)
+    }
+
+    @Test fun stereoRouteClaimsNothing() {
+        val out = AudioOut.of(2, emptySet())
+        assertEquals(2, out.maxChannels)
+        assertEquals(2, DeviceProfile.fromDecoders(softwareOnly, "2.0.0", out).audioChannels)
+    }
+
+    @Test fun aDefaultContextIsStereoWithoutPassthrough() {
+        // Media3's own maxChannelCount is 10 here; the claim must not follow it
+        val out = AudioOut.current(androidx.test.core.app.ApplicationProvider.getApplicationContext())
+        assertEquals(2, out.maxChannels)
+        assertEquals(emptySet<String>(), out.passthrough)
+        val caps = DeviceProfile.fromDecoders(softwareOnly, "2.0.0", out)
+        assertEquals(2, caps.audioChannels)
+        assertEquals(emptyList<String>(), caps.hls!!.surround)
+    }
 }
