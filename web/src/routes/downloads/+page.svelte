@@ -116,7 +116,7 @@
  {:else}
   <section class="panel store">
     <div class="bar" role="progressbar" aria-label={$t('account.downloads.storageAria')} aria-valuenow={Math.round(barPct)} aria-valuemin="0" aria-valuemax="100"><i style="width:{barPct}%"></i></div>
-    <p>{$t('account.downloads.storageUsed', { used: fmtBytes(used), total: fmtBytes(total) })}{#if me?.downloads?.max}{$t('account.downloads.maxDownloads', { n: me.downloads.max })}{/if}</p>
+    <p class="facts"><span>{$t('account.downloads.storageUsed', { used: fmtBytes(used), total: fmtBytes(total) })}</span>{#if me?.downloads?.max}<span>{$t('account.downloads.maxDownloads', { n: me.downloads.max })}</span>{/if}</p>
     <div class="flex">
       <label>{$t('account.downloads.defaultQuality')}
         <select value={quality} on:change={(e) => setQuality(e.currentTarget.value)}>
@@ -165,6 +165,7 @@
   .bar { height: 8px; border-radius: 4px; background: var(--surface-2, #242b33); overflow: hidden; } .bar i { display: block; height: 100%; background: var(--acc); transition: width .3s; }
   .bar.slim { height: 4px; margin-top: .3rem; }
   .small { font-size: .85rem; } .store p { margin: 0; }
+  .facts { display: flex; flex-wrap: wrap; gap: .1rem 1.1rem; } /* two facts, no "·" separator that could start a wrapped line */
   .list { list-style: none; padding: 0; margin: 0 0 1.5rem; display: grid; gap: .5rem; max-width: 900px; }
   .item { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: .8rem 1rem; background: var(--surface); border-radius: 8px; flex-wrap: wrap; }
   .tx { display: flex; flex-direction: column; gap: .15rem; min-width: 0; flex: 1 1 240px; }

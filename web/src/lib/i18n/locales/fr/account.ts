@@ -171,7 +171,7 @@ const fr: Translation<typeof de> = {
     emptyFind: 'Trouver quelque chose à télécharger',
     storageAria: 'Espace utilisé',
     storageUsed: '{used} utilisés sur {total} de stockage de l’appareil',
-    maxDownloads: { one: ' · jusqu’à {n} téléchargement', many: ' · jusqu’à {n} téléchargements', other: ' · jusqu’à {n} téléchargements' },
+    maxDownloads: { one: 'jusqu’à {n} téléchargement', many: 'jusqu’à {n} téléchargements', other: 'jusqu’à {n} téléchargements' },
     defaultQuality: 'Qualité par défaut',
     qualities: { sd: 'Basse (480p)', hd: 'Moyenne (720p)', fhd: 'Haute (1080p)', original: 'Original' },
     persist: 'Protéger le stockage',

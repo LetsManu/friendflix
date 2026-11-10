@@ -388,5 +388,12 @@
     .em { display: block; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
   }
   /* phone card: the selection cell is the first line, keep its box clear of the actions button (top right) */
-  @media (max-width: 720px) { .pick { margin-right: 3.2rem; } .bulk { position: static; } }
+  /* touch: the row checkbox gets a 44 px hit box around its 20 px glyph (no label to click) */
+  @media (pointer: coarse) { .pick { box-sizing: content-box; padding: 12px; margin: -12px; } }
+  @media (max-width: 720px) {
+    .pick { margin-right: 3.2rem; } .bulk { position: static; }
+    :global(.dt .bar .field) { flex: 1 1 100%; } /* the three filters share one width */
+    /* the tab strip scrolls: a fade at the right edge says there is more (the end padding keeps the last label clear of it) */
+    .tabs { padding-inline-end: 1.5rem; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent); }
+  }
 </style>

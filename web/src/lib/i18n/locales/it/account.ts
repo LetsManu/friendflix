@@ -171,7 +171,7 @@ const it: Translation<typeof de> = {
     emptyFind: 'Trova qualcosa da scaricare',
     storageAria: 'Spazio occupato',
     storageUsed: '{used} di {total} di memoria del dispositivo occupati',
-    maxDownloads: { one: ' · fino a {n} download', many: ' · fino a {n} download', other: ' · fino a {n} download' },
+    maxDownloads: { one: 'fino a {n} download', many: 'fino a {n} download', other: 'fino a {n} download' },
     defaultQuality: 'Qualità predefinita',
     qualities: { sd: 'Bassa (480p)', hd: 'Media (720p)', fhd: 'Alta (1080p)', original: 'Originale' },
     persist: 'Proteggi la memoria',

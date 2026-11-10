@@ -9,7 +9,7 @@ test.describe('search', () => {
     const input = page.locator('#hq');
     await expect(page.locator('#q')).toHaveCount(0);
     await expect(input).toBeVisible();
-    await expect(page.getByRole('heading', { level: 2, name: 'Beliebte Suchen' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Beliebt hier' })).toBeVisible();
 
     // regression: results used to re-render the page and wipe what was typed
     await input.click();
