@@ -215,6 +215,11 @@ describe('runLgProbe', () => {
     expect((await p).home).toBe('fail');
     expect(JSON.parse(m.store.get('ff.lgProbe')!)).toMatchObject({ home: 'fail', stage: 'done' });
   });
+  it('an old stored result without the HLS claim prints hlsvideo=- surround=- ch=2', async () => {
+    const old = { tv: 'webos', screen: '1920x1080', os: '25', direct: 'ok:1840ms', hls: 'ok', nativehls: 'ok', palm: 'yes', home: 'fail', keys: 'ok', video: ['vp9'], audio: [], containers: ['webm'], stage: 'home' };
+    const m = mk({ search: '?probe=1&ff_app=webos&home=ok', stored: { 'ff.lgProbe': JSON.stringify(old) } });
+    expect(formatLgProbe(await runLgProbe(m.deps, m.onStage))).toMatch(/ containers=webm hlsvideo=- surround=- ch=2$/);
+  });
   it('home=ok in the URL with a stored result prints the restored line and runs no playback', async () => {
     const stored = { ...SPEC, home: 'fail', video: ['vp9'], audio: [], containers: ['webm'] };
     const m = mk({ search: '?probe=1&ff_app=webos&home=ok', stored: { 'ff.lgProbe': JSON.stringify(stored) } });

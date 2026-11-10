@@ -4,6 +4,9 @@
   import { onMount } from 'svelte';
   import { api } from '#lib/api';
   import { fmtDate, t } from '#lib/i18n';
+  import { isLgApp } from '#lib/webos/detect';
+  import { isFireTvApp } from '#lib/firetv/detect';
+  import { tvBaseCaps } from '#lib/webos/caps';
   import { capsPending, capsSummary, warmDeviceCaps } from '#lib/player/devicecaps';
   import { avRows, type Abilities, type CapsFacts } from '#lib/player/diagnoseav';
   import { airLogStart, clearAirLog, formatAirLog, readAirLog, type AirLogEntry } from '#lib/player/airplayLog';
@@ -15,7 +18,7 @@
   let caps: CapsFacts = { hevcFiles: false, hevcStreams: false, surround: [], channels: 2, stereoChoice: false, soundMode: false, avoided: {} };
   let abilities: Abilities | null = null;
   $: av = avRows({ caps, abilities, last: timings[0] ?? null, t: $t, date: (ms) => fmtDate(new Date(ms)) });
-  const readCaps = () => { try { caps = capsSummary(); } catch { /* an unreadable probe shows "no HEVC confirmed" */ } };
+  const readCaps = () => { try { caps = capsSummary(isLgApp() || isFireTvApp() ? tvBaseCaps() : undefined); } catch { /* an unreadable probe shows "no HEVC confirmed" */ } };
   let probe: HTMLElement, svh: HTMLElement, lvh: HTMLElement, dvh: HTMLElement, vh: HTMLElement;
   let table: HTMLElement; // wraps both tables: the copy fallback selects all rows
   let note = '';

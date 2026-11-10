@@ -414,9 +414,9 @@ export function withOutput(c: Out): Out {
   return { ...rest, ...(hls ? { hls } : {}), audioChannels: stereo ? 2 : statedChannels(hls ? { ...c, hls } : c) };
 }
 
-/** what Diagnose shows (Task 4): the device's abilities before the stereo choice and the avoid memory, then those two */
-export function capsSummary(): { hevcFiles: boolean; hevcStreams: boolean; surround: string[]; channels: number; stereoChoice: boolean; soundMode: boolean; avoided: { hevc?: number; surround?: number } } {
-  const c = baseCaps();
+/** what Diagnose shows (Task 4; `base`: the TV app's own probe-time block, see tvBaseCaps): the device's abilities before the stereo choice and the avoid memory, then those two */
+export function capsSummary(base?: Out | null): { hevcFiles: boolean; hevcStreams: boolean; surround: string[]; channels: number; stereoChoice: boolean; soundMode: boolean; avoided: { hevc?: number; surround?: number } } {
+  const c = base !== undefined ? base : baseCaps();
   return {
     hevcFiles: Boolean(c?.video.some((v) => v.codec === 'hevc')),
     hevcStreams: Boolean(c?.hls?.video.includes('hevc')),

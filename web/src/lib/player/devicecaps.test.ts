@@ -509,6 +509,14 @@ describe('this device: output channels, stereo choice, avoid memory', () => {
     expect(JSON.parse(store.get(CACHE_KEY)!).v).toBe(2);
   });
 
+  it('capsSummary(base): a TV app block states channels and surround from its own claim, not the browser probe', async () => {
+    reset(); await fresh({ channels: () => 2 });
+    const tv = { client: 'webos' as const, appVersion: '1', containers: [], video: [{ codec: 'hevc' }], audio: [], subtitles: [], audioChannels: 6,
+      hls: { video: ['h264', 'hevc'] as ('h264' | 'hevc')[], audio: ['eac3' as const], surround: ['eac3' as const] } };
+    expect(capsSummary(tv)).toMatchObject({ hevcFiles: true, hevcStreams: true, surround: ['eac3'], channels: 6 });
+    expect(capsSummary(null)).toMatchObject({ hevcStreams: false, surround: [], channels: 2 });
+  });
+
   it('capsSummary: abilities before the stereo choice, the choice, the mode, the avoid memory', async () => {
     reset(); await fresh();
     expect(capsSummary()).toEqual({ hevcFiles: true, hevcStreams: true, surround: ['eac3', 'ac3', 'aac'], channels: 6, stereoChoice: false, soundMode: false, avoided: {} });

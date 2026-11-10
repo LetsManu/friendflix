@@ -136,18 +136,28 @@ export function buildLgCaps(m: MediaProbe | null, appVersion: string): ClientCap
   return buildTvCaps(m, { client: 'webos', appVersion, maxHeight: 2160, assumed: ASSUMED_CONTAINERS });
 }
 
-let cached: ClientCapsBody | null | undefined;
 /** the probe-time block of the TV apps; the output facts are applied on top at every call (not cached) */
+let cached: ClientCapsBody | null | undefined;
 
 /**
  * the block for this page load: LG app, Fire TV app (probed once here); every other browser and the Samsung TV app probe themselves
  * (lib/player/devicecaps.ts: strict claims, cached per device, safe profile after a failure); null without a media element
  */
 export function appCaps(): ClientCapsBody | null {
-  if (cached !== undefined) return cached && withOutput(cached);
+  const b = tvBaseCaps();
+  if (b) return withOutput(b);
+  return isLgApp() || isFireTvApp() ? null : typeof window === 'undefined' ? null : deviceCaps();
+}
+
+/**
+ * the probe-time block of the LG / Fire TV app (before the Surround switch, sound modes and the avoid memory); null outside those apps,
+ * without a window or when the TV confirms nothing. Diagnose reads it so it shows what the TV states, not the browser probe's guess.
+ */
+export function tvBaseCaps(): ClientCapsBody | null {
+  if (cached !== undefined) return cached;
   if (typeof window === 'undefined') return null;
   const lg = isLgApp();
-  if (!lg && !isFireTvApp()) return deviceCaps();
+  if (!lg && !isFireTvApp()) return null;
   let probe: MediaProbe | null = null;
   try {
     const v = document.createElement('video');
@@ -157,7 +167,7 @@ export function appCaps(): ClientCapsBody | null {
   cached = lg
     ? buildLgCaps(probe, APP_VERSION)
     : buildTvCaps(probe, { client: 'firetv', appVersion: APP_VERSION, maxHeight: fireTvDisplayHeight(), assumed: [] });
-  return cached && withOutput(cached);
+  return cached;
 }
 
 /** tests only */

@@ -9,7 +9,7 @@ vi.mock('#lib/firetv/detect', () => ({ isFireTvApp: () => fire.on, fireTvDisplay
 const dev = vi.hoisted(() => ({ block: null as unknown, out: (c: unknown): unknown => c }));
 vi.mock('#lib/player/devicecaps', () => ({ deviceCaps: () => dev.block, withOutput: (c: unknown) => dev.out(c) }));
 import { APP_VERSION } from '#lib/version/codenames';
-import { _resetAppCaps, appCaps, buildLgCaps, buildTvCaps, confirmedTypes, type MediaProbe } from './caps';
+import { _resetAppCaps, appCaps, buildLgCaps, buildTvCaps, confirmedTypes, tvBaseCaps, type MediaProbe } from './caps';
 
 const all: MediaProbe = { canPlayType: () => 'probably', isTypeSupported: () => true };
 const none: MediaProbe = { canPlayType: () => '', isTypeSupported: () => false };
@@ -130,6 +130,16 @@ describe('appCaps', () => {
     vi.stubGlobal('window', { MediaSource: { isTypeSupported: (t: string) => t !== 'video/x-matroska' } });
     vi.stubGlobal('document', { createElement: () => ({ canPlayType: (t: string) => (t === 'video/x-matroska' ? '' : 'maybe') }) });
   };
+
+  it('tvBaseCaps: the TV block without the output facts; null in a browser', () => {
+    stub(); _resetAppCaps();
+    expect(tvBaseCaps()).toBeNull();
+    lg.on = true; _resetAppCaps();
+    dev.out = (c) => ({ ...(c as object), audioChannels: 2 });
+    expect(tvBaseCaps()!.audioChannels).toBe(6);
+    expect(appCaps()!.audioChannels).toBe(2);
+    dev.out = (c) => c;
+  });
 
   it('is null without a window', () => {
     lg.on = true; _resetAppCaps();

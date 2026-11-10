@@ -391,7 +391,7 @@ export async function hevcTick(ctx: Ctx): Promise<boolean>;
 ### Task 6: TV apps (LG webOS, Fire TV; Samsung via Task 3) and probe pages — **sonnet-routine**
 
 **Files:**
-- Modify: `web/src/lib/webos/caps.ts` (`buildTvCaps` adds the strict-MSE `hls` block and `audioChannels: 6` when surround is not empty), `web/src/lib/webos/probe.ts` (FFPROBE line adds `hls=h264,hevc surround=eac3,ac3 ch=6`), `docs/webos.md`, `docs/tizen.md`, `docs/firetv.md` (the sample probe line, plus surround and HEVC-stream notes; the German docs in `docs/de/*` alike)
+- Modify: `web/src/lib/webos/caps.ts` (`buildTvCaps` adds the strict-MSE `hls` block and `audioChannels: 6` when surround is not empty), `web/src/lib/webos/probe.ts` (FFPROBE line adds `hlsvideo=h264,hevc surround=eac3,ac3 ch=6`), `docs/webos.md`, `docs/tizen.md`, `docs/firetv.md` (the sample probe line, plus surround and HEVC-stream notes; the German docs in `docs/de/*` alike)
 - Test: `web/src/lib/webos/caps.test.ts`, `web/src/lib/webos/probe.test.ts`
 
 **Interfaces:**
@@ -406,7 +406,7 @@ export async function hevcTick(ctx: Ctx): Promise<boolean>;
 - [ ] **Step 4: Commit** `feat(tv): LG and Fire TV state HEVC streams and Dolby surround`.
 
 **Owner check:**
-1. On the LG 43QNED82A6B, the probe page shows `hls=h264,hevc surround=eac3,ac3 ch=6`.
+1. On the LG 43QNED82A6B, the probe page shows `hlsvideo=h264,hevc surround=eac3,ac3 ch=6`.
 2. *Wrenfield Pier* plays with sound through the TV speakers and through the soundbar (ARC).
 3. If the soundbar stays silent, the *Raumklang* switch fixes it.
 
