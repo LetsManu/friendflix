@@ -428,7 +428,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       // Stop and a session end clear the hint before the owner lets the lock go; a pagehide keeps it
       if (!readHint(deps.store, timers.now())) { freeLock(); return; }
       log('info', 'session', 'the owner tab left · taking the cast over');
-      void resume();
+      // not joined here (no auto-join): the bar comes back as `detached` (Reconnect / Stop), as on a fresh page
+      void resume().then((ok) => { if (!ok && !cur && !follower) boot(); });
     });
   }
   /** the queued next episode leaves the receiver's queue; its token (never reported, never started) is revoked */

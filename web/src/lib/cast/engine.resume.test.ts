@@ -321,6 +321,27 @@ describe('cast engine: resume (re-adoption)', () => {
     expect(b.calls.filter((c) => c.init.method === 'DELETE' || c.path.startsWith('/api/playback/'))).toEqual([]);
   });
 
+  it('a tab that never auto-joined shows the detached bar once the owner tab closed', async () => {
+    const lock = fakeLock(), store = memStore(), lookups = {};
+    const one = setup({ lock, store, lookups }), two = setup({ lock, store, lookups });
+    one.lookups[A] = lookup(A, 'dun4');
+    tvPlaysA(one, { queue: [] });
+    expect(await one.engine.resume()).toBe(true);
+    two.state.set({ ...idle, connected: false, deviceName: '' });
+    two.ready();
+    await two.advance(DETACHED_AFTER_MS);
+    await settle();
+    expect(get(two.out)).toBeNull(); // follows while the owner is there
+    one.pagehide();
+    await settle();
+    await two.advance(RESUME_WAIT_MS); // its resume finds nothing joined here
+    await settle();
+    await two.advance(DETACHED_AFTER_MS);
+    await settle();
+    expect(get(two.out)).toMatchObject({ state: 'detached', castId: A, device: 'Wohnzimmer-TV' });
+    expect(two.calls.filter((c) => c.init.method === 'DELETE' || c.path.startsWith('/api/playback/'))).toEqual([]);
+  });
+
   it('a hand-off in a tab without the lock still plays (the user cast from here); a second follower resume waits once', async () => {
     const lock = fakeLock();
     const one = setup({ lock }), two = setup({ lock });
