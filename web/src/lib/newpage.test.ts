@@ -6,7 +6,8 @@ import { LOCALES, setLocale, tr } from '#lib/i18n';
 import { reasonText } from './reason';
 import {
   daysSince, episodeItem, filterItems, filterKeyTarget, filterSearch, freshText, kindOf, matchesFilter, NEW_TITLE_DAYS, parseFilter, planSections, withinDays,
-  type NewData, type NewEpisode, type Up,
+  availableTabs, forYouItems, mergeSuggestions, openRequests, pageSearch, parseTab, quotaExhausted, quotaLeft, tabKeyTarget,
+  type NewData, type NewEpisode, type Suggestion, type Up,
 } from './newpage';
 
 const NOW = new Date(2026, 10, 10, 15, 0, 0).getTime(); // 10 Nov 2026, local afternoon
@@ -14,6 +15,7 @@ const ago = (days: number, hour = 9) => new Date(2026, 10, 10 - days, hour, 0, 0
 const item = (id: string, name: string, type: 'Movie' | 'Series' | 'Episode', extra: Partial<Item> = {}) => ({ id, name, type, genres: [], image: true, backdrop: false, logo: false, played: false, favorite: false, positionTicks: 0, ...extra }) as Item;
 const ep = (id: string, series: string, days: number): NewEpisode => ({ seriesId: `s-${series}`, seriesName: series, newCount: 1, episode: { id, name: 'Pilot', season: 2, episode: 4, addedAt: ago(days), image: true } });
 const up = (title: string, mediaType: 'movie' | 'tv', releaseDate = '2026-11-21T00:00:00Z'): Up => ({ tmdbId: title.length, mediaType, title, releaseDate, status: 'nicht_angefragt' });
+const sug = (tmdbId: number, mediaType: 'movie' | 'tv', state: Suggestion['request']['state'] = 'none'): Suggestion => ({ tmdbId, mediaType, title: `T${tmdbId}`, year: 2025, poster: null, reason: { seed: 'Inkwell' }, request: { state } });
 const EMPTY: NewData = { forYou: [], newSeries: [], newMovies: [], episodes: [], week: [], upcoming: [] };
 
 afterEach(async () => { await setLocale('de'); });
@@ -111,19 +113,20 @@ describe('new episodes as cards', () => {
 describe('page plan', () => {
   const data = (): NewData => ({
     forYou: [item('f1', 'Kestrel', 'Series'), item('f2', 'Cedar Falls', 'Movie')],
-    newSeries: [item('f1', 'Kestrel', 'Series'), item('s2', 'Hollow Pines', 'Series')],
-    newMovies: [item('m1', 'Meridian', 'Movie'), item('f2', 'Cedar Falls', 'Movie')],
+    newSeries: [item('f1', 'Kestrel', 'Series', { dateCreated: ago(1) }), item('s2', 'Hollow Pines', 'Series', { dateCreated: ago(6) })],
+    newMovies: [item('m1', 'Meridian', 'Movie', { dateCreated: ago(3) }), item('f2', 'Cedar Falls', 'Movie', { dateCreated: ago(9) })],
     episodes: [ep('e1', 'Inkwell', 1)],
     week: [item('w1', 'Interlace', 'Movie'), item('w2', 'Dunmoor', 'Series')],
     upcoming: [up('Vesper Bay', 'movie'), up('Nightingale Road', 'tv')],
   });
   const ids = (l: Array<{ id: string }>) => l.map((i) => i.id);
 
-  it('Alles shows every section; a title the For-you row shows is not repeated below', () => {
+  it('Alles shows every section; the library list has series and films together, newest first', () => {
     const p = planSections(data(), 'all', { requests: true });
     expect(ids(p.forYou)).toEqual(['f1', 'f2']);
-    expect(ids(p.newSeries)).toEqual(['s2']);
-    expect(ids(p.newMovies)).toEqual(['m1']);
+    expect(ids(p.newSeries)).toEqual(['f1', 's2']);
+    expect(ids(p.newMovies)).toEqual(['m1', 'f2']);
+    expect(ids(p.library)).toEqual(['f1', 'm1', 's2', 'f2']);
     expect(p.episodes).toHaveLength(1);
     expect(ids(p.week)).toEqual(['w1', 'w2']);
     expect(p.upcoming).toHaveLength(2);
@@ -152,6 +155,14 @@ describe('page plan', () => {
     expect(ids(p.newMovies)).toEqual(['m1']);
     expect(p.empty).toBe(false);
   });
+  it('suggestions from outside the library need a request service and follow the filter', () => {
+    const d = { ...data(), suggest: [sug(1, 'movie'), sug(2, 'tv')] };
+    expect(planSections(d, 'all', { requests: true }).suggestions).toHaveLength(2);
+    expect(planSections(d, 'series', { requests: true }).suggestions.map((s) => s.tmdbId)).toEqual([2]);
+    expect(planSections(d, 'movie', { requests: true }).suggestions.map((s) => s.tmdbId)).toEqual([1]);
+    expect(planSections(d, 'all', { requests: false }).suggestions).toEqual([]); // kids, no service
+    expect(planSections(data(), 'all', { requests: true }).suggestions).toEqual([]); // not loaded
+  });
   it('the empty state is for "nothing new at all"; this week and Demnächst may still show below it', () => {
     const p = planSections({ ...EMPTY, week: [item('w1', 'Interlace', 'Movie')], upcoming: [up('Vesper Bay', 'movie')] }, 'all', { requests: true });
     expect(p.empty).toBe(true);
@@ -170,5 +181,73 @@ describe('reason lines on the page', () => {
     expect(reasonText({ seed: null, traits: ['genre:Mystery'] }, tr)).toContain('Mystery');
     expect(reasonText(null, tr)).toBe('');
     expect(reasonText(undefined, tr)).toBe('');
+  });
+});
+
+describe('tabs', () => {
+  it('a profile with a request service has three tabs, kids and installs without a service two', () => {
+    expect(availableTabs({ requests: true })).toEqual(['foryou', 'library', 'wishes']);
+    expect(availableTabs({ requests: false })).toEqual(['foryou', 'library']);
+  });
+  it('the URL value picks the tab; unknown values and a missing third tab fall back to Für dich', () => {
+    expect(parseTab(null, { requests: true })).toBe('foryou');
+    expect(parseTab('neu', { requests: true })).toBe('library');
+    expect(parseTab('wuensche', { requests: true })).toBe('wishes');
+    expect(parseTab('wuensche', { requests: false })).toBe('foryou'); // kids and no service: no such tab
+    expect(parseTab('neu', { requests: false })).toBe('library');
+    expect(parseTab('nonsense', { requests: true })).toBe('foryou');
+  });
+  it('the query string keeps tab and filter, and stays empty for the plain page', () => {
+    expect(pageSearch('foryou', 'all')).toBe('');
+    expect(pageSearch('library', 'all')).toBe('?tab=neu');
+    expect(pageSearch('wishes', 'series')).toBe('?tab=wuensche&type=series');
+    expect(pageSearch('foryou', 'movie')).toBe('?type=movie');
+  });
+  it('arrow keys wrap, Home and End jump, other keys are left alone', () => {
+    const t = availableTabs({ requests: true });
+    expect(tabKeyTarget('ArrowRight', 'wishes', t)).toBe('foryou');
+    expect(tabKeyTarget('ArrowLeft', 'foryou', t)).toBe('wishes');
+    expect(tabKeyTarget('End', 'foryou', t)).toBe('wishes');
+    expect(tabKeyTarget('Home', 'library', t)).toBe('foryou');
+    expect(tabKeyTarget('ArrowRight', 'library', availableTabs({ requests: false }))).toBe('foryou');
+    expect(tabKeyTarget('a', 'library', t)).toBeNull();
+    expect(tabKeyTarget('ArrowRight', 'wishes', availableTabs({ requests: false }))).toBeNull();
+  });
+});
+
+describe('Für dich neu follows the engine', () => {
+  const items = [item('a', 'Kestrel', 'Series')];
+  it('v2 shows the picks, v1 and a missing answer show nothing', () => {
+    expect(forYouItems({ engine: 'v2', items })).toEqual(items);
+    expect(forYouItems({ engine: 'v1', items })).toEqual([]);
+    expect(forYouItems({ items })).toEqual([]);
+    expect(forYouItems(null)).toEqual([]);
+  });
+  it('under v1 the library list is complete (nothing is taken away from it)', () => {
+    const d: NewData = { ...EMPTY, forYou: forYouItems({ engine: 'v1', items }), newSeries: items };
+    expect(planSections(d, 'all', { requests: true }).library).toEqual(items);
+  });
+});
+
+describe('suggestions and wishes', () => {
+  it('films and series alternate, doubles are dropped, the list is capped', () => {
+    const m = [sug(1, 'movie'), sug(2, 'movie'), sug(3, 'movie')], s = [sug(10, 'tv'), sug(1, 'movie')];
+    expect(mergeSuggestions(m, s).map((x) => x.tmdbId)).toEqual([1, 10, 2, 3]);
+    expect(mergeSuggestions(m, s, 2).map((x) => x.tmdbId)).toEqual([1, 10]);
+    expect(mergeSuggestions([], [])).toEqual([]);
+  });
+  it('the quota: unlimited never runs out, a used-up one does, unknown is not exhausted', () => {
+    expect(quotaLeft({ limit: 5, used: 2, resetsAt: 'x' })).toBe(3);
+    expect(quotaLeft({ limit: 5, used: 9, resetsAt: 'x' })).toBe(0);
+    expect(quotaLeft({ limit: null, used: 99, resetsAt: 'x' })).toBeNull();
+    expect(quotaExhausted({ limit: null, used: 99, resetsAt: 'x' })).toBe(false);
+    expect(quotaExhausted({ limit: 2, used: 2, resetsAt: 'x' })).toBe(true);
+    expect(quotaExhausted({ limit: 2, used: 1, resetsAt: 'x' })).toBe(false);
+    expect(quotaExhausted(null)).toBe(false);
+  });
+  it('the badge counts the open requests only', () => {
+    const mine = ['angefragt', 'in_arbeit', 'teilweise', 'verfuegbar', 'abgelehnt', 'entfernt'].map((status) => ({ status }));
+    expect(openRequests(mine)).toHaveLength(3);
+    expect(openRequests(null)).toEqual([]);
   });
 });

@@ -44,6 +44,77 @@ export function filterKeyTarget(key: string, current: NewFilter): NewFilter | nu
   return null;
 }
 
+// ---- tabs ----
+/** the three views of the page: picks for you, what was added to the library, wishes and announced titles */
+export type NewTab = 'foryou' | 'library' | 'wishes';
+/** query parameter that holds the tab (absent = Für dich) */
+export const TAB_PARAM = 'tab';
+const TAB_URL: Record<NewTab, string> = { foryou: '', library: 'neu', wishes: 'wuensche' };
+
+/**
+ * The tabs a profile gets. The third one (wishes and announced titles) needs a request service and a grown-up profile: without
+ * a service, and for kids, there are two tabs and nothing that could ask the service.
+ */
+export const availableTabs = (o: { requests: boolean }): NewTab[] => (o.requests ? ['foryou', 'library', 'wishes'] : ['foryou', 'library']);
+
+/** the tab in a URL value; an unknown one, or one this profile does not have (`?tab=wuensche` for a kid), counts as Für dich */
+export function parseTab(v: string | null | undefined, o: { requests: boolean }): NewTab {
+  const tab = (Object.keys(TAB_URL) as NewTab[]).find((k) => TAB_URL[k] !== '' && TAB_URL[k] === v);
+  return tab && availableTabs(o).includes(tab) ? tab : 'foryou';
+}
+/** the query string for a tab and a filter ('' for Für dich + Alles, so the plain page keeps a plain URL) */
+export function pageSearch(tab: NewTab, f: NewFilter): string {
+  const q = new URLSearchParams();
+  if (TAB_URL[tab]) q.set(TAB_PARAM, TAB_URL[tab]);
+  if (f !== 'all') q.set(FILTER_PARAM, f);
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}
+/** the tab after a key on the tab list (Left / Right wrap, Home / End jump), or null for other keys */
+export function tabKeyTarget(key: string, current: NewTab, tabs: readonly NewTab[]): NewTab | null {
+  const i = tabs.indexOf(current), n = tabs.length;
+  if (i < 0) return null;
+  if (key === 'ArrowRight') return tabs[(i + 1) % n]!;
+  if (key === 'ArrowLeft') return tabs[(i + n - 1) % n]!;
+  if (key === 'Home') return tabs[0]!;
+  if (key === 'End') return tabs[n - 1]!;
+  return null;
+}
+
+/** "Für dich neu" exists only for the v2 engine (picks with reasons); under v1, or when the call failed, the row stays out */
+export const forYouItems = (r: { engine?: string; items?: Item[] } | null | undefined): Item[] => (r?.engine === 'v2' ? r.items ?? [] : []);
+
+// ---- suggestions from outside the library ("Noch nicht bei uns") ----
+export type WishState = 'none' | 'requested' | 'processing' | 'available';
+/** one entry of GET /api/library/request-suggestions */
+export interface Suggestion {
+  tmdbId: number; mediaType: 'movie' | 'tv'; title: string; year: number | null; poster: string | null; releaseDate?: string;
+  reason: { seed: string }; request: { state: WishState };
+}
+/** the monthly wish quota (`limit: null` = unlimited) */
+export interface Quota { limit: number | null; used: number; resetsAt: string }
+/** wishes left; null = unlimited (or unknown) */
+export const quotaLeft = (q: Quota | null | undefined): number | null => (q && q.limit !== null ? Math.max(0, q.limit - q.used) : null);
+/** the quota is used up; an unlimited or unknown quota never is */
+export const quotaExhausted = (q: Quota | null | undefined): boolean => quotaLeft(q) === 0;
+
+/** the films and the series suggestions as one list: they alternate (film, series, film …), a title that came twice stays once, at most `max` */
+export function mergeSuggestions(movies: readonly Suggestion[], series: readonly Suggestion[], max = 12): Suggestion[] {
+  const out: Suggestion[] = [], seen = new Set<string>();
+  for (let i = 0; i < Math.max(movies.length, series.length); i++) {
+    for (const s of [movies[i], series[i]]) {
+      if (!s) continue;
+      const k = `${s.mediaType}:${s.tmdbId}`;
+      if (!seen.has(k)) { seen.add(k); out.push(s); }
+    }
+  }
+  return out.slice(0, max);
+}
+
+/** the own requests that are not done yet (what the badge of the wishes tab counts): asked for, in progress, partly there */
+const OPEN_STATES = new Set(['angefragt', 'in_arbeit', 'teilweise']);
+export const openRequests = <T extends { status: string }>(mine: readonly T[] | null | undefined): T[] => (mine ?? []).filter((m) => OPEN_STATES.has(m.status));
+
 // ---- freshness ----
 /** whole calendar days between `iso` and `now` (0 = today); null for a missing or unreadable date; a date in the future counts as today */
 export function daysSince(iso: string | undefined, now: number): number | null {
@@ -94,26 +165,31 @@ export interface Up { tmdbId: number; mediaType: string; title: string; releaseD
 /** what the sections loaded; null = still loading, [] = nothing or failed (a failed section is simply absent) */
 export interface NewData {
   forYou: Item[] | null; newSeries: Item[] | null; newMovies: Item[] | null; episodes: NewEpisode[] | null;
-  week: Item[] | null; upcoming: Up[] | null;
+  week: Item[] | null; upcoming: Up[] | null; suggest?: Suggestion[] | null;
 }
 export interface NewPlan {
   forYou: Item[]; newSeries: Item[]; episodes: NewEpisode[]; newMovies: Item[]; week: Item[]; upcoming: Up[];
+  /** everything added lately, series and films together, newest first (the "Neu in der Bibliothek" tab) */
+  library: Item[];
+  /** titles that are not in the library yet, with their wish state (only with a request service) */
+  suggestions: Suggestion[];
   /** none of the four "new" sections has anything: the page shows the empty state (the sections below it may still show) */
   empty: boolean;
 }
 
 /**
- * What every section shows for a filter. A section without titles is empty and the page leaves it out. A title the "For you" row
- * already shows is not repeated in "Neue Serien" / "Neue Filme". Without a request service there is no "Demnächst".
+ * What every section shows for a filter. A section without titles is empty and the page leaves it out. Without a request
+ * service there is no "Demnächst" and no suggestions from outside the library.
  */
 export function planSections(d: NewData, filter: NewFilter, o: { requests: boolean }): NewPlan {
-  const forYouAll = d.forYou ?? [];
-  const taken = new Set(forYouAll.map((i) => i.id));
-  const forYou = filterItems(forYouAll, filter);
-  const newSeries = filter === 'movie' ? [] : filterItems(d.newSeries ?? [], 'series').filter((i) => !taken.has(i.id));
-  const newMovies = filter === 'series' ? [] : filterItems(d.newMovies ?? [], 'movie').filter((i) => !taken.has(i.id));
+  const forYou = filterItems(d.forYou ?? [], filter);
+  const newSeries = filter === 'movie' ? [] : filterItems(d.newSeries ?? [], 'series');
+  const newMovies = filter === 'series' ? [] : filterItems(d.newMovies ?? [], 'movie');
   const episodes = filter === 'movie' ? [] : d.episodes ?? [];
   const week = filterItems(d.week ?? [], filter);
   const upcoming = o.requests ? (d.upcoming ?? []).filter((u) => matchesFilter(filter, u.mediaType)) : [];
-  return { forYou, newSeries, episodes, newMovies, week, upcoming, empty: !forYou.length && !newSeries.length && !episodes.length && !newMovies.length };
+  const suggestions = o.requests ? (d.suggest ?? []).filter((s) => matchesFilter(filter, s.mediaType)) : [];
+  const at = (i: Item) => Date.parse(i.dateCreated ?? '') || 0;
+  const library = [...newSeries, ...newMovies].sort((a, b) => at(b) - at(a));
+  return { forYou, newSeries, episodes, newMovies, week, upcoming, library, suggestions, empty: !forYou.length && !newSeries.length && !episodes.length && !newMovies.length };
 }
