@@ -68,7 +68,7 @@
   </a>
   {#if landscape}
     <div class="pbar">
-      <span class="t"><b>{item.type === 'Episode' ? item.seriesName ?? item.name : item.name}</b>{#if sub}<small>S{item.parentIndexNumber ?? '?'}:E{item.indexNumber ?? '?'}</small>{/if}</span>
+      <span class="t"><b>{item.type === 'Episode' ? item.seriesName ?? item.name : item.name}</b>{#if sub}<small>{$t('detail.view.episodeCode', { s: String(item.parentIndexNumber ?? '?'), e: String(item.indexNumber ?? '?') })}</small>{/if}</span>
       <button type="button" class="ib" aria-label={$t('home.card.detailsFor', { name: item.name })} aria-haspopup="dialog" on:click={(e) => openPreview(item, e.currentTarget)}><Icon name="info" size={22} /></button>
       <button type="button" class="ib" bind:this={moreBtn} aria-label={$t('home.card.actionsFor', { name: item.name })} aria-haspopup="dialog" aria-expanded={acts} on:click={openActs}><span aria-hidden="true" class="dots">⋯</span></button>
     </div>

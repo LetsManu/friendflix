@@ -99,7 +99,7 @@ export default {
   },
   /** episode number in the control bar when the season is unknown ("F3 Titel"); with a season: detail.view.episodeCode */
   episodeOnly: 'F{e}',
-  phone: { episodeLine: 'S{s} · F{e} · {name}', playback: 'Wiedergabe', tools: 'Werkzeuge' },
+  phone: { episodeLine: 'S{s}:F{e} · {name}', playback: 'Wiedergabe', tools: 'Werkzeuge' },
   speed: {
     title: 'Wiedergabetempo',
     aria: 'Wiedergabetempo: {r}',

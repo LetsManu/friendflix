@@ -112,7 +112,7 @@ const pl: Translation<typeof de> = {
     langs: { ger: 'Niemiecki', eng: 'Angielski', fre: 'Francuski', spa: 'Hiszpański', ita: 'Włoski' },
   },
   episodeOnly: 'O{e}',
-  phone: { episodeLine: 'S{s} · O{e} · {name}', playback: 'Odtwarzanie', tools: 'Narzędzia' },
+  phone: { episodeLine: 'S{s}:O{e} · {name}', playback: 'Odtwarzanie', tools: 'Narzędzia' },
   speed: {
     title: 'Prędkość odtwarzania',
     aria: 'Prędkość odtwarzania: {r}',

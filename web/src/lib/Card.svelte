@@ -69,9 +69,9 @@
   // one URL for blur + main image (identical strings: a single request); the srcset widths are the same for both
   $: srcs = posterSrc ? srcset('Primary', posterId, [200, 320, 480]) : item.backdrop ? srcset('Backdrop', item.id, CARD_WIDTHS) : item.image ? srcset('Primary', item.id, CARD_WIDTHS) : '';
   $: sizes = posterSrc ? '(min-width: 1400px) 9vw, (min-width: 1100px) 11vw, 14vw' : CARD_SIZES;
-  $: epSub = item.type === 'Episode' && item.seriesName ? `S${item.parentIndexNumber ?? '?'}·E${item.indexNumber ?? '?'} ${item.name}` : '';
+  $: epSub = item.type === 'Episode' && item.seriesName ? `${$t('detail.view.episodeCode', { s: String(item.parentIndexNumber ?? '?'), e: String(item.indexNumber ?? '?') })} ${item.name}` : '';
   $: posterOnly = !posterSrc && !item.backdrop && item.image; // poster (2:3) in a 16:9 slot: show it contained on a blurred copy
-  $: sub = item.type === 'Episode' ? `${item.seriesName ?? ''} · S${item.parentIndexNumber ?? '?'}:E${item.indexNumber ?? '?'}` : '';
+  $: sub = item.type === 'Episode' ? `${item.seriesName ?? ''} · ${$t('detail.view.episodeCode', { s: String(item.parentIndexNumber ?? '?'), e: String(item.indexNumber ?? '?') })}` : '';
   $: pct = item.positionTicks && item.runtimeTicks ? Math.min(100, (item.positionTicks / item.runtimeTicks) * 100) : 0;
   $: inList = $listIds.has(item.seriesId ?? item.id);
   // one tag per card from the server (fresh label or "Nur noch N Tage"); episodes ask for their series' removal date

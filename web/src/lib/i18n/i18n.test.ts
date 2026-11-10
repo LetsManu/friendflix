@@ -18,6 +18,13 @@ function keys(o: object, p = ''): string[] {
 }
 
 describe('i18n core', () => {
+  it('episode codes: the phone player line uses the same code format as the detail page in every locale', async () => {
+    for (const { code } of LOCALES) {
+      await setLocale(code);
+      expect(tr('player.phone.episodeLine', { s: 2, e: 5, name: 'X' }), code).toBe(`${tr('detail.view.episodeCode', { s: 2, e: 5 })} · X`);
+    }
+  });
+
   it('locales: seven languages with native names, code checks, browser matching', () => {
     expect(LOCALES.map((l) => l.name)).toEqual(['Deutsch', 'English', 'Français', 'Español', 'Italiano', 'Türkçe', 'Polski']);
     expect(isLocale('pl')).toBe(true);

@@ -69,7 +69,7 @@
   $: pct = item.positionTicks && item.runtimeTicks ? Math.min(100, (item.positionTicks / item.runtimeTicks) * 100) : 0;
   $: title = ep && item.seriesName ? item.seriesName : item.name;
   $: logo = !ep && item.logo && !logoFailed;
-  $: epLine = ep ? `S${item.parentIndexNumber ?? '?'}·E${item.indexNumber ?? '?'} ${item.name}` : '';
+  $: epLine = ep ? `${$t('detail.view.episodeCode', { s: String(item.parentIndexNumber ?? '?'), e: String(item.indexNumber ?? '?') })} ${item.name}` : '';
   $: match = item.communityRating && item.communityRating > 0 ? $t('home.hero.match', { pct: Math.round(item.communityRating * 10) }) : '';
   $: len = lengthLabel(item);
   $: why = reasonText(item.reason, $t);

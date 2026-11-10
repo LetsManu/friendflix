@@ -179,7 +179,7 @@ test.describe('desktop wide hover preview', () => {
     await page.evaluate(() => scrollTo(0, 0));
     dpv = await openOn(page, row(page, 'Weiterschauen').locator('article.card').first());
     await expect(dpv.locator('.dpv-title')).toHaveText(SERIES.name);
-    await expect(dpv.locator('.dpv-ep')).toHaveText(`S1·E1 ${episodes[0]!.name}`);
+    await expect(dpv.locator('.dpv-ep')).toHaveText(`S1:F1 ${episodes[0]!.name}`);
     await expect(dpv.locator('.dpv-progress')).toBeVisible();
     await expect(dpv.locator('a.dpv-more')).toHaveAttribute('href', `/item/${SERIES.id}`);
   });
