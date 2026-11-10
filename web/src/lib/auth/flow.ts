@@ -369,20 +369,75 @@ export function credentialJSON(cred: unknown): Credential {
   return out;
 }
 
-/** signs in with a passkey (assertion) on this page; throws `passkey_cancelled` / `passkey_unsupported` */
-export async function passkeyGet(options: PasskeyGet): Promise<Credential> {
+/**
+ * Signs in with a passkey (assertion) on this page; throws `passkey_cancelled` / `passkey_unsupported`, and `passkey_aborted` when
+ * `signal` ended the ceremony (the person chose another method). The options are the step's own, for the app host (the backend checked
+ * the RP ID); the browser enforces origin and RP ID, nothing here relaxes them.
+ */
+export async function passkeyGet(options: PasskeyGet, signal?: AbortSignal): Promise<Credential> {
   const P = pkc();
   const publicKey = typeof P.parseRequestOptionsFromJSON === 'function'
     ? P.parseRequestOptionsFromJSON(options)
     : ({ ...options, challenge: fromB64url(options.challenge), allowCredentials: descriptors(options.allowCredentials) } as PublicKeyCredentialRequestOptions);
   let cred: unknown;
   try {
-    cred = await navigator.credentials.get({ publicKey });
+    cred = await navigator.credentials.get(signal ? { publicKey, signal } : { publicKey });
   } catch (e) {
+    if (signal?.aborted) throw new Error('passkey_aborted');
     throw ceremonyError(e);
   }
+  if (signal?.aborted) throw new Error('passkey_aborted');
   if (!cred) throw new Error('passkey_cancelled');
   return credentialJSON(cred);
+}
+
+/**
+ * Why a passkey sign-in did not give a credential, for the waiting card: `aborted` (the person chose another method), `unsupported`,
+ * `timeout` (the browser's NotAllowedError once the options' timeout has run out), `cancelled` (NotAllowedError before that: the person
+ * closed the prompt, or no passkey on the device matches; the browser does not tell these apart on purpose), `failed` (anything else).
+ */
+export type PasskeyProblem = 'aborted' | 'unsupported' | 'timeout' | 'cancelled' | 'failed';
+/** what the passkey card shows: the open prompt, the check of the answer, a problem with a way back, or too many attempts */
+export type PasskeyCard = 'waiting' | 'checking' | 'limited' | Exclude<PasskeyProblem, 'aborted'>;
+export function passkeyProblem(e: unknown, elapsedMs: number, timeoutMs?: number): PasskeyProblem {
+  const code = (e as Error | null)?.message;
+  if (code === 'passkey_aborted') return 'aborted';
+  if (code === 'passkey_unsupported') return 'unsupported';
+  if (code === 'passkey_cancelled') return timeoutMs !== undefined && elapsedMs >= timeoutMs - 1000 ? 'timeout' : 'cancelled';
+  return 'failed';
+}
+
+/** One passkey sign-in ceremony with its outcome as a value (never throws): the credential, or why there is none. */
+export async function runPasskey(options: PasskeyGet, signal?: AbortSignal, now: () => number = Date.now): Promise<{ credential: Credential } | { problem: PasskeyProblem }> {
+  const started = now();
+  try {
+    return { credential: await passkeyGet(options, signal) };
+  } catch (e) {
+    return { problem: passkeyProblem(e, now() - started, options.timeout) };
+  }
+}
+
+/**
+ * The passkey prompts of one screen: `run` starts one (aborting a previous one) and resolves its outcome, or null when it is no longer
+ * the current prompt (the person chose another method, or a newer prompt replaced it), so a stale outcome changes nothing on the screen.
+ * The browser's prompt starts synchronously inside `run`, so a click handler keeps its user gesture.
+ */
+export function passkeyCeremonies() {
+  let current: AbortController | null = null;
+  return {
+    async run(options: PasskeyGet, now?: () => number): Promise<Awaited<ReturnType<typeof runPasskey>> | null> {
+      current?.abort();
+      const ctrl = (current = new AbortController());
+      const r = await runPasskey(options, ctrl.signal, now);
+      if (current !== ctrl) return null;
+      current = null;
+      return r;
+    },
+    abort(): void {
+      current?.abort();
+      current = null;
+    },
+  };
 }
 
 /** creates a passkey (attestation) on this page; throws `passkey_cancelled` / `passkey_unsupported` */

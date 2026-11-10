@@ -6,14 +6,18 @@
    * anmelden" and "Noch kein Konto? Einladung einlösen".
    * Never navigates: it answers the step and emits `next` / `done`; `invite` (a pasted invite token) is for the page to act on.
    * Passkey: offered only when the step carries usable WebAuthn options (the RP ID is the app host, checked by the backend); without
-   * them there is no passkey button at all, never one that leaves for the sign-in page. A cancelled or unmatched passkey shows the
-   * sign-in page's passkey link, clearly labelled: passkeys made on Authentik's own pages only work there (plan Ruling 1, trade-off).
+   * them there is no passkey button at all, never one that leaves for the sign-in page. While the browser's prompt is open the card
+   * shows the waiting step (PasskeyWait, "Andere Methode wählen" aborts it); a cancelled or unmatched passkey, a timeout or an error
+   * stay on that card with "Erneut versuchen" and the way back, plus the sign-in page's passkey link, clearly labelled: passkeys made
+   * on Authentik's own pages only work there (plan Ruling 1, trade-off). The prompt starts inside the click (the options come with
+   * the step), so the browser sees the user gesture.
    */
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import { t } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
   import Errors from './Errors.svelte';
-  import { answer, inviteToken, passkeyGet, type FlowError, type FlowReply, type FlowStep } from './flow';
+  import PasskeyWait from './PasskeyWait.svelte';
+  import { answer, inviteToken, passkeyCeremonies, type FlowError, type FlowReply, type FlowStep, type PasskeyCard } from './flow';
   import './auth.css';
 
   export let step: Extract<FlowStep, { stage: 'identify' }> & { errors?: FlowError[] };
@@ -22,9 +26,11 @@
 
   const dispatch = createEventDispatcher<{ next: FlowReply; done: { next: string }; invite: { token: string } }>();
   let identifier = '', password = '', busy = false;
-  let passkeyHint: '' | 'cancelled' | 'unsupported' = '';
+  /** the passkey card: null = the form; else the waiting step or what went wrong */
+  let pk: PasskeyCard | null = null;
+  const ceremony = passkeyCeremonies();
   let inviteOpen = false, inviteText = '', inviteBad = false;
-  let first: HTMLInputElement, inviteInput: HTMLInputElement;
+  let first: HTMLInputElement, inviteInput: HTMLInputElement, passkeyBtn: HTMLButtonElement | undefined;
 
   onMount(() => first?.focus());
 
@@ -42,7 +48,6 @@
     const id = identifier.trim();
     if (busy || !id) return;
     busy = true;
-    passkeyHint = '';
     try {
       emit(await answer(step, step.passwordInline && password ? { identifier: id, password } : { identifier: id }));
     } finally {
@@ -52,18 +57,36 @@
     void refocus();
   }
 
+  /** runs in the click handler itself (the browser wants a user gesture for its prompt); the step's own options only */
   async function withPasskey() {
     if (busy || !step.passkey) return;
     busy = true;
-    passkeyHint = '';
+    pk = 'waiting';
+    const r = await ceremony.run(step.passkey);
+    // a prompt that is no longer the current one (another method chosen, a newer prompt) touches nothing, `busy` included
+    if (!r) return;
+    if ('problem' in r) {
+      busy = false;
+      if (r.problem !== 'aborted') pk = r.problem;
+      return;
+    }
+    pk = 'checking';
     try {
-      const passkey = await passkeyGet(step.passkey);
-      emit(await answer(step, { passkey }));
-    } catch (e) {
-      passkeyHint = (e as Error | null)?.message === 'passkey_unsupported' ? 'unsupported' : 'cancelled';
+      emit(await answer(step, { passkey: r.credential }));
     } finally {
       busy = false;
+      pk = null; // the reply decides: the next step, or this one again with its errors
     }
+    // refused (this step again with its errors): the focus goes back to the passkey button, not to the page
+    await tick();
+    (passkeyBtn ?? first)?.focus();
+  }
+  /** "Andere Methode wählen": back to the form; a running prompt is aborted */
+  function otherMethod() {
+    ceremony.abort();
+    busy = false;
+    pk = null;
+    void refocus();
   }
 
   async function toggleInvite() {
@@ -81,6 +104,9 @@
   }
 </script>
 
+{#if pk}
+  <PasskeyWait state={pk} {classicHref} on:retry={withPasskey} on:other={otherMethod} />
+{:else}
 <form class="af-form" on:submit|preventDefault={submit} aria-busy={busy}>
   <h1>{$t('login.identify.title')}</h1>
   <p class="af-sub">{$t('login.identify.text')}</p>
@@ -98,13 +124,7 @@
   <button class="af-pri" type="submit" disabled={busy}>{$t('login.identify.next')}</button>
   {#if step.passkey}
     <div class="af-or">{$t('login.identify.or')}</div>
-    <button class="af-sec" type="button" disabled={busy} on:click={withPasskey}><Icon name="key" size={20} />{$t('login.identify.passkey')}</button>
-  {/if}
-  {#if passkeyHint}
-    <p class="af-hint" role="status">
-      {passkeyHint === 'unsupported' ? $t('login.passkey.unsupported') : $t('login.passkey.noMatch')}
-      <a class="af-link" href={classicHref}>{$t('login.passkey.classic')}</a>
-    </p>
+    <button class="af-sec" type="button" disabled={busy} bind:this={passkeyBtn} on:click={withPasskey}><Icon name="key" size={20} />{$t('login.identify.passkey')}</button>
   {/if}
   <button class="af-link" type="button" aria-expanded={inviteOpen} aria-controls="af-invite" on:click={toggleInvite}>{$t('login.identify.noAccount')}</button>
 </form>
@@ -117,6 +137,7 @@
     <Errors errors={[]} {classicHref} extra={inviteBad ? $t('login.identify.inviteBad') : ''} />
     <button class="af-sec" type="submit">{$t('login.identify.inviteGo')}</button>
   </form>
+{/if}
 {/if}
 
 <style>

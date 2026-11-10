@@ -5,13 +5,16 @@
    * Screen 3, the second factor: 6 single-digit boxes for the authenticator app (submitted on the 6th digit; a paste fills all boxes),
    * "Stattdessen Wiederherstellungscode nutzen" (one text field) and "Passkey verwenden" (in-app when the step carries options; a passkey
    * for another host only as the clearly labelled link "Auf der Anmeldeseite mit Passkey anmelden"). When a passkey is the only factor, the screen starts with the passkey button and no boxes.
+   * The passkey runs on this page: while the browser's prompt is open the card shows the waiting step (PasskeyWait); "Andere Methode
+   * wählen" aborts it and returns to the screen before, and a cancelled prompt, a timeout or an error offer "Erneut versuchen".
    * Never navigates: emits `next` / `done`; the sign-in page links use `classicHref`.
    */
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import { t } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
   import Errors from './Errors.svelte';
-  import { answer, codeFromBoxes, passkeyGet, pasteCode, type FlowError, type FlowReply, type FlowStep } from './flow';
+  import PasskeyWait from './PasskeyWait.svelte';
+  import { answer, codeFromBoxes, passkeyCeremonies, pasteCode, type FlowError, type FlowReply, type FlowStep, type PasskeyCard } from './flow';
   import './auth.css';
 
   export let step: Extract<FlowStep, { stage: 'mfa' }> & { errors?: FlowError[] };
@@ -24,7 +27,9 @@
   let boxes: HTMLInputElement[] = [];
   let recoveryCode = '';
   let busy = false;
-  let passkeyHint: '' | 'cancelled' | 'unsupported' = '';
+  /** the passkey card over this screen: null = the screen itself */
+  let pk: PasskeyCard | null = null;
+  const ceremony = passkeyCeremonies();
   let recoveryInput: HTMLInputElement, heading: HTMLElement, passkeyBtn: HTMLButtonElement;
 
   onMount(() => focusMode());
@@ -37,7 +42,6 @@
   }
   function switchTo(m: Mode) {
     mode = m;
-    passkeyHint = '';
     void focusMode();
   }
 
@@ -48,7 +52,6 @@
   async function send(body: Record<string, unknown>) {
     if (busy) return;
     busy = true;
-    passkeyHint = '';
     try {
       emit(await answer(step, body));
     } finally {
@@ -112,23 +115,38 @@
     if (code) void send({ code });
   }
 
+  /** runs in the click handler itself (the browser wants a user gesture for its prompt); the step's own options only */
   async function usePasskey() {
     if (busy || !step.passkey) return;
     busy = true;
-    passkeyHint = '';
-    let webauthn;
-    try {
-      webauthn = await passkeyGet(step.passkey);
-    } catch (e) {
-      passkeyHint = (e as Error | null)?.message === 'passkey_unsupported' ? 'unsupported' : 'cancelled';
-      busy = false;
+    pk = 'waiting';
+    const r = await ceremony.run(step.passkey);
+    // a prompt that is no longer the current one (another method chosen, a newer prompt) touches nothing, `busy` included
+    if (!r) return;
+    busy = false;
+    if ('problem' in r) {
+      if (r.problem !== 'aborted') pk = r.problem;
       return;
     }
+    pk = 'checking';
+    try {
+      await send({ webauthn: r.credential });
+    } finally {
+      pk = null;
+    }
+  }
+  /** "Andere Methode wählen": back to the screen; a running prompt is aborted */
+  function otherMethod() {
+    ceremony.abort();
     busy = false;
-    await send({ webauthn });
+    pk = null;
+    void focusMode();
   }
 </script>
 
+{#if pk}
+  <PasskeyWait state={pk} {classicHref} on:retry={usePasskey} on:other={otherMethod} />
+{:else}
 <div class="af-form" aria-busy={busy}>
   {#if mode === 'code'}
     <h1 bind:this={heading} tabindex="-1">{$t('login.mfa.title')}</h1>
@@ -169,12 +187,6 @@
   {:else if step.passkeyClassic}
     <a class="af-link" href={classicHref}>{$t('login.passkey.classic')}</a>
   {/if}
-  {#if passkeyHint}
-    <p class="af-hint" role="status">
-      {passkeyHint === 'unsupported' ? $t('login.passkey.unsupported') : $t('login.passkey.noMatch')}
-      <a class="af-link" href={classicHref}>{$t('login.passkey.classic')}</a>
-    </p>
-  {/if}
   {#if mode !== 'recovery' && step.recovery}
     <button class="af-link" type="button" disabled={busy} on:click={() => switchTo('recovery')}>{$t('login.mfa.useRecovery')}</button>
   {/if}
@@ -182,3 +194,4 @@
     <button class="af-link" type="button" disabled={busy} on:click={() => switchTo('code')}>{$t('login.mfa.useCode')}</button>
   {/if}
 </div>
+{/if}
