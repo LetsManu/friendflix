@@ -36,25 +36,71 @@ async function freezeClock(page: Page) {
 }
 
 test.describe('rating card', () => {
-  test('fades in with the hero, stays 4 s, fades out; reappears for the next title', async ({ page }) => {
-    await page.clock.install();
+  test.use({ reducedMotion: 'no-preference' }); // reduced motion shows no card at all (the calm test below turns calm mode on instead)
+  test('fades in with the hero, stays 4 s, fades out without moving the title; the screen-reader text lives only while it shows', async ({ page }) => {
+    await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} })); // no trailer: the title block stays where it is
+    await freezeClock(page);
     await page.goto('/');
     const bb = page.locator('section.billboard');
     const card = bb.locator('.rc');
-    await expect(card).toHaveText(/FSK 12/);
+    const h1 = bb.getByRole('heading', { level: 1 });
+    await expect(card).toHaveCount(1);
+    await expect(card).toHaveCSS('opacity', '0'); // frozen clock: the fade-in has not started
     await expect(card).toHaveCSS('pointer-events', 'none');
+    await expect(card.locator('.sr-only')).toHaveCount(0); // the live region starts empty
     await page.clock.runFor(100);
     await expect(card).toHaveCSS('opacity', '1');
+    await expect(card.locator('.sr-only')).toHaveText('Altersfreigabe FSK 12');
+    await expect(card.locator('[aria-hidden="true"]').filter({ hasText: 'FSK 12' })).toHaveCount(1);
+    // the card is out of the flow: the title sits where it does with the card showing, once it has faded, and without the card
+    await expect(card).toHaveCSS('position', 'absolute');
+    await expect.poll(async () => { const a = (await h1.boundingBox())!.y; await page.waitForTimeout(150); return a - (await h1.boundingBox())!.y; }).toBe(0);
+    const before = (await h1.boundingBox())!;
     await page.clock.runFor(4600);
     await expect(card).toHaveCSS('opacity', '0');
-    // it never moved the layout: the title sits where it did
-    await expect(bb.getByRole('heading', { level: 1 })).toBeVisible();
+    await page.clock.runFor(600);
+    await expect(card.locator('.sr-only')).toHaveCount(0); // nothing readable after the fade
+    expect(await h1.boundingBox()).toEqual(before); // nor after it left
+    await card.evaluate((e) => e.remove());
+    expect(await h1.boundingBox()).toEqual(before); // nor without the card in the DOM at all
   });
 
-  test('calm mode: no card at all', async ({ page }) => {
-    await page.route('**/api/prefs', (r) => r.fulfill({ json: { prefs: { calm: true } } }));
+  test('reappears for the next title', async ({ page, context }) => {
+    await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+    await freezeClock(page);
     await page.goto('/');
+    const card = page.locator('section.billboard .rc');
+    await expect(card).toHaveCount(1);
+    await page.clock.runFor(100);
+    await expect(card).toHaveCSS('opacity', '1');
+    await page.clock.runFor(5200);
+    await expect(card).toHaveCSS('opacity', '0');
+    // another visit, another hero: a fresh card with its own rating comes back
+    const next = await context.newPage();
+    await next.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+    await heroIs(next, { ...MOVIE, id: SERIES.id, name: 'Zweiter Titel', rating: 'FSK 16' });
+    await freezeClock(next);
+    await next.goto('/');
+    const card2 = next.locator('section.billboard .rc');
+    await expect(card2).toHaveText(/FSK 16/);
+    await expect(card2).toHaveCSS('opacity', '0');
+    await next.clock.runFor(100);
+    await expect(card2).toHaveCSS('opacity', '1');
+    await expect(card2.locator('.sr-only')).toHaveText('Altersfreigabe FSK 16');
+  });
+
+  test('calm mode: no card at all, not even a flash before the prefs arrive', async ({ page }) => {
+    await freezeClock(page);
+    let release!: () => void;
+    const gate = new Promise<void>((res) => { release = res; });
+    await page.route('**/api/prefs', async (r) => { await gate; await r.fulfill({ json: { prefs: { calm: true } } }); });
+    await page.goto('/');
+    await expect(page.locator('section.billboard').getByRole('heading', { level: 1 })).toBeVisible();
+    await page.clock.runFor(500);
+    await expect(page.locator('section.billboard .rc')).toHaveCount(0); // hero is there, prefs are not: still no card
+    release();
     await expect(page.locator('html')).toHaveClass(/(^|\s)calm(\s|$)/);
+    await page.clock.runFor(5000);
     await expect(page.locator('section.billboard .rc')).toHaveCount(0);
   });
 });

@@ -4,7 +4,8 @@
   import { onDestroy, onMount } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { motionAllowed } from '#lib/preview';
-  import { prefs } from '#lib/stores';
+  import { prefs, prefsLoaded } from '#lib/stores';
+  import { t } from '#lib/i18n';
 
   /**
    * The hero's age rating as a small glass card at the top left: it fades in when the hero has loaded, stays 4 s, fades out.
@@ -18,25 +19,31 @@
   export let ready = true;
 
   const SHOW_MS = 4000;
-  let mounted = false, on = false, started = false, timer: ReturnType<typeof setTimeout> | undefined;
+  let mounted = false, on = false, shown = false, started = false, timer: ReturnType<typeof setTimeout> | undefined;
   onMount(() => { mounted = true; });
   // the profile's prefs can arrive after the hero: calm mode (or reduced motion) always wins
   const calmOff = (_p: unknown) => motionAllowed();
-  $: allowed = mounted && calmOff($prefs);
+  // not before the prefs have loaded: a calm profile would see the card flash until they arrive
+  $: allowed = mounted && $prefsLoaded && calmOff($prefs);
   $: if (allowed && ready && rating && !started) {
     started = true;
     // one frame with opacity 0 first, so the fade-in runs
-    timer = setTimeout(() => { on = true; timer = setTimeout(() => (on = false), SHOW_MS); }, 30);
+    timer = setTimeout(() => {
+      on = shown = true;
+      timer = setTimeout(() => { on = false; timer = setTimeout(() => (shown = false), 450); }, SHOW_MS);
+    }, 30);
   }
   onDestroy(() => clearTimeout(timer));
   $: line2 = reasons.filter(Boolean).join(', ');
 </script>
 
 {#if allowed && rating}
-  <!-- polite and atomic, in the DOM from the start: read once when the text arrives, not on every re-render -->
+  <!-- the live region is rendered empty and gets its text only while the card shows (and loses it after the fade), so it is
+       announced once and never lingers in the reading order; the glass part is decoration for the eyes -->
   <div class="rc frost frost-tile frost-safe" class:on role="status" aria-live="polite" aria-atomic="true">
+    {#if shown}<span class="sr-only">{$t('home.card.ageRating', { rating })}{line2 ? ', ' + line2 : ''}</span>{/if}
     <span class="ic" aria-hidden="true"><Icon name="shield" size={20} /></span>
-    <span class="tx">
+    <span class="tx" aria-hidden="true">
       <b>{rating}</b>
       {#if line2}<small>{line2}</small>{/if}
     </span>
