@@ -57,6 +57,11 @@ const REPORT_KIND = { start: 'Playing', progress: 'Playing/Progress', stop: 'Pla
  * stored (encrypted) password, caches the user token (encrypted, in Redis) and re-authenticates
  * on 401. The token never leaves the backend/gateway.
  */
+const downmixOf = (v: unknown): EncoderSettings['downmix'] => {
+  if (typeof v !== 'string' || !v.trim()) return 'unknown';
+  const k = v.trim().toLowerCase();
+  return k === 'none' || k === 'dave750' || k === 'nightmodedialogue' || k === 'rfc7845' || k === 'ac4' ? k : 'other';
+};
 /** Jellyfin's EncodingOptions (GET /System/Configuration/encoding) -> the few facts the Health check advises on; nothing else is kept */
 export function encoderSettingsOf(o: Record<string, unknown> | null | undefined): EncoderSettings {
   const hw = typeof o?.HardwareAccelerationType === 'string' && o.HardwareAccelerationType.trim() ? o.HardwareAccelerationType.trim().toLowerCase() : 'none';
@@ -67,6 +72,11 @@ export function encoderSettingsOf(o: Record<string, unknown> | null | undefined)
     throttle: o?.EnableThrottling === true,
     // an older server without the field extracts keyframes for mkv by default
     keyframeMkv: exts === null || exts.some((e) => typeof e === 'string' && e.trim().toLowerCase().replace(/^\./, '') === 'mkv'),
+    hevcEncode: o?.AllowHevcEncoding === true,
+    hwEncode: o?.EnableHardwareEncoding !== false,
+    lowPowerHevc: o?.EnableIntelLowPowerHevcHwEncoder === true,
+    downmix: downmixOf(o?.DownMixStereoAlgorithm),
+    ...(typeof o?.DownMixAudioBoost === 'number' && Number.isFinite(o.DownMixAudioBoost) ? { downmixBoost: o.DownMixAudioBoost } : {}),
   };
 }
 
@@ -142,6 +152,7 @@ export class JellyfinService implements MediaServer {
       ...(o.fmp4 ? { SegmentContainer: 'mp4', VideoCodec: o.videoCodec ?? 'h264', AudioCodec: 'aac' } : {}),
       AllowVideoStreamCopy: 'false', AllowAudioStreamCopy: 'false', VideoBitrate: String(o.videoBitrate), AudioBitrate: String(o.audioBitrate), MaxWidth: String(o.maxWidth),
       ...(o.stereo ? { TranscodingMaxAudioChannels: '2' } : {}),
+      ...(o.segmentLength ? { SegmentLength: String(o.segmentLength) } : {}),
       ...(o.maxBitrate ? { MaxStreamingBitrate: String(o.maxBitrate) } : {}),
     };
     for (const [k, v] of Object.entries(set)) q.set(k, v);

@@ -353,7 +353,7 @@ export interface PlaybackOptions { maxBitrate: number; /** validated device capa
   /** asked only when the plan wants an HEVC conversion; absent = refused (h264_unproven) */
   hevcGate?: () => Promise<HevcGate> }
 /** Server-side transcode of a short clip / probe (preview clips, playback health check): forced re-encode at these limits. */
-export interface ClipTranscode { audioIndex?: number; fmp4?: boolean; videoBitrate: number; audioBitrate: number; maxWidth: number; stereo?: boolean; maxBitrate?: number; /** video codec of the conversion (default h264); the HEVC probe uses 'hevc' */ videoCodec?: 'h264' | 'hevc' }
+export interface ClipTranscode { audioIndex?: number; fmp4?: boolean; videoBitrate: number; audioBitrate: number; maxWidth: number; stereo?: boolean; maxBitrate?: number; /** video codec of the conversion (default h264); the HEVC probe uses 'hevc' */ videoCodec?: 'h264' | 'hevc'; /** HLS segment length in seconds (SegmentLength) */ segmentLength?: number }
 
 /** Role/kids policy for one identity; the implementation maps it to the server's own access model. */
 export interface IdentityPolicy {
@@ -402,6 +402,16 @@ export interface EncoderSettings {
   throttle: boolean;
   /** Matroska keyframe extraction (playlists of copied video follow keyframes: needed for 3 s remux segments) */
   keyframeMkv: boolean;
+  /** "Allow encoding in HEVC format" (AllowHevcEncoding) */
+  hevcEncode: boolean;
+  /** hardware encoding allowed at all (EnableHardwareEncoding, on unless explicitly false) */
+  hwEncode: boolean;
+  /** "Intel low-power HEVC encoder" (EnableIntelLowPowerHevcHwEncoder) */
+  lowPowerHevc: boolean;
+  /** stereo downmix algorithm (DownMixStereoAlgorithm); 'unknown' when the server does not report it */
+  downmix: 'none' | 'dave750' | 'nightmodedialogue' | 'rfc7845' | 'ac4' | 'other' | 'unknown';
+  /** volume boost of the stereo downmix (DownMixAudioBoost) */
+  downmixBoost?: number;
 }
 
 export interface MediaAdmin {

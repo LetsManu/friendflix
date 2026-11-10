@@ -79,26 +79,69 @@ afterEach(() => { vi.useRealTimers(); });
 describe('encoder advice (read-only)', () => {
   const read = () => env.ctx.jf.admin.encoderSettings!;
   let orig: typeof env.ctx.jf.admin.encoderSettings;
-  beforeEach(() => { orig = env.ctx.jf.admin.encoderSettings; });
+  beforeEach(async () => { orig = env.ctx.jf.admin.encoderSettings; for (const k of await env.kv.keys('hevcenc:')) await env.kv.del(k); });
   afterEach(() => { env.ctx.jf.admin.encoderSettings = orig; });
 
+  const full = { hevcEncode: true, hwEncode: true, lowPowerHevc: true, downmix: 'dave750' as const };
   it('reads Jellyfin\'s encoding settings with the admin key and maps them (nothing else kept)', async () => {
     const { encoderSettingsOf } = await import('../src/jellyfin/service.js');
     expect(encoderSettingsOf({ HardwareAccelerationType: 'qsv', EnableTonemapping: false, EnableVppTonemapping: true, EnableThrottling: true, AllowOnDemandMetadataBasedKeyframeExtractionForExtensions: ['mkv'], EncoderAppPath: '/usr/lib/jellyfin-ffmpeg/ffmpeg' }))
-      .toEqual({ hwAccel: 'qsv', tonemap: true, throttle: true, keyframeMkv: true });
-    expect(encoderSettingsOf({ HardwareAccelerationType: '', AllowOnDemandMetadataBasedKeyframeExtractionForExtensions: [] })).toEqual({ hwAccel: 'none', tonemap: false, throttle: false, keyframeMkv: false });
+      .toEqual({ hwAccel: 'qsv', tonemap: true, throttle: true, keyframeMkv: true, hevcEncode: false, hwEncode: true, lowPowerHevc: false, downmix: 'unknown' });
+    expect(encoderSettingsOf({ HardwareAccelerationType: '', AllowOnDemandMetadataBasedKeyframeExtractionForExtensions: [] })).toMatchObject({ hwAccel: 'none', tonemap: false, throttle: false, keyframeMkv: false });
     expect(encoderSettingsOf(null).keyframeMkv).toBe(true); // older server without the field: mkv by default
     expect(typeof read()).toBe('function');
   });
+  it('maps the HEVC switches and the downmix; a missing algorithm is unknown, a foreign one other', async () => {
+    const { encoderSettingsOf } = await import('../src/jellyfin/service.js');
+    expect(encoderSettingsOf({ AllowHevcEncoding: true, EnableHardwareEncoding: false, EnableIntelLowPowerHevcHwEncoder: true, DownMixStereoAlgorithm: 'Dave750', DownMixAudioBoost: 2 }))
+      .toMatchObject({ hevcEncode: true, hwEncode: false, lowPowerHevc: true, downmix: 'dave750', downmixBoost: 2 });
+    expect(encoderSettingsOf({ DownMixStereoAlgorithm: 'None' }).downmix).toBe('none');
+    expect(encoderSettingsOf({ DownMixStereoAlgorithm: 'NightmodeDialogue' }).downmix).toBe('nightmodedialogue');
+    expect(encoderSettingsOf({}).downmix).toBe('unknown');
+    expect(encoderSettingsOf({ DownMixStereoAlgorithm: 'Weird' }).downmix).toBe('other');
+    expect(encoderSettingsOf({}).downmixBoost).toBeUndefined();
+    expect(encoderSettingsOf({ EnableHardwareEncoding: undefined }).hwEncode).toBe(true);
+  });
   it('every gap is advice in order of importance; the row warns but never colours the snapshot or the banner', async () => {
-    env.ctx.jf.admin.encoderSettings = async () => ({ hwAccel: 'none', tonemap: false, throttle: false, keyframeMkv: false });
+    env.ctx.cfg = { ...cfg, HEVC_STREAMS: 0 };
+    env.ctx.jf.admin.encoderSettings = async () => ({ hwAccel: 'none', tonemap: false, throttle: false, keyframeMkv: false, ...full });
     const s = await buildSnapshot(env.ctx, deps());
     expect(svc(s, 'encoder')).toEqual({ id: 'encoder', level: 'warn', reason: 'no_hw_accel', advice: ['no_hw_accel', 'no_tonemap', 'no_throttle', 'no_keyframes'] });
     expect(s.worst).toBe('ok');
     expect(s.issues.some((i) => i.id === 'svc:encoder')).toBe(false);
-    env.ctx.jf.admin.encoderSettings = async () => ({ hwAccel: 'vaapi', tonemap: true, throttle: false, keyframeMkv: true });
+    env.ctx.jf.admin.encoderSettings = async () => ({ hwAccel: 'vaapi', tonemap: true, throttle: false, keyframeMkv: true, ...full });
     expect(svc(await buildSnapshot(env.ctx, deps()), 'encoder')).toMatchObject({ level: 'warn', reason: 'no_throttle', advice: ['no_throttle'] });
-    env.ctx.jf.admin.encoderSettings = async () => ({ hwAccel: 'nvenc', tonemap: true, throttle: true, keyframeMkv: true });
+    env.ctx.jf.admin.encoderSettings = async () => ({ hwAccel: 'nvenc', tonemap: true, throttle: true, keyframeMkv: true, ...full });
+    expect(svc(await buildSnapshot(env.ctx, deps()), 'encoder')).toEqual({ id: 'encoder', level: 'ok' });
+  });
+  it('HEVC conversion advice per state while HEVC_STREAMS > 0, none at 0; the line carries state, speed and time only', async () => {
+    const base = { tonemap: true, throttle: true, keyframeMkv: true, ...full };
+    const row = async (e: object) => { env.ctx.jf.admin.encoderSettings = async () => ({ hwAccel: 'qsv', ...base, ...e }); return svc(await buildSnapshot(env.ctx, deps()), 'encoder'); };
+    expect(await row({ hevcEncode: false })).toMatchObject({ level: 'warn', advice: ['hevc_server_off'], hevc: { state: 'server_off' } });
+    expect(await row({ hwEncode: false })).toMatchObject({ advice: ['hevc_no_hw'], hevc: { state: 'no_hw' } });
+    expect(await row({})).toEqual({ id: 'encoder', level: 'ok', hevc: { state: 'unproven' } });
+    const { fingerprint } = await import('../src/hevcenc.js');
+    const fp = fingerprint({ hwAccel: 'qsv', ...base });
+    const put = (r: object) => env.kv.set('hevcenc:probe', JSON.stringify({ fingerprint: fp, at: Date.parse('2026-11-10T03:10:00Z'), ...r }), 3600);
+    await put({ ok: false, reason: 'not_hevc' });
+    expect(await row({})).toMatchObject({ advice: ['hevc_failed'], hevc: { state: 'failed' } });
+    await put({ ok: false, reason: 'slow', speed: 1.2 });
+    expect(await row({})).toMatchObject({ advice: ['hevc_slow'], hevc: { state: 'slow', speed: 1.2 } });
+    await put({ ok: true, speed: 2.4 }); // ready, but below 3x: one at a time, and the line says so
+    expect(await row({})).toMatchObject({ advice: ['hevc_limited'], hevc: { state: 'ready', speed: 2.4, at: '2026-11-10T03:10:00.000Z' } });
+    await put({ ok: true, speed: 3.2 });
+    expect(await row({})).toEqual({ id: 'encoder', level: 'ok', hevc: { state: 'ready', speed: 3.2, at: '2026-11-10T03:10:00.000Z' } });
+    env.ctx.cfg = { ...cfg, HEVC_STREAMS: 0 };
+    expect(await row({ hevcEncode: false })).toEqual({ id: 'encoder', level: 'ok' });
+    expect(JSON.stringify(await row({}))).not.toMatch(/http|token|:\/\//);
+  });
+  it('downmix_plain when the stereo algorithm is none (also with HEVC off); unknown gives no advice; never a banner', async () => {
+    env.ctx.cfg = { ...cfg, HEVC_STREAMS: 0 };
+    env.ctx.jf.admin.encoderSettings = async () => ({ hwAccel: 'qsv', tonemap: true, throttle: true, keyframeMkv: true, ...full, downmix: 'none' });
+    const s = await buildSnapshot(env.ctx, deps());
+    expect(svc(s, 'encoder')).toMatchObject({ level: 'warn', reason: 'downmix_plain', advice: ['downmix_plain'] });
+    expect(s.issues.some((i) => i.id === 'svc:encoder')).toBe(false);
+    env.ctx.jf.admin.encoderSettings = async () => ({ hwAccel: 'qsv', tonemap: true, throttle: true, keyframeMkv: true, ...full, downmix: 'unknown' });
     expect(svc(await buildSnapshot(env.ctx, deps()), 'encoder')).toEqual({ id: 'encoder', level: 'ok' });
   });
   it('a failing read is off; a media server without the method (Plex) has no row', async () => {

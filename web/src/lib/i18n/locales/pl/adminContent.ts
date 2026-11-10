@@ -217,6 +217,12 @@ const dict: Translation<typeof de> = {
       no_tonemap: 'Bez mapowania tonów',
       no_throttle: 'Bez dławienia',
       no_keyframes: 'Klatki kluczowe MKV wyłączone',
+      hevc_server_off: 'Konwersja HEVC wyłączona na serwerze',
+      hevc_no_hw: 'HEVC wymaga kodowania sprzętowego',
+      hevc_failed: 'Test HEVC nieudany',
+      hevc_slow: 'HEVC zbyt wolne',
+      hevc_limited: 'HEVC: tylko jedna naraz',
+      downmix_plain: 'Zwykłe miksowanie do stereo',
     },
     /** encoder row (Status): one line per gap in the media server's transcoding settings */
     advice: {
@@ -224,6 +230,23 @@ const dict: Translation<typeof de> = {
       no_tonemap: 'Mapowanie tonów jest wyłączone: filmy HDR po konwersji wyglądają blado i szaro. W Jellyfin włącz „Włącz mapowanie tonów” w sekcji Transkodowanie.',
       no_throttle: 'Dławienie jest wyłączone: Jellyfin konwertuje każdy film do końca tak szybko, jak może, i zajmuje układ graficzny dłużej niż trzeba. W Jellyfin włącz „Dławienie transkodowania” w sekcji Transkodowanie.',
       no_keyframes: 'Wyodrębnianie klatek kluczowych dla MKV jest wyłączone: przepakowane pliki MKV startują z 6-sekundowymi segmentami zamiast 3. W Jellyfin dodaj z powrotem „mkv” do wyodrębniania klatek kluczowych w sekcji Transkodowanie.',
+      hevc_server_off: 'Widzowie ze słabym uploadem nie dostają HEVC, bo Jellyfin na to nie pozwala. W Jellyfin włącz „Zezwalaj na kodowanie w formacie HEVC” w Panel → Odtwarzanie → Transkodowanie. Do tego czasu dostają H.264.',
+      hevc_no_hw: 'Konwersja HEVC wymaga kodowania sprzętowego. W Jellyfin wybierz jednostkę graficzną serwera i włącz „Włącz kodowanie sprzętowe” w sekcji Transkodowanie. Do tego czasu ci widzowie dostają H.264.',
+      hevc_failed: 'Test HEVC nie wyprodukował obrazu HEVC, więc wszyscy dostają H.264. W Jellyfin włącz „Niskonapięciowy koder HEVC Intel” w sekcji Transkodowanie. Układy Intel, takie jak Jasper Lake N5095, potrzebują też załadowanego firmware’u GuC/HuC (zob. instrukcję eksploatacji). Potem uruchom „Sprawdź HEVC teraz”.',
+      hevc_slow: 'Test HEVC działał wolniej niż 1,5 raza w czasie rzeczywistym, więc wszyscy dostają H.264. Sprawdź jednostkę graficzną i przełącznik kodera niskonapięciowego w sekcji Transkodowanie, potem uruchom „Sprawdź HEVC teraz”.',
+      hevc_limited: 'Test HEVC działał poniżej 3 razy w czasie rzeczywistym, więc działa tylko jedna konwersja HEVC naraz, niezależnie od ustawień. Kolejni widzowie dostają H.264.',
+      downmix_plain: 'Miksowanie do stereo jest zwykłe: filmy przestrzenne w stereo mogą brzmieć cicho, z przytłumionymi dialogami. W Jellyfin ustaw „Algorytm miksowania do stereo” na Dave750 w sekcji Transkodowanie (do sprawdzenia na słuch na urządzeniu).',
+    },
+    /** encoder row (Status): the server's HEVC conversion line and its button */
+    hevc: {
+      line: 'Konwersja HEVC: {state}',
+      speed: '{n}× czasu rzeczywistego',
+      checked: 'sprawdzono o {time}',
+      state: { server_off: 'wyłączona na serwerze', no_hw: 'brak kodowania sprzętowego', unproven: 'jeszcze nie testowana', failed: 'test nieudany', slow: 'zbyt wolna', runtime_failed: 'wstrzymana po błędach', ready: 'gotowa' },
+      check: 'Sprawdź HEVC teraz',
+      busy: 'Nie, gdy ktoś ogląda.',
+      running: 'Sprawdzanie już trwa.',
+      failed: 'Nie udało się uruchomić sprawdzania.',
     },
     disks: {
       title: 'Miejsce',

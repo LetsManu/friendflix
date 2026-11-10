@@ -167,7 +167,7 @@ describe('playback', () => {
     });
     const hevcCaps = webCaps({ video: ['h264', 'hevc'], audio: ['aac'], surround: [] });
     const wrenfield = [
-      { Index: 10, Type: 'Video', Codec: 'hevc', Profile: 'Main', Height: 1080, BitRate: 9_000_000, VideoRangeType: 'SDR' },
+      { Index: 10, Type: 'Video', Codec: 'hevc', Profile: 'Main', Width: 1920, Height: 1080, BitRate: 9_000_000, VideoRangeType: 'SDR' },
     ];
     const info = (remote: boolean, body: Record<string, unknown>) => env.app.inject({
       method: 'POST', url: '/api/playback/info', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf, ...(remote ? { 'x-real-ip': '203.0.113.9' } : { 'x-real-ip': '192.168.1.10' }) }, payload: { itemId: ID, ...body },

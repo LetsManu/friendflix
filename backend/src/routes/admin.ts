@@ -11,6 +11,7 @@ import { adminOverview, revokeLicense } from '../downloads.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { ERROR_SOURCES, listErrors } from '../errorlog.js';
 import { freshSnapshot } from '../health.js';
+import { hevcBusy, hevcProbeRunning, hevcProbeWanted, hevcStatus, probeHevcEncoder } from '../hevcenc.js';
 import { activeStreams } from '../playstats.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
@@ -229,6 +230,16 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/admin/playback-check', admin, async (_req, reply) => {
     if (!(await startPlaybackCheck(ctx))) return reply.code(409).send({ error: 'already_running' });
     return { ok: true };
+  });
+  // the timed probe of the server's HEVC conversion; never while a portal stream is live (the encoder is shared)
+  app.post('/api/admin/hevc-check', admin, async (_req, reply) => {
+    if (hevcProbeRunning(ctx)) return reply.code(409).send({ error: 'already_running' });
+    if (await hevcBusy(ctx)) return reply.code(409).send({ error: 'busy' });
+    const user = await serviceUser(ctx);
+    if (!user) return reply.code(409).send({ error: 'no_user' });
+    // switched off in the settings or at the media server (or unreadable): nothing to measure, the state says why
+    if (await hevcProbeWanted(ctx)) await probeHevcEncoder(ctx, user);
+    return { ok: true, ...(await hevcStatus(ctx)) };
   });
   app.get('/api/admin/playback-check', admin, async () => checkState(ctx));
 

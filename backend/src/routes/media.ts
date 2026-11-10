@@ -17,7 +17,8 @@ import { requireUser } from '../session.js';
 import { playbackHooks } from '../hooks.js';
 import { bumpHome } from '../homegen.js';
 import { nextUpItems, resumeItems } from '../resumeRows.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { bindHevcGrant, hevcGate as gateHevc, noteHevcFailure } from '../hevcenc.js';
 import { itemsByIds, libraryBecause } from './discover.js';
 import { id32 as itemId, wrap as sharedWrap } from './_shared.js';
 
@@ -347,8 +348,15 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     const cap = Math.min(upload.cap, b.maxBitrate ?? role.maxBitrate);
     const capReason: CapReason = b.maxBitrate !== undefined && b.maxBitrate < upload.cap ? (b.reasonHint ?? 'network') : upload.limited ? 'uploadCap' : remote && ceiling < role.maxBitrate ? 'remoteCap' : 'roleCap';
     // PlaybackInfo and the resume-position/trickplay lookup run in parallel (one Jellyfin /Items call instead of two sequential ones)
-    // HEVC conversions: a gate only while HEVC_STREAMS > 0; the real one (probe, limit, health) arrives with hevcenc.ts, until then every ask is refused
-    const hevcGate = async (): Promise<HevcGate> => ({ ok: false, why: 'h264_unproven' });
+    // HEVC conversions: a gate only while HEVC_STREAMS > 0 (probe, limit from the server's session list, failure pause: hevcenc.ts)
+    const grantId = randomUUID();
+    const hevcGate = (): Promise<HevcGate> => gateHevc(ctx, { userId: req.user!.id, deviceId: req.session?.deviceId, playSessionIdHint: grantId });
+    // the player left a HEVC conversion for H.264: counts against the server's HEVC state when that stream really was one
+    if ((b.fellBack === 'hevc' || b.fellBack === 'both') && b.prevPs && req.session?.deviceId) {
+      let prev: { video?: unknown } | null = null;
+      try { prev = JSON.parse((await ctx.kv.get(`pbinfo:${req.user!.id}:${b.prevPs}`).catch(() => null)) ?? 'null'); } catch { prev = null; }
+      if (prev?.video === 'hevc') await noteHevcFailure(ctx, req.session.deviceId);
+    }
     const opts = { ...(clientCaps ? { clientCaps } : {}), remote, surround: ctx.cfg.SURROUND_AUDIO !== 'false', ...(ctx.cfg.HEVC_STREAMS > 0 ? { hevcGate } : {}), maxBitrate: cap, capReason, maxHeight: role.maxHeight, startTicks: b.startTicks, audioIndex: b.audioIndex, audioLang: b.audioLang, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') };
     const [first, meta] = await Promise.all([ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts), ctx.jf.playMeta(req.jfUser!, b.itemId)]);
     let info = first;
@@ -363,6 +371,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       if (resume === undefined) return reply.code(502).send({ error: 'jellyfin', reason: 'resume_unknown' });
     }
     info.resumeTicks = resume;
+    await bindHevcGrant(ctx, grantId, info.delivery?.video === 'hevc' ? info.playSessionId : null); // a grant only lives on for a stream that converts
     info.trickplay = meta?.trickplay(info.mediaSourceId);
     // Block 22: remember the server's transcode reason for this play session; the stream is counted on "Playing" only
     // (the web prefetches info, Block 20), so a prefetch alone never counts

@@ -314,6 +314,16 @@ Optional (Admin → Einstellungen → Wiedergabe, „Upload des Servers (Mbit/s)
 
 Beispiel: 30 Mbit/s Upload → 25,5 Mbit/s Budget. Laufen 8 + 8 + 4 Mbit/s, bleiben 5,5: der nächste Stream startet mit 4 Mbit/s (720p).
 
+## HEVC-Umwandlung und Surround-Ton
+Zuschauer unterwegs, deren Gerät HEVC abspielt und deren Upload für das Original nicht reicht, bekommen statt H.264 eine HEVC-Umwandlung (gleiche Qualität bei etwa der Hälfte der Bitrate). Im Heimnetz, bei HDR-Quellen und ohne bestandenen Test wird **nie** in HEVC umgewandelt; HEVC-Dateien, die das Gerät kann, werden ohne Umwandlung ausgeliefert. Jellyfin kodiert, FriendFlix ändert keine seiner Einstellungen, sondern liest sie und gibt in Admin → Status Ratschläge. Folgendes schaltet der Admin in Jellyfin selbst ein (Dashboard → Wiedergabe → Transkodierung):
+
+1. **Hardware-Beschleunigung** (z. B. Intel QuickSync/QSV) und **„Hardware-Kodierung aktivieren“**.
+2. **„Kodierung im HEVC-Format erlauben“** (`AllowHevcEncoding`, standardmäßig aus). Ohne diesen Schalter lässt Jellyfin HEVC hinter H.264 zurückfallen.
+3. **„Intel-Low-Power-HEVC-Encoder“** (`EnableIntelLowPowerHevcHwEncoder`, standardmäßig aus). Bei Jasper-Lake-Chips wie dem **Celeron N5095** braucht der Low-Power-Encoder die geladene **GuC/HuC-Firmware** des Kernels (je nach Kernel `i915.enable_guc=2`, Paket `linux-firmware`); ohne sie fällt Jellyfin **lautlos auf Software-Kodierung** zurück, was ein so schwacher Prozessor nicht schafft. Deshalb gibt es den zeitgesteuerten Test (siehe [monitoring.md](monitoring.md)). Bei Docker braucht der Container `/dev/dri` (`devices:`) und die passende Gruppe (`group_add:`, die Gruppe von `/dev/dri/renderD128`).
+4. **Stereo-Downmix-Algorithmus** auf **Dave750** (Standard ist „None“, dann klingen Surround-Filme in Stereo leise und mit dumpfen Dialogen; Admin → Status rät dazu). Ob Dave750 oder ein anderer Algorithmus besser klingt, ist am Gerät nach Gehör zu prüfen.
+
+In Admin → Einstellungen → Wiedergabe: `HEVC_STREAMS` (0 = aus; Standard 2 gleichzeitige Umwandlungen, **1, solange der Test unter 3-facher Echtzeit blieb**) und `SURROUND_AUDIO`. Prüfen am Server: Admin → Status → Transcoding → *HEVC jetzt prüfen* meldet `bereit` mit mindestens 1,5-facher Echtzeit; mit zwei Zuschauern unterwegs gleichzeitig bekommt der zweite H.264, wenn das Limit erreicht ist. Beispiel-Hosts in der Dokumentation sind Platzhalter (`friend.example.com`, `192.0.2.x`).
+
 ## Plan B: NPM liefert /media/ direkt (auth_request)
 Standard ist das Node-Gateway. Wird es bei vielen parallelen Streams zum Engpass (CPU des `gateway`-Containers, `rate(friendflix_gateway_bytes_total)`), kann NPM/nginx `/media/` selbst ausliefern. Jede Anfrage wird vorher vom Backend freigegeben (`GET /internal/authz-nginx`).
 
