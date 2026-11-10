@@ -167,6 +167,8 @@ class PlayerActivity : FragmentActivity() {
     private var forcedHls = false
     /** the one automatic fallback of this session happened (spec §9); a quality switch keeps it, a new title clears it */
     private var avoided = false
+    /** the channels the audio output claimed at the last `/info` (2 = nothing to switch) */
+    private var outChannels = 2
     /** set by the fallback for the next `/info` only: what was left out and the session it replaces */
     private var fellBack: Pair<String, String>? = null
     private var retries = 0
@@ -359,7 +361,12 @@ class PlayerActivity : FragmentActivity() {
                 if (first) loadTitle(pa, a)
                 val audioLang = if (audioIndex == null) titleLangs(a).audioLang() else null
                 val soundMode = fxMode != "off" && fx.supported()
-                val caps = withContext(Dispatchers.IO) { DeviceProfile.build(applicationContext, soundMode) }
+                // the audio route is read here, off the main thread, and also decides whether the track sheet offers the switch
+                val (caps, out) = withContext(Dispatchers.IO) {
+                    val o = AudioOut.current(applicationContext)
+                    DeviceProfile.build(applicationContext, soundMode, o) to o
+                }
+                outChannels = out.maxChannels
                 val fell = fellBack
                 fellBack = null
                 val body = PlayerApi.infoBody(
@@ -825,7 +832,8 @@ class PlayerActivity : FragmentActivity() {
                 fxMode = fxMode,
                 fxDisabledReason = null,
                 // only for an online stream on an output with 5.1 (a phone on speakers or headphones has nothing to switch)
-                surround = if (s != null && serverCaps.surround && AudioOut.current(applicationContext).maxChannels >= 6) SurroundStore.of(applicationContext).enabled else null,
+                surround = if (s != null && serverCaps.surround && outChannels >= 6) SurroundStore.of(applicationContext).enabled else null,
+                surroundLocked = fxMode != "off" && fx.supported(),
             )
         }
 

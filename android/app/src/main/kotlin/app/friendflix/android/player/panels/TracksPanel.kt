@@ -29,6 +29,8 @@ data class TracksState(
     val fxDisabledReason: Int?,
     /** the *Surround sound* switch (device-wide): null = not offered (offline, or the output has no 5.1), else its state */
     val surround: Boolean? = null,
+    /** a sound mode is on: stereo is used whatever the switch says, so it is shown off-limits with a note */
+    val surroundLocked: Boolean = false,
 )
 
 interface TracksActions {
@@ -68,8 +70,8 @@ object TracksPanel {
         state.fxDisabledReason?.let { col.addView(PanelRows.note(ctx, ctx.getString(it))) }
         state.surround?.let { on ->
             lateinit var sw: SwitchCompat
-            sw = fxSwitch(ctx, R.id.tracks_surround, on, true) { actions.surround(sw.isChecked) }
-            col.addView(fxRow(ctx, sw, R.string.player_surround, R.string.player_surround_hint))
+            sw = fxSwitch(ctx, R.id.tracks_surround, on, !state.surroundLocked) { actions.surround(sw.isChecked) }
+            col.addView(fxRow(ctx, sw, R.string.player_surround, if (state.surroundLocked) R.string.player_surround_mode else R.string.player_surround_hint))
         }
         return col
     }

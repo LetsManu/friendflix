@@ -101,10 +101,10 @@ object DeviceProfile {
      * [soundMode] = a sound mode (*Clear voices*, *Night mode*) is on: its processing works on two channels, so stereo is claimed.
      * The *Surround sound* switch and the remembered fallback ([SurroundStore]) narrow the claims further.
      */
-    fun build(context: Context, soundMode: Boolean = false): ClientCaps {
+    fun build(context: Context, soundMode: Boolean = false, out: AudioOut = AudioOut.current(context)): ClientCaps {
         val store = SurroundStore.of(context)
         return fromDecoders(
-            systemDecoders(), BuildConfig.VERSION_NAME, AudioOut.current(context),
+            systemDecoders(), BuildConfig.VERSION_NAME, out,
             stereo = !store.enabled || soundMode, avoidHevc = store.avoidsHevc(), avoidSurround = store.avoidsSurround(),
         )
     }
