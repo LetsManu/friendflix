@@ -47,7 +47,9 @@ describe('navLabel (the new-titles entry reads "Neu" without a request service)'
 
 describe('isRailTop (TV: Back opens the rail)', () => {
   it('only the rail destinations themselves, without a filter', () => {
-    for (const p of ['/', '/search', '/browse/series', '/browse/movies', '/watchlist']) expect(isRailTop(p, '')).toBe(true);
+    for (const p of ['/', '/search', '/browse/series', '/browse/movies', '/new', '/watchlist']) expect(isRailTop(p, '')).toBe(true);
+    expect(isRailTop('/new', '?type=series')).toBe(true); // the new page's filter is a view, not a drill-down
+    expect(isRailTop('/browse/movies', '?type=series')).toBe(false);
     expect(isRailTop('/browse/movies', '?genre=Drama')).toBe(false);
     expect(isRailTop('/browse/series/x', '')).toBe(false);
     expect(isRailTop('/me', '')).toBe(false);
