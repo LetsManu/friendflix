@@ -94,6 +94,8 @@ const pinKey = (hash: string) => `castpin:${hash}`;
 const pin2Key = (hash: string) => `castpin2:${hash}`;
 /** counts of refused fetches of a token (never an address): { n, v4, v6 } */
 const refuseKey = (hash: string) => `castrefuse:${hash}`;
+/** a queued next episode's token of a play session (value: its hash), so the predecessor's touches keep it alive */
+const nextKey = (userId: string, ps: string) => `castnext:${userId}:${ps}`;
 const idxKey = (userId: string, castId: string) => `castidx:${userId}:${castId}`;
 /** start of the preload overlap of the queued next episode(s) after a play session (one window per predecessor, set once) */
 const ovlKey = (userId: string, ps: string) => `povl:${userId}:${ps}`;
@@ -111,6 +113,14 @@ export const castTtlSeconds = (runtimeTicks: number | undefined, startTicks: num
 };
 
 /** Redis TTL of a token's keys: idle window, but never past the absolute cap (0 = already over). */
+/**
+ * Absolute-cap TTL of a queued next episode's token: its own TTL plus what its predecessor has left beyond the 1 h that every
+ * token already adds, capped at 6 h. Queued from the start of an episode, the token must outlive the episode it follows.
+ */
+export function castNextTtlSeconds(ownTtl: number, predExp: number, now = Date.now()): number {
+  return Math.min(MAX_TTL, ownTtl + Math.max(0, Math.ceil((predExp - now) / 1000) - 3600));
+}
+
 export const castKeyTtl = (exp: number, now = Date.now()) => Math.max(0, Math.min(CAST_IDLE_TTL, Math.ceil((exp - now) / 1000)));
 
 interface IdxEntry { hash: string; createdAt: number; deviceId?: string; kind?: 'media' | 'img'; imgHash?: string; /** a queued next episode's token */ next?: boolean }
@@ -134,13 +144,27 @@ async function listIdx(ctx: Ctx, userId: string): Promise<Array<IdxEntry & { key
   return out;
 }
 
+/** a queued next token was requested while its predecessor has no pin yet (never fetched): nothing is minted */
+export class CastUnpinnedError extends Error {
+  constructor() { super('cast_unpinned'); }
+}
+
+/** the address a token is pinned to (slot 1), null while nobody fetched it */
+export const castPinned = async (ctx: Ctx, hash: string): Promise<boolean> => Boolean(await ctx.kv.get(pinKey(hash)));
+
 /**
  * Creates a media token (plus, with `image`, a poster-only token), keeping at most MAX_CAST_TOKENS media tokens per account (oldest
  * revoked). A queued next episode's token (`rec.afterPs`) replaces the device's earlier one and may be one more than that.
  * The limit is enforced AFTER the insert, so two simultaneous creations converge to the limit instead of racing past it.
  * Returns the raw tokens (once).
  */
-export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'createdAt' | 'kind' | 'seen'>, ttlSeconds: number, image = false): Promise<{ ct: string; imgCt?: string; castId: string; expiresAt: number }> {
+export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'createdAt' | 'kind' | 'seen'>, ttlSeconds: number, image = false, pred?: { hash: string }): Promise<{ ct: string; imgCt?: string; castId: string; expiresAt: number }> {
+  // a queued next token takes over the pin of its predecessor at mint (nobody on the LAN can take it first); no pin, no token
+  let predPin: string | null = null;
+  if (rec.afterPs) {
+    predPin = pred ? await ctx.kv.get(pinKey(pred.hash)) : null;
+    if (!predPin) throw new CastUnpinnedError();
+  }
   const now = Date.now();
   const exp = now + ttlSeconds * 1000;
   const ttl = castKeyTtl(exp, now);
@@ -149,6 +173,10 @@ export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'create
     const hash = hashToken(ct);
     await ctx.kv.set(dataKey(hash), JSON.stringify({ ...rec, kind, exp, createdAt: now, seen: now } satisfies CastRecord), ttl);
     await ctx.kv.set(idxKey(rec.userId, castIdOf(hash)), JSON.stringify({ hash, createdAt: now, deviceId: rec.deviceId, kind, ...extra } satisfies IdxEntry), ttl);
+    if (kind === 'media' && predPin) {
+      await ctx.kv.set(pinKey(hash), predPin, ttl);
+      await ctx.kv.set(nextKey(rec.userId, rec.afterPs!), hash, ttl);
+    }
     return { ct, hash };
   };
   const next = Boolean(rec.afterPs);
@@ -180,12 +208,12 @@ async function waiting(ctx: Ctx, i: IdxEntry, rec?: CastRecord | null): Promise<
 }
 
 /** the cast a queued next episode follows: the newest media token of this device that is not a waiting queued one (null = none) */
-export async function castPredecessor(ctx: Ctx, userId: string, deviceId: string): Promise<{ castId: string; playSessionId: string } | null> {
+export async function castPredecessor(ctx: Ctx, userId: string, deviceId: string): Promise<{ castId: string; playSessionId: string; exp: number; hash: string } | null> {
   const mine = (await listIdx(ctx, userId)).filter((i) => i.kind !== 'img' && i.deviceId === deviceId).sort((a, b) => b.createdAt - a.createdAt);
   for (const i of mine) {
     const raw = await ctx.kv.get(dataKey(i.hash));
     const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
-    if (rec && !(await waiting(ctx, i, rec))) return { castId: castIdOf(i.hash), playSessionId: rec.playSessionId };
+    if (rec && !(await waiting(ctx, i, rec))) return { castId: castIdOf(i.hash), playSessionId: rec.playSessionId, exp: rec.exp, hash: i.hash };
   }
   return null;
 }
@@ -232,6 +260,7 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
   const ik = idxKey(rec.userId, castIdOf(hash));
   const idx = await ctx.kv.get(ik);
   if (idx) await ctx.kv.replace(ik, idx, ttl);
+  if (rec.kind !== 'img') await keepQueue(ctx, hash, rec, ttl);
   if (rec.kind === 'img' || overlap) return; // a queued next episode's preload: the stream it follows is the counted one
   const cur = await getLive(ctx, rec.userId, rec.playSessionId);
   // its stop was reported just now (title switch / end): the receiver only drains buffered segments until the revoke, no ghost
@@ -240,6 +269,30 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
   await setLive(ctx, cur
     ? { ...cur, updatedAt: now }
     : { userId: rec.userId, userName, profileName, itemId: rec.itemId, title: rec.title ?? '', positionTicks: 0, isPaused: false, playSessionId: rec.playSessionId, updatedAt: now, source: 'portal' });
+}
+
+/**
+ * A queued next episode's life follows its predecessor: every touch of a media token refreshes the keys of its successor
+ * (`castnext:`) up to the successor's own cap, and a queued token refreshes its own pin (it was written at mint with the idle TTL).
+ * Replace only: a revoked successor is never resurrected.
+ */
+async function keepQueue(ctx: Ctx, hash: string, rec: CastRecord, ttl: number) {
+  if (rec.afterPs) {
+    const pin = await ctx.kv.get(pinKey(hash));
+    if (pin) await ctx.kv.replace(pinKey(hash), pin, ttl);
+  }
+  const nk = nextKey(rec.userId, rec.playSessionId);
+  const succ = await ctx.kv.get(nk);
+  if (!succ) return;
+  const raw = await ctx.kv.get(dataKey(succ));
+  const r = raw ? (JSON.parse(raw) as CastRecord) : null;
+  const t = r ? Math.min(ttl, castKeyTtl(r.exp)) : 0;
+  if (!r || t <= 0) { await ctx.kv.del(nk); return; }
+  await ctx.kv.replace(dataKey(succ), raw!, t);
+  for (const k of [idxKey(rec.userId, castIdOf(succ)), pinKey(succ), nk]) {
+    const v = await ctx.kv.get(k);
+    if (v) await ctx.kv.replace(k, v, t);
+  }
 }
 
 /**

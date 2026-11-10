@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AIRPLAY_PIN2_WINDOW_MS, CAST_IDLE_TTL, castKeyTtl, castLookup, createCast, hashToken, NEXT_OVERLAP_MS } from '../src/cast.js';
+import { AIRPLAY_PIN2_WINDOW_MS, CAST_IDLE_TTL, castKeyTtl, castLookup, castNextTtlSeconds, createCast, hashToken, NEXT_OVERLAP_MS } from '../src/cast.js';
 import { revokeSessions } from '../src/devices.js';
 import { countLive, DRAIN_MS, getLive, setLive } from '../src/live.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -429,6 +429,7 @@ describe('cast session: stop report and the queued next episode', () => {
     psNext = null;
     const cur = await create();
     await report('start', cur.j.playSessionId);
+    await authz({ ct: cur.ct }); // the receiver fetched it: pinned (a queued token takes over that pin at mint)
     psNext = 'ps-next-0001';
     const nx = await create(admin, { next: true, after: cur.j.castId });
     psNext = null;
@@ -504,7 +505,7 @@ describe('cast session: stop report and the queued next episode', () => {
     const uid = await fresh();
     const { cur, nx } = await playingThenNext();
     const progress = () => call(admin, 'POST', '/api/playback/progress', { itemId: ID, playSessionId: cur.j.playSessionId, mediaSourceId: MS, positionTicks: 0, isPaused: false, playMethod: 'Transcode' });
-    const elsewhere = '203.0.113.78';
+    const elsewhere = '198.51.100.1'; // the receiver: the address the predecessor is pinned to (a queued token is pinned to it at mint)
     expect((await authz({ ct: nx.ct, client: elsewhere })).statusCode).toBe(200);
     skipClock(170_000);
     await progress();
@@ -539,7 +540,7 @@ describe('cast session: stop report and the queued next episode', () => {
   it('next: used concurrently while the predecessor plays: refused once the 180 s overlap is over, never counted twice', async () => {
     const uid = await fresh();
     const { cur, nx } = await playingThenNext();
-    const elsewhere = { ct: nx.ct, client: '203.0.113.77' };
+    const elsewhere = { ct: nx.ct, client: '198.51.100.1' }; // the predecessor's pin
     const progress = () => call(admin, 'POST', '/api/playback/progress', { itemId: ID, playSessionId: cur.j.playSessionId, mediaSourceId: MS, positionTicks: 0, isPaused: false, playMethod: 'Transcode' });
     expect((await authz(elsewhere)).statusCode).toBe(200);
     skipClock(NEXT_OVERLAP_MS - 10_000);
@@ -943,5 +944,105 @@ describe('cast lookup (token-free, re-adoption and Diagnose)', () => {
     const codes: number[] = [];
     for (let i = 0; i < 32; i++) codes.push((await env.app.inject({ method: 'GET', url: `/api/cast/session/${c.castId}`, cookies: admin.cookies, headers: { 'x-forwarded-for': '203.0.113.31' } })).statusCode);
     expect(codes.filter((x) => x === 429).length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('cast: the queued next token is pinned at mint and its life follows its predecessor', () => {
+  const TV = '198.51.100.1'; // authz() pins with this address by default
+  const me = async () => (await call(admin, 'GET', '/api/me')).json().id as string;
+  const fresh = async () => {
+    const uid = await me();
+    await revokeSessions(env.ctx, uid);
+    admin = await env.login();
+    for (const k of [...await env.kv.keys(`play:${uid}:`), ...await env.kv.keys(`pstop:${uid}:`), ...await env.kv.keys('povl:'), ...await env.kv.keys('castnext:')]) await env.kv.del(k);
+    env.ctx.roles.admin!.maxStreams = 3;
+    return uid;
+  };
+  const role0 = { max: 0 };
+  beforeAll(() => { role0.max = env.ctx.roles.admin!.maxStreams; });
+  afterEach(() => { env.ctx.roles.admin!.maxStreams = role0.max; psNext = null; });
+  /** the playing cast (fetched by the TV: pinned), then its queued next episode */
+  const queued = async () => {
+    psNext = null;
+    const cur = await create();
+    expect((await authz({ ct: cur.ct, client: TV })).statusCode).toBe(200);
+    psNext = 'ps-next-1001';
+    const nx = await create(admin, { next: true, after: cur.j.castId });
+    psNext = null;
+    expect(nx.r.statusCode).toBe(200);
+    return { cur, nx };
+  };
+
+  it('castNextTtlSeconds caps at 6 h', () => {
+    const now = Date.now();
+    expect(castNextTtlSeconds(4000, now + 7 * 3600_000, now)).toBe(21600);
+    expect(castNextTtlSeconds(4000, now + 30 * 60_000, now)).toBe(4000);
+    expect(castNextTtlSeconds(4000, now + 3600_000 + 5000_000, now)).toBe(9000); // 4000 + (predecessor's remaining beyond its 1 h)
+  });
+
+  it('queued token is pinned to the predecessor\'s address at mint', async () => {
+    await fresh();
+    const { nx } = await queued();
+    expect(await env.kv.get(`castpin:${hashToken(nx.ct)}`)).toBe(TV); // before anybody fetched it
+    expect((await authz({ ct: nx.ct, client: '198.51.100.21' })).statusCode).toBe(401); // another address, also first
+    expect((await authz({ ct: nx.ct, client: '2001:db8::7' })).statusCode).toBe(401);
+    expect((await authz({ ct: nx.ct, client: TV })).statusCode).toBe(200); // the receiver, inside the overlap window
+    expect((await call(admin, 'GET', `/api/cast/session/${nx.j.castId}`)).json()).toMatchObject({ next: true, pins: 1, refused: { count: 2, families: ['v4', 'v6'] } });
+  });
+
+  it('unpinned predecessor refuses the queue', async () => {
+    await fresh();
+    const cur = await create(); // never fetched: no pin
+    const before = (await env.kv.keys('castidx:')).length;
+    const calls = env.jfCalls.filter((c) => c.path.endsWith('/PlaybackInfo')).length;
+    const r = await call(admin, 'POST', '/api/cast/session', { itemId: ID, next: true, after: cur.j.castId });
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'cast_unpinned' });
+    expect((await env.kv.keys('castidx:')).length).toBe(before);
+    expect(env.jfCalls.filter((c) => c.path.endsWith('/PlaybackInfo')).length).toBe(calls);
+    expect(await env.kv.keys('castnext:')).toEqual([]);
+    // once the TV fetched it, the same request works
+    await authz({ ct: cur.ct, client: TV });
+    expect((await call(admin, 'POST', '/api/cast/session', { itemId: ID, next: true, after: cur.j.castId })).statusCode).toBe(200);
+  });
+
+  it('queued token idle life follows the predecessor', async () => {
+    await fresh();
+    const { cur, nx } = await queued();
+    for (let i = 0; i < 4; i++) {
+      skipClock(11 * 60_000);
+      expect((await authz({ ct: cur.ct, client: TV })).statusCode).toBe(200); // the TV keeps fetching the playing episode
+    }
+    skipClock(2 * 60_000); // 46 min after the mint: the queued token alone would be idle-expired
+    expect((await authz({ ct: nx.ct, client: '198.51.100.21' })).statusCode).toBe(401); // still pinned
+    expect((await authz({ ct: nx.ct, client: TV })).statusCode).toBe(200);
+  });
+
+  it('without predecessor touches the queued token expires after 45 min', async () => {
+    await fresh();
+    const { nx } = await queued();
+    skipClock(46 * 60_000);
+    expect((await authz({ ct: nx.ct, client: TV })).statusCode).toBe(401);
+  });
+
+  it('a revoked queued token is never resurrected by its predecessor\'s touches', async () => {
+    await fresh();
+    const { cur, nx } = await queued();
+    expect((await call(admin, 'DELETE', `/api/cast/session/${nx.j.castId}`)).statusCode).toBe(200);
+    skipClock(60_000);
+    expect((await authz({ ct: cur.ct, client: TV })).statusCode).toBe(200);
+    expect(await env.kv.get(`cast:${hashToken(nx.ct)}`)).toBeNull();
+    expect(await env.kv.get(`castpin:${hashToken(nx.ct)}`)).toBeNull();
+    expect((await authz({ ct: nx.ct, client: TV })).statusCode).toBe(401);
+  });
+
+  it('the queued token\'s cap follows the predecessor\'s remaining time', async () => {
+    await fresh();
+    const { cur, nx } = await queued();
+    const a = JSON.parse((await env.kv.get(`cast:${hashToken(cur.ct)}`))!) as { exp: number };
+    const b = JSON.parse((await env.kv.get(`cast:${hashToken(nx.ct)}`))!) as { exp: number };
+    expect(b.exp).toBeGreaterThan(a.exp);
+    expect(b.exp - nx.j.expiresAt).toBe(0);
+    expect(b.exp - Date.now()).toBeLessThanOrEqual(6 * 3600_000);
   });
 });
