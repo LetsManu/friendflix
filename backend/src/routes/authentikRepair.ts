@@ -18,7 +18,8 @@ import { requireAdmin } from '../session.js';
 import { AK_BLUEPRINT_DIR, applyLockTtlS, repairAuthentik } from '../setup/authentikSetup.js';
 import { saveWithProbes } from './adminSettings.js';
 
-const Body = z.strictObject({ token: z.string().min(1).max(512) });
+/** passkeySignIn: the admin's explicit opt-in to set the passkey validation stage (it affects every application of the default flow) */
+const Body = z.strictObject({ token: z.string().min(1).max(512), passkeySignIn: z.boolean().optional() });
 /** the wizard's lock: a repair and a wizard run never import the same blueprints at once */
 const LOCK = 'setup:authentik:apply';
 
@@ -35,7 +36,7 @@ export function authentikRepairRoutes(app: FastifyInstance, ctx: Ctx) {
     const owner = randomToken();
     if (!(await ctx.kv.setnx(LOCK, owner, applyLockTtlS()))) return reply.code(409).send({ error: 'busy' });
     try {
-      const { steps, values } = await repairAuthentik({ url, token: b.data.token }, { fetchImpl: ctx.fetchImpl, blueprintDir: AK_BLUEPRINT_DIR, cfg: ctx.cfg });
+      const { steps, values } = await repairAuthentik({ url, token: b.data.token, passkeySignIn: b.data.passkeySignIn === true }, { fetchImpl: ctx.fetchImpl, blueprintDir: AK_BLUEPRINT_DIR, cfg: ctx.cfg });
       req.log.info({ steps: steps.map((s) => `${s.id}:${s.state}${s.detail ? `:${s.detail}` : ''}`) }, 'authentik: setup repaired');
       await audit(ctx, req.user!.id, 'authentik.repair', undefined, { steps: steps.map((s) => `${s.id}:${s.state}`), ok: Boolean(values) });
       if (!values) return { ok: false, steps };

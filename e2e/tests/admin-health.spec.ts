@@ -200,6 +200,20 @@ test.describe('admin health page', () => {
     await expect(card.getByText(/RP-ID passt nicht.*AUTHENTIK_URL/)).toBeVisible();
   });
 
+  test('Repair sets the passkey check only when "Anmeldung mit Passkey anbieten" is ticked, and says it affects other applications', async ({ page, api }) => {
+    api.admin.loginCheck = { ...loginCheckOk(), passkeySignIn: 'no_stage', warnings: ['passkeys:no_stage'] };
+    await page.goto('/admin/status');
+    const form = page.getByRole('form', { name: 'Authentik-Einrichtung reparieren' });
+    const box = form.getByRole('checkbox', { name: 'Anmeldung mit Passkey anbieten (ohne Passwort)' });
+    await expect(box).not.toBeChecked();
+    await expect(form.getByText(/jede Anwendung, die die Standard-Anmeldung von Authentik nutzt/)).toBeVisible();
+    await box.check();
+    await form.getByLabel('Authentik-Admin-Token (Superuser, einmalig)').fill('ak-admin-placeholder-e2e');
+    await form.getByRole('button', { name: 'Reparieren' }).click();
+    await expect(form.getByRole('status')).toBeVisible();
+    expect(api.admin.repairs).toEqual([{ token: 'ak-admin-placeholder-e2e', passkeySignIn: true }]);
+  });
+
   test('sign-in card: a refused service token, the executor check, the last error and the one-click repair', async ({ page, api }) => {
     api.admin.loginCheck = {
       ...loginCheckOk(), warnings: ['token:invalid', 'executor:non_json'],
@@ -222,7 +236,7 @@ test.describe('admin health page', () => {
     await expect(form.getByRole('status')).toHaveText('Authentik-Einrichtung repariert. Das neue Dienst-Token wurde gespeichert.');
     await expect(form.getByRole('list')).toContainText('Dienstkonto für Einladungen');
     await expect(form.getByLabel('Authentik-Admin-Token (Superuser, einmalig)')).toHaveValue(''); // used once, never kept
-    expect(api.admin.repairs).toEqual([{ token: 'ak-admin-placeholder-e2e' }]);
+    expect(api.admin.repairs).toEqual([{ token: 'ak-admin-placeholder-e2e', passkeySignIn: false }]);
     // the card shows the state after the repair
     await expect(card.getByText('Alles in Ordnung.')).toBeVisible();
     await expect(card.getByText('Von Authentik abgelehnt')).toHaveCount(0);
@@ -268,7 +282,7 @@ test.describe('Authentik repair: re-authentication', () => {
     await dlg.getByLabel('Passwort', { exact: true }).fill('hunter2-fixture');
     await dlg.getByRole('button', { name: 'Anmelden' }).click();
     await expect(form.getByRole('status')).toHaveText('Authentik-Einrichtung repariert. Das neue Dienst-Token wurde gespeichert.');
-    expect(api.admin.repairs).toEqual([{ token: 'ak-admin-placeholder-e2e' }]);
+    expect(api.admin.repairs).toEqual([{ token: 'ak-admin-placeholder-e2e', passkeySignIn: false }]);
   });
 
   test('classic sign-in mode: the forced sign-in at /auth/reauth, back to /admin/status (never the plain sign-in page)', async ({ page }) => {

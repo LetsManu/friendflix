@@ -174,15 +174,19 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
   const badUrl = { ok: false, code: 'invalid', detail: 'invalid_url' } as const;
 
   app.post('/api/setup/authentik/plan', { ...session, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const b = akBody.parse(req.body);
+    const b = akBody.extend({ passkeySignIn: z.boolean().optional() }).parse(req.body);
     if (!plainHttpUrl(b.url)) return reply.code(400).send(badUrl);
-    const steps = await planAuthentik({ url: b.url, token: b.token, publicUrl: ctx.cfg.PUBLIC_URL, adminGroup: ctx.cfg.ADMIN_GROUP }, { fetchImpl: ctx.fetchImpl });
+    const steps = await planAuthentik(
+      { url: b.url, token: b.token, publicUrl: ctx.cfg.PUBLIC_URL, adminGroup: ctx.cfg.ADMIN_GROUP, passkeySignIn: b.passkeySignIn === true },
+      { fetchImpl: ctx.fetchImpl },
+    );
     req.log.info({ steps: steps.map((s) => `${s.id}:${s.state}${s.detail ? `:${s.detail}` : ''}`) }, 'authentik: setup planned');
     return { steps };
   });
 
   app.post('/api/setup/authentik/apply', { ...session, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const b = akBody.extend({ addMeToAdmins: z.boolean() }).parse(req.body);
+    // passkeySignIn: the owner's explicit opt-in (it changes Authentik's default identification stage for every application)
+    const b = akBody.extend({ addMeToAdmins: z.boolean(), passkeySignIn: z.boolean().optional() }).parse(req.body);
     // http(s) without user info, checked before any request
     if (!plainHttpUrl(b.url)) return reply.code(400).send(badUrl);
     // the redirect URI is <PUBLIC_URL>/auth/callback: step 2 of the wizard comes first
@@ -196,7 +200,7 @@ export function setupRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!(await ctx.kv.setnx(lock, owner, applyLockTtlS()))) return reply.code(409).send({ error: 'busy' });
     try {
       const { steps, values } = await applyAuthentik(
-        { url: b.url, token: b.token, addMeToAdmins: b.addMeToAdmins, publicUrl, adminGroup: ctx.cfg.ADMIN_GROUP },
+        { url: b.url, token: b.token, addMeToAdmins: b.addMeToAdmins, publicUrl, adminGroup: ctx.cfg.ADMIN_GROUP, passkeySignIn: b.passkeySignIn === true },
         { fetchImpl: ctx.fetchImpl, blueprintDir: AK_BLUEPRINT_DIR, cfg: ctx.cfg },
       );
       req.log.info({ steps: steps.map((s) => `${s.id}:${s.state}${s.detail ? `:${s.detail}` : ''}`) }, 'authentik: setup applied');

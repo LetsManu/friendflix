@@ -29,6 +29,16 @@ export const akFailText = (code: string | undefined): string =>
   word(code) && hasKey(`setup.ak.fail.${code}`) ? trDynamic(`setup.ak.fail.${code}`) : tr('setup.ak.fail.unexpected');
 
 /** The first failed step of an Authentik plan or apply, or null. */
+/**
+ * The note behind the passkey step's state (not chosen, unsupported version, not kept, or any Authentik error code → "could not be
+ * set"); '' for any other step or no detail.
+ */
+export function passkeyDetailText(s: { id: string; detail?: string }): string {
+  if (s.id !== 'passkeys' || !s.detail) return '';
+  const key = `setup.ak.passkeyDetail.${s.detail}`;
+  return hasKey(key) ? trDynamic(key) : tr('setup.ak.passkeyDetail.failed');
+}
+
 export const failedStep = (steps: readonly AkStep[]): AkStep | null => steps.find((s) => s.state === 'failed') ?? null;
 
 /** Text of a top-level error code of the setup API (`unknown` with the status for anything else). */

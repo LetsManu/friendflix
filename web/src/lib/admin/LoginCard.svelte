@@ -10,6 +10,7 @@
   import Icon from '#lib/Icon.svelte';
   import { fmtDateTime, t, tr, trDynamic, type TKey } from '#lib/i18n';
   import { failClassText, loadLoginCheck, loginWarningText, repairAuthentik, type LoginCheck, type RepairResult } from './health';
+  import { passkeyDetailText } from '#lib/setup/messages';
   import { isReauthError, reauthenticate } from '#lib/account/reauth';
   import { loadSettings, saveSettings } from './settings/api';
   import { errorText } from '#lib/ui/action';
@@ -24,7 +25,9 @@
   let saving = false;
   /** the repair form: the one-time admin token (emptied once used), the run and its result; a refused run asks for the sign-in in place */
   let repairToken = '', repairing = false, repair: RepairResult | null = null, repairErr = '';
-  $: needsRepair = Boolean(check && check.warnings.some((w) => w === 'token:invalid' || w.startsWith('permission:') || w === 'optional:change-email'));
+  /** the passkey check on Authentik's default identification stage: only when ticked (it applies to every application there) */
+  let repairPasskeys = false;
+  $: needsRepair = Boolean(check && check.warnings.some((w) => w === 'token:invalid' || w.startsWith('permission:') || w === 'optional:change-email' || w === 'passkeys:no_stage'));
   const STEP_KEY = (id: string) => `setup.ak.step.${id}`;
   const failLine = (f: NonNullable<LoginCheck['lastFailures']>[number]) =>
     $t('adminContent.login.failLine', {
@@ -45,7 +48,7 @@
     repairing = true; repairErr = ''; repair = null;
     let signIn = false;
     try {
-      repair = await repairAuthentik(token);
+      repair = await repairAuthentik(token, repairPasskeys);
       if (repair.check) check = repair.check;
       repairToken = '';
     } catch (e) {
@@ -145,12 +148,14 @@
         <label for="st-repair-token">{$t('adminContent.login.repair.tokenLabel')}</label>
         <input id="st-repair-token" type="password" autocomplete="off" spellcheck="false" maxlength="512" bind:value={repairToken} disabled={repairing} aria-describedby="st-repair-hint" />
         <p class="muted small" id="st-repair-hint">{$t('adminContent.login.repair.tokenHint')}</p>
+        <label class="pk"><input type="checkbox" bind:checked={repairPasskeys} disabled={repairing} aria-describedby="st-repair-pk" /><span>{$t('setup.signin.passkeys')}</span></label>
+        <p class="muted small" id="st-repair-pk">{$t('setup.signin.passkeysHint')}</p>
         <div class="acts"><Button type="submit" icon="refresh" pending={repairing} disabled={!repairToken.trim()}>{$t('adminContent.login.repair.run')}</Button></div>
         {#if repairErr}<p class="rerr" role="alert">{repairErr}</p>{/if}
         {#if repair}
           <ul class="rsteps" aria-label={$t('adminContent.login.repair.title')}>
             {#each repair.steps as st (st.id)}
-              <li><span>{trDynamic(STEP_KEY(st.id))}</span><span class="muted">{trDynamic(`setup.ak.state.${st.state}`)}{st.detail === 'template_missing' ? ` – ${$t('adminContent.login.repair.templateMissing')}` : ''}</span></li>
+              <li><span>{trDynamic(STEP_KEY(st.id))}</span><span class="muted">{trDynamic(`setup.ak.state.${st.state}`)}{st.detail === 'template_missing' ? ` – ${$t('adminContent.login.repair.templateMissing')}` : ''}{passkeyDetailText(st) ? ` – ${passkeyDetailText(st)}` : ''}</span></li>
             {/each}
           </ul>
           <p role="status" class={repair.ok ? 'rok' : 'rerr'}>
@@ -193,6 +198,8 @@
   .repair { gap: .45rem; }
   .repair h3, .last h3 { margin: 0; font-size: .95rem; }
   .repair label { font-weight: 600; font-size: .9rem; }
+  .repair label.pk { display: flex; align-items: center; gap: .6rem; min-height: 44px; cursor: pointer; font-weight: 500; }
+  .repair label.pk input { width: 1.1rem; height: 1.1rem; min-height: 0; padding: 0; }
   .repair input { min-height: 44px; padding: 0 .7rem; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); font: inherit; min-width: 0; max-width: 28rem; }
   .repair p { margin: 0; }
   .rsteps, .last ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .25rem; font-size: .88rem; }
