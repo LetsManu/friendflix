@@ -185,7 +185,7 @@ const dict: Translation<typeof de> = {
     checkedAt: 'Stato delle {time}',
     loadFailed: 'Impossibile caricare lo stato.',
     ms: '{n} ms',
-    svc: { media: 'Server multimediale', postgres: 'Database', redis: 'Cache', gateway: 'Gateway multimediale', oidc: 'Accesso', requests: 'Servizio richieste', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Test di riproduzione' },
+    svc: { media: 'Server multimediale', postgres: 'Database', redis: 'Cache', gateway: 'Gateway multimediale', oidc: 'Accesso', requests: 'Servizio richieste', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Test di riproduzione', encoder: 'Transcodifica' },
     level: { ok: 'Funziona', warn: 'Limitato', err: 'Guasto', off: 'Disattivato' },
     playbackNever: 'Mai eseguito',
     reason: {
@@ -208,6 +208,17 @@ const dict: Translation<typeof de> = {
       failed_playbacks: 'Riproduzioni non riuscite',
       pending_approvals: 'Accessi in attesa di approvazione',
       removed_env: 'Vecchi nomi di variabile in .env',
+      no_hw_accel: 'Senza accelerazione hardware',
+      no_tonemap: 'Senza tone mapping',
+      no_throttle: 'Senza limitazione',
+      no_keyframes: 'Keyframe MKV disattivati',
+    },
+    /** encoder row (Status): one line per gap in the media server's transcoding settings */
+    advice: {
+      no_hw_accel: 'L’accelerazione hardware è disattivata: Jellyfin converte con il processore, è lento e regge pochi streaming insieme. In Jellyfin scegli l’unità grafica del server in Pannello → Riproduzione → Transcodifica (ad es. QSV, VAAPI, NVENC).',
+      no_tonemap: 'Il tone mapping è disattivato: i film HDR appaiono pallidi e grigi quando vengono convertiti. In Jellyfin attiva «Abilita tone mapping» in Transcodifica.',
+      no_throttle: 'La limitazione è disattivata: Jellyfin converte ogni film fino alla fine il più velocemente possibile e occupa l’unità grafica più del necessario. In Jellyfin attiva «Limita le transcodifiche» in Transcodifica.',
+      no_keyframes: 'L’estrazione dei keyframe per MKV è disattivata: i file MKV riconfezionati partono con segmenti da 6 secondi invece di 3. In Jellyfin aggiungi di nuovo «mkv» all’estrazione dei keyframe in Transcodifica.',
     },
     disks: {
       title: 'Spazio',

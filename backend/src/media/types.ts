@@ -382,6 +382,18 @@ export interface HygieneFacts {
 }
 
 /** Admin-key side: identities (one per account / profile), policies, server health, foreign sessions. */
+/** the media server's transcoding settings the Health check looks at (MediaAdmin.encoderSettings) */
+export interface EncoderSettings {
+  /** hardware acceleration type ('none' when off) */
+  hwAccel: string;
+  /** HDR -> SDR tone mapping (software, VPP or VideoToolbox) */
+  tonemap: boolean;
+  /** throttling: the server pauses a transcode that is far ahead of the viewer */
+  throttle: boolean;
+  /** Matroska keyframe extraction (playlists of copied video follow keyframes: needed for 3 s remux segments) */
+  keyframeMkv: boolean;
+}
+
 export interface MediaAdmin {
   createIdentity(name: string, password: string): Promise<{ id: string }>;
   /** Removes an identity; an unknown one counts as removed. Throws MediaError otherwise. */
@@ -392,6 +404,11 @@ export interface MediaAdmin {
   identityExists?(id: string): Promise<boolean>;
   libraries(): Promise<Array<{ id: string; name: string }>>;
   ping(): Promise<boolean>;
+  /**
+   * Optional (Jellyfin): the server's transcoding settings as far as the Health check advises on them, read with the admin key.
+   * Read-only: FriendFlix never changes them. Throws when the server cannot be read.
+   */
+  encoderSettings?(): Promise<EncoderSettings>;
   /** active playback not started through FriendFlix */
   externalSessions(): Promise<ExternalSession[]>;
   /**

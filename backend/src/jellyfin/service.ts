@@ -19,7 +19,7 @@ import type { ChapterDto, ItemAboutDto, ItemCreditsDto, MediaCollection } from '
 import type { HygieneFacts, ServerSession } from '../media/types.js'; // Block 22
 import type { ItemFeatures } from '../media/types.js'; // R1
 import type { SeriesStatus } from '../media/types.js'; // 1.1 post-play
-import type { CapReason } from '../media/types.js';
+import type { CapReason, EncoderSettings } from '../media/types.js';
 
 const TOKEN_TTL = 6 * 3600;
 const BOXSET_INDEX_KEY = 'jf:boxsets:v1';
@@ -56,6 +56,19 @@ const REPORT_KIND = { start: 'Playing', progress: 'Playing/Progress', stop: 'Pla
  * stored (encrypted) password, caches the user token (encrypted, in Redis) and re-authenticates
  * on 401. The token never leaves the backend/gateway.
  */
+/** Jellyfin's EncodingOptions (GET /System/Configuration/encoding) -> the few facts the Health check advises on; nothing else is kept */
+export function encoderSettingsOf(o: Record<string, unknown> | null | undefined): EncoderSettings {
+  const hw = typeof o?.HardwareAccelerationType === 'string' && o.HardwareAccelerationType.trim() ? o.HardwareAccelerationType.trim().toLowerCase() : 'none';
+  const exts = Array.isArray(o?.AllowOnDemandMetadataBasedKeyframeExtractionForExtensions) ? (o.AllowOnDemandMetadataBasedKeyframeExtractionForExtensions as unknown[]) : null;
+  return {
+    hwAccel: /^[a-z0-9]{1,16}$/.test(hw) ? hw : 'other',
+    tonemap: o?.EnableTonemapping === true || o?.EnableVppTonemapping === true || o?.EnableVideoToolboxTonemapping === true,
+    throttle: o?.EnableThrottling === true,
+    // an older server without the field extracts keyframes for mkv by default
+    keyframeMkv: exts === null || exts.some((e) => typeof e === 'string' && e.trim().toLowerCase().replace(/^\./, '') === 'mkv'),
+  };
+}
+
 /** Jellyfin VideoRangeType values a stated range covers (a Dolby Vision file with a fallback layer plays as that layer) */
 const RANGE_TYPES: Record<CapRange, string[]> = {
   sdr: ['SDR', 'DOVIWithSDR'], hdr10: ['HDR10', 'DOVIWithHDR10'], hlg: ['HLG', 'DOVIWithHLG'], hdr10plus: ['HDR10Plus', 'DOVIWithHDR10Plus'],
@@ -973,6 +986,7 @@ export class JellyfinService implements MediaServer {
       },
       libraries: async () => (await client.mediaFolders()).map((f) => ({ id: f.Id, name: f.Name })),
       ping: () => client.ping(),
+      encoderSettings: async () => encoderSettingsOf(await client.adminJson<Record<string, unknown>>('/System/Configuration/encoding')),
       /** sessions of other apps: FriendFlix' own devices ("ff-<id>") are tracked by the portal itself */
       externalSessions: async (): Promise<ExternalSession[]> => (await client.sessions())
         .filter((s) => s.NowPlayingItem && !String(s.DeviceId ?? '').startsWith('ff-'))

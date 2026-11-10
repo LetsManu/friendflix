@@ -76,6 +76,39 @@ beforeEach(async () => {
 });
 afterEach(() => { vi.useRealTimers(); });
 
+describe('encoder advice (read-only)', () => {
+  const read = () => env.ctx.jf.admin.encoderSettings!;
+  let orig: typeof env.ctx.jf.admin.encoderSettings;
+  beforeEach(() => { orig = env.ctx.jf.admin.encoderSettings; });
+  afterEach(() => { env.ctx.jf.admin.encoderSettings = orig; });
+
+  it('reads Jellyfin\'s encoding settings with the admin key and maps them (nothing else kept)', async () => {
+    const { encoderSettingsOf } = await import('../src/jellyfin/service.js');
+    expect(encoderSettingsOf({ HardwareAccelerationType: 'qsv', EnableTonemapping: false, EnableVppTonemapping: true, EnableThrottling: true, AllowOnDemandMetadataBasedKeyframeExtractionForExtensions: ['mkv'], EncoderAppPath: '/usr/lib/jellyfin-ffmpeg/ffmpeg' }))
+      .toEqual({ hwAccel: 'qsv', tonemap: true, throttle: true, keyframeMkv: true });
+    expect(encoderSettingsOf({ HardwareAccelerationType: '', AllowOnDemandMetadataBasedKeyframeExtractionForExtensions: [] })).toEqual({ hwAccel: 'none', tonemap: false, throttle: false, keyframeMkv: false });
+    expect(encoderSettingsOf(null).keyframeMkv).toBe(true); // older server without the field: mkv by default
+    expect(typeof read()).toBe('function');
+  });
+  it('every gap is advice in order of importance; the row warns but never colours the snapshot or the banner', async () => {
+    env.ctx.jf.admin.encoderSettings = async () => ({ hwAccel: 'none', tonemap: false, throttle: false, keyframeMkv: false });
+    const s = await buildSnapshot(env.ctx, deps());
+    expect(svc(s, 'encoder')).toEqual({ id: 'encoder', level: 'warn', reason: 'no_hw_accel', advice: ['no_hw_accel', 'no_tonemap', 'no_throttle', 'no_keyframes'] });
+    expect(s.worst).toBe('ok');
+    expect(s.issues.some((i) => i.id === 'svc:encoder')).toBe(false);
+    env.ctx.jf.admin.encoderSettings = async () => ({ hwAccel: 'vaapi', tonemap: true, throttle: false, keyframeMkv: true });
+    expect(svc(await buildSnapshot(env.ctx, deps()), 'encoder')).toMatchObject({ level: 'warn', reason: 'no_throttle', advice: ['no_throttle'] });
+    env.ctx.jf.admin.encoderSettings = async () => ({ hwAccel: 'nvenc', tonemap: true, throttle: true, keyframeMkv: true });
+    expect(svc(await buildSnapshot(env.ctx, deps()), 'encoder')).toEqual({ id: 'encoder', level: 'ok' });
+  });
+  it('a failing read is off; a media server without the method (Plex) has no row', async () => {
+    env.ctx.jf.admin.encoderSettings = async () => { throw new Error('403 http://jellyfin:8096/System/Configuration/encoding'); };
+    expect(svc(await buildSnapshot(env.ctx, deps()), 'encoder')).toEqual({ id: 'encoder', level: 'off', reason: 'unavailable' });
+    env.ctx.jf.admin.encoderSettings = undefined;
+    expect((await buildSnapshot(env.ctx, deps())).services.some((x) => x.id === 'encoder')).toBe(false);
+  });
+});
+
 describe('traffic lights', () => {
   it('all ok → worst ok, no issues', async () => {
     const s = await buildSnapshot(env.ctx, deps());
@@ -83,6 +116,7 @@ describe('traffic lights', () => {
     expect(s.issues).toEqual([]);
     expect(s.services.map((x) => [x.id, x.level])).toEqual([
       ['media', 'ok'], ['postgres', 'ok'], ['redis', 'ok'], ['gateway', 'ok'], ['oidc', 'ok'], ['requests', 'ok'], ['tmdb', 'off'], ['omdb', 'off'], ['playbackCheck', 'off'],
+      ['encoder', 'off'], // the fake Jellyfin has no encoding config: unreadable, never a problem
     ]);
     expect(svc(s, 'tmdb').reason).toBe('not_set');
     expect(typeof svc(s, 'media').ms).toBe('number');

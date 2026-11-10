@@ -185,7 +185,7 @@ const dict: Translation<typeof de> = {
     checkedAt: 'Durum: {time}',
     loadFailed: 'Durum yüklenemedi.',
     ms: '{n} ms',
-    svc: { media: 'Medya sunucusu', postgres: 'Veritabanı', redis: 'Önbellek', gateway: 'Medya geçidi', oidc: 'Giriş', requests: 'İstek hizmeti', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Oynatma testi' },
+    svc: { media: 'Medya sunucusu', postgres: 'Veritabanı', redis: 'Önbellek', gateway: 'Medya geçidi', oidc: 'Giriş', requests: 'İstek hizmeti', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Oynatma testi', encoder: 'Dönüştürme' },
     level: { ok: 'Çalışıyor', warn: 'Kısıtlı', err: 'Arızalı', off: 'Kapalı' },
     playbackNever: 'Hiç çalışmadı',
     reason: {
@@ -208,6 +208,17 @@ const dict: Translation<typeof de> = {
       failed_playbacks: 'Başarısız oynatmalar',
       pending_approvals: 'Onay bekleyen girişler',
       removed_env: '.env içinde eski değişken adları',
+      no_hw_accel: 'Donanım hızlandırma yok',
+      no_tonemap: 'Ton eşleme yok',
+      no_throttle: 'Kısma yok',
+      no_keyframes: 'MKV anahtar kareleri kapalı',
+    },
+    /** encoder row (Status): one line per gap in the media server's transcoding settings */
+    advice: {
+      no_hw_accel: 'Donanım hızlandırma kapalı: Jellyfin işlemciyle dönüştürür, bu yavaştır ve aynı anda az yayın kaldırır. Jellyfin’de Pano → Oynatma → Kod Dönüştürme altında sunucunun grafik birimini seçin (ör. QSV, VAAPI, NVENC).',
+      no_tonemap: 'Ton eşleme kapalı: HDR filmler dönüştürülünce soluk ve gri görünür. Jellyfin’de Kod Dönüştürme altında “Ton eşlemeyi etkinleştir”i açın.',
+      no_throttle: 'Kısma kapalı: Jellyfin her filmi sonuna kadar olabildiğince hızlı dönüştürür ve grafik birimini gereğinden uzun meşgul eder. Jellyfin’de Kod Dönüştürme altında “Kod dönüştürmeleri kıs”ı açın.',
+      no_keyframes: 'MKV için anahtar kare çıkarma kapalı: yeniden paketlenen MKV dosyaları 3 yerine 6 saniyelik parçalarla başlar. Jellyfin’de Kod Dönüştürme altında anahtar kare çıkarmaya “mkv”yi yeniden ekleyin.',
     },
     disks: {
       title: 'Depolama',

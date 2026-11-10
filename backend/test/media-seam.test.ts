@@ -204,6 +204,16 @@ describe('transcodeReason on the playback DTO', () => {
     expect(mk(tu('VideoResolutionNotSupported')).transcodeReason).toBe('height');
     expect(mk(tu('SomethingNew')).transcodeReason).toBe('other');
   });
+  it('3 s segments only for Matroska sources (Jellyfin re-encodes at 3 s anyway; copied mp4 keeps its keyframe-safe 6 s), never for cast', () => {
+    const seg = (src: Record<string, unknown>, extra: Partial<Parameters<typeof toPlaybackDto>[0]> = {}) => new URL(mk(src, extra).hlsUrl, 'https://x').searchParams.get('SegmentLength');
+    expect(seg({ Container: 'mkv' })).toBe('3');
+    expect(seg({ Container: 'matroska,webm' })).toBe('3');
+    expect(seg({ Container: 'mkv', Path: '/media/films/Film.mkv' })).toBe('3');
+    expect(seg({ Container: 'matroska,webm', Path: '/media/films/Film.webm' })).toBeNull(); // the server extracts keyframes by file extension
+    expect(seg({ Container: 'mov,mp4,m4a,3gp,3g2,mj2' })).toBeNull();
+    expect(seg({ Container: 'mkv' }, { cast: true })).toBeNull();
+    expect(mk({ Container: 'mkv', Path: '/media/films/Film.mkv' }).hlsUrl).not.toContain('media%2Ffilms'); // the server path never reaches the client
+  });
   it('direct play has no reason', () => {
     expect(mk({ Container: 'mp4', SupportsDirectPlay: true }).transcodeReason).toBeUndefined();
   });

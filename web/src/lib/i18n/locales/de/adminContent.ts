@@ -183,7 +183,7 @@ export default {
     checkedAt: 'Stand {time}',
     loadFailed: 'Der Zustand konnte nicht geladen werden.',
     ms: '{n} ms',
-    svc: { media: 'Medienserver', postgres: 'Datenbank', redis: 'Zwischenspeicher', gateway: 'Medien-Gateway', oidc: 'Anmeldung', requests: 'Wunsch-Dienst', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Wiedergabe-Check' },
+    svc: { media: 'Medienserver', postgres: 'Datenbank', redis: 'Zwischenspeicher', gateway: 'Medien-Gateway', oidc: 'Anmeldung', requests: 'Wunsch-Dienst', tmdb: 'TMDB', omdb: 'OMDb', playbackCheck: 'Wiedergabe-Check', encoder: 'Transcoding' },
     level: { ok: 'Läuft', warn: 'Eingeschränkt', err: 'Gestört', off: 'Aus' },
     playbackNever: 'Noch nie gelaufen',
     reason: {
@@ -206,6 +206,17 @@ export default {
       failed_playbacks: 'Wiedergaben fehlgeschlagen',
       pending_approvals: 'Anmeldungen warten auf Freigabe',
       removed_env: 'Alte Variablennamen in der .env',
+      no_hw_accel: 'Ohne Hardware-Beschleunigung',
+      no_tonemap: 'Ohne Tone-Mapping',
+      no_throttle: 'Ohne Drosselung',
+      no_keyframes: 'MKV-Keyframes aus',
+    },
+    /** encoder row (Status): one line per gap in the media server's transcoding settings */
+    advice: {
+      no_hw_accel: 'Hardware-Beschleunigung ist aus: Jellyfin wandelt mit dem Prozessor um, das ist langsam und schafft wenige Streams gleichzeitig. In Jellyfin unter Dashboard → Wiedergabe → Transkodierung die Grafikeinheit des Servers wählen (z. B. QSV, VAAPI, NVENC).',
+      no_tonemap: 'Tone-Mapping ist aus: HDR-Filme wirken beim Umwandeln blass und grau. In Jellyfin unter Transkodierung „Tone-Mapping aktivieren“ einschalten.',
+      no_throttle: 'Drosselung ist aus: Jellyfin wandelt jeden Film so schnell wie möglich bis zum Ende um und belegt die Grafikeinheit länger als nötig. In Jellyfin unter Transkodierung „Transkodierung drosseln“ einschalten.',
+      no_keyframes: 'Die Keyframe-Erkennung für MKV ist aus: umgepackte MKV-Dateien starten mit 6-Sekunden-Abschnitten statt 3 s. In Jellyfin „mkv“ bei der Keyframe-Extraktion (Transkodierung) wieder eintragen.',
     },
     disks: {
       title: 'Speicher',

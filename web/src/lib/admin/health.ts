@@ -9,15 +9,21 @@ import { hasKey, tr, trDynamic, type TKey } from '#lib/i18n';
 import type { Tone } from '#lib/ui/StatusPill.svelte';
 
 export type Level = 'ok' | 'warn' | 'err' | 'off';
-export const SERVICE_IDS = ['media', 'postgres', 'redis', 'gateway', 'oidc', 'requests', 'tmdb', 'omdb', 'playbackCheck'] as const;
+export const SERVICE_IDS = ['media', 'postgres', 'redis', 'gateway', 'oidc', 'requests', 'tmdb', 'omdb', 'playbackCheck', 'encoder'] as const;
 export type ServiceId = (typeof SERVICE_IDS)[number];
+/** the encoder row's advice codes (backend health.ts encoderAdvice), most important first */
+export const ENCODER_ADVICE = ['no_hw_accel', 'no_tonemap', 'no_throttle', 'no_keyframes'] as const;
+export type EncoderAdvice = (typeof ENCODER_ADVICE)[number];
 export const REASONS = [
   'slow', 'down', 'issuer_mismatch', 'invalid_key', 'paused', 'budget', 'not_set', 'failed_titles', 'unavailable',
   'full', 'low_free', 'cap', 'large', 'server_errors', 'client_errors', 'failed_playbacks', 'empty_media', 'pending_approvals', 'removed_env',
+  ...ENCODER_ADVICE,
 ] as const;
 export type Reason = (typeof REASONS)[number];
 export interface Detail { n?: number; pct?: number }
-export interface ServiceHealth { id: ServiceId; level: Level; reason?: Reason; ms?: number; detail?: Detail }
+export interface ServiceHealth { id: ServiceId; level: Level; reason?: Reason; ms?: number; detail?: Detail; advice?: EncoderAdvice[] }
+/** the advice lines of a row (only known codes) */
+export const adviceKeys = (s: Pick<ServiceHealth, 'advice'>): TKey[] => (s.advice ?? []).filter((a) => (ENCODER_ADVICE as readonly string[]).includes(a)).map((a) => `adminContent.health.advice.${a}` as TKey);
 export type DiskId = 'downloads' | 'previews' | 'database';
 export interface DiskHealth {
   id: DiskId; level: Level; reason?: Reason; totalBytes?: number; freeBytes?: number; usedPct?: number; ownBytes: number; capBytes?: number;

@@ -290,6 +290,20 @@ Jede Rolle hat zusätzlich zur normalen Bitrate-Grenze ein **Limit unterwegs** (
 
 **Direct Play unterwegs:** Das Gateway kappt transkodierte Streams (HLS: fehlende `MaxStreamingBitrate`/`VideoBitrate` setzt es auf das Limit, höhere Werte senkt es). Den Originalstream (`/Videos/<id>/stream`) kann es nicht kappen, weil es die Bitrate der Datei nicht kennt: Rollen ohne Höhenbegrenzung dürfen ihn (mit dem Standard `DIRECT_PLAY_REQUIRES_DOWNLOAD=false`) auch unterwegs abrufen, etwa per Skript mit ihrem Cookie, und so mehr als das Limit unterwegs ziehen. Der Player selbst fordert unterwegs nur an, was das Backend-Limit erlaubt. Wer den Upload streng schützen muss, setzt `DIRECT_PLAY_REQUIRES_DOWNLOAD=true`: Dann bekommen nur Rollen mit Download-Recht den Originalstream (mehr Transcoding-Last, siehe [downloads.md](downloads.md)).
 
+## Reverse Proxy und TCP für Zuschauer unterwegs (BBR)
+Der Engpass für Freunde unterwegs ist der **Upload** des Servers. Was dort hilft, ist eine Einstellung des **Senders**, also des Docker-Hosts (nicht von FriendFlix gesetzt):
+
+- **TCP-Staukontrolle BBR mit `fq`:** hält den Durchsatz auf langen oder verlustbehafteten Strecken (Mobilfunk, WLAN beim Freund) stabiler als das Linux-Standardverfahren CUBIC, das bei jedem Paketverlust stark bremst. Auf dem Host (Linux ≥ 4.9):
+  ```sh
+  sudo modprobe tcp_bbr
+  printf 'net.core.default_qdisc=fq\nnet.ipv4.tcp_congestion_control=bbr\n' | sudo tee /etc/sysctl.d/90-friendflix-bbr.conf
+  sudo sysctl --system
+  sysctl net.ipv4.tcp_congestion_control   # -> bbr
+  ```
+  Es wirkt für alle neuen Verbindungen des Hosts, also auch für Nginx Proxy Manager; ein Neustart der Container ist nicht nötig. Zurück: Datei löschen, `sudo sysctl -w net.ipv4.tcp_congestion_control=cubic`.
+- **Proxy:** HTTP/2 und `proxy_buffering off` für `/media/` (die mitgelieferte `deploy/npm/portal.advanced.conf` setzt beides) – Segmente fließen sofort durch, statt erst auf der Platte des Proxys zu landen. Lange Timeouts (3600 s) beibehalten.
+- **Messen:** Admin → Wiedergabe → Startzeit, Zeilen „Unterwegs“: Hänger pro Sitzung und Hänger-ms vorher/nachher über 7 Tage vergleichen.
+
 ## Upload-Grenze für neue Streams (`UPLOAD_MBPS`)
 Optional (Admin → Einstellungen → Wiedergabe, „Upload des Servers (Mbit/s)“; leer = aus). Trägt der Admin die Upload-Geschwindigkeit des Anschlusses ein, startet ein **neuer** Stream von unterwegs niedriger, wenn die Leitung schon voll ist, statt dass alle ruckeln. Die Regel (`backend/src/uploadcap.ts`):
 
