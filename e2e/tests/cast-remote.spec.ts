@@ -162,7 +162,7 @@ test('the Next button plays the next episode', async ({ page, api: _api }) => {
 });
 
 test('audio chip opens a keyboard menu', async ({ page, api: _api }) => {
-  const sdk = await chromecastRemote(page, { tracks: true });
+  const sdk = await chromecastRemote(page, { tracks: true, queue: true });
   const chip = page.getByRole('button', { name: 'Audio: Deutsch' });
   await expect(page.getByRole('button', { name: 'Untertitel: Aus' })).toBeVisible();
   await chip.click();
@@ -183,7 +183,7 @@ test('audio chip opens a keyboard menu', async ({ page, api: _api }) => {
 });
 
 test('subtitles chip switches the TV\'s track', async ({ page, api: _api }) => {
-  const sdk = await chromecastRemote(page, { tracks: true });
+  const sdk = await chromecastRemote(page, { tracks: true, queue: true });
   await page.getByRole('button', { name: 'Untertitel: Aus' }).click();
   await page.getByRole('menuitemradio', { name: 'Deutsch (SDH)' }).click();
   await expect(page.getByRole('button', { name: 'Untertitel: Deutsch (SDH)' })).toBeVisible();
@@ -252,7 +252,7 @@ test.describe('screenshots', () => {
   test.skip(!process.env.CAST_SHOTS, 'only with CAST_SHOTS=1');
   test.use({ viewport: { width: 1440, height: 900 } });
   test('desktop: playing, paused, connecting, AirPlay, up next', async ({ page, api: _api }) => {
-    const sdk = await chromecastRemote(page, { tracks: true });
+    const sdk = await chromecastRemote(page, { tracks: true, queue: true });
     await page.waitForTimeout(800);
     await page.screenshot({ path: `${SHOTS}/desktop-playing.png` });
     await page.getByRole('button', { name: 'Pause', exact: true }).click();

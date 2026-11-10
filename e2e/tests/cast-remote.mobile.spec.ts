@@ -86,7 +86,7 @@ test('Play now never wraps', async ({ page, api: _api }) => {
 });
 
 test('the chips share one row; their menus stay inside the screen', async ({ page, api: _api }) => {
-  await chromecastRemote(page, { tracks: true });
+  await chromecastRemote(page, { tracks: true, queue: true });
   const vw = page.viewportSize()!.width;
   const subs = page.getByRole('button', { name: 'Untertitel: Aus' });
   await subs.click();
@@ -100,7 +100,7 @@ test.describe('screenshots', () => {
   test.skip(!process.env.CAST_SHOTS, 'only with CAST_SHOTS=1');
   test.use({ deviceScaleFactor: 1 });
   test('phone: playing, paused, up next', async ({ page, api: _api }) => {
-    const sdk = await chromecastRemote(page, { tracks: true });
+    const sdk = await chromecastRemote(page, { tracks: true, queue: true });
     await page.waitForTimeout(800);
     await page.screenshot({ path: `${SHOTS}/phone-playing.png` });
     await page.getByRole('button', { name: 'Pause', exact: true }).click();
