@@ -42,5 +42,6 @@ const pl: Translation<typeof de> = {
   language: {
     label: 'Język',
   },
+  experimental: 'Eksperymentalne',
 };
 export default pl;

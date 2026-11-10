@@ -42,5 +42,6 @@ const tr: Translation<typeof de> = {
   language: {
     label: 'Dil',
   },
+  experimental: 'Deneysel',
 };
 export default tr;
