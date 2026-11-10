@@ -8,7 +8,7 @@ Shipped since the last roadmap (details in the [CHANGELOG](CHANGELOG.md)): admin
 
 ## Planned
 
-1. **Cast and AirPlay.** Fixes across Chromecast and AirPlay receivers, a redesigned cast screen, a token gate for "next episode" on the receiver, and continuous AirPlay streaming where receivers allow it; better diagnostics on the Diagnose page.
+1. **Cast and AirPlay.** Phase 1 is done: a redesigned remote screen, cast bar and "Play on" sheet, Chromecast casts that survive closing the tab, next-episode queueing from the start, and a casting section on the Diagnose page. Phases 2 to 4 follow: the TV receiver's pause and loading screens, subtitles inside the AirPlay stream (and continuous AirPlay if it passes its test), and the cast bar inside the Android app. Playing HEVC and surround sound through FriendFlix's own receiver follows later.
 2. **Downloads on desktop and TV.** Offline downloads in the desktop app like on Android, and on TVs where the platform allows enough storage (Fire TV first; LG webOS and Samsung Tizen after a storage check).
 3. **Profiles and household.** A PIN to leave the kids profile, "who's watching" on the TV apps, viewing-time limits for kids.
 4. **Watch party 2.0.** Reactions on the timeline, a shared queue, smoother sync.
