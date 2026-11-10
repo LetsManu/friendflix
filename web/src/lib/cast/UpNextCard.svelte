@@ -6,12 +6,12 @@
    * the session's autoplay switch. Hidden without an offer and for films. The switch is session-scoped (`castEngine.setAutoplay`).
    */
   import { onDestroy } from 'svelte';
-  import { img } from '#lib/api';
+  import { api, cachedItem, img, type Item } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import Toggle from '#lib/ui/Toggle.svelte';
   import { castEngine, type CastSession } from './engine';
-  import { upNextLine, upNextOf } from './remotescreen';
+  import { episodeCodeLine, upNextLine, upNextOf } from './remotescreen';
 
   export let session: CastSession;
   /** phone: the buttons take the full width, the card docks under the controls */
@@ -25,6 +25,14 @@
   onDestroy(() => clearInterval(tick));
   $: line = upNextLine(session, now, $t);
   let failed = '';
+  /** the label in the app's episode format (the engine's label is the bar's); it shows until the item is known */
+  let fetched: Item | undefined, askedFor = '';
+  $: if (next && next.itemId !== askedFor && !cachedItem(next.itemId)) { askedFor = next.itemId; void load(next.itemId); }
+  async function load(id: string) {
+    try { const r = await api<{ item: Item }>(`/api/items/${id}`); if (next?.itemId === id) fetched = r.item; } catch { /* the engine's label */ }
+  }
+  $: it = next ? cachedItem(next.itemId) ?? (fetched?.id === next.itemId ? fetched : undefined) : undefined;
+  $: label = next ? (it ? episodeCodeLine(it, $t) : next.label) : '';
 </script>
 
 {#if next}
@@ -34,7 +42,7 @@
     </div>
     <div class="txt">
       <p class="eyebrow">{$t('player.castRemote.upNext')}</p>
-      <b class="unt">{next.label}</b>
+      <b class="unt">{label}</b>
       <span class="mut">{line}</span>
     </div>
     <div class="acts">

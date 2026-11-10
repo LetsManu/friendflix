@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { tr } from '#lib/i18n';
-import { applePlatform, nowLine, upNextLine, upNextOf, remoteLayout, scrubberTarget, segmentMarks, statusOf, timeLine, volumeLine } from './remotescreen';
+import { applePlatform, episodeCodeLine, nowLine, upNextLine, upNextOf, remoteLayout, scrubberTarget, segmentMarks, statusOf, timeLine, volumeLine } from './remotescreen';
 
 const tf = tr;
 const base = { kind: 'chromecast' as const, device: 'Wohnzimmer-TV' };
@@ -123,5 +123,12 @@ describe('remote screen: up next', () => {
     expect(upNextOf({ isEpisode: true, state: 'ended', next: undefined, upcoming: up })).toBeNull();
     expect(upNextOf({ isEpisode: false, state: 'playing', next: n, upcoming: up })).toBeNull();
     expect(upNextOf({ isEpisode: true, state: 'reconnect', next: n, upcoming: up })).toBeNull();
+  });
+});
+
+describe('remote screen: episode code', () => {
+  it('one format through i18n; the name alone without numbers', () => {
+    expect(episodeCodeLine({ name: 'Wrenfield Pier', parentIndexNumber: 1, indexNumber: 5 }, tr)).toBe('S1:F5 \u00b7 Wrenfield Pier');
+    expect(episodeCodeLine({ name: 'Wrenfield Pier' }, tr)).toBe('Wrenfield Pier');
   });
 });

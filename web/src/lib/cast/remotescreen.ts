@@ -119,3 +119,8 @@ export function upNextLine(s: Pick<CastSession, 'kind' | 'autoplay' | 'next'>, n
   if (s.kind !== 'airplay' || !byItself) return first;
   return `${first.endsWith('.') ? first : `${first}.`} ${tf('player.castRemote.onUnlock')}`;
 }
+
+/** an episode's code line in the app's language ("S1:F5 · Name", "S1:E5 · Name"); the name alone without numbers */
+export function episodeCodeLine(it: Pick<Item, 'name' | 'parentIndexNumber' | 'indexNumber'>, tf: TFn): string {
+  return it.parentIndexNumber != null && it.indexNumber != null ? tf('player.phone.episodeLine', { s: it.parentIndexNumber, e: it.indexNumber, name: it.name }) : it.name;
+}

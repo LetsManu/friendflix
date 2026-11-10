@@ -148,7 +148,7 @@ test('episode end on the TV while the watch page is open: its next card counts d
   await expect.poll(() => page.getByRole('slider', { name: 'Position auf dem Fernseher' }).evaluate((el) => Number(el.getAttribute('aria-valuemax')) - Number(el.getAttribute('aria-valuenow')))).toBeLessThan(10);
   await sdk.finish();
   const card = page.getByRole('region', { name: 'Als Nächstes' });
-  await expect(card).toContainText(`S1:E2 · ${episodes[1]!.name}`);
+  await expect(card).toContainText(`S1:F2 · ${episodes[1]!.name}`);
   await expect(card).toContainText(/Startet in \d+ s/);
   await expect(page).toHaveURL(new RegExp('/watch/' + episodes[1]!.id), { timeout: 15_000 });
   await expect(page.locator('.castov')).toContainText('Wird auf Wohnzimmer-TV abgespielt');

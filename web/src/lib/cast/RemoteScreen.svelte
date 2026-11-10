@@ -55,7 +55,8 @@
   // ---- what plays ----
   let fetched: Item | undefined;
   $: item = s ? cachedItem(s.itemId) ?? (fetched?.id === s.itemId ? fetched : undefined) : undefined;
-  $: if (s && !cachedItem(s.itemId) && fetched?.id !== s.itemId) void loadItem(s.itemId);
+  let askedFor = ''; // one request per title, also when it fails
+  $: if (s && s.itemId !== askedFor && !cachedItem(s.itemId)) { askedFor = s.itemId; void loadItem(s.itemId); }
   async function loadItem(id: string) {
     try { const r = await api<{ item: Item }>(`/api/items/${id}`); if (get(castSession)?.itemId === id) fetched = r.item; } catch { /* the session's own subtitle */ }
   }
@@ -151,7 +152,8 @@
   const fresh: Memo | null = memo && Date.now() - memo.at < MEMO_MS ? memo : null;
   let kept: { audioTracks: CastTrack[]; subtitles: CastTrack[] } | null = fresh ? { audioTracks: fresh.audioTracks, subtitles: fresh.subtitles } : null;
   $: if (s && (s.audioTracks.length || s.subtitles.length)) kept = { audioTracks: s.audioTracks, subtitles: s.subtitles };
-  $: chipSession = s && !s.audioTracks.length && !s.subtitles.length && kept ? { ...s, ...kept } : s;
+  // the engine clears the tracks on a switch and fills only the subtitles: the old ones show (disabled) only while it connects
+  $: chipSession = s && s.state === 'connecting' && !s.audioTracks.length && !s.subtitles.length && kept ? { ...s, ...kept } : s;
   $: hasChips = chipSession ? chipSession.audioTracks.length > 0 || (!air && chipSession.subtitles.length > 0) : false;
   let everChips = Boolean(kept?.audioTracks.length || kept?.subtitles.length);
   let everEpisode: boolean = Boolean(fresh?.episode);
