@@ -151,6 +151,20 @@ export function toastRise(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode
   };
 }
 
+export const BAR_IN_MS = 240;
+export const BAR_OUT_MS = 180;
+/**
+ * Svelte transition: the cast bar rises 16 px while it fades in (240 ms, outEase) and goes back the same way (180 ms); only
+ * transform and opacity (cast spec §2). Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
+ */
+export function barRise(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
+  const mode = p.mode ?? fxMode();
+  if (mode === 'still') return { duration: 0, delay: 0, easing: linear, css: () => '' };
+  if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
+  const out = p.dir === 'out';
+  return { duration: out ? BAR_OUT_MS : BAR_IN_MS, delay: 0, easing: out ? inEase : outEase, css: (t, u) => `transform:translateY(${Math.round(u * 160) / 10}px);opacity:${Math.min(1, Math.max(0, t))}` };
+}
+
 /** Svelte transition: a sheet's scrim fades (200 ms; the reduced set's 160 ms; instant when still) */
 export function scrimFade(_node: Element, p: { mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number) => string } {
   const mode = p.mode ?? fxMode();

@@ -8,6 +8,9 @@ import type { Page } from '@playwright/test';
 
 /** Shared setup of the cast remote screen specs (desktop + mobile): the watch page as the TV's remote. */
 
+/** FriendFlix's own receiver app id of the specs that re-adopt a cast after a reload */
+export const RECEIVER = 'ABCD1234';
+
 export const SHOTS = '/tmp/claude-0/-home-user/65bf3c9c-0207-5176-a7cc-9841c5a17402/scratchpad/cast-shots/remote';
 
 /**
@@ -43,14 +46,14 @@ const infoWithTracks = (page: Page) => page.route('**/api/playback/info', (r) =>
 /**
  * Chromecast: episode 1 cast from its watch page, which stays open as the remote. `queue`: the receiver accepts a queued next
  * episode (the engine queues episode 2 at the first position update); `tracks`: the title has two audio tracks and a subtitle.
- * Returns the SDK fake plus `sessions` (POST /api/cast/session bodies) and `deleted` (revoked castIds).
+ * `survive`: the TV keeps its media over a reload (own receiver app, see `fakeCastSdk`). Returns the SDK fake plus `sessions` (POST /api/cast/session bodies) and `deleted` (revoked castIds).
  */
-export async function chromecastRemote(page: Page, o: { fail?: () => boolean; queue?: boolean; tracks?: boolean } = {}) {
+export async function chromecastRemote(page: Page, o: { fail?: () => boolean; queue?: boolean; tracks?: boolean; survive?: 'join' | 'ask' } = {}) {
   await mockPlayer(page);
   if (o.tracks) await infoWithTracks(page);
   if (o.queue) await nextAfterFirst(page); // before the cast: the engine asks for the queue at the first position update
-  await castOn(page);
-  const sdk = await fakeCastSdk(page, { queue: o.queue });
+  await castOn(page, true, o.survive ? RECEIVER : undefined);
+  const sdk = await fakeCastSdk(page, { queue: o.queue, survive: o.survive });
   const tokens = await castSessions(page, o);
   await page.goto('/');
   await page.waitForLoadState('networkidle');
@@ -104,4 +107,32 @@ export async function rowFits(page: Page) {
   expect(new Set(r.tops).size).toBe(1);
   expect(r.left).toBeGreaterThanOrEqual(16);
   expect(r.right).toBeLessThanOrEqual(r.vw - 16);
+}
+
+export const BAR_SHOTS = '/tmp/claude-0/-home-user/65bf3c9c-0207-5176-a7cc-9841c5a17402/scratchpad/cast-shots/bar';
+export type BarState = 'playing' | 'connecting' | 'reconnect' | 'detached';
+/**
+ * Dunmoor S1 E4 on Wohnzimmer-TV, the remote closed, the bar on `/` in the given state (for the screenshots: call `dunmoor()` and
+ * allow the 429 console error): connecting = the next episode's token is on its way, reconnect = that token request failed,
+ * detached = the page reloaded and the browser did not join the TV again.
+ */
+export async function barIn(page: Page, state: BarState) {
+  let fail = false;
+  await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} })); // the home page's hero (full motion): no clip
+  await chromecastRemote(page, { queue: state === 'playing', fail: () => fail, survive: state === 'detached' ? 'ask' : undefined });
+  if (state === 'connecting') await page.route('**/api/cast/session', async (r) => { await new Promise((ok) => setTimeout(ok, 60_000)); await r.fallback(); });
+  if (state === 'reconnect') fail = true;
+  if (state === 'connecting' || state === 'reconnect') await page.getByRole('button', { name: 'Nächste Folge', exact: true }).click();
+  await page.getByRole('button', { name: 'Fernbedienung schließen' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  const bar = page.getByRole('region', { name: 'Jetzt auf dem Fernseher' });
+  await expect(bar).toBeVisible();
+  if (state === 'detached') {
+    await page.reload();
+    await expect(bar).toContainText('Verbindung verloren', { timeout: 9000 });
+  }
+  if (state === 'connecting') await expect(bar).toContainText('Verbinde mit Wohnzimmer-TV');
+  if (state === 'reconnect') await expect(bar).toContainText('Verbindung verloren');
+  await page.waitForTimeout(700); // risen in, the progress line settled
+  return bar;
 }

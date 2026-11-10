@@ -66,23 +66,39 @@ export async function castSessions(page: Page, o: { fail?: () => boolean; castId
       ...(o.report ? { report: o.report } : {}),
     } });
   });
-  await page.route('**/api/cast/session/*', (r) => { deleted.push(r.request().url().split('/').pop()!); return r.fulfill({ json: { ok: true } }); });
+  // GET = the token-free lookup of the live session (a reloaded page re-adopts the TV's media with it); DELETE = a revoke
+  await page.route('**/api/cast/session/*', (r) => {
+    if (r.request().method() === 'GET') {
+      const b = sessions.at(-1);
+      if (!b) return r.fulfill({ status: 404, json: { error: 'not_found' } });
+      return r.fulfill({ json: {
+        castId: o.castId ?? 'c'.repeat(32), itemId: b.itemId, mediaSourceId: 'ms', playSessionId: 'air-ps', expiresAt: Date.now() + 3 * 3600_000, via: 'chromecast', next: false, reported: true,
+        title: 'Film', subtitles: [], pins: 1, refused: { count: 0, families: [] },
+      } });
+    }
+    deleted.push(r.request().url().split('/').pop()!);
+    return r.fulfill({ json: { ok: true } });
+  });
   return { sessions, deleted };
 }
 export const picks = (page: Page) => page.evaluate(() => (window as unknown as { __picks: number }).__picks);
 export const srcAtPick = (page: Page) => page.evaluate(() => (window as unknown as { __srcAtPick: string }).__srcAtPick);
 
 /** runs in the page as the Cast sender SDK (same shape as `fakeSdk()` in web/src/lib/cast.test.ts) */
-function castSdkScript(opts: { queue?: boolean } = {}) {
+function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask' } = {}) {
   type Rec = { args: unknown[] } & Record<string, unknown>;
   const w = window as unknown as Record<string, unknown> & { __castLoads: unknown[]; __castCalls: string[]; __castOptions: unknown; __castMsgs: unknown[]; __castLoadFails?: boolean; __onGCastApiAvailable?: (ok: boolean) => void; chrome?: Record<string, unknown> };
   w.__castLoads = []; w.__castCalls = []; w.__castOptions = null; w.__castMsgs = [];
   const ctxListeners = new Map<string, (e: { castState?: string; sessionState?: string }) => void>();
   let anyChange: () => void = () => undefined;
-  const player = { isConnected: false, isPaused: true, isMediaLoaded: false, currentTime: 0, duration: 0, volumeLevel: 1, isMuted: false, playerState: null as string | null, mediaInfo: null };
+  const player = { isConnected: false, isPaused: true, isMediaLoaded: false, currentTime: 0, duration: 0, volumeLevel: 1, isMuted: false, playerState: null as string | null, mediaInfo: null as { contentId: string; customData: unknown } | null };
   const change = (p: Partial<typeof player>) => { Object.assign(player, p); anyChange(); };
+  // `survive`: the receiver keeps its media when the page reloads (kept in localStorage); `join` = the SDK auto-joins it, `ask` = only requestSession() does
+  const RX = '__fakeReceiver';
+  type Rx = { contentId: string; customData: unknown; currentTime: number; duration: number; paused: boolean };
+  const saveRx = () => { if (opts.survive && player.isMediaLoaded && player.mediaInfo) { const m = player.mediaInfo; localStorage.setItem(RX, JSON.stringify({ contentId: m.contentId, customData: m.customData ?? null, currentTime: player.currentTime, duration: player.duration, paused: player.isPaused })); } };
   // the receiver plays: its clock advances (4 updates per second, like the SDK's ANY_CHANGE stream)
-  setInterval(() => { if (player.isConnected && player.isMediaLoaded && !player.isPaused) change({ currentTime: player.currentTime + 0.25 }); }, 250);
+  setInterval(() => { if (player.isConnected && player.isMediaLoaded && !player.isPaused) { change({ currentTime: player.currentTime + 0.25 }); saveRx(); } }, 250);
   const controller = {
     addEventListener: (_t: string, fn: () => void) => { anyChange = fn; },
     playOrPause() { w.__castCalls.push('playOrPause'); change({ isPaused: !player.isPaused, playerState: player.isPaused ? 'PLAYING' : 'PAUSED' }); },
@@ -119,7 +135,10 @@ function castSdkScript(opts: { queue?: boolean } = {}) {
       const media = req.args[0] as Rec;
       w.__castLoads.push({ contentId: media.args[0], contentType: media.args[1], currentTime: req.currentTime, activeTrackIds: req.activeTrackIds ?? [], customData: media.customData ?? null });
       if (w.__castLoadFails) throw new Error('LOAD_FAILED'); // the receiver cannot play it
-      setTimeout(() => change({ isMediaLoaded: true, isPaused: false, playerState: 'PLAYING', currentTime: Number(req.currentTime) || 0, duration: Number(media.duration) || 600 }), 0);
+      setTimeout(() => {
+        change({ isMediaLoaded: true, isPaused: false, playerState: 'PLAYING', currentTime: Number(req.currentTime) || 0, duration: Number(media.duration) || 600, ...(opts.survive ? { mediaInfo: { contentId: String(media.args[0]), customData: media.customData ?? null } } : {}) });
+        saveRx();
+      }, 0);
       return undefined;
     },
     getMediaSession: () => mediaSession,
@@ -132,7 +151,12 @@ function castSdkScript(opts: { queue?: boolean } = {}) {
     current: null as typeof session | null,
     setOptions(o: unknown) { w.__castOptions = o; },
     addEventListener: (t: string, fn: (e: { castState?: string; sessionState?: string }) => void) => { ctxListeners.set(t, fn); },
-    async requestSession(): Promise<string | undefined> { w.__castCalls.push('requestSession'); return 'cancel'; },
+    async requestSession(): Promise<string | undefined> {
+      w.__castCalls.push('requestSession');
+      if (opts.survive !== 'ask' || !stored()) return 'cancel';
+      join();
+      return undefined;
+    },
     getCurrentSession() { return context.current; },
     endCurrentSession() { w.__castCalls.push('endCurrentSession'); setTimeout(end, 0); },
   };
@@ -163,7 +187,19 @@ function castSdkScript(opts: { queue?: boolean } = {}) {
     fire('caststatechanged', { castState: 'CONNECTED' });
     fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
   }
+  const stored = (): Rx | null => { try { return JSON.parse(localStorage.getItem(RX) ?? 'null') as Rx | null; } catch { return null; } };
+  /** the page joins the TV that still plays what it stored */
+  function join() {
+    const rx = stored();
+    if (!rx) return;
+    context.current = session;
+    Object.assign(player, { isConnected: true, isMediaLoaded: true, isPaused: rx.paused, playerState: rx.paused ? 'PAUSED' : 'PLAYING', currentTime: rx.currentTime, duration: rx.duration, mediaInfo: { contentId: rx.contentId, customData: rx.customData } });
+    fire('caststatechanged', { castState: 'CONNECTED' });
+    fire('sessionstatechanged', { sessionState: 'SESSION_RESUMED' });
+    anyChange();
+  }
   function end() {
+    localStorage.removeItem(RX);
     context.current = null;
     Object.assign(player, { isConnected: false, isMediaLoaded: false, isPaused: true, playerState: null });
     fire('caststatechanged', { castState: 'NOT_CONNECTED' });
@@ -178,6 +214,7 @@ function castSdkScript(opts: { queue?: boolean } = {}) {
   w.__castFake = { start, end, finish, nearEnd };
   w.__onGCastApiAvailable?.(true);
   fire('caststatechanged', { castState: 'NOT_CONNECTED' }); // a receiver is around
+  if (opts.survive === 'join') join();
 }
 
 /**
@@ -185,11 +222,12 @@ function castSdkScript(opts: { queue?: boolean } = {}) {
  * `calls()` = controller / context calls (`playOrPause`, `seek:<sec>`, `endCurrentSession`, ...); `start()` = the user picked
  * `Wohnzimmer-TV`, `end()` = the session ended, `nearEnd()` = the receiver jumps to the last seconds, `finish()` = the media
  * finished on the receiver (the end only counts as finished after `nearEnd()`); `failLoads()` = every
- * later `loadMedia` rejects (the receiver cannot play the title). `queue: true`: the receiver accepts queued titles
+ * later `loadMedia` rejects (the receiver cannot play the title). `survive`: the TV keeps its media over a page reload;
+ * `'join'` = the SDK auto-joins it (SESSION_RESUMED), `'ask'` = nothing joins until `requestSession()` (the Reconnect button). `queue: true`: the receiver accepts queued titles
  * (`queueInsert`, `queueRemove:<id>`, `queueNext` show up in `calls()`); without it the engine's queue request is refused.
  */
-export async function fakeCastSdk(page: Page, o: { queue?: boolean } = {}) {
-  await page.route('https://www.gstatic.com/cv/js/sender/**', (r) => r.fulfill({ contentType: 'text/javascript', body: `(${castSdkScript.toString()})(${JSON.stringify({ queue: Boolean(o.queue) })});` }));
+export async function fakeCastSdk(page: Page, o: { queue?: boolean; survive?: 'join' | 'ask' } = {}) {
+  await page.route('https://www.gstatic.com/cv/js/sender/**', (r) => r.fulfill({ contentType: 'text/javascript', body: `(${castSdkScript.toString()})(${JSON.stringify({ queue: Boolean(o.queue), ...(o.survive ? { survive: o.survive } : {}) })});` }));
   type Fake = { start(): void; end(): void; finish(): void; nearEnd(): void };
   const ready = () => page.waitForFunction(() => Boolean((window as unknown as { __castFake?: unknown }).__castFake));
   const run = async (fn: keyof Fake) => {

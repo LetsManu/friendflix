@@ -11,7 +11,7 @@ import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { countable } from './glass';
-import { AA, AMB_PEAK, contrast, DARK_BASE, frostComposite, SCRIM_LIGHT, SCRIM_RGB, SEL_A, textContrast, type RGB } from '#lib/glass/tone';
+import { AA, AMB_PEAK, contrast, DARK_BASE, frostComposite, SCRIM_LIGHT, SCRIM_RGB, SCRIM_SAFE, SEL_A, textContrast, type RGB } from '#lib/glass/tone';
 
 describe('countable', () => {
   it('takes finite numbers', () => {
@@ -212,6 +212,24 @@ describe('admin glass: text contrast (B′)', () => {
     expect(contrast(hex('#ff4f6d'), AMB_PEAK)).toBeLessThan(AA);
     // the recommendation card's "change" link and the cast bar's hint use the coral text token, not the brand coral
     expect(read('./RecoCard.svelte')).toMatch(/\.change \{[^}]*color: var\(--acc-text\)/);
-    expect(read('../cast/CastBar.svelte')).toMatch(/\.t2\.hint \{ color: var\(--acc-text\); \}/);
+  });
+});
+
+describe('cast bar: text on its glass (cast spec §2)', () => {
+  const bar = read('../cast/CastBar.svelte');
+  /** the bar is `.frost-safe` over whatever scrolls under it: the safe scrim over the brightest ambient, and the solid fallback */
+  const SURFACES = [frostComposite(AMB_PEAK, SCRIM_SAFE), frostComposite(DARK_BASE, SCRIM_SAFE), SOLID];
+  it('uses the safe glass and the three line colours stated here', () => {
+    expect(bar).toMatch(/class="box frost frost-safe frost-panel"/);
+    expect(bar).toContain('.t2 { font-size: .85rem; color: rgba(255, 255, 255, .72); }');
+    expect(bar).toContain('.t2.warn { color: #f7b344; }');
+    expect(bar).toContain('.t2.error { color: #ffa8a8; }');
+  });
+  it('white .72, amber and error text keep 4.5:1 on every surface', () => {
+    for (const bg of SURFACES) {
+      expect(textContrast(bg, 0.72)).toBeGreaterThanOrEqual(AA);
+      expect(contrast(hex('#f7b344'), bg)).toBeGreaterThanOrEqual(AA);
+      expect(contrast(hex('#ffa8a8'), bg)).toBeGreaterThanOrEqual(AA);
+    }
   });
 });

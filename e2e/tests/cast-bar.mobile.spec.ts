@@ -5,9 +5,10 @@ import { available, castOn, castSessions, fakeCastSdk, mockHls, picks, stubAirPl
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { noHorizontalOverflow } from '../helpers.js';
 import { expect, test } from '../fixtures.js';
+import { BAR_SHOTS, barIn, dunmoor } from './cast-remote-setup.js';
 import type { Page } from '@playwright/test';
 
-/** The cast bar on the phone: docked on the tab bar, 48 px targets, the offline banner and toasts above it, AirPlay reconnect. */
+/** The cast bar on the phone: docked on the tab bar, 44 px targets, the offline banner and toasts above it, AirPlay reconnect. */
 
 /** a client-side navigation by a link click (a full page load would fire pagehide and end the cast) */
 async function clientNav(page: Page, path: string) {
@@ -56,7 +57,8 @@ test('airplay route lost -> reconnect text, one tap opens the picker', async ({ 
     document.querySelector('video[data-cast-engine]')!.dispatchEvent(new Event('webkitcurrentplaybacktargetiswirelesschanged'));
   });
   await page.waitForTimeout(4500);
-  const hint = bar.getByRole('button', { name: /Verbindung verloren – tippen, um am Fernseher fortzusetzen/ });
+  await expect(bar).toContainText('Verbindung verloren');
+  const hint = bar.getByRole('button', { name: /^(Neu verbinden|Fernseher auswählen)$/ });
   await expect(hint).toBeVisible();
   const before = await picks(page);
   await hint.tap();
@@ -64,15 +66,40 @@ test('airplay route lost -> reconnect text, one tap opens the picker', async ({ 
   await expect(page).toHaveURL(/\/$/); // a reconnect, not the remote
 });
 
-test('bar sits directly above the tab bar', async ({ page, api: _api }) => {
+test('phone bar sits 8 px above the tab bar, 14 px inset', async ({ page, api: _api }) => {
   await castAndLeave(page);
-  const bar = await castBar(page).boundingBox();
-  const tabbar = await page.locator('nav.tabbar').boundingBox();
-  expect(bar).not.toBeNull();
-  expect(tabbar).not.toBeNull();
-  expect(Math.abs(bar!.y + bar!.height - tabbar!.y)).toBeLessThanOrEqual(1);
-  expect(bar!.height).toBe(64);
-  expect(bar!.width).toBe(390);
+  await page.waitForTimeout(400); // risen in
+  const bar = (await castBar(page).boundingBox())!;
+  const tabbar = (await page.locator('nav.tabbar').boundingBox())!;
+  expect(Math.abs(tabbar.y - (bar.y + bar.height) - 8)).toBeLessThanOrEqual(1);
+  expect(Math.abs(bar.x - 14)).toBeLessThanOrEqual(1);
+  expect(Math.abs(bar.x + bar.width - (page.viewportSize()!.width - 14))).toBeLessThanOrEqual(1);
+  expect(bar.height).toBe(68);
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--castbar-h').trim())).toBe('76px'); // 68 + 8
+  expect(await noHorizontalOverflow(page)).toBe(true);
+});
+
+test('header shows the casting indicator', async ({ page, api: _api }) => {
+  await mockPlayer(page);
+  await castOn(page);
+  const sdk = await fakeCastSdk(page);
+  await castSessions(page);
+  await page.goto('/');
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByRole('button', { name: /^Überträgt auf/ })).toHaveCount(0);
+  await clientNav(page, '/watch/' + MOVIE.id);
+  await videoReady(page);
+  await sdk.start();
+  await expect(page.locator('.castov')).toContainText('Wird auf Wohnzimmer-TV abgespielt');
+  await clientNav(page, '/');
+  const ind = page.getByRole('button', { name: 'Überträgt auf Wohnzimmer-TV' });
+  await expect(ind).toBeVisible();
+  const r = (await ind.boundingBox())!;
+  expect(r.width).toBeGreaterThanOrEqual(44);
+  expect(r.height).toBeGreaterThanOrEqual(44);
+  expect(await ind.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)'); // an icon on a transparent button
+  await ind.click();
+  await expect(page).toHaveURL(new RegExp('/watch/' + MOVIE.id));
 });
 
 test.describe('banner and toasts', () => {
@@ -111,13 +138,26 @@ test('no horizontal overflow', async ({ page, api: _api }) => {
   expect(await noHorizontalOverflow(page)).toBe(true);
 });
 
-test('buttons are at least 48 px', async ({ page, api: _api }) => {
+test('buttons are at least 44 px', async ({ page, api: _api }) => {
   await castAndLeave(page);
   const buttons = castBar(page).getByRole('button');
   await expect(buttons).toHaveCount(3);
   for (const b of await buttons.all()) {
     const r = (await b.boundingBox())!;
-    expect(r.width).toBeGreaterThanOrEqual(48);
-    expect(r.height).toBeGreaterThanOrEqual(48);
+    expect(r.width).toBeGreaterThanOrEqual(44);
+    expect(r.height).toBeGreaterThanOrEqual(44);
+  }
+});
+
+test.describe('screenshots', () => {
+  test.skip(!process.env.CAST_SHOTS, 'only with CAST_SHOTS=1');
+  test.use({ deviceScaleFactor: 1, reducedMotion: 'no-preference', allowedConsole: /status of 429/ });
+  dunmoor();
+  for (const state of ['playing', 'connecting', 'reconnect', 'detached'] as const) {
+    test(`phone: ${state}`, async ({ page, api: _api }) => {
+      test.setTimeout(45_000);
+      await barIn(page, state);
+      await page.screenshot({ path: `${BAR_SHOTS}/phone-${state}.png` });
+    });
   }
 });

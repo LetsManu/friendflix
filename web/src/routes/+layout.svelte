@@ -12,7 +12,7 @@
   import Logo from '#lib/Logo.svelte';
   import Footer from '#lib/Footer.svelte';
   import CastBar from '#lib/cast/CastBar.svelte';
-  import { barVisible, liveCast } from '#lib/cast/bar';
+  import { barVisible, CASTBAR_H, liveCast } from '#lib/cast/bar';
   import { castEngine, castSession } from '#lib/cast/engine';
   import { castCapableBrowser, initCast, onCastEvent } from '#lib/cast';
   import { readHint as readCastHint } from '#lib/cast/resume';
@@ -119,12 +119,21 @@
   /** kids profile: kids header, no footer links / tab bar / bell; the last /api/me answer decides until the fresh one arrives */
   $: kidsUi = me ? Boolean(me.kids) : Boolean(bootHint?.kids);
   $: if (typeof document !== 'undefined') document.documentElement.classList.toggle('kids', kidsUi);
-  $: castBarOn = pageReady && !publicPage && barVisible({ path, tv, session: $castSession }); // where <CastBar> renders
+  $: castBarOn = pageReady && !publicPage && barVisible({ path, tv, session: $castSession }); // the bar shows (it rises out when false)
   /**
    * `--castbar-h` on <html> while the bar shows: the page content gets room for it at its end (main on phones, the page below
-   * the footer on desktop); the offline banner and the toasts move up by it
+   * the footer on desktop); the offline banner and the toasts move up by it. The room is set before the bar rises in and kept
+   * until it has risen out (`gone`), so nothing jumps either way.
    */
-  $: if (typeof document !== 'undefined') { const st = document.documentElement.style; if (castBarOn) st.setProperty('--castbar-h', '64px'); else st.removeProperty('--castbar-h'); }
+  let barHeld = false;
+  let barHeldTimer: ReturnType<typeof setTimeout> | undefined;
+  $: if (castBarOn) { barHeld = true; clearTimeout(barHeldTimer); barHeldTimer = undefined; }
+  else if (barHeld && barHeldTimer === undefined) barHeldTimer = setTimeout(() => { barHeld = false; barHeldTimer = undefined; }, 600); // the bar's `gone` normally ends it sooner
+  $: if (!pageReady || publicPage) barHeld = false; // no bar here to rise out
+  $: if (typeof document !== 'undefined') { const st = document.documentElement.style; if (castBarOn || barHeld) st.setProperty('--castbar-h', `${$mobile ? CASTBAR_H.phone : CASTBAR_H.desktop}px`); else st.removeProperty('--castbar-h'); }
+  /** phone header: the casting indicator (a cast that plays or is on its way; not a failed one) */
+  $: castHeader = $mobile && !tv && !kidsUi && liveCast($castSession) && $castSession?.state !== 'failed';
+  function openCastRemote() { const c = get(castSession); if (c) void goto('/watch/' + c.itemId); }
   $: kidsMode.set(kidsUi); // shared flag for components (no social UI on kids profiles)
   // ---- phone: chip bar + "Kategorien" overlay (the desktop dropdown lives in DeskBar) ----
   let catOpen = false, catGenres: string[] | null = null, catKind: Kind = 'movies', catBtn: HTMLElement | null = null;
@@ -771,7 +780,7 @@
         <span class="mbg" aria-hidden="true"></span>
         <div class="mrow">
           <a class="mlogo" href="/" aria-label={$t('shell.nav.homeLink')} aria-current={path === '/' ? 'page' : undefined}><Logo size={28} label="" /><span class="wm" aria-hidden="true">FriendFlix</span></a>
-          <span class="sp"></span>
+          <span class="sp">{#if castHeader && $castSession}<button type="button" class="icon-btn castind" aria-label={$t('player.castBar.castingTo', { device: $castSession.device })} on:click={openCastRemote}><Icon name="cast" size={24} /></button>{/if}</span>
           <a class="icon-btn" href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>
           <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
         </div>
@@ -810,7 +819,7 @@
     {#if $mobile}<MobilePreviewSheet {canDownload} />{/if}
   {/if}
 
-  {#if castBarOn}<CastBar tabbar={!kidsUi && !profilesPage} />{/if}
+  <CastBar show={castBarOn} phone={$mobile} tabbar={!kidsUi && !profilesPage} on:gone={() => { barHeld = false; clearTimeout(barHeldTimer); barHeldTimer = undefined; }} />
   {#if !online}<div class="offbar" class:notab={kidsUi || profilesPage} role="status">{$t('shell.offline.bar')} <a href="/offline" data-sveltekit-reload>{$t('shell.offline.toDownloads')}</a></div>{/if}
   {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:calc(5rem + var(--safe-top));left:50%;transform:translateX(-50%)"><b>{$t('shell.tvReplaced.text')}</b> <button on:click={() => location.reload()}>{$t('shell.tvReplaced.reconnect')}</button></div>{/if}
   {#if modalId && Modal}<svelte:component this={Modal} id={modalId} />{/if}
@@ -873,7 +882,8 @@
   .nav::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--bg); opacity: 0; pointer-events: none; transition: opacity var(--t-med); }
   :global(html.m-still) .nav::before { transition: none; }
   .nav.solid::before { opacity: 1; }
-  .sp { flex: 1; }
+  .sp { flex: 1; display: flex; justify-content: flex-end; min-width: 0; }
+  .nav.m .castind { color: var(--acc-light); display: inline-flex; align-items: center; justify-content: center; flex: none; }
   .dot { position: absolute; top: 4px; right: 2px; background: var(--acc-fill); color: #fff; font-size: .65rem; min-width: 1.1rem; height: 1.1rem; border-radius: 99px; display: grid; place-items: center; font-weight: 700; }
   .avatar { width: auto; min-height: 44px; height: 44px; padding: 0 .1rem; background: transparent; gap: .45rem; border-radius: 4px; }
   .avatar:hover:not(:disabled) { background: transparent; }
@@ -908,7 +918,7 @@
     main { padding-bottom: calc(70px + var(--castbar-h) + min(var(--castbar-h), var(--safe-bottom))); }
     :global(html:not(.kids)) main { padding-bottom: calc(var(--tabbar-h) + 1rem + var(--safe-bottom) + var(--castbar-h)); }
   }
-  :global(html) { --castbar-h: 0px; } /* 64px while the cast bar shows (set on <html> above) */
+  :global(html) { --castbar-h: 0px; } /* 92px (phone 76px) while the cast bar shows (set on <html> above) */
   @media (min-width: 721px) { :global(body) { padding-bottom: var(--castbar-h); } }
 
   /* ---- phone header: transparent over the hero, glass once scrolled (SOLID_AFTER); chip bar below tucks while scrolling down ---- */

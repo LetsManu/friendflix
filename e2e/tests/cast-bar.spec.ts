@@ -5,6 +5,7 @@ import { PROFILES } from '../mocks/api.js';
 import { available, castOn, castSessions, fakeCastSdk, mockHls, stubAirPlay } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
+import { BAR_SHOTS, barIn, dunmoor } from './cast-remote-setup.js';
 import type { Page } from '@playwright/test';
 
 /** The cast bar: shown on every page except /watch/*, /party/* and TV mode while a title plays on a TV (desktop here, phone in cast-bar.mobile). */
@@ -78,11 +79,11 @@ test.describe('token failure', () => {
     await leaveWatch(page);
     release();
     const bar = castBar(page);
-    await expect(bar).toContainText('Verbindung verloren – tippen, um am Fernseher fortzusetzen');
+    await expect(bar).toContainText('Verbindung verloren');
     await expect.poll(() => sessions.length).toBe(2);
-    await expect(bar.getByRole('button', { name: /^(Pause|Abspielen)$/ })).toHaveCount(0); // the whole bar reconnects
+    await expect(bar.getByRole('button', { name: /^(Pause|Abspielen)$/ })).toHaveCount(0); // nothing to pause: Neu verbinden and Stop
     fail = false;
-    await bar.getByRole('button', { name: /Verbindung verloren/ }).click();
+    await bar.getByRole('button', { name: 'Neu verbinden' }).click();
     await expect(page).toHaveURL(/\/$/); // a reconnect, not the remote
     await expect.poll(() => sessions.length).toBe(3);
     await page.waitForTimeout(400);
@@ -95,13 +96,13 @@ test.describe('token failure', () => {
 test('switching episodes of one series changes the visible bar text', async ({ page, api: _api }) => {
   await castAndLeave(page, { id: episodes[0]!.id });
   const bar = castBar(page);
-  await expect(bar).toContainText(episodes[0]!.name);
+  await expect(bar).toContainText('S1:F1'); // line 1: the series and the episode's code
   await clientNav(page, '/watch/' + episodes[1]!.id);
   await expect(page).toHaveURL(/\/watch\//);
   await expect(page.locator('.castov')).toBeVisible();
   await leaveWatch(page);
-  await expect(bar).toContainText(episodes[1]!.name);
-  await expect(bar).not.toContainText(episodes[0]!.name);
+  await expect(bar).toContainText('S1:F2');
+  await expect(bar).not.toContainText('S1:F1');
 });
 
 test('episode end on the TV shows "Als Nächstes" and switches after the countdown', async ({ page, api: _api }) => {
@@ -109,7 +110,7 @@ test('episode end on the TV shows "Als Nächstes" and switches after the countdo
   const { sdk, sessions } = await castAndLeave(page, { id: episodes[0]!.id });
   await nextAfterFirst(page);
   const bar = castBar(page);
-  await expect(bar).toContainText(episodes[0]!.name);
+  await expect(bar).toContainText('S1:F1');
   await sdk.nearEnd();
   await expect(bar.getByRole('progressbar')).toHaveAttribute('aria-valuenow', /^(99|100)$/); // the engine mirrors the receiver's position
   await sdk.finish();
@@ -219,7 +220,7 @@ test('bar shows title, device and progress', async ({ page, api: _api }) => {
   await castAndLeave(page);
   const bar = castBar(page);
   await expect(bar).toContainText(MOVIE.name);
-  await expect(bar).toContainText('auf Wohnzimmer-TV');
+  await expect(bar).toContainText('Wohnzimmer-TV · noch');
   const progress = bar.getByRole('progressbar', { name: 'Fortschritt' });
   await expect(progress).toHaveAttribute('aria-valuemin', '0');
   await expect(progress).toHaveAttribute('aria-valuemax', '100');
@@ -229,13 +230,13 @@ test('bar shows title, device and progress', async ({ page, api: _api }) => {
 test('stop asks first and ends the session', async ({ page, api: _api }) => {
   const { sdk, deleted } = await castAndLeave(page);
   const bar = castBar(page);
-  await bar.getByRole('button', { name: 'Wiedergabe auf Wohnzimmer-TV beenden', exact: true }).click();
+  await bar.getByRole('button', { name: 'Übertragung beenden', exact: true }).click();
   const dlg = page.getByRole('alertdialog', { name: 'Wiedergabe auf Wohnzimmer-TV beenden?' });
   await expect(dlg).toBeVisible();
   await dlg.getByRole('button', { name: 'Abbrechen' }).click();
   await expect(bar).toBeVisible();
   expect(deleted).toEqual([]);
-  await bar.getByRole('button', { name: 'Wiedergabe auf Wohnzimmer-TV beenden', exact: true }).click();
+  await bar.getByRole('button', { name: 'Übertragung beenden', exact: true }).click();
   await dlg.getByRole('button', { name: 'Wiedergabe auf Wohnzimmer-TV beenden', exact: true }).click();
   await expect(bar).toHaveCount(0);
   await expect.poll(() => deleted).toEqual(['c'.repeat(32)]);
@@ -245,13 +246,13 @@ test('stop asks first and ends the session', async ({ page, api: _api }) => {
 test('buttons have names', async ({ page, api: _api }) => {
   await castAndLeave(page);
   const bar = castBar(page);
-  for (const name of ['Pause', 'Wiedergabe auf Wohnzimmer-TV beenden', 'Fernbedienung öffnen']) await expect(bar.getByRole('button', { name, exact: true })).toBeVisible();
+  for (const name of ['Pause', 'Übertragung beenden', 'Fernbedienung öffnen']) await expect(bar.getByRole('button', { name, exact: true })).toBeVisible();
   // keyboard: remote, play / pause, stop in DOM order
   await bar.getByRole('button', { name: 'Fernbedienung öffnen' }).focus();
   await page.keyboard.press('Tab');
   await expect(bar.getByRole('button', { name: 'Pause', exact: true })).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(bar.getByRole('button', { name: 'Wiedergabe auf Wohnzimmer-TV beenden', exact: true })).toBeFocused();
+  await expect(bar.getByRole('button', { name: 'Übertragung beenden', exact: true })).toBeFocused();
 });
 
 test('no bar in TV mode', async ({ page, api: _api }) => {
@@ -309,13 +310,13 @@ test.describe('receiver failure', () => {
 test('the remote button names its action and is described by the title and line', async ({ page, api: _api }) => {
   await castAndLeave(page);
   const open = castBar(page).getByRole('button', { name: 'Fernbedienung öffnen' });
-  await expect(open).toHaveAccessibleDescription(new RegExp(`${MOVIE.name}.*auf Wohnzimmer-TV`));
+  await expect(open).toHaveAccessibleDescription(new RegExp(`${MOVIE.name}.*Wohnzimmer-TV`));
 });
 
 test('public pages get no room for a bar they do not show', async ({ page, api: _api }) => {
   await castAndLeave(page);
   const h = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--castbar-h').trim());
-  expect(await h()).toBe('64px');
+  expect(await h()).toBe('92px');
   await clientNav(page, '/offline');
   await expect(page).toHaveURL(/\/offline$/);
   await expect(castBar(page)).toHaveCount(0);
@@ -370,7 +371,7 @@ test('keyboard focus stays in the bar when the focused button is replaced', asyn
   await page.keyboard.press('Enter'); // the button gives way to the spinner, then to Pause
   await expect(next).toHaveCount(0);
   await expect(bar.getByRole('button', { name: 'Fernbedienung öffnen' })).toBeFocused();
-  await expect(bar).toContainText(episodes[1]!.name);
+  await expect(bar).toContainText('S1:F2');
   expect(await bar.evaluate((el) => el.contains(document.activeElement))).toBe(true);
 });
 
@@ -388,4 +389,137 @@ test('the profile PIN overlay covers the cast bar', async ({ page, api: _api }) 
   const b = (await castBar(page).boundingBox())!;
   const onTop = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('.ov') !== null, { x: b.x + b.width / 2, y: b.y + b.height / 2 });
   expect(onTop).toBe(true);
+});
+
+test.describe('with motion', () => {
+  test.use({ reducedMotion: 'no-preference' });
+test('floating bar: centred, 76 px, progress by transform', async ({ page, api: _api }) => {
+  await castAndLeave(page);
+  const bar = castBar(page);
+  await expect(bar).toBeVisible();
+  await page.waitForTimeout(400); // risen in
+  const box = (await bar.boundingBox())!;
+  const vp = page.viewportSize()!;
+  expect(box.height).toBe(76);
+  expect(Math.abs(box.x + box.width / 2 - vp.width / 2)).toBeLessThanOrEqual(2);
+  expect(box.width).toBeLessThanOrEqual(660);
+  expect(Math.round(vp.height - (box.y + box.height))).toBe(16); // 16 px above the bottom edge
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--castbar-h').trim())).toBe('92px'); // 76 + 16: the content ends above it
+  const fill = bar.getByRole('progressbar', { name: 'Fortschritt' }).locator('i');
+  const css = await fill.evaluate((el) => { const c = getComputedStyle(el); return { transform: c.transform, prop: c.transitionProperty, w: el.getBoundingClientRect().width }; });
+  expect(css.transform).toMatch(/^matrix\(/);
+  expect(css.prop).toBe('transform');
+  expect(await bar.evaluate((el) => getComputedStyle(el).backdropFilter)).not.toBe('none'); // glass with full motion
+});
+});
+
+test('content ends above the bar', async ({ page, api: _api }) => {
+  await castAndLeave(page);
+  await expect(castBar(page)).toBeVisible();
+  await lastFocusableAboveBar(page);
+});
+
+/** the switch to another title is held (the bar is `connecting`) until `release()` */
+async function holdSwitch(page: Page) {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  let held = false;
+  await page.route('**/api/cast/session', async (r) => { if (!held) { held = true; await gate; } return r.fallback(); });
+  return release;
+}
+
+test.describe('states', () => {
+  test.use({ allowedConsole: /status of 429/ });
+  test('connecting: spinner, the device, Stop', async ({ page, api: _api }) => {
+    await castAndLeave(page);
+    const release = await holdSwitch(page);
+    await clientNav(page, '/watch/' + MOVIE2.id);
+    await expect(page.locator('.castov')).toBeVisible();
+    await leaveWatch(page);
+    const bar = castBar(page);
+    await expect(bar).toContainText('Verbinde mit Wohnzimmer-TV …');
+    await expect(bar).toHaveAttribute('aria-busy', 'true');
+    await expect(bar.locator('.spin')).toBeVisible();
+    await expect(bar.getByRole('button')).toHaveCount(2); // the remote and Stop
+    await expect(bar.getByRole('button', { name: 'Übertragung beenden' })).toBeVisible();
+    release();
+    await expect(bar).toContainText('Wohnzimmer-TV · noch');
+    await expect(bar.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  });
+
+  test('lost: the warning with its icon, Reconnect and Stop', async ({ page, api: _api }) => {
+    let fail = false;
+    await castAndLeave(page, { fail: () => fail });
+    const release = await holdSwitch(page);
+    fail = true;
+    await clientNav(page, '/watch/' + MOVIE2.id);
+    await expect(page.locator('.castov')).toBeVisible();
+    await leaveWatch(page);
+    release();
+    const bar = castBar(page);
+    await expect(bar).toContainText('Verbindung verloren');
+    await expect(bar.locator('.mark')).toBeVisible(); // colour is never alone
+    await expect(bar.getByRole('button', { name: 'Neu verbinden' })).toBeVisible();
+    await expect(bar.getByRole('button', { name: 'Übertragung beenden' })).toBeVisible();
+    await expect(bar.getByRole('button')).toHaveCount(2);
+    await expect(page.getByRole('status').filter({ hasText: 'Verbindung verloren' }).first()).toBeAttached(); // announced politely
+  });
+
+  test('failed: could not play, Play here and Stop', async ({ page, api: _api }) => {
+    const { sdk } = await castAndLeave(page);
+    const release = await holdSwitch(page);
+    await sdk.failLoads();
+    await clientNav(page, '/watch/' + MOVIE2.id);
+    await expect(page.locator('.castov')).toBeVisible();
+    await leaveWatch(page);
+    release();
+    const bar = castBar(page);
+    await expect(bar).toContainText('Konnte auf dem Fernseher nicht abspielen');
+    await expect(bar.locator('.mark.err')).toBeVisible();
+    await expect(bar.getByRole('button', { name: 'Hier abspielen' })).toBeVisible();
+    await expect(bar.getByRole('button', { name: 'Übertragung beenden' })).toBeVisible();
+  });
+});
+
+test('every bar button is at least 44 px and shows a focus ring', async ({ page, api: _api }) => {
+  await castAndLeave(page, { id: episodes[0]!.id });
+  await nextAfterFirst(page);
+  const bar = castBar(page);
+  await expect(bar.getByRole('button', { name: 'Nächste Folge' })).toBeVisible();
+  for (const b of await bar.getByRole('button').all()) {
+    const r = (await b.boundingBox())!;
+    expect(r.height, await b.innerText()).toBeGreaterThanOrEqual(44);
+    expect(r.width).toBeGreaterThanOrEqual(44);
+  }
+  await bar.getByRole('button', { name: 'Pause', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => { const c = getComputedStyle(document.activeElement!); return c.outlineStyle !== 'none' && parseFloat(c.outlineWidth) >= 2; })).toBe(true);
+});
+
+test.describe('reduced motion', () => {
+  test.use({ reducedMotion: 'reduce' });
+  test('no bar animation', async ({ page, api: _api }) => {
+    await castAndLeave(page);
+    const bar = castBar(page);
+    await expect(bar).toBeVisible();
+    const moving = await page.locator('.castbar').evaluate((root) => [root, ...root.querySelectorAll('*')].filter((el) => {
+      const c = getComputedStyle(el);
+      return (c.animationName !== 'none' && parseFloat(c.animationDuration) > 1e-4) || c.transitionDuration.split(',').some((d) => parseFloat(d) > 1e-4); // (the suite's global rule leaves 0.001 ms)
+    }).map((el) => el.className.toString() || el.tagName));
+    expect(moving).toEqual([]);
+    expect(await bar.evaluate((el) => getComputedStyle(el).backdropFilter)).toBe('none'); // a solid panel
+  });
+});
+
+test.describe('screenshots', () => {
+  test.skip(!process.env.CAST_SHOTS, 'only with CAST_SHOTS=1');
+  test.use({ viewport: { width: 1440, height: 900 }, reducedMotion: 'no-preference', allowedConsole: /status of 429/ });
+  dunmoor();
+  for (const state of ['playing', 'connecting', 'reconnect', 'detached'] as const) {
+    test(`desktop: ${state}`, async ({ page, api: _api }) => {
+      test.setTimeout(45_000);
+      await barIn(page, state);
+      await page.screenshot({ path: `${BAR_SHOTS}/desktop-${state}.png` });
+    });
+  }
 });
