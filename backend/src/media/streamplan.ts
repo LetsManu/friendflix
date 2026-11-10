@@ -80,6 +80,12 @@ export function planStream(i: PlanInput): StreamPlan {
   let audio: StreamDelivery['audio'];
   let audioCodec: string;
   let channels: number;
+  /** the stereo branch's decision for the current `audioCodecs`: a source already in a listed codec at stereo and a fitting bitrate is copied */
+  const stereoAudio = () => {
+    const srcCodec = a?.codec.toLowerCase() ?? '';
+    const copy = Boolean(a) && a!.channels <= 2 && audioCodecs.includes(srcCodec) && (a!.bitrate === undefined || a!.bitrate <= audioBitrate);
+    return { audio: (copy ? 'copy' : 'stereo') as StreamDelivery['audio'], audioCodec: copy ? srcCodec : 'aac', channels: copy ? a!.channels : 2 };
+  };
   if (surround && a) {
     audioCodecs = [...surroundList];
     const srcCodec = a.codec.toLowerCase();
@@ -91,9 +97,7 @@ export function planStream(i: PlanInput): StreamPlan {
     audio = copy ? 'copy' : 'surround'; audioCodec = codec; channels = copy ? a.channels : 6;
   } else {
     audioCodecs = hls ? ['aac', ...(!i.cast && hls.audio.includes('mp3') ? ['mp3'] : [])] : i.cast ? ['aac'] : ['aac', 'mp3'];
-    const srcCodec = a?.codec.toLowerCase() ?? '';
-    const copy = Boolean(a) && a!.channels <= 2 && audioCodecs.includes(srcCodec) && (a!.bitrate === undefined || a!.bitrate <= audioBitrate);
-    audio = copy ? 'copy' : 'stereo'; audioCodec = copy ? srcCodec : 'aac'; channels = copy ? a!.channels : 2;
+    ({ audio, audioCodec, channels } = stereoAudio());
   }
 
   // ---- video
@@ -145,6 +149,11 @@ export function planStream(i: PlanInput): StreamPlan {
   else videoWhy = ['h264_off'];
 
   const keepMp4 = surround || (srcCodec === 'hevc' && hevcOk);
+  // MP3 is proven only as plain `audio/mpeg` (MPEG-TS), never inside fMP4: an HEVC-copy / HEVC-encode plan keeps AAC only
+  if (!surround && (keepMp4 || wantsHevcEncode) && audioCodecs.includes('mp3') && hls) {
+    audioCodecs = ['aac'];
+    ({ audio, audioCodec, channels } = stereoAudio());
+  }
   return {
     segment: keepMp4 || wantsHevcEncode ? 'mp4' : 'ts',
     videoCodecs, codecParams, audioCodecs, audioChannels: surround ? 6 : 2, audioBitrate, videoBitrate: budget, wantsHevcEncode, keepMp4,

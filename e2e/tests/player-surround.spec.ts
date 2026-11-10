@@ -14,7 +14,7 @@ interface InfoCall { startTicks?: number; audioChannels?: number; fellBack?: str
 
 const HEVC_SURROUND = { ...{ video: 'copy', videoCodec: 'hevc', audio: 'surround', audioCodec: 'aac', channels: 6, why: ['hevc_device', 'surround_device'] } };
 const SURROUND = { video: 'copy', videoCodec: 'h264', audio: 'surround', audioCodec: 'aac', channels: 6, why: ['surround_device'] };
-const STEREO = { video: 'copy', videoCodec: 'h264', audio: 'stereo', audioCodec: 'aac', channels: 2, why: ['stereo_choice'] };
+const STEREO = { video: 'copy', videoCodec: 'h264', audio: 'stereo', audioCodec: 'aac', channels: 2, why: ['stereo_device'] }; // what the server says to a device that states 2 channels
 const PLAYLIST = ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:2', '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-PLAYLIST-TYPE:VOD', '#EXT-X-MAP:URI="init.mp4"',
   ...HLS_SEGMENTS.flatMap((_, i) => ['#EXTINF:2.000000,', `s${i}.m4s`]), '#EXT-X-ENDLIST', ''].join('\n');
 /** a master playlist with a separate AAC audio rendition next to the VP9 picture, so hls.js has to open an audio source buffer */
@@ -104,6 +104,20 @@ test.describe('player: surround sound switch', () => {
     await expect(sw).toHaveAttribute('aria-checked', 'true');
     await expect.poll(() => calls.length).toBe(3);
     expect(calls[2]!.caps).toMatchObject({ audioChannels: 6 });
+  });
+
+  test('the stored timing names the choice: stereo_choice, not the server\'s stereo_device', async ({ page, api: _api }) => {
+    const calls = await mock(page);
+    await page.goto('/watch/' + MOVIE.id);
+    await playing(page);
+    const sw = (await openMenu(page)).getByRole('switch', { name: /Raumklang/ });
+    await sw.click();
+    await expect.poll(() => calls.length).toBe(2);
+    await expect(sw).toHaveAttribute('aria-checked', 'false');
+    await page.goto('/'); // leaving the player writes the report of the stereo stream
+    await expect.poll(() => page.evaluate(() => (JSON.parse(localStorage.getItem('ff.playTimings') ?? '[]') as Array<{ why?: string[] }>)[0]?.why ?? [])).toContain('stereo_choice');
+    const why = await page.evaluate(() => (JSON.parse(localStorage.getItem('ff.playTimings') ?? '[]') as Array<{ why?: string[] }>)[0]?.why ?? []);
+    expect(why).not.toContain('stereo_device');
   });
 
   test('without the server feature the switch is not offered', async ({ page, api }) => {

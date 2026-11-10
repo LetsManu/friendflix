@@ -164,6 +164,26 @@ describe('planStream: audio', () => {
   });
 });
 
+describe('planStream: mp3 only where the plan stays on TS', () => {
+  const mp3Src: SourceFacts = { ...wrenfield, audio: { codec: 'mp3', channels: 2, bitrate: 128_000 } };
+  it('H.264 copy / convert on TS: mp3 listed and copied', () => {
+    const p = planStream(input({ src: { ...mp3Src, videoCodec: 'h264', profile: 'High' } }));
+    expect([p.segment, p.audioCodecs, p.delivery.audio, p.delivery.audioCodec]).toEqual(['ts', ['aac', 'mp3'], 'copy', 'mp3']);
+  });
+  it('an HEVC copy plan (fMP4): aac only, the mp3 track is converted', () => {
+    const p = planStream(input({ src: mp3Src }));
+    expect([p.segment, p.keepMp4, p.audioCodecs, p.delivery.audio, p.delivery.audioCodec]).toEqual(['mp4', true, ['aac'], 'stereo', 'aac']);
+  });
+  it('an HEVC encode plan (fMP4): aac only', () => {
+    const p = planStream(input({ remote: true, maxBitrate: 8_000_000, src: { ...brindlemarsh, range: 'SDR', profile: 'Main', audio: { codec: 'mp3', channels: 2, bitrate: 128_000 } } }));
+    expect(p.wantsHevcEncode).toBe(true);
+    expect([p.segment, p.audioCodecs, p.delivery.audioCodec]).toEqual(['mp4', ['aac'], 'aac']);
+  });
+  it('no hls block keeps aac,mp3 (byte-identical fallback)', () => {
+    expect(planStream(input({ caps: caps(undefined), src: mp3Src })).audioCodecs).toEqual(['aac', 'mp3']);
+  });
+});
+
 describe('planStream: only the audio does not fit', () => {
   const viewer = (c: ReturnType<typeof caps>, src: SourceFacts, maxBitrate = 20_000_000) => planStream(input({ caps: c, src, maxBitrate }));
   it('Saltwater Almanac S2 E1 Night Market: H.264 + DTS 5.1 on a stereo browser: the video is copied, only the audio is converted to stereo', () => {
