@@ -177,6 +177,7 @@ const login: Translation<typeof de> = {
       add: 'Geçiş anahtarı ekle',
       addClassic: 'Giriş sayfasında ekle',
       note: 'Burada oluşturduğun geçiş anahtarları FriendFlix için geçerlidir.',
+      renew: 'Geçiş anahtarlarını daha önce giriş sayfasında mı oluşturdun? Onlar FriendFlix’te geçmez. Burada bir kez yeni bir geçiş anahtarı ekle.',
     },
     password: {
       title: 'Şifre',

@@ -177,6 +177,7 @@ const login: Translation<typeof de> = {
       add: 'Dodaj klucz dostępu',
       addClassic: 'Dodaj na stronie logowania',
       note: 'Klucze dostępu utworzone tutaj obowiązują w FriendFlix.',
+      renew: 'Klucze dostępu utworzone wcześniej na stronie logowania nie działają w FriendFlix. Dodaj tutaj jednorazowo nowy klucz dostępu.',
     },
     password: {
       title: 'Hasło',

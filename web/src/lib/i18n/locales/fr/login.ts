@@ -177,6 +177,7 @@ const login: Translation<typeof de> = {
       add: 'Ajouter une passkey',
       addClassic: 'Ajouter sur la page de connexion',
       note: 'Les passkeys créées ici valent pour FriendFlix.',
+      renew: 'Tu as créé tes clés d’accès sur la page de connexion ? Elles ne fonctionnent pas dans FriendFlix. Ajoute ici une nouvelle clé une fois.',
     },
     password: {
       title: 'Mot de passe',

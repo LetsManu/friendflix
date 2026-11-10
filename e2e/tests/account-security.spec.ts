@@ -148,6 +148,18 @@ test.describe('security section (/me/account)', () => {
     expect(answerBodies(st)[1]).toEqual({ stage: 'prompt', password: 'new-pw-placeholder-1', password_repeat: 'new-pw-placeholder-2' });
   });
 
+  test('passkeys in-app: "Passkey hinzufügen" stays in FriendFlix (re-auth dialog), and people with passkeys get the one-time renew notice', async ({ page, api }) => {
+    api.security.passkeySetup = 'in-app';
+    api.security.devices.push({ id: '31', type: 'webauthn', name: 'Laptop', lastUsed: null });
+    const st = loginState({ starts: [{ body: password('anna') }] });
+    await open(page, st);
+    await expect(security(page).getByText('Lege hier einmal einen neuen Passkey an.', { exact: false })).toBeVisible();
+    await expect(security(page).getByRole('link', { name: 'Auf der Anmeldeseite hinzufügen' })).toHaveCount(0);
+    await security(page).getByRole('button', { name: 'Passkey hinzufügen' }).click();
+    await expect(dialog(page)).toBeVisible();
+    await expect.poll(() => startBodies(st)).toEqual([{ kind: 'reauth', then: 'setup-webauthn' }]);
+  });
+
   test("passkey add with passkeySetup 'sign-in page' links to the sign-in page (same tab)", async ({ page, api }) => {
     api.security.passkeySetup = 'sign-in page';
     await open(page, loginState());
@@ -156,6 +168,7 @@ test.describe('security section (/me/account)', () => {
     await expect(link).toHaveAttribute('href', '/auth/flow/classic/webauthn-setup');
     await expect(link).not.toHaveAttribute('target', /.+/);
     await expect(security(page).getByText('Passkeys, die du hier anlegst, gelten für FriendFlix.')).toBeVisible();
+    await expect(security(page).locator('[data-note="passkey-renew"]')).toHaveCount(0);
   });
 
   test('change e-mail: re-auth → new address → "Bestätigungslink" screen with the masked new address; email_in_use error shown', async ({ page, api }) => {

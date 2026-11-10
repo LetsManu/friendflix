@@ -176,6 +176,7 @@ const login = {
       add: 'Passkey hinzufügen',
       addClassic: 'Auf der Anmeldeseite hinzufügen',
       note: 'Passkeys, die du hier anlegst, gelten für FriendFlix.',
+      renew: 'Hast du deine Passkeys früher auf der Anmeldeseite angelegt? Die gelten in FriendFlix nicht. Lege hier einmal einen neuen Passkey an.',
     },
     password: {
       title: 'Passwort',
