@@ -30,6 +30,7 @@
     answer, cancelFlow, classicHref, flowConfig, FlowRefused, preparedPasskey, runPasskey, startFlow, type FlowReply, type PasskeyCard, type ThenKind,
     type UnavailableReason,
   } from './flow';
+  import { reauthLife } from './reauthLife';
   import './auth.css';
 
   /** the follow-up flow; none = only a fresh sign-in (the parent then repeats its action) */
@@ -65,7 +66,7 @@
     step_used: { stage: 'expired', text: null },
     csrf: { stage: 'expired', text: null },
   };
-  let ended = false;
+  const life = reauthLife(cancelFlow);
   let dlg: HTMLElement;
   /** the first step said a passkey can confirm instead of the password */
   let passkeyAlt = false;
@@ -84,6 +85,7 @@
     try {
       await flowConfig();
       const r = await startFlow('reauth', then ? { then } : {});
+      if (!life.started()) return; // closed while the start was in flight: its provider sessions are cancelled
       passkeyAlt = r.passkeyAlt === true;
       // fetched before any click: the passkey prompt then starts inside the click (Safari refuses one after a round trip)
       pkStep = passkeyAlt ? preparedPasskey(r) : null;
@@ -103,8 +105,8 @@
   function show(r: FlowReply) {
     if (r.stage === 'unavailable') noticeText = UNAVAILABLE_TEXT[r.reason ?? 'error'] ?? null;
     if (r.stage !== 'done') view = r;
-    else if (then) finished = true;
-    else { ended = true; dispatch('done'); }
+    else if (then) { finished = true; life.finish(); }
+    else { life.finish(); dispatch('done'); }
   }
   /**
    * "Stattdessen mit Passkey bestätigen" and "Erneut versuchen": the browser's prompt with the prepared options (fetched with the
@@ -171,13 +173,11 @@
   }
   async function close() {
     ceremony?.abort();
-    const live = !ended && !finished && ((view !== null && 'step' in view) || pkStep !== null);
-    ended = true;
-    if (live) await cancelFlow().catch(() => undefined);
+    await life.close(); // loading, a step, a refused passkey: the provider sessions are still open unless the flow ended
     dispatch('close');
   }
   function finish() {
-    ended = true;
+    life.finish();
     dispatch('done');
   }
 </script>

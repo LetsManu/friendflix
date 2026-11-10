@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { lastAkFailures } from '../src/akdiag.js';
 import { loadJar } from '../src/akflow.js';
 import { akFlowCacheKey } from '../src/authentik.js';
@@ -213,6 +213,123 @@ describe('re-authentication, security actions', () => {
       // the password step is still answerable, and the passkey attempt ends with it
       expect((await b.post('answer', { step: pw.step, stage: 'password', password: RIGHT })).json()).toEqual({ stage: 'done', next: '/me/account' });
       expect(await loadJar(env.ctx, alt)).toBeNull();
+    });
+
+    describe('the prepared passkey attempt (alt): refusals', () => {
+      afterEach(() => { vi.restoreAllMocks(); });
+      /** a re-authentication with a prepared attempt; every Authentik session on its own (s1 password, s2 passkey) */
+      const prepared = async (onPasskey?: Parameters<typeof flows>[0]) => {
+        w = flows(onPasskey);
+        const s = await session();
+        const b = browser(env, s);
+        await b.config();
+        const pw = (await b.post('start', { kind: 'reauth' })).json() as { step: string; passkeyStep: { step: string } };
+        return { s, b, pw, alt: b.cookies.ff_flow_alt!, primary: b.cookies.ff_flow!, answer: (extra: Record<string, unknown> = {}, opts: Parameters<typeof b.post>[2] = {}) =>
+          b.post('answer', { step: pw.passkeyStep.step, stage: 'identify', passkey: CRED, alt: true, ...extra }, opts) };
+      };
+      const endedSessions = () => w.calls.filter((c) => c.path === INVALIDATION).map((c) => /authentik_session=([^;]+)/.exec(c.headers.cookie ?? '')?.[1]);
+      const passkeyPosts = () => executorPosts(w, LOGIN).filter((c) => (c.body as Ans).passkey);
+
+      it('another person\'s passkey on the prepared attempt → denied, audited, no stamp; the passkey attempt is gone, the password attempt stays', async () => {
+        const t = await prepared();
+        env.claims.current = { sub: 'sub-ben', email: 'ben@elsewhere.example.com', name: 'Ben', groups: [] };
+        expect((await t.answer()).json()).toEqual({ stage: 'denied' });
+        expect((await sessionOf(t.s)).reauthAt).toBeUndefined();
+        expect((await audits('session.reauth_mismatch')).length).toBe(1);
+        expect(await audits('session.reauth')).toHaveLength(0);
+        expect(await loadJar(env.ctx, t.alt)).toBeNull();
+        expect(t.b.cookies.ff_flow_alt).toBeUndefined();
+        expect(await loadJar(env.ctx, t.primary)).not.toBeNull();
+        expect(endedSessions()).toContain('s2'); // the passkey session was ended at the provider
+      });
+
+      it('a replayed assertion is refused: the step is used up once answered, and the used jar and cookie are gone', async () => {
+        const t = await prepared();
+        expect((await t.answer()).json()).toEqual({ stage: 'done', next: '/me/account' });
+        const posts = executorPosts(w).length;
+        // the same request again with the old cookie put back: the jar no longer exists
+        t.b.cookies.ff_flow_alt = t.alt;
+        expect((await t.answer()).json()).toEqual({ stage: 'expired' });
+        expect(executorPosts(w)).toHaveLength(posts);
+        expect(t.b.cookies.ff_flow_alt).toBeUndefined();
+        // a refused answer rotates the step: the earlier step token is then refused with 409 and nothing reaches Authentik
+        const u = await prepared(() => ({ ...identPk(), response_errors: { passkey: [{ string: 'no', code: 'invalid' }] } }));
+        const refused = (await u.answer()).json() as { stage: string; step: string };
+        expect(refused.stage).toBe('identify');
+        const before = passkeyPosts().length;
+        const again = await u.answer();
+        expect([again.statusCode, again.json()]).toEqual([409, { error: 'step_used' }]);
+        expect(passkeyPosts()).toHaveLength(before);
+      });
+
+      it('another session, or none of the session\'s csrf token → 403, nothing reaches Authentik, both attempts stay', async () => {
+        const t = await prepared();
+        // another person's signed-in session
+        const otherSid = 'other-person-sid';
+        const mine = await sessionOf(t.s);
+        await env.kv.set(`sess:${otherSid}`, JSON.stringify({ ...mine, userId: `${mine.userId}-other`, csrf: 'other-persons-csrf' }), 600);
+        const other = { cookies: { ff_sid: otherSid }, csrf: 'other-persons-csrf' };
+        const refused = [
+          await t.answer({}, { token: null }),
+          await t.answer({}, { token: 'wrong' }),
+          await t.answer({}, { token: other.csrf }), // another person's token
+          // another person's session cookie driving this person's jar (flow cookies copied over)
+          await env.app.inject({
+            method: 'POST', url: '/auth/flow/answer', remoteAddress: t.b.ip,
+            cookies: { ...other.cookies, ff_flow_alt: t.alt, ff_flow: t.primary, ff_flow_csrf: t.b.cookies.ff_flow_csrf! },
+            headers: { 'x-ff-flow-csrf': t.b.cookies.ff_flow_csrf!, 'x-csrf-token': other.csrf },
+            payload: { step: t.pw.passkeyStep.step, stage: 'identify', passkey: CRED, alt: true },
+          }),
+        ];
+        expect(refused.map((r) => [r.statusCode, r.json()])).toEqual(Array(4).fill([403, { error: 'csrf' }]));
+        expect(passkeyPosts()).toHaveLength(0);
+        expect((await sessionOf(t.s)).reauthAt).toBeUndefined();
+        expect(await loadJar(env.ctx, t.alt)).not.toBeNull();
+        expect(await loadJar(env.ctx, t.primary)).not.toBeNull();
+      });
+
+      it('cancel ends both attempts: their jars, cookies and Authentik sessions; a cancel without the session token changes nothing', async () => {
+        const t = await prepared();
+        expect((await t.b.post('cancel', {}, { token: null })).statusCode).toBe(403);
+        expect(await loadJar(env.ctx, t.primary)).not.toBeNull();
+        expect(await loadJar(env.ctx, t.alt)).not.toBeNull();
+        expect((await t.b.post('cancel', {})).json()).toEqual({ ok: true });
+        expect(await loadJar(env.ctx, t.primary)).toBeNull();
+        expect(await loadJar(env.ctx, t.alt)).toBeNull();
+        expect(t.b.cookies.ff_flow).toBeUndefined();
+        expect(t.b.cookies.ff_flow_alt).toBeUndefined();
+        expect([...endedSessions()].sort()).toEqual(['s1', 's2']);
+        // nothing is left to answer
+        await t.b.config(); // a fresh flow csrf cookie, as a returning page gets
+        t.b.cookies.ff_flow_alt = t.alt;
+        expect((await t.answer()).json()).toEqual({ stage: 'expired' });
+        expect(passkeyPosts()).toHaveLength(0);
+      });
+
+      it('rate limited: the passkey never reaches Authentik, and both attempts and cookies stay', async () => {
+        await env.kv.set(`flowfail:${sha256('anna')}`, '10', 900);
+        const t = await prepared();
+        const r = (await t.answer()).json() as { stage: string; errors: string[] };
+        expect(r).toMatchObject({ stage: 'identify', errors: expect.arrayContaining(['rate_limited']) });
+        expect(passkeyPosts()).toHaveLength(0);
+        expect((await sessionOf(t.s)).reauthAt).toBeUndefined();
+        expect(t.b.cookies.ff_flow).toBe(t.primary);
+        expect(t.b.cookies.ff_flow_alt).toBe(t.alt);
+        expect(await loadJar(env.ctx, t.primary)).not.toBeNull();
+        expect(await loadJar(env.ctx, t.alt)).not.toBeNull();
+      });
+
+      it('an expired prepared attempt (older than 600 s) → expired, nothing reaches Authentik; the password step is unaffected', async () => {
+        const t = await prepared();
+        // 601 s later: the jar is older than its lifetime (the answer is seen at that time)
+        const real = Date.now;
+        vi.spyOn(Date, 'now').mockImplementation(() => real() + 601_000);
+        const r = await t.answer();
+        expect([r.statusCode, r.json()]).toEqual([200, { stage: 'expired' }]);
+        vi.restoreAllMocks();
+        expect(passkeyPosts()).toHaveLength(0);
+        expect((await sessionOf(t.s)).reauthAt).toBeUndefined();
+      });
     });
 
     it('a prepared attempt that cannot be used ends its Authentik session at once; the password step is unaffected', async () => {
