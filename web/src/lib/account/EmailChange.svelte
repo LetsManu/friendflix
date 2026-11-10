@@ -38,5 +38,5 @@
   h3 { font-size: 1rem; margin: 0 0 .2rem; }
   .val { margin: 0; overflow-wrap: anywhere; }
   .note { margin: .2rem 0 0; font-size: .88rem; }
-  @media (max-width: 600px) { .row { flex-direction: column; align-items: stretch; } .acts :global(.ui-btn) { width: 100%; } }
+  @media (max-width: 600px) { .row { flex-direction: column; align-items: stretch; } .what { flex: none; } .acts :global(.ui-btn) { width: 100%; } }
 </style>

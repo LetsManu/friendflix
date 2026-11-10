@@ -235,6 +235,7 @@
   .ext:hover { text-decoration: underline; }
   @media (max-width: 600px) {
     .row { flex-direction: column; align-items: stretch; }
+    .what { flex: none; }
     .acts :global(.ui-btn), .acts :global(.btn) { width: 100%; }
   }
 </style>
