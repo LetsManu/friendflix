@@ -171,7 +171,7 @@ const tr: Translation<typeof de> = {
     emptyFind: 'İndirecek bir şey bul',
     storageAria: 'Kullanılan depolama',
     storageUsed: 'Cihaz depolamasının {used} / {total} kısmı dolu',
-    maxDownloads: { one: ' · en fazla {n} indirme', other: ' · en fazla {n} indirme' },
+    maxDownloads: { one: 'en fazla {n} indirme', other: 'en fazla {n} indirme' },
     defaultQuality: 'Varsayılan kalite',
     qualities: { sd: 'Düşük (480p)', hd: 'Orta (720p)', fhd: 'Yüksek (1080p)', original: 'Orijinal' },
     persist: 'Depolamayı koru',

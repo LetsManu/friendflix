@@ -68,7 +68,8 @@ test.describe('detail page (phone)', () => {
     await page.evaluate(() => window.scrollTo(0, 1500));
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(1000);
     const navH = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--nav-h')));
-    const box = (await bar.boundingBox())!;
+    // the sticky element is the band around the tab bar (it backs the pill with the page colour)
+    const box = (await bar.locator('xpath=..').boundingBox())!;
     expect(Math.abs(box.y - navH)).toBeLessThan(2);
   });
 
@@ -256,7 +257,7 @@ test.describe('phone detail page (phone browse §4)', () => {
       const list = tablist(page);
       await expect(list).toHaveClass(/(^|\s)frost(\s|$)/);
       expect(await list.evaluate((e) => getComputedStyle(e).borderTopLeftRadius)).toBe('999px');
-      expect(await list.evaluate((e) => getComputedStyle(e).position)).toBe('sticky'); // still sticks under the app bar
+      expect(await list.evaluate((e) => getComputedStyle(e.parentElement!).position)).toBe('sticky'); // the band around it still sticks under the app bar
       const more = list.getByRole('tab', { name: 'Mehr davon' });
       const details = list.getByRole('tab', { name: 'Details' });
       await expect(details).toHaveAttribute('aria-selected', 'true');

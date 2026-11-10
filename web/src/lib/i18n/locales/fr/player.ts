@@ -97,7 +97,7 @@ const fr: Translation<typeof de> = {
     langs: { ger: 'Allemand', eng: 'Anglais', fre: 'Français', spa: 'Espagnol', ita: 'Italien' },
   },
   episodeOnly: 'E{e}',
-  phone: { episodeLine: 'S{s} · E{e} · {name}', playback: 'Lecture', tools: 'Outils' },
+  phone: { episodeLine: 'S{s}:E{e} · {name}', playback: 'Lecture', tools: 'Outils' },
   speed: {
     title: 'Vitesse de lecture',
     aria: 'Vitesse de lecture : {r}',

@@ -62,3 +62,38 @@ export function worstStep(cols: number[], k = 6): { step: number; at: number } {
   }
   return { step: Math.round(step * 10) / 10, at };
 }
+/**
+ * 1 px seam columns across a surface (e.g. a glass pill, round ends left out of `box`): each device-pixel column against
+ * the mean of its two neighbours, row by row over the box's whole height. A seam (a column painted twice or not at all)
+ * differs with one sign in nearly every row; grain, text and soft gradients do not. Returns the columns (CSS px) whose
+ * median difference reaches `min` with the same sign in at least 90 % of the rows. One column at a time: an average over
+ * a few columns cannot see a 1 px line.
+ */
+export async function seamColumns(page: Page, box: { x: number; y: number; width: number; height: number }, min = 1.5): Promise<Array<{ x: number; d: number; agree: number }>> {
+  const clip = { x: Math.floor(box.x) - 1, y: Math.floor(box.y), width: Math.ceil(box.x + box.width) + 1 - (Math.floor(box.x) - 1), height: Math.ceil(box.y + box.height) - Math.floor(box.y) };
+  const png = await page.screenshot({ clip, scale: 'device', animations: 'allow' });
+  const img = await page.evaluate(async (b64) => {
+    const im = new Image();
+    im.src = 'data:image/png;base64,' + b64;
+    await im.decode();
+    const c = document.createElement('canvas');
+    c.width = im.width; c.height = im.height;
+    const g = c.getContext('2d')!;
+    g.drawImage(im, 0, 0);
+    const d = g.getImageData(0, 0, im.width, im.height).data, L: number[] = [];
+    for (let i = 0; i < d.length; i += 4) L.push(0.2126 * d[i]! + 0.7152 * d[i + 1]! + 0.0722 * d[i + 2]!);
+    return { w: im.width, h: im.height, L };
+  }, png.toString('base64'));
+  const k = img.w / clip.width; // device pixels per CSS px
+  const y0 = Math.ceil((box.y - clip.y) * k + 0.5), y1 = Math.floor((box.y + box.height - clip.y) * k - 0.5);
+  const x0 = Math.max(1, Math.ceil((box.x - clip.x) * k)), x1 = Math.min(img.w - 1, Math.floor((box.x + box.width - clip.x) * k));
+  const out: Array<{ x: number; d: number; agree: number }> = [];
+  for (let x = x0; x < x1; x++) {
+    const ds: number[] = [];
+    for (let y = y0; y < y1; y++) { const i = y * img.w + x; ds.push(img.L[i]! - (img.L[i - 1]! + img.L[i + 1]!) / 2); }
+    const med = [...ds].sort((a, b) => a - b)[ds.length >> 1]!;
+    const agree = ds.filter((d) => d !== 0 && Math.sign(d) === Math.sign(med)).length / ds.length;
+    if (Math.abs(med) >= min && agree >= 0.9) out.push({ x: Math.round((clip.x + x / k) * 100) / 100, d: Math.round(med * 10) / 10, agree: Math.round(agree * 100) / 100 });
+  }
+  return out;
+}

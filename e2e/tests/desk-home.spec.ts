@@ -35,6 +35,76 @@ async function freezeClock(page: Page) {
   await page.clock.pauseAt(t0 + 1000);
 }
 
+test.describe('rating card', () => {
+  test.use({ reducedMotion: 'no-preference' }); // reduced motion shows no card at all (the calm test below turns calm mode on instead)
+  test('fades in with the hero, stays 4 s, fades out without moving the title; the screen-reader text lives only while it shows', async ({ page }) => {
+    await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} })); // no trailer: the title block stays where it is
+    await freezeClock(page);
+    await page.goto('/');
+    const bb = page.locator('section.billboard');
+    const card = bb.locator('.rc');
+    const h1 = bb.getByRole('heading', { level: 1 });
+    await expect(card).toHaveCount(1);
+    await expect(card).toHaveCSS('opacity', '0'); // frozen clock: the fade-in has not started
+    await expect(card).toHaveCSS('pointer-events', 'none');
+    await expect(card.locator('.sr-only')).toHaveCount(0); // the live region starts empty
+    await page.clock.runFor(100);
+    await expect(card).toHaveCSS('opacity', '1');
+    await expect(card.locator('.sr-only')).toHaveText('Altersfreigabe FSK 12');
+    await expect(card.locator('[aria-hidden="true"]').filter({ hasText: 'FSK 12' })).toHaveCount(1);
+    // the card is out of the flow: the title sits where it does with the card showing, once it has faded, and without the card
+    await expect(card).toHaveCSS('position', 'absolute');
+    await expect.poll(async () => { const a = (await h1.boundingBox())!.y; await page.waitForTimeout(150); return a - (await h1.boundingBox())!.y; }).toBe(0);
+    const before = (await h1.boundingBox())!;
+    await page.clock.runFor(4600);
+    await expect(card).toHaveCSS('opacity', '0');
+    await page.clock.runFor(600);
+    await expect(card.locator('.sr-only')).toHaveCount(0); // nothing readable after the fade
+    expect(await h1.boundingBox()).toEqual(before); // nor after it left
+    await card.evaluate((e) => e.remove());
+    expect(await h1.boundingBox()).toEqual(before); // nor without the card in the DOM at all
+  });
+
+  test('reappears for the next title', async ({ page, context }) => {
+    await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+    await freezeClock(page);
+    await page.goto('/');
+    const card = page.locator('section.billboard .rc');
+    await expect(card).toHaveCount(1);
+    await page.clock.runFor(100);
+    await expect(card).toHaveCSS('opacity', '1');
+    await page.clock.runFor(5200);
+    await expect(card).toHaveCSS('opacity', '0');
+    // another visit, another hero: a fresh card with its own rating comes back
+    const next = await context.newPage();
+    await next.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+    await heroIs(next, { ...MOVIE, id: SERIES.id, name: 'Zweiter Titel', rating: 'FSK 16' });
+    await freezeClock(next);
+    await next.goto('/');
+    const card2 = next.locator('section.billboard .rc');
+    await expect(card2).toHaveText(/FSK 16/);
+    await expect(card2).toHaveCSS('opacity', '0');
+    await next.clock.runFor(100);
+    await expect(card2).toHaveCSS('opacity', '1');
+    await expect(card2.locator('.sr-only')).toHaveText('Altersfreigabe FSK 16');
+  });
+
+  test('calm mode: no card at all, not even a flash before the prefs arrive', async ({ page }) => {
+    await freezeClock(page);
+    let release!: () => void;
+    const gate = new Promise<void>((res) => { release = res; });
+    await page.route('**/api/prefs', async (r) => { await gate; await r.fulfill({ json: { prefs: { calm: true } } }); });
+    await page.goto('/');
+    await expect(page.locator('section.billboard').getByRole('heading', { level: 1 })).toBeVisible();
+    await page.clock.runFor(500);
+    await expect(page.locator('section.billboard .rc')).toHaveCount(0); // hero is there, prefs are not: still no card
+    release();
+    await expect(page.locator('html')).toHaveClass(/(^|\s)calm(\s|$)/);
+    await page.clock.runFor(5000);
+    await expect(page.locator('section.billboard .rc')).toHaveCount(0);
+  });
+});
+
 test.describe('desktop billboard', () => {
   test('billboard: 80vh (min 520px), eyebrow only when a label exists, title logo or name, meta line, Play and More info', async ({ page }) => {
     await page.goto('/');
@@ -56,11 +126,8 @@ test.describe('desktop billboard', () => {
     await expect(play).toHaveAttribute('href', `/watch/${MOVIE.id}`);
     expect(await play.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 255, 255)');
     await expect(bb.getByRole('link', { name: 'Weitere Infos' })).toHaveAttribute('href', `/item/${MOVIE.id}`);
-    // the age badge sits flush against the right edge of the screen
-    const age = bb.locator('.side .agebadge');
-    await expect(age).toHaveText('FSK 12');
-    const box = (await age.boundingBox())!;
-    expect(Math.round(box.x + box.width)).toBe(1280);
+    // no edge flag any more: the rating is in the meta line and in the short-lived glass card
+    await expect(bb.locator('.agebadge')).toHaveCount(0);
 
     // the min height on a short window
     await page.setViewportSize({ width: 1280, height: 600 });
@@ -117,7 +184,7 @@ test.describe('desktop billboard', () => {
       await expect.poll(() => full.evaluate((e) => getComputedStyle(e).opacity)).toBe('0');
       await expect.poll(() => one.evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
       expect(await one.evaluate((e) => getComputedStyle(e).webkitLineClamp)).toBe('1');
-      // the mute toggle and the age badge, on the right edge, level with the buttons
+      // the mute toggle, on the right edge, level with the buttons
       // (a fixed name, the state is aria-pressed only: no "Ton aus, gedrückt")
       const mute = bb.getByRole('button', { name: 'Ton', exact: true });
       await expect(mute).toBeVisible();
@@ -126,8 +193,6 @@ test.describe('desktop billboard', () => {
       const muteBox = (await mute.boundingBox())!;
       expect(Math.abs((muteBox.y + muteBox.height / 2) - (playBox.y + playBox.height / 2))).toBeLessThanOrEqual(2);
       expect(muteBox.x).toBeGreaterThan(1000);
-      const ageBox = (await bb.locator('.side .agebadge').boundingBox())!;
-      expect(Math.round(ageBox.x + ageBox.width)).toBe(1280);
       await mute.click();
       await expect(mute).toHaveAttribute('aria-pressed', 'true');
       expect(await bb.locator('video.hv').evaluate((v: HTMLVideoElement) => v.muted)).toBe(false);
@@ -280,21 +345,21 @@ test.describe('desktop rows', () => {
     expect(await row.locator('h2').evaluate((e) => [getComputedStyle(e).fontSize, getComputedStyle(e).fontWeight])).toEqual(['20px', '700']);
   });
 
-  test('ranked rows show large outlined rank numbers on desktop', async ({ page }) => {
+  test('ranked rows: a glass strip at the foot with the rank and the title, the rank is the accessible name', async ({ page }) => {
     await page.goto('/');
     const row = page.locator('section.row.rk').first();
     await row.scrollIntoViewIfNeeded();
-    const rank = row.locator('.rank').first();
-    await expect(rank).toHaveText('1');
-    await expect(rank).toHaveAttribute('aria-label', 'Platz 1');
-    const st = await rank.evaluate((e) => { const c = getComputedStyle(e); return { size: parseFloat(c.fontSize), stroke: parseFloat(c.webkitTextStroke || c.getPropertyValue('-webkit-text-stroke-width')), fill: c.webkitTextFillColor || c.color }; });
-    expect(st.size).toBeGreaterThanOrEqual(120);
-    expect(st.stroke).toBeGreaterThan(0);
-    expect(st.fill).toBe('rgb(16, 20, 24)'); // the page colour inside the outline
-    // the numeral sits beside the poster (left of it), not on top of it as a chip
-    const r = (await rank.boundingBox())!, c = (await row.locator('article.card').first().boundingBox())!;
-    expect(r.x).toBeLessThan(c.x);
-    expect(r.height).toBeGreaterThan(c.height * .6);
+    const card = row.locator('article.card').first();
+    const strip = card.locator('.rkbar');
+    await expect(strip.locator('.rkn')).toHaveText('1');
+    await expect(strip.locator('.rkt')).toHaveText(/\S/);
+    await expect(card.locator('a.thumb')).toHaveAttribute('aria-label', /^Platz 1: /);
+    // no big hollow numerals, no chip: the strip sits inside the poster at its foot
+    await expect(row.locator('.rank')).toHaveCount(0);
+    const s = (await strip.boundingBox())!, c = (await card.locator('.thumb').boundingBox())!;
+    expect(Math.round(s.y + s.height)).toBe(Math.round(c.y + c.height));
+    expect(Math.round(s.width)).toBe(Math.round(c.width));
+    expect(await strip.locator('.rkn').evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 167, 182)');
   });
 
   test('rows keep today\'s order and reco captions', async ({ page }) => {

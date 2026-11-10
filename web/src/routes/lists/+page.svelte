@@ -116,7 +116,7 @@
   .head { display: flex; gap: 1rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
   form { display: flex; gap: .5rem; flex-wrap: wrap; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; margin-top: 1rem; }
-  .list { display: block; background: var(--surface); border-radius: var(--radius); overflow: hidden; color: inherit; text-decoration: none; }
+  .list { display: block; background: var(--surface); border-radius: var(--fr-r-tile); overflow: hidden; color: inherit; text-decoration: none; }
   .list:hover, .list:focus-visible { outline: 2px solid var(--acc); }
   .mosaic { display: grid; grid-template-columns: 1fr 1fr; aspect-ratio: 16 / 9; background: #151a20; }
   .mosaic img, .mosaic span { width: 100%; height: 100%; object-fit: cover; display: block; background: #20262d; }

@@ -170,7 +170,7 @@ const en: Translation<typeof de> = {
     emptyFind: 'Find something to download',
     storageAria: 'Storage used',
     storageUsed: '{used} of {total} device storage used',
-    maxDownloads: { one: ' · up to {n} download', other: ' · up to {n} downloads' },
+    maxDownloads: { one: 'up to {n} download', other: 'up to {n} downloads' },
     defaultQuality: 'Default quality',
     qualities: { sd: 'Low (480p)', hd: 'Medium (720p)', fhd: 'High (1080p)', original: 'Original' },
     persist: 'Protect storage',

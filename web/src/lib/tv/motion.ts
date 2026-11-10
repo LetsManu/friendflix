@@ -259,6 +259,9 @@ export function glide(el: HTMLElement, axis: Axis, jump: () => number): void {
   start(el, axis, { x, v: was.v }, 0, was.active);
 }
 
+/** whether a spring (animateTo, glide, follow) is playing on `el` right now */
+export const moving = (el: HTMLElement): boolean => runs.has(el);
+
 /**
  * Plays on `el` a translation derived frame by frame from the springs that run on `of` right now (each one's position on
  * `axis`, its resting value when none runs): `combine` turns their positions into `el`'s. For a part that must stay exactly

@@ -97,7 +97,7 @@
   .seasonbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .6rem; }
   h2 { margin: 0; font-size: 1.4rem; }
   .sel { position: relative; display: inline-block; }
-  select { appearance: none; -webkit-appearance: none; background: #1f262c; border: 1px solid #3c4650; padding-right: 2.2rem; font-weight: 600; cursor: pointer; }
+  select { appearance: none; -webkit-appearance: none; background: var(--fr-solid); border: 1px solid var(--fr-line); border-radius: 999px; padding: 0 2.2rem 0 1.1rem; font-weight: 600; cursor: pointer; }
   select:hover { border-color: #fff; }
   .chev { position: absolute; right: .7rem; top: 50%; transform: translateY(-50%); pointer-events: none; }
   /* episodes are glass tiles (glass spec §4: .frost-flat.frost-tile, 12 px padding, 10 px thumbnail radius, coral progress) */
@@ -129,6 +129,7 @@
   .epdl { position: absolute; right: .8rem; bottom: .8rem; display: flex; align-items: center; gap: .4rem; }
   /* the row's bottom margin makes room when the comments panel is closed: the buttons sit over the row's padding */
   .cmbtn { display: inline-flex; align-items: center; gap: .25rem; min-height: 0; padding: .3rem .5rem; border-radius: 999px; background: rgba(255, 255, 255, .1); border: 0; color: var(--fg); cursor: pointer; font-size: .8rem; }
+  @media (pointer: coarse) { .cmbtn { min-height: 44px; min-width: 44px; justify-content: center; } }
   .cmbtn:hover, .cmbtn.on { background: rgba(255, 255, 255, .22); }
   .n2 { font-variant-numeric: tabular-nums; }
   /* ---- row: a horizontal strip of 16:9 tiles (title, length, progress line); next up wears the coral ring ---- */

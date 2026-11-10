@@ -677,14 +677,14 @@
       <Safe name="cast" key={item.id}><CastRow id={item.id} {people} /></Safe>
 
       <!-- ================= tabs (always shown); the panels stay mounted and switch with `hidden` ================= -->
-      <div class="tabs frost frost-pill frost-safe" style="--fr-scrim-safe:{SCRIM_SAFE_DIM}" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" on:keydown={tabKeys} bind:this={tabsEl}>
+      <div class="tabband"><div class="tabs frost frost-pill frost-safe" style="--fr-scrim-safe:{SCRIM_SAFE_DIM}" role="tablist" aria-label={$t('hubs.extras.tabs')} tabindex="-1" on:keydown={tabKeys} bind:this={tabsEl}>
         {#each tabs as n (n)}
           <button type="button" role="tab" id="dv-tab-{n}" class="tab" class:on={curTab === n} aria-selected={curTab === n} aria-controls="dv-panel-{n}" tabindex={curTab === n || tvOn ? 0 : -1}
             on:click={() => pick(n)} on:focus={() => onTabFocus(n)}>{tabLabel(n)}</button>
         {/each}
         <!-- a new title: the pill is placed, not slid -->
         {#if tabsEl}{#key item.id}<SlidePill host={tabsEl} selector={'[role="tab"][aria-selected="true"]'} tone="white" />{/key}{/if}
-      </div>
+      </div></div>
 
       <div class="panes" class:out={fadeOut} class:in={fadeIn} on:animationend={(e) => { if (e.target === e.currentTarget) fadeIn = false; }}>
 
@@ -762,6 +762,7 @@
   .mslot { display: grid; gap: .6rem; padding: .3rem .4rem .4rem; }
   .mslot :global(.status) { margin: 0; }
   .mslot :global(.lang) { margin: 0; }
+  .mslot :global(.lm .rowbtn) { margin-inline: -.4rem; width: calc(100% + .8rem); } /* the menu row lines up with the other rows */
 
   /* auto start countdown (top right of the hero, the "next" hint) */
   .auto { position: absolute; z-index: 4; right: 2rem; bottom: 5.4rem; display: flex; align-items: center; gap: .7rem; padding: .45rem .5rem .45rem .7rem; border-radius: 6px; background: rgba(16,20,24, .88); box-shadow: 0 6px 22px rgba(0, 0, 0, .6); font-weight: 600; }
@@ -821,9 +822,12 @@
   .ov.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
   .more-syn { min-height: 44px; padding: 0 .2rem; font-weight: 600; text-decoration: none; }
   /* phone: the tab bar sticks under the app bar (in the popup: at the top of its scroll box) */
-  .phone .tabs { position: sticky; top: var(--nav-total); z-index: 5; }
-  .phone.vm .tabs { top: 0; }
-  .phone .tab { min-height: 44px; }
+  /* a full-bleed band behind the pill is what sticks: content never shows in the pill's rounded corners */
+  .phone .tabband { --bx: 2.2rem; position: sticky; top: var(--nav-total); z-index: 5; margin: 2.2rem calc(var(--bx) * -1) 0; padding: .4rem var(--bx); background: linear-gradient(var(--dv-bg) 80%, transparent); }
+  .phone.vp .tabband { --bx: var(--pad-x); }
+  .phone.vm .tabband { top: 0; }
+  .phone .tabs { width: 100%; margin-top: 0; }
+  .phone .tab { min-height: 44px; flex: 1 1 auto; }
   .pcap .small { margin: 0; }
   .icons { display: flex; justify-content: space-around; align-items: flex-start; gap: .4rem; margin: .4rem 0 .2rem; }
   .lab { display: flex; flex-direction: column; align-items: center; gap: .3rem; min-height: 44px; min-width: 64px; padding: .2rem .4rem; background: none; border: 0; color: #fff; border-radius: 6px; font-weight: 500; }
@@ -884,6 +888,7 @@
   @media (max-width: 640px) {
     .body { padding: 0 1rem 5rem; }
     .vp .body { padding: 0 1rem 5rem; }
+    .phone .tabband, .phone.vp .tabband { --bx: 1rem; }
   }
   @media (prefers-reduced-motion: reduce) { .bg, .hv { transition: none; } .auto .pr { transition: none; } .lead:global(.ready) { transition: none; } .panes { transition: none; animation: none; } }
 </style>

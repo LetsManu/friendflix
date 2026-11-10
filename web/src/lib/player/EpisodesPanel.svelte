@@ -1,6 +1,7 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts" module>
+  import { SCRIM_MENU } from '#lib/glass/tone';
   import type { Item } from '#lib/api';
   /** seasons / episodes stay cached while the player hops from episode to episode */
   const seasonCache = new Map<string, Item[]>();
@@ -19,6 +20,8 @@
   export let currentId: string;
   /** phone player: every row shows its overview on one line (the playing one too) */
   export let synopsis = false;
+  /** desktop player: the glass menu material like the other player menus (otherwise the solid card) */
+  export let glass = false;
   const dispatch = createEventDispatcher<{ pick: { id: string }; close: void }>();
 
   let seasons: Item[] = seasonCache.get(seriesId) ?? [], season = seasonId, episodes: Item[] | null = null, failed = false, list: HTMLUListElement;
@@ -57,7 +60,7 @@
   const pct = (e: Item) => (e.played ? 100 : e.runtimeTicks && e.positionTicks ? Math.min(100, (e.positionTicks / e.runtimeTicks) * 100) : 0);
 </script>
 
-<div class="eps" class:syn={synopsis} role="dialog" aria-label={$t('player.episodes.title')} data-nav data-scope bind:this={root}>
+<div class="eps{glass ? ' frost frost-menu frost-safe' : ''}" class:glass class:syn={synopsis} style={glass ? `--fr-scrim-safe:${SCRIM_MENU}` : undefined} role="dialog" aria-label={$t('player.episodes.title')} data-nav data-scope bind:this={root}>
   <header>
     {#if seasons.length > 1}
       <label class="sel"><span class="sr">{$t('player.episodes.season')}</span>
@@ -95,7 +98,8 @@
 </div>
 
 <style>
-  .eps { width: min(560px, 94vw); max-height: min(70vh, 640px); display: flex; flex-direction: column; background: rgba(16,20,24,.98); border: 1px solid #323a43; border-radius: 6px; box-shadow: 0 12px 30px #000; overflow: hidden; }
+  .eps { width: min(560px, 94vw); max-height: min(70vh, 640px); display: flex; flex-direction: column; overflow: hidden; }
+  .eps:not(.glass) { background: rgba(16,20,24,.98); border: 1px solid #323a43; border-radius: 6px; box-shadow: 0 12px 30px #000; }
   header { display: flex; align-items: center; justify-content: space-between; gap: .6rem; padding: .7rem .8rem .5rem 1rem; border-bottom: 1px solid #252c34; }
   header b { font-size: 1.15rem; }
   .sel select { font-size: 1.05rem; font-weight: 700; background: #20262d; color: #fff; border: 1px solid #4a5560; border-radius: 4px; min-height: 44px; padding: 0 .8rem; }

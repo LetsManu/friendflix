@@ -92,7 +92,7 @@
 
 <style>
   /* bottom: above the player's bar (--bar-h is set on phones, where the bar's height is measured; elsewhere the fixed offsets) */
-  .ci { position: absolute; z-index: 7; left: max(clamp(.6rem, 2.4vw, 2.4rem), var(--safe-left)); top: calc(4.8rem + var(--safe-top)); bottom: calc(var(--bar-h, 8.5rem) + .5rem); width: min(360px, calc(100% - 1.2rem - var(--inset, 0px))); display: flex; flex-direction: column;
+  .ci { position: absolute; z-index: 9; left: max(clamp(.6rem, 2.4vw, 2.4rem), var(--safe-left)); top: calc(4.8rem + var(--safe-top)); bottom: calc(var(--bar-h, 8.5rem) + .5rem); width: min(360px, calc(100% - 1.2rem - var(--inset, 0px))); display: flex; flex-direction: column;
     background: rgba(14,14,14,.9); border: 1px solid #2b333c; border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.6); overflow: hidden; animation: ciIn var(--t-med, .2s) ease-out; }
   @keyframes ciIn { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
   @media (prefers-reduced-motion: reduce) { .ci { animation: none; } }

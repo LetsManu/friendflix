@@ -216,7 +216,8 @@ test.describe('TV layout', () => {
       // resting on a card for 400 ms puts its title in the tile (instead of the hero and its buttons)
       const target = page.locator('main .rows section.row[aria-label="Diese Woche bei uns"] .card .thumb').first();
       await target.focus();
-      const name = (await target.getAttribute('aria-label'))!.split(',')[0]!;
+      // a ranked card's name starts with "Platz n: "; the tile shows the title alone
+      const name = (await target.getAttribute('aria-label'))!.replace(/^Platz \d+: /, '').split(',')[0]!;
       await page.waitForTimeout(400);
       await expect(tile).toHaveAttribute('aria-label', name);
       await expect(tile.locator('[data-autofocus]')).toHaveCount(0); // the buttons give way to the card's info

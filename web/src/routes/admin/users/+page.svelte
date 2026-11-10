@@ -319,8 +319,8 @@
       </svelte:fragment>
       <svelte:fragment slot="cell" let:row let:col>
         {#if col.key === 'select'}
-          <input type="checkbox" class="pick" aria-label={$t('adminPeople.users.select', { name: row.name })} checked={selected.has(row.id)} disabled={!selectable(row)}
-            on:change={(e) => toggle(row, e.currentTarget.checked)} />
+          <label class="pickhit"><input type="checkbox" class="pick" aria-label={$t('adminPeople.users.select', { name: row.name })} checked={selected.has(row.id)} disabled={!selectable(row)}
+            on:change={(e) => toggle(row, e.currentTarget.checked)} /></label>
         {:else if col.key === 'name'}
           <span class="who">
             <span class="av" style:background={avatarBg(undefined)} aria-hidden="true">{initial(row.name)}</span>
@@ -336,12 +336,12 @@
               </span>
             </span>
           </span>
-        {:else if col.key === 'email'}<span class="sub">{row.email ?? ''}</span>
+        {:else if col.key === 'email'}<span class="sub em" title={row.email ?? undefined}>{row.email ?? ''}</span>
         {:else if col.key === 'role'}
           {#if row.role === null}<span class="sub">–</span>
           {:else}
-            <Select label={$t('adminPeople.users.roleOf', { name: row.name })} options={optionsFor(roleOptions, row.role)} value={row.role} hideLabel
-              disabled={row.id === meId || $busyKeys.has(`user:${row.id}`)} on:change={(e) => changeRole(row, (e.target as HTMLSelectElement).value)} />
+            <span class="rolecell"><Select label={$t('adminPeople.users.roleOf', { name: row.name })} options={optionsFor(roleOptions, row.role)} value={row.role} hideLabel
+              disabled={row.id === meId || $busyKeys.has(`user:${row.id}`)} on:change={(e) => changeRole(row, (e.target as HTMLSelectElement).value)} /></span>
           {/if}
         {:else if col.key === 'profiles'}<span class="num">{fmtNumber(row.profiles)}</span>
         {:else if col.key === 'devices'}<span class="num">{fmtNumber(row.devices)}</span>
@@ -384,7 +384,28 @@
   @media (min-width: 721px) {
     .ulist :global(th), .ulist :global(td) { padding-inline: .5rem; }
     .ulist :global(th) { white-space: normal; }
+    .rolecell { display: block; min-width: 7.5rem; }
+    .ulist :global(td.primary) { min-width: 11rem; }
+    .em { display: block; max-width: 8.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+  }
+  /* next to the admin sidebar, below 1500 px the table does not fit with all ten columns: the 2FA placeholder and the access end
+     (both on the user's page) give way, so the name keeps its room and the page never scrolls sideways */
+  @media (min-width: 721px) and (max-width: 1499px) {
+    .ulist :global(th:nth-child(8)), .ulist :global(td:nth-child(8)), .ulist :global(th:nth-child(9)), .ulist :global(td:nth-child(9)) { display: none; }
   }
   /* phone card: the selection cell is the first line, keep its box clear of the actions button (top right) */
-  @media (max-width: 720px) { .pick { margin-right: 3.2rem; } .bulk { position: static; } }
+  /* touch: the row checkbox gets a 44 px hit box around its 20 px glyph (no label to click) */
+  .pickhit { display: inline-flex; align-items: center; justify-content: center; }
+  @media (pointer: coarse) {
+    .pickhit { min-width: 44px; min-height: 44px; margin: -12px; cursor: pointer; }
+  }
+  @media (pointer: coarse) and (min-width: 721px) {
+    .ulist :global(td:has(> .pickhit)) { z-index: 1; } /* table layout: the 44 px box overhangs the next cell, keep it on top (the phone card has its actions button there, which must stay on top) */
+  }
+  @media (max-width: 720px) {
+    .pickhit { margin-right: 3.2rem; } .bulk { position: static; }
+    :global(.dt .bar .field) { flex: 1 1 100%; } /* the three filters share one width */
+    /* the tab strip scrolls: a fade at the right edge says there is more (the end padding keeps the last label clear of it) */
+    .tabs { padding-inline-end: 1.5rem; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent); }
+  }
 </style>

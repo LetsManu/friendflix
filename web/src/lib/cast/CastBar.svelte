@@ -127,7 +127,7 @@
   button { color: inherit; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
   div.main { cursor: default; }
   .skipb { flex: none; min-height: 40px; padding: 0 .7rem; border: 1px solid var(--line, #3b444e); border-radius: var(--radius); font-size: .85rem; white-space: nowrap; }
-  .main { flex: 1 1 auto; min-width: 0; height: 100%; cursor: pointer; min-height: 48px; display: flex; align-items: center; gap: .7rem; padding-left: var(--pad-x); text-align: left; }
+  .main { flex: 1 1 auto; min-width: 0; height: 100%; cursor: pointer; min-height: 48px; display: flex; align-items: center; justify-content: flex-start; gap: .7rem; padding-left: var(--pad-x); text-align: left; }
   .thumb { flex: none; height: 44px; width: auto; object-fit: cover; border-radius: var(--radius); }
   .txt { min-width: 0; display: flex; flex-direction: column; }
   .t1, .t2 { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

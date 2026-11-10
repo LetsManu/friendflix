@@ -99,7 +99,7 @@
   function forget() { clearRecent(getActiveProfile()); recent = []; }
   const initials = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
 
-  // empty state: what friends watch this week ("Beliebte Suchen")
+  // empty state: what friends watch this week ("Beliebt hier")
   let popular: Item[] | null = null, genreList: string[] = [];
   onMount(() => {
     recent = loadRecent(getActiveProfile());
@@ -109,7 +109,7 @@
     // kids profiles: "what friends watch" is social (403 kids_profile): the section stays out
     if ($kidsMode) popular = [];
     else api('/api/library/trending').then((r) => (popular = (r.items as Item[]).slice(0, 12))).catch(() => (popular = []));
-    if ($mobile && !$kidsMode) api('/api/library/genres').then((r) => (genreList = (r.genres as string[]) ?? [])).catch(() => {});
+    if (!$kidsMode) api('/api/library/genres').then((r) => (genreList = (r.genres as string[]) ?? [])).catch(() => {});
     if ($mobile && !input) inputEl?.focus();
     return () => window.removeEventListener('ff-me', onMe);
   });
@@ -145,7 +145,7 @@
     {#if !$mobile && !recent.length}<p class="muted hint">{$t('home.search.hint')}</p>{/if}
     {#if !$kidsMode}
     <section aria-labelledby="pop">
-      <h2 id="pop" class="sh">{$t($mobile ? 'home.search.popularHere' : 'home.search.popular')}</h2>
+      <h2 id="pop" class="sh">{$t('home.search.popularHere')}</h2>
       {#if popular === null}<div class="tiles" aria-busy="true">{#each Array(6) as _}<div class="skeleton" style="aspect-ratio:16/9"></div>{/each}</div>
       {:else if popular.length && $mobile}
         <ul class="top">{#each popular as i (i.id)}
@@ -157,7 +157,7 @@
       {:else if popular.length}<div class="tiles">{#each popular as i (i.id)}<div class="slot"><Card item={i} /></div>{/each}</div>
       {:else}<p class="muted">{$t('home.search.minChars')}</p>{/if}
     </section>
-    {#if $mobile && genreList.length}
+    {#if genreList.length}
     <section aria-labelledby="bg" class="genres">
       <h2 id="bg" class="sh">{$t('home.search.byGenre')}</h2>
       <ul class="gt">{#each genreList as g (g)}
@@ -219,15 +219,15 @@
 
 <style>
   .gap { height: .5rem; }
-  .top { display: grid; gap: .25rem; margin: 0 calc(var(--pad-x) * -1); }
-  .top li { display: flex; align-items: center; background: #161b21; padding-right: var(--pad-x); }
+  .top { display: grid; gap: .25rem; margin: 0; }
+  .top li { display: flex; align-items: center; background: #161b21; padding-right: .5rem; border-radius: var(--fr-r-card); overflow: hidden; }
   .row { flex: 1; min-width: 0; display: flex; align-items: center; gap: .9rem; min-height: 72px; }
   .row:active { background: #20262d; }
   .top img { width: 146px; height: 82px; flex: none; object-fit: cover; background: #242b33; }
   .tt { flex: 1; min-width: 0; font-weight: 600; font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pl { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; border: 2px solid #fff; padding-left: 2px; margin-left: .5rem; }
   .pl:active { opacity: .7; }
-  .gt { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+  .gt { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr)); gap: .6rem; }
   /* glass genre tiles (glass spec §6): the genre's colour as a wash from the lower left over the glass (white stays AA at any
      strength of the wash: lib/glass/pages.test.ts); a touch gets the press feedback */
   .gt a { display: flex; align-items: flex-end; height: 74px; padding: .6rem .8rem; color: #fff; font-weight: 700; overflow: hidden; }

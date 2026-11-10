@@ -47,7 +47,7 @@
 
 <style>
   .foot { padding: 3rem var(--pad-x) 2.5rem; color: #9aa0a6; font-size: .82rem; } /* 6.9:1 on --bg (WCAG 1.4.3; #808080 dimmed fell to 3.4) */
-  .inner { max-width: 980px; margin: 0 auto; }
+  .inner { max-width: none; margin: 0; } /* starts at the page gutter like the content above */
   .cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 1.2rem; }
   ul { list-style: none; margin: 0; padding: 0; }
   li { margin: 0; }
@@ -56,10 +56,10 @@
   .meta { display: flex; align-items: center; gap: 1.2rem; margin-top: 1.2rem; flex-wrap: wrap; }
   .lang { position: relative; display: inline-flex; align-items: center; }
   .globe { position: absolute; left: .7rem; font-size: .9rem; pointer-events: none; filter: grayscale(1); }
-  .lang select { min-height: 44px; padding: .3rem .9rem .3rem 2.1rem; background: transparent; border: 1px solid #808080; border-radius: 2px; color: #b3bac2; font-size: .82rem; }
+  .lang select { min-height: 44px; padding: .3rem .9rem .3rem 2.1rem; background: transparent; border: 1px solid var(--fr-line); border-radius: 999px; color: #b3bac2; font-size: .82rem; }
   .lang select:hover, .lang select:focus-visible { color: #fff; border-color: #fff; }
   .lang option { background: #101418; color: #fff; }
-  .help { background: transparent; border: 1px solid #808080; color: #9aa0a6; font-weight: 400; font-size: .82rem; min-height: 44px; padding: .3rem .9rem; border-radius: 2px; }
+  .help { background: transparent; border: 1px solid var(--fr-line); color: #9aa0a6; font-weight: 400; font-size: .82rem; min-height: 44px; padding: .3rem .9rem; border-radius: 999px; }
   .help:hover:not(:disabled) { background: transparent; color: #fff; border-color: #fff; }
   .brand { display: inline-flex; align-items: center; gap: .45rem; }
   .version { margin-left: auto; font-size: .76rem; }

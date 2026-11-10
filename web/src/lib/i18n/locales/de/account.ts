@@ -173,7 +173,7 @@ export default {
     emptyFind: 'Etwas zum Herunterladen finden',
     storageAria: 'Belegter Speicher',
     storageUsed: '{used} von {total} Gerätespeicher belegt',
-    maxDownloads: { one: ' · bis zu {n} Download', other: ' · bis zu {n} Downloads' },
+    maxDownloads: { one: 'bis zu {n} Download', other: 'bis zu {n} Downloads' },
     defaultQuality: 'Standard-Qualität',
     qualities: { sd: 'Niedrig (480p)', hd: 'Mittel (720p)', fhd: 'Hoch (1080p)', original: 'Original' },
     persist: 'Speicher schützen',

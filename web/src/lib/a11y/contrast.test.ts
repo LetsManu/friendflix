@@ -9,7 +9,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { AA, contrast, textContrast, type RGB } from '#lib/glass/tone';
+import { AA, contrast, frostComposite, textContrast, type RGB } from '#lib/glass/tone';
 
 const SRC = fileURLToPath(new URL('../../', import.meta.url));
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8');
@@ -154,5 +154,22 @@ describe('layout (WCAG 1.4.10 / 2.4.11)', () => {
     const app = read('app.css');
     expect(app).toContain('html { scroll-padding-top: calc(var(--nav-total) + 8px); }');
     expect(app).toContain('html:not(.kids) { scroll-padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 16px); }');
+  });
+});
+
+describe('ranked strip over a bright poster (WCAG 1.4.3)', () => {
+  const app = read('app.css');
+  const coral = hex(/\.frost-text \{[^}]*--acc-text: (#[0-9a-f]{6})/.exec(app)![1]!);
+  it('the coral rank numeral and the white title keep AA over a pure white poster, with the strip scrim and milk read from the stylesheets', () => {
+    for (const file of ['lib/Card.svelte', 'lib/PosterCard.svelte']) {
+      const src = read(file);
+      const scrim = Number(/\.rkbar \{[^}]*--fr-scrim: ([.\d]+);/.exec(src)![1]);
+      expect(src).toMatch(/\.rkn \{[^}]*color: var\(--acc-text\)/);
+      expect(src).toMatch(/class="rkbar frost-flat frost-text"/);
+      // the numeral sits on the milk's top stop (the lightest part of the strip), over the scrim, over the poster
+      const back = frostComposite(WHITE, scrim);
+      expect(contrast(coral, back), file).toBeGreaterThanOrEqual(AA);
+      expect(contrast(WHITE, back), file).toBeGreaterThanOrEqual(AA);
+    }
   });
 });

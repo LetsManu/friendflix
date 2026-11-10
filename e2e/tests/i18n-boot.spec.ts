@@ -59,7 +59,7 @@ test.describe('settings: language switch', () => {
     await page.goto('/settings');
     await page.locator('#al').selectOption('eng');
     await page.locator('#ui-lang').selectOption('en');
-    await expect(page.getByRole('heading', { level: 1, name: 'Playback settings' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
     await expect(page.locator('#al')).toHaveValue('eng'); // unsaved edit survived
     await expect(page.locator('#al option[value="eng"]')).toHaveText('English'); // track names follow the language
     await page.getByRole('button', { name: 'Save', exact: true }).last().click();

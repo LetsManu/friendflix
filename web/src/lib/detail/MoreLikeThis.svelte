@@ -68,7 +68,7 @@
   @media (max-width: 899px) { .grid3, .grid3.modal { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 340px) { .grid3, .grid3.modal { grid-template-columns: minmax(0, 1fr); } }
   .sk { aspect-ratio: 16 / 12; }
-  .mc { background: #2a323b; border-radius: 6px; overflow: hidden; display: flex; flex-direction: column; }
+  .mc { background: #2a323b; border-radius: var(--fr-r-tile); overflow: hidden; display: flex; flex-direction: column; }
   .im { position: relative; display: block; aspect-ratio: 16 / 9; background: #1c2228; }
   .im img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .im img.contain { object-fit: contain; }

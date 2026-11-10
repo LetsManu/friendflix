@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { ME } from '../mocks/fixtures.js';
 import { expect, test } from '../fixtures.js';
-import { meanOf, pixelCols, redPixels, worstStep } from '../helpers.js';
+import { pixelCols, redPixels, seamColumns, worstStep } from '../helpers.js';
 
 /** Desktop top bar (spec desktop browse §1): logo, a floating pill with the tabs, search that stretches open, bell, avatar. */
 test.describe('desktop pill bar', () => {
@@ -67,12 +67,13 @@ test.describe('desktop pill bar', () => {
       await page.evaluate(() => window.scrollTo(0, 700));
       await expect(bar).toHaveClass(/solid/);
       await expect.poll(() => bar.locator('.scrim').evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
-      // every painted bar-wide layer holds the pill's whole box (no band that ends across or above the pill)
+      // every painted bar-wide layer holds the pill's whole box (no band that ends across or above the pill; the glass's halves
+      // are not drawn at rest)
       const bands = await bar.evaluate((b) => {
         const p = b.querySelector('.pill')!.getBoundingClientRect();
         return [b, ...b.querySelectorAll<HTMLElement>('*')].filter((e) => {
           const cs = getComputedStyle(e), r = e.getBoundingClientRect();
-          return r.width >= innerWidth * .9 && Number(cs.opacity) > 0 && (cs.backgroundImage !== 'none' || cs.backgroundColor !== 'rgba(0, 0, 0, 0)');
+          return r.width >= innerWidth * .9 && Number(cs.opacity) > 0 && cs.visibility !== 'hidden' && (cs.backgroundImage !== 'none' || cs.backgroundColor !== 'rgba(0, 0, 0, 0)');
         }).map((e) => { const r = e.getBoundingClientRect(); return { cls: String(e.className), holds: r.top <= p.top && r.bottom >= p.bottom && r.left <= p.left && r.right >= p.right }; });
       });
       expect(bands.length).toBeGreaterThan(0);
@@ -85,10 +86,8 @@ test.describe('desktop pill bar', () => {
       }
       // at rest, with the pointer elsewhere, the sheen is out
       await expect.poll(() => pill.locator('.frost-sheen').evaluate((e) => getComputedStyle(e).opacity)).toBe('0');
-      // the glass is even across the split of its two halves (a strip above the labels, averaged over 4 rows)
-      const mid = pb.x + pb.width / 2;
-      const strip = await pixelCols(page, mid - 24, pb.y + 4, 48, 4);
-      expect(Math.abs(meanOf(strip, 0, 20) - meanOf(strip, 28, 48))).toBeLessThan(4);
+      // the glass has no seam: no device-pixel column along it that stands out from both neighbours over its whole height
+      expect(await seamColumns(page, { x: pb.x + pb.height / 2, y: pb.y, width: pb.width - pb.height, height: pb.height })).toEqual([]);
     });
 
     // regression (v3.0.2): the pill's blur was two blurring halves whose boxes overlap (each reaches far over the other, for
@@ -156,6 +155,73 @@ test.describe('desktop pill bar', () => {
         await page.mouse.move(720, 800);
       }
     });
+
+    // regression (v3.0.3, the third report of a fine line at the bar's centre, Chrome on Windows): the glass was drawn by two
+    // halves, each the whole material clipped at the pill's middle. Wherever that middle fell between two device pixels (an odd
+    // window width, a pill width that is not a whole number of pixels: it follows the active tab's label), the column there
+    // got both halves or neither: a 1 px line, lighter or darker depending on the renderer. Now the glass is ONE surface at
+    // rest; the halves exist only while the pill slides, and cross-fade in the middle instead of meeting in a cut. Checked
+    // column by column (an average over a few columns cannot see a 1 px line) at device scales and widths where the
+    // middle falls between device pixels, with each tab active, and held mid-slide (opening, closing, reversed).
+    for (const [dsf, width] of [[1.25, 1441], [1.5, 1905]] as const) {
+      test.describe(`device scale ${dsf}, ${width}px wide`, () => {
+        test.use({ deviceScaleFactor: dsf, viewport: { width, height: 900 } });
+        test('the glass pill has no 1 px seam column: one surface at rest, none mid-slide', async ({ page }) => {
+          await page.addInitScript(() => { (window as unknown as { __ffDeskGuard: unknown }).__ffDeskGuard = { slowMs: 1000, frames: 8 }; });
+          await page.goto('/watchlist');
+          await expect(page.locator('html')).toHaveClass(/(^|\s)m-glass(\s|$)/);
+          const bar = page.locator('[data-desk-bar]');
+          const pill = bar.locator('.pill');
+          await page.mouse.move(width / 2, 850); // the pointer away from the bar (no sheen)
+          /** the glass's straight part (its ends wherever they are, mid-slide too; the round ends left out) */
+          const straight = () => pill.evaluate((p) => {
+            const l = p.querySelector('.pbg .l > i.frost')!.getBoundingClientRect(), r = p.querySelector('.pbg .r > i.frost')!.getBoundingClientRect();
+            return { x: l.left + l.height / 2, y: l.top, width: r.right - l.left - l.height, height: l.height };
+          });
+          const pbg = pill.locator('.pbg');
+          for (const name of ['Merkliste', 'Start', 'Serien', 'Filme', 'Neu & demnächst']) {
+            if (name !== 'Merkliste') await pill.getByRole('link', { name }).click();
+            await expect(pill.locator('[aria-current="page"]')).toHaveText(name);
+            await page.mouse.move(width / 2, 850);
+            await page.evaluate(() => scrollTo(0, 600)); // the bar's glass state over the page
+            await expect(bar).toHaveClass(/solid/);
+            await expect.poll(() => page.evaluate(() => document.getAnimations().filter((a) => a.playState === 'running').length)).toBe(0);
+            // at rest: one surface, the halves not drawn at all
+            await expect(pbg).not.toHaveClass(/split/);
+            await expect(pbg.locator('.whole')).toBeVisible();
+            await expect(pbg.locator('.halves')).toBeHidden();
+            expect(await seamColumns(page, await straight()), `at rest, ${name} active`).toEqual([]);
+          }
+          // mid-slide (the sheen out of the way): the halves draw the glass; every animation held at a few moments
+          await page.addStyleTag({ content: '[data-desk-bar] .pill > .sclip { display: none; }' });
+          const holdAt = (t: number) => page.evaluate(async (t) => {
+            const half = document.querySelector('[data-desk-bar] .pbg .l > i.frost')!;
+            await new Promise<void>((res) => { const f = () => (half.getAnimations().length ? res() : requestAnimationFrame(f)); f(); });
+            for (const a of document.getAnimations()) { a.pause(); a.currentTime = t; }
+          }, t);
+          const open = () => pill.locator('.mag').evaluate((b: HTMLButtonElement) => b.click());
+          const close = () => page.locator('#hq').evaluate((i) => i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+          const finish = () => page.evaluate(() => { for (const a of document.getAnimations()) a.finish(); });
+          for (const t of [0, 48, 160]) {
+            await open(); await holdAt(t);
+            await expect(pbg).toHaveClass(/split/);
+            expect(await seamColumns(page, await straight()), `opening, ${t} ms`).toEqual([]);
+            await finish();
+            await expect(pbg).not.toHaveClass(/split/); // the surface is back the frame the slide ends
+            await close(); await holdAt(t);
+            expect(await seamColumns(page, await straight()), `closing, ${t} ms`).toEqual([]);
+            await finish();
+          }
+          // reversed half way: open, close 100 ms in, held in the reversal
+          await open(); await holdAt(100);
+          await close(); await holdAt(48);
+          expect(await seamColumns(page, await straight()), 'reversed mid-slide').toEqual([]);
+          await finish();
+          await expect(pbg).not.toHaveClass(/split/);
+          expect(await seamColumns(page, await straight()), 'at rest after the reversal').toEqual([]);
+        });
+      });
+    }
   });
 
   test('bar is transparent over the billboard and solid after scrolling 40px; no full-width band', async ({ page }) => {

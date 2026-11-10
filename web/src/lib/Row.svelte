@@ -26,7 +26,7 @@
   /** null = loading (skeleton) */
   export let items: Item[] | null;
   export let href = '';
-  /** small rank chip on the corner of portrait posters */
+  /** Top-10 row: each poster carries its rank in a glass strip at its foot */
   export let ranked = false;
   /** cards get an X button; the parent handles `remove` */
   export let removable = false;
@@ -144,7 +144,7 @@
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     return () => mo.disconnect();
   });
-  /** desktop browse layout (not phone, TV or the kids UI): paged rows, outlined rank numerals */
+  /** desktop browse layout (not phone, TV or the kids UI): paged rows */
   $: desk = deskUi({ tv: tvOn, mobile: $mobile, kids: $kidsMode });
   /** TV: the focus tile labels a card of a ranked row with its rank (the tile cannot know the row) */
   const rankFocus = (id: string, n: number) => { if (tvOn) tvRank.set(ranked ? { id, n } : null); };
@@ -172,7 +172,7 @@
         {#if items === null}
           {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={(($mobile && !landscape) || ranked) && !tvOn}></div></div>{/each}
         {:else}
-          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem" on:focusin={() => rankFocus(it.id, idx + 1)}>{#if ranked}<span class="rank" class:two={idx >= 9} aria-label={$t('home.row.rank', { n: idx + 1 })}>{idx + 1}</span>{/if}{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} on:remove />{:else}<Card item={it} {removable} poster={ranked && !tvOn} {priority} on:remove />{/if}</div>{/if}{/each}
+          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem" on:focusin={() => rankFocus(it.id, idx + 1)}>{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} rank={ranked ? idx + 1 : 0} on:remove />{:else}<Card item={it} {removable} poster={ranked && !tvOn} {priority} rank={ranked ? idx + 1 : 0} on:remove />{/if}</div>{/if}{/each}
         {/if}
         </div>
       </div>
@@ -189,7 +189,7 @@
   /* content-visibility skips off-screen rows; the size estimate matches the real height (slot width * card ratio + title)
      so the page height - and the scroll position restored on "back" - stays exact before a row was rendered once */
   .row { position: relative; z-index: 1; margin: 1.6rem 0 0; padding-bottom: .6rem; --n: 2.4; --gap: .45rem; --sw: calc((100vw - 2 * var(--pad-x) - (var(--n) - 1) * var(--gap)) / var(--n)); content-visibility: auto; contain-intrinsic-size: auto calc(var(--sw) * .5625 + 42px); }
-  .row.rk { contain-intrinsic-size: auto calc(var(--sw) * .78 + 42px); }
+  .row.rk { contain-intrinsic-size: auto calc(var(--sw) * 1.5 + 42px); }
   /* iOS WebKit: skipped rows whose size estimate differs (e.g. cards with a title bar) change the page height mid-scroll;
      the fixed tab bar then jumps into the page and rows paint blank until scrolling stops - render every row there */
   @supports (-webkit-touch-callout: none) { .row, .row.rk { content-visibility: visible; contain-intrinsic-size: none; } }
@@ -214,9 +214,6 @@
   .strip { display: contents; }
   /* 100% = the track content box (inside the pad-x padding): exactly n cards per page, the neighbours peek in the padding */
   .slot { flex: 0 0 calc((100% - (var(--n) - 1) * var(--gap)) / var(--n)); scroll-snap-align: start; min-width: 0; }
-  /* ranked row: normal portrait posters with a small filled rank chip on the top-right corner */
-  .slot.ranked { position: relative; }
-  .rank { position: absolute; right: .45rem; top: .45rem; z-index: 3; display: inline-flex; align-items: center; justify-content: center; min-width: 1.7rem; height: 1.7rem; padding: 0 .5rem; border-radius: 99px; background: var(--acc-fill); color: #fff; font-size: .85rem; font-weight: 800; line-height: 1; box-shadow: 0 2px 8px rgba(0, 0, 0, .45); pointer-events: none; user-select: none; }
   .row:not(.near) :global(.skeleton::after) { animation: none; display: none; }
   .ph { aspect-ratio: 16 / 9; width: 100%; }
   .ph.poster { aspect-ratio: 2 / 3; }
@@ -227,7 +224,7 @@
   .row:hover .arrow, .arrow:focus-visible { opacity: 1; }
   @media (hover: none), (pointer: coarse) { .arrow { display: none; } }
 
-  /* ---- desktop browse (spec §2): paged rows from the logo's gutter, arrows on hover / focus, page dots, rank numerals ---- */
+  /* ---- desktop browse (spec §2): paged rows from the logo's gutter, arrows on hover / focus, page dots ---- */
   .row.dk { --gap: 8px; --emph: cubic-bezier(.05, .7, .1, 1); margin-top: 24px; }
   .row.dk .hd { align-items: center; min-height: 28px; margin: 0 var(--pad-x) 8px; }
   .row.dk h2 { font-size: 20px; font-weight: 700; line-height: 28px; letter-spacing: -.01em; }
@@ -263,17 +260,12 @@
   .row .pg:focus-visible { outline: 2px solid #fff; outline-offset: -6px; box-shadow: inset 0 0 0 8px var(--ring-dark); }
   .row.dk:hover .pg, .row.dk:focus-within .pg { opacity: 1; }
   @media (hover: none), (pointer: coarse) { .row.dk:hover .pg:not(:focus-visible) { opacity: 0; } }
-  /* ranked rows: a large outlined numeral, the poster overlapping its right edge */
-  .row.dk.rk { contain-intrinsic-size: auto calc(var(--sw) * .87 + 48px); }
-  .row.dk .slot.ranked { display: flex; align-items: flex-end; }
-  .row.dk.rk .ph.poster { width: 58%; margin-left: auto; } /* the skeleton takes the poster's place, no jump when it loads */
-  .row.dk .slot.ranked > :global(.card) { position: relative; z-index: 1; flex: 0 0 58%; min-width: 0; margin-left: -4%; }
-  /* z-index: a flex item stacks even when static; the poster (z 1) must stay above the numeral */
-  .row.dk .rank { position: static; z-index: 0; flex: 0 0 46%; display: block; min-width: 0; height: auto; padding: 0; border-radius: 0; background: none; box-shadow: none; text-align: right;
-    font-size: calc(var(--sw) * .9); font-weight: 800; line-height: .74; letter-spacing: -.06em; color: var(--bg);
-    /* outline only: the page colour fills the glyph over the inner half of the stroke, which also hides the overlapping contours of the variable font */
-    -webkit-text-fill-color: var(--bg); -webkit-text-stroke: 4px rgba(255, 255, 255, .5); paint-order: stroke fill; }
-  .row.dk .rank.two { font-size: calc(var(--sw) * .66); letter-spacing: -.1em; }
+  /* ranked rows: portrait posters with the rank strip (Card); the poster fills its slot, so the row shows more slots per page
+     than a plain row and the cards keep about the width they had (the poster used to take 58 % of its slot) */
+  .row.dk.rk { --n: 5; contain-intrinsic-size: auto calc(var(--sw) * 1.5 + 48px); }
+  @media (min-width: 1000px) { .row.dk.rk { --n: 6; } }
+  @media (min-width: 1200px) { .row.dk.rk { --n: 7; } }
+  @media (min-width: 1400px) { .row.dk.rk { --n: 8; } }
 
   /* ---- phone: swipeable poster rows (3.2 posters visible), no hover room needed ---- */
   .row.m { --gap: .4rem; --pw: calc((100vw - var(--pad-x) - 3 * var(--gap)) / 3.2); margin-top: 1.4rem; contain-intrinsic-size: auto calc(var(--pw) * 1.5 + 39px); }
@@ -299,13 +291,5 @@
   /* the strip carries the row glide (FLIP: scrollLeft jumps, the strip's transform springs back; spec 5.2) */
   :global(html.tv) .strip { display: flex; flex: none; gap: var(--gap); }
   :global(html.tv) .slot { flex: 0 0 var(--cw); }
-  :global(html.tv) .rank { right: .625rem; top: .625rem; min-width: 2rem; height: 2rem; border-radius: 4px; box-shadow: none; font-size: .9375rem; font-weight: 600; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
-  /* phone Top 10: a large outlined numeral, the poster overlapping its right edge (the slot widens to hold both) */
-  .row.m .slot.ranked { flex-basis: calc(var(--pw) * 1.42); display: flex; align-items: flex-end; }
-  .row.m .slot.ranked > :global(.pc) { position: relative; z-index: 1; flex: 0 0 var(--pw); }
-  .row.m .rank { position: static; z-index: 0; flex: 1 1 auto; min-width: 0; height: auto; padding: 0; margin-right: calc(var(--pw) * -.13); border-radius: 0; background: none; box-shadow: none; text-align: right;
-    font-size: calc(var(--pw) * .95); font-weight: 900; line-height: .78; letter-spacing: -.08em; color: var(--bg);
-    -webkit-text-fill-color: var(--bg); -webkit-text-stroke: 2.5px rgba(255, 255, 255, .45); paint-order: stroke fill; }
-  .row.m .rank.two { font-size: calc(var(--pw) * .7); letter-spacing: -.1em; }
   .row.m.land { --pw: calc((100vw - var(--pad-x)) / 2.15); }
 </style>

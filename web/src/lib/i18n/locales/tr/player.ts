@@ -97,7 +97,7 @@ const tr: Translation<typeof de> = {
     langs: { ger: 'Almanca', eng: 'İngilizce', fre: 'Fransızca', spa: 'İspanyolca', ita: 'İtalyanca' },
   },
   episodeOnly: 'B{e}',
-  phone: { episodeLine: 'S{s} · B{e} · {name}', playback: 'Oynatma', tools: 'Araçlar' },
+  phone: { episodeLine: 'S{s}:B{e} · {name}', playback: 'Oynatma', tools: 'Araçlar' },
   speed: {
     title: 'Oynatma hızı',
     aria: 'Oynatma hızı: {r}',
