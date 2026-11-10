@@ -15,7 +15,7 @@
   import { uid } from '#lib/ui/ids';
   import { keyLabel } from '#lib/admin/settings/form';
   import { akApply, akPlan, isPlainHttp, type AkResult, type AkStep } from './api';
-  import { akFailText, failedStep, type Handle } from './messages';
+  import { akFailText, failedStep, passkeyDetailText, type Handle } from './messages';
   import Notice from './Notice.svelte';
 
   export let handle: Handle;
@@ -23,6 +23,8 @@
   const id = uid('ak');
 
   let url = '', token = '', addMe = true;
+  /** passkey sign-in: an explicit opt-in, off by default (it changes Authentik's default identification stage for every application) */
+  let passkeys = false;
   let plan: AkStep[] | null = null;
   let result: AkResult | null = null;
   let busy: 'plan' | 'apply' | null = null;
@@ -34,14 +36,14 @@
   $: applyFailed = result && !result.ok ? failedStep(result.steps) : null;
   $: ready = Boolean(url.trim() && token.trim());
 
-  /** another address makes the plan and the result stale */
+  /** another address (or the passkey choice) makes the plan and the result stale */
   function urlChanged() { plan = null; result = null; msg = ''; }
 
   async function showPlan() {
     if (busy || !ready) return;
     busy = 'plan'; msg = ''; result = null;
     try {
-      plan = (await akPlan({ url: url.trim(), token: token.trim() })).steps;
+      plan = (await akPlan({ url: url.trim(), token: token.trim(), passkeySignIn: passkeys })).steps;
     } catch (e) {
       plan = null;
       msg = handle(e)?.text ?? '';
@@ -52,7 +54,7 @@
     if (busy || !ready) return;
     busy = 'apply'; msg = '';
     try {
-      result = await akApply({ url: url.trim(), token: token.trim(), addMeToAdmins: addMe });
+      result = await akApply({ url: url.trim(), token: token.trim(), addMeToAdmins: addMe, passkeySignIn: passkeys });
     } catch (e) {
       const f = handle(e);
       msg = f?.text ?? '';
@@ -79,6 +81,11 @@
     <span>{$t('setup.signin.addMe')}</span>
   </label>
   <span class="hint" id="{id}-me">{$t('setup.signin.addMeHint')}</span>
+  <label class="check">
+    <input type="checkbox" bind:checked={passkeys} disabled={busy === 'apply'} aria-describedby="{id}-pk" on:change={urlChanged} />
+    <span>{$t('setup.signin.passkeys')}</span>
+  </label>
+  <span class="hint" id="{id}-pk">{$t('setup.signin.passkeysHint')}</span>
   {#if !result?.ok}
     <div class="acts"><Button variant={plan && !planFailed ? 'secondary' : 'primary'} type="submit" icon="list" pending={busy === 'plan'} disabled={!ready || busy === 'apply'}>{$t('setup.signin.plan')}</Button></div>
   {/if}
@@ -89,7 +96,7 @@
     <h3 id="{id}-p">{$t('setup.signin.planTitle')}</h3>
     <ul class="steps" aria-labelledby="{id}-p">
       {#each plan as s (s.id)}
-        <li><span>{$t(`setup.ak.step.${s.id}`)}</span><StatusPill tone={TONE[s.state]} icon={ICON[s.state]} label={$t(`setup.ak.state.${s.state}`)} /></li>
+        <li><span>{$t(`setup.ak.step.${s.id}`)}{#if passkeyDetailText(s)}<span class="muted small"> – {passkeyDetailText(s)}</span>{/if}</span><StatusPill tone={TONE[s.state]} icon={ICON[s.state]} label={$t(`setup.ak.state.${s.state}`)} /></li>
       {/each}
     </ul>
     {#if planFailed}
@@ -111,7 +118,7 @@
     <h3 id="{id}-r">{$t('setup.signin.resultsTitle')}</h3>
     <ul class="steps" aria-labelledby="{id}-r">
       {#each result.steps as s (s.id)}
-        <li><span>{$t(`setup.ak.step.${s.id}`)}</span><StatusPill tone={TONE[s.state]} icon={ICON[s.state]} label={$t(`setup.ak.state.${s.state}`)} /></li>
+        <li><span>{$t(`setup.ak.step.${s.id}`)}{#if passkeyDetailText(s)}<span class="muted small"> – {passkeyDetailText(s)}</span>{/if}</span><StatusPill tone={TONE[s.state]} icon={ICON[s.state]} label={$t(`setup.ak.state.${s.state}`)} /></li>
       {/each}
     </ul>
     {#if result.ok}

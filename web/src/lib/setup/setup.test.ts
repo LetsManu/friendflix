@@ -7,7 +7,7 @@ import { describeActivity } from '#lib/admin/activity';
 import {
   akApply, akPlan, APPLY_TIMEOUT_MS, CSRF_HEADER, firstOpenStep, isPlainHttp, mediaAuto, readCookie, redirectUri, saveSetup, setupState, testSetup, unlock,
 } from './api';
-import { akFailText, errorText, failedStep, failure, filled, isSecretKey, otherFieldErrors, probeText } from './messages';
+import { akFailText, errorText, failedStep, failure, filled, isSecretKey, otherFieldErrors, passkeyDetailText, probeText } from './messages';
 
 const LOCALES = ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const;
 
@@ -94,6 +94,15 @@ describe('setup API', () => {
 });
 
 describe('setup messages', () => {
+  it('the passkey step says why it was skipped; an Authentik error code reads "could not be set"; other steps have no note', () => {
+    expect(passkeyDetailText({ id: 'passkeys', detail: 'not_chosen' })).toBe(tr('setup.ak.passkeyDetail.not_chosen'));
+    expect(passkeyDetailText({ id: 'passkeys', detail: 'unsupported_version' })).toBe(tr('setup.ak.passkeyDetail.unsupported_version'));
+    expect(passkeyDetailText({ id: 'passkeys', detail: 'not_applied' })).toBe(tr('setup.ak.passkeyDetail.not_applied'));
+    expect(passkeyDetailText({ id: 'passkeys', detail: 'blueprint_invalid' })).toBe(tr('setup.ak.passkeyDetail.failed'));
+    expect(passkeyDetailText({ id: 'passkeys' })).toBe('');
+    expect(passkeyDetailText({ id: 'extraFlows', detail: 'template_missing' })).toBe('');
+  });
+
   it('maps every refusal: session, complete, rate limit, probe (soft or hard), fields, probe-shaped refusals, codes, unknown', () => {
     expect(failure(new ApiError(409, { error: 'setup_complete' }))).toEqual({ kind: 'complete' });
     expect(failure(new ApiError(401, { error: 'setup_session_required' }))).toEqual({ kind: 'session' });

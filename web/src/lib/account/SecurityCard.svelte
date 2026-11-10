@@ -181,6 +181,8 @@
         </ul>
       {/if}
       <p class="muted note">{$t('login.sec.passkey.note')}</p>
+      <!-- passkeys made on the identity provider's pages are bound to its host (WebAuthn RP ID) and never work in FriendFlix -->
+      {#if sec && inApp && keys.length}<p class="muted note" data-note="passkey-renew">{$t('login.sec.passkey.renew')}</p>{/if}
     </div>
     {#if sec}
       <div class="acts">

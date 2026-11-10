@@ -67,7 +67,7 @@ The path: **install** Authentik and Jellyfin (steps 3–4), **start** the stack 
 - `friend.example.com` → FriendFlix
 - `auth.example.com` → Authentik
 
-Ports 80 and 443 forwarded from the router to NPM. The FriendFlix backend fetches `https://auth.example.com/…` itself; if your router cannot reach its own public IP from inside (no NAT loopback), add local DNS entries (router, Pi-hole, AdGuard) so both names resolve to the NPM host inside the LAN too.
+Ports 80 and 443 forwarded from the router to NPM. If your router cannot reach its own public IP from inside (no NAT loopback), add local DNS entries (router, Pi-hole, AdGuard) so both names resolve to the NPM host inside the LAN too; that is for browsers and other LAN devices. The FriendFlix backend does **not** go through the public proxy: it reaches `auth.example.com` over a route only it uses ([authentik.md §10a, step 5](authentik.md#10a-in-app-sign-in)).
 
 **Nginx Proxy Manager** running ([installation](https://nginxproxymanager.com/setup/)), reachable on 80/443, with an e-mail address set for Let's Encrypt. FriendFlix and Authentik publish their ports on `127.0.0.1` only, so NPM must run on the same host:
 
@@ -302,6 +302,7 @@ Values in the table can also be set in *Admin → Settings*. After changing `.en
 - [ ] `curl -s -o /dev/null -w '%{http_code}\n' https://friend.example.com/internal/x` → `404`; same for `/metrics`.
 - [ ] From outside your network: `nmap -p 3080-3082,8096,5055,9000 <public-ip>` → all filtered/closed.
 - [ ] `curl -s https://auth.example.com/application/o/friendflix/.well-known/openid-configuration | jq -r .issuer` equals `OIDC_ISSUER`.
+- [ ] **Required behind Nginx Proxy Manager, also for existing installs:** `curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer": *"[^"]*"'` prints the provider's own address (`https://auth.example.com/…`), never `evil.example.com`. Windows PowerShell form, why, and the fix (a custom location `/` with `proxy_set_header X-Forwarded-Host $host;`): [authentik.md §2.3](authentik.md#23-reverse-proxy-nginx-proxy-manager). Afterwards sign in once and open Authentik's admin page to confirm nothing broke.
 - [ ] Admin login works, MFA is requested, *Admin* is visible.
 - [ ] A test invite in a private window ends logged in on the portal; the user appears in *Admin → Users* and in Jellyfin.
 - [ ] *Admin → Status → Sign-in* shows no warning (the e-mail change flow shows *Missing* until you import it, without a warning; see [Harden Authentik](#harden-authentik)).
@@ -323,7 +324,7 @@ Values in the table can also be set in *Admin → Settings*. After changing `.en
 | *Sign in with Authentik* in the wizard comes back to the code step (*Your setup session has expired*) | The sign-in came back to another browser or address than the one that holds the setup session (cookies), or the session expired. Open the wizard at `PUBLIC_URL`, enter the code again and sign in from there. |
 | Authentik shows a redirect URI error | The provider's redirect URI must be exactly `${PUBLIC_URL}/auth/callback` (scheme, host, no trailing slash). FriendFlix must run at the root of its host name. |
 | Sign-in answers 503, backend log `oidc discovery failed`, `"issuer" property does not match the expected value` | `OIDC_ISSUER` needs the trailing slash and the exact application slug. |
-| Sign-in answers 503, backend log `oidc discovery failed` with `fetch failed` / `ENOTFOUND` | The backend container cannot reach `auth.example.com`: DNS inside the LAN, NAT loopback, firewall. Test with `docker compose -f compose.prod.yaml run --rm --no-deps backend node -e "fetch('https://auth.example.com').then(r=>console.log(r.status))"`. As a workaround, a local override can add `extra_hosts: ["auth.example.com:host-gateway"]` to `backend` when NPM listens on the host's port 443. |
+| Sign-in answers 503, backend log `oidc discovery failed` with `fetch failed` / `ENOTFOUND` | The backend container cannot reach `auth.example.com` over its backend-only route ([authentik.md §10a, step 5](authentik.md#10a-in-app-sign-in)): split-horizon DNS, network alias or `extra_hosts` entry missing or wrong, certificate, firewall. Test with `docker compose -f compose.prod.yaml run --rm --no-deps backend node -e "fetch('https://auth.example.com').then(r=>console.log(r.status))"`. Never fix it by sending the backend through the public proxy. |
 | Backend refuses an `http://` issuer | `openid-client` only accepts https. `OIDC_ALLOW_INSECURE=true` is for development against a local Authentik, never for production. |
 | `{"error":"login_failed"}` after Authentik | Wrong client secret, an encryption key set on the provider, or clock skew > 30 s between the hosts (enable NTP). The backend log line `oidc callback failed` has the reason. |
 | `{"error":"invalid_state"}` | The login was started on another address than `PUBLIC_URL` (LAN IP, `http://`), the browser blocked the cookie, or the login took longer than 10 minutes. Always use `PUBLIC_URL`. |

@@ -17,7 +17,7 @@ import { join, plainHttpUrl, smallJson } from '../settings/probeKit.js';
  * Every request has a 10 s deadline that also covers its body; a blueprint import 60 s (Authentik applies it synchronously: the shipped
  * recovery example took 17 s on a fresh 2026.8.3 install).
  */
-export type AkStepId = 'check' | 'groups' | 'provider' | 'serviceAccount' | 'enrollment' | 'recovery' | 'brand' | 'readback' | 'adminMember' | 'extraFlows';
+export type AkStepId = 'check' | 'groups' | 'provider' | 'serviceAccount' | 'enrollment' | 'recovery' | 'brand' | 'passkeys' | 'readback' | 'adminMember' | 'extraFlows';
 export interface AkStep { id: AkStepId; state: 'create' | 'update' | 'exists' | 'skip' | 'ok' | 'failed'; detail?: string /* i18n code */ }
 
 export type AkCode = 'invalid_url' | 'unauthorized' | 'not_superuser' | 'unsupported_version' | 'blueprint_invalid' | 'unreachable' | 'unexpected' | 'issuer_mismatch';
@@ -52,7 +52,11 @@ const ENROLL_FLOW = 'friendflix-enrollment';
 const RECOVERY_FLOW = 'default-recovery-flow';
 const RECOVERY_BLUEPRINT = 'example/flows-recovery-email-mfa-verification.yaml';
 const IDENTIFICATION_STAGE = 'default-authentication-identification';
-const BLUEPRINTS = { setup: 'friendflix-setup.yaml', serviceAccount: 'friendflix-service-account.yaml', enrollment: 'friendflix-blueprint.yaml' } as const;
+const BLUEPRINTS = {
+  setup: 'friendflix-setup.yaml', serviceAccount: 'friendflix-service-account.yaml', enrollment: 'friendflix-blueprint.yaml', passkey: 'friendflix-passkey.yaml',
+} as const;
+/** the WebAuthn validation stage friendflix-passkey.yaml creates (the identification stage's `webauthn_stage`: passkey sign-in in FriendFlix) */
+export const PASSKEY_STAGE = 'friendflix-passkey-validation';
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj | undefined => (v && typeof v === 'object' && !Array.isArray(v) ? v as Obj : undefined);
@@ -256,7 +260,7 @@ class Steps {
  * The plan (read-only: GET requests only): what apply would create, update or leave. `publicUrl` and `adminGroup` (optional) make the
  * provider and group comparison exact.
  */
-export async function planAuthentik(input: { url: string; token: string; publicUrl?: string; adminGroup?: string }, deps: { fetchImpl: typeof fetch }): Promise<AkStep[]> {
+export async function planAuthentik(input: { url: string; token: string; publicUrl?: string; adminGroup?: string; passkeySignIn?: boolean }, deps: { fetchImpl: typeof fetch }): Promise<AkStep[]> {
   const s = new Steps();
   let c: Client | undefined;
   await s.run('check', async () => {
@@ -288,6 +292,14 @@ export async function planAuthentik(input: { url: string; token: string; publicU
     if (!brand && !stage) return { state: 'skip' };
     return { state: (brand && !brand.flow_recovery) || (stage && !stage.recovery_flow) ? 'create' : 'exists' };
   });
+  // what "Offer passkey sign-in" would do: not chosen (the default), nothing to set, set already, or not possible on this version
+  await s.run('passkeys', async () => {
+    if (input.passkeySignIn !== true) return { state: 'skip', detail: 'not_chosen' };
+    const { stage } = await brandTargets(ak);
+    if (!stage) return { state: 'skip' };
+    if (!Object.hasOwn(stage, 'webauthn_stage')) return { state: 'skip', detail: 'unsupported_version' };
+    return { state: stage.webauthn_stage ? 'exists' : 'create' };
+  });
   await s.run('extraFlows', async () => {
     if (!AK_EXTRA_BLUEPRINTS.length) return { state: 'skip' };
     const r = await extraFlowsPlan(ak);
@@ -305,6 +317,38 @@ async function extraFlowsPlan(c: Client): Promise<{ ready: typeof AK_EXTRA_BLUEP
   return { ready, missing: AK_EXTRA_BLUEPRINTS.filter((b) => !ready.includes(b)) };
 }
 
+/**
+ * Passkey sign-in in FriendFlix (opt-in: `on`): Authentik sends a passkey challenge on the identification stage only when its "WebAuthn
+ * Authenticator Validation Stage" (`webauthn_stage`) is set. That stage is shared: setting it offers passwordless passkey sign-in to
+ * every application using Authentik's default login flow, so the owner must tick it (wizard, Repair); off → `skip` + `not_chosen`.
+ * When the default identification stage has none, friendflix-passkey.yaml creates friendflix-passkey-validation (WebAuthn only, user
+ * verification required) and the stage gets it; the value is read back, since a version without the field ignores it in a PATCH.
+ * Never fatal: the rest of the setup (credentials above all) does not depend on it. Outcomes: `exists` (an existing choice is never
+ * overwritten), `ok`, or `skip` with `not_chosen`, `unsupported_version` (no such field), `not_applied` (not kept), or an AkError code.
+ * No default identification stage (a custom login flow) → `skip` (docs/authentik.md §11 names the clicks).
+ */
+async function passkeyStage(c: Client, deps: Deps, on: boolean): Promise<{ state: AkStep['state']; detail?: string }> {
+  if (!on) return { state: 'skip', detail: 'not_chosen' };
+  try {
+    const { stage } = await brandTargets(c);
+    if (!stage || !str(stage.pk)) return { state: 'skip' };
+    if (!Object.hasOwn(stage, 'webauthn_stage')) return { state: 'skip', detail: 'unsupported_version' };
+    if (stage.webauthn_stage) return { state: 'exists' };
+    await importWith(c, { file: BLUEPRINTS.passkey, context: {} }, deps);
+    const found = results(await c.json(`/api/v3/stages/authenticator/validate/?name=${q(PASSKEY_STAGE)}`)).find((v) => v.name === PASSKEY_STAGE);
+    if (!found || !str(found.pk)) return { state: 'skip', detail: 'not_applied' };
+    // the serializer reads user_fields and sources from the request only (see the brand step): sent back unchanged
+    const keep = Object.fromEntries((['user_fields', 'sources'] as const).filter((k) => Array.isArray(stage[k])).map((k) => [k, stage[k]]));
+    const path = `/api/v3/stages/identification/${q(String(stage.pk))}/`;
+    await c.send('PATCH', path, { ...keep, webauthn_stage: found.pk });
+    const after = await c.json(path);
+    return after?.webauthn_stage === found.pk ? { state: 'ok' } : { state: 'skip', detail: 'not_applied' };
+  } catch (e) {
+    if (e instanceof AkError) return { state: 'skip', detail: e.code };
+    throw e;
+  }
+}
+
 /** step 7: the extra blueprints whose preconditions hold; `skip` + `template_missing` when one still waits for its mail template */
 async function extraFlows(c: Client, deps: Deps & { cfg?: Config }): Promise<{ state: AkStep['state']; detail?: string }> {
   if (!AK_EXTRA_BLUEPRINTS.length) return { state: 'skip' };
@@ -318,7 +362,7 @@ async function extraFlows(c: Client, deps: Deps & { cfg?: Config }): Promise<{ s
  * Authentik on a failure (re-running is idempotent). `cfg` is handed to the extra blueprints' context functions.
  */
 export async function applyAuthentik(
-  input: { url: string; token: string; addMeToAdmins: boolean; publicUrl: string; adminGroup: string },
+  input: { url: string; token: string; addMeToAdmins: boolean; publicUrl: string; adminGroup: string; passkeySignIn?: boolean },
   deps: Deps & { cfg?: Config },
 ): Promise<{ steps: AkStep[]; values?: Record<string, string> }> {
   const s = new Steps();
@@ -395,6 +439,9 @@ export async function applyAuthentik(
     return { state: 'ok' };
   });
 
+  // step 6b: passkey sign-in in FriendFlix, when chosen; never fatal, after the credentials are read back
+  await s.run('passkeys', () => passkeyStage(ak, deps, input.passkeySignIn === true));
+
   // step 7: phase 3's flows
   await s.run('extraFlows', () => extraFlows(ak, deps));
 
@@ -418,11 +465,12 @@ export async function applyAuthentik(
  * "Repair / upgrade the Authentik setup" (Admin → Status → Sign-in): the parts an existing install may lack after an update, with a
  * one-time superuser token like the wizard's (never stored or logged). It re-applies the service account blueprint (its permissions grow
  * with new releases: phase 3 added the device deletes and two reads; an install set up before never got them), imports the extra flows
- * whose preconditions hold (the e-mail change once its template is mounted) and reads the service token back. Groups, provider,
+ * whose preconditions hold (the e-mail change once its template is mounted), gives the default identification stage its passkey
+ * validation stage when it has none and the admin ticked "Offer passkey sign-in", and reads the service token back. Groups, provider,
  * application, enrollment and recovery flows are left alone (an admin may have adapted them). `values.AUTHENTIK_API_TOKEN` is the
  * service token after the run: the caller saves it when it differs from the one in use (a deleted token is created anew by the import).
  */
-export async function repairAuthentik(input: { url: string; token: string }, deps: Deps & { cfg?: Config }): Promise<{ steps: AkStep[]; values?: { AUTHENTIK_API_TOKEN: string } }> {
+export async function repairAuthentik(input: { url: string; token: string; passkeySignIn?: boolean }, deps: Deps & { cfg?: Config }): Promise<{ steps: AkStep[]; values?: { AUTHENTIK_API_TOKEN: string } }> {
   const s = new Steps();
   let c: Client | undefined;
   await s.run('check', async () => {
@@ -433,6 +481,7 @@ export async function repairAuthentik(input: { url: string; token: string }, dep
   if (!c) return { steps: s.list };
   const ak = c;
   await s.run('serviceAccount', async () => (await importWith(ak, { file: BLUEPRINTS.serviceAccount, context: {} }, deps), { state: 'ok' }));
+  await s.run('passkeys', () => passkeyStage(ak, deps, input.passkeySignIn === true));
   await s.run('extraFlows', () => extraFlows(ak, deps));
   const key = await s.run('readback', async () => {
     const k = str((await ak.json(`/api/v3/core/tokens/${SERVICE_TOKEN}/view_key/`))?.key);

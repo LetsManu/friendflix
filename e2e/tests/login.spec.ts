@@ -146,11 +146,13 @@ test.describe('in-app sign-in (/login)', () => {
   test('mfa step with passkeyClassic only links to the sign-in page', async ({ page }) => {
     await open(page, loginState({ starts: [{ body: mfa({ passkeyClassic: true }) }] }));
     await expect(h1(page, 'Bestätigungscode')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Passkey verwenden' })).toHaveAttribute('href', '/auth/login?classic=1');
+    // clearly labelled as the identity provider's page, never a "Passkey verwenden" that silently leaves
+    await expect(page.getByRole('link', { name: 'Auf der Anmeldeseite mit Passkey anmelden' })).toHaveAttribute('href', '/auth/login?classic=1');
     await expect(page.getByRole('button', { name: 'Passkey verwenden' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Passkey verwenden' })).toHaveCount(0);
   });
 
-  test('passkey cancelled shows the classic passkey link', async ({ page }) => {
+  test('passkey cancelled: the card says so, offers retry, the way back and the labelled sign-in page link; nothing is sent', async ({ page }) => {
     await page.addInitScript(() => {
       navigator.credentials.get = () => Promise.reject(new DOMException('cancelled', 'NotAllowedError'));
     });
@@ -159,16 +161,80 @@ test.describe('in-app sign-in (/login)', () => {
     });
     await open(page, st);
     await page.getByRole('button', { name: 'Mit Passkey anmelden' }).click();
-    await expect(page.getByText('Kein passender Passkey gefunden?')).toBeVisible();
+    await expect(h1(page, 'Kein Passkey bestätigt')).toBeFocused();
+    await expect(page.getByText(/kein Passkey für FriendFlix gespeichert/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Erneut versuchen' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Auf der Anmeldeseite mit Passkey anmelden' })).toHaveAttribute('href', '/auth/login?classic=1');
+    await page.getByRole('button', { name: 'Andere Methode wählen' }).click();
+    await expect(h1(page, 'Willkommen zurück')).toBeVisible();
+    await expect(page.getByLabel('E-Mail oder Benutzername')).toBeFocused();
+    expect(answers(st)).toEqual([]);
+    await expect(page).toHaveURL(/\/login$/);
+  });
+
+  test('passkey waiting: a calm card while the device prompt is open; "Andere Methode wählen" aborts it, no redirect, nothing sent', async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as any).__aborted = false;
+      navigator.credentials.get = (o?: CredentialRequestOptions) => new Promise((_res, rej) => {
+        o?.signal?.addEventListener('abort', () => { (window as any).__aborted = true; rej(new DOMException('aborted', 'AbortError')); });
+      });
+    });
+    const st = loginState({
+      starts: [{ body: identify({ passkey: { challenge: 'ZmFrZS1jaGFsbGVuZ2U', rpId: '127.0.0.1', allowCredentials: [], userVerification: 'required', timeout: 60000 } }) }],
+    });
+    await open(page, st);
+    await page.getByRole('button', { name: 'Mit Passkey anmelden' }).click();
+    await expect(h1(page, 'Bestätige mit deinem Gerät')).toBeFocused();
+    await expect(page.getByRole('status').filter({ hasText: 'Fingerabdruck, Gesicht oder PIN' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Erneut versuchen' })).toHaveCount(0);
+    const other = page.getByRole('button', { name: 'Andere Methode wählen' });
+    const boxOf = await other.boundingBox();
+    expect(boxOf!.height).toBeGreaterThanOrEqual(44);
+    await other.click();
+    await expect(h1(page, 'Willkommen zurück')).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__aborted)).toBe(true);
+    expect(answers(st)).toEqual([]);
+    await expect(page).toHaveURL(/\/login$/);
+  });
+
+  test('a refused passkey: the form comes back with the error and the focus on the passkey button (never on the page)', async ({ page }) => {
+    await page.addInitScript(() => {
+      navigator.credentials.get = () => Promise.resolve({ toJSON: () => ({ id: 'Y3JlZA', rawId: 'Y3JlZA', type: 'public-key', response: { clientDataJSON: 'e30', authenticatorData: 'YQ', signature: 'cw', userHandle: null } }) } as any);
+    });
+    const opts = { challenge: 'ZmFrZS1jaGFsbGVuZ2U', rpId: '127.0.0.1', allowCredentials: [], userVerification: 'required', timeout: 60000 };
+    const st = loginState({ starts: [{ body: identify({ passkey: opts }) }], answers: [{ body: { ...identify({ passkey: opts }), errors: ['invalid'] } }] });
+    await open(page, st);
+    await page.getByRole('button', { name: 'Mit Passkey anmelden' }).click();
+    await expect(h1(page, 'Willkommen zurück')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Mit Passkey anmelden' })).toBeFocused();
+    expect(answers(st)[0]).toMatchObject({ stage: 'identify' });
+  });
+
+  test('passkey timeout: its own text and "Erneut versuchen" runs the prompt again with the same step', async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as any).__gets = 0;
+      navigator.credentials.get = () => { (window as any).__gets++; return Promise.reject(new DOMException('timed out', 'NotAllowedError')); };
+    });
+    const st = loginState({
+      starts: [{ body: identify({ passkey: { challenge: 'ZmFrZS1jaGFsbGVuZ2U', rpId: '127.0.0.1', allowCredentials: [], userVerification: 'preferred', timeout: 1000 } }) }],
+    });
+    await open(page, st);
+    await page.getByRole('button', { name: 'Mit Passkey anmelden' }).click();
+    await expect(h1(page, 'Zeit abgelaufen')).toBeVisible();
+    await expect(page.getByRole('link', { name: /Anmeldeseite/ })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Erneut versuchen' }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__gets)).toBe(2);
+    await expect(h1(page, 'Zeit abgelaufen')).toBeVisible();
     expect(answers(st)).toEqual([]);
   });
 
-  test('"Mit Passkey anmelden" without an in-app passkey goes to the sign-in page, keeping the invite', async ({ page }) => {
+  test('without usable passkey options there is no passkey button (and no "oder"): nothing that leaves for the sign-in page', async ({ page }) => {
     const st = loginState();
     await open(page, st, '/login?invite=inv-0001');
-    await page.getByRole('button', { name: 'Mit Passkey anmelden' }).click();
-    await expect(page).toHaveURL(/\/auth\/login\?classic=1&invite=inv-0001$/);
+    await expect(h1(page, 'Willkommen zurück')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Mit Passkey anmelden' })).toHaveCount(0);
+    await expect(page.getByText('oder', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /Passkey/ })).toHaveCount(0);
     expect(st.calls[0]).toMatchObject({ path: '/auth/flow/start', body: { kind: 'login', invite: 'inv-0001' } });
   });
 

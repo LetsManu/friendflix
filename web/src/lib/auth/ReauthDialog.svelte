@@ -5,31 +5,39 @@
    * The in-app re-authentication as a modal (account page): `start {kind:'reauth', then?}` and the flow's steps inline (password, second
    * factor, then the follow-up flow's own steps: authenticator app, recovery codes, passkey, new password, new e-mail). The step components
    * only emit events, so this dialog decides what happens: `done` (the flow finished: the parent reloads / retries its action) and `close`
-   * (given up: the attempt is cancelled at the server, Authentik's session too). "Passkey verwenden" is phase 2's redirect re-auth, back
-   * to `next`; without a follow-up flow the classic fallback is that redirect too (the identity provider's forced sign-in).
+   * (given up: the attempt is cancelled at the server, Authentik's session too). "Stattdessen mit Passkey bestätigen" appears only when
+   * the first step says a passkey can confirm here (`passkeyAlt`); it runs the same in-app passkey step as the sign-in screen
+   * (PasskeyWait) with the options the first reply prepared, so the prompt starts inside the click, never a redirect. "Andere Methode
+   * wählen" returns to the password. Without a follow-up flow the classic fallback is the redirect (the identity provider's forced
+   * sign-in).
    * A role=dialog with a name; Escape and the backdrop close it; Tab stays inside.
    */
   import { createEventDispatcher, onMount } from 'svelte';
   import { dialogKeys } from '#lib/actions';
   import { t, type TKey } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
-  import { reauthHref, startReauth } from '#lib/account/reauth';
+  import { reauthHref } from '#lib/account/reauth';
   import Mfa from './Mfa.svelte';
   import Notice from './Notice.svelte';
   import PasskeySetup from './PasskeySetup.svelte';
+  import PasskeyWait from './PasskeyWait.svelte';
   import Password from './Password.svelte';
   import PromptFields from './PromptFields.svelte';
   import RecoveryCodes from './RecoveryCodes.svelte';
   import EmailSent from './EmailSent.svelte';
   import TotpSetup from './TotpSetup.svelte';
-  import { cancelFlow, classicHref, flowConfig, FlowRefused, startFlow, type FlowReply, type ThenKind, type UnavailableReason } from './flow';
+  import {
+    answer, cancelFlow, classicHref, flowConfig, FlowRefused, preparedPasskey, runPasskey, startFlow, type FlowReply, type PasskeyCard, type ThenKind,
+    type UnavailableReason,
+  } from './flow';
+  import { reauthLife } from './reauthLife';
   import './auth.css';
 
   /** the follow-up flow; none = only a fresh sign-in (the parent then repeats its action) */
   export let then: ThenKind | undefined = undefined;
   /** Authentik's own settings page: where an account change continues when it cannot run here (null: not known) */
   export let manageUrl: string | null = null;
-  /** where the redirect re-authentication comes back to (the passkey link; without `then` also the classic fallback); null: the account page */
+  /** where the redirect re-authentication comes back to (without `then`, the classic fallback); null: the account page */
   export let next: string | null = null;
 
   const dispatch = createEventDispatcher<{ done: void; close: void }>();
@@ -58,8 +66,16 @@
     step_used: { stage: 'expired', text: null },
     csrf: { stage: 'expired', text: null },
   };
-  let ended = false;
+  const life = reauthLife(cancelFlow);
   let dlg: HTMLElement;
+  /** the first step said a passkey can confirm instead of the password */
+  let passkeyAlt = false;
+  /** the passkey card (null: the step itself), the identification step it answers, and the running prompt */
+  let pk: PasskeyCard | null = null;
+  let pkStep: Extract<FlowReply, { stage: 'identify' }> | null = null;
+  /** pkStep is the prepared attempt next to the password step (answered with `alt: true`; the password attempt stays until it is accepted) */
+  let pkPrepared = false;
+  let ceremony: AbortController | null = null;
 
   onMount(() => { dlg?.focus(); void begin(); }); // the steps move the focus on to their first control
 
@@ -68,7 +84,13 @@
     noticeText = null;
     try {
       await flowConfig();
-      show(await startFlow('reauth', then ? { then } : {}));
+      const r = await startFlow('reauth', then ? { then } : {});
+      if (!life.started()) return; // closed while the start was in flight: its provider sessions are cancelled
+      passkeyAlt = r.passkeyAlt === true;
+      // fetched before any click: the passkey prompt then starts inside the click (Safari refuses one after a round trip)
+      pkStep = passkeyAlt ? preparedPasskey(r) : null;
+      pkPrepared = pkStep !== null;
+      show(r);
     } catch (e) {
       if (e instanceof FlowRefused && e.code === 'passkey_classic') {
         classic = '/auth/flow/classic/webauthn-setup';
@@ -83,17 +105,80 @@
   function show(r: FlowReply) {
     if (r.stage === 'unavailable') noticeText = UNAVAILABLE_TEXT[r.reason ?? 'error'] ?? null;
     if (r.stage !== 'done') view = r;
-    else if (then) finished = true;
-    else { ended = true; dispatch('done'); }
+    else if (then) { finished = true; life.finish(); }
+    else { life.finish(); dispatch('done'); }
+  }
+  /**
+   * "Stattdessen mit Passkey bestätigen" and "Erneut versuchen": the browser's prompt with the prepared options (fetched with the
+   * password step, so the prompt starts inside the click), and the assertion as the answer. Only without prepared options a new
+   * re-authentication stopping at the identification is fetched first (`method: 'passkey'`).
+   */
+  async function withPasskey() {
+    if (pk === 'waiting' || pk === 'checking') return;
+    pk = 'waiting';
+    const ctrl = (ceremony = new AbortController());
+    if (!pkStep) {
+      let r: FlowReply | null = null;
+      try {
+        r = await startFlow('reauth', { ...(then ? { then } : {}), method: 'passkey' });
+      } catch { /* refused (no usable options any more) or unreachable: the card says it did not work */ }
+      if (ceremony !== ctrl) return; // the person chose another method meanwhile
+      if (!life.started()) return; // closed while the start was in flight: its provider session is cancelled
+      if (r && r.stage === 'identify' && r.passkey) pkStep = r;
+      else if (r && !('step' in r) && r.stage !== 'done') {
+        ceremony = null;
+        pk = null;
+        return show(r); // unavailable, expired: the notice with its retry
+      } else {
+        pk = 'failed';
+        return;
+      }
+    }
+    const res = await runPasskey(pkStep.passkey!, ctrl.signal);
+    if (ceremony !== ctrl) return; // stale: another method chosen, or a newer prompt
+    ceremony = null;
+    if ('problem' in res) {
+      if (res.problem !== 'aborted') pk = res.problem;
+      return;
+    }
+    pk = 'checking';
+    const reply = await answer(pkStep, pkPrepared ? { passkey: res.credential, alt: true } : { passkey: res.credential });
+    // refused: the prepared attempt stays prepared (and the password step live); accepted: it is the attempt now
+    if (reply.stage !== 'identify') pkPrepared = false;
+    if (reply.stage === 'identify' && 'errors' in reply && reply.errors?.includes('rate_limited')) {
+      pkStep = reply.passkey ? reply : null;
+      pk = 'limited'; // too many attempts: said so, and only the way back
+      return;
+    }
+    if (reply.stage === 'identify' && reply.passkey) {
+      pkStep = reply; // refused: a new challenge for "Erneut versuchen"
+      pk = 'failed';
+      return;
+    }
+    pkStep = null;
+    pk = null;
+    show(reply);
+  }
+  /**
+   * "Andere Methode wählen": the prompt is aborted. While the prepared attempt is unanswered or was refused, the password step is still
+   * live, so the dialog simply shows it again; otherwise the re-authentication starts over with the password.
+   */
+  function otherMethod() {
+    ceremony?.abort();
+    ceremony = null;
+    pk = null;
+    if (pkPrepared && view && 'step' in view) return;
+    pkStep = null;
+    pkPrepared = false;
+    void begin();
   }
   async function close() {
-    const live = !ended && !finished && view !== null && 'step' in view;
-    ended = true;
-    if (live) await cancelFlow().catch(() => undefined);
+    ceremony?.abort();
+    await life.close(); // loading, a step, a refused passkey: the provider sessions are still open unless the flow ended
     dispatch('close');
   }
   function finish() {
-    ended = true;
+    life.finish();
     dispatch('done');
   }
 </script>
@@ -109,11 +194,13 @@
       <p class="af-sub">{$t(DONE_TEXT[then])}</p>
       <button class="af-pri" type="button" on:click={finish}>{$t('login.sec.done')}</button>
     </div>
+  {:else if pk}
+    <PasskeyWait state={pk} on:retry={withPasskey} on:other={otherMethod} />
   {:else if !view}
     <p class="loading muted" role="status">{$t('login.sec.loading')}</p>
   {:else if view.stage === 'password'}
     <Password step={view} classicHref={classic} canRestart={false} on:next={(e) => show(e.detail)} on:done={() => show({ stage: 'done', next: '' })} />
-    <button class="af-link alt" type="button" on:click={() => startReauth(next ?? '/me/account')}>{$t('login.sec.usePasskey')}</button>
+    {#if passkeyAlt}<button class="af-link alt" type="button" on:click={withPasskey}>{$t('login.sec.usePasskey')}</button>{/if}
   {:else if view.stage === 'mfa'}
     <Mfa step={view} classicHref={classic} on:next={(e) => show(e.detail)} on:done={() => show({ stage: 'done', next: '' })} />
   {:else if view.stage === 'totp-setup'}

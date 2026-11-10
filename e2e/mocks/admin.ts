@@ -312,7 +312,7 @@ const GiB = 1024 ** 3;
 export function loginCheckOk(): Record<string, any> {
   const row = (kind: string, slug: string, state = 'ok') => ({ kind, slug, state, stages: [] });
   return {
-    mode: 'app', implicitConsent: true, authCodeGrant: true, issuerMatches: true, passkeys: 'in-app', passkeysReason: 'ok', unreachable: false, warnings: [],
+    mode: 'app', implicitConsent: true, authCodeGrant: true, issuerMatches: true, passkeys: 'in-app', passkeysReason: 'ok', passkeySignIn: 'ok', unreachable: false, warnings: [],
     flows: [row('login', 'default-authentication-flow'), row('recovery', 'default-recovery-flow'), row('invalidation', 'default-invalidation-flow'), row('setup-totp', 'default-authenticator-totp-setup')],
   };
 }

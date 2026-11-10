@@ -51,7 +51,7 @@ export interface World {
 }
 
 /** installs the fake on the env; returns the world to inspect and change */
-export function installWorld(env: TestEnv, flows: Record<string, FakeStage[]>, opts: { extraRoutes?: Parameters<typeof fakeAuthentik>[1] } = {}): World {
+export function installWorld(env: TestEnv, flows: Record<string, FakeStage[]>, opts: { extraRoutes?: Parameters<typeof fakeAuthentik>[1]; perSession?: boolean } = {}): World {
   const w: World = { flows, people: [ANNA, BEN], devices: [], mfaMandatory: false, calls: [], deleted: [], fakes: {} };
   const authorize = (call: AkCall) => new Response(null, {
     status: 302, headers: { location: `${APP}/auth/callback?code=c-placeholder&state=${call.url.searchParams.get('state')}` },
@@ -97,7 +97,7 @@ export function installWorld(env: TestEnv, flows: Record<string, FakeStage[]>, o
     let target = base;
     if (m) {
       const slug = m[1]!;
-      target = w.fakes[slug] ??= fakeAuthentik(w.flows[slug] ?? [], api);
+      target = w.fakes[slug] ??= fakeAuthentik(w.flows[slug] ?? [], api, { perSession: opts.perSession });
     }
     const r = await target.fetch(input, init);
     w.calls.push(target.calls.at(-1)!);

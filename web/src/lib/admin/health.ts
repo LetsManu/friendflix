@@ -109,6 +109,8 @@ export interface LoginCheck {
   issuerMatches: boolean;
   passkeys: 'in-app' | 'sign-in page';
   passkeysReason: string;
+  /** whether the sign-in screen can offer a passkey in FriendFlix (backend flowCheck.ts PasskeySignIn); null: not checked */
+  passkeySignIn?: 'ok' | 'no_stage' | 'rp_mismatch' | 'off' | 'unknown' | null;
   unreachable: boolean;
   /** the service token: accepted at all, and the read permissions Authentik refused */
   serviceToken?: { token: 'ok' | 'invalid' | 'unreachable'; missing: string[] } | null;
@@ -124,7 +126,9 @@ export const loadLoginCheck = (fresh = false): Promise<LoginCheck> => api<LoginC
 
 /** POST /api/admin/authentik/repair: the one-time admin token goes in the body only and is never kept */
 export interface RepairResult { ok: boolean; steps: Array<{ id: string; state: string; detail?: string }>; tokenSaved?: boolean; envKept?: string[]; check?: LoginCheck }
-export const repairAuthentik = (token: string): Promise<RepairResult> => api<RepairResult>('/api/admin/authentik/repair', { method: 'POST', body: { token } });
+/** `passkeySignIn`: the admin's opt-in to set the passkey check on Authentik's default identification stage (for every application) */
+export const repairAuthentik = (token: string, passkeySignIn = false): Promise<RepairResult> =>
+  api<RepairResult>('/api/admin/authentik/repair', { method: 'POST', body: { token, passkeySignIn } });
 
 /** an error class of the status card as text (unknown classes: the raw class, which is a fixed code word) */
 export const failClassText = (cls: string): string => (hasKey(`adminContent.login.failClass.${cls}`) ? trDynamic(`adminContent.login.failClass.${cls}`) : cls);

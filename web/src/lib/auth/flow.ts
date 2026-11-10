@@ -193,11 +193,28 @@ export async function flowConfig(): Promise<FlowConfig> {
   return { mode: body?.mode === 'app' ? 'app' : 'authentik', recovery: body?.recovery === true, enroll: body?.enroll === true };
 }
 
+/**
+ * a start's reply; a re-authentication's first step may say that a passkey can confirm instead of the password (`passkeyAlt`: the
+ * identification carried passkey options for the app host, user verification required) and bring the prepared passkey attempt
+ * (`passkeyStep`). `method: 'passkey'` is the fallback without one: it starts with that identification step.
+ */
+export type StartReply = FlowReply & { passkeyAlt?: boolean; passkeyStep?: unknown };
+
+/**
+ * The prepared passkey attempt of a re-authentication's first reply (`passkeyStep`: an identification with passkey options), so the
+ * passkey prompt can start right in the click; null when there is none or it is not of that shape. Answered with `alt: true`.
+ */
+export function preparedPasskey(r: StartReply): Extract<FlowStep, { stage: 'identify' }> | null {
+  const s = r.passkeyStep as Partial<Extract<FlowStep, { stage: 'identify' }>> | null | undefined;
+  return s && typeof s === 'object' && s.stage === 'identify' && typeof s.step === 'string' && s.passkey && typeof s.passkey.challenge === 'string'
+    ? (s as Extract<FlowStep, { stage: 'identify' }>) : null;
+}
+
 /** starts a flow; `invite` keeps a portal invite to the end (login, enroll), `identifier` answers a recovery's identification */
-export async function startFlow(kind: FlowKind, extra: { invite?: string; identifier?: string; then?: ThenKind } = {}): Promise<FlowReply> {
+export async function startFlow(kind: FlowKind, extra: { invite?: string; identifier?: string; then?: ThenKind; method?: 'passkey' } = {}): Promise<StartReply> {
   const r = await post('/auth/flow/start', { kind, ...extra });
   if (r?.status === 410) throw new FlowRefused(410, typeof r.body?.error === 'string' ? r.body.error : 'invite_invalid');
-  // a re-authentication that cannot start: no passkeys in-app (`passkey_classic`), no such flow (`flow_not_configured`)
+  // a re-authentication that cannot start: no passkeys in-app (`passkey_classic`, `passkey_unavailable`), no such flow (`flow_not_configured`)
   if (kind === 'reauth' && r && r.status >= 400 && r.status < 500 && r.status !== 429 && typeof r.body?.error === 'string') throw new FlowRefused(r.status, r.body.error);
   return toReply(r);
 }
@@ -369,20 +386,75 @@ export function credentialJSON(cred: unknown): Credential {
   return out;
 }
 
-/** signs in with a passkey (assertion) on this page; throws `passkey_cancelled` / `passkey_unsupported` */
-export async function passkeyGet(options: PasskeyGet): Promise<Credential> {
+/**
+ * Signs in with a passkey (assertion) on this page; throws `passkey_cancelled` / `passkey_unsupported`, and `passkey_aborted` when
+ * `signal` ended the ceremony (the person chose another method). The options are the step's own, for the app host (the backend checked
+ * the RP ID); the browser enforces origin and RP ID, nothing here relaxes them.
+ */
+export async function passkeyGet(options: PasskeyGet, signal?: AbortSignal): Promise<Credential> {
   const P = pkc();
   const publicKey = typeof P.parseRequestOptionsFromJSON === 'function'
     ? P.parseRequestOptionsFromJSON(options)
     : ({ ...options, challenge: fromB64url(options.challenge), allowCredentials: descriptors(options.allowCredentials) } as PublicKeyCredentialRequestOptions);
   let cred: unknown;
   try {
-    cred = await navigator.credentials.get({ publicKey });
+    cred = await navigator.credentials.get(signal ? { publicKey, signal } : { publicKey });
   } catch (e) {
+    if (signal?.aborted) throw new Error('passkey_aborted');
     throw ceremonyError(e);
   }
+  if (signal?.aborted) throw new Error('passkey_aborted');
   if (!cred) throw new Error('passkey_cancelled');
   return credentialJSON(cred);
+}
+
+/**
+ * Why a passkey sign-in did not give a credential, for the waiting card: `aborted` (the person chose another method), `unsupported`,
+ * `timeout` (the browser's NotAllowedError once the options' timeout has run out), `cancelled` (NotAllowedError before that: the person
+ * closed the prompt, or no passkey on the device matches; the browser does not tell these apart on purpose), `failed` (anything else).
+ */
+export type PasskeyProblem = 'aborted' | 'unsupported' | 'timeout' | 'cancelled' | 'failed';
+/** what the passkey card shows: the open prompt, the check of the answer, a problem with a way back, or too many attempts */
+export type PasskeyCard = 'waiting' | 'checking' | 'limited' | Exclude<PasskeyProblem, 'aborted'>;
+export function passkeyProblem(e: unknown, elapsedMs: number, timeoutMs?: number): PasskeyProblem {
+  const code = (e as Error | null)?.message;
+  if (code === 'passkey_aborted') return 'aborted';
+  if (code === 'passkey_unsupported') return 'unsupported';
+  if (code === 'passkey_cancelled') return timeoutMs !== undefined && elapsedMs >= timeoutMs - 1000 ? 'timeout' : 'cancelled';
+  return 'failed';
+}
+
+/** One passkey sign-in ceremony with its outcome as a value (never throws): the credential, or why there is none. */
+export async function runPasskey(options: PasskeyGet, signal?: AbortSignal, now: () => number = Date.now): Promise<{ credential: Credential } | { problem: PasskeyProblem }> {
+  const started = now();
+  try {
+    return { credential: await passkeyGet(options, signal) };
+  } catch (e) {
+    return { problem: passkeyProblem(e, now() - started, options.timeout) };
+  }
+}
+
+/**
+ * The passkey prompts of one screen: `run` starts one (aborting a previous one) and resolves its outcome, or null when it is no longer
+ * the current prompt (the person chose another method, or a newer prompt replaced it), so a stale outcome changes nothing on the screen.
+ * The browser's prompt starts synchronously inside `run`, so a click handler keeps its user gesture.
+ */
+export function passkeyCeremonies() {
+  let current: AbortController | null = null;
+  return {
+    async run(options: PasskeyGet, now?: () => number): Promise<Awaited<ReturnType<typeof runPasskey>> | null> {
+      current?.abort();
+      const ctrl = (current = new AbortController());
+      const r = await runPasskey(options, ctrl.signal, now);
+      if (current !== ctrl) return null;
+      current = null;
+      return r;
+    },
+    abort(): void {
+      current?.abort();
+      current = null;
+    },
+  };
 }
 
 /** creates a passkey (attestation) on this page; throws `passkey_cancelled` / `passkey_unsupported` */
