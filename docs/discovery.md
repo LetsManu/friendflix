@@ -77,7 +77,7 @@ Ungültige Werte führen zu `400 {"error":"bad_request"}`.
 
 ## „Neu & demnächst“: Daten der Seite
 
-Die Seite setzt sich aus bestehenden und zwei neuen Routen zusammen. Alle Titel werden mit der Identität des Profils beim Medienserver gelesen (Bibliotheksrechte und Altersgrenze von Kinderprofilen gelten), Jellyfin und Plex antworten gleich. Kein Token, keine Adresse und kein Schlüssel des Medien- oder Anfragedienstes erreicht den Client.
+Die Seite setzt sich aus bestehenden und drei neuen Routen zusammen (die dritte, `request-suggestions`, speist den Bereich „Noch nicht bei uns“ des Tabs „Wünsche & demnächst“). Alle Titel werden mit der Identität des Profils beim Medienserver gelesen (Bibliotheksrechte und Altersgrenze von Kinderprofilen gelten), Jellyfin und Plex antworten gleich. Kein Token, keine Adresse und kein Schlüssel des Medien- oder Anfragedienstes erreicht den Client.
 
 - **Anfragedienst ja/nein:** `GET /api/me` liefert `features.requests` (Boolean). Es wird bei jedem Aufruf aus den gespeicherten Einstellungen abgeleitet: Verbindet oder entfernt der Admin den Dienst, ändert sich der Wert ohne Neustart. `false` heißt: Abschnitt „Demnächst“ und die Anfrage-Funktionen verschwinden, die Seite heißt „Neu“. Die Anfrage-Routen antworten dann 404 `requests_disabled`.
 - **Neue Serien / Neue Filme:** `GET /api/library/items?types=Series` bzw. `types=Movie` mit `sort=DateCreated&desc=true&limit=30`. Jedes Item trägt `dateCreated` (ISO, Datum der Aufnahme in die Bibliothek); „neu“ heißt höchstens 14 Tage alt (gleiches Fenster wie die Badges „Neue Serie“ / „Neu“), der Client filtert darauf.
@@ -94,14 +94,14 @@ Die Seite setzt sich aus bestehenden und zwei neuen Routen zusammen. Alle Titel 
 ```
 
 - Serien, denen das Profil folgt (mindestens eine Folge gesehen **oder** die Serie steht auf der Merkliste des Profils) und die in den letzten 7 Tagen eine Folge bekommen haben. Eine Zeile je Serie, neueste zuerst, höchstens 30; `episode` ist die neueste neue Folge, `newCount` die Zahl neuer Folgen im Fenster.
-- Quelle ist `addedItems()` der Medienserver-Schnittstelle (höchstens 5 Seiten à 200 Einträge, 60 Serien geprüft); „gesehen“ fragt `items({ parentId, types: 'Episode', filter: 'played' })` mit dem Token des Profils. Plex beantwortet beides aus seinem Spiegel, ohne Sonderweg.
+- Quelle ist `addedItems()` der Medienserver-Schnittstelle (höchstens 5 Seiten à 200 Einträge). Serien auf der Merkliste brauchen keine Abfrage und fallen nie aus der Begrenzung; von den übrigen werden die 60 neuesten geprüft, höchstens 4 Abfragen gleichzeitig. Die Route ist auf 60 Aufrufe je Minute und Sitzung begrenzt; „gesehen“ fragt `items({ parentId, types: 'Episode', filter: 'played' })` mit dem Token des Profils. Plex beantwortet beides aus seinem Spiegel, ohne Sonderweg.
 - 5 Minuten je Profil und Nutzerdaten-Version gecacht (eine gesehene Folge wirkt sofort); die Merkliste wird immer live gelesen. Auch für Kinderprofile (ihre Merkliste, ihre Altersgrenze).
 
 ### `GET /api/library/new-for-you?type=movie|series`: „Für dich neu“
 
 ```json
 { "windowDays": 14, "engine": "v2", "items": [{ "id": "…", "name": "…", "type": "Series", "dateCreated": "…",
-  "reason": { "seed": { "id": "…", "name": "Dune" }, "traits": ["director:Denis Villeneuve", "genre:science fiction"] } }] }
+  "reason": { "seed": { "id": "…", "name": "Die Glasbucht" }, "traits": ["director:Mira Okonkwo", "genre:science fiction"] } }] }
 ```
 
 - Titel, die in den letzten 14 Tagen in die Bibliothek kamen (nach `dateCreated`; eine ältere Serie mit neuer Folge gehört nicht dazu), nach dem v2-Geschmacksprofil des Profils gerankt: `recommend({ surface: 'home_rows' })` mit der Quelle `fresh` (siehe R3) plus den Signalen Freunde und Trend. Höchstens 20, schon gesehene oder mit Daumen nach unten bewertete fehlen. `type` ist optional (`movie` oder `series`, sonst 400).
@@ -109,6 +109,23 @@ Die Seite setzt sich aus bestehenden und zwei neuen Routen zusammen. Alle Titel 
 - Kinderprofile bekommen die Antwort ebenfalls: Die Engine führt für sie nie soziale Quellen aus (keine Freunde, kein Trend), und die Altersgrenze gilt.
 - Ohne `RECO_ENGINE=v2` (oder wenn v2 scheitert) kommen die neuesten Titel des Fensters ohne Begründung: `engine: "v1"`, `reason: null`.
 - 10 Minuten je Profil gecacht (Schlüssel mit Nutzerdaten-Version und Startseiten-Generation, wie die „Weil du …“-Zeilen); der Typfilter wirkt nach dem Cache.
+
+### `GET /api/library/request-suggestions?type=movie|series`: „Noch nicht bei uns“
+
+```json
+{ "items": [{
+  "tmdbId": 11, "mediaType": "movie", "title": "…", "year": 2019, "poster": "/api/seerr/image/p11abcdef.jpg", "releaseDate": "2027-01-15",
+  "reason": { "seed": "Die Glasbucht" }, "request": { "state": "none" }
+}], "quota": { "limit": 2, "used": 1, "resetsAt": "2026-12-01T00:00:00.000Z" } }
+```
+
+- Vorschläge für Titel, die **nicht** in der Bibliothek sind, mit Wunsch-Zustand für den Knopf „Wünschen“. `type` ist `movie` (Standard) oder `series`, sonst 400. `mediaType` ist `movie` oder `tv` (TMDB-Schreibweise, wie bei den anderen Anfrage-Routen).
+- Ausgangstitel („Seeds“) sind die stärksten Geschmacks-Anker des Profils, dieselben, mit denen die v2-Engine seedlose Flächen füttert (zuletzt Gesehenes, Daumen, Bewertungen), gefiltert auf den gefragten Typ; höchstens 3. Je Seed fragt der Server den Anfragedienst nach Empfehlungen (`/movie|tv/{id}/recommendations`, je Seed ein Aufruf, höchstens 8 Titel); die Titel werden reihum gemischt, ein Titel erscheint einmal, höchstens 12. `reason.seed` ist der Name des Seeds („Ähnlich wie …“); `releaseDate` steht nur bei Titeln, die noch erscheinen („Erscheint am …“).
+- Entfernt werden: Titel in der Bibliothek (Abgleich über die TMDB-Id, Suche mit dem Admin-Zugang, gilt für alle Profile gleich), Titel, die der Anfragedienst als verfügbar meldet, Titel für Erwachsene und der Seed selbst. Hat die Rolle eine Altersgrenze (z. B. Gast), bleiben nur Titel mit bekannter Freigabe (FSK, sonst US) innerhalb der Grenze; ohne Angabe fällt der Titel weg (wie bei Kinderprofilen). Ein nicht erreichbarer Bibliotheks- oder Freigabe-Check zählt als „nicht anbieten“.
+- `request.state`: `none` (offen, auch nach Ablehnung, wie bei `POST /api/requests`), `requested`, `processing` (genehmigt, in Arbeit oder teilweise vorhanden) oder `available`. Ein Titel, den das Konto selbst gewünscht hat, steht sofort auf `requested`, auch aus dem Cache.
+- `quota` ist die Antwort von `GET /api/requests/quota` ohne `remaining` (gleiche Logik: Rolle, Überschreibung je Nutzer, `limit: null` = unbegrenzt); `null`, wenn sie nicht gelesen werden kann. Sie wird nie gecacht.
+- Nur für Erwachsenenprofile (Kinderprofile: 403 `kids_profile`); ohne Anfragedienst 404 `requests_disabled`; ein ausgefallener Seed (oder ein nicht erreichbarer Anfragedienst) lässt die Antwort kürzer oder leer werden, nie scheitern. Ohne Geschmacksprofil (zu wenig Verlauf) kommt `items: []`. Limit 30 Aufrufe je Minute und Sitzung.
+- 6 Stunden je Profil, Typ und Altersgrenze der Rolle gecacht (kürzer, wenn ein Seed ausfiel). Der Schlüssel des Anfragedienstes und Medienserver-Token verlassen den Server nie; Poster laufen über `/api/seerr/image/…`.
 
 ## Reaktionen: `/api/items/:id/reactions`
 
