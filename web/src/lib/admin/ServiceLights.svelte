@@ -31,7 +31,7 @@
       dispatch('refresh');
     } catch (e) {
       const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
-      toast.error($t(code === 'busy' ? 'adminContent.health.hevc.busy' : code === 'already_running' ? 'adminContent.health.hevc.running' : 'adminContent.health.hevc.failed'));
+      toast.error($t(code === 'busy' ? 'adminContent.health.hevc.busy' : code === 'sessions_unknown' ? 'adminContent.health.hevc.unknown' : code === 'already_running' ? 'adminContent.health.hevc.running' : 'adminContent.health.hevc.failed'));
     }
     hevcBusy = false;
   }

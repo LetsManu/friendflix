@@ -239,6 +239,7 @@ export default {
       check: 'HEVC jetzt prüfen',
       busy: 'Nicht, während jemand schaut.',
       running: 'Eine Prüfung läuft bereits.',
+      unknown: 'Die Streams des Medienservers konnten nicht gelesen werden; gleich noch einmal versuchen.',
       failed: 'Die Prüfung konnte nicht ausgeführt werden.',
     },
     disks: {

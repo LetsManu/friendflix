@@ -241,6 +241,7 @@ const dict: Translation<typeof de> = {
       check: 'HEVC’yi şimdi denetle',
       busy: 'Biri izlerken olmaz.',
       running: 'Bir denetim zaten çalışıyor.',
+      unknown: 'Medya sunucusunun akışları okunamadı; birazdan yeniden deneyin.',
       failed: 'Denetim çalıştırılamadı.',
     },
     disks: {

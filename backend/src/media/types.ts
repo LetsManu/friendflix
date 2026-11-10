@@ -243,6 +243,8 @@ export interface MediaTraits {
   hdr: 'dolbyvision' | 'hdr10plus' | 'hdr10' | 'hlg' | null;
   /** best audio layout, null = unknown */
   audio: 'atmos' | 'surround' | 'stereo' | 'mono' | null;
+  /** the server states the range type exactly SDR (Jellyfin only; `hdr: null` alone also covers an unknown range) */
+  sdr?: true;
 }
 /** One library item (movie, or episode with its `seriesId`) with its traits: input of the quality index behind the browse filter. */
 export interface ItemMediaTraits { id: string; seriesId?: string; traits: MediaTraits }

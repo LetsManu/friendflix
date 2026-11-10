@@ -246,6 +246,7 @@ const dict: Translation<typeof de> = {
       check: 'Sprawdź HEVC teraz',
       busy: 'Nie, gdy ktoś ogląda.',
       running: 'Sprawdzanie już trwa.',
+      unknown: 'Nie udało się odczytać strumieni serwera multimediów; spróbuj za chwilę.',
       failed: 'Nie udało się uruchomić sprawdzania.',
     },
     disks: {

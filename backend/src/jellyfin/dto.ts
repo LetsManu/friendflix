@@ -326,7 +326,7 @@ export function toMediaTraits(streams: Array<Record<string, any>> | undefined): 
   const atmos = audioStreams.some((s) => String(s.AudioSpatialFormat ?? '').toLowerCase() === 'dolbyatmos' || /atmos/i.test(`${s.Profile ?? ''} ${s.DisplayTitle ?? ''} ${s.Title ?? ''}`));
   const ch = Number(best?.Channels ?? 0);
   const audio: MediaTraits['audio'] = atmos ? 'atmos' : ch >= 6 ? 'surround' : ch === 2 ? 'stereo' : ch === 1 ? 'mono' : ch > 2 ? 'surround' : null;
-  return { resolution, hdr, audio };
+  return { resolution, hdr, audio, ...(range === 'sdr' ? { sdr: true as const } : {}) };
 }
 const RES_RANK = { sd: 0, hd: 1, '4k': 2 } as const;
 const AUDIO_RANK = { mono: 0, stereo: 1, surround: 2, atmos: 3 } as const;

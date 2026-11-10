@@ -241,6 +241,7 @@ const dict: Translation<typeof de> = {
       check: 'Check HEVC now',
       busy: 'Not while someone is watching.',
       running: 'A check is already running.',
+      unknown: 'Could not read the media server’s streams; try again shortly.',
       failed: 'The check could not be run.',
     },
     disks: {

@@ -58,8 +58,7 @@ async function hevcAfterCheck(ctx: Ctx, user: UserRow, pv: { whenIdle(): Promise
     // never next to a viewer; nothing to measure while HEVC is off here or at the server
     if (await hevcProbeRunning(ctx) || await hevcBusy(ctx) || !(await hevcProbeWanted(ctx))) return;
     await pv.whenIdle();
-    if (await hevcBusy(ctx)) return; // someone started watching while the previews finished
-    await probeHevcEncoder(ctx, user);
+    await probeHevcEncoder(ctx, user); // checks again for viewers once the previews are idle
   } catch {
     // the probe stores its own result; a failure here is only a missing one
   }

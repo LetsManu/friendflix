@@ -186,8 +186,11 @@ export async function noteHevcFailure(ctx: Ctx, deviceId: string): Promise<void>
 
 /** Is a probe running (any trigger, any backend process)? */
 export const hevcProbeRunning = async (ctx: Ctx): Promise<boolean> => (await ctx.kv.get(RUN_KEY).catch(() => null)) !== null;
-/** Atomic claim of the one probe slot; the probe releases it. False: another probe holds it. */
-export const claimHevcProbe = async (ctx: Ctx): Promise<boolean> => ctx.kv.setnx(RUN_KEY, '1', RUN_TTL_S).catch(() => false);
+/** Atomic claim of the one probe slot: a token the probe releases with (only its own claim is ever deleted). null: another probe holds it. */
+export async function claimHevcProbe(ctx: Ctx): Promise<string | null> {
+  const token = randomUUID();
+  return (await ctx.kv.setnx(RUN_KEY, token, RUN_TTL_S).catch(() => false)) ? token : null;
+}
 
 const resolveUri = (base: string, uri: string) => { const u = new URL(uri, new URL(base, 'http://jf.invalid')); return u.pathname + u.search; };
 const lines = (p: string) => p.split(/\r?\n/).map((l) => l.trim());
@@ -205,7 +208,7 @@ async function pickTitle(ctx: Ctx, user: UserRow): Promise<string | null> {
       id = ep.id;
     }
     const t = await traits(user, id).catch(() => null);
-    if (t && t.resolution === 'hd' && t.hdr === null) return id;
+    if (t && t.resolution === 'hd' && t.hdr === null && t.sdr === true) return id; // an unknown range is not SDR
   }
   return null;
 }
@@ -216,9 +219,10 @@ async function pickTitle(ctx: Ctx, user: UserRow): Promise<string | null> {
  * stopped. Previews are paused and idle first. One probe at a time (KV claim). The result is stored for 48 h; only code, speed,
  * settings fingerprint and time. null: another probe holds the slot.
  */
-export async function probeHevcEncoder(ctx: Ctx, user: UserRow, deps: { now?: () => number; claimed?: boolean } = {}): Promise<HevcProbeRecord | null> {
+export async function probeHevcEncoder(ctx: Ctx, user: UserRow, deps: { now?: () => number; claimed?: string } = {}): Promise<HevcProbeRecord | null> {
   const now = deps.now ?? Date.now;
-  if (!deps.claimed && !(await claimHevcProbe(ctx))) return null;
+  const token = deps.claimed ?? (await claimHevcProbe(ctx));
+  if (!token) return null;
   await ctx.kv.set(ATTEMPT_KEY, String(now()), HEVC_ATTEMPT_GAP_S).catch(() => undefined);
   const pv = previews(ctx);
   const wasPaused = pv.paused;
@@ -234,6 +238,7 @@ export async function probeHevcEncoder(ctx: Ctx, user: UserRow, deps: { now?: ()
     };
     try {
       await pv.whenIdle();
+      if (await hevcBusy(ctx)) return null; // someone started watching while a preview clip finished: nothing is converted or stored
       const videoId = await pickTitle(ctx, user);
       if (!videoId) return await done({ ok: false, reason: 'no_title' });
       const info = await ctx.jf.playbackInfo(user, videoId, { maxBitrate: 8_000_000 });
@@ -274,22 +279,24 @@ export async function probeHevcEncoder(ctx: Ctx, user: UserRow, deps: { now?: ()
   } finally {
     if (playSessionId) await ctx.jf.stopEncoding(user, playSessionId).catch(() => undefined);
     pv.paused = wasPaused;
-    await ctx.kv.del(RUN_KEY).catch(() => undefined);
+    await ctx.kv.delIfEquals(RUN_KEY, token).catch(() => undefined);
   }
 }
 class HttpFail extends Error {}
 
 /**
- * Someone is watching: a live portal stream, or any transcode on the media server (an app of its own). An unreadable session list
- * counts as busy (the probe would measure nothing useful anyway).
+ * Why the media server may not be disturbed: `watching` = a live portal stream or any transcode on the media server (an app of its
+ * own); `unknown` = its session list could not be read in time (the probe would measure nothing useful anyway). null = free.
  */
-export async function hevcBusy(ctx: Ctx): Promise<boolean> {
-  if ((await listLive(ctx).catch(() => [{}])).length > 0) return true;
+export async function hevcBusyReason(ctx: Ctx): Promise<'watching' | 'unknown' | null> {
+  if ((await listLive(ctx).catch(() => [{}])).length > 0) return 'watching';
   const list = ctx.jf.admin.transcodeSessions?.bind(ctx.jf.admin);
-  if (!list) return false;
+  if (!list) return null;
   const sessions = await within(list, HEVC_SESSIONS_TIMEOUT_MS);
-  return !sessions || sessions.some((s) => s.playMethod === 'Transcode');
+  if (!sessions) return 'unknown';
+  return sessions.some((s) => s.playMethod === 'Transcode') ? 'watching' : null;
 }
+export const hevcBusy = async (ctx: Ctx): Promise<boolean> => (await hevcBusyReason(ctx)) !== null;
 
 /**
  * 10-minute timer: probes only when the state is `unproven`, nobody watches, previews are idle, none is running and the last attempt

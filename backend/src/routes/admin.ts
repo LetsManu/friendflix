@@ -11,7 +11,7 @@ import { adminOverview, revokeLicense } from '../downloads.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { ERROR_SOURCES, listErrors } from '../errorlog.js';
 import { freshSnapshot } from '../health.js';
-import { claimHevcProbe, hevcBusy, hevcProbeRunning, hevcProbeWanted, hevcStatus, probeHevcEncoder } from '../hevcenc.js';
+import { claimHevcProbe, hevcBusyReason, hevcProbeRunning, hevcProbeWanted, hevcStatus, probeHevcEncoder } from '../hevcenc.js';
 import { activeStreams } from '../playstats.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
@@ -235,13 +235,15 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   // background: 202 now, the page polls GET until `running` is false
   app.post('/api/admin/hevc-check', admin, async (_req, reply) => {
     if (await hevcProbeRunning(ctx)) return reply.code(409).send({ error: 'already_running' });
-    if (await hevcBusy(ctx)) return reply.code(409).send({ error: 'busy' });
+    const busy = await hevcBusyReason(ctx);
+    if (busy) return reply.code(409).send({ error: busy === 'unknown' ? 'sessions_unknown' : 'busy' });
     const user = await serviceUser(ctx);
     if (!user) return reply.code(409).send({ error: 'no_user' });
     // switched off in the settings or at the media server (or unreadable): nothing to measure, the state says why
     if (!(await hevcProbeWanted(ctx))) return { started: false, running: false, ...(await hevcStatus(ctx)) };
-    if (!(await claimHevcProbe(ctx))) return reply.code(409).send({ error: 'already_running' });
-    void probeHevcEncoder(ctx, user, { claimed: true }).catch(() => undefined);
+    const claimed = await claimHevcProbe(ctx);
+    if (!claimed) return reply.code(409).send({ error: 'already_running' });
+    void probeHevcEncoder(ctx, user, { claimed }).catch(() => undefined);
     return reply.code(202).send({ started: true });
   });
   app.get('/api/admin/hevc-check', admin, async () => ({ running: await hevcProbeRunning(ctx), ...(await hevcStatus(ctx)) }));

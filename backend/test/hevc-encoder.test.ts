@@ -224,6 +224,17 @@ describe('gate: more cases', () => {
   });
 });
 
+describe('hevcBusyReason', () => {
+  it('watching vs unknown vs free', async () => {
+    const { hevcBusyReason } = await import('../src/hevcenc.js');
+    expect(await hevcBusyReason(env.ctx)).toBeNull();
+    sessions = async () => [hevcSession('p', { videoCodec: 'h264' })];
+    expect(await hevcBusyReason(env.ctx)).toBe('watching');
+    sessions = async () => { throw new Error('x'); };
+    expect(await hevcBusyReason(env.ctx)).toBe('unknown');
+  });
+});
+
 describe('hevcBusy (N3)', () => {
   it('a live portal stream, or any transcode on the media server (another app), or an unreadable list is busy', async () => {
     expect(await hevcBusy(env.ctx)).toBe(false);
@@ -279,7 +290,7 @@ describe('probe', () => {
   let paths: string[] = [];
   let mode: { init?: Buffer; fail?: string; segMs?: number; titles?: 'none' | 'series' | 'movie' } = {};
   const now = () => t;
-  const SDR_HD: MediaTraits = { resolution: 'hd', hdr: null, audio: null };
+  const SDR_HD: MediaTraits = { resolution: 'hd', hdr: null, audio: null, sdr: true };
   let traitsOf: Record<string, MediaTraits> = {};
   let origTraits: typeof env.ctx.jf.mediaTraits;
   beforeAll(() => { origTraits = env.ctx.jf.mediaTraits; });
@@ -376,6 +387,34 @@ describe('probe', () => {
     expect(env.ctx.jf.playbackInfo).not.toHaveBeenCalled();
     expect((await hevcStatus(env.ctx)).state).toBe('unproven');
   });
+  it('optional: an unknown range (hdr null but not stated SDR) is skipped', async () => {
+    titles('u', 'g');
+    traitsOf = { u: { resolution: 'hd', hdr: null, audio: null }, g: SDR_HD };
+    await probeHevcEncoder(env.ctx, user(), { now });
+    expect(env.ctx.jf.playbackInfo).toHaveBeenCalledWith(user(), 'g'.repeat(32), expect.anything());
+  });
+  it('N7: someone starts watching while previews are idle-waiting: nothing converted or stored, the slot is released', async () => {
+    const pv = previews(env.ctx);
+    vi.spyOn(pv, 'whenIdle').mockImplementation(async () => { await setLive(env.ctx, { userId: admin.id, userName: 'A', itemId: 'i', title: 't', positionTicks: 0, isPaused: false, playSessionId: 'ps-late', updatedAt: Date.now(), source: 'portal' }); });
+    expect(await probeHevcEncoder(env.ctx, user(), { now })).toBeNull();
+    expect(env.ctx.jf.clipTranscode).not.toHaveBeenCalled();
+    expect(await env.kv.get('hevcenc:probe')).toBeNull();
+    expect(await env.kv.get('hevcenc:running')).toBeNull();
+    expect(pv.paused).toBe(false);
+  });
+  it('N8: the claim is released only by its own token', async () => {
+    const pbi = vi.spyOn(env.ctx.jf, 'playbackInfo').mockImplementation(async () => { await env.kv.set('hevcenc:running', 'next-probe', 600); return { playSessionId: 'ps-probe-1', hlsUrl: '/x' } as never; });
+    await probeHevcEncoder(env.ctx, user(), { now });
+    expect(await env.kv.get('hevcenc:running')).toBe('next-probe'); // a probe that outlived its claim does not delete the next one's
+    pbi.mockResolvedValue({ playSessionId: 'ps-probe-1', hlsUrl: '/media/Videos/x/master.m3u8?PlaySessionId=ps-probe-1' } as never);
+    await env.kv.del('hevcenc:running');
+    const { claimHevcProbe } = await import('../src/hevcenc.js');
+    const token = await claimHevcProbe(env.ctx);
+    expect(token).toBeTruthy();
+    expect(await claimHevcProbe(env.ctx)).toBeNull();
+    expect(await probeHevcEncoder(env.ctx, user(), { now, claimed: token! })).not.toBeNull();
+    expect(await env.kv.get('hevcenc:running')).toBeNull();
+  });
   it('S2: two concurrent probes: the second is refused, the encoder is started once; the slot is free again afterwards', async () => {
     const [a, b] = await Promise.all([probeHevcEncoder(env.ctx, user(), { now }), probeHevcEncoder(env.ctx, user(), { now })]);
     expect([a, b].filter((x) => x === null)).toHaveLength(1);
@@ -429,6 +468,13 @@ describe('POST /api/admin/hevc-check', () => {
     await setLive(env.ctx, { userId: admin.id, userName: 'A', itemId: 'i', title: 't', positionTicks: 0, isPaused: false, playSessionId: 'ps-live', updatedAt: Date.now(), source: 'portal' });
     const busy = await post();
     expect([busy.statusCode, busy.json()]).toEqual([409, { error: 'busy' }]);
+  });
+  it('N9: an unreadable session list answers its own code, not the "someone is watching" one', async () => {
+    sessions = async () => { throw new Error('x'); };
+    const r = await post();
+    expect([r.statusCode, r.json()]).toEqual([409, { error: 'sessions_unknown' }]);
+    sessions = async () => [hevcSession('ps-native', { videoCodec: 'h264' })];
+    expect((await post()).json()).toEqual({ error: 'busy' });
   });
   it('S3: answers 202 at once while the probe is still pending; GET shows running, then the state', async () => {
     let release: () => void = () => undefined;
