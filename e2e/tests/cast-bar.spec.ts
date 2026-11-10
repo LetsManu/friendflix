@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { episodes, ME, MOVIE, MOVIE2 } from '../mocks/fixtures.js';
 import { PROFILES } from '../mocks/api.js';
-import { available, castOn, castSessions, fakeCastSdk, mockHls, stubAirPlay } from '../mocks/cast.js';
+import { available, castOn, castSessions, fakeCastSdk, mockHls, playOnAirPlay, stubAirPlay } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
 import { BAR_SHOTS, barIn, chromecastRemote, dunmoor } from './cast-remote-setup.js';
@@ -270,7 +270,7 @@ test('no bar in TV mode', async ({ page, api: _api }) => {
   await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
   await available(page);
   await page.locator('.stage').hover();
-  await page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' }).click();
+  await page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' }).click(); // TV mode keeps its own AirPlay button (the sheet is not part of TV mode)
   await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
   await clientNav(page, '/');
   await expect(page).toHaveURL(/\/$/);

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { items, MOVIE, MOVIE2 } from '../mocks/fixtures.js';
-import { available, castOn, castSessions, fakeCastSdk, mockHls, picks, stubAirPlay, wireless } from '../mocks/cast.js';
+import { available, castOn, castSessions, fakeCastSdk, mockHls, picks, playOnAirPlay, playOnButton, playOnSheet, stubAirPlay, wireless } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
 import type { Page } from '@playwright/test';
@@ -50,7 +50,7 @@ async function airPlayToTv(page: Page) {
   await hlsPlaying(page);
   await available(page);
   await page.locator('.stage').hover();
-  await page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' }).click();
+  await playOnAirPlay(page);
   await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
 }
 const engineVideo = 'video[data-cast-engine]';
@@ -270,6 +270,7 @@ test('airplay: the reopened remote offers the session\'s audio tracks and "chang
   await expect(box).toContainText('Läuft über AirPlay');
   const picks0 = await picks(page);
   await box.getByRole('button', { name: 'Läuft über AirPlay, Fernseher wechseln' }).click();
+  await playOnSheet(page).getByRole('button', { name: /^AirPlay …/ }).click();
   expect(await picks(page)).toBe(picks0 + 1); // the engine's controller opened the picker inside the tap
   await box.getByRole('button', { name: 'Audio: Deutsch' }).click();
   await expect(box.getByRole('menuitemradio', { name: 'Deutsch (SDH)' })).toHaveCount(0); // AirPlay: audio only
@@ -294,7 +295,7 @@ test.describe('party', () => {
     await wireless(page, true); // a route chosen in Control Center
     await page.locator('.stage').hover();
     await expect(page.locator('.ctl')).toBeVisible();
-    await expect(page.getByTestId('airplay')).toHaveCount(0);
+    await expect(playOnButton(page)).toHaveCount(0);
     expect(await page.locator(engineVideo).count()).toBe(0);
     expect(sessions).toHaveLength(0);
   });

@@ -247,3 +247,15 @@ export async function fakeCastSdk(page: Page, o: { queue?: boolean; survive?: 'j
     failLoads: () => page.evaluate(() => { (window as unknown as { __castLoadFails: boolean }).__castLoadFails = true; }),
   };
 }
+
+/** the player's "Play on" button (desktop and phone top bar) */
+export const playOnButton = (page: Page) => page.getByRole('button', { name: 'Abspielen auf …' });
+/** the open sheet */
+export const playOnSheet = (page: Page) => page.getByRole('dialog', { name: 'Abspielen auf' });
+/** AirPlay from the player: "Play on" opens the sheet, its AirPlay row runs the token-then-picker flow */
+export async function playOnAirPlay(page: Page, how: 'click' | 'tap' = 'click') {
+  const open = playOnButton(page);
+  await (how === 'tap' ? open.tap() : open.click());
+  const row = playOnSheet(page).getByRole('button', { name: /^AirPlay …/ });
+  await (how === 'tap' ? row.tap() : row.click());
+}

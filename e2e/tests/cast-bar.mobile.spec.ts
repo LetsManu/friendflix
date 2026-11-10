@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { MOVIE, MOVIE2 } from '../mocks/fixtures.js';
-import { available, castOn, castSessions, fakeCastSdk, mockHls, picks, stubAirPlay } from '../mocks/cast.js';
+import { available, castOn, castSessions, fakeCastSdk, mockHls, picks, playOnAirPlay, stubAirPlay } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { noHorizontalOverflow } from '../helpers.js';
 import { expect, test } from '../fixtures.js';
@@ -46,7 +46,7 @@ test('airplay route lost -> reconnect text, one tap opens the picker', async ({ 
   await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
   await available(page);
   if (await page.locator('.ctl.hide').count()) await page.locator('.stage').tap({ position: { x: 30, y: page.viewportSize()!.height * 0.3 } });
-  await page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' }).tap();
+  await playOnAirPlay(page, 'tap');
   await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
   await clientNav(page, '/');
   const bar = castBar(page);

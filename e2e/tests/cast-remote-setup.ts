@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { episodes } from '../mocks/fixtures.js';
-import { available, castOn, castSessions, fakeCastSdk, mockHls, stubAirPlay } from '../mocks/cast.js';
+import { available, castOn, castSessions, fakeCastSdk, mockHls, playOnAirPlay, stubAirPlay } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
 import type { Page } from '@playwright/test';
@@ -83,7 +83,7 @@ export async function airplayRemote(page: Page, o: { tracks?: boolean } = {}) {
   await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
   await available(page);
   if (await page.locator('.ctl.hide').count()) await page.locator('.stage').click({ position: { x: 30, y: 200 } });
-  await page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' }).click();
+  await playOnAirPlay(page);
   await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
 }
 
@@ -135,4 +135,24 @@ export async function barIn(page: Page, state: BarState) {
   if (state === 'reconnect') await expect(bar).toContainText('Verbindung verloren');
   await page.waitForTimeout(700); // risen in, the progress line settled
   return bar;
+}
+
+export const SHEET_SHOTS = '/tmp/claude-0/-home-user/65bf3c9c-0207-5176-a7cc-9841c5a17402/scratchpad/cast-shots/sheet';
+/**
+ * The player with a Chromecast TV remembered (`ff-cast-last`), Cast devices in reach and an AirPlay target (Safari stubbed):
+ * every row of the "Play on" sheet is there. Returns the SDK fake and the token mocks.
+ */
+export async function playOnPlayer(page: Page, o: { remembered?: boolean; hls?: boolean } = {}) {
+  if (o.remembered !== false) await page.addInitScript(() => localStorage.setItem('ff-cast-last', 'Wohnzimmer-TV'));
+  await stubAirPlay(page);
+  await mockPlayer(page);
+  await castOn(page);
+  if (o.hls) await mockHls(page);
+  const sdk = await fakeCastSdk(page);
+  const tokens = await castSessions(page);
+  await page.goto('/watch/' + episodes[0]!.id);
+  if (o.hls) await page.waitForFunction(() => (document.querySelector('video')?.duration ?? 0) > 20);
+  else await videoReady(page);
+  await available(page);
+  return Object.assign(sdk, tokens);
 }

@@ -45,7 +45,7 @@ export function minutesLeft(s: Pick<CastSession, 'position' | 'duration'>): numb
 }
 
 /** episode code as the app writes it ("S1:E4", "E4" without a season), from the item; else the session subtitle's leading code */
-function episodeCode(s: Pick<CastSession, 'subtitle'>, it: Pick<Item, 'parentIndexNumber' | 'indexNumber'> | null | undefined, tf: TFn): string {
+export function episodeCode(s: Pick<CastSession, 'subtitle'>, it: Pick<Item, 'parentIndexNumber' | 'indexNumber'> | null | undefined, tf: TFn): string {
   if (it && it.indexNumber != null) return it.parentIndexNumber != null ? tf('detail.view.episodeCode', { s: it.parentIndexNumber, e: it.indexNumber }) : tf('player.episodeOnly', { e: it.indexNumber });
   const lead = s.subtitle.split(' ')[0] ?? '';
   return /^[A-Z]\d+:[A-Z]\d+$/.test(lead) ? lead : '';

@@ -28,6 +28,8 @@
   import { airPlaySupported, createAirPlay, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
   import { airLog } from '#lib/player/airplayLog';
   import RemoteScreen from '#lib/cast/RemoteScreen.svelte';
+  import PlayOnSheet from '#lib/cast/PlayOnSheet.svelte';
+  import { episodeCode } from '#lib/cast/bar';
   import { AbrController, LADDER, autoBps, isOriginalBps, rungKey, type Decision } from '#lib/player/abr';
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
@@ -304,7 +306,7 @@
   $: tvSub = item?.seriesName && item.indexNumber !== undefined && item.indexNumber !== null
     ? $t('tv.player.episode', { s: item.parentIndexNumber ?? 1, e: item.indexNumber, name: item.name }) : barSub;
   /** desktop and phone pause screens (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
-  $: pauseBlocked = ctlFocus || menu !== '' || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
+  $: pauseBlocked = ctlFocus || menu !== '' || playOnOpen || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
   $: deskPause = desk && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked });
   $: phonePause = phoneUi && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked || cardOn });
   $: phoneMotion = phoneUi && motionAllowed();
@@ -342,7 +344,7 @@
     if (left) credOutT = setTimeout(() => (credOut = false), phoneUi ? 800 : 300);
   }
   // phones: an open panel (a menu, Cast & info, the party host's settings) keeps the controls up (spec 2026-11-08 §1)
-  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || ctlFocus || menu !== '' || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
+  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || ctlFocus || menu !== '' || playOnOpen || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
@@ -740,8 +742,16 @@
 
   /** "change device": the system picker of the controller the engine owns (from the tap); a lost route: the engine reconnects */
   function changeAirPlay() { if ($castSession?.state === 'reconnect') castEngine.reconnect(); else castEngine.pick(); }
-  /** the cast screen's device chip: AirPlay's picker / reconnect; Chromecast: the browser's cast dialog (other device, stop) */
-  function chipTap() { if (tvSession?.kind === 'airplay') changeAirPlay(); else void requestCastSession(); }
+  // ---- "Play on" (lib/cast/PlayOnSheet.svelte): the one entry for Chromecast, AirPlay and this device; the remote screen's device chip opens it too ----
+  let playOnOpen = false, playOnTrigger: HTMLElement | null = null;
+  function openPlayOn(el?: HTMLElement | null) { menu = ''; playOnTrigger = el ?? (document.activeElement as HTMLElement | null); playOnOpen = true; wake(); }
+  /** the AirPlay row: the token-then-picker flow of the controller (the engine's picker while AirPlay already casts) */
+  function airRow() { if (tvSession?.kind === 'airplay') changeAirPlay(); else air?.pick(); }
+  $: airAvail = Boolean(air && (airState.available || airOn || airState.ready || airState.busy)) || tvSession?.kind === 'airplay';
+  /** something to choose from: Cast devices in reach or an AirPlay target (the remote screen has its own chip) */
+  $: playOnShown = !partyMode && !remote && (Boolean($castState.available || $castState.connected) || airAvail);
+  $: playOnLabel = $t('player.castPicker.open');
+  $: playOnEp = item?.type === 'Episode' || item?.seriesId ? episodeCode({ subtitle: '' }, item, tr) : '';
 
   // ---- the cast screen (remote): lib/cast/RemoteScreen.svelte (it reads the engine's session; the Player keeps the page's side of it) ----
 
@@ -1148,9 +1158,6 @@
     if (i < 0) i = SPEEDS.reduce((best, r, k) => (Math.abs(r - rate) < Math.abs(SPEEDS[best]! - rate) ? k : best), 0);
     setRate(SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, i + delta))]!, true);
   }
-  // ---- Chromecast entry in the "Mehr" menu (the SDK loads lazily, Chromium only) ----
-  function castClick() { menu = ''; if (!$castState.connected) void requestCastSession(); else if (casting) void castEngine.stop(); else if (!remote) void startCast(); }
-  $: castLabel = casting ? $t('player.cast.stopOn', { name: $castState.deviceName || 'Chromecast' }) : $castState.connected ? $t('player.cast.playOn', { name: $castState.deviceName || 'Chromecast' }) : $t('player.cast.castTo');
   $: modeLabel = casting ? 'Chromecast' : airOn ? 'AirPlay' : mode === 'direct' ? $t('player.mode.direct') : mode ? $t('player.mode.hls') : '';
   const toggleMenu = (m: typeof menu) => (menu = menu === m ? '' : m);
   /** a sub-view reached through More is open (phones: speed when it has no own button, chapters) */
@@ -1218,7 +1225,7 @@
     if (!pop || pop.contains(to) || opener?.contains(to)) return;
     menu = '';
   }
-  const overlayOpen = () => Boolean(menu || subDlg || help || (xray && showXray));
+  const overlayOpen = () => Boolean(menu || subDlg || help || playOnOpen || (xray && showXray));
   function act(a: KeyAction) {
     // credits corner (TV): the bar is hidden and inert; a key that would bring it (an arrow at the edge of the sequence) only wakes
     if (credits === 'corner' && a.type === 'tvControls') { wake(); return; }
@@ -1280,6 +1287,11 @@
       e.preventDefault(); e.stopImmediatePropagation(); focusControls(); return;
     }
     if (!(e.key === 'Escape' || (tvMode() && isBackKey(e)))) return;
+    if (playOnOpen) { // the "Play on" dialog closes alone; the focus goes back to what opened it
+      e.preventDefault(); e.stopImmediatePropagation(); playOnOpen = false;
+      void tickDom().then(() => playOnTrigger?.isConnected && playOnTrigger.focus({ preventScroll: true }));
+      return;
+    }
     if (tvUi && !chipOpen && !subDlg && !help) {
       const layer = tvLayer();
       if (layer === 'overlay' || layer === 'seek') {
@@ -1634,7 +1646,7 @@
   {:else if (posterOn && !posterOut && !remote) || (spin && waiting && !remote && !posterOn)}<div class="sr" role="status">{$t('player.loading')}</div>{/if}
   {#if tvSession}
     <!-- the cast engine plays this title on the TV (also after this page): the player is its remote (lib/cast/RemoteScreen.svelte) -->
-    <RemoteScreen on:close={() => dispatch('back')} on:pick={chipTap} />
+    <RemoteScreen on:close={() => dispatch('back')} on:pick={(e) => openPlayOn(e.detail)} />
   {:else if airOn || airState.error}
     <!-- Safari does not tell which receiver was picked; ending AirPlay happens in its picker (choose this device).
          Also while `ready` (no TV yet) when a token request failed: Retry, the src stays as it is (no restore loop) -->
@@ -1687,9 +1699,8 @@
     {#if phoneUi}
       <!-- phone player: quality chip, Cast, AirPlay and lock at the end of the top bar (they leave the pill and More) -->
       <PhoneTopBar {blur} lock={!remote}
-        cast={!partyMode && ($castState.available || $castState.connected) ? { on: casting, label: castLabel } : null}
-        airplay={air && (airState.available || airOn || airState.ready || airState.busy) ? { on: airOn, busy: airState.busy, label: $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') } : null}
-        on:cast={castClick} on:airplay={() => air?.pick()} on:lock={lockNow}>
+        playon={playOnShown ? { on: casting || airOn, busy: airState.busy, label: playOnLabel } : null}
+        on:playon={(e) => openPlayOn(e.detail)} on:lock={lockNow}>
         {#if phoneChip && info}<QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
       </PhoneTopBar>
     {:else if phoneChip && info}<div class="qtop"><QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} /></div>{/if}
@@ -1711,6 +1722,8 @@
   {:else if peek && !locked && menu === '' && !remote}
     <CastPeek data={castData} hint={tvMode() ? 'tv' : coarse ? 'none' : 'key'} on:more={() => openCastInfo(false)} />
   {/if}
+  <PlayOnSheet open={playOnOpen} trigger={playOnTrigger} at={tvSession ? tvSession.position : current} title={tvSession ? tvSession.title : barTitle || title} episode={tvSession ? (tvSession.isEpisode ? episodeCode(tvSession, item, tr) : '') : playOnEp}
+    airplay={airAvail} sheet={phone} onAirPlay={airRow} onConnected={() => void startCast()} on:close={() => (playOnOpen = false)} />
   {#if subDlg}
     <div class="dlg ui" data-nav data-scope role="dialog" tabindex="-1" aria-modal="true" aria-label={$t('player.subs.search')} on:click|stopPropagation on:keydown|stopPropagation>
       <header><b>{$t('player.subs.search')}</b><button class="icx" aria-label={$t('common.close')} on:click={() => (subDlg = false)}><Icon name="x" size={20} /></button></header>
@@ -1820,7 +1833,7 @@
             {#if menu === 'chapters'}<div class="menu bare" in:cardIn={{ origin: 'bottom right' }} out:cardOut><ScenesPanel {chapters} current={shown} {duration} trickplay={info?.trickplay} on:seek={(e) => { seekTo(e.detail.time); closeScenes(); }} on:close={closeScenes} /></div>{/if}
           </div>
         {/if}
-        {#if !phoneUi && air && (airState.available || airOn || airState.ready || airState.busy)}<button class="ic" class:on={airOn} class:airbusy={airState.busy} aria-pressed={airOn} aria-busy={airState.busy} data-testid="airplay" aria-label={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} data-label={desk ? $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') : undefined} title={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} on:click={() => air?.pick()}><Icon name="airplay" size={ICON} /></button>{/if}
+        {#if !phoneUi && playOnShown}<button class="ic" class:on={casting || airOn} class:airbusy={airState.busy} aria-haspopup="dialog" aria-expanded={playOnOpen} aria-busy={airState.busy} data-testid="playon" aria-label={playOnLabel} data-label={desk ? playOnLabel : undefined} title={playOnLabel} on:click={(e) => openPlayOn(e.currentTarget)}><Icon name="cast" size={ICON} /></button>{/if}
         {#if !phoneUi}<button class="ic" class:on={showXray || peek} bind:this={castBtn} aria-label={$t('scenes.info.open')} data-label={desk ? $t('scenes.info.open') : undefined} title={$t(coarse ? 'scenes.info.open' : 'scenes.info.openKey')} aria-pressed={showXray} on:click={castButton}><Icon name="users" size={ICON} /></button>{/if}
         {#if info || tvSession}
           <div class="mwrap">
@@ -1871,7 +1884,6 @@
               {#if coarse && showScenes}<button class="mi" on:click={() => (menu = 'chapters')}><Icon name="film" size={20} />{$t('scenes.chapters.open')}<span class="chev" aria-hidden="true">›</span></button>{/if}
               <button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />{$t('player.bookmark.menu')}<span class="chev" aria-hidden="true">›</span></button>
               <button class="mi" class:on={showXray} aria-pressed={showXray} on:click={() => { if (showXray) { menu = ''; closeCastInfo(); } else openCastInfo(tvMode()); }}><Icon name="users" size={20} />{$t('scenes.info.open')}</button>
-              {#if !phoneUi && !partyMode && ($castState.available || $castState.connected)}<button class="mi" class:on={casting} aria-pressed={casting} on:click={castClick}><Icon name="cast" size={20} />{castLabel}</button>{/if}
               {#if phone && !phoneUi && !remote}<button class="mi" on:click={lockNow}><Icon name="lock" size={20} />{$t('player.lock.lockAria')}</button>{/if}
               {#if pipOk && !remote}<button class="mi" class:on={inPip} aria-pressed={inPip} aria-keyshortcuts="P" on:click={() => { menu = ''; void pip(); }}><Icon name="pip" size={20} />{$t('player.controls.pip')}</button>{/if}
               {#if phoneUi && volOk && tvSession?.kind !== 'airplay'}<button class="mi" on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : 'volume'} size={20} />{muted ? $t('player.unmute') : $t('player.mute')}</button>{/if}

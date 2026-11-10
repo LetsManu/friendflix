@@ -15,5 +15,5 @@ test('phone More menu: TV-mode hint when no AirPlay or Chromecast receiver is ar
   const hint = page.getByTestId('tv-hint');
   await expect(hint).toBeVisible();
   await expect(hint).toContainText(`${new URL(page.url()).host}/tv`);
-  await expect(page.getByTestId('airplay')).toHaveCount(0);
+  await expect(page.getByTestId('playon')).toHaveCount(0);
 });

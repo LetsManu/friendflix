@@ -34,7 +34,7 @@
   import TrackChips from './TrackChips.svelte';
   import UpNextCard from './UpNextCard.svelte';
 
-  const dispatch = createEventDispatcher<{ close: void; pick: void }>();
+  const dispatch = createEventDispatcher<{ close: void; pick: HTMLElement }>();
 
   $: s = $castSession;
   $: air = s?.kind === 'airplay';
@@ -133,7 +133,7 @@
         <button type="button" class="frost-btn round close" aria-label={$t('player.castRemote.close')} title={$t('player.castRemote.close')} on:click={() => dispatch('close')}>
           <Icon name={phone ? 'chevron-down' : 'chevron-left'} size={22} />
         </button>
-        <button type="button" class="frost-btn chip" aria-label={air ? $t('player.castRemote.chipAirplay') : $t('player.castRemote.chip', { device: s.device })} title={air ? $t('player.castRemote.chipAirplay') : $t('player.castRemote.chip', { device: s.device })} on:click={() => dispatch('pick')}>
+        <button type="button" class="frost-btn chip" aria-label={air ? $t('player.castRemote.chipAirplay') : $t('player.castRemote.chip', { device: s.device })} title={air ? $t('player.castRemote.chipAirplay') : $t('player.castRemote.chip', { device: s.device })} on:click={(e) => dispatch('pick', e.currentTarget)}>
           <Icon name={air ? 'airplay' : 'cast'} size={18} /><span class="ell">{deviceLabel(s)}</span><Icon name="chevron-down" size={16} />
         </button>
         <button type="button" class="frost-btn stopb" aria-label={$t('player.cast.stop')} title={$t('player.cast.stop')} on:click={stop}>
