@@ -160,6 +160,8 @@ const settings: Translation<typeof de> = {
     PREVIEW_WARM: { label: 'Przygotowuj podglądy', help: 'W czasie bezczynności tworzy brakujące klipy podglądu, jeden na minutę.' },
     HOME_NETWORKS: { label: 'Sieci domowe', help: 'Sieci uznawane za dom (bez limitu bitrate poza domem), oddzielone przecinkami, np. 192.168.0.0/16.' },
     UPLOAD_MBPS: { label: 'Wysyłanie serwera (Mbit/s)', help: 'Prędkość wysyłania Twojego łącza internetowego. Gdy jest prawie wykorzystana, nowe strumienie spoza domu startują w niższej jakości, zamiast żeby wszystkie się zacinały. Trwające strumienie i sieć domowa się nie zmieniają. Puste = wyłączone.' },
+    HEVC_STREAMS: { label: 'Jednoczesne konwersje HEVC', help: 'Konwertowane strumienie dla urządzeń odtwarzających HEVC używają HEVC zamiast H.264: lepszy obraz przy tym samym wysyłaniu. Tylko dla widzów spoza Twojej sieci domowej i dopiero gdy FriendFlix potwierdzi, że sprzęt serwera konwertuje HEVC wystarczająco szybko (Status → Enkoder). 0 = wyłączone. Pliki HEVC nadal trafiają bez konwersji do urządzeń odtwarzających HEVC.' },
+    SURROUND_AUDIO: { label: 'Dźwięk przestrzenny', help: 'Urządzenia z wyjściem 5.1 (aplikacje TV, Android przy zestawie audio, przeglądarki z wyjściem 5.1) dostają ścieżkę przestrzenną filmu lub jej konwersję do 5.1. Pozostałe dostają stereo. Wyłączone = stereo dla wszystkich.' },
     GITHUB_TOKEN: { label: 'Token GitHub', help: 'Opcjonalne: wyższy limit zapytań przy szukaniu nowych wersji.' },
     PORTAINER_WEBHOOK_URL: { label: 'Webhook stosu Portainer', help: 'Adres webhooka stosu do aktualizacji jednym kliknięciem. Sam adres jest kluczem.' },
     PORTAINER_URL: { label: 'Adres Portainer', help: 'Zamiast webhooka: adres Portainer, z kluczem API i ID stosu.' },

@@ -9,11 +9,12 @@ import type {
 import type { JfUser } from '../types.js';
 import { JellyfinClient, JellyfinError, mediaBrowserHeader, policyFromTemplate } from './client.js';
 import { jellyfinWebhookEvents } from './webhook.js';
-import { bestTraits, maxWidthFor, toDownloadSource, toItemDto, toMediaTraits, toPlaybackDto, toTrickplayDto, type DownloadQuality, type DownloadSourceDto } from './dto.js';
+import { bestTraits, maxWidthFor, toDownloadSource, toItemDto, toMediaTraits, sourceFacts, toPlaybackDto, toTrickplayDto, type DownloadQuality, type DownloadSourceDto } from './dto.js';
 import { toChapters, toCredits, toItemAbout, toProviderIds } from './dto.js'; // Block 17 P1, Block 21
 import { toHygieneFacts, toServerSession } from './dto.js'; // Block 22
 import { toItemFeatures } from './dto.js'; // R1
 import { MediaError } from '../media/types.js';
+import { applyGate, boxHeightFor, jellyfinRanges, planStream, type HevcGate, type StreamPlan } from '../media/streamplan.js';
 import type { CapRange, ClientCaps } from '../media/clientCaps.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, MediaCollection } from '../media/types.js'; // Block 17 P1, Block 21
 import type { HygieneFacts, ServerSession } from '../media/types.js'; // Block 22
@@ -69,12 +70,7 @@ export function encoderSettingsOf(o: Record<string, unknown> | null | undefined)
   };
 }
 
-/** Jellyfin VideoRangeType values a stated range covers (a Dolby Vision file with a fallback layer plays as that layer) */
-const RANGE_TYPES: Record<CapRange, string[]> = {
-  sdr: ['SDR', 'DOVIWithSDR'], hdr10: ['HDR10', 'DOVIWithHDR10'], hlg: ['HLG', 'DOVIWithHLG'], hdr10plus: ['HDR10Plus', 'DOVIWithHDR10Plus'],
-  dovi: ['DOVI', 'DOVIWithSDR', 'DOVIWithHDR10', 'DOVIWithHLG', 'DOVIWithHDR10Plus'],
-};
-export const jellyfinRanges = (ranges: CapRange[]): string => [...new Set(ranges.flatMap((r) => RANGE_TYPES[r]))].join('|');
+export { jellyfinRanges };
 
 /** The one direct-play entry of the Web profile; with an Android capability block its non-empty lists replace the browser's. */
 function directPlayProfile(caps: ClientCaps | null) {
@@ -143,7 +139,7 @@ export class JellyfinService implements MediaServer {
     const q = master.searchParams;
     if (o.audioIndex !== undefined) q.set('AudioStreamIndex', String(o.audioIndex));
     const set: Record<string, string> = {
-      ...(o.fmp4 ? { SegmentContainer: 'mp4', VideoCodec: 'h264', AudioCodec: 'aac' } : {}),
+      ...(o.fmp4 ? { SegmentContainer: 'mp4', VideoCodec: o.videoCodec ?? 'h264', AudioCodec: 'aac' } : {}),
       AllowVideoStreamCopy: 'false', AllowAudioStreamCopy: 'false', VideoBitrate: String(o.videoBitrate), AudioBitrate: String(o.audioBitrate), MaxWidth: String(o.maxWidth),
       ...(o.stereo ? { TranscodingMaxAudioChannels: '2' } : {}),
       ...(o.maxBitrate ? { MaxStreamingBitrate: String(o.maxBitrate) } : {}),
@@ -562,7 +558,7 @@ export class JellyfinService implements MediaServer {
     await this.mutate(user, () => this.compat(user, 'played' + on, [`/UserPlayedItems/${id}?userId=${uid}`, `/Users/${uid}/PlayedItems/${id}`], { method: on ? 'POST' : 'DELETE' }));
   }
 
-  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; capReason?: CapReason; clientCaps?: ClientCaps | null }): Promise<PlaybackDto> {
+  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; capReason?: CapReason; clientCaps?: ClientCaps | null; remote?: boolean; surround?: boolean; hevcGate?: () => Promise<HevcGate> }): Promise<PlaybackDto> {
     const p = new URLSearchParams({ UserId: user.jellyfin_user_id, MaxStreamingBitrate: String(opts.maxBitrate), AutoOpenLiveStream: 'false' });
     if (opts.startTicks) p.set('StartTimeTicks', String(opts.startTicks));
     if (opts.audioIndex !== undefined) p.set('AudioStreamIndex', String(opts.audioIndex));
@@ -624,7 +620,18 @@ export class JellyfinService implements MediaServer {
       const want = streams.find((s) => s.Type === 'Audio' && s.Language === opts.audioLang);
       if (want && !want.IsDefault && typeof want.Index === 'number') audioIndex = want.Index;
     }
-    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect, capReason: opts.capReason, directContainers: caps?.containers });
+    // the stream plan: HEVC copy / conversion, surround, reasons. A gate is passed only while HEVC_STREAMS > 0 (no gate = conversions off) and is
+    // asked only when the plan wants an HEVC conversion; an error from it counts as busy.
+    const src0 = (info.MediaSources ?? [])[0];
+    let plan: StreamPlan | undefined;
+    if (src0) {
+      plan = planStream({
+        caps: opts.clientCaps ?? null, cast: Boolean(opts.cast), remote: Boolean(opts.remote), maxBitrate: opts.maxBitrate, boxHeight: boxHeightFor(opts.maxBitrate, opts.maxHeight),
+        src: sourceFacts(src0, audioIndex), surroundOn: Boolean(opts.surround), hevcStreams: opts.hevcGate ? 1 : 0, // the count itself is the gate's business (hevcenc.ts)
+      });
+      if (plan.wantsHevcEncode) plan = applyGate(plan, await opts.hevcGate!().catch((): HevcGate => ({ ok: false, why: 'h264_busy' })));
+    }
+    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect, capReason: opts.capReason, directContainers: caps?.containers, plan });
   }
 
   /** PlaybackInfo with the "FriendFlix Download" profile: source details + (unless 'original') the fMP4 HLS master the preparer pulls. */

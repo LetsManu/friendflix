@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { parseClientCaps } from '../media/clientCaps.js';
-import { MediaError, type CapReason, type ItemDto, type TranscodeReason } from '../media/types.js';
+import { MediaError, type CapReason, type HevcGate, type ItemDto, type TranscodeReason } from '../media/types.js';
 import type { JfUser, ProfileRow, UserRow } from '../types.js';
 import { methodOf } from '../playstats.js';
 import { clearLive, clearStopped, countLive, getLive, listLive, markStopped, setLive } from '../live.js';
@@ -330,6 +330,9 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       reasonHint: z.enum(['network', 'manual']).optional(),
       /** Android app: what the device can direct-play (parseClientCaps; anything invalid is ignored, never an error) */
       caps: z.unknown().optional(),
+      /** the player's one automatic fallback: which feature failed, and the play session it replaces (accepted here, used by later steps) */
+      fellBack: z.enum(['hevc', 'surround', 'both']).optional(),
+      prevPs: psId.optional(),
     }).parse(req.body);
     const clientCaps = parseClientCaps(b.caps);
     const role = (await effectiveLimits(ctx, req.user!))!;
@@ -344,7 +347,9 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     const cap = Math.min(upload.cap, b.maxBitrate ?? role.maxBitrate);
     const capReason: CapReason = b.maxBitrate !== undefined && b.maxBitrate < upload.cap ? (b.reasonHint ?? 'network') : upload.limited ? 'uploadCap' : remote && ceiling < role.maxBitrate ? 'remoteCap' : 'roleCap';
     // PlaybackInfo and the resume-position/trickplay lookup run in parallel (one Jellyfin /Items call instead of two sequential ones)
-    const opts = { ...(clientCaps ? { clientCaps } : {}), maxBitrate: cap, capReason, maxHeight: role.maxHeight, startTicks: b.startTicks, audioIndex: b.audioIndex, audioLang: b.audioLang, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') };
+    // HEVC conversions: a gate only while HEVC_STREAMS > 0; the real one (probe, limit, health) arrives with hevcenc.ts, until then every ask is refused
+    const hevcGate = async (): Promise<HevcGate> => ({ ok: false, why: 'h264_unproven' });
+    const opts = { ...(clientCaps ? { clientCaps } : {}), remote, surround: ctx.cfg.SURROUND_AUDIO !== 'false', ...(ctx.cfg.HEVC_STREAMS > 0 ? { hevcGate } : {}), maxBitrate: cap, capReason, maxHeight: role.maxHeight, startTicks: b.startTicks, audioIndex: b.audioIndex, audioLang: b.audioLang, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') };
     const [first, meta] = await Promise.all([ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts), ctx.jf.playMeta(req.jfUser!, b.itemId)]);
     let info = first;
     // optional server step before the player loads the master playlist (decision call, audio/subtitle selection); Jellyfin has none
@@ -362,7 +367,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     // Block 22: remember the server's transcode reason for this play session; the stream is counted on "Playing" only
     // (the web prefetches info, Block 20), so a prefetch alone never counts
     // (plus the granted cap and remote flag: the upload-aware cap counts live remote streams with them)
-    await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ reason: info.transcodeReason ?? null, bitrate: info.maxBitrate, remote }), 6 * 3600).catch(() => undefined);
+    await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ reason: info.transcodeReason ?? null, bitrate: info.maxBitrate, remote, ...(info.delivery ? { video: info.delivery.video, audio: info.delivery.audio } : {}) }), 6 * 3600).catch(() => undefined);
     return info;
   }));
 

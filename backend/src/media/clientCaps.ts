@@ -24,7 +24,15 @@ export interface ClientCaps {
   audio: string[];
   subtitles: string[];
   ranges?: CapRange[];
+  /** what the device plays INSIDE an HLS stream (hls.js on MSE, ExoPlayer, the Cast receiver): a stricter claim than the direct-play lists above; absent = today's H.264 / AAC stereo stream */
+  hls?: HlsCaps;
+  /** channels of the device's current audio output (integer 1-16); absent counts as 2 */
+  audioChannels?: number;
 }
+export type HlsVideo = 'h264' | 'hevc';
+export type HlsAudio = 'aac' | 'mp3' | 'ac3' | 'eac3';
+export type SurroundCodec = 'eac3' | 'ac3' | 'aac';
+export interface HlsCaps { video: HlsVideo[]; audio: HlsAudio[]; surround: SurroundCodec[] }
 
 export const MAX_CAP_ENTRIES = 16;
 const MAX_HEIGHT = 8640;
@@ -34,6 +42,9 @@ export const CAP_CONTAINERS: ReadonlySet<string> = new Set(['mp4', 'm4v', 'mkv',
 export const CAP_SUBTITLES: ReadonlySet<string> = new Set(['srt', 'subrip', 'ass', 'ssa', 'vtt']);
 export const CAP_TAGS: ReadonlySet<string> = new Set(['avc1', 'avc3', 'hvc1', 'hev1', 'dvh1', 'dvhe', 'av01', 'vp09']);
 export const CAP_RANGES: ReadonlySet<string> = new Set<CapRange>(['sdr', 'hdr10', 'hlg', 'hdr10plus', 'dovi']);
+const HLS_VIDEO: ReadonlySet<string> = new Set(['h264', 'hevc']);
+const HLS_AUDIO: ReadonlySet<string> = new Set(['aac', 'mp3', 'ac3', 'eac3']);
+const HLS_SURROUND: ReadonlySet<string> = new Set(['eac3', 'ac3', 'aac']);
 const PROFILE = /^[a-z0-9][a-z0-9 ._-]{0,31}$/;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
@@ -56,7 +67,24 @@ const shape = z.object({
   appVersion: z.string().max(32).regex(SEMVER),
   containers: list, video: list, audio: list, subtitles: list,
   ranges: list.optional(),
+  hls: z.unknown().optional(),
+  audioChannels: z.unknown().optional(),
 });
+
+/**
+ * The `hls` claim: unknown values are dropped; `hevc` counts only with a hevc entry in `video[]`, `ac3` / `eac3` only with the same entry in `audio[]`,
+ * and `surround` must be a subset of `hls.audio` (aac is always allowed). Nothing left in it = absent (never an invalid block: it only narrows).
+ */
+function parseHls(raw: unknown, video: ClientVideoCap[], audio: string[]): HlsCaps | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const arr = (v: unknown) => (Array.isArray(v) ? v.slice(0, MAX_CAP_ENTRIES) : []);
+  const hasHevc = video.some((v) => v.codec === 'hevc');
+  const hlsVideo = allowed(arr(r.video), HLS_VIDEO).filter((c) => c !== 'hevc' || hasHevc) as HlsVideo[];
+  const hlsAudio = allowed(arr(r.audio), HLS_AUDIO).filter((c) => (c !== 'ac3' && c !== 'eac3') || audio.includes(c)) as HlsAudio[];
+  const surround = allowed(arr(r.surround), HLS_SURROUND).filter((c) => c === 'aac' || (hlsAudio as string[]).includes(c)) as SurroundCodec[];
+  return hlsVideo.length || hlsAudio.length || surround.length ? { video: hlsVideo, audio: hlsAudio, surround } : null;
+}
 
 /** Validates the capability block; null when absent, not an app block, malformed or oversized, or when nothing valid is left in it. */
 export function parseClientCaps(body: unknown): ClientCaps | null {
@@ -84,10 +112,15 @@ export function parseClientCaps(body: unknown): ClientCaps | null {
   }
   // ranges: present = the device states them; SDR is always playable (a block without it would refuse every SDR file)
   const ranges = r.data.ranges ? [...new Set<CapRange>(['sdr', ...(allowed(r.data.ranges, CAP_RANGES) as CapRange[])])] : null;
+  const audio = allowed(r.data.audio, CAP_AUDIO_CODECS);
+  const hls = parseHls(r.data.hls, video, audio);
+  const ch = r.data.audioChannels;
   const caps: ClientCaps = {
     client: r.data.client, appVersion: r.data.appVersion,
-    containers: allowed(r.data.containers, CAP_CONTAINERS), video, audio: allowed(r.data.audio, CAP_AUDIO_CODECS), subtitles: allowed(r.data.subtitles, CAP_SUBTITLES),
+    containers: allowed(r.data.containers, CAP_CONTAINERS), video, audio, subtitles: allowed(r.data.subtitles, CAP_SUBTITLES),
     ...(ranges ? { ranges } : {}),
+    ...(hls ? { hls } : {}),
+    ...(typeof ch === 'number' && Number.isInteger(ch) && ch >= 1 && ch <= 16 ? { audioChannels: ch } : {}),
   };
   return caps.containers.length || caps.video.length || caps.audio.length ? caps : null;
 }

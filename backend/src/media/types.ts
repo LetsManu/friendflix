@@ -9,6 +9,8 @@
  * See docs/architecture.md, "Media server seam".
  */
 import type { ClientCaps } from './clientCaps.js';
+import type { HevcGate, StreamDelivery } from './streamplan.js';
+export type { HevcGate, StreamDelivery };
 import type { RoleTemplate } from '../roles.js';
 import type { JfUser } from '../types.js';
 
@@ -165,6 +167,8 @@ export interface PlaybackDto {
   transcodeReason?: TranscodeReason;
   /** audio track baked into hlsUrl (explicit audioIndex or the matched audioLang); undefined = source default */
   audioIndex?: number;
+  /** the server's plan for the HLS stream (Jellyfin only): what the picture and sound are given and why; fixed reason codes, nothing else */
+  delivery?: StreamDelivery;
   trickplay?: TrickplayDto;
   audioTracks: Array<{ index: number; language?: string; title: string; isDefault: boolean }>;
   subtitles: Array<{ index: number; language?: string; title: string; url: string; isDefault: boolean }>;
@@ -341,9 +345,15 @@ export interface PlaybackOptions { maxBitrate: number; /** validated device capa
    * by castPredecessor() on the server (never taken from the client). A server that counts streams itself (Plex) lets the new
    * session overlap exactly that one; the gateway serves it only within NEXT_OVERLAP_MS while that one still plays (cast.ts).
    */
-  after?: string }
+  after?: string;
+  /** the viewer is outside the home networks (HEVC conversions are for those only) */
+  remote?: boolean;
+  /** the SURROUND_AUDIO setting; absent = off */
+  surround?: boolean;
+  /** asked only when the plan wants an HEVC conversion; absent = refused (h264_unproven) */
+  hevcGate?: () => Promise<HevcGate> }
 /** Server-side transcode of a short clip / probe (preview clips, playback health check): forced re-encode at these limits. */
-export interface ClipTranscode { audioIndex?: number; fmp4?: boolean; videoBitrate: number; audioBitrate: number; maxWidth: number; stereo?: boolean; maxBitrate?: number }
+export interface ClipTranscode { audioIndex?: number; fmp4?: boolean; videoBitrate: number; audioBitrate: number; maxWidth: number; stereo?: boolean; maxBitrate?: number; /** video codec of the conversion (default h264); the HEVC probe uses 'hevc' */ videoCodec?: 'h264' | 'hevc' }
 
 /** Role/kids policy for one identity; the implementation maps it to the server's own access model. */
 export interface IdentityPolicy {

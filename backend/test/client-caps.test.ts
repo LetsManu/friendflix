@@ -64,6 +64,37 @@ describe('parseClientCaps', () => {
   });
 });
 
+describe('parseClientCaps: hls and audioChannels', () => {
+  const web = (over: Record<string, unknown> = {}) => caps({ client: 'web', appVersion: '3.3.0', ...over });
+  it('accepts the hls claim and the output channels', () => {
+    const c = parseClientCaps(web({ hls: { video: ['h264', 'HEVC'], audio: ['aac', 'eac3'], surround: ['eac3', 'aac'] }, audioChannels: 6 }))!;
+    expect(c.hls).toEqual({ video: ['h264', 'hevc'], audio: ['aac', 'eac3'], surround: ['eac3', 'aac'] });
+    expect(c.audioChannels).toBe(6);
+  });
+  it('drops hevc in hls without a hevc entry in video[], and ac3/eac3 without the entry in audio[]', () => {
+    const c = parseClientCaps(web({ video: [{ codec: 'h264' }], audio: ['aac'], hls: { video: ['h264', 'hevc'], audio: ['aac', 'eac3', 'ac3'], surround: ['eac3'] } }))!;
+    expect(c.hls).toEqual({ video: ['h264'], audio: ['aac'], surround: [] });
+  });
+  it('drops a surround codec that is not in hls.audio (aac is always allowed); unknown values go', () => {
+    const c = parseClientCaps(web({ hls: { video: ['h264'], audio: ['aac', 'eac3'], surround: ['ac3', 'dts', 'aac', 7] } }))!;
+    expect(c.hls!.surround).toEqual(['aac']);
+  });
+  it('an hls block with nothing left is absent; a malformed one never invalidates the block', () => {
+    for (const hls of [{ video: ['vp9'], audio: [], surround: [] }, {}, 'x', 5, [], null]) expect(parseClientCaps(web({ hls }))!.hls).toBeUndefined();
+    expect(parseClientCaps(web({ hls: { video: 'hevc', audio: { a: 1 } } }))).not.toBeNull();
+  });
+  it('audioChannels 0 / 17 / 2.5 / a string is absent', () => {
+    for (const n of [0, 17, 2.5, '6', null, -1, Number.NaN]) expect(parseClientCaps(web({ audioChannels: n }))!.audioChannels).toBeUndefined();
+    expect(parseClientCaps(web({ audioChannels: 1 }))!.audioChannels).toBe(1);
+    expect(parseClientCaps(web({ audioChannels: 16 }))!.audioChannels).toBe(16);
+  });
+  it('an old Android block parses unchanged (no hls, no audioChannels key)', () => {
+    const c = parseClientCaps(caps())!;
+    expect('hls' in c).toBe(false);
+    expect('audioChannels' in c).toBe(false);
+  });
+});
+
 describe('/api/version', () => {
   it('minAndroid is a strict x.y.z next to the version constant', () => {
     expect(MIN_ANDROID).toBe('2.0.0');

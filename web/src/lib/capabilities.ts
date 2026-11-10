@@ -59,12 +59,14 @@ export interface Features {
   requests: boolean;
   /** 1.1 post-play screen (POSTPLAY_ENABLED): the "Done? See what's next" card, the end-of-title overlay and /postplay/:id */
   postplay: boolean;
+  /** SURROUND_AUDIO is on and the server is Jellyfin: the per-device "Surround sound" switch is offered (only an explicit true counts) */
+  surround: boolean;
 }
-export const ALL_FEATURES: Features = { requests: true, postplay: true };
+export const ALL_FEATURES: Features = { requests: true, postplay: true, surround: false };
 /** Lenient parse: only an explicit false turns a feature off. */
 export function featuresFrom(raw: unknown): Features {
   const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  return { requests: r.requests !== false, postplay: r.postplay !== false };
+  return { requests: r.requests !== false, postplay: r.postplay !== false, surround: r.surround === true };
 }
 export const features = writable<Features>(featuresFrom(undefined));
 /**
