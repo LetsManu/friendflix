@@ -357,6 +357,11 @@ function pkc(): PKCStatic {
 }
 
 /** the browser said no: the person cancelled, or no passkey matched (both are NotAllowedError by design); another host → unsupported */
+/** the error for a ceremony the person ended; no cause: an arbitrary thrown value could carry request data (challenge, credential) */
+function abortedError(): Error {
+  return new Error('passkey_aborted');
+}
+
 function ceremonyError(e: unknown): Error {
   const name = (e as { name?: unknown } | null)?.name;
   if (name === 'NotAllowedError' || name === 'AbortError') return new Error('passkey_cancelled');
@@ -400,7 +405,12 @@ export async function passkeyGet(options: PasskeyGet, signal?: AbortSignal): Pro
   try {
     cred = await navigator.credentials.get(signal ? { publicKey, signal } : { publicKey });
   } catch (e) {
-    if (signal?.aborted) throw new Error('passkey_aborted');
+    // Keep the browser's own DOMException (a fixed browser text, no options/challenge/credential) as the cause; any other
+    // thrown value is not attached, as it could carry data from the request that must not reach logs.
+    if (signal?.aborted) {
+      if (e instanceof DOMException) throw new Error('passkey_aborted', { cause: e });
+      throw abortedError();
+    }
     throw ceremonyError(e);
   }
   if (signal?.aborted) throw new Error('passkey_aborted');
