@@ -126,7 +126,7 @@
 <style>
   .lm { position: relative; display: inline-block; }
   .blk { display: block; }
-  .rowbtn { display: flex; gap: .8rem; align-items: center; width: 100%; min-height: 48px; padding: 0 1rem; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; }
+  .rowbtn { display: flex; gap: .8rem; align-items: center; width: 100%; min-height: 44px; padding: 0 14px; border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; text-align: left; }
   .rowbtn:hover:not(:disabled), .rowbtn.on { background: rgba(255,255,255,.08); }
   .round { width: 34px; min-height: 34px; height: 34px; padding: 0; border-radius: 50%; background: rgba(42,42,42,.6); border: 2px solid rgba(255,255,255,.5); color: #fff; display: grid; place-items: center; }
   .round:hover:not(:disabled) { border-color: #fff; background: rgba(42,42,42,.9); }

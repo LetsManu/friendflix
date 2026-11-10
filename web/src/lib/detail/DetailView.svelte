@@ -821,9 +821,9 @@
   .ov.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
   .more-syn { min-height: 44px; padding: 0 .2rem; font-weight: 600; text-decoration: none; }
   /* phone: the tab bar sticks under the app bar (in the popup: at the top of its scroll box) */
-  .phone .tabs { position: sticky; top: var(--nav-total); z-index: 5; }
+  .phone .tabs { position: sticky; top: var(--nav-total); z-index: 5; width: 100%; } /* full width: scrolling content must not show beside the pill */
   .phone.vm .tabs { top: 0; }
-  .phone .tab { min-height: 44px; }
+  .phone .tab { min-height: 44px; flex: 1 1 auto; }
   .pcap .small { margin: 0; }
   .icons { display: flex; justify-content: space-around; align-items: flex-start; gap: .4rem; margin: .4rem 0 .2rem; }
   .lab { display: flex; flex-direction: column; align-items: center; gap: .3rem; min-height: 44px; min-width: 64px; padding: .2rem .4rem; background: none; border: 0; color: #fff; border-radius: 6px; font-weight: 500; }

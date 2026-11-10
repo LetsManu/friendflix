@@ -14,7 +14,7 @@ test.describe('UI language', () => {
     await page.locator('#ui-lang').selectOption('en');
     await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link')).toHaveText(['Home', 'TV Shows', 'Movies', 'New & Upcoming', 'Watchlist']);
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-    await expect(page.getByRole('heading', { level: 1, name: 'Playback settings' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
     expect(api.log.some((l) => l.startsWith('PUT /api/prefs/language {"language":"en"}'))).toBe(true);
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/settings-en.png`, fullPage: false });
 

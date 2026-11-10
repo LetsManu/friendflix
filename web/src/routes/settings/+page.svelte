@@ -138,6 +138,7 @@
   {#each sections as [id, label], i (id)}<a href="#{id}" aria-current={i === cur ? 'location' : undefined} on:click|preventDefault={() => go(id, i)}>{$t(label)}</a>{/each}
 </nav>
 <div class="scol">
+<h1>{$t('account.settings.pageTitle')}</h1>
 <section class="panel form langsec" id="language" tabindex="-1" aria-labelledby="langh">
   <h2 id="langh">{$t('account.language.settingsTitle')}</h2>
   <div class="field"><label for="ui-lang" class="sr-only">{$t('account.language.settingsTitle')}</label>
@@ -158,7 +159,7 @@
     <div><button type="button" class="sec" on:click={() => native.openSettings()}>{$t('account.settings.app.open')}</button></div>
   </section>
 {/if}
-<h1>{$t('account.settings.title')}</h1>
+<h2 id="playh">{$t('account.settings.title')}</h2>
 <p class="muted">{$t('account.settings.lead')}</p>
 <!-- kids profiles: only language and playback languages / subtitle look (nothing social, nothing account-wide) -->
 <form class="panel form" id="prefs" tabindex="-1" on:submit|preventDefault={save}>
@@ -272,6 +273,7 @@
   .form select option { background: var(--fr-solid); color: #fff; }
   .langsec { margin-bottom: 1.5rem; } .langsec h2 { margin: 0; font-size: 1.15rem; } .langsec .flex { align-items: center; }
   .push { margin-top: 1.5rem; } .push h2 { margin: 0; font-size: 1.15rem; }
+  #playh { margin: 1.5rem 0 0; font-size: 1.15rem; }
   /* reflow at 320 px (WCAG 1.4.10): the track may shrink below a select's natural width, the switch rows wrap their text */
   .form { max-width: 640px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.2rem; }
   .row { display: flex; gap: .9rem; align-items: flex-start; color: var(--fg); font-size: 1rem; } .row span { display: grid; gap: .1rem; min-width: 0; overflow-wrap: anywhere; }
