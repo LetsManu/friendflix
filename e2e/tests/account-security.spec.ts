@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { expect, test, type MockState } from '../fixtures.js';
-import { done, emailSent, installLogin, loginState, password, prompt, recoveryCodes, totpSetup, type LoginMock } from '../mocks/login.js';
+import { done, emailSent, identify, installLogin, loginState, password, prompt, recoveryCodes, totpSetup, type LoginMock } from '../mocks/login.js';
 
 // The account page's security section (Block 23 phase 3 Task 11): in-app re-authentication in a dialog with the follow-up flow's steps
 // inline, device removal, the e-mail change and the /confirm-email link page. The flow behind /auth/flow/* is scripted (mocks/login.ts).
@@ -254,6 +254,97 @@ test.describe('passkey add in-app (virtual authenticator)', () => {
     expect(Object.keys(a.response.response).sort()).toEqual(expect.arrayContaining(['attestationObject', 'clientDataJSON']));
     expect(Object.keys(a.response.response)).not.toContain('publicKey');
     expect(a.response.clientExtensionResults).toEqual({});
+  });
+});
+
+test.describe('re-authentication with a passkey instead of the password (in-app, virtual authenticator)', () => {
+  test.use({ baseURL: LOCAL });
+
+  test('"Stattdessen mit Passkey bestätigen" runs the passkey on this page with the prepared options: { passkey, alt } with the app origin, no request before the prompt, no redirect', async ({ page, api }: { page: Page; api: MockState }) => {
+    api.security.passkeySetup = 'in-app';
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('WebAuthn.enable', { enableUI: false });
+    const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
+      options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
+    });
+    const { generateKeyPairSync } = await import('node:crypto');
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    await cdp.send('WebAuthn.addCredential', {
+      authenticatorId,
+      credential: {
+        credentialId: randomBytes(16).toString('base64'), isResidentCredential: true, rpId: 'localhost',
+        privateKey: privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64'), userHandle: Buffer.from('fake-user-0001').toString('base64'), signCount: 0,
+      },
+    });
+    let redirected = false;
+    await page.route('**/auth/reauth?**', (r) => { redirected = true; return r.fulfill({ status: 200, contentType: 'text/html', body: '<p>left</p>' }); });
+    const challenge = randomBytes(32).toString('base64url');
+    // the passkey attempt comes prepared with the password step: no request between the click and the browser's prompt
+    const st = loginState({
+      starts: [{ body: { ...password('anna'), passkeyAlt: true, passkeyStep: identify({ passkey: { challenge, rpId: 'localhost', allowCredentials: [], userVerification: 'required', timeout: 30000 } }) } }],
+      answers: [{ body: totpSetup() }],
+    });
+    await open(page, st);
+    await security(page).getByRole('button', { name: 'Hinzufügen', exact: true }).click();
+    await dialog(page).getByRole('button', { name: 'Stattdessen mit Passkey bestätigen' }).click();
+    await expect(dialog(page).getByRole('heading', { name: 'Authenticator-App einrichten' })).toBeVisible();
+    expect(startBodies(st)).toEqual([{ kind: 'reauth', then: 'setup-totp' }]);
+    const [a] = answerBodies(st);
+    expect(Object.keys(a).sort()).toEqual(['alt', 'passkey', 'stage']);
+    expect(a.alt).toBe(true);
+    expect(a.stage).toBe('identify');
+    expect(JSON.parse(Buffer.from(a.passkey.response.clientDataJSON, 'base64url').toString('utf8'))).toMatchObject({ type: 'webauthn.get', origin: LOCAL, challenge });
+    expect(redirected).toBe(false);
+  });
+
+  test('without passkeyAlt there is no passkey link; without a prepared attempt the options are fetched (method passkey); a cancelled prompt offers retry and "Andere Methode wählen" goes back to the password', async ({ page }) => {
+    const plain = loginState({ starts: [{ body: password('anna') }] });
+    await open(page, plain);
+    await security(page).getByRole('button', { name: 'Hinzufügen', exact: true }).click();
+    await expect(dialog(page).getByLabel('Passwort', { exact: true })).toBeVisible();
+    await expect(dialog(page).getByRole('button', { name: 'Stattdessen mit Passkey bestätigen' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    await page.addInitScript(() => { navigator.credentials.get = () => Promise.reject(new DOMException('cancelled', 'NotAllowedError')); });
+    const st = loginState({
+      starts: [
+        { body: { ...password('anna'), passkeyAlt: true } },
+        { body: identify({ passkey: { challenge: 'ZmFrZS1jaGFsbGVuZ2U', rpId: 'localhost', allowCredentials: [], userVerification: 'required', timeout: 30000 } }) },
+        { body: { ...password('anna'), passkeyAlt: true } },
+      ],
+    });
+    await open(page, st);
+    await security(page).getByRole('button', { name: 'Hinzufügen', exact: true }).click();
+    await dialog(page).getByRole('button', { name: 'Stattdessen mit Passkey bestätigen' }).click();
+    await expect(dialog(page).getByRole('heading', { name: 'Kein Passkey bestätigt' })).toBeVisible();
+    await expect(dialog(page).getByRole('button', { name: 'Erneut versuchen' })).toBeVisible();
+    await dialog(page).getByRole('button', { name: 'Andere Methode wählen' }).click();
+    await expect(dialog(page).getByLabel('Passwort', { exact: true })).toBeVisible();
+    expect(answerBodies(st)).toEqual([]);
+    expect(startBodies(st).map((b) => b.method ?? 'password')).toEqual(['password', 'passkey', 'password']);
+  });
+});
+
+test.describe('re-authentication passkey: too many attempts', () => {
+  test('a rate-limited passkey answer says so on the card, without "Erneut versuchen"; the way back shows the password again without a new start', async ({ page }) => {
+    await page.addInitScript(() => {
+      navigator.credentials.get = () => Promise.resolve({ toJSON: () => ({ id: 'Y3JlZA', rawId: 'Y3JlZA', type: 'public-key', response: { clientDataJSON: 'e30', authenticatorData: 'YQ', signature: 'cw', userHandle: null } }) } as any);
+    });
+    const opts = { challenge: 'ZmFrZS1jaGFsbGVuZ2U', rpId: '127.0.0.1', allowCredentials: [], userVerification: 'required', timeout: 30000 };
+    const st = loginState({
+      starts: [{ body: { ...password('anna'), passkeyAlt: true, passkeyStep: identify({ passkey: opts }) } }],
+      answers: [{ body: { ...identify({ passkey: opts }), errors: ['rate_limited'] } }],
+    });
+    await open(page, st);
+    await security(page).getByRole('button', { name: 'Hinzufügen', exact: true }).click();
+    await dialog(page).getByRole('button', { name: 'Stattdessen mit Passkey bestätigen' }).click();
+    await expect(dialog(page).getByText(/Zu viele Versuche/)).toBeVisible();
+    await expect(dialog(page).getByRole('button', { name: 'Erneut versuchen' })).toHaveCount(0);
+    expect(answerBodies(st)[0]).toMatchObject({ stage: 'identify', alt: true });
+    // the password attempt was kept: the way back needs no new start
+    await dialog(page).getByRole('button', { name: 'Andere Methode wählen' }).click();
+    await expect(dialog(page).getByLabel('Passwort', { exact: true })).toBeVisible();
+    expect(startBodies(st)).toHaveLength(1);
   });
 });
 

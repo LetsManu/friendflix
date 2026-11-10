@@ -193,11 +193,28 @@ export async function flowConfig(): Promise<FlowConfig> {
   return { mode: body?.mode === 'app' ? 'app' : 'authentik', recovery: body?.recovery === true, enroll: body?.enroll === true };
 }
 
+/**
+ * a start's reply; a re-authentication's first step may say that a passkey can confirm instead of the password (`passkeyAlt`: the
+ * identification carried passkey options for the app host, user verification required) and bring the prepared passkey attempt
+ * (`passkeyStep`). `method: 'passkey'` is the fallback without one: it starts with that identification step.
+ */
+export type StartReply = FlowReply & { passkeyAlt?: boolean; passkeyStep?: unknown };
+
+/**
+ * The prepared passkey attempt of a re-authentication's first reply (`passkeyStep`: an identification with passkey options), so the
+ * passkey prompt can start right in the click; null when there is none or it is not of that shape. Answered with `alt: true`.
+ */
+export function preparedPasskey(r: StartReply): Extract<FlowStep, { stage: 'identify' }> | null {
+  const s = r.passkeyStep as Partial<Extract<FlowStep, { stage: 'identify' }>> | null | undefined;
+  return s && typeof s === 'object' && s.stage === 'identify' && typeof s.step === 'string' && s.passkey && typeof s.passkey.challenge === 'string'
+    ? (s as Extract<FlowStep, { stage: 'identify' }>) : null;
+}
+
 /** starts a flow; `invite` keeps a portal invite to the end (login, enroll), `identifier` answers a recovery's identification */
-export async function startFlow(kind: FlowKind, extra: { invite?: string; identifier?: string; then?: ThenKind } = {}): Promise<FlowReply> {
+export async function startFlow(kind: FlowKind, extra: { invite?: string; identifier?: string; then?: ThenKind; method?: 'passkey' } = {}): Promise<StartReply> {
   const r = await post('/auth/flow/start', { kind, ...extra });
   if (r?.status === 410) throw new FlowRefused(410, typeof r.body?.error === 'string' ? r.body.error : 'invite_invalid');
-  // a re-authentication that cannot start: no passkeys in-app (`passkey_classic`), no such flow (`flow_not_configured`)
+  // a re-authentication that cannot start: no passkeys in-app (`passkey_classic`, `passkey_unavailable`), no such flow (`flow_not_configured`)
   if (kind === 'reauth' && r && r.status >= 400 && r.status < 500 && r.status !== 429 && typeof r.body?.error === 'string') throw new FlowRefused(r.status, r.body.error);
   return toReply(r);
 }

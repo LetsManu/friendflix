@@ -111,6 +111,153 @@ describe('re-authentication, security actions', () => {
     expect(b.cookies.ff_flow).toBeUndefined();
   });
 
+  describe('passkey instead of the password (in-app, no redirect)', () => {
+    /** the identification stage with a WebAuthn validation stage: Authentik sends a passkey challenge for the forwarded app host */
+    const identPk = (rpId = 'friend.example.com', userVerification = 'required') => ({
+      ...fixture('identification-passkey'), password_fields: false, passkey_challenge: { ...(fixture('identification-passkey').passkey_challenge as object), rpId, userVerification },
+    });
+    const CRED = {
+      id: 'Y3JlZC0x', rawId: 'Y3JlZC0x', type: 'public-key',
+      response: { clientDataJSON: 'eyJ0eXBlIjoid2ViYXV0aG4uZ2V0In0', authenticatorData: 'YWQ', signature: 'c2ln', userHandle: 'dWg' }, clientExtensionResults: {},
+    };
+    /** one sign-in for these tests (the classic login route is rate limited per IP across the file) */
+    let shared: Awaited<ReturnType<TestEnv['login']>> | null = null;
+    const session = async () => {
+      shared ??= await env.login();
+      await setReauthAt(shared, undefined);
+      return shared;
+    };
+    type Ans = { passkey?: unknown; uid_field?: string };
+    /** identification (a passkey ends the flow, a name goes on to the password) → password; every Authentik session on its own */
+    const flows = (onPasskey: () => true | 'end' | ReturnType<typeof identPk> = () => 'end') => installWorld(env, { [LOGIN]: [
+      { challenge: identPk(), answer: (x: Ans) => (x.passkey ? onPasskey() : x.uid_field ? true : identPk()) },
+      loginStages()[1]!,
+    ] }, { perSession: true });
+
+    it('method passkey (the fallback without a prepared attempt): the identification\'s options, only a passkey, and the session is stamped', async () => {
+      w = installWorld(env, { [LOGIN]: [{ challenge: identPk(), answer: (x: Ans) => (x.passkey || x.uid_field ? true : identPk()) }, loginStages()[1]!] });
+      const s = await session();
+      const b = browser(env, s);
+      await b.config();
+      const pw = (await b.post('start', { kind: 'reauth' })).json();
+      expect(pw).toMatchObject({ stage: 'password', identity: 'anna', passkeyAlt: true });
+      w = installWorld(env, { [LOGIN]: [{ challenge: identPk(), answer: () => true, hops: 2 }] });
+      const r = await b.post('start', { kind: 'reauth', method: 'passkey' });
+      const step = r.json() as { stage: string; step: string; passkey: { rpId: string } };
+      expect(step).toMatchObject({ stage: 'identify', passkey: { rpId: 'friend.example.com', challenge: 'fake-challenge-0011' } });
+      expect(executorPosts(w)).toEqual([]);
+      // a typed name (or a password) is refused on a re-authentication's identification: only the passkey
+      expect((await b.post('answer', { step: step.step, stage: 'identify', identifier: 'ben' })).statusCode).toBe(400);
+      expect(executorPosts(w)).toEqual([]);
+      // the assertion is passed through unchanged; the end checks the session's own person and stamps it
+      const end = await b.post('answer', { step: step.step, stage: 'identify', passkey: CRED });
+      expect(end.json()).toEqual({ stage: 'done', next: '/me/account' });
+      expect(executorPosts(w, LOGIN).map((c) => c.body)).toEqual([{ passkey: CRED }]);
+      expect((await sessionOf(s)).reauthAt).toBeGreaterThan(Date.now() - 5_000);
+      // the app host is forwarded: Authentik issued and checks the challenge for friend.example.com
+      expect(executorPosts(w, LOGIN)[0]!.headers['x-forwarded-host']).toBe('friend.example.com');
+    });
+
+    it('the passkey attempt is prepared with the password step (no round trip before the prompt); answered with alt it ends the password attempt; the password path drops it', async () => {
+      w = flows();
+      const s = await session();
+      const b = browser(env, s);
+      await b.config();
+      const pw = (await b.post('start', { kind: 'reauth' })).json() as { stage: string; passkeyStep: { stage: string; step: string } };
+      expect(pw).toMatchObject({ stage: 'password', passkeyAlt: true, passkeyStep: { stage: 'identify', passkey: { rpId: 'friend.example.com', userVerification: 'required' } } });
+      const altId = b.cookies.ff_flow_alt!;
+      const primary = b.cookies.ff_flow!;
+      expect(altId).toBeTruthy();
+      expect(altId).not.toBe(primary);
+      // only `alt: true`; on the prepared identification only a passkey; a refused request costs neither attempt
+      expect((await b.post('answer', { step: pw.passkeyStep.step, stage: 'identify', passkey: CRED, alt: 'yes' })).statusCode).toBe(400);
+      expect((await b.post('answer', { step: pw.passkeyStep.step, stage: 'identify', identifier: 'ben', alt: true })).statusCode).toBe(400);
+      expect(await loadJar(env.ctx, primary)).not.toBeNull();
+      expect(await loadJar(env.ctx, altId)).not.toBeNull();
+      const end = await b.post('answer', { step: pw.passkeyStep.step, stage: 'identify', passkey: CRED, alt: true });
+      expect(end.json()).toEqual({ stage: 'done', next: '/me/account' });
+      expect((await sessionOf(s)).reauthAt).toBeGreaterThan(Date.now() - 5_000);
+      expect(executorPosts(w, LOGIN).map((c) => c.body)).toEqual([{ uid_field: 'anna' }, { passkey: CRED }]);
+      // verified: the password attempt ended (its jar gone), both cookies cleared
+      expect(await loadJar(env.ctx, primary)).toBeNull();
+      expect(b.cookies.ff_flow).toBeUndefined();
+      expect(b.cookies.ff_flow_alt).toBeUndefined();
+      // the password path: the prepared passkey attempt is dropped once the password moved on
+      await setReauthAt(s, undefined);
+      w = flows();
+      const p2 = (await b.post('start', { kind: 'reauth' })).json() as { step: string };
+      const alt2 = b.cookies.ff_flow_alt!;
+      expect(await loadJar(env.ctx, alt2)).not.toBeNull();
+      expect((await b.post('answer', { step: p2.step, stage: 'password', password: RIGHT })).json()).toEqual({ stage: 'done', next: '/me/account' });
+      expect(await loadJar(env.ctx, alt2)).toBeNull();
+      expect(b.cookies.ff_flow_alt).toBeUndefined();
+    });
+
+    it('a refused passkey on the prepared attempt keeps the password attempt: the password still works afterwards; it counts against the limit', async () => {
+      const refusedIdent = () => ({ ...identPk(), response_errors: { passkey: [{ string: 'no', code: 'invalid' }] } });
+      w = flows(refusedIdent);
+      const s = await session();
+      const b = browser(env, s);
+      await b.config();
+      const pw = (await b.post('start', { kind: 'reauth' })).json() as { step: string; passkeyStep: { step: string } };
+      const primary = b.cookies.ff_flow!;
+      const alt = b.cookies.ff_flow_alt!;
+      const r = (await b.post('answer', { step: pw.passkeyStep.step, stage: 'identify', passkey: CRED, alt: true })).json() as { stage: string; errors: string[] };
+      expect(r).toMatchObject({ stage: 'identify', errors: ['invalid'] });
+      expect(await env.kv.get(`flowfail:${sha256('anna')}`)).toBe('1');
+      // both attempts and both cookies stay
+      expect(b.cookies.ff_flow).toBe(primary);
+      expect(b.cookies.ff_flow_alt).toBe(alt);
+      expect(await loadJar(env.ctx, primary)).not.toBeNull();
+      expect(await loadJar(env.ctx, alt)).not.toBeNull();
+      // the password step is still answerable, and the passkey attempt ends with it
+      expect((await b.post('answer', { step: pw.step, stage: 'password', password: RIGHT })).json()).toEqual({ stage: 'done', next: '/me/account' });
+      expect(await loadJar(env.ctx, alt)).toBeNull();
+    });
+
+    it('a prepared attempt that cannot be used ends its Authentik session at once; the password step is unaffected', async () => {
+      // the first session (the password attempt) sees options with user verification required, the second (prepared) one does not
+      let gets = 0;
+      const ident = { get challenge() { return gets++ === 0 ? identPk() : identPk('friend.example.com', 'preferred'); }, answer: (x: Ans) => (x.uid_field ? true : identPk()) };
+      w = installWorld(env, { [LOGIN]: [ident as never, loginStages()[1]!] }, { perSession: true });
+      const s = await session();
+      const b = browser(env, s);
+      await b.config();
+      const pw = (await b.post('start', { kind: 'reauth' })).json() as { step: string } & Record<string, unknown>;
+      expect(pw).toMatchObject({ stage: 'password', passkeyAlt: true });
+      expect(pw).not.toHaveProperty('passkeyStep');
+      expect(b.cookies.ff_flow_alt).toBeUndefined();
+      // two Authentik sessions were opened (s1 password, s2 prepared); s2 was ended through the invalidation flow, s1 lives on
+      const ended = w.calls.filter((c) => c.path === INVALIDATION).map((c) => /authentik_session=([^;]+)/.exec(c.headers.cookie ?? '')?.[1]);
+      expect(ended).toEqual(['s2']);
+      expect((await b.post('answer', { step: pw.step, stage: 'password', password: RIGHT })).json()).toEqual({ stage: 'done', next: '/me/account' });
+    });
+
+    it('another person\'s passkey → denied, no stamp; a passkey for another host, without required user verification or none at all → no passkeyAlt and 409 passkey_unavailable', async () => {
+      w = installWorld(env, { [LOGIN]: [{ challenge: identPk(), answer: () => true, hops: 2 }] });
+      const s = await session();
+      const b = browser(env, s);
+      await b.config();
+      env.claims.current = { sub: 'sub-ben', email: 'ben@elsewhere.example.com', name: 'Ben', groups: [] };
+      const step = (await b.post('start', { kind: 'reauth', method: 'passkey' })).json() as { step: string };
+      expect((await b.post('answer', { step: step.step, stage: 'identify', passkey: CRED })).json()).toEqual({ stage: 'denied' });
+      expect((await sessionOf(s)).reauthAt).toBeUndefined();
+      // another host; user verification only `preferred` (a device alone must not re-authenticate); no passkey challenge
+      for (const ident of [identPk('auth.example.com'), identPk('friend.example.com', 'preferred'), fixture('identification')]) {
+        w = installWorld(env, { [LOGIN]: [{ challenge: ident, answer: () => true }, loginStages()[1]!] });
+        const pw = (await b.post('start', { kind: 'reauth' })).json() as Record<string, unknown>;
+        expect(pw.stage).toBe('password');
+        expect(pw).not.toHaveProperty('passkeyAlt');
+        const before = executorPosts(w, LOGIN).length;
+        const r = await b.post('start', { kind: 'reauth', method: 'passkey' });
+        expect([r.statusCode, r.json()]).toEqual([409, { error: 'passkey_unavailable' }]);
+        expect(executorPosts(w, LOGIN)).toHaveLength(before); // nothing answered for the person
+      }
+      // method belongs to reauth only
+      expect((await b.post('start', { kind: 'login', method: 'passkey' })).statusCode).toBe(400);
+    });
+  });
+
   it('reauth sets reauthAt; DELETE device works within 10 min, 401 reauth_required after 11 min', async () => {
     const s = await env.login();
     // no stamp yet

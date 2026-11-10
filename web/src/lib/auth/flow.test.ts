@@ -10,7 +10,7 @@ vi.mock('#lib/api', () => ({ getCsrf: () => csrf.token }));
 
 import {
   answer, artPaths, cancelFlow, classicHref, codeFromBoxes, credentialJSON, errorKey, fallbackArt, fieldLabel, flowConfig, inviteToken,
-  passkeyCeremonies, passkeyCreate, passkeyGet, passkeyProblem, pasteCode, resumeFlow, runPasskey, safeNext, startFlow, wallColumns,
+  passkeyCeremonies, passkeyCreate, passkeyGet, passkeyProblem, pasteCode, preparedPasskey, resumeFlow, runPasskey, safeNext, startFlow, wallColumns,
   type FlowStep, type PasskeyCreate, type PasskeyGet,
 } from './flow';
 
@@ -444,6 +444,14 @@ describe('passkeys', () => {
     const fourth = c.run(GET);
     pending.at(-1)!.reject(Object.assign(new Error('x'), { name: 'NotAllowedError' }));
     expect(await fourth).toEqual({ problem: 'cancelled' });
+  });
+
+  it('preparedPasskey: only an identification step with passkey options', () => {
+    const step = { stage: 'identify', step: 's1', passwordInline: false, canRecover: false, canEnroll: false, passkey: GET };
+    expect(preparedPasskey({ stage: 'password', step: 'p', identity: 'anna', canRecover: false, passkeyStep: step })).toEqual(step);
+    expect(preparedPasskey({ stage: 'password', step: 'p', identity: 'anna', canRecover: false })).toBeNull();
+    expect(preparedPasskey({ stage: 'password', step: 'p', identity: 'anna', canRecover: false, passkeyStep: { ...step, passkey: null } })).toBeNull();
+    expect(preparedPasskey({ stage: 'password', step: 'p', identity: 'anna', canRecover: false, passkeyStep: { stage: 'mfa', step: 'x' } })).toBeNull();
   });
 
   it('uses the browser JSON helpers and toJSON where present, without publicKey and with empty clientExtensionResults', async () => {
