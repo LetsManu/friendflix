@@ -349,6 +349,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   let lockRelease: (() => void) | null = null;
   let follower = false;
   let lockWaiting = false;
+  /** a Stop is still reporting / revoking: the lock stays (a waiting tab must not re-adopt the cast before the revoke is through) */
+  let holdLock = false;
 
   const log = (level: CastLogEntry['level'], tag: CastLogEntry['tag'], text: string) => { try { deps.log({ level, tag, text }); } catch { /* never breaks a cast */ } };
   /** the session's autoplay (the switch, else the profile's autoplay and this episode's "sleep after") */
@@ -400,7 +402,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   };
   /** the owner lock goes when this tab owns nothing (another tab waiting for it picks the cast up) */
   function freeLock() {
-    if (cur || !lockRelease) return;
+    if (cur || holdLock || !lockRelease) return;
     const r = lockRelease;
     lockRelease = null;
     r();
@@ -423,6 +425,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     void ownLock(false).then((ok) => {
       lockWaiting = false;
       if (!ok || cur) return;
+      // Stop and a session end clear the hint before the owner lets the lock go; a pagehide keeps it
+      if (!readHint(deps.store, timers.now())) { freeLock(); return; }
       log('info', 'session', 'the owner tab left · taking the cast over');
       void resume();
     });
@@ -1143,8 +1147,14 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     detachTimer = timers.set(() => {
       detachTimer = undefined;
       if (cur) return;
-      if (resuming) detachDue = true;
-      else showDetached();
+      if (resuming) { detachDue = true; return; } // shown once that resume gives up (it follows when another tab owns)
+      // another tab may own the cast (this one did not auto-join): then nothing is lost here, this tab follows
+      void ownLock(true).then((ok) => {
+        if (!ok) { follow(); return; }
+        if (cur || resuming) return;
+        freeLock(); // only a probe
+        showDetached();
+      });
     }, DETACHED_AFTER_MS);
   }
   deps.whenReady(boot);
@@ -1174,6 +1184,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       if (!ok || detached !== d || g !== gen) return; // picker dismissed (the bar stays), or stopped meanwhile
       if (await resume()) return;
       if (cur || g !== gen) return; // stopped meanwhile: no toast
+      if (follower) { log('info', 'session', 'another tab controls the cast'); dropDetached(); return; } // no toast, the hint is the owner's
       deps.toast('info', tr('player.castBar.nothingThere', { device: get(cast.castState).deviceName || d.hint.device }));
       clearHint(deps.store);
       dropDetached();
@@ -1234,8 +1245,11 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         dropDetached();
         clearHint(deps.store);
         log('info', 'session', 'cast ended · stopped from the detached bar');
-        // the playing token and its queued successor (the server's revoke does not cascade: the TV may already play the successor)
-        await Promise.all([revokeId(d.hint.castId), d.hint.next ? revokeId(d.hint.next) : undefined]);
+        holdLock = true;
+        try {
+          // the playing token and its queued successor (the server's revoke does not cascade: the TV may already play the successor)
+          await Promise.all([revokeId(d.hint.castId), d.hint.next ? revokeId(d.hint.next) : undefined]);
+        } finally { holdLock = false; freeLock(); }
         return;
       }
       gen++;
@@ -1248,11 +1262,15 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         await stopped;
         return;
       }
-      end(s, 'stopped');
-      dropHint(s);
-      cast.castStop();
-      await stopped;
-      revoke(ci);
+      // the owner lock stays until the stop report and the revoke are through: a waiting tab then finds nothing to re-adopt
+      holdLock = true;
+      try {
+        end(s, 'stopped');
+        dropHint(s);
+        cast.castStop();
+        await stopped;
+        if (ci) await revokeId(ci.castId);
+      } finally { holdLock = false; freeLock(); }
     },
     reconnect() {
       const s = cur;

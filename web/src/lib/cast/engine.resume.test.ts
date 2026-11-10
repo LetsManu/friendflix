@@ -6,7 +6,7 @@ import { consumeAutoplay, noteInteraction } from '#lib/stillwatching';
 import { CAST_LOCK, castLock, DETACHED_AFTER_MS, PROGRESS_MS, RESUME_WAIT_MS } from './engine';
 import type { CastLookup } from './resume';
 import { writeHint } from './resume';
-import { castIdOf, ci, contentOf, deferred, fakeLock, flush, settle, handoff, idle, lookup, playing, setup, T0, token, type Env } from '../../test-utils/fake-cast-engine';
+import { castIdOf, ci, contentOf, deferred, fakeLock, flush, memStore, settle, handoff, idle, lookup, playing, setup, T0, token, type Env } from '../../test-utils/fake-cast-engine';
 
 const tA = token('Aaaa'), tB = token('Bbbb'), tZ = token('Zzzz');
 let A = '', B = '', Z = '';
@@ -225,9 +225,10 @@ describe('cast engine: resume (re-adoption)', () => {
   });
 
   it('a second engine does not resume while the first owns the cast; it takes over when the first leaves', async () => {
-    const lock = fakeLock();
-    const one = setup({ lock }), two = setup({ lock });
-    for (const env of [one, two]) { env.lookups[A] = lookup(A, 'dun4'); tvPlaysA(env, { queue: [] }); }
+    const lock = fakeLock(), store = memStore(), lookups = {};
+    const one = setup({ lock, store, lookups }), two = setup({ lock, store, lookups });
+    one.lookups[A] = lookup(A, 'dun4');
+    for (const env of [one, two]) tvPlaysA(env, { queue: [] });
     expect(await one.engine.resume()).toBe(true);
     expect(await two.engine.resume()).toBe(false);
     two.ready();
@@ -242,6 +243,82 @@ describe('cast engine: resume (re-adoption)', () => {
     expect(lock.held()).toBe(true);
     await two.engine.stop();
     expect(lock.held()).toBe(false);
+  });
+
+  it('Stop in the owner tab: the waiting tab does not re-adopt the stopped cast; one stop report, one DELETE', async () => {
+    const lock = fakeLock(), store = memStore(), lookups = {};
+    const one = setup({ lock, store, lookups }), two = setup({ lock, store, lookups });
+    one.lookups[A] = lookup(A, 'dun4');
+    for (const env of [one, two]) tvPlaysA(env, { queue: [] });
+    expect(await one.engine.resume()).toBe(true);
+    expect(await two.engine.resume()).toBe(false);
+    const stop = deferred<null>();
+    const record = one.api.getMockImplementation()!;
+    one.api.mockImplementation(async (path, init) => (path === '/api/playback/stop' ? (await record(path, init), stop.promise) : record(path, init)));
+    const stopping = one.engine.stop();
+    await settle();
+    expect(lock.held()).toBe(true); // the owner keeps the lock until its stop report and DELETE are through
+    expect(two.calls).toEqual([]);
+    stop.resolve(null);
+    await stopping;
+    await settle();
+    expect(one.reports()).toEqual(['stop']);
+    expect(one.deletes()).toEqual(['q1', A]); // q1: its own queue token the fake receiver refused earlier; then one DELETE for A
+    expect([...one.reports(), ...two.reports()]).toEqual(['stop']);
+    expect(get(two.out)).toBeNull();
+    expect(two.reports()).toEqual([]);
+    expect(two.queuePosts()).toEqual([]);
+    expect(two.lookupsAsked()).toEqual([]); // the hint was gone: nothing to pick up
+    expect(lock.held()).toBe(false);
+    // the hint still there (no pre-check help): the lookup after the DELETE answers 404, the waiting tab changes nothing
+    const lock2 = fakeLock(), store2 = memStore(), lookups2 = {};
+    const a = setup({ lock: lock2, store: store2, lookups: lookups2 }), b = setup({ lock: lock2, store: store2, lookups: lookups2 });
+    a.lookups[A] = lookup(A, 'dun4');
+    for (const env of [a, b]) tvPlaysA(env, { queue: [] });
+    await a.engine.resume();
+    await b.engine.resume();
+    const stoppedA = a.engine.stop();
+    leaveHint(b); // e.g. written back by a late step
+    await stoppedA;
+    await settle();
+    expect(b.lookupsAsked()).toEqual([A]);
+    expect(get(b.out)).toBeNull();
+    expect(b.reports()).toEqual([]);
+    expect(lock2.held()).toBe(false);
+  });
+
+  it('a tab without auto-join shows no "connection lost" while another tab owns the cast; Reconnect there drops the bar silently', async () => {
+    const lock = fakeLock(), store = memStore(), lookups = {};
+    const one = setup({ lock, store, lookups }), two = setup({ lock, store, lookups });
+    one.lookups[A] = lookup(A, 'dun4');
+    tvPlaysA(one, { queue: [] });
+    expect(await one.engine.resume()).toBe(true);
+    two.state.set({ ...idle, connected: false, deviceName: '' });
+    two.ready();
+    await two.advance(DETACHED_AFTER_MS);
+    await settle();
+    expect(get(two.out)).toBeNull();
+    expect(lock.waiting()).toBe(1); // it follows: it takes over when the owner goes
+    // the bar was already up when the other tab became the owner
+    const lock2 = fakeLock(), store2 = memStore(), lookups2 = {};
+    const a = setup({ lock: lock2, store: store2, lookups: lookups2 }), b = setup({ lock: lock2, store: store2, lookups: lookups2 });
+    a.lookups[A] = lookup(A, 'dun4');
+    leaveHint(b);
+    b.state.set({ ...idle, connected: false, deviceName: '' });
+    b.ready();
+    await b.advance(DETACHED_AFTER_MS);
+    await settle();
+    expect(get(b.out)?.state).toBe('detached');
+    expect(lock2.held()).toBe(false); // the probe let it go again
+    tvPlaysA(a, { queue: [] });
+    expect(await a.engine.resume()).toBe(true);
+    b.setRequest(async () => { tvPlaysA(b, { queue: [] }); return true; });
+    b.engine.reconnect();
+    await settle();
+    expect(b.toast).not.toHaveBeenCalled();
+    expect(get(b.out)).toBeNull();
+    expect(b.hint()?.castId).toBe(A); // the owner's hint stays
+    expect(b.calls.filter((c) => c.init.method === 'DELETE' || c.path.startsWith('/api/playback/'))).toEqual([]);
   });
 
   it('a hand-off in a tab without the lock still plays (the user cast from here); a second follower resume waits once', async () => {

@@ -92,7 +92,8 @@ export function fakeLock() {
 export type FakeLock = ReturnType<typeof fakeLock>;
 
 type Init = { method?: string; body?: any; keepalive?: boolean };
-export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock } = {}) {
+/** `lock`, `store` and `lookups` shared between two setups model two tabs of one browser (one localStorage, one lock manager, one server) */
+export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock; store?: ReturnType<typeof memStore>; lookups?: Record<string, CastLookup> } = {}) {
   const calls: Array<{ path: string; init: Init }> = [];
   const order: string[] = [];
   let n = 0, qn = 0;
@@ -101,13 +102,14 @@ export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock } = {}) {
   /** answers of POST /api/cast/session with `next: true` (default: a queue token q<n>) */
   const queuePostAnswers: Array<() => Promise<CastInfo>> = [];
   /** GET /api/cast/session/:castId (absent: 404) */
-  const lookups: Record<string, CastLookup> = {};
+  const lookups: Record<string, CastLookup> = o.lookups ?? {};
   const api = vi.fn(async (path: string, init: Init = {}) => {
     calls.push({ path, init });
     order.push(`${init.method ?? 'GET'} ${path}`);
     if (path === '/api/cast/session' && init.body?.next) { const next = queuePostAnswers.shift(); return next ? next() : ci(`q${++qn}`); } // the receiver queue's token (own ids)
     if (path === '/api/cast/session') { const next = posts.shift(); return next ? next() : ci(`n${++n}`); }
     const lk = /^\/api\/cast\/session\/([^/]+)$/.exec(path);
+    if (lk && init.method === 'DELETE') { delete lookups[lk[1]!]; return null; } // revoked: the lookup answers 404 from now on
     if (lk && (init.method ?? 'GET') === 'GET') { const l = lookups[lk[1]!]; if (!l) throw new ApiError(404, { error: 'not_found' }); return l; }
     const nx = /^\/api\/items\/([^/]+)\/next$/.exec(path);
     if (nx) return { item: nexts[nx[1]!] ? items[nexts[nx[1]!]!] : null };
@@ -161,7 +163,7 @@ export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock } = {}) {
   let hiddenNow = false;
   const toast = vi.fn();
   const item = vi.fn(async (id: string) => { const it = items[id]; if (!it) throw new Error('404'); return it as Item; });
-  const store = memStore();
+  const store = o.store ?? memStore();
   const logs: Array<Omit<CastLogEntry, 'at'>> = [];
   let requestImpl: () => Promise<boolean> = async () => true;
   const deps: EngineDeps = {
