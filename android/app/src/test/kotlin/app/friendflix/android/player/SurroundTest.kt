@@ -27,7 +27,7 @@ class SurroundTest {
         val ctx = ApplicationProvider.getApplicationContext<Context>()
         val prefs = ctx.getSharedPreferences("surround_test", Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
-        return SurroundStore(prefs) { clock }
+        return SurroundStore(prefs, now = { clock })
     }
 
     // ---- infoBody: fellBack / prevPs only on a fallback
@@ -99,6 +99,7 @@ class SurroundTest {
         assertEquals("surround", Fallback.feature(hevcSurround, false, false, c, "audio/eac3"))
         assertEquals("hevc", Fallback.feature(hevcSurround, false, false, c, "video/hevc"))
         assertNull("an H.264 error drops nothing", Fallback.feature(Delivery("copy", "h264", "copy", "ac3", 6), false, false, c, "video/avc"))
+        assertNull("a subtitle track drops nothing", Fallback.feature(hevcSurround, false, false, c, "text/vtt"))
     }
 
     // ---- the store: the switch and the 30 days
@@ -127,9 +128,9 @@ class SurroundTest {
         val ctx = ApplicationProvider.getApplicationContext<Context>()
         val prefs = ctx.getSharedPreferences("surround_test_build", Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
-        SurroundStore(prefs, { clock }, "build-a").avoid("hevc")
-        assertTrue(SurroundStore(prefs, { clock }, "build-a").avoidsHevc())
-        assertFalse(SurroundStore(prefs, { clock }, "build-b").avoidsHevc())
+        SurroundStore(prefs, now = { clock }, build = "build-a").avoid("hevc")
+        assertTrue(SurroundStore(prefs, now = { clock }, build = "build-a").avoidsHevc())
+        assertFalse(SurroundStore(prefs, now = { clock }, build = "build-b").avoidsHevc())
     }
 
     @Test fun bothMarksBothAndAClockGoingBackwardsForgets() {

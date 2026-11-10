@@ -119,6 +119,7 @@ object Fallback {
             code in AUDIO_CODES -> if (d.surround) "surround" else null
             code in VIDEO_CODES && mime != null && mime.startsWith("audio/") -> if (d.surround) "surround" else null
             code in VIDEO_CODES && mime != null && mime.startsWith("video/") -> if (d.hevc) "hevc" else null
+            code in VIDEO_CODES && mime != null -> null // a subtitle or other track: nothing to drop
             code in VIDEO_CODES -> when {
                 d.hevc && d.surround -> "both"
                 d.hevc -> "hevc"
