@@ -15,6 +15,12 @@ import org.json.JSONObject
 data class VideoCap(val codec: String, val maxHeight: Int? = null, val profiles: List<String> = emptyList())
 
 /**
+ * What the device plays INSIDE an HLS stream (spec §3, backend `HlsCaps`): stricter than the direct-play lists. [surround] is in
+ * server order (eac3, ac3, aac).
+ */
+data class HlsCaps(val video: List<String>, val audio: List<String>, val surround: List<String>)
+
+/**
  * The capability block of `POST /api/playback/info` (`caps`, backend/src/media/clientCaps.ts). The server's lists REPLACE its browser
  * defaults, so every list is complete (mp4 / h264 / aac are always in). At most 16 entries per list (more invalidates the block).
  */
@@ -24,6 +30,8 @@ data class ClientCaps(
     val video: List<VideoCap>,
     val audio: List<String>,
     val subtitles: List<String>,
+    val hls: HlsCaps? = null,
+    val audioChannels: Int? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("client", "android")
@@ -42,6 +50,18 @@ data class ClientCaps(
         )
         .put("audio", JSONArray(audio.take(MAX)))
         .put("subtitles", JSONArray(subtitles.take(MAX)))
+        .also { o ->
+            hls?.let { h ->
+                o.put(
+                    "hls",
+                    JSONObject()
+                        .put("video", JSONArray(h.video.take(MAX)))
+                        .put("audio", JSONArray(h.audio.take(MAX)))
+                        .put("surround", JSONArray(h.surround.take(MAX))),
+                )
+            }
+            audioChannels?.let { o.put("audioChannels", it) }
+        }
 
     companion object {
         const val MAX = 16
@@ -76,11 +96,31 @@ object DeviceProfile {
     private const val AV1_MAIN10_HDR10 = 0x1000
     private const val AV1_MAIN10_HDR10_PLUS = 0x2000
 
-    /** The device's caps (reads MediaCodecList; call it off the main thread). The context is not needed by the platform list. */
-    @Suppress("UNUSED_PARAMETER")
-    fun build(context: Context): ClientCaps = fromDecoders(systemDecoders(), BuildConfig.VERSION_NAME)
+    /**
+     * The device's caps (reads MediaCodecList and the current audio output; call it off the main thread, at every `/info`).
+     * [soundMode] = a sound mode (*Clear voices*, *Night mode*) is on: its processing works on two channels, so stereo is claimed.
+     * The *Surround sound* switch and the remembered fallback ([SurroundStore]) narrow the claims further.
+     */
+    fun build(context: Context, soundMode: Boolean = false): ClientCaps {
+        val store = SurroundStore.of(context)
+        return fromDecoders(
+            systemDecoders(), BuildConfig.VERSION_NAME, AudioOut.current(context),
+            stereo = !store.enabled || soundMode, avoidHevc = store.avoidsHevc(), avoidSurround = store.avoidsSurround(),
+        )
+    }
 
-    fun fromDecoders(decoders: List<Decoder>, versionName: String): ClientCaps {
+    /**
+     * [audio] is the output now; [stereo] (the switch is off or a sound mode is on) and [avoidSurround] (a remembered failed start)
+     * make surround empty and the channels 2; [avoidHevc] leaves HEVC out of the HLS claim only (direct play is unchanged).
+     */
+    fun fromDecoders(
+        decoders: List<Decoder>,
+        versionName: String,
+        audio: AudioOut = AudioOut.STEREO,
+        stereo: Boolean = false,
+        avoidHevc: Boolean = false,
+        avoidSurround: Boolean = false,
+    ): ClientCaps {
         fun any(mime: String) = decoders.filter { it.mime.equals(mime, ignoreCase = true) }
         fun hw(mime: String) = any(mime).filter { isHardware(it.name, it.hardware) }
         fun height(ds: List<Decoder>): Int? = ds.mapNotNull { it.maxHeight }.maxOrNull()
@@ -104,8 +144,17 @@ object DeviceProfile {
         any("video/mp4v-es").takeIf { it.isNotEmpty() }?.let { video += VideoCap("mpeg4", height(it)) }
         any("video/mpeg2").takeIf { it.isNotEmpty() }?.let { video += VideoCap("mpeg2video", height(it)) }
 
-        val audio = (BASE_AUDIO + OPTIONAL_AUDIO.filter { (mime, _) -> any(mime).isNotEmpty() }.map { it.second }).distinct()
-        return ClientCaps(strictVersion(versionName), CONTAINERS, video, audio, SUBTITLES)
+        val decodable = OPTIONAL_AUDIO.filter { (mime, _) -> any(mime).isNotEmpty() }.map { it.second }.toSet()
+        // a Dolby codec the output takes as passthrough plays without a decoder
+        val dolby = listOf("eac3", "ac3").filter { it in decodable || it in audio.passthrough }
+        val audioList = (BASE_AUDIO + decodable + dolby).distinct()
+
+        val hlsVideo = listOf("h264") + (if (!avoidHevc && video.any { it.codec == "hevc" }) listOf("hevc") else emptyList())
+        val hlsAudio = listOf("aac", "mp3") + dolby
+        // AAC 5.1 decodes to multichannel PCM: only a route that takes 6 PCM channels proves it (Dolby passthrough does not)
+        val surround = if (stereo || avoidSurround) emptyList() else dolby + (if (audio.pcmChannels >= 6) listOf("aac") else emptyList())
+        val channels = if (!stereo && !avoidSurround && audio.maxChannels >= 6 && surround.isNotEmpty()) audio.maxChannels.coerceAtMost(16) else 2
+        return ClientCaps(strictVersion(versionName), CONTAINERS, video, audioList, SUBTITLES, HlsCaps(hlsVideo, hlsAudio, surround), channels)
     }
 
     /**
