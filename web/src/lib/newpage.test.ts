@@ -6,7 +6,7 @@ import { LOCALES, setLocale, tr } from '#lib/i18n';
 import { reasonText } from './reason';
 import {
   daysSince, episodeItem, filterItems, filterKeyTarget, filterSearch, freshText, kindOf, matchesFilter, NEW_TITLE_DAYS, parseFilter, planSections, withinDays,
-  availableTabs, forYouItems, mergeSuggestions, openRequests, pageSearch, parseTab, quotaExhausted, quotaLeft, tabKeyTarget,
+  availableTabs, forYouItems, mergeSuggestions, openRequests, wishStateOf, pageSearch, parseTab, quotaExhausted, quotaLeft, tabKeyTarget,
   type NewData, type NewEpisode, type Suggestion, type Up,
 } from './newpage';
 
@@ -244,6 +244,10 @@ describe('suggestions and wishes', () => {
     expect(quotaExhausted({ limit: 2, used: 2, resetsAt: 'x' })).toBe(true);
     expect(quotaExhausted({ limit: 2, used: 1, resetsAt: 'x' })).toBe(false);
     expect(quotaExhausted(null)).toBe(false);
+  });
+  it('the request service words map to the button states', () => {
+    expect(['nicht_angefragt', 'abgelehnt', undefined, 'x'].map(wishStateOf)).toEqual(['none', 'none', 'none', 'none']);
+    expect(['angefragt', 'in_arbeit', 'teilweise', 'verfuegbar'].map(wishStateOf)).toEqual(['requested', 'processing', 'processing', 'available']);
   });
   it('the badge counts the open requests only', () => {
     const mine = ['angefragt', 'in_arbeit', 'teilweise', 'verfuegbar', 'abgelehnt', 'entfernt'].map((status) => ({ status }));

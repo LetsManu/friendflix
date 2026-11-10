@@ -12,6 +12,8 @@
   import { filterKeyTarget, NEW_FILTERS, type NewFilter } from '#lib/newpage';
 
   export let value: NewFilter;
+  /** phone: separate chips instead of a full-width segment bar */
+  export let chips = false;
   const dispatch = createEventDispatcher<{ change: NewFilter }>();
   const LABEL: Record<NewFilter, TKey> = { all: 'home.new.all', series: 'home.new.series', movie: 'home.new.movies' };
   let bar: HTMLElement;
@@ -27,7 +29,8 @@
   }
 </script>
 
-<div class="seg frost frost-pill frost-safe" style="--fr-scrim-safe:{SCRIM_SAFE_DIM}" role="radiogroup" tabindex="-1" aria-label={$t('home.new.filter')} bind:this={bar} on:keydown={key}>
+<!-- svelte-ignore a11y_interactive_supports_focus (the roving tab stop is on the selected entry; the container only receives the bubbling keys) -->
+<div class="seg frost frost-pill frost-safe" class:chips style="--fr-scrim-safe:{SCRIM_SAFE_DIM}" role="radiogroup" aria-label={$t('home.new.filter')} bind:this={bar} on:keydown={key}>
   {#each NEW_FILTERS as f (f)}
     <button type="button" role="radio" class="s" class:on={value === f} data-f={f} aria-checked={value === f} tabindex={value === f ? 0 : -1} on:click={() => value !== f && dispatch('change', f)}>{$t(LABEL[f])}</button>
   {/each}
@@ -43,4 +46,9 @@
   :global(html.tv) .s { height: 56px; min-height: 56px; padding: 0 28px; font-size: 1.375rem; }
   :global(html.tv) .s:focus-visible { outline: 3px solid var(--tv-ring); outline-offset: 3px; box-shadow: none; }
   @media (max-width: 720px) { .seg { display: flex; width: 100%; } .s { flex: 1 1 0; padding: 0 8px; } }
+  /* phone chips: each filter is its own pill, the bar itself has no glass */
+  .seg.chips { background: none; border: 0; box-shadow: none; padding: 0; gap: 8px; width: auto; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .seg.chips::before, .seg.chips::after { display: none; }
+  .chips .s { flex: 0 0 auto; padding: 0 20px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .35); background: rgba(var(--fr-scrim-rgb), .5); }
+  .chips .s.on, .chips .s.on:hover:not(:disabled) { background: #fff; }
 </style>

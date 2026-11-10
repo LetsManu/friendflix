@@ -111,6 +111,16 @@ export function mergeSuggestions(movies: readonly Suggestion[], series: readonly
   return out.slice(0, max);
 }
 
+/** the wish state of a search result or request (the request service's status words) as the button knows it */
+export function wishStateOf(status: string | undefined): WishState {
+  switch (status) {
+    case 'angefragt': return 'requested';
+    case 'in_arbeit': case 'teilweise': return 'processing';
+    case 'verfuegbar': return 'available';
+    default: return 'none'; // nicht_angefragt, abgelehnt (a declined title may be asked for again), unknown
+  }
+}
+
 /** the own requests that are not done yet (what the badge of the wishes tab counts): asked for, in progress, partly there */
 const OPEN_STATES = new Set(['angefragt', 'in_arbeit', 'teilweise']);
 export const openRequests = <T extends { status: string }>(mine: readonly T[] | null | undefined): T[] => (mine ?? []).filter((m) => OPEN_STATES.has(m.status));

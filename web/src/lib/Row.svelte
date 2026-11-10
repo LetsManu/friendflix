@@ -179,7 +179,7 @@
         {#if items === null}
           {#each Array(8) as _}<div class="slot"><div class="skeleton ph" class:poster={(($mobile && !landscape) || ranked || portrait) && !tvOn}></div></div>{/each}
         {:else}
-          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem" on:focusin={() => rankFocus(it.id, idx + 1)}>{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} rank={ranked ? idx + 1 : 0} on:remove />{:else}<Card item={it} {removable} poster={(ranked || portrait) && !tvOn} {priority} rank={ranked ? idx + 1 : 0} on:remove />{/if}{#if notes}{@const n = notes(it)}<div class="note" data-testid="row-note"><span class="nm">{it.type === 'Episode' && it.seriesName ? it.seriesName : it.name}</span>{#if n.meta}<span class="meta">{n.meta}</span>{/if}{#if n.fresh}<span class="fresh">{n.fresh}</span>{/if}{#if n.reason}<span class="why">{n.reason}</span>{/if}</div>{/if}</div>{/if}{/each}
+          {#each items as it, idx (it.id)}{#if idx < limit}<div class="slot" class:ranked role="listitem" on:focusin={() => rankFocus(it.id, idx + 1)}>{#if $mobile}<PosterCard item={it} {landscape} {removable} {priority} rank={ranked ? idx + 1 : 0} on:remove />{:else}<Card item={it} {removable} poster={(ranked || portrait) && !tvOn} {priority} rank={ranked ? idx + 1 : 0} on:remove />{/if}{#if notes}{@const n = notes(it)}<div class="note" class:ep={it.type === 'Episode'} data-testid="row-note"><span class="nm">{it.type === 'Episode' && it.seriesName ? it.seriesName : it.name}</span>{#if n.meta}<span class="meta">{n.meta}</span>{/if}{#if n.fresh}<span class="fresh">{n.fresh}</span>{/if}{#if n.reason}<span class="why">{n.reason}</span>{/if}</div>{/if}</div>{/if}{/each}
         {/if}
         </div>
       </div>
@@ -308,18 +308,22 @@
   .note .nm { display: none; }
   .note .fresh { color: var(--acc-text); font-weight: 600; }
   .note .why { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  /* the reason is the point of the line: phone and TV give it three lines before it is cut (the screen-reader text is always complete) */
+  .row.m .note .why, :global(html.tv) .note .why { -webkit-line-clamp: 3; line-clamp: 3; }
   .row.dk .note { margin-top: .75rem; padding-inline: 2px; }
   .row.m .note .nm { display: block; color: #fff; font-size: .82rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .row.hasnotes { contain-intrinsic-size: auto calc(var(--sw) * .5625 + 96px); }
   .row.hasnotes.rk { contain-intrinsic-size: auto calc(var(--sw) * 1.5 + 96px); }
-  .row.hasnotes.m { contain-intrinsic-size: auto calc(var(--pw) * 1.5 + 96px); }
+  .row.hasnotes.m { contain-intrinsic-size: auto calc(var(--pw) * 1.5 + 112px); }
   /* TV: a solid panel under the thumbnail names the title (there is no focus tile on this page) */
   :global(html.tv) .note { margin-top: 0; padding: .7rem .9rem .8rem; border-radius: 0 0 var(--tv-radius) var(--tv-radius); background: var(--fr-solid); font-size: 1.125rem; line-height: 1.3; gap: 2px; }
   :global(html.tv) .note .nm { display: block; color: #fff; font-size: 1.25rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   :global(html.tv) .note .meta { display: none; }
+  /* an episode's code (S1:F2) is the one thing TV must keep: the title line names only the show */
+  :global(html.tv) .note.ep .meta { display: block; }
   :global(html.tv) .note .why { color: var(--tv-white-78); }
   :global(html.tv) .sub { display: none; }
   /* four and a half cards across: the panels under them carry text */
   :global(html.tv) .row.hasnotes { --cw: calc((100vw - var(--tv-left) - 5vw) / 4.5); }
-  :global(html.tv) .row.hasnotes { contain-intrinsic-size: auto calc(var(--cw) * .5625 + 11rem); }
+  :global(html.tv) .row.hasnotes { contain-intrinsic-size: auto calc(var(--cw) * .5625 + 12rem); }
 </style>

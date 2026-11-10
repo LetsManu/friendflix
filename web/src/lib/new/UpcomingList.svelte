@@ -42,7 +42,7 @@
         <div class="act">
           {#if it.status === 'verfuegbar'}<span class="ok">{$t('home.upcoming.available')}</span>
           {:else if availNow.has(it.tmdbId)}<span class="ok">{$t('home.upcoming.alreadyAvailable')}</span>
-          {:else}<button type="button" class="rem" class:on aria-pressed={on} aria-label={`${on ? $t('home.upcoming.reminderOn') : $t('home.upcoming.remind')}: ${it.title}`} on:click={() => remind(it)}><Icon name="bell" size={18} /><span>{on ? $t('home.upcoming.reminderOn') : $t('home.upcoming.remind')}</span></button>{/if}
+          {:else}<button type="button" class="rem" class:on aria-pressed={on} aria-label={`${on ? $t('home.new.remindOn') : $t('home.upcoming.remind')}: ${it.title}`} on:click={() => remind(it)}><Icon name="bell" size={18} /><span>{on ? $t('home.new.remindOn') : $t('home.upcoming.remind')}</span></button>{/if}
         </div>
       </li>
     {/each}
