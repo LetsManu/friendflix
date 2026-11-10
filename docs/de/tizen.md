@@ -206,6 +206,10 @@ Entscheidend ist vor allem `avplay=ok play=ok:...`. Egal was die Zeile sagt, sch
 
 Die Probe bleibt als Diagnose-Werkzeug im Repository und an jedem Release.
 
+## HEVC-Streams und Raumklang
+
+Die Samsung-App nutzt dieselben Prüfungen wie ein Browser: Umgewandelte Streams enthalten HEVC oder Dolby-Raumklang (E-AC-3 / AC-3) nur, wenn die Streaming-Engine des Fernsehers und ihre Dekodierprüfung sie bestätigen. Vorher wird nichts behauptet. Startet ein Stream mit HEVC oder Raumklang nicht, wechselt der Player einmal zu einem Stream, den der Fernseher abspielt, und merkt sich das 30 Tage. Bleibt die Soundbar stumm, schalte im Bereich **Klang** des Players den Schalter **Raumklang** aus. (Die Probe-Zeile oben betrifft nur AVPlay und bleibt unverändert.)
+
 ## Updates
 
 Die App aktualisiert sich nicht selbst (eine Entwicklermodus-App kann das nicht). Führe nach einem neuen Release das Installationsskript erneut aus; es installiert die neue Version über die alte. Die Version am Release ist die Version des Servers. Der Samsung-App-Store ist nicht vorgesehen.

@@ -51,7 +51,7 @@ export interface MockState {
   /** POST /api/account/delete answers 401 reauth_required even inside the reauth window (it ran out meanwhile) */
   reauthLapsed?: boolean;
   /** /api/me `features` (optional services); absent = the field is left out, like an older backend (everything on) */
-  features?: { requests?: boolean; postplay?: boolean };
+  features?: { requests?: boolean; postplay?: boolean; surround?: boolean };
   /** /api/me `server.kind` (absent = the field is left out, like an older backend: the app treats it as Jellyfin) */
   serverKind?: 'jellyfin' | 'plex';
   /**
@@ -480,6 +480,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (/^\/api\/comments\/[^/]+$/.test(p) && m === 'DELETE') return J({ ok: true });
 
     // profiles (gate "Wer ist heute dabei?" and the avatar menu)
+    if (p === '/api/playback/abilities') return J({ hevc: 'off', surround: false }); // /diagnose "Picture and sound": the coarse server answer
     if (p === '/api/profiles') return J({ profiles: PROFILES, max: 5, activeId: 'p1' });
     if ((mm = p.match(/^\/api\/profiles\/([^/]+)\/select$/)) && m === 'POST') return J({ ok: true });
 

@@ -7,7 +7,10 @@
  *
  *   FFPROBE v1 tv=<webos|firetv> os=<ver|?> direct=<ok:<ms>ms|error:<code>> hls=<ok|error:<code>> nativehls=<ok|error:<code>>
  *     palm=<yes|no> home=<ok|fail|skipped> keys=<ok|missing:<names>|skipped> video=<codec[+10],…|-> audio=<codecs|-> containers=<list|->
- *     [screen=<w>x<h>]   (Fire TV only: the page's CSS viewport)
+ *     hlsvideo=<h264,hevc|-> surround=<eac3,ac3|-> ch=<2|6> [screen=<w>x<h>]   (screen: Fire TV only, the page's CSS viewport)
+ *
+ * `hlsvideo` / `surround` / `ch` are what the TV states for HLS streams (strict MSE `isTypeSupported`, as buildTvCaps): the video
+ * codecs hls.js may be given, the Dolby surround codecs, and 6 channels when surround is not empty. (`hls=` above is the playback check.)
  *
  * Fire TV: `os` is '<Android version>/<model>'; the probe stops after the playbacks (keys=skipped home=skipped: the shell maps
  * the remote itself, and its Change server is a message, not a walk back through the history).
@@ -26,7 +29,7 @@ import { loadHls } from '#lib/player/hls';
 import { fetchProbeTarget, type ProbeTarget } from '#lib/tvprobe/target';
 import { isTvApp } from '#lib/tvapp';
 import { fireTvOs, isFireTvApp, type FireWin } from '#lib/firetv/detect';
-import { appCaps, confirmedTypes, type MediaProbe } from './caps';
+import { appCaps, confirmedTypes, hlsClaim, type MediaProbe } from './caps';
 import { webosVersion, type LgWin } from './detect';
 import { goToAppHome } from './home';
 import { HOME_HINT_KEY, rememberLgProbeHome } from './probehome';
@@ -83,11 +86,12 @@ export interface LgProbeResult {
   tv: 'webos' | 'firetv'; screen: string;
   os: string; direct: string; hls: string; nativehls: string; palm: 'yes' | 'no'; home: 'ok' | 'fail' | 'skipped'; keys: string;
   video: string[]; audio: string[]; containers: string[];
+  hlsVideo: string[]; surround: string[]; ch: number;
 }
 
 const list = (a: string[]) => (a.length ? a.join(',') : '-');
 export function formatLgProbe(r: LgProbeResult): string {
-  const line = `FFPROBE v1 tv=${r.tv} os=${r.os} direct=${r.direct} hls=${r.hls} nativehls=${r.nativehls} palm=${r.palm} home=${r.home} keys=${r.keys} video=${list(r.video)} audio=${list(r.audio)} containers=${list(r.containers)}`;
+  const line = `FFPROBE v1 tv=${r.tv} os=${r.os} direct=${r.direct} hls=${r.hls} nativehls=${r.nativehls} palm=${r.palm} home=${r.home} keys=${r.keys} video=${list(r.video)} audio=${list(r.audio)} containers=${list(r.containers)} hlsvideo=${list(r.hlsVideo)} surround=${list(r.surround)} ch=${r.ch}`;
   return r.tv === 'firetv' ? `${line} screen=${r.screen}` : line;
 }
 
@@ -168,7 +172,8 @@ function readStored(deps: LgProbeDeps): Stored | null {
       tv: o.tv === 'firetv' ? 'firetv' : 'webos', screen: typeof o.screen === 'string' ? o.screen : '?',
       os: o.os!, direct: o.direct!, hls: o.hls!, nativehls: o.nativehls!, palm: o.palm === 'yes' ? 'yes' : 'no',
       home: o.home === 'ok' ? 'ok' : o.home === 'skipped' ? 'skipped' : 'fail', keys: o.keys!,
-      video: o.video, audio: o.audio, containers: o.containers, stage: o.stage === 'done' ? 'done' : 'home',
+      video: o.video, audio: o.audio, containers: o.containers,
+      hlsVideo: strs(o.hlsVideo) ? o.hlsVideo : [], surround: strs(o.surround) ? o.surround : [], ch: typeof o.ch === 'number' ? o.ch : 2, stage: o.stage === 'done' ? 'done' : 'home',
     };
   } catch { return null; }
 }
@@ -200,10 +205,12 @@ export async function runLgProbe(deps: LgProbeDeps, onStage: (s: LgProbeStage, d
 
   onStage('formats');
   const t = confirmedTypes(deps.media);
+  const claim = hlsClaim(deps.media, t.video.some((v) => v.startsWith('hevc:')));
   const r: LgProbeResult = {
     tv: deps.tv, screen: token(deps.screen, '?'),
     os: token(deps.os, '?'), direct: 'skipped', hls: 'skipped', nativehls: 'skipped', palm: deps.palm ? 'yes' : 'no', home: 'skipped', keys: 'skipped',
     video: videoTokens(t.video), audio: t.audio, containers: t.containers,
+    hlsVideo: claim?.video ?? [], surround: claim?.surround ?? [], ch: claim?.surround.length ? 6 : 2,
   };
 
   onStage('direct');
@@ -278,7 +285,7 @@ export function failedLgProbeLine(win: LgWin & FireWin = window): string {
   return formatLgProbe({
     tv: fire ? 'firetv' : 'webos', screen: screenOf(win),
     os: token(fire ? fireTvOs(win) : webosVersion(win), '?'), direct: 'error:unknown', hls: 'skipped', nativehls: 'skipped', palm: !fire && typeof win.PalmSystem !== 'undefined' ? 'yes' : 'no',
-    home: 'skipped', keys: 'skipped', video: [], audio: [], containers: [],
+    home: 'skipped', keys: 'skipped', video: [], audio: [], containers: [], hlsVideo: [], surround: [], ch: 2,
   });
 }
 

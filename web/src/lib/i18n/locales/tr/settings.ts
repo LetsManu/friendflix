@@ -158,6 +158,8 @@ const settings: Translation<typeof de> = {
     PREVIEW_WARM: { label: 'Önizlemeleri hazırla', help: 'Boştayken eksik önizleme kliplerini dakikada bir oluşturur.' },
     HOME_NETWORKS: { label: 'Ev ağları', help: 'Ev sayılan ağlar (dışarıdaki bit hızı sınırı yok), virgülle ayrılmış, ör. 192.168.0.0/16.' },
     UPLOAD_MBPS: { label: 'Sunucu yükleme hızı (Mbit/s)', help: 'İnternet bağlantınızın yükleme hızı. Neredeyse dolduğunda, dışarıdan yeni yayınlar herkesin takılması yerine daha düşük kalitede başlar. Süren yayınlar ve ev ağı etkilenmez. Boş = kapalı.' },
+    HEVC_STREAMS: { label: 'Eşzamanlı HEVC dönüştürmeleri', help: 'HEVC oynatan cihazlar için dönüştürülen yayınlar H.264 yerine HEVC kullanır: aynı yüklemeyle daha iyi görüntü. Yalnızca ev ağınızın dışındaki izleyiciler için ve ancak FriendFlix sunucunun donanımının HEVC\'yi yeterince hızlı dönüştürdüğünü doğruladıktan sonra (Durum → Kodlayıcı). 0 = kapalı. HEVC dosyaları, HEVC oynatan cihazlara yine dönüştürülmeden ulaşır.' },
+    SURROUND_AUDIO: { label: 'Surround ses', help: '5.1 çıkışı olan cihazlar (TV uygulamaları, ses sistemine bağlı Android, 5.1 çıkışlı tarayıcılar) filmin surround kanalını veya onun 5.1 dönüşümünü alır. Diğer tüm cihazlar stereo alır. Kapalı = herkes için stereo.' },
     GITHUB_TOKEN: { label: 'GitHub token’ı', help: 'İsteğe bağlı: yeni sürümleri ararken daha yüksek sorgu sınırı.' },
     PORTAINER_WEBHOOK_URL: { label: 'Portainer stack webhook’u', help: 'Tek tıkla güncelleme için stack’in webhook adresi. Adresin kendisi anahtardır.' },
     PORTAINER_URL: { label: 'Portainer adresi', help: 'Webhook yerine: API anahtarı ve stack kimliğiyle Portainer adresi.' },

@@ -834,6 +834,12 @@ export const MIGRATIONS: string[] = [
   `
   alter table playback_timings add column if not exists from_next boolean not null default false;
   `,
+  // 45: what the device was given, as fixed codes only (playtiming.ts allowlists them; no URL, id or title). Rerunnable.
+  `
+  alter table playback_timings
+    add column if not exists video_out text,
+    add column if not exists audio_out text;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

@@ -4,16 +4,16 @@ What the maintainer plans for FriendFlix over roughly the next 12 months. This i
 
 ## Done recently
 
-Shipped since the last roadmap (details in the [CHANGELOG](CHANGELOG.md)): admin care (health, disk, errors, hygiene), **Plex support built in** since 2.0 (`MEDIA_SERVER=plex`, [docs/plex.md](docs/plex.md); the separate friendflix-plex project is archived), coverage reporting with high thresholds, tagged releases with codenames and signed images, SPDX license headers, the 3.0 redesign (desktop, phone, TV, glass look), apps for Android, Fire TV, LG webOS, Samsung Tizen and Windows, and the 3.1 reliability and accessibility pass.
+Shipped since the last roadmap (details in the [CHANGELOG](CHANGELOG.md)): admin care (health, disk, errors, hygiene), **Plex support built in** since 2.0 (`MEDIA_SERVER=plex`, [docs/plex.md](docs/plex.md); the separate friendflix-plex project is archived), coverage reporting with high thresholds, tagged releases with codenames and signed images, SPDX license headers, the 3.0 redesign (desktop, phone, TV, glass look), apps for Android, Fire TV, LG webOS, Samsung Tizen and Windows, and the 3.1 reliability and accessibility pass. Next up: **HEVC and surround sound** (HEVC files without a conversion, a proven and limited HEVC conversion for viewers away from home, 5.1 for devices that output it, and a *Picture and sound* section in Diagnose; see [docs/operations.md](docs/operations.md#hevc-umwandlung-und-surround-ton)).
 
 ## Planned
 
-1. **Cast and AirPlay.** Fixes across Chromecast and AirPlay receivers, a redesigned cast screen, a token gate for "next episode" on the receiver, and continuous AirPlay streaming where receivers allow it; better diagnostics on the Diagnose page.
+1. **Cast and AirPlay.** Fixes across Chromecast and AirPlay receivers, a redesigned cast screen, a token gate for "next episode" on the receiver, and continuous AirPlay streaming where receivers allow it; better diagnostics on the Diagnose page. Surround sound and HEVC streams on FriendFlix's own Cast receiver follow in a later update; the receiver keeps its current H.264 stereo streams until then.
 2. **Downloads on desktop and TV.** Offline downloads in the desktop app like on Android, and on TVs where the platform allows enough storage (Fire TV first; LG webOS and Samsung Tizen after a storage check).
 3. **Profiles and household.** A PIN to leave the kids profile, "who's watching" on the TV apps, viewing-time limits for kids.
 4. **Watch party 2.0.** Reactions on the timeline, a shared queue, smoother sync.
 5. **Smarter home.** "Because you watched …" rows that say why, an optional weekly "new for you" notice, and "resume on TV" from the phone.
-6. **Admin media insights.** Which titles force a conversion and why, with suggestions that make them play directly.
+6. **Admin media insights.** Which titles force a conversion and why, with suggestions that make them play directly. The first part has shipped: the Diagnose page now shows, per device, what it plays and was given last time and why, and Admin → Status shows the HEVC conversion state.
 7. **Security hygiene.** A CI check of the Gradle wrapper, fuzz tests for the security-relevant parsers (invite codes, cast tokens), and the desktop app's move to a GTK 4 based toolkit once it is stable.
 
 ## Out of scope

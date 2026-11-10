@@ -212,6 +212,12 @@ const dict: Translation<typeof de> = {
       no_tonemap: 'No tone mapping',
       no_throttle: 'No throttling',
       no_keyframes: 'MKV keyframes off',
+      hevc_server_off: 'HEVC conversion off at the server',
+      hevc_no_hw: 'HEVC needs hardware encoding',
+      hevc_failed: 'HEVC test failed',
+      hevc_slow: 'HEVC too slow',
+      hevc_limited: 'HEVC: one at a time',
+      downmix_plain: 'Plain stereo downmix',
     },
     /** encoder row (Status): one line per gap in the media server's transcoding settings */
     advice: {
@@ -219,6 +225,24 @@ const dict: Translation<typeof de> = {
       no_tonemap: 'Tone mapping is off: HDR films look pale and grey when converted. In Jellyfin, turn on “Enable tone mapping” under Transcoding.',
       no_throttle: 'Throttling is off: Jellyfin converts each film to the end as fast as it can and keeps the graphics unit busy longer than needed. In Jellyfin, turn on “Throttle transcodes” under Transcoding.',
       no_keyframes: 'Keyframe extraction for MKV is off: repackaged MKV files start with 6-second segments instead of 3. In Jellyfin, add “mkv” back to keyframe extraction under Transcoding.',
+      hevc_server_off: 'Viewers on a weak upload link are not given HEVC because Jellyfin does not allow it. In Jellyfin, turn on “Allow encoding in HEVC format” under Dashboard → Playback → Transcoding. Until then these viewers get H.264.',
+      hevc_no_hw: 'HEVC conversion needs hardware encoding. In Jellyfin, choose the server’s graphics unit and turn on “Enable hardware encoding” under Transcoding. Until then these viewers get H.264.',
+      hevc_failed: 'The HEVC test did not produce HEVC video, so everyone gets H.264. In Jellyfin, turn on “Intel low-power HEVC encoder” under Transcoding. Intel chips such as the Jasper Lake N5095 also need the GuC/HuC firmware loaded (see the operations guide). Then run “Check HEVC now”.',
+      hevc_slow: 'The HEVC test ran slower than 1.5 times real time, so everyone gets H.264. Check the graphics unit and the low-power encoder switch under Transcoding, then run “Check HEVC now”.',
+      hevc_limited: 'The HEVC test ran below 3 times real time, so only one HEVC conversion runs at a time, however many the settings allow. Further viewers get H.264.',
+      downmix_plain: 'The stereo downmix is plain: surround films played in stereo can sound quiet, with muffled dialogue. In Jellyfin, set “Stereo downmix algorithm” to Dave750 under Transcoding (to be checked by ear on a device).',
+    },
+    /** encoder row (Status): the server's HEVC conversion line and its button */
+    hevc: {
+      line: 'HEVC conversion: {state}',
+      speed: '{n}× real time',
+      checked: 'checked {time}',
+      state: { server_off: 'off at the server', no_hw: 'no hardware encoding', unproven: 'not tested yet', failed: 'test failed', slow: 'too slow', runtime_failed: 'paused after errors', ready: 'ready' },
+      check: 'Check HEVC now',
+      busy: 'Not while someone is watching.',
+      running: 'A check is already running.',
+      unknown: 'Could not read the media server’s streams; try again shortly.',
+      failed: 'The check could not be run.',
     },
     disks: {
       title: 'Storage',

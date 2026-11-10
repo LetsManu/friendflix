@@ -17,6 +17,7 @@ export default {
   attempt: 'Versuch {n} von {max}',
   reconnected: 'Verbindung wiederhergestellt',
   switchingTranscode: 'Wechsle auf Transcoding …',
+  switchingCompatible: 'Wechsle zu einem Stream, den dieses Gerät abspielt',
   loading: 'Lädt',
   soundOff: 'Ton aus – beliebige Taste drücken für Ton',
   noNext: 'Keine weitere Folge',

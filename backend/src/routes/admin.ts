@@ -11,6 +11,7 @@ import { adminOverview, revokeLicense } from '../downloads.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { ERROR_SOURCES, listErrors } from '../errorlog.js';
 import { freshSnapshot } from '../health.js';
+import { claimHevcProbe, hevcBusyReason, hevcProbeRunning, hevcProbeWanted, hevcStatus, probeHevcEncoder } from '../hevcenc.js';
 import { activeStreams } from '../playstats.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
@@ -230,6 +231,22 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!(await startPlaybackCheck(ctx))) return reply.code(409).send({ error: 'already_running' });
     return { ok: true };
   });
+  // the timed probe of the server's HEVC conversion; never while someone watches. It takes a while (the encoder starts), so it runs in the
+  // background: 202 now, the page polls GET until `running` is false
+  app.post('/api/admin/hevc-check', admin, async (_req, reply) => {
+    if (await hevcProbeRunning(ctx)) return reply.code(409).send({ error: 'already_running' });
+    const busy = await hevcBusyReason(ctx);
+    if (busy) return reply.code(409).send({ error: busy === 'unknown' ? 'sessions_unknown' : 'busy' });
+    const user = await serviceUser(ctx);
+    if (!user) return reply.code(409).send({ error: 'no_user' });
+    // switched off in the settings or at the media server (or unreadable): nothing to measure, the state says why
+    if (!(await hevcProbeWanted(ctx))) return { started: false, running: false, ...(await hevcStatus(ctx)) };
+    const claimed = await claimHevcProbe(ctx);
+    if (!claimed) return reply.code(409).send({ error: 'already_running' });
+    void probeHevcEncoder(ctx, user, { claimed }).catch(() => undefined);
+    return reply.code(202).send({ started: true });
+  });
+  app.get('/api/admin/hevc-check', admin, async () => ({ running: await hevcProbeRunning(ctx), ...(await hevcStatus(ctx)) }));
   app.get('/api/admin/playback-check', admin, async () => checkState(ctx));
 
   // `roles`/`invitable` feed the users page; `limits` is the per-role monthly Seerr wish limit (null = unlimited) plus playback settings (transcoding, maxHeight null = unlimited)

@@ -15,14 +15,14 @@ async function pairedTv(page: Page) {
 }
 
 /** the playback info mock: records each request body */
-async function playerWithInfo(page: Page) {
+async function playerWithInfo(page: Page, audioTracks: Array<Record<string, unknown>> = []) {
   await mockPlayer(page);
   const bodies: Array<Record<string, any>> = [];
   await page.route('**/api/playback/info', (r) => {
     bodies.push(r.request().postDataJSON());
     return r.fulfill({ json: {
       directUrl: '/media/p1test.webm', hlsUrl: '/media/p1test.webm', resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: 'ps1', maxBitrate: 60_000_000, roleMaxBitrate: 60_000_000,
-      audioTracks: [], subtitles: [{ index: 7, title: 'Deutsch', language: 'deu', codec: 'subrip', url: '/media/sub.vtt' }],
+      audioTracks, subtitles: [{ index: 7, title: 'Deutsch', language: 'deu', codec: 'subrip', url: '/media/sub.vtt' }],
     } });
   });
   await page.route('**/media/sub.vtt', (r) => r.fulfill({ status: 200, contentType: 'text/vtt', body: 'WEBVTT\n\n00:00:01.000 --> 00:00:05.000\nHallo\n' }));
@@ -94,6 +94,19 @@ test.describe('Fire TV app, paired', () => {
     await fireKey(page, 'MediaPlayPause');
     await expect.poll(() => isPaused(page)).toBe(true);
     await expect.poll(async () => (await ftv.messages()).at(-1)).toBe('keepAwake:0');
+  });
+
+  test('the Surround sound switch shows when the TV claims eac3', async ({ page, api: _api }) => {
+    await asFireTvApp(page);
+    await page.addInitScript(() => { MediaSource.isTypeSupported = () => true; });
+    await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, tv: true, features: { requests: true, postplay: false, surround: true } } }));
+    const bodies = await playerWithInfo(page, [{ index: 1, title: 'Deutsch 5.1', language: 'ger', isDefault: true }]);
+    await page.goto('/watch/' + MOVIE.id + '?ff_app=firetv');
+    await videoReady(page);
+    expect(bodies[0]?.caps).toMatchObject({ audioChannels: 6, hls: { surround: ['eac3', 'ac3'] } });
+    await fireKey(page, 'ArrowDown');
+    await page.getByRole('button', { name: 'Audio und Untertitel' }).click();
+    await expect(page.getByTestId('surround-switch')).toHaveAttribute('aria-checked', 'true');
   });
 
   test('Home hides the page: the player pauses (the WebView alone may keep the sound)', async ({ page, api: _api }) => {

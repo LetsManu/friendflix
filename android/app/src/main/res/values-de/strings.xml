@@ -193,6 +193,10 @@
     <string name="player_fx_casting">Beim Streamen auf ein anderes Gerät nicht verfügbar</string>
     <string name="player_fx_on">%1$s an</string>
     <string name="player_fx_off">%1$s aus</string>
+    <string name="player_surround">Raumklang</string>
+    <string name="player_surround_hint">5.1 auf diesem Gerät</string>
+    <string name="player_surround_mode">Stereo, solange ein Klangmodus an ist</string>
+    <string name="player_switching_compatible">Wechsle zu einem Stream, den dieses Gerät abspielt</string>
     <string name="player_next_pause_after">Nächste Folge · Pause nach dieser Folge</string>
     <string name="player_chip_label">Wiedergabeart</string>
     <string name="player_chip_converted">Umgewandelt · %1$s</string>

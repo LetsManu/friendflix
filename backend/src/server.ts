@@ -14,6 +14,7 @@ import { createLazyOidc } from './oidc.js';
 import { SeerrClient } from './seerr/client.js';
 import { loadRoles } from './roles.js';
 import { nightlyTick } from './healthcheck.js';
+import { hevcTick } from './hevcenc.js';
 import { digestTick } from './digest.js';
 import { expiryTick } from './expiry.js';
 import { deletionTick } from './deletion.js';
@@ -113,6 +114,7 @@ timers.push(setInterval(() => { if (op()) void calendarNotifications(ctx).catch(
 timers.push(setInterval(() => { if (op()) void previewWarmTick(ctx).catch(jobFailed(ctx, app.log, 'preview-warm', 'preview warm failed')); }, 60_000));
 timers.push(setInterval(() => { if (op()) void reminderTick(ctx).catch(jobFailed(ctx, app.log, 'reminder', 'reminder tick failed')); }, 1800_000));
 timers.push(setInterval(() => { if (op()) void nightlyTick(ctx).catch(jobFailed(ctx, app.log, 'playback-check', 'playback check failed')); }, 600_000));
+timers.push(setInterval(() => { if (op()) void hevcTick(ctx).catch(jobFailed(ctx, app.log, 'hevc-probe', 'HEVC probe failed')); }, 600_000)); // timed probe of the HEVC conversion while unproven and idle
 timers.push(setInterval(() => { if (op()) void digestTick(ctx).catch(jobFailed(ctx, app.log, 'digest', 'digest tick failed')); }, 600_000));
 let expiryBusy = false; // a slow tick (media server) must not overlap the next one
 timers.push(setInterval(() => {

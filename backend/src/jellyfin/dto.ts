@@ -4,6 +4,7 @@
 import { DOWNLOAD_PRESETS, maxWidthFor, type DownloadQuality, type DownloadSourceDto, type ImageTags, type ItemDto, type MediaTraits, type PlaybackDto, type TranscodeReason, type TrickplayDto, type CapReason } from '../media/types.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, ProviderIds } from '../media/types.js'; // Block 17 P1
 import type { ItemFeatures } from '../media/types.js'; // R1
+import { boxHeightFor, planStream, type SourceFacts, type StreamPlan } from '../media/streamplan.js';
 import type { HygieneFacts, HygieneSource, HygieneStream, ServerSession } from '../media/types.js'; // Block 22
 
 export { DOWNLOAD_PRESETS, maxWidthFor };
@@ -60,7 +61,6 @@ export function toItemDto(i: Record<string, any>): ItemDto {
 
 const TEXT_SUBS = new Set(['srt', 'subrip', 'ass', 'ssa', 'vtt', 'webvtt', 'mov_text', 'subviewer']);
 
-const AUDIO_BITRATE = 192_000;
 /** HLS segment length asked for where Jellyfin's playlist follows keyframes (see toPlaybackDto) */
 export const SEGMENT_SECONDS = 3;
 /** the file on the server is Matroska (path when Jellyfin names it, else the container) */
@@ -69,7 +69,24 @@ export function isMatroskaSource(src: Record<string, any>): boolean {
   if (path) return /\.mkv$/i.test(path);
   return /(^|,)\s*(mkv|matroska)\s*(,|$)/i.test(String(src.Container ?? ''));
 }
-const MIN_VIDEO_BITRATE = 300_000;
+
+/**
+ * What the plan needs to know about the media source Jellyfin chose: the first video stream and the audio track the stream will carry
+ * (the explicit one, else the default, else the first).
+ */
+export function sourceFacts(src: Record<string, any>, audioIndex?: number): SourceFacts {
+  const streams: Array<Record<string, any>> = src.MediaStreams ?? [];
+  const v = streams.find((s) => s.Type === 'Video');
+  const auds = streams.filter((s) => s.Type === 'Audio');
+  const a = (audioIndex !== undefined ? auds.find((s) => s.Index === audioIndex) : undefined) ?? [...auds].sort((x, y) => Number(x.Index) - Number(y.Index)).find((s) => Number(s.Channels) > 0) ?? auds[0]; // what Jellyfin streams without AudioStreamIndex (not IsDefault)
+  const num = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : undefined);
+  const range = typeof v?.VideoRangeType === 'string' && v.VideoRangeType ? v.VideoRangeType : String(v?.VideoRange ?? '').toUpperCase() === 'SDR' ? 'SDR' : 'Unknown';
+  return {
+    videoCodec: String(v?.Codec ?? '').toLowerCase(), videoBitrate: num(v?.BitRate), height: Number(v?.Height ?? 0), width: Number(v?.Width ?? 0), range,
+    ...(typeof v?.Profile === 'string' && v.Profile ? { profile: v.Profile } : {}),
+    ...(a ? { audio: { codec: String(a.Codec ?? '').toLowerCase(), channels: Number(a.Channels ?? 0), ...(num(a.BitRate) ? { bitrate: num(a.BitRate) } : {}) } } : {}),
+  };
+}
 
 const REASON_MAP: Record<string, TranscodeReason | 'bitrate'> = {
   ContainerNotSupported: 'container',
@@ -121,6 +138,8 @@ export function toPlaybackDto(args: {
   capReason?: CapReason;
   /** containers the device itself direct-plays (Android capability block); replaces the browser list when non-empty */
   directContainers?: string[];
+  /** the stream plan (service.ts: planned, gate applied); absent = the plan of a device that stated nothing (today's URL) */
+  plan?: StreamPlan;
 }): PlaybackDto {
   const { itemId, info, deviceId, maxBitrate, resumeTicks, audioIndex, maxHeight, cast, noDirect, capReason, directContainers } = args;
   const src = (info.MediaSources ?? [])[0];
@@ -128,29 +147,34 @@ export function toPlaybackDto(args: {
   const streams: Array<Record<string, any>> = src.MediaStreams ?? [];
   const common = new URLSearchParams({ MediaSourceId: src.Id, PlaySessionId: info.PlaySessionId, DeviceId: deviceId });
 
+  const plan = args.plan ?? planStream({
+    caps: null, cast: Boolean(cast), remote: false, maxBitrate, boxHeight: boxHeightFor(maxBitrate, maxHeight), src: sourceFacts(src, audioIndex), surroundOn: false, hevcStreams: 0,
+  });
   const hls = new URLSearchParams(common);
-  hls.set('VideoCodec', 'h264');
-  hls.set('AudioCodec', cast ? 'aac' : 'aac,mp3');
-  hls.set('SegmentContainer', 'ts');
+  hls.set('VideoCodec', plan.videoCodecs.join(','));
+  hls.set('AudioCodec', plan.audioCodecs.join(','));
+  hls.set('SegmentContainer', plan.segment);
   hls.set('MinSegments', '1');
   // segments start on a keyframe: a restarted transcode (seek, resume, reconnect, track switch) with copied video would
   // otherwise snap the picture back to the previous keyframe while the re-encoded audio starts at the exact time (A/V offset)
   hls.set('BreakOnNonKeyFrames', 'false');
-  hls.set('TranscodingMaxAudioChannels', '2');
+  hls.set('TranscodingMaxAudioChannels', String(plan.audioChannels));
   hls.set('MaxStreamingBitrate', String(maxBitrate));
   if (audioIndex !== undefined) hls.set('AudioStreamIndex', String(audioIndex));
   // Explicit budgets: otherwise Jellyfin subtracts the SOURCE audio bitrate (TrueHD / DTS-HD MA: several Mbit/s) and starves the video
-  hls.set('AudioBitrate', String(AUDIO_BITRATE));
-  hls.set('AudioChannels', '2');
-  hls.set('VideoBitrate', String(Math.max(MIN_VIDEO_BITRATE, maxBitrate - AUDIO_BITRATE)));
-  const rungHeight = maxBitrate >= 8e6 ? 1080 : maxBitrate >= 4e6 ? 720 : maxBitrate >= 1.5e6 ? 480 : 360;
-  const height = maxHeight ? Math.min(rungHeight, maxHeight) : rungHeight;
+  hls.set('AudioBitrate', String(plan.audioBitrate));
+  hls.set('AudioChannels', String(plan.audioChannels));
+  hls.set('VideoBitrate', String(plan.videoBitrate));
+  const height = boxHeightFor(maxBitrate, maxHeight);
   hls.set('MaxHeight', String(height));
   hls.set('MaxWidth', String(maxWidthFor(height)));
+  // the device's own codec parameters (`hevc-codectag`, `hevc-profile`, `hevc-rangetype`) and one fixed variant in fMP4 plans
+  for (const [k, v] of Object.entries(plan.codecParams)) hls.set(k, v);
+  if (plan.segment === 'mp4') hls.set('EnableAdaptiveBitrateStreaming', 'false');
   if (cast) {
     // keep Jellyfin from stream-copying a source the Default Media Receiver cannot decode (H.264 > level 4.1, 10 bit)
-    hls.set('Level', '41');
-    hls.set('MaxVideoBitDepth', '8');
+    // (qualified for H.264 when the plan may carry HEVC: an unqualified Level 41 would refuse copying every HEVC source)
+    if (plan.videoCodecs.includes('hevc')) { hls.set('h264-level', '41'); hls.set('h264-videobitdepth', '8'); } else { hls.set('Level', '41'); hls.set('MaxVideoBitDepth', '8'); }
     hls.set('RequireAvc', 'true');
     // no `#EXT-X-IMAGE-STREAM-INF` trickplay line (Jellyfin 10.9+, Roku-style image playlist): AirPlay receivers (LG webOS) reject
     // the whole master on it (MEDIA_ERR_SRC_NOT_SUPPORTED, no variant fetched); the gateway strips it too (defence in depth)
@@ -183,6 +207,7 @@ export function toPlaybackDto(args: {
     resumeTicks,
     maxBitrate,
     ...(transcodeReason ? { transcodeReason } : {}),
+    delivery: plan.delivery,
     ...(audioIndex !== undefined ? { audioIndex } : {}),
     audioTracks: streams
       .filter((s) => s.Type === 'Audio')
@@ -301,7 +326,7 @@ export function toMediaTraits(streams: Array<Record<string, any>> | undefined): 
   const atmos = audioStreams.some((s) => String(s.AudioSpatialFormat ?? '').toLowerCase() === 'dolbyatmos' || /atmos/i.test(`${s.Profile ?? ''} ${s.DisplayTitle ?? ''} ${s.Title ?? ''}`));
   const ch = Number(best?.Channels ?? 0);
   const audio: MediaTraits['audio'] = atmos ? 'atmos' : ch >= 6 ? 'surround' : ch === 2 ? 'stereo' : ch === 1 ? 'mono' : ch > 2 ? 'surround' : null;
-  return { resolution, hdr, audio };
+  return { resolution, hdr, audio, ...(range === 'sdr' ? { sdr: true as const } : {}) };
 }
 const RES_RANK = { sd: 0, hd: 1, '4k': 2 } as const;
 const AUDIO_RANK = { mono: 0, stereo: 1, surround: 2, atmos: 3 } as const;

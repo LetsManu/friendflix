@@ -6,10 +6,10 @@ const lg = vi.hoisted(() => ({ on: false }));
 const fire = vi.hoisted(() => ({ on: false, height: 1080 }));
 vi.mock('./detect', () => ({ isLgApp: () => lg.on }));
 vi.mock('#lib/firetv/detect', () => ({ isFireTvApp: () => fire.on, fireTvDisplayHeight: () => fire.height }));
-const dev = vi.hoisted(() => ({ block: null as unknown }));
-vi.mock('#lib/player/devicecaps', () => ({ deviceCaps: () => dev.block }));
+const dev = vi.hoisted(() => ({ block: null as unknown, out: (c: unknown): unknown => c }));
+vi.mock('#lib/player/devicecaps', () => ({ deviceCaps: () => dev.block, withOutput: (c: unknown) => dev.out(c) }));
 import { APP_VERSION } from '#lib/version/codenames';
-import { _resetAppCaps, appCaps, buildLgCaps, buildTvCaps, confirmedTypes, type MediaProbe } from './caps';
+import { _resetAppCaps, appCaps, buildLgCaps, buildTvCaps, confirmedTypes, hlsClaim, tvBaseCaps, type MediaProbe } from './caps';
 
 const all: MediaProbe = { canPlayType: () => 'probably', isTypeSupported: () => true };
 const none: MediaProbe = { canPlayType: () => '', isTypeSupported: () => false };
@@ -80,12 +80,70 @@ describe('buildTvCaps', () => {
   });
 });
 
+describe('hls claim of the TV apps', () => {
+  const mse = (no: string[] = []): MediaProbe => ({ canPlayType: () => 'maybe', isTypeSupported: (t) => !no.some((n) => t.includes(n)) });
+  for (const client of ['webos', 'firetv'] as const) {
+    it(`${client}: MSE confirms hvc1 and ec-3: hevc, surround [eac3, ac3], 6 channels`, () => {
+      const c = buildTvCaps(mse(), { client, appVersion: '1', maxHeight: 2160, assumed: [] })!;
+      expect(c.hls).toEqual({ video: ['h264', 'hevc'], audio: ['aac', 'mp3', 'ac3', 'eac3'], surround: ['eac3', 'ac3'] });
+      expect(c.audioChannels).toBe(6);
+    });
+    it(`${client}: only ec-3 confirmed: surround [eac3]`, () => {
+      expect(buildTvCaps(mse(['ac-3"']), { client, appVersion: '1', maxHeight: 2160, assumed: [] })!.hls!.surround).toEqual(['eac3']);
+    });
+    it(`${client}: no hvc1 in MSE: no hevc stream even though canPlayType says maybe`, () => {
+      const c = buildTvCaps(mse(['hvc1']), { client, appVersion: '1', maxHeight: 2160, assumed: [] })!;
+      expect(c.video.map((v) => v.codec)).toContain('hevc');
+      expect(c.hls!.video).toEqual(['h264']);
+    });
+    it(`${client}: no Dolby in MSE: no surround, no audioChannels`, () => {
+      const c = buildTvCaps(mse(['ac-3', 'ec-3']), { client, appVersion: '1', maxHeight: 2160, assumed: [] })!;
+      expect(c.hls!.surround).toEqual([]);
+      expect(c.audioChannels).toBeUndefined();
+    });
+    it(`${client}: without isTypeSupported no hls and no audioChannels, the rest as today`, () => {
+      const c = buildTvCaps({ canPlayType: () => 'probably' }, { client, appVersion: '1', maxHeight: 2160, assumed: [] })!;
+      expect('hls' in c).toBe(false);
+      expect('audioChannels' in c).toBe(false);
+      expect(Object.keys(c).sort()).toEqual(['appVersion', 'audio', 'client', 'containers', 'subtitles', 'video']);
+    });
+  }
+  it('mp3 is in hls.audio only when MSE confirms audio/mpeg', () => {
+    expect(hlsClaim(mse(['mpeg']), true)!.audio).not.toContain('mp3');
+    expect(hlsClaim(mse(), true)!.audio).toContain('mp3');
+  });
+  it('a throwing isTypeSupported counts as no', () => {
+    const m: MediaProbe = { canPlayType: () => 'maybe', isTypeSupported: () => { throw new Error('x'); } };
+    expect(buildTvCaps(m, { client: 'webos', appVersion: '1', maxHeight: 2160, assumed: [] })!.hls).toBeUndefined();
+  });
+  it('appCaps applies the output facts on top of the cached block', () => {
+    vi.stubGlobal('window', { MediaSource: { isTypeSupported: () => true } });
+    vi.stubGlobal('document', { createElement: () => ({ canPlayType: () => 'maybe' }) });
+    lg.on = true; _resetAppCaps();
+    dev.out = (c) => ({ ...(c as object), audioChannels: 2 });
+    expect(appCaps()!.audioChannels).toBe(2);
+    dev.out = (c) => c;
+    expect(appCaps()!.audioChannels).toBe(6);
+    lg.on = false; _resetAppCaps(); vi.unstubAllGlobals();
+  });
+});
+
 describe('appCaps', () => {
   afterEach(() => { lg.on = false; fire.on = false; fire.height = 1080; _resetAppCaps(); vi.unstubAllGlobals(); });
   const stub = () => {
     vi.stubGlobal('window', { MediaSource: { isTypeSupported: (t: string) => t !== 'video/x-matroska' } });
     vi.stubGlobal('document', { createElement: () => ({ canPlayType: (t: string) => (t === 'video/x-matroska' ? '' : 'maybe') }) });
   };
+
+  it('tvBaseCaps: the TV block without the output facts; null in a browser', () => {
+    stub(); _resetAppCaps();
+    expect(tvBaseCaps()).toBeNull();
+    lg.on = true; _resetAppCaps();
+    dev.out = (c) => ({ ...(c as object), audioChannels: 2 });
+    expect(tvBaseCaps()!.audioChannels).toBe(6);
+    expect(appCaps()!.audioChannels).toBe(2);
+    dev.out = (c) => c;
+  });
 
   it('is null without a window', () => {
     lg.on = true; _resetAppCaps();
@@ -107,9 +165,9 @@ describe('appCaps', () => {
     expect(a.appVersion).toBe(APP_VERSION);
     expect(a.containers).toContain('mkv');
     expect(a.video.every((v) => v.maxHeight === 2160)).toBe(true);
-    expect(appCaps()).toBe(a);
+    expect(appCaps()).toEqual(a);
     _resetAppCaps();
-    expect(appCaps()).not.toBe(a);
+    expect(appCaps()).toEqual(a);
   });
 
   it('builds the Fire TV block with the display height and no assumed containers', () => {

@@ -505,6 +505,22 @@ class PlayerControlsTest {
         assertTrue(texts(v).contains(activity.getString(R.string.player_fx_unsupported)))
     }
 
+    @Test fun tracksSurroundSwitchIsLockedWhileASoundModeIsOn() {
+        val picked = mutableListOf<Boolean>()
+        val actions = object : TracksActions by NoTracks { override fun surround(on: Boolean) { picked += on } }
+        assertNull("not offered without a state", TracksPanel.build(activity, tracks(audio = 1), actions).findViewById(R.id.tracks_surround))
+        val free = TracksPanel.build(activity, tracks(audio = 1).copy(surround = true), actions)
+        val sw = free.findViewById<SwitchCompat>(R.id.tracks_surround)
+        assertTrue(sw.isEnabled)
+        assertTrue(texts(free).contains(activity.getString(R.string.player_surround_hint)))
+        sw.performClick()
+        assertEquals(listOf(false), picked)
+        val locked = TracksPanel.build(activity, tracks(audio = 1).copy(surround = true, surroundLocked = true), actions)
+        assertFalse(locked.findViewById<SwitchCompat>(R.id.tracks_surround).isEnabled)
+        assertTrue(texts(locked).contains(activity.getString(R.string.player_surround_mode)))
+        assertFalse(texts(locked).contains(activity.getString(R.string.player_surround_hint)))
+    }
+
     @Test fun tracksSearchRowOnlyWhenAllowed() {
         assertNull(TracksPanel.build(activity, tracks(audio = 1), NoTracks).findViewById(R.id.tracks_search))
         assertNotNull(TracksPanel.build(activity, tracks(audio = 1).copy(canSearch = true), NoTracks).findViewById(R.id.tracks_search))
