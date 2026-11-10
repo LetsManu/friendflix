@@ -17,12 +17,13 @@ import { allowWebWatchOnce } from '#lib/native/watch';
 import { tr } from '#lib/i18n';
 import { noteInteraction } from '#lib/stillwatching';
 import { toast } from '#lib/ui/toast';
+import { liveCast } from './bar';
 import { castEngine, castSession } from './engine';
 
 export function playOrCast(e: MouseEvent, item: { id: string; positionTicks?: number }, opts?: { audio?: string; subtitle?: string }): boolean {
   if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return false;
   const s = get(castSession);
-  if (!s) return playNatively(e, item, opts);
+  if (!liveCast(s)) return playNatively(e, item, opts); // a detached cast takes no title: it plays here
   e.preventDefault();
   noteInteraction(); // a tap: the viewer is there ("still watching?")
   void castEngine.playOnTv(item.id, item.positionTicks ? item.positionTicks / 10_000_000 : undefined);

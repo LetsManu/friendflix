@@ -43,6 +43,15 @@ describe('playOrCast', () => {
     expect(noteInteraction).toHaveBeenCalledTimes(1); // a tap: the viewer is there (still-watching)
   });
 
+  it('a detached cast (only known from the hint) does not take the tap: the title plays here', () => {
+    (session.current as Writable<unknown>).set({ device: 'Wohnzimmer-TV', state: 'detached' });
+    const e = ev();
+    expect(playOrCast(e, { id: 'e1' })).toBe(false);
+    expect(e.preventDefault).not.toHaveBeenCalled();
+    expect(playOnTv).not.toHaveBeenCalled();
+    expect(info).not.toHaveBeenCalled();
+  });
+
   it('no position = server resume', () => {
     (session.current as Writable<unknown>).set({ device: 'TV' });
     playOrCast(ev(), { id: 'e1' });

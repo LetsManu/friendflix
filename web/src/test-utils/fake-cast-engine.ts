@@ -62,8 +62,37 @@ export const lookup = (castId: string, itemId: string, over: Partial<CastLookup>
   subtitles: [{ index: 3, language: 'de', title: 'Deutsch' }], pins: 1, refused: { count: 0, families: [] }, ...over,
 });
 
+/**
+ * navigator.locks for the one-owner-per-browser lock: `ifAvailable` answers null while another engine holds it; without it the
+ * request waits and is granted when the holder releases. Share one between two setups to model two tabs.
+ */
+export function fakeLock() {
+  let held = false;
+  const waiters: Array<(r: () => void) => void> = [];
+  const grant = (): (() => void) => {
+    held = true;
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true; held = false;
+      const w = waiters.shift();
+      if (w) w(grant());
+    };
+  };
+  return {
+    acquire: vi.fn(async (ifAvailable: boolean): Promise<(() => void) | null> => {
+      if (!held) return grant();
+      if (ifAvailable) return null;
+      return new Promise<() => void>((r) => waiters.push(r));
+    }),
+    held: () => held,
+    waiting: () => waiters.length,
+  };
+}
+export type FakeLock = ReturnType<typeof fakeLock>;
+
 type Init = { method?: string; body?: any; keepalive?: boolean };
-export function setup(o: { prefs?: Partial<Prefs> } = {}) {
+export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock } = {}) {
   const calls: Array<{ path: string; init: Init }> = [];
   const order: string[] = [];
   let n = 0, qn = 0;
@@ -125,6 +154,8 @@ export function setup(o: { prefs?: Partial<Prefs> } = {}) {
   const wakes = new Set<() => void>();
   const hiddens = new Set<() => void>();
   const readies: Array<() => void> = [];
+  const restores = new Set<() => void>();
+  const lock = o.lock ?? fakeLock();
   /** the title's segments (GET /api/items/{id}/segments as the engine gets them) */
   const segs: Record<string, Array<{ type: string; start: number; end: number }>> = {};
   let hiddenNow = false;
@@ -143,11 +174,15 @@ export function setup(o: { prefs?: Partial<Prefs> } = {}) {
     toast, prefs: () => ({ ...DEFAULT_PREFS, ...o.prefs }), timers: timerDeps,
     store, digest: sha256Hex, log: (e) => { logs.push(e); },
     requestSession: vi.fn(() => requestImpl()), leave: vi.fn(), whenReady: vi.fn((fn: () => void) => { readies.push(fn); }),
+    lock: lock.acquire,
+    onRestore: vi.fn((fn: () => void) => { restores.add(fn); }),
   };
   const out = writable<CastSession | null>(null);
   const engine = createCastEngine(deps, out);
   return {
-    engine, out, deps, calls, order, posts, queuePostAnswers, lookups, api, state, cast, events, loads, toast, timers: timerDeps, hides, item, store, logs,
+    engine, out, deps, calls, order, posts, queuePostAnswers, lookups, api, state, cast, events, loads, toast, timers: timerDeps, hides, item, store, logs, lock,
+    /** the page came back from the back/forward cache */
+    restore: () => restores.forEach((fn) => fn()),
     advance, segs, wakes, hide: (on: boolean) => { hiddenNow = on; }, wake: () => wakes.forEach((fn) => fn()), subs: () => subs, pending: () => timers.length,
     setLoad: (f: (info: CastInfo) => Promise<boolean>) => { loadImpl = f; },
     setQueue: (f: (info: CastInfo) => number | null) => { queueImpl = f; }, queued,

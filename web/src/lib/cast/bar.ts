@@ -4,6 +4,9 @@ import { img } from '#lib/api';
 import type { TFn } from '#lib/i18n';
 import type { CastSession } from './engine';
 
+/** the engine drives this session (a `detached` one is only known from the hint: no lock screen, no remote, taps play here) */
+export const liveCast = (s: CastSession | null): s is CastSession => s !== null && s.state !== 'detached';
+
 /** The cast bar shows while a title plays on a TV, except on the immersive pages (watch, party) and in TV mode. */
 export function barVisible(o: { path: string; tv: boolean; session: CastSession | null }): boolean {
   return o.session !== null && !o.tv && !/^\/(watch|party)\//.test(o.path);

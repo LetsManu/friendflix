@@ -112,7 +112,7 @@ async function setup(o: { started?: boolean } = {}) {
     onPageHide: vi.fn((fn: () => void) => { hides.add(fn); return () => { hides.delete(fn); }; }),
     segments: vi.fn(async (id: string) => segs[id] ?? []), hidden: () => hiddenNow, onWake: vi.fn((fn: () => void) => { wakes.add(fn); return () => { wakes.delete(fn); }; }),
     toast, prefs: () => ({ ...DEFAULT_PREFS }), timers: timerDeps,
-    onHidden: vi.fn(() => () => undefined), store: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); }, removeItem: (k) => { store.delete(k); } }, digest: async () => '', log: vi.fn(), requestSession: vi.fn(async () => false), leave: vi.fn(), whenReady: vi.fn(),
+    onHidden: vi.fn(() => () => undefined), store: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); }, removeItem: (k) => { store.delete(k); } }, digest: async () => '', log: vi.fn(), requestSession: vi.fn(async () => false), leave: vi.fn(), whenReady: vi.fn(), lock: vi.fn(async () => () => undefined), onRestore: vi.fn(),
   };
   const out = writable<CastSession | null>(null);
   const engine = createCastEngine(deps, out);

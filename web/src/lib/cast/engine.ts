@@ -35,6 +35,10 @@
  * profile and device by the token-free lookup `GET /api/cast/session/:castId`; anything else is left alone and the hint dropped.
  * Without an auto-join the bar shows `detached` from the hint (Reconnect: device picker, then `resume()`; Stop: revoke by castId).
  * AirPlay still ends on `pagehide` (the route belongs to this page's `<video>`).
+ *
+ * One owner per browser: a re-adopting engine holds the Web Lock `CAST_LOCK` (`deps.lock`). Another tab of the origin auto-joins
+ * the same receiver session but does not re-adopt while the lock is held: it shows no bar (no second set of reports, renewals,
+ * queue tokens or revokes) and waits for the lock; when the owner tab goes (pagehide, Stop) it picks the cast up itself.
  */
 import { get, writable, type Readable, type Writable } from 'svelte/store';
 import { api, cachedItem, secToTicks, ticksToSec, type Item, type ItemDetail } from '#lib/api';
@@ -113,7 +117,7 @@ export interface CastEngine {
   setAutoplay(on: boolean): void;
   readonly airState: Readable<AirPlayState | null>;
 }
-export type CastFns = Pick<typeof import('#lib/cast'), 'castState' | 'onCastEvent' | 'loadOnCast' | 'castPlayPause' | 'castSeek' | 'castStop' | 'castSetSubtitle' | 'queueOnCast' | 'castQueueRemove' | 'castQueueNext' | 'castAdoptTracks' | 'castLeave'>
+export type CastFns = Pick<typeof import('#lib/cast'), 'castState' | 'onCastEvent' | 'loadOnCast' | 'castPlayPause' | 'castSeek' | 'castStop' | 'castSetSubtitle' | 'queueOnCast' | 'castQueueRemove' | 'castQueueNext' | 'castAdoptTracks'>
   /** FriendFlix's own receiver (absent = Default Media Receiver behaviour) */
   & Partial<Pick<typeof import('#lib/cast'), 'castCustomReceiver' | 'castBody' | 'castSendMessage' | 'onReceiverMessage'>>;
 export interface EngineDeps {
@@ -140,6 +144,13 @@ export interface EngineDeps {
   leave(): void;
   /** runs `fn` once the Cast SDK is set up (at once when it already is; never without the SDK) */
   whenReady(fn: () => void): void;
+  /**
+   * The one-owner-per-browser lock (navigator.locks): resolves its release function, or null when another tab holds it and
+   * `ifAvailable` is set (without it: waits until granted). Without the Locks API every tab owns (resolves a no-op release).
+   */
+  lock(ifAvailable: boolean): Promise<(() => void) | null>;
+  /** the page came back from the back/forward cache (pageshow, persisted); registered once */
+  onRestore(fn: () => void): void;
 }
 
 /** progress report cadence while the receiver plays */
@@ -161,6 +172,8 @@ export const UNPINNED_RETRY_MS = 60_000;
 /** a stall on the TV longer than this is logged (and its recovery) */
 export const STALL_LOG_MS = 2_000;
 
+/** the Web Lock of the tab that owns the Chromecast cast (one owner per browser) */
+export const CAST_LOCK = 'ff-cast-engine';
 /** marks the AirPlay `<video>` the engine owns (in `document.body`) */
 export const CAST_VIDEO_ATTR = 'data-cast-engine';
 /** rendered but invisible and inert: WebKit may skip `display:none` media elements for AirPlay */
@@ -330,6 +343,12 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   /** the boot timer of the `detached` bar; set when it ran out while a resume was still waiting */
   let detachTimer: unknown;
   let detachDue = false;
+  /** bumped by every Stop, hand-off and release: a resume or reconnect started before gives up (it must not bring a stopped cast back) */
+  let gen = 0;
+  /** the owner lock's release while this tab owns the Chromecast cast; `follower`: another tab owns it (no detached bar here) */
+  let lockRelease: (() => void) | null = null;
+  let follower = false;
+  let lockWaiting = false;
 
   const log = (level: CastLogEntry['level'], tag: CastLogEntry['tag'], text: string) => { try { deps.log({ level, tag, text }); } catch { /* never breaks a cast */ } };
   /** the session's autoplay (the switch, else the profile's autoplay and this episode's "sleep after") */
@@ -345,7 +364,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   /** Chromecast: the hint names the live token (the next page finds the cast by it); AirPlay never leaves one */
   const hint = (s: Live) => {
     if (s.air || !s.ci) return;
-    writeHint(deps.store, { castId: s.ci.castId, itemId: s.view.itemId, device: s.view.device, exp: s.ci.expiresAt, at: timers.now() });
+    writeHint(deps.store, { castId: s.ci.castId, next: s.queued?.ci.castId, itemId: s.view.itemId, device: s.view.device, exp: s.ci.expiresAt, at: timers.now() });
   };
   const dropHint = (s: Live) => { if (!s.air) clearHint(deps.store); };
   const report = (s: Live, kind: 'start' | 'progress' | 'stop', ci: CastInfo, keepalive = false): Promise<unknown> => call(`/api/playback/${kind}`, {
@@ -360,9 +379,9 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     s.stopping = report(s, 'stop', s.ci, keepalive);
     return s.stopping;
   };
-  const revoke = (ci: CastInfo | null, keepalive = false) => {
-    if (ci) void call(`/api/cast/session/${ci.castId}`, { method: 'DELETE', ...(keepalive ? { keepalive } : {}) }).catch(() => undefined);
-  };
+  const revokeId = (castId: string, keepalive = false) =>
+    call(`/api/cast/session/${castId}`, { method: 'DELETE', ...(keepalive ? { keepalive } : {}) }).catch(() => undefined);
+  const revoke = (ci: CastInfo | null, keepalive = false) => { if (ci) void revokeId(ci.castId, keepalive); };
   /** forgets the session: listeners and timers off, `castSession` null (the token is the caller's business) */
   const end = (s: Live, why: string) => {
     if (cur !== s) return;
@@ -377,7 +396,37 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     dequeue(s);
     out.set(null);
     log('info', 'session', `cast ended · ${why}`);
+    queueMicrotask(freeLock); // unless a hand-off took over at once
   };
+  /** the owner lock goes when this tab owns nothing (another tab waiting for it picks the cast up) */
+  function freeLock() {
+    if (cur || !lockRelease) return;
+    const r = lockRelease;
+    lockRelease = null;
+    r();
+  }
+  /** this tab owns the Chromecast cast (true), or another tab does (false: this one follows and waits for the lock) */
+  async function ownLock(ifAvailable: boolean): Promise<boolean> {
+    if (lockRelease) return true;
+    const r = await deps.lock(ifAvailable).catch(() => () => undefined);
+    if (!r) return false;
+    if (lockRelease) { r(); return true; }
+    lockRelease = r;
+    follower = false;
+    return true;
+  }
+  /** another tab owns the cast: wait for its lock, then re-adopt here */
+  function follow() {
+    follower = true;
+    if (lockWaiting) return;
+    lockWaiting = true;
+    void ownLock(false).then((ok) => {
+      lockWaiting = false;
+      if (!ok || cur) return;
+      log('info', 'session', 'the owner tab left · taking the cast over');
+      void resume();
+    });
+  }
   /** the queued next episode leaves the receiver's queue; its token (never reported, never started) is revoked */
   const dequeue = (s: Live, keepalive = false) => {
     const q = s.queued;
@@ -386,6 +435,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     cast.castQueueRemove(q.qid);
     revoke(q.ci, keepalive);
     log('info', 'queue', 'queued episode removed');
+    if (cur === s) hint(s); // the hint no longer names it
     tvSync(s);
   };
   /** the title's segments (intro / recap skip, credits) */
@@ -544,6 +594,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       }
       s.queued = tv ? { ci, it, qid, ask } : { ci, it, qid };
       log('info', 'queue', 'queued episode loaded on the receiver');
+      hint(s); // a detached Stop revokes it too
       tvSync(s);
     } finally {
       s.queueing = false;
@@ -579,7 +630,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   }
 
   function onEvent(s: Live, e: CastEvent) {
-    if (cur !== s || leaving) return;
+    // (after a pagehide the SDK's session end never arrives here: end() removed this listener before deps.leave())
+    if (cur !== s) return;
     // FINISHED is the end; CANCELLED / INTERRUPTED (stopped by another sender, other media) never is; otherwise (unknown, ERROR on
     // the last segment) the position decides: idle well before the end (playback error) is not finished
     const why = get(cast.castState).idleReason;
@@ -643,6 +695,9 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   /**
    * The page goes. AirPlay ends (the route belongs to this page's element). Chromecast plays on: nothing is reported or revoked,
    * the receiver's queue stays, this sender only disconnects; the hint stays while a token is live on the TV.
+   * Accepted exceptions (only work still in flight, if the page's JS still runs): a token minted after this point never reaches
+   * the TV and is revoked — a queue token whose POST returns late, and a switch's new token (the switch already revoked the old
+   * one, so that cast ends and the hint is cleared).
    */
   function onPageHide(s: Live) {
     if (cur !== s) return;
@@ -921,7 +976,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   }
 
   /** takes a cast over: a hand-off from the Player, or a cast `resume()` found on the receiver */
-  function adoptLive(h: PlayerHandoff, how: 'adopt' | 'resume'): Live {
+  function adoptLive(h: PlayerHandoff, how: 'adopt' | 'resume', hold = false): Live {
+    gen++;
     const prev = cur;
     if (prev) {
       // the same token again (the Player re-hands its session): nothing to stop; another token: stop and revoke it
@@ -931,12 +987,15 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       else if (ci && !same) void stopped.then(() => revoke(ci));
     }
     leaving = false;
+    // a hand-off: the cast was started in this tab, it is this tab's (the lock is taken if free; resume() holds it already)
+    if (h.kind === 'chromecast' && how === 'adopt') void ownLock(true).then(() => { if (!cur) freeLock(); });
     const s: Live = {
       view: { kind: h.kind, device: h.kind === 'airplay' ? tr('player.castBar.airplayDevice') : 'Chromecast', itemId: h.itemId, seriesId: h.seriesId, title: h.title, subtitle: h.subtitle, posterId: h.itemId, isEpisode: h.isEpisode,
         position: h.position, duration: h.duration, paused: h.paused, buffering: false, state: h.started ? 'playing' : 'connecting',
         audioTracks: h.audioTracks ?? [], subtitles: h.subtitles ?? [], audioIndex: h.audioIndex, subIndex: h.subIndex,
         autoplay: deps.prefs().autoplayNext && !h.sleepAfterEpisode, castId: h.cast.castId },
-      ci: h.cast, started: h.started, busy: false, stopping: Promise.resolve(), lastPaused: null, hold: false,
+      // hold: a resumed, never reported cast on a paused TV counts as started once it is seen paused (as a paused renewal)
+      ci: h.cast, started: h.started, busy: false, stopping: Promise.resolve(), lastPaused: null, hold,
       audioIndex: h.audioIndex, subIndex: h.subIndex, maxBitrate: h.maxBitrate, sleepAfterEpisode: h.sleepAfterEpisode,
       // a resumed cast first looks at the receiver's own queue (restoreQueue): nothing is queued before that
       retry: null, offs: [], segs: [], credits: false, queueAsked: how === 'resume', going: false,
@@ -994,8 +1053,13 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   }
 
   async function doResume(): Promise<boolean> {
+    const g = gen;
+    /** a Stop / hand-off / release came meanwhile: this resume must not bring anything back */
+    const stale = () => g !== gen || Boolean(cur);
+    if (!(await ownLock(true))) { follow(); return false; } // another tab owns the cast: nothing here, the hint stays
+    if (stale()) return false;
     const st = await waitMedia();
-    if (cur) return false;
+    if (stale()) return false;
     if (!st) {
       // joined, but nothing loaded within the wait: our cast is over on that TV; not joined: the hint stays (detached bar)
       if (get(cast.castState).connected) notOurs('nothing plays on the TV');
@@ -1003,12 +1067,12 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     }
     const id = await handleOf(st.castId, st.contentId);
     const l = id ? await lookupOf(id) : null;
-    if (cur) return false;
+    if (stale()) return false;
     if (l === undefined) { log('warn', 'session', 'cast lookup failed'); return false; }
     if (!l) { notOurs('the TV plays something else'); return false; }
     const it = await deps.item(l.itemId).catch(() => null);
     const now = get(cast.castState);
-    if (cur || now.contentId !== st.contentId) return false; // a hand-off came first, or the TV moved on (the next event resumes again)
+    if (stale() || now.contentId !== st.contentId) return false; // a hand-off / Stop came first, or the TV moved on (the next event resumes again)
     cast.castAdoptTracks(st.contentId, l.subtitles);
     const ci = lookupToCastInfo(l, st.contentId);
     const { title, sub } = it ? barTitles(it) : { title: l.seriesName ?? l.title, sub: l.seriesName ? l.title : '' };
@@ -1016,7 +1080,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       kind: 'chromecast', itemId: l.itemId, seriesId: it?.seriesId, title, subtitle: sub, isEpisode: it ? it.type === 'Episode' : Boolean(l.seriesName),
       position: now.currentTime, duration: now.duration || (l.runtimeTicks ? ticksToSec(l.runtimeTicks) : 0), paused: now.paused,
       cast: ci, started: l.reported, subIndex: -1, sleepAfterEpisode: false, subtitles: subsOf(ci),
-    }, 'resume');
+    }, 'resume', !l.reported && now.paused);
     if (it) s.label = labelOf(it);
     await restoreQueue(s, now);
     return true;
@@ -1025,20 +1089,26 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   async function restoreQueue(s: Live, st: CastState) {
     const my = seq, q0 = st.queue[0];
     const gone = () => cur !== s || my !== seq || Boolean(s.queued) || !s.ci;
+    /** ours, but the session went meanwhile (Stop, switch, TV ended): its token goes too, unless the page just left (pagehide) */
+    const orphan = (l: CastLookup) => { if (!leaving) void revokeId(l.castId); };
+    let unknown = false;
     try {
       if (!q0?.contentId || q0.contentId === st.contentId) return;
       const id = await handleOf(q0.castId, q0.contentId);
       const l = id ? await lookupOf(id) : null;
-      if (!l?.next || gone()) return;
+      if (l === undefined) { unknown = true; return; } // probably ours: never a second queue token next to it
+      if (!l?.next) return;
+      if (gone()) { orphan(l); return; }
       const it = await deps.item(l.itemId).catch(() => itemOfLookup(l));
-      if (gone()) return;
+      if (gone()) { orphan(l); return; }
       cast.castAdoptTracks(q0.contentId, l.subtitles);
       s.queued = { ci: lookupToCastInfo(l, q0.contentId), it, qid: q0.itemId };
       log('info', 'queue', `queued episode found on the receiver · ${labelOf(it)}`);
+      hint(s);
       tvSync(s);
     } finally {
-      // none of ours queued there: this title queues its own (from the start)
-      if (cur === s && my === seq && !s.queued) { s.queueAsked = false; atPosition(s); }
+      // none of ours queued there (for sure): this title queues its own (from the start)
+      if (cur === s && my === seq && !s.queued && !unknown) { s.queueAsked = false; atPosition(s); }
     }
   }
 
@@ -1053,7 +1123,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   /** the bar from the hint: "Connection lost" with Reconnect and Stop */
   function showDetached() {
     const h = readHint(deps.store, timers.now());
-    if (cur || !h) return;
+    if (cur || !h || follower) return; // another tab owns the cast: nothing is lost
     const d = { hint: h, view: { kind: 'chromecast', device: h.device, itemId: h.itemId, title: '', subtitle: '', posterId: h.itemId, isEpisode: false,
       position: 0, duration: 0, paused: true, buffering: false, state: 'detached', audioTracks: [], subtitles: [], subIndex: -1,
       autoplay: deps.prefs().autoplayNext, castId: h.castId } as CastSession };
@@ -1069,7 +1139,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   }
   /** the SDK is ready: a fresh hint and no resume within DETACHED_AFTER_MS shows the detached bar (after a resume that still waits) */
   function boot() {
-    if (cur || detached || detachTimer !== undefined || !readHint(deps.store, timers.now())) return;
+    if (cur || detached || follower || detachTimer !== undefined || !readHint(deps.store, timers.now())) return;
     detachTimer = timers.set(() => {
       detachTimer = undefined;
       if (cur) return;
@@ -1078,11 +1148,19 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     }, DETACHED_AFTER_MS);
   }
   deps.whenReady(boot);
+  // back from the back/forward cache after a pagehide (the engine let the cast go): look again, as on a fresh page
+  deps.onRestore(() => {
+    leaving = false;
+    if (cur || !readHint(deps.store, timers.now())) return;
+    if (get(cast.castState).connected) void resume();
+    else boot();
+  });
 
   function resume(): Promise<boolean> {
     if (cur) return Promise.resolve(false);
     resuming ??= doResume().catch(() => false).finally(() => {
       resuming = null;
+      if (!cur) freeLock();
       if (detachDue && !cur) { detachDue = false; showDetached(); }
     });
     return resuming;
@@ -1090,11 +1168,12 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   /** Reconnect on the detached bar (inside the tap): the device picker, then the resume; nothing of ours there: toast, bar gone */
   function reconnectDetached(d: NonNullable<typeof detached>) {
     log('info', 'session', 'reconnect tapped');
+    const g = gen;
     const asked = deps.requestSession(); // synchronously: the browser's picker needs the gesture
     void asked.then(async (ok) => {
-      if (!ok || detached !== d) return; // picker dismissed: the bar stays
+      if (!ok || detached !== d || g !== gen) return; // picker dismissed (the bar stays), or stopped meanwhile
       if (await resume()) return;
-      if (cur) return;
+      if (cur || g !== gen) return; // stopped meanwhile: no toast
       deps.toast('info', tr('player.castBar.nothingThere', { device: get(cast.castState).deviceName || d.hint.device }));
       clearHint(deps.store);
       dropDetached();
@@ -1151,12 +1230,15 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         // detached: the TV's token is revoked by its handle; the position is unknown, so no stop report
         const d = detached;
         if (!d) return;
+        gen++; // a resume / reconnect on its way gives up
         dropDetached();
         clearHint(deps.store);
         log('info', 'session', 'cast ended · stopped from the detached bar');
-        await call(`/api/cast/session/${d.hint.castId}`, { method: 'DELETE' }).catch(() => undefined);
+        // the playing token and its queued successor (the server's revoke does not cascade: the TV may already play the successor)
+        await Promise.all([revokeId(d.hint.castId), d.hint.next ? revokeId(d.hint.next) : undefined]);
         return;
       }
+      gen++;
       const ci = s.ci, stopped = stopReport(s);
       s.ci = null;
       if (s.air) {
@@ -1210,6 +1292,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     release() {
       const s = cur;
       if (s?.view.state !== 'failed') return;
+      gen++;
       end(s, 'released');
       dropHint(s);
       if (s.air) dropAir(s.air);
@@ -1217,6 +1300,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     pick() { cur?.air?.ctl.pick(); },
     resume,
     setAutoplay(on) {
+      // Off after the receiver finished with a queued episode: the advance has already begun (the receiver moves on by itself);
+      // its fallback (a fresh token when the TV does not) still runs.
       const s = cur;
       if (!s) return;
       noteInteraction();
@@ -1250,11 +1335,25 @@ const session = writable<CastSession | null>(null);
 /** the session the cast engine owns (null = nothing is cast) */
 export const castSession: Readable<CastSession | null> = { subscribe: session.subscribe };
 
+/**
+ * `EngineDeps.lock` over navigator.locks: the release function while held, null when `ifAvailable` and another tab holds it.
+ * Without the Locks API (or when it refuses, e.g. an opaque origin) every tab owns, as before the lock.
+ */
+export function castLock(locks: Pick<LockManager, 'request'> | undefined, ifAvailable: boolean): Promise<(() => void) | null> {
+  if (!locks?.request) return Promise.resolve(() => undefined);
+  return new Promise((resolve) => {
+    locks.request(CAST_LOCK, { ifAvailable }, (l) => {
+      if (!l) { resolve(null); return undefined; }
+      return new Promise<void>((done) => resolve(() => done())); // held until released
+    }).catch(() => resolve(() => undefined));
+  });
+}
+
 /** browser wiring: `window` / `document` / `localStorage` are only touched when a dep is called (first adopt, the SDK ready) */
 const browserDeps: EngineDeps = {
   api,
   item: async (id) => cachedItem(id) ?? (await api<ItemDetail>(`/api/items/${id}`)).item,
-  cast: { castState, onCastEvent, loadOnCast, castPlayPause, castSeek, castStop, castSetSubtitle, queueOnCast, castQueueRemove, castQueueNext, castAdoptTracks, castLeave, castCustomReceiver, castBody, castSendMessage, onReceiverMessage },
+  cast: { castState, onCastEvent, loadOnCast, castPlayPause, castSeek, castStop, castSetSubtitle, queueOnCast, castQueueRemove, castQueueNext, castAdoptTracks, castCustomReceiver, castBody, castSendMessage, onReceiverMessage },
   async segments(id) {
     const caps = get(serverCaps);
     if (!caps.segments.length) return [];
@@ -1287,5 +1386,10 @@ const browserDeps: EngineDeps = {
   requestSession: requestCastSession,
   leave: castLeave,
   whenReady: whenCastReady,
+  lock: (ifAvailable) => castLock(typeof navigator === 'undefined' ? undefined : navigator.locks, ifAvailable),
+  onRestore(fn) {
+    if (typeof window === 'undefined') return;
+    window.addEventListener('pageshow', (e) => { if ((e as PageTransitionEvent).persisted) fn(); });
+  },
 };
 export const castEngine: CastEngine = createCastEngine(browserDeps, session);

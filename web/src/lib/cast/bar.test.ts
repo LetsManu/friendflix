@@ -1,11 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { barLine, barProgress, barThumb, barVisible, nextSecondsLeft } from './bar';
+import { barLine, barProgress, barThumb, barVisible, liveCast, nextSecondsLeft } from './bar';
 import { img } from '#lib/api';
 import type { CastSession } from './engine';
 
 describe('cast bar', () => {
+  it('liveCast: a session the engine drives (not one only known from the hint)', () => {
+    expect(liveCast(null)).toBe(false);
+    expect(liveCast({ state: 'detached' } as CastSession)).toBe(false);
+    for (const state of ['connecting', 'playing', 'reconnect', 'ended', 'failed'] as const) expect(liveCast({ state } as CastSession)).toBe(true);
+  });
+
   it('barVisible', () => {
     const s = { itemId: 'x' } as CastSession;
     expect(barVisible({ path: '/', tv: false, session: s })).toBe(true);

@@ -9,7 +9,8 @@ import type { CastInfo } from '#lib/cast';
 
 export const CAST_HINT_KEY = 'ff-cast-hint', CAST_LAST_KEY = 'ff-cast-last', HINT_SEEN_KEY = 'ff-cast-hint-seen';
 
-export interface CastHint { castId: string; itemId: string; device: string; exp: number; at: number }
+/** `next`: the public handle of the queued successor on the receiver (a detached Stop revokes it too) */
+export interface CastHint { castId: string; itemId: string; device: string; exp: number; at: number; next?: string }
 export type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
 
 /** answer of GET /api/cast/session/:castId (token-free; see backend `CastLookup`) */
@@ -31,6 +32,8 @@ export interface CastLookup {
 }
 
 const CAST_ID = /^[0-9a-f]{32}$/;
+/** an item id that is safe in a path segment (`/api/items/<id>`, `/watch/<id>`) */
+const ITEM_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
 /** the hint if it is well formed and not expired (`exp` and `now` in the same unit, ms); null otherwise, also when storage throws */
@@ -41,15 +44,17 @@ export function readHint(store: Store, now: number): CastHint | null {
     const h = JSON.parse(raw) as Partial<CastHint> | null;
     if (!h || typeof h !== 'object') return null;
     if (typeof h.castId !== 'string' || !CAST_ID.test(h.castId)) return null;
-    if (typeof h.itemId !== 'string' || typeof h.device !== 'string' || !finite(h.exp) || !finite(h.at)) return null;
+    if (typeof h.itemId !== 'string' || !ITEM_ID.test(h.itemId) || typeof h.device !== 'string' || !finite(h.exp) || !finite(h.at)) return null;
     if (h.exp <= now) return null;
-    return { castId: h.castId, itemId: h.itemId, device: h.device, exp: h.exp, at: h.at };
+    const next = typeof h.next === 'string' && CAST_ID.test(h.next) ? h.next : undefined;
+    return { castId: h.castId, itemId: h.itemId, device: h.device, exp: h.exp, at: h.at, ...(next ? { next } : {}) };
   } catch {
     return null;
   }
 }
 export function writeHint(store: Store, h: CastHint): void {
-  try { store?.setItem(CAST_HINT_KEY, JSON.stringify({ castId: h.castId, itemId: h.itemId, device: h.device, exp: h.exp, at: h.at })); } catch { /* storage full or blocked */ }
+  const v = { castId: h.castId, itemId: h.itemId, device: h.device, exp: h.exp, at: h.at, ...(h.next ? { next: h.next } : {}) };
+  try { store?.setItem(CAST_HINT_KEY, JSON.stringify(v)); } catch { /* storage full or blocked */ }
 }
 export function clearHint(store: Store): void {
   try { store?.removeItem(CAST_HINT_KEY); } catch { /* storage blocked */ }

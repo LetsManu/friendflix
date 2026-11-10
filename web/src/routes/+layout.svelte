@@ -12,7 +12,7 @@
   import Logo from '#lib/Logo.svelte';
   import Footer from '#lib/Footer.svelte';
   import CastBar from '#lib/cast/CastBar.svelte';
-  import { barVisible } from '#lib/cast/bar';
+  import { barVisible, liveCast } from '#lib/cast/bar';
   import { castEngine, castSession } from '#lib/cast/engine';
   import { castCapableBrowser, initCast, onCastEvent } from '#lib/cast';
   import { readHint as readCastHint } from '#lib/cast/resume';
@@ -307,7 +307,7 @@
   // ---- Android app: a watch page reached inside the page (episode cards, history, cast bar, goto) plays in the native player ----
   beforeNavigate((nav) => {
     const c = get(castSession);
-    interceptWatch(nav, (u) => void goto(u.pathname + u.search), { castActive: Boolean(c && c.state !== 'failed') });
+    interceptWatch(nav, (u) => void goto(u.pathname + u.search), { castActive: liveCast(c) && c.state !== 'failed' }); // detached: like failed
   });
 
   // ---- TV focus memory: coming back (Back key) puts the focus on the card you left, a new page focuses its first element ----

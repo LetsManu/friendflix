@@ -445,6 +445,39 @@ describe('cast engine: session end, stop, pagehide (Chromecast)', () => {
     expect(env.hint()).toBeNull();
   });
 
+  it('the hint names the queued successor (`next`) and drops it when the queue goes; pagehide keeps it', async () => {
+    const env = setup();
+    env.setQueue(() => 7);
+    env.queuePostAnswers.push(async () => ci(hex('d1')), async () => ci(hex('d2')));
+    await playingSession(env, { itemId: 'ep1', isEpisode: true, cast: ci(hex('c1')) });
+    await flush();
+    expect(env.hint()).toMatchObject({ castId: hex('c1'), next: hex('d1') });
+    env.state.set(playing({ currentTime: 1780 }));
+    await flush();
+    env.engine.cancelNext(); // the queued episode leaves the receiver
+    expect(env.hint()?.castId).toBe(hex('c1'));
+    expect(env.hint()?.next).toBeUndefined();
+    env.engine.setAutoplay(true); // queued again
+    await flush();
+    expect(env.hint()?.next).toBe(hex('d2'));
+    env.pagehide();
+    expect(env.hint()).toMatchObject({ castId: hex('c1'), next: hex('d2') });
+    expect(JSON.stringify([...env.store.data.values()])).not.toMatch(/media\/c|token/);
+  });
+
+  it('advanced() still revokes only the predecessor; the hint moves to the successor', async () => {
+    const env = setup();
+    env.setQueue(() => 7);
+    env.queuePostAnswers.push(async () => ci(hex('d1')));
+    await playingSession(env, { itemId: 'ep1', isEpisode: true, cast: ci(hex('c1')) });
+    await flush();
+    env.state.set(playing({ currentTime: 3, contentId: ci(hex('d1')).contentUrl }));
+    await flush();
+    expect(env.deletes()).toEqual([hex('c1')]);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', castId: hex('d1') });
+    expect(env.hint()).toMatchObject({ castId: hex('d1'), itemId: 'ep2' });
+  });
+
   it('the hint goes with a session the TV ended', async () => {
     const env = setup();
     await playingSession(env, { cast: ci(hex('c1')) });

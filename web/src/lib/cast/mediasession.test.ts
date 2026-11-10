@@ -55,6 +55,18 @@ describe('cast media session (lock screen / Control Center drive the TV)', () =>
     off();
   });
 
+  it('a detached cast (no live session) is not on the lock screen', () => {
+    const { ms, handlers, eng } = fake();
+    const s = writable<CastSession | null>(null);
+    bindCastMediaSession(s, eng, ms, (m) => m);
+    s.set(view());
+    expect(handlers.size).toBeGreaterThan(0);
+    s.set(view({ state: 'detached' }));
+    expect(ms.metadata).toBeNull();
+    expect(ms.playbackState).toBe('none');
+    expect([...handlers.values()].every((h) => h === null)).toBe(true);
+  });
+
   it('is a no-op without the Media Session API', () => {
     expect(() => bindCastMediaSession(writable(view()), fake().eng, undefined)()).not.toThrow();
   });

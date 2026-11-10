@@ -3,9 +3,10 @@
 import { get } from 'svelte/store';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { consumeAutoplay, noteInteraction } from '#lib/stillwatching';
-import { DETACHED_AFTER_MS, PROGRESS_MS, RESUME_WAIT_MS } from './engine';
+import { CAST_LOCK, castLock, DETACHED_AFTER_MS, PROGRESS_MS, RESUME_WAIT_MS } from './engine';
+import type { CastLookup } from './resume';
 import { writeHint } from './resume';
-import { castIdOf, ci, contentOf, flush, settle, handoff, idle, lookup, playing, setup, T0, token, type Env } from '../../test-utils/fake-cast-engine';
+import { castIdOf, ci, contentOf, deferred, fakeLock, flush, settle, handoff, idle, lookup, playing, setup, T0, token, type Env } from '../../test-utils/fake-cast-engine';
 
 const tA = token('Aaaa'), tB = token('Bbbb'), tZ = token('Zzzz');
 let A = '', B = '', Z = '';
@@ -133,6 +134,7 @@ describe('cast engine: resume (re-adoption)', () => {
     env.lookups[A] = lookup(A, 'dun4');
     env.state.set({ ...idle }); // joined, media status not there yet
     const p = env.engine.resume();
+    await flush(); // the owner lock first
     await env.advance(4_000);
     tvPlaysA(env, { queue: [] });
     expect(await p).toBe(true);
@@ -142,6 +144,7 @@ describe('cast engine: resume (re-adoption)', () => {
     leaveHint(idleTv);
     idleTv.state.set({ ...idle });
     const q = idleTv.engine.resume();
+    await flush(); // the owner lock first
     await idleTv.advance(RESUME_WAIT_MS);
     expect(await q).toBe(false);
     expect(idleTv.hint()).toBeNull();
@@ -151,6 +154,7 @@ describe('cast engine: resume (re-adoption)', () => {
     leaveHint(away);
     away.state.set({ ...idle, connected: false, deviceName: '' });
     const r = away.engine.resume();
+    await flush(); // the owner lock first
     await away.advance(RESUME_WAIT_MS);
     expect(await r).toBe(false);
     expect(away.hint()?.castId).toBe(A);
@@ -176,6 +180,109 @@ describe('cast engine: resume (re-adoption)', () => {
     env.item.mockImplementationOnce(async () => { env.state.set(playing({ contentId: contentOf(tZ) })); throw new Error('slow'); });
     expect(await env.engine.resume()).toBe(false);
     expect(get(env.out)).toBeNull();
+  });
+
+  it('resume of an unreported paused cast reports start (paused) and shows playing', async () => {
+    const env = setup();
+    env.lookups[A] = lookup(A, 'dun5', { reported: false, next: true });
+    tvPlaysA(env, { queue: [], paused: true, state: 'paused', currentTime: 42 });
+    expect(await env.engine.resume()).toBe(true);
+    await flush();
+    expect(get(env.out)).toMatchObject({ state: 'playing', paused: true, position: 42 });
+    expect(env.reports()).toEqual(['start']);
+    expect(env.lastReport()!.init.body).toMatchObject({ isPaused: true });
+  });
+
+  it('a network failure on the queue lookup queues nothing next to the receiver\'s item', async () => {
+    const env = setup();
+    env.lookups[A] = lookup(A, 'dun4');
+    const record = env.api.getMockImplementation()!;
+    env.api.mockImplementation(async (path, init) => (path === `/api/cast/session/${B}` ? Promise.reject(new Error('net')) : record(path, init)));
+    tvPlaysA(env);
+    expect(await env.engine.resume()).toBe(true);
+    await flush();
+    await env.advance(PROGRESS_MS);
+    expect(env.queuePosts()).toEqual([]);
+  });
+
+  it('stop during the queue lookup revokes the receiver\'s queued token too', async () => {
+    const env = setup();
+    env.lookups[A] = lookup(A, 'dun4');
+    env.lookups[B] = lookup(B, 'dun5', { next: true });
+    const gate = deferred<void>();
+    const record = env.api.getMockImplementation()!;
+    env.api.mockImplementation(async (path, init) => (path === `/api/cast/session/${B}` && (init?.method ?? 'GET') === 'GET' ? record(path, init).then(async (r) => { await gate.promise; return r; }) : record(path, init)));
+    tvPlaysA(env);
+    const p = env.engine.resume();
+    await settle();
+    expect(get(env.out)?.itemId).toBe('dun4');
+    await env.engine.stop();
+    gate.resolve();
+    await p;
+    await flush();
+    expect(env.deletes().sort()).toEqual([A, B].sort());
+    expect(env.reports()).toEqual(['stop']);
+  });
+
+  it('a second engine does not resume while the first owns the cast; it takes over when the first leaves', async () => {
+    const lock = fakeLock();
+    const one = setup({ lock }), two = setup({ lock });
+    for (const env of [one, two]) { env.lookups[A] = lookup(A, 'dun4'); tvPlaysA(env, { queue: [] }); }
+    expect(await one.engine.resume()).toBe(true);
+    expect(await two.engine.resume()).toBe(false);
+    two.ready();
+    await two.advance(DETACHED_AFTER_MS * 2);
+    expect(get(two.out)).toBeNull(); // no bar, no "connection lost" while another tab owns the cast
+    expect(two.calls.filter((c) => c.path.startsWith('/api/playback/') || c.init.method === 'DELETE' || c.path === '/api/cast/session')).toEqual([]);
+    await one.advance(PROGRESS_MS);
+    expect(one.reports()).toEqual(['progress']);
+    one.pagehide(); // the owner tab goes: the other one picks the cast up
+    await settle();
+    expect(get(two.out)).toMatchObject({ state: 'playing', itemId: 'dun4' });
+    expect(lock.held()).toBe(true);
+    await two.engine.stop();
+    expect(lock.held()).toBe(false);
+  });
+
+  it('a hand-off in a tab without the lock still plays (the user cast from here); a second follower resume waits once', async () => {
+    const lock = fakeLock();
+    const one = setup({ lock }), two = setup({ lock });
+    for (const env of [one, two]) { env.lookups[A] = lookup(A, 'dun4'); tvPlaysA(env, { queue: [] }); }
+    expect(await one.engine.resume()).toBe(true);
+    expect(await two.engine.resume()).toBe(false);
+    expect(await two.engine.resume()).toBe(false);
+    expect(lock.waiting()).toBe(1);
+    two.engine.adopt(handoff({ cast: ci('c9') }));
+    await flush();
+    expect(get(two.out)?.itemId).toBe('film');
+    one.pagehide();
+    await settle();
+    expect(lock.held()).toBe(true); // the waiting request went to the tab that casts now; it keeps it
+    expect(get(two.out)?.itemId).toBe('film');
+    await two.engine.stop();
+    expect(lock.held()).toBe(false);
+  });
+
+  it('castLock: navigator.locks held until released, null when taken, everyone owns without the API', async () => {
+    let cb: ((l: unknown) => unknown) | null = null;
+    const opts: unknown[] = [];
+    const locks = { request: (name: string, o: unknown, fn: (l: unknown) => unknown) => { opts.push([name, o]); cb = fn; return Promise.resolve(); } };
+    const p = castLock(locks as unknown as LockManager, true);
+    const held = cb!({ name: CAST_LOCK }) as Promise<void>;
+    const release = await p;
+    expect(opts).toEqual([[CAST_LOCK, { ifAvailable: true }]]);
+    let done = false;
+    void held.then(() => { done = true; });
+    await flush();
+    expect(done).toBe(false);
+    release!();
+    await flush();
+    expect(done).toBe(true);
+    const q = castLock(locks as unknown as LockManager, true);
+    cb!(null);
+    expect(await q).toBeNull();
+    expect(typeof (await castLock(undefined, true))).toBe('function');
+    expect(typeof (await castLock({ request: () => Promise.reject(new Error('opaque')) } as unknown as LockManager, false))).toBe('function');
   });
 
   it('a Player hand-off during the lookup wins; the resume gives up', async () => {
@@ -250,6 +357,83 @@ describe('cast engine: detached', () => {
     expect(env.hint()).toBeNull();
   });
 
+  it('detached stop revokes the queued successor named in the hint too', async () => {
+    const env = setup();
+    writeHint(env.store, { castId: A, next: B, itemId: 'dun4', device: 'Wohnzimmer-TV', exp: T0 + 60 * 60_000, at: T0 });
+    env.state.set({ ...idle, connected: false, deviceName: '' });
+    env.ready();
+    await env.advance(DETACHED_AFTER_MS);
+    await flush();
+    await env.engine.stop();
+    expect(env.order).toEqual([`DELETE /api/cast/session/${A}`, `DELETE /api/cast/session/${B}`]);
+    expect(env.reports()).toEqual([]);
+    expect(env.cast.castStop).not.toHaveBeenCalled();
+  });
+
+  it('detached stop during a reconnect lookup: no re-adoption, no toast, one DELETE', async () => {
+    const env = setup();
+    leaveHint(env);
+    env.lookups[A] = lookup(A, 'dun4');
+    env.state.set({ ...idle, connected: false, deviceName: '' });
+    env.ready();
+    await env.advance(DETACHED_AFTER_MS);
+    await flush();
+    const answer = deferred<CastLookup>();
+    const record = env.api.getMockImplementation()!;
+    env.api.mockImplementation(async (path, init) => (path === `/api/cast/session/${A}` && (init?.method ?? 'GET') === 'GET' ? (await record(path, init), answer.promise) : record(path, init)));
+    env.setRequest(async () => { tvPlaysA(env, { queue: [] }); return true; });
+    env.engine.reconnect();
+    await settle();
+    expect(env.lookupsAsked()).toEqual([A]);
+    await env.engine.stop();
+    answer.resolve(lookup(A, 'dun4')); // processed before the DELETE: still 200
+    await settle();
+    expect(get(env.out)).toBeNull();
+    expect(env.toast).not.toHaveBeenCalled();
+    expect(env.deletes()).toEqual([A]);
+    expect(env.reports()).toEqual([]);
+    expect(env.hint()).toBeNull();
+    // the other order: the DELETE first, the lookup 404s
+    const two = setup();
+    leaveHint(two);
+    two.state.set({ ...idle, connected: false, deviceName: '' });
+    two.ready();
+    await two.advance(DETACHED_AFTER_MS);
+    await flush();
+    two.setRequest(async () => { tvPlaysA(two, { queue: [] }); return true; });
+    two.engine.reconnect();
+    await two.engine.stop();
+    await settle();
+    expect(two.toast).not.toHaveBeenCalled();
+    expect(get(two.out)).toBeNull();
+  });
+
+  it('bfcache restore after pagehide brings the detached bar back (or resumes when the SDK is still joined)', async () => {
+    const env = setup();
+    env.lookups[A] = lookup(A, 'dun4');
+    tvPlaysA(env, { queue: [] });
+    expect(await env.engine.resume()).toBe(true);
+    env.pagehide();
+    env.state.set({ ...idle, connected: false, deviceName: '' }); // castLeave disconnected this page
+    env.restore();
+    await env.advance(DETACHED_AFTER_MS);
+    await flush();
+    expect(get(env.out)).toMatchObject({ state: 'detached', castId: A });
+    const joined = setup();
+    joined.lookups[A] = lookup(A, 'dun4');
+    tvPlaysA(joined, { queue: [] });
+    await joined.engine.resume();
+    joined.pagehide();
+    joined.restore();
+    await settle();
+    expect(get(joined.out)).toMatchObject({ state: 'playing', itemId: 'dun4' });
+    const none = setup();
+    none.restore();
+    await none.advance(DETACHED_AFTER_MS);
+    expect(get(none.out)).toBeNull();
+    expect(none.calls).toEqual([]);
+  });
+
   it('detached stop revokes by the hint\'s castId only', async () => {
     const env = setup();
     leaveHint(env);
@@ -287,6 +471,7 @@ describe('cast engine: detached', () => {
     leaveHint(waiting);
     waiting.state.set({ ...idle, connected: false, deviceName: '' });
     const p = waiting.engine.resume();
+    await flush(); // the owner lock first
     waiting.ready();
     await waiting.advance(DETACHED_AFTER_MS);
     expect(get(waiting.out)).toBeNull();

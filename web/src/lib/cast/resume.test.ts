@@ -42,6 +42,22 @@ describe('hint', () => {
     expect(s.data.has(CAST_HINT_KEY)).toBe(false);
   });
 
+  it('the hint may carry the queued successor\'s public handle (`next`); malformed ones and unsafe item ids are dropped', () => {
+    const s = mem();
+    const next = 'cd'.repeat(16);
+    writeHint(s, { ...hint, next });
+    expect(readHint(s, 1_500)).toEqual({ ...hint, next });
+    expect(Object.keys(JSON.parse(s.data.get(CAST_HINT_KEY)!)).sort()).toEqual(['at', 'castId', 'device', 'exp', 'itemId', 'next']);
+    writeHint(s, { ...hint, next: undefined });
+    expect(readHint(s, 1_500)).toEqual(hint);
+    s.data.set(CAST_HINT_KEY, JSON.stringify({ ...hint, next: 'not-hex' }));
+    expect(readHint(s, 1_500)).toEqual(hint); // a bad successor handle is ignored, the cast itself stays
+    for (const itemId of ['../admin', 'a/b', 'a?x=1', '', 'x'.repeat(65)]) {
+      s.data.set(CAST_HINT_KEY, JSON.stringify({ ...hint, itemId }));
+      expect(readHint(s, 1_500)).toBeNull();
+    }
+  });
+
   it('remembers the last device, trimmed and capped at 80 characters', () => {
     const s = mem();
     expect(lastDevice(s)).toBeNull();

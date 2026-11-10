@@ -26,6 +26,8 @@
   /** AirPlay waits for the TV to be chosen in the system picker (it may not have opened without a fresh tap) */
   $: choose = s?.kind === 'airplay' && state === 'reconnect' && Boolean($airState?.ready);
   $: thumb = s ? barThumb(s) : null;
+  /** a detached cast whose title could not be loaded: "Playing on {device}" */
+  $: title = s ? s.title || $t('player.castBar.playingOn', { device: s.device }) : '';
   $: progress = s ? Math.round(barProgress(s)) : 0;
 
   /** the next-episode countdown (from the credits on, or after the end) ticks once a second while it runs */
@@ -83,13 +85,13 @@
         <!-- the whole bar (but Stop) is one button: the tap reconnects -->
         <button type="button" class="main" on:click={reconnect}>
           {#if thumb}<img class="thumb" src={thumb.src} alt="" style="aspect-ratio:{thumb.ratio}" />{/if}
-          <span class="txt"><span class="t1">{s.title}</span><span class="t2 hint">{line2}</span></span>
+          <span class="txt"><span class="t1">{title}</span><span class="t2 hint">{line2}</span></span>
         </button>
         {#if choose}<button type="button" class="act" aria-label={$t('player.airplay.choose')} title={$t('player.airplay.choose')} on:click={reconnect}><Icon name="airplay" size={24} /></button>{/if}
       {:else}
         {#snippet info()}
           {#if thumb}<img class="thumb" src={thumb.src} alt="" style="aspect-ratio:{thumb.ratio}" />{/if}
-          <span class="txt" id="castbar-txt"><span class="t1">{s.title}</span>{#if line2}<span class="t2">{line2}</span>{/if}</span>
+          <span class="txt" id="castbar-txt"><span class="t1">{title}</span>{#if line2}<span class="t2">{line2}</span>{/if}</span>
         {/snippet}
         {#if state === 'failed'}
           <!-- the title can't play on the TV: no remote to open; "Play here" is the action -->
