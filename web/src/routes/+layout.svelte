@@ -14,6 +14,8 @@
   import CastBar from '#lib/cast/CastBar.svelte';
   import { barVisible } from '#lib/cast/bar';
   import { castEngine, castSession } from '#lib/cast/engine';
+  import { castCapableBrowser, initCast } from '#lib/cast';
+  import { readHint as readCastHint } from '#lib/cast/resume';
   import { interceptWatch } from '#lib/native/watch';
   import { bindCastMediaSession } from '#lib/cast/mediasession';
   import { avatarBg, initial } from '#lib/avatars';
@@ -617,6 +619,12 @@
   let stops: Array<() => void> = [];
   // lock screen / Control Center / notification drive what plays on the TV
   onMount(() => bindCastMediaSession(castSession, castEngine));
+  // a Chromecast cast may still run from an earlier page: load the Cast SDK so the bar can come back (nobody else pays for it)
+  onMount(() => {
+    let store: Storage | null = null;
+    try { store = localStorage; } catch { /* storage blocked */ }
+    if (castCapableBrowser() && readCastHint(store, Date.now())) void initCast();
+  });
   onMount(() => {
     // desktop page motion: which element a title was opened from (capture: before the router handles the click)
     const onClick = (e: MouseEvent) => { if (e.target instanceof Element) lastClick = { el: e.target, at: performance.now() }; };

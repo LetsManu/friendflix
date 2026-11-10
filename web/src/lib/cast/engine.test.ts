@@ -24,7 +24,7 @@ const items: Record<string, Partial<Item>> = {
 };
 /** GET /api/items/{id}/next: the episode after ep1 is ep2 (others: none) */
 const nexts: Record<string, string> = { ep1: 'ep2', ep2: 'ep3', ep5: 'sp1' };
-const idle: CastState = { available: true, connected: true, deviceName: 'Wohnzimmer-TV', state: 'idle', currentTime: 0, duration: 0, paused: true, volume: 1, muted: false, loaded: false, contentId: '', idleReason: null };
+const idle: CastState = { available: true, connected: true, deviceName: 'Wohnzimmer-TV', state: 'idle', currentTime: 0, duration: 0, paused: true, volume: 1, muted: false, loaded: false, contentId: '', idleReason: null, castId: '', queue: [] };
 const playing = (over: Partial<CastState> = {}): CastState => ({ ...idle, state: 'playing', loaded: true, paused: false, currentTime: 60, duration: 1800, ...over });
 
 function deferred<T>() {
