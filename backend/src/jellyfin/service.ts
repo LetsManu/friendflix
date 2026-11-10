@@ -15,7 +15,7 @@ import { toHygieneFacts, toServerSession } from './dto.js'; // Block 22
 import { toItemFeatures } from './dto.js'; // R1
 import { MediaError } from '../media/types.js';
 import { applyGate, boxHeightFor, jellyfinRanges, planStream, type HevcGate, type StreamPlan } from '../media/streamplan.js';
-import type { CapRange, ClientCaps } from '../media/clientCaps.js';
+import type { ClientCaps } from '../media/clientCaps.js';
 import type { ChapterDto, ItemAboutDto, ItemCreditsDto, MediaCollection } from '../media/types.js'; // Block 17 P1, Block 21
 import type { HygieneFacts, ServerSession } from '../media/types.js'; // Block 22
 import type { ItemFeatures } from '../media/types.js'; // R1

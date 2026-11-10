@@ -135,7 +135,7 @@ export function planStream(i: PlanInput): StreamPlan {
   }
 
   let video: VideoOut = 'h264';
-  let videoWhy: PlanWhy[] = [];
+  let videoWhy: PlanWhy[]; // every branch below assigns
   if (copyVideo) {
     video = 'copy';
     videoWhy = srcCodec === 'hevc' ? ['hevc_device'] : [];

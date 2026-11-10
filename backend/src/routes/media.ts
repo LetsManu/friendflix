@@ -362,7 +362,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     const hevcGate = (): Promise<HevcGate> => gateHevc(ctx, { userId: req.user!.id, deviceId: req.session?.deviceId, playSessionIdHint: grantId });
     // the player left a HEVC conversion for H.264: counts against the server's HEVC state when that stream really was one
     if ((b.fellBack === 'hevc' || b.fellBack === 'both') && b.prevPs && req.session?.deviceId) {
-      let prev: { video?: unknown } | null = null;
+      let prev: { video?: unknown } | null;
       try { prev = JSON.parse((await ctx.kv.get(`pbinfo:${req.user!.id}:${b.prevPs}`).catch(() => null)) ?? 'null'); } catch { prev = null; }
       if (prev?.video === 'hevc') await noteHevcFailure(ctx, req.session.deviceId);
     }
