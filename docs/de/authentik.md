@@ -129,7 +129,7 @@ NPM setzt `Host`, `X-Forwarded-Proto` und `X-Forwarded-For`, reicht ein vom Besu
 **Pflicht, auch für jede schon bestehende Installation.** Ein Nginx-Proxy-Manager-Proxy-Host mit Standardeinstellungen ist heute betroffen, unabhängig von FriendFlix: Links zum Zurücksetzen des Passworts und zur Wiederherstellung lassen sich über ein gefälschtes `X-Forwarded-Host` vergiften. Hat der Proxy-Host weitere Custom locations, braucht jede dieselbe `proxy_set_header`-Zeile. Prüfen von jedem Rechner, dessen Anfrage über den Proxy läuft, mit dem Slug deiner Anwendung (klein geschrieben, `<slug>`):
 
 ```sh
-curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
+curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer": *"[^"]*"'
 ```
 
 In Windows PowerShell (ohne `grep`):
@@ -663,8 +663,9 @@ Auf dem Docker-Host:
 curl -s https://auth.example.com/application/o/friendflix/.well-known/openid-configuration | jq -r .issuer
 
 # 1b. PFLICHT hinter dem Nginx Proxy Manager: ein gefälschtes X-Forwarded-Host darf Authentik nicht erreichen
-# (erwartet "issuer":"https://auth.example.com/..."; evil.example.com heißt: §2.3 korrigieren; PowerShell-Form in §2.3)
-curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
+# (erwartet "issuer": "https://auth.example.com/..." (mit oder ohne Leerzeichen); evil.example.com heißt: §2.3 korrigieren; KEINE Ausgabe heißt:
+# die Prüfung hat nicht funktioniert (falscher Slug oder falsche URL), nicht dass die Installation sicher ist; PowerShell-Form in §2.3)
+curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer": *"[^"]*"'
 
 # 2. Backend erreicht Authentik (im Container; erwartet: 200)
 docker compose -f compose.prod.yaml exec backend node -e \

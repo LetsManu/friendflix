@@ -129,7 +129,7 @@ NPM sets `Host`, `X-Forwarded-Proto` and `X-Forwarded-For`, but passes an `X-For
 **Required, also for every install that already exists.** A default Nginx Proxy Manager proxy host is affected today, independently of FriendFlix: password-reset and recovery links can be poisoned through a forged `X-Forwarded-Host`. If the proxy host has other custom locations, each of them needs the same `proxy_set_header` line. Check it from any machine whose request goes through the proxy, with your own application slug (lowercase, `<slug>`):
 
 ```sh
-curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
+curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer": *"[^"]*"'
 ```
 
 On Windows PowerShell (no `grep`):
@@ -663,8 +663,9 @@ From the Docker host:
 curl -s https://auth.example.com/application/o/friendflix/.well-known/openid-configuration | jq -r .issuer
 
 # 1b. REQUIRED behind Nginx Proxy Manager: a forged X-Forwarded-Host must not reach Authentik
-# (expect "issuer":"https://auth.example.com/..."; evil.example.com means fix §2.3; PowerShell form in §2.3)
-curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
+# (expect "issuer": "https://auth.example.com/..." (with or without the space); evil.example.com means fix §2.3; printing NOTHING means
+# the check did not work (wrong slug or URL), not that the install is safe; PowerShell form in §2.3)
+curl -s -H 'X-Forwarded-Host: evil.example.com' https://auth.example.com/application/o/<slug>/.well-known/openid-configuration | grep -o '"issuer": *"[^"]*"'
 
 # 2. the backend can reach Authentik (inside the container; expect 200)
 docker compose -f compose.prod.yaml exec backend node -e \

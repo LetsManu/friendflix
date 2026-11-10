@@ -123,6 +123,7 @@
         r = await startFlow('reauth', { ...(then ? { then } : {}), method: 'passkey' });
       } catch { /* refused (no usable options any more) or unreachable: the card says it did not work */ }
       if (ceremony !== ctrl) return; // the person chose another method meanwhile
+      if (!life.started()) return; // closed while the start was in flight: its provider session is cancelled
       if (r && r.stage === 'identify' && r.passkey) pkStep = r;
       else if (r && !('step' in r) && r.stage !== 'done') {
         ceremony = null;

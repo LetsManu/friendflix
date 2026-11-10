@@ -329,6 +329,9 @@ describe('re-authentication, security actions', () => {
         vi.restoreAllMocks();
         expect(passkeyPosts()).toHaveLength(0);
         expect((await sessionOf(t.s)).reauthAt).toBeUndefined();
+        // the password attempt is untouched
+        expect(t.b.cookies.ff_flow).toBe(t.primary);
+        expect(await loadJar(env.ctx, t.primary)).not.toBeNull();
       });
     });
 
