@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { isIPv6 } from 'node:net';
 import type { Ctx } from './ctx.js';
 import { jfUserFor, getProfile } from './profiles.js';
 import { effectiveRole } from './roles.js';
@@ -68,7 +69,14 @@ export interface CastRecord {
   seen?: number;
   /** a queued next episode's token: the play session it follows (the newest other media token of the same device) */
   afterPs?: string;
+  /** runtime of the item in ticks (lookup answer; not secret) */
+  runtimeTicks?: number;
+  /** series name for the lookup answer */
+  seriesName?: string;
+  /** the subtitle tracks of the cast (index, language, title; URLs are never stored here) */
+  subs?: CastSubtitleInfo[];
 }
+export interface CastSubtitleInfo { index: number; language?: string; title: string }
 
 export interface CastAuth {
   userId: string;
@@ -84,6 +92,10 @@ export const hashToken = (ct: string) => createHash('sha256').update(ct).digest(
 const dataKey = (hash: string) => `cast:${hash}`;
 const pinKey = (hash: string) => `castpin:${hash}`;
 const pin2Key = (hash: string) => `castpin2:${hash}`;
+/** counts of refused fetches of a token (never an address): { n, v4, v6 } */
+const refuseKey = (hash: string) => `castrefuse:${hash}`;
+/** a queued next episode's token of a play session (value: its hash), so the predecessor's touches keep it alive */
+const nextKey = (userId: string, ps: string) => `castnext:${userId}:${ps}`;
 const idxKey = (userId: string, castId: string) => `castidx:${userId}:${castId}`;
 /** start of the preload overlap of the queued next episode(s) after a play session (one window per predecessor, set once) */
 const ovlKey = (userId: string, ps: string) => `povl:${userId}:${ps}`;
@@ -100,6 +112,14 @@ export const castTtlSeconds = (runtimeTicks: number | undefined, startTicks: num
   return Math.min(MAX_TTL, Math.max(MIN_TTL, Math.ceil(remaining) + 3600));
 };
 
+/**
+ * Absolute-cap TTL of a queued next episode's token: its own TTL plus what its predecessor has left beyond the 1 h that every
+ * token already adds, capped at 6 h. Queued from the start of an episode, the token must outlive the episode it follows.
+ */
+export function castNextTtlSeconds(ownTtl: number, predExp: number, now = Date.now()): number {
+  return Math.min(MAX_TTL, ownTtl + Math.max(0, Math.ceil((predExp - now) / 1000) - 3600));
+}
+
 /** Redis TTL of a token's keys: idle window, but never past the absolute cap (0 = already over). */
 export const castKeyTtl = (exp: number, now = Date.now()) => Math.max(0, Math.min(CAST_IDLE_TTL, Math.ceil((exp - now) / 1000)));
 
@@ -110,6 +130,7 @@ async function dropByHash(ctx: Ctx, userId: string, hash: string, imgHash?: stri
     await ctx.kv.del(dataKey(h));
     await ctx.kv.del(pinKey(h));
     await ctx.kv.del(pin2Key(h));
+    await ctx.kv.del(refuseKey(h));
     await ctx.kv.del(idxKey(userId, castIdOf(h)));
   }
 }
@@ -123,13 +144,27 @@ async function listIdx(ctx: Ctx, userId: string): Promise<Array<IdxEntry & { key
   return out;
 }
 
+/** a queued next token was requested while its predecessor has no pin yet (never fetched): nothing is minted */
+export class CastUnpinnedError extends Error {
+  constructor() { super('cast_unpinned'); }
+}
+
+/** true once the token has a pin (slot 1) */
+export const castPinned = async (ctx: Ctx, hash: string): Promise<boolean> => Boolean(await ctx.kv.get(pinKey(hash)));
+
 /**
  * Creates a media token (plus, with `image`, a poster-only token), keeping at most MAX_CAST_TOKENS media tokens per account (oldest
  * revoked). A queued next episode's token (`rec.afterPs`) replaces the device's earlier one and may be one more than that.
  * The limit is enforced AFTER the insert, so two simultaneous creations converge to the limit instead of racing past it.
  * Returns the raw tokens (once).
  */
-export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'createdAt' | 'kind' | 'seen'>, ttlSeconds: number, image = false): Promise<{ ct: string; imgCt?: string; castId: string; expiresAt: number }> {
+export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'createdAt' | 'kind' | 'seen'>, ttlSeconds: number, image = false, pred?: { hash: string }): Promise<{ ct: string; imgCt?: string; castId: string; expiresAt: number }> {
+  // a queued next token takes over the pin of its predecessor at mint (nobody on the LAN can take it first); no pin, no token
+  let predPin: string | null = null;
+  if (rec.afterPs) {
+    predPin = pred ? await ctx.kv.get(pinKey(pred.hash)) : null;
+    if (!predPin) throw new CastUnpinnedError();
+  }
   const now = Date.now();
   const exp = now + ttlSeconds * 1000;
   const ttl = castKeyTtl(exp, now);
@@ -138,6 +173,12 @@ export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'create
     const hash = hashToken(ct);
     await ctx.kv.set(dataKey(hash), JSON.stringify({ ...rec, kind, exp, createdAt: now, seen: now } satisfies CastRecord), ttl);
     await ctx.kv.set(idxKey(rec.userId, castIdOf(hash)), JSON.stringify({ hash, createdAt: now, deviceId: rec.deviceId, kind, ...extra } satisfies IdxEntry), ttl);
+    if (kind === 'media' && predPin) {
+      await ctx.kv.set(pinKey(hash), predPin, ttl);
+      await ctx.kv.set(nextKey(rec.userId, rec.afterPs!), hash, ttl);
+    } else if (kind === 'img' && predPin) {
+      await ctx.kv.set(pinKey(hash), predPin, ttl); // the queued poster is fetched by the same receiver
+    }
     return { ct, hash };
   };
   const next = Boolean(rec.afterPs);
@@ -169,12 +210,12 @@ async function waiting(ctx: Ctx, i: IdxEntry, rec?: CastRecord | null): Promise<
 }
 
 /** the cast a queued next episode follows: the newest media token of this device that is not a waiting queued one (null = none) */
-export async function castPredecessor(ctx: Ctx, userId: string, deviceId: string): Promise<{ castId: string; playSessionId: string } | null> {
+export async function castPredecessor(ctx: Ctx, userId: string, deviceId: string): Promise<{ castId: string; playSessionId: string; exp: number; hash: string } | null> {
   const mine = (await listIdx(ctx, userId)).filter((i) => i.kind !== 'img' && i.deviceId === deviceId).sort((a, b) => b.createdAt - a.createdAt);
   for (const i of mine) {
     const raw = await ctx.kv.get(dataKey(i.hash));
     const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
-    if (rec && !(await waiting(ctx, i, rec))) return { castId: castIdOf(i.hash), playSessionId: rec.playSessionId };
+    if (rec && !(await waiting(ctx, i, rec))) return { castId: castIdOf(i.hash), playSessionId: rec.playSessionId, exp: rec.exp, hash: i.hash };
   }
   return null;
 }
@@ -221,6 +262,12 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
   const ik = idxKey(rec.userId, castIdOf(hash));
   const idx = await ctx.kv.get(ik);
   if (idx) await ctx.kv.replace(ik, idx, ttl);
+  // a queued token (and its poster token) never pins by itself: its mint-time pin lives as long as the token does
+  if (rec.afterPs) {
+    const pin = await ctx.kv.get(pinKey(hash));
+    if (pin) await ctx.kv.replace(pinKey(hash), pin, ttl);
+  }
+  if (rec.kind !== 'img') await keepQueue(ctx, hash, rec, ttl);
   if (rec.kind === 'img' || overlap) return; // a queued next episode's preload: the stream it follows is the counted one
   const cur = await getLive(ctx, rec.userId, rec.playSessionId);
   // its stop was reported just now (title switch / end): the receiver only drains buffered segments until the revoke, no ghost
@@ -229,6 +276,34 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
   await setLive(ctx, cur
     ? { ...cur, updatedAt: now }
     : { userId: rec.userId, userName, profileName, itemId: rec.itemId, title: rec.title ?? '', positionTicks: 0, isPaused: false, playSessionId: rec.playSessionId, updatedAt: now, source: 'portal' });
+}
+
+/**
+ * A queued next episode's life follows its predecessor: every touch of a media token refreshes the keys of its successor
+ * (`castnext:`) up to the successor's own cap, and a queued token refreshes its own pin (it was written at mint with the idle TTL).
+ * Replace only: a revoked successor is never resurrected.
+ */
+async function keepQueue(ctx: Ctx, hash: string, rec: CastRecord, ttl: number) {
+  const nk = nextKey(rec.userId, rec.playSessionId);
+  const succ = await ctx.kv.get(nk);
+  if (!succ) return;
+  const raw = await ctx.kv.get(dataKey(succ));
+  const r = raw ? (JSON.parse(raw) as CastRecord) : null;
+  const t = r ? castKeyTtl(r.exp) : 0; // its own idle window (<= its cap, which is never below the predecessor's)
+  if (!r || t <= 0) { await ctx.kv.del(nk); return; }
+  await ctx.kv.replace(dataKey(succ), raw!, t);
+  const sidx = await ctx.kv.get(idxKey(rec.userId, castIdOf(succ)));
+  const imgHash = sidx ? (JSON.parse(sidx) as IdxEntry).imgHash : undefined;
+  for (const k of [idxKey(rec.userId, castIdOf(succ)), pinKey(succ), nk]) {
+    const v = await ctx.kv.get(k);
+    if (v) await ctx.kv.replace(k, v, t);
+  }
+  if (imgHash) { // its poster token lives as long
+    for (const k of [dataKey(imgHash), idxKey(rec.userId, castIdOf(imgHash)), pinKey(imgHash)]) {
+      const v = await ctx.kv.get(k);
+      if (v) await ctx.kv.replace(k, v, t);
+    }
+  }
 }
 
 /**
@@ -247,7 +322,9 @@ export async function resolveCast(ctx: Ctx, ct: string, client: string): Promise
   const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
   if (rec && rec.exp > Date.now()) {
     const owner = await liveOwner(ctx, rec);
-    const ok = owner && (await pinned(ctx, hash, client, rec.exp, rec.via === 'airplay' && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1, rec.via === 'airplay'));
+    // a queued next token never takes a pin of its own (0 slots): it only matches the pin it got at mint
+    const slots = rec.afterPs ? 0 : rec.via === 'airplay' && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1;
+    const ok = owner && (await pinned(ctx, hash, client, rec.exp, slots, rec.via === 'airplay'));
     const overlap = ok ? await nextOverlap(ctx, rec) : false;
     if (ok && owner && overlap !== null) {
       const { user, role, prof } = owner;
@@ -332,14 +409,58 @@ export async function resolveCastSubtitle(ctx: Ctx, r: CastSubtitleRef, sig: str
  * `slots` = 2 (AirPlay, early): the second distinct client takes a second pin the same way; a third one is refused.
  * `twoPins` (AirPlay, later): no new pin is taken any more, but an address pinned in either slot keeps working.
  */
-async function pinned(ctx: Ctx, hash: string, client: string, exp: number, slots: 1 | 2 = 1, twoPins = false): Promise<boolean> {
+async function pinned(ctx: Ctx, hash: string, client: string, exp: number, slots: 0 | 1 | 2 = 1, twoPins = false): Promise<boolean> {
   const ttl = Math.max(1, Math.ceil((exp - Date.now()) / 1000));
   const keys = twoPins ? [pinKey(hash), pin2Key(hash)] : [pinKey(hash)];
   for (const [i, key] of keys.entries()) {
     if (i < slots && (await ctx.kv.setnx(key, client, ttl))) return true;
     if ((await ctx.kv.get(key)) === client) return true;
   }
+  await noteRefused(ctx, hash, client, Math.max(1, Math.min(CAST_IDLE_TTL, ttl))); // lives no longer than the token's idle window
   return false;
+}
+
+export const addrFamily = (client: string): 'v4' | 'v6' => (isIPv6(client) ? 'v6' : 'v4');
+
+/** Counts a refused fetch of a token (for Diagnose): how many, and from which address families; never the address itself. */
+export async function noteRefused(ctx: Ctx, hash: string, client: string, ttl: number): Promise<void> {
+  const raw = await ctx.kv.get(refuseKey(hash));
+  const cur = raw ? (JSON.parse(raw) as { n: number; v4: boolean; v6: boolean }) : { n: 0, v4: false, v6: false };
+  const fam = addrFamily(client);
+  await ctx.kv.set(refuseKey(hash), JSON.stringify({ n: Math.min(cur.n + 1, 1_000_000), v4: cur.v4 || fam === 'v4', v6: cur.v6 || fam === 'v6' }), ttl);
+}
+
+export interface CastLookup {
+  castId: string; itemId: string; mediaSourceId: string; playSessionId: string; expiresAt: number; runtimeTicks?: number; via: CastVia;
+  next: boolean; reported: boolean; title: string; seriesName?: string; subtitles: CastSubtitleInfo[]; pins: 0 | 1 | 2;
+  refused: { count: number; families: Array<'v4' | 'v6'> };
+}
+
+/**
+ * Token-free lookup of a device's running cast by its public handle (re-adoption after the tab was gone, Diagnose). Answers only for
+ * a media token of exactly this account, profile and device; the answer has no token, URL or address.
+ */
+export async function castLookup(ctx: Ctx, who: { userId: string; profileId: string; deviceId: string }, castId: string): Promise<CastLookup | null> {
+  const idxRaw = await ctx.kv.get(idxKey(who.userId, castId));
+  const idx = idxRaw ? (JSON.parse(idxRaw) as IdxEntry) : null;
+  if (!idx || idx.kind === 'img') return null;
+  const raw = await ctx.kv.get(dataKey(idx.hash));
+  const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
+  if (!rec || rec.exp <= Date.now() || (rec.kind ?? 'media') !== 'media') return null;
+  if (rec.userId !== who.userId || rec.profileId !== who.profileId || rec.deviceId !== who.deviceId) return null;
+  const live = await getLive(ctx, rec.userId, rec.playSessionId);
+  const pins = ((await ctx.kv.get(pinKey(idx.hash))) ? 1 : 0) + ((await ctx.kv.get(pin2Key(idx.hash))) ? 1 : 0);
+  const rf = await ctx.kv.get(refuseKey(idx.hash));
+  const r = rf ? (JSON.parse(rf) as { n: number; v4: boolean; v6: boolean }) : { n: 0, v4: false, v6: false };
+  return {
+    castId, itemId: rec.itemId, mediaSourceId: rec.mediaSourceId, playSessionId: rec.playSessionId, expiresAt: rec.exp,
+    ...(rec.runtimeTicks !== undefined ? { runtimeTicks: rec.runtimeTicks } : {}),
+    via: rec.via ?? 'chromecast', next: Boolean(rec.afterPs), reported: Boolean(live?.playMethod), title: rec.title ?? '',
+    ...(rec.seriesName ? { seriesName: rec.seriesName } : {}),
+    subtitles: (rec.subs ?? []).map((s) => ({ index: s.index, ...(s.language ? { language: s.language } : {}), title: s.title })),
+    pins: pins as 0 | 1 | 2,
+    refused: { count: r.n, families: [...(r.v4 ? ['v4' as const] : []), ...(r.v6 ? ['v6' as const] : [])] },
+  };
 }
 
 /**
