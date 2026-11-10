@@ -7,8 +7,12 @@
  */
 import type { Ctx } from './ctx.js';
 import { inPool } from './discoverData.js';
-import { NEW_EPISODE_DAYS } from './fresh.js';
+import { homeGens } from './homegen.js';
+import { NEW_DAYS, NEW_EPISODE_DAYS } from './fresh.js';
 import type { ImageTags, ItemDto } from './media/types.js';
+import { countFallback, recoProfileOf, withReason, type WithReason } from './reco/engine.js';
+import { recommend } from './reco/recommend.js';
+import { freshSource, friendsSource, trendingSource } from './reco/sources.js';
 import type { JfUser } from './types.js';
 
 const DAY = 86_400_000;
@@ -95,4 +99,70 @@ export async function newEpisodes(ctx: Pick<Ctx, 'db' | 'kv' | 'jf'>, user: JfUs
     ? new Set((await ctx.db.query<{ item_id: string }>('select item_id from watchlist where profile_id=$1 and item_id = any($2::text[])', [profileId, found.map((f) => f.seriesId)])).rows.map((r) => r.item_id))
     : new Set<string>();
   return found.filter((f) => f.watched || listed.has(f.seriesId)).slice(0, NEW_EPISODES_MAX).map(({ watched: _w, ...e }) => e);
+}
+
+// ---------------------------------------------------------------- "Für dich neu"
+
+export type NewType = 'movie' | 'series';
+const TYPE_OF: Record<NewType, string> = { movie: 'Movie', series: 'Series' };
+/** "recent" = added to the library within this many days: the window of the badges "Neue Serie" / "Neu" (fresh.ts NEW_DAYS) */
+export const FOR_YOU_DAYS = NEW_DAYS;
+export const FOR_YOU_MAX = 20;
+export const FOR_YOU_TTL = 600;
+/** candidates ranked before the filter: far more than the fresh source brings (40), so no fresh title is cut by the ranking */
+const FOR_YOU_POOL = 100;
+
+export interface ForYouResult {
+  /** which engine answered: 'v2' = ranked by the taste model with a reason per item; 'v1' = newest titles, no reasons */
+  engine: 'v1' | 'v2';
+  /** `reason` = { seed: {id,name} | null, traits: ["kind" | "kind:value"] } like every v2 row (the client words it); null on the v1 answer */
+  items: Array<ItemDto & { reason: WithReason['reason'] | null }>;
+}
+
+const recentEnough = (i: ItemDto, now: number): boolean => {
+  const t = ts(i);
+  return !Number.isNaN(t) && t <= now + DAY && now - t <= FOR_YOU_DAYS * DAY;
+};
+/** in-flight v2 computations by cache key (concurrent callers share one recommend()) */
+const running = new Map<string, Promise<WithReason[]>>();
+
+/** v1 / failure answer: the newest titles of the window (viewer's token), without reasons. */
+async function newestPlain(ctx: Pick<Ctx, 'jf'>, user: JfUser, type: NewType | undefined, now: number): Promise<ForYouResult> {
+  const types = type ? TYPE_OF[type] : 'Movie,Series';
+  const r = await ctx.jf.items(user, { types, sort: 'DateCreated', desc: true, limit: 60 });
+  return { engine: 'v1', items: r.items.filter((i) => !i.played && recentEnough(i, now)).slice(0, FOR_YOU_MAX).map((i) => ({ ...i, reason: null })) };
+}
+
+/**
+ * "Für dich neu": titles added within the last 14 days (never an old series that only got a new episode), ranked by the v2 recommendation
+ * engine for the profile, each with its reason. Candidates are the engine's `fresh` source plus the friends / trending signals that
+ * source titles already carry; for a kids profile the engine never runs the social sources, and its age cap applies. The v2 list is cached
+ * like the home rows (user-data version + home generation, 10 min) and filtered by type afterwards. Engine v1 / shadow, or a failing v2 run,
+ * answers with the plain newest titles and no reasons.
+ */
+export async function newForYou(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf'>, user: JfUser, profileId: string, type?: NewType, now = Date.now()): Promise<ForYouResult> {
+  const profile = ctx.cfg.RECO_ENGINE === 'v2' ? await recoProfileOf(ctx, profileId) : undefined;
+  if (!profile) return newestPlain(ctx, user, type, now);
+  try {
+    const ver = await ctx.jf.userDataVersion(user).catch(() => 0);
+    const key = `newforyou:${user.jellyfin_user_id}:${profileId}:${ver}:${await homeGens(ctx, profileId)}`;
+    let list: WithReason[] | null = null;
+    const hit = await ctx.kv.get(key).catch(() => null);
+    if (hit) { try { list = JSON.parse(hit) as WithReason[]; } catch { /* recompute */ } }
+    if (!list) {
+      let run = running.get(key);
+      if (!run) {
+        run = recommend(ctx, user, profile, { surface: 'home_rows', limit: FOR_YOU_POOL, row: 'top_picks', explore: false, now, sources: [freshSource, friendsSource, trendingSource] })
+          .then((r) => r.items.filter((x) => x.sources.includes('fresh') && recentEnough(x.item, now)).slice(0, FOR_YOU_POOL).map(withReason));
+        running.set(key, run);
+        void run.then((l) => ctx.kv.set(key, JSON.stringify(l), FOR_YOU_TTL).catch(() => undefined), () => undefined).finally(() => running.delete(key));
+      }
+      list = await run;
+    }
+    const wanted = type ? TYPE_OF[type] : null;
+    return { engine: 'v2', items: list.filter((i) => !wanted || i.type === wanted).slice(0, FOR_YOU_MAX) };
+  } catch {
+    countFallback('home');
+    return newestPlain(ctx, user, type, now);
+  }
 }

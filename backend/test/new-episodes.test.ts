@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { newEpisodes } from '../src/newpage.js';
-import { makeEnv, type TestEnv } from './helpers.js';
+import { cfg, makeEnv, type TestEnv } from './helpers.js';
 import { MemoryKV } from '../src/kv.js';
 import { plexEnv, identity, type PlexEnv } from './plex/setup.js';
 
@@ -121,6 +121,17 @@ describe('GET /api/library/new-episodes (Jellyfin)', () => {
     expect(again).toContain(S_STRANGER);
     expect(calls()).toBe(n);
     expect(first.body).not.toMatch(/tok-|adminkey|AccessToken/i);
+  });
+
+  it('does not depend on the request service: same answer after the admin removes it', async () => {
+    const before = (await get()).json();
+    await env.ctx.settings.save({ REQUESTS_URL: null }, null);
+    try {
+      expect(env.ctx.seerr).toBeNull();
+      expect((await get()).json()).toEqual(before);
+    } finally {
+      await env.ctx.settings.save({ REQUESTS_URL: cfg.REQUESTS_URL }, null);
+    }
   });
 
   it('bounded: at most 30 entries', async () => {
