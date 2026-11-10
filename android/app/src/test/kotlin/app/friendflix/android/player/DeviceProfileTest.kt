@@ -3,6 +3,7 @@
 package app.friendflix.android.player
 
 import android.media.MediaCodecInfo.CodecProfileLevel
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -87,7 +88,7 @@ class DeviceProfileTest {
     @Test fun jsonHasExactlyTheServerKeys() {
         val list = softwareOnly + dec("c2.qti.hevc.decoder", "video/hevc", true, 2160, setOf(CodecProfileLevel.HEVCProfileMain))
         val j = DeviceProfile.fromDecoders(list, "2.0.0").toJson()
-        assertEquals(setOf("client", "appVersion", "containers", "video", "audio", "subtitles"), j.keys().asSequence().toSet())
+        assertEquals(setOf("client", "appVersion", "containers", "video", "audio", "subtitles", "hls", "audioChannels"), j.keys().asSequence().toSet())
         assertEquals("android", j.getString("client"))
         assertEquals("2.0.0", j.getString("appVersion"))
         for (k in listOf("containers", "video", "audio", "subtitles")) assertTrue(k, j.getJSONArray(k).length() in 1..16)
@@ -112,5 +113,80 @@ class DeviceProfileTest {
     @Test fun unknownHeightIsLeftOut() {
         val list = listOf(dec("c2.android.avc.decoder", "video/avc", false, null))
         assertNull(DeviceProfile.fromDecoders(list, "2.0.0").video.single { it.codec == "h264" }.maxHeight)
+    }
+
+    private val hdmiBox = AudioOut(8, setOf("eac3", "ac3"))
+    private val hardwareHevc = dec("c2.qti.hevc.decoder", "video/hevc", true, 2160, setOf(CodecProfileLevel.HEVCProfileMain))
+
+    private fun strings(a: JSONArray) = (0 until a.length()).map { a.getString(it) }
+
+    @Test fun phoneClaimsStereoAndNoSurround() {
+        val caps = DeviceProfile.fromDecoders(softwareOnly, "2.0.0", AudioOut(2, emptySet()))
+        assertEquals(2, caps.audioChannels)
+        assertEquals(emptyList<String>(), caps.hls!!.surround)
+        assertEquals(listOf("h264"), caps.hls!!.video) // software HEVC is not claimed
+        assertEquals(listOf("aac", "mp3"), caps.hls!!.audio)
+    }
+
+    @Test fun hardwareHevcIsClaimedInHls() {
+        val caps = DeviceProfile.fromDecoders(softwareOnly + hardwareHevc, "2.0.0")
+        assertEquals(listOf("h264", "hevc"), caps.hls!!.video)
+    }
+
+    @Test fun remembersAFailedHevcStartForHlsOnly() {
+        val caps = DeviceProfile.fromDecoders(softwareOnly + hardwareHevc, "2.0.0", avoidHevc = true)
+        assertEquals(listOf("h264"), caps.hls!!.video)
+        assertTrue("direct play keeps its own claim", "hevc" in caps.video.map { it.codec })
+    }
+
+    @Test fun hdmiBoxWithEac3PassthroughClaimsSurround() {
+        val caps = DeviceProfile.fromDecoders(softwareOnly, "2.0.0", hdmiBox)
+        assertTrue("eac3" in caps.audio) // no decoder, passthrough
+        assertTrue("ac3" in caps.audio)
+        assertEquals(listOf("eac3", "ac3", "aac"), caps.hls!!.surround)
+        assertEquals(listOf("aac", "mp3", "eac3", "ac3"), caps.hls!!.audio)
+        assertEquals(8, caps.audioChannels)
+    }
+
+    @Test fun eac3OnlyPassthroughDoesNotClaimAc3() {
+        val caps = DeviceProfile.fromDecoders(softwareOnly, "2.0.0", AudioOut(6, setOf("eac3")))
+        assertEquals(listOf("eac3", "aac"), caps.hls!!.surround)
+        assertFalse("ac3" in caps.audio)
+        assertEquals(6, caps.audioChannels)
+    }
+
+    @Test fun sixChannelPcmClaimsAacSurround() {
+        val caps = DeviceProfile.fromDecoders(softwareOnly, "2.0.0", AudioOut(6, emptySet()))
+        assertEquals(listOf("aac"), caps.hls!!.surround)
+        assertEquals(6, caps.audioChannels)
+    }
+
+    @Test fun stereoChoiceOrSoundModeMeansStereoAndNoSurround() {
+        val caps = DeviceProfile.fromDecoders(softwareOnly, "2.0.0", hdmiBox, stereo = true)
+        assertEquals(2, caps.audioChannels)
+        assertEquals(emptyList<String>(), caps.hls!!.surround)
+        assertTrue("direct play of Dolby audio stays claimed", "eac3" in caps.audio)
+    }
+
+    @Test fun rememberedSurroundFailureMeansStereo() {
+        val caps = DeviceProfile.fromDecoders(softwareOnly, "2.0.0", hdmiBox, avoidSurround = true)
+        assertEquals(2, caps.audioChannels)
+        assertEquals(emptyList<String>(), caps.hls!!.surround)
+    }
+
+    @Test fun jsonCarriesTheBackendKeys() {
+        val j = DeviceProfile.fromDecoders(softwareOnly + hardwareHevc, "2.0.0", hdmiBox).toJson()
+        val hls = j.getJSONObject("hls")
+        assertEquals(setOf("video", "audio", "surround"), hls.keys().asSequence().toSet())
+        assertEquals(listOf("h264", "hevc"), strings(hls.getJSONArray("video")))
+        assertEquals(listOf("aac", "mp3", "eac3", "ac3"), strings(hls.getJSONArray("audio")))
+        assertEquals(listOf("eac3", "ac3", "aac"), strings(hls.getJSONArray("surround")))
+        assertEquals(8, j.getInt("audioChannels"))
+    }
+
+    @Test fun aBlockWithoutHlsHasNeitherKey() {
+        val j = ClientCaps("2.0.0", listOf("mp4"), emptyList(), listOf("aac"), listOf("vtt")).toJson()
+        assertFalse(j.has("hls"))
+        assertFalse(j.has("audioChannels"))
     }
 }

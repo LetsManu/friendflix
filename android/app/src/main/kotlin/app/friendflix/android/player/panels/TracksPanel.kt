@@ -27,6 +27,8 @@ data class TracksState(
     val canSearch: Boolean,
     val fxMode: String,
     val fxDisabledReason: Int?,
+    /** the *Surround sound* switch (device-wide): null = not offered (offline, or the output has no 5.1), else its state */
+    val surround: Boolean? = null,
 )
 
 interface TracksActions {
@@ -34,6 +36,7 @@ interface TracksActions {
     fun subtitle(index: Int?)
     fun search()
     fun fx(mode: String)
+    fun surround(on: Boolean) {}
 }
 
 /** The web player's "Audio and subtitles" menu: Audio, Subtitles (Off, Find subtitles …, tracks), Sound (Clear voices, Night mode). */
@@ -63,6 +66,11 @@ object TracksPanel {
         col.addView(fxRow(ctx, voices, R.string.player_fx_voices, R.string.player_fx_voices_hint))
         col.addView(fxRow(ctx, night, R.string.player_fx_night, R.string.player_fx_night_hint))
         state.fxDisabledReason?.let { col.addView(PanelRows.note(ctx, ctx.getString(it))) }
+        state.surround?.let { on ->
+            lateinit var sw: SwitchCompat
+            sw = fxSwitch(ctx, R.id.tracks_surround, on, true) { actions.surround(sw.isChecked) }
+            col.addView(fxRow(ctx, sw, R.string.player_surround, R.string.player_surround_hint))
+        }
         return col
     }
 

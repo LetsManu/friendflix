@@ -32,6 +32,8 @@ data class PlaybackInfo(
     val audioTracks: List<AudioTrack>,
     val subtitles: List<SubtitleTrack>,
     val trickplay: TrickplayInfo? = null,
+    /** the server's plan for the HLS stream (null from an older server or Plex) */
+    val delivery: Delivery? = null,
 )
 
 /** The title being played (`GET /api/items/:id` → item, or `/next`). */
@@ -400,6 +402,8 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
         private val ID = Regex("[A-Za-z0-9_-]{1,64}")
         private fun validId(id: String) = ID.matches(id)
 
+        private val FELL_BACK = setOf("hevc", "surround", "both")
+
         val ALL_SEGMENTS = setOf("intro", "outro", "recap", "preview")
         private val AUDIO_FX = setOf("off", "voices", "night", "both")
         private val PROFILE_ERRORS = setOf("profile_changed", "profile_required")
@@ -428,7 +432,13 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
                     SubtitleTrack(o.optInt("index"), o.optString("title"), lang(o), url, o.optBoolean("isDefault"))
                 },
                 trickplay = j.optJSONObject("trickplay")?.let(::parseTrickplay),
+                delivery = j.optJSONObject("delivery")?.let(::parseDelivery),
             )
+        }
+
+        private fun parseDelivery(o: JSONObject): Delivery? {
+            val videoCodec = o.optString("videoCodec").takeIf { it.isNotEmpty() } ?: return null
+            return Delivery(o.optString("video"), videoCodec, o.optString("audio"), o.optString("audioCodec"), o.optInt("channels", 2))
         }
 
         private fun parseTrickplay(o: JSONObject): TrickplayInfo? {
@@ -462,7 +472,17 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
          * The body of the first / every `POST /api/playback/info`, like web lib/player/infobody.ts `playbackInfoBody` plus the
          * device's [caps]: `{itemId, startTicks?, audioIndex?, maxBitrate?, reasonHint, audioLang?, caps}`.
          */
-        fun infoBody(itemId: String, startMs: Long?, audioIndex: Int?, maxBitrate: Long?, manual: Boolean, audioLang: String?, caps: ClientCaps): JSONObject =
+        fun infoBody(
+            itemId: String,
+            startMs: Long?,
+            audioIndex: Int?,
+            maxBitrate: Long?,
+            manual: Boolean,
+            audioLang: String?,
+            caps: ClientCaps,
+            fellBack: String? = null,
+            prevPs: String? = null,
+        ): JSONObject =
             JSONObject().apply {
                 put("itemId", itemId)
                 put("reasonHint", if (manual) "manual" else "network")
@@ -471,6 +491,11 @@ class PlayerApi(val server: ServerApi, private val profileId: String) {
                 maxBitrate?.takeIf { it in 300_000..200_000_000 }?.let { put("maxBitrate", it) }
                 audioLang?.takeIf { it.isNotEmpty() && it.length <= 16 }?.let { put("audioLang", it) }
                 put("caps", caps.toJson())
+                // only on the one automatic fallback (`hevc | surround | both`) and the session it replaces (spec §9)
+                if (fellBack in FELL_BACK && prevPs != null && ID.matches(prevPs)) {
+                    put("fellBack", fellBack)
+                    put("prevPs", prevPs)
+                }
             }
     }
 }

@@ -16,6 +16,7 @@
     <item name="subs_results" type="id" />
     <item name="tracks_fx_voices" type="id" />
     <item name="tracks_fx_night" type="id" />
+    <item name="tracks_surround" type="id" />
     <item name="more_speed" type="id" />
     <item name="more_quality" type="id" />
     <item name="more_sleep" type="id" />
