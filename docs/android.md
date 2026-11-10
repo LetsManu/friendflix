@@ -104,6 +104,8 @@ The player fills the screen: the status and navigation bars stay hidden, also af
 
 Your *Subtitle appearance* from the web settings (size, colour, background, font) is used for subtitles. With *Anime: original audio with subtitles* on in your profile, an anime series starts in Japanese with subtitles in the app language, unless you chose something else for that series.
 
+**Surround sound and HEVC streams.** The app tells the server what the phone can output: 5.1 only when the phone's own speakers, its USB or HDMI output or a Dolby passthrough really are 5.1. Headphones and Bluetooth count as stereo, so they get a stereo stream. A converted stream can carry HEVC and Dolby Digital Plus, Dolby Digital or AAC 5.1 when the phone confirms them. If such a stream does not start, the player falls back once to one the phone plays and remembers that for 30 days (also forgotten after a system update). When the server offers surround and the output is 5.1, the *Sound* section of *Audio and subtitles* has a *Surround sound* switch ("5.1 on this device"); turning it off reloads the stream at the same position with stereo. The switch is hidden offline and while casting. Surround and HEVC on FriendFlix's own Chromecast receiver follow in a later update.
+
 **Offline (a download):** *Episodes*, *Scenes*, *Cast & info*, bookmarks, subtitle search, quality, the quality chip, Chromecast and post-play need the server and are hidden. Speed, *Clear voices* and *Night mode* (with your last setting on this phone), subtitles (in the default style), the sleep timer, lock and picture-in-picture work.
 
 **While casting:** the phone is the remote for the TV. *Episodes* plays the picked episode on the TV, *Scenes* and bookmarks jump on the TV, a new bookmark takes the TV's position, the sleep timer pauses the TV, and *Cast & info* shows the title the TV plays. Not offered while casting: audio, subtitles, subtitle search, *Clear voices* and *Night mode*, quality and its chip, speed, lock, picture-in-picture and post-play. The Chromecast button stays in the top bar left of *Cast & info*, and More shows *Playing on TV*.
@@ -357,6 +359,12 @@ Unit tests and the emulator in CI cover the logic; these points need a real phon
 64. Change the server to a second test server: the warning names the new address; afterwards the downloads are gone, the old server shows the licences returned and the session ended, and setup checks the new address (a typo stays on the setup screen with the address filled in).
 65. Sign out of this device: after the confirmation the app shows the sign-in page; downloads and their files are gone (also on the SD card), the next download works (new keys), and the old session no longer works on the server.
 66. Android's app info → the gear icon opens the app settings; the version shown matches the release.
+
+**HEVC and surround sound**
+67. Bluetooth headphones connected, a title with a 5.1 track on a server with `SURROUND_AUDIO=true`: the sound is stereo and the *Surround sound* switch is not shown in *Audio and subtitles → Sound* (the receiver or the headphones' app shows two channels).
+68. Phone on wired headphones or the speaker: same result, stereo and no switch.
+69. Phone or Android TV box on an HDMI receiver or soundbar that takes Dolby: the switch *Surround sound* shows, the receiver shows 5.1 (Dolby Digital Plus, Dolby Digital or multichannel PCM); turn the switch off, the stream reloads at the same position with stereo; turn it on again, 5.1 returns.
+70. A HEVC title in a converted stream on a phone with HEVC hardware: it plays; the admin's now-playing shows the stream. Force a failure on a test server (for example block the HEVC stream): one automatic fallback, no loop, and the choice is remembered.
 
 ## Building it yourself
 

@@ -104,6 +104,8 @@ Der Player füllt den Bildschirm: Status- und Navigationsleiste bleiben ausgeble
 
 Deine *Untertitel-Darstellung* aus den Web-Einstellungen (Größe, Farbe, Hintergrund, Schrift) gilt für die Untertitel. Mit *Anime: Originalton mit Untertiteln* in deinem Profil beginnt eine Anime-Serie auf Japanisch mit Untertiteln in der Sprache der App, außer du hast für diese Serie etwas anderes gewählt.
 
+**Raumklang und HEVC-Streams.** Die App sagt dem Server, was das Handy ausgeben kann: 5.1 nur, wenn die Lautsprecher des Handys, der USB- oder HDMI-Ausgang oder ein Dolby-Passthrough wirklich 5.1 sind. Kopfhörer und Bluetooth gelten als Stereo und bekommen einen Stereo-Stream. Ein umgewandelter Stream kann HEVC und Dolby Digital Plus, Dolby Digital oder AAC 5.1 enthalten, wenn das Handy sie bestätigt. Startet ein solcher Stream nicht, weicht der Player einmal auf einen aus, den das Handy abspielt, und merkt sich das 30 Tage (nach einem Systemupdate wird es ebenfalls vergessen). Bietet der Server Raumklang an und ist die Ausgabe 5.1, hat der Abschnitt *Klang* unter *Audio und Untertitel* einen Schalter *Raumklang* („5.1 auf diesem Gerät“); ausgeschaltet lädt der Stream an derselben Stelle mit Stereo neu. Offline und beim Casting ist der Schalter verborgen. Raumklang und HEVC auf dem eigenen Chromecast-Empfänger von FriendFlix folgen in einem späteren Update.
+
 **Offline (ein Download):** *Folgen*, *Szenen*, *Besetzung & Infos*, Lesezeichen, Untertitelsuche, Qualität, der Qualitäts-Chip, Chromecast und Post-Play brauchen den Server und sind ausgeblendet. Tempo, *Klare Stimmen* und *Nachtmodus* (mit deiner letzten Einstellung auf diesem Handy), Untertitel (in der Standarddarstellung), Schlaf-Timer, Sperre und Bild-in-Bild funktionieren.
 
 **Beim Casting:** Das Handy ist die Fernbedienung für den Fernseher. *Folgen* spielt die gewählte Folge auf dem Fernseher, *Szenen* und Lesezeichen springen auf dem Fernseher, ein neues Lesezeichen nimmt die Position des Fernsehers, der Schlaf-Timer pausiert den Fernseher, und *Besetzung & Infos* zeigt den Titel, den der Fernseher spielt. Beim Casting nicht angeboten: Ton, Untertitel, Untertitelsuche, *Klare Stimmen* und *Nachtmodus*, Qualität und ihr Chip, Tempo, Sperre, Bild-in-Bild und Post-Play. Der Chromecast-Knopf bleibt in der oberen Leiste links neben *Besetzung & Infos*, und Mehr zeigt *Läuft auf dem Fernseher*.
@@ -357,6 +359,12 @@ Unit-Tests und der Emulator in der CI decken die Logik ab; diese Punkte brauchen
 64. Den Server auf einen zweiten Testserver wechseln: Die Warnung nennt die neue Adresse; danach sind die Downloads weg, der alte Server zeigt die Lizenzen zurückgegeben und die Sitzung beendet, und die Einrichtung prüft die neue Adresse (ein Tippfehler bleibt mit ausgefüllter Adresse in der Einrichtung).
 65. Auf diesem Gerät abmelden: Nach der Rückfrage zeigt die App die Anmeldeseite; Downloads und ihre Dateien sind weg (auch auf der SD-Karte), der nächste Download klappt (neue Schlüssel), und die alte Sitzung gilt auf dem Server nicht mehr.
 66. Androids App-Info → das Zahnrad öffnet die App-Einstellungen; die angezeigte Version passt zum Release.
+
+**HEVC und Raumklang**
+67. Bluetooth-Kopfhörer verbunden, ein Titel mit 5.1-Spur auf einem Server mit `SURROUND_AUDIO=true`: Der Ton ist Stereo, und der Schalter *Raumklang* fehlt unter *Audio und Untertitel → Klang* (die Anzeige des Receivers oder der Kopfhörer-App zeigt zwei Kanäle).
+68. Handy mit Kabelkopfhörern oder dem Lautsprecher: gleiches Ergebnis, Stereo und kein Schalter.
+69. Handy oder Android-TV-Box an einem HDMI-Receiver oder einer Soundbar, die Dolby kann: Der Schalter *Raumklang* erscheint, der Receiver zeigt 5.1 (Dolby Digital Plus, Dolby Digital oder mehrkanaliges PCM); Schalter aus, der Stream lädt an derselben Stelle mit Stereo neu; wieder an, 5.1 kommt zurück.
+70. Ein HEVC-Titel in einem umgewandelten Stream auf einem Handy mit HEVC-Hardware: Er spielt; „Läuft gerade“ des Admins zeigt den Stream. Auf einem Testserver einen Fehler erzwingen (zum Beispiel den HEVC-Stream blockieren): ein automatischer Ausweichschritt, keine Schleife, und die Wahl wird gemerkt.
 
 ## Selbst bauen
 
