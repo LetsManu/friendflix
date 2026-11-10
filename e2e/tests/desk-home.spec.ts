@@ -299,21 +299,21 @@ test.describe('desktop rows', () => {
     expect(await row.locator('h2').evaluate((e) => [getComputedStyle(e).fontSize, getComputedStyle(e).fontWeight])).toEqual(['20px', '700']);
   });
 
-  test('ranked rows show large outlined rank numbers on desktop', async ({ page }) => {
+  test('ranked rows: a glass strip at the foot with the rank and the title, the rank is the accessible name', async ({ page }) => {
     await page.goto('/');
     const row = page.locator('section.row.rk').first();
     await row.scrollIntoViewIfNeeded();
-    const rank = row.locator('.rank').first();
-    await expect(rank).toHaveText('1');
-    await expect(rank).toHaveAttribute('aria-label', 'Platz 1');
-    const st = await rank.evaluate((e) => { const c = getComputedStyle(e); return { size: parseFloat(c.fontSize), stroke: parseFloat(c.webkitTextStroke || c.getPropertyValue('-webkit-text-stroke-width')), fill: c.webkitTextFillColor || c.color }; });
-    expect(st.size).toBeGreaterThanOrEqual(120);
-    expect(st.stroke).toBeGreaterThan(0);
-    expect(st.fill).toBe('rgb(16, 20, 24)'); // the page colour inside the outline
-    // the numeral sits beside the poster (left of it), not on top of it as a chip
-    const r = (await rank.boundingBox())!, c = (await row.locator('article.card').first().boundingBox())!;
-    expect(r.x).toBeLessThan(c.x);
-    expect(r.height).toBeGreaterThan(c.height * .6);
+    const card = row.locator('article.card').first();
+    const strip = card.locator('.rkbar');
+    await expect(strip.locator('.rkn')).toHaveText('1');
+    await expect(strip.locator('.rkt')).toHaveText(/\S/);
+    await expect(card.locator('a.thumb')).toHaveAttribute('aria-label', /^Platz 1: /);
+    // no big hollow numerals, no chip: the strip sits inside the poster at its foot
+    await expect(row.locator('.rank')).toHaveCount(0);
+    const s = (await strip.boundingBox())!, c = (await card.locator('.thumb').boundingBox())!;
+    expect(Math.round(s.y + s.height)).toBe(Math.round(c.y + c.height));
+    expect(Math.round(s.width)).toBe(Math.round(c.width));
+    expect(await strip.locator('.rkn').evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 167, 182)');
   });
 
   test('rows keep today\'s order and reco captions', async ({ page }) => {

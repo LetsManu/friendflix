@@ -21,6 +21,8 @@
   export let priority = false;
   /** shows "Aus Weiterschauen entfernen" in the ⋯ sheet; emits `remove` */
   export let removable = false;
+  /** place in a ranked row (1-based, 0 = not ranked): a glass strip at the foot shows it with the title */
+  export let rank = 0;
   const dispatch = createEventDispatcher<{ remove: Item }>();
 
   const POSTER_WIDTHS = [200, 320, 480] as const;
@@ -58,11 +60,12 @@
 </script>
 
 <article class="pc" class:landscape>
-  <a class="thumb" href={landscape ? playPath(item) : itemPath(item)} aria-label={landscape ? $t('home.card.playName', { name: label }) : $t('home.card.openPreview', { name: label })} aria-haspopup={landscape ? undefined : 'dialog'} on:click={landscape ? (e) => { if (watchable) playOrCast(e, item); } : open}>
+  <a class="thumb" class:ranked={rank > 0} href={landscape ? playPath(item) : itemPath(item)} aria-label={landscape ? $t('home.card.playName', { name: label }) : $t('home.card.openPreview', { name: (rank ? $t('home.row.rank', { n: rank }) + ': ' : '') + label })} aria-haspopup={landscape ? undefined : 'dialog'} on:click={landscape ? (e) => { if (watchable) playOrCast(e, item); } : open}>
     {#if src}
       <img class:spoil={isSpoiler(item, $prefs)} loading={priority ? 'eager' : 'lazy'} fetchpriority={priority ? 'high' : undefined} decoding="async" {src} srcset={srcs} sizes={landscape ? '45vw' : '32vw'} alt="" width={landscape ? 320 : 200} height={landscape ? 180 : 300} />
     {:else}<span class="noimg">{item.name}</span>{/if}
     {#if tag}<span class="newep" class:leave={tag.kind === 'leaving'}>{$t(tag.key, { n: tag.kind === 'leaving' ? tag.n : 0 })}</span>{/if}
+    {#if rank}<span class="rkbar frost frost-safe" aria-hidden="true"><span class="rkn">{rank}</span><span class="rkt">{item.name}</span></span>{/if}
     {#if landscape}<span class="playi" aria-hidden="true"><Icon name="play" size={20} /></span>{/if}
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
   </a>
@@ -99,9 +102,13 @@
   .spoil { filter: blur(14px) saturate(.7); transform: scale(1.1); }
   .noimg { position: absolute; inset: 0; display: grid; place-items: center; padding: .5rem; text-align: center; font-weight: 700; font-size: .85rem; background: linear-gradient(160deg, #252c34, #161b21); overflow: hidden; }
   .newep { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); background: var(--acc-fill); color: #fff; font-size: .62rem; font-weight: 700; padding: .1rem .45rem; border-radius: 3px; white-space: nowrap; }
+  .ranked .newep { bottom: 2.7rem; }
   .newep.leave { background: #b3261e; }
   .landscape .newep { left: 6px; transform: none; bottom: 10px; }
   .playi { position: absolute; left: 50%; top: 50%; width: 38px; height: 38px; margin: -19px 0 0 -19px; border-radius: 50%; border: 2px solid rgba(255,255,255,.85); background: rgba(0,0,0,.5); display: grid; place-items: center; padding-left: 2px; }
+  .rkbar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: .4rem; height: 2.2rem; padding: 0 .45rem; box-sizing: border-box; border: 0; border-top: 1px solid var(--fr-line); border-radius: 0; pointer-events: none; }
+  .rkn { flex: none; font-size: 1.3rem; font-weight: 800; line-height: 1; color: #ffa7b6; font-variant-numeric: tabular-nums; }
+  .rkt { flex: 1; min-width: 0; font-size: .7rem; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.3); }
   .progress i { display: block; height: 100%; background: var(--acc); }
   .pbar { display: flex; align-items: center; gap: 0; background: #1b2127; border-radius: 0 0 8px 8px; margin-top: -2px; padding-left: .5rem; }

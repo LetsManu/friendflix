@@ -46,6 +46,8 @@
   export let removable = false;
   /** portrait 2:3 poster instead of the 16:9 thumbnail (Top-10 rows) */
   export let poster = false;
+  /** place in a ranked row (1-based, 0 = not ranked): a glass strip at the foot shows it with the title */
+  export let rank = 0;
   /** eager + high priority image (first visible row of the home page) */
   export let priority = false;
   /** the link the card opens instead of the title's own page (TV extras grid: the clip plays) */
@@ -240,13 +242,14 @@
   <div class="tw" bind:this={twEl} use:rowTilt>
   <span class="tw-shadow" aria-hidden="true"></span>
   <div class="media">
-  <a class="thumb" class:art={!!src} {href} bind:this={thumbEl} on:keydown={thumbKeyDown} on:keyup={thumbKeyUp} aria-label={epSub ? `${item.seriesName}, ${epSub}` : item.name + (sub ? ', ' + sub : '')}>
+  <a class="thumb" class:art={!!src} {href} bind:this={thumbEl} on:keydown={thumbKeyDown} on:keyup={thumbKeyUp} aria-label={(rank ? $t('home.row.rank', { n: rank }) + ': ' : '') + (epSub ? `${item.seriesName}, ${epSub}` : item.name + (sub ? ', ' + sub : ''))}>
     {#if posterOnly}<img class="blur" loading="lazy" decoding="async" {src} srcset={srcs} {sizes} alt="" aria-hidden="true" />{/if}
     {#if src}<img bind:this={imgEl} use:decodeFade class:contain={posterOnly} class:spoil={isSpoiler(item, $prefs)} loading={priority ? 'eager' : 'lazy'} fetchpriority={priority ? 'high' : undefined} decoding="async" {src} srcset={srcs} {sizes} alt="" width={posterSrc ? 200 : 320} height={posterSrc ? 300 : 180} />{/if}
     {#if tag?.kind === 'leaving'}<span class="newep leave">{$t(tag.key, { n: tag.n })}</span>
     {:else if tag && (tag.label === 'new' || tag.label === 'newSeries')}<span class="brand"><Logo size={16} label="" /><span class="neu">{$t(tag.key)}</span></span>
     {:else if tag}<span class="newep">{$t(tag.key)}</span>{/if}
-    <span class="cap" class:big={!src}>{#if epSub}<span class="l1">{item.seriesName}</span> <span class="l2">{epSub}</span>{:else}{item.name}{/if}</span>
+    {#if rank}<span class="rkbar frost frost-safe" aria-hidden="true"><span class="rkn">{rank}</span><span class="rkt">{item.name}</span></span>
+    {:else}<span class="cap" class:big={!src}>{#if epSub}<span class="l1">{item.seriesName}</span> <span class="l2">{epSub}</span>{:else}{item.name}{/if}</span>{/if}
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
     <span class="tw-band" aria-hidden="true"></span><span class="tw-glare" aria-hidden="true"></span>
   </a>
@@ -304,6 +307,10 @@
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .l1 { display: block; } .l2 { display: block; font-weight: 500; font-size: .75rem; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cap.big { align-content: center; }
+  /* ranked row: glass strip at the foot, the rank large on the left (coral on glass), the title on one line */
+  .rkbar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; display: flex; align-items: center; gap: .6rem; height: 2.5rem; padding: 0 .6rem; box-sizing: border-box; border: 0; border-top: 1px solid var(--fr-line); border-radius: 0; pointer-events: none; }
+  .rkn { flex: none; font-size: 1.6rem; font-weight: 800; line-height: 1; color: #ffa7b6; font-variant-numeric: tabular-nums; }
+  .rkt { flex: 1; min-width: 0; font-size: .82rem; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .media { position: relative; }
   .poster .thumb { aspect-ratio: 2 / 3; }
   .poster .thumb::after { background: linear-gradient(transparent 70%, rgba(0,0,0,.6)); }
