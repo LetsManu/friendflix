@@ -65,7 +65,7 @@
       <img class:spoil={isSpoiler(item, $prefs)} loading={priority ? 'eager' : 'lazy'} fetchpriority={priority ? 'high' : undefined} decoding="async" {src} srcset={srcs} sizes={landscape ? '45vw' : '32vw'} alt="" width={landscape ? 320 : 200} height={landscape ? 180 : 300} />
     {:else}<span class="noimg">{item.name}</span>{/if}
     {#if tag}<span class="newep" class:leave={tag.kind === 'leaving'}>{$t(tag.key, { n: tag.kind === 'leaving' ? tag.n : 0 })}</span>{/if}
-    {#if rank}<span class="rkbar frost frost-safe" aria-hidden="true"><span class="rkn">{rank}</span><span class="rkt">{item.name}</span></span>{/if}
+    {#if rank}<span class="rkbar frost-flat frost-text" aria-hidden="true"><span class="rkn">{rank}</span><span class="rkt">{item.name}</span></span>{/if}
     {#if landscape}<span class="playi" aria-hidden="true"><Icon name="play" size={20} /></span>{/if}
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
   </a>
@@ -106,8 +106,8 @@
   .newep.leave { background: #b3261e; }
   .landscape .newep { left: 6px; transform: none; bottom: 10px; }
   .playi { position: absolute; left: 50%; top: 50%; width: 38px; height: 38px; margin: -19px 0 0 -19px; border-radius: 50%; border: 2px solid rgba(255,255,255,.85); background: rgba(0,0,0,.5); display: grid; place-items: center; padding-left: 2px; }
-  .rkbar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: .4rem; height: 2.2rem; padding: 0 .45rem; box-sizing: border-box; border: 0; border-top: 1px solid var(--fr-line); border-radius: 0; pointer-events: none; }
-  .rkn { flex: none; font-size: 1.3rem; font-weight: 800; line-height: 1; color: #ffa7b6; font-variant-numeric: tabular-nums; }
+  .rkbar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: .4rem; height: 2.2rem; padding: 0 .45rem; box-sizing: border-box; border: 0; border-top: 1px solid var(--fr-line); border-radius: 0; pointer-events: none; --fr-scrim: .92; }
+  .rkn { flex: none; font-size: 1.3rem; font-weight: 800; line-height: 1; color: var(--acc-text); font-variant-numeric: tabular-nums; }
   .rkt { flex: 1; min-width: 0; font-size: .7rem; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.3); }
   .progress i { display: block; height: 100%; background: var(--acc); }

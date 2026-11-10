@@ -248,7 +248,7 @@
     {#if tag?.kind === 'leaving'}<span class="newep leave">{$t(tag.key, { n: tag.n })}</span>
     {:else if tag && (tag.label === 'new' || tag.label === 'newSeries')}<span class="brand"><Logo size={16} label="" /><span class="neu">{$t(tag.key)}</span></span>
     {:else if tag}<span class="newep">{$t(tag.key)}</span>{/if}
-    {#if rank}<span class="rkbar frost frost-safe" aria-hidden="true"><span class="rkn">{rank}</span><span class="rkt">{item.name}</span></span>
+    {#if rank}<span class="rkbar frost-flat frost-text" aria-hidden="true"><span class="rkn">{rank}</span><span class="rkt">{item.name}</span></span>
     {:else}<span class="cap" class:big={!src}>{#if epSub}<span class="l1">{item.seriesName}</span> <span class="l2">{epSub}</span>{:else}{item.name}{/if}</span>{/if}
     {#if pct}<span class="progress"><i style="width:{pct}%"></i></span>{/if}
     <span class="tw-band" aria-hidden="true"></span><span class="tw-glare" aria-hidden="true"></span>
@@ -308,8 +308,12 @@
   .l1 { display: block; } .l2 { display: block; font-weight: 500; font-size: .75rem; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cap.big { align-content: center; }
   /* ranked row: glass strip at the foot, the rank large on the left (coral on glass), the title on one line */
-  .rkbar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; display: flex; align-items: center; gap: .6rem; height: 2.5rem; padding: 0 .6rem; box-sizing: border-box; border: 0; border-top: 1px solid var(--fr-line); border-radius: 0; pointer-events: none; }
-  .rkn { flex: none; font-size: 1.6rem; font-weight: 800; line-height: 1; color: #ffa7b6; font-variant-numeric: tabular-nums; }
+  .rkbar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; display: flex; align-items: center; gap: .6rem; height: 2.5rem; padding: 0 .6rem; box-sizing: border-box; border: 0; border-top: 1px solid var(--fr-line); border-radius: 0; pointer-events: none; --fr-scrim: .92; }
+  .rkn { flex: none; font-size: 1.6rem; font-weight: 800; line-height: 1; color: var(--acc-text); font-variant-numeric: tabular-nums; }
+  /* TV: the old corner chip (number only; the focus tile names the title) */
+  :global(html.tv) .rkbar { left: auto; right: .625rem; top: .625rem; bottom: auto; height: 2rem; min-width: 2rem; justify-content: center; gap: 0; padding: 0 .4rem; border: 1px solid var(--fr-line); border-radius: 4px; box-shadow: none; }
+  :global(html.tv) .rkn { font-size: .9375rem; }
+  :global(html.tv) .rkt { display: none; }
   .rkt { flex: 1; min-width: 0; font-size: .82rem; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .media { position: relative; }
   .poster .thumb { aspect-ratio: 2 / 3; }

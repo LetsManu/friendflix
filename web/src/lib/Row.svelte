@@ -262,7 +262,9 @@
   @media (hover: none), (pointer: coarse) { .row.dk:hover .pg:not(:focus-visible) { opacity: 0; } }
   /* ranked rows: portrait posters with the rank strip (Card); the poster fills its slot, so the row shows more slots per page
      than a plain row and the cards keep about the width they had (the poster used to take 58 % of its slot) */
-  .row.dk.rk { --n: 7; contain-intrinsic-size: auto calc(var(--sw) * 1.5 + 48px); }
+  .row.dk.rk { --n: 5; contain-intrinsic-size: auto calc(var(--sw) * 1.5 + 48px); }
+  @media (min-width: 1000px) { .row.dk.rk { --n: 6; } }
+  @media (min-width: 1200px) { .row.dk.rk { --n: 7; } }
   @media (min-width: 1400px) { .row.dk.rk { --n: 8; } }
 
   /* ---- phone: swipeable poster rows (3.2 posters visible), no hover room needed ---- */

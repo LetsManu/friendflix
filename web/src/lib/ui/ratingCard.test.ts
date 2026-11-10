@@ -12,6 +12,8 @@ describe('hero rating card', () => {
     expect(card).toMatch(/SHOW_MS = 4000/);
     expect(card).toMatch(/motionAllowed\(\)/);
     expect(card).toMatch(/\{#if allowed && rating\}/);
+    expect(card).toMatch(/mounted && \$prefsLoaded && calmOff/);
+    expect(card).toMatch(/\{#if shown\}<span class="sr-only">\{\$t\('home\.card\.ageRating'/);
     expect(card).toMatch(/pointer-events: none/);
     expect(card).toMatch(/role="status" aria-live="polite" aria-atomic="true"/);
   });
@@ -32,9 +34,9 @@ describe('ranked rows', () => {
     expect(row).not.toMatch(/text-stroke|\.rank\b/);
     expect(row).toMatch(/rank=\{ranked \? idx \+ 1 : 0\}/);
     for (const src of [cardTpl, posterTpl]) {
-      expect(src).toMatch(/class="rkbar frost frost-safe"/);
+      expect(src).toMatch(/class="rkbar frost-flat frost-text"/);
       expect(src).toMatch(/\$t\('home\.row\.rank', \{ n: rank \}\)/);
-      expect(src).toMatch(/\.rkn \{[^}]*color: #ffa7b6/);
+      expect(src).toMatch(/\.rkn \{[^}]*color: var\(--acc-text\)/);
     }
   });
 });
