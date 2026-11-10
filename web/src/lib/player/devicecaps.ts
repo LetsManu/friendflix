@@ -36,6 +36,8 @@ export interface DecodeQuery {
 export interface ProbeEnv {
   canPlayType(t: string): string;
   isTypeSupported?: (t: string) => boolean;
+  /** MSE as hls.js uses it (`MediaSource`, or `ManagedMediaSource` on iPhone): the hls claim only; the direct-play claims keep isTypeSupported */
+  hlsTypeSupported?: (t: string) => boolean;
   decodingInfo?: (q: DecodeQuery) => Promise<{ supported: boolean }>;
   /** the screen shows high dynamic range (`(dynamic-range: high)`) */
   hdrDisplay: boolean;
@@ -204,8 +206,9 @@ export function buildDeviceCaps(env: ProbeEnv, o: { client: ProbeClient; appVers
   // what plays inside an HLS stream (hls.js): only with MSE; hevc also needs the file claim and (with the API) the media-source decode,
   // surround needs the media-source 6-channel decode per codec (no API, no pending answer: no surround)
   let hls: Out['hls'];
-  if (typeof env.isTypeSupported === 'function') {
-    const mse = (m: string) => { try { return env.isTypeSupported!(m) === true; } catch { return false; } };
+  const hlsMse = env.hlsTypeSupported ?? env.isTypeSupported;
+  if (typeof hlsMse === 'function') {
+    const mse = (m: string) => { try { return hlsMse(m) === true; } catch { return false; } };
     const hv: NonNullable<Out['hls']>['video'] = [];
     if (mse(MSE_H264)) hv.push('h264');
     if (video.some((v) => v.codec === 'hevc') && mse(MIME.hevcMain) && (!api || dec(msKey(MIME.hevcMain, 1080)))) hv.push('hevc');
@@ -227,6 +230,8 @@ interface Cached { v: number; ua: string; at: number; hdr?: boolean; caps: Out |
 export interface DeviceDeps { env: ProbeEnv | null;
   /** the output's channel count (default: AudioContext destination.maxChannelCount) */
   channels?: () => number;
+  /** where `devicechange` is heard (default navigator.mediaDevices) */
+  mediaDevices?: { addEventListener(type: string, fn: () => void): void } | null;
   /** a sound mode ("Clear voices" / "Night mode") is on for the active profile (default: the player's stored preference) */
   soundMode?: () => boolean; ua: string; storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null; now: () => number; tizen: boolean;
   /** the LG webOS or Fire TV app: it sends its own caps (webos/caps.ts appCaps), so nothing is probed and nothing waits for a probe */
@@ -241,12 +246,14 @@ function realDeps(): DeviceDeps {
     if (w && typeof document !== 'undefined') {
       const v = document.createElement('video');
       const ms = (w as unknown as { MediaSource?: { isTypeSupported?: (t: string) => boolean } }).MediaSource;
+      const hlsMs = ms?.isTypeSupported ? ms : (w as unknown as { ManagedMediaSource?: { isTypeSupported?: (t: string) => boolean } }).ManagedMediaSource;
       const mc = (navigator as Navigator & { mediaCapabilities?: { decodingInfo?: (q: unknown) => Promise<{ supported: boolean }> } }).mediaCapabilities;
       let hdrDisplay: boolean;
       try { hdrDisplay = w.matchMedia?.('(dynamic-range: high)').matches === true; } catch { hdrDisplay = false; }
       env = {
         canPlayType: (t) => v.canPlayType(t),
         isTypeSupported: ms?.isTypeSupported ? (t) => ms.isTypeSupported!(t) : undefined,
+        hlsTypeSupported: hlsMs?.isTypeSupported ? (t) => hlsMs.isTypeSupported!(t) : undefined,
         decodingInfo: mc?.decodingInfo ? (q) => mc.decodingInfo!(q) : undefined,
         hdrDisplay,
       };
@@ -316,22 +323,30 @@ function baseCaps(): Out | null {
 // ---- the output: channels, the stereo choice, sound modes, the avoid memory ----
 let channels: number | undefined;
 let listening = false;
-function measureChannels(): number {
-  const AC = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
-    ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+/** S2: the avoid memory of this page load, for when storage is blocked */
+let memAvoid: { ua: string; hevc?: number; surround?: number } | null = null;
+/** the destination's channel count of a short-lived AudioContext (2 without one; a throwing constructor throws, the caller counts it as 2) */
+export function measureChannelsWith(AC: (new () => AudioContext) | undefined): number {
   if (!AC) return 2;
   const ctx = new AC();
-  try { return ctx.destination.maxChannelCount; } finally { void ctx.close().catch(() => undefined); }
+  try { return ctx.destination.maxChannelCount; } finally { try { void ctx.close?.()?.catch?.(() => undefined); } catch { /* already closed */ } }
 }
+const measureChannels = (): number => {
+  const w = window as unknown as { AudioContext?: new () => AudioContext; webkitAudioContext?: new () => AudioContext };
+  return measureChannelsWith(w.AudioContext ?? w.webkitAudioContext);
+};
+/** forget the measured count: the next read measures again (the player calls this at every start; `devicechange` is not reliable without media permissions) */
+export function remeasureOutput(): void { channels = undefined; }
 /** how many channels the output can play (2 when unknown or when measuring throws); measured once per page and again after a `devicechange` */
 export function outputChannels(): number {
   if (channels !== undefined) return channels;
   let n: number;
   try { n = d().channels ? d().channels!() : measureChannels(); } catch { n = 2; }
   channels = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 2;
-  if (!d().channels && !listening && typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
+  const md = d().mediaDevices !== undefined ? d().mediaDevices : !d().channels && typeof navigator !== 'undefined' ? navigator.mediaDevices : null;
+  if (md?.addEventListener && (!listening || d().mediaDevices)) {
     listening = true;
-    try { navigator.mediaDevices.addEventListener('devicechange', () => { channels = undefined; }); } catch { listening = false; }
+    try { md.addEventListener('devicechange', () => { channels = undefined; }); } catch { listening = false; }
   }
   return channels;
 }
@@ -347,7 +362,10 @@ function soundModeOn(): boolean {
 type AvoidRec = { ua: string; hevc?: number; surround?: number };
 /** until when each feature is left out on this device (ms timestamps); a different user agent or an old entry counts as nothing */
 export function avoidedUntil(): { hevc?: number; surround?: number } {
-  const a = read<AvoidRec>(AVOID_KEY);
+  const stored = read<AvoidRec>(AVOID_KEY);
+  const mem = memAvoid && memAvoid.ua === d().ua ? memAvoid : null;
+  // the stored record and this page's own copy: the later failure of each feature counts
+  const a: AvoidRec | null = stored && stored.ua === d().ua ? { ua: stored.ua, ...(mem ? { hevc: Math.max(stored.hevc ?? 0, mem.hevc ?? 0) || undefined, surround: Math.max(stored.surround ?? 0, mem.surround ?? 0) || undefined } : stored) } : mem;
   const out: { hevc?: number; surround?: number } = {};
   if (!a || a.ua !== d().ua) return out;
   for (const k of ['hevc', 'surround'] as const) {
@@ -361,7 +379,9 @@ export function noteHlsFailure(what: 'hevc' | 'surround' | 'both'): void {
   const prev = read<AvoidRec>(AVOID_KEY);
   const keep = prev && prev.ua === d().ua ? prev : { ua: d().ua };
   const at = d().now();
-  write(AVOID_KEY, { ...keep, ...(what !== 'surround' ? { hevc: at } : {}), ...(what !== 'hevc' ? { surround: at } : {}) } satisfies AvoidRec);
+  const next = { ...keep, ...(what !== 'surround' ? { hevc: at } : {}), ...(what !== 'hevc' ? { surround: at } : {}) } satisfies AvoidRec;
+  memAvoid = { ...(memAvoid && memAvoid.ua === d().ua ? memAvoid : { ua: d().ua }), ...(what !== 'surround' ? { hevc: at } : {}), ...(what !== 'hevc' ? { surround: at } : {}) };
+  write(AVOID_KEY, next);
 }
 
 /** the channel count the device states before the stereo choice and the sound modes apply (Tizen: 6 when its Dolby probe passed) */
@@ -429,4 +449,4 @@ export function capsPending(ms = 400): Promise<void> | null {
 export const isProbedBlock = (c: { client?: string } | null | undefined): boolean => c?.client === 'web' || c?.client === 'tizen';
 
 /** tests only */
-export function _resetDeviceCaps(next: DeviceDeps | null = null): void { deps = next; probed = undefined; syncResult = undefined; running = null; channels = undefined; }
+export function _resetDeviceCaps(next: DeviceDeps | null = null): void { deps = next; probed = undefined; syncResult = undefined; running = null; channels = undefined; memAvoid = null; listening = false; }

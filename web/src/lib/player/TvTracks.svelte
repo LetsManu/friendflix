@@ -48,7 +48,7 @@
             <button type="button" class="ti" role="switch" aria-checked={fx[o.k] && !fxDisabled} disabled={Boolean(fxDisabled)} on:click={() => dispatch('fx', o.k)}><span class="ck">{#if fx[o.k] && !fxDisabled}<Icon name="check" size={24} />{/if}</span><span class="tl">{$t(o.label)}</span></button>
           {/each}
           {#if surroundShown}
-            <button type="button" class="ti" role="switch" aria-checked={surroundOn} disabled={surroundLocked} data-testid="surround-switch" on:click={() => dispatch('surround')}><span class="ck">{#if surroundOn}<Icon name="check" size={24} />{/if}</span><span class="tl">{$t('scenes.audio.surround')}<small>{$t(surroundLocked ? 'scenes.audio.surroundMode' : 'scenes.audio.surroundHint')}</small></span></button>
+            <button type="button" class="ti" role="switch" aria-checked={surroundOn} aria-disabled={surroundLocked ? 'true' : undefined} class:locked={surroundLocked} data-testid="surround-switch" on:click={() => { if (!surroundLocked) dispatch('surround'); }}><span class="ck">{#if surroundOn}<Icon name="check" size={24} />{/if}</span><span class="tl">{$t('scenes.audio.surround')}<small>{$t(surroundLocked ? 'scenes.audio.surroundMode' : 'scenes.audio.surroundHint')}</small></span></button>
           {/if}
         </div>
       </section>
@@ -79,7 +79,7 @@
     transform-origin: left center; transition: transform var(--tv-d-s) var(--tv-emph-out); }
   :global(html.tv) .ti[aria-checked='true'] { color: #fff; font-weight: 600; }
   :global(html.tv) .ti:focus-visible { outline: none; background: #fff; color: #000; transform: scale(1.03); transition: transform var(--tv-d-spring) var(--tv-spring); }
-  :global(html.tv) .ti:disabled { opacity: .45; }
+  :global(html.tv) .ti:disabled, :global(html.tv) .ti.locked { opacity: .45; }
   .ck { display: inline-grid; place-items: center; width: 1.6rem; flex: none; }
   .tl { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tl small { display: block; font-size: .85rem; font-weight: 400; opacity: .75; }

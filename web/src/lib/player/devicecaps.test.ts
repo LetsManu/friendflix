@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_VERSION } from '#lib/version/codenames';
 import {
-  _resetDeviceCaps, avoidedUntil, AVOID_KEY, AVOID_MS, buildDeviceCaps, CACHE_KEY, capsPending, capsSummary, confirmsType, decodeQueries, deviceCaps, inSafeMode, isFormatFailure, isProbedBlock, MIME,
+  _resetDeviceCaps, avoidedUntil, AVOID_KEY, AVOID_MS, buildDeviceCaps, CACHE_KEY, capsPending, capsSummary, confirmsType, measureChannelsWith, remeasureOutput, decodeQueries, deviceCaps, inSafeMode, isFormatFailure, isProbedBlock, MIME,
   noteDirectFailure, noteHlsFailure, outputChannels, PROBE_VERSION, runDecodeQueries, SAFE_KEY, SAFE_MS, setStereoOnly, STEREO_KEY, stereoOnly, warmDeviceCaps, type DecodeQuery, type DeviceDeps, type ProbeEnv,
 } from './devicecaps';
 
@@ -343,6 +343,16 @@ describe('hls claim (buildDeviceCaps)', () => {
     expect(noMseEac3.hls!.audio).toEqual(['aac', 'ac3']);
   });
 
+  it('S6: the hls claim may rest on ManagedMediaSource (iPhone); the direct-play claims do not', () => {
+    const managed = { ...withApi, hlsTypeSupported: () => true } as Partial<ProbeEnv>;
+    const c = buildDeviceCaps(env(all, managed), O, decoded())!;
+    expect(c.hls).toMatchObject({ video: ['h264', 'hevc'], surround: ['eac3', 'ac3', 'aac'] });
+    // canPlayType 'maybe' still needs isTypeSupported for the file claims
+    const maybe: ProbeEnv = { canPlayType: (m) => (/codecs=/.test(m) ? 'maybe' : 'maybe'), hdrDisplay: false, ...managed };
+    expect(codecs(buildDeviceCaps(maybe, O, decoded())!)).toEqual([]);
+    expect(buildDeviceCaps(maybe, O, decoded())!.hls!.video).toEqual(['h264']); // hevc also needs the file claim
+  });
+
   it('while the decode probe is pending: no hls hevc and no surround; without the API MSE alone claims hevc but never surround', () => {
     const pending = buildDeviceCaps(full, O, null)!;
     expect(pending.hls!.video).toEqual(['h264']);
@@ -440,6 +450,41 @@ describe('this device: output channels, stereo choice, avoid memory', () => {
     expect(Object.keys(avoidedUntil()).sort()).toEqual(['hevc', 'surround']);
     reset(); await fresh(); noteHlsFailure('both');
     expect(deviceCaps()).toMatchObject({ hls: { video: ['h264'], surround: [] } });
+  });
+
+  it('S2: with blocked storage the failure is still honoured for this page', async () => {
+    reset(); await fresh();
+    const blocked = { getItem: () => null, setItem: () => { throw new Error('blocked'); }, removeItem: () => undefined };
+    _resetDeviceCaps(deps({ storage: blocked })); await warmDeviceCaps();
+    expect(deviceCaps()!.hls!.video).toContain('hevc');
+    noteHlsFailure('hevc');
+    expect(deviceCaps()!.hls!.video).toEqual(['h264']);
+    expect(avoidedUntil()).toEqual({ hevc: now + 30 * DAY });
+    now += 31 * DAY; expect(avoidedUntil()).toEqual({});
+  });
+
+  it('S5: remeasureOutput forgets the measured count', () => {
+    reset(); let n = 2;
+    _resetDeviceCaps(deps({ channels: () => n }));
+    expect(outputChannels()).toBe(2); n = 6;
+    expect(outputChannels()).toBe(2);
+    remeasureOutput();
+    expect(outputChannels()).toBe(6);
+  });
+
+  it('N5: a devicechange measures again; the measurement tolerates a missing close() and a throwing constructor', () => {
+    reset(); let n = 2; const fire: Array<() => void> = [];
+    _resetDeviceCaps(deps({ channels: () => n, mediaDevices: { addEventListener: (_t: string, f: () => void) => void fire.push(f) } }));
+    expect(outputChannels()).toBe(2); n = 6;
+    expect(outputChannels()).toBe(2);
+    fire.forEach((f) => f());
+    expect(outputChannels()).toBe(6);
+    class NoClose { destination = { maxChannelCount: 8 }; }
+    expect(measureChannelsWith(NoClose as never)).toBe(8);
+    class Throws { constructor() { throw new Error('no audio'); } }
+    expect(() => measureChannelsWith(Throws as never)).toThrow();
+    _resetDeviceCaps(deps({ channels: undefined }));
+    expect(measureChannelsWith(undefined)).toBe(2);
   });
 
   it('PROBE_VERSION 2 discards a version-1 cache', async () => {

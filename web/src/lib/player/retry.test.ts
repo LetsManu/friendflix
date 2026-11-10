@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { avoidTarget, backoffMs, decideRecovery, freshRecovery, isCodecError, kindOfMediaError, lowerQuality, networkStep, pickLockedLevel } from './retry';
+import { avoidTarget, backoffMs, decideRecovery, freshRecovery, isCodecError, isNativeCodecFailure, kindOfMediaError, lowerQuality, networkStep, pickLockedLevel } from './retry';
 import { AbrController } from './abr';
 import { parseVolume, stepVolume } from './volume';
 
@@ -69,7 +69,14 @@ describe('codec errors and the variant lock', () => {
     expect(avoidTarget({}, both)).toBe('both');
     expect(avoidTarget({}, { hevc: true, surround: false })).toBe('hevc');
     expect(avoidTarget({}, { hevc: false, surround: true })).toBe('surround');
-    expect(avoidTarget({ sourceBufferName: 'audio' }, { hevc: true, surround: false })).toBe('both'); // the report does not match the plan: drop both
+    expect(avoidTarget({ sourceBufferName: 'audio' }, { hevc: true, surround: false })).toBe('hevc'); // not 5.1, so the audio is not the feature: back to the plain H.264 stream (an HEVC stream's audio buffer is the HEVC stream's)
+    expect(avoidTarget({ sourceBufferName: 'video' }, { hevc: false, surround: true })).toBe('surround');
+  });
+  it('S4: a native HLS media error counts as a codec failure only after metadata or a decode error (code 3); an HTTP-looking code 4 before metadata does not', () => {
+    expect(isNativeCodecFailure({ code: 4, readyState: 0 })).toBe(false);
+    expect(isNativeCodecFailure({ code: 3, readyState: 0 })).toBe(true);
+    expect(isNativeCodecFailure({ code: 4, readyState: 1 })).toBe(true);
+    expect(isNativeCodecFailure({ code: undefined, readyState: 0 })).toBe(false);
   });
   const lv = (bitrate: number, videoCodec: string | undefined) => ({ bitrate, videoCodec });
   it('picks the highest-bitrate level of the planned codec; one level or no match: -1 (no lock)', () => {

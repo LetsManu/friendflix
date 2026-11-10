@@ -69,15 +69,15 @@ export const isCodecError = (details: string | undefined): boolean =>
 
 /**
  * What to give up after a codec failure: the audio buffer / an audio MIME is surround, the video buffer / video MIME is HEVC, anything
- * else both (narrowed to the one the stream actually carried). A report that does not match the plan (audio failed in a stream with
- * only HEVC) drops both.
+ * else both (narrowed to the one the stream actually carried). A report for a feature the stream does not carry names the one it does.
  */
 export function avoidTarget(d: { sourceBufferName?: string; mimeType?: string }, active: { hevc: boolean; surround: boolean }): AvoidWhat {
   const name = d.sourceBufferName ?? '';
   const mime = d.mimeType ?? '';
   const kind = name === 'audio' || (!name && /^audio\//.test(mime)) ? 'audio' : name === 'video' || (!name && /^video\//.test(mime)) ? 'video' : 'other';
-  if (kind === 'audio') return active.surround ? 'surround' : 'both';
-  if (kind === 'video') return active.hevc ? 'hevc' : 'both';
+  // a feature that is not in the stream cannot be the cause: the other one is what moves the stream back to the plain H.264 one
+  if (kind === 'audio') return active.surround ? 'surround' : active.hevc ? 'hevc' : 'both';
+  if (kind === 'video') return active.hevc ? 'hevc' : active.surround ? 'surround' : 'both';
   return active.hevc && !active.surround ? 'hevc' : active.surround && !active.hevc ? 'surround' : 'both';
 }
 
@@ -86,6 +86,13 @@ export function avoidTarget(d: { sourceBufferName?: string; mimeType?: string },
  * one level the player takes the highest-bitrate level of the planned codec (hvc1 / hev1 for HEVC, else avc1). -1 = no lock (one level,
  * or none of the planned codec).
  */
+/**
+ * Native HLS (no hls.js, so no codec details): a media error counts as "the device cannot play what the stream carries" only after
+ * metadata arrived or as a decode error. A code 4 before any metadata is also what an expired token or an HTTP error on the playlist looks like.
+ */
+export const isNativeCodecFailure = (o: { code?: number | null; readyState: number }): boolean => o.code === 3 || o.readyState >= 1;
+
+/** (equal bandwidth: the first listed level wins, which relies on Jellyfin listing the planned variant first) */
 export function pickLockedLevel(levels: Array<{ bitrate: number; videoCodec?: string }>, hevc: boolean): number {
   if (levels.length < 2) return -1;
   const want = hevc ? /^(hvc1|hev1)/ : /^avc1/;

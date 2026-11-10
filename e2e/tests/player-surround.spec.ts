@@ -12,6 +12,7 @@ import { expect, test } from '../fixtures.js';
  */
 interface InfoCall { startTicks?: number; audioChannels?: number; fellBack?: string; prevPs?: string; caps?: { audioChannels?: number; hls?: { surround: string[] } } }
 
+const HEVC_SURROUND = { ...{ video: 'copy', videoCodec: 'hevc', audio: 'surround', audioCodec: 'aac', channels: 6, why: ['hevc_device', 'surround_device'] } };
 const SURROUND = { video: 'copy', videoCodec: 'h264', audio: 'surround', audioCodec: 'aac', channels: 6, why: ['surround_device'] };
 const STEREO = { video: 'copy', videoCodec: 'h264', audio: 'stereo', audioCodec: 'aac', channels: 2, why: ['stereo_choice'] };
 const PLAYLIST = ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:2', '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-PLAYLIST-TYPE:VOD', '#EXT-X-MAP:URI="init.mp4"',
@@ -20,7 +21,7 @@ const PLAYLIST = ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:2', '#EX
 const MASTER = ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Deutsch 5.1",DEFAULT=YES,AUTOSELECT=YES,LANGUAGE="ger",URI="audio.m3u8"',
   '#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS="vp09.00.51.08,mp4a.40.2",AUDIO="aud"', 'out.m3u8', ''].join('\n');
 
-async function mock(page: Page, o: { audioCodecFails?: boolean } = {}) {
+async function mock(page: Page, o: { audioCodecFails?: boolean; hevc?: boolean; slowMs?: number; corruptFrom?: number; videoFailsAfterFallback?: boolean; gate?: Promise<void> } = {}) {
   // the browser states a 6-channel output; every decode query passes (the codec checks themselves are in devicecaps.test.ts)
   await page.addInitScript((fail) => {
     Object.defineProperty(BaseAudioContext.prototype, 'destination', { configurable: true, get: () => ({ maxChannelCount: 6 }) });
@@ -30,25 +31,28 @@ async function mock(page: Page, o: { audioCodecFails?: boolean } = {}) {
       // the audio source buffer of the 5.1 stream cannot be created: hls.js reports bufferAddCodecError
       const add = MediaSource.prototype.addSourceBuffer;
       MediaSource.prototype.addSourceBuffer = function (mime: string) {
-        if (/^audio\//.test(mime)) throw new DOMException('mocked', 'NotSupportedError');
+        if (/^audio\//.test(mime) || (/^video\//.test(mime) && (window as unknown as { __videoFail: boolean }).__videoFail)) throw new DOMException('mocked', 'NotSupportedError');
         return add.call(this, mime);
       };
     }
   }, Boolean(o.audioCodecFails));
   await mockPlayer(page);
   const calls: InfoCall[] = [];
-  await page.route('**/api/playback/info', (r) => {
+  await page.route('**/api/playback/info', async (r) => {
     const b = r.request().postDataJSON() as InfoCall;
     calls.push(b);
+    if (b.fellBack && o.videoFailsAfterFallback) await page.evaluate(() => { (window as unknown as { __videoFail: boolean }).__videoFail = true; }); // the reloaded stream's picture cannot be appended either
     const surround = (b.caps?.audioChannels ?? 2) >= 6 && (b.caps?.hls?.surround.length ?? 0) > 0 && !b.fellBack;
     return r.fulfill({ json: {
       resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: `ps-wren-${calls.length}`, roleMaxBitrate: 20_000_000, maxBitrate: 8_000_000, transcodeReason: 'audioCodec', subtitles: [],
       audioTracks: [{ index: 1, title: 'Deutsch 5.1', language: 'ger', isDefault: true }], hlsUrl: surround && o.audioCodecFails ? '/media/hls/wren/master.m3u8' : '/media/hls/wren/out.m3u8',
-      delivery: surround ? SURROUND : STEREO,
+      delivery: surround ? (o.hevc ? HEVC_SURROUND : SURROUND) : (o.hevc && b.fellBack === 'surround' ? { ...STEREO, videoCodec: 'hevc' } : STEREO),
     } });
   });
-  await page.route('**/media/hls/wren/**', (r) => {
+  await page.route('**/media/hls/wren/**', async (r) => {
     const f = new URL(r.request().url()).pathname.split('/').pop()!;
+    if (o.slowMs && (f === 'out.m3u8' || f === 'init.mp4')) await new Promise((res) => setTimeout(res, o.slowMs));
+    if (o.corruptFrom !== undefined && /^s(\d+)\.m4s$/.test(f) && Number(/\d+/.exec(f)![0]) >= o.corruptFrom) { await o.gate; return r.fulfill({ contentType: 'video/mp4', body: HLS_AUDIO_SEG }); } // a fragment of another track, held back until the test says the session has started; then the media source refuses to append it
     if (f === 'master.m3u8') return r.fulfill({ contentType: 'application/vnd.apple.mpegurl', body: MASTER });
     if (f === 'out.m3u8') return r.fulfill({ contentType: 'application/vnd.apple.mpegurl', body: PLAYLIST });
     if (f === 'audio.m3u8') return r.fulfill({ contentType: 'application/vnd.apple.mpegurl', body: HLS_AUDIO_PLAYLIST });
@@ -127,5 +131,41 @@ test.describe('player: surround sound switch', () => {
       expect(typeof avoid.surround).toBe('number');
       expect(avoid.hevc).toBeUndefined();
     });
+  });
+
+  test('B2: a slow start of an HEVC stream is never an HEVC failure', async ({ page, api: _api }) => {
+    await page.addInitScript(() => { (globalThis as unknown as { __ffFirstFrameMs: number }).__ffFirstFrameMs = 700; });
+    const calls = await mock(page, { hevc: true, slowMs: 2500 });
+    await page.goto('/watch/' + MOVIE.id);
+    await playing(page); // the playlist and the init segment arrive 2.5 s late, well past the watchdog time
+    await page.waitForTimeout(1200);
+    expect(calls).toHaveLength(1);
+    expect(await page.evaluate(() => localStorage.getItem('ff_devcaps_avoid'))).toBeNull();
+  });
+
+  test('S1: after the surround fallback an HEVC picture that cannot be appended is not ignored (no second fallback, no loop)', async ({ page, api: _api }) => {
+    const calls = await mock(page, { audioCodecFails: true, hevc: true, videoFailsAfterFallback: true });
+    await page.goto('/watch/' + MOVIE.id);
+    await expect.poll(() => calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls[1]).toMatchObject({ fellBack: 'surround' });
+    // the reloaded stream is HEVC + AAC and its video buffer cannot be created either: answered by the quality step-down, not ignored,
+    // and never by a second fallback
+    await expect.poll(() => calls.length, { timeout: 10_000 }).toBeGreaterThanOrEqual(3);
+    expect(calls.slice(2).every((c) => !c.fellBack)).toBe(true);
+  });
+
+  test('S3: the one fallback stops the failed session before it asks again', async ({ page, api: _api }) => {
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    const calls = await mock(page, { hevc: true, corruptFrom: 3, gate });
+    const order: string[] = [];
+    await page.route('**/api/playback/stop', (r) => { order.push('stop'); return r.fulfill({ status: 204 }); });
+    page.on('request', (r) => { if (r.url().endsWith('/api/playback/info')) order.push('info'); });
+    await page.goto('/watch/' + MOVIE.id);
+    await playing(page); // the session has started (play reported) before the corrupt fragments are let through
+    open();
+    await expect.poll(() => calls.some((c) => c.fellBack), { timeout: 20_000 }).toBe(true);
+    const i = order.indexOf('info', 1);
+    expect(order.slice(0, i)).toContain('stop');
   });
 });

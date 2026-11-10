@@ -163,7 +163,8 @@ test.describe('player: scenes, cast & info, sound', () => {
     const menu = page.getByRole('dialog', { name: 'Audio und Untertitel' });
     await menu.getByRole('switch', { name: /Klare Stimmen/ }).click();
     await expect.poll(async () => (await fx()).sources).toBe(1);
-    expect((await fx()).opts).toEqual([{ latencyHint: 'interactive' }]);
+    // devicecaps measures the output with a short-lived context without options at every player start (surround claim); it is no sound capture
+    expect((await fx()).opts.filter((o) => o !== null)).toEqual([{ latencyHint: 'interactive' }]);
     await menu.getByRole('switch', { name: /Klare Stimmen/ }).click(); // off again while playing
     await expect(menu.getByRole('switch', { name: /Klare Stimmen/ })).toHaveAttribute('aria-checked', 'false');
     await page.keyboard.press('Escape');
