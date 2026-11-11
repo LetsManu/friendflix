@@ -215,6 +215,12 @@ test.describe('receiver screens', () => {
     return caf;
   }
   /** the box of a panel once it has finished fading and rising in (its transform is gone) */
+  /** the pill is the topmost thing at its centre (nothing, not the loading screen nor the hold backdrop, paints over it) */
+  const pillOnTop = async (page: Page) => {
+    await expect(page.locator('#who')).toBeVisible();
+    const b = await box(page, '#who');
+    expect(await page.evaluate(([x, y]) => document.elementFromPoint(x!, y!)?.id, [b.x + b.width / 2, b.y + b.height / 2])).toBe('who');
+  };
   const box = async (page: Page, sel: string) => {
     await expect.poll(() => page.locator(sel).evaluate((el) => getComputedStyle(el).transform)).toBe('none');
     return (await page.locator(sel).boundingBox())!;
@@ -299,6 +305,30 @@ test.describe('receiver screens', () => {
     await expect(fx(page, '#pause')).toBeHidden();
   });
 
+  test('Play/Pause with the pause screen under an up-next card resumes; it does not jump to the next episode', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    await caf.time(2620);
+    await caf.pause();
+    await expect(fx(page, '#pause')).toBeVisible();
+    await expect(fx(page, '#card')).toBeVisible();
+    await page.keyboard.press('MediaPlayPause');
+    await expect.poll(() => caf.calls()).toContain('play');
+    expect(await caf.calls()).not.toContain('jump:1');
+    await expect(fx(page, '#pause')).toBeHidden();
+    await expect(fx(page, '#card')).toBeVisible();
+  });
+
+  test('answering "Noch da?" shows no loading screen', async ({ page, api: _api }) => {
+    const caf = await boot(page, { next: { ...WRENFIELD, ask: true } });
+    await caf.time(2620);
+    await caf.media(B, 2640);
+    await expect(fx(page, '#still .panel')).toBeVisible();
+    await caf.play(); // PLAY from the phone answers it
+    await expect(fx(page, '#still .panel')).toBeHidden();
+    await page.waitForTimeout(400);
+    await expect(fx(page, '#load')).toBeHidden();
+  });
+
   test('OK on the pause screen plays', async ({ page, api: _api }) => {
     const caf = await boot(page);
     await caf.pause();
@@ -329,6 +359,7 @@ test.describe('receiver screens', () => {
     await caf.load();
     const load = fx(page, '#load');
     await expect(load).toBeVisible();
+    await pillOnTop(page);
     await expect(page.locator('#load-label')).toHaveText('Wird vorbereitet …');
     await caf.message({ t: 'tok', castId: A, rt: RT });
     await caf.media(A, 2640, '/poster/dunmoor.svg');
@@ -440,6 +471,7 @@ test.describe('receiver screens', () => {
     await caf.media(B, 2640); // the queued episode started: it waits paused under the question
     const hold = fx(page, '#still .panel');
     await expect(hold).toBeVisible();
+    await pillOnTop(page);
     await caf.pause(); // the TV paused it
     await page.waitForTimeout(1800);
     await expect(fx(page, '#pause')).toBeHidden();

@@ -161,13 +161,15 @@ function render() {
   if (v.who) setText($('who'), v.who);
 
   const skip = $('skip');
-  skip.hidden = !v.skip || Boolean(v.card) || Boolean(v.still);
+  skip.hidden = !v.skip || Boolean(v.card) || Boolean(v.still) || Boolean(v.load);
   if (v.skip) setText(skip, v.skip.text);
   document.body.classList.toggle('idle', !pm.getMediaInformation());
 }
 
-function activate(which) {
+function activate(which, resume = false) {
   const v = view(st, strings);
+  // the Play/Pause key resumes a paused picture, even under an up-next card (OK / Enter still plays the next episode)
+  if (resume && v.pause && !v.still) { pm.play(); return run({ type: 'pause', paused: false, at: nowMs() }); }
   if (v.still) return run({ type: 'confirm' });
   if (v.card) {
     if (v.card.mode === 'still') return run({ type: 'confirm' });
@@ -192,7 +194,7 @@ document.addEventListener('keydown', (e) => {
   const arrow = k === 'ArrowLeft' || k === 'ArrowRight';
   if (arrow && v.card?.buttons) { focus = focus ? 0 : 1; render(); }
   else if (arrow && v.pause && !v.card && !v.still) seekBy(k === 'ArrowLeft' ? -1 : 1);
-  else if (k === 'Enter' || k === ' ' || k === 'MediaPlayPause') { if (!v.card && !v.still && !v.pause && !v.skip) return; activate(focus); }
+  else if (k === 'Enter' || k === ' ' || k === 'MediaPlayPause') { if (!v.card && !v.still && !v.pause && !v.skip) return; activate(focus, k === 'MediaPlayPause'); }
   else if (k === 'Escape' || k === 'Backspace' || k === 'GoBack' || k === 'BrowserBack') run({ type: 'cancel' });
   else return;
   e.preventDefault();

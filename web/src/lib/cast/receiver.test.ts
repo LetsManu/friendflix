@@ -125,7 +125,7 @@ describe('receiver: next-up card, countdown, still watching', () => {
     expect(view(st, DEFAULT_STRINGS).card).toBeNull();
     ({ st } = run(st, [time(1776), time(1777, true, 3000)]));
     const v = view(st, DEFAULT_STRINGS).card!;
-    expect(v).toMatchObject({ mode: 'next', title: 'Up next in 6 s', name: 'S1:E2 · Two', hint: 'Cancel on your phone', buttons: false, text: 'Next episode starts in 6 seconds', primary: 'Next episode', secondary: 'Watch credits' });
+    expect(v).toMatchObject({ mode: 'next', title: 'Up next in 6 s', name: 'S1:E2 · Two', hint: 'Cancel on your phone', buttons: false, text: 'Next episode starts in 6 seconds', primary: 'Play now', secondary: 'Watch credits' });
     expect(v.progress).toBeCloseTo(0.4);
     ({ st } = run(st, [time(1778, false, 60_000)])); // paused: the countdown waits
     expect(view(st, DEFAULT_STRINGS).card!.progress).toBeCloseTo(0.4);
@@ -290,6 +290,16 @@ describe('receiver: pause, loading, sender pill, key hints', () => {
     const NEXT = { castId: B, label: 'E5', auto: false, ask: false };
     const st = run([{ type: 'media', castId: A }, { type: 'item', msg: { t: 'item', castId: A, episode: true, segs: [], next: NEXT, meta } }, { type: 'time', pos: 2630, dur: 2640, playing: true, dt: 1000 }]);
     expect(view(st, t).card!.title).toBe('Als Nächstes');
+  });
+
+  it('answering "Still there?" shows no loading screen: the held item\'s frame is already up', () => {
+    const NEXT = { castId: B, label: 'E5', auto: true, ask: true };
+    let st = run([{ type: 'media', castId: A }, { type: 'item', msg: { t: 'item', castId: A, episode: true, segs: [], next: NEXT, meta } }, { type: 'clock', now: T }, { type: 'firstFrame' },
+      { type: 'time', pos: 2630, dur: 2640, playing: true, dt: 1000 }, { type: 'media', castId: B }, { type: 'pause', paused: true, at: T }]);
+    expect(view(st, DEFAULT_STRINGS).still).not.toBeNull();
+    st = step(st, { type: 'confirm' }).st;
+    st = run([{ type: 'clock', now: T + 3000 }], st);
+    expect(view(st, DEFAULT_STRINGS)).toMatchObject({ load: null, still: null });
   });
 
   it('formatTime and the ±10 s seek target', () => {

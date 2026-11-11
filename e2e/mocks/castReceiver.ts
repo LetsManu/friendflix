@@ -96,7 +96,7 @@ export async function fakeCaf(page: Page, o: { canDisplay?: string[] | null } = 
 export const ui = (o: Record<string, unknown> = {}) => ({ t: 'ui', strings: {
   next: 'Nächste Folge', upNext: 'Als Nächstes: {label}', watchCredits: 'Abspann ansehen',
   startsIn: Array.from({ length: 10 }, (_, i) => `Nächste Folge in ${i + 1} s`),
-  upNextIn: Array.from({ length: 10 }, (_, i) => `Als Nächstes in ${i + 1} s`), upNextTitle: 'Als Nächstes',
+  upNextIn: Array.from({ length: 10 }, (_, i) => `Als Nächstes in ${i + 1} s`), upNextTitle: 'Als Nächstes', playNow: 'Jetzt abspielen',
   stillTitle: 'Noch da?', stillText: 'Automatische Wiedergabe pausiert. Als Nächstes: {ep}', keepWatching: 'Weiterschauen', skip: { intro: 'Intro überspringen', recap: 'Rückblick überspringen' },
   keys: 'OK spielt sofort · Zurück stoppt hier', phoneCancel: 'Abbrechen am Handy', stopHere: 'Hier stoppen', stillKeys: 'OK schaut weiter',
   loading: 'Wird vorbereitet …', stall: 'Lädt …', paused: 'Pausiert' },

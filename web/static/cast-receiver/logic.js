@@ -43,7 +43,7 @@ const pick = (v, list, dflt) => (typeof v === 'string' && list.includes(v) ? v :
  * @typedef {{ castId: string, label: string, auto: boolean, ask: boolean }} Next
  * @typedef {{ size: string, color: string, background: string, font: string }} SubStyle
  * @typedef {{ next: string, upNext: string, watchCredits: string, startsIn: string[], stillTitle: string, stillText: string, keepWatching: string, skip: { intro: string, recap: string },
- *   upNextIn: string[], upNextTitle: string, keys: string, phoneCancel: string, stopHere: string, stillKeys: string, loading: string, stall: string, paused: string }} Strings
+ *   upNextIn: string[], upNextTitle: string, playNow: string, keys: string, phoneCancel: string, stopHere: string, stillKeys: string, loading: string, stall: string, paused: string }} Strings
  * @typedef {{ title: string, line: string }} Meta
  * @typedef {{ t: 'tok', castId: string, rt: string }
  *   | { t: 'caps?' }
@@ -57,7 +57,7 @@ export const DEFAULT_STRINGS = /** @type {Strings} */ ({
   startsIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => `Next episode starts in ${i + 1} second${i ? 's' : ''}`),
   stillTitle: 'Still there?', stillText: 'Autoplay is paused. Up next: {ep}', keepWatching: 'Continue watching',
   skip: { intro: 'Skip intro', recap: 'Skip recap' },
-  upNextIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => `Up next in ${i + 1} s`), upNextTitle: 'Up next',
+  upNextIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => `Up next in ${i + 1} s`), upNextTitle: 'Up next', playNow: 'Play now',
   keys: 'OK plays now · Back stops here', phoneCancel: 'Cancel on your phone', stopHere: 'Stop here', stillKeys: 'OK keeps watching',
   loading: 'Getting ready…', stall: 'Loading…', paused: 'Paused',
 });
@@ -115,7 +115,7 @@ export function parseMessage(raw) {
         startsIn, stillTitle: text('stillTitle', DEFAULT_STRINGS.stillTitle), stillText: text('stillText', DEFAULT_STRINGS.stillText),
         keepWatching: text('keepWatching', DEFAULT_STRINGS.keepWatching),
         skip: { intro: str(skip.intro, 100) ?? DEFAULT_STRINGS.skip.intro, recap: str(skip.recap, 100) ?? DEFAULT_STRINGS.skip.recap },
-        upNextIn: list(s.upNextIn, DEFAULT_STRINGS.upNextIn), upNextTitle: text('upNextTitle', DEFAULT_STRINGS.upNextTitle), keys: text('keys', DEFAULT_STRINGS.keys), phoneCancel: text('phoneCancel', DEFAULT_STRINGS.phoneCancel),
+        upNextIn: list(s.upNextIn, DEFAULT_STRINGS.upNextIn), upNextTitle: text('upNextTitle', DEFAULT_STRINGS.upNextTitle), playNow: text('playNow', DEFAULT_STRINGS.playNow), keys: text('keys', DEFAULT_STRINGS.keys), phoneCancel: text('phoneCancel', DEFAULT_STRINGS.phoneCancel),
         stopHere: text('stopHere', DEFAULT_STRINGS.stopHere), stillKeys: text('stillKeys', DEFAULT_STRINGS.stillKeys), loading: text('loading', DEFAULT_STRINGS.loading),
         stall: text('stall', DEFAULT_STRINGS.stall), paused: text('paused', DEFAULT_STRINGS.paused),
       },
@@ -299,7 +299,7 @@ export function step(st, ev) {
       if (cardOf(s) && s.next && !s.jumped) { s.jumped = true; actions.push('jump', 'send-interaction'); }
       break;
     case 'confirm':
-      if (s.still) { s.still = false; actions.push('play', 'send-interaction'); }
+      if (s.still) { s.still = false; s.firstFrame = true; if (s.loading === 'first') s.loading = null; actions.push('play', 'send-interaction'); } // the held item's frame is already up: no loading screen
       else if (cardOf(s)?.mode === 'still') { s.answered = true; s.elapsed = 0; actions.push('send-interaction'); }
       break;
     case 'skip': {
@@ -358,7 +358,7 @@ export function view(s, t) {
       /** touch devices (Nest Hub) get "Play now" and "Stop here" buttons instead of a key hint */
       buttons: s.touch,
       text: c.mode === 'still' ? t.stillText.replace('{ep}', label) : c.auto && left > 0 ? (t.startsIn[left - 1] ?? '') : '',
-      primary: c.mode === 'still' ? t.keepWatching : t.next,
+      primary: c.mode === 'still' ? t.keepWatching : t.playNow,
       secondary: c.mode === 'still' ? '' : s.touch ? t.stopHere : t.watchCredits,
       /** 0..1 of the countdown ring (0 without a countdown) */
       progress: c.auto ? Math.min(1, s.elapsed / (s.countdown * 1000)) : 0,

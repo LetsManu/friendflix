@@ -41,7 +41,7 @@ test.describe('receiver on a touch display', () => {
     await expect(page.locator('#card-buttons')).toBeHidden();
     await expect(page.locator('#card-hint')).toHaveText('Abbrechen am Handy');
     await page.touchscreen.tap(500, 200);
-    const play = page.getByRole('button', { name: 'Nächste Folge' }), stop = page.getByRole('button', { name: 'Hier stoppen' });
+    const play = page.getByRole('button', { name: 'Jetzt abspielen' }), stop = page.getByRole('button', { name: 'Hier stoppen' });
     await expect(play).toBeVisible();
     await expect(stop).toBeVisible();
     await expect(page.locator('#card-hint')).toBeHidden();
@@ -62,7 +62,7 @@ test.describe('receiver on a touch display', () => {
     await caf.message({ t: 'item', castId: 'a'.repeat(32), episode: true, segs: [], next: WRENFIELD, meta: DUNMOOR });
     await caf.time(2620);
     await page.touchscreen.tap(500, 200);
-    await page.getByRole('button', { name: 'Nächste Folge' }).tap();
+    await page.getByRole('button', { name: 'Jetzt abspielen' }).tap();
     await expect.poll(() => caf.calls()).toContain('jump:1');
   });
 });

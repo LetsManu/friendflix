@@ -51,7 +51,7 @@ export function receiverHtml(): string {
 <section id="card" class="card panel fx" aria-live="polite">
 <div class="art thumb"><img id="card-img" alt="" hidden></div>
 <div>
-<h2 id="card-title"></h2>
+<h2 id="card-title" aria-live="off"></h2>
 <p id="card-name" class="name clamp"></p>
 <p id="card-hint" class="hint"></p>
 </div>
