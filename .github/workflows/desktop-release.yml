@@ -88,14 +88,18 @@ jobs:
       - name: Fetch the pinned mpv
         shell: pwsh
         run: ./desktop/scripts/fetch-mpv.ps1 -Dest desktop/app/mpv
+      - name: Tauri CLI (the version pinned in desktop/package-lock.json)
+        working-directory: desktop
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Build the installers
         working-directory: desktop/app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ steps.updates.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ steps.updates.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        # the CLI release that goes with the tauri crate in Cargo.lock (tauri 2.12.5 / tauri-utils 2.10.2); bump both together.
+        # the CLI release that goes with the tauri crate in Cargo.lock (tauri 2.12.5 / tauri-utils 2.10.2); bump both together
+        # (desktop/package.json + package-lock.json). It comes from the lockfile (npm ci above), never fetched by this step.
         # After `--`: arguments for cargo build (Cargo.lock as committed).
-        run: npx --yes @tauri-apps/cli@2.12.3 build --ci --config "$RUNNER_TEMP/tauri.release.json" -- --locked
+        run: npm exec --prefix .. --no-install -- tauri build --ci --config "$RUNNER_TEMP/tauri.release.json" -- --locked
       - name: Name the files, latest.json, checksums
         env:
           VERSION: ${{ steps.version.outputs.version }}
