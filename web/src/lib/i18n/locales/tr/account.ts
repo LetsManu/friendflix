@@ -275,6 +275,7 @@ const tr: Translation<typeof de> = {
     renamed: 'Cihazın adı artık “{name}”.',
     nameInvalid: '1 ile 40 karakter girin, kontrol karakteri olmasın.',
     renameFailed: 'Cihaz yeniden adlandırılamadı. Lütfen tekrar deneyin.',
+    actions: 'İşlemler',
   },
   invite: {
     pageTitle: 'Davet',

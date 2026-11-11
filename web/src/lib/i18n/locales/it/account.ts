@@ -275,6 +275,7 @@ const it: Translation<typeof de> = {
     renamed: 'Il dispositivo ora si chiama «{name}».',
     nameInvalid: 'Usa da 1 a 40 caratteri, senza caratteri di controllo.',
     renameFailed: 'Impossibile rinominare il dispositivo. Riprova.',
+    actions: 'Azioni',
   },
   invite: {
     pageTitle: 'Invito',

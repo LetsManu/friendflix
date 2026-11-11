@@ -295,6 +295,7 @@ const pl: Translation<typeof de> = {
     renamed: 'Urządzenie nazywa się teraz „{name}”.',
     nameInvalid: 'Wpisz od 1 do 40 znaków, bez znaków sterujących.',
     renameFailed: 'Nie udało się zmienić nazwy. Spróbuj ponownie.',
+    actions: 'Akcje',
   },
   invite: {
     pageTitle: 'Zaproszenie',

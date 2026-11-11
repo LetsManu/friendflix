@@ -97,7 +97,7 @@
 <p><button class="sec" on:click={revokeOthers}>{$t('account.devices.revokeOthers')}</button></p>
 <!-- grid rows with table roles (not <table>): the overlay form needs a positioned row, which table rows do not give on older TV engines -->
 <div role="table" class="dtable" aria-label={$t('account.devices.approvedTitle')}>
-  <div role="rowgroup" class="dhead"><div role="row" class="drow hdr"><div role="columnheader" class="c-name">{$t('account.devices.device')}</div><div role="columnheader" class="c-seen">{$t('account.devices.lastSeen')}</div><div role="columnheader" class="c-act"><span class="vh">{$t('account.devices.rename')}</span></div></div></div>
+  <div role="rowgroup" class="dhead"><div role="row" class="drow hdr"><div role="columnheader" class="c-name">{$t('account.devices.device')}</div><div role="columnheader" class="c-seen">{$t('account.devices.lastSeen')}</div><div role="columnheader" class="c-act"><span class="vh">{$t('account.devices.actions')}</span></div></div></div>
   <div role="rowgroup">
     {#each others as d (d.id)}
       <div role="row" class="drow">
@@ -157,8 +157,8 @@
   .fld::placeholder { color: #a9b3bd; opacity: 1; }
   .fld[aria-invalid='true'] { border-color: var(--err); }
   .edit button { flex: none; padding-inline: .8rem; }
-  .bubble { scroll-margin-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 8px); position: absolute; z-index: 4; left: .6rem; top: calc(100% + 4px); max-width: calc(100% - 1.2rem); margin: 0; padding: .35rem .7rem; border-radius: 6px; background: #4a1d24; color: #ffd9dd; border: 1px solid var(--err); font-size: .9rem; opacity: 0; transform: translateY(-4px); pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
-  .bubble.show { opacity: 1; transform: none; pointer-events: auto; }
+  .bubble { position: absolute; z-index: 4; left: .6rem; top: calc(100% + 4px); max-width: calc(100% - 1.2rem); margin: 0; padding: .35rem .7rem; border-radius: 6px; background: #4a1d24; color: #ffd9dd; border: 1px solid var(--err); font-size: .9rem; opacity: 0; transform: translateY(-4px); pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
+  .bubble.show { opacity: 1; transform: none; }
   :global(html.m-still) .bubble, :global(html.tv) .bubble, :global(html.kids) .bubble { transition: none; }
   .acts { display: flex; gap: .5rem; justify-content: flex-end; align-items: center; min-height: 44px; }
   .ico { padding: .5rem; width: 44px; }

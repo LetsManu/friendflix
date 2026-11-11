@@ -277,6 +277,7 @@ export default {
     renamed: 'Das Gerät heißt jetzt „{name}“.',
     nameInvalid: 'Bitte 1 bis 40 Zeichen ohne Steuerzeichen.',
     renameFailed: 'Umbenennen hat nicht geklappt. Bitte noch einmal versuchen.',
+    actions: 'Aktionen',
   },
   invite: {
     pageTitle: 'Einladung',

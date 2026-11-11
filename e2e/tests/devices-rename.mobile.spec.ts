@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import type { MockState } from '../fixtures.js';
 
@@ -28,6 +28,15 @@ const ys = async (page: Page) => {
   const out: number[] = [(await page.getByRole('table').boundingBox())!.y + sy];
   for (let i = 0; i < n; i++) out.push((await rows.nth(i).boundingBox())!.y + sy);
   return out;
+};
+
+/** the bubble ignores pointer events (taps reach the buttons under it), so the probe lets it take them */
+const topmostIsBubble = async (page: Page, bubble: Locator) => {
+  await page.addStyleTag({ content: '.bubble { pointer-events: auto !important; }' });
+  return bubble.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return !!document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('.bubble');
+  });
 };
 
 test.describe('devices page: renaming (phone)', () => {
@@ -100,9 +109,23 @@ test.describe('devices page: renaming (phone)', () => {
     const bubble = page.getByRole('alert').filter({ hasText: 'Bitte 1 bis 40 Zeichen ohne Steuerzeichen.' });
     await expect(bubble).toBeInViewport({ ratio: 1 });
     // the topmost element at the bubble's centre is the bubble itself (not the fixed tab bar)
-    await expect.poll(() => bubble.evaluate((el) => {
-      const r = el.getBoundingClientRect();
-      return !!document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('.bubble');
-    })).toBe(true);
+    await expect.poll(() => topmostIsBubble(page, bubble)).toBe(true);
+  });
+
+  test('scrolled so the form sits just above the tab bar, the error scrolls into view', async ({ page, api }) => {
+    await open(page, api);
+    await page.getByRole('button', { name: 'Firefox auf Windows umbenennen' }).click();
+    const field = page.getByLabel('Gerätename');
+    await field.fill('\u202eevil');
+    // put the form's bottom edge right at the top of the tab bar
+    await page.evaluate(() => {
+      const f = document.querySelector('.edit')!.getBoundingClientRect();
+      const bar = document.querySelector('nav.tabbar')!.getBoundingClientRect();
+      window.scrollBy(0, f.bottom - bar.top);
+    });
+    await field.press('Enter');
+    const bubble = page.getByRole('alert').filter({ hasText: 'Bitte 1 bis 40 Zeichen ohne Steuerzeichen.' });
+    await expect(bubble).toBeInViewport({ ratio: 1 });
+    await expect.poll(() => topmostIsBubble(page, bubble)).toBe(true);
   });
 });

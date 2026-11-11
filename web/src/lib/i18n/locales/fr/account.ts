@@ -275,6 +275,7 @@ const fr: Translation<typeof de> = {
     renamed: 'L’appareil s’appelle maintenant « {name} ».',
     nameInvalid: 'Utilisez 1 à 40 caractères, sans caractères de contrôle.',
     renameFailed: 'Impossible de renommer l’appareil. Veuillez réessayer.',
+    actions: 'Actions',
   },
   invite: {
     pageTitle: 'Invitation',
