@@ -28,6 +28,36 @@ const uuid = z.guid();
 /** parental cap of a kids profile (KIDS_RATINGS) */
 const maxRating = z.union([z.literal(0), z.literal(6), z.literal(12)]);
 
+/** The ids of the account's sessions that sit on this profile. */
+export async function profileSids(ctx: Pick<Ctx, 'kv'>, userId: string, profileId: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const k of await ctx.kv.keys('sess:')) {
+    const raw = await ctx.kv.get(k);
+    if (!raw) continue;
+    const sess = JSON.parse(raw) as Session;
+    if (sess.userId === userId && sess.profileId === profileId) out.add(k.slice('sess:'.length));
+  }
+  return out;
+}
+
+/**
+ * Sessions of the account that sit on this profile (except `exceptSid`) lose it (PIN changed / profile deleted) and re-resolve on their
+ * next request; the gateway forgets their memoised identity.
+ */
+export async function dropProfileSessions(ctx: Ctx, userId: string, profileId: string, exceptSid?: string): Promise<void> {
+  for (const k of await ctx.kv.keys('sess:')) {
+    const sid = k.slice('sess:'.length);
+    if (sid === exceptSid) continue;
+    const raw = await ctx.kv.get(k);
+    if (!raw) continue;
+    const sess = JSON.parse(raw) as Session;
+    if (sess.userId !== userId || sess.profileId !== profileId) continue;
+    delete sess.profileId;
+    await saveSession(ctx, sid, sess, true);
+    forgetAuth(sid);
+  }
+}
+
 export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx, { allowNoProfile: true, skipProfileHeader: true }) };
 
@@ -35,20 +65,7 @@ export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
     if (e instanceof ProfileError) return reply.code(e.status).send({ error: e.code });
     throw e;
   };
-  /** Other sessions of the account that sit on this profile lose it (PIN changed / profile deleted) and re-resolve on their next request. */
-  const dropProfile = async (userId: string, profileId: string, exceptSid?: string) => {
-    for (const k of await ctx.kv.keys('sess:')) {
-      const sid = k.slice('sess:'.length);
-      if (sid === exceptSid) continue;
-      const raw = await ctx.kv.get(k);
-      if (!raw) continue;
-      const sess = JSON.parse(raw) as Session;
-      if (sess.userId !== userId || sess.profileId !== profileId) continue;
-      delete sess.profileId;
-      await saveSession(ctx, sid, sess, true);
-      forgetAuth(sid);
-    }
-  };
+  const dropProfile = (userId: string, profileId: string, exceptSid?: string) => dropProfileSessions(ctx, userId, profileId, exceptSid);
   const ownerActive = (req: FastifyRequest) => Boolean(req.profile?.is_owner);
 
   /**

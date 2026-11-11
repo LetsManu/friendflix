@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Admin user management: the account list, single and bulk account actions (role, lock, access, sessions), the user detail page, the approval queue, invites. */
 import type { FastifyInstance } from 'fastify';
+import type pg from 'pg';
 import { z } from 'zod';
-import { audit } from '../audit.js';
+import { audit, auditInTx } from '../audit.js';
 import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
 import { akActions, akMfaState, akSendMfaSetup, akSendRecovery } from '../authentik.js';
 import type { Ctx } from '../ctx.js';
@@ -12,12 +13,12 @@ import { forgetUserAuth, revokeSessions } from '../devices.js';
 import { userLicenses } from '../downloads.js';
 import { createInvite, deleteAuthentikInvitation } from '../invites.js';
 import { getUserLimits } from '../limits.js';
-import { accountJellyfinIds, getProfile, jfUserFor, listProfiles, publicProfile } from '../profiles.js';
+import { KIDS_RATINGS, ProfileError, accountJellyfinIds, createProfile, deleteProfile, getProfile, jfUserFor, listProfiles, publicProfile } from '../profiles.js';
 import { roleLimitFor } from '../requestlimit.js';
 import { ROLE_KEY_RE, invitableRoles, roleExists } from '../rolecat.js';
 import { effectiveRole } from '../roles.js';
 import { PERM_KEYS, readPerms, type PermKey } from '../perms.js';
-import { roleRights } from '../rights.js';
+import { invalidateRights, roleRights } from '../rights.js';
 import { requestsEnabled } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireAdmin, type Session } from '../session.js';
@@ -25,7 +26,10 @@ import type { ProfileRow, UserRow } from '../types.js';
 import { rightsBody, rightsView, writeRights, type RightsBody } from '../userRights.js';
 import { HttpError, accessEnded, accountSerial, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser, type LockReason } from '../users.js';
 import { pendingNoticeKey } from '../pending.js';
-import { dropPartyDenied } from '../partySockets.js';
+import { dropPartyDenied, forbidPartyPeers } from '../partySockets.js';
+import { policyChanged } from '../hooks.js';
+import { forgetAuth } from './internal.js';
+import { dropProfileSessions, profileSids } from './profiles.js';
 
 const uuid = z.guid();
 /** ISO date-time with offset, or null (= no end) */
@@ -211,6 +215,77 @@ async function putRights(ctx: Ctx, actor: string, id: string, b: RightsBody): Pr
   if (w.effective) await forgetUserAuth(ctx, id);
   return { ...reapplied, changed: w.changed };
 }
+
+const profileName = z.string().trim().min(1).max(20);
+/** a kids profile's age cap (KIDS_RATINGS, the DB CHECK of profiles.kids_max_rating) */
+const kidsCap = z.literal(KIDS_RATINGS);
+/** PATCH …/profiles/:pid: rename, clear the PIN, kids switch, age cap; at least one field */
+const adminProfileBody = z.object({
+  name: profileName.optional(), resetPin: z.literal(true).optional(), kids: z.boolean().optional(), maxRating: kidsCap.optional(),
+}).strict().refine((x) => x.name !== undefined || x.resetPin || x.kids !== undefined || x.maxRating !== undefined, { path: ['name'] });
+/** POST …/profiles: admins create kids profiles only (grown-up profiles stay the account holder's choice); no PIN */
+const adminKidsProfileBody = z.object({
+  name: profileName, kids: z.literal(true), maxRating: kidsCap, avatar: z.string().regex(/^[a-z0-9-]{1,20}$/).optional(),
+}).strict();
+
+/**
+ * The admin profile write, run in accountSerial by the caller (it calls nothing that queues there): the row is locked and updated, a
+ * kids profile switched off loses its device locks, and one profile.admin_update entry `{ profile, from, to }` holds the changed fields
+ * (name / hasPin / kids + maxRating, never a PIN) — all in one transaction. After commit a kids change re-applies the identity's policy
+ * (the cap and the unrated block live on the media server; `applyRole` reads the stored kids fields), drops the caches of the old policy,
+ * and the open party sockets of the profile's sessions close when it became a kids profile. `policyFailed`: the media server did not take
+ * the policy — the stored (FriendFlix) state stays, the repair re-applies it. Errors: 404 not_found, 400 owner_not_kids / not_kids,
+ * 409 name_taken.
+ */
+async function updateProfile(ctx: Ctx, actor: string, user: UserRow, pid: string, b: z.infer<typeof adminProfileBody>): Promise<{ profile: ProfileRow; policyFailed: boolean }> {
+  const c = await (ctx.db as pg.Pool).connect();
+  let p: ProfileRow, u: ProfileRow;
+  try {
+    await c.query('begin');
+    const cur = (await c.query<ProfileRow>('select * from profiles where id=$1 and user_id=$2 for update', [pid, user.id])).rows[0];
+    if (!cur) throw new HttpError(404, 'not_found');
+    p = cur;
+    // the owner profile acts as the account itself and is never a kids profile (nor is a profile without its own identity)
+    if (b.kids !== undefined && (p.is_owner || !p.jellyfin_user_id)) throw new HttpError(400, 'owner_not_kids');
+    const kids = b.kids ?? p.kids;
+    if (b.maxRating !== undefined && !kids) throw new HttpError(400, 'not_kids');
+    const cap = b.maxRating ?? p.kids_max_rating;
+    if (b.name && (await c.query('select 1 from profiles where user_id=$1 and lower(name)=lower($2) and id<>$3', [user.id, b.name, pid])).rowCount) {
+      throw new HttpError(409, 'name_taken');
+    }
+    u = (await c.query<ProfileRow>(
+      'update profiles set name=coalesce($2, name), pin_hash=case when $3 then null else pin_hash end, kids=$4, kids_max_rating=$5 where id=$1 returning *',
+      [pid, b.name ?? null, Boolean(b.resetPin), kids, cap])).rows[0]!;
+    // kids off: no device stays locked to it (a new login there would land on it again, leaving it would need a PIN)
+    if (p.kids && !u.kids) await c.query('update devices set kids_profile_id=null where user_id=$1 and kids_profile_id=$2', [user.id, pid]);
+    const from: Record<string, unknown> = {}, to: Record<string, unknown> = {};
+    if (u.name !== p.name) { from.name = p.name; to.name = u.name; }
+    if (Boolean(u.pin_hash) !== Boolean(p.pin_hash)) { from.hasPin = Boolean(p.pin_hash); to.hasPin = Boolean(u.pin_hash); }
+    if (kidsChanged(p, u)) {
+      from.kids = p.kids; from.maxRating = p.kids ? p.kids_max_rating : null;
+      to.kids = u.kids; to.maxRating = u.kids ? u.kids_max_rating : null;
+    }
+    if (Object.keys(to).length) await auditInTx({ db: c }, actor, 'profile.admin_update', user.id, { profile: pid, from, to });
+    await c.query('commit');
+  } catch (e) {
+    await c.query('rollback').catch(() => undefined);
+    if ((e as { code?: string }).code === '23505') throw new HttpError(409, 'name_taken');
+    throw e;
+  } finally {
+    c.release();
+  }
+  if (b.resetPin) await ctx.kv.del(`pinfail:${pid}`);
+  if (!kidsChanged(p, u)) return { profile: u, policyFailed: false };
+  invalidateRights(user.id);
+  const policyFailed = await applyRole(ctx, u.jellyfin_user_id!, user.role, user.disabled, { userId: user.id, hidden: true }).then(() => false, () => true);
+  await policyChanged(ctx, u.jellyfin_user_id!); // cached rows / hubs / items of the old policy must not be served again
+  const sids = await profileSids(ctx, user.id, pid);
+  if (u.kids) forbidPartyPeers(user.id, sids); // a kids profile has no watch party: its open sockets close (4403)
+  for (const sid of sids) forgetAuth(sid);
+  return { profile: u, policyFailed };
+}
+/** the kids switch or the effective age cap of a kids profile changed */
+const kidsChanged = (a: ProfileRow, b: ProfileRow) => a.kids !== b.kids || (b.kids && a.kids_max_rating !== b.kids_max_rating);
 
 /** the switch names as an SQL list (constants of the code, never input) */
 const PERM_SQL = PERM_KEYS.map((k) => `'${k}'`).join(', ');
@@ -570,29 +645,60 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true };
   });
 
-  // rename a profile (the owner profile too, as its user can) and/or clear its PIN
+  // rename a profile (the owner profile too, as its user can), clear its PIN, switch it to / from kids, set its age cap (kids only).
+  // 502 jellyfin: the media server did not take the policy of a kids change (stored and audited either way; "Repair" re-applies it)
   app.patch('/api/admin/users/:id/profiles/:pid', admin, async (req, reply) => {
     const { id, pid } = z.object({ id: uuid, pid: uuid }).parse(req.params);
-    const b = z.object({ name: z.string().trim().min(1).max(20).optional(), resetPin: z.literal(true).optional() }).strict()
-      .refine((x) => x.name !== undefined || x.resetPin, { path: ['name'] }).parse(req.body);
-    const p = await getProfile(ctx, id, pid);
-    if (!p) return reply.code(404).send({ error: 'not_found' });
-    if (b.name && (await ctx.db.query('select 1 from profiles where user_id=$1 and lower(name)=lower($2) and id<>$3', [id, b.name, pid])).rowCount) {
-      return reply.code(409).send({ error: 'name_taken' });
-    }
-    let u: ProfileRow;
-    try {
-      u = (await ctx.db.query<ProfileRow>('update profiles set name=coalesce($2, name), pin_hash=case when $3 then null else pin_hash end where id=$1 returning *',
-        [pid, b.name ?? null, Boolean(b.resetPin)])).rows[0]!;
-    } catch (e) {
-      if ((e as { code?: string }).code === '23505') return reply.code(409).send({ error: 'name_taken' });
-      throw e;
-    }
-    if (b.resetPin) await ctx.kv.del(`pinfail:${pid}`);
-    await audit(ctx, req.user!.id, 'profile.admin_update', id, {
-      profile: pid, from: { name: p.name, hasPin: Boolean(p.pin_hash) }, to: { name: u.name, hasPin: Boolean(u.pin_hash) },
+    const b = adminProfileBody.parse(req.body);
+    return serial(async () => {
+      const user = await userOr404(id);
+      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
+      const { profile: u, policyFailed } = await updateProfile(ctx, req.user!.id, user, pid, b);
+      if (policyFailed) return reply.code(502).send({ error: 'jellyfin' });
+      return { profile: { ...publicProfile(u), hasPin: Boolean(u.pin_hash) } };
     });
-    return { profile: { ...publicProfile(u), hasPin: Boolean(u.pin_hash) } };
+  });
+
+  // a kids profile for the account, through the same path as the owner's own (max 5 profiles, unique name, hidden identity with the kids
+  // policy): 409 max_profiles / name_taken, 502 jellyfin
+  app.post('/api/admin/users/:id/profiles', admin, async (req, reply) => {
+    const id = idParam(req);
+    const b = adminKidsProfileBody.parse(req.body);
+    return serial(async () => {
+      const user = await userOr404(id);
+      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
+      let p: ProfileRow;
+      try {
+        p = await createProfile(ctx, user, { name: b.name, avatar: b.avatar, kids: true, maxRating: b.maxRating });
+      } catch (e) {
+        if (e instanceof ProfileError) return reply.code(e.status).send({ error: e.code });
+        throw e;
+      }
+      await audit(ctx, req.user!.id, 'profile.admin_create', id, { profile: p.id, maxRating: p.kids_max_rating });
+      return reply.code(201).send({ profile: { ...publicProfile(p), hasPin: Boolean(p.pin_hash) } });
+    });
+  });
+
+  // deletes a profile other than the owner's like its owner can: media server identity first (502 jellyfin), then the row (list,
+  // history, favourites, progress, hand-off and download rows cascade, device kids locks go); its sessions re-resolve their profile
+  app.delete('/api/admin/users/:id/profiles/:pid', admin, async (req, reply) => {
+    const { id, pid } = z.object({ id: uuid, pid: uuid }).parse(req.params);
+    return serial(async () => {
+      await userOr404(id);
+      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
+      const p = await getProfile(ctx, id, pid);
+      if (!p) return reply.code(404).send({ error: 'not_found' });
+      if (p.is_owner) return reply.code(400).send({ error: 'owner_profile' });
+      try {
+        await deleteProfile(ctx, p);
+      } catch (e) {
+        if (e instanceof ProfileError) return reply.code(e.status).send({ error: e.code });
+        throw e;
+      }
+      await dropProfileSessions(ctx, id, pid);
+      await audit(ctx, req.user!.id, 'profile.admin_delete', id, { profile: pid });
+      return { ok: true };
+    });
   });
 
   // ---- invites: multi-use (maxUses), optional access days for the accounts they create ----
