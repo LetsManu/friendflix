@@ -200,6 +200,8 @@ describe('Plex browse + user data over the mirror', () => {
     expect(await e.ms.findByTmdb(4242, 'movie')).toEqual({ id: item(lib.alpha!), name: 'Alpha Horror' });
     expect(await e.ms.findByTmdb(4242, 'tv')).toBeNull();
     expect(await e.ms.findByTmdb(-1, 'movie')).toBeNull();
+    expect(await e.ms.findSeriesByTvdb!(-1)).toBeNull();
+    expect(await e.ms.findSeriesByTvdb!(987654)).toBeNull(); // no show with that TVDB guid
     expect(await e.ms.seriesHasEpisode(item(3))).toBe(true);
     expect(await e.ms.seriesHasEpisode(item(1))).toBe(false);
     const movies = await e.ms.libraryStreams('Movie', 0, 2);

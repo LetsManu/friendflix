@@ -729,6 +729,16 @@ export class JellyfinService implements MediaServer {
     return i ? { id: i.Id, name: i.Name } : null;
   }
 
+  /** Series lookup by TVDB id with the admin key (libraries without TMDB ids, typical for anime). */
+  async findSeriesByTvdb(tvdbId: number): Promise<{ id: string; name: string } | null> {
+    if (!Number.isInteger(tvdbId) || tvdbId <= 0) return null;
+    const r = await this.client.adminJson<{ Items: Array<{ Id: string; Name: string }> }>(
+      `/Items?anyProviderIdEquals=tvdb.${tvdbId}&recursive=true&includeItemTypes=Series&limit=1`,
+    );
+    const i = r.Items[0];
+    return i ? { id: i.Id, name: i.Name } : null;
+  }
+
   /** A series counts as available once at least one real (non-placeholder) episode exists. */
   async seriesHasEpisode(seriesId: string): Promise<boolean> {
     const p = new URLSearchParams({ parentId: seriesId, recursive: 'true', includeItemTypes: 'Episode', isMissing: 'false', limit: '1', fields: 'LocationType' });

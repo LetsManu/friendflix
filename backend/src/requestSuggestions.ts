@@ -59,7 +59,7 @@ function certificationOf(mediaType: 'movie' | 'tv', d: any): string | null {
 /** Counts of one build (no titles, no ids): why a list is as long as it is. Logged once per build, shown to admins as `debug`. */
 export interface SuggestStats {
   anchors: number; seeds: number; seedsWithoutTmdb: number; seedsFoundByName: number; recommendations: number;
-  inLibrary: number; lookupFailures: number; ageFiltered: number; final: number;
+  inLibrary: number; inLibraryByTvdb: number; lookupFailures: number; ageFiltered: number; final: number;
 }
 interface Cached { builtAt?: string; stats?: SuggestStats; items: Array<Omit<Suggestion, 'request'> & { state: WishState }> }
 
@@ -84,6 +84,17 @@ async function findTmdbByName(ctx: Pick<Ctx, 'kv' | 'cfg'>, seerr: ReturnType<ty
   const n = found ? (found.id as number) : 0;
   await ctx.kv.set(key, String(n), n ? SEED_ID_TTL : SEED_MISS_TTL).catch(() => undefined);
   return n || null;
+}
+
+/** TVDB id of a TMDB series from the request service's details (kv, 30 days; 0 = it has none). A failing call throws and is not cached. */
+async function tvdbOf(ctx: Pick<Ctx, 'kv'>, seerr: ReturnType<typeof requestsClient>, tmdbId: number, lang: Language): Promise<number | null> {
+  const key = `reqtvdb:${tmdbId}`;
+  const hit = await ctx.kv.get(key).catch(() => null);
+  if (hit !== null && hit !== undefined && /^\d+$/.test(hit)) return Number(hit) || null;
+  const n = Number(((await seerr.details('tv', tmdbId, lang)) as any)?.externalIds?.tvdbId);
+  const id = Number.isInteger(n) && n > 0 ? n : 0;
+  await ctx.kv.set(key, String(id), 30 * 86400).catch(() => undefined);
+  return id || null;
 }
 
 /** Seeds: the profile's top taste anchors of the asked type (title, TMDB id). A seed without a TMDB id from the media server (anime libraries often carry only TVDB / AniDB ids) is looked up by name and year; one the media server cannot name is skipped. */
@@ -126,7 +137,7 @@ async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user:
   const builtAt = new Date().toISOString();
   const seerr = requestsClient(ctx);
   const mt: 'movie' | 'tv' = type === 'movie' ? 'movie' : 'tv';
-  const stats: SuggestStats = { anchors: 0, seeds: 0, seedsWithoutTmdb: 0, seedsFoundByName: 0, recommendations: 0, inLibrary: 0, lookupFailures: 0, ageFiltered: 0, final: 0 };
+  const stats: SuggestStats = { anchors: 0, seeds: 0, seedsWithoutTmdb: 0, seedsFoundByName: 0, recommendations: 0, inLibrary: 0, inLibraryByTvdb: 0, lookupFailures: 0, ageFiltered: 0, final: 0 };
   const seeds = await seedsFor(ctx, user, profileId, type, seerr, lang, stats);
   stats.seeds = seeds.length;
   let complete = true;
@@ -151,10 +162,18 @@ async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user:
   stats.recommendations = pool.length;
   const candidates = pool.filter((e) => WISH[portalStatus(e.x.mediaInfo?.status, e.x.mediaInfo?.requests?.[0]?.status)] !== 'available');
   const inLibrary = await inPool(candidates, PARALLEL, async (e) => {
-    try { return Boolean(await ctx.jf.findByTmdb(e.x.id, mt)); } catch { complete = false; stats.lookupFailures++; return true; } // unknown = do not offer
+    try {
+      if (await ctx.jf.findByTmdb(e.x.id, mt)) return true;
+      if (mt !== 'tv' || !ctx.jf.findSeriesByTvdb) return false;
+      // a library without TMDB ids (anime): the same series by its TVDB id, which the request service's details name
+      const tvdb = await tvdbOf(ctx, seerr, e.x.id, lang);
+      if (!tvdb || !(await ctx.jf.findSeriesByTvdb(tvdb))) return false;
+      stats.inLibraryByTvdb++;
+      return true;
+    } catch { complete = false; stats.lookupFailures++; return true; } // unknown = do not offer
   });
   let rest = candidates.filter((_e, i) => !inLibrary[i]);
-  stats.inLibrary = inLibrary.filter(Boolean).length - stats.lookupFailures;
+  stats.inLibrary = inLibrary.filter(Boolean).length - stats.lookupFailures; // includes the ones found by TVDB id
   if (ageCap !== null) {
     // a role with an age cap: only titles whose rating is known and within the cap (the request service lists no ratings in its lists)
     const ok = await inPool(rest, PARALLEL, async (e) => {

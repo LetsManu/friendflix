@@ -49,6 +49,9 @@ export function tmdbIdOf(guids: readonly string[] | null | undefined): number | 
 /** The guids findByTmdb() looks for: the new-agent and the legacy-agent spelling of one TMDB id. */
 export const tmdbGuids = (tmdbId: number): string[] => [`tmdb://${tmdbId}`, `com.plexapp.agents.themoviedb://${tmdbId}`];
 
+/** The guids findSeriesByTvdb() looks for: the new-agent and the legacy-agent spelling of one TVDB id. */
+export const tvdbGuids = (tvdbId: number): string[] => [`tvdb://${tvdbId}`, `com.plexapp.agents.thetvdb://${tvdbId}`];
+
 const RT = /^rottentomatoes:\/\//;
 
 /**
