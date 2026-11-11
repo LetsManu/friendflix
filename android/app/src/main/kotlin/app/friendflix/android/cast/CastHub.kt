@@ -6,7 +6,9 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
+import androidx.media3.common.util.UnstableApi
 import app.friendflix.android.downloads.Downloads
 import app.friendflix.android.offline.Offline
 import app.friendflix.android.player.FlowPrefs
@@ -261,6 +263,8 @@ object CastHub {
         }
     }
 
+    // androidx.media3.cast.Cast is Media3's unstable API (like RemoteCastPlayer in MediaThreeReceiver)
+    @OptIn(UnstableApi::class)
     private fun create(app: Context, ctx: CastContext) {
         val media3 = androidx.media3.cast.Cast.getSingletonInstance(app)
         if (media3.needsInitialization()) media3.initialize()
