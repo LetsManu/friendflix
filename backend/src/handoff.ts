@@ -143,12 +143,13 @@ export async function selectHandoff(ctx: Ctx, who: { userId: string; profileId: 
   const kind: ClientKind = r.client ?? 'web';
   const name = r.name ?? (kind === 'web' ? r.label : null);
   const rt = runtime ?? it.runtimeTicks;
+  if (runtime === undefined && rt != null && rt > 0 && pos >= rt * 0.9) return null; // the row knew no runtime: the item's decides
   return {
     id: createHash('sha256').update(`${r.device_id}|${r.item_id}|${r.started_at.toISOString()}`).digest('hex').slice(0, 16),
     itemId: it.id, type: it.type, title: it.name,
-    ...(it.year != null ? { year: it.year } : {}),
+    ...(it.type === 'Movie' && it.year != null ? { year: it.year } : {}),
     ...(it.seriesName ? { seriesName: it.seriesName } : {}),
-    ...(it.parentIndexNumber != null ? { season: it.parentIndexNumber } : {}),
+    ...(it.type === 'Episode' && it.parentIndexNumber != null ? { season: it.parentIndexNumber } : {}),
     ...(it.indexNumber != null && it.type === 'Episode' ? { episode: it.indexNumber } : {}),
     imageId: it.type === 'Episode' && !it.image ? (it.seriesId ?? r.series_id ?? it.id) : it.id,
     positionTicks: pos,

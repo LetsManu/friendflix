@@ -316,9 +316,35 @@ describe('read', () => {
   });
 
   it('no runtime known: offered from 60 s', async () => {
-    await put({ pos: T(5000), runtime: null });
+    await put({ pos: T(1000), runtime: null });
     const { h } = await get();
-    expect(h).toMatchObject({ itemId: EP4, positionTicks: T(5000), runtimeTicks: 30_000_000_000 }); // the media server knows it
+    expect(h).toMatchObject({ itemId: EP4, positionTicks: T(1000), runtimeTicks: 30_000_000_000 }); // the media server knows it
+  });
+
+  it('no runtime in the row: 90 % of the item runtime still ends the offer', async () => {
+    await put({ pos: T(2850), runtime: null }); // 95 % of 3000 s
+    expect((await get()).h).toBeNull();
+    await put({ pos: T(2690), runtime: null }); // just under 90 %
+    expect((await get()).h).toMatchObject({ itemId: EP4 });
+  });
+
+  it('season and episode only for an episode, year only for a film', async () => {
+    ITEMS[EP4] = { ...GENERIC, ProductionYear: 2021 };
+    forget();
+    await put();
+    const ep = (await get()).h!;
+    expect(ep).not.toHaveProperty('year');
+    expect(ep).toMatchObject({ season: 1, episode: 4 });
+    ITEMS[FILM] = { ...ITEMS[FILM]!, ParentIndexNumber: 1, IndexNumber: 2 };
+    forget();
+    await put({ item: FILM, pos: T(600), runtime: 28_320_000_000 });
+    const film = (await get()).h!;
+    expect(film).toMatchObject({ year: 2019 });
+    expect(film).not.toHaveProperty('season');
+    expect(film).not.toHaveProperty('episode');
+    delete ITEMS[FILM]!.ParentIndexNumber;
+    delete ITEMS[FILM]!.IndexNumber;
+    forget();
   });
 
   it('played -> null', async () => {
