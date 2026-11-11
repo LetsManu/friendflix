@@ -13,6 +13,11 @@ updates:
     directory: /desktop # the Tauri CLI of the Windows release (own lockfile, not a workspace)
     open-pull-requests-limit: 2
     schedule: { interval: weekly }
+    # The CLI must match the `tauri` crate in desktop/Cargo.lock, and nothing on a PR runs it (desktop-release is tag-only), so only
+    # patch releases arrive on their own; a minor or major bump is done by hand together with the crate.
+    ignore:
+      - dependency-name: "@tauri-apps/cli"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
   - package-ecosystem: docker
     directory: /backend
     open-pull-requests-limit: 5
