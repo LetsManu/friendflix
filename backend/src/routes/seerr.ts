@@ -10,6 +10,7 @@ import { localizeStored, notify } from '../notify.js';
 import { portalStatus, RequestsDisabledError, requestsClient, requestsEnabled, requestStateKey, SeerrError, viewerLanguage } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireGrownUp } from '../kids.js';
+import { permsOf } from '../permGuard.js';
 import { requireAdmin } from '../session.js';
 import { limitFor, quota, release, reserve, resetsAt, usage } from '../requestlimit.js';
 import { checkSecret } from './internal.js';
@@ -33,9 +34,13 @@ function mapResult(r: any) {
 
 const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { zod: 'plain', jellyfin: false, seerr: true });
 
-/** preHandler after the sign-in checks: without a request service its routes answer 404 {error:'requests_disabled'} */
-const requestsOn = (ctx: Ctx) => async () => {
+/**
+ * preHandler after the sign-in checks: without a request service its routes answer 404 {error:'requests_disabled'}, without the
+ * `requests` switch 403 {error:'requests_forbidden'} (admins always have it, so the admin routes behind it are unaffected)
+ */
+const requestsOn = (ctx: Ctx) => async (req: FastifyRequest, reply: FastifyReply) => {
   if (!requestsEnabled(ctx)) throw new RequestsDisabledError();
+  if (!(await permsOf(ctx, req)).requests) return reply.code(403).send({ error: 'requests_forbidden' });
 };
 
 export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {

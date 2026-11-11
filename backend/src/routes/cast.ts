@@ -14,6 +14,7 @@ import { playbackReport } from './media.js';
 import { effectiveLimits } from '../limits.js';
 import { remoteBitrateCap } from '../roles.js';
 import { loadSession, requireUser } from '../session.js';
+import { requirePerm } from '../permGuard.js';
 import { id32 as itemId } from './_shared.js';
 
 const psId = z.string().regex(/^[\w-]{8,64}$/);
@@ -27,7 +28,8 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
     return { enabled: castEnabled(ctx), ...(receiverAppId ? { receiverAppId } : {}) };
   });
 
-  app.post('/api/cast/session', { ...pre, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+  // the `cast` switch decides who may start a cast (a running one can still be followed and stopped)
+  app.post('/api/cast/session', { preHandler: [requireUser(ctx), requirePerm(ctx, 'cast', 'cast_forbidden')], config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     if (!castEnabled(ctx)) return reply.code(404).send({ error: 'cast_disabled' });
     const b = z.object({
       itemId,
