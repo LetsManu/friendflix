@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CastInfo } from '#lib/cast';
-import { airPlaySupported, ARM_MS, AUTO_MAX, AUTO_WINDOW_MS, AVAILABILITY_EVENT, CONNECT_TIMEOUT_MS, createAirPlay, POSITION_TOLERANCE_S, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayDeps, type AirPlayState } from './airplay';
+import { airPhase, airPlaySupported, ARM_MS, AUTO_MAX, AUTO_WINDOW_MS, AVAILABILITY_EVENT, CONNECT_TIMEOUT_MS, createAirPlay, DETACH_WAIT_MS, POSITION_TOLERANCE_S, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayDeps, type AirPlayState } from './airplay';
 import { clearAirLog, readAirLog } from './airplayLog';
 
 /** a <video> stand-in: Safari's AirPlay events are simulated by dispatching them */
@@ -1235,10 +1235,78 @@ describe('connecting phase, connect timeout, position guard', () => {
     await adv(0);
     remoteConnecting(v); // TV picked, but Safari never reports the wireless target
     expect(c.state.connecting).toBe(true);
-    await adv(ARM_MS);
+    await adv(10_000);
+    c.cancel(); // the restore, well before the 30 s
     expect(deps.restore).toHaveBeenCalledOnce();
-    expect(connectTimeout).toHaveBeenCalledOnce(); // 30 s passed before the 90 s arm timeout
     expect(c.state).toMatchObject({ connecting: false, ready: false, active: false });
+    await adv(SETTLE_MS * 2);
+    expect(vi.getTimerCount()).toBe(0); // the connect timer went with the restore
+    await adv(CONNECT_TIMEOUT_MS * 2);
+    expect(connectTimeout).not.toHaveBeenCalled();
+  });
+
+  it('a TV picked late in the arm window is not restored mid-connect: the 30 s take over, then the prompt waits again', async () => {
+    exact();
+    const connectTimeout = vi.fn();
+    const { v, c, deps } = setup({ connectTimeout });
+    c.pick();
+    await adv(0);
+    await adv(ARM_MS - 5000);
+    remoteConnecting(v); // picked at 85 s, Safari has not reported the wireless target yet
+    await adv(CONNECT_TIMEOUT_MS - 1); // past the 90 s mark
+    expect(deps.restore).not.toHaveBeenCalled();
+    expect(connectTimeout).not.toHaveBeenCalled();
+    expect(c.state).toMatchObject({ ready: true, connecting: true });
+    await adv(1); // 115 s: the connect timeout
+    expect(connectTimeout).toHaveBeenCalledOnce();
+    expect(deps.restore).not.toHaveBeenCalled();
+    expect(c.state).toMatchObject({ ready: true, connecting: false }); // the prompt: choose the TV again
+    await adv(ARM_MS - 1);
+    expect(deps.restore).not.toHaveBeenCalled();
+    await adv(1);
+    expect(deps.restore).toHaveBeenCalledOnce();
+  });
+
+  it('every pick of a TV gets its connecting phase: a second pick after a timeout shows connecting again', async () => {
+    exact();
+    const connectTimeout = vi.fn();
+    const { v, c } = setup({ connectTimeout });
+    c.pick();
+    await adv(0);
+    remoteConnecting(v);
+    await adv(CONNECT_TIMEOUT_MS);
+    expect(c.state).toMatchObject({ ready: true, connecting: false });
+    remoteConnecting(v); // a stray event without a new pick: nothing
+    expect(c.state.connecting).toBe(false);
+    c.pick(); // the prompt's button: the picker again
+    remoteConnecting(v);
+    expect(c.state.connecting).toBe(true);
+    await adv(CONNECT_TIMEOUT_MS);
+    expect(connectTimeout).toHaveBeenCalledTimes(2);
+    // the same after the wireless target (the engine's case): its Neu verbinden opens the picker while active
+    c.pick();
+    v.wireless(true);
+    remoteConnecting(v);
+    expect(c.state).toMatchObject({ active: true, connecting: true });
+    playing(v);
+    expect(c.state.connecting).toBe(false);
+    c.pick(); // once the TV played: a pick is a change of TV, no connecting phase
+    remoteConnecting(v);
+    expect(c.state.connecting).toBe(false);
+  });
+
+  it('a wireless playing without our token on the element (restored stream) does not count as the TV playing', async () => {
+    exact();
+    const { v, c } = setup();
+    c.pick();
+    await adv(0);
+    v.wireless(true);
+    c.cancel(); // restore while WebKit still reports the route
+    await adv(0);
+    playing(v); // the restored normal stream
+    c.pick(); // a fresh tap: token first, the route is still there
+    await adv(0);
+    expect(c.state).toMatchObject({ active: true, connecting: true });
   });
 
   it('first playing more than 5 s off seeks once', async () => {
@@ -1276,6 +1344,40 @@ describe('connecting phase, connect timeout, position guard', () => {
     expect(readAirLog().some((e) => e.ev === 'position corrected')).toBe(false);
   });
 
+  it('the phone played on while the picker was open: the position at the pick counts, not the tap', async () => {
+    const a = setup();
+    a.v.currentTime = 1390; a.v.paused = false;
+    a.c.pick();
+    await flush();
+    a.v.currentTime = 1402; // the phone plays the token stream while the person chooses the TV
+    a.v.wireless(true); // TV picked
+    playing(a.v); // the TV starts where the phone was
+    expect(a.v.currentTime).toBe(1402);
+    expect(readAirLog().some((e) => e.ev === 'position corrected')).toBe(false);
+
+    const b = setup();
+    b.v.currentTime = 1390; b.v.paused = false;
+    b.c.pick();
+    await flush();
+    b.v.currentTime = 1402;
+    b.v.wireless(true);
+    b.v.currentTime = 0; // the TV starts at the beginning
+    playing(b.v);
+    expect(b.v.currentTime).toBe(1402);
+  });
+
+  it('a token put on at the start (pos 0: the start or the server resume decides) is never corrected', async () => {
+    const { v, c, deps } = setup();
+    v.currentTime = 600; v.paused = false;
+    await airplayOn(v, c);
+    playing(v);
+    vi.mocked(deps.request).mockResolvedValueOnce({ ...CI2, startTime: 754 });
+    await c.switchItem(0); // another title, the server's resume position
+    v.currentTime = 754; // the TV starts there (the owner seeks to ci.startTime)
+    playing(v);
+    expect(v.currentTime).toBe(754);
+  });
+
   it('a new token (refresh) gets its own one check', async () => {
     const { v, c, deps } = setup();
     v.currentTime = 600; v.paused = false;
@@ -1307,6 +1409,45 @@ describe('connecting phase, connect timeout, position guard', () => {
     expect(deps.started).not.toHaveBeenCalled();
     expect(v.src).not.toBe(CI.contentUrl);
     expect(v.webkitShowPlaybackTargetPicker).not.toHaveBeenCalled();
+  });
+
+  it(`the wait for a hanging detach ends after ${DETACH_WAIT_MS / 1000} s: the restore is not blocked by a stop report`, async () => {
+    exact();
+    expect(DETACH_WAIT_MS).toBe(5000);
+    const { c, deps } = setup({ detach: vi.fn(() => new Promise<void>(() => undefined)) });
+    c.pick();
+    c.cancel();
+    await adv(DETACH_WAIT_MS - 1);
+    expect(deps.restore).not.toHaveBeenCalled();
+    await adv(1);
+    expect(deps.restore).toHaveBeenCalledOnce();
+    expect(readAirLog().some((e) => e.ev === 'restore' && e.note?.includes('detach'))).toBe(true);
+  });
+
+  it('destroy removes the playing and the remote connecting listeners', () => {
+    const v = new FakeVideo();
+    const r = v.remote as EventTarget;
+    const addR = vi.spyOn(r, 'addEventListener'), remR = vi.spyOn(r, 'removeEventListener');
+    const addV = vi.spyOn(v, 'addEventListener'), remV = vi.spyOn(v, 'removeEventListener');
+    const c = createAirPlay(v, { request: vi.fn(async () => CI), revoke: vi.fn(), detach: vi.fn(), started: vi.fn(), restore: vi.fn(), fail: vi.fn(), change: vi.fn() });
+    const onConnecting = addR.mock.calls.find((x) => x[0] === 'connecting')?.[1];
+    const onPlaying = addV.mock.calls.find((x) => x[0] === 'playing')?.[1];
+    expect(onConnecting).toBeTypeOf('function');
+    expect(onPlaying).toBeTypeOf('function');
+    c.destroy();
+    expect(remR).toHaveBeenCalledWith('connecting', onConnecting);
+    expect(remV).toHaveBeenCalledWith('playing', onPlaying);
+  });
+
+  it('the cancel log names the connecting phase (also while a new token loads)', async () => {
+    const { v, c, deps } = setup();
+    await airplayOn(v, c);
+    vi.mocked(deps.request).mockImplementationOnce(() => new Promise<CastInfo>(() => undefined));
+    void c.refresh();
+    await flush();
+    expect(c.state).toMatchObject({ busy: true, connecting: true });
+    c.cancel();
+    expect(readAirLog().find((e) => e.ev === 'cancel')?.note).toBe('connecting');
   });
 
   it('cancel waits for a running detach before the restore (the restored stream is not dropped by it)', async () => {
@@ -1372,5 +1513,29 @@ describe('connecting phase, connect timeout, position guard', () => {
     const log = readAirLog();
     expect(log.map((e) => e.ev)).toEqual(expect.arrayContaining(['connecting', 'connect timeout', 'position corrected']));
     expect(JSON.stringify(log)).not.toMatch(/TOKEN|ff\.example|:\/\/|master\.m3u8|c{32}/);
+  });
+});
+
+describe('airPhase: the one value the player renders', () => {
+  const base: AirPlayState = { available: true, active: false, busy: false, ready: false, error: false, connecting: false };
+  const at = (o: Partial<AirPlayState>) => airPhase({ ...base, ...o });
+  it('idle, prompt, connecting, active, error', () => {
+    expect(at({})).toBe('idle');
+    expect(at({ available: false })).toBe('idle');
+    expect(at({ busy: true })).toBe('connecting'); // the tap until the token stream is on the element
+    expect(at({ ready: true })).toBe('prompt');
+    expect(at({ ready: true, connecting: true })).toBe('connecting'); // TV picked before Safari reports the target
+    expect(at({ active: true, connecting: true })).toBe('connecting');
+    expect(at({ active: true })).toBe('active');
+  });
+  it('precedence: error over everything, the connecting overlay over the prompt', () => {
+    expect(at({ error: true, connecting: true, ready: true })).toBe('error');
+    expect(at({ error: true, active: true, busy: true })).toBe('error');
+    expect(at({ error: true, ready: true })).toBe('error');
+    expect(at({ busy: true, ready: true })).toBe('connecting'); // a Retry from the ready error loads a token
+  });
+  it('a new token while the TV plays (audio track, quality, renewal, next title) stays active', () => {
+    expect(at({ active: true, busy: true })).toBe('active');
+    expect(at({ active: true, busy: true, connecting: true })).toBe('connecting');
   });
 });

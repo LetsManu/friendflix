@@ -923,7 +923,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (type === 'playing') p.buffering = false;
     if (start) p.state = 'playing';
     patch(s, p);
-    if (start) { s.started = true; void report(s, 'start', s.ci); }
+    if (start) { s.started = true; a.resume = false; void report(s, 'start', s.ci); } // the TV plays: a pending Neu verbinden has nothing left to resume
     else if ((type === 'play' || type === 'pause') && s.started) void report(s, 'progress', s.ci);
     if (type === 'timeupdate' && s.started) atPosition(s);
   }

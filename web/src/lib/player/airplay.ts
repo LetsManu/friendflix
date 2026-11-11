@@ -45,11 +45,17 @@
  *   is the target (not while only the phone plays it: no TV refused anything) first gets ONE new token without subtitles (`request(pos, { noSubs: true })`, `subsRefused` first); that token has none, so a
  *   second code 4 goes on to the variant fallback as above. Never more than that one extra request per token.
  * - Connecting phase (spec 4.1): from "TV picked" (a `connecting` event on `video.remote` or `video.remote.state === 'connecting'`
- *   while our token is on the element, or the wireless target reported while it is) until the first `playing` while wireless,
- *   CONNECT_TIMEOUT_MS, or a restore. The timeout only tells the owner (`connectTimeout`: the engine turns its remote screen to
- *   `reconnect`); the token stays, a late `playing` still counts. `cancel()` (the overlay's *Abbrechen*) = the arm timeout's restore.
+ *   while our token is on the element, or the wireless target reported while it is) until the first `playing` of our token while
+ *   wireless, CONNECT_TIMEOUT_MS, or a restore. Once per pick: opening the picker again before the TV played allows another one.
+ *   While it runs the `ready` arm timer is off (the 30 s take over); a timeout while still `ready` starts the ARM_MS wait again (the
+ *   prompt). The timeout only tells the owner (`connectTimeout`: the engine turns its remote screen to `reconnect`); the token
+ *   stays, a late `playing` still counts. `cancel()` (the overlay's *Abbrechen*) = the arm timeout's restore. `airPhase()` is the
+ *   one value a view renders.
  * - Position guard (spec 4.2): on the first `playing` while wireless for a token, a TV more than POSITION_TOLERANCE_S away from the
- *   position the token URL was put on the element at is seeked there, once; never again for that token.
+ *   hand-over position is seeked there, once; never again for that token. The hand-over position is where the token URL went on
+ *   the element, moved to the phone's position when the TV is picked (the phone plays the token stream while the picker is open).
+ *   Positions up to 1 s are not held (the start, or the server's resume position, decides).
+ * - A restore waits for a running `detach` (it would drop the restored stream), at most DETACH_WAIT_MS.
  * - Every decision is written to the AirPlay event log (airplayLog.ts, /diagnose) without URLs, tokens or cast ids.
  *
  * Other notes:
@@ -104,6 +110,8 @@ export const AUTO_WINDOW_MS = 60_000;
 export const CONNECT_TIMEOUT_MS = 30_000;
 /** the TV's first `playing` further than this from the hand-over position: one seek there (spec 4.2) */
 export const POSITION_TOLERANCE_S = 5;
+/** a restore waits at most this long for a running `detach` (its stop report may hang: no fetch timeout) */
+export const DETACH_WAIT_MS = 5000;
 
 export interface AirPlayState {
   /** Safari knows at least one AirPlay receiver: show the button */
@@ -119,6 +127,15 @@ export interface AirPlayState {
   /** a TV was picked for our token stream and has not played yet (connecting overlay, *Abbrechen* = `cancel()`) */
   connecting: boolean;
 }
+
+/**
+ * What a view shows, one value: `error` (Retry / end AirPlay in the picker) > `connecting` (the overlay with *Abbrechen*: the tap's
+ * token on its way, or a TV picked and not playing yet) > `prompt` (choose the TV) > `active` (plays on the TV; also while a new
+ * token for it loads) > `idle`.
+ */
+export type AirPhase = 'idle' | 'error' | 'connecting' | 'prompt' | 'active';
+export const airPhase = (s: AirPlayState): AirPhase =>
+  s.error ? 'error' : s.connecting || (s.busy && !s.active) ? 'connecting' : s.ready ? 'prompt' : s.active ? 'active' : 'idle';
 
 export interface AirPlayDeps {
   /** POST /api/cast/session for the current item at `pos` (audio track, quality are the player's) */
@@ -194,7 +211,7 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
   let afterStop = false;
   /** d.restore() is running (the player re-attaches its normal stream, src changes at some point): keep the window open */
   let restoring = false;
-  /** connecting phase: its timer; it already began in this episode (one per pick); the TV played (until the restore) */
+  /** connecting phase: its timer; it already ran for this pick (a new pick() before the TV played clears it); our token played on the TV (until the restore) */
   let connectT: ReturnType<typeof setTimeout> | undefined, connectSeen = false, played = false;
   /** the position our token URL went on the element at, per token; `done` after the first `playing` while wireless */
   let guard: { ci: CastInfo; pos: number; done: boolean } | null = null;
@@ -274,10 +291,15 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
     emit();
   };
 
-  /** TV picked for our token stream: the connecting phase (once per pick) and its timeout; true = changed (the caller emits) */
-  function startConnecting(why: string): boolean {
+  /**
+   * TV picked for our token stream: the connecting phase (once per pick) and its timeout; true = changed (the caller emits).
+   * `at` = the phone's position at the pick (taken before disarm() drops armPos): the TV is held there.
+   */
+  function startConnecting(why: string, at = position()): boolean {
     if (dead || connecting || connectSeen || played || !tokenOnElement) return false;
     connecting = true; connectSeen = true;
+    if (at > 1 && guard && !guard.done && guard.ci === tokenOnElement) guard.pos = at;
+    if (ready) stopArmTimer(); // no restore mid-connect: the 30 s take over
     stopConnectTimer();
     connectT = timers.set(connectEnd, CONNECT_TIMEOUT_MS);
     log('connecting', { note: why });
@@ -289,6 +311,7 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
     if (dead || !connecting) return;
     connecting = false;
     log('connect timeout', { note: `no playing on the TV within ${CONNECT_TIMEOUT_MS / 1000} s` });
+    if (ready && !active && !error) arm(); // the picker never reported the TV: the prompt, and its wait, again
     emit();
     try { d.connectTimeout?.(); } catch { /* the owner's reaction is its own */ }
   }
@@ -307,7 +330,7 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
         log('position corrected', { wireless: true, note: `off by ${Math.round(off)} s` });
       }
     }
-    if (played) return;
+    if (played || !tokenOnElement) return; // a restored normal stream on a still reported route is not our TV playing
     played = true;
     stopConnectTimer();
     if (connecting) { connecting = false; log('wireless', { wireless: true, note: 'first playing on the TV' }); emit(); }
@@ -331,7 +354,8 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
       if (active) { log('wireless', { wireless: w, note: `${why}: already active` }); return; }
       if (busy && !ready) { log('wireless', { wireless: w, note: `${why}: token in flight` }); return; } // tokenFirst() checks the target when done
       if (tokenOnElement) { // the TV got our token URL
-        disarm(); active = true; error = false; startConnecting('wireless with our token'); emit();
+        const at = position(); // before disarm() drops armPos
+        disarm(); active = true; error = false; startConnecting('wireless with our token', at); emit();
         log('wireless', { wireless: w, note: `${why}: started` });
         return;
       }
@@ -451,7 +475,12 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
     restoring = true;
     try {
       const running = detaching;
-      if (running) await running.catch(() => undefined); // the token request's detach must not drop the stream restored here
+      if (running) { // the token request's detach must not drop the stream restored here; a hanging stop report must not block it
+        let t: ReturnType<typeof setTimeout> | undefined, late = false;
+        await Promise.race([running.catch(() => undefined), new Promise<void>((r) => { t = timers.set(() => { late = true; r(); }, DETACH_WAIT_MS); })]);
+        if (t !== undefined) timers.clear(t);
+        if (late) log('restore', { note: `detach still running after ${DETACH_WAIT_MS / 1000} s: restoring anyway` });
+      }
       await d.restore(pos, wasPlaying, ci);
     }
     finally { restoring = false; }
@@ -529,7 +558,8 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
       if (dead) return;
       if (active || ready) {
         log('pick', { note: active ? 'picker (active)' : 'picker (ready)' });
-        if (ready && !active && !error) arm(); // the user is still choosing: restart the wait
+        if (!connecting && !played) connectSeen = false; // the picker again: the next TV pick gets its connecting phase
+        if (ready && !active && !error && !connecting) arm(); // the user is still choosing: restart the wait
         picker();
         return;
       }
@@ -560,7 +590,7 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
       if (dead) return;
       if (played || !(busy || ready || connecting)) { log('cancel', { note: 'nothing to cancel' }); return; }
       const at = busy && !tokenOnElement ? tapAt : null; // the token is still on its way: the tap's position / play state
-      log('cancel', { note: busy ? 'busy' : connecting ? 'connecting' : 'ready' });
+      log('cancel', { note: connecting ? 'connecting' : busy ? 'busy' : 'ready' });
       void stop(at ?? undefined);
     },
     destroy() {

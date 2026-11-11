@@ -492,6 +492,21 @@ describe('cast engine: AirPlay route loss and reconnect', () => {
     expect(env.reports()).toEqual(['start']);
   });
 
+  it('after a connect timeout, Neu verbinden and then a late start of the TV on its own: playing stays playing', async () => {
+    const env = await setup({ started: false });
+    await env.adopt();
+    await env.advance(CONNECT_TIMEOUT_MS);
+    expect(get(env.out)?.state).toBe('reconnect');
+    env.engine.reconnect(); // the picker opens (the controller is active); the person closes it without a choice
+    expect(env.spy.pick).toHaveBeenCalledOnce();
+    env.video.fire('playing'); // the TV starts late, by itself
+    expect(get(env.out)?.state).toBe('playing');
+    env.probe.dispatchEvent(Object.assign(new Event('webkitplaybacktargetavailabilitychanged'), { availability: 'not-available' })); // any later state change
+    await flush();
+    expect(get(env.out)).toMatchObject({ state: 'playing', buffering: false });
+    expect(env.tokenPosts()).toEqual([]);
+  });
+
   it('connect timeout while the TV already plays changes nothing', async () => {
     const env = await setup({ started: true });
     await env.adopt();
