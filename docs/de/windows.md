@@ -90,6 +90,8 @@ Die Medientasten deiner Tastatur und die Windows-Medienanzeige (Lautstärke-Flyo
 
 Der Fortschritt geht an den Server (Start, alle 10 Sekunden, Pause, Fortsetzen, Spulen, Ende), sodass Web und die anderen Apps dieselbe Position zeigen. Hängt die Wiedergabe länger als 15 Sekunden, erscheint *Reconnecting…* und der Player lädt bis zu dreimal neu. Endet die Sitzung (Anmeldung abgelaufen), schließt der Player und die App zeigt die Anmeldeseite.
 
+**Von einem anderen Gerät weiterschauen.** Hast du in den letzten 6 Stunden auf einem anderen Gerät einen Titel angehalten, zeigt die Startseite eine Karte, zum Beispiel „Zuletzt auf Wohnzimmer · vor 12 Min.“, mit *Hier weiterschauen ab 23:10*. Der Knopf öffnet mpv genau an dieser Position (die Karte verspricht eine Zeit, darum startet sie nie am gespeicherten Wiedergabestand). Das andere Gerät bleibt unberührt. *Ausblenden* blendet die Karte an diesem PC aus.
+
 ## Tray, Links und eine Instanz
 
 - **Tray-Symbol:** *Open FriendFlix*, die Serveradresse (nur lesbar), *Settings*, *Quit*. Das Fenster zu schließen beendet die App.

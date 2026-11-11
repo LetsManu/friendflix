@@ -56,6 +56,15 @@ Startet der Browser die Wiedergabe ohne vorherigen Tastendruck (z. B. wenn das H
 - Auf jeder Detailseite erscheint **Auf Fernseher**, sobald ein Fernseher verbunden ist.
 - Es wird immer der Fernseher **desselben Nutzers** gesteuert (nie der anderer Freunde). Pro Nutzer ist ein Fernseher aktiv; ein zweiter ersetzt den ersten.
 
+## Hier weiterschauen (Karte auf der Startseite)
+Hast du zuletzt auf einem anderen Gerät geschaut (innerhalb von 6 Stunden, Titel nicht zu Ende), zeigt die Startseite eine Karte „Zuletzt auf Wohnzimmer · vor 12 Min.“ mit **Hier weiterschauen ab 23:10** und **Ausblenden**. Am Fernseher steuerst du sie so:
+- Die Karte sitzt als **feste Fläche** (ohne Unschärfe) rechts oben in der großen Kachel und ist nur da, solange der Fokus in der Kachel ist.
+- Sie nimmt den Fokus nur, wenn die Antwort **innerhalb von 2 Sekunden** nach dem Öffnen kommt und **noch keine Taste** gedrückt wurde, und **nie** nach Zurück oder Vor (Seite wiederhergestellt). Dann setzt OK sofort fort.
+- Sonst bleibt der Fokus, wo er ist: **↑** von den Knöpfen der Kachel erreicht die Karte, **↓** oder **Zurück** bringt dich zurück auf die Kachel (ohne die Karte auszublenden). **→** geht auf *Ausblenden*; danach liegt der Fokus wieder auf der Kachel.
+- Eine **späte Antwort** nimmt nie den Fokus und schiebt keine Reihe: Die Karte liegt über der Kachel.
+- Startest du von der Karte aus und drückst im Player **Zurück**, landet der Fokus auf **Abspielen** der Kachel.
+- Ob die Fernbedienung ihre Zurück-Taste an die Seite weitergibt, hängt vom Fernseher ab; siehe die Prüfliste des Betreibers im Pull Request.
+
 ## Vorschau im Browser
 `https://portal.<domain>/?tv=1` zeigt den TV-Modus auf jedem Rechner (nur Optik und Tastatursteuerung, keine Kopplung; `?tv=0` beendet die Vorschau).
 

@@ -88,6 +88,8 @@ The media keys of your keyboard and the Windows media overlay (volume flyout, lo
 
 Progress is reported to the server (start, every 10 seconds, pause, resume, seek, stop), so the web and the other apps show the same position. A stall of more than 15 seconds shows *Reconnecting…* and reloads up to three times. If the session ends (sign-in expired), the player closes and the app shows the sign-in page.
 
+**Continue from another device.** When you stopped a title on another device in the last 6 hours, the start page shows a card, for example "Last on Living room · 12 min ago", with *Continue here from 23:10*. The button opens mpv at exactly that position (the card promises a time, so it never starts from the saved resume point). The other device is not touched. *Dismiss* hides the card on this PC.
+
 ## Tray, links and single instance
 
 - **Tray icon:** *Open FriendFlix*, the server address (read-only), *Settings*, *Quit*. Closing the window quits the app.
