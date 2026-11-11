@@ -9,6 +9,7 @@ import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
 let env: TestEnv;
 let admin: { cookies: Record<string, string>; csrf: string };
 let adminId = '';
+let failPolicyFor = '';
 const ids: Record<string, string> = {};
 const as = (s: { cookies: Record<string, string>; csrf: string }, method: 'GET' | 'POST' | 'PATCH', url: string, payload?: unknown) =>
   env.app.inject({ method, url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, ...(payload === undefined ? {} : { payload: payload as object }) });
@@ -26,7 +27,9 @@ const fakeSession = (userId: string, sid: string) =>
   env.kv.set(`sess:${sid}`, JSON.stringify({ userId, csrf: 'c', deviceId: 'd', deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now() }), 600);
 
 beforeAll(async () => {
-  env = await makeEnv();
+  env = await makeEnv({
+    'POST /Users/[^/]+/Policy': (u) => (failPolicyFor && u.pathname.includes(failPolicyFor) ? { status: 500, raw: 'nope' } : { status: 204 }),
+  }, { seerr: { 'GET /api/v1/user/[0-9]+': (u) => ({ json: { id: Number(u.pathname.split('/').pop()) } }) } });
   admin = await env.login();
   adminId = (await env.pool.query("select id from users where authentik_sub='sub-admin'")).rows[0].id;
   ids.anna = await addUser('anna', 'Anna', 'friend');
@@ -311,13 +314,18 @@ describe('concurrency', () => {
     const B = { sub: 'sub-b', email: 'b@example.com', name: 'Bea', groups: ['friendflix-admins'] };
     const bea = await env.login(B);
     const beaId = (await env.pool.query("select id from users where authentik_sub='sub-b'")).rows[0].id as string;
-    const [r1, r2] = await Promise.all([
-      as(admin, 'PATCH', `/api/admin/users/${beaId}`, { role: 'friend' }),
-      as(bea, 'PATCH', `/api/admin/users/${adminId}`, { role: 'friend' }),
-    ]);
-    expect([r1.statusCode, r2.statusCode].sort()).toEqual([200, 400]);
-    expect([r1, r2].find((r) => r.statusCode === 400)!.json().error).toBe('last_admin');
-    expect(Number((await env.pool.query("select count(*) n from users where role='admin' and not disabled")).rows[0].n)).toBe(1);
+    try {
+      const [r1, r2] = await Promise.all([
+        as(admin, 'PATCH', `/api/admin/users/${beaId}`, { role: 'friend' }),
+        as(bea, 'PATCH', `/api/admin/users/${adminId}`, { role: 'friend' }),
+      ]);
+      expect([r1.statusCode, r2.statusCode].sort()).toEqual([200, 400]);
+      expect([r1, r2].find((r) => r.statusCode === 400)!.json().error).toBe('last_admin');
+      expect(Number((await env.pool.query("select count(*) n from users where role='admin' and not disabled")).rows[0].n)).toBe(1);
+    } finally {
+      // either one may have won: later tests need the main admin back
+      await env.pool.query("update users set role='admin' where authentik_sub in ('sub-admin', 'sub-b')");
+    }
   });
 });
 
@@ -325,17 +333,20 @@ describe('rights filters, columns and bulk rights', () => {
   const bulk = (body: unknown) => as(admin, 'POST', '/api/admin/users/bulk', body);
   const names = async (q: string) => ((await get(`/api/admin/users${q}`)).json().users as Array<{ name: string }>).map((u) => u.name).sort();
   const overridesOf = async (id: string) => (await env.pool.query('select perms from user_limits where user_id=$1', [id])).rows[0]?.perms ?? null;
-  const ownerProfile = (id: string, kids: boolean) =>
+  const addProfile = (id: string, kids: boolean) =>
     env.pool.query('insert into profiles(id, user_id, name, is_owner, kids, jellyfin_user_id) values (gen_random_uuid(), $1, $2, false, $3, $4)', [id, kids ? 'Kind' : 'Gast', kids, 'f'.repeat(32)]);
 
   beforeEach(async () => {
-    await env.pool.query('delete from user_limits; delete from profiles where not is_owner');
+    failPolicyFor = '';
+    await env.pool.query('update users set seerr_user_id = 100 + (random()*1e6)::int where seerr_user_id is null'); // mapped: a repair needs no new Seerr user
+    await env.pool.query("update users set role='admin' where authentik_sub = 'sub-admin'"); // the concurrency test above may have demoted it
+    await env.pool.query('delete from account_deletions; delete from user_limits; delete from profiles where not is_owner');
     await env.pool.query('delete from audit_log where action in (\'user.rights\', \'user.repair\')');
   });
 
   it('overrides=1 and kids=1 filter; rows carry overrides, kidsProfiles and note', async () => {
     await env.pool.query("insert into user_limits(user_id, max_streams, perms, note) values ($1, 2, '{\"cast\": false}', 'Testkonto')", [ids.ben]);
-    await ownerProfile(ids.clara!, true);
+    await addProfile(ids.clara!, true);
     expect(await names('?overrides=1')).toEqual(['Ben']);
     expect(await names('?kids=1')).toEqual(['Clara']);
     const users = (await get('/api/admin/users')).json().users as any[];
@@ -387,5 +398,76 @@ describe('rights filters, columns and bulk rights', () => {
     for (const sub of ['anna', 'ben']) expect(env.jfCalls.some((c) => c.path === `/Users/${jfId(sub)}/Policy`)).toBe(true);
     expect(env.jfCalls.some((c) => c.path === `/Users/${jfId('clara')}/Policy`)).toBe(false);
     for (const id of [ids.anna!, ids.ben!]) expect((await audits('user.repair', id)).length).toBe(1);
+  });
+
+  it('perm filter pages after the backend filter and recomputes total', async () => {
+    const all = (await get('/api/admin/users?perm=cast:on')).json();
+    expect(all.total).toBeGreaterThanOrEqual(4);
+    const page = (await get('/api/admin/users?perm=cast:on&sort=name&dir=asc&limit=2&offset=1')).json();
+    expect(page.total).toBe(all.total);
+    expect(page.users.map((u: any) => u.name)).toEqual(all.users.map((u: any) => u.name).sort((a: string, b: string) => a.toLowerCase().localeCompare(b.toLowerCase())).slice(1, 3));
+    expect(page.users.length).toBe(2);
+  });
+
+  it('perm filter counts an account whose role is unknown as off', async () => {
+    await env.pool.query("update users set role='ghost-role' where id=$1", [ids.anna]);
+    try {
+      expect(await names('?perm=cast:off')).toContain('Anna');
+      expect(await names('?perm=cast:on')).not.toContain('Anna');
+    } finally { await env.pool.query("update users set role='friend' where id=$1", [ids.anna]); }
+  });
+
+  it('mfa=off lists accounts without a confirmed second factor (Authentik configured)', async () => {
+    const saved = env.ctx.cfg;
+    env.ctx.cfg = { ...saved, AUTHENTIK_URL: 'http://ak.invalid', AUTHENTIK_API_TOKEN: 't' };
+    try {
+      for (const u of (await env.pool.query('select authentik_sub s, name from users')).rows) {
+        const has = u.name === 'Ben';
+        await env.kv.set(`akmfa:${u.s}`, JSON.stringify({ totp: has, webauthn: false, static: false }), 600);
+      }
+      const j = (await get('/api/admin/users?mfa=off')).json();
+      expect(j.users.map((u: any) => u.name)).not.toContain('Ben');
+      expect(j.users.map((u: any) => u.name)).toContain('Anna');
+      expect(j.total).toBe(j.users.length);
+      expect((await names('')).length).toBeGreaterThan(j.total);
+    } finally { env.ctx.cfg = saved; }
+  });
+
+  it('status=pending with perm or mfa is a 400', async () => {
+    expect((await get('/api/admin/users?status=pending&perm=cast:off')).statusCode).toBe(400);
+    expect((await get('/api/admin/users?status=pending&mfa=off')).statusCode).toBe(400);
+  });
+
+  it('overrides count ignores admin switches and unknown keys, and survives a non-object perms', async () => {
+    await env.pool.query("insert into user_limits(user_id, perms) values ($1, '{\"cast\": false}'), ($2, '{\"bogus\": true}'), ($3, '{\"cast\": false}')", [adminId, ids.anna, ids.ben]);
+    await env.pool.query("insert into user_limits(user_id, perms) values ($1, '[]')", [ids.clara]);
+    const users = (await get('/api/admin/users')).json().users as any[];
+    const n = (name: string) => users.find((u) => u.name === name).overrides;
+    expect([n('Admin'), n('Anna'), n('Ben'), n('Clara')]).toEqual([0, 0, 1, 0]);
+  });
+
+  it('bulk perm refuses an admin anywhere in the set before writing anyone', async () => {
+    const r = await bulk({ ids: [ids.anna, ids.ben, adminId], action: 'perm', perm: 'cast', value: false });
+    expect([r.statusCode, r.json().error]).toEqual([400, 'admin_perms_locked']);
+    expect(await overridesOf(ids.anna!)).toBeNull();
+    expect(await overridesOf(ids.ben!)).toBeNull();
+  });
+
+  it('bulk perm and repair refuse the whole set when one account is under deletion', async () => {
+    await env.pool.query("insert into account_deletions(user_id, pseudonym) values ($1, 'deleted-x')", [ids.clara]);
+    env.jfCalls.length = 0;
+    for (const body of [{ action: 'perm', perm: 'cast', value: false }, { action: 'repair' }]) {
+      const r = await bulk({ ids: [ids.anna, ids.ben, ids.clara], ...body });
+      expect([r.statusCode, r.json().error]).toEqual([409, 'deletion_in_progress']);
+    }
+    expect(await overridesOf(ids.anna!)).toBeNull();
+    expect(env.jfCalls.filter((c) => c.method === 'POST')).toHaveLength(0);
+  });
+
+  it('bulk repair counts only the accounts that were repaired', async () => {
+    failPolicyFor = jfId('ben');
+    const r = await bulk({ ids: [ids.anna, ids.ben], action: 'repair' });
+    expect([r.statusCode, r.json()]).toEqual([200, { done: 1, failed: 1 }]);
+    expect((await audits('user.repair', ids.ben!)).length).toBe(1); // still audited
   });
 });

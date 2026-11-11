@@ -16,9 +16,8 @@ import { accountJellyfinIds, getProfile, jfUserFor, listProfiles, publicProfile 
 import { roleLimitFor } from '../requestlimit.js';
 import { ROLE_KEY_RE, invitableRoles, roleExists } from '../rolecat.js';
 import { effectiveRole } from '../roles.js';
-import { getUserOverrides } from '../limits.js';
-import { PERM_KEYS, type PermKey } from '../perms.js';
-import { effectiveRights } from '../rights.js';
+import { PERM_KEYS, readPerms, type PermKey } from '../perms.js';
+import { roleRights } from '../rights.js';
 import { requestsEnabled } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireAdmin, type Session } from '../session.js';
@@ -26,7 +25,7 @@ import type { ProfileRow, UserRow } from '../types.js';
 import { rightsBody, rightsView, writeRights, type RightsBody } from '../userRights.js';
 import { HttpError, accessEnded, accountSerial, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser, type LockReason } from '../users.js';
 import { pendingNoticeKey } from '../pending.js';
-import { dropPartyDenied } from './party.js';
+import { dropPartyDenied } from '../partySockets.js';
 
 const uuid = z.guid();
 /** ISO date-time with offset, or null (= no end) */
@@ -73,7 +72,7 @@ export type BulkBody = z.infer<typeof bulkBody>;
  * Applies one action to many accounts. All or nothing on validation and guards (unknown id, unknown role,
  * the actor locking/demoting themselves, last admin, unlocking an account whose access has ended or whose deletion is under way); then per user. `done` counts the accounts that changed.
  */
-export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{ done: number }> {
+export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{ done: number; failed?: number }> {
   const ids = [...new Set(b.ids)];
   const rows = (await ctx.db.query<{ id: string; role: string; disabled: boolean; access_until: Date | null }>('select id, role, disabled, access_until from users where id = any($1::uuid[])', [ids])).rows;
   if (rows.length !== ids.length) throw new HttpError(404, 'not_found');
@@ -95,7 +94,7 @@ export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{
   if (demote) await assertNotLastAdmin(ctx, ids, 'demote');
   if (b.action === 'lock') await assertNotLastAdmin(ctx, ids, 'lock');
 
-  let done = 0;
+  let done = 0, failed = 0;
   for (const u of rows) {
     switch (b.action) {
       case 'role':
@@ -121,12 +120,13 @@ export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{
         if (!(await putRights(ctx, actor, u.id, { overrides: { [b.perm!]: b.value! } })).changed.length) continue;
         break;
       case 'repair':
-        await repairAccount(ctx, actor, (await getUserById(ctx, u.id))!);
+        if (!(await repairAccount(ctx, actor, (await getUserById(ctx, u.id))!)).ok) { failed++; continue; }
         break;
     }
     done++;
   }
-  return { done };
+  // repair: the accounts whose identities or request-service mapping did not take it are not `done`
+  return failed ? { done, failed } : { done };
 }
 
 /** Per-user limit overrides: the bounds of the role settings (roles.ts / PUT /api/admin/roles); null = as role, omitted = unchanged. */
@@ -212,6 +212,8 @@ async function putRights(ctx: Ctx, actor: string, id: string, b: RightsBody): Pr
   return { ...reapplied, changed: w.changed };
 }
 
+/** the switch names as an SQL list (constants of the code, never input) */
+const PERM_SQL = PERM_KEYS.map((k) => `'${k}'`).join(', ');
 const permFilter = z.string().regex(/^[A-Za-z]+:(on|off)$/).refine((v) => (PERM_KEYS as readonly string[]).includes(v.split(':')[0]!));
 
 export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
@@ -231,6 +233,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       perm: permFilter.optional(),
       mfa: z.literal('off').optional(),
     }).parse(req.query);
+    if (p.status === 'pending' && (p.perm || p.mfa)) throw new HttpError(400, 'bad_request'); // open requests have no rights or MFA
     const w = new Where();
     if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(u.name ilike ${m} or coalesce(u.email,'') ilike ${m} or coalesce(u.jellyfin_username,'') ilike ${m})`); }
     if (p.role) w.add('u.role = ?', p.role);
@@ -253,7 +256,9 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
                 coalesce((select (l.max_streams is not null)::int + (l.remote_bitrate is not null)::int + (l.max_downloads is not null)::int + (l.download_max_height is not null)::int
                   + (l.requests_per_month is not null)::int + (l.transcoding is not null)::int + (l.max_height is not null)::int + (l.download is not null)::int
                   + (l.max_bitrate is not null)::int + (l.max_parental_rating is not null)::int + (l.libraries is not null)::int + (l.download_days is not null)::int
-                  + (select count(*) from jsonb_object_keys(l.perms))::int from user_limits l where l.user_id = u.id), 0) overrides,
+                  + (case when u.role = 'admin' or jsonb_typeof(l.perms) <> 'object' then 0
+                         else (select count(*) from jsonb_object_keys(l.perms) k where k in (${PERM_SQL}))::int end)
+                  from user_limits l where l.user_id = u.id), 0) overrides,
                 (select count(*) from profiles x where x.user_id = u.id and x.kids)::int "kidsProfiles",
                 (select l.note from user_limits l where l.user_id = u.id) note${p.status === 'deleting' ? `,
                 case when ad.user_id is not null and ad.finished_at is null then jsonb_build_object('step', ad.step + 1, 'error', ad.last_error, 'gone', false) end cleanup` : ''}
@@ -268,16 +273,21 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     const lim = p.limit ?? 1000, skip = p.offset ?? 0;
     // switch and MFA state are resolved in the backend, on the rows the SQL filter left (≤ 1000)
     const mfaOn = p.mfa === 'off' && akActions(ctx).recovery;
-    if (p.status !== 'pending' && (p.perm || mfaOn)) {
+    if (p.perm || mfaOn) {
       type Row = { id: string; role: string | null; pending: boolean; authentik_sub?: string; [k: string]: unknown };
       let rows = (await ctx.db.query<Row>(`select u.*, (select authentik_sub from users x where x.id = u.id) authentik_sub from (${base}) u ${w.sql} ${order} limit 1000`, w.params)).rows;
       if (p.perm) {
         const [key, want] = p.perm.split(':') as [PermKey, 'on' | 'off'];
+        // one read of the stored switches, one role resolution per distinct role (as accountsWithout); an unknown role counts as off
+        const stored = new Map((await ctx.db.query<{ user_id: string; perms: unknown }>('select user_id, perms from user_limits where user_id = any($1::uuid[])', [rows.map((u) => u.id)])).rows.map((x) => [x.user_id, x.perms]));
+        const roles = new Map<string, boolean | undefined>();
+        for (const role of new Set(rows.map((u) => u.role))) if (role) roles.set(role, (await roleRights(ctx, role))?.perms[key]);
         const keep = new Set<string>();
         for (const u of rows) {
-          if (!u.role) continue; // a claimed deletion that has no account any more
-          const eff = await effectiveRights(ctx, { id: u.id, role: u.role }, null, await getUserOverrides(ctx, u.id));
-          if (eff && eff.perms[key] === (want === 'on')) keep.add(u.id);
+          if (!u.role) continue; // a claimed deletion without an account
+          const base = roles.get(u.role);
+          const eff = base === undefined ? false : u.role === 'admin' ? true : (readPerms(stored.get(u.id))[key] ?? base);
+          if (eff === (want === 'on')) keep.add(u.id);
         }
         rows = rows.filter((u) => keep.has(u.id));
       }

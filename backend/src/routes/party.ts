@@ -13,35 +13,11 @@ import { authenticate } from '../session.js';
 import { isKidsProfile, requireGrownUp } from '../kids.js';
 import { permsOf, requirePerm } from '../permGuard.js';
 import { accountsWithout } from '../rights.js';
+import { sockets } from '../partySockets.js';
 import { m } from '../i18n.js';
 import { notify } from '../notify.js';
 import type { JfUser } from '../types.js';
 import { itemsByIds } from './discover.js';
-
-/**
- * open party sockets per account (session id, close as revoked, close as refused), so a revoked session/device or a switched-off
- * `party` loses its socket at once
- */
-const sockets = new Map<string, Set<{ sid: string; close: () => void; forbid: () => void }>>();
-/** Closes the party sockets of these sessions (revokeSessions: device removed/unapproved, account locked, sign-out elsewhere). */
-export function dropPartyPeers(userId: string, sids: Set<string>) {
-  for (const p of [...(sockets.get(userId) ?? [])]) if (sids.has(p.sid)) p.close();
-}
-/** Closes every party socket of the account with 4403 'party_forbidden' (the client shows the refusal, not a sign-out). */
-export function dropPartyUser(userId: string) {
-  for (const p of [...(sockets.get(userId) ?? [])]) p.forbid();
-}
-/**
- * After a rights write that changed `party` (a person's override, a role's switch): closes the open sockets of the accounts whose switch
- * is now off; `userIds` limits it to these accounts (default: every account with an open socket). Call after the write invalidated the
- * rights caches.
- */
-export async function dropPartyDenied(ctx: Pick<Ctx, 'db' | 'roles'>, userIds?: string[]): Promise<void> {
-  const ids = (userIds ?? [...sockets.keys()]).filter((id) => sockets.has(id));
-  if (!ids.length) return;
-  const denied = new Set(await accountsWithout(ctx, 'party'));
-  for (const id of ids) if (denied.has(id)) dropPartyUser(id);
-}
 
 export const parties = new PartyRegistry();
 
