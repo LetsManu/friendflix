@@ -1448,6 +1448,22 @@ describe('connecting phase, connect timeout, position guard', () => {
     expect(v.webkitShowPlaybackTargetPicker).not.toHaveBeenCalled();
   });
 
+  it('Abbrechen is not undone: Safari still reports the route as wireless after the restore -> error view, no new automatic token', async () => {
+    exact();
+    const { v, c, deps } = setup();
+    c.pick();
+    await adv(0);
+    remoteConnecting(v);
+    expect(c.state.connecting).toBe(true);
+    c.cancel();
+    await adv(0);
+    expect(deps.restore).toHaveBeenCalledOnce();
+    v.webkitCurrentPlaybackTargetIsWireless = true; // WebKit keeps the chosen route after the src change
+    await adv(SETTLE_MS * 3);
+    expect(deps.request).toHaveBeenCalledOnce(); // no second token
+    expect(c.state).toMatchObject({ error: true, connecting: false, busy: false });
+  });
+
   it(`the wait for a hanging detach ends after ${DETACH_WAIT_MS / 1000} s: the restore is not blocked by a stop report`, async () => {
     exact();
     expect(DETACH_WAIT_MS).toBe(5000);

@@ -150,6 +150,9 @@ test('the connecting layout takes no gestures and hides the player controls', as
   await expect(page.locator('.ctl')).toBeHidden(); // no control bar
   const state = () => page.evaluate(() => { const v = document.querySelector('video')!; return { t: Math.round(v.currentTime), p: v.paused }; });
   const was = await state();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('k'); // keys act through the layout like taps did: they do not
   const b = (await box.boundingBox())!;
   const x = b.x + b.width * 0.85, y = b.y + b.height * 0.4;
   await page.touchscreen.tap(x, y);

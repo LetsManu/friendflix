@@ -593,6 +593,7 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
       if (played || !(busy || ready || connecting)) { log('cancel', { note: 'nothing to cancel' }); return; }
       const at = busy && !tokenOnElement ? tapAt : null; // the token is still on its way: the tap's position / play state
       log('cancel', { note: connecting ? 'connecting' : busy ? 'busy' : 'ready' });
+      autoUsed = true; // Safari may still report the chosen route after the restore: that must land in the error view, never in a new automatic token
       void stop(at ?? undefined);
     },
     destroy() {

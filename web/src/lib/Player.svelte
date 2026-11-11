@@ -181,7 +181,7 @@
   let mediaBind: ReturnType<typeof bindPlayerMediaSession> | null = null, mediaEl: HTMLVideoElement | null = null;
   $: mediaItem = item && item.id === itemId ? {
     title: item.name,
-    artist: item.type === 'Episode' && item.seriesName ? `${item.seriesName} · S${item.parentIndexNumber}:E${item.indexNumber}` : item.year ? String(item.year) : '',
+    artist: item.type === 'Episode' && item.seriesName ? [item.seriesName, episodeCode({ subtitle: '' }, item, tr)].filter(Boolean).join(' · ') : item.year ? String(item.year) : '',
     artworkIds: item.type === 'Episode' && item.seriesId ? [item.id, item.seriesId] : [item.id],
   } : null;
   /** lock-screen play: never while the title is on its way to the TV (local playback would start a second stream) */
@@ -1408,6 +1408,7 @@
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
     if (!video || isTypingTarget(t)) return;
+    if (aconn && !(e.key === 'Escape' || isBackKey(e))) return; // the AirPlay connecting layout: only Back / Escape (and its own buttons) act
     if ((t.tagName === 'BUTTON' || t.tagName === 'A') && (e.key === ' ' || e.key === 'Enter')) return; // the focused control keeps Space/Enter
     const lg = isLgApp();
     const a = resolveKey(lg ? { key: normaliseLgKey(e), ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey } : e, { tv: tvMode(), onBody: t === document.body || t === stage, hasSkip: Boolean(skip), hasNext, overlayOpen: overlayOpen(), peekOpen: peek, lg });
