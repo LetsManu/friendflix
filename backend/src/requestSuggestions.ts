@@ -32,6 +32,8 @@ export interface Suggestion {
 export const SUGGEST_SEEDS = 3;
 export const SUGGEST_PER_SEED = 8;
 export const SUGGEST_MAX = 12;
+/** anchors of the asked type looked at to find the seeds (a seed needs a TMDB id: the media server's, else found by name and year) */
+export const SUGGEST_ANCHORS = 12;
 /** cache lifetime (seconds) of one profile's list; a short one when a seed failed, so the gap closes soon */
 export const SUGGEST_TTL = 6 * 3600;
 const PARTIAL_TTL = 120;
@@ -54,10 +56,38 @@ function certificationOf(mediaType: 'movie' | 'tv', d: any): string | null {
     : pick<any>(d?.contentRatings?.results, (x) => x.iso_3166_1, (x) => x.rating);
 }
 
-interface Cached { builtAt?: string; items: Array<Omit<Suggestion, 'request'> & { state: WishState }> }
+/** Counts of one build (no titles, no ids): why a list is as long as it is. Logged once per build, shown to admins as `debug`. */
+export interface SuggestStats {
+  anchors: number; seeds: number; seedsWithoutTmdb: number; seedsFoundByName: number; recommendations: number;
+  inLibrary: number; lookupFailures: number; ageFiltered: number; final: number;
+}
+interface Cached { builtAt?: string; stats?: SuggestStats; items: Array<Omit<Suggestion, 'request'> & { state: WishState }> }
 
-/** Seeds: the profile's top taste anchors of the asked type (title, TMDB id); a seed the media server cannot name or has no TMDB id for is skipped. */
-async function seedsFor(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf'>, user: JfUser, profileId: string, type: SuggestType): Promise<Array<{ name: string; tmdbId: number }>> {
+const norm = (x: unknown): string => String(x ?? '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+const SEED_ID_TTL = 30 * 86400;
+const SEED_MISS_TTL = 86400;
+
+/** TMDB id of a library title that carries none: the request service's search by name, accepted only for an equal title (or original title) and a first release year within one year. */
+async function findTmdbByName(ctx: Pick<Ctx, 'kv' | 'cfg'>, seerr: ReturnType<typeof requestsClient>, id: string, mt: 'movie' | 'tv', names: string[], year: number | undefined, lang: Language): Promise<number | null> {
+  const key = `reqseed:${mt}:${id}`;
+  const hit = await ctx.kv.get(key).catch(() => null);
+  if (hit) return Number(hit) > 0 ? Number(hit) : null;
+  const want = new Set(names.map(norm).filter(Boolean));
+  if (!want.size) return null;
+  const r = await seerr.search(names[0]!, 1, lang); // a failing search is not cached: it is tried again with the next build
+  const found = r.results.find((x) => {
+    if (!x || x.mediaType !== mt || !Number.isInteger(x.id)) return false;
+    if (![x.title, x.name, x.originalTitle, x.originalName].some((n) => want.has(norm(n)))) return false;
+    const y = Number(String(x.releaseDate ?? x.firstAirDate ?? '').slice(0, 4));
+    return !year || !y || Math.abs(y - year) <= 1;
+  });
+  const n = found ? (found.id as number) : 0;
+  await ctx.kv.set(key, String(n), n ? SEED_ID_TTL : SEED_MISS_TTL).catch(() => undefined);
+  return n || null;
+}
+
+/** Seeds: the profile's top taste anchors of the asked type (title, TMDB id). A seed without a TMDB id from the media server (anime libraries often carry only TVDB / AniDB ids) is looked up by name and year; one the media server cannot name is skipped. */
+async function seedsFor(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf'>, user: JfUser, profileId: string, type: SuggestType, seerr: ReturnType<typeof requestsClient>, lang: Language, stats: SuggestStats): Promise<Array<{ name: string; tmdbId: number }>> {
   const profile = await recoProfileOf(ctx, profileId);
   if (!profile || !ctx.jf.itemAbout) return [];
   const c = recoCoefficients(ctx.cfg);
@@ -65,18 +95,30 @@ async function seedsFor(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf'>, user: JfUser
   const index = await loadIndex(ctx, w);
   const taste = await tasteProfile(ctx, user, profile, index, c, w);
   const want = type === 'movie' ? 'Movie' : 'Series';
-  const anchors = (taste.anchors ?? []).filter((a) => index.rows.get(a.id)?.type === want).slice(0, SUGGEST_SEEDS + 2); // two spare for seeds without a TMDB id
+  const mt: 'movie' | 'tv' = type === 'movie' ? 'movie' : 'tv';
+  const anchors = (taste.anchors ?? []).filter((a) => index.rows.get(a.id)?.type === want).slice(0, SUGGEST_ANCHORS);
+  stats.anchors = anchors.length;
   const out: Array<{ name: string; tmdbId: number }> = [];
-  const resolved = await inPool(anchors, 2, async (a) => {
-    try {
-      const [item, about] = await Promise.all([ctx.jf.item(user, a.id) as Promise<ItemDto>, ctx.jf.itemAbout!(user, a.id)]);
-      const n = Number(about.providerIds.tmdb);
-      return Number.isInteger(n) && n > 0 && item.name ? { name: item.name, tmdbId: n } : null;
-    } catch {
-      return null;
-    }
-  });
-  for (const r of resolved) if (r && out.length < SUGGEST_SEEDS) out.push(r);
+  // two at a time, strongest first, until there are enough seeds
+  for (let i = 0; i < anchors.length && out.length < SUGGEST_SEEDS; i += 2) {
+    const got = await inPool(anchors.slice(i, i + 2), 2, async (a) => {
+      try {
+        const [item, about] = await Promise.all([ctx.jf.item(user, a.id) as Promise<ItemDto>, ctx.jf.itemAbout!(user, a.id)]);
+        if (!item.name) return null;
+        const n = Number(about.providerIds.tmdb);
+        if (Number.isInteger(n) && n > 0) return { name: item.name, tmdbId: n };
+        stats.seedsWithoutTmdb++;
+        const year = item.year ?? (Number((about.premiereDate ?? '').slice(0, 4)) || undefined);
+        const found = await findTmdbByName(ctx, seerr, a.id, mt, [item.name, about.originalTitle ?? ''].filter(Boolean), year, lang);
+        if (!found) return null;
+        stats.seedsFoundByName++;
+        return { name: item.name, tmdbId: found };
+      } catch {
+        return null;
+      }
+    });
+    for (const r of got) if (r && out.length < SUGGEST_SEEDS) out.push(r);
+  }
   return out;
 }
 
@@ -84,7 +126,9 @@ async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user:
   const builtAt = new Date().toISOString();
   const seerr = requestsClient(ctx);
   const mt: 'movie' | 'tv' = type === 'movie' ? 'movie' : 'tv';
-  const seeds = await seedsFor(ctx, user, profileId, type);
+  const stats: SuggestStats = { anchors: 0, seeds: 0, seedsWithoutTmdb: 0, seedsFoundByName: 0, recommendations: 0, inLibrary: 0, lookupFailures: 0, ageFiltered: 0, final: 0 };
+  const seeds = await seedsFor(ctx, user, profileId, type, seerr, lang, stats);
+  stats.seeds = seeds.length;
   let complete = true;
   const perSeed = await inPool(seeds, 2, async (s) => {
     try {
@@ -104,11 +148,13 @@ async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user:
       if (e && !seen.has(e.x.id) && !seedIds.has(e.x.id)) { seen.add(e.x.id); pool.push(e); }
     }
   }
+  stats.recommendations = pool.length;
   const candidates = pool.filter((e) => WISH[portalStatus(e.x.mediaInfo?.status, e.x.mediaInfo?.requests?.[0]?.status)] !== 'available');
   const inLibrary = await inPool(candidates, PARALLEL, async (e) => {
-    try { return Boolean(await ctx.jf.findByTmdb(e.x.id, mt)); } catch { complete = false; return true; } // unknown = do not offer
+    try { return Boolean(await ctx.jf.findByTmdb(e.x.id, mt)); } catch { complete = false; stats.lookupFailures++; return true; } // unknown = do not offer
   });
   let rest = candidates.filter((_e, i) => !inLibrary[i]);
+  stats.inLibrary = inLibrary.filter(Boolean).length - stats.lookupFailures;
   if (ageCap !== null) {
     // a role with an age cap: only titles whose rating is known and within the cap (the request service lists no ratings in its lists)
     const ok = await inPool(rest, PARALLEL, async (e) => {
@@ -117,6 +163,7 @@ async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user:
         return age !== null && age <= ageCap;
       } catch { complete = false; return false; }
     });
+    stats.ageFiltered = ok.filter((x) => !x).length;
     rest = rest.filter((_e, i) => ok[i]);
   }
   const today = new Date().toISOString().slice(0, 10);
@@ -130,11 +177,17 @@ async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user:
       state: WISH[portalStatus(x.mediaInfo?.status, x.mediaInfo?.requests?.[0]?.status)] ?? 'none',
     };
   }).filter((i) => i.title);
-  return { list: { builtAt, items }, complete };
+  stats.final = items.length;
+  return { list: { builtAt, stats, items }, complete: complete && items.length > 0 }; // an empty list is not kept for hours: the library or the taste may change
 }
 
 /** One profile's suggestions (cached 6 h per profile, type and age cap), with the wish state overlaid from the account's own requests. */
 export async function requestSuggestions(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr' | 'roles'>, user: JfUser, account: { id: string; role: string }, profileId: string, type: SuggestType): Promise<Suggestion[]> {
+  return (await requestSuggestionsDetailed(ctx, user, account, profileId, type)).items;
+}
+
+/** The same with the counts of the build behind the list (`fresh`: built by this call, not read from the cache). */
+export async function requestSuggestionsDetailed(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr' | 'roles'>, user: JfUser, account: { id: string; role: string }, profileId: string, type: SuggestType): Promise<{ items: Suggestion[]; stats: SuggestStats | null; fresh: boolean }> {
   requestsClient(ctx); // no request service: 404 requests_disabled, before anything is read
   const cap = (await effectiveRole(ctx, account.role))?.maxParentalRating ?? null;
   const lang = await effectiveLanguage(ctx, profileId);
@@ -142,7 +195,9 @@ export async function requestSuggestions(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'j
   let list: Cached | null = null;
   const hit = await ctx.kv.get(key).catch(() => null);
   if (hit) { try { list = JSON.parse(hit) as Cached; } catch { /* recompute */ } }
+  let fresh = false;
   if (!list) {
+    fresh = true;
     const b = await build(ctx, user, profileId, type, cap, lang);
     list = b.list;
     await ctx.kv.set(key, JSON.stringify(list), b.complete ? SUGGEST_TTL : PARTIAL_TTL).catch(() => undefined);
@@ -151,5 +206,6 @@ export async function requestSuggestions(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'j
     ? (await ctx.db.query<{ tmdb_id: number; media_type: string }>('select tmdb_id, media_type from seerr_requests where user_id=$1 and tmdb_id = any($2::int[]) and created_at >= $3', [account.id, list.items.map((i) => i.tmdbId), list.builtAt ?? '1970-01-01'])).rows
     : [];
   const asked = new Set(mine.map((r) => `${r.media_type}:${r.tmdb_id}`));
-  return list.items.map(({ state, ...i }) => ({ ...i, request: { state: state === 'none' && asked.has(`${i.mediaType}:${i.tmdbId}`) ? 'requested' : state } }));
+  const items = list.items.map(({ state, ...i }): Suggestion => ({ ...i, request: { state: state === 'none' && asked.has(`${i.mediaType}:${i.tmdbId}`) ? 'requested' : state } }));
+  return { items, stats: list.stats ?? null, fresh };
 }

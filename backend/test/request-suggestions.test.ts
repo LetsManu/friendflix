@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { requestSuggestions, SUGGEST_SEEDS } from '../src/requestSuggestions.js';
+import { requestSuggestions, requestSuggestionsDetailed, SUGGEST_SEEDS } from '../src/requestSuggestions.js';
 import { resetIndexCache } from '../src/reco/vectors.js';
 import { DEFAULT_ROLES } from '../src/roles.js';
 import { SeerrClient } from '../src/seerr/client.js';
@@ -17,12 +17,17 @@ let libraryIds = new Set<number>();
 let certs: Record<number, string> = {};
 let seerrCalls: Call[] = [];
 let failSeed: number | null = null;
+/** the media server's TMDB id per fixture key; a key without one has only a TVDB id (an anime library) */
+let tmdbOf: Record<string, string | undefined> = {};
+let searchHits: any[] = [];
 
 const routes = (): Record<string, Handler> => ({
   'GET /api/v1/movie/1001/recommendations': () => (failSeed === 1001 ? { status: 500 } : { json: { totalPages: 1, results: [
     rec(11), rec(12, { mediaInfo: { status: 5 } }), rec(13, { adult: true }), rec(14, { releaseDate: future }), rec(15, { mediaInfo: { status: 2 } }), rec(16), rec(1001),
   ] } }),
   'GET /api/v1/tv/2002/recommendations': () => ({ json: { totalPages: 1, results: [{ id: 21, name: 'Serial Twentyone', firstAirDate: '2020-01-01', posterPath: '/s21abcdef.jpg', mediaInfo: { status: 3 } }, { id: 22, name: 'Serial Twentytwo' }] } }),
+  'GET /api/v1/movie/3003/recommendations': () => ({ json: { totalPages: 1, results: [rec(31)] } }),
+  'GET /api/v1/search': () => ({ json: { totalPages: 1, results: searchHits } }),
   'GET /api/v1/movie/\\d+': (u) => {
     const id = Number(u.pathname.split('/').pop());
     return { json: { title: `Fiction ${id}`, releases: { results: certs[id] ? [{ iso_3166_1: 'DE', release_dates: [{ certification: '' }, { certification: certs[id] }] }] : [] } } };
@@ -37,17 +42,18 @@ describe('requestSuggestions (function level)', () => {
   afterAll(() => env.close());
   beforeEach(async () => {
     for (const t of ['thumbs', 'watchlist', 'dropped', 'ratings', 'play_seconds', 'seerr_requests']) await env.pool.query(`delete from ${t}`);
-    for (const p of ['reco:', 'reqsug:']) for (const k of await env.kv.keys(p)) await env.kv.del(k);
+    for (const p of ['reco:', 'reqsug:', 'reqseed:']) for (const k of await env.kv.keys(p)) await env.kv.del(k);
     resetIndexCache(env.ctx);
     libraryIds = new Set([14]);
-    certs = {}; seerrCalls = []; failSeed = null; jfx = fakeJf();
+    certs = {}; seerrCalls = []; failSeed = null; jfx = fakeJf(); searchHits = [];
+    tmdbOf = { bear1: '1001', pups: '2002' };
     await env.pool.query("insert into thumbs(user_id,item_id,value,item_name,profile_id) values ($1,$2,2,'x',$1)", [s.owner.user_id, H('bear1')]);
     await env.pool.query("insert into thumbs(user_id,item_id,value,item_name,profile_id) values ($1,$2,2,'x',$1)", [s.owner.user_id, H('pups')]);
   });
 
   const ctxFor = () => {
     const jf = Object.assign(Object.create(jfx.jf), {
-      async itemAbout(_u: unknown, id: string) { return { providerIds: { tmdb: id === H('bear1') ? '1001' : id === H('pups') ? '2002' : undefined }, countries: [], studios: [], tags: [], type: 'x' }; },
+      async itemAbout(_u: unknown, id: string) { return { providerIds: { tvdb: '555', tmdb: Object.entries(tmdbOf).find(([k]) => H(k) === id)?.[1] }, countries: [], studios: [], tags: [], type: 'x' }; },
       async findByTmdb(id: number) { return libraryIds.has(id) ? { id: 'lib', name: 'x' } : null; },
     });
     return { ...engineCtx(env, jf), seerr: new SeerrClient('http://requests.example.com', KEY, fakeHttp(routes(), seerrCalls)), roles: DEFAULT_ROLES };
@@ -132,6 +138,58 @@ describe('requestSuggestions (function level)', () => {
     expect(await env.kv.keys('reqsug:')).toContain(`reqsug:${s.owner.id}:movie:12:de`); // the cap is part of the key
   });
 
+  it('a series without a TMDB id (anime library: TVDB only) is found by name and year through the request service', async () => {
+    tmdbOf = {};
+    searchHits = [{ id: 9, mediaType: 'tv', name: 'Wrong', firstAirDate: '2021-01-01' }, { id: 2002, mediaType: 'tv', name: 'pups', firstAirDate: '2021-04-02' }];
+    const out = await ask('series');
+    expect(out.map((i) => i.tmdbId)).toEqual([21, 22]);
+    expect(seerrCalls.filter((c) => c.path.endsWith('/search')).length).toBe(1);
+    expect(await env.kv.get(`reqseed:tv:${H('pups')}`)).toBe('2002');
+  });
+
+  it('a name match with another first year or another media type is no seed; the miss is remembered', async () => {
+    tmdbOf = {};
+    searchHits = [{ id: 2002, mediaType: 'tv', name: 'Pups', firstAirDate: '2015-04-02' }, { id: 2003, mediaType: 'movie', title: 'Pups', releaseDate: '2021-01-01' }];
+    expect(await ask('series')).toEqual([]);
+    expect(seerrCalls.some((c) => c.path.endsWith('/recommendations'))).toBe(false);
+    for (const k of await env.kv.keys('reqsug:')) await env.kv.del(k);
+    seerrCalls.length = 0;
+    await ask('series');
+    expect(seerrCalls.some((c) => c.path.endsWith('/search'))).toBe(false); // not asked again for a day
+  });
+
+  it('looks past the first five anchors: the 8th strongest film is the only one with a TMDB id', async () => {
+    await env.pool.query('delete from thumbs');
+    const keys = ['saga1', 'saga2', 'saga3', 'orbit', 'mars', 'noir1', 'noir2', 'doc3'];
+    for (const k of keys) await env.pool.query("insert into thumbs(user_id,item_id,value,item_name,profile_id) values ($1,$2,$3,'x',$1)", [s.owner.user_id, H(k), k === 'doc3' ? 1 : 2]);
+    tmdbOf = { doc3: '3003' };
+    expect((await ask()).map((i) => i.tmdbId)).toEqual([31]);
+  });
+
+  it('an empty list is cached for the short time only, a list with titles for the long one', async () => {
+    const ttls: number[] = [];
+    const realSet = env.kv.set.bind(env.kv);
+    env.kv.set = async (k: string, v: string, ttl: number) => { if (k.startsWith('reqsug:')) ttls.push(ttl); return realSet(k, v, ttl); };
+    try {
+      tmdbOf = {};
+      expect(await ask('series')).toEqual([]); // no seed at all (the search finds nothing)
+      for (const k of await env.kv.keys('reqsug:')) await env.kv.del(k);
+      tmdbOf = { pups: '2002' };
+      expect((await ask('series')).length).toBe(2);
+    } finally { env.kv.set = realSet; }
+    expect(ttls).toEqual([120, 6 * 3600]);
+  });
+
+  it('counts of the build: anchors, seeds, seeds without a TMDB id, recommendations, library hits, age filter, final', async () => {
+    libraryIds = new Set([14, 16]);
+    tmdbOf = { bear1: '1001' };
+    await env.pool.query("insert into thumbs(user_id,item_id,value,item_name,profile_id) values ($1,$2,1,'x',$1)", [s.owner.user_id, H('robot')]); // a second film anchor without a TMDB id
+    const d = await requestSuggestionsDetailed(ctxFor(), s.user, { id: s.owner.user_id, role: 'friend' }, s.owner.id, 'movie');
+    expect(d.fresh).toBe(true);
+    expect(d.stats).toEqual({ anchors: 2, seeds: 1, seedsWithoutTmdb: 1, seedsFoundByName: 0, recommendations: 5, inLibrary: 2, lookupFailures: 0, ageFiltered: 0, final: 2 });
+    expect((await requestSuggestionsDetailed(ctxFor(), s.user, { id: s.owner.user_id, role: 'friend' }, s.owner.id, 'movie')).fresh).toBe(false);
+  });
+
   it('a failing seed does not fail the answer (short cache), no seeds means an empty list', async () => {
     failSeed = 1001;
     const ttls: number[] = [];
@@ -168,6 +226,15 @@ describe('GET /api/library/request-suggestions (route)', () => {
     expect(r.json()).toEqual({ items: [], quota: { limit: q.limit, used: 1, resetsAt: q.resetsAt } });
     expect(q.limit).toBe(2);
     expect(r.body).not.toMatch(/key-|seerrkey|adminkey|AccessToken|requests:5055/i);
+  });
+
+  it('admins get the counts of the build as `debug`, other roles do not', async () => {
+    const uid = (await env.pool.query<{ id: string }>('select id from users limit 1')).rows[0]!.id;
+    await env.pool.query("update users set role='admin' where id=$1", [uid]);
+    const a = (await get()).json();
+    expect(Object.keys(a.debug).sort()).toEqual(['ageFiltered', 'anchors', 'final', 'inLibrary', 'lookupFailures', 'recommendations', 'seeds', 'seedsFoundByName', 'seedsWithoutTmdb']);
+    await env.pool.query("update users set role='friend' where id=$1", [uid]);
+    expect((await get()).json().debug).toBeUndefined();
   });
 
   it('kids profile: 403 kids_profile, no request-service call', async () => {
