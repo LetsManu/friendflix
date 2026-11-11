@@ -55,7 +55,7 @@ Während einer Übertragung zeigt `/watch/<id>` die Fernbedienung (Desktop, Hand
 
 - Standbild der Folge im Hintergrund, Gerät oben (Tipp: Gerät wechseln), **Beenden** (mit Rückfrage), Titel, Zeitleiste mit Intro-/Rückblick-Markierungen, Pause, ±10 s, Lautstärke (Chromecast; bei AirPlay ein Hinweis, dass der Fernseher oder die Systemlautstärke sie regelt).
 - **Als Nächstes:** Eine Karte mit der nächsten Folge erscheint **schon ab dem Start der Folge**, nicht erst im Abspann, mit dem Schalter **Nächste Folge automatisch abspielen**. Der Schalter gilt nur für diese Übertragung und ändert die Kontoeinstellung nicht. Ab dem Abspann kommt der Countdown dazu.
-- **Spur-Chips** für Audio und Untertitel (Untertitel bei AirPlay noch nicht; sie bleiben seitlich geladene Spuren, siehe unten), ein Hinweis beim ersten Mal und die Zustände „Verbindung wird hergestellt“, „Verbindung verloren“ (*Neu verbinden* bzw. *Hier abspielen*) und „Kann nicht abgespielt werden“.
+- **Spur-Chips** für Audio und Untertitel (bei AirPlay: ein Textuntertitel im Stream, siehe „AirPlay-Untertitel“; bei Plex ist der Untertitel-Chip ausgegraut), ein Hinweis beim ersten Mal und die Zustände „Verbindung wird hergestellt“, „Verbindung verloren“ (*Neu verbinden* bzw. *Hier abspielen*) und „Kann nicht abgespielt werden“.
 
 ## Leiste: eingeklappt und ausgeklappt
 
@@ -119,7 +119,7 @@ Safari (auch die Home-Bildschirm-App und jeder iOS-Browser, da alle WebKit sind)
 - **Kontrollzentrum:** AirPlay, das im Kontrollzentrum (Bildschirmsynchronisierung) statt über die Taste im Player gestartet wird, spiegelt nur den Bildschirm bzw. sendet nur Ton: Während hls.js spielt, meldet Safari kein AirPlay-Videoziel, es gibt kein Token und keine eigene Wiedergabe auf dem Fernseher. Für Video auf dem Fernseher immer die AirPlay-Taste im Player benutzen. (Meldet Safari doch ein drahtloses Ziel, ohne dass die Token-URL am Video liegt, holt der Player einmal ein Token und schaltet um; siehe „Keine Anfrage-Schleifen“.)
 - **Anzeige:** Während AirPlay zeigt der Player „Läuft über AirPlay“ (Safari verrät den Gerätenamen nicht) und eine Taste, die die Geräteauswahl öffnet; Pause, Springen und Fortschritt laufen über das Video-Element selbst, Safari reicht sie an den Fernseher weiter. „Klare Stimmen“/„Nachtmodus“ sind währenddessen aus.
 - **Adress-Bindung:** Das Handy lädt den Token-Stream zuerst selbst (es spielt ihn, solange die Auswahl offen ist), danach der Fernseher; im Heimnetz haben beide verschiedene Adressen. AirPlay-Tokens (`via: airplay`) binden sich deshalb an höchstens **zwei** Client-Adressen (`castpin:` und `castpin2:`, jeweils erster Nutzer gewinnt). Die zweite Adresse kann nur in den ersten **120 s** nach dem Anlegen des Tokens hinzukommen (`AIRPLAY_PIN2_WINDOW_MS`; die Auswahl darf 90 s offen sein); danach ist das Token an die vorhandenen Adressen gebunden, jede weitere bekommt 401. Chromecast-Tokens bleiben bei einer Adresse.
-- **Untertitel:** Im Video-URL-Modus zeigt der Fernseher nur Spuren aus dem Stream selbst. Die Untertitel des Players sind seitlich geladene WebVTT-Spuren und erscheinen daher **nicht** auf dem Fernseher (eingebrannte Untertitel bietet der Cast-Ablauf nicht an); auch ein Wechsel im Untertitel-Menü wirkt nur am Handy. Die gewählte Audiospur gilt dagegen.
+- **Untertitel:** Der Fernseher zeigt nur Spuren aus dem Stream selbst. Die seitlich geladenen WebVTT-Spuren des Players erscheinen daher nicht auf ihm; stattdessen kann der Stream **einen** Textuntertitel mitbringen (Abschnitt „AirPlay-Untertitel“). Die gewählte Audiospur gilt ebenfalls.
 
 ## Empfänger-Kompatibilität (Receiver compatibility)
 
@@ -132,7 +132,7 @@ Der Cast-/AirPlay-Stream soll auf **jedem** Empfänger laufen: Apple TV, AirPlay
 | Container | MPEG-TS-Segmente (`SegmentContainer=ts`), VOD-Playlist mit `#EXT-X-ENDLIST` | fMP4/CMAF können ältere Fernseher nicht |
 | Master-Playlist | nur `#EXT-X-STREAM-INF` mit `BANDWIDTH`, `AVERAGE-BANDWIDTH`, `CODECS`, `RESOLUTION`, `FRAME-RATE` (Audio-/Video-Gruppen nur, wenn die Gruppe existiert) | strenger Apple-HLS-Kern; siehe unten |
 | Trickplay | **keine** `#EXT-X-IMAGE-STREAM-INF`-Zeile (Backend: `EnableTrickplay=false`, Gateway entfernt alle `#EXT-X-IMAGE-*` zusätzlich) | Feld: iPhone-PWA → LG webOS lud die Master-Playlist und danach nichts mehr (`MEDIA_ERR_SRC_NOT_SUPPORTED`, Code 4); einziges Nicht-Apple-Element war Jellyfins Trickplay-Zeile (Roku-Format, Jellyfin ab 10.9) |
-| Untertitel | **keine** `#EXT-X-MEDIA:TYPE=SUBTITLES`- oder `CLOSED-CAPTIONS`-Gruppen, kein `SUBTITLES=` | Empfänger sind an Untertitelgruppen gescheitert; Chromecast-Untertitel kommen über den eigenen WebVTT-Weg |
+| Untertitel | **keine** `#EXT-X-MEDIA:TYPE=SUBTITLES`- oder `CLOSED-CAPTIONS`-Gruppen, kein `SUBTITLES=`. **Ausnahme AirPlay:** genau **eine** Untertitelgruppe (die gewählte Textspur) und das dazugehörige `SUBTITLES=`, nur für ein Token, das diese Spur angefragt hat (siehe „AirPlay-Untertitel“); `CLOSED-CAPTIONS` fehlt immer | Empfänger sind an Untertitelgruppen gescheitert; Chromecast-Untertitel kommen über den eigenen WebVTT-Weg |
 | `VIDEO-RANGE` | entfernt | verlangt laut RFC 8216bis keine `EXT-X-VERSION`, ist aber ein Attribut der 2. Ausgabe, das ältere Firmware nicht kennt; fehlt es, gilt SDR, und der Stream ist ohnehin 8-Bit-SDR |
 
 Die Bereinigung macht das Gateway nur für Cast-Playlists (`/media/c/<token>/…`, `compatPlaylist` nach den bisherigen URI-/Token-Prüfungen, die auch für entfernte Zeilen gelten); die normale Wiedergabe im Browser bekommt Jellyfins Master-Playlist unverändert.
@@ -140,6 +140,26 @@ Die Bereinigung macht das Gateway nur für Cast-Playlists (`/media/c/<token>/…
 **Variant-Fallback (AirPlay):** Meldet das Video während des Token-Streams (Auswahl offen oder Fernseher aktiv) `video-error` Code 4 (`MEDIA_ERR_SRC_NOT_SUPPORTED`), lädt der Player die Master-Playlist des Tokens ohne Credentials, nimmt die erste Variante (sie muss unter `/media/c/<token>/` bleiben) und setzt **deren** URL direkt ans Video – ohne Master, an derselben Stelle und im selben Zustand. Das passiert **einmal pro Token**; scheitert auch die Variante, gilt das bisherige Fehlerverhalten. Ein neues Token (Erneut versuchen, Erneuerung, Audiospur/Qualität) beginnt wieder mit der Master-Playlist. Im Protokoll steht `fallback-variant` (ohne URL).
 
 **Wenn ein Fernseher trotzdem nicht spielt:** auf dem iPhone/iPad/Mac `/diagnose` öffnen → „AirPlay-Protokoll“ → kopieren und mit Hersteller, Modell und Firmware-Stand des Fernsehers melden. Wichtig sind darin `probe-master`/`probe-variant` (was der Empfänger bekommt), `video-error` mit Code und `w=` (Rohwert von `webkitCurrentPlaybackTargetIsWireless`: `w=true` = Fehler am Fernseher, `w=false` = am Handy) und ob `fallback-variant` versucht wurde. Das Protokoll enthält keine URLs, Tokens oder Cast-IDs.
+
+### AirPlay-Untertitel
+
+Ein **Textuntertitel** reist im AirPlay-Stream selbst mit (als WebVTT-Spur in der HLS-Playlist), sodass der Fernseher ihn anzeigt.
+
+- **Nur Jellyfin.** Bei Plex ist der Untertitel-Chip auf der Fernbedienung ausgegraut („Aus“, mit dem Hinweis „Dieser Server kann noch keine Untertitel an AirPlay senden.“); Bild und Ton laufen wie bisher.
+- **Auswahl:** über den Untertitel-Chip auf der Fernbedienung oder übernommen vom Player, wenn man dort bei der Übergabe an AirPlay schon einen Untertitel an hatte. Es gibt immer höchstens **eine** Spur.
+- **Bilduntertitel** (PGS, VobSub und ähnliche) werden nicht angeboten und **nie eingebrannt**. Eingebrannte Untertitel gibt es im Cast-Ablauf nicht.
+- **Wechsel und Ausschalten** erzeugen ein neues Token an der aktuellen Stelle (wie ein Wechsel der Audiospur). Dabei kann das Bild kurz neu laden.
+- **Bild und Ton** bleiben H.264 und Stereo-AAC (siehe Tabelle oben); nur die eine Untertitelgruppe kommt hinzu.
+- **Ein Fernseher, der den Stream ablehnt** (`MEDIA_ERR_SRC_NOT_SUPPORTED`, Code 4, während der Fernseher das Ziel ist): Der Player holt **einmal** automatisch ein neues Token **ohne** Untertitel und zeigt „Dieser Fernseher kann die Untertitel nicht zeigen; es geht ohne weiter.“. Danach greift wie bisher der Variant-Fallback; ein dritter Versuch folgt nie. Der Browser merkt sich die Ablehnung **30 Tage** pro Gerät (`localStorage`, `ff-air-subs-refused`): neue AirPlay-Sitzungen starten dann ohne Untertitel, der Chip zeigt „Aus (vom Fernseher abgelehnt)“, bis man auf der Fernbedienung wieder einen Untertitel wählt.
+- **Hinweis:** Solange bei AirPlay ein Untertitel an ist, steht unter dem Bedienfeld „Untertitel über AirPlay sind neu; manche Fernseher zeigen sie nicht.“ Zeigt ein Fernseher sie nicht, hilft Ausschalten.
+- **`/diagnose`:** Die Zeile zu den Untertiteln („Werden mit dem Stream gesendet (neu)“) zeigt, ob der Server (Jellyfin) das kann.
+- **Bekannt riskant:** Apple TV ist die Referenz. LG webOS, Samsung, Roku, Vizio und Sony sind ungetestet; die Seite kann nicht erkennen, welcher Fernseher es ist.
+
+**Gateway:** Die Untertitel-Playlist (`…/Subtitles/<n>/subtitles.m3u8`) und ihre Segmente (`…/stream.vtt`) sind nur für ein AirPlay-Token erlaubt, das genau diese Spur angefragt hat (Index fest im Token), mit schmaler Pfad- und Query-Erlaubnisliste. `api_key` wird entfernt, abweichende Überschreibungen (z. B. `itemId`, `index`, `format`) werden abgelehnt. Details in [security.md](security.md#airplay-subtitle-rendition).
+
+### Durchgehendes AirPlay (nicht verfügbar)
+
+**Noch nicht verfügbar.** Ob mehrere Folgen am Stück laufen können, ohne dass das iPhone dazwischen wach sein muss, ist nicht entschieden. Ein Prototyp existiert; die Entscheidung hängt an einem Test des Betreibers mit echter Hardware (Apple TV und LG webOS). Bis dahin gilt weiter: Sperrt sich das iPhone, startet die nächste Folge, sobald man es entsperrt (der Hinweis steht in der Fernbedienung). Es gibt keine Einstellung dafür und keinen Zeitplan.
 
 ### HEVC und Raumklang mit dem eigenen Empfänger
 
@@ -191,4 +211,6 @@ AirPlay (iPhone/iPad/Mac mit Safari und einem Apple TV oder AirPlay-2-Fernseher;
 - Taste erscheint nur mit Empfänger im Netz; die Systemauswahl öffnet sich; nach der Wahl spielt der Fernseher an derselben Stelle weiter (Token-URL), nach Rückkehr zum iPhone läuft der lokale Stream an der Stelle des Fernsehers weiter.
 - Ob Safari die Playlist selbst lädt und von welcher Adresse (Zwei-Adressen-Bindung reicht? IPv4/IPv6-Wechsel?), Verhalten im Hintergrund und bei gesperrtem Bildschirm, Token-Erneuerung bei langen Filmen, Wechsel von Audiospur/Qualität während AirPlay.
 - Tipp → Token-URL am Video (Position, Wiedergabe), ob sich die Geräteauswahl nach dem Warten auf das Token noch von selbst öffnet oder erst über „Fernseher auswählen“, ob der Fernseher danach sofort spielt, Rückkehr zu hls.js nach 90 s ohne Auswahl, ob das unsichtbare Prüf-`<video>` Empfänger meldet, Fehleranzeige mit „Erneut versuchen“.
+- **AirPlay-Untertitel** (Apple TV und LG webOS, jeweils Jellyfin mit einer Folge, die Textuntertitel hat): Der Untertitel erscheint und ist im Takt mit dem Ton; Wechsel der Spur auf der Fernbedienung und Ausschalten/Einschalten wirken; ein Fernseher, der den Stream ablehnt, fällt **einmal** auf „ohne Untertitel“ zurück (Hinweis erscheint, danach „Aus (vom Fernseher abgelehnt)“); bei Plex ist der Chip ausgegraut. Außerdem auf dem echten Server: Die Gateway-Logs zeigen **kein 403** für `subtitles.m3u8` und `stream.vtt` (Jellyfins echte Untertitel-URLs passen zur Erlaubnisliste).
+- **Durchgehendes AirPlay:** Der Betreiber-Test (GO-Kriterien P1 bis P6 am Apple TV, P1 und P2 am LG) steht noch aus; bis dahin ist die Funktion nicht verfügbar.
 - iPhone-PWA → LG webOS: höchstens eine Token-Anfrage pro Tipp im Backend-Log (keine 429-Serien), kein kurzes Umschalten zurück aufs Handy; bei Problemen `/diagnose` → „AirPlay-Protokoll“ kopieren.
