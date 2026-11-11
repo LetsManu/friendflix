@@ -10,6 +10,7 @@ import { authenticate, COOKIE, loadSession, requireUser } from '../session.js';
 import { revokeCasts } from '../cast.js';
 import { roleAllowsDownloads } from '../downloads.js';
 import { effectiveLimits } from '../limits.js';
+import { catalogueLabel } from '../rolecat.js';
 import { DEFAULT_ROLES } from '../roles.js';
 import { deviceHasSession } from '../devices.js';
 import { noteClientKind } from '../deviceKind.js';
@@ -301,7 +302,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       email: u.email,
       role: u.role,
       /** role name in the UI language (a label customised via ROLES_JSON is shown as configured) */
-      roleLabel: roleLabel(profLang ?? instLang ?? FALLBACK_LANGUAGE, u.role, ctx.roles[u.role]?.label, DEFAULT_ROLES[u.role]?.label),
+      roleLabel: roleLabel(profLang ?? instLang ?? FALLBACK_LANGUAGE, u.role, await catalogueLabel(ctx, u.role), DEFAULT_ROLES[u.role]?.label),
       isAdmin: u.role === 'admin',
       csrfToken: req.session!.csrf,
       deviceApproved: req.session!.deviceApproved,

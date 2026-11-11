@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { z } from 'zod';
+import { invalidateCatalogue } from './rolecat.js';
 
 export const roleTemplateSchema = z.object({
   label: z.string(),
@@ -72,4 +73,5 @@ export async function effectiveRole(ctx: { roles: Record<string, RoleTemplate>; 
 }
 /** bitrate ceiling for a viewer outside the home networks: the remote cap, never above the role's own limit */
 export const remoteBitrateCap = (role: Pick<RoleTemplate, 'maxBitrate' | 'remoteMaxBitrate'>) => Math.min(role.maxBitrate, role.remoteMaxBitrate);
-export const invalidateRoles = (ctx: object) => void cache.delete(ctx);
+/** forgets the cached role settings and the role catalogue (rolecat.ts) of this ctx */
+export const invalidateRoles = (ctx: object) => { cache.delete(ctx); invalidateCatalogue(ctx); };

@@ -14,6 +14,7 @@ import { createInvite, deleteAuthentikInvitation } from '../invites.js';
 import { getUserLimits, invalidateLimits, setUserLimits } from '../limits.js';
 import { accountJellyfinIds, getProfile, jfUserFor, listProfiles, publicProfile } from '../profiles.js';
 import { roleLimitFor } from '../requestlimit.js';
+import { roleExists } from '../rolecat.js';
 import { INVITABLE_ROLES, effectiveRole } from '../roles.js';
 import { requestsEnabled } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
@@ -73,7 +74,7 @@ export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{
   if (b.action === 'unlock' && (await ctx.db.query('select 1 from account_deletions where user_id = any($1::uuid[]) limit 1', [ids])).rowCount) {
     throw new HttpError(409, 'deletion_in_progress');
   }
-  if (b.action === 'role' && !Object.hasOwn(ctx.roles, b.role!)) throw new HttpError(400, 'unknown_role');
+  if (b.action === 'role' && !(await roleExists(ctx, b.role!))) throw new HttpError(400, 'unknown_role');
   const demote = b.action === 'role' && b.role !== 'admin';
   if ((demote || b.action === 'lock') && ids.includes(actor)) throw new HttpError(400, 'cannot_lock_yourself_out');
   if (demote) await assertNotLastAdmin(ctx, ids, 'demote');
@@ -209,7 +210,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
       const demote = b.role !== undefined && b.role !== 'admin';
       if (id === actor && (b.disabled || demote)) return reply.code(400).send({ error: 'cannot_lock_yourself_out' });
-      if (b.role !== undefined && !Object.hasOwn(ctx.roles, b.role)) return reply.code(400).send({ error: 'unknown_role' });
+      if (b.role !== undefined && !(await roleExists(ctx, b.role))) return reply.code(400).send({ error: 'unknown_role' });
       if (demote) await assertNotLastAdmin(ctx, [id], 'demote');
       if (b.disabled) await assertNotLastAdmin(ctx, [id], 'lock');
       const cur = (await ctx.db.query<{ access_until: Date | null; locked_reason: LockReason | null }>('select access_until, locked_reason from users where id=$1', [id])).rows[0]!;

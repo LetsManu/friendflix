@@ -7,6 +7,7 @@ import type { Ctx } from './ctx.js';
 import { encrypt, randomPassword } from './crypto.js';
 import type { IdentityPolicy } from './media/types.js';
 import { effectiveLimits } from './limits.js';
+import { listRoles, roleExists } from './rolecat.js';
 import { effectiveRole } from './roles.js';
 import { accountJellyfinIds, kidsPolicyFor } from './profiles.js';
 import { revokeSessions } from './devices.js';
@@ -103,7 +104,7 @@ export async function reapplyPoliciesOnce(ctx: Ctx, flag = 'reapply_roles_v1'): 
   const got = await ctx.db.query('insert into app_flags(key) values ($1) on conflict do nothing returning key', [flag]);
   if (!got.rowCount) return;
   let failed = 0;
-  for (const role of Object.keys(ctx.roles)) failed += await reapplyRole(ctx, role);
+  for (const { key } of await listRoles(ctx)) failed += await reapplyRole(ctx, key);
   if (failed) await ctx.db.query('delete from app_flags where key=$1', [flag]); // retry on next start
 }
 
@@ -159,7 +160,7 @@ export async function unlockUser(ctx: Ctx, actor: string | null, userId: string)
 
 /** Changes the role: the role policy goes to the account's media server identity and all its profile identities. No-op when unchanged. */
 export async function setRole(ctx: Ctx, actor: string | null, userId: string, role: string): Promise<void> {
-  if (!Object.hasOwn(ctx.roles, role)) throw new HttpError(400, 'unknown_role');
+  if (!(await roleExists(ctx, role))) throw new HttpError(400, 'unknown_role');
   const user = await getUserById(ctx, userId);
   if (!user) throw new HttpError(404, 'not_found');
   if (user.role === role) return;

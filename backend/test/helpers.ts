@@ -10,6 +10,7 @@ import { MemoryKV } from '../src/kv.js';
 import { createMediaServer } from '../src/media/index.js';
 import { SeerrClient } from '../src/seerr/client.js';
 import type { OidcClaims } from '../src/oidc.js';
+import { syncRoles } from '../src/rolecat.js';
 import { DEFAULT_ROLES } from '../src/roles.js';
 import { MemorySettingsBus } from '../src/settings/bus.js';
 import { settingDef } from '../src/settings/registry.js';
@@ -192,6 +193,7 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
     { get ms() { return ctx.jf as PlexMediaServer; }, fake: plexFake } : undefined;
   await plex?.ms.sync.run();
   extra.ctxPatch?.(ctx);
+  await syncRoles(ctx); // as server.ts after migrate: env roles (here: ctx.roles after ctxPatch) become catalogue rows
   await isSetupComplete(ctx); // warms the cache isOperational reads (server.ts does the same before the timers start)
   const app = await buildApp(ctx, extra);
   const dev: { v?: string } = {};
