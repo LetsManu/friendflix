@@ -25,7 +25,7 @@ describe('key classification', () => {
     const classes = [SETTINGS.map((s) => s.key), ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS];
     for (const k of keys) expect(classes.filter((c) => c.includes(k)), k).toHaveLength(1);
     expect(classes.flat().sort()).toEqual([...keys].sort()); // nothing outside the schema, no duplicates
-    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 21, 4, 72]); // + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS
+    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 21, 4, 72]); // + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS
     expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(72);
     expect(SETTINGS.filter((s) => s.visible === false).map((s) => s.key)).toEqual([]);
   });

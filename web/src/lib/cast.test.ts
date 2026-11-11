@@ -63,11 +63,12 @@ let classes: Set<string>;
 let scripts: Array<{ src: string; async: boolean }>;
 let win: Record<string, any>;
 let castEnabled: boolean | 'error';
+let airplayCont: boolean | undefined;
 /** /api/cast/config `receiverAppId` ('' = not in the answer, as without CAST_RECEIVER_APP_ID) */
 let appId = '';
 const fetchMock = vi.fn(async (_url: string) => {
   if (castEnabled === 'error') return new Response('{}', { status: 500 });
-  return new Response(JSON.stringify({ enabled: castEnabled, ...(appId ? { receiverAppId: appId } : {}) }));
+  return new Response(JSON.stringify({ enabled: castEnabled, ...(appId ? { receiverAppId: appId } : {}), ...(airplayCont === undefined ? {} : { airplayContinuous: airplayCont }) }));
 });
 type Cast = typeof import('./cast');
 let C: Cast;
@@ -78,6 +79,7 @@ beforeEach(async () => {
   classes = new Set();
   scripts = [];
   castEnabled = true;
+  airplayCont = undefined;
   appId = '';
   fetchMock.mockClear();
   win = {};
@@ -144,6 +146,26 @@ describe('castConfigEnabled', () => {
     castEnabled = false;
     await expect(C.castConfigEnabled()).resolves.toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('castConfigAirplayContinuous', () => {
+  it('is false until /api/cast/config answered, then follows the answer', async () => {
+    airplayCont = true;
+    expect(C.castConfigAirplayContinuous()).toBe(false);
+    await C.castConfigEnabled();
+    expect(C.castConfigAirplayContinuous()).toBe(true);
+  });
+
+  it('stays false when the answer says off or lacks the field', async () => {
+    airplayCont = false;
+    await C.castConfigEnabled();
+    expect(C.castConfigAirplayContinuous()).toBe(false);
+    vi.resetModules();
+    C = await import('./cast');
+    airplayCont = undefined;
+    await C.castConfigEnabled();
+    expect(C.castConfigAirplayContinuous()).toBe(false);
   });
 });
 

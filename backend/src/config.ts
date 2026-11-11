@@ -139,9 +139,9 @@ export const configSchema = z.object({
    * Google Cast application ID of FriendFlix's own Web Receiver (served at /cast-receiver/, registered by the admin in the Google Cast
    * SDK Developer Console). Empty = the Default Media Receiver (no TV-side next-up card, still-watching or progress reports).
    */
+  CAST_RECEIVER_APP_ID: z.string().trim().toUpperCase().regex(/^([0-9A-F]{8})?$/).default(''),
   /** continuous AirPlay (one joined stream for up to three episodes): experimental, an admin turns it on after testing with their TV; Jellyfin only */
   CAST_AIRPLAY_CONTINUOUS: z.enum(['true', 'false']).default('false'),
-  CAST_RECEIVER_APP_ID: z.string().trim().toUpperCase().regex(/^([0-9A-F]{8})?$/).default(''),
   METRICS_TOKEN: opt,
   /** optional external data sources for the detail page (an admin can also save the keys in the UI; a key from env/file wins) */
   TMDB_API_KEY: opt,

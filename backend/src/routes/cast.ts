@@ -54,8 +54,8 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       /** with `continuous`: how many episodes the stream carries at most */
       maxEpisodes: z.number().int().min(1).max(3).optional(),
     }).parse(req.body);
-    // continuous play is AirPlay's way, and only while the admin switch is on
-    if (b.continuous && b.via !== 'airplay') return reply.code(400).send({ error: 'bad_request' });
+    // continuous play is AirPlay's way (`maxEpisodes` only means something with it), and only while the admin switch is on
+    if ((b.continuous || b.maxEpisodes !== undefined) && !(b.continuous && b.via === 'airplay')) return reply.code(400).send({ error: 'bad_request' });
     if (b.continuous && !airplayContinuousOn(ctx)) return reply.code(400).send({ error: 'continuous_off' });
     // a subtitle rendition in the stream is AirPlay's way (Chromecast side-loads WebVTT itself)
     if (b.subtitleIndex !== undefined && b.via !== 'airplay') return reply.code(400).send({ error: 'bad_request' });

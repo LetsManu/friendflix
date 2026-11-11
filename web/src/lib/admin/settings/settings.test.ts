@@ -7,11 +7,11 @@ import { describeActivity } from '../activity';
 import { activeItem } from '../nav';
 import { fieldErrors, generate, importEnv, loadSettings, probeFailure, saveSettings, testGroup, type SettingView } from './api';
 import {
-  changedValues, clearPending, enumOptions, errorText, groupHelp, isChange, keepable, keyHelp, keyLabel, moveHint, probeText, redactedKeys, shownDraft, stashPending, stillRedacted,
+  EXPERIMENTAL_KEYS, changedValues, clearPending, enumOptions, errorText, groupHelp, isChange, keepable, keyHelp, keyLabel, moveHint, probeText, redactedKeys, shownDraft, stashPending, stillRedacted,
   submitValue, takePending,
 } from './form';
 
-/** every visible setting of the registry (spec Part A: 48, plus the nine of phase 3, plus UPDATE_CHANNEL, plus the four recommendation settings, plus the three updater settings, plus the server upload, plus HEVC_STREAMS and SURROUND_AUDIO) */
+/** every visible setting of the registry (spec Part A: 48, plus the nine of phase 3, plus UPDATE_CHANNEL, plus the four recommendation settings, plus the three updater settings, plus the server upload, plus HEVC_STREAMS and SURROUND_AUDIO, plus CAST_AIRPLAY_CONTINUOUS) */
 const KEYS = ['PUBLIC_URL', 'WEBHOOK_SECRET', 'API_COMPRESSION', 'OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET', 'ADMIN_GROUP', 'AUTHENTIK_URL',
   'AUTHENTIK_API_TOKEN', 'AUTHENTIK_ENROLL_FLOW', 'AUTHENTIK_RECOVERY_FLOW', 'AUTHENTIK_TOTP_SETUP_FLOW', 'JELLYFIN_URL', 'JELLYFIN_ADMIN_API_KEY', 'REQUESTS_URL',
   'REQUESTS_API_KEY', 'NTFY_URL', 'NTFY_BASE_URL', 'DISCORD_WEBHOOK_URL', 'VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'VAPID_SUBJECT', 'TMDB_API_KEY', 'OMDB_API_KEY',
@@ -29,6 +29,13 @@ const view = (over: Partial<SettingView> & Pick<SettingView, 'key' | 'kind'>): S
 });
 
 afterEach(async () => { vi.unstubAllGlobals(); await setLocale('de'); });
+
+describe('experimental settings', () => {
+  it('only the continuous AirPlay switch carries the Experimental badge, and it is a known setting', () => {
+    expect([...EXPERIMENTAL_KEYS]).toEqual(['CAST_AIRPLAY_CONTINUOUS']);
+    for (const k of EXPERIMENTAL_KEYS) expect(KEYS).toContain(k);
+  });
+});
 
 describe('settings texts', () => {
   it('every visible setting has a label and a help text; the request service is never named after a product', async () => {
