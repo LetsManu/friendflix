@@ -491,7 +491,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
         case 'extras': return J({ items: [] });
         case 'comments': return J(m === 'POST' ? { id: 'c1', name: 'Tester', mine: true, spoiler: false, body: body().body, createdAt: new Date().toISOString(), canDelete: true } : { watched: true, comments: [] }); // episode comments (block 15)
         case 'seasons': return J({ items: [{ id: hex(200), name: 'Staffel 1', type: 'Season', indexNumber: 1, genres: [], image: true, backdrop: false, logo: false, played: false, favorite: false, positionTicks: 0 }] });
-        case 'episodes': return J({ items: episodes });
+        case 'episodes': { const sid = u.searchParams.get('seasonId'); return J({ items: sid ? episodes.filter((e) => e.seasonId === sid) : episodes }); }
         case 'tracks': return J({ audio: [{ language: 'deu', title: 'Deutsch', isDefault: true }, { language: 'eng', title: 'English', isDefault: false }], subtitles: [{ language: 'deu', title: 'Deutsch' }], type: 'Movie' });
         case 'lists': return J({ lists: [] });
       }

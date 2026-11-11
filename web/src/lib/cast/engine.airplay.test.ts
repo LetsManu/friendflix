@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, secToTicks, type Item } from '#lib/api';
 import type { CastInfo } from '#lib/cast';
 import { tr } from '#lib/i18n';
-import { createAirPlay, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayTimers, type AirPlayVideo } from '#lib/player/airplay';
+import { CONNECT_TIMEOUT_MS, createAirPlay, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayTimers, type AirPlayVideo } from '#lib/player/airplay';
 import { clearAirLog, readAirLog, srcKind } from '#lib/player/airplayLog';
 import { DEFAULT_PREFS } from '#lib/stores';
 import { SUBS_REFUSED_KEY } from './airsubs';
@@ -474,6 +474,45 @@ describe('cast engine: AirPlay route loss and reconnect', () => {
     expect(env.calls.at(-1)!.init.body).toMatchObject({ playSessionId: 'ps-n1' });
     expect(get(env.out)?.state).toBe('playing');
     expect(env.engineLog()).toEqual(['adopt', 'reconnect: route lost', 'reconnect: tap', 'reconnect: tap']);
+  });
+
+  it('connect timeout turns the remote screen to reconnect', async () => {
+    const env = await setup({ started: false }); // the TV was picked at setup's start, SETTLE_MS ago
+    await env.adopt();
+    expect(get(env.out)?.state).toBe('connecting');
+    await env.advance(CONNECT_TIMEOUT_MS - SETTLE_MS - 1);
+    expect(get(env.out)?.state).toBe('connecting');
+    await env.advance(1);
+    expect(get(env.out)).toMatchObject({ state: 'reconnect', buffering: false });
+    expect(get(env.engine.airState)).toMatchObject({ active: true, connecting: false });
+    expect(env.engineLog()).toEqual(['adopt', 'reconnect: connect timeout']);
+    expect(env.deletes()).toEqual([]); // the token stays: a late start on the TV still counts
+    env.video.fire('playing');
+    expect(get(env.out)?.state).toBe('playing');
+    expect(env.reports()).toEqual(['start']);
+  });
+
+  it('after a connect timeout, Neu verbinden and then a late start of the TV on its own: playing stays playing', async () => {
+    const env = await setup({ started: false });
+    await env.adopt();
+    await env.advance(CONNECT_TIMEOUT_MS);
+    expect(get(env.out)?.state).toBe('reconnect');
+    env.engine.reconnect(); // the picker opens (the controller is active); the person closes it without a choice
+    expect(env.spy.pick).toHaveBeenCalledOnce();
+    env.video.fire('playing'); // the TV starts late, by itself
+    expect(get(env.out)?.state).toBe('playing');
+    env.probe.dispatchEvent(Object.assign(new Event('webkitplaybacktargetavailabilitychanged'), { availability: 'not-available' })); // any later state change
+    await flush();
+    expect(get(env.out)).toMatchObject({ state: 'playing', buffering: false });
+    expect(env.tokenPosts()).toEqual([]);
+  });
+
+  it('connect timeout while the TV already plays changes nothing', async () => {
+    const env = await setup({ started: true });
+    await env.adopt();
+    await env.advance(CONNECT_TIMEOUT_MS);
+    expect(get(env.out)?.state).toBe('playing');
+    expect(env.engineLog()).toEqual(['adopt']);
   });
 
   it('reconnect() outside the reconnect state does nothing', async () => {

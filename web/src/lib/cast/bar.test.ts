@@ -60,7 +60,7 @@ describe('cast bar', () => {
       expect(barLine2({ ...live, position: live.duration }, 0, tr).text).toBe('Läuft auf Wohnzimmer-TV');
     });
     it('connecting names the device', () => {
-      expect(barLine2({ ...live, state: 'connecting' }, 0, tr)).toEqual({ text: 'Verbinde mit Wohnzimmer-TV …', tone: 'none' });
+      expect(barLine2({ ...live, state: 'connecting' }, 0, tr)).toEqual({ text: 'Verbinde mit Wohnzimmer-TV …', tone: 'none' });
     });
     it('reconnect and detached: warning; AirPlay waiting for the picker: the pick hint', () => {
       for (const state of ['reconnect', 'detached'] as const) expect(barLine2({ ...live, state }, 0, tr)).toEqual({ text: 'Verbindung verloren', tone: 'warn' });
@@ -109,7 +109,7 @@ describe('cast bar', () => {
       const upcoming = { itemId: 'e5', label: 'S1:F5 · Wrenfield Pier' };
       expect(barLine2Full({ ...ep, upcoming }, 0, tr)).toEqual({ text: 'Auf Wohnzimmer-TV · Als Nächstes: S1:F5 · Wrenfield Pier', tone: 'none', device: 'Wohnzimmer-TV' });
       expect(barLine2Full(ep, 0, tr)).toEqual(barLine2(ep, 0, tr));
-      expect(barLine2Full({ ...ep, upcoming, state: 'connecting' }, 0, tr).text).toBe('Verbinde mit Wohnzimmer-TV …');
+      expect(barLine2Full({ ...ep, upcoming, state: 'connecting' }, 0, tr).text).toBe('Verbinde mit Wohnzimmer-TV …');
     });
   });
 

@@ -879,6 +879,14 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         a.video.pause();
         patch(s, { state: 'reconnect', paused: true, buffering: false });
       },
+      connectTimeout() {
+        // the TV was picked but has not played within CONNECT_TIMEOUT_MS: the remote screen offers Neu verbinden (the picker);
+        // the token stays, so a late first `playing` still turns it to playing
+        if (cur !== s || s.view.state !== 'connecting') return;
+        patch(s, { state: 'reconnect', buffering: false });
+        airNote(s, 'reconnect', 'connect timeout');
+        log('warn', 'session', 'AirPlay connect timeout');
+      },
       subsRefused() {
         if (cur !== s) return;
         // the retry without subtitles is already under way (its request leaves out the key): remember, switch the chip off, tell
@@ -915,7 +923,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (type === 'playing') p.buffering = false;
     if (start) p.state = 'playing';
     patch(s, p);
-    if (start) { s.started = true; void report(s, 'start', s.ci); }
+    if (start) { s.started = true; a.resume = false; void report(s, 'start', s.ci); } // the TV plays: a pending Neu verbinden has nothing left to resume
     else if ((type === 'play' || type === 'pause') && s.started) void report(s, 'progress', s.ci);
     if (type === 'timeupdate' && s.started) atPosition(s);
   }

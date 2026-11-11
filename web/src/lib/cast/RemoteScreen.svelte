@@ -95,6 +95,10 @@
   // ---- next episode: the card (UpNextCard) tells; here it is announced once, with its start time, not every second ----
   $: next = s ? upNextOf(s) : null;
   let said = '', saidFor = '';
+  // AirPlay: nothing says "plays" before the TV does. The eyebrow keeps its room, empty, and fades in on the first `playing`, which is announced politely
+  $: airWait = air && s?.state === 'connecting';
+  let airSaid = '', wasWait = false;
+  $: if (air && s) { if (airWait) airSaid = ''; else if (wasWait && s.state === 'playing') airSaid = playingLine(s, tr); wasWait = Boolean(airWait); } else { airSaid = ''; wasWait = false; }
   // announced when the credits offer it (not at the start of every episode)
   $: if (s && s.next && next && next.itemId !== saidFor) { saidFor = next.itemId; said = `${tr('player.castRemote.upNext')}: ${next.label}. ${upNextLine(s, Date.now(), tr)}`; } else if (!s?.next && saidFor) { saidFor = ''; said = ''; }
 
@@ -140,6 +144,7 @@
 
     <p class="sr-only" role="status" aria-live="polite">{said}</p>
     <p class="sr-only" role="status" aria-live="polite">{subsHintOn ? subsText : ''}</p>
+    <p class="sr-only" role="status" aria-live="polite">{airSaid}</p>
     <div class="wrap">
       <div class="top" data-testid="cast-row">
         <button type="button" class="frost-btn round close" aria-label={$t('player.castRemote.close')} title={$t('player.castRemote.close')} on:click={() => dispatch('close')}>
@@ -161,7 +166,7 @@
             </div>
           {/if}
           <div class="txt">
-            <p class="eyebrow">{playingLine(s, $t)}</p>
+            <p class="eyebrow" class:wait={airWait} aria-hidden={airWait ? 'true' : undefined}>{playingLine(s, $t)}</p>
             <h1 class="title" id="rs-title">{s.title}</h1>
             {#if line}<p class="sub">{line}</p>{/if}
             {#if !air && !seenAtOpen}
@@ -246,7 +251,8 @@
   .shade { position: absolute; inset: 0; background: linear-gradient(rgba(0, 0, 0, .55), rgba(0, 0, 0, .25) 40%, rgba(0, 0, 0, .8)); pointer-events: none; }
   .wrap { position: relative; width: 100%; max-width: 1100px; margin: 0 auto; flex: 1 0 auto; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
   .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .eyebrow { margin: 0; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #ff8aa0; }
+  .eyebrow { margin: 0; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #ff8aa0; transition: opacity 120ms ease; }
+  .eyebrow.wait { opacity: 0; } /* AirPlay, TV not playing yet: the line keeps its room */
 
   /* top row: close, device chip (truncates), Stop */
   .top { display: flex; align-items: center; gap: 10px; min-width: 0; }
