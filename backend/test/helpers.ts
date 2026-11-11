@@ -80,7 +80,7 @@ export interface TestEnv {
   seerrCalls: Call[];
   claims: { current: OidcClaims };
   kv: MemoryKV;
-  login: (claims?: OidcClaims) => Promise<{ cookies: Record<string, string>; csrf: string }>;
+  login: (claims?: OidcClaims, ua?: string) => Promise<{ cookies: Record<string, string>; csrf: string }>;
   close: () => Promise<void>;
   /** makeEnv(…, { server: 'plex' }): the Plex implementation (the current ctx.jf, already synced once) and its fake server */
   plex?: { readonly ms: PlexMediaServer; fake: PlexFake };
@@ -195,15 +195,16 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
   await isSetupComplete(ctx); // warms the cache isOperational reads (server.ts does the same before the timers start)
   const app = await buildApp(ctx, extra);
   const dev: { v?: string } = {};
-  const login = async (c: OidcClaims = claims.current) => {
+  const login = async (c: OidcClaims = claims.current, ua?: string) => {
+    const headers = ua ? { 'user-agent': ua } : undefined;
     claims.current = c;
     const l = await app.inject('/auth/login?classic=1'); // the IdP redirect, also when LOGIN_UI is app
     const state = l.cookies.find((x) => x.name === 'ff_oidc')!.value; // the login cookie carries the state
-    const cb = await app.inject({ url: `/auth/callback?state=${state}&code=c`, cookies: { ...(dev.v ? { ff_dev: dev.v } : {}), ff_oidc: state } });
+    const cb = await app.inject({ url: `/auth/callback?state=${state}&code=c`, cookies: { ...(dev.v ? { ff_dev: dev.v } : {}), ff_oidc: state }, ...(headers ? { headers } : {}) });
     dev.v = cb.cookies.find((x) => x.name === 'ff_dev')?.value ?? dev.v; // same browser -> same device
     if (cb.statusCode !== 302) throw new Error(`login failed ${cb.statusCode} ${cb.body}`);
     const sid = cb.cookies.find((x) => x.name === 'ff_sid')!.value;
-    const me = await app.inject({ url: '/api/me', cookies: { ff_sid: sid } });
+    const me = await app.inject({ url: '/api/me', cookies: { ff_sid: sid }, ...(headers ? { headers } : {}) });
     return { cookies: { ff_sid: sid }, csrf: me.json().csrfToken as string };
   };
   return { ctx, app, pool, jfCalls, seerrCalls, claims, kv, login, plex, close: async () => { await live.close(); await plex?.ms.stop(); await settings.close(); await app.close(); await pool.end(); } }; // plex, plex?.ms.stop()

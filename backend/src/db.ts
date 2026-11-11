@@ -840,6 +840,35 @@ export const MIGRATIONS: string[] = [
     add column if not exists video_out text,
     add column if not exists audio_out text;
   `,
+  // 46: which kind of client a device is (clientKind(), filled at registration, TV claim and GET /api/me), the user's own name for it,
+  // and the hand-off row: the latest thing each device played for a profile. Rerunnable.
+  `
+  alter table devices add column if not exists client text;
+  alter table devices add column if not exists name text;
+  do $$ begin
+    if not exists (select 1 from pg_constraint where conname = 'devices_client_check') then
+      alter table devices add constraint devices_client_check check (client in ('web','tizen','webos','firetv','desktop','android'));
+    end if;
+    if not exists (select 1 from pg_constraint where conname = 'devices_name_check') then
+      alter table devices add constraint devices_name_check check (name is null or char_length(name) between 1 and 40);
+    end if;
+  end $$;
+  create table if not exists handoff (
+    profile_id     uuid not null references profiles(id) on delete cascade,
+    user_id        uuid not null,
+    device_id      text not null,
+    item_id        text not null,
+    series_id      text,
+    position_ticks bigint not null,
+    runtime_ticks  bigint,
+    via            text check (via in ('airplay','chromecast')),
+    started_at     timestamptz not null default now(),
+    updated_at     timestamptz not null default now(),
+    primary key (profile_id, device_id),
+    foreign key (user_id, device_id) references devices(user_id, device_id) on delete cascade
+  );
+  create index if not exists handoff_recent on handoff (profile_id, updated_at desc);
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
