@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { castOn, fakeCastSdk } from '../mocks/cast.js';
+import { castOn, fakeCastSdk, stubAirPlay } from '../mocks/cast.js';
 import { expect, test } from '../fixtures.js';
 import { chromecastRemote, DIAG_SHOTS, hideFixed, dunmoor, leaveRemoteTo, RECEIVER, seedCastLog, type LogSeed } from './cast-remote-setup.js';
 
@@ -30,6 +30,26 @@ test.describe('/diagnose casting', () => {
     expect(loads).toHaveLength(1);
     expect(new URL(loads[0]!.contentId).pathname).toBe('/cast-test/clip.mp4');
     await expect(page.getByTestId('cast-events')).toContainText('test clip playing');
+  });
+
+  test.describe('Safari (AirPlay only, no Chromecast)', () => {
+    const SAFARI = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
+    test.use({ userAgent: SAFARI });
+    test('the continuous row follows the admin switch', async ({ page, api: _api }) => {
+      await stubAirPlay(page);
+      await castOn(page, true, undefined, { airplayContinuous: true });
+      await page.goto('/diagnose');
+      await expect(page.getByText('Durchgehend abspielen (experimentell)')).toBeVisible();
+      await expect(page.getByText('An (Einstellung)')).toBeVisible();
+    });
+    test('no continuous row with the switch off', async ({ page, api: _api }) => {
+      await stubAirPlay(page);
+      await castOn(page, true);
+      await page.goto('/diagnose');
+      await expect(page.getByRole('heading', { level: 2, name: 'Übertragung' })).toBeVisible();
+      await expect(page.getByText('In diesem Browser', { exact: true })).toBeVisible();
+      await expect(page.getByText('Durchgehend abspielen (experimentell)')).toHaveCount(0);
+    });
   });
 
   test('the clip is served and small', async ({ request }) => {

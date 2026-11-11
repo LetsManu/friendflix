@@ -109,7 +109,7 @@ test('AirPlay: tap -> cast token URL on the element FIRST, then the picker; TV -
 
 const JOINED = { items: [{ itemId: 'x', title: 'Folge 1', start: 0, duration: 600 }, { itemId: 'y', title: 'Folge 2', start: 600, duration: 600 }], subtitles: false };
 
-test('AirPlay: an episode asks for a joined token when the admin switch is on, a film never', async ({ page, api: _api }) => {
+test('AirPlay: an episode asks for a joined token when the admin switch is on', async ({ page, api: _api }) => {
   await stubAirPlay(page);
   await mockPlayer(page);
   await castOn(page, true, undefined, { airplayContinuous: true });
@@ -127,6 +127,36 @@ test('AirPlay: an episode asks for a joined token when the admin switch is on, a
   expect(sessions[0]!.via).toBe('airplay');
   expect(sessions[0]!.continuous).toBe(true);
   expect(sessions[0]!.maxEpisodes).toBe(3);
+});
+
+async function airToken(page: Page, id: string, on: boolean) {
+  await stubAirPlay(page);
+  await mockPlayer(page);
+  await castOn(page, true, undefined, { airplayContinuous: on });
+  await mockHls(page);
+  const { sessions } = await castSessions(page);
+  await page.goto('/watch/' + id);
+  await hlsPlaying(page);
+  await available(page);
+  await page.locator('.stage').hover();
+  await playOnButton(page).click();
+  await playOnSheet(page).getByRole('button', { name: /^AirPlay …/ }).click();
+  await expect.poll(() => sessions.length).toBe(1);
+  return sessions[0]!;
+}
+
+test('AirPlay: a film never asks for a joined token, even with the switch on', async ({ page, api: _api }) => {
+  const body = await airToken(page, MOVIE.id, true);
+  expect(body.via).toBe('airplay');
+  expect(body).not.toHaveProperty('continuous');
+  expect(body).not.toHaveProperty('maxEpisodes');
+});
+
+test('AirPlay: an episode with the admin switch off asks for a plain token', async ({ page, api: _api }) => {
+  const body = await airToken(page, episodes[1]!.id, false);
+  expect(body.via).toBe('airplay');
+  expect(body).not.toHaveProperty('continuous');
+  expect(body).not.toHaveProperty('maxEpisodes');
 });
 
 test('AirPlay: the Player reports nothing for a joined token', async ({ page, api: _api }) => {

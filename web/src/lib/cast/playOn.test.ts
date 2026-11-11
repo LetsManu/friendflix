@@ -46,7 +46,6 @@ describe('playOnRows (spec §3)', () => {
   });
   it('the sheet has no continuous row', () => {
     expect(ids({ airplay: true })).toEqual(['airplay', 'here']);
-    expect(ids({ airplay: true })).toEqual(['airplay', 'here']);
   });
 });
 

@@ -21,7 +21,7 @@
 
   const CLIP = '/cast-test/clip.mp4';
 
-  let capable = false, enabled = false, custom = false, ready = false, airAvailable = false;
+  let capable = false, enabled = false, custom = false, ready = false, airAvailable = false, airCont = false;
   let otherTab = false;
   let now = Date.now();
   let entries: CastLogEntry[] = [];
@@ -63,6 +63,8 @@
     airAvailable = typeof HTMLMediaElement !== 'undefined' && typeof (HTMLMediaElement.prototype as { webkitShowPlaybackTargetPicker?: unknown }).webkitShowPlaybackTargetPicker === 'function';
     read();
     void checkLock();
+    // Safari (the AirPlay browser) is no Cast browser: the switch for continuous AirPlay is read from the config regardless
+    void castConfigEnabled().then((on) => { airCont = on && castConfigAirplayContinuous(); }).catch(() => undefined);
     if (capable) {
       void castConfigEnabled().then((on) => { enabled = on; custom = castCustomReceiver(); if (on) { void initCast(); whenCastReady(() => { ready = true; }); } }).catch(() => undefined);
     }
@@ -77,8 +79,7 @@
     capable, enabled, custom, state: $castState, session: $castSession,
     lookup: $castSession?.kind === 'chromecast' ? lookup : null, errors, now, tf: $t, otherTab: otherTab && !$castSession, item: $castSession ? cachedItem($castSession.itemId) : null,
   });
-  // `enabled` is set once /api/cast/config answered, so the switch is known by then
-  $: ap = airplayRows({ available: airAvailable, continuous: enabled && castConfigAirplayContinuous() ? 'on' : null, subsInStream: $serverCaps.castHlsSubtitles, last: air, lookup: $castSession?.kind === 'airplay' ? lookup : null, pinned: lookup?.pinFamily, tf: $t });
+  $: ap = airplayRows({ available: airAvailable, continuous: airCont ? 'on' : null, subsInStream: $serverCaps.castHlsSubtitles, last: air, lookup: $castSession?.kind === 'airplay' ? lookup : null, pinned: lookup?.pinFamily, tf: $t });
 
   $: castBusy = $castSession !== null || otherTab;
   $: canTest = capable && enabled && ready && !busy && !castBusy;
