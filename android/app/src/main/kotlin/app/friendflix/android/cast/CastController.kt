@@ -83,6 +83,8 @@ interface CastHost {
      * the server's resume point); [play] = it was playing; [ended] = the title finished on the TV
      */
     fun onReturn(itemId: String, positionMs: Long?, play: Boolean, ended: Boolean)
+    /** the screen plays (or is about to play) the title on this device: a cast found later must stop that first */
+    fun playingLocally(): Boolean = false
     /** the own receiver's TV texts in the app's language (engine.ts `receiverStrings`) */
     fun receiverStrings(): JSONObject
     /** the viewer picked a Cast device in the route chooser: the playing title goes there ([CastController.start]) */
@@ -211,6 +213,8 @@ class CastController(
     private var seq = 0
     /** a [resume] lookup is on its way */
     private var resuming = false
+    /** [stop] was called while a [resume] lookup was in flight: if the lookup then finds our cast, the receiver session ends */
+    private var stopAsked = false
     /** ended episodes already closed after a resume (once per castId) */
     private val closed = HashSet<String>()
     /** the bar's last state while the TV shows the end of a title (until [pendingEnd] runs) */
@@ -360,6 +364,7 @@ class CastController(
         val url = contentUrl?.takeIf { it.isNotEmpty() } ?: return
         val id = receiverCastId?.takeIf(CastIds::valid) ?: CastIds.ofContentUrl(url) ?: return
         resuming = true
+        stopAsked = false
         val my = seq
         val queuedMedia = receiver.queuedNext()
         io.execute {
@@ -375,7 +380,13 @@ class CastController(
             }
             main.execute {
                 resuming = false
-                if (cur != null || my != seq) return@execute // a hand-over or another cast came first
+                val asked = stopAsked
+                stopAsked = false
+                if (cur != null || my != seq) {
+                    // a hand-over or another cast came first; a stop in between still ends the TV's session of the cast found
+                    if (asked && cur == null) receiver.end()
+                    return@execute
+                }
                 prev?.let(::closeEnded)
                 adopt(l, url, queued, queuedMedia)
             }
@@ -393,6 +404,9 @@ class CastController(
     }
 
     private fun adopt(l: CastLookup, url: String, queued: Result<CastLookup?>?, queuedMedia: ReceiverMedia?) {
+        // a screen that plays on this device (restored after process death, Play tapped before the lookup answered) lets go first, like
+        // before a fresh cast: its stop report goes out and its stream slot is freed
+        if (host.playingLocally()) host.stopLocal()
         val (prefs, bitrate) = adoptDefaults()
         val s = Live(CastStart(l.itemId, 0, null, null, null, bitrate, l.seriesName != null, prefs, offline = false))
         val ci = l.toCastInfo(url)
@@ -553,7 +567,10 @@ class CastController(
      * cast too): queued token revoked, stop reported, token revoked, receiver stopped.
      */
     fun stop() {
-        if (cur == null) seq++ // a resume lookup in flight must not adopt a cast after the stop
+        if (cur == null) {
+            seq++ // a resume lookup in flight must not adopt a cast after the stop
+            if (resuming) stopAsked = true
+        }
         val s = cur ?: run {
             // a title just finished on the TV and the player closes before its delayed end: the session ends now
             val p = pendingEnd ?: return

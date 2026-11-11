@@ -1203,6 +1203,9 @@ class PlayerActivity : FragmentActivity() {
             if (started) { stream = null; showCasting() }
         }
 
+        override fun playingLocally(): Boolean =
+            loadJob?.isActive == true || reporter != null || (::player.isInitialized && player.playbackState != Player.STATE_IDLE)
+
         override fun stopLocal() {
             // like Player.svelte startCast: the local session's stop, local playback off (the stream slot is free for the token)
             loadJob?.cancel()

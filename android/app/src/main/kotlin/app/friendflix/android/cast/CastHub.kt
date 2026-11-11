@@ -69,6 +69,7 @@ class CastHubCore(
         override fun onCasting(itemId: String) { host?.onCasting(itemId) }
         override fun onTitle(item: ItemInfo) { host?.onTitle(item) }
         override fun onFailed(answer: TokenAnswer?) { host?.onFailed(answer) }
+        override fun playingLocally(): Boolean = host?.playingLocally() ?: false
         override fun onReturn(itemId: String, positionMs: Long?, play: Boolean, ended: Boolean) { host?.onReturn(itemId, positionMs, play, ended) }
         override fun receiverStrings(): JSONObject = host?.receiverStrings() ?: strings()
         override fun onDevicePicked() { host?.onDevicePicked() }

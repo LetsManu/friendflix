@@ -80,8 +80,12 @@ class CastHubTest {
         var returned: String? = null
         var picked = 0
         var casting = 0
-        override fun stopLocal() {}
-        override fun onCasting(itemId: String) { casting++ }
+        /** the screen plays on this device */
+        var local = false
+        val order = mutableListOf<String>()
+        override fun playingLocally() = local
+        override fun stopLocal() { order += "stopLocal"; local = false }
+        override fun onCasting(itemId: String) { casting++; order += "onCasting" }
         override fun onTitle(item: ItemInfo) {}
         override fun onFailed(answer: TokenAnswer?) {}
         override fun onReturn(itemId: String, positionMs: Long?, play: Boolean, ended: Boolean) { returned = itemId }
@@ -354,6 +358,66 @@ class CastHubTest {
         val lookupsBefore = calls.count { it.startsWith("GET /api/cast/session") }
         events.onState(playing(id, 601_000))
         assertEquals(lookupsBefore, calls.count { it.startsWith("GET /api/cast/session") })
+    }
+
+    private fun ours(): Pair<String, String> {
+        val url = "https://ff.example/media/c/${"C".repeat(43)}/master.m3u8"
+        val id = CastIds.ofContentUrl(url)!!
+        lookups[id] = CastLookup(id, "ep1", "ms", "ps", clock + 3_600_000, 1_800L * 10_000_000, "chromecast", false, true, "First", "Bright Valley", emptyList())
+        return url to id
+    }
+
+    @Test fun adoptingWhileTheScreenPlaysLocallyStopsLocalPlaybackFirstAndOnce() {
+        val (url, id) = ours()
+        val h = hub(custom = true)
+        val host = Host().also { it.local = true }
+        h.attach(host)
+        link.playing = ReceiverMedia(null, url)
+        events.onState(playing(id, 600_000))
+        assertTrue(h.controller.casting)
+        assertEquals(listOf("stopLocal", "onCasting"), host.order)
+        events.onState(playing(id, 601_000))
+        assertEquals("once", 1, host.order.count { it == "stopLocal" })
+    }
+
+    @Test fun adoptingIntoAnIdleScreenIsUnchanged() {
+        val (url, id) = ours()
+        val h = hub(custom = true)
+        val host = Host()
+        h.attach(host)
+        link.playing = ReceiverMedia(null, url)
+        events.onState(playing(id, 600_000))
+        assertTrue(h.controller.casting)
+        assertEquals(listOf("onCasting"), host.order)
+    }
+
+    @Test fun aStopWhileTheReadoptionLookupIsInFlightStillEndsTheReceiverSession() {
+        val (url, id) = ours()
+        val h = hub(custom = true)
+        link.playing = ReceiverMedia(null, url)
+        val queued = mutableListOf<Runnable>()
+        stuck = queued // the lookup is on its way
+        events.onState(playing(id, 600_000))
+        assertFalse(h.controller.casting)
+        h.stop() // sign-out meanwhile
+        stuck = null
+        queued.forEach { it.run() }
+        assertFalse("the cast is not adopted after the stop", h.controller.casting)
+        assertEquals("the lookup found our cast: the TV session ends with the stop", 1, link.ended)
+    }
+
+    @Test fun aStopWhileTheLookupIsInFlightLeavesAForeignCastAlone() {
+        val url = "https://ff.example/media/c/${"D".repeat(43)}/master.m3u8"
+        val id = CastIds.ofContentUrl(url)!!
+        val h = hub(custom = true) // no lookup entry: not ours
+        link.playing = ReceiverMedia(null, url)
+        val queued = mutableListOf<Runnable>()
+        stuck = queued
+        events.onState(playing(id, 600_000))
+        h.stop()
+        stuck = null
+        queued.forEach { it.run() }
+        assertEquals(0, link.ended)
     }
 
     @Test fun foreignMediaOnTheTvIsLeftAlone() {
