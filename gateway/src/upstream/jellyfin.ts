@@ -41,7 +41,8 @@ export const jellyfinUpstream: Upstream = {
   directStream: /^\/Videos\/[0-9a-fA-F]{32}\/stream(\.\w{2,5})?$/,
   image: /^\/Items\/[0-9a-fA-F]{32}\/Images\//,
   stripQuery: new Set(['api_key', 'apikey', 'x-emby-token', 'x-mediabrowser-token', 'token']),
-  castDropQuery: new Set(['livestreamid', 'deviceid']),
+  // alwaysburninsubtitlewhentranscoding: a receiver-supplied burn-in switch (FriendFlix never sets it; with a subtitle selected it forces a burn-in transcode)
+  castDropQuery: new Set(['livestreamid', 'deviceid', 'alwaysburninsubtitlewhentranscoding']),
   clampHeight: ['maxheight', 'height'],
   clampWidth: ['maxwidth', 'width'],
   clampBitrate: ['maxstreamingbitrate', 'videobitrate'],

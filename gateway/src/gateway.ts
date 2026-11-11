@@ -211,7 +211,7 @@ const unquote = (v: string) => v.replace(/^"|"$/g, '');
 export function compatPlaylist(lines: string[], opts: { keepSubtitleIndex?: number; checkUri?: (uri: string) => void } = {}): string[] {
   const dropTypes = /^(SUBTITLES|CLOSED-CAPTIONS)$/;
   const groups = new Set<string>(); // `TYPE:GROUP-ID` of kept EXT-X-MEDIA renditions
-  const keptSub: { line: number; text: string }[] = []; // the one subtitle rendition AirPlay keeps (first one only)
+  const keptSub: { line: number; text: string }[] = []; // the requested track's rendition AirPlay keeps (the first line matching keepSubtitleIndex; at most one entry)
   lines.forEach((line, i) => {
     if (!line.startsWith('#EXT-X-MEDIA:')) return;
     const a = new Map(hlsAttrs(line.slice(13)));

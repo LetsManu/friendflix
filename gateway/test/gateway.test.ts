@@ -589,6 +589,26 @@ describe('cast route /media/c/<token>/', () => {
     expect(seen.at(-1)!.url).toContain('StartPositionTicks=0&EndPositionTicks=300000000');
     expect(seen.at(-1)!.auth).toContain('Token="CASTJF"');
   });
+  it('an hlsSub token\'s segment fetch carries its own SubtitleStreamIndex and SubtitleMethod=Hls (as Jellyfin\'s playlist writes them)', async () => {
+    seen.length = 0;
+    const r = await subGet(`/Videos/${ID}/hls1/main/0.ts?MediaSourceId=${MS}&PlaySessionId=ps-1&SubtitleStreamIndex=4&SubtitleMethod=Hls`);
+    expect(r.status).toBe(200);
+    await r.arrayBuffer();
+    expect(seen.at(-1)!.url).toContain('SubtitleStreamIndex=4');
+    expect(seen.at(-1)!.url).toContain('SubtitleMethod=Hls');
+  });
+  it('AlwaysBurnInSubtitleWhenTranscoding never reaches the upstream, for an hlsSub token or any other cast token', async () => {
+    for (const ct of [CT_SUB, CT]) {
+      for (const path of [`/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&AlwaysBurnInSubtitleWhenTranscoding=true&jfmaster=3`, `/Videos/${ID}/hls1/main/0.ts?MediaSourceId=${MS}&alwaysburninsubtitlewhentranscoding=true`]) {
+        seen.length = 0;
+        const r = await subGet(path, ct);
+        expect(r.status, `${ct.slice(0, 1)} ${path}`).toBe(200);
+        await r.arrayBuffer();
+        expect(seen.at(-1)!.url, path).not.toMatch(/alwaysburnin/i);
+        expect(seen.at(-1)!.url).toContain(`MediaSourceId=${MS}`);
+      }
+    }
+  });
   it('the same paths are 403 for a token without hlsSub and for a poster token', async () => {
     for (const ct of [CT, CT_IMG, CT_LOW]) {
       expect((await subGet(`${SUBP}/subtitles.m3u8?SegmentLength=30`, ct)).status, ct).toBe(403);
