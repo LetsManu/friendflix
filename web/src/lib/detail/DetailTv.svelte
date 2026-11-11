@@ -295,7 +295,7 @@
   .tag { margin: .9rem 0 0; font-size: 1.4rem; font-weight: 500; line-height: 1.35; color: var(--tv-white-88); max-width: 46ch; }
   .ov { margin: .75rem 0 0; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .with { margin: .75rem 0 0; max-width: 46ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  :global(html.tv) .resume { margin: .75rem 0 0; display: flex; align-items: center; gap: .9rem; color: var(--tv-white-88); }
+  :global(html.tv) .resume { margin: .75rem 0 0; max-width: 100%; display: flex; align-items: center; gap: .9rem; color: var(--tv-white-88); }
   :global(html.tv) .resume > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .bar { position: relative; flex: none; width: 7.5rem; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .22); overflow: hidden; }
   .bar span { position: absolute; inset: 0; background: var(--acc); transform-origin: left center; border-radius: 2px; }

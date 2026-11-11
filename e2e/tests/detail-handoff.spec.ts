@@ -132,26 +132,51 @@ test('the desktop progress bar names the hint\'s position', async ({ page, api }
 });
 
 test.describe('TV late answer', () => {
+  /** the long AirPlay name, and a renamed device at the 40-character limit (spec 2.8) */
+  const NAME40 = 'Wohnzimmer-Fernseher von Anna Musterfrau';
+  const devices = [['AirPlay', longOffer], ['40-character name', () => offer({ positionTicks: 50_000_000_000, device: { kind: 'webos', name: NAME40 } })]] as const;
   for (const vp of [{ width: 1920, height: 1080 }, { width: 1280, height: 720 }]) {
-    test(`TV ${vp.height}p: the late long hint moves nothing`, async ({ page, api }) => {
-      await page.setViewportSize(vp);
-      api.handoff.byItem[SERIES.id] = longOffer();
-      await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, tv: true } }));
-      await page.routeWebSocket(/\/ws\/remote/, () => {});
-      await mockPlayer(page);
-      const release = await holdHandoff(page);
-      await seriesPage(page);
-      const res = page.locator('.tv-meta.resume');
-      await expect(res).toContainText('Noch');
-      await page.waitForTimeout(600);
-      const sels = ['.tvd .btns', 'a.tv-btn.play', '.tv-meta.resume', '.tv-body.ov'];
-      const before = await boxes(page, sels);
-      release();
-      await expect(res).toContainText('Weiter ab 1:23:20');
-      await page.waitForTimeout(300);
-      expect(await boxes(page, sels)).toEqual(before);
-    });
+    for (const [dev, mk] of devices) {
+      test(`TV ${vp.height}p, ${dev}: the late long hint moves nothing and is cut inside the text column`, async ({ page, api }) => {
+        expect(NAME40).toHaveLength(40);
+        await page.setViewportSize(vp);
+        api.handoff.byItem[SERIES.id] = mk();
+        await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, tv: true } }));
+        await page.routeWebSocket(/\/ws\/remote/, () => {});
+        await mockPlayer(page);
+        const release = await holdHandoff(page);
+        await seriesPage(page);
+        const res = page.locator('.tv-meta.resume');
+        await expect(res).toContainText('Noch');
+        await page.waitForTimeout(600);
+        const sels = ['.tvd .btns', 'a.tv-btn.play', '.tv-meta.resume', '.tv-body.ov'];
+        const before = await boxes(page, sels);
+        release();
+        await expect(res).toContainText('Weiter ab 1:23:20');
+        await page.waitForTimeout(300);
+        expect(await boxes(page, sels)).toEqual(before);
+        const m = await page.evaluate(() => {
+          const p = document.querySelector('.tv-meta.resume')!, col = p.parentElement!.getBoundingClientRect(), t = p.querySelector(':scope > span:last-child')!;
+          return { right: p.getBoundingClientRect().right, colRight: col.right, cut: t.scrollWidth > t.clientWidth };
+        });
+        expect(m.right).toBeLessThanOrEqual(m.colRight + 1);
+        expect(m.cut).toBe(true);
+      });
+    }
   }
+
+  test('the story sub-screen Play names the hint', async ({ page, api }) => {
+    api.handoff.byItem[SERIES.id] = offer();
+    await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, tv: true } }));
+    await page.routeWebSocket(/\/ws\/remote/, () => {});
+    await mockPlayer(page);
+    await page.route('**/api/library/nextup*', (r) => r.fulfill({ json: { items: [episodes[0]] } }));
+    await page.route('**/api/items/*/story', (r) => r.fulfill({ json: { story: { reason: 'newSeason', season: { number: 1, name: 'Staffel 1', overview: 'Was in Staffel 1 geschah.' }, episode: { id: episodes[5]!.id, name: 'Folge 6', season: 1, index: 6, overview: 'Das Finale.' }, next: { id: episodes[1]!.id, season: 2, index: 1 } } } }));
+    await page.goto(`/item/${SERIES.id}/story`);
+    const go = page.locator('.sstory a.tv-btn');
+    await expect(go).toHaveAttribute('href', /[?&]t=1390$/);
+    await expect(go).toHaveAccessibleName(/^Fortsetzen, weiter ab 23:10, zuletzt auf LG-Fernseher$/);
+  });
 });
 
 // ---- cast and native plays start at the hint ----
