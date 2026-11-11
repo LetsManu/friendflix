@@ -3,7 +3,9 @@
 <script lang="ts">
   /**
    * Admin → Status: the counts behind the "not here yet" suggestions, per type (films, series). Why a list is short or empty:
-   * few starting titles, or nearly everything recommended is already in the library. Numbers only, loaded once.
+   * few starting titles, or nearly everything recommended is already in the library. Numbers only. Opening the page only reads the
+   * counts of the last stored build (nothing is built); "Jetzt prüfen" builds the lists now (slow when cold, it calls the request service).
+   * The card is the last on the page and keeps the numbers it has while a build runs, so nothing moves.
    */
   import { onMount } from 'svelte';
   import { fmtNumber, t, type TKey } from '#lib/i18n';
@@ -14,17 +16,34 @@
 
   const TYPES: Array<{ type: SuggestType; label: TKey }> = [{ type: 'movie', label: 'common.movies' }, { type: 'series', label: 'common.series' }];
   let res: Record<SuggestType, SuggestResult | null> = { movie: null, series: null };
-  async function load(type: SuggestType) { res[type] = null; res = res; const r = await loadSuggestStats(type); res[type] = r; res = res; }
+  let building = false;
+  async function load(type: SuggestType, mode: 'cached' | 'build' = 'cached') {
+    if (mode === 'cached') res[type] = null;
+    res = res;
+    const r = await loadSuggestStats(type, mode);
+    res[type] = r;
+    res = res;
+  }
+  /** a real build of both lists; each column keeps its numbers until its own answer arrives */
+  async function checkNow() {
+    if (building) return;
+    building = true;
+    await Promise.all(TYPES.map((x) => load(x.type, 'build')));
+    building = false;
+  }
   onMount(() => { for (const x of TYPES) void load(x.type); });
 </script>
 
 <AdminCard title={$t('adminContent.status.sug.title')} description={$t('adminContent.status.sug.intro')} id="st-sug">
+  <svelte:fragment slot="actions">
+    <Button variant="secondary" icon="refresh" pending={building} on:click={checkNow}>{$t('adminContent.health.checkNow')}</Button>
+  </svelte:fragment>
   <div class="types" data-testid="sug-card">
     {#each TYPES as x (x.type)}
       {@const r = res[x.type]}
       <div class="one" data-type={x.type}>
         <h3>{$t(x.label)}</h3>
-        {#if !r}<Skeleton lines={4} h="1rem" />
+        {#if !r}<Skeleton lines={SUGGEST_FIELDS.length} h="1.1rem" />
         {:else if r.state === 'ok'}
           <dl>
             {#each SUGGEST_FIELDS as k (k)}
@@ -36,7 +55,7 @@
         {:else if r.state === 'failed'}
           <p class="muted">{$t('adminContent.status.sug.failed')}</p>
           <Button variant="secondary" icon="refresh" on:click={() => void load(x.type)}>{$t('ui.retry')}</Button>
-        {:else}<p class="muted">{$t(r.state === 'off' ? 'adminContent.status.sug.off' : 'adminContent.status.sug.owner')}</p>{/if}
+        {:else}<p class="muted">{$t(r.state === 'off' ? 'adminContent.status.sug.off' : r.state === 'none' ? 'adminContent.status.sug.none' : 'adminContent.status.sug.owner')}</p>{/if}
       </div>
     {/each}
   </div>

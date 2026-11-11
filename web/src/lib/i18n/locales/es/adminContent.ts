@@ -161,7 +161,8 @@ const dict: Translation<typeof de> = {
     recoIndexOff: 'El servidor multimedia no lo admite',
     sug: {
       title: 'Sugerencias (Aún no está aquí)',
-      intro: 'De qué se compone la lista de la página Novedades, por tipo. Solo cifras, sin títulos.',
+      intro: 'De qué se compone la lista de la página Novedades para tu perfil de propietario, por tipo (no para todo el servidor). Solo cifras, sin títulos; la página muestra la última creación guardada.',
+      none: 'Aún no hay ninguna creación guardada. «Comprobar ahora» crea la lista una vez.',
       owner: 'Las cifras solo están disponibles para el administrador con el perfil del propietario.',
       off: 'No hay ningún servicio de pedidos configurado.',
       failed: 'No se pudieron cargar las cifras.',

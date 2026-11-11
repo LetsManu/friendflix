@@ -166,7 +166,8 @@ const dict: Translation<typeof de> = {
     recoIndexOff: 'Nieobsługiwane przez serwer multimediów',
     sug: {
       title: 'Propozycje (Jeszcze nie u nas)',
-      intro: 'Z czego powstaje lista na stronie Nowe, osobno dla każdego typu. Tylko liczby, bez tytułów.',
+      intro: 'Z czego powstaje lista na stronie Nowe dla Twojego profilu właściciela, osobno dla każdego typu (nie dla całego serwera). Tylko liczby, bez tytułów; strona pokazuje ostatnie zapisane zbudowanie.',
+      none: 'Brak zapisanego zbudowania. „Sprawdź teraz” buduje listę jeden raz.',
       owner: 'Liczby widzi tylko administrator na profilu właściciela.',
       off: 'Nie skonfigurowano usługi próśb.',
       failed: 'Nie udało się wczytać liczb.',

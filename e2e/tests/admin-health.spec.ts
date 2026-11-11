@@ -106,7 +106,7 @@ test.describe('admin health page', () => {
     await expect(db.getByRole('progressbar')).toHaveCount(0);
   });
 
-  test('suggestions card: counts per type, hints for "all in the library" and "no starting titles"', async ({ page, api }) => {
+  test('suggestions card: opening the page builds nothing; "Jetzt prüfen" builds and shows the counts, hints included', async ({ page, api }) => {
     const base = { anchors: 6, seeds: 9, seedsWithoutTmdb: 1, seedsFoundByName: 2, recommendations: 40, inLibrary: 12, inLibraryByTvdb: 3, lookupFailures: 0, seedSearchFailures: 0, ageFiltered: 4, final: 24 };
     api.newPage.suggestions.debug = {
       movie: base,
@@ -115,6 +115,10 @@ test.describe('admin health page', () => {
     await page.goto('/admin/status');
     const card = page.getByRole('region', { name: 'Vorschläge (Noch nicht bei uns)' });
     const movie = card.locator('[data-type="movie"]'), series = card.locator('[data-type="series"]');
+    await expect(movie).toContainText('Noch kein Aufbau gespeichert');
+    await expect(series).toContainText('Noch kein Aufbau gespeichert');
+    expect(api.newPage.suggestions.builds ?? 0).toBe(0); // reading the cache started no build
+    await card.getByRole('button', { name: 'Jetzt prüfen' }).click();
     await expect(movie.getByRole('heading', { name: 'Filme' })).toBeVisible();
     await expect(movie.locator('dt')).toHaveCount(11);
     await expect(movie.locator('[data-field="recommendations"]')).toHaveText('40');
@@ -123,16 +127,32 @@ test.describe('admin health page', () => {
     await expect(movie.getByRole('note')).toHaveCount(0);
     await expect(series.getByRole('heading', { name: 'Serien' })).toBeVisible();
     await expect(series.getByRole('note')).toContainText('Keine Ausgangstitel');
+    expect(api.newPage.suggestions.builds).toBe(2);
+    // the build is kept: a new visit shows it at once, without building again
+    await page.reload();
+    await expect(card.locator('[data-type="movie"] [data-field="final"]')).toHaveText('24');
+    expect(api.newPage.suggestions.builds).toBe(2);
     // nearly everything recommended is already here
-    api.newPage.suggestions.debug = { movie: { ...base, recommendations: 40, inLibrary: 39, final: 1 }, series: base };
+    api.newPage.suggestions.cached = { movie: { ...base, recommendations: 40, inLibrary: 39, final: 1 }, series: base };
     await page.reload();
     await expect(card.locator('[data-type="movie"]').getByRole('note')).toContainText('schon in der Bibliothek');
     await expect(card.locator('[data-type="series"]').getByRole('note')).toHaveCount(0);
   });
 
+  test('suggestions card sits last on the page, so a late answer moves nothing', async ({ page, api }) => {
+    api.newPage.suggestions.cached = { movie: { anchors: 1, seeds: 1, seedsWithoutTmdb: 0, seedsFoundByName: 0, recommendations: 5, inLibrary: 1, inLibraryByTvdb: 0, lookupFailures: 0, seedSearchFailures: 0, ageFiltered: 0, final: 4 } };
+    await page.goto('/admin/status');
+    const card = page.getByRole('region', { name: 'Vorschläge (Noch nicht bei uns)' });
+    await expect(card.locator('[data-type="movie"] [data-field="final"]')).toBeVisible();
+    const cardY = (await card.boundingBox())!.y, numbers = (await page.getByRole('region', { name: 'Zahlen' }).boundingBox())!, refresh = (await page.getByRole('button', { name: 'Aktualisieren' }).boundingBox())!;
+    expect(cardY).toBeGreaterThan(numbers.y + numbers.height - 1);
+    expect(cardY).toBeGreaterThan(refresh.y);
+  });
+
   test.describe('suggestions card without counts', () => {
     test.use({ allowedConsole: /status of (500|404)/ }); // the 404 requests_disabled is the answer under test
     test('suggestions card: without counts (not the owner profile) and without a request service it says so', async ({ page, api }) => {
+      api.newPage.suggestions.notOwner = true;
       await page.goto('/admin/status');
       const card = page.getByRole('region', { name: 'Vorschläge (Noch nicht bei uns)' });
       await expect(card).toContainText('nur für den Admin auf dem Besitzer-Profil');

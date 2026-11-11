@@ -161,7 +161,8 @@ const dict: Translation<typeof de> = {
     recoIndexOff: 'Not supported by the media server',
     sug: {
       title: 'Suggestions (Not here yet)',
-      intro: 'What the list on the New page is built from, per type. Numbers only, no titles.',
+      intro: 'What the list on the New page is built from for your owner profile, per type (not for the whole server). Numbers only, no titles; the page shows the last stored build.',
+      none: 'No build stored yet. “Check now” builds the list once.',
       owner: 'The numbers are only available to the admin on the owner profile.',
       off: 'No request service is set up.',
       failed: 'The numbers could not be loaded.',

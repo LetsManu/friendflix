@@ -161,7 +161,8 @@ const dict: Translation<typeof de> = {
     recoIndexOff: 'Non supportato dal server multimediale',
     sug: {
       title: 'Suggerimenti (Non ancora da noi)',
-      intro: 'Da cosa nasce la lista della pagina Novità, per tipo. Solo numeri, nessun titolo.',
+      intro: 'Da cosa nasce la lista della pagina Novità per il tuo profilo proprietario, per tipo (non per l’intero server). Solo numeri, nessun titolo; la pagina mostra l’ultima creazione salvata.',
+      none: 'Nessuna creazione salvata. «Controlla ora» crea la lista una volta.',
       owner: 'I numeri sono disponibili solo per l’admin con il profilo del proprietario.',
       off: 'Nessun servizio di richieste configurato.',
       failed: 'Impossibile caricare i numeri.',

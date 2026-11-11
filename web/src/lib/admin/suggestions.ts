@@ -11,15 +11,17 @@ export type SuggestType = 'movie' | 'series';
 export const SUGGEST_FIELDS = ['anchors', 'seeds', 'seedsWithoutTmdb', 'seedsFoundByName', 'recommendations', 'inLibrary', 'inLibraryByTvdb', 'lookupFailures', 'seedSearchFailures', 'ageFiltered', 'final'] as const;
 export type SuggestField = (typeof SUGGEST_FIELDS)[number];
 export type SuggestStats = Record<SuggestField, number>;
-/** `owner`: no counts for this profile (only the admin's owner profile gets them); `off`: no request service; `failed`: the request failed */
-export type SuggestResult = { state: 'ok'; stats: SuggestStats } | { state: 'owner' | 'off' | 'failed' };
+/** `none`: no build in the cache yet; `owner`: no counts for this profile (only the admin's owner profile gets them); `off`: no request service; `failed`: the request failed */
+export type SuggestResult = { state: 'ok'; stats: SuggestStats } | { state: 'none' | 'owner' | 'off' | 'failed' };
 
 const isStats = (d: unknown): d is SuggestStats => !!d && typeof d === 'object' && SUGGEST_FIELDS.every((k) => typeof (d as Record<string, unknown>)[k] === 'number');
 
-export async function loadSuggestStats(type: SuggestType): Promise<SuggestResult> {
+/** `cached`: only what the last build left in the cache (never starts one); `build`: builds the list when it is not cached (slow when cold) */
+export async function loadSuggestStats(type: SuggestType, mode: 'cached' | 'build' = 'cached'): Promise<SuggestResult> {
   try {
-    const r = await api<{ debug?: unknown }>(`/api/library/request-suggestions?type=${type}`);
-    return isStats(r?.debug) ? { state: 'ok', stats: r.debug } : { state: 'owner' };
+    const r = await api<{ debug?: unknown }>(`/api/library/request-suggestions?type=${type}${mode === 'cached' ? '&debug=cached' : ''}`);
+    if (isStats(r?.debug)) return { state: 'ok', stats: r.debug };
+    return mode === 'cached' && r?.debug === null ? { state: 'none' } : { state: 'owner' };
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) return { state: 'off' };
     if (e instanceof ApiError && e.status === 403) return { state: 'owner' }; // a kids profile

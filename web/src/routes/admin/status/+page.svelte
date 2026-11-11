@@ -92,8 +92,6 @@
 
 <LoginCard />
 
-<SuggestionsCard />
-
 <section aria-labelledby="st-num">
   <h2 id="st-num">{$t('adminContent.status.numbers')}</h2>
   {#if $summaryFailed && !s}
@@ -114,6 +112,8 @@
 </section>
 
 <p class="foot"><Button variant="ghost" icon="refresh" pending={refreshing} on:click={() => { void reloadSummary(); slow(); void loadStr(); }}>{$t('admin.playback.refresh')}</Button></p>
+
+<SuggestionsCard />
 
 <style>
   .intro { margin: 0 0 1rem; }

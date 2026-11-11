@@ -20,16 +20,26 @@ describe('suggestHint', () => {
 });
 
 describe('loadSuggestStats', () => {
-  it('returns the counts of the admin', async () => {
-    answer(200, { items: [], quota: null, debug: stats() });
+  const url = () => String((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![0]);
+  it('cached (the default) asks for the cache only and returns the counts of the last build', async () => {
+    answer(200, { debug: stats(), builtAt: '2026-11-01T10:00:00Z' });
     await expect(loadSuggestStats('series')).resolves.toEqual({ state: 'ok', stats: stats() });
-    expect(String((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![0])).toBe('/api/library/request-suggestions?type=series');
+    expect(url()).toBe('/api/library/request-suggestions?type=series&debug=cached');
   });
-  it('no debug (not the owner profile) or a kids profile: owner', async () => {
-    answer(200, { items: [], quota: null });
+  it('cached: debug null = no build yet; no debug key (not the owner profile) or a kids profile = owner', async () => {
+    answer(200, { debug: null, builtAt: null });
+    await expect(loadSuggestStats('movie')).resolves.toEqual({ state: 'none' });
+    answer(200, {});
     await expect(loadSuggestStats('movie')).resolves.toEqual({ state: 'owner' });
     answer(403, { error: 'kids_profile' });
     await expect(loadSuggestStats('movie')).resolves.toEqual({ state: 'owner' });
+  });
+  it('build asks for the real list (no debug=cached) and takes the counts from it', async () => {
+    answer(200, { items: [], quota: null, debug: stats() });
+    await expect(loadSuggestStats('movie', 'build')).resolves.toEqual({ state: 'ok', stats: stats() });
+    expect(url()).toBe('/api/library/request-suggestions?type=movie');
+    answer(200, { items: [], quota: null });
+    await expect(loadSuggestStats('movie', 'build')).resolves.toEqual({ state: 'owner' });
   });
   it('no request service: off; anything else: failed', async () => {
     answer(404, { error: 'requests_disabled' });
@@ -42,6 +52,6 @@ describe('loadSuggestStats', () => {
 describe('texts', () => {
   it('every row and hint has a text', () => {
     for (const k of SUGGEST_FIELDS) expect(hasKey(`adminContent.status.sug.f.${k}`), k).toBe(true);
-    for (const k of ['title', 'intro', 'owner', 'off', 'failed', 'hint.inLibrary', 'hint.noSeeds']) expect(hasKey(`adminContent.status.sug.${k}`), k).toBe(true);
+    for (const k of ['title', 'intro', 'none', 'owner', 'off', 'failed', 'hint.inLibrary', 'hint.noSeeds']) expect(hasKey(`adminContent.status.sug.${k}`), k).toBe(true);
   });
 });

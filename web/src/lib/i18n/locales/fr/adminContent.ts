@@ -161,7 +161,8 @@ const dict: Translation<typeof de> = {
     recoIndexOff: 'Non pris en charge par le serveur multimédia',
     sug: {
       title: 'Suggestions (Pas encore chez nous)',
-      intro: 'D’où vient la liste de la page Nouveautés, par type. Des chiffres seulement, aucun titre.',
+      intro: 'D’où vient la liste de la page Nouveautés pour ton profil propriétaire, par type (pas pour tout le serveur). Des chiffres seulement, aucun titre ; la page montre la dernière construction enregistrée.',
+      none: 'Aucune construction enregistrée. « Vérifier maintenant » construit la liste une fois.',
       owner: 'Les chiffres ne sont disponibles que pour l’admin sur le profil propriétaire.',
       off: 'Aucun service de demandes n’est configuré.',
       failed: 'Impossible de charger les chiffres.',

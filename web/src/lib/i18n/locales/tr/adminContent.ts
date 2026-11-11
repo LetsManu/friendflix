@@ -161,7 +161,8 @@ const dict: Translation<typeof de> = {
     recoIndexOff: 'Medya sunucusu desteklemiyor',
     sug: {
       title: 'Öneriler (Henüz bizde yok)',
-      intro: 'Yeni sayfasındaki listenin neyden oluştuğu, türe göre. Yalnızca sayılar, başlık yok.',
+      intro: 'Yeni sayfasındaki listenin sahip profilin için neyden oluştuğu, türe göre (tüm sunucu için değil). Yalnızca sayılar, başlık yok; sayfa son kaydedilen oluşturmayı gösterir.',
+      none: 'Henüz kayıtlı bir oluşturma yok. “Şimdi kontrol et” listeyi bir kez oluşturur.',
       owner: 'Sayılar yalnızca sahip profilindeki yönetici için görünür.',
       off: 'İstek hizmeti kurulmamış.',
       failed: 'Sayılar yüklenemedi.',

@@ -158,7 +158,8 @@ export default {
     recoIndexOff: 'Vom Medienserver nicht unterstützt',
     sug: {
       title: 'Vorschläge (Noch nicht bei uns)',
-      intro: 'Woraus die Liste auf der Seite „Neu“ entsteht, je Typ. Nur Zahlen, keine Titel.',
+      intro: 'Woraus die Liste auf der Seite „Neu“ für dein Besitzer-Profil entsteht, je Typ (nicht für den ganzen Server). Nur Zahlen, keine Titel; die Seite zeigt den letzten gespeicherten Aufbau.',
+      none: 'Noch kein Aufbau gespeichert. „Jetzt prüfen“ baut die Liste einmal auf.',
       owner: 'Die Zahlen gibt es nur für den Admin auf dem Besitzer-Profil.',
       off: 'Kein Wunsch-Dienst eingerichtet.',
       failed: 'Die Zahlen konnten nicht geladen werden.',
