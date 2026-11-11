@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { tr } from '#lib/i18n';
-import { dismiss, DISMISS_KEY, DISMISS_MAX, handoffAge, handoffDevice, handoffHref, handoffTime, handoffTitle, isDismissed, shouldTakeFocus, type Handoff } from './handoff';
+import { dismiss, DISMISS_KEY, DISMISS_MAX, handoffAge, handoffDevice, handoffHref, handoffTime, hintFor, handoffTitle, isDismissed, shouldTakeFocus, type Handoff } from './handoff';
 
 const base: Handoff = {
   id: 'h1', itemId: 'e4', type: 'Episode', title: 'The Lantern Road', seriesName: 'Dunmoor', season: 1, episode: 4, imageId: 'e4',
@@ -77,5 +77,12 @@ describe('handoff helpers', () => {
     expect(shouldTakeFocus({ mountedAt: 1000, arrivedAt: 3100, keyPressed: false })).toBe(false);
     expect(shouldTakeFocus({ mountedAt: 1000, arrivedAt: 1500, keyPressed: true })).toBe(false);
     expect(shouldTakeFocus({ mountedAt: 1000, arrivedAt: 900, keyPressed: false })).toBe(false); // a clock that went back: no
+  });
+
+  it('hintFor: only for the play target itself', () => {
+    expect(hintFor(base, 'e4')).toBe(base);
+    expect(hintFor(base, 'e5')).toBeNull();
+    expect(hintFor(base, '')).toBeNull();
+    expect(hintFor(null, 'e4')).toBeNull();
   });
 });

@@ -32,6 +32,9 @@ export async function loadHandoff(item?: string): Promise<Handoff | null> {
   }
 }
 
+/** the title page's hint (spec 2.5): the answer only when it is for what the Play button would play */
+export const hintFor = (h: Handoff | null, playTarget: string): Handoff | null => (h && playTarget && h.itemId === playTarget ? h : null);
+
 // ---- dismissal: per device, the last DISMISS_MAX ids (spec 2.4) ----
 export const DISMISS_KEY = 'ff-handoff-dismissed';
 export const DISMISS_MAX = 20;

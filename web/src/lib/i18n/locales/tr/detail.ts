@@ -10,6 +10,8 @@ const tr: Translation<typeof de> = {
     resume: 'Devam et',
     continue: 'Devam',
     episodeCode: 'S{s}:B{e}',
+    handoffLine: '{time} konumundan devam (son olarak {device})',
+    handoffAria: '{play}, {time} konumundan devam et, son olarak {device}',
     myList: 'İzleme listesi',
     addToList: 'İzleme listesine ekle',
     removeFromList: 'İzleme listesinden çıkar',

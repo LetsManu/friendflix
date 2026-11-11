@@ -34,6 +34,7 @@
   export let playBase = '';
   export let playHref = '';
   export let playLabel = '';
+  export let playAria: string | undefined = undefined;
   /** audio / subtitle choice as a query string for the player links */
   export let qs = '';
   /** the title Play resumes (a series: its next episode) */
@@ -229,7 +230,7 @@
         {#each ids as id, i (id)}
           <div class="it" data-st hidden={id === 'langs' && !langsOk}>
             {#if id === 'play'}
-              <a class="tv-btn play" data-autofocus={i === 0 ? '' : undefined} href={playHref} use:playPrefetch><Icon name="play" size={24} />{playLabel}</a>
+              <a class="tv-btn play" data-autofocus={i === 0 ? '' : undefined} href={playHref} aria-label={playAria} use:playPrefetch><Icon name="play" size={24} />{playLabel}</a>
             {:else if id === 'restart'}
               <a class="tv-btn" href={restartHref} use:playPrefetch><Icon name="refresh" size={24} />{$t('tv.detail.restart')}</a>
             {:else if id === 'trailer'}

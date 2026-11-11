@@ -59,6 +59,9 @@
   export let playBase = '';
   export let playHref = '';
   export let playLabel = '';
+  /** the hand-off hint (spec 2.5): its text replaces the remaining time, its accessible name the button's */
+  export let handoffLine = '';
+  export let playAria: string | undefined = undefined;
   /** the title Play resumes (a series: its next episode) */
   export let resumeFrom: Item | null = null;
   export let tagline = '';
@@ -343,7 +346,7 @@
         {/if}
       </div>
       <div class="acts" data-st>
-        <a class="play" data-autofocus href={playHref} use:playPrefetch on:click={onPlay}><Icon name="play" size={24} /><span>{deskPlay}</span></a>
+        <a class="play" data-autofocus href={playHref} aria-label={playAria} use:playPrefetch on:click={onPlay}><Icon name="play" size={24} /><span>{deskPlay}</span></a>
         {#if restartHref}
           <a class="rb frost-btn round" use:sheen href={restartHref} use:playPrefetch aria-label={$t('tv.detail.restart')} title={$t('tv.detail.restart')}><Icon name="refresh" size={20} /></a>
         {/if}
@@ -366,7 +369,7 @@
         </MoreActions>
       </div>
       {#if progress && remaining}
-        <p class="resume"><span class="bar" aria-hidden="true"><span style="transform:scaleX({progress})"></span></span><span>{remaining}</span></p>
+        <p class="resume"><span class="bar" aria-hidden="true"><span style="transform:scaleX({progress})"></span></span><span>{handoffLine || remaining}</span></p>
       {/if}
       <slot />
     </div>
