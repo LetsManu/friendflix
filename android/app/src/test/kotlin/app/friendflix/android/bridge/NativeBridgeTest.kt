@@ -532,4 +532,36 @@ class NativeBridgeTest {
         cast.held!!() // a second call of done changes nothing
         assertEquals(1, reply.sent.size)
     }
+
+    @Test fun repliesQueuedBeforeDestroyAreNotDeliveredAfterwards() {
+        val queue = mutableListOf<Runnable>()
+        val delivered = mutableListOf<String>()
+        val sink = uiReplySink(bridge, { queue += it }) { delivered += it }
+        sink.post("""{"id":"a"}""") // queued on the UI thread ...
+        bridge.detach() // ... the activity finishes and destroys the WebView ...
+        queue.forEach { it.run() } // ... the queued runnable runs afterwards
+        assertTrue(delivered.isEmpty())
+        assertTrue(bridge.isDetached)
+    }
+
+    @Test fun aLivePageStillGetsRepliesAndAThrowingProxyIsIgnored() {
+        val queue = mutableListOf<Runnable>()
+        val delivered = mutableListOf<String>()
+        uiReplySink(bridge, { queue += it }) { delivered += it }.post("x")
+        uiReplySink(bridge, { queue += it }) { error("dead frame") }.post("y")
+        queue.forEach { it.run() }
+        assertEquals(listOf("x"), delivered)
+    }
+
+    @Test fun afterDetachNoEventIsPushedAndALateMessageDoesNotRegisterASink() {
+        castBridge.onMessage("""{"id":"a1","method":"capabilities","args":{}}""", origin, true, reply)
+        reply.sent.clear()
+        castBridge.detach()
+        castBridge.emit("download", JSONObject().put("licenseId", "L1"))
+        castBridge.emitCast(null)
+        castBridge.onMessage("""{"id":"a2","method":"capabilities","args":{}}""", origin, true, reply)
+        castBridge.emit("download", JSONObject().put("licenseId", "L2"))
+        assertTrue(reply.sent.isEmpty())
+        assertTrue(timers.all { it.cancelled })
+    }
 }

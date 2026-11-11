@@ -7,7 +7,7 @@ import { NEW_EPISODE_DAYS } from '../fresh.js';
 import { FOR_YOU_DAYS, newEpisodes, newForYou } from '../newpage.js';
 import { requireGrownUp } from '../kids.js';
 import { quota } from '../requestlimit.js';
-import { requestSuggestionsDetailed } from '../requestSuggestions.js';
+import { cachedSuggestionStats, requestSuggestionsDetailed } from '../requestSuggestions.js';
 import { requireUser } from '../session.js';
 import { perSession } from './discover.js';
 import { wrap } from './_shared.js';
@@ -39,12 +39,20 @@ export function newPageRoutes(app: FastifyInstance, ctx: Ctx) {
    * "Noch nicht bei uns": titles the profile might like that are not in the library, from the request service's recommendations for a few
    * of the profile's seed titles, with the wish state and the account's request quota. `?type=movie|series`. Grown-ups only (kids profiles:
    * 403 kids_profile); without a request service 404 requests_disabled. The quota is the one of POST /api/requests (null if it cannot be read). The admin (its owner profile) also gets `debug`: the counts of the build behind the list.
+   * `&debug=cached` (Admin → Status): only the counts of the last cached build, nothing is built or fetched: `{ debug: counts | null, builtAt }`
+   * (null = no build in the cache); anyone but the admin on the owner profile gets `{}`.
    */
   app.get('/api/library/request-suggestions', { preHandler: requireGrownUp(ctx), config: perSession(30) }, wrap(async (req) => {
-    const { type } = z.object({ type: z.enum(['movie', 'series']).default('movie') }).parse(req.query);
+    const { type, debug } = z.object({ type: z.enum(['movie', 'series']).default('movie'), debug: z.literal('cached').optional() }).parse(req.query);
+    const owner = req.user!.role === 'admin' && req.profile!.is_owner;
+    if (debug) {
+      if (!owner) return {};
+      const c = await cachedSuggestionStats(ctx, req.user!, req.profile!.id, type);
+      return { debug: c.stats, builtAt: c.builtAt };
+    }
     const { items, stats, fresh } = await requestSuggestionsDetailed(ctx, req.jfUser!, req.user!, req.profile!.id, type);
     if (fresh && stats) req.log.info({ type, ...stats }, 'request suggestions built'); // counts only: why a list is empty
     const q = await quota(ctx, req.user!).then(({ limit, used, resetsAt }) => ({ limit, used, resetsAt }), () => null);
-    return { items, quota: q, ...(req.user!.role === 'admin' && req.profile!.is_owner && stats ? { debug: stats } : {}) };
+    return { items, quota: q, ...(owner && stats ? { debug: stats } : {}) };
   }, { zod: 'plain', seerr: true }));
 }

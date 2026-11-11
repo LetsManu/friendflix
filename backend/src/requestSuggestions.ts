@@ -217,6 +217,24 @@ async function build(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr'>, user:
   return { list: { builtAt, stats, items }, complete: complete && items.length > 0 }; // an empty list is not kept for hours: the library or the taste may change
 }
 
+const suggestKey = async (ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'roles'>, account: { role: string }, profileId: string, type: SuggestType) => {
+  const cap = (await effectiveRole(ctx, account.role))?.maxParentalRating ?? null;
+  const lang = await effectiveLanguage(ctx, profileId);
+  return { cap, lang, key: `reqsug:${profileId}:${type}:${cap ?? 'x'}:${lang}` }; // titles come in the viewer's language
+};
+
+/**
+ * The counts of the last build that is still cached for this profile and type, read from the cache only: never builds, never calls the
+ * request service, TMDB or the media server. `stats: null` = no (usable) build in the cache.
+ */
+export async function cachedSuggestionStats(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'seerr' | 'roles'>, account: { role: string }, profileId: string, type: SuggestType): Promise<{ stats: SuggestStats | null; builtAt: string | null }> {
+  requestsClient(ctx); // no request service: 404 requests_disabled
+  const { key } = await suggestKey(ctx, account, profileId, type);
+  const hit = await ctx.kv.get(key).catch(() => null);
+  if (!hit) return { stats: null, builtAt: null };
+  try { const l = JSON.parse(hit) as Cached; return { stats: l.stats ?? null, builtAt: l.builtAt ?? null }; } catch { return { stats: null, builtAt: null }; }
+}
+
 /** One profile's suggestions (cached 6 h per profile, type and age cap), with the wish state overlaid from the account's own requests. */
 export async function requestSuggestions(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr' | 'roles'>, user: JfUser, account: { id: string; role: string }, profileId: string, type: SuggestType): Promise<Suggestion[]> {
   return (await requestSuggestionsDetailed(ctx, user, account, profileId, type)).items;
@@ -225,9 +243,7 @@ export async function requestSuggestions(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'j
 /** The same with the counts of the build behind the list (`fresh`: built by this call, not read from the cache). */
 export async function requestSuggestionsDetailed(ctx: Pick<Ctx, 'cfg' | 'db' | 'kv' | 'jf' | 'seerr' | 'roles'>, user: JfUser, account: { id: string; role: string }, profileId: string, type: SuggestType): Promise<{ items: Suggestion[]; stats: SuggestStats | null; fresh: boolean }> {
   requestsClient(ctx); // no request service: 404 requests_disabled, before anything is read
-  const cap = (await effectiveRole(ctx, account.role))?.maxParentalRating ?? null;
-  const lang = await effectiveLanguage(ctx, profileId);
-  const key = `reqsug:${profileId}:${type}:${cap ?? 'x'}:${lang}`; // titles come in the viewer's language
+  const { cap, lang, key } = await suggestKey(ctx, account, profileId, type);
   let list: Cached | null = null;
   const hit = await ctx.kv.get(key).catch(() => null);
   if (hit) { try { list = JSON.parse(hit) as Cached; } catch { /* recompute */ } }
