@@ -194,6 +194,51 @@ describe('effectiveRights', () => {
     expect((await effectiveRights(ctx, { id: admin, role: 'admin' }, { kids: true, kids_max_rating: 0 }))!.perms.party).toBe(false);
   });
 
+  it('the kids overlay beats role and user overrides', async () => {
+    const ctx = mk();
+    const on = JSON.stringify(Object.fromEntries(KIDS_OFF.map((k) => [k, true])));
+    await pool.query(`insert into role_settings(role, requests_per_month, template, perms) values ('friend', 2, '{"maxParentalRating": null}', $1)`, [on]);
+    const id = await addUser('Carla Probe', 'friend');
+    await pool.query('insert into user_limits(user_id, max_parental_rating, perms) values ($1, -1, $2)', [id, on]);
+    const k = (await effectiveRights(ctx, { id, role: 'friend' }, { kids: true, kids_max_rating: 6 }))!;
+    for (const p of KIDS_OFF) expect([p, k.perms[p], k.sources[p]]).toEqual([p, false, 'kids']);
+    expect([k.template.maxParentalRating, k.sources.maxParentalRating]).toEqual([6, 'kids']);
+    // a user cap above the kids cap: the kids cap wins
+    await pool.query('update user_limits set max_parental_rating = 18 where user_id=$1', [id]);
+    invalidateRights(id);
+    const k12 = (await effectiveRights(ctx, { id, role: 'friend' }, { kids: true, kids_max_rating: 12 }))!;
+    expect([k12.template.maxParentalRating, k12.sources.maxParentalRating]).toEqual([12, 'kids']);
+    for (const p of KIDS_OFF) expect(k12.perms[p]).toBe(false);
+    // without the kids profile the overrides apply
+    const adult = (await effectiveRights(ctx, { id, role: 'friend' }))!;
+    expect([adult.template.maxParentalRating, adult.sources.maxParentalRating, adult.perms.partySchedule]).toEqual([18, 'user', true]);
+  });
+
+  it('role keys that are Object.prototype names resolve like any other key', async () => {
+    // catalogue-only roles (env roles that left ROLE_TEMPLATES) with base guest: guest's full template, the stored field on top
+    await pool.query("insert into roles(key, base, origin, position) values ('constructor', 'guest', 'env', 4), ('hasownproperty', 'guest', 'env', 5)");
+    await pool.query(`insert into role_settings(role, requests_per_month, template) values ('constructor', 2, '{"maxStreams": 2}'), ('hasownproperty', 2, '{"maxStreams": 2}')`);
+    const ctx = mk();
+    for (const key of ['constructor', 'hasownproperty']) {
+      const r = (await roleRights(ctx, key))!;
+      expect(r.template).toEqual({ ...DEFAULT_ROLES.guest, maxStreams: 2, requestsPerMonth: 2 });
+      for (const k of TEMPLATE_KEYS) expect([k, r.sources[k]]).toEqual([k, k === 'maxStreams' ? 'role' : 'default']);
+      expect(r.perms).toEqual(DEFAULT_PERMS.guest);
+    }
+    expect(await roleRights(ctx, 'tostring')).toBeUndefined();
+    expect(await roleRights(ctx, 'toString')).toBeUndefined();
+    // an env role of that name gets the friend defaults under its env values (loadRoles), not Object's
+    const env = mk('{"constructor":{"label":"Bau","maxStreams":3},"__proto__":{"label":"X"}}');
+    expect(Object.getPrototypeOf(env.roles)).toBe(Object.prototype);
+    expect(env.roles.constructor).toEqual({ ...DEFAULT_ROLES.friend, label: 'Bau', maxStreams: 3 });
+    expect(Object.hasOwn(env.roles, '__proto__')).toBe(false); // dropped on parse: never a role, never the prototype
+    const e = (await roleRights(env, 'constructor'))!;
+    expect(e.template).toEqual({ ...DEFAULT_ROLES.friend, label: 'Bau', maxStreams: 2, requestsPerMonth: 2 }); // row template on top
+    expect([e.sources.maxBitrate, e.sources.maxStreams]).toEqual(['default', 'role']);
+    expect(await effectiveRole(env, '__proto__')).toBeUndefined();
+    expect(await effectiveRole(env, 'hasOwnProperty')).toBeUndefined();
+  });
+
   it('effective values identical before and after migration 47', async () => {
     // rewind 47, seed 3.3-shape rows (every old role_settings column combination, user_limits), migrate: the backfilled template must
     // give the values the 3.3 code computed from the old columns (SNAPSHOT_33, recorded with the pre-Task-2 resolver)

@@ -275,6 +275,18 @@ describe('role existence in the admin API', () => {
       expect((await env.pool.query("select template from role_settings where role='kino'")).rows[0].template).toEqual({ maxStreams: 3, transcoding: false, maxHeight: 1080 });
     });
 
+    it('the legacy role PUT writes the columns and the template together or not at all', async () => {
+      const before = (await env.pool.query("select download_days from role_settings where role='kino'")).rows[0].download_days;
+      await env.pool.query("update role_settings set template = '5'::jsonb where role='kino'"); // the template step fails on a scalar
+      try {
+        expect((await as('PUT', '/api/admin/roles/kino', { downloadDays: 9 })).statusCode).toBe(500);
+        expect((await env.pool.query("select download_days from role_settings where role='kino'")).rows[0].download_days).toBe(before);
+      } finally {
+        await env.pool.query(`update role_settings set template = '{"maxStreams": 3, "transcoding": false, "maxHeight": 1080}' where role='kino'`);
+        invalidateRoles(env.ctx);
+      }
+    });
+
     it('/api/me roleLabel of an env role that left ROLE_TEMPLATES is the translated label of its base', async () => {
       await env.pool.query("update users set role='opa' where id=$1", [ben]);
       const ses = await env.login({ sub: 'ben', email: 'ben@example.com', name: 'Ben Muster', groups: [] });

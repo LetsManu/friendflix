@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type pg from 'pg';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
@@ -280,15 +281,26 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const before = await effectiveRole(ctx, role);
     const cur = (await ctx.db.query<{ requests_per_month: number | null }>('select requests_per_month from role_settings where role=$1', [role])).rows[0];
     const limit = b.requestsPerMonth !== undefined ? b.requestsPerMonth : cur ? cur.requests_per_month : defaultLimit(role);
-    await ctx.db.query(
-      `insert into role_settings(role, requests_per_month, transcoding, max_height, download, max_downloads, download_max_height, download_days, remote_max_bitrate) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       on conflict (role) do update set requests_per_month=$2, transcoding=coalesce($3, role_settings.transcoding), max_height=coalesce($4, role_settings.max_height),
-         download=coalesce($5, role_settings.download), max_downloads=coalesce($6, role_settings.max_downloads), download_max_height=coalesce($7, role_settings.download_max_height),
-         download_days=coalesce($8, role_settings.download_days), remote_max_bitrate=case when $10 then null else coalesce($9, role_settings.remote_max_bitrate) end, updated_at=now()`,
-      [role, limit, b.transcoding ?? null, b.maxHeight === undefined ? null : (b.maxHeight ?? 0), b.download ?? null, b.maxDownloads ?? null, b.downloadMaxHeight ?? null, b.downloadDays ?? null, b.remoteMaxBitrate ?? null, b.remoteMaxBitrate === null],
-    );
-    // effectiveRole reads role_settings.template: carry the columns this request wrote over (until the role matrix writes template itself)
-    await mirrorLegacyColumns(ctx, role, (Object.keys(LEGACY_COLUMNS) as LegacyKey[]).filter((k) => b[k] !== undefined));
+    // one transaction: the columns (the rollback copy) and the template (what is read) never disagree
+    const c = await (ctx.db as pg.Pool).connect();
+    try {
+      await c.query('begin');
+      await c.query(
+        `insert into role_settings(role, requests_per_month, transcoding, max_height, download, max_downloads, download_max_height, download_days, remote_max_bitrate) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         on conflict (role) do update set requests_per_month=$2, transcoding=coalesce($3, role_settings.transcoding), max_height=coalesce($4, role_settings.max_height),
+           download=coalesce($5, role_settings.download), max_downloads=coalesce($6, role_settings.max_downloads), download_max_height=coalesce($7, role_settings.download_max_height),
+           download_days=coalesce($8, role_settings.download_days), remote_max_bitrate=case when $10 then null else coalesce($9, role_settings.remote_max_bitrate) end, updated_at=now()`,
+        [role, limit, b.transcoding ?? null, b.maxHeight === undefined ? null : (b.maxHeight ?? 0), b.download ?? null, b.maxDownloads ?? null, b.downloadMaxHeight ?? null, b.downloadDays ?? null, b.remoteMaxBitrate ?? null, b.remoteMaxBitrate === null],
+      );
+      // effectiveRole reads role_settings.template: carry the columns this request wrote over (until the role matrix writes template itself)
+      await mirrorLegacyColumns({ db: c }, role, (Object.keys(LEGACY_COLUMNS) as LegacyKey[]).filter((k) => b[k] !== undefined));
+      await c.query('commit');
+    } catch (e) {
+      await c.query('rollback').catch(() => undefined);
+      throw e;
+    } finally {
+      c.release();
+    }
     invalidateRoles(ctx);
     const after = (await effectiveRole(ctx, role))!;
     if (b.requestsPerMonth !== undefined) await audit(ctx, req.user!.id, 'role.request_limit', role, { requestsPerMonth: b.requestsPerMonth });

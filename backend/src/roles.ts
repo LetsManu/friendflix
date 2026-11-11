@@ -38,11 +38,20 @@ export const DEFAULT_ROLES: Record<string, RoleTemplate> = {
 
 export const INVITABLE_ROLES = ['friend', 'family', 'guest'] as const;
 
+/**
+ * `o[key]` only when `key` is an own property: role keys come from env, the database and URLs, and a key like `constructor` must never
+ * read Object.prototype (a hollow template that silently drops the base's caps).
+ */
+export const own = <T>(o: Record<string, T>, key: string): T | undefined => (Object.hasOwn(o, key) ? o[key] : undefined);
+
 export function loadRoles(overrideJson?: string): Record<string, RoleTemplate> {
   if (!overrideJson) return DEFAULT_ROLES;
   const o = z.record(z.string(), roleTemplateSchema.partial()).parse(JSON.parse(overrideJson));
   const out: Record<string, RoleTemplate> = { ...DEFAULT_ROLES };
-  for (const [k, v] of Object.entries(o)) out[k] = { ...(DEFAULT_ROLES[k] ?? DEFAULT_ROLES.friend!), ...v } as RoleTemplate;
+  // defineProperty: a key `__proto__` becomes an own role, never the object's prototype
+  for (const [k, v] of Object.entries(o)) {
+    Object.defineProperty(out, k, { value: { ...(own(DEFAULT_ROLES, k) ?? DEFAULT_ROLES.friend!), ...v } as RoleTemplate, enumerable: true, writable: true, configurable: true });
+  }
   return out;
 }
 
@@ -93,11 +102,11 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
  * An env field equal to the code default counts as `default`. undefined for a role that is neither in ctx.roles nor in the catalogue.
  */
 export async function resolveRole(ctx: RoleCtx, role: string): Promise<{ template: RoleTemplate; sources: Record<TemplateKey, RoleLayer>; base: string; perms: unknown } | undefined> {
-  const env = ctx.roles[role];
+  const env = own(ctx.roles, role);
   const row = (await listRoles(ctx)).find((r) => r.key === role);
   if (!env && !row) return undefined;
   const base = row?.base ?? (Object.hasOwn(DEFAULT_ROLES, role) ? role : 'friend');
-  const code = (env ? DEFAULT_ROLES[role] : DEFAULT_ROLES[base]) ?? DEFAULT_ROLES.friend!;
+  const code = own(DEFAULT_ROLES, env ? role : base) ?? DEFAULT_ROLES.friend!;
   const from = env ?? code;
   const template: RoleTemplate = { ...from, label: row?.label ?? from.label };
   const sources = Object.fromEntries(TEMPLATE_KEYS.map((k) => [k, env && !same(env[k], code[k]) ? 'env' : 'default'])) as Record<TemplateKey, RoleLayer>;

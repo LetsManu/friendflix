@@ -3,7 +3,7 @@
 import type { Ctx } from './ctx.js';
 // roles.ts and rolecat.ts import each other (invalidateRoles clears the catalogue; the catalogue needs DEFAULT_ROLES): neither may use
 // the other's exports at module load, only inside functions
-import { DEFAULT_ROLES } from './roles.js';
+import { DEFAULT_ROLES, own } from './roles.js';
 
 /**
  * The role catalogue (table `roles`, migration 47): which roles exist, their order, label, base and whether invites may offer them.
@@ -79,9 +79,9 @@ export async function catalogueLabel(ctx: CatCtx, key: string): Promise<string |
  */
 export async function roleLabelArgs(ctx: CatCtx, key: string): Promise<[role: string, configured: string | undefined, builtinGerman: string | undefined]> {
   const row = (await listRoles(ctx)).find((r) => r.key === key);
-  const own = row?.label ?? (row ? ctx.roles[key]?.label : undefined);
-  if (own !== undefined || !row) return [key, own, DEFAULT_ROLES[key]?.label];
-  const base = DEFAULT_ROLES[row.base]?.label;
+  const label = row?.label ?? (row ? own(ctx.roles, key)?.label : undefined);
+  if (label !== undefined || !row) return [key, label, own(DEFAULT_ROLES, key)?.label];
+  const base = own(DEFAULT_ROLES, row.base)?.label;
   return [base ? row.base : key, base, base];
 }
 
