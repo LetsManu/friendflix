@@ -164,8 +164,7 @@ test.describe('a select that fails (mocked on purpose)', () => {
     await switchTold(page, (r) => r.fulfill({ status: 403, json: { error: 'pin_wrong' } }), true);
     await expect(page.getByRole('button', { name: 'Anna' })).toBeVisible();
     await expect(page).toHaveURL(/\/profiles/);
-    await expect.poll(async () => (await nativeCalls(page, 'capabilities')).length).toBeGreaterThan(0);
-    await page.waitForResponse((r) => r.url().includes('/select')).catch(() => undefined);
+    await expect(page.getByRole('alert').filter({ hasText: 'Falsche PIN' })).toBeVisible(); // the refused select was answered and handled
     expect(await nativeCalls(page, 'sessionChanged')).toHaveLength(0);
   });
 });
