@@ -22,8 +22,8 @@ export function castLabel(via: 'airplay' | 'chromecast', sender: string, tf: TFn
 }
 
 // the same rules as backend/src/deviceName.ts (cleanDeviceName); test-vectors/device-names.json keeps both honest
-const REFUSED = /[\p{Cc}\p{Cs}‪-‮⁦-⁩‎‏؜]/u;
-const NOT_VISIBLE = /^[\p{Cf}\p{Z}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}⠀]*$/u;
+const REFUSED = /[\p{Cc}\p{Cs}\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/u;
+const NOT_VISIBLE = /^[\p{Cf}\p{Z}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u2800]*$/u;
 
 /** the form's check: refused characters first (on the raw input), then NFC, trim, collapse; no visible character = reset (null); 1 to 40 code points */
 export function cleanName(raw: string): { ok: true; name: string | null } | { ok: false } {

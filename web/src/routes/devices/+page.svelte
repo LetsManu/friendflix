@@ -4,6 +4,7 @@
   import { fmtDateTime, t, tr } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
   import { cleanName, deviceName } from '#lib/handoff/deviceName';
+  import { isBackKey } from '#lib/spatial';
   import { confirm } from '#lib/ui/confirm';
   import Rich from '#lib/i18n/Rich.svelte';
   import { onMount, tick } from 'svelte';
@@ -43,7 +44,7 @@
   }
   async function saveName(d: Dev, raw: string | null) {
     const r = raw === null ? { ok: true as const, name: null } : cleanName(raw);
-    if (!r.ok) { invalid = true; err = tr('account.devices.nameInvalid'); msg = ''; return; }
+    if (!r.ok) { invalid = true; msg = ''; return; }
     saving = true; err = ''; msg = '';
     try {
       await api(`/api/devices/${encodeURIComponent(d.id)}`, { method: 'PATCH', body: { name: r.name } });
@@ -103,22 +104,24 @@
           <div class="cell">
             {#if editing === d.id}
               <!-- svelte-ignore a11y_no_noninteractive_element_interactions (Escape on any control of the form cancels it) -->
-              <form class="edit" on:submit|preventDefault={() => saveName(d, draft)} on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); void stopEdit(d.id); } }}>
+              <form class="edit" on:submit|preventDefault={() => saveName(d, draft)} on:keydown={(e) => { if (e.key === 'Escape' || isBackKey(e)) { e.preventDefault(); e.stopPropagation(); void stopEdit(d.id); } }}>
                 <input class="fld" type="text" maxlength="40" autocomplete="off" spellcheck="false" aria-label={$t('account.devices.nameLabel')} placeholder={auto(d)} bind:value={draft}
-                  aria-invalid={invalid ? 'true' : undefined} aria-describedby={invalid ? 'dev-err' : undefined} on:input={() => { if (invalid) { invalid = false; err = ''; } }} use:focusField />
+                  aria-invalid={invalid ? 'true' : undefined} aria-describedby="dev-bad-{d.id}" on:input={() => { invalid = false; }} use:focusField />
                 <button type="submit" disabled={saving}>{$t('common.save')}</button>
                 <button type="button" class="sec" on:click={() => stopEdit(d.id)}>{$t('common.cancel')}</button>
                 {#if d.name}<button type="button" class="ghost" disabled={saving} on:click={() => saveName(d, null)}>{$t('account.devices.useAuto')}</button>{/if}
+                <!-- the reason, right under the field; overlays the next row (opacity and transform only), so nothing moves -->
+                <p class="bubble" class:show={invalid} id="dev-bad-{d.id}" role="alert">{invalid ? $t('account.devices.nameInvalid') : ''}</p>
               </form>
-            {:else}
-              <span class="nm">{shown(d)} {#if d.current}<span class="badge">{$t('account.devices.thisDevice')}</span>{/if}</span>
             {/if}
+            <!-- stays in the flow under the form, so the row keeps its height -->
+            <span class="nm" class:under={editing === d.id}>{shown(d)} {#if d.current}<span class="badge">{$t('account.devices.thisDevice')}</span>{/if}</span>
           </div>
         </td>
         <td class="c-seen">{fmtDateTime(d.last_seen)}</td>
         <td class="c-act">
           <div class="acts">
-            {#if editing !== d.id}
+            {#if editing !== d.id && d.approved}
               <button type="button" class="ghost ico" data-rename={d.id} aria-label={$t('account.devices.renameAria', { name: shown(d) })} title={$t('account.devices.rename')} on:click={() => startEdit(d)}><Icon name="pencil" size={18} /></button>
             {/if}
             {#if !d.current}<button class="sec" on:click={() => remove(d)}>{$t('account.devices.remove')}</button>{/if}
@@ -135,18 +138,22 @@
   .row { padding: .5rem 0; border-top: 1px solid var(--line); } .row:first-of-type { border-top: 0; }
   .sp { flex: 1; }
   h2 { font-size: 1.15rem; }
-  /* the result line keeps two lines of room even when empty, so showing a message moves nothing */
-  .status { min-height: 3.4em; margin: .4rem 0; } .status p { margin: 0; }
+  /* the result line has a fixed height of two clamped lines, so no message, however long, moves the table */
+  .status { height: 3em; margin: .4rem 0; display: grid; line-height: 1.5; overflow: hidden; }
+  .status p { grid-area: 1 / 1; margin: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
   table { table-layout: fixed; }
   .c-name { width: 62%; } .c-seen { width: 20%; } .c-act { width: 18%; }
-  /* every row reserves the height of the rename form (44 px field), so opening it moves nothing */
-  .cell { min-height: 44px; display: flex; align-items: center; }
-  .nm { overflow-wrap: anywhere; }
-  .edit { display: flex; gap: .5rem; align-items: center; flex-wrap: nowrap; width: 100%; min-width: 0; }
-  .fld { flex: 1 1 8rem; min-width: 0; height: 44px; padding-block: 0; box-sizing: border-box; }
+  tbody tr { position: relative; }
+  .nm { overflow-wrap: anywhere; display: block; } .nm.under { visibility: hidden; }
+  /* while editing, the form lies over its whole row: rows keep their natural height and nothing moves */
+  .edit { position: absolute; z-index: 3; left: 0; right: 0; top: 0; min-height: 100%; box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .4rem .6rem; background: var(--fr-solid); box-shadow: 0 0 0 1px var(--line); border-radius: 6px; }
+  .fld { flex: 1 1 10rem; min-width: 0; height: 44px; padding-block: 0; box-sizing: border-box; }
   .fld::placeholder { color: #a9b3bd; opacity: 1; }
   .fld[aria-invalid='true'] { border-color: var(--err); }
   .edit button { flex: none; padding-inline: .8rem; }
+  .bubble { position: absolute; z-index: 4; left: .6rem; top: calc(100% + 4px); max-width: calc(100% - 1.2rem); margin: 0; padding: .35rem .7rem; border-radius: 6px; background: #4a1d24; color: #ffd9dd; border: 1px solid var(--err); font-size: .9rem; opacity: 0; transform: translateY(-4px); pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
+  .bubble.show { opacity: 1; transform: none; }
+  :global(html.m-still) .bubble, :global(html.tv) .bubble, :global(html.kids) .bubble { transition: none; }
   .acts { display: flex; gap: .5rem; justify-content: flex-end; align-items: center; min-height: 44px; }
   .ico { padding: .5rem; width: 44px; }
   @media (max-width: 700px) {
@@ -154,8 +161,6 @@
     tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-bottom: 1px solid var(--line); }
     td { border-bottom: 0; }
     .c-name { grid-column: 1 / -1; width: auto; padding-bottom: 0; } .c-seen { width: auto; } .c-act { width: auto; }
-    /* field on one line, its buttons on a second: both lines reserved in every row */
-    .cell { min-height: 96px; }
-    .edit { flex-wrap: wrap; } .fld { flex: 1 0 100%; }
+    .fld { flex: 1 0 100%; }
   }
 </style>
