@@ -160,6 +160,26 @@ describe('player media session', () => {
     expect(handlers.get('nexttrack')).toBeTypeOf('function');
   });
 
+  it('bind B then release A (an element swap): the session never blanks, B drives B, A writes nothing, releasing B blanks it', () => {
+    const { ms, handlers, metaWrites } = fake();
+    const ea = el(), eb = el();
+    const a = acts(), b2 = acts();
+    const A = bindPlayerMediaSession(ea, item, a, ms, (m) => m);
+    const B = bindPlayerMediaSession(eb, item, b2, ms, (m) => m); // bind first
+    A.release();
+    expect(metaWrites).not.toContain(null); // no blank moment
+    expect(ms.metadata).not.toBeNull();
+    handlers.get('seekforward')!({});
+    expect(b2.seekBy).toHaveBeenCalled();
+    expect(a.seekBy).not.toHaveBeenCalled();
+    ms.pos.length = 0;
+    ea.dispatchEvent(new Event('seeked'));
+    expect(ms.pos).toHaveLength(0); // A no longer writes
+    B.release();
+    expect(ms.metadata).toBeNull();
+    expect(mediaSessionOwner()).toBeNull();
+  });
+
   it('release clears what it owns', () => {
     const { ms, handlers } = fake();
     const e = el();

@@ -35,7 +35,7 @@ test('local playback fills the media session', async ({ page, api: _api }) => {
   await expect.poll(async () => (await mediaSessionLog(page)).metadata?.title).toBe('Folge 2');
   await expect.poll(async () => (await mediaSessionLog(page)).handlers).toEqual(['nexttrack', 'pause', 'play', 'previoustrack', 'seekbackward', 'seekforward', 'seekto']);
   const log = await mediaSessionLog(page);
-  expect(log.metadata!.artist).toBe('Bright Valley · S1:E2');
+  expect(log.metadata!.artist).toBe('Bright Valley · S1:F2');
   expect(log.metadata!.artwork.map((a) => a.src).join(' ')).not.toContain('/media/c/');
   expect(log.metadata!.artwork).toHaveLength(2);
   expect(log.metadata!.artwork[0]!.src).toContain(episodes[1]!.id);
@@ -93,14 +93,23 @@ test('the previous episode is looked up in the episode\'s own season', async ({ 
   expect(asked).toEqual([`?seasonId=${episodes[1]!.seasonId}`]);
 });
 
+test('an episode without a season number shows only its episode code on the lock screen', async ({ page, api: _api }) => {
+  const e = { ...episodes[1]!, id: hex(220), name: 'Folge 9', parentIndexNumber: undefined, indexNumber: 9 };
+  await page.route(`**/api/items/${e.id}`, (r) => r.fulfill({ json: { item: e } }));
+  await open(page, e.id);
+  await expect.poll(async () => (await mediaSessionLog(page)).metadata?.title).toBe('Folge 9');
+  expect((await mediaSessionLog(page)).metadata!.artist).toBe('Bright Valley · F9');
+});
+
 test('the first episode of season 2 has no previous-track button', async ({ page, api: _api }) => {
   const s2 = [hex(210), hex(211)].map((id, i) => ({ ...episodes[0]!, id, name: `Folge ${7 + i}`, seasonId: hex(201), parentIndexNumber: 2, indexNumber: i + 1, positionTicks: 0 }));
   await page.route('**/api/items/*/episodes?*', (r) => r.fulfill({ json: { items: new URL(r.request().url()).searchParams.get('seasonId') === hex(201) ? s2 : [] } }));
   for (const e of s2) await page.route(`**/api/items/${e.id}`, (r) => r.fulfill({ json: { item: e } }));
+  const listed = page.waitForResponse((x) => x.url().includes('/episodes?seasonId=' + hex(201)));
   await open(page, s2[0]!.id);
   await expect.poll(async () => (await mediaSessionLog(page)).metadata?.title).toBe('Folge 7');
-  // give the episode list time to answer: still no previous button
-  await page.waitForTimeout(600);
+  // the episode list answered: still no previous button
+  await listed;
   expect((await mediaSessionLog(page)).handlers).toEqual(['pause', 'play', 'seekbackward', 'seekforward', 'seekto']);
 });
 
