@@ -15,9 +15,9 @@
   "normalized": "Wohnzimmer 📺"
  },
  {
-  "input": "👨‍👩‍👧 Familie",
+  "input": "👨\u200d👩\u200d👧 Familie",
   "ok": true,
-  "normalized": "👨‍👩‍👧 Familie"
+  "normalized": "👨\u200d👩\u200d👧 Familie"
  },
  {
   "input": "📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺",
@@ -50,15 +50,15 @@
   "ok": false
  },
  {
-  "input": "‮evil",
+  "input": "\u202eevil",
   "ok": false
  },
  {
-  "input": "⁦x",
+  "input": "\u2066x",
   "ok": false
  },
  {
-  "input": "x⁩",
+  "input": "x\u2069",
   "ok": false
  },
  {
@@ -72,13 +72,54 @@
   "normalized": null
  },
  {
-  "input": "Café",
+  "input": "Cafe\u0301",
   "ok": true,
   "normalized": "Café"
  },
  {
-  "input": "a  b",
+  "input": "a\u00a0\u00a0b",
   "ok": true,
   "normalized": "a b"
+ },
+ {
+  "input": "Wohn\ud800zimmer",
+  "ok": false
+ },
+ {
+  "input": "\u200b",
+  "ok": true,
+  "normalized": null
+ },
+ {
+  "input": "\u2060",
+  "ok": true,
+  "normalized": null
+ },
+ {
+  "input": "\u200d",
+  "ok": true,
+  "normalized": null
+ },
+ {
+  "input": " \ufe0f \u200b",
+  "ok": true,
+  "normalized": null
+ },
+ {
+  "input": "\u200e",
+  "ok": false
+ },
+ {
+  "input": "\u200f",
+  "ok": false
+ },
+ {
+  "input": "a\u061cb",
+  "ok": false
+ },
+ {
+  "input": "a\u200bb",
+  "ok": true,
+  "normalized": "a\u200bb"
  }
 ]

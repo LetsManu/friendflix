@@ -40,7 +40,7 @@ describe('PATCH /api/devices/:id', () => {
     expect(r.json()).toEqual({ ok: true, name: 'Wohnzimmer' });
     const row = (await call(s, 'GET', '/api/devices')).json().devices[0];
     expect(row).toMatchObject({ name: 'Wohnzimmer', label: before.label });
-    expect(row).toHaveProperty('kind');
+    expect(row.kind).toBe('web'); // light-my-request's default user agent
   });
 
   it('blank or null resets', async () => {
@@ -58,12 +58,12 @@ describe('PATCH /api/devices/:id', () => {
     env = await makeEnv();
     const s = await env.login();
     const { deviceId } = await sessOf(s);
-    for (const bad of ['a'.repeat(41), 'Wohn\u0000zimmer', 'a\tb', '‮evil', '⁦x', '📺'.repeat(41)]) {
+    for (const bad of ['a'.repeat(41), 'Wohn\u0000zimmer', 'a\tb', '\u202eevil', '\u2066x', '\ud800', '\u200e', '📺'.repeat(41)]) {
       const r = await rename(s, deviceId, bad);
       expect(r.statusCode, JSON.stringify(bad)).toBe(400);
       expect(r.json()).toEqual({ error: 'invalid_name' });
     }
-    for (const good of ['Wohnzimmer 📺', '👨‍👩‍👧 Familie', '📺'.repeat(40)]) expect((await rename(s, deviceId, good)).statusCode).toBe(200);
+    for (const good of ['Wohnzimmer 📺', '👨\u200d👩\u200d👧 Familie', '📺'.repeat(40)]) expect((await rename(s, deviceId, good)).statusCode).toBe(200);
     expect((await rename(s, deviceId, 'Wohn   zimmer')).json()).toEqual({ ok: true, name: 'Wohn zimmer' });
   });
 

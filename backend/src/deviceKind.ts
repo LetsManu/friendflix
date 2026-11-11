@@ -14,7 +14,12 @@ export function clientKind(ua: string): ClientKind {
   return 'web';
 }
 
-/** Stores the kind of the device when it differs from the stored one (one conditional update). */
-export async function noteClientKind(ctx: Pick<Ctx, 'db'>, userId: string, deviceId: string, ua: string): Promise<void> {
-  await ctx.db.query('update devices set client = $3 where user_id = $1 and device_id = $2 and client is distinct from $3', [userId, deviceId, clientKind(ua)]);
+/**
+ * Stores the kind of the device when it differs from the stored one (one conditional update).
+ * `keepSpecific` (GET /api/me): never downgrade a stored kind to `web`; the native players call /api/me with their own HTTP
+ * client (OkHttp, reqwest) and the WebView's cookie, which says nothing about the device.
+ */
+export async function noteClientKind(ctx: Pick<Ctx, 'db'>, userId: string, deviceId: string, ua: string, keepSpecific = false): Promise<void> {
+  const guard = keepSpecific ? " and (client is null or $3 <> 'web')" : '';
+  await ctx.db.query(`update devices set client = $3 where user_id = $1 and device_id = $2 and client is distinct from $3${guard}`, [userId, deviceId, clientKind(ua)]);
 }

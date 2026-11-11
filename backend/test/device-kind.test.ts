@@ -29,10 +29,38 @@ describe('clientKind', () => {
 });
 
 describe('device client kind in the database', () => {
-  it('registration stores the kind', async () => {
+  // log in through the callback only (no /api/me), with the given user agent and device cookie
+  const callbackLogin = async (ua: string, dev?: string) => {
+    const l = await env.app.inject('/auth/login?classic=1');
+    const state = l.cookies.find((x) => x.name === 'ff_oidc')!.value;
+    const cb = await env.app.inject({ url: `/auth/callback?state=${state}&code=c`, headers: { 'user-agent': ua }, cookies: { ...(dev ? { ff_dev: dev } : {}), ff_oidc: state } });
+    expect(cb.statusCode).toBe(302);
+    return cb.cookies.find((x) => x.name === 'ff_dev')!.value;
+  };
+
+  it('registration stores the kind (new device and existing device)', async () => {
     env = await makeEnv();
-    await env.login(undefined, LG);
+    const dev = await callbackLogin(LG); // new device branch, nothing else touched the row yet
     expect((await env.pool.query('select client from devices')).rows).toEqual([{ client: 'webos' }]);
+    await callbackLogin(DESKTOP, dev); // the same device registers again (existing branch)
+    expect((await env.pool.query('select client from devices')).rows).toEqual([{ client: 'desktop' }]);
+  });
+
+  it('/api/me never downgrades a stored kind to web, but fills an empty one', async () => {
+    env = await makeEnv();
+    const s = await env.login();
+    const me = (ua?: string) => env.app.inject({ url: '/api/me', cookies: s.cookies, ...(ua === undefined ? {} : { headers: { 'user-agent': ua } }) });
+    const stored = async () => (await env.pool.query('select client from devices')).rows[0].client;
+    await env.pool.query("update devices set client = 'firetv'");
+    for (const ua of ['okhttp/4.12.0', '']) {
+      expect((await me(ua)).statusCode).toBe(200);
+      expect(await stored()).toBe('firetv');
+    }
+    await me(DESKTOP); // a specific kind may still correct a specific kind
+    expect(await stored()).toBe('desktop');
+    await env.pool.query('update devices set client = null');
+    await me('okhttp/4.12.0'); // nothing stored yet: set, even to web
+    expect(await stored()).toBe('web');
   });
 
   it('TV claim stores the kind', async () => {
