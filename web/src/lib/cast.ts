@@ -178,10 +178,12 @@ function queueOf(ms: MediaT | null): CastState['queue'] {
   return items.slice(cur + 1).map((q) => ({ itemId: q.itemId, contentId: q.media?.contentId ?? '', castId: castIdOf(q.media) }));
 }
 
-/** Chromium only, and only where the acting profile may cast (Chrome, Edge, Opera, Samsung ...), never iOS (all iOS browsers are WebKit), never a paired TV. */
+/** the acting profile may cast (me.perms.cast): the server answers 403 cast_forbidden otherwise, so nothing casting-related starts */
+export const castAllowed = (): boolean => get(perms).cast;
+
+/** Chromium only (Chrome, Edge, Opera, Samsung ...), never iOS (all iOS browsers are WebKit), never a paired TV. */
 export function castCapableBrowser(): boolean {
   if (typeof navigator === 'undefined' || typeof document === 'undefined') return false;
-  if (!get(perms).cast) return false; // the account may not cast: the server would answer 403 cast_forbidden
   const ua = navigator.userAgent;
   const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   if (ios || !/Chrome\/|Chromium\/|CriOS/.test(ua) || /CriOS/.test(ua)) return false;
@@ -291,7 +293,7 @@ const sendReport = (info: CastInfo) => { if (info.report) castSendMessage({ t: '
 
 /** Loads the SDK once if casting makes sense here. Safe to call repeatedly. Never throws. */
 export async function initCast(): Promise<void> {
-  if (initStarted || !castCapableBrowser()) return;
+  if (initStarted || !castAllowed() || !castCapableBrowser()) return;
   initStarted = true;
   try {
     if (!(await castConfigEnabled())) return;

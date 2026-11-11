@@ -71,6 +71,12 @@ export function featuresFrom(raw: unknown): Features {
   const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   return { requests: r.requests !== false, postplay: r.postplay !== false, surround: r.surround === true };
 }
+/** The features the person gets from an /api/me answer: no right to request = like no request service (one fold for every reader). */
+export const featuresOfMe = (m: { features?: unknown; perms?: unknown }): Features => {
+  const f = m.features && typeof m.features === 'object' ? (m.features as Record<string, unknown>) : {};
+  const p = m.perms && typeof m.perms === 'object' ? (m.perms as Record<string, unknown>) : {};
+  return featuresFrom({ ...f, requests: f.requests !== false && p.requests !== false });
+};
 export const features = writable<Features>(featuresFrom(undefined));
 /**
  * `features` holds what /api/me answered (true) or only the default / the last visit's boot hint (false). A page that renders early

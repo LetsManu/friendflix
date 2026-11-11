@@ -14,7 +14,7 @@
   import CastBar from '#lib/cast/CastBar.svelte';
   import { barVisible, CASTBAR_H, liveCast } from '#lib/cast/bar';
   import { castEngine, castSession } from '#lib/cast/engine';
-  import { castCapableBrowser, initCast, onCastEvent } from '#lib/cast';
+  import { castAllowed, castCapableBrowser, initCast, onCastEvent } from '#lib/cast';
   import { readHint as readCastHint } from '#lib/cast/resume';
   import { interceptWatch } from '#lib/native/watch';
   import { native, refreshNativeCast } from '#lib/native/bridge';
@@ -28,7 +28,7 @@
   import { loadModal, prefetchModal } from '#lib/lazy';
   import { startTvLink, type ToTv } from '#lib/remote';
   import { perms, permsFrom } from '#lib/perms';
-  import { capsFrom, features, featuresFrom, featuresKnown, kindFrom, serverCaps, serverKind } from '#lib/capabilities';
+  import { capsFrom, features, featuresOfMe, featuresFrom, featuresKnown, kindFrom, serverCaps, serverKind } from '#lib/capabilities';
   import { setMeta } from '#lib/offline/db';
   import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
   import Intro from '#lib/Intro.svelte';
@@ -44,7 +44,7 @@
   import { railKey } from '#lib/tv/rail';
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
   import { dialogKeys } from '#lib/actions';
-  import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
+  import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, hintPerms, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
   import TabBar from '#lib/phone/TabBar.svelte';
   import { dragClose } from '#lib/phone/dragClose';
@@ -97,7 +97,11 @@
    * Either way the page mounts once in the right language; nothing re-creates it later (see pageEpoch in lib/i18n).
    */
   if (bootHint?.noRequests) features.set(featuresFrom({ requests: false })); // until /api/me answers: no request links flash
-  if (bootHint?.noPerms) perms.set(permsFrom(Object.fromEntries(bootHint.noPerms.map((k) => [k, false])))); // ... nor the entries of a switched-off right
+  { // ... nor the entries of a right switched off for the profile this tab runs with (the hint keeps a list per profile)
+    const hp = hintPerms(bootHint, bootProfile);
+    perms.set(hp);
+    if (!hp.requests) features.set(featuresFrom({ requests: false }));
+  }
   let earlyLang = !(early && bootHint?.lang);
   if (early && bootHint?.lang) void setLocale(bootHint.lang).finally(() => (earlyLang = true));
   let pageReady = false; // sticky: a later language load (ready = false for a moment) must not unmount the page
@@ -668,7 +672,7 @@
     const off = onCastEvent((e) => { if (e === 'session-resume') void castEngine.resume(); });
     let store: Storage | null = null;
     try { store = localStorage; } catch { /* storage blocked */ }
-    if (castCapableBrowser() && readCastHint(store, Date.now())) void initCast();
+    if (castAllowed() && castCapableBrowser() && readCastHint(store, Date.now())) void initCast();
     return off;
   });
   onMount(() => {
@@ -746,9 +750,9 @@
         serverKind.set(kindFrom(m.server?.kind));
         setMediaServer(m.server?.kind); // texts that name the media server (i18n serverText)
         perms.set(permsFrom(m.perms));
-        features.set(featuresFrom({ ...m.features, requests: m.features?.requests !== false && m.perms?.requests !== false })); // no right to request = like no request service
+        features.set(featuresOfMe(m));
         featuresKnown.set(true);
-        writeHint(hintOf(m)); writeActive(m.profile?.id); clearReloadFlag(); // the profile-switch reload is done: a later reload may render early again
+        writeHint(hintOf(m, readHint())); writeActive(m.profile?.id); clearReloadFlag(); // the profile-switch reload is done: a later reload may render early again
         if (m.profile?.id) void setMeta('lastProfileId', m.profile.id).catch(() => undefined); // the offline hub shows the last active profile's downloads
         pending = !m.deviceApproved;
         // "Wer ist heute dabei?": when no profile is chosen, and once per browser session for accounts with several profiles

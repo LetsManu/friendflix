@@ -15,6 +15,15 @@ const lookup = (o: Partial<CastLookup> = {}): CastLookup => ({ castId: 'a'.repea
 const base = { capable: true, enabled: true, custom: true, state: state(), session: session(), lookup: lookup(), errors: 0, now: NOW, tf: tr };
 const val = (rows: Array<{ label: string; value: string }>, label: string) => rows.find((r) => r.label === label)?.value;
 
+describe('chromecastRows without the cast right', () => {
+  it('says the account may not cast instead of blaming the browser, and lists nothing else', () => {
+    const rows = chromecastRows({ ...base, allowed: false });
+    expect(rows).toHaveLength(1);
+    expect(val(rows, 'Cast-Unterstützung')).toBe(tr('ui.error.castForbidden'));
+    expect(chromecastRows({ ...base, capable: false, allowed: true })[0]!.value).toBe(tr('diagnose.cast.supportNoBrowser'));
+  });
+});
+
 describe('chromecastRows', () => {
   it('own receiver connected and playing', () => {
     const rows = chromecastRows(base);

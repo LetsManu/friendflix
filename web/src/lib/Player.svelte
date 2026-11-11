@@ -712,6 +712,7 @@
 
   // ---- Chromecast session lifecycle ----
   const castErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
+    : e?.body?.error === 'cast_forbidden' ? tr('ui.error.castForbidden') // the right was switched off meanwhile: said once, no retry
     : e?.body?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
   // (FriendFlix's own receiver is given a moment to state what it plays first: castCapsReady; `again` names the stream the TV just refused)
   const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }, extra: { subtitleIndex?: number } = {}) => {
@@ -872,6 +873,7 @@
   }
   // ---- AirPlay session lifecycle (the controller tells when Safari's playback target becomes / stops being wireless) ----
   const airErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
+    : e?.body?.error === 'cast_forbidden' ? tr('ui.error.castForbidden')
     : e?.body?.error === 'transcoding_disabled' ? tr('player.airplay.needsTranscode') : tr('player.airplay.failed');
   /** the subtitle index the current AirPlay token was requested with (-1 = none): the hand-off tells the engine this, not the menu's later choice */
   let airSubAsked = -1;
@@ -910,7 +912,7 @@
   }
   /** the player's AirPlay button: same gate as Chromecast (/api/cast/config); a hidden non-MSE probe <video> reports receivers */
   async function initAirPlay() {
-    if (partyMode || !video || !airPlaySupported(video) || !(await castConfigEnabled().catch(() => false)) || destroyed || !video) return;
+    if (partyMode || !get(perms).cast || !video || !airPlaySupported(video) || !(await castConfigEnabled().catch(() => false)) || destroyed || !video) return;
     airProbe = document.createElement('video');
     airProbe.setAttribute('x-webkit-airplay', 'allow');
     airProbe.setAttribute('playsinline', '');
@@ -918,6 +920,14 @@
     airProbe.setAttribute('aria-hidden', 'true');
     stage?.appendChild(airProbe);
     startAirPlay(video);
+  }
+
+  // the cast right arrives after the player mounted (a stale boot hint denied it): start what onMount skipped
+  let castWasDenied = !$perms.cast;
+  $: if ($perms.cast && castWasDenied) {
+    castWasDenied = false;
+    if (!partyMode) void initCast();
+    if (!air && !airProbe && !remote) void initAirPlay();
   }
 
   const doPause = () => { if (remote) { if (!paused) castEngine.playPause(); } else video?.pause(); };

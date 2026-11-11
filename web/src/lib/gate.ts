@@ -6,7 +6,7 @@
  * Accounts with more than one profile see the gate once per browser session (new tab/window = new session),
  * like the big streaming apps. The pick is remembered in sessionStorage by /profiles.
  */
-import { deniedKeys, permsFrom, type PermKey } from './perms';
+import { deniedKeys, permsFrom, type PermKey, type Perms } from './perms';
 
 /** the switched-off rights of an /api/me `perms` object */
 const deniedOf = (raw: unknown): PermKey[] => deniedKeys(permsFrom(raw));
@@ -28,8 +28,8 @@ export interface BootHint {
   /** UI language of the last answer: an early-rendered page waits until it is active */ lang?: string;
   /** the last answer was a kids profile: only kids routes may render early */ kids?: boolean;
   /** the last answer still owed the /welcome onboarding: nothing renders early */ welcome?: boolean;
-  /** the last answer had no request service (features.requests false): request links stay hidden until /api/me answers */ noRequests?: boolean;
-  /** the rights the last answer switched off (me.perms): their entries stay hidden until /api/me answers, so nothing jumps in later */ noPerms?: PermKey[];
+  /** the last answer had no request service (features.requests false; a person's own requests right is in noPerms): request links stay hidden until /api/me answers */ noRequests?: boolean;
+  /** the rights switched off per profile id (`NO_PROFILE` = no active profile), from the last answers: their entries stay hidden until /api/me answers, so nothing jumps in later */ noPerms?: Record<string, PermKey[]>;
 }
 
 // ---- kids profiles: only a small set of routes; everything else goes to the kids home ----
@@ -66,16 +66,36 @@ export function needsProfileGate(me: GateMe, path: string, sessionPicked: boolea
 /** `/profiles?next=…` for the current location (deep links continue after the pick) */
 export const gateHref = (pathAndSearch: string) => `/profiles?next=${encodeURIComponent(pathAndSearch)}`;
 
-export function hintOf(me: GateMe & { deviceApproved?: boolean; profile?: { id: string } | null; language?: string; features?: { requests?: boolean }; perms?: unknown }): BootHint {
+/** key of the denied-rights list when no profile is active */
+export const NO_PROFILE = '_';
+/** the denied-rights lists of a hint with `perms` of profile `id` set (an empty list drops the entry) */
+function permsMap(prev: BootHint['noPerms'], id: string | null | undefined, raw: unknown): BootHint['noPerms'] {
+  const m = { ...(prev ?? {}) }, d = deniedOf(raw);
+  if (d.length) m[id || NO_PROFILE] = d; else delete m[id || NO_PROFILE];
+  return Object.keys(m).length ? m : undefined;
+}
+/** the rights the hint expects of profile `id` (all allowed when it knows nothing) */
+export const hintPerms = (h: BootHint | null, id: string | null | undefined): Perms =>
+  permsFrom(Object.fromEntries((h?.noPerms?.[id || NO_PROFILE] ?? []).map((k) => [k, false])));
+
+/** `prev`: the hint written so far, so the other profiles' rights lists stay */
+export function hintOf(me: GateMe & { deviceApproved?: boolean; profile?: { id: string } | null; language?: string; features?: { requests?: boolean }; perms?: unknown }, prev?: BootHint | null): BootHint {
   const multi = (me.profileCount ?? 0) > 1;
   return {
     approved: Boolean(me.deviceApproved), multi, tv: Boolean(me.tv), ...(!multi && me.profile?.id ? { profile: me.profile.id } : {}), ...(me.language ? { lang: me.language } : {}),
-    ...(me.kids ? { kids: true } : {}), ...(me.onboarded === false ? { welcome: true } : {}), ...(me.features?.requests === false || (me.perms as { requests?: unknown } | undefined)?.requests === false ? { noRequests: true } : {}), ...(deniedOf(me.perms).length ? { noPerms: deniedOf(me.perms) } : {}),
+    ...(me.kids ? { kids: true } : {}), ...(me.onboarded === false ? { welcome: true } : {}), ...(me.features?.requests === false ? { noRequests: true } : {}), ...((n) => (n ? { noPerms: n } : {}))(permsMap(prev?.noPerms, me.profile?.id, me.perms)),
   };
 }
 
 /** profile id early requests of this tab use: the one this tab ran with, else the only profile of a single-profile account */
 export const earlyProfile = (h: BootHint | null, tabProfile: string | null): string | null => tabProfile ?? (h && !h.multi ? h.profile ?? null : null);
+
+function parsePermsMap(raw: unknown): BootHint['noPerms'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const m: Record<string, PermKey[]> = {};
+  for (const [id, list] of Object.entries(raw)) { const d = deniedFromList(list); if (d.length) m[id] = d; }
+  return Object.keys(m).length ? m : undefined;
+}
 
 export function parseHint(raw: string | null | undefined): BootHint | null {
   if (!raw) return null;
@@ -84,7 +104,7 @@ export function parseHint(raw: string | null | undefined): BootHint | null {
     if (!(h && typeof h === 'object' && typeof h.approved === 'boolean' && typeof h.multi === 'boolean' && typeof h.tv === 'boolean')) return null;
     return {
       approved: h.approved, multi: h.multi, tv: h.tv, ...(typeof h.profile === 'string' && h.profile ? { profile: h.profile } : {}), ...(typeof h.lang === 'string' && /^[a-z]{2}$/.test(h.lang) ? { lang: h.lang } : {}),
-      ...(h.kids === true ? { kids: true } : {}), ...(h.welcome === true ? { welcome: true } : {}), ...(h.noRequests === true ? { noRequests: true } : {}), ...(deniedFromList(h.noPerms).length ? { noPerms: deniedFromList(h.noPerms) } : {}),
+      ...(h.kids === true ? { kids: true } : {}), ...(h.welcome === true ? { welcome: true } : {}), ...(h.noRequests === true ? { noRequests: true } : {}), ...((n) => (n ? { noPerms: n } : {}))(parsePermsMap(h.noPerms)),
     };
   } catch { return null; }
 }

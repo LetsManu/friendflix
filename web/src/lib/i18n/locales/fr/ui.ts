@@ -26,7 +26,7 @@ const dict: Translation<typeof de> = {
     network: 'Pas de connexion au serveur.',
     forbidden: 'Vous n’avez pas l’autorisation de faire cela.',
     castForbidden: 'La diffusion sur un téléviseur n’est pas activée pour votre compte.',
-    partyForbidden: 'Les watch parties ne sont pas activées pour votre compte.',
+    partyForbidden: 'Les soirées partagées ne sont pas activées pour votre compte.',
     requestsForbidden: 'Les demandes ne sont pas activées pour votre compte.',
     notFound: 'Cet élément n’existe pas (ou plus).',
     conflict: 'Impossible pour le moment – quelque chose a changé entre-temps.',

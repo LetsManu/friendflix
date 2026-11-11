@@ -2,7 +2,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { t, fmtDuration, fmtTime } from '#lib/i18n';
-  import { onMount } from 'svelte';
   import { pageStore } from '#lib/page';
   const page = pageStore();
   import { api, type Item } from '#lib/api';
@@ -22,11 +21,13 @@
     const r = await api('/api/party', { method: 'POST', body: { itemId: pick.id, startInMinutes: delay || undefined } });
     location.href = `/party/${r.id}`;
   }
-  onMount(async () => {
-    if (!$perms.party) return;
+  // the right may arrive after mount (a stale hint denied it): rooms and the ?item= pick load when it does, once
+  let started = false;
+  $: if ($perms.party && !started) {
+    started = true;
     load().catch(() => undefined);
-    if (preItem) pick = (await api(`/api/items/${preItem}`)).item;
-  });
+    if (preItem) api(`/api/items/${preItem}`).then((r) => { pick = r.item; }).catch(() => undefined);
+  }
 </script>
 
 <h1>{$t('social.party.title')}</h1>

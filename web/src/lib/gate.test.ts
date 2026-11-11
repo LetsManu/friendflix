@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { canRenderEarly, clearHint, clearReloadFlag, earlyProfile, gateHref, hintOf, kidsAllowed, kidsRedirect, markPicked, needsProfileGate, needsWelcome, parseHint, readActive, readHint, readPicked, readReloading, safeNext, welcomeHref, writeHint } from './gate';
+import { canRenderEarly, clearHint, clearReloadFlag, earlyProfile, gateHref, hintOf, hintPerms, NO_PROFILE, kidsAllowed, kidsRedirect, markPicked, needsProfileGate, needsWelcome, parseHint, readActive, readHint, readPicked, readReloading, safeNext, welcomeHref, writeHint } from './gate';
+import { ALL_PERMS, permsFrom } from './perms';
 
 describe('needsProfileGate', () => {
   const multi = { profileCount: 3, profileChosen: true };
@@ -56,12 +57,7 @@ describe('kids profiles', () => {
     expect(hintOf({ deviceApproved: true, profileCount: 1, features: { requests: true } }).noRequests).toBeUndefined();
     expect(hintOf({ deviceApproved: true, profileCount: 1 }).noRequests).toBeUndefined();
     expect(parseHint(JSON.stringify({ ...h, noRequests: 'yes' }))?.noRequests).toBeUndefined();
-    const p = hintOf({ deviceApproved: true, profileCount: 1, perms: { party: false, cast: true, requests: false } });
-    expect(p.noPerms).toEqual(['requests', 'party']);
-    expect(p.noRequests).toBe(true);
-    expect(parseHint(JSON.stringify(p))?.noPerms).toEqual(['requests', 'party']);
-    expect(parseHint(JSON.stringify({ ...p, noPerms: ['party', 'bogus'] }))?.noPerms).toEqual(['party']);
-    expect(hintOf({ deviceApproved: true, profileCount: 1 }).noPerms).toBeUndefined();
+    expect(hintOf({ deviceApproved: true, profileCount: 1, perms: { requests: false } }).noRequests).toBeUndefined(); // a person's right is in noPerms
   });
 });
 
@@ -167,5 +163,31 @@ describe('hint lifetime (storage)', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(readHint()).toBeNull();
     expect(loc.href).toBe('/auth/login');
+  });
+});
+
+describe('rights in the hint (per profile)', () => {
+  const me = (id: string, perms: unknown) => ({ deviceApproved: true, profileCount: 2, profile: { id }, perms });
+  it('keeps one denied list per profile; an empty list drops the entry', () => {
+    const a = hintOf(me('p1', { party: false, requests: false }));
+    expect(a.noPerms).toEqual({ p1: ['requests', 'party'] });
+    const b = hintOf(me('p2', { comments: false }), a);
+    expect(b.noPerms).toEqual({ p1: ['requests', 'party'], p2: ['comments'] });
+    expect(hintOf(me('p1', {}), b).noPerms).toEqual({ p2: ['comments'] });
+    expect(hintOf(me('p2', undefined), hintOf(me('p2', { cast: false }))).noPerms).toBeUndefined();
+    expect(hintOf({ deviceApproved: true, profileCount: 1, perms: { cast: false } }).noPerms).toEqual({ [NO_PROFILE]: ['cast'] });
+  });
+  it('hintPerms applies the entry of the profile the tab runs with: correct hint = no change, a switch = the right list at once', () => {
+    const h = hintOf(me('p2', { comments: false }), hintOf(me('p1', { party: false })));
+    expect(hintPerms(h, 'p1')).toEqual(permsFrom({ party: false }));
+    expect(hintPerms(h, 'p2')).toEqual(permsFrom({ comments: false }));
+    expect(hintPerms(h, 'p3')).toEqual(ALL_PERMS);
+    expect(hintPerms(null, 'p1')).toEqual(ALL_PERMS);
+  });
+  it('round-trips through parseHint and drops unknown names and broken shapes', () => {
+    const h = hintOf(me('p1', { party: false }));
+    expect(parseHint(JSON.stringify(h))?.noPerms).toEqual({ p1: ['party'] });
+    expect(parseHint(JSON.stringify({ ...h, noPerms: { p1: ['party', 'bogus'], p2: ['nope'] } }))?.noPerms).toEqual({ p1: ['party'] });
+    for (const bad of [['party'], 'x', 5, null]) expect(parseHint(JSON.stringify({ ...h, noPerms: bad }))?.noPerms).toBeUndefined();
   });
 });

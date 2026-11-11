@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { get } from 'svelte/store';
 import { permsFrom } from './perms';
-import { ALL_CAPS, ALL_FEATURES, capsFrom, features, featuresFrom, linkShown, segmentShown, serverCaps } from './capabilities';
+import { ALL_CAPS, ALL_FEATURES, capsFrom, features, featuresFrom, featuresOfMe, linkShown, segmentShown, serverCaps } from './capabilities';
 
 describe('server capabilities', () => {
   it('default: everything supported (before /api/me, older backends)', () => {
@@ -57,6 +57,16 @@ describe('instance features', () => {
       expect(linkShown(ALL_CAPS, href, off)).toBe(false);
     }
     expect(linkShown(ALL_CAPS, '/favorites', off)).toBe(true);
+  });
+});
+
+describe('featuresOfMe (the one requests fold)', () => {
+  it('no right to request = no request service; the service flag alone also counts; nothing sent = on', () => {
+    expect(featuresOfMe({ features: { requests: true }, perms: { requests: false } }).requests).toBe(false);
+    expect(featuresOfMe({ features: { requests: false }, perms: { requests: true } }).requests).toBe(false);
+    expect(featuresOfMe({ features: { requests: true }, perms: { cast: false } }).requests).toBe(true);
+    expect(featuresOfMe({}).requests).toBe(true);
+    expect(featuresOfMe({ features: { postplay: false }, perms: { requests: false } })).toMatchObject({ requests: false, postplay: false });
   });
 });
 

@@ -18,7 +18,7 @@
   import { goto } from '$app/navigation';
   import { pageStore } from '#lib/page';
   import { api, ApiError, type Item } from '#lib/api';
-  import { features, featuresFrom, featuresKnown } from '#lib/capabilities';
+  import { features, featuresKnown, featuresOfMe } from '#lib/capabilities';
   import { perms, permsFrom } from '#lib/perms';
   import { kidsMode } from '#lib/kids';
   import Icon from '#lib/Icon.svelte';
@@ -84,9 +84,9 @@
     if (!force && Date.now() - flagsAt < 30_000) return;
     flagsAt = Date.now();
     try {
-      const m = await api<{ features?: { requests?: boolean }; perms?: { requests?: boolean } }>('/api/me');
+      const m = await api<{ features?: unknown; perms?: unknown }>('/api/me');
       perms.set(permsFrom(m.perms));
-      features.set(featuresFrom({ ...m.features, requests: m.features?.requests !== false && m.perms?.requests !== false }));
+      features.set(featuresOfMe(m));
     } catch { /* keep what we know */ }
   }
 

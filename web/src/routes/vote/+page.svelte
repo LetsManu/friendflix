@@ -95,7 +95,7 @@
         <div class="bar" style="flex:1;min-width:80px"><i style="width:{(o.votes / total) * 100}%"></i></div><span>{o.votes}</span>
       </div>
     {/each}
-    {#if p.roomId && (p.status === 'scheduled' || p.status === 'started')}<a class="btn" href="/party/{p.roomId}">{$t('social.vote.toRoom')}</a>{/if}
+    {#if $perms.party && p.roomId && (p.status === 'scheduled' || p.status === 'started')}<a class="btn" href="/party/{p.roomId}">{$t('social.vote.toRoom')}</a>{/if}
   </div>
 {/each}
 {#if loaded && !polls.length && !loadErr}<p class="muted">{$t('social.vote.none')}</p>{/if}
