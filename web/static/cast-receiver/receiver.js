@@ -83,7 +83,8 @@ function render() {
   card.hidden = !v.card;
   if (v.card) {
     card.dataset.mode = v.card.mode;
-    $('card-title').textContent = v.card.title;
+    // until the restyled card (Task 17) uses title / name / hint, the page keeps its old "Next: <episode>" line
+    $('card-title').textContent = v.card.mode === 'still' ? v.card.title : strings.upNext.replace('{label}', v.card.name);
     $('card-text').textContent = v.card.text;
     $('card-primary').textContent = v.card.primary;
     $('card-secondary').textContent = v.card.secondary;

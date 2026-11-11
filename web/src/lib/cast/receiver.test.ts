@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { creditsStart as playerCredits } from '#lib/player/nextup';
 import { CAST_NS } from '#lib/cast';
 import {
-  CAPS_PROBES, COUNTDOWN_SECONDS, DEFAULT_STRINGS, NS, PROGRESS_MS, activeSkip, buildCaps, createReporter, creditsStart, initialState, parseMessage, probeCaps, step, textTrackStyle, view,
+  CAPS_PROBES, COUNTDOWN_SECONDS, DEFAULT_STRINGS, NS, PAUSE_SHOW_MS, PROGRESS_MS, STALL_SHOW_MS, WHO_MS, activeSkip, buildCaps, createReporter, creditsStart, initialState, parseMessage, probeCaps, step, textTrackStyle, view,
 } from '../../../static/cast-receiver/logic.js';
 import { CAF_URL, RECEIVER_CSP, receiverHtml } from './receiverPage';
 import { GET, trailingSlash } from '../../routes/cast-receiver/+server';
@@ -125,7 +125,7 @@ describe('receiver: next-up card, countdown, still watching', () => {
     expect(view(st, DEFAULT_STRINGS).card).toBeNull();
     ({ st } = run(st, [time(1776), time(1777, true, 3000)]));
     const v = view(st, DEFAULT_STRINGS).card!;
-    expect(v).toMatchObject({ mode: 'next', title: 'Next: S1:E2 · Two', text: 'Next episode starts in 6 seconds', primary: 'Next episode', secondary: 'Watch credits' });
+    expect(v).toMatchObject({ mode: 'next', title: 'Up next in 6 s', name: 'S1:E2 · Two', hint: 'Cancel on your phone', buttons: false, text: 'Next episode starts in 6 seconds', primary: 'Next episode', secondary: 'Watch credits' });
     expect(v.progress).toBeCloseTo(0.4);
     ({ st } = run(st, [time(1778, false, 60_000)])); // paused: the countdown waits
     expect(view(st, DEFAULT_STRINGS).card!.progress).toBeCloseTo(0.4);
@@ -182,6 +182,101 @@ describe('receiver: next-up card, countdown, still watching', () => {
     expect(run(st, [{ type: 'item', msg: { t: 'item', castId: B, episode: false, segs: [], next: null } }]).st.next).toEqual(NEXT);
     expect(run(st, [time(100), { type: 'skip' }]).actions).toEqual([]);
     expect(run(st, [{ type: 'countdown', seconds: 5 }]).st.countdown).toBe(5);
+  });
+});
+
+describe('receiver: pause, loading, sender pill, key hints', () => {
+  type Ev = Parameters<typeof step>[1];
+  const run = (evs: Ev[], st = initialState()) => { for (const e of evs) st = step(st, e).st; return st; };
+  const meta = { title: 'Dunmoor', line: 'Season 1 · Episode 4 · The Lantern Road' };
+  const item: Ev = { type: 'item', msg: { t: 'item', castId: A, episode: true, segs: [], next: null, meta } };
+  const T = 100_000;
+  const base = (): ReturnType<typeof initialState> => run([{ type: 'ui', who: 'Cast from Anna\'s phone', motion: true }, { type: 'media', castId: A }, item, { type: 'clock', now: T }, { type: 'load' }, { type: 'firstFrame' },
+    { type: 'time', pos: 754, dur: 2640, playing: true, dt: 250 }]);
+
+  it('the new state starts quiet', () => {
+    expect(initialState()).toMatchObject({ paused: false, pausedAt: null, loading: null, firstFrame: false, stallAt: null, keySeen: false, touch: false, meta: null, who: '', whoUntil: 0, motion: true });
+    expect([PAUSE_SHOW_MS, WHO_MS, STALL_SHOW_MS]).toEqual([1500, 5000, 3000]);
+  });
+
+  it('pause screen only after 1.5 s of pause', () => {
+    let st = run([{ type: 'pause', paused: true, at: T + 10_000 }], base());
+    expect(view(run([{ type: 'clock', now: T + 10_000 + PAUSE_SHOW_MS - 1 }], st), DEFAULT_STRINGS).pause).toBeNull();
+    st = run([{ type: 'clock', now: T + 10_000 + PAUSE_SHOW_MS }], st);
+    expect(view(st, DEFAULT_STRINGS).pause).toEqual({ label: 'Paused', title: 'Dunmoor', line: meta.line, pos: 754, dur: 2640 });
+    // a repeated pause does not restart the timer; play hides at once; a quick pause / resume never shows
+    expect(view(run([{ type: 'pause', paused: true, at: T + 20_000 }], st), DEFAULT_STRINGS).pause).not.toBeNull();
+    expect(view(run([{ type: 'pause', paused: false, at: T + 11_600 }], st), DEFAULT_STRINGS).pause).toBeNull();
+    const quick = run([{ type: 'pause', paused: true, at: T + 30_000 }, { type: 'pause', paused: false, at: T + 30_400 }, { type: 'clock', now: T + 40_000 }], base());
+    expect(view(quick, DEFAULT_STRINGS).pause).toBeNull();
+  });
+
+  it('loading screen until the first frame; a 3 s stall shows Loading…', () => {
+    let st = run([{ type: 'media', castId: A }, item, { type: 'clock', now: T }, { type: 'load' }]);
+    expect(view(st, DEFAULT_STRINGS).load).toEqual({ title: 'Dunmoor', line: meta.line, label: 'Getting ready…' });
+    st = run([{ type: 'firstFrame' }], st);
+    expect(view(st, DEFAULT_STRINGS).load).toBeNull();
+    expect(view(st, DEFAULT_STRINGS).pause).toBeNull();
+    st = run([{ type: 'buffering', on: true, at: T + 60_000 }, { type: 'clock', now: T + 60_000 + STALL_SHOW_MS - 1 }], st);
+    expect(view(st, DEFAULT_STRINGS).pause).toBeNull();
+    st = run([{ type: 'clock', now: T + 60_000 + STALL_SHOW_MS }], st);
+    expect(view(st, DEFAULT_STRINGS).pause).toMatchObject({ label: 'Loading…', title: 'Dunmoor' });
+    expect(view(run([{ type: 'buffering', on: false, at: T + 64_000 }], st), DEFAULT_STRINGS).pause).toBeNull();
+    // buffering before the first frame stays the loading screen, no stall
+    const first = run([{ type: 'media', castId: A }, { type: 'clock', now: T }, { type: 'load' }, { type: 'buffering', on: true, at: T }, { type: 'clock', now: T + 9000 }]);
+    expect(view(first, DEFAULT_STRINGS)).toMatchObject({ pause: null, load: { label: 'Getting ready…' } });
+  });
+
+  it('a load survives the media change that follows it; clock, keys and sender stay', () => {
+    const st = run([{ type: 'ui', who: 'Anna', motion: false }, { type: 'key' }, { type: 'clock', now: T }, { type: 'load' }, { type: 'media', castId: B }]);
+    expect(st).toMatchObject({ loading: 'first', whoUntil: T + WHO_MS, who: 'Anna', motion: false, keySeen: true, now: T, castId: B });
+    expect(view(st, DEFAULT_STRINGS).load).not.toBeNull();
+  });
+
+  it('sender pill for 5 s after a load and with any overlay', () => {
+    const st = base();
+    expect(view(st, DEFAULT_STRINGS).who).toBe('Cast from Anna\'s phone');
+    const later = run([{ type: 'clock', now: T + WHO_MS }], st);
+    expect(view(later, DEFAULT_STRINGS).who).toBeNull();
+    expect(view(run([{ type: 'clock', now: T + WHO_MS - 1 }], st), DEFAULT_STRINGS).who).not.toBeNull();
+    const paused = run([{ type: 'pause', paused: true, at: T + 20_000 }, { type: 'clock', now: T + 21_500 }], later);
+    expect(view(paused, DEFAULT_STRINGS).who).toBe('Cast from Anna\'s phone');
+    expect(view(run([{ type: 'pause', paused: false, at: T + 22_000 }], paused), DEFAULT_STRINGS).who).toBeNull();
+    // loading shows it too; no sender text, no pill
+    expect(view(run([{ type: 'load' }], later), DEFAULT_STRINGS).who).not.toBeNull();
+    expect(view(run([{ type: 'ui', who: '', motion: true }, { type: 'load' }], later), DEFAULT_STRINGS).who).toBeNull();
+  });
+
+  it('key hint appears only after a key; touch shows buttons', () => {
+    const NEXT = { castId: B, label: 'S1:E5 · Wrenfield Pier', auto: true, ask: false };
+    const card = (extra: Ev[]) => run([{ type: 'media', castId: A }, { type: 'item', msg: { t: 'item', castId: A, episode: true, segs: [], next: NEXT, meta } }, { type: 'time', pos: 2630, dur: 2640, playing: true, dt: 1000 }, ...extra]);
+    expect(view(card([]), DEFAULT_STRINGS)).toMatchObject({ hint: 'phone', card: { hint: 'Cancel on your phone', buttons: false, name: 'S1:E5 · Wrenfield Pier', secondary: 'Watch credits' } });
+    expect(view(card([{ type: 'key' }]), DEFAULT_STRINGS)).toMatchObject({ hint: 'keys', card: { hint: 'OK plays now · Back stops here', buttons: false } });
+    const t = view(card([{ type: 'touch' }]), DEFAULT_STRINGS);
+    expect(t).toMatchObject({ hint: 'touch', card: { hint: '', buttons: true, secondary: 'Stop here' } });
+    // "Stop here" is the existing cancel; Play now the existing playNow
+    expect(step(card([{ type: 'touch' }]), { type: 'cancel' }).actions).toEqual(['send-cancel']);
+  });
+
+  it('the item message carries meta, the ui message who and motion; oversized or wrong types are dropped', () => {
+    expect(parseMessage({ t: 'item', castId: A, meta: { title: ' Dunmoor ', line: meta.line } })).toMatchObject({ meta });
+    expect(parseMessage({ t: 'item', castId: A, meta: { title: 'Saltwater Almanac', line: 5 } })).toMatchObject({ meta: { title: 'Saltwater Almanac', line: '' } });
+    expect(parseMessage({ t: 'item', castId: A, meta: { title: 'x'.repeat(201), line: 'ok' } })).not.toHaveProperty('meta');
+    expect(parseMessage({ t: 'item', castId: A, meta: 'Dunmoor' })).not.toHaveProperty('meta');
+  });
+
+  it('parseMessage refuses an oversized who and non-boolean motion', () => {
+    expect(parseMessage({ t: 'ui', who: 'Cast from Anna\'s phone', motion: false })).toMatchObject({ who: 'Cast from Anna\'s phone', motion: false });
+    expect(parseMessage({ t: 'ui', who: 'x'.repeat(81) })).toMatchObject({ who: '', motion: true });
+    expect(parseMessage({ t: 'ui', who: 'x'.repeat(80), motion: 'no' })).toMatchObject({ who: 'x'.repeat(80), motion: true });
+    expect(parseMessage({ t: 'ui', who: 7, motion: 0 })).toMatchObject({ who: '', motion: true });
+  });
+
+  it('ui: the new strings with English fallbacks, upNextIn per second', () => {
+    const m = parseMessage({ t: 'ui', strings: { upNextIn: ['In 1 s', 'In 2 s'], keys: 'OK', paused: 'Pausiert', loading: 5 } }) as { strings: typeof DEFAULT_STRINGS };
+    expect(m.strings).toMatchObject({ upNextIn: ['In 1 s', 'In 2 s'], keys: 'OK', paused: 'Pausiert', loading: 'Getting ready…', stall: 'Loading…', phoneCancel: 'Cancel on your phone', stopHere: 'Stop here', stillKeys: 'OK keeps watching' });
+    expect(DEFAULT_STRINGS.upNextIn).toHaveLength(COUNTDOWN_SECONDS);
+    expect(DEFAULT_STRINGS.upNextIn[9]).toBe('Up next in 10 s');
   });
 });
 
