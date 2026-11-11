@@ -41,7 +41,7 @@ export function clearMediaSession(ms: MediaSessionLike, actions: readonly string
 // one owner at a time: the cast binding and the player binding never write over each other
 let owner: symbol | null = null;
 const ownerListeners = new Set<(o: symbol | null) => void>();
-const setOwner = (o: symbol | null) => { owner = o; for (const fn of [...ownerListeners]) fn(o); };
+const setOwner = (o: symbol | null) => { owner = o; for (const fn of [...ownerListeners]) { try { fn(o); } catch { /* one bad listener must not stop the rest */ } } };
 export function claimMediaSession(o: symbol): void { if (owner !== o) setOwner(o); }
 /** true when `o` held the session (it is then free); a non-owner's release changes nothing */
 export function releaseMediaSession(o: symbol): boolean { if (owner !== o) return false; setOwner(null); return true; }

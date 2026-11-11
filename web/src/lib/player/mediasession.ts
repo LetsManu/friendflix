@@ -37,13 +37,13 @@ export function bindPlayerMediaSession(
     try { ms.metadata = meta({ title: cur.title, artist: cur.artist, artwork: cur.artworkIds.map((id) => ({ src: img(id, 512) })) }); } catch { /* no MediaMetadata */ }
   };
   const writeHandlers = () => {
-    set('play', () => act.play());
-    set('pause', () => act.pause());
-    set('seekto', (d) => { if (typeof d.seekTime === 'number') act.seekTo(d.seekTime); });
-    set('seekbackward', (d) => act.seekBy(-(d.seekOffset || 10)));
-    set('seekforward', (d) => act.seekBy(d.seekOffset || 10));
-    set('nexttrack', act.next ? () => act.next?.() : null);
-    set('previoustrack', act.prev ? () => act.prev?.() : null);
+    set('play', () => { if (owns()) act.play(); });
+    set('pause', () => { if (owns()) act.pause(); });
+    set('seekto', (d) => { if (owns() && typeof d.seekTime === 'number') act.seekTo(d.seekTime); });
+    set('seekbackward', (d) => { if (owns()) act.seekBy(-(d.seekOffset || 10)); });
+    set('seekforward', (d) => { if (owns()) act.seekBy(d.seekOffset || 10); });
+    set('nexttrack', act.next ? () => { if (owns()) act.next?.(); } : null);
+    set('previoustrack', act.prev ? () => { if (owns()) act.prev?.(); } : null);
   };
   const writeState = () => { ms.playbackState = el.paused ? 'paused' : 'playing'; };
   const writePos = () => { lastPos = now(); setPositionClamped(ms, el.duration, el.currentTime, el.playbackRate || 1); };
@@ -51,14 +51,17 @@ export function bindPlayerMediaSession(
 
   const guard = (fn: () => void) => () => { if (owns()) fn(); };
   const on: Array<[string, () => void]> = [
-    ['loadedmetadata', guard(writePos)], ['seeked', guard(writePos)], ['ratechange', guard(writePos)],
+    ['loadedmetadata', guard(() => { writeState(); writePos(); })], ['emptied', guard(writeState)], ['seeked', guard(writePos)], ['ratechange', guard(writePos)],
     ['timeupdate', guard(() => { if (now() - lastPos >= 1000) writePos(); })],
     ['play', guard(() => { ms.playbackState = 'playing'; })], ['pause', guard(() => { ms.playbackState = 'paused'; })],
   ];
   for (const [e, fn] of on) el.addEventListener(e, fn);
 
   const claimAndApply = () => { claimMediaSession(me); applyAll(); };
-  const offOwner = onMediaSessionOwner((o) => { if (bound && o === null) claimAndApply(); });
+  const offOwner = onMediaSessionOwner((o) => { if (!bound) return;
+    if (o === null) claimAndApply();
+    else if (o !== me) for (const a of PLAYER_ACTIONS) set(a, null); // another owner: nothing of ours stays armed
+  });
   if (mediaSessionOwner() === null) claimAndApply();
 
   return {

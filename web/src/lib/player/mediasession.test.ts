@@ -3,12 +3,12 @@
 import { writable } from 'svelte/store';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CastSession } from '#lib/cast/engine';
-import { bindCastMediaSession, mediaSessionOwner, type MediaSessionLike } from '#lib/cast/mediasession';
+import { bindCastMediaSession, claimMediaSession, mediaSessionOwner, onMediaSessionOwner, releaseMediaSession, type MediaSessionLike } from '#lib/cast/mediasession';
 import { bindPlayerMediaSession as bindRaw, type MediaElementLike, type PlayerMediaActions, type PlayerMediaItem } from './mediasession';
 
 const bound: Array<{ release(): void }> = [];
 const bindPlayerMediaSession: typeof bindRaw = (...a) => { const b = bindRaw(...a); bound.push(b); return b; };
-afterEach(() => { for (const b of bound.splice(0)) b.release(); });
+afterEach(() => { for (const b of bound.splice(0)) b.release(); expect(mediaSessionOwner()).toBeNull(); });
 type H = (d: { seekTime?: number; seekOffset?: number }) => void;
 function fake(throwOn?: string) {
   const handlers = new Map<string, H | null>();
@@ -172,5 +172,85 @@ describe('player media session', () => {
     ms.pos.length = 0;
     e.dispatchEvent(new Event('seeked'));
     expect(ms.pos).toHaveLength(0);
+  });
+
+  it('previous never reaches the player while a cast owns the session, after release, or after the cast ends', () => {
+    const { ms, handlers } = fake();
+    const a = acts();
+    const b = bindPlayerMediaSession(el(), item, a, ms, (m) => m);
+    const s = writable<CastSession | null>(null);
+    const off = bindCastMediaSession(s, castEng, ms, (m) => m);
+    s.set(castView());
+    handlers.get('previoustrack')?.({});
+    expect(a.prev).not.toHaveBeenCalled();
+    b.release();
+    handlers.get('previoustrack')?.({});
+    expect(a.prev).not.toHaveBeenCalled();
+    s.set(null);
+    expect(handlers.get('previoustrack') ?? null).toBeNull();
+    expect(a.prev).not.toHaveBeenCalled();
+    off();
+  });
+
+  it('every player handler is silent without ownership', () => {
+    const { ms, handlers } = fake();
+    const a = acts();
+    bindPlayerMediaSession(el(), item, a, ms, (m) => m);
+    const play = handlers.get('play')!;
+    const other = Symbol('other');
+    claimMediaSession(other);
+    play({}); handlers.get('seekto')?.({ seekTime: 5 });
+    expect(a.play).not.toHaveBeenCalled();
+    expect(a.seekTo).not.toHaveBeenCalled();
+    releaseMediaSession(other);
+  });
+
+  it('playbackState re-reads the element on loadedmetadata and emptied', () => {
+    const { ms } = fake();
+    const e = el({ paused: false });
+    bindPlayerMediaSession(e, item, acts(), ms, (m) => m);
+    expect(ms.playbackState).toBe('playing');
+    e.paused = true; e.dispatchEvent(new Event('emptied'));
+    expect(ms.playbackState).toBe('paused');
+    e.paused = false; e.dispatchEvent(new Event('loadedmetadata'));
+    expect(ms.playbackState).toBe('playing');
+  });
+
+  it('without navigator.mediaSession the binding is a no-op', () => {
+    const b = bindPlayerMediaSession(el(), item, acts(), undefined, (m) => m);
+    expect(() => { b.update(item, acts()); b.release(); }).not.toThrow();
+    expect(mediaSessionOwner()).toBeNull();
+  });
+});
+
+describe('media session owner token', () => {
+  it('a non-owner release returns false and does not notify; a second claim notifies once; unsubscribe works', () => {
+    const a = Symbol('a'), b = Symbol('b');
+    const seen: Array<symbol | null> = [];
+    const off = onMediaSessionOwner((o) => seen.push(o));
+    expect(releaseMediaSession(a)).toBe(false);
+    expect(seen).toEqual([]);
+    claimMediaSession(a); claimMediaSession(a);
+    expect(seen).toEqual([a]);
+    expect(releaseMediaSession(b)).toBe(false);
+    expect(mediaSessionOwner()).toBe(a);
+    expect(releaseMediaSession(a)).toBe(true);
+    expect(mediaSessionOwner()).toBeNull();
+    expect(seen).toEqual([a, null]);
+    off();
+    claimMediaSession(b);
+    expect(seen).toEqual([a, null]);
+    releaseMediaSession(b);
+  });
+
+  it('a throwing listener neither stops the others nor makes claim/release throw', () => {
+    const a = Symbol('a');
+    const offA = onMediaSessionOwner(() => { throw new Error('boom'); });
+    let seen = 0;
+    const offB = onMediaSessionOwner(() => { seen++; });
+    expect(() => claimMediaSession(a)).not.toThrow();
+    expect(() => releaseMediaSession(a)).not.toThrow();
+    expect(seen).toBe(2);
+    offA(); offB();
   });
 });
