@@ -28,11 +28,21 @@ export const jellyfinUpstream: Upstream = {
     new RegExp(`^/Videos/${ID}/${ID}/Subtitles/\\d{1,3}/\\d{1,10}/Stream\\.vtt$`),
     new RegExp(`^/Items/${ID}/Images/(Primary|Backdrop)$`),
   ],
+  // AirPlay subtitle rendition (SubtitleMethod=Hls), only for tokens whose scope says hlsSub (gateway.ts handleCast). Jellyfin 10.10:
+  // DynamicHlsHelper.AddSubtitles writes `<msid>/Subtitles/<n>/subtitles.m3u8?SegmentLength=30&api_key=...` (relative to master.m3u8);
+  // SubtitleController.GetSubtitlePlaylist writes `stream.vtt?CopyTimestamps=true&AddVttTimeMap=true&StartPositionTicks=<t>&EndPositionTicks=<t>&api_key=...`.
+  // Query allowlisted: GetSubtitle honours the obsolete itemId / mediaSourceId / index / format overrides over the route values.
+  castHlsSubPaths: [
+    { path: new RegExp(`^/Videos/${ID}/${ID}/Subtitles/(\\d{1,3})/subtitles\\.m3u8$`), query: { segmentlength: /^[1-9]\d?$/ } },
+    { path: new RegExp(`^/Videos/${ID}/${ID}/Subtitles/(\\d{1,3})/stream\\.vtt$`),
+      query: { copytimestamps: /^true$/, addvtttimemap: /^true$/, startpositionticks: /^\d{1,14}$/, endpositionticks: /^\d{1,14}$/ } },
+  ],
   // every /stream request (static or not: Jellyfin can stream-copy)
   directStream: /^\/Videos\/[0-9a-fA-F]{32}\/stream(\.\w{2,5})?$/,
   image: /^\/Items\/[0-9a-fA-F]{32}\/Images\//,
   stripQuery: new Set(['api_key', 'apikey', 'x-emby-token', 'x-mediabrowser-token', 'token']),
-  castDropQuery: new Set(['livestreamid', 'deviceid']),
+  // alwaysburninsubtitlewhentranscoding: a receiver-supplied burn-in switch (FriendFlix never sets it; with a subtitle selected it forces a burn-in transcode)
+  castDropQuery: new Set(['livestreamid', 'deviceid', 'alwaysburninsubtitlewhentranscoding']),
   clampHeight: ['maxheight', 'height'],
   clampWidth: ['maxwidth', 'width'],
   clampBitrate: ['maxstreamingbitrate', 'videobitrate'],

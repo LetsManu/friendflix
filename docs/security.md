@@ -314,6 +314,19 @@ A Chromecast cast keeps running when the tab is closed or reloaded (the browser 
 - **Diagnostics privacy:** the cast log and "Copy report" on `/diagnose` stay on the device and never contain tokens, URLs, castIds, item ids or IP addresses; device names are anonymised in the report.
 - **Without a page:** the own receiver reports start, progress and stop itself. With the Default Media Receiver, progress and "watched" stay where the page left them until a page picks the cast up again.
 
+## AirPlay subtitle rendition
+
+An AirPlay token can carry one text subtitle inside the stream (Jellyfin only). What the gateway allows for it (`/media/c/<token>/…`):
+
+- **Only for the track that was asked for.** The subtitle playlist (`Videos/<id>/<source>/Subtitles/<n>/subtitles.m3u8`) and its segments (`…/stream.vtt`) are served only to an AirPlay token whose scope says it requested exactly that track; the index is pinned in the token. Chromecast tokens, poster tokens and AirPlay tokens without a subtitle lose every subtitle group as before; `CLOSED-CAPTIONS` always goes. The kept playlist line must pass the same token-path check as every other URI and is reduced to a fixed set of attributes.
+- **Narrow path and query allowlist.** Only these two path shapes, with only the query keys Jellyfin itself writes there (segment length for the playlist; copy-timestamps, VTT time map and start/end ticks for the segments), each once and with a strict value pattern. Anything else is refused with 403, so Jellyfin's obsolete route overrides (`itemId`, `mediaSourceId`, `index`, `format`) cannot be used to read another item or track.
+- **`api_key` and the other credential parameters are stripped** from the forwarded request and from the playlist lines, as on every cast path.
+- **No forced burn-in.** `SubtitleMethod` other than `Hls` and a `SubtitleStreamIndex` other than the token's own track are refused on a subtitle token. On every other cast token `SubtitleMethod` and `SubtitleStreamIndex` are stripped, and `AlwaysBurnInSubtitleWhenTranscoding` is dropped, so a receiver can no longer force a burned-in (CPU-heavy) transcode. This also closes a gap that existed for all cast tokens before.
+- **Image subtitles** are never offered; the backend ignores a track that is not a text subtitle of the source.
+- **Limits unchanged:** address pin, single-title scope, idle expiry, cap and revoke apply as for any AirPlay token. The token is still never logged. See [cast.md](cast.md#airplay-untertitel).
+
+Continuous AirPlay (several episodes in one token) is not available; no such token exists.
+
 ## Cast receiver
 
 FriendFlix's own Cast Web Receiver ([cast-receiver.md](cast-receiver.md), opt-in with `CAST_RECEIVER_APP_ID`) runs on a TV that has

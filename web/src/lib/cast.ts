@@ -109,6 +109,8 @@ export interface CastInfo {
   report?: string;
   /** 'fmp4' for a HEVC / surround stream (the answer then also carries `hlsVideoSegmentFormat`); absent otherwise */
   hlsVideoSegmentFormat?: string;
+  /** AirPlay only: the stream carries the one WebVTT rendition that was asked for (`subtitleIndex`); absent otherwise */
+  hlsSub?: boolean;
   /** what the stream carries (fixed codes, see caps.ts); only in the answer to a cast that sent receiver caps */
   delivery?: CastDelivery;
 }

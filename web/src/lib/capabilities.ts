@@ -24,10 +24,12 @@ export interface ServerCaps {
   chapters: boolean;
   /** POST /api/playback/info may be prefetched on hover / focus (false: that call starts the server's transcode, e.g. Plex) */
   playbackPrefetch: boolean;
+  /** the server can put one WebVTT subtitle rendition into an AirPlay stream (Jellyfin; Plex false) */
+  castHlsSubtitles: boolean;
 }
 
 export const ALL_CAPS: ServerCaps = {
-  segments: ['intro', 'outro', 'recap', 'preview'], trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true, subtitleExtract: false, chapters: true, playbackPrefetch: true,
+  segments: ['intro', 'outro', 'recap', 'preview'], trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true, subtitleExtract: false, chapters: true, playbackPrefetch: true, castHlsSubtitles: true,
 };
 
 /** Lenient parse: a missing or malformed field keeps its "supported" default. */
@@ -38,7 +40,7 @@ export function capsFrom(raw: unknown): ServerCaps {
   return {
     segments: Array.isArray(r.segments) ? r.segments.filter((s): s is string => typeof s === 'string').map((s) => s.toLowerCase()) : [...ALL_CAPS.segments],
     trickplay: flag('trickplay'), upcoming: flag('upcoming'), subtitleSearch: flag('subtitleSearch'), webhooks: flag('webhooks'), changeFeed: flag('changeFeed'), planB: flag('planB'),
-    subtitleExtract: flag('subtitleExtract'), chapters: flag('chapters'), playbackPrefetch: flag('playbackPrefetch'),
+    subtitleExtract: flag('subtitleExtract'), chapters: flag('chapters'), playbackPrefetch: flag('playbackPrefetch'), castHlsSubtitles: flag('castHlsSubtitles'),
   };
 }
 

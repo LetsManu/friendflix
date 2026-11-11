@@ -30,6 +30,7 @@
   import RemoteScreen from '#lib/cast/RemoteScreen.svelte';
   import PlayOnSheet from '#lib/cast/PlayOnSheet.svelte';
   import { episodeCode } from '#lib/cast/bar';
+  import { airSubBody, rememberSubsRefused } from '#lib/cast/airsubs';
   import { AbrController, LADDER, autoBps, isOriginalBps, rungKey, type Decision } from '#lib/player/abr';
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
@@ -712,9 +713,9 @@
   const castErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
     : e?.body?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
   // (FriendFlix's own receiver is given a moment to state what it plays first: castCapsReady; `again` names the stream the TV just refused)
-  const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }) => {
+  const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }, extra: { subtitleIndex?: number } = {}) => {
     if (via !== 'airplay') await castCapsReady();
-    return api<CastInfo>('/api/cast/session', { method: 'POST', body: castBody({ itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}) }) });
+    return api<CastInfo>('/api/cast/session', { method: 'POST', body: castBody({ itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}), ...extra }) });
   };
   const castRevoke = (ci: CastInfo | null) => { if (ci) api(`/api/cast/session/${ci.castId}`, { method: 'DELETE' }).catch(() => undefined); };
 
@@ -778,7 +779,7 @@
     const v = video, ctl = air, ci = airInfo;
     if (!v || !ctl || !ci || partyMode) return;
     // `start` was reported for this token exactly when the element played it here (the phone's token stream / the TV)
-    castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), cast: ci, started: started && !stopped, video: v, air: ctl, probe: airProbe });
+    castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), cast: ci, subIndex: ci.hlsSub ? airSubAsked : -1, started: started && !stopped, video: v, air: ctl, probe: airProbe });
     handedOver();
     air = null; airProbe = null; airInfo = null; airState = AIR_IDLE;
   }
@@ -871,9 +872,17 @@
   // ---- AirPlay session lifecycle (the controller tells when Safari's playback target becomes / stops being wireless) ----
   const airErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
     : e?.body?.error === 'transcoding_disabled' ? tr('player.airplay.needsTranscode') : tr('player.airplay.failed');
+  /** the subtitle index the current AirPlay token was requested with (-1 = none): the hand-off tells the engine this, not the menu's later choice */
+  let airSubAsked = -1;
   function startAirPlay(v: HTMLVideoElement) {
     air = createAirPlay(v, {
-      request: (pos) => castRequest(pos, 'airplay'),
+      // the chosen text track rides inside the AirPlay stream (the TV shows only what the stream carries); never in the retry after a refusal
+      request: (pos, o) => {
+        const body = airSubBody(subIndex, Boolean(o?.noSubs), typeof localStorage === 'undefined' ? null : localStorage, Date.now(), get(serverCaps).castHlsSubtitles);
+        airSubAsked = body.subtitleIndex ?? -1; // what the token carries: a later change in this menu does not change the TV's stream
+        return castRequest(pos, 'airplay', undefined, body);
+      },
+      subsRefused() { rememberSubsRefused(typeof localStorage === 'undefined' ? null : localStorage, Date.now()); setSubtitle(-1, false); flash(tr('player.castRemote.subsRefused'), 4000); },
       revoke: (ci) => castRevoke(ci),
       async detach() {
         // before the token stream (tap on the button, or a new token): the TV must never get the MSE / cookie URL

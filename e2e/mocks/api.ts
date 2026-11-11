@@ -54,6 +54,8 @@ export interface MockState {
   features?: { requests?: boolean; postplay?: boolean; surround?: boolean };
   /** /api/me `server.kind` (absent = the field is left out, like an older backend: the app treats it as Jellyfin) */
   serverKind?: 'jellyfin' | 'plex';
+  /** /api/me `server.capabilities` (absent = left out: every capability counts as supported); e.g. `{ castHlsSubtitles: false }` */
+  serverCaps?: Record<string, unknown>;
   /**
    * the "Neu & demnächst" page: GET /api/library/new-for-you and /new-episodes answer these (`'fail'` = a 500), the request service's
    * upcoming titles come per media type (empty by default, like the rest of the mock); `hang` = the call never answers
@@ -234,7 +236,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     if (p === '/api/me' && st.setup && !st.setup.complete) return J({ error: 'setup_required' }, 503);
     if (p === '/api/me') {
-      const withServer = st.serverKind ? { ...ME, server: { kind: st.serverKind } } : ME;
+      const withServer = st.serverKind || st.serverCaps ? { ...ME, server: { ...(st.serverKind ? { kind: st.serverKind } : {}), ...(st.serverCaps ? { capabilities: st.serverCaps } : {}) } } : ME;
       const base = st.features ? { ...withServer, features: st.features } : withServer;
       const me = st.asAdmin ? { ...base, role: 'admin', roleLabel: 'Admin', isAdmin: true } : base;
       const s = st.accountSaved;

@@ -64,7 +64,35 @@
       "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/hls1/main/../../../System/Info",
       "//evil.example/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/master.m3u8",
       "/Users/AuthenticateByName",
-      ""
+      "",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/subtitles.m3u8",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/stream.vtt"
+    ]
+  },
+  "castHlsSub": {
+    "_comment": "AirPlay subtitle rendition (Jellyfin SubtitleMethod=Hls) on /media/c/<token>/: allowed only for tokens whose authz scope says hlsSub, with only these query keys. Tested by the gateway (path plus query).",
+    "allow": [
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/subtitles.m3u8?SegmentLength=30",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/stream.vtt?CopyTimestamps=true&AddVttTimeMap=true&StartPositionTicks=0&EndPositionTicks=300000000",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/stream.vtt?CopyTimestamps=true&AddVttTimeMap=true&StartPositionTicks=72000000000&EndPositionTicks=72300000000"
+    ],
+    "deny": [
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/stream.vtt?itemId=cccccccccccccccccccccccccccccccc",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/stream.vtt?index=4",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/stream.vtt?format=srt",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/stream.vtt?mediaSourceId=cccccccccccccccccccccccccccccccc",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/subtitles.m3u8?SegmentLength=0",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/subtitles.m3u8?SegmentLength=30&SegmentLength=1",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/stream.srt",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/stream.ass",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/Stream.js",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/1000/subtitles.m3u8",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/-1/stream.vtt",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/0/subtitles.m3u8",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/stream.vtt/x",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Subtitles/3/subtitles.m3u8",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/../../../master.m3u8",
+      "/Videos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Subtitles/3/%2e%2e/stream.vtt"
     ]
   },
   "download": {

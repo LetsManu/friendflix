@@ -22,6 +22,7 @@
   import { fade } from 'svelte/transition';
   import { api, cachedItem, type Item } from '#lib/api';
   import { castSetVolume, castState, castToggleMute } from '#lib/cast';
+  import { serverCaps } from '#lib/capabilities';
   import { SCRIM_BAR } from '#lib/glass/tone';
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
@@ -112,7 +113,7 @@
   $: if (s && (s.audioTracks.length || s.subtitles.length)) kept = { audioTracks: s.audioTracks, subtitles: s.subtitles };
   // the engine clears the tracks on a switch and fills only the subtitles: the old ones show (disabled) only while it connects
   $: chipSession = s && s.state === 'connecting' && !s.audioTracks.length && !s.subtitles.length && kept ? { ...s, ...kept } : s;
-  $: hasChips = chipSession ? chipSession.audioTracks.length > 0 || (!air && chipSession.subtitles.length > 0) : false;
+  $: hasChips = chipSession ? chipSession.audioTracks.length > 0 || chipSession.subtitles.length > 0 : false;
   let everChips = Boolean(kept?.audioTracks.length || kept?.subtitles.length);
   let everEpisode: boolean = Boolean(fresh?.episode);
   $: if (s) { if (s.isEpisode) everEpisode = true; else if (s.state === 'playing') everEpisode = false; }
@@ -120,6 +121,15 @@
   $: remember(kept, everEpisode);
   onDestroy(() => { if (memo) memo.at = Date.now(); });
   $: if (hasChips) everChips = true;
+
+  // ---- AirPlay subtitles: the line under the chips (reserved once the title has subtitles, so nothing moves when it fades in) ----
+  $: airSubs = air && (chipSession?.subtitles.length ?? 0) > 0;
+  // reserved on every AirPlay screen: a next title with subtitles must not grow the panel
+  $: subsNoServer = air && !$serverCaps.castHlsSubtitles;
+  $: subsHintOn = air && !subsNoServer && (s?.subIndex ?? -1) >= 0;
+  /** what the line shows (it is read only then; invisible it stays out of the accessibility tree) */
+  $: subsShown = (subsNoServer && airSubs) || subsHintOn;
+  $: subsText = $t(subsNoServer ? 'player.castRemote.subsNoServer' : 'player.castRemote.subsHint');
 </script>
 
 {#if s && st}
@@ -129,6 +139,7 @@
     <div class="shade" aria-hidden="true"></div>
 
     <p class="sr-only" role="status" aria-live="polite">{said}</p>
+    <p class="sr-only" role="status" aria-live="polite">{subsHintOn ? subsText : ''}</p>
     <div class="wrap">
       <div class="top" data-testid="cast-row">
         <button type="button" class="frost-btn round close" aria-label={$t('player.castRemote.close')} title={$t('player.castRemote.close')} on:click={() => dispatch('close')}>
@@ -189,7 +200,7 @@
         <CastScrubber bind:this={scrubber} session={s} label={$t('player.castRemote.position')} />
 
         <div class="ctrl">
-          {#if everChips}<div class="cl">{#if hasChips && chipSession}<TrackChips session={chipSession} airplay={air} icons={w >= 1200} compact={phone} disabled={s.state === 'connecting'} />{/if}</div>{/if}
+          {#if everChips}<div class="cl">{#if hasChips && chipSession}<TrackChips session={chipSession} airplay={air} icons={w >= 1200} compact={phone} disabled={s.state === 'connecting'} describedby={subsShown ? 'rs-subs-hint' : undefined} />{/if}</div>{/if}
           <div class="tp">
             {#if phone && !air}
               <button type="button" class="tb mute" aria-label={$t(muted ? 'player.castRemote.unmute' : 'player.castRemote.mute')} on:click={castToggleMute}>
@@ -222,6 +233,7 @@
             {/if}
           </div>
         </div>
+        {#if air}<p id="rs-subs-hint" class="sh" class:on={subsShown} aria-hidden={subsNoServer && airSubs ? undefined : 'true'}>{subsText}</p>{/if}
       </div>
     </div>
   </section>
@@ -305,6 +317,9 @@
   .disc:hover:not(:disabled) { background: rgba(255, 255, 255, .85); }
   .disc:focus-visible { outline-color: #fff; outline-offset: 4px; }
   .mute { width: 44px; height: 44px; }
+  /* AirPlay subtitles line: always has its room, fades by opacity */
+  .sh { margin: 4px 0 0; min-height: 2.6em; font-size: .85rem; line-height: 1.3; color: rgba(255, 255, 255, .8); opacity: 0; transition: opacity 200ms ease; }
+  .sh.on { opacity: 1; }
   .volhint { margin: 0; display: flex; align-items: center; gap: 8px; font-size: .9rem; color: rgba(255, 255, 255, .78); }
   .vval { font-size: .85rem; color: rgba(255, 255, 255, .78); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .vslider { -webkit-appearance: none; appearance: none; width: 130px; height: 44px; margin: 0; background: transparent; cursor: pointer; }

@@ -146,6 +146,7 @@ export class PlexMediaServer implements MediaServer {
       libraryFeatures: true, // the recommendation index reads the mirror (libraryFeatures)
       // POST /api/playback/info starts the Plex transcode (preparePlayback): no prefetch on hover / focus
       playbackPrefetch: false,
+      castHlsSubtitles: false, // not verified on Plex
     };
   }
 

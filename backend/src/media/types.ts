@@ -82,13 +82,18 @@ export interface MediaCapabilities {
    * Optional; absent = false, and the index job stays idle.
    */
   libraryFeatures?: boolean;
+  /**
+   * The server can emit one subtitle as a WebVTT rendition inside its HLS master (AirPlay subtitles in the stream): playbackInfo()
+   * honours `hlsSubtitleIndex`. Jellyfin true; Plex false until someone verifies it. Required: every implementation says so.
+   */
+  castHlsSubtitles: boolean;
 }
 
 /** JSON form of the capabilities (sets as arrays), as sent to the web in /api/me and /api/server. */
 export const publicCapabilities = (c: MediaCapabilities) => ({
   segments: SEGMENT_TYPES.filter((s) => c.segments.has(s)),
   trickplay: c.trickplay, upcoming: c.upcoming, subtitleSearch: c.subtitleSearch, webhooks: c.webhooks, changeFeed: c.changeFeed, planB: c.planB,
-  subtitleExtract: c.subtitleExtract, chapters: c.chapters ?? false, playbackPrefetch: c.playbackPrefetch ?? true,
+  subtitleExtract: c.subtitleExtract, chapters: c.chapters ?? false, playbackPrefetch: c.playbackPrefetch ?? true, castHlsSubtitles: c.castHlsSubtitles,
 });
 
 // ---------------------------------------------------------------- DTOs
@@ -352,6 +357,11 @@ export interface PlaybackOptions { maxBitrate: number; /** validated device capa
   remote?: boolean;
   /** the SURROUND_AUDIO setting; absent = off */
   surround?: boolean;
+  /**
+   * AirPlay cast with subtitles in the stream (capabilities.castHlsSubtitles): the text subtitle track to carry as ONE WebVTT HLS rendition
+   * (`SubtitleStreamIndex` + `SubtitleMethod=Hls` on the HLS URL). A track that is not a text subtitle of the source is ignored (never burned in).
+   */
+  hlsSubtitleIndex?: number;
   /** asked only when the plan wants an HEVC conversion; absent = refused (h264_unproven) */
   hevcGate?: () => Promise<HevcGate> }
 /** Server-side transcode of a short clip / probe (preview clips, playback health check): forced re-encode at these limits. */

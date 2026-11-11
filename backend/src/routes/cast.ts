@@ -47,7 +47,11 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       /** the sender's one automatic fallback after the receiver failed a stream with that feature, and the play session it replaces */
       fellBack: z.enum(['hevc', 'surround', 'both']).optional(),
       prevPs: psId.optional(),
+      /** AirPlay only: the text subtitle track to carry in the stream as one WebVTT rendition (omitted = off); needs capabilities.castHlsSubtitles */
+      subtitleIndex: z.number().int().min(0).max(999).optional(),
     }).parse(req.body);
+    // a subtitle rendition in the stream is AirPlay's way (Chromecast side-loads WebVTT itself)
+    if (b.subtitleIndex !== undefined && b.via !== 'airplay') return reply.code(400).send({ error: 'bad_request' });
     // the queue is Chromecast only (an AirPlay token has a two-address pin, a queued token never takes a pin of its own)
     if (b.next && b.via === 'airplay') return reply.code(400).send({ error: 'bad_request' });
     const deviceId = req.session!.deviceId;
@@ -93,8 +97,11 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
           await noteHevcFailure(ctx, `cast:${req.user!.id}`);
         }
       }
+      // a server that cannot emit the rendition ignores the field (no error, nothing recorded); an AirPlay token has no queue, so no `pred` here
+      const hlsSubtitleIndex = b.subtitleIndex !== undefined && ctx.jf.capabilities.castHlsSubtitles ? b.subtitleIndex : undefined;
       const opts = {
         maxBitrate, maxHeight, startTicks, audioIndex: b.audioIndex, cast: true, ...(pred ? { after: pred.playSessionId } : {}),
+        ...(hlsSubtitleIndex !== undefined ? { hlsSubtitleIndex } : {}),
         ...(clientCaps ? { clientCaps, remote, surround: ctx.cfg.SURROUND_AUDIO !== 'false', ...(ctx.cfg.HEVC_STREAMS > 0 ? { hevcGate: gate } : {}) } : {}),
       };
       let info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts);
@@ -106,12 +113,15 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         if (info.delivery) await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ video: info.delivery.video, audio: info.delivery.audio }), 6 * 3600).catch(() => undefined);
       }
       started = info.playSessionId;
+      // the rendition exists only when the HLS URL the server plan built asks for it (a track that is not a text subtitle is not carried)
+      const hlsSub = hlsSubtitleIndex !== undefined && new URL(info.hlsUrl, 'http://x').searchParams.get('SubtitleMethod') === 'Hls';
       const ownTtl = castTtlSeconds(info.runtimeTicks, startTicks);
       // a queued token outlives the episode it follows (queued from the start of that episode)
       const ttl = pred ? castNextTtlSeconds(ownTtl, pred.exp) : ownTtl;
       const rec = {
         userId: req.user!.id, profileId: req.profile!.id, deviceId, itemId: b.itemId, mediaSourceId: info.mediaSourceId, playSessionId: info.playSessionId, maxBitrate, title: item.name, via: b.via ?? 'chromecast',
         ...(pred ? { afterPs: pred.playSessionId } : {}),
+        ...(hlsSub ? { hlsSub: true, hlsSubIndex: hlsSubtitleIndex } : {}),
         runtimeTicks: info.runtimeTicks, ...(item.seriesName ? { seriesName: item.seriesName } : {}),
         subs: info.subtitles.map((s) => ({ index: s.index, ...(s.language ? { language: s.language } : {}), title: s.title })),
       } as const;
@@ -154,6 +164,8 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         imageUrl: imgCt ? absWith(imgCt, `/media/Items/${b.itemId}/Images/Primary?maxWidth=600`) : undefined,
         subtitles: info.subtitles.map((s) => ({ index: s.index, language: s.language, title: s.title, url: subUrl(s.url) })),
         ...(report ? { report } : {}),
+        // AirPlay: the stream carries the requested subtitle as a WebVTT rendition (the sender shows no side-loaded track for it)
+        ...(hlsSub ? { hlsSub: true } : {}),
         // what the stream carries, as fixed codes (never a URL or title); only with receiver caps, so any other answer stays as it was
         ...(clientCaps && info.delivery ? { delivery: info.delivery } : {}),
       };

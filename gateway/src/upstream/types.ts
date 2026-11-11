@@ -40,6 +40,12 @@ export interface Upstream {
   readonly paths: RegExp[];
   /** Chromecast subset (token in the URL path): playlists, segments, VTT subtitles, poster images */
   readonly castPaths: RegExp[];
+  /**
+   * AirPlay subtitle rendition (scope.hlsSub tokens only, never an ordinary cast token): extra cast paths (first capture group = the track
+   * index, which must be the token's `hlsSubIndex`) and, per path, the ONLY query keys allowed (lower-case key -> value pattern; each at
+   * most once; credential keys of `stripQuery` may appear). Absent = the server has no such rendition (Plex).
+   */
+  readonly castHlsSubPaths?: ReadonlyArray<{ path: RegExp; query: Readonly<Record<string, RegExp>> }>;
   /** original (untranscoded) streams: refused for roles with a height cap or without download rights */
   readonly directStream: RegExp;
   /** images: cacheable per user; the only thing a cast 'img' token may fetch */

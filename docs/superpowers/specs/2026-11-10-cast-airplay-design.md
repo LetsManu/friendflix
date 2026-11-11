@@ -381,10 +381,11 @@ A new first section on `/diagnose`, heading "Casting", above the existing viewpo
   `SubtitleMethod=Hls` on the HLS URL, so Jellyfin writes the subtitle playlist and segments with the correct
   `X-TIMESTAMP-MAP`). The media-server seam gets `capabilities.castHlsSubtitles` (Jellyfin `true`, Plex `false`); without it
   the AirPlay Subtitles chip shows "Off" and is disabled with the hint "This server can't send subtitles to AirPlay yet."
-- **Gateway:** `compatPlaylist` keeps exactly **one** `#EXT-X-MEDIA:TYPE=SUBTITLES` rendition, only for AirPlay tokens whose
-  authz scope says `hlsSub: true`, reduced to `TYPE, GROUP-ID, NAME, LANGUAGE, DEFAULT=YES, AUTOSELECT=YES, FORCED=NO, URI`, and
+- **Gateway:** `compatPlaylist` keeps exactly **one** `#EXT-X-MEDIA:TYPE=SUBTITLES` rendition (the requested track's,
+  found by `Subtitles/<index>/subtitles.m3u8` in its URI: Jellyfin lists every text track), only for AirPlay tokens whose
+  authz scope says `hlsSub: true` with that `hlsSubIndex`, reduced to `TYPE, GROUP-ID, NAME, LANGUAGE, DEFAULT=YES, AUTOSELECT=YES, FORCED=NO, URI`, and
   the matching `SUBTITLES=` attribute on `#EXT-X-STREAM-INF`. The URI check (inside `/media/c/<token>/`) applies as before;
-  `CLOSED-CAPTIONS` and every other subtitle group stay dropped. Chromecast tokens are unchanged (side-loaded WebVTT).
+  `CLOSED-CAPTIONS` and every other subtitle group stay dropped. The rendition's playlist and segment paths (query allowlisted) are served to that token only; `SubtitleMethod` other than `Hls` is refused (no burn-in). Chromecast tokens are unchanged (side-loaded WebVTT).
 - **Switching:** a subtitle change on AirPlay is a new token at the current position (like an audio change today).
 - **Risky receivers:** Apple TV is the reference (expected to work). LG webOS (has failed on unknown playlist lines before),
   Samsung (field reports of missing AirPlay subtitles), LG after some firmware updates (misplaced), Roku, Vizio and Sony AirPlay

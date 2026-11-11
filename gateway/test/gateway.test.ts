@@ -6,7 +6,8 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authClientIp, blocksDirectStream, compatPlaylist, createGateway, hlsAttrs, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
+import { authClientIp, blocksDirectStream, castHlsSubAllowed, compatPlaylist, createGateway, hlsAttrs, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
+import { UPSTREAMS } from '../src/upstream/index.js';
 
 const ID = 'a'.repeat(32);
 let jf: Server, be: Server, gw: Server;
@@ -22,6 +23,7 @@ const CT_BAD = 'B'.repeat(43);
 const CT_IMG = 'I'.repeat(43); // poster-only token
 const CT_PIN = 'P'.repeat(43); // valid only for client PIN_CLIENT (the backend pins tokens to the first client)
 const CT_LOW = 'L'.repeat(43); // role limited to 720p
+const CT_SUB = 'S'.repeat(43); // AirPlay token whose stream carries one subtitle rendition (scope.hlsSub)
 const PIN_CLIENT = '198.51.100.50';
 const D_FILE = '11111111-1111-4111-8111-111111111111';
 const D_BADNAME = '22222222-2222-4222-8222-222222222222';
@@ -45,6 +47,30 @@ const JF_MASTER = [
   `#EXT-X-IMAGE-STREAM-INF:BANDWIDTH=9768,RESOLUTION=320x180,CODECS="jpeg",URI="Trickplay/320/tiles.m3u8?MediaSourceId=${MS}&api_key=LEAK"`,
   '',
 ].join('\n');
+/** Jellyfin 10.10.7 with SubtitleMethod=Hls: EVERY text track is listed (DynamicHlsHelper.AddSubtitles), DEFAULT=YES on the requested one (4), LANGUAGE after URI */
+const hlsSubLine = (n: number, name: string, def: string, lang: string, uri = `${MS}/Subtitles/${n}/subtitles.m3u8?SegmentLength=30&api_key=LEAK`) =>
+  `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="${name}",DEFAULT=${def},FORCED=NO,AUTOSELECT=YES,URI="${uri}",LANGUAGE="${lang}"`;
+const JF_HLS_MASTER = [
+  '#EXTM3U',
+  hlsSubLine(3, 'English', 'NO', 'eng'),
+  hlsSubLine(4, 'Deutsch', 'YES', 'ger'),
+  hlsSubLine(5, 'Track 5', 'NO', 'Unknown'),
+  '#EXT-X-STREAM-INF:BANDWIDTH=11088278,AVERAGE-BANDWIDTH=11088278,VIDEO-RANGE=SDR,CODECS="avc1.640028,mp4a.40.2",RESOLUTION=1920x1080,FRAME-RATE=23.976,SUBTITLES="subs"',
+  `main.m3u8?DeviceId=d&MediaSourceId=${MS}&VideoCodec=h264&AudioCodec=aac&PlaySessionId=ps-1&api_key=LEAK&TranscodeReasons=ContainerNotSupported`,
+  '',
+].join('\n');
+/** what an AirPlay token with hlsSubIndex 4 gets: only the German rendition, as the receiver will fetch it */
+const JF_SUB_KEPT = [
+  '#EXTM3U',
+  `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="Deutsch",LANGUAGE="ger",DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,URI="${MS}/Subtitles/4/subtitles.m3u8?SegmentLength=30"`,
+  '#EXT-X-STREAM-INF:BANDWIDTH=11088278,AVERAGE-BANDWIDTH=11088278,CODECS="avc1.640028,mp4a.40.2",RESOLUTION=1920x1080,FRAME-RATE=23.976,SUBTITLES="subs"',
+  `main.m3u8?DeviceId=d&MediaSourceId=${MS}&VideoCodec=h264&AudioCodec=aac&PlaySessionId=ps-1&TranscodeReasons=ContainerNotSupported`,
+  '',
+].join('\n');
+/** Jellyfin's subtitle playlist for track 4 (SubtitleController.GetSubtitlePlaylist): segment lines carry api_key */
+const JF_SUB_PLAYLIST = ['#EXTM3U', '#EXT-X-TARGETDURATION:30', '#EXT-X-VERSION:3', '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-PLAYLIST-TYPE:VOD',
+  '#EXTINF:30.0000,', 'stream.vtt?CopyTimestamps=true&AddVttTimeMap=true&StartPositionTicks=0&EndPositionTicks=300000000&api_key=LEAK',
+  '#EXTINF:30.0000,', 'stream.vtt?CopyTimestamps=true&AddVttTimeMap=true&StartPositionTicks=300000000&EndPositionTicks=600000000&api_key=LEAK', '#EXT-X-ENDLIST', ''].join('\n');
 const JF_COMPAT = [
   '#EXTM3U',
   '#EXT-X-STREAM-INF:BANDWIDTH=11088278,AVERAGE-BANDWIDTH=11088278,CODECS="avc1.640028,mp4a.40.2",RESOLUTION=1920x1080,FRAME-RATE=23.976',
@@ -59,6 +85,13 @@ beforeAll(async () => {
     seen.push({ url: req.url!, auth: req.headers.authorization, range: req.headers.range, acceptEncoding: req.headers['accept-encoding'], cookie: req.headers.cookie });
     if (req.url!.includes('/master.m3u8') && req.url!.includes('jfmaster=1')) {
       return void res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' }).end(JF_MASTER);
+    }
+    if (req.url!.includes('/master.m3u8') && req.url!.includes('jfmaster=3')) return void res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' }).end(JF_HLS_MASTER);
+    if (/\/Subtitles\/\d+\/subtitles\.m3u8/.test(req.url!)) return void res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' }).end(JF_SUB_PLAYLIST);
+    if (/\/Subtitles\/\d+\/stream\.vtt/.test(req.url!)) return void res.writeHead(200, { 'content-type': 'text/vtt' }).end('WEBVTT\n');
+    if (req.url!.includes('/master.m3u8') && req.url!.includes('jfmaster=2')) {
+      // a subtitle rendition that points outside the token path (the check must fail the whole playlist)
+      return void res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' }).end(JF_HLS_MASTER.replace(`URI="${MS}/Subtitles/4/`, 'URI="https://evil.example/Subtitles/4/'));
     }
     if (req.url!.includes('/main.m3u8')) {
       if (req.url!.includes('big=1')) {
@@ -94,10 +127,10 @@ beforeAll(async () => {
       if (j.ct !== undefined) {
         authzCalls.push({ ct: j.ct, client: j.client });
         if (j.ct === 'E'.repeat(43)) return void res.writeHead(500).end();
-        if (![CT, CT_IMG, CT_PIN, CT_LOW].includes(j.ct)) return void res.writeHead(401).end();
+        if (![CT, CT_IMG, CT_PIN, CT_LOW, CT_SUB].includes(j.ct)) return void res.writeHead(401).end();
         if (j.ct === CT_PIN && j.client !== PIN_CLIENT) return void res.writeHead(401).end();
         res.writeHead(200, { 'content-type': 'application/json' });
-        return void res.end(JSON.stringify({ userId: 'u1', token: 'CASTJF', deviceId: 'ff-u1', maxBitrate: 5_000_000, maxHeight: j.ct === CT_LOW ? 720 : 1080, kind: j.ct === CT_IMG ? 'img' : 'media', scope: { itemId: ID, mediaSourceId: MS, playSessionId: 'ps-1' } }));
+        return void res.end(JSON.stringify({ userId: 'u1', token: 'CASTJF', deviceId: 'ff-u1', maxBitrate: 5_000_000, maxHeight: j.ct === CT_LOW ? 720 : 1080, kind: j.ct === CT_IMG ? 'img' : 'media', scope: { itemId: ID, mediaSourceId: MS, playSessionId: 'ps-1', ...(j.ct === CT_SUB ? { hlsSub: true, hlsSubIndex: 4 } : {}) } }));
       }
       if (j.dl !== undefined) {
         if (j.sid !== 'goodsid' && j.sid !== 'othersid') return void res.writeHead(401).end();
@@ -394,6 +427,104 @@ describe('compatPlaylist', () => {
   });
 });
 
+describe('compatPlaylist: the requested subtitle rendition for AirPlay (keepSubtitleIndex)', () => {
+  const T = 'A'.repeat(43);
+  const req = `/media/c/${T}/Videos/${ID}/master.m3u8`;
+  const sp = (text: string, idx?: number) => sanitizePlaylist(text, req, undefined, idx === undefined ? {} : { keepSubtitleIndex: idx });
+  const stream = ['#EXT-X-STREAM-INF:BANDWIDTH=5,CODECS="avc1.64001f,mp4a.40.2",SUBTITLES="subs"', 'v.m3u8'];
+  const master = (...mid: string[]) => ['#EXTM3U', ...mid, ...stream];
+  const noSubs = ['#EXTM3U', '#EXT-X-STREAM-INF:BANDWIDTH=5,CODECS="avc1.64001f,mp4a.40.2"', 'v.m3u8'];
+
+  it('Jellyfin\'s real master (3 tracks, DEFAULT on the requested one, LANGUAGE after URI): keeps the requested track, not the first', () => {
+    expect(sp(JF_HLS_MASTER, 4)).toBe(JF_SUB_KEPT);
+    // the requested track is not DEFAULT=YES upstream and not first either: the index decides, not the order or the flag
+    const out = sp(JF_HLS_MASTER, 3)!;
+    expect(out).toContain(`NAME="English",LANGUAGE="eng",DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,URI="${MS}/Subtitles/3/subtitles.m3u8?SegmentLength=30"`);
+    expect(out.match(/#EXT-X-MEDIA/g)).toHaveLength(1);
+    expect(out).not.toMatch(/LEAK|Deutsch|Track 5/);
+  });
+  it('LANGUAGE="Unknown" (not a language tag) is left out; a real tag stays', () => {
+    const out = sp(JF_HLS_MASTER, 5)!;
+    expect(out).toContain(`NAME="Track 5",DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,URI="${MS}/Subtitles/5/subtitles.m3u8?SegmentLength=30"`);
+    expect(out).not.toContain('LANGUAGE');
+    expect(sp(JF_HLS_MASTER, 3)).toContain('LANGUAGE="eng"');
+    expect(compatPlaylist(master('#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="x",URI="m/Subtitles/2/subtitles.m3u8",LANGUAGE="pt-BR"'), { keepSubtitleIndex: 2 })[1]).toContain('LANGUAGE="pt-BR"');
+  });
+  it('without an index (Chromecast, AirPlay without subtitles) every subtitle group goes', () => {
+    expect(sp(JF_HLS_MASTER)).toContain('#EXT-X-STREAM-INF:BANDWIDTH=11088278,AVERAGE-BANDWIDTH=11088278,CODECS="avc1.640028,mp4a.40.2",RESOLUTION=1920x1080,FRAME-RATE=23.976\n');
+    expect(sp(JF_HLS_MASTER)).not.toMatch(/#EXT-X-MEDIA|SUBTITLES/);
+    expect(compatPlaylist(master(hlsSubLine(4, 'x', 'YES', 'ger')))).toEqual(noSubs);
+    expect(compatPlaylist(master(hlsSubLine(4, 'x', 'YES', 'ger')), {})).toEqual(noSubs);
+    expect(compatPlaylist(master(hlsSubLine(4, 'x', 'YES', 'ger')), { keepSubtitleIndex: undefined })).toEqual(noSubs);
+  });
+  it('an index the master does not list drops every subtitle group and the references (no fallback to another track)', () => {
+    expect(sp(JF_HLS_MASTER, 9)).not.toMatch(/#EXT-X-MEDIA|SUBTITLES/);
+    expect(sp(JF_HLS_MASTER, 0)).not.toMatch(/#EXT-X-MEDIA|SUBTITLES/);
+  });
+  it('only an exact `Subtitles/<index>/subtitles.m3u8` path counts: look-alikes, other file names and the first match only', () => {
+    const l = (uri: string) => `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="x",URI="${uri}"`;
+    for (const uri of [`${MS}/Subtitles/4/stream.vtt`, `${MS}/Subtitles/44/subtitles.m3u8`, `${MS}/xSubtitles/4/subtitles.m3u8`, `${MS}/Subtitles/4/subtitles.m3u8/x`, `${MS}/Subtitles/4/0/subtitles.m3u8`, 's.m3u8'])
+      expect(compatPlaylist(master(l(uri)), { keepSubtitleIndex: 4 }), uri).toEqual(noSubs);
+    const twice = compatPlaylist(master(l(`${MS}/Subtitles/4/subtitles.m3u8?a=1`), l(`${MS}/Subtitles/4/subtitles.m3u8?a=2`)), { keepSubtitleIndex: 4 });
+    expect(twice.filter((x) => x.startsWith('#EXT-X-MEDIA'))).toHaveLength(1);
+    expect(twice.join('\n')).toContain('a=1');
+  });
+  it('a second group and CLOSED-CAPTIONS go, also when the group is only referenced by another variant', () => {
+    const out = compatPlaylist([
+      '#EXTM3U', '#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID="cc",NAME="cc",INSTREAM-ID="CC1"',
+      '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="a",URI="m/Subtitles/4/subtitles.m3u8"',
+      '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs2",NAME="b",URI="m/Subtitles/5/subtitles.m3u8"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=5,CLOSED-CAPTIONS="cc",SUBTITLES="subs"', 'v.m3u8', '#EXT-X-STREAM-INF:BANDWIDTH=4,CLOSED-CAPTIONS="cc",SUBTITLES="subs2"', 'w.m3u8',
+    ], { keepSubtitleIndex: 4 });
+    expect(out.join('\n')).not.toMatch(/CLOSED-CAPTIONS|subs2|Subtitles\/5/);
+    expect(out).toContain('#EXT-X-STREAM-INF:BANDWIDTH=5,SUBTITLES="subs"');
+    expect(out).toContain('#EXT-X-STREAM-INF:BANDWIDTH=4');
+  });
+  it('a missing NAME gets the fixed, intentionally not localised "Subtitles"; a rendition without GROUP-ID or URI is dropped', () => {
+    expect(compatPlaylist(master('#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",URI="m/Subtitles/4/subtitles.m3u8"'), { keepSubtitleIndex: 4 })[1])
+      .toBe('#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="Subtitles",DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,URI="m/Subtitles/4/subtitles.m3u8"');
+    expect(compatPlaylist(master('#EXT-X-MEDIA:TYPE=SUBTITLES,NAME="x",URI="m/Subtitles/4/subtitles.m3u8"'), { keepSubtitleIndex: 4 })).toEqual(noSubs);
+    expect(compatPlaylist(master('#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="x"'), { keepSubtitleIndex: 4 })).toEqual(noSubs);
+  });
+  it('AUDIO groups and everything else behave as without the option', () => {
+    const lines = ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="de",URI="a.m3u8"', '#EXT-X-STREAM-INF:BANDWIDTH=5,HDCP-LEVEL=NONE,AUDIO="aud"', 'v.m3u8'];
+    expect(compatPlaylist(lines, { keepSubtitleIndex: 4 })).toEqual(compatPlaylist(lines));
+  });
+  it('a kept rendition with a URI outside the token path makes the playlist fail (null); dropped lines are checked too', () => {
+    for (const uri of ['https://evil.example/Subtitles/4/subtitles.m3u8', '//evil.example/Subtitles/4/subtitles.m3u8', '/Videos/x/Subtitles/4/subtitles.m3u8', '../../../../Subtitles/4/subtitles.m3u8', `/media/c/${'B'.repeat(43)}/Subtitles/4/subtitles.m3u8`]) {
+      const text = master(`#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="x",URI="${uri}"`).join('\n');
+      expect(sp(text, 4), uri).toBeNull();
+      expect(sp(text), uri).toBeNull();
+    }
+    const l = (extra: string) => `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="x",${extra}`;
+    expect(sp(master(l('URI="m/Subtitles/4/subtitles.m3u8"'), `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="x",NAME="E",URI="https://evil.example/t.m3u8"`).join('\n'), 4)).toBeNull();
+    expect(sp(master(`#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="x,URI=//evil/s.m3u8",URI="m/Subtitles/4/subtitles.m3u8"`).join('\n'), 4)).toBeNull();
+  });
+  it('the kept URI is re-checked as the exact string that is emitted: values the checker reads differently (quote tricks) never survive', () => {
+    for (const uri of [`'//evil.example/Subtitles/4/subtitles.m3u8'`, `,//evil/Subtitles/4/subtitles.m3u8`, `"m/Subtitles/4/subtitles.m3u8,x"`]) {
+      const line = `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="x",URI=${uri.startsWith('"') ? uri : uri}`;
+      const out = sp(master(line).join('\n'), 4);
+      expect(out === null || !/evil/.test(out), uri).toBe(true);
+      if (out !== null) expect(out, uri).not.toMatch(/#EXT-X-MEDIA/);
+    }
+  });
+});
+
+describe('cast hlsSub allowlist vectors (AirPlay subtitle rendition paths, query allowlisted)', () => {
+  const hv = (JSON.parse(readFileSync(new URL('../../test-vectors/media-paths.json', import.meta.url), 'utf8')) as { castHlsSub: { allow: string[]; deny: string[] } }).castHlsSub;
+  it.each(hv.allow)('allows %s', (p) => expect(castHlsSubAllowed(p)).not.toBeNull());
+  it.each(hv.deny)('denies %s', (p) => expect(castHlsSubAllowed(p)).toBeNull());
+  it('reports the track index of the path', () => {
+    expect(castHlsSubAllowed(hv.allow[0]!)).toEqual({ index: 3 });
+  });
+  it('an ordinary cast token never reaches these paths through normalizeCastPath (cast.deny)', () => {
+    for (const p of hv.allow) expect(normalizeCastPath(p.split('?')[0]!)).toBeNull();
+  });
+  it('Plex has none', () => {
+    expect(UPSTREAMS.plex!.castHlsSubPaths).toBeUndefined();
+  });
+});
+
 describe('cast route /media/c/<token>/', () => {
   it('streams playlist + segment with the profile token in the header and the cast token never upstream', async () => {
     seen.length = 0;
@@ -422,6 +553,103 @@ describe('cast route /media/c/<token>/', () => {
     const wm = await get(`/media/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&jfmaster=1`);
     expect(wm.status).toBe(200);
     expect(await wm.text()).toBe(JF_MASTER);
+  });
+  const SUBP = `/Videos/${ID}/${MS}/Subtitles/4`;
+  const SEGQ = 'CopyTimestamps=true&AddVttTimeMap=true&StartPositionTicks=0&EndPositionTicks=300000000&api_key=LEAK';
+  const subGet = (path: string, ct = CT_SUB) => cget(path, {}, `/media/c/${ct}`);
+  it('keeps the requested subtitle rendition only for a token whose scope says hlsSub (+ index); every other token still gets the plain master', async () => {
+    const withSub = await subGet(`/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&PlaySessionId=ps-1&SubtitleStreamIndex=4&SubtitleMethod=Hls&jfmaster=3`);
+    expect(withSub.status).toBe(200);
+    expect(await withSub.text()).toBe(JF_SUB_KEPT);
+    const plain = await cget(`/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&PlaySessionId=ps-1&jfmaster=3`);
+    expect(await plain.text()).not.toMatch(/#EXT-X-MEDIA|SUBTITLES/);
+    const img = await subGet(`/Videos/${ID}/master.m3u8?jfmaster=3`, CT_IMG);
+    expect(img.status).toBe(403);
+  });
+  it('a hlsSub token whose subtitle rendition points outside the token path gets 502, never the playlist', async () => {
+    const r = await subGet(`/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&PlaySessionId=ps-1&jfmaster=2`);
+    expect(r.status).toBe(502);
+    expect(await r.text()).not.toContain('evil.example');
+  });
+  it('AirPlay subtitle playlist: 200 for the hlsSub token, api_key stripped from the segment lines, segments stay relative', async () => {
+    seen.length = 0;
+    const r = await subGet(`${SUBP}/subtitles.m3u8?SegmentLength=30&api_key=LEAK`);
+    expect(r.status).toBe(200);
+    const body = await r.text();
+    expect(body).not.toMatch(/api_key|LEAK/i);
+    expect(body).toContain('stream.vtt?CopyTimestamps=true&AddVttTimeMap=true&StartPositionTicks=0&EndPositionTicks=300000000\n');
+    expect(seen.at(-1)!.url).toMatch(new RegExp(`^${SUBP}/subtitles\\.m3u8\\?SegmentLength=30`));
+    expect(seen.at(-1)!.url).not.toContain(CT_SUB);
+  });
+  it('AirPlay subtitle segment: 200 with Jellyfin\'s four params (forwarded), only for the hlsSub token and its index', async () => {
+    seen.length = 0;
+    const r = await subGet(`${SUBP}/stream.vtt?${SEGQ}`);
+    expect(r.status).toBe(200);
+    expect(await r.text()).toBe('WEBVTT\n');
+    expect(seen.at(-1)!.url).toContain('StartPositionTicks=0&EndPositionTicks=300000000');
+    expect(seen.at(-1)!.auth).toContain('Token="CASTJF"');
+  });
+  it('an hlsSub token\'s segment fetch carries its own SubtitleStreamIndex and SubtitleMethod=Hls (as Jellyfin\'s playlist writes them)', async () => {
+    seen.length = 0;
+    const r = await subGet(`/Videos/${ID}/hls1/main/0.ts?MediaSourceId=${MS}&PlaySessionId=ps-1&SubtitleStreamIndex=4&SubtitleMethod=Hls`);
+    expect(r.status).toBe(200);
+    await r.arrayBuffer();
+    expect(seen.at(-1)!.url).toContain('SubtitleStreamIndex=4');
+    expect(seen.at(-1)!.url).toContain('SubtitleMethod=Hls');
+  });
+  it('AlwaysBurnInSubtitleWhenTranscoding never reaches the upstream, for an hlsSub token or any other cast token', async () => {
+    for (const ct of [CT_SUB, CT]) {
+      for (const path of [`/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&AlwaysBurnInSubtitleWhenTranscoding=true&jfmaster=3`, `/Videos/${ID}/hls1/main/0.ts?MediaSourceId=${MS}&alwaysburninsubtitlewhentranscoding=true`]) {
+        seen.length = 0;
+        const r = await subGet(path, ct);
+        expect(r.status, `${ct.slice(0, 1)} ${path}`).toBe(200);
+        await r.arrayBuffer();
+        expect(seen.at(-1)!.url, path).not.toMatch(/alwaysburnin/i);
+        expect(seen.at(-1)!.url).toContain(`MediaSourceId=${MS}`);
+      }
+    }
+  });
+  it('the Chromecast side-loaded subtitle path refuses an itemId override that is not the token\'s item (any key case); its own item id passes', async () => {
+    const other = 'c'.repeat(32);
+    const p = `/Videos/${ID}/${MS}/Subtitles/3/0/Stream.vtt`;
+    for (const q of [`itemId=${other}`, `ITEMID=${other}`, `itemid=${other}`]) expect((await cget(`${p}?${q}`)).status, q).toBe(403);
+    expect((await cget(`${p}?itemId=${ID}`)).status).toBe(200);
+    expect((await cget(p)).status).toBe(200);
+  });
+  it('the same paths are 403 for a token without hlsSub and for a poster token', async () => {
+    for (const ct of [CT, CT_IMG, CT_LOW]) {
+      expect((await subGet(`${SUBP}/subtitles.m3u8?SegmentLength=30`, ct)).status, ct).toBe(403);
+      expect((await subGet(`${SUBP}/stream.vtt?${SEGQ}`, ct)).status, ct).toBe(403);
+    }
+  });
+  it('hlsSub token: another track index, a foreign media source, overrides (itemId / index / format / mediaSourceId), repeats and other file types are 403', async () => {
+    const bad = [
+      `/Videos/${ID}/${MS}/Subtitles/3/subtitles.m3u8?SegmentLength=30`, `/Videos/${ID}/${MS}/Subtitles/3/stream.vtt?${SEGQ}`, // not the token's index
+      `/Videos/${ID}/${'c'.repeat(32)}/Subtitles/4/stream.vtt?${SEGQ}`, // foreign media source
+      `${SUBP}/stream.vtt?${SEGQ}&itemId=${'c'.repeat(32)}`, `${SUBP}/stream.vtt?${SEGQ}&index=3`, `${SUBP}/stream.vtt?${SEGQ}&format=srt`, `${SUBP}/stream.vtt?${SEGQ}&mediaSourceId=${'c'.repeat(32)}`,
+      `${SUBP}/subtitles.m3u8?SegmentLength=30&SegmentLength=1`, `${SUBP}/subtitles.m3u8?SegmentLength=0`, `${SUBP}/stream.srt?${SEGQ}`,
+    ];
+    for (const b of bad) expect((await subGet(b)).status, b).toBe(403);
+  });
+  it('burn-in: SubtitleMethod=Encode / other methods or another SubtitleStreamIndex is refused for an hlsSub token; stripped for every other token', async () => {
+    for (const q of ['SubtitleMethod=Encode&SubtitleStreamIndex=4', 'SubtitleMethod=Embed', 'SubtitleMethod=Hls&SubtitleStreamIndex=3', 'SubtitleStreamIndex=2', 'SubtitleMethod=Hls&SubtitleMethod=Encode', 'subtitlemethod=encode']) {
+      const r = await subGet(`/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&${q}&jfmaster=3`);
+      expect(r.status, q).toBe(403);
+      await r.arrayBuffer();
+    }
+    seen.length = 0;
+    const ok = await subGet(`/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&SubtitleMethod=hls&SubtitleStreamIndex=4&jfmaster=3`);
+    expect(ok.status).toBe(200);
+    await ok.arrayBuffer();
+    expect(seen.at(-1)!.url).toContain('SubtitleMethod=hls');
+    for (const path of [`/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&SubtitleMethod=Encode&SubtitleStreamIndex=4&jfmaster=3`, `/Videos/${ID}/main.m3u8?MediaSourceId=${MS}&SubtitleMethod=Encode&SubtitleStreamIndex=4`]) {
+      seen.length = 0;
+      const r = await cget(path); // CT: no hlsSub
+      expect(r.status).toBe(200);
+      await r.arrayBuffer();
+      expect(seen.at(-1)!.url, path).not.toMatch(/subtitlemethod|subtitlestreamindex/i);
+      expect(seen.at(-1)!.url).toContain(`MediaSourceId=${MS}`);
+    }
   });
   it('clamps bitrate to the token limit', async () => {
     seen.length = 0;

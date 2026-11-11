@@ -8,6 +8,7 @@ import { tr } from '#lib/i18n';
 import { createAirPlay, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayTimers, type AirPlayVideo } from '#lib/player/airplay';
 import { clearAirLog, readAirLog, srcKind } from '#lib/player/airplayLog';
 import { DEFAULT_PREFS } from '#lib/stores';
+import { SUBS_REFUSED_KEY } from './airsubs';
 import { CAST_VIDEO_ATTR, createCastEngine, ENDED_HIDE_MS, ENDED_IDLE_MS, PROGRESS_MS, type CastSession, type EngineDeps, type PlayerHandoff } from './engine';
 
 const T0 = 1_000_000;
@@ -140,6 +141,7 @@ async function setup(o: { started?: boolean } = {}) {
   };
   const srcBefore = video.src;
   return {
+    cast_setSubtitleCalls: () => vi.mocked(deps.cast.castSetSubtitle).mock.calls.length,
     engine, out, deps, calls, order, posts, api, toast, hides, body, store, video, probe, air, player, spy, handoff, srcBefore,
     advance, segs, wakes, hide: (on: boolean) => { hiddenNow = on; }, wake: () => wakes.forEach((fn) => fn()), pending: () => timers.length,
     adopt: async (over: Partial<PlayerHandoff> = {}) => { engine.adopt({ ...handoff, ...over }); await flush(); },
@@ -725,5 +727,113 @@ describe('cast engine: AirPlay next episode without a receiver queue', () => {
     expect(env.spy.switchItem).toHaveBeenCalled();
     expect(env.reports().at(-1)).toBe('stop'); // ep1's (after the 10 s progress)
     expect(get(env.out)).toMatchObject({ itemId: 'ep2' });
+  });
+});
+
+describe('cast engine: AirPlay subtitles inside the stream', () => {
+  const subs = [{ index: 3, title: 'Deutsch (SDH)', language: 'deu' }];
+  const bodies = (env: Env) => env.tokenPosts().map((c) => c.init.body as Record<string, unknown>);
+
+  it('subtitle choice on AirPlay re-requests the stream with subtitleIndex at the current position', async () => {
+    const env = await setup();
+    await env.adopt({ subtitles: subs });
+    env.video.currentTime = 400;
+    env.video.fire('timeupdate');
+    env.posts.push(async () => ci('s1', { hlsSub: true }));
+    env.engine.setSubtitle(3);
+    await flush();
+    expect(env.cast_setSubtitleCalls()).toBe(0); // the receiver is the TV: nothing side-loaded
+    expect(bodies(env)).toHaveLength(1);
+    expect(bodies(env)[0]).toMatchObject({ via: 'airplay', subtitleIndex: 3, startTicks: secToTicks(400), itemId: 'film' });
+    expect(get(env.out)).toMatchObject({ subIndex: 3 });
+    expect(env.deletes()).toEqual(['a1']);
+    expect(env.reports().filter((r) => r === 'stop')).toHaveLength(1);
+    // off again: a new token without the key
+    env.posts.push(async () => ci('s2'));
+    env.engine.setSubtitle(-1);
+    await flush();
+    expect(bodies(env)).toHaveLength(2);
+    expect('subtitleIndex' in bodies(env)[1]!).toBe(false);
+  });
+
+  it('an audio change keeps the chosen subtitle in the new token', async () => {
+    const env = await setup();
+    await env.adopt({ subtitles: subs });
+    env.posts.push(async () => ci('s1', { hlsSub: true }));
+    env.engine.setSubtitle(3);
+    await flush();
+    await env.engine.refresh({ audioIndex: 2 });
+    expect(bodies(env)[1]).toMatchObject({ audioIndex: 2, subtitleIndex: 3, via: 'airplay' });
+  });
+
+  it('a server without the capability sends no subtitleIndex and does not re-request', async () => {
+    const env = await setup();
+    env.deps.subsInStream = () => false;
+    await env.adopt({ subtitles: subs });
+    env.engine.setSubtitle(3);
+    await flush();
+    expect(bodies(env)).toHaveLength(0);
+    expect(get(env.out)?.subIndex).toBe(-1);
+  });
+
+  it('code 4 retries once without subtitles: toast, remembered for 30 days, subIndex off; a second code 4 never asks again', async () => {
+    const env = await setup();
+    await env.adopt({ subtitles: subs });
+    env.posts.push(async () => ci('s1', { hlsSub: true }));
+    env.engine.setSubtitle(3);
+    await flush();
+    expect(env.video.src).toContain('/s1/');
+    env.posts.push(async () => ci('s2'));
+    env.air.videoError(4);
+    await flush(); await flush();
+    expect(bodies(env)).toHaveLength(2);
+    expect('subtitleIndex' in bodies(env)[1]!).toBe(false);
+    expect(env.toast).toHaveBeenCalledWith('info', tr('player.castRemote.subsRefused'));
+    expect(Number(env.store.get(SUBS_REFUSED_KEY))).toBeGreaterThanOrEqual(T0);
+    expect(get(env.out)?.subIndex).toBe(-1);
+    expect(env.video.src).toContain('/s2/');
+    expect(env.reports().filter((r) => r === 'stop')).toHaveLength(1); // the hand-off's token only: s1 never started, so it owes none
+    expect(env.deletes()).toEqual(['a1', 's1']);
+    env.air.videoError(4);
+    await flush(); await flush();
+    expect(bodies(env)).toHaveLength(2);
+  });
+
+  it('a remembered refusal starts AirPlay without subtitles until picked again', async () => {
+    const env = await setup();
+    env.store.set(SUBS_REFUSED_KEY, String(T0 - 24 * 3600_000));
+    await env.adopt({ subtitles: subs, subIndex: 3, cast: { ...env.handoff.cast, hlsSub: true } });
+    await env.engine.refresh({ audioIndex: 2 });
+    expect('subtitleIndex' in bodies(env)[0]!).toBe(false);
+    env.engine.setSubtitle(3);
+    await flush();
+    expect(bodies(env)[1]).toMatchObject({ subtitleIndex: 3 });
+    expect(env.store.has(SUBS_REFUSED_KEY)).toBe(false);
+  });
+
+  it('a refusal older than 30 days no longer counts', async () => {
+    const env = await setup();
+    env.store.set(SUBS_REFUSED_KEY, String(T0 - 31 * 24 * 3600_000));
+    await env.adopt({ subtitles: subs, subIndex: 3, cast: { ...env.handoff.cast, hlsSub: true } });
+    await env.engine.refresh({ audioIndex: 2 });
+    expect(bodies(env)[0]).toMatchObject({ subtitleIndex: 3 });
+  });
+
+  it('adopt: a token that does not carry the rendition starts with subtitles off, one that does keeps the track', async () => {
+    const a = await setup();
+    await a.adopt({ subtitles: subs, subIndex: 3 });
+    expect(get(a.out)?.subIndex).toBe(-1);
+    const b = await setup();
+    await b.adopt({ subtitles: subs, subIndex: 3, cast: { ...b.handoff.cast, hlsSub: true } });
+    expect(get(b.out)?.subIndex).toBe(3);
+  });
+
+  it('a new token without the rendition (the server ignored the index) switches the chip off', async () => {
+    const env = await setup();
+    await env.adopt({ subtitles: subs });
+    env.posts.push(async () => ci('s1')); // no hlsSub
+    env.engine.setSubtitle(3);
+    await flush();
+    expect(get(env.out)?.subIndex).toBe(-1);
   });
 });

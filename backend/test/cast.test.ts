@@ -1397,3 +1397,110 @@ describe('cast: HEVC and surround with FriendFlix\'s own receiver', () => {
     expect((await create(admin, { receiver: true, caps })).j.delivery).toMatchObject({ video: 'copy', videoCodec: 'hevc' });
   });
 });
+
+/** AirPlay subtitles in the stream: one WebVTT rendition requested from the media server, recorded as `hlsSub`, named in the authz scope. */
+describe('cast: AirPlay subtitle rendition request', () => {
+  afterEach(() => { srcStreams = null; });
+  const textSub = { Index: 3, Type: 'Subtitle', Codec: 'srt', Language: 'ger', IsTextSubtitleStream: true };
+  const imageSub = { Index: 4, Type: 'Subtitle', Codec: 'pgssub', Language: 'eng', IsTextSubtitleStream: false };
+  const streams = [{ Index: 0, Type: 'Video', Codec: 'h264', Height: 1080 }, { Index: 1, Type: 'Audio', Codec: 'aac', Channels: 2 }, textSub, imageSub];
+  const lastInfo = () => env.jfCalls.filter((c) => c.path.endsWith('/PlaybackInfo')).at(-1)!;
+  const recOf = async (ct: string) => JSON.parse((await env.kv.get(`cast:${hashToken(ct)}`))!);
+
+  it('AirPlay token with subtitleIndex asks Jellyfin for an HLS subtitle', async () => {
+    srcStreams = streams;
+    const { r, j, ct } = await create(admin, { via: 'airplay', subtitleIndex: 3 });
+    expect(r.statusCode, r.body).toBe(200);
+    const p = new URL(j.contentUrl).searchParams;
+    expect(p.get('SubtitleMethod')).toBe('Hls');
+    expect(p.get('SubtitleStreamIndex')).toBe('3');
+    expect(j.hlsSub).toBe(true);
+    // the PlaybackInfo request: the track is named by the URL only (-1 here: an image track must never be selected and burned in); this request (only) can deliver WebVTT through HLS
+    expect(lastInfo().body.SubtitleStreamIndex).toBe(-1);
+    expect(lastInfo().body.DeviceProfile.SubtitleProfiles).toContainEqual({ Format: 'vtt', Method: 'Hls' });
+    // still H.264 + stereo AAC over TS
+    expect(p.get('VideoCodec')).toBe('h264');
+    expect(p.get('AudioCodec')).toBe('aac');
+    expect(p.get('SegmentContainer')).toBe('ts');
+    expect(j.hlsSegmentFormat).toBe('ts');
+    expect((await recOf(ct))).toMatchObject({ hlsSub: true, hlsSubIndex: 3 });
+    expect(JSON.stringify(lastInfo())).not.toContain(ct);
+  });
+
+  it('without subtitleIndex (AirPlay off, or Chromecast) the URL, the request and the record carry no rendition', async () => {
+    srcStreams = streams;
+    for (const body of [{ via: 'airplay' }, {}]) {
+      const { j, ct } = await create(admin, body);
+      const p = new URL(j.contentUrl).searchParams;
+      expect(p.has('SubtitleMethod')).toBe(false);
+      expect(p.has('SubtitleStreamIndex')).toBe(false);
+      expect(j.hlsSub).toBeUndefined();
+      expect(lastInfo().body.SubtitleStreamIndex).toBe(-1);
+      expect(lastInfo().body.DeviceProfile.SubtitleProfiles).not.toContainEqual({ Format: 'vtt', Method: 'Hls' });
+      expect((await recOf(ct)).hlsSub).toBeUndefined();
+    }
+  });
+
+  it('Chromecast request with subtitleIndex is refused', async () => {
+    for (const body of [{ subtitleIndex: 3 }, { via: 'chromecast', subtitleIndex: 3 }, { receiver: true, subtitleIndex: 3 }]) {
+      const before = (await env.kv.keys('cast:')).length;
+      const { r } = await create(admin, body);
+      expect(r.statusCode, JSON.stringify(body)).toBe(400);
+      expect((await env.kv.keys('cast:')).length).toBe(before); // nothing minted
+    }
+    expect((await create(admin, { via: 'airplay', subtitleIndex: -1 })).r.statusCode).toBe(400);
+    expect((await create(admin, { via: 'airplay', subtitleIndex: 1.5 })).r.statusCode).toBe(400);
+  });
+
+  it('an image track is never carried (no burn-in): the request goes through without a rendition', async () => {
+    srcStreams = streams;
+    const { r, j, ct } = await create(admin, { via: 'airplay', subtitleIndex: 4 });
+    expect(r.statusCode).toBe(200);
+    expect(new URL(j.contentUrl).searchParams.has('SubtitleMethod')).toBe(false);
+    expect(j.hlsSub).toBeUndefined();
+    expect(lastInfo().body.SubtitleStreamIndex).toBe(-1); // Jellyfin is never asked to select an image track
+    expect((await recOf(ct)).hlsSub).toBeUndefined();
+    expect((await recOf(ct)).hlsSubIndex).toBeUndefined();
+    expect((await create(admin, { via: 'airplay', subtitleIndex: 77 })).j.hlsSub).toBeUndefined(); // no such track
+  });
+
+  it('authz scope carries hlsSub', async () => {
+    srcStreams = streams;
+    const scope = async (ct: string) => (await authz({ ct })).json().scope; // read right away: an account keeps 2 live tokens
+    expect(await scope((await create(admin, { via: 'airplay', subtitleIndex: 3 })).ct)).toEqual({ itemId: ID, mediaSourceId: MS, playSessionId: 'ps-12345678', hlsSub: true, hlsSubIndex: 3 });
+    expect(await scope((await create(admin, { via: 'airplay' })).ct)).toEqual({ itemId: ID, mediaSourceId: MS, playSessionId: 'ps-12345678' });
+    expect(await scope((await create(admin)).ct)).toEqual({ itemId: ID, mediaSourceId: MS, playSessionId: 'ps-12345678' });
+  });
+
+  it('a record that says hlsSub but is not an AirPlay token never reaches the gateway as one', async () => {
+    const { ct } = await create(admin);
+    const k = `cast:${hashToken(ct)}`;
+    await env.kv.set(k, JSON.stringify({ ...JSON.parse((await env.kv.get(k))!), hlsSub: true, hlsSubIndex: 3 }), 600);
+    expect((await authz({ ct })).json().scope).not.toHaveProperty('hlsSub');
+    expect((await authz({ ct })).json().scope).not.toHaveProperty('hlsSubIndex');
+  });
+
+  it('a server without the capability ignores subtitleIndex: no rendition, no hlsSub', async () => {
+    srcStreams = streams;
+    const jf = env.ctx.jf as { capabilities: typeof env.ctx.jf.capabilities };
+    const prev = jf.capabilities;
+    jf.capabilities = { ...prev, castHlsSubtitles: false };
+    try {
+      const { r, j, ct } = await create(admin, { via: 'airplay', subtitleIndex: 3 });
+      expect(r.statusCode).toBe(200);
+      expect(new URL(j.contentUrl).searchParams.has('SubtitleMethod')).toBe(false);
+      expect(lastInfo().body.SubtitleStreamIndex).toBe(-1);
+      expect(j.hlsSub).toBeUndefined();
+      expect((await recOf(ct)).hlsSub).toBeUndefined();
+      expect((await authz({ ct })).json().scope).not.toHaveProperty('hlsSub');
+    } finally {
+      jf.capabilities = prev;
+    }
+  });
+
+  it('the capability is public: Jellyfin true', async () => {
+    expect(env.ctx.jf.capabilities.castHlsSubtitles).toBe(true);
+    const me = (await call(admin, 'GET', '/api/me')).json();
+    expect(me.server.capabilities.castHlsSubtitles).toBe(true);
+  });
+});

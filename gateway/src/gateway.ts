@@ -42,7 +42,7 @@ interface Authz {
   deviceId: string;
   maxBitrate: number;
   /** only present for Chromecast tokens: the one item / media source / play session the token may touch */
-  scope?: { itemId: string; mediaSourceId: string; playSessionId: string };
+  scope?: { itemId: string; mediaSourceId: string; playSessionId: string; /** AirPlay token whose stream carries one subtitle rendition (anything but `true` = drop every subtitle group) */ hlsSub?: boolean; /** with hlsSub: the track whose rendition compatPlaylist keeps and whose paths the token may fetch */ hlsSubIndex?: number };
   /** cast only: 'img' tokens may fetch poster images and nothing else (default 'media') */
   kind?: 'media' | 'img';
   /** resolution cap: role limit (cookie path, when the role has one) or cast token cap (role limit, at most 1080) */
@@ -106,8 +106,36 @@ export function authClientIp(headers: IncomingMessage['headers'], peer: string |
 
 export const normalizeCastPath = (raw: string, up: Upstream = jellyfinUpstream) => normalizePath(raw, up.castPaths);
 
+/**
+ * AirPlay subtitle rendition paths (Upstream.castHlsSubPaths): `rawPathWithQuery` ("/Videos/<id>/<ms>/Subtitles/<n>/subtitles.m3u8?SegmentLength=30")
+ * -> { index } when the path matches one entry and every query key is a credential key (stripped later) or one of that entry's allowed keys, once,
+ * with a matching value; else null. Only a token whose scope says hlsSub (and this index) may use it (handleCast); `castPaths` stay unchanged.
+ */
+export function castHlsSubAllowed(rawPathWithQuery: string, up: Upstream = jellyfinUpstream): { index: number } | null {
+  const q = rawPathWithQuery.indexOf('?');
+  const rawPath = q === -1 ? rawPathWithQuery : rawPathWithQuery.slice(0, q);
+  for (const e of up.castHlsSubPaths ?? []) {
+    const path = normalizePath(rawPath, [e.path]);
+    const m = path ? e.path.exec(path) : null;
+    if (!m) continue;
+    const seen = new Set<string>();
+    for (const [k, v] of new URLSearchParams(q === -1 ? '' : rawPathWithQuery.slice(q + 1))) {
+      const lk = k.toLowerCase();
+      if (up.stripQuery.has(lk)) continue;
+      const re = e.query[lk];
+      if (!re || seen.has(lk) || !re.test(v)) return null;
+      seen.add(lk);
+    }
+    return { index: Number(m[1]) };
+  }
+  return null;
+}
+
 const sha256 = (v: string) => createHash('sha256').update(v).digest('hex');
 const lc = (v: string) => v.replace(/-/g, '').toLowerCase();
+/** the subtitle track an AirPlay token may carry (scope.hlsSub === true with an integer hlsSubIndex, never a poster token), else undefined */
+const hlsSubIndexOf = (auth: Pick<Authz, 'scope' | 'kind'>): number | undefined =>
+  auth.scope?.hlsSub === true && auth.kind !== 'img' && Number.isInteger(auth.scope.hlsSubIndex) ? auth.scope.hlsSubIndex : undefined;
 
 /** Removes token-like parameters from one playlist URI (relative, optionally with a query). */
 export function stripUriTokens(uri: string, strip: ReadonlySet<string> = jellyfinUpstream.stripQuery): string {
@@ -123,7 +151,7 @@ export function stripUriTokens(uri: string, strip: ReadonlySet<string> = jellyfi
 
 /** `#EXT-X-STREAM-INF` attributes the compatibility master keeps (AUDIO / VIDEO only while their EXT-X-MEDIA group is kept) */
 const COMPAT_STREAM_ATTRS = new Set(['BANDWIDTH', 'AVERAGE-BANDWIDTH', 'CODECS', 'RESOLUTION', 'FRAME-RATE']);
-const COMPAT_GROUP_ATTRS = new Set(['AUDIO', 'VIDEO']);
+const COMPAT_GROUP_ATTRS = new Set(['AUDIO', 'VIDEO', 'SUBTITLES']); // SUBTITLES only ever matches the one kept rendition (see compatPlaylist)
 
 /**
  * `KEY=value` pairs of an HLS attribute list (quoted values may contain commas). A single linear scan, no regex: the list comes
@@ -168,22 +196,47 @@ const unquote = (v: string) => v.replace(/^"|"$/g, '');
  *   "its absence implies a value of SDR". The cast stream is forced to H.264 8 bit (Level 41, MaxVideoBitDepth 8), i.e. SDR, so
  *   dropping it loses nothing and removes one more thing a strict receiver can choke on. HDCP-LEVEL, ALLOWED-CPC, PATHWAY-ID,
  *   SUPPLEMENTAL-CODECS, REQ-* and other newer attributes go for the same reason.
+ *   Exception (`opts.keepSubtitleIndex`, AirPlay tokens whose authz scope says `hlsSub` with that `hlsSubIndex`): Jellyfin lists EVERY text track
+ *   (DEFAULT=YES on the requested one, LANGUAGE after URI), so the rendition is picked by its URI, never by position: the first
+ *   `TYPE=SUBTITLES` line whose URI path ends in `Subtitles/<index>/subtitles.m3u8` stays, rewritten
+ *   to exactly `TYPE, GROUP-ID, NAME, LANGUAGE, DEFAULT=YES, AUTOSELECT=YES, FORCED=NO, URI` (nothing else of the upstream line survives),
+ *   and `SUBTITLES="<that group>"` stays on `#EXT-X-STREAM-INF`. Without GROUP-ID or URI, with an odd value or without that track it is
+ *   dropped like the rest (no fallback to another track). LANGUAGE stays only when it is a language tag (Jellyfin writes "Unknown"); a missing
+ *   NAME becomes the fixed "Subtitles" (intentionally not localised: the playlist is not per-language). Other subtitle groups and every
+ *   CLOSED-CAPTIONS rendition always go. `opts.checkUri` re-checks the exact URI string that is emitted (sanitizePlaylist's origin / prefix check).
  * - Every other tag (EXTM3U, EXT-X-VERSION, EXT-X-INDEPENDENT-SEGMENTS, media playlist tags, EXT-X-I-FRAME-STREAM-INF ...) and all
  *   media playlists stay as they are.
  * Runs on the already URI-checked / token-stripped lines (sanitizePlaylist), so the hardening is unaffected.
  */
-export function compatPlaylist(lines: string[]): string[] {
+export function compatPlaylist(lines: string[], opts: { keepSubtitleIndex?: number; checkUri?: (uri: string) => void } = {}): string[] {
   const dropTypes = /^(SUBTITLES|CLOSED-CAPTIONS)$/;
   const groups = new Set<string>(); // `TYPE:GROUP-ID` of kept EXT-X-MEDIA renditions
-  for (const line of lines) {
-    if (!line.startsWith('#EXT-X-MEDIA:')) continue;
+  const keptSub: { line: number; text: string }[] = []; // the requested track's rendition AirPlay keeps (the first line matching keepSubtitleIndex; at most one entry)
+  lines.forEach((line, i) => {
+    if (!line.startsWith('#EXT-X-MEDIA:')) return;
     const a = new Map(hlsAttrs(line.slice(13)));
     const type = a.get('TYPE') ?? '';
     if (!dropTypes.test(type)) groups.add(`${type}:${unquote(a.get('GROUP-ID') ?? '')}`);
-  }
+    else if (type === 'SUBTITLES' && opts.keepSubtitleIndex !== undefined && !keptSub.length) {
+      const group = a.get('GROUP-ID');
+      const uri = a.get('URI');
+      const name = a.get('NAME');
+      const lang = a.get('LANGUAGE');
+      const plain = /^"[^"\\]*"$/; // only plain quoted strings are re-emitted
+      const m = uri && /^"[^"'\\,\s]+"$/.test(uri) ? /(?:^|\/)Subtitles\/(\d{1,3})\/subtitles\.m3u8$/.exec(unquote(uri).split('?')[0]!) : null;
+      if (group && plain.test(group) && m && Number(m[1]) === opts.keepSubtitleIndex) {
+        opts.checkUri?.(unquote(uri!));
+        keptSub.push({
+          line: i,
+          text: `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=${group},NAME=${name && plain.test(name) ? name : '"Subtitles"'}${lang && /^"[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*"$/.test(lang) ? `,LANGUAGE=${lang}` : ''},DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,URI=${uri}`,
+        });
+        groups.add(`SUBTITLES:${unquote(group)}`);
+      }
+    }
+  });
   const out: string[] = [];
   let skipUri = false;
-  for (const line of lines) {
+  for (const [i, line] of lines.entries()) {
     const t = line.trim();
     if (skipUri && t && !t.startsWith('#')) { skipUri = false; continue; }
     if (t.startsWith('#EXT-X-IMAGE-')) {
@@ -191,7 +244,10 @@ export function compatPlaylist(lines: string[]): string[] {
       continue;
     }
     if (t.startsWith('#EXT-X-MEDIA:')) {
-      if (dropTypes.test(new Map(hlsAttrs(t.slice(13))).get('TYPE') ?? '')) continue;
+      if (dropTypes.test(new Map(hlsAttrs(t.slice(13))).get('TYPE') ?? '')) {
+        if (keptSub[0]?.line === i) out.push(keptSub[0].text);
+        continue;
+      }
       out.push(line);
       continue;
     }
@@ -210,9 +266,10 @@ export function compatPlaylist(lines: string[]): string[] {
  * /media/c/<token>/ on the same origin once resolved against the playlist's own URL (absolute URLs, //host, /abs paths,
  * ../ escapes, backslash tricks): the receiver would otherwise fetch from another host/path and leak or bypass the gateway.
  * `requestPath` is the public path the playlist was requested at (/media/c/<token>/Videos/<id>/main.m3u8).
- * Then the compatibility rewrite for the receivers (compatPlaylist). Every line is URI-checked, also the ones it drops.
+ * Then the compatibility rewrite for the receivers (compatPlaylist; `opts.keepSubtitleIndex` from the token's authz scope). Every line is
+ * URI-checked first, also the ones it drops and the subtitle rendition it may keep.
  */
-export function sanitizePlaylist(text: string, requestPath: string, strip: ReadonlySet<string> = jellyfinUpstream.stripQuery): string | null {
+export function sanitizePlaylist(text: string, requestPath: string, strip: ReadonlySet<string> = jellyfinUpstream.stripQuery, opts: { keepSubtitleIndex?: number } = {}): string | null {
   const m = CAST_ROUTE.exec(requestPath);
   if (!m) return null;
   const prefix = `${CAST_PREFIX}${m[1]}/`;
@@ -239,7 +296,9 @@ export function sanitizePlaylist(text: string, requestPath: string, strip: Reado
     check(t);
     return stripUriTokens(t, strip);
   });
-  return bad ? null : compatPlaylist(out).join('\n');
+  // the kept subtitle line's exact URI string is checked once more, as emitted (`check` is the same origin / prefix rule)
+  const res = compatPlaylist(out, { ...opts, checkUri: check });
+  return bad ? null : res.join('\n');
 }
 
 export function createGateway(opts: GatewayOptions): { server: Server; metrics: () => string } {
@@ -605,6 +664,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     for (const [k, v] of url.searchParams) {
       const lk = k.toLowerCase();
       if (lk === 'mediasourceid' && lc(v) !== lc(scope.mediaSourceId)) return false;
+      if (lk === 'itemid' && lc(v) !== lc(scope.itemId)) return false; // Jellyfin's obsolete override of the route's item id
       if (lk === 'playsessionid' && v !== scope.playSessionId) return false;
     }
     return true;
@@ -628,7 +688,10 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       res.setHeader('retry-after', '300');
       return cors(429, 'too many requests');
     }
-    const path = normalizeCastPath(mm[2]!, up);
+    let path = normalizeCastPath(mm[2]!, up);
+    // the AirPlay subtitle rendition's own paths (query allowlisted): reachable only with an hlsSub token of that track (checked below)
+    const subPath = path ? null : castHlsSubAllowed(mm[2]! + url.search, up);
+    if (subPath) path = normalizePath(mm[2]!, (up.castHlsSubPaths ?? []).map((e) => e.path));
     if (!path) {
       castCount('403');
       return cors(403, 'forbidden');
@@ -658,6 +721,21 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       castCount('403');
       return cors(403, 'forbidden');
     }
+    const subIndex = hlsSubIndexOf(auth);
+    if (subPath && subIndex !== subPath.index) {
+      castCount('403'); // not an hlsSub token, or another track than the one it asked for
+      return cors(403, 'forbidden');
+    }
+    // never a burn-in: an hlsSub token may only name its own track, with SubtitleMethod=Hls; every other token's subtitle selectors are stripped (forward)
+    if (subIndex !== undefined) {
+      for (const [k, v] of url.searchParams) {
+        const lk = k.toLowerCase();
+        if ((lk === 'subtitlemethod' && v.toLowerCase() !== 'hls') || (lk === 'subtitlestreamindex' && v !== String(subIndex))) {
+          castCount('403');
+          return cors(403, 'forbidden');
+        }
+      }
+    }
     if (up.authorize) {
       const scope = auth.scope;
       const ok = await up.authorize({ path, query: url.searchParams, cast: true, checkItem: async (id) => lc(id) === lc(scope.itemId) }).catch(() => 'error' as const);
@@ -681,6 +759,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       const lk = k.toLowerCase();
       if (up.stripQuery.has(lk)) continue;
       if (cast && up.castDropQuery.has(lk)) continue; // stream/device identity comes from the token, never from the receiver's URL
+      if (cast && (lk === 'subtitlemethod' || lk === 'subtitlestreamindex') && hlsSubIndexOf(auth) === undefined) continue; // no burn-in selector from a token without a subtitle rendition (handleCast refused wrong ones for the others)
       // resolution cap: always on the cast path (default 1080), on the cookie path when the role has one
       if ((cast || auth.maxHeight) && (up.clampHeight.includes(lk) || up.clampWidth.includes(lk))) {
         const cap = auth.maxHeight ?? 1080;
@@ -780,7 +859,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
           text = null;
         }
       }
-      const clean = text === null ? null : cast ? sanitizePlaylist(text, url.pathname, up.stripQuery) : text;
+      const clean = text === null ? null : cast ? sanitizePlaylist(text, url.pathname, up.stripQuery, { keepSubtitleIndex: hlsSubIndexOf(auth) }) : text;
       if (clean === null) {
         countCode('502');
         return end(res, 502, 'bad gateway', 'text/plain', extra);
