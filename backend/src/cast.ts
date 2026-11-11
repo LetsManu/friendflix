@@ -7,6 +7,7 @@ import { jfUserFor, getProfile } from './profiles.js';
 import { effectiveRole } from './roles.js';
 import { clearLive, draining, getLive, setLive } from './live.js';
 import { getUserById } from './users.js';
+import { playbackReport, type PlaybackKind, type PlaybackReporter } from './routes/media.js';
 import type { JfUser, ProfileRow, UserRow } from './types.js';
 
 /**
@@ -123,6 +124,8 @@ const idxKey = (userId: string, castId: string) => `castidx:${userId}:${castId}`
 const ovlKey = (userId: string, ps: string) => `povl:${userId}:${ps}`;
 /** public, non-secret handle of a token (cannot be turned back into the token) */
 const castIdOf = (hash: string) => hash.slice(0, 32);
+/** continuous AirPlay: the server's progress of a joined token (JoinedProgress), as long as the token's keys live */
+const jpKey = (hash: string) => `castjp:${hash}`;
 
 export const castEnabled = (ctx: Ctx) => ctx.cfg.CAST_ENABLED === 'true' && ctx.cfg.PUBLIC_URL.startsWith('https://');
 /** continuous AirPlay is on: the admin switch alone (no per-profile opt-in); joined playlists are built from Jellyfin's HLS playlists, so Plex never offers it */
@@ -216,6 +219,8 @@ export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'create
   while (active.length >= MAX_CAST_TOKENS + (next ? 1 : 0)) {
     const old = active.shift()!;
     await dropByHash(ctx, rec.userId, old.hash, old.imgHash);
+    // an evicted joined token ends like an expired one: no stop report, the last progress stands (its live record runs out)
+    await ctx.kv.del(jpKey(old.hash));
   }
   memo.clear();
   return { ct: media.ct, imgCt: img?.ct, castId: castIdOf(media.hash), expiresAt: exp };
@@ -251,12 +256,15 @@ export async function revokeCast(ctx: Ctx, userId: string, castId: string): Prom
   const raw = await ctx.kv.get(idxKey(userId, castId));
   if (!raw) return false;
   const i = JSON.parse(raw) as IdxEntry;
-  const rec = await ctx.kv.get(dataKey(i.hash));
+  const recRaw = await ctx.kv.get(dataKey(i.hash));
+  const rec = recRaw ? (JSON.parse(recRaw) as CastRecord) : null;
   await dropByHash(ctx, userId, i.hash, i.imgHash);
   memo.clear();
+  // a joined stream has no sender that reports: the server stops its current episode and every part's encoding
+  if (rec && isJoined(rec)) await stopJoined(ctx, i.hash, rec);
   // a stream only its segment fetches counted (touch; never a `start` report, e.g. a queued next episode the receiver preloaded
   // and that was dropped) ends with its token; a reported one ends with its own stop
-  const ps = rec ? (JSON.parse(rec) as CastRecord).playSessionId : undefined;
+  const ps = rec?.playSessionId;
   const live = ps ? await getLive(ctx, userId, ps) : null;
   if (ps && live && !live.playMethod) await clearLive(ctx, userId, ps);
   return true;
@@ -268,7 +276,11 @@ export async function revokeCasts(ctx: Ctx, userId: string, deviceId?: string, e
   for (const i of await listIdx(ctx, userId)) {
     if (deviceId && i.deviceId !== deviceId) continue;
     if (exceptDeviceId && i.deviceId === exceptDeviceId) continue;
+    const raw = i.kind === 'img' ? null : await ctx.kv.get(dataKey(i.hash));
+    const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
     await dropByHash(ctx, userId, i.hash, i.imgHash);
+    memo.clear(); // before the stop below: the gateway's next fetch of a dropped token must not pass a memoised answer
+    if (rec && isJoined(rec)) await stopJoined(ctx, i.hash, rec);
     n++;
   }
   memo.clear();
@@ -295,13 +307,130 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
   }
   if (rec.kind !== 'img') await keepQueue(ctx, hash, rec);
   if (rec.kind === 'img' || overlap) return; // a queued next episode's preload: the stream it follows is the counted one
-  const cur = await getLive(ctx, rec.userId, rec.playSessionId);
+  // a joined stream counts as its current part (the server's progress moved it there; before the first progress: episode 1)
+  let part: { itemId: string; playSessionId: string; title: string } = { itemId: rec.itemId, playSessionId: rec.playSessionId, title: rec.title ?? '' };
+  if (isJoined(rec)) {
+    const jp = await ctx.kv.get(jpKey(hash));
+    const st = jp ? (JSON.parse(jp) as JoinedProgress) : null;
+    const it = st ? rec.items![st.idx] : undefined;
+    if (st && it) {
+      await ctx.kv.replace(jpKey(hash), jp!, ttl);
+      if (st.idx > 0) part = { itemId: it.itemId, playSessionId: it.playSessionId, title: '' };
+    }
+  }
+  const cur = await getLive(ctx, rec.userId, part.playSessionId);
   // its stop was reported just now (title switch / end): the receiver only drains buffered segments until the revoke, no ghost
   // stream; a token still fetched after DRAIN_MS counts again
-  if (!cur && (await draining(ctx, rec.userId, rec.playSessionId))) return;
+  if (!cur && (await draining(ctx, rec.userId, part.playSessionId))) return;
   await setLive(ctx, cur
     ? { ...cur, updatedAt: now }
-    : { userId: rec.userId, userName, profileName, itemId: rec.itemId, title: rec.title ?? '', positionTicks: 0, isPaused: false, playSessionId: rec.playSessionId, updatedAt: now, source: 'portal' });
+    : { userId: rec.userId, userName, profileName, itemId: part.itemId, title: part.title, positionTicks: 0, isPaused: false, playSessionId: part.playSessionId, updatedAt: now, source: 'portal' });
+}
+
+/**
+ * Continuous AirPlay, server-side progress (spec device-handoff §5.4 c/f). The TV reports nothing and the page sends no reports for a
+ * joined token, so the gateway tells the backend which segment (episode, position) the TV fetches (POST /internal/cast/progress, at once
+ * on a part change, else at most every 15 s) and the server reports each episode as the token's user, profile and device (`via:
+ * 'airplay'`, so the hand-off row follows the episode): `Playing` when a part starts, `Playing/Progress` at most every JOINED_REPORT_MS,
+ * `Playing/Stopped` of the previous part when the fetches move to another one. Positions are the fetch positions (no lead correction,
+ * decision 10). State per token in `castjp:<hash>`; calls of one token run one at a time. Revoke stops the current part (stopJoined);
+ * expiry and eviction stop nothing: the last progress stands. Nothing is logged on success; a failure only by its error class.
+ */
+interface JoinedProgress { /** the current part */ idx: number; /** its last fetched position */ pos: number; /** epoch ms of its last report */ at: number }
+export const JOINED_REPORT_MS = 30_000;
+/** a part whose last known position is this close to its end played to its end (the gateway's 15 s throttle plus a few segments) */
+export const JOINED_END_TICKS = 300_000_000;
+
+/** a joined AirPlay media token (more than one item) */
+const isJoined = (rec: CastRecord) => Boolean(rec.items && rec.items.length > 1 && rec.via === 'airplay' && (rec.kind ?? 'media') === 'media');
+
+/** the record of a joined AirPlay token by its hash while it is valid; null = unknown, expired or no joined token */
+export async function joinedCastRecord(ctx: Ctx, hash: string): Promise<CastRecord | null> {
+  const raw = await ctx.kv.get(dataKey(hash));
+  const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
+  return rec && rec.exp > Date.now() && isJoined(rec) ? rec : null;
+}
+
+const joinedChains = new Map<string, Promise<void>>();
+/** runs `fn` after every earlier call of the same token (one process; the gateway already sends at most one call per part change / 15 s) */
+async function oneAtATime(hash: string, fn: () => Promise<void>): Promise<void> {
+  const run = (joinedChains.get(hash) ?? Promise.resolve()).then(fn);
+  const tail = run.catch(() => undefined);
+  joinedChains.set(hash, tail);
+  try { await run; } finally { if (joinedChains.get(hash) === tail) joinedChains.delete(hash); }
+}
+
+const reportPart = (ctx: Ctx, kind: PlaybackKind, it: JoinedItem, positionTicks: number, who: PlaybackReporter) =>
+  playbackReport(ctx, kind, {
+    itemId: it.itemId, playSessionId: it.playSessionId, mediaSourceId: it.mediaSourceId, positionTicks, isPaused: false, playMethod: 'Transcode',
+    ...(Number.isInteger(it.hlsSubIndex) ? { subtitleIndex: it.hlsSubIndex } : {}),
+  }, who);
+
+/** Notes a joined token's segment position (see above). Throws the first report failure (after the state is kept); the caller logs its class. */
+export async function noteJoinedProgress(ctx: Ctx, hash: string, rec: CastRecord, p: { itemId: string; positionTicks: number }): Promise<void> {
+  if (!isJoined(rec) || !rec.items!.some((i) => i.itemId === p.itemId)) return;
+  await oneAtATime(hash, async () => {
+    const cur = await joinedCastRecord(ctx, hash); // again in turn: a revoke in between ends it
+    const items = cur?.items;
+    const idx = items ? items.findIndex((i) => i.itemId === p.itemId) : -1;
+    if (!cur || !items || idx < 0) return;
+    const owner = await liveOwner(ctx, cur);
+    if (!owner) return;
+    const who: PlaybackReporter = { user: owner.user, jfUser: jfUserFor(owner.user, owner.prof), profile: owner.prof, deviceId: cur.deviceId, via: 'airplay' };
+    const now = Date.now();
+    const jp = await ctx.kv.get(jpKey(hash));
+    const st = jp ? (JSON.parse(jp) as JoinedProgress) : null;
+    const part = items[idx]!;
+    const pos = part.runtimeTicks ? Math.min(p.positionTicks, part.runtimeTicks) : p.positionTicks;
+    const todo: Array<[PlaybackKind, JoinedItem, number]> = [];
+    let at = st?.at ?? now;
+    if (!st || st.idx !== idx) {
+      const prev = st ? items[st.idx] : undefined;
+      if (prev) {
+        // it played to its end when its last position was within the last 30 s, else it stops where it was (a seek)
+        const end = prev.runtimeTicks && st!.pos >= prev.runtimeTicks - JOINED_END_TICKS ? prev.runtimeTicks : st!.pos;
+        todo.push(['Playing/Stopped', prev, end]);
+      } else if (idx !== 0) {
+        // the first report is of a later part: the live record the token's fetches made (touch) is episode 1's and goes
+        const l = await getLive(ctx, cur.userId, items[0]!.playSessionId);
+        if (l && !l.playMethod) await clearLive(ctx, cur.userId, items[0]!.playSessionId);
+      }
+      todo.push(['Playing', part, pos]);
+      at = now;
+    } else if (now - st.at >= JOINED_REPORT_MS) {
+      todo.push(['Playing/Progress', part, pos]);
+      at = now;
+    }
+    const ttl = castKeyTtl(cur.exp, now);
+    if (ttl > 0) await ctx.kv.set(jpKey(hash), JSON.stringify({ idx, pos, at } satisfies JoinedProgress), ttl);
+    let failed: unknown;
+    for (const [kind, it, ticks] of todo) {
+      try { await reportPart(ctx, kind, it, ticks, who); } catch (e) { failed ??= e; }
+    }
+    if (failed !== undefined) throw failed;
+  });
+}
+
+/**
+ * A joined token was revoked (revokeCast / revokeCasts; called after its keys are gone): its current part stops at its last position and
+ * every part's encoding ends (not only episode 1's). Never throws (a revoke always completes); a failure logs its error class only.
+ */
+export async function stopJoined(ctx: Ctx, hash: string, rec: CastRecord): Promise<void> {
+  if (!isJoined(rec)) return;
+  const fail = (e: unknown) => console.warn('cast: continuous AirPlay stop failed', e instanceof Error ? e.name : 'unknown');
+  // the account's media identity even when the revoke is about the device or the session (no approval check here)
+  const user = await getUserById(ctx, rec.userId).catch(() => undefined);
+  const prof = user ? await getProfile(ctx, rec.userId, rec.profileId).catch(() => null) : null;
+  const jfUser = user && prof ? jfUserFor(user, prof) : null;
+  await oneAtATime(hash, async () => {
+    const jp = await ctx.kv.get(jpKey(hash));
+    await ctx.kv.del(jpKey(hash));
+    const st = jp ? (JSON.parse(jp) as JoinedProgress) : null;
+    const it = st ? rec.items![st.idx] : undefined;
+    if (it && user && prof && jfUser) await reportPart(ctx, 'Playing/Stopped', it, st!.pos, { user, jfUser, profile: prof, deviceId: rec.deviceId, via: 'airplay' });
+  }).catch(fail);
+  // every part's transcode, whatever happened above
+  if (jfUser) for (const i of rec.items!) await ctx.jf.stopEncoding(jfUser, i.playSessionId).catch(() => undefined);
 }
 
 /**

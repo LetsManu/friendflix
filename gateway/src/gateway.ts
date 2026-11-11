@@ -29,9 +29,44 @@ export interface GatewayOptions {
    * continuous AirPlay: every `/media/c/<ct>/s/<part>/<n>.ts` fetch that passed authz and the cast checks (just before it is
    * proxied). `tokenHash` = sha256 hex of the cast token (what the backend keys cast records by; the hook never sees the bearer
    * token), `part` the 0-based episode of the joined stream, `positionTicks` the segment's start in that episode (Jellyfin's
-   * `runtimeTicks`; a segment without a valid one reports nothing).
+   * `runtimeTicks`; a segment without a valid one reports nothing). Default: joinedProgressSender (the backend's per-episode progress).
    */
   onJoinedSegment?: (e: JoinedSegment) => void;
+}
+
+/** a token's progress goes to the backend at once when its part changes, else at most this often */
+export const JOINED_PROGRESS_MS = 15_000;
+
+/**
+ * The default onJoinedSegment: POST /internal/cast/progress `{ tokenHash, itemId, positionTicks }` (the backend turns it into the
+ * episode's start / progress / stop). Throttled per token (at once on a part change, else at most every JOINED_PROGRESS_MS), fire and
+ * forget: the segment response never waits for it, a failing or hanging backend (5 s timeout) is swallowed and nothing is logged. The
+ * body carries the token's hash only (never the token, never the receiver's address).
+ */
+export function joinedProgressSender(o: { backendUrl: string; internalSecret: string; fetchImpl?: typeof fetch; now?: () => number }): (e: JoinedSegment) => void {
+  const f = o.fetchImpl ?? fetch;
+  const now = o.now ?? Date.now;
+  const url = new URL('/internal/cast/progress', o.backendUrl).href;
+  /** per token hash: the part and time of its last call */
+  const last = new Map<string, { part: number; at: number }>();
+  return (e) => {
+    const t = now();
+    const prev = last.get(e.tokenHash);
+    if (prev && prev.part === e.part && t - prev.at < JOINED_PROGRESS_MS) return;
+    if (!prev && last.size >= 5000) { // bounded: forget tokens that went quiet (a joined stream fetches every few seconds)
+      for (const [k, v] of last) if (t - v.at > 10 * 60_000) last.delete(k);
+      if (last.size >= 5000) last.clear();
+    }
+    last.set(e.tokenHash, { part: e.part, at: t });
+    try {
+      void f(url, {
+        method: 'POST',
+        headers: { 'x-internal-secret': o.internalSecret, 'content-type': 'application/json' },
+        body: JSON.stringify({ tokenHash: e.tokenHash, itemId: e.itemId, positionTicks: e.positionTicks }),
+        signal: AbortSignal.timeout(5000),
+      }).then((r) => r.body?.cancel().catch(() => {}), () => {});
+    } catch { /* progress is best effort: playback never depends on it */ }
+  };
 }
 
 export interface JoinedSegment { tokenHash: string; part: number; itemId: string; positionTicks: number }
@@ -336,6 +371,7 @@ export function sanitizePlaylist(text: string, requestPath: string, strip: Reado
 export function createGateway(opts: GatewayOptions): { server: Server; metrics: () => string } {
   const f = opts.fetchImpl ?? fetch;
   const up = opts.upstream ?? jellyfinUpstream;
+  const onJoinedSegment = opts.onJoinedSegment ?? joinedProgressSender({ backendUrl: opts.backendUrl, internalSecret: opts.internalSecret, fetchImpl: f });
   const upstreamUrl = opts.upstreamUrl;
   if (!upstreamUrl) throw new Error('gateway: upstreamUrl missing');
   const currentUrl = typeof upstreamUrl === 'function' ? upstreamUrl : (() => { const u = new URL(upstreamUrl).href; return () => u; })();
@@ -794,10 +830,10 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
         return cors(ok === 'error' ? 503 : 403, ok === 'error' ? 'unavailable' : 'forbidden');
       }
     }
-    if (joinedSeg && opts.onJoinedSegment) {
+    if (joinedSeg) {
       const ticks = Number(url.searchParams.get('runtimeTicks') ?? NaN);
       if (Number.isSafeInteger(ticks) && ticks >= 0) {
-        try { opts.onJoinedSegment({ ...joinedSeg, positionTicks: ticks }); } catch { /* a reporting hook never breaks playback */ }
+        try { onJoinedSegment({ ...joinedSeg, positionTicks: ticks }); } catch { /* a reporting hook never breaks playback */ }
       }
     }
     return forward(req, res, url, path, auth, castCount, true, false, authzMs);

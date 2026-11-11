@@ -15,7 +15,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createGateway, type JoinedSegment } from '../src/gateway.js';
+import { createGateway, joinedProgressSender, type JoinedSegment } from '../src/gateway.js';
 import { joinPlaylists } from '../src/joined.js';
 import { jellyfinUpstream } from '../src/upstream/jellyfin.js';
 import { plexUpstream } from '../src/upstream/plex.js';
@@ -542,6 +542,107 @@ describe('fix round 1: both scope layers of /s, guards, caps', () => {
     extra.push(g.server);
     const port = await listen(g.server);
     expect((await fetch(`http://127.0.0.1:${port}/media/c/${CT_JOIN}/joined/master.m3u8`)).status).toBe(200);
+  });
+});
+
+/**
+ * Task 18: the default onJoinedSegment is a throttled, fire-and-forget sender of POST /internal/cast/progress (per token: at once on a part
+ * change, else at most every 15 s). It carries the token's hash, the item and the position, nothing else; the segment never waits for it.
+ */
+describe('progress sender (default onJoinedSegment)', () => {
+  const PROGRESS = '/internal/cast/progress';
+  type Sent = { url: string; init: RequestInit };
+  const ev = (tokenHash: string, part: number, positionTicks: number): JoinedSegment => ({ tokenHash, part, itemId: EP[part]!.id, positionTicks });
+
+  it('progress at once on a part change, then at most every 15 s', async () => {
+    const sent: Sent[] = [];
+    let now = 1_000_000;
+    const send = joinedProgressSender({
+      backendUrl: 'http://be.invalid:3000', internalSecret: 's3cret-s3cret-s3cret', now: () => now,
+      fetchImpl: (async (url: string | URL, init: RequestInit) => { sent.push({ url: String(url), init }); return new Response('{"ok":true}'); }) as typeof fetch,
+    });
+    const A = sha('token-a'), B = sha('token-b');
+    send(ev(A, 0, 0));
+    expect(sent).toHaveLength(1); // the first segment of a token: at once
+    now += 3_000; send(ev(A, 0, 3 * 1e7));
+    now += 3_000; send(ev(A, 0, 6 * 1e7));
+    expect(sent).toHaveLength(1);
+    now += 3_000; send(ev(A, 1, 0)); // a part change: at once, whatever the last call
+    expect(sent).toHaveLength(2);
+    now += 14_999; send(ev(A, 1, 15 * 1e7));
+    expect(sent).toHaveLength(2);
+    now += 1; send(ev(A, 1, 18 * 1e7)); // 15 s since the last call of this token
+    expect(sent).toHaveLength(3);
+    send(ev(B, 0, 0)); // another token has its own window
+    expect(sent).toHaveLength(4);
+    now += 1_000; send(ev(A, 0, 9 * 1e7)); // back to an earlier part (a seek): also a part change
+    expect(sent).toHaveLength(5);
+    for (const s of sent) {
+      expect(s.url).toBe(`http://be.invalid:3000${PROGRESS}`);
+      expect(s.init.method).toBe('POST');
+      expect(s.init.headers).toMatchObject({ 'x-internal-secret': 's3cret-s3cret-s3cret', 'content-type': 'application/json' });
+      expect(s.init.signal).toBeInstanceOf(AbortSignal);
+    }
+    expect(sent.map((s) => JSON.parse(String(s.init.body)))).toEqual([
+      { tokenHash: A, itemId: EP[0]!.id, positionTicks: 0 },
+      { tokenHash: A, itemId: EP[1]!.id, positionTicks: 0 },
+      { tokenHash: A, itemId: EP[1]!.id, positionTicks: 18 * 1e7 },
+      { tokenHash: B, itemId: EP[0]!.id, positionTicks: 0 },
+      { tokenHash: A, itemId: EP[0]!.id, positionTicks: 9 * 1e7 },
+    ]);
+  });
+
+  it('a failing backend is swallowed and logs nothing', async () => {
+    const spies = (['log', 'warn', 'error', 'info'] as const).map((k) => vi.spyOn(console, k).mockImplementation(() => {}));
+    try {
+      let n = 0;
+      const send = joinedProgressSender({ backendUrl: 'http://be.invalid:3000', internalSecret: 'x', fetchImpl: (() => { n++; return Promise.reject(new TypeError('fetch failed')); }) as typeof fetch });
+      const sync = joinedProgressSender({ backendUrl: 'http://be.invalid:3000', internalSecret: 'x', fetchImpl: (() => { n++; throw new TypeError('boom'); }) as typeof fetch });
+      expect(() => send(ev(sha('t'), 0, 0))).not.toThrow();
+      expect(() => sync(ev(sha('t'), 0, 0))).not.toThrow();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(n).toBe(2);
+      for (const s of spies) expect(s).not.toHaveBeenCalled();
+    } finally { for (const s of spies) s.mockRestore(); }
+  });
+
+  /** a gateway with the default sender whose progress calls go to `progress` (everything else to the fake backend) */
+  async function gatewayWith(progress: (init: RequestInit) => Promise<Response>) {
+    const g = createGateway({
+      upstreamUrl: `http://127.0.0.1:${jfPort}`, backendUrl: `http://127.0.0.1:${bePort}`, internalSecret: 's3cret-s3cret-s3cret',
+      fetchImpl: ((u: string | URL, init: RequestInit) => (String(u).endsWith(PROGRESS) ? progress(init) : fetch(u, init))) as typeof fetch,
+    });
+    extra.push(g.server);
+    return listen(g.server);
+  }
+
+  it('a hanging backend never delays the segment', async () => {
+    const calls: RequestInit[] = [];
+    const port = await gatewayWith((init) => { calls.push(init); return new Promise<Response>(() => {}); }); // never answers
+    const t0 = performance.now();
+    const r = await fetch(`http://127.0.0.1:${port}${S}/1/2.ts`);
+    await r.arrayBuffer();
+    expect(r.status).toBe(HAVE_FFMPEG ? 200 : 404);
+    expect(performance.now() - t0).toBeLessThan(2_000); // the sender's call stays pending (aborted after 5 s), the segment does not wait
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0]!.body))).toEqual({ tokenHash: sha(CT_JOIN), itemId: EP[1]!.id, positionTicks: 2 * SEG * 1e7 });
+  });
+
+  it('the progress body carries no address', async () => {
+    const calls: RequestInit[] = [];
+    const port = await gatewayWith(async (init) => { calls.push(init); return new Response('{"ok":true}'); });
+    const ip = '203.0.113.77';
+    const r = await fetch(`http://127.0.0.1:${port}/media/c/${CT_JOIN}/s/2/1.ts`, { headers: { 'x-real-ip': ip, 'x-forwarded-for': ip } });
+    await r.arrayBuffer();
+    await new Promise((res) => setTimeout(res, 20));
+    expect(calls).toHaveLength(1);
+    const body = String(calls[0]!.body);
+    expect(Object.keys(JSON.parse(body)).sort()).toEqual(['itemId', 'positionTicks', 'tokenHash']);
+    expect(body).not.toContain(ip);
+    expect(body).not.toContain('127.0.0.1');
+    expect(body).not.toContain(CT_JOIN); // the hash only, never the bearer token
+    expect(JSON.stringify(calls[0]!.headers)).not.toMatch(/203\.0\.113|real-ip|forwarded/i);
+    expect(JSON.stringify(calls[0]!.headers)).not.toContain(CT_JOIN);
   });
 });
 
