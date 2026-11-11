@@ -34,6 +34,9 @@
   let resetDone = false;
   /** `?stale=1`: a sign-in through the identity provider's page was refused because it did not ask for the login again (backend /auth/callback) */
   let stale = false;
+  /** the stale banner fades (it keeps its space) once the person has started or advanced the sign-in */
+  let staleFaded = false;
+  let shows = 0;
   let leaving = false;
   $: classic = classicHref(invite);
   /** the stale notice replaces the classic redirect in `authentik` mode */
@@ -95,6 +98,7 @@
   }
 
   function show(r: FlowReply) {
+    if (++shows > 1) staleFaded = true; // the first screen is the start of the attempt itself
     if (r.stage === 'done') leave(safeNext(r.next));
     else view = r;
   }
@@ -107,7 +111,7 @@
 <svelte:head><title>{$t('common.pageTitle', { page: $t('login.pageTitle') })}</title></svelte:head>
 <AuthShell>
   {#if resetDone && view && !leaving}<p class="ok" role="status">{$t('login.reset.banner')}</p>{/if}
-  {#if stale && view && !leaving && cfg?.mode !== 'authentik'}<p class="gone" role="alert" data-notice="stale">{$t('login.stale.text')}</p>{/if}
+  {#if stale && view && !leaving && cfg?.mode !== 'authentik'}<p class="gone stale" class:faded={staleFaded} role={staleFaded ? undefined : 'alert'} aria-hidden={staleFaded ? 'true' : undefined} data-notice="stale">{$t('login.stale.text')}</p>{/if}
   {#if inviteGone}<p class="gone" role="status">{$t('login.inviteGone')}</p>{/if}
   {#if !view || leaving}
     <p class="loading muted" role="status">{$t('login.loading')}</p>
@@ -136,5 +140,7 @@
 <style>
   .loading { margin: 0; text-align: center; padding: 1rem 0; }
   .ok { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--tone-ok, rgba(46, 160, 100, .22)); font-size: .88rem; }
+  .stale { transition: opacity .3s; }
+  .stale.faded { opacity: 0; pointer-events: none; }
   .gone { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--tone-warn); font-size: .88rem; }
 </style>

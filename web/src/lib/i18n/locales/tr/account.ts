@@ -326,6 +326,7 @@ const tr: Translation<typeof de> = {
     loadFailed: 'Hesap yüklenemedi.',
     retry: 'Tekrar dene',
     reauthFailed: 'Oturum açma doğrulanamadı. Lütfen tekrar dene.',
+    reauthFailedHint: 'Yine olmazsa yarım dakika bekle ya da önce Authentik’ten çıkış yap.',
     privacy: 'Yöneticiler son izlediğin başlıkları görebilir. Her görüntüleme denetim günlüğüne kaydedilir.',
     data: {
       title: 'Verilerin',

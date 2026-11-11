@@ -20,15 +20,17 @@ export const RESET_PIN_MAX_AGE = 120;
 export const freshAuth = (authTime: number | undefined, maxAge: number, nowMs = Date.now()): boolean =>
   typeof authTime === 'number' && Number.isFinite(authTime) && nowMs / 1000 - authTime <= maxAge + 30 && authTime - nowMs / 1000 <= 30;
 
-/**
- * max_age (seconds) of a sign-in through the identity provider's own page. Authentik 2026.8.3 honours a positive max_age on every request
- * (authorize.py l.535-549: the session's login event older than max_age sends the person to the login page; after that login the event
- * is new, so it cannot loop unless more than this many seconds pass between the login stage and the authorize request), whereas max_age=0
- * is ignored (l.145, l.535: falsy) and prompt=login works once per session only (l.552-560). 60 s leaves room for a slow second factor.
- */
-export const SIGNIN_MAX_AGE = 60;
 /** clock skew (seconds) allowed between this server and the identity provider */
 export const AUTH_SKEW_S = 30;
+/**
+ * max_age (seconds) of a sign-in or re-authentication through the identity provider's own page. Authentik 2026.8.3 honours a positive
+ * max_age on every request (authorize.py l.535-549: a session whose login event is older sends the person to the login page; after that
+ * login the event is new, so it cannot loop unless more than this many seconds pass between the login stage and the authorize request),
+ * whereas max_age=0 is ignored (l.145, l.535: falsy) and prompt=login re-prompts once per session only (l.552-560). The login event is
+ * created when the login stage completes, after the second factor, so a slow factor does not count. Equal to the clock skew: a login
+ * Authentik still accepts (at most this old) is never refused by the start-bound check, which allows the same skew before the start.
+ */
+export const SIGNIN_MAX_AGE = AUTH_SKEW_S;
 
 /**
  * true when the IdP login (`authTime`, seconds) happened no earlier than `startedMs` (when this sign-in began, from the saved login)
@@ -138,7 +140,7 @@ export async function createAuthentikProvider(cfg: Config): Promise<OidcProvider
         code_challenge_method: 'S256',
         state,
         nonce,
-        ...(opts?.forceLogin ? { prompt: 'login', max_age: '0' } : opts?.silent ? { prompt: 'none' } : opts?.maxAge ? { max_age: String(opts.maxAge) } : {}),
+        ...(opts?.forceLogin ? { prompt: 'login', max_age: String(opts.maxAge ?? 0) } : opts?.silent ? { prompt: 'none' } : opts?.maxAge ? { max_age: String(opts.maxAge) } : {}),
       });
       return { url: url.toString(), state, nonce, codeVerifier };
     },

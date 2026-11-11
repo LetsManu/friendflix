@@ -220,6 +220,12 @@ test.describe('setup wizard', () => {
     await expect(h2(page, 'Öffentliche Adresse')).toBeVisible();
   });
 
+  test('a first-admin sign-in refused as stale comes back to /setup?stale=1: the notice says to sign in again, not that the session expired', async ({ page }) => {
+    await page.goto('/setup?stale=1');
+    await expect(page.getByText(/Authentik hat die Anmeldung nicht erneut abgefragt/)).toBeVisible();
+    await expect(page.getByText('Deine Einrichtungssitzung ist abgelaufen')).toHaveCount(0);
+  });
+
   test('Authentik: plan failures stop before Apply; blueprint_invalid and busy explain the retry; http needs OIDC_ALLOW_INSECURE', async ({ page, api }) => {
     api.setup!.steps.publicUrl = 'done';
     api.setup!.steps.media = 'done';

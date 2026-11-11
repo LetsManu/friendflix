@@ -8,7 +8,7 @@ const login: Translation<typeof de> = {
   loading: 'Préparation de la connexion …',
   busy: 'Un instant …',
   inviteGone: 'Cette invitation n’est plus valide. Si tu as déjà un compte, connecte-toi simplement.',
-  stale: { title: 'Connexion non confirmée', text: 'Authentik n’a pas redemandé la connexion, FriendFlix l’a donc refusée. Réessaie. Si cela échoue encore, attends une minute puis réessaie, ou déconnecte-toi d’abord d’Authentik.', retry: 'Se reconnecter' },
+  stale: { title: 'Connexion non confirmée', text: 'Authentik n’a pas redemandé la connexion, FriendFlix l’a donc refusée. Réessaie. Si cela échoue encore, attends une demi-minute puis réessaie, ou déconnecte-toi d’abord d’Authentik.', retry: 'Se reconnecter' },
   identify: {
     title: 'Bon retour',
     text: 'Connecte-toi pour continuer à regarder.',

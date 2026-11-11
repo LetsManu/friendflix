@@ -317,6 +317,14 @@ test.describe('in-app sign-in (/login)', () => {
     await open(page, loginState({ answers: [{ body: password() }] }), '/login?stale=1');
     await expect(page.locator('[data-notice="stale"]')).toContainText('Authentik hat die Anmeldung nicht erneut abgefragt');
     await expect(h1(page, 'Willkommen zurück')).toBeVisible();
+    // the banner keeps its space but fades once the person advances the sign-in
+    const banner = page.locator('[data-notice="stale"]');
+    await expect(banner).toHaveCSS('opacity', '1');
+    await page.getByLabel('E-Mail oder Benutzername').fill('anna@example.com');
+    await page.getByRole('button', { name: 'Weiter' }).click();
+    await expect(h1(page, 'Passwort')).toBeVisible();
+    await expect(banner).toHaveCSS('opacity', '0');
+    await expect(banner).toHaveAttribute('aria-hidden', 'true');
   });
 
   test('"Noch kein Konto? Einladung einlösen" takes a pasted invite link to /invite/<token>', async ({ page }) => {

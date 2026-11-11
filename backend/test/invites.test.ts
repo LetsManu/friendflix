@@ -180,14 +180,24 @@ describe('invites', () => {
     };
     for (const off of [-3600, -31, undefined]) {
       const cb = await run(off);
-      expect([cb.statusCode, cb.headers.location]).toEqual([302, '/login?stale=1']);
+      expect([cb.statusCode, cb.headers.location]).toEqual([302, `/login?stale=1&invite=${token}`]);
       expect(cb.cookies.find((c) => c.name === 'ff_sid')).toBeUndefined();
     }
     // an auth_time from after the start (the enrollment flow's own login) passes
     const ok = await run(5);
     expect(ok.statusCode).toBe(302);
-    expect(ok.headers.location).not.toBe('/login?stale=1');
+    expect(ok.headers.location).not.toMatch(/stale/);
     expect(ok.cookies.find((c) => c.name === 'ff_sid')).toBeTruthy();
+  });
+
+  it('a stale sign-in keeps the invite for the retry', async () => {
+    const token = (await adm('POST', '/api/admin/invites', { role: 'family', ttlHours: 24, enroll: false })).json().link.split('/').pop() as string;
+    const l = await env.app.inject(`/auth/login?invite=${token}&classic=1`);
+    const st = l.cookies.find((c) => c.name === 'ff_oidc')!.value;
+    const saved = JSON.parse((await env.kv.get(`oidc:${st}`))!);
+    env.claims.current = { ...env.claims.current, authTime: Math.floor(saved.startedAt / 1000) - 3600 } as typeof env.claims.current;
+    const cb = await env.app.inject({ url: `/auth/callback?state=${st}&code=c`, cookies: { ff_oidc: st } });
+    expect([cb.statusCode, cb.headers.location]).toEqual([302, `/login?stale=1&invite=${token}`]);
   });
 
   it('invite for an existing Authentik user skips enrollment', async () => {

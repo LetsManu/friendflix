@@ -45,7 +45,7 @@
 <svelte:head><title>{$t('common.pageTitle', { page: $t('account.account.pageTitle') })}</title></svelte:head>
 <div class="acct">
   <h1>{$t('account.account.title')}</h1>
-  {#if reauthFailed}<p class="err banner" role="alert">{$t('account.account.reauthFailed')}</p>{/if}
+  {#if reauthFailed}<p class="err banner" role="alert">{$t('account.account.reauthFailed')}</p><p class="muted small banner-hint">{$t('account.account.reauthFailedHint')}</p>{/if}
 
   {#if phase === 'loading'}<div class="skeleton sk" aria-hidden="true"></div>
   {:else if phase === 'owner'}<p class="muted">{$t('account.account.ownerOnly')}</p>

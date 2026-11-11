@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createAuthentikProvider, RESET_PIN_MAX_AGE, SIGNIN_MAX_AGE, signedInAfter } from '../src/oidc.js';
+import { createAuthentikProvider, AUTH_SKEW_S, RESET_PIN_MAX_AGE, SIGNIN_MAX_AGE, signedInAfter } from '../src/oidc.js';
 import { REAUTH_MAX_AGE } from '../src/reauth.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
@@ -41,8 +41,8 @@ describe('interactive sign-in through the identity provider', () => {
       expect((await env.app.inject(url)).statusCode).toBe(302);
       expect(s.starts.at(-1), url).toEqual({ maxAge: SIGNIN_MAX_AGE });
     }
-    expect(SIGNIN_MAX_AGE).toBeGreaterThan(0);
-    expect(SIGNIN_MAX_AGE).toBeLessThanOrEqual(RESET_PIN_MAX_AGE);
+    expect(SIGNIN_MAX_AGE).toBe(30); // = the clock skew: an IdP login older than that is never answered without the login page
+    expect(SIGNIN_MAX_AGE).toBe(AUTH_SKEW_S);
   });
 
   it('the callback binds freshness to the start of the sign-in: auth_time 30 s before the start passes, 31 s fails', async () => {
@@ -86,12 +86,36 @@ describe('interactive sign-in through the identity provider', () => {
     expect(cb.cookies.find((c) => c.name === 'ff_sid')).toBeUndefined();
   });
 
+  it('re-authentication is start-bound too: auth_time 100 s or 31 s before the start is refused (no stamp), 30 s before passes', async () => {
+    env = await makeEnv();
+    const sess = await env.login();
+    const run = async (offsetS: number) => {
+      const r = await env.app.inject({ url: '/auth/reauth?next=/me/account', cookies: sess.cookies });
+      const st = r.cookies.find((x) => x.name === 'ff_oidc')!.value;
+      const saved = JSON.parse((await env.kv.get(`oidc:${st}`))!);
+      expect(typeof saved.startedAt).toBe('number');
+      saved.startedAt = Math.floor(saved.startedAt / 1000) * 1000;
+      await env.kv.set(`oidc:${st}`, JSON.stringify(saved), 600);
+      env.claims.current = { ...env.claims.current, authTime: saved.startedAt / 1000 + offsetS } as typeof env.claims.current;
+      return env.app.inject({ url: `/auth/callback?state=${st}&code=c`, cookies: { ...sess.cookies, ff_oidc: st } });
+    };
+    const stamp = async () => JSON.parse((await env.kv.get(`sess:${sess.cookies.ff_sid}`))!).reauthAt;
+    for (const off of [-100, -31]) {
+      const cb = await run(off);
+      expect([cb.statusCode, cb.headers.location], String(off)).toEqual([302, '/me/account?reauth=failed']);
+      expect(await stamp()).toBeUndefined();
+    }
+    const ok = await run(-30);
+    expect(ok.headers.location).toBe('/me/account');
+    expect(await stamp()).toBeGreaterThan(Date.now() - 5_000);
+  });
+
   it('re-authentication and the silent authorize are unchanged: forceLogin and REAUTH_MAX_AGE', async () => {
     env = await makeEnv();
     const sess = await env.login();
     const s = spy();
     const r = await env.app.inject({ url: '/auth/reauth?next=/me/account', cookies: sess.cookies });
-    expect(s.starts.at(-1)).toEqual({ forceLogin: true });
+    expect(s.starts.at(-1)).toEqual({ forceLogin: true, maxAge: SIGNIN_MAX_AGE });
     const st = r.cookies.find((x) => x.name === 'ff_oidc')!.value;
     const cb = await env.app.inject({ url: `/auth/callback?state=${st}&code=c`, cookies: { ...sess.cookies, ff_oidc: st } });
     expect(cb.headers.location).toBe('/me/account');
@@ -130,6 +154,9 @@ describe('the authorize URL', () => {
     const forced = new URL((await p.start({ forceLogin: true })).url);
     expect(forced.searchParams.get('prompt')).toBe('login');
     expect(forced.searchParams.get('max_age')).toBe('0');
+    const reauth = new URL((await p.start({ forceLogin: true, maxAge: SIGNIN_MAX_AGE })).url);
+    expect(reauth.searchParams.get('prompt')).toBe('login');
+    expect(reauth.searchParams.get('max_age')).toBe(String(SIGNIN_MAX_AGE));
     const plain = new URL((await p.start({ maxAge: SIGNIN_MAX_AGE })).url);
     expect(plain.searchParams.get('max_age')).toBe(String(SIGNIN_MAX_AGE));
     expect(plain.searchParams.has('prompt')).toBe(false);

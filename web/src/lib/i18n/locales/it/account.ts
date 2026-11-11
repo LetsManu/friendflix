@@ -326,6 +326,7 @@ const it: Translation<typeof de> = {
     loadFailed: 'Impossibile caricare l’account.',
     retry: 'Riprova',
     reauthFailed: 'Non è stato possibile confermare l’accesso. Riprova.',
+    reauthFailedHint: 'Se fallisce ancora, aspetta mezzo minuto o esci prima da Authentik.',
     privacy: 'Gli admin possono vedere quali titoli hai guardato di recente. Ogni consultazione viene registrata nel registro di audit.',
     data: {
       title: 'I tuoi dati',

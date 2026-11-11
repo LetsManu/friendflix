@@ -326,6 +326,7 @@ const es: Translation<typeof de> = {
     loadFailed: 'No se pudo cargar la cuenta.',
     retry: 'Reintentar',
     reauthFailed: 'No se pudo confirmar el inicio de sesión. Inténtalo de nuevo.',
+    reauthFailedHint: 'Si vuelve a fallar, espera medio minuto o cierra primero la sesión en Authentik.',
     privacy: 'Los admins pueden ver qué títulos has visto recientemente. Cada consulta queda registrada en el registro de auditoría.',
     data: {
       title: 'Tus datos',

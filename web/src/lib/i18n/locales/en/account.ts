@@ -325,6 +325,7 @@ const en: Translation<typeof de> = {
     loadFailed: 'Could not load the account.',
     retry: 'Try again',
     reauthFailed: 'The sign-in could not be confirmed. Please try again.',
+    reauthFailedHint: 'If it fails again, wait half a minute or sign out in Authentik first.',
     privacy: 'Admins can see which titles you watched recently. Every look at them is recorded in the audit log.',
     data: {
       title: 'Your data',

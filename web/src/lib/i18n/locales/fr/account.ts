@@ -326,6 +326,7 @@ const fr: Translation<typeof de> = {
     loadFailed: 'Impossible de charger le compte.',
     retry: 'Réessayer',
     reauthFailed: 'La connexion n’a pas pu être confirmée. Réessaie.',
+    reauthFailedHint: 'Si cela échoue encore, attends une demi-minute ou déconnecte-toi d’abord d’Authentik.',
     privacy: 'Les admins peuvent voir les titres que tu as regardés récemment. Chaque consultation est consignée dans le journal d’audit.',
     data: {
       title: 'Tes données',

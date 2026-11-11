@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Ctx } from '../src/ctx.js';
 import { REAUTH_MAX_AGE, recentlyAuthenticated, requireRecentAuth } from '../src/reauth.js';
+import { SIGNIN_MAX_AGE } from '../src/oidc.js';
 import type { Session } from '../src/session.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
@@ -68,13 +69,13 @@ describe('re-authentication guard', () => {
 
   it('/auth/reauth starts a forced login', async () => {
     const s = await mk();
-    const starts: Array<{ forceLogin?: boolean } | undefined> = [];
+    const starts: Array<{ forceLogin?: boolean; maxAge?: number } | undefined> = [];
     const orig = env.ctx.oidc.start;
     env.ctx.oidc.start = (o) => { starts.push(o); return orig(o); };
     const r = await env.app.inject({ url: '/auth/reauth?next=/me/account?delete=1', cookies: s.cookies });
     expect(r.statusCode).toBe(302);
     expect(r.headers.location).toBe('https://idp/authorize');
-    expect(starts.at(-1)).toEqual({ forceLogin: true });
+    expect(starts.at(-1)).toEqual({ forceLogin: true, maxAge: SIGNIN_MAX_AGE }); // a positive max_age: Authentik 2026.8.3 ignores max_age=0 and honours prompt=login once per session
     const st = r.cookies.find((x) => x.name === 'ff_oidc')!.value;
     const saved = JSON.parse((await env.kv.get(`oidc:${st}`))!);
     expect(saved.reauth).toEqual({ userId: (await sessionOf(s)).userId, next: '/me/account?delete=1' });

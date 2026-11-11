@@ -8,7 +8,7 @@ const login: Translation<typeof de> = {
   loading: 'Preparando el inicio de sesión …',
   busy: 'Un momento …',
   inviteGone: 'Esta invitación ya no es válida. Si ya tienes una cuenta, simplemente inicia sesión.',
-  stale: { title: 'Inicio de sesión no confirmado', text: 'Authentik no volvió a pedir el inicio de sesión, así que FriendFlix lo rechazó. Inténtalo de nuevo. Si sigue fallando, espera un minuto y reintenta, o cierra primero la sesión en Authentik.', retry: 'Iniciar sesión de nuevo' },
+  stale: { title: 'Inicio de sesión no confirmado', text: 'Authentik no volvió a pedir el inicio de sesión, así que FriendFlix lo rechazó. Inténtalo de nuevo. Si sigue fallando, espera medio minuto y reintenta, o cierra primero la sesión en Authentik.', retry: 'Iniciar sesión de nuevo' },
   identify: {
     title: 'Bienvenido de nuevo',
     text: 'Inicia sesión para seguir viendo.',

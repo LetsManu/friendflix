@@ -29,7 +29,7 @@ import { publicCapabilities } from '../media/types.js';
 import { requestsEnabled } from '../seerr/client.js';
 import { postplayEnabled } from './postplay.js';
 import { isSetupSession, setupSessionHash } from '../setup/code.js';
-import { claimSetup, isSetupComplete, SETUP_EXPIRED } from '../setup/state.js';
+import { claimSetup, isSetupComplete, SETUP_EXPIRED, SETUP_STALE } from '../setup/state.js';
 import type { UserRow } from '../types.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, profileLanguage, roleLabel } from '../i18n.js';
 
@@ -74,11 +74,12 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
    * The rule that holds whatever the IdP does: the callback accepts a login only when its auth_time is not older than `startedAt` (saved
    * here) minus the clock skew. The request asks for it with max_age=SIGNIN_MAX_AGE (Authentik 2026.8.3 honours a positive value on every
    * request and shows its login page for an older session; prompt=login would do so once per session only and max_age=0 is ignored, see
-   * oidc.ts). A re-authentication keeps prompt=login + max_age=0. The invite enrollment sends no parameter (its flow logs the new person
+   * oidc.ts). A re-authentication sends the same max_age next to prompt=login (the max_age branch sets Authentik's marker, so prompt=login then passes
+   * after the re-login) and is start-bound as well (finishReauth). The invite enrollment sends no parameter (its flow logs the new person
    * in itself, possibly minutes later) but is checked against its start like the others.
    */
   async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number, opts: { resetPin?: boolean; reauth?: SavedLogin['reauth']; setup?: string; enroll?: boolean } = {}) {
-    const s = await ctx.oidc.start(opts.enroll ? undefined : opts.reauth ? { forceLogin: true } : { maxAge: SIGNIN_MAX_AGE });
+    const s = await ctx.oidc.start(opts.enroll ? undefined : opts.reauth ? { forceLogin: true, maxAge: SIGNIN_MAX_AGE } : { maxAge: SIGNIN_MAX_AGE });
     const saved: SavedLogin = {
       state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, startedAt: Date.now(), invite,
       ...(opts.resetPin ? { resetPin: true } : {}), ...(opts.reauth ? { reauth: opts.reauth } : {}), ...(opts.setup ? { setup: opts.setup } : {}), ...(opts.enroll ? { enroll: true } : {}),
@@ -148,6 +149,8 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     let claims: OidcClaims;
     try {
       claims = await ctx.oidc.finish(callbackUrl(req), saved, { maxAge: REAUTH_MAX_AGE });
+      // the IdP login must come after this re-authentication began (a leftover session answering at once is no re-authentication)
+      if (!signedInAfter(claims.authTime, saved.startedAt)) throw new Error('auth_time before the start of the re-authentication');
     } catch (err) {
       if (unavailable(err)) throw err;
       req.log.warn({ err }, 'oidc re-authentication failed'); // e.g. auth_time older than REAUTH_MAX_AGE
@@ -209,7 +212,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       const claims = await ctx.oidc.finish(callbackUrl(req), saved);
       if (!signedInAfter(claims.authTime, saved.startedAt) || (!saved.enroll && !freshAuth(claims.authTime, RESET_PIN_MAX_AGE))) {
         req.log.warn({ route: '/auth/callback', code: claims.authTime === undefined ? 'auth_time_missing' : 'auth_time_stale' }, 'sign-in refused: the identity provider did not authenticate again');
-        return reply.redirect(firstAdmin ? SETUP_EXPIRED : saved.resetPin ? RESET_STALE : LOGIN_STALE);
+        return reply.redirect(firstAdmin ? SETUP_STALE : saved.resetPin ? RESET_STALE : saved.invite ? `${LOGIN_STALE}&invite=${encodeURIComponent(saved.invite)}` : LOGIN_STALE);
       }
       if (firstAdmin) {
         // the account is being deleted (claimed by the deletion tick): no first admin either (F15 step 2; resolveLogin checks it below)
