@@ -65,6 +65,24 @@ describe('toStep', () => {
     expect(step(fixture('validate-webauthn'))).toMatchObject({ stage: 'mfa', totp: false, recovery: true, passkey: { rpId: APP }, passkeyClassic: false });
   });
 
+  it('a passkey challenge without a known userVerification gets required (never the browser default), a known one passes unchanged', () => {
+    const ident = (uv: unknown) => {
+      const pk = { ...(fixture('identification-passkey').passkey_challenge as object) } as Record<string, unknown>;
+      if (uv === undefined) delete pk.userVerification; else pk.userVerification = uv;
+      return step(fx('identification-passkey', { passkey_challenge: pk }));
+    };
+    for (const uv of [undefined, null, 'mandatory', 'REQUIRED', '', 7, {}]) {
+      expect(ident(uv)).toMatchObject({ stage: 'identify', passkey: { rpId: APP, userVerification: 'required' } });
+    }
+    for (const uv of ['required', 'preferred', 'discouraged']) expect(ident(uv)).toMatchObject({ passkey: { userVerification: uv } });
+    // the MFA step's passkey as well
+    const raw = fixture('validate-all');
+    const wa = (raw.device_challenges as Array<{ challenge: Record<string, unknown> }>)[2]!.challenge;
+    wa.rpId = APP;
+    delete wa.userVerification;
+    expect(step(raw)).toMatchObject({ stage: 'mfa', passkey: { userVerification: 'required' } });
+  });
+
   it("validate with webauthn whose rpId is Authentik's host → passkey null, passkeyClassic true", () => {
     expect(step(fixture('validate-all'))).toEqual({ stage: 'mfa', step: STEP, totp: true, recovery: true, passkey: null, passkeyClassic: true });
     expect(step(fixture('validate-webauthn-unforwarded'))).toMatchObject({ stage: 'mfa', recovery: true, passkey: null, passkeyClassic: true });

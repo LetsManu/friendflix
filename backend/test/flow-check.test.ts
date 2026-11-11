@@ -227,6 +227,28 @@ describe('checkLoginFlows', () => {
     expect(await checkLoginFlows(setup().ctx)).toMatchObject({ passkeySignIn: 'ok', warnings: [] });
   });
 
+  it('passkeyUv exposes what Authentik sends: required / preferred / discouraged, anything else or missing -> unknown, no passkey challenge -> null', async () => {
+    const uv = async (v: unknown) => {
+      const pk: Record<string, unknown> = { ...IDENT_WITH_PASSKEY.passkey_challenge };
+      if (v === undefined) delete pk.userVerification; else pk.userVerification = v;
+      return (await checkLoginFlows(setup({ executor: { json: { ...IDENT_WITH_PASSKEY, passkey_challenge: pk } } }).ctx)).passkeyUv;
+    };
+    expect(await uv('required')).toBe('required');
+    expect(await uv('preferred')).toBe('preferred');
+    expect(await uv('discouraged')).toBe('discouraged');
+    expect(await uv(undefined)).toBe('unknown');
+    expect(await uv('mandatory')).toBe('unknown');
+    const noStage = await checkLoginFlows(setup({ executor: { json: { component: 'ak-stage-identification', user_fields: ['username'], passkey_challenge: null } } }).ctx);
+    expect(noStage.passkeyUv).toBeNull();
+    expect((await checkLoginFlows(setup({ executor: { status: 500, json: {} } }).ctx)).passkeyUv).toBeNull();
+  });
+
+  it('a missing or unknown userVerification is a warning too (sign-in itself may not verify the person)', async () => {
+    const pk: Record<string, unknown> = { ...IDENT_WITH_PASSKEY.passkey_challenge };
+    delete pk.userVerification;
+    expect(await checkLoginFlows(setup({ executor: { json: { ...IDENT_WITH_PASSKEY, passkey_challenge: pk } } }).ctx)).toMatchObject({ passkeyUv: 'unknown', warnings: ['passkeys:uv_not_required'] });
+  });
+
   it('passkey sign-in: a first stage that is no identification -> unknown, no warning; a failing executor -> null', async () => {
     expect(await checkLoginFlows(setup({ executor: { json: { component: 'ak-stage-password' } } }).ctx)).toMatchObject({ passkeySignIn: 'unknown', warnings: [] });
     const down = await checkLoginFlows(setup({ executor: { status: 500, json: {} } }).ctx);

@@ -369,6 +369,14 @@ function installWebAuthn(opts: { json?: boolean; get?: (o: unknown) => Promise<u
 }
 
 describe('passkeys', () => {
+  it('passkeyGet hands the step\'s userVerification to the browser unchanged (the backend already made it required when Authentik named none)', async () => {
+    for (const uv of ['required', 'discouraged']) {
+      const { seen } = installWebAuthn();
+      await passkeyGet({ ...GET, userVerification: uv });
+      expect(seen.get.userVerification).toBe(uv);
+    }
+  });
+
   it('passkeyGet converts base64url options and returns JSON; NotAllowedError → passkey_cancelled', async () => {
     const { seen } = installWebAuthn();
     const cred = await passkeyGet(GET);
