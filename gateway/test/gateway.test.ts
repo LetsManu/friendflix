@@ -22,6 +22,7 @@ const CT_BAD = 'B'.repeat(43);
 const CT_IMG = 'I'.repeat(43); // poster-only token
 const CT_PIN = 'P'.repeat(43); // valid only for client PIN_CLIENT (the backend pins tokens to the first client)
 const CT_LOW = 'L'.repeat(43); // role limited to 720p
+const CT_SUB = 'S'.repeat(43); // AirPlay token whose stream carries one subtitle rendition (scope.hlsSub)
 const PIN_CLIENT = '198.51.100.50';
 const D_FILE = '11111111-1111-4111-8111-111111111111';
 const D_BADNAME = '22222222-2222-4222-8222-222222222222';
@@ -45,6 +46,14 @@ const JF_MASTER = [
   `#EXT-X-IMAGE-STREAM-INF:BANDWIDTH=9768,RESOLUTION=320x180,CODECS="jpeg",URI="Trickplay/320/tiles.m3u8?MediaSourceId=${MS}&api_key=LEAK"`,
   '',
 ].join('\n');
+/** the AirPlay form of that master: the one subtitle rendition and its reference stay, reduced to the fixed attribute set */
+const JF_SUB_KEPT = [
+  '#EXTM3U',
+  `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",LANGUAGE="eng",DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,URI="${MS}/Subtitles/3/subtitles.m3u8?SegmentLength=3"`,
+  '#EXT-X-STREAM-INF:BANDWIDTH=11088278,AVERAGE-BANDWIDTH=11088278,CODECS="avc1.640028,mp4a.40.2",RESOLUTION=1920x1080,FRAME-RATE=23.976,SUBTITLES="subs"',
+  `main.m3u8?DeviceId=d&MediaSourceId=${MS}&VideoCodec=h264&AudioCodec=aac&PlaySessionId=ps-1&TranscodeReasons=ContainerNotSupported`,
+  '',
+].join('\n');
 const JF_COMPAT = [
   '#EXTM3U',
   '#EXT-X-STREAM-INF:BANDWIDTH=11088278,AVERAGE-BANDWIDTH=11088278,CODECS="avc1.640028,mp4a.40.2",RESOLUTION=1920x1080,FRAME-RATE=23.976',
@@ -59,6 +68,10 @@ beforeAll(async () => {
     seen.push({ url: req.url!, auth: req.headers.authorization, range: req.headers.range, acceptEncoding: req.headers['accept-encoding'], cookie: req.headers.cookie });
     if (req.url!.includes('/master.m3u8') && req.url!.includes('jfmaster=1')) {
       return void res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' }).end(JF_MASTER);
+    }
+    if (req.url!.includes('/master.m3u8') && req.url!.includes('jfmaster=2')) {
+      // a subtitle rendition that points outside the token path (the check must fail the whole playlist)
+      return void res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' }).end(JF_MASTER.replace(`URI="${MS}/Subtitles/3/`, 'URI="https://evil.example/Subtitles/3/'));
     }
     if (req.url!.includes('/main.m3u8')) {
       if (req.url!.includes('big=1')) {
@@ -94,10 +107,10 @@ beforeAll(async () => {
       if (j.ct !== undefined) {
         authzCalls.push({ ct: j.ct, client: j.client });
         if (j.ct === 'E'.repeat(43)) return void res.writeHead(500).end();
-        if (![CT, CT_IMG, CT_PIN, CT_LOW].includes(j.ct)) return void res.writeHead(401).end();
+        if (![CT, CT_IMG, CT_PIN, CT_LOW, CT_SUB].includes(j.ct)) return void res.writeHead(401).end();
         if (j.ct === CT_PIN && j.client !== PIN_CLIENT) return void res.writeHead(401).end();
         res.writeHead(200, { 'content-type': 'application/json' });
-        return void res.end(JSON.stringify({ userId: 'u1', token: 'CASTJF', deviceId: 'ff-u1', maxBitrate: 5_000_000, maxHeight: j.ct === CT_LOW ? 720 : 1080, kind: j.ct === CT_IMG ? 'img' : 'media', scope: { itemId: ID, mediaSourceId: MS, playSessionId: 'ps-1' } }));
+        return void res.end(JSON.stringify({ userId: 'u1', token: 'CASTJF', deviceId: 'ff-u1', maxBitrate: 5_000_000, maxHeight: j.ct === CT_LOW ? 720 : 1080, kind: j.ct === CT_IMG ? 'img' : 'media', scope: { itemId: ID, mediaSourceId: MS, playSessionId: 'ps-1', ...(j.ct === CT_SUB ? { hlsSub: true } : {}) } }));
       }
       if (j.dl !== undefined) {
         if (j.sid !== 'goodsid' && j.sid !== 'othersid') return void res.writeHead(401).end();
@@ -394,6 +407,73 @@ describe('compatPlaylist', () => {
   });
 });
 
+describe('compatPlaylist: one subtitle rendition for AirPlay (keepSubtitles)', () => {
+  const sub = (group: string, name: string, lang: string, uri: string, extra = '') => `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="${group}",NAME="${name}",DEFAULT=NO,AUTOSELECT=NO${extra},LANGUAGE="${lang}",URI="${uri}"`;
+  const master = (...mid: string[]) => ['#EXTM3U', ...mid, '#EXT-X-STREAM-INF:BANDWIDTH=5,CODECS="avc1.64001f,mp4a.40.2",SUBTITLES="subs"', 'v.m3u8'];
+  const KEPT = '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",LANGUAGE="eng",DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,URI="s/subtitles.m3u8"';
+
+  it('keeps one subtitle rendition for an AirPlay token that asked', () => {
+    const out = compatPlaylist(master(sub('subs', 'English', 'eng', 's/subtitles.m3u8', ',FORCED=YES,CHARACTERISTICS="public.accessibility.transcribes-spoken-dialog"')), { keepSubtitles: true });
+    expect(out).toEqual(['#EXTM3U', KEPT, '#EXT-X-STREAM-INF:BANDWIDTH=5,CODECS="avc1.64001f,mp4a.40.2",SUBTITLES="subs"', 'v.m3u8']);
+  });
+  it('the same through sanitizePlaylist: the token query is stripped from the kept URI, the reference stays', () => {
+    const T = 'A'.repeat(43);
+    const text = JF_MASTER;
+    expect(sanitizePlaylist(text, `/media/c/${T}/Videos/${ID}/master.m3u8`, undefined, { keepSubtitles: true })).toBe(JF_SUB_KEPT);
+    expect(sanitizePlaylist(text, `/media/c/${T}/Videos/${ID}/master.m3u8`, undefined, { keepSubtitles: true })).not.toContain('LEAK');
+  });
+  it('drops subtitle groups without keepSubtitles (Chromecast, AirPlay without subtitles)', () => {
+    const lines = master(sub('subs', 'English', 'eng', 's/subtitles.m3u8'));
+    const want = ['#EXTM3U', '#EXT-X-STREAM-INF:BANDWIDTH=5,CODECS="avc1.64001f,mp4a.40.2"', 'v.m3u8'];
+    expect(compatPlaylist(lines)).toEqual(want);
+    expect(compatPlaylist(lines, {})).toEqual(want);
+    expect(compatPlaylist(lines, { keepSubtitles: false })).toEqual(want);
+  });
+  it('a second subtitle group and closed captions are dropped; the first rendition wins', () => {
+    const out = compatPlaylist([
+      '#EXTM3U',
+      '#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID="cc",NAME="cc",INSTREAM-ID="CC1"',
+      sub('subs', 'English', 'eng', 's/subtitles.m3u8'),
+      sub('subs', 'Deutsch', 'ger', 't/subtitles.m3u8'),
+      sub('subs2', 'Francais', 'fre', 'u/subtitles.m3u8'),
+      '#EXT-X-STREAM-INF:BANDWIDTH=5,CLOSED-CAPTIONS="cc",SUBTITLES="subs"', 'v.m3u8',
+      '#EXT-X-STREAM-INF:BANDWIDTH=4,CLOSED-CAPTIONS="cc",SUBTITLES="subs2"', 'w.m3u8',
+    ], { keepSubtitles: true });
+    expect(out).toEqual(['#EXTM3U', KEPT, '#EXT-X-STREAM-INF:BANDWIDTH=5,SUBTITLES="subs"', 'v.m3u8', '#EXT-X-STREAM-INF:BANDWIDTH=4', 'w.m3u8']);
+    expect(out.join('\n')).not.toMatch(/CLOSED-CAPTIONS|Deutsch|Francais/);
+  });
+  it('CLOSED-CAPTIONS go even when only they are there, with keepSubtitles', () => {
+    expect(compatPlaylist(['#EXTM3U', '#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID="cc",NAME="cc",INSTREAM-ID="CC1"', '#EXT-X-STREAM-INF:BANDWIDTH=5,CLOSED-CAPTIONS="cc"', 'v.m3u8'], { keepSubtitles: true }))
+      .toEqual(['#EXTM3U', '#EXT-X-STREAM-INF:BANDWIDTH=5', 'v.m3u8']);
+  });
+  it('a rendition without GROUP-ID or URI is dropped with its references; a missing NAME gets a fixed one; a missing LANGUAGE stays out', () => {
+    const noUri = '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",LANGUAGE="eng"';
+    expect(compatPlaylist(master(noUri), { keepSubtitles: true })).toEqual(['#EXTM3U', '#EXT-X-STREAM-INF:BANDWIDTH=5,CODECS="avc1.64001f,mp4a.40.2"', 'v.m3u8']);
+    expect(compatPlaylist(master('#EXT-X-MEDIA:TYPE=SUBTITLES,NAME="English",URI="s.m3u8"'), { keepSubtitles: true })[1]).toMatch(/^#EXT-X-STREAM-INF/);
+    expect(compatPlaylist(master('#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",URI="s.m3u8"'), { keepSubtitles: true })[1])
+      .toBe('#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="Subtitles",DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,URI="s.m3u8"');
+    // the first rendition is the one that counts: an unusable first one is not replaced by a later one
+    expect(compatPlaylist(master(noUri, sub('subs', 'Deutsch', 'ger', 't.m3u8')), { keepSubtitles: true })).not.toContain('t.m3u8');
+  });
+  it('AUDIO groups and everything else behave as without the option', () => {
+    const lines = ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="de",URI="a.m3u8"', '#EXT-X-STREAM-INF:BANDWIDTH=5,HDCP-LEVEL=NONE,AUDIO="aud"', 'v.m3u8'];
+    expect(compatPlaylist(lines, { keepSubtitles: true })).toEqual(compatPlaylist(lines));
+  });
+  it('a kept rendition with a URI outside the token path makes the playlist fail (null)', () => {
+    const T = 'A'.repeat(43);
+    const req = `/media/c/${T}/Videos/${ID}/master.m3u8`;
+    for (const uri of ['https://evil.example/s.m3u8', '//evil.example/s.m3u8', '/Videos/x/s.m3u8', '../../../../s.m3u8', 'a\\b.m3u8', `/media/c/${'B'.repeat(43)}/s.m3u8`]) {
+      const text = master(sub('subs', 'English', 'eng', uri)).join('\n');
+      expect(sanitizePlaylist(text, req, undefined, { keepSubtitles: true }), uri).toBeNull();
+      expect(sanitizePlaylist(text, req), uri).toBeNull(); // dropped lines are checked too
+    }
+    // a URI hidden in another attribute of the kept line cannot get through either
+    expect(sanitizePlaylist(master(sub('subs', 'x,URI="//evil/s.m3u8"', 'eng', 's.m3u8')).join('\n'), req, undefined, { keepSubtitles: true })).toBeNull();
+    // a second group's bad URI fails the playlist although that group is dropped
+    expect(sanitizePlaylist(master(sub('subs', 'English', 'eng', 's.m3u8'), sub('x', 'Evil', 'eng', 'https://evil.example/t.m3u8')).join('\n'), req, undefined, { keepSubtitles: true })).toBeNull();
+  });
+});
+
 describe('cast route /media/c/<token>/', () => {
   it('streams playlist + segment with the profile token in the header and the cast token never upstream', async () => {
     seen.length = 0;
@@ -422,6 +502,18 @@ describe('cast route /media/c/<token>/', () => {
     const wm = await get(`/media/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&jfmaster=1`);
     expect(wm.status).toBe(200);
     expect(await wm.text()).toBe(JF_MASTER);
+  });
+  it('keeps the one subtitle rendition only for a token whose scope says hlsSub; every other token still gets the plain master', async () => {
+    const withSub = await cget(`/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&PlaySessionId=ps-1&jfmaster=1`, {}, `/media/c/${CT_SUB}`);
+    expect(withSub.status).toBe(200);
+    expect(await withSub.text()).toBe(JF_SUB_KEPT);
+    const plain = await cget(`/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&PlaySessionId=ps-1&jfmaster=1`);
+    expect(await plain.text()).toBe(JF_COMPAT);
+  });
+  it('a hlsSub token whose subtitle rendition points outside the token path gets 502, never the playlist', async () => {
+    const r = await cget(`/Videos/${ID}/master.m3u8?MediaSourceId=${MS}&PlaySessionId=ps-1&jfmaster=2`, {}, `/media/c/${CT_SUB}`);
+    expect(r.status).toBe(502);
+    expect(await r.text()).not.toContain('evil.example');
   });
   it('clamps bitrate to the token limit', async () => {
     seen.length = 0;

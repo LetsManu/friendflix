@@ -42,7 +42,7 @@ interface Authz {
   deviceId: string;
   maxBitrate: number;
   /** only present for Chromecast tokens: the one item / media source / play session the token may touch */
-  scope?: { itemId: string; mediaSourceId: string; playSessionId: string };
+  scope?: { itemId: string; mediaSourceId: string; playSessionId: string; /** AirPlay token whose stream carries one subtitle rendition: compatPlaylist keeps it (anything but `true` = drop every subtitle group) */ hlsSub?: boolean };
   /** cast only: 'img' tokens may fetch poster images and nothing else (default 'media') */
   kind?: 'media' | 'img';
   /** resolution cap: role limit (cookie path, when the role has one) or cast token cap (role limit, at most 1080) */
@@ -123,7 +123,7 @@ export function stripUriTokens(uri: string, strip: ReadonlySet<string> = jellyfi
 
 /** `#EXT-X-STREAM-INF` attributes the compatibility master keeps (AUDIO / VIDEO only while their EXT-X-MEDIA group is kept) */
 const COMPAT_STREAM_ATTRS = new Set(['BANDWIDTH', 'AVERAGE-BANDWIDTH', 'CODECS', 'RESOLUTION', 'FRAME-RATE']);
-const COMPAT_GROUP_ATTRS = new Set(['AUDIO', 'VIDEO']);
+const COMPAT_GROUP_ATTRS = new Set(['AUDIO', 'VIDEO', 'SUBTITLES']); // SUBTITLES only ever matches the one kept rendition (see compatPlaylist)
 
 /**
  * `KEY=value` pairs of an HLS attribute list (quoted values may contain commas). A single linear scan, no regex: the list comes
@@ -168,22 +168,41 @@ const unquote = (v: string) => v.replace(/^"|"$/g, '');
  *   "its absence implies a value of SDR". The cast stream is forced to H.264 8 bit (Level 41, MaxVideoBitDepth 8), i.e. SDR, so
  *   dropping it loses nothing and removes one more thing a strict receiver can choke on. HDCP-LEVEL, ALLOWED-CPC, PATHWAY-ID,
  *   SUPPLEMENTAL-CODECS, REQ-* and other newer attributes go for the same reason.
+ *   Exception (`opts.keepSubtitles`, AirPlay tokens whose authz scope says `hlsSub`): the FIRST `TYPE=SUBTITLES` rendition stays, rewritten
+ *   to exactly `TYPE, GROUP-ID, NAME, LANGUAGE, DEFAULT=YES, AUTOSELECT=YES, FORCED=NO, URI` (nothing else of the upstream line survives),
+ *   and `SUBTITLES="<that group>"` stays on `#EXT-X-STREAM-INF`. Without GROUP-ID or URI it is dropped like the rest. Other subtitle
+ *   groups and every CLOSED-CAPTIONS rendition always go. The URI of the kept line was checked by sanitizePlaylist like every other.
  * - Every other tag (EXTM3U, EXT-X-VERSION, EXT-X-INDEPENDENT-SEGMENTS, media playlist tags, EXT-X-I-FRAME-STREAM-INF ...) and all
  *   media playlists stay as they are.
  * Runs on the already URI-checked / token-stripped lines (sanitizePlaylist), so the hardening is unaffected.
  */
-export function compatPlaylist(lines: string[]): string[] {
+export function compatPlaylist(lines: string[], opts: { keepSubtitles?: boolean } = {}): string[] {
   const dropTypes = /^(SUBTITLES|CLOSED-CAPTIONS)$/;
   const groups = new Set<string>(); // `TYPE:GROUP-ID` of kept EXT-X-MEDIA renditions
-  for (const line of lines) {
-    if (!line.startsWith('#EXT-X-MEDIA:')) continue;
+  const keptSub: { line: number; text: string }[] = []; // the one subtitle rendition AirPlay keeps (first one only)
+  let firstSub = true;
+  lines.forEach((line, i) => {
+    if (!line.startsWith('#EXT-X-MEDIA:')) return;
     const a = new Map(hlsAttrs(line.slice(13)));
     const type = a.get('TYPE') ?? '';
     if (!dropTypes.test(type)) groups.add(`${type}:${unquote(a.get('GROUP-ID') ?? '')}`);
-  }
+    else if (type === 'SUBTITLES' && firstSub) {
+      firstSub = false;
+      const group = a.get('GROUP-ID');
+      const uri = a.get('URI');
+      if (opts.keepSubtitles && group && uri) {
+        const lang = a.get('LANGUAGE');
+        keptSub.push({
+          line: i,
+          text: `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=${group},NAME=${a.get('NAME') ?? '"Subtitles"'}${lang ? `,LANGUAGE=${lang}` : ''},DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,URI=${uri}`,
+        });
+        groups.add(`SUBTITLES:${unquote(group)}`);
+      }
+    }
+  });
   const out: string[] = [];
   let skipUri = false;
-  for (const line of lines) {
+  for (const [i, line] of lines.entries()) {
     const t = line.trim();
     if (skipUri && t && !t.startsWith('#')) { skipUri = false; continue; }
     if (t.startsWith('#EXT-X-IMAGE-')) {
@@ -191,7 +210,10 @@ export function compatPlaylist(lines: string[]): string[] {
       continue;
     }
     if (t.startsWith('#EXT-X-MEDIA:')) {
-      if (dropTypes.test(new Map(hlsAttrs(t.slice(13))).get('TYPE') ?? '')) continue;
+      if (dropTypes.test(new Map(hlsAttrs(t.slice(13))).get('TYPE') ?? '')) {
+        if (keptSub[0]?.line === i) out.push(keptSub[0].text);
+        continue;
+      }
       out.push(line);
       continue;
     }
@@ -210,9 +232,10 @@ export function compatPlaylist(lines: string[]): string[] {
  * /media/c/<token>/ on the same origin once resolved against the playlist's own URL (absolute URLs, //host, /abs paths,
  * ../ escapes, backslash tricks): the receiver would otherwise fetch from another host/path and leak or bypass the gateway.
  * `requestPath` is the public path the playlist was requested at (/media/c/<token>/Videos/<id>/main.m3u8).
- * Then the compatibility rewrite for the receivers (compatPlaylist). Every line is URI-checked, also the ones it drops.
+ * Then the compatibility rewrite for the receivers (compatPlaylist; `opts.keepSubtitles` from the token's authz scope). Every line is
+ * URI-checked first, also the ones it drops and the subtitle rendition it may keep.
  */
-export function sanitizePlaylist(text: string, requestPath: string, strip: ReadonlySet<string> = jellyfinUpstream.stripQuery): string | null {
+export function sanitizePlaylist(text: string, requestPath: string, strip: ReadonlySet<string> = jellyfinUpstream.stripQuery, opts: { keepSubtitles?: boolean } = {}): string | null {
   const m = CAST_ROUTE.exec(requestPath);
   if (!m) return null;
   const prefix = `${CAST_PREFIX}${m[1]}/`;
@@ -239,7 +262,7 @@ export function sanitizePlaylist(text: string, requestPath: string, strip: Reado
     check(t);
     return stripUriTokens(t, strip);
   });
-  return bad ? null : compatPlaylist(out).join('\n');
+  return bad ? null : compatPlaylist(out, opts).join('\n');
 }
 
 export function createGateway(opts: GatewayOptions): { server: Server; metrics: () => string } {
@@ -780,7 +803,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
           text = null;
         }
       }
-      const clean = text === null ? null : cast ? sanitizePlaylist(text, url.pathname, up.stripQuery) : text;
+      const clean = text === null ? null : cast ? sanitizePlaylist(text, url.pathname, up.stripQuery, { keepSubtitles: auth.scope?.hlsSub === true && auth.kind !== 'img' }) : text;
       if (clean === null) {
         countCode('502');
         return end(res, 502, 'bad gateway', 'text/plain', extra);
