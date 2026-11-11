@@ -913,8 +913,11 @@
       revoke: (ci) => castRevoke(ci),
       async detach() {
         // before the token stream (tap on the button, or a new token): the TV must never get the MSE / cookie URL
-        attachSeq++; clearTimeout(retryT); reconnecting = 0; error = '';
+        const my = ++attachSeq; clearTimeout(retryT); reconnecting = 0; error = '';
         if (started && !stopped) { stopped = true; await send('stop'); } // frees the stream slot (maxStreams) for the token's session
+        // the stop report outlasted the controller's DETACH_WAIT_MS and it restored the normal stream meanwhile (no token loading any
+        // more, a newer attach): that stream is not ours to drop
+        if (my !== attachSeq && !air?.state.busy) return;
         hls?.destroy(); hls = null;
         if (video?.disableRemotePlayback) video.disableRemotePlayback = false; // hls.js sets it for ManagedMediaSource; it would block AirPlay
         started = false; stopped = false;

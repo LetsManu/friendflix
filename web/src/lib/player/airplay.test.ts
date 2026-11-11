@@ -1309,6 +1309,43 @@ describe('connecting phase, connect timeout, position guard', () => {
     expect(c.state).toMatchObject({ active: true, connecting: true });
   });
 
+  it('a route picked outside our button (Control Center, automatic token): connecting phase and the 30 s timeout too', async () => {
+    exact();
+    const connectTimeout = vi.fn();
+    const { v, c, deps } = setup({ connectTimeout });
+    v.currentTime = 300; v.paused = false;
+    v.wireless(true); // no tap on our button: one automatic token request
+    expect(c.state).toMatchObject({ active: true, busy: true });
+    await adv(0);
+    expect(deps.request).toHaveBeenCalledOnce();
+    expect(c.state).toMatchObject({ active: true, busy: false, connecting: true });
+    expect(airPhase(c.state)).toBe('connecting');
+    await adv(CONNECT_TIMEOUT_MS - 1);
+    expect(connectTimeout).not.toHaveBeenCalled();
+    await adv(1);
+    expect(connectTimeout).toHaveBeenCalledOnce();
+    expect(c.state.connecting).toBe(false);
+  });
+
+  it('automatic route: the first playing ends the phase; a new token while the TV plays starts none', async () => {
+    exact();
+    const connectTimeout = vi.fn();
+    const { v, c, deps } = setup({ connectTimeout });
+    v.currentTime = 300; v.paused = false;
+    v.wireless(true);
+    await adv(0);
+    expect(c.state.connecting).toBe(true);
+    playing(v);
+    expect(c.state.connecting).toBe(false);
+    vi.mocked(deps.request).mockResolvedValueOnce(CI2);
+    await adv(SETTLE_MS);
+    await c.refresh(); // audio track / quality while the TV plays
+    expect(deps.request).toHaveBeenCalledTimes(2);
+    expect(c.state).toMatchObject({ active: true, connecting: false });
+    await adv(CONNECT_TIMEOUT_MS * 2);
+    expect(connectTimeout).not.toHaveBeenCalled();
+  });
+
   it('first playing more than 5 s off seeks once', async () => {
     const { v, c } = setup();
     v.currentTime = 1390; v.paused = false;
@@ -1532,7 +1569,7 @@ describe('airPhase: the one value the player renders', () => {
     expect(at({ error: true, connecting: true, ready: true })).toBe('error');
     expect(at({ error: true, active: true, busy: true })).toBe('error');
     expect(at({ error: true, ready: true })).toBe('error');
-    expect(at({ busy: true, ready: true })).toBe('connecting'); // a Retry from the ready error loads a token
+    expect(at({ busy: true, ready: true })).toBe('connecting'); // a refresh (audio track / quality) while the picker is open; a Retry keeps `error` set until its token is there, so it shows 'error'
   });
   it('a new token while the TV plays (audio track, quality, renewal, next title) stays active', () => {
     expect(at({ active: true, busy: true })).toBe('active');

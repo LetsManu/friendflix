@@ -447,6 +447,8 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
       info = ci; error = false;
       d.started(ci);
       play(ci, pos, wasPlaying);
+      // a route picked outside our button (automatic token) or a Retry before the TV ever played: the TV is about to load it
+      if (active && !played) startConnecting(why === 'auto' ? 'automatic token' : why, pos);
       if (ready && !active && armT === undefined) arm(); // Retry from the `ready` error: wait for the picker again
     } catch (e) {
       if (my !== seq || dead) return;
