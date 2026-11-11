@@ -3,6 +3,7 @@
 package app.friendflix.android.cast
 
 import android.content.Context
+import androidx.core.content.edit
 
 /** [CastHints] in a private preferences file: the public castIds only (never a token, URL or report token). */
 class PrefsCastHints(context: Context) : CastHints {
@@ -14,10 +15,10 @@ class PrefsCastHints(context: Context) : CastHints {
     }
 
     override fun write(h: CastHints.Hint) {
-        prefs.edit().putString(KEY_ID, h.castId).apply { if (h.next != null) putString(KEY_NEXT, h.next) else remove(KEY_NEXT) }.apply()
+        prefs.edit { putString(KEY_ID, h.castId); if (h.next != null) putString(KEY_NEXT, h.next) else remove(KEY_NEXT) }
     }
 
-    override fun clear() { prefs.edit().clear().apply() }
+    override fun clear() { prefs.edit { clear() } }
 
     private companion object {
         const val FILE = "ff_cast_hint"
