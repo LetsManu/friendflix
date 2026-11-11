@@ -36,11 +36,16 @@ export interface RoleSettingsRow { template: unknown; perms: unknown; requestsPe
  */
 export async function roleRights(ctx: RightsCtx, role: string, row?: RoleSettingsRow | null): Promise<{ template: EffectiveLimits; perms: Perms; sources: Record<RightKey, RoleSource> } | undefined> {
   const explicit = row === undefined ? undefined : row && { template: readTemplate(row.template), perms: row.perms };
-  const [r, req] = await Promise.all([
+  const [r, stored] = await Promise.all([
     resolveRole(ctx, role, explicit),
-    row === undefined ? roleLimitRow(ctx, role) : row ? { limit: row.requestsPerMonth, set: true } : { limit: defaultLimit(role), set: false },
+    row === undefined ? roleLimitRow(ctx, role) : row ? { limit: row.requestsPerMonth, set: true } : null,
   ]);
   if (!r) return undefined;
+  // a stored limit equal to the base's default reads as inherited (ruling 2: "back to the default" writes the default, as does the
+  // first write of any other field, because a null column means unlimited)
+  const inherited = defaultLimit(r.base);
+  const req = stored?.set ? stored : { limit: inherited, set: false };
+  const reqSource: RoleSource = req.set && req.limit !== inherited ? 'role' : 'default';
   const perms = defaultPerms(r.base);
   const permSources = Object.fromEntries(PERM_KEYS.map((k) => [k, 'default'])) as Record<PermKey, RoleSource>;
   for (const [k, v] of Object.entries(readPerms(r.perms)) as Array<[PermKey, boolean]>) {
@@ -51,7 +56,7 @@ export async function roleRights(ctx: RightsCtx, role: string, row?: RoleSetting
   return {
     template: { ...r.template, requestsPerMonth: req.limit },
     perms,
-    sources: { ...r.sources, requestsPerMonth: req.set ? 'role' : 'default', ...permSources },
+    sources: { ...r.sources, requestsPerMonth: reqSource, ...permSources },
   };
 }
 

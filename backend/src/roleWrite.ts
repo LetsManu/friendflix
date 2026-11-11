@@ -2,76 +2,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type pg from 'pg';
 import { z } from 'zod';
-import { audit } from './audit.js';
-import { castEnabled } from './cast.js';
+import { auditInTx } from './audit.js';
 import type { Ctx } from './ctx.js';
 import type { EffectiveLimits } from './limits.js';
 import { MATRIX_FIELDS, PERM_KEYS, permsPatch, readPerms, type MatrixField, type PermKey } from './perms.js';
+import { featureFlags } from './features.js';
+import { fetchLibraries, knownLibraries, missingLibraries, type Library } from './libraries.js';
 import { defaultLimit } from './requestlimit.js';
 import { invalidateRights, roleRights, type RightKey, type RightSource } from './rights.js';
 import { invitableRoles, listRoles, roleLabelArgs, type RoleRow } from './rolecat.js';
 import { DEFAULT_ROLES, LEGACY_COLUMNS, TEMPLATE_KEYS, invalidateRoles, own, readTemplate, type RoleTemplate } from './roles.js';
-import { requestsEnabled } from './seerr/client.js';
 import { HttpError, accountSerial, reapplyRole } from './users.js';
 
 /**
  * The role editor (spec §4.1): GET /api/admin/roles (the legacy fields plus the role matrix) and the partial role write behind
  * PUT /api/admin/roles/:role. A write merges into role_settings.template / perms (null = back to the inherited value, 'unlimited' = no
- * cap), dual-writes the old role_settings columns (one-release rollback), audits one role.update with the changed effective values and
- * re-applies the media server policy only when a field the server enforces changed.
+ * cap), dual-writes the old role_settings columns (one-release rollback), audits one role.update per stored change and re-applies the
+ * media server policy only when the effective value of a field the server enforces changed.
  */
-
-/** which optional features this install has (the editor hides the rows of absent ones); Live TV detection ships with Live TV Phase 1b */
-export function featureFlags(ctx: Ctx): { requests: boolean; cast: boolean; livetv: boolean } {
-  return { requests: requestsEnabled(ctx), cast: castEnabled(ctx), livetv: false };
-}
-
-// ---- media server libraries (the editor's choices, the names a write may use, stale names of a template) ----
-
-export interface Library { id: string; name: string }
-const LIB_TTL_MS = 5 * 60_000;
-const libCache = new WeakMap<object, { at: number; list: Library[] }>();
-
-/** the media server's libraries, cached 5 min per ctx; undefined while the server cannot list them (a failure is not cached) */
-async function fetchLibraries(ctx: Pick<Ctx, 'jf'>, fresh = false): Promise<Library[] | undefined> {
-  const c = libCache.get(ctx);
-  if (!fresh && c && Date.now() - c.at <= LIB_TTL_MS) return c.list;
-  try {
-    const list = (await ctx.jf.admin.libraries()).map((l) => ({ id: String(l.id), name: String(l.name) }));
-    libCache.set(ctx, { at: Date.now(), list });
-    return list;
-  } catch {
-    return undefined;
-  }
-}
-/** the media server's libraries (cached 5 min); [] while the server cannot list them */
-export const serverLibraries = async (ctx: Pick<Ctx, 'jf'>): Promise<Library[]> => (await fetchLibraries(ctx)) ?? [];
-export const forgetLibraries = (ctx: object): void => void libCache.delete(ctx);
-
-const lc = (s: string) => s.toLowerCase();
-/** library names of a template the server no longer has (matched case-insensitively, like the policy); [] when that cannot be told */
-export function missingLibraries(libraries: 'all' | string[], known: Library[] | undefined): string[] {
-  if (libraries === 'all' || !known?.length) return [];
-  const have = new Set(known.map((l) => lc(l.name)));
-  return libraries.filter((n) => !have.has(lc(n)));
-}
-
-/**
- * Names a write wants → the server's spelling of each (deduplicated). A name the cached list lacks gets one fresh look (a library added
- * a minute ago); still unknown → 400 unknown_library. 502 libraries_unavailable while the server cannot list them.
- */
-export async function knownLibraries(ctx: Pick<Ctx, 'jf'>, names: string[]): Promise<string[]> {
-  const find = (list: Library[]) => names.map((n) => list.find((l) => lc(l.name) === lc(n))?.name);
-  let list = await fetchLibraries(ctx);
-  let found = list && find(list);
-  if (!found || found.includes(undefined)) {
-    list = await fetchLibraries(ctx, true);
-    if (!list) throw new HttpError(502, 'libraries_unavailable');
-    found = find(list);
-  }
-  if (found.includes(undefined)) throw new HttpError(400, 'unknown_library');
-  return [...new Set(found as string[])];
-}
 
 // ---- the partial role write ----
 
@@ -132,9 +80,11 @@ function legacyColumns(t: Partial<Omit<RoleTemplate, 'label'>>): unknown[] {
 /**
  * Writes a partial role change in one transaction (serialized per role, so two admins editing different fields of one role keep
  * each other's change): template / perms merged, requests_per_month (null → the code default of the base, 'unlimited' → SQL null),
- * the old columns dual-written from the merged template, label / invitable into the catalogue. Then the caches are dropped, one
- * role.update audit entry holds the changed effective values ({ from, to }; nothing changed → none) and the identities of the role get
- * their policy again when a media-enforced field changed. `changed`: the changed keys (matrix keys, label, invitable).
+ * the old columns dual-written from the merged template, label / invitable into the catalogue, and one role.update audit entry:
+ * `{ from, to }` of the changed effective values, plus `layer` for a value that only moved between layers (pinned at the role or back
+ * to inherited, `{ [key]: { from, to } }` sources). No change → no entry. Everything inside the transaction runs on its one connection
+ * (no second pool client while the role lock is held). After commit the caches are dropped and the identities of the role get their
+ * policy again when the effective value of a media-enforced field changed. `changed`: the audited keys.
  */
 export async function writeRole(ctx: Ctx, actor: string | null, key: string, patch: RolePatch): Promise<{ changed: string[]; reapplied: { identities: number; failed: number } }> {
   const cat = (await listRoles(ctx)).find((r) => r.key === key);
@@ -147,14 +97,18 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
 
   const from: Record<string, unknown> = {};
   const to: Record<string, unknown> = {};
+  const layer: Record<string, { from: string; to: string }> = {};
+  let media = false;
   const c = await (ctx.db as pg.Pool).connect();
   try {
     await c.query('begin');
     await c.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${key}`]);
-    const cur = (await c.query<{ template: unknown; perms: unknown; requests_per_month: number | null }>(
-      'select template, perms, requests_per_month from role_settings where role=$1', [key])).rows[0];
-    const catRow = (await c.query<{ label: string | null; invitable: boolean }>('select label, invitable from roles where key=$1 for update', [key])).rows[0];
+    // the resolver reads the catalogue through this connection: a fresh ctx object, so nothing cached from before the lock is used
+    const tx = { db: c, roles: ctx.roles };
+    const catRow = (await c.query<{ label: string | null; invitable: boolean; base: string }>('select label, invitable, base from roles where key=$1 for update', [key])).rows[0];
+    if (!catRow && !Object.hasOwn(ctx.roles, key)) throw new HttpError(404, 'not_found'); // deleted while this write waited
     if (touchesCatalogue && !catRow) throw new HttpError(400, 'not_in_catalogue'); // a ROLE_TEMPLATES key the catalogue cannot hold
+    const base = catRow?.base ?? cat.base;
 
     if (touchesCatalogue && catRow) {
       const label = patch.label === undefined ? catRow.label : patch.label;
@@ -164,6 +118,8 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
       if (label !== catRow.label || invitable !== catRow.invitable) await c.query('update roles set label=$2, invitable=$3 where key=$1', [key, label, invitable]);
     }
     if (touchesSettings) {
+      const cur = (await c.query<{ template: unknown; perms: unknown; requests_per_month: number | null }>(
+        'select template, perms, requests_per_month from role_settings where role=$1', [key])).rows[0];
       const template = cleaned(cur?.template, TEMPLATE_KEYS, readTemplate(cur?.template));
       for (const k of TEMPLATE_KEYS) {
         const v = k === 'libraries' ? libraries : patch[k];
@@ -177,14 +133,22 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
         else if (v !== undefined) perms[k] = v;
       }
       const rq = patch.requestsPerMonth;
-      const requestsPerMonth = rq === undefined ? (cur ? cur.requests_per_month : defaultLimit(cat.base)) : rq === null ? defaultLimit(cat.base) : rq === 'unlimited' ? null : rq;
+      const requestsPerMonth = rq === undefined ? (cur ? cur.requests_per_month : defaultLimit(base)) : rq === null ? defaultLimit(base) : rq === 'unlimited' ? null : rq;
       const next = { template, perms, requestsPerMonth };
       const prev = cur ? { template: cur.template, perms: cur.perms, requestsPerMonth: cur.requests_per_month } : null;
-      const [before, after] = await Promise.all([roleRights(ctx, key, prev), roleRights(ctx, key, next)]);
+      const before = (await roleRights(tx, key, prev))!;
+      const after = (await roleRights(tx, key, next))!;
       for (const { key: k } of MATRIX_FIELDS) {
-        const a = valueOf(before!, k);
-        const b = valueOf(after!, k);
-        if (!same(a, b)) { from[k] = a; to[k] = b; }
+        const a = valueOf(before, k);
+        const b = valueOf(after, k);
+        const sa = before.sources[k as RightKey];
+        const sb = after.sources[k as RightKey];
+        if (!same(a, b)) {
+          from[k] = a; to[k] = b;
+          if (MEDIA_FIELDS.has(k)) media = true;
+        } else if (sa !== sb) {
+          from[k] = a; to[k] = b; layer[k] = { from: sa, to: sb };
+        }
       }
       if (!prev || !same(prev, next)) {
         const cols = Object.values(LEGACY_COLUMNS);
@@ -195,6 +159,8 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
           [key, requestsPerMonth, JSON.stringify(template), JSON.stringify(perms), ...legacyColumns(readTemplate(template))]);
       }
     }
+    // in the transaction: an entry for every stored change, in commit order (the role lock is still held)
+    if (Object.keys(to).length) await auditInTx({ db: c }, actor, 'role.update', key, { from, to, ...(Object.keys(layer).length ? { layer } : {}) });
     await c.query('commit');
   } catch (e) {
     await c.query('rollback').catch(() => undefined);
@@ -204,12 +170,10 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
   }
   invalidateRoles(ctx);
   invalidateRights(); // accountsWithout answers follow the role's switches
-  const changed = Object.keys(to);
-  if (changed.length) await audit(ctx, actor, 'role.update', key, { from, to });
-  const reapplied = changed.some((k) => MEDIA_FIELDS.has(k))
+  const reapplied = media
     ? await accountSerial(() => reapplyRole(ctx, key)) // after a role change of one of its accounts, never interleaved with it
     : { identities: 0, failed: 0 };
-  return { changed, reapplied };
+  return { changed: Object.keys(to), reapplied };
 }
 
 // ---- GET /api/admin/roles ----

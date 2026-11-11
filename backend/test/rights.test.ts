@@ -117,7 +117,7 @@ describe('effectiveRights', () => {
   it('layer order and sources', async () => {
     // (a role_settings row whose requests_per_month is null means unlimited, as in 3.3: the fixtures write the column explicitly)
     const ctx = mk('{"friend":{"maxStreams":3}}');
-    await pool.query(`insert into role_settings(role, requests_per_month, template, perms) values ('friend', 2, '{"maxHeight": 1080}', '{"cast": false}')`);
+    await pool.query(`insert into role_settings(role, requests_per_month, template, perms) values ('friend', 7, '{"maxHeight": 1080}', '{"cast": false}')`);
     const id = await addUser('Carla Probe', 'friend');
     await pool.query("insert into user_limits(user_id, max_streams, perms) values ($1, 5, '{\"comments\": false}')", [id]);
     const r = (await effectiveRights(ctx, { id, role: 'friend' }))!;
@@ -127,7 +127,10 @@ describe('effectiveRights', () => {
     expect([r.perms.comments, r.sources.comments]).toEqual([false, 'user']);
     expect([r.perms.party, r.sources.party]).toEqual([true, 'default']);
     expect([r.template.downloadDays, r.sources.downloadDays]).toEqual([30, 'default']);
-    expect([r.template.requestsPerMonth, r.sources.requestsPerMonth]).toEqual([2, 'role']);
+    expect([r.template.requestsPerMonth, r.sources.requestsPerMonth]).toEqual([7, 'role']);
+    // a stored limit equal to the base's default reads as inherited (ruling 2: "back to the default" stores the default)
+    await pool.query("update role_settings set requests_per_month = 2 where role = 'friend'");
+    expect((await roleRights(mk(), 'friend'))!.sources.requestsPerMonth).toBe('default');
 
     await pool.query('delete from user_limits where user_id=$1', [id]);
     invalidateRights(id);

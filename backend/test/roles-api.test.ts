@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Ctx } from '../src/ctx.js';
+import { forgetLibraries } from '../src/libraries.js';
 import { MATRIX_FIELDS } from '../src/perms.js';
+import { roleLimitFor } from '../src/requestlimit.js';
+import { accountsWithout } from '../src/rights.js';
 import { invalidateRoles } from '../src/roles.js';
-import { forgetLibraries } from '../src/roleWrite.js';
-import { makeEnv, type TestEnv } from './helpers.js';
+import { writeRole } from '../src/roleWrite.js';
+import { TEST_DB, makeEnv, type TestEnv } from './helpers.js';
 
 // Users & permissions Task 3: GET /api/admin/roles (legacy fields + the role matrix) and PUT /api/admin/roles/:role (partial writes into
 // role_settings.template / perms, dual-written old columns, one role.update audit entry, policy re-apply only for media-enforced fields).
@@ -38,6 +43,7 @@ afterAll(() => env.close());
 beforeEach(async () => {
   await env.pool.query('delete from role_settings; delete from audit_log');
   await env.pool.query("update roles set label = null, invitable = (key <> 'admin')");
+  await env.pool.query("delete from roles where origin = 'admin'");
   invalidateRoles(env.ctx);
   folders = [{ Id: 'f1', Name: 'Filme' }, { Id: 'f2', Name: 'Serien' }];
   forgetLibraries(env.ctx);
@@ -95,6 +101,40 @@ describe('GET /api/admin/roles', () => {
     expect(friend).toMatchObject({ requestsPerMonth: 2, isDefault: true, remoteDefault: 8_000_000, remoteIsDefault: true, maxHeight: null });
     await put('friend', { remoteMaxBitrate: 12_000_000 });
     expect((await get()).limits.find((l: { role: string }) => l.role === 'friend')).toMatchObject({ remoteMaxBitrate: 12_000_000, remoteDefault: 8_000_000, remoteIsDefault: false });
+  });
+});
+
+describe('requestsPerMonth source', () => {
+  it('reads as inherited unless the stored value differs from the default', async () => {
+    const limit = async () => (await get()).limits.find((l: { role: string }) => l.role === 'family');
+    // an unrelated first write stores the default (null would mean unlimited), the field still reads inherited
+    await put('family', { maxStreams: 3 });
+    expect((await row('family')).requests_per_month).toBe(2);
+    expect((await roleOf('family')).sources.requestsPerMonth).toBe('default');
+    expect(await limit()).toMatchObject({ requestsPerMonth: 2, isDefault: true });
+    await put('family', { requestsPerMonth: 5 });
+    expect((await roleOf('family')).sources.requestsPerMonth).toBe('role');
+    expect(await limit()).toMatchObject({ requestsPerMonth: 5, isDefault: false });
+    await put('family', { requestsPerMonth: 'unlimited' });
+    expect((await roleOf('family')).sources.requestsPerMonth).toBe('role');
+    // back to the inherited value
+    await put('family', { requestsPerMonth: null });
+    expect((await roleOf('family')).sources.requestsPerMonth).toBe('default');
+    expect(await limit()).toMatchObject({ requestsPerMonth: 2, isDefault: true });
+  });
+
+  it('a catalogue role defaults to the limit of its base', async () => {
+    // an admin-created role on base admin (unlimited wishes), no role_settings row yet
+    await env.pool.query("insert into roles(key, label, base, origin, position) values ('kino', 'Kino', 'admin', 'admin', 9)");
+    invalidateRoles(env.ctx);
+    const kino = await roleOf('kino');
+    expect(kino.values.requestsPerMonth).toBeNull();
+    expect(kino.sources.requestsPerMonth).toBe('default');
+    expect(await roleLimitFor(env.ctx, 'kino')).toBeNull();
+    await put('kino', { maxStreams: 3 });
+    expect((await row('kino')).requests_per_month).toBeNull();
+    expect((await audits('kino')).map((a) => a.meta)).toEqual([{ from: { maxStreams: 6 }, to: { maxStreams: 3 } }]);
+    expect((await roleOf('kino')).sources.requestsPerMonth).toBe('default');
   });
 });
 
@@ -206,6 +246,61 @@ describe('PUT /api/admin/roles/:role', () => {
     expect(bad.statusCode).toBe(502);
     expect(bad.json()).toEqual({ error: 'policy_partial', failed: 1, identities: 3 });
     expect((await row('family')).template).toMatchObject({ maxStreams: 2 });
+  });
+
+  it('pinning or unpinning an inherited value is audited once and re-applies nothing', async () => {
+    const n = policies().length;
+    const r = await put('family', { maxStreams: 4 }); // the family default
+    expect(r.json()).toEqual({ ok: true, reapplied: { identities: 0, failed: 0 } });
+    expect((await roleOf('family')).sources.maxStreams).toBe('role');
+    expect((await put('family', { maxStreams: null })).statusCode).toBe(200);
+    expect((await roleOf('family')).sources.maxStreams).toBe('default');
+    expect((await audits('family')).map((a) => a.meta)).toEqual([
+      { from: { maxStreams: 4 }, to: { maxStreams: 4 }, layer: { maxStreams: { from: 'default', to: 'role' } } },
+      { from: { maxStreams: 4 }, to: { maxStreams: 4 }, layer: { maxStreams: { from: 'role', to: 'default' } } },
+    ]);
+    expect(policies()).toHaveLength(n);
+  });
+
+  it('the audit entry is part of the write: no entry, no change', async () => {
+    await env.pool.query("alter table audit_log add constraint t3_no_role_audit check (action <> 'role.update') not valid");
+    try {
+      expect((await put('family', { maxStreams: 3 })).statusCode).toBe(500);
+      expect(await row('family')).toBeUndefined();
+    } finally {
+      await env.pool.query('alter table audit_log drop constraint t3_no_role_audit');
+    }
+  });
+
+  it('download re-applies; maxDownloads and downloadMaxHeight do not', async () => {
+    let n = policies().length;
+    expect((await put('family', { download: false })).json()).toEqual({ ok: true, reapplied: { identities: 3, failed: 0 } });
+    expect(policies().slice(n).every((c) => c.body.EnableContentDownloading === false)).toBe(true);
+    expect(policies()).toHaveLength(n + 3);
+    n = policies().length;
+    expect((await put('family', { maxDownloads: 3 })).json()).toEqual({ ok: true, reapplied: { identities: 0, failed: 0 } });
+    expect((await put('family', { downloadMaxHeight: 480 })).json()).toEqual({ ok: true, reapplied: { identities: 0, failed: 0 } });
+    expect(policies()).toHaveLength(n);
+  });
+
+  it('a switch change reaches accountsWithout at once', async () => {
+    expect(await accountsWithout(env.ctx, 'comments')).toEqual([]); // primed (cached 30 s)
+    await put('family', { perms: { comments: false } });
+    expect((await accountsWithout(env.ctx, 'comments')).sort()).toEqual([ANNA, BEN].sort());
+  });
+
+  it('a write needs no second database connection while it holds the role lock', async () => {
+    // one connection only: two writers on one role, the second resolves the role with a cold catalogue cache inside its transaction
+    const one = new pg.Pool({ connectionString: TEST_DB, max: 1 });
+    const ctx1 = Object.create(env.ctx, { db: { value: one } }) as Ctx;
+    try {
+      const both = Promise.all([writeRole(ctx1, null, 'family', { maxDownloads: 3 }), writeRole(ctx1, null, 'family', { downloadDays: 9 })]);
+      const late = new Promise((_, reject) => setTimeout(() => reject(new Error('pool starved')), 5000));
+      await Promise.race([both, late]);
+      expect((await row('family')).template).toEqual({ maxDownloads: 3, downloadDays: 9 });
+    } finally {
+      await one.end().catch(() => undefined);
+    }
   });
 
   it('unknown library refused', async () => {

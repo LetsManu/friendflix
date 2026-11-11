@@ -2,19 +2,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Ctx } from './ctx.js';
 import { effectiveLimits } from './limits.js';
+import { listRoles } from './rolecat.js';
 
-/** Default monthly Seerr wishes per role; null = unlimited. Unknown roles (ROLE_TEMPLATES extras) get DEFAULT_LIMIT. */
+/** Default monthly Seerr wishes of a built-in base role; null = unlimited. Other roles use the default of their catalogue base. */
 const DEFAULT_LIMIT = 2;
 export const defaultLimit = (role: string): number | null => (role === 'admin' ? null : DEFAULT_LIMIT);
 
-/** The role's monthly limit (role_settings, else the default); the per-user override is applied by limitFor. */
-export async function roleLimitFor(ctx: Pick<Ctx, 'db'>, role: string): Promise<number | null> {
+/** The role's monthly limit (role_settings, else the default of its base); the per-user override is applied by limitFor. */
+export async function roleLimitFor(ctx: Pick<Ctx, 'db' | 'roles'>, role: string): Promise<number | null> {
   return (await roleLimitRow(ctx, role)).limit;
 }
-/** roleLimitFor plus whether a role_settings row decided it (`set`) or the code default (rights.ts reports the source). */
-export async function roleLimitRow(ctx: Pick<Ctx, 'db'>, role: string): Promise<{ limit: number | null; set: boolean }> {
+/** the built-in role whose code default applies to a role (its catalogue base; a key outside the catalogue is its own base) */
+const baseOf = async (ctx: Pick<Ctx, 'db' | 'roles'>, role: string) => (await listRoles(ctx)).find((r) => r.key === role)?.base ?? role;
+/** roleLimitFor plus whether a role_settings row holds it (`set`) or the code default of the base applies. */
+export async function roleLimitRow(ctx: Pick<Ctx, 'db' | 'roles'>, role: string): Promise<{ limit: number | null; set: boolean }> {
   const r = await ctx.db.query<{ requests_per_month: number | null }>('select requests_per_month from role_settings where role=$1', [role]);
-  return r.rowCount ? { limit: r.rows[0]!.requests_per_month, set: true } : { limit: defaultLimit(role), set: false };
+  return r.rowCount ? { limit: r.rows[0]!.requests_per_month, set: true } : { limit: defaultLimit(await baseOf(ctx, role)), set: false };
 }
 /** The user's monthly limit: their override, else the role's (null = unlimited). */
 export async function limitFor(ctx: Pick<Ctx, 'db' | 'roles'>, user: { id: string; role: string }): Promise<number | null> {
