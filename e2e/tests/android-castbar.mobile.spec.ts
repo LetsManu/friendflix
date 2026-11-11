@@ -133,6 +133,35 @@ test('the app hears about the new profile BEFORE the server switches (its stop r
   expect(selectAt - call!.at).toBeGreaterThanOrEqual(550); // sent first, answered, then the select
 });
 
+test.use({ allowedConsole: /Failed to load resource/ }); // the refused / failed selects below are mocked on purpose
+const switchTold = async (page: Page, select: Parameters<Page['route']>[1] | null) => {
+  await page.route('**/api/me', (r) => r.fulfill({ json: multi }));
+  await page.addInitScript(noIntro);
+  if (select) await page.route('**/api/profiles/p2/select', select);
+  await fakeNativeApp(page, APP2);
+  await page.goto('/profiles');
+  await page.getByRole('button', { name: 'Anna' }).tap();
+};
+
+test('a refused select (wrong PIN, 403) puts the app back on the active profile', async ({ page, api: _api }) => {
+  await switchTold(page, (r) => r.fulfill({ status: 403, json: { error: 'pin_wrong' } }));
+  await expect.poll(async () => (await asked(page, 'sessionChanged')).length).toBe(2);
+  expect(await asked(page, 'sessionChanged')).toEqual([{ profileId: 'p2' }, { profileId: 'p1' }]);
+  await expect(page).toHaveURL(/\/profiles/);
+});
+
+test('a network-failed select puts the app back on the active profile', async ({ page, api: _api }) => {
+  await switchTold(page, (r) => r.abort('failed'));
+  await expect.poll(async () => (await asked(page, 'sessionChanged')).length).toBe(2);
+  expect(await asked(page, 'sessionChanged')).toEqual([{ profileId: 'p2' }, { profileId: 'p1' }]);
+});
+
+test('a successful select tells the app only the new profile', async ({ page, api: _api }) => {
+  await switchTold(page, null);
+  await expect(page).not.toHaveURL(/\/profiles/);
+  expect(await asked(page, 'sessionChanged')).toEqual([{ profileId: 'p2' }]);
+});
+
 test('choosing the profile that is already active sends nothing', async ({ page, api: _api }) => {
   await page.route('**/api/me', (r) => r.fulfill({ json: multi }));
   await page.addInitScript(noIntro);
