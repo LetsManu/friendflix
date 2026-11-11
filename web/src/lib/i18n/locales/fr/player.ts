@@ -221,8 +221,6 @@ const fr: Translation<typeof de> = {
     chromecast: 'Chromecast',
     airplay: 'AirPlay…',
     airplayHint: 'Apple TV et téléviseurs AirPlay',
-    continuous: 'Enchaîner les épisodes',
-    continuousHint: 'Sans appui entre les deux',
     thisPhone: 'Ce téléphone',
     thisTablet: 'Cette tablette',
     thisComputer: 'Cet ordinateur',

@@ -169,6 +169,37 @@ describe('castConfigAirplayContinuous', () => {
   });
 });
 
+describe('continuousFields', () => {
+  const on = { episode: true, autoplay: true, sleepAfter: false, maxEpisodes: 3 };
+  it('is empty while the config is off, for a film, with autoplay off and with sleep-after', async () => {
+    expect(C.continuousFields(on)).toEqual({});
+    airplayCont = true;
+    await C.castConfigEnabled();
+    expect(C.continuousFields({ ...on, episode: false })).toEqual({});
+    expect(C.continuousFields({ ...on, autoplay: false })).toEqual({});
+    expect(C.continuousFields({ ...on, sleepAfter: true })).toEqual({});
+    expect(C.continuousFields({ ...on, maxEpisodes: 2 })).toEqual({ continuous: true, maxEpisodes: 2 });
+  });
+});
+
+describe('postAirPlayToken', () => {
+  const posts: Array<Record<string, unknown>> = [];
+  const answer = (status: number, json: unknown) => new Response(JSON.stringify(json), { status });
+  beforeEach(() => { posts.length = 0; });
+  it('continuous_off retries once without continuous', async () => {
+    const replies = [answer(400, { error: 'continuous_off' }), answer(200, { castId: 'c' })];
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init: { body: string }) => { posts.push(JSON.parse(init.body)); return replies.shift()!; }));
+    await expect(C.postAirPlayToken({ itemId: 'i', via: 'airplay', continuous: true, maxEpisodes: 2 })).resolves.toMatchObject({ castId: 'c' });
+    expect(posts).toEqual([{ itemId: 'i', via: 'airplay', continuous: true, maxEpisodes: 2 }, { itemId: 'i', via: 'airplay' }]);
+  });
+  it('any other error is thrown and a body without continuous is not retried', async () => {
+    const f = vi.fn(async () => answer(400, { error: 'continuous_off' }));
+    vi.stubGlobal('fetch', f);
+    await expect(C.postAirPlayToken({ itemId: 'i', via: 'airplay' })).rejects.toMatchObject({ body: { error: 'continuous_off' } });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('initCast', () => {
   it('loads the SDK script once when the server offers casting', async () => {
     await C.initCast();

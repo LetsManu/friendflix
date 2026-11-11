@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { MOVIE } from '../mocks/fixtures.js';
+import { episodes, MOVIE } from '../mocks/fixtures.js';
 import { available, castOn, castSessions, mockHls, picks, playOnAirPlay, playOnButton, playOnSheet, srcAtPick, stubAirPlay, wireless } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
@@ -105,6 +105,53 @@ test('AirPlay: tap -> cast token URL on the element FIRST, then the picker; TV -
   for (const bad of ['p1test', '/media/', 'c'.repeat(32), '127.0.0.1', 'blob:']) expect(text).not.toContain(bad);
   await page.locator('.page > .row').getByRole('button', { name: 'Leeren' }).click();
   await expect(page.getByTestId('airplay-log-empty')).toBeVisible();
+});
+
+const JOINED = { items: [{ itemId: 'x', title: 'Folge 1', start: 0, duration: 600 }, { itemId: 'y', title: 'Folge 2', start: 600, duration: 600 }], subtitles: false };
+
+test('AirPlay: an episode asks for a joined token when the admin switch is on, a film never', async ({ page, api: _api }) => {
+  await stubAirPlay(page);
+  await mockPlayer(page);
+  await castOn(page, true, undefined, { airplayContinuous: true });
+  await mockHls(page);
+  const { sessions } = await castSessions(page);
+  await page.goto('/watch/' + episodes[1]!.id);
+  await hlsPlaying(page);
+  await available(page);
+  await page.locator('.stage').hover();
+  await expect(playOnButton(page)).toBeVisible();
+  await playOnButton(page).click();
+  await expect(playOnSheet(page).locator('[data-row="continuous"]')).toHaveCount(0); // no per-cast row any more
+  await playOnSheet(page).getByRole('button', { name: /^AirPlay …/ }).click();
+  await expect.poll(() => sessions.length).toBe(1);
+  expect(sessions[0]!.via).toBe('airplay');
+  expect(sessions[0]!.continuous).toBe(true);
+  expect(sessions[0]!.maxEpisodes).toBe(3);
+});
+
+test('AirPlay: the Player reports nothing for a joined token', async ({ page, api: _api }) => {
+  await stubAirPlay(page);
+  await mockPlayer(page);
+  await castOn(page, true, undefined, { airplayContinuous: true });
+  await mockHls(page);
+  const reports: Array<{ kind: string; playSessionId: unknown }> = [];
+  await page.route('**/api/playback/{start,progress,stop}', (r) => {
+    reports.push({ kind: new URL(r.request().url()).pathname.split('/').pop()!, playSessionId: (r.request().postDataJSON() as Record<string, unknown>).playSessionId });
+    return r.fulfill({ status: 204 });
+  });
+  await castSessions(page, { deliver: () => ({ joined: JOINED, runtimeTicks: 12_000_000_000 }) });
+  await page.goto('/watch/' + episodes[1]!.id);
+  await hlsPlaying(page);
+  await available(page);
+  await page.locator('.stage').hover();
+  await playOnAirPlay(page);
+  await expect.poll(() => srcAtPick(page)).toContain('#airplay');
+  // the phone plays the token stream for a moment (before the TV takes over): still nothing is reported for the joined session
+  await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
+  await page.waitForFunction(() => (document.querySelector('video')?.currentTime ?? 0) > 0.3);
+  await page.evaluate(() => document.querySelector('video')!.pause());
+  await page.waitForTimeout(300);
+  expect(reports.filter((x) => x.playSessionId === 'a'.repeat(32))).toEqual([]);
 });
 
 test('AirPlay: picker did not lead to a TV yet -> prompt "Fernseher auswählen" opens it from a fresh tap; then TV -> active', async ({ page, api: _api }) => {

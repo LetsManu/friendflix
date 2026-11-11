@@ -9,7 +9,7 @@
   import { prefs, prefsLoaded, saveAudioFx } from '#lib/stores';
   import { features, segmentShown, serverCaps } from '#lib/capabilities';
   import { subClasses } from '#lib/substyle';
-  import { noteInteraction } from '#lib/stillwatching';
+  import { episodesBeforeAsk, noteInteraction } from '#lib/stillwatching';
   import { nowPlaying } from '#lib/remote';
   import { bindPlayerMediaSession } from '#lib/player/mediasession';
   import { isBackKey } from '#lib/spatial';
@@ -56,7 +56,7 @@
   import { frameShown, snapshotFrame, swapAllowed } from '#lib/player/freshvideo';
   import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
-  import { castBody, castCapsReady, castConfigEnabled, castFellBack, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastEvent, type CastInfo } from '#lib/cast';
+  import { castBody, castCapsReady, castConfigEnabled, castFellBack, continuousFields, postAirPlayToken, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastEvent, type CastInfo } from '#lib/cast';
   import { CAST_VIDEO_ATTR, castEngine, castSession, type CastSession } from '#lib/cast/engine';
   import type { Item } from '#lib/api';
   import { SEEK_COMMIT_MS, seekCancel, seekCommit, seekStep, type SeekPreview } from '#lib/player/tvSeek';
@@ -406,6 +406,7 @@
   const send = (kind: 'start' | 'progress' | 'stop', keepalive = false) => {
     if (kind === 'stop') reportTiming();
     if (handedOff) return undefined; // the cast engine reports for the handed-over session
+    if (airInfo?.joined) return undefined; // a joined AirPlay token: the server reports per episode (a page report would stop episode 1 at the wrong position)
     if (swapping && kind === 'progress') return undefined; // the fresh element is still on its way to the position
     lastSent = Date.now();
     const r = report && info && api(`/api/playback/${kind}`, { method: 'POST', body: body(), keepalive }).catch(() => undefined);
@@ -749,7 +750,11 @@
   // (FriendFlix's own receiver is given a moment to state what it plays first: castCapsReady; `again` names the stream the TV just refused)
   const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }, extra: { subtitleIndex?: number } = {}) => {
     if (via !== 'airplay') await castCapsReady();
-    return api<CastInfo>('/api/cast/session', { method: 'POST', body: castBody({ itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}), ...extra }) });
+    const body = castBody({ itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}), ...extra });
+    if (via !== 'airplay') return api<CastInfo>('/api/cast/session', { method: 'POST', body });
+    // AirPlay: one joined stream for this and the next episodes while the admin switch is on (no sheet row; the profile's autoplay decides)
+    const pf = get(prefs);
+    return postAirPlayToken({ ...body, ...continuousFields({ episode: Boolean(seriesId), autoplay: pf.autoplayNext, sleepAfter: sleepAfterEpisode, maxEpisodes: episodesBeforeAsk(pf) }) });
   };
   const castRevoke = (ci: CastInfo | null) => { if (ci) api(`/api/cast/session/${ci.castId}`, { method: 'DELETE' }).catch(() => undefined); };
 
@@ -813,7 +818,7 @@
     const v = video, ctl = air, ci = airInfo;
     if (!v || !ctl || !ci || partyMode) return;
     // `start` was reported for this token exactly when the element played it here (the phone's token stream / the TV)
-    castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), cast: ci, subIndex: ci.hlsSub ? airSubAsked : -1, started: started && !stopped, video: v, air: ctl, probe: airProbe });
+    castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), cast: ci, subIndex: ci.hlsSub ? airSubAsked : -1, started: started && !stopped && !ci.joined, video: v, air: ctl, probe: airProbe });
     handedOver();
     air = null; airProbe = null; airInfo = null; airState = AIR_IDLE;
   }

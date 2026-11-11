@@ -223,8 +223,6 @@ export default {
     chromecast: 'Chromecast',
     airplay: 'AirPlay …',
     airplayHint: 'Apple TV und AirPlay-Fernseher',
-    continuous: 'Folgen am Stück abspielen',
-    continuousHint: 'Ohne Tippen dazwischen',
     thisPhone: 'Dieses Handy',
     thisTablet: 'Dieses Tablet',
     thisComputer: 'Dieser Computer',

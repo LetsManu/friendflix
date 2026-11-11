@@ -113,6 +113,13 @@ export interface CastInfo {
   hlsSub?: boolean;
   /** what the stream carries (fixed codes, see caps.ts); only in the answer to a cast that sent receiver caps */
   delivery?: CastDelivery;
+  /** a continuous AirPlay token: the episodes the one stream carries, on the joined timeline (stream seconds); the server reports per episode */
+  joined?: JoinedInfo;
+}
+/** the joined stream's timeline: `runtimeTicks` / `duration` of the whole stream come from here, never from a single episode's lookup */
+export interface JoinedInfo {
+  items: Array<{ itemId: string; title: string; season?: number; episode?: number; start: number; duration: number }>;
+  subtitles: boolean;
 }
 
 export interface CastState {
@@ -200,6 +207,21 @@ export function castConfigEnabled(): Promise<boolean> {
     return Boolean(c?.enabled);
   }).catch((e) => { cfgP = null; throw e; });
   return cfgP;
+}
+
+/** the extra fields of a continuous AirPlay token request: only with the admin switch on, for an episode, autoplay on and sleep-after off */
+export function continuousFields(o: { episode: boolean; autoplay: boolean; sleepAfter: boolean; maxEpisodes: number }): { continuous?: true; maxEpisodes?: number } {
+  return airplayContinuous && o.episode && o.autoplay && !o.sleepAfter ? { continuous: true, maxEpisodes: o.maxEpisodes } : {};
+}
+/** POST /api/cast/session for AirPlay; when the server says the switch is off (`continuous_off`, a stale config) once more as a plain token, silently */
+export async function postAirPlayToken(body: Record<string, unknown>): Promise<CastInfo> {
+  try {
+    return await api<CastInfo>('/api/cast/session', { method: 'POST', body });
+  } catch (e) {
+    if (!body.continuous || (e as { body?: { error?: string } })?.body?.error !== 'continuous_off') throw e;
+    const { continuous: _c, maxEpisodes: _m, ...plain } = body;
+    return api<CastInfo>('/api/cast/session', { method: 'POST', body: plain });
+  }
 }
 
 /** the private message channel between this sender and FriendFlix's own receiver (cast-receiver/receiver.js uses the same name) */
