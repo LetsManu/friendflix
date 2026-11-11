@@ -609,6 +609,13 @@ describe('cast route /media/c/<token>/', () => {
       }
     }
   });
+  it('the Chromecast side-loaded subtitle path refuses an itemId override that is not the token\'s item (any key case); its own item id passes', async () => {
+    const other = 'c'.repeat(32);
+    const p = `/Videos/${ID}/${MS}/Subtitles/3/0/Stream.vtt`;
+    for (const q of [`itemId=${other}`, `ITEMID=${other}`, `itemid=${other}`]) expect((await cget(`${p}?${q}`)).status, q).toBe(403);
+    expect((await cget(`${p}?itemId=${ID}`)).status).toBe(200);
+    expect((await cget(p)).status).toBe(200);
+  });
   it('the same paths are 403 for a token without hlsSub and for a poster token', async () => {
     for (const ct of [CT, CT_IMG, CT_LOW]) {
       expect((await subGet(`${SUBP}/subtitles.m3u8?SegmentLength=30`, ct)).status, ct).toBe(403);

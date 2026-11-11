@@ -664,6 +664,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     for (const [k, v] of url.searchParams) {
       const lk = k.toLowerCase();
       if (lk === 'mediasourceid' && lc(v) !== lc(scope.mediaSourceId)) return false;
+      if (lk === 'itemid' && lc(v) !== lc(scope.itemId)) return false; // Jellyfin's obsolete override of the route's item id
       if (lk === 'playsessionid' && v !== scope.playSessionId) return false;
     }
     return true;

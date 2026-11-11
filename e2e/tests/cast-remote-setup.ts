@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { episodes } from '../mocks/fixtures.js';
-import { available, castOn, castSessions, fakeCastSdk, mockHls, playOnAirPlay, stubAirPlay } from '../mocks/cast.js';
+import { available, castOn, castSessions, fakeCastSdk, mockHls, playOnAirPlay, stubAirPlay, wireless } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
 import type { Page } from '@playwright/test';
@@ -65,8 +65,8 @@ export async function chromecastRemote(page: Page, o: { fail?: () => boolean; qu
 }
 
 /** AirPlay: episode 1 sent to the TV with the player's AirPlay button; the watch page stays the remote */
-export async function airplayRemote(page: Page, o: { tracks?: boolean; localSub?: boolean } = {}) {
-  await stubAirPlay(page, { pickTv: true });
+export async function airplayRemote(page: Page, o: { tracks?: boolean; localSub?: boolean; subOffBeforeTv?: boolean } = {}) {
+  await stubAirPlay(page, { pickTv: !o.subOffBeforeTv });
   await mockPlayer(page);
   await castOn(page);
   await mockHls(page);
@@ -88,6 +88,12 @@ export async function airplayRemote(page: Page, o: { tracks?: boolean; localSub?
     await page.getByRole('button', { name: 'Deutsch (SDH)' }).click();
   }
   await playOnAirPlay(page);
+  if (o.subOffBeforeTv) { // the token is on the element, the TV is not chosen yet: the person turns the subtitle off in the Player menu, then picks the TV
+    await expect(page.getByTestId('airplay-ready')).toBeVisible();
+    await page.getByRole('button', { name: 'Audio und Untertitel' }).click();
+    await page.getByRole('button', { name: 'Aus', exact: true }).click();
+    await wireless(page, true);
+  }
   await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
   return { sessions };
 }

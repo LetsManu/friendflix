@@ -779,7 +779,7 @@
     const v = video, ctl = air, ci = airInfo;
     if (!v || !ctl || !ci || partyMode) return;
     // `start` was reported for this token exactly when the element played it here (the phone's token stream / the TV)
-    castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), cast: ci, started: started && !stopped, video: v, air: ctl, probe: airProbe });
+    castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), cast: ci, subIndex: ci.hlsSub ? airSubAsked : -1, started: started && !stopped, video: v, air: ctl, probe: airProbe });
     handedOver();
     air = null; airProbe = null; airInfo = null; airState = AIR_IDLE;
   }
@@ -872,10 +872,16 @@
   // ---- AirPlay session lifecycle (the controller tells when Safari's playback target becomes / stops being wireless) ----
   const airErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
     : e?.body?.error === 'transcoding_disabled' ? tr('player.airplay.needsTranscode') : tr('player.airplay.failed');
+  /** the subtitle index the current AirPlay token was requested with (-1 = none): the hand-off tells the engine this, not the menu's later choice */
+  let airSubAsked = -1;
   function startAirPlay(v: HTMLVideoElement) {
     air = createAirPlay(v, {
       // the chosen text track rides inside the AirPlay stream (the TV shows only what the stream carries); never in the retry after a refusal
-      request: (pos, o) => castRequest(pos, 'airplay', undefined, airSubBody(subIndex, Boolean(o?.noSubs), typeof localStorage === 'undefined' ? null : localStorage, Date.now(), get(serverCaps).castHlsSubtitles)),
+      request: (pos, o) => {
+        const body = airSubBody(subIndex, Boolean(o?.noSubs), typeof localStorage === 'undefined' ? null : localStorage, Date.now(), get(serverCaps).castHlsSubtitles);
+        airSubAsked = body.subtitleIndex ?? -1; // what the token carries: a later change in this menu does not change the TV's stream
+        return castRequest(pos, 'airplay', undefined, body);
+      },
       subsRefused() { rememberSubsRefused(typeof localStorage === 'undefined' ? null : localStorage, Date.now()); setSubtitle(-1, false); flash(tr('player.castRemote.subsRefused'), 4000); },
       revoke: (ci) => castRevoke(ci),
       async detach() {

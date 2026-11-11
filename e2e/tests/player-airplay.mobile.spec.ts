@@ -67,3 +67,11 @@ test('AirPlay: the subtitle that was on locally goes into the first token and sh
   await expect(screen.getByRole('button', { name: 'Untertitel: Deutsch (SDH)' })).toBeVisible();
   await expect(page.locator('#rs-subs-hint')).toHaveCSS('opacity', '1');
 });
+
+test('AirPlay: the subtitle turned off after the token was asked for it (before the TV is chosen) still shows what the stream carries', async ({ page, api: _api }) => {
+  const { sessions } = await airplayRemote(page, { tracks: true, localSub: true, subOffBeforeTv: true });
+  const screen = page.getByTestId('airplay-active');
+  expect(sessions).toHaveLength(1);
+  expect(sessions[0]).toMatchObject({ via: 'airplay', subtitleIndex: 3 });
+  await expect(screen.getByRole('button', { name: 'Untertitel: Deutsch (SDH)' })).toBeVisible(); // the TV shows track 3: the chip must not say "Aus"
+});
