@@ -633,6 +633,33 @@ describe('invites and approvals for any invitable role', () => {
     expect(ak.calls.some((c) => c.method === 'DELETE')).toBe(true); // the Authentik invitation made meanwhile is removed again
   });
 
+  it('the invite insert waits for a role delete in flight (the shared role lock)', async () => {
+    const key = (await adm('POST', '/api/admin/roles', { label: 'Sperre', from: 'friend' })).json().key as string;
+    const before = (await env.pool.query('select count(*) n from invites')).rows[0].n;
+    const holder = await env.pool.connect();
+    try {
+      await holder.query('begin');
+      await holder.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${key}`]); // what deleteRole holds
+      const post = adm('POST', '/api/admin/invites', { role: key, ttlHours: 1 });
+      // the insert is parked on the lock: the role still exists and is invitable, so without the lock it would go through
+      for (let i = 0; i < 100; i++) {
+        if ((await env.pool.query("select 1 from pg_locks where locktype='advisory' and not granted")).rowCount) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect((await env.pool.query("select 1 from pg_locks where locktype='advisory' and not granted")).rowCount).toBe(1);
+      await holder.query('delete from roles where key=$1', [key]);
+      await holder.query('commit');
+      const r = await post;
+      expect(r.statusCode).toBe(400);
+      expect(r.json().error).toBe('role_not_invitable');
+    } finally {
+      await holder.query('rollback').catch(() => undefined);
+      holder.release();
+      invalidateRoles(env.ctx);
+    }
+    expect((await env.pool.query('select count(*) n from invites')).rows[0].n).toBe(before);
+  });
+
   it('an approval whose role is deleted during provisioning is refused cleanly', async () => {
     const key = (await adm('POST', '/api/admin/roles', { label: 'Flucht2', from: 'friend' })).json().key as string;
     const id = (await env.pool.query("insert into approval_requests(id, authentik_sub, name) values (gen_random_uuid(), 'apgone', 'Gone') returning id")).rows[0].id;
