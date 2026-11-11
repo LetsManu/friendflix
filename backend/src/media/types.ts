@@ -289,6 +289,11 @@ export interface TrackList {
    * (continuous AirPlay picks a later episode's subtitle by them, following episode 1's forced choice)
    */
   subtitles: Array<{ language: string; title: string; index?: number; forcedIndex?: number }>;
+  /**
+   * every audio and subtitle stream of the first source by its stream index (Jellyfin; absent elsewhere): continuous AirPlay maps a
+   * track choice of one episode (its indices) to another episode's own tracks by language. Backend only (the tracks route drops it).
+   */
+  indexed?: Array<{ index: number; kind: 'audio' | 'subtitle'; language: string }>;
   runtimeTicks?: number;
   type: string;
 }

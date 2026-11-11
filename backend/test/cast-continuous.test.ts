@@ -439,6 +439,66 @@ describe('joined AirPlay token', () => {
     expect(JSON.parse((await env.kv.get(`cast:${media}`))!).items).toHaveLength(3);
   });
 
+  /** a new token from a later episode (continuous AirPlay re-mint): the track indices it sends belong to `tracksOf` */
+  const remint = (body: Record<string, unknown>) => call('POST', '/api/cast/session', { via: 'airplay', ...body });
+  const recOf = async (j: { contentUrl: string }) => JSON.parse((await env.kv.get(`cast:${hashToken(/\/media\/c\/([\w-]{43})\//.exec(j.contentUrl)![1]!)}`))!);
+
+  it('a re-mint from a later episode keeps the chosen languages: indices of `tracksOf` are mapped to the episode\'s own tracks', async () => {
+    try {
+      // episode 2 numbers its tracks differently: English audio at 4, German subtitles at 7
+      EPS[1]!.audio = [{ Index: 1, Language: 'ger', IsDefault: true }, { Index: 4, Language: 'eng' }];
+      EPS[1]!.subs = [{ Index: 2, Language: 'eng' }, { Index: 7, Language: 'ger' }];
+      // episode 1's choice: English audio (2), German subtitles (3)
+      const r = await remint({ itemId: EPS[1]!.id, tracksOf: EPS[0]!.id, audioIndex: 2, subtitleIndex: 3, continuous: true });
+      expect(r.statusCode, r.body).toBe(200);
+      const j = r.json(), rec = await recOf(j);
+      const [p1, p2] = (rec.items as Array<{ hlsPath: string }>).map((i) => q(i.hlsPath));
+      expect([p1!.get('AudioStreamIndex'), p1!.get('SubtitleStreamIndex')]).toEqual(['4', '7']);
+      // the later part follows the mapped choice (episode 3: English at 5, German at 4)
+      expect([p2!.get('AudioStreamIndex'), p2!.get('SubtitleStreamIndex')]).toEqual(['5', '4']);
+      // the answer names episode 2's own tracks and what was chosen of them
+      expect(j).toMatchObject({ hlsSub: true, audioIndex: 4, subtitleIndex: 7 });
+      expect(j.audioTracks).toEqual([{ index: 1, language: 'ger', title: expect.any(String), isDefault: true }, { index: 4, language: 'eng', title: expect.any(String), isDefault: false }]);
+      expect(j.subtitles.map((x: { index: number; language: string }) => [x.index, x.language])).toEqual([[2, 'eng'], [7, 'ger']]);
+      // a single token (switch off on the client's side) maps the same way
+      const one = await remint({ itemId: EPS[2]!.id, tracksOf: EPS[1]!.id, audioIndex: 4, subtitleIndex: 7 });
+      expect(one.statusCode, one.body).toBe(200);
+      expect(one.json()).toMatchObject({ audioIndex: 5, subtitleIndex: 4, hlsSub: true });
+      expect(one.json().joined).toBeUndefined();
+    } finally { EPS = base(); }
+  });
+
+  it('no track of that language in the episode: its default audio, no subtitle (never another language by number)', async () => {
+    // episode 4 has German audio only and no subtitles: episode 3's English audio (5) and German subtitles (4) have no match there
+    const r = await remint({ itemId: EPS[3]!.id, tracksOf: EPS[2]!.id, audioIndex: 5, subtitleIndex: 4 });
+    expect(r.statusCode, r.body).toBe(200);
+    const j = r.json(), p = q(new URL(j.contentUrl).search);
+    expect((await recOf(j)).hlsSub).toBeUndefined();
+    expect(p.has('AudioStreamIndex')).toBe(false);
+    expect(p.has('SubtitleStreamIndex')).toBe(false);
+    expect(j.hlsSub).toBeUndefined();
+    expect(j.subtitleIndex).toBeUndefined();
+    // the same indices without `tracksOf` would be used as they are (the client's own episode)
+    const plain = await remint({ itemId: EPS[2]!.id, audioIndex: 5, subtitleIndex: 4 });
+    expect(q(new URL(plain.json().contentUrl).search).get('AudioStreamIndex')).toBe('5');
+  });
+
+  it('`tracksOf` must be an earlier episode of the same series the profile sees, and AirPlay only', async () => {
+    for (const [body, why] of [
+      [{ itemId: EPS[1]!.id, tracksOf: FILM }, 'a film'],
+      [{ itemId: EPS[1]!.id, tracksOf: EPS[3]!.id }, 'a later episode'],
+      [{ itemId: FILM, tracksOf: EPS[0]!.id }, 'the item is no episode'],
+      [{ itemId: EPS[1]!.id, tracksOf: '9'.repeat(32) }, 'not an episode of this series'],
+      [{ itemId: EPS[1]!.id, tracksOf: EPS[0]!.id, via: 'chromecast' }, 'Chromecast'],
+    ] as const) {
+      const r = await remint({ audioIndex: 2, ...body });
+      expect(r.statusCode, why).toBe(400);
+      expect(r.json(), why).toEqual({ error: 'bad_request' });
+    }
+    // its own item: nothing to map
+    expect((await remint({ itemId: EPS[1]!.id, tracksOf: EPS[1]!.id, audioIndex: 2 })).statusCode).toBe(200);
+  });
+
   // last in this describe: it switches the session's profile
   it('the profile-switch race revokes a joined token too', async () => {
     const p = await call('POST', '/api/profiles', { name: 'Kind' });

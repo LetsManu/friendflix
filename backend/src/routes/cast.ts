@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { CAST_MAX_BITRATE, airplayContinuousOn, type JoinedItem, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, castLookup, castNextTtlSeconds, castPinned, CastUnpinnedError, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
 import type { Ctx } from '../ctx.js';
 import { receiverCaps } from '../media/clientCaps.js';
-import { MediaError, type HevcGate, type ItemDto, type PlaybackDto } from '../media/types.js';
+import { MediaError, type HevcGate, type ItemDto, type PlaybackDto, type TrackList } from '../media/types.js';
 import { bindHevcGrant, hevcGate as gateHevc, noteHevcFailure } from '../hevcenc.js';
 import { countLive } from '../live.js';
 import { clientAddress, isHomeRequest } from '../netaddr.js';
@@ -24,6 +24,46 @@ const psId = z.string().regex(/^[\w-]{8,64}$/);
 const JOINED_MAX_TICKS = 6 * 3600 * 10_000_000;
 const hlsSubOf = (hlsUrl: string) => new URL(hlsUrl, 'http://x').searchParams.get('SubtitleMethod') === 'Hls';
 interface JoinedPart { item: ItemDto; info: PlaybackDto; runtimeTicks: number; sub?: number }
+
+/** what a track choice stands for in another episode: the subtitle language and whether it was that language's forced track */
+interface SubChoice { lang?: string; forced: boolean }
+/** a subtitle index was its language's forced track (the episode's first forced text track of that language) */
+const forcedIn = (tl: TrackList, lang: string, index: number) => tl.subtitles.find((t) => t.language === lang)?.forcedIndex === index;
+/**
+ * The one lookup that carries a subtitle choice into another episode (a joined stream's later part, a re-mint from a later episode):
+ * that language's forced text track when the choice was forced (else its full one), else its full one; none (image-only, missing): undefined.
+ */
+const subtitleFor = (tl: TrackList, c: SubChoice): number | undefined => {
+  if (!c.lang) return undefined;
+  const t = tl.subtitles.find((x) => x.language === c.lang);
+  return c.forced ? t?.forcedIndex ?? t?.index : t?.index;
+};
+/** the languages behind `tracksOf`'s audio / subtitle indices (unknown index or a server without stream indices: none) */
+function choiceOf(tl: TrackList, audioIndex?: number, subIndex?: number): { audioLang?: string; sub: SubChoice } {
+  const lang = (kind: 'audio' | 'subtitle', index?: number) => (index === undefined ? undefined : tl.indexed?.find((s) => s.kind === kind && s.index === index)?.language);
+  const subLang = lang('subtitle', subIndex), audioLang = lang('audio', audioIndex);
+  return { ...(audioLang ? { audioLang } : {}), sub: { ...(subLang ? { lang: subLang } : {}), forced: subLang !== undefined && forcedIn(tl, subLang, subIndex!) } };
+}
+/** how far back `tracksOf` may lie: a joined stream carries at most three episodes, so its first part is at most two before */
+const TRACKS_BACK = 3;
+/**
+ * `tracksOf` (the episode a re-mint's track indices belong to) is an episode of `item`'s series the profile can see, at most TRACKS_BACK
+ * episodes before it (or `item` itself). Its tracks are only looked up after this.
+ */
+async function tracksOfOk(ctx: Ctx, jfUser: JfUser, tracksOf: string, item: ItemDto): Promise<boolean> {
+  if (tracksOf === item.id) return true;
+  if (item.type !== 'Episode' || !item.seriesId) return false;
+  const t = await ctx.jf.item(jfUser, tracksOf).catch(() => null); // the profile must be able to see it
+  if (!t || t.id !== tracksOf || t.type !== 'Episode' || t.seriesId !== item.seriesId) return false;
+  let cur = t.id;
+  for (let k = 0; k < TRACKS_BACK; k++) {
+    const nx = await ctx.jf.nextEpisode(jfUser, item.seriesId, cur).catch(() => null);
+    if (!nx) return false;
+    if (nx.id === item.id) return true;
+    cur = nx.id;
+  }
+  return false;
+}
 
 /**
  * Continuous AirPlay (spec device-handoff §5): the episode being cast plus up to two following ones (the series order, across seasons),
@@ -54,9 +94,8 @@ async function joinedParts(ctx: Ctx, jfUser: JfUser, a: {
       // the item's runtime decides (unknown: the join ends before it, no PlaybackInfo spent); trailing episodes are left out while the
       // joined runtime from the start position would pass 6 h
       if (!nx || !nx.runtimeTicks || total + nx.runtimeTicks - a.startTicks > JOINED_MAX_TICKS) break;
-      if (subLang && forced === undefined) forced = (await ctx.jf.tracks(jfUser, item.id)).subtitles.find((t) => t.language === subLang)?.forcedIndex === a.hlsSubIndex;
-      const track = subLang ? (await ctx.jf.tracks(jfUser, nx.id)).subtitles.find((t) => t.language === subLang) : undefined;
-      const sub = forced ? track?.forcedIndex ?? track?.index : track?.index;
+      if (subLang && forced === undefined) forced = forcedIn(await ctx.jf.tracks(jfUser, item.id), subLang, a.hlsSubIndex!);
+      const sub = subLang ? subtitleFor(await ctx.jf.tracks(jfUser, nx.id), { lang: subLang, forced: Boolean(forced) }) : undefined;
       const ni = await ctx.jf.playbackInfo(jfUser, nx.id, {
         maxBitrate: a.maxBitrate, maxHeight: a.maxHeight, startTicks: 0, cast: true, ...(audioLang ? { audioLang } : {}), ...(sub !== undefined ? { hlsSubtitleIndex: sub } : {}),
       });
@@ -125,6 +164,11 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       continuous: z.boolean().optional(),
       /** with `continuous`: how many episodes the stream carries at most */
       maxEpisodes: z.number().int().min(1).max(3).optional(),
+      /**
+       * AirPlay only: the episode `audioIndex` / `subtitleIndex` belong to (a re-mint of continuous AirPlay from a later episode). Another
+       * item than `itemId`: they are mapped to `itemId`'s own tracks by language; it must be an earlier episode of that series (else 400)
+       */
+      tracksOf: itemId.optional(),
     }).parse(req.body);
     // continuous play is AirPlay's way (`maxEpisodes` only means something with it), and only while the admin switch is on
     if ((b.continuous || b.maxEpisodes !== undefined) && !(b.continuous && b.via === 'airplay')) return reply.code(400).send({ error: 'bad_request' });
@@ -133,6 +177,7 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
     if (b.subtitleIndex !== undefined && b.via !== 'airplay') return reply.code(400).send({ error: 'bad_request' });
     // the queue is Chromecast only (an AirPlay token has a two-address pin, a queued token never takes a pin of its own)
     if (b.next && b.via === 'airplay') return reply.code(400).send({ error: 'bad_request' });
+    if (b.tracksOf !== undefined && b.via !== 'airplay') return reply.code(400).send({ error: 'bad_request' });
     const deviceId = req.session!.deviceId;
     if (!deviceId) return reply.code(403).send({ error: 'device_pending' });
     const role = (await effectiveLimits(ctx, req.user!))!;
@@ -149,6 +194,17 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
     let started: string | undefined;
     try {
       const item = await ctx.jf.item(req.jfUser!, b.itemId); // access check: the profile must be able to see the item
+      // a re-mint from a later episode: the indices are `tracksOf`'s; this episode gets its own tracks of the same languages (spec §5.4 f), none
+      // of that language: its default audio / no subtitle (never another track by number)
+      let audioIndex = b.audioIndex, audioLang: string | undefined, subtitleIndex = b.subtitleIndex;
+      if (b.tracksOf !== undefined && b.tracksOf !== b.itemId) {
+        if (!(await tracksOfOk(ctx, req.jfUser!, b.tracksOf, item))) return reply.code(400).send({ error: 'bad_request' });
+        if (b.audioIndex !== undefined || b.subtitleIndex !== undefined) {
+          const c = choiceOf(await ctx.jf.tracks(req.jfUser!, b.tracksOf), b.audioIndex, b.subtitleIndex);
+          audioIndex = undefined; audioLang = c.audioLang;
+          subtitleIndex = c.sub.lang ? subtitleFor(await ctx.jf.tracks(req.jfUser!, b.itemId), c.sub) : undefined;
+        }
+      }
       const startTicks = b.startTicks ?? item.positionTicks;
       // the cast device streams over the same uplink as the sender: outside the home networks the remote cap applies
       const remote = !isHomeRequest(req, ctx.cfg.HOME_NETWORKS);
@@ -177,9 +233,9 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         }
       }
       // a server that cannot emit the rendition ignores the field (no error, nothing recorded); an AirPlay token has no queue, so no `pred` here
-      const hlsSubtitleIndex = b.subtitleIndex !== undefined && ctx.jf.capabilities.castHlsSubtitles ? b.subtitleIndex : undefined;
+      const hlsSubtitleIndex = subtitleIndex !== undefined && ctx.jf.capabilities.castHlsSubtitles ? subtitleIndex : undefined;
       const opts = {
-        maxBitrate, maxHeight, startTicks, audioIndex: b.audioIndex, cast: true, ...(pred ? { after: pred.playSessionId } : {}),
+        maxBitrate, maxHeight, startTicks, audioIndex, ...(audioLang ? { audioLang } : {}), cast: true, ...(pred ? { after: pred.playSessionId } : {}),
         ...(hlsSubtitleIndex !== undefined ? { hlsSubtitleIndex } : {}),
         ...(clientCaps ? { clientCaps, remote, surround: ctx.cfg.SURROUND_AUDIO !== 'false', ...(ctx.cfg.HEVC_STREAMS > 0 ? { hevcGate: gate } : {}) } : {}),
       };
@@ -260,6 +316,12 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         ...(report ? { report } : {}),
         // AirPlay: the stream carries the requested subtitle as a WebVTT rendition (the sender shows no side-loaded track for it)
         ...(hlsSub ? { hlsSub: true } : {}),
+        // AirPlay: this episode's own audio tracks and what the stream carries of its tracks (a re-mint from a later episode maps the choice):
+        // the sender's menus and its next re-mint follow these
+        ...(rec.via === 'airplay' ? {
+          audioTracks: info.audioTracks.map((t) => ({ index: t.index, ...(t.language ? { language: t.language } : {}), title: t.title, isDefault: t.isDefault })),
+          ...(info.audioIndex !== undefined ? { audioIndex: info.audioIndex } : {}), ...(hlsSub ? { subtitleIndex: hlsSubtitleIndex } : {}),
+        } : {}),
         // what the stream carries, as fixed codes (never a URL or title); only with receiver caps, so any other answer stays as it was
         ...(clientCaps && info.delivery ? { delivery: info.delivery } : {}),
       };

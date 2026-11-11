@@ -346,7 +346,9 @@ export class JellyfinService implements MediaServer {
         const forcedIndex = text.find((s) => s.IsForced)?.Index as number | undefined;
         return { ...a, ...(index !== undefined ? { index } : {}), ...(forcedIndex !== undefined ? { forcedIndex } : {}) };
       });
-    return { audio, subtitles, runtimeTicks: i.RunTimeTicks, type: String(i.Type ?? '') };
+    const indexed = streams.filter((s) => (s.Type === 'Audio' || s.Type === 'Subtitle') && Number.isInteger(s.Index))
+      .map((s) => ({ index: s.Index as number, kind: s.Type === 'Audio' ? 'audio' as const : 'subtitle' as const, language: String(s.Language ?? 'und') }));
+    return { audio, subtitles, indexed, runtimeTicks: i.RunTimeTicks, type: String(i.Type ?? '') };
   }
 
   /** Genre names of the viewer's libraries; cached 10 min per Jellyfin user (library visibility is per user). */

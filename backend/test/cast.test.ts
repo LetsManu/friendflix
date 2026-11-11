@@ -1172,7 +1172,8 @@ describe('cast: HEVC and surround with FriendFlix\'s own receiver', () => {
     expect(params(base).get('TranscodingMaxAudioChannels')).toBe('2');
     expect(params(base).get('Level')).toBe('41');
     expect(params(base).get('RequireAvc')).toBe('true');
-    const keys = (j: Record<string, unknown>) => Object.keys(j).filter((k) => k !== 'report').sort();
+    // (an AirPlay answer also names the episode's own audio tracks and the chosen indices: that is the via, not the caps)
+    const keys = (j: Record<string, unknown>) => Object.keys(j).filter((k) => k !== 'report' && !['audioTracks', 'audioIndex', 'subtitleIndex'].includes(k)).sort();
     for (const body of [
       { receiver: true, caps: { hevc: false, surround: [] } }, // the receiver confirmed nothing
       { receiver: true, caps: { hevc: 'yes', surround: ['dts'] } }, // malformed: ignored, never an error

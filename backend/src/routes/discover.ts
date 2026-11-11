@@ -295,7 +295,8 @@ export function discoverRoutes(app: FastifyInstance, ctx: Ctx) {
     const cur = await ctx.jf.item(req.jfUser!, id);
     return { item: cur.type === 'Episode' && cur.seriesId ? await ctx.jf.nextEpisode(req.jfUser!, cur.seriesId, id) : null };
   }));
-  app.get('/api/items/:id/tracks', pre, wrap(async (req) => ctx.jf.tracks(req.jfUser!, id32.parse((req.params as { id: string }).id))));
+  // (the per-stream index list is the cast route's, not the language picker's)
+  app.get('/api/items/:id/tracks', pre, wrap(async (req) => { const { indexed: _i, ...t } = await ctx.jf.tracks(req.jfUser!, id32.parse((req.params as { id: string }).id)); return t; }));
   // Hover/billboard preview: a short clip, transcoded once (service user, background queue) and then served as a plain MP4 file.
   // Route name kept for old clients; `mp4: true` tells the client to use the url as a plain <video src>.
   const viewable = async (user: JfUser, id: string): Promise<ItemDto | null> => {
