@@ -69,7 +69,11 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, 
     let row: UserRow;
     try {
       if (!tx) await c.query('begin');
-      if (inviteId) {
+      if (!inviteId) {
+        // shared role lock as well: a role delete in flight finishes first, and a role that is gone is refused instead of inserted on
+        await c.query('select pg_advisory_xact_lock_shared(hashtext($1))', [`role:${role}`]);
+        if (!Object.hasOwn(ctx.roles, role) && !(await c.query('select 1 from roles where key=$1', [role])).rowCount) throw new HttpError(400, 'unknown_role');
+      } else {
         // shared role lock (deleteRole holds it exclusively): a delete in flight either finishes first, so the invite shows the new
         // role, or waits for this account and then moves it. Re-read under each lock until the role is stable and still exists.
         let settled = false;

@@ -3,6 +3,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Ctx } from './ctx.js';
 import { randomToken, sha256 } from './crypto.js';
+import type pg from 'pg';
+import { HttpError } from './users.js';
 
 export interface InviteRow {
   id: string;
@@ -143,9 +145,27 @@ export async function createInvite(
   }
   const id = randomUUID();
   const maxUses = opts.maxUses ?? 1;
-  await ctx.db.query('insert into invites(id, token_hash, role, note, expires_at, created_by, authentik_invite, max_uses, access_days) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [
-    id, sha256(token), opts.role, opts.note ?? null, expiresAt, createdBy, akId, maxUses, opts.accessDays ?? null,
-  ]);
+  // the role may be deleted (or switched to not invitable) while the Authentik call ran: insert under the shared role lock (deleteRole holds
+  // it exclusively) and re-check there, so no invite is ever stored for a role that is gone
+  const c = await (ctx.db as pg.Pool).connect();
+  try {
+    await c.query('begin');
+    await c.query('select pg_advisory_xact_lock_shared(hashtext($1))', [`role:${opts.role}`]);
+    if (opts.role === 'admin' || !(await c.query("select 1 from roles where key=$1 and invitable", [opts.role])).rowCount) {
+      await c.query('rollback');
+      await deleteAuthentikInvitation(ctx, akId, log);
+      throw new HttpError(400, 'role_not_invitable');
+    }
+    await c.query('insert into invites(id, token_hash, role, note, expires_at, created_by, authentik_invite, max_uses, access_days) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [
+      id, sha256(token), opts.role, opts.note ?? null, expiresAt, createdBy, akId, maxUses, opts.accessDays ?? null,
+    ]);
+    await c.query('commit');
+  } catch (e) {
+    await c.query('rollback').catch(() => undefined);
+    throw e;
+  } finally {
+    c.release();
+  }
   // '' without a public URL (setup mode, where the gate keeps invites unreachable): the links stay relative, nothing throws
   const base = ctx.cfg.PUBLIC_URL.replace(/\/$/, '');
   return {

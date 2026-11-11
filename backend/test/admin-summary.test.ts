@@ -44,8 +44,11 @@ describe('GET /api/admin/summary', () => {
     await env.pool.query("insert into approval_requests(id, authentik_sub, name) values (gen_random_uuid(), 'o1', 'O1'), (gen_random_uuid(), 'o2', 'O2')");
     await env.pool.query("insert into approval_requests(id, authentik_sub, name, rejected_at) values (gen_random_uuid(), 'o3', 'O3', now())");
     await env.pool.query("update users set access_until = now() + interval '3 days' where id=$1", [bobId]);
+    // outside the window: ended yesterday, ends in 10 days
+    const far = (await env.pool.query("insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, access_until) values (gen_random_uuid(), 'far', 'Far', 'guest', $1, 'far', 'x', now() + interval '10 days'), (gen_random_uuid(), 'past', 'Past', 'guest', $2, 'past', 'x', now() - interval '1 day') returning id", ['2'.repeat(32), '3'.repeat(32)])).rows.map((x) => x.id);
     const j = (await env.app.inject({ url: '/api/admin/summary', cookies: admin.cookies })).json();
     await env.pool.query("update users set access_until = null where id=$1", [bobId]);
+    await env.pool.query('delete from users where id = any($1::uuid[])', [far]);
     await env.pool.query("delete from approval_requests");
     expect(j.pending.approvals).toBe(2);
     expect(j.users.expiring).toBe(1);

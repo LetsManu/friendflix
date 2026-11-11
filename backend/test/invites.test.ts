@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256 } from '../src/crypto.js';
 import { DEFAULT_ROLES, invalidateRoles } from '../src/roles.js';
 import { claimInvite, releaseInvite } from '../src/invites.js';
@@ -557,7 +557,7 @@ describe('admin user management', () => {
 
   it('an invite redeemed after its role was deleted gets the new role', async () => {
     const key = (await adm('POST', '/api/admin/roles', { label: 'Kino-Gast', from: 'friend' })).json().key as string;
-    // the invite routes still offer the built-in roles only: the open invite for the custom role is stored directly
+    // an open invite for the custom role, stored directly
     const token = 'custom-role-invite-token-0123456789abcdef';
     await env.pool.query("insert into invites(id, token_hash, role, expires_at, max_uses) values (gen_random_uuid(), $1, $2, now() + interval '1 hour', 1)", [sha256(token), key]);
     expect((await adm('DELETE', `/api/admin/roles/${key}`, { moveTo: 'guest' })).statusCode).toBe(200);
@@ -567,10 +567,17 @@ describe('admin user management', () => {
 });
 
 describe('invites and approvals for any invitable role', () => {
-  it('invite for an env role: the redeemed account holds it', async () => {
+  const addOma = async () => {
     env.ctx.roles.oma = { ...DEFAULT_ROLES.friend!, label: 'Oma' };
     await syncRoles(env.ctx);
+    await env.pool.query("update roles set invitable=true where key='oma'");
     invalidateRoles(env.ctx);
+  };
+  const setInvitable = async (v: boolean) => { await env.pool.query('update roles set invitable=$1 where key=$2', [v, 'oma']); invalidateRoles(env.ctx); };
+  beforeEach(addOma);
+  afterEach(async () => { await setInvitable(true); });
+
+  it('invite for an env role: the redeemed account holds it', async () => {
     const r = await adm('POST', '/api/admin/invites', { role: 'oma', ttlHours: 1 });
     expect(r.statusCode).toBe(200);
     const token = r.json().link.split('/').pop();
@@ -579,13 +586,17 @@ describe('invites and approvals for any invitable role', () => {
   });
 
   it('a role switched to not invitable is refused', async () => {
-    await env.pool.query("update roles set invitable=false where key='oma'");
-    invalidateRoles(env.ctx);
+    await setInvitable(false);
     const r = await adm('POST', '/api/admin/invites', { role: 'oma', ttlHours: 1 });
     expect(r.statusCode).toBe(400);
     expect(r.json().error).toBe('role_not_invitable');
-    await env.pool.query("update roles set invitable=true where key='oma'");
-    invalidateRoles(env.ctx);
+  });
+
+  it('an invite created before its role was made not invitable still redeems', async () => {
+    const token = (await adm('POST', '/api/admin/invites', { role: 'oma', ttlHours: 1 })).json().link.split('/').pop();
+    await setInvitable(false);
+    expect((await inviteLogin(token, 'omalate')).statusCode).toBe(302);
+    expect((await env.pool.query("select role from users where authentik_sub='omalate'")).rows).toEqual([{ role: 'oma' }]);
   });
 
   it('admin is never invitable, approval may grant admin', async () => {
@@ -598,11 +609,39 @@ describe('invites and approvals for any invitable role', () => {
     }
     expect((await adm('POST', `/api/admin/approvals/${ids[0]}/approve`, { role: 'admin' })).statusCode).toBe(200);
     expect((await adm('POST', `/api/admin/approvals/${ids[1]}/approve`, { role: 'oma' })).statusCode).toBe(200);
-    await env.pool.query("update roles set invitable=false where key='oma'");
-    invalidateRoles(env.ctx);
+    await setInvitable(false);
     const bad = await adm('POST', `/api/admin/approvals/${ids[2]}/approve`, { role: 'oma' });
     expect(bad.statusCode).toBe(400);
     expect(bad.json().error).toBe('role_not_invitable');
     expect((await env.pool.query("select authentik_sub, role from users where authentik_sub in ('ap1','ap2') order by 1")).rows).toEqual([{ authentik_sub: 'ap1', role: 'admin' }, { authentik_sub: 'ap2', role: 'oma' }]);
+  });
+
+  it('a role deleted while the invite is being created leaves no invite behind', async () => {
+    const key = (await adm('POST', '/api/admin/roles', { label: 'Flucht', from: 'friend' })).json().key as string;
+    const before = (await env.pool.query('select count(*) n from invites')).rows[0].n;
+    // the delete lands inside the (fake) Authentik call, between the invitable check and the insert
+    const realFetch = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/invitations/') && init?.method === 'POST') await deleteRole(env.ctx, null, key, 'guest');
+      return (realFetch as typeof fetch)(input, init);
+    }) as typeof fetch;
+    let r;
+    try { r = await adm('POST', '/api/admin/invites', { role: key, ttlHours: 1 }); } finally { env.ctx.fetchImpl = realFetch; }
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toBe('role_not_invitable');
+    expect((await env.pool.query('select count(*) n from invites')).rows[0].n).toBe(before);
+    expect(ak.calls.some((c) => c.method === 'DELETE')).toBe(true); // the Authentik invitation made meanwhile is removed again
+  });
+
+  it('an approval whose role is deleted during provisioning is refused cleanly', async () => {
+    const key = (await adm('POST', '/api/admin/roles', { label: 'Flucht2', from: 'friend' })).json().key as string;
+    const id = (await env.pool.query("insert into approval_requests(id, authentik_sub, name) values (gen_random_uuid(), 'apgone', 'Gone') returning id")).rows[0].id;
+    const admin_ = env.ctx.jf.admin;
+    const realApply = admin_.applyPolicy.bind(admin_);
+    admin_.applyPolicy = (async (...a: Parameters<typeof realApply>) => { await realApply(...a); await deleteRole(env.ctx, null, key, 'guest'); }) as typeof realApply;
+    let r;
+    try { r = await adm('POST', `/api/admin/approvals/${id}/approve`, { role: key }); } finally { admin_.applyPolicy = realApply; }
+    expect(r.statusCode).toBe(400);
+    expect((await env.pool.query("select 1 from users where authentik_sub='apgone'")).rowCount).toBe(0);
   });
 });
