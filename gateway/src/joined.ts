@@ -4,7 +4,7 @@
  * Continuous AirPlay (admin switch CAST_AIRPLAY_CONTINUOUS): several episodes as ONE VOD stream for a multi-item AirPlay token.
  * Pure helpers only; the routes (`/media/c/<ct>/joined/{master,main,subs}.m3u8`, `/media/c/<ct>/s/<part>/<n>.ts`) live in gateway.ts.
  */
-import { hlsAttrs } from './gateway.js';
+import { hlsAttrs } from './hls.js';
 
 export interface JoinPart {
   /** one episode's media playlist, already through sanitizePlaylist (token-free, URIs relative and inside the token path) */

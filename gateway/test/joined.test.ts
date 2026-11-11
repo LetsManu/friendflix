@@ -10,12 +10,15 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createGateway, type JoinedSegment } from '../src/gateway.js';
 import { joinPlaylists } from '../src/joined.js';
+import { jellyfinUpstream } from '../src/upstream/jellyfin.js';
+import { plexUpstream } from '../src/upstream/plex.js';
 
 const HAVE_FFMPEG = spawnSync('ffmpeg', ['-version']).status === 0;
 /** async (the gateway runs in this process: a sync spawn would block it); no proxy for the loopback gateway */
@@ -34,6 +37,20 @@ const CT_WARM = 'W'.repeat(43); // a fresh joined token of the three short episo
 const CT_NOSUB = 'N'.repeat(43); // joined token whose episodes carry no subtitle track
 const CT_IMG = 'I'.repeat(43); // a poster token (never has a joined stream)
 const CT_DOWN = 'D'.repeat(43); // the backend fails for this one
+const CT_ONCE = 'C'.repeat(43); // a fresh joined token for the build-once count
+const CT_SHIFT = 'S'.repeat(43); // joined token whose authz answer changes item 2's play session after the build (shift.v)
+const CT_FOUR = 'Q'.repeat(43); // a scope listing four items (the cap is three)
+/** a fresh joined token of the three short episodes per hostile-upstream case (own build) */
+const hostileCt = (k: string) => `${k}_`.padEnd(43, 'H');
+/**
+ * Hostile / broken upstream answers for item 2 (EP[1]) while `hostile.v` is set, all on its segment 1 unless noted:
+ * foreign = absolute URI; ps = item 1's PlaySessionId; itemid = an ItemId=<item 1> override; encode = SubtitleMethod=Encode;
+ * encoded = percent-encoded file name (%31.ts); noticks = no runtimeTicks; subq = its subtitle playlist's first segment with an unknown query key
+ */
+type Variant = '' | 'foreign' | 'ps' | 'itemid' | 'encode' | 'encoded' | 'noticks' | 'subq';
+const hostile = { v: '' as Variant };
+const shift = { v: false };
+const sha = (v: string) => createHash('sha256').update(v).digest('hex');
 const hex = (c: string) => c.repeat(32);
 type Ep = { id: string; ms: string; ps: string; dur: number; sub: number; lang: string; pattern: string };
 // Saltwater Almanac S2 E1-E3 (fictional), deliberately odd runtimes (last segment shorter than SEG)
@@ -52,13 +69,14 @@ const OTHER = { id: hex('9'), ms: hex('d'), ps: 'ps-other' };
 const work = mkdtempSync(join(tmpdir(), 'ff-joined-'));
 const upstreamLog: string[] = [];
 const segEvents: JoinedSegment[] = [];
-let jf: Server, be: Server, gw: Server, gwPort = 0;
+let jf: Server, be: Server, gw: Server, gwPort = 0, jfPort = 0, bePort = 0;
+const extra: Server[] = [];
 
 const q = (ep: Ep) =>
   `DeviceId=jfdev&MediaSourceId=${ep.ms}&VideoCodec=h264&AudioCodec=aac&PlaySessionId=${ep.ps}&SegmentContainer=ts&MinSegments=1&BreakOnNonKeyFrames=false&TranscodingMaxAudioChannels=2&MaxStreamingBitrate=8000000&AudioBitrate=192000&AudioChannels=2&VideoBitrate=7808000&MaxHeight=1080&MaxWidth=1920&Level=41&MaxVideoBitDepth=8&RequireAvc=true&EnableTrickplay=false&SubtitleStreamIndex=${ep.sub}&SubtitleMethod=Hls`;
 
 /** port of DynamicHlsPlaylistGenerator.CreateMainPlaylist (10.10, equal-length segments of a transcode) */
-function jfMain(ep: Ep, query: string, foreign = false): string {
+function jfMain(ep: Ep, query: string, variant: Variant = ''): string {
   const total = Math.round(ep.dur * 1e7), len = SEG * 1e7;
   const segs: number[] = [];
   for (let t = total; t > 0; t -= len) segs.push(Math.min(t, len) / 1e7);
@@ -66,7 +84,12 @@ function jfMain(ep: Ep, query: string, foreign = false): string {
   let rt = 0;
   segs.forEach((d, i) => {
     const lt = Math.round(d * 1e7);
-    out.push(`#EXTINF:${d.toFixed(6)}, nodesc`, `${foreign && i === 1 ? 'https://cdn.invalid/' : ''}hls1/main/${i}.ts?${query}&runtimeTicks=${rt}&actualSegmentLengthTicks=${lt}`);
+    const v = i === 1 ? variant : '';
+    let qq = `${query}${v === 'noticks' ? '' : `&runtimeTicks=${rt}`}&actualSegmentLengthTicks=${lt}`;
+    if (v === 'ps') qq = qq.replace(`PlaySessionId=${ep.ps}`, `PlaySessionId=${EP[0]!.ps}`);
+    if (v === 'itemid') qq += `&ItemId=${EP[0]!.id}`;
+    if (v === 'encode') qq = qq.replace('SubtitleMethod=Hls', 'SubtitleMethod=Encode');
+    out.push(`#EXTINF:${d.toFixed(6)}, nodesc`, `${v === 'foreign' ? 'https://cdn.invalid/' : ''}hls1/main/${v === 'encoded' ? '%31' : i}.ts?${qq}`);
     rt += lt;
   });
   out.push('#EXT-X-ENDLIST', '');
@@ -82,12 +105,12 @@ const jfMaster = (ep: Ep, query: string) => [
   '',
 ].join('\n');
 /** SubtitleController.GetSubtitlePlaylist */
-function jfSubs(ep: Ep): string {
+function jfSubs(ep: Ep, variant: Variant = ''): string {
   const rt = Math.round(ep.dur * 1e7), len = 30 * 1e7;
   const out = ['#EXTM3U', '#EXT-X-TARGETDURATION:30', '#EXT-X-VERSION:3', '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-PLAYLIST-TYPE:VOD'];
   for (let p = 0; p < rt; p += len) {
     const l = Math.min(rt - p, len);
-    out.push(`#EXTINF:${l / 1e7},`, `stream.vtt?CopyTimestamps=true&AddVttTimeMap=true&StartPositionTicks=${p}&EndPositionTicks=${Math.min(rt, p + len)}&api_key=${TOKEN}`);
+    out.push(`#EXTINF:${l / 1e7},`, `stream.vtt?CopyTimestamps=true&AddVttTimeMap=true&StartPositionTicks=${p}&EndPositionTicks=${Math.min(rt, p + len)}&api_key=${TOKEN}${variant === 'subq' && p === 0 ? '&Foo=1' : ''}`);
   }
   out.push('#EXT-X-ENDLIST', '');
   return out.join('\n');
@@ -95,7 +118,7 @@ function jfSubs(ep: Ep): string {
 const jfVtt = (n: number) => `WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:900000,LOCAL:00:00:00.000\n\n00:00:01.000 --> 00:00:04.000\nFolge ${n}: erste Zeile\n`;
 
 const listen = (s: Server) => new Promise<number>((r) => s.listen(0, '127.0.0.1', () => r((s.address() as AddressInfo).port)));
-const get = (path: string) => fetch(`http://127.0.0.1:${gwPort}${path}`);
+const get = (path: string, ip?: string) => fetch(`http://127.0.0.1:${gwPort}${path}`, ip ? { headers: { 'x-real-ip': ip } } : {});
 
 beforeAll(async () => {
   if (HAVE_FFMPEG) {
@@ -118,8 +141,9 @@ beforeAll(async () => {
     const query = [...u.searchParams].filter(([k]) => !/^(runtimeTicks|actualSegmentLengthTicks)$/.test(k)).map(([k, v]) => `${k}=${v}`).join('&');
     const m3u8 = (t: string) => { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' }); res.end(t); };
     if (u.pathname.endsWith('/master.m3u8')) return m3u8(jfMaster(ep, query));
-    if (u.pathname.endsWith('/main.m3u8')) return m3u8(jfMain(ep, `${query}&api_key=${TOKEN}`, req.headers['x-test-foreign'] === '1'));
-    if (u.pathname.endsWith('/subtitles.m3u8')) return m3u8(jfSubs(ep));
+    const variant = String(req.headers['x-test-variant'] ?? '') as Variant;
+    if (u.pathname.endsWith('/main.m3u8')) return m3u8(jfMain(ep, `${query}&api_key=${TOKEN}`, variant));
+    if (u.pathname.endsWith('/subtitles.m3u8')) return m3u8(jfSubs(ep, variant));
     if (u.pathname.endsWith('/stream.vtt')) { res.writeHead(200, { 'content-type': 'text/vtt' }); return res.end(jfVtt(n + 1)); }
     const seg = /\/hls1\/main\/(\d+)\.ts$/.exec(u.pathname);
     if (seg && HAVE_FFMPEG && n >= 0) {
@@ -135,7 +159,9 @@ beforeAll(async () => {
       const item = (e: Ep) => ({ itemId: e.id, mediaSourceId: e.ms, playSessionId: e.ps, hlsPath: `/Videos/${e.id}/master.m3u8?${q(e)}`, hlsSubIndex: e.sub });
       const base = { userId: 'u1', token: TOKEN, deviceId: 'gw', maxBitrate: 8_000_000, kind: 'media' };
       const first = (e: Ep) => ({ itemId: e.id, mediaSourceId: e.ms, playSessionId: e.ps, hlsSub: true, hlsSubIndex: e.sub });
-      if (j.ct === CT_JOIN || j.ct === CT_FOREIGN || j.ct === CT_WARM) return res.end(JSON.stringify({ ...base, scope: { ...first(EP[0]!), items: EP.map(item) } }));
+      if ([CT_JOIN, CT_FOREIGN, CT_WARM, CT_ONCE].includes(j.ct!) || /H{20}$/.test(j.ct!)) return res.end(JSON.stringify({ ...base, scope: { ...first(EP[0]!), items: EP.map(item) } }));
+      if (j.ct === CT_SHIFT) return res.end(JSON.stringify({ ...base, scope: { ...first(EP[0]!), items: EP.map((e, i) => ({ ...item(e), ...(i === 1 && shift.v ? { playSessionId: 'ps-shifted' } : {}) })) } }));
+      if (j.ct === CT_FOUR) return res.end(JSON.stringify({ ...base, scope: { ...first(EP[0]!), items: [...EP, LONG[0]!].map(item) } }));
       if (j.ct === CT_LONG) return res.end(JSON.stringify({ ...base, scope: { ...first(LONG[0]!), items: LONG.map(item) } }));
       if (j.ct === CT_ONE) return res.end(JSON.stringify({ ...base, scope: first(EP[0]!) }));
       if (j.ct === CT_NOSUB) return res.end(JSON.stringify({ ...base, scope: { itemId: EP[0]!.id, mediaSourceId: EP[0]!.ms, playSessionId: EP[0]!.ps, items: EP.map(({ sub: _s, ...e }) => ({ ...item({ ...e, sub: 0 }), hlsSubIndex: undefined })) } }));
@@ -144,19 +170,18 @@ beforeAll(async () => {
       res.writeHead(401); res.end('{}');
     });
   });
-  const jfp = await listen(jf);
-  const bep = await listen(be);
+  const jfp = (jfPort = await listen(jf));
+  const bep = (bePort = await listen(be));
   const g = createGateway({
     upstreamUrl: `http://127.0.0.1:${jfp}`, backendUrl: `http://127.0.0.1:${bep}`, internalSecret: 's3cret-s3cret-s3cret',
     onJoinedSegment: (e) => segEvents.push(e),
-    // CT_FOREIGN: the fake Jellyfin answers item 2's variant with one absolute URI (a hostile / broken upstream)
-    fetchImpl: ((u: string, init: RequestInit) => fetch(u, String(u).includes(`/Videos/${EP[1]!.id}/main.m3u8`) && foreignNext.v ? { ...init, headers: { ...(init.headers as Record<string, string>), 'x-test-foreign': '1' } } : init)) as typeof fetch,
+    // hostile.v: the fake Jellyfin answers item 2's playlists with that hostile / broken variant (see Variant)
+    fetchImpl: ((u: string, init: RequestInit) => fetch(u, String(u).includes(`/Videos/${EP[1]!.id}/`) && hostile.v ? { ...init, headers: { ...(init.headers as Record<string, string>), 'x-test-variant': hostile.v } } : init)) as typeof fetch,
   });
   gw = g.server;
   gwPort = await listen(gw);
 }, 120_000);
-const foreignNext = { v: false };
-afterAll(() => { jf?.close(); be?.close(); gw?.close(); rmSync(work, { recursive: true, force: true }); });
+afterAll(() => { jf?.close(); be?.close(); gw?.close(); for (const x of extra) x.close(); rmSync(work, { recursive: true, force: true }); });
 
 const J = `/media/c/${CT_JOIN}/joined`;
 const S = `/media/c/${CT_JOIN}/s`;
@@ -226,10 +251,16 @@ describe('joined route through the real gateway', () => {
     expect(t).toContain(`../Videos/${EP[2]!.id}/${EP[2]!.ms}/Subtitles/4/stream.vtt?`);
   });
   it('builds once per token: 9 upstream playlist requests (3 masters, 3 variants, 3 subtitle playlists), then cached', async () => {
+    const O = `/media/c/${CT_ONCE}/joined`;
+    const playlists = (from: number) => upstreamLog.slice(from).filter((l) => /\.m3u8/.test(l));
     const n0 = upstreamLog.length;
-    await get(`${J}/master.m3u8`); await get(`${J}/main.m3u8`); await get(`${J}/subs.m3u8`);
-    expect(upstreamLog.length - n0).toBe(0); // built by the first test already
-    expect(upstreamLog.filter((l) => /\.m3u8/.test(l))).toHaveLength(9);
+    // three first requests at once share one build (single flight)
+    const rs = await Promise.all(['master', 'main', 'subs'].map((n) => get(`${O}/${n}.m3u8`)));
+    expect(rs.map((r) => r.status)).toEqual([200, 200, 200]);
+    expect(playlists(n0)).toHaveLength(9);
+    const n1 = upstreamLog.length;
+    for (const n of ['master', 'main', 'subs', 'main']) expect((await get(`${O}/${n}.m3u8`)).status).toBe(200);
+    expect(playlists(n1)).toHaveLength(0);
   });
   it('every segment and subtitle URI of the joined playlists is served to the joined token', async () => {
     for (const name of ['main', 'subs']) {
@@ -261,8 +292,8 @@ describe('scope of a joined token', () => {
   it('a single-item token has no joined stream', async () => expect((await get(`/media/c/${CT_ONE}/joined/main.m3u8`)).status).toBe(403));
   it('a query on the joined route is refused (nothing from the receiver shapes it)', async () => expect((await get(`${J}/main.m3u8?x=1`)).status).toBe(403));
   it('one part with a URI outside the token path fails the whole joined stream', async () => {
-    foreignNext.v = true;
-    try { expect((await get(`/media/c/${CT_FOREIGN}/joined/main.m3u8`)).status).toBe(502); } finally { foreignNext.v = false; }
+    hostile.v = 'foreign';
+    try { expect((await get(`/media/c/${CT_FOREIGN}/joined/main.m3u8`)).status).toBe(502); } finally { hostile.v = ''; }
   });
 });
 
@@ -300,10 +331,10 @@ describe('short segment URIs, tuple scope, events, warm-up', () => {
   });
   it('unknown part or index is 404', async () => {
     const n0 = upstreamLog.length;
-    for (const p of ['3/0', '0/7', '1/5', '2/6', '0/999999', '99/0']) expect((await get(`${S}/${p}.ts`)).status, p).toBe(404);
+    for (const p of ['0/7', '1/5', '2/6', '0/999999']) expect((await get(`${S}/${p}.ts`)).status, p).toBe(404);
     expect(segLog(n0)).toEqual([]);
     // anything but the canonical short form never reaches the lookup
-    for (const p of ['00/0.ts', '0/01.ts', '0/-1.ts', '0/0.mp4', '0/0', 'x/0.ts', '0/../0.ts', '0/%2e%2e/0.ts', '0/0.ts/']) expect((await get(`${S}/${p}`)).status, p).toBe(403);
+    for (const p of ['3/0.ts', '9/0.ts', '99/0.ts', '00/0.ts', '0/01.ts', '0/-1.ts', '0/0.mp4', '0/0', 'x/0.ts', '0/../0.ts', '0/%2e%2e/0.ts', '0/0.ts/']) expect((await get(`${S}/${p}`)).status, p).toBe(403);
     expect(segLog(n0)).toEqual([]);
   });
   it('a single-item token gets 403 on /joined and /s', async () => {
@@ -338,10 +369,12 @@ describe('short segment URIs, tuple scope, events, warm-up', () => {
     segEvents.length = 0;
     await (await get(`${S}/1/2.ts`)).arrayBuffer();
     await (await get(`${S}/0/6.ts`)).arrayBuffer();
+    // the token's hash (what the backend keys cast records by), never the bearer token itself
     expect(segEvents).toEqual([
-      { ct: CT_JOIN, part: 1, itemId: EP[1]!.id, positionTicks: 2 * SEG * 1e7 },
-      { ct: CT_JOIN, part: 0, itemId: EP[0]!.id, positionTicks: 6 * SEG * 1e7 },
+      { tokenHash: sha(CT_JOIN), part: 1, itemId: EP[1]!.id, positionTicks: 2 * SEG * 1e7 },
+      { tokenHash: sha(CT_JOIN), part: 0, itemId: EP[0]!.id, positionTicks: 6 * SEG * 1e7 },
     ]);
+    expect(JSON.stringify(segEvents)).not.toContain(CT_JOIN);
     // refused and direct-path fetches report nothing
     segEvents.length = 0;
     await get(`${S}/9/0.ts`);
@@ -400,8 +433,115 @@ describe('edge answers of the joined routes', () => {
     }
   });
   it('a short segment of a stream whose build failed is 502', async () => {
-    foreignNext.v = true;
-    try { expect((await get(`/media/c/${CT_FOREIGN}/s/0/0.ts`)).status).toBe(502); } finally { foreignNext.v = false; }
+    hostile.v = 'foreign';
+    try { expect((await get(`/media/c/${CT_FOREIGN}/s/0/0.ts`)).status).toBe(502); } finally { hostile.v = ''; }
+  });
+});
+
+describe('fix round 1: both scope layers of /s, guards, caps', () => {
+  it.each(['ps', 'itemid', 'encode'] as const)('a relative segment URI outside its own tuple (%s) fails the whole joined stream', async (k) => {
+    const H = `/media/c/${hostileCt(k)}`;
+    hostile.v = k;
+    try {
+      expect((await get(`${H}/joined/main.m3u8`)).status).toBe(502);
+    } finally { hostile.v = ''; }
+    const n0 = upstreamLog.length;
+    for (const p of ['s/1/1.ts', 's/1/0.ts', 's/0/0.ts']) expect((await get(`${H}/${p}`)).status, p).toBe(502);
+    expect(segLog(n0)).toEqual([]);
+  });
+  it('every /s request re-checks the expanded URI against the token\'s current scope (never the cached build alone)', async () => {
+    const X = `/media/c/${CT_SHIFT}`;
+    expect((await get(`${X}/joined/main.m3u8`, '10.9.0.1')).status).toBe(200);
+    const n0 = upstreamLog.length;
+    const ok = await get(`${X}/s/1/1.ts`, '10.9.0.1');
+    expect(ok.status).toBe(HAVE_FFMPEG ? 200 : 404);
+    await ok.arrayBuffer();
+    expect(segLog(n0)).toHaveLength(1);
+    shift.v = true; // the backend now names another play session for item 2 (a fresh client = a fresh authz answer)
+    try {
+      const n1 = upstreamLog.length;
+      expect((await get(`${X}/s/1/1.ts`, '10.9.0.2')).status).toBe(403);
+      expect(segLog(n1)).toEqual([]);
+      const still = await get(`${X}/s/0/0.ts`, '10.9.0.2'); // item 1's tuple is unchanged
+      expect(still.status).toBe(HAVE_FFMPEG ? 200 : 404);
+      await still.arrayBuffer();
+    } finally { shift.v = false; }
+  });
+  it('the expanded path is normalised like any cast path before it is proxied', async () => {
+    const H = `/media/c/${hostileCt('encoded')}`;
+    hostile.v = 'encoded';
+    try {
+      expect((await get(`${H}/joined/main.m3u8`)).status).toBe(200);
+    } finally { hostile.v = ''; }
+    const n0 = upstreamLog.length;
+    await (await get(`${H}/s/1/1.ts`)).arrayBuffer();
+    expect(segLog(n0).map((l) => l.split('?')[0])).toEqual([`/Videos/${EP[1]!.id}/hls1/main/1.ts`]);
+  });
+  it('a segment without runtimeTicks reports no position', async () => {
+    const H = `/media/c/${hostileCt('noticks')}`;
+    hostile.v = 'noticks';
+    try {
+      expect((await get(`${H}/joined/main.m3u8`)).status).toBe(200);
+    } finally { hostile.v = ''; }
+    segEvents.length = 0;
+    for (const p of ['s/1/0.ts', 's/1/1.ts']) await (await get(`${H}/${p}`)).arrayBuffer();
+    expect(segEvents).toEqual([{ tokenHash: sha(hostileCt('noticks')), part: 1, itemId: EP[1]!.id, positionTicks: 0 }]);
+  });
+  it('a failed build is retried after 10 s, not cached for the entry lifetime', async () => {
+    const H = `/media/c/${hostileCt('ttl')}/joined/main.m3u8`;
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+    try {
+      hostile.v = 'foreign';
+      try { expect((await get(H)).status).toBe(502); } finally { hostile.v = ''; }
+      const n0 = upstreamLog.length;
+      expect((await get(H)).status).toBe(502); // still the cached failure: no rebuild
+      expect(upstreamLog.slice(n0).filter((l) => l.includes('.m3u8'))).toEqual([]);
+      vi.setSystemTime(Date.now() + 9_000);
+      expect((await get(H)).status).toBe(502);
+      vi.setSystemTime(Date.now() + 2_000);
+      expect((await get(H)).status).toBe(200);
+    } finally { vi.useRealTimers(); }
+  });
+  it('the warm-up only fetches a subtitle segment the TV could fetch itself', async () => {
+    const H = `/media/c/${hostileCt('subq')}`;
+    const vttOf = (e: Ep, from: number) => upstreamLog.slice(from).filter((l) => l.startsWith(`/Videos/${e.id}/${e.ms}/Subtitles/${e.sub}/stream.vtt?`) && l.includes('StartPositionTicks=0&'));
+    const n0 = upstreamLog.length;
+    hostile.v = 'subq'; // item 2's first subtitle segment carries a query key outside the allowlist
+    try {
+      expect((await get(`${H}/joined/master.m3u8`)).status).toBe(200);
+    } finally { hostile.v = ''; }
+    await vi.waitFor(() => expect(vttOf(EP[2]!, n0).length).toBeGreaterThan(0)); // part 3 is warmed as usual
+    await new Promise((r) => setTimeout(r, 100));
+    expect(vttOf(EP[1]!, n0).filter((l) => l.includes('Foo=1'))).toEqual([]); // part 2's segment would be 403 for the TV: never fetched
+  });
+  it('a scope with more than three items is refused; /s only knows parts 0-2', async () => {
+    const F = `/media/c/${CT_FOUR}`;
+    const n0 = upstreamLog.length;
+    for (const p of ['joined/master.m3u8', 'joined/main.m3u8', 's/0/0.ts', 's/3/0.ts']) expect((await get(`${F}/${p}`)).status, p).toBe(403);
+    expect((await get(`${F}/Videos/${EP[0]!.id}/hls1/main/0.ts?MediaSourceId=${EP[0]!.ms}&PlaySessionId=${EP[0]!.ps}&runtimeTicks=0`)).status).toBe(403);
+    expect(upstreamLog.length).toBe(n0);
+    // control: three items pass
+    expect((await get(`${J}/master.m3u8`)).status).toBe(200);
+  });
+  it('only the Jellyfin adapter (no playlist / authorize / rewrite hook) serves joined streams', async () => {
+    const adapters = [
+      plexUpstream,
+      { ...jellyfinUpstream, kind: 'other' },
+      { ...jellyfinUpstream, authorize: async () => true },
+      { ...jellyfinUpstream, playlist: (t: string) => t },
+      { ...jellyfinUpstream, rewrite: (path: string, query: URLSearchParams) => ({ path, query }) },
+    ];
+    for (const [i, upstream] of adapters.entries()) {
+      const g = createGateway({ upstream, upstreamUrl: `http://127.0.0.1:${jfPort}`, backendUrl: `http://127.0.0.1:${bePort}`, internalSecret: 's3cret-s3cret-s3cret' });
+      extra.push(g.server);
+      const port = await listen(g.server);
+      for (const p of ['joined/master.m3u8', 's/0/0.ts']) expect((await fetch(`http://127.0.0.1:${port}/media/c/${CT_JOIN}/${p}`)).status, `${i} ${p}`).toBe(403);
+    }
+    // control: the plain Jellyfin adapter on its own gateway
+    const g = createGateway({ upstream: jellyfinUpstream, upstreamUrl: `http://127.0.0.1:${jfPort}`, backendUrl: `http://127.0.0.1:${bePort}`, internalSecret: 's3cret-s3cret-s3cret' });
+    extra.push(g.server);
+    const port = await listen(g.server);
+    expect((await fetch(`http://127.0.0.1:${port}/media/c/${CT_JOIN}/joined/master.m3u8`)).status).toBe(200);
   });
 });
 

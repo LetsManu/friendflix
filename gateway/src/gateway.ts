@@ -7,7 +7,10 @@ import { open, realpath } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { jellyfinUpstream, type Upstream } from './upstream/index.js';
+import { hlsAttrs } from './hls.js';
 import { joinPlaylists, joinedMaster, joinedPrefix, readMaster, type PartMaster } from './joined.js';
+
+export { hlsAttrs };
 
 export interface GatewayOptions {
   /** media server adapter (allowlist, credential params, auth header); default Jellyfin */
@@ -24,13 +27,14 @@ export interface GatewayOptions {
   downloadDir?: string;
   /**
    * continuous AirPlay: every `/media/c/<ct>/s/<part>/<n>.ts` fetch that passed authz and the cast checks (just before it is
-   * proxied). `ct` is the raw cast token (for the caller's backend report only: never log it), `part` the 0-based episode of the
-   * joined stream, `positionTicks` the segment's start in that episode (Jellyfin's `runtimeTicks`; segments without one report nothing).
+   * proxied). `tokenHash` = sha256 hex of the cast token (what the backend keys cast records by; the hook never sees the bearer
+   * token), `part` the 0-based episode of the joined stream, `positionTicks` the segment's start in that episode (Jellyfin's
+   * `runtimeTicks`; a segment without a valid one reports nothing).
    */
   onJoinedSegment?: (e: JoinedSegment) => void;
 }
 
-export interface JoinedSegment { ct: string; part: number; itemId: string; positionTicks: number }
+export interface JoinedSegment { tokenHash: string; part: number; itemId: string; positionTicks: number }
 /** one episode of a joined AirPlay token as the backend's authz answer lists it (backend cast.ts JoinedItem without runtimeTicks) */
 export interface JoinedItemScope {
   itemId: string; mediaSourceId: string; playSessionId: string;
@@ -178,8 +182,15 @@ const burnInFree = (query: URLSearchParams, subIndex: number | undefined) =>
   });
 /** the joined playlists of a multi-item token (query-free) */
 const JOINED_ROUTE = /^\/joined\/(master|main|subs)\.m3u8$/;
-/** a short segment URI of the joined main playlist: `s/<part>/<n>.ts`, canonical decimal only (no leading zero, no sign) */
-const SHORT_SEG_ROUTE = /^\/s\/(0|[1-9]\d?)\/(0|[1-9]\d{0,5})\.ts$/;
+/** a short segment URI of the joined main playlist: `s/<part>/<n>.ts`, part 0-2 (JOINED_MAX_ITEMS), canonical decimal only (no leading zero, no sign) */
+const SHORT_SEG_ROUTE = /^\/s\/([0-2])\/(0|[1-9]\d{0,5})\.ts$/;
+/** spec §6: at most three episodes per joined token (the backend mints at most three; a longer list is refused here too) */
+const JOINED_MAX_ITEMS = 3;
+/**
+ * The joined build fetches and rewrites playlists itself and bypasses the adapter's playlist / authorize / rewrite hooks, so it runs only
+ * for the Jellyfin adapter, which has none (continuous AirPlay is Jellyfin-only: the backend's switch requires it). Anything else: 403.
+ */
+const joinedCapable = (up: Upstream) => up.kind === 'jellyfin' && !up.playlist && !up.authorize && !up.rewrite;
 const JOINED_TTL_MS = 6 * 3600_000;
 const JOINED_FAIL_TTL_MS = 10_000; // a failed build is retried after this (an upstream hiccup must not kill the stream for hours)
 const JOINED_MAX = 50;
@@ -200,32 +211,6 @@ export function stripUriTokens(uri: string, strip: ReadonlySet<string> = jellyfi
 const COMPAT_STREAM_ATTRS = new Set(['BANDWIDTH', 'AVERAGE-BANDWIDTH', 'CODECS', 'RESOLUTION', 'FRAME-RATE']);
 const COMPAT_GROUP_ATTRS = new Set(['AUDIO', 'VIDEO', 'SUBTITLES']); // SUBTITLES only ever matches the one kept rendition (see compatPlaylist)
 
-/**
- * `KEY=value` pairs of an HLS attribute list (quoted values may contain commas). A single linear scan, no regex: the list comes
- * from the upstream playlist, and a backtracking pattern would be quadratic on hostile input (long runs without `=`).
- */
-export function hlsAttrs(list: string): Array<[string, string]> {
-  const out: Array<[string, string]> = [];
-  let i = 0;
-  while (i < list.length) {
-    const eq = list.indexOf('=', i);
-    if (eq === -1) break;
-    const key = list.slice(i, eq).trim();
-    let end: number;
-    if (list[eq + 1] === '"') {
-      const close = list.indexOf('"', eq + 2);
-      end = close === -1 ? list.length : close + 1;
-    } else {
-      const comma = list.indexOf(',', eq + 1);
-      end = comma === -1 ? list.length : comma;
-    }
-    if (/^[A-Z0-9-]+$/.test(key)) out.push([key, list.slice(eq + 1, end)]);
-    const next = list.indexOf(',', end);
-    if (next === -1) break;
-    i = next + 1;
-  }
-  return out;
-}
 const unquote = (v: string) => v.replace(/^"|"$/g, '');
 
 /**
@@ -709,6 +694,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
    */
   function inScope(path: string, url: URL, scope: NonNullable<Authz['scope']>): boolean {
     if (!scope.items) return inTuple(path, url, scope);
+    if (scope.items.length > JOINED_MAX_ITEMS) return false; // never minted: refuse the whole token
     const it = joinedItemOf(scope, path);
     return it !== undefined && inTuple(path, url, it);
   }
@@ -746,8 +732,8 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     const jr = JOINED_ROUTE.exec(mm[2]!);
     const sr = jr ? null : SHORT_SEG_ROUTE.exec(mm[2]!);
     if (jr || sr) {
-      if (url.search !== '') {
-        castCount('403'); // nothing from the receiver shapes a joined playlist or picks a segment's query
+      if (url.search !== '' || !joinedCapable(up)) {
+        castCount('403'); // nothing from the receiver shapes a joined playlist or picks a segment's query; Jellyfin adapter only
         return cors(403, 'forbidden');
       }
       return jr ? handleJoined(req, res, mm[1]!, jr[1] as JoinedName, ip) : handleShortSegment(req, res, mm[1]!, Number(sr![1]), Number(sr![2]), ip);
@@ -948,8 +934,9 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     const authzMs = performance.now() - t0;
     if (auth === 'error') { castCount('503'); cors(503, 'unavailable'); return null; }
     if (!auth || !auth.scope) { noteFail(ip, sha256(ct)); castCount('401'); cors(401, 'unauthorized'); return null; }
-    // single-item and poster tokens have no joined stream
-    if (auth.kind === 'img' || (auth.scope.items?.length ?? 0) < 2) { castCount('403'); cors(403, 'forbidden'); return null; }
+    // single-item and poster tokens have no joined stream; nor has a scope longer than the cap
+    const n = auth.scope.items?.length ?? 0;
+    if (auth.kind === 'img' || n < 2 || n > JOINED_MAX_ITEMS) { castCount('403'); cors(403, 'forbidden'); return null; }
     return { auth: auth as CastAuthz, authzMs };
   }
 
@@ -992,7 +979,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       castCount('403');
       return cors(403, 'forbidden');
     }
-    return serveCast(req, res, url, path, null, a.auth, a.authzMs, { ct, part, itemId: p.itemId });
+    return serveCast(req, res, url, path, null, a.auth, a.authzMs, { tokenHash: sha256(ct), part, itemId: p.itemId });
   }
 
   async function forward(req: IncomingMessage, res: ServerResponse, url: URL, path: string, auth: Authz, countCode: (k: string) => void, cast = false, download = false, authzMs = 0) {
