@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { z } from 'zod';
+// roles.ts and rolecat.ts import each other: neither may use the other's exports at module load, only inside functions
 import { invalidateCatalogue } from './rolecat.js';
 
 export const roleTemplateSchema = z.object({

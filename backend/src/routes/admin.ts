@@ -16,7 +16,7 @@ import { activeStreams } from '../playstats.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
 import { defaultLimit } from '../requestlimit.js';
-import { catalogueLabel, roleExists } from '../rolecat.js';
+import { roleExists, roleLabelArgs } from '../rolecat.js';
 import { DEFAULT_ROLES, INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
 import { cleanDeviceName } from '../deviceName.js';
 import { requireGrownUp } from '../kids.js';
@@ -497,6 +497,6 @@ export function inviteRoutes(app: FastifyInstance, ctx: Ctx) {
     const defaultLanguage = (await instanceLanguage(ctx)) ?? FALLBACK_LANGUAGE;
     const lang = isLanguage(q) ? q : defaultLanguage;
     // defaultLanguage: a new invitee without a stored UI language sees the page in the instance language (or the browser's)
-    return { defaultLanguage, role: inv.role, roleLabel: roleLabel(lang, inv.role, await catalogueLabel(ctx, inv.role), DEFAULT_ROLES[inv.role]?.label), expiresAt: inv.expires_at, enrollUrl: enroll ? (loginUi(ctx.cfg) === 'app' ? `/login?invite=${encodeURIComponent(token)}&enroll=1` : `/auth/enroll?invite=${encodeURIComponent(token)}`) : undefined };
+    return { defaultLanguage, role: inv.role, roleLabel: roleLabel(lang, ...(await roleLabelArgs(ctx, inv.role))), expiresAt: inv.expires_at, enrollUrl: enroll ? (loginUi(ctx.cfg) === 'app' ? `/login?invite=${encodeURIComponent(token)}&enroll=1` : `/auth/enroll?invite=${encodeURIComponent(token)}`) : undefined };
   });
 }

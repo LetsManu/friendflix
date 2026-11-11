@@ -4,8 +4,9 @@ import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { MIGRATIONS, migrate } from '../src/db.js';
-import { catalogueLabel, invalidateCatalogue, invitableRoles, listRoles, roleExists, syncRoles } from '../src/rolecat.js';
-import { DEFAULT_ROLES, loadRoles } from '../src/roles.js';
+import { roleLabel } from '../src/i18n.js';
+import { catalogueLabel, invalidateCatalogue, invitableRoles, listRoles, roleExists, roleLabelArgs, syncRoles } from '../src/rolecat.js';
+import { DEFAULT_ROLES, invalidateRoles, loadRoles } from '../src/roles.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { ENC_KEY, makeEnv, resetDb, type TestEnv } from './helpers.js';
 
@@ -168,6 +169,41 @@ describe('role catalogue', () => {
       expect(await catalogueLabel(ctx, 'opa')).toBe('Familie'); // left ROLE_TEMPLATES: the label of its base
     } finally {
       await pool.query("update roles set label = null where key = 'friend'");
+      await pool.query("delete from roles where key = 'opa'");
+      invalidateCatalogue(ctx);
+    }
+  });
+
+  it('invalidateRoles also forgets the catalogue', async () => {
+    expect(await catalogueLabel(ctx, 'friend')).toBe('Freund'); // warm
+    await pool.query("update roles set label = 'Kumpel' where key = 'friend'");
+    try {
+      expect(await catalogueLabel(ctx, 'friend')).toBe('Freund'); // still cached
+      invalidateRoles(ctx);
+      expect(await catalogueLabel(ctx, 'friend')).toBe('Kumpel');
+    } finally {
+      await pool.query("update roles set label = null where key = 'friend'");
+      invalidateCatalogue(ctx);
+    }
+  });
+
+  it('listRoles hands out a copy, never the cached list', async () => {
+    const plain = { db: pool, roles: DEFAULT_ROLES };
+    const a = await listRoles(plain);
+    const n = a.length;
+    a.splice(0, n);
+    expect((await listRoles(plain)).length).toBe(n);
+  });
+
+  it('roleLabelArgs: a role that fell back to its base label is translated as the base', async () => {
+    await pool.query("insert into roles(key, base, origin, position) values ('opa', 'family', 'env', 9)");
+    invalidateCatalogue(ctx);
+    try {
+      expect(roleLabel('en', ...(await roleLabelArgs(ctx, 'opa')))).toBe('Family');
+      expect(roleLabel('en', ...(await roleLabelArgs(ctx, 'friend')))).toBe('Friend');
+      expect(roleLabel('en', ...(await roleLabelArgs(ctx, 'oma')))).toBe('Oma');
+      expect(roleLabel('en', ...(await roleLabelArgs(ctx, 'nobody')))).toBe('nobody');
+    } finally {
       await pool.query("delete from roles where key = 'opa'");
       invalidateCatalogue(ctx);
     }

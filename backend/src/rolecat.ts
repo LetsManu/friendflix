@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Ctx } from './ctx.js';
+// roles.ts and rolecat.ts import each other (invalidateRoles clears the catalogue; the catalogue needs DEFAULT_ROLES): neither may use
+// the other's exports at module load, only inside functions
 import { DEFAULT_ROLES } from './roles.js';
 
 /**
@@ -45,10 +47,10 @@ async function storedRoles(ctx: CatCtx): Promise<RoleRow[]> {
 /**
  * Every role in catalogue order (position, key); the rows are cached ~30 s per ctx. A ctx.roles key without a row (syncRoles has not
  * run yet, or it cannot be stored: reserved or not a valid key) is appended in memory as an env role, so accounts holding it keep
- * working; only a storable one is offered to invites.
+ * working; only a storable one is offered to invites. Always a fresh list of fresh rows (callers may sort or change it).
  */
 export async function listRoles(ctx: CatCtx): Promise<RoleRow[]> {
-  const rows = await storedRoles(ctx);
+  const rows = (await storedRoles(ctx)).map((r) => ({ ...r }));
   const known = new Set(rows.map((r) => r.key));
   const extra = Object.keys(ctx.roles).filter((k) => !known.has(k));
   if (!extra.length) return rows;
@@ -68,9 +70,19 @@ export async function invitableRoles(ctx: CatCtx): Promise<string[]> {
 
 /** the configured label of a role (roleLabel() translates a built-in default): row label ← ROLE_TEMPLATES label ← built-in label of its base */
 export async function catalogueLabel(ctx: CatCtx, key: string): Promise<string | undefined> {
+  return (await roleLabelArgs(ctx, key))[1];
+}
+
+/**
+ * The arguments of i18n roleLabel(lang, …) for a role: its own key with the configured label, or, for a role whose label falls back
+ * to its base (an env role that left ROLE_TEMPLATES, label not set), the base key, so the built-in label is translated.
+ */
+export async function roleLabelArgs(ctx: CatCtx, key: string): Promise<[role: string, configured: string | undefined, builtinGerman: string | undefined]> {
   const row = (await listRoles(ctx)).find((r) => r.key === key);
-  if (!row) return undefined;
-  return row.label ?? ctx.roles[key]?.label ?? DEFAULT_ROLES[row.base]?.label;
+  const own = row?.label ?? (row ? ctx.roles[key]?.label : undefined);
+  if (own !== undefined || !row) return [key, own, DEFAULT_ROLES[key]?.label];
+  const base = DEFAULT_ROLES[row.base]?.label;
+  return [base ? row.base : key, base, base];
 }
 
 /**
