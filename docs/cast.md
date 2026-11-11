@@ -2,7 +2,7 @@
 
 Aus dem Player kann ein Film oder eine Folge per Chromecast (und Geräte mit eingebautem Chromecast, z. B. Google TV) auf den Fernseher gesendet werden. Verwendet wird der **Default Media Receiver** von Google: keine Registrierung, keine eigene Receiver-App, kein Google-Konto nötig.
 
-Optional gibt es einen **eigenen FriendFlix-Empfänger** (`/cast-receiver/`, `CAST_RECEIVER_APP_ID`) mit „Nächste Folge“-Countdown, „Noch da?“, Untertitel-Stil, Fortschritt melden und, wenn Fernseher und AV-Receiver es bestätigen, HEVC und Dolby-Raumklang (siehe „HEVC und Raumklang mit dem eigenen Empfänger“ unten); er braucht eine Registrierung in der Google Cast SDK Developer Console: [de/cast-receiver.md](de/cast-receiver.md) (English: [cast-receiver.md](cast-receiver.md)).
+Optional gibt es einen **eigenen FriendFlix-Empfänger** (`/cast-receiver/`, `CAST_RECEIVER_APP_ID`) mit „Nächste Folge“-Countdown, „Noch da?“, Pausen- und Ladebildschirm, Absender-Pille (nur der Profilname), Untertitel-Stil, Fortschritt melden und, wenn Fernseher und AV-Receiver es bestätigen, HEVC und Dolby-Raumklang (siehe „HEVC und Raumklang mit dem eigenen Empfänger“ unten); er braucht eine Registrierung in der Google Cast SDK Developer Console: [de/cast-receiver.md](de/cast-receiver.md) (English: [cast-receiver.md](cast-receiver.md)).
 
 ## Voraussetzungen
 
@@ -179,6 +179,7 @@ Die Tests decken Backend und Gateway ab; folgendes lässt sich nur mit einem Chr
 - Cast-Taste erscheint nur in Chromium, Geräteauswahl, Start an der gemerkten Position, Pause/Springen/Lautstärke, Untertitel an/aus und Wechsel der Audiospur.
 - HEVC- oder 5.1-Quelle auf den Default Media Receiver und per AirPlay: Es kommt unverändert H.264 in Stereo an. HEVC-Streams und Raumklang gibt es nur auf dem eigenen Empfänger von FriendFlix, und nur, wenn der Fernseher es bestätigt (siehe unten und [operations.md](operations.md#hevc-umwandlung-und-surround-ton)).
 - Eigener Empfänger: Was `canDisplayType` am Chromecast mit Google TV (und am AV-Receiver dahinter) für `hvc1`, `ec-3` und `ac-3` antwortet, und ob der Empfänger fMP4-HLS mit HEVC und Dolby Digital Plus wirklich abspielt (Prüfliste in [cast-receiver.md](cast-receiver.md)).
+- Eigener Empfänger, Bildschirme: Zurück- und Fokus-Tasten, Ladebildschirm bei `isBuffering` und bei der nächsten Folge, Poster, Play-Pause-Taste, Touch am Nest Hub, ruhiger Modus, Absender-Pille (Prüfliste „die Bildschirme am echten Fernseher“ in [cast-receiver.md](cast-receiver.md#owner-checklist-the-screens-on-a-real-tv)).
 - HLS/TS-Wiedergabe von Quellen mit HEVC, 10 Bit, H.264 Level über 4.1, 5.1-Ton und 4K (Jellyfin muss transkodieren; der Default Media Receiver verlangt H.264 bis Level 4.1 und AAC).
 - Die pfadbeschränkten CSP-Ausnahmen für `www.gstatic.com` (`/cv/js/sender/`, `/cast/sdk/libs/`) reichen für das SDK; lädt es weitere Skripte von anderen Pfaden (oder braucht `connect-src`/`frame-src`), nur genau diese ergänzen.
 - Der Chromecast nutzt für Playlist, Segmente und Poster dieselbe Client-Adresse (Adress-Bindung; z. B. kein Wechsel zwischen IPv4/IPv6 im laufenden Betrieb).

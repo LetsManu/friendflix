@@ -13,9 +13,58 @@ streaming-app features:
 - **Skip intro / Skip recap** on the TV as well as on the phone.
 - **HEVC and Dolby surround** when the TV (and the AV receiver behind it) confirms them: the receiver asks the TV what it plays and the
   stream is planned for exactly that (see below). Other TVs, the Default Media Receiver and AirPlay keep getting H.264 stereo.
-- FriendFlix's look (coral accent, dark), readable from 3 m, reduced motion respected (no card animation).
+- **Pause and loading screens**, a **sender pill** that says who is casting, and **key hints** (see "What the TV shows"). FriendFlix's
+  look (coral accent, dark), readable from 3 m, solid panels, calm mode and reduced motion respected.
 
 Nothing changes for AirPlay, and nothing changes for Chromecast as long as `CAST_RECEIVER_APP_ID` is empty.
+
+## What the TV shows
+
+All screens are **solid panels** (`#1c1a21`, a thin light border, no blur: a blur is too heavy for a TV's graphics chip), inside
+safe margins of 5 % of the screen width on every side, sized to be read from 3 m (nothing below 20 px at 1280×720; sizes scale with
+the screen).
+
+- **Sender pill** (top left): "Cast from Anna's phone" (or tablet / computer). It shows only the **profile's display name** (at
+  most 80 characters), never the device name, an e-mail address, a token or a URL. It appears for 5 s after a load and whenever a
+  card, the pause screen or the loading screen is visible.
+- **Up next card** (bottom right): thumbnail, "Up next in 12 s" (the number counts down), "E5 · Wrenfield Pier", a key hint and a
+  thin countdown bar. The card title stays "Up next" without the number once the countdown was cancelled.
+  - On a TV with a remote the card has **no buttons**. The hint says "OK plays now · Back stops here" once a remote key was seen in
+    this session, and "Cancel on your phone" before that.
+  - On a touch screen (Nest Hub) the card shows two buttons instead: *Play now* and *Stop here*.
+  - OK / Enter / Space / the remote's play-pause key play the next episode now (with the pause screen showing as well, OK plays it and
+    the play-pause key resumes the paused episode); Back, Escape or Backspace stop here (no autoplay,
+    the card stays as "Up next" until the episode ends).
+  - **Still there?** uses the same card ("Autoplay is paused. Up next: ...", hint "OK keeps watching"); while the queued episode
+    waits paused, the same solid card is shown in the middle of the screen.
+- **Pause screen:** 1.5 s after the TV pauses (a quick pause and resume shows nothing) the picture dims a little and a block at the
+  bottom left shows "Paused", the title, the line ("Season 1 · Episode 4 · The Lantern Road") and a progress bar with elapsed
+  and total time. It hides at once on play. OK or the play-pause key resumes; left and right seek 10 s while it shows. If a card is
+  showing at the same time, the card sits on the right and the pause block on the left; OK then plays the next episode now, and
+  the play-pause key resumes the current one.
+- **Loading screen:** from the start of a load until the first picture of each item, including the next episode: the poster, the
+  title and the line, a moving bar and "Getting ready...". A stall of more than 3 s in the middle of playback shows the pause
+  layout with "Loading..." instead of "Paused".
+- **Calm mode / reduced motion:** when the viewer's phone or browser has calm mode on (or reduced motion), the sender tells the TV
+  (`motion: false`), and the TV page's own *reduce motion* setting counts as well. Then nothing moves: panels appear and disappear
+  without a transition, the countdown and progress bars still show their value, and the loading bar stands still.
+- **Remote keys:** OK / Enter / Space = play now (card), keep watching (*Still there?*) or resume (pause screen); the play-pause
+  key resumes whenever the TV is paused (also with a card showing) and plays now when only the card shows;
+  Back / Escape / Backspace / GoBack = stop here; left / right = seek 10 s on the pause screen, or move between the two buttons on
+  a touch screen.
+
+### What the receiver receives, and how it is shown
+
+The sender (the phone or browser) tells the TV what to show on the private channel; the TV has no language and no FriendFlix session:
+
+- `ui`: the texts in the viewer's language, the subtitle style, the countdown length, `who` (the profile name for the pill) and
+  `motion` (`false` in calm mode).
+- `item`: as before, plus `meta` with `title` and `line` (at most 200 characters each) for the pause and loading screens. The
+  poster is the image of the media metadata and is used only when it comes from the receiver's own origin; otherwise a plain
+  placeholder is shown.
+
+**Everything a sender sends is shown as text only** (`textContent`, never HTML), is length-capped, and nothing in it is a link the
+TV follows. The pill and the screens never show a token, a URL or an e-mail address.
 
 ## Set it up
 
@@ -51,6 +100,7 @@ To go back, empty the field: the next cast uses the Default Media Receiver again
 | Progress / watched with the phone asleep | lost until the phone wakes | reported by the TV |
 | Subtitle style | the TV's default | your style |
 | Skip intro / recap | phone only | TV and phone |
+| Pause screen, loading screen, who is casting | no | yes |
 | HEVC and Dolby surround | no (H.264, AAC stereo) | when the TV / AV receiver confirms them (fMP4) |
 
 Limits: the TV only plays what the phone queued. With the phone asleep the TV moves on by **one** episode (the one queued while
@@ -98,6 +148,37 @@ CI runs the sender against a fake Cast SDK and the receiver page against a fake 
 - HLS/TS playback through the framework with the page's own `<video>` element; subtitles render with the chosen style.
 - *Next episode* at the end of the countdown moves the queue on (`QUEUE_UPDATE` jump); otherwise the fallback plays to the end.
 - A queued item with `autoplay: false` waits paused; *Still there?* is answered by OK, the remote's play button and the phone.
-- Which keys the remote delivers to the page (OK / Back / arrows on Chromecast with Google TV; touch on a Nest Hub).
+- Which keys the remote delivers to the page (OK / Back / arrows on Chromecast with Google TV; touch on a Nest Hub). The checklist
+  for the screens is below.
 - Reports reach the backend from the same client address as the media (the report token is bound to the address that streams the
   token; an IPv4/IPv6 split between media and API requests would refuse the reports, and the phone's reports still apply).
+
+### Owner checklist: the screens on a real TV
+
+On a Chromecast with Google TV, a plain Chromecast and, if you have one, a Nest Hub, each with the own receiver. Record the result
+of each point in the pull request (write down what you saw, also when it is different from the expectation).
+
+- [ ] **Back and focus keys.** Does Back reach the page during the up-next card (the card stays as "Up next", no countdown) or does
+  Google TV close the app? Write down which. If Back closes the app, the hint should read "Cancel on your phone" on this device.
+  Arrows move the focus between the buttons only on a touch screen.
+- [ ] **Up next card** sits inside the overscan on every TV, the countdown bar is smooth, text is readable from 3 m. OK plays now.
+- [ ] **Loading screen on `isBuffering`.** It shows on the start of a cast and ends with the first picture; a stall in the middle of
+  playback shows "Loading..." in the pause layout after 3 s and not before. Check that the first-picture moment is not early (the
+  receiver treats the first PLAYING or time update as "first picture").
+- [ ] **LOAD interceptor on queue loads.** Cast *Dunmoor* S1 E4 and let *Wrenfield Pier* (S1 E5) follow: the loading screen shows
+  with the title and line of *Wrenfield Pier* (not the previous episode), then the picture.
+- [ ] **Poster metadata.** The loading screen shows the poster of the title; a title without one shows the solid placeholder and
+  no broken image.
+- [ ] **Play-pause key handled once.** While the pause screen and the up-next card are both showing, one press of the remote's
+  play-pause key resumes the paused episode (it does not toggle twice and does not skip), and OK plays the next episode.
+- [ ] **Pause screen** appears about 1.5 s after a pause (not on a quick pause), hides at once on play, shows the right elapsed and
+  total time, and left / right seek 10 s.
+- [ ] **Nest Hub touch.** A tap shows the two buttons; *Play now* jumps to the next episode, *Stop here* keeps watching without
+  autoplay.
+- [ ] **Calm mode on the TV.** Switch calm mode on in the phone's FriendFlix, cast again: panels appear and disappear without
+  movement and the loading bar stands still.
+- [ ] **Sender pill** shows only the profile name ("Cast from Anna's phone"), never the device name, an e-mail address or a
+  token; it shows for about 5 s after the start and while a card or screen is up.
+- [ ] **Solid panels** look right on the TV (no see-through areas), and the animation stays smooth on the plain Chromecast.
+
+The HEVC and surround checks for the receiver stay in [operations.md](operations.md#hevc-umwandlung-und-surround-ton) (point 6).
