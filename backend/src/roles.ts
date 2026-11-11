@@ -132,6 +132,15 @@ export const LEGACY_COLUMNS = {
 } as const satisfies Partial<Record<TemplateKey, string>>;
 export type LegacyKey = keyof typeof LEGACY_COLUMNS;
 
+/** the old role_settings columns from a template (max_height 0 = unlimited; null = inherit, as 3.3 reads them) */
+export function legacyColumns(t: Partial<Omit<RoleTemplate, 'label'>>): unknown[] {
+  return (Object.keys(LEGACY_COLUMNS) as Array<keyof typeof LEGACY_COLUMNS>).map((k) => {
+    if (!Object.hasOwn(t, k)) return null;
+    const v = t[k];
+    return k === 'maxHeight' && v === null ? 0 : v;
+  });
+}
+
 /** bitrate ceiling for a viewer outside the home networks: the remote cap, never above the role's own limit */
 export const remoteBitrateCap = (role: Pick<RoleTemplate, 'maxBitrate' | 'remoteMaxBitrate'>) => Math.min(role.maxBitrate, role.remoteMaxBitrate);
 /** forgets the cached role settings and the role catalogue (rolecat.ts) of this ctx */

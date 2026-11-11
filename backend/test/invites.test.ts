@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256 } from '../src/crypto.js';
+import { claimInvite, releaseInvite } from '../src/invites.js';
+import { provisionUser } from '../src/users.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const AK = { AUTHENTIK_URL: 'https://auth.example.com', AUTHENTIK_API_TOKEN: 't', AUTHENTIK_ENROLL_FLOW: 'enroll' };
@@ -413,6 +415,41 @@ describe('admin user management', () => {
     expect((await adm('DELETE', `/api/admin/invites/${inv.id}`)).statusCode).toBe(200);
     expect(ak.calls.filter((c) => c.method === 'DELETE')).toHaveLength(1);
   });
+  it('a claim taken before the delete ends on the target role, and a released invite carries it', async () => {
+    const key = (await adm('POST', '/api/admin/roles', { label: 'Mitte', from: 'friend' })).json().key as string;
+    const token = 'claimed-before-delete-token-0123456789abcdef';
+    await env.pool.query("insert into invites(id, token_hash, role, expires_at, max_uses) values (gen_random_uuid(), $1, $2, now() + interval '1 hour', 1)", [sha256(token), key]);
+    const claimed = (await claimInvite(env.ctx, token))!;
+    expect(claimed.role).toBe(key);
+    expect((await adm('DELETE', `/api/admin/roles/${key}`, { moveTo: 'guest' })).statusCode).toBe(200);
+    expect((await env.pool.query('select role from invites where id=$1', [claimed.id])).rows).toEqual([{ role: 'guest' }]);
+    // provisioning with the stale role of the claim: the invite's current role wins
+    const user = await provisionUser(env.ctx, { sub: 'claimed1', email: 'c1@x.de', name: 'Freund c1', groups: [] }, claimed.role, null, undefined, claimed.id);
+    expect(user.role).toBe('guest');
+    await releaseInvite(env.ctx, claimed.id);
+    expect((await env.pool.query('select role, uses from invites where id=$1', [claimed.id])).rows).toEqual([{ role: 'guest', uses: 0 }]);
+  });
+
+  it('a delete between provisioning steps cannot leave the account on the deleted role', async () => {
+    const key = (await adm('POST', '/api/admin/roles', { label: 'Mitte2', from: 'friend' })).json().key as string;
+    const token = 'claimed-during-provision-token-0123456789ab';
+    await env.pool.query("insert into invites(id, token_hash, role, expires_at, max_uses) values (gen_random_uuid(), $1, $2, now() + interval '1 hour', 1)", [sha256(token), key]);
+    const claimed = (await claimInvite(env.ctx, token))!;
+    // the delete holds the role lock exclusively and has moved the invite when the redemption reaches its insert
+    const c = await env.pool.connect();
+    try {
+      await c.query('begin');
+      await c.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${key}`]);
+      const p = provisionUser(env.ctx, { sub: 'claimed2', email: 'c2@x.de', name: 'Freund c2', groups: [] }, claimed.role, null, undefined, claimed.id);
+      await new Promise((r) => setTimeout(r, 400));
+      await c.query('update invites set role=$2 where id=$1', [claimed.id, 'guest']);
+      await c.query('commit');
+      expect((await p).role).toBe('guest');
+    } finally {
+      c.release();
+    }
+  });
+
   it('an invite redeemed after its role was deleted gets the new role', async () => {
     const key = (await adm('POST', '/api/admin/roles', { label: 'Kino-Gast', from: 'friend' })).json().key as string;
     // the invite routes still offer the built-in roles only: the open invite for the custom role is stored directly

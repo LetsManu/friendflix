@@ -3,14 +3,12 @@
 import type pg from 'pg';
 import { auditInTx } from './audit.js';
 import type { Ctx } from './ctx.js';
-import { PERM_KEYS } from './perms.js';
-import { defaultLimit } from './requestlimit.js';
+import { DEFAULT_PERMS, PERM_KEYS } from './perms.js';
 import { invalidateRights, roleRights } from './rights.js';
-import { legacyColumns } from './roleWrite.js';
 import { HttpError, setRole } from './users.js';
 // roles.ts and rolecat.ts import each other (invalidateRoles clears the catalogue; the catalogue needs DEFAULT_ROLES): neither may use
 // the other's exports at module load, only inside functions
-import { DEFAULT_ROLES, LEGACY_COLUMNS, TEMPLATE_KEYS, invalidateRoles, own, readTemplate } from './roles.js';
+import { DEFAULT_ROLES, LEGACY_COLUMNS, TEMPLATE_KEYS, invalidateRoles, legacyColumns, own, readTemplate } from './roles.js';
 
 /**
  * The role catalogue (table `roles`, migration 47): which roles exist, their order, label, base and whether invites may offer them.
@@ -123,15 +121,14 @@ const MARKS = /\p{M}/gu;
  */
 export function slugKey(label: string, taken: ReadonlySet<string>): string {
   let k = label.normalize('NFKD').toLowerCase().replace(/ß/g, 'ss').replace(/æ/g, 'ae').replace(/ø/g, 'o').replace(MARKS, '')
-    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 21).replace(/-+$/, '');
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   if (!k) k = 'role';
   else if (!/^[a-z]/.test(k) || k.length < 2) k = `r-${k}`;
+  // the stem is cut after the prefix and leaves room for the suffix: the whole key stays within ROLE_KEY_RE's 24 characters
+  const fit = (suffix: string) => `${k.slice(0, Math.min(21, 24 - suffix.length)).replace(/-+$/, '')}${suffix}`;
   const free = (c: string) => !taken.has(c) && !(RESERVED_ROLE_KEYS as readonly string[]).includes(c);
-  if (free(k)) return k;
-  for (let n = 2; ; n++) {
-    const c = `${k}-${n}`;
-    if (free(c)) return c;
-  }
+  if (free(fit(''))) return fit('');
+  for (let n = 2; ; n++) if (free(fit(`-${n}`))) return fit(`-${n}`);
 }
 
 const lockRole = (c: pg.PoolClient, key: string) => c.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${key}`]);
@@ -139,7 +136,7 @@ const lockRole = (c: pg.PoolClient, key: string) => c.query('select pg_advisory_
 /**
  * Duplicates a role (spec §4.2): a new admin role holding a full snapshot of the source's effective template, switches and wish limit
  * (later edits of the source do not reach it). The source is read under its role lock. Admin rights belong to the key `admin`, so a
- * copy of admin has base `friend` and is invitable; every other copy keeps the source's base and invitable flag. Returns the new key.
+ * copy of admin has base `family`, the family switches (only admin's numbers are copied) and is invitable; every other copy keeps the source's base and invitable flag. Returns the new key.
  */
 export async function createRole(ctx: Ctx, actor: string | null, label: string, from: string): Promise<string> {
   if (!(await roleExists(ctx, from))) throw new HttpError(404, 'not_found');
@@ -152,10 +149,10 @@ export async function createRole(ctx: Ctx, actor: string | null, label: string, 
     const rights = await roleRights(tx, from);
     if (!rights) throw new HttpError(404, 'not_found');
     const isAdmin = from === 'admin';
-    const base = isAdmin ? 'friend' : src?.base ?? (Object.hasOwn(DEFAULT_ROLES, from) ? from : 'friend');
+    const base = isAdmin ? 'family' : src?.base ?? (Object.hasOwn(DEFAULT_ROLES, from) ? from : 'friend');
     const invitable = isAdmin ? true : src?.invitable ?? true;
     const template = Object.fromEntries(TEMPLATE_KEYS.map((k) => [k, rights.template[k]]));
-    const perms = Object.fromEntries(PERM_KEYS.map((k) => [k, rights.perms[k]]));
+    const perms = Object.fromEntries(PERM_KEYS.map((k) => [k, (isAdmin ? DEFAULT_PERMS.family : rights.perms)[k]]));
     const cols = Object.values(LEGACY_COLUMNS);
     let key = '';
     for (let attempt = 0; attempt < 5 && !key; attempt++) {
@@ -197,7 +194,11 @@ export class RoleInUse extends Error {
 /**
  * Deletes an admin role (spec §2). Built-ins and a role still in ROLE_TEMPLATES cannot be deleted. Accounts and open invites need
  * `moveTo`: one transaction (holding the role locks of both roles in key order, so a concurrent role write waits and then finds the role
- * gone) moves the open invites, then each account through setRole (audited user.role), then removes the rows and audits role.delete.
+ * gone) moves every invite of the role (open, used-up or expired: a released invite is reopened), then each account through setRole
+ * (audited user.role), then removes the rows and audits role.delete. `admin` is never a target (admin is never invitable).
+ * The account moves run on pool connections, each committed and audited on its own, and hold both role locks across the media server
+ * calls. If one fails, earlier accounts stay moved while the role, its invites and the audit entry roll back (no role.delete entry);
+ * a retry finishes the job. Redemptions take the role lock shared (provisionUser), so one either waits or sees the new invite role.
  * Runs in the caller's accountSerial (setRole needs it); it must not call accountSerial or writeRole itself.
  */
 export async function deleteRole(ctx: Ctx, actor: string | null, key: string, moveTo?: string): Promise<{ accounts: number; invites: number }> {
@@ -205,7 +206,7 @@ export async function deleteRole(ctx: Ctx, actor: string | null, key: string, mo
   if (!cat) throw new HttpError(404, 'not_found');
   if (cat.origin === 'code' || Object.hasOwn(DEFAULT_ROLES, key)) throw new HttpError(400, 'builtin_role');
   if (cat.origin === 'env' && Object.hasOwn(ctx.roles, key)) throw new HttpError(400, 'env_role');
-  if (moveTo !== undefined && (moveTo === key || !(await roleExists(ctx, moveTo)))) throw new HttpError(400, 'bad_target');
+  if (moveTo !== undefined && (moveTo === key || moveTo === 'admin' || !(await roleExists(ctx, moveTo)))) throw new HttpError(400, 'bad_target');
   const c = await (ctx.db as pg.Pool).connect();
   try {
     await c.query('begin');
@@ -214,22 +215,24 @@ export async function deleteRole(ctx: Ctx, actor: string | null, key: string, mo
     if (moveTo !== undefined && !Object.hasOwn(ctx.roles, moveTo) && !(await c.query('select 1 from roles where key=$1', [moveTo])).rowCount) throw new HttpError(400, 'bad_target');
     const accountIds = async () => (await c.query<{ id: string }>('select id from users where role=$1', [key])).rows.map((r) => r.id);
     const ids = await accountIds();
+    let moved = 0;
     const open = "role=$1 and uses < max_uses and expires_at >= now()";
     const invites = Number((await c.query<{ n: string }>(`select count(*) n from invites where ${open}`, [key])).rows[0]!.n);
     if ((ids.length || invites) && moveTo === undefined) throw new RoleInUse(ids.length, invites);
     if (moveTo !== undefined) {
-      await c.query(`update invites set role=$2 where ${open}`, [key, moveTo]);
-      // an account created meanwhile (an invite redeemed before the update) shows up in the next pass
+      await c.query('update invites set role=$2 where role=$1', [key, moveTo]);
+      // an account created meanwhile shows up in the next pass
       for (let pass = 0, todo = ids; todo.length; todo = await accountIds()) {
-        if (++pass > 3) throw new HttpError(409, 'role_in_use');
+        if (++pass > 3) throw new RoleInUse(todo.length, invites);
         for (const id of todo) await setRole(ctx, actor, id, moveTo);
+        moved += todo.length;
       }
     }
     await c.query('delete from role_settings where role=$1', [key]);
     await c.query('delete from roles where key=$1', [key]);
-    await auditInTx({ db: c }, actor, 'role.delete', key, { moveTo: moveTo ?? null, accounts: ids.length, invites });
+    await auditInTx({ db: c }, actor, 'role.delete', key, { moveTo: moveTo ?? null, accounts: moved, invites });
     await c.query('commit');
-    return { accounts: ids.length, invites };
+    return { accounts: moved, invites };
   } catch (e) {
     await c.query('rollback').catch(() => undefined);
     throw e;

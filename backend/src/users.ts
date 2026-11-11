@@ -44,7 +44,10 @@ export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, 
  * `tx`: a connection inside an open transaction (setup/state.ts claimSetup): the account rows and their audit are written there and
  * commit or roll back with it; the caller then owns the Jellyfin account if that transaction does not commit.
  */
-export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, accessUntil: Date | null = null, tx?: pg.PoolClient): Promise<UserRow> {
+export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, accessUntil: Date | null = null, tx?: pg.PoolClient, inviteId?: string): Promise<UserRow> {
+  // an invite's role may have been deleted (its invites moved to the target) since the use was claimed: the invite's current role wins
+  const inviteRole = async (db: Pick<pg.Pool, 'query'>) => (await db.query<{ role: string }>('select role from invites where id=$1', [inviteId])).rows[0]?.role;
+  if (inviteId) role = (await inviteRole(ctx.db)) ?? role;
   const base = safeName(claims.name ?? claims.email?.split('@')[0] ?? 'freund');
   const password = randomPassword();
   let jf: { id: string } | undefined;
@@ -64,6 +67,17 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, 
     let row: UserRow;
     try {
       if (!tx) await c.query('begin');
+      if (inviteId) {
+        // shared role lock (deleteRole holds it exclusively): a delete in flight either finishes first, so the invite shows the new
+        // role, or waits for this account and then moves it
+        await c.query('select pg_advisory_xact_lock_shared(hashtext($1))', [`role:${role}`]);
+        const now = await inviteRole(c);
+        if (now && now !== role) {
+          role = now;
+          await applyRole(ctx, jf!.id, role, false, { userId: id });
+          await c.query('select pg_advisory_xact_lock_shared(hashtext($1))', [`role:${role}`]);
+        }
+      }
       const r = await c.query<UserRow>(
         `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, access_until)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,

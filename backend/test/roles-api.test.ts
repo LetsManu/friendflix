@@ -4,10 +4,10 @@ import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ctx } from '../src/ctx.js';
 import { forgetLibraries } from '../src/libraries.js';
-import { MATRIX_FIELDS } from '../src/perms.js';
+import { DEFAULT_PERMS, MATRIX_FIELDS } from '../src/perms.js';
 import { roleLimitFor } from '../src/requestlimit.js';
 import { accountsWithout } from '../src/rights.js';
-import { ROLE_KEY_RE, invitableRoles, slugKey, syncRoles } from '../src/rolecat.js';
+import { ROLE_KEY_RE, deleteRole, invitableRoles, slugKey, syncRoles } from '../src/rolecat.js';
 import { invalidateRoles } from '../src/roles.js';
 import { writeRole } from '../src/roleWrite.js';
 import { TEST_DB, makeEnv, type TestEnv } from './helpers.js';
@@ -357,6 +357,11 @@ describe('catalogue writes', () => {
     expect(make('x'.repeat(40)).length).toBeLessThanOrEqual(24);
     const again = [make('x'.repeat(40)), make('x'.repeat(40))];
     expect(new Set(again).size).toBe(2);
+    const digits = '1' + 'a'.repeat(39);
+    const d1 = make(digits);
+    const d2 = make(digits);
+    expect(d1).not.toBe(d2);
+    for (let i = 0; i < 100; i++) make('x'.repeat(40));
     for (const k of taken) expect(k, k).toMatch(ROLE_KEY_RE);
     expect([...taken]).not.toContain('order');
   });
@@ -404,14 +409,17 @@ describe('catalogue writes', () => {
     expect((await roleOf(key)).values.requestsPerMonth).toBeNull();
   });
 
-  it('duplicating admin gives a friend-based role with admin numbers and no admin rights', async () => {
+  it('duplicating admin gives a family-based role with admin numbers and the family switches', async () => {
     const r = await post({ label: 'Verwalter', from: 'admin' });
     expect(r.statusCode).toBe(201);
     const { key } = r.json();
     const adm = await roleOf('admin');
     const copy = await roleOf(key);
-    expect(copy).toMatchObject({ base: 'friend', invitable: true, origin: 'admin' });
-    expect(copy.values).toEqual(adm.values);
+    expect(copy).toMatchObject({ base: 'family', invitable: true, origin: 'admin' });
+    const fam = await roleOf('family');
+    for (const f of MATRIX_FIELDS.filter((x) => !(x.key in DEFAULT_PERMS.family))) expect(copy.values[f.key], f.key).toEqual(adm.values[f.key]);
+    for (const k of Object.keys(DEFAULT_PERMS.family)) expect(copy.values[k], k).toBe(fam.values[k]);
+    expect(copy.values.partySchedule).toBe(false);
     await env.pool.query("update users set role=$2 where id=$1", [ANNA, key]);
     invalidateRoles(env.ctx);
     const anna = await env.login({ sub: 'sub-anna', email: 'anna@example.com', name: 'Anna Beispiel', groups: [] });
@@ -463,6 +471,50 @@ describe('catalogue writes', () => {
     expect(await log('role.delete')).toEqual([{ target: key, meta: { moveTo: 'friend', accounts: 2, invites: 1 } }]);
     expect((await get()).matrix.roles.some((x: { key: string }) => x.key === key)).toBe(false);
     expect(await invitableRoles(env.ctx)).not.toContain(key);
+  });
+
+  it('a digit-led long label can be used twice over the API', async () => {
+    const a = await dup('1. FC Familie und Freunde');
+    const b = await dup('1. FC Familie und Freunde');
+    expect(a).not.toBe(b);
+    for (const k of [a, b]) expect(k).toMatch(ROLE_KEY_RE);
+  });
+
+  it('admin is never a move target', async () => {
+    const key = await dup('Zu Admin');
+    await setInvite(key);
+    const r = await del(key, { moveTo: 'admin' });
+    expect([r.statusCode, r.json()]).toEqual([400, { error: 'bad_target' }]);
+    expect((await env.pool.query('select role from invites')).rows).toEqual([{ role: key }]);
+    expect((await env.pool.query('select 1 from roles where key=$1', [key])).rowCount).toBe(1);
+  });
+
+  it('every invite of the role moves, used-up and expired ones too', async () => {
+    const key = await dup('Alt');
+    await setInvite(key);
+    await setInvite(key, 'used');
+    await setInvite(key);
+    await env.pool.query("update invites set expires_at = now() - interval '1 day' where id = (select id from invites limit 1)");
+    expect((await del(key, { moveTo: 'guest' })).statusCode).toBe(200);
+    expect((await env.pool.query('select role from invites')).rows).toEqual([{ role: 'guest' }, { role: 'guest' }, { role: 'guest' }]);
+  });
+
+  it('a delete that waited finds the role gone: 404 and one audit entry', async () => {
+    const key = await dup('Doppelt');
+    const c = await env.pool.connect();
+    try {
+      await c.query('begin');
+      await c.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${key}`]);
+      const both = Promise.allSettled([deleteRole(env.ctx, null, key), deleteRole(env.ctx, null, key)]);
+      await new Promise((r) => setTimeout(r, 300));
+      await c.query('commit');
+      const res = await both;
+      expect(res.map((x) => x.status).sort()).toEqual(['fulfilled', 'rejected']);
+      expect((res.find((x) => x.status === 'rejected') as PromiseRejectedResult).reason).toMatchObject({ statusCode: 404 });
+    } finally {
+      c.release();
+    }
+    expect((await env.pool.query("select 1 from audit_log where action='role.delete'")).rowCount).toBe(1);
   });
 
   it('an unused role is deleted without a target', async () => {

@@ -12,7 +12,7 @@ import { defaultLimit } from './requestlimit.js';
 import { invalidateRights, roleRights, type RightKey, type RightSource } from './rights.js';
 import { invitableRoles, listRoles, roleLabelArgs, type RoleRow } from './rolecat.js';
 import { wellFormed } from './wellFormed.js';
-import { DEFAULT_ROLES, LEGACY_COLUMNS, TEMPLATE_KEYS, invalidateRoles, own, readTemplate, type RoleTemplate } from './roles.js';
+import { DEFAULT_ROLES, LEGACY_COLUMNS, TEMPLATE_KEYS, legacyColumns, invalidateRoles, own, readTemplate, type RoleTemplate } from './roles.js';
 import { HttpError, accountSerial, reapplyRole } from './users.js';
 
 /**
@@ -69,15 +69,6 @@ function cleaned(raw: unknown, known: readonly string[], clean: Record<string, u
     else delete out[k];
   }
   return out;
-}
-
-/** the old role_settings columns from a template (max_height 0 = unlimited; null = inherit, as 3.3 reads them) */
-export function legacyColumns(t: Partial<Omit<RoleTemplate, 'label'>>): unknown[] {
-  return (Object.keys(LEGACY_COLUMNS) as Array<keyof typeof LEGACY_COLUMNS>).map((k) => {
-    if (!Object.hasOwn(t, k)) return null;
-    const v = t[k];
-    return k === 'maxHeight' && v === null ? 0 : v;
-  });
 }
 
 /**
