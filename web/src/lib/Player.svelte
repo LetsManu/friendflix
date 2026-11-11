@@ -514,7 +514,7 @@
   let attachSeq = 0;
   /** `swap`: the same stream again on a fresh element (restorePlain): no new start, no reports, the viewer's tracks stay */
   async function attach(startSec: number, swap = false) {
-    if (!video || !info || airInfo || handedOff) return; // AirPlay plays its own token stream
+    if (!video || destroyed || !info || airInfo || handedOff) return; // AirPlay plays its own token stream
     const my = ++attachSeq, cur = info;
     sampleFrames(); // the counters restart with the new stream
     if (!swap) { sessionPlaying = false; resetStall(); } // the first buffering of each stream is a start, not a stall
@@ -532,7 +532,8 @@
       const dl = info.delivery;
       timing.stream({ reason: info.transcodeReason ?? null, ...(dl && !useDirect ? { videoCopy: dl.video === 'copy', out: { video: dl.video, videoCodec: dl.videoCodec, audio: dl.audio, audioCodec: dl.audioCodec, channels: dl.channels, why: clientWhy(dl.why, playerCapsSummary()) } } : {}) });
     }
-    const seek = () => { if (startSec > 1) video!.currentTime = startSec; };
+    const el = video;
+    const seek = () => { if (startSec > 1 && !destroyed && video === el) el.currentTime = startSec; }; // the page may be gone (Back before the first frame) or the element swapped
     // hls.js is loaded lazily, only on this path (and usually already prefetched by the play button)
     let H: typeof Hls | null = null;
     if (!useDirect) {
