@@ -612,6 +612,22 @@ describe('progress sender (default onJoinedSegment)', () => {
     expect(JSON.parse(sent[2]!)).toMatchObject({ itemId: EP[0]!.id, positionTicks: 36 * 1e7 });
   });
 
+  it('the 1 s floor counts from the last part change only: a boundary right after a routine call goes out at once', async () => {
+    const sent: string[] = [];
+    let now = 9_000_000;
+    const send = joinedProgressSender({
+      backendUrl: 'http://be.invalid:3000', internalSecret: 'x', now: () => now,
+      fetchImpl: (async (_u: string | URL, init: RequestInit) => { sent.push(String(init.body)); return new Response('{}'); }) as typeof fetch,
+    });
+    const A = sha('token-boundary');
+    send(ev(A, 0, 0));
+    now += 15_000; send(ev(A, 0, 15 * 1e7)); // the routine 15 s call
+    expect(sent).toHaveLength(2);
+    now += 300; send(ev(A, 1, 0)); // episode 2's first segment 0.3 s later
+    expect(sent).toHaveLength(3);
+    expect(JSON.parse(sent[2]!)).toEqual({ tokenHash: A, itemId: EP[1]!.id, positionTicks: 0 });
+  });
+
   it('a failing backend is swallowed and logs nothing', async () => {
     const spies = (['log', 'warn', 'error', 'info'] as const).map((k) => vi.spyOn(console, k).mockImplementation(() => {}));
     try {

@@ -238,7 +238,8 @@ describe('profiles', () => {
     expect(r.json()).toEqual({ error: 'profile_changed' });
     expect(await env.kv.keys('cast:')).toEqual([]);
     expect(await env.kv.keys('castidx:')).toEqual([]);
-    expect(env.jfCalls.some((c) => c.method === 'DELETE' && c.path === '/Videos/ActiveEncodings')).toBe(true);
+    // a single token's encoding is stopped by the race path itself, once
+    expect(env.jfCalls.filter((c) => c.method === 'DELETE' && c.path === '/Videos/ActiveEncodings').map((c) => new URLSearchParams(c.search).get('playSessionId'))).toEqual(['ps-race-1']);
   });
 
   it('after select, Jellyfin calls and /internal/authz use the profile identity', async () => {

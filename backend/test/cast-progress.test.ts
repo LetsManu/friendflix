@@ -355,6 +355,18 @@ describe('server-side per-episode progress of a joined AirPlay stream', () => {
     expect(await stopAt(181)).toBe(EPS[0]!.rt - 181 * S);
   });
 
+  it('a seek back from near the end of a part to the start of the previous one stops it where it was (the start signal is forward only)', async () => {
+    const { hash, ps } = await joinedToken();
+    const from = env.jfCalls.length;
+    await progress(hash, EPS[0]!.id, 0);
+    await progress(hash, EPS[1]!.id, EPS[1]!.rt - 100 * S); // within episode 2's last 180 s, not its last 30 s
+    await progress(hash, EPS[0]!.id, 0); // back to episode 1's first segment
+    expect(reports(from).slice(3)).toEqual([
+      ['Playing/Stopped', EPS[1]!.id, ps[1], EPS[1]!.rt - 100 * S],
+      ['Playing', EPS[0]!.id, ps[0], 0],
+    ]);
+  });
+
   it('the bounded wait for background stops returns although a stop hangs (graceful shutdown)', async () => {
     const { hash, rec } = await joinedToken();
     await progress(hash, EPS[0]!.id, 0);
@@ -441,6 +453,33 @@ describe('server-side per-episode progress of a joined AirPlay stream', () => {
     }
     expect(await seconds()).toBeGreaterThanOrEqual(88);
     expect(await seconds()).toBeLessThanOrEqual(92);
+  });
+
+  it('one server report counts at most 60 s of watch time (the TV fetched nothing for longer)', async () => {
+    const { hash, rec } = await joinedToken();
+    const item = EPS[1]!.id;
+    await env.pool.query('delete from play_seconds where item_id = $1', [item]);
+    await progress(hash, EPS[0]!.id, 2830 * S);
+    await progress(hash, item, 0);
+    skipClock(300_000); // five minutes without a fetch
+    await progress(hash, item, 60 * S);
+    const sec = Number((await env.pool.query('select coalesce(sum(seconds), 0) s from play_seconds where user_id = $1 and item_id = $2', [rec.userId, item])).rows[0].s);
+    expect(sec).toBe(60);
+  });
+
+  it('the player and single tokens keep the default watch time: since the last update, at most 30 s', async () => {
+    const item = EPS[2]!.id;
+    const uid = (await joinedToken()).rec.userId;
+    await env.pool.query('delete from play_seconds where item_id = $1', [item]);
+    const body = (positionTicks: number) => ({ itemId: item, playSessionId: 'ps-default-watch', mediaSourceId: EPS[2]!.ms, positionTicks, isPaused: false });
+    expect((await call('POST', '/api/playback/start', body(0))).statusCode).toBe(200);
+    skipClock(20_000);
+    expect((await call('POST', '/api/playback/progress', body(20 * S))).statusCode).toBe(200);
+    skipClock(40_000); // longer than 30 s, still within the live record's 45 s
+    expect((await call('POST', '/api/playback/progress', body(60 * S))).statusCode).toBe(200);
+    expect((await call('POST', '/api/playback/stop', body(60 * S))).statusCode).toBe(200);
+    const sec = Number((await env.pool.query('select coalesce(sum(seconds), 0) s from play_seconds where user_id = $1 and item_id = $2', [uid, item])).rows[0].s);
+    expect(sec).toBe(20 + 30);
   });
 
   it("a later part's live record made by the token refresh carries its title", async () => {
