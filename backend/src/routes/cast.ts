@@ -225,7 +225,7 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       const kind = p.data.event === 'start' ? 'Playing' : p.data.event === 'stop' ? 'Playing/Stopped' : 'Playing/Progress';
       const r = await playbackReport(ctx, kind, { itemId: c.i, playSessionId: c.ps, mediaSourceId: c.ms, positionTicks: p.data.positionTicks, isPaused: p.data.isPaused, playMethod: 'Transcode' },
-        { user: v.user, jfUser: v.jfUser, profile: v.prof, deviceId: c.d });
+        { user: v.user, jfUser: v.jfUser, profile: v.prof, deviceId: c.d, via: 'chromecast' });
       return 'error' in r ? reply.code(429).send(r) : r;
     } catch (e) {
       if (e instanceof MediaError) return reply.code(e.status === 404 || e.status === 403 ? 404 : 502).send({ error: 'jellyfin', status: e.status });

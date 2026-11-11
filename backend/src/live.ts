@@ -12,6 +12,8 @@ export interface Live {
   itemId: string;
   title: string;
   seriesName?: string;
+  /** episodes: their series (device hand-off, handoff.ts) */
+  seriesId?: string;
   type?: string;
   positionTicks: number;
   runtimeTicks?: number;
