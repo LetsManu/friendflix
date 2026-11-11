@@ -11,6 +11,7 @@
   import { subClasses } from '#lib/substyle';
   import { noteInteraction } from '#lib/stillwatching';
   import { nowPlaying } from '#lib/remote';
+  import { bindPlayerMediaSession } from '#lib/player/mediasession';
   import { isBackKey } from '#lib/spatial';
   import { isLgApp } from '#lib/webos/detect';
   import { isTvApp } from '#lib/tvapp';
@@ -137,6 +138,8 @@
   export let extPanel = false;
   /** the next episode's id while the page's autoplay countdown runs: its playback info is prepared and its transcoder warmed (prefetch.ts) */
   export let prepNext: string | null = null;
+  /** the episode before this one (lock screen / media keys "previous"); null = none, a film or not known yet */
+  export let prevEpisodeId: string | null = null;
   const dispatch = createEventDispatcher();
 
   type Info = PlaybackDto;
@@ -165,6 +168,27 @@
   let air: AirPlayController | null = null, airState: AirPlayState = AIR_IDLE, airInfo: CastInfo | null = null, airProbe: HTMLVideoElement | null = null;
   $: airOn = remote ? $castSession?.kind === 'airplay' : airState.active;
   let destroyed = false;
+
+  // ---- Media Session (lock screen, Control Center, media keys): bound once this page plays locally; a hand-over the player starts
+  // itself (AirPlay, cast) keeps the binding, so the lock screen never goes blank in between (the cast's own binding takes the session over) ----
+  let mediaBind: ReturnType<typeof bindPlayerMediaSession> | null = null, mediaEl: HTMLVideoElement | null = null;
+  $: mediaItem = item && item.id === itemId ? {
+    title: item.name,
+    artist: item.type === 'Episode' && item.seriesName ? `${item.seriesName} · S${item.parentIndexNumber}:E${item.indexNumber}` : item.year ? String(item.year) : '',
+    artworkIds: item.type === 'Episode' && item.seriesId ? [item.id, item.seriesId] : [item.id],
+  } : null;
+  $: mediaActions = {
+    play: () => { if (video?.paused) togglePlay(); },
+    pause: () => { if (video && !video.paused) togglePlay(); },
+    seekTo: (t: number) => seekTo(t),
+    seekBy: (d: number) => seekBy(d, true),
+    next: hasNext ? () => { if (allowed()) void goNext(); } : null,
+    prev: prevEpisodeId ? () => { if (allowed() && prevEpisodeId) dispatch('episode', { id: prevEpisodeId }); } : null,
+  };
+  $: if (!mediaBind && !destroyed && video && mediaItem && started && !remote && !handedOff && !airOn) { mediaEl = video; mediaBind = bindPlayerMediaSession(video, mediaItem, mediaActions); }
+  // a fresh element (sound modes off, restorePlain): the listeners move to it
+  $: if (mediaBind && !destroyed && !handedOff && video && mediaEl && video !== mediaEl && mediaItem) { mediaBind.release(); mediaEl = video; mediaBind = bindPlayerMediaSession(video, mediaItem, mediaActions); }
+  $: if (mediaBind && mediaItem) mediaBind.update(mediaItem, mediaActions);
 
   // ---- UI state ----
   let paused = true, current = 0, duration = 0, buffered = 0, volume = 1, muted = false, rate = 1, waiting = true, fullscreen = false;
@@ -1696,6 +1720,7 @@
     holdPrefetch(Promise.resolve(lastStop)); // no cached info survives the player; the next prefetch waits for this stop (resume position)
     if (preparedFor) releaseNext(); // the next episode's warm-up: taken by its player within the grace, else stopped
     destroyed = true;
+    mediaBind?.release(); mediaBind = null;
     clearTimeout(credOutT);
     // a handed-over cast keeps running (the engine owns token, element, controller and probe); otherwise AirPlay ends here
     if (!handedOff) { air?.destroy(); airProbe?.remove(); } // revokes a live AirPlay token
