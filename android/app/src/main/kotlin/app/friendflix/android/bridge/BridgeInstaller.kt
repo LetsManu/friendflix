@@ -23,7 +23,7 @@ object BridgeInstaller {
         WebViewCompat.addWebMessageListener(view, OBJECT_NAME, setOf(policy.originRule())) { _, message: WebMessageCompat, sourceOrigin, isMainFrame, replyProxy: JavaScriptReplyProxy ->
             val data = message.data ?: return@addWebMessageListener // binary messages are not part of the protocol
             // JavaScriptReplyProxy is only safe on the thread that delivered the message (the UI thread); events are posted back there
-            val sink = ReplySink { json -> view.post { replyProxy.postMessage(json) } }
+            val sink = uiReplySink(bridge, { r -> view.post(r) }) { json -> replyProxy.postMessage(json) }
             bridge.onMessage(data, sourceOrigin, isMainFrame, sink)
         }
         return true

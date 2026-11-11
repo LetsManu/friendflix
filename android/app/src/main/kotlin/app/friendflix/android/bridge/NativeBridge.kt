@@ -40,6 +40,9 @@ class NativeBridge(
     private val openSettings: () -> Unit,
 ) {
     @Volatile private var eventSink: ReplySink? = null
+    /** set by [detach]: the page is gone for good, so replies already queued for it must not be delivered and no new message re-registers a sink */
+    @Volatile var isDetached = false
+        private set
     private var lastCast: CastSnapshot? = null
     private var lastCastAt = 0L
     /** a position-only change held back by the throttle, and the cancel of the timer that pushes it when the window is over */
@@ -47,6 +50,7 @@ class NativeBridge(
     private var cancelTrailing: (() -> Unit)? = null
 
     fun onMessage(message: String, sourceOrigin: Uri, isMainFrame: Boolean, reply: ReplySink) {
+        if (isDetached) return
         // Frame and origin first: a foreign or nested frame learns nothing about the protocol (not even size or syntax errors).
         if (!isMainFrame || !policy.isAppOrigin(sourceOrigin)) return reply.post(error(forbiddenId(message), "forbidden"))
         if (message.length > MAX_MESSAGE_CHARS) return reply.post(error(null, "too_large"))
@@ -65,6 +69,7 @@ class NativeBridge(
 
     /** Drops the reply target (the page is gone, e.g. the WebView is destroyed) so nothing keeps a dead view alive. */
     fun detach() {
+        isDetached = true
         eventSink = null
         dropPending()
     }

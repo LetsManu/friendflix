@@ -12,6 +12,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 - **Admin → Status shows how the "not here yet" suggestions are built.** A card per type (films, series) with the counts (starting titles, recommendations, already in the library, filtered by age, shown, failures) and a hint when nearly everything recommended is already in the library or there are no starting titles. Numbers only; available on the owner profile.
 
 ### Fixed
+- **Android: no reply to the page after the activity is gone.** A reply queued for the WebView (`view.post`) could run after the shell finished and destroyed the WebView, which can crash the process on closing the app (seen once in the emulator test "back at the first page finishes"). Replies now check that the page is still attached when they run, and a detached bridge ignores late messages.
 - **The Android app hears about a sign-out once** when several requests fail with 401 at the same time, not once per request.
 - **The page's capabilities retry for the Android app** no longer fires when the page just went to the background and is never scheduled after the page was torn down.
 - **Flaky phone-player test.** The "title glides down when the skip row goes" check measured while the title was still gliding from the skip row's arrival; it now waits for that and steps the glide's own clock (no app change).
