@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from 'vitest';
-import { clientAddress, isHomeAddress, isHomeRequest, isValidCidr } from '../src/netaddr.js';
+import { clientAddress, isHomeAddress, isHomeRequest, isTrustedPeer, isValidCidr, noteUntrustedForwarding, resetUntrustedForwardingNote } from '../src/netaddr.js';
 import { loadConfig } from '../src/config.js';
 
 const HOME = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10'];
@@ -37,7 +37,7 @@ describe('isHomeRequest', () => {
     expect(isHomeRequest(req({}, '192.168.1.5'), HOME)).toBe(false);
   });
   it('with a forwarding header the derived address decides', () => {
-    expect(isHomeRequest(req({ 'x-real-ip': '192.168.1.10' }, '203.0.113.1'), HOME)).toBe(true);
+    expect(isHomeRequest(req({ 'x-real-ip': '192.168.1.10' }, '172.18.0.5'), HOME)).toBe(true);
     expect(isHomeRequest(req({ 'x-forwarded-for': '192.168.1.10, 203.0.113.9' }, '127.0.0.1'), HOME)).toBe(false);
   });
 });
@@ -120,5 +120,36 @@ describe('trustProxy: the client address behind the proxy (req.ip, the rate-limi
     }
     expect(behind).toEqual([200, 200, 429, 200]); // a spoofed leftmost entry does not buy a new bucket; another real client has its own
     await app.close();
+  });
+});
+
+describe('forwarding headers are believed only from a trusted (loopback / private) peer', () => {
+  it('isTrustedPeer', () => {
+    for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1', '10.1.2.3', '172.17.0.1', '192.168.1.2', '169.254.1.1', 'fd12::3', 'fe80::1']) expect(isTrustedPeer(ip), ip).toBe(true);
+    for (const ip of ['203.0.113.5', '100.64.1.2', '2001:db8::1', '', undefined, 'nope']) expect(isTrustedPeer(ip), String(ip)).toBe(false);
+  });
+  it('a direct public peer claiming a home address is not home, and its address is the socket address', () => {
+    const r = req({ 'x-real-ip': '192.168.1.10', 'x-forwarded-for': '192.168.1.10' }, '203.0.113.1');
+    expect(isHomeRequest(r, HOME)).toBe(false);
+    expect(clientAddress(r)).toBe('203.0.113.1');
+  });
+  it('a trusted proxy peer forwarding a client address still works', () => {
+    expect(clientAddress(req({ 'x-forwarded-for': '198.51.100.9, 192.168.1.10' }, '172.18.0.5'))).toBe('192.168.1.10');
+    expect(isHomeRequest(req({ 'x-real-ip': '192.168.1.10' }, '127.0.0.1'), HOME)).toBe(true);
+    expect(isHomeRequest(req({ 'x-real-ip': '198.51.100.9' }, '127.0.0.1'), HOME)).toBe(false);
+  });
+});
+
+describe('noteUntrustedForwarding', () => {
+  it('warns once per process, only for X-Forwarded-For from an untrusted peer, and never names an address', () => {
+    resetUntrustedForwardingNote();
+    const warn = vi.fn();
+    noteUntrustedForwarding(req({ 'x-forwarded-for': '1.1.1.1' }, '127.0.0.1'), { warn });
+    noteUntrustedForwarding(req({}, '203.0.113.5'), { warn });
+    expect(warn).not.toHaveBeenCalled();
+    noteUntrustedForwarding(req({ 'x-forwarded-for': '198.51.100.9' }, '203.0.113.5'), { warn });
+    noteUntrustedForwarding(req({ 'x-forwarded-for': '198.51.100.8' }, '203.0.113.6'), { warn });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).not.toMatch(/\d+\.\d+\.\d+\.\d+/);
   });
 });

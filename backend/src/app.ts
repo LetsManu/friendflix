@@ -9,7 +9,7 @@ import { buildInfo } from './channel.js';
 import type { Ctx } from './ctx.js';
 import { MIN_ANDROID } from './version.js';
 import { authOrigin } from './oidc.js';
-import { TRUSTED_PROXY_RANGES } from './netaddr.js';
+import { noteUntrustedForwarding, TRUSTED_PROXY_RANGES } from './netaddr.js';
 import { compressJson } from './compress.js';
 import { newTimingStore, serverTimingHeader, timedDb, timedKv, timingStorage, timingSummary, type TimingStore } from './timing.js';
 import { metricsPlugin } from './metrics.js';
@@ -108,6 +108,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   ctx.kv = timedKv(ctx.kv);
   const timings = new WeakMap<object, TimingStore>();
   app.addHook('onRequest', (req, _reply, done) => {
+    noteUntrustedForwarding(req.raw, req.log);
     const store = newTimingStore();
     timings.set(req, store);
     timingStorage.run(store, done);
