@@ -3,6 +3,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { noteHandoff } from '../src/handoff.js';
 import { jfUserFor } from '../src/profiles.js';
+import { getLive } from '../src/live.js';
 import { playbackReport } from '../src/routes/media.js';
 import type { ProfileRow } from '../src/types.js';
 import { getUserById } from '../src/users.js';
@@ -26,6 +27,7 @@ let uid = '';
 let dev = '';
 let pid = '';
 let n = 0;
+let psN = 0;
 
 beforeAll(async () => {
   env = await makeEnv({
@@ -37,7 +39,7 @@ beforeAll(async () => {
     'POST /Sessions/Playing/Progress': () => ({ status: 204 }),
     'POST /Sessions/Playing/Stopped': () => ({ status: 204 }),
     'POST /Items/[^/]+/PlaybackInfo': () => ({
-      json: { PlaySessionId: 'ps-cast0001', MediaSources: [{ Id: MS, Container: 'mkv', SupportsDirectPlay: true, Bitrate: 4_000_000, RunTimeTicks: 30_000_000_000, MediaStreams: [{ Index: 0, Type: 'Video', Height: 1080 }, { Index: 1, Type: 'Audio' }] }] },
+      json: { PlaySessionId: `ps-cast-${String(++psN).padStart(4, '0')}`, MediaSources: [{ Id: MS, Container: 'mkv', SupportsDirectPlay: true, Bitrate: 4_000_000, RunTimeTicks: 30_000_000_000, MediaStreams: [{ Index: 0, Type: 'Video', Height: 1080 }, { Index: 1, Type: 'Audio' }] }] },
     }),
   });
   s = await env.login();
@@ -136,6 +138,44 @@ describe('write', () => {
       expect(await rows()).toEqual([expect.objectContaining({ device_id: dev, item_id: EP4, series_id: SER, via: 'chromecast', position_ticks: '4000000000' })]);
       await call('DELETE', `/api/cast/session/${j.castId}`);
     } finally { env.ctx.cfg = { ...env.ctx.cfg, CAST_RECEIVER_APP_ID: was }; }
+  });
+
+  it('a Chromecast autoplay of the next episode keeps series and runtime (live record made by the token touch)', async () => {
+    const token = async (itemId: string) => {
+      const c = await call('POST', '/api/cast/session', { itemId });
+      expect(c.statusCode).toBe(200);
+      const j = c.json();
+      return { j, ct: /\/media\/c\/([\w-]{43})\//.exec(j.contentUrl)![1]! };
+    };
+    const authz = (ct: string) => env.app.inject({ method: 'POST', url: '/internal/authz', headers: { 'x-internal-secret': cfg.INTERNAL_SECRET }, payload: { ct, client: TV } });
+    const cast = (b: Record<string, unknown>) => report('start', { mediaSourceId: MS, via: 'chromecast', ...b });
+    const a = await token(EP4);
+    expect((await authz(a.ct)).statusCode).toBe(200);
+    expect((await cast({ itemId: EP4, playSessionId: a.j.playSessionId })).statusCode).toBe(200);
+    expect(await row()).toMatchObject({ item_id: EP4, series_id: SER, runtime_ticks: '30000000000', via: 'chromecast' });
+    // the TV moves on to the next episode: its token is fetched again after the touch window, before any report for it
+    const b = await token(EP5);
+    expect((await authz(b.ct)).statusCode).toBe(200);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + 25_000);
+      expect((await authz(b.ct)).statusCode).toBe(200);
+      const touched = await getLive(env.ctx, uid, b.j.playSessionId);
+      expect(touched).toMatchObject({ itemId: EP5 });
+      expect(touched!.type).toBeUndefined(); // the touch knows the item id and title only
+      expect((await cast({ itemId: EP5, playSessionId: b.j.playSessionId, positionTicks: 10_000_000 })).statusCode).toBe(200);
+    } finally { vi.useRealTimers(); }
+    expect(await row()).toMatchObject({ item_id: EP5, series_id: SER, runtime_ticks: '31000000000', via: 'chromecast', position_ticks: '10000000' });
+    expect(await getLive(env.ctx, uid, b.j.playSessionId)).toMatchObject({ type: 'Episode', seriesId: SER, seriesName: 'Dunmoor', runtimeTicks: 31_000_000_000, title: 'Wrenfield Pier' });
+    for (const x of [a, b]) await call('DELETE', `/api/cast/session/${x.j.castId}`);
+  });
+
+  it('a TV probe report writes no row', async () => {
+    const before = env.jfCalls.length;
+    expect((await report('stop', { probe: true })).statusCode).toBe(200);
+    expect(env.jfCalls.slice(before).map((c) => c.path)).toContain('/Sessions/Playing/Stopped'); // the media server still gets it
+    expect(await rows()).toEqual([]);
+    expect((await report('stop', { probe: 'yes' })).statusCode).toBe(400);
   });
 
   it('no row without a device', async () => {

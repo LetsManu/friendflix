@@ -55,6 +55,8 @@ const reportBody = z.object({
   playMethod: z.enum(['DirectPlay', 'DirectStream', 'Transcode']).optional(),
   /** the cast engine's reports for a cast it runs (device hand-off: how this device played it); absent = on the device itself */
   via: z.enum(['airplay', 'chromecast']).optional(),
+  /** the TV diagnostic probe's report (web/src/lib/tvprobe/target.ts): a test play, never a hand-off source */
+  probe: z.boolean().optional(),
 });
 
 export type PlaybackKind = 'Playing' | 'Playing/Progress' | 'Playing/Stopped';
@@ -88,6 +90,11 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
       userId: user.id, userName: user.name, profileName: who.profile?.is_owner ? undefined : who.profile?.name, itemId: b.itemId, title: item.name, seriesName: item.seriesName, seriesId: item.seriesId, type: item.type,
       positionTicks: ticks, runtimeTicks: item.runtimeTicks, isPaused: false, playSessionId: b.playSessionId, updatedAt: Date.now(), source: 'portal',
     };
+  } else if (live.type === undefined && live.itemId === b.itemId) {
+    // a live record the cast token's touch made before the first report (cast.ts touch: item id and title only): the item's facts
+    // once (hand-off series and runtime). The token's creation already checked access, so a failed lookup keeps the record as it is.
+    const item = await ctx.jf.item(who.jfUser, b.itemId).catch(() => null);
+    if (item) live = { ...live, title: live.title || item.name, seriesName: item.seriesName, seriesId: item.seriesId, type: item.type, runtimeTicks: item.runtimeTicks };
   }
   const prev = live.updatedAt;
   live = { ...live, positionTicks: ticks, isPaused: b.isPaused, updatedAt: Date.now() };
@@ -107,7 +114,7 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
     audioIndex: b.audioIndex, subtitleIndex: b.subtitleIndex, playMethod: b.playMethod,
   });
   // device hand-off: what this device played for the profile, how far and when (best effort, never fails the report)
-  if (who.profile && who.deviceId) {
+  if (who.profile && who.deviceId && !b.probe) {
     await noteHandoff(ctx, {
       userId: user.id, profileId: who.profile.id, deviceId: who.deviceId, itemId: b.itemId, seriesId: live.seriesId, positionTicks: ticks,
       runtimeTicks: live.runtimeTicks, via: who.via ?? null, start: kind === 'Playing',

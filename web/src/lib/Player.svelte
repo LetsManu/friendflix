@@ -39,6 +39,7 @@
   import { avoidedUntil, capsPending, clientWhy, isFormatFailure, isProbedBlock, noteDirectFailure, noteHlsFailure, remeasureOutput, setStereoOnly, stereoOnly } from '#lib/player/devicecaps';
   import { firstFrameMs, watchFirstFrame } from '#lib/player/firstframe';
   import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
+  import { playerReportBody } from '#lib/player/reportbody';
   import { holdPrefetch, prepareNext, releaseNext, takeNext, takePrefetched } from '#lib/player/prefetch';
   import { createTiming, deviceClass, effectiveType, sendTiming } from '#lib/player/timing';
   import EpisodesPanel from '#lib/player/EpisodesPanel.svelte';
@@ -361,12 +362,11 @@
   const segKey = (k: string, kind: 'segment' | 'skip' | 'skipped'): TKey | null => (isSeg(k) ? `player.${kind}.${k}` : null);
   const segText = (tf: TFn, k: string, kind: 'segment' | 'skip' | 'skipped'): string => { const key = segKey(k, kind); return key ? tf(key) : k; };
 
-  const body = () => airInfo
-    ? { itemId, playSessionId: airInfo.playSessionId, mediaSourceId: airInfo.mediaSourceId, positionTicks: secToTicks(video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: 'Transcode' }
-    : {
-      itemId, playSessionId: info!.playSessionId, mediaSourceId: info!.mediaSourceId,
-      positionTicks: secToTicks(swapping ? lastPos : video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: mode === 'direct' ? 'DirectPlay' : 'Transcode',
-    };
+  // lib/player/reportbody.ts: the armed AirPlay token's play session, `via: 'airplay'` only while the TV plays it (airOn)
+  const body = () => playerReportBody({
+    itemId, local: info!, air: airInfo, airOn, position: !airInfo && swapping ? lastPos : video?.currentTime ?? 0, paused: video?.paused ?? false,
+    audioIndex, direct: mode === 'direct',
+  });
   let lastSent = 0;
   /** the latest stop report (also one sent earlier, e.g. at the end of the film): leaving the player holds prefetches on it */
   let lastStop: unknown;
