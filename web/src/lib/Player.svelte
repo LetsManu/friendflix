@@ -397,8 +397,9 @@
   const segText = (tf: TFn, k: string, kind: 'segment' | 'skip' | 'skipped'): string => { const key = segKey(k, kind); return key ? tf(key) : k; };
 
   // lib/player/reportbody.ts: the armed AirPlay token's play session, `via: 'airplay'` only while the TV plays it (airOn)
+  // (a single token a joined re-mint got for another episode is reported as that episode)
   const body = () => playerReportBody({
-    itemId, local: info!, air: airInfo, airOn, position: !airInfo && swapping ? lastPos : video?.currentTime ?? 0, paused: video?.paused ?? false,
+    itemId: airInfo && airEp ? airEp.itemId : itemId, local: info!, air: airInfo, airOn, position: !airInfo && swapping ? lastPos : video?.currentTime ?? 0, paused: video?.paused ?? false,
     audioIndex, direct: mode === 'direct',
   });
   let lastSent = 0;
@@ -752,10 +753,13 @@
   // `joined`: a new token for the joined AirPlay stream on the element starts with that episode (`pos` = the offset in it), §5.4 f
   const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }, extra: { subtitleIndex?: number } = {}, joined?: { itemId: string; left: number }) => {
     if (via !== 'airplay') await castCapsReady();
-    const body = castBody({ itemId: joined?.itemId ?? itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}), ...extra });
+    // another episode than this page's: the track indices are this page's, the server maps them to that episode's tracks by language
+    const other = joined && joined.itemId !== itemId ? { tracksOf: itemId } : {};
+    const body = castBody({ itemId: joined?.itemId ?? itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}), ...extra, ...other });
     if (via !== 'airplay') return api<CastInfo>('/api/cast/session', { method: 'POST', body });
     // AirPlay: one joined stream for this and the next episodes while the admin switch is on (no sheet row; the profile's autoplay decides);
-    // a re-mint of a joined stream never asks for more episodes than that stream had left
+    // a re-mint of a joined stream never asks for more episodes than that stream had left (one left: a plain token)
+    if (joined && joined.left < 2) return postAirPlayToken(body);
     const pf = get(prefs), most = episodesBeforeAsk(pf);
     return postAirPlayToken({ ...body, ...continuousFields({ episode: Boolean(seriesId), autoplay: pf.autoplayNext, sleepAfter: sleepAfterEpisode, maxEpisodes: joined ? Math.min(joined.left, most) : most }) });
   };
@@ -824,7 +828,8 @@
     const other = !ci.joined && ep && ep.itemId !== itemId ? { itemId: ep.itemId, subtitle: episodeOf(barTitle || title, ep).sub } : {};
     // `start` was reported for this token exactly when the element played it here (the phone's token stream / the TV); a joined
     // token never (the server reports it per episode); its position is on the stream, the engine maps it and takes its length
-    castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), ...other, cast: ci, subIndex: ci.hlsSub ? airSubAsked : -1, started: started && !stopped && !ci.joined, video: v, air: ctl, probe: airProbe });
+    // (the track indices are this page's item's: the engine maps them when the token is another episode's)
+    castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), ...other, tracksOf: itemId, cast: ci, subIndex: ci.hlsSub ? airSubAsked : -1, started: started && !stopped && !ci.joined, video: v, air: ctl, probe: airProbe });
     handedOver();
     air = null; airProbe = null; airInfo = null; airState = AIR_IDLE;
   }
@@ -904,7 +909,8 @@
       stage.insertBefore(video, stage.firstChild);
     }
     if (!air) void initAirPlay();
-    if (was?.state === 'ended') { paused = true; dispatch('ended'); return; } // finished on the TV: the page offers what comes next
+    // finished on the TV: the page offers what comes next (another episode ended there, e.g. a joined stream's last: that one's page, at its end)
+    if (was?.state === 'ended') { if (was.itemId !== itemId) dispatch('episode', { id: was.itemId, t: was.position }); else { paused = true; dispatch('ended'); } return; }
     if (was?.kind === 'airplay' && lastRouteOn) {
       // the system route may still be the TV: the local stream (MSE) would play its sound there, the picture here
       airLog('engine', { src: video?.src, state: was.state, note: 'local playback, route was still wireless' });

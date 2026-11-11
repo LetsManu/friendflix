@@ -97,6 +97,8 @@ export interface PlayerHandoff {
   position: number; duration: number; paused: boolean;
   cast: CastInfo; /** the Player already sent `start` for this cast session */ started: boolean;
   audioIndex?: number; subIndex: number; maxBitrate?: number; sleepAfterEpisode: boolean;
+  /** the item `audioIndex` / `subIndex` belong to (absent: `itemId`; the Player's own item when its token is another episode's) */
+  tracksOf?: string;
   /** the title's tracks (from the playback info), so a Player that attaches later can offer them */
   audioTracks?: CastTrack[]; subtitles?: CastTrack[];
   /** AirPlay only: the Player's element, its controller and the availability probe */
@@ -249,6 +251,11 @@ interface Live {
   /** a renewal of a paused TV: the token loads without autoplay and `start` follows once it is loaded (paused) */
   hold: boolean;
   audioIndex?: number; subIndex: number; maxBitrate?: number; sleepAfterEpisode: boolean;
+  /**
+   * AirPlay: the item `audioIndex` / `subIndex` (and the remote's track lists) belong to. A token for another episode (a joined re-mint)
+   * names it (`tracksOf`): the server maps the choice to that episode's tracks by language, and its answer's tracks become the session's
+   */
+  tracksOf: string;
   /** what `reconnect()` repeats after a failed token request */
   retry: (() => Promise<void>) | null;
   offs: Array<() => void>;
@@ -446,21 +453,39 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     s.view = { ...s.view, ...p, autoplay: autoOf(s), castId: s.ci?.castId };
     out.set(s.view);
   };
-  /**
-   * A joined stream at stream second `t`: the session's fields for the episode there. `played`: the TV got there by playing on (not
-   * a seek): a new episode counts as an autoplay for "still watching?" (the server already reported the boundary).
-   */
-  const stream = (s: Live, t: number, played = false): Partial<CastSession> => {
-    const j = s.joined!, { index, offset } = joinedAt(j.items, t), it = j.items[index]!;
-    const was = s.view.joined; // (a new token restarts the stream with the same episode: no change)
-    if (!was || s.view.itemId !== it.itemId) {
-      s.label = labelOf({ type: 'Episode', indexNumber: it.episode, parentIndexNumber: it.season });
-      if (was) log('info', 'session', `joined stream · ${s.label}${played ? '' : ' (seek)'}`);
-      if (played && was && index > was.index) { noteAutoplay(); consumeAutoplay(); }
-    }
+  /** a joined stream at stream second `t`: the session's fields for the episode there (pure) */
+  const episodeView = (j: NonNullable<Live['joined']>, t: number): Partial<CastSession> & { joined: NonNullable<CastSession['joined']> } => {
+    const { index, offset } = joinedAt(j.items, t), it = j.items[index]!;
     const { title, sub } = episodeOf(j.series, it);
     return { itemId: it.itemId, title, subtitle: sub, posterId: it.itemId, isEpisode: true, position: offset, duration: it.duration,
       joined: { items: j.items, index, streamPosition: t, streamDuration: j.length } };
+  };
+  /**
+   * The session moves to `next` (an `episodeView`): another episode is logged and named in the cast log. `played`: the TV got there by
+   * playing on (not a seek): that episode counts as an autoplay for "still watching?" (the server already reported the boundary).
+   */
+  const noteEpisode = (s: Live, next: ReturnType<typeof episodeView>, played = false) => {
+    const was = s.view.joined, it = next.joined.items[next.joined.index]!;
+    if (was && s.view.itemId === it.itemId) return; // (a new token restarts the stream with the same episode: no change)
+    s.label = labelOf({ type: 'Episode', indexNumber: it.episode, parentIndexNumber: it.season });
+    if (!was) return;
+    log('info', 'session', `joined stream · ${s.label}${played ? '' : ' (seek)'}`);
+    if (played && next.joined.index > was.index) { noteAutoplay(); consumeAutoplay(); }
+  };
+  /** a joined stream at stream second `t`: the episode there, noted (see `noteEpisode`); the session's fields for a patch */
+  const stream = (s: Live, t: number, played = false): Partial<CastSession> => {
+    const v = episodeView(s.joined!, t);
+    noteEpisode(s, v, played);
+    return v;
+  };
+  /** an AirPlay token's own tracks (its answer names them) become the session's: lists, choice and the item they belong to */
+  const takeTracks = (s: Live, ci: CastInfo, item: string) => {
+    s.tracksOf = item;
+    if (!ci.audioTracks) return; // an older server: nothing to take (its re-mints never map)
+    s.audioIndex = ci.audioIndex;
+    s.subIndex = ci.hlsSub && ci.subtitleIndex !== undefined ? ci.subtitleIndex : -1;
+    patch(s, { audioTracks: ci.audioTracks.map(({ index, title, language, isDefault }) => ({ index, title, ...(language ? { language } : {}), isDefault })),
+      subtitles: subsOf(ci), audioIndex: s.audioIndex, subIndex: s.subIndex });
   };
   /** a joined stream: the TV to stream second `t` (clamped to the stream), the session to the episode there */
   const seekStream = (s: Live, t: number) => {
@@ -878,8 +903,12 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         const w = a.want, at = w ? w.at : pos, jo = w ? undefined : o?.joined;
         // the chosen subtitle rides inside the stream (text only: the server ignores an image track); not after the TV refused one, not without the server's capability
         const sub = airSubBody(s.subIndex, Boolean(o?.noSubs), deps.store, deps.timers.now(), subsOk());
-        const body = { itemId: w?.itemId ?? jo?.itemId ?? s.view.itemId, startTicks: at === undefined ? undefined : secToTicks(at), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, via: 'airplay', ...sub };
-        if (!jo) return call<CastInfo>('/api/cast/session', { method: 'POST', body });
+        const item = w?.itemId ?? jo?.itemId ?? s.view.itemId;
+        // the track indices are another episode's (a re-mint from a later one): the server maps them by language (not for a new title: none chosen)
+        const of = !w && s.tracksOf !== item ? { tracksOf: s.tracksOf } : {};
+        const body = { itemId: item, startTicks: at === undefined ? undefined : secToTicks(at), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, via: 'airplay', ...sub, ...of };
+        // a single episode left: a plain token (a joined one of one episode is one anyway)
+        if (!jo || jo.left < 2) return call<CastInfo>('/api/cast/session', { method: 'POST', body });
         // a joined stream again from this episode (never more episodes than this stream had left); switch off: a single token, silently
         const p = deps.prefs();
         return postAirPlayToken({ ...body, ...(deps.continuous ?? continuousFields)({ episode: true, autoplay: s.autoSet ?? p.autoplayNext, sleepAfter: s.sleepAfterEpisode, maxEpisodes: Math.min(jo.left, episodesBeforeAsk(p)) }) }, call);
@@ -894,6 +923,9 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         a.want = null;
         s.ci = ci; s.started = false; s.seen = false; s.lastPaused = null;
         const was = s.joined;
+        // the episode the token starts with: another one than the tracks' (a new title, a re-mint from a later episode) brings its own
+        const first = w?.itemId ?? ci.joined?.items[0]?.itemId ?? s.view.itemId;
+        if (first !== s.tracksOf) takeTracks(s, ci, first);
         // a joined token (a re-mint starts it with the episode the session shows: its offset is the stream position); else none
         s.joined = ci.joined ? { items: ci.joined.items, series: ci.seriesName ?? was?.series ?? s.view.title, length: joinedLength(ci.joined.items, ci.runtimeTicks) } : undefined;
         // the chip never claims a track the stream does not carry (the server ignored the index, or the token was asked without it)
@@ -1212,7 +1244,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         autoplay: deps.prefs().autoplayNext && !h.sleepAfterEpisode, castId: h.cast.castId },
       // hold: a resumed, never reported cast on a paused TV counts as started once it is seen paused (as a paused renewal)
       ci: h.cast, started: h.started, seen: h.started, busy: false, stopping: Promise.resolve(), lastPaused: null, hold,
-      audioIndex: h.audioIndex, subIndex: subOf(h), maxBitrate: h.maxBitrate, sleepAfterEpisode: h.sleepAfterEpisode,
+      audioIndex: h.audioIndex, subIndex: subOf(h), maxBitrate: h.maxBitrate, sleepAfterEpisode: h.sleepAfterEpisode, tracksOf: h.tracksOf ?? h.itemId,
       // a resumed cast first looks at the receiver's own queue (restoreQueue): nothing is queued before that
       retry: null, offs: [], segs: [], credits: false, queueAsked: how === 'resume', going: false,
       autoSet: null, queueing: false, unpinRetried: false, label: labelOf(null, h.isEpisode), line: '', stallLogged: false, renewing: false,
@@ -1221,9 +1253,16 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (jo) {
       // a joined token: the hand-over's position is on the stream, its item the first episode; the length is the token's, never the element's
       s.joined = { items: jo.items, series: h.cast.seriesName ?? h.title, length: joinedLength(jo.items, h.cast.runtimeTicks) };
-      s.view = { ...s.view, ...stream(s, h.position) };
+      const v = episodeView(s.joined, h.position);
+      noteEpisode(s, v);
+      s.view = { ...s.view, ...v };
+      // nothing was reported for it, whatever the hand-over says: the server reports a joined token per episode (ruling C4)
+      s.started = false;
     }
     cur = s;
+    // AirPlay: a token that starts with another episode than the hand-over's tracks (a re-mint before the TV) brings that episode's own
+    const first = jo?.items[0]?.itemId ?? h.itemId;
+    if (h.kind === 'airplay' && first !== s.tracksOf) takeTracks(s, h.cast, first);
     // the TV's episode line needs the season / episode numbers, which a hand-off does not carry (a resume brings its item itself)
     if (how === 'adopt' && h.isEpisode && h.kind === 'chromecast') {
       void deps.item(h.itemId).then((it) => { if (cur === s && s.view.itemId === it.id && !s.line) { s.line = lineOf(it); tvSync(s); } }, () => undefined);

@@ -111,6 +111,13 @@ export interface CastInfo {
   hlsVideoSegmentFormat?: string;
   /** AirPlay only: the stream carries the one WebVTT rendition that was asked for (`subtitleIndex`); absent otherwise */
   hlsSub?: boolean;
+  /**
+   * AirPlay only (absent from an older server): the first episode's own audio tracks, the audio track the stream carries (absent: the
+   * source default) and, with `hlsSub`, the subtitle it carries. A re-mint from a later episode (`tracksOf`) has its choice mapped by language.
+   */
+  audioTracks?: Array<{ index: number; language?: string; title: string; isDefault: boolean }>;
+  audioIndex?: number;
+  subtitleIndex?: number;
   /** what the stream carries (fixed codes, see caps.ts); only in the answer to a cast that sent receiver caps */
   delivery?: CastDelivery;
   /** a continuous AirPlay token: the episodes the one stream carries, on the joined timeline (stream seconds); the server reports per episode */

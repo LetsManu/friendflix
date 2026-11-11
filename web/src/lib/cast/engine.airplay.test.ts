@@ -5,10 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, secToTicks, type Item } from '#lib/api';
 import type { CastInfo } from '#lib/cast';
 import { tr } from '#lib/i18n';
-import { CONNECT_TIMEOUT_MS, createAirPlay, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayTimers, type AirPlayVideo } from '#lib/player/airplay';
+import { ARM_MS, CONNECT_TIMEOUT_MS, createAirPlay, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayTimers, type AirPlayVideo } from '#lib/player/airplay';
 import { clearAirLog, readAirLog, srcKind } from '#lib/player/airplayLog';
 import { DEFAULT_PREFS } from '#lib/stores';
-import { noteInteraction } from '#lib/stillwatching';
+import { episodesBeforeAsk, noteInteraction } from '#lib/stillwatching';
 import { SUBS_REFUSED_KEY } from './airsubs';
 import { joinedAsk } from './joined';
 import { CAST_VIDEO_ATTR, createCastEngine, ENDED_HIDE_MS, ENDED_IDLE_MS, PROGRESS_MS, type CastSession, type EngineDeps, type PlayerHandoff } from './engine';
@@ -921,8 +921,39 @@ describe('cast engine: continuous AirPlay (a joined stream)', () => {
     env.video.currentTime = 5540; // the stream moved on into episode 3 by itself
     env.video.fire('timeupdate');
     expect(get(env.out)).toMatchObject({ itemId: 'ep3', subtitle: 'S1:F3 Third', posterId: 'ep3', position: 8, duration: 2600, joined: { index: 2, streamPosition: 5540 } });
-    expect(env.calls.filter((c) => c.path.endsWith('/next') || c.path.includes('/segments'))).toEqual([]); // no up-next lookup
+    expect(env.calls.filter((c) => c.path.endsWith('/next'))).toEqual([]); // no up-next lookup
+    expect(env.deps.segments).not.toHaveBeenCalled(); // no skip / credits logic
     expect(get(env.out)?.next).toBeUndefined();
+  });
+
+  it('an episode reached by playing on counts as an autoplay for "still watching?", one reached by a seek does not', async () => {
+    const env = await joinedEnv();
+    playing(env, 2900);
+    const p = { ...DEFAULT_PREFS, stillWatching: true, stillWatchingEpisodes: 2 as const }; // ask after 2: chain 0 -> 3 left (capped), 1 -> 2
+    expect(episodesBeforeAsk(p)).toBe(3);
+    env.engine.seek(2690); // a seek to just before the boundary, then the stream plays across it
+    env.video.currentTime = 5540;
+    env.video.fire('timeupdate');
+    expect(get(env.out)?.itemId).toBe('ep3');
+    expect(episodesBeforeAsk(p)).toBe(2);
+    env.video.currentTime = 3000; // back into episode 2 by the TV's own scrubbing: no autoplay
+    env.video.fire('timeupdate');
+    expect(episodesBeforeAsk(p)).toBe(2);
+    await env.engine.next(); // a tap: the viewer is there (the chain starts over), no autoplay counted
+    expect(get(env.out)?.itemId).toBe('ep3');
+    expect(episodesBeforeAsk(p)).toBe(3);
+  });
+
+  it('a joined hand-over is never reported, even when the Player claims it reported its start', async () => {
+    const env = await joinedEnv({ started: true });
+    playing(env, 2900);
+    env.video.pause();
+    void env.video.play();
+    await env.advance(2 * PROGRESS_MS);
+    env.video.currentTime = 8132;
+    env.video.fire('ended');
+    await flush();
+    expect(env.reports()).toEqual([]);
   });
 
   it('next seeks to the next boundary, no-op on the last', async () => {
@@ -1014,7 +1045,63 @@ describe('cast engine: continuous AirPlay (a joined stream)', () => {
     const env = await joinedEnv();
     playing(env, 6000);
     await env.engine.refresh({ audioIndex: 3 });
-    expect(env.tokenPosts()[0]!.init.body).toMatchObject({ itemId: 'ep3', startTicks: secToTicks(468), audioIndex: 3, continuous: true, maxEpisodes: 1 });
+    const body = env.tokenPosts()[0]!.init.body;
+    // the stream's last episode: one episode left, so a plain token (a joined one of one episode is a single token anyway)
+    expect(body).toMatchObject({ itemId: 'ep3', startTicks: secToTicks(468), audioIndex: 3, tracksOf: 'ep1', via: 'airplay' });
+    expect(body).not.toHaveProperty('continuous');
+    expect(body).not.toHaveProperty('maxEpisodes');
+  });
+
+  it('a re-mint from a later episode names the episode its tracks belong to; the answer\'s tracks become the session\'s', async () => {
+    const env = await setup({ started: false, continuous: true, first: { joined: J, runtimeTicks: secToTicks(8132), hlsSub: true }, at: 2900 });
+    await env.adopt({ itemId: 'ep1', seriesId: 's1', title: 'Bright Valley', isEpisode: true, position: 2900, audioIndex: 2, subIndex: 3,
+      audioTracks: [{ index: 1, title: 'Deutsch', language: 'ger' }, { index: 2, title: 'English', language: 'eng' }], subtitles: [{ index: 3, title: 'Deutsch', language: 'ger' }] });
+    playing(env, 2900);
+    // episode 2 numbers its tracks differently: the server mapped English audio to 4 and German subtitles to 7
+    env.posts.push(async () => ci('r1', { ...R1, castId: 'r1', hlsSub: true, audioIndex: 4, subtitleIndex: 7,
+      audioTracks: [{ index: 1, language: 'ger', title: 'Deutsch', isDefault: true }, { index: 4, language: 'eng', title: 'English', isDefault: false }],
+      subtitles: [{ index: 2, language: 'eng', title: 'English', url: '/media/c/r1/2.vtt' }, { index: 7, language: 'ger', title: 'Deutsch', url: '/media/c/r1/7.vtt' }] }));
+    await env.engine.refresh();
+    expect(env.tokenPosts()[0]!.init.body).toMatchObject({ itemId: 'ep2', tracksOf: 'ep1', audioIndex: 2, subtitleIndex: 3, continuous: true });
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', audioIndex: 4, subIndex: 7,
+      audioTracks: [{ index: 1, language: 'ger', title: 'Deutsch', isDefault: true }, { index: 4, language: 'eng', title: 'English', isDefault: false }],
+      subtitles: [{ index: 2, language: 'eng', title: 'English' }, { index: 7, language: 'ger', title: 'Deutsch' }] });
+    // the next re-mint (episode 3 of the new stream) maps from episode 2's real choice
+    env.video.fire('loadedmetadata');
+    playing(env, 2800);
+    await env.engine.refresh();
+    expect(env.tokenPosts()[1]!.init.body).toMatchObject({ itemId: 'ep3', tracksOf: 'ep2', audioIndex: 4, subtitleIndex: 7 });
+  });
+
+  it('a hand-over of a token that starts with a later episode (the Player re-minted it before the TV) takes that episode\'s tracks', async () => {
+    const tracks = { hlsSub: true, audioIndex: 4, subtitleIndex: 7, audioTracks: [{ index: 4, language: 'eng', title: 'English', isDefault: false }],
+      subtitles: [{ index: 7, language: 'ger', title: 'Deutsch', url: '/media/c/a1/7.vtt' }] };
+    const env = await setup({ started: false, continuous: true, first: { ...R1, ...tracks }, at: 68 });
+    // the Player's own indices are episode 1's (its page)
+    await env.adopt({ itemId: 'ep1', tracksOf: 'ep1', seriesId: 's1', title: 'Bright Valley', isEpisode: true, position: 68, audioIndex: 2, subIndex: 3 });
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', audioIndex: 4, subIndex: 7, audioTracks: [{ index: 4, language: 'eng' }], subtitles: [{ index: 7, language: 'ger' }] });
+    playing(env, 2800); // episode 3 of that stream
+    await env.engine.refresh();
+    expect(env.tokenPosts()[0]!.init.body).toMatchObject({ itemId: 'ep3', tracksOf: 'ep2', audioIndex: 4, subtitleIndex: 7 });
+  });
+
+  it('a renewal of the episode the tracks belong to sends no `tracksOf`', async () => {
+    const env = await joinedEnv();
+    playing(env, 100);
+    await env.engine.refresh();
+    expect(env.tokenPosts()[0]!.init.body).toMatchObject({ itemId: 'ep1', startTicks: secToTicks(100) });
+    expect(env.tokenPosts()[0]!.init.body).not.toHaveProperty('tracksOf');
+  });
+
+  it('a paused renewal of a joined token reports nothing', async () => {
+    const env = await expiring();
+    env.engine.playPause();
+    expect(env.video.paused).toBe(true);
+    env.posts.push(async () => R1);
+    await env.advance(PROGRESS_MS);
+    expect(env.air.info?.castId).toBe('r1');
+    expect(get(env.out)).toMatchObject({ state: 'playing', paused: true });
+    expect(env.reports()).toEqual([]);
   });
 
   it('switch off: a renewal falls back to a single token', async () => {
@@ -1037,6 +1124,7 @@ describe('cast engine: continuous AirPlay (a joined stream)', () => {
     expect(get(env.out)).toMatchObject({ itemId: 'ep2', position: 70, duration: 2700, state: 'playing' });
     expect(get(env.out)?.joined).toBeUndefined();
     expect(env.reports()).toEqual(['start']);
+    expect(env.deps.segments).toHaveBeenCalledWith('ep2'); // the episode's own skip / credits again
   });
 
   it('a lost route: the reconnect asks for the episode and offset', async () => {
@@ -1044,10 +1132,27 @@ describe('cast engine: continuous AirPlay (a joined stream)', () => {
     playing(env, 2900);
     await routeLost(env);
     expect(get(env.out)).toMatchObject({ state: 'reconnect', itemId: 'ep2', position: 68 });
+    env.posts.push(async () => R1);
     env.engine.reconnect(); // the picker: the controller asks for a new token at the element's (stream) position
     await flush();
     expect(env.tokenPosts().at(-1)!.init.body).toMatchObject({ itemId: 'ep2', startTicks: 680_000_000, continuous: true, maxEpisodes: 2 });
     expect(env.reports()).toEqual([]);
+    // the new stream starts with episode 2: the element goes to its offset
+    env.video.currentTime = 0;
+    env.video.fire('loadedmetadata');
+    expect(env.video.currentTime).toBe(68);
+  });
+
+  it('a lost route: no TV picked after the reconnect tap, the session stays at the episode and offset', async () => {
+    const env = await joinedEnv();
+    playing(env, 2900);
+    await routeLost(env);
+    env.posts.push(async () => R1);
+    env.engine.reconnect();
+    await flush();
+    env.video.currentTime = 0; // the new token's metadata is not there yet: its hand-over position counts
+    await env.advance(ARM_MS); // nobody picks the TV: the controller gives the stream back
+    expect(get(env.out)).toMatchObject({ state: 'reconnect', itemId: 'ep2', position: 68 });
   });
 
   it('the stream ends after the last episode', async () => {
