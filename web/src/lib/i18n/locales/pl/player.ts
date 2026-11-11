@@ -139,6 +139,7 @@ const pl: Translation<typeof de> = {
     play: 'Odtwórz na urządzeniu AirPlay',
     playing: 'Odtwarzanie przez AirPlay',
     change: 'Zmień urządzenie AirPlay',
+    cancel: 'Anuluj',
     failed: 'Odtwarzanie przez AirPlay nie powiodło się.',
     endHint: 'Aby zakończyć, wybierz to urządzenie w menu AirPlay.',
     choose: 'Wybierz telewizor',
@@ -207,7 +208,7 @@ const pl: Translation<typeof de> = {
   castBar: {
     region: 'Teraz na telewizorze',
     failed: 'Nie można odtworzyć „{title}” na {device}.',
-    airplayDevice: 'Urządzenie AirPlay',
+    airplayDevice: 'AirPlay',
     reconnect: 'Utracono połączenie – dotknij, aby kontynuować na telewizorze',
     on: 'na {device}',
     stop: 'Zatrzymaj odtwarzanie na {device}',

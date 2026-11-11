@@ -124,6 +124,7 @@ const tr: Translation<typeof de> = {
     play: 'AirPlay cihazında oynat',
     playing: 'AirPlay ile oynatılıyor',
     change: 'AirPlay cihazını değiştir',
+    cancel: 'İptal',
     failed: 'AirPlay ile oynatma başarısız oldu.',
     endHint: 'Durdurmak için AirPlay menüsünde bu cihazı seç.',
     choose: 'Televizyonu seç',
@@ -192,7 +193,7 @@ const tr: Translation<typeof de> = {
   castBar: {
     region: 'Şu an televizyonda',
     failed: '“{title}” {device} üzerinde oynatılamıyor.',
-    airplayDevice: 'AirPlay cihazı',
+    airplayDevice: 'AirPlay',
     reconnect: 'Bağlantı kesildi – televizyonda devam etmek için dokunun',
     on: '{device} üzerinde',
     stop: '{device} üzerindeki oynatmayı durdur',

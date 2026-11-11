@@ -126,6 +126,7 @@ export default {
     play: 'Auf AirPlay-Gerät abspielen',
     playing: 'Läuft über AirPlay',
     change: 'AirPlay-Gerät wechseln',
+    cancel: 'Abbrechen',
     failed: 'Übertragung per AirPlay fehlgeschlagen.',
     endHint: 'Zum Beenden in der AirPlay-Auswahl dieses Gerät wählen.',
     choose: 'Fernseher auswählen',
@@ -194,7 +195,7 @@ export default {
   castBar: {
     region: 'Jetzt auf dem Fernseher',
     failed: '„{title}“ kann auf {device} nicht abgespielt werden.',
-    airplayDevice: 'AirPlay-Gerät',
+    airplayDevice: 'AirPlay',
     reconnect: 'Verbindung verloren – tippen, um am Fernseher fortzusetzen',
     on: 'auf {device}',
     stop: 'Wiedergabe auf {device} beenden',

@@ -26,9 +26,10 @@
   import { TvWheelStepper, WheelAccumulator } from '#lib/player/wheel';
   import { parseVolume, stepVolume } from '#lib/player/volume';
   import { hlsConfig, loadHls } from '#lib/player/hls';
-  import { airPlaySupported, createAirPlay, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
+  import { airPhase, airPlaySupported, createAirPlay, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
   import { airLog } from '#lib/player/airplayLog';
   import RemoteScreen from '#lib/cast/RemoteScreen.svelte';
+  import AirPlayConnecting from '#lib/player/AirPlayConnecting.svelte';
   import PlayOnSheet from '#lib/cast/PlayOnSheet.svelte';
   import { episodeCode } from '#lib/cast/bar';
   import { airSubBody, rememberSubsRefused } from '#lib/cast/airsubs';
@@ -166,6 +167,7 @@
   // ---- AirPlay (Safari): the <video> itself plays on the receiver, from a cast token URL (lib/player/airplay.ts) ----
   const AIR_IDLE: AirPlayState = { available: false, active: false, busy: false, ready: false, error: false, connecting: false };
   let air: AirPlayController | null = null, airState: AirPlayState = AIR_IDLE, airInfo: CastInfo | null = null, airProbe: HTMLVideoElement | null = null;
+  $: airPh = airPhase(airState);
   $: airOn = remote ? $castSession?.kind === 'airplay' : airState.active;
   let destroyed = false;
 
@@ -1778,6 +1780,8 @@
   {#if tvSession}
     <!-- the cast engine plays this title on the TV (also after this page): the player is its remote (lib/cast/RemoteScreen.svelte) -->
     <RemoteScreen on:close={() => dispatch('back')} on:pick={(e) => openPlayOn(e.detail)} />
+  {:else if airPh === 'connecting'}
+    <!-- the tap's token is on its way, or a TV was picked and has not played yet: the layout overlays (see AirPlayConnecting) -->
   {:else if airOn || airState.error}
     <!-- Safari does not tell which receiver was picked; ending AirPlay happens in its picker (choose this device).
          Also while `ready` (no TV yet) when a token request failed: Retry, the src stays as it is (no restore loop) -->
@@ -1797,6 +1801,7 @@
       <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.choose')}</button>
     </div></div>
   {/if}
+  {#if airPh === 'connecting' && !tvSession && !handedOff}<AirPlayConnecting backdropId={poster?.id ?? itemId} onCancel={() => air?.cancel()} />{/if}
   {#if !phone && !tvUi && paused && !deskPause && credits !== 'corner' && !waiting && !error && !remote && !locked && !reconnecting}
     <button class="bigplay ui" aria-label={$t('player.controls.play')} on:click|stopPropagation={togglePlay}><Icon name="play" size={44} /></button>
   {/if}

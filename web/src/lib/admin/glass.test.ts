@@ -360,3 +360,35 @@ describe('hand-off card (device hand-off spec 2.4)', () => {
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
   });
 });
+
+/** the player's AirPlay connecting layout: safe glass, motion (transform / opacity only), calm mode */
+describe('AirPlay connecting layout (device hand-off spec 4)', () => {
+  const src = read('../player/AirPlayConnecting.svelte');
+  const css = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('is a safe glass panel over the dimmed backdrop, with a named status and no video frame', () => {
+    expect(src).toMatch(/class="msg frost frost-safe frost-panel"/);
+    expect(src).toContain('--fr-scrim-safe:{SCRIM_BAR}');
+    expect(src).toMatch(/role="status"/);
+    expect(src).toContain('brightness(.5)'); // the remote screen's dim treatment
+    expect(src).not.toMatch(/<video|drawImage|canvas/);
+  });
+
+  it('animates transform and opacity only (the layout overlays, nothing reflows) and switches it off in calm mode', () => {
+    const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+    const parts: string[] = [];
+    for (const m of css.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) parts.push(m[1]!);
+    for (const m of css.matchAll(/@keyframes\s+[\w-]+\s*\{/g)) {
+      let depth = 1, i = m.index! + m[0].length;
+      const start = i;
+      while (depth && i < css.length) { if (css[i] === '{') depth++; else if (css[i] === '}') depth--; i++; }
+      parts.push(css.slice(start, i - 1));
+    }
+    const live = parts.filter((v) => !/^\s*none/.test(v));
+    expect(live.length).toBeGreaterThanOrEqual(1);
+    for (const v of live) { expect(v).not.toMatch(LAYOUT); expect(v).not.toMatch(/\ball\b|color|background|border|filter|shadow/); }
+    expect(src).toMatch(/transition:fade\|global=\{\{ duration: motionAllowed\(\) \? 120 : 0 \}\}/); // opacity, 120 ms, 0 ms when calm
+    expect(css).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+  });
+});
