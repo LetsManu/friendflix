@@ -142,6 +142,8 @@
         </p>
         {#if rank > 0}<p class="rank"><span class="no">#{rank}</span>{$t('home.hero.rankTop10')}</p>{/if}
       </div>
+      <!-- the page's "continue here" card: right after the heading in reading order, painted top right of the billboard (see .hoff) -->
+      {#if $$slots.handoff}<div class="hoff"><slot name="handoff" /></div>{/if}
       {#if item.overview}
         <div class="synbox">
           <p class="syn full" bind:clientHeight={fullH} aria-hidden={quiet}>{item.overview}</p>
@@ -170,8 +172,8 @@
 </section>
 
 <style>
-  .billboard { --gutter: max(32px, 4vw); --ink: 16, 20, 24; --emph: cubic-bezier(.05, .7, .1, 1); --btn-h: 48px; --foot: max(120px, 22%);
-    position: relative; height: max(520px, 80vh); margin-bottom: -48px; overflow: hidden; background: var(--bg); isolation: isolate; }
+  .billboard { --gutter: max(32px, 4vw); --ink: 16, 20, 24; --emph: cubic-bezier(.05, .7, .1, 1); --btn-h: 48px; --bh: max(520px, 80vh); --foot: max(120px, calc(var(--bh) * .22));
+    position: relative; height: var(--bh); margin-bottom: -48px; overflow: hidden; background: var(--bg); isolation: isolate; container-type: inline-size; }
   .fill { position: absolute; inset: 0; border-radius: 0; }
 
   /* ---- picture: full bleed, anchored to the right edge ---- */
@@ -191,6 +193,10 @@
 
   /* ---- text block ---- */
   .content { position: absolute; left: var(--gutter); bottom: var(--foot); width: min(40vw, 640px); min-width: 420px; }
+  /* the hand-off card's frame: a box over the billboard's top area. It sits inside .content (for the reading order) but is sized from the
+     billboard (.content's bottom edge is --bh - --foot down, the billboard's width is 100cqw), so the card's `top: 0` is a fixed
+     distance below the top bar and its `right` the page gutter; absolute, so nothing around it ever moves */
+  .hoff { position: absolute; left: calc(-1 * var(--gutter)); bottom: 0; width: 100cqw; height: max(0px, calc(var(--bh) - var(--foot) - var(--nav-total) - 16px)); pointer-events: none; }
   .head { transition: transform 640ms var(--emph); }
   .eyebrow { margin: 0 0 12px; color: var(--acc); font-size: 13px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; line-height: 16px; }
   .name { margin: 0 0 16px; font-size: min(4.5vw, 88px); font-weight: 900; letter-spacing: -.035em; line-height: .98; text-wrap: balance; }

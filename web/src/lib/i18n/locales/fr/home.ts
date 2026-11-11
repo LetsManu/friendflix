@@ -64,6 +64,15 @@ const fr: Translation<typeof de> = {
     label: 'Nos meilleurs choix pour vous',
     slide: '{n} sur {m}',
   },
+  /** the start page's "continue here" card: what another device played last (spec device hand-off 2.4) */
+  handoff: {
+    region: 'Commencé sur un autre appareil',
+    last: 'Dernière lecture sur {device} · {age}',
+    play: 'Reprendre ici à {time}',
+    playAria: 'Reprendre ici : {title} à {time}, dernière lecture sur {device}',
+    dismiss: 'Masquer',
+    justNow: 'à l\'instant',
+  },
   row: {
     showAll: 'Tout afficher',
     prev: 'Précédent',

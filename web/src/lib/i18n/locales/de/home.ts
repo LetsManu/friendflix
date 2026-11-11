@@ -67,6 +67,15 @@ export default {
     label: 'Top-Tipps für dich',
     slide: '{n} von {m}',
   },
+  /** the start page's "continue here" card: what another device played last (spec device hand-off 2.4) */
+  handoff: {
+    region: 'Auf einem anderen Gerät angefangen',
+    last: 'Zuletzt auf {device} · {age}',
+    play: 'Hier weiterschauen ab {time}',
+    playAria: 'Hier weiterschauen: {title} ab {time}, zuletzt auf {device}',
+    dismiss: 'Ausblenden',
+    justNow: 'gerade eben',
+  },
   row: {
     showAll: 'Alle anzeigen',
     prev: 'Zurückblättern',

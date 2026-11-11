@@ -11,7 +11,7 @@ import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { countable } from './glass';
-import { AA, AMB_PEAK, contrast, DARK_BASE, frostComposite, SCRIM_LIGHT, SCRIM_BAR, SCRIM_MENU, GRAIN_LIFT, SCRIM_RGB, SEL_A, textContrast, type RGB } from '#lib/glass/tone';
+import { AA, AMB_PEAK, contrast, DARK_BASE, frostComposite, SCRIM_LIGHT, SCRIM_BAR, SCRIM_MENU, SCRIM_SAFE_DIM, GRAIN_LIFT, SCRIM_RGB, SEL_A, textContrast, tintColor, type RGB } from '#lib/glass/tone';
 
 describe('countable', () => {
   it('takes finite numbers', () => {
@@ -314,5 +314,49 @@ describe('cast surfaces: motion', () => {
     expect(css.replace(/\/\*[\s\S]*?\*\//g, '')).not.toContain('backdrop-filter');
     expect(css).toMatch(/body\.still \.fx, body\.still \.fx\.on \{ transition: none;/);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.ind i \{ animation: none;/);
+  });
+});
+
+/** the start page's hand-off card: glass, text contrast, motion (transform / opacity only), calm mode */
+describe('hand-off card (device hand-off spec 2.4)', () => {
+  const card = read('../handoff/HandoffCard.svelte');
+  const css = [...card.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('is the safe glass panel, a named region, and not a live region', () => {
+    expect(card).toMatch(/class="hc frost frost-safe frost-panel /);
+    expect(card).toContain('--fr-scrim-safe:{SCRIM_SAFE_DIM}'); // the scrim that holds .9 white text over pure white
+    expect(card).toMatch(/role="region" aria-label=\{\$t\('home\.handoff\.region'\)\}/);
+    expect(card).not.toMatch(/aria-live|role="status"|role="alert"/);
+  });
+
+  it('its text keeps 4.5:1 on the safe glass over the brightest picture, the ambient peak, the base and the solid fallback', () => {
+    expect(css).toContain('color: rgba(255, 255, 255, .9)'); // the eyebrow line
+    const bright = frostComposite(WHITE, SCRIM_SAFE_DIM, tintColor(WHITE));
+    for (const bg of [bright, frostComposite(AMB_PEAK, SCRIM_SAFE_DIM), frostComposite(DARK_BASE, SCRIM_SAFE_DIM), SOLID]) {
+      expect(textContrast(bg, 0.9)).toBeGreaterThanOrEqual(AA);
+      expect(textContrast(bg, 1)).toBeGreaterThanOrEqual(AA);
+    }
+    expect(contrast(hex('#d6325a'), WHITE)).toBeGreaterThanOrEqual(AA); // the white button label on --acc-fill
+  });
+
+  it('animates transform and opacity only, and switches it off for calm mode and reduced motion', () => {
+    const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+    const parts: string[] = [];
+    for (const m of css.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) parts.push(m[1]!);
+    for (const m of css.matchAll(/@keyframes\s+[\w-]+\s*\{/g)) {
+      let depth = 1, i = m.index! + m[0].length;
+      const start = i;
+      while (depth && i < css.length) { if (css[i] === '{') depth++; else if (css[i] === '}') depth--; i++; }
+      parts.push(css.slice(start, i - 1));
+    }
+    const live = parts.filter((v) => !/^\s*none/.test(v));
+    expect(live.length).toBeGreaterThanOrEqual(2);
+    for (const v of live) {
+      expect(v).not.toMatch(LAYOUT);
+      expect(v).not.toMatch(/\ball\b|color|background|border|filter|shadow/);
+    }
+    expect(css).toContain('translateY(-8px)');
+    expect(css).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
   });
 });

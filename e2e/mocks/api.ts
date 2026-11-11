@@ -36,6 +36,8 @@ export interface MockState {
   build: { sha: string; build: 'release' | 'nightly' | 'dev' | null; channel: 'stable' | 'nightly' | null; label: string };
   /** /api/me reports an admin owner profile (admin pages, admin menu) */
   asAdmin: boolean;
+  /** GET /api/handoff (device hand-off): the start page's answer (`home`, null = no offer) and the title pages' (`byItem`, by the asked `item` id) */
+  handoff: { home: unknown | null; byItem: Record<string, unknown> };
   /** ids removed from Weiterschauen (DELETE /api/library/resume/:id), left out of GET /api/library/resume */
   resumeGone: Set<string>;
   /** the profile's player sound pref (PUT /api/prefs/audiofx), echoed by GET /api/prefs */
@@ -145,6 +147,7 @@ export function freshState(): MockState {
     build: { sha: 'c0be6c5deadbeef', build: 'release', channel: 'stable', label: '1.0.0' },
     asAdmin: false,
     resumeGone: new Set(),
+    handoff: { home: null, byItem: {} },
     account: { name: 'Tester', email: 'tester@example.com', avatar: 'blue', mfa: { totp: true, webauthn: false, static: true }, manageUrl: 'https://login.example.com/if/user/#/settings', reauthUntil: null },
     devices: [
       { id: 'dev-current-0000000001', label: 'Chrome auf Linux', name: null, kind: 'web', approved: true, current: true, created_at: '2026-09-01T10:00:00Z', last_seen: '2026-10-14T09:00:00Z' },
@@ -268,6 +271,10 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (p === '/api/account/delete' && m === 'POST') {
       if (st.reauthLapsed || !st.account.reauthUntil || st.account.reauthUntil < Date.now()) return J({ error: 'reauth_required' }, 401);
       return J({ deletionAt: '2026-10-21T12:00:00.000Z' });
+    }
+    if (p === '/api/handoff' && m === 'GET') {
+      const item = sp.get('item');
+      return J({ handoff: (item ? st.handoff.byItem[item] : st.handoff.home) ?? null }, 200, { 'cache-control': 'no-store' });
     }
     if (p === '/api/devices' && m === 'GET') return J({ devices: st.devices });
     if ((mm = p.match(/^\/api\/devices\/([^/]+)\/sign-out$/)) && m === 'POST') return J({ revoked: 1 }); // the device stays (approved)

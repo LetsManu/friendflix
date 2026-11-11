@@ -64,6 +64,15 @@ const en: Translation<typeof de> = {
     label: 'Top picks for you',
     slide: '{n} of {m}',
   },
+  /** the start page's "continue here" card: what another device played last (spec device hand-off 2.4) */
+  handoff: {
+    region: 'Started on another device',
+    last: 'Last on {device} · {age}',
+    play: 'Continue here from {time}',
+    playAria: 'Continue here: {title} from {time}, last on {device}',
+    dismiss: 'Dismiss',
+    justNow: 'just now',
+  },
   row: {
     showAll: 'Show all',
     prev: 'Scroll back',

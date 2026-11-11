@@ -64,6 +64,15 @@ const es: Translation<typeof de> = {
     label: 'Lo mejor para ti',
     slide: '{n} de {m}',
   },
+  /** the start page's "continue here" card: what another device played last (spec device hand-off 2.4) */
+  handoff: {
+    region: 'Empezado en otro dispositivo',
+    last: 'Última vez en {device} · {age}',
+    play: 'Continuar aquí desde {time}',
+    playAria: 'Continuar aquí: {title} desde {time}, última vez en {device}',
+    dismiss: 'Ocultar',
+    justNow: 'ahora mismo',
+  },
   row: {
     showAll: 'Ver todo',
     prev: 'Anterior',
