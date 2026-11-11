@@ -164,7 +164,7 @@
   $: casting = remote && $castSession?.kind === 'chromecast';
   let castBusy = false, castOff: (() => void) | null = null;
   // ---- AirPlay (Safari): the <video> itself plays on the receiver, from a cast token URL (lib/player/airplay.ts) ----
-  const AIR_IDLE: AirPlayState = { available: false, active: false, busy: false, ready: false, error: false };
+  const AIR_IDLE: AirPlayState = { available: false, active: false, busy: false, ready: false, error: false, connecting: false };
   let air: AirPlayController | null = null, airState: AirPlayState = AIR_IDLE, airInfo: CastInfo | null = null, airProbe: HTMLVideoElement | null = null;
   $: airOn = remote ? $castSession?.kind === 'airplay' : airState.active;
   let destroyed = false;

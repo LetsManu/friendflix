@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CastInfo } from '#lib/cast';
-import { airPlaySupported, ARM_MS, AUTO_MAX, AUTO_WINDOW_MS, AVAILABILITY_EVENT, createAirPlay, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayDeps, type AirPlayState } from './airplay';
+import { airPlaySupported, ARM_MS, AUTO_MAX, AUTO_WINDOW_MS, AVAILABILITY_EVENT, CONNECT_TIMEOUT_MS, createAirPlay, POSITION_TOLERANCE_S, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayDeps, type AirPlayState } from './airplay';
 import { clearAirLog, readAirLog } from './airplayLog';
 
 /** a <video> stand-in: Safari's AirPlay events are simulated by dispatching them */
@@ -16,7 +16,8 @@ class FakeVideo extends EventTarget {
   protected srcChanged() { /* nothing */ }
   attrs = new Map<string, string>([['crossorigin', 'use-credentials']]);
   webkitCurrentPlaybackTargetIsWireless = false;
-  remote?: { state?: 'connecting' | 'connected' | 'disconnected' };
+  /** Remote Playback API stand-in (an EventTarget, as in Safari); `remoteConnecting()` simulates the TV being picked */
+  remote?: { state?: 'connecting' | 'connected' | 'disconnected' } = Object.assign(new EventTarget(), { state: 'disconnected' as const });
   webkitShowPlaybackTargetPicker = vi.fn();
   play = vi.fn(async () => { this.paused = false; });
   setAttribute(n: string, v: string) { this.attrs.set(n, v); }
@@ -24,6 +25,8 @@ class FakeVideo extends EventTarget {
   getAttribute(n: string) { return this.attrs.get(n) ?? null; }
   wireless(on: boolean) { this.webkitCurrentPlaybackTargetIsWireless = on; this.dispatchEvent(new Event(WIRELESS_EVENT)); }
 }
+/** the system picker's choice reported by the Remote Playback API: state `connecting` plus its `connecting` event */
+const remoteConnecting = (v: FakeVideo) => { const r = v.remote as EventTarget & { state?: string }; r.state = 'connecting'; r.dispatchEvent(new Event('connecting')); };
 const available = (t: EventTarget, on: boolean) => t.dispatchEvent(Object.assign(new Event(AVAILABILITY_EVENT), { availability: on ? 'available' : 'not-available' }));
 
 const CI: CastInfo = {
@@ -1127,5 +1130,247 @@ describe('subtitle rendition refused by the TV (code 4 on a token with subtitles
     expect(request).toHaveBeenCalledTimes(2);
     expect(c.state.error).toBe(true);
     expect(deps.fail).toHaveBeenCalledOnce();
+  });
+});
+
+describe('connecting phase, connect timeout, position guard', () => {
+  /** exact fake timers (no real time drift): the 29 999 / 30 000 ms boundary must be exact */
+  const exact = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+  const adv = (ms: number) => vi.advanceTimersByTimeAsync(ms);
+  const playing = (v: FakeVideo) => v.dispatchEvent(new Event('playing'));
+  const phase = (s: AirPlayState) => s.busy ? 'busy' : s.active ? (s.connecting ? 'active' : 'playing') : s.connecting ? 'connecting' : s.ready ? 'ready' : 'idle';
+
+  it('constants: 30 s to the first playing on the TV, 5 s position tolerance', () => {
+    expect(CONNECT_TIMEOUT_MS).toBe(30_000);
+    expect(POSITION_TOLERANCE_S).toBe(5);
+  });
+
+  it('phases busy → ready → connecting → active → playing', async () => {
+    const { v, c, states } = setup();
+    v.paused = false;
+    c.pick();
+    await flush();
+    playing(v); // the phone plays the token stream while the picker is open: not the TV
+    expect(c.state).toMatchObject({ ready: true, connecting: false });
+    remoteConnecting(v); // TV picked
+    expect(c.state).toMatchObject({ ready: true, active: false, connecting: true });
+    playing(v); // still the phone (not wireless yet): stays connecting
+    expect(c.state.connecting).toBe(true);
+    v.wireless(true);
+    expect(c.state).toMatchObject({ active: true, connecting: true });
+    playing(v); // first playing on the TV
+    expect(c.state).toMatchObject({ active: true, connecting: false });
+    const seen = states.map(phase).filter((p) => p !== 'idle').filter((p, i, a) => p !== a[i - 1]);
+    expect(seen).toEqual(['busy', 'ready', 'connecting', 'active', 'playing']);
+    playing(v);
+    expect(states.at(-1)?.connecting).toBe(false);
+  });
+
+  it('wireless reported while our token is on the element starts the connecting phase too (no Remote Playback API)', async () => {
+    const { v, c } = setup();
+    v.remote = undefined;
+    c.pick();
+    await flush();
+    v.wireless(true);
+    expect(c.state).toMatchObject({ active: true, connecting: true });
+  });
+
+  it(`no playing within ${CONNECT_TIMEOUT_MS / 1000} s of the pick → connectTimeout once`, async () => {
+    exact();
+    const connectTimeout = vi.fn();
+    const { v, c, deps } = setup({ connectTimeout });
+    c.pick();
+    await adv(0);
+    await adv(10_000); // the picker is open a while: the timeout counts from the TV, not from the tap
+    v.wireless(true);
+    await adv(29_999);
+    expect(connectTimeout).not.toHaveBeenCalled();
+    expect(c.state.connecting).toBe(true);
+    await adv(1);
+    expect(connectTimeout).toHaveBeenCalledOnce();
+    expect(c.state).toMatchObject({ active: true, connecting: false });
+    expect(deps.restore).not.toHaveBeenCalled(); // the owner decides (engine: reconnect screen); the token stays
+    expect(deps.revoke).not.toHaveBeenCalled();
+    playing(v);
+    await adv(CONNECT_TIMEOUT_MS * 2);
+    expect(connectTimeout).toHaveBeenCalledOnce();
+    expect(c.state.connecting).toBe(false);
+  });
+
+  it('the first playing on the TV in time clears the timer', async () => {
+    exact();
+    const connectTimeout = vi.fn();
+    const { v, c } = setup({ connectTimeout });
+    c.pick();
+    await adv(0);
+    remoteConnecting(v);
+    v.wireless(true);
+    await adv(CONNECT_TIMEOUT_MS - 1000);
+    playing(v);
+    await adv(CONNECT_TIMEOUT_MS * 2);
+    expect(connectTimeout).not.toHaveBeenCalled();
+    expect(c.state).toMatchObject({ active: true, connecting: false });
+  });
+
+  it('the picker closed without a TV never arms the timeout', async () => {
+    exact();
+    const connectTimeout = vi.fn();
+    const { c, deps, states } = setup({ connectTimeout });
+    c.pick();
+    await adv(0);
+    expect(c.state.ready).toBe(true);
+    await adv(ARM_MS);
+    expect(deps.restore).toHaveBeenCalledOnce();
+    await adv(CONNECT_TIMEOUT_MS * 2);
+    expect(connectTimeout).not.toHaveBeenCalled();
+    expect(states.some((s) => s.connecting)).toBe(false);
+    expect(c.state.connecting).toBe(false);
+  });
+
+  it('a restore ends the connecting phase and its timer', async () => {
+    exact();
+    const connectTimeout = vi.fn();
+    const { v, c, deps } = setup({ connectTimeout });
+    c.pick();
+    await adv(0);
+    remoteConnecting(v); // TV picked, but Safari never reports the wireless target
+    expect(c.state.connecting).toBe(true);
+    await adv(ARM_MS);
+    expect(deps.restore).toHaveBeenCalledOnce();
+    expect(connectTimeout).toHaveBeenCalledOnce(); // 30 s passed before the 90 s arm timeout
+    expect(c.state).toMatchObject({ connecting: false, ready: false, active: false });
+  });
+
+  it('first playing more than 5 s off seeks once', async () => {
+    const { v, c } = setup();
+    v.currentTime = 1390; v.paused = false;
+    c.pick();
+    await flush();
+    v.wireless(true);
+    v.currentTime = 0; // the TV started the token stream at its beginning
+    playing(v);
+    expect(v.currentTime).toBe(1390);
+    expect(readAirLog().filter((e) => e.ev === 'position corrected')).toHaveLength(1);
+    v.currentTime = 0;
+    playing(v); // never a second correction for this token
+    expect(v.currentTime).toBe(0);
+    expect(readAirLog().filter((e) => e.ev === 'position corrected')).toHaveLength(1);
+  });
+
+  it('within 5 s → no seek (and the phone\'s own playing is not the TV\'s)', async () => {
+    const { v, c } = setup();
+    v.currentTime = 1390; v.paused = false;
+    c.pick();
+    await flush();
+    v.currentTime = 0;
+    playing(v); // the phone, not wireless: no guard
+    expect(v.currentTime).toBe(0);
+    v.currentTime = 1390;
+    v.wireless(true);
+    v.currentTime = 1390 - POSITION_TOLERANCE_S;
+    playing(v);
+    expect(v.currentTime).toBe(1385);
+    v.currentTime = 0;
+    playing(v); // the check was used on the first playing: nothing later
+    expect(v.currentTime).toBe(0);
+    expect(readAirLog().some((e) => e.ev === 'position corrected')).toBe(false);
+  });
+
+  it('a new token (refresh) gets its own one check', async () => {
+    const { v, c, deps } = setup();
+    v.currentTime = 600; v.paused = false;
+    await airplayOn(v, c);
+    playing(v);
+    vi.mocked(deps.request).mockResolvedValueOnce(CI2);
+    v.currentTime = 900;
+    await c.refresh();
+    v.currentTime = 0;
+    playing(v);
+    expect(v.currentTime).toBe(900);
+  });
+
+  it('cancel while busy restores and revokes', async () => {
+    let resolve!: (ci: CastInfo) => void;
+    const { v, c, deps } = setup({ request: vi.fn(() => new Promise<CastInfo>((r) => (resolve = r))) });
+    v.currentTime = 754; v.paused = false;
+    c.pick();
+    await flush();
+    expect(c.state.busy).toBe(true);
+    v.currentTime = 0; v.paused = true; // detach dropped hls.js: the element is empty meanwhile
+    c.cancel();
+    expect(c.state).toMatchObject({ busy: false, ready: false, active: false, connecting: false });
+    await flush();
+    expect(deps.restore).toHaveBeenCalledWith(754, true, null); // the tap's position and play state
+    resolve(CI);
+    await flush();
+    expect(deps.revoke).toHaveBeenCalledWith(CI);
+    expect(deps.started).not.toHaveBeenCalled();
+    expect(v.src).not.toBe(CI.contentUrl);
+    expect(v.webkitShowPlaybackTargetPicker).not.toHaveBeenCalled();
+  });
+
+  it('cancel waits for a running detach before the restore (the restored stream is not dropped by it)', async () => {
+    let done!: () => void;
+    const order: string[] = [];
+    const { c } = setup({
+      detach: vi.fn(() => new Promise<void>((r) => { done = () => { order.push('detach'); r(); }; })),
+      restore: vi.fn(() => { order.push('restore'); }),
+    });
+    c.pick();
+    c.cancel();
+    await flush();
+    expect(order).toEqual([]);
+    done();
+    await flush();
+    expect(order).toEqual(['detach', 'restore']);
+  });
+
+  it('cancel while ready or connecting restores like the arm timeout; once the TV plays it does nothing', async () => {
+    const a = setup();
+    a.v.currentTime = 50; a.v.paused = false;
+    a.c.pick();
+    await flush();
+    a.c.cancel();
+    expect(a.deps.revoke).toHaveBeenCalledWith(CI);
+    expect(a.deps.restore).toHaveBeenCalledWith(50, true, CI);
+    expect(a.c.state).toMatchObject({ ready: false, active: false, connecting: false });
+
+    const b = setup();
+    b.v.currentTime = 50;
+    await airplayOn(b.v, b.c);
+    expect(b.c.state).toMatchObject({ active: true, connecting: true });
+    b.c.cancel();
+    expect(b.deps.revoke).toHaveBeenCalledWith(CI);
+    expect(b.deps.restore).toHaveBeenCalledOnce();
+    expect(b.c.state).toMatchObject({ active: false, connecting: false });
+
+    const p = setup();
+    await airplayOn(p.v, p.c);
+    playing(p.v);
+    p.c.cancel();
+    await flush();
+    expect(p.deps.revoke).not.toHaveBeenCalled();
+    expect(p.deps.restore).not.toHaveBeenCalled();
+    expect(p.c.state.active).toBe(true);
+
+    const idle = setup();
+    idle.c.cancel();
+    expect(idle.deps.restore).not.toHaveBeenCalled();
+  });
+
+  it('log lines carry no URL', async () => {
+    exact();
+    const { v, c } = setup({ connectTimeout: vi.fn() });
+    v.currentTime = 1390; v.paused = false;
+    c.pick();
+    await adv(0);
+    remoteConnecting(v);
+    v.wireless(true);
+    await adv(CONNECT_TIMEOUT_MS);
+    v.currentTime = 0;
+    playing(v);
+    const log = readAirLog();
+    expect(log.map((e) => e.ev)).toEqual(expect.arrayContaining(['connecting', 'connect timeout', 'position corrected']));
+    expect(JSON.stringify(log)).not.toMatch(/TOKEN|ff\.example|:\/\/|master\.m3u8|c{32}/);
   });
 });
