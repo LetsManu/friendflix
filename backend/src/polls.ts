@@ -37,7 +37,11 @@ export async function createPoll(ctx: Ctx, creatorId: string, input: { title: st
       if (!ctx.seerr) throw new InvalidOptions('wish options need the request service');
       const d = await ctx.seerr.details(o.mediaType, o.tmdbId);
       const inLib = await ctx.jf.findByTmdb(o.tmdbId, o.mediaType).catch(() => null);
-      if (inLib) { if (!resolved.some((r) => r.jf === inLib.id)) resolved.push({ jf: inLib.id, title: inLib.name }); } // already in library -> plain library option
+      if (inLib) {
+        // already in library -> plain library option, if the creator can see it (library access); otherwise it is left out, like an explicit item they cannot see
+        const visible = await ctx.jf.item(creator, inLib.id).then(() => true, () => false);
+        if (visible && !resolved.some((r) => r.jf === inLib.id)) resolved.push({ jf: inLib.id, title: inLib.name });
+      }
       else resolved.push({ tmdb: o.tmdbId, type: o.mediaType, title: String(d.title ?? d.name), poster: d.posterPath ?? undefined });
     }
   }
@@ -136,6 +140,8 @@ export async function resolveRequestedPolls(ctx: Ctx) {
   for (const p of rows) {
     const found = await ctx.jf.findByTmdb(p.tmdb_id, p.media_type).catch(() => null);
     if (!found) continue;
+    const host = await getUserById(ctx, p.created_by);
+    if (!host || !(await ctx.jf.item(host, found.id).then(() => true, () => false))) continue; // the host cannot see it (library access): no party for it yet
     const startsAt = new Date(Math.max(Date.now() + 30 * 60_000, new Date(p.starts_at).getTime()));
     await ctx.db.query('update poll_options set jf_item_id=$1 where id=$2', [found.id, p.winner_option_id]); // idempotent; before the claim so a restored room always has an item
     const room = randomToken(9);

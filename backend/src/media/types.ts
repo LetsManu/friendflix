@@ -605,6 +605,10 @@ export interface MediaServer {
   searchSubtitles(id: string, lang: string): Promise<SubtitleHit[]>;
   downloadSubtitle(id: string, subtitleId: string): Promise<void>;
   findByTmdb(tmdbId: number, mediaType: string): Promise<{ id: string; name: string } | null>;
+  /** library lookup of a series by TVDB id (anime libraries often carry only that); absent = the server cannot */
+  findSeriesByTvdb?(tvdbId: number): Promise<{ id: string; name: string } | null>;
+  /** the library gained or lost a film or series: drop what is cached about library contents (optional; the media event path calls it) */
+  invalidateLibraryIndex?(): void;
   /** a series has at least one real episode (library-wide) */
   seriesHasEpisode(seriesId: string): Promise<boolean>;
   /** one page of the whole library's stream languages (language index); a short page = the end */

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { reminderTick } from '../src/reminders.js';
 import { calendarNotifications } from '../src/routes/polls.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
@@ -17,7 +17,17 @@ let env: TestEnv;
 let a: { cookies: Record<string, string>; csrf: string };
 let b: { cookies: Record<string, string>; csrf: string };
 const mediaStatus: Record<string, number | undefined> = {};
+/** Jellyfin users that may not see the film (library access) */
+const hiddenFor = new Set<string>();
 const library = new Map<string, string>(); // 'movie:603' -> jf id
+/** A library change the way the real flow has it: signalled (the stale copy answers meanwhile), then the background refresh runs; the spacing between refreshes is skipped. */
+const libraryChanged = async () => {
+  const jf = env.ctx.jf as any;
+  jf.providerRefreshAt = 0;
+  jf.invalidateLibraryIndex();
+  await vi.waitFor(() => { if (jf.providerIndexBuild) throw new Error('refreshing'); });
+};
+const own = async (key: string, id: string) => { library.set(key, id); await libraryChanged(); };
 const episodes = new Map<string, { virtual: boolean }>();
 const realEps = new Map<string, Array<{ Id: string; IndexNumber: number; LocationType: string }>>(); // `${series}:${season}`
 let seriesHasFile = false;
@@ -32,6 +42,7 @@ beforeAll(async () => {
       const id = u.pathname.split('/').pop()!;
       if (id === EP || id === EP2) return { json: epJson(id) };
       if (id === SERIES) return { json: { Id: SERIES, Name: 'Show', Type: 'Series' } };
+      if (id === MOVIE && hiddenFor.has(u.searchParams.get('userId') ?? '')) return { status: 404 };
       if (id === MOVIE) return { json: { Id: MOVIE, Name: 'Film', Type: 'Movie' } };
       return { status: 404 };
     },
@@ -39,11 +50,8 @@ beforeAll(async () => {
     'GET /Shows/[^/]+/Episodes': (u) => ({ json: { Items: realEps.get(`${u.pathname.split('/')[2]}:${u.searchParams.get('season')}`) ?? [] } }),
     'GET /Items': (u) => {
       if (u.searchParams.get('parentId')) return { json: { Items: seriesHasFile ? [{ Id: 'c'.repeat(32), Type: 'Episode', LocationType: 'FileSystem' }] : [] } };
-      const tmdb = u.searchParams.get('anyProviderIdEquals');
-      if (tmdb) {
-        const type = u.searchParams.get('includeItemTypes') === 'Series' ? 'tv' : 'movie';
-        const id = library.get(`${type}:${tmdb.replace('tmdb.', '')}`);
-        return { json: { Items: id ? [{ Id: id, Name: 'X' }] : [] } };
+      if (u.searchParams.get('fields') === 'ProviderIds') { // the library listing of the provider id index (the real server has no provider id filter)
+        return { json: { Items: [...library].map(([k, Id]) => ({ Id, Name: 'X', Type: k.startsWith('tv:') ? 'Series' : 'Movie', ProviderIds: { Tmdb: k.split(':')[1] } })) } };
       }
       const ids = (u.searchParams.get('ids') ?? '').split(',').filter((i) => episodes.has(i));
       return { json: { Items: ids.map((id) => ({ Id: id, Type: 'Episode', LocationType: episodes.get(id)!.virtual ? 'Virtual' : 'FileSystem' })) } };
@@ -71,7 +79,7 @@ const uid = async (name: string) => (await env.pool.query('select id from users 
 describe('reminders', () => {
   it('already available -> 409 with item id; no row', async () => {
     mediaStatus['movie:1'] = 5;
-    library.set('movie:1', MOVIE);
+    await own('movie:1', MOVIE);
     const r = await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1 });
     expect(r.statusCode).toBe(409);
     expect(r.json()).toMatchObject({ error: 'already_available', itemId: MOVIE });
@@ -104,7 +112,7 @@ describe('reminders', () => {
     const [ua, ub] = [await uid('Admin'), await uid('Bea')];
     await env.pool.query("insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title) values (77,$1,'movie',700,'Dunmoor 3')", [ub]);
     for (const w of [a, b]) expect((await call(w, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 700 })).statusCode).toBe(200);
-    library.set('movie:700', MOVIE);
+    await own('movie:700', MOVIE);
     const hook = () => env.app.inject({ method: 'POST', url: '/internal/webhook/seerr', headers: secret, payload: { notification_type: 'MEDIA_AVAILABLE', subject: 'Dunmoor 3', media: { media_type: 'movie', tmdbId: '700' }, request: { request_id: '77' } } });
     expect((await hook()).statusCode).toBe(200);
     await hook();
@@ -116,6 +124,40 @@ describe('reminders', () => {
     expect((await call(a, 'GET', '/api/reminders')).json().reminders).toEqual([]);
     const n = (await env.pool.query("select link from notifications where kind='reminder'")).rows[0];
     expect(n.link).toBe(`/item/${MOVIE}`);
+  });
+
+  it('the reminder links to the title only for a recipient who can see it', async () => {
+    await env.pool.query('truncate reminders');
+    await env.pool.query('truncate notifications');
+    const [ua, ub] = [await uid('Admin'), await uid('Bea')];
+    for (const w of [a, b]) expect((await call(w, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1300 })).statusCode).toBe(200);
+    await own('movie:1300', MOVIE);
+    const beaJf = (await env.pool.query('select jellyfin_user_id from users where id=$1', [ub])).rows[0].jellyfin_user_id as string;
+    hiddenFor.add(beaJf);
+    await env.ctx.jf.touchUserData(beaJf); // an earlier test memoised the film as visible for her
+    try {
+      const r = await env.app.inject({ method: 'POST', url: '/internal/webhook/seerr', headers: secret, payload: { notification_type: 'MEDIA_AVAILABLE', subject: 'Dunmoor 4', media: { media_type: 'movie', tmdbId: '1300' }, request: { request_id: '78' } } });
+      expect(r.statusCode).toBe(200);
+    } finally { hiddenFor.clear(); }
+    const links = Object.fromEntries((await env.pool.query("select user_id, link from notifications where kind='reminder'")).rows.map((n) => [n.user_id, n.link]));
+    expect(links).toEqual({ [ua]: `/item/${MOVIE}` }); // Bea cannot see it: no notification at all
+    const done = (await env.pool.query('select user_id, fired_at is not null as done from reminders')).rows;
+    expect(done.map((r) => [r.user_id, r.done]).sort()).toEqual([[ua, true], [ub, true]].sort()); // and hers is done, not pending forever
+  });
+
+  it('a film that has just arrived is not in the (stale) index yet: the available webhook does not consume the reminder, the safety net fires it with the link', async () => {
+    await env.pool.query('truncate reminders');
+    await env.pool.query('truncate notifications');
+    await env.ctx.jf.findByTmdb(1, 'movie'); // the index exists
+    expect((await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1400 })).statusCode).toBe(200);
+    library.set('movie:1400', MOVIE); // arrived in the library, the index does not know yet
+    const r = await env.app.inject({ method: 'POST', url: '/internal/webhook/seerr', headers: secret, payload: { notification_type: 'MEDIA_AVAILABLE', subject: 'Dunmoor 5', media: { media_type: 'movie', tmdbId: '1400' }, request: { request_id: '79' } } });
+    expect(r.statusCode).toBe(200);
+    expect(await notes('reminder')).toEqual([]);
+    expect((await env.pool.query('select 1 from reminders where fired_at is null')).rowCount).toBe(1); // still open
+    await libraryChanged(); // the index refreshes
+    await reminderTick(env.ctx);
+    expect((await env.pool.query("select link from notifications where kind='reminder'")).rows).toEqual([{ link: `/item/${MOVIE}` }]);
   });
 
   it('personal push never reaches Discord or the global ntfy topic', async () => {
@@ -130,7 +172,7 @@ describe('reminders', () => {
     expect((await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 800 })).statusCode).toBe(200);
     await reminderTick(env.ctx);
     expect(await notes('reminder')).toHaveLength(0);
-    library.set('movie:800', MOVIE);
+    await own('movie:800', MOVIE);
     await reminderTick(env.ctx);
     await reminderTick(env.ctx);
     expect(await notes('reminder')).toHaveLength(1);
@@ -199,7 +241,7 @@ describe('reminders', () => {
   it('a re-armed reminder notifies again (dedupe per reminder id)', async () => {
     await env.pool.query('truncate reminders');
     await env.pool.query('truncate notifications');
-    library.set('movie:1000', MOVIE);
+    await own('movie:1000', MOVIE);
     mediaStatus['movie:1000'] = undefined;
     for (let i = 0; i < 2; i++) {
       expect((await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1000 })).statusCode).toBe(200);
@@ -215,7 +257,7 @@ describe('reminders', () => {
     await env.pool.query('truncate notifications');
     const ua = await uid('Admin');
     await env.pool.query("insert into seerr_requests(seerr_request_id,user_id,media_type,tmdb_id,title) values (88,$1,'movie',1100,'Hearth 2')", [ua]);
-    library.set('movie:1100', MOVIE);
+    await own('movie:1100', MOVIE);
     expect((await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1100 })).statusCode).toBe(200);
     await reminderTick(env.ctx); // no avail-88 notice was ever created -> the reminder must notify
     expect(await notes('reminder')).toHaveLength(1);
@@ -230,7 +272,7 @@ describe('reminders', () => {
   it('a series reminder needs at least one real episode', async () => {
     await env.pool.query('truncate reminders');
     await env.pool.query('truncate notifications');
-    library.set('tv:1396', SERIES);
+    await own('tv:1396', SERIES);
     seriesHasFile = false;
     expect((await call(a, 'POST', '/api/reminders', { mediaType: 'tv', tmdbId: 1396 })).statusCode).toBe(200);
     await reminderTick(env.ctx);

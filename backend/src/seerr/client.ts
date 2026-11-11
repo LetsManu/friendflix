@@ -83,8 +83,9 @@ export class SeerrClient {
   }
 
   search(query: string, page = 1, lang: Language = FALLBACK_LANGUAGE) {
-    // Seerr requires %20 (not +) for spaces
-    return this.json<{ results: any[]; totalPages: number }>(`/search?query=${encodeURIComponent(query)}&page=${page}&language=${upstreamLanguage(lang)}`);
+    // Seerr requires %20 (not +) for spaces, and rejects the characters encodeURIComponent leaves alone (! ' ( ) *: "K-On!", "Haikyu!!")
+    const q = encodeURIComponent(query).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+    return this.json<{ results: any[]; totalPages: number }>(`/search?query=${q}&page=${page}&language=${upstreamLanguage(lang)}`);
   }
   upcoming(mediaType: 'movie' | 'tv', page = 1, lang: Language = FALLBACK_LANGUAGE) {
     return this.json<{ results: any[]; totalPages: number }>(`/discover/${mediaType === 'movie' ? 'movies' : 'tv'}/upcoming?page=${page}&language=${upstreamLanguage(lang)}`);

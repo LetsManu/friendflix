@@ -46,6 +46,12 @@ describe('providerIdsOf (Guid parsing)', () => {
     expect(providerIdsOf(['IMDB://TT0133093'])).toEqual({ imdb: 'tt0133093' });
     expect(providerIdsOf([42 as unknown as string, 'tmdb://603'])).toEqual({ tmdb: '603' });
   });
+  it('HAMA anime agent guids name the source in the value', () => {
+    expect(providerIdsOf(['com.plexapp.agents.hama://tvdb-81189?lang=en'])).toEqual({ tvdb: '81189' });
+    expect(providerIdsOf(['com.plexapp.agents.hama://tvdb2-81189'])).toEqual({ tvdb: '81189' });
+    expect(providerIdsOf(['com.plexapp.agents.hama://tmdb-603', 'com.plexapp.agents.hama://tsdb-603'])).toEqual({}); // HAMA's tmdb- is a movie id, tsdb- a series id: no TMDB id from either
+    expect(providerIdsOf(['com.plexapp.agents.hama://anidb-1234', 'com.plexapp.agents.hama://tvdb-x1'])).toEqual({}); // AniDB is no provider id here
+  });
   it('tmdbIdOf reads new and legacy guids', () => {
     expect(tmdbIdOf(['tmdb://603'])).toBe(603);
     expect(tmdbIdOf(['com.plexapp.agents.themoviedb://604?lang=en'])).toBe(604);
@@ -59,6 +65,7 @@ describe('guidsOf (mirror)', () => {
     expect(guidsOf({ guid: 'com.plexapp.agents.imdb://tt0133093?lang=en' })).toEqual(['com.plexapp.agents.imdb://tt0133093']);
     expect(guidsOf({ guid: 'com.plexapp.agents.thetvdb://81189/1/2?lang=en' })).toEqual(['com.plexapp.agents.thetvdb://81189/1/2']);
     expect(guidsOf({ guid: 'com.plexapp.agents.hama://anidb-1?lang=en' })).toEqual([]);
+    expect(guidsOf({ guid: 'com.plexapp.agents.hama://tvdb-81189?lang=en' })).toEqual(['com.plexapp.agents.hama://tvdb-81189']);
     expect(guidsOf({ guid: 'local://1' })).toEqual([]);
     expect(guidsOf({})).toEqual([]);
   });
@@ -111,6 +118,12 @@ function seed(f: PlexFake) {
   Object.assign(f.items.get(lib.legacy)!, { guid: 'com.plexapp.agents.imdb://tt0090605?lang=en', rating: 7.4 });
   lib.legacyTmdb = f.addMovie({ title: 'Legacy Teil', rating: 'PG', year: 1999 });
   f.items.get(lib.legacyTmdb)!.guid = 'com.plexapp.agents.themoviedb://555?lang=de';
+  // series for the TVDB lookup: new agent, legacy agent, HAMA anime agent
+  lib.tvdbNew = f.addShow({ title: 'Neue Serie', guids: ['tvdb://81001'] }).show;
+  lib.tvdbLegacy = f.addShow({ title: 'Alte Serie' }).show;
+  f.items.get(lib.tvdbLegacy)!.guid = 'com.plexapp.agents.thetvdb://81002?lang=de';
+  lib.tvdbHama = f.addShow({ title: 'Anime Serie' }).show;
+  f.items.get(lib.tvdbHama)!.guid = 'com.plexapp.agents.hama://tvdb-81003?lang=en';
   lib.bare = f.addMovie({ title: 'Ohne Ids', rating: 'PG', year: 2001 });
 }
 
@@ -174,6 +187,14 @@ describe('PlexMediaServer.itemAbout / itemCollections', () => {
     const c = await e.ms.itemCollections(admin, item(lib.ash!));
     expect(c[0]!.parts.find((p) => p.item.name === 'Eins')!.item.played).toBe(true);
     expect((await e.ms.itemCollections(kid, item(lib.ash!)))[0]!.parts.find((p) => p.item.name === 'Eins')!.item.played).toBe(false);
+  });
+
+  it('findSeriesByTvdb finds a show by a new-agent, legacy-agent or HAMA guid, exactly (no prefix match), shows only', async () => {
+    expect(await e.ms.findSeriesByTvdb!(81001)).toEqual({ id: item(lib.tvdbNew!), name: 'Neue Serie' });
+    expect(await e.ms.findSeriesByTvdb!(81002)).toEqual({ id: item(lib.tvdbLegacy!), name: 'Alte Serie' });
+    expect(await e.ms.findSeriesByTvdb!(81003)).toEqual({ id: item(lib.tvdbHama!), name: 'Anime Serie' });
+    expect(await e.ms.findSeriesByTvdb!(8100)).toBeNull(); // a prefix of 81001
+    expect(await e.ms.findSeriesByTvdb!(77)).toBeNull(); // the film Ashfall carries tvdb://77, no show does
   });
 
   it('findByTmdb also finds a legacy-agent movie', async () => {
