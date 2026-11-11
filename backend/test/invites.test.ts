@@ -530,6 +530,31 @@ describe('admin user management', () => {
     expect((await env.pool.query("select role from users where authentik_sub='loginlvl'")).rows).toEqual([{ role: 'guest' }]);
   });
 
+  it('a delete between the first policy apply and the role lock leaves the account on the target with its policy', async () => {
+    const key = await mkInvite('Schmal', 'guest', 'narrow-window-token-0123456789abcdefabcdef');
+    expect((await adm('PUT', `/api/admin/roles/${key}`, { maxStreams: 7 })).statusCode).toBe(200);
+    const claimed = (await claimInvite(env.ctx, 'narrow-window-token-0123456789abcdefabcdef'))!;
+    const jfAdmin = env.ctx.jf.admin as unknown as { applyPolicy: (id: string, pol: { template?: { maxStreams?: number } }) => Promise<unknown> };
+    const orig = jfAdmin.applyPolicy;
+    const seen: Array<{ id: string; maxStreams?: number }> = [];
+    let fired = false;
+    jfAdmin.applyPolicy = async (id, pol) => {
+      seen.push({ id, maxStreams: pol.template?.maxStreams });
+      if (!fired) { fired = true; await deleteRole(env.ctx, null, key); } // commits after this first apply, before the insert transaction
+      return orig.call(jfAdmin, id, pol);
+    };
+    let user;
+    try {
+      user = await provisionUser(env.ctx, { sub: 'narrow1', email: 'nw1@x.de', name: 'Freund nw1', groups: [] }, claimed.role, null, undefined, claimed.id);
+    } finally {
+      jfAdmin.applyPolicy = orig;
+    }
+    expect(user.role).toBe('guest');
+    const guest = (await adm('GET', '/api/admin/roles')).json().matrix.roles.find((r: { key: string }) => r.key === 'guest').values.maxStreams;
+    expect(guest).not.toBe(7);
+    expect(seen.filter((x) => x.id === user.jellyfin_user_id).at(-1)!.maxStreams).toBe(guest);
+  });
+
   it('an invite redeemed after its role was deleted gets the new role', async () => {
     const key = (await adm('POST', '/api/admin/roles', { label: 'Kino-Gast', from: 'friend' })).json().key as string;
     // the invite routes still offer the built-in roles only: the open invite for the custom role is stored directly

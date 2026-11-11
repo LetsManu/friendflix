@@ -520,20 +520,21 @@ describe('catalogue writes', () => {
   it('the pass-exhaustion 409 carries the counts', async () => {
     const key = await dup('Zuwachs');
     await env.pool.query('update users set role=$2 where id=$1', [ANNA, key]);
+    await setInvite(key);
     invalidateRoles(env.ctx);
     // every move is followed by a new account on the role (a redemption that keeps winning the race)
     let n = 0;
     const orig = env.pool.query.bind(env.pool);
     const trap = (async (...a: unknown[]) => {
       const r = await (orig as (...x: unknown[]) => Promise<unknown>)(...a);
-      if (typeof a[0] === 'string' && a[0].startsWith('update users set role=$1') && n++ < 10) await env.pool.query('update users set role=$2 where id=$1', [n % 2 ? BEN : ANNA, key]);
+      if (typeof a[0] === 'string' && /^\s*update\s+users\s+set\s+role\b/i.test(a[0]) && n++ < 10) await orig('update users set role=$2 where id=$1', [n % 2 ? BEN : ANNA, key]);
       return r;
     }) as typeof env.pool.query;
     env.pool.query = trap;
     try {
       const r = await del(key, { moveTo: 'friend' });
       expect(r.statusCode).toBe(409);
-      expect(r.json()).toMatchObject({ error: 'role_in_use', accounts: expect.any(Number), invites: 0 });
+      expect(r.json()).toMatchObject({ error: 'role_in_use', accounts: 1, invites: 1 });
     } finally {
       env.pool.query = orig as typeof env.pool.query;
     }
