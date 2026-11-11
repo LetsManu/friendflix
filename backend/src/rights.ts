@@ -127,7 +127,7 @@ export async function effectiveRights(
 
 /**
  * Ids of the non-disabled accounts whose effective switch `perm` is off (account level: role and override, no kids overlay), e.g.
- * whose comments are hidden. Cached ~30 s per (ctx, perm).
+ * whose comments are hidden. An account whose role does not resolve counts as off (fail closed). Cached ~30 s per (ctx, perm).
  */
 export async function accountsWithout(ctx: RightsCtx, perm: PermKey): Promise<string[]> {
   let per = without.get(ctx);
@@ -139,7 +139,7 @@ export async function accountsWithout(ctx: RightsCtx, perm: PermKey): Promise<st
   for (const role of new Set(rows.map((x) => x.role))) roles.set(role, (await roleRights(ctx, role))?.perms);
   const ids = rows.filter((x) => {
     const rp = roles.get(x.role);
-    if (!rp) return false; // an unknown role has no rights to switch off
+    if (!rp) return true; // fail closed: an account whose role nobody knows has every switch off
     if (x.role === 'admin') return false;
     return !(readPerms(x.perms)[perm] ?? rp[perm]);
   }).map((x) => x.id);

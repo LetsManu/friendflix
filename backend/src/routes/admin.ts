@@ -263,7 +263,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.put('/api/admin/roles/:role', admin, async (req, reply) => {
     const role = (req.params as { role: string }).role;
     if (!(await roleExists(ctx, role))) return reply.code(404).send({ error: 'not_found' });
-    const { reapplied } = await writeRole(ctx, req.user!.id, role, rolePatch.parse(req.body));
+    const { changed, reapplied } = await writeRole(ctx, req.user!.id, role, rolePatch.parse(req.body));
+    if (changed.includes('party')) await (await import('./party.js')).dropPartyDenied(ctx); // the role's accounts that lost `party` lose their open party sockets
     if (reapplied.failed) return reply.code(502).send({ error: 'policy_partial', failed: reapplied.failed, identities: reapplied.identities });
     return { ok: true, reapplied };
   });

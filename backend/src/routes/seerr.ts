@@ -10,7 +10,7 @@ import { localizeStored, notify } from '../notify.js';
 import { portalStatus, RequestsDisabledError, requestsClient, requestsEnabled, requestStateKey, SeerrError, viewerLanguage } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireGrownUp } from '../kids.js';
-import { permsOf } from '../permGuard.js';
+import { requirePerm } from '../permGuard.js';
 import { requireAdmin } from '../session.js';
 import { limitFor, quota, release, reserve, resetsAt, usage } from '../requestlimit.js';
 import { checkSecret } from './internal.js';
@@ -34,18 +34,16 @@ function mapResult(r: any) {
 
 const wrap = <T extends (...a: any[]) => Promise<any>>(fn: T): T => sharedWrap(fn, { zod: 'plain', jellyfin: false, seerr: true });
 
-/**
- * preHandler after the sign-in checks: without a request service its routes answer 404 {error:'requests_disabled'}, without the
- * `requests` switch 403 {error:'requests_forbidden'} (admins always have it, so the admin routes behind it are unaffected)
- */
-const requestsOn = (ctx: Ctx) => async (req: FastifyRequest, reply: FastifyReply) => {
+/** preHandler after the sign-in checks: without a request service its routes answer 404 {error:'requests_disabled'} */
+const requestsOn = (ctx: Ctx) => async () => {
   if (!requestsEnabled(ctx)) throw new RequestsDisabledError();
-  if (!(await permsOf(ctx, req)).requests) return reply.code(403).send({ error: 'requests_forbidden' });
 };
 
 export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
   const on = requestsOn(ctx);
-  const pre = { preHandler: [requireGrownUp(ctx), on] }; // Seerr requests are for grown-ups: kids profiles get 403 kids_profile
+  // Seerr requests are for grown-ups: kids profiles get 403 kids_profile; then 404 requests_disabled without the service, then 403
+  // requests_forbidden without the `requests` switch (admins always have it: the admin routes below need only `on`)
+  const pre = { preHandler: [requireGrownUp(ctx), on, requirePerm(ctx, 'requests', 'requests_forbidden')] };
   // the poster proxy fetches TMDB itself: it also serves stored posters (polls, reminders) while the request service is off
   const img = { preHandler: requireGrownUp(ctx) };
   // the account's notifications (party invites, recommendations, requests ...) are not shown on kids profiles either

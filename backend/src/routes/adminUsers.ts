@@ -23,6 +23,7 @@ import type { ProfileRow, UserRow } from '../types.js';
 import { rightsBody, rightsView, writeRights, type RightsBody } from '../userRights.js';
 import { HttpError, accessEnded, accountSerial, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser, type LockReason } from '../users.js';
 import { pendingNoticeKey } from '../pending.js';
+import { dropPartyDenied } from './party.js';
 
 const uuid = z.guid();
 /** ISO date-time with offset, or null (= no end) */
@@ -397,6 +398,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     const user = await userOr404(id);
     if (await claimed(id)) throw new HttpError(409, 'deletion_in_progress');
     const w = await writeRights(ctx, actor, id, b);
+    if (w.changed.includes('party')) await dropPartyDenied(ctx, [id]); // `party` switched off: the open party sockets close (4403)
     const reapplied = w.media ? await reapplyAccount(ctx, user) : { identities: 0, failed: 0 };
     if (w.effective) await forgetUserAuth(ctx, id);
     return reapplied;
