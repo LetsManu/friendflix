@@ -105,11 +105,13 @@
     for (const n of bad) loaders[n]();
   }
 
+  let homeAnswered: Promise<unknown> = Promise.resolve();
   onMount(() => {
     // 1. the whole first screen (billboard, rows, hubs, themed lists) in ONE request; stale data from the last visit shows at once.
     //    Parts the server could not build are loaded the old way, one request each.
     const firstScreen = swrLoad(homeCache, HOME_KEY(), () => retry(() => api('/api/home') as Promise<HomeResponse<Item>>, 2, 800, (e) => e instanceof ApiError && e.status >= 400 && e.status < 500), applyHome, ALWAYS, () => { for (const n of Object.keys(loaders) as HomePart[]) loaders[n](); })
       .catch(() => undefined);
+    homeAnswered = firstScreen;
     // 3. below the fold: once the browser is idle (keeps the network free for the billboard image);
     //    from the cache at once (back navigation: same page height, so the scroll position restores exactly)
     const warm = Boolean(homeCache.get(`${getActiveProfile()}|latest`));
@@ -144,8 +146,10 @@
     const h = await loadHandoff();
     if (n === handoffSeq) handoff = h;
   }
-  onMount(() => { void refreshHandoff(); });
-  onDestroy(() => { handoffSeq++; }); // an answer after leaving is dropped
+  let gone = false;
+  // asked only after /api/home has answered (the first screen keeps its 5-call budget); the card waits for the billboard anyway
+  onMount(() => { void homeAnswered.then(() => { if (!gone) void refreshHandoff(); }); });
+  onDestroy(() => { gone = true; handoffSeq++; }); // an answer after leaving is dropped
   /** the offer unless this device dismissed it */
   $: offer = handoff && handoff.id !== dismissedId && !isDismissed(handoff.id) ? handoff : null;
   /** only once the billboard title is here (and, on the phone carousel, once its cards are): a late title never meets a card that was already shown */

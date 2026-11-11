@@ -154,7 +154,12 @@ test('the card waits for the billboard title: a late title never meets a card th
   api.handoff.home = offer();
   let release = () => {};
   const gate = new Promise<void>((res) => { release = res; });
-  await page.route(/\/api\/library\/items\?.*sort=Random/, async (r) => { await gate; await r.fallback(); });
+  // /api/home (composed by the mock from sub-requests, x-mock-sub) answers at once with the billboard flagged failed (null); the app's own
+  // fallback request for it is held: the hand-off is asked after /api/home, so this is the late-title case
+  await page.route(/\/api\/library\/items\?.*sort=Random/, async (r) => {
+    if (r.request().headers()['x-mock-sub']) return r.fulfill({ status: 200, contentType: 'application/json', body: 'null' });
+    await gate; await r.fallback();
+  });
   const answered = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/handoff');
   await page.goto('/');
   await answered;
