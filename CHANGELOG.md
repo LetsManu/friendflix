@@ -4,6 +4,9 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Fixed
+- **Flaky phone-player test.** The "title glides down when the skip row goes" check measured while the title was still gliding from the skip row's arrival; it now waits for that and steps the glide's own clock (no app change).
+
 ## [3.3.0] – Churros – 2026-11-11
 
 ### Upgrade notes
