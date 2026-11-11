@@ -8,7 +8,7 @@ import { MediaError, type CapReason, type HevcGate, type ItemDto, type Transcode
 import type { JfUser, ProfileRow, UserRow } from '../types.js';
 import { methodOf } from '../playstats.js';
 import { clearLive, clearStopped, countLive, getLive, listLive, markStopped, setLive } from '../live.js';
-import { noteHandoff, type HandoffVia } from '../handoff.js';
+import { noteHandoff, selectHandoff, type HandoffVia } from '../handoff.js';
 import { isHomeRequest } from '../netaddr.js';
 import { effectiveLimits } from '../limits.js';
 import { remoteBitrateCap } from '../roles.js';
@@ -87,14 +87,14 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
     const item = await ctx.jf.item(who.jfUser, b.itemId); // access check: the user must be able to see the item
     elapsed = false;
     live = {
-      userId: user.id, userName: user.name, profileName: who.profile?.is_owner ? undefined : who.profile?.name, itemId: b.itemId, title: item.name, seriesName: item.seriesName, seriesId: item.seriesId, type: item.type,
+      userId: user.id, userName: user.name, profileName: who.profile?.is_owner ? undefined : who.profile?.name, itemId: b.itemId, title: item.name, seriesName: item.seriesName, seriesId: item.seriesId, type: item.type ?? 'Unknown',
       positionTicks: ticks, runtimeTicks: item.runtimeTicks, isPaused: false, playSessionId: b.playSessionId, updatedAt: Date.now(), source: 'portal',
     };
   } else if (live.type === undefined && live.itemId === b.itemId) {
     // a live record the cast token's touch made before the first report (cast.ts touch: item id and title only): the item's facts
     // once (hand-off series and runtime). The token's creation already checked access, so a failed lookup keeps the record as it is.
     const item = await ctx.jf.item(who.jfUser, b.itemId).catch(() => null);
-    if (item) live = { ...live, title: live.title || item.name, seriesName: item.seriesName, seriesId: item.seriesId, type: item.type, runtimeTicks: item.runtimeTicks };
+    if (item) live = { ...live, title: live.title || item.name, seriesName: item.seriesName, seriesId: item.seriesId, type: item.type ?? 'Unknown', runtimeTicks: item.runtimeTicks };
   }
   const prev = live.updatedAt;
   live = { ...live, positionTicks: ticks, isPaused: b.isPaused, updatedAt: Date.now() };
@@ -245,6 +245,15 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     }).parse(req.query);
     const r = await ctx.jf.items(req.jfUser!, { types: q.type, genre: q.genre, sort: 'Random', limit: 1, filter: q.unplayed === 'true' ? 'unplayed' : undefined });
     return r.items[0] ? { item: r.items[0] } : reply.code(404).send({ error: 'nothing_found' });
+  }));
+
+  // device hand-off: what this profile last played on another device (selection and answer: handoff.ts)
+  app.get('/api/handoff', { ...pre, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, wrap(async (req, reply) => {
+    const q = z.object({ item: itemId.optional() }).parse(req.query);
+    const deviceId = req.session!.deviceId;
+    reply.header('Cache-Control', 'no-store');
+    if (!deviceId) return { handoff: null };
+    return { handoff: await selectHandoff(ctx, { userId: req.user!.id, profileId: req.profile!.id, deviceId, jfUser: req.jfUser! }, q.item) };
   }));
 
   app.get('/api/library/resume', pre, wrap(async (req) => ({ items: await resumeItems(ctx, req.jfUser!, req.profile!.id) })));
