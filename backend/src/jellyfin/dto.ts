@@ -84,6 +84,7 @@ export function sourceFacts(src: Record<string, any>, audioIndex?: number): Sour
   return {
     videoCodec: String(v?.Codec ?? '').toLowerCase(), videoBitrate: num(v?.BitRate), height: Number(v?.Height ?? 0), width: Number(v?.Width ?? 0), range,
     ...(typeof v?.Profile === 'string' && v.Profile ? { profile: v.Profile } : {}),
+    ...(num(v?.Level) ? { level: num(v?.Level) } : {}),
     ...(a ? { audio: { codec: String(a.Codec ?? '').toLowerCase(), channels: Number(a.Channels ?? 0), ...(num(a.BitRate) ? { bitrate: num(a.BitRate) } : {}) } } : {}),
   };
 }
@@ -174,8 +175,8 @@ export function toPlaybackDto(args: {
   if (cast) {
     // keep Jellyfin from stream-copying a source the Default Media Receiver cannot decode (H.264 > level 4.1, 10 bit)
     // (qualified for H.264 when the plan may carry HEVC: an unqualified Level 41 would refuse copying every HEVC source)
-    if (plan.videoCodecs.includes('hevc')) { hls.set('h264-level', '41'); hls.set('h264-videobitdepth', '8'); } else { hls.set('Level', '41'); hls.set('MaxVideoBitDepth', '8'); }
-    hls.set('RequireAvc', 'true');
+    // and RequireAvc stays out of such a plan: Jellyfin would refuse to copy a source that is not AVC (every HEVC one)
+    if (plan.videoCodecs.includes('hevc') || plan.segment === 'mp4') { hls.set('h264-level', '41'); hls.set('h264-videobitdepth', '8'); } else { hls.set('Level', '41'); hls.set('MaxVideoBitDepth', '8'); hls.set('RequireAvc', 'true'); }
     // no `#EXT-X-IMAGE-STREAM-INF` trickplay line (Jellyfin 10.9+, Roku-style image playlist): AirPlay receivers (LG webOS) reject
     // the whole master on it (MEDIA_ERR_SRC_NOT_SUPPORTED, no variant fetched); the gateway strips it too (defence in depth)
     hls.set('EnableTrickplay', 'false');

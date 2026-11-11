@@ -11,6 +11,7 @@ ausliefert, bekommt der Fernseher die Funktionen der Streaming-Apps:
 - **Fortschritt und „gesehen“, während das Handy schläft:** der Fernseher meldet Start, Fortschritt und Stopp selbst.
 - **Dein Untertitel-Stil** (Größe, Farbe, Hintergrund, Schrift aus *Konto → Wiedergabe → Untertitel*) auf dem Fernseher.
 - **Intro überspringen / Rückblick überspringen** am Fernseher wie am Handy.
+- **HEVC und Dolby-Raumklang**, wenn der Fernseher (und der AV-Receiver dahinter) sie bestätigt: Der Empfänger fragt den Fernseher, was er abspielt, und der Stream wird genau dafür geplant (siehe unten). Andere Fernseher, der Default Media Receiver und AirPlay bekommen weiter H.264 in Stereo.
 - Das FriendFlix-Aussehen (Koralle, dunkel), aus 3 m lesbar, reduzierte Bewegung wird beachtet (keine Karten-Animation).
 
 Für AirPlay ändert sich nichts, und für Chromecast nichts, solange `CAST_RECEIVER_APP_ID` leer ist.
@@ -50,6 +51,7 @@ Zurück geht es mit einem leeren Feld: die nächste Übertragung nutzt wieder de
 | Fortschritt / gesehen bei schlafendem Handy | fehlt, bis das Handy aufwacht | meldet der Fernseher |
 | Untertitel-Stil | Standard des Fernsehers | dein Stil |
 | Intro / Rückblick überspringen | nur am Handy | Fernseher und Handy |
+| HEVC und Dolby-Raumklang | nein (H.264, AAC Stereo) | wenn Fernseher / AV-Receiver es bestätigen (fMP4) |
 
 Grenzen: der Fernseher spielt nur, was das Handy eingereiht hat. Schläft das Handy, geht der Fernseher **eine** Folge weiter (die,
 die eingereiht wurde, als das Handy wach war); die übernächste wird eingereiht, sobald das Handy wieder aufwacht. Wird *Noch da?*
@@ -69,6 +71,25 @@ Handy aus starten.
   Backend verarbeitet das mit derselben Logik wie `/api/playback/*`, für Konto, Profil und Gerät des Tokens.
 - Sicherheit: siehe [security.md, „Cast receiver“](../security.md#cast-receiver) (englisch).
 
+## HEVC und Dolby-Raumklang
+
+- **Der Empfänger meldet nur, was der Fernseher bestätigt hat.** `context.canDisplayType` wird für `hvc1` Main und Main 10 (Level 4.1,
+  1920×1080) sowie für Dolby Digital Plus (`ec-3`) und Dolby Digital (`ac-3`) gefragt; das Framework antwortet für Display und
+  HDMI-Senke (den AV-Receiver). Nur ein glattes `true` zählt: unbekannt, ein Fehler oder ein Framework ohne `canDisplayType` heißt
+  „nein“. Main 10 zählt nur zusammen mit Main. Gesendet wird `{ t: 'caps', v: 1, hevc, hevc10, surround: ['eac3', 'ac3'] }` auf dem
+  privaten Kanal, wenn ein Absender sich verbindet und immer, wenn er mit `{ t: 'caps?' }` fragt (jedes Mal neu geprüft: die
+  HDMI-Senke kann wechseln).
+- **Der Absender hängt es an die Cast-Anfrage** (`caps`), nur für den eigenen Empfänger, nachdem er bei einer neuen Sitzung bis zu
+  2 s auf die Antwort gewartet hat; ohne Antwort behauptet er nichts. Der Server plant den Stream wie für den Player (HEVC-SDR neu
+  verpackt, Dolby durchgereicht oder in Dolby Digital Plus / Dolby Digital umgewandelt, fMP4-Segmente, `hlsSegmentFormat` und
+  `hlsVideoSegmentFormat` `fmp4`; die HEVC-Umwandlung für Zuschauer unterwegs nur mit dem bewährten Encoder des Servers und freiem
+  Platz). Einzelheiten und Tabelle: [cast.md](../cast.md#hevc-und-raumklang-mit-dem-eigenen-empfänger).
+- **Nur mit Jellyfin:** mit Plex bleibt der Cast H.264 in Stereo.
+- **Nichts bestätigt, nichts ändert sich:** Cast-URL und Antwort sind genau die des Default Media Receivers.
+- **Lehnt der Fernseher so einen Stream ab** (Laden schlägt fehl oder er meldet gleich am Anfang einen Fehler), startet das Handy
+  denselben Titel noch einmal ohne HEVC / Raumklang und merkt sich das für den Namen dieses Fernsehers 30 Tage (`ff-cast-avoid`, im
+  Browser).
+
 ## Auf echter Hardware prüfen
 
 CI testet den Sender gegen ein nachgebautes Cast-SDK und die Empfängerseite gegen ein nachgebautes Empfänger-Framework. Nur ein
@@ -77,6 +98,10 @@ echtes Gerät zeigt:
 - Der Empfänger startet (registriertes Testgerät, App-ID), die CSP der Seite erlaubt alles, was Googles Framework lädt (die
   Player-Bibliotheken unter `https://www.gstatic.com/cast/sdk/libs/`; lädt ein Gerät eine von einem anderen Google-Pfad, nur genau
   diesen in `web/src/lib/cast/receiverPage.ts` ergänzen).
+- Was `canDisplayType` am Chromecast mit Google TV und am AV-Receiver dahinter antwortet (`hvc1.1.6.L123.B0` und `hvc1.2.4.L123.B0`
+  bei 1920×1080, `ec-3`, `ac-3`), bei ein- und ausgeschaltetem AV-Receiver, und ob das Framework fMP4-HLS mit HEVC und Dolby
+  Digital Plus abspielt: *Wrenfield Pier* (HEVC mit Dolby-Digital-Plus-5.1-Spur) soll am AV-Receiver Dolby Digital Plus zeigen, das
+  Bild ohne Neukodierung; ein Fernseher, der HEVC ablehnt, führt zu einer neuen Übertragung ohne HEVC.
 - HLS/TS-Wiedergabe über das Framework mit dem eigenen `<video>`-Element der Seite; Untertitel erscheinen im gewählten Stil.
 - *Nächste Folge* am Ende des Countdowns schaltet die Warteschlange weiter (`QUEUE_UPDATE`-Sprung); sonst spielt der Ersatzweg bis
   zum Ende.

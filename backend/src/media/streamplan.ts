@@ -27,7 +27,7 @@ export type AudioOut = 'copy' | 'stereo' | 'surround';
 export type PlanWhy = 'hevc_device' | 'hevc_upload' | 'h264_device' | 'h264_home' | 'h264_hdr' | 'h264_off' | 'h264_unproven' | 'h264_unhealthy' | 'h264_busy'
   | 'surround_device' | 'stereo_device' | 'stereo_bitrate' | 'stereo_off' | 'stereo_source';
 export type HevcGate = { ok: true } | { ok: false; why: 'h264_off' | 'h264_unproven' | 'h264_unhealthy' | 'h264_busy' };
-export interface SourceFacts { videoCodec: string; videoBitrate?: number; height: number; /** absent = not checked; 0 = unknown (the server refuses a copy then) */ width?: number; range: string; profile?: string; audio?: { codec: string; channels: number; bitrate?: number } }
+export interface SourceFacts { videoCodec: string; videoBitrate?: number; height: number; /** absent = not checked; 0 = unknown (the server refuses a copy then) */ width?: number; range: string; profile?: string; /** the source's codec level as Jellyfin states it (HEVC: 30 x level, so 4.1 = 123); absent = unknown */ level?: number; audio?: { codec: string; channels: number; bitrate?: number } }
 export interface PlanInput { caps: ClientCaps | null; cast: boolean; remote: boolean; maxBitrate: number; boxHeight: number; src: SourceFacts; surroundOn: boolean; hevcStreams: number }
 export interface StreamDelivery { video: VideoOut; videoCodec: 'h264' | 'hevc'; audio: AudioOut; audioCodec: string; channels: number; why: PlanWhy[] }
 export interface StreamPlan {
@@ -41,6 +41,8 @@ export interface StreamPlan {
 export const SURROUND_MIN_BPS = 4_000_000;
 export const SURROUND_BUDGET = { eac3: 640_000, ac3: 640_000, aac: 384_000 } as const;
 export const AUDIO_BITRATE = 192_000;
+/** HEVC Level 4.1 in Jellyfin's numbers (30 x level): what the cast receiver is probed for */
+export const HEVC_CAST_LEVEL = 123;
 export const MIN_VIDEO_BITRATE = 300_000;
 const SURROUND_ORDER = ['eac3', 'ac3', 'aac'] as const;
 
@@ -122,7 +124,9 @@ export function planStream(i: PlanInput): StreamPlan {
   const heightOk = widthOk && i.src.height > 0 && i.src.height <= i.boxHeight && (!entry?.maxHeight || i.src.height <= entry.maxHeight);
   const exceeds = i.src.videoBitrate !== undefined && i.src.videoBitrate > budget;
   const fits = i.src.videoBitrate !== undefined && !exceeds;
-  const copyVideo = codecOk && profileOk && rangeOk && heightOk && fits;
+  // a cast plan is capped at the HEVC level the receiver was probed for (hevc-level below): a source above it is not copied (unknown level: no prediction)
+  const levelOk = !i.cast || srcCodec !== 'hevc' || i.src.level === undefined || i.src.level <= HEVC_CAST_LEVEL;
+  const copyVideo = codecOk && profileOk && rangeOk && heightOk && fits && levelOk;
   const wantsHevcEncode = hevcOk && i.remote && i.hevcStreams > 0 && !copyVideo && exceeds && i.src.range === 'SDR';
 
   const videoCodecs: StreamPlan['videoCodecs'] = hevcOk && (srcCodec === 'hevc' || wantsHevcEncode) ? ['h264', 'hevc'] : ['h264'];
@@ -132,6 +136,8 @@ export function planStream(i: PlanInput): StreamPlan {
     codecParams['hevc-codectag'] = (tags.length ? tags : ['hvc1']).join(',');
     codecParams['hevc-profile'] = profiles.join(',');
     codecParams['hevc-rangetype'] = jellyfinRanges(ranges);
+    // the cast receiver was probed for HEVC Level 4.1 (web/static/cast-receiver/logic.js): a source tagged higher is not copied to it (Jellyfin level = 30 x level)
+    if (i.cast) codecParams['hevc-level'] = String(HEVC_CAST_LEVEL);
   }
 
   let video: VideoOut = 'h264';

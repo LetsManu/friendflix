@@ -336,6 +336,22 @@ describe('sanitizePlaylist', () => {
       '/media/c/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB/x.ts', '../../../../x.ts', 'data:text/plain,x', 'javascript:alert(1)',
     ]) expect(sp(bad), bad).toBeNull();
   });
+  it('fMP4 (HEVC / surround casts): the init segment and the .mp4 segments inside the token path are kept, one pointing outside is refused', () => {
+    const fmp4 = '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-MAP:URI="hls1/main/-1.mp4?api_key=X&a=1"\n#EXTINF:3,\nhls1/main/0.mp4?api_key=X&a=1\n#EXTINF:3,\nhls1/main/1.mp4\n';
+    expect(sp(fmp4)).toBe('#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-MAP:URI="hls1/main/-1.mp4?a=1"\n#EXTINF:3,\nhls1/main/0.mp4?a=1\n#EXTINF:3,\nhls1/main/1.mp4\n');
+    expect(sp('#EXT-X-MAP:URI="-1.mp4"')).toBe('#EXT-X-MAP:URI="-1.mp4"'); // relative to the playlist, so still inside /media/c/<token>/Videos/<id>/hls1/main/
+    expect(sp(`#EXT-X-MAP:URI="/media/c/${T}/Videos/${ID}/hls1/main/-1.mp4"`)).toBeTruthy();
+    for (const bad of ['#EXT-X-MAP:URI="../../../../x/-1.mp4"', '#EXT-X-MAP:URI="/Videos/a/hls1/main/-1.mp4"', '#EXT-X-MAP:URI="https://evil.example/-1.mp4"',
+      '#EXT-X-MAP:URI="-1.mp4"\n#EXTINF:3,\n//evil.example/0.mp4', '#EXTM3U\n#EXT-X-MAP:URI="hls1/main/-1.mp4"\n#EXTINF:3,\n/media/c/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB/0.mp4']) expect(sp(bad), bad).toBeNull();
+  });
+  it('the fMP4 init and segment paths pass the cast allowlist (hls1/<id>/-1.mp4, 0.mp4), the whole-file stream does not', () => {
+    for (const ok of [`/Videos/${ID}/hls1/main/-1.mp4`, `/Videos/${ID}/hls1/main/0.mp4`, `/Videos/${ID}/hls1/main/12.mp4`]) expect(normalizeCastPath(ok), ok).toBeTruthy();
+    for (const no of [`/Videos/${ID}/stream.mp4`, `/Videos/${ID}/hls1/main/../../stream`]) expect(normalizeCastPath(no), no).toBeNull();
+  });
+  it('a master for an HEVC / Dolby cast keeps its CODECS (hvc1, ec-3) and loses VIDEO-RANGE like any cast master', () => {
+    const master = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=3640000,AVERAGE-BANDWIDTH=3640000,VIDEO-RANGE=SDR,CODECS="hvc1.1.6.L123.B0,ec-3",RESOLUTION=1920x1080,FRAME-RATE=23.976\nmain.m3u8?MediaSourceId=x&api_key=LEAK';
+    expect(sanitizePlaylist(master, `/media/c/${T}/Videos/${ID}/master.m3u8`)).toBe('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=3640000,AVERAGE-BANDWIDTH=3640000,CODECS="hvc1.1.6.L123.B0,ec-3",RESOLUTION=1920x1080,FRAME-RATE=23.976\nmain.m3u8?MediaSourceId=x');
+  });
   it('rejects a request path that is not a cast path', () => {
     expect(sanitizePlaylist('x.ts', '/media/Videos/a/main.m3u8')).toBeNull();
   });

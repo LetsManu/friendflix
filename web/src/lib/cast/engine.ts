@@ -42,7 +42,7 @@
  */
 import { get, writable, type Readable, type Writable } from 'svelte/store';
 import { api, cachedItem, secToTicks, ticksToSec, type Item, type ItemDetail } from '#lib/api';
-import { castActiveSubtitle, castAdoptTracks, castBody, castCustomReceiver, castLeave, castPlayPause, castQueueNext, castQueueRemove, castSeek, castSendMessage, castSetSubtitle, castState, castStop, loadOnCast, onCastEvent, onReceiverMessage, queueOnCast, requestCastSession, whenCastReady, type CastEvent, type CastInfo, type CastState } from '#lib/cast';
+import { castActiveSubtitle, castAdoptTracks, castBody, castCapsReady, castCustomReceiver, castFellBack, castLeave, castPlayPause, castQueueNext, castQueueRemove, castSeek, castSendMessage, castSetSubtitle, castState, castStop, loadOnCast, onCastEvent, onReceiverMessage, queueOnCast, requestCastSession, whenCastReady, type CastEvent, type CastInfo, type CastState } from '#lib/cast';
 import { segmentShown, serverCaps } from '#lib/capabilities';
 import { tr } from '#lib/i18n';
 import { createAirPlay, type AirPlayController, type AirPlayDeps, type AirPlayState } from '#lib/player/airplay';
@@ -121,7 +121,7 @@ export interface CastEngine {
 }
 export type CastFns = Pick<typeof import('#lib/cast'), 'castState' | 'onCastEvent' | 'loadOnCast' | 'castPlayPause' | 'castSeek' | 'castStop' | 'castSetSubtitle' | 'queueOnCast' | 'castQueueRemove' | 'castQueueNext' | 'castAdoptTracks'>
   /** FriendFlix's own receiver (absent = Default Media Receiver behaviour) */
-  & Partial<Pick<typeof import('#lib/cast'), 'castCustomReceiver' | 'castBody' | 'castSendMessage' | 'onReceiverMessage'>>
+  & Partial<Pick<typeof import('#lib/cast'), 'castCustomReceiver' | 'castBody' | 'castCapsReady' | 'castFellBack' | 'castSendMessage' | 'onReceiverMessage'>>
   /** the subtitle the receiver shows (a re-adopted cast keeps it for its renewals; absent: none) */
   & Partial<Pick<typeof import('#lib/cast'), 'castActiveSubtitle'>>;
 export interface EngineDeps {
@@ -175,6 +175,8 @@ export const DETACHED_AFTER_MS = 5_000;
 export const UNPINNED_RETRY_MS = 60_000;
 /** a stall on the TV longer than this is logged (and its recovery) */
 export const STALL_LOG_MS = 2_000;
+/** an ERROR of the own receiver within this many seconds of the start of a stream with HEVC / surround counts as that feature failing (later it is the network) */
+export const EARLY_ERROR_S = 30;
 
 /** the Web Lock of the tab that owns the Chromecast cast (one owner per browser) */
 export const CAST_LOCK = 'ff-cast-engine';
@@ -263,6 +265,8 @@ interface Live {
   foreignAt?: number;
   /** the receiver's queued item whose lookup failed after a resume (probably ours): revoked on Stop / session end */
   orphanNext?: string;
+  /** the next token request is the one automatic fallback after the receiver failed a HEVC / surround stream (what failed, its play session) */
+  fallback?: { kind: 'hevc' | 'surround' | 'both'; prevPs: string };
 }
 
 /** a cast token's subtitles as remote tracks (without their URLs) */
@@ -312,8 +316,24 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   const { api: call, cast, timers } = deps;
   /** FriendFlix's own receiver is the Chromecast app (never AirPlay) */
   const custom = (s: Live) => !s.air && Boolean(cast.castCustomReceiver?.());
-  /** a Chromecast token request body (the own receiver also gets its report token) */
-  const castReq = (b: Record<string, unknown>) => (cast.castBody ? cast.castBody(b) : b);
+  /**
+   * A Chromecast token request body (the own receiver also gets its report token and what it confirmed it plays). The own receiver
+   * is given a moment to state its caps first (`castCapsReady`: at once when they are known or it is not FriendFlix's receiver).
+   */
+  const castReq = async (b: Record<string, unknown>) => {
+    await cast.castCapsReady?.();
+    return cast.castBody ? cast.castBody(b) : b;
+  };
+  /**
+   * Own receiver: the TV refused a stream that carried HEVC / surround (or failed it at the start). What it carried is remembered per
+   * device name (cast.ts castFellBack, 30 days) and the answer says what to ask for once more: the same title without it. Nothing
+   * is left to give up in that second stream, so this never repeats. null: nothing special was in it, or not the own receiver.
+   */
+  const fellBack = (s: Live, c: CastInfo): { kind: 'hevc' | 'surround' | 'both'; prevPs: string } | null => {
+    if (s.air || !custom(s)) return null;
+    const kind = cast.castFellBack?.(c) ?? null;
+    return kind ? { kind, prevPs: c.playSessionId } : null;
+  };
   /** own receiver: what its TV UI needs for the playing token (segments, the queued next episode and how it may start) */
   const tvSync = (s: Live) => {
     if (cur !== s || !s.ci || !custom(s)) return;
@@ -599,7 +619,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       if (!it || stale() || unwanted(it.id)) return;
       let ci: CastInfo;
       try {
-        ci = await call<CastInfo>('/api/cast/session', { method: 'POST', body: castReq({ itemId: it.id, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, next: true, after: s.ci!.castId }) });
+        ci = await call<CastInfo>('/api/cast/session', { method: 'POST', body: await castReq({ itemId: it.id, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, next: true, after: s.ci!.castId }) });
       } catch (e) {
         const why = errText(e);
         log('warn', 'queue', `queue refused · ${why}`);
@@ -676,6 +696,17 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         void swap(s, q.it.id, undefined, true, Boolean(q.ask));
       }, ADVANCE_WAIT_MS);
       return;
+    }
+    if (e === 'media-end' && why === 'ERROR' && !finished && s.ci && !s.busy && s.view.position <= s.ci.startTime + EARLY_ERROR_S) {
+      // own receiver: an error right at the start of a stream with HEVC / surround is that feature failing: once more without it, here
+      const again = fellBack(s, s.ci);
+      if (again) {
+        log('warn', 'receiver', `the receiver failed the ${again.kind === 'both' ? 'HEVC / surround' : again.kind} stream · asking again without`);
+        deps.toast('info', tr('player.switchingCompatible'));
+        s.fallback = again;
+        void swap(s, s.view.itemId, s.view.position, false);
+        return;
+      }
     }
     if (e === 'session-end' || (e === 'media-end' && s.ci && !s.busy && !finished)) {
       const ci = s.ci, stopped = stopReport(s);
@@ -959,6 +990,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     s.stallAt = undefined; s.stallLogged = false; s.loadAt = undefined; s.foreignAt = undefined;
     if (fresh) { s.segs = []; s.noAuto = undefined; }
     const old = s.ci;
+    const fb = s.fallback;
+    s.fallback = undefined;
     void stopReport(s);
     const stopped = s.stopping; // also a stop an earlier, superseded switch still waits for
     s.ci = null; s.busy = true; s.retry = null; s.lastPaused = null; s.hold = hold;
@@ -977,7 +1010,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     try {
       ci = await call<CastInfo>('/api/cast/session', {
         method: 'POST',
-        body: castReq({ itemId, startTicks: startAt === undefined ? undefined : secToTicks(startAt), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate }),
+        body: await castReq({ itemId, startTicks: startAt === undefined ? undefined : secToTicks(startAt), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, ...(fb ? { fellBack: fb.kind, prevPs: fb.prevPs } : {}) }),
       });
     } catch (e) {
       if (my !== seq) return;
@@ -1001,9 +1034,17 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (my !== seq) return; // a newer switch revokes `ci`, a session end already did
     s.busy = false;
     if (!ok) {
+      const again = fellBack(s, ci);
       s.ci = null;
       revoke(ci);
       dropHint(s);
+      if (again) {
+        // the one automatic fallback: the same title and position once more, without what the TV could not play
+        log('warn', 'load', `the receiver could not load the ${again.kind === 'both' ? 'HEVC / surround' : again.kind} stream · asking again without`);
+        deps.toast('info', tr('player.switchingCompatible'));
+        s.fallback = again;
+        return swap(s, itemId, startAt ?? ci.startTime, false, hold);
+      }
       log('error', 'load', 'the receiver could not load the title');
       deps.toast('error', tr('player.castBar.failed', { title: s.view.title, device: s.view.device }));
       patch(s, { state: 'failed', buffering: false });
@@ -1447,7 +1488,7 @@ export function castLock(locks: Pick<LockManager, 'request'> | undefined, ifAvai
 const browserDeps: EngineDeps = {
   api,
   item: async (id) => cachedItem(id) ?? (await api<ItemDetail>(`/api/items/${id}`)).item,
-  cast: { castState, onCastEvent, loadOnCast, castPlayPause, castSeek, castStop, castSetSubtitle, queueOnCast, castQueueRemove, castQueueNext, castAdoptTracks, castActiveSubtitle, castCustomReceiver, castBody, castSendMessage, onReceiverMessage },
+  cast: { castState, onCastEvent, loadOnCast, castPlayPause, castSeek, castStop, castSetSubtitle, queueOnCast, castQueueRemove, castQueueNext, castAdoptTracks, castActiveSubtitle, castCustomReceiver, castBody, castCapsReady, castFellBack, castSendMessage, onReceiverMessage },
   async segments(id) {
     const caps = get(serverCaps);
     if (!caps.segments.length) return [];

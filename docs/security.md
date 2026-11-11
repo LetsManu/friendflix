@@ -324,6 +324,11 @@ no FriendFlix session and must never get one. It is a static page (`/cast-receiv
 media-server credential. The receiver never asks the server for a title on its own: the sender's queue and the `next: true` token
 gate (`castPredecessor`, the `povl:` overlap window, `DRAIN_MS`) stay the only way a next episode reaches the TV.
 
+**What the receiver claims.** The `caps` (HEVC, Dolby) the sender passes with a cast request are claims of the TV, checked strictly
+(`receiverCaps`: booleans and `eac3` / `ac3` only, anything else ignored) and honoured only for a `receiver: true` Chromecast
+request while `CAST_RECEIVER_APP_ID` is set, on Jellyfin (Plex casts stay H.264 stereo). They can only widen the codec lists of the stream plan; the role's limits, the stream
+limit, the HEVC gate and the "never claim before a probe" rule are unchanged (a queued next episode is never an HEVC conversion: the gate is not asked and answers `h264_busy`), and the answer's `delivery` holds fixed codes only.
+
 **Report token design** (`backend/src/cast.ts`, `castReportToken` / `verifyCastReport`).
 - `base64url(claims) "." base64url(HMAC-SHA256(k, claims))`, `k = HMAC(APP_ENC_KEY, "friendflix cast report v1")` (a key of its own;
   the subtitle URLs use another derivation). Claims: account, profile, sender device, castId, item, media source, play session,

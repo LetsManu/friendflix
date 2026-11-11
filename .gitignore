@@ -34,3 +34,4 @@ e2e/playwright-report/
 /webos/probe/setup-core.js
 /webos/node_modules
 /tizen/probe/setup.js
+.vitest/

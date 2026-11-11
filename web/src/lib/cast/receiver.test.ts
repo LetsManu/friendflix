@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { creditsStart as playerCredits } from '#lib/player/nextup';
 import { CAST_NS } from '#lib/cast';
 import {
-  COUNTDOWN_SECONDS, DEFAULT_STRINGS, NS, PROGRESS_MS, activeSkip, createReporter, creditsStart, initialState, parseMessage, step, textTrackStyle, view,
+  CAPS_PROBES, COUNTDOWN_SECONDS, DEFAULT_STRINGS, NS, PROGRESS_MS, activeSkip, buildCaps, createReporter, creditsStart, initialState, parseMessage, probeCaps, step, textTrackStyle, view,
 } from '../../../static/cast-receiver/logic.js';
 import { CAF_URL, RECEIVER_CSP, receiverHtml } from './receiverPage';
 import { GET, trailingSlash } from '../../routes/cast-receiver/+server';
@@ -37,6 +37,48 @@ describe('receiver: messages from the sender', () => {
     expect(m).toMatchObject({ t: 'ui', strings: { next: 'Nächste Folge', startsIn: ['in 1', 'in 2'], stillTitle: DEFAULT_STRINGS.stillTitle, skip: { intro: 'Intro überspringen', recap: 'Skip recap' } },
       sub: { size: 'xl', color: 'white', background: 'solid', font: 'mono' }, countdown: COUNTDOWN_SECONDS });
     expect(parseMessage({ t: 'ui', countdown: 5 })).toMatchObject({ countdown: 5, strings: DEFAULT_STRINGS });
+  });
+});
+
+describe('receiver: what it claims (HEVC, Dolby) and when', () => {
+  it('a caps request from the sender is accepted in its exact shape (the sender asks, the receiver answers)', () => {
+    expect(parseMessage({ t: 'caps?' })).toEqual({ t: 'caps?' });
+    expect(parseMessage(JSON.stringify({ t: 'caps?' }))).toEqual({ t: 'caps?' });
+    expect(parseMessage({ t: 'caps?', hevc: true, evil: 1 })).toEqual({ t: 'caps?' }); // nothing from the sender is taken over
+    expect(parseMessage({ t: 'caps' })).toBeNull(); // the answer is ours to send, never to receive
+  });
+
+  it('buildCaps: a claim only for what the probe answered with a plain true; the message is versioned', () => {
+    expect(buildCaps({ hevc: true, hevc10: true, eac3: true, ac3: true })).toEqual({ t: 'caps', v: 1, hevc: true, hevc10: true, surround: ['eac3', 'ac3'] });
+    expect(buildCaps({ hevc: true, hevc10: false, eac3: false, ac3: true })).toEqual({ t: 'caps', v: 1, hevc: true, hevc10: false, surround: ['ac3'] });
+    expect(buildCaps({ hevc: false, hevc10: false, eac3: true, ac3: false })).toEqual({ t: 'caps', v: 1, hevc: false, hevc10: false, surround: ['eac3'] });
+    expect(buildCaps({ hevc: false, hevc10: false, eac3: false, ac3: false })).toEqual({ t: 'caps', v: 1, hevc: false, hevc10: false, surround: [] });
+  });
+
+  it('buildCaps: Main 10 only counts together with Main; unknown, missing or not-boolean answers are "no"', () => {
+    expect(buildCaps({ hevc: false, hevc10: true, eac3: false, ac3: false })).toMatchObject({ hevc: false, hevc10: false });
+    expect(buildCaps({} as never)).toEqual({ t: 'caps', v: 1, hevc: false, hevc10: false, surround: [] });
+    expect(buildCaps({ hevc: 'yes', hevc10: 1, eac3: 'true', ac3: {} } as never)).toEqual({ t: 'caps', v: 1, hevc: false, hevc10: false, surround: [] });
+    expect(buildCaps(null as never)).toEqual({ t: 'caps', v: 1, hevc: false, hevc10: false, surround: [] });
+  });
+
+  it('probeCaps asks canDisplayType for hvc1 Main and Main 10 at 1920x1080 and for ec-3 / ac-3, and trusts only a true answer', () => {
+    const asked: unknown[][] = [];
+    const yes = (...a: unknown[]) => { asked.push(a); return true; };
+    expect(probeCaps(yes)).toEqual({ hevc: true, hevc10: true, eac3: true, ac3: true });
+    expect(asked).toEqual([CAPS_PROBES.hevc, CAPS_PROBES.hevc10, CAPS_PROBES.eac3, CAPS_PROBES.ac3]);
+    expect(CAPS_PROBES.hevc).toEqual(['video/mp4', 'hvc1.1.6.L123.B0', 1920, 1080, 30]);
+    expect(CAPS_PROBES.hevc10).toEqual(['video/mp4', 'hvc1.2.4.L123.B0', 1920, 1080, 30]);
+    expect(CAPS_PROBES.eac3).toEqual(['audio/mp4', 'ec-3']);
+    expect(CAPS_PROBES.ac3).toEqual(['audio/mp4', 'ac-3']);
+    // only the Dolby Digital probe passes (an AVR without Plus): surround is ac3 alone, the picture stays H.264
+    expect(buildCaps(probeCaps((_m: string, c: string) => c === 'ac-3'))).toMatchObject({ hevc: false, hevc10: false, surround: ['ac3'] });
+    // "maybe", undefined, a string, a throw (no such API on this firmware): no claim
+    expect(probeCaps(() => 'maybe' as never)).toEqual({ hevc: false, hevc10: false, eac3: false, ac3: false });
+    expect(probeCaps(() => undefined as never)).toEqual({ hevc: false, hevc10: false, eac3: false, ac3: false });
+    expect(probeCaps(() => { throw new Error('no canDisplayType'); })).toEqual({ hevc: false, hevc10: false, eac3: false, ac3: false });
+    // a failing probe never stops the others
+    expect(probeCaps((m: string, c: string) => { if (c.startsWith('hvc1.1')) throw new Error('x'); return c === 'ec-3'; })).toEqual({ hevc: false, hevc10: false, eac3: true, ac3: false });
   });
 });
 

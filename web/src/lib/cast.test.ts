@@ -444,11 +444,11 @@ describe('own receiver (CAST_RECEIVER_APP_ID)', () => {
     const media = sdk.session.loadMedia.mock.calls[0]![0].args[0];
     expect(media.customData).toEqual({ ff: { castId: info.castId } });
     expect(JSON.stringify(media)).not.toContain(info.report!); // never in metadata other senders can read
-    expect(ch.sent).toEqual([[C.CAST_NS, { t: 'tok', castId: info.castId, rt: info.report }]]);
+    expect(ch.sent).toEqual([[C.CAST_NS, { t: 'caps?' }], [C.CAST_NS, { t: 'tok', castId: info.castId, rt: info.report }]]); // the session start asks for the caps
     // a queued one gets its token too; autoplay false (waits for "still watching?")
     expect(await C.queueOnCast({ ...info, castId: 'd'.repeat(32), contentUrl: 'https://p/n.m3u8' }, false)).toBe(100);
     expect(sdk.mediaSession.queueInsertItems.mock.calls[0]![0].args[0][0]).toMatchObject({ autoplay: false });
-    expect(ch.sent).toHaveLength(2);
+    expect(ch.sent).toHaveLength(3);
     // receiver messages reach the listeners (bad JSON / shapes are dropped)
     const got: unknown[] = [];
     const off = C.onReceiverMessage((m) => got.push(m));
@@ -462,6 +462,181 @@ describe('own receiver (CAST_RECEIVER_APP_ID)', () => {
     appId = 'nothex!!';
     const sdk = await connectSdk();
     expect(sdk.context.setOptions.mock.calls[0]![0]).toMatchObject({ receiverApplicationId: 'CC1AD845' });
+  });
+});
+
+describe('own receiver: what it confirms it plays (HEVC, Dolby)', () => {
+  const info: CastInfo = {
+    castId: 'c'.repeat(32), expiresAt: 0, playSessionId: 'ps-wren-1', mediaSourceId: 'ms', startTime: 0,
+    contentUrl: 'https://p/media/c/TOKEN/Videos/x/master.m3u8', contentType: 'application/x-mpegURL', hlsSegmentFormat: 'ts', title: 'Wrenfield Pier', subtitles: [],
+  };
+  const wren: NonNullable<CastInfo['delivery']> = { video: 'copy', videoCodec: 'hevc', audio: 'copy', audioCodec: 'eac3', channels: 6, why: ['hevc_device', 'surround_device'] };
+  const CAPS = { t: 'caps', v: 1, hevc: true, hevc10: false, surround: ['eac3', 'ac3'] };
+  let storage: Map<string, string>;
+  beforeEach(() => {
+    storage = new Map();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => storage.get(k) ?? null, setItem: (k: string, v: string) => void storage.set(k, v), removeItem: (k: string) => void storage.delete(k) });
+  });
+  /** a NEW session object (every session of the real SDK is one) with the custom channel; the receiver's messages go to `rx` */
+  const withChannel = (sdk: ReturnType<typeof fakeSdk>, device = 'Living Room TV') => {
+    const sent: Array<Record<string, unknown>> = [];
+    let onMsg: ((ns: string, m: string) => void) | null = null;
+    const sess = Object.assign(Object.create(sdk.session) as typeof sdk.session, {
+      getCastDevice: () => ({ friendlyName: device }),
+      sendMessage: vi.fn(async (_ns: string, m: Record<string, unknown>) => { sent.push(m); }),
+      addMessageListener: vi.fn((_ns: string, fn: (ns: string, m: string) => void) => { onMsg = fn; }),
+    });
+    sdk.context.current = sess;
+    return { sent, rx: (m: unknown) => onMsg?.(C.CAST_NS, typeof m === 'string' ? m : JSON.stringify(m)) };
+  };
+
+  it('asks for the caps when a session starts and sends none before the receiver answered', async () => {
+    appId = 'A1B2C3D4';
+    const sdk = await connectSdk();
+    const ch = withChannel(sdk);
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    expect(ch.sent).toContainEqual({ t: 'caps?' });
+    expect(C.castBody({ itemId: 'x' })).toEqual({ itemId: 'x', receiver: true }); // an unanswered receiver claims nothing
+  });
+
+  it('the cast request carries what the receiver confirmed (HEVC, Dolby), nothing for AirPlay, nothing when it claims nothing', async () => {
+    appId = 'A1B2C3D4';
+    const sdk = await connectSdk();
+    const ch = withChannel(sdk);
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    ch.rx(CAPS);
+    expect(C.castBody({ itemId: 'x' })).toEqual({ itemId: 'x', receiver: true, caps: { hevc: true, hevc10: false, surround: ['eac3', 'ac3'] } });
+    expect(C.castBody({ itemId: 'x', via: 'airplay' })).toEqual({ itemId: 'x', via: 'airplay' });
+    ch.rx({ t: 'caps', v: 1, hevc: false, hevc10: false, surround: [] });
+    expect(C.castBody({ itemId: 'x' })).toEqual({ itemId: 'x', receiver: true });
+    // a malformed or foreign answer is ignored (the last valid one stays), and a caps message is not an engine message
+    const got: unknown[] = [];
+    C.onReceiverMessage((m) => got.push(m));
+    ch.rx({ t: 'caps', v: 2, hevc: true, hevc10: true, surround: ['dts'] });
+    ch.rx('{"t":"caps","v":1,"hevc":"yes"}');
+    expect(C.castBody({ itemId: 'x' })).toEqual({ itemId: 'x', receiver: true });
+    expect(got).toEqual([]);
+  });
+
+  it('a new session starts from nothing (what the last TV confirmed says nothing about the next), also after the session ended', async () => {
+    appId = 'A1B2C3D4';
+    const sdk = await connectSdk();
+    const ch = withChannel(sdk);
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    ch.rx(CAPS);
+    expect(C.castBody({ itemId: 'x' })).toHaveProperty('caps');
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_ENDED' });
+    expect(C.castBody({ itemId: 'x' })).toEqual({ itemId: 'x', receiver: true });
+  });
+
+  it('without the own receiver: no caps, no asking, a caps message from nowhere is never used', async () => {
+    const sdk = await connectSdk();
+    const ch = withChannel(sdk);
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    ch.rx(CAPS);
+    expect(ch.sent).toEqual([]);
+    const b = { itemId: 'x' };
+    expect(C.castBody(b)).toBe(b);
+    await expect(C.castCapsReady()).resolves.toBeUndefined();
+  });
+
+  it('castCapsReady: at once when known, when the receiver answers, and after 2 s at the latest (then not again this session)', async () => {
+    vi.useFakeTimers();
+    try {
+      appId = 'A1B2C3D4';
+      const sdk = await connectSdk();
+      await expect(C.castCapsReady()).resolves.toBeUndefined(); // no session: nothing to wait for
+      const ch = withChannel(sdk);
+      sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+      let done = 0;
+      void C.castCapsReady().then(() => done++);
+      await vi.advanceTimersByTimeAsync(C.CAPS_WAIT_MS - 1);
+      expect(done).toBe(0);
+      ch.rx(CAPS); // answered in time
+      await vi.advanceTimersByTimeAsync(0);
+      expect(done).toBe(1);
+      await expect(C.castCapsReady()).resolves.toBeUndefined();
+      // a receiver that never answers: the request goes out after the wait without caps, the next one does not wait again
+      sdk.fire('sessionstatechanged', { sessionState: 'SESSION_ENDED' });
+      withChannel(sdk);
+      sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+      let late = 0;
+      void C.castCapsReady().then(() => late++);
+      await vi.advanceTimersByTimeAsync(C.CAPS_WAIT_MS + 1);
+      expect(late).toBe(1);
+      expect(C.castBody({ itemId: 'x' })).toEqual({ itemId: 'x', receiver: true });
+      let again = 0;
+      void C.castCapsReady().then(() => again++);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(again).toBe(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('a TV where HEVC / Dolby failed is asked without it (by device name, 30 days), also in the same session', async () => {
+    appId = 'A1B2C3D4';
+    const sdk = await connectSdk();
+    const ch = withChannel(sdk);
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    ch.rx(CAPS);
+    expect(C.castFellBack({ ...info, delivery: { ...wren, audio: 'surround' } })).toBe('both');
+    expect(C.castBody({ itemId: 'x' })).toEqual({ itemId: 'x', receiver: true }); // nothing left to claim: a plain cast
+    expect(JSON.parse(storage.get('ff-cast-avoid')!)).toMatchObject({ 'Living Room TV': { hevc: expect.any(Number), surround: expect.any(Number) } });
+    // the next session on the same TV (the memory, not the session) keeps them out; another TV is not affected
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_ENDED' });
+    const ch2 = withChannel(sdk);
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    ch2.rx(CAPS);
+    expect(C.castBody({ itemId: 'x' })).toEqual({ itemId: 'x', receiver: true });
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_ENDED' });
+    const ch3 = withChannel(sdk, 'Kitchen TV');
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    ch3.rx(CAPS);
+    expect(C.castBody({ itemId: 'x' })).toHaveProperty('caps.hevc', true);
+  });
+
+  it('castFellBack names only what the stream carried; nothing (null) for a plain stream, without delivery or without the own receiver', async () => {
+    appId = 'A1B2C3D4';
+    const sdk = await connectSdk();
+    withChannel(sdk);
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    expect(C.castFellBack({ ...info, delivery: { ...wren, videoCodec: 'h264', channels: 6 } })).toBe('surround');
+    expect(C.castFellBack({ ...info, delivery: { ...wren, channels: 2 } })).toBe('hevc');
+    expect(C.castFellBack({ ...info, delivery: { ...wren, videoCodec: 'h264', channels: 2 } })).toBeNull();
+    expect(C.castFellBack(info)).toBeNull();
+  });
+
+  it('the Default Media Receiver never falls back and never writes the avoid memory', async () => {
+    const sdk = await connectSdk();
+    withChannel(sdk);
+    expect(C.castFellBack({ ...info, delivery: wren })).toBeNull();
+    expect(storage.has('ff-cast-avoid')).toBe(false);
+  });
+
+  it('a HEVC / surround stream is loaded as fMP4 (segment format and video segment format); every other stream stays TS exactly as before', async () => {
+    appId = 'A1B2C3D4';
+    const sdk = await connectSdk();
+    withChannel(sdk);
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    // the fake SDK has no FMP4 constants: the documented literal values are used
+    expect(await C.loadOnCast({ ...info, hlsSegmentFormat: 'fmp4', hlsVideoSegmentFormat: 'fmp4' })).toBe(true);
+    const fmp4 = sdk.session.loadMedia.mock.calls[0]![0].args[0];
+    expect([fmp4.hlsSegmentFormat, fmp4.hlsVideoSegmentFormat]).toEqual(['fmp4', 'fmp4']);
+    expect(await C.loadOnCast(info)).toBe(true);
+    const ts = sdk.session.loadMedia.mock.calls[1]![0].args[0];
+    expect(ts.hlsSegmentFormat).toBe('ts');
+    expect('hlsVideoSegmentFormat' in ts).toBe(false);
+    // a queued episode carries its own format
+    expect(await C.queueOnCast({ ...info, castId: 'd'.repeat(32), contentUrl: 'https://p/n.m3u8', hlsSegmentFormat: 'fmp4' })).toBe(100);
+  });
+
+  it('with the SDK\'s own constants the loaded media uses them', async () => {
+    const sdk = await connectSdk();
+    Object.assign(sdk.chromeCast.media, { HlsSegmentFormat: { TS: 'ts', FMP4: 'FMP4_SDK' }, HlsVideoSegmentFormat: { FMP4: 'VIDEO_FMP4_SDK' } });
+    sdk.context.current = sdk.session;
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    await C.loadOnCast({ ...info, hlsSegmentFormat: 'fmp4' });
+    const m = sdk.session.loadMedia.mock.calls[0]![0].args[0];
+    expect([m.hlsSegmentFormat, m.hlsVideoSegmentFormat]).toEqual(['FMP4_SDK', 'VIDEO_FMP4_SDK']);
   });
 });
 

@@ -2,7 +2,7 @@
 
 Aus dem Player kann ein Film oder eine Folge per Chromecast (und Geräte mit eingebautem Chromecast, z. B. Google TV) auf den Fernseher gesendet werden. Verwendet wird der **Default Media Receiver** von Google: keine Registrierung, keine eigene Receiver-App, kein Google-Konto nötig.
 
-Optional gibt es einen **eigenen FriendFlix-Empfänger** (`/cast-receiver/`, `CAST_RECEIVER_APP_ID`) mit „Nächste Folge“-Countdown, „Noch da?“, Untertitel-Stil und Fortschritt melden; er braucht eine Registrierung in der Google Cast SDK Developer Console: [de/cast-receiver.md](de/cast-receiver.md) (English: [cast-receiver.md](cast-receiver.md)).
+Optional gibt es einen **eigenen FriendFlix-Empfänger** (`/cast-receiver/`, `CAST_RECEIVER_APP_ID`) mit „Nächste Folge“-Countdown, „Noch da?“, Untertitel-Stil, Fortschritt melden und, wenn Fernseher und AV-Receiver es bestätigen, HEVC und Dolby-Raumklang (siehe „HEVC und Raumklang mit dem eigenen Empfänger“ unten); er braucht eine Registrierung in der Google Cast SDK Developer Console: [de/cast-receiver.md](de/cast-receiver.md) (English: [cast-receiver.md](cast-receiver.md)).
 
 ## Voraussetzungen
 
@@ -127,7 +127,7 @@ Der Cast-/AirPlay-Stream soll auf **jedem** Empfänger laufen: Apple TV, AirPlay
 
 | Teil | Cast-/AirPlay-Stream | Warum |
 |---|---|---|
-| Video | H.264, höchstens Level 4.1, 8 Bit, SDR (`VideoCodec=h264`, `Level=41`, `MaxVideoBitDepth=8`, `RequireAvc=true`), höchstens 1080p | kleinster gemeinsamer Nenner aller Empfänger; HEVC, 10 Bit, HDR und Level über 4.1 werden von Jellyfin transkodiert |
+| Video | H.264, höchstens Level 4.1, 8 Bit, SDR (`VideoCodec=h264`, `Level=41`, `MaxVideoBitDepth=8`, `RequireAvc=true`), höchstens 1080p | kleinster gemeinsamer Nenner aller Empfänger; HEVC, 10 Bit, HDR und Level über 4.1 werden von Jellyfin transkodiert. Das gilt für den Default Media Receiver, AirPlay und jeden Empfänger ohne Anspruch; nur der eigene Empfänger kann mehr (unten) |
 | Ton | AAC, Stereo (`AudioCodec=aac`, `AudioChannels=2`, 192 kbit/s) | MP3/AC-3/DTS/TrueHD oder 5.1 lehnen einzelne Empfänger ab |
 | Container | MPEG-TS-Segmente (`SegmentContainer=ts`), VOD-Playlist mit `#EXT-X-ENDLIST` | fMP4/CMAF können ältere Fernseher nicht |
 | Master-Playlist | nur `#EXT-X-STREAM-INF` mit `BANDWIDTH`, `AVERAGE-BANDWIDTH`, `CODECS`, `RESOLUTION`, `FRAME-RATE` (Audio-/Video-Gruppen nur, wenn die Gruppe existiert) | strenger Apple-HLS-Kern; siehe unten |
@@ -140,6 +140,23 @@ Die Bereinigung macht das Gateway nur für Cast-Playlists (`/media/c/<token>/…
 **Variant-Fallback (AirPlay):** Meldet das Video während des Token-Streams (Auswahl offen oder Fernseher aktiv) `video-error` Code 4 (`MEDIA_ERR_SRC_NOT_SUPPORTED`), lädt der Player die Master-Playlist des Tokens ohne Credentials, nimmt die erste Variante (sie muss unter `/media/c/<token>/` bleiben) und setzt **deren** URL direkt ans Video – ohne Master, an derselben Stelle und im selben Zustand. Das passiert **einmal pro Token**; scheitert auch die Variante, gilt das bisherige Fehlerverhalten. Ein neues Token (Erneut versuchen, Erneuerung, Audiospur/Qualität) beginnt wieder mit der Master-Playlist. Im Protokoll steht `fallback-variant` (ohne URL).
 
 **Wenn ein Fernseher trotzdem nicht spielt:** auf dem iPhone/iPad/Mac `/diagnose` öffnen → „AirPlay-Protokoll“ → kopieren und mit Hersteller, Modell und Firmware-Stand des Fernsehers melden. Wichtig sind darin `probe-master`/`probe-variant` (was der Empfänger bekommt), `video-error` mit Code und `w=` (Rohwert von `webkitCurrentPlaybackTargetIsWireless`: `w=true` = Fehler am Fernseher, `w=false` = am Handy) und ob `fallback-variant` versucht wurde. Das Protokoll enthält keine URLs, Tokens oder Cast-IDs.
+
+### HEVC und Raumklang mit dem eigenen Empfänger
+
+Der eigene Empfänger ([cast-receiver.md](cast-receiver.md)) fragt den Fernseher und, über HDMI, den AV-Receiver dahinter, was sie abspielen (`canDisplayType`), und meldet nur, was bestätigt wurde: `{ t: 'caps', v: 1, hevc, hevc10, surround }` auf dem privaten Kanal, wenn ein Absender sich verbindet und auf `{ t: 'caps?' }`. Der Browser schickt das als `caps` mit `POST /api/cast/session` (nur an den eigenen Empfänger; Default Media Receiver und AirPlay nie), und der Server plant den Stream wie für den Player (`backend/src/media/streamplan.ts`):
+
+| Teil | Default Media Receiver, AirPlay, älterer Empfänger, Fernseher ohne Bestätigung | Eigener Empfänger, wenn bestätigt |
+|---|---|---|
+| Video | H.264 wie oben | HEVC Main (und Main 10, wenn bestätigt) bleibt HEVC (neu verpackt, `hvc1`); H.264 wie oben (qualifiziert: `h264-level=41`, `h264-videobitdepth=8`, ohne `RequireAvc`, damit Jellyfin HEVC-Quellen kopieren darf); nur SDR, Dolby Vision und HDR nie |
+| Ton | AAC, Stereo | Dolby Digital Plus (`ec-3`) oder Dolby Digital (`ac-3`), wenn bestätigt: die 5.1-Spur durchgereicht oder umgewandelt; sonst AAC Stereo (kein MP3) |
+| Container | MPEG-TS | fMP4, sobald HEVC oder Raumklang im Stream ist (`SegmentContainer=mp4`, eine feste Variante); die Antwort sagt `hlsSegmentFormat: 'fmp4'` und `hlsVideoSegmentFormat: 'fmp4'`, der Browser lädt es mit `HlsSegmentFormat.FMP4` und `HlsVideoSegmentFormat.FMP4` |
+| Umwandlung in HEVC | nie | nur außerhalb des Heimnetzes, wenn der Test des Servers bestanden ist und ein Platz frei ist (`HEVC_STREAMS`), wie im Player |
+
+- **Ohne Bestätigung ist alles wie zuvor:** kein `caps`, oder `caps` ohne HEVC und Dolby (ein Fernseher, der nichts bestätigt, ein alter Empfänger, der nie antwortet), oder ein Fehler im Format (wird ignoriert): URL und Antwort sind byte-gleich zu früher. Der Browser wartet nach dem Start der Sitzung bis zu 2 s auf die Antwort des Empfängers und behauptet davor nichts.
+- Ein Fehler zählt höchstens einmal je Konto und Play-Session für den HEVC-Zustand des Servers. Die Antwort enthält bei einer Anfrage mit `caps` zusätzlich `delivery` (feste Codes: was das Bild und der Ton sind und warum), nie URLs oder Titel.
+- Eine eingereihte nächste Folge bekommt dieselben `caps` wie die laufende; sie ist aber nie eine HEVC-Umwandlung (ihr Stream startet später als jede Platzprüfung): HEVC-Kopie und Raumklang bleiben. Der Stream ist außerdem auf HEVC Level 4.1 begrenzt (`hevc-level=123`), das, wofür der Empfänger geprüft wurde.
+- **Nur mit Jellyfin;** mit Plex bleibt der Cast H.264 in Stereo.
+- **Fehler am Fernseher:** Lehnt der Empfänger einen solchen Stream ab (Laden schlägt fehl) oder meldet er gleich am Anfang (innerhalb von 30 s) `ERROR`, startet der Browser **einmal** eine neue Übertragung desselben Titels an derselben Stelle ohne das, was im Stream war (Hinweis „Wechsle zu einem Stream, den dieses Gerät abspielt“), und merkt sich das für **diesen Fernseher (Gerätename) 30 Tage** (`ff-cast-avoid` im Browser). Die zweite Anfrage nennt `fellBack` und die abgelöste Play-Session; war der Stream eine HEVC-Umwandlung des Servers, zählt das wie ein Fehler des Players für den HEVC-Zustand des Servers. Nie zwei automatische Neuversuche.
 
 ### Fernseher ohne AirPlay und ohne Chromecast
 
@@ -160,7 +177,8 @@ Die Bereinigung macht das Gateway nur für Cast-Playlists (`/media/c/<token>/…
 Die Tests decken Backend und Gateway ab; folgendes lässt sich nur mit einem Chromecast prüfen:
 
 - Cast-Taste erscheint nur in Chromium, Geräteauswahl, Start an der gemerkten Position, Pause/Springen/Lautstärke, Untertitel an/aus und Wechsel der Audiospur.
-- HEVC- oder 5.1-Quelle auf den Default Media Receiver und per AirPlay: Es kommt unverändert H.264 in Stereo an. Raumklang und HEVC-Streams auf dem eigenen Empfänger von FriendFlix folgen in einem späteren Update (siehe [operations.md](operations.md#hevc-umwandlung-und-surround-ton)).
+- HEVC- oder 5.1-Quelle auf den Default Media Receiver und per AirPlay: Es kommt unverändert H.264 in Stereo an. HEVC-Streams und Raumklang gibt es nur auf dem eigenen Empfänger von FriendFlix, und nur, wenn der Fernseher es bestätigt (siehe unten und [operations.md](operations.md#hevc-umwandlung-und-surround-ton)).
+- Eigener Empfänger: Was `canDisplayType` am Chromecast mit Google TV (und am AV-Receiver dahinter) für `hvc1`, `ec-3` und `ac-3` antwortet, und ob der Empfänger fMP4-HLS mit HEVC und Dolby Digital Plus wirklich abspielt (Prüfliste in [cast-receiver.md](cast-receiver.md)).
 - HLS/TS-Wiedergabe von Quellen mit HEVC, 10 Bit, H.264 Level über 4.1, 5.1-Ton und 4K (Jellyfin muss transkodieren; der Default Media Receiver verlangt H.264 bis Level 4.1 und AAC).
 - Die pfadbeschränkten CSP-Ausnahmen für `www.gstatic.com` (`/cv/js/sender/`, `/cast/sdk/libs/`) reichen für das SDK; lädt es weitere Skripte von anderen Pfaden (oder braucht `connect-src`/`frame-src`), nur genau diese ergänzen.
 - Der Chromecast nutzt für Playlist, Segmente und Poster dieselbe Client-Adresse (Adress-Bindung; z. B. kein Wechsel zwischen IPv4/IPv6 im laufenden Betrieb).

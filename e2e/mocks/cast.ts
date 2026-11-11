@@ -56,18 +56,21 @@ export const wireless = (page: Page, on: boolean) => page.evaluate((on) => {
 /** the castId the fake server gives a queued next episode's token */
 export const NEXT_CAST_ID = 'e'.repeat(32);
 /** POST /api/cast/session answers with a token URL (a test file the phone can play); `fail` -> 429 max_streams */
-export async function castSessions(page: Page, o: { fail?: () => boolean; castId?: string; report?: string } = {}) {
+export async function castSessions(page: Page, o: { fail?: () => boolean; castId?: string; report?: string; deliver?: (body: Record<string, unknown>) => Record<string, unknown> | undefined } = {}) {
   const sessions: Array<Record<string, unknown>> = [];
   const deleted: string[] = [];
   await page.route('**/api/cast/session', (r) => {
     const body = r.request().postDataJSON() as Record<string, unknown>;
     sessions.push(body);
     if (o.fail?.()) return r.fulfill({ status: 429, json: { error: 'max_streams', max: 1 } });
+    // `deliver`: the answer to a cast that sent receiver caps (the server's `delivery` block, fMP4 formats); absent / undefined = today's answer
+    const extra = o.deliver?.(body);
     return r.fulfill({ json: {
       // a queued next episode's token (`next: true`) has its own handle, as on the server: its revoke is not the playing one's
-      castId: body?.next ? NEXT_CAST_ID : o.castId ?? 'c'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, playSessionId: 'air-ps', mediaSourceId: 'ms', startTime: 0,
+      castId: body?.next ? NEXT_CAST_ID : o.castId ?? 'c'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, playSessionId: 'a'.repeat(32), mediaSourceId: 'ms', startTime: 0,
       contentUrl: `${new URL(page.url()).origin}/media/p1test.webm#airplay`, contentType: 'application/x-mpegURL', hlsSegmentFormat: 'ts', title: 'Film', subtitles: [],
       ...(o.report ? { report: o.report } : {}),
+      ...(extra ?? {}),
     } });
   });
   // GET = the token-free lookup of the live session (a reloaded page re-adopts the TV's media with it); DELETE = a revoke
@@ -76,7 +79,7 @@ export async function castSessions(page: Page, o: { fail?: () => boolean; castId
       const b = sessions.at(-1);
       if (!b) return r.fulfill({ status: 404, json: { error: 'not_found' } });
       return r.fulfill({ json: {
-        castId: o.castId ?? 'c'.repeat(32), itemId: b.itemId, mediaSourceId: 'ms', playSessionId: 'air-ps', expiresAt: Date.now() + 3 * 3600_000, via: 'chromecast', next: false, reported: true,
+        castId: o.castId ?? 'c'.repeat(32), itemId: b.itemId, mediaSourceId: 'ms', playSessionId: 'a'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, via: 'chromecast', next: false, reported: true,
         title: 'Film', subtitles: [], pins: 1, pinFamily: 'v4', refused: { count: 0, families: [] },
       } });
     }
@@ -89,7 +92,7 @@ export const picks = (page: Page) => page.evaluate(() => (window as unknown as {
 export const srcAtPick = (page: Page) => page.evaluate(() => (window as unknown as { __srcAtPick: string }).__srcAtPick);
 
 /** runs in the page as the Cast sender SDK (same shape as `fakeSdk()` in web/src/lib/cast.test.ts) */
-function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask'; pick?: boolean; playAfter?: number } = {}) {
+function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask'; pick?: boolean; playAfter?: number; caps?: { hevc: boolean; hevc10: boolean; surround: string[] } | null; refuseFmp4?: boolean } = {}) {
   type Rec = { args: unknown[] } & Record<string, unknown>;
   const w = window as unknown as Record<string, unknown> & { __castLoads: unknown[]; __castCalls: string[]; __castOptions: unknown; __castMsgs: unknown[]; __castLoadFails?: boolean; __onGCastApiAvailable?: (ok: boolean) => void; chrome?: Record<string, unknown> };
   w.__castLoads = []; w.__castCalls = []; w.__castOptions = null; w.__castMsgs = [];
@@ -135,12 +138,14 @@ function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask'; pick?:
   };
   // like the SDK, the playing item comes first (`currentItemId` 0), the queued ones after it (live: read on every status update)
   if (opts.queue) Object.defineProperty(mediaSession, 'items', { get: () => [{ itemId: 0, media: { contentId: String((w.__castLoads.at(-1) as Rec | undefined)?.contentId ?? '') } }, ...queued] });
+  let rxFn: ((ns: string, m: string) => void) | null = null;
   const session = {
     getCastDevice: () => ({ friendlyName: 'Wohnzimmer-TV' }),
     async loadMedia(req: Rec): Promise<string | undefined> {
       const media = req.args[0] as Rec;
-      w.__castLoads.push({ contentId: media.args[0], contentType: media.args[1], currentTime: req.currentTime, activeTrackIds: req.activeTrackIds ?? [], customData: media.customData ?? null });
+      w.__castLoads.push({ contentId: media.args[0], contentType: media.args[1], currentTime: req.currentTime, activeTrackIds: req.activeTrackIds ?? [], customData: media.customData ?? null, hlsSegmentFormat: media.hlsSegmentFormat ?? null, hlsVideoSegmentFormat: media.hlsVideoSegmentFormat ?? null });
       if (w.__castLoadFails) throw new Error('LOAD_FAILED'); // the receiver cannot play it
+      if (opts.refuseFmp4 && media.hlsSegmentFormat === 'fmp4') throw new Error('LOAD_FAILED'); // a TV that cannot play HEVC / Dolby streams
       setTimeout(() => {
         change({ isMediaLoaded: true, isPaused: false, playerState: 'PLAYING', currentTime: Number(req.currentTime) || 0, duration: Number(media.duration) || 600, ...(opts.survive ? { mediaInfo: { contentId: String(media.args[0]), customData: media.customData ?? null } } : {}) });
         saveRx();
@@ -149,8 +154,12 @@ function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask'; pick?:
     },
     getMediaSession: () => mediaSession,
     // the custom receiver channel (only FriendFlix's own receiver uses it)
-    async sendMessage(ns: string, msg: unknown) { w.__castMsgs.push({ ns, msg }); },
-    addMessageListener(_ns: string, _fn: unknown) { w.__castCalls.push('addMessageListener'); },
+    // (FriendFlix's receiver answers `caps?` with what it confirmed: `opts.caps`, default nothing; `null` = a receiver that never answers)
+    async sendMessage(ns: string, msg: unknown) {
+      w.__castMsgs.push({ ns, msg });
+      if ((msg as { t?: string }).t === 'caps?' && opts.caps !== null) setTimeout(() => rxFn?.(ns, JSON.stringify({ t: 'caps', v: 1, ...(opts.caps ?? { hevc: false, hevc10: false, surround: [] }) })), 0);
+    },
+    addMessageListener(_ns: string, fn: (ns: string, m: string) => void) { w.__castCalls.push('addMessageListener'); rxFn = fn; },
   };
   const fire = (type: string, e: { castState?: string; sessionState?: string }) => ctxListeners.get(type)?.(e);
   const context = {
@@ -185,7 +194,7 @@ function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask'; pick?:
       MediaInfo: class extends R {}, LoadRequest: class extends R {}, MovieMediaMetadata: class extends R {}, TvShowMediaMetadata: class extends R {},
       Track: class extends R {}, EditTracksInfoRequest: class extends R {},
       ...(opts.queue ? { QueueItem: class extends R {}, QueueInsertItemsRequest: class extends R {}, QueueRemoveItemsRequest: class extends R {} } : {}),
-      StreamType: { BUFFERED: 'BUFFERED' }, HlsSegmentFormat: { TS: 'ts' }, MetadataType: { MOVIE: 1, TV_SHOW: 2 }, TrackType: { TEXT: 'TEXT' }, TextTrackType: { SUBTITLES: 'SUBTITLES' },
+      StreamType: { BUFFERED: 'BUFFERED' }, HlsSegmentFormat: { TS: 'ts', FMP4: 'fmp4' }, HlsVideoSegmentFormat: { FMP4: 'fmp4' }, MetadataType: { MOVIE: 1, TV_SHOW: 2 }, TrackType: { TEXT: 'TEXT' }, TextTrackType: { SUBTITLES: 'SUBTITLES' },
     },
   };
   function start() {
@@ -232,9 +241,11 @@ function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask'; pick?:
  * later `loadMedia` rejects (the receiver cannot play the title). `survive`: the TV keeps its media over a page reload;
  * `'join'` = the SDK auto-joins it (SESSION_RESUMED), `'ask'` = nothing joins until `requestSession()` (the Reconnect button). `queue: true`: the receiver accepts queued titles
  * (`queueInsert`, `queueRemove:<id>`, `queueNext` show up in `calls()`); without it the engine's queue request is refused.
+ * `caps`: what FriendFlix's own receiver answers to `caps?` (default: confirms nothing; `null`: never answers); `refuseFmp4`: a TV that
+ * rejects every fMP4 (HEVC / Dolby) load, `loads()` then show each request's `hlsSegmentFormat` / `hlsVideoSegmentFormat`.
  */
-export async function fakeCastSdk(page: Page, o: { queue?: boolean; survive?: 'join' | 'ask'; pick?: boolean; playAfter?: number } = {}) {
-  await page.route('https://www.gstatic.com/cv/js/sender/**', (r) => r.fulfill({ contentType: 'text/javascript', body: `(${castSdkScript.toString()})(${JSON.stringify({ queue: Boolean(o.queue), ...(o.survive ? { survive: o.survive } : {}), ...(o.pick ? { pick: true } : {}), ...(o.playAfter ? { playAfter: o.playAfter } : {}) })});` }));
+export async function fakeCastSdk(page: Page, o: { queue?: boolean; survive?: 'join' | 'ask'; pick?: boolean; playAfter?: number; caps?: { hevc: boolean; hevc10: boolean; surround: string[] } | null; refuseFmp4?: boolean } = {}) {
+  await page.route('https://www.gstatic.com/cv/js/sender/**', (r) => r.fulfill({ contentType: 'text/javascript', body: `(${castSdkScript.toString()})(${JSON.stringify({ queue: Boolean(o.queue), ...(o.survive ? { survive: o.survive } : {}), ...(o.pick ? { pick: true } : {}), ...(o.playAfter ? { playAfter: o.playAfter } : {}), ...(o.caps !== undefined ? { caps: o.caps } : {}), ...(o.refuseFmp4 ? { refuseFmp4: true } : {}) })});` }));
   type Fake = { start(): void; end(): void; finish(): void; nearEnd(): void };
   const ready = () => page.waitForFunction(() => Boolean((window as unknown as { __castFake?: unknown }).__castFake));
   const run = async (fn: keyof Fake) => {
