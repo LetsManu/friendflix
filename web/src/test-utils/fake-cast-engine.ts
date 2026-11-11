@@ -93,7 +93,9 @@ export type FakeLock = ReturnType<typeof fakeLock>;
 
 type Init = { method?: string; body?: any; keepalive?: boolean };
 /** `lock`, `store` and `lookups` shared between two setups model two tabs of one browser (one localStorage, one lock manager, one server) */
-export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock; store?: ReturnType<typeof memStore>; lookups?: Record<string, CastLookup> } = {}) {
+export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock; store?: ReturnType<typeof memStore>; lookups?: Record<string, CastLookup>;
+  /** the active profile's display name, the sender's form factor, and whether motion is allowed (default: Anna, computer, calm pref off) */
+  profile?: string; form?: 'phone' | 'tablet' | 'computer'; motion?: boolean } = {}) {
   const calls: Array<{ path: string; init: Init }> = [];
   const order: string[] = [];
   let n = 0, qn = 0;
@@ -178,6 +180,7 @@ export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock; store?: Retu
     requestSession: vi.fn(() => requestImpl()), leave: vi.fn(), whenReady: vi.fn((fn: () => void) => { readies.push(fn); }),
     lock: lock.acquire,
     onRestore: vi.fn((fn: () => void) => { restores.add(fn); }),
+    profileName: () => o.profile ?? 'Anna', formFactor: () => o.form ?? 'computer', /* mirrors motionAllowed(): calm mode means no motion (the real link is browserDeps.motion) */ motion: () => o.motion ?? !o.prefs?.calm,
   };
   const out = writable<CastSession | null>(null);
   const engine = createCastEngine(deps, out);

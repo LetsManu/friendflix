@@ -208,19 +208,26 @@ describe('cast bar and remote text pairs pass 4.5:1', () => {
 describe('receiver panel text pairs pass 4.5:1', () => {
   const css = readFileSync(join(SRC, '../static/cast-receiver/receiver.css'), 'utf8');
   const tok = (name: string) => hex(new RegExp(`--${name}: (#[0-9a-f]{6})`).exec(css)![1]!);
-  const CARD: [RGB, number] = [[16, 20, 24], 0.92];
-  it('card text (white, muted) on the next-up card over a white picture', () => {
-    const card = over(WHITE, CARD[0], CARD[1]);
-    expect(contrast(tok('fg'), card)).toBeGreaterThanOrEqual(AA);
-    expect(contrast(tok('mut'), card)).toBeGreaterThanOrEqual(AA);
+  // every panel is solid, so a white picture behind it changes nothing; the loading screen is solid --bg
+  const SOLID_PANEL = tok('solid');
+  it('the panel is the spec colour and solid (no alpha, no backdrop-filter anywhere)', () => {
+    expect(SOLID_PANEL).toEqual(hex('#1c1a21'));
+    expect(css.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/backdrop-filter/);
+    expect(/--dim: rgba\(255, 255, 255, \.78\)/.test(css)).toBe(true);
   });
-  it('the still-watching dim (black .72 over a white frame): muted text and the white button label', () => {
-    const dim = over(WHITE, BLACK, 0.72);
-    expect(contrast(tok('mut'), dim)).toBeGreaterThanOrEqual(AA);
-    expect(contrast(WHITE, tok('acc-fill'))).toBeGreaterThanOrEqual(AA); // the focused button
+  it('card, pause and pill text: white, dim (.78 white) and the coral title on the solid panel', () => {
+    expect(contrast(tok('fg'), SOLID_PANEL)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(tok('mut'), SOLID_PANEL)).toBeGreaterThanOrEqual(AA);
+    expect(textContrast(SOLID_PANEL, 0.78)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(tok('coral'), SOLID_PANEL)).toBeGreaterThanOrEqual(AA);
   });
-  it('the skip pill (white on .78 dark over white) and the idle brand screen', () => {
-    expect(contrast(WHITE, over(WHITE, [16, 20, 24], 0.78))).toBeGreaterThanOrEqual(AA);
+  it('the touch buttons: white on the unfocused and on the focused fill; the dimmed hold backdrop never carries text', () => {
+    expect(contrast(WHITE, tok('solid-hi'))).toBeGreaterThanOrEqual(AA);
+    expect(contrast(WHITE, tok('acc-fill'))).toBeGreaterThanOrEqual(AA);
+  });
+  it('the loading screen (.78 white and white on --bg), the skip pill (white on the solid panel) and the idle brand screen', () => {
+    expect(textContrast(tok('bg'), 0.78)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(WHITE, SOLID_PANEL)).toBeGreaterThanOrEqual(AA);
     expect(contrast(tok('fg'), tok('bg'))).toBeGreaterThanOrEqual(AA);
   });
 });

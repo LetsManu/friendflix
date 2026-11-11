@@ -6,6 +6,8 @@ import type { Page } from '@playwright/test';
  * A fake of Google's Cast Application Framework (CAF v3) receiver script, served for gstatic's URL so /cast-receiver/ runs in CI
  * without a Chromecast. `window.__caf`: `message(data)` = a sender message on the custom channel, `media(castId, dur)` = a
  * token became the current media, `time(pos, playing)` = the player reports its position, `play()` = a PLAY from the remote,
+ * `load()` = a LOAD request from the sender, `playing()` / `pause()` = the player's PLAYING / PAUSE event (the first frame, a viewer's pause), `buffering(on)` =
+ * BUFFERING, `media(castId, dur, poster?)` may carry the poster URL (metadata.images[0]),
  * `calls` = what the receiver asked the framework to do (pause, play, seek:<s>, jump, sent:<json>, style:<json>), `connect()` = a sender
  * connected (SENDER_CONNECTED). `canDisplay` (fakeCaf option): the codecs the TV confirms through canDisplayType (`hvc1.1`, `hvc1.2`, `ec-3`, `ac-3`
  * prefixes of the codec string; `null` = a framework without canDisplayType); every question is in `calls` as `can:<mime>|<codecs>|<w>x<h>`.
@@ -16,9 +18,9 @@ function cafScript(opts: { canDisplay?: string[] | null } = {}) {
   const calls: string[] = [];
   const listeners = new Map<string, Fn[]>();
   let custom: Fn = () => undefined;
-  let playInterceptor: ((r: unknown) => unknown) | null = null;
+  const interceptors = new Map<string, (r: unknown) => unknown>();
   const st = { pos: 0, dur: 0, state: 'IDLE', media: null as unknown };
-  const fire = (t: string) => (listeners.get(t) ?? []).forEach((fn) => fn({}));
+  const fire = (t: string, e: unknown = {}) => (listeners.get(t) ?? []).forEach((fn) => fn(e));
   const pm = {
     setMediaElement() { /* own <video> */ },
     addEventListener(t: string | string[], fn: Fn) { for (const x of Array.isArray(t) ? t : [t]) listeners.set(x, [...(listeners.get(x) ?? []), fn]); },
@@ -26,7 +28,7 @@ function cafScript(opts: { canDisplay?: string[] | null } = {}) {
     getCurrentTimeSec: () => st.pos,
     getDurationSec: () => st.dur,
     getMediaInformation: () => st.media,
-    setMessageInterceptor(t: string, fn: (r: unknown) => unknown) { if (t === 'PLAY') playInterceptor = fn; },
+    setMessageInterceptor(t: string, fn: (r: unknown) => unknown) { interceptors.set(t, fn); },
     pause() { calls.push('pause'); st.state = 'PAUSED'; },
     play() { calls.push('play'); st.state = 'PLAYING'; },
     seek(s: number) { calls.push(`seek:${s}`); st.pos = s; },
@@ -52,15 +54,20 @@ function cafScript(opts: { canDisplay?: string[] | null } = {}) {
     CastReceiverContext: { getInstance: () => context },
     CastReceiverOptions: class extends Plain {},
     system: { MessageType: { JSON: 'JSON' }, EventType: { SENDER_CONNECTED: 'sender-connected' } },
-    messages: { PlayerState: { PLAYING: 'PLAYING' }, MessageType: { PLAY: 'PLAY', QUEUE_UPDATE: 'QUEUE_UPDATE' }, TextTrackStyle: class extends Plain {}, QueueUpdateRequestData: class extends Plain {} },
-    events: { EventType: { PLAYER_LOAD_COMPLETE: 'PLAYER_LOAD_COMPLETE', MEDIA_STATUS: 'MEDIA_STATUS', TIME_UPDATE: 'TIME_UPDATE', PLAYING: 'PLAYING', PAUSE: 'PAUSE', MEDIA_FINISHED: 'MEDIA_FINISHED' } },
+    messages: { PlayerState: { PLAYING: 'PLAYING', PAUSED: 'PAUSED', BUFFERING: 'BUFFERING' }, MessageType: { PLAY: 'PLAY', LOAD: 'LOAD', QUEUE_UPDATE: 'QUEUE_UPDATE' }, TextTrackStyle: class extends Plain {}, QueueUpdateRequestData: class extends Plain {} },
+    events: { EventType: { PLAYER_LOAD_COMPLETE: 'PLAYER_LOAD_COMPLETE', MEDIA_STATUS: 'MEDIA_STATUS', TIME_UPDATE: 'TIME_UPDATE', PLAYING: 'PLAYING', PAUSE: 'PAUSE', BUFFERING: 'BUFFERING', ERROR: 'ERROR', MEDIA_FINISHED: 'MEDIA_FINISHED' } },
   } };
   (window as unknown as Record<string, unknown>).__caf = {
     calls,
     message: (data: unknown) => custom({ data, senderId: 's1' }),
-    media(castId: string, dur: number) { st.media = { customData: { ff: { castId } } }; st.dur = dur; st.pos = 0; st.state = 'PLAYING'; fire('PLAYER_LOAD_COMPLETE'); },
+    media(castId: string, dur: number, poster?: string, paused = false) { st.media = { customData: { ff: { castId } }, ...(poster ? { metadata: { images: [{ url: poster }] } } : {}) }; st.dur = dur; st.pos = 0; st.state = paused ? 'PAUSED' : 'PLAYING'; fire('PLAYER_LOAD_COMPLETE'); },
     time(pos: number, playing = true) { st.pos = pos; st.state = playing ? 'PLAYING' : 'PAUSED'; fire('TIME_UPDATE'); },
-    play() { playInterceptor?.({}); st.state = 'PLAYING'; fire('PLAYING'); },
+    play() { interceptors.get('PLAY')?.({}); st.state = 'PLAYING'; fire('PLAYING'); },
+    load(poster?: string) { interceptors.get('LOAD')?.({ media: poster ? { metadata: { images: [{ url: poster }] } } : undefined }); },
+    error() { fire('ERROR'); },
+    playing() { st.state = 'PLAYING'; fire('PLAYING'); },
+    pause() { st.state = 'PAUSED'; fire('PAUSE'); },
+    buffering(on: boolean) { fire('BUFFERING', { isBuffering: on }); },
     connect(senderId: string) { system.forEach((fn) => fn({ senderId })); },
   };
 }
@@ -74,10 +81,28 @@ export async function fakeCaf(page: Page, o: { canDisplay?: string[] | null } = 
   }, [fn, args] as const);
   return {
     message: (data: unknown) => caf('message', data),
-    media: (castId: string, dur: number) => caf('media', castId, dur),
+    media: (castId: string, dur: number, poster?: string, paused = false) => caf('media', castId, dur, poster, paused),
     time: (pos: number, playing = true) => caf('time', pos, playing),
     play: () => caf('play'),
+    load: (poster?: string) => caf('load', poster),
+    error: () => caf('error'),
+    playing: () => caf('playing'),
+    pause: () => caf('pause'),
+    buffering: (on: boolean) => caf('buffering', on),
     connect: (senderId: string) => caf('connect', senderId),
     calls: () => page.evaluate(() => (window as unknown as { __caf: { calls: string[] } }).__caf.calls.slice()),
   };
 }
+
+/** the sender's `ui` message in German (as the phone sends it); `who` is the profile name in a sentence */
+export const ui = (o: Record<string, unknown> = {}) => ({ t: 'ui', strings: {
+  next: 'Nächste Folge', upNext: 'Als Nächstes: {label}', watchCredits: 'Abspann ansehen',
+  startsIn: Array.from({ length: 10 }, (_, i) => `Nächste Folge in ${i + 1} s`),
+  upNextIn: Array.from({ length: 10 }, (_, i) => `Als Nächstes in ${i + 1} s`), upNextTitle: 'Als Nächstes', playNow: 'Jetzt abspielen',
+  stillTitle: 'Noch da?', stillText: 'Automatische Wiedergabe pausiert. Als Nächstes: {ep}', keepWatching: 'Weiterschauen', skip: { intro: 'Intro überspringen', recap: 'Rückblick überspringen' },
+  keys: 'OK spielt sofort · Zurück stoppt hier', phoneCancel: 'Abbrechen am Handy', stopHere: 'Hier stoppen', stillKeys: 'OK schaut weiter',
+  loading: 'Wird vorbereitet …', stall: 'Lädt …', paused: 'Pausiert' },
+  sub: { size: 'm', color: 'white', background: 'semi', font: 'sans' }, countdown: 10, who: 'Vom Handy von Anna', motion: true, ...o });
+export const DUNMOOR = { title: 'Dunmoor', line: 'Staffel 1 · Folge 4 · The Lantern Road' };
+export const WRENFIELD = { castId: 'b'.repeat(32), label: 'S1:E5 · Wrenfield Pier', auto: true, ask: false };
+

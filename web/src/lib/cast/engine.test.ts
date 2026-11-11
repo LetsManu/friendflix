@@ -7,7 +7,7 @@ import type { CastInfo } from '#lib/cast';
 import { COUNTDOWN_SECONDS } from '#lib/player/nextup';
 import { consumeAutoplay, noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
 import { DEFAULT_PREFS } from '#lib/stores';
-import { ADVANCE_WAIT_MS, ENDED_HIDE_MS, ENDED_IDLE_MS, PROGRESS_MS, RENEW_BEFORE_MS, UNPINNED_RETRY_MS, type PlayerHandoff } from './engine';
+import { ADVANCE_WAIT_MS, ENDED_HIDE_MS, ENDED_IDLE_MS, PROGRESS_MS, RENEW_BEFORE_MS, UNPINNED_RETRY_MS, receiverStrings, type PlayerHandoff } from './engine';
 import { ci, deferred, flush, handoff, hex, idle, items, playing, playingSession, setup, T0, type Env } from '../../test-utils/fake-cast-engine';
 
 describe('cast engine: adopt (Chromecast)', () => {
@@ -1470,9 +1470,100 @@ describe('cast engine: FriendFlix\'s own receiver (CAST_RECEIVER_APP_ID)', () =>
     expect(ui.strings.upNext).toContain('{label}');
     expect(env.queuePosts()[0]!.init.body).toEqual({ itemId: 'ep2', maxBitrate: 8_000_000, next: true, after: 'c1', receiver: true });
     expect(tv.items().at(-1)).toEqual({ t: 'item', castId: 'c1', episode: true, segs: [{ type: 'intro', start: 10, end: 80 }],
-      next: { castId: 'q1', label: expect.stringContaining('Second'), auto: true, ask: false } });
+      next: { castId: 'q1', label: expect.stringContaining('Second'), auto: true, ask: false, meta: { title: expect.any(String), line: expect.any(String) } }, meta: { title: 'Bright Valley', line: '' } });
     await env.engine.playOnTv('film', 0);
     expect(env.tokenPosts().at(-1)!.init.body).toMatchObject({ itemId: 'film', receiver: true });
+  });
+
+  it('ui message carries who and motion', async () => {
+    const env = setup({ profile: 'Anna', form: 'phone' });
+    const tv = custom(env);
+    await playingSession(env, ep1);
+    await flush();
+    expect(tv.sent.find((m) => m.t === 'ui')).toMatchObject({ who: 'Vom Handy von Anna', motion: true });
+    const calm = setup({ profile: 'Anna', form: 'tablet', prefs: { calm: true } });
+    const tv2 = custom(calm);
+    await playingSession(calm, ep1);
+    await flush();
+    expect(tv2.sent.find((m) => m.t === 'ui')).toMatchObject({ who: 'Vom Tablet von Anna', motion: false });
+    const pc = setup({ profile: 'Anna' });
+    const tv3 = custom(pc);
+    await playingSession(pc, ep1);
+    expect(tv3.sent.find((m) => m.t === 'ui')!.who).toBe('Vom Computer von Anna');
+  });
+
+  it('ui message: no profile name, no pill text; nothing but the name goes to the TV', async () => {
+    const env = setup({ profile: '', form: 'phone' });
+    const tv = custom(env);
+    await playingSession(env, ep1);
+    await flush();
+    const ui = tv.sent.find((m) => m.t === 'ui')!;
+    expect(ui.who).toBe('');
+    const named = setup({ profile: 'Anna', form: 'phone' });
+    const tv2 = custom(named);
+    await playingSession(named, ep1);
+    await flush();
+    expect(JSON.stringify(tv2.sent)).not.toMatch(/https?:|@|[0-9a-f]{40}|token/i);
+    // exactly these fields and no others go to the TV
+    expect(Object.keys(tv2.sent.find((m) => m.t === 'ui')!).sort()).toEqual(['countdown', 'motion', 'strings', 'sub', 't', 'who']);
+    const item = tv2.items().at(-1)!;
+    expect(Object.keys(item).sort()).toEqual(['castId', 'episode', 'meta', 'next', 'segs', 't']);
+    expect(Object.keys(item.meta).sort()).toEqual(['line', 'title']);
+  });
+
+  it('item message carries meta', async () => {
+    const env = setup();
+    const tv = custom(env);
+    env.engine.adopt(handoff({ itemId: 'dun4', seriesId: 'dun', title: 'Dunmoor', subtitle: 'S1:E4 The Lantern Road', isEpisode: true, cast: ci('c1') }));
+    env.state.set(playing());
+    await flush();
+    expect(tv.items().at(-1)).toMatchObject({ meta: { title: 'Dunmoor', line: 'Staffel 1 · Folge 4 · The Lantern Road' } });
+    // a film: the title and an empty line
+    const film = setup();
+    const tv2 = custom(film);
+    await playingSession(film, { itemId: 'film', title: 'Film', subtitle: '', isEpisode: false });
+    await flush();
+    expect(tv2.items().at(-1)).toMatchObject({ meta: { title: 'Film', line: '' } });
+  });
+
+  it('a switch to another episode sends its meta', async () => {
+    const env = setup();
+    const tv = custom(env);
+    env.engine.adopt(handoff({ itemId: 'dun4', seriesId: 'dun', title: 'Dunmoor', subtitle: '', isEpisode: true, cast: ci('c1') }));
+    env.state.set(playing());
+    await flush();
+    await env.engine.playOnTv('dun5', 0);
+    await flush();
+    expect(tv.items().at(-1)).toMatchObject({ meta: { title: 'Dunmoor', line: 'Staffel 1 · Folge 5 · Wrenfield Pier' } });
+  });
+
+  it('queue advance: the receiver moves on to the queued episode and its meta follows', async () => {
+    const env = setup();
+    const tv = custom(env);
+    await playingSession(env, { itemId: 'dun4', seriesId: 'dun', title: 'Dunmoor', subtitle: '', isEpisode: true, cast: ci('c1') });
+    await flush();
+    expect(tv.items().at(-1)).toMatchObject({ next: { castId: 'q1' }, meta: { line: 'Staffel 1 · Folge 4 · The Lantern Road' } });
+    env.state.set(playing({ currentTime: 3, contentId: '/media/c/q1/master.m3u8' }));
+    await flush();
+    expect(tv.items().at(-1)).toMatchObject({ castId: 'q1', meta: { title: 'Dunmoor', line: 'Staffel 1 · Folge 5 · Wrenfield Pier' } });
+  });
+
+  it('long titles are cut to what the receiver accepts', async () => {
+    const env = setup();
+    const tv = custom(env);
+    await playingSession(env, { itemId: 'film', title: 'x'.repeat(300), subtitle: '', isEpisode: false });
+    await flush();
+    expect(tv.items().at(-1)!.meta.title).toHaveLength(200);
+  });
+
+  it('receiverStrings has upNextIn per second', () => {
+    const t = receiverStrings();
+    expect(t.upNextIn).toHaveLength(COUNTDOWN_SECONDS);
+    expect(t.upNextIn[0]).toBe('Als Nächstes in 1 s');
+    expect(t.upNextIn[9]).toBe('Als Nächstes in 10 s');
+    expect(t.upNextTitle).toBe('Als Nächstes');
+    expect(t.playNow).toBe('Jetzt abspielen');
+    expect(t).toMatchObject({ keys: 'OK spielt sofort · Zurück stoppt hier', phoneCancel: 'Abbrechen am Handy', stopHere: 'Hier stoppen', stillKeys: 'OK schaut weiter', loading: 'Wird vorbereitet …', stall: 'Lädt …', paused: 'Pausiert' });
   });
 
   it('the TV runs the countdown: the phone does not make the receiver jump as well', async () => {

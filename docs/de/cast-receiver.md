@@ -12,9 +12,64 @@ ausliefert, bekommt der Fernseher die Funktionen der Streaming-Apps:
 - **Dein Untertitel-Stil** (Größe, Farbe, Hintergrund, Schrift aus *Konto → Wiedergabe → Untertitel*) auf dem Fernseher.
 - **Intro überspringen / Rückblick überspringen** am Fernseher wie am Handy.
 - **HEVC und Dolby-Raumklang**, wenn der Fernseher (und der AV-Receiver dahinter) sie bestätigt: Der Empfänger fragt den Fernseher, was er abspielt, und der Stream wird genau dafür geplant (siehe unten). Andere Fernseher, der Default Media Receiver und AirPlay bekommen weiter H.264 in Stereo.
-- Das FriendFlix-Aussehen (Koralle, dunkel), aus 3 m lesbar, reduzierte Bewegung wird beachtet (keine Karten-Animation).
+- **Pause- und Ladebildschirm**, eine **Absender-Pille**, die zeigt, wer überträgt, und **Tastenhinweise** (siehe „Was der Fernseher
+  zeigt“). Das FriendFlix-Aussehen (Koralle, dunkel), aus 3 m lesbar, feste Flächen, ruhiger Modus und reduzierte Bewegung werden
+  beachtet.
 
 Für AirPlay ändert sich nichts, und für Chromecast nichts, solange `CAST_RECEIVER_APP_ID` leer ist.
+
+## Was der Fernseher zeigt
+
+Alle Bildschirme sind **feste Flächen** (`#1c1a21`, dünner heller Rand, keine Unschärfe: Unschärfe ist für den Grafikchip eines
+Fernsehers zu schwer), mit Sicherheitsrand von 5 % der Bildschirmbreite auf allen Seiten, für das Lesen aus 3 m gebaut (nichts
+unter 20 px bei 1280×720; die Größen wachsen mit dem Bildschirm).
+
+- **Absender-Pille** (oben links): „Vom Handy von Anna“ (oder Tablet / Computer). Sie zeigt nur den **Anzeigenamen des
+  Profils** (der Name wird auf 40 Zeichen gekürzt; Profilnamen haben höchstens 20; ein Pillentext über 80 Zeichen wird nicht
+  gezeigt), nie den Gerätenamen, eine E-Mail-Adresse, ein Token oder eine URL. Ein Besitzer-Profil ohne Anzeigenamen vom
+  Anmeldedienst heißt nach dem Teil der E-Mail-Adresse vor dem @; die Pille kann also diesen Teil zeigen. Das Profil umbenennen,
+  um zu ändern, was der Fernseher zeigt. Sie erscheint 5 s nach dem
+  Laden und immer, solange eine Karte, der Pausen- oder der Ladebildschirm sichtbar ist.
+- **Als-Nächstes-Karte** (unten rechts): Vorschaubild, „Als Nächstes in 8 s“ (die Zahl zählt von 10 herunter), „S1:F5 · Wrenfield Pier“,
+  ein Tastenhinweis und ein dünner Countdown-Balken. Ohne Countdown (Autoplay für diese Folge aus) heißt die Karte nur „Als Nächstes“.
+  - Am Fernseher mit Fernbedienung hat die Karte **keine Schaltflächen**. Der Hinweis lautet „OK spielt sofort · Zurück stoppt hier“,
+    sobald in dieser Sitzung eine Fernbedienungstaste gesehen wurde, davor „Abbrechen am Handy“.
+  - Auf einem Touchscreen (Nest Hub) zeigt die Karte stattdessen zwei Schaltflächen: *Jetzt abspielen* und *Hier stoppen*.
+  - OK / Enter / Leertaste / die Play-Pause-Taste der Fernbedienung spielen die nächste Folge sofort (ist auch der Pausenbildschirm
+    sichtbar, spielt OK die nächste Folge und die Play-Pause-Taste setzt die pausierte Folge fort); Zurück, Escape oder Backspace
+    stoppen hier (kein Autoplay: die Karte schließt sich, das Handy bietet die nächste Folge ohne Countdown an, und der Fernseher hält am Ende dieser Folge an).
+  - **Noch da?** nutzt dieselbe Karte („Die automatische Wiedergabe ist pausiert. Als Nächstes: …“, Hinweis „OK schaut weiter“); wartet die
+    eingereihte Folge pausiert, erscheint dieselbe feste Karte in der Bildmitte.
+- **Pausenbildschirm:** 1,5 s nachdem der Fernseher pausiert (ein kurzes Pausieren und Weiterspielen zeigt nichts) wird das Bild
+  etwas abgedunkelt, und unten links erscheinen „Pausiert“, der Titel, die Zeile („Staffel 1 · Folge 4 · The Lantern Road“) und ein
+  Fortschrittsbalken mit vergangener und Gesamtzeit. Beim Abspielen verschwindet er sofort. OK oder die Play-Pause-Taste setzt
+  fort; links und rechts springen 10 s, solange er sichtbar ist. Ist gleichzeitig eine Karte sichtbar, steht die Karte rechts und
+  der Pausenblock links; OK spielt dann die nächste Folge sofort, die Play-Pause-Taste setzt die aktuelle fort.
+- **Ladebildschirm:** vom Beginn eines Ladevorgangs bis zum ersten Bild jedes Titels, auch bei der nächsten Folge: Poster, Titel und
+  Zeile, ein laufender Balken und „Wird vorbereitet …“. Ein Stocken von mehr als 3 s mitten in der Wiedergabe zeigt das
+  Pausenlayout mit „Lädt …“ statt „Pausiert“.
+- **Ruhiger Modus / reduzierte Bewegung:** Ist am Handy oder im Browser der ruhige Modus an (oder reduzierte Bewegung), sagt der
+  Absender es dem Fernseher (`motion: false`); auch die eigene Einstellung „Bewegung reduzieren“ der Fernseherseite zählt. Dann
+  bewegt sich nichts: Flächen erscheinen und verschwinden ohne Übergang, Countdown- und Fortschrittsbalken zeigen weiter ihren Wert,
+  der Ladebalken steht still.
+- **Fernbedienungstasten:** OK / Enter / Leertaste = jetzt spielen (Karte), weiterschauen (*Noch da?*) oder fortsetzen
+  (Pausenbildschirm); die Play-Pause-Taste setzt fort, wenn der Fernseher pausiert (auch bei sichtbarer Karte oder Überspringen-Schaltfläche, auch in
+  den ersten 1,5 s), und spielt jetzt, wenn nur die Karte sichtbar ist; bei einem Intro pausiert sie, und OK überspringt; Zurück / Escape / Backspace / GoBack = hier stoppen; links / rechts = 10 s springen im
+  Pausenbildschirm (nicht bei sichtbarer Als-Nächstes-Karte) oder zwischen den zwei Schaltflächen wechseln (Touchscreen).
+
+### Was der Empfänger bekommt und wie es angezeigt wird
+
+Der Absender (Handy oder Browser) sagt dem Fernseher auf dem privaten Kanal, was er zeigen soll; der Fernseher hat weder Sprache
+noch FriendFlix-Sitzung:
+
+- `ui`: die Texte in der Sprache des Zuschauers, der Untertitel-Stil, die Countdown-Länge, `who` (der Profilname für die Pille)
+  und `motion` (`false` im ruhigen Modus).
+- `item`: wie bisher, dazu `meta` mit `title` und `line` (je höchstens 200 Zeichen) für Pausen- und Ladebildschirm. Das Poster ist
+  das Bild aus den Medien-Metadaten und wird nur genutzt, wenn es vom eigenen Ursprung des Empfängers kommt; sonst steht eine
+  schlichte Fläche.
+
+**Alles, was ein Absender schickt, wird nur als Text angezeigt** (`textContent`, nie HTML), ist in der Länge begrenzt, und nichts
+davon ist ein Link, dem der Fernseher folgt. Pille und Bildschirme zeigen nie ein Token, eine URL oder eine E-Mail-Adresse.
 
 ## Einrichten
 
@@ -51,6 +106,7 @@ Zurück geht es mit einem leeren Feld: die nächste Übertragung nutzt wieder de
 | Fortschritt / gesehen bei schlafendem Handy | fehlt, bis das Handy aufwacht | meldet der Fernseher |
 | Untertitel-Stil | Standard des Fernsehers | dein Stil |
 | Intro / Rückblick überspringen | nur am Handy | Fernseher und Handy |
+| Pausen- und Ladebildschirm, wer überträgt | nein | ja |
 | HEVC und Dolby-Raumklang | nein (H.264, AAC Stereo) | wenn Fernseher / AV-Receiver es bestätigen (fMP4) |
 
 Grenzen: der Fernseher spielt nur, was das Handy eingereiht hat. Schläft das Handy, geht der Fernseher **eine** Folge weiter (die,
@@ -107,6 +163,46 @@ echtes Gerät zeigt:
   zum Ende.
 - Eine eingereihte Folge mit `autoplay: false` wartet pausiert; *Noch da?* lässt sich mit OK, der Play-Taste der Fernbedienung und
   am Handy beantworten.
-- Welche Tasten die Fernbedienung an die Seite liefert (OK / Zurück / Pfeile bei Chromecast mit Google TV; Touch bei einem Nest Hub).
+- Welche Tasten die Fernbedienung an die Seite liefert (OK / Zurück / Pfeile bei Chromecast mit Google TV; Touch bei einem Nest Hub). Die Prüfliste für die Bildschirme
+  steht unten.
 - Meldungen kommen von derselben Client-Adresse wie die Medien (das Melde-Token ist an die Adresse gebunden, die das Token streamt;
   verschiedene Adressen für Medien und API, z. B. IPv4/IPv6, würden die Meldungen ablehnen; die Meldungen des Handys gelten weiter).
+
+### Prüfliste für den Besitzer: die Bildschirme am echten Fernseher
+
+An einem Chromecast mit Google TV, einem einfachen Chromecast und, falls vorhanden, einem Nest Hub, jeweils mit dem eigenen
+Empfänger. Das Ergebnis jedes Punkts im Pull Request festhalten (aufschreiben, was zu sehen war, auch wenn es von der Erwartung
+abweicht).
+
+- [ ] **Zurück- und Fokus-Tasten.** Erreicht Zurück bei der Als-Nächstes-Karte die Seite (die Karte schließt sich, das Handy zeigt die
+  nächste Folge ohne Countdown), oder schließt Google TV die App? Aufschreiben, was passiert. Schließt Zurück die App, braucht der
+  Hinweis eine Regel je Gerät (Folgeaufgabe): heute schaltet jede Taste den Hinweis auf den Tastenhinweis. Pfeiltasten wechseln den Fokus zwischen den Schaltflächen nur auf einem Touchscreen.
+- [ ] **Als-Nächstes-Karte** liegt auf jedem Fernseher innerhalb des Overscans, der Countdown-Balken läuft gleichmäßig, der Text ist
+  aus 3 m lesbar. OK spielt jetzt.
+- [ ] **Ladebildschirm bei `isBuffering`.** Er erscheint beim Start einer Übertragung und endet mit dem ersten Bild; ein Stocken
+  mitten in der Wiedergabe zeigt nach 3 s (nicht früher) „Lädt …“ im Pausenlayout. Prüfen, dass er nicht zu früh endet (der
+  Empfänger wertet das erste PLAYING oder ein Zeit-Update als „erstes Bild“).
+- [ ] **LOAD-Abfänger bei Warteschlangen-Ladungen.** *Dunmoor* S1 E4 übertragen und *Wrenfield Pier* (S1 E5) folgen lassen, mit
+  wachem und mit schlafendem Handy: Der Ladebildschirm zeigt Titel und Zeile von *Wrenfield Pier* (nicht der vorherigen Folge),
+  dann das Bild. Am Handy zu einer anderen Folge wechseln: kein Titel der alten Folge. Ein fehlgeschlagener Ladevorgang beendet den
+  Ladebildschirm.
+- [ ] **Neu laden bei Pause.** Audiospur wechseln (oder das Token erneuern lassen), während pausiert ist: Der Fernseher behält den
+  Pausenbildschirm, ohne *Wird vorbereitet …*.
+- [ ] **Poster-Metadaten.** Der Ladebildschirm zeigt das Poster des Titels; ein Titel ohne Poster zeigt die schlichte Fläche und
+  kein kaputtes Bild.
+- [ ] **Play-Pause-Taste genau einmal verarbeitet.** Sind Pausenbildschirm und Als-Nächstes-Karte beide sichtbar, setzt ein
+  Druck auf die Play-Pause-Taste die pausierte Folge fort (nicht doppelt umgeschaltet, nicht übersprungen), und OK spielt die
+  nächste Folge. Bei einem Intro pausiert Play-Pause und OK überspringt das Intro.
+- [ ] **Pausenbildschirm** erscheint etwa 1,5 s nach einer Pause (nicht bei kurzem Pausieren), verschwindet sofort beim
+  Abspielen, zeigt vergangene und Gesamtzeit richtig, und links / rechts springen 10 s.
+- [ ] **Nest-Hub-Touch.** Ein Tippen zeigt die zwei Schaltflächen; *Jetzt abspielen* springt zur nächsten Folge, *Hier stoppen*
+  schaut ohne Autoplay weiter.
+- [ ] **Ruhiger Modus am Fernseher.** Ruhigen Modus in FriendFlix am Handy einschalten, neu übertragen: Flächen erscheinen und
+  verschwinden ohne Bewegung, der Ladebalken steht still.
+- [ ] **Absender-Pille** zeigt nur den Profilnamen („Vom Handy von Anna“), nie Gerätenamen, E-Mail-Adresse oder Token;
+  sie erscheint etwa 5 s nach dem Start und solange eine Karte oder ein Bildschirm sichtbar ist.
+- [ ] **Feste Flächen** sehen am Fernseher richtig aus (keine durchsichtigen Bereiche), und die Animation bleibt am einfachen
+  Chromecast flüssig.
+
+Die HEVC- und Raumklang-Prüfungen des Empfängers bleiben in [operations.md](../operations.md#hevc-umwandlung-und-surround-ton)
+(Punkt 6).

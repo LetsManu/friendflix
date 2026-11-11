@@ -7,7 +7,7 @@
  *
  * - parseMessage: what the sender may send on the private channel (urn:x-cast:com.friendflix.cast), strictly validated.
  * - creditsStart / activeSkip: the same rules as the web player (web/src/lib/player/nextup.ts, engine.ts atPosition).
- * - step / view: the TV's next-up card, its countdown, "still watching?" and the skip button.
+ * - step / view: the TV's next-up card, its countdown, "still watching?", the skip button, the pause and loading screens, the sender pill and the key hint.
  * - createReporter: start / progress / stop of the playing token to /api/cast/report with its report token.
  * - probeCaps / buildCaps: what this TV (and the AVR behind it) confirms it plays, as the `caps` message the sender attaches to its cast request.
  */
@@ -17,6 +17,12 @@ export const LAST_SECONDS = 25;
 export const COUNTDOWN_SECONDS = 10;
 /** progress report cadence while the TV plays (the phone's engine reports every 10 s while it is awake) */
 export const PROGRESS_MS = 15_000;
+/** the pause screen shows this long after the TV paused (a quick pause / resume never flashes it) */
+export const PAUSE_SHOW_MS = 1500;
+/** the sender pill shows this long after a load (and as long as a card, the pause or the loading screen is up) */
+export const WHO_MS = 5000;
+/** a buffering stall this long mid-playback shows the paused layout with "Loading…" */
+export const STALL_SHOW_MS = 3000;
 
 const CAST_ID = /^[0-9a-f]{32}$/;
 const RT = /^[A-Za-z0-9_-]{16,1024}\.[A-Za-z0-9_-]{43}$/;
@@ -34,13 +40,15 @@ const pick = (v, list, dflt) => (typeof v === 'string' && list.includes(v) ? v :
 
 /**
  * @typedef {{ type: string, start: number, end: number }} Segment
- * @typedef {{ castId: string, label: string, auto: boolean, ask: boolean }} Next
+ * @typedef {{ castId: string, label: string, auto: boolean, ask: boolean, meta?: Meta | null }} Next
  * @typedef {{ size: string, color: string, background: string, font: string }} SubStyle
- * @typedef {{ next: string, upNext: string, watchCredits: string, startsIn: string[], stillTitle: string, stillText: string, keepWatching: string, skip: { intro: string, recap: string } }} Strings
+ * @typedef {{ next: string, upNext: string, watchCredits: string, startsIn: string[], stillTitle: string, stillText: string, keepWatching: string, skip: { intro: string, recap: string },
+ *   upNextIn: string[], upNextTitle: string, playNow: string, keys: string, phoneCancel: string, stopHere: string, stillKeys: string, loading: string, stall: string, paused: string }} Strings
+ * @typedef {{ title: string, line: string }} Meta
  * @typedef {{ t: 'tok', castId: string, rt: string }
  *   | { t: 'caps?' }
- *   | { t: 'item', castId: string, episode: boolean, segs: Segment[], next: Next | null }
- *   | { t: 'ui', strings: Strings, sub: SubStyle, countdown: number }} Message
+ *   | { t: 'item', castId: string, episode: boolean, segs: Segment[], next: Next | null, meta?: Meta | null }
+ *   | { t: 'ui', strings: Strings, sub: SubStyle, countdown: number, who: string, motion: boolean }} Message
  */
 
 /** English texts until the sender sent its own (in the viewer's language) */
@@ -49,6 +57,9 @@ export const DEFAULT_STRINGS = /** @type {Strings} */ ({
   startsIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => `Next episode starts in ${i + 1} second${i ? 's' : ''}`),
   stillTitle: 'Still there?', stillText: 'Autoplay is paused. Up next: {ep}', keepWatching: 'Continue watching',
   skip: { intro: 'Skip intro', recap: 'Skip recap' },
+  upNextIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => `Up next in ${i + 1} s`), upNextTitle: 'Up next', playNow: 'Play now',
+  keys: 'OK plays now · Back stops here', phoneCancel: 'Cancel on your phone', stopHere: 'Stop here', stillKeys: 'OK keeps watching',
+  loading: 'Getting ready…', stall: 'Loading…', paused: 'Paused',
 });
 
 /**
@@ -81,16 +92,25 @@ export function parseMessage(raw) {
     }
     const n = /** @type {Record<string, unknown> | null} */ (o.next && typeof o.next === 'object' ? o.next : null);
     const nid = n ? str(n.castId, 32) : null;
-    const next = n && nid && CAST_ID.test(nid) ? { castId: nid, label: (str(n.label, 200) ?? '').trim(), auto: n.auto === true, ask: n.ask === true } : null;
-    return { t: 'item', castId, episode: o.episode === true, segs, next };
+    /** @param {unknown} v @returns {Meta | null} */
+    const metaOf = (v) => {
+      const mo = /** @type {Record<string, unknown> | null} */ (v && typeof v === 'object' ? v : null);
+      const title = mo ? str(mo.title, 200) : null;
+      return mo && title !== null ? { title: title.trim(), line: (str(mo.line, 200) ?? '').trim() } : null;
+    };
+    const nm = n ? metaOf(n.meta) : null; // the queued episode's own title and line: a queue advance shows them even while the phone sleeps
+    const next = n && nid && CAST_ID.test(nid) ? { castId: nid, label: (str(n.label, 200) ?? '').trim(), auto: n.auto === true, ask: n.ask === true, ...(nm ? { meta: nm } : {}) } : null;
+    const meta = metaOf(o.meta);
+    return { t: 'item', castId, episode: o.episode === true, segs, next, ...(meta ? { meta } : {}) };
   }
   if (o.t === 'ui') {
     const s = /** @type {Record<string, unknown>} */ (o.strings && typeof o.strings === 'object' ? o.strings : {});
     /** @param {string} k @param {string} d */
     const text = (k, d) => str(s[k], 300) ?? d;
     const skip = /** @type {Record<string, unknown>} */ (s.skip && typeof s.skip === 'object' ? s.skip : {});
-    const startsIn = Array.isArray(s.startsIn) && s.startsIn.length && s.startsIn.length <= 60 && s.startsIn.every((x) => str(x, 300) !== null)
-      ? /** @type {string[]} */ (s.startsIn) : DEFAULT_STRINGS.startsIn;
+    /** @param {unknown} v @param {string[]} d */
+    const list = (v, d) => (Array.isArray(v) && v.length && v.length <= 60 && v.every((x) => str(x, 300) !== null) ? /** @type {string[]} */ (v) : d);
+    const startsIn = list(s.startsIn, DEFAULT_STRINGS.startsIn);
     const sub = /** @type {Record<string, unknown>} */ (o.sub && typeof o.sub === 'object' ? o.sub : {});
     const cd = num(o.countdown);
     return {
@@ -100,9 +120,15 @@ export function parseMessage(raw) {
         startsIn, stillTitle: text('stillTitle', DEFAULT_STRINGS.stillTitle), stillText: text('stillText', DEFAULT_STRINGS.stillText),
         keepWatching: text('keepWatching', DEFAULT_STRINGS.keepWatching),
         skip: { intro: str(skip.intro, 100) ?? DEFAULT_STRINGS.skip.intro, recap: str(skip.recap, 100) ?? DEFAULT_STRINGS.skip.recap },
+        upNextIn: list(s.upNextIn, DEFAULT_STRINGS.upNextIn), upNextTitle: text('upNextTitle', DEFAULT_STRINGS.upNextTitle), playNow: text('playNow', DEFAULT_STRINGS.playNow), keys: text('keys', DEFAULT_STRINGS.keys), phoneCancel: text('phoneCancel', DEFAULT_STRINGS.phoneCancel),
+        stopHere: text('stopHere', DEFAULT_STRINGS.stopHere), stillKeys: text('stillKeys', DEFAULT_STRINGS.stillKeys), loading: text('loading', DEFAULT_STRINGS.loading),
+        stall: text('stall', DEFAULT_STRINGS.stall), paused: text('paused', DEFAULT_STRINGS.paused),
       },
       sub: { size: pick(sub.size, SIZES, 'm'), color: pick(sub.color, COLORS, 'white'), background: pick(sub.background, BACKS, 'semi'), font: pick(sub.font, FONTS, 'sans') },
       countdown: cd !== null && cd >= 3 && cd <= 60 ? Math.round(cd) : COUNTDOWN_SECONDS,
+      // the profile's display name in a sentence, nothing else; too long = none. motion is false only when the sender says so (calm mode)
+      who: str(o.who, 80)?.trim() ?? '',
+      motion: o.motion !== false,
     };
   }
   return null;
@@ -187,12 +213,16 @@ export function textTrackStyle(sub) {
  *   castId: string, pos: number, dur: number, playing: boolean,
  *   segs: Segment[], episode: boolean, next: Next | null, countdown: number,
  *   credits: boolean, elapsed: number, dismissed: boolean, answered: boolean, jumped: boolean,
- *   still: boolean, prevNext: Next | null
+ *   still: boolean, prevNext: Next | null,
+ *   now: number, paused: boolean, pausedAt: number | null, loading: 'first' | 'stall' | null, firstFrame: boolean, stallAt: number | null,
+ *   keySeen: boolean, touch: boolean, meta: Meta | null, who: string, whoUntil: number, motion: boolean
  * }} State
  * @typedef {{ type: 'time', pos: number, dur: number, playing: boolean, dt: number }
  *   | { type: 'media', castId: string }
  *   | { type: 'item', msg: Extract<Message, { t: 'item' }> }
  *   | { type: 'countdown', seconds: number }
+ *   | { type: 'load', at?: number } | { type: 'firstFrame' } | { type: 'buffering', on: boolean, at: number } | { type: 'pause', paused: boolean, at: number }
+ *   | { type: 'key' } | { type: 'touch' } | { type: 'clock', now: number } | { type: 'ui', who: string, motion: boolean }
  *   | { type: 'cancel' } | { type: 'playNow' } | { type: 'confirm' } | { type: 'skip' }} Event
  * @typedef {'jump' | 'pause' | 'play' | 'send-cancel' | 'send-interaction' | { seek: number }} Action
  */
@@ -200,7 +230,8 @@ export function textTrackStyle(sub) {
 /** @returns {State} */
 export function initialState() {
   return { castId: '', pos: 0, dur: 0, playing: false, segs: [], episode: false, next: null, countdown: COUNTDOWN_SECONDS,
-    credits: false, elapsed: 0, dismissed: false, answered: false, jumped: false, still: false, prevNext: null };
+    credits: false, elapsed: 0, dismissed: false, answered: false, jumped: false, still: false, prevNext: null,
+    now: 0, paused: false, pausedAt: null, loading: null, firstFrame: false, stallAt: null, keySeen: false, touch: false, meta: null, who: '', whoUntil: 0, motion: true };
 }
 
 /**
@@ -218,13 +249,16 @@ export function step(st, ev) {
       if (ev.castId === s.castId) break;
       // the receiver moved on: to the queued episode that waits for "still watching?" -> it stays paused under the question
       const waiting = Boolean(s.next && s.next.castId === ev.castId && s.next.ask && !s.answered);
-      s = { ...initialState(), countdown: s.countdown, castId: ev.castId, still: waiting, prevNext: s.next };
+      // what belongs to the TV session (clock, keys, touch, sender pill, motion) stays; every new item starts on the loading screen until its first frame
+      // (also a queue advance, which has no LOAD request), and the sender pill shows again for WHO_MS
+      s = { ...initialState(), countdown: s.countdown, castId: ev.castId, still: waiting, prevNext: s.next,
+        meta: s.next && s.next.castId === ev.castId ? s.next.meta ?? null : null, now: s.now, keySeen: s.keySeen, touch: s.touch, who: s.who, whoUntil: s.now + WHO_MS, motion: s.motion, loading: 'first', firstFrame: false };
       if (waiting) actions.push('pause');
       break;
     }
     case 'item':
       if (ev.msg.castId !== s.castId) break;
-      s.segs = ev.msg.segs; s.episode = ev.msg.episode;
+      s.segs = ev.msg.segs; s.episode = ev.msg.episode; s.meta = ev.msg.meta ?? null;
       if (!sameNext(s.next, ev.msg.next)) { s.next = ev.msg.next; s.elapsed = 0; s.jumped = false; s.answered = false; }
       break;
     case 'countdown':
@@ -242,6 +276,32 @@ export function step(st, ev) {
       }
       break;
     }
+    case 'load': // new media: the loading screen until the first frame, the sender pill for WHO_MS
+      s.now = ev.at ?? s.now;
+      s.meta = null; // the previous title is not this one's
+      s.loading = 'first'; s.firstFrame = false; s.stallAt = null; s.paused = false; s.pausedAt = null; s.whoUntil = s.now + WHO_MS;
+      break;
+    case 'firstFrame':
+      s.firstFrame = true;
+      if (s.loading === 'first') s.loading = null;
+      break;
+    case 'buffering':
+      s.now = Math.max(s.now, ev.at);
+      if (ev.on) { if (s.loading === null) { s.loading = 'stall'; s.stallAt = ev.at; } } // while the first frame is awaited the loading screen already shows
+      else if (s.loading === 'stall') { s.loading = null; s.stallAt = null; }
+      break;
+    case 'pause':
+      s.now = Math.max(s.now, ev.at);
+      if (ev.paused) {
+        // a paused player has its frame (a re-load while paused): the loading screen ends, the pause screen follows
+        if (s.loading === 'first') { s.loading = null; s.firstFrame = true; }
+        if (!s.paused) { s.paused = true; s.pausedAt = ev.at; }
+      } else { s.paused = false; s.pausedAt = null; }
+      break;
+    case 'key': s.keySeen = true; break;
+    case 'touch': s.touch = true; break;
+    case 'clock': s.now = ev.now; break;
+    case 'ui': s.who = ev.who; s.motion = ev.motion; break;
     case 'cancel':
       if (cardOf(s)) { s.dismissed = true; s.elapsed = 0; actions.push('send-cancel'); }
       break;
@@ -249,7 +309,7 @@ export function step(st, ev) {
       if (cardOf(s) && s.next && !s.jumped) { s.jumped = true; actions.push('jump', 'send-interaction'); }
       break;
     case 'confirm':
-      if (s.still) { s.still = false; actions.push('play', 'send-interaction'); }
+      if (s.still) { s.still = false; s.firstFrame = true; if (s.loading === 'first') s.loading = null; actions.push('play', 'send-interaction'); } // the held item's frame is already up: no loading screen
       else if (cardOf(s)?.mode === 'still') { s.answered = true; s.elapsed = 0; actions.push('send-interaction'); }
       break;
     case 'skip': {
@@ -286,19 +346,54 @@ export function view(s, t) {
   const left = Math.max(0, Math.ceil((s.countdown * 1000 - s.elapsed) / 1000));
   const label = s.next?.label ?? '';
   const prev = s.prevNext?.label ?? '';
+  const hint = /** @type {'keys' | 'phone' | 'touch'} */ (s.touch ? 'touch' : s.keySeen ? 'keys' : 'phone');
+  const hintText = hint === 'keys' ? t.keys : hint === 'phone' ? t.phoneCancel : '';
+  const stalled = s.loading === 'stall' && s.stallAt !== null && s.now - s.stallAt >= STALL_SHOW_MS;
+  const paused = s.paused && s.pausedAt !== null && s.now - s.pausedAt >= PAUSE_SHOW_MS;
+  const pause = !s.still && s.loading !== 'first' && (stalled || paused)
+    ? { label: stalled ? t.stall : t.paused, title: s.meta?.title ?? '', line: s.meta?.line ?? '', pos: s.pos, dur: s.dur } : null;
+  const load = !s.still && s.loading === 'first' ? { title: s.meta?.title ?? '', line: s.meta?.line ?? '', label: t.loading } : null;
   return {
+    pause, load,
+    who: s.who && (s.now < s.whoUntil || pause || load || c || s.still) ? s.who : null,
+    hint,
     skip: k ? { end: k.end, text: k.type === 'recap' ? t.skip.recap : t.skip.intro } : null,
     card: c ? {
       mode: c.mode,
-      title: c.mode === 'still' ? t.stillTitle : t.upNext.replace('{label}', label),
+      title: c.mode === 'still' ? t.stillTitle : c.auto && left > 0 ? (t.upNextIn[left - 1] ?? t.upNextTitle) : t.upNextTitle,
+      /** the queued episode's name ("S1:E5 · Wrenfield Pier") */
+      name: c.mode === 'still' ? t.stillText.replace('{ep}', label) : label,
+      /** the key hint line; empty on touch devices (they get buttons) */
+      hint: c.mode === 'still' ? (s.touch ? '' : t.stillKeys) : hintText,
+      /** touch devices (Nest Hub) get "Play now" and "Stop here" buttons instead of a key hint */
+      buttons: s.touch,
       text: c.mode === 'still' ? t.stillText.replace('{ep}', label) : c.auto && left > 0 ? (t.startsIn[left - 1] ?? '') : '',
-      primary: c.mode === 'still' ? t.keepWatching : t.next,
-      secondary: c.mode === 'still' ? '' : t.watchCredits,
+      primary: c.mode === 'still' ? t.keepWatching : t.playNow,
+      secondary: c.mode === 'still' ? '' : s.touch ? t.stopHere : t.watchCredits,
       /** 0..1 of the countdown ring (0 without a countdown) */
       progress: c.auto ? Math.min(1, s.elapsed / (s.countdown * 1000)) : 0,
     } : null,
     still: s.still ? { title: t.stillTitle, text: t.stillText.replace('{ep}', prev), primary: t.keepWatching } : null,
   };
+}
+
+/**
+ * "12:34" / "1:02:03" for the pause screen's elapsed and total time ("0:00" for anything that is not a finite time >= 0).
+ * @param {number} sec
+ */
+export function formatTime(sec) {
+  const t = Number.isFinite(sec) && sec > 0 ? Math.floor(sec) : 0;
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), x = t % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${m}:${String(x).padStart(2, '0')}`;
+}
+
+/**
+ * The TV's ←/→ while the pause screen shows: the new position, ±10 s, inside the film.
+ * @param {number} pos @param {number} dur @param {-1 | 1} dir
+ */
+export function seekTarget(pos, dur, dir) {
+  const hi = dur > 0 ? Math.max(0, dur - 1) : Infinity;
+  return Math.min(hi, Math.max(0, pos + dir * 10));
 }
 
 /**

@@ -16,6 +16,10 @@ export const getCsrf = () => csrf;
 let activeProfile = '';
 export const setActiveProfile = (id: string | null | undefined) => (activeProfile = id ?? '');
 export const getActiveProfile = () => activeProfile;
+/** the active profile's display name (only for texts the viewer sees, e.g. the TV's "Cast from Anna's phone"; never sent anywhere as an identifier) */
+let activeProfileName = '';
+export const setActiveProfileName = (name: string | null | undefined) => (activeProfileName = name ?? '');
+export const getActiveProfileName = () => activeProfileName;
 
 /** set while keepaliveDuring() runs: every request started meanwhile survives page unload */
 let forceKeepalive = false;

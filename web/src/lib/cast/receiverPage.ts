@@ -45,17 +45,40 @@ export function receiverHtml(): string {
 <body class="idle">
 <video id="v"></video>
 <div class="brand" aria-hidden="true"><div><img src="/logo-icon.svg" alt="">FriendFlix</div></div>
+<div id="scrim" class="scrim fx flat" aria-hidden="true"></div>
+<div id="who" class="who fx" role="status"></div>
 <button id="skip" class="skip" hidden></button>
-<section id="card" class="card" hidden aria-live="polite">
-<h2 id="card-title"></h2>
-<p id="card-text"></p>
-<div class="bar"><i></i></div>
-<div class="btns"><button id="card-primary" class="focus"></button><button id="card-secondary"></button></div>
+<section id="card" class="card panel fx" aria-live="polite">
+<div class="art thumb"><img id="card-img" alt="" hidden></div>
+<div>
+<h2 id="card-title" aria-live="off"></h2>
+<p id="card-name" class="name clamp"></p>
+<p id="card-hint" class="hint"></p>
+</div>
+<div id="card-buttons" class="btns" hidden><button id="card-primary" class="focus"></button><button id="card-secondary"></button></div>
+<div class="cbar"><i></i></div>
 </section>
-<section id="still" class="still" hidden aria-live="assertive">
+<section id="pause" class="pause panel fx" aria-live="polite">
+<div class="head"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="5" height="18" rx="1.5"></rect><rect x="14" y="3" width="5" height="18" rx="1.5"></rect></svg><span id="pause-label"></span></div>
+<h2 id="pause-title" class="clamp"></h2>
+<p id="pause-line" class="line clamp"></p>
+<div class="pbar"><i id="pause-fill"></i></div>
+<div class="times"><span id="pause-pos"></span><span id="pause-dur"></span></div>
+</section>
+<section id="load" class="load fx flat" aria-live="polite">
+<div class="art"><img id="load-art" alt="" hidden></div>
+<h2 id="load-title" class="clamp"></h2>
+<p id="load-line" class="line clamp"></p>
+<div class="ind"><i></i></div>
+<p id="load-label" class="label"></p>
+</section>
+<section id="still" class="hold fx flat" aria-live="assertive">
+<div class="panel">
 <h2 id="still-title"></h2>
 <p id="still-text"></p>
-<div><button id="still-primary"></button></div>
+<p id="still-hint" class="hint"></p>
+<button id="still-primary" hidden></button>
+</div>
 </section>
 </body>
 </html>

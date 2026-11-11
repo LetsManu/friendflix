@@ -1,47 +1,110 @@
 /* SPDX-FileCopyrightText: 2026 Manuel Weißböck */
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
-/* FriendFlix Cast receiver: the app's tokens (coral accent, OLED dark), sized for reading from 3 m (10 ft) on a 1080p TV. */
+/*
+ * FriendFlix Cast receiver: the app's tokens (coral accent, OLED dark), sized for reading from 3 m (10 ft) on a TV.
+ * Everything is laid out in --u (1 u = 1 px at 1280 wide, scales with the viewport) inside 5vw safe margins. Every panel is SOLID
+ * (no backdrop-filter: TV GPUs are slow, and text must stay readable over a white picture). Only transform and opacity animate.
+ */
 :root {
-  --bg: #101418; --fg: #f5f5f5; --mut: #b3bac2; --acc: #ff4f6d; --acc-fill: #d6325a;
-  --safe: 5vh 5vw; /* TV overscan-safe area */
+  --u: calc(100vw / 1280);
+  --safe: 5vw; /* TV overscan-safe area, all four sides (64 px at 1280) */
+  --solid: #1c1a21; /* solid panel */
+  --solid-hi: #3a3842; /* an unfocused button on a panel */
+  --bg: #101418; --fg: #f5f5f5; --mut: #b3bac2; --dim: rgba(255, 255, 255, .78); --acc: #ff4f6d; --acc-fill: #d6325a; --coral: #ffa7b6;
+  --ease: cubic-bezier(.2, .7, .2, 1);
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: #000; color: var(--fg); overflow: hidden;
-  font: 400 28px/1.35 'Inter Variable', Inter, Roboto, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  font: 400 calc(24 * var(--u))/1.35 'Inter Variable', Inter, Roboto, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
 video { position: fixed; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; }
 [hidden] { display: none !important; }
+h2, p { margin: 0; }
+button { font: inherit; }
 
 /* nothing loaded: the brand on dark */
 .brand { position: fixed; inset: 0; display: none; place-items: center; background: radial-gradient(circle at 50% 40%, #1b2128, var(--bg) 70%); }
 body.idle .brand { display: grid; }
-.brand div { display: flex; align-items: center; gap: .6em; font-size: 56px; font-weight: 700; letter-spacing: -.01em; }
-.brand img { width: 96px; height: 96px; }
+.brand div { display: flex; align-items: center; gap: .6em; font-size: calc(56 * var(--u)); font-weight: 700; letter-spacing: -.01em; }
+.brand img { width: calc(96 * var(--u)); height: calc(96 * var(--u)); }
+
+/* screens and panels come and go by the .on class (never by [hidden]), so closing animates: in = opacity + translateY 260 ms,
+   out = opacity 200 ms (the offset is reset only after the fade, so nothing jumps while it fades) */
+.fx { opacity: 0; visibility: hidden; transform: translateY(calc(24 * var(--u)));
+  transition: opacity 200ms linear, transform 0s linear 200ms, visibility 0s linear 200ms; }
+.fx.on { opacity: 1; visibility: visible; transform: none;
+  transition: opacity 260ms var(--ease), transform 260ms var(--ease), visibility 0s; }
+.fx.flat, .fx.flat.on { transform: none; }
+
+/* the solid panel: #1c1a21, border, top highlight, shadow */
+.panel { background: var(--solid); border: 1px solid rgba(255, 255, 255, .2); border-radius: calc(24 * var(--u));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 calc(20 * var(--u)) calc(60 * var(--u)) rgba(0, 0, 0, .55); }
+.art { background: #2a2831; border-radius: calc(12 * var(--u)); overflow: hidden; flex: none; }
+.art img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+
+/* sender pill, top left */
+.who { position: fixed; z-index: 3; /* above the loading screen and the hold backdrop */ left: var(--safe); top: var(--safe); max-width: calc(100vw - 2 * var(--safe)); padding: calc(10 * var(--u)) calc(24 * var(--u));
+  font-size: calc(22 * var(--u)); font-weight: 600; color: var(--fg); border-radius: 999px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: var(--solid); border: 1px solid rgba(255, 255, 255, .2); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 calc(8 * var(--u)) calc(24 * var(--u)) rgba(0, 0, 0, .5); }
 
 /* skip intro / recap: bottom right, like the web player */
-.skip { position: fixed; right: 5vw; bottom: 12vh; font: inherit; font-weight: 600; font-size: 30px; color: #fff; padding: .55em 1.2em;
-  background: rgba(16, 20, 24, .78); border: 3px solid rgba(255, 255, 255, .85); border-radius: 999px; }
+.skip { position: fixed; right: var(--safe); bottom: var(--safe); font-weight: 600; font-size: calc(26 * var(--u)); color: #fff; padding: .5em 1.2em;
+  background: var(--solid); border: 3px solid rgba(255, 255, 255, .85); border-radius: 999px; box-shadow: 0 calc(12 * var(--u)) calc(32 * var(--u)) rgba(0, 0, 0, .55); }
 
-/* next-up card / still watching (credits), bottom right */
-.card { position: fixed; right: 5vw; bottom: 10vh; width: min(760px, 44vw); padding: 32px 36px; border-radius: 16px;
-  background: rgba(16, 20, 24, .92); box-shadow: 0 12px 48px rgba(0, 0, 0, .6); border-left: 6px solid var(--acc);
-  animation: rise 260ms cubic-bezier(.2, .7, .2, 1); }
-.card h2 { margin: 0 0 .25em; font-size: 38px; line-height: 1.2; font-weight: 700; }
-.card p { margin: 0 0 .9em; color: var(--mut); font-size: 28px; min-height: 1.35em; }
-.bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .18); overflow: hidden; margin-bottom: 24px; }
-.bar i { display: block; height: 100%; width: calc(var(--p, 0) * 100%); background: var(--acc); }
-.card[data-mode="still"] .bar { display: none; }
-.btns { display: flex; gap: 20px; }
-.btns button, .still button { font: inherit; font-weight: 600; font-size: 30px; padding: .5em 1.3em; border-radius: 999px; border: 3px solid transparent;
-  background: rgba(112, 124, 138, .55); color: #fff; }
-.btns button.focus, .still button { background: var(--acc-fill); border-color: #fff; }
+/* up next / still watching (credits), bottom right: 660 wide at 1280 */
+.card { position: fixed; right: var(--safe); bottom: var(--safe); width: calc(660 * var(--u)); max-width: calc(100vw - 2 * var(--safe)); padding: calc(24 * var(--u)) calc(24 * var(--u)) calc(30 * var(--u));
+  display: grid; grid-template-columns: auto 1fr; gap: calc(24 * var(--u)); align-items: center; overflow: hidden; }
+.card .thumb { width: calc(200 * var(--u)); height: calc(112 * var(--u)); }
+.card h2 { font-size: calc(30 * var(--u)); line-height: 1.2; font-weight: 700; color: var(--coral); }
+.card[data-mode="still"] h2 { color: var(--fg); }
+.card .name { margin-top: calc(4 * var(--u)); font-size: calc(24 * var(--u)); font-weight: 600; color: var(--fg); }
+.card .hint { margin-top: calc(8 * var(--u)); font-size: calc(20 * var(--u)); color: var(--dim); }
+.btns { grid-column: 1 / -1; display: flex; gap: calc(16 * var(--u)); }
+.btns button, .hold button { min-height: 44px; padding: calc(10 * var(--u)) calc(28 * var(--u)); border-radius: 999px; border: 3px solid transparent; font-size: calc(22 * var(--u)); font-weight: 600;
+  background: var(--solid-hi); color: #fff; }
+.btns button.focus, .hold button { background: var(--acc-fill); border-color: #fff; }
+/* the countdown along the card's bottom edge: scaleX, linear */
+.cbar { position: absolute; left: 0; right: 0; bottom: 0; height: calc(6 * var(--u)); background: rgba(255, 255, 255, .18); }
+.cbar i, .pbar i { display: block; height: 100%; background: var(--acc); transform: scaleX(var(--p, 0)); transform-origin: left; transition: transform 250ms linear; }
+.card[data-mode="still"] .cbar { display: none; }
 
-/* still watching while the queued episode waits paused: full screen dim */
-.still { position: fixed; inset: 0; display: grid; place-content: center; text-align: center; padding: var(--safe); background: rgba(0, 0, 0, .72); }
-.still h2 { font-size: 64px; margin: 0 0 .3em; }
-.still p { font-size: 34px; color: var(--mut); margin: 0 0 1.2em; }
+/* "Still there?" while the queued episode waits paused: the same solid card, centred */
+.hold { position: fixed; inset: 0; display: grid; place-items: center; padding: var(--safe); background: rgba(0, 0, 0, .55); }
+.hold .panel { width: min(calc(760 * var(--u)), 100%); padding: calc(40 * var(--u)); text-align: center; }
+.hold h2 { font-size: calc(44 * var(--u)); line-height: 1.2; font-weight: 700; }
+.hold p { margin-top: calc(12 * var(--u)); font-size: calc(26 * var(--u)); color: var(--dim); }
+.hold .hint { font-size: calc(20 * var(--u)); }
+.hold button { margin-top: calc(24 * var(--u)); }
 
-@keyframes rise { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+/* paused (and a stall): a plain gradient dims the picture, the solid block sits bottom left. Fixed width, so it never reaches
+   the up-next card (bottom right: 660 wide, 64 margin; the gap at 1280 is 32) */
+.scrim { position: fixed; inset: 0; background: linear-gradient(to top, rgba(0, 0, 0, .78), rgba(0, 0, 0, 0) 65%); }
+.pause { position: fixed; left: var(--safe); bottom: var(--safe); width: calc(460 * var(--u)); padding: calc(28 * var(--u)); }
+.pause .head { display: flex; align-items: center; gap: calc(12 * var(--u)); font-size: calc(24 * var(--u)); font-weight: 600; color: var(--coral); }
+.pause svg { width: calc(24 * var(--u)); height: calc(24 * var(--u)); fill: currentColor; }
+.pause h2 { margin-top: calc(8 * var(--u)); font-size: calc(56 * var(--u)); line-height: 1.1; font-weight: 700; }
+.pause .line { margin-top: calc(8 * var(--u)); font-size: calc(22 * var(--u)); color: var(--dim); }
+.pbar { margin-top: calc(20 * var(--u)); height: calc(6 * var(--u)); border-radius: 3px; background: rgba(255, 255, 255, .18); overflow: hidden; }
+.times { display: flex; justify-content: space-between; margin-top: calc(8 * var(--u)); font-size: calc(22 * var(--u)); color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* loading: from a LOAD to the first frame, centred */
+.load { position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: calc(12 * var(--u)); text-align: center; padding: var(--safe); background: var(--bg); }
+.load .art { width: calc(200 * var(--u)); height: calc(300 * var(--u)); margin-bottom: calc(12 * var(--u)); }
+.load h2 { font-size: calc(44 * var(--u)); line-height: 1.15; font-weight: 700; max-width: calc(900 * var(--u)); }
+.load .line { font-size: calc(24 * var(--u)); color: var(--dim); }
+.ind { width: calc(360 * var(--u)); height: calc(4 * var(--u)); margin-top: calc(16 * var(--u)); border-radius: 2px; background: rgba(255, 255, 255, .18); overflow: hidden; }
+.ind i { display: block; width: 40%; height: 100%; background: var(--acc); animation: slide 1400ms ease-in-out infinite; }
+.load .label { font-size: calc(24 * var(--u)); color: var(--dim); }
+
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+
+/* calm mode (the sender says motion: false) and the TV's own reduced motion: nothing moves, the loading bar stands still */
+body.still .fx, body.still .fx.on { transition: none; transform: none; }
+body.still .cbar i, body.still .pbar i { transition: none; }
+body.still .ind i { animation: none; transform: translateX(75%); }
 @media (prefers-reduced-motion: reduce) {
-  .card { animation: none; }
+  .fx, .fx.on { transition: none; transform: none; }
+  .cbar i, .pbar i { transition: none; }
+  .ind i { animation: none; transform: translateX(75%); }
 }

@@ -299,10 +299,20 @@ describe('cast surfaces: motion', () => {
     }
   });
 
-  it('the receiver css animates transform and opacity only', () => {
+  it('the receiver css animates transform and opacity only (visibility flips after the fade, nothing else)', () => {
     const css = readFileSync(fileURLToPath(new URL('../../../static/cast-receiver/receiver.css', import.meta.url)), 'utf8');
     const vals = motion(css);
-    expect(vals.length).toBeGreaterThan(0); // the card's rise keyframes
-    expect(vals.filter((v) => LAYOUT.test(v) || /\ball\b/.test(v))).toEqual([]);
+    expect(vals.length).toBeGreaterThan(4); // the panels' fade and rise, the countdown bar, the loading bar's keyframes
+    expect(vals.filter((v) => LAYOUT.test(v) || /\ball\b|filter|shadow|color|background/.test(v))).toEqual([]);
+    const props = new Set(vals.filter((v) => v.startsWith('transition:')).flatMap((v) => v.slice(11).split(',').map((x) => x.trim().split(/\s+/)[0]!)).filter((x) => x !== 'none'));
+    expect([...props].sort()).toEqual(['opacity', 'transform', 'visibility']);
+    for (const m of css.matchAll(/@keyframes\s+[\w-]+\s*\{([\s\S]*?\}\s*)\}/g)) expect(m[1]!.replace(/(from|to|\d+%)\s*\{\s*transform:[^;}]*;?\s*\}/g, '').trim()).toBe('');
+  });
+
+  it('the receiver css has no backdrop-filter, and calm mode / reduced motion switch the motion off', () => {
+    const css = readFileSync(fileURLToPath(new URL('../../../static/cast-receiver/receiver.css', import.meta.url)), 'utf8');
+    expect(css.replace(/\/\*[\s\S]*?\*\//g, '')).not.toContain('backdrop-filter');
+    expect(css).toMatch(/body\.still \.fx, body\.still \.fx\.on \{ transition: none;/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.ind i \{ animation: none;/);
   });
 });
