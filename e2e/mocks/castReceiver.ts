@@ -55,15 +55,16 @@ function cafScript(opts: { canDisplay?: string[] | null } = {}) {
     CastReceiverOptions: class extends Plain {},
     system: { MessageType: { JSON: 'JSON' }, EventType: { SENDER_CONNECTED: 'sender-connected' } },
     messages: { PlayerState: { PLAYING: 'PLAYING', PAUSED: 'PAUSED', BUFFERING: 'BUFFERING' }, MessageType: { PLAY: 'PLAY', LOAD: 'LOAD', QUEUE_UPDATE: 'QUEUE_UPDATE' }, TextTrackStyle: class extends Plain {}, QueueUpdateRequestData: class extends Plain {} },
-    events: { EventType: { PLAYER_LOAD_COMPLETE: 'PLAYER_LOAD_COMPLETE', MEDIA_STATUS: 'MEDIA_STATUS', TIME_UPDATE: 'TIME_UPDATE', PLAYING: 'PLAYING', PAUSE: 'PAUSE', BUFFERING: 'BUFFERING', MEDIA_FINISHED: 'MEDIA_FINISHED' } },
+    events: { EventType: { PLAYER_LOAD_COMPLETE: 'PLAYER_LOAD_COMPLETE', MEDIA_STATUS: 'MEDIA_STATUS', TIME_UPDATE: 'TIME_UPDATE', PLAYING: 'PLAYING', PAUSE: 'PAUSE', BUFFERING: 'BUFFERING', ERROR: 'ERROR', MEDIA_FINISHED: 'MEDIA_FINISHED' } },
   } };
   (window as unknown as Record<string, unknown>).__caf = {
     calls,
     message: (data: unknown) => custom({ data, senderId: 's1' }),
-    media(castId: string, dur: number, poster?: string) { st.media = { customData: { ff: { castId } }, ...(poster ? { metadata: { images: [{ url: poster }] } } : {}) }; st.dur = dur; st.pos = 0; st.state = 'PLAYING'; fire('PLAYER_LOAD_COMPLETE'); },
+    media(castId: string, dur: number, poster?: string, paused = false) { st.media = { customData: { ff: { castId } }, ...(poster ? { metadata: { images: [{ url: poster }] } } : {}) }; st.dur = dur; st.pos = 0; st.state = paused ? 'PAUSED' : 'PLAYING'; fire('PLAYER_LOAD_COMPLETE'); },
     time(pos: number, playing = true) { st.pos = pos; st.state = playing ? 'PLAYING' : 'PAUSED'; fire('TIME_UPDATE'); },
     play() { interceptors.get('PLAY')?.({}); st.state = 'PLAYING'; fire('PLAYING'); },
-    load() { interceptors.get('LOAD')?.({}); },
+    load(poster?: string) { interceptors.get('LOAD')?.({ media: poster ? { metadata: { images: [{ url: poster }] } } : undefined }); },
+    error() { fire('ERROR'); },
     playing() { st.state = 'PLAYING'; fire('PLAYING'); },
     pause() { st.state = 'PAUSED'; fire('PAUSE'); },
     buffering(on: boolean) { fire('BUFFERING', { isBuffering: on }); },
@@ -80,10 +81,11 @@ export async function fakeCaf(page: Page, o: { canDisplay?: string[] | null } = 
   }, [fn, args] as const);
   return {
     message: (data: unknown) => caf('message', data),
-    media: (castId: string, dur: number, poster?: string) => caf('media', castId, dur, poster),
+    media: (castId: string, dur: number, poster?: string, paused = false) => caf('media', castId, dur, poster, paused),
     time: (pos: number, playing = true) => caf('time', pos, playing),
     play: () => caf('play'),
-    load: () => caf('load'),
+    load: (poster?: string) => caf('load', poster),
+    error: () => caf('error'),
     playing: () => caf('playing'),
     pause: () => caf('pause'),
     buffering: (on: boolean) => caf('buffering', on),
@@ -102,5 +104,5 @@ export const ui = (o: Record<string, unknown> = {}) => ({ t: 'ui', strings: {
   loading: 'Wird vorbereitet …', stall: 'Lädt …', paused: 'Pausiert' },
   sub: { size: 'm', color: 'white', background: 'semi', font: 'sans' }, countdown: 10, who: 'Vom Handy von Anna', motion: true, ...o });
 export const DUNMOOR = { title: 'Dunmoor', line: 'Staffel 1 · Folge 4 · The Lantern Road' };
-export const WRENFIELD = { castId: 'b'.repeat(32), label: 'E5 · Wrenfield Pier', auto: true, ask: false };
+export const WRENFIELD = { castId: 'b'.repeat(32), label: 'S1:E5 · Wrenfield Pier', auto: true, ask: false };
 

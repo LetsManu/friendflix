@@ -358,7 +358,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (cur !== s || !s.ci || !custom(s)) return;
     const q = s.queued;
     cast.castSendMessage?.({ t: 'item', castId: s.ci.castId, episode: s.view.isEpisode, segs: s.segs,
-      next: q ? { castId: q.ci.castId, label: nextLabel(q.it), auto: s.noAuto !== q.it.id && s.autoSet !== false, ask: Boolean(q.ask) } : null,
+      next: q ? { castId: q.ci.castId, label: nextLabel(q.it), auto: s.noAuto !== q.it.id && s.autoSet !== false, ask: Boolean(q.ask),
+        meta: { title: barTitles(q.it).title.slice(0, 200), line: lineOf(q.it).slice(0, 200) } } : null,
       // the receiver drops a meta longer than 200 characters
       meta: { title: s.view.title.slice(0, 200), line: (s.view.isEpisode ? s.line : '').slice(0, 200) } });
   };

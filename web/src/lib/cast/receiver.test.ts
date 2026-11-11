@@ -191,7 +191,7 @@ describe('receiver: pause, loading, sender pill, key hints', () => {
   const meta = { title: 'Dunmoor', line: 'Season 1 · Episode 4 · The Lantern Road' };
   const item: Ev = { type: 'item', msg: { t: 'item', castId: A, episode: true, segs: [], next: null, meta } };
   const T = 100_000;
-  const base = (): ReturnType<typeof initialState> => run([{ type: 'ui', who: 'Cast from Anna\'s phone', motion: true }, { type: 'media', castId: A }, item, { type: 'clock', now: T }, { type: 'load' }, { type: 'firstFrame' },
+  const base = (): ReturnType<typeof initialState> => run([{ type: 'ui', who: 'Cast from Anna\'s phone', motion: true }, { type: 'media', castId: A }, { type: 'clock', now: T }, { type: 'load' }, item, { type: 'firstFrame' },
     { type: 'time', pos: 754, dur: 2640, playing: true, dt: 250 }]);
 
   it('the new state starts quiet', () => {
@@ -212,7 +212,7 @@ describe('receiver: pause, loading, sender pill, key hints', () => {
   });
 
   it('loading screen until the first frame; a 3 s stall shows Loading…', () => {
-    let st = run([{ type: 'media', castId: A }, item, { type: 'clock', now: T }, { type: 'load' }]);
+    let st = run([{ type: 'media', castId: A }, { type: 'clock', now: T }, { type: 'load' }, item]); // the item message follows the LOAD (a LOAD clears the old meta)
     expect(view(st, DEFAULT_STRINGS).load).toEqual({ title: 'Dunmoor', line: meta.line, label: 'Getting ready…' });
     st = run([{ type: 'firstFrame' }], st);
     expect(view(st, DEFAULT_STRINGS).load).toBeNull();
@@ -300,6 +300,26 @@ describe('receiver: pause, loading, sender pill, key hints', () => {
     st = step(st, { type: 'confirm' }).st;
     st = run([{ type: 'clock', now: T + 3000 }], st);
     expect(view(st, DEFAULT_STRINGS)).toMatchObject({ load: null, still: null });
+  });
+
+  it('a paused re-load (no autoplay) ends the loading screen and shows the pause screen', () => {
+    const st = run([{ type: 'load', at: 0 }, { type: 'media', castId: B }, { type: 'pause', paused: true, at: 100 }, { type: 'clock', now: 1600 }]);
+    const v = view(st, DEFAULT_STRINGS);
+    expect(v.load).toBeNull();
+    expect(v.pause).toMatchObject({ label: 'Paused' });
+  });
+
+  it('a LOAD clears the previous title; a queue advance takes the queued episode\'s own title and line', () => {
+    const NEXT = { castId: B, label: 'S1:E5 · Wrenfield Pier', auto: true, ask: false, meta: { title: 'Dunmoor', line: 'Season 1 · Episode 5 · Wrenfield Pier' } };
+    const playing = run([{ type: 'media', castId: A }, { type: 'item', msg: { t: 'item', castId: A, episode: true, segs: [], next: NEXT, meta } }, { type: 'firstFrame' }]);
+    expect(view(step(playing, { type: 'load' }).st, DEFAULT_STRINGS).load).toMatchObject({ title: '', line: '' });
+    expect(view(step(playing, { type: 'media', castId: B }).st, DEFAULT_STRINGS).load).toMatchObject({ title: 'Dunmoor', line: 'Season 1 · Episode 5 · Wrenfield Pier' });
+  });
+
+  it('item.next.meta is parsed with the same caps', () => {
+    const m = parseMessage({ t: 'item', castId: A, next: { castId: B, label: 'x', meta: { title: 'Dunmoor', line: 'l' } } }) as { next: { meta?: unknown } };
+    expect(m.next.meta).toEqual({ title: 'Dunmoor', line: 'l' });
+    expect((parseMessage({ t: 'item', castId: A, next: { castId: B, label: 'x', meta: { title: 'x'.repeat(201) } } }) as { next: { meta?: unknown } }).next.meta).toBeUndefined();
   });
 
   it('formatTime and the ±10 s seek target', () => {

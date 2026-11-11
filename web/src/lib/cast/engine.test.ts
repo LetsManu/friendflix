@@ -1470,7 +1470,7 @@ describe('cast engine: FriendFlix\'s own receiver (CAST_RECEIVER_APP_ID)', () =>
     expect(ui.strings.upNext).toContain('{label}');
     expect(env.queuePosts()[0]!.init.body).toEqual({ itemId: 'ep2', maxBitrate: 8_000_000, next: true, after: 'c1', receiver: true });
     expect(tv.items().at(-1)).toEqual({ t: 'item', castId: 'c1', episode: true, segs: [{ type: 'intro', start: 10, end: 80 }],
-      next: { castId: 'q1', label: expect.stringContaining('Second'), auto: true, ask: false }, meta: { title: 'Bright Valley', line: '' } });
+      next: { castId: 'q1', label: expect.stringContaining('Second'), auto: true, ask: false, meta: { title: expect.any(String), line: expect.any(String) } }, meta: { title: 'Bright Valley', line: '' } });
     await env.engine.playOnTv('film', 0);
     expect(env.tokenPosts().at(-1)!.init.body).toMatchObject({ itemId: 'film', receiver: true });
   });

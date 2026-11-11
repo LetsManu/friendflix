@@ -202,7 +202,7 @@ test.describe('receiver screens', () => {
   const fx = (page: Page, sel: string) => page.locator(sel);
 
   /** the receiver page with the German `ui` message, Dunmoor S1 E4 playing, E5 queued (the card shows once the credits begin) */
-  async function boot(page: Page, o: { next?: typeof WRENFIELD | null; at?: number; ui?: Record<string, unknown>; poster?: string } = {}) {
+  async function boot(page: Page, o: { next?: (typeof WRENFIELD & { meta?: { title: string; line: string } }) | null; at?: number; ui?: Record<string, unknown>; poster?: string } = {}) {
     const caf = await fakeCaf(page);
     await page.route('**/api/cast/report', (r) => r.fulfill({ json: { ok: true } }));
     await page.goto('/cast-receiver/');
@@ -232,7 +232,7 @@ test.describe('receiver screens', () => {
     const card = fx(page, '#card');
     await expect(card).toBeVisible();
     await expect(page.locator('#card-title')).toHaveText(/^Als Nächstes in \d+ s$/);
-    await expect(page.locator('#card-name')).toHaveText('E5 · Wrenfield Pier');
+    await expect(page.locator('#card-name')).toHaveText('S1:E5 · Wrenfield Pier');
     const css = await page.evaluate(() => [['card', '#card'], ['pause', '#pause'], ['who', '#who'], ['still', '#still .panel'], ['skip', '#skip'], ['load', '#load']].map(([id, sel]) => {
       const cs = getComputedStyle(document.querySelector(sel!)!);
       return [id, cs.backdropFilter, cs.backgroundColor];
@@ -260,7 +260,7 @@ test.describe('receiver screens', () => {
     await expect(page.locator('#card-buttons')).toBeHidden(); // no buttons on a remote-driven TV
   });
 
-  test('back stops here: the card stays as "Als Nächstes" without a countdown, and tells the phone', async ({ page, api: _api }) => {
+  test('back stops here: the card closes and tells the phone; without a countdown it is titled "Als Nächstes"', async ({ page, api: _api }) => {
     const caf = await boot(page);
     await caf.time(2620);
     await expect(page.locator('#card-title')).toHaveText(/^Als Nächstes in/);
@@ -327,6 +327,57 @@ test.describe('receiver screens', () => {
     await expect(fx(page, '#still .panel')).toBeHidden();
     await page.waitForTimeout(400);
     await expect(fx(page, '#load')).toBeHidden();
+  });
+
+  test('a paused re-load shows the pause screen, never "Wird vorbereitet …" for good', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    await caf.load();
+    await caf.media(B, 2640, undefined, true); // loaded without autoplay (a token renewal while paused)
+    await caf.message({ t: 'item', castId: B, episode: true, segs: [], next: null, meta: DUNMOOR });
+    await expect(fx(page, '#load')).toBeHidden();
+    await expect(fx(page, '#pause')).toBeVisible({ timeout: 2500 });
+    await expect(page.locator('#pause-label')).toHaveText('Pausiert');
+  });
+
+  test('a LOAD does not show the previous title or poster; a failed LOAD ends the loading screen', async ({ page, api: _api }) => {
+    await page.route('**/poster/old.svg', (r) => r.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"/>' }));
+    await page.route('**/poster/new.svg', (r) => r.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"/>' }));
+    const caf = await boot(page, { poster: '/poster/old.svg' });
+    await caf.load('/poster/new.svg');
+    await expect(fx(page, '#load')).toBeVisible();
+    await expect(page.locator('#load-title')).toBeHidden(); // not "Dunmoor" of the item that played before
+    await expect(page.locator('#load-art')).toHaveAttribute('src', /\/poster\/new\.svg$/);
+    await caf.error();
+    await expect(fx(page, '#load')).toBeHidden();
+  });
+
+  test('a queue advance shows the next episode\'s title and line even if the phone sleeps', async ({ page, api: _api }) => {
+    const caf = await boot(page, { next: { ...WRENFIELD, meta: { title: 'Dunmoor', line: 'Staffel 1 · Folge 5 · Wrenfield Pier' } } });
+    await caf.media(B, 2640); // the receiver moved on by itself: no item message yet
+    await expect(fx(page, '#load')).toBeVisible();
+    await expect(page.locator('#load-title')).toHaveText('Dunmoor');
+    await expect(page.locator('#load-line')).toHaveText('Staffel 1 · Folge 5 · Wrenfield Pier');
+  });
+
+  test('Play/Pause right after a pause (before the pause screen) resumes, under the card too', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    await caf.time(2620);
+    await caf.pause();
+    await page.keyboard.press('MediaPlayPause');
+    await expect.poll(() => caf.calls()).toContain('play');
+    expect(await caf.calls()).not.toContain('jump:1');
+  });
+
+  test('during an intro Play/Pause is left to the player (OK skips)', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    await caf.message({ t: 'item', castId: A, episode: true, segs: [{ type: 'intro', start: 10, end: 80 }], next: null, meta: DUNMOOR });
+    await caf.time(20);
+    await expect(page.getByRole('button', { name: 'Intro überspringen' })).toBeVisible();
+    await page.keyboard.press('MediaPlayPause');
+    await page.waitForTimeout(300);
+    expect((await caf.calls()).filter((c) => c.startsWith('seek:'))).toEqual([]);
+    await page.keyboard.press('Enter');
+    await expect.poll(() => caf.calls()).toContain('seek:80');
   });
 
   test('OK on the pause screen plays', async ({ page, api: _api }) => {

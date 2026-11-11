@@ -40,7 +40,7 @@ const pick = (v, list, dflt) => (typeof v === 'string' && list.includes(v) ? v :
 
 /**
  * @typedef {{ type: string, start: number, end: number }} Segment
- * @typedef {{ castId: string, label: string, auto: boolean, ask: boolean }} Next
+ * @typedef {{ castId: string, label: string, auto: boolean, ask: boolean, meta?: Meta | null }} Next
  * @typedef {{ size: string, color: string, background: string, font: string }} SubStyle
  * @typedef {{ next: string, upNext: string, watchCredits: string, startsIn: string[], stillTitle: string, stillText: string, keepWatching: string, skip: { intro: string, recap: string },
  *   upNextIn: string[], upNextTitle: string, playNow: string, keys: string, phoneCancel: string, stopHere: string, stillKeys: string, loading: string, stall: string, paused: string }} Strings
@@ -92,10 +92,15 @@ export function parseMessage(raw) {
     }
     const n = /** @type {Record<string, unknown> | null} */ (o.next && typeof o.next === 'object' ? o.next : null);
     const nid = n ? str(n.castId, 32) : null;
-    const next = n && nid && CAST_ID.test(nid) ? { castId: nid, label: (str(n.label, 200) ?? '').trim(), auto: n.auto === true, ask: n.ask === true } : null;
-    const mo = /** @type {Record<string, unknown> | null} */ (o.meta && typeof o.meta === 'object' ? o.meta : null);
-    const title = mo ? str(mo.title, 200) : null;
-    const meta = mo && title !== null ? { title: title.trim(), line: (str(mo.line, 200) ?? '').trim() } : null;
+    /** @param {unknown} v @returns {Meta | null} */
+    const metaOf = (v) => {
+      const mo = /** @type {Record<string, unknown> | null} */ (v && typeof v === 'object' ? v : null);
+      const title = mo ? str(mo.title, 200) : null;
+      return mo && title !== null ? { title: title.trim(), line: (str(mo.line, 200) ?? '').trim() } : null;
+    };
+    const nm = n ? metaOf(n.meta) : null; // the queued episode's own title and line: a queue advance shows them even while the phone sleeps
+    const next = n && nid && CAST_ID.test(nid) ? { castId: nid, label: (str(n.label, 200) ?? '').trim(), auto: n.auto === true, ask: n.ask === true, ...(nm ? { meta: nm } : {}) } : null;
+    const meta = metaOf(o.meta);
     return { t: 'item', castId, episode: o.episode === true, segs, next, ...(meta ? { meta } : {}) };
   }
   if (o.t === 'ui') {
@@ -247,7 +252,7 @@ export function step(st, ev) {
       // what belongs to the TV session (clock, keys, touch, sender pill, motion) stays; every new item starts on the loading screen until its first frame
       // (also a queue advance, which has no LOAD request), and the sender pill shows again for WHO_MS
       s = { ...initialState(), countdown: s.countdown, castId: ev.castId, still: waiting, prevNext: s.next,
-        now: s.now, keySeen: s.keySeen, touch: s.touch, who: s.who, whoUntil: s.now + WHO_MS, motion: s.motion, loading: 'first', firstFrame: false };
+        meta: s.next && s.next.castId === ev.castId ? s.next.meta ?? null : null, now: s.now, keySeen: s.keySeen, touch: s.touch, who: s.who, whoUntil: s.now + WHO_MS, motion: s.motion, loading: 'first', firstFrame: false };
       if (waiting) actions.push('pause');
       break;
     }
@@ -273,6 +278,7 @@ export function step(st, ev) {
     }
     case 'load': // new media: the loading screen until the first frame, the sender pill for WHO_MS
       s.now = ev.at ?? s.now;
+      s.meta = null; // the previous title is not this one's
       s.loading = 'first'; s.firstFrame = false; s.stallAt = null; s.paused = false; s.pausedAt = null; s.whoUntil = s.now + WHO_MS;
       break;
     case 'firstFrame':
@@ -286,7 +292,11 @@ export function step(st, ev) {
       break;
     case 'pause':
       s.now = Math.max(s.now, ev.at);
-      if (ev.paused) { if (!s.paused) { s.paused = true; s.pausedAt = ev.at; } } else { s.paused = false; s.pausedAt = null; }
+      if (ev.paused) {
+        // a paused player has its frame (a re-load while paused): the loading screen ends, the pause screen follows
+        if (s.loading === 'first') { s.loading = null; s.firstFrame = true; }
+        if (!s.paused) { s.paused = true; s.pausedAt = ev.at; }
+      } else { s.paused = false; s.pausedAt = null; }
       break;
     case 'key': s.keySeen = true; break;
     case 'touch': s.touch = true; break;
@@ -351,7 +361,7 @@ export function view(s, t) {
     card: c ? {
       mode: c.mode,
       title: c.mode === 'still' ? t.stillTitle : c.auto && left > 0 ? (t.upNextIn[left - 1] ?? t.upNextTitle) : t.upNextTitle,
-      /** the queued episode's name ("E5 · Wrenfield Pier") */
+      /** the queued episode's name ("S1:E5 · Wrenfield Pier") */
       name: c.mode === 'still' ? t.stillText.replace('{ep}', label) : label,
       /** the key hint line; empty on touch devices (they get buttons) */
       hint: c.mode === 'still' ? (s.touch ? '' : t.stillKeys) : hintText,

@@ -83,9 +83,11 @@ const setText = (el, text) => { if (el.textContent !== text) el.textContent = te
 /** screens and panels fade by the .on class (so closing animates), they never flip [hidden] */
 const show = (el, on) => { el.classList.toggle('on', on); el.setAttribute('aria-hidden', on ? 'false' : 'true'); };
 
+/** the media of a LOAD request that is on its way (its poster belongs on the loading screen, not the previous one's) */
+let loadingMedia = null;
 /** the first image of the media metadata (the poster token), same origin only; '' = none */
 function posterUrl() {
-  const u = pm.getMediaInformation()?.metadata?.images?.[0]?.url;
+  const u = (loadingMedia ?? pm.getMediaInformation())?.metadata?.images?.[0]?.url;
   if (typeof u !== 'string' || !u || u.length > 2048) return '';
   try { const x = new URL(u, location.href); return x.origin === location.origin ? x.href : ''; } catch { return ''; }
 }
@@ -169,7 +171,7 @@ function render() {
 function activate(which, resume = false) {
   const v = view(st, strings);
   // the Play/Pause key resumes a paused picture, even under an up-next card (OK / Enter still plays the next episode)
-  if (resume && v.pause && !v.still) { pm.play(); return run({ type: 'pause', paused: false, at: nowMs() }); }
+  if (resume && (v.pause || st.paused) && !v.still) { pm.play(); return run({ type: 'pause', paused: false, at: nowMs() }); }
   if (v.still) return run({ type: 'confirm' });
   if (v.card) {
     if (v.card.mode === 'still') return run({ type: 'confirm' });
@@ -194,7 +196,12 @@ document.addEventListener('keydown', (e) => {
   const arrow = k === 'ArrowLeft' || k === 'ArrowRight';
   if (arrow && v.card?.buttons) { focus = focus ? 0 : 1; render(); }
   else if (arrow && v.pause && !v.card && !v.still) seekBy(k === 'ArrowLeft' ? -1 : 1);
-  else if (k === 'Enter' || k === ' ' || k === 'MediaPlayPause') { if (!v.card && !v.still && !v.pause && !v.skip) return; activate(focus, k === 'MediaPlayPause'); }
+  else if (k === 'Enter' || k === ' ' || k === 'MediaPlayPause') {
+    if (!v.card && !v.still && !v.pause && !v.skip && !st.paused) return;
+    // during an intro the player's own Play/Pause pauses; OK skips
+    if (k === 'MediaPlayPause' && !v.card && !v.still && !v.pause && !st.paused) return;
+    activate(focus, k === 'MediaPlayPause');
+  }
   else if (k === 'Escape' || k === 'Backspace' || k === 'GoBack' || k === 'BrowserBack') run({ type: 'cancel' });
   else return;
   e.preventDefault();
@@ -232,6 +239,7 @@ pm.setMessageInterceptor(fw.messages.MessageType.PLAY, (req) => {
 // a LOAD starts the loading screen (until the first frame); a queue advance has none and starts it with its media change
 pm.setMessageInterceptor(fw.messages.MessageType.LOAD, (req) => {
   run({ type: 'clock', now: nowMs() });
+  loadingMedia = req?.media ?? null;
   run({ type: 'load', at: nowMs() });
   return req;
 });
@@ -240,9 +248,15 @@ pm.setMessageInterceptor(fw.messages.MessageType.LOAD, (req) => {
 const E = fw.events.EventType;
 function current() {
   const id = castIdOf(pm.getMediaInformation());
-  if (id && id !== st.castId) { run({ type: 'clock', now: nowMs() }); reporter.media(id); run({ type: 'media', castId: id }); }
+  if (id && id !== st.castId) { loadingMedia = null; run({ type: 'clock', now: nowMs() }); reporter.media(id); run({ type: 'media', castId: id }); }
 }
-pm.addEventListener(E.PLAYER_LOAD_COMPLETE, current);
+pm.addEventListener(E.PLAYER_LOAD_COMPLETE, () => {
+  current();
+  // a load without autoplay (the phone re-loads while paused) fires no PAUSE: say so, or the loading screen would stay up
+  if (pm.getPlayerState() === fw.messages.PlayerState.PAUSED) run({ type: 'pause', paused: true, at: nowMs() });
+});
+// a failed LOAD must not leave "Getting ready…" up
+pm.addEventListener(E.ERROR, () => run({ type: 'firstFrame' }));
 pm.addEventListener(E.MEDIA_STATUS, current);
 pm.addEventListener([E.TIME_UPDATE, E.PLAYING, E.PAUSE], () => {
   current();
