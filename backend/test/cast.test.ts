@@ -1415,15 +1415,15 @@ describe('cast: AirPlay subtitle rendition request', () => {
     expect(p.get('SubtitleMethod')).toBe('Hls');
     expect(p.get('SubtitleStreamIndex')).toBe('3');
     expect(j.hlsSub).toBe(true);
-    // the PlaybackInfo request: the track is selected and this request (only) can deliver WebVTT through HLS
-    expect(lastInfo().body.SubtitleStreamIndex).toBe(3);
+    // the PlaybackInfo request: the track is named by the URL only (-1 here: an image track must never be selected and burned in); this request (only) can deliver WebVTT through HLS
+    expect(lastInfo().body.SubtitleStreamIndex).toBe(-1);
     expect(lastInfo().body.DeviceProfile.SubtitleProfiles).toContainEqual({ Format: 'vtt', Method: 'Hls' });
     // still H.264 + stereo AAC over TS
     expect(p.get('VideoCodec')).toBe('h264');
     expect(p.get('AudioCodec')).toBe('aac');
     expect(p.get('SegmentContainer')).toBe('ts');
     expect(j.hlsSegmentFormat).toBe('ts');
-    expect((await recOf(ct)).hlsSub).toBe(true);
+    expect((await recOf(ct))).toMatchObject({ hlsSub: true, hlsSubIndex: 3 });
     expect(JSON.stringify(lastInfo())).not.toContain(ct);
   });
 
@@ -1458,14 +1458,16 @@ describe('cast: AirPlay subtitle rendition request', () => {
     expect(r.statusCode).toBe(200);
     expect(new URL(j.contentUrl).searchParams.has('SubtitleMethod')).toBe(false);
     expect(j.hlsSub).toBeUndefined();
+    expect(lastInfo().body.SubtitleStreamIndex).toBe(-1); // Jellyfin is never asked to select an image track
     expect((await recOf(ct)).hlsSub).toBeUndefined();
+    expect((await recOf(ct)).hlsSubIndex).toBeUndefined();
     expect((await create(admin, { via: 'airplay', subtitleIndex: 77 })).j.hlsSub).toBeUndefined(); // no such track
   });
 
   it('authz scope carries hlsSub', async () => {
     srcStreams = streams;
     const scope = async (ct: string) => (await authz({ ct })).json().scope; // read right away: an account keeps 2 live tokens
-    expect(await scope((await create(admin, { via: 'airplay', subtitleIndex: 3 })).ct)).toEqual({ itemId: ID, mediaSourceId: MS, playSessionId: 'ps-12345678', hlsSub: true });
+    expect(await scope((await create(admin, { via: 'airplay', subtitleIndex: 3 })).ct)).toEqual({ itemId: ID, mediaSourceId: MS, playSessionId: 'ps-12345678', hlsSub: true, hlsSubIndex: 3 });
     expect(await scope((await create(admin, { via: 'airplay' })).ct)).toEqual({ itemId: ID, mediaSourceId: MS, playSessionId: 'ps-12345678' });
     expect(await scope((await create(admin)).ct)).toEqual({ itemId: ID, mediaSourceId: MS, playSessionId: 'ps-12345678' });
   });
@@ -1473,8 +1475,9 @@ describe('cast: AirPlay subtitle rendition request', () => {
   it('a record that says hlsSub but is not an AirPlay token never reaches the gateway as one', async () => {
     const { ct } = await create(admin);
     const k = `cast:${hashToken(ct)}`;
-    await env.kv.set(k, JSON.stringify({ ...JSON.parse((await env.kv.get(k))!), hlsSub: true }), 600);
+    await env.kv.set(k, JSON.stringify({ ...JSON.parse((await env.kv.get(k))!), hlsSub: true, hlsSubIndex: 3 }), 600);
     expect((await authz({ ct })).json().scope).not.toHaveProperty('hlsSub');
+    expect((await authz({ ct })).json().scope).not.toHaveProperty('hlsSubIndex');
   });
 
   it('a server without the capability ignores subtitleIndex: no rendition, no hlsSub', async () => {

@@ -100,7 +100,8 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       // a server that cannot emit the rendition ignores the field (no error, nothing recorded); an AirPlay token has no queue, so no `pred` here
       const hlsSubtitleIndex = b.subtitleIndex !== undefined && ctx.jf.capabilities.castHlsSubtitles ? b.subtitleIndex : undefined;
       const opts = {
-        maxBitrate, ...(hlsSubtitleIndex !== undefined ? { hlsSubtitleIndex } : {}), maxHeight, startTicks, audioIndex: b.audioIndex, cast: true, ...(pred ? { after: pred.playSessionId } : {}),
+        maxBitrate, maxHeight, startTicks, audioIndex: b.audioIndex, cast: true, ...(pred ? { after: pred.playSessionId } : {}),
+        ...(hlsSubtitleIndex !== undefined ? { hlsSubtitleIndex } : {}),
         ...(clientCaps ? { clientCaps, remote, surround: ctx.cfg.SURROUND_AUDIO !== 'false', ...(ctx.cfg.HEVC_STREAMS > 0 ? { hevcGate: gate } : {}) } : {}),
       };
       let info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts);
@@ -120,7 +121,7 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       const rec = {
         userId: req.user!.id, profileId: req.profile!.id, deviceId, itemId: b.itemId, mediaSourceId: info.mediaSourceId, playSessionId: info.playSessionId, maxBitrate, title: item.name, via: b.via ?? 'chromecast',
         ...(pred ? { afterPs: pred.playSessionId } : {}),
-        ...(hlsSub ? { hlsSub: true } : {}),
+        ...(hlsSub ? { hlsSub: true, hlsSubIndex: hlsSubtitleIndex } : {}),
         runtimeTicks: info.runtimeTicks, ...(item.seriesName ? { seriesName: item.seriesName } : {}),
         subs: info.subtitles.map((s) => ({ index: s.index, ...(s.language ? { language: s.language } : {}), title: s.title })),
       } as const;

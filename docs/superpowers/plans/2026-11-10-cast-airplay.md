@@ -571,10 +571,10 @@ Task counts: Phase 1: 14, Phase 2: 4, Phase 3: 10 (5 of them only on GO), Phase 
 **Implementer:** backend · hard
 
 **Files:**
-- Modify: `gateway/src/gateway.ts` (`compatPlaylist(lines, opts?: { keepSubtitles?: boolean })`, `sanitizePlaylist` passes it from the authz scope)
+- Modify: `gateway/src/gateway.ts` (`compatPlaylist(lines, opts?: { keepSubtitleIndex?: number })`, `sanitizePlaylist` passes it from the authz scope (`hlsSub` + `hlsSubIndex`))
 - Test: `gateway/src/gateway.test.ts` (or the file that tests `compatPlaylist`)
 
-**Interfaces:** `keepSubtitles: true` keeps the **first** `#EXT-X-MEDIA:TYPE=SUBTITLES` only, rewritten to `TYPE, GROUP-ID, NAME, LANGUAGE, DEFAULT=YES, AUTOSELECT=YES, FORCED=NO, URI`; keeps `SUBTITLES="<that group>"` on `#EXT-X-STREAM-INF`; drops other subtitle groups and all `CLOSED-CAPTIONS`. Default (`false`) behaves exactly as today. The URI check in `sanitizePlaylist` runs before and covers the kept line.
+**Interfaces:** `keepSubtitleIndex: n` keeps only the `#EXT-X-MEDIA:TYPE=SUBTITLES` whose URI ends in `Subtitles/<n>/subtitles.m3u8` (Jellyfin lists every text track; the requested one is chosen by index, not position), rewritten to `TYPE, GROUP-ID, NAME, LANGUAGE, DEFAULT=YES, AUTOSELECT=YES, FORCED=NO, URI`; keeps `SUBTITLES="<that group>"` on `#EXT-X-STREAM-INF`; drops other subtitle groups and all `CLOSED-CAPTIONS`. Default (no index) behaves exactly as today. Its own paths (`subtitles.m3u8`, `stream.vtt`, query allowlisted) are reachable only for that token (`castHlsSubPaths`). The URI check in `sanitizePlaylist` runs before and covers the kept line.
 
 - [ ] **Step 1: Write the failing tests** – `keeps one subtitle rendition for an AirPlay token that asked`; `drops subtitle groups without keepSubtitles (Chromecast, AirPlay without subtitles)`; `a second subtitle group and closed captions are dropped`; `a kept rendition with a URI outside the token path makes the playlist fail (null)`; existing compat tests unchanged.
 - [ ] **Step 2: Implement.**

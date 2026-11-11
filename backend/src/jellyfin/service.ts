@@ -622,9 +622,11 @@ export class JellyfinService implements MediaServer {
     };
     const info = await this.json<Record<string, any>>(user, `/Items/${itemId}/PlaybackInfo?${p}`, {
       method: 'POST',
+      // (also for an AirPlay subtitle rendition: that track is named by the HLS URL only (dto.ts, text tracks only); selecting an image track here would
+      // make the server plan a burn-in)
       // SubtitleStreamIndex -1: without it Jellyfin picks the user's default subtitle (StreamBuilder.BuildVideoItem) and an image track
       // (PGS, VobSub) it would have to burn in refuses direct play. FriendFlix shows text subtitles itself and never burns any in.
-      body: JSON.stringify({ DeviceProfile: profile, SubtitleStreamIndex: opts.hlsSubtitleIndex ?? -1 }),
+      body: JSON.stringify({ DeviceProfile: profile, SubtitleStreamIndex: -1 }),
     });
     if (info.ErrorCode) throw new JellyfinError(403, `playback blocked: ${info.ErrorCode}`);
     // preferred audio language: our HLS URL carries AudioStreamIndex itself, so a non-default track needs no second PlaybackInfo

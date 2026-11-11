@@ -75,6 +75,8 @@ export interface CastRecord {
   seriesName?: string;
   /** AirPlay only: the HLS stream carries one WebVTT subtitle rendition the gateway keeps (scope.hlsSub) */
   hlsSub?: boolean;
+  /** with hlsSub: the source's subtitle stream index of that rendition (the gateway keeps exactly that track's playlist and serves only its paths) */
+  hlsSubIndex?: number;
   /** the subtitle tracks of the cast (index, language, title; URLs are never stored here) */
   subs?: CastSubtitleInfo[];
 }
@@ -87,7 +89,7 @@ export interface CastAuth {
   maxBitrate: number;
   maxHeight: number;
   kind: 'media' | 'img';
-  scope: { itemId: string; mediaSourceId: string; playSessionId: string; /** AirPlay token whose stream carries one subtitle rendition: the gateway keeps it */ hlsSub?: boolean };
+  scope: { itemId: string; mediaSourceId: string; playSessionId: string; /** AirPlay token whose stream carries one subtitle rendition: the gateway keeps it */ hlsSub?: boolean; hlsSubIndex?: number };
 }
 
 export const hashToken = (ct: string) => createHash('sha256').update(ct).digest('hex');
@@ -337,7 +339,7 @@ export async function resolveCast(ctx: Ctx, ct: string, client: string): Promise
         maxBitrate: Math.min(role.maxBitrate, rec.maxBitrate),
         maxHeight: Math.min(role.maxHeight ?? CAST_MAX_HEIGHT, CAST_MAX_HEIGHT),
         kind: rec.kind ?? 'media',
-        scope: { itemId: rec.itemId, mediaSourceId: rec.mediaSourceId, playSessionId: rec.playSessionId, ...(rec.hlsSub && rec.via === 'airplay' && (rec.kind ?? 'media') === 'media' ? { hlsSub: true } : {}) },
+        scope: { itemId: rec.itemId, mediaSourceId: rec.mediaSourceId, playSessionId: rec.playSessionId, ...(rec.hlsSub && Number.isInteger(rec.hlsSubIndex) && rec.via === 'airplay' && (rec.kind ?? 'media') === 'media' ? { hlsSub: true, hlsSubIndex: rec.hlsSubIndex } : {}) },
       };
       if (Date.now() - (rec.seen ?? rec.createdAt) > CAST_TOUCH_MS) await touch(ctx, hash, rec, user.name, prof.name, overlap);
     }
