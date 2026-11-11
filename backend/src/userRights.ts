@@ -5,10 +5,10 @@ import { z } from 'zod';
 import { auditInTx } from './audit.js';
 import type { Ctx } from './ctx.js';
 import { fetchLibraries, knownLibraries, missingLibraries } from './libraries.js';
-import { getUserOverrides, setUserOverrides, type EffectiveLimits, type UserOverrides } from './limits.js';
+import { getUserOverrides, setUserOverrides, type UserOverrides } from './limits.js';
 import { KIDS_OFF, MATRIX_FIELDS, PERM_KEYS, type PermKey } from './perms.js';
-import { effectiveRights, invalidateRights, roleRights, type RightKey, type RightSource } from './rights.js';
-import { MEDIA_FIELDS, rolePatch } from './roleWrite.js';
+import { diffRights, effectiveRights, invalidateRights, isPerm, roleRights, same, valueOf, type RightKey, type RightSource } from './rights.js';
+import { rolePatch } from './roleWrite.js';
 import type { ProfileRow } from './types.js';
 import { HttpError } from './users.js';
 import { wellFormed } from './wellFormed.js';
@@ -19,9 +19,9 @@ import { wellFormed } from './wellFormed.js';
  * the role editor's encodings (null = back to the role, 'unlimited' lifts a cap); an override equal to the role's value is not stored.
  */
 
-type Override = Exclude<RightKey, 'downloadDays'>;
-/** every field a person can override: all matrix rows except downloadDays (user_limits has no column for it, it stays the role's) */
-export const OVERRIDE_KEYS: readonly Override[] = MATRIX_FIELDS.map((f) => f.key as RightKey).filter((k): k is Override => k !== 'downloadDays');
+type Override = RightKey;
+/** every field a person can override: every matrix row (template fields, requestsPerMonth, switches) */
+export const OVERRIDE_KEYS: readonly Override[] = MATRIX_FIELDS.map((f) => f.key as RightKey);
 
 const r = rolePatch.shape;
 const permFields = Object.fromEntries(PERM_KEYS.map((k) => [k, z.boolean().nullable().optional()])) as Record<PermKey, z.ZodOptional<z.ZodNullable<z.ZodBoolean>>>;
@@ -29,7 +29,7 @@ const permFields = Object.fromEntries(PERM_KEYS.map((k) => [k, z.boolean().nulla
 export const rightsOverrides = z.object({
   libraries: r.libraries, maxParentalRating: r.maxParentalRating, maxStreams: r.maxStreams, maxBitrate: r.maxBitrate,
   remoteMaxBitrate: r.remoteMaxBitrate, transcoding: r.transcoding, maxHeight: r.maxHeight, download: r.download,
-  maxDownloads: r.maxDownloads, downloadMaxHeight: r.downloadMaxHeight, requestsPerMonth: r.requestsPerMonth, ...permFields,
+  maxDownloads: r.maxDownloads, downloadMaxHeight: r.downloadMaxHeight, downloadDays: r.downloadDays, requestsPerMonth: r.requestsPerMonth, ...permFields,
 }).strict();
 /** PUT /api/admin/users/:id/rights; `note`: the admin's why (≤ 200 characters, empty = none), shown in the editor, never audited */
 export const rightsBody = z.object({
@@ -38,11 +38,6 @@ export const rightsBody = z.object({
 }).strict();
 export type RightsBody = z.infer<typeof rightsBody>;
 type OverrideValue = unknown;
-
-const isPerm = (k: string): k is PermKey => (PERM_KEYS as readonly string[]).includes(k);
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-type Resolved = { template: EffectiveLimits; perms: Record<PermKey, boolean>; sources: Record<RightKey, RightSource> };
-const valueOf = (x: Resolved, k: string): unknown => (isPerm(k) ? x.perms[k] : x.template[k as keyof EffectiveLimits]);
 
 /** the stored sentinel of 'unlimited' where the column's null already means "as the role" */
 const UNLIMITED: Partial<Record<Override, number>> = { maxHeight: 0, maxParentalRating: -1, requestsPerMonth: -1 };
@@ -121,18 +116,15 @@ export interface RightsWrite {
  * Writes an account's overrides (partial: an absent field stays, null = back to the role) in one transaction on one connection,
  * serialized per account across instances (the routes also run it in accountSerial). A value equal to the role's is not stored (an
  * existing override of that field goes). One user.rights audit entry per stored change, inside the transaction: `{ from, to }` of the
- * changed effective account values (no kids overlay), `layer` for a value that only moved between layers (unpinned), `note: 'changed'`
- * when the note changed (never its text). The caches of the account are dropped after commit; re-applying the policy and forgetting
+ * changed effective account values (no kids overlay; diffRights, as the role editor), `layer` for a value that only moved between layers
+ * (unpinned), `stored` for an override that changed but decides nothing (a switch cleared on an admin account), `note: 'changed'` when
+ * the note changed (never its text). The caches of the account are dropped after commit; re-applying the policy and forgetting
  * the gateway memo are the caller's (`media`, `effective`), outside the transaction.
  */
 export async function writeRights(ctx: Ctx, actor: string | null, userId: string, body: RightsBody): Promise<RightsWrite> {
   const o = body.overrides ?? {};
   // names → the server's spelling, before the transaction (a media server call); 400 unknown_library, 502 libraries_unavailable
   const libraries = Array.isArray(o.libraries) ? await knownLibraries(ctx, o.libraries) : o.libraries;
-  const from: Record<string, unknown> = {};
-  const to: Record<string, unknown> = {};
-  const layer: Record<string, { from: string; to: string }> = {};
-  let media = false;
   const c = await (ctx.db as pg.Pool).connect();
   try {
     await c.query('begin');
@@ -141,7 +133,8 @@ export async function writeRights(ctx: Ctx, actor: string | null, userId: string
     const tx = { db: c, roles: ctx.roles };
     const user = (await c.query<{ id: string; role: string }>('select id, role from users where id=$1 for share', [userId])).rows[0];
     if (!user) throw new HttpError(404, 'not_found');
-    if (user.role === 'admin' && PERM_KEYS.some((k) => o[k] !== undefined)) throw new HttpError(400, 'admin_perms_locked');
+    // the admin role's switches are always on: none can be set, but one stored under an earlier role may be cleared (null)
+    if (user.role === 'admin' && PERM_KEYS.some((k) => o[k] !== undefined && o[k] !== null)) throw new HttpError(400, 'admin_perms_locked');
     const role = await roleRights(tx, user.role);
     if (!role) throw new HttpError(409, 'unknown_role');
     const cur = await getUserOverrides(tx, userId);
@@ -155,24 +148,21 @@ export async function writeRights(ctx: Ctx, actor: string | null, userId: string
 
     const before = (await effectiveRights(tx, user, null, cur))!;
     const after = (await effectiveRights(tx, user, null, next))!;
-    let effective = false;
-    for (const { key: k } of MATRIX_FIELDS) {
-      const a = valueOf(before, k);
-      const b = valueOf(after, k);
-      const sa = before.sources[k as RightKey];
-      const sb = after.sources[k as RightKey];
-      if (!same(a, b)) {
-        from[k] = a; to[k] = b; effective = true;
-        if (MEDIA_FIELDS.has(k)) media = true;
-      } else if (sa !== sb) {
-        from[k] = a; to[k] = b; layer[k] = { from: sa, to: sb };
-      }
+    const { from, to, layer, media, effective } = diffRights(before, after);
+    // stored overrides that decide nothing (a switch of an admin account): audited by their stored values
+    const stored: Record<string, { from: unknown; to: unknown }> = {};
+    for (const k of OVERRIDE_KEYS) {
+      const a = overrideOf(cur, k);
+      const b = overrideOf(next, k);
+      if (!same(a, b) && !Object.hasOwn(to, k)) stored[k] = { from: a, to: b };
     }
     const note = cur.note !== next.note;
     if (!same(cur, next)) await setUserOverrides(tx, userId, next);
-    // in the transaction: an entry for every stored change, in commit order (the account lock is still held)
-    if (Object.keys(to).length || note) {
-      await auditInTx(tx, actor, 'user.rights', userId, { from, to, ...(Object.keys(layer).length ? { layer } : {}), ...(note ? { note: 'changed' } : {}) });
+    // in the transaction: exactly one entry for every stored change, in commit order (the account lock is still held)
+    if (Object.keys(to).length || Object.keys(stored).length || note) {
+      await auditInTx(tx, actor, 'user.rights', userId, {
+        from, to, ...(Object.keys(layer).length ? { layer } : {}), ...(Object.keys(stored).length ? { stored } : {}), ...(note ? { note: 'changed' } : {}),
+      });
     }
     await c.query('commit');
     return { changed: Object.keys(to), media, effective };

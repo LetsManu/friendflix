@@ -24,7 +24,7 @@ async function rewind(seed?: () => Promise<void>) {
     drop table if exists roles;
     alter table role_settings drop column if exists template, drop column if exists perms;
     alter table user_limits drop column if exists transcoding, drop column if exists max_height, drop column if exists download,
-      drop column if exists max_bitrate, drop column if exists max_parental_rating, drop column if exists libraries,
+      drop column if exists max_bitrate, drop column if exists max_parental_rating, drop column if exists download_days, drop column if exists libraries,
       drop column if exists perms, drop column if exists note;
     delete from schema_migrations where version >= 47;`);
   await seed?.();
@@ -90,11 +90,13 @@ describe('migration 47', () => {
       await pool.query('insert into user_limits(user_id, max_streams, requests_per_month) values ($1, 3, 4)', [uid]);
     });
     const r = (await pool.query('select * from user_limits where user_id=$1', [uid])).rows[0];
-    expect(r).toMatchObject({ max_streams: 3, requests_per_month: 4, perms: {}, transcoding: null, max_height: null, download: null, max_bitrate: null, max_parental_rating: null, libraries: null, note: null });
+    expect(r).toMatchObject({ max_streams: 3, requests_per_month: 4, perms: {}, transcoding: null, max_height: null, download: null, max_bitrate: null, max_parental_rating: null, download_days: null, libraries: null, note: null });
     await expect(pool.query('update user_limits set max_parental_rating = 22 where user_id=$1', [uid])).rejects.toThrow(/check/);
     await expect(pool.query('update user_limits set max_bitrate = 1000 where user_id=$1', [uid])).rejects.toThrow(/check/);
     await expect(pool.query("update user_limits set note = repeat('x', 201) where user_id=$1", [uid])).rejects.toThrow(/check/);
-    await pool.query("update user_limits set max_parental_rating = -1, libraries = '\"all\"', note = 'Urlaub' where user_id=$1", [uid]);
+    await expect(pool.query('update user_limits set download_days = 0 where user_id=$1', [uid])).rejects.toThrow(/check/);
+    await expect(pool.query('update user_limits set download_days = 91 where user_id=$1', [uid])).rejects.toThrow(/check/);
+    await pool.query("update user_limits set max_parental_rating = -1, download_days = 14, libraries = '\"all\"', note = 'Urlaub' where user_id=$1", [uid]);
   });
 
   it('audit indexes exist', async () => {

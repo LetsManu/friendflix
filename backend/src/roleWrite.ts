@@ -4,12 +4,11 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { auditInTx } from './audit.js';
 import type { Ctx } from './ctx.js';
-import type { EffectiveLimits } from './limits.js';
 import { MATRIX_FIELDS, PERM_KEYS, permsPatch, readPerms, type MatrixField, type PermKey } from './perms.js';
 import { featureFlags } from './features.js';
 import { fetchLibraries, knownLibraries, missingLibraries, type Library } from './libraries.js';
 import { defaultLimit } from './requestlimit.js';
-import { invalidateRights, roleRights, type RightKey, type RightSource } from './rights.js';
+import { diffRights, invalidateRights, roleRights, same, valueOf, type RightKey, type RightSource } from './rights.js';
 import { invitableRoles, listRoles, roleLabelArgs, type RoleRow } from './rolecat.js';
 import { wellFormed } from './wellFormed.js';
 import { DEFAULT_ROLES, LEGACY_COLUMNS, TEMPLATE_KEYS, legacyColumns, invalidateRoles, own, readTemplate, type RoleTemplate } from './roles.js';
@@ -48,14 +47,6 @@ export const rolePatch = z.object({
 }).strict();
 export type RolePatch = z.infer<typeof rolePatch>;
 
-/** fields the media server enforces through the identity policy: a change re-applies it (spec §2.3; `download` is the policy's
- * EnableContentDownloading / Plex' download flag, so it re-applies as the legacy editor did) */
-export const MEDIA_FIELDS: ReadonlySet<string> = new Set(['libraries', 'maxParentalRating', 'maxStreams', 'maxBitrate', 'transcoding', 'maxHeight', 'download']);
-
-type RoleRights = NonNullable<Awaited<ReturnType<typeof roleRights>>>;
-const isPerm = (k: string): k is PermKey => (PERM_KEYS as readonly string[]).includes(k);
-const valueOf = (r: RoleRights, k: string): unknown => (isPerm(k) ? r.perms[k] : r.template[k as keyof EffectiveLimits]);
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
 /**
@@ -132,18 +123,11 @@ export async function writeRole(ctx: Ctx, actor: string | null, key: string, pat
       const prev = cur ? { template: cur.template, perms: cur.perms, requestsPerMonth: cur.requests_per_month } : null;
       const before = (await roleRights(tx, key, prev))!;
       const after = (await roleRights(tx, key, next))!;
-      for (const { key: k } of MATRIX_FIELDS) {
-        const a = valueOf(before, k);
-        const b = valueOf(after, k);
-        const sa = before.sources[k as RightKey];
-        const sb = after.sources[k as RightKey];
-        if (!same(a, b)) {
-          from[k] = a; to[k] = b;
-          if (MEDIA_FIELDS.has(k)) media = true;
-        } else if (sa !== sb) {
-          from[k] = a; to[k] = b; layer[k] = { from: sa, to: sb };
-        }
-      }
+      const d = diffRights(before, after);
+      Object.assign(from, d.from);
+      Object.assign(to, d.to);
+      Object.assign(layer, d.layer);
+      media = d.media;
       if (!prev || !same(prev, next)) {
         const cols = Object.values(LEGACY_COLUMNS);
         await c.query(

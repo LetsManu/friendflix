@@ -224,6 +224,51 @@ describe('PUT /api/admin/users/:id/rights', () => {
     expect((await put({ overrides: { libraries: ['Archiv'] } })).json()).toEqual({ error: 'unknown_library' });
   });
 
+  it('downloadDays is overridable per person', async () => {
+    const n = policies().length;
+    expect((await put({ overrides: { downloadDays: 14 } })).json()).toEqual({ ok: true, reapplied: { identities: 0, failed: 0 } });
+    expect(policies().length).toBe(n); // not part of the media policy: downloads.ts reads it per request
+    expect(forgot).toHaveBeenCalledWith(env.ctx, ANNA);
+    expect(await stored()).toMatchObject({ download_days: 14 });
+    const r = (await effectiveRights(env.ctx, anna))!;
+    expect(r.template.downloadDays).toBe(14);
+    expect(r.sources.downloadDays).toBe('user');
+    expect(rowOf(await get(), 'downloadDays')).toEqual({ key: 'downloadDays', value: 14, roleValue: 30, override: 14, source: 'user' });
+    expect((await audits()).at(-1).meta).toEqual({ from: { downloadDays: 30 }, to: { downloadDays: 14 } });
+    // back to the role; the role's own value is not stored either
+    await put({ overrides: { downloadDays: null } });
+    expect(await stored()).toBeUndefined();
+    expect(rowOf(await get(), 'downloadDays')).toEqual({ key: 'downloadDays', value: 30, roleValue: 30, override: null, source: 'default' });
+    await put({ overrides: { downloadDays: 30 } });
+    expect(await stored()).toBeUndefined();
+    for (const bad of [0, 91, 1.5]) expect((await put({ overrides: { downloadDays: bad } })).statusCode, String(bad)).toBe(400);
+  });
+
+  it('library lists equal to the role in another case and order are not stored', async () => {
+    await env.pool.query("insert into role_settings(role, template) values ('friend', '{\"libraries\": [\"Filme\", \"Serien\"]}')");
+    invalidateRoles(env.ctx);
+    const n = policies().length;
+    expect((await put({ overrides: { libraries: ['serien', 'FILME'] } })).json()).toEqual({ ok: true, reapplied: { identities: 0, failed: 0 } });
+    expect(policies().length).toBe(n);
+    expect(await stored()).toBeUndefined();
+    expect(await audits()).toEqual([]);
+    // a different set is stored
+    expect((await put({ overrides: { libraries: ['filme'] } })).json()).toEqual({ ok: true, reapplied: { identities: 3, failed: 0 } });
+    expect(await stored()).toMatchObject({ libraries: ['Filme'] });
+  });
+
+  it('the audit entry is written in the transaction: a failing audit rolls the write back', async () => {
+    await env.pool.query("alter table audit_log add constraint no_user_rights check (action <> 'user.rights') not valid");
+    try {
+      const r = await put({ overrides: { cast: false, maxStreams: 1 } });
+      expect(r.statusCode).toBe(500);
+      expect(await stored()).toBeUndefined();
+      expect((await effectiveRights(env.ctx, anna))!.perms.cast).toBe(true);
+    } finally {
+      await env.pool.query('alter table audit_log drop constraint no_user_rights');
+    }
+  });
+
   it('unknown field refused', async () => {
     for (const bad of [
       { overrides: { telepathy: true } }, { overrides: { maxStreams: 0 } }, { overrides: { maxHeight: 100 } }, { overrides: { requestsPerMonth: 101 } },
@@ -239,11 +284,51 @@ describe('PUT /api/admin/users/:id/rights', () => {
   it('admin switches stay locked, deletion in progress and unknown accounts are refused', async () => {
     const adminId = (await env.pool.query("select id from users where authentik_sub='sub-admin'")).rows[0].id as string;
     expect((await put({ overrides: { comments: false } }, adminId)).json()).toEqual({ error: 'admin_perms_locked' });
+    expect((await put({ overrides: { comments: null, cast: true } }, adminId)).json()).toEqual({ error: 'admin_perms_locked' });
     expect((await put({ overrides: { cast: false } }, '0b000000-0000-4000-a000-0000000000ff')).statusCode).toBe(404);
     await env.pool.query("insert into account_deletions(user_id, pseudonym) values ($1, 'gone-1')", [ANNA]);
     const r = await put({ overrides: { cast: false } });
     expect(r.statusCode).toBe(409);
     expect(r.json()).toEqual({ error: 'deletion_in_progress' });
+    expect(await stored()).toBeUndefined();
+  });
+});
+
+describe('admin accounts and access', () => {
+  const adminId = async () => (await env.pool.query("select id from users where authentik_sub='sub-admin'")).rows[0].id as string;
+
+  it('an admin account shows its switches locked, a switch stored under an earlier role is not an override', async () => {
+    const id = await adminId();
+    await env.pool.query('insert into user_limits(user_id, perms) values ($1, \'{"comments": false}\')', [id]);
+    invalidateRights(id);
+    const v = (await call('GET', `/api/admin/users/${id}/rights`)).json();
+    expect(v.role).toBe('admin');
+    expect(rowOf(v, 'comments')).toEqual({ key: 'comments', value: true, roleValue: true, override: null, source: 'admin' });
+    expect(rowOf(v, 'maxStreams')).toMatchObject({ value: 6, override: null, source: 'default' });
+  });
+
+  it('a stored switch can be cleared on an admin account (never set)', async () => {
+    const id = await adminId();
+    await env.pool.query('insert into user_limits(user_id, perms) values ($1, \'{"comments": false}\')', [id]);
+    invalidateRights(id);
+    const r = await put({ overrides: { comments: null } }, id);
+    expect(r.json()).toEqual({ ok: true, reapplied: { identities: 0, failed: 0 } });
+    expect((await env.pool.query('select 1 from user_limits where user_id=$1', [id])).rowCount).toBe(0);
+    // the stored change is audited although no effective value moved
+    const a = (await env.pool.query("select meta from audit_log where action='user.rights' and target=$1", [id])).rows;
+    expect(a.map((x) => x.meta)).toEqual([{ from: {}, to: {}, stored: { comments: { from: false, to: null } } }]);
+    // clearing what is not stored changes nothing
+    expect((await put({ overrides: { comments: null } }, id)).statusCode).toBe(200);
+    expect((await env.pool.query("select 1 from audit_log where action='user.rights' and target=$1", [id])).rowCount).toBe(1);
+  });
+
+  it('only admins reach the rights', async () => {
+    const anna = await env.login({ sub: 'sub-anna', email: 'anna@example.com', name: 'Anna Beispiel', groups: [] });
+    const as = (method: 'GET' | 'PUT', url: string, payload?: object) =>
+      env.app.inject({ method, url, cookies: anna.cookies, headers: { 'x-csrf-token': anna.csrf }, ...(payload ? { payload } : {}) });
+    expect((await as('GET', `/api/admin/users/${ANNA}/rights`)).statusCode).toBe(403);
+    expect((await as('PUT', `/api/admin/users/${ANNA}/rights`, { overrides: { cast: true } })).statusCode).toBe(403);
+    expect((await as('PUT', `/api/admin/users/${ANNA}/limits`, { maxStreams: 5 })).statusCode).toBe(403);
     expect(await stored()).toBeUndefined();
   });
 });

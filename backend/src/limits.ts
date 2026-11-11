@@ -14,19 +14,19 @@ export type UserLimits = { maxStreams: number | null; remoteBitrate: number | nu
  * "as the role"); `libraries` 'all' or library names; `perms` only the switches set for this account; `note` the admin's free-text why.
  */
 export type UserOverrides = UserLimits & {
-  transcoding: boolean | null; maxHeight: number | null; download: boolean | null; maxBitrate: number | null; maxParentalRating: number | null;
-  libraries: 'all' | string[] | null; perms: Partial<Perms>; note: string | null;
+  transcoding: boolean | null; maxHeight: number | null; download: boolean | null; downloadDays: number | null; maxBitrate: number | null;
+  maxParentalRating: number | null; libraries: 'all' | string[] | null; perms: Partial<Perms>; note: string | null;
 };
 /** The role template with the user's overrides on top, plus the monthly request limit (null = unlimited). */
 export type EffectiveLimits = RoleTemplate & { requestsPerMonth: number | null };
 
 const NONE: UserLimits = { maxStreams: null, remoteBitrate: null, maxDownloads: null, downloadMaxHeight: null, requestsPerMonth: null };
-const NO_OVERRIDES: UserOverrides = { ...NONE, transcoding: null, maxHeight: null, download: null, maxBitrate: null, maxParentalRating: null, libraries: null, perms: {}, note: null };
+const NO_OVERRIDES: UserOverrides = { ...NONE, transcoding: null, maxHeight: null, download: null, downloadDays: null, maxBitrate: null, maxParentalRating: null, libraries: null, perms: {}, note: null };
 
 /** the row goes once nothing is overridden any more (the user follows the role again) */
 const DROP_EMPTY = `delete from user_limits where user_id=$1 and max_streams is null and remote_bitrate is null and max_downloads is null
   and download_max_height is null and requests_per_month is null and transcoding is null and max_height is null and download is null
-  and max_bitrate is null and max_parental_rating is null and libraries is null and perms = '{}'::jsonb and note is null`;
+  and download_days is null and max_bitrate is null and max_parental_rating is null and libraries is null and perms = '{}'::jsonb and note is null`;
 
 export async function getUserLimits(ctx: Pick<Ctx, 'db'>, userId: string): Promise<UserLimits> {
   const { maxStreams, remoteBitrate, maxDownloads, downloadMaxHeight, requestsPerMonth } = await getUserOverrides(ctx, userId);
@@ -49,15 +49,15 @@ const readLibraries = (v: unknown): 'all' | string[] | null =>
 export async function getUserOverrides(ctx: Pick<Ctx, 'db'>, userId: string): Promise<UserOverrides> {
   const r = await ctx.db.query<{
     max_streams: number | null; remote_bitrate: number | null; max_downloads: number | null; download_max_height: number | null; requests_per_month: number | null;
-    transcoding: boolean | null; max_height: number | null; download: boolean | null; max_bitrate: number | null; max_parental_rating: number | null;
-    libraries: unknown; perms: unknown; note: string | null;
-  }>(`select max_streams, remote_bitrate, max_downloads, download_max_height, requests_per_month, transcoding, max_height, download, max_bitrate,
-        max_parental_rating, libraries, perms, note from user_limits where user_id=$1`, [userId]);
+    transcoding: boolean | null; max_height: number | null; download: boolean | null; download_days: number | null; max_bitrate: number | null;
+    max_parental_rating: number | null; libraries: unknown; perms: unknown; note: string | null;
+  }>(`select max_streams, remote_bitrate, max_downloads, download_max_height, requests_per_month, transcoding, max_height, download, download_days,
+        max_bitrate, max_parental_rating, libraries, perms, note from user_limits where user_id=$1`, [userId]);
   const x = r.rows[0];
   if (!x) return { ...NO_OVERRIDES, perms: {} };
   return {
     maxStreams: x.max_streams, remoteBitrate: x.remote_bitrate, maxDownloads: x.max_downloads, downloadMaxHeight: x.download_max_height, requestsPerMonth: x.requests_per_month,
-    transcoding: x.transcoding, maxHeight: x.max_height, download: x.download, maxBitrate: x.max_bitrate, maxParentalRating: x.max_parental_rating,
+    transcoding: x.transcoding, maxHeight: x.max_height, download: x.download, downloadDays: x.download_days, maxBitrate: x.max_bitrate, maxParentalRating: x.max_parental_rating,
     libraries: readLibraries(x.libraries), perms: readPerms(x.perms), note: x.note,
   };
 }
@@ -66,11 +66,11 @@ export async function getUserOverrides(ctx: Pick<Ctx, 'db'>, userId: string): Pr
 export async function setUserOverrides(ctx: Pick<Ctx, 'db'>, userId: string, o: UserOverrides): Promise<void> {
   await ctx.db.query(
     `insert into user_limits(user_id, max_streams, remote_bitrate, max_downloads, download_max_height, requests_per_month, transcoding, max_height, download,
-       max_bitrate, max_parental_rating, libraries, perms, note) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       max_bitrate, max_parental_rating, libraries, perms, note, download_days) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      on conflict (user_id) do update set max_streams=$2, remote_bitrate=$3, max_downloads=$4, download_max_height=$5, requests_per_month=$6, transcoding=$7,
-       max_height=$8, download=$9, max_bitrate=$10, max_parental_rating=$11, libraries=$12, perms=$13, note=$14, updated_at=now()`,
+       max_height=$8, download=$9, max_bitrate=$10, max_parental_rating=$11, libraries=$12, perms=$13, note=$14, download_days=$15, updated_at=now()`,
     [userId, o.maxStreams, o.remoteBitrate, o.maxDownloads, o.downloadMaxHeight, o.requestsPerMonth, o.transcoding, o.maxHeight, o.download,
-      o.maxBitrate, o.maxParentalRating, o.libraries === null ? null : JSON.stringify(o.libraries), JSON.stringify(o.perms), o.note]);
+      o.maxBitrate, o.maxParentalRating, o.libraries === null ? null : JSON.stringify(o.libraries), JSON.stringify(o.perms), o.note, o.downloadDays]);
   await ctx.db.query(DROP_EMPTY, [userId]);
   invalidateLimits(userId);
 }

@@ -904,6 +904,7 @@ export const MIGRATIONS: string[] = [
     add column if not exists download boolean,
     add column if not exists max_bitrate int check (max_bitrate between 300000 and 200000000),
     add column if not exists max_parental_rating int check (max_parental_rating between -1 and 21),
+    add column if not exists download_days int check (download_days between 1 and 90),
     add column if not exists libraries jsonb,
     add column if not exists perms jsonb not null default '{}',
     add column if not exists note text check (char_length(note) <= 200);

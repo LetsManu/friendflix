@@ -3,7 +3,7 @@
 import type { Ctx } from './ctx.js';
 // rights.ts and limits.ts import each other: neither may use the other's exports at module load, only inside functions
 import { getUserOverrides, type EffectiveLimits, type UserOverrides } from './limits.js';
-import { DEFAULT_PERMS, KIDS_OFF, PERM_KEYS, readPerms, type PermKey, type Perms } from './perms.js';
+import { DEFAULT_PERMS, KIDS_OFF, MATRIX_FIELDS, PERM_KEYS, readPerms, type PermKey, type Perms } from './perms.js';
 import { defaultLimit, roleLimitRow } from './requestlimit.js';
 import { readTemplate, resolveRole, type RoleTemplate, type TemplateKey } from './roles.js';
 import type { ProfileRow } from './types.js';
@@ -81,6 +81,7 @@ function overrideValues(u: UserOverrides): Partial<EffectiveLimits> {
   put('remoteMaxBitrate', u.remoteBitrate);
   put('maxDownloads', u.maxDownloads);
   put('downloadMaxHeight', u.downloadMaxHeight);
+  put('downloadDays', u.downloadDays);
   if (u.requestsPerMonth !== null) out.requestsPerMonth = u.requestsPerMonth === -1 ? null : u.requestsPerMonth;
   put('transcoding', u.transcoding);
   put('download', u.download);
@@ -145,6 +146,48 @@ export async function accountsWithout(ctx: RightsCtx, perm: PermKey): Promise<st
   if (!per) without.set(ctx, (per = new Map()));
   per.set(perm, { at: Date.now(), ids });
   return [...ids];
+}
+
+// ---- comparing two resolutions (the role and the rights editor decide audit and policy re-apply with it) ----
+
+/** fields the media server enforces through the identity policy: a change re-applies it (spec §2.3; `download` is the policy's
+ * EnableContentDownloading / Plex' download flag, so it re-applies as the legacy editor did) */
+export const MEDIA_FIELDS: ReadonlySet<string> = new Set(['libraries', 'maxParentalRating', 'maxStreams', 'maxBitrate', 'transcoding', 'maxHeight', 'download']);
+export const isPerm = (k: string): k is PermKey => (PERM_KEYS as readonly string[]).includes(k);
+/** equal as stored and audited (JSON; key order of objects counts, as both sides come from the same resolver) */
+export const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+/** a resolution of roleRights or effectiveRights */
+export type Resolved = { template: EffectiveLimits; perms: Perms; sources: Record<RightKey, RightSource> };
+/** the value of a matrix field (template field, requestsPerMonth or switch) in a resolution */
+export const valueOf = (r: Resolved, k: string): unknown => (isPerm(k) ? r.perms[k] : r.template[k as keyof EffectiveLimits]);
+
+export interface RightsDiff {
+  /** changed values and values that only moved between layers: field -> value before / after */
+  from: Record<string, unknown>; to: Record<string, unknown>;
+  /** the fields whose value stayed but whose deciding layer moved (pinned / unpinned): field -> source before / after */
+  layer: Record<string, { from: RightSource; to: RightSource }>;
+  /** a value the media server policy carries changed: its identities need the policy again */
+  media: boolean;
+  /** some value changed (not only a layer) */
+  effective: boolean;
+}
+
+/** what a write changed, over every matrix field: the audit's `{ from, to, layer }`, and whether policies and memos must follow */
+export function diffRights(before: Resolved, after: Resolved): RightsDiff {
+  const d: RightsDiff = { from: {}, to: {}, layer: {}, media: false, effective: false };
+  for (const { key: k } of MATRIX_FIELDS) {
+    const a = valueOf(before, k);
+    const b = valueOf(after, k);
+    const sa = before.sources[k as RightKey];
+    const sb = after.sources[k as RightKey];
+    if (!same(a, b)) {
+      d.from[k] = a; d.to[k] = b; d.effective = true;
+      if (MEDIA_FIELDS.has(k)) d.media = true;
+    } else if (sa !== sb) {
+      d.from[k] = a; d.to[k] = b; d.layer[k] = { from: sa, to: sb };
+    }
+  }
+  return d;
 }
 
 /** Drops the cached overrides of one account (all without an id) and every accountsWithout answer. */

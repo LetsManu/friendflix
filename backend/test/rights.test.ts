@@ -145,22 +145,22 @@ describe('effectiveRights', () => {
     const id = await addUser('Ben Muster', 'guest');
     await setUserOverrides(ctx, id, {
       maxStreams: 2, remoteBitrate: 3_000_000, maxDownloads: 5, downloadMaxHeight: 480, requestsPerMonth: 9,
-      transcoding: false, maxHeight: 0, download: true, maxBitrate: 6_000_000, maxParentalRating: -1, libraries: ['Filme'], perms: { cast: false }, note: 'Urlaub',
+      transcoding: false, maxHeight: 0, download: true, downloadDays: 7, maxBitrate: 6_000_000, maxParentalRating: -1, libraries: ['Filme'], perms: { cast: false },
+      note: 'Urlaub',
     });
     const r = (await effectiveRights(ctx, { id, role: 'guest' }))!;
     expect(r.template).toEqual({
       ...DEFAULT_ROLES.guest, maxStreams: 2, remoteMaxBitrate: 3_000_000, maxDownloads: 5, downloadMaxHeight: 480, requestsPerMonth: 9,
-      transcoding: false, maxHeight: null, download: true, maxBitrate: 6_000_000, maxParentalRating: null, libraries: ['Filme'],
+      transcoding: false, maxHeight: null, download: true, downloadDays: 7, maxBitrate: 6_000_000, maxParentalRating: null, libraries: ['Filme'],
     });
-    for (const k of [...TEMPLATE_KEYS.filter((k) => k !== 'downloadDays'), 'requestsPerMonth', 'cast'] as const) expect(r.sources[k]).toBe('user');
-    expect(r.sources.downloadDays).toBe('default');
-    expect(await getUserOverrides(ctx, id)).toMatchObject({ maxHeight: 0, maxParentalRating: -1, libraries: ['Filme'], perms: { cast: false }, note: 'Urlaub' });
+    for (const k of [...TEMPLATE_KEYS, 'requestsPerMonth', 'cast'] as const) expect(r.sources[k]).toBe('user');
+    expect(await getUserOverrides(ctx, id)).toMatchObject({ maxHeight: 0, maxParentalRating: -1, downloadDays: 7, libraries: ['Filme'], perms: { cast: false }, note: 'Urlaub' });
     // the old limits editor keeps the new override columns (the row is not deleted while one is set)
     await setUserLimits(ctx, id, { maxStreams: null, remoteBitrate: null, maxDownloads: null, downloadMaxHeight: null, requestsPerMonth: null });
-    expect(await getUserOverrides(ctx, id)).toMatchObject({ maxStreams: null, transcoding: false, perms: { cast: false }, note: 'Urlaub' });
+    expect(await getUserOverrides(ctx, id)).toMatchObject({ maxStreams: null, transcoding: false, downloadDays: 7, perms: { cast: false }, note: 'Urlaub' });
     await setUserOverrides(ctx, id, {
       maxStreams: null, remoteBitrate: null, maxDownloads: null, downloadMaxHeight: null, requestsPerMonth: null,
-      transcoding: null, maxHeight: null, download: null, maxBitrate: null, maxParentalRating: null, libraries: null, perms: {}, note: null,
+      transcoding: null, maxHeight: null, download: null, downloadDays: null, maxBitrate: null, maxParentalRating: null, libraries: null, perms: {}, note: null,
     });
     expect((await pool.query('select 1 from user_limits where user_id=$1', [id])).rowCount).toBe(0);
     expect((await effectiveLimits(ctx, { id, role: 'guest' }))).toEqual({ ...DEFAULT_ROLES.guest, requestsPerMonth: 4 });
