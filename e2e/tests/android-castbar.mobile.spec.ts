@@ -19,10 +19,11 @@ const SNAP: NativeCastSnap = {
 const { next: _queued, ...LAST } = SNAP; // the last episode: nothing queued
 const APP2 = { api: 2, caps: { play: true, download: true, cast: true, castBar: true } };
 const bar = (page: Page) => page.getByRole('region', { name: 'Jetzt auf dem Fernseher' });
-/** the y the bar settles at: the tab bar's top minus the bar's height and the 8 px gap */
+/** the y the bar settles at: the tab bar's top minus the bar's own (measured) height and the 8 px gap; the rise-in only moves it by transform */
 const stableY = async (page: Page) => {
   const t = (await page.locator('nav.tabbar').boundingBox())!;
-  return Math.round(t.y - 8 - 68);
+  const b = (await bar(page).boundingBox())!;
+  return Math.round(t.y - 8 - b.height);
 };
 const asked = async (page: Page, method: string) => (await nativeCalls(page, method)).map((c) => c.args);
 
@@ -247,6 +248,24 @@ test('a slow app at page start: the bar comes after one retry when the page is s
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   await expect(bar(page)).toContainText('Auf Wohnzimmer-TV');
   expect(await nativeCalls(page, 'castState')).toHaveLength(1);
+});
+
+test('a slow app at page start: going to the background does not fire the retry', async ({ page, api: _api }) => {
+  test.setTimeout(30_000);
+  await fakeNativeApp(page, { ...APP2, cast: SNAP, capsHangFirst: true });
+  await page.goto('/');
+  await expect.poll(async () => (await nativeCalls(page, 'capabilities')).length).toBe(1);
+  await page.waitForFunction(() => performance.now() > 5600);
+  const hide = (hidden: boolean) => page.evaluate((h) => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => h });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, hidden);
+  await hide(true);
+  await page.waitForTimeout(300);
+  expect(await nativeCalls(page, 'capabilities')).toHaveLength(1); // hidden: no second question
+  await expect(bar(page)).toHaveCount(0);
+  await hide(false); // back in front: now it asks again
+  await expect(bar(page)).toContainText('Auf Wohnzimmer-TV');
 });
 
 test('sign-out with a hung app still finishes (the wait for the app is capped)', async ({ page, api: _api }) => {

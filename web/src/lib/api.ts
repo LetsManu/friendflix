@@ -10,7 +10,9 @@ export class ApiError extends Error {
 }
 
 let csrf = '';
-export const setCsrf = (t: string) => (csrf = t);
+/** a burst of parallel requests all hit the same 401: the app hears the sign-out once; a successful sign-in (setCsrf) arms it again */
+let signOutTold = false;
+export const setCsrf = (t: string) => { signOutTold = false; return (csrf = t); };
 /** for requests outside api() (the player's start-time report: a keepalive fetch that must never redirect on 401) */
 export const getCsrf = () => csrf;
 /** id of the profile the page loaded with; sent as x-ff-profile so the backend can detect a profile switch in another tab */
@@ -46,7 +48,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   // public pages (invite, TV pairing, waiting room, restore, setup, the in-app sign-in and reset) handle a 401 themselves: no redirect loop
   // 401 reauth_required: the session is fine, only a sensitive action wants a fresh sign-in; the caller starts it (lib/account/reauth.ts)
   if (res.status === 401 && json?.error !== 'reauth_required' && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv' && location.pathname !== '/pending' && location.pathname !== '/restore' && location.pathname !== '/setup' && location.pathname !== '/login' && location.pathname !== '/reset' && location.pathname !== '/confirm-email') {
-    void tellAppSession(null); // the Android app's own cast must not stay controllable for whoever signs in next (fire and forget; no-op outside the app / with API 1)
+    if (!signOutTold) { signOutTold = true; void tellAppSession(null); } // the Android app's own cast must not stay controllable for whoever signs in next (fire and forget; no-op outside the app / with API 1)
     clearHint(); // the session is gone: the next start must not render early with this account's hint/profile
     location.href = localStorage.getItem('ff_tv_device') ? '/tv' : '/auth/login'; // a TV re-pairs instead of typing a login
     await new Promise(() => undefined);

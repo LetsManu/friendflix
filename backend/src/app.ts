@@ -9,6 +9,7 @@ import { buildInfo } from './channel.js';
 import type { Ctx } from './ctx.js';
 import { MIN_ANDROID } from './version.js';
 import { authOrigin } from './oidc.js';
+import { noteUntrustedForwarding, TRUSTED_PROXY_RANGES } from './netaddr.js';
 import { compressJson } from './compress.js';
 import { newTimingStore, serverTimingHeader, timedDb, timedKv, timingStorage, timingSummary, type TimingStore } from './timing.js';
 import { metricsPlugin } from './metrics.js';
@@ -101,12 +102,13 @@ const MUTATING: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']
 const SLOW_REQUEST_MS = 500;
 
 export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInstance> {
-  const app = Fastify({ logger: extra.logger ?? process.env.NODE_ENV !== 'test', trustProxy: true, bodyLimit: 256 * 1024 });
+  const app = Fastify({ logger: extra.logger ?? process.env.NODE_ENV !== 'test', trustProxy: [...TRUSTED_PROXY_RANGES], bodyLimit: 256 * 1024 });
   // Server-Timing: Postgres and Redis calls are booked on the current request (Jellyfin: JellyfinClient). Same objects underneath.
   ctx.db = timedDb(ctx.db);
   ctx.kv = timedKv(ctx.kv);
   const timings = new WeakMap<object, TimingStore>();
   app.addHook('onRequest', (req, _reply, done) => {
+    noteUntrustedForwarding(req.raw, req.log);
     const store = newTimingStore();
     timings.set(req, store);
     timingStorage.run(store, done);

@@ -8,6 +8,20 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 - **Continue on another device.** Stop a title on one device and open FriendFlix on another within 6 hours: the start page shows a card ("Last on Living room · 12 min ago") and one tap continues at that minute, in the browser, the Windows app, the Android app and the TV apps. Nothing shown at 90 % watched or more, and kids profiles get no card. The title page says where you stopped on the other device, without moving anything. On a TV the card takes the focus only when it arrives quickly and before any key; otherwise Up reaches it. Dismiss works per device.
 - **Name your devices.** *Devices* has a rename button for each device ("Living room", "Bedroom"). The name shows on the card, on the title page and in the admin views. The detected name comes back with *Use the detected name*.
 
+### Security
+- **A spoofed `X-Forwarded-For` or `X-Real-IP` is no longer believed from a direct client.** With the documented NPM configuration the proxy overwrites the header, so this only mattered for a client that reached the backend port directly (or a proxy set up differently): the backend believed the header from any peer and took the leftmost, client-written entry for rate limits and the audit log, and the home-network check trusted it too. It now believes the forwarding headers only from a loopback or private peer (NPM on the host or in a bridge container, as documented), and uses the address the proxy appended; any other peer counts as itself. A proxy that reaches the backend from a public address, over Tailscale or over public IPv6 is not supported; the backend logs one warning when it sees `X-Forwarded-For` from such a peer ([docs/setup.md](docs/setup.md)).
+- **Windows release build:** the Tauri CLI comes from a lockfile (`desktop/package-lock.json`, run with `npm exec --no`) instead of an unpinned `npx` download in the job that holds the signing key.
+- **`desktop/Cargo.lock`:** `rustix` 1.1.6 (RUSTSEC-2026-0486). It is a Linux-only dependency and not part of the Windows app; this is lockfile hygiene.
+
+### Added
+- **Admin → Status shows how the "not here yet" suggestions are built.** A card per type (films, series) at the end of the page with the counts of the last stored build for your owner profile (starting titles, recommendations, already in the library, filtered by age, shown, failures) and a hint when nearly everything recommended is already in the library or there are no starting titles. Opening the page builds nothing; *Check now* builds the lists. Numbers only.
+
+### Fixed
+- **Android: no reply to the page after the activity is gone.** A reply queued for the WebView (`view.post`) could run after the shell finished and destroyed the WebView, which can crash the process on closing the app (seen once in the emulator test "back at the first page finishes"). Replies now check that the page is still attached when they run, and a detached bridge ignores late messages.
+- **The Android app hears about a sign-out once** when several requests fail with 401 at the same time, not once per request.
+- **The page's capabilities retry for the Android app** no longer fires when the page just went to the background and is never scheduled after the page was torn down.
+- **Flaky phone-player test.** The "title glides down when the skip row goes" check measured while the title was still gliding from the skip row's arrival; it now waits for that and steps the glide's own clock (no app change).
+
 ## [3.3.0] – Churros – 2026-11-11
 
 ### Upgrade notes
