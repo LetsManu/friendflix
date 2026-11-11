@@ -330,7 +330,7 @@ export default {
     loadFailed: 'Das Konto konnte nicht geladen werden.',
     retry: 'Erneut versuchen',
     reauthFailed: 'Die Anmeldung konnte nicht bestätigt werden. Bitte versuch es noch einmal.',
-    reauthFailedHint: 'Klappt es wieder nicht, warte eine halbe Minute oder melde dich zuerst bei Authentik ab.',
+    reauthFailedHint: 'Klappt es wieder nicht, versuch es in einer halben Minute; passiert es immer wieder, gehen die Uhren von Server und Authentik womöglich unterschiedlich (ein Admin kann das prüfen).',
     privacy: 'Admins können sehen, welche Titel du zuletzt geschaut hast. Jeder Blick darauf wird im Audit-Log festgehalten.',
     data: {
       title: 'Deine Daten',

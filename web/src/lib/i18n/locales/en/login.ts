@@ -8,7 +8,7 @@ const login: Translation<typeof de> = {
   loading: 'Preparing the sign-in …',
   busy: 'One moment …',
   inviteGone: 'This invite is no longer valid. If you already have an account, just sign in.',
-  stale: { title: 'Sign-in was not confirmed', text: 'Authentik did not ask for your sign-in again, so FriendFlix refused it. Try again. If it keeps failing, wait half a minute and retry, or sign out in Authentik first.', retry: 'Sign in again' },
+  stale: { title: 'Sign-in was not confirmed', text: 'Authentik did not ask for your sign-in again, so FriendFlix refused it. Try again in half a minute. If it keeps happening, the clocks of the server and Authentik may differ (an admin can check).', retry: 'Sign in again' },
   identify: {
     title: 'Welcome back',
     text: 'Sign in to keep watching.',

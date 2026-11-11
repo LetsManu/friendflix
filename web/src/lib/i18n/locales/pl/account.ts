@@ -346,7 +346,7 @@ const pl: Translation<typeof de> = {
     loadFailed: 'Nie udało się wczytać konta.',
     retry: 'Spróbuj ponownie',
     reauthFailed: 'Nie udało się potwierdzić logowania. Spróbuj ponownie.',
-    reauthFailedHint: 'Jeśli znów się nie uda, odczekaj pół minuty albo najpierw wyloguj się z Authentika.',
+    reauthFailedHint: 'Jeśli znów się nie uda, spróbuj za pół minuty; jeśli to się powtarza, zegary serwera i Authentika mogą się różnić (administrator może to sprawdzić).',
     privacy: 'Administratorzy widzą, jakie tytuły ostatnio oglądałeś(-aś). Każdy taki wgląd jest zapisywany w dzienniku audytu.',
     data: {
       title: 'Twoje dane',

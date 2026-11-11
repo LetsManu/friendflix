@@ -144,6 +144,7 @@ test.describe('account page (/me/account)', () => {
 
   test('?reauth=failed shows an alert', async ({ page }) => {
     await page.goto('/me/account?reauth=failed');
+    await expect(page.locator('[data-hint="reauth-failed"]')).toContainText('Klappt es wieder nicht, versuch es in einer halben Minute');
     await expect(page.getByRole('alert')).toHaveText('Die Anmeldung konnte nicht bestätigt werden. Bitte versuch es noch einmal.');
   });
 
