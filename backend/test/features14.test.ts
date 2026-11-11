@@ -175,12 +175,12 @@ describe('language picker and clip preview', () => {
     const r = (await call('GET', `/api/items/${B}/tracks`)).json();
     expect(r.audio).toEqual([{ language: 'ger', title: 'Deutsch (AC3)', isDefault: true }, { language: 'eng', title: 'English (AAC)', isDefault: false }]);
     // one entry per language (the first track names it); `index` = that language's first text, non-forced track, else its first text
-    // track, none for image-only (continuous AirPlay picks a later episode's subtitle by it)
+    // track, none for image-only; `forcedIndex` = its first forced text track (continuous AirPlay picks a later episode's subtitle by them)
     expect(r.subtitles).toEqual([
-      { language: 'ger', title: 'Deutsch', index: 3 },
-      { language: 'eng', title: 'English (forced)', index: 6 },
+      { language: 'ger', title: 'Deutsch', index: 3, forcedIndex: 4 },
+      { language: 'eng', title: 'English (forced)', index: 6, forcedIndex: 5 },
       { language: 'fre', title: 'Français (PGS)' },
-      { language: 'spa', title: 'Español (PGS)', index: 9 },
+      { language: 'spa', title: 'Español (PGS)', index: 9, forcedIndex: 9 },
     ]);
   });
   it('clip preview defaults to on', async () => {

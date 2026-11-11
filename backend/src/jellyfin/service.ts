@@ -336,13 +336,16 @@ export class JellyfinService implements MediaServer {
     const langOf = (s: Record<string, any>) => String(s.Language ?? 'und');
     // the track that stands for a language (continuous AirPlay carries it in a later episode): its first text, non-forced track, else its
     // first text track; image-only languages have none (never burned in). The entries themselves (first track per language) stay as they are.
-    const indexOf = (lang: string): number | undefined => {
-      const text = subs.filter((s) => langOf(s) === lang && isTextSubtitle(s) && Number.isInteger(s.Index));
-      return (text.find((s) => !s.IsForced) ?? text[0])?.Index as number | undefined;
-    };
+    // `forcedIndex`: its first forced text track (a later episode follows episode 1's forced choice)
+    const textOf = (lang: string) => subs.filter((s) => langOf(s) === lang && isTextSubtitle(s) && Number.isInteger(s.Index));
     const subtitles = subs.map((s) => ({ language: langOf(s), title: String(s.DisplayTitle ?? s.Language ?? 'Untertitel') }))
       .filter((a) => !seenS.has(a.language) && seenS.add(a.language))
-      .map((a) => { const index = indexOf(a.language); return index !== undefined ? { ...a, index } : a; });
+      .map((a) => {
+        const text = textOf(a.language);
+        const index = (text.find((s) => !s.IsForced) ?? text[0])?.Index as number | undefined;
+        const forcedIndex = text.find((s) => s.IsForced)?.Index as number | undefined;
+        return { ...a, ...(index !== undefined ? { index } : {}), ...(forcedIndex !== undefined ? { forcedIndex } : {}) };
+      });
     return { audio, subtitles, runtimeTicks: i.RunTimeTicks, type: String(i.Type ?? '') };
   }
 

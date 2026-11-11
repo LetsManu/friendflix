@@ -285,9 +285,10 @@ export interface TrackList {
   audio: Array<{ language: string; title: string; isDefault: boolean }>;
   /**
    * one entry per language (its first track names it); `index` (Jellyfin) = the source's stream index of that language's first text,
-   * non-forced track, else its first text track, absent for image-only languages (continuous AirPlay picks a later episode's subtitle by it)
+   * non-forced track, else its first text track, absent for image-only languages; `forcedIndex` = its first forced text track
+   * (continuous AirPlay picks a later episode's subtitle by them, following episode 1's forced choice)
    */
-  subtitles: Array<{ language: string; title: string; index?: number }>;
+  subtitles: Array<{ language: string; title: string; index?: number; forcedIndex?: number }>;
   runtimeTicks?: number;
   type: string;
 }

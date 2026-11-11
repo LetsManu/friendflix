@@ -342,6 +342,25 @@ describe('joined AirPlay token', () => {
     } finally { EPS = base(); }
   });
 
+  it("later parts follow episode 1's forced choice", async () => {
+    try {
+      EPS[0]!.subs = [{ Index: 3, Language: 'ger', IsForced: true }, { Index: 6, Language: 'ger' }];
+      EPS[1]!.subs = [{ Index: 3, Language: 'ger', IsForced: true }, { Index: 6, Language: 'ger' }];
+      EPS[2]!.subs = [{ Index: 2, Language: 'eng' }, { Index: 4, Language: 'ger', IsForced: true }, { Index: 7, Language: 'ger' }];
+      // episode 1 on its forced track: the later parts on theirs
+      let { j, rec } = await joined({ subtitleIndex: 3 });
+      expect(rec.items.map((i: { hlsSubIndex?: number }) => i.hlsSubIndex)).toEqual([3, 3, 4]);
+      expect(j.joined.subtitles).toBe(true);
+      // episode 1 on its full track: the later parts on theirs
+      ({ j, rec } = await joined({ subtitleIndex: 6 }));
+      expect(rec.items.map((i: { hlsSubIndex?: number }) => i.hlsSubIndex)).toEqual([6, 6, 7]);
+      // forced, but a later part has no forced German track: its full one
+      EPS[2]!.subs = [{ Index: 7, Language: 'ger' }];
+      ({ rec } = await joined({ subtitleIndex: 3 }));
+      expect(rec.items.map((i: { hlsSubIndex?: number }) => i.hlsSubIndex)).toEqual([3, 3, 7]);
+    } finally { EPS = base(); }
+  });
+
   it('a later part keeps its subtitle only when its HLS URL carries the rendition', async () => {
     try {
       EPS[2]!.pbImageSubs = true; // the lookup says text, the PlaybackInfo plan carries none

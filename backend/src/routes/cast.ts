@@ -30,7 +30,8 @@ interface JoinedPart { item: ItemDto; info: PlaybackDto; runtimeTicks: number; s
  * at most `max`, while the joined runtime from `startTicks` on stays within 6 h. null = a single token (the profile's autoplay is off,
  * the item is no episode of a series, no next episode, or a runtime is unknown). Each later episode gets ONE PlaybackInfo from its start,
  * with the first episode's bitrate / height, its audio language and the subtitle of the first episode's subtitle language (index from
- * the episode's own streams, its first text non-forced track of that language; none = that part carries no subtitle). Any failure of a later
+ * the episode's own streams: its first text track of that language, forced when episode 1's is, else not forced; none = that
+ * part carries no subtitle). Any failure of a later
  * episode's lookup ends the join there.
  */
 async function joinedParts(ctx: Ctx, jfUser: JfUser, a: {
@@ -43,6 +44,8 @@ async function joinedParts(ctx: Ctx, jfUser: JfUser, a: {
   const audio = info.audioIndex !== undefined ? info.audioTracks.find((t) => t.index === info.audioIndex) : info.audioTracks.find((t) => t.isDefault) ?? info.audioTracks[0];
   const audioLang = audio?.language;
   const subLang = a.hlsSubIndex !== undefined ? info.subtitles.find((t) => t.index === a.hlsSubIndex)?.language : undefined;
+  /** episode 1's chosen track is its language's forced one: later parts take theirs (else the full track); looked up once, on demand */
+  let forced: boolean | undefined;
   let total = info.runtimeTicks;
   let cur = item;
   while (parts.length < a.max) {
@@ -51,7 +54,9 @@ async function joinedParts(ctx: Ctx, jfUser: JfUser, a: {
       // the item's runtime decides (unknown: the join ends before it, no PlaybackInfo spent); trailing episodes are left out while the
       // joined runtime from the start position would pass 6 h
       if (!nx || !nx.runtimeTicks || total + nx.runtimeTicks - a.startTicks > JOINED_MAX_TICKS) break;
-      const sub = subLang ? (await ctx.jf.tracks(jfUser, nx.id)).subtitles.find((t) => t.language === subLang)?.index : undefined;
+      if (subLang && forced === undefined) forced = (await ctx.jf.tracks(jfUser, item.id)).subtitles.find((t) => t.language === subLang)?.forcedIndex === a.hlsSubIndex;
+      const track = subLang ? (await ctx.jf.tracks(jfUser, nx.id)).subtitles.find((t) => t.language === subLang) : undefined;
+      const sub = forced ? track?.forcedIndex ?? track?.index : track?.index;
       const ni = await ctx.jf.playbackInfo(jfUser, nx.id, {
         maxBitrate: a.maxBitrate, maxHeight: a.maxHeight, startTicks: 0, cast: true, ...(audioLang ? { audioLang } : {}), ...(sub !== undefined ? { hlsSubtitleIndex: sub } : {}),
       });
