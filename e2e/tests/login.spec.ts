@@ -307,6 +307,18 @@ test.describe('in-app sign-in (/login)', () => {
     await expect(page).toHaveURL(/\/auth\/login\?classic=1&invite=inv-0003$/);
   });
 
+  test('?stale=1: a refused classic sign-in ends on a notice with a working retry, not on a redirect loop (LOGIN_UI=authentik) or a banner above the in-app sign-in', async ({ page }) => {
+    await open(page, loginState({ config: { body: { mode: 'authentik', recovery: false, enroll: false } } }), '/login?stale=1&invite=inv-0003');
+    await expect(page).toHaveURL(/\/login\?stale=1/);
+    await expect(h1(page, 'Anmeldung nicht bestätigt')).toBeVisible();
+    await expect(page.getByText(/Authentik hat die Anmeldung nicht erneut abgefragt/)).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Erneut anmelden' })).toHaveAttribute('href', '/auth/login?classic=1&invite=inv-0003');
+    // in-app mode: the sign-in itself works, the banner says what happened
+    await open(page, loginState({ answers: [{ body: password() }] }), '/login?stale=1');
+    await expect(page.locator('[data-notice="stale"]')).toContainText('Authentik hat die Anmeldung nicht erneut abgefragt');
+    await expect(h1(page, 'Willkommen zurück')).toBeVisible();
+  });
+
   test('"Noch kein Konto? Einladung einlösen" takes a pasted invite link to /invite/<token>', async ({ page }) => {
     await page.route('**/api/invite/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ valid: true, enrollUrl: '/auth/enroll?invite=tok-000001' }) }));
     await open(page, loginState());

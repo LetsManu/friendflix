@@ -8,6 +8,7 @@ const login: Translation<typeof de> = {
   loading: 'Przygotowywanie logowania …',
   busy: 'Chwileczkę …',
   inviteGone: 'To zaproszenie jest już nieważne. Jeśli masz już konto, po prostu się zaloguj.',
+  stale: { title: 'Logowanie niepotwierdzone', text: 'Authentik nie zapytał ponownie o logowanie, więc FriendFlix je odrzucił. Spróbuj jeszcze raz. Jeśli nadal się nie udaje, odczekaj minutę i spróbuj ponownie albo najpierw wyloguj się z Authentika.', retry: 'Zaloguj się ponownie' },
   identify: {
     title: 'Witaj ponownie',
     text: 'Zaloguj się, aby oglądać dalej.',

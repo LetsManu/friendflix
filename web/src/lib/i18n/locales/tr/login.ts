@@ -8,6 +8,7 @@ const login: Translation<typeof de> = {
   loading: 'Giriş hazırlanıyor …',
   busy: 'Bir dakika …',
   inviteGone: 'Bu davet artık geçerli değil. Zaten bir hesabın varsa giriş yapman yeterli.',
+  stale: { title: 'Giriş doğrulanmadı', text: 'Authentik girişi yeniden istemedi, bu yüzden FriendFlix onu reddetti. Tekrar dene. Yine olmazsa bir dakika bekleyip tekrar dene ya da önce Authentik’ten çıkış yap.', retry: 'Yeniden giriş yap' },
   identify: {
     title: 'Tekrar hoş geldin',
     text: 'İzlemeye devam etmek için giriş yap.',

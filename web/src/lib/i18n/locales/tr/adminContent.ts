@@ -432,7 +432,7 @@ const dict: Translation<typeof de> = {
     passkeySignIn: 'Passkey ile giriş',
     passkeySignInState: { ok: 'FriendFlix içinde sunuluyor', no_stage: 'Sunulmuyor (aşama eksik)', rp_mismatch: 'Sunulmuyor (yanlış ana bilgisayar)', off: 'Giriş sayfasında', unknown: 'Bilinmiyor' },
     passkeyUv: 'Kullanıcı doğrulaması',
-    passkeyUvState: { required: 'Zorunlu', preferred: 'Tercih edilen (zorlanmıyor)', discouraged: 'Önerilmeyen (zorlanmıyor)', unknown: 'Ayarlanmamış (FriendFlix ister)' },
+    passkeyUvState: { required: 'Zorunlu', preferred: 'Tercih ediliyor (zorlanmıyor)', discouraged: 'Önerilmiyor (zorlanmıyor)', unknown: 'Ayarlanmamış (FriendFlix ister)' },
     ok: 'Her şey yolunda.',
     loadFailed: 'Giriş denetimi yüklenemedi.',
     coverLabel: 'Girişin arkasında kapaklar',

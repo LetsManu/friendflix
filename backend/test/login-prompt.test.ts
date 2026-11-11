@@ -21,7 +21,6 @@ function spy() {
   return { starts, finishes };
 }
 const callback = (state: string) => env.app.inject({ url: `/auth/callback?state=${state}&code=c`, cookies: { ff_oidc: state } });
-const now = () => Math.floor(Date.now() / 1000);
 
 describe('interactive sign-in through the identity provider', () => {
   /** starts a sign-in at `url`, pins its start time to a whole second, and answers the callback with auth_time = start + offsetS */
