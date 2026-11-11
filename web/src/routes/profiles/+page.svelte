@@ -94,12 +94,13 @@
     let told = false, selected = false; // told: the app was told `p`; selected: the server accepted it
     try {
       if (p.id !== activeId) {
-        told = true;
+        told = Boolean(activeId); // no known active profile (a fresh login): no app cast can exist, the app is told after the select instead
         await endCast(); // the old profile's stream must not keep running under the new one
-        await tellAppSession(p.id); // the app's cast ends and records the new profile BEFORE the server switches: its stop report and revoke go out under the old one (waits at most 4 s; no-op outside the app / with API 1)
+        if (activeId) await tellAppSession(p.id); // the app's cast ends and records the new profile BEFORE the server switches: its stop report and revoke go out under the old one (waits at most 4 s; no-op outside the app / with API 1)
       }
       await api(`/api/profiles/${p.id}/select`, { method: 'POST', body: pin === undefined ? {} : { pin } });
       selected = true;
+      if (!told && p.id !== activeId) await tellAppSession(p.id); // unknown active profile before: the app just records the new one (no-op outside the app / with API 1)
       await setMeta('lastProfileId', p.id).catch(() => undefined); // offline hub: downloads of the last active profile
       markPicked(p.id); // the profile question ("Wer ist heute dabei?") was answered for this browser session
       await playIntro(p.id).catch(() => undefined);
@@ -107,7 +108,7 @@
     } catch (e) {
       // the select did not go through (wrong PIN, any error, network): the app goes back to the profile that is really active, else it would list
       // the other profile's downloads. Without a known active profile there is nothing to go back to (the app keeps `p` until the next signal).
-      if (told && !selected && activeId) await tellAppSession(activeId);
+      if (told && !selected) await tellAppSession(activeId);
       const code = e instanceof ApiError ? e.body?.error : '';
       pinOwner = e instanceof ApiError && e.body?.pinOf === 'owner';
       if (code === 'pin_required') { pinFor = p; pinErr = ''; }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { ME, episodes } from '../mocks/fixtures.js';
+import { PROFILES } from '../mocks/api.js';
 import { APP_UA, fakeNativeApp, nativeCalls, pushCast, type NativeCastSnap } from '../mocks/native.js';
 import { dunmoor } from './cast-remote-setup.js';
 import { noHorizontalOverflow } from '../helpers.js';
@@ -133,8 +134,8 @@ test('the app hears about the new profile BEFORE the server switches (its stop r
   expect(selectAt - call!.at).toBeGreaterThanOrEqual(550); // sent first, answered, then the select
 });
 
-test.use({ allowedConsole: /Failed to load resource/ }); // the refused / failed selects below are mocked on purpose
-const switchTold = async (page: Page, select: Parameters<Page['route']>[1] | null) => {
+const switchTold = async (page: Page, select: Parameters<Page['route']>[1] | null, noActive = false) => {
+  if (noActive) await page.route('**/api/profiles', (r) => r.request().method() === 'GET' ? r.fulfill({ json: { profiles: PROFILES.map((q) => ({ ...q, active: false })), max: 5, activeId: null } }) : r.fallback());
   await page.route('**/api/me', (r) => r.fulfill({ json: multi }));
   await page.addInitScript(noIntro);
   if (select) await page.route('**/api/profiles/p2/select', select);
@@ -143,17 +144,36 @@ const switchTold = async (page: Page, select: Parameters<Page['route']>[1] | nul
   await page.getByRole('button', { name: 'Anna' }).tap();
 };
 
-test('a refused select (wrong PIN, 403) puts the app back on the active profile', async ({ page, api: _api }) => {
-  await switchTold(page, (r) => r.fulfill({ status: 403, json: { error: 'pin_wrong' } }));
-  await expect.poll(async () => (await asked(page, 'sessionChanged')).length).toBe(2);
-  expect(await asked(page, 'sessionChanged')).toEqual([{ profileId: 'p2' }, { profileId: 'p1' }]);
-  await expect(page).toHaveURL(/\/profiles/);
+test.describe('a select that fails (mocked on purpose)', () => {
+  test.use({ allowedConsole: /status of 403|net::ERR_FAILED/ });
+
+  test('a refused select (wrong PIN, 403) puts the app back on the active profile', async ({ page, api: _api }) => {
+    await switchTold(page, (r) => r.fulfill({ status: 403, json: { error: 'pin_wrong' } }));
+    await expect.poll(async () => (await asked(page, 'sessionChanged')).length).toBe(2);
+    expect(await asked(page, 'sessionChanged')).toEqual([{ profileId: 'p2' }, { profileId: 'p1' }]);
+    await expect(page).toHaveURL(/\/profiles/);
+  });
+
+  test('a network-failed select puts the app back on the active profile', async ({ page, api: _api }) => {
+    await switchTold(page, (r) => r.abort('failed'));
+    await expect.poll(async () => (await asked(page, 'sessionChanged')).length).toBe(2);
+    expect(await asked(page, 'sessionChanged')).toEqual([{ profileId: 'p2' }, { profileId: 'p1' }]);
+  });
+
+  test('without a known active profile (fresh login) a refused select tells the app nothing', async ({ page, api: _api }) => {
+    await switchTold(page, (r) => r.fulfill({ status: 403, json: { error: 'pin_wrong' } }), true);
+    await expect(page.getByRole('button', { name: 'Anna' })).toBeVisible();
+    await expect(page).toHaveURL(/\/profiles/);
+    await expect.poll(async () => (await nativeCalls(page, 'capabilities')).length).toBeGreaterThan(0);
+    await page.waitForResponse((r) => r.url().includes('/select')).catch(() => undefined);
+    expect(await nativeCalls(page, 'sessionChanged')).toHaveLength(0);
+  });
 });
 
-test('a network-failed select puts the app back on the active profile', async ({ page, api: _api }) => {
-  await switchTold(page, (r) => r.abort('failed'));
-  await expect.poll(async () => (await asked(page, 'sessionChanged')).length).toBe(2);
-  expect(await asked(page, 'sessionChanged')).toEqual([{ profileId: 'p2' }, { profileId: 'p1' }]);
+test('without a known active profile a successful select tells the app [p2] after it', async ({ page, api: _api }) => {
+  await switchTold(page, null, true);
+  await expect(page).not.toHaveURL(/\/profiles/);
+  expect(await asked(page, 'sessionChanged')).toEqual([{ profileId: 'p2' }]);
 });
 
 test('a successful select tells the app only the new profile', async ({ page, api: _api }) => {
