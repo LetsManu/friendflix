@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { MOVIE } from '../mocks/fixtures.js';
 import { castOn, castSessions, fakeCastSdk } from '../mocks/cast.js';
-import { fakeCaf } from '../mocks/castReceiver.js';
+import { DUNMOOR, WRENFIELD, fakeCaf, ui } from '../mocks/castReceiver.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
+import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 
 /**
@@ -148,9 +149,7 @@ test('receiver page: own CSP, brand while idle, next-up countdown, still watchin
   await expect.poll(() => caf.calls()).toContain('start');
 
   // the sender's texts (German UI) and the user's subtitle style
-  await caf.message({ t: 'ui', strings: { next: 'Nächste Folge', upNext: 'Als Nächstes: {label}', watchCredits: 'Abspann ansehen', startsIn: Array.from({ length: 10 }, (_, i) => `Nächste Folge in ${i + 1} s`),
-    stillTitle: 'Noch da?', stillText: 'Automatische Wiedergabe pausiert. Als Nächstes: {ep}', keepWatching: 'Weiterschauen', skip: { intro: 'Intro überspringen', recap: 'Rückblick überspringen' } },
-    sub: { size: 'l', color: 'yellow', background: 'solid', font: 'sans' }, countdown: 10 });
+  await caf.message(ui({ sub: { size: 'l', color: 'yellow', background: 'solid', font: 'sans' } }));
   expect((await caf.calls()).find((c) => c.startsWith('style:'))).toContain('"foregroundColor":"#FFEB3BFF"');
   await caf.message({ t: 'tok', castId: A, rt: RT });
   await caf.media(A, 1800);
@@ -168,9 +167,9 @@ test('receiver page: own CSP, brand while idle, next-up countdown, still watchin
   await caf.time(1780);
   const card = page.locator('#card');
   await expect(card).toBeVisible();
-  await expect(card).toContainText('Als Nächstes: S1:E2 · Zwei');
-  await expect(card).toContainText(/Nächste Folge in \d+ s/);
-  await page.keyboard.press('Enter'); // "Next episode" has the focus: plays the queued one now
+  await expect(card).toContainText('S1:E2 · Zwei');
+  await expect(card.locator('#card-title')).toHaveText(/^Als Nächstes in \d+ s$/);
+  await page.keyboard.press('Enter'); // OK on the remote: plays the queued one now
   await expect.poll(() => caf.calls()).toContain('jump:1');
   await expect(card).toBeHidden();
 
@@ -180,7 +179,7 @@ test('receiver page: own CSP, brand while idle, next-up countdown, still watchin
   await caf.message({ t: 'item', castId: B, episode: true, segs: [], next: { castId: 'c'.repeat(32), label: 'S1:E3 · Drei', auto: true, ask: true } });
   await caf.time(1780);
   await expect(card).toContainText('Noch da?');
-  await expect(card).toContainText('Weiterschauen');
+  await expect(card.locator('#card-hint')).toHaveText('OK schaut weiter');
   await caf.media('c'.repeat(32), 1800);
   const still = page.locator('#still');
   await expect(still).toBeVisible();
@@ -192,4 +191,372 @@ test('receiver page: own CSP, brand while idle, next-up countdown, still watchin
   // the ended token's stop went out before the next one's start
   // the reports arrive through a route handler: poll, do not check once
   await expect.poll(() => reports.map((r) => r.event)).toEqual(['start', 'stop', 'start', 'stop']);
+});
+
+/**
+ * The restyled receiver (Task 17): solid panels, up next card, pause and loading screens, the sender pill, keys. 1280x720 like a TV
+ * at 720p (`--u` = 1 px); the 1080p run checks that everything scales.
+ */
+test.describe('receiver screens', () => {
+  test.use({ viewport: { width: 1280, height: 720 }, reducedMotion: 'no-preference' });
+  const fx = (page: Page, sel: string) => page.locator(sel);
+
+  /** the receiver page with the German `ui` message, Dunmoor S1 E4 playing, E5 queued (the card shows once the credits begin) */
+  async function boot(page: Page, o: { next?: typeof WRENFIELD | null; at?: number; ui?: Record<string, unknown>; poster?: string } = {}) {
+    const caf = await fakeCaf(page);
+    await page.route('**/api/cast/report', (r) => r.fulfill({ json: { ok: true } }));
+    await page.goto('/cast-receiver/');
+    await expect.poll(() => caf.calls()).toContain('start');
+    await caf.message(ui(o.ui));
+    await caf.message({ t: 'tok', castId: A, rt: RT });
+    await caf.media(A, 2640, o.poster);
+    await caf.message({ t: 'item', castId: A, episode: true, segs: [], next: o.next === undefined ? WRENFIELD : o.next, meta: DUNMOOR });
+    await caf.time(o.at ?? 754);
+    return caf;
+  }
+  /** the box of a panel once it has finished fading and rising in (its transform is gone) */
+  const box = async (page: Page, sel: string) => {
+    await expect.poll(() => page.locator(sel).evaluate((el) => getComputedStyle(el).transform)).toBe('none');
+    return (await page.locator(sel).boundingBox())!;
+  };
+
+  test('up next card: solid, inside the margins, countdown by transform', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    await caf.time(2620);
+    const card = fx(page, '#card');
+    await expect(card).toBeVisible();
+    await expect(page.locator('#card-title')).toHaveText(/^Als Nächstes in \d+ s$/);
+    await expect(page.locator('#card-name')).toHaveText('E5 · Wrenfield Pier');
+    const css = await page.evaluate(() => [['card', '#card'], ['pause', '#pause'], ['who', '#who'], ['still', '#still .panel'], ['skip', '#skip'], ['load', '#load']].map(([id, sel]) => {
+      const cs = getComputedStyle(document.querySelector(sel!)!);
+      return [id, cs.backdropFilter, cs.backgroundColor];
+    }));
+    for (const [id, bf, bg] of css as string[][]) { expect(bf, id).toBe('none'); expect(bg, id).toMatch(/^rgb\(/); } // solid: no blur, no alpha
+    expect(css.find(([id]) => id === 'card')![2]).toBe('rgb(28, 26, 33)');
+    const b = await box(page, '#card');
+    expect(b.x + b.width).toBeLessThanOrEqual(1280 - 64 + 1);
+    expect(b.y + b.height).toBeLessThanOrEqual(720 - 64 + 1);
+    expect(Math.round(b.width)).toBe(660);
+    const bar = () => page.locator('#card .cbar i').evaluate((el) => getComputedStyle(el).transform);
+    const t0 = await bar();
+    await page.waitForTimeout(1000);
+    expect(await bar()).not.toBe(t0);
+    expect(await page.locator('#card .cbar i').evaluate((el) => getComputedStyle(el).width)).not.toBe('0px'); // full width, scaled, never resized
+  });
+
+  test('key hint only after a key', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    await caf.time(2620);
+    const hint = page.locator('#card-hint');
+    await expect(hint).toHaveText('Abbrechen am Handy');
+    await page.keyboard.press('ArrowLeft');
+    await expect(hint).toHaveText('OK spielt sofort · Zurück stoppt hier');
+    await expect(page.locator('#card-buttons')).toBeHidden(); // no buttons on a remote-driven TV
+  });
+
+  test('back stops here: the card stays as "Als Nächstes" without a countdown, and tells the phone', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    await caf.time(2620);
+    await expect(page.locator('#card-title')).toHaveText(/^Als Nächstes in/);
+    await page.keyboard.press('Escape');
+    await expect.poll(() => caf.calls()).toContain('sent:{"t":"cancel"}');
+    await expect(page.locator('#card')).toBeHidden();
+    // the card withdraws; with autoplay off it shows without a countdown and its title stays "Als Nächstes" (spec §5)
+    const caf2 = await boot(page, { next: { ...WRENFIELD, auto: false } });
+    await caf2.time(2620);
+    await expect(page.locator('#card')).toBeVisible();
+    await expect(page.locator('#card-title')).toHaveText('Als Nächstes');
+  });
+
+  test('pause screen after 1.5 s, gone on play; ←/→ seek 10 s', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    const pause = fx(page, '#pause');
+    await expect(pause).toBeHidden();
+    const t0 = Date.now();
+    await caf.pause();
+    await expect(pause).toBeVisible();
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(1400);
+    await expect(page.locator('#pause-label')).toHaveText('Pausiert');
+    await expect(page.locator('#pause-title')).toHaveText('Dunmoor');
+    await expect(page.locator('#pause-line')).toHaveText('Staffel 1 · Folge 4 · The Lantern Road');
+    await expect(page.locator('#pause-pos')).toHaveText('12:34');
+    await expect(page.locator('#pause-dur')).toHaveText('44:00');
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => caf.calls()).toContain('seek:764');
+    await expect(page.locator('#pause-pos')).toHaveText('12:44');
+    await page.keyboard.press('ArrowLeft');
+    await expect.poll(() => caf.calls()).toContain('seek:754');
+    await caf.playing();
+    await expect(pause).toBeHidden();
+  });
+
+  test('a quick pause and resume never flashes the pause screen', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    await caf.pause();
+    await page.waitForTimeout(600);
+    await caf.playing();
+    await page.waitForTimeout(1200);
+    await expect(fx(page, '#pause')).toBeHidden();
+  });
+
+  test('OK on the pause screen plays', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    await caf.pause();
+    await expect(fx(page, '#pause')).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => caf.calls()).toContain('play');
+    await expect(fx(page, '#pause')).toBeHidden();
+  });
+
+  test('a 3 s stall mid-playback shows the paused layout with "Lädt …"', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    await caf.buffering(true);
+    await page.waitForTimeout(1500);
+    await expect(fx(page, '#pause')).toBeHidden();
+    await expect(fx(page, '#pause')).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('#pause-label')).toHaveText('Lädt …');
+    await caf.buffering(false);
+    await expect(fx(page, '#pause')).toBeHidden();
+  });
+
+  test('loading screen until the first frame, with the poster', async ({ page, api: _api }) => {
+    await page.route('**/poster/dunmoor.svg', (r) => r.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="300"><rect width="200" height="300" fill="#2d4a5a"/></svg>' }));
+    const caf = await fakeCaf(page);
+    await page.route('**/api/cast/report', (r) => r.fulfill({ json: { ok: true } }));
+    await page.goto('/cast-receiver/');
+    await expect.poll(() => caf.calls()).toContain('start');
+    await caf.message(ui());
+    await caf.load();
+    const load = fx(page, '#load');
+    await expect(load).toBeVisible();
+    await expect(page.locator('#load-label')).toHaveText('Wird vorbereitet …');
+    await caf.message({ t: 'tok', castId: A, rt: RT });
+    await caf.media(A, 2640, '/poster/dunmoor.svg');
+    await caf.message({ t: 'item', castId: A, episode: true, segs: [], next: null, meta: DUNMOOR });
+    await expect(page.locator('#load-title')).toHaveText('Dunmoor');
+    await expect(page.locator('#load-line')).toHaveText('Staffel 1 · Folge 4 · The Lantern Road');
+    await expect(page.locator('#load-art')).toHaveAttribute('src', 'http://127.0.0.1:' + new URL(page.url()).port + '/poster/dunmoor.svg');
+    await expect(load).toBeVisible();
+    await caf.playing(); // the first frame
+    await expect(load).toBeHidden();
+  });
+
+  test('a poster from another origin is not loaded; none = a solid placeholder', async ({ page, api: _api }) => {
+    const caf = await fakeCaf(page);
+    await page.route('**/api/cast/report', (r) => r.fulfill({ json: { ok: true } }));
+    await page.goto('/cast-receiver/');
+    await expect.poll(() => caf.calls()).toContain('start');
+    await caf.message(ui());
+    await caf.message({ t: 'tok', castId: A, rt: RT });
+    await caf.media(A, 2640, 'https://evil.example/p.png');
+    await expect(fx(page, '#load')).toBeVisible();
+    await expect(page.locator('#load-art')).toBeHidden();
+    await expect(page.locator('#load-art')).not.toHaveAttribute('src', /.+/);
+  });
+
+  test('sender pill shows for 5 s after a load, and again with a panel', async ({ page, api: _api }) => {
+    test.setTimeout(30_000);
+    const caf = await fakeCaf(page);
+    await page.route('**/api/cast/report', (r) => r.fulfill({ json: { ok: true } }));
+    await page.goto('/cast-receiver/');
+    await expect.poll(() => caf.calls()).toContain('start');
+    await caf.message(ui());
+    await caf.message({ t: 'tok', castId: A, rt: RT });
+    await caf.load();
+    await caf.media(A, 2640);
+    await caf.message({ t: 'item', castId: A, episode: true, segs: [], next: null, meta: DUNMOOR });
+    await caf.time(754);
+    const who = page.locator('#who');
+    await expect(who).toBeVisible();
+    await expect(who).toHaveText('Vom Handy von Anna');
+    const t0 = Date.now();
+    await expect(who).toBeHidden({ timeout: 8000 });
+    expect(Date.now() - t0).toBeGreaterThan(3000);
+    await caf.pause();
+    await expect(page.locator('#pause')).toBeVisible();
+    await expect(who).toBeVisible();
+  });
+
+  test('closing animates: the card stays and fades out, then hides', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    await caf.time(2620);
+    const card = fx(page, '#card');
+    await expect(card).toBeVisible();
+    await expect.poll(() => card.evaluate((el) => getComputedStyle(el).opacity)).toBe('1'); // faded in
+    await page.evaluate(() => {
+      const w = window as unknown as { __runs: string[] };
+      w.__runs = [];
+      document.getElementById('card')!.addEventListener('transitionrun', (e) => w.__runs.push(`${e.propertyName}:${e.elapsedTime}`));
+    });
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __runs: string[] }).__runs.map((r) => r.split(':')[0]))).toContain('opacity');
+    expect(await card.evaluate((el) => ({ attached: el.isConnected, on: el.classList.contains('on'), dur: getComputedStyle(el).transitionDuration }))).toEqual(
+      { attached: true, on: false, dur: '0.2s, 0s, 0s' });
+    await expect(card).toBeHidden();
+    await expect(card).toBeAttached();
+  });
+
+  test('pause during the up next card: the two never overlap, at 720p and 1080p', async ({ page, api: _api }) => {
+    const caf = await boot(page);
+    await caf.time(2620);
+    await caf.pause();
+    await expect(fx(page, '#pause')).toBeVisible();
+    await expect(fx(page, '#card')).toBeVisible();
+    for (const [w, h] of [[1280, 720], [1920, 1080]] as const) {
+      await page.setViewportSize({ width: w, height: h });
+      const margin = w * 0.05;
+      const p = await box(page, '#pause'), c = await box(page, '#card');
+      expect(p.x, `${w}`).toBeGreaterThanOrEqual(margin - 1);
+      expect(p.y + p.height, `${w}`).toBeLessThanOrEqual(h - margin + 1);
+      expect(c.x + c.width, `${w}`).toBeLessThanOrEqual(w - margin + 1);
+      expect(p.x + p.width, `${w}: pause block ends before the card starts`).toBeLessThan(c.x);
+    }
+  });
+
+  test('a long title and a long episode name stay inside the panels (2 lines, no overflow into the card)', async ({ page, api: _api }) => {
+    const caf = await fakeCaf(page);
+    await page.route('**/api/cast/report', (r) => r.fulfill({ json: { ok: true } }));
+    await page.goto('/cast-receiver/');
+    await expect.poll(() => caf.calls()).toContain('start');
+    await caf.message(ui());
+    await caf.message({ t: 'tok', castId: A, rt: RT });
+    await caf.media(A, 2640);
+    const longTitle = 'The Extraordinarily Long Chronicles of the Dunmoor Lighthouse Keepers and Their Many Wandering Lanterns';
+    await caf.message({ t: 'item', castId: A, episode: true, segs: [], next: { castId: 'b'.repeat(32), label: 'E5 · ' + longTitle, auto: true, ask: false }, meta: { title: longTitle, line: DUNMOOR.line + ' · ' + longTitle } });
+    await caf.time(2620);
+    await caf.pause();
+    await expect(fx(page, '#pause')).toBeVisible();
+    await expect(fx(page, '#card')).toBeVisible();
+    const p = await box(page, '#pause'), c = await box(page, '#card');
+    expect(p.x + p.width).toBeLessThan(c.x);
+    expect(p.y).toBeGreaterThan(0);
+    expect(c.y).toBeGreaterThan(0);
+  });
+
+  test('still watching holds as the same solid card, centred; no pause or loading screen on top', async ({ page, api: _api }) => {
+    const caf = await boot(page, { next: { ...WRENFIELD, ask: true } });
+    await caf.time(2620);
+    await expect(page.locator('#card-title')).toHaveText('Noch da?');
+    await caf.media(B, 2640); // the queued episode started: it waits paused under the question
+    const hold = fx(page, '#still .panel');
+    await expect(hold).toBeVisible();
+    await caf.pause(); // the TV paused it
+    await page.waitForTimeout(1800);
+    await expect(fx(page, '#pause')).toBeHidden();
+    await expect(fx(page, '#load')).toBeHidden();
+    await expect(page.locator('#still-hint')).toHaveText('OK schaut weiter');
+    const b = await hold.boundingBox();
+    expect(Math.abs(b!.x + b!.width / 2 - 640)).toBeLessThan(2);
+    expect(await hold.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(28, 26, 33)');
+  });
+
+  test('calm mode: no transitions, no animation, solid panels', async ({ page, api: _api }) => {
+    const caf = await boot(page, { ui: { motion: false } });
+    await caf.time(2620);
+    await expect(fx(page, '#card')).toBeVisible();
+    await expect(page.locator('body')).toHaveClass(/\bstill\b/);
+    const m = await page.evaluate(() => {
+      const cs = (sel: string) => getComputedStyle(document.querySelector(sel)!);
+      return { card: cs('#card').transitionDuration, bar: cs('#card .cbar i').transitionDuration, ind: cs('#load .ind i').animationName, cardT: cs('#card').transform, bf: cs('#card').backdropFilter };
+    });
+    expect(m).toEqual({ card: '0s', bar: '0s', ind: 'none', cardT: 'none', bf: 'none' });
+    await page.keyboard.press('Escape');
+    await expect(fx(page, '#card')).toBeHidden();
+  });
+
+  test('the TV\'s own reduced motion stops the motion, too', async ({ page, api: _api }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const caf = await boot(page);
+    await caf.time(2620);
+    await expect(fx(page, '#card')).toBeVisible();
+    const m = await page.evaluate(() => ({ card: getComputedStyle(document.getElementById('card')!).transitionDuration, ind: getComputedStyle(document.querySelector('#load .ind i')!).animationName }));
+    expect(m).toEqual({ card: '0s', ind: 'none' });
+  });
+
+  test('texts from the sender are plain text, never HTML', async ({ page, api: _api }) => {
+    const caf = await fakeCaf(page);
+    await page.route('**/api/cast/report', (r) => r.fulfill({ json: { ok: true } }));
+    await page.goto('/cast-receiver/');
+    await expect.poll(() => caf.calls()).toContain('start');
+    const evil = '<img src=x onerror="document.title=\'pwned\'"><b>x</b>';
+    await caf.message(ui({ who: evil }));
+    await caf.message({ t: 'tok', castId: A, rt: RT });
+    await caf.media(A, 2640);
+    await caf.message({ t: 'item', castId: A, episode: true, segs: [], next: { castId: 'b'.repeat(32), label: evil, auto: true, ask: false }, meta: { title: evil, line: evil } });
+    await caf.time(2620);
+    await caf.pause();
+    await expect(page.locator('#pause')).toBeVisible();
+    await expect(page.locator('#card')).toBeVisible();
+    await expect(page.locator('#who')).toHaveText(evil);
+    await expect(page.locator('#pause-title')).toHaveText(evil);
+    await expect(page.locator('#card-name')).toHaveText(evil);
+    expect(await page.locator('#who img, #pause img[src="x"], #card-name img, #pause b, #card-name b').count()).toBe(0);
+    expect(await page.title()).toBe('FriendFlix');
+  });
+
+  test.describe('screenshots', () => {
+    test.skip(!process.env.CAST_SHOTS, 'only with CAST_SHOTS=1');
+    const DIR = '/tmp/claude-0/-home-user/65bf3c9c-0207-5176-a7cc-9841c5a17402/scratchpad/cast-shots/receiver';
+    const POSTER = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2d4a5a"/><stop offset="1" stop-color="#d8895b"/></linearGradient></defs><rect width="400" height="600" fill="url(#g)"/><text x="200" y="330" font-family="Inter,sans-serif" font-size="52" font-weight="700" fill="#fff" text-anchor="middle">Dunmoor</text></svg>';
+    for (const [w, h] of [[1280, 720], [1920, 1080]] as const) {
+      test(`receiver at ${w}x${h}`, async ({ page, api: _api }) => {
+        test.setTimeout(90_000);
+        await page.setViewportSize({ width: w, height: h });
+        await page.route('**/poster/dunmoor.svg', (r) => r.fulfill({ contentType: 'image/svg+xml', body: POSTER }));
+        const shot = async (name: string, wait = '#card') => {
+          if (wait) await box(page, wait);
+          await page.waitForTimeout(350);
+          await page.screenshot({ path: `${DIR}/${name}-${w}.png` });
+        };
+        const bright = () => page.evaluate(() => { document.getElementById('v')!.style.background = 'linear-gradient(135deg, #f4efe2, #cfe3ee)'; });
+        const caf = await boot(page, { poster: '/poster/dunmoor.svg' });
+        await bright();
+        await page.waitForTimeout(300);
+        await expect(page.locator('#who')).toBeVisible();
+        await shot('playing-pill', '#who');
+        await caf.pause();
+        await expect(page.locator('#pause')).toBeVisible();
+        await shot('pause', '#pause');
+        await caf.playing();
+        await caf.time(2620);
+        await expect(page.locator('#card')).toBeVisible();
+        await page.keyboard.press('ArrowLeft');
+        await expect(page.locator('#card-hint')).toHaveText('OK spielt sofort · Zurück stoppt hier');
+        await shot('upnext-keys');
+        await caf.pause();
+        await expect(page.locator('#pause')).toBeVisible();
+        await shot('pause-during-upnext');
+        await caf.playing();
+        await page.touchscreen.tap(w / 2, h / 3).catch(() => undefined);
+        await page.evaluate(() => document.dispatchEvent(new Event('touchstart')));
+        await expect(page.locator('#card-buttons')).toBeVisible();
+        await shot('upnext-touch');
+      });
+      test(`receiver loading and calm mode at ${w}x${h}`, async ({ page, api: _api }) => {
+        test.setTimeout(60_000);
+        await page.setViewportSize({ width: w, height: h });
+        await page.route('**/poster/dunmoor.svg', (r) => r.fulfill({ contentType: 'image/svg+xml', body: POSTER }));
+        const caf = await fakeCaf(page);
+        await page.route('**/api/cast/report', (r) => r.fulfill({ json: { ok: true } }));
+        await page.goto('/cast-receiver/');
+        await expect.poll(() => caf.calls()).toContain('start');
+        await caf.message(ui());
+        await caf.message({ t: 'tok', castId: A, rt: RT });
+        await caf.load();
+        await caf.media(A, 2640, '/poster/dunmoor.svg');
+        await caf.message({ t: 'item', castId: A, episode: true, segs: [], next: WRENFIELD, meta: DUNMOOR });
+        await expect(page.locator('#load')).toBeVisible();
+        await box(page, '#load');
+        await page.waitForTimeout(500);
+        await page.screenshot({ path: `${DIR}/loading-${w}.png` });
+        await caf.playing();
+        await page.evaluate(() => { document.getElementById('v')!.style.background = 'linear-gradient(135deg, #f4efe2, #cfe3ee)'; });
+        await caf.message(ui({ motion: false }));
+        await caf.time(2620);
+        await expect(page.locator('#card')).toBeVisible();
+        await page.waitForTimeout(400);
+        await page.screenshot({ path: `${DIR}/calm-upnext-${w}.png` });
+      });
+    }
+  });
 });

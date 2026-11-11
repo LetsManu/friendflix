@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { creditsStart as playerCredits } from '#lib/player/nextup';
 import { CAST_NS } from '#lib/cast';
 import {
-  CAPS_PROBES, COUNTDOWN_SECONDS, DEFAULT_STRINGS, NS, PAUSE_SHOW_MS, PROGRESS_MS, STALL_SHOW_MS, WHO_MS, activeSkip, buildCaps, createReporter, creditsStart, initialState, parseMessage, probeCaps, step, textTrackStyle, view,
+  CAPS_PROBES, COUNTDOWN_SECONDS, DEFAULT_STRINGS, NS, PAUSE_SHOW_MS, PROGRESS_MS, STALL_SHOW_MS, WHO_MS, activeSkip, buildCaps, createReporter, creditsStart, formatTime, initialState, parseMessage, probeCaps, seekTarget, step, textTrackStyle, view,
 } from '../../../static/cast-receiver/logic.js';
 import { CAF_URL, RECEIVER_CSP, receiverHtml } from './receiverPage';
 import { GET, trailingSlash } from '../../routes/cast-receiver/+server';
@@ -139,7 +139,7 @@ describe('receiver: next-up card, countdown, still watching', () => {
   it('without autoplay the card has no countdown; Play now moves on; cancel tells the phone; seeking back withdraws it', () => {
     let { st, actions } = run(initialState(), [{ type: 'media', castId: A }, item({ ...NEXT, auto: false }), time(1780), time(1790, true, 20_000)]);
     expect(actions).toEqual([]);
-    expect(view(st, DEFAULT_STRINGS).card).toMatchObject({ text: '', progress: 0 });
+    expect(view(st, DEFAULT_STRINGS).card).toMatchObject({ title: 'Up next', text: '', progress: 0 }); // no countdown: still "Up next" (spec §5), not "Next episode"
     expect(run(st, [{ type: 'playNow' }]).actions).toEqual(['jump', 'send-interaction']);
     ({ st, actions } = run(st, [{ type: 'cancel' }]));
     expect(actions).toEqual(['send-cancel']);
@@ -274,6 +274,29 @@ describe('receiver: pause, loading, sender pill, key hints', () => {
     expect(step(card([{ type: 'touch' }]), { type: 'cancel' }).actions).toEqual(['send-cancel']);
   });
 
+  it('pausing during the up-next card gives both the card and the pause screen (the page lays them out side by side)', () => {
+    const NEXT = { castId: B, label: 'S1:E5 · Wrenfield Pier', auto: true, ask: false };
+    const st = run([{ type: 'media', castId: A }, { type: 'item', msg: { t: 'item', castId: A, episode: true, segs: [], next: NEXT, meta } }, { type: 'clock', now: T }, { type: 'firstFrame' },
+      { type: 'time', pos: 2630, dur: 2640, playing: true, dt: 1000 }, { type: 'pause', paused: true, at: T }, { type: 'clock', now: T + PAUSE_SHOW_MS }]);
+    const v = view(st, DEFAULT_STRINGS);
+    expect(v.card).toMatchObject({ mode: 'next', name: 'S1:E5 · Wrenfield Pier' });
+    expect(v.pause).toMatchObject({ label: 'Paused', title: 'Dunmoor', pos: 2630, dur: 2640 });
+    expect(v.card!.progress).toBe(0.1); // the countdown stands while paused
+    expect(view(run([{ type: 'time', pos: 2630, dur: 2640, playing: false, dt: 5000 }], st), DEFAULT_STRINGS).card!.progress).toBe(0.1);
+  });
+
+  it('the card without a countdown is titled "Up next" in the sender\'s language', () => {
+    const t = { ...DEFAULT_STRINGS, upNextTitle: 'Als Nächstes', next: 'Nächste Folge' };
+    const NEXT = { castId: B, label: 'E5', auto: false, ask: false };
+    const st = run([{ type: 'media', castId: A }, { type: 'item', msg: { t: 'item', castId: A, episode: true, segs: [], next: NEXT, meta } }, { type: 'time', pos: 2630, dur: 2640, playing: true, dt: 1000 }]);
+    expect(view(st, t).card!.title).toBe('Als Nächstes');
+  });
+
+  it('formatTime and the ±10 s seek target', () => {
+    expect([formatTime(0), formatTime(59.9), formatTime(754), formatTime(2640), formatTime(3723), formatTime(-5), formatTime(NaN)]).toEqual(['0:00', '0:59', '12:34', '44:00', '1:02:03', '0:00', '0:00']);
+    expect([seekTarget(754, 2640, 1), seekTarget(754, 2640, -1), seekTarget(4, 2640, -1), seekTarget(2635, 2640, 1), seekTarget(30, 0, 1)]).toEqual([764, 744, 0, 2639, 40]);
+  });
+
   it('the item message carries meta, the ui message who and motion; oversized or wrong types are dropped', () => {
     expect(parseMessage({ t: 'item', castId: A, meta: { title: ' Dunmoor ', line: meta.line } })).toMatchObject({ meta });
     expect(parseMessage({ t: 'item', castId: A, meta: { title: 'Saltwater Almanac', line: 5 } })).toMatchObject({ meta: { title: 'Saltwater Almanac', line: '' } });
@@ -293,6 +316,7 @@ describe('receiver: pause, loading, sender pill, key hints', () => {
     expect(m.strings).toMatchObject({ upNextIn: ['In 1 s', 'In 2 s'], keys: 'OK', paused: 'Pausiert', loading: 'Getting ready…', stall: 'Loading…', phoneCancel: 'Cancel on your phone', stopHere: 'Stop here', stillKeys: 'OK keeps watching' });
     expect(DEFAULT_STRINGS.upNextIn).toHaveLength(COUNTDOWN_SECONDS);
     expect(DEFAULT_STRINGS.upNextIn[9]).toBe('Up next in 10 s');
+    expect(DEFAULT_STRINGS.upNextTitle).toBe('Up next');
   });
 });
 
@@ -353,6 +377,18 @@ describe('receiver: progress reports with the report token', () => {
 });
 
 describe('receiver page', () => {
+  it('has every element the script renders into; the script puts sender texts on the page as text only', async () => {
+    const html = receiverHtml();
+    for (const id of ['who', 'card', 'card-img', 'card-title', 'card-name', 'card-hint', 'card-buttons', 'card-primary', 'card-secondary', 'pause', 'pause-label', 'pause-title', 'pause-line', 'pause-pos', 'pause-dur',
+      'load', 'load-art', 'load-title', 'load-line', 'load-label', 'skip', 'still', 'still-title', 'still-text', 'still-hint', 'still-primary', 'scrim']) expect(html, id).toContain(`id="${id}"`);
+    expect(html).not.toMatch(/\sstyle=|\son\w+=/);
+    const { readFileSync } = await import('node:fs');
+    const js = readFileSync(new URL('../../../static/cast-receiver/receiver.js', import.meta.url), 'utf8');
+    expect(js).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|createContextualFragment/);
+    expect(js).not.toContain('card-text'); // the temporary "Als Nächstes: <episode>" bridge is gone
+    expect(js).not.toMatch(/strings\.upNext\.replace/);
+  });
+
   it('loads Google\'s receiver framework and its own static files; nothing else', () => {
     const html = receiverHtml();
     expect(html).toContain(`<script src="${CAF_URL}"></script>`);

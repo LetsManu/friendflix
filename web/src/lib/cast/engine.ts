@@ -325,6 +325,7 @@ export function receiverStrings() {
     stillTitle: tr('player.watch.stillTitle'), stillText: tr('player.watch.stillText', { ep: '{ep}' }), keepWatching: tr('player.watch.keepWatching'),
     skip: { intro: tr('player.skip.intro'), recap: tr('player.skip.recap') },
     upNextIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => tr('player.castTv.upNextIn', { n: i + 1 })),
+    upNextTitle: tr('player.castRemote.upNext'),
     keys: tr('player.castTv.keys'), phoneCancel: tr('player.castTv.phoneCancel'), stopHere: tr('player.castTv.stopHere'), stillKeys: tr('player.castTv.stillKeys'),
     loading: tr('player.castTv.loading'), stall: tr('player.castTv.stall'), paused: tr('player.pause.paused'),
   };

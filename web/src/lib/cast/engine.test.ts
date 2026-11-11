@@ -1561,6 +1561,7 @@ describe('cast engine: FriendFlix\'s own receiver (CAST_RECEIVER_APP_ID)', () =>
     expect(t.upNextIn).toHaveLength(COUNTDOWN_SECONDS);
     expect(t.upNextIn[0]).toBe('Als Nächstes in 1 s');
     expect(t.upNextIn[9]).toBe('Als Nächstes in 10 s');
+    expect(t.upNextTitle).toBe('Als Nächstes');
     expect(t).toMatchObject({ keys: 'OK spielt sofort · Zurück stoppt hier', phoneCancel: 'Abbrechen am Handy', stopHere: 'Hier stoppen', stillKeys: 'OK schaut weiter', loading: 'Wird vorbereitet …', stall: 'Lädt …', paused: 'Pausiert' });
   });
 

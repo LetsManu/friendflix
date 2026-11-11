@@ -43,7 +43,7 @@ const pick = (v, list, dflt) => (typeof v === 'string' && list.includes(v) ? v :
  * @typedef {{ castId: string, label: string, auto: boolean, ask: boolean }} Next
  * @typedef {{ size: string, color: string, background: string, font: string }} SubStyle
  * @typedef {{ next: string, upNext: string, watchCredits: string, startsIn: string[], stillTitle: string, stillText: string, keepWatching: string, skip: { intro: string, recap: string },
- *   upNextIn: string[], keys: string, phoneCancel: string, stopHere: string, stillKeys: string, loading: string, stall: string, paused: string }} Strings
+ *   upNextIn: string[], upNextTitle: string, keys: string, phoneCancel: string, stopHere: string, stillKeys: string, loading: string, stall: string, paused: string }} Strings
  * @typedef {{ title: string, line: string }} Meta
  * @typedef {{ t: 'tok', castId: string, rt: string }
  *   | { t: 'caps?' }
@@ -57,7 +57,7 @@ export const DEFAULT_STRINGS = /** @type {Strings} */ ({
   startsIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => `Next episode starts in ${i + 1} second${i ? 's' : ''}`),
   stillTitle: 'Still there?', stillText: 'Autoplay is paused. Up next: {ep}', keepWatching: 'Continue watching',
   skip: { intro: 'Skip intro', recap: 'Skip recap' },
-  upNextIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => `Up next in ${i + 1} s`),
+  upNextIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => `Up next in ${i + 1} s`), upNextTitle: 'Up next',
   keys: 'OK plays now · Back stops here', phoneCancel: 'Cancel on your phone', stopHere: 'Stop here', stillKeys: 'OK keeps watching',
   loading: 'Getting ready…', stall: 'Loading…', paused: 'Paused',
 });
@@ -115,7 +115,7 @@ export function parseMessage(raw) {
         startsIn, stillTitle: text('stillTitle', DEFAULT_STRINGS.stillTitle), stillText: text('stillText', DEFAULT_STRINGS.stillText),
         keepWatching: text('keepWatching', DEFAULT_STRINGS.keepWatching),
         skip: { intro: str(skip.intro, 100) ?? DEFAULT_STRINGS.skip.intro, recap: str(skip.recap, 100) ?? DEFAULT_STRINGS.skip.recap },
-        upNextIn: list(s.upNextIn, DEFAULT_STRINGS.upNextIn), keys: text('keys', DEFAULT_STRINGS.keys), phoneCancel: text('phoneCancel', DEFAULT_STRINGS.phoneCancel),
+        upNextIn: list(s.upNextIn, DEFAULT_STRINGS.upNextIn), upNextTitle: text('upNextTitle', DEFAULT_STRINGS.upNextTitle), keys: text('keys', DEFAULT_STRINGS.keys), phoneCancel: text('phoneCancel', DEFAULT_STRINGS.phoneCancel),
         stopHere: text('stopHere', DEFAULT_STRINGS.stopHere), stillKeys: text('stillKeys', DEFAULT_STRINGS.stillKeys), loading: text('loading', DEFAULT_STRINGS.loading),
         stall: text('stall', DEFAULT_STRINGS.stall), paused: text('paused', DEFAULT_STRINGS.paused),
       },
@@ -350,7 +350,7 @@ export function view(s, t) {
     skip: k ? { end: k.end, text: k.type === 'recap' ? t.skip.recap : t.skip.intro } : null,
     card: c ? {
       mode: c.mode,
-      title: c.mode === 'still' ? t.stillTitle : c.auto && left > 0 ? (t.upNextIn[left - 1] ?? t.next) : t.next,
+      title: c.mode === 'still' ? t.stillTitle : c.auto && left > 0 ? (t.upNextIn[left - 1] ?? t.upNextTitle) : t.upNextTitle,
       /** the queued episode's name ("E5 · Wrenfield Pier") */
       name: c.mode === 'still' ? t.stillText.replace('{ep}', label) : label,
       /** the key hint line; empty on touch devices (they get buttons) */
@@ -365,6 +365,25 @@ export function view(s, t) {
     } : null,
     still: s.still ? { title: t.stillTitle, text: t.stillText.replace('{ep}', prev), primary: t.keepWatching } : null,
   };
+}
+
+/**
+ * "12:34" / "1:02:03" for the pause screen's elapsed and total time ("0:00" for anything that is not a finite time >= 0).
+ * @param {number} sec
+ */
+export function formatTime(sec) {
+  const t = Number.isFinite(sec) && sec > 0 ? Math.floor(sec) : 0;
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), x = t % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${m}:${String(x).padStart(2, '0')}`;
+}
+
+/**
+ * The TV's ←/→ while the pause screen shows: the new position, ±10 s, inside the film.
+ * @param {number} pos @param {number} dur @param {-1 | 1} dir
+ */
+export function seekTarget(pos, dur, dir) {
+  const hi = dur > 0 ? Math.max(0, dur - 1) : Infinity;
+  return Math.min(hi, Math.max(0, pos + dir * 10));
 }
 
 /**
