@@ -381,7 +381,11 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
     if (dead) return;
     if (restoring) { settleT = timers.set(settleEnd, SETTLE_MS); return; } // the normal stream is not attached yet
     const w = isWireless();
-    if (afterStop) { afterStop = false; if (!w) autoUsed = false; } // the route is really off: the wireless episode is over
+    if (afterStop) {
+      afterStop = false;
+      const picked = video.remote?.state === 'connecting' || video.remote?.state === 'connected'; // a TV was picked: its wireless report may still come
+      if (!w && !picked) autoUsed = false; // the route is really off: the wireless episode is over
+    }
     evaluate(w, 'settle re-check');
   }
 

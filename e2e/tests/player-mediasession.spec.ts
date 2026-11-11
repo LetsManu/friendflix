@@ -110,6 +110,9 @@ test('the first episode of season 2 has no previous-track button', async ({ page
   await expect.poll(async () => (await mediaSessionLog(page)).metadata?.title).toBe('Folge 7');
   // the episode list answered: still no previous button
   await listed;
+  await expect.poll(async () => (await mediaSessionLog(page)).handlers, { timeout: 1500 }).toContain('play'); // settled
+  await expect(async () => expect((await mediaSessionLog(page)).handlers).not.toContain('previoustrack')).toPass({ timeout: 1000 });
+  await page.waitForTimeout(300); // a button a frame late would show by now
   expect((await mediaSessionLog(page)).handlers).toEqual(['pause', 'play', 'seekbackward', 'seekforward', 'seekto']);
 });
 

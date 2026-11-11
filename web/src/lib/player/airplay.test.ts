@@ -1464,6 +1464,22 @@ describe('connecting phase, connect timeout, position guard', () => {
     expect(c.state).toMatchObject({ error: true, connecting: false, busy: false });
   });
 
+  it('Abbrechen is not undone by a wireless report after the settle window while the remote playback still says connecting', async () => {
+    exact();
+    const { v, c, deps } = setup();
+    c.pick();
+    await adv(0);
+    remoteConnecting(v);
+    c.cancel();
+    await adv(SETTLE_MS + 500); // the settle re-check saw no wireless route; remote playback still says `connecting`
+    expect(c.state).toMatchObject({ connecting: false, active: false });
+    v.wireless(true); // Safari reports the picked TV at about 2 s
+    await adv(SETTLE_MS * 3);
+    expect(deps.request).toHaveBeenCalledOnce(); // no second token
+    expect(c.state.connecting).toBe(false);
+    expect(c.state).toMatchObject({ error: true });
+  });
+
   it(`the wait for a hanging detach ends after ${DETACH_WAIT_MS / 1000} s: the restore is not blocked by a stop report`, async () => {
     exact();
     expect(DETACH_WAIT_MS).toBe(5000);
