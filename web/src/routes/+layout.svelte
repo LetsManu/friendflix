@@ -154,8 +154,8 @@
   $: if (!pageReady || publicPage) barHeld = false; // no bar here to rise out
   $: if (typeof document !== 'undefined') { const st = document.documentElement.style; if (castBarOn || barHeld) st.setProperty('--castbar-h', `${$mobile ? CASTBAR_H.phone : CASTBAR_H.desktop}px`); else st.removeProperty('--castbar-h'); }
   /** phone header: the casting indicator (a cast that plays or is on its way; not a failed one) */
-  $: castHeader = $mobile && !tv && !kidsUi && liveCast($castSession) && $castSession?.state !== 'failed';
-  function openCastRemote() { const c = get(castSession); if (c) void goto('/watch/' + c.itemId); }
+  $: castHeader = $mobile && !tv && !kidsUi && liveCast($barSess) && $barSess?.state !== 'failed'; // the engine's cast, or the app's (barSrc)
+  function openCastRemote() { barSrc.open(); } // engine: the watch page as the remote; app: castControl open
   $: kidsMode.set(kidsUi); // shared flag for components (no social UI on kids profiles)
   // ---- phone: chip bar + "Kategorien" overlay (the desktop dropdown lives in DeskBar) ----
   let catOpen = false, catGenres: string[] | null = null, catKind: Kind = 'movies', catBtn: HTMLElement | null = null;
@@ -803,7 +803,7 @@
         <span class="mbg" aria-hidden="true"></span>
         <div class="mrow">
           <a class="mlogo" href="/" aria-label={$t('shell.nav.homeLink')} aria-current={path === '/' ? 'page' : undefined}><Logo size={28} label="" /><span class="wm" aria-hidden="true">FriendFlix</span></a>
-          <span class="sp">{#if castHeader && $castSession}<button type="button" class="icon-btn castind" aria-label={$t('player.castBar.castingTo', { device: $castSession.device })} on:click={openCastRemote}><Icon name="cast" size={24} /></button>{/if}</span>
+          <span class="sp">{#if castHeader && $barSess}<button type="button" class="icon-btn castind" aria-label={$t('player.castBar.castingTo', { device: $barSess.device })} on:click={openCastRemote}><Icon name="cast" size={24} /></button>{/if}</span>
           <a class="icon-btn" href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>
           <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
         </div>

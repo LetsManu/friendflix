@@ -119,6 +119,42 @@ test('a profile switch inside the shell tells the app the new profile', async ({
   expect(await asked(page, 'sessionChanged')).toEqual([{ profileId: 'p2' }]);
 });
 
+test('the app hears about the new profile BEFORE the server switches (its stop report goes out under the old one)', async ({ page, api: _api }) => {
+  let selectAt = 0;
+  page.on('request', (r) => { if (r.method() === 'POST' && r.url().endsWith('/api/profiles/p2/select')) selectAt = Date.now(); });
+  await page.route('**/api/me', (r) => r.fulfill({ json: multi }));
+  await page.addInitScript(noIntro);
+  await fakeNativeApp(page, { ...APP2, sessionDelayMs: 600 });
+  await page.goto('/profiles');
+  await page.getByRole('button', { name: 'Anna' }).tap();
+  await expect.poll(() => selectAt).toBeGreaterThan(0);
+  const [call] = await nativeCalls(page, 'sessionChanged');
+  expect(call!.args).toEqual({ profileId: 'p2' });
+  expect(selectAt - call!.at).toBeGreaterThanOrEqual(550); // sent first, answered, then the select
+});
+
+test('choosing the profile that is already active sends nothing', async ({ page, api: _api }) => {
+  await page.route('**/api/me', (r) => r.fulfill({ json: multi }));
+  await page.addInitScript(noIntro);
+  await fakeNativeApp(page, APP2);
+  await page.goto('/profiles');
+  await page.getByRole('button', { name: 'Tester' }).tap();
+  await expect(page).not.toHaveURL(/\/profiles/);
+  expect(await nativeCalls(page, 'sessionChanged')).toHaveLength(0);
+});
+
+test('the phone header shows the casting icon for the app\'s cast and a tap opens it through the app', async ({ page, api: _api }) => {
+  await fakeNativeApp(page, { ...APP2, cast: SNAP });
+  await page.goto('/');
+  const icon = page.getByRole('button', { name: 'Überträgt auf Wohnzimmer-TV' });
+  await expect(icon).toBeVisible();
+  await icon.tap();
+  await expect.poll(async () => (await asked(page, 'castControl')).map((a) => a.action)).toEqual(['open']);
+  await expect(page).toHaveURL(/\/$/);
+  await pushCast(page, null);
+  await expect(icon).toHaveCount(0);
+});
+
 test('a profile switch with an API 1 app sends nothing unknown', async ({ page, api }) => {
   await page.route('**/api/me', (r) => r.fulfill({ json: multi }));
   await page.addInitScript(noIntro);

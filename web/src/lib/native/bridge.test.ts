@@ -194,6 +194,17 @@ describe('the app cast session (API 2)', () => {
     installFake(() => ({ ok: true, result: { ...SNAP, itemId: '../x' } }));
     await expect(native.castState()).resolves.toBeNull();
   });
+  it('an over-long title, TV name, subtitle or label is cut, the snapshot is kept', async () => {
+    const long = (n: number) => 'x'.repeat(n);
+    installFake(() => ({ ok: true, result: { ...SNAP, title: long(600), device: long(300), subtitle: long(700), next: { itemId: 'ep5', label: long(250) } } }));
+    const r = (await native.castState())!;
+    expect(r.title).toHaveLength(500);
+    expect(r.device).toHaveLength(200);
+    expect(r.subtitle).toHaveLength(500);
+    expect(r.next!.label).toHaveLength(200);
+    expect(r.title.endsWith('\u2026')).toBe(true);
+    expect(r.itemId).toBe('ep4');
+  });
   it('castControl sends the action and answers the boolean', async () => {
     const { sent } = installFake((req) => ({ ok: true, result: req.args.action !== 'next' }));
     await expect(native.castControl('playPause')).resolves.toBe(true);

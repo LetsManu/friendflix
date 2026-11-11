@@ -92,9 +92,11 @@
     if (pin === undefined && (p.hasPin || p.unlock === 'owner')) { pinFor = p; pinOwner = !p.hasPin; pinErr = ''; return; }
     pinBusy = true; pinErr = '';
     try {
-      if (p.id !== activeId) await endCast(); // the old profile's stream must not keep running under the new one
+      if (p.id !== activeId) {
+        await endCast(); // the old profile's stream must not keep running under the new one
+        await tellAppSession(p.id); // the app's cast ends and records the new profile BEFORE the server switches: its stop report and revoke go out under the old one (waits at most 4 s; no-op outside the app / with API 1)
+      }
       await api(`/api/profiles/${p.id}/select`, { method: 'POST', body: pin === undefined ? {} : { pin } });
-      await tellAppSession(p.id); // the app ends a cast of another profile and records this one; no-op outside the app / with API 1
       await setMeta('lastProfileId', p.id).catch(() => undefined); // offline hub: downloads of the last active profile
       markPicked(p.id); // the profile question ("Wer ist heute dabei?") was answered for this browser session
       await playIntro(p.id).catch(() => undefined);

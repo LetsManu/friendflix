@@ -102,15 +102,17 @@ const CAST_STATES = new Set<string>(['connecting', 'playing', 'ended']);
 export function asCastSnapshot(x: unknown): NativeCastSnapshot | null {
   const o = x as Record<string, unknown> | null;
   if (!o || typeof o !== 'object' || o.kind !== 'chromecast') return null;
-  const str = (v: unknown, max: number) => typeof v === 'string' && v.length <= max;
+  /** an over-long text is cut (with an ellipsis), not a reason to drop the whole snapshot */
+  const cut = (v: unknown, max: number): string | null => (typeof v !== 'string' ? null : v.length <= max ? v : v.slice(0, max - 1) + '\u2026');
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
-  if (!str(o.device, 200) || !str(o.title, 500) || typeof o.itemId !== 'string' || !ID.test(o.itemId) || typeof o.posterId !== 'string' || !ID.test(o.posterId)) return null;
+  const device = cut(o.device, 200), title = cut(o.title, 500);
+  if (device === null || title === null || typeof o.itemId !== 'string' || !ID.test(o.itemId) || typeof o.posterId !== 'string' || !ID.test(o.posterId)) return null;
   if (typeof o.state !== 'string' || !CAST_STATES.has(o.state)) return null;
   const n = o.next as Record<string, unknown> | undefined;
-  const next = n && typeof n === 'object' && typeof n.itemId === 'string' && ID.test(n.itemId) && str(n.label, 200) ? { next: { itemId: n.itemId, label: n.label as string } } : {};
-  const subtitle = str(o.subtitle, 500) && o.subtitle ? { subtitle: o.subtitle as string } : {};
+  const next = n && typeof n === 'object' && typeof n.itemId === 'string' && ID.test(n.itemId) && cut(n.label, 200) !== null ? { next: { itemId: n.itemId, label: cut(n.label, 200)! } } : {};
+  const sub = cut(o.subtitle, 500), subtitle = sub ? { subtitle: sub } : {};
   return {
-    kind: 'chromecast', device: o.device as string, itemId: o.itemId, title: o.title as string, posterId: o.posterId, isEpisode: o.isEpisode === true,
+    kind: 'chromecast', device, itemId: o.itemId, title, posterId: o.posterId, isEpisode: o.isEpisode === true,
     positionMs: num(o.positionMs), durationMs: num(o.durationMs), paused: o.paused === true, state: o.state as NativeCastSnapshot['state'], ...subtitle, ...next,
   };
 }
