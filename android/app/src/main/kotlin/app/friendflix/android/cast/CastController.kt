@@ -186,6 +186,8 @@ class CastController(
         /** the one retry after `409 cast_unpinned` per title: used, and its cancel */
         var unpinRetried = false
         var requeue: (() -> Unit)? = null
+        /** since when the receiver plays media that is not ours (another sender took over); null: ours */
+        var foreignAt: Long? = null
         /** the title's kind is only known from the token's answer (a [switchTo] by id) */
         var episodeFromToken = false
         var title = ""
@@ -341,8 +343,8 @@ class CastController(
         tvUi(s)
         tvSync(s)
         hint(s)
+        changed() // the snapshot first: the screen reads the title when it is told
         host.onCasting(s.itemId)
-        changed()
     }
 
     /**
@@ -350,9 +352,10 @@ class CastController(
      * data), else the first 32 hex characters of `sha256` of the token in [contentUrl]; the token-free lookup says whether it is ours
      * (this account, profile and device). Ours: the cast is adopted as it plays (no `start` again when the server saw one), the queued
      * successor on the receiver is taken over, and an episode that ended on the TV meanwhile is closed once (its stop at its runtime,
-     * its revoke). Not ours (404, AirPlay, media without a token) or unknown (network): nothing is reported or revoked.
+     * its revoke). Not ours (404, AirPlay, media without a token) or unknown (network): nothing is reported or revoked; [onUnknown]
+     * runs for the latter (the caller may try again later).
      */
-    fun resume(receiverCastId: String?, contentUrl: String?) {
+    fun resume(receiverCastId: String?, contentUrl: String?, onUnknown: () -> Unit = {}) {
         if (cur != null || resuming) return
         val url = contentUrl?.takeIf { it.isNotEmpty() } ?: return
         val id = receiverCastId?.takeIf(CastIds::valid) ?: CastIds.ofContentUrl(url) ?: return
@@ -360,7 +363,7 @@ class CastController(
         val my = seq
         val queuedMedia = receiver.queuedNext()
         io.execute {
-            val l = try { server.lookup(id) } catch (_: IOException) { main.execute { resuming = false }; return@execute }
+            val l = try { server.lookup(id) } catch (_: IOException) { main.execute { resuming = false; onUnknown() }; return@execute }
             if (l == null) { main.execute { resuming = false; if (cur == null) hints.clear() }; return@execute }
             val h = hints.read()
             // the TV moved on to the queued episode while nobody listened: the ended one is closed now
@@ -401,20 +404,22 @@ class CastController(
         s.queueAsked = when {
             queued == null || queuedMedia == null -> false // none queued: this title queues its own (from the start)
             queued.isFailure -> true // unknown: never a second queued token next to one that may be ours
-            q != null && q.next -> {
+            q == null -> true // a dead or foreign item is queued there: none of ours behind it
+            q.next -> {
                 val item = ItemInfo(q.itemId, "Episode", q.title, q.seriesName, null, null, null)
                 s.queued = Queued(q.toCastInfo(queuedMedia.contentUrl), item, false)
                 true
             }
-            else -> false
+            else -> true // not a queued successor of ours: nothing to take over, none behind it
         }
         cur = s
         seq++
         hint(s)
         tvUi(s)
         tvSync(s)
+        loadSegs(s)
+        changed() // the snapshot first: the screen reads the title when it is told
         host.onCasting(s.itemId)
-        changed()
     }
 
     /** the receiver refused the loaded media (load error) */
@@ -437,7 +442,13 @@ class CastController(
         if (s.busy) return
         val q = s.queued
         if (st.loaded && q != null && st.castId == q.ci.castId && st.castId != ci.castId) advanced(s)
-        else if (st.loaded && st.castId != null && st.castId != ci.castId) return // other media: not ours
+        else if (st.loaded && st.castId != null && st.castId != ci.castId) {
+            // other media: not ours; no report, no renewal while it plays, and after ADVANCE_WAIT_MS the cast is let go (tick)
+            s.foreignAt = s.foreignAt ?: now()
+            changed()
+            return
+        }
+        if (st.loaded) s.foreignAt = null
         val live = s.ci ?: return
         val begins = st.loaded && !s.started && (st.playing || (s.hold && st.paused))
         // an idle receiver's time is no position (it is reset around the end): the end check needs the last real one
@@ -470,6 +481,7 @@ class CastController(
         val ci = s.ci ?: return
         if (s.busy) return
         val t = now()
+        s.foreignAt?.let { if (t - it >= ADVANCE_WAIT_MS) letGo(s); return } // no progress, no renewal over another sender's media
         if (t - s.lastLoop < PROGRESS_MS) return
         s.lastLoop = t
         if (s.started) report(s, PlaybackReporter.Kind.PROGRESS, ci)
@@ -541,6 +553,7 @@ class CastController(
      * cast too): queued token revoked, stop reported, token revoked, receiver stopped.
      */
     fun stop() {
+        if (cur == null) seq++ // a resume lookup in flight must not adopt a cast after the stop
         val s = cur ?: run {
             // a title just finished on the TV and the player closes before its delayed end: the session ends now
             val p = pendingEnd ?: return
@@ -560,6 +573,21 @@ class CastController(
     }
 
     // ---- internals ----
+
+    /**
+     * Another sender took the TV over (engine.ts `letGo`): the owed stop is reported, the live and the queued token revoked, the
+     * hint cleared. The receiver is not touched (no end, no dequeue): it belongs to the other sender now.
+     */
+    private fun letGo(s: Live) {
+        val q = s.queued
+        s.queued = null
+        stopReport(s)
+        s.ci?.let(::revoke)
+        q?.let { revoke(it.ci) }
+        s.ci = null
+        close(s)
+        host.onReturn(s.itemId, s.returnAt, play = false, ended = false)
+    }
 
     private fun atPosition(s: Live) {
         // queue from the start: once per title, as soon as the receiver plays it and its length is known
@@ -713,6 +741,7 @@ class CastController(
 
     private fun close(s: Live) {
         if (cur !== s) return
+        dequeue(s) // a queued token never outlives the cast (a no-op when the caller already took it off)
         cur = null
         seq++
         s.cancel?.invoke(); s.cancel = null

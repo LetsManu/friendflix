@@ -28,6 +28,7 @@ class CastHubTest {
     private var clock = 1_000_000L
     private val calls = mutableListOf<String>()
     private val lookups = mutableMapOf<String, CastLookup>()
+    private val down = mutableSetOf<String>()
     private var tokens = 0
 
     private val server = object : CastServer {
@@ -36,7 +37,11 @@ class CastHubTest {
             return TokenAnswer.Ok(info(if (body.optBoolean("next")) "q${++tokens}" else "c${++tokens}"))
         }
         override fun revoke(castId: String) { calls += "DELETE /api/cast/session/$castId" }
-        override fun lookup(castId: String): CastLookup? { calls += "GET /api/cast/session/$castId"; return lookups[castId] }
+        override fun lookup(castId: String): CastLookup? {
+            calls += "GET /api/cast/session/$castId"
+            if (castId in down) throw java.io.IOException("down")
+            return lookups[castId]
+        }
         override fun report(kind: PlaybackReporter.Kind, body: JSONObject) { calls += "POST /api/playback/${kind.path}" }
         override fun next(itemId: String): ItemInfo? = ItemInfo("ep2", "Episode", "Second", "Bright Valley", "s1", 1, 2)
         override fun segments(itemId: String): List<Segment> = emptyList()
@@ -245,5 +250,21 @@ class CastHubTest {
         h.attach(Host())
         cast(h)
         assertEquals("from the screen", link.messages.first { it.optString("t") == "ui" }.getJSONObject("strings").getString("next"))
+    }
+
+    @Test fun aLookupThatCouldNotBeAnsweredIsTriedAgainAfterThirtySeconds() {
+        val url = "https://ff.example/media/c/${"C".repeat(43)}/master.m3u8"
+        val id = CastIds.ofContentUrl(url)!!
+        down += id
+        val h = hub()
+        link.playing = ReceiverMedia(null, url)
+        events.onState(playing(id, 1_000))
+        events.onState(playing(id, 2_000))
+        assertEquals("one try per receiver media", 1, calls.count { it.startsWith("GET /api/cast/session") })
+        down.clear()
+        lookups[id] = CastLookup(id, "ep1", "ms", "ps", clock + 3_600_000, 1_800L * 10_000_000, "chromecast", false, true, "First", "Bright Valley", emptyList())
+        advance(CastHubCore.RESUME_RETRY_MS)
+        events.onState(playing(id, 3_000))
+        assertTrue(h.controller.casting)
     }
 }

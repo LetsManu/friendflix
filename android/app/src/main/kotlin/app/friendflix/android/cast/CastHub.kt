@@ -79,7 +79,8 @@ class CastHubCore(
             controller.onReceiver(st)
             if (!controller.casting && st.loaded && !st.idle && st.castId != null && st.castId != resumeTried) {
                 resumeTried = st.castId
-                link.current()?.let { controller.resume(it.castId, it.contentUrl) }
+                // a lookup that could not be answered (network, server) is tried again later, at most every RESUME_RETRY_MS (rate limit)
+                link.current()?.let { m -> controller.resume(m.castId, m.contentUrl) { schedule(RESUME_RETRY_MS) { resumeTried = null } } }
             }
             if (!st.loaded) resumeTried = null
             refresh()
@@ -144,6 +145,8 @@ class CastHubCore(
     companion object {
         /** the receiver's position is mirrored and the controller ticked this often while casting */
         const val POLL_MS = 1_000L
+        /** a resume lookup that failed is asked again no sooner (the server's lookup limit is 30 per minute) */
+        const val RESUME_RETRY_MS = 30_000L
     }
 }
 
@@ -187,7 +190,14 @@ object CastHub {
     }
 
     private fun build(app: Context, ctx: CastContext) {
-        if (core != null) return
+        try {
+            if (core == null) create(app, ctx)
+        } finally {
+            starting = false // a failed start (Media3 initialize) may be tried again
+        }
+    }
+
+    private fun create(app: Context, ctx: CastContext) {
         val media3 = androidx.media3.cast.Cast.getSingletonInstance(app)
         if (media3.needsInitialization()) media3.initialize()
         // the running Cast app: FriendFlix's own receiver unless it is the Default Media Receiver (fixed for this process)
@@ -219,12 +229,15 @@ object CastHub {
     /** Ends the cast (Stop casting, sign-out, profile switch): queued token revoked, stop reported, token revoked, receiver stopped. */
     fun stop() {
         core?.stop()
-        proxy.current = null
+        // the account is gone: its prefs and profile go too. The server is dropped only after the stop calls (same ordered thread)
+        defaults = FlowPrefs() to null
+        core?.useProfile(null)
+        Players.reports.execute { proxy.current.set(null) }
     }
 
     /** The server calls (and the profile) for the playing profile: the player screen's own, known once a stream started. */
     fun useServer(server: CastServer, profileId: String) {
-        proxy.current = server
+        proxy.current.set(server)
         core?.useProfile(profileId)
     }
 
@@ -236,10 +249,10 @@ object CastHub {
 
     /** The cast endpoints of the player's profile, else of the last active profile (an app that restarted while casting). */
     private class HubServer : CastServer {
-        @Volatile var current: CastServer? = null
+        val current = java.util.concurrent.atomic.AtomicReference<CastServer?>(null)
         @Volatile var fallback: () -> CastServer? = { null }
 
-        private fun real(): CastServer? = current ?: fallback()?.also { current = it }
+        private fun real(): CastServer? = current.get() ?: fallback()?.let { f -> if (current.compareAndSet(null, f)) f else current.get() }
 
         override fun session(body: JSONObject) = real()?.session(body) ?: TokenAnswer.Failed
         override fun revoke(castId: String) { real()?.revoke(castId) }
@@ -254,6 +267,9 @@ object CastHub {
         val profile = Offline.get(app).state.lastProfileId ?: return null
         val api = runBlocking { Downloads.get(app).api() } ?: return null
         core?.let { c -> Handler(Looper.getMainLooper()).post { c.useProfile(profile) } }
-        return CastServerApi(api, profile, PlayerApi(api, profile))
+        val pa = PlayerApi(api, profile)
+        // the profile's autoplay and "still watching" prefs for a cast found after a restart
+        try { pa.prefs()?.let { p -> defaults = p.flow to p.quality.takeIf { it >= 300_000 } } } catch (_: IOException) { }
+        return CastServerApi(api, profile, pa)
     }
 }

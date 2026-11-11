@@ -54,8 +54,9 @@ class CastControllerTest {
         }
         override fun report(kind: PlaybackReporter.Kind, body: JSONObject) { calls += "POST /api/playback/${kind.path}" to body }
         override fun next(itemId: String): ItemInfo? { calls += "GET /api/items/$itemId/next" to null; return nextItem }
-        override fun segments(itemId: String): List<Segment> = emptyList()
+        override fun segments(itemId: String): List<Segment> { segmentCalls++; return emptyList() }
     }
+    private var segmentCalls = 0
 
     private class FakeReceiver(override val custom: Boolean) : CastReceiver {
         val loads = mutableListOf<Triple<String, Int?, Boolean>>()
@@ -84,7 +85,10 @@ class CastControllerTest {
         val titles = mutableListOf<String>()
         var casting = 0
         override fun stopLocal() = onStop()
-        override fun onCasting(itemId: String) { casting++ }
+        /** what the cast's snapshot showed at the moment the screen was told */
+        var titleAtCasting: String? = null
+        var probe: () -> String? = { null }
+        override fun onCasting(itemId: String) { casting++; titleAtCasting = probe() }
         override fun onTitle(item: ItemInfo) { titles += item.id }
         override fun onFailed(answer: TokenAnswer?) { failures++; failed = answer }
         override fun onReturn(itemId: String, positionMs: Long?, play: Boolean, ended: Boolean) {
@@ -777,5 +781,131 @@ class CastControllerTest {
         assertNull(CastIds.ofContentUrl("https://ff.example/media/c/short/master.m3u8"))
         assertNull(CastIds.ofContentUrl("https://ff.example/media/c/${"A".repeat(44)}/master.m3u8"))
         assertNull(CastIds.ofContentUrl(null))
+    }
+
+    // ---- fix round 1 ----
+
+    @Test fun stoppedOnTheTvRevokesTheQueuedToken() {
+        val (_, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 61_000)) // q2 queued
+        calls.clear()
+        c.onMediaEnd(IdleReason.CANCELLED, "c1")
+        assertEquals(1, calls.count { it.first == "DELETE /api/cast/session/q2" })
+        assertEquals(1, calls.count { it.first == "DELETE /api/cast/session/c1" })
+        assertEquals(1, calls.count { it.first == "POST /api/playback/stop" })
+    }
+
+    @Test fun aLoadFailureRevokesTheQueuedToken() {
+        val (_, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 61_000))
+        calls.clear()
+        c.onLoadFailed()
+        assertEquals(1, calls.count { it.first == "DELETE /api/cast/session/q2" })
+        assertEquals(1, calls.count { it.first == "DELETE /api/cast/session/c1" })
+        assertEquals(1, calls.count { it.first == "POST /api/playback/stop" })
+    }
+
+    @Test fun aSessionEndRevokesTheQueuedTokenOnce() {
+        val (_, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 61_000))
+        calls.clear()
+        c.onSessionEnded()
+        assertEquals(1, calls.count { it.first == "DELETE /api/cast/session/q2" })
+    }
+
+    @Test fun foreignMediaIsLetGoAfterTheAdvanceWait() {
+        val (r, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 61_000)) // q2 queued
+        calls.clear()
+        c.onReceiver(playing("other", 5_000)) // another sender took the TV
+        clock += 10_000
+        c.tick()
+        assertTrue("no progress while foreign media plays", calls.isEmpty())
+        clock += CastController.ADVANCE_WAIT_MS
+        c.tick()
+        assertEquals(1, calls.count { it.first == "POST /api/playback/stop" })
+        assertEquals(1, calls.count { it.first == "DELETE /api/cast/session/c1" })
+        assertEquals(1, calls.count { it.first == "DELETE /api/cast/session/q2" })
+        assertFalse(calls.any { it.first == "POST /api/cast/session" })
+        assertEquals("the TV is the other sender's now", 0, r.ended)
+        assertTrue(r.removed.isEmpty())
+        assertFalse(c.casting)
+        assertNull(c.snapshot("TV"))
+    }
+
+    @Test fun foreignMediaNeverTriggersARenewal() {
+        val (r, c) = controller()
+        c.start(film())
+        c.onReceiver(playing("c1", 61_000))
+        c.onReceiver(playing("other", 1_000))
+        calls.clear()
+        clock += 55 * 60_000 // the token would be renewed now
+        c.tick() // the first tick after the wait lets go; it never mints a token
+        assertFalse(calls.any { it.first == "POST /api/cast/session" })
+        assertEquals(listOf("c1"), r.loads.map { it.first })
+    }
+
+    @Test fun ourMediaAgainCancelsTheLetGo() {
+        val (_, c) = controller()
+        c.start(film())
+        c.onReceiver(playing("c1", 61_000))
+        c.onReceiver(playing("other", 1_000))
+        c.onReceiver(playing("c1", 62_000)) // back
+        clock += 2 * CastController.ADVANCE_WAIT_MS
+        c.tick()
+        assertTrue(c.casting)
+    }
+
+    @Test fun stopDuringAResumeLookupAdoptsNothing() {
+        lookups[tokenId] = lookup(tokenId)
+        val r = FakeReceiver(false)
+        val c = CastController(server, r, host, still, io = manualIo, main = direct, now = { clock }, schedule = schedule)
+        c.resume(null, tokenUrl) // the lookup is on its way
+        c.stop() // sign-out, or the bar's Stop
+        runIo()
+        assertFalse(c.casting)
+        assertNull(c.snapshot("TV"))
+    }
+
+    @Test fun anAdoptedCastLoadsItsSegmentsAndShowsItsTitleWhenTold() {
+        lookups[tokenId] = lookup(tokenId)
+        val (_, c) = controller(custom = true)
+        host.probe = { c.snapshot("TV")?.title }
+        c.resume(null, tokenUrl)
+        assertEquals("Bright Valley", host.titleAtCasting)
+        assertEquals(1, segmentCalls)
+    }
+
+    @Test fun theTitleIsInTheSnapshotWhenTheTokenLoads() {
+        val (_, c) = controller()
+        host.probe = { c.snapshot("TV")?.title }
+        c.start(film())
+        assertEquals("Film", host.titleAtCasting)
+    }
+
+    @Test fun noSecondQueuedItemBehindADeadOne() {
+        val qUrl = "https://ff.example/media/c/" + "B".repeat(43) + "/master.m3u8"
+        lookups[tokenId] = lookup(tokenId) // the queued item's lookup is a 404
+        val (r, c) = controller()
+        r.next = ReceiverMedia(null, qUrl)
+        c.resume(null, tokenUrl)
+        c.onReceiver(playing(tokenId, 61_000))
+        assertTrue(r.queued.isEmpty())
+        assertFalse(calls.any { it.second?.optBoolean("next") == true })
+    }
+
+    @Test fun aFailedLookupIsReportedToTheCaller() {
+        lookupDown += tokenId
+        val (_, c) = controller()
+        var unknown = 0
+        c.resume(null, tokenUrl) { unknown++ }
+        assertEquals(1, unknown)
+        lookupDown.clear()
+        c.resume(null, tokenUrl) { unknown++ } // foreign (404): not "unknown"
+        assertEquals(1, unknown)
     }
 }

@@ -302,8 +302,14 @@ class PlayerActivity : FragmentActivity() {
     private fun start(a: Args, handed: OfflineMedia?) {
         loadJob?.cancel()
         hideError()
-        val c = cast
-        if (a.licenseId == null && c != null && c.casting) { openWhileCasting(a, c); return }
+        if (a.licenseId != null) {
+            // a download plays here and never on the TV: this screen is not the cast's remote (the cast goes on in the hub)
+            if (cast != null) { CastHub.detach(castHost); cast = null; showLocal() }
+        } else {
+            if (cast == null && CastHub.ready.value) cast = CastHub.attach(castHost)
+            val c = cast
+            if (c != null && c.casting) { openWhileCasting(a, c); return }
+        }
         loading.visibility = View.VISIBLE
         if (a.licenseId != null) startOffline(a, handed) else startOnline(a, first = true, startMs = a.startMs)
     }
@@ -316,6 +322,19 @@ class PlayerActivity : FragmentActivity() {
         loading.visibility = View.GONE
         if (c.itemId != a.itemId) c.switchTo(a.itemId, a.startMs)
         showCasting()
+        // the title's data for Episodes, Cast & info, bookmarks and the title lines (no local stream, no "still watching" count)
+        val id = c.itemId ?: a.itemId
+        loadJob = lifecycleScope.launch {
+            try {
+                val server = Downloads.get(applicationContext).api() ?: return@launch
+                val pa = PlayerApi(server, a.profileId)
+                api = pa
+                CastHub.useServer(CastServerApi(server, a.profileId, pa), a.profileId)
+                loadTitle(pa, a.copy(itemId = id), remote = true)
+            } catch (e: IOException) {
+                Log.w(TAG, "remote title not loaded ${e.javaClass.simpleName}")
+            }
+        }
     }
 
     private fun startOffline(a: Args, handed: OfflineMedia?) {
@@ -399,7 +418,7 @@ class PlayerActivity : FragmentActivity() {
      * are gathered on the IO dispatcher and applied on the main thread only if this load is still the current one (a newer title's
      * load cancels it). Preferences that could not be loaded leave the current ones (subtitle look, sound mode) as they are.
      */
-    private suspend fun loadTitle(pa: PlayerApi, a: Args) = withContext(Dispatchers.IO) {
+    private suspend fun loadTitle(pa: PlayerApi, a: Args, remote: Boolean = false) = withContext(Dispatchers.IO) {
         val p = async { pa.prefs() }
         val types = async { pa.segmentTypes() }
         val it = async { pa.item(a.itemId) }
@@ -435,7 +454,8 @@ class PlayerActivity : FragmentActivity() {
                 view.subtitleView?.let { v -> applyCaptionLook(v, loaded.subtitleStyle) }
                 if (!fxTouched) setFx(loaded.audioFx) // the server's mode wins until a switch is flipped here (web adoptFxPref)
             }
-            Players.still.opened()
+            CastHub.useDefaults(pr.flow, pr.quality.takeIf { it >= MIN_BITRATE }) // what a cast found after a restart is queued with
+            if (!remote) Players.still.opened()
             title.text = cur?.seriesName ?: cur?.name.orEmpty()
             subtitle.text = cur?.let { i -> if (i.seriesName != null) episodeLabel(i) else "" }.orEmpty()
             controls.loadTitleExtras(pa, a.itemId, caps.chapters) // Scenes, bookmarks and their marks
@@ -1136,11 +1156,13 @@ class PlayerActivity : FragmentActivity() {
     }
 
     private fun attachCast() {
-        val c = CastHub.attach(castHost) ?: return
-        cast = c
         castLink = CastHub.link
         CastButtonFactory.setUpMediaRouteButton(applicationContext, castButton)
         updateBar()
+        // a download is never cast and never this screen's remote
+        if (::args.isInitialized && args.licenseId != null) return
+        val c = CastHub.attach(castHost) ?: return
+        cast = c
         // a cast that runs (kept from an earlier screen, or found again after a restart): this screen is its remote, nothing plays here
         if (c.casting && offlineLicense == null && ::args.isInitialized) {
             castHost.stopLocal()
@@ -1258,7 +1280,8 @@ class PlayerActivity : FragmentActivity() {
         view.controllerShowTimeoutMs = 0 // a remote: the controls stay
         controls.onCasting() // first: a lock is lifted, else the controller could not show
         view.showController()
-        CastHub.state.value?.let { snap -> title.text = snap.title; subtitle.text = snap.subtitle.orEmpty() }
+        // a title the screen knows keeps its lines; else the cast's (series over episode title)
+        CastHub.state.value?.takeIf { it.title.isNotEmpty() && title.text.isNullOrEmpty() }?.let { snap -> title.text = snap.title; subtitle.text = snap.subtitle.orEmpty() }
         castStatus.text = link.deviceName?.let { getString(R.string.cast_playing_on, it) } ?: getString(R.string.cast_playing)
         applyFx()
         updateBar()

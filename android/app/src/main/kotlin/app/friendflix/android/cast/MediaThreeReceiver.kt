@@ -52,9 +52,11 @@ class TokenConverter(private val custom: Boolean) : MediaItemConverter {
     /** the cast id of a receiver item (null: not one of ours) */
     fun castIdOf(q: MediaQueueItem?): String? {
         val media = q?.media ?: return null
+        // the token in the item's own URL names it (sha256, as the server's castId): also after an app restart, and a sender on the
+        // network cannot claim another's id through custom data; the custom data only serves a URL without a token
+        CastIds.ofContentUrl(media.contentId)?.let { return it }
         val tagged = media.customData?.optJSONObject("ff")?.optString("castId")?.takeIf(CastIds::valid)
-        // after an app restart the entries are gone: the token in the item's own URL still names it (sha256, as the server's castId)
-        return tagged ?: entries.entries.firstOrNull { it.value.info.contentUrl == media.contentId }?.key ?: CastIds.ofContentUrl(media.contentId)
+        return tagged ?: entries.entries.firstOrNull { it.value.info.contentUrl == media.contentId }?.key
     }
 
     override fun toMediaQueueItem(mediaItem: MediaItem): MediaQueueItem {
