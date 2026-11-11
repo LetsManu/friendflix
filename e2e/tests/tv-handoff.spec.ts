@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { episodes, ME } from '../mocks/fixtures.js';
 import { offer } from '../mocks/handoff.js';
-import { mockPlayer } from '../mocks/scenes.js';
+import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { dunmoor } from './cast-remote-setup.js';
 
 /** Device hand-off, the "continue here" card in TV mode: a solid panel in the focus tile, driven by the remote (spec device hand-off 2.4). */
@@ -40,6 +40,24 @@ test('an early answer takes focus and OK plays', async ({ page, api }) => {
   expect(asked).toHaveLength(1); // asked once per page load
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(new RegExp(`/watch/${episodes[0]!.id}\\?t=1390$`));
+});
+
+test('Back from the player started on the card: home without a card puts the focus on the tile\'s Play', async ({ page, api }) => {
+  api.handoff.home = offer();
+  await setTv(page);
+  await page.goto('/');
+  await expect(go(page)).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(new RegExp(`/watch/${episodes[0]!.id}\\?t=1390$`));
+  api.handoff.home = null; // this TV now played last: no card on the way back
+  await videoReady(page);
+  // Back walks the player's layers (controls -> hidden) before it leaves
+  await expect(async () => { await back(page); await expect(page).not.toHaveURL(/\/watch\//, { timeout: 700 }); }).toPass({ timeout: 8000 });
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('section.tile')).toBeVisible();
+  await expect(tilePlay(page)).toBeFocused({ timeout: 5000 }); // the remembered card link is gone: not left on <body>
+  expect(await tilePlay(page).evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(255, 255, 255)'); // visibly: the white fill
+  await expect(page.locator('[data-handoff]')).toHaveCount(0);
 });
 
 test('a late answer does not take focus', async ({ page, api }) => {
