@@ -29,6 +29,7 @@ import app.friendflix.android.bridge.NativeBridge
 import app.friendflix.android.bridge.PlayRequest
 import app.friendflix.android.bridge.PlayerLauncher
 import app.friendflix.android.cast.CastHub
+import app.friendflix.android.cast.HubCastRemote
 import app.friendflix.android.notify.NotificationScheduler
 import app.friendflix.android.notify.NotifyLinks
 import app.friendflix.android.offline.NetworkWatch
@@ -107,8 +108,17 @@ class ShellActivity : ComponentActivity() {
                     return native.launch(req)
                 }
             }
-            val bridge = NativeBridge(policy, player, sink, Capabilities(play = true, download = true, cast = true), openSettings = ::openSettings)
+            // the web UI's cast bar: reads and drives the app's cast; "open" starts the player as the remote of the cast's item
+            val castRemote = HubCastRemote(
+                openRemote = { itemId -> offline.state.lastProfileId?.let { native.launch(PlayRequest(itemId, it, null, null, null, null)) } ?: false },
+                profileNoted = offline::noteProfile,
+            )
+            val bridge = NativeBridge(
+                policy, player, sink, Capabilities(play = true, download = true, cast = true, castBar = true), cast = castRemote,
+                openSettings = ::openSettings,
+            )
             this@ShellActivity.bridge = bridge
+            launch { CastHub.state.collect { bridge.emitCast(it) } }
             launch {
                 var last = emptyList<DownloadEntry>()
                 downloads.observeWeb().collect { now ->
