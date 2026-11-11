@@ -179,13 +179,13 @@ forgets the memoised identity (`forgetUserAuth`).
   waiting approvals (new `BadgeKey 'approvals'`; `/api/admin/summary` gains `pending.approvals` = open, not rejected
   `approval_requests`).
 
-## 3. Data model (migration 46)
+## 3. Data model (migration 47)
 
-Migration **46** (the next free number in `backend/src/db.ts` today; if another migration lands first, take the next free
-number, never reorder). One transaction, rerunnable parts use `if not exists`.
+Migration **47** (controller ruling 2026-11-11: 46 is taken by the device hand-off plan, which builds first; Live TV follows
+with 48–50; never reorder). One transaction, rerunnable parts use `if not exists`.
 
 ```sql
--- 46: users & permissions remodel. Roles become rows (built-ins seeded; env roles are synced at startup), role_settings and
+-- 47: users & permissions remodel. Roles become rows (built-ins seeded; env roles are synced at startup), role_settings and
 -- user_limits get the full template + permission overrides as JSON, audit gets indexes. The old role_settings columns stay
 -- (dual-written for one release so a rollback to 3.3 reads current values); a later migration drops them.
 create table if not exists roles (
@@ -336,7 +336,7 @@ All admin routes: `requireAdmin` (admin account acting as its owner profile), CS
 
 ## 5. Migration and compatibility plan
 
-1. Migration 46 (§3) + `syncRoles` at startup. Effective values unchanged (test).
+1. Migration 47 (§3) + `syncRoles` at startup. Effective values unchanged (test).
 2. Backend reads `template`/`perms`; writes dual (`template` + old columns) for one release.
 3. Old endpoints kept one release: `GET /api/admin/roles` legacy fields, `PUT /api/admin/users/:id/limits`. The web uses the new
    ones from day one.
@@ -489,7 +489,7 @@ translated fragments in the wrong order (each sentence is one key with parameter
 
 ## 9. Testing
 
-- **Unit (backend):** migration 46 on a fixture DB (role_settings with every column combination, user_limits) → effective
+- **Unit (backend):** migration 47 on a fixture DB (role_settings with every column combination, user_limits) → effective
   rights identical before/after; `syncRoles` (env role added, removed, re-added); `effectiveRights` layer order and `sources`;
   kids overlay; admin lock; role create/duplicate/delete with move (accounts, invites); invitable roles in invites/approvals;
   `comments`/`party`/`partySchedule`/`cast`/`requests` enforcement (403 codes, comment list filter); `PUT /rights` audit
@@ -503,7 +503,7 @@ translated fragments in the wrong order (each sentence is one key with parameter
 
 ## 10. Phases (each its own PR; the app works after each)
 
-- **0a Backend:** migration 46, `syncRoles`, `perms.ts`, `rights.ts`, enforcement of the switches, new/extended endpoints,
+- **0a Backend:** migration 47, `syncRoles`, `perms.ts`, `rights.ts`, enforcement of the switches, new/extended endpoints,
   audit changes, `/api/me.perms`, docs (`docs/security.md` roles section, `docs/setup.md` ROLE_TEMPLATES note).
 - **0b Rollen & Rechte:** the matrix, role sheet, phone cards and *Vergleich*, role create/duplicate/delete/order, history.
 - **0c Personen:** summary strip, filters, columns, bulk; detail *Rechte*, *Sicht prüfen*, profile admin; audit filters;

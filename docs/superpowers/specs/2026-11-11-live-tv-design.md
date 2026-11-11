@@ -16,6 +16,8 @@ films, HEVC conversions, live channels and recordings never overload the server 
 **Approach.** Option B: FriendFlix manages channels itself (not Jellyfin Live TV).
 
 **Sources.** Provider M3U list(s) with an optional XMLTV EPG URL, plus own feeds entered by hand (SRT, HLS or MPEG-TS).
+Own feeds are either **pulled** (FriendFlix fetches the URL while watched or recorded) or **pushed** (an encoder such as OBS
+sends SRT to FriendFlix; owner answer 2026-11-11, §3.5).
 Refresh interval per source (6 h / 12 h / 24 h / weekly / manual) plus *Jetzt aktualisieren*; last refresh and error shown.
 Credentials inside provider URLs stay on the server, never reach clients or logs. Optional manual tools: manual EPG entries
 (single or recurring) for own feeds; time-based recording.
@@ -102,8 +104,8 @@ and `2026-11-11-users-permissions-design.md` (Phase 0).
 ## Non-goals
 
 - No Jellyfin Live TV / tuner integration, no HDHomeRun discovery, no DVB hardware. Jellyfin keeps doing films and series.
-- No SRT **listener** (feeds pushing into FriendFlix) in these phases: own SRT feeds are pulled (`srt://host:port`,
-  caller mode) only while watched or recorded (see open question 1).
+- No SRT push without a generated stream id + passphrase, no RTMP/WHIP/RTSP ingest, no TCP ingest ports: pushed feeds come in
+  only over SRT on the published UDP range (§3.5).
 - No adaptive bitrate ladder for live: one rendition per channel (the *Mobile-Qualität* rendition stays a later, off option).
 - No catch-up / replay TV beyond the 30-minute buffer and recordings; no provider VOD (M3U entries for films and series are
   skipped on import).
@@ -147,12 +149,12 @@ The phase split (each PR leaves the app working; Live TV stays invisible until e
 | **0** | 0a–0c | Users & permissions remodel (`2026-11-11-users-permissions-design.md`): permission registry with `liveTv` / `liveRecord`, role editor, per-user overrides. Live TV depends on it. |
 | **1** | **1a** | Shared conversion budget + benchmark (backend `convbudget.ts`, `/api/playback/info` gate, Admin → *Wiedergabe* card). No Live TV needed. |
 | | **1b** | `livetv` image + compose profile + GPU overlays + updater actions + backend detection + *Live-TV (optional)* entry + enable/disable flow. |
-| | **1c** | Sources, import (M3U/XMLTV), channels, groups & rights, logos, admin *Quellen* / *Kanäle* / *Gruppen & Rechte* / *Live-Status*; now/next from XMLTV (auto-matching only). Migration 47. |
-| | **1d** | Watching: tokens, gateway route, shared streams, DVR, budget admission, the *Live-TV* tab (desktop, phone, kids, TV), live player, favourites, last channel, Chromecast/AirPlay, *TV startet mit Live-TV*. |
+| | **1c** | Sources, import (M3U/XMLTV), channels (pulled and pushed own feeds, §3.5), groups & rights, logos, admin *Quellen* / *Kanäle* / *Gruppen & Rechte* / *Live-Status*; now/next from XMLTV (auto-matching only). Migration 48. |
+| | **1d** | Watching: tokens, gateway route, shared streams (incl. SRT push ingest, §3.5), DVR, budget admission, the *Live-TV* tab (desktop, phone, kids, TV), live player, favourites, last channel, Chromecast/AirPlay, *TV startet mit Live-TV*. |
 | | **1e** | Platform keys and shells: Tizen key registration, webOS key mapping, Fire TV `FireTvKeys`, Android shell cast bridge `castLive`. |
-| **2** | 2a | EPG admin: *Programmführer* tab (matching with suggestions, unmatched list, manual EPG entries/rules). Migration 48. |
+| **2** | 2a | EPG admin: *Programmführer* tab (matching with suggestions, unmatched list, manual EPG entries/rules). Migration 49. |
 | | 2b | EPG grid for users (desktop, phone, TV), detail sheet, reminders. |
-| **3** | 3a | Recordings backend + `livetv` recorder + storage modes + budget reservation + notifications. Migration 49. |
+| **3** | 3a | Recordings backend + `livetv` recorder + storage modes (incl. the library sub-folder mount, §15.3) + budget reservation + notifications. Migration 50. |
 | | 3b | Recording UI (detail sheet actions, Live-TV row, *Meine Aufnahmen*, admin *Aufnahmen*), player source seam for recordings, casting/hand-off of recordings. |
 | | later | Optional H.265 re-encode of recordings (off by default, quiet hours, budget). |
 
@@ -166,16 +168,18 @@ playback for everyone and should ship and settle on its own), Phase 2 plan, Phas
         │  /api/* (cookie session)                 │  /media/l/<token>/…  /media/r/<token>/…  (token in path)
         ▼                                          ▼
    backend (Fastify) ──signed HTTP──► livetv ◄──── gateway (proxies HLS from livetv, serves recordings read-only)
-     │  DB: sources, channels, groups, EPG,          │  ffmpeg / HLS proxy / DVR cache / recorder
+     │  DB: sources, channels, groups, EPG,          │  ffmpeg / HLS proxy / DVR cache / recorder / SRT listener
      │  rights, recordings, budget                   │  networks: livetv (internal) + livetv-egress (internet / LAN)
-     │                                               ▼
+     │                                               ▲  encoders (OBS …) push SRT to UDP ${LIVETV_SRT_PORTS} (§3.5)
+     │                                               │
      └──signed HTTP──► updater ──► docker-proxy ──► docker (pull/up/stop livetv; profile livetv)
 ```
 
 - **backend** owns all state (Postgres), decides who may watch what, admits conversions against the budget, mints tokens,
   schedules refreshes and recordings, and tells `livetv` what to run. It never talks to provider hosts itself.
 - **livetv** (new service, Node + jellyfin-ffmpeg) is the only component that fetches provider/own-feed URLs: M3U and XMLTV
-  downloads (parsed with hard limits), logos, stream inputs, probes, benchmarks, recordings. It holds no database and no
+  downloads (parsed with hard limits), logos, stream inputs, probes, benchmarks, recordings. It is also the only component
+  that accepts pushed SRT feeds (§3.5). It holds no database and no
   credentials at rest: the backend sends the decrypted input URL in each signed start request; `livetv` keeps it in memory only.
 - **gateway** serves live HLS to clients from `livetv` under `/media/l/<token>/…` (the existing `/media` location of the
   reverse proxy, so no proxy change), and recordings from a read-only mount under `/media/r/<token>/…`.
@@ -192,7 +196,8 @@ playback for everyone and should ship and settle on its own), Phase 2 plan, Phas
 
 ```yaml
   # Live TV (optional): only with the profile `livetv` (Admin -> Live-TV aktivieren through the updater, or COMPOSE_PROFILES=livetv
-  # in .env). Fetches provider lists, EPG and streams; the backend tells it what to run. No ports, no Docker socket.
+  # in .env). Fetches provider lists, EPG and streams; the backend tells it what to run. No Docker socket. Its only published
+  # ports are the UDP range for pushed SRT feeds (LIVETV_SRT_PORTS; open them on the firewall only if you push feeds).
   livetv:
     profiles: [livetv]
     image: ${FF_REGISTRY:-ghcr.io/letsmanu}/friendflix-livetv:${FF_TAG:-latest}
@@ -206,7 +211,11 @@ playback for everyone and should ship and settle on its own), Phase 2 plan, Phas
     environment:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-} # unset: the copy in the bootstrap-gateway volume
       LIVETV_CACHE_MAX_GB: ${LIVETV_CACHE_MAX_GB:-6}
+      LIVETV_SRT_PORTS: ${LIVETV_SRT_PORTS:-9000-9009}
       TZ: ${TZ:-Europe/Vienna}
+    ports:
+      # SRT push (§3.5): UDP only, same numbers outside and inside so the setup hint shows the real port.
+      - "${LIVETV_SRT_BIND:-0.0.0.0}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp"
     volumes:
       - livetv-cache:/cache                                   # DVR segments, previews (disposable)
       - ${RECORDINGS_PATH:-recordings}:/recordings             # Phase 3
@@ -219,7 +228,12 @@ playback for everyone and should ship and settle on its own), Phase 2 plan, Phas
 - Networks (defined always, like `updater`): `livetv` (`internal: true`; backend, gateway and livetv join it) and
   `livetv-egress` (normal bridge; only livetv). Backend and gateway gain `livetv` in their `networks`; the gateway also mounts
   `${RECORDINGS_PATH:-recordings}:/data/recordings:ro` (Phase 3). Volumes `livetv-cache`, `recordings` are added to `volumes:`.
-- Env-only keys (`ENV_ONLY_KEYS`): `LIVETV_URL` (backend and gateway; default `http://livetv:8090`).
+- Env-only keys (`ENV_ONLY_KEYS`): `LIVETV_URL` (backend and gateway; default `http://livetv:8090`). Compose-only:
+  `LIVETV_SRT_PORTS` (a range `A-B`, 1–100 ports, default `9000-9009`; also passed into `livetv`, which listens on exactly
+  these) and `LIVETV_SRT_BIND` (host address the range is published on, default `0.0.0.0`; `127.0.0.1` turns push off from
+  outside without removing the service).
+- **Library overlay** (Phase 3, opt-in, `compose.livetv-library.yaml`): the one read-write mount into the media share, see
+  §15.3.
 - **GPU overlays** (new files, opt-in like `compose.plex.yaml`):
   - `compose.livetv-gpu.yaml` (Intel/AMD): `livetv: { devices: ["/dev/dri:/dev/dri"], group_add: ["${RENDER_GID:?set RENDER_GID}"] }`.
   - `compose.livetv-nvidia.yaml`: `deploy.resources.reservations.devices: [{ driver: nvidia, count: 1, capabilities: [gpu, video] }]`.
@@ -234,7 +248,7 @@ Every `/v1/*` request is HMAC-signed like the updater (`signUpdater` scheme, key
 
 | Method & path | Body → answer |
 |---|---|
-| `GET /healthz` | `{ ok, version }` (unsigned) |
+| `GET /healthz` | `{ ok, version, bootId }` (unsigned) |
 | `GET /v1/system` | `{ cpu: { model, cores, loadPct }, gpu: { devices: string[], driver: string \| null, readable: boolean, busyPct: number \| null }, encoders: Array<'h264_qsv'\|'h264_vaapi'\|'h264_nvenc'\|'libx264'>, cache: { usedBytes, maxBytes }, recordings: { usedBytes, freeBytes } \| null }` |
 | `POST /v1/fetch/m3u` | `{ url, userAgent?, allowLan }` → `{ entries: [{ key, name, tvgId?, tvgName?, chno?, group?, logo?, url, kind }], skipped: { vod, invalid, overLimit } }` |
 | `POST /v1/fetch/xmltv` | `{ url, userAgent?, allowLan, channels?: string[], from, to }` → NDJSON stream: `{ t:'channel', id, names[] }` / `{ t:'prog', ch, start, end, title, subtitle?, desc?, cats?, episode?, seriesId?, isNew?, prevShown?, rating? }` |
@@ -245,11 +259,15 @@ Every `/v1/*` request is HMAC-signed like the updater (`signUpdater` scheme, key
 | `DELETE /v1/streams/:channelId` | stop now |
 | `GET /v1/streams/:channelId/preview.jpg` | latest keyframe snapshot (320 px wide, refreshed ≤ every 60 s while running; 404 when not running) |
 | `POST /v1/benchmark` | `{ encoder }` → `{ speed, encoder, seconds }` (20 s of 1080p25 `testsrc2` → H.264 6 Mbit/s → null) |
+| `PUT /v1/ingest` | `{ feeds: [{ channelId, port, streamId, passphrase }] }` → `{ ok, listening: number[] }`: the complete set of push feeds (§3.5), replaced atomically; sent by the backend at every change and whenever `livetv`'s `bootId` (in `/healthz`) changes |
+| `GET /v1/ingest` | `[{ channelId, port, state: 'idle'\|'receiving', since, bitrate, rejected1h }]` (never the passphrase or the peer address) |
 | `POST /v1/recordings` (Phase 3) | `{ id, input, mode, encoder, dir, startAt, endAt }` → `{ state }` |
 | `DELETE /v1/recordings/:id` (Phase 3) | stop (keeps files) · `POST /v1/recordings/:id/delete` removes files · `POST /v1/recordings/:id/export` copies/concats into the library folder |
 | `GET /s/<streamKey>/<file>` | `index.m3u8`, `init.mp4`, `<n>.ts` / `<n>.m4s` for the gateway |
 
-`input` = `{ url, kind: 'hls'|'ts'|'srt', userAgent?, allowLan }`, decrypted by the backend just before the call.
+`input` = `{ url, kind: 'hls'|'ts'|'srt', userAgent?, allowLan }` (pulled; decrypted by the backend just before the call) or
+`{ push: channelId }` (a pushed feed, read from `livetv`'s own ingest, §3.5). `GET /v1/system` also reports
+`srt: { ports: number[] }` (the parsed `LIVETV_SRT_PORTS`).
 
 ### 3.3 Stream modes
 
@@ -257,7 +275,8 @@ Every `/v1/*` request is HMAC-signed like the updater (`signUpdater` scheme, key
 |---|---|---|
 | Provider/own **HLS** | **passthrough**: `livetv` acts as an HLS proxy. It picks one variant (highest bandwidth ≤ `maxBitrate`, default 10 Mbit/s, H.264 preferred), fetches its media playlist and segments once for all viewers, stores segments in the DVR cache, serves its own playlist with local names (`<seq>.ts` / `<seq>.m4s`, `init.mp4`). Provider URLs never leave `livetv`. | no |
 | **MPEG-TS** over HTTP | **remux**: `ffmpeg -c:v copy`, audio copied when AAC/MP3, else AAC stereo 160 kbit/s (audio-only conversion is cheap and is **not** counted), HLS 4 s segments | no |
-| **SRT** (caller) | probe → **remux** when H.264 + AAC/MP3 (or audio-only conversion as above), else **transcode** | only when transcoding |
+| **SRT** (caller, pulled) | probe → **remux** when H.264 + AAC/MP3 (or audio-only conversion as above), else **transcode** | only when transcoding |
+| **SRT push** (listener, §3.5) | same as SRT caller, probed from the ingest when the first viewer or recording starts | only when transcoding |
 | any source whose video is not H.264 (HEVC, MPEG-2) | **transcode**: H.264 High ≤ 1080p, 6 Mbit/s (720p: 3 Mbit/s), GOP 2 s, AAC stereo, HLS 4 s; encoder per `LIVETV_ENCODER` (§5.4) | yes |
 
 - **One stream per channel** for all viewers; viewers join a running stream without any new work.
@@ -295,6 +314,50 @@ Implemented in `livetv` (`src/netguard.ts`), mirrored by backend validation on s
 - **VOD filter:** M3U entries whose path contains `/movie/` or `/series/` or ends in `.mp4|.mkv|.avi|.mov` are skipped
   (`skipped.vod`).
 - The backend never follows provider URLs; `POST /api/admin/livetv/sources/test` only asks `livetv`.
+
+### 3.5 SRT push (listener mode)
+
+Owner answer (2026-11-11): own feeds may **push** into FriendFlix. Pull mode (§3.3, `srt://host:port` in caller mode, HLS,
+MPEG-TS) stays exactly as it is; push is a second way to add an own feed.
+
+- **Ports.** `livetv` listens on every UDP port of `LIVETV_SRT_PORTS` (compose, default `9000-9009`, published with the same
+  numbers on the host, §3.1). Each push feed is assigned **one port** of the range (the lowest free one) when it is created; a
+  range of 10 ports carries at most 10 push feeds. When the range is full, *Stream hinzufügen* says "Alle {n} Ports für
+  gesendete Streams sind belegt. Vergrößere LIVETV_SRT_PORTS in der .env." Only UDP is published; nothing goes through the
+  reverse proxy (it handles HTTP only).
+- **Credentials.** Per push feed the backend generates a **stream id** (`ff-` + 16 random base32 chars, SRT `streamid`) and a
+  **passphrase** (32 random base64url chars; SRT AES-256 encryption, `pbkeylen 32`). Both are stored encrypted
+  (`APP_ENC_KEY`, as stream URLs) and shown to the admin **once**, in the result sheet of *Stream hinzufügen* (and after
+  *Zugangsdaten neu erzeugen*), each with a copy button, plus the full SRT URL for encoders that take one
+  (`srt://<host>:<port>?streamid=<id>&passphrase=<pass>&pbkeylen=32&mode=caller&latency=200000`) and an *OBS/Encoder einrichten*
+  hint (§9.1). Afterwards the admin sees only the host, port and the first 6 characters of the stream id; a lost passphrase is
+  replaced by *Zugangsdaten neu erzeugen* (the old one stops working at once; a running push is dropped).
+- **Host shown in the hint:** setting `LIVETV_SRT_HOST` (DB, group `livetv`, string, default = the host of `PUBLIC_URL`). If
+  the public name is proxied by a CDN that does not pass UDP (e.g. an orange-cloud Cloudflare record), the admin sets a DNS-only
+  name or the public IP here; the hint says so.
+- **Accepting a connection.** `livetv`'s ingest (`src/srtingest.ts`, libsrt through a small native binding with
+  `srt_listen_callback`) reads the caller's stream id during the handshake, looks up the feed **of that port**, sets that feed's
+  passphrase on the socket and accepts; an unknown stream id, a stream id of another port or a wrong passphrase is **rejected
+  in the handshake** (SRT reject reason `SRT_REJX_FORBIDDEN`; a wrong passphrase fails the key exchange). One sender per feed:
+  a second caller with valid credentials while one is sending is rejected (`SRT_REJX_CONFLICT`). An address with 20 rejected
+  handshakes within 1 min is ignored for 10 min. Rejections are counted (`rejected1h`) and become one *Live-Status* event per
+  feed per 10 min ("Verbindung abgelehnt: falsche Kennung oder Passphrase") — never with the passphrase, the stream id or the
+  peer address.
+- **Live only while sending.** A push feed is *live* while the encoder sends (state `receiving`: an accepted connection with
+  data in the last 5 s). Otherwise the channel is listed normally with the line "Gerade keine Übertragung" instead of
+  *Jetzt*/*Danach* (manual EPG entries still show in the guide) and *watch* answers 409 `not_receiving`; the player shows
+  "Gerade keine Übertragung" and switches to the stream by itself when the encoder starts (it polls the channel state every
+  10 s). If the encoder stops while people watch, the input-lost state (§12.5) shows "Gerade keine Übertragung" instead of
+  "Sender gerade nicht erreichbar" and the stream stops 60 s later like any stream without input.
+- **Cost while idle.** Listening costs no ffmpeg process. Received data goes into a 4-s in-memory ring per feed; an ffmpeg
+  process (remux or transcode, §3.3) reads from it only while the channel has viewers or a recording, exactly like a pulled
+  feed. The budget (§5) applies the same way: probe at start, `transcode` takes a `live` (or `record`) slot, remux does not.
+- **Plays and records like a pulled feed:** same tokens, gateway route, DVR, sharing, casting, recordings (a recording of a
+  push feed that is not receiving waits; the time without data is a gap, §15.2), same rights (the feed's group).
+- **Sync.** The backend owns the feeds (DB) and sends the complete list with `PUT /v1/ingest` (§3.2); `livetv` keeps it in
+  memory only and listens on every port of the range, accepting nothing on a port without a feed.
+- **Firewall.** The owner opens (or forwards on the router) **UDP** `LIVETV_SRT_PORTS` (default 9000–9009) to the server, and
+  only if a push feed is used; `docs/livetv.md` and the *Quellen* tab say which ports. No TCP port is needed.
 
 ## 4. Enabling, disabling and detection
 
@@ -452,13 +515,13 @@ conversion (its own session is not counted, as in `hevcGate`).
 
 ## 6. Data model
 
-### 6.1 Migration 47 (Phase 1c) — Live TV core
+### 6.1 Migration 48 (Phase 1c) — Live TV core
 
-Numbers are the next free ones after Phase 0's 46 at the time of writing; if another migration lands first, take the next free
-number, never reorder.
+Numbering (controller ruling, 2026-11-11): 46 is taken by the device hand-off plan (builds first), 47 by Phase 0 (users &
+permissions); Live TV uses 48, 49, 50 in its phase order. Never reorder.
 
 ```sql
--- 47: Live TV core. Sources and channel stream URLs are stored encrypted (APP_ENC_KEY blob, like settings.enc); *_hint is a
+-- 48: Live TV core. Sources and channel stream URLs are stored encrypted (APP_ENC_KEY blob, like settings.enc); *_hint is a
 -- masked display form (scheme://host/…) for the admin. Import fields (import_*) are rewritten by every refresh; admin
 -- overrides (*_override, hidden, group_id) never are. Programmes are EPG facts only (no user data) and are pruned daily.
 create table livetv_sources (
@@ -498,7 +561,7 @@ create table livetv_group_map (           -- provider group-title -> group
 );
 create table livetv_group_roles (
   group_id uuid not null references livetv_groups(id) on delete cascade,
-  role text not null references roles(key) on delete cascade, -- roles table from migration 46 (Phase 0)
+  role text not null references roles(key) on delete cascade, -- roles table from migration 47 (Phase 0)
   primary key (group_id, role)
 );
 create table livetv_group_users (         -- per-user exception: allow = true adds, false removes
@@ -511,8 +574,13 @@ create table livetv_channels (
   id uuid primary key,
   source_id uuid not null references livetv_sources(id) on delete cascade,
   source_key text not null,               -- tvg-id, else sha256(name + url without query)[0..32]
-  stream_url_enc text not null,
+  stream_url_enc text,                    -- pulled feeds; null for push feeds
   stream_kind text not null check (stream_kind in ('hls','ts','srt')),
+  ingest text not null default 'pull' check (ingest in ('pull','push')), -- push = SRT listener (§3.5), manual source only
+  push_port int unique check (push_port between 1 and 65535),
+  push_stream_id_enc text,                -- APP_ENC_KEY blob; push_stream_id_hint = first 6 chars for the admin
+  push_stream_id_hint text,
+  push_passphrase_enc text,
   allow_lan boolean,                      -- manual feeds; null = the source's value
   import_name text not null, import_number int, import_group text, import_logo_hash text, tvg_id text, tvg_name text,
   name_override text check (char_length(name_override) between 1 and 60),
@@ -526,7 +594,10 @@ create table livetv_channels (
   probe jsonb,                            -- last probe: { at, ok, video, audio, needs }
   missing_since timestamptz,              -- not in the latest import; deleted 30 days later
   created_at timestamptz not null default now(),
-  unique (source_id, source_key)
+  unique (source_id, source_key),
+  check ((ingest = 'pull') = (stream_url_enc is not null)),
+  check ((ingest = 'push') = (push_port is not null and push_stream_id_enc is not null and push_passphrase_enc is not null
+                              and stream_kind = 'srt'))
 );
 create index livetv_channels_epg on livetv_channels(epg_source_id, epg_channel_id);
 create table livetv_logos (
@@ -577,7 +648,7 @@ Derived values (one SQL view `livetv_channels_v` or a function in `livetv/channe
 `group_override ?? group_map(source, import_group)`; logo = `logo_override_hash ?? import_logo_hash`. Duplicate effective
 numbers are allowed but flagged in the admin (number entry picks the channel with the lowest group position).
 
-### 6.2 Migration 48 (Phase 2) — manual EPG and reminders
+### 6.2 Migration 49 (Phase 2) — manual EPG and reminders
 
 ```sql
 create table livetv_epg_rules (
@@ -608,7 +679,7 @@ create table livetv_reminders (
 );
 ```
 
-### 6.3 Migration 49 (Phase 3) — recordings
+### 6.3 Migration 50 (Phase 3) — recordings
 
 ```sql
 create table livetv_recording_rules (
@@ -667,17 +738,20 @@ create table livetv_recording_progress (
 | `LIVETV_OFFER_HIDDEN` | bool | false | 1b (group `general`) |
 | `LIVETV_WANTED` | bool, `visible: false` | false | 1b |
 | `LIVETV_ENCODER` | enum auto / qsv / vaapi / nvenc / software | auto | 1c |
+| `LIVETV_SRT_HOST` | string (host name or IP shown in the push setup hint) | host of `PUBLIC_URL` | 1c |
 | `LIVETV_DVR_MINUTES` | int 0–30 | 30 | 1d |
 | `LIVETV_MAX_BITRATE` | int bit/s 1–40 Mbit/s | 10 000 000 | 1d |
 | `LIVETV_RECORD_STORAGE` | enum ff / library / both | ff | 3 |
 | `LIVETV_RECORD_LIBRARY_ID` | string (Jellyfin library id) | – | 3 |
+| `LIVETV_RECORD_LIBRARY_JF_PATH` | string (the folder as Jellyfin sees it) | `/media/Aufnahmen` | 3 |
 | `LIVETV_RECORD_LIMIT_GB` | number 1–100 000 | 200 | 3 |
 | `LIVETV_RECORD_RETENTION_DAYS` | int 0–365 (0 = off) | 30 | 3 |
 | `LIVETV_RECORD_PAD_BEFORE_MIN` / `_AFTER_MIN` | int 0–30 / 0–120 | 2 / 5 | 3 |
 | `LIVETV_RECORD_MAX_PARALLEL` | int 1–8 | 4 | 3 |
 | `LIVETV_REENCODE` + `LIVETV_REENCODE_HOURS` | bool + "HH:MM-HH:MM" | false, 01:00-06:00 | later |
 
-Env-only: `LIVETV_URL`; compose-only (not settings): `LIVETV_CACHE_MAX_GB`, `RECORDINGS_PATH`, `RENDER_GID`.
+Env-only: `LIVETV_URL`; compose-only (not settings): `LIVETV_CACHE_MAX_GB`, `RECORDINGS_PATH`, `RENDER_GID`,
+`LIVETV_SRT_PORTS`, `LIVETV_SRT_BIND`, `RECORDINGS_LIBRARY_PATH`.
 
 ## 7. Watching: tokens, gateway, shared streams
 
@@ -700,7 +774,7 @@ Env-only: `LIVETV_URL`; compose-only (not settings): `LIVETV_CACHE_MAX_GB`, `REC
   `{ token, url: '/media/l/<token>/index.m3u8', expiresAt, dvrSeconds, mode: 'passthrough'|'remux'|'transcode', channel: {…},
   now, next }`; errors: 403 `forbidden` (no right / hidden), 404, **503 `live_full`** with
   `{ running: [{ id, number, name, logo }] }` (running channels **this profile may see**), 502 `channel_unreachable` (first
-  start failed after 15 s), 429 `max_streams` (the account's `maxStreams` from Phase 0 rights; a live view counts as a stream,
+  start failed after 15 s), 409 `not_receiving` (a push feed whose encoder is not sending, §3.5), 429 `max_streams` (the account's `maxStreams` from Phase 0 rights; a live view counts as a stream,
   see §7.4; the calling device's own current live view is replaced by the new one and not counted). Rate limit 30/min.
 - `POST /api/livetv/beat` `{ token }` → `{ ok, expiresAt }` every 20 s while the live player is open
   (playing **or** paused); 410 `gone` when the token was revoked (the client re-requests watch once).
@@ -768,9 +842,21 @@ chip row; tables become row cards (the existing `DataTable` phone mode).
   with "unverändert lassen"), optional XMLTV URL, user agent (advanced), *LAN erlauben*, interval, *Neue Gruppen freigeben
   für* (role chips). *Prüfen* runs `POST /sources/test` and shows "412 Sender in 18 Gruppen · EPG: 398 Kanäle" plus five sample
   names, or the error, before *Speichern*.
-- Own feeds (*Eigene Streams* source, created on first use): *Stream hinzufügen* sheet: name, URL (`https://…m3u8`,
-  `http://…ts`, `srt://192.0.2.10:9000?…`), kind auto-detected from the URL (editable), number, group, *LAN erlauben*,
-  *Testen*.
+- Own feeds (*Eigene Streams* source, created on first use): *Stream hinzufügen* sheet with a segmented choice
+  *FriendFlix holt den Stream* (pull) / *Encoder sendet an FriendFlix* (push, SRT):
+  - **pull** (unchanged): name, URL (`https://…m3u8`, `http://…ts`, `srt://192.0.2.10:9000?…`), kind auto-detected from the URL
+    (editable), number, group, *LAN erlauben*, *Testen*.
+  - **push** (§3.5): name, number, group; *Anlegen* reserves a port and generates the credentials, then the sheet turns into
+    the **one-time result**: *Server* (`LIVETV_SRT_HOST`), *Port*, *Stream-ID*, *Passphrase*, *SRT-Adresse* (the full URL),
+    each a read-only field with a copy button (`runAction` toast "Kopiert"), the warning "Die Passphrase wird nur jetzt
+    angezeigt." and the expandable **OBS/Encoder einrichten** hint: "OBS: Einstellungen → Stream → Dienst *Benutzerdefiniert*,
+    Server = die SRT-Adresse, Streamschlüssel leer lassen. Andere Encoder: Modus *Caller*, Verschlüsselung AES-256
+    (pbkeylen 32), Latenz 200 ms. Video H.264 + Audio AAC spart Umwandlungen." plus "Die Firewall bzw. der Router muss UDP-Port
+    {port} an den Server weiterleiten." *Fertig* closes it; the values never come back.
+  - The *Eigene Streams* card shows for each push feed: port, stream-id hint ("ff-AB12CD…"), state chip *Sendet* / *Keine
+    Übertragung* (from `GET /v1/ingest`), rejected attempts in the last hour, menu *Zugangsdaten neu erzeugen* (confirm:
+    "Der Encoder muss danach die neuen Daten bekommen.") and *Löschen* (frees the port). A line under the card names the
+    ports: "Gesendete Streams kommen über UDP {range} an. Nur diese Ports in der Firewall öffnen."
 
 ### 9.2 Kanäle
 
@@ -778,7 +864,7 @@ chip row; tables become row cards (the existing `DataTable` phone mode).
   *Ohne Programm*, *Mit Fehler*; result count; view toggle *Liste / Reihenfolge*.
 - **Liste:** `DataTable`, server paging (100/page, lists of 20 000 channels stay fast): checkbox, logo (40 px tile on the
   glass, fallback = the number in a tile), number, name (edited inline on double click / Enter), group (inline select), source,
-  stream kind chip (*HLS* / *TS* / *SRT*), mode chip from the last test (*Durchgereicht* / *Umverpackt* / *Umgewandelt*), EPG
+  stream kind chip (*HLS* / *TS* / *SRT* / *SRT empfangen*), mode chip from the last test (*Durchgereicht* / *Umverpackt* / *Umgewandelt*), EPG
   state (*Programm* ✓ / *Kein Programm*), visibility toggle, menu (*Testen*, *Logo ändern*, *Zurücksetzen* = drop overrides).
   Overridden values show a small dot with "geändert (Import: …)".
 - **Bulk bar** (selection across pages kept by id): *Ausblenden*, *Einblenden*, *Gruppe ändern…*, *Ab Nummer … durchnummerieren*,
@@ -819,6 +905,8 @@ chip row; tables become row cards (the existing `DataTable` phone mode).
   since, bitrate, input state (*läuft* / *verbinde neu (3)* / *gestört*), menu *Stoppen*, *Neu starten*.
 - **Ereignisse** (last 200, KV ring, no URLs): time, level (icon + word), channel, text ("Eingang verloren · 12 s bis zur
   Wiederverbindung", "Start abgelehnt: alle Plätze belegt", "Quelle Anbieter A: Aktualisierung fehlgeschlagen (Zeitüberschreitung)").
+- **Gesendete Streams** (only when push feeds exist): feed, port, state (*Sendet* since … / *Keine Übertragung*), bitrate,
+  rejected attempts (1 h).
 - GPU setup message (§4.4), version of `livetv`, *Live-TV ausschalten…*.
 
 ### 9.6 Aufnahmen (Phase 3)
@@ -844,7 +932,7 @@ join, stop, tick), `logos.ts`, `recordings.ts` (Phase 3), `events.ts` (KV ring),
 | `POST /api/admin/livetv/enable` · `POST /api/admin/livetv/disable { removeImage, removeCache }` | 202 `{ job }`; 409 `no_updater` / `foreign_stack` with `envLine` |
 | `GET/POST /api/admin/livetv/sources`, `PATCH/DELETE /api/admin/livetv/sources/:id`, `POST …/:id/refresh`, `POST …/sources/test` | answers carry `urlHint`/`epgHint`, never URLs; `refresh` 202, result through polling `GET` |
 | `GET /api/admin/livetv/channels?q&source&group&state&epg&error&sort&dir&limit&offset` | `{ channels, total }` |
-| `POST /api/admin/livetv/channels` (own feed) · `PATCH /api/admin/livetv/channels/:id` `{ name?, number?, groupId?, hidden?, epg? }` (`null` = back to import) | |
+| `POST /api/admin/livetv/channels` (own feed; `{ ingest: 'push', name, number?, groupId? }` answers 201 with `push: { host, port, streamId, passphrase, url }` **once**; 409 `srt_ports_full`) · `POST /api/admin/livetv/channels/:id/push-credentials` (regenerate; same one-time answer) · `PATCH /api/admin/livetv/channels/:id` `{ name?, number?, groupId?, hidden?, epg? }` (`null` = back to import) | |
 | `POST /api/admin/livetv/channels/bulk` `{ ids, action: 'hide'\|'show'\|'group'\|'renumber'\|'reset'\|'test', groupId?, from? }` | |
 | `PUT /api/admin/livetv/channels/order` `{ ids }` · `POST …/:id/test` · `PUT …/:id/logo` (multipart) · `DELETE …/:id/logo` | |
 | `GET/POST/PATCH/DELETE /api/admin/livetv/groups[/:id]` `{ name, kidFriendly, roles }` · `PUT …/groups/order` · `POST …/groups/merge { ids, into }` | |
@@ -859,7 +947,7 @@ join, stop, tick), `logos.ts`, `recordings.ts` (Phase 3), `events.ts` (KV ring),
 
 | Route | Answer |
 |---|---|
-| `GET /api/livetv/channels` | `{ groups: [{ id, name }], channels: [{ id, number, name, logo, groupId, running, preview?: string, now?: Prog, next?: Prog, favourite }], favourites: string[], last: { id, previous } \| null, dvrSeconds }`; `Prog = { title, start, end, subtitle? }`; ETag; 30 s client refresh of now/next |
+| `GET /api/livetv/channels` | `{ groups: [{ id, name }], channels: [{ id, number, name, logo, groupId, running, receiving?: boolean /* push feeds only */, preview?: string, now?: Prog, next?: Prog, favourite }], favourites: string[], last: { id, previous } \| null, dvrSeconds }`; `Prog = { title, start, end, subtitle? }`; ETag; 30 s client refresh of now/next |
 | `GET /api/livetv/logos/:hash` | image, `cache-control: private, max-age=604800, immutable` |
 | `GET /api/livetv/channels/:id/preview.jpg` | only while running and allowed; `max-age=60` |
 | `POST /api/livetv/channels/:id/watch`, `POST /api/livetv/beat`, `DELETE /api/livetv/watch` | §7.2 |
@@ -897,7 +985,8 @@ entry. All only when `me.features.livetv`.
    slides the pill highlight (`SlidePill`).
 3. **Channel grid**, two columns of rows (each 72 px): number (tabular), 48-px logo tile, name, two text lines **always
    reserved**: *Jetzt* line ("20:15 Die Leuchtturmwärter" + thin progress) and *Danach* line ("21:00 Wetter am Hafen"); without
-   EPG: "Live" and "Kein Programm verfügbar". Star button (44 px, `aria-pressed`). Hover/focus: the existing row fill.
+   EPG: "Live" and "Kein Programm verfügbar"; a push feed that is not receiving: "Gerade keine Übertragung" (one line, the
+   second stays reserved). Star button (44 px, `aria-pressed`). Hover/focus: the existing row fill.
 4. **Programmführer** button (Phase 2) in the page head next to the title; **Aufnahmen** row (Phase 3) under the favourites.
 - Loading: skeleton rows of the final height; logos fade in (opacity).
 
@@ -985,6 +1074,7 @@ and in the Live list (there it focuses the row).
 | starting (≤ 15 s) | channel card + "Sender wird gestartet …" (spinner in the play slot) |
 | buffering | thin indeterminate line under the top bar (transform only) |
 | input lost (playlist stalls > 8 s, or 502 from `watch`) | overlay card "Sender gerade nicht erreichbar" + "Verbinde neu …"; the player retries (playlist reload, then a new `watch` after 30 s) with backoff up to 2 min, then *Erneut versuchen*; the channel keys keep working; every outage is an event in *Live-Status* |
+| `not_receiving` (push feed, §3.5) | channel card + "Gerade keine Übertragung"; polls every 10 s and starts by itself when the encoder sends; channel keys keep working |
 | `live_full` | sheet "Gerade sind alle Live-Plätze belegt" + "Diese Sender laufen schon und gehen sofort:" list of running channels (logo, number, name, *Jetzt* title) → tap joins; *Schließen* |
 | `max_streams` | the existing max-streams message of the film player |
 | right lost / channel hidden (403/410 during play) | "Dieser Sender ist für dich nicht mehr verfügbar." → back to the list |
@@ -1057,8 +1147,39 @@ user).
   existing kids block), so the per-recording privacy does not apply in this mode (the admin panel says so).
 - **Beides** (`both`): recorded into the FriendFlix folder; *Behalten → in Bibliothek* on a recording exports a copy into the
   library and marks it `keep`.
-- The library folder is a dedicated sub-folder mounted read-write into `livetv` only (`${RECORDINGS_LIBRARY_PATH}:/library`,
-  e.g. `${MEDIA_PATH}/Aufnahmen`), never the whole media path (see open question 2).
+- **The library sub-folder** (owner answer 2026-11-11: `livetv` may write into one dedicated sub-folder of the media share):
+  - **Mount:** opt-in overlay `compose.livetv-library.yaml` (added to `COMPOSE_FILE` like the GPU overlays):
+    ```yaml
+    services:
+      livetv:
+        volumes:
+          - ${RECORDINGS_LIBRARY_PATH:?set RECORDINGS_LIBRARY_PATH, e.g. ./media/Aufnahmen}:/library:rw
+    ```
+    Only that sub-folder is mounted, read-write; the rest of the media share (`MEDIA_PATH`) is **not mounted into `livetv` at
+    all**, not even read-only. Jellyfin keeps its existing read-only mount of the whole share (`${MEDIA_PATH}:/media:ro`), so it
+    sees the folder as `/media/Aufnahmen`. No other FriendFlix container gains write access to the media share.
+  - **Setup** (docs and the *Aufnahmen* tab): `mkdir -p <media>/Aufnahmen && chown 10001:10001 <media>/Aufnahmen` (`livetv`
+    runs as uid 10001), set `RECORDINGS_LIBRARY_PATH`, add the overlay, `docker compose up -d`. In Jellyfin a library pointing at
+    `/media/Aufnahmen` (type *Gemischte Inhalte* or *Heimvideos*).
+  - **Dedicated-folder guard:** on first use `livetv` writes a marker `/library/.friendflix-recordings`; if `/library` is not
+    empty and has no marker, `livetv` refuses every export with `library_not_dedicated` (the panel: "Der Ordner ist nicht leer.
+    Bitte einen eigenen, leeren Unterordner nur für Aufnahmen verwenden."). This catches a mount of the whole media share by
+    mistake. `GET /v1/system` reports `library: { mounted, writable, dedicated, freeBytes } | null`.
+  - **Choosing the library:** *Aufnahmen* tab, *Jellyfin-Bibliothek* select lists the Jellyfin libraries **with their
+    folders** (new optional seam method `MediaAdmin.libraryFolders?()` → `{ id, name, paths: string[] }[]`; Jellyfin
+    `/Library/VirtualFolders`). The library whose folders contain `LIVETV_RECORD_LIBRARY_JF_PATH` (default `/media/Aufnahmen`,
+    editable under *Erweitert*) is preselected and marked *passt*; a library without that folder can be saved only after a
+    warning ("Diese Bibliothek enthält den Aufnahmeordner nicht – Jellyfin findet die Aufnahmen dann nicht."). When no library
+    contains it, *Bibliothek „Aufnahmen“ anlegen* creates one through the optional seam method
+    `MediaAdmin.createLibrary?(name, path, kind: 'homevideos'|'mixed')` (Jellyfin `POST /Library/VirtualFolders`). The library
+    choice is stored in `LIVETV_RECORD_LIBRARY_ID`; *Jellyfin-Bibliothek* and *Beides* stay disabled with the setup steps while
+    `library.mounted` is false.
+  - **Security note** (in the panel, `docs/security.md` and `docs/livetv.md`): "Live-TV darf nur in diesen einen Ordner
+    schreiben. Wer diese Bibliothek in Jellyfin sieht, sieht alle Aufnahmen darin." A compromised `livetv` could create, change
+    or delete files **inside that sub-folder only**; it cannot read or change other media. `livetv` writes with `O_NOFOLLOW`,
+    creates paths only below `/library` after `realpath` checks, sanitises file names (no `/`, `..`, control characters,
+    max 120 chars) and never follows or creates symlinks; the backend deletes library recordings only through `livetv` by
+    recording id, never by a client-supplied path.
 
 ### 15.4 Budget and conflicts
 
@@ -1172,8 +1293,14 @@ the recipient's own notifications (they chose to record it), never in admin broa
 - **Kids:** only kid-friendly groups; no recording, no guide reminders; shared kid-friendly recordings only.
 - **SSRF / hostile input:** §3.4; the backend validates scheme and host form on save, `livetv` enforces the address rules at
   connect time; `livetv` has no route to the database, Redis or the media server (networks).
-- **Container hardening:** read-only root, tmpfs `/tmp`, no capabilities, `no-new-privileges`, uid 10001, no ports, GPU only
-  through the opt-in overlays, signed internal API.
+- **Container hardening:** read-only root, tmpfs `/tmp`, no capabilities, `no-new-privileges`, uid 10001, GPU only through the
+  opt-in overlays, signed internal API. Published ports: only the UDP range `LIVETV_SRT_PORTS` for pushed SRT feeds (no TCP,
+  no HTTP); the internal API stays on the internal network.
+- **SRT push:** a connection is accepted only with the feed's stream id **and** passphrase on the feed's own port, encrypted
+  with AES-256; credentials are random, stored encrypted, shown once; rejected handshakes are throttled per address and never
+  logged with credentials or addresses (§3.5). Push data never leaves `livetv` except as HLS through the gateway.
+- **Media share:** `livetv` has read-write access to one dedicated sub-folder only (opt-in overlay, guarded by the marker
+  file); nothing else of the media share is mounted into it (§15.3).
 - **Privacy notice** (`docs/privacy.md`, account page): which channels a profile watched is stored only as *last channel* and
   favourites; live views appear in the admin's *Wiedergabe* list while they run (like films); no viewing history is kept for live.
 
@@ -1199,6 +1326,13 @@ the recipient's own notifications (they chose to record it), never in admin broa
 | profile deleted | favourites, last, reminders, recordings, progress cascade |
 | `livetv` disabled with scheduled recordings | they fail with `livetv_off`, owners notified once |
 | Plex install | budget counts Plex transcodes via the adapter; library storage mode not offered |
+| push encoder not sending | channel shows "Gerade keine Übertragung"; `watch` 409 `not_receiving`; player waits and starts by itself |
+| push encoder stops while watched | "Gerade keine Übertragung" overlay; stream stops 60 s after input loss; resumes on a new `watch` when sending again |
+| wrong stream id / passphrase | rejected in the SRT handshake; counted; one event per feed per 10 min; throttled per address |
+| second encoder with valid credentials | rejected while the first one sends (`SRT_REJX_CONFLICT`) |
+| UDP range full | *Stream hinzufügen* (push) refused with the range hint (409 `srt_ports_full`) |
+| `LIVETV_SRT_PORTS` changed so a feed's port left the range | the feed shows "Port {p} liegt nicht mehr im Bereich" and *Neuen Port zuweisen* (keeps credentials) |
+| library folder not empty and unmarked, or not writable | exports refused (`library_not_dedicated` / `library_not_writable`); recordings stay in the FriendFlix folder; admin event |
 
 ## 20. Copy (EN / DE; the other five locales translated)
 
@@ -1235,6 +1369,14 @@ the recipient's own notifications (they chose to record it), never in admin broa
 | `adminLive.src.interval.*` | Every 6 h / Every 12 h / Daily / Weekly / Manual only | Alle 6 Std. / Alle 12 Std. / Täglich / Wöchentlich / Nur von Hand |
 | `adminLive.src.state` / `stateEpg` / `unchanged` | Last updated {when} · {n} channels (+{a} / −{r}) / Guide: {n} programmes / leave unchanged | Zuletzt aktualisiert {when} · {n} Sender (+{a} / −{r}) / Programm: {n} Sendungen / unverändert lassen |
 | `adminLive.src.err.*` | Not reachable / Access denied (username or password?) / Timed out / List too big (over 50 MB) / Not a valid channel list / The list was empty, nothing changed / Address not allowed (internal network) | Nicht erreichbar / Zugang abgelehnt (Benutzername oder Passwort?) / Zeitüberschreitung / Liste zu groß (über 50 MB) / Keine gültige Senderliste / Die Liste war leer – nichts geändert / Adresse nicht erlaubt (internes Netz) |
+| `adminLive.push.mode` / `pull` / `push` | How does the stream arrive? / FriendFlix fetches the stream / Encoder sends to FriendFlix | Wie kommt der Stream an? / FriendFlix holt den Stream / Encoder sendet an FriendFlix |
+| `adminLive.push.host` / `port` / `streamId` / `passphrase` / `url` / `copy` / `copied` | Server / Port / Stream ID / Passphrase / SRT address / Copy / Copied | Server / Port / Stream-ID / Passphrase / SRT-Adresse / Kopieren / Kopiert |
+| `adminLive.push.onceWarning` | The passphrase is shown only now. | Die Passphrase wird nur jetzt angezeigt. |
+| `adminLive.push.obsTitle` / `obsBody` | OBS/encoder setup / OBS: Settings → Stream → service *Custom*, server = the SRT address, leave the stream key empty. Other encoders: mode *Caller*, encryption AES-256 (pbkeylen 32), latency 200 ms. H.264 video + AAC audio avoids conversions. | OBS/Encoder einrichten / OBS: Einstellungen → Stream → Dienst *Benutzerdefiniert*, Server = die SRT-Adresse, Streamschlüssel leer lassen. Andere Encoder: Modus *Caller*, Verschlüsselung AES-256 (pbkeylen 32), Latenz 200 ms. Video H.264 + Audio AAC spart Umwandlungen. |
+| `adminLive.push.firewall` / `portsLine` | Your firewall or router must forward UDP port {port} to the server. / Pushed streams arrive on UDP {range}. Open only these ports in the firewall. | Die Firewall bzw. der Router muss UDP-Port {port} an den Server weiterleiten. / Gesendete Streams kommen über UDP {range} an. Nur diese Ports in der Firewall öffnen. |
+| `adminLive.push.receiving` / `idle` / `rejected` / `regenerate` / `regenerateBody` / `portsFull` | Sending / Not sending / {n} rejected attempts (1 h) / Generate new credentials / The encoder then needs the new credentials. / All {n} ports for pushed streams are taken. Enlarge LIVETV_SRT_PORTS in .env. | Sendet / Keine Übertragung / {n} abgelehnte Versuche (1 Std.) / Zugangsdaten neu erzeugen / Der Encoder muss danach die neuen Daten bekommen. / Alle {n} Ports für gesendete Streams sind belegt. Vergrößere LIVETV_SRT_PORTS in der .env. |
+| `live.notReceiving` | Not broadcasting right now | Gerade keine Übertragung |
+| `adminLive.rec.libFits` / `libMismatch` / `libCreate` / `libNotDedicated` / `libSecurity` | fits / This library does not contain the recordings folder, so Jellyfin will not find the recordings. / Create library "Recordings" / The folder is not empty. Please use a separate, empty sub-folder just for recordings. / Live TV may write only into this one folder. Everyone who sees this library in Jellyfin sees all recordings in it. | passt / Diese Bibliothek enthält den Aufnahmeordner nicht – Jellyfin findet die Aufnahmen dann nicht. / Bibliothek „Aufnahmen“ anlegen / Der Ordner ist nicht leer. Bitte einen eigenen, leeren Unterordner nur für Aufnahmen verwenden. / Live-TV darf nur in diesen einen Ordner schreiben. Wer diese Bibliothek in Jellyfin sieht, sieht alle Aufnahmen darin. |
 | `adminLive.ch.mode.*` | Passed through / Repackaged / Converted | Durchgereicht / Umverpackt / Umgewandelt |
 | `adminLive.ch.hide` / `show` / `regroup` / `renumber` / `reset` / `order` / `dupNumber` / `changedFrom` | Hide / Show / Change group… / Number from… / Reset changes / Order / Duplicate number / changed (import: {v}) | Ausblenden / Einblenden / Gruppe ändern … / Ab Nummer … durchnummerieren / Änderungen zurücksetzen / Reihenfolge / Nummer doppelt / geändert (Import: {v}) |
 | `adminLive.grp.kidFriendly` / `merge` / `kidsSee` / `noGroup` | Kid-friendly / Merge… / Kids profiles see: {groups} ({n} channels) / No group | Kinderfreundlich / Zusammenführen … / Kinderprofile sehen: {groups} ({n} Sender) / Ohne Gruppe |
@@ -1273,7 +1415,10 @@ Hosts `iptv.example.com`, `friend.example.com`, `192.0.2.10`. Fixture M3U/XMLTV 
   BOM, CRLF), XMLTV parser (gzip, time zones in `start="20261111201500 +0100"`, DST, overlaps, entity/DTD refusal, ratio guard,
   300 000 cap), netguard (every refused range, IPv4-mapped IPv6, rebinding via a fake resolver, redirect re-checks, LAN
   switch), stderr scrubber, passthrough playlist rewriting (variant choice, discontinuities, DVR window), DVR cache eviction,
-  stop rules, signed API (vectors).
+  stop rules, signed API (vectors), SRT ingest (accept with the right stream id + passphrase on the feed's port; reject an
+  unknown id, another port's id, a wrong passphrase, a second sender; per-address throttle; `PUT /v1/ingest` replaces the set;
+  no credential or address in any log line), library export (marker guard, not-empty refusal, name sanitising, no symlink
+  follow, paths stay below `/library`).
 - **Unit (backend):** import merge (overrides survive, missing/return, shrink guard, group auto-create with `auto_roles`), rights
   (roles, user allow/deny, admin, kids kid-friendly only, no group → no tab), tokens (hash only, pin, re-pin by beat, caps,
   revoke paths), viewer/stop tick, budget counting (all kinds, grants, holdback per priority, HEVC sub-cap, never stops
@@ -1292,17 +1437,21 @@ Hosts `iptv.example.com`, `friend.example.com`, `192.0.2.10`. Fixture M3U/XMLTV 
   channel switch, unreachable and `live_full` states; Chromecast live with the cast SDK fake; guide navigation on desktop and
   TV; recordings scheduling, conflict warning, *Meine Aufnahmen*, recording playback through the source seam. German UI.
 - **On-device checks for the owner** (listed per phase in the plans): Tizen/webOS/Fire TV channel keys and digits, QSV
-  transcode of an SRT test feed on the N5095, Chromecast and AirPlay live, 30-min pause on a TV.
+  transcode of an SRT test feed on the N5095, an OBS push through the opened UDP port (and a refused push with a wrong
+  passphrase), a library recording appearing in the Jellyfin library, Chromecast and AirPlay live, 30-min pause on a TV.
 
 ## 23. Rollout
 
 - **Order:** Phase 0 → 1a (budget; release note: "Gleichzeitige Umwandlungen sind jetzt begrenzt – Standard 2 bis zur ersten
   Messung, danach automatisch; Admin → Wiedergabe") → 1b–1e (one release; Live TV invisible until enabled) → 2 → 3.
-- **Migrations:** 46 (Phase 0), 47 (1c), 48 (2a), 49 (3a); all additive; Live TV tables are empty until a source is added.
+- **Migrations:** 46 is the device hand-off plan (builds first); 47 (Phase 0), 48 (1c), 49 (2a), 50 (3a); all additive; Live
+  TV tables are empty until a source is added.
 - **Defaults:** budget automatic (2 before measuring), priority films; Live TV offered (hideable), not installed; DVR 30 min;
   new groups visible to admin/family/friend; `liveRecord` off for guests; recording storage FriendFlix folder, 200 GB,
   retention 30 days, padding 2/5 min; re-encode off.
-- **Docs:** new `docs/livetv.md` (German; enabling, sources, rights, GPU overlays, troubleshooting) + `docs/de` counterpart
+- **Docs:** new `docs/livetv.md` (German; enabling, sources, rights, GPU overlays, **SRT push: which ports — UDP
+  `LIVETV_SRT_PORTS`, default 9000–9009, no TCP, not through the reverse proxy, only needed when a feed pushes — and the
+  OBS/encoder setup**, the library overlay with its security note, troubleshooting) + `docs/de` counterpart
   per the docs convention; `docs/setup.md` (profile, overlays, `RENDER_GID`), `docs/security.md` (livetv container, SSRF,
   tokens, credentials), `docs/privacy.md`, `docs/operations.md` (budget, benchmark), `docs/architecture.md` diagram,
   `docs/tv-mode.md` (keys), `README` feature lines, `CHANGELOG` per phase, `ROADMAP` item.
@@ -1332,10 +1481,7 @@ Hosts `iptv.example.com`, `friend.example.com`, `192.0.2.10`. Fixture M3U/XMLTV 
 13. Recordings are HLS folders in FriendFlix mode (seekable while recording) and one concatenated `.ts` file in library mode;
     library mode makes recordings visible to everyone with that library.
 14. Admin sees recording metadata but not playback of private recordings.
-
-## 25. Open questions for the owner
-
-1. **SRT push:** do any of your own feeds need to **push** into FriendFlix (SRT listener, e.g. OBS sending to the server)? That
-   needs a published UDP port and a permanently running input; these phases support pulled feeds only.
-2. **Library recordings:** may `livetv` get **write** access to one dedicated sub-folder of the media path (e.g.
-   `media/Aufnahmen`) for the *Jellyfin-Bibliothek* mode? Today no FriendFlix container writes into the media folder.
+15. SRT push: one port of the published UDP range per push feed, stream id + AES-256 passphrase checked in the handshake,
+    credentials shown once; listening is cheap, ffmpeg runs only while watched or recorded (owner answer 1).
+16. Library recordings: the only write access into the media share is one dedicated sub-folder mounted read-write into
+    `livetv` through an opt-in overlay, guarded by a marker file (owner answer 2).
