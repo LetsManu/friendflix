@@ -14,7 +14,7 @@ test.describe('admin health page (phone)', () => {
 
   test('no horizontal overflow; buttons ≥ 44 px', async ({ page }) => {
     await page.goto('/admin/status');
-    const check = page.getByRole('button', { name: 'Jetzt prüfen' });
+    const check = page.getByRole('region', { name: 'Systemzustand' }).getByRole('button', { name: 'Jetzt prüfen' });
     await expect(check).toBeVisible();
     await expect(page.getByRole('region', { name: 'Wiedergaben' }).getByText('Untertitel')).toBeVisible();
     await page.waitForLoadState('networkidle');
@@ -25,6 +25,18 @@ test.describe('admin health page (phone)', () => {
     }
     const media = await page.getByRole('region', { name: 'Systemzustand' }).getByRole('link', { name: /Medienserver/ }).boundingBox();
     expect(media!.height).toBeGreaterThanOrEqual(44);
+  });
+  test('suggestions card fits on a phone: columns stack, no overflow, button at least 44 px', async ({ page, api }) => {
+    const c = { anchors: 6, seeds: 9, seedsWithoutTmdb: 1, seedsFoundByName: 2, recommendations: 40, inLibrary: 39, inLibraryByTvdb: 3, lookupFailures: 0, seedSearchFailures: 0, ageFiltered: 4, final: 1 };
+    api.newPage.suggestions.cached = { movie: c, series: c };
+    await page.goto('/admin/status');
+    const card = page.getByRole('region', { name: 'Vorschläge (Noch nicht bei uns)' });
+    await expect(card.locator('[data-type="series"] [data-field="final"]')).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+    expect((await card.getByRole('button', { name: 'Jetzt prüfen' }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    const [a, b] = [await card.locator('[data-type="movie"]').boundingBox(), await card.locator('[data-type="series"]').boundingBox()];
+    expect(b!.y).toBeGreaterThan(a!.y + a!.height - 1); // stacked
   });
   test('recommendation index tile fits on a phone', async ({ page }) => {
     await page.goto('/admin/status');

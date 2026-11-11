@@ -351,21 +351,48 @@ test.describe('phone player, skip leaving (motion on)', () => {
   test('the title glides down when the skip row goes, never jumps', async ({ page, api: _api }) => {
     await forceSafeArea(page, PORTRAIT);
     await openLong(page);
-    const r = await page.evaluate(() => new Promise<{ tops: number[] }>((res) => {
-      const ptx = document.querySelector('.ptx')!, tops: number[] = [];
-      const t0 = performance.now();
-      // read after each frame's layout + resize observers (a task after the frame), i.e. what was painted
-      const tick = () => setTimeout(() => { tops.push(ptx.getBoundingClientRect().top); if (performance.now() - t0 < 1400) requestAnimationFrame(tick); else res({ tops }); }, 0);
-      requestAnimationFrame(tick);
-      (document.querySelector('.ptitle .skipbtn') as HTMLButtonElement).click();
-    }));
+    // The glide is a Web Animation the title starts when the row is gone. Sampling painted frames against a wall-clock window is a race
+    // (a slow CI frame or seek moves the row's removal out of the window), so take the animation under control instead: pause every
+    // animation the title starts, then step its clock and read the title's position at each step.
+    const top = () => page.evaluate(() => document.querySelector('.ptx')!.getBoundingClientRect().top);
+    await page.evaluate(() => {
+      const w = window as unknown as { __glide: Animation[] };
+      w.__glide = [];
+      const orig = Element.prototype.animate;
+      Element.prototype.animate = function (this: Element, ...a: Parameters<Element['animate']>) {
+        const an = orig.apply(this, a);
+        if (this.classList.contains('ptx')) { an.pause(); w.__glide.push(an); }
+        return an;
+      };
+    });
+    // The skip row coming in glides the title up the same way: measure only once that earlier glide is over (starting mid-glide made
+    // the distance fall short of the row's height, the flake this once was).
+    await expect.poll(() => page.evaluate(() => document.querySelector('.ptx')!.getAnimations().length)).toBe(0);
+    const first = await top();
+    await page.evaluate(() => (document.querySelector('.ptitle .skipbtn') as HTMLButtonElement).click());
     await expect(page.locator('.ptitle .skipbtn')).toHaveCount(0);
-    const first = r.tops[0]!, last = r.tops.at(-1)!;
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __glide: Animation[] }).__glide.length)).toBe(1);
+    // transform only (never top/height/margin), and the title still sits where it was the moment the row went: no jump
+    const keys = await page.evaluate(() => {
+      const an = (window as unknown as { __glide: Animation[] }).__glide[0]!;
+      return [...new Set((an.effect as KeyframeEffect).getKeyframes().flatMap((k) => Object.keys(k)))].filter((k) => !['offset', 'easing', 'composite', 'computedOffset'].includes(k));
+    });
+    expect(keys).toEqual(['transform']);
+    const steps = await page.evaluate(() => {
+      const an = (window as unknown as { __glide: Animation[] }).__glide[0]!, el = document.querySelector('.ptx')!;
+      const out: number[] = [];
+      for (let ms = 0; ms <= 250; ms += 25) { an.currentTime = ms; out.push(el.getBoundingClientRect().top); }
+      an.finish();
+      return out.concat(el.getBoundingClientRect().top);
+    });
+    expect(Math.abs(steps[0]! - first), 'no jump when the row goes').toBeLessThanOrEqual(1);
+    const last = steps.at(-1)!;
     expect(last - first).toBeGreaterThan(40); // the row (44 px + 10 px gap) is gone: the text sits lower
-    // a glide: painted frames in between the two places (one jump would have none), and never past the end
-    const between = r.tops.filter((y) => y > first + 5 && y < last - 5);
+    // a glide: every step in between, in order, never past the end
+    const between = steps.filter((y) => y > first + 5 && y < last - 5);
     expect(between.length).toBeGreaterThanOrEqual(2);
-    expect(Math.max(...r.tops)).toBeLessThanOrEqual(last + 1);
+    for (let i = 1; i < steps.length; i++) expect(steps[i]!).toBeGreaterThanOrEqual(steps[i - 1]! - 0.01);
+    expect(Math.max(...steps)).toBeLessThanOrEqual(last + 1);
   });
 });
 

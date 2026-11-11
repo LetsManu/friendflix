@@ -9,12 +9,12 @@ vi.mock('#lib/native/bridge', () => ({
 }));
 vi.mock('#lib/native/play', () => ({ nativeCaps: async () => ({ api: h.api, play: true, download: true, cast: true, castBar: true }) }));
 
-import { api } from './api';
+import { api, setCsrf } from './api';
 
 let loc: { pathname: string; href: string };
 const respond = (status: number, body: unknown) => vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status })));
 beforeEach(() => {
-  h.available = true; h.api = 2; h.sent = [];
+  h.available = true; h.api = 2; h.sent = []; setCsrf(''); // setCsrf re-arms the once-per-burst sign-out message
   loc = { pathname: '/', href: '/' };
   vi.stubGlobal('location', loc);
   vi.stubGlobal('localStorage', { getItem: () => null });
@@ -48,5 +48,15 @@ describe('a 401 (the session is gone)', () => {
     respond(401, { error: 'reauth_required' });
     await expect(api('/api/x')).rejects.toMatchObject({ status: 401 });
     expect(h.sent).toEqual([]);
+  });
+  it('a burst of parallel 401s tells the app once; the next sign-in arms it again', async () => {
+    respond(401, { error: 'unauthorized' });
+    void Promise.all([api('/api/a'), api('/api/b'), api('/api/c')]);
+    await vi.waitFor(() => expect(h.sent).toEqual([null]));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.sent).toEqual([null]);
+    setCsrf('t'); // a successful /api/me after signing in again
+    void api('/api/d');
+    await vi.waitFor(() => expect(h.sent).toEqual([null, null]));
   });
 });
