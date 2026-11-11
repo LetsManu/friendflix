@@ -1093,6 +1093,20 @@ describe('subtitle rendition refused by the TV (code 4 on a token with subtitles
     expect(evs()).toContain('fallback-variant');
   });
 
+  it('ready (the phone itself plays the token): code 4 is no TV refusal, straight to the variant fallback', async () => {
+    serve();
+    const request = vi.fn().mockResolvedValue(WITH);
+    const subsRefused = vi.fn();
+    const { c } = setup({ request, subsRefused });
+    c.pick();
+    await flush(); await flush();
+    c.videoError(4);
+    await flush(); await flush();
+    expect(subsRefused).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledOnce();
+    expect(evs()).toContain('fallback-variant');
+  });
+
   it('other error codes do not retry without subtitles', async () => {
     const request = vi.fn().mockResolvedValue(WITH);
     const subsRefused = vi.fn();

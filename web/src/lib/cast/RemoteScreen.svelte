@@ -124,10 +124,11 @@
 
   // ---- AirPlay subtitles: the line under the chips (reserved once the title has subtitles, so nothing moves when it fades in) ----
   $: airSubs = air && (chipSession?.subtitles.length ?? 0) > 0;
-  let everAirSubs = false;
-  $: if (airSubs) everAirSubs = true;
+  // reserved on every AirPlay screen: a next title with subtitles must not grow the panel
   $: subsNoServer = air && !$serverCaps.castHlsSubtitles;
   $: subsHintOn = air && !subsNoServer && (s?.subIndex ?? -1) >= 0;
+  /** what the line shows (it is read only then; invisible it stays out of the accessibility tree) */
+  $: subsShown = (subsNoServer && airSubs) || subsHintOn;
   $: subsText = $t(subsNoServer ? 'player.castRemote.subsNoServer' : 'player.castRemote.subsHint');
 </script>
 
@@ -199,7 +200,7 @@
         <CastScrubber bind:this={scrubber} session={s} label={$t('player.castRemote.position')} />
 
         <div class="ctrl">
-          {#if everChips}<div class="cl">{#if hasChips && chipSession}<TrackChips session={chipSession} airplay={air} icons={w >= 1200} compact={phone} disabled={s.state === 'connecting'} describedby={everAirSubs ? 'rs-subs-hint' : undefined} />{/if}</div>{/if}
+          {#if everChips}<div class="cl">{#if hasChips && chipSession}<TrackChips session={chipSession} airplay={air} icons={w >= 1200} compact={phone} disabled={s.state === 'connecting'} describedby={subsShown ? 'rs-subs-hint' : undefined} />{/if}</div>{/if}
           <div class="tp">
             {#if phone && !air}
               <button type="button" class="tb mute" aria-label={$t(muted ? 'player.castRemote.unmute' : 'player.castRemote.mute')} on:click={castToggleMute}>
@@ -232,7 +233,7 @@
             {/if}
           </div>
         </div>
-        {#if everAirSubs}<p id="rs-subs-hint" class="sh" class:on={subsNoServer || subsHintOn} aria-hidden={subsHintOn ? 'true' : undefined}>{subsText}</p>{/if}
+        {#if air}<p id="rs-subs-hint" class="sh" class:on={subsShown} aria-hidden={subsNoServer && airSubs ? undefined : 'true'}>{subsText}</p>{/if}
       </div>
     </div>
   </section>

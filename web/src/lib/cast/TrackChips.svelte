@@ -41,8 +41,10 @@
   $: audioValue = nameOf(audio.find((a) => a.index === audioSel));
   /** AirPlay and the server cannot put subtitles into the stream: the chip stays, disabled, at Off */
   $: noServer = airplay && !$serverCaps.castHlsSubtitles;
-  $: refused = airplay && !noServer && session.subIndex === -1 && recentRefusal();
-  function recentRefusal(): boolean {
+  /** another tab's refusal (storage event) re-reads the memory */
+  let stored = 0;
+  $: refused = airplay && !noServer && session.subIndex === -1 && recentRefusal(stored);
+  function recentRefusal(_stored: number): boolean {
     try { return subsRefusedRecently(typeof localStorage === 'undefined' ? null : localStorage, Date.now()); } catch { return false; }
   }
   $: subValue = noServer ? $t('player.castRemote.off') : refused ? $t('player.castRemote.offRefused') : session.subIndex === -1 ? $t('player.castRemote.off') : nameOf(subs.find((x) => x.index === session.subIndex)) || $t('player.castRemote.off');
@@ -84,7 +86,7 @@
   }
 </script>
 
-<svelte:window on:pointerdown={outside} />
+<svelte:window on:pointerdown={outside} on:storage={() => stored++} />
 
 {#if showAudio || showSubs}
   <div class="tc" class:compact role="group" aria-label={$t('player.controls.tracks')} on:focusout={out}>

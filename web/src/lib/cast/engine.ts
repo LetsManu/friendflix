@@ -50,7 +50,7 @@ import { airLog } from '#lib/player/airplayLog';
 import { motionAllowed } from '#lib/preview';
 import { formFactor } from './playOn';
 import { castLog, type CastLogEntry } from './castLog';
-import { forgetSubsRefused, rememberSubsRefused, subsRefusedRecently } from './airsubs';
+import { airSubBody, forgetSubsRefused, rememberSubsRefused, subsRefusedRecently } from './airsubs';
 import { castIdOfContentUrl, clearHint, lookupToCastInfo, readHint, sha256Hex, writeHint, type CastHint, type CastLookup, type Store } from './resume';
 import { barTitles, firstInfoBody } from '#lib/player/bar';
 import { episodeLabel } from './remoteview';
@@ -834,7 +834,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       request(pos, o) {
         const w = a.want, at = w ? w.at : pos;
         // the chosen subtitle rides inside the stream (text only: the server ignores an image track); not after the TV refused one, not without the server's capability
-        const sub = !o?.noSubs && s.subIndex >= 0 && subsOk() && !subsRefusedRecently(deps.store, deps.timers.now()) ? { subtitleIndex: s.subIndex } : {};
+        const sub = airSubBody(s.subIndex, Boolean(o?.noSubs), deps.store, deps.timers.now(), subsOk());
         return call<CastInfo>('/api/cast/session', {
           method: 'POST',
           body: { itemId: w?.itemId ?? s.view.itemId, startTicks: at === undefined ? undefined : secToTicks(at), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, via: 'airplay', ...sub },
@@ -848,6 +848,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         const w = a.want; // set only by a switch to another title: its subtitles replace the list (a renewal keeps it)
         a.want = null;
         s.ci = ci; s.started = false; s.lastPaused = null;
+        // the chip never claims a track the stream does not carry (the server ignored the index, or the token was asked without it)
+        if (s.subIndex >= 0 && !ci.hlsSub) { s.subIndex = -1; patch(s, { subIndex: -1 }); }
         // the server chose the start (resume position): the stream's timeline is absolute, seek there once it loaded
         if (w && w.at === undefined && ci.startTime > 1) a.video.addEventListener('loadedmetadata', () => { if (a.ctl.info === ci) a.video.currentTime = ci.startTime; }, { once: true });
         patch(s, { position: w ? w.at ?? ci.startTime : s.view.position, ...(ci.runtimeTicks ? { duration: ticksToSec(ci.runtimeTicks) } : {}), ...(w ? { subtitles: subsOf(ci) } : {}) });
@@ -1124,7 +1126,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     // a hand-off: the cast was started in this tab, it is this tab's (the lock is taken if free; resume() holds it already)
     if (h.kind === 'chromecast' && how === 'adopt') void ownLock(true).then(() => { if (!cur) freeLock(); });
     // AirPlay: a TV that refused subtitles lately (or a server that cannot send them) starts without
-    const subOf = (x: PlayerHandoff) => (x.kind === 'airplay' && (!subsOk() || subsRefusedRecently(deps.store, timers.now())) ? -1 : x.subIndex);
+    const subOf = (x: PlayerHandoff) => (x.kind === 'airplay' && (!x.cast.hlsSub || !subsOk() || subsRefusedRecently(deps.store, timers.now())) ? -1 : x.subIndex);
     const s: Live = {
       view: { kind: h.kind, device: h.kind === 'airplay' ? tr('player.castBar.airplayDevice') : 'Chromecast', itemId: h.itemId, seriesId: h.seriesId, title: h.title, subtitle: h.subtitle, posterId: h.itemId, isEpisode: h.isEpisode,
         position: h.position, duration: h.duration, paused: h.paused, buffering: false, state: h.started ? 'playing' : 'connecting',

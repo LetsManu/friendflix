@@ -25,3 +25,12 @@ export function rememberSubsRefused(store: SubsStore | null | undefined, now: nu
 export function forgetSubsRefused(store: SubsStore | null | undefined): void {
   try { store?.removeItem(SUBS_REFUSED_KEY); } catch { /* nothing to forget */ }
 }
+
+/**
+ * The `subtitleIndex` part of an AirPlay token request (the Player's first token and the engine's later ones): the chosen text track,
+ * left out when subtitles are off, in the retry after a TV refused them (`noSubs`), without the server's capability, or while a
+ * refusal is fresh.
+ */
+export function airSubBody(sub: number, noSubs: boolean, store: SubsStore | null | undefined, now: number, capsOk: boolean): { subtitleIndex?: number } {
+  return !noSubs && sub >= 0 && capsOk && !subsRefusedRecently(store, now) ? { subtitleIndex: sub } : {};
+}

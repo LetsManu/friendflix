@@ -27,6 +27,8 @@ test('AirPlay remote shows the subtitles chip and the hint', async ({ page, api:
   const line = page.locator('#rs-subs-hint');
   const chip = screen.getByRole('button', { name: /^Untertitel: / });
   await expect(chip).toHaveAccessibleName('Untertitel: Aus');
+  await expect(chip).toHaveAccessibleDescription(''); // the invisible hint is not read
+  await expect(line).toHaveAttribute('aria-hidden', 'true');
   await expect(line).toHaveCSS('opacity', '0'); // its room is there, it is just not shown yet
   const before = await line.boundingBox();
   await chip.click();
@@ -56,4 +58,12 @@ test('AirPlay: a server that cannot put subtitles into the stream shows the chip
   await chip.click({ force: true }); // aria-disabled: Playwright would wait for it
   await expect(screen.getByRole('menu')).toHaveCount(0);
   expect(sessions).toHaveLength(n);
+});
+
+test('AirPlay: the subtitle that was on locally goes into the first token and shows on the remote', async ({ page, api: _api }) => {
+  const { sessions } = await airplayRemote(page, { tracks: true, localSub: true });
+  const screen = page.getByTestId('airplay-active');
+  expect(sessions[0]).toMatchObject({ via: 'airplay', subtitleIndex: 3 });
+  await expect(screen.getByRole('button', { name: 'Untertitel: Deutsch (SDH)' })).toBeVisible();
+  await expect(page.locator('#rs-subs-hint')).toHaveCSS('opacity', '1');
 });

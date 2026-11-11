@@ -30,6 +30,7 @@
   import RemoteScreen from '#lib/cast/RemoteScreen.svelte';
   import PlayOnSheet from '#lib/cast/PlayOnSheet.svelte';
   import { episodeCode } from '#lib/cast/bar';
+  import { airSubBody, rememberSubsRefused } from '#lib/cast/airsubs';
   import { AbrController, LADDER, autoBps, isOriginalBps, rungKey, type Decision } from '#lib/player/abr';
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
@@ -712,9 +713,9 @@
   const castErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
     : e?.body?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
   // (FriendFlix's own receiver is given a moment to state what it plays first: castCapsReady; `again` names the stream the TV just refused)
-  const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }) => {
+  const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }, extra: { subtitleIndex?: number } = {}) => {
     if (via !== 'airplay') await castCapsReady();
-    return api<CastInfo>('/api/cast/session', { method: 'POST', body: castBody({ itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}) }) });
+    return api<CastInfo>('/api/cast/session', { method: 'POST', body: castBody({ itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}), ...extra }) });
   };
   const castRevoke = (ci: CastInfo | null) => { if (ci) api(`/api/cast/session/${ci.castId}`, { method: 'DELETE' }).catch(() => undefined); };
 
@@ -873,7 +874,9 @@
     : e?.body?.error === 'transcoding_disabled' ? tr('player.airplay.needsTranscode') : tr('player.airplay.failed');
   function startAirPlay(v: HTMLVideoElement) {
     air = createAirPlay(v, {
-      request: (pos) => castRequest(pos, 'airplay'),
+      // the chosen text track rides inside the AirPlay stream (the TV shows only what the stream carries); never in the retry after a refusal
+      request: (pos, o) => castRequest(pos, 'airplay', undefined, airSubBody(subIndex, Boolean(o?.noSubs), typeof localStorage === 'undefined' ? null : localStorage, Date.now(), get(serverCaps).castHlsSubtitles)),
+      subsRefused() { rememberSubsRefused(typeof localStorage === 'undefined' ? null : localStorage, Date.now()); setSubtitle(-1, false); flash(tr('player.castRemote.subsRefused'), 4000); },
       revoke: (ci) => castRevoke(ci),
       async detach() {
         // before the token stream (tap on the button, or a new token): the TV must never get the MSE / cookie URL

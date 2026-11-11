@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { forgetSubsRefused, rememberSubsRefused, SUBS_REFUSED_KEY, SUBS_REFUSED_MS, subsRefusedRecently } from './airsubs';
+import { airSubBody, forgetSubsRefused, rememberSubsRefused, SUBS_REFUSED_KEY, SUBS_REFUSED_MS, subsRefusedRecently } from './airsubs';
 
 const mem = (init: Record<string, string> = {}) => {
   const m = new Map(Object.entries(init));
@@ -29,5 +29,19 @@ describe('AirPlay subtitle refusal memory', () => {
     const bad = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); }, removeItem: () => { throw new Error('blocked'); } };
     expect(subsRefusedRecently(bad, 10)).toBe(false);
     expect(() => { rememberSubsRefused(bad, 1); forgetSubsRefused(bad); }).not.toThrow();
+  });
+});
+
+describe('airSubBody (the token request of the Player and of the engine)', () => {
+  const ok = mem();
+  it('carries the chosen text track', () => {
+    expect(airSubBody(3, false, ok, 1000, true)).toEqual({ subtitleIndex: 3 });
+  });
+  it('leaves the key out: off, noSubs (the fallback), no capability, fresh refusal', () => {
+    expect(airSubBody(-1, false, ok, 1000, true)).toEqual({});
+    expect(airSubBody(3, true, ok, 1000, true)).toEqual({});
+    expect(airSubBody(3, false, ok, 1000, false)).toEqual({});
+    expect(airSubBody(3, false, mem({ [SUBS_REFUSED_KEY]: '900' }), 1000, true)).toEqual({});
+    expect(airSubBody(3, false, mem({ [SUBS_REFUSED_KEY]: String(1000 - SUBS_REFUSED_MS - 1) }), 1000, true)).toEqual({ subtitleIndex: 3 });
   });
 });

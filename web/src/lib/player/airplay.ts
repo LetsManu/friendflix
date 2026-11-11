@@ -41,8 +41,8 @@
  *   master, which is fetched without credentials; it must stay under /media/c/<token>/) replaces the master on the element at the
  *   same position / play state. It still counts as our token stream (`tokenOnElement`). If that fails too (or the master has no
  *   usable variant): the error behaviour below. A new token (retry / refresh) starts with its master again.
- * - Subtitle fallback (before the variant fallback): the same code 4 on a token that carries the subtitle rendition (`ci.hlsSub`)
- *   first gets ONE new token without subtitles (`request(pos, { noSubs: true })`, `subsRefused` first); that token has none, so a
+ * - Subtitle fallback (before the variant fallback): the same code 4 on a token that carries the subtitle rendition (`ci.hlsSub`) while the TV
+ *   is the target (not while only the phone plays it: no TV refused anything) first gets ONE new token without subtitles (`request(pos, { noSubs: true })`, `subsRefused` first); that token has none, so a
  *   second code 4 goes on to the variant fallback as above. Never more than that one extra request per token.
  * - Every decision is written to the AirPlay event log (airplayLog.ts, /diagnose) without URLs, tokens or cast ids.
  *
@@ -389,7 +389,7 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
   /** code 4 on a token with the subtitle rendition: one new token without it (before the variant fallback); false = not applicable */
   function trySubsFallback(code: number | undefined): boolean {
     const ci = info;
-    if (code !== 4 || !ci?.hlsSub || tokenOnElement !== ci || !(ready || active) || subsRetried.has(ci.castId)) return false;
+    if (code !== 4 || !ci?.hlsSub || tokenOnElement !== ci || !active || subsRetried.has(ci.castId)) return false;
     subsRetried.add(ci.castId);
     log('fallback-subs', { note: 'stream with subtitles not supported: new token without them' });
     try { d.subsRefused?.(); } catch { /* the hint is a courtesy */ }

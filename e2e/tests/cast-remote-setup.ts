@@ -65,7 +65,7 @@ export async function chromecastRemote(page: Page, o: { fail?: () => boolean; qu
 }
 
 /** AirPlay: episode 1 sent to the TV with the player's AirPlay button; the watch page stays the remote */
-export async function airplayRemote(page: Page, o: { tracks?: boolean } = {}) {
+export async function airplayRemote(page: Page, o: { tracks?: boolean; localSub?: boolean } = {}) {
   await stubAirPlay(page, { pickTv: true });
   await mockPlayer(page);
   await castOn(page);
@@ -83,6 +83,10 @@ export async function airplayRemote(page: Page, o: { tracks?: boolean } = {}) {
   await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
   await available(page);
   if (await page.locator('.ctl.hide').count()) await page.locator('.stage').click({ position: { x: 30, y: 200 } });
+  if (o.localSub) { // the phone plays with the subtitle on (Player menu)
+    await page.getByRole('button', { name: 'Audio und Untertitel' }).click();
+    await page.getByRole('button', { name: 'Deutsch (SDH)' }).click();
+  }
   await playOnAirPlay(page);
   await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
   return { sessions };
