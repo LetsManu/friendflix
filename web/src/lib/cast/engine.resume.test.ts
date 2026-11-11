@@ -386,7 +386,8 @@ describe('cast engine: resume (re-adoption)', () => {
   it('resume onto the queued successor closes the predecessor once (one stop at its runtime, one DELETE)', async () => {
     const env = setup();
     writeHint(env.store, { castId: A, next: B, itemId: 'dun4', device: 'Wohnzimmer-TV', exp: T0 + 60 * 60_000, at: T0 - 60_000 });
-    env.lookups[A] = lookup(A, 'dun4', { reported: true, runtimeTicks: 30_000_000_000 });
+    // `reported` is false by then: the ended episode's live record died ~45 s after the TV stopped fetching it
+    env.lookups[A] = lookup(A, 'dun4', { reported: false, runtimeTicks: 30_000_000_000 });
     env.lookups[B] = lookup(B, 'dun5', { next: true, reported: true, title: 'Wrenfield Pier' });
     env.state.set(playing({ currentTime: 120, duration: 3000, contentId: contentOf(tB), queue: [] })); // the TV moved on with no page open
     expect(await env.engine.resume()).toBe(true);
@@ -406,15 +407,28 @@ describe('cast engine: resume (re-adoption)', () => {
     expect(await gone.engine.resume()).toBe(true);
     expect(gone.reports()).toEqual([]);
     expect(gone.deletes()).toEqual([]);
-    // a predecessor that never played (no start reported): revoked, no stop
-    const unplayed = setup();
-    writeHint(unplayed.store, { castId: A, next: B, itemId: 'dun4', device: 'Wohnzimmer-TV', exp: T0 + 60 * 60_000, at: T0 - 60_000 });
-    unplayed.lookups[A] = lookup(A, 'dun4', { reported: false });
-    unplayed.lookups[B] = lookup(B, 'dun5', { next: true, reported: true });
-    unplayed.state.set(playing({ contentId: contentOf(tB), queue: [] }));
-    expect(await unplayed.engine.resume()).toBe(true);
-    expect(unplayed.reports()).toEqual([]);
-    expect(unplayed.deletes()).toEqual([A]);
+  });
+
+  it('a resume that gives up after closing the ended episode: the next resume does not close it again', async () => {
+    const env = setup();
+    writeHint(env.store, { castId: A, next: B, itemId: 'dun4', device: 'Wohnzimmer-TV', exp: T0 + 60 * 60_000, at: T0 - 60_000 });
+    env.lookups[A] = lookup(A, 'dun4', { reported: false, runtimeTicks: 30_000_000_000 });
+    env.lookups[B] = lookup(B, 'dun5', { next: true, reported: true });
+    const revoked = deferred<void>();
+    const record = env.api.getMockImplementation()!;
+    // the ended episode's DELETE has not landed yet (its lookup still answers 200 meanwhile)
+    env.api.mockImplementation(async (path, init) => (path === `/api/cast/session/${A}` && init?.method === 'DELETE' ? (await revoked.promise, record(path, init)) : record(path, init)));
+    env.state.set(playing({ contentId: contentOf(tB), queue: [] }));
+    // the TV moves on while the item metadata loads: this resume gives up after closing the ended episode
+    env.item.mockImplementationOnce(async () => { env.state.set(playing({ contentId: contentOf(tZ), queue: [] })); throw new Error('slow'); });
+    expect(await env.engine.resume()).toBe(false);
+    env.state.set(playing({ contentId: contentOf(tB), queue: [] }));
+    expect(await env.engine.resume()).toBe(true);
+    revoked.resolve();
+    await flush();
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.lookupsAsked().filter((id) => id === A)).toHaveLength(1);
+    expect(env.deletes()).toEqual([A]);
   });
 
   it('a failed queue lookup: the hint keeps the receiver\'s queued token and Stop revokes it', async () => {

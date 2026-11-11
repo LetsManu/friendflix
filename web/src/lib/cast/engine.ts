@@ -361,6 +361,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   let lockWaiting = false;
   /** a Stop is still reporting / revoking: the lock stays (a waiting tab must not re-adopt the cast before the revoke is through) */
   let holdLock = false;
+  /** ended episodes this page closed after a resume (closeEnded): never twice */
+  const closed = new Set<string>();
 
   const log = (level: CastLogEntry['level'], tag: CastLogEntry['tag'], text: string) => { try { deps.log({ level, tag, text }); } catch { /* never breaks a cast */ } };
   /** the session's autoplay (the switch, else the profile's autoplay and this episode's "sleep after") */
@@ -1101,12 +1103,16 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     log('info', 'session', why);
   }
 
-  /** an episode that ended on the TV with no page open: `stop` at its runtime (watched) when it was reported, then its revoke */
+  /**
+   * An episode that ended on the TV with no page open: `stop` at its runtime (watched), then its revoke. Always sent: its live
+   * record (`reported`) dies ~45 s after the TV stopped fetching it, and the server forwards a stop without one. Once per castId,
+   * also when a resume gives up after it and the next one reads the same hint before the revoke landed.
+   */
   function closeEnded(p: CastLookup) {
-    const stop = p.reported
-      ? call('/api/playback/stop', { method: 'POST', body: { itemId: p.itemId, playSessionId: p.playSessionId, mediaSourceId: p.mediaSourceId, positionTicks: p.runtimeTicks ?? 0, isPaused: false, playMethod: 'Transcode' } }).catch(() => undefined)
-      : Promise.resolve();
-    void stop.then(() => revokeId(p.castId));
+    closed.add(p.castId);
+    void call('/api/playback/stop', { method: 'POST', body: { itemId: p.itemId, playSessionId: p.playSessionId, mediaSourceId: p.mediaSourceId, positionTicks: p.runtimeTicks ?? 0, isPaused: false, playMethod: 'Transcode' } })
+      .catch(() => undefined)
+      .then(() => revokeId(p.castId));
     log('info', 'queue', 'ended episode closed after resume');
   }
 
@@ -1130,7 +1136,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (!l) { notOurs('the TV plays something else'); return false; }
     // the TV moved on to the queued episode while no page was open: the ended one is closed now (its stop at its end, its token)
     const h = readHint(deps.store, timers.now());
-    if (l.next && h?.next === l.castId && h.castId !== l.castId) {
+    if (l.next && h?.next === l.castId && h.castId !== l.castId && !closed.has(h.castId)) {
       const p = await lookupOf(h.castId);
       if (stale()) return false;
       if (p) closeEnded(p);
