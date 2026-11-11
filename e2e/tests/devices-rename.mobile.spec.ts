@@ -23,9 +23,9 @@ async function open(page: Page, api: MockState, name: string | null = null) {
 /** page y of the table and every row (the page may scroll when the field takes focus) */
 const ys = async (page: Page) => {
   const sy = await page.evaluate(() => window.scrollY);
-  const rows = page.locator('tbody tr');
+  const rows = page.locator('.drow');
   const n = await rows.count();
-  const out: number[] = [(await page.locator('table').boundingBox())!.y + sy];
+  const out: number[] = [(await page.getByRole('table').boundingBox())!.y + sy];
   for (let i = 0; i < n; i++) out.push((await rows.nth(i).boundingBox())!.y + sy);
   return out;
 };
@@ -89,5 +89,20 @@ test.describe('devices page: renaming (phone)', () => {
     await expect.poll(() => patches(api)).toEqual([`PATCH /api/devices/${TV} {"name":null} -> 200`]);
     await expect(page.getByRole('row', { name: /LG-Fernseher/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'LG-Fernseher umbenennen' })).toBeFocused();
+  });
+
+  test('the error of the last row is not covered by the tab bar', async ({ page, api }) => {
+    await open(page, api);
+    await page.getByRole('button', { name: 'Firefox auf Windows umbenennen' }).click();
+    const field = page.getByLabel('Gerätename');
+    await field.fill('\u202eevil');
+    await field.press('Enter');
+    const bubble = page.getByRole('alert').filter({ hasText: 'Bitte 1 bis 40 Zeichen ohne Steuerzeichen.' });
+    await expect(bubble).toBeInViewport({ ratio: 1 });
+    // the topmost element at the bubble's centre is the bubble itself (not the fixed tab bar)
+    await expect.poll(() => bubble.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return !!document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('.bubble');
+    })).toBe(true);
   });
 });

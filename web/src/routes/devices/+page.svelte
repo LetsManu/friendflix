@@ -44,7 +44,7 @@
   }
   async function saveName(d: Dev, raw: string | null) {
     const r = raw === null ? { ok: true as const, name: null } : cleanName(raw);
-    if (!r.ok) { invalid = true; msg = ''; return; }
+    if (!r.ok) { invalid = true; msg = ''; await tick(); document.getElementById(`dev-bad-${d.id}`)?.scrollIntoView({ block: 'nearest' }); return; }
     saving = true; err = ''; msg = '';
     try {
       await api(`/api/devices/${encodeURIComponent(d.id)}`, { method: 'PATCH', body: { name: r.name } });
@@ -95,12 +95,13 @@
 
 <h2>{$t('account.devices.approvedTitle')}</h2>
 <p><button class="sec" on:click={revokeOthers}>{$t('account.devices.revokeOthers')}</button></p>
-<table>
-  <thead><tr><th class="c-name">{$t('account.devices.device')}</th><th class="c-seen">{$t('account.devices.lastSeen')}</th><th class="c-act"></th></tr></thead>
-  <tbody>
+<!-- grid rows with table roles (not <table>): the overlay form needs a positioned row, which table rows do not give on older TV engines -->
+<div role="table" class="dtable" aria-label={$t('account.devices.approvedTitle')}>
+  <div role="rowgroup" class="dhead"><div role="row" class="drow hdr"><div role="columnheader" class="c-name">{$t('account.devices.device')}</div><div role="columnheader" class="c-seen">{$t('account.devices.lastSeen')}</div><div role="columnheader" class="c-act"><span class="vh">{$t('account.devices.rename')}</span></div></div></div>
+  <div role="rowgroup">
     {#each others as d (d.id)}
-      <tr>
-        <td class="c-name">
+      <div role="row" class="drow">
+        <div role="cell" class="c-name">
           <div class="cell">
             {#if editing === d.id}
               <!-- svelte-ignore a11y_no_noninteractive_element_interactions (Escape on any control of the form cancels it) -->
@@ -117,20 +118,22 @@
             <!-- stays in the flow under the form, so the row keeps its height -->
             <span class="nm" class:under={editing === d.id}>{shown(d)} {#if d.current}<span class="badge">{$t('account.devices.thisDevice')}</span>{/if}</span>
           </div>
-        </td>
-        <td class="c-seen">{fmtDateTime(d.last_seen)}</td>
-        <td class="c-act">
+        </div>
+        <div role="cell" class="c-seen" inert={editing === d.id ? true : undefined} aria-hidden={editing === d.id ? 'true' : undefined}>{fmtDateTime(d.last_seen)}</div>
+        <div role="cell" class="c-act" inert={editing === d.id ? true : undefined} aria-hidden={editing === d.id ? 'true' : undefined}>
           <div class="acts">
             {#if editing !== d.id && d.approved}
               <button type="button" class="ghost ico" data-rename={d.id} aria-label={$t('account.devices.renameAria', { name: shown(d) })} title={$t('account.devices.rename')} on:click={() => startEdit(d)}><Icon name="pencil" size={18} /></button>
             {/if}
             {#if !d.current}<button class="sec" on:click={() => remove(d)}>{$t('account.devices.remove')}</button>{/if}
           </div>
-        </td>
-      </tr>
+        </div>
+      </div>
     {/each}
-  </tbody>
-</table>
+  </div>
+</div>
+<!-- room under the last row for an error bubble, above the phone tab bar -->
+<div class="spacer" aria-hidden="true"></div>
 
 <style>
   .how ol { margin: .3rem 0 0; padding-left: 1.3rem; display: grid; gap: .3rem; color: var(--mut); } .how b { color: var(--fg); }
@@ -141,9 +144,12 @@
   /* the result line has a fixed height of two clamped lines, so no message, however long, moves the table */
   .status { height: 3em; margin: .4rem 0; display: grid; line-height: 1.5; overflow: hidden; }
   .status p { grid-area: 1 / 1; margin: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
-  table { table-layout: fixed; }
-  .c-name { width: 62%; } .c-seen { width: 20%; } .c-act { width: 18%; }
-  tbody tr { position: relative; }
+  .dtable { width: 100%; }
+  .drow { position: relative; display: grid; grid-template-columns: minmax(0, 62fr) minmax(0, 20fr) minmax(0, 18fr); align-items: center; border-bottom: 1px solid var(--line); }
+  .drow > div { padding: .6rem; text-align: left; }
+  .hdr > div { color: var(--mut); font-weight: 500; font-size: .85rem; }
+  .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .spacer { height: 3.5rem; }
   .nm { overflow-wrap: anywhere; display: block; } .nm.under { visibility: hidden; }
   /* while editing, the form lies over its whole row: rows keep their natural height and nothing moves */
   .edit { position: absolute; z-index: 3; left: 0; right: 0; top: 0; min-height: 100%; box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .4rem .6rem; background: var(--fr-solid); box-shadow: 0 0 0 1px var(--line); border-radius: 6px; }
@@ -151,16 +157,16 @@
   .fld::placeholder { color: #a9b3bd; opacity: 1; }
   .fld[aria-invalid='true'] { border-color: var(--err); }
   .edit button { flex: none; padding-inline: .8rem; }
-  .bubble { position: absolute; z-index: 4; left: .6rem; top: calc(100% + 4px); max-width: calc(100% - 1.2rem); margin: 0; padding: .35rem .7rem; border-radius: 6px; background: #4a1d24; color: #ffd9dd; border: 1px solid var(--err); font-size: .9rem; opacity: 0; transform: translateY(-4px); pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
-  .bubble.show { opacity: 1; transform: none; }
+  .bubble { scroll-margin-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 8px); position: absolute; z-index: 4; left: .6rem; top: calc(100% + 4px); max-width: calc(100% - 1.2rem); margin: 0; padding: .35rem .7rem; border-radius: 6px; background: #4a1d24; color: #ffd9dd; border: 1px solid var(--err); font-size: .9rem; opacity: 0; transform: translateY(-4px); pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
+  .bubble.show { opacity: 1; transform: none; pointer-events: auto; }
   :global(html.m-still) .bubble, :global(html.tv) .bubble, :global(html.kids) .bubble { transition: none; }
   .acts { display: flex; gap: .5rem; justify-content: flex-end; align-items: center; min-height: 44px; }
   .ico { padding: .5rem; width: 44px; }
   @media (max-width: 700px) {
-    thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-    tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-bottom: 1px solid var(--line); }
-    td { border-bottom: 0; }
-    .c-name { grid-column: 1 / -1; width: auto; padding-bottom: 0; } .c-seen { width: auto; } .c-act { width: auto; }
+    .dhead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .drow { grid-template-columns: minmax(0, 1fr) auto; }
+    .drow > div { padding-block: .4rem; }
+    .c-name { grid-column: 1 / -1; padding-bottom: 0 !important; }
     .fld { flex: 1 0 100%; }
   }
 </style>

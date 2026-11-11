@@ -23,9 +23,9 @@ async function open(page: Page, api: MockState, name: string | null = null) {
 /** page y of the table and every row (the page may scroll when the field takes focus) */
 const ys = async (page: Page) => {
   const sy = await page.evaluate(() => window.scrollY);
-  const rows = page.locator('tbody tr');
+  const rows = page.locator('.drow');
   const n = await rows.count();
-  const out: number[] = [(await page.locator('table').boundingBox())!.y + sy];
+  const out: number[] = [(await page.getByRole('table').boundingBox())!.y + sy];
   for (let i = 0; i < n; i++) out.push((await rows.nth(i).boundingBox())!.y + sy);
   return out;
 };
@@ -104,5 +104,17 @@ test.describe('devices page: renaming', () => {
     await page.reload();
     await expect(page.getByRole('button', { name: 'LG-Fernseher umbenennen' })).toBeVisible();
     await expect(page.getByRole('button', { name: /Chrome auf Linux umbenennen/ })).toHaveCount(0);
+  });
+
+  test('Tab leaves the form to the next row, never into the covered Entfernen button', async ({ page, api }) => {
+    await open(page, api);
+    await page.getByRole('button', { name: 'LG-Fernseher umbenennen' }).click();
+    await expect(page.getByLabel('Gerätename')).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Speichern' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Abbrechen' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Safari auf iOS umbenennen' })).toBeFocused();
   });
 });
