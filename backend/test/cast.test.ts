@@ -905,6 +905,13 @@ describe('cast lookup (token-free, re-adoption and Diagnose)', () => {
     const l = await castLookup(env.ctx, w, j.castId);
     expect(l!.pinFamily).toBe('v4');
     expect(JSON.stringify(l)).not.toContain('192.0.2');
+    // an IPv6 TV: the family is v6 and no part of the address is in the answer
+    const c2 = await create();
+    const w2 = await who(c2.j.castId);
+    expect((await authz({ ct: c2.ct, client: '2001:db8::5' })).statusCode).toBe(200);
+    const l2 = await castLookup(env.ctx, w2, c2.j.castId);
+    expect(l2!.pinFamily).toBe('v6');
+    expect(JSON.stringify(l2)).not.toContain('2001:db8');
   });
 
   it('lookup reports reported=true only after a start report', async () => {
@@ -1069,12 +1076,29 @@ describe('cast: the queued next token is pinned at mint and its life follows its
     expect(await env.kv.get(`castpin:${hashToken(imgCt)}`)).toBe(TV);
     expect((await authz({ ct: imgCt, client: '203.0.113.66' })).statusCode).toBe(401);
     expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200);
-    // its pin lives as long as the token: the TV is still served past the idle window while the predecessor is alive
+    // its pin lives as long as the token: the TV is still served past the idle window (these are the poster's own touches;
+    // the predecessor-driven refresh is the next test)
     skipClock(40 * 60_000);
     expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200);
     skipClock(10 * 60_000);
     expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200);
     expect((await authz({ ct: imgCt, client: '203.0.113.66' })).statusCode).toBe(401);
+  });
+
+  it('the queued poster keys are refreshed by the predecessor\'s touches', async () => {
+    await fresh();
+    const { cur, nx } = await queued();
+    const imgCt = /\/media\/c\/([\w-]{43})\/Items\//.exec(nx.j.imageUrl)![1]!;
+    expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200); // the poster's last own touch
+    // only the predecessor is fetched from here on: each of its touches refreshes the successor's poster keys
+    for (let i = 0; i < 4; i++) {
+      skipClock(11 * 60_000);
+      expect((await authz({ ct: cur.ct, client: TV })).statusCode).toBe(200);
+    }
+    skipClock(2 * 60_000); // 46 min after the poster's own touch: past its 45 min idle window without the refresh
+    expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200);
+    expect((await authz({ ct: imgCt, client: '203.0.113.66' })).statusCode).toBe(401);
+    expect(await env.kv.get(`castpin:${hashToken(imgCt)}`)).toBe(TV);
   });
 
   it('createCast refuses a queued token whose predecessor has no pin (nothing minted)', async () => {

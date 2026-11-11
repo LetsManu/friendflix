@@ -433,7 +433,7 @@ export async function noteRefused(ctx: Ctx, hash: string, client: string, ttl: n
 export interface CastLookup {
   castId: string; itemId: string; mediaSourceId: string; playSessionId: string; expiresAt: number; runtimeTicks?: number; via: CastVia;
   next: boolean; reported: boolean; title: string; seriesName?: string; subtitles: CastSubtitleInfo[]; pins: 0 | 1 | 2;
-  /** the address family of the TV's pin (the second slot of an AirPlay token, else the first): the family only, never an address; null while unpinned */
+  /** the address family of the TV's pin: the second slot of an AirPlay token when set, else the first (for AirPlay before the TV fetched: the sender's own address, which the Network row then compares against); the family only, never an address; null while unpinned */
   pinFamily: 'v4' | 'v6' | null;
   refused: { count: number; families: Array<'v4' | 'v6'> };
 }

@@ -53,6 +53,8 @@ const dict: Translation<typeof de> = {
     twoAddresses: 'La tele usó 2 direcciones (IPv4 e IPv6). No pasa nada mientras la reproducción siga; si se detiene, desactiva IPv6 en la tele.',
     events: 'Eventos',
     eventsHint: 'Solo en este dispositivo, los últimos 200 · incluidos en el informe copiado',
+    copyEvents: 'Copiar eventos',
+    clearEvents: 'Vaciar eventos',
     eventsEmpty: 'Aún no hay eventos.',
     info: 'info',
     warn: 'aviso',

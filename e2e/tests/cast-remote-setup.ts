@@ -51,7 +51,7 @@ const infoWithTracks = (page: Page) => page.route('**/api/playback/info', (r) =>
 export async function chromecastRemote(page: Page, o: { fail?: () => boolean; queue?: boolean; tracks?: boolean; survive?: 'join' | 'ask' } = {}) {
   await mockPlayer(page);
   if (o.tracks) await infoWithTracks(page);
-  if (o.queue) await nextAfterFirst(page); // before the cast: the engine asks for the queue at the first position update
+  await nextAfterFirst(page); // before the cast, always: the engine's one lookup / queue request must not race the route
   await castOn(page, true, o.survive ? RECEIVER : undefined);
   const sdk = await fakeCastSdk(page, { queue: o.queue, survive: o.survive });
   const tokens = await castSessions(page, o);
@@ -61,7 +61,6 @@ export async function chromecastRemote(page: Page, o: { fail?: () => boolean; qu
   await videoReady(page);
   await sdk.start();
   await expect(page.getByTestId('cast-active')).toContainText('Wird auf Wohnzimmer-TV abgespielt');
-  await nextAfterFirst(page);
   return Object.assign(sdk, tokens);
 }
 

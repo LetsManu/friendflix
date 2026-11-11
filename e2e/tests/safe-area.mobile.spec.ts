@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
+import { castOn } from '../mocks/cast.js';
 import { MOVIE } from '../mocks/fixtures.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 
@@ -81,6 +82,7 @@ test.describe('safe area top (iPhone home-screen app)', () => {
 
   for (const [path, name] of [['/downloads', 'Downloads'], ['/diagnose', 'Anzeige-Diagnose']] as const) {
     test(`${path}: header row and heading below the status bar`, async ({ page }) => {
+      if (path === '/diagnose') await castOn(page);
       await page.goto(path);
       const h1 = page.getByRole('heading', { level: 1, name });
       await expect(h1).toBeVisible();

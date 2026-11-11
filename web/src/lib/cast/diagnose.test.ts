@@ -23,6 +23,11 @@ describe('chromecastRows', () => {
     expect(val(rows, 'Zugangspass')).toBe('Gültig 4 Std. 12 Min., wird 10 Min. vor Ablauf erneuert');
     expect(rows.find((r) => r.label === 'Cast-Unterstützung')?.tone).toBe('ok');
   });
+  it('a detached cast is shown as lost, not as connected', () => {
+    const rows = chromecastRows({ ...base, session: session({ state: 'detached' }) });
+    expect(val(rows, 'Sitzung')).toBe('Verbindung verloren');
+    expect(rows.find((r) => r.label === 'Sitzung')?.tone).toBe('warn');
+  });
   it('support variants', () => {
     expect(val(chromecastRows({ ...base, capable: false }), 'Cast-Unterstützung')).toBe('In diesem Browser nicht verfügbar (Chrome oder Edge nötig)');
     expect(val(chromecastRows({ ...base, enabled: false }), 'Cast-Unterstützung')).toBe('Auf diesem Server aus');

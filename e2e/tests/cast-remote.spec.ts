@@ -74,11 +74,12 @@ test.describe('failures', () => {
     await page.getByRole('button', { name: 'Nächste Folge', exact: true }).click(); // the switch's token request fails
     const screen = page.getByTestId('cast-active');
     await expect(screen.getByRole('status').filter({ hasText: 'Verbindung verloren' })).toBeVisible();
-    const posts = sdk.sessions.length;
+    const own = () => sdk.sessions.filter((b) => !b.next); // queue traffic is not part of this count
+    const posts = own().length;
     fail = false;
     await screen.getByRole('button', { name: 'Neu verbinden' }).click();
-    await expect.poll(() => sdk.sessions.length).toBe(posts + 1);
-    expect(sdk.sessions.at(-1)!.itemId).toBe(episodes[1]!.id);
+    await expect.poll(() => own().length).toBe(posts + 1);
+    expect(own().at(-1)!.itemId).toBe(episodes[1]!.id);
     await expect(screen.getByRole('status').filter({ hasText: 'Verbindung verloren' })).toHaveCount(0);
     await expect(screen.getByRole('button', { name: 'Neu verbinden' })).toHaveCount(0);
   });

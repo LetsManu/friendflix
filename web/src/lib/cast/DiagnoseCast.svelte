@@ -171,8 +171,8 @@
         <p class="hint">{$t('diagnose.cast.eventsHint')}</p>
       </div>
       <div class="acts">
-        <button type="button" class="light" on:click={copyEvents} disabled={!entries.length}>{$t('diagnose.airplayCopy')}</button>
-        <button type="button" class="sec" on:click={clearEvents} disabled={!entries.length}>{$t('diagnose.airplayClear')}</button>
+        <button type="button" class="light" aria-label={$t('diagnose.cast.copyEvents')} on:click={copyEvents} disabled={!entries.length}>{$t('diagnose.airplayCopy')}</button>
+        <button type="button" class="sec" aria-label={$t('diagnose.cast.clearEvents')} on:click={clearEvents} disabled={!entries.length}>{$t('diagnose.airplayClear')}</button>
         <span class="note" role="status" aria-live="polite">{eventsNote}</span>
       </div>
     </div>
