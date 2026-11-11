@@ -102,5 +102,6 @@ test('receiver page: own CSP, brand while idle, next-up countdown, still watchin
   await expect(still).toBeHidden();
   expect((await caf.calls()).filter((c) => c.startsWith('sent:'))).toContain('sent:{"t":"interaction"}');
   // the ended token's stop went out before the next one's start
-  expect(reports.map((r) => r.event)).toEqual(['start', 'stop', 'start', 'stop']);
+  // the reports arrive through a route handler: poll, do not check once
+  await expect.poll(() => reports.map((r) => r.event)).toEqual(['start', 'stop', 'start', 'stop']);
 });

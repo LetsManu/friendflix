@@ -43,4 +43,5 @@ export default {
   language: {
     label: 'Sprache',
   },
+  experimental: 'Experimentell',
 } as const;

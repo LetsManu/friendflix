@@ -102,6 +102,7 @@ async function setup(o: { started?: boolean } = {}) {
   let hiddenNow = false;
   const toast = vi.fn();
   const body = new FakeBody();
+  const store = new Map<string, string>();
   const deps: EngineDeps = {
     api: api as unknown as EngineDeps['api'],
     item: vi.fn(async (id: string) => { const it = items[id]; if (!it) throw new Error('404'); return it as Item; }),
@@ -111,6 +112,7 @@ async function setup(o: { started?: boolean } = {}) {
     onPageHide: vi.fn((fn: () => void) => { hides.add(fn); return () => { hides.delete(fn); }; }),
     segments: vi.fn(async (id: string) => segs[id] ?? []), hidden: () => hiddenNow, onWake: vi.fn((fn: () => void) => { wakes.add(fn); return () => { wakes.delete(fn); }; }),
     toast, prefs: () => ({ ...DEFAULT_PREFS }), timers: timerDeps,
+    onHidden: vi.fn(() => () => undefined), store: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); }, removeItem: (k) => { store.delete(k); } }, digest: async () => '', log: vi.fn(), requestSession: vi.fn(async () => false), leave: vi.fn(), whenReady: vi.fn(), lock: vi.fn(async () => () => undefined), onRestore: vi.fn(),
   };
   const out = writable<CastSession | null>(null);
   const engine = createCastEngine(deps, out);
@@ -137,7 +139,7 @@ async function setup(o: { started?: boolean } = {}) {
   };
   const srcBefore = video.src;
   return {
-    engine, out, deps, calls, order, posts, api, toast, hides, body, video, probe, air, player, spy, handoff, srcBefore,
+    engine, out, deps, calls, order, posts, api, toast, hides, body, store, video, probe, air, player, spy, handoff, srcBefore,
     advance, segs, wakes, hide: (on: boolean) => { hiddenNow = on; }, wake: () => wakes.forEach((fn) => fn()), pending: () => timers.length,
     adopt: async (over: Partial<PlayerHandoff> = {}) => { engine.adopt({ ...handoff, ...over }); await flush(); },
     reports: () => calls.filter((c) => c.path.startsWith('/api/playback/')).map((c) => c.path.slice('/api/playback/'.length)),
@@ -442,6 +444,7 @@ describe('cast engine: AirPlay route loss and reconnect', () => {
     expect(env.player.restore).not.toHaveBeenCalled();
     expect(get(env.out)).toMatchObject({ state: 'reconnect', position: 300, paused: true, buffering: false });
     expect(env.engineLog()).toEqual(['adopt', 'reconnect: route lost']);
+    expect(env.deps.log).toHaveBeenCalledWith({ level: 'warn', tag: 'session', text: 'AirPlay route lost' }); // Diagnose counts it as a reconnect
   });
 
   it('reconnect() calls pick synchronously and resumes on active', async () => {
@@ -590,7 +593,7 @@ describe('cast engine: AirPlay end and stop', () => {
     await env.adopt({ itemId: 'ep1', isEpisode: true });
     env.video.fire('ended');
     await flush();
-    expect(get(env.out)).toMatchObject({ state: 'ended', next: { itemId: 'ep2', label: 'S1:E2 · Second' } });
+    expect(get(env.out)).toMatchObject({ state: 'ended', next: { itemId: 'ep2', label: 'S1:F2 · Second' } });
     expect(get(env.out)?.next?.startsAt).not.toBeNull();
     await env.advance(10_000);
     expect(env.tokenPosts().at(-1)!.init.body).toMatchObject({ itemId: 'ep2', via: 'airplay' });
@@ -636,7 +639,7 @@ describe('cast engine: AirPlay end and stop', () => {
     expect(env.body.children).toContain(env.video);
   });
 
-  it('airplay pagehide: keepalive stop and token revoked', async () => {
+  it('pagehide still ends AirPlay', async () => {
     const env = await setup();
     await env.adopt();
     env.hides.forEach((fn) => fn());
@@ -646,6 +649,8 @@ describe('cast engine: AirPlay end and stop', () => {
     expect(env.spy.destroy).toHaveBeenCalledTimes(1);
     expect(get(env.out)).toBeNull();
     expect(env.hides.size).toBe(0);
+    expect(env.deps.leave).not.toHaveBeenCalled(); // the Chromecast-only leave
+    expect(env.store.size).toBe(0); // AirPlay never writes the resume hint
   });
 
   it('variant fallback failed on the TV: failed toast, failed state; release() drops the element', async () => {

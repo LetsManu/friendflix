@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AA, AMB_CORAL, AMB_CORAL_A, AMB_ORANGE, AMB_ORANGE_A, AMB_PEAK, AMB_VIOLET, AMB_VIOLET_A, BLUR_BRIGHTNESS, cachedTone, clearTones, contrast, DARK_BASE, frostComposite, luminance, MILK_RGB, SCRIM_LIGHT, SCRIM_MAX, SCRIM_MIN,
   MILK_TOP, SCRIM_RGB, SCRIM_SAFE, scrimFor, tintColor, TINT_LUM_MAX, toneFor, toneOf, toneVars, type RGB,
-  BD, SCRIM_SAFE_DIM, TEXT_DIM, textContrast, menuScrim, SCRIM_MENU, SEL_A, GRAIN_LIFT, MENU_SCRIM_MAX,
+  BD, SCRIM_SAFE_DIM, TEXT_DIM, textContrast, menuScrim, SCRIM_MENU, SCRIM_BAR, barScrim, BAR_INKS, SEL_A, GRAIN_LIFT, MENU_SCRIM_MAX,
 } from './tone';
 
 const WHITE: RGB = [255, 255, 255];
@@ -358,3 +358,14 @@ describe('the ambient background (AMB_*)', () => {
   });
 });
 
+describe('SCRIM_BAR (the floating cast bar)', () => {
+  it('its dimmest white line, amber and error text pass AA over pure white', () => {
+    expect(SCRIM_BAR).toBe(barScrim());
+    expect(SCRIM_BAR).toBeLessThanOrEqual(MENU_SCRIM_MAX);
+    const c = frostComposite([255, 255, 255], SCRIM_BAR);
+    expect(textContrast(c, BAR_INKS.dim)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(BAR_INKS.warn, c)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(BAR_INKS.error, c)).toBeGreaterThanOrEqual(AA);
+    expect(SCRIM_BAR).toBeGreaterThan(SCRIM_SAFE); // the safe scrim is not enough for these inks
+  });
+});

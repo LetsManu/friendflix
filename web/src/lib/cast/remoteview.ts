@@ -5,7 +5,7 @@
  * Images go through the portal's own image path (`/media/Items/…`, the session cookie; never a cast or media server token).
  */
 import { backdrop, img, type Item } from '#lib/api';
-import type { TFn } from '#lib/i18n';
+import { tr, type TFn } from '#lib/i18n';
 import type { CastSession } from './engine';
 
 type Art = Pick<CastSession, 'itemId' | 'seriesId' | 'isEpisode'>;
@@ -32,9 +32,9 @@ export const deviceLabel = (s: Pick<CastSession, 'kind' | 'device'>): string => 
 export const playingLine = (s: Pick<CastSession, 'kind' | 'device'>, tf: TFn): string =>
   s.kind === 'airplay' ? tf('player.airplay.playing') : tf('player.cast.playingOn', { name: s.device || 'Chromecast' });
 
-/** an episode as the watch page's header and the next-episode label show it: "S1:E2 · Name" (the name alone without numbers) */
+/** an episode as the watch page's header and the next-episode label show it, in the app's language: "S1:F2 · Name" / "S1:E2 · Name" (the name alone without numbers) */
 export const episodeLabel = (it: Pick<Item, 'name' | 'parentIndexNumber' | 'indexNumber'>): string =>
-  (it.parentIndexNumber != null && it.indexNumber != null ? `S${it.parentIndexNumber}:E${it.indexNumber} · ${it.name}` : it.name);
+  (it.parentIndexNumber != null && it.indexNumber != null ? tr('player.phone.episodeLine', { s: it.parentIndexNumber, e: it.indexNumber, name: it.name }) : it.name);
 
 /** the card's second line: the episode in that format when its item is known, else the session's subtitle */
 export const episodeLine = (s: Pick<CastSession, 'isEpisode' | 'subtitle'>, it: Pick<Item, 'name' | 'parentIndexNumber' | 'indexNumber'> | null | undefined): string =>

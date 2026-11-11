@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { AIRPLAY_PIN2_WINDOW_MS, CAST_IDLE_TTL, castKeyTtl, hashToken, NEXT_OVERLAP_MS } from '../src/cast.js';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CastUnpinnedError, AIRPLAY_PIN2_WINDOW_MS, CAST_IDLE_TTL, castKeyTtl, castLookup, castNextTtlSeconds, createCast, hashToken, NEXT_OVERLAP_MS } from '../src/cast.js';
 import { revokeSessions } from '../src/devices.js';
 import { countLive, DRAIN_MS, getLive, setLive } from '../src/live.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
@@ -429,6 +429,7 @@ describe('cast session: stop report and the queued next episode', () => {
     psNext = null;
     const cur = await create();
     await report('start', cur.j.playSessionId);
+    await authz({ ct: cur.ct }); // the receiver fetched it: pinned (a queued token takes over that pin at mint)
     psNext = 'ps-next-0001';
     const nx = await create(admin, { next: true, after: cur.j.castId });
     psNext = null;
@@ -504,7 +505,7 @@ describe('cast session: stop report and the queued next episode', () => {
     const uid = await fresh();
     const { cur, nx } = await playingThenNext();
     const progress = () => call(admin, 'POST', '/api/playback/progress', { itemId: ID, playSessionId: cur.j.playSessionId, mediaSourceId: MS, positionTicks: 0, isPaused: false, playMethod: 'Transcode' });
-    const elsewhere = '203.0.113.78';
+    const elsewhere = '198.51.100.1'; // the receiver: the address the predecessor is pinned to (a queued token is pinned to it at mint)
     expect((await authz({ ct: nx.ct, client: elsewhere })).statusCode).toBe(200);
     skipClock(170_000);
     await progress();
@@ -539,7 +540,7 @@ describe('cast session: stop report and the queued next episode', () => {
   it('next: used concurrently while the predecessor plays: refused once the 180 s overlap is over, never counted twice', async () => {
     const uid = await fresh();
     const { cur, nx } = await playingThenNext();
-    const elsewhere = { ct: nx.ct, client: '203.0.113.77' };
+    const elsewhere = { ct: nx.ct, client: '198.51.100.1' }; // the predecessor's pin
     const progress = () => call(admin, 'POST', '/api/playback/progress', { itemId: ID, playSessionId: cur.j.playSessionId, mediaSourceId: MS, positionTicks: 0, isPaused: false, playMethod: 'Transcode' });
     expect((await authz(elsewhere)).statusCode).toBe(200);
     skipClock(NEXT_OVERLAP_MS - 10_000);
@@ -852,5 +853,277 @@ describe('cast: own receiver and its report token', () => {
       await rep(`${j.report.slice(0, -2)}xx`, 'progress');
       expect(lines.join('\n')).not.toContain(j.report.split('.')[1]);
     } finally { spies.forEach((s) => s.mockRestore()); }
+  });
+});
+
+describe('cast lookup (token-free, re-adoption and Diagnose)', () => {
+  const who = async (castId: string) => {
+    const idx = JSON.parse((await env.kv.get(`castidx:${await uid()}:${castId}`))!) as { hash: string };
+    const rec = JSON.parse((await env.kv.get(`cast:${idx.hash}`))!) as { userId: string; profileId: string; deviceId: string };
+    return { userId: rec.userId, profileId: rec.profileId, deviceId: rec.deviceId };
+  };
+  const uid = async () => (await call(admin, 'GET', '/api/me')).json().id as string;
+  let k = 0;
+  // every case its own play session: the fixed default one keeps a live record from earlier tests
+  beforeEach(() => { psNext = `ps-lookup-${++k}`; });
+  afterEach(() => { psNext = null; });
+
+  it('lookup is scoped to account, profile and approved device', async () => {
+    const { j } = await create();
+    const w = await who(j.castId);
+    const a = await castLookup(env.ctx, w, j.castId);
+    expect(a).toMatchObject({ castId: j.castId, itemId: ID, mediaSourceId: MS, playSessionId: j.playSessionId, expiresAt: j.expiresAt, runtimeTicks: runtime, via: 'chromecast', next: false, reported: false, title: 'Film', pins: 0, refused: { count: 0, families: [] } });
+    expect(a!.subtitles).toEqual([{ index: 2, language: 'ger', title: expect.any(String) }]);
+    expect(await castLookup(env.ctx, { ...w, userId: 'u2' }, j.castId)).toBeNull();
+    expect(await castLookup(env.ctx, { ...w, profileId: 'p2' }, j.castId)).toBeNull();
+    expect(await castLookup(env.ctx, { ...w, deviceId: 'd2' }, j.castId)).toBeNull();
+    expect(await castLookup(env.ctx, w, 'f'.repeat(32))).toBeNull();
+    // the poster token's handle is no cast
+    const imgCastId = hashToken(/\/media\/c\/([\w-]{43})\/Items\//.exec(j.imageUrl)![1]!).slice(0, 32);
+    expect(await castLookup(env.ctx, w, imgCastId)).toBeNull();
+    // revoked
+    expect((await call(admin, 'DELETE', `/api/cast/session/${j.castId}`)).statusCode).toBe(200);
+    expect(await castLookup(env.ctx, w, j.castId)).toBeNull();
+  });
+
+  it('lookup answer carries no token or URL', async () => {
+    const { j, ct } = await create();
+    const text = JSON.stringify(await castLookup(env.ctx, await who(j.castId), j.castId));
+    expect(text).not.toMatch(/media\/c\//);
+    expect(text).not.toContain(ct);
+    expect(text).not.toMatch(/https?:/);
+    expect(text).not.toContain(hashToken(ct)); // not even the stored hash, only the public 128-bit handle
+    expect(text).toContain(j.castId);
+    expect(text).not.toMatch(/\d+\.\d+\.\d+\.\d+/); // no IP literal either: the pin is only reported as a family
+  });
+
+  it('lookup names the pinned address family, never the address', async () => {
+    const { j, ct } = await create();
+    const w = await who(j.castId);
+    expect((await castLookup(env.ctx, w, j.castId))!.pinFamily).toBeNull();
+    expect((await authz({ ct, client: '192.0.2.10' })).statusCode).toBe(200);
+    const l = await castLookup(env.ctx, w, j.castId);
+    expect(l!.pinFamily).toBe('v4');
+    expect(JSON.stringify(l)).not.toContain('192.0.2');
+    // an IPv6 TV: the family is v6 and no part of the address is in the answer
+    const c2 = await create();
+    const w2 = await who(c2.j.castId);
+    expect((await authz({ ct: c2.ct, client: '2001:db8::5' })).statusCode).toBe(200);
+    const l2 = await castLookup(env.ctx, w2, c2.j.castId);
+    expect(l2!.pinFamily).toBe('v6');
+    expect(JSON.stringify(l2)).not.toContain('2001:db8');
+  });
+
+  it('lookup reports reported=true only after a start report', async () => {
+    const { j } = await create();
+    const w = await who(j.castId);
+    expect((await castLookup(env.ctx, w, j.castId))!.reported).toBe(false);
+    const r = await call(admin, 'POST', '/api/playback/start', { itemId: ID, playSessionId: j.playSessionId, mediaSourceId: MS, positionTicks: 0, isPaused: false, playMethod: 'Transcode' });
+    expect(r.statusCode).toBe(200);
+    expect((await castLookup(env.ctx, w, j.castId))!.reported).toBe(true);
+  });
+
+  it('refused counter stores families, never addresses', async () => {
+    const { j, ct } = await create();
+    const w = await who(j.castId);
+    expect((await authz({ ct, client: '192.0.2.10' })).statusCode).toBe(200);
+    expect((await castLookup(env.ctx, w, j.castId))).toMatchObject({ pins: 1, refused: { count: 0, families: [] } });
+    expect((await authz({ ct, client: '192.0.2.11' })).statusCode).toBe(401);
+    expect((await authz({ ct, client: '2001:db8::1' })).statusCode).toBe(401);
+    expect((await castLookup(env.ctx, w, j.castId))!.refused).toEqual({ count: 2, families: ['v4', 'v6'] });
+    const raw = (await env.kv.get(`castrefuse:${hashToken(ct)}`))!;
+    expect(raw).not.toContain('192.0.2');
+    expect(raw).not.toContain('2001');
+    const text = JSON.stringify(await castLookup(env.ctx, w, j.castId));
+    for (const a of ['192.0.2.10', '192.0.2.11', '2001:db8::1']) expect(text).not.toContain(a);
+    // gone with the token
+    await call(admin, 'DELETE', `/api/cast/session/${j.castId}`);
+    expect(await env.kv.get(`castrefuse:${hashToken(ct)}`)).toBeNull();
+  });
+
+  it('GET /api/cast/session/:castId returns the lookup for the caller\'s cast', async () => {
+    const { j } = await create();
+    const r = await call(admin, 'GET', `/api/cast/session/${j.castId}`);
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['cache-control']).toBe('no-store');
+    expect(r.json()).toMatchObject({ castId: j.castId, itemId: ID, via: 'chromecast', next: false, reported: false, pins: 0 });
+    expect((await call(admin, 'GET', '/api/cast/session/zz')).statusCode).toBe(400);
+    expect((await env.app.inject({ method: 'GET', url: `/api/cast/session/${j.castId}` })).statusCode).toBe(401);
+  });
+
+  it('GET /api/cast/session/:castId returns 404 for another device\'s cast', async () => {
+    const me = await uid();
+    const w = { userId: me, profileId: (await env.pool.query('select id from profiles where user_id=$1 and is_owner', [me])).rows[0].id as string, deviceId: 'other-device-lookup' };
+    await env.pool.query("insert into devices(user_id, device_id, label, approved) values ($1,$2,'x',true) on conflict do nothing", [me, w.deviceId]);
+    const c = await createCast(env.ctx, { ...w, itemId: ID, mediaSourceId: MS, playSessionId: 'ps-other-dev', maxBitrate: 1_000_000, title: 'Other' }, 3600);
+    expect((await castLookup(env.ctx, w, c.castId))!.title).toBe('Other');
+    const r = await call(admin, 'GET', `/api/cast/session/${c.castId}`);
+    expect(r.statusCode).toBe(404);
+    expect(r.json()).toEqual({ error: 'not_found' });
+    // 30 per minute
+    const codes: number[] = [];
+    for (let i = 0; i < 32; i++) codes.push((await env.app.inject({ method: 'GET', url: `/api/cast/session/${c.castId}`, cookies: admin.cookies, headers: { 'x-forwarded-for': '203.0.113.31' } })).statusCode);
+    expect(codes.filter((x) => x === 429).length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('cast: the queued next token is pinned at mint and its life follows its predecessor', () => {
+  const TV = '198.51.100.1'; // authz() pins with this address by default
+  const me = async () => (await call(admin, 'GET', '/api/me')).json().id as string;
+  const fresh = async () => {
+    const uid = await me();
+    await revokeSessions(env.ctx, uid);
+    admin = await env.login();
+    for (const k of [...await env.kv.keys(`play:${uid}:`), ...await env.kv.keys(`pstop:${uid}:`), ...await env.kv.keys('povl:'), ...await env.kv.keys('castnext:')]) await env.kv.del(k);
+    env.ctx.roles.admin!.maxStreams = 3;
+    return uid;
+  };
+  const role0 = { max: 0 };
+  beforeAll(() => { role0.max = env.ctx.roles.admin!.maxStreams; });
+  afterEach(() => { env.ctx.roles.admin!.maxStreams = role0.max; psNext = null; });
+  /** the playing cast (fetched by the TV: pinned), then its queued next episode */
+  const queued = async () => {
+    psNext = null;
+    const cur = await create();
+    expect((await authz({ ct: cur.ct, client: TV })).statusCode).toBe(200);
+    psNext = 'ps-next-1001';
+    const nx = await create(admin, { next: true, after: cur.j.castId });
+    psNext = null;
+    expect(nx.r.statusCode).toBe(200);
+    return { cur, nx };
+  };
+
+  it('castNextTtlSeconds caps at 6 h', () => {
+    const now = Date.now();
+    expect(castNextTtlSeconds(4000, now + 7 * 3600_000, now)).toBe(21600);
+    expect(castNextTtlSeconds(4000, now + 30 * 60_000, now)).toBe(4000);
+    expect(castNextTtlSeconds(4000, now + 3600_000 + 5000_000, now)).toBe(9000); // 4000 + (predecessor's remaining beyond its 1 h)
+  });
+
+  it('queued token is pinned to the predecessor\'s address at mint', async () => {
+    await fresh();
+    const { nx } = await queued();
+    expect(await env.kv.get(`castpin:${hashToken(nx.ct)}`)).toBe(TV); // before anybody fetched it
+    expect((await authz({ ct: nx.ct, client: '198.51.100.21' })).statusCode).toBe(401); // another address, also first
+    expect((await authz({ ct: nx.ct, client: '2001:db8::7' })).statusCode).toBe(401);
+    expect((await authz({ ct: nx.ct, client: TV })).statusCode).toBe(200); // the receiver, inside the overlap window
+    expect((await call(admin, 'GET', `/api/cast/session/${nx.j.castId}`)).json()).toMatchObject({ next: true, pins: 1, refused: { count: 2, families: ['v4', 'v6'] } });
+  });
+
+  it('unpinned predecessor refuses the queue', async () => {
+    await fresh();
+    const cur = await create(); // never fetched: no pin
+    const before = (await env.kv.keys('castidx:')).length;
+    const calls = env.jfCalls.filter((c) => c.path.endsWith('/PlaybackInfo')).length;
+    const r = await call(admin, 'POST', '/api/cast/session', { itemId: ID, next: true, after: cur.j.castId });
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'cast_unpinned' });
+    expect((await env.kv.keys('castidx:')).length).toBe(before);
+    expect(env.jfCalls.filter((c) => c.path.endsWith('/PlaybackInfo')).length).toBe(calls);
+    expect(await env.kv.keys('castnext:')).toEqual([]);
+    // once the TV fetched it, the same request works
+    await authz({ ct: cur.ct, client: TV });
+    expect((await call(admin, 'POST', '/api/cast/session', { itemId: ID, next: true, after: cur.j.castId })).statusCode).toBe(200);
+  });
+
+  it('queued token idle life follows the predecessor', async () => {
+    await fresh();
+    const { cur, nx } = await queued();
+    for (let i = 0; i < 4; i++) {
+      skipClock(11 * 60_000);
+      expect((await authz({ ct: cur.ct, client: TV })).statusCode).toBe(200); // the TV keeps fetching the playing episode
+    }
+    skipClock(2 * 60_000); // 46 min after the mint: the queued token alone would be idle-expired
+    expect((await authz({ ct: nx.ct, client: '198.51.100.21' })).statusCode).toBe(401); // still pinned
+    expect((await authz({ ct: nx.ct, client: TV })).statusCode).toBe(200);
+  });
+
+  it('without predecessor touches the queued token expires after 45 min', async () => {
+    await fresh();
+    const { nx } = await queued();
+    skipClock(46 * 60_000);
+    expect((await authz({ ct: nx.ct, client: TV })).statusCode).toBe(401);
+  });
+
+  it('a revoked queued token is never resurrected by its predecessor\'s touches', async () => {
+    await fresh();
+    const { cur, nx } = await queued();
+    expect((await call(admin, 'DELETE', `/api/cast/session/${nx.j.castId}`)).statusCode).toBe(200);
+    skipClock(60_000);
+    expect((await authz({ ct: cur.ct, client: TV })).statusCode).toBe(200);
+    expect(await env.kv.get(`cast:${hashToken(nx.ct)}`)).toBeNull();
+    expect(await env.kv.get(`castpin:${hashToken(nx.ct)}`)).toBeNull();
+    expect((await authz({ ct: nx.ct, client: TV })).statusCode).toBe(401);
+  });
+
+  it('a queued token never takes a pin of its own: no AirPlay queue, no re-pin after a lapse', async () => {
+    await fresh();
+    const { cur, nx } = await queued();
+    // the queue is Chromecast only
+    const r = await call(admin, 'POST', '/api/cast/session', { itemId: ID, next: true, via: 'airplay', after: cur.j.castId });
+    expect(r.statusCode).toBe(400);
+    // even a lapsed pin is not taken again by a foreign address
+    await env.kv.del(`castpin:${hashToken(nx.ct)}`);
+    expect((await authz({ ct: nx.ct, client: '203.0.113.66' })).statusCode).toBe(401);
+    expect(await env.kv.get(`castpin:${hashToken(nx.ct)}`)).toBeNull();
+    expect(await env.kv.get(`castpin2:${hashToken(nx.ct)}`)).toBeNull();
+  });
+
+  it('the queued poster token is pinned at mint too', async () => {
+    await fresh();
+    const { nx } = await queued();
+    const imgCt = /\/media\/c\/([\w-]{43})\/Items\//.exec(nx.j.imageUrl)![1]!;
+    expect(await env.kv.get(`castpin:${hashToken(imgCt)}`)).toBe(TV);
+    expect((await authz({ ct: imgCt, client: '203.0.113.66' })).statusCode).toBe(401);
+    expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200);
+    // its pin lives as long as the token: the TV is still served past the idle window (these are the poster's own touches;
+    // the predecessor-driven refresh is the next test)
+    skipClock(40 * 60_000);
+    expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200);
+    skipClock(10 * 60_000);
+    expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200);
+    expect((await authz({ ct: imgCt, client: '203.0.113.66' })).statusCode).toBe(401);
+  });
+
+  it('the queued poster keys are refreshed by the predecessor\'s touches', async () => {
+    await fresh();
+    const { cur, nx } = await queued();
+    const imgCt = /\/media\/c\/([\w-]{43})\/Items\//.exec(nx.j.imageUrl)![1]!;
+    expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200); // the poster's last own touch
+    // only the predecessor is fetched from here on: each of its touches refreshes the successor's poster keys
+    for (let i = 0; i < 4; i++) {
+      skipClock(11 * 60_000);
+      expect((await authz({ ct: cur.ct, client: TV })).statusCode).toBe(200);
+    }
+    skipClock(2 * 60_000); // 46 min after the poster's own touch: past its 45 min idle window without the refresh
+    expect((await authz({ ct: imgCt, client: TV })).statusCode).toBe(200);
+    expect((await authz({ ct: imgCt, client: '203.0.113.66' })).statusCode).toBe(401);
+    expect(await env.kv.get(`castpin:${hashToken(imgCt)}`)).toBe(TV);
+  });
+
+  it('createCast refuses a queued token whose predecessor has no pin (nothing minted)', async () => {
+    await fresh();
+    const cur = await create(); // never fetched
+    const idx = (await env.kv.keys('castidx:')).length;
+    const me0 = await me();
+    const w = await (async () => {
+      const i = JSON.parse((await env.kv.get(`castidx:${me0}:${cur.j.castId}`))!) as { hash: string };
+      const rec = JSON.parse((await env.kv.get(`cast:${i.hash}`))!) as { profileId: string; deviceId: string };
+      return { hash: i.hash, profileId: rec.profileId, deviceId: rec.deviceId };
+    })();
+    const base = { userId: me0, profileId: w.profileId, deviceId: w.deviceId, itemId: ID, mediaSourceId: MS, playSessionId: 'ps-x-1', maxBitrate: 1_000_000, afterPs: cur.j.playSessionId };
+    await expect(createCast(env.ctx, base, 3600, false, { hash: w.hash })).rejects.toBeInstanceOf(CastUnpinnedError);
+    await expect(createCast(env.ctx, base, 3600)).rejects.toBeInstanceOf(CastUnpinnedError);
+    expect((await env.kv.keys('castidx:')).length).toBe(idx);
+  });
+
+  it('the queued token\'s cap follows the predecessor\'s remaining time', async () => {
+    await fresh();
+    const { cur, nx } = await queued();
+    const a = JSON.parse((await env.kv.get(`cast:${hashToken(cur.ct)}`))!) as { exp: number };
+    const b = JSON.parse((await env.kv.get(`cast:${hashToken(nx.ct)}`))!) as { exp: number };
+    expect(b.exp).toBeGreaterThan(a.exp);
+    expect(b.exp - nx.j.expiresAt).toBe(0);
+    expect(b.exp - Date.now()).toBeLessThanOrEqual(6 * 3600_000);
   });
 });

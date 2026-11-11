@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { MOVIE } from '../mocks/fixtures.js';
-import { available, castOn, castSessions, mockHls, picks, srcAtPick, stubAirPlay, wireless } from '../mocks/cast.js';
+import { available, castOn, castSessions, mockHls, picks, playOnAirPlay, playOnButton, playOnSheet, srcAtPick, stubAirPlay, wireless } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
 import type { Page } from '@playwright/test';
@@ -13,20 +13,21 @@ const hlsPlaying = async (page: Page) => {
   await page.waitForFunction(() => (document.querySelector('video')?.currentTime ?? 0) > 0.5);
 };
 
-test('AirPlay: the button appears once Safari reports a receiver and opens the system picker (with the token URL on the element)', async ({ page, api: _api }) => {
+test('AirPlay: "Play on" appears once Safari reports a receiver; its AirPlay row opens the system picker (with the token URL on the element)', async ({ page, api: _api }) => {
   await stubAirPlay(page);
   await mockPlayer(page);
   await castOn(page);
   await castSessions(page);
   await page.goto('/watch/' + MOVIE.id);
   await videoReady(page);
-  const btn = page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' });
+  const btn = playOnButton(page);
   await expect.poll(() => page.evaluate(() => document.querySelector('video')!.getAttribute('x-webkit-airplay'))).toBe('allow');
   await expect(btn).toHaveCount(0); // no receiver yet
   await available(page);
   await page.locator('.stage').hover();
   await expect(btn).toBeVisible();
   await btn.click();
+  await playOnSheet(page).getByRole('button', { name: /^AirPlay …/ }).click();
   await expect.poll(() => picks(page)).toBe(1);
   expect(await srcAtPick(page)).toContain('#airplay');
 });
@@ -40,7 +41,7 @@ test('AirPlay: no button while the server has casting off (same gate as Chromeca
   await available(page);
   await page.locator('.stage').hover();
   await expect(page.locator('.ctl')).toBeVisible();
-  await expect(page.getByTestId('airplay')).toHaveCount(0);
+  await expect(playOnButton(page)).toHaveCount(0);
   expect(await page.evaluate(() => document.querySelector('video')!.getAttribute('x-webkit-airplay'))).toBeNull();
 });
 
@@ -58,9 +59,9 @@ test('Safari-like playback keeps hls.js (MSE + bandwidth samples) until the AirP
   // every fragment came through hls.js' loader (fetch/xhr -> FRAG_LOADED feeds the bandwidth estimate), none as a native media load
   expect(segTypes.length).toBeGreaterThan(2);
   expect(segTypes.every((t) => t === 'xhr' || t === 'fetch')).toBe(true);
-  // the AirPlay button is there, but nothing switched away from hls.js on its own
+  // "Play on" is there, but nothing switched away from hls.js on its own
   await page.locator('.stage').hover();
-  await expect(page.getByTestId('airplay')).toBeVisible();
+  await expect(playOnButton(page)).toBeVisible();
   expect(await src(page)).toMatch(/^blob:/);
 });
 
@@ -76,7 +77,7 @@ test('AirPlay: tap -> cast token URL on the element FIRST, then the picker; TV -
   expect(await src(page)).toMatch(/^blob:/);
   await page.evaluate(() => { document.querySelector('video')!.currentTime = 12; });
   await page.locator('.stage').hover();
-  await page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' }).click();
+  await playOnAirPlay(page);
   await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
   // the TV was handed the token URL, never the MSE blob or the cookie URL
   expect(await picks(page)).toBe(1);
@@ -102,7 +103,7 @@ test('AirPlay: tap -> cast token URL on the element FIRST, then the picker; TV -
   await expect(log).toContainText('sustained off -> stop');
   const text = (await log.textContent()) ?? '';
   for (const bad of ['p1test', '/media/', 'c'.repeat(32), '127.0.0.1', 'blob:']) expect(text).not.toContain(bad);
-  await page.getByRole('button', { name: 'Leeren' }).click();
+  await page.locator('.page > .row').getByRole('button', { name: 'Leeren' }).click();
   await expect(page.getByTestId('airplay-log-empty')).toBeVisible();
 });
 
@@ -116,8 +117,7 @@ test('AirPlay: picker did not lead to a TV yet -> prompt "Fernseher auswählen" 
   await hlsPlaying(page);
   await available(page);
   await page.locator('.stage').hover();
-  const btn = page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' });
-  await btn.click();
+  await playOnAirPlay(page);
   const prompt = page.getByTestId('airplay-ready');
   await expect(prompt).toContainText('Jetzt den Fernseher in der Liste auswählen');
   expect(await srcAtPick(page)).toContain('#airplay');
@@ -125,7 +125,7 @@ test('AirPlay: picker did not lead to a TV yet -> prompt "Fernseher auswählen" 
   expect(await picks(page)).toBe(2);
   expect(await srcAtPick(page)).toContain('#airplay');
   await page.locator('.stage').hover();
-  await btn.click(); // the AirPlay button does the same while waiting: picker, no new token
+  await playOnAirPlay(page); // the AirPlay row does the same while waiting: picker, no new token
   expect(await picks(page)).toBe(3);
   await wireless(page, true);
   await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
@@ -145,7 +145,7 @@ test.describe('AirPlay token failure', () => {
     await hlsPlaying(page);
     await available(page);
     await page.locator('.stage').hover();
-    await page.getByRole('button', { name: 'Auf AirPlay-Gerät abspielen' }).click();
+    await playOnAirPlay(page);
     await expect(page.locator('.toast')).toContainText('Maximal 1 gleichzeitiger Stream erlaubt.');
     await expect.poll(() => src(page)).toMatch(/^blob:/); // hls.js again
     expect(sessions).toHaveLength(1);
@@ -184,5 +184,5 @@ test('Chromium without the AirPlay API: no AirPlay button', async ({ page, api: 
   await available(page);
   await page.locator('.stage').hover();
   await expect(page.locator('.ctl')).toBeVisible();
-  await expect(page.getByTestId('airplay')).toHaveCount(0);
+  await expect(playOnButton(page)).toHaveCount(0);
 });

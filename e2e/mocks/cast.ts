@@ -53,36 +53,56 @@ export const wireless = (page: Page, on: boolean) => page.evaluate((on) => {
   document.querySelector('video')!.dispatchEvent(new Event('webkitcurrentplaybacktargetiswirelesschanged'));
 }, on);
 
+/** the castId the fake server gives a queued next episode's token */
+export const NEXT_CAST_ID = 'e'.repeat(32);
 /** POST /api/cast/session answers with a token URL (a test file the phone can play); `fail` -> 429 max_streams */
 export async function castSessions(page: Page, o: { fail?: () => boolean; castId?: string; report?: string } = {}) {
   const sessions: Array<Record<string, unknown>> = [];
   const deleted: string[] = [];
   await page.route('**/api/cast/session', (r) => {
-    sessions.push(r.request().postDataJSON());
+    const body = r.request().postDataJSON() as Record<string, unknown>;
+    sessions.push(body);
     if (o.fail?.()) return r.fulfill({ status: 429, json: { error: 'max_streams', max: 1 } });
     return r.fulfill({ json: {
-      castId: o.castId ?? 'c'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, playSessionId: 'air-ps', mediaSourceId: 'ms', startTime: 0,
+      // a queued next episode's token (`next: true`) has its own handle, as on the server: its revoke is not the playing one's
+      castId: body?.next ? NEXT_CAST_ID : o.castId ?? 'c'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, playSessionId: 'air-ps', mediaSourceId: 'ms', startTime: 0,
       contentUrl: `${new URL(page.url()).origin}/media/p1test.webm#airplay`, contentType: 'application/x-mpegURL', hlsSegmentFormat: 'ts', title: 'Film', subtitles: [],
       ...(o.report ? { report: o.report } : {}),
     } });
   });
-  await page.route('**/api/cast/session/*', (r) => { deleted.push(r.request().url().split('/').pop()!); return r.fulfill({ json: { ok: true } }); });
+  // GET = the token-free lookup of the live session (a reloaded page re-adopts the TV's media with it); DELETE = a revoke
+  await page.route('**/api/cast/session/*', (r) => {
+    if (r.request().method() === 'GET') {
+      const b = sessions.at(-1);
+      if (!b) return r.fulfill({ status: 404, json: { error: 'not_found' } });
+      return r.fulfill({ json: {
+        castId: o.castId ?? 'c'.repeat(32), itemId: b.itemId, mediaSourceId: 'ms', playSessionId: 'air-ps', expiresAt: Date.now() + 3 * 3600_000, via: 'chromecast', next: false, reported: true,
+        title: 'Film', subtitles: [], pins: 1, pinFamily: 'v4', refused: { count: 0, families: [] },
+      } });
+    }
+    deleted.push(r.request().url().split('/').pop()!);
+    return r.fulfill({ json: { ok: true } });
+  });
   return { sessions, deleted };
 }
 export const picks = (page: Page) => page.evaluate(() => (window as unknown as { __picks: number }).__picks);
 export const srcAtPick = (page: Page) => page.evaluate(() => (window as unknown as { __srcAtPick: string }).__srcAtPick);
 
 /** runs in the page as the Cast sender SDK (same shape as `fakeSdk()` in web/src/lib/cast.test.ts) */
-function castSdkScript() {
+function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask'; pick?: boolean; playAfter?: number } = {}) {
   type Rec = { args: unknown[] } & Record<string, unknown>;
   const w = window as unknown as Record<string, unknown> & { __castLoads: unknown[]; __castCalls: string[]; __castOptions: unknown; __castMsgs: unknown[]; __castLoadFails?: boolean; __onGCastApiAvailable?: (ok: boolean) => void; chrome?: Record<string, unknown> };
   w.__castLoads = []; w.__castCalls = []; w.__castOptions = null; w.__castMsgs = [];
   const ctxListeners = new Map<string, (e: { castState?: string; sessionState?: string }) => void>();
   let anyChange: () => void = () => undefined;
-  const player = { isConnected: false, isPaused: true, isMediaLoaded: false, currentTime: 0, duration: 0, volumeLevel: 1, isMuted: false, playerState: null as string | null, mediaInfo: null };
+  const player = { isConnected: false, isPaused: true, isMediaLoaded: false, currentTime: 0, duration: 0, volumeLevel: 1, isMuted: false, playerState: null as string | null, mediaInfo: null as { contentId: string; customData: unknown } | null };
   const change = (p: Partial<typeof player>) => { Object.assign(player, p); anyChange(); };
+  // `survive`: the receiver keeps its media when the page reloads (kept in localStorage); `join` = the SDK auto-joins it, `ask` = only requestSession() does
+  const RX = '__fakeReceiver';
+  type Rx = { contentId: string; customData: unknown; currentTime: number; duration: number; paused: boolean };
+  const saveRx = () => { if (opts.survive && player.isMediaLoaded && player.mediaInfo) { const m = player.mediaInfo; localStorage.setItem(RX, JSON.stringify({ contentId: m.contentId, customData: m.customData ?? null, currentTime: player.currentTime, duration: player.duration, paused: player.isPaused })); } };
   // the receiver plays: its clock advances (4 updates per second, like the SDK's ANY_CHANGE stream)
-  setInterval(() => { if (player.isConnected && player.isMediaLoaded && !player.isPaused) change({ currentTime: player.currentTime + 0.25 }); }, 250);
+  setInterval(() => { if (player.isConnected && player.isMediaLoaded && !player.isPaused) { change({ currentTime: player.currentTime + 0.25 }); saveRx(); } }, 250);
   const controller = {
     addEventListener: (_t: string, fn: () => void) => { anyChange = fn; },
     playOrPause() { w.__castCalls.push('playOrPause'); change({ isPaused: !player.isPaused, playerState: player.isPaused ? 'PLAYING' : 'PAUSED' }); },
@@ -91,14 +111,40 @@ function castSdkScript() {
     setVolumeLevel() { w.__castCalls.push(`volume:${player.volumeLevel}`); change({}); },
     muteOrUnmute() { w.__castCalls.push('muteOrUnmute'); change({ isMuted: !player.isMuted }); },
   };
-  const mediaSession = { editTracksInfo(_r: unknown, ok: () => void) { w.__castCalls.push('editTracksInfo'); ok(); } };
+  // the receiver queue (opt-in: without it `new QueueItem` throws and the engine's queue request counts as refused)
+  const queued: Array<{ itemId: number; media: { contentId: unknown } }> = [];
+  let queueId = 1;
+  const mediaSession = {
+    editTracksInfo(_r: unknown, ok: () => void) { w.__castCalls.push('editTracksInfo'); ok(); },
+    ...(opts.queue ? {
+      currentItemId: 0,
+      queueInsertItems(req: Rec, ok: () => void) {
+        for (const it of req.args[0] as Rec[]) queued.push({ itemId: queueId++, media: { contentId: (it.args[0] as Rec).args[0] } });
+        w.__castCalls.push('queueInsert');
+        ok();
+      },
+      queueRemoveItems(req: Rec, ok: () => void) {
+        const id = (req.args[0] as number[])[0]!;
+        const i = queued.findIndex((q) => q.itemId === id);
+        if (i >= 0) queued.splice(i, 1);
+        w.__castCalls.push(`queueRemove:${id}`);
+        ok();
+      },
+      queueNext(ok: () => void) { w.__castCalls.push('queueNext'); ok(); },
+    } : {}),
+  };
+  // like the SDK, the playing item comes first (`currentItemId` 0), the queued ones after it (live: read on every status update)
+  if (opts.queue) Object.defineProperty(mediaSession, 'items', { get: () => [{ itemId: 0, media: { contentId: String((w.__castLoads.at(-1) as Rec | undefined)?.contentId ?? '') } }, ...queued] });
   const session = {
     getCastDevice: () => ({ friendlyName: 'Wohnzimmer-TV' }),
     async loadMedia(req: Rec): Promise<string | undefined> {
       const media = req.args[0] as Rec;
       w.__castLoads.push({ contentId: media.args[0], contentType: media.args[1], currentTime: req.currentTime, activeTrackIds: req.activeTrackIds ?? [], customData: media.customData ?? null });
       if (w.__castLoadFails) throw new Error('LOAD_FAILED'); // the receiver cannot play it
-      setTimeout(() => change({ isMediaLoaded: true, isPaused: false, playerState: 'PLAYING', currentTime: Number(req.currentTime) || 0, duration: Number(media.duration) || 600 }), 0);
+      setTimeout(() => {
+        change({ isMediaLoaded: true, isPaused: false, playerState: 'PLAYING', currentTime: Number(req.currentTime) || 0, duration: Number(media.duration) || 600, ...(opts.survive ? { mediaInfo: { contentId: String(media.args[0]), customData: media.customData ?? null } } : {}) });
+        saveRx();
+      }, opts.playAfter ?? 0);
       return undefined;
     },
     getMediaSession: () => mediaSession,
@@ -111,7 +157,13 @@ function castSdkScript() {
     current: null as typeof session | null,
     setOptions(o: unknown) { w.__castOptions = o; },
     addEventListener: (t: string, fn: (e: { castState?: string; sessionState?: string }) => void) => { ctxListeners.set(t, fn); },
-    async requestSession(): Promise<string | undefined> { w.__castCalls.push('requestSession'); return 'cancel'; },
+    async requestSession(): Promise<string | undefined> {
+      w.__castCalls.push('requestSession');
+      if (opts.pick) { start(); return undefined; }
+      if (opts.survive !== 'ask' || !stored()) return 'cancel';
+      join();
+      return undefined;
+    },
     getCurrentSession() { return context.current; },
     endCurrentSession() { w.__castCalls.push('endCurrentSession'); setTimeout(end, 0); },
   };
@@ -132,6 +184,7 @@ function castSdkScript() {
       DEFAULT_MEDIA_RECEIVER_APP_ID: 'CC1AD845',
       MediaInfo: class extends R {}, LoadRequest: class extends R {}, MovieMediaMetadata: class extends R {}, TvShowMediaMetadata: class extends R {},
       Track: class extends R {}, EditTracksInfoRequest: class extends R {},
+      ...(opts.queue ? { QueueItem: class extends R {}, QueueInsertItemsRequest: class extends R {}, QueueRemoveItemsRequest: class extends R {} } : {}),
       StreamType: { BUFFERED: 'BUFFERED' }, HlsSegmentFormat: { TS: 'ts' }, MetadataType: { MOVIE: 1, TV_SHOW: 2 }, TrackType: { TEXT: 'TEXT' }, TextTrackType: { SUBTITLES: 'SUBTITLES' },
     },
   };
@@ -141,7 +194,19 @@ function castSdkScript() {
     fire('caststatechanged', { castState: 'CONNECTED' });
     fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
   }
+  const stored = (): Rx | null => { try { return JSON.parse(localStorage.getItem(RX) ?? 'null') as Rx | null; } catch { return null; } };
+  /** the page joins the TV that still plays what it stored */
+  function join() {
+    const rx = stored();
+    if (!rx) return;
+    context.current = session;
+    Object.assign(player, { isConnected: true, isMediaLoaded: true, isPaused: rx.paused, playerState: rx.paused ? 'PAUSED' : 'PLAYING', currentTime: rx.currentTime, duration: rx.duration, mediaInfo: { contentId: rx.contentId, customData: rx.customData } });
+    fire('caststatechanged', { castState: 'CONNECTED' });
+    fire('sessionstatechanged', { sessionState: 'SESSION_RESUMED' });
+    anyChange();
+  }
   function end() {
+    localStorage.removeItem(RX);
     context.current = null;
     Object.assign(player, { isConnected: false, isMediaLoaded: false, isPaused: true, playerState: null });
     fire('caststatechanged', { castState: 'NOT_CONNECTED' });
@@ -156,6 +221,7 @@ function castSdkScript() {
   w.__castFake = { start, end, finish, nearEnd };
   w.__onGCastApiAvailable?.(true);
   fire('caststatechanged', { castState: 'NOT_CONNECTED' }); // a receiver is around
+  if (opts.survive === 'join') join();
 }
 
 /**
@@ -163,10 +229,12 @@ function castSdkScript() {
  * `calls()` = controller / context calls (`playOrPause`, `seek:<sec>`, `endCurrentSession`, ...); `start()` = the user picked
  * `Wohnzimmer-TV`, `end()` = the session ended, `nearEnd()` = the receiver jumps to the last seconds, `finish()` = the media
  * finished on the receiver (the end only counts as finished after `nearEnd()`); `failLoads()` = every
- * later `loadMedia` rejects (the receiver cannot play the title).
+ * later `loadMedia` rejects (the receiver cannot play the title). `survive`: the TV keeps its media over a page reload;
+ * `'join'` = the SDK auto-joins it (SESSION_RESUMED), `'ask'` = nothing joins until `requestSession()` (the Reconnect button). `queue: true`: the receiver accepts queued titles
+ * (`queueInsert`, `queueRemove:<id>`, `queueNext` show up in `calls()`); without it the engine's queue request is refused.
  */
-export async function fakeCastSdk(page: Page) {
-  await page.route('https://www.gstatic.com/cv/js/sender/**', (r) => r.fulfill({ contentType: 'text/javascript', body: `(${castSdkScript.toString()})();` }));
+export async function fakeCastSdk(page: Page, o: { queue?: boolean; survive?: 'join' | 'ask'; pick?: boolean; playAfter?: number } = {}) {
+  await page.route('https://www.gstatic.com/cv/js/sender/**', (r) => r.fulfill({ contentType: 'text/javascript', body: `(${castSdkScript.toString()})(${JSON.stringify({ queue: Boolean(o.queue), ...(o.survive ? { survive: o.survive } : {}), ...(o.pick ? { pick: true } : {}), ...(o.playAfter ? { playAfter: o.playAfter } : {}) })});` }));
   type Fake = { start(): void; end(): void; finish(): void; nearEnd(): void };
   const ready = () => page.waitForFunction(() => Boolean((window as unknown as { __castFake?: unknown }).__castFake));
   const run = async (fn: keyof Fake) => {
@@ -185,4 +253,16 @@ export async function fakeCastSdk(page: Page) {
     nearEnd: () => run('nearEnd'),
     failLoads: () => page.evaluate(() => { (window as unknown as { __castLoadFails: boolean }).__castLoadFails = true; }),
   };
+}
+
+/** the player's "Play on" button (desktop and phone top bar) */
+export const playOnButton = (page: Page) => page.getByRole('button', { name: 'Abspielen auf …' });
+/** the open sheet */
+export const playOnSheet = (page: Page) => page.getByRole('dialog', { name: 'Abspielen auf' });
+/** AirPlay from the player: "Play on" opens the sheet, its AirPlay row runs the token-then-picker flow */
+export async function playOnAirPlay(page: Page, how: 'click' | 'tap' = 'click') {
+  const open = playOnButton(page);
+  await (how === 'tap' ? open.tap() : open.click());
+  const row = playOnSheet(page).getByRole('button', { name: /^AirPlay …/ });
+  await (how === 'tap' ? row.tap() : row.click());
 }

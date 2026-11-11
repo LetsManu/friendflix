@@ -25,6 +25,7 @@ async function setup(page: Page, o: { stereo?: boolean; last?: unknown; abilitie
     if (stereo) localStorage.setItem('ff_audio_stereo', '1');
     if (last) localStorage.setItem('ff.playTimings', JSON.stringify([last]));
   }, { stereo: Boolean(o.stereo), last: o.last === undefined ? LAST : o.last });
+  await page.route('**/api/cast/config', (r) => r.fulfill({ json: { enabled: false } })); // the casting section above asks for it
   await page.route('**/api/playback/abilities', (r) => (o.status ? r.fulfill({ status: o.status, json: { error: 'x' } }) : r.fulfill({ json: o.abilities ?? { hevc: 'ready', surround: true } })));
 }
 
@@ -70,7 +71,7 @@ test.describe('/diagnose: Bild und Ton', () => {
     await page.goto('/diagnose');
     await expect(page.getByTestId('av-table').getByRole('row', { name: /Letzte Wiedergabe/ })).toContainText('Bild:');
     await page.getByRole('button', { name: 'Werte kopieren' }).click();
-    await expect(page.locator('.note')).toContainText(/Kopiert|Kopieren nicht möglich/);
+    await expect(page.locator('.page > .note')).toContainText(/Kopiert|Kopieren nicht möglich/);
     const text = await page.evaluate(() => navigator.clipboard.readText());
     expect(text).toContain('Letzte Wiedergabe: Bild: HEVC (H.265) unverändert weitergegeben · Ton: Dolby Digital Plus 5.1 weitergegeben');
     expect(text).toContain('Tonausgabe: Stereo (deine Wahl)');

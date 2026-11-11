@@ -3,7 +3,7 @@
 <script lang="ts">
   import type Hls from 'hls.js';
   import { createEventDispatcher, onDestroy, onMount, tick as tickDom } from 'svelte';
-  import { api, ApiError, backdrop, cachedItem, fmtClock, getActiveProfile, getCsrf, HERO_WIDTHS, img, secToTicks, srcset, ticksToSec } from '#lib/api';
+  import { api, ApiError, backdrop, fmtClock, getActiveProfile, getCsrf, HERO_WIDTHS, img, secToTicks, srcset, ticksToSec } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { get } from 'svelte/store';
   import { prefs, prefsLoaded, saveAudioFx } from '#lib/stores';
@@ -27,8 +27,9 @@
   import { hlsConfig, loadHls } from '#lib/player/hls';
   import { airPlaySupported, createAirPlay, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
   import { airLog } from '#lib/player/airplayLog';
-  import { nextSecondsLeft } from '#lib/cast/bar';
-  import { castBackdrops, castThumbs, deviceLabel, episodeLine, playingLine } from '#lib/cast/remoteview';
+  import RemoteScreen from '#lib/cast/RemoteScreen.svelte';
+  import PlayOnSheet from '#lib/cast/PlayOnSheet.svelte';
+  import { episodeCode } from '#lib/cast/bar';
   import { AbrController, LADDER, autoBps, isOriginalBps, rungKey, type Decision } from '#lib/player/abr';
   import { BandwidthEstimator, loadStoredEstimate, storeEstimate } from '#lib/player/bandwidth';
   import QualityChip from '#lib/player/QualityChip.svelte';
@@ -50,7 +51,7 @@
   import { frameShown, snapshotFrame, swapAllowed } from '#lib/player/freshvideo';
   import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
-  import { castBody, castConfigEnabled, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastInfo } from '#lib/cast';
+  import { castBody, castConfigEnabled, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastEvent, type CastInfo } from '#lib/cast';
   import { CAST_VIDEO_ATTR, castEngine, castSession, type CastSession } from '#lib/cast/engine';
   import type { Item } from '#lib/api';
   import { SEEK_COMMIT_MS, seekCancel, seekCommit, seekStep, type SeekPreview } from '#lib/player/tvSeek';
@@ -305,7 +306,7 @@
   $: tvSub = item?.seriesName && item.indexNumber !== undefined && item.indexNumber !== null
     ? $t('tv.player.episode', { s: item.parentIndexNumber ?? 1, e: item.indexNumber, name: item.name }) : barSub;
   /** desktop and phone pause screens (spec 2026-11-08 §3): 5 s after the pause or the last input, unless something else is on screen */
-  $: pauseBlocked = ctlFocus || menu !== '' || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
+  $: pauseBlocked = ctlFocus || menu !== '' || playOnOpen || scrubbing || partyMode || remote || Boolean(error) || reconnecting > 0 || locked || help || subDlg || showXray || peek || credits !== 'off';
   $: deskPause = desk && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked });
   $: phonePause = phoneUi && paused && started && deskPauseDue({ pausedAt, lastActive, now: tick, blocked: pauseBlocked || cardOn });
   $: phoneMotion = phoneUi && motionAllowed();
@@ -343,7 +344,7 @@
     if (left) credOutT = setTimeout(() => (credOut = false), phoneUi ? 800 : 300);
   }
   // phones: an open panel (a menu, Cast & info, the party host's settings) keeps the controls up (spec 2026-11-08 §1)
-  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || ctlFocus || menu !== '' || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
+  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || ctlFocus || menu !== '' || playOnOpen || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
@@ -754,7 +755,7 @@
     handedOver();
   }
   /** the engine owns Chromecast session end / media end; a picked device starts a cast unless one is already handed over */
-  function handleCast(e: 'session-start' | 'session-end' | 'media-end') {
+  function handleCast(e: CastEvent) {
     if (e === 'session-start' && !remote) void startCast();
   }
 
@@ -776,7 +777,8 @@
    */
   function attachToCast(): boolean {
     const s = get(castSession);
-    if (partyMode || !s) return false;
+    // a detached cast (known only from the hint) has no remote: this page plays by itself, the bar offers Reconnect
+    if (partyMode || !s || s.state === 'detached') return false;
     handedOver();
     if (s.itemId !== itemId) void castEngine.playOnTv(itemId, startAt);
     else if (startAt !== undefined) castEngine.seek(startAt);
@@ -786,24 +788,29 @@
 
   /** "change device": the system picker of the controller the engine owns (from the tap); a lost route: the engine reconnects */
   function changeAirPlay() { if ($castSession?.state === 'reconnect') castEngine.reconnect(); else castEngine.pick(); }
-  /** the cast screen's device chip: AirPlay's picker / reconnect; Chromecast: the browser's cast dialog (other device, stop) */
-  function chipTap() { if (tvSession?.kind === 'airplay') changeAirPlay(); else void requestCastSession(); }
+  // ---- "Play on" (lib/cast/PlayOnSheet.svelte): the one entry for Chromecast, AirPlay and this device; the remote screen's device chip opens it too ----
+  let playOnOpen = false, playOnTrigger: HTMLElement | null = null;
+  function openPlayOn(el?: HTMLElement | null) { menu = ''; playOnTrigger = el ?? (document.activeElement as HTMLElement | null); playOnOpen = true; wake(); }
+  /** "Continue here": the cast stopped and the page plays on; the focus goes to the player instead of the body */
+  function onContinued() {
+    playOnOpen = false; wake();
+    let tries = 0;
+    const land = () => {
+      const el = stage?.querySelector<HTMLElement>('[data-testid="playon"], .ctl button, .ovl button');
+      if (el) { el.focus({ preventScroll: true }); return; }
+      if (++tries < 30 && !destroyed) setTimeout(land, 50); else if (stage) { stage.tabIndex = -1; stage.focus({ preventScroll: true }); }
+    };
+    void tickDom().then(land);
+  }
+  /** the AirPlay row: the token-then-picker flow of the controller (the engine's picker while AirPlay already casts) */
+  function airRow() { if (tvSession?.kind === 'airplay') changeAirPlay(); else air?.pick(); }
+  $: airAvail = Boolean(air && (airState.available || airOn || airState.ready || airState.busy)) || tvSession?.kind === 'airplay';
+  /** something to choose from: Cast devices in reach or an AirPlay target (the remote screen has its own chip) */
+  $: playOnShown = !partyMode && !remote && (Boolean($castState.available || $castState.connected) || airAvail);
+  $: playOnLabel = $t('player.castPicker.open');
+  $: playOnEp = item?.type === 'Episode' || item?.seriesId ? episodeCode({ subtitle: '' }, item, $t) : '';
 
-  // ---- the cast screen (remote): what plays on the TV, its artwork (fallback chain), the next episode with its countdown ----
-  let bgI = 0, thI = 0, artFor = '';
-  $: bgs = tvSession ? castBackdrops(tvSession) : [];
-  $: thumbs = tvSession ? castThumbs(tvSession) : [];
-  $: if ((tvSession?.itemId ?? '') !== artFor) { artFor = tvSession?.itemId ?? ''; bgI = 0; thI = 0; }
-  /** from the credits on (the TV still plays) or after the end: the engine's offer, the card turns into it */
-  $: tvNext = tvSession && (tvSession.state === 'playing' || tvSession.state === 'ended') ? tvSession.next ?? null : null;
-  let tvNow = Date.now(), tvTick: ReturnType<typeof setInterval> | undefined;
-  $: tvCounting = tvNext?.startsAt != null;
-  $: if (tvCounting && !tvTick) { tvNow = Date.now(); tvTick = setInterval(() => (tvNow = Date.now()), 250); } else if (!tvCounting && tvTick) { clearInterval(tvTick); tvTick = undefined; }
-  $: tvSecs = tvNext ? nextSecondsLeft(tvNext.startsAt, tvNow) : null;
-  /** the card's episode line in the header's format ("S1:E1 · Name"; the watch page put the item in the cache) */
-  $: tvEpisode = tvSession ? episodeLine(tvSession, cachedItem(tvSession.itemId)) : '';
-  /** phone: card and play / ±10 form one group, centred between the device row and the progress bar (the card's height decides) */
-  let rCardH = 0;
+  // ---- the cast screen (remote): lib/cast/RemoteScreen.svelte (it reads the engine's session; the Player keeps the page's side of it) ----
 
   /** while this Player is still mounted: mirror the engine's session; a lost / failed one plays on locally */
   let lastTv: CastSession | null = null;
@@ -816,13 +823,12 @@
     paused = s.paused; waiting = s.buffering || s.state === 'connecting';
     audioIndex = s.audioIndex; subIndex = s.subIndex;
     lastRouteOn = s.kind === 'airplay' && Boolean(get(castEngine.airState)?.active);
-    if (s.state === 'reconnect') {
-      // AirPlay with the route still on the TV (a failed token request): local hls.js (MSE) would send the TV the sound only;
-      // stay its remote ("change device" / the bar retries); a lost route (or Chromecast): the phone plays on instead
-      if (lastRouteOn) { airLog('engine', { src: video?.src, state: 'reconnect', note: 'route still wireless: stays remote' }); lastTv = s; return; }
+    // reconnect / failed: this page stays the TV's remote, which shows "Connection lost" / "Could not play" with its own Reconnect /
+    // Play here (the latter drops the session; the title then plays on here, from the TV's position)
+    if (s.state === 'reconnect' && s.kind === 'airplay' && !lastRouteOn) {
+      // the route is off (this device picked in Safari's picker, or the TV gone for good): AirPlay ends, the page plays on
       queueMicrotask(() => void castEngine.stop()); return;
     }
-    if (s.state === 'failed') { queueMicrotask(() => castEngine.release()); return; }
     lastTv = s;
   }
   $: followTv($castSession);
@@ -1229,9 +1235,6 @@
     if (i < 0) i = SPEEDS.reduce((best, r, k) => (Math.abs(r - rate) < Math.abs(SPEEDS[best]! - rate) ? k : best), 0);
     setRate(SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, i + delta))]!, true);
   }
-  // ---- Chromecast entry in the "Mehr" menu (the SDK loads lazily, Chromium only) ----
-  function castClick() { menu = ''; if (!$castState.connected) void requestCastSession(); else if (casting) void castEngine.stop(); else if (!remote) void startCast(); }
-  $: castLabel = casting ? $t('player.cast.stopOn', { name: $castState.deviceName || 'Chromecast' }) : $castState.connected ? $t('player.cast.playOn', { name: $castState.deviceName || 'Chromecast' }) : $t('player.cast.castTo');
   $: modeLabel = casting ? 'Chromecast' : airOn ? 'AirPlay' : mode === 'direct' ? $t('player.mode.direct') : mode ? $t('player.mode.hls') : '';
   const toggleMenu = (m: typeof menu) => (menu = menu === m ? '' : m);
   /** a sub-view reached through More is open (phones: speed when it has no own button, chapters) */
@@ -1299,7 +1302,7 @@
     if (!pop || pop.contains(to) || opener?.contains(to)) return;
     menu = '';
   }
-  const overlayOpen = () => Boolean(menu || subDlg || help || (xray && showXray));
+  const overlayOpen = () => Boolean(menu || subDlg || help || playOnOpen || (xray && showXray));
   function act(a: KeyAction) {
     // credits corner (TV): the bar is hidden and inert; a key that would bring it (an arrow at the edge of the sequence) only wakes
     if (credits === 'corner' && a.type === 'tvControls') { wake(); return; }
@@ -1361,6 +1364,11 @@
       e.preventDefault(); e.stopImmediatePropagation(); focusControls(); return;
     }
     if (!(e.key === 'Escape' || (tvMode() && isBackKey(e)))) return;
+    if (playOnOpen) { // the "Play on" dialog closes alone; the focus goes back to what opened it
+      e.preventDefault(); e.stopImmediatePropagation(); playOnOpen = false;
+      void tickDom().then(() => playOnTrigger?.isConnected && playOnTrigger.focus({ preventScroll: true }));
+      return;
+    }
     if (tvUi && !chipOpen && !subDlg && !help) {
       const layer = tvLayer();
       if (layer === 'overlay' || layer === 'seek') {
@@ -1433,7 +1441,7 @@
 
   // ---- mouse: click = play/pause (deferred to tell a double click = fullscreen); touch is handled by the pointer gestures below ----
   let lastTap = 0, lastTouch = 0;
-  const NO_GESTURE = '.ui, .skipbtn, .ovl, .dlg, .help, .lockbtn, [data-nav], button, a, input, select';
+  const NO_GESTURE = '.ui, .skipbtn, .ovl, .dlg, .help, .lockbtn, .rs, [data-nav], button, a, input, select';
   function onSurfaceClick(e: MouseEvent) {
     if ((e.target as HTMLElement).closest(NO_GESTURE)) return;
     if (Date.now() - lastTouch < 800) return; // the click that follows a touch was already handled
@@ -1656,7 +1664,6 @@
     postFireTv('keepAwake:0');
     pnlObs?.disconnect();
     cancelFirstFrame();
-    clearInterval(tvTick);
     clearTimeout(peekT); clearTimeout(posterT); clearTimeout(spT); clearTimeout(probeT); clearTimeout(swapT); fxEngine?.destroy();
     persistEstimate(); clearInterval(abrTimer); clearInterval(bwTimer); clearTimeout(stallT);
     clearInterval(progressTimer); clearInterval(activityTimer); clearTimeout(toastTimer); clearTimeout(retryT); clearTimeout(spinT); clearTimeout(pendingTap); clearTimeout(hudT); clearTimeout(rippleT); clearTimeout(lockT); clearTimeout(unlockT); nowPlaying.set(null);
@@ -1675,10 +1682,10 @@
 </script>
 
 <svelte:window bind:innerWidth={winW} bind:innerHeight={winH} on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar}{picVar};--rcard-h:{rCardH}px" bind:this={stage} bind:clientWidth={stW} bind:clientHeight={stH} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:focusin={onStageFocus} on:focusout={onStageFocus} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar}{picVar}" bind:this={stage} bind:clientWidth={stW} bind:clientHeight={stH} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:focusin={onStageFocus} on:focusout={onStageFocus} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- the page heading (WCAG 1.3.1 / 2.4.6): the title, for heading navigation; the visible title block is styled text -->
-  <h1 class="sr-only">{barTitle || title}</h1>
+  {#if !tvSession}<h1 class="sr-only">{barTitle || title}</h1>{/if} <!-- the remote screen has the page's one h1 -->
   <!-- svelte-ignore a11y_media_has_caption -->
   {#key videoGen}
   <video bind:this={video} playsinline crossorigin="use-credentials" poster={swapShot || undefined} style:filter={brightness < 1 ? `brightness(${brightness})` : null}
@@ -1715,45 +1722,8 @@
   {:else if spin && waiting && !remote && !posterOn && !ccOn}<div class="center" role="status" aria-label={$t('player.loading')}><div class="spin"></div></div>
   {:else if (posterOn && !posterOut && !remote) || (spin && waiting && !remote && !posterOn)}<div class="sr" role="status">{$t('player.loading')}</div>{/if}
   {#if tvSession}
-    <!-- the cast engine plays this title on the TV (also after this page): the player is its remote. Artwork in the back,
-         one row with the device (picker / reconnect) and Stop, a card with what plays where (or the next episode) -->
-    <div class="remote castov" aria-busy={tvSession.buffering} data-testid={tvSession.kind === 'airplay' ? 'airplay-active' : 'cast-active'}>
-      {#if bgs[bgI]}<img class="rbg" src={bgs[bgI]} alt="" aria-hidden="true" on:error={() => bgI++} />{/if}
-      <div class="rshade" aria-hidden="true"></div>
-      <div class="rrow" data-testid="cast-row">
-        <button class="chip" aria-label={tvSession.kind === 'airplay' ? $t('player.airplay.change') : $t('player.castRemote.changeDevice')} title={tvSession.kind === 'airplay' ? $t('player.airplay.change') : $t('player.castRemote.changeDevice')} on:click|stopPropagation={chipTap}>
-          <Icon name={tvSession.kind === 'airplay' ? 'airplay' : 'cast'} size={18} /><span>{deviceLabel(tvSession)}</span>
-        </button>
-        <button class="rstop" aria-label={$t('player.cast.stop')} title={$t('player.cast.stop')} on:click|stopPropagation={() => void castEngine.stop()}><Icon name="stop" size={18} /><span>{$t('player.castRemote.stopShort')}</span></button>
-      </div>
-      <div class="rmid">
-        {#if tvNext}
-          <div class="rcard" role="group" aria-label={$t('player.watch.next')} bind:clientHeight={rCardH}>
-            <div class="rthumb">
-              <img src={img(tvNext.itemId, 640)} alt="" loading="lazy" on:error={(e) => e.currentTarget.remove()} />
-              {#if tvSecs !== null}<b class="rn" aria-hidden="true">{tvSecs}</b>{/if}
-            </div>
-            <span class="rt2">{$t('player.watch.next')}{#if tvSecs !== null}{$t('player.watch.inSeconds', { n: tvSecs })}{/if}</span>
-            <b class="rt1">{tvNext.label}</b>
-            <div class="racts">
-              {#if tvSecs !== null}<button class="rsec" on:click|stopPropagation={() => castEngine.cancelNext()}>{$t('common.cancel')}</button>{/if}
-              <button class="btn light rgo" on:click|stopPropagation={() => void castEngine.next()}><Icon name="play" size={18} />{$t('player.castRemote.playNow')}</button>
-            </div>
-            <span class="sr" role="status">{tvSecs !== null ? $t('player.watch.startsIn', { n: tvSecs }) : ''}</span>
-          </div>
-        {:else}
-          <div class="rcard" role="status" bind:clientHeight={rCardH}>
-            <div class="rthumb">
-              {#if thumbs[thI]}<img src={thumbs[thI]} alt="" on:error={() => thI++} />{:else}<span class="rph"><Icon name="film" size={32} /></span>{/if}
-              {#if tvSession.buffering}<div class="spin sm rspin" aria-hidden="true"></div>{/if}
-            </div>
-            <b class="rt1">{tvSession.title}</b>
-            {#if tvEpisode}<span class="rt2">{tvEpisode}</span>{/if}
-            <span class="ron"><Icon name={tvSession.kind === 'airplay' ? 'airplay' : 'cast'} size={16} />{playingLine(tvSession, $t)}</span>
-          </div>
-        {/if}
-      </div>
-    </div>
+    <!-- the cast engine plays this title on the TV (also after this page): the player is its remote (lib/cast/RemoteScreen.svelte) -->
+    <RemoteScreen on:close={() => dispatch('back')} on:pick={(e) => openPlayOn(e.detail)} />
   {:else if airOn || airState.error}
     <!-- Safari does not tell which receiver was picked; ending AirPlay happens in its picker (choose this device).
          Also while `ready` (no TV yet) when a token request failed: Retry, the src stays as it is (no restore loop) -->
@@ -1806,9 +1776,8 @@
     {#if phoneUi}
       <!-- phone player: quality chip, Cast, AirPlay and lock at the end of the top bar (they leave the pill and More) -->
       <PhoneTopBar {blur} lock={!remote}
-        cast={!partyMode && ($castState.available || $castState.connected) ? { on: casting, label: castLabel } : null}
-        airplay={air && (airState.available || airOn || airState.ready || airState.busy) ? { on: airOn, busy: airState.busy, label: $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') } : null}
-        on:cast={castClick} on:airplay={() => air?.pick()} on:lock={lockNow}>
+        playon={playOnShown ? { on: casting || airOn, busy: airState.busy, open: playOnOpen, label: playOnLabel } : null}
+        on:playon={(e) => openPlayOn(e.detail)} on:lock={lockNow}>
         {#if phoneChip && info}<QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
       </PhoneTopBar>
     {:else if phoneChip && info}<div class="qtop"><QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} /></div>{/if}
@@ -1830,6 +1799,8 @@
   {:else if peek && !locked && menu === '' && !remote}
     <CastPeek data={castData} hint={tvMode() ? 'tv' : coarse ? 'none' : 'key'} on:more={() => openCastInfo(false)} />
   {/if}
+  <PlayOnSheet open={playOnOpen} trigger={playOnTrigger} at={tvSession ? tvSession.position : current} title={tvSession ? tvSession.title : barTitle || title} episode={tvSession ? (tvSession.isEpisode ? episodeCode(tvSession, item, $t) : '') : playOnEp}
+    airplay={airAvail} airplayActive={airOn && !tvSession} sheet={phone} onAirPlay={airRow} onConnected={() => void startCast()} on:close={() => (playOnOpen = false)} on:continued={onContinued} />
   {#if subDlg}
     <div class="dlg ui" data-nav data-scope role="dialog" tabindex="-1" aria-modal="true" aria-label={$t('player.subs.search')} on:click|stopPropagation on:keydown|stopPropagation>
       <header><b>{$t('player.subs.search')}</b><button class="icx" aria-label={$t('common.close')} on:click={() => (subDlg = false)}><Icon name="x" size={20} /></button></header>
@@ -1939,7 +1910,7 @@
             {#if menu === 'chapters'}<div class="menu bare" in:cardIn={{ origin: 'bottom right' }} out:cardOut><ScenesPanel {chapters} current={shown} {duration} trickplay={info?.trickplay} on:seek={(e) => { seekTo(e.detail.time); closeScenes(); }} on:close={closeScenes} /></div>{/if}
           </div>
         {/if}
-        {#if !phoneUi && air && (airState.available || airOn || airState.ready || airState.busy)}<button class="ic" class:on={airOn} class:airbusy={airState.busy} aria-pressed={airOn} aria-busy={airState.busy} data-testid="airplay" aria-label={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} data-label={desk ? $t(airOn ? 'player.airplay.playing' : 'player.airplay.play') : undefined} title={$t(airOn ? 'player.airplay.playing' : 'player.airplay.play')} on:click={() => air?.pick()}><Icon name="airplay" size={ICON} /></button>{/if}
+        {#if !phoneUi && playOnShown}<button class="ic" class:on={casting || airOn} class:airbusy={airState.busy} aria-haspopup="dialog" aria-expanded={playOnOpen} aria-busy={airState.busy} data-testid="playon" aria-label={playOnLabel} data-label={desk ? playOnLabel : undefined} title={playOnLabel} on:click={(e) => openPlayOn(e.currentTarget)}><Icon name="cast" size={ICON} /></button>{/if}
         {#if !phoneUi}<button class="ic" class:on={showXray || peek} bind:this={castBtn} aria-label={$t('scenes.info.open')} data-label={desk ? $t('scenes.info.open') : undefined} title={$t(coarse ? 'scenes.info.open' : 'scenes.info.openKey')} aria-pressed={showXray} on:click={castButton}><Icon name="users" size={ICON} /></button>{/if}
         {#if info || tvSession}
           <div class="mwrap">
@@ -1991,7 +1962,6 @@
               {#if coarse && showScenes}<button class="mi" on:click={() => (menu = 'chapters')}><Icon name="film" size={20} />{$t('scenes.chapters.open')}<span class="chev" aria-hidden="true">›</span></button>{/if}
               <button class="mi" on:click={() => (menu = 'scenes')}><Icon name="bookmark" size={20} />{$t('player.bookmark.menu')}<span class="chev" aria-hidden="true">›</span></button>
               <button class="mi" class:on={showXray} aria-pressed={showXray} on:click={() => { if (showXray) { menu = ''; closeCastInfo(); } else openCastInfo(tvMode()); }}><Icon name="users" size={20} />{$t('scenes.info.open')}</button>
-              {#if !phoneUi && !partyMode && ($castState.available || $castState.connected)}<button class="mi" class:on={casting} aria-pressed={casting} on:click={castClick}><Icon name="cast" size={20} />{castLabel}</button>{/if}
               {#if phone && !phoneUi && !remote}<button class="mi" on:click={lockNow}><Icon name="lock" size={20} />{$t('player.lock.lockAria')}</button>{/if}
               {#if pipOk && !remote}<button class="mi" class:on={inPip} aria-pressed={inPip} aria-keyshortcuts="P" on:click={() => { menu = ''; void pip(); }}><Icon name="pip" size={20} />{$t('player.controls.pip')}</button>{/if}
               {#if phoneUi && volOk && tvSession?.kind !== 'airplay'}<button class="mi" on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : 'volume'} size={20} />{muted ? $t('player.unmute') : $t('player.mute')}</button>{/if}
@@ -2108,35 +2078,8 @@
   .bigplay { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 96px; height: 96px; border-radius: 50%; background: rgba(0,0,0,.55); border: 3px solid #fff; z-index: 4; }
   .bigplay:hover:not(:disabled) { background: rgba(0,0,0,.75); }
   .castov { background: #000; pointer-events: none; z-index: 2; }
-  /* the cast screen: artwork (blurred, darkened) in the back, the device row on top, the card in the middle */
-  .remote { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; gap: 1rem; overflow: hidden; color: #fff;
-    padding: calc(4.6rem + var(--safe-top)) max(16px, var(--safe-right)) calc(7.5rem + var(--safe-bottom)) max(16px, var(--safe-left)); }
-  .rbg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: blur(16px) brightness(.5) saturate(1.1); transform: scale(1.08); }
-  .rshade { position: absolute; inset: 0; background: linear-gradient(rgba(0,0,0,.62), rgba(0,0,0,.4) 45%, rgba(0,0,0,.82)); }
-  .rrow { position: relative; display: flex; align-items: center; gap: .5rem; width: 100%; max-width: 420px; min-width: 0; }
-  .rrow button { pointer-events: auto; display: inline-flex; align-items: center; gap: .45rem; height: 44px; padding: 0 .9rem; border-radius: 999px; color: #fff; font: inherit; font-size: .9rem; white-space: nowrap; cursor: pointer; }
-  .chip { flex: 0 1 auto; min-width: 0; margin-right: auto; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.3); }
-  .chip span, .rstop span { overflow: hidden; text-overflow: ellipsis; }
-  .rstop { flex: none; background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.3); }
-  .rrow button:hover, .rrow button:focus-visible { background: rgba(255,255,255,.24); }
-  .rmid { position: relative; flex: 1 1 auto; min-height: 0; width: 100%; display: grid; place-items: center; }
-  .rcard { pointer-events: auto; width: min(100%, 420px); display: grid; justify-items: center; gap: .3rem; text-align: center; padding: 1rem; border-radius: 12px; background: rgba(16,20,24,.72); border: 1px solid rgba(255,255,255,.12); }
-  .rthumb { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: #1c2228; display: grid; place-items: center; margin-bottom: .45rem; }
-  .rthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .rph { color: #9aa4ad; }
-  .rspin, .rn { position: absolute; inset: 50% auto auto 50%; transform: translate(-50%, -50%); }
-  .rn { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: rgba(0,0,0,.6); border: 2px solid #fff; font-size: 1.2rem; font-variant-numeric: tabular-nums; }
-  .rt1 { font-size: 1.1rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rt2 { color: #d5dbe0; font-size: .92rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ron { display: inline-flex; align-items: center; gap: .4rem; margin-top: .35rem; font-size: .88rem; color: #e8edf1; }
-  .racts { display: flex; gap: .6rem; margin-top: .6rem; flex-wrap: wrap; justify-content: center; }
-  .racts button { pointer-events: auto; min-height: 44px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .rsec { background: none; border: 1px solid rgba(255,255,255,.5); color: #fff; border-radius: 6px; padding: 0 1rem; font: inherit; cursor: pointer; }
-  .rgo { display: inline-flex; align-items: center; gap: .4rem; }
-  @media (prefers-reduced-motion: no-preference) { .rcard { animation: rcard-in .25s ease-out; } }
-  @keyframes rcard-in { from { opacity: 0; transform: translateY(6px); } }
-  /* narrow phones: Stop as an icon (its aria-label names it) */
-  @media (max-width: 359px) { .rstop span { display: none; } .rstop { padding: 0 .75rem; } }
+  /* while the cast screen (RemoteScreen) is up it brings its own controls: the player's go away (display, so they leave the tab order too) */
+  .stage.rmt :is(.ctl, .ovl, .cc, .skipbtn, .lockbtn, .bigplay, .qtop) { display: none !important; }
   .castbox { display: grid; justify-items: center; gap: .9rem; text-align: center; color: #fff; }
   .airhint { font-size: .85rem; opacity: .8; max-width: 22rem; }
   .ic.airbusy { opacity: .55; }
@@ -2297,32 +2240,6 @@
   :is(.stage.phone, .stage.pui) .lockbtn { top: auto; left: 50%; transform: translateX(-50%); bottom: calc(1.5rem + var(--safe-bottom)); width: 56px; min-height: 56px; }
   /* casting: the device line moves up, the centre keeps play / ±10 for the receiver */
   :is(.stage.phone, .stage.pui) .castov.center { place-items: start center; padding-top: calc(4.6rem + var(--safe-top)); }
-  /* the cast screen on a phone: the card in the upper half (play / ±10 sit in the centre), smaller as the height shrinks */
-  /* the cast screen on a phone: card and play / ±10 as one group, centred between the device row and the progress bar
-     (--rcard-h = the card's height, measured; 76px = the play button) */
-  :is(.stage.phone, .stage.pui).rmt {
-    --r-top: calc(4.2rem + var(--safe-top) + 44px + .8rem);
-    --r-free: calc(100% - var(--bar-h, 8.6rem) - var(--r-top));
-    --r-grp: calc(var(--rcard-h, 0px) + 1rem + 76px);
-    --r-gtop: calc(var(--r-top) + max(0px, (var(--r-free) - var(--r-grp)) / 2));
-  }
-  :is(.stage.phone, .stage.pui) .remote { padding-top: calc(4.2rem + var(--safe-top)); }
-  :is(.stage.phone, .stage.pui) .rmid { position: static; }
-  :is(.stage.phone, .stage.pui) .rcard { position: absolute; top: var(--r-gtop); left: max(16px, var(--safe-left)); right: max(16px, var(--safe-right)); margin: 0 auto; width: auto; max-width: 420px; padding: .8rem; }
-  .stage.phone.rmt .cc { top: calc(var(--r-gtop) + var(--rcard-h, 0px) + 1rem + 38px); }
-  /* < 600 px: stacked, the still full width on top (the hero), the lines centred below */
-  :is(.stage.phone, .stage.pui) .rthumb { width: min(100%, max(9rem, calc((100dvh - 31rem) * 16 / 9))); justify-self: center; }
-  :is(.stage.phone, .stage.pui) .racts { width: 100%; flex-wrap: nowrap; }
-  :is(.stage.phone, .stage.pui) .racts button { flex: 1 1 0; min-width: 0; justify-content: center; }
-  :is(.stage.phone, .stage.pui) .ron { font-size: .84rem; }
-  /* from 600 px: the still beside the titles, the buttons below */
-  @media (min-width: 600px) {
-    :is(.stage.phone, .stage.pui) .rcard { grid-template-columns: 9rem minmax(0, 1fr); column-gap: .9rem; row-gap: .15rem; justify-items: start; align-items: center; text-align: left; max-width: 520px; }
-    :is(.stage.phone, .stage.pui) .rthumb { width: 100%; grid-row: 1 / span 4; margin: 0; align-self: start; }
-    :is(.stage.phone, .stage.pui) .rcard > :not(.rthumb):not(.racts):not(.sr) { grid-column: 2; }
-    :is(.stage.phone, .stage.pui) .racts { grid-column: 1 / -1; margin-top: .5rem; }
-  }
-  @media (max-height: 560px) { :is(.stage.phone, .stage.pui) .rthumb { display: none; } }
   :is(.stage.phone, .stage.pui) .castbox { grid-auto-flow: column; align-items: center; gap: .7rem; font-size: .9rem; }
   :is(.stage.phone, .stage.pui) .castbox button { padding: .4rem .9rem; min-height: 44px; }
   /* landscape phone: seek row and icons on one line when they fit (else the icons wrap below), tighter spacing = more picture */
@@ -2334,9 +2251,6 @@
     .stage.phone .menu.tracks { flex-direction: row; overflow: hidden; }
     .stage.phone .menu.tracks > div { max-height: calc(100dvh - var(--menu-gap) - 1.6rem); overflow-y: auto; }
     :is(.stage.phone, .stage.pui) .castov.center { padding-top: calc(3.6rem + var(--safe-top)); }
-    :is(.stage.phone, .stage.pui).rmt { --r-top: calc(3.4rem + var(--safe-top) + 44px + .5rem); }
-    :is(.stage.phone, .stage.pui) .remote { padding-top: calc(3.4rem + var(--safe-top)); }
-    :is(.stage.phone, .stage.pui) .ron { display: none; }
     .stage.phone .cc .ccs { width: 56px; min-width: 56px; min-height: 56px; }
     .stage.phone .cc .ccp { width: 68px; min-width: 68px; min-height: 68px; }
   }
@@ -2345,8 +2259,6 @@
      (title, timeline, two glass pills) laid out with flex column + gap, so nothing can overlap whatever the title, language or
      rotation. Every side follows its safe-area inset; hiding fades opacity (250 ms), never a cut. ---- */
   .stage.pui { --dock-w: calc(100vw - var(--safe-left) - var(--safe-right) - 32px - var(--inset, 0px)); }
-  /* the cast screen: no centre play button on the phone player, the card alone is centred */
-  .stage.pui.rmt { --r-grp: var(--rcard-h, 0px); }
   /* the page's top slot (watch, party): .ovl already holds the safe-area padding and the scrim, so the slot brings neither */
   .stage.pui .ovl > :global(.top) { padding: 0; background: none; flex: 1 1 auto; min-width: 0; }
   /* scrubbing on touch: the 3 px rail keeps a hit area of at least 44 px (3 + 2 × 21) */
@@ -2458,9 +2370,6 @@
   .stage.pui.port:is(.cred, .credout) > video:not(.airprobe) { position: absolute; left: 0; top: 50%; height: auto; max-height: none;
     aspect-ratio: var(--va, 1.7778); margin-top: calc(-50% / var(--va, 1.7778)); }
   .stage.pui.port.cred > video { transform: translateY(calc(var(--safe-top) + 12px + 46% - var(--sh2, 50vh))) scale(.92); }
-  /* casting: the remote screen's card sits above the taller desk bar (its measured height, gradient padding included); otherwise the
-     bar's box covers the card's buttons */
-  .stage.desk .remote { padding-bottom: calc(var(--ctl-h, 7.5rem) + 1rem + var(--safe-bottom)); }
   .stage.desk .ctl { display: grid; gap: .7rem; padding: 4.5rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-right)) 1.4rem max(clamp(1.5rem, 3vw, 3rem), var(--safe-left));
     background: linear-gradient(transparent, rgba(0,0,0,.62) 4.5rem, rgba(0,0,0,.72) 60%, rgba(0,0,0,.88)); transition: opacity 250ms ease; }
   .ttlblock { display: grid; gap: .15rem; min-width: 0; max-width: min(60%, 46rem); text-shadow: 0 1px 10px rgba(0,0,0,.5); }

@@ -12,6 +12,7 @@
  */
 import { get, writable } from 'svelte/store';
 import { api } from '#lib/api';
+import { castLog, noteCastDevice } from '#lib/cast/castLog';
 
 declare global {
   interface Window {
@@ -46,7 +47,11 @@ interface CastSessionT {
 /** chrome.cast.media.Media: the receiver's media session (updated in place by the SDK) */
 interface MediaT {
   idleReason?: string | null;
-  items?: Array<{ itemId: number; media?: { contentId?: string } | null }> | null;
+  /** queue item id of the item that plays now (queue items after it are the queued ones) */
+  currentItemId?: number;
+  /** the tracks the receiver shows (cast track ids) */
+  activeTrackIds?: number[] | null;
+  items?: Array<{ itemId: number; media?: { contentId?: string; customData?: unknown } | null }> | null;
   editTracksInfo(r: unknown, ok: () => void, err: (e: unknown) => void): void;
   queueInsertItems(r: unknown, ok: () => void, err: (e: unknown) => void): void;
   queueRemoveItems(r: unknown, ok: () => void, err: (e: unknown) => void): void;
@@ -54,7 +59,7 @@ interface MediaT {
 }
 interface RemotePlayerT {
   isConnected: boolean; isPaused: boolean; isMediaLoaded: boolean; currentTime: number; duration: number; volumeLevel: number; isMuted: boolean;
-  playerState: string | null; mediaInfo: { contentId?: string } | null;
+  playerState: string | null; mediaInfo: { contentId?: string; customData?: unknown } | null;
 }
 interface RemotePlayerControllerT {
   addEventListener(t: string, fn: () => void): void;
@@ -117,13 +122,17 @@ export interface CastState {
   contentId: string;
   /** why the receiver went idle (FINISHED / CANCELLED / INTERRUPTED / ERROR; null = unknown or not idle) */
   idleReason: string | null;
+  /** the public handle of the loaded media when the own receiver reports it (`customData.ff.castId`, 32 hex), else '' */
+  castId: string;
+  /** the receiver's queue after the playing item (`castId` is '' when the receiver did not carry it: derive it from the content URL) */
+  queue: Array<{ itemId: number; contentId: string; castId: string }>;
 }
-const initial: CastState = { available: false, connected: false, deviceName: '', state: 'idle', currentTime: 0, duration: 0, paused: true, volume: 1, muted: false, loaded: false, contentId: '', idleReason: null };
+const initial: CastState = { available: false, connected: false, deviceName: '', state: 'idle', currentTime: 0, duration: 0, paused: true, volume: 1, muted: false, loaded: false, contentId: '', idleReason: null, castId: '', queue: [] };
 export const castState = writable<CastState>(initial);
 
-export type CastEvent = 'session-start' | 'session-end' | 'media-end';
+export type CastEvent = 'session-start' | 'session-resume' | 'session-end' | 'media-end';
 const listeners = new Set<(e: CastEvent) => void>();
-/** subscribes to session start/end and "media finished on the receiver"; returns the unsubscribe function */
+/** subscribes to session start/resume/end and "media finished on the receiver"; returns the unsubscribe function */
 export function onCastEvent(fn: (e: CastEvent) => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -141,6 +150,23 @@ let trackIds = new Map<number, number>();
 let lastLoaded = false;
 /** the receiver's media session as last seen: the SDK may drop it before the idle update reaches the RemotePlayer */
 let lastMedia: MediaT | null = null;
+/** the idle-ERROR already logged for the current media (one entry per error, not one per status update) */
+let errorLogged = false;
+
+const CAST_ID = /^[0-9a-f]{32}$/;
+/** `customData.ff.castId` of a MediaInfo (the own receiver's handle), '' when absent or not 32 hex */
+function castIdOf(info: { customData?: unknown } | null | undefined): string {
+  const id = (info?.customData as { ff?: { castId?: unknown } } | null | undefined)?.ff?.castId;
+  return typeof id === 'string' && CAST_ID.test(id) ? id : '';
+}
+/** the receiver's queue after the playing item (the first item counts as playing when the SDK reports no current item id) */
+function queueOf(ms: MediaT | null): CastState['queue'] {
+  const items = ms?.items ?? [];
+  const id = ms?.currentItemId;
+  const cur = id === undefined ? 0 : items.findIndex((q) => q.itemId === id);
+  if (cur < 0) return []; // the playing item is not in the list: do not mistake it for a queued one
+  return items.slice(cur + 1).map((q) => ({ itemId: q.itemId, contentId: q.media?.contentId ?? '', castId: castIdOf(q.media) }));
+}
 
 /** Chromium only (Chrome, Edge, Opera, Samsung ...), never iOS (all iOS browsers are WebKit), never a paired TV. */
 export function castCapableBrowser(): boolean {
@@ -235,10 +261,24 @@ function sync() {
     loaded,
     contentId,
     idleReason: lastMedia?.idleReason ?? null,
+    castId: loaded ? castIdOf(p.mediaInfo) : '',
+    queue: loaded ? queueOf(ms) : [],
   }));
+  if (lastMedia?.idleReason === 'ERROR') {
+    if (!errorLogged) { errorLogged = true; castLog({ level: 'error', tag: 'receiver', text: 'receiver went idle: ERROR' }); }
+  } else errorLogged = false;
   // media ended on the receiver: it was loaded, and now IDLE (the Default Media Receiver reports IDLE + FINISHED)
   if (lastLoaded && !loaded && p.isConnected && (p.playerState === 'IDLE' || p.playerState === null)) emit('media-end');
   lastLoaded = loaded;
+}
+
+/** callbacks waiting for the SDK's setup (`whenCastReady`) */
+const readyFns: Array<() => void> = [];
+let ready = false;
+/** runs `fn` once the Cast SDK is set up (at once when it is; never when the SDK is not loaded or unavailable) */
+export function whenCastReady(fn: () => void) {
+  if (ready) fn();
+  else readyFns.push(fn);
 }
 
 function setup() {
@@ -256,17 +296,37 @@ function setup() {
     if (e.sessionState === fw.SessionState.SESSION_STARTED) {
       sync();
       listen();
+      castLog({ level: 'info', tag: 'session', text: `session started · ${deviceName()}` });
       emit('session-start'); // the user just picked a device
     } else if (e.sessionState === fw.SessionState.SESSION_RESUMED) {
       sync(); // auto-joined an earlier session of this origin: no playback is started on its own
       listen();
+      castLog({ level: 'info', tag: 'session', text: `session resumed · ${deviceName()}` });
+      emit('session-resume');
     } else if (e.sessionState === fw.SessionState.SESSION_ENDED) {
       lastLoaded = false;
+      castLog({ level: 'info', tag: 'session', text: 'session ended' });
       castState.update((s) => ({ ...s, connected: false, deviceName: '', state: 'idle', loaded: false }));
       emit('session-end');
     }
   });
+  // the SDK may already hold a session (auto-joined before this page's script ran): same as a resume
+  if (ctxT.getCurrentSession()) {
+    sync();
+    listen();
+    castLog({ level: 'info', tag: 'session', text: `session found at start · ${deviceName()}` });
+    emit('session-resume');
+  }
+  ready = true;
+  for (const fn of readyFns.splice(0)) { try { fn(); } catch { /* one waiter never breaks the others */ } }
 }
+/** the TV's name for a log line; remembered so the copied report can anonymise it later */
+const deviceName = () => {
+  const n = ctxT?.getCurrentSession()?.getCastDevice().friendlyName;
+  if (!n) return 'unknown device'; // only a real receiver name is remembered, never the fallback
+  noteCastDevice(n);
+  return n;
+};
 
 /** Opens the browser's device picker (must run from a click). Resolves when a session started or the picker was dismissed. */
 export async function requestCastSession(): Promise<boolean> {
@@ -373,6 +433,24 @@ export function castPause() { if (player && !player.isPaused) controller?.playOr
 export function castSeek(sec: number) { if (!player) return; player.currentTime = Math.max(0, sec); controller?.seek(); }
 export function castSetVolume(v: number) { if (!player) return; player.volumeLevel = Math.max(0, Math.min(1, v)); controller?.setVolumeLevel(); }
 export function castToggleMute() { controller?.muteOrUnmute(); }
+/**
+ * Rebuilds the subtitle track map of a re-adopted title (track id = position + 1, as `mediaOf` assigned them when it was loaded).
+ * Becomes the active map unless the receiver is known to play something else.
+ */
+export function castAdoptTracks(contentUrl: string, subs: Array<{ index: number }>) {
+  const ids = new Map<number, number>();
+  subs.forEach((s, i) => ids.set(s.index, i + 1));
+  if (trackMaps.size > 8) trackMaps.clear();
+  trackMaps.set(contentUrl, ids);
+  const cur = get(castState).contentId;
+  if (!cur || cur === contentUrl) trackIds = ids;
+}
+/** the subtitle index the receiver shows now, from the current track map (-1: none, unknown, or no session) */
+export function castActiveSubtitle(): number {
+  const ids = ctxT?.getCurrentSession()?.getMediaSession()?.activeTrackIds ?? [];
+  for (const [index, id] of trackIds) if (ids.includes(id)) return index;
+  return -1;
+}
 /** subtitle index of the cast session info (-1 = off) */
 export function castSetSubtitle(index: number) {
   const ch = window.chrome?.cast, ms = ctxT?.getCurrentSession()?.getMediaSession();
@@ -382,3 +460,58 @@ export function castSetSubtitle(index: number) {
 }
 /** ends the cast session (the receiver stops) */
 export function castStop() { ctxT?.endCurrentSession(true); }
+/** this sender disconnects and the receiver keeps playing (the tab closes, a Chromecast cast carries on) */
+export function castLeave() {
+  castLog({ level: 'info', tag: 'sender', text: 'sender left · TV keeps playing' });
+  ctxT?.endCurrentSession(false);
+}
+
+/** a failed test clip is given up after this long */
+const TEST_CLIP_TIMEOUT_MS = 20_000;
+/** after the first frame the clip is watched this long for its end (the clip is 6 s) */
+const TEST_CLIP_WATCH_MS = 60_000;
+/**
+ * Diagnose: loads a short MP4 (no tracks, no token) on the current session and measures LOAD -> first PLAYING.
+ * `endAfter`: the caller opened the session for the test; it ends (the receiver app stops) when the clip is finished.
+ * Resolves `{ ok: false }` after 20 s, on a load error or when the session ends.
+ */
+export function castTestClip(url: string, title: string, opts: { endAfter?: boolean } = {}): Promise<{ ok: boolean; firstFrameMs: number | null }> {
+  const sess = ctxT?.getCurrentSession(), ch = window.chrome?.cast;
+  if (!sess || !ch) return Promise.resolve({ ok: false, firstFrameMs: null });
+  const m = ch.media;
+  const abs = new URL(url, location.href).href; // the TV cannot resolve a relative path
+  const media = new m.MediaInfo(abs, 'video/mp4');
+  media.streamType = m.StreamType.BUFFERED;
+  const meta = new m.MovieMediaMetadata();
+  meta.metadataType = m.MetadataType.MOVIE;
+  meta.title = title;
+  media.metadata = meta;
+  const req = new m.LoadRequest(media);
+  req.autoplay = true;
+  req.currentTime = 0;
+  lastMedia = null;
+  return new Promise((resolve) => {
+    let settled = false, playing = false, first = true;
+    let capTimer: ReturnType<typeof setTimeout> | undefined;
+    const t0 = Date.now();
+    const offStore = castState.subscribe((s) => {
+      if (first) { first = false; return; } // the value at subscription time is not an update of this clip
+      if (s.contentId && s.contentId !== abs) { if (playing) cleanup(); return; } // something else took over
+      if (!playing && s.state === 'playing') { playing = true; finish(true); if (opts.endAfter) capTimer = setTimeout(cleanup, TEST_CLIP_WATCH_MS); }
+      else if (playing && s.state === 'idle') { cleanup(); if (opts.endAfter && s.idleReason === 'FINISHED') ctxT?.endCurrentSession(true); }
+      else if (!playing && s.idleReason === 'ERROR') finish(false);
+    });
+    const offEvents = onCastEvent((e) => { if (e === 'session-end') { if (!playing) finish(false); cleanup(); } });
+    const timer = setTimeout(() => finish(false), TEST_CLIP_TIMEOUT_MS);
+    function cleanup() { clearTimeout(timer); clearTimeout(capTimer); offStore(); offEvents(); }
+    function finish(ok: boolean) {
+      if (settled) return;
+      settled = true;
+      const ms = ok ? Date.now() - t0 : null;
+      castLog({ level: ok ? 'info' : 'error', tag: 'test', text: ok ? `test clip playing after ${ms} ms` : 'test clip did not play' });
+      if (!ok || !opts.endAfter) cleanup(); // with endAfter a played clip stays watched until it is finished
+      resolve({ ok, firstFrameMs: ms });
+    }
+    sess.loadMedia(req).then((r) => { if (r !== undefined) finish(false); }, () => finish(false));
+  });
+}

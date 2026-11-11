@@ -11,7 +11,7 @@ import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { countable } from './glass';
-import { AA, AMB_PEAK, contrast, DARK_BASE, frostComposite, SCRIM_LIGHT, SCRIM_RGB, SEL_A, textContrast, type RGB } from '#lib/glass/tone';
+import { AA, AMB_PEAK, contrast, DARK_BASE, frostComposite, SCRIM_LIGHT, SCRIM_BAR, SCRIM_MENU, GRAIN_LIFT, SCRIM_RGB, SEL_A, textContrast, type RGB } from '#lib/glass/tone';
 
 describe('countable', () => {
   it('takes finite numbers', () => {
@@ -61,6 +61,15 @@ const cr = (t: string | number, bg: RGB) => (typeof t === 'number' ? textContras
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const appCss = read('../../app.css'), shell = read('./AdminShell.svelte'), pill = read('../ui/StatusPill.svelte');
 const table = read('../ui/DataTable.svelte'), tile = read('../ui/StatTile.svelte'), field = read('../ui/Field.svelte'), select = read('../ui/Select.svelte');
+
+describe('Play on sheet: the selected / hovered row keeps white hints', () => {
+  it('hint text is white on the light pill, over the brightest picture', () => {
+    const sheet = read('../cast/PlayOnSheet.svelte');
+    expect(sheet).toMatch(/\.row\.on \.h, \.row:hover \.h \{ color: #fff; \}/);
+    const pill = over(frostComposite(WHITE, SCRIM_MENU), WHITE, SEL_A).map((x) => Math.min(255, x + GRAIN_LIFT)) as RGB;
+    expect(textContrast(pill)).toBeGreaterThanOrEqual(AA);
+  });
+});
 
 describe('admin glass: text contrast (B′)', () => {
   it('the glass text tokens include the lighter info colour', () => {
@@ -212,6 +221,88 @@ describe('admin glass: text contrast (B′)', () => {
     expect(contrast(hex('#ff4f6d'), AMB_PEAK)).toBeLessThan(AA);
     // the recommendation card's "change" link and the cast bar's hint use the coral text token, not the brand coral
     expect(read('./RecoCard.svelte')).toMatch(/\.change \{[^}]*color: var\(--acc-text\)/);
-    expect(read('../cast/CastBar.svelte')).toMatch(/\.t2\.hint \{ color: var\(--acc-text\); \}/);
+  });
+});
+
+describe('cast bar: text on its glass (cast spec §2)', () => {
+  const bar = read('../cast/CastBar.svelte'), exp = read('../cast/CastBarExpanded.svelte');
+  /** the bar floats over anything (a white button, a bright poster): the bar scrim over pure white is the worst case; then the ambient peak, the base and the solid fallback */
+  const SURFACES = [frostComposite(WHITE, SCRIM_BAR), frostComposite(AMB_PEAK, SCRIM_BAR), frostComposite(DARK_BASE, SCRIM_BAR), SOLID];
+  it('both panels use the bar scrim and the stated line colours', () => {
+    expect(bar).toMatch(/class="box frost frost-safe frost-panel" style="--fr-scrim-safe:\{SCRIM_BAR\}"/);
+    expect(exp).toMatch(/class="exp frost frost-safe frost-panel" style="--fr-scrim-safe:\{SCRIM_BAR\}"/);
+    for (const css of [bar, exp]) {
+      expect(css).toContain('color: rgba(255, 255, 255, .72)');
+      expect(css).toContain('.t2.warn { color: #ffc56b; }');
+      expect(css).toContain('.t2.error { color: #ffbdbd; }');
+    }
+    expect(exp).toContain('color: rgba(255, 255, 255, .78)'); // times / volume hint (CastScrubber, volhint)
+  });
+  it('white .72 / .78, amber and error text keep 4.5:1 on every surface', () => {
+    for (const bg of SURFACES) {
+      for (const a of [0.72, 0.78]) expect(textContrast(bg, a), String(a)).toBeGreaterThanOrEqual(AA);
+      expect(contrast(hex('#ffc56b'), bg)).toBeGreaterThanOrEqual(AA);
+      expect(contrast(hex('#ffbdbd'), bg)).toBeGreaterThanOrEqual(AA);
+    }
+  });
+});
+
+/**
+ * Cast motion rule (cast plan, Global Constraints): animate transform and opacity only. Layout properties never appear in a
+ * transition or a @keyframes block of the cast components (progress fills are scaleX, panels grow with growBoth / sheetSlide).
+ */
+describe('cast surfaces: motion', () => {
+  const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+  /** every transition value and every @keyframes body of one stylesheet */
+  function motion(css: string): string[] {
+    const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const out: string[] = [];
+    for (const m of src.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) out.push(`transition:${m[1]}`);
+    for (const m of src.matchAll(/@keyframes\s+[\w-]+\s*\{/g)) {
+      let depth = 1, i = m.index! + m[0].length;
+      const start = i;
+      while (depth && i < src.length) { if (src[i] === '{') depth++; else if (src[i] === '}') depth--; i++; }
+      out.push(`@keyframes ${src.slice(start, i - 1)}`);
+    }
+    return out;
+  }
+  const styleOf = (src: string) => [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n');
+  const castDir = fileURLToPath(new URL('../cast/', import.meta.url));
+
+  it('the scan sees what it should (it refuses a width transition and a left keyframe)', () => {
+    expect(motion('.a { transition: width 1s; }').some((v) => LAYOUT.test(v))).toBe(true);
+    expect(motion('@keyframes k { from { left: 0; } to { left: 9px; } }').some((v) => LAYOUT.test(v))).toBe(true);
+    expect(motion('.a { transition: transform 1s, opacity 1s; transform-origin: left; width: 3px; }').some((v) => LAYOUT.test(v))).toBe(false);
+  });
+
+  it('cast surfaces animate transform and opacity only', () => {
+    const files = readdirSync(castDir).filter((f) => f.endsWith('.svelte'));
+    expect(files).toEqual(expect.arrayContaining(['CastBar.svelte', 'CastBarExpanded.svelte', 'CastScrubber.svelte', 'PlayOnSheet.svelte', 'RemoteScreen.svelte', 'DiagnoseCast.svelte', 'TrackChips.svelte', 'UpNextCard.svelte']));
+    let seen = 0;
+    const bad: string[] = [];
+    for (const f of files) {
+      for (const v of motion(styleOf(readFileSync(join(castDir, f), 'utf8')))) {
+        if (/transition:\s*none/.test(v)) continue;
+        seen++;
+        if (LAYOUT.test(v) || /\b(all)\b|color|background|border|filter|shadow/.test(v)) bad.push(`${f}: ${v.trim()}`);
+      }
+    }
+    expect(seen).toBeGreaterThan(8);
+    expect(bad).toEqual([]);
+  });
+
+  it('every cast component with motion switches it off in calm mode and for reduced motion', () => {
+    for (const f of ['CastBar', 'CastBarExpanded', 'CastScrubber', 'PlayOnSheet', 'RemoteScreen']) {
+      const src = read(`../cast/${f}.svelte`);
+      expect(src, f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+      expect(src, f).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+    }
+  });
+
+  it('the receiver css animates transform and opacity only', () => {
+    const css = readFileSync(fileURLToPath(new URL('../../../static/cast-receiver/receiver.css', import.meta.url)), 'utf8');
+    const vals = motion(css);
+    expect(vals.length).toBeGreaterThan(0); // the card's rise keyframes
+    expect(vals.filter((v) => LAYOUT.test(v) || /\ball\b/.test(v))).toEqual([]);
   });
 });

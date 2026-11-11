@@ -41,5 +41,6 @@ const en: Translation<typeof de> = {
   language: {
     label: 'Language',
   },
+  experimental: 'Experimental',
 };
 export default en;

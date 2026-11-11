@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
+import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, castLookup, castNextTtlSeconds, castPinned, CastUnpinnedError, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
 import type { Ctx } from '../ctx.js';
 import { MediaError } from '../media/types.js';
 import { countLive } from '../live.js';
@@ -10,7 +10,7 @@ import { clientAddress, isHomeRequest } from '../netaddr.js';
 import { playbackReport } from './media.js';
 import { effectiveLimits } from '../limits.js';
 import { remoteBitrateCap } from '../roles.js';
-import { requireUser } from '../session.js';
+import { loadSession, requireUser } from '../session.js';
 import { id32 as itemId } from './_shared.js';
 
 export function castRoutes(app: FastifyInstance, ctx: Ctx) {
@@ -38,6 +38,8 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       /** the sender casts to FriendFlix's own receiver: the answer carries its report token (`report`, see cast.ts castReportToken) */
       receiver: z.boolean().optional(),
     }).parse(req.body);
+    // the queue is Chromecast only (an AirPlay token has a two-address pin, a queued token never takes a pin of its own)
+    if (b.next && b.via === 'airplay') return reply.code(400).send({ error: 'bad_request' });
     const deviceId = req.session!.deviceId;
     if (!deviceId) return reply.code(403).send({ error: 'device_pending' });
     const role = (await effectiveLimits(ctx, req.user!))!;
@@ -47,8 +49,11 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
     const pred = b.next ? await castPredecessor(ctx, req.user!.id, deviceId) : null;
     if (b.next && !pred) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
     if (pred && b.after !== undefined && b.after !== pred.castId) return reply.code(409).send({ error: 'cast_mismatch' });
+    // the queued token is pinned to its predecessor's address at mint: a predecessor nobody fetched yet has none, so nothing is minted
+    if (pred && !(await castPinned(ctx, pred.hash))) return reply.code(409).send({ error: 'cast_unpinned' });
     const live = await countLive(ctx, req.user!.id);
     if (live >= role.maxStreams && !(pred && live === role.maxStreams)) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
+    let started: string | undefined;
     try {
       const item = await ctx.jf.item(req.jfUser!, b.itemId); // access check: the profile must be able to see the item
       const startTicks = b.startTicks ?? item.positionTicks;
@@ -61,12 +66,17 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       const opts = { maxBitrate, maxHeight, startTicks, audioIndex: b.audioIndex, cast: true, ...(pred ? { after: pred.playSessionId } : {}) };
       let info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts);
       if (ctx.jf.preparePlayback) info = await ctx.jf.preparePlayback(req.jfUser!, info, opts);
-      const ttl = castTtlSeconds(info.runtimeTicks, startTicks);
+      started = info.playSessionId;
+      const ownTtl = castTtlSeconds(info.runtimeTicks, startTicks);
+      // a queued token outlives the episode it follows (queued from the start of that episode)
+      const ttl = pred ? castNextTtlSeconds(ownTtl, pred.exp) : ownTtl;
       const rec = {
         userId: req.user!.id, profileId: req.profile!.id, deviceId, itemId: b.itemId, mediaSourceId: info.mediaSourceId, playSessionId: info.playSessionId, maxBitrate, title: item.name, via: b.via ?? 'chromecast',
         ...(pred ? { afterPs: pred.playSessionId } : {}),
+        runtimeTicks: info.runtimeTicks, ...(item.seriesName ? { seriesName: item.seriesName } : {}),
+        subs: info.subtitles.map((s) => ({ index: s.index, ...(s.language ? { language: s.language } : {}), title: s.title })),
       } as const;
-      const { ct, imgCt, castId, expiresAt } = await createCast(ctx, rec, ttl, Boolean(item.image));
+      const { ct, imgCt, castId, expiresAt } = await createCast(ctx, rec, ttl, Boolean(item.image), pred ?? undefined);
       const report = b.receiver && rec.via === 'chromecast' && castReceiverAppId(ctx) ? castReportToken(ctx, rec, { castId, expiresAt }) : undefined;
       // Jellyfin returns /media/... URLs; the cast variant carries the token in the path: /media/c/<ct>/...
       const absWith = (t: string, u: string) => `${ctx.cfg.PUBLIC_URL.replace(/\/+$/, '')}/media/c/${t}${u.slice('/media'.length)}`;
@@ -77,6 +87,15 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         const p = ctx.jf.capabilities.subtitleExtract ? castSubtitlePath(ctx, u, { userId: req.user!.id, castId, expiresAt }) : null;
         return p ? `${origin}${p}` : abs(u);
       };
+      // A profile switch (POST /api/profiles/:id/select) revokes this device's tokens, but one minted by a request that was already
+      // past requireUser could land after that revoke: re-read the session (the old sid stays readable for a few seconds, already
+      // acting as the new profile) and take the token back when the profile is no longer the one it was minted for.
+      const after = await loadSession(ctx, req.sid);
+      if (!after || (after.profileId && after.profileId !== rec.profileId)) {
+        await revokeCast(ctx, req.user!.id, castId);
+        await ctx.jf.stopEncoding(req.jfUser!, info.playSessionId).catch(() => undefined);
+        return reply.code(409).send({ error: 'profile_changed' });
+      }
       reply.header('Cache-Control', 'no-store');
       return {
         castId,
@@ -96,6 +115,11 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         ...(report ? { report } : {}),
       };
     } catch (e) {
+      if (e instanceof CastUnpinnedError) {
+        // the pin vanished between the check above and the mint: nothing was minted; give the started stream back (Plex counts it from preparePlayback on)
+        if (started) await ctx.jf.stopEncoding(req.jfUser!, started).catch(() => undefined);
+        return reply.code(409).send({ error: 'cast_unpinned' });
+      }
       if (e instanceof MediaError) return reply.code(e.status === 404 ? 404 : e.status === 403 ? 403 : 502).send({ error: 'jellyfin', status: e.status });
       throw e;
     }
@@ -152,6 +176,16 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       if (e instanceof MediaError) return reply.code(e.status === 404 || e.status === 403 ? 404 : 502).send({ error: 'jellyfin', status: e.status });
       throw e;
     }
+  });
+
+  // token-free lookup of this device's running cast by its public handle (re-adoption, Diagnose): account, profile and device must match
+  app.get('/api/cast/session/:castId', { ...pre, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { castId } = z.object({ castId: z.string().regex(/^[0-9a-f]{32}$/) }).parse(req.params);
+    if (!castEnabled(ctx)) return reply.code(404).send({ error: 'not_found' });
+    const deviceId = req.session!.deviceId;
+    const found = deviceId ? await castLookup(ctx, { userId: req.user!.id, profileId: req.profile!.id, deviceId }, castId) : null;
+    return found ?? reply.code(404).send({ error: 'not_found' });
   });
 
   app.delete('/api/cast/session/:castId', pre, async (req, reply) => {

@@ -7,7 +7,7 @@ import { bindCastMediaSession, type MediaSessionLike } from './mediasession';
 
 const view = (over: Partial<CastSession> = {}): CastSession => ({
   kind: 'chromecast', device: 'Wohnzimmer-TV', itemId: 'ep1', seriesId: 's1', title: 'Bright Valley', subtitle: 'S1:E1 First', posterId: 'ep1', isEpisode: true,
-  position: 60, duration: 1800, paused: false, buffering: false, state: 'playing', audioTracks: [], subtitles: [], subIndex: -1, ...over,
+  position: 60, duration: 1800, paused: false, buffering: false, state: 'playing', audioTracks: [], subtitles: [], subIndex: -1, autoplay: true, ...over,
 });
 function fake() {
   const handlers = new Map<string, ((d: { seekTime?: number; seekOffset?: number }) => void) | null>();
@@ -53,6 +53,18 @@ describe('cast media session (lock screen / Control Center drive the TV)', () =>
     expect(ms.metadata).toBeNull();
     expect(ms.playbackState).toBe('none');
     off();
+  });
+
+  it('a detached cast (no live session) is not on the lock screen', () => {
+    const { ms, handlers, eng } = fake();
+    const s = writable<CastSession | null>(null);
+    bindCastMediaSession(s, eng, ms, (m) => m);
+    s.set(view());
+    expect(handlers.size).toBeGreaterThan(0);
+    s.set(view({ state: 'detached' }));
+    expect(ms.metadata).toBeNull();
+    expect(ms.playbackState).toBe('none');
+    expect([...handlers.values()].every((h) => h === null)).toBe(true);
   });
 
   it('is a no-op without the Media Session API', () => {

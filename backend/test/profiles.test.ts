@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
+import { castLookup } from '../src/cast.js';
 import { hashPin, verifyPin } from '../src/crypto.js';
 import { MemoryKV } from '../src/kv.js';
 import { reapplyPoliciesOnce, reapplyRole } from '../src/users.js';
@@ -166,6 +167,78 @@ describe('profiles', () => {
     expect((await call(kid, 'PUT', `/api/profiles/${p.id}/pin`, { pin: null })).statusCode).toBe(403);
     expect((await call(kid, 'PUT', `/api/profiles/${p.id}/pin`, { pin: null, currentPin: '2222' })).statusCode).toBe(200);
     expect((await call(kid, 'PUT', `/api/profiles/${p.id}/pin`, { pin: 'abcd' })).statusCode).toBe(400);
+  });
+
+  it('switching profile revokes this device\'s cast tokens', async () => {
+    let psN = 1;
+    const s = await mk({
+      'POST /Items/[^/]+/PlaybackInfo': () => ({ json: { PlaySessionId: `ps-switch-${psN}`, MediaSources: [{ Id: 'b'.repeat(32), Container: 'mkv', SupportsDirectPlay: true, Bitrate: 4_000_000, RunTimeTicks: 3_000_000_000, MediaStreams: [{ Index: 0, Type: 'Video', Height: 1080 }, { Index: 1, Type: 'Audio' }] }] } }),
+    });
+    const p = await mkProfile(s, 'Kind');
+    const owner = (await env.pool.query<{ id: string }>('select id from profiles where is_owner')).rows[0]!.id;
+    const mint = async (sess: Sess, body: Record<string, unknown> = {}) => {
+      const r = await call(sess, 'POST', '/api/cast/session', { itemId: ITEM, ...body });
+      expect(r.statusCode).toBe(200);
+      return r.json() as { castId: string; contentUrl: string };
+    };
+    const first = await mint(s);
+    const castId = first.castId;
+    // the receiver fetched it (pinned): now a queued next episode can follow
+    const ct = /\/media\/c\/([\w-]{43})\//.exec(first.contentUrl)![1]!;
+    const fetched = await env.app.inject({ method: 'POST', url: '/internal/authz', headers: { 'x-internal-secret': cfg.INTERNAL_SECRET }, payload: { ct, client: '198.51.100.1' } });
+    expect(fetched.statusCode).toBe(200);
+    psN = 2;
+    const queuedId = (await mint(s, { next: true, after: castId })).castId;
+    const device = (await env.pool.query<{ device_id: string }>('select device_id from devices where user_id=$1', [await ownerId()])).rows[0]!.device_id;
+    const who = { userId: await ownerId(), profileId: owner, deviceId: device };
+    expect(await castLookup(env.ctx, who, castId)).not.toBeNull();
+    expect(await castLookup(env.ctx, who, queuedId)).not.toBeNull();
+    // selecting the profile that is already active keeps the cast
+    expect((await call(s, 'POST', `/api/profiles/${owner}/select`, {})).statusCode).toBe(200);
+    expect(await castLookup(env.ctx, who, castId)).not.toBeNull();
+    // switching to another profile revokes the device's tokens (media and poster), server-side
+    const before = (await env.kv.keys('cast:')).length;
+    expect(before).toBeGreaterThan(0);
+    expect((await call(s, 'POST', `/api/profiles/${p.id}/select`, {})).statusCode).toBe(200);
+    expect(await castLookup(env.ctx, who, castId)).toBeNull();
+    expect(await castLookup(env.ctx, who, queuedId)).toBeNull(); // the queued token goes too
+    expect(await env.kv.keys('cast:')).toEqual([]);
+    expect(await env.kv.keys('castidx:')).toEqual([]);
+    expect(await env.kv.keys('castpin:')).toEqual([]);
+  });
+
+  it('a failing cast revoke does not break the profile switch (200, new session cookie, new profile)', async () => {
+    const s = await mk();
+    const p = await mkProfile(s, 'Kind');
+    const kv = env.ctx.kv as unknown as { keys: (...a: unknown[]) => Promise<string[]> };
+    const orig = kv.keys.bind(kv);
+    let failed = 0;
+    kv.keys = async (...a) => { if (!failed) { failed++; throw new Error('kv down'); } return orig(...a); };
+    const r = await call(s, 'POST', `/api/profiles/${p.id}/select`, {});
+    kv.keys = orig;
+    expect(failed).toBe(1);
+    expect(r.statusCode).toBe(200);
+    expect(r.cookies.some((c) => c.name === 'ff_sid')).toBe(true);
+    const s2 = sessOf(r, s);
+    expect((await call(s2, 'GET', '/api/profiles')).json().activeId).toBe(p.id);
+  });
+
+  it('a cast minted by a request that races a profile switch is taken back (409 profile_changed)', async () => {
+    const s = await mk({
+      'POST /Items/[^/]+/PlaybackInfo': () => ({ json: { PlaySessionId: 'ps-race-1', MediaSources: [{ Id: 'b'.repeat(32), Container: 'mkv', SupportsDirectPlay: true, Bitrate: 4_000_000, RunTimeTicks: 3_000_000_000, MediaStreams: [{ Index: 0, Type: 'Video', Height: 1080 }, { Index: 1, Type: 'Audio' }] }] } }),
+      'DELETE /Videos/ActiveEncodings': () => ({ status: 204 }),
+    });
+    const p = await mkProfile(s, 'Kind');
+    const jf = env.ctx.jf as unknown as { playbackInfo: (...a: unknown[]) => Promise<unknown> };
+    const orig = jf.playbackInfo.bind(env.ctx.jf);
+    // the switch lands while the mint is in flight (after its requireUser, before its token exists)
+    jf.playbackInfo = async (...a) => { const r = await orig(...a); await call(s, 'POST', `/api/profiles/${p.id}/select`, {}); return r; };
+    const r = await call(s, 'POST', '/api/cast/session', { itemId: ITEM });
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'profile_changed' });
+    expect(await env.kv.keys('cast:')).toEqual([]);
+    expect(await env.kv.keys('castidx:')).toEqual([]);
+    expect(env.jfCalls.some((c) => c.method === 'DELETE' && c.path === '/Videos/ActiveEncodings')).toBe(true);
   });
 
   it('after select, Jellyfin calls and /internal/authz use the profile identity', async () => {

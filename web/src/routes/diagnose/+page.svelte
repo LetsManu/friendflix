@@ -4,6 +4,7 @@
   import { onMount } from 'svelte';
   import { api } from '#lib/api';
   import { fmtDate, t } from '#lib/i18n';
+  import DiagnoseCast from '#lib/cast/DiagnoseCast.svelte';
   import { playerCapsSummary } from '#lib/webos/caps';
   import { capsPending, warmDeviceCaps } from '#lib/player/devicecaps';
   import { avRows, type Abilities, type CapsFacts } from '#lib/player/diagnoseav';
@@ -18,7 +19,7 @@
   $: av = avRows({ caps, abilities, last: timings[0] ?? null, t: $t, date: (ms) => fmtDate(new Date(ms)) });
   const readCaps = () => { try { caps = playerCapsSummary(); } catch { /* an unreadable probe shows "no HEVC confirmed" */ } };
   let probe: HTMLElement, svh: HTMLElement, lvh: HTMLElement, dvh: HTMLElement, vh: HTMLElement;
-  let table: HTMLElement; // wraps both tables: the copy fallback selects all rows
+  let table: HTMLElement; // wraps the casting section and both tables: the copy fallback selects all of it
   let note = '';
   // AirPlay event log (lib/player/airplayLog.ts): no URLs / tokens are ever stored there
   let air: AirLogEntry[] = [];
@@ -139,8 +140,9 @@
   <button type="button" on:click={copy}>{$t('diagnose.copy')}</button>
   {#if note}<span role="status" class="note">{note}</span>{/if}
 
-  <!-- below "Casting" once that section exists on this page; until then first -->
+  <!-- order: Casting, Picture and sound, then the device facts; the wrapper is what the copy fallback selects -->
   <div bind:this={table}>
+  <DiagnoseCast />
   <section aria-labelledby="av-title" data-testid="av-section">
     <h2 id="av-title">{$t('diagnose.avTitle')}</h2>
     <p class="hint">{$t('diagnose.avHint')}</p>

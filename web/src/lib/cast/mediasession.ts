@@ -8,6 +8,7 @@
 import type { Readable } from 'svelte/store';
 import { img } from '#lib/api';
 import type { CastEngine, CastSession } from './engine';
+import { liveCast } from './bar';
 
 type Eng = Pick<CastEngine, 'playPause' | 'seek' | 'skip' | 'next'>;
 /** the part of `navigator.mediaSession` used here (tests pass a fake) */
@@ -37,7 +38,7 @@ export function bindCastMediaSession(
   let cur: CastSession | null = null;
   const off = session.subscribe((s) => {
     cur = s;
-    if (!s) { clear(); return; }
+    if (!liveCast(s)) { clear(); return; } // a detached cast has nothing to drive
     if (!bound) {
       bound = true;
       set('play', () => { if (cur?.paused) eng.playPause(); });

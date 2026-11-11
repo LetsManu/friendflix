@@ -8,7 +8,7 @@ vi.mock('#lib/tv/motion', () => ({ motionLevel: () => m.level, watchFrames: () =
 
 import {
   COUNT_MS, countAt, cubicBezier, fxMode, grow, growBoth, growFrom, GROW_IN_MS, GROW_OUT_MS, growOrigin, inEase, outEase, PILL_MID, pillParts,
-  REDUCED_MS, rippleBox, scrimFade, twoWay, SHEET_IN_MS, SHEET_OUT_MS, sheetSlide, springEase, TOAST_IN_MS, TOAST_OUT_MS, toastRise,
+  REDUCED_MS, rippleBox, scrimFade, twoWay, SHEET_IN_MS, SHEET_OUT_MS, sheetSlide, springEase, TOAST_IN_MS, TOAST_OUT_MS, toastRise, barRise, BAR_IN_MS, BAR_OUT_MS,
 } from './fx';
 
 const node = {} as Element;
@@ -248,5 +248,25 @@ describe('the frame guard watches glass motion', () => {
     grow(node);
     expect(m.watched).toBe(1);
     m.allowed = true;
+  });
+});
+
+describe('barRise (the cast bar)', () => {
+  const node = {} as Element;
+  it('rises 16 px with opacity, 240 ms in (outEase) and 180 ms out', () => {
+    const fin = barRise(node, { mode: 'full' });
+    expect([fin.duration, BAR_IN_MS]).toEqual([240, 240]);
+    expect(fin.easing).toBe(outEase);
+    expect(fin.css(0, 1)).toBe('transform:translateY(16px);opacity:0');
+    expect(fin.css(1, 0)).toBe('transform:translateY(0px);opacity:1');
+    const fout = barRise(node, { dir: 'out', mode: 'full' });
+    expect([fout.duration, BAR_OUT_MS]).toEqual([180, 180]);
+    expect(fout.css(0, 1)).toBe('transform:translateY(16px);opacity:0');
+  });
+  it('reduced set crossfades, still is instant', () => {
+    expect(barRise(node, { mode: 'reduced' }).css(0.5, 0.5)).toBe('opacity:0.5');
+    const still = barRise(node, { mode: 'still' });
+    expect(still.duration).toBe(0);
+    expect(still.css(0, 1)).toBe('');
   });
 });

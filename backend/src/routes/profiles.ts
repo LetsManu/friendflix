@@ -3,6 +3,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
+import { revokeCasts } from '../cast.js';
 import { secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { hashPin, verifyPin } from '../crypto.js';
@@ -200,12 +201,20 @@ export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
       }
     }
     // The gateway caches the media token per sid: rotate the sid so the previous profile's token can never be served again.
+    const switching = req.profile?.id !== p.id && Boolean(req.session!.deviceId);
     const oldSid = req.sid!;
     const newSid = rand();
     const s = { ...req.session!, profileId: p.id, touchedAt: Date.now() };
     await saveSession(ctx, newSid, s);
     // in-flight requests of the tab still carry the old sid: keep it alive for a few seconds, already acting as the new profile (never beyond that)
     await ctx.kv.replace(`sess:${oldSid}`, JSON.stringify(s), OLD_SID_GRACE);
+    // a cast belongs to one profile: leaving it ends this device's cast tokens, server-side, so it holds with no page open. Runs after the
+    // sessions above carry the new profile: a mint in flight either sees it (and takes its token back) or exists by now (and is revoked here)
+    if (switching) {
+      // the new session is saved and the old sid is on its grace: a KV error here must not turn the switch into a 500 (logout 15 s later)
+      try { await revokeCasts(ctx, req.user!.id, req.session!.deviceId!); }
+      catch { req.log.warn({ userId: req.user!.id }, 'profile select: revoking the device casts failed'); } // no token / key in the log
+    }
     forgetAuth(oldSid);
     renamePeerSid(req.user!.id, oldSid, newSid);
     const maxAge = Math.max(60, Math.floor(((s.createdAt ?? Date.now()) + (s.ttl ?? ctx.cfg.SESSION_TTL_SECONDS) * 1000 - Date.now()) / 1000));

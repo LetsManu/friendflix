@@ -10,12 +10,13 @@ const CHROME_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, li
 function fakeSdk() {
   const ctxListeners = new Map<string, (e: { castState?: string; sessionState?: string }) => void>();
   let anyChange: () => void = () => undefined;
-  const player = { isConnected: false, isPaused: true, isMediaLoaded: false, currentTime: 0, duration: 0, volumeLevel: 1, isMuted: false, playerState: null as string | null, mediaInfo: null as { contentId: string } | null };
+  const player = { isConnected: false, isPaused: true, isMediaLoaded: false, currentTime: 0, duration: 0, volumeLevel: 1, isMuted: false, playerState: null as string | null, mediaInfo: null as { contentId: string; customData?: unknown } | null };
   const controller = { playOrPause: vi.fn(), stop: vi.fn(), seek: vi.fn(), setVolumeLevel: vi.fn(), muteOrUnmute: vi.fn(), addEventListener: (_t: string, fn: () => void) => { anyChange = fn; } };
   const mediaSession = {
     editTracksInfo: vi.fn((_r: unknown, ok: () => void) => ok()),
     idleReason: null as string | null,
-    items: [] as Array<{ itemId: number; media: { contentId: string } }>,
+    currentItemId: undefined as number | undefined,
+    items: [] as Array<{ itemId: number; media: { contentId: string; customData?: unknown } }>,
     queueInsertItems: vi.fn((r: any, ok: () => void, _err: (e: unknown) => void) => { for (const q of r.args[0]) mediaSession.items.push({ itemId: 100 + mediaSession.items.length, media: { contentId: q.args[0].args[0] } }); ok(); }),
     queueRemoveItems: vi.fn((_r: unknown, ok: () => void) => ok()),
     queueNext: vi.fn((ok: () => void) => ok()),
@@ -87,7 +88,7 @@ beforeEach(async () => {
     head: { appendChild: (s: { src: string; async: boolean }) => scripts.push(s) },
   });
   vi.stubGlobal('window', win);
-  vi.stubGlobal('location', { pathname: '/', href: '/' });
+  vi.stubGlobal('location', { pathname: '/', href: 'https://friend.example.com/' });
   vi.stubGlobal('fetch', fetchMock);
   vi.resetModules();
   C = await import('./cast');
@@ -207,10 +208,10 @@ describe('session and player state', () => {
     sdk.fire('sessionstatechanged', { sessionState: 'SESSION_RESUMED' });
     sdk.fire('sessionstatechanged', { sessionState: 'SESSION_ENDED' });
     expect(get(C.castState)).toMatchObject({ connected: false, deviceName: '', state: 'idle', loaded: false });
-    expect(events).toEqual(['session-start', 'session-end']); // resume starts nothing on its own
+    expect(events).toEqual(['session-start', 'session-resume', 'session-end']); // resume starts nothing on its own
     off();
     sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(3);
   });
 
   it('emits media-end once when loaded media goes idle on the receiver', async () => {
@@ -461,5 +462,272 @@ describe('own receiver (CAST_RECEIVER_APP_ID)', () => {
     appId = 'nothex!!';
     const sdk = await connectSdk();
     expect(sdk.context.setOptions.mock.calls[0]![0]).toMatchObject({ receiverApplicationId: 'CC1AD845' });
+  });
+});
+
+describe('resume plumbing', () => {
+  it('emits session-resume on SESSION_RESUMED and for a session present at setup', async () => {
+    const sdk = await connectSdk();
+    const events: string[] = [];
+    C.onCastEvent((e) => events.push(e));
+    sdk.context.current = sdk.session;
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_RESUMED' });
+    expect(events).toEqual(['session-resume']);
+
+    // a session the SDK auto-joined before setup() ran
+    vi.resetModules();
+    C = await import('./cast');
+    const early: string[] = [];
+    C.onCastEvent((e) => early.push(e));
+    const sdk2 = fakeSdk();
+    sdk2.context.current = sdk2.session;
+    await C.initCast();
+    win.cast = { framework: sdk2.framework };
+    win.chrome = { cast: sdk2.chromeCast };
+    win.__onGCastApiAvailable(true);
+    expect(early).toEqual(['session-resume']);
+    expect(get(C.castState).deviceName).toBe('Living Room TV');
+  });
+
+  it('whenCastReady runs after the setup (after its session-resume), at once once ready, never without the SDK', async () => {
+    const seen: string[] = [];
+    C.onCastEvent((e) => seen.push(e));
+    C.whenCastReady(() => seen.push('ready'));
+    C.whenCastReady(() => { throw new Error('one waiter'); });
+    C.whenCastReady(() => seen.push('ready 2'));
+    await C.initCast();
+    win.__onGCastApiAvailable(false); // unavailable: nobody is told it is ready
+    expect(seen).toEqual([]);
+    const sdk = fakeSdk();
+    sdk.context.current = sdk.session;
+    win.cast = { framework: sdk.framework };
+    win.chrome = { cast: sdk.chromeCast };
+    win.__onGCastApiAvailable(true);
+    expect(seen).toEqual(['session-resume', 'ready', 'ready 2']);
+    C.whenCastReady(() => seen.push('late'));
+    expect(seen.at(-1)).toBe('late');
+  });
+
+  it('castState carries the own receiver castId and the queued items', async () => {
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    const id = 'cd'.repeat(16), nextId = 'ef'.repeat(16);
+    sdk.mediaSession.items.push(
+      { itemId: 1, media: { contentId: 'https://p/a.m3u8', customData: { ff: { castId: id } } } },
+      { itemId: 2, media: { contentId: 'https://p/b.m3u8', customData: { ff: { castId: nextId } } } },
+      { itemId: 3, media: { contentId: 'https://p/c.m3u8' } },
+    );
+    sdk.mediaSession.currentItemId = 1;
+    sdk.change({ isConnected: true, isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: 'https://p/a.m3u8', customData: { ff: { castId: id } } } });
+    const s = get(C.castState);
+    expect(s.castId).toBe(id);
+    expect(s.queue).toEqual([{ itemId: 2, contentId: 'https://p/b.m3u8', castId: nextId }, { itemId: 3, contentId: 'https://p/c.m3u8', castId: '' }]);
+    // not 32 hex: ignored
+    sdk.change({ mediaInfo: { contentId: 'https://p/a.m3u8', customData: { ff: { castId: 'nope' } } } });
+    expect(get(C.castState).castId).toBe('');
+  });
+
+  it('an unknown currentItemId gives an empty queue, never the playing item', async () => {
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.mediaSession.items.push({ itemId: 1, media: { contentId: 'https://p/a.m3u8' } }, { itemId: 2, media: { contentId: 'https://p/b.m3u8' } });
+    sdk.mediaSession.currentItemId = 9;
+    sdk.change({ isConnected: true, isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: 'https://p/c.m3u8' } });
+    expect(get(C.castState).queue).toEqual([]);
+  });
+
+  it('the first queue item counts as playing without a current item id', async () => {
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.mediaSession.items.push({ itemId: 1, media: { contentId: 'https://p/a.m3u8' } }, { itemId: 2, media: { contentId: 'https://p/b.m3u8' } });
+    sdk.change({ isConnected: true, isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: 'https://p/a.m3u8' } });
+    expect(get(C.castState).queue.map((q) => q.contentId)).toEqual(['https://p/b.m3u8']);
+  });
+
+  it('castAdoptTracks lets castSetSubtitle pick the right track id', async () => {
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    C.castAdoptTracks('https://p/a.m3u8', [{ index: 3 }, { index: 7 }]);
+    C.castSetSubtitle(7);
+    expect(sdk.mediaSession.editTracksInfo.mock.calls[0]![0]).toMatchObject({ args: [[2]] });
+    C.castSetSubtitle(-1);
+    expect(sdk.mediaSession.editTracksInfo.mock.calls[1]![0]).toMatchObject({ args: [[]] });
+  });
+
+  it('castActiveSubtitle: the subtitle index the receiver shows (from the adopted track map), -1 for none or no session', async () => {
+    expect(C.castActiveSubtitle()).toBe(-1);
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    C.castAdoptTracks('https://p/a.m3u8', [{ index: 3 }, { index: 7 }]);
+    expect(C.castActiveSubtitle()).toBe(-1);
+    (sdk.mediaSession as unknown as { activeTrackIds: number[] }).activeTrackIds = [2];
+    expect(C.castActiveSubtitle()).toBe(7);
+    (sdk.mediaSession as unknown as { activeTrackIds: number[] }).activeTrackIds = [9];
+    expect(C.castActiveSubtitle()).toBe(-1);
+  });
+
+  it('castAdoptTracks of a title that is not the playing one waits for it to play', async () => {
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.change({ isConnected: true, isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: 'https://p/a.m3u8' } });
+    C.castAdoptTracks('https://p/b.m3u8', [{ index: 5 }]);
+    C.castSetSubtitle(5); // the playing title has no track 5
+    expect(sdk.mediaSession.editTracksInfo.mock.calls[0]![0]).toMatchObject({ args: [[]] });
+    sdk.change({ mediaInfo: { contentId: 'https://p/b.m3u8' } }); // the queued title took over
+    C.castSetSubtitle(5);
+    expect(sdk.mediaSession.editTracksInfo.mock.calls[1]![0]).toMatchObject({ args: [[1]] });
+  });
+
+  it('castLeave disconnects without stopping the receiver', async () => {
+    const sdk = await connectSdk();
+    C.castLeave();
+    expect(sdk.context.endCurrentSession).toHaveBeenCalledTimes(1);
+    expect(sdk.context.endCurrentSession).toHaveBeenCalledWith(false);
+    C.castStop();
+    expect(sdk.context.endCurrentSession).toHaveBeenLastCalledWith(true);
+  });
+
+  it('writes session and receiver-error entries to the cast log, never a URL', async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } });
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_STARTED' });
+    sdk.change({ isConnected: true, isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: 'https://friend.example.com/media/c/T/x.m3u8' } });
+    sdk.mediaSession.idleReason = 'ERROR';
+    sdk.change({ isMediaLoaded: false, playerState: 'IDLE' });
+    sdk.change({ currentTime: 3 }); // the same error is not logged twice
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_ENDED' });
+    const log = JSON.parse(store.get('ff-castlog')!) as Array<{ tag: string; level: string; text: string }>;
+    expect(log.map((e) => `${e.tag}:${e.level}`)).toEqual(['session:info', 'receiver:error', 'session:info']);
+    expect(log[0]!.text).toContain('Living Room TV');
+    expect(JSON.stringify(log)).not.toContain('friend.example.com');
+    expect(JSON.parse(store.get('ff-castlog-devices')!)).toEqual(['Living Room TV']);
+    // no session to name: the log says so, the fallback is never remembered as a device
+    sdk.context.current = null;
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_RESUMED' });
+    expect(JSON.parse(store.get('ff-castlog')!).at(-1).text).toContain('unknown device');
+    expect(JSON.parse(store.get('ff-castlog-devices')!)).toEqual(['Living Room TV']);
+  });
+});
+
+describe('castTestClip', () => {
+  const CLIP = 'https://friend.example.com/cast-test/clip.mp4';
+  afterEach(() => vi.useRealTimers());
+
+  it('measures the first frame and ends the session it opened', async () => {
+    vi.useFakeTimers();
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.change({ isConnected: true, playerState: 'IDLE' });
+    const p = C.castTestClip(CLIP, 'FriendFlix test', { endAfter: true });
+    const req = sdk.session.loadMedia.mock.calls[0]![0];
+    expect(req.args[0].args).toEqual([CLIP, 'video/mp4']);
+    expect(req.autoplay).toBe(true);
+    await vi.advanceTimersByTimeAsync(1900);
+    sdk.change({ isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: CLIP } });
+    await expect(p).resolves.toEqual({ ok: true, firstFrameMs: 1900 });
+    expect(sdk.context.endCurrentSession).not.toHaveBeenCalled();
+    sdk.mediaSession.idleReason = 'FINISHED';
+    sdk.change({ isMediaLoaded: false, playerState: 'IDLE' });
+    expect(sdk.context.endCurrentSession).toHaveBeenCalledTimes(1);
+    expect(sdk.context.endCurrentSession).toHaveBeenCalledWith(true);
+  });
+
+  it('does not end a later real cast after something else took over the receiver', async () => {
+    vi.useFakeTimers();
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.change({ isConnected: true, playerState: 'IDLE' });
+    const p = C.castTestClip(CLIP, 't', { endAfter: true });
+    sdk.change({ isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: CLIP } });
+    await p;
+    sdk.change({ mediaInfo: { contentId: 'https://friend.example.com/media/c/T/x.m3u8' } }); // a real title was loaded
+    sdk.mediaSession.idleReason = 'FINISHED';
+    sdk.change({ isMediaLoaded: false, playerState: 'IDLE', mediaInfo: null });
+    expect(sdk.context.endCurrentSession).not.toHaveBeenCalled();
+  });
+
+  it('a clip the caller did not open leaves no watch timer behind', async () => {
+    vi.useFakeTimers();
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.change({ isConnected: true, playerState: 'IDLE' });
+    const p = C.castTestClip(CLIP, 't');
+    sdk.change({ isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: CLIP } });
+    expect(await p).toMatchObject({ ok: true });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('stops watching the clip when the TV stopped it, and after 60 s', async () => {
+    vi.useFakeTimers();
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.change({ isConnected: true, playerState: 'IDLE' });
+    const p = C.castTestClip(CLIP, 't', { endAfter: true });
+    sdk.change({ isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: CLIP } });
+    await p;
+    sdk.mediaSession.idleReason = 'CANCELLED';
+    sdk.change({ isMediaLoaded: false, playerState: 'IDLE' });
+    sdk.mediaSession.idleReason = 'FINISHED';
+    sdk.change({ currentTime: 1 });
+    expect(sdk.context.endCurrentSession).not.toHaveBeenCalled();
+    const p2 = C.castTestClip(CLIP, 't', { endAfter: true });
+    sdk.change({ isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: CLIP } });
+    await p2;
+    await vi.advanceTimersByTimeAsync(60_000);
+    sdk.change({ isMediaLoaded: false, playerState: 'IDLE' });
+    expect(sdk.context.endCurrentSession).not.toHaveBeenCalled();
+  });
+
+  it('sends the TV an absolute URL for a relative path', async () => {
+    vi.stubGlobal('location', { pathname: '/', href: 'https://friend.example.com/diagnose' });
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    void C.castTestClip('/cast-test/clip.mp4', 't');
+    const req = sdk.session.loadMedia.mock.calls[0]![0];
+    expect(req.args[0].args[0]).toBe('https://friend.example.com/cast-test/clip.mp4');
+  });
+
+  it('leaves the session alone when the caller did not open it', async () => {
+    vi.useFakeTimers();
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.change({ isConnected: true, playerState: 'IDLE' });
+    const p = C.castTestClip(CLIP, 'FriendFlix test');
+    sdk.change({ isMediaLoaded: true, playerState: 'PLAYING', mediaInfo: { contentId: CLIP } });
+    await expect(p).resolves.toMatchObject({ ok: true });
+    sdk.mediaSession.idleReason = 'FINISHED';
+    sdk.change({ isMediaLoaded: false, playerState: 'IDLE' });
+    expect(sdk.context.endCurrentSession).not.toHaveBeenCalled();
+  });
+
+  it('gives up after 20 s, on a load error and without a session', async () => {
+    vi.useFakeTimers();
+    await expect(C.castTestClip(CLIP, 't')).resolves.toEqual({ ok: false, firstFrameMs: null });
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.change({ isConnected: true, playerState: 'IDLE' });
+    const slow = C.castTestClip(CLIP, 't');
+    await vi.advanceTimersByTimeAsync(20_000);
+    await expect(slow).resolves.toEqual({ ok: false, firstFrameMs: null });
+    sdk.session.loadMedia.mockResolvedValueOnce('load_failed');
+    await expect(C.castTestClip(CLIP, 't')).resolves.toEqual({ ok: false, firstFrameMs: null });
+    sdk.session.loadMedia.mockRejectedValueOnce(new Error('x'));
+    await expect(C.castTestClip(CLIP, 't')).resolves.toEqual({ ok: false, firstFrameMs: null });
+  });
+
+  it('fails when the session ends or the receiver errors before the first frame', async () => {
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    sdk.change({ isConnected: true, playerState: 'IDLE' });
+    const ended = C.castTestClip(CLIP, 't');
+    sdk.fire('sessionstatechanged', { sessionState: 'SESSION_ENDED' });
+    await expect(ended).resolves.toEqual({ ok: false, firstFrameMs: null });
+    sdk.change({ isConnected: true, playerState: 'IDLE' });
+    const errored = C.castTestClip(CLIP, 't');
+    sdk.mediaSession.idleReason = 'ERROR';
+    sdk.change({ isMediaLoaded: false, playerState: 'IDLE' });
+    await expect(errored).resolves.toEqual({ ok: false, firstFrameMs: null });
   });
 });
