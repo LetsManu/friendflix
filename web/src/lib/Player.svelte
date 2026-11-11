@@ -379,7 +379,7 @@
     if (left) credOutT = setTimeout(() => (credOut = false), phoneUi ? 800 : 300);
   }
   // phones: an open panel (a menu, Cast & info, the party host's settings) keeps the controls up (spec 2026-11-08 §1)
-  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || ctlFocus || menu !== '' || playOnOpen || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
+  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || aconn || ctlFocus || menu !== '' || playOnOpen || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);

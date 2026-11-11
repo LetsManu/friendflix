@@ -184,3 +184,18 @@ test('closing the picker without a TV hides the connecting layout', async ({ pag
   await expect(layout(page)).toHaveCount(0);
   await expect.poll(() => deleted).toEqual(['c'.repeat(32)]); // the arm revoke only
 });
+
+test('the connecting layout does not jump after it mounts, and Back stays reachable', async ({ page, api: _api }) => {
+  await airplayTap(page);
+  await expect(page.getByTestId('airplay-ready')).toBeVisible();
+  await remoteConnecting(page);
+  const box = layout(page);
+  const boxes = async () => box.evaluate((el) => ['.msg', 'button'].map((q) => { const r = el.querySelector(q)!.getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map(Math.round); }));
+  const first = await boxes(); // the first frame
+  expect(first[0]![2]).toBeGreaterThan(150); // the text is already in the pill
+  await page.waitForTimeout(200);
+  expect(await boxes()).toEqual(first);
+  await page.waitForTimeout(4000); // past the 3 s auto-hide
+  await expect(page.getByRole('button', { name: 'Zurück', exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Zurück', exact: true }).first()).toHaveCSS('opacity', '1');
+});

@@ -17,9 +17,12 @@
   export let art: string[];
   export let onCancel: () => void;
 
-  let i = 0;
+  let i = 0, artKey = '';
+  $: if (art.join('|') !== artKey) { artKey = art.join('|'); i = 0; } // other candidates: start again from the best
   $: src = art[i] ?? null;
-  // the live region mounts empty: screen readers announce what is put into a region that already exists
+  $: line = $t('player.castRemote.connecting', { device: $t('player.castBar.airplayDevice') });
+  // the visible line is there from the first frame (nothing grows); a separate hidden live region mounts empty and is filled after
+  // mount: screen readers announce what is put into a region that already exists
   let said = false;
   onMount(() => { const id = setTimeout(() => (said = true), 50); return () => clearTimeout(id); });
 </script>
@@ -29,7 +32,8 @@
   <div class="shade" aria-hidden="true"></div>
   <div class="box">
     <span class="disc" aria-hidden="true"><span class="spin"></span></span>
-    <p class="msg frost frost-safe frost-panel" role="status">{#if said}{$t('player.castRemote.connecting', { device: $t('player.castBar.airplayDevice') })}{/if}</p>
+    <p class="msg frost frost-safe frost-panel">{line}</p>
+    <p class="sr-only" role="status">{said ? line : ''}</p>
     <button type="button" class="frost-btn" on:click|stopPropagation={onCancel}>{$t('player.airplay.cancel')}</button>
   </div>
 </div>
