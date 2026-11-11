@@ -3,7 +3,7 @@
 import { get } from 'svelte/store';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { consumeAutoplay, noteInteraction } from '#lib/stillwatching';
-import { CAST_LOCK, castLock, DETACHED_AFTER_MS, PROGRESS_MS, RESUME_WAIT_MS } from './engine';
+import { CAST_LOCK, castLock, DETACHED_AFTER_MS, PROGRESS_MS, RENEW_BEFORE_MS, RESUME_WAIT_MS } from './engine';
 import type { CastLookup } from './resume';
 import { writeHint } from './resume';
 import { castIdOf, ci, contentOf, deferred, fakeLock, flush, memStore, settle, handoff, idle, lookup, playing, setup, T0, token, type Env } from '../../test-utils/fake-cast-engine';
@@ -381,6 +381,65 @@ describe('cast engine: resume (re-adoption)', () => {
     expect(await q).toBeNull();
     expect(typeof (await castLock(undefined, true))).toBe('function');
     expect(typeof (await castLock({ request: () => Promise.reject(new Error('opaque')) } as unknown as LockManager, false))).toBe('function');
+  });
+
+  it('resume onto the queued successor closes the predecessor once (one stop at its runtime, one DELETE)', async () => {
+    const env = setup();
+    writeHint(env.store, { castId: A, next: B, itemId: 'dun4', device: 'Wohnzimmer-TV', exp: T0 + 60 * 60_000, at: T0 - 60_000 });
+    env.lookups[A] = lookup(A, 'dun4', { reported: true, runtimeTicks: 30_000_000_000 });
+    env.lookups[B] = lookup(B, 'dun5', { next: true, reported: true, title: 'Wrenfield Pier' });
+    env.state.set(playing({ currentTime: 120, duration: 3000, contentId: contentOf(tB), queue: [] })); // the TV moved on with no page open
+    expect(await env.engine.resume()).toBe(true);
+    await flush();
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.calls.find((c) => c.path === '/api/playback/stop')!.init.body).toEqual({
+      itemId: 'dun4', playSessionId: 'ps-dun4', mediaSourceId: 'ms-dun4', positionTicks: 30_000_000_000, isPaused: false, playMethod: 'Transcode' });
+    expect(env.deletes()).toEqual([A]);
+    expect(get(env.out)).toMatchObject({ itemId: 'dun5', state: 'playing', castId: B });
+    expect(env.hint()?.castId).toBe(B);
+    expect(env.logs.some((l) => l.tag === 'queue' && /ended episode closed/.test(l.text))).toBe(true);
+    // its token already gone (idle expiry): nothing to close
+    const gone = setup();
+    writeHint(gone.store, { castId: A, next: B, itemId: 'dun4', device: 'Wohnzimmer-TV', exp: T0 + 60 * 60_000, at: T0 - 60_000 });
+    gone.lookups[B] = lookup(B, 'dun5', { next: true, reported: true });
+    gone.state.set(playing({ contentId: contentOf(tB), queue: [] }));
+    expect(await gone.engine.resume()).toBe(true);
+    expect(gone.reports()).toEqual([]);
+    expect(gone.deletes()).toEqual([]);
+    // a predecessor that never played (no start reported): revoked, no stop
+    const unplayed = setup();
+    writeHint(unplayed.store, { castId: A, next: B, itemId: 'dun4', device: 'Wohnzimmer-TV', exp: T0 + 60 * 60_000, at: T0 - 60_000 });
+    unplayed.lookups[A] = lookup(A, 'dun4', { reported: false });
+    unplayed.lookups[B] = lookup(B, 'dun5', { next: true, reported: true });
+    unplayed.state.set(playing({ contentId: contentOf(tB), queue: [] }));
+    expect(await unplayed.engine.resume()).toBe(true);
+    expect(unplayed.reports()).toEqual([]);
+    expect(unplayed.deletes()).toEqual([A]);
+  });
+
+  it('a failed queue lookup: the hint keeps the receiver\'s queued token and Stop revokes it', async () => {
+    const env = setup();
+    env.lookups[A] = lookup(A, 'dun4');
+    const record = env.api.getMockImplementation()!;
+    env.api.mockImplementation(async (path, init) => (path === `/api/cast/session/${B}` && (init?.method ?? 'GET') === 'GET' ? Promise.reject(new Error('net')) : record(path, init)));
+    tvPlaysA(env);
+    expect(await env.engine.resume()).toBe(true);
+    await flush();
+    expect(env.hint()).toMatchObject({ castId: A, next: B });
+    await env.engine.stop();
+    expect(env.deletes().sort()).toEqual([A, B].sort());
+    expect(env.reports()).toEqual(['stop']);
+  });
+
+  it('a resume keeps the receiver\'s subtitle for the first renewal', async () => {
+    const env = setup();
+    env.lookups[A] = lookup(A, 'dun4', { expiresAt: T0 + RENEW_BEFORE_MS + 5_000, subtitles: [{ index: 3, language: 'de', title: 'Deutsch' }, { index: 7, language: 'en', title: 'English' }] });
+    env.cast.castActiveSubtitle.mockReturnValue(7);
+    tvPlaysA(env, { queue: [] });
+    expect(await env.engine.resume()).toBe(true);
+    expect(get(env.out)?.subIndex).toBe(7);
+    await env.advance(PROGRESS_MS);
+    expect(env.loads.map((l) => l.sub)).toEqual([7]);
   });
 
   it('a Player hand-off during the lookup wins; the resume gives up', async () => {

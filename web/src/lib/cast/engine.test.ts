@@ -459,6 +459,46 @@ describe('cast engine: session end, stop, pagehide (Chromecast)', () => {
     expect(env2.queued).toEqual([]);
   });
 
+  it('foreign media for 20 s: one stop report, one DELETE (plus the queued token), no castStop, no renewal, no progress after it, hint cleared, lock freed', async () => {
+    const env = setup();
+    env.setQueue(() => 7);
+    await playingSession(env, { itemId: 'ep1', isEpisode: true, cast: ci(hex('c1'), { expiresAt: T0 + RENEW_BEFORE_MS + 15_000 }) });
+    await flush();
+    expect(env.queued.map((q) => q.castId)).toEqual(['q1']);
+    expect(env.lock.held()).toBe(true);
+    env.state.set(playing({ currentTime: 5, contentId: '/media/c/someone-else/master.m3u8' })); // another sender took the TV
+    await env.advance(ADVANCE_WAIT_MS - 1);
+    expect(env.reports()).toEqual([]); // no progress for a stream that does not play
+    expect(env.tokenPosts()).toEqual([]); // and no renewal over the other cast
+    expect(get(env.out)).not.toBeNull();
+    await env.advance(PROGRESS_MS);
+    await flush();
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.calls.find((c) => c.path === '/api/playback/stop')!.init.body).toMatchObject({ itemId: 'ep1', positionTicks: secToTicks(60) });
+    expect(env.deletes().sort()).toEqual([hex('c1'), 'q1'].sort());
+    expect(env.cast.castStop).not.toHaveBeenCalled();
+    expect(env.cast.castQueueRemove).not.toHaveBeenCalled(); // the TV belongs to the other sender now
+    expect(get(env.out)).toBeNull();
+    expect(env.hint()).toBeNull();
+    expect(env.lock.held()).toBe(false);
+    expect(env.pending()).toBe(0);
+    await env.advance(PROGRESS_MS * 10);
+    expect(env.reports()).toEqual(['stop']);
+    expect(env.tokenPosts()).toEqual([]);
+  });
+
+  it('foreign media for a moment (a switch on the TV that comes back) is no reason to let go', async () => {
+    const env = setup();
+    await playingSession(env);
+    env.state.set(playing({ contentId: '/media/c/someone-else/master.m3u8' }));
+    await env.advance(5_000);
+    env.state.set(playing({ currentTime: 70 }));
+    await env.advance(ADVANCE_WAIT_MS * 2);
+    expect(get(env.out)).not.toBeNull();
+    expect(env.reports().every((r) => r === 'progress')).toBe(true);
+    expect(env.reports().length).toBeGreaterThan(0);
+  });
+
   it('hint follows the live token', async () => {
     const env = setup();
     await playingSession(env, { cast: ci(hex('c1')) });

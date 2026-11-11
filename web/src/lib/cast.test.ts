@@ -554,6 +554,18 @@ describe('resume plumbing', () => {
     expect(sdk.mediaSession.editTracksInfo.mock.calls[1]![0]).toMatchObject({ args: [[]] });
   });
 
+  it('castActiveSubtitle: the subtitle index the receiver shows (from the adopted track map), -1 for none or no session', async () => {
+    expect(C.castActiveSubtitle()).toBe(-1);
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    C.castAdoptTracks('https://p/a.m3u8', [{ index: 3 }, { index: 7 }]);
+    expect(C.castActiveSubtitle()).toBe(-1);
+    (sdk.mediaSession as unknown as { activeTrackIds: number[] }).activeTrackIds = [2];
+    expect(C.castActiveSubtitle()).toBe(7);
+    (sdk.mediaSession as unknown as { activeTrackIds: number[] }).activeTrackIds = [9];
+    expect(C.castActiveSubtitle()).toBe(-1);
+  });
+
   it('castAdoptTracks of a title that is not the playing one waits for it to play', async () => {
     const sdk = await connectSdk();
     sdk.context.current = sdk.session;

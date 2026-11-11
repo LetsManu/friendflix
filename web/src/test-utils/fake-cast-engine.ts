@@ -130,7 +130,7 @@ export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock; store?: Retu
     loadOnCast: vi.fn(async (info: CastInfo, sub = -1) => { loads.push({ info, sub }); return loadImpl(info); }),
     castPlayPause: vi.fn(), castSeek: vi.fn(), castStop: vi.fn(), castSetSubtitle: vi.fn(),
     queueOnCast: vi.fn(async (info: CastInfo): Promise<number | null> => { queued.push(info); return queueImpl(info); }), castQueueRemove: vi.fn(), castQueueNext: vi.fn(),
-    castAdoptTracks: vi.fn(), castLeave: vi.fn(),
+    castAdoptTracks: vi.fn(), castLeave: vi.fn(), castActiveSubtitle: vi.fn((): number => -1),
   };
   let now = T0;
   let timers: Array<{ fn: () => void; at: number; id: number }> = [];

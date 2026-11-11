@@ -49,6 +49,8 @@ interface MediaT {
   idleReason?: string | null;
   /** queue item id of the item that plays now (queue items after it are the queued ones) */
   currentItemId?: number;
+  /** the tracks the receiver shows (cast track ids) */
+  activeTrackIds?: number[] | null;
   items?: Array<{ itemId: number; media?: { contentId?: string; customData?: unknown } | null }> | null;
   editTracksInfo(r: unknown, ok: () => void, err: (e: unknown) => void): void;
   queueInsertItems(r: unknown, ok: () => void, err: (e: unknown) => void): void;
@@ -442,6 +444,12 @@ export function castAdoptTracks(contentUrl: string, subs: Array<{ index: number 
   trackMaps.set(contentUrl, ids);
   const cur = get(castState).contentId;
   if (!cur || cur === contentUrl) trackIds = ids;
+}
+/** the subtitle index the receiver shows now, from the current track map (-1: none, unknown, or no session) */
+export function castActiveSubtitle(): number {
+  const ids = ctxT?.getCurrentSession()?.getMediaSession()?.activeTrackIds ?? [];
+  for (const [index, id] of trackIds) if (ids.includes(id)) return index;
+  return -1;
 }
 /** subtitle index of the cast session info (-1 = off) */
 export function castSetSubtitle(index: number) {
