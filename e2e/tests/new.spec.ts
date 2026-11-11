@@ -124,7 +124,7 @@ test.describe('new & upcoming, variant B (desktop)', () => {
   });
 
   test('the request service is slow: Für dich and the library do not wait for it, and nothing moves when it gives up', async ({ page, api }) => {
-    test.setTimeout(40_000);
+    test.setTimeout(70_000);
     api.newPage.suggestions = { ...SUGGESTIONS };
     api.newPage.hang.add('suggestions');
     await page.goto('/new');
@@ -134,7 +134,7 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     await expect(ms.locator('li.skc')).toHaveCount(4); // the slot is there, as a placeholder
     const y = async () => (await page.getByRole('heading', { level: 2, name: 'Neue Folgen' }).boundingBox())!.y;
     const before = await y();
-    await expect(ms.getByRole('button', { name: /Etwas fehlt\?/ })).toBeVisible({ timeout: 8000 }); // given up: the filler takes the slot
+    await expect(ms.getByRole('button', { name: /Etwas fehlt\?/ })).toBeVisible({ timeout: 26_000 }); // given up after 20 s (a cache miss of the server takes long): the filler takes the slot
     expect(Math.abs((await y()) - before)).toBeLessThanOrEqual(0.5);
     await page.goto('/new?tab=neu');
     await expect(region(page, 'Neu in der Bibliothek')).toBeVisible({ timeout: 1500 });
@@ -377,6 +377,11 @@ test.describe('new & upcoming, variant B (desktop)', () => {
       // the failed suggestions leave their slot to the "Etwas fehlt?" entry
       await expect(region(page, 'Noch nicht bei uns').locator('li.c:not(.fill)')).toHaveCount(0);
       await expect(region(page, 'Noch nicht bei uns').getByRole('button', { name: /Etwas fehlt\?/ })).toBeVisible();
+      // the filler is quiet glass: the global button rule must not paint it with the accent fill (not even on hover)
+      const filler = region(page, 'Noch nicht bei uns').getByRole('button', { name: /Etwas fehlt\?/ });
+      expect(await filler.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
+      await filler.hover();
+      expect(await filler.evaluate((e) => getComputedStyle(e).backgroundColor)).not.toMatch(/^rgb\(\d+, \d+, \d+\)$/); // translucent, never a solid fill
       await expect(region(page, 'Neue Folgen')).toHaveCount(0);
       await expect(page.locator('.skeleton')).toHaveCount(0);
       await tab(page, 'Neu in der Bibliothek').click();

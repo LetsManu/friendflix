@@ -11,6 +11,12 @@ import type { TFn } from '#lib/i18n';
 const DAY = 86_400_000;
 /** "new" for series and films: added to the library at most this many days ago (the window of the fresh badges, backend fresh.ts) */
 export const NEW_TITLE_DAYS = 14;
+/**
+ * How long the page waits for "Noch nicht bei uns". A list that is not cached is built by the server from the taste profile, a few media
+ * server lookups and the request service (up to 15 s per call), far beyond the 4 s of the quick sections; giving up early would show
+ * the filler although the server finishes (and caches) the list a moment later. The skeleton keeps the slot meanwhile.
+ */
+export const SUGGEST_TIMEOUT_MS = 20_000;
 
 // ---- filter ----
 export type NewFilter = 'all' | 'series' | 'movie';

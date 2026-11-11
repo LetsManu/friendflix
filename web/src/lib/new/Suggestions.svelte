@@ -76,9 +76,12 @@
   @keyframes ms-in { from { opacity: 0; } }
   .c.skc { border: 0; background: #1b2127; }
   .skc::before { display: none; }
-  .fill { grid-column: span var(--n); background: rgba(255, 255, 255, .04); }
+  /* the quiet glass filler: milk over scrim like .frost, the dashed edge marks it as a gap. The global button rule paints the accent fill, so the button is cleared below */
+  .fill { grid-column: span var(--n); border: 1px dashed var(--fr-line); background: linear-gradient(180deg, rgba(var(--fr-milk-top), calc(var(--fr-milk-a2) * .5)), rgba(var(--fr-milk), calc(var(--fr-milk-a1) * .5))), rgba(var(--fr-scrim-rgb), var(--fr-scrim)); }
   .fill::before { display: none; }
   .fillbtn { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .3rem; padding: 1rem; color: #fff; text-align: center; font: inherit; border-radius: inherit; }
+  .fill .fillbtn { background: none; }
+  .fill .fillbtn:hover:not(:disabled) { background: rgba(255, 255, 255, .06); }
   .fillbtn b { font-size: 1.05rem; font-weight: 800; }
   .fillbtn span { font-size: .85rem; color: rgba(255, 255, 255, .8); }
   .fillbtn :global(svg) { color: var(--acc-text); }
@@ -97,7 +100,7 @@
     .tx { grid-column: 2; margin: 0; padding: 0; min-width: 0; }
     .act { height: auto; margin-top: .4rem; }
     .c.skc { display: block; overflow: hidden; border-radius: 12px; }
-    .fill { display: flex; height: calc(var(--n) * var(--ch) + (var(--n) - 1) * 14px); grid-column: 1 / -1; border: 1px dashed rgba(255, 255, 255, .4); border-radius: 18px; }
+    .fill { display: flex; height: calc(var(--n) * var(--ch) + (var(--n) - 1) * 14px); grid-column: 1 / -1; border: 1px dashed var(--fr-line); border-radius: 18px; }
     .fill.one { grid-column: 1 / -1; }
     .ln { flex-direction: column; gap: 0; }
     .nm { font-size: 1.1rem; }

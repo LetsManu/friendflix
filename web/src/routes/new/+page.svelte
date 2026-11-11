@@ -24,7 +24,7 @@
   import { t } from '#lib/i18n';
   import { runtimeLabel, sortUpcoming } from '#lib/mobile';
   import {
-    episodeItem, FILTER_PARAM, availableTabs, forYouItems, freshText, mergeSuggestions, NEW_TITLE_DAYS, openRequests, pageSearch, parseFilter, parseTab, planSections, quotaLeft, TAB_PARAM,
+    episodeItem, FILTER_PARAM, SUGGEST_TIMEOUT_MS, availableTabs, forYouItems, freshText, mergeSuggestions, NEW_TITLE_DAYS, openRequests, pageSearch, parseFilter, parseTab, planSections, quotaLeft, TAB_PARAM,
     withinDays, type NewData, type NewEpisode, type NewFilter, type NewTab, type Suggestion, type Up,
   } from '#lib/newpage';
   import FilterBar from '#lib/new/FilterBar.svelte';
@@ -120,7 +120,7 @@
     if (tv) { set('suggest', []); return; }
     void loadMine();
     type Answer = { items: Suggestion[]; quota: { limit: number | null; used: number; resetsAt: string } | null };
-    const [m, s] = await Promise.all([fetchJson<Answer>('/api/library/request-suggestions?type=movie', FAST_TIMEOUT_MS), fetchJson<Answer>('/api/library/request-suggestions?type=series', FAST_TIMEOUT_MS)]);
+    const [m, s] = await Promise.all([fetchJson<Answer>('/api/library/request-suggestions?type=movie', SUGGEST_TIMEOUT_MS), fetchJson<Answer>('/api/library/request-suggestions?type=series', SUGGEST_TIMEOUT_MS)]);
     const q = m?.quota ?? s?.quota ?? null;
     if (q) quota.set(q); else void loadQuota();
     set('suggest', mergeSuggestions(m?.items ?? [], s?.items ?? []));
