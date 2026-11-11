@@ -51,6 +51,8 @@ export default {
     twoAddresses: 'Der Fernseher nutzte 2 Adressen (IPv4 und IPv6). Unproblematisch, solange die Wiedergabe läuft; stoppt sie, IPv6 am Fernseher abschalten.',
     events: 'Ereignisse',
     eventsHint: 'Nur auf diesem Gerät, letzte 200 · im Bericht enthalten',
+    copyEvents: 'Ereignisse kopieren',
+    clearEvents: 'Ereignisse leeren',
     eventsEmpty: 'Noch keine Ereignisse.',
     info: 'Info',
     warn: 'Warnung',

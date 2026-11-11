@@ -51,7 +51,7 @@ test.describe('/diagnose casting', () => {
     await expect(page.getByTestId('diagnose-cast-cc')).toContainText('Dunmoor · S1:F4');
     await expect(page.getByTestId('diagnose-cast-cc')).not.toContainText('The Lantern Road');
     await expect(page.getByTestId('diagnose-cast-cc')).toContainText('S1:F5 auf dem Fernseher vorgemerkt');
-    await page.locator('.events').getByRole('button', { name: 'Kopieren', exact: true }).click(); // the events table's own copy
+    await page.locator('.events').getByRole('button', { name: 'Ereignisse kopieren' }).click(); // the events table's own copy
     await expect(page.locator('.note[role=status]')).toContainText('Kopiert');
     const ev = await page.evaluate(() => navigator.clipboard.readText());
     expect(ev).toContain('session started · TV 1');
@@ -113,7 +113,7 @@ test.describe('/diagnose casting', () => {
     await expect(page.getByText('Beende zuerst die Übertragung.')).toBeVisible();
     await expect(send).toHaveAccessibleDescription('Beende zuerst die Übertragung.');
     await expect(page.getByTestId('diagnose-cast-cc')).toContainText('Gültig 2 Std.');
-    await page.getByTestId('diagnose-cast').getByRole('button', { name: 'Leeren' }).click();
+    await page.getByTestId('diagnose-cast').getByRole('button', { name: 'Ereignisse leeren' }).click();
     await expect(page.getByTestId('cast-events-empty')).toHaveText('Noch keine Ereignisse.');
   });
 

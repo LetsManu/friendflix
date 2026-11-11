@@ -207,6 +207,22 @@ describe('profiles', () => {
     expect(await env.kv.keys('castpin:')).toEqual([]);
   });
 
+  it('a failing cast revoke does not break the profile switch (200, new session cookie, new profile)', async () => {
+    const s = await mk();
+    const p = await mkProfile(s, 'Kind');
+    const kv = env.ctx.kv as unknown as { keys: (...a: unknown[]) => Promise<string[]> };
+    const orig = kv.keys.bind(kv);
+    let failed = 0;
+    kv.keys = async (...a) => { if (!failed) { failed++; throw new Error('kv down'); } return orig(...a); };
+    const r = await call(s, 'POST', `/api/profiles/${p.id}/select`, {});
+    kv.keys = orig;
+    expect(failed).toBe(1);
+    expect(r.statusCode).toBe(200);
+    expect(r.cookies.some((c) => c.name === 'ff_sid')).toBe(true);
+    const s2 = sessOf(r, s);
+    expect((await call(s2, 'GET', '/api/profiles')).json().activeId).toBe(p.id);
+  });
+
   it('a cast minted by a request that races a profile switch is taken back (409 profile_changed)', async () => {
     const s = await mk({
       'POST /Items/[^/]+/PlaybackInfo': () => ({ json: { PlaySessionId: 'ps-race-1', MediaSources: [{ Id: 'b'.repeat(32), Container: 'mkv', SupportsDirectPlay: true, Bitrate: 4_000_000, RunTimeTicks: 3_000_000_000, MediaStreams: [{ Index: 0, Type: 'Video', Height: 1080 }, { Index: 1, Type: 'Audio' }] }] } }),

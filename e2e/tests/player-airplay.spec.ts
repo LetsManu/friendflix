@@ -103,7 +103,7 @@ test('AirPlay: tap -> cast token URL on the element FIRST, then the picker; TV -
   await expect(log).toContainText('sustained off -> stop');
   const text = (await log.textContent()) ?? '';
   for (const bad of ['p1test', '/media/', 'c'.repeat(32), '127.0.0.1', 'blob:']) expect(text).not.toContain(bad);
-  await page.getByRole('button', { name: 'Leeren' }).click();
+  await page.locator('.page > .row').getByRole('button', { name: 'Leeren' }).click();
   await expect(page.getByTestId('airplay-log-empty')).toBeVisible();
 });
 

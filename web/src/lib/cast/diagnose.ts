@@ -40,8 +40,9 @@ export function chromecastRows(o: {
   const s = o.session;
   rows.push({
     label: tf('diagnose.cast.session'),
-    value: !s && o.otherTab ? tf('diagnose.cast.otherTab') : s || o.state.connected ? tf('diagnose.cast.connectedTo', { device: device || '…' }) : tf('diagnose.cast.notConnected'),
-    tone: 'none',
+    value: s?.state === 'detached' ? tf('player.castRemote.lost')
+      : !s && o.otherTab ? tf('diagnose.cast.otherTab') : s || o.state.connected ? tf('diagnose.cast.connectedTo', { device: device || '…' }) : tf('diagnose.cast.notConnected'),
+    tone: s?.state === 'detached' ? 'warn' : 'none',
   });
   rows.push({ label: tf('diagnose.cast.playing'), value: s ? barLine1(s, o.item, tf) || NONE : NONE, tone: 'none' });
   rows.push({
