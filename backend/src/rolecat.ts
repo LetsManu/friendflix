@@ -194,7 +194,7 @@ export class RoleInUse extends Error {
 /**
  * Deletes an admin role (spec §2). Built-ins and a role still in ROLE_TEMPLATES cannot be deleted. Accounts and open invites need
  * `moveTo`: one transaction (holding the role locks of both roles in key order, so a concurrent role write waits and then finds the role
- * gone) moves every invite of the role (open, used-up or expired: a released invite is reopened), then each account through setRole
+ * gone) moves every invite of the role (open, used-up or expired: a released invite is reopened; without `moveTo` the non-open ones go to the role's base), then each account through setRole
  * (audited user.role), then removes the rows and audits role.delete. `admin` is never a target (admin is never invitable).
  * The account moves run on pool connections, each committed and audited on its own, and hold both role locks across the media server
  * calls. If one fails, earlier accounts stay moved while the role, its invites and the audit entry roll back (no role.delete entry);
@@ -211,7 +211,8 @@ export async function deleteRole(ctx: Ctx, actor: string | null, key: string, mo
   try {
     await c.query('begin');
     for (const k of [...new Set([key, ...(moveTo !== undefined ? [moveTo] : [])])].sort()) await lockRole(c, k);
-    if (!(await c.query('select 1 from roles where key=$1 for update', [key])).rowCount) throw new HttpError(404, 'not_found'); // deleted while this waited
+    const locked = (await c.query<{ base: string }>('select base from roles where key=$1 for update', [key])).rows[0];
+    if (!locked) throw new HttpError(404, 'not_found'); // deleted while this waited
     if (moveTo !== undefined && !Object.hasOwn(ctx.roles, moveTo) && !(await c.query('select 1 from roles where key=$1', [moveTo])).rowCount) throw new HttpError(400, 'bad_target');
     const accountIds = async () => (await c.query<{ id: string }>('select id from users where role=$1', [key])).rows.map((r) => r.id);
     const ids = await accountIds();
@@ -219,8 +220,10 @@ export async function deleteRole(ctx: Ctx, actor: string | null, key: string, mo
     const open = "role=$1 and uses < max_uses and expires_at >= now()";
     const invites = Number((await c.query<{ n: string }>(`select count(*) n from invites where ${open}`, [key])).rows[0]!.n);
     if ((ids.length || invites) && moveTo === undefined) throw new RoleInUse(ids.length, invites);
+    // every invite of the role leaves it (a claimed one may still be provisioning, a used-up one can be reopened): without a target
+    // they go to the role's base, always a built-in and never admin; the counts above only decide whether the delete needs a target
+    await c.query('update invites set role=$2 where role=$1', [key, moveTo ?? (locked.base === 'admin' ? 'friend' : locked.base)]);
     if (moveTo !== undefined) {
-      await c.query('update invites set role=$2 where role=$1', [key, moveTo]);
       // an account created meanwhile shows up in the next pass
       for (let pass = 0, todo = ids; todo.length; todo = await accountIds()) {
         if (++pass > 3) throw new RoleInUse(todo.length, invites);

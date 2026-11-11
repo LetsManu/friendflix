@@ -62,21 +62,29 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, 
   }
   try {
     const id = randomUUID();
-    await applyRole(ctx, jf!.id, role, false, { userId: id });
+    // an invite's role may be deleted right now: that is settled under the role lock below, so a failure here waits for it
+    let applied = true;
+    await applyRole(ctx, jf!.id, role, false, { userId: id }).catch((e) => { if (!inviteId) throw e; applied = false; });
     const c = tx ?? (await (ctx.db as pg.Pool).connect());
     let row: UserRow;
     try {
       if (!tx) await c.query('begin');
       if (inviteId) {
         // shared role lock (deleteRole holds it exclusively): a delete in flight either finishes first, so the invite shows the new
-        // role, or waits for this account and then moves it
-        await c.query('select pg_advisory_xact_lock_shared(hashtext($1))', [`role:${role}`]);
-        const now = await inviteRole(c);
-        if (now && now !== role) {
-          role = now;
-          await applyRole(ctx, jf!.id, role, false, { userId: id });
+        // role, or waits for this account and then moves it. Re-read under each lock until the role is stable and still exists.
+        let settled = false;
+        for (let tries = 0; tries < 3 && !settled; tries++) {
           await c.query('select pg_advisory_xact_lock_shared(hashtext($1))', [`role:${role}`]);
+          const now = (await inviteRole(c)) ?? role;
+          if (now === role) {
+            settled = Object.hasOwn(ctx.roles, role) || (await c.query('select 1 from roles where key=$1', [role])).rowCount! > 0;
+            break;
+          }
+          role = now;
+          applied = false;
         }
+        if (!settled) throw new HttpError(503, 'role_changing'); // never insert on a missing role; the invite is released and the person retries
+        if (!applied) await applyRole(ctx, jf!.id, role, false, { userId: id });
       }
       const r = await c.query<UserRow>(
         `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, access_until)

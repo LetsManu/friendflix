@@ -2,8 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256 } from '../src/crypto.js';
+import { invalidateRoles } from '../src/roles.js';
 import { claimInvite, releaseInvite } from '../src/invites.js';
+import { deleteRole } from '../src/rolecat.js';
 import { provisionUser } from '../src/users.js';
+
+// the sign-in path calls the real provisionUser; a test can run a step (a role delete) just before it, after the invite was claimed
+const hook: { before?: () => Promise<void> } = {};
+vi.mock('../src/users.js', async (orig) => {
+  const real = await orig<typeof import('../src/users.js')>();
+  return { ...real, provisionUser: vi.fn(async (...a: Parameters<typeof real.provisionUser>) => { await hook.before?.(); return real.provisionUser(...a); }) };
+});
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const AK = { AUTHENTIK_URL: 'https://auth.example.com', AUTHENTIK_API_TOKEN: 't', AUTHENTIK_ENROLL_FLOW: 'enroll' };
@@ -448,6 +457,77 @@ describe('admin user management', () => {
     } finally {
       c.release();
     }
+  });
+
+  const mkInvite = async (label: string, from: string, token: string) => {
+    const key = (await adm('POST', '/api/admin/roles', { label, from })).json().key as string;
+    await env.pool.query("insert into invites(id, token_hash, role, expires_at, max_uses) values (gen_random_uuid(), $1, $2, now() + interval '1 hour', 1)", [sha256(token), key]);
+    return key;
+  };
+
+  it('a delete without a target moves the claimed and the used-up invites to the base role', async () => {
+    const key = await mkInvite('Ohne Ziel', 'family', 'no-target-claimed-token-0123456789abcdef');
+    const claimed = (await claimInvite(env.ctx, 'no-target-claimed-token-0123456789abcdef'))!;
+    await env.pool.query("insert into invites(id, token_hash, role, expires_at, max_uses, uses) values (gen_random_uuid(), 'x-used', $1, now() + interval '1 hour', 1, 1)", [key]);
+    const r = await adm('DELETE', `/api/admin/roles/${key}`);
+    expect([r.statusCode, r.json()]).toEqual([200, { ok: true, accounts: 0, invites: 0 }]);
+    expect((await env.pool.query("select role from invites where token_hash in ($1, 'x-used')", [sha256('no-target-claimed-token-0123456789abcdef')])).rows.map((x) => x.role)).toEqual(['family', 'family']);
+    const user = await provisionUser(env.ctx, { sub: 'notarget1', email: 'n1@x.de', name: 'Freund n1', groups: [] }, claimed.role, null, undefined, claimed.id);
+    expect(user.role).toBe('family');
+    await releaseInvite(env.ctx, claimed.id);
+    expect((await env.pool.query('select role, uses from invites where id=$1', [claimed.id])).rows).toEqual([{ role: 'family', uses: 0 }]);
+    await env.pool.query("delete from invites where token_hash='x-used'");
+  });
+
+  it('a second delete during one redemption (T to U) still ends on an existing role', async () => {
+    const t = await mkInvite('Erste', 'friend', 'double-delete-token-0123456789abcdefghij');
+    const u = (await adm('POST', '/api/admin/roles', { label: 'Zweite', from: 'friend' })).json().key as string;
+    const claimed = (await claimInvite(env.ctx, 'double-delete-token-0123456789abcdefghij'))!;
+    const [c1, c2] = [await env.pool.connect(), await env.pool.connect()];
+    try {
+      for (const [c, k] of [[c1, t], [c2, u]] as const) {
+        await c.query('begin');
+        await c.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${k}`]);
+      }
+      const p = provisionUser(env.ctx, { sub: 'double1', email: 'd1@x.de', name: 'Freund d1', groups: [] }, claimed.role, null, undefined, claimed.id);
+      await new Promise((r) => setTimeout(r, 300));
+      await c1.query('update invites set role=$2 where id=$1', [claimed.id, u]);
+      await c1.query('delete from role_settings where role=$1', [t]);
+      await c1.query('delete from roles where key=$1', [t]);
+      await c1.query('commit');
+      await new Promise((r) => setTimeout(r, 300)); // now waiting for U
+      await c2.query('update invites set role=$2 where id=$1', [claimed.id, 'guest']);
+      await c2.query('delete from role_settings where role=$1', [u]);
+      await c2.query('delete from roles where key=$1', [u]);
+      await c2.query('commit');
+      expect((await p).role).toBe('guest');
+    } finally {
+      c1.release();
+      c2.release();
+    }
+  });
+
+  it('provisioning refuses a role that no longer exists instead of inserting on it', async () => {
+    const t = await mkInvite('Weg', 'friend', 'missing-role-token-0123456789abcdefghijk');
+    const claimed = (await claimInvite(env.ctx, 'missing-role-token-0123456789abcdefghijk'))!;
+    await env.pool.query('delete from roles where key=$1', [t]);
+    invalidateRoles(env.ctx);
+    await expect(provisionUser(env.ctx, { sub: 'missing1', email: 'm1@x.de', name: 'Freund m1', groups: [] }, claimed.role, null, undefined, claimed.id)).rejects.toMatchObject({ statusCode: 503 });
+    expect((await env.pool.query("select 1 from users where authentik_sub='missing1'")).rowCount).toBe(0);
+  });
+
+  it('the sign-in passes the claimed invite on to provisioning: a role deleted meanwhile leaves the account on the target', async () => {
+    const key = await mkInvite('Login', 'friend', 'login-level-token-0123456789abcdefghijklm');
+    hook.before = async () => { await deleteRole(env.ctx, null, key, 'guest'); };
+    try {
+      expect((await inviteLogin('login-level-token-0123456789abcdefghijklm', 'loginlvl')).statusCode).toBe(302);
+    } finally {
+      hook.before = undefined;
+    }
+    const calls = vi.mocked(provisionUser).mock.calls;
+    const inviteId = (await env.pool.query('select id from invites where token_hash=$1', [sha256('login-level-token-0123456789abcdefghijklm')])).rows[0].id;
+    expect(calls.at(-1)![5]).toBe(inviteId);
+    expect((await env.pool.query("select role from users where authentik_sub='loginlvl'")).rows).toEqual([{ role: 'guest' }]);
   });
 
   it('an invite redeemed after its role was deleted gets the new role', async () => {
