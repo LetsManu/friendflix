@@ -7,6 +7,7 @@ import { forgetLibraries } from '../src/libraries.js';
 import { MATRIX_FIELDS } from '../src/perms.js';
 import { roleLimitFor } from '../src/requestlimit.js';
 import { accountsWithout } from '../src/rights.js';
+import { ROLE_KEY_RE, invitableRoles, slugKey, syncRoles } from '../src/rolecat.js';
 import { invalidateRoles } from '../src/roles.js';
 import { writeRole } from '../src/roleWrite.js';
 import { TEST_DB, makeEnv, type TestEnv } from './helpers.js';
@@ -50,7 +51,7 @@ beforeEach(async () => {
   failFor = '';
 });
 
-const call = (s: Sess, method: 'GET' | 'PUT', url: string, payload?: object) =>
+const call = (s: Sess, method: 'GET' | 'PUT' | 'POST' | 'DELETE', url: string, payload?: object) =>
   env.app.inject({ method, url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, ...(payload ? { payload } : {}) });
 const put = (role: string, body: object, s: Sess = admin) => call(s, 'PUT', `/api/admin/roles/${role}`, body);
 const get = async () => (await call(admin, 'GET', '/api/admin/roles')).json();
@@ -326,5 +327,212 @@ describe('PUT /api/admin/roles/:role', () => {
     expect(r.json()).toEqual({ ok: true, reapplied: { identities: 3, failed: 0 } });
     for (const c of policies().slice(n)) expect(c.body).toMatchObject({ EnableAllFolders: false, EnabledFolders: ['f1'] });
     expect((await roleOf('family')).missingLibraries).toEqual(['Archiv']);
+  });
+});
+
+describe('catalogue writes', () => {
+  const post = (body: object, s: Sess = admin) => call(s, 'POST', '/api/admin/roles', body);
+  const del = (role: string, body?: object) => call(admin, 'DELETE', `/api/admin/roles/${role}`, body);
+  const dup = async (label: string, from = 'family') => (await post({ label, from })).json().key as string;
+  const roleOfUser = async (id: string) => (await env.pool.query('select role from users where id=$1', [id])).rows[0].role;
+  const setInvite = (role: string, extra = '') => env.pool.query(
+    `insert into invites(id, token_hash, role, expires_at, max_uses ${extra ? ', uses' : ''}) values (gen_random_uuid(), md5(random()::text), $1, now() + interval '1 day', 1 ${extra ? ', 1' : ''})`, [role]);
+  beforeEach(async () => {
+    await env.pool.query("update users set role='family' where id in ($1, $2)", [ANNA, BEN]);
+    await env.pool.query('delete from invites');
+    invalidateRoles(env.ctx);
+  });
+
+  it('labels slug to valid unique keys', () => {
+    const taken = new Set<string>();
+    const make = (l: string) => { const k = slugKey(l, taken); taken.add(k); return k; };
+    expect(make('Großeltern')).toBe('grosseltern');
+    expect(make('Gäste 2')).toBe('gaste-2');
+    expect(make('Гости')).toBe('role');
+    expect(make('Гости')).toBe('role-2');
+    expect(make('🎬 Kino')).toBe('kino');
+    expect(make('Order')).toBe('order-2');
+    expect(make('Ærø Øl')).toBe('aero-ol');
+    expect(make('1. Klasse')).toBe('r-1-klasse');
+    expect(make('x'.repeat(40)).length).toBeLessThanOrEqual(24);
+    const again = [make('x'.repeat(40)), make('x'.repeat(40))];
+    expect(new Set(again).size).toBe(2);
+    for (const k of taken) expect(k, k).toMatch(ROLE_KEY_RE);
+    expect([...taken]).not.toContain('order');
+  });
+
+  it('labels from real keyboards create roles over the API', async () => {
+    const keys = [await dup('Großeltern'), await dup('Gäste 2'), await dup('Гости'), await dup('Гости'), await dup('🎬 Kino'), await dup('Order')];
+    expect(keys).toEqual(['grosseltern', 'gaste-2', 'role', 'role-2', 'kino', 'order-2']);
+    for (const k of keys) expect(k).toMatch(ROLE_KEY_RE);
+  });
+
+  it('duplicate snapshots the source', async () => {
+    await put('family', { maxStreams: 3, perms: { comments: false } });
+    const r = await post({ label: 'Oma & Opa', from: 'family' });
+    expect(r.statusCode).toBe(201);
+    const { key } = r.json();
+    expect(key).toBe('oma-opa');
+    const m = await get();
+    const fam = m.matrix.roles.find((x: { key: string }) => x.key === 'family');
+    const copy = m.matrix.roles.find((x: { key: string }) => x.key === key);
+    expect(copy).toMatchObject({ label: 'Oma & Opa', base: 'family', origin: 'admin', invitable: true, accounts: 0 });
+    expect(copy.position).toBe(Math.max(...m.matrix.roles.map((x: { position: number }) => x.position)));
+    expect(copy.values).toEqual(fam.values);
+    expect(copy.values.maxStreams).toBe(3);
+    expect(copy.values.comments).toBe(false);
+    const stored = await row(key);
+    expect(stored.requests_per_month).toBe(fam.values.requestsPerMonth);
+    expect(Object.keys(stored.template).length).toBeGreaterThan(5);
+    expect((await env.pool.query("select actor, meta from audit_log where action='role.create' and target=$1", [key])).rows)
+      .toEqual([{ actor: expect.any(String), meta: { from: 'family', label: 'Oma & Opa' } }]);
+    // later edits of the source do not reach the copy
+    await put('family', { maxStreams: 5, perms: { comments: true } });
+    const after = await roleOf(key);
+    expect(after.values.maxStreams).toBe(3);
+    expect(after.values.comments).toBe(false);
+  });
+
+  it('a duplicate writes unlimited wishes explicitly', async () => {
+    await put('family', { requestsPerMonth: 'unlimited' });
+    const key = await dup('Unbegrenzt');
+    expect((await row(key)).requests_per_month).toBeNull();
+    expect((await roleOf(key)).values.requestsPerMonth).toBeNull();
+    // the base default (guest: a limit) does not creep back in for a copy of an unlimited source
+    await env.pool.query("update role_settings set requests_per_month = null where role = $1", [key]);
+    invalidateRoles(env.ctx);
+    expect((await roleOf(key)).values.requestsPerMonth).toBeNull();
+  });
+
+  it('duplicating admin gives a friend-based role with admin numbers and no admin rights', async () => {
+    const r = await post({ label: 'Verwalter', from: 'admin' });
+    expect(r.statusCode).toBe(201);
+    const { key } = r.json();
+    const adm = await roleOf('admin');
+    const copy = await roleOf(key);
+    expect(copy).toMatchObject({ base: 'friend', invitable: true, origin: 'admin' });
+    expect(copy.values).toEqual(adm.values);
+    await env.pool.query("update users set role=$2 where id=$1", [ANNA, key]);
+    invalidateRoles(env.ctx);
+    const anna = await env.login({ sub: 'sub-anna', email: 'anna@example.com', name: 'Anna Beispiel', groups: [] });
+    expect((await call(anna, 'GET', '/api/admin/roles')).statusCode).toBe(403);
+  });
+
+  it('create validates label and source', async () => {
+    expect((await post({ label: '', from: 'family' })).statusCode).toBe(400);
+    expect((await post({ label: 'x'.repeat(31), from: 'family' })).statusCode).toBe(400);
+    expect((await post({ label: 'Gut', from: 'nobody' })).statusCode).toBe(404);
+    expect((await post({ label: 'Gut' })).statusCode).toBe(400);
+    expect((await env.pool.query("select 1 from roles where origin='admin'")).rowCount).toBe(0);
+  });
+
+  it('labels that are not well-formed Unicode are refused with 400', async () => {
+    const lone = '{"label":"Oma \\ud800","from":"family"}';
+    const r = await env.app.inject({ method: 'POST', url: '/api/admin/roles', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf, 'content-type': 'application/json' }, payload: lone });
+    expect(r.statusCode).toBe(400);
+    const renamed = await env.app.inject({ method: 'PUT', url: '/api/admin/roles/family', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf, 'content-type': 'application/json' }, payload: '{"label":"Fam \\udc00"}' });
+    expect(renamed.statusCode).toBe(400);
+    // a library name reaches the audit entry
+    folders = [{ Id: 'f1', Name: 'Filme' }, { Id: 'f9', Name: 'Bad \ud800' }];
+    forgetLibraries(env.ctx);
+    expect((await put('family', { libraries: ['Bad \ud800'] })).statusCode).toBe(400);
+    expect(await row('family')).toBeUndefined();
+  });
+
+  it('delete needs a target while in use', async () => {
+    const key = await dup('Kino');
+    await env.pool.query('update users set role=$3 where id in ($1, $2)', [ANNA, BEN, key]);
+    await setInvite(key);
+    await setInvite(key, 'used'); // used up: not open
+    invalidateRoles(env.ctx);
+    const r = await del(key);
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'role_in_use', accounts: 2, invites: 1 });
+    expect((await del(key, { moveTo: key })).statusCode).toBe(400);
+    expect((await del(key, { moveTo: 'nobody' })).statusCode).toBe(400);
+    await env.pool.query('delete from audit_log');
+    const ok = await del(key, { moveTo: 'friend' });
+    expect(ok.statusCode).toBe(200);
+    expect(await roleOfUser(ANNA)).toBe('friend');
+    expect(await roleOfUser(BEN)).toBe('friend');
+    expect((await env.pool.query("select role from invites where uses < max_uses")).rows).toEqual([{ role: 'friend' }]);
+    expect((await env.pool.query('select 1 from roles where key=$1', [key])).rowCount).toBe(0);
+    expect(await row(key)).toBeUndefined();
+    const log = async (a: string) => (await env.pool.query('select target, meta from audit_log where action=$1', [a])).rows;
+    expect((await log('user.role')).map((x) => x.meta)).toEqual([{ from: key, to: 'friend' }, { from: key, to: 'friend' }]);
+    expect(await log('role.delete')).toEqual([{ target: key, meta: { moveTo: 'friend', accounts: 2, invites: 1 } }]);
+    expect((await get()).matrix.roles.some((x: { key: string }) => x.key === key)).toBe(false);
+    expect(await invitableRoles(env.ctx)).not.toContain(key);
+  });
+
+  it('an unused role is deleted without a target', async () => {
+    const key = await dup('Leer');
+    expect((await del(key)).statusCode).toBe(200);
+    expect((await env.pool.query('select 1 from roles where key=$1', [key])).rowCount).toBe(0);
+    expect((await del(key)).statusCode).toBe(404);
+  });
+
+  it('built-in and env roles cannot be deleted', async () => {
+    const r = await del('guest');
+    expect([r.statusCode, r.json()]).toEqual([400, { error: 'builtin_role' }]);
+    expect((await del('admin')).json()).toEqual({ error: 'builtin_role' });
+    const saved = env.ctx.roles;
+    env.ctx.roles = { ...saved, team: { ...saved.friend!, label: 'Team' } };
+    try {
+      await syncRoles(env.ctx);
+      invalidateRoles(env.ctx);
+      const e = await del('team');
+      expect([e.statusCode, e.json()]).toEqual([400, { error: 'env_role' }]);
+    } finally {
+      env.ctx.roles = saved;
+      await env.pool.query("delete from roles where key='team'");
+      invalidateRoles(env.ctx);
+    }
+  });
+
+  it('delete takes the role lock: a concurrent write cannot recreate role_settings for a deleted role', async () => {
+    const key = await dup('Sperre');
+    const c = await env.pool.connect();
+    try {
+      await c.query('begin');
+      await c.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${key}`]);
+      let done = false;
+      const d = del(key).then((x) => { done = true; return x; });
+      await new Promise((r) => setTimeout(r, 400));
+      expect(done).toBe(false);
+      await c.query('commit');
+      expect((await d).statusCode).toBe(200);
+    } finally {
+      c.release();
+    }
+    expect((await put(key, { maxStreams: 2 })).statusCode).toBe(404);
+    await expect(writeRole(env.ctx, null, key, { maxStreams: 2 })).rejects.toMatchObject({ statusCode: 404 });
+    expect(await row(key)).toBeUndefined();
+  });
+
+  it('a write re-reads the catalogue inside its transaction', async () => {
+    await env.pool.query("insert into roles(key, label, base, origin, position) values ('weg', 'Weg', 'friend', 'admin', 9)");
+    invalidateRoles(env.ctx);
+    await roleOf('weg'); // warms the catalogue cache
+    await env.pool.query("delete from roles where key='weg'");
+    await expect(writeRole(env.ctx, null, 'weg', { maxStreams: 2 })).rejects.toMatchObject({ statusCode: 404 });
+    expect(await row('weg')).toBeUndefined();
+  });
+
+  it('order must be a permutation', async () => {
+    const key = await dup('Zuletzt');
+    const keys: string[] = (await get()).matrix.roles.map((x: { key: string }) => x.key);
+    const order = (k: unknown) => call(admin, 'PUT', '/api/admin/roles/order', { keys: k });
+    expect((await order(keys.slice(1))).json()).toEqual({ error: 'bad_order' });
+    expect((await order([...keys, key])).statusCode).toBe(400);
+    expect((await order([...keys.slice(1), 'nobody'])).statusCode).toBe(400);
+    const want = [...keys].reverse();
+    const ok = await order(want);
+    expect(ok.statusCode).toBe(200);
+    const after = await get();
+    expect(after.matrix.roles.map((x: { key: string }) => x.key)).toEqual(want);
+    expect(after.matrix.roles.map((x: { position: number }) => x.position)).toEqual(want.map((_, i) => i));
+    expect(await invitableRoles(env.ctx)).toEqual(want.filter((k) => k !== 'admin'));
+    expect((await env.pool.query("select 1 from audit_log where action='role.order'")).rowCount).toBe(1);
   });
 });

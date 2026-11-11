@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sha256 } from '../src/crypto.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const AK = { AUTHENTIK_URL: 'https://auth.example.com', AUTHENTIK_API_TOKEN: 't', AUTHENTIK_ENROLL_FLOW: 'enroll' };
@@ -411,5 +412,14 @@ describe('admin user management', () => {
     ak.calls.length = 0;
     expect((await adm('DELETE', `/api/admin/invites/${inv.id}`)).statusCode).toBe(200);
     expect(ak.calls.filter((c) => c.method === 'DELETE')).toHaveLength(1);
+  });
+  it('an invite redeemed after its role was deleted gets the new role', async () => {
+    const key = (await adm('POST', '/api/admin/roles', { label: 'Kino-Gast', from: 'friend' })).json().key as string;
+    // the invite routes still offer the built-in roles only: the open invite for the custom role is stored directly
+    const token = 'custom-role-invite-token-0123456789abcdef';
+    await env.pool.query("insert into invites(id, token_hash, role, expires_at, max_uses) values (gen_random_uuid(), $1, $2, now() + interval '1 hour', 1)", [sha256(token), key]);
+    expect((await adm('DELETE', `/api/admin/roles/${key}`, { moveTo: 'guest' })).statusCode).toBe(200);
+    expect((await inviteLogin(token, 'moved1')).statusCode).toBe(302);
+    expect((await env.pool.query("select role from users where authentik_sub='moved1'")).rows).toEqual([{ role: 'guest' }]);
   });
 });

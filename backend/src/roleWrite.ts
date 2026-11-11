@@ -11,6 +11,7 @@ import { fetchLibraries, knownLibraries, missingLibraries, type Library } from '
 import { defaultLimit } from './requestlimit.js';
 import { invalidateRights, roleRights, type RightKey, type RightSource } from './rights.js';
 import { invitableRoles, listRoles, roleLabelArgs, type RoleRow } from './rolecat.js';
+import { wellFormed } from './wellFormed.js';
 import { DEFAULT_ROLES, LEGACY_COLUMNS, TEMPLATE_KEYS, invalidateRoles, own, readTemplate, type RoleTemplate } from './roles.js';
 import { HttpError, accountSerial, reapplyRole } from './users.js';
 
@@ -24,10 +25,12 @@ import { HttpError, accountSerial, reapplyRole } from './users.js';
 // ---- the partial role write ----
 
 const nullable = <T extends z.ZodTypeAny>(t: T) => t.nullable().optional();
+/** a role label: 1-30 characters, well-formed Unicode (a lone surrogate would fail the audit insert) */
+export const roleLabelInput = z.string().trim().min(1).max(30).refine(wellFormed);
 const bitrate = z.number().int().min(300_000).max(200_000_000);
 /** PUT /api/admin/roles/:role: every field optional, null = back to the inherited value; 'unlimited' lifts a cap (ruling 2) */
 export const rolePatch = z.object({
-  label: nullable(z.string().trim().min(1).max(30)),
+  label: nullable(roleLabelInput),
   invitable: z.boolean().optional(),
   requestsPerMonth: nullable(z.union([z.number().int().min(0).max(100), z.literal('unlimited')])),
   maxStreams: nullable(z.number().int().min(1).max(50)),
@@ -36,7 +39,7 @@ export const rolePatch = z.object({
   transcoding: nullable(z.boolean()),
   maxHeight: nullable(z.union([z.number().int().min(144).max(4320), z.literal('unlimited')])),
   maxParentalRating: nullable(z.union([z.number().int().min(0).max(21), z.literal('unlimited')])),
-  libraries: nullable(z.union([z.literal('all'), z.array(z.string().trim().min(1).max(100)).min(1).max(50)])),
+  libraries: nullable(z.union([z.literal('all'), z.array(z.string().trim().min(1).max(100).refine(wellFormed)).min(1).max(50)])),
   download: nullable(z.boolean()),
   maxDownloads: nullable(z.number().int().min(0).max(200)),
   downloadMaxHeight: nullable(z.number().int().min(0).max(2160)), // 0 = no downloads
@@ -69,7 +72,7 @@ function cleaned(raw: unknown, known: readonly string[], clean: Record<string, u
 }
 
 /** the old role_settings columns from a template (max_height 0 = unlimited; null = inherit, as 3.3 reads them) */
-function legacyColumns(t: Partial<Omit<RoleTemplate, 'label'>>): unknown[] {
+export function legacyColumns(t: Partial<Omit<RoleTemplate, 'label'>>): unknown[] {
   return (Object.keys(LEGACY_COLUMNS) as Array<keyof typeof LEGACY_COLUMNS>).map((k) => {
     if (!Object.hasOwn(t, k)) return null;
     const v = t[k];

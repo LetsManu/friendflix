@@ -15,9 +15,9 @@ import { claimHevcProbe, hevcBusyReason, hevcProbeRunning, hevcProbeWanted, hevc
 import { activeStreams } from '../playstats.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
-import { roleExists, roleLabelArgs } from '../rolecat.js';
+import { RoleInUse, createRole, deleteRole, orderRoles, roleExists, roleLabelArgs } from '../rolecat.js';
 import { invalidateRoles } from '../roles.js';
-import { rolePatch, rolesOverview, writeRole } from '../roleWrite.js';
+import { rolePatch, roleLabelInput, rolesOverview, writeRole } from '../roleWrite.js';
 import { cleanDeviceName } from '../deviceName.js';
 import { requireGrownUp } from '../kids.js';
 import { recoIndexState } from '../reco/indexJob.js';
@@ -25,7 +25,7 @@ import { recoStats } from '../reco/engine.js';
 import { requireAdmin, requireOwner } from '../session.js';
 import { portainerMode, redeployViaPortainer, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
-import { getUserById } from '../users.js';
+import { accountSerial, getUserById } from '../users.js';
 import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, isLanguage, roleLabel, setInstanceLanguage } from '../i18n.js';
 
 const uuid = z.guid();
@@ -266,6 +266,32 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const { reapplied } = await writeRole(ctx, req.user!.id, role, rolePatch.parse(req.body));
     if (reapplied.failed) return reply.code(502).send({ error: 'policy_partial', failed: reapplied.failed, identities: reapplied.identities });
     return { ok: true, reapplied };
+  });
+
+  // duplicates a role: the new row holds a full snapshot of `from` (the key is derived from the label)
+  app.post('/api/admin/roles', admin, async (req, reply) => {
+    const body = z.object({ label: roleLabelInput, from: z.string().min(1).max(64) }).strict().parse(req.body);
+    return reply.code(201).send({ key: await createRole(ctx, req.user!.id, body.label, body.from) });
+  });
+
+  // `order` is a reserved role key (a static route wins over `:role`)
+  app.put('/api/admin/roles/order', admin, async (req) => {
+    const { keys } = z.object({ keys: z.array(z.string().max(64)).max(500) }).strict().parse(req.body);
+    await orderRoles(ctx, req.user!.id, keys);
+    return { ok: true };
+  });
+
+  // 409 role_in_use while accounts or open invites hold the role and no `moveTo` is given
+  app.delete('/api/admin/roles/:role', admin, async (req, reply) => {
+    const role = (req.params as { role: string }).role;
+    const { moveTo } = z.object({ moveTo: z.string().min(1).max(64).optional() }).strict().parse(req.body ?? {});
+    try {
+      const r = await accountSerial(() => deleteRole(ctx, req.user!.id, role, moveTo));
+      return { ok: true, ...r };
+    } catch (e) {
+      if (e instanceof RoleInUse) return reply.code(409).send({ error: 'role_in_use', accounts: e.accounts, invites: e.invites });
+      throw e;
+    }
   });
 
   // ---- offline downloads: prepared jobs, disk usage, active licenses ----
