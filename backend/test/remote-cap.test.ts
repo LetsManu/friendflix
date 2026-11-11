@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { forgetAuth } from '../src/routes/internal.js';
-import { invalidateRoles } from '../src/roles.js';
+import { invalidateRoles, mirrorLegacyColumns } from '../src/roles.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const ID = 'a'.repeat(32);
@@ -51,12 +51,15 @@ describe('POST /api/playback/info remote cap', () => {
   });
   it('role_settings.remote_max_bitrate overrides the default and is clamped by the role maxBitrate', async () => {
     await env.pool.query("insert into role_settings(role, remote_max_bitrate) values ('friend', 12000000) on conflict (role) do update set remote_max_bitrate=12000000");
+    await mirrorLegacyColumns(env.ctx, 'friend', ['remoteMaxBitrate']);
     invalidateRoles(env.ctx);
     expect((await info(friend, { 'x-real-ip': '203.0.113.9' })).json().maxBitrate).toBe(12_000_000);
     await env.pool.query("update role_settings set remote_max_bitrate=100000000 where role='friend'");
+    await mirrorLegacyColumns(env.ctx, 'friend', ['remoteMaxBitrate']);
     invalidateRoles(env.ctx);
     expect((await info(friend, { 'x-real-ip': '203.0.113.9' })).json().maxBitrate).toBe(20_000_000);
     await env.pool.query("update role_settings set remote_max_bitrate=null where role='friend'");
+    await mirrorLegacyColumns(env.ctx, 'friend', ['remoteMaxBitrate']);
     invalidateRoles(env.ctx);
     expect((await info(friend, { 'x-real-ip': '203.0.113.9' })).json().maxBitrate).toBe(8_000_000);
   });

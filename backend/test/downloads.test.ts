@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MIGRATIONS } from '../src/db.js';
 import { forgetDownloadVisibility, qualityOptions } from '../src/downloads.js';
-import { DEFAULT_ROLES, invalidateRoles } from '../src/roles.js';
+import { DEFAULT_ROLES, invalidateRoles, mirrorLegacyColumns } from '../src/roles.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const enqueued: string[] = [];
@@ -51,6 +51,7 @@ const setRole = async (role: string, cols: Record<string, unknown>) => {
     `insert into role_settings(role, ${keys.join(',')}) values ($1, ${keys.map((_, i) => `$${i + 2}`).join(',')}) on conflict (role) do update set ${keys.map((k, i) => `${k}=$${i + 2}`).join(',')}`,
     [role, ...Object.values(cols)],
   );
+  await mirrorLegacyColumns(env.ctx, role); // the old columns, as the legacy role editor writes them, into role_settings.template
   invalidateRoles(env.ctx);
 };
 const resetRole = async () => { await env.pool.query('delete from role_settings'); invalidateRoles(env.ctx); };

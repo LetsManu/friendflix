@@ -17,7 +17,7 @@ import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
 import { defaultLimit } from '../requestlimit.js';
 import { roleExists, roleLabelArgs } from '../rolecat.js';
-import { DEFAULT_ROLES, INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
+import { DEFAULT_ROLES, INVITABLE_ROLES, LEGACY_COLUMNS, effectiveRole, invalidateRoles, mirrorLegacyColumns, type LegacyKey } from '../roles.js';
 import { cleanDeviceName } from '../deviceName.js';
 import { requireGrownUp } from '../kids.js';
 import { recoIndexState } from '../reco/indexJob.js';
@@ -287,6 +287,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
          download_days=coalesce($8, role_settings.download_days), remote_max_bitrate=case when $10 then null else coalesce($9, role_settings.remote_max_bitrate) end, updated_at=now()`,
       [role, limit, b.transcoding ?? null, b.maxHeight === undefined ? null : (b.maxHeight ?? 0), b.download ?? null, b.maxDownloads ?? null, b.downloadMaxHeight ?? null, b.downloadDays ?? null, b.remoteMaxBitrate ?? null, b.remoteMaxBitrate === null],
     );
+    // effectiveRole reads role_settings.template: carry the columns this request wrote over (until the role matrix writes template itself)
+    await mirrorLegacyColumns(ctx, role, (Object.keys(LEGACY_COLUMNS) as LegacyKey[]).filter((k) => b[k] !== undefined));
     invalidateRoles(ctx);
     const after = (await effectiveRole(ctx, role))!;
     if (b.requestsPerMonth !== undefined) await audit(ctx, req.user!.id, 'role.request_limit', role, { requestsPerMonth: b.requestsPerMonth });

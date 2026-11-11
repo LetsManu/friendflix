@@ -9,8 +9,12 @@ export const defaultLimit = (role: string): number | null => (role === 'admin' ?
 
 /** The role's monthly limit (role_settings, else the default); the per-user override is applied by limitFor. */
 export async function roleLimitFor(ctx: Pick<Ctx, 'db'>, role: string): Promise<number | null> {
+  return (await roleLimitRow(ctx, role)).limit;
+}
+/** roleLimitFor plus whether a role_settings row decided it (`set`) or the code default (rights.ts reports the source). */
+export async function roleLimitRow(ctx: Pick<Ctx, 'db'>, role: string): Promise<{ limit: number | null; set: boolean }> {
   const r = await ctx.db.query<{ requests_per_month: number | null }>('select requests_per_month from role_settings where role=$1', [role]);
-  return r.rowCount ? r.rows[0]!.requests_per_month : defaultLimit(role);
+  return r.rowCount ? { limit: r.rows[0]!.requests_per_month, set: true } : { limit: defaultLimit(role), set: false };
 }
 /** The user's monthly limit: their override, else the role's (null = unlimited). */
 export async function limitFor(ctx: Pick<Ctx, 'db' | 'roles'>, user: { id: string; role: string }): Promise<number | null> {
