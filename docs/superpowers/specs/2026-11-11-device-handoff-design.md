@@ -1,7 +1,7 @@
 # Device hand-off, media controls, AirPlay status and continuous AirPlay (design)
 
-Date: 2026-11-11 · Base: `main` = release 3.3.0 · Status: direction approved by the owner in chat ("approach 1"); this spec writes
-the owner's decisions down and resolves the rest
+Date: 2026-11-11 · Base: `main` = release 3.3.0 · Status: approved by the owner ("approach 1"); the owner's answers to the two
+open questions (owner decisions 6 and 7) are written in
 
 ## Goal
 
@@ -30,10 +30,15 @@ of freezing. And the next episode can keep playing over AirPlay with the iPhone 
    admin settings, stored in the database); the **owner's acceptance test on the LG AirPlay TV** replaces the spike's hardware
    test (P1 three episodes with the iPhone locked, P2 boundary gap ≤ 5 s); Apple TV criteria are dropped. Fails → the switch
    stays off.
+6. **Device renaming is part of A.** On the existing devices page (*Geräte*) a user renames their own devices ("Wohnzimmer",
+   "Schlafzimmer"). The custom name wins over the auto-detected name everywhere: hand-off card, title-page hint, the sender in
+   cast labels ("AirPlay (Annas iPhone)"), the device lists. Validation, per-account ownership and i18n in section 2.8.
+7. **Continuous AirPlay has no per-profile opt-in.** The admin switch alone turns it on for every profile; there is no
+   profile setting (Task 26 of the cast plan loses its profile preference, sheet switch and account row).
 
 ## Scope
 
-In: A (server record, API, start-page card, title-page hint on every client), C (Media Session for local web playback, small
+In: A (server record, API, start-page card, title-page hint on every client, device renaming on *Geräte*), C (Media Session for local web playback, small
 additions to the existing cast binding), D (AirPlay connecting state, wording, position guard, timeout), E (Tasks 23–27 with the
 changes in section 5).
 
@@ -44,7 +49,7 @@ Out (written down so nobody adds them):
 - Live remote takeover (stopping or pausing the other device), and "send to device" (push a title to a running TV app, in the
   style of a connect feature). The latter is a possible later project; nothing here prepares a protocol for it.
 - Content-Security-Policy work.
-- Renaming devices (see open question 2). Device names come from the client kind (section 2.2).
+- A per-profile switch for continuous AirPlay (owner decision 7).
 - A hand-off card on the kids home page (`/kids`); kids profiles get the title-page hint only (section 2.6).
 
 ## Global constraints (restated project rules)
@@ -73,7 +78,7 @@ Out (written down so nobody adds them):
 
 | Part | Server | Web UI (all clients) | Native shells |
 |---|---|---|---|
-| A | `devices.client` column; new table `handoff`; logic in `backend/src/handoff.ts`; write in `playbackReport` and route `GET /api/handoff` (`backend/src/routes/media.ts`) | `web/src/lib/handoff/` (`handoff.ts` pure logic, `HandoffCard.svelte`); start page; `DetailView` hint | none (the card's action uses the existing native `play` bridge call) |
+| A | `devices.client` and `devices.name` columns; new table `handoff`; logic in `backend/src/handoff.ts`; write in `playbackReport` and route `GET /api/handoff` (`backend/src/routes/media.ts`); `PATCH /api/devices/:id` (rename) | `web/src/lib/handoff/` (`handoff.ts` pure logic, `HandoffCard.svelte`); start page; `DetailView` hint; rename on *Geräte* | none (the card's action uses the existing native `play` bridge call) |
 | C | none | `web/src/lib/player/mediasession.ts` (local playback); small changes in `web/src/lib/cast/mediasession.ts` | none (mpv in the Windows app and Media3 on Android keep their own) |
 | D | none | `web/src/lib/player/airplay.ts`, `Player.svelte`, `RemoteScreen.svelte`, one string | none |
 | E | Tasks 23–25 (backend, gateway) + the admin switch | Tasks 26–27 | none |
@@ -102,6 +107,8 @@ What exists and is reused (3.3.0):
 ```
 alter table devices add column client text
   check (client in ('web','tizen','webos','firetv','desktop','android'));
+alter table devices add column name text                       -- the user's own name for the device (section 2.8); null = none
+  check (name is null or char_length(name) between 1 and 40);
 
 create table handoff (
   profile_id     uuid not null references profiles(id) on delete cascade,
@@ -176,8 +183,8 @@ Answer:
 } }
 ```
 
-`device.name` is sent only for `kind: 'web'` (the stored label, e.g. "Safari auf iPhone"). No device id, no play session id, no
-address, no URL.
+`device.name` is the device's custom name when it has one (section 2.8, any kind), otherwise the stored label for `kind: 'web'`
+(e.g. "Safari auf iPhone"), otherwise absent. No device id, no play session id, no address, no URL.
 
 ### 2.4 Start page card
 
@@ -230,9 +237,10 @@ the page's play target (`playTarget`; on a series page the episode the button wo
 | Android app | phone placement in the shell | native `play` with `startMs`; casting via the app's hub: TV | |
 | Kids profiles | no card on `/kids` | title-page hint only | own rows only; the Jellyfin lookup applies the kids cap |
 
-Device name shown: `tizen` "Samsung-Fernseher", `webos` "LG-Fernseher", `firetv` "Fire TV", `desktop` "Windows-App", `android`
-"Android-App", `web` the stored label; with `via`: "AirPlay ({sender})" or "Chromecast ({sender})" where `{sender}` is the
-sending device's name (Safari on the iPhone casting to the LG TV reads "AirPlay (Safari auf iPhone)").
+Device name shown: the custom name when the device has one (section 2.8); otherwise `tizen` "Samsung-Fernseher", `webos`
+"LG-Fernseher", `firetv` "Fire TV", `desktop` "Windows-App", `android` "Android-App", `web` the stored label; with `via`:
+"AirPlay ({sender})" or "Chromecast ({sender})" where `{sender}` is the sending device's name by the same rule (Safari on the
+iPhone casting to the LG TV reads "AirPlay (Safari auf iPhone)", or "AirPlay (Annas iPhone)" once renamed).
 
 ### 2.7 Edge cases
 
@@ -249,6 +257,31 @@ sending device's name (Safari on the iPhone casting to the LG TV reads "AirPlay 
 - **Title deleted or no longer visible:** row deleted at read, nothing shown.
 - **Device removed or account deleted:** rows go with it (foreign key).
 - **Watch party:** its reports count like any playback (a film started in a party can be continued alone).
+
+### 2.8 Device renaming (owner decision 6)
+
+Two TVs of the same make read the same name; the owner wants "Wohnzimmer" and "Schlafzimmer".
+
+- **Where:** the existing devices page (*Geräte*, `/devices`), in the list of approved devices (this device included). Each row
+  gets an icon button *Umbenennen* (named "‹Name› umbenennen"). It turns the name cell into an inline form in the same row: a
+  text field (label "Gerätename", placeholder = the auto-detected name, at most 40 characters), *Speichern*, *Abbrechen*, and,
+  when the device has a custom name, *Automatischen Namen verwenden*. Enter saves, Escape cancels; focus returns to the rename
+  button. Every row reserves the field's height, so opening the form moves nothing. Works with the TV remote (field and buttons
+  are focusable in reading order).
+- **API:** `PATCH /api/devices/:id` with `{ name: string | null }` (`requireGrownUp`; CSRF as every write; rate limit 30/min).
+  Only a device of the caller's own account (`where user_id = <account> and device_id = :id`; anything else 404, the same answer
+  for a foreign and a missing id). `null` or a name that is empty after trimming clears the custom name. Audited as
+  `device.rename` without the name.
+- **Validation (server is the authority, the form mirrors it):** Unicode NFC, trimmed, inner whitespace runs collapsed to one
+  space; 1 to 40 characters (code points) after that; control characters (`\p{Cc}`) and the bidirectional controls U+202A–U+202E
+  and U+2066–U+2069 are refused with `400 invalid_name` (emoji, including joiners, are fine). Two devices may share a name.
+- **Display rule, everywhere:** custom name → otherwise the client kind's name (section 2.6; not for `web`) → otherwise the
+  stored label. Used by *Geräte*, the account page's sessions card, the hand-off card and title hint (including the sender in
+  "AirPlay ({sender})"), and the admin device views (`coalesce(name, label)`). The notification sent when a new device
+  registers keeps the auto-detected label (it has no custom name yet). The cast receiver's sender pill stays the profile name
+  only (cast spec: no device name on the TV).
+- **Privacy:** the name is the account's own text, stored with the device and deleted with it; it appears in the data export
+  next to the label; never in logs or audit metadata.
 
 ## 3. Part C: media controls (Media Session)
 
@@ -337,11 +370,12 @@ rule) and decision 10 of that spec.** Only the changes:
    playback, default **false**, applies live, stored in the `settings` table like the other playback settings), shown in
    *Admin → Einstellungen → Wiedergabe* with the *Experimentell* badge and a help line (copy table). Off: `POST
    /api/cast/session` with `continuous: true` answers `400 continuous_off` and the web silently asks for a single-episode
-   token; `/api/cast/config` reports `airplayContinuous: false`, so the sheet row, the account row and the Diagnose row do not
-   render. Switching it off does not cut a joined stream that already plays (it ends after its last episode or on *Stop
-   casting*); new requests get single tokens.
-3. **Profile opt-in stays** as in Task 26 (`airplayContinuous`, default off; *Play on* sheet switch and *Konto → Wiedergabe*):
-   the server-wide switch only makes it available (decision 7).
+   token; `/api/cast/config` reports `airplayContinuous: false`, so the Diagnose row does not render. Switching it off does not
+   cut a joined stream that already plays (it ends after its last episode or on *Stop casting*); new requests get single tokens.
+3. **No profile opt-in** (owner decision 7): with the switch on, every profile's AirPlay cast of an episode asks for a joined
+   stream (when autoplay is on and "sleep after this episode" is not set). Task 26 loses its profile preference
+   `airplayContinuous`, the *Play on* sheet's switch row (the existing `continuous` row and its two strings are removed) and the
+   *Konto → Wiedergabe* row; the Diagnose row shows "An (Einstellung)" while the switch is on.
 4. **Spike conditions adopted as requirements** (spike findings §4): (a) `contentUrl` is `joined/master.m3u8` (one variant plus
    the subtitle rendition); Task 24 adds the master route; (b) tuple scope: each listed item only with its own media source and
    play session; subtitle paths and the no-burn-in guard use that item's subtitle index; (c) Task 25 takes the position from
@@ -353,8 +387,8 @@ rule) and decision 10 of that spec.** Only the changes:
    from the items' streams instead of a second PlaybackInfo; (f) page: no page reports and no per-title credits / up-next for
    joined tokens; every re-mint restarts at (episode, offset); (g) joined playlists built once per token after authz, cached by
    token hash, the whole stream refused when any part fails the URI check.
-5. **Acceptance test (owner, LG webOS AirPlay TV only)** on the merged build with the admin switch and the profile opt-in on,
-   three consecutive episodes of one series (text subtitles optional):
+5. **Acceptance test (owner, LG webOS AirPlay TV only)** on the merged build with the admin switch on, three consecutive
+   episodes of one series (text subtitles optional):
    - **P1:** the three episodes play to the end of the third with the iPhone locked from minute 1 of episode 1 and no touch.
    - **P2:** at each of the two boundaries the picture is back within **5 s** (stopwatch), no AirPlay placeholder, the route
      never falls back to the iPhone.
@@ -362,7 +396,7 @@ rule) and decision 10 of that spec.** Only the changes:
    - Recorded but **not gating**: O1 the admin view shows one stream and `cast_requests_total` gains no 401 / 403 / 502;
      O2 the server position's lead over the TV's picture in episode 2 (three samples); O3 CPU / transcodes on the server at a
      boundary. Apple TV criteria (old P3–P6) are dropped. Another AirPlay TV (e.g. Samsung), if at hand, is an observation
-     only; the profile opt-in limits the risk for others.
+     only; because the switch applies to every profile, a TV that fails it later is a reason to turn the switch off again.
 6. **Task 28 (docs)** is written after the acceptance with its outcome; the CHANGELOG line of the implementing release says
    "Continuous AirPlay (experimental, off by default)" and replaces 3.3's "whether it ships depends on a hardware test on an
    Apple TV and an LG TV".
@@ -374,7 +408,8 @@ rule) and decision 10 of that spec.** Only the changes:
   address, no title text, no token. Kept ≤ 24 h, one row per device, deleted with the device, profile or account.
   `docs/privacy.md` gets one paragraph.
 - **The API answer** carries no device id, play session id, address or URL; the opaque `id` cannot be turned back into a
-  device id. Device names are client kinds or the label the account's own device got at registration.
+  device id. Device names are the account's own custom names (section 2.8), client kinds, or the label the account's own
+  device got at registration.
 - **Kids profiles:** only their own rows; the item lookup runs as the kids profile's Jellyfin user, so a title above its cap
   never appears; no card on `/kids`.
 - **Media Session:** metadata is title, series line and the cookie image path only; lock screens show titles to whoever holds
@@ -400,12 +435,21 @@ rule) and decision 10 of that spec.** Only the changes:
 | `common.deviceKind.airplay` / `chromecast` | AirPlay ({sender}) / Chromecast ({sender}) | AirPlay ({sender}) / Chromecast ({sender}) |
 | `player.castBar.airplayDevice` (changed) | AirPlay | AirPlay |
 | `player.airplay.cancel` | Abbrechen | Cancel |
-| `settings.keys.CAST_AIRPLAY_CONTINUOUS` label (cast spec §11) and `help` | Durchgehendes AirPlay (experimentell) · Experimentell. Erst einschalten, wenn der Test mit deinem AirPlay-Fernseher bestanden ist; jedes Profil schaltet es danach selbst ein. | Continuous AirPlay (experimental) · Experimental. Turn on only after the test with your AirPlay TV passed; each profile then turns it on for itself. |
+| `settings.keys.CAST_AIRPLAY_CONTINUOUS` label (cast spec §11) and `help` | Durchgehendes AirPlay (experimentell) · Experimentell. Erst einschalten, wenn der Test mit deinem AirPlay-Fernseher bestanden ist; danach gilt es für alle Profile. | Continuous AirPlay (experimental) · Experimental. Turn on only after the test with your AirPlay TV passed; it then applies to every profile. |
+| `account.devices.rename` | Umbenennen | Rename |
+| `account.devices.renameAria` | {name} umbenennen | Rename {name} |
+| `account.devices.nameLabel` | Gerätename | Device name |
+| `account.devices.useAuto` | Automatischen Namen verwenden | Use the detected name |
+| `account.devices.renamed` | Das Gerät heißt jetzt „{name}“. | The device is now called “{name}”. |
+| `account.devices.nameInvalid` | Bitte 1 bis 40 Zeichen ohne Steuerzeichen. | Use 1 to 40 characters, no control characters. |
+| `account.devices.renameFailed` | Umbenennen hat nicht geklappt. Bitte noch einmal versuchen. | Could not rename the device. Please try again. |
 
 Reused: `detail.view.episodeCode` (S{s}:F{e} / S{s}:E{e}), `player.castRemote.connecting` ("Verbinde mit {device} …"),
 `player.airplay.playing` ("Läuft über AirPlay"), `player.airplay.chooseHint` / `choose`, `player.castRemote.lost` /
-`reconnectBtn`, `player.castBar.onLeft`, `common.experimental`, and the continuous-AirPlay keys of the cast spec §11
-(`account.playback.airplayContinuous`, `player.castRemote.continuous*`).
+`reconnectBtn`, `player.castBar.onLeft`, `common.experimental`, `common.save` / `common.cancel`, `diagnose.cast.continuous*`,
+and the continuous-AirPlay keys of the cast spec §11 that already ship (`player.castRemote.continuous*`, `inARow`,
+`episodeOf`, `prevNone`). Removed (owner decision 7): `player.castPicker.continuous` / `continuousHint`;
+`account.playback.airplayContinuous` is never added.
 
 ## 8. Accessibility
 
@@ -417,6 +461,8 @@ Reused: `detail.view.episodeCode` (S{s}:F{e} / S{s}:E{e}), `player.castRemote.co
 - AirPlay connecting layout: `role="status"`, phase changes announced politely once ("Verbinde mit AirPlay …", "Läuft über
   AirPlay"); the spinner is decorative; *Abbrechen* reachable by keyboard.
 - Media Session needs no UI; nothing on screen changes.
+- Rename form: the field has its visible label, an invalid name is announced (`role="alert"` next to the field, the field gets
+  `aria-invalid`), success is announced politely ("Das Gerät heißt jetzt …"); buttons ≥ 44 px with names.
 
 ## 9. Testing
 
@@ -426,10 +472,12 @@ Reused: `detail.view.episodeCode` (S{s}:F{e} / S{s}:E{e}), `player.castRemote.co
   from `playbackReport` (start resets `started_at`, progress keeps it, `via` from `/api/cast/report` and the body field, no row
   without profile or device); selection rules (other device only, 6 h, 60 s, 90 %, played, `resume_hidden`, `dropped`,
   series match, lookup 404 deletes the row, kids lookup as the kids user); answer carries no device id or play session id;
-  profile isolation; 24 h cleanup; `continuous_off` with the switch off; Task 23–25 tests as in the cast plan, plus tuple
-  scope, `runtimeTicks` positions, short segment URIs, master route.
-- Web: `handoff.ts` (device name per kind and `via`, dismissal list of 20 with storage throwing, visibility rules, time and
-  age formatting); `player/mediasession.ts` (actions call the player's functions, no next / previous without a target,
+  profile isolation; 24 h cleanup; rename (own device only, 404 for a foreign id, trimming, length, control and bidi
+  characters refused, null resets, the custom name in the device lists and the hand-off answer); `continuous_off` with the
+  switch off; Task 23–25 tests as in the cast plan, plus tuple scope, `runtimeTicks` positions, short segment URIs, master
+  route.
+- Web: `handoff.ts` (device name per kind, custom name and `via`, dismissal list of 20 with storage throwing, visibility rules,
+  time and age formatting); `player/mediasession.ts` (actions call the player's functions, no next / previous without a target,
   position clamping, owner hand-over to the cast binding and back, artwork never contains `/media/c/`); `airplay.ts` (phases
   busy → ready → remote connecting → active → playing, 30 s timeout to `reconnect`, one position correction only).
 
@@ -441,6 +489,8 @@ Reused: `detail.view.episodeCode` (S{s}:F{e} / S{s}:E{e}), `player.castRemote.co
 - Title page line "S1:F4 · Weiter ab 23:10 (zuletzt auf LG-Fernseher)" on a series and a film; nothing for this device's own
   playback.
 - Android shell: the card's action calls the native `play` with `startMs`.
+- *Geräte*: rename a device to "Wohnzimmer" (the row does not move, the list shows the new name after a reload), Escape
+  cancels, an invalid name shows the error, *Automatischen Namen verwenden* restores the detected name.
 - AirPlay: connecting layout during `busy`, "Verbinde mit AirPlay …" on the remote screen, then "Läuft über AirPlay".
 - Media Session stub receives metadata and handlers for local playback and loses them when the player closes.
 
@@ -451,6 +501,7 @@ Reused: `detail.view.episodeCode` (S{s}:F{e} / S{s}:E{e}), `player.castRemote.co
 - A2: Samsung app with the remote: card gets focus at start, OK plays; another start: Up reaches it, Back returns, *Ausblenden*.
 - A3: iPhone Safari after the Fire TV app; the title page line on a series.
 - A4: no card on the device that played last, after 6 h, or for a finished episode.
+- A5: rename the LG TV to "Wohnzimmer" on *Geräte*; the Windows app's card then reads "Zuletzt auf Wohnzimmer".
 - C1: iPhone lock screen and Control Center during local playback and during AirPlay: title, artwork, play / pause, seek,
   next episode; volume buttons change the TV's volume.
 - C2: Chrome or Edge on Windows: media keys and the media overlay control the web player; observation only: the Windows app's
@@ -461,11 +512,11 @@ Reused: `detail.view.episodeCode` (S{s}:F{e} / S{s}:E{e}), `player.castRemote.co
 
 ## 10. Rollout
 
-- **Migration 46** (rerunnable: `if not exists`): `devices.client`, table `handoff`, index. No backfill; kinds fill in at the
-  next `/api/me`, rows with the next report.
+- **Migration 46** (rerunnable: `if not exists`): `devices.client`, `devices.name`, table `handoff`, index. No backfill; kinds
+  fill in at the next `/api/me`, rows with the next report, names when a user renames a device.
 - **Old clients** need no update: the server writes rows from any report; old web bundles simply do not show the card.
-- **Admin switch** `CAST_AIRPLAY_CONTINUOUS` default off; nothing changes for anybody until an admin turns it on and a profile
-  opts in.
+- **Admin switch** `CAST_AIRPLAY_CONTINUOUS` default off; nothing changes for anybody until an admin turns it on (then for
+  every profile).
 - **Docs:** `docs/cast.md` (AirPlay states, continuous AirPlay switch and acceptance, outcome), `docs/tv-mode.md` (the card with
   the remote), `docs/privacy.md` (hand-off data), `docs/windows.md` (the card's action opens mpv at the position),
   `CHANGELOG.md` under *Unreleased*, `README.md` / `README.de.md` one feature line each.
@@ -475,9 +526,10 @@ Reused: `detail.view.episodeCode` (S{s}:F{e} / S{s}:E{e}), `player.castRemote.co
 Two plans:
 
 1. **New plan `2026-11-11-device-handoff`** for A, C and D, two pull requests: PR 1 = A (migration, server, card, title hint,
-   docs); PR 2 = C and D (web player only). They share no code with E and are low-risk.
+   device renaming, docs); PR 2 = C and D (web player only). They share no code with E and are low-risk.
 2. **E stays in the existing cast plan.** An amendment section in `docs/superpowers/plans/2026-11-10-cast-airplay.md` adjusts
-   Task 22 (no spike gate), Tasks 23–25 (spike conditions), Task 26 (switch help copy, `continuous_off`) and Task 28 (docs
+   Task 22 (no spike gate), Tasks 23–25 (spike conditions), Task 26 (switch help copy, `continuous_off`, no profile
+   preference) and Task 28 (docs
    after acceptance), and links this spec. One pull request. It is backend and gateway heavy, needs the owner's TV, and must
    not hold back A / C / D.
 
@@ -489,19 +541,14 @@ Order: A first (most value for the owner's daily use), then C + D, then E. E's T
 1. One new table `handoff` (one row per profile and device) plus `devices.client`; nothing existing holds "which device, how
    far, when", and Jellyfin keeps only one position per profile.
 2. Device names from the client kind (Samsung-Fernseher, LG-Fernseher, Fire TV, Windows-App, Android-App, browser label);
-   casts read "AirPlay (Safari auf iPhone)". No renaming in this round.
+   casts read "AirPlay (Safari auf iPhone)". A custom name from *Geräte* wins over all of them (owner decision 6).
 3. "Different device" = the profile's newest playback overall was elsewhere; the title page uses the newest playback of that
    title. Less than 60 s played or ≥ 90 % → no offer; hidden or dropped titles are respected.
 4. The card is an overlay at the top of the start page (never pushes the rows), fetched separately from the cached `/api/home`.
 5. The action starts at the shown position (`?t=` / `startMs`), also in the native apps.
 6. AirPlay's device word becomes "AirPlay"; the playing label stays the shipped "Läuft über AirPlay".
-7. Continuous AirPlay keeps the per-profile opt-in (default off) under the new admin switch.
+7. Continuous AirPlay: the admin switch alone turns it on for every profile; no per-profile opt-in (owner decision 7).
 8. Dismissal is per device in local storage; the title-page hint stays.
 9. Kids profiles: title-page hint, no card on `/kids`.
 10. No lead correction for continuous AirPlay positions until the owner's observation O2 shows one is needed.
 11. AirPlay connect timeout 30 s after the TV was picked; one position correction if the TV starts more than 5 s off.
-
-## 13. Open questions for the owner
-
-1. Continuous AirPlay: keep the per-profile opt-in (decision 7), or should the admin switch alone turn it on for every profile?
-2. Device renaming on *Geräte* (two TVs of the same make read the same name): later project, or include it in A?
