@@ -177,8 +177,10 @@
     artist: item.type === 'Episode' && item.seriesName ? `${item.seriesName} · S${item.parentIndexNumber}:E${item.indexNumber}` : item.year ? String(item.year) : '',
     artworkIds: item.type === 'Episode' && item.seriesId ? [item.id, item.seriesId] : [item.id],
   } : null;
+  /** lock-screen play: never while the title is on its way to the TV (local playback would start a second stream) */
+  function mediaPlay() { if (!castBusy && video?.paused) togglePlay(); }
   $: mediaActions = {
-    play: () => { if (video?.paused) togglePlay(); },
+    play: mediaPlay,
     pause: () => { if (video && !video.paused) togglePlay(); },
     seekTo: (t: number) => seekTo(t),
     seekBy: (d: number) => seekBy(d, true),
@@ -187,7 +189,7 @@
   };
   $: if (!mediaBind && !destroyed && video && mediaItem && started && !remote && !handedOff && !airOn) { mediaEl = video; mediaBind = bindPlayerMediaSession(video, mediaItem, mediaActions); }
   // a fresh element (sound modes off, restorePlain): the listeners move to it
-  $: if (mediaBind && !destroyed && !handedOff && video && mediaEl && video !== mediaEl && mediaItem) { mediaBind.release(); mediaEl = video; mediaBind = bindPlayerMediaSession(video, mediaItem, mediaActions); }
+  $: if (mediaBind && !destroyed && !handedOff && video && mediaEl && video !== mediaEl && mediaItem) { const old = mediaBind; mediaEl = video; mediaBind = bindPlayerMediaSession(video, mediaItem, mediaActions); old.release(); } // bind first: the session never goes blank in between
   $: if (mediaBind && mediaItem) mediaBind.update(mediaItem, mediaActions);
 
   // ---- UI state ----
