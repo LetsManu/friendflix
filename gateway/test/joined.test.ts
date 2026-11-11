@@ -592,6 +592,26 @@ describe('progress sender (default onJoinedSegment)', () => {
     ]);
   });
 
+  it('part changes are at least 1 s apart per token: alternating parts cannot drive one call per segment', async () => {
+    const sent: string[] = [];
+    let now = 5_000_000;
+    const send = joinedProgressSender({
+      backendUrl: 'http://be.invalid:3000', internalSecret: 'x', now: () => now,
+      fetchImpl: (async (_u: string | URL, init: RequestInit) => { sent.push(String(init.body)); return new Response('{}'); }) as typeof fetch,
+    });
+    const A = sha('token-alt');
+    send(ev(A, 0, 0));
+    for (let i = 1; i <= 9; i++) { now += 100; send(ev(A, i % 2, i * 3 * 1e7)); } // a part change every 100 ms
+    expect(sent).toHaveLength(1);
+    now += 100; send(ev(A, 1, 30 * 1e7)); // 1 s after the last call: the part change goes out
+    expect(sent).toHaveLength(2);
+    now += 999; send(ev(A, 0, 33 * 1e7));
+    expect(sent).toHaveLength(2);
+    now += 1; send(ev(A, 0, 36 * 1e7));
+    expect(sent).toHaveLength(3);
+    expect(JSON.parse(sent[2]!)).toMatchObject({ itemId: EP[0]!.id, positionTicks: 36 * 1e7 });
+  });
+
   it('a failing backend is swallowed and logs nothing', async () => {
     const spies = (['log', 'warn', 'error', 'info'] as const).map((k) => vi.spyOn(console, k).mockImplementation(() => {}));
     try {

@@ -7,8 +7,8 @@
  * Saltwater Almanac (fictional): S1 E10, S2 E1, S2 E2 in a row.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { hashToken, revokeCasts, type CastRecord } from '../src/cast.js';
-import { countLive } from '../src/live.js';
+import { hashToken, joinedStopsSettled, revokeCast, revokeCasts, type CastRecord } from '../src/cast.js';
+import { countLive, getLive } from '../src/live.js';
 import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const SERIES = 'e'.repeat(32);
@@ -211,6 +211,8 @@ describe('server-side per-episode progress of a joined AirPlay stream', () => {
     skipClock(10_000);
     await progress(hash, EPS[0]!.id, 700 * S);
     expect(await revokeCasts(env.ctx, rec.userId, rec.deviceId)).toBeGreaterThan(0);
+    await joinedStopsSettled(); // the stop runs in the background (a revoke never waits for the media server)
+    expect(await env.kv.get(`castjp:${hash}`)).toBeNull();
     // (the device's other token from an earlier test is revoked and stopped as well: only this token's play sessions here)
     expect(reports(from).filter((r) => ps.includes(r[2]))).toEqual([
       ['Playing', EPS[0]!.id, ps[0], 0],
@@ -244,26 +246,31 @@ describe('server-side per-episode progress of a joined AirPlay stream', () => {
   });
 
   it('unknown token, unlisted item or single-item token is 404', async () => {
+    const notFound = async (h: string, id: string) => {
+      const r = await progress(h, id, 0);
+      expect(r.statusCode, `${h.slice(0, 4)} ${id.slice(0, 4)}`).toBe(404);
+      expect(r.json()).toEqual({ error: 'not_found' });
+    };
     const { hash } = await joinedToken();
+    const from = env.jfCalls.length;
+    await notFound('0'.repeat(64), EPS[0]!.id); // no such token
+    // the joined token itself is valid: only its item list refuses these (asserted before any other token is minted, which could evict it)
+    expect(await env.kv.get(`cast:${hash}`)).not.toBeNull();
+    await notFound(hash, '4'.repeat(32)); // not one of its items
+    await notFound(hash, FILM);
+    expect(await env.kv.get(`cast:${hash}`)).not.toBeNull();
+    expect(await env.kv.get(`castjp:${hash}`)).toBeNull();
     const single = await joined(); // AirPlay, no continuous: one item
     const film = await joined({ itemId: FILM, continuous: true }); // a film is never joined
     expect(single.rec.items).toBeUndefined();
     expect(film.rec.items).toBeUndefined();
-    const from = env.jfCalls.length;
-    const cases: Array<[string, string]> = [
-      ['0'.repeat(64), EPS[0]!.id], // no such token
-      [hash, '4'.repeat(32)], // not one of its items
-      [hash, FILM],
-      [single.hash, EPS[0]!.id],
-      [film.hash, FILM],
-    ];
-    for (const [h, id] of cases) {
-      const r = await progress(h, id, 0);
-      expect(r.statusCode, `${h.slice(0, 4)} ${id.slice(0, 4)}`).toBe(404);
-      expect(r.json()).toEqual({ error: 'not_found' });
-    }
+    await notFound(single.hash, EPS[0]!.id);
+    await notFound(film.hash, FILM);
     expect(reports(from)).toEqual([]);
-    expect(await env.kv.keys('castjp:')).toEqual([]);
+    for (const h of [single.hash, film.hash]) expect(await env.kv.get(`castjp:${h}`)).toBeNull();
+    // control: the joined token's own item is accepted (a fresh one; the two mints above evicted the first)
+    const again = await joinedToken();
+    expect((await progress(again.hash, EPS[1]!.id, 0)).statusCode).toBe(200);
   });
 
   it('internal only: the secret is required, the body is the hash (never a raw token) and nothing else', async () => {
@@ -278,6 +285,166 @@ describe('server-side per-episode progress of a joined AirPlay stream', () => {
       { tokenHash: hash, itemId: EPS[0]!.id, positionTicks: 0, client: '198.51.100.7' },
     ];
     for (const payload of bad) expect((await env.app.inject({ method: 'POST', url: '/internal/cast/progress', headers: H, payload })).statusCode, JSON.stringify(Object.keys(payload))).toBe(400);
-    expect(await env.kv.keys('castjp:')).toEqual([]);
+    expect(await env.kv.get(`castjp:${hash}`)).toBeNull();
+  });
+
+  it('casting off: 404 for a valid joined token and item, nothing reported', async () => {
+    const { hash } = await joinedToken();
+    const was = env.ctx.cfg;
+    const from = env.jfCalls.length;
+    try {
+      env.ctx.cfg = { ...was, CAST_ENABLED: 'false' };
+      const r = await progress(hash, EPS[0]!.id, 0);
+      expect(r.statusCode).toBe(404);
+      expect(r.json()).toEqual({ error: 'not_found' });
+    } finally { env.ctx.cfg = was; }
+    expect(reports(from)).toEqual([]);
+    expect(await env.kv.get(`castjp:${hash}`)).toBeNull();
+    expect((await progress(hash, EPS[0]!.id, 0)).statusCode).toBe(200); // control
+  });
+
+  it('positions past a part\'s runtime are clamped to it', async () => {
+    const { hash, ps } = await joinedToken();
+    const from = env.jfCalls.length;
+    await progress(hash, EPS[0]!.id, EPS[0]!.rt + 50 * S);
+    skipClock(31_000);
+    await progress(hash, EPS[0]!.id, EPS[0]!.rt + 90 * S);
+    expect(reports(from)).toEqual([
+      ['Playing', EPS[0]!.id, ps[0], EPS[0]!.rt],
+      ['Playing/Progress', EPS[0]!.id, ps[0], EPS[0]!.rt],
+    ]);
+    expect(JSON.parse((await env.kv.get(`castjp:${hash}`))!).pos).toBe(EPS[0]!.rt);
+  });
+
+  it('a fast-fetching TV: the next part starting at its first segment means the previous one played to its end', async () => {
+    const { hash, ps } = await joinedToken();
+    const from = env.jfCalls.length;
+    await progress(hash, EPS[0]!.id, 0);
+    skipClock(15_000);
+    // the TV filled its buffer fast: the last position the server knows is 2 min before the end (outside the last 30 s)
+    await progress(hash, EPS[0]!.id, EPS[0]!.rt - 120 * S);
+    await progress(hash, EPS[1]!.id, 0); // episode 2's first segment
+    expect(reports(from).slice(1)).toEqual([
+      ['Playing/Stopped', EPS[0]!.id, ps[0], EPS[0]!.rt],
+      ['Playing', EPS[1]!.id, ps[1], 0],
+    ]);
+  });
+
+  it('a call queued behind a running one re-reads the token: a revoke in between ends it', async () => {
+    const { hash, castId, ps, rec } = await joinedToken();
+    const jf = env.ctx.jf as unknown as { report: (...a: unknown[]) => Promise<void> };
+    const orig = jf.report;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let held = false;
+    jf.report = async (...a) => { if (!held) { held = true; await gate; } return orig.apply(env.ctx.jf, a); };
+    const from = env.jfCalls.length;
+    try {
+      const first = progress(hash, EPS[0]!.id, 300 * S); // its Playing report hangs at the gate
+      await new Promise((r) => setTimeout(r, 100));
+      expect(held).toBe(true);
+      const second = progress(hash, EPS[1]!.id, 0); // passes the route's check, then waits behind the first
+      await new Promise((r) => setTimeout(r, 100));
+      const revoked = revokeCast(env.ctx, rec.userId, castId); // the token's keys go now; its stop queues behind both
+      await new Promise((r) => setTimeout(r, 100));
+      release();
+      expect((await first).statusCode).toBe(200);
+      expect((await second).statusCode).toBe(200);
+      expect(await revoked).toBe(true);
+    } finally { jf.report = orig; release(); }
+    // the queued call found the token gone: no stop of episode 1 / start of episode 2 from it; the revoke's stop is the last word
+    expect(reports(from)).toEqual([
+      ['Playing', EPS[0]!.id, ps[0], 300 * S],
+      ['Playing/Stopped', EPS[0]!.id, ps[0], 300 * S],
+    ]);
+    expect(await env.kv.get(`castjp:${hash}`)).toBeNull();
+  });
+
+  // logout, profile switch and device / session revokes all end a device's tokens through revokeCasts
+  it('a hanging media server never delays a revoke of all tokens (logout, profile switch, device revoke); encodings stop in parallel', async () => {
+    const { hash, ps, rec } = await joinedToken();
+    await progress(hash, EPS[0]!.id, 0);
+    const jf = env.ctx.jf as unknown as { report: (...a: unknown[]) => Promise<void>; stopEncoding: (...a: unknown[]) => Promise<void> };
+    const orig = { report: jf.report, stopEncoding: jf.stopEncoding };
+    const releases: Array<() => void> = [];
+    const hang = () => new Promise<void>((r) => releases.push(r));
+    const stopsAsked: string[] = [];
+    jf.report = () => hang();
+    jf.stopEncoding = (_u: unknown, p: unknown) => { stopsAsked.push(String(p)); return hang(); };
+    try {
+      const t0 = Date.now();
+      expect(await revokeCasts(env.ctx, rec.userId, rec.deviceId)).toBeGreaterThan(0);
+      expect(Date.now() - t0).toBeLessThan(1_000);
+      expect(await env.kv.get(`cast:${hash}`)).toBeNull(); // the token is gone at once
+      // the stop report hangs: the encodings do not wait for it, and none waits for another
+      await new Promise((r) => setTimeout(r, 100));
+      expect(stopsAsked).toEqual(expect.arrayContaining(ps));
+    } finally {
+      Object.assign(jf, orig);
+      for (const r of releases) r();
+    }
+    await joinedStopsSettled();
+  });
+
+  it('server progress counts the full watch time (the token refresh never cuts it short)', async () => {
+    const { ct, hash, rec } = await joinedToken();
+    const seconds = async () => Number((await env.pool.query('select coalesce(sum(seconds), 0) s from play_seconds where user_id = $1 and item_id = $2', [rec.userId, EPS[0]!.id])).rows[0].s);
+    await env.pool.query('delete from play_seconds where item_id = $1', [EPS[0]!.id]);
+    expect((await authz(ct)).statusCode).toBe(200);
+    await progress(hash, EPS[0]!.id, 0);
+    // 90 s of play: the gateway calls every 15 s, the token is fetched (and refreshed every 20 s) in between
+    for (let t = 5; t <= 90; t += 5) {
+      skipClock(5_000);
+      if (t % 10 === 0) expect((await authz(ct)).statusCode).toBe(200);
+      if (t % 15 === 0) await progress(hash, EPS[0]!.id, t * S);
+    }
+    expect(await seconds()).toBeGreaterThanOrEqual(88);
+    expect(await seconds()).toBeLessThanOrEqual(92);
+  });
+
+  it("a later part's live record made by the token refresh carries its title", async () => {
+    const { ct, hash, ps, rec } = await joinedToken();
+    expect((await authz(ct)).statusCode).toBe(200);
+    await progress(hash, EPS[0]!.id, 2820 * S);
+    await progress(hash, EPS[1]!.id, 0);
+    await env.kv.del(`play:${rec.userId}:${ps[1]}`); // its record ran out (e.g. the media server was away)
+    skipClock(25_000);
+    expect((await authz(ct)).statusCode).toBe(200);
+    expect((await getLive(env.ctx, rec.userId, ps[1]!))?.title).toBe('The Toll Keeper');
+  });
+
+  it('the stop still goes out when the device was unapproved', async () => {
+    const { hash, ps, rec } = await joinedToken();
+    await progress(hash, EPS[0]!.id, 0);
+    skipClock(5_000);
+    await progress(hash, EPS[0]!.id, 400 * S);
+    const from = env.jfCalls.length;
+    await env.pool.query('update devices set approved = false where user_id = $1 and device_id = $2', [rec.userId, rec.deviceId]);
+    try {
+      await revokeCasts(env.ctx, rec.userId, rec.deviceId);
+      await joinedStopsSettled();
+    } finally { await env.pool.query('update devices set approved = true where user_id = $1 and device_id = $2', [rec.userId, rec.deviceId]); }
+    expect(reports(from).filter((r) => ps.includes(r[2]))).toEqual([['Playing/Stopped', EPS[0]!.id, ps[0], 400 * S]]);
+    const stopped = env.jfCalls.slice(from).filter((c) => c.method === 'DELETE' && c.path === '/Videos/ActiveEncodings').map((c) => new URLSearchParams(c.search).get('playSessionId'));
+    expect(stopped).toEqual(expect.arrayContaining(ps));
+  });
+
+  // last: it deletes the session's device
+  it('the stop still goes out when the device was deleted', async () => {
+    const { hash, ps, rec } = await joinedToken();
+    await progress(hash, EPS[0]!.id, 0);
+    skipClock(5_000);
+    await progress(hash, EPS[0]!.id, 450 * S);
+    const from = env.jfCalls.length;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await env.pool.query('delete from devices where user_id = $1 and device_id = $2', [rec.userId, rec.deviceId]);
+      await revokeCasts(env.ctx, rec.userId, rec.deviceId);
+      await joinedStopsSettled();
+    } finally { warn.mockRestore(); }
+    expect(reports(from).filter((r) => ps.includes(r[2]))).toEqual([['Playing/Stopped', EPS[0]!.id, ps[0], 450 * S]]);
+    const stopped = env.jfCalls.slice(from).filter((c) => c.method === 'DELETE' && c.path === '/Videos/ActiveEncodings').map((c) => new URLSearchParams(c.search).get('playSessionId'));
+    expect(stopped).toEqual(expect.arrayContaining(ps));
+    expect(await env.kv.get(`castjp:${hash}`)).toBeNull();
   });
 });

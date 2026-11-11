@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { airplayContinuousOn, castTtlSeconds, hashToken } from '../src/cast.js';
+import { airplayContinuousOn, castTtlSeconds, hashToken, joinedStopsSettled, revokeCasts } from '../src/cast.js';
 import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const ID = 'a'.repeat(32);
@@ -444,6 +444,9 @@ describe('joined AirPlay token', () => {
     const p = await call('POST', '/api/profiles', { name: 'Kind' });
     expect(p.statusCode, p.body).toBe(201);
     const pid = p.json().profile.id as string;
+    // earlier tests' tokens use the same play session names: they go first, so the count below is this mint's alone
+    for (const uid of new Set((await env.kv.keys('castidx:')).map((x) => x.split(':')[1]!))) await revokeCasts(env.ctx, uid);
+    await joinedStopsSettled();
     const jf = env.ctx.jf as unknown as { playbackInfo: (...a: unknown[]) => Promise<unknown> };
     const orig = jf.playbackInfo;
     let k = 0;
@@ -460,5 +463,7 @@ describe('joined AirPlay token', () => {
     expect(await env.kv.keys('castidx:')).toEqual([]);
     const stopped = env.jfCalls.slice(calls).filter((c) => c.method === 'DELETE' && c.path === '/Videos/ActiveEncodings').map((c) => new URLSearchParams(c.search).get('playSessionId'));
     expect(stopped).toEqual(expect.arrayContaining(EPS.slice(0, 3).map((e) => e.ps)));
+    // once each: the revoke's own stop of a joined token covers every part (no second loop after it)
+    for (const e of EPS.slice(0, 3)) expect(stopped.filter((x) => x === e.ps), e.ps).toHaveLength(1);
   });
 });

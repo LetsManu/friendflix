@@ -202,7 +202,7 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         : null;
       const items: JoinedItem[] | undefined = parts?.map((p) => ({
         itemId: p.item.id, mediaSourceId: p.info.mediaSourceId, playSessionId: p.info.playSessionId, runtimeTicks: p.runtimeTicks,
-        hlsPath: p.info.hlsUrl.slice('/media'.length), ...(p.sub !== undefined ? { hlsSubIndex: p.sub } : {}),
+        hlsPath: p.info.hlsUrl.slice('/media'.length), ...(p.sub !== undefined ? { hlsSubIndex: p.sub } : {}), title: p.item.name,
       }));
       const joinedTicks = parts?.reduce((n, p) => n + p.runtimeTicks, 0);
       const ownTtl = castTtlSeconds(joinedTicks ?? info.runtimeTicks, startTicks);
@@ -232,8 +232,8 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       // acting as the new profile) and take the token back when the profile is no longer the one it was minted for.
       const after = await loadSession(ctx, req.sid);
       if (!after || (after.profileId && after.profileId !== rec.profileId)) {
-        await revokeCast(ctx, req.user!.id, castId);
-        for (const ps of items ? items.map((i) => i.playSessionId) : [info.playSessionId]) await ctx.jf.stopEncoding(req.jfUser!, ps).catch(() => undefined);
+        await revokeCast(ctx, req.user!.id, castId); // a joined token's revoke stops every part's encoding itself (stopJoined)
+        if (!items) await ctx.jf.stopEncoding(req.jfUser!, info.playSessionId).catch(() => undefined);
         return reply.code(409).send({ error: 'profile_changed' });
       }
       reply.header('Cache-Control', 'no-store');

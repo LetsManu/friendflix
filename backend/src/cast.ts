@@ -92,7 +92,11 @@ export interface CastRecord {
  * tuple). `hlsPath` = its Jellyfin HLS master as minted, without the `/media` prefix (never a credential: no api key, no token);
  * `hlsSubIndex` = the source's subtitle stream index of its one WebVTT rendition (absent = this part carries none).
  */
-export interface JoinedItem { itemId: string; mediaSourceId: string; playSessionId: string; runtimeTicks?: number; hlsPath: string; hlsSubIndex?: number }
+export interface JoinedItem {
+  itemId: string; mediaSourceId: string; playSessionId: string; runtimeTicks?: number; hlsPath: string; hlsSubIndex?: number;
+  /** display title for the live record of this part (as CastRecord.title; never in the gateway's scope) */
+  title?: string;
+}
 export interface CastSubtitleInfo { index: number; language?: string; title: string }
 
 export interface CastAuth {
@@ -280,7 +284,8 @@ export async function revokeCasts(ctx: Ctx, userId: string, deviceId?: string, e
     const rec = raw ? (JSON.parse(raw) as CastRecord) : null;
     await dropByHash(ctx, userId, i.hash, i.imgHash);
     memo.clear(); // before the stop below: the gateway's next fetch of a dropped token must not pass a memoised answer
-    if (rec && isJoined(rec)) await stopJoined(ctx, i.hash, rec);
+    // in the background: logout, profile switch and device revokes never wait for the media server (stopJoined never throws)
+    if (rec && isJoined(rec)) stopInBackground(ctx, i.hash, rec);
     n++;
   }
   memo.clear();
@@ -315,7 +320,7 @@ async function touch(ctx: Ctx, hash: string, rec: CastRecord, userName: string, 
     const it = st ? rec.items![st.idx] : undefined;
     if (st && it) {
       await ctx.kv.replace(jpKey(hash), jp!, ttl);
-      if (st.idx > 0) part = { itemId: it.itemId, playSessionId: it.playSessionId, title: '' };
+      if (st.idx > 0) part = { itemId: it.itemId, playSessionId: it.playSessionId, title: it.title ?? '' };
     }
   }
   const cur = await getLive(ctx, rec.userId, part.playSessionId);
@@ -340,6 +345,13 @@ interface JoinedProgress { /** the current part */ idx: number; /** its last fet
 export const JOINED_REPORT_MS = 30_000;
 /** a part whose last known position is this close to its end played to its end (the gateway's 15 s throttle plus a few segments) */
 export const JOINED_END_TICKS = 300_000_000;
+/**
+ * the next part's first fetch at most this far into it (its first segment or two) means the previous part played to its end, wherever
+ * its last known position was (a TV filling its buffer fast fetches far ahead of the gateway's 15 s throttle)
+ */
+export const JOINED_START_TICKS = 100_000_000;
+/** the watch time one server report closes is at most this (the TV fetched nothing for longer: paused or gone) */
+export const JOINED_ELAPSED_MAX_MS = 60_000;
 
 /** a joined AirPlay media token (more than one item) */
 const isJoined = (rec: CastRecord) => Boolean(rec.items && rec.items.length > 1 && rec.via === 'airplay' && (rec.kind ?? 'media') === 'media');
@@ -352,7 +364,12 @@ export async function joinedCastRecord(ctx: Ctx, hash: string): Promise<CastReco
 }
 
 const joinedChains = new Map<string, Promise<void>>();
-/** runs `fn` after every earlier call of the same token (one process; the gateway already sends at most one call per part change / 15 s) */
+/**
+ * Runs `fn` after every earlier call of the same token. In-process only: with several backend replicas two calls of one token can
+ * interleave. The gateway sends at most one call per part change (>= 1 s apart) or 15 s, so that is rare; the worst normal case is a
+ * duplicate Playing / Progress, and fast seeks back and forth across a boundary on two replicas could leave a second live record until its
+ * 45 s TTL. A KV lock is not worth it for that.
+ */
 async function oneAtATime(hash: string, fn: () => Promise<void>): Promise<void> {
   const run = (joinedChains.get(hash) ?? Promise.resolve()).then(fn);
   const tail = run.catch(() => undefined);
@@ -360,11 +377,14 @@ async function oneAtATime(hash: string, fn: () => Promise<void>): Promise<void> 
   try { await run; } finally { if (joinedChains.get(hash) === tail) joinedChains.delete(hash); }
 }
 
-const reportPart = (ctx: Ctx, kind: PlaybackKind, it: JoinedItem, positionTicks: number, who: PlaybackReporter) =>
+const reportPart = (ctx: Ctx, kind: PlaybackKind, it: JoinedItem, positionTicks: number, who: PlaybackReporter, elapsedMs: number) =>
   playbackReport(ctx, kind, {
     itemId: it.itemId, playSessionId: it.playSessionId, mediaSourceId: it.mediaSourceId, positionTicks, isPaused: false, playMethod: 'Transcode',
     ...(Number.isInteger(it.hlsSubIndex) ? { subtitleIndex: it.hlsSubIndex } : {}),
-  }, who);
+  }, who, { elapsedMs });
+
+/** watch time since the part's last report (the server is the only reporter of a joined stream; the token refresh does not cut it) */
+const watched = (st: JoinedProgress, now: number) => Math.max(0, Math.min(now - st.at, JOINED_ELAPSED_MAX_MS));
 
 /** Notes a joined token's segment position (see above). Throws the first report failure (after the state is kept); the caller logs its class. */
 export async function noteJoinedProgress(ctx: Ctx, hash: string, rec: CastRecord, p: { itemId: string; positionTicks: number }): Promise<void> {
@@ -382,38 +402,55 @@ export async function noteJoinedProgress(ctx: Ctx, hash: string, rec: CastRecord
     const st = jp ? (JSON.parse(jp) as JoinedProgress) : null;
     const part = items[idx]!;
     const pos = part.runtimeTicks ? Math.min(p.positionTicks, part.runtimeTicks) : p.positionTicks;
-    const todo: Array<[PlaybackKind, JoinedItem, number]> = [];
+    const todo: Array<[PlaybackKind, JoinedItem, number, number]> = [];
     let at = st?.at ?? now;
+    /** the first report is of a later part: the live record the token's fetches made (touch) is episode 1's and goes */
+    let dropFirst = false;
     if (!st || st.idx !== idx) {
       const prev = st ? items[st.idx] : undefined;
       if (prev) {
-        // it played to its end when its last position was within the last 30 s, else it stops where it was (a seek)
-        const end = prev.runtimeTicks && st!.pos >= prev.runtimeTicks - JOINED_END_TICKS ? prev.runtimeTicks : st!.pos;
-        todo.push(['Playing/Stopped', prev, end]);
+        // it played to its end when its last position was within its last 30 s, or when the next part starts at its beginning;
+        // else it stops where it was (a seek)
+        const ended = prev.runtimeTicks && (st!.pos >= prev.runtimeTicks - JOINED_END_TICKS || (idx === st!.idx + 1 && pos < JOINED_START_TICKS));
+        todo.push(['Playing/Stopped', prev, ended ? prev.runtimeTicks! : st!.pos, watched(st!, now)]);
       } else if (idx !== 0) {
-        // the first report is of a later part: the live record the token's fetches made (touch) is episode 1's and goes
-        const l = await getLive(ctx, cur.userId, items[0]!.playSessionId);
-        if (l && !l.playMethod) await clearLive(ctx, cur.userId, items[0]!.playSessionId);
+        dropFirst = true;
       }
-      todo.push(['Playing', part, pos]);
+      todo.push(['Playing', part, pos, 0]);
       at = now;
     } else if (now - st.at >= JOINED_REPORT_MS) {
-      todo.push(['Playing/Progress', part, pos]);
+      todo.push(['Playing/Progress', part, pos, watched(st, now)]);
       at = now;
     }
+    // the state first: a token refresh from here on already counts the new part (never episode 1's record again)
     const ttl = castKeyTtl(cur.exp, now);
     if (ttl > 0) await ctx.kv.set(jpKey(hash), JSON.stringify({ idx, pos, at } satisfies JoinedProgress), ttl);
+    if (dropFirst) {
+      const l = await getLive(ctx, cur.userId, items[0]!.playSessionId);
+      if (l && !l.playMethod) await clearLive(ctx, cur.userId, items[0]!.playSessionId);
+    }
     let failed: unknown;
-    for (const [kind, it, ticks] of todo) {
-      try { await reportPart(ctx, kind, it, ticks, who); } catch (e) { failed ??= e; }
+    for (const [kind, it, ticks, elapsedMs] of todo) {
+      try { await reportPart(ctx, kind, it, ticks, who, elapsedMs); } catch (e) { failed ??= e; }
     }
     if (failed !== undefined) throw failed;
   });
 }
 
+/** stops of joined tokens still running in the background (revokeCasts never waits for them) */
+const pendingStops = new Set<Promise<void>>();
+/** settles once every background stop started so far is done (tests; a graceful shutdown could use it too) */
+export const joinedStopsSettled = async (): Promise<void> => { await Promise.allSettled([...pendingStops]); };
+const stopInBackground = (ctx: Ctx, hash: string, rec: CastRecord) => {
+  const p = stopJoined(ctx, hash, rec).catch(() => undefined); // never throws; belt and braces
+  pendingStops.add(p);
+  void p.finally(() => pendingStops.delete(p));
+};
+
 /**
  * A joined token was revoked (revokeCast / revokeCasts; called after its keys are gone): its current part stops at its last position and
- * every part's encoding ends (not only episode 1's). Never throws (a revoke always completes); a failure logs its error class only.
+ * every part's encoding ends (not only episode 1's), all at once (none waits for another or for the stop report). Never throws (a revoke
+ * always completes); a failure logs its error class only.
  */
 export async function stopJoined(ctx: Ctx, hash: string, rec: CastRecord): Promise<void> {
   if (!isJoined(rec)) return;
@@ -422,15 +459,16 @@ export async function stopJoined(ctx: Ctx, hash: string, rec: CastRecord): Promi
   const user = await getUserById(ctx, rec.userId).catch(() => undefined);
   const prof = user ? await getProfile(ctx, rec.userId, rec.profileId).catch(() => null) : null;
   const jfUser = user && prof ? jfUserFor(user, prof) : null;
-  await oneAtATime(hash, async () => {
+  const report = oneAtATime(hash, async () => {
     const jp = await ctx.kv.get(jpKey(hash));
     await ctx.kv.del(jpKey(hash));
     const st = jp ? (JSON.parse(jp) as JoinedProgress) : null;
     const it = st ? rec.items![st.idx] : undefined;
-    if (it && user && prof && jfUser) await reportPart(ctx, 'Playing/Stopped', it, st!.pos, { user, jfUser, profile: prof, deviceId: rec.deviceId, via: 'airplay' });
+    if (it && user && prof && jfUser) await reportPart(ctx, 'Playing/Stopped', it, st!.pos, { user, jfUser, profile: prof, deviceId: rec.deviceId, via: 'airplay' }, watched(st!, Date.now()));
   }).catch(fail);
-  // every part's transcode, whatever happened above
-  if (jfUser) for (const i of rec.items!) await ctx.jf.stopEncoding(jfUser, i.playSessionId).catch(() => undefined);
+  // every part's transcode, in parallel and whatever happens to the report
+  const encodings = jfUser ? rec.items!.map((i) => ctx.jf.stopEncoding(jfUser, i.playSessionId).catch(() => undefined)) : [];
+  await Promise.allSettled([report, ...encodings]);
 }
 
 /**

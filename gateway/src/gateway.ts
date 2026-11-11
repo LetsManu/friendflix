@@ -36,12 +36,15 @@ export interface GatewayOptions {
 
 /** a token's progress goes to the backend at once when its part changes, else at most this often */
 export const JOINED_PROGRESS_MS = 15_000;
+/** two calls of one token for different parts are at least this far apart */
+export const JOINED_PART_FLOOR_MS = 1_000;
 
 /**
  * The default onJoinedSegment: POST /internal/cast/progress `{ tokenHash, itemId, positionTicks }` (the backend turns it into the
- * episode's start / progress / stop). Throttled per token (at once on a part change, else at most every JOINED_PROGRESS_MS), fire and
- * forget: the segment response never waits for it, a failing or hanging backend (5 s timeout) is swallowed and nothing is logged. The
- * body carries the token's hash only (never the token, never the receiver's address).
+ * episode's start / progress / stop). Throttled per token: at once on a part change (but at least JOINED_PART_FLOOR_MS after the
+ * token's last call), else at most every JOINED_PROGRESS_MS. Fire and forget: the segment response never waits for it, a failing or
+ * hanging backend (5 s timeout) is swallowed and nothing is logged. The body carries the token's hash only (never the token, never the
+ * receiver's address).
  */
 export function joinedProgressSender(o: { backendUrl: string; internalSecret: string; fetchImpl?: typeof fetch; now?: () => number }): (e: JoinedSegment) => void {
   const f = o.fetchImpl ?? fetch;
@@ -52,7 +55,9 @@ export function joinedProgressSender(o: { backendUrl: string; internalSecret: st
   return (e) => {
     const t = now();
     const prev = last.get(e.tokenHash);
-    if (prev && prev.part === e.part && t - prev.at < JOINED_PROGRESS_MS) return;
+    // the same part: at most every 15 s; a part change at once, but never sooner than 1 s after the token's last call (a TV, or a
+    // token holder, alternating between parts never drives one backend call per segment)
+    if (prev && t - prev.at < (prev.part === e.part ? JOINED_PROGRESS_MS : JOINED_PART_FLOOR_MS)) return;
     if (!prev && last.size >= 5000) { // bounded: forget tokens that went quiet (a joined stream fetches every few seconds)
       for (const [k, v] of last) if (t - v.at > 10 * 60_000) last.delete(k);
       if (last.size >= 5000) last.clear();
