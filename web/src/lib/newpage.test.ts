@@ -6,7 +6,7 @@ import { LOCALES, setLocale, tr } from '#lib/i18n';
 import { reasonText } from './reason';
 import {
   daysSince, episodeItem, filterItems, filterKeyTarget, filterSearch, freshText, kindOf, matchesFilter, NEW_TITLE_DAYS, parseFilter, planSections, withinDays,
-  availableTabs, forYouItems, mergeSuggestions, openRequests, wishStateOf, pageSearch, parseTab, quotaExhausted, quotaLeft, tabKeyTarget,
+  availableTabs, forYouItems, completeSuggestions, earlySuggestions, openRequests, wishStateOf, pageSearch, parseTab, quotaExhausted, quotaLeft, tabKeyTarget,
   type NewData, type NewEpisode, type Suggestion, type Up,
 } from './newpage';
 
@@ -230,11 +230,23 @@ describe('Für dich neu follows the engine', () => {
 });
 
 describe('suggestions and wishes', () => {
-  it('films and series alternate, doubles are dropped, the list is capped', () => {
-    const m = [sug(1, 'movie'), sug(2, 'movie'), sug(3, 'movie')], s = [sug(10, 'tv'), sug(1, 'movie')];
-    expect(mergeSuggestions(m, s).map((x) => x.tmdbId)).toEqual([1, 10, 2, 3]);
-    expect(mergeSuggestions(m, s, 2).map((x) => x.tmdbId)).toEqual([1, 10]);
-    expect(mergeSuggestions([], [])).toEqual([]);
+  const ids = (l: readonly Suggestion[]) => l.map((x) => x.tmdbId);
+  it('the half that arrives first takes at most half of the slots, the other fills the rest after it; what is shown never moves', () => {
+    const first = [sug(1, 'movie'), sug(2, 'movie'), sug(3, 'movie'), sug(4, 'movie')], late = [sug(10, 'tv'), sug(11, 'tv'), sug(12, 'tv')];
+    const shown = earlySuggestions(first, 4);
+    expect(ids(shown)).toEqual([1, 2]);
+    expect(ids(earlySuggestions(first, 3))).toEqual([1, 2]); // phone: three slots, two at most
+    const done = completeSuggestions(shown, first, late);
+    expect(ids(done)).toEqual([1, 2, 10, 11, 12, 3, 4]); // the shown prefix is intact, the late half comes next, then the rest of the early one
+    expect(ids(done.slice(0, shown.length))).toEqual(ids(shown));
+  });
+  it('a half that is empty or failed leaves its slots to the other; doubles are dropped; the list is capped', () => {
+    const first = [sug(1, 'movie'), sug(2, 'movie'), sug(3, 'movie')];
+    expect(ids(completeSuggestions(earlySuggestions(first, 4), first, []))).toEqual([1, 2, 3]); // the late half has nothing
+    expect(ids(completeSuggestions(earlySuggestions([], 4), [], [sug(10, 'tv'), sug(11, 'tv')]))).toEqual([10, 11]); // the early half had nothing
+    expect(ids(completeSuggestions([sug(1, 'movie')], [sug(1, 'movie'), sug(2, 'movie')], [sug(2, 'movie'), sug(1, 'movie')]))).toEqual([1, 2]);
+    const many = Array.from({ length: 20 }, (_x, i) => sug(100 + i, 'tv'));
+    expect(completeSuggestions([], [], many)).toHaveLength(12);
   });
   it('the quota: unlimited never runs out, a used-up one does, unknown is not exhausted', () => {
     expect(quotaLeft({ limit: 5, used: 2, resetsAt: 'x' })).toBe(3);

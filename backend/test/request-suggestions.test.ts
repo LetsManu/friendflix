@@ -240,6 +240,18 @@ describe('requestSuggestions (function level)', () => {
     expect(seerrCalls.filter((c) => c.path.endsWith('/recommendations')).length).toBe(1);
   });
 
+  it('a build that throws reaches every waiting caller, leaves no cache entry and no stuck in-flight build', async () => {
+    const base = ctxFor();
+    const broken = { ...base, db: { ...base.db, query: (q: string, ...rest: unknown[]) => (/item_features/.test(q) ? Promise.reject(new Error('index down')) : (base.db.query as any)(q, ...rest)) } } as any;
+    resetIndexCache(base);
+    const acct = { id: s.owner.user_id, role: 'friend' };
+    const r = await Promise.allSettled([requestSuggestions(broken, s.user, acct, s.owner.id, 'movie'), requestSuggestions(broken, s.user, acct, s.owner.id, 'movie')]);
+    expect(r.map((x) => x.status)).toEqual(['rejected', 'rejected']);
+    expect(await env.kv.keys('reqsug:')).toEqual([]);
+    resetIndexCache(base);
+    expect((await requestSuggestions(ctxFor(), s.user, acct, s.owner.id, 'movie')).length).toBeGreaterThan(0); // the next ask builds again
+  });
+
   it('the TVDB id is kept 30 days, none 7 days; an age-capped role reads each series\' details once', async () => {
     tvdbOfTmdb = { 21: 7001 };
     const ttls: Record<string, number> = {};

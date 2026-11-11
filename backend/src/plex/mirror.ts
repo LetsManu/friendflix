@@ -72,7 +72,7 @@ const epoch = (v: unknown): string | null => {
 };
 
 /** Legacy (pre-2020) metadata agents put the external id into the item's own guid: `com.plexapp.agents.imdb://tt0133093?lang=en`. */
-const LEGACY_AGENT = /^(com\.plexapp\.agents\.(?:(?:imdb|themoviedb|thetvdb):\/\/[\w./-]{1,200}|hama:\/\/(?:tvdb[2-5]?|tmdb)-\d{1,12}))(?:\?[^#\s]*)?$/i; // the HAMA anime agent only with a TVDB / TMDB id (never anidb-)
+const LEGACY_AGENT = /^(com\.plexapp\.agents\.(?:(?:imdb|themoviedb|thetvdb):\/\/[\w./-]{1,200}|hama:\/\/tvdb[2-5]?-\d{1,12}))(?:\?[^#\s]*)?$/i; // the HAMA anime agent only with a TVDB id (never anidb-, tmdb- is a movie id, tsdb-)
 
 /** `Guid: [{id:"tmdb://123"}]` (+ the item's own `guid` when it is a legacy agent guid, query string dropped). */
 export function guidsOf(m: Record<string, any>): string[] {

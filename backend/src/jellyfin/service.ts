@@ -24,6 +24,13 @@ import type { CapReason, EncoderSettings } from '../media/types.js';
 
 const TOKEN_TTL = 6 * 3600;
 const BOXSET_INDEX_KEY = 'jf:boxsets:v1';
+const PROVIDER_INDEX_KEY = 'jf:providers:v1';
+const PROVIDER_INDEX_TTL = 30 * 60;
+const PROVIDER_INDEX_PAGE = 500;
+const PROVIDER_INDEX_MISS_REFRESH_MS = 60_000;
+interface ProviderIndex { at: number; map: Map<string, { id: string; name: string }> }
+/** a safety stop: 200 000 titles */
+const PROVIDER_INDEX_MAX = 200_000;
 const BOXSET_INDEX_TTL = 3600;
 /** a partial index (some box set calls failed) is kept shorter, so a passing outage heals sooner */
 const BOXSET_INDEX_PARTIAL_TTL = 600;
@@ -719,27 +726,69 @@ export class JellyfinService implements MediaServer {
     if (!res.ok) throw new JellyfinError(res.status, `report ${kind} -> ${res.status}`);
   }
 
+  private providerIndexBuild: Promise<ProviderIndex> | null = null;
   /**
-   * Library lookup by one provider id with the admin key. The answer is trusted only when the item itself carries that id (key case-insensitive,
-   * value exact): a server that ignores the filter answers with an unrelated first item, and an older one matches by substring (`7001` finds `70012`).
+   * Films and series by provider id: `tmdb:Movie:<id>`, `tmdb:Series:<id>`, `tvdb:Series:<id>` -> { id, name }. Jellyfin's /Items has no provider id filter
+   * (an `anyProviderIdEquals` parameter is silently ignored and the first items of the library come back), so the index is built from a paged admin
+   * listing with fields=ProviderIds, kept 30 minutes in kv and built once at a time. The ids are compared exactly (the map key). A failing page rejects the build.
    */
-  private async byProviderId(kind: 'tmdb' | 'tvdb', id: number, type: 'Movie' | 'Series'): Promise<{ id: string; name: string } | null> {
-    if (!Number.isInteger(id) || id <= 0) return null;
-    const r = await this.client.adminJson<{ Items?: Array<{ Id: string; Name: string; ProviderIds?: Record<string, unknown> }> }>(
-      `/Items?anyProviderIdEquals=${kind}.${id}&recursive=true&includeItemTypes=${type}&fields=ProviderIds&enableImages=false&enableUserData=false&limit=5`,
-    );
-    const hit = (r.Items ?? []).find((i) => toProviderIds(i.ProviderIds)[kind] === String(id));
-    return hit ? { id: hit.Id, name: hit.Name } : null;
+  private providerIndex(): Promise<ProviderIndex> {
+    if (this.providerIndexBuild) return this.providerIndexBuild;
+    const build = (async () => {
+      const cached = await this.kv.get(PROVIDER_INDEX_KEY).catch(() => null);
+      if (cached) {
+        try {
+          const c = JSON.parse(cached) as { at: number; e: Array<[string, string, string]> };
+          return { at: c.at, map: new Map(c.e.map(([k, id, name]) => [k, { id, name }] as const)) };
+        } catch { /* rebuild */ }
+      }
+      const index = new Map<string, { id: string; name: string }>();
+      for (let start = 0; start < PROVIDER_INDEX_MAX; start += PROVIDER_INDEX_PAGE) {
+        const p = new URLSearchParams({
+          recursive: 'true', includeItemTypes: 'Movie,Series', sortBy: 'SortName,Id', sortOrder: 'Ascending', fields: 'ProviderIds',
+          enableImages: 'false', enableUserData: 'false', enableTotalRecordCount: 'false', startIndex: String(start), limit: String(PROVIDER_INDEX_PAGE),
+        });
+        const r = await this.client.adminJson<{ Items?: Array<{ Id?: string; Name?: string; Type?: string; ProviderIds?: Record<string, unknown> }> }>(`/Items?${p}`);
+        const page = r?.Items ?? [];
+        for (const i of page) {
+          if (!i?.Id || (i.Type !== 'Movie' && i.Type !== 'Series')) continue;
+          const ids = toProviderIds(i.ProviderIds);
+          const entry = { id: i.Id, name: String(i.Name ?? '') };
+          if (ids.tmdb && /^\d+$/.test(ids.tmdb) && !index.has(`tmdb:${i.Type}:${ids.tmdb}`)) index.set(`tmdb:${i.Type}:${ids.tmdb}`, entry);
+          if (i.Type === 'Series' && ids.tvdb && /^\d+$/.test(ids.tvdb) && !index.has(`tvdb:Series:${ids.tvdb}`)) index.set(`tvdb:Series:${ids.tvdb}`, entry);
+        }
+        if (page.length < PROVIDER_INDEX_PAGE) break;
+      }
+      const at = Date.now();
+      await this.kv.set(PROVIDER_INDEX_KEY, JSON.stringify({ at, e: [...index].map(([k, v]) => [k, v.id, v.name]) }), PROVIDER_INDEX_TTL).catch(() => undefined);
+      return { at, map: index };
+    })();
+    this.providerIndexBuild = build;
+    const clear = () => { if (this.providerIndexBuild === build) this.providerIndexBuild = null; };
+    build.then(clear, clear);
+    return build;
   }
 
-  /** Library lookup by TMDB id with the admin key (used to link finished Seerr requests to library items). */
+  /** Library lookup by TMDB id (used to link finished requests to library items, the request suggestions, polls, reminders). Throws when the library cannot be listed. */
   async findByTmdb(tmdbId: number, mediaType: string): Promise<{ id: string; name: string } | null> {
-    return this.byProviderId('tmdb', tmdbId, mediaType === 'tv' ? 'Series' : 'Movie');
+    if (!Number.isInteger(tmdbId) || tmdbId <= 0) return null;
+    return this.lookup(`tmdb:${mediaType === 'tv' ? 'Series' : 'Movie'}:${tmdbId}`);
   }
 
-  /** Series lookup by TVDB id with the admin key (libraries without TMDB ids, typical for anime). */
+  /** From the index; a miss against an index older than a minute builds it once more first (a title added since is found soon, a stream of misses costs one listing a minute). */
+  private async lookup(key: string): Promise<{ id: string; name: string } | null> {
+    let idx = await this.providerIndex();
+    const hit = idx.map.get(key);
+    if (hit || Date.now() - idx.at < PROVIDER_INDEX_MISS_REFRESH_MS) return hit ?? null;
+    await this.kv.del(PROVIDER_INDEX_KEY).catch(() => undefined);
+    idx = await this.providerIndex();
+    return idx.map.get(key) ?? null;
+  }
+
+  /** Series lookup by TVDB id (libraries without TMDB ids, typical for anime). */
   async findSeriesByTvdb(tvdbId: number): Promise<{ id: string; name: string } | null> {
-    return this.byProviderId('tvdb', tvdbId, 'Series');
+    if (!Number.isInteger(tvdbId) || tvdbId <= 0) return null;
+    return this.lookup(`tvdb:Series:${tvdbId}`);
   }
 
   /** A series counts as available once at least one real (non-placeholder) episode exists. */

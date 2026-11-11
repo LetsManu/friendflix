@@ -24,7 +24,7 @@
   import { t } from '#lib/i18n';
   import { runtimeLabel, sortUpcoming } from '#lib/mobile';
   import {
-    episodeItem, FILTER_PARAM, SUGGEST_TIMEOUT_MS, availableTabs, forYouItems, freshText, mergeSuggestions, NEW_TITLE_DAYS, openRequests, pageSearch, parseFilter, parseTab, planSections, quotaLeft, TAB_PARAM,
+    episodeItem, FILTER_PARAM, SUGGEST_TIMEOUT_MS, availableTabs, forYouItems, freshText, completeSuggestions, earlySuggestions, NEW_TITLE_DAYS, openRequests, pageSearch, parseFilter, parseTab, planSections, quotaLeft, TAB_PARAM,
     withinDays, type NewData, type NewEpisode, type NewFilter, type NewTab, type Suggestion, type Up,
   } from '#lib/newpage';
   import FilterBar from '#lib/new/FilterBar.svelte';
@@ -124,12 +124,18 @@
     void loadMine();
     type Answer = { items: Suggestion[]; quota: { limit: number | null; used: number; resetsAt: string } | null };
     // each half is shown as soon as it arrives (a cached one is quick, a cold build is not); the slots of the other stay skeletons meanwhile
+    // the first to arrive takes at most half of the slots, the second fills the others behind it: the cards on screen never move
     let m: Answer | null = null, s: Answer | null = null;
+    let early: Suggestion[] | null = null, shown: Suggestion[] = [];
     suggestLoading = true;
-    const arrive = () => set('suggest', mergeSuggestions(m?.items ?? [], s?.items ?? []));
+    const arrive = (items: Suggestion[]) => {
+      if (!requests) return; // the request service went away while this was on its way
+      if (early === null) { early = items; shown = earlySuggestions(items, slots); set('suggest', shown); }
+      else set('suggest', completeSuggestions(shown, early, items));
+    };
     await Promise.all([
-      fetchJson<Answer>('/api/library/request-suggestions?type=movie', SUGGEST_TIMEOUT_MS).then((r) => { m = r; arrive(); }),
-      fetchJson<Answer>('/api/library/request-suggestions?type=series', SUGGEST_TIMEOUT_MS).then((r) => { s = r; arrive(); }),
+      fetchJson<Answer>('/api/library/request-suggestions?type=movie', SUGGEST_TIMEOUT_MS).then((r) => { m = r; arrive(r?.items ?? []); }),
+      fetchJson<Answer>('/api/library/request-suggestions?type=series', SUGGEST_TIMEOUT_MS).then((r) => { s = r; arrive(r?.items ?? []); }),
     ]);
     const q = m?.quota ?? s?.quota ?? null;
     if (q) quota.set(q); else void loadQuota();

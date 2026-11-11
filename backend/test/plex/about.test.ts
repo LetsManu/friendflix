@@ -49,7 +49,7 @@ describe('providerIdsOf (Guid parsing)', () => {
   it('HAMA anime agent guids name the source in the value', () => {
     expect(providerIdsOf(['com.plexapp.agents.hama://tvdb-81189?lang=en'])).toEqual({ tvdb: '81189' });
     expect(providerIdsOf(['com.plexapp.agents.hama://tvdb2-81189'])).toEqual({ tvdb: '81189' });
-    expect(providerIdsOf(['com.plexapp.agents.hama://tmdb-603'])).toEqual({ tmdb: '603' });
+    expect(providerIdsOf(['com.plexapp.agents.hama://tmdb-603', 'com.plexapp.agents.hama://tsdb-603'])).toEqual({}); // HAMA's tmdb- is a movie id, tsdb- a series id: no TMDB id from either
     expect(providerIdsOf(['com.plexapp.agents.hama://anidb-1234', 'com.plexapp.agents.hama://tvdb-x1'])).toEqual({}); // AniDB is no provider id here
   });
   it('tmdbIdOf reads new and legacy guids', () => {

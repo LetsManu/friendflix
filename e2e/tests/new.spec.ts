@@ -123,7 +123,7 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
   });
 
-  test('a cold suggestion list that takes 5 s still arrives; the films show first, the series slots stay placeholders meanwhile, nothing moves', async ({ page, api }) => {
+  test('a cold suggestion list that takes 5 s still arrives; the films show first, the series slots stay placeholders meanwhile, no card on screen moves', async ({ page, api }) => {
     test.setTimeout(40_000);
     api.newPage.suggestions = { ...SUGGESTIONS };
     await page.route('**/api/library/request-suggestions?type=series', async (r) => { await new Promise((res) => setTimeout(res, 5000)); await r.fallback(); });
@@ -132,10 +132,20 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     await expect(ms.getByText('Tin Meadow')).toBeVisible({ timeout: 3000 }); // the quick half is not held back by the slow one
     await expect(ms.locator('li.skc')).toHaveCount(2); // the slots of the series are still placeholders, the filler has not taken them
     await expect(ms.getByRole('button', { name: /Etwas fehlt\?/ })).toHaveCount(0);
+    await expect(ms.getByText('Copper Sky')).toBeVisible();
     const y = async () => (await page.getByRole('heading', { level: 2, name: 'Neue Folgen' }).boundingBox())!.y;
+    const box = async (t: string) => (await ms.locator('li.c', { hasText: t }).boundingBox())!;
     const before = await y();
+    const shown = { tin: await box('Tin Meadow'), copper: await box('Copper Sky') };
     await expect(ms.getByText('Lantern Row')).toBeVisible({ timeout: 12_000 }); // past the old 4 s limit
+    await expect(ms.getByText('Foxglove Court')).toBeVisible();
     expect(Math.abs((await y()) - before)).toBeLessThanOrEqual(0.5);
+    // the cards that were on screen did not move when the late half came: it took the placeholders' slots
+    for (const [t, b] of [['Tin Meadow', shown.tin], ['Copper Sky', shown.copper]] as const) {
+      const now = await box(t);
+      expect([now.x, now.y, now.width, now.height].map(Math.round)).toEqual([b.x, b.y, b.width, b.height].map(Math.round));
+    }
+    await expect(ms.locator('li.skc')).toHaveCount(0);
   });
 
   test('the request service is slow: Für dich and the library do not wait for it, and nothing moves when it gives up', async ({ page, api }) => {

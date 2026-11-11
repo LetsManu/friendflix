@@ -31,9 +31,9 @@ export function providerIdsOf(guids: readonly string[] | null | undefined): Prov
     if (!m) continue;
     const scheme = m[1]!.toLowerCase();
     if (m[3] && m[3] !== '/') continue;
-    // the HAMA anime agent names the source in the value: `com.plexapp.agents.hama://tvdb-81189` (`tvdb2-` … `tvdb5-` are TVDB orderings of the same series)
-    const hama = scheme === 'com.plexapp.agents.hama' ? /^(tvdb[2-5]?|tmdb)-(\d+)$/i.exec(m[2]!) : null;
-    const kind = hama ? (hama[1]!.toLowerCase() === 'tmdb' ? 'tmdb' : 'tvdb') : SCHEME[scheme];
+    // the HAMA anime agent names the source in the value: `com.plexapp.agents.hama://tvdb-81189` (`tvdb2-` … `tvdb5-` are TVDB orderings of the same series; its `tmdb-N` is a TMDB *movie* id and `tsdb-N` a TMDB *series* id, so neither is mapped here)
+    const hama = scheme === 'com.plexapp.agents.hama' ? /^(tvdb[2-5]?)-(\d+)$/i.exec(m[2]!) : null;
+    const kind = hama ? 'tvdb' : SCHEME[scheme];
     if (!kind) continue;
     const v = hama ? hama[2]! : kind === 'imdb' ? m[2]!.toLowerCase() : m[2]!;
     if (kind === 'imdb' ? !IMDB.test(v) : !NUM.test(v)) continue;

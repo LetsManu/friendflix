@@ -16,7 +16,7 @@ let jfId = '';
 beforeAll(async () => {
   env = await makeEnv({
     'GET /Items/[^/]+': (u) => { const id = u.pathname.split('/').pop()!; return id === MISSING ? { status: 404 } : { json: { Id: id, Name: 'Ashfall', Type: 'Movie' } }; },
-    'GET /Items': (u) => ({ json: { Items: u.search.includes('tmdb.1') ? [{ Id: 'd'.repeat(32), Name: 'Dunmoor', ProviderIds: { Tmdb: '1' } }] : [] } }),
+    'GET /Items': (u) => ({ json: { Items: u.searchParams.get('fields') === 'ProviderIds' ? [{ Id: 'd'.repeat(32), Name: 'Dunmoor', Type: 'Movie', ProviderIds: { Tmdb: '1' } }] : [] } }), // the listing of the provider id index
   }, {
     seerr: {
       'GET /api/v1/user': () => ({ json: { results: [{ id: 9, jellyfinUserId: jfId }] } }),

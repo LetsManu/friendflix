@@ -16,7 +16,9 @@ let imported = '';
 beforeAll(async () => {
   env = await makeEnv({
     'GET /Items/[^/]+': (u) => { const id = u.pathname.split('/').pop()!; return { json: { Id: id, Name: id === A ? 'Ashfall' : id === B ? 'Brasswind' : 'Serie', Type: id === SERIES ? 'Series' : 'Movie' } }; },
-    'GET /Items': (u) => u.searchParams.get('ids') ? { json: { Items: u.searchParams.get('ids')!.split(',').map((Id) => ({ Id, Name: Id === A ? 'Ashfall' : 'Brasswind', Type: 'Movie' })) } } : ({ json: { Items: libraryHasDune && u.search.includes('tmdb.900001') ? [{ Id: 'd'.repeat(32), Name: 'Dunmoor', ProviderIds: { Tmdb: '900001' } }] : [] } }),
+    'GET /Items': (u) => u.searchParams.get('ids') ? { json: { Items: u.searchParams.get('ids')!.split(',').map((Id) => ({ Id, Name: Id === A ? 'Ashfall' : 'Brasswind', Type: 'Movie' })) } } : (u.searchParams.get('fields') === 'ProviderIds'
+      ? { json: { Items: libraryHasDune ? [{ Id: 'd'.repeat(32), Name: 'Dunmoor', Type: 'Movie', ProviderIds: { Tmdb: '900001' } }] : [] } } // the listing of the provider id index; the real server has no provider id filter
+      : { json: { Items: [] } }),
     'GET /Shows/Upcoming': () => ({ json: { Items: [{ Id: 'e'.repeat(32), Name: 'Pilot', Type: 'Episode', SeriesId: SERIES, SeriesName: 'Serie', IndexNumber: 1, ParentIndexNumber: 1, PremiereDate: '2020-01-01T00:00:00Z' }, { Id: 'f'.repeat(32), Name: 'Later', Type: 'Episode', SeriesId: SERIES, SeriesName: 'Serie', PremiereDate: '2999-01-01T00:00:00Z' }] } }),
   }, {
     seerr: {
@@ -74,6 +76,7 @@ describe('polls', () => {
     await resolveRequestedPolls(env.ctx);
     expect((await call('GET', `/api/polls/${id}`)).json().status).toBe('requested'); // not in library yet
     libraryHasDune = true;
+    for (const k of await env.kv.keys('jf:providers')) await env.kv.del(k);
     await seerrHooks.run(env.ctx, { type: 'available', tmdbId: 900001, mediaType: 'movie' });
     const done = (await call('GET', `/api/polls/${id}`)).json();
     expect(done.status).toBe('scheduled');

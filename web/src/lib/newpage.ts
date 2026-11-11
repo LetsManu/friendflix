@@ -104,15 +104,17 @@ export const quotaLeft = (q: Quota | null | undefined): number | null => (q && q
 /** the quota is used up; an unlimited or unknown quota never is */
 export const quotaExhausted = (q: Quota | null | undefined): boolean => quotaLeft(q) === 0;
 
-/** the films and the series suggestions as one list: they alternate (film, series, film …), a title that came twice stays once, at most `max` */
-export function mergeSuggestions(movies: readonly Suggestion[], series: readonly Suggestion[], max = 12): Suggestion[] {
+/**
+ * The films and the series suggestions arrive separately (a cached list is quick, a cold one is not) and the cards on screen must not move when the
+ * second one comes. The first to arrive shows at most half of the slots (rounded up), the other slots stay placeholders ...
+ */
+export const earlySuggestions = (first: readonly Suggestion[], slots: number): Suggestion[] => first.slice(0, Math.ceil(slots / 2));
+/** ... and the late half goes behind what is shown, then the rest of the early one (an empty or failed half leaves its slots to the other); a title that came twice stays once, at most `max`. */
+export function completeSuggestions(shown: readonly Suggestion[], first: readonly Suggestion[], late: readonly Suggestion[], max = 12): Suggestion[] {
   const out: Suggestion[] = [], seen = new Set<string>();
-  for (let i = 0; i < Math.max(movies.length, series.length); i++) {
-    for (const s of [movies[i], series[i]]) {
-      if (!s) continue;
-      const k = `${s.mediaType}:${s.tmdbId}`;
-      if (!seen.has(k)) { seen.add(k); out.push(s); }
-    }
+  for (const s of [...shown, ...late, ...first]) {
+    const k = `${s.mediaType}:${s.tmdbId}`;
+    if (!seen.has(k)) { seen.add(k); out.push(s); }
   }
   return out.slice(0, max);
 }
