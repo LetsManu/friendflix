@@ -9,7 +9,7 @@ import type {
 import type { JfUser } from '../types.js';
 import { JellyfinClient, JellyfinError, mediaBrowserHeader, policyFromTemplate } from './client.js';
 import { jellyfinWebhookEvents } from './webhook.js';
-import { bestTraits, maxWidthFor, toDownloadSource, toItemDto, toMediaTraits, sourceFacts, toPlaybackDto, toTrickplayDto, type DownloadQuality, type DownloadSourceDto } from './dto.js';
+import { bestTraits, isTextSubtitle, maxWidthFor, toDownloadSource, toItemDto, toMediaTraits, sourceFacts, toPlaybackDto, toTrickplayDto, type DownloadQuality, type DownloadSourceDto } from './dto.js';
 import { toChapters, toCredits, toItemAbout, toProviderIds } from './dto.js'; // Block 17 P1, Block 21
 import { toHygieneFacts, toServerSession } from './dto.js'; // Block 22
 import { toItemFeatures } from './dto.js'; // R1
@@ -332,9 +332,17 @@ export class JellyfinService implements MediaServer {
     const audio = streams.filter((s) => s.Type === 'Audio').map((s) => ({ language: String(s.Language ?? 'und'), title: String(s.DisplayTitle ?? s.Language ?? 'Spur'), isDefault: Boolean(s.IsDefault) }))
       .filter((a) => !seen.has(a.language) && seen.add(a.language));
     const seenS = new Set<string>();
-    const subtitles = streams.filter((s) => s.Type === 'Subtitle')
-      .map((s) => ({ language: String(s.Language ?? 'und'), title: String(s.DisplayTitle ?? s.Language ?? 'Untertitel'), ...(Number.isInteger(s.Index) ? { index: s.Index as number } : {}) }))
-      .filter((a) => !seenS.has(a.language) && seenS.add(a.language));
+    const subs = streams.filter((s) => s.Type === 'Subtitle');
+    const langOf = (s: Record<string, any>) => String(s.Language ?? 'und');
+    // the track that stands for a language (continuous AirPlay carries it in a later episode): its first text, non-forced track, else its
+    // first text track; image-only languages have none (never burned in). The entries themselves (first track per language) stay as they are.
+    const indexOf = (lang: string): number | undefined => {
+      const text = subs.filter((s) => langOf(s) === lang && isTextSubtitle(s) && Number.isInteger(s.Index));
+      return (text.find((s) => !s.IsForced) ?? text[0])?.Index as number | undefined;
+    };
+    const subtitles = subs.map((s) => ({ language: langOf(s), title: String(s.DisplayTitle ?? s.Language ?? 'Untertitel') }))
+      .filter((a) => !seenS.has(a.language) && seenS.add(a.language))
+      .map((a) => { const index = indexOf(a.language); return index !== undefined ? { ...a, index } : a; });
     return { audio, subtitles, runtimeTicks: i.RunTimeTicks, type: String(i.Type ?? '') };
   }
 

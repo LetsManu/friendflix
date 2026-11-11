@@ -30,7 +30,8 @@ interface JoinedPart { item: ItemDto; info: PlaybackDto; runtimeTicks: number; s
  * at most `max`, while the joined runtime from `startTicks` on stays within 6 h. null = a single token (the profile's autoplay is off,
  * the item is no episode of a series, no next episode, or a runtime is unknown). Each later episode gets ONE PlaybackInfo from its start,
  * with the first episode's bitrate / height, its audio language and the subtitle of the first episode's subtitle language (index from
- * the episode's own streams; none = that part carries no subtitle). A later episode that fails its lookup ends the join there.
+ * the episode's own streams, its first text non-forced track of that language; none = that part carries no subtitle). Any failure of a later
+ * episode's lookup ends the join there.
  */
 async function joinedParts(ctx: Ctx, jfUser: JfUser, a: {
   userId: string; profileId: string; item: ItemDto; info: PlaybackDto; startTicks: number; max: number; maxBitrate: number; maxHeight: number; hlsSubIndex?: number;
@@ -47,7 +48,8 @@ async function joinedParts(ctx: Ctx, jfUser: JfUser, a: {
   while (parts.length < a.max) {
     try {
       const nx = await ctx.jf.nextEpisode(jfUser, item.seriesId, cur.id);
-      // trailing episodes are left out while the joined runtime from the start position would pass 6 h
+      // the item's runtime decides (unknown: the join ends before it, no PlaybackInfo spent); trailing episodes are left out while the
+      // joined runtime from the start position would pass 6 h
       if (!nx || !nx.runtimeTicks || total + nx.runtimeTicks - a.startTicks > JOINED_MAX_TICKS) break;
       const sub = subLang ? (await ctx.jf.tracks(jfUser, nx.id)).subtitles.find((t) => t.language === subLang)?.index : undefined;
       const ni = await ctx.jf.playbackInfo(jfUser, nx.id, {
@@ -60,8 +62,9 @@ async function joinedParts(ctx: Ctx, jfUser: JfUser, a: {
       total += rt;
       cur = nx;
     } catch (e) {
-      if (!(e instanceof MediaError)) throw e;
-      log.warn({ status: e.status, part: parts.length + 1 }, 'cast: continuous AirPlay ends before a part that failed its lookup');
+      // any failure of a later part (refusal, timeout, a broken answer) only shortens the stream: episode 1's play session stays this
+      // token's; logged without ids, URLs or the error's message
+      log.warn({ ...(e instanceof MediaError ? { status: e.status } : { error: e instanceof Error ? e.name : 'unknown' }), part: parts.length + 1 }, 'cast: continuous AirPlay ends before a part that failed its lookup');
       break;
     }
   }

@@ -283,7 +283,10 @@ export interface ItemTraits { genres: string[]; tags: string[]; countries: strin
 export interface PersonDto { id: string; name: string; overview?: string; birthYear?: number; image: boolean }
 export interface TrackList {
   audio: Array<{ language: string; title: string; isDefault: boolean }>;
-  /** `index` = the source's stream index of that language's first subtitle track (Jellyfin; continuous AirPlay picks a later episode's subtitle by it) */
+  /**
+   * one entry per language (its first track names it); `index` (Jellyfin) = the source's stream index of that language's first text,
+   * non-forced track, else its first text track, absent for image-only languages (continuous AirPlay picks a later episode's subtitle by it)
+   */
   subtitles: Array<{ language: string; title: string; index?: number }>;
   runtimeTicks?: number;
   type: string;

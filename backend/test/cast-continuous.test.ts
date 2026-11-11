@@ -115,8 +115,16 @@ describe('after the Plex block', () => {
 describe('joined AirPlay token', () => {
   const SERIES = 'e'.repeat(32);
   const FILM = 'f'.repeat(32);
-  type Stream = { Index: number; Language?: string; IsDefault?: boolean };
-  type Ep = { id: string; ms: string; ps: string; name: string; season: number; ix: number; rt: number; audio: Stream[]; subs: Stream[] };
+  type Stream = { Index: number; Language?: string; IsDefault?: boolean; IsForced?: boolean; Codec?: string };
+  type Ep = {
+    id: string; ms: string; ps: string; name: string; season: number; ix: number; rt: number; audio: Stream[]; subs: Stream[];
+    /** the item lookup has no runtime / PlaybackInfo has none */
+    noItemRt?: boolean; noPbRt?: boolean;
+    /** PlaybackInfo refuses (Jellyfin ErrorCode -> 403 MediaError) / answers without a media source (a plain Error) */
+    pbFail?: 'blocked' | 'nosource';
+    /** PlaybackInfo lists the subtitles as image tracks while the item lookup lists them as text (no rendition is planned) */
+    pbImageSubs?: boolean;
+  };
   const ger = { Index: 1, Language: 'ger', IsDefault: true };
   const eng = { Index: 2, Language: 'eng' };
   const base = (): Ep[] => [
@@ -129,10 +137,12 @@ describe('joined AirPlay token', () => {
   const streams = (e: Ep) => [
     { Index: 0, Type: 'Video', Codec: 'h264', Height: 1080 },
     ...e.audio.map((a) => ({ ...a, Type: 'Audio', Codec: 'aac', Channels: 2 })),
-    ...e.subs.map((x) => ({ ...x, Type: 'Subtitle', Codec: 'srt', IsTextSubtitleStream: true })),
+    ...e.subs.map((x) => ({ ...x, Type: 'Subtitle', Codec: x.Codec ?? 'srt', IsTextSubtitleStream: (x.Codec ?? 'srt') === 'srt' })),
   ];
+  /** a later part's episode list fails at the network level (fetch TypeError, no MediaError) */
+  let episodesThrow = false;
   const epDto = (e: Ep) => ({
-    Id: e.id, Name: e.name, Type: 'Episode', SeriesId: SERIES, SeriesName: 'Saltwater Almanac', ParentIndexNumber: e.season, IndexNumber: e.ix, RunTimeTicks: e.rt,
+    Id: e.id, Name: e.name, Type: 'Episode', SeriesId: SERIES, SeriesName: 'Saltwater Almanac', ParentIndexNumber: e.season, IndexNumber: e.ix, RunTimeTicks: e.noItemRt ? undefined : e.rt,
     ImageTags: { Primary: 'x' }, UserData: { PlaybackPositionTicks: 0 }, MediaSources: [{ Id: e.ms, MediaStreams: streams(e) }],
   });
   const H = { 'x-internal-secret': cfg.INTERNAL_SECRET };
@@ -145,13 +155,17 @@ describe('joined AirPlay token', () => {
         return { json: epDto(EPS.find((e) => u.pathname.endsWith(e.id)) ?? EPS[0]!) };
       },
       [`GET /Shows/${SERIES}/Episodes`]: (u) => {
+        if (episodesThrow) throw new TypeError('fetch failed');
         const i = EPS.findIndex((e) => e.id === u.searchParams.get('startItemId'));
         return { json: { Items: EPS.slice(i, i + Number(u.searchParams.get('limit') ?? 2)).map(epDto) } };
       },
       'POST /Items/[^/]+/PlaybackInfo': (u) => {
         if (u.pathname.includes(FILM)) return { json: { PlaySessionId: 'ps-film-0001', MediaSources: [{ Id: MS, Container: 'mkv', Bitrate: 4_000_000, RunTimeTicks: 5400e7, MediaStreams: [{ Index: 0, Type: 'Video', Height: 1080 }, { Index: 1, Type: 'Audio' }] }] } };
         const e = EPS.find((x) => u.pathname.includes(x.id))!;
-        return { json: { PlaySessionId: e.ps, MediaSources: [{ Id: e.ms, Container: 'mkv', Bitrate: 4_000_000, RunTimeTicks: e.rt, MediaStreams: streams(e) }] } };
+        if (e.pbFail === 'blocked') return { json: { ErrorCode: 'NotAllowed' } };
+        if (e.pbFail === 'nosource') return { json: { PlaySessionId: e.ps, MediaSources: [] } };
+        const ms = streams(e).map((x) => (e.pbImageSubs && x.Type === 'Subtitle' ? { ...x, Codec: 'pgssub', IsTextSubtitleStream: false } : x));
+        return { json: { PlaySessionId: e.ps, MediaSources: [{ Id: e.ms, Container: 'mkv', Bitrate: 4_000_000, RunTimeTicks: e.noPbRt ? undefined : e.rt, MediaStreams: ms }] } };
       },
       'DELETE /Videos/ActiveEncodings': () => ({ status: 204 }),
     });
@@ -308,6 +322,102 @@ describe('joined AirPlay token', () => {
       // new requests get no joined token
       expect((await call('POST', '/api/cast/session', { itemId: EPS[0]!.id, via: 'airplay', continuous: true })).json()).toEqual({ error: 'continuous_off' });
     } finally { expect((await call('PUT', '/api/admin/settings', { values: { CAST_AIRPLAY_CONTINUOUS: true } })).statusCode).toBe(200); }
+  });
+
+  it("a forced track is not the language's subtitle of a later part", async () => {
+    try {
+      // episode 2 lists its forced German track first; episode 3 has only a forced one (the fallback)
+      EPS[1]!.subs = [{ Index: 3, Language: 'ger', IsForced: true }, { Index: 6, Language: 'ger' }];
+      EPS[2]!.subs = [{ Index: 2, Language: 'eng' }, { Index: 4, Language: 'ger', IsForced: true }];
+      const { j, rec } = await joined({ subtitleIndex: 3 });
+      expect(rec.items.map((i: { hlsSubIndex?: number }) => i.hlsSubIndex)).toEqual([3, 6, 4]);
+      expect(q(rec.items[1].hlsPath).get('SubtitleStreamIndex')).toBe('6');
+      expect(j.joined.subtitles).toBe(true);
+      // an image-only language: no subtitle for that part (never burned in)
+      EPS[2]!.subs = [{ Index: 4, Language: 'ger', Codec: 'pgssub' }];
+      const img = await joined({ subtitleIndex: 3 });
+      expect(img.rec.items.map((i: { hlsSubIndex?: number }) => i.hlsSubIndex)).toEqual([3, 6, undefined]);
+      expect(q(img.rec.items[2].hlsPath).has('SubtitleStreamIndex')).toBe(false);
+      expect(img.j.joined.subtitles).toBe(false);
+    } finally { EPS = base(); }
+  });
+
+  it('a later part keeps its subtitle only when its HLS URL carries the rendition', async () => {
+    try {
+      EPS[2]!.pbImageSubs = true; // the lookup says text, the PlaybackInfo plan carries none
+      const { j, rec } = await joined({ subtitleIndex: 3 });
+      expect(rec.items.map((i: { hlsSubIndex?: number }) => i.hlsSubIndex)).toEqual([3, 3, undefined]);
+      expect(j.joined.subtitles).toBe(false);
+    } finally { EPS = base(); }
+  });
+
+  it('a later part that fails its lookup ends the join there, the token is still minted', async () => {
+    const stops = () => env.jfCalls.filter((c) => c.method === 'DELETE' && c.path === '/Videos/ActiveEncodings').length;
+    for (const fail of ['blocked', 'nosource'] as const) {
+      try {
+        EPS[2]!.pbFail = fail;
+        const before = stops();
+        const { j, rec } = await joined();
+        expect(j.joined.items.map((i: { itemId: string }) => i.itemId), fail).toEqual([EPS[0]!.id, EPS[1]!.id]);
+        expect(rec.items.map((i: { playSessionId: string }) => i.playSessionId)).toEqual([EPS[0]!.ps, EPS[1]!.ps]);
+        expect(j.runtimeTicks).toBe(EPS[0]!.rt + EPS[1]!.rt);
+        expect(stops()).toBe(before); // episode 1's play session is the token's, nothing to give back
+      } finally { EPS = base(); }
+    }
+    // the episode list itself fails at the network level (no MediaError): episode 1 alone, a single token
+    episodesThrow = true;
+    try {
+      const r = await call('POST', '/api/cast/session', { itemId: EPS[0]!.id, via: 'airplay', continuous: true });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.json().joined).toBeUndefined();
+      expect(r.json().playSessionId).toBe(EPS[0]!.ps);
+      const ct = /\/media\/c\/([\w-]{43})\//.exec(r.json().contentUrl)![1]!;
+      expect(JSON.parse((await env.kv.get(`cast:${hashToken(ct)}`))!).playSessionId).toBe(EPS[0]!.ps);
+    } finally { episodesThrow = false; }
+  });
+
+  it('audio language of episode 1 without an audio choice: its default track, else its first', async () => {
+    try {
+      // default English in episode 1 -> English in episode 2 (index 2 there, not its default)
+      EPS[0]!.audio = [{ Index: 1, Language: 'ger' }, { Index: 2, Language: 'eng', IsDefault: true }];
+      let { rec } = await joined({ maxEpisodes: 2 });
+      expect(q(rec.items[1].hlsPath).get('AudioStreamIndex')).toBe('2');
+      // no default track: the first one (English)
+      EPS[0]!.audio = [{ Index: 1, Language: 'eng' }, { Index: 2, Language: 'ger' }];
+      ({ rec } = await joined({ maxEpisodes: 2 }));
+      expect(q(rec.items[1].hlsPath).get('AudioStreamIndex')).toBe('2');
+      // German first: episode 2's default German needs no index
+      EPS[0]!.audio = [{ Index: 1, Language: 'ger' }, { Index: 2, Language: 'eng' }];
+      ({ rec } = await joined({ maxEpisodes: 2 }));
+      expect(q(rec.items[1].hlsPath).has('AudioStreamIndex')).toBe(false);
+    } finally { EPS = base(); }
+  });
+
+  it('an unknown runtime: single token for episode 1, the join ends before a later one', async () => {
+    try {
+      EPS[0]!.noPbRt = true;
+      const r = await call('POST', '/api/cast/session', { itemId: EPS[0]!.id, via: 'airplay', continuous: true });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.json().joined).toBeUndefined();
+      EPS = base();
+      EPS[2]!.noItemRt = true; // the item's runtime decides (no PlaybackInfo is spent on it)
+      const before = pbCalls(EPS[2]!.id);
+      const { j } = await joined();
+      expect(j.joined.items).toHaveLength(2);
+      expect(pbCalls(EPS[2]!.id)).toBe(before);
+    } finally { EPS = base(); }
+  });
+
+  it('the poster token record carries no items', async () => {
+    const { ct } = await joined();
+    const media = hashToken(ct);
+    const idx = await Promise.all((await env.kv.keys('castidx:')).map(async (k) => JSON.parse((await env.kv.get(k))!) as { hash: string; kind?: string; imgHash?: string }));
+    const imgHash = idx.find((i) => i.hash === media)!.imgHash!;
+    expect(imgHash).toBeTruthy();
+    const img = JSON.parse((await env.kv.get(`cast:${imgHash}`))!);
+    expect(img.kind).toBe('img');
+    expect(img).not.toHaveProperty('items');
+    expect(JSON.parse((await env.kv.get(`cast:${media}`))!).items).toHaveLength(3);
   });
 
   // last in this describe: it switches the session's profile
