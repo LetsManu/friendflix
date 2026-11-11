@@ -712,7 +712,7 @@
   const castErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
     : e?.body?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
   // (FriendFlix's own receiver is given a moment to state what it plays first: castCapsReady; `again` names the stream the TV just refused)
-  const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }) => {
+  const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string; tv?: string }) => {
     if (via !== 'airplay') await castCapsReady();
     return api<CastInfo>('/api/cast/session', { method: 'POST', body: castBody({ itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}) }) });
   };
@@ -750,7 +750,7 @@
         flash(tr('player.switchingCompatible'), 2500);
         const prev = ci;
         ci = null;
-        ci = await castRequest(pos, undefined, { fellBack: fb, prevPs: prev.playSessionId });
+        ci = await castRequest(pos, undefined, { fellBack: fb, prevPs: prev.playSessionId, tv: $castState.deviceName || undefined });
         if (!(await loadOnCast(ci, subIndex))) throw new Error('load');
       }
     } catch (e) {

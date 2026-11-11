@@ -84,6 +84,7 @@ Handy aus starten.
   verpackt, Dolby durchgereicht oder in Dolby Digital Plus / Dolby Digital umgewandelt, fMP4-Segmente, `hlsSegmentFormat` und
   `hlsVideoSegmentFormat` `fmp4`; die HEVC-Umwandlung für Zuschauer unterwegs nur mit dem bewährten Encoder des Servers und freiem
   Platz). Einzelheiten und Tabelle: [cast.md](../cast.md#hevc-und-raumklang-mit-dem-eigenen-empfänger).
+- **Nur mit Jellyfin:** mit Plex bleibt der Cast H.264 in Stereo.
 - **Nichts bestätigt, nichts ändert sich:** Cast-URL und Antwort sind genau die des Default Media Receivers.
 - **Lehnt der Fernseher so einen Stream ab** (Laden schlägt fehl oder er meldet gleich am Anfang einen Fehler), startet das Handy
   denselben Titel noch einmal ohne HEVC / Raumklang und merkt sich das für den Namen dieses Fernsehers 30 Tage (`ff-cast-avoid`, im

@@ -701,7 +701,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       // own receiver: an error right at the start of a stream with HEVC / surround is that feature failing: once more without it, here
       const again = fellBack(s, s.ci);
       if (again) {
-        log('warn', 'receiver', `the receiver failed the ${again.kind} stream · asking again without`);
+        log('warn', 'receiver', `the receiver failed the ${again.kind === 'both' ? 'HEVC / surround' : again.kind} stream · asking again without`);
         deps.toast('info', tr('player.switchingCompatible'));
         s.fallback = again;
         void swap(s, s.view.itemId, s.view.position, false);
@@ -1010,7 +1010,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     try {
       ci = await call<CastInfo>('/api/cast/session', {
         method: 'POST',
-        body: await castReq({ itemId, startTicks: startAt === undefined ? undefined : secToTicks(startAt), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, ...(fb ? { fellBack: fb.kind, prevPs: fb.prevPs } : {}) }),
+        body: await castReq({ itemId, startTicks: startAt === undefined ? undefined : secToTicks(startAt), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, ...(fb ? { fellBack: fb.kind, prevPs: fb.prevPs, tv: s.view.device } : {}) }),
       });
     } catch (e) {
       if (my !== seq) return;
@@ -1040,7 +1040,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       dropHint(s);
       if (again) {
         // the one automatic fallback: the same title and position once more, without what the TV could not play
-        log('warn', 'load', `the receiver could not load the ${again.kind} stream · asking again without`);
+        log('warn', 'load', `the receiver could not load the ${again.kind === 'both' ? 'HEVC / surround' : again.kind} stream · asking again without`);
         deps.toast('info', tr('player.switchingCompatible'));
         s.fallback = again;
         return swap(s, itemId, startAt ?? ci.startTime, false, hold);

@@ -79,6 +79,7 @@ the phone was awake); the one after that is queued once the phone wakes again. A
   session; without an answer it claims nothing. The server plans the stream like for the player (HEVC SDR remux, Dolby passthrough or
   conversion to Dolby Digital Plus / Dolby Digital, fMP4 segments, `hlsSegmentFormat` and `hlsVideoSegmentFormat` `fmp4`; the HEVC
   conversion for viewers away from home only with the server's proven encoder and a free slot). Details and the table: [cast.md](cast.md#hevc-und-raumklang-mit-dem-eigenen-empfänger) (German).
+- **Jellyfin only:** with Plex the cast stays H.264 stereo.
 - **Nothing confirmed, nothing changes:** the cast URL and answer are exactly the Default Media Receiver's.
 - **If the TV refuses such a stream** (the load fails, or it reports an error right at the start) the phone starts the same title
   once more without HEVC / surround and remembers it for this TV's name for 30 days (`ff-cast-avoid`, in the browser).

@@ -100,6 +100,7 @@ export async function castIdOfContentUrl(url: string, digest: (s: string) => Pro
   }
 }
 
+/** (carries no `delivery`: a re-adopted cast has no early-ERROR fallback for HEVC / surround, a TV error right after a reload takes the plain error path) */
 /** the CastInfo of a re-adopted cast: the receiver's own content URL, no subtitle URLs (they are already on the receiver) */
 export function lookupToCastInfo(l: CastLookup, contentUrl: string): CastInfo {
   return {

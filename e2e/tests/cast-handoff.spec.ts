@@ -68,11 +68,11 @@ test('chromecast: leaving the watch page keeps the receiver playing', async ({ p
   await expect(page.locator('.castov')).toContainText('Wird auf Wohnzimmer-TV abgespielt');
   await leaveWatch(page);
   // the engine reports the receiver's session (exactly one start), nothing ended it
-  await expect.poll(() => reports.filter((r) => r.playSessionId === 'air-ps' && r.kind === 'start')).toHaveLength(1);
+  await expect.poll(() => reports.filter((r) => r.playSessionId === 'a'.repeat(32) && r.kind === 'start')).toHaveLength(1);
   expect(sessions).toHaveLength(1);
   expect(deleted).toEqual([]);
   expect(await sdk.calls()).not.toContain('endCurrentSession');
-  expect(reports.filter((r) => r.playSessionId === 'air-ps' && r.kind === 'stop')).toEqual([]);
+  expect(reports.filter((r) => r.playSessionId === 'a'.repeat(32) && r.kind === 'stop')).toEqual([]);
 });
 
 test('chromecast: Stop on the watch page ends the session and plays on locally', async ({ page, api: _api }) => {
@@ -135,8 +135,8 @@ test('only the engine reports after leaving the watch page', async ({ page, api:
     await page.waitForTimeout(400); // a second report (the Player's) would arrive with the engine's
     expect(reports.slice(n)).toEqual([want]);
   };
-  const progress = (isPaused: boolean): Report => ({ kind: 'progress', playSessionId: 'air-ps', isPaused });
-  await expect.poll(() => reports.filter((r) => r.playSessionId === 'air-ps' && r.kind === 'start')).toHaveLength(1);
+  const progress = (isPaused: boolean): Report => ({ kind: 'progress', playSessionId: 'a'.repeat(32), isPaused });
+  await expect.poll(() => reports.filter((r) => r.playSessionId === 'a'.repeat(32) && r.kind === 'start')).toHaveLength(1);
   // still on the watch page (the Player's handlers are on the moved element), well inside the engine's first 10 s
   const handed = reports.length;
   await after('pause', progress(true));
@@ -145,10 +145,10 @@ test('only the engine reports after leaving the watch page', async ({ page, api:
   await leaveWatch(page);
   // the engine's 10 s progress just went out: the next one is far away, every report below comes from an element event
   const left = reports.length;
-  await expect.poll(() => reports.slice(left).filter((r) => r.playSessionId === 'air-ps' && r.kind === 'progress'), { timeout: 15_000 }).toHaveLength(1);
+  await expect.poll(() => reports.slice(left).filter((r) => r.playSessionId === 'a'.repeat(32) && r.kind === 'progress'), { timeout: 15_000 }).toHaveLength(1);
   await after('pause', progress(true));
   await after('play', progress(false));
-  await after('ended', { kind: 'stop', playSessionId: 'air-ps', isPaused: true });
+  await after('ended', { kind: 'stop', playSessionId: 'a'.repeat(32), isPaused: true });
   expect(reports.slice(handed).filter((r) => r.kind === 'start')).toEqual([]); // never a second start
 });
 

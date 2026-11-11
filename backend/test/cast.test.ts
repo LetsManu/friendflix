@@ -1340,4 +1340,53 @@ describe('cast: HEVC and surround with FriendFlix\'s own receiver', () => {
     expect(r.r.statusCode).toBe(200);
     expect(JSON.parse((await env.kv.get('hevcenc:failures'))!)).toHaveLength(1);
   });
+  it('a queued next episode is never an HEVC conversion (its stream starts later than any slot check); HEVC copy stays', async () => {
+    const uid = (await call(admin, 'GET', '/api/me')).json().id as string;
+    await revokeSessions(env.ctx, uid);
+    admin = await env.login();
+    for (const k of [...await env.kv.keys(`play:${uid}:`), ...await env.kv.keys('castnext:')]) await env.kv.del(k);
+    const role = env.ctx.roles.admin!, before = role.maxStreams;
+    role.maxStreams = 3;
+    try {
+      srcStreams = wrenfield;
+      const cur = await create(admin, { receiver: true, caps });
+      expect((await authz({ ct: cur.ct, client: '198.51.100.1' })).statusCode).toBe(200);
+      psNext = 'ps-next-8001';
+      srcStreams = [{ ...wrenfield[0]!, BitRate: 60_000_000 }, wrenfield[1], sub];
+      const nx = await remote({ caps, next: true, after: cur.j.castId });
+      expect(nx.statusCode).toBe(200);
+      // (the real gate would say h264_unproven here: h264_busy comes from the queued-token rule, the gate is not asked)
+      expect(nx.json().delivery).toMatchObject({ video: 'h264' });
+      expect(nx.json().delivery.why[0]).toBe('h264_busy');
+      expect(params(nx.json()).get('VideoCodec')).toBe('h264,hevc');
+      // a source that fits is still copied as HEVC
+      psNext = 'ps-next-8002';
+      srcStreams = wrenfield;
+      const copy = await remote({ caps, next: true });
+      expect(copy.statusCode, copy.body).toBe(200);
+      expect(copy.json().delivery).toMatchObject({ video: 'copy', videoCodec: 'hevc' });
+    } finally { role.maxStreams = before; psNext = null; }
+  });
+
+  it('a HEVC cast plan carries the level the receiver was probed for (Level 4.1 = hevc-level 123)', async () => {
+    srcStreams = wrenfield;
+    const { j } = await create(admin, { receiver: true, caps });
+    expect(params(j).get('hevc-level')).toBe('123');
+    srcStreams = stereoH264;
+    expect(params((await create(admin, { receiver: true, caps })).j).has('hevc-level')).toBe(false); // no HEVC in this plan: as before
+  });
+
+  it('cast HEVC failures are counted per TV (a hash of its name), not per sender phone', async () => {
+    const uid = (await call(admin, 'GET', '/api/me')).json().id as string;
+    await env.kv.set(`pbinfo:${uid}:ps-tv-failed1`, JSON.stringify({ video: 'hevc', audio: 'copy' }), 600);
+    await env.kv.del('hevcenc:failures');
+    srcStreams = stereoH264;
+    await create(admin, { receiver: true, caps, fellBack: 'hevc', prevPs: 'ps-tv-failed1', tv: 'Living Room TV' });
+    await create(admin, { receiver: true, caps, fellBack: 'hevc', prevPs: 'ps-tv-failed1', tv: 'Living Room TV' });
+    const { createHash } = await import('node:crypto');
+    const want = createHash('sha256').update(`cast:${uid}:Living Room TV`).digest('hex').slice(0, 16);
+    const fails = JSON.parse((await env.kv.get('hevcenc:failures'))!) as Array<{ device: string }>;
+    expect(fails.map((f) => f.device)).toEqual([createHash('sha256').update(`cast:${uid}:Living Room TV`).digest('hex').slice(0, 16), want]);
+    expect(JSON.stringify(fails)).not.toContain('Living');
+  });
 });

@@ -47,6 +47,8 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       /** the sender's one automatic fallback after the receiver failed a stream with that feature, and the play session it replaces */
       fellBack: z.enum(['hevc', 'surround', 'both']).optional(),
       prevPs: psId.optional(),
+      /** the receiver's name (what the sender shows as the TV): cast HEVC failures are counted per TV, not per sender phone */
+      tv: z.string().max(80).optional(),
     }).parse(req.body);
     // the queue is Chromecast only (an AirPlay token has a two-address pin, a queued token never takes a pin of its own)
     if (b.next && b.via === 'airplay') return reply.code(400).send({ error: 'bad_request' });
@@ -79,12 +81,15 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       const clientCaps = own ? receiverCaps(b.caps) : null;
       const grantId = randomUUID();
       // a conversion for the receiver follows the player's rules: remote only, the server's HEVC gate (probe, limit, failure pause)
-      const gate = (): Promise<HevcGate> => gateHevc(ctx, { userId: req.user!.id, deviceId, playSessionIdHint: grantId });
+      // A queued token's stream starts only when the receiver moves on (up to an episode later): no 30 s grant can cover it, so it is never an
+      // HEVC conversion (copy / remux and surround stay as planned).
+      const gate = (): Promise<HevcGate> => (pred ? Promise.resolve({ ok: false, why: 'h264_busy' }) : gateHevc(ctx, { userId: req.user!.id, deviceId, playSessionIdHint: grantId }));
       // the receiver failed a stream that was a HEVC conversion: it counts against the server's HEVC state (as a player fallback does)
       if ((b.fellBack === 'hevc' || b.fellBack === 'both') && b.prevPs) {
         let prev: { video?: unknown } | null;
         try { prev = JSON.parse((await ctx.kv.get(`pbinfo:${req.user!.id}:${b.prevPs}`).catch(() => null)) ?? 'null'); } catch { prev = null; }
-        if (prev?.video === 'hevc') await noteHevcFailure(ctx, deviceId);
+        // counted per TV (user + receiver name, hashed in noteHevcFailure): two phones casting to one TV that misreports HEVC are one device
+        if (prev?.video === 'hevc') await noteHevcFailure(ctx, b.tv ? `cast:${req.user!.id}:${b.tv}` : deviceId);
       }
       const opts = {
         maxBitrate, maxHeight, startTicks, audioIndex: b.audioIndex, cast: true, ...(pred ? { after: pred.playSessionId } : {}),
@@ -94,7 +99,8 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       if (ctx.jf.preparePlayback) info = await ctx.jf.preparePlayback(req.jfUser!, info, opts);
       if (clientCaps) {
         await bindHevcGrant(ctx, grantId, info.delivery?.video === 'hevc' ? info.playSessionId : null); // a grant only lives on for a conversion
-        // the server's HEVC count and the next fallback look at the fixed codes of this play session (as /api/playback/info writes them)
+        // the server's HEVC count and the next fallback look at the fixed codes of this play session (as /api/playback/info writes them).
+        // Side effect: these sessions also pass the ownership check of /api/playback/warm/stop (the user's own sessions only).
         if (info.delivery) await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ video: info.delivery.video, audio: info.delivery.audio }), 6 * 3600).catch(() => undefined);
       }
       started = info.playSessionId;

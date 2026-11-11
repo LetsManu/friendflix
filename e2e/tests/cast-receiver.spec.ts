@@ -81,7 +81,7 @@ test('sender: a TV that refuses the HEVC / Dolby stream gets one new cast withou
   await expect.poll(() => sdk.loads()).toHaveLength(2);
   expect(sessions).toHaveLength(2);
   expect(sessions[0]).toMatchObject({ receiver: true, caps: CONFIRMED });
-  expect(sessions[1]).toMatchObject({ itemId: MOVIE.id, receiver: true, fellBack: 'both', prevPs: 'air-ps' });
+  expect(sessions[1]).toMatchObject({ itemId: MOVIE.id, receiver: true, fellBack: 'both', prevPs: 'a'.repeat(32) });
   expect(sessions[1]).not.toHaveProperty('caps');
   expect((await sdk.loads()).map((l) => (l as { hlsSegmentFormat: string }).hlsSegmentFormat)).toEqual(['fmp4', 'ts']);
   expect(deleted).toContain('c'.repeat(32)); // the refused token was revoked

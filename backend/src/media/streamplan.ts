@@ -132,6 +132,8 @@ export function planStream(i: PlanInput): StreamPlan {
     codecParams['hevc-codectag'] = (tags.length ? tags : ['hvc1']).join(',');
     codecParams['hevc-profile'] = profiles.join(',');
     codecParams['hevc-rangetype'] = jellyfinRanges(ranges);
+    // the cast receiver was probed for HEVC Level 4.1 (web/static/cast-receiver/logic.js): a source tagged higher is not copied to it (Jellyfin level = 30 x level)
+    if (i.cast) codecParams['hevc-level'] = '123';
   }
 
   let video: VideoOut = 'h264';

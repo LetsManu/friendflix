@@ -67,7 +67,7 @@ export async function castSessions(page: Page, o: { fail?: () => boolean; castId
     const extra = o.deliver?.(body);
     return r.fulfill({ json: {
       // a queued next episode's token (`next: true`) has its own handle, as on the server: its revoke is not the playing one's
-      castId: body?.next ? NEXT_CAST_ID : o.castId ?? 'c'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, playSessionId: 'air-ps', mediaSourceId: 'ms', startTime: 0,
+      castId: body?.next ? NEXT_CAST_ID : o.castId ?? 'c'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, playSessionId: 'a'.repeat(32), mediaSourceId: 'ms', startTime: 0,
       contentUrl: `${new URL(page.url()).origin}/media/p1test.webm#airplay`, contentType: 'application/x-mpegURL', hlsSegmentFormat: 'ts', title: 'Film', subtitles: [],
       ...(o.report ? { report: o.report } : {}),
       ...(extra ?? {}),
@@ -79,7 +79,7 @@ export async function castSessions(page: Page, o: { fail?: () => boolean; castId
       const b = sessions.at(-1);
       if (!b) return r.fulfill({ status: 404, json: { error: 'not_found' } });
       return r.fulfill({ json: {
-        castId: o.castId ?? 'c'.repeat(32), itemId: b.itemId, mediaSourceId: 'ms', playSessionId: 'air-ps', expiresAt: Date.now() + 3 * 3600_000, via: 'chromecast', next: false, reported: true,
+        castId: o.castId ?? 'c'.repeat(32), itemId: b.itemId, mediaSourceId: 'ms', playSessionId: 'a'.repeat(32), expiresAt: Date.now() + 3 * 3600_000, via: 'chromecast', next: false, reported: true,
         title: 'Film', subtitles: [], pins: 1, pinFamily: 'v4', refused: { count: 0, families: [] },
       } });
     }
