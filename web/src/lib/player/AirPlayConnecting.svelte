@@ -8,24 +8,28 @@
    * The Player renders it while `airPhase()` is 'connecting'. It crossfades by opacity (120 ms; calm mode and reduced motion: 0 ms).
    */
   import { fade } from 'svelte/transition';
-  import { backdrop, img } from '#lib/api';
+  import { onMount } from 'svelte';
   import { SCRIM_BAR } from '#lib/glass/tone';
   import { t } from '#lib/i18n';
   import { motionAllowed } from '#lib/preview';
 
-  export let backdropId: string | null;
+  /** the picture candidates, best first (`castBackdrops()`: the next one is tried when one fails to load) */
+  export let art: string[];
   export let onCancel: () => void;
 
-  let failed = false;
-  $: src = backdropId ? (failed ? img(backdropId, 640) : backdrop(backdropId, 1280)) : null;
+  let i = 0;
+  $: src = art[i] ?? null;
+  // the live region mounts empty: screen readers announce what is put into a region that already exists
+  let said = false;
+  onMount(() => { const id = setTimeout(() => (said = true), 50); return () => clearTimeout(id); });
 </script>
 
 <div class="ac" data-testid="airplay-connecting" style="--fr-scrim-safe:{SCRIM_BAR}" transition:fade|global={{ duration: motionAllowed() ? 120 : 0 }}>
-  {#if src}<img class="bg" {src} alt="" aria-hidden="true" on:error={() => { failed = true; }} />{/if}
+  {#if src}<img class="bg" {src} alt="" aria-hidden="true" on:error={() => i++} />{/if}
   <div class="shade" aria-hidden="true"></div>
   <div class="box">
     <span class="disc" aria-hidden="true"><span class="spin"></span></span>
-    <p class="msg frost frost-safe frost-panel" role="status">{$t('player.castRemote.connecting', { device: $t('player.castBar.airplayDevice') })}</p>
+    <p class="msg frost frost-safe frost-panel" role="status">{#if said}{$t('player.castRemote.connecting', { device: $t('player.castBar.airplayDevice') })}{/if}</p>
     <button type="button" class="frost-btn" on:click|stopPropagation={onCancel}>{$t('player.airplay.cancel')}</button>
   </div>
 </div>

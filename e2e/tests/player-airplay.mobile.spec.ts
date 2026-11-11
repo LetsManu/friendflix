@@ -129,9 +129,37 @@ test('the remote screen says Verbinde mit AirPlay …, then Läuft über AirPlay
   await wireless(page, true);
   const screen = page.getByTestId('airplay-active');
   await expect(screen.getByRole('status').filter({ hasText: 'Verbinde mit AirPlay …' })).toHaveCount(1);
+  await expect(layout(page)).toHaveCount(0); // the remote screen replaces the layout
+  const eyebrow = screen.locator('.eyebrow');
+  await expect(eyebrow).toHaveCSS('opacity', '0'); // its room is kept, nothing says "plays" yet
+  const before = await eyebrow.boundingBox();
   await page.evaluate(() => document.querySelector('video')!.dispatchEvent(new Event('playing')));
-  await expect(screen.locator('.eyebrow')).toHaveText('Läuft über AirPlay');
+  await expect(eyebrow).toHaveText('Läuft über AirPlay');
+  await expect(eyebrow).toHaveCSS('opacity', '1');
+  expect(await eyebrow.boundingBox()).toEqual(before); // nothing jumped
+  await expect(page.getByRole('status').filter({ hasText: /^Läuft über AirPlay$/ })).toHaveCount(1); // announced politely, once
   await expect(screen.getByRole('status').filter({ hasText: 'Verbinde mit AirPlay …' })).toHaveCount(0); // the status line is gone: it plays
+});
+
+test('the connecting layout takes no gestures and hides the player controls', async ({ page, api: _api }) => {
+  await airplayTap(page);
+  await expect(page.getByTestId('airplay-ready')).toBeVisible();
+  await remoteConnecting(page);
+  const box = layout(page);
+  await expect(box).toBeVisible();
+  await expect(page.locator('.ctl')).toBeHidden(); // no control bar
+  const state = () => page.evaluate(() => { const v = document.querySelector('video')!; return { t: Math.round(v.currentTime), p: v.paused }; });
+  const was = await state();
+  const b = (await box.boundingBox())!;
+  const x = b.x + b.width * 0.85, y = b.y + b.height * 0.4;
+  await page.touchscreen.tap(x, y);
+  await page.touchscreen.tap(x, y);
+  await page.mouse.dblclick(x, y);
+  await page.mouse.click(x, y);
+  await page.waitForTimeout(800);
+  const now = await state();
+  expect(now.p).toBe(was.p);
+  expect(Math.abs(now.t - was.t)).toBeLessThan(3); // the stream only played on (no +10 s)
 });
 
 test('Abbrechen restores local playback', async ({ page, api: _api }) => {

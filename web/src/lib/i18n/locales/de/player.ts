@@ -164,7 +164,7 @@ export default {
     subsHint: 'Untertitel über AirPlay sind neu; manche Fernseher zeigen sie nicht.',
     subsRefused: 'Dieser Fernseher kann die Untertitel nicht zeigen; es geht ohne weiter.',
     subsNoServer: 'Dieser Server kann noch keine Untertitel an AirPlay senden.',
-    connecting: 'Verbinde mit {device} …',
+    connecting: 'Verbinde mit {device} …',
     lost: 'Verbindung verloren',
     reconnectBtn: 'Neu verbinden',
     cannotPlay: 'Konnte auf dem Fernseher nicht abspielen',
