@@ -43,13 +43,20 @@ test.describe('UI language at boot: the page mounts once', () => {
 
   test('a language switch made by the person still rebuilds the page once', async ({ page }) => {
     const gets = countGets(page, '/api/watchlist');
+    const watchlistLoaded = () => page.waitForResponse((r) => r.request().method() === 'GET' && new URL(r.url()).pathname === '/api/watchlist');
+    // `networkidle` is no help after the switch: the page never navigates, so the load state is already reached and
+    // waiting for it returns at once, before the rebuild's request. Wait for that request's answer instead.
+    const first = watchlistLoaded();
     await page.goto('/watchlist');
+    await first;
     await expect(page.getByRole('navigation', { name: 'Hauptnavigation' })).toBeVisible();
     await page.waitForLoadState('networkidle');
     expect(gets.n).toBe(1);
+    const rebuilt = watchlistLoaded();
     await page.getByRole('contentinfo').getByRole('combobox').selectOption('en');
+    await rebuilt;
     await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('heading', { level: 1, name: 'Watchlist' })).toBeVisible();
     expect(gets.n).toBe(2);
   });
 });
