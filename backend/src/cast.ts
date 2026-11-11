@@ -73,6 +73,8 @@ export interface CastRecord {
   runtimeTicks?: number;
   /** series name for the lookup answer */
   seriesName?: string;
+  /** AirPlay only: the HLS stream carries one WebVTT subtitle rendition the gateway keeps (scope.hlsSub) */
+  hlsSub?: boolean;
   /** the subtitle tracks of the cast (index, language, title; URLs are never stored here) */
   subs?: CastSubtitleInfo[];
 }
@@ -85,7 +87,7 @@ export interface CastAuth {
   maxBitrate: number;
   maxHeight: number;
   kind: 'media' | 'img';
-  scope: { itemId: string; mediaSourceId: string; playSessionId: string };
+  scope: { itemId: string; mediaSourceId: string; playSessionId: string; /** AirPlay token whose stream carries one subtitle rendition: the gateway keeps it */ hlsSub?: boolean };
 }
 
 export const hashToken = (ct: string) => createHash('sha256').update(ct).digest('hex');
@@ -335,7 +337,7 @@ export async function resolveCast(ctx: Ctx, ct: string, client: string): Promise
         maxBitrate: Math.min(role.maxBitrate, rec.maxBitrate),
         maxHeight: Math.min(role.maxHeight ?? CAST_MAX_HEIGHT, CAST_MAX_HEIGHT),
         kind: rec.kind ?? 'media',
-        scope: { itemId: rec.itemId, mediaSourceId: rec.mediaSourceId, playSessionId: rec.playSessionId },
+        scope: { itemId: rec.itemId, mediaSourceId: rec.mediaSourceId, playSessionId: rec.playSessionId, ...(rec.hlsSub && rec.via === 'airplay' && (rec.kind ?? 'media') === 'media' ? { hlsSub: true } : {}) },
       };
       if (Date.now() - (rec.seen ?? rec.createdAt) > CAST_TOUCH_MS) await touch(ctx, hash, rec, user.name, prof.name, overlap);
     }

@@ -97,6 +97,21 @@ describe('Plex: cast stop report and the queued next episode', () => {
   };
   const progress = (cur: { j: { playSessionId: string; mediaSourceId: string } }) => report('progress', E1, cur.j.playSessionId, cur.j.mediaSourceId);
 
+  it('Plex ignores subtitleIndex: capability off, no rendition, no hlsSub in the record or the authz scope', async () => {
+    await fresh();
+    env.ctx.roles.admin!.maxStreams = 5;
+    expect(env.ctx.jf.capabilities.castHlsSubtitles).toBe(false);
+    const { r, j, ct } = await create(E1, { via: 'airplay', subtitleIndex: 3 });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(j.hlsSub).toBeUndefined();
+    expect(j.contentUrl).not.toContain('SubtitleMethod');
+    expect(JSON.parse((await env.kv.get(`cast:${hashToken(ct)}`))!).hlsSub).toBeUndefined();
+    const a = await authz(ct);
+    expect(a.statusCode).toBe(200);
+    expect(a.json().scope).not.toHaveProperty('hlsSub');
+    expect((await create(E1, { subtitleIndex: 3 })).r.statusCode).toBe(400); // Chromecast is refused here too
+  });
+
   it('next: no predecessor (no cast token of this device) is 429', async () => {
     await fresh();
     env.ctx.roles.admin!.maxStreams = 5;

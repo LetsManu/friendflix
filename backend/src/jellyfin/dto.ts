@@ -141,6 +141,8 @@ export function toPlaybackDto(args: {
   directContainers?: string[];
   /** the stream plan (service.ts: planned, gate applied); absent = the plan of a device that stated nothing (today's URL) */
   plan?: StreamPlan;
+  /** AirPlay: carry this text subtitle as a WebVTT rendition of the HLS master; ignored unless it is a text subtitle of the source */
+  hlsSubtitleIndex?: number;
 }): PlaybackDto {
   const { itemId, info, deviceId, maxBitrate, resumeTicks, audioIndex, maxHeight, cast, noDirect, capReason, directContainers } = args;
   const src = (info.MediaSources ?? [])[0];
@@ -172,6 +174,11 @@ export function toPlaybackDto(args: {
   // the device's own codec parameters (`hevc-codectag`, `hevc-profile`, `hevc-rangetype`) and one fixed variant in fMP4 plans
   for (const [k, v] of Object.entries(plan.codecParams)) hls.set(k, v);
   if (plan.segment === 'mp4') hls.set('EnableAdaptiveBitrateStreaming', 'false');
+  // the one subtitle rendition of an AirPlay stream: only a text track of the source (an image track would have to be burned in, which FriendFlix never does)
+  if (cast && args.hlsSubtitleIndex !== undefined && streams.some((s) => s.Type === 'Subtitle' && s.Index === args.hlsSubtitleIndex && (s.IsTextSubtitleStream || TEXT_SUBS.has(String(s.Codec ?? '').toLowerCase())))) {
+    hls.set('SubtitleStreamIndex', String(args.hlsSubtitleIndex));
+    hls.set('SubtitleMethod', 'Hls');
+  }
   if (cast) {
     // keep Jellyfin from stream-copying a source the Default Media Receiver cannot decode (H.264 > level 4.1, 10 bit)
     // (qualified for H.264 when the plan may carry HEVC: an unqualified Level 41 would refuse copying every HEVC source)

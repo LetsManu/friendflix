@@ -46,6 +46,7 @@ export const JELLYFIN_CAPABILITIES: MediaCapabilities = {
   segments: new Set<SegmentType>(['intro', 'outro', 'recap', 'preview']),
   trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true, subtitleExtract: false,
   chapters: true, // Block 17 P1
+  castHlsSubtitles: true, // AirPlay: one WebVTT rendition in the HLS master (SubtitleMethod=Hls)
   libraryFeatures: true, // R1
   requestUsers: 'jellyfin-import',
 };
@@ -570,7 +571,7 @@ export class JellyfinService implements MediaServer {
     await this.mutate(user, () => this.compat(user, 'played' + on, [`/UserPlayedItems/${id}?userId=${uid}`, `/Users/${uid}/PlayedItems/${id}`], { method: on ? 'POST' : 'DELETE' }));
   }
 
-  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; capReason?: CapReason; clientCaps?: ClientCaps | null; remote?: boolean; surround?: boolean; hevcGate?: () => Promise<HevcGate> }): Promise<PlaybackDto> {
+  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; capReason?: CapReason; clientCaps?: ClientCaps | null; remote?: boolean; surround?: boolean; hlsSubtitleIndex?: number; hevcGate?: () => Promise<HevcGate> }): Promise<PlaybackDto> {
     const p = new URLSearchParams({ UserId: user.jellyfin_user_id, MaxStreamingBitrate: String(opts.maxBitrate), AutoOpenLiveStream: 'false' });
     if (opts.startTicks) p.set('StartTimeTicks', String(opts.startTicks));
     if (opts.audioIndex !== undefined) p.set('AudioStreamIndex', String(opts.audioIndex));
@@ -612,6 +613,7 @@ export class JellyfinService implements MediaServer {
         { Container: 'ts', Type: 'Video', AudioCodec: opts.cast ? 'aac' : 'aac,mp3', VideoCodec: 'h264', Protocol: 'hls', Context: 'Streaming', MaxAudioChannels: '2', MinSegments: 1, BreakOnNonKeyFrames: false },
       ],
       SubtitleProfiles: [
+        ...(opts.hlsSubtitleIndex !== undefined ? [{ Format: 'vtt', Method: 'Hls' }] : []), // only the AirPlay request that asked for a rendition
         { Format: 'vtt', Method: 'External' },
         { Format: 'srt', Method: 'External' },
         { Format: 'ass', Method: 'External' },
@@ -622,7 +624,7 @@ export class JellyfinService implements MediaServer {
       method: 'POST',
       // SubtitleStreamIndex -1: without it Jellyfin picks the user's default subtitle (StreamBuilder.BuildVideoItem) and an image track
       // (PGS, VobSub) it would have to burn in refuses direct play. FriendFlix shows text subtitles itself and never burns any in.
-      body: JSON.stringify({ DeviceProfile: profile, SubtitleStreamIndex: -1 }),
+      body: JSON.stringify({ DeviceProfile: profile, SubtitleStreamIndex: opts.hlsSubtitleIndex ?? -1 }),
     });
     if (info.ErrorCode) throw new JellyfinError(403, `playback blocked: ${info.ErrorCode}`);
     // preferred audio language: our HLS URL carries AudioStreamIndex itself, so a non-default track needs no second PlaybackInfo
@@ -643,7 +645,7 @@ export class JellyfinService implements MediaServer {
       });
       if (plan.wantsHevcEncode) plan = applyGate(plan, await Promise.resolve().then(() => opts.hevcGate!()).catch((): HevcGate => ({ ok: false, why: 'h264_busy' })));
     }
-    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect, capReason: opts.capReason, directContainers: caps?.containers, plan });
+    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect, capReason: opts.capReason, directContainers: caps?.containers, plan, hlsSubtitleIndex: opts.hlsSubtitleIndex });
   }
 
   /** PlaybackInfo with the "FriendFlix Download" profile: source details + (unless 'original') the fMP4 HLS master the preparer pulls. */
