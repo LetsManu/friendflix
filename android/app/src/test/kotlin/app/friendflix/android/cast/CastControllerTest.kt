@@ -908,4 +908,60 @@ class CastControllerTest {
         c.resume(null, tokenUrl) { unknown++ } // foreign (404): not "unknown"
         assertEquals(1, unknown)
     }
+
+    // ---- fix round 2 ----
+
+    /** media of another app (the Default Media Receiver plays it): loaded, and no FriendFlix token to name it */
+    private fun tokenless(positionMs: Long) = ReceiverState(castId = null, loaded = true, playing = true, paused = false, positionMs = positionMs, durationMs = 600_000, idle = false)
+
+    @Test fun foreignMediaWithoutATokenIsLetGoToo() {
+        val (r, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 61_000)) // q2 queued
+        calls.clear()
+        c.onReceiver(tokenless(5_000))
+        clock += 10_000
+        c.tick()
+        assertTrue("no progress while foreign media plays", calls.isEmpty())
+        clock += 55 * 60_000 // the token would be renewed now
+        c.tick()
+        assertEquals(1, calls.count { it.first == "POST /api/playback/stop" })
+        assertEquals(1, calls.count { it.first == "DELETE /api/cast/session/c1" })
+        assertEquals(1, calls.count { it.first == "DELETE /api/cast/session/q2" })
+        assertFalse("never renewed over the other app's video", calls.any { it.first == "POST /api/cast/session" })
+        assertEquals(0, r.ended)
+        assertEquals(listOf("c1"), r.loads.map { it.first })
+        assertFalse(c.casting)
+    }
+
+    @Test fun idleOrNoMediaIsNotForeign() {
+        val (r, c) = controller()
+        c.start(film())
+        c.onReceiver(playing("c1", 61_000))
+        calls.clear()
+        // nothing loaded (between media, the receiver idle): not another sender's media
+        c.onReceiver(ReceiverState(castId = null, loaded = false, playing = false, paused = false, positionMs = 0, durationMs = 0, idle = true))
+        c.onReceiver(ReceiverState(castId = null, loaded = false, playing = false, paused = false, positionMs = 0, durationMs = 0, idle = false))
+        clock += 2 * CastController.ADVANCE_WAIT_MS
+        c.tick()
+        assertTrue(c.casting)
+        assertFalse(calls.any { it.first == "POST /api/playback/stop" || it.first.startsWith("DELETE") })
+        assertEquals(0, r.ended)
+    }
+
+    @Test fun aSwitchWhileForeignMediaPlaysKeepsTheNewToken() {
+        val (_, c) = controller()
+        c.start(film())
+        c.onReceiver(playing("c1", 61_000))
+        c.onReceiver(playing("other", 1_000)) // another sender took the TV
+        clock += 15_000
+        c.tick()
+        assertTrue(c.switchTo("film2", null)) // the viewer picks a title: c2 is loaded
+        calls.clear()
+        c.onReceiver(playing("other", 2_000)) // the TV still shows the other media for a moment
+        clock += 6_000 // 21 s after the first foreign status, 6 s after the switch
+        c.tick()
+        assertTrue(c.casting)
+        assertFalse(calls.any { it.first == "DELETE /api/cast/session/c2" })
+    }
 }

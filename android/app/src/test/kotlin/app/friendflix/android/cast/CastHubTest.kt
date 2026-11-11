@@ -60,7 +60,9 @@ class CastHubTest {
         override fun send(msg: JSONObject) { messages += msg }
         override fun end() { ended++ }
         override fun current() = playing
-        override fun publish() { published++ }
+        /** what the receiver reports when asked (the player's status, mirrored by publish) */
+        var onPublish: () -> Unit = {}
+        override fun publish() { published++; onPublish() }
         override fun release() {}
     }
 
@@ -265,6 +267,20 @@ class CastHubTest {
         lookups[id] = CastLookup(id, "ep1", "ms", "ps", clock + 3_600_000, 1_800L * 10_000_000, "chromecast", false, true, "First", "Bright Valley", emptyList())
         advance(CastHubCore.RESUME_RETRY_MS)
         events.onState(playing(id, 3_000))
+        assertTrue(h.controller.casting)
+    }
+
+    @Test fun theRetryAsksTheReceiverAgainWithoutWaitingForATvEvent() {
+        val url = "https://ff.example/media/c/${"D".repeat(43)}/master.m3u8"
+        val id = CastIds.ofContentUrl(url)!!
+        down += id
+        val h = hub()
+        link.playing = ReceiverMedia(null, url)
+        link.onPublish = { events.onState(playing(id, 4_000)) } // the TV keeps playing and sends no event of its own
+        events.onState(playing(id, 1_000))
+        down.clear()
+        lookups[id] = CastLookup(id, "ep1", "ms", "ps", clock + 3_600_000, 1_800L * 10_000_000, "chromecast", false, true, "First", "Bright Valley", emptyList())
+        advance(CastHubCore.RESUME_RETRY_MS)
         assertTrue(h.controller.casting)
     }
 }

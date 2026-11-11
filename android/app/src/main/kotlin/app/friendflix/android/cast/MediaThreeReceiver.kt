@@ -267,7 +267,8 @@ class MediaThreeReceiver(
         val item = player.currentMediaItem
         val state = player.playbackState
         val id = item?.mediaId?.takeIf { it != TokenConverter.FOREIGN }
-        val loaded = id != null && (state == Player.STATE_READY || state == Player.STATE_BUFFERING)
+        // media without a FriendFlix token is loaded too (castId null): the controller sees it as another sender's
+        val loaded = item != null && (state == Player.STATE_READY || state == Player.STATE_BUFFERING)
         val idle = state == Player.STATE_IDLE || state == Player.STATE_ENDED
         val duration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0L
         events.onState(ReceiverState(

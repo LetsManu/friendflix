@@ -80,7 +80,7 @@ class CastHubCore(
             if (!controller.casting && st.loaded && !st.idle && st.castId != null && st.castId != resumeTried) {
                 resumeTried = st.castId
                 // a lookup that could not be answered (network, server) is tried again later, at most every RESUME_RETRY_MS (rate limit)
-                link.current()?.let { m -> controller.resume(m.castId, m.contentUrl) { schedule(RESUME_RETRY_MS) { resumeTried = null } } }
+                link.current()?.let { m -> controller.resume(m.castId, m.contentUrl) { schedule(RESUME_RETRY_MS) { resumeTried = null; link.publish() } } }
             }
             if (!st.loaded) resumeTried = null
             refresh()
@@ -232,7 +232,8 @@ object CastHub {
         // the account is gone: its prefs and profile go too. The server is dropped only after the stop calls (same ordered thread)
         defaults = FlowPrefs() to null
         core?.useProfile(null)
-        Players.reports.execute { proxy.current.set(null) }
+        val old = proxy.current.get()
+        Players.reports.execute { proxy.current.compareAndSet(old, null) } // a server a screen set meanwhile survives
     }
 
     /** The server calls (and the profile) for the playing profile: the player screen's own, known once a stream started. */

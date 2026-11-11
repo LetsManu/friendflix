@@ -299,7 +299,7 @@ class CastController(
         stopReport(s)
         val old = s.ci
         s.ci = null; s.busy = true; s.started = false; s.lastPaused = null; s.hold = false
-        s.queueAsked = false; s.noAuto = null; s.unpinRetried = false
+        s.queueAsked = false; s.noAuto = null; s.unpinRetried = false; s.foreignAt = null
         s.itemId = itemId; s.isEpisode = isEpisode ?: false; s.episodeFromToken = isEpisode == null
         s.audioIndex = null; s.subIndex = null; s.segs = emptyList()
         s.title = ""; s.subtitle = null
@@ -442,8 +442,8 @@ class CastController(
         if (s.busy) return
         val q = s.queued
         if (st.loaded && q != null && st.castId == q.ci.castId && st.castId != ci.castId) advanced(s)
-        else if (st.loaded && st.castId != null && st.castId != ci.castId) {
-            // other media: not ours; no report, no renewal while it plays, and after ADVANCE_WAIT_MS the cast is let go (tick)
+        else if (st.loaded && st.castId != ci.castId) {
+            // other media (also one without a FriendFlix token: castId null): not ours; no report, no renewal while it plays, and after ADVANCE_WAIT_MS the cast is let go (tick)
             s.foreignAt = s.foreignAt ?: now()
             changed()
             return
@@ -653,7 +653,7 @@ class CastController(
         still.opened()
         seq++
         s.ci = q.ci; s.started = false; s.lastPaused = null; s.hold = q.ask
-        s.audioIndex = null; s.subIndex = null; s.noAuto = null; s.queueAsked = false; s.unpinRetried = false
+        s.audioIndex = null; s.subIndex = null; s.noAuto = null; s.queueAsked = false; s.unpinRetried = false; s.foreignAt = null
         s.itemId = q.item.id; s.isEpisode = q.item.type == "Episode"
         s.positionMs = q.ci.startTime * 1000; s.durationMs = (q.ci.runtimeTicks ?: 0) / TICKS_PER_MS; s.paused = false
         s.segs = emptyList()
@@ -672,7 +672,7 @@ class CastController(
         cancelRequeue(s)
         dequeue(s)
         s.ci = null; s.busy = true; s.started = false; s.lastPaused = null; s.hold = false
-        s.queueAsked = false; s.unpinRetried = false; s.fresh = true; s.positionMs = 0
+        s.queueAsked = false; s.unpinRetried = false; s.fresh = true; s.positionMs = 0; s.foreignAt = null
         val body = CastBodies.token(s.itemId, null, null, s.maxBitrate ?: s.prefsBitrate, receiver.custom)
         io.execute {
             server.revoke(old.castId)
@@ -688,7 +688,7 @@ class CastController(
         val my = ++seq
         cancelRequeue(s)
         dequeue(s)
-        s.queueAsked = false; s.unpinRetried = false
+        s.queueAsked = false; s.unpinRetried = false; s.foreignAt = null
         stopReport(s)
         s.ci = null; s.busy = true; s.lastPaused = null; s.hold = s.paused
         val body = CastBodies.token(s.itemId, s.positionMs, s.audioIndex, s.maxBitrate ?: s.prefsBitrate, receiver.custom)
