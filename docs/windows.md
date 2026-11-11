@@ -86,6 +86,8 @@ Press Play anywhere in the web app. The player opens in its own window, fullscre
 
 The media keys of your keyboard and the Windows media overlay (volume flyout, lock screen) control playback; the overlay shows the title, without a poster.
 
+This is mpv's own media-key support and it stays as it is. Only the fallback *Play in the web player* (a WebView2 window) uses the browser's Media Session for its media keys and overlay. Whether WebView2 passes it on to the Windows media overlay is not promised; the owner records it in the manual checklist (item 17).
+
 Progress is reported to the server (start, every 10 seconds, pause, resume, seek, stop), so the web and the other apps show the same position. A stall of more than 15 seconds shows *Reconnecting…* and reloads up to three times. If the session ends (sign-in expired), the player closes and the app shows the sign-in page.
 
 **Continue from another device.** When you stopped a title on another device in the last 6 hours, the start page shows a card, for example "Last on Living room · 12 min ago", with *Continue here from 23:10*. The button opens mpv at exactly that position (the card promises a time, so it never starts from the saved resume point). The other device is not touched. *Dismiss* hides the card on this PC.
@@ -180,7 +182,7 @@ Unit tests and CI cover the logic and that the app builds; these points need a r
 **Chapters, trickplay, keys**
 15. The chapter list jumps on click; chapter marks show on the seek bar. Dragging the seek bar shows the preview picture; a server without previews shows none and seeking works.
 16. All keys of the table in [Player](#player) do what is listed; the controls hide after 3 seconds and stay shown while paused.
-17. Keyboard media keys (play/pause, next) and the Windows media overlay control the player and show the title.
+17. Keyboard media keys (play/pause, next) and the Windows media overlay control the player and show the title. Then play a title in the fallback *Play in the web player*: note whether the media keys and the overlay follow it (observation only; not required).
 
 **Errors**
 18. Cut the network for 20 seconds while playing: *Reconnecting…* shows and playback resumes at its position afterwards.

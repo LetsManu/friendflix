@@ -20,8 +20,8 @@ describe('remote screen: layout', () => {
 
 describe('remote screen: status', () => {
   it('connecting names the device', () => {
-    expect(statusOf({ ...base, state: 'connecting' }, tf)).toEqual({ tone: 'none', text: 'Verbinde mit Wohnzimmer-TV …', action: null });
-    expect(statusOf({ kind: 'airplay', device: 'AirPlay-Gerät', state: 'connecting' }, tf).text).toBe('Verbinde mit AirPlay …');
+    expect(statusOf({ ...base, state: 'connecting' }, tf)).toEqual({ tone: 'none', text: 'Verbinde mit Wohnzimmer-TV …', action: null });
+    expect(statusOf({ kind: 'airplay', device: 'AirPlay-Gerät', state: 'connecting' }, tf).text).toBe('Verbinde mit AirPlay …');
   });
   it('reconnect and detached: warning, Reconnect', () => {
     for (const state of ['reconnect', 'detached'] as const) expect(statusOf({ ...base, state }, tf)).toEqual({ tone: 'warn', text: 'Verbindung verloren', action: 'reconnect' });

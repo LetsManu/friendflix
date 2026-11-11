@@ -124,6 +124,7 @@ const fr: Translation<typeof de> = {
     play: 'Lire sur un appareil AirPlay',
     playing: 'Lecture via AirPlay',
     change: 'Changer d’appareil AirPlay',
+    cancel: 'Annuler',
     failed: 'La lecture AirPlay a échoué.',
     endHint: 'Pour arrêter, choisissez cet appareil dans le menu AirPlay.',
     choose: 'Choisir le téléviseur',
@@ -192,7 +193,7 @@ const fr: Translation<typeof de> = {
   castBar: {
     region: 'En cours sur la télé',
     failed: 'Impossible de lire « {title} » sur {device}.',
-    airplayDevice: 'Appareil AirPlay',
+    airplayDevice: 'AirPlay',
     reconnect: 'Connexion perdue – touchez pour continuer sur la télé',
     on: 'sur {device}',
     stop: 'Arrêter la lecture sur {device}',

@@ -29,6 +29,8 @@
   import { dropLayers } from '#lib/player/phone/backlayer';
 
   let video: HTMLVideoElement | null = null;
+  /** the episode before this one in its season (Media Session "previous track"): read once per episode after playback started */
+  let prevEpisodeId: string | null = null, prevFor = '';
   let item: Item | null = null, nextEp: Item | null = null, similar: Item[] = [];
   let sleepAfterEpisode = false, creditsAt = Infinity;
   // 1.1 post-play: no next episode follows -> a small "Done? See what's next" card from the credits (outro segment, else the last
@@ -131,6 +133,7 @@
   // whenever `item` changed, i.e. an endless request loop and a title that never showed.)
   async function loadItem(wanted: string) {
     item = cachedItem(wanted) ?? null; // title right away when a card/detail view had it
+    prevEpisodeId = null; prevFor = '';
     nextEp = null; similar = []; stopCountdown(); remote = false; dismissed = false; entered = false; askStill = false; curTime = 0; creditsAt = Infinity;
     postplayAt = Infinity; ppData = null; ppLoading = false; ppCardClosed = false; ppOpen = false; ppToken = ''; ppEntered = false;
     enteredAt = null; clearInterval(credT); credT = undefined;
@@ -148,6 +151,17 @@
     } catch { /* player shows its own error */ }
   }
   $: loadItem(id);
+  $: if (item && item.id === id && item.type === 'Episode' && item.seriesId && item.seasonId && curTime > 0 && prevFor !== id) void loadPrev(id, item.seriesId, item.seasonId);
+  async function loadPrev(wanted: string, seriesId: string, seasonId: string) {
+    prevFor = wanted;
+    let prev: string | null = null;
+    try {
+      const list = (await api(`/api/items/${seriesId}/episodes?seasonId=${seasonId}`)).items as Item[];
+      const i = list.findIndex((e) => e.id === wanted);
+      prev = i > 0 ? list[i - 1]!.id : null;
+    } catch { /* no previous button */ }
+    if (wanted === id) prevEpisodeId = prev;
+  }
 
   // an open phone panel's shallow entry comes off first (and any back of its own lands): one tap on ‹ leaves the player
   const back = async () => { await dropLayers(); return history.length > 1 ? history.back() : goto('/'); };
@@ -277,7 +291,7 @@
   <!-- the overlay covers the player: while it is open the player's controls are out of the tab order (inert, not a focus trap) -->
   <div class="stagewrap" inert={ppOpen}>
   {#key id}
-    <Player itemId={id} {poster} item={item && item.id === id ? item : null} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote bind:orient credits={beat} {cardOn} bind:credHold {prepNext} on:credits={watchCredits} hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded} on:back={back}>
+    <Player itemId={id} {poster} item={item && item.id === id ? item : null} title={label(item)} barTitle={bt.title} barSub={bt.sub} seriesId={item?.seriesId ?? ''} isMovie={item?.type === 'Movie'} seasonId={item?.seasonId ?? ''} on:episode={playEpisode} {startAt} {wantAudio} {wantSub} bind:video bind:sleepAfterEpisode bind:creditsAt bind:postplayAt bind:remote bind:orient credits={beat} {cardOn} bind:credHold {prepNext} {prevEpisodeId} on:credits={watchCredits} hasNext={Boolean(nextEp)} on:next={() => nextEp && toEpisode(nextHref())} on:timeupdate={onTime} on:ended={onEnded} on:back={back}>
       <div slot="top" class="top" class:pui={phoneUi}>
         <button class="icon-btn" aria-label={$t('player.watch.back')} on:click={back}><Icon name="arrow-left" size={phoneUi ? 24 : 30} /></button>
         {#if item && !phoneUi}<div class="ttl phone"><b>{item.seriesName ?? item.name}</b>{#if item.seriesName}<span>S{item.parentIndexNumber}:E{item.indexNumber} · {item.name}</span>{/if}</div>{/if}
