@@ -30,9 +30,9 @@ const item: PlayerMediaItem = { title: 'The Lantern Road', artist: 'Dunmoor · S
 const acts = (over: Partial<PlayerMediaActions> = {}): PlayerMediaActions => ({
   play: vi.fn(), pause: vi.fn(), seekTo: vi.fn(), seekBy: vi.fn(), next: vi.fn(), prev: vi.fn(), ...over,
 });
-const castView = (): CastSession => ({
+const castView = (over: Partial<CastSession> = {}): CastSession => ({
   kind: 'chromecast', device: 'Stube-TV', itemId: 'c1', seriesId: 's1', title: 'Bright Valley', subtitle: 'S1:E1 First', posterId: 'c1', isEpisode: true,
-  position: 60, duration: 1800, paused: false, buffering: false, state: 'playing', audioTracks: [], subtitles: [], subIndex: -1, autoplay: true,
+  position: 60, duration: 1800, paused: false, buffering: false, state: 'playing', audioTracks: [], subtitles: [], subIndex: -1, autoplay: true, ...over,
 });
 const castEng = { playPause: vi.fn(), seek: vi.fn(), skip: vi.fn(), next: vi.fn(async () => undefined) };
 
@@ -189,6 +189,29 @@ describe('player media session', () => {
     s.set(null);
     expect(handlers.get('previoustrack') ?? null).toBeNull();
     expect(a.prev).not.toHaveBeenCalled();
+    off();
+  });
+
+  it('after the takeover every cast handler drives the cast engine and the player gets no calls', () => {
+    const { ms, handlers } = fake();
+    const a = acts();
+    const eng = { playPause: vi.fn(), seek: vi.fn(), skip: vi.fn(), next: vi.fn(async () => undefined) };
+    bindPlayerMediaSession(el(), item, a, ms, (m) => m);
+    const s = writable<CastSession | null>(null);
+    const off = bindCastMediaSession(s, eng, ms, (m) => m);
+    s.set(castView({ paused: true }));
+    handlers.get('play')!({});
+    s.set(castView({ paused: false }));
+    handlers.get('pause')!({});
+    handlers.get('seekto')!({ seekTime: 40 });
+    handlers.get('seekbackward')!({});
+    handlers.get('seekforward')!({});
+    handlers.get('nexttrack')!({});
+    expect(eng.playPause).toHaveBeenCalledTimes(2);
+    expect(eng.seek).toHaveBeenCalledWith(40);
+    expect(eng.skip.mock.calls).toEqual([[-10], [10]]);
+    expect(eng.next).toHaveBeenCalledTimes(1);
+    for (const f of [a.play, a.pause, a.seekTo, a.seekBy, a.next, a.prev]) expect(f).not.toHaveBeenCalled();
     off();
   });
 

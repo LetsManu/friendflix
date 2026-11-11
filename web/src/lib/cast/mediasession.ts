@@ -69,6 +69,7 @@ export function bindCastMediaSession(
     if (!liveCast(s)) { clear(); return; } // a detached cast has nothing to drive
     if (!bound) {
       bound = true;
+      // the claim must come before the handler set() calls below: a bound player clears all its handlers on takeover
       claimMediaSession(CAST_OWNER);
       set('play', () => { if (cur?.paused) eng.playPause(); });
       set('pause', () => { if (cur && !cur.paused) eng.playPause(); });
