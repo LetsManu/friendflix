@@ -16,7 +16,7 @@ vi.mock('$app/navigation', () => ({ goto: h.goto }));
 
 import { nativeCast } from '#lib/native/bridge';
 import { castSession } from './engine';
-import { engineSource, nativeSource } from './barSource';
+import { engineSource, itemFetchWanted, nativeSource } from './barSource';
 
 const SNAP = { kind: 'chromecast', device: 'Wohnzimmer-TV', itemId: 'ep4', title: 'Dunmoor', subtitle: 'The Lantern Road', posterId: 'ep4p', isEpisode: true, positionMs: 61000, durationMs: 1800000, paused: false, state: 'playing', next: { itemId: 'ep5', label: 'E5 · Wrenfield Pier' } } as const;
 
@@ -70,5 +70,19 @@ describe('engineSource', () => {
     expect(h.engine.stop).toHaveBeenCalled();
     expect(h.goto).toHaveBeenCalledWith('/watch/ep4');
     expect(h.castControl).not.toHaveBeenCalled();
+  });
+});
+
+describe('itemFetchWanted', () => {
+  const ep = { isEpisode: true, itemId: 'ep4' };
+  it('the web engine bar never fetches the item (its text stays as it was)', () => {
+    expect(itemFetchWanted(engineSource(), ep, false)).toBe(false);
+  });
+  it('the app bar fetches the episode once for its code, only when it is not cached', () => {
+    const src = nativeSource();
+    expect(itemFetchWanted(src, ep, false)).toBe(true);
+    expect(itemFetchWanted(src, ep, true)).toBe(false);
+    expect(itemFetchWanted(src, { isEpisode: false, itemId: 'f1' }, false)).toBe(false);
+    expect(itemFetchWanted(src, null, false)).toBe(false);
   });
 });

@@ -14,6 +14,10 @@ export interface NativeCfg {
   cast?: NativeCastSnap | null;
   /** answer sessionChanged after this many ms (the app replies once the stop report and token revoke went out; default 5) */
   sessionDelayMs?: number;
+  /** the first `capabilities` request is never answered (a slow app at page start); later ones are */
+  capsHangFirst?: boolean;
+  /** `sessionChanged` is never answered (a hung app) */
+  sessionHangs?: boolean;
   /** what play / download answer */
   playResult?: boolean;
   downloadResult?: boolean;
@@ -52,6 +56,8 @@ export async function fakeNativeApp(page: Page, cfg: NativeCfg = {}) {
         const k = w.__nativeCfg;
         // like the app: a deleted download is gone from the next listing
         if (req.method === 'deleteDownload') k.downloads = (k.downloads as Array<{ licenseId?: string }>).filter((d) => d.licenseId !== req.args?.licenseId);
+        if (req.method === 'capabilities' && k.capsHangFirst && !w.__capsAsked) { w.__capsAsked = true; return; }
+        if (req.method === 'sessionChanged' && k.sessionHangs) return;
         let delay = req.method === 'play' && k.playDelayMs ? k.playDelayMs : 5;
         let castAnswer: unknown = true;
         if (req.method === 'castState') castAnswer = k.cast;

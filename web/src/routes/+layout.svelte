@@ -128,7 +128,18 @@
   $: barSess = barSrc.session;
   onMount(() => {
     if (!native.available) return;
-    void nativeCaps().then((c) => { if (c.castBar) { barSrc = nativeSource(); void refreshNativeCast(); } }); // events are not replayed to a loaded page: pull once, then follow them
+    let retry: ReturnType<typeof setTimeout> | undefined, off: (() => void) | undefined;
+    const start = (again: boolean) => void nativeCaps().then((c) => {
+      if (c.castBar) { barSrc = nativeSource(); void refreshNativeCast(); return; } // events are not replayed to a loaded page: pull once, then follow them
+      if (c.api === 0 && again) { // the app did not answer in time: ask once more, after 10 s or when the page comes back to the front
+        const go = () => { off?.(); off = undefined; start(false); };
+        retry = setTimeout(go, 10_000);
+        document.addEventListener('visibilitychange', go, { once: true });
+        off = () => { clearTimeout(retry); document.removeEventListener('visibilitychange', go); };
+      }
+    });
+    start(true);
+    return () => off?.();
   });
   $: castBarOn = pageReady && !publicPage && barVisible({ path, tv, session: $barSess }); // the bar shows (it rises out when false)
   /**

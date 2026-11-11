@@ -22,7 +22,7 @@
   import { barLine1, barLine2, barProgress, barThumb, nextSecondsLeft, splitLine } from './bar';
   import CastBarExpanded from './CastBarExpanded.svelte';
   import { castEngine, type CastSession } from './engine';
-  import { engineSource, type CastBarSource } from './barSource';
+  import { engineSource, itemFetchWanted, type CastBarSource } from './barSource';
 
   /** the bar shows (the layout's `barVisible`); false: it rises out */
   export let show = true;
@@ -50,10 +50,10 @@
   /** AirPlay waits for the TV to be chosen in the system picker (it may not have opened without a fresh tap) */
   $: choose = s?.kind === 'airplay' && state === 'reconnect' && Boolean($airState?.ready);
   $: thumb = s ? barThumb(s) : null;
-  // the app's session carries no episode numbers: the item gives the code ("S1:F4"); one request per title, also when it fails
+  // the app's session carries no episode numbers: the item gives the code ("S1:F4"; app source only); one request per title, also when it fails
   let fetched: Item | undefined, askedFor = '';
-  $: it = s ? cachedItem(s.itemId) ?? (fetched?.id === s.itemId ? fetched : undefined) : undefined;
-  $: if (s && s.isEpisode && s.itemId !== askedFor && !cachedItem(s.itemId)) { askedFor = s.itemId; void loadItem(s.itemId); }
+  $: it = s ? cachedItem(s.itemId) ?? (source.fromApp && fetched?.id === s.itemId ? fetched : undefined) : undefined;
+  $: if (s && s.itemId !== askedFor && itemFetchWanted(source, s, Boolean(cachedItem(s.itemId)))) { askedFor = s.itemId; void loadItem(s.itemId); }
   async function loadItem(id: string) {
     try { const r = await api<{ item: Item }>(`/api/items/${id}`); if (get(session)?.itemId === id) fetched = r.item; } catch { /* the session's own subtitle */ }
   }
@@ -193,7 +193,7 @@
           <Icon name={s.paused ? 'play' : 'pause'} size={24} />
         </button>
         <!-- the web engine: episodes (not on the phone); the app: only while it has a next episode queued (its Next answers false otherwise) -->
-        {#if source.nextNeedsQueue ? s.upcoming : s.isEpisode && !phone}<button type="button" class="tb" aria-label={$t('player.controls.next')} title={$t('player.controls.next')} on:click={() => source.next()}><Icon name="skip-next" size={24} /></button>{/if}
+        {#if source.fromApp ? s.upcoming : s.isEpisode && !phone}<button type="button" class="tb" aria-label={$t('player.controls.next')} title={$t('player.controls.next')} on:click={() => source.next()}><Icon name="skip-next" size={24} /></button>{/if}
       {/if}
 
       {#if phone}

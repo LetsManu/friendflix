@@ -18,6 +18,11 @@ const SNAP: NativeCastSnap = {
 const { next: _queued, ...LAST } = SNAP; // the last episode: nothing queued
 const APP2 = { api: 2, caps: { play: true, download: true, cast: true, castBar: true } };
 const bar = (page: Page) => page.getByRole('region', { name: 'Jetzt auf dem Fernseher' });
+/** the y the bar settles at: the tab bar's top minus the bar's height and the 8 px gap */
+const stableY = async (page: Page) => {
+  const t = (await page.locator('nav.tabbar').boundingBox())!;
+  return Math.round(t.y - 8 - 68);
+};
 const asked = async (page: Page, method: string) => (await nativeCalls(page, method)).map((c) => c.args);
 
 test('Android shell shows the bar from native cast events', async ({ page, api: _api }) => {
@@ -30,7 +35,7 @@ test('Android shell shows the bar from native cast events', async ({ page, api: 
   await expect(b).toBeVisible();
   await expect(b).toContainText('Dunmoor · S1:F4');
   await expect(b).toContainText('Auf Wohnzimmer-TV');
-  await page.waitForTimeout(400); // risen in
+  await expect.poll(async () => Math.round((await b.boundingBox())!.y)).toBe(await stableY(page)); // risen in: its top stops moving
   const box = (await b.boundingBox())!;
   const tabbar = (await page.locator('nav.tabbar').boundingBox())!;
   expect(Math.abs(tabbar.y - (box.y + box.height) - 8)).toBeLessThanOrEqual(1);
@@ -87,7 +92,7 @@ test('tapping the bar opens the app player, the page stays', async ({ page, api:
   await page.goto('/');
   await bar(page).getByRole('button', { name: /Fernbedienung|öffnen/ }).first().tap();
   await expect.poll(async () => (await asked(page, 'castControl')).map((a) => a.action)).toEqual(['open']);
-  await page.waitForTimeout(300);
+  await expect(bar(page)).toBeVisible(); // still the same page, the bar still there
   await expect(page).toHaveURL(/\/$/);
 });
 
@@ -95,7 +100,7 @@ test('an app without the cast bar (API 1) keeps working: no cast calls, no bar',
   await fakeNativeApp(page, { api: 1, caps: { play: true, download: true, cast: true } });
   await page.goto('/');
   await expect(page.locator('nav.tabbar')).toBeVisible();
-  await page.waitForTimeout(400);
+  await expect.poll(async () => (await nativeCalls(page, 'capabilities')).length).toBeGreaterThan(0);
   expect(await nativeCalls(page, 'castState')).toHaveLength(0);
   await expect(bar(page)).toHaveCount(0);
 });
@@ -147,4 +152,28 @@ test('sign-out with an API 1 app does not send sessionChanged', async ({ page, a
   await page.getByRole('button', { name: 'Abmelden' }).tap();
   await expect.poll(() => out).toBe(true);
   expect(await nativeCalls(page, 'sessionChanged')).toHaveLength(0);
+});
+
+test('a slow app at page start: the bar comes after one retry when the page is shown again', async ({ page, api: _api }) => {
+  test.setTimeout(30_000);
+  await fakeNativeApp(page, { ...APP2, cast: SNAP, capsHangFirst: true });
+  await page.goto('/');
+  await expect.poll(async () => (await nativeCalls(page, 'capabilities')).length).toBe(1);
+  await page.waitForFunction(() => performance.now() > 5600); // the 5 s request timeout has passed
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await expect(bar(page)).toContainText('Auf Wohnzimmer-TV');
+  expect(await nativeCalls(page, 'castState')).toHaveLength(1);
+});
+
+test('sign-out with a hung app still finishes (the wait for the app is capped)', async ({ page, api: _api }) => {
+  test.setTimeout(30_000);
+  let loggedOutAt = 0;
+  await page.route('**/auth/logout', (r) => { loggedOutAt = Date.now(); return r.fulfill({ status: 204 }); });
+  await page.route('**/auth/login**', (r) => r.fulfill({ contentType: 'text/html', body: '<title>login</title>' }));
+  await fakeNativeApp(page, { ...APP2, sessionHangs: true });
+  await page.goto('/me');
+  await page.getByRole('button', { name: 'Abmelden' }).tap();
+  await expect.poll(() => loggedOutAt, { timeout: 15_000 }).toBeGreaterThan(0);
+  const [call] = await nativeCalls(page, 'sessionChanged');
+  expect(loggedOutAt - call!.at).toBeLessThan(9000); // the 4 s cap (plus the push step's own 3 s), never the whole hang
 });

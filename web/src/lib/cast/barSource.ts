@@ -15,8 +15,9 @@ export interface CastBarSource {
   open(): void;
   /** the bar can grow into the expanded sheet (the web engine's; the app has none) */
   canExpand: boolean;
-  /** the Next button shows only while a next episode is known (`session.upcoming`): the app's `next` answers false otherwise */
-  nextNeedsQueue: boolean;
+  /** the session is the Android app's: its Next shows only while a next episode is queued (`session.upcoming`; the app's `next` answers false
+   *  otherwise) and its snapshot has no episode code, so the bar loads the item for it */
+  fromApp: boolean;
 }
 
 /** today's behaviour: the page's engine drives the TV, the watch page is its remote */
@@ -28,7 +29,7 @@ export function engineSource(): CastBarSource {
     stop: () => castEngine.stop(),
     open: () => { const c = get(castSession); if (c) void goto('/watch/' + c.itemId); },
     canExpand: true,
-    nextNeedsQueue: false,
+    fromApp: false,
   };
 }
 
@@ -51,6 +52,9 @@ export function nativeSource(): CastBarSource {
     stop: async () => { await native.castControl('stop'); },
     open: () => void native.castControl('open'),
     canExpand: false,
-    nextNeedsQueue: true,
+    fromApp: true,
   };
 }
+
+/** the bar asks for the episode's item (for the "S1:F4" code): the app's session only, and only when the item is not cached; the web engine's bar is unchanged */
+export const itemFetchWanted = (src: CastBarSource, s: Pick<CastSession, 'isEpisode' | 'itemId'> | null, cached: boolean): boolean => src.fromApp && s !== null && s.isEpisode && !cached;
