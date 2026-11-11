@@ -163,7 +163,7 @@ missing `perms` (older backend) counts as "everything allowed" in the web (`capa
 ### 2.3 Per-user overrides (G3)
 
 Every template field and every permission can be overridden per account (`user_limits`, §3). New override fields:
-`transcoding`, `maxHeight`, `download`, `maxParentalRating`, `libraries`, `maxBitrate`, `perms`, plus a free-text `note`
+`transcoding`, `maxHeight`, `download`, `downloadDays`, `maxParentalRating`, `libraries`, `maxBitrate`, `perms`, plus a free-text `note`
 ("why", max 200 chars, shown in the list tooltip and the detail page). With Live TV: channel-group exceptions per user (Live TV
 spec §8). Policies follow as today: any override that the media server enforces (`libraries`, `maxParentalRating`,
 `maxStreams`, `maxBitrate`, `transcoding`, `maxHeight`) re-applies the account's identities (`reapplyAccount`), the gateway
@@ -219,6 +219,7 @@ alter table user_limits
   add column if not exists download boolean,
   add column if not exists max_bitrate int check (max_bitrate between 300000 and 200000000),
   add column if not exists max_parental_rating int check (max_parental_rating between -1 and 21),
+  add column if not exists download_days int check (download_days between 1 and 90),
   add column if not exists libraries jsonb,
   add column if not exists perms jsonb not null default '{}',
   add column if not exists note text check (char_length(note) <= 200);
@@ -233,7 +234,7 @@ Semantics:
   its column (`reserve_request_slot` and `roleLimitFor` read it). For admin-created roles the row holds the full template.
 - `role_settings.perms` / `user_limits.perms`: `{ [PermKey]: boolean }`, unknown keys rejected by zod on write and ignored on
   read (a key removed in a later version never breaks a load).
-- `user_limits.max_parental_rating`: `null` = as role, `-1` = unrestricted, `0..21` = cap. `libraries`: `null` = as role,
+- `user_limits.max_parental_rating`: `null` = as role, `-1` = unrestricted, `0..21` = cap. `download_days`: `null` = as role, `1..90` days. `libraries`: `null` = as role,
   `"all"` or an array of library names (the format of `RoleTemplate.libraries`).
 - Old `role_settings` columns: written alongside `template` by `PUT /api/admin/roles/:role` for one release, never read;
   migration "drop old role_settings columns" ships in the release after Phase 0.
