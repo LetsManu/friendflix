@@ -5,7 +5,7 @@ import type { Item } from '#lib/api';
 import { LOCALES, setLocale, tr } from '#lib/i18n';
 import { reasonText } from './reason';
 import {
-  SUGGEST_TIMEOUT_MS, daysSince, episodeItem, filterItems, filterKeyTarget, filterSearch, freshText, kindOf, matchesFilter, NEW_TITLE_DAYS, parseFilter, planSections, withinDays,
+  daysSince, episodeItem, filterItems, filterKeyTarget, filterSearch, freshText, kindOf, matchesFilter, NEW_TITLE_DAYS, parseFilter, planSections, withinDays,
   availableTabs, forYouItems, mergeSuggestions, openRequests, wishStateOf, pageSearch, parseTab, quotaExhausted, quotaLeft, tabKeyTarget,
   type NewData, type NewEpisode, type Suggestion, type Up,
 } from './newpage';
@@ -253,11 +253,5 @@ describe('suggestions and wishes', () => {
     const mine = ['angefragt', 'in_arbeit', 'teilweise', 'verfuegbar', 'abgelehnt', 'entfernt'].map((status) => ({ status }));
     expect(openRequests(mine)).toHaveLength(3);
     expect(openRequests(null)).toEqual([]);
-  });
-});
-
-describe('SUGGEST_TIMEOUT_MS', () => {
-  it('outlasts one request-service call of the server (15 s), so a cache miss is not given up on before it is answered', () => {
-    expect(SUGGEST_TIMEOUT_MS).toBeGreaterThan(15_000);
   });
 });

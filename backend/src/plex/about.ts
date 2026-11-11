@@ -30,9 +30,12 @@ export function providerIdsOf(guids: readonly string[] | null | undefined): Prov
     const m = /^([a-z.]+):\/\/([^/?#\s]+)(\/[^?#\s]*)?(?:\?.*)?$/i.exec(g.trim());
     if (!m) continue;
     const scheme = m[1]!.toLowerCase();
-    const kind = SCHEME[scheme];
-    if (!kind || (m[3] && m[3] !== '/')) continue;
-    const v = kind === 'imdb' ? m[2]!.toLowerCase() : m[2]!;
+    if (m[3] && m[3] !== '/') continue;
+    // the HAMA anime agent names the source in the value: `com.plexapp.agents.hama://tvdb-81189` (`tvdb2-` … `tvdb5-` are TVDB orderings of the same series)
+    const hama = scheme === 'com.plexapp.agents.hama' ? /^(tvdb[2-5]?|tmdb)-(\d+)$/i.exec(m[2]!) : null;
+    const kind = hama ? (hama[1]!.toLowerCase() === 'tmdb' ? 'tmdb' : 'tvdb') : SCHEME[scheme];
+    if (!kind) continue;
+    const v = hama ? hama[2]! : kind === 'imdb' ? m[2]!.toLowerCase() : m[2]!;
     if (kind === 'imdb' ? !IMDB.test(v) : !NUM.test(v)) continue;
     const into = scheme.startsWith('com.plexapp.agents.') ? legacy : out;
     if (!into[kind]) into[kind] = v;
@@ -49,8 +52,8 @@ export function tmdbIdOf(guids: readonly string[] | null | undefined): number | 
 /** The guids findByTmdb() looks for: the new-agent and the legacy-agent spelling of one TMDB id. */
 export const tmdbGuids = (tmdbId: number): string[] => [`tmdb://${tmdbId}`, `com.plexapp.agents.themoviedb://${tmdbId}`];
 
-/** The guids findSeriesByTvdb() looks for: the new-agent and the legacy-agent spelling of one TVDB id. */
-export const tvdbGuids = (tvdbId: number): string[] => [`tvdb://${tvdbId}`, `com.plexapp.agents.thetvdb://${tvdbId}`];
+/** The guids findSeriesByTvdb() looks for: the new-agent, the legacy-agent and the HAMA anime agent spelling of one TVDB id. */
+export const tvdbGuids = (tvdbId: number): string[] => [`tvdb://${tvdbId}`, `com.plexapp.agents.thetvdb://${tvdbId}`, ...['tvdb', 'tvdb2', 'tvdb3', 'tvdb4', 'tvdb5'].map((k) => `com.plexapp.agents.hama://${k}-${tvdbId}`)];
 
 const RT = /^rottentomatoes:\/\//;
 

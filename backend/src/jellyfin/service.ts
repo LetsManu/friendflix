@@ -719,24 +719,27 @@ export class JellyfinService implements MediaServer {
     if (!res.ok) throw new JellyfinError(res.status, `report ${kind} -> ${res.status}`);
   }
 
+  /**
+   * Library lookup by one provider id with the admin key. The answer is trusted only when the item itself carries that id (key case-insensitive,
+   * value exact): a server that ignores the filter answers with an unrelated first item, and an older one matches by substring (`7001` finds `70012`).
+   */
+  private async byProviderId(kind: 'tmdb' | 'tvdb', id: number, type: 'Movie' | 'Series'): Promise<{ id: string; name: string } | null> {
+    if (!Number.isInteger(id) || id <= 0) return null;
+    const r = await this.client.adminJson<{ Items?: Array<{ Id: string; Name: string; ProviderIds?: Record<string, unknown> }> }>(
+      `/Items?anyProviderIdEquals=${kind}.${id}&recursive=true&includeItemTypes=${type}&fields=ProviderIds&enableImages=false&enableUserData=false&limit=5`,
+    );
+    const hit = (r.Items ?? []).find((i) => toProviderIds(i.ProviderIds)[kind] === String(id));
+    return hit ? { id: hit.Id, name: hit.Name } : null;
+  }
+
   /** Library lookup by TMDB id with the admin key (used to link finished Seerr requests to library items). */
   async findByTmdb(tmdbId: number, mediaType: string): Promise<{ id: string; name: string } | null> {
-    const type = mediaType === 'tv' ? 'Series' : 'Movie';
-    const r = await this.client.adminJson<{ Items: Array<{ Id: string; Name: string }> }>(
-      `/Items?anyProviderIdEquals=tmdb.${tmdbId}&recursive=true&includeItemTypes=${type}&limit=1`,
-    );
-    const i = r.Items[0];
-    return i ? { id: i.Id, name: i.Name } : null;
+    return this.byProviderId('tmdb', tmdbId, mediaType === 'tv' ? 'Series' : 'Movie');
   }
 
   /** Series lookup by TVDB id with the admin key (libraries without TMDB ids, typical for anime). */
   async findSeriesByTvdb(tvdbId: number): Promise<{ id: string; name: string } | null> {
-    if (!Number.isInteger(tvdbId) || tvdbId <= 0) return null;
-    const r = await this.client.adminJson<{ Items: Array<{ Id: string; Name: string }> }>(
-      `/Items?anyProviderIdEquals=tvdb.${tvdbId}&recursive=true&includeItemTypes=Series&limit=1`,
-    );
-    const i = r.Items[0];
-    return i ? { id: i.Id, name: i.Name } : null;
+    return this.byProviderId('tvdb', tvdbId, 'Series');
   }
 
   /** A series counts as available once at least one real (non-placeholder) episode exists. */

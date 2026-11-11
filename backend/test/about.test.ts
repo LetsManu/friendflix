@@ -64,9 +64,9 @@ const jellyfin: Record<string, Handler> = {
       const any = u.searchParams.get('anyProviderIdEquals');
       if (any) {
         const t = any.replace('tmdb.', '');
-        if (providerFilterIgnored) return { json: { Items: [{ Id: MOV, Name: 'Ashfall' }] } };
+        if (providerFilterIgnored) return { json: { Items: [{ Id: MOV, Name: 'Ashfall', ProviderIds: { Tmdb: t } }] } }; // two TMDB ids that both resolve to the one copy
         const hit = Object.values(raw).find((r) => (r.ProviderIds as { Tmdb?: string } | undefined)?.Tmdb === t && (r.Id !== HIDLIB || libHasPart3));
-        return { json: { Items: hit ? [{ Id: hit.Id, Name: hit.Name }] : [] } };
+        return { json: { Items: hit ? [{ Id: hit.Id, Name: hit.Name, ProviderIds: hit.ProviderIds }] : [] } };
       }
       if (u.searchParams.get('includeItemTypes') === 'BoxSet') return { json: { Items: Object.keys(members).map((b) => ({ Id: b })) } };
       if (parent) return { json: { Items: (members[parent] ?? []).map((c) => ({ Id: c })) } };

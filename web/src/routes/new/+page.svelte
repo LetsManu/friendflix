@@ -46,8 +46,10 @@
 
   /** a section that does not answer within this long is left out (never a skeleton forever) */
   const SECTION_TIMEOUT_MS = 8000;
-  /** the calls the first view waits for and the suggestions: given up sooner (the server keeps building and caches it for the next visit) */
+  /** the calls the first view waits for: given up sooner (the server keeps building and caches it for the next visit); the suggestions have their own, longer SUGGEST_TIMEOUT_MS */
   const FAST_TIMEOUT_MS = 4000;
+  /** one half of the suggestions is still on its way */
+  let suggestLoading = false;
   let d: NewData = { forYou: null, newSeries: null, newMovies: null, episodes: null, week: null, upcoming: null, suggest: null };
   let now = Date.now();
   let mounted = false;
@@ -112,6 +114,7 @@
   $: if (!requests && wishStarted) {
     wishStarted = false;
     d = { ...d, suggest: null, upcoming: null };
+    suggestLoading = false;
   }
   async function loadWishData() {
     void Promise.all([section<Up>('/api/seerr/upcoming?type=movie', (r) => r.results), section<Up>('/api/seerr/upcoming?type=tv', (r) => r.results)])
@@ -120,10 +123,17 @@
     if (tv) { set('suggest', []); return; }
     void loadMine();
     type Answer = { items: Suggestion[]; quota: { limit: number | null; used: number; resetsAt: string } | null };
-    const [m, s] = await Promise.all([fetchJson<Answer>('/api/library/request-suggestions?type=movie', SUGGEST_TIMEOUT_MS), fetchJson<Answer>('/api/library/request-suggestions?type=series', SUGGEST_TIMEOUT_MS)]);
+    // each half is shown as soon as it arrives (a cached one is quick, a cold build is not); the slots of the other stay skeletons meanwhile
+    let m: Answer | null = null, s: Answer | null = null;
+    suggestLoading = true;
+    const arrive = () => set('suggest', mergeSuggestions(m?.items ?? [], s?.items ?? []));
+    await Promise.all([
+      fetchJson<Answer>('/api/library/request-suggestions?type=movie', SUGGEST_TIMEOUT_MS).then((r) => { m = r; arrive(); }),
+      fetchJson<Answer>('/api/library/request-suggestions?type=series', SUGGEST_TIMEOUT_MS).then((r) => { s = r; arrive(); }),
+    ]);
     const q = m?.quota ?? s?.quota ?? null;
     if (q) quota.set(q); else void loadQuota();
-    set('suggest', mergeSuggestions(m?.items ?? [], s?.items ?? []));
+    suggestLoading = false;
   }
 
   /** grown-up profile with a request service (as far as we know: the hint of the last visit until /api/me answered) */
@@ -252,7 +262,7 @@
             {#if $mobile && plan.forYou.length > 1}<div class="bleed"><Row title={$t('home.new.moreForYou')} items={plan.forYou.slice(1)} portrait notes={forYouNote} /></div>{/if}
           {/if}
           {#if canWish}
-            <Suggestions items={d.suggest === null ? null : plan.suggestions.slice(0, slots)} {slots} title={$t('home.new.missing')} sub={$t('home.new.missingSub')} on:wish={wish} />
+            <Suggestions items={d.suggest === null ? null : plan.suggestions.slice(0, slots)} loading={suggestLoading} {slots} title={$t('home.new.missing')} sub={$t('home.new.missingSub')} on:wish={wish} />
           {/if}
           {#if plan.episodes.length}
             {#if $mobile}<div class="bleed"><NewEpisodes title={$t('home.new.newEpisodes')} items={plan.episodes} {now} /></div>

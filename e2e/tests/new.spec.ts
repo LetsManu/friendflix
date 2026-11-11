@@ -123,6 +123,21 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
   });
 
+  test('a cold suggestion list that takes 5 s still arrives; the films show first, the series slots stay placeholders meanwhile, nothing moves', async ({ page, api }) => {
+    test.setTimeout(40_000);
+    api.newPage.suggestions = { ...SUGGESTIONS };
+    await page.route('**/api/library/request-suggestions?type=series', async (r) => { await new Promise((res) => setTimeout(res, 5000)); await r.fallback(); });
+    await page.goto('/new');
+    const ms = region(page, 'Noch nicht bei uns');
+    await expect(ms.getByText('Tin Meadow')).toBeVisible({ timeout: 3000 }); // the quick half is not held back by the slow one
+    await expect(ms.locator('li.skc')).toHaveCount(2); // the slots of the series are still placeholders, the filler has not taken them
+    await expect(ms.getByRole('button', { name: /Etwas fehlt\?/ })).toHaveCount(0);
+    const y = async () => (await page.getByRole('heading', { level: 2, name: 'Neue Folgen' }).boundingBox())!.y;
+    const before = await y();
+    await expect(ms.getByText('Lantern Row')).toBeVisible({ timeout: 12_000 }); // past the old 4 s limit
+    expect(Math.abs((await y()) - before)).toBeLessThanOrEqual(0.5);
+  });
+
   test('the request service is slow: Für dich and the library do not wait for it, and nothing moves when it gives up', async ({ page, api }) => {
     test.setTimeout(70_000);
     api.newPage.suggestions = { ...SUGGESTIONS };

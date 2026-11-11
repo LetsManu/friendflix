@@ -24,6 +24,8 @@ let searchHits: any[] = [];
 let tvdbOfTmdb: Record<number, number> = {};
 let libraryTvdb = new Set<number>();
 let failTvdb = false;
+let noYear = false;
+let searchStatus = 200;
 
 const routes = (): Record<string, Handler> => ({
   'GET /api/v1/movie/1001/recommendations': () => (failSeed === 1001 ? { status: 500 } : { json: { totalPages: 1, results: [
@@ -32,7 +34,7 @@ const routes = (): Record<string, Handler> => ({
   'GET /api/v1/tv/2002/recommendations': () => ({ json: { totalPages: 1, results: [{ id: 21, name: 'Serial Twentyone', firstAirDate: '2020-01-01', posterPath: '/s21abcdef.jpg', mediaInfo: { status: 3 } }, { id: 22, name: 'Serial Twentytwo' }] } }),
   'GET /api/v1/movie/3003/recommendations': () => ({ json: { totalPages: 1, results: [rec(31)] } }),
   'GET /api/v1/tv/\\d+': (u) => { const id = Number(u.pathname.split('/').pop()); return { json: { name: `Serial ${id}`, externalIds: tvdbOfTmdb[id] ? { tvdbId: tvdbOfTmdb[id] } : {} } }; },
-  'GET /api/v1/search': () => ({ json: { totalPages: 1, results: searchHits } }),
+  'GET /api/v1/search': () => (searchStatus !== 200 ? { status: searchStatus } : { json: { totalPages: 1, results: searchHits } }),
   'GET /api/v1/movie/\\d+': (u) => {
     const id = Number(u.pathname.split('/').pop());
     return { json: { title: `Fiction ${id}`, releases: { results: certs[id] ? [{ iso_3166_1: 'DE', release_dates: [{ certification: '' }, { certification: certs[id] }] }] : [] } } };
@@ -50,7 +52,7 @@ describe('requestSuggestions (function level)', () => {
     for (const p of ['reco:', 'reqsug:', 'reqseed:', 'reqtvdb:']) for (const k of await env.kv.keys(p)) await env.kv.del(k);
     resetIndexCache(env.ctx);
     libraryIds = new Set([14]);
-    certs = {}; seerrCalls = []; failSeed = null; jfx = fakeJf(); searchHits = []; tvdbOfTmdb = {}; libraryTvdb = new Set(); failTvdb = false;
+    certs = {}; seerrCalls = []; failSeed = null; jfx = fakeJf(); searchHits = []; tvdbOfTmdb = {}; libraryTvdb = new Set(); failTvdb = false; noYear = false; searchStatus = 200;
     tmdbOf = { bear1: '1001', pups: '2002' };
     await env.pool.query("insert into thumbs(user_id,item_id,value,item_name,profile_id) values ($1,$2,2,'x',$1)", [s.owner.user_id, H('bear1')]);
     await env.pool.query("insert into thumbs(user_id,item_id,value,item_name,profile_id) values ($1,$2,2,'x',$1)", [s.owner.user_id, H('pups')]);
@@ -58,6 +60,7 @@ describe('requestSuggestions (function level)', () => {
 
   const ctxFor = () => {
     const jf = Object.assign(Object.create(jfx.jf), {
+      async item(u: any, id: string) { const i = await (jfx.jf as any).item(u, id); return noYear ? { ...i, year: undefined } : i; },
       async itemAbout(_u: unknown, id: string) { return { providerIds: { tvdb: '555', tmdb: Object.entries(tmdbOf).find(([k]) => H(k) === id)?.[1] }, countries: [], studios: [], tags: [], type: 'x' }; },
       async findSeriesByTvdb(id: number) { if (failTvdb) throw new Error('down'); return libraryTvdb.has(id) ? { id: 'libtv', name: 'x' } : null; },
       async findByTmdb(id: number) { return libraryIds.has(id) ? { id: 'lib', name: 'x' } : null; },
@@ -193,12 +196,58 @@ describe('requestSuggestions (function level)', () => {
     expect(seerrCalls.some((c) => c.path.endsWith('/search'))).toBe(false); // not asked again for a day
   });
 
-  it('looks past the first five anchors: the 8th strongest film is the only one with a TMDB id', async () => {
+  it('looks past the first eight anchors: the 10th strongest film is the only one with a TMDB id', async () => {
     await env.pool.query('delete from thumbs');
-    const keys = ['saga1', 'saga2', 'saga3', 'orbit', 'mars', 'noir1', 'noir2', 'doc3'];
+    const keys = ['saga1', 'saga2', 'saga3', 'orbit', 'mars', 'noir1', 'noir2', 'noir3', 'heist2', 'doc3'];
     for (const k of keys) await env.pool.query("insert into thumbs(user_id,item_id,value,item_name,profile_id) values ($1,$2,$3,'x',$1)", [s.owner.user_id, H(k), k === 'doc3' ? 1 : 2]);
     tmdbOf = { doc3: '3003' };
-    expect((await ask()).map((i) => i.tmdbId)).toEqual([31]);
+    const d = await requestSuggestionsDetailed(ctxFor(), s.user, { id: s.owner.user_id, role: 'friend' }, s.owner.id, 'movie');
+    expect(d.items.map((i) => i.tmdbId)).toEqual([31]);
+    expect(d.stats!.anchors).toBe(10);
+  });
+
+  it('a name match without a known year on either side counts only when it is the single equal-titled result', async () => {
+    tmdbOf = {};
+    noYear = true;
+    searchHits = [{ id: 2002, mediaType: 'tv', name: 'Pups', firstAirDate: '2021-04-02' }, { id: 5, mediaType: 'tv', name: 'PUPS', firstAirDate: '1999-01-01' }];
+    expect(await ask('series')).toEqual([]); // two equal titles, no year to tell them apart
+    for (const k of [...await env.kv.keys('reqsug:'), ...await env.kv.keys('reqseed:')]) await env.kv.del(k);
+    searchHits = [{ id: 2002, mediaType: 'tv', name: 'Pups', firstAirDate: '2021-04-02' }, { id: 6, mediaType: 'tv', name: 'Other' }];
+    expect((await ask('series')).map((i) => i.tmdbId)).toEqual([21, 22]);
+  });
+
+  it('the search encodes ! \' ( ) * and falls back to the original title; a failing search is counted and not repeated for a while', async () => {
+    tmdbOf = {};
+    searchStatus = 400;
+    const d = await requestSuggestionsDetailed(ctxFor(), s.user, { id: s.owner.user_id, role: 'friend' }, s.owner.id, 'series');
+    expect(d.stats).toMatchObject({ seeds: 0, seedSearchFailures: 1 }); // one failed query: the original title equals the name here
+    const q = seerrCalls.find((c) => c.path.endsWith('/search'))!;
+    expect(q.search).toContain('query=PUPS');
+    for (const k of await env.kv.keys('reqsug:')) await env.kv.del(k);
+    seerrCalls.length = 0;
+    await ask('series');
+    expect(seerrCalls.some((c) => c.path.endsWith('/search'))).toBe(false); // not at once again
+    searchStatus = 200;
+    const c = new SeerrClient('http://requests.example.com', KEY, fakeHttp(routes(), seerrCalls));
+    seerrCalls.length = 0;
+    await c.search("K-On! (Haikyu!!) *'");
+    expect(seerrCalls[0]!.search).toContain('query=K-On%21%20%28Haikyu%21%21%29%20%2A%27');
+  });
+
+  it('concurrent asks of one list share one build', async () => {
+    const [a, b] = await Promise.all([ask(), ask()]);
+    expect(a).toEqual(b);
+    expect(seerrCalls.filter((c) => c.path.endsWith('/recommendations')).length).toBe(1);
+  });
+
+  it('the TVDB id is kept 30 days, none 7 days; an age-capped role reads each series\' details once', async () => {
+    tvdbOfTmdb = { 21: 7001 };
+    const ttls: Record<string, number> = {};
+    const realSet = env.kv.set.bind(env.kv);
+    env.kv.set = async (k: string, v: string, ttl: number) => { if (k.startsWith('reqtvdb:')) ttls[k] = ttl; return realSet(k, v, ttl); };
+    try { await ask('series', { role: 'guest' }); } finally { env.kv.set = realSet; }
+    expect(ttls).toEqual({ 'reqtvdb:21': 30 * 86400, 'reqtvdb:22': 7 * 86400 });
+    for (const id of [21, 22]) expect(seerrCalls.filter((c) => c.path === `/api/v1/tv/${id}`).length).toBe(1);
   });
 
   it('an empty list is cached for the short time only, a list with titles for the long one', async () => {
@@ -221,7 +270,7 @@ describe('requestSuggestions (function level)', () => {
     await env.pool.query("insert into thumbs(user_id,item_id,value,item_name,profile_id) values ($1,$2,1,'x',$1)", [s.owner.user_id, H('robot')]); // a second film anchor without a TMDB id
     const d = await requestSuggestionsDetailed(ctxFor(), s.user, { id: s.owner.user_id, role: 'friend' }, s.owner.id, 'movie');
     expect(d.fresh).toBe(true);
-    expect(d.stats).toEqual({ anchors: 2, seeds: 1, seedsWithoutTmdb: 1, seedsFoundByName: 0, recommendations: 5, inLibrary: 2, inLibraryByTvdb: 0, lookupFailures: 0, ageFiltered: 0, final: 2 });
+    expect(d.stats).toEqual({ anchors: 2, seeds: 1, seedsWithoutTmdb: 1, seedsFoundByName: 0, seedSearchFailures: 0, recommendations: 5, inLibrary: 2, inLibraryByTvdb: 0, lookupFailures: 0, ageFiltered: 0, final: 2 });
     expect((await requestSuggestionsDetailed(ctxFor(), s.user, { id: s.owner.user_id, role: 'friend' }, s.owner.id, 'movie')).fresh).toBe(false);
   });
 
@@ -267,7 +316,14 @@ describe('GET /api/library/request-suggestions (route)', () => {
     const uid = (await env.pool.query<{ id: string }>('select id from users limit 1')).rows[0]!.id;
     await env.pool.query("update users set role='admin' where id=$1", [uid]);
     const a = (await get()).json();
-    expect(Object.keys(a.debug).sort()).toEqual(['ageFiltered', 'anchors', 'final', 'inLibrary', 'inLibraryByTvdb', 'lookupFailures', 'recommendations', 'seeds', 'seedsFoundByName', 'seedsWithoutTmdb']);
+    expect(Object.keys(a.debug).sort()).toEqual(['ageFiltered', 'anchors', 'final', 'inLibrary', 'inLibraryByTvdb', 'lookupFailures', 'recommendations', 'seedSearchFailures', 'seeds', 'seedsFoundByName', 'seedsWithoutTmdb']);
+    // another (grown-up) profile of the admin's account is a normal reader
+    const pid = (await env.pool.query<{ id: string }>("insert into profiles(id, user_id, name, is_owner, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values (gen_random_uuid(), $1, 'Partner', false, 'jfpartner', 'Partner', 'x') returning id", [uid])).rows[0]!.id;
+    const sw = await env.app.inject({ method: 'POST', url: `/api/profiles/${pid}/select`, cookies: sess.cookies, headers: { 'x-csrf-token': sess.csrf }, payload: {} });
+    const other = { ff_sid: sw.cookies.find((c) => c.name === 'ff_sid')!.value };
+    const r = await get('/api/library/request-suggestions?type=movie', other);
+    expect([r.statusCode, r.json().debug]).toEqual([200, undefined]);
+    await env.pool.query('delete from profiles where id=$1', [pid]);
     await env.pool.query("update users set role='friend' where id=$1", [uid]);
     expect((await get()).json().debug).toBeUndefined();
   });

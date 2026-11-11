@@ -31,6 +31,9 @@ const MAX_CREDIT_CALLS = 3;
 /** an anchor must be at least this similar to the title to count as the reason for it */
 const MIN_ANCHOR_COS = 0.05;
 
+/** the reasons come from the first 8 anchors, as they always did (the profile keeps more for the request suggestions) */
+export const EXPLAIN_ANCHORS = 8;
+
 /** The seed that contributed most: the explicit seed, else the producing anchor of a crowd signal, else the profile anchor closest to the title. */
 export function seedFor(s: Scored, seedId: string | undefined, taste: Pick<Taste, 'anchors'>, index: Index): string | null {
   if (seedId) return seedId;
@@ -38,7 +41,7 @@ export function seedFor(s: Scored, seedId: string | undefined, taste: Pick<Taste
   if (via && (s.parts.cooccurrence > 0 || s.parts.transition > 0)) return via;
   if (!s.vec) return null;
   let best: string | null = null, bestV = MIN_ANCHOR_COS;
-  for (const a of taste.anchors ?? []) {
+  for (const a of (taste.anchors ?? []).slice(0, EXPLAIN_ANCHORS)) {
     const v = index.vecs.get(a.id);
     if (!v || a.id === s.id) continue;
     const contribution = a.w * dot(s.vec, v);

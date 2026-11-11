@@ -42,8 +42,9 @@ beforeAll(async () => {
       const tmdb = u.searchParams.get('anyProviderIdEquals');
       if (tmdb) {
         const type = u.searchParams.get('includeItemTypes') === 'Series' ? 'tv' : 'movie';
-        const id = library.get(`${type}:${tmdb.replace('tmdb.', '')}`);
-        return { json: { Items: id ? [{ Id: id, Name: 'X' }] : [] } };
+        const n = tmdb.replace('tmdb.', '');
+        const id = library.get(`${type}:${n}`);
+        return { json: { Items: id ? [{ Id: id, Name: 'X', ProviderIds: { Tmdb: n } }] : [] } };
       }
       const ids = (u.searchParams.get('ids') ?? '').split(',').filter((i) => episodes.has(i));
       return { json: { Items: ids.map((id) => ({ Id: id, Type: 'Episode', LocationType: episodes.get(id)!.virtual ? 'Virtual' : 'FileSystem' })) } };
