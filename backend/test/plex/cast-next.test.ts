@@ -91,6 +91,7 @@ describe('Plex: cast stop report and the queued next episode', () => {
     const cur = await create(E1);
     expect(cur.r.statusCode, cur.r.body).toBe(200);
     await report('start', E1, cur.j.playSessionId, cur.j.mediaSourceId);
+    expect((await authz(cur.ct)).statusCode).toBe(200); // the receiver fetched it: pinned (a queued token takes over that pin at mint)
     const nx = await create(E2, { next: true, after: cur.j.castId });
     return { cur, nx };
   };
@@ -120,6 +121,7 @@ describe('Plex: cast stop report and the queued next episode', () => {
     await fresh();
     const cur = await create(E1); // the transcode runs at Plex, nothing reported yet
     expect(cur.r.statusCode).toBe(200);
+    expect((await authz(cur.ct)).statusCode).toBe(200); // pinned by the receiver's first fetch
     expect(await countLive(env.ctx, uid)).toBe(0);
     const other = await call(admin, 'POST', '/api/cast/session', { itemId: E3 });
     expect(other.statusCode).toBe(429);
@@ -196,7 +198,7 @@ describe('Plex: cast stop report and the queued next episode', () => {
   it('next: re-minting does not renew the overlap: the window belongs to the play session it follows', async () => {
     await fresh();
     const { cur, nx } = await playingThenNext();
-    const elsewhere = '203.0.113.78';
+    const elsewhere = '198.51.100.1'; // the receiver: the address the predecessor is pinned to (a queued token is pinned to it at mint)
     expect((await authz(nx.ct, elsewhere)).statusCode).toBe(200);
     skipClock(170_000);
     await progress(cur);
@@ -228,7 +230,7 @@ describe('Plex: cast stop report and the queued next episode', () => {
   it('next: used concurrently while the predecessor plays: refused once the 180 s overlap is over, never counted twice', async () => {
     await fresh();
     const { cur, nx } = await playingThenNext();
-    const elsewhere = '203.0.113.77';
+    const elsewhere = '198.51.100.1'; // the predecessor's pin
     expect((await authz(nx.ct, elsewhere)).statusCode).toBe(200);
     skipClock(NEXT_OVERLAP_MS - 10_000);
     await progress(cur);
