@@ -9,6 +9,7 @@ import type { IdentityPolicy } from './media/types.js';
 import { effectiveLimits } from './limits.js';
 import { listRoles, roleExists } from './rolecat.js';
 import { effectiveRole } from './roles.js';
+import { invalidateRights } from './rights.js';
 import { accountJellyfinIds, kidsPolicyFor } from './profiles.js';
 import { revokeSessions } from './devices.js';
 import type { OidcClaims } from './oidc.js';
@@ -194,6 +195,10 @@ export async function setRole(ctx: Ctx, actor: string | null, userId: string, ro
   for (const jid of ids) await applyRole(ctx, jid, role, user.disabled, { userId, hidden: jid !== user.jellyfin_user_id });
   await ctx.db.query('update users set role=$1 where id=$2', [role, userId]);
   await audit(ctx, actor, 'user.role', userId, { from: user.role, to: role });
+  // the new role may not have `party`: the account's open party sockets close (4403). Also the path of the bulk role change and of a
+  // role deleted with a move target. rights.ts caches which accounts lack a switch: drop that first.
+  invalidateRights(userId);
+  await (await import('./routes/party.js')).dropPartyDenied(ctx, [userId]);
 }
 
 /**

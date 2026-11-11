@@ -108,7 +108,7 @@ beforeEach(async () => {
   for (const c of open.splice(0)) { c.ws.close(); await c.closed; }
   parties.rooms.clear();
   await env.pool.query(`delete from user_limits; delete from role_settings; delete from episode_comments; delete from notifications;
-    delete from poll_votes; delete from poll_options; delete from polls; update users set role = 'guest' where id = '${CARLA}';
+    delete from poll_votes; delete from poll_options; delete from polls; update users set role = 'guest' where id = '${CARLA}'; update users set role = 'friend' where id in ('${ANNA}', '${BEN}');
     delete from profiles where kids`); // a kids profile locks the shared test device: the other sessions would land on it
   invalidateRoles(env.ctx);
   invalidateRights();
@@ -213,6 +213,45 @@ describe('party switches', () => {
     expect(await b.closed).toEqual({ code: 4403, reason: 'party_forbidden' });
     await vi.waitFor(() => expect([...parties.get(id)!.members.keys()]).not.toContain(BEN));
     expect(a.ws.readyState).toBe(OPEN);
+  });
+
+  describe('party sockets of accounts that lose `party` through the account list', () => {
+    /** Anna and Ben in one room; `act` runs; Anna's socket closes 4403, Ben's stays open */
+    const losesParty = async (act: () => Promise<void>) => {
+      const id = await room();
+      const a = track(await join(id, anna));
+      const b = track(await join(id, ben));
+      await act();
+      expect(await a.closed).toEqual({ code: 4403, reason: 'party_forbidden' });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(b.ws.readyState).toBe(OPEN);
+    };
+    const roleOf = (id: string, role: string) => call(admin, 'PATCH', `/api/admin/users/${id}`, { role });
+
+    it('bulk perm party off', () => losesParty(async () => {
+      const r = await call(admin, 'POST', '/api/admin/users/bulk', { ids: [ANNA], action: 'perm', perm: 'party', value: false });
+      expect([r.statusCode, r.json()]).toEqual([200, { done: 1 }]);
+    }));
+
+    it('bulk role change to a role without party', () => losesParty(async () => {
+      await rolePerms('guest', { party: false });
+      const r = await call(admin, 'POST', '/api/admin/users/bulk', { ids: [ANNA], action: 'role', role: 'guest' });
+      expect([r.statusCode, r.json()]).toEqual([200, { done: 1 }]);
+    }));
+
+    it('single role change', () => losesParty(async () => {
+      await rolePerms('guest', { party: false });
+      expect((await roleOf(ANNA, 'guest')).statusCode).toBe(200);
+    }));
+
+    it('role delete with move', () => losesParty(async () => {
+      const kino = (await call(admin, 'POST', '/api/admin/roles', { label: 'Kino', from: 'friend' })).json().key as string;
+      const wenig = (await call(admin, 'POST', '/api/admin/roles', { label: 'Wenig', from: 'friend' })).json().key as string;
+      await rolePerms(wenig, { party: false });
+      expect((await roleOf(ANNA, kino)).statusCode).toBe(200);
+      const r = await call(admin, 'DELETE', `/api/admin/roles/${kino}`, { moveTo: wenig });
+      expect(r.statusCode, r.body).toBe(200);
+    }));
   });
 
   it('an open socket is closed when the role write turns party off for its accounts', async () => {

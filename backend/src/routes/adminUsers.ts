@@ -16,6 +16,9 @@ import { accountJellyfinIds, getProfile, jfUserFor, listProfiles, publicProfile 
 import { roleLimitFor } from '../requestlimit.js';
 import { ROLE_KEY_RE, invitableRoles, roleExists } from '../rolecat.js';
 import { effectiveRole } from '../roles.js';
+import { getUserOverrides } from '../limits.js';
+import { PERM_KEYS, type PermKey } from '../perms.js';
+import { effectiveRights } from '../rights.js';
 import { requestsEnabled } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireAdmin, type Session } from '../session.js';
@@ -55,10 +58,14 @@ export async function approveRequest(ctx: Ctx, actor: string, id: string, role: 
 
 export const bulkBody = z.object({
   ids: z.array(uuid).min(1).max(200),
-  action: z.enum(['role', 'lock', 'unlock', 'revoke', 'access']),
+  action: z.enum(['role', 'lock', 'unlock', 'revoke', 'access', 'perm', 'repair']),
   role: z.string().max(40).optional(),
   accessUntil: accessUntil.optional(),
+  /** action 'perm': the switch and its person override (null = back to the role) */
+  perm: z.enum(PERM_KEYS).optional(),
+  value: z.boolean().nullable().optional(),
 }).refine((b) => b.action !== 'role' || b.role !== undefined, { path: ['role'] })
+  .refine((b) => b.action !== 'perm' || (b.perm !== undefined && b.value !== undefined), { path: ['perm'] })
   .refine((b) => b.action !== 'access' || b.accessUntil !== undefined, { path: ['accessUntil'] });
 export type BulkBody = z.infer<typeof bulkBody>;
 
@@ -76,6 +83,12 @@ export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{
   if (b.action === 'unlock' && (await ctx.db.query('select 1 from account_deletions where user_id = any($1::uuid[]) limit 1', [ids])).rowCount) {
     throw new HttpError(409, 'deletion_in_progress');
   }
+  // a repair or rights write on a claimed account would act on identities that are being deleted
+  if ((b.action === 'perm' || b.action === 'repair') && (await ctx.db.query('select 1 from account_deletions where user_id = any($1::uuid[]) limit 1', [ids])).rowCount) {
+    throw new HttpError(409, 'deletion_in_progress');
+  }
+  // the admin role's switches are locked: refuse the whole call before the first write (clearing stays possible)
+  if (b.action === 'perm' && b.value !== null && rows.some((u) => u.role === 'admin')) throw new HttpError(400, 'admin_perms_locked');
   if (b.action === 'role' && !(await roleExists(ctx, b.role!))) throw new HttpError(400, 'unknown_role');
   const demote = b.action === 'role' && b.role !== 'admin';
   if ((demote || b.action === 'lock') && ids.includes(actor)) throw new HttpError(400, 'cannot_lock_yourself_out');
@@ -102,6 +115,13 @@ export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{
         break;
       case 'access':
         await setAccessUntil(ctx, actor, u.id, toDate(b.accessUntil!));
+        break;
+      case 'perm':
+        // the same per-account write as PUT /rights (admin lock, audit in the transaction, party sockets, gateway memo)
+        if (!(await putRights(ctx, actor, u.id, { overrides: { [b.perm!]: b.value! } })).changed.length) continue;
+        break;
+      case 'repair':
+        await repairAccount(ctx, actor, (await getUserById(ctx, u.id))!);
         break;
     }
     done++;
@@ -158,6 +178,42 @@ async function reapplyAccount(ctx: Ctx, user: UserRow): Promise<{ identities: nu
   return { identities: ids.length, failed };
 }
 
+/**
+ * "Repair link": the role policy again on every media server identity, and the request-service user mapped again; audited user.repair.
+ * 409 deletion_in_progress for a claimed account (its request-service user may already be deleted, a repair would create an orphan).
+ * Runs in accountSerial of the caller.
+ */
+export async function repairAccount(ctx: Ctx, actor: string, user: UserRow) {
+  if (await accountClaimed(ctx, user.id)) throw new HttpError(409, 'deletion_in_progress');
+  const jellyfin = await reapplyAccount(ctx, user);
+  const before = user.seerr_user_id;
+  // no request service: nothing to map (null), and the repair is not a partial failure because of it
+  const requestsOk = requestsEnabled(ctx) ? await ensureSeerrUser(ctx, user).then(() => true, () => false) : null;
+  await audit(ctx, actor, 'user.repair', user.id, { jellyfin, requests: { ok: requestsOk, from: before, to: user.seerr_user_id } });
+  return { ok: !jellyfin.failed && requestsOk !== false, jellyfin, requests: { ok: requestsOk, id: user.seerr_user_id } };
+}
+
+/** true once the deletion tick has claimed the account: admin changes would act on identities that are being deleted */
+const accountClaimed = async (ctx: Ctx, id: string) => Boolean((await ctx.db.query('select 1 from account_deletions where user_id=$1', [id])).rowCount);
+
+/**
+ * The override write of /rights, /limits and the bulk `perm`, run in accountSerial by the caller (it calls nothing that queues there itself): 409
+ * deletion_in_progress once the deletion tick claimed the account; a changed media-enforced value re-applies the account's identities,
+ * any changed value makes the gateway forget the memoised identity of the account's sessions (they stay signed in).
+ */
+async function putRights(ctx: Ctx, actor: string, id: string, b: RightsBody): Promise<{ identities: number; failed: number; changed: string[] }> {
+  const user = await getUserById(ctx, id);
+  if (!user) throw new HttpError(404, 'not_found');
+  if (await accountClaimed(ctx, id)) throw new HttpError(409, 'deletion_in_progress');
+  const w = await writeRights(ctx, actor, id, b);
+  if (w.changed.includes('party')) await dropPartyDenied(ctx, [id]); // `party` switched off: the open party sockets close (4403)
+  const reapplied = w.media ? await reapplyAccount(ctx, user) : { identities: 0, failed: 0 };
+  if (w.effective) await forgetUserAuth(ctx, id);
+  return { ...reapplied, changed: w.changed };
+}
+
+const permFilter = z.string().regex(/^[A-Za-z]+:(on|off)$/).refine((v) => (PERM_KEYS as readonly string[]).includes(v.split(':')[0]!));
+
 export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   const admin = { preHandler: requireAdmin(ctx) };
   const serial = accountSerial;
@@ -170,6 +226,10 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       role: z.string().max(40).optional(),
       status: z.enum(['active', 'locked', 'pending', 'expiring', 'deleting']).optional(),
       lastActive: z.enum(['7', '30', '90', '90+']).optional(),
+      overrides: z.literal('1').optional(),
+      kids: z.literal('1').optional(),
+      perm: permFilter.optional(),
+      mfa: z.literal('off').optional(),
     }).parse(req.query);
     const w = new Where();
     if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(u.name ilike ${m} or coalesce(u.email,'') ilike ${m} or coalesce(u.jellyfin_username,'') ilike ${m})`); }
@@ -180,25 +240,63 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     if (p.status === 'deleting') w.add('(u.deletion_at is not null or u.cleanup is not null)');
     if (p.lastActive === '90+') w.add("(u.last_seen is null or u.last_seen < now() - interval '90 days')");
     else if (p.lastActive) w.add("u.last_seen >= now() - make_interval(days => ?)", Number(p.lastActive));
+    if (p.overrides) w.add('u.overrides > 0');
+    if (p.kids) w.add('u."kidsProfiles" > 0');
     const base = p.status === 'pending'
       ? `select a.id, a.name, a.email, null::text role, false disabled, null::text jellyfin_username, null::int seerr_user_id, a.requested_at created_at,
-                null::timestamptz last_seen, null::timestamptz access_until, null::text locked_reason, null::timestamptz deletion_at, 0 profiles, 0 devices, true pending
+                null::timestamptz last_seen, null::timestamptz access_until, null::text locked_reason, null::timestamptz deletion_at, 0 profiles, 0 devices, true pending, 0 overrides, 0 "kidsProfiles", null::text note
            from approval_requests a where a.rejected_at is null`
       : `select u.id, u.name, u.email, u.role, u.disabled, u.jellyfin_username, u.seerr_user_id, u.created_at,
                 (select max(last_seen) from devices d where d.user_id = u.id) last_seen, u.access_until, u.locked_reason, u.deletion_at,
                 (select count(*) from profiles x where x.user_id = u.id)::int profiles,
-                (select count(*) from devices d where d.user_id = u.id)::int devices, false pending${p.status === 'deleting' ? `,
+                (select count(*) from devices d where d.user_id = u.id)::int devices, false pending,
+                coalesce((select (l.max_streams is not null)::int + (l.remote_bitrate is not null)::int + (l.max_downloads is not null)::int + (l.download_max_height is not null)::int
+                  + (l.requests_per_month is not null)::int + (l.transcoding is not null)::int + (l.max_height is not null)::int + (l.download is not null)::int
+                  + (l.max_bitrate is not null)::int + (l.max_parental_rating is not null)::int + (l.libraries is not null)::int + (l.download_days is not null)::int
+                  + (select count(*) from jsonb_object_keys(l.perms))::int from user_limits l where l.user_id = u.id), 0) overrides,
+                (select count(*) from profiles x where x.user_id = u.id and x.kids)::int "kidsProfiles",
+                (select l.note from user_limits l where l.user_id = u.id) note${p.status === 'deleting' ? `,
                 case when ad.user_id is not null and ad.finished_at is null then jsonb_build_object('step', ad.step + 1, 'error', ad.last_error, 'gone', false) end cleanup` : ''}
            from users u${p.status === 'deleting' ? ` left join account_deletions ad on ad.user_id = u.id
          union all
          -- claimed deletions carry the step being worked on and its error; once the users row is gone (steps 5-6) only the pseudonym is
          -- left (gone: no detail page to link to)
-         select ad.user_id, ad.pseudonym, null, null, true, null, null, ad.started_at, null, null, 'deletion', null, 0, 0, false,
+         select ad.user_id, ad.pseudonym, null, null, true, null, null, ad.started_at, null, null, 'deletion', null, 0, 0, false, 0, 0, null,
                 jsonb_build_object('step', ad.step + 1, 'error', ad.last_error, 'gone', true)
            from account_deletions ad where ad.finished_at is null and not exists (select 1 from users x where x.id = ad.user_id)` : ''}`;
     const order = orderBy({ name: 'lower(u.name)', email: "lower(coalesce(u.email,''))", role: 'u.role', status: 'u.disabled', lastSeen: 'u.last_seen', createdAt: 'u.created_at', accessUntil: 'u.access_until', profiles: 'u.profiles', devices: 'u.devices' }, p.sort, p.dir, 'u.created_at, u.id');
+    const lim = p.limit ?? 1000, skip = p.offset ?? 0;
+    // switch and MFA state are resolved in the backend, on the rows the SQL filter left (≤ 1000)
+    const mfaOn = p.mfa === 'off' && akActions(ctx).recovery;
+    if (p.status !== 'pending' && (p.perm || mfaOn)) {
+      type Row = { id: string; role: string | null; pending: boolean; authentik_sub?: string; [k: string]: unknown };
+      let rows = (await ctx.db.query<Row>(`select u.*, (select authentik_sub from users x where x.id = u.id) authentik_sub from (${base}) u ${w.sql} ${order} limit 1000`, w.params)).rows;
+      if (p.perm) {
+        const [key, want] = p.perm.split(':') as [PermKey, 'on' | 'off'];
+        const keep = new Set<string>();
+        for (const u of rows) {
+          if (!u.role) continue; // a claimed deletion that has no account any more
+          const eff = await effectiveRights(ctx, { id: u.id, role: u.role }, null, await getUserOverrides(ctx, u.id));
+          if (eff && eff.perms[key] === (want === 'on')) keep.add(u.id);
+        }
+        rows = rows.filter((u) => keep.has(u.id));
+      }
+      if (mfaOn) {
+        const noMfa = new Set<string>();
+        let next = 0;
+        await Promise.all(Array.from({ length: 8 }, async () => {
+          for (let i = next++; i < rows.length; i = next++) {
+            const u = rows[i]!;
+            const st = u.authentik_sub ? await akMfaState(ctx, u.authentik_sub).catch(() => null) : null;
+            if (st && !st.totp && !st.webauthn && !st.static) noMfa.add(u.id);
+          }
+        }));
+        rows = rows.filter((u) => noMfa.has(u.id));
+      }
+      return { users: rows.slice(skip, skip + lim).map(({ authentik_sub: _s, ...u }) => u), total: rows.length };
+    }
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c from (${base}) u ${w.sql}`, w.params)).rows[0]!.c);
-    const r = await ctx.db.query(`select * from (${base}) u ${w.sql} ${order} limit ${p.limit ?? 1000} offset ${p.offset ?? 0}`, w.params);
+    const r = await ctx.db.query(`select * from (${base}) u ${w.sql} ${order} limit ${lim} offset ${skip}`, w.params);
     return { users: r.rows, total };
   });
 
@@ -267,7 +365,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ---- user detail page ----
   /** true once the deletion tick has claimed the account: admin changes would act on identities that are being deleted */
-  const claimed = async (id: string) => Boolean((await ctx.db.query('select 1 from account_deletions where user_id=$1', [id])).rowCount);
+  const claimed = (id: string) => accountClaimed(ctx, id);
   /** The account or a 404 HttpError. */
   const userOr404 = async (id: string) => {
     const user = await getUserById(ctx, id);
@@ -391,21 +489,6 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     };
   });
 
-  /**
-   * The override write of /rights and /limits, run in accountSerial by the caller (it calls nothing that queues there itself): 409
-   * deletion_in_progress once the deletion tick claimed the account; a changed media-enforced value re-applies the account's identities,
-   * any changed value makes the gateway forget the memoised identity of the account's sessions (they stay signed in).
-   */
-  const putRights = async (actor: string, id: string, b: RightsBody): Promise<{ identities: number; failed: number }> => {
-    const user = await userOr404(id);
-    if (await claimed(id)) throw new HttpError(409, 'deletion_in_progress');
-    const w = await writeRights(ctx, actor, id, b);
-    if (w.changed.includes('party')) await dropPartyDenied(ctx, [id]); // `party` switched off: the open party sockets close (4403)
-    const reapplied = w.media ? await reapplyAccount(ctx, user) : { identities: 0, failed: 0 };
-    if (w.effective) await forgetUserAuth(ctx, id);
-    return reapplied;
-  };
-
   // every matrix row of the account: effective value (with the kids overlay of ?profile=), the role's value, the override, its layer
   app.get('/api/admin/users/:id/rights', admin, async (req) => {
     const user = await userOr404(idParam(req));
@@ -421,7 +504,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     const id = idParam(req);
     const b = rightsBody.parse(req.body);
     return serial(async () => {
-      const reapplied = await putRights(req.user!.id, id, b);
+      const { changed: _c, ...reapplied } = await putRights(ctx, req.user!.id, id, b);
       if (reapplied.failed) return reply.code(502).send({ error: 'policy_partial', failed: reapplied.failed, identities: reapplied.identities });
       return { ok: true, reapplied };
     });
@@ -433,25 +516,17 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     const b = limitsBody.parse(req.body);
     const overrides = { maxStreams: b.maxStreams, remoteMaxBitrate: b.remoteBitrate, maxDownloads: b.maxDownloads, downloadMaxHeight: b.downloadMaxHeight, requestsPerMonth: b.requestsPerMonth };
     return serial(async () => {
-      const { failed } = await putRights(req.user!.id, id, { overrides });
+      const { failed } = await putRights(ctx, req.user!.id, id, { overrides });
       if (failed) return reply.code(502).send({ error: 'jellyfin' });
       return { limits: await getUserLimits(ctx, id) };
     });
   });
 
   // "Repair link": the role policy again on every media server identity, and the request-service user mapped again
-  app.post('/api/admin/users/:id/repair', admin, async (req, reply) => {
+  app.post('/api/admin/users/:id/repair', admin, async (req) => {
     const id = idParam(req);
     return serial(async () => {
-      const user = await userOr404(id);
-      // a claimed account: the request-service user may already be deleted, a repair would create an orphan
-      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
-      const jellyfin = await reapplyAccount(ctx, user);
-      const before = user.seerr_user_id;
-      // no request service: nothing to map (null), and the repair is not a partial failure because of it
-      const requestsOk = requestsEnabled(ctx) ? await ensureSeerrUser(ctx, user).then(() => true, () => false) : null;
-      await audit(ctx, req.user!.id, 'user.repair', id, { jellyfin, requests: { ok: requestsOk, from: before, to: user.seerr_user_id } });
-      return { ok: !jellyfin.failed && requestsOk !== false, jellyfin, requests: { ok: requestsOk, id: user.seerr_user_id } };
+      return repairAccount(ctx, req.user!.id, await userOr404(id));
     });
   });
 

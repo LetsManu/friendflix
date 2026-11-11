@@ -320,3 +320,72 @@ describe('concurrency', () => {
     expect(Number((await env.pool.query("select count(*) n from users where role='admin' and not disabled")).rows[0].n)).toBe(1);
   });
 });
+
+describe('rights filters, columns and bulk rights', () => {
+  const bulk = (body: unknown) => as(admin, 'POST', '/api/admin/users/bulk', body);
+  const names = async (q: string) => ((await get(`/api/admin/users${q}`)).json().users as Array<{ name: string }>).map((u) => u.name).sort();
+  const overridesOf = async (id: string) => (await env.pool.query('select perms from user_limits where user_id=$1', [id])).rows[0]?.perms ?? null;
+  const ownerProfile = (id: string, kids: boolean) =>
+    env.pool.query('insert into profiles(id, user_id, name, is_owner, kids, jellyfin_user_id) values (gen_random_uuid(), $1, $2, false, $3, $4)', [id, kids ? 'Kind' : 'Gast', kids, 'f'.repeat(32)]);
+
+  beforeEach(async () => {
+    await env.pool.query('delete from user_limits; delete from profiles where not is_owner');
+    await env.pool.query('delete from audit_log where action in (\'user.rights\', \'user.repair\')');
+  });
+
+  it('overrides=1 and kids=1 filter; rows carry overrides, kidsProfiles and note', async () => {
+    await env.pool.query("insert into user_limits(user_id, max_streams, perms, note) values ($1, 2, '{\"cast\": false}', 'Testkonto')", [ids.ben]);
+    await ownerProfile(ids.clara!, true);
+    expect(await names('?overrides=1')).toEqual(['Ben']);
+    expect(await names('?kids=1')).toEqual(['Clara']);
+    const users = (await get('/api/admin/users')).json().users as any[];
+    expect(users.find((u) => u.name === 'Ben')).toMatchObject({ overrides: 2, kidsProfiles: 0, note: 'Testkonto' });
+    expect(users.find((u) => u.name === 'Clara')).toMatchObject({ overrides: 0, kidsProfiles: 1, note: null });
+  });
+
+  it('perm=cast:off lists the effective value, perm=comments:off the guests; total follows', async () => {
+    await env.pool.query("insert into user_limits(user_id, perms) values ($1, '{\"cast\": false}')", [ids.anna]);
+    const off = (await get('/api/admin/users?perm=cast:off')).json();
+    expect(off.users.map((u: any) => u.name)).toEqual(['Anna']);
+    expect(off.total).toBe(1);
+    expect(await names('?perm=comments:off')).toEqual(['Ben']);
+    expect(await names('?perm=cast:on')).not.toContain('Anna');
+    expect((await get('/api/admin/users?perm=bogus:off')).statusCode).toBe(400);
+  });
+
+  it('mfa=off is ignored without the Authentik API', async () => {
+    expect((await names('?mfa=off')).length).toBe((await names('')).length);
+  });
+
+  it('bulk perm writes the override per account, audits each, is idempotent, null clears', async () => {
+    const r = await bulk({ ids: [ids.anna, ids.ben], action: 'perm', perm: 'cast', value: false });
+    expect([r.statusCode, r.json()]).toEqual([200, { done: 2 }]);
+    expect(await overridesOf(ids.anna!)).toEqual({ cast: false });
+    expect(await overridesOf(ids.ben!)).toEqual({ cast: false });
+    expect((await audits('user.rights', ids.anna!)).map((a) => a.meta.to)).toEqual([{ cast: false }]);
+    expect((await bulk({ ids: [ids.anna, ids.ben], action: 'perm', perm: 'cast', value: false })).json()).toEqual({ done: 0 });
+    expect((await audits('user.rights', ids.anna!)).length).toBe(1);
+    expect((await bulk({ ids: [ids.anna, ids.ben], action: 'perm', perm: 'cast', value: null })).json()).toEqual({ done: 2 });
+    expect(await overridesOf(ids.anna!)).toBeNull();
+    // equal to the role's value: not stored (guests have comments off already)
+    expect((await bulk({ ids: [ids.ben], action: 'perm', perm: 'comments', value: false })).json()).toEqual({ done: 0 });
+  });
+
+  it('bulk perm validates: perm and value required, admin accounts refuse a switch as a whole', async () => {
+    expect((await bulk({ ids: [ids.anna], action: 'perm', value: false })).statusCode).toBe(400);
+    expect((await bulk({ ids: [ids.anna], action: 'perm', perm: 'cast' })).statusCode).toBe(400);
+    expect((await bulk({ ids: [ids.anna], action: 'perm', perm: 'nope', value: true })).statusCode).toBe(400);
+    const r = await bulk({ ids: [ids.anna, adminId], action: 'perm', perm: 'cast', value: false });
+    expect([r.statusCode, r.json().error]).toEqual([400, 'admin_perms_locked']);
+    expect(await overridesOf(ids.anna!)).toBeNull();
+  });
+
+  it('bulk repair re-applies the policy per account and audits user.repair', async () => {
+    env.jfCalls.length = 0;
+    const r = await bulk({ ids: [ids.anna, ids.ben], action: 'repair' });
+    expect([r.statusCode, r.json()]).toEqual([200, { done: 2 }]);
+    for (const sub of ['anna', 'ben']) expect(env.jfCalls.some((c) => c.path === `/Users/${jfId(sub)}/Policy`)).toBe(true);
+    expect(env.jfCalls.some((c) => c.path === `/Users/${jfId('clara')}/Policy`)).toBe(false);
+    for (const id of [ids.anna!, ids.ben!]) expect((await audits('user.repair', id)).length).toBe(1);
+  });
+});
