@@ -3,6 +3,7 @@
 import type { Ctx } from './ctx.js';
 import { m } from './i18n.js';
 import { notify } from './notify.js';
+import { MediaError } from './media/types.js';
 import { jfUserFor } from './profiles.js';
 import type { JfUser, ProfileRow, UserRow } from './types.js';
 
@@ -47,19 +48,24 @@ export async function fireTmdb(ctx: Db & Pick<Ctx, 'jf'>, mediaType: string, tmd
   )).rows;
   if (!rows.length) return 0;
   const itemId = jfItemId ?? (await ctx.jf.findByTmdb(tmdbId, mediaType).catch(() => null))?.id;
-  // a series shell with only announced (virtual) episodes is not watchable yet
-  if (mediaType === 'tv' && !(itemId && (await seriesHasEpisode(ctx, itemId).catch(() => false)))) return 0;
+  // the title is not in the library as far as we can tell (a lookup against an index that may not know a title that has just arrived): leave the
+  // reminders open for the safety net; a series shell with only announced (virtual) episodes is not watchable yet either
+  if (!itemId) return 0;
+  if (mediaType === 'tv' && !(await seriesHasEpisode(ctx, itemId).catch(() => false))) return 0;
   let sent = 0;
-  const sees = new Map<string, boolean>(); // per viewer identity: one item() call, however many reminders
+  const sees = new Map<string, boolean | null>(); // per viewer identity: one item() call, however many reminders
   for (const r of rows) {
+    const visible = await canSee(ctx, sees, r, itemId);
+    if (visible === null) continue; // could not tell: stays open for the next run
     if (!(await claim(ctx, r.id))) continue;
+    if (!visible) continue; // this recipient may not see the title: done for them, silently (no "available" they could not open)
     // the requester already gets "avail-<seerr request id>" for the same title: one notification is enough
     const req = await ctx.db.query(
       `select 1 from seerr_requests s join notifications n on n.user_id = s.user_id and n.dedupe = 'avail-' || s.seerr_request_id
         where s.user_id = $1 and s.tmdb_id = $2 and s.media_type = $3`, [r.user_id, tmdbId, mediaType]);
     if (req.rowCount) continue;
     const ok = await notify(ctx, {
-      userId: r.user_id, kind: 'reminder', title: m('title.available', { title: r.title }), link: itemId && (await canSee(ctx, sees, r, itemId)) ? `/item/${itemId}` : '/',
+      userId: r.user_id, kind: 'reminder', title: m('title.available', { title: r.title }), link: `/item/${itemId}`,
       dedupe: `remind-${r.id}`, personal: true,
     });
     if (ok) sent++;
@@ -67,17 +73,18 @@ export async function fireTmdb(ctx: Db & Pick<Ctx, 'jf'>, mediaType: string, tmd
   return sent;
 }
 
-/** The title was found with the admin key: only a recipient (the profile that asked) who may see it gets a link to it. Not knowing counts as not seeing. */
-async function canSee(ctx: Db & Pick<Ctx, 'jf'>, memo: Map<string, boolean>, r: ReminderRow, itemId: string): Promise<boolean> {
+/** The title was found with the admin key: only a recipient (the profile that asked) who may see it is told. null = could not be told. */
+async function canSee(ctx: Db & Pick<Ctx, 'jf'>, memo: Map<string, boolean | null>, r: ReminderRow, itemId: string): Promise<boolean | null> {
   try {
     const u = (await ctx.db.query<UserRow>('select * from users where id=$1', [r.user_id])).rows[0];
     if (!u) return false;
     const p = r.profile_id ? (await ctx.db.query<ProfileRow>('select * from profiles where id=$1 and user_id=$2', [r.profile_id, r.user_id])).rows[0] : undefined;
     const viewer = p ? jfUserFor(u, p) : u;
     const key = viewer.jellyfin_user_id;
-    if (!memo.has(key)) memo.set(key, await ctx.jf.item(viewer, itemId).then(() => true, () => false));
+    // not found / not allowed = cannot see; anything else (the media server is down) = unknown
+    if (!memo.has(key)) memo.set(key, await ctx.jf.item(viewer, itemId).then(() => true, (e: unknown) => (e instanceof MediaError && (e.status === 404 || e.status === 403) ? false : null)));
     return memo.get(key)!;
-  } catch { return false; }
+  } catch { return null; }
 }
 
 async function fireEpisodeRow(ctx: Db, r: ReminderRow, realId: string): Promise<boolean> {

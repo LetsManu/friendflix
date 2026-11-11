@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { reminderTick } from '../src/reminders.js';
 import { calendarNotifications } from '../src/routes/polls.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
@@ -20,8 +20,14 @@ const mediaStatus: Record<string, number | undefined> = {};
 /** Jellyfin users that may not see the film (library access) */
 const hiddenFor = new Set<string>();
 const library = new Map<string, string>(); // 'movie:603' -> jf id
-/** a title enters the library: the provider id index (kv, 30 min) forgets what it knew */
-const own = async (key: string, id: string) => { library.set(key, id); await (env.ctx.jf as any).resetLibraryIndex(); };
+/** A library change the way the real flow has it: signalled (the stale copy answers meanwhile), then the background refresh runs; the spacing between refreshes is skipped. */
+const libraryChanged = async () => {
+  const jf = env.ctx.jf as any;
+  jf.providerRefreshAt = 0;
+  jf.invalidateLibraryIndex();
+  await vi.waitFor(() => { if (jf.providerIndexBuild) throw new Error('refreshing'); });
+};
+const own = async (key: string, id: string) => { library.set(key, id); await libraryChanged(); };
 const episodes = new Map<string, { virtual: boolean }>();
 const realEps = new Map<string, Array<{ Id: string; IndexNumber: number; LocationType: string }>>(); // `${series}:${season}`
 let seriesHasFile = false;
@@ -126,13 +132,32 @@ describe('reminders', () => {
     const [ua, ub] = [await uid('Admin'), await uid('Bea')];
     for (const w of [a, b]) expect((await call(w, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1300 })).statusCode).toBe(200);
     await own('movie:1300', MOVIE);
-    hiddenFor.add((await env.pool.query('select jellyfin_user_id from users where id=$1', [ub])).rows[0].jellyfin_user_id);
+    const beaJf = (await env.pool.query('select jellyfin_user_id from users where id=$1', [ub])).rows[0].jellyfin_user_id as string;
+    hiddenFor.add(beaJf);
+    await env.ctx.jf.touchUserData(beaJf); // an earlier test memoised the film as visible for her
     try {
       const r = await env.app.inject({ method: 'POST', url: '/internal/webhook/seerr', headers: secret, payload: { notification_type: 'MEDIA_AVAILABLE', subject: 'Dunmoor 4', media: { media_type: 'movie', tmdbId: '1300' }, request: { request_id: '78' } } });
       expect(r.statusCode).toBe(200);
     } finally { hiddenFor.clear(); }
     const links = Object.fromEntries((await env.pool.query("select user_id, link from notifications where kind='reminder'")).rows.map((n) => [n.user_id, n.link]));
-    expect(links).toEqual({ [ua]: `/item/${MOVIE}`, [ub]: '/' }); // Bea cannot see it: no link to a page that would say "not found"
+    expect(links).toEqual({ [ua]: `/item/${MOVIE}` }); // Bea cannot see it: no notification at all
+    const done = (await env.pool.query('select user_id, fired_at is not null as done from reminders')).rows;
+    expect(done.map((r) => [r.user_id, r.done]).sort()).toEqual([[ua, true], [ub, true]].sort()); // and hers is done, not pending forever
+  });
+
+  it('a film that has just arrived is not in the (stale) index yet: the available webhook does not consume the reminder, the safety net fires it with the link', async () => {
+    await env.pool.query('truncate reminders');
+    await env.pool.query('truncate notifications');
+    await env.ctx.jf.findByTmdb(1, 'movie'); // the index exists
+    expect((await call(a, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1400 })).statusCode).toBe(200);
+    library.set('movie:1400', MOVIE); // arrived in the library, the index does not know yet
+    const r = await env.app.inject({ method: 'POST', url: '/internal/webhook/seerr', headers: secret, payload: { notification_type: 'MEDIA_AVAILABLE', subject: 'Dunmoor 5', media: { media_type: 'movie', tmdbId: '1400' }, request: { request_id: '79' } } });
+    expect(r.statusCode).toBe(200);
+    expect(await notes('reminder')).toEqual([]);
+    expect((await env.pool.query('select 1 from reminders where fired_at is null')).rowCount).toBe(1); // still open
+    await libraryChanged(); // the index refreshes
+    await reminderTick(env.ctx);
+    expect((await env.pool.query("select link from notifications where kind='reminder'")).rows).toEqual([{ link: `/item/${MOVIE}` }]);
   });
 
   it('personal push never reaches Discord or the global ntfy topic', async () => {

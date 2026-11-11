@@ -163,20 +163,67 @@ describe('library lookups by provider id (index of the admin listing)', () => {
     expect(await env.ctx.jf.findByTmdb(5, 'movie')).not.toBeNull(); // still answered, the failure only blocks new tries for a minute
   });
 
-  it('the library change signal (itemAdded / itemRemoved of a film or series on the media event path) marks the index stale: the next lookup refreshes it in the background', async () => {
+  it('the library change signal (itemAdded / itemRemoved of a film or series on the media event path) starts the background refresh itself, the stale copy serves meanwhile', async () => {
     items = [lib(1, { Type: 'Movie', ProviderIds: { Tmdb: '5' } })];
     vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-11T10:00:00Z') });
     await env.ctx.jf.findByTmdb(5, 'movie');
     items.push(lib(2, { Type: 'Movie', ProviderIds: { Tmdb: '6' } }));
-    await handleMediaEvent(env.ctx, { type: 'itemAdded', itemId: lib(2).Id, itemType: 'Movie' });
     at(2 * MIN); // past the minimum gap between refreshes
-    expect(await env.ctx.jf.findByTmdb(6, 'movie')).toBeNull(); // the stale copy answers first
+    await handleMediaEvent(env.ctx, { type: 'itemAdded', itemId: lib(2).Id, itemType: 'Movie' });
+    expect(await env.ctx.jf.findByTmdb(5, 'movie')).not.toBeNull(); // answered without waiting
     await settle();
+    expect(listing().length).toBe(2); // started by the signal, no lookup needed
     expect(await env.ctx.jf.findByTmdb(6, 'movie')).toEqual({ id: lib(2).Id, name: 'Fiction 2' });
-    expect(listing().length).toBe(2);
-    await handleMediaEvent(env.ctx, { type: 'itemAdded', itemId: 'x', itemType: 'Episode' }); // an episode changes no film or series id
-    await env.ctx.jf.findByTmdb(6, 'movie');
+    at(2 * MIN + 10_000);
+    await handleMediaEvent(env.ctx, { type: 'itemAdded', itemId: lib(3).Id, itemType: 'Movie' }); // within a minute of the last refresh: only marked
     await settle();
     expect(listing().length).toBe(2);
+    at(4 * MIN);
+    await env.ctx.jf.findByTmdb(5, 'movie'); // the next lookup after the spacing starts it
+    await settle();
+    expect(listing().length).toBe(3);
+    await handleMediaEvent(env.ctx, { type: 'itemAdded', itemId: 'x', itemType: 'Episode' }); // an episode changes no film or series id
+    at(6 * MIN);
+    await env.ctx.jf.findByTmdb(5, 'movie');
+    await settle();
+    expect(listing().length).toBe(3);
+  });
+
+  it('two cold lookups that both passed the failure check start one listing, not two', async () => {
+    items = [lib(1, { Type: 'Movie', ProviderIds: { Tmdb: '5' } })];
+    const realGet = env.kv.get.bind(env.kv);
+    const gates: Array<() => void> = [];
+    env.kv.get = async (k: string) => { if (k === 'jf:providers:fail') await new Promise<void>((res) => gates.push(res)); return realGet(k); };
+    try {
+      const first = env.ctx.jf.findByTmdb(5, 'movie');
+      const second = env.ctx.jf.findByTmdb(5, 'movie');
+      await vi.waitFor(() => { if (gates.length < 2) throw new Error('waiting'); });
+      gates[0]!(); // the first goes on and builds
+      await first;
+      gates[1]!(); // the second only now returns from its kv read: the index is there
+      expect(await second).not.toBeNull();
+    } finally { env.kv.get = realGet; }
+    expect(listing().length).toBe(1);
+  });
+
+  it('a failing background refresh logs one warning with counts and the error class, no address, and the stale copy goes on serving', async () => {
+    items = [lib(1, { Type: 'Movie', ProviderIds: { Tmdb: '5' } })];
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-11T10:00:00Z') });
+    await env.ctx.jf.findByTmdb(5, 'movie');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      failListing = true;
+      at(31 * MIN);
+      expect(await env.ctx.jf.findByTmdb(5, 'movie')).not.toBeNull();
+      await settle();
+      at(31 * MIN + 10_000);
+      await env.ctx.jf.findByTmdb(5, 'movie'); // within the minute after the failure: no new try, no second warning
+      await settle();
+      expect(warn).toHaveBeenCalledTimes(1);
+      const [msg, detail] = warn.mock.calls[0] as [string, Record<string, unknown>];
+      expect(msg).toContain('provider index refresh failed');
+      expect(Object.keys(detail).sort()).toEqual(['ageMinutes', 'entries', 'error', 'status']);
+      expect(JSON.stringify(detail)).not.toMatch(/http|key|token/i);
+    } finally { warn.mockRestore(); }
   });
 });

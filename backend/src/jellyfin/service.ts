@@ -740,6 +740,7 @@ export class JellyfinService implements MediaServer {
   /** A film or series was added or removed (the media event path): the index is stale, the next lookup refreshes it in the background. */
   invalidateLibraryIndex(): void {
     this.providerChangedAt = Date.now();
+    if (this.providerMemo) this.refreshProviderIndex(); // bound by the single-flight and the spacing; a lookup later starts it if it had to wait
   }
 
   /** Forgets the index everywhere (memory and kv); the next lookup lists the library again. */
@@ -781,14 +782,23 @@ export class JellyfinService implements MediaServer {
       return memo.map;
     }
     const failed = await this.recentFailure();
-    if (failed) throw failed;
+    // another caller may have built (or failed to build) while this one was reading the failure marker
+    if (this.providerMemo) return this.providerMemo.map;
+    if (failed || (this.providerFailure && this.providerFailure.until > Date.now())) throw failed ?? new Error(this.providerFailure!.message);
     return (await this.buildProviderIndex()).map;
   }
 
   private refreshProviderIndex(): void {
     if (this.providerIndexBuild || Date.now() - this.providerRefreshAt < PROVIDER_INDEX_MIN_GAP_MS) return;
     if (this.providerFailure && this.providerFailure.until > Date.now()) return;
-    this.buildProviderIndex().catch(() => undefined); // the stale copy keeps serving
+    this.buildProviderIndex().catch((e: unknown) => {
+      // the stale copy keeps serving; the failure window keeps this to one warning a minute. Counts and the error class only (never an address or a key).
+      const status = (e as { status?: unknown })?.status;
+      console.warn('jellyfin provider index refresh failed', {
+        entries: this.providerMemo?.map.size ?? 0, ageMinutes: this.providerMemo ? Math.round((Date.now() - this.providerMemo.at) / 60_000) : null,
+        error: e instanceof Error ? e.constructor.name : 'unknown', status: typeof status === 'number' ? status : null,
+      });
+    });
   }
 
   private buildProviderIndex(): Promise<ProviderIndex> {

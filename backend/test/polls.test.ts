@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { closeDuePolls, pollTick, resolveRequestedPolls } from '../src/polls.js';
 import { calendarNotifications } from '../src/routes/polls.js';
 import { parties } from '../src/routes/party.js';
@@ -14,6 +14,13 @@ let libraryHasDune = false;
 /** the library has the title but the creator may not see it (library access) */
 let hideDune = false;
 let imported = '';
+/** a library change the way the real flow has it: signalled, then refreshed in the background (the spacing between refreshes is skipped) */
+const libraryChanged = async () => {
+  const jf = env.ctx.jf as any;
+  jf.providerRefreshAt = 0;
+  jf.invalidateLibraryIndex();
+  await vi.waitFor(() => { if (jf.providerIndexBuild) throw new Error('refreshing'); });
+};
 
 beforeAll(async () => {
   env = await makeEnv({
@@ -78,7 +85,7 @@ describe('polls', () => {
     await resolveRequestedPolls(env.ctx);
     expect((await call('GET', `/api/polls/${id}`)).json().status).toBe('requested'); // not in library yet
     libraryHasDune = true;
-    await (env.ctx.jf as any).resetLibraryIndex();
+    await libraryChanged();
     hideDune = true; // the poll's creator cannot see the title: it is not scheduled for a party that cannot play it
     await seerrHooks.run(env.ctx, { type: 'available', tmdbId: 900001, mediaType: 'movie' });
     expect((await call('GET', `/api/polls/${id}`)).json().status).toBe('requested');
@@ -91,12 +98,12 @@ describe('polls', () => {
 
   it('a wish option whose title is in the library but not visible to the creator is left out', async () => {
     libraryHasDune = true; hideDune = true;
-    await (env.ctx.jf as any).resetLibraryIndex();
+    await libraryChanged();
     for (const u of (await env.pool.query<{ jellyfin_user_id: string }>('select jellyfin_user_id from users')).rows) await env.ctx.jf.touchUserData(u.jellyfin_user_id); // the earlier tests memoised the item as visible
     try {
       const r = await call('POST', '/api/polls', { title: 'Unsichtbar', options: [{ tmdbId: 900001, mediaType: 'movie' }, { jfItemId: A }], closesInMinutes: 5 });
       expect(r.statusCode).toBe(400); // one option is left: "need two distinct options"
-    } finally { libraryHasDune = false; hideDune = false; await (env.ctx.jf as any).resetLibraryIndex(); }
+    } finally { libraryHasDune = false; hideDune = false; await libraryChanged(); }
   });
 
   it('polls without votes are cancelled; invalid options rejected', async () => {
