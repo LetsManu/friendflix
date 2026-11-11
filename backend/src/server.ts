@@ -41,6 +41,7 @@ import { recoIndexDue, startRecoIndexListener, stopRecoIndex } from './reco/inde
 import { announceSetupCode } from './setup/code.js';
 import { isOperational, isSetupComplete } from './setup/state.js';
 import { autoUpdateTick, syncChannel } from './updater.js';
+import { joinedStopsSettled } from './cast.js';
 
 // the bootstrap keys open the database: env (incl. VAR_FILE) wins, else the bootstrap volume written by the init container (a missing
 // file stops the start, naming the file); the settings store then layers the saved settings over env
@@ -169,7 +170,9 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     stopRecoIndex();
     offPush();
     offUpdater();
-    void live.close().catch(() => undefined)
+    // continuous AirPlay stops a logout / revoke started in the background reach the media server first (at most 5 s)
+    void joinedStopsSettled(5_000).catch(() => undefined)
+      .then(() => live.close()).catch(() => undefined)
       .then(() => settings.close()).catch(() => undefined)
       .then(() => app.close()).then(() => process.exit(0));
   });

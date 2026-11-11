@@ -330,6 +330,47 @@ describe('server-side per-episode progress of a joined AirPlay stream', () => {
     ]);
   });
 
+  it('a "next" jump from the middle to the start of the next part stops the previous one where it was', async () => {
+    const { hash, ps } = await joinedToken();
+    const from = env.jfCalls.length;
+    await progress(hash, EPS[0]!.id, 0);
+    skipClock(5_000);
+    await progress(hash, EPS[0]!.id, 300 * S);
+    await progress(hash, EPS[1]!.id, 0); // the remote screen's "next": a seek to episode 2's start
+    expect(reports(from).slice(1)).toEqual([
+      ['Playing/Stopped', EPS[0]!.id, ps[0], 300 * S],
+      ['Playing', EPS[1]!.id, ps[1], 0],
+    ]);
+  });
+
+  it('the next part\'s start counts as the end only within 180 s of it', async () => {
+    const stopAt = async (lastBeforeEnd: number) => {
+      const { hash } = await joinedToken();
+      const from = env.jfCalls.length;
+      await progress(hash, EPS[0]!.id, EPS[0]!.rt - lastBeforeEnd * S);
+      await progress(hash, EPS[1]!.id, 0);
+      return reports(from).find((r) => r[0] === 'Playing/Stopped')![3];
+    };
+    expect(await stopAt(180)).toBe(EPS[0]!.rt);
+    expect(await stopAt(181)).toBe(EPS[0]!.rt - 181 * S);
+  });
+
+  it('the bounded wait for background stops returns although a stop hangs (graceful shutdown)', async () => {
+    const { hash, rec } = await joinedToken();
+    await progress(hash, EPS[0]!.id, 0);
+    const jf = env.ctx.jf as unknown as { report: (...a: unknown[]) => Promise<void> };
+    const orig = jf.report;
+    let release!: () => void;
+    jf.report = () => new Promise<void>((r) => (release = r));
+    try {
+      await revokeCasts(env.ctx, rec.userId, rec.deviceId);
+      const t0 = Date.now();
+      await joinedStopsSettled(100);
+      expect(Date.now() - t0).toBeLessThan(1_000);
+    } finally { jf.report = orig; release?.(); }
+    await joinedStopsSettled();
+  });
+
   it('a call queued behind a running one re-reads the token: a revoke in between ends it', async () => {
     const { hash, castId, ps, rec } = await joinedToken();
     const jf = env.ctx.jf as unknown as { report: (...a: unknown[]) => Promise<void> };

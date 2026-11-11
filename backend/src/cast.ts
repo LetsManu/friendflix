@@ -346,11 +346,16 @@ export const JOINED_REPORT_MS = 30_000;
 /** a part whose last known position is this close to its end played to its end (the gateway's 15 s throttle plus a few segments) */
 export const JOINED_END_TICKS = 300_000_000;
 /**
- * the next part's first fetch at most this far into it (its first segment or two) means the previous part played to its end, wherever
- * its last known position was (a TV filling its buffer fast fetches far ahead of the gateway's 15 s throttle)
+ * the next part's first fetch at most this far into it (its first segment or two) means the previous part played to its end, when that
+ * part's last known position was within JOINED_NEAR_END_TICKS of its end (a TV filling its buffer fast fetches far ahead of the
+ * gateway's 15 s throttle); from further away it is a jump ("next" on the remote screen) and the part stops where it was
  */
 export const JOINED_START_TICKS = 100_000_000;
-/** the watch time one server report closes is at most this (the TV fetched nothing for longer: paused or gone) */
+export const JOINED_NEAR_END_TICKS = 1_800_000_000;
+/**
+ * the watch time one server report closes is at most this (the TV fetched nothing for longer: paused or gone). The server cannot see a
+ * pause on a joined stream, so a pause of up to this long without fetches still counts as watched (accepted).
+ */
 export const JOINED_ELAPSED_MAX_MS = 60_000;
 
 /** a joined AirPlay media token (more than one item) */
@@ -409,9 +414,10 @@ export async function noteJoinedProgress(ctx: Ctx, hash: string, rec: CastRecord
     if (!st || st.idx !== idx) {
       const prev = st ? items[st.idx] : undefined;
       if (prev) {
-        // it played to its end when its last position was within its last 30 s, or when the next part starts at its beginning;
-        // else it stops where it was (a seek)
-        const ended = prev.runtimeTicks && (st!.pos >= prev.runtimeTicks - JOINED_END_TICKS || (idx === st!.idx + 1 && pos < JOINED_START_TICKS));
+        // it played to its end when its last position was within its last 30 s, or when the next part starts at its beginning while it
+        // was within its last 180 s (fast fetching); else it stops where it was (a seek, or "next" from the middle)
+        const nearEnd = prev.runtimeTicks !== undefined && st!.pos >= prev.runtimeTicks - JOINED_NEAR_END_TICKS;
+        const ended = prev.runtimeTicks && (st!.pos >= prev.runtimeTicks - JOINED_END_TICKS || (idx === st!.idx + 1 && pos < JOINED_START_TICKS && nearEnd));
         todo.push(['Playing/Stopped', prev, ended ? prev.runtimeTicks! : st!.pos, watched(st!, now)]);
       } else if (idx !== 0) {
         dropFirst = true;
@@ -439,8 +445,14 @@ export async function noteJoinedProgress(ctx: Ctx, hash: string, rec: CastRecord
 
 /** stops of joined tokens still running in the background (revokeCasts never waits for them) */
 const pendingStops = new Set<Promise<void>>();
-/** settles once every background stop started so far is done (tests; a graceful shutdown could use it too) */
-export const joinedStopsSettled = async (): Promise<void> => { await Promise.allSettled([...pendingStops]); };
+/** settles once every background stop started so far is done, or after `maxMs` (graceful shutdown: server.ts; tests) */
+export async function joinedStopsSettled(maxMs?: number): Promise<void> {
+  const all = Promise.allSettled([...pendingStops]).then(() => undefined);
+  if (maxMs === undefined) return all;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([all, new Promise<void>((r) => { timer = setTimeout(r, maxMs); timer.unref?.(); })]);
+  clearTimeout(timer);
+}
 const stopInBackground = (ctx: Ctx, hash: string, rec: CastRecord) => {
   const p = stopJoined(ctx, hash, rec).catch(() => undefined); // never throws; belt and braces
   pendingStops.add(p);
