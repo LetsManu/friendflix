@@ -80,3 +80,45 @@ describe('HOME_NETWORKS config', () => {
     for (const c of ['10.0.0.0/33', 'fc00::/129', '10.0.0.0/8/1', 'x', '', '10.0.0.0/-1']) expect(isValidCidr(c)).toBe(false);
   });
 });
+
+describe('trustProxy: the client address behind the proxy (req.ip, the rate-limit key)', () => {
+  const build = async () => {
+    const { default: Fastify } = await import('fastify');
+    const { default: rateLimit } = await import('@fastify/rate-limit');
+    const { TRUSTED_PROXY_RANGES } = await import('../src/netaddr.js');
+    const app = Fastify({ trustProxy: [...TRUSTED_PROXY_RANGES] });
+    await app.register(rateLimit, { global: true, max: 2, timeWindow: '1 minute' });
+    app.get('/ip', async (r) => r.ip);
+    return app;
+  };
+  const get = (app: Awaited<ReturnType<typeof build>>, remoteAddress: string, xff?: string) =>
+    app.inject({ method: 'GET', url: '/ip', remoteAddress, headers: xff ? { 'x-forwarded-for': xff } : {} });
+
+  it('a proxy on loopback or a private address: req.ip is the client it appended, whatever the client put in front', async () => {
+    const app = await build();
+    expect((await get(app, '127.0.0.1', '203.0.113.9')).body).toBe('203.0.113.9');
+    expect((await get(app, '172.17.0.1', '198.51.100.1, 203.0.113.10')).body).toBe('203.0.113.10');
+    expect((await get(app, '192.168.1.2', '10.9.9.9, 203.0.113.11')).body).toBe('203.0.113.11'); // a spoofed private entry in front changes nothing
+    expect((await get(app, '::ffff:127.0.0.1', '203.0.113.12')).body).toBe('203.0.113.12');
+    expect((await get(app, 'fd00::5', '203.0.113.13')).body).toBe('203.0.113.13');
+    await app.close();
+  });
+  it('a direct connection from a public address: X-Forwarded-For is ignored', async () => {
+    const app = await build();
+    expect((await get(app, '198.51.100.77', '203.0.113.9')).body).toBe('198.51.100.77');
+    expect((await get(app, '198.51.100.77', '10.0.0.1, 203.0.113.9')).body).toBe('198.51.100.77');
+    await app.close();
+  });
+  it('rate limiting: rotating X-Forwarded-For from a public peer shares one bucket; behind the proxy each client has its own', async () => {
+    const app = await build();
+    const codes = [];
+    for (let i = 1; i <= 3; i++) codes.push((await get(app, '198.51.100.88', `203.0.113.${i}`)).statusCode);
+    expect(codes).toEqual([200, 200, 429]);
+    const behind = [];
+    for (const [peerHeader, n] of [['198.51.100.200, 203.0.113.50', 3], ['198.51.100.201, 203.0.113.51', 1]] as const) {
+      for (let i = 0; i < n; i++) behind.push((await get(app, '127.0.0.1', peerHeader)).statusCode);
+    }
+    expect(behind).toEqual([200, 200, 429, 200]); // a spoofed leftmost entry does not buy a new bucket; another real client has its own
+    await app.close();
+  });
+});

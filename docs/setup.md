@@ -166,7 +166,7 @@ The request service is **optional**. Without `REQUESTS_URL` and `REQUESTS_API_KE
 
 The advanced config routes `/api/`, `/auth/` and `/ws/` to the backend (`:3081`), `/media/` to the gateway (`:3082`, unbuffered, with HTTP range), keeps `/media/c/` (Chromecast tokens) out of the logs, and answers `/internal/`, `/metrics` and `/health/ready` with 404. If you changed `BIND_ADDR` or the ports, replace `127.0.0.1:3081`/`:3082` in the pasted text accordingly. Keep the `/media/c/` block even if you do not use Chromecast.
 
-The backend trusts `X-Forwarded-*` headers (`trustProxy`), so NPM must be the only way in: the ports stay on `BIND_ADDR`.
+The backend believes `X-Forwarded-For` only from a proxy on a loopback or private address (`trustProxy`: 127.0.0.0/8, 10/8, 172.16/12, 192.168/16, link-local, `fc00::/7`), which covers NPM on the host and in a bridge container. A connection from any other address is taken at its own address, so a spoofed header cannot change the client address (rate limits, audit log). A proxy that reaches the backend from a public address is not supported; keep NPM the only way in: the ports stay on `BIND_ADDR`.
 
 Until the setup wizard is finished, anybody who reaches the portal sees the wizard's first page (the code prompt). They cannot get past it without the code, but they can use up its attempts ([section 8](#the-setup-code)). Finish the wizard right after starting the stack, or keep the portal private until then, e.g. with an NPM *Access List* that only allows your own address, or by opening the wizard through an SSH tunnel to `127.0.0.1:3080`.
 

@@ -64,6 +64,15 @@ export function isHomeAddress(ip: string, cidrs: string[]): boolean {
   return b !== null && cidrs.some((c) => inCidr(b, c));
 }
 
+/**
+ * Peers whose X-Forwarded-For Fastify believes (`trustProxy`): loopback, link-local and private (RFC 1918 / unique-local) addresses, i.e. the
+ * documented setups (the reverse proxy on the host, or in a bridge container, reaches the backend on BIND_ADDR). Anything else that connects
+ * directly is taken at its socket address, so a spoofed X-Forwarded-For cannot pick another rate-limit bucket. A proxy that reaches the
+ * backend from a public address is not supported (docs/setup.md). `req.ip` is then the first address, walking back from the peer, that is not
+ * one of these: the client the proxy appended.
+ */
+export const TRUSTED_PROXY_RANGES: readonly string[] = ['loopback', 'linklocal', 'uniquelocal'];
+
 interface AddrReq { headers: Record<string, string | string[] | undefined>; socket?: { remoteAddress?: string } }
 const hdr = (req: AddrReq, k: string) => {
   const v = req.headers[k];

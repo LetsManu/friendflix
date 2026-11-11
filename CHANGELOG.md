@@ -4,7 +4,16 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+### Security
+- **A spoofed `X-Forwarded-For` no longer picks the rate-limit bucket.** The backend believed the header from any peer and took the leftmost (client-written) entry. It now trusts it only from loopback and private addresses (NPM on the host or in a bridge container, as documented) and then uses the address the proxy appended; a direct connection from anywhere else counts as itself. A proxy that reaches the backend from a public address is not supported ([docs/setup.md](docs/setup.md)).
+- **Windows release build:** the Tauri CLI comes from a lockfile (`desktop/package-lock.json`) instead of an unpinned `npx` download in the job that holds the signing key; `rustix` is updated to 1.1.6 (RUSTSEC-2026-0486).
+
+### Added
+- **Admin → Status shows how the "not here yet" suggestions are built.** A card per type (films, series) with the counts (starting titles, recommendations, already in the library, filtered by age, shown, failures) and a hint when nearly everything recommended is already in the library or there are no starting titles. Numbers only; available on the owner profile.
+
 ### Fixed
+- **The Android app hears about a sign-out once** when several requests fail with 401 at the same time, not once per request.
+- **The page's capabilities retry for the Android app** no longer fires when the page just went to the background and is never scheduled after the page was torn down.
 - **Flaky phone-player test.** The "title glides down when the skip row goes" check measured while the title was still gliding from the skip row's arrival; it now waits for that and steps the glide's own clock (no app change).
 
 ## [3.3.0] – Churros – 2026-11-11

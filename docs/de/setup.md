@@ -166,7 +166,7 @@ Der Wunsch-Dienst ist **optional**. Ohne `REQUESTS_URL` und `REQUESTS_API_KEY` b
 
 Die Advanced-Konfiguration leitet `/api/`, `/auth/` und `/ws/` ans Backend (`:3081`), `/media/` ans Gateway (`:3082`, ungepuffert, mit HTTP-Range), hält `/media/c/` (Chromecast-Tokens) aus den Logs heraus und beantwortet `/internal/`, `/metrics` und `/health/ready` mit 404. Wer `BIND_ADDR` oder die Ports geändert hat, passt `127.0.0.1:3081`/`:3082` im eingefügten Text an. Den `/media/c/`-Block auch ohne Chromecast stehen lassen.
 
-Das Backend vertraut `X-Forwarded-*`-Headern (`trustProxy`), NPM muss daher der einzige Zugang sein: Die Ports bleiben auf `BIND_ADDR`.
+Das Backend glaubt `X-Forwarded-For` nur von einem Proxy mit Loopback- oder privater Adresse (`trustProxy`: 127.0.0.0/8, 10/8, 172.16/12, 192.168/16, Link-Local, `fc00::/7`); das deckt NPM auf dem Host und in einem Bridge-Container ab. Eine Verbindung von jeder anderen Adresse zählt mit ihrer eigenen Adresse, ein gefälschter Header ändert die Client-Adresse (Limits, Audit-Log) also nicht. Ein Proxy, der das Backend von einer öffentlichen Adresse erreicht, wird nicht unterstützt; NPM bleibt der einzige Zugang: Die Ports bleiben auf `BIND_ADDR`.
 
 Solange der Einrichtungsassistent nicht abgeschlossen ist, sieht jeder, der das Portal erreicht, dessen erste Seite (die Abfrage des Codes). Ohne den Code kommt niemand weiter, aber jeder kann dessen Versuche aufbrauchen ([Abschnitt 8](#der-einrichtungscode)). Den Assistenten deshalb direkt nach dem Start abschließen oder das Portal bis dahin privat halten, z. B. mit einer *Access List* in NPM, die nur deine eigene Adresse zulässt, oder indem du den Assistenten über einen SSH-Tunnel auf `127.0.0.1:3080` öffnest.
 
