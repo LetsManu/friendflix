@@ -197,6 +197,7 @@
      billboard (.content's bottom edge is --bh - --foot down, the billboard's width is 100cqw), so the card's `top: 0` is a fixed
      distance below the top bar and its `right` the page gutter; absolute, so nothing around it ever moves */
   .hoff { position: absolute; left: calc(-1 * var(--gutter)); bottom: 0; width: 100cqw; height: max(0px, calc(var(--bh) - var(--foot) - var(--nav-total) - 16px)); pointer-events: none; }
+  @supports not (width: 1cqw) { .hoff { width: 100vw; } } /* engines without container units: the viewport (a scrollbar's width off at most) */
   .head { transition: transform 640ms var(--emph); }
   .eyebrow { margin: 0 0 12px; color: var(--acc); font-size: 13px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; line-height: 16px; }
   .name { margin: 0 0 16px; font-size: min(4.5vw, 88px); font-weight: 900; letter-spacing: -.035em; line-height: .98; text-wrap: balance; }

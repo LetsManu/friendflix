@@ -71,7 +71,7 @@ const fr: Translation<typeof de> = {
     play: 'Reprendre ici à {time}',
     playAria: 'Reprendre ici : {title} à {time}, dernière lecture sur {device}',
     dismiss: 'Masquer',
-    justNow: 'à l\'instant',
+    justNow: 'à l’instant',
   },
   row: {
     showAll: 'Tout afficher',

@@ -41,6 +41,24 @@ test('card overlays the billboard and moves nothing', async ({ page, api }) => {
   expect(await rowY(page)).toBe(y);
 });
 
+test.describe('narrow desktop', () => {
+  test.use({ viewport: { width: 768, height: 800 } });
+  test('the card stays clear of the title and the meta line', async ({ page, api }) => {
+    api.handoff.home = offer();
+    await page.goto('/');
+    await expect(region(page)).toBeVisible();
+    await page.waitForTimeout(400);
+    const c = (await region(page).boundingBox())!;
+    expect(c.x + c.width).toBeLessThanOrEqual(768);
+    for (const sel of ['section.billboard h1', 'section.billboard .meta']) {
+      const b = (await page.locator(sel).boundingBox())!;
+      const apart = c.x >= b.x + b.width - 0.5 || c.x + c.width <= b.x + 0.5 || c.y >= b.y + b.height - 0.5 || c.y + c.height <= b.y + 0.5;
+      expect(apart, sel).toBe(true);
+    }
+    expect(c.width).toBeGreaterThanOrEqual(200);
+  });
+});
+
 test('reading order: the card follows the heading and precedes the billboard buttons', async ({ page, api }) => {
   api.handoff.home = offer();
   await page.goto('/');

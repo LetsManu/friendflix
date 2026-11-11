@@ -62,7 +62,9 @@
   /* out of the flow: the host's slot is absolute (DeskBillboard / Hero / the page's phone wrapper), so the rows below never move */
   .hc { position: absolute; z-index: 6; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 14px; align-items: start; padding: 14px; color: #fff; pointer-events: auto;
     animation: hc-in 240ms cubic-bezier(.22, 1, .36, 1) both; transition: opacity 180ms linear; }
-  .hc.desk { top: 0; right: var(--pad-x); width: 380px; max-width: calc(100% - 2 * var(--pad-x)); }
+  .hc.desk { top: 0; right: var(--pad-x); width: min(380px, max(220px, calc(100% - var(--pad-x) - 16px - var(--gutter, 32px) - max(420px, min(40vw, 640px))))); }
+  /* the billboard is a size container: in a narrow column the thumbnail makes room for the text */
+  @container (max-width: 900px) { .hc.desk { grid-template-columns: minmax(0, 1fr); } .desk .thumb { display: none; } .desk .txt { grid-column: 1; } }
   .hc.phone { top: calc(var(--nav-total) + 8px); left: 16px; right: 16px; }
   .hc.tv { top: 0; right: var(--tv-gutter, 3.5rem); width: 520px; font-size: 1.25rem; }
   .hc.phone { grid-template-columns: minmax(0, 1fr); }
