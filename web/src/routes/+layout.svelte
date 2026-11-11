@@ -7,7 +7,7 @@
   import { afterNavigate, beforeNavigate, goto, onNavigate } from '$app/navigation';
   import { pageStore } from '#lib/page';
   const page = pageStore();
-  import { api, ApiError, setActiveProfile, setCsrf, type Me } from '#lib/api';
+  import { api, ApiError, setActiveProfile, setActiveProfileName, setCsrf, type Me } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import Footer from '#lib/Footer.svelte';
@@ -649,7 +649,7 @@
     window.addEventListener('ff-help', onHelp);
     const onOnboarded = () => { if (me) me = { ...me, onboarded: true }; }; // /welcome finished
     window.addEventListener('ff-onboarded', onOnboarded);
-    const onMeChanged = () => void api<Me>('/api/me').then((m) => { if (me) me = { ...me, name: m.name, profile: m.profile }; }).catch(() => undefined); // /me/account saved name or avatar
+    const onMeChanged = () => void api<Me>('/api/me').then((m) => { setActiveProfileName(m.profile?.name); if (me) me = { ...me, name: m.name, profile: m.profile }; }).catch(() => undefined); // /me/account saved name or avatar
     window.addEventListener('ff-me-changed', onMeChanged);
     stops.push(() => { window.removeEventListener('ff-notes', onNotes); window.removeEventListener('ff-help', onHelp); window.removeEventListener('ff-onboarded', onOnboarded); window.removeEventListener('ff-me-changed', onMeChanged); });
     // header background: a 10 px sentinel at the top of the document instead of reading scrollY on every scroll event
@@ -708,6 +708,7 @@
         const m = await api<Me>('/api/me');
         setCsrf(m.csrfToken);
         setActiveProfile(m.profile?.id);
+        setActiveProfileName(m.profile?.name);
         serverCaps.set(capsFrom(m.server?.capabilities));
         serverKind.set(kindFrom(m.server?.kind));
         setMediaServer(m.server?.kind); // texts that name the media server (i18n serverText)

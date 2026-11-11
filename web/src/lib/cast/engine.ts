@@ -41,12 +41,14 @@
  * queue tokens or revokes) and waits for the lock; when the owner tab goes (pagehide, Stop) it picks the cast up itself.
  */
 import { get, writable, type Readable, type Writable } from 'svelte/store';
-import { api, cachedItem, secToTicks, ticksToSec, type Item, type ItemDetail } from '#lib/api';
+import { api, cachedItem, getActiveProfileName, secToTicks, ticksToSec, type Item, type ItemDetail } from '#lib/api';
 import { castActiveSubtitle, castAdoptTracks, castBody, castCapsReady, castCustomReceiver, castFellBack, castLeave, castPlayPause, castQueueNext, castQueueRemove, castSeek, castSendMessage, castSetSubtitle, castState, castStop, loadOnCast, onCastEvent, onReceiverMessage, queueOnCast, requestCastSession, whenCastReady, type CastEvent, type CastInfo, type CastState } from '#lib/cast';
 import { segmentShown, serverCaps } from '#lib/capabilities';
 import { tr } from '#lib/i18n';
 import { createAirPlay, type AirPlayController, type AirPlayDeps, type AirPlayState } from '#lib/player/airplay';
 import { airLog } from '#lib/player/airplayLog';
+import { motionAllowed } from '#lib/preview';
+import { formFactor } from './playOn';
 import { castLog, type CastLogEntry } from './castLog';
 import { castIdOfContentUrl, clearHint, lookupToCastInfo, readHint, sha256Hex, writeHint, type CastHint, type CastLookup, type Store } from './resume';
 import { barTitles, firstInfoBody } from '#lib/player/bar';
@@ -155,6 +157,12 @@ export interface EngineDeps {
   lock(ifAvailable: boolean): Promise<(() => void) | null>;
   /** the page came back from the back/forward cache (pageshow, persisted); registered once */
   onRestore(fn: () => void): void;
+  /** the active profile's display name (the only thing about the viewer the TV is told; '' = unknown) */
+  profileName?(): string;
+  /** this device's kind, for the TV's "Cast from Anna's phone" pill */
+  formFactor?(): 'phone' | 'tablet' | 'computer';
+  /** may the TV animate (calm mode and reduced motion say no) */
+  motion?(): boolean;
 }
 
 /** progress report cadence while the receiver plays */
@@ -254,6 +262,8 @@ interface Live {
   unpinRetried: boolean;
   /** the cast log's name of the title ("S1 E4", "episode", "film"; never its name) */
   label: string;
+  /** the TV's second line for an episode ("Season 1 · Episode 4 · The Lantern Road"; '' for a film or while the item is unknown) */
+  line: string;
   /** when the live token was loaded on the receiver (its first `playing` is logged with the time since) */
   loadAt?: number;
   /** a stall on the TV: since when, and whether it was logged */
@@ -276,6 +286,11 @@ const subsOf = (ci: CastInfo): CastTrack[] => ci.subtitles.map(({ index, title, 
 const nextLabel = (it: Item): string => episodeLabel(it);
 
 /** the cast log's name of a title: "S1 E4", "episode" without numbers, "film" (never a name or id) */
+/** the TV's line under the title: "Season 1 · Episode 4 · The Lantern Road"; an episode without numbers: its name; a film: '' */
+function lineOf(it: Pick<Item, 'type' | 'name' | 'indexNumber' | 'parentIndexNumber'> | null): string {
+  if (!it || it.type !== 'Episode') return '';
+  return it.parentIndexNumber != null && it.indexNumber != null ? tr('player.castTv.line', { s: it.parentIndexNumber, e: it.indexNumber, name: it.name }) : it.name;
+}
 function labelOf(it: Pick<Item, 'type' | 'indexNumber' | 'parentIndexNumber'> | null, episode = false): string {
   if (it ? it.type !== 'Episode' : !episode) return 'film';
   return it?.parentIndexNumber != null && it.indexNumber != null ? `S${it.parentIndexNumber} E${it.indexNumber}` : 'episode';
@@ -309,6 +324,9 @@ export function receiverStrings() {
     startsIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => tr('player.watch.startsIn', { n: i + 1 })),
     stillTitle: tr('player.watch.stillTitle'), stillText: tr('player.watch.stillText', { ep: '{ep}' }), keepWatching: tr('player.watch.keepWatching'),
     skip: { intro: tr('player.skip.intro'), recap: tr('player.skip.recap') },
+    upNextIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => tr('player.castTv.upNextIn', { n: i + 1 })),
+    keys: tr('player.castTv.keys'), phoneCancel: tr('player.castTv.phoneCancel'), stopHere: tr('player.castTv.stopHere'), stillKeys: tr('player.castTv.stillKeys'),
+    loading: tr('player.castTv.loading'), stall: tr('player.castTv.stall'), paused: tr('player.pause.paused'),
   };
 }
 
@@ -339,12 +357,20 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (cur !== s || !s.ci || !custom(s)) return;
     const q = s.queued;
     cast.castSendMessage?.({ t: 'item', castId: s.ci.castId, episode: s.view.isEpisode, segs: s.segs,
-      next: q ? { castId: q.ci.castId, label: nextLabel(q.it), auto: s.noAuto !== q.it.id && s.autoSet !== false, ask: Boolean(q.ask) } : null });
+      next: q ? { castId: q.ci.castId, label: nextLabel(q.it), auto: s.noAuto !== q.it.id && s.autoSet !== false, ask: Boolean(q.ask) } : null,
+      meta: { title: s.view.title, line: s.view.isEpisode ? s.line : '' } });
   };
   /** own receiver: texts, subtitle style and countdown length, once per session (and again after a new token load) */
   const tvUi = (s: Live) => {
     if (cur !== s || !custom(s)) return;
-    cast.castSendMessage?.({ t: 'ui', strings: receiverStrings(), sub: deps.prefs().subtitleStyle, countdown: COUNTDOWN_SECONDS });
+    cast.castSendMessage?.({ t: 'ui', strings: receiverStrings(), sub: deps.prefs().subtitleStyle, countdown: COUNTDOWN_SECONDS,
+      who: whoText(), motion: deps.motion ? deps.motion() : true });
+  };
+  /** "Cast from Anna's phone": the profile's display name and the kind of device, nothing else (no account, token, URL or device name) */
+  const whoText = (): string => {
+    const name = (deps.profileName?.() ?? '').trim().slice(0, 40);
+    const key = { phone: 'player.castTv.fromPhone', tablet: 'player.castTv.fromTablet', computer: 'player.castTv.fromComputer' } as const;
+    return name ? tr(key[deps.formFactor?.() ?? 'computer'], { name }) : '';
   };
   /** own receiver: input on the TV (its remote) */
   function fromTv(s: Live, m: Record<string, unknown>) {
@@ -666,7 +692,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     s.ci = q.ci; s.started = false; s.lastPaused = null; s.going = false; s.hold = Boolean(q.ask);
     s.audioIndex = undefined; s.subIndex = -1; s.sleepAfterEpisode = false; s.noAuto = undefined;
     s.segs = []; s.credits = false; s.queueAsked = false; s.upLookup = undefined; s.offered = undefined; s.unpinRetried = false;
-    s.label = labelOf(q.it); s.loadAt = timers.now(); s.foreignAt = undefined;
+    s.label = labelOf(q.it); s.line = lineOf(q.it); s.loadAt = timers.now(); s.foreignAt = undefined;
     log('info', 'queue', `queued episode started · ${s.label}`);
     const { title, sub } = barTitles(q.it);
     patch(s, { itemId: q.it.id, title, subtitle: sub, seriesId: q.it.seriesId, posterId: q.it.id, isEpisode: q.it.type === 'Episode', state: 'connecting',
@@ -1004,7 +1030,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (!a) revoke(old); // AirPlay: the controller revokes the old token once the new one is on the element
     if (my !== seq) return;
     if (it) { const { title, sub } = barTitles(it); patch(s, { title, subtitle: sub, seriesId: it.seriesId, posterId: it.id, isEpisode: it.type === 'Episode' }); }
-    if (fresh) { s.label = labelOf(it, s.view.isEpisode); loadSegs(s); }
+    if (fresh) { s.label = labelOf(it, s.view.isEpisode); s.line = lineOf(it); loadSegs(s); }
     if (a) { log('info', 'load', `${s.label} · from ${startAt === undefined ? 'resume position' : clock(startAt)}`); await airSwap(s, a, my, itemId, startAt, fresh, it, hold); return; }
     let ci: CastInfo;
     try {
@@ -1090,9 +1116,13 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       audioIndex: h.audioIndex, subIndex: h.subIndex, maxBitrate: h.maxBitrate, sleepAfterEpisode: h.sleepAfterEpisode,
       // a resumed cast first looks at the receiver's own queue (restoreQueue): nothing is queued before that
       retry: null, offs: [], segs: [], credits: false, queueAsked: how === 'resume', going: false,
-      autoSet: null, queueing: false, unpinRetried: false, label: labelOf(null, h.isEpisode), stallLogged: false, renewing: false,
+      autoSet: null, queueing: false, unpinRetried: false, label: labelOf(null, h.isEpisode), line: '', stallLogged: false, renewing: false,
     };
     cur = s;
+    // the TV's episode line needs the season / episode numbers, which a hand-off does not carry (a resume brings its item itself)
+    if (how === 'adopt' && h.isEpisode && h.kind === 'chromecast') {
+      void deps.item(h.itemId).then((it) => { if (cur === s && s.view.itemId === it.id && !s.line) { s.line = lineOf(it); tvSync(s); } }, () => undefined);
+    }
     dropDetached(); // the bar shows this session now
     out.set(s.view);
     if (h.video && h.air) {
@@ -1195,7 +1225,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       position: now.currentTime, duration: now.duration || (l.runtimeTicks ? ticksToSec(l.runtimeTicks) : 0), paused: now.paused,
       cast: ci, started: l.reported, subIndex, sleepAfterEpisode: false, subtitles: subsOf(ci),
     }, 'resume', !l.reported && now.paused);
-    if (it) s.label = labelOf(it);
+    if (it) { s.label = labelOf(it); s.line = lineOf(it); tvSync(s); }
     await restoreQueue(s, now);
     return true;
   }
@@ -1522,6 +1552,9 @@ const browserDeps: EngineDeps = {
   leave: castLeave,
   whenReady: whenCastReady,
   lock: (ifAvailable) => castLock(typeof navigator === 'undefined' ? undefined : navigator.locks, ifAvailable),
+  profileName: getActiveProfileName,
+  formFactor: () => (typeof navigator === 'undefined' ? 'computer' : formFactor(navigator, typeof innerWidth === 'number' ? innerWidth : 1024)),
+  motion: motionAllowed,
   onRestore(fn) {
     if (typeof window === 'undefined') return;
     window.addEventListener('pageshow', (e) => { if ((e as PageTransitionEvent).persisted) fn(); });
