@@ -1,0 +1,84 @@
+[
+ {
+  "input": "  Wohnzimmer  ",
+  "ok": true,
+  "normalized": "Wohnzimmer"
+ },
+ {
+  "input": "Wohn   zimmer",
+  "ok": true,
+  "normalized": "Wohn zimmer"
+ },
+ {
+  "input": "Wohnzimmer 📺",
+  "ok": true,
+  "normalized": "Wohnzimmer 📺"
+ },
+ {
+  "input": "👨‍👩‍👧 Familie",
+  "ok": true,
+  "normalized": "👨‍👩‍👧 Familie"
+ },
+ {
+  "input": "📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺",
+  "ok": true,
+  "normalized": "📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺"
+ },
+ {
+  "input": "📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺📺",
+  "ok": false
+ },
+ {
+  "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "ok": true,
+  "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "ok": false
+ },
+ {
+  "input": "Wohn\u0000zimmer",
+  "ok": false
+ },
+ {
+  "input": "a\tb",
+  "ok": false
+ },
+ {
+  "input": "a\nb",
+  "ok": false
+ },
+ {
+  "input": "‮evil",
+  "ok": false
+ },
+ {
+  "input": "⁦x",
+  "ok": false
+ },
+ {
+  "input": "x⁩",
+  "ok": false
+ },
+ {
+  "input": "   ",
+  "ok": true,
+  "normalized": null
+ },
+ {
+  "input": "",
+  "ok": true,
+  "normalized": null
+ },
+ {
+  "input": "Café",
+  "ok": true,
+  "normalized": "Café"
+ },
+ {
+  "input": "a  b",
+  "ok": true,
+  "normalized": "a b"
+ }
+]
