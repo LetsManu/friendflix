@@ -8,6 +8,7 @@
   import { api, ApiError, img } from '#lib/api';
   import { swapModal } from '#lib/modal';
   import Icon from '#lib/Icon.svelte';
+  import { features } from '#lib/capabilities';
   import { fmtDate, t, tr } from '#lib/i18n';
   import { collectionView, type AboutCollection, type AboutPart } from '#lib/detail/about';
 
@@ -62,7 +63,7 @@
           <span class="nm">{p.name}</span>{#if p.year}<span class="yr">{p.year}</span>{/if}
           {#if !p.inLibrary}
             <span class="yr">{$t('detail.collection.missing')}</span>
-            {#if canRequest && p.tmdbId !== undefined}
+            {#if canRequest && $features.requests && p.tmdbId !== undefined}
               {@const done = sent.has(p.tmdbId)}
               <button type="button" class="rq" aria-label={`${done ? $t('detail.collection.requested') : $t('detail.collection.request')}: ${p.name}`} aria-disabled={done || busy === p.tmdbId ? 'true' : undefined} on:click={() => request(p)}>{done ? $t('detail.collection.requested') : $t('detail.collection.request')}</button>
             {/if}

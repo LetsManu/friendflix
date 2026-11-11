@@ -56,6 +56,12 @@ describe('kids profiles', () => {
     expect(hintOf({ deviceApproved: true, profileCount: 1, features: { requests: true } }).noRequests).toBeUndefined();
     expect(hintOf({ deviceApproved: true, profileCount: 1 }).noRequests).toBeUndefined();
     expect(parseHint(JSON.stringify({ ...h, noRequests: 'yes' }))?.noRequests).toBeUndefined();
+    const p = hintOf({ deviceApproved: true, profileCount: 1, perms: { party: false, cast: true, requests: false } });
+    expect(p.noPerms).toEqual(['requests', 'party']);
+    expect(p.noRequests).toBe(true);
+    expect(parseHint(JSON.stringify(p))?.noPerms).toEqual(['requests', 'party']);
+    expect(parseHint(JSON.stringify({ ...p, noPerms: ['party', 'bogus'] }))?.noPerms).toEqual(['party']);
+    expect(hintOf({ deviceApproved: true, profileCount: 1 }).noPerms).toBeUndefined();
   });
 });
 

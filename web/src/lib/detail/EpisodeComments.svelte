@@ -4,6 +4,7 @@
   import { onMount } from 'svelte';
   import { api, ApiError } from '#lib/api';
   import { kidsMode } from '#lib/kids';
+  import { perms } from '#lib/perms';
   import { fmtRelative, t } from '#lib/i18n';
 
   /** episode (or movie) id */
@@ -25,7 +26,7 @@
       else failed = true;
     }
   }
-  onMount(() => { void load(); });
+  onMount(() => { if ($perms.comments) void load(); }); // without the right the server answers 403: the whole region stays away
 
   /** hidden bodies are not sent until asked for: reveal fetches them once for the whole list */
   async function reveal(id: string) {
@@ -59,6 +60,7 @@
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void send(); } };
 </script>
 
+{#if $perms.comments}
 <div class="cm" role="region" aria-label={$t('anime.comments.title')}>
   {#if !watched}<p class="muted hint">{$t('anime.comments.hint')}</p>{/if}
   <form on:submit|preventDefault={send}>
@@ -91,6 +93,7 @@
     </ul>
   {/if}
 </div>
+{/if}
 
 <style>
   .cm { padding: .2rem .8rem 1rem 3.6rem; display: flex; flex-direction: column; gap: .6rem; }

@@ -6,6 +6,13 @@
  * Accounts with more than one profile see the gate once per browser session (new tab/window = new session),
  * like the big streaming apps. The pick is remembered in sessionStorage by /profiles.
  */
+import { deniedKeys, permsFrom, type PermKey } from './perms';
+
+/** the switched-off rights of an /api/me `perms` object */
+const deniedOf = (raw: unknown): PermKey[] => deniedKeys(permsFrom(raw));
+/** the same from a stored list (unknown names are dropped) */
+export const deniedFromList = (list: unknown): PermKey[] => deniedOf(Array.isArray(list) ? Object.fromEntries(list.map((k) => [k, false])) : undefined);
+
 export const PICKED_KEY = 'ff-profile-picked';
 /** localStorage: flags of the last /api/me answer (no names), lets the layout render the page before /api/me returns */
 export const HINT_KEY = 'ff-boot-hint';
@@ -22,6 +29,7 @@ export interface BootHint {
   /** the last answer was a kids profile: only kids routes may render early */ kids?: boolean;
   /** the last answer still owed the /welcome onboarding: nothing renders early */ welcome?: boolean;
   /** the last answer had no request service (features.requests false): request links stay hidden until /api/me answers */ noRequests?: boolean;
+  /** the rights the last answer switched off (me.perms): their entries stay hidden until /api/me answers, so nothing jumps in later */ noPerms?: PermKey[];
 }
 
 // ---- kids profiles: only a small set of routes; everything else goes to the kids home ----
@@ -58,11 +66,11 @@ export function needsProfileGate(me: GateMe, path: string, sessionPicked: boolea
 /** `/profiles?next=…` for the current location (deep links continue after the pick) */
 export const gateHref = (pathAndSearch: string) => `/profiles?next=${encodeURIComponent(pathAndSearch)}`;
 
-export function hintOf(me: GateMe & { deviceApproved?: boolean; profile?: { id: string } | null; language?: string; features?: { requests?: boolean } }): BootHint {
+export function hintOf(me: GateMe & { deviceApproved?: boolean; profile?: { id: string } | null; language?: string; features?: { requests?: boolean }; perms?: unknown }): BootHint {
   const multi = (me.profileCount ?? 0) > 1;
   return {
     approved: Boolean(me.deviceApproved), multi, tv: Boolean(me.tv), ...(!multi && me.profile?.id ? { profile: me.profile.id } : {}), ...(me.language ? { lang: me.language } : {}),
-    ...(me.kids ? { kids: true } : {}), ...(me.onboarded === false ? { welcome: true } : {}), ...(me.features?.requests === false ? { noRequests: true } : {}),
+    ...(me.kids ? { kids: true } : {}), ...(me.onboarded === false ? { welcome: true } : {}), ...(me.features?.requests === false || (me.perms as { requests?: unknown } | undefined)?.requests === false ? { noRequests: true } : {}), ...(deniedOf(me.perms).length ? { noPerms: deniedOf(me.perms) } : {}),
   };
 }
 
@@ -76,7 +84,7 @@ export function parseHint(raw: string | null | undefined): BootHint | null {
     if (!(h && typeof h === 'object' && typeof h.approved === 'boolean' && typeof h.multi === 'boolean' && typeof h.tv === 'boolean')) return null;
     return {
       approved: h.approved, multi: h.multi, tv: h.tv, ...(typeof h.profile === 'string' && h.profile ? { profile: h.profile } : {}), ...(typeof h.lang === 'string' && /^[a-z]{2}$/.test(h.lang) ? { lang: h.lang } : {}),
-      ...(h.kids === true ? { kids: true } : {}), ...(h.welcome === true ? { welcome: true } : {}), ...(h.noRequests === true ? { noRequests: true } : {}),
+      ...(h.kids === true ? { kids: true } : {}), ...(h.welcome === true ? { welcome: true } : {}), ...(h.noRequests === true ? { noRequests: true } : {}), ...(deniedFromList(h.noPerms).length ? { noPerms: deniedFromList(h.noPerms) } : {}),
     };
   } catch { return null; }
 }

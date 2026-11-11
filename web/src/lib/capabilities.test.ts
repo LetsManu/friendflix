@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { get } from 'svelte/store';
+import { permsFrom } from './perms';
 import { ALL_CAPS, ALL_FEATURES, capsFrom, features, featuresFrom, linkShown, segmentShown, serverCaps } from './capabilities';
 
 describe('server capabilities', () => {
@@ -56,5 +57,13 @@ describe('instance features', () => {
       expect(linkShown(ALL_CAPS, href, off)).toBe(false);
     }
     expect(linkShown(ALL_CAPS, '/favorites', off)).toBe(true);
+  });
+});
+
+describe('rights and links', () => {
+  it('the party link needs the party right; without perms it shows', () => {
+    expect(linkShown(ALL_CAPS, '/party')).toBe(true);
+    expect(linkShown(ALL_CAPS, '/party', ALL_FEATURES, permsFrom({ party: false }))).toBe(false);
+    expect(linkShown(ALL_CAPS, '/vote', ALL_FEATURES, permsFrom({ party: false }))).toBe(true);
   });
 });

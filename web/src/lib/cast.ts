@@ -12,6 +12,7 @@
  */
 import { get, writable } from 'svelte/store';
 import { api } from '#lib/api';
+import { perms } from '#lib/perms';
 import { castLog, noteCastDevice } from '#lib/cast/castLog';
 import { applyAvoid, avoidedOf, castCapsBody, noteAvoid, parseReceiverCaps, usedFeatures, type CastDelivery, type CastFeature, type ReceiverCaps } from '#lib/cast/caps';
 import type { Store } from '#lib/cast/resume';
@@ -177,9 +178,10 @@ function queueOf(ms: MediaT | null): CastState['queue'] {
   return items.slice(cur + 1).map((q) => ({ itemId: q.itemId, contentId: q.media?.contentId ?? '', castId: castIdOf(q.media) }));
 }
 
-/** Chromium only (Chrome, Edge, Opera, Samsung ...), never iOS (all iOS browsers are WebKit), never a paired TV. */
+/** Chromium only, and only where the acting profile may cast (Chrome, Edge, Opera, Samsung ...), never iOS (all iOS browsers are WebKit), never a paired TV. */
 export function castCapableBrowser(): boolean {
   if (typeof navigator === 'undefined' || typeof document === 'undefined') return false;
+  if (!get(perms).cast) return false; // the account may not cast: the server would answer 403 cast_forbidden
   const ua = navigator.userAgent;
   const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   if (ios || !/Chrome\/|Chromium\/|CriOS/.test(ua) || /CriOS/.test(ua)) return false;

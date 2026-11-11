@@ -7,6 +7,7 @@
   const page = pageStore();
   import { api, type Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
+  import { perms } from '#lib/perms';
 
   let rooms: any[] = [], pick: Item | null = null, results: Item[] = [], q = '', delay = 0, busy = false;
   const preItem = $page.url.searchParams.get('item');
@@ -22,12 +23,16 @@
     location.href = `/party/${r.id}`;
   }
   onMount(async () => {
-    load();
+    if (!$perms.party) return;
+    load().catch(() => undefined);
     if (preItem) pick = (await api(`/api/items/${preItem}`)).item;
   });
 </script>
 
 <h1>{$t('social.party.title')}</h1>
+{#if !$perms.party}
+  <p class="muted">{$t('ui.error.partyForbidden')}</p>
+{:else}
 <div class="panel">
   <h3>{$t('social.party.newParty')}</h3>
   {#if pick}
@@ -42,3 +47,4 @@
 <h3>{$t('social.party.openRooms')}</h3>
 {#if !rooms.length}<p class="muted">{$t('social.party.noRooms')}</p>{/if}
 <table><tbody>{#each rooms as r}<tr><td>{r.title}</td><td class="muted">{r.hostName ?? ''} · {$t('social.party.members', { n: r.members })}</td><td>{#if r.startAt}<span class="badge">{$t('social.party.startAt', { time: fmtTime(r.startAt) })}</span>{/if}</td><td><a class="btn" href="/party/{r.id}">{$t('social.party.join')}</a></td></tr>{/each}</tbody></table>
+{/if}

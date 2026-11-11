@@ -72,6 +72,7 @@
   import { motionAllowed } from '#lib/preview';
   import { motionLevel, motionTripped } from '#lib/tv/motion';
   import { kidsMode } from '#lib/kids';
+  import { perms } from '#lib/perms';
   import { growOrigin, moreExtras, panelAnchor, panelBox, phoneOrient, phonePlayer, phoneSub, phoneTools, type PhoneOrient } from '#lib/player/phone/logic';
   import BackLayer from '#lib/player/phone/BackLayer.svelte';
   import PhoneTitle from '#lib/player/phone/PhoneTitle.svelte';
@@ -821,7 +822,7 @@
   function airRow() { if (tvSession?.kind === 'airplay') changeAirPlay(); else air?.pick(); }
   $: airAvail = Boolean(air && (airState.available || airOn || airState.ready || airState.busy)) || tvSession?.kind === 'airplay';
   /** something to choose from: Cast devices in reach or an AirPlay target (the remote screen has its own chip) */
-  $: playOnShown = !partyMode && !remote && (Boolean($castState.available || $castState.connected) || airAvail);
+  $: playOnShown = $perms.cast && !partyMode && !remote && (Boolean($castState.available || $castState.connected) || airAvail);
   $: playOnLabel = $t('player.castPicker.open');
   $: playOnEp = item?.type === 'Episode' || item?.seriesId ? episodeCode({ subtitle: '' }, item, $t) : '';
 

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { writable } from 'svelte/store';
+import { ALL_PERMS, type PermKey, type Perms } from './perms';
 
 /**
  * What the media server behind FriendFlix supports (backend: media/types.ts, sent once in /api/me as `server.capabilities`).
@@ -80,7 +81,9 @@ export const featuresKnown = writable(false);
 /** pages that only make sense with a capability or a feature (menus, footer, admin nav): href -> required flag */
 const NEEDS: Record<string, Exclude<keyof ServerCaps, 'segments'>> = { '/calendar': 'upcoming' };
 const FEATURE_NEEDS: Record<string, keyof Features> = { '/upcoming': 'requests', '/admin/requests': 'requests' };
-export const linkShown = (c: ServerCaps, href: string, f: Features = ALL_FEATURES) => {
-  const k = NEEDS[href], fk = FEATURE_NEEDS[href];
-  return (!k || c[k]) && (!fk || f[fk]);
+/** ... or a right of the acting profile (lib/perms.ts) */
+const PERM_NEEDS: Record<string, PermKey> = { '/party': 'party' };
+export const linkShown = (c: ServerCaps, href: string, f: Features = ALL_FEATURES, p: Perms = ALL_PERMS) => {
+  const k = NEEDS[href], fk = FEATURE_NEEDS[href], pk = PERM_NEEDS[href];
+  return (!k || c[k]) && (!fk || f[fk]) && (!pk || p[pk]);
 };

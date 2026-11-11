@@ -19,6 +19,7 @@
   import { pageStore } from '#lib/page';
   import { api, ApiError, type Item } from '#lib/api';
   import { features, featuresFrom, featuresKnown } from '#lib/capabilities';
+  import { perms, permsFrom } from '#lib/perms';
   import { kidsMode } from '#lib/kids';
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
@@ -82,7 +83,11 @@
   async function refreshFlags(force = false) {
     if (!force && Date.now() - flagsAt < 30_000) return;
     flagsAt = Date.now();
-    try { features.set(featuresFrom((await api<{ features?: unknown }>('/api/me')).features)); } catch { /* keep what we know */ }
+    try {
+      const m = await api<{ features?: { requests?: boolean }; perms?: { requests?: boolean } }>('/api/me');
+      perms.set(permsFrom(m.perms));
+      features.set(featuresFrom({ ...m.features, requests: m.features?.requests !== false && m.perms?.requests !== false }));
+    } catch { /* keep what we know */ }
   }
 
   onMount(() => {

@@ -27,6 +27,7 @@
   import type ItemModalType from '#lib/ItemModal.svelte';
   import { loadModal, prefetchModal } from '#lib/lazy';
   import { startTvLink, type ToTv } from '#lib/remote';
+  import { perms, permsFrom } from '#lib/perms';
   import { capsFrom, features, featuresFrom, featuresKnown, kindFrom, serverCaps, serverKind } from '#lib/capabilities';
   import { setMeta } from '#lib/offline/db';
   import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
@@ -96,6 +97,7 @@
    * Either way the page mounts once in the right language; nothing re-creates it later (see pageEpoch in lib/i18n).
    */
   if (bootHint?.noRequests) features.set(featuresFrom({ requests: false })); // until /api/me answers: no request links flash
+  if (bootHint?.noPerms) perms.set(permsFrom(Object.fromEntries(bootHint.noPerms.map((k) => [k, false])))); // ... nor the entries of a switched-off right
   let earlyLang = !(early && bootHint?.lang);
   if (early && bootHint?.lang) void setLocale(bootHint.lang).finally(() => (earlyLang = true));
   let pageReady = false; // sticky: a later language load (ready = false for a moment) must not unmount the page
@@ -743,7 +745,8 @@
         serverCaps.set(capsFrom(m.server?.capabilities));
         serverKind.set(kindFrom(m.server?.kind));
         setMediaServer(m.server?.kind); // texts that name the media server (i18n serverText)
-        features.set(featuresFrom(m.features));
+        perms.set(permsFrom(m.perms));
+        features.set(featuresFrom({ ...m.features, requests: m.features?.requests !== false && m.perms?.requests !== false })); // no right to request = like no request service
         featuresKnown.set(true);
         writeHint(hintOf(m)); writeActive(m.profile?.id); clearReloadFlag(); // the profile-switch reload is done: a later reload may render early again
         if (m.profile?.id) void setMeta('lastProfileId', m.profile.id).catch(() => undefined); // the offline hub shows the last active profile's downloads
