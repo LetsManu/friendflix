@@ -89,3 +89,16 @@ export function handoffTitle(h: Handoff, tf: TFn): string {
 
 /** the web player at the shown position */
 export const handoffHref = (h: Handoff): string => `/watch/${h.itemId}?t=${Math.floor(h.positionTicks / 1e7)}`;
+
+// ---- TV remote (spec 2.4) ----
+/** how long after the page's mount an arriving card may still take the focus */
+export const TAKE_FOCUS_MS = 2000;
+
+/**
+ * TV: the card's primary button takes the focus only when the card arrives within 2 s of the page's mount and no key was
+ * pressed yet; later it would pull the focus away from where the viewer is, so it waits to be reached with Up.
+ */
+export function shouldTakeFocus(o: { mountedAt: number; arrivedAt: number; keyPressed: boolean }): boolean {
+  const dt = o.arrivedAt - o.mountedAt;
+  return !o.keyPressed && dt >= 0 && dt <= TAKE_FOCUS_MS;
+}

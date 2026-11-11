@@ -16,7 +16,7 @@
   import ThemedListRows from '#lib/ThemedListRows.svelte';
   import UpcomingRow from '#lib/UpcomingRow.svelte';
   import HandoffCard from '#lib/handoff/HandoffCard.svelte';
-  import { dismiss as dismissHandoff, isDismissed, loadHandoff, type Handoff } from '#lib/handoff/handoff';
+  import { dismiss as dismissHandoff, isDismissed, loadHandoff, shouldTakeFocus, type Handoff } from '#lib/handoff/handoff';
   import { failedParts, firstNonEmptyTab, homeCache, swrLoad, type HomePart, type HomeResponse } from '#lib/home';
   import type { Hub } from '#lib/hubs';
   import { loadFeatured, loadThemed, type FeaturedList, type ThemedList } from '#lib/lists';
@@ -156,6 +156,25 @@
     // the card held focus: it goes to the page's first button (the billboard's Play)
     if (!document.activeElement || document.activeElement === document.body) document.querySelector<HTMLElement>('[data-autofocus]')?.focus({ preventScroll: true });
   }
+  // ---- TV remote: the card's action takes the focus only if it shows within 2 s of mount and before any key (spec 2.4) ----
+  let mountedAt = 0, keyPressed = false, focusDecided = false;
+  onMount(() => {
+    mountedAt = Date.now();
+    const onKey = () => { keyPressed = true; };
+    window.addEventListener('keydown', onKey, { capture: true, once: true });
+    return () => window.removeEventListener('keydown', onKey, true);
+  });
+  /** the tile's first button (Back on the card, Down from it, after Ausblenden) */
+  const focusTile = () => document.querySelector<HTMLElement>('section.tile [data-autofocus]')?.focus({ preventScroll: true });
+  $: tvOffer = tv && offerReady && hero ? offer : null;
+  // decided once per page load, when the first card shows (a later card, e.g. after a refresh, never takes the focus)
+  $: if (tvOffer && !focusDecided) void takeFocus();
+  async function takeFocus() {
+    focusDecided = true;
+    if (!shouldTakeFocus({ mountedAt, arrivedAt: Date.now(), keyPressed })) return;
+    await tick();
+    if (!keyPressed) document.querySelector<HTMLElement>('section.tile [data-handoff] a[href]')?.focus({ preventScroll: true });
+  }
   onMount(() => {
     rowsAt = Date.now(); // the first screen just loaded them
     document.addEventListener('visibilitychange', refreshProgress);
@@ -275,7 +294,9 @@
 
 <svelte:head><title>{$t('common.appName')}</title></svelte:head>
 {#if tv}
-  <TvFocusTile {hero} {heroRank} />
+  <TvFocusTile {hero} {heroRank}>
+    <HandoffCard slot="handoff" handoff={tvOffer} layout="tv" tvVisible={$tvFocus === null} {focusTile} on:dismiss={onHandoffDismiss} />
+  </TvFocusTile>
 {:else if desk}
   <DeskBillboard item={hero} rank={heroRank}>
     <HandoffCard slot="handoff" handoff={offerReady && hero ? offer : null} layout="desk" on:dismiss={onHandoffDismiss} />
