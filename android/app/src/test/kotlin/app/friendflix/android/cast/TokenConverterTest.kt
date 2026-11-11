@@ -72,6 +72,20 @@ class TokenConverterTest {
         assertEquals(TokenConverter.FOREIGN, c.toMediaItem(foreign).mediaId)
     }
 
+    @Test fun itemsOfAnEarlierProcessAreStillOursByTheirToken() {
+        // after an app restart the converter has never seen the token: its castId is the sha256 of the token in the receiver's own URL
+        val token = "A".repeat(43)
+        val url = "https://ff.example/media/c/$token/videos/x/master.m3u8"
+        val fresh = TokenConverter(custom = false)
+        val q = TokenConverter.queueItem(CastInfo.parse(JSONObject(answer.toString()).put("contentUrl", url))!!, null, true, false)
+        val item = fresh.toMediaItem(q)
+        assertEquals(CastIds.ofContentUrl(url), item.mediaId)
+        assertEquals(url, item.localConfiguration!!.uri.toString())
+        // the own receiver's custom data names it directly
+        val own = TokenConverter.queueItem(info, null, true, custom = true)
+        assertEquals(info.castId, TokenConverter(custom = true).toMediaItem(own).mediaId)
+    }
+
     @Test fun castInfoNeverPrintsItsUrls() {
         assertFalse(info.toString().contains("ff.example"))
         assertFalse(info.toString().contains("REPORT"))

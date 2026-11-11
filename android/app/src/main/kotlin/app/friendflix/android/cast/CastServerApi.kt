@@ -28,6 +28,8 @@ class CastServerApi(private val server: ServerApi, private val profileId: String
             code == 429 && j?.optString("error") == "max_streams" -> TokenAnswer.MaxStreams(j.optInt("max", 1))
             code == 403 && j?.optString("error") == "transcoding_disabled" -> TokenAnswer.NeedsTranscode
             code == 403 && j?.optString("error") == "device_pending" -> TokenAnswer.DevicePending
+            // the queued successor is pinned to the playing token's TV address at mint: the TV has not fetched that one yet
+            code == 409 && j?.optString("error") == "cast_unpinned" -> TokenAnswer.Unpinned
             else -> TokenAnswer.Failed
         }
     } catch (_: IOException) {
@@ -35,8 +37,19 @@ class CastServerApi(private val server: ServerApi, private val profileId: String
     }
 
     override fun revoke(castId: String) {
-        if (!CAST_ID.matches(castId)) return
+        if (!CastIds.valid(castId)) return
         try { server.sendJson("/api/cast/session/$castId", profileId, JSONObject(), method = "DELETE") } catch (_: IOException) { }
+    }
+
+    /** null: not ours (404 / 400, or an AirPlay token); an [IOException] (network, 5xx, 401): unknown, nothing is concluded */
+    override fun lookup(castId: String): CastLookup? {
+        if (!CastIds.valid(castId)) return null
+        val (code, j) = server.getJson("/api/cast/session/$castId", profileId)
+        return when {
+            code == 200 && j != null -> CastLookup.parse(j)?.takeIf { it.via != "airplay" }
+            code == 404 || code == 400 -> null
+            else -> throw IOException("lookup answered $code")
+        }
     }
 
     override fun report(kind: PlaybackReporter.Kind, body: JSONObject) = player.report(kind, body)
@@ -51,8 +64,6 @@ class CastServerApi(private val server: ServerApi, private val profileId: String
     }
 
     companion object {
-        private val CAST_ID = Regex("^[0-9a-f]{32}$")
-
         /** `GET /api/cast/config` (null: not answered); blocking */
         fun config(server: ServerApi, profileId: String): CastConfig.Config? = try {
             val (code, j) = server.getJson("/api/cast/config", profileId)

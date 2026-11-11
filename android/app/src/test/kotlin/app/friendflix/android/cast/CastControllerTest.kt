@@ -18,6 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.IOException
 import java.util.concurrent.Executor
 
 /**
@@ -35,6 +36,9 @@ class CastControllerTest {
     private val calls = mutableListOf<Pair<String, JSONObject?>>()
     private val answers = ArrayDeque<TokenAnswer>()
     private var tokens = 0
+    /** what the token-free lookup answers (absent: not ours) and the ids it cannot reach */
+    private val lookups = mutableMapOf<String, CastLookup>()
+    private val lookupDown = mutableSetOf<String>()
     private var nextItem: ItemInfo? = ItemInfo("ep2", "Episode", "Second", "Bright Valley", "s1", 1, 2)
 
     private val server = object : CastServer {
@@ -43,6 +47,11 @@ class CastControllerTest {
             return answers.removeFirstOrNull() ?: TokenAnswer.Ok(info(if (body.optBoolean("next")) "q${++tokens}" else "c${++tokens}"))
         }
         override fun revoke(castId: String) { calls += "DELETE /api/cast/session/$castId" to null }
+        override fun lookup(castId: String): CastLookup? {
+            calls += "GET /api/cast/session/$castId" to null
+            if (castId in lookupDown) throw IOException("down")
+            return lookups[castId]
+        }
         override fun report(kind: PlaybackReporter.Kind, body: JSONObject) { calls += "POST /api/playback/${kind.path}" to body }
         override fun next(itemId: String): ItemInfo? { calls += "GET /api/items/$itemId/next" to null; return nextItem }
         override fun segments(itemId: String): List<Segment> = emptyList()
@@ -59,6 +68,10 @@ class CastControllerTest {
         override fun dequeue(castId: String) { removed += castId }
         override fun send(msg: JSONObject) { messages += msg }
         override fun end() { ended++ }
+        var playing: ReceiverMedia? = null
+        var next: ReceiverMedia? = null
+        override fun current() = playing
+        override fun queuedNext() = next
     }
 
     private inner class Host(val onStop: () -> Unit) : CastHost {
@@ -176,13 +189,12 @@ class CastControllerTest {
         assertTrue(r.messages.isEmpty())
     }
 
-    @Test fun queueNextUsesNextTrueWithThePredecessor() {
+    @Test fun queueFromTheStart() {
         val (r, c) = controller()
         c.start(episode())
         val long = 90 * 60_000L
-        c.onReceiver(playing("c1", 61_000, durationMs = long))
-        assertTrue("not queued long before the end", r.queued.isEmpty())
-        c.onReceiver(playing("c1", long - CastController.QUEUE_WITHIN_MS, durationMs = long))
+        assertTrue("not before the receiver plays it", r.queued.isEmpty())
+        c.onReceiver(playing("c1", 61_000, durationMs = long)) // 89 minutes before the end: queued all the same
         val q = calls.filter { it.first == "POST /api/cast/session" && it.second!!.optBoolean("next") }
         assertEquals(1, q.size)
         assertEquals(fixture("queue-body.json"), q[0].second.toString())
@@ -194,7 +206,7 @@ class CastControllerTest {
     @Test fun queueNextToTheOwnReceiverAsksForItsReportToken() {
         val (r, c) = controller(custom = true)
         c.start(episode())
-        c.onReceiver(playing("c1", 30 * 60_000 - CastController.QUEUE_WITHIN_MS))
+        c.onReceiver(playing("c1", 61_000))
         assertEquals(fixture("queue-body-receiver.json"), calls.first { it.second?.optBoolean("next") == true }.second.toString())
         assertTrue(r.messages.any { it.optString("t") == "tok" && it.optString("castId") == "q2" })
         val item = r.messages.last { it.optString("t") == "item" }
@@ -512,5 +524,258 @@ class CastControllerTest {
         val (_, c) = controller()
         c.start(film())
         assertEquals(TokenAnswer.DevicePending, host.failed)
+    }
+
+    // ---- Task 29: queue from the start, cast_unpinned, switchTo, resume ----
+
+    @Test fun anUnpinnedPlayingTokenIsAskedAgainOnceAfterSixtySeconds() {
+        answers += TokenAnswer.Ok(info("c1")) // the first token
+        answers += TokenAnswer.Unpinned // the queue request: the TV has not fetched c1 yet
+        val (r, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 1_000))
+        assertEquals(1, calls.count { it.second?.optBoolean("next") == true })
+        assertTrue(r.queued.isEmpty())
+        advance(CastController.UNPINNED_RETRY_MS - 1)
+        assertEquals("not before 60 s", 1, calls.count { it.second?.optBoolean("next") == true })
+        advance(1)
+        assertEquals(2, calls.count { it.second?.optBoolean("next") == true })
+        assertEquals("the retry's token", listOf("q1" to true), r.queued)
+    }
+
+    @Test fun aSecondUnpinnedAnswerIsNotRetried() {
+        answers += TokenAnswer.Ok(info("c1")); answers += TokenAnswer.Unpinned; answers += TokenAnswer.Unpinned
+        val (r, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 1_000))
+        advance(CastController.UNPINNED_RETRY_MS)
+        advance(10 * CastController.UNPINNED_RETRY_MS)
+        c.onReceiver(playing("c1", 2_000))
+        assertEquals(2, calls.count { it.second?.optBoolean("next") == true })
+        assertTrue(r.queued.isEmpty())
+    }
+
+    @Test fun otherQueueRefusalsAreNeverRetried() {
+        answers += TokenAnswer.Ok(info("c1")); answers += TokenAnswer.Failed // 409 profile_changed / 400 bad_request
+        val (_, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 1_000))
+        advance(10 * CastController.UNPINNED_RETRY_MS)
+        assertEquals(1, calls.count { it.second?.optBoolean("next") == true })
+    }
+
+    @Test fun theRetryDiesWithTheCast() {
+        answers += TokenAnswer.Ok(info("c1")); answers += TokenAnswer.Unpinned
+        val (_, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 1_000))
+        c.stop()
+        advance(CastController.UNPINNED_RETRY_MS)
+        assertEquals(1, calls.count { it.second?.optBoolean("next") == true })
+    }
+
+    @Test fun aQueuedEpisodeTheReceiverDidNotStartGetsAFreshToken() {
+        val (r, c) = controller()
+        c.start(episode())
+        c.onReceiver(playing("c1", 61_000)) // q2 queued
+        c.onReceiver(playing("c1", 30 * 60_000 - 1_000))
+        calls.clear()
+        c.onMediaEnd(IdleReason.FINISHED, "c1") // the receiver went idle but did not move on
+        advance(CastController.ADVANCE_WAIT_MS)
+        assertEquals(listOf("POST /api/playback/stop", "DELETE /api/cast/session/c1", "DELETE /api/cast/session/q2", "POST /api/cast/session"), paths())
+        assertFalse("a plain token, not the queued one", calls.last().second!!.optBoolean("next"))
+        assertEquals("ep2", calls.last().second!!.getString("itemId"))
+        assertEquals("c3", r.loads.last().first)
+    }
+
+    @Test fun switchToReplacesTheToken() {
+        val (r, c) = controller()
+        assertFalse(c.switchTo("film2", null))
+        c.start(episode())
+        c.onReceiver(playing("c1", 61_000)) // q2 queued
+        calls.clear()
+        assertTrue(c.switchTo("film2", 90_000))
+        assertEquals(listOf("DELETE /api/cast/session/q2", "POST /api/playback/stop", "DELETE /api/cast/session/c1", "POST /api/cast/session"), paths())
+        val body = calls.last().second!!
+        assertEquals("film2", body.getString("itemId"))
+        assertEquals(90_000L * 10_000, body.getLong("startTicks"))
+        assertEquals("c3", r.loads.last().first)
+        assertEquals("film2", c.itemId)
+        assertEquals("exactly one new token", 1, calls.count { it.first == "POST /api/cast/session" })
+        // the kind comes from the token's answer: no episode here, so no next episode is asked for
+        c.onReceiver(playing("c3", 91_000))
+        assertFalse(calls.any { it.second?.optBoolean("next") == true })
+    }
+
+    private fun lookup(castId: String, itemId: String = "ep1", next: Boolean = false, reported: Boolean = true, series: String? = "Bright Valley") = CastLookup(
+        castId = castId, itemId = itemId, mediaSourceId = "ms-$castId", playSessionId = "ps-$castId", expiresAt = clock + 60 * 60_000,
+        runtimeTicks = 30L * 60 * 10_000_000, via = "chromecast", next = next, reported = reported, title = "First", seriesName = series,
+        subtitles = emptyList(),
+    )
+
+    private val tokenUrl = "https://ff.example/media/c/" + "A".repeat(43) + "/master.m3u8"
+    private val tokenId = CastIds.ofContentUrl(tokenUrl)!!
+
+    @Test fun resumeAdoptsOurMedia() {
+        lookups[tokenId] = lookup(tokenId)
+        val (r, c) = controller(custom = true)
+        calls.clear()
+        c.resume(null, tokenUrl) // the castId is derived from the token in the URL
+        assertTrue(c.casting)
+        assertEquals("ep1", c.itemId)
+        val snap = c.snapshot("Wohnzimmer-TV")!!
+        assertEquals("Bright Valley", snap.title)
+        assertEquals("First", snap.subtitle)
+        assertTrue(snap.isEpisode)
+        assertEquals(CastPhase.PLAYING, snap.state)
+        assertEquals("Wohnzimmer-TV", snap.device)
+        assertEquals(1, host.casting)
+        // adopted as it plays: no second start report, the receiver is not loaded again, its texts are sent
+        assertTrue(r.loads.isEmpty())
+        assertFalse(paths().any { it == "POST /api/playback/start" })
+        assertTrue(r.messages.any { it.optString("t") == "ui" })
+        // the playing token is reported from now on
+        c.onReceiver(playing(tokenId, 120_000))
+        clock += CastController.PROGRESS_MS
+        c.tick()
+        assertEquals("ps-$tokenId", calls.last { it.first == "POST /api/playback/progress" }.second!!.getString("playSessionId"))
+        // and it is stopped like any other
+        c.stop()
+        assertTrue(paths().contains("DELETE /api/cast/session/$tokenId"))
+    }
+
+    @Test fun resumeUsesTheOwnReceiversCastIdFirst() {
+        val own = "b".repeat(32)
+        lookups[own] = lookup(own)
+        val (_, c) = controller(custom = true)
+        c.resume(own, tokenUrl)
+        assertEquals(listOf("GET /api/cast/session/$own"), paths().filter { it.startsWith("GET /api/cast") })
+        assertTrue(c.casting)
+    }
+
+    @Test fun resumeIgnoresForeignMedia() {
+        val (r, c) = controller()
+        calls.clear()
+        c.resume(null, tokenUrl) // lookup answers 404
+        assertFalse(c.casting)
+        assertNull(c.snapshot("TV"))
+        assertEquals("only the lookup: no report, no revoke", listOf("GET /api/cast/session/$tokenId"), paths())
+        assertTrue(r.ended == 0 && r.loads.isEmpty())
+        // media without a token (the test clip) is not even looked up
+        calls.clear()
+        c.resume(null, "https://media.example/clip.m3u8")
+        c.resume(null, null)
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun resumeKeepsEverythingWhenTheLookupFails() {
+        lookupDown += tokenId
+        val (_, c) = controller()
+        c.resume(null, tokenUrl)
+        assertFalse(c.casting)
+        assertTrue(paths().none { it.startsWith("DELETE") })
+        // asked again on the next trigger
+        lookupDown.clear(); lookups[tokenId] = lookup(tokenId)
+        c.resume(null, tokenUrl)
+        assertTrue(c.casting)
+    }
+
+    @Test fun resumeTakesOverTheQueuedSuccessor() {
+        val qUrl = "https://ff.example/media/c/" + "B".repeat(43) + "/master.m3u8"
+        val qId = CastIds.ofContentUrl(qUrl)!!
+        lookups[tokenId] = lookup(tokenId); lookups[qId] = lookup(qId, itemId = "ep2", next = true, reported = false)
+        val (r, c) = controller()
+        r.next = ReceiverMedia(null, qUrl)
+        c.resume(null, tokenUrl)
+        assertEquals("ep2", c.snapshot("TV")!!.next!!.itemId)
+        c.onReceiver(playing(tokenId, 61_000))
+        assertFalse("never a second queue token next to it", calls.any { it.second?.optBoolean("next") == true })
+        // stopping revokes it as well
+        c.stop()
+        assertTrue(paths().containsAll(listOf("DELETE /api/cast/session/$tokenId", "DELETE /api/cast/session/$qId")))
+    }
+
+    @Test fun resumeQueuesItsOwnSuccessorWhenNoneIsThere() {
+        lookups[tokenId] = lookup(tokenId)
+        val (r, c) = controller()
+        c.resume(null, tokenUrl)
+        c.onReceiver(playing(tokenId, 61_000))
+        assertEquals(1, calls.count { it.second?.optBoolean("next") == true })
+        assertEquals(1, r.queued.size)
+    }
+
+    @Test fun resumeClosesTheEpisodeThatEndedMeanwhileOnce() {
+        val oldId = "d".repeat(32)
+        val hints = object : CastHints {
+            var h: CastHints.Hint? = CastHints.Hint(oldId, tokenId)
+            override fun read() = h
+            override fun write(h: CastHints.Hint) { this.h = h }
+            override fun clear() { h = null }
+        }
+        lookups[tokenId] = lookup(tokenId, itemId = "ep2", next = true); lookups[oldId] = lookup(oldId)
+        val r = FakeReceiver(false)
+        val c = CastController(server, r, host, still, io = direct, main = direct, now = { clock }, schedule = schedule, hints = hints)
+        c.resume(null, tokenUrl)
+        val stop = calls.single { it.first == "POST /api/playback/stop" }.second!!
+        assertEquals("ps-$oldId", stop.getString("playSessionId"))
+        assertEquals(30L * 60 * 10_000_000, stop.getLong("positionTicks"))
+        assertEquals(1, calls.count { it.first == "DELETE /api/cast/session/$oldId" })
+        // the hint now names the playing token
+        assertEquals(tokenId, hints.h!!.castId)
+        c.stop()
+        hints.h = CastHints.Hint(oldId, tokenId)
+        c.resume(null, tokenUrl)
+        assertEquals("closed once", 1, calls.count { it.first == "DELETE /api/cast/session/$oldId" })
+    }
+
+    @Test fun resumeDoesNothingWhileACastRuns() {
+        val (_, c) = controller()
+        c.start(film())
+        calls.clear()
+        c.resume(null, tokenUrl)
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun theSnapshotShowsTheTitleAndTheEnd() {
+        val (_, c) = controller()
+        assertNull(c.snapshot("TV"))
+        c.start(episode())
+        assertEquals(CastPhase.CONNECTING, c.snapshot("TV")!!.state)
+        c.onReceiver(playing("c1", 61_000))
+        val s = c.snapshot("TV")!!
+        assertEquals(CastPhase.PLAYING, s.state)
+        assertEquals(61_000L, s.positionMs)
+        assertEquals("the queued episode is the next line", "ep2", s.next!!.itemId)
+        c.onReceiver(playing("c1", 30 * 60_000 - 1_000))
+        c.onMediaEnd(IdleReason.FINISHED, "c1") // moves on to the queued one
+        assertEquals("ep2", c.snapshot("TV")!!.itemId)
+    }
+
+    @Test fun theEndOnTheTvIsShownForAMoment() {
+        val (_, c) = controller()
+        c.start(film())
+        c.onReceiver(playing("c1", 61_000))
+        c.onReceiver(playing("c1", 30 * 60_000 - 1_000))
+        c.onMediaEnd(IdleReason.FINISHED, "c1")
+        assertEquals(CastPhase.ENDED, c.snapshot("TV")!!.state)
+        advance(CastController.ENDED_HIDE_MS)
+        assertNull(c.snapshot("TV"))
+    }
+
+    @Test fun lookupAnswersParseWithoutTokensOrUrls() {
+        val l = CastLookup.parse(JSONObject("""{"castId":"${"a".repeat(32)}","itemId":"ep1","mediaSourceId":"ms","playSessionId":"ps","expiresAt":5,"runtimeTicks":10,"via":"chromecast","next":true,"reported":true,"title":"T","seriesName":"S","subtitles":[{"index":2,"language":"de","title":"Deutsch"}],"pins":1,"refused":{"count":0,"families":[]}}"""))!!
+        assertEquals("ep1", l.itemId); assertTrue(l.next); assertTrue(l.reported)
+        assertEquals("", l.subtitles.single().url)
+        assertFalse(l.toCastInfo("https://x.example/media/c/t/master.m3u8").toString().contains("x.example"))
+        assertNull(CastLookup.parse(JSONObject("""{"castId":"nope","itemId":"i","playSessionId":"p"}""")))
+    }
+
+    @Test fun castIdsMatchTheServersDerivation() {
+        // sha256("A" * 43), first 32 hex characters (backend castIdOf(hashToken(token)))
+        val expected = java.security.MessageDigest.getInstance("SHA-256").digest("A".repeat(43).toByteArray()).joinToString("") { "%02x".format(it) }.take(32)
+        assertEquals(expected, CastIds.ofContentUrl("https://ff.example/media/c/${"A".repeat(43)}/master.m3u8"))
+        assertNull(CastIds.ofContentUrl("https://ff.example/media/c/short/master.m3u8"))
+        assertNull(CastIds.ofContentUrl("https://ff.example/media/c/${"A".repeat(44)}/master.m3u8"))
+        assertNull(CastIds.ofContentUrl(null))
     }
 }
