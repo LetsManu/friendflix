@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, castLookup, castNextTtlSeconds, castPinned, CastUnpinnedError, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
+import { CAST_MAX_BITRATE, airplayContinuousOn, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, castLookup, castNextTtlSeconds, castPinned, CastUnpinnedError, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
 import type { Ctx } from '../ctx.js';
 import { receiverCaps } from '../media/clientCaps.js';
 import { MediaError, type HevcGate } from '../media/types.js';
@@ -24,7 +24,7 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
   // receiverAppId only when FriendFlix's own receiver is configured: without it the sender keeps the Default Media Receiver
   app.get('/api/cast/config', pre, async () => {
     const receiverAppId = castReceiverAppId(ctx);
-    return { enabled: castEnabled(ctx), ...(receiverAppId ? { receiverAppId } : {}) };
+    return { enabled: castEnabled(ctx), ...(receiverAppId ? { receiverAppId } : {}), airplayContinuous: airplayContinuousOn(ctx) };
   });
 
   app.post('/api/cast/session', { ...pre, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
@@ -49,7 +49,14 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       prevPs: psId.optional(),
       /** AirPlay only: the text subtitle track to carry in the stream as one WebVTT rendition (omitted = off); needs capabilities.castHlsSubtitles */
       subtitleIndex: z.number().int().min(0).max(999).optional(),
+      /** AirPlay only, admin switch CAST_AIRPLAY_CONTINUOUS: one stream for this and the next episodes (the joined path follows) */
+      continuous: z.boolean().optional(),
+      /** with `continuous`: how many episodes the stream carries at most */
+      maxEpisodes: z.number().int().min(1).max(3).optional(),
     }).parse(req.body);
+    // continuous play is AirPlay's way, and only while the admin switch is on
+    if (b.continuous && b.via !== 'airplay') return reply.code(400).send({ error: 'bad_request' });
+    if (b.continuous && !airplayContinuousOn(ctx)) return reply.code(400).send({ error: 'continuous_off' });
     // a subtitle rendition in the stream is AirPlay's way (Chromecast side-loads WebVTT itself)
     if (b.subtitleIndex !== undefined && b.via !== 'airplay') return reply.code(400).send({ error: 'bad_request' });
     // the queue is Chromecast only (an AirPlay token has a two-address pin, a queued token never takes a pin of its own)

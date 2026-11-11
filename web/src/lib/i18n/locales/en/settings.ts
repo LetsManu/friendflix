@@ -152,6 +152,7 @@ const settings: Translation<typeof de> = {
     DOWNLOAD_CREATE_PER_HOUR: { label: 'Downloads per hour', help: 'Maximum number of new downloads per hour and session.' },
     CAST_ENABLED: { label: 'Chromecast', help: 'Playback on Chromecast devices. Needs a public address with a valid https certificate.' },
     CAST_RECEIVER_APP_ID: { label: 'Cast receiver app ID', help: 'Empty: Chromecast uses Google’s default receiver. With the app ID of FriendFlix’s own receiver (8 characters, from the Google Cast SDK Developer Console, receiver address https://<your address>/cast-receiver/) the TV shows “Next episode” with a countdown, “Still there?” and “Skip intro”, and reports progress even while the phone sleeps. See docs/cast-receiver.md.' },
+    CAST_AIRPLAY_CONTINUOUS: { label: 'Continuous AirPlay (experimental)', help: 'Experimental. Turn on only after the test with your AirPlay TV passed; it then applies to every profile.' },
     PREVIEW_WARM: { label: 'Prepare previews', help: 'Creates missing preview clips while idle, one per minute.' },
     HOME_NETWORKS: { label: 'Home networks', help: 'Networks that count as home (no bitrate cap for away), separated by commas, e.g. 192.168.0.0/16.' },
     UPLOAD_MBPS: { label: 'Server upload (Mbit/s)', help: 'The upload speed of your internet connection. When it is nearly used up, new streams from away start at a lower quality instead of everyone stalling. Running streams and the home network are not affected. Empty = off.' },

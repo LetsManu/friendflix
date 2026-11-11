@@ -190,9 +190,13 @@ export function castCapableBrowser(): boolean {
 let cfgP: Promise<boolean> | null = null;
 /** the app ID of FriendFlix's own receiver ('' = Default Media Receiver), from the same config answer */
 let receiverId = '';
+/** continuous AirPlay is on (admin switch), from the same config answer; false until it answered */
+let airplayContinuous = false;
+export const castConfigAirplayContinuous = (): boolean => airplayContinuous;
 export function castConfigEnabled(): Promise<boolean> {
-  cfgP ??= api<{ enabled: boolean; receiverAppId?: string }>('/api/cast/config').then((c) => {
+  cfgP ??= api<{ enabled: boolean; receiverAppId?: string; airplayContinuous?: boolean }>('/api/cast/config').then((c) => {
     receiverId = typeof c?.receiverAppId === 'string' && /^[0-9A-F]{8}$/.test(c.receiverAppId) ? c.receiverAppId : '';
+    airplayContinuous = c?.airplayContinuous === true;
     return Boolean(c?.enabled);
   }).catch((e) => { cfgP = null; throw e; });
   return cfgP;

@@ -150,6 +150,7 @@ export default {
     DOWNLOAD_CREATE_PER_HOUR: { label: 'Downloads pro Stunde', help: 'Höchstzahl neuer Downloads pro Stunde und Sitzung.' },
     CAST_ENABLED: { label: 'Chromecast', help: 'Wiedergabe auf Chromecast-Geräten. Braucht eine öffentliche Adresse mit gültigem https-Zertifikat.' },
     CAST_RECEIVER_APP_ID: { label: 'Cast-Empfänger-App-ID', help: 'Leer: Chromecast nutzt Googles Standard-Empfänger. Mit der App-ID des eigenen FriendFlix-Empfängers (8 Zeichen, aus der Google Cast SDK Developer Console, Empfänger-Adresse https://<deine Adresse>/cast-receiver/) zeigt der Fernseher „Nächste Folge“ mit Countdown, „Noch da?“ und „Intro überspringen“ und meldet den Fortschritt, auch wenn das Handy schläft. Siehe docs/cast-receiver.md.' },
+    CAST_AIRPLAY_CONTINUOUS: { label: 'Durchgehendes AirPlay (experimentell)', help: 'Experimentell. Erst einschalten, wenn der Test mit deinem AirPlay-Fernseher bestanden ist; danach gilt es für alle Profile.' },
     PREVIEW_WARM: { label: 'Vorschauen vorbereiten', help: 'Erzeugt im Leerlauf fehlende Vorschau-Clips, einen pro Minute.' },
     HOME_NETWORKS: { label: 'Heimnetze', help: 'Netze, die als Zuhause gelten (keine Bitraten-Grenze für unterwegs), durch Kommas getrennt, z. B. 192.168.0.0/16.' },
     UPLOAD_MBPS: { label: 'Upload des Servers (Mbit/s)', help: 'Die Upload-Geschwindigkeit deines Internetanschlusses. Ist sie fast ausgelastet, starten neue Streams von unterwegs mit weniger Qualität, statt dass alle ruckeln. Laufende Streams und das Heimnetz bleiben unberührt. Leer = aus.' },

@@ -157,6 +157,7 @@ const settings: Translation<typeof de> = {
     DOWNLOAD_CREATE_PER_HOUR: { label: 'Pobrania na godzinę', help: 'Maksymalna liczba nowych pobrań na godzinę i sesję.' },
     CAST_ENABLED: { label: 'Chromecast', help: 'Odtwarzanie na urządzeniach Chromecast. Wymaga adresu publicznego z ważnym certyfikatem https.' },
     CAST_RECEIVER_APP_ID: { label: 'ID aplikacji odbiornika Cast', help: 'Puste: Chromecast używa domyślnego odbiornika Google. Z ID aplikacji własnego odbiornika FriendFlix (8 znaków, z Google Cast SDK Developer Console, adres odbiornika https://<twój adres>/cast-receiver/) telewizor pokazuje „Następny odcinek” z odliczaniem, „Nadal tu jesteś?” i „Pomiń intro” oraz zapisuje postęp także wtedy, gdy telefon śpi. Zobacz docs/cast-receiver.md.' },
+    CAST_AIRPLAY_CONTINUOUS: { label: 'Ciągłe AirPlay (eksperymentalne)', help: 'Eksperymentalne. Włącz dopiero po udanym teście z telewizorem AirPlay; potem obowiązuje wszystkie profile.' },
     PREVIEW_WARM: { label: 'Przygotowuj podglądy', help: 'W czasie bezczynności tworzy brakujące klipy podglądu, jeden na minutę.' },
     HOME_NETWORKS: { label: 'Sieci domowe', help: 'Sieci uznawane za dom (bez limitu bitrate poza domem), oddzielone przecinkami, np. 192.168.0.0/16.' },
     UPLOAD_MBPS: { label: 'Wysyłanie serwera (Mbit/s)', help: 'Prędkość wysyłania Twojego łącza internetowego. Gdy jest prawie wykorzystana, nowe strumienie spoza domu startują w niższej jakości, zamiast żeby wszystkie się zacinały. Trwające strumienie i sieć domowa się nie zmieniają. Puste = wyłączone.' },

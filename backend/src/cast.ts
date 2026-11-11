@@ -107,6 +107,8 @@ const ovlKey = (userId: string, ps: string) => `povl:${userId}:${ps}`;
 const castIdOf = (hash: string) => hash.slice(0, 32);
 
 export const castEnabled = (ctx: Ctx) => ctx.cfg.CAST_ENABLED === 'true' && ctx.cfg.PUBLIC_URL.startsWith('https://');
+/** continuous AirPlay is on: the admin switch alone (no per-profile opt-in); joined playlists are built from Jellyfin's HLS playlists, so Plex never offers it */
+export const airplayContinuousOn = (ctx: Ctx): boolean => castEnabled(ctx) && ctx.cfg.CAST_AIRPLAY_CONTINUOUS === 'true' && ctx.jf.kind === 'jellyfin';
 
 /** 5 s memo of resolved tokens (keyed by hash + client): keeps per-segment auth cheap. Cleared on every revoke. */
 const memo = new Map<string, { exp: number; v: CastAuth | null }>();

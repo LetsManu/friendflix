@@ -21,12 +21,12 @@ const def = (key: string) => {
 describe('key classification', () => {
   it('every key of the config schema is in exactly one of SETTINGS, ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS', () => {
     const keys = Object.keys(configSchema.shape);
-    expect(keys).toHaveLength(100); // + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS
+    expect(keys).toHaveLength(101); // + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS
     const classes = [SETTINGS.map((s) => s.key), ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS];
     for (const k of keys) expect(classes.filter((c) => c.includes(k)), k).toHaveLength(1);
     expect(classes.flat().sort()).toEqual([...keys].sort()); // nothing outside the schema, no duplicates
-    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 21, 4, 71]); // + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS
-    expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(71);
+    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 21, 4, 72]); // + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS
+    expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(72);
     expect(SETTINGS.filter((s) => s.visible === false).map((s) => s.key)).toEqual([]);
   });
   it('each setting parses with the config schema field of the same key', () => {
@@ -89,6 +89,7 @@ describe('key classification', () => {
     expect(parseEnvValue(def('SESSION_IDLE_SECONDS'), '7776000')).toEqual({ ok: true, value: 7_776_000 });
     expect(def('DOWNLOAD_PREP_CONCURRENCY')).toMatchObject({ min: 1, max: 4 });
     expect(def('CAST_ENABLED')).toMatchObject({ kind: 'bool', group: 'playback', default: 'true' });
+    expect(def('CAST_AIRPLAY_CONTINUOUS')).toMatchObject({ kind: 'bool', group: 'playback', default: 'false', apply: 'live' });
     expect(def('CAST_RECEIVER_APP_ID')).toMatchObject({ kind: 'string', group: 'playback', apply: 'live' });
     expect(def('CAST_RECEIVER_APP_ID').schema.parse(' a1b2c3d4 ')).toBe('A1B2C3D4');
     expect(def('CAST_RECEIVER_APP_ID').schema.safeParse('not-an-id').success).toBe(false);
