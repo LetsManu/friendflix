@@ -129,7 +129,6 @@
     type Answer = { items: Suggestion[]; quota: { limit: number | null; used: number; resetsAt: string } | null };
     // each half is shown as soon as it arrives (a cached one is quick, a cold build is not); the slots of the other stay skeletons meanwhile
     // the first to arrive takes at most half of the slots, the second fills the others behind it: the cards on screen never move
-    let m: Answer | null = null, s: Answer | null = null;
     let early: Suggestion[] | null = null, shown: Suggestion[] = [];
     const run = wishRun.start(); // a load that is overtaken (the service went away and came back) writes nothing
     pendingMovies = pendingSeries = true;
@@ -138,9 +137,9 @@
       if (early === null) { early = items; shown = earlySuggestions(items, slots, filter === 'all'); set('suggest', shown); }
       else set('suggest', completeSuggestions(shown, early, items));
     };
-    await Promise.all([
-      fetchJson<Answer>('/api/library/request-suggestions?type=movie', SUGGEST_TIMEOUT_MS).then((r) => { m = r; if (!wishRun.stale(run)) pendingMovies = false; arrive(r?.items ?? []); }),
-      fetchJson<Answer>('/api/library/request-suggestions?type=series', SUGGEST_TIMEOUT_MS).then((r) => { s = r; if (!wishRun.stale(run)) pendingSeries = false; arrive(r?.items ?? []); }),
+    const [m, s] = await Promise.all([
+      fetchJson<Answer>('/api/library/request-suggestions?type=movie', SUGGEST_TIMEOUT_MS).then((r) => { if (!wishRun.stale(run)) pendingMovies = false; arrive(r?.items ?? []); return r; }),
+      fetchJson<Answer>('/api/library/request-suggestions?type=series', SUGGEST_TIMEOUT_MS).then((r) => { if (!wishRun.stale(run)) pendingSeries = false; arrive(r?.items ?? []); return r; }),
     ]);
     if (wishRun.stale(run)) return;
     const q = m?.quota ?? s?.quota ?? null;
