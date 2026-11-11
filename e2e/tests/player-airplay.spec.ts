@@ -184,6 +184,41 @@ test('AirPlay: the Player reports nothing for a joined token', async ({ page, ap
   expect(reports.filter((x) => x.playSessionId === 'a'.repeat(32))).toEqual([]);
 });
 
+test('AirPlay: a joined token handed over to the TV is reported by nobody on the page (no start, progress or stop)', async ({ page, api: _api }) => {
+  await stubAirPlay(page);
+  await mockPlayer(page);
+  await castOn(page, true, undefined, { airplayContinuous: true });
+  await mockHls(page);
+  const reports: Array<{ kind: string; playSessionId: unknown }> = [];
+  await page.route('**/api/playback/{start,progress,stop}', (r) => {
+    reports.push({ kind: new URL(r.request().url()).pathname.split('/').pop()!, playSessionId: (r.request().postDataJSON() as Record<string, unknown>).playSessionId });
+    return r.fulfill({ status: 204 });
+  });
+  const joined = { items: [{ itemId: episodes[1]!.id, title: 'Folge 2', season: 1, episode: 2, start: 0, duration: 600 }, { itemId: episodes[2]!.id, title: 'Folge 3', season: 1, episode: 3, start: 600, duration: 600 }], subtitles: false };
+  const { sessions } = await castSessions(page, { deliver: () => ({ joined, runtimeTicks: 12_000_000_000 }) });
+  await page.goto('/watch/' + episodes[1]!.id);
+  await hlsPlaying(page);
+  await available(page);
+  await page.locator('.stage').hover();
+  await playOnAirPlay(page);
+  await expect.poll(() => srcAtPick(page)).toContain('#airplay');
+  // the phone plays the joined token stream first (the Player counts it as started, but never reports it) ...
+  await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
+  await page.waitForFunction(() => (document.querySelector('video')?.currentTime ?? 0) > 0.3);
+  // ... then the TV is picked: the hand-over must not tell the engine a start was sent (it would owe progress and a stop)
+  await wireless(page, true);
+  await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
+  const el = 'video[data-cast-engine]';
+  await expect(page.locator(el)).toHaveCount(1); // the engine owns the element
+  await page.evaluate((sel) => document.querySelector<HTMLVideoElement>(sel)!.pause(), el);
+  await page.evaluate((sel) => document.querySelector<HTMLVideoElement>(sel)!.play().catch(() => undefined), el);
+  await page.waitForFunction((sel) => !document.querySelector<HTMLVideoElement>(sel)!.paused, el); // the TV plays: no start from the engine either
+  await page.evaluate((sel) => document.querySelector<HTMLVideoElement>(sel)!.dispatchEvent(new Event('ended')), el);
+  await page.waitForTimeout(600);
+  expect(sessions).toHaveLength(1);
+  expect(reports.filter((x) => x.playSessionId === 'a'.repeat(32))).toEqual([]);
+});
+
 test('AirPlay: picker did not lead to a TV yet -> prompt "Fernseher auswählen" opens it from a fresh tap; then TV -> active', async ({ page, api: _api }) => {
   await stubAirPlay(page);
   await mockPlayer(page);

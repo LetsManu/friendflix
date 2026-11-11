@@ -8,7 +8,9 @@ import { tr } from '#lib/i18n';
 import { CONNECT_TIMEOUT_MS, createAirPlay, SETTLE_MS, WIRELESS_EVENT, WIRELESS_OFF_GRACE_MS, type AirPlayTimers, type AirPlayVideo } from '#lib/player/airplay';
 import { clearAirLog, readAirLog, srcKind } from '#lib/player/airplayLog';
 import { DEFAULT_PREFS } from '#lib/stores';
+import { noteInteraction } from '#lib/stillwatching';
 import { SUBS_REFUSED_KEY } from './airsubs';
+import { joinedAsk } from './joined';
 import { CAST_VIDEO_ATTR, createCastEngine, ENDED_HIDE_MS, ENDED_IDLE_MS, PROGRESS_MS, type CastSession, type EngineDeps, type PlayerHandoff } from './engine';
 
 const T0 = 1_000_000;
@@ -64,7 +66,8 @@ beforeEach(() => { probeFetch.mockClear(); vi.stubGlobal('fetch', probeFetch); }
 afterEach(() => { vi.unstubAllGlobals(); clearAirLog(); });
 
 /** fake deps (api, manual timers, a fake body) and an AirPlay controller playing on the TV, as the Player hands it over */
-async function setup(o: { started?: boolean } = {}) {
+/** `at`: where the Player put its token (and the TV is held: the position guard) */
+async function setup(o: { started?: boolean; first?: Partial<CastInfo>; continuous?: boolean; at?: number } = {}) {
   const calls: Array<{ path: string; init: { method?: string; body?: any; keepalive?: boolean } }> = [];
   const order: string[] = [];
   let n = 0;
@@ -114,6 +117,7 @@ async function setup(o: { started?: boolean } = {}) {
     onPageHide: vi.fn((fn: () => void) => { hides.add(fn); return () => { hides.delete(fn); }; }),
     segments: vi.fn(async (id: string) => segs[id] ?? []), hidden: () => hiddenNow, onWake: vi.fn((fn: () => void) => { wakes.add(fn); return () => { wakes.delete(fn); }; }),
     toast, prefs: () => ({ ...DEFAULT_PREFS }), timers: timerDeps,
+    ...(o.continuous ? { continuous: (f: { episode: boolean; autoplay: boolean; sleepAfter: boolean; maxEpisodes: number }) => (f.episode && f.autoplay && !f.sleepAfter ? { continuous: true as const, maxEpisodes: f.maxEpisodes } : {}) } : {}),
     onHidden: vi.fn(() => () => undefined), store: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); }, removeItem: (k) => { store.delete(k); } }, digest: async () => '', log: vi.fn(), requestSession: vi.fn(async () => false), leave: vi.fn(), whenReady: vi.fn(), lock: vi.fn(async () => () => undefined), onRestore: vi.fn(),
   };
   const out = writable<CastSession | null>(null);
@@ -122,8 +126,8 @@ async function setup(o: { started?: boolean } = {}) {
   // the Player's side: tap on the AirPlay button (token a1 on the element), the TV picked, settle window over
   const video = new FakeVideo();
   const probe = new FakeVideo();
-  video.currentTime = 60;
-  const player = { request: vi.fn(async () => ci('a1')), revoke: vi.fn(), detach: vi.fn(), started: vi.fn(), restore: vi.fn(), fail: vi.fn(), change: vi.fn() };
+  video.currentTime = o.at ?? 60;
+  const player = { request: vi.fn(async () => ci('a1', o.first)), revoke: vi.fn(), detach: vi.fn(), started: vi.fn(), restore: vi.fn(), fail: vi.fn(), change: vi.fn() };
   const air = createAirPlay(video as unknown as AirPlayVideo, player, probe, timerDeps as unknown as AirPlayTimers);
   air.pick();
   await flush();
@@ -886,5 +890,204 @@ describe('cast engine: AirPlay subtitles inside the stream', () => {
     env.engine.setSubtitle(3);
     await flush();
     expect(get(env.out)?.subIndex).toBe(-1);
+  });
+});
+
+describe('cast engine: continuous AirPlay (a joined stream)', () => {
+  const E1 = { itemId: 'ep1', title: 'First', season: 1, episode: 1, start: 0, duration: 2832 };
+  const E2 = { itemId: 'ep2', title: 'Second', season: 1, episode: 2, start: 2832, duration: 2700 };
+  const E3 = { itemId: 'ep3', title: 'Third', season: 1, episode: 3, start: 5532, duration: 2600 };
+  const J = { items: [E1, E2, E3], subtitles: false };
+  /** the Player's joined token (episodes 1–3, the server's runtime is the joined total) at stream second 2900 = episode 2 at 68 s */
+  async function joinedEnv(over: Partial<PlayerHandoff> = {}) {
+    noteInteraction(); // the still-watching chain other tests ran up starts over (it caps maxEpisodes)
+    const env = await setup({ started: false, continuous: true, first: { joined: J, runtimeTicks: secToTicks(8132) }, at: 2900 });
+    // the Player hands over episode 1's metadata, the joined position and its element's (stale) duration
+    await env.adopt({ itemId: 'ep1', seriesId: 's1', title: 'Bright Valley', subtitle: 'S1:F1 First', isEpisode: true, position: 2900, duration: 1800, ...over });
+    return env;
+  }
+  /** the TV plays (at the hand-over position: the position guard holds it there), then reaches stream second `at` */
+  const playing = (env: Env, at: number) => { env.video.fire('playing'); env.video.currentTime = at; env.video.fire('timeupdate'); };
+
+  it('the session shows the current episode', async () => {
+    const env = await joinedEnv();
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', title: 'Bright Valley', subtitle: 'S1:F2 Second', posterId: 'ep2', isEpisode: true, position: 68, duration: 2700, state: 'connecting',
+      joined: { items: J.items, index: 1, streamPosition: 2900, streamDuration: 8132 } });
+    env.video.duration = 1800; // the element may still report episode 1's length right after the token loaded
+    env.video.fire('durationchange');
+    expect(get(env.out)?.duration).toBe(2700);
+    playing(env, 2950);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', position: 118, duration: 2700, state: 'playing', joined: { index: 1, streamPosition: 2950 } });
+    env.video.currentTime = 5540; // the stream moved on into episode 3 by itself
+    env.video.fire('timeupdate');
+    expect(get(env.out)).toMatchObject({ itemId: 'ep3', subtitle: 'S1:F3 Third', posterId: 'ep3', position: 8, duration: 2600, joined: { index: 2, streamPosition: 5540 } });
+    expect(env.calls.filter((c) => c.path.endsWith('/next') || c.path.includes('/segments'))).toEqual([]); // no up-next lookup
+    expect(get(env.out)?.next).toBeUndefined();
+  });
+
+  it('next seeks to the next boundary, no-op on the last', async () => {
+    const env = await joinedEnv();
+    playing(env, 2900);
+    await env.engine.next();
+    expect(env.video.currentTime).toBe(5532);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep3', position: 0, joined: { index: 2 } });
+    await env.engine.next();
+    expect(env.video.currentTime).toBe(5532);
+    expect(env.tokenPosts()).toEqual([]);
+    expect(env.toast).not.toHaveBeenCalled();
+  });
+
+  it('prev seeks to the previous, no-op on the first', async () => {
+    const env = await joinedEnv();
+    playing(env, 2900);
+    env.engine.prev();
+    expect(env.video.currentTime).toBe(0);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep1', position: 0, duration: 2832, joined: { index: 0 } });
+    env.video.currentTime = 50;
+    env.engine.prev();
+    expect(env.video.currentTime).toBe(50);
+    expect(env.tokenPosts()).toEqual([]);
+  });
+
+  it('prev without a joined stream does nothing', async () => {
+    const env = await setup();
+    await env.adopt();
+    env.video.currentTime = 400;
+    env.engine.prev();
+    expect(env.video.currentTime).toBe(400);
+  });
+
+  it('seek is episode-relative', async () => {
+    const env = await joinedEnv();
+    playing(env, 2900);
+    env.engine.seek(100);
+    expect(env.video.currentTime).toBe(2932);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', position: 100 });
+    env.engine.seek(-5);
+    expect(env.video.currentTime).toBe(2832);
+    env.engine.skip(-10); // the ±10 s buttons move on the stream: back into episode 1
+    expect(env.video.currentTime).toBe(2822);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep1', position: 2822 });
+  });
+
+  it('no page progress reports for a joined token', async () => {
+    const env = await joinedEnv();
+    playing(env, 2900);
+    env.video.pause();
+    void env.video.play();
+    env.engine.seek(200);
+    await env.advance(3 * PROGRESS_MS);
+    await env.engine.stop();
+    await flush();
+    expect(env.reports()).toEqual([]);
+    expect(env.deletes()).toEqual(['a1']);
+  });
+
+  /** a joined env whose handed-over token expires in 5 min: the first loop tick renews it */
+  async function expiring() {
+    const env = await joinedEnv();
+    env.engine.adopt({ ...env.handoff, itemId: 'ep1', seriesId: 's1', title: 'Bright Valley', isEpisode: true, position: 2900, cast: { ...env.air.info!, expiresAt: T0 + 5 * 60_000 } });
+    await flush();
+    playing(env, 2900);
+    return env;
+  }
+  /** the episodes 2 and 3 as a new joined stream (episode 2 starts it at 0), from 68 s */
+  const R1 = ci('r1', { startTime: 68, expiresAt: T0 + 9 * 60 * 60_000, runtimeTicks: secToTicks(5300),
+    joined: { items: [{ ...E2, start: 0 }, { ...E3, start: 2700 }], subtitles: false } });
+
+  it('a renewal restarts at the episode and offset', async () => {
+    const env = await expiring();
+    env.posts.push(async () => R1);
+    await env.advance(PROGRESS_MS);
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(env.tokenPosts()[0]!.init.body).toMatchObject({ itemId: 'ep2', startTicks: 680_000_000, via: 'airplay', continuous: true, maxEpisodes: 2 });
+    expect(env.air.info?.castId).toBe('r1');
+    env.video.currentTime = 0;
+    env.video.fire('loadedmetadata'); // the new stream starts with episode 2: the element goes to its offset, not to stream second 2900
+    expect(env.video.currentTime).toBe(68);
+    playing(env, 68);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', position: 68, duration: 2700, state: 'playing', joined: { index: 0, streamPosition: 68, streamDuration: 5300 } });
+    expect(env.reports()).toEqual([]);
+  });
+
+  it('an audio change asks for the episode and offset too', async () => {
+    const env = await joinedEnv();
+    playing(env, 6000);
+    await env.engine.refresh({ audioIndex: 3 });
+    expect(env.tokenPosts()[0]!.init.body).toMatchObject({ itemId: 'ep3', startTicks: secToTicks(468), audioIndex: 3, continuous: true, maxEpisodes: 1 });
+  });
+
+  it('switch off: a renewal falls back to a single token', async () => {
+    const env = await expiring();
+    env.posts.push(() => Promise.reject(new ApiError(400, { error: 'continuous_off' })));
+    env.posts.push(async () => ci('s1', { startTime: 68, expiresAt: T0 + 9 * 60 * 60_000, runtimeTicks: secToTicks(2700) }));
+    await env.advance(PROGRESS_MS);
+    const bodies = env.tokenPosts().map((c) => c.init.body);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toMatchObject({ itemId: 'ep2', startTicks: 680_000_000, continuous: true, maxEpisodes: 2 });
+    expect(bodies[1]).toMatchObject({ itemId: 'ep2', startTicks: 680_000_000, via: 'airplay' });
+    expect(bodies[1]).not.toHaveProperty('continuous');
+    expect(bodies[1]).not.toHaveProperty('maxEpisodes');
+    expect(env.toast).not.toHaveBeenCalled();
+    expect(env.air.info?.castId).toBe('s1');
+    env.video.fire('loadedmetadata');
+    expect(env.video.currentTime).toBe(68);
+    playing(env, 70);
+    // the session goes on with episode 2 alone: a plain token the page reports again
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', position: 70, duration: 2700, state: 'playing' });
+    expect(get(env.out)?.joined).toBeUndefined();
+    expect(env.reports()).toEqual(['start']);
+  });
+
+  it('a lost route: the reconnect asks for the episode and offset', async () => {
+    const env = await joinedEnv();
+    playing(env, 2900);
+    await routeLost(env);
+    expect(get(env.out)).toMatchObject({ state: 'reconnect', itemId: 'ep2', position: 68 });
+    env.engine.reconnect(); // the picker: the controller asks for a new token at the element's (stream) position
+    await flush();
+    expect(env.tokenPosts().at(-1)!.init.body).toMatchObject({ itemId: 'ep2', startTicks: 680_000_000, continuous: true, maxEpisodes: 2 });
+    expect(env.reports()).toEqual([]);
+  });
+
+  it('the stream ends after the last episode', async () => {
+    const env = await joinedEnv();
+    playing(env, 8000);
+    env.video.currentTime = 8132;
+    env.video.fire('ended');
+    await flush();
+    expect(get(env.out)).toMatchObject({ state: 'ended', itemId: 'ep3', position: 2600 });
+    expect(get(env.out)?.next).toBeUndefined();
+    expect(env.deletes()).toEqual(['a1']);
+    await env.advance(ENDED_HIDE_MS);
+    expect(get(env.out)).toBeNull();
+    expect(env.body.children).toEqual([]);
+    expect(env.reports()).toEqual([]);
+    expect(env.calls.filter((c) => c.path.endsWith('/next'))).toEqual([]);
+  });
+
+  it('the Player\'s re-mint before a TV is picked (the phone plays the joined token) asks for the episode and offset', async () => {
+    // the controller as the Player owns it: `ready` (token on the element, no TV yet), then a quality change (refresh)
+    const video = new FakeVideo();
+    const timers = { set: (fn: () => void, ms: number) => setTimeout(fn, ms), clear: (t: ReturnType<typeof setTimeout>) => clearTimeout(t) };
+    let info: CastInfo | null = null;
+    const request = vi.fn(async (_pos: number, o?: { joined?: { itemId: string; left: number } }) => (o?.joined ? R1 : ci('a1', { joined: J })));
+    const air = createAirPlay(video as unknown as AirPlayVideo, {
+      request, revoke: vi.fn(), detach: vi.fn(), restore: vi.fn(), fail: vi.fn(), change: vi.fn(),
+      started(c) { info = c; },
+      joined: (pos) => (info?.joined ? joinedAsk(info.joined.items, pos) : null),
+    }, null, timers as unknown as AirPlayTimers);
+    video.currentTime = 10;
+    air.pick();
+    await flush();
+    expect(air.state.ready).toBe(true);
+    expect(request).toHaveBeenLastCalledWith(10); // the first token: the page's own episode and position
+    video.currentTime = 2900;
+    await air.refresh();
+    expect(request).toHaveBeenLastCalledWith(68, { joined: { itemId: 'ep2', left: 2 } });
+    video.currentTime = 0;
+    video.fire('loadedmetadata');
+    expect(video.currentTime).toBe(68);
+    air.destroy();
   });
 });

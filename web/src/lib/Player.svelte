@@ -58,6 +58,7 @@
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
   import { castBody, castCapsReady, castConfigEnabled, castFellBack, continuousFields, postAirPlayToken, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastEvent, type CastInfo } from '#lib/cast';
   import { CAST_VIDEO_ATTR, castEngine, castSession, type CastSession } from '#lib/cast/engine';
+  import { episodeOf, joinedAsk, joinedAt, type JoinedItem } from '#lib/cast/joined';
   import type { Item } from '#lib/api';
   import { SEEK_COMMIT_MS, seekCancel, seekCommit, seekStep, type SeekPreview } from '#lib/player/tvSeek';
   import { pauseScreenDue, playerBack, tvPlayerButtons, type TvButton, type TvLayer } from '#lib/player/tvLayer';
@@ -748,13 +749,15 @@
   const castErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
     : e?.body?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
   // (FriendFlix's own receiver is given a moment to state what it plays first: castCapsReady; `again` names the stream the TV just refused)
-  const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }, extra: { subtitleIndex?: number } = {}) => {
+  // `joined`: a new token for the joined AirPlay stream on the element starts with that episode (`pos` = the offset in it), §5.4 f
+  const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }, extra: { subtitleIndex?: number } = {}, joined?: { itemId: string; left: number }) => {
     if (via !== 'airplay') await castCapsReady();
-    const body = castBody({ itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}), ...extra });
+    const body = castBody({ itemId: joined?.itemId ?? itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}), ...extra });
     if (via !== 'airplay') return api<CastInfo>('/api/cast/session', { method: 'POST', body });
-    // AirPlay: one joined stream for this and the next episodes while the admin switch is on (no sheet row; the profile's autoplay decides)
-    const pf = get(prefs);
-    return postAirPlayToken({ ...body, ...continuousFields({ episode: Boolean(seriesId), autoplay: pf.autoplayNext, sleepAfter: sleepAfterEpisode, maxEpisodes: episodesBeforeAsk(pf) }) });
+    // AirPlay: one joined stream for this and the next episodes while the admin switch is on (no sheet row; the profile's autoplay decides);
+    // a re-mint of a joined stream never asks for more episodes than that stream had left
+    const pf = get(prefs), most = episodesBeforeAsk(pf);
+    return postAirPlayToken({ ...body, ...continuousFields({ episode: Boolean(seriesId), autoplay: pf.autoplayNext, sleepAfter: sleepAfterEpisode, maxEpisodes: joined ? Math.min(joined.left, most) : most }) });
   };
   const castRevoke = (ci: CastInfo | null) => { if (ci) api(`/api/cast/session/${ci.castId}`, { method: 'DELETE' }).catch(() => undefined); };
 
@@ -815,10 +818,13 @@
 
   /** the AirPlay route plays our token on the TV: element, controller and probe go to the engine */
   function handOverAirPlay() {
-    const v = video, ctl = air, ci = airInfo;
+    const v = video, ctl = air, ci = airInfo, ep = airEp;
     if (!v || !ctl || !ci || partyMode) return;
-    // `start` was reported for this token exactly when the element played it here (the phone's token stream / the TV)
-    castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), cast: ci, subIndex: ci.hlsSub ? airSubAsked : -1, started: started && !stopped && !ci.joined, video: v, air: ctl, probe: airProbe });
+    // a re-mint of a joined stream gave a single token for a later episode (switch off meanwhile): the engine is told that episode
+    const other = !ci.joined && ep && ep.itemId !== itemId ? { itemId: ep.itemId, subtitle: episodeOf(barTitle || title, ep).sub } : {};
+    // `start` was reported for this token exactly when the element played it here (the phone's token stream / the TV); a joined
+    // token never (the server reports it per episode); its position is on the stream, the engine maps it and takes its length
+    castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), ...other, cast: ci, subIndex: ci.hlsSub ? airSubAsked : -1, started: started && !stopped && !ci.joined, video: v, air: ctl, probe: airProbe });
     handedOver();
     air = null; airProbe = null; airInfo = null; airState = AIR_IDLE;
   }
@@ -905,6 +911,8 @@
       flash(tr('player.airplay.endHint'), 5000);
     }
     lastRouteOn = false;
+    // the TV had moved on to another episode (a joined stream, or the engine's next episode): that one plays on here, at its position
+    if (was && was.itemId !== itemId) { dispatch('episode', { id: was.itemId, t: was.position }); return; }
     wantAutoplay = !(was?.paused ?? true);
     await load(was?.position);
   }
@@ -913,14 +921,24 @@
     : e?.body?.error === 'transcoding_disabled' ? tr('player.airplay.needsTranscode') : tr('player.airplay.failed');
   /** the subtitle index the current AirPlay token was requested with (-1 = none): the hand-off tells the engine this, not the menu's later choice */
   let airSubAsked = -1;
+  /**
+   * the episode a re-mint of a joined stream asked for (null: this page's item): `airEp` belongs to the token on the element,
+   * `airEpAsked` to the request on its way
+   */
+  let airEp: JoinedItem | null = null, airEpAsked: JoinedItem | null = null;
   function startAirPlay(v: HTMLVideoElement) {
     air = createAirPlay(v, {
       // the chosen text track rides inside the AirPlay stream (the TV shows only what the stream carries); never in the retry after a refusal
       request: (pos, o) => {
         const body = airSubBody(subIndex, Boolean(o?.noSubs), typeof localStorage === 'undefined' ? null : localStorage, Date.now(), get(serverCaps).castHlsSubtitles);
         airSubAsked = body.subtitleIndex ?? -1; // what the token carries: a later change in this menu does not change the TV's stream
-        return castRequest(pos, 'airplay', undefined, body);
+        // a single token for another episode (a joined re-mint the server answered plainly) stays that episode's
+        const keep = !o?.joined && airInfo && !airInfo.joined && airEp ? airEp : null;
+        airEpAsked = o?.joined ? airInfo?.joined?.items.find((x) => x.itemId === o.joined!.itemId) ?? null : keep;
+        return castRequest(pos, 'airplay', undefined, body, o?.joined ?? (keep ? { itemId: keep.itemId, left: 1 } : undefined));
       },
+      // the phone plays a joined token (before a TV is picked): a new token (audio, quality, renewal) starts at the episode and offset
+      joined: (pos) => (airInfo?.joined ? joinedAsk(airInfo.joined.items, pos) : null),
       subsRefused() { rememberSubsRefused(typeof localStorage === 'undefined' ? null : localStorage, Date.now()); setSubtitle(-1, false); flash(tr('player.castRemote.subsRefused'), 4000); },
       revoke: (ci) => castRevoke(ci),
       async detach() {
@@ -934,13 +952,16 @@
         if (video?.disableRemotePlayback) video.disableRemotePlayback = false; // hls.js sets it for ManagedMediaSource; it would block AirPlay
         started = false; stopped = false;
       },
-      started(ci) { airInfo = ci; started = false; stopped = false; mode = 'hls'; },
+      started(ci) { airInfo = ci; airEp = airEpAsked; started = false; stopped = false; mode = 'hls'; },
       async restore(pos, play, ci) {
         if (ci && started && !stopped) { stopped = true; await send('stop'); }
-        airInfo = null; started = false; stopped = false;
+        // a joined token's position is on its stream: the episode there, at its offset (another episode: that one's page plays it)
+        const j = ci?.joined ? joinedAt(ci.joined.items, pos) : null, ep = j ? ci!.joined!.items[j.index]! : ci ? airEp : null;
+        airInfo = null; airEp = null; started = false; stopped = false;
         if (destroyed) return;
+        if (ep && ep.itemId !== itemId) { dispatch('episode', { id: ep.itemId, t: j ? j.offset : pos }); return; }
         wantAutoplay = play;
-        await load(pos);
+        await load(j ? j.offset : pos);
       },
       fail: (e) => flash(airErr(e), 4000),
       change: (st) => {

@@ -213,14 +213,17 @@ export function castConfigEnabled(): Promise<boolean> {
 export function continuousFields(o: { episode: boolean; autoplay: boolean; sleepAfter: boolean; maxEpisodes: number }): { continuous?: true; maxEpisodes?: number } {
   return airplayContinuous && o.episode && o.autoplay && !o.sleepAfter ? { continuous: true, maxEpisodes: o.maxEpisodes } : {};
 }
-/** POST /api/cast/session for AirPlay; when the server says the switch is off (`continuous_off`, a stale config) once more as a plain token, silently */
-export async function postAirPlayToken(body: Record<string, unknown>): Promise<CastInfo> {
+/**
+ * POST /api/cast/session for AirPlay; when the server says the switch is off (`continuous_off`, a stale config) once more as a plain
+ * token, silently. `call`: the api function (the cast engine passes its own)
+ */
+export async function postAirPlayToken(body: Record<string, unknown>, call: typeof api = api): Promise<CastInfo> {
   try {
-    return await api<CastInfo>('/api/cast/session', { method: 'POST', body });
+    return await call<CastInfo>('/api/cast/session', { method: 'POST', body });
   } catch (e) {
     if (!body.continuous || (e as { body?: { error?: string } })?.body?.error !== 'continuous_off') throw e;
     const { continuous: _c, maxEpisodes: _m, ...plain } = body;
-    return api<CastInfo>('/api/cast/session', { method: 'POST', body: plain });
+    return call<CastInfo>('/api/cast/session', { method: 'POST', body: plain });
   }
 }
 

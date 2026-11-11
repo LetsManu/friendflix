@@ -24,6 +24,11 @@
  * The session's autoplay switch (`setAutoplay`) turns all of that off (or on) for the rest of the session.
  * AirPlay has no receiver queue: an `ended` while the page is hidden, or found on wake (`onWake`), starts the next one at once.
  * Intro / recap segments offer `skip` (seek past it).
+ * Continuous AirPlay (spec device-handoff §5.4 f): a token whose answer carries `joined` is one stream of several episodes. The
+ * session then describes the episode the TV is in (`itemId`, titles, `position`, `duration`; the stream's own in `joined`), `seek` is
+ * episode-relative, `next` / `prev` seek to a boundary, and every new token (renewal, tracks, reconnect) starts at that episode and
+ * offset as a joined stream again (`continuous_off`: silently a single token). The server reports such a token per episode: the
+ * engine sends no playback reports for it and runs no credits / up-next / skip logic; the end of its last part ends the session.
  * FriendFlix's own receiver (CAST_RECEIVER_APP_ID; `cast.castCustomReceiver()`): the engine also tells the TV what it needs for its own
  * UI (`tvSync`: segments, the queued next episode, still-watching) and the TV runs the next-up countdown and moves on to the queued
  * episode itself; "still watching?" no longer blocks the queue there (the queued item waits paused until it is answered on the TV,
@@ -42,7 +47,7 @@
  */
 import { get, writable, type Readable, type Writable } from 'svelte/store';
 import { api, cachedItem, getActiveProfileName, secToTicks, ticksToSec, type Item, type ItemDetail } from '#lib/api';
-import { castActiveSubtitle, castAdoptTracks, castBody, castCapsReady, castCustomReceiver, castFellBack, castLeave, castPlayPause, castQueueNext, castQueueRemove, castSeek, castSendMessage, castSetSubtitle, castState, castStop, loadOnCast, onCastEvent, onReceiverMessage, queueOnCast, requestCastSession, whenCastReady, type CastEvent, type CastInfo, type CastState } from '#lib/cast';
+import { castActiveSubtitle, castAdoptTracks, castBody, castCapsReady, castCustomReceiver, castFellBack, castLeave, castPlayPause, castQueueNext, castQueueRemove, castSeek, castSendMessage, castSetSubtitle, castState, castStop, continuousFields, loadOnCast, onCastEvent, onReceiverMessage, postAirPlayToken, queueOnCast, requestCastSession, whenCastReady, type CastEvent, type CastInfo, type CastState, type JoinedInfo } from '#lib/cast';
 import { segmentShown, serverCaps } from '#lib/capabilities';
 import { tr } from '#lib/i18n';
 import { createAirPlay, type AirPlayController, type AirPlayDeps, type AirPlayState } from '#lib/player/airplay';
@@ -55,7 +60,8 @@ import { castIdOfContentUrl, clearHint, lookupToCastInfo, readHint, sha256Hex, w
 import { barTitles, firstInfoBody } from '#lib/player/bar';
 import { episodeLabel } from './remoteview';
 import { COUNTDOWN_SECONDS, creditsStart, mayAutoplay, type Segment } from '#lib/player/nextup';
-import { consumeAutoplay, noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
+import { consumeAutoplay, episodesBeforeAsk, noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
+import { episodeOf, joinedAsk, joinedAt, joinedLength } from './joined';
 import { prefs, type Prefs } from '#lib/stores';
 import { toast } from '#lib/ui/toast';
 
@@ -80,6 +86,11 @@ export interface CastSession {
   autoplay: boolean;
   /** the live token's public handle (Diagnose); absent while switching, after the end and for AirPlay before a token plays */
   castId?: string;
+  /**
+   * continuous AirPlay: the token is one stream of these episodes (stream seconds); `index` = the episode the TV is in, which
+   * `itemId` / `title` / `subtitle` / `position` / `duration` describe; the stream's own position and length are here
+   */
+  joined?: { items: JoinedInfo['items']; index: number; streamPosition: number; streamDuration: number };
 }
 export interface PlayerHandoff {
   kind: CastKind; itemId: string; seriesId?: string; title: string; subtitle: string; isEpisode: boolean;
@@ -96,8 +107,10 @@ export interface CastEngine {
   playPause(): void; seek(sec: number): void; skip(delta: number): void;
   /** plays another title on the TV (no `startAt` = the server's resume position) */
   playOnTv(itemId: string, startAt?: number): Promise<void>;
-  /** plays the next episode now (from a tap): the known one in `ended`, else the episode after the playing one */
+  /** plays the next episode now (from a tap): the known one in `ended`, else the episode after the playing one; a joined stream: its next boundary (none after the last) */
   next(): Promise<void>;
+  /** a joined stream (from a tap): to the start of the previous episode; nothing on the first or without a joined stream */
+  prev(): void;
   /** from a tap: the next episode's autoplay countdown stops, the episode stays offered (and leaves the receiver's queue) */
   cancelNext(): void;
   /** from a tap: past the intro / recap the TV is in */
@@ -166,6 +179,8 @@ export interface EngineDeps {
   formFactor(): 'phone' | 'tablet' | 'computer';
   /** may the TV animate (calm mode and reduced motion say no); */
   motion(): boolean;
+  /** the joined-stream fields of an AirPlay token request (absent: `continuousFields`, which follows the admin switch) */
+  continuous?: typeof continuousFields;
 }
 
 /** progress report cadence while the receiver plays */
@@ -220,8 +235,12 @@ interface Live {
   view: CastSession;
   /** the live cast token (null while switching, after a failure and after the end) */
   ci: CastInfo | null;
-  /** `start` was reported for `ci` (a `stop` is owed) */
+  /** `start` was reported for `ci` (a `stop` is owed); never for a joined token, which the server reports itself */
   started: boolean;
+  /** AirPlay: the TV played the live token (its position counts); with a joined token without `started` */
+  seen: boolean;
+  /** AirPlay: the stream on the element is a joined one (kept through a lost route: the reconnect asks from its position) */
+  joined?: { items: JoinedInfo['items']; series: string; length: number };
   /** a token switch is in flight: the receiver still reports the previous media */
   busy: boolean;
   /** the latest `stop` report: the next token request waits for it (the server counts the stream until then) */
@@ -427,6 +446,29 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     s.view = { ...s.view, ...p, autoplay: autoOf(s), castId: s.ci?.castId };
     out.set(s.view);
   };
+  /**
+   * A joined stream at stream second `t`: the session's fields for the episode there. `played`: the TV got there by playing on (not
+   * a seek): a new episode counts as an autoplay for "still watching?" (the server already reported the boundary).
+   */
+  const stream = (s: Live, t: number, played = false): Partial<CastSession> => {
+    const j = s.joined!, { index, offset } = joinedAt(j.items, t), it = j.items[index]!;
+    const was = s.view.joined; // (a new token restarts the stream with the same episode: no change)
+    if (!was || s.view.itemId !== it.itemId) {
+      s.label = labelOf({ type: 'Episode', indexNumber: it.episode, parentIndexNumber: it.season });
+      if (was) log('info', 'session', `joined stream · ${s.label}${played ? '' : ' (seek)'}`);
+      if (played && was && index > was.index) { noteAutoplay(); consumeAutoplay(); }
+    }
+    const { title, sub } = episodeOf(j.series, it);
+    return { itemId: it.itemId, title, subtitle: sub, posterId: it.itemId, isEpisode: true, position: offset, duration: it.duration,
+      joined: { items: j.items, index, streamPosition: t, streamDuration: j.length } };
+  };
+  /** a joined stream: the TV to stream second `t` (clamped to the stream), the session to the episode there */
+  const seekStream = (s: Live, t: number) => {
+    if (!s.ci || s.busy || !s.air || !s.joined) return;
+    const x = Math.max(0, Math.min(s.joined.length, t));
+    s.air.video.currentTime = x;
+    patch(s, stream(s, x));
+  };
   /** Chromecast: the hint names the live token (the next page finds the cast by it); AirPlay never leaves one */
   const hint = (s: Live) => {
     if (s.air || !s.ci) return;
@@ -509,6 +551,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   };
   /** the title's segments (intro / recap skip, credits) */
   const loadSegs = (s: Live) => {
+    if (s.joined) return; // a joined stream has no skip / credits logic on the page
     const id = s.view.itemId;
     void deps.segments(id).then((x) => { if (cur === s && s.view.itemId === id) { s.segs = x; tvSync(s); } }, () => undefined);
   };
@@ -570,7 +613,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   /** a position update while the TV plays: skip offer, credits (next episode offered), Chromecast queue */
   function atPosition(s: Live) {
     const v = s.view;
-    if (cur !== s || !s.ci || s.busy || v.state !== 'playing') return;
+    if (cur !== s || !s.ci || s.busy || v.state !== 'playing' || s.joined) return; // a joined stream: no skip, credits or up-next
     const seg = s.segs.find((x) => (x.type === 'intro' || x.type === 'recap') && v.position >= x.start && v.position < x.end - 1);
     if (seg?.end !== v.skip?.end) patch(s, { skip: seg ? { type: seg.type, end: seg.end } : undefined });
     if (!v.isEpisode || !(v.duration > 0)) return;
@@ -832,32 +875,40 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   function airDeps(s: Live, a: AirLive): AirPlayDeps {
     return {
       request(pos, o) {
-        const w = a.want, at = w ? w.at : pos;
+        const w = a.want, at = w ? w.at : pos, jo = w ? undefined : o?.joined;
         // the chosen subtitle rides inside the stream (text only: the server ignores an image track); not after the TV refused one, not without the server's capability
         const sub = airSubBody(s.subIndex, Boolean(o?.noSubs), deps.store, deps.timers.now(), subsOk());
-        return call<CastInfo>('/api/cast/session', {
-          method: 'POST',
-          body: { itemId: w?.itemId ?? s.view.itemId, startTicks: at === undefined ? undefined : secToTicks(at), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, via: 'airplay', ...sub },
-        });
+        const body = { itemId: w?.itemId ?? jo?.itemId ?? s.view.itemId, startTicks: at === undefined ? undefined : secToTicks(at), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, via: 'airplay', ...sub };
+        if (!jo) return call<CastInfo>('/api/cast/session', { method: 'POST', body });
+        // a joined stream again from this episode (never more episodes than this stream had left); switch off: a single token, silently
+        const p = deps.prefs();
+        return postAirPlayToken({ ...body, ...(deps.continuous ?? continuousFields)({ episode: true, autoplay: s.autoSet ?? p.autoplayNext, sleepAfter: s.sleepAfterEpisode, maxEpisodes: Math.min(jo.left, episodesBeforeAsk(p)) }) }, call);
       },
+      joined: (pos) => (s.joined && !a.want ? joinedAsk(s.joined.items, pos) : null),
       // the server counts the stream until its `stop` arrived: revoke after it (pagehide: now, with keepalive)
       revoke(ci) { if (a.revoked.has(ci.castId)) return; if (a.leaving) revoke(ci, true); else void s.stopping.then(() => revoke(ci)); },
-      detach() { void stopReport(s); return s.stopping.then(() => undefined); },
+      detach() { s.seen = false; void stopReport(s); return s.stopping.then(() => undefined); },
       started(ci) {
         if (cur !== s) return;
         const w = a.want; // set only by a switch to another title: its subtitles replace the list (a renewal keeps it)
         a.want = null;
-        s.ci = ci; s.started = false; s.lastPaused = null;
+        s.ci = ci; s.started = false; s.seen = false; s.lastPaused = null;
+        const was = s.joined;
+        // a joined token (a re-mint starts it with the episode the session shows: its offset is the stream position); else none
+        s.joined = ci.joined ? { items: ci.joined.items, series: ci.seriesName ?? was?.series ?? s.view.title, length: joinedLength(ci.joined.items, ci.runtimeTicks) } : undefined;
         // the chip never claims a track the stream does not carry (the server ignored the index, or the token was asked without it)
         if (s.subIndex >= 0 && !ci.hlsSub) { s.subIndex = -1; patch(s, { subIndex: -1 }); }
         // the server chose the start (resume position): the stream's timeline is absolute, seek there once it loaded
         if (w && w.at === undefined && ci.startTime > 1) a.video.addEventListener('loadedmetadata', () => { if (a.ctl.info === ci) a.video.currentTime = ci.startTime; }, { once: true });
-        patch(s, { position: w ? w.at ?? ci.startTime : s.view.position, ...(ci.runtimeTicks ? { duration: ticksToSec(ci.runtimeTicks) } : {}), ...(w ? { subtitles: subsOf(ci) } : {}) });
+        const pos = w ? w.at ?? ci.startTime : s.view.position;
+        if (s.joined) patch(s, { ...stream(s, pos), ...(w ? { subtitles: subsOf(ci) } : {}) });
+        else patch(s, { position: pos, ...(ci.runtimeTicks ? { duration: ticksToSec(ci.runtimeTicks) } : {}), ...(w ? { subtitles: subsOf(ci) } : {}), ...(was ? { joined: undefined } : {}) });
+        if (was && !s.joined && !w) { log('info', 'renew', 'single token after a joined stream'); loadSegs(s); } // the episode's own skip / credits / up-next again
       },
       restore(pos) {
         // sustained route loss (or no TV chosen after a reconnect tap): never the cookie stream, wait for a tap
         if (cur !== s || s.view.state === 'ended') return;
-        patch(s, { position: pos });
+        patch(s, s.joined ? stream(s, pos) : { position: pos });
         void stopReport(s);
         s.ci = null;
         a.video.pause();
@@ -915,17 +966,21 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (type === 'error') { if (v.error && v.error.code !== 1) a.ctl.videoError(v.error.code, v.error.message); return; }
     if (!s.ci || s.busy) return;
     if (type === 'ended') { airEnded(s, a, deps.hidden()); return; }
-    const start = type === 'playing' && !s.started && a.ctl.state.active;
+    const start = type === 'playing' && !s.seen && a.ctl.state.active;
     const p: Partial<CastSession> = { paused: v.paused };
-    if (s.started || start) p.position = v.currentTime; // before that the element may still be at 0 (the switch's start counts)
-    if (Number.isFinite(v.duration) && v.duration > 0) p.duration = v.duration;
+    // before that the element may still be at 0 (the switch's start counts); a joined stream: the episode there, at its offset
+    if (s.seen || start) Object.assign(p, s.joined ? stream(s, v.currentTime, type === 'timeupdate') : { position: v.currentTime });
+    // a joined stream's length comes from its token (right after the load the element may still report the previous stream's)
+    if (!s.joined && Number.isFinite(v.duration) && v.duration > 0) p.duration = v.duration;
     if (type === 'waiting') p.buffering = true;
     if (type === 'playing') p.buffering = false;
     if (start) p.state = 'playing';
     patch(s, p);
-    if (start) { s.started = true; a.resume = false; void report(s, 'start', s.ci); } // the TV plays: a pending Neu verbinden has nothing left to resume
-    else if ((type === 'play' || type === 'pause') && s.started) void report(s, 'progress', s.ci);
-    if (type === 'timeupdate' && s.started) atPosition(s);
+    if (start) {
+      s.seen = true; a.resume = false; // the TV plays: a pending Neu verbinden has nothing left to resume
+      if (!s.ci.joined) { s.started = true; void report(s, 'start', s.ci); } // a joined token: the server reports per episode
+    } else if ((type === 'play' || type === 'pause') && s.started) void report(s, 'progress', s.ci);
+    if (type === 'timeupdate' && s.seen) atPosition(s);
   }
 
   /**
@@ -934,6 +989,19 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
    */
   function airEnded(s: Live, a: AirLive, late: boolean) {
     if (!s.ci) return;
+    if (s.joined) {
+      // a joined stream ends after its last part: the session ends (nothing is owed: the server reported each episode); no next offer
+      airNote(s, 'stop', late ? 'joined stream ended while hidden' : 'joined stream ended');
+      patch(s, { ...stream(s, s.joined.length), state: 'ended', paused: true, buffering: false, skip: undefined });
+      const ci = s.ci, stopped = stopReport(s);
+      s.ci = null;
+      a.revoked.add(ci.castId);
+      void stopped.then(() => revoke(ci));
+      s.close = () => { end(s, 'joined stream ended'); dropAir(a); };
+      if (s.hide !== undefined) timers.clear(s.hide);
+      s.hide = timers.set(s.close, ENDED_HIDE_MS);
+      return;
+    }
     airNote(s, 'switch', late ? 'ended while hidden' : 'ended');
     patch(s, { state: 'ended', position: s.view.duration || s.view.position, paused: true, buffering: false });
     // the ended token goes now (after its stop), not only when the controller replaces or drops it
@@ -982,11 +1050,11 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     a.opSeq = null; // a newer switch waits for `op` before it sets its own
     if (my !== seq) return; // a newer switch takes over (the controller revokes this token when it replaces it)
     s.busy = false;
-    if (s.ci && hold && !s.started) {
+    if (s.ci && hold && !s.seen) {
       // the element stays paused (the controller plays only what played): no `playing` will come, the paused token counts now
-      s.started = true;
+      s.seen = true;
       patch(s, { state: 'playing', buffering: false });
-      void report(s, 'start', s.ci);
+      if (!s.ci.joined) { s.started = true; void report(s, 'start', s.ci); }
     }
     if (s.ci) { if (fresh && !it) patch(s, { title: s.ci.seriesName ?? s.ci.title, subtitle: s.ci.seriesName ? s.ci.title : '', seriesId: undefined, posterId: itemId, isEpisode: Boolean(s.ci.seriesName) }); return; }
     if (s.view.state !== 'connecting') return;
@@ -1041,7 +1109,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     dequeue(s); // a new load replaces the receiver's queue; asked again for the new token
     s.credits = false; s.queueAsked = false; s.upLookup = undefined; s.offered = undefined; s.going = false; s.unpinRetried = false;
     s.stallAt = undefined; s.stallLogged = false; s.loadAt = undefined; s.foreignAt = undefined;
-    if (fresh) { s.segs = []; s.noAuto = undefined; }
+    if (fresh) { s.segs = []; s.noAuto = undefined; s.joined = undefined; } // another title: a plain token (the joined stream is over)
     const old = s.ci;
     const fb = s.fallback;
     s.fallback = undefined;
@@ -1050,7 +1118,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     s.ci = null; s.busy = true; s.retry = null; s.lastPaused = null; s.hold = hold;
     if (fresh) { s.audioIndex = undefined; s.subIndex = -1; s.sleepAfterEpisode = false; } // "sleep after" meant the ended episode
     patch(s, { itemId, state: 'connecting', position: startAt ?? 0, paused: hold, buffering: true, next: undefined, upcoming: undefined, skip: undefined,
-      ...(fresh ? { audioTracks: [], subtitles: [], audioIndex: undefined, subIndex: -1 } : {}) });
+      ...(fresh ? { audioTracks: [], subtitles: [], audioIndex: undefined, subIndex: -1, joined: undefined } : {}) });
     const meta = fresh ? deps.item(itemId).catch(() => null) : Promise.resolve(null);
     const a = s.air;
     const [, it] = await Promise.all([stopped, meta, a?.op]);
@@ -1112,6 +1180,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   function seek(sec: number) {
     const s = cur;
     if (!s?.ci || s.busy) return;
+    const j = s.joined && s.view.joined ? s.joined.items[s.view.joined.index] : undefined;
+    if (j) { seekStream(s, j.start + Math.max(0, Math.min(j.duration, sec))); return; } // episode-relative; nothing is reported
     const t = Math.max(0, s.view.duration ? Math.min(s.view.duration, sec) : sec);
     if (s.air) s.air.video.currentTime = t;
     else cast.castSeek(t);
@@ -1141,12 +1211,18 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         audioTracks: h.audioTracks ?? [], subtitles: h.subtitles ?? [], audioIndex: h.audioIndex, subIndex: subOf(h),
         autoplay: deps.prefs().autoplayNext && !h.sleepAfterEpisode, castId: h.cast.castId },
       // hold: a resumed, never reported cast on a paused TV counts as started once it is seen paused (as a paused renewal)
-      ci: h.cast, started: h.started, busy: false, stopping: Promise.resolve(), lastPaused: null, hold,
+      ci: h.cast, started: h.started, seen: h.started, busy: false, stopping: Promise.resolve(), lastPaused: null, hold,
       audioIndex: h.audioIndex, subIndex: subOf(h), maxBitrate: h.maxBitrate, sleepAfterEpisode: h.sleepAfterEpisode,
       // a resumed cast first looks at the receiver's own queue (restoreQueue): nothing is queued before that
       retry: null, offs: [], segs: [], credits: false, queueAsked: how === 'resume', going: false,
       autoSet: null, queueing: false, unpinRetried: false, label: labelOf(null, h.isEpisode), line: '', stallLogged: false, renewing: false,
     };
+    const jo = h.kind === 'airplay' ? h.cast.joined : undefined;
+    if (jo) {
+      // a joined token: the hand-over's position is on the stream, its item the first episode; the length is the token's, never the element's
+      s.joined = { items: jo.items, series: h.cast.seriesName ?? h.title, length: joinedLength(jo.items, h.cast.runtimeTicks) };
+      s.view = { ...s.view, ...stream(s, h.position) };
+    }
     cur = s;
     // the TV's episode line needs the season / episode numbers, which a hand-off does not carry (a resume brings its item itself)
     if (how === 'adopt' && h.isEpisode && h.kind === 'chromecast') {
@@ -1380,17 +1456,37 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       else s.air.video.pause();
     },
     seek,
-    skip(delta) { if (!cur) return; noteInteraction(); seek(cur.view.position + delta); },
+    skip(delta) {
+      const s = cur;
+      if (!s) return;
+      noteInteraction();
+      // a joined stream: ±delta on the stream (across a boundary too)
+      if (s.joined && s.view.joined) seekStream(s, s.view.joined.streamPosition + delta);
+      else seek(s.view.position + delta);
+    },
     async playOnTv(itemId, startAt) { if (cur) await swap(cur, itemId, startAt, true); },
     async next() {
       const s = cur;
       // a second tap while the next episode is on its way must not skip one more
       if (!s || s.busy || (s.view.state !== 'ended' && s.view.state !== 'playing')) return;
       noteInteraction();
+      if (s.joined) {
+        // a joined stream: its next episode's start (the stream carries it); after the last nothing
+        const n = s.view.joined ? s.joined.items[s.view.joined.index + 1] : undefined;
+        if (n && s.view.state === 'playing') seekStream(s, n.start);
+        return;
+      }
       const my = seq;
       const id = s.view.next?.itemId ?? s.queued?.it.id ?? (s.view.isEpisode ? (await nextOf(s.view.itemId))?.id : undefined);
       if (!id) { if (cur === s && my === seq) deps.toast('info', tr('player.noNext')); return; }
       if (cur === s && my === seq) await swap(s, id, undefined, true);
+    },
+    prev() {
+      const s = cur;
+      const p = s?.joined && s.view.joined ? s.joined.items[s.view.joined.index - 1] : undefined;
+      if (!s || !p || s.view.state !== 'playing') return;
+      noteInteraction();
+      seekStream(s, p.start);
     },
     cancelNext() {
       const s = cur;
