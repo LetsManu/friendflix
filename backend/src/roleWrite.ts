@@ -50,7 +50,7 @@ export type RolePatch = z.infer<typeof rolePatch>;
 
 /** fields the media server enforces through the identity policy: a change re-applies it (spec §2.3; `download` is the policy's
  * EnableContentDownloading / Plex' download flag, so it re-applies as the legacy editor did) */
-const MEDIA_FIELDS: ReadonlySet<string> = new Set(['libraries', 'maxParentalRating', 'maxStreams', 'maxBitrate', 'transcoding', 'maxHeight', 'download']);
+export const MEDIA_FIELDS: ReadonlySet<string> = new Set(['libraries', 'maxParentalRating', 'maxStreams', 'maxBitrate', 'transcoding', 'maxHeight', 'download']);
 
 type RoleRights = NonNullable<Awaited<ReturnType<typeof roleRights>>>;
 const isPerm = (k: string): k is PermKey => (PERM_KEYS as readonly string[]).includes(k);

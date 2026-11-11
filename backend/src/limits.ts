@@ -10,7 +10,8 @@ import type { RoleTemplate } from './roles.js';
 export type UserLimits = { maxStreams: number | null; remoteBitrate: number | null; maxDownloads: number | null; downloadMaxHeight: number | null; requestsPerMonth: number | null };
 /**
  * Every per-user override (user_limits, migration 47), in the stored encoding: null = as the role; `maxHeight` 0 = unlimited;
- * `maxParentalRating` -1 = unrestricted, 0..21 = cap; `libraries` 'all' or library names; `perms` only the switches set for this account.
+ * `maxParentalRating` -1 = unrestricted, 0..21 = cap; `requestsPerMonth` -1 = unlimited (the column has no other way to tell it from
+ * "as the role"); `libraries` 'all' or library names; `perms` only the switches set for this account; `note` the admin's free-text why.
  */
 export type UserOverrides = UserLimits & {
   transcoding: boolean | null; maxHeight: number | null; download: boolean | null; maxBitrate: number | null; maxParentalRating: number | null;

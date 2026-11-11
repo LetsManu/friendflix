@@ -70,7 +70,10 @@ async function cachedOverrides(ctx: RightsCtx, userId: string): Promise<UserOver
   return v;
 }
 
-/** the account's overrides in the effective encoding: field -> value (null = unlimited / unrestricted); unset fields are absent */
+/**
+ * the account's overrides in the effective encoding: field -> value (null = unlimited / unrestricted); unset fields are absent.
+ * Stored sentinels: maxHeight 0, maxParentalRating -1 and requestsPerMonth -1 mean unlimited (the column's null is "as the role").
+ */
 function overrideValues(u: UserOverrides): Partial<EffectiveLimits> {
   const out: Record<string, unknown> = {};
   const put = (k: TemplateKey | 'requestsPerMonth', v: unknown) => { if (v !== null && v !== undefined) out[k] = v; };
@@ -78,7 +81,7 @@ function overrideValues(u: UserOverrides): Partial<EffectiveLimits> {
   put('remoteMaxBitrate', u.remoteBitrate);
   put('maxDownloads', u.maxDownloads);
   put('downloadMaxHeight', u.downloadMaxHeight);
-  put('requestsPerMonth', u.requestsPerMonth);
+  if (u.requestsPerMonth !== null) out.requestsPerMonth = u.requestsPerMonth === -1 ? null : u.requestsPerMonth;
   put('transcoding', u.transcoding);
   put('download', u.download);
   put('maxBitrate', u.maxBitrate);
@@ -91,10 +94,13 @@ function overrideValues(u: UserOverrides): Partial<EffectiveLimits> {
 /**
  * What an account may do: its role's rights with the account's overrides on top, and for a kids profile the kids overlay (KIDS_OFF
  * switched off, the age cap lowered to the profile's). The override row is cached ~30 s per (ctx, user); the role layer has its own
- * caches (role rows, catalogue). undefined for an unknown role.
+ * caches (role rows, catalogue). undefined for an unknown role. `explicit`: resolve over this override row instead of the stored one
+ * (the rights editor compares before and after a write).
  */
-export async function effectiveRights(ctx: RightsCtx, user: { id: string; role: string }, profile?: Pick<ProfileRow, 'kids' | 'kids_max_rating'> | null): Promise<Rights | undefined> {
-  const [r, u] = await Promise.all([roleRights(ctx, user.role), cachedOverrides(ctx, user.id)]);
+export async function effectiveRights(
+  ctx: RightsCtx, user: { id: string; role: string }, profile?: Pick<ProfileRow, 'kids' | 'kids_max_rating'> | null, explicit?: UserOverrides,
+): Promise<Rights | undefined> {
+  const [r, u] = await Promise.all([roleRights(ctx, user.role), explicit ?? cachedOverrides(ctx, user.id)]);
   if (!r) return undefined;
   const template: EffectiveLimits = { ...r.template };
   const perms: Perms = { ...r.perms };

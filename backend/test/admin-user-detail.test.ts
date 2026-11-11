@@ -181,10 +181,12 @@ describe('limits', () => {
     expect(policies.map((c) => c.path).sort()).toEqual([ANNA_JF, KID_JF, BROKEN_JF].map((j) => `/Users/${j}/Policy`).sort());
     expect(policies.every((c) => c.body.MaxActiveSessions === 4)).toBe(true);
     expect(await env.kv.get('sess:s-lim')).not.toBeNull(); // sessions stay
-    expect((await audits('user.limits', anna)).at(-1)).toMatchObject({
+    // the alias writes through /rights: audited user.rights with the changed effective values only
+    expect((await audits('user.rights', anna)).at(-1)).toEqual({
       actor: adminId,
-      meta: { from: { maxStreams: null, maxDownloads: null }, to: { maxStreams: 4, maxDownloads: 3, remoteBitrate: null } },
+      meta: { from: { maxStreams: 2, maxDownloads: 15 }, to: { maxStreams: 4, maxDownloads: 3 } },
     });
+    expect(await audits('user.limits', anna)).toEqual([]);
 
     // a partial PUT keeps the other fields; null goes back to the role value
     await as('PUT', `/api/admin/users/${anna}/limits`, { maxStreams: null });

@@ -11,7 +11,7 @@ import { restoreDeletion } from '../deletion.js';
 import { forgetUserAuth, revokeSessions } from '../devices.js';
 import { userLicenses } from '../downloads.js';
 import { createInvite, deleteAuthentikInvitation } from '../invites.js';
-import { getUserLimits, invalidateLimits, setUserLimits } from '../limits.js';
+import { getUserLimits } from '../limits.js';
 import { accountJellyfinIds, getProfile, jfUserFor, listProfiles, publicProfile } from '../profiles.js';
 import { roleLimitFor } from '../requestlimit.js';
 import { roleExists } from '../rolecat.js';
@@ -20,6 +20,7 @@ import { requestsEnabled } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireAdmin, type Session } from '../session.js';
 import type { ProfileRow, UserRow } from '../types.js';
+import { rightsBody, rightsView, writeRights, type RightsBody } from '../userRights.js';
 import { HttpError, accessEnded, accountSerial, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser, type LockReason } from '../users.js';
 import { pendingNoticeKey } from '../pending.js';
 
@@ -387,25 +388,50 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     };
   });
 
-  // partial update: omitted fields stay, null goes back to the role. The media server policies follow (MaxActiveSessions),
-  // the gateway forgets the memoised identity of the user's sessions (they stay signed in). 502 `jellyfin` when a policy failed.
+  /**
+   * The override write of /rights and /limits, run in accountSerial by the caller (it calls nothing that queues there itself): 409
+   * deletion_in_progress once the deletion tick claimed the account; a changed media-enforced value re-applies the account's identities,
+   * any changed value makes the gateway forget the memoised identity of the account's sessions (they stay signed in).
+   */
+  const putRights = async (actor: string, id: string, b: RightsBody): Promise<{ identities: number; failed: number }> => {
+    const user = await userOr404(id);
+    if (await claimed(id)) throw new HttpError(409, 'deletion_in_progress');
+    const w = await writeRights(ctx, actor, id, b);
+    const reapplied = w.media ? await reapplyAccount(ctx, user) : { identities: 0, failed: 0 };
+    if (w.effective) await forgetUserAuth(ctx, id);
+    return reapplied;
+  };
+
+  // every matrix row of the account: effective value (with the kids overlay of ?profile=), the role's value, the override, its layer
+  app.get('/api/admin/users/:id/rights', admin, async (req) => {
+    const user = await userOr404(idParam(req));
+    const { profile: pid } = z.object({ profile: uuid.optional() }).parse(req.query);
+    const profile = pid ? await getProfile(ctx, user.id, pid) : null;
+    if (pid && !profile) throw new HttpError(404, 'not_found');
+    return rightsView(ctx, user, profile);
+  });
+
+  // partial: an omitted field stays, null goes back to the role, an override equal to the role is not stored. 502 policy_partial when
+  // some identities did not take the new policy (the rights are stored either way)
+  app.put('/api/admin/users/:id/rights', admin, async (req, reply) => {
+    const id = idParam(req);
+    const b = rightsBody.parse(req.body);
+    return serial(async () => {
+      const reapplied = await putRights(req.user!.id, id, b);
+      if (reapplied.failed) return reply.code(502).send({ error: 'policy_partial', failed: reapplied.failed, identities: reapplied.identities });
+      return { ok: true, reapplied };
+    });
+  });
+
+  // legacy (one release): the old editor's five fields on the /rights write (audited user.rights); answer and 502 `jellyfin` unchanged
   app.put('/api/admin/users/:id/limits', admin, async (req, reply) => {
     const id = idParam(req);
     const b = limitsBody.parse(req.body);
+    const overrides = { maxStreams: b.maxStreams, remoteMaxBitrate: b.remoteBitrate, maxDownloads: b.maxDownloads, downloadMaxHeight: b.downloadMaxHeight, requestsPerMonth: b.requestsPerMonth };
     return serial(async () => {
-      const user = await userOr404(id);
-      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
-      const from = await getUserLimits(ctx, id);
-      const to = { ...from, ...b };
-      if (JSON.stringify(from) !== JSON.stringify(to)) {
-        await setUserLimits(ctx, id, to);
-        await audit(ctx, req.user!.id, 'user.limits', id, { from, to });
-      }
-      invalidateLimits(id);
-      const { failed } = await reapplyAccount(ctx, user);
-      await forgetUserAuth(ctx, id);
+      const { failed } = await putRights(req.user!.id, id, { overrides });
       if (failed) return reply.code(502).send({ error: 'jellyfin' });
-      return { limits: to };
+      return { limits: await getUserLimits(ctx, id) };
     });
   });
 
