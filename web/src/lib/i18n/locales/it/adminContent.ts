@@ -431,6 +431,8 @@ const dict: Translation<typeof de> = {
     passkeysOut: 'Nella pagina di accesso',
     passkeySignIn: 'Accesso con passkey',
     passkeySignInState: { ok: 'Offerto in FriendFlix', no_stage: 'Non offerto (manca la fase)', rp_mismatch: 'Non offerto (host errato)', off: 'Nella pagina di accesso', unknown: 'Sconosciuto' },
+    passkeyUv: 'Verifica dell’utente',
+    passkeyUvState: { required: 'Obbligatoria', preferred: 'Preferita (non imposta)', discouraged: 'Sconsigliata (non imposta)', unknown: 'Non impostata (FriendFlix la richiede)' },
     ok: 'Tutto a posto.',
     loadFailed: 'Impossibile caricare il controllo dell’accesso.',
     coverLabel: 'Copertine dietro l’accesso',
@@ -457,7 +459,7 @@ const dict: Translation<typeof de> = {
       passkeys_not_configured: 'Le passkey funzionano solo nella pagina di accesso: Authentik non è collegato.',
       passkeys_no_stage: 'L’accesso non offre passkey: la fase di identificazione del flusso di accesso non ha una fase di convalida WebAuthn. In Authentik apri Flows and Stages → Stages → default-authentication-identification → Modifica, scegli in «WebAuthn Authenticator Validation Stage» una fase di convalida con la classe di dispositivo WebAuthn e salva. «Ripara» qui sotto lo fa se spunti «Offri l’accesso con passkey»; vale anche per le altre applicazioni che usano l’accesso predefinito di Authentik.',
       passkeys_rp_mismatch: 'L’accesso non offre passkey: Authentik emette la sfida della passkey per un host diverso da PUBLIC_URL (RP ID non corrispondente), quindi qualcosa lungo il percorso sostituisce X-Forwarded-Host. Fai raggiungere Authentik al backend con il suo nome pubblico (AUTHENTIK_URL) tramite un percorso diretto usato solo da lui, non tramite il reverse proxy pubblico, e includi quel percorso in AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS sul server e sul worker di Authentik.',
-      passkeys_uv_not_required: 'L’accesso con passkey funziona, ma il controllo non richiede la verifica dell’utente (impronta, volto o PIN), quindi «Conferma con passkey» resta disattivato per la nuova autenticazione. Imposta «User verification» su «required» nella fase di convalida WebAuthn della fase di identificazione (friendflix-passkey-validation lo fa già).',
+      passkeys_uv_not_required: 'L’accesso con passkey funziona, ma il controllo non richiede la verifica dell’utente (impronta, volto o PIN): già l’accesso stesso potrebbe non verificare la persona, un dispositivo da solo può bastare. Per lo stesso motivo «Conferma con passkey» resta disattivato per la nuova autenticazione. Imposta «User verification» su «required» nella fase di convalida WebAuthn della fase di identificazione (friendflix-passkey-validation lo fa già).',
     },
   },
 };

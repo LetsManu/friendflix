@@ -431,6 +431,8 @@ const dict: Translation<typeof de> = {
     passkeysOut: 'Sur la page de connexion',
     passkeySignIn: 'Connexion par passkey',
     passkeySignInState: { ok: 'Proposée dans FriendFlix', no_stage: 'Non proposée (étape manquante)', rp_mismatch: 'Non proposée (mauvais hôte)', off: 'Sur la page de connexion', unknown: 'Inconnue' },
+    passkeyUv: 'Vérification de l’utilisateur',
+    passkeyUvState: { required: 'Obligatoire', preferred: 'Préférée (non imposée)', discouraged: 'Déconseillée (non imposée)', unknown: 'Non définie (FriendFlix l’exige)' },
     ok: 'Tout est en ordre.',
     loadFailed: 'La vérification de la connexion n’a pas pu être chargée.',
     coverLabel: 'Jaquettes derrière la connexion',
@@ -457,7 +459,7 @@ const dict: Translation<typeof de> = {
       passkeys_not_configured: 'Les passkeys ne fonctionnent que sur la page de connexion : Authentik n’est pas connecté.',
       passkeys_no_stage: 'La connexion ne propose pas de passkey : l’étape d’identification du flux de connexion n’a pas d’étape de validation WebAuthn. Dans Authentik, ouvre Flows and Stages → Stages → default-authentication-identification → Modifier, choisis pour « WebAuthn Authenticator Validation Stage » une étape de validation avec la classe d’appareil WebAuthn, puis enregistre. « Réparer » ci-dessous le fait si tu coches « Proposer la connexion par passkey » ; cela vaut aussi pour les autres applications qui utilisent la connexion par défaut d’Authentik.',
       passkeys_rp_mismatch: 'La connexion ne propose pas de passkey : Authentik émet le défi du passkey pour un autre hôte que PUBLIC_URL (RP ID différent), donc quelque chose sur le chemin remplace X-Forwarded-Host. Fais joindre Authentik par le backend sous son nom public (AUTHENTIK_URL) par une route directe qu’il est seul à utiliser, pas via le proxy inverse public, et couvre cette route dans AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS sur le serveur et le worker d’Authentik.',
-      passkeys_uv_not_required: 'La connexion par passkey fonctionne, mais la vérification n’exige pas la vérification de l’utilisateur (empreinte, visage ou code PIN), donc « Confirmer avec une passkey » reste désactivé pour la réauthentification. Règle « User verification » sur « required » dans l’étape de validation WebAuthn de l’étape d’identification (friendflix-passkey-validation le fait déjà).',
+      passkeys_uv_not_required: 'La connexion par passkey fonctionne, mais la vérification n’exige pas la vérification de l’utilisateur (empreinte, visage ou code PIN) : la connexion elle-même peut donc ne pas vérifier la personne, un appareil seul peut suffire. Pour la même raison, « Confirmer avec une passkey » reste désactivé pour la réauthentification. Règle « User verification » sur « required » dans l’étape de validation WebAuthn de l’étape d’identification (friendflix-passkey-validation le fait déjà).',
     },
   },
 };

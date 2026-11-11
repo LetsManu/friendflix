@@ -431,6 +431,8 @@ const dict: Translation<typeof de> = {
     passkeysOut: 'En la página de inicio de sesión',
     passkeySignIn: 'Inicio de sesión con passkey',
     passkeySignInState: { ok: 'Ofrecido en FriendFlix', no_stage: 'No ofrecido (falta la etapa)', rp_mismatch: 'No ofrecido (host incorrecto)', off: 'En la página de inicio de sesión', unknown: 'Desconocido' },
+    passkeyUv: 'Verificación del usuario',
+    passkeyUvState: { required: 'Obligatoria', preferred: 'Preferida (no se exige)', discouraged: 'Desaconsejada (no se exige)', unknown: 'Sin definir (FriendFlix la pide)' },
     ok: 'Todo en orden.',
     loadFailed: 'No se pudo cargar la comprobación del inicio de sesión.',
     coverLabel: 'Portadas tras el inicio de sesión',
@@ -457,7 +459,7 @@ const dict: Translation<typeof de> = {
       passkeys_not_configured: 'Los passkeys solo funcionan en la página de inicio de sesión: Authentik no está conectado.',
       passkeys_no_stage: 'El inicio de sesión no ofrece passkey: la etapa de identificación del flujo de inicio de sesión no tiene etapa de validación WebAuthn. En Authentik abre Flows and Stages → Stages → default-authentication-identification → Editar, elige en «WebAuthn Authenticator Validation Stage» una etapa de validación con la clase de dispositivo WebAuthn y guarda. «Reparar» abajo lo hace si marcas «Ofrecer inicio de sesión con passkey»; eso también afecta a otras aplicaciones que usan el inicio de sesión predeterminado de Authentik.',
       passkeys_rp_mismatch: 'El inicio de sesión no ofrece passkey: Authentik emite el desafío del passkey para otro host distinto de PUBLIC_URL (el RP ID no coincide), así que algo en el camino sustituye X-Forwarded-Host. Haz que el backend llegue a Authentik con su nombre público (AUTHENTIK_URL) por una ruta directa que solo use él, no a través del proxy inverso público, y cubre esa ruta en AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS en el servidor y el worker de Authentik.',
-      passkeys_uv_not_required: 'El inicio de sesión con passkey funciona, pero la comprobación no exige verificación del usuario (huella, cara o PIN), así que «Confirmar con passkey» sigue desactivado al volver a identificarse. Pon «User verification» en «required» en la etapa de validación WebAuthn de la etapa de identificación (friendflix-passkey-validation ya lo hace).',
+      passkeys_uv_not_required: 'El inicio de sesión con passkey funciona, pero la comprobación no exige verificación del usuario (huella, cara o PIN), así que el propio inicio de sesión puede no verificar a la persona: un dispositivo solo puede bastar. Por la misma razón «Confirmar con passkey» sigue desactivado al volver a identificarse. Pon «User verification» en «required» en la etapa de validación WebAuthn de la etapa de identificación (friendflix-passkey-validation ya lo hace).',
     },
   },
 };
