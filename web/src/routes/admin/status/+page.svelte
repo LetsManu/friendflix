@@ -17,6 +17,7 @@
   import StreamsCard from '#lib/admin/StreamsCard.svelte';
   import ErrorsCard from '#lib/admin/ErrorsCard.svelte';
   import LoginCard from '#lib/admin/LoginCard.svelte';
+  import SuggestionsCard from '#lib/admin/SuggestionsCard.svelte';
   import { errorText } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import StatTile from '#lib/ui/StatTile.svelte';
@@ -111,6 +112,8 @@
 </section>
 
 <p class="foot"><Button variant="ghost" icon="refresh" pending={refreshing} on:click={() => { void reloadSummary(); slow(); void loadStr(); }}>{$t('admin.playback.refresh')}</Button></p>
+
+<SuggestionsCard />
 
 <style>
   .intro { margin: 0 0 1rem; }

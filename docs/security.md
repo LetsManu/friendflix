@@ -45,7 +45,7 @@ Networks and ports are defined in [compose.yaml](../compose.yaml); the diagram a
 | Boundary | Who is on each side | What crosses it and how it is checked |
 |---|---|---|
 | Browser to reverse proxy | Any client on the internet to your TLS terminator | HTTPS only; HSTS and TLS settings are configured at the proxy ([setup.md](setup.md)). Treated as untrusted input from here on. |
-| Reverse proxy to web, backend, gateway | Your proxy to three ports bound to `127.0.0.1` (`BIND_ADDR`) | Requests are routed by path (`/api`, `/auth`, `/ws` to the backend, `/media` to the gateway). The backend sets `trustProxy` and so relies on the proxy for the client address. |
+| Reverse proxy to web, backend, gateway | Your proxy to three ports bound to `127.0.0.1` (`BIND_ADDR`) | Requests are routed by path (`/api`, `/auth`, `/ws` to the backend, `/media` to the gateway). The backend sets `trustProxy` for loopback and private peers only, so it relies on the proxy for the client address and ignores `X-Forwarded-For` from any other peer. |
 | Web to backend | SvelteKit app to API | Cookie session plus CSRF header on state-changing requests. The web container holds no secrets. |
 | Gateway to backend | Media path to authorisation | Shared `INTERNAL_SECRET` header on `/internal/authz` and `/internal/gateway-config`; the authz answer (user's media token and limits) is cached for 5 s and never stored, the config answer carries only the settings revision and the media server URL. |
 | Backend and gateway to Postgres and Redis | App to data stores | Only the backend reaches them, over the `db` network which is `internal`. Redis requires a password and persistence is switched off (sessions are not written to disk). |

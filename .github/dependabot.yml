@@ -1,35 +1,60 @@
 # SPDX-FileCopyrightText: 2026 Manuel Weißböck
 # SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Every Dependabot PR runs the full CI, so updates arrive as few, grouped PRs:
+# - one PR per ecosystem and month for minor and patch updates (majors stay separate, they need a look of their own);
+# - a version must be out for 7 days before it is proposed (cooldown), so a quick follow-up patch does not open a second PR;
+# - no automatic rebase on every push to main (that re-ran CI on every open Dependabot PR after each merge). Dependabot
+#   still rebases on a merge conflict; `@dependabot rebase` on a PR rebases it by hand.
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
-    open-pull-requests-limit: 5
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
+    rebase-strategy: disabled
+    open-pull-requests-limit: 2
     groups:
       npm-minor-patch:
         update-types: [minor, patch]
+  - package-ecosystem: npm
+    directory: /desktop # the Tauri CLI of the Windows release (own lockfile, not a workspace)
+    schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
+    rebase-strategy: disabled
+    open-pull-requests-limit: 1
+    # The CLI must match the `tauri` crate in desktop/Cargo.lock, and nothing on a PR runs it (desktop-release is tag-only), so only
+    # patch releases arrive on their own; a minor or major bump is done by hand together with the crate.
+    ignore:
+      - dependency-name: "@tauri-apps/cli"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+    groups:
+      desktop-npm:
+        patterns: ["*"]
   - package-ecosystem: docker
-    directory: /backend
-    open-pull-requests-limit: 5
-    schedule: { interval: weekly }
-  - package-ecosystem: docker
-    directory: /gateway
-    open-pull-requests-limit: 5
-    schedule: { interval: weekly }
-  - package-ecosystem: docker
-    directory: /web
-    open-pull-requests-limit: 5
-    schedule: { interval: weekly }
-  - package-ecosystem: docker
-    directory: /updater
-    open-pull-requests-limit: 5
-    schedule: { interval: weekly }
+    directories: [/backend, /gateway, /web, /updater]
+    schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
+    rebase-strategy: disabled
+    open-pull-requests-limit: 2
+    groups:
+      docker-minor-patch:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
-    open-pull-requests-limit: 5
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
+    rebase-strategy: disabled
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: gradle
     directory: /android
-    open-pull-requests-limit: 5
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
+    rebase-strategy: disabled
+    open-pull-requests-limit: 2
+    groups:
+      gradle-minor-patch:
+        update-types: [minor, patch]
