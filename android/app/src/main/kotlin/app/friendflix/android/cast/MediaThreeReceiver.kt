@@ -233,6 +233,10 @@ class MediaThreeReceiver(
         return ReceiverMedia(item.mediaId.takeIf { it != TokenConverter.FOREIGN }, url)
     }
 
+    override fun togglePause() {
+        if (player.playWhenReady) player.pause() else player.play()
+    }
+
     override fun release() {
         if (released) return
         released = true

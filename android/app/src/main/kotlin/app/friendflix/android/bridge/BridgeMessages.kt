@@ -85,27 +85,29 @@ interface CastRemote {
     /** the cast as the bar shows it; null when none runs */
     fun snapshot(): CastSnapshot?
     fun playPause()
-    /** the queued next episode starts on the TV (nothing when none is queued) */
-    fun next()
+    /** the queued next episode starts on the TV; false when no next episode is queued (nothing changed) */
+    fun next(): Boolean
     /** ends the cast (Stop casting) */
     fun stop()
     /** opens the native player as the remote of the cast's item; false when it could not be opened */
     fun open(): Boolean
     /**
      * The web session changed: [profileId] is the now active profile (a switch; a cast of another profile ends), null after a
-     * sign-out (the cast ends).
+     * sign-out (the cast ends). [done] is called once (any thread) when nothing is owed to the server any more: right away when no
+     * cast ended, else after the stop report and the revoke have been sent (or failed, or a timeout passed). The web UI invalidates
+     * its session only after the bridge's reply, so the reply waits for [done].
      */
-    fun sessionChanged(profileId: String?)
+    fun sessionChanged(profileId: String?, done: () -> Unit)
 }
 
 /** Placeholder without a cast hub: there is never a cast to show or drive. */
 object NoCastRemote : CastRemote {
     override fun snapshot(): CastSnapshot? = null
     override fun playPause() {}
-    override fun next() {}
+    override fun next(): Boolean = false
     override fun stop() {}
     override fun open(): Boolean = false
-    override fun sessionChanged(profileId: String?) {}
+    override fun sessionChanged(profileId: String?, done: () -> Unit) { done() }
 }
 
 /** Where native code can send a JSON string back to the page (the main frame's reply channel). */

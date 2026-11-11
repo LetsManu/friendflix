@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.cast
 
-import androidx.media3.common.util.UnstableApi
 import app.friendflix.android.bridge.CastRemote
 
 /**
@@ -10,33 +9,26 @@ import app.friendflix.android.bridge.CastRemote
  * Main thread only (the bridge's calls). [openRemote] starts the native player as the remote of the snapshot's item,
  * [profileNoted] hands a switched-to profile on (the offline list follows it too).
  */
-@OptIn(UnstableApi::class)
 class HubCastRemote(
     private val openRemote: (itemId: String) -> Boolean,
     private val profileNoted: (String) -> Unit = {},
 ) : CastRemote {
     override fun snapshot(): CastSnapshot? = CastHub.state.value
 
-    override fun playPause() {
-        val p = CastHub.link?.player ?: return
-        if (p.playWhenReady) p.pause() else p.play()
-    }
+    override fun playPause() = CastHub.playPause()
 
-    override fun next() {
-        val p = CastHub.link?.player ?: return
-        if (p.hasNextMediaItem()) p.seekToNextMediaItem()
-    }
+    override fun next(): Boolean = CastHub.next()
 
-    override fun stop() = CastHub.stop()
+    override fun stop() = CastHub.userStop()
 
-    override fun open(): Boolean = CastHub.state.value?.let { openRemote(it.itemId) } ?: false
+    override fun open(): Boolean = CastHub.openTarget()?.let(openRemote) ?: false
 
-    override fun sessionChanged(profileId: String?) {
+    override fun sessionChanged(profileId: String?, done: () -> Unit) {
         if (profileId == null) {
-            CastHub.stop() // signed out: the cast ends
+            CastHub.stopThen(done) // signed out: the cast ends, the answer waits for its stop report and revoke
         } else {
             profileNoted(profileId)
-            CastHub.noteProfile(profileId) // another profile than the cast's ends it
+            CastHub.noteProfileThen(profileId, done) // another profile than the cast's ends it
         }
     }
 }

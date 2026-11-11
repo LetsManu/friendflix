@@ -30,6 +30,11 @@ class CastHubTest {
     private val lookups = mutableMapOf<String, CastLookup>()
     private val down = mutableSetOf<String>()
     private var tokens = 0
+    /** "<kind> <itemId> <positionMs>" of every report that left */
+    private val reports = mutableListOf<String>()
+    /** while non-null the report thread is stuck: its work is collected here */
+    private var stuck: MutableList<Runnable>? = null
+    private val still = StillWatching { clock }
 
     private val server = object : CastServer {
         override fun session(body: JSONObject): TokenAnswer {
@@ -42,7 +47,10 @@ class CastHubTest {
             if (castId in down) throw java.io.IOException("down")
             return lookups[castId]
         }
-        override fun report(kind: PlaybackReporter.Kind, body: JSONObject) { calls += "POST /api/playback/${kind.path}" }
+        override fun report(kind: PlaybackReporter.Kind, body: JSONObject) {
+            calls += "POST /api/playback/${kind.path}"
+            reports += "${kind.path} ${body.optString("itemId")} ${body.optLong("positionTicks") / 10_000}"
+        }
         override fun next(itemId: String): ItemInfo? = ItemInfo("ep2", "Episode", "Second", "Bright Valley", "s1", 1, 2)
         override fun segments(itemId: String): List<Segment> = emptyList()
     }
@@ -62,6 +70,8 @@ class CastHubTest {
         override fun current() = playing
         /** what the receiver reports when asked (the player's status, mirrored by publish) */
         var onPublish: () -> Unit = {}
+        var toggled = 0
+        override fun togglePause() { toggled++ }
         override fun publish() { published++; onPublish() }
         override fun release() {}
     }
@@ -93,8 +103,8 @@ class CastHubTest {
     private fun hub(custom: Boolean = false) = CastHubCore(
         server = server,
         linkFactory = { ev -> events = ev; FakeLink(custom).also { link = it } },
-        still = StillWatching { clock },
-        io = direct, main = direct, now = { clock },
+        still = still,
+        io = Executor { r -> stuck?.add(r) ?: r.run() }, main = direct, now = { clock },
         schedule = { ms, block -> val c = BooleanArray(1); timers += Triple(clock + ms, block, c); ({ c[0] = true }) },
         strings = { JSONObject().put("next", "from the hub") },
     )
@@ -106,15 +116,125 @@ class CastHubTest {
         subtitles = emptyList(), report = "rt-$castId",
     )
 
-    private fun cast(h: CastHubCore, itemId: String = "ep1") {
+    private fun cast(h: CastHubCore, itemId: String = "ep1", prefs: FlowPrefs = FlowPrefs()) {
         val c = h.controller
-        assertTrue(c.start(CastStart(itemId, 60_000, null, null, 8_000_000, 8_000_000, true, FlowPrefs(), offline = false)))
+        assertTrue(c.start(CastStart(itemId, 60_000, null, null, 8_000_000, 8_000_000, true, prefs, offline = false)))
         events.onState(playing("c1", 61_000))
     }
 
     private fun playing(castId: String, positionMs: Long) = ReceiverState(
         castId = castId, loaded = true, playing = true, paused = false, positionMs = positionMs, durationMs = 30 * 60_000, idle = false,
     )
+
+    @Test fun nextSwitchesToTheQueuedEpisodeAtTheRealPosition() {
+        val h = hub()
+        h.attach(Host())
+        cast(h)
+        events.onState(playing("c1", 300_000)) // five minutes into episode 1
+        assertEquals("ep2", h.state.value!!.next?.itemId)
+        repeat(3) { still.noteAutoplay() }
+        assertTrue(still.shouldAsk(FlowPrefs()))
+        reports.clear()
+        assertTrue(h.next())
+        events.onState(playing("c3", 1_000)) // the TV plays the new token: its start is reported
+        val stopStart = reports.filter { it.startsWith("stop") || it.startsWith("start") }
+        assertEquals(2, stopStart.size)
+        assertEquals("stop ep1 300000", stopStart[0])
+        assertTrue(stopStart[1], stopStart[1].startsWith("start ep2"))
+        assertTrue("the skip is no 'advanced' progress: " + reports, reports.none { it.startsWith("progress ep1") || it == "stop ep1 1800000" })
+        assertFalse("the tap is an interaction: the autoplay chain starts over", still.shouldAsk(FlowPrefs()))
+    }
+
+    @Test fun nextWithoutAQueuedEpisodeIsRefused() {
+        val h = hub()
+        assertFalse("no cast", h.next())
+        h.attach(Host())
+        cast(h, prefs = FlowPrefs(autoplayNext = false))
+        events.onState(playing("c1", 300_000))
+        assertNull("autoplay off: nothing is queued", h.state.value!!.next)
+        calls.clear()
+        assertFalse(h.next())
+        assertTrue("nothing was switched", calls.isEmpty())
+        assertEquals("ep1", h.state.value!!.itemId)
+    }
+
+    @Test fun openIsOnlyForARunningCast() {
+        val h = hub()
+        assertNull("no cast", h.openTarget())
+        h.attach(Host())
+        cast(h, prefs = FlowPrefs(autoplayNext = false))
+        assertEquals("ep1", h.openTarget())
+        events.onMediaEnd(IdleReason.FINISHED, "c1")
+        assertEquals(CastPhase.ENDED, h.state.value!!.state)
+        assertNull("the bar still shows the ended title, but nothing runs to be the remote of", h.openTarget())
+    }
+
+    @Test fun theBarsPlayPauseAndStopAreInteractions() {
+        val h = hub()
+        h.attach(Host())
+        cast(h)
+        repeat(3) { still.noteAutoplay() }
+        h.playPause()
+        assertEquals(1, link.toggled)
+        assertFalse(still.shouldAsk(FlowPrefs()))
+        repeat(3) { still.noteAutoplay() }
+        h.userStop()
+        assertFalse(still.shouldAsk(FlowPrefs()))
+        assertFalse(h.controller.casting)
+    }
+
+    @Test fun stopThenWaitsForTheReportsAndGivesUpAfterAWhile() {
+        val h = hub()
+        h.attach(Host())
+        cast(h)
+        val queued = mutableListOf<Runnable>()
+        stuck = queued // the report thread is busy
+        var done = 0
+        h.stopThen { done++ }
+        assertFalse(h.controller.casting)
+        assertEquals("the stop report and the revoke are still queued", 0, done)
+        stuck = null
+        queued.forEach { it.run() }
+        assertEquals("reports out: answer", 1, done)
+        assertTrue(reports.any { it.startsWith("stop ep1") })
+        // a stuck thread: the answer comes after the timeout, once
+        val h2 = hub()
+        h2.attach(Host())
+        cast(h2)
+        stuck = mutableListOf()
+        var done2 = 0
+        h2.stopThen { done2++ }
+        advance(CastHubCore.REPORT_WAIT_MS - 1)
+        assertEquals(0, done2)
+        advance(1)
+        assertEquals(1, done2)
+        (stuck as MutableList<Runnable>).forEach { it.run() }
+        advance(60_000)
+        assertEquals("once", 1, done2)
+    }
+
+    @Test fun aProfileSwitchThatStopsTheCastWaitsForTheReportsToo() {
+        val h = hub()
+        h.attach(Host())
+        h.useProfile("anna")
+        cast(h)
+        var same = 0
+        h.noteProfileThen("anna") { same++ }
+        assertEquals("the same profile: nothing owed, answer at once", 1, same)
+        assertTrue(h.controller.casting)
+        val queued = mutableListOf<Runnable>()
+        stuck = queued
+        var other = 0
+        h.noteProfileThen("ben") { other++ }
+        assertFalse(h.controller.casting)
+        assertEquals(0, other)
+        stuck = null
+        queued.forEach { it.run() }
+        assertEquals(1, other)
+        var idle = 0
+        h.noteProfileThen("ben") { idle++ } // no cast: nothing to wait for
+        assertEquals(1, idle)
+    }
 
     @Test fun closingThePlayerKeepsTheCast() {
         val h = hub()

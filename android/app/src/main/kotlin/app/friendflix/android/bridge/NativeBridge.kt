@@ -3,12 +3,15 @@
 package app.friendflix.android.bridge
 
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import app.friendflix.android.cast.CastSnapshot
 import app.friendflix.android.shell.OriginPolicy
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The listener logic behind `window.FriendFlixNative.postMessage(json)`, free of WebView types so it can be unit-tested.
@@ -27,11 +30,21 @@ class NativeBridge(
     private val cast: CastRemote = NoCastRemote,
     /** monotonic milliseconds; the throttle of `cast` events */
     private val clock: () -> Long = SystemClock::elapsedRealtime,
+    /** runs a block after a delay on the main thread, returns its cancel; the trailing `cast` event */
+    private val schedule: (Long, () -> Unit) -> (() -> Unit) = { ms, block ->
+        val handler = Handler(Looper.getMainLooper())
+        val run = Runnable(block)
+        handler.postDelayed(run, ms)
+        ({ handler.removeCallbacks(run) })
+    },
     private val openSettings: () -> Unit,
 ) {
     @Volatile private var eventSink: ReplySink? = null
     private var lastCast: CastSnapshot? = null
     private var lastCastAt = 0L
+    /** a position-only change held back by the throttle, and the cancel of the timer that pushes it when the window is over */
+    private var pendingCast: CastSnapshot? = null
+    private var cancelTrailing: (() -> Unit)? = null
 
     fun onMessage(message: String, sourceOrigin: Uri, isMainFrame: Boolean, reply: ReplySink) {
         // Frame and origin first: a foreign or nested frame learns nothing about the protocol (not even size or syntax errors).
@@ -41,7 +54,7 @@ class NativeBridge(
         val id = (root.opt("id") as? String)?.takeIf { REQUEST_ID.matches(it) } ?: return reply.post(error(null, "bad_request"))
         eventSink = reply
         val out = try {
-            ok(id, handle(root))
+            handle(root, id, reply).let { if (it === Later) return else ok(id, it) }
         } catch (e: BadRequest) {
             error(id, e.code)
         } catch (_: Exception) {
@@ -51,7 +64,10 @@ class NativeBridge(
     }
 
     /** Drops the reply target (the page is gone, e.g. the WebView is destroyed) so nothing keeps a dead view alive. */
-    fun detach() { eventSink = null }
+    fun detach() {
+        eventSink = null
+        dropPending()
+    }
 
     /** Best-effort request id for the `forbidden` answer; never parses oversized input. */
     private fun forbiddenId(message: String): String? {
@@ -69,12 +85,36 @@ class NativeBridge(
      */
     fun emitCast(snapshot: CastSnapshot?) {
         val last = lastCast
-        if (snapshot == last) return
+        if (snapshot == last) {
+            dropPending() // back to what the page already shows
+            return
+        }
         val now = clock()
-        if (snapshot != null && last != null && snapshot.copy(positionMs = last.positionMs) == last && now - lastCastAt < CAST_POSITION_MS) return
+        if (snapshot != null && last != null && snapshot.copy(positionMs = last.positionMs) == last && now - lastCastAt < CAST_POSITION_MS) {
+            // too soon: held back, but the newest position is pushed once the window is over (nothing else may re-deliver it)
+            pendingCast = snapshot
+            if (cancelTrailing == null) cancelTrailing = schedule(lastCastAt + CAST_POSITION_MS - now, ::flushCast)
+            return
+        }
+        pushCast(snapshot)
+    }
+
+    private fun flushCast() {
+        cancelTrailing = null
+        pendingCast?.let(::pushCast)
+    }
+
+    private fun pushCast(snapshot: CastSnapshot?) {
+        dropPending()
         lastCast = snapshot
-        lastCastAt = now
+        lastCastAt = clock()
         emitAny("cast", snapshot?.let(::castJson) ?: JSONObject.NULL)
+    }
+
+    private fun dropPending() {
+        pendingCast = null
+        cancelTrailing?.invoke()
+        cancelTrailing = null
     }
 
     private fun emitAny(event: String, detail: Any) {
@@ -94,7 +134,7 @@ class NativeBridge(
         before.forEach { if (it.licenseId !in now) emit("downloadRemoved", JSONObject().put("licenseId", it.licenseId)) }
     }
 
-    private fun handle(root: JSONObject): Any {
+    private fun handle(root: JSONObject, requestId: String, reply: ReplySink): Any {
         if (root.keys().asSequence().any { it !in TOP_KEYS }) throw BadRequest("bad_request")
         val method = root.opt("method") as? String ?: throw BadRequest("bad_request")
         val raw = root.opt("args")
@@ -112,7 +152,7 @@ class NativeBridge(
                 only(args, "action")
                 when (args.opt("action") as? String) {
                     "playPause" -> { cast.playPause(); true }
-                    "next" -> { cast.next(); true }
+                    "next" -> cast.next()
                     "stop" -> { cast.stop(); true }
                     "open" -> cast.open()
                     else -> throw BadRequest("bad_args")
@@ -122,8 +162,12 @@ class NativeBridge(
                 // the web session's profile: an id (switch), or null (sign-out). The key must be there: a bare {} is no sign-out.
                 only(args, "profileId")
                 if (!args.has("profileId")) throw BadRequest("bad_args")
-                cast.sessionChanged(if (args.isNull("profileId")) null else id(args, "profileId"))
-                true
+                // the answer waits until the cast's stop report and revoke have left: the web UI ends its session only after it
+                val answered = AtomicBoolean(false)
+                cast.sessionChanged(if (args.isNull("profileId")) null else id(args, "profileId")) {
+                    if (answered.compareAndSet(false, true)) reply.post(ok(requestId, true))
+                }
+                Later
             }
             "play" -> launcher.launch(playRequest(args))
             "download" -> downloads.enqueue(downloadRequest(args))
@@ -211,6 +255,9 @@ class NativeBridge(
     private fun ok(id: String, result: Any) = JSONObject().put("id", id).put("ok", true).put("result", result).toString()
 
     private fun error(id: String?, code: String) = JSONObject().put("id", id ?: JSONObject.NULL).put("ok", false).put("error", code).toString()
+
+    /** the reply of this request is sent later, by the backend */
+    private object Later
 
     private companion object {
         const val API_VERSION = 2

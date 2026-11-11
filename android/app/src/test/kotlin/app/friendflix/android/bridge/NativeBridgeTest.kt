@@ -54,17 +54,28 @@ class NativeBridgeTest {
         val calls = mutableListOf<String>()
         override fun snapshot() = snap
         override fun playPause() { calls += "playPause" }
-        override fun next() { calls += "next" }
+        var nextResult = true
+        override fun next(): Boolean { calls += "next"; return nextResult }
         override fun stop() { calls += "stop" }
         override fun open(): Boolean { calls += "open"; return opened }
-        override fun sessionChanged(profileId: String?) { calls += "session:$profileId" }
+        /** true: [done] of a session change is kept in [held] (the stop is still on its way) */
+        var hold = false
+        var held: (() -> Unit)? = null
+        override fun sessionChanged(profileId: String?, done: () -> Unit) {
+            calls += "session:$profileId"
+            if (hold) held = done else done()
+        }
     }
+
+    private class Timer(val delay: Long, val block: () -> Unit) { var cancelled = false }
+    private val timers = mutableListOf<Timer>()
 
     private val cast = FakeCast()
     private var clockMs = 10_000L
     private val castBridge = NativeBridge(
         OriginPolicy("https://friend.example.com".toHttpUrl()), launcher, downloads,
-        Capabilities(play = true, download = true, cast = true, castBar = true), cast = cast, clock = { clockMs }, openSettings = {},
+        Capabilities(play = true, download = true, cast = true, castBar = true), cast = cast, clock = { clockMs },
+        schedule = { ms, block -> val t = Timer(ms, block); timers += t; ({ t.cancelled = true }) }, openSettings = {},
     )
 
     private fun snapshot(position: Long = 1_000, paused: Boolean = false, next: NextSnapshot? = null, title: String = "Moonlit Harbour") = CastSnapshot(
@@ -380,6 +391,13 @@ class NativeBridgeTest {
         assertFalse(reply.sent.single().getBoolean("result"))
     }
 
+    @Test fun nextAnswersFalseWhenNoEpisodeIsQueued() {
+        cast.nextResult = false
+        castCall("castControl", """{"action":"next"}""")
+        assertTrue(reply.sent.single().getBoolean("ok"))
+        assertFalse(reply.sent.single().getBoolean("result"))
+    }
+
     @Test fun stopRoutesToCastHubStop() {
         castCall("castControl", """{"action":"stop"}""")
         assertEquals(listOf("stop"), cast.calls)
@@ -451,5 +469,67 @@ class NativeBridgeTest {
             assertEquals(args, "bad_args", reply.sent.single().getString("error"))
         }
         assertTrue(cast.calls.isEmpty())
+    }
+
+    // ---- fix round 1 ----
+
+    @Test fun theLastDroppedPositionArrivesAfterTheWindow() {
+        castCall("capabilities")
+        reply.sent.clear()
+        castBridge.emitCast(snapshot(position = 100_000, paused = true))
+        clockMs += 300
+        castBridge.emitCast(snapshot(position = 400_000, paused = true)) // dropped for now, but not lost
+        assertEquals(1, reply.sent.size)
+        val t = timers.single { !it.cancelled }
+        assertEquals(700L, t.delay)
+        clockMs += 100
+        castBridge.emitCast(snapshot(position = 410_000, paused = true)) // newer position replaces the pending one, no second timer
+        assertEquals(1, timers.count { !it.cancelled })
+        clockMs += 600
+        t.block()
+        assertEquals(2, reply.sent.size)
+        assertEquals(410_000, reply.sent[1].getJSONObject("detail").getLong("positionMs"))
+        t.block() // nothing pending any more
+        assertEquals(2, reply.sent.size)
+    }
+
+    @Test fun anImmediatePushCancelsTheTrailingOne() {
+        castCall("capabilities")
+        reply.sent.clear()
+        castBridge.emitCast(snapshot(position = 1_000))
+        clockMs += 100
+        castBridge.emitCast(snapshot(position = 1_100))
+        val t = timers.single()
+        clockMs += 100
+        castBridge.emitCast(snapshot(position = 1_200, paused = true)) // a real change goes out with the newest position
+        assertTrue(t.cancelled)
+        assertEquals(1_200, reply.sent.last().getJSONObject("detail").getLong("positionMs"))
+        val n = reply.sent.size
+        t.block()
+        assertEquals(n, reply.sent.size)
+    }
+
+    @Test fun detachCancelsTheTrailingPush() {
+        castCall("capabilities")
+        castBridge.emitCast(snapshot(position = 1_000))
+        clockMs += 100
+        castBridge.emitCast(snapshot(position = 1_100))
+        val t = timers.single()
+        castBridge.detach()
+        assertTrue(t.cancelled)
+    }
+
+    @Test fun sessionChangedRepliesOnlyWhenTheStopIsDone() {
+        cast.hold = true
+        castCall("sessionChanged", """{"profileId":null}""", id = "s1")
+        assertEquals(listOf("session:null"), cast.calls)
+        assertTrue("no answer while the stop report and revoke are on their way", reply.sent.isEmpty())
+        cast.held!!()
+        val r = reply.sent.single()
+        assertEquals("s1", r.getString("id"))
+        assertTrue(r.getBoolean("ok"))
+        assertTrue(r.getBoolean("result"))
+        cast.held!!() // a second call of done changes nothing
+        assertEquals(1, reply.sent.size)
     }
 }

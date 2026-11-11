@@ -31,6 +31,8 @@ interface CastLink : CastReceiver {
     /** mirrors the receiver into the controller (about once a second while casting) */
     fun publish()
     fun release()
+    /** the bar's play / pause: toggles the receiver's player */
+    fun togglePause() {}
 }
 
 /**
@@ -43,9 +45,9 @@ interface CastLink : CastReceiver {
 class CastHubCore(
     server: CastServer,
     linkFactory: (MediaThreeReceiver.Events) -> CastLink,
-    still: StillWatching,
-    io: Executor,
-    main: Executor,
+    private val still: StillWatching,
+    private val io: Executor,
+    private val main: Executor,
     now: () -> Long,
     private val schedule: (Long, () -> Unit) -> (() -> Unit),
     /** the own receiver's TV texts when no player screen is attached */
@@ -124,6 +126,65 @@ class CastHubCore(
         if (controller.casting) { if (p != null && p != id) stop() } else profile = id
     }
 
+    /**
+     * The bar's Next: the queued next episode plays on the TV through the controller's title switch (the web `engine.next()`): the
+     * skipped episode's stop is reported at its real position and its token revoked, then the next one starts. A viewer action (the
+     * "still watching" chain starts over). False when no cast runs or no next episode is queued (nothing is changed).
+     */
+    fun next(): Boolean {
+        if (!controller.casting) return false
+        val id = controller.snapshot(link.deviceName.orEmpty())?.next?.itemId ?: return false
+        still.noteInteraction()
+        return controller.switchTo(id, null)
+    }
+
+    /** The item the player screen can open as the remote: the running cast's (null: none runs; a title that just ended is no cast). */
+    fun openTarget(): String? = if (controller.casting) controller.itemId else null
+
+    /** The bar's play / pause (a viewer action). */
+    fun playPause() {
+        if (!controller.casting) return
+        still.noteInteraction()
+        link.togglePause()
+    }
+
+    /** The bar's Stop casting (a viewer action). */
+    fun userStop() {
+        still.noteInteraction()
+        stop()
+    }
+
+    /** [stop]s, then calls [done] once the stop report and the revoke have left (or failed), at the latest after [REPORT_WAIT_MS]. */
+    fun stopThen(done: () -> Unit) {
+        stop()
+        afterReports(done)
+    }
+
+    /** [noteProfile], and when that ended the cast the same wait as [stopThen]; else [done] right away. */
+    fun noteProfileThen(id: String, done: () -> Unit) {
+        val was = controller.casting
+        noteProfile(id)
+        if (was && !controller.casting) afterReports(done) else done()
+    }
+
+    /**
+     * [done] (once) when everything queued on the report thread so far has run (the stop report and the revokes: they leave in order
+     * on that one thread, still with the session cookie), or after [REPORT_WAIT_MS] when it is stuck.
+     */
+    fun afterReports(done: () -> Unit) {
+        var fired = false
+        var cancel: () -> Unit = {}
+        val fire = {
+            if (!fired) {
+                fired = true
+                cancel()
+                done()
+            }
+        }
+        cancel = schedule(REPORT_WAIT_MS, fire)
+        io.execute { main.execute(fire) }
+    }
+
     private fun refresh() {
         snapshots.value = controller.snapshot(link.deviceName.orEmpty())
         if (controller.casting) pump()
@@ -147,6 +208,8 @@ class CastHubCore(
         const val POLL_MS = 1_000L
         /** a resume lookup that failed is asked again no sooner (the server's lookup limit is 30 per minute) */
         const val RESUME_RETRY_MS = 30_000L
+        /** how long an answer waits for the stop report and the revoke of an ended cast to leave */
+        const val REPORT_WAIT_MS = 3_000L
     }
 }
 
@@ -229,7 +292,40 @@ object CastHub {
     /** Ends the cast (Stop casting, sign-out, profile switch): queued token revoked, stop reported, token revoked, receiver stopped. */
     fun stop() {
         core?.stop()
-        // the account is gone: its prefs and profile go too. The server is dropped only after the stop calls (same ordered thread)
+        forgetAccount()
+    }
+
+    /** The bar's next episode ([CastHubCore.next]); false when none runs or none is queued. */
+    fun next(): Boolean = core?.next() ?: false
+
+    /** The item a player screen can open as the remote of the running cast, else null ([CastHubCore.openTarget]). */
+    fun openTarget(): String? = core?.openTarget()
+
+    /** The bar's play / pause. */
+    fun playPause() { core?.playPause() }
+
+    /** The bar's Stop casting: a viewer action, then [stop]. */
+    fun userStop() {
+        core?.userStop() ?: return
+        forgetAccount()
+    }
+
+    /** Sign-out from the web UI: [stop], and [done] once the stop report and the revoke have left (bounded wait). */
+    fun stopThen(done: () -> Unit) {
+        val c = core
+        if (c == null) { stop(); done(); return }
+        c.stop()
+        forgetAccount()
+        c.afterReports(done)
+    }
+
+    /** Profile switch from the web UI: [noteProfile], with [done] after the reports when the cast ended with it. */
+    fun noteProfileThen(profileId: String, done: () -> Unit) {
+        core?.noteProfileThen(profileId, done) ?: done()
+    }
+
+    /** the account is gone: its prefs and profile go too. The server is dropped only after the stop calls (same ordered thread) */
+    private fun forgetAccount() {
         defaults = FlowPrefs() to null
         core?.useProfile(null)
         val old = proxy.current.get()
