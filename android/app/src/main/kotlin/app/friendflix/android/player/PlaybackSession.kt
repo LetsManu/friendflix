@@ -15,6 +15,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionToken
+import app.friendflix.android.cast.CastHub
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -106,8 +107,8 @@ class PlaybackSession : MediaSessionService() {
 
 /**
  * "This device leaves its account" (sign-out of this device, server change; [app.friendflix.android.settings.DeviceReset]): every
- * player screen closes as if the person closed it (stop report, offline position, cast stop), then the player, its session and the
- * media session service go. [epoch] counts the resets. [stopAll] waits until the stop reports have left, so they still carry the
+ * player screen closes as if the person closed it (stop report, offline position), the app's cast ends ([CastHub.stop]), then the
+ * player, its session and the media session service go. [epoch] counts the resets. [stopAll] waits until the stop reports have left, so they still carry the
  * session cookie that the reset clears afterwards.
  */
 object PlayerReset {
@@ -123,6 +124,7 @@ object PlayerReset {
         val app = context.applicationContext
         withContext(Dispatchers.Main) {
             count.value++
+            CastHub.stop() // the cast belongs to the account: its stop and revoke leave with the others, still with the cookie
             screens.toList().forEach { it() }
             PlayerHolder.release() // no screen (or one that already let go): the session must not outlive the account
             PlaybackSession.stop(app)

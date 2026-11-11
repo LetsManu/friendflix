@@ -22,6 +22,7 @@ vi.mock('#lib/offline/manager', () => ({ removeAll: h.removeAll }));
 vi.mock('#lib/ui/confirm', () => ({ confirm: async (o: Record<string, unknown>) => { h.confirmCalls.push(o); return h.confirmAnswer; } }));
 vi.mock('#lib/push', () => ({ disablePush: h.disablePush }));
 vi.mock('#lib/gate', () => ({ clearHint: h.clearHint }));
+vi.mock('#lib/native/sessionSync', () => ({ tellAppSession: async (id: string | null) => { h.calls.push(`app ${id}`); await Promise.resolve(); await Promise.resolve(); h.calls.push('app answered'); } }));
 
 const { logout } = await import('./session');
 
@@ -51,7 +52,12 @@ describe('logout', () => {
   it('stops a running cast before the server logout', async () => {
     h.cast = { castId: 'c' };
     await logout(false);
-    expect(h.calls).toEqual(['cast.stop', 'POST /auth/logout']);
+    expect(h.calls).toEqual(['cast.stop', 'app null', 'app answered', 'POST /auth/logout']);
+  });
+
+  it('tells the app the sign-out and waits for its answer before the server logout', async () => {
+    await logout(false);
+    expect(h.calls).toEqual(['app null', 'app answered', 'POST /auth/logout']);
   });
 
   it('does not touch the cast engine when nothing is cast', async () => {
@@ -63,7 +69,7 @@ describe('logout', () => {
     h.cast = { castId: 'c' };
     h.stop.mockRejectedValueOnce(new Error('boom'));
     await logout(false);
-    expect(h.calls).toEqual(['POST /auth/logout']);
+    expect(h.calls).toEqual(['app null', 'app answered', 'POST /auth/logout']);
     expect(loc.href).toBe('/auth/login');
   });
 

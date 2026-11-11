@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { clearHint } from '#lib/gate';
+import { tellAppSession } from '#lib/native/sessionSync';
 
 export class ApiError extends Error {
   constructor(public status: number, public body: any) {
@@ -45,6 +46,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   // public pages (invite, TV pairing, waiting room, restore, setup, the in-app sign-in and reset) handle a 401 themselves: no redirect loop
   // 401 reauth_required: the session is fine, only a sensitive action wants a fresh sign-in; the caller starts it (lib/account/reauth.ts)
   if (res.status === 401 && json?.error !== 'reauth_required' && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv' && location.pathname !== '/pending' && location.pathname !== '/restore' && location.pathname !== '/setup' && location.pathname !== '/login' && location.pathname !== '/reset' && location.pathname !== '/confirm-email') {
+    void tellAppSession(null); // the Android app's own cast must not stay controllable for whoever signs in next (fire and forget; no-op outside the app / with API 1)
     clearHint(); // the session is gone: the next start must not render early with this account's hint/profile
     location.href = localStorage.getItem('ff_tv_device') ? '/tv' : '/auth/login'; // a TV re-pairs instead of typing a login
     await new Promise(() => undefined);

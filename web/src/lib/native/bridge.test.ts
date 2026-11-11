@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { native, nativeDownloads, refreshNativeDownloads } from './bridge';
+import { native, nativeCast, nativeDownloads, refreshNativeCast, refreshNativeDownloads } from './bridge';
 
 type Listener = (e: { data: string }) => void;
 /** a fake of what the app injects: postMessage(string) in, 'message' events (data = JSON string) out */
@@ -28,7 +28,7 @@ const ua = (s: string) => vi.stubGlobal('navigator', { userAgent: s });
 const APP_UA = 'Mozilla/5.0 (Linux; Android 14) Chrome/120 Mobile Safari/537.36 FriendFlixAndroid/2.0.0';
 
 beforeEach(() => { win = new EventTarget() as typeof win; vi.stubGlobal('window', win); ua(APP_UA); });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); nativeDownloads.set(new Map()); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); nativeDownloads.set(new Map()); nativeCast.set(null); });
 
 describe('native bridge', () => {
   it('is unavailable without the injected object', () => {
@@ -85,7 +85,7 @@ describe('native bridge', () => {
   });
   it('capabilities are parsed leniently', async () => {
     installFake(() => ({ ok: true, result: { api: 1, play: true, download: 'yes', cast: false } }));
-    await expect(native.capabilities()).resolves.toEqual({ api: 1, play: true, download: false, cast: false });
+    await expect(native.capabilities()).resolves.toEqual({ api: 1, play: true, download: false, cast: false, castBar: false });
   });
   it('downloads keeps only well-formed entries', async () => {
     const good = { licenseId: 'L', itemId: 'i', state: 'done', progress: 1, bytes: 10, expiresAt: 5 };
@@ -170,5 +170,96 @@ describe('desktop marker', () => {
     installFake(() => ({ ok: true, result: true }));
     ua('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 FriendFlixDesk/2.3.0');
     expect(native.available).toBe(false);
+  });
+});
+
+const SNAP = { kind: 'chromecast', device: 'Wohnzimmer-TV', itemId: 'ep4', title: 'Dunmoor', subtitle: 'The Lantern Road', posterId: 'ep4', isEpisode: true, positionMs: 61000, durationMs: 1800000, paused: false, state: 'playing', next: { itemId: 'ep5', label: 'E5 · Wrenfield Pier' } };
+
+describe('the app cast session (API 2)', () => {
+  it('capabilities carry castBar', async () => {
+    installFake(() => ({ ok: true, result: { api: 2, play: true, download: true, cast: true, castBar: true } }));
+    await expect(native.capabilities()).resolves.toMatchObject({ api: 2, castBar: true });
+  });
+  it('castState parses the snapshot, null = no cast, no answer = undefined', async () => {
+    installFake(() => ({ ok: true, result: SNAP }));
+    await expect(native.castState()).resolves.toEqual(SNAP);
+    installFake(() => ({ ok: true, result: null }));
+    await expect(native.castState()).resolves.toBeNull();
+    installFake(() => ({ ok: false, error: 'internal' }));
+    await expect(native.castState()).resolves.toBeUndefined();
+  });
+  it('a malformed snapshot counts as no cast', async () => {
+    installFake(() => ({ ok: true, result: { ...SNAP, state: 'weird' } }));
+    await expect(native.castState()).resolves.toBeNull();
+    installFake(() => ({ ok: true, result: { ...SNAP, itemId: '../x' } }));
+    await expect(native.castState()).resolves.toBeNull();
+  });
+  it('an over-long title, TV name, subtitle or label is cut, the snapshot is kept', async () => {
+    const long = (n: number) => 'x'.repeat(n);
+    installFake(() => ({ ok: true, result: { ...SNAP, title: long(600), device: long(300), subtitle: long(700), next: { itemId: 'ep5', label: long(250) } } }));
+    const r = (await native.castState())!;
+    expect(r.title).toHaveLength(500);
+    expect(r.device).toHaveLength(200);
+    expect(r.subtitle).toHaveLength(500);
+    expect(r.next!.label).toHaveLength(200);
+    expect(r.title.endsWith('\u2026')).toBe(true);
+    expect(r.itemId).toBe('ep4');
+  });
+  it('castControl sends the action and answers the boolean', async () => {
+    const { sent } = installFake((req) => ({ ok: true, result: req.args.action !== 'next' }));
+    await expect(native.castControl('playPause')).resolves.toBe(true);
+    await expect(native.castControl('next')).resolves.toBe(false);
+    expect(sent.map((r) => [r.method, r.args])).toEqual([['castControl', { action: 'playPause' }], ['castControl', { action: 'next' }]]);
+  });
+  it('sessionChanged sends the profile id or null and waits for the answer', async () => {
+    const { sent, push, fake } = installFake(() => undefined);
+    let done = false;
+    const p = native.sessionChanged(null).then((r) => { done = r; });
+    await Promise.resolve();
+    expect(sent[0]).toMatchObject({ method: 'sessionChanged', args: { profileId: null } });
+    expect(done).toBe(false);
+    push({ id: sent[0].id, ok: true, result: true });
+    await p;
+    expect(done).toBe(true);
+    expect(fake.postMessage).toHaveBeenCalledTimes(1);
+  });
+  it('sessionChanged resolves false after the request timeout', async () => {
+    vi.useFakeTimers();
+    installFake(() => undefined);
+    const p = native.sessionChanged('p2');
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(p).resolves.toBe(false);
+  });
+  it('the cast event fills the store; null detail empties it', async () => {
+    const { push } = installFake(() => ({ ok: true, result: true }));
+    await native.capabilities();
+    push({ event: 'cast', detail: SNAP });
+    expect(get(nativeCast)).toEqual(SNAP);
+    push({ event: 'cast', detail: null });
+    expect(get(nativeCast)).toBeNull();
+  });
+  it('refreshNativeCast pulls the running cast once', async () => {
+    installFake((req) => ({ ok: true, result: req.method === 'castState' ? SNAP : true }));
+    await refreshNativeCast();
+    expect(get(nativeCast)).toEqual(SNAP);
+  });
+  it('refreshNativeCast keeps what it has without an answer, and drops an answer an event overtook', async () => {
+    nativeCast.set(SNAP as never);
+    installFake(() => ({ ok: false, error: 'internal' }));
+    await refreshNativeCast();
+    expect(get(nativeCast)).toEqual(SNAP);
+    const { push, fake } = installFake(() => undefined);
+    const p = refreshNativeCast();
+    await Promise.resolve();
+    const id = JSON.parse((fake.postMessage as any).mock.calls.at(-1)[0]).id;
+    push({ event: 'cast', detail: null }); // newer than the stale answer
+    push({ id, ok: true, result: SNAP });
+    await p;
+    expect(get(nativeCast)).toBeNull();
+  });
+  it('refreshNativeCast does nothing outside the app', async () => {
+    ua('Mozilla/5.0 Chrome/120');
+    await refreshNativeCast();
+    expect(get(nativeCast)).toBeNull();
   });
 });

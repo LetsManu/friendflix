@@ -50,6 +50,14 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        // Installable build for testing pull requests: the debug key, a separate app (com.friendflix.preview, label from
+        // src/preview/res) next to the production app. Built by PR CI only (:app:assemblePreview); the library modules have no
+        // preview type, so they resolve to their debug variant.
+        create("preview") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".preview"
+            matchingFallbacks += listOf("debug")
+        }
     }
 
     compileOptions {

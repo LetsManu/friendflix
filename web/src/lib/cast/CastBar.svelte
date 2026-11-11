@@ -11,7 +11,7 @@
   import { goto } from '$app/navigation';
   import { get } from 'svelte/store';
   import { fade } from 'svelte/transition';
-  import { cachedItem } from '#lib/api';
+  import { api, cachedItem, type Item } from '#lib/api';
   import { barRise } from '#lib/glass/fx';
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
@@ -21,7 +21,8 @@
   import { SCRIM_BAR } from '#lib/glass/tone';
   import { barLine1, barLine2, barProgress, barThumb, nextSecondsLeft, splitLine } from './bar';
   import CastBarExpanded from './CastBarExpanded.svelte';
-  import { castEngine, castSession, type CastSession } from './engine';
+  import { castEngine, type CastSession } from './engine';
+  import { engineSource, itemFetchWanted, type CastBarSource } from './barSource';
 
   /** the bar shows (the layout's `barVisible`); false: it rises out */
   export let show = true;
@@ -30,21 +31,32 @@
   /** the phone bar: no thumbnail, no Next, Stop as an icon */
   export let phone = false;
 
+  /** where the session comes from and where the buttons go: the page's cast engine (default) or the Android app's own cast session */
+  export let source: CastBarSource = engineSource();
+
   /** the bar has risen out: the layout may give the room back */
   const dispatch = createEventDispatcher<{ gone: void }>();
 
   const airState = castEngine.airState;
   let last: CastSession | null = null;
-  $: if ($castSession) last = $castSession;
-  $: s = $castSession ?? last;
-  $: shown = show && $castSession !== null;
+  let session = source.session;
+  $: session = source.session;
+  $: if ($session) last = $session;
+  $: s = $session ?? last;
+  $: shown = show && $session !== null;
   $: state = s?.state;
   /** play / pause only drives a TV that plays (connecting / reconnect / failed / ended have no live token) */
   $: live = state === 'playing';
   /** AirPlay waits for the TV to be chosen in the system picker (it may not have opened without a fresh tap) */
   $: choose = s?.kind === 'airplay' && state === 'reconnect' && Boolean($airState?.ready);
   $: thumb = s ? barThumb(s) : null;
-  $: it = s ? cachedItem(s.itemId) : undefined;
+  // the app's session carries no episode numbers: the item gives the code ("S1:F4"; app source only); one request per title, also when it fails
+  let fetched: Item | undefined, askedFor = '';
+  $: it = s ? cachedItem(s.itemId) ?? (source.fromApp && fetched?.id === s.itemId ? fetched : undefined) : undefined;
+  $: if (s && s.itemId !== askedFor && itemFetchWanted(source, s, Boolean(cachedItem(s.itemId)))) { askedFor = s.itemId; void loadItem(s.itemId); }
+  async function loadItem(id: string) {
+    try { const r = await api<{ item: Item }>(`/api/items/${id}`); if (get(session)?.itemId === id) fetched = r.item; } catch { /* the session's own subtitle */ }
+  }
   /** a detached cast whose title could not be loaded: "Playing on {device}" */
   $: title = s ? (s.title ? barLine1(s, it, $t) : $t('player.castBar.playingOn', { device: s.device })) : '';
   $: progress = s ? barProgress(s) : 0;
@@ -76,7 +88,7 @@
   /** the More button's rectangle at the tap: the button is gone once the expanded bar mounts, the grow still starts from it */
   let origin: Element | null = null;
   /** the expanded bar serves a TV that plays, connects or has just ended; a lost or failed one has its own collapsed state */
-  $: canExpand = !phone && (state === 'playing' || state === 'connecting' || state === 'ended');
+  $: canExpand = source.canExpand && !phone && (state === 'playing' || state === 'connecting' || state === 'ended');
   $: if (expanded && (!canExpand || !shown)) expanded = false;
   function expand() {
     const r = moreBtn?.getBoundingClientRect();
@@ -105,25 +117,24 @@
 
   /** text / thumb: opens the remote (the watch page attaches) */
   function open() {
-    const c = get(castSession);
-    if (c) void goto('/watch/' + c.itemId);
+    source.open();
   }
   /** "Play here" in `failed`: the session is dropped, the title plays here */
   function playHere() {
-    const c = get(castSession);
+    const c = get(session);
     if (!c) return;
     castEngine.release();
     void goto('/watch/' + c.itemId);
   }
   /** `reconnect`: runs inside the tap (AirPlay opens the system picker, which needs the gesture) */
   function reconnect() { castEngine.reconnect(); }
-  function playPause() { if (get(castSession)?.state === 'playing') castEngine.playPause(); }
+  function playPause() { if (get(session)?.state === 'playing') source.playPause(); }
   async function stop() {
-    const c = get(castSession);
+    const c = get(session);
     if (!c) return;
     const inBar = Boolean(region?.contains(document.activeElement));
     if (await confirm({ title: tr('player.castBar.stopQuestion', { device: c.device }), danger: true, confirmLabel: tr('player.castBar.stop', { device: c.device }) })) {
-      await castEngine.stop();
+      await source.stop();
       // the bar is gone: the focus goes on to the page, not to <body>
       if (inBar || document.activeElement === document.body) focusMain();
     }
@@ -176,12 +187,13 @@
         <button type="button" class="act here" on:click={playHere}><Icon name="play" size={18} />{$t('player.castBar.playHere')}</button>
       {:else if next}
         {#if secs !== null}<button type="button" class="tb" aria-label={$t('common.cancel')} title={$t('common.cancel')} on:click={() => castEngine.cancelNext()}><Icon name="x" size={22} /></button>{/if}
-        <button type="button" class="tb" aria-label={$t('player.castBar.next', { label: next.label })} title={$t('player.castBar.next', { label: next.label })} on:click={() => void castEngine.next()}><Icon name="skip-next" size={24} /></button>
+        <button type="button" class="tb" aria-label={$t('player.castBar.next', { label: next.label })} title={$t('player.castBar.next', { label: next.label })} on:click={() => source.next()}><Icon name="skip-next" size={24} /></button>
       {:else if live}
         <button type="button" class="tb pp" aria-label={$t(s.paused ? 'player.controls.play' : 'player.controls.pause')} on:click={playPause}>
           <Icon name={s.paused ? 'play' : 'pause'} size={24} />
         </button>
-        {#if s.isEpisode && !phone}<button type="button" class="tb" aria-label={$t('player.controls.next')} title={$t('player.controls.next')} on:click={() => void castEngine.next()}><Icon name="skip-next" size={24} /></button>{/if}
+        <!-- the web engine: episodes (not on the phone); the app: only while it has a next episode queued (its Next answers false otherwise) -->
+        {#if source.fromApp ? s.upcoming : s.isEpisode && !phone}<button type="button" class="tb" aria-label={$t('player.controls.next')} title={$t('player.controls.next')} on:click={() => source.next()}><Icon name="skip-next" size={24} /></button>{/if}
       {/if}
 
       {#if phone}

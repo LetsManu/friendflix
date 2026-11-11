@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.bridge
 
+import app.friendflix.android.cast.CastSnapshot
 import app.friendflix.android.offline.OfflineMedia
 
 /**
@@ -70,8 +71,44 @@ interface DownloadSink {
     fun delete(licenseId: String): Boolean
 }
 
-/** What this build can do natively right now; the web UI only uses a native path whose flag is true. */
-data class Capabilities(val play: Boolean, val download: Boolean, val cast: Boolean)
+/**
+ * What this build can do natively right now; the web UI only uses a native path whose flag is true.
+ * [castBar]: the web UI may show the cast bar for the app's own cast (bridge `castState` / `castControl` / event `cast`).
+ */
+data class Capabilities(val play: Boolean, val download: Boolean, val cast: Boolean, val castBar: Boolean = false)
+
+/**
+ * The running Chromecast session as the web UI sees and drives it (Task 30). All calls come on the UI thread, only after the
+ * bridge validated them. [snapshot] carries no token or URL.
+ */
+interface CastRemote {
+    /** the cast as the bar shows it; null when none runs */
+    fun snapshot(): CastSnapshot?
+    fun playPause()
+    /** the queued next episode starts on the TV; false when no next episode is queued (nothing changed) */
+    fun next(): Boolean
+    /** ends the cast (Stop casting) */
+    fun stop()
+    /** opens the native player as the remote of the cast's item; false when it could not be opened */
+    fun open(): Boolean
+    /**
+     * The web session changed: [profileId] is the now active profile (a switch; a cast of another profile ends), null after a
+     * sign-out (the cast ends). [done] is called once (any thread) when nothing is owed to the server any more: right away when no
+     * cast ended, else after the stop report and the revoke have been sent (or failed, or a timeout passed). The web UI invalidates
+     * its session only after the bridge's reply, so the reply waits for [done].
+     */
+    fun sessionChanged(profileId: String?, done: () -> Unit)
+}
+
+/** Placeholder without a cast hub: there is never a cast to show or drive. */
+object NoCastRemote : CastRemote {
+    override fun snapshot(): CastSnapshot? = null
+    override fun playPause() {}
+    override fun next(): Boolean = false
+    override fun stop() {}
+    override fun open(): Boolean = false
+    override fun sessionChanged(profileId: String?, done: () -> Unit) { done() }
+}
 
 /** Where native code can send a JSON string back to the page (the main frame's reply channel). */
 fun interface ReplySink {

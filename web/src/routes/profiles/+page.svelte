@@ -18,6 +18,7 @@
   import { t, tr, type TKey } from '#lib/i18n';
   import { confirm } from '#lib/ui/confirm';
   import { endCast } from '#lib/session';
+  import { tellAppSession } from '#lib/native/sessionSync';
   const colorKey = (key: string) => `account.profiles.colors.${key}` as TKey;
 
   /** unlock 'owner': leaving the active kids profile towards this profile needs the owner profile's PIN (it has none of its own) */
@@ -90,14 +91,24 @@
     // leaving a kids profile: the target's own PIN, else the owner profile's (the server enforces both)
     if (pin === undefined && (p.hasPin || p.unlock === 'owner')) { pinFor = p; pinOwner = !p.hasPin; pinErr = ''; return; }
     pinBusy = true; pinErr = '';
+    let told = false, selected = false; // told: the app was told `p`; selected: the server accepted it
     try {
-      if (p.id !== activeId) await endCast(); // the old profile's stream must not keep running under the new one
+      if (p.id !== activeId) {
+        told = Boolean(activeId); // no known active profile (a fresh login): no app cast can exist, the app is told after the select instead
+        await endCast(); // the old profile's stream must not keep running under the new one
+        if (activeId) await tellAppSession(p.id); // the app's cast ends and records the new profile BEFORE the server switches: its stop report and revoke go out under the old one (waits at most 4 s; no-op outside the app / with API 1)
+      }
       await api(`/api/profiles/${p.id}/select`, { method: 'POST', body: pin === undefined ? {} : { pin } });
+      selected = true;
+      if (!told && p.id !== activeId) await tellAppSession(p.id); // unknown active profile before: the app just records the new one (no-op outside the app / with API 1)
       await setMeta('lastProfileId', p.id).catch(() => undefined); // offline hub: downloads of the last active profile
       markPicked(p.id); // the profile question ("Wer ist heute dabei?") was answered for this browser session
       await playIntro(p.id).catch(() => undefined);
       done();
     } catch (e) {
+      // the select did not go through (wrong PIN, any error, network): the app goes back to the profile that is really active, else it would list
+      // the other profile's downloads. Without a known active profile there is nothing to go back to (the app keeps `p` until the next signal).
+      if (told && !selected) await tellAppSession(activeId);
       const code = e instanceof ApiError ? e.body?.error : '';
       pinOwner = e instanceof ApiError && e.body?.pinOf === 'owner';
       if (code === 'pin_required') { pinFor = p; pinErr = ''; }
