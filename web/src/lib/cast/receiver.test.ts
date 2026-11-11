@@ -227,10 +227,26 @@ describe('receiver: pause, loading, sender pill, key hints', () => {
     expect(view(first, DEFAULT_STRINGS)).toMatchObject({ pause: null, load: { label: 'Getting ready…' } });
   });
 
-  it('a load survives the media change that follows it; clock, keys and sender stay', () => {
+  it('a load before the media change and the media change itself both start on the loading screen; clock, keys and sender stay', () => {
     const st = run([{ type: 'ui', who: 'Anna', motion: false }, { type: 'key' }, { type: 'clock', now: T }, { type: 'load' }, { type: 'media', castId: B }]);
     expect(st).toMatchObject({ loading: 'first', whoUntil: T + WHO_MS, who: 'Anna', motion: false, keySeen: true, now: T, castId: B });
     expect(view(st, DEFAULT_STRINGS).load).not.toBeNull();
+  });
+
+  it('queue advance (no LOAD): the new item shows the loading screen, its first buffering is no stall', () => {
+    let st = run([{ type: 'media', castId: A }, item, { type: 'clock', now: T }, { type: 'load' }, { type: 'firstFrame' }], base());
+    st = run([{ type: 'clock', now: T + 60_000 }, { type: 'media', castId: B }, { type: 'buffering', on: true, at: T + 60_000 }, { type: 'clock', now: T + 64_000 }], st);
+    expect(view(st, DEFAULT_STRINGS)).toMatchObject({ pause: null, load: { label: 'Getting ready…' }, who: expect.any(String) });
+    st = run([{ type: 'firstFrame' }], st);
+    expect(view(st, DEFAULT_STRINGS).load).toBeNull();
+  });
+
+  it('"Still there?" hold: the centred card only, no pause or loading screen on top', () => {
+    const next = { castId: B, label: 'S1:E5 · Wrenfield Pier', auto: true, ask: true };
+    let st = run([{ type: 'media', castId: A }, { type: 'item', msg: { t: 'item', castId: A, episode: true, segs: [], next, meta } }, { type: 'media', castId: B }]);
+    expect(view(st, DEFAULT_STRINGS)).toMatchObject({ still: expect.anything(), load: null });
+    st = run([{ type: 'pause', paused: true, at: T }, { type: 'clock', now: T + PAUSE_SHOW_MS }], st);
+    expect(view(st, DEFAULT_STRINGS)).toMatchObject({ still: expect.anything(), pause: null, load: null });
   });
 
   it('sender pill for 5 s after a load and with any overlay', () => {

@@ -104,6 +104,7 @@ async function setup(o: { started?: boolean } = {}) {
   const body = new FakeBody();
   const store = new Map<string, string>();
   const deps: EngineDeps = {
+    profileName: () => '', formFactor: () => 'computer', motion: () => true,
     api: api as unknown as EngineDeps['api'],
     item: vi.fn(async (id: string) => { const it = items[id]; if (!it) throw new Error('404'); return it as Item; }),
     cast: { castState: writable({}), onCastEvent: vi.fn(), loadOnCast: vi.fn(), castPlayPause: vi.fn(), castSeek: vi.fn(), castStop: vi.fn(), castSetSubtitle: vi.fn(), queueOnCast: vi.fn(async () => null), castQueueRemove: vi.fn(), castQueueNext: vi.fn() } as unknown as EngineDeps['cast'],

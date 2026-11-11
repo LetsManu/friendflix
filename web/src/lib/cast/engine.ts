@@ -158,11 +158,11 @@ export interface EngineDeps {
   /** the page came back from the back/forward cache (pageshow, persisted); registered once */
   onRestore(fn: () => void): void;
   /** the active profile's display name (the only thing about the viewer the TV is told; '' = unknown) */
-  profileName?(): string;
+  profileName(): string;
   /** this device's kind, for the TV's "Cast from Anna's phone" pill */
-  formFactor?(): 'phone' | 'tablet' | 'computer';
-  /** may the TV animate (calm mode and reduced motion say no) */
-  motion?(): boolean;
+  formFactor(): 'phone' | 'tablet' | 'computer';
+  /** may the TV animate (calm mode and reduced motion say no); */
+  motion(): boolean;
 }
 
 /** progress report cadence while the receiver plays */
@@ -285,12 +285,12 @@ const subsOf = (ci: CastInfo): CastTrack[] => ci.subtitles.map(({ index, title, 
 /** the bar's label of the next episode: "S1:E2 · Name", the name alone without season / episode numbers (the header's format) */
 const nextLabel = (it: Item): string => episodeLabel(it);
 
-/** the cast log's name of a title: "S1 E4", "episode" without numbers, "film" (never a name or id) */
 /** the TV's line under the title: "Season 1 · Episode 4 · The Lantern Road"; an episode without numbers: its name; a film: '' */
 function lineOf(it: Pick<Item, 'type' | 'name' | 'indexNumber' | 'parentIndexNumber'> | null): string {
   if (!it || it.type !== 'Episode') return '';
   return it.parentIndexNumber != null && it.indexNumber != null ? tr('player.castTv.line', { s: it.parentIndexNumber, e: it.indexNumber, name: it.name }) : it.name;
 }
+/** the cast log's name of a title: "S1 E4", "episode" without numbers, "film" (never a name or id) */
 function labelOf(it: Pick<Item, 'type' | 'indexNumber' | 'parentIndexNumber'> | null, episode = false): string {
   if (it ? it.type !== 'Episode' : !episode) return 'film';
   return it?.parentIndexNumber != null && it.indexNumber != null ? `S${it.parentIndexNumber} E${it.indexNumber}` : 'episode';
@@ -358,19 +358,20 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     const q = s.queued;
     cast.castSendMessage?.({ t: 'item', castId: s.ci.castId, episode: s.view.isEpisode, segs: s.segs,
       next: q ? { castId: q.ci.castId, label: nextLabel(q.it), auto: s.noAuto !== q.it.id && s.autoSet !== false, ask: Boolean(q.ask) } : null,
-      meta: { title: s.view.title, line: s.view.isEpisode ? s.line : '' } });
+      // the receiver drops a meta longer than 200 characters
+      meta: { title: s.view.title.slice(0, 200), line: (s.view.isEpisode ? s.line : '').slice(0, 200) } });
   };
   /** own receiver: texts, subtitle style and countdown length, once per session (and again after a new token load) */
   const tvUi = (s: Live) => {
     if (cur !== s || !custom(s)) return;
     cast.castSendMessage?.({ t: 'ui', strings: receiverStrings(), sub: deps.prefs().subtitleStyle, countdown: COUNTDOWN_SECONDS,
-      who: whoText(), motion: deps.motion ? deps.motion() : true });
+      who: whoText(), motion: deps.motion() });
   };
   /** "Cast from Anna's phone": the profile's display name and the kind of device, nothing else (no account, token, URL or device name) */
   const whoText = (): string => {
-    const name = (deps.profileName?.() ?? '').trim().slice(0, 40);
+    const name = deps.profileName().trim().slice(0, 40);
     const key = { phone: 'player.castTv.fromPhone', tablet: 'player.castTv.fromTablet', computer: 'player.castTv.fromComputer' } as const;
-    return name ? tr(key[deps.formFactor?.() ?? 'computer'], { name }) : '';
+    return name ? tr(key[deps.formFactor()], { name }) : '';
   };
   /** own receiver: input on the TV (its remote) */
   function fromTv(s: Live, m: Record<string, unknown>) {

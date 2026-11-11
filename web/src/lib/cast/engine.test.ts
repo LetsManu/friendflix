@@ -1504,6 +1504,11 @@ describe('cast engine: FriendFlix\'s own receiver (CAST_RECEIVER_APP_ID)', () =>
     await playingSession(named, ep1);
     await flush();
     expect(JSON.stringify(tv2.sent)).not.toMatch(/https?:|@|[0-9a-f]{40}|token/i);
+    // exactly these fields and no others go to the TV
+    expect(Object.keys(tv2.sent.find((m) => m.t === 'ui')!).sort()).toEqual(['countdown', 'motion', 'strings', 'sub', 't', 'who']);
+    const item = tv2.items().at(-1)!;
+    expect(Object.keys(item).sort()).toEqual(['castId', 'episode', 'meta', 'next', 'segs', 't']);
+    expect(Object.keys(item.meta).sort()).toEqual(['line', 'title']);
   });
 
   it('item message carries meta', async () => {
@@ -1521,7 +1526,7 @@ describe('cast engine: FriendFlix\'s own receiver (CAST_RECEIVER_APP_ID)', () =>
     expect(tv2.items().at(-1)).toMatchObject({ meta: { title: 'Film', line: '' } });
   });
 
-  it('item message follows the queued episode: meta of the new title once it plays', async () => {
+  it('a switch to another episode sends its meta', async () => {
     const env = setup();
     const tv = custom(env);
     env.engine.adopt(handoff({ itemId: 'dun4', seriesId: 'dun', title: 'Dunmoor', subtitle: '', isEpisode: true, cast: ci('c1') }));
@@ -1530,6 +1535,25 @@ describe('cast engine: FriendFlix\'s own receiver (CAST_RECEIVER_APP_ID)', () =>
     await env.engine.playOnTv('dun5', 0);
     await flush();
     expect(tv.items().at(-1)).toMatchObject({ meta: { title: 'Dunmoor', line: 'Staffel 1 · Folge 5 · Wrenfield Pier' } });
+  });
+
+  it('queue advance: the receiver moves on to the queued episode and its meta follows', async () => {
+    const env = setup();
+    const tv = custom(env);
+    await playingSession(env, { itemId: 'dun4', seriesId: 'dun', title: 'Dunmoor', subtitle: '', isEpisode: true, cast: ci('c1') });
+    await flush();
+    expect(tv.items().at(-1)).toMatchObject({ next: { castId: 'q1' }, meta: { line: 'Staffel 1 · Folge 4 · The Lantern Road' } });
+    env.state.set(playing({ currentTime: 3, contentId: '/media/c/q1/master.m3u8' }));
+    await flush();
+    expect(tv.items().at(-1)).toMatchObject({ castId: 'q1', meta: { title: 'Dunmoor', line: 'Staffel 1 · Folge 5 · Wrenfield Pier' } });
+  });
+
+  it('long titles are cut to what the receiver accepts', async () => {
+    const env = setup();
+    const tv = custom(env);
+    await playingSession(env, { itemId: 'film', title: 'x'.repeat(300), subtitle: '', isEpisode: false });
+    await flush();
+    expect(tv.items().at(-1)!.meta.title).toHaveLength(200);
   });
 
   it('receiverStrings has upNextIn per second', () => {

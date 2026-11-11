@@ -244,9 +244,10 @@ export function step(st, ev) {
       if (ev.castId === s.castId) break;
       // the receiver moved on: to the queued episode that waits for "still watching?" -> it stays paused under the question
       const waiting = Boolean(s.next && s.next.castId === ev.castId && s.next.ask && !s.answered);
-      // what belongs to the TV session (clock, keys, touch, sender pill, motion) and a load that just started (LOAD comes before the media change) stay
+      // what belongs to the TV session (clock, keys, touch, sender pill, motion) stays; every new item starts on the loading screen until its first frame
+      // (also a queue advance, which has no LOAD request), and the sender pill shows again for WHO_MS
       s = { ...initialState(), countdown: s.countdown, castId: ev.castId, still: waiting, prevNext: s.next,
-        now: s.now, keySeen: s.keySeen, touch: s.touch, who: s.who, whoUntil: s.whoUntil, motion: s.motion, loading: s.loading === 'first' ? 'first' : null, firstFrame: s.firstFrame && s.loading !== 'first' };
+        now: s.now, keySeen: s.keySeen, touch: s.touch, who: s.who, whoUntil: s.now + WHO_MS, motion: s.motion, loading: 'first', firstFrame: false };
       if (waiting) actions.push('pause');
       break;
     }
@@ -339,9 +340,9 @@ export function view(s, t) {
   const hintText = hint === 'keys' ? t.keys : hint === 'phone' ? t.phoneCancel : '';
   const stalled = s.loading === 'stall' && s.stallAt !== null && s.now - s.stallAt >= STALL_SHOW_MS;
   const paused = s.paused && s.pausedAt !== null && s.now - s.pausedAt >= PAUSE_SHOW_MS;
-  const pause = s.loading !== 'first' && (stalled || paused)
+  const pause = !s.still && s.loading !== 'first' && (stalled || paused)
     ? { label: stalled ? t.stall : t.paused, title: s.meta?.title ?? '', line: s.meta?.line ?? '', pos: s.pos, dur: s.dur } : null;
-  const load = s.loading === 'first' ? { title: s.meta?.title ?? '', line: s.meta?.line ?? '', label: t.loading } : null;
+  const load = !s.still && s.loading === 'first' ? { title: s.meta?.title ?? '', line: s.meta?.line ?? '', label: t.loading } : null;
   return {
     pause, load,
     who: s.who && (s.now < s.whoUntil || pause || load || c || s.still) ? s.who : null,

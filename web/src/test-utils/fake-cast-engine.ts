@@ -180,7 +180,7 @@ export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock; store?: Retu
     requestSession: vi.fn(() => requestImpl()), leave: vi.fn(), whenReady: vi.fn((fn: () => void) => { readies.push(fn); }),
     lock: lock.acquire,
     onRestore: vi.fn((fn: () => void) => { restores.add(fn); }),
-    profileName: () => o.profile ?? 'Anna', formFactor: () => o.form ?? 'computer', motion: () => o.motion ?? !o.prefs?.calm,
+    profileName: () => o.profile ?? 'Anna', formFactor: () => o.form ?? 'computer', /* mirrors motionAllowed(): calm mode means no motion (the real link is browserDeps.motion) */ motion: () => o.motion ?? !o.prefs?.calm,
   };
   const out = writable<CastSession | null>(null);
   const engine = createCastEngine(deps, out);
