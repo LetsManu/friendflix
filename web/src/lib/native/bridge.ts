@@ -10,6 +10,7 @@
  *
  * Protocol (JSON strings, both directions):
  *   web -> app   {id, method, args}                  method: capabilities | play | download | downloads | deleteDownload | openSettings
+ *                                                    | castState | castControl | sessionChanged (API 2, the app's own Chromecast session)
  *   app -> web   {id, ok:true, result} | {id, ok:false, error}
  *   app -> web   {event, detail}                     unsolicited, no id (download progress ...); re-dispatched as the DOM event
  *                                                    'friendflix-native' with detail = the whole {event, detail} object
@@ -24,7 +25,14 @@ export const UA_MARKER = ' FriendFlixAndroid/';
 export const UA_MARKERS = [UA_MARKER, ' FriendFlixDesktop/'] as const;
 export const EVENT_NAME = 'friendflix-native';
 
-export interface NativeCapabilities { api: number; play: boolean; download: boolean; cast: boolean }
+/** `castBar` (API 2): the app shows its own cast session through castState / castControl / the 'cast' event */
+export interface NativeCapabilities { api: number; play: boolean; download: boolean; cast: boolean; castBar: boolean }
+/** the app's running Chromecast session (no token, no URL); `next` = the queued next episode */
+export interface NativeCastSnapshot {
+  kind: 'chromecast'; device: string; itemId: string; title: string; subtitle?: string; posterId: string; isEpisode: boolean;
+  positionMs: number; durationMs: number; paused: boolean; state: 'connecting' | 'playing' | 'ended'; next?: { itemId: string; label: string };
+}
+export type NativeCastAction = 'playPause' | 'next' | 'stop' | 'open';
 export interface NativePlayRequest { itemId: string; profileId: string; startMs?: number; mediaSourceId?: string; audio?: string; subtitle?: string }
 export interface NativeDownloadRequest { licenseId: string; itemId: string; profileId: string }
 export type NativeDownloadState = 'queued' | 'preparing' | 'downloading' | 'paused' | 'done' | 'error' | 'expired';
@@ -51,7 +59,7 @@ const hasMarker = () => {
   return UA_MARKERS.some((m) => ua.includes(m));
 };
 
-const NO_CAPS: NativeCapabilities = { api: 0, play: false, download: false, cast: false };
+const NO_CAPS: NativeCapabilities = { api: 0, play: false, download: false, cast: false, castBar: false };
 const STATES = new Set<string>(['queued', 'preparing', 'downloading', 'paused', 'done', 'error', 'expired']);
 
 const pending = new Map<string, (m: Reply) => void>();
@@ -88,6 +96,27 @@ function request(method: string, args: Record<string, unknown> = {}): Promise<Re
   });
 }
 
+const ID = /^[A-Za-z0-9_-]{1,64}$/;
+const CAST_STATES = new Set<string>(['connecting', 'playing', 'ended']);
+/** the app's snapshot, checked field by field (a malformed one counts as "no cast") */
+export function asCastSnapshot(x: unknown): NativeCastSnapshot | null {
+  const o = x as Record<string, unknown> | null;
+  if (!o || typeof o !== 'object' || o.kind !== 'chromecast') return null;
+  /** an over-long text is cut (with an ellipsis), not a reason to drop the whole snapshot */
+  const cut = (v: unknown, max: number): string | null => (typeof v !== 'string' ? null : v.length <= max ? v : v.slice(0, max - 1) + '\u2026');
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
+  const device = cut(o.device, 200), title = cut(o.title, 500);
+  if (device === null || title === null || typeof o.itemId !== 'string' || !ID.test(o.itemId) || typeof o.posterId !== 'string' || !ID.test(o.posterId)) return null;
+  if (typeof o.state !== 'string' || !CAST_STATES.has(o.state)) return null;
+  const n = o.next as Record<string, unknown> | undefined;
+  const next = n && typeof n === 'object' && typeof n.itemId === 'string' && ID.test(n.itemId) && cut(n.label, 200) !== null ? { next: { itemId: n.itemId, label: cut(n.label, 200)! } } : {};
+  const sub = cut(o.subtitle, 500), subtitle = sub ? { subtitle: sub } : {};
+  return {
+    kind: 'chromecast', device, itemId: o.itemId, title, posterId: o.posterId, isEpisode: o.isEpisode === true,
+    positionMs: num(o.positionMs), durationMs: num(o.durationMs), paused: o.paused === true, state: o.state as NativeCastSnapshot['state'], ...subtitle, ...next,
+  };
+}
+
 const asEntry = (x: unknown): NativeDownload | null => {
   const o = x as Record<string, unknown> | null;
   if (!o || typeof o !== 'object') return null;
@@ -102,10 +131,18 @@ const asEntry = (x: unknown): NativeDownload | null => {
 /** downloads the app holds, by licence id (kept current by `refreshNativeDownloads` and the app's events) */
 export const nativeDownloads = writable<Map<string, NativeDownload>>(new Map());
 
+/** the app's own cast session (null = none); kept current by `refreshNativeCast` (once on load) and the app's 'cast' events */
+export const nativeCast = writable<NativeCastSnapshot | null>(null);
+/** counts the app's cast events: a castState answer that was overtaken by an event is stale and dropped */
+let castEvents = 0;
+
 function applyEvent(m: { event: string; detail: unknown }) {
   if (m.event === 'download') {
     const e = asEntry(m.detail);
     if (e) nativeDownloads.update((s) => new Map(s).set(e.licenseId, e));
+  } else if (m.event === 'cast') {
+    castEvents++;
+    nativeCast.set(asCastSnapshot(m.detail));
   } else if (m.event === 'downloadRemoved') {
     const id = (m.detail as { licenseId?: unknown } | null)?.licenseId;
     if (typeof id === 'string') nativeDownloads.update((s) => { const n = new Map(s); n.delete(id); return n; });
@@ -119,6 +156,15 @@ export async function refreshNativeDownloads(): Promise<void> {
   nativeDownloads.set(new Map(list.map((d) => [d.licenseId, d])));
 }
 
+/** the app does not replay events to a loaded page: ask for the running cast once (when the bridge is ready) and follow the events after */
+export async function refreshNativeCast(): Promise<void> {
+  if (!native.available) return;
+  const seen = castEvents;
+  const r = await native.castState();
+  if (r === undefined || seen !== castEvents) return; // no answer, or an event already told something newer
+  nativeCast.set(r);
+}
+
 export const native = {
   /** running inside the FriendFlix Android app with the bridge present */
   get available(): boolean { return Boolean(port()) && hasMarker(); },
@@ -127,7 +173,7 @@ export const native = {
     const r = await request('capabilities');
     const o = r.result as Record<string, unknown> | undefined;
     if (!r.ok || !o || typeof o !== 'object') return { ...NO_CAPS };
-    return { api: typeof o.api === 'number' ? o.api : 0, play: o.play === true, download: o.download === true, cast: o.cast === true };
+    return { api: typeof o.api === 'number' ? o.api : 0, play: o.play === true, download: o.download === true, cast: o.cast === true, castBar: o.castBar === true };
   },
   /** true = the native player took over; false = declined (play it in the page); 'timeout' = no answer in time (the app may still start it) */
   async play(req: NativePlayRequest): Promise<boolean | 'timeout'> {
@@ -146,6 +192,22 @@ export const native = {
   },
   async deleteDownload(licenseId: string): Promise<boolean> {
     const r = await request('deleteDownload', { licenseId });
+    return r.ok && r.result === true;
+  },
+  /** the app's cast session; null = none runs; undefined = no answer (keep what is known) */
+  async castState(): Promise<NativeCastSnapshot | null | undefined> {
+    const r = await request('castState');
+    return r.ok ? asCastSnapshot(r.result) : undefined;
+  },
+  /** false = refused (`next`: nothing queued; `open`: the cast has ended) or no answer */
+  async castControl(action: NativeCastAction): Promise<boolean> {
+    const r = await request('castControl', { action });
+    return r.ok && r.result === true;
+  },
+  /** API 2: tells the app which profile is active now (null = signed out). Resolves when the app has answered (it replies after its stop report
+   *  and token revoke went out, at most about 3 s) or after the request timeout; true = answered */
+  async sessionChanged(profileId: string | null): Promise<boolean> {
+    const r = await request('sessionChanged', { profileId });
     return r.ok && r.result === true;
   },
   openSettings(): void { void request('openSettings'); },

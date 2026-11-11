@@ -72,7 +72,9 @@ sealed interface TokenAnswer {
     data object NeedsTranscode : TokenAnswer
     /** 403 device_pending: this device is not approved yet */
     data object DevicePending : TokenAnswer
-    /** anything else (refused, network, the next-token gate said no) */
+    /** 409 cast_unpinned: the TV has not fetched the playing token yet, so no queued successor can be pinned to it (asked once more later) */
+    data object Unpinned : TokenAnswer
+    /** anything else (refused, network, 409 profile_changed, 400 bad_request, the next-token gate said no) */
     data object Failed : TokenAnswer
 }
 
@@ -121,3 +123,107 @@ object CastBodies {
 
     private fun bitrate(b: Long?) = b?.takeIf { it in 300_000..200_000_000 }
 }
+
+/**
+ * The answer of `GET /api/cast/session/:castId`: what the server knows of one of this device's cast tokens. It carries no token, URL or
+ * address; the receiver's own content URL ([toCastInfo]) is all a re-adopted cast needs.
+ */
+data class CastLookup(
+    val castId: String,
+    val itemId: String,
+    val mediaSourceId: String,
+    val playSessionId: String,
+    val expiresAt: Long,
+    val runtimeTicks: Long?,
+    /** `chromecast` or `airplay` */
+    val via: String,
+    /** the token is a queued successor (`next: true`) */
+    val next: Boolean,
+    /** the playing token's `start` was reported */
+    val reported: Boolean,
+    val title: String,
+    val seriesName: String?,
+    val subtitles: List<CastSubtitle>,
+) {
+    /** the [CastInfo] of a cast found on the receiver: its own [contentUrl], subtitle URLs are already there (empty), no report token */
+    fun toCastInfo(contentUrl: String) = CastInfo(
+        castId = castId, expiresAt = expiresAt, playSessionId = playSessionId, mediaSourceId = mediaSourceId, runtimeTicks = runtimeTicks,
+        startTime = 0, contentUrl = contentUrl, contentType = "application/x-mpegURL", hlsSegmentFormat = "ts", title = title,
+        seriesName = seriesName, imageUrl = null, subtitles = subtitles, report = null,
+    )
+
+    companion object {
+        fun parse(j: JSONObject): CastLookup? {
+            fun str(k: String) = if (j.isNull(k)) null else j.optString(k).takeIf { it.isNotEmpty() }
+            val castId = str("castId")?.takeIf(CastIds::valid) ?: return null
+            val itemId = str("itemId") ?: return null
+            val subs = j.optJSONArray("subtitles")
+            return CastLookup(
+                castId = castId,
+                itemId = itemId,
+                mediaSourceId = j.optString("mediaSourceId"),
+                playSessionId = str("playSessionId") ?: return null,
+                expiresAt = j.optLong("expiresAt"),
+                runtimeTicks = if (j.has("runtimeTicks") && !j.isNull("runtimeTicks")) j.optLong("runtimeTicks") else null,
+                via = j.optString("via", "chromecast"),
+                next = j.optBoolean("next", false),
+                reported = j.optBoolean("reported", false),
+                title = j.optString("title"),
+                seriesName = str("seriesName"),
+                subtitles = if (subs == null) emptyList() else (0 until subs.length()).mapNotNull { i ->
+                    val o = subs.optJSONObject(i) ?: return@mapNotNull null
+                    CastSubtitle(o.optInt("index"), if (o.isNull("language")) null else o.optString("language").takeIf { it.isNotEmpty() }, o.optString("title"), "")
+                },
+            )
+        }
+    }
+}
+
+/** The public handle of a cast token: the first 32 hex characters of `sha256(token)` (the server's `castIdOf(hashToken(token))`). */
+object CastIds {
+    private val ID = Regex("^[0-9a-f]{32}$")
+    /** the 43-character base64url token right after `/media/c/` of a cast content URL */
+    private val TOKEN = Regex("/media/c/([A-Za-z0-9_-]{43})(?![A-Za-z0-9_-])")
+
+    fun valid(id: String) = ID.matches(id)
+
+    /** the castId of the token in a cast content URL, null when the URL carries none (other media, the test clip) */
+    fun ofContentUrl(url: String?): String? {
+        val token = TOKEN.find(url ?: return null)?.groupValues?.get(1) ?: return null
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(token.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }.take(32)
+    }
+}
+
+/** What a receiver item is: its public handle (null: unknown) and its content URL (never logged). */
+class ReceiverMedia(val castId: String?, val contentUrl: String) {
+    override fun toString() = "ReceiverMedia(${castId?.take(4)}…)"
+}
+
+enum class CastKind { CHROMECAST }
+
+/** The cast bar's phases: waiting for the TV's first playing update, playing (or paused), the title just ended on the TV. */
+enum class CastPhase { CONNECTING, PLAYING, ENDED }
+
+/** The queued next episode (the bar's up-next line). */
+data class NextSnapshot(val itemId: String, val label: String)
+
+/**
+ * What a cast looks like from outside (the native bridge, Task 30): web `CastSession` in the shape the Android shell needs.
+ * [title] is the series name for an episode and [subtitle] the episode's own title (the web bar's two lines); [posterId] is the item
+ * whose poster the bar shows. No token, URL or castId in it.
+ */
+data class CastSnapshot(
+    val kind: CastKind,
+    val device: String,
+    val itemId: String,
+    val title: String,
+    val subtitle: String?,
+    val posterId: String,
+    val isEpisode: Boolean,
+    val positionMs: Long,
+    val durationMs: Long,
+    val paused: Boolean,
+    val state: CastPhase,
+    val next: NextSnapshot?,
+)

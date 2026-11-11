@@ -17,6 +17,9 @@
   import { castCapableBrowser, initCast, onCastEvent } from '#lib/cast';
   import { readHint as readCastHint } from '#lib/cast/resume';
   import { interceptWatch } from '#lib/native/watch';
+  import { native, refreshNativeCast } from '#lib/native/bridge';
+  import { nativeCaps } from '#lib/native/play';
+  import { engineSource, nativeSource, type CastBarSource } from '#lib/cast/barSource';
   import { bindCastMediaSession } from '#lib/cast/mediasession';
   import { avatarBg, initial } from '#lib/avatars';
   import { cachedCalm, loadList, loadPrefs, prefs } from '#lib/stores';
@@ -119,7 +122,26 @@
   /** kids profile: kids header, no footer links / tab bar / bell; the last /api/me answer decides until the fresh one arrives */
   $: kidsUi = me ? Boolean(me.kids) : Boolean(bootHint?.kids);
   $: if (typeof document !== 'undefined') document.documentElement.classList.toggle('kids', kidsUi);
-  $: castBarOn = pageReady && !publicPage && barVisible({ path, tv, session: $castSession }); // the bar shows (it rises out when false)
+  /** where the bar's session comes from: the page's cast engine, or (inside the Android app with the cast bar) the app's own Chromecast session */
+  let barSrc: CastBarSource = engineSource();
+  let barSess = barSrc.session;
+  $: barSess = barSrc.session;
+  onMount(() => {
+    if (!native.available) return;
+    let retry: ReturnType<typeof setTimeout> | undefined, off: (() => void) | undefined;
+    const start = (again: boolean) => void nativeCaps().then((c) => {
+      if (c.castBar) { barSrc = nativeSource(); void refreshNativeCast(); return; } // events are not replayed to a loaded page: pull once, then follow them
+      if (c.api === 0 && again) { // the app did not answer in time: ask once more, after 10 s or when the page comes back to the front
+        const go = () => { off?.(); off = undefined; start(false); };
+        retry = setTimeout(go, 10_000);
+        document.addEventListener('visibilitychange', go, { once: true });
+        off = () => { clearTimeout(retry); document.removeEventListener('visibilitychange', go); };
+      }
+    });
+    start(true);
+    return () => off?.();
+  });
+  $: castBarOn = pageReady && !publicPage && barVisible({ path, tv, session: $barSess }); // the bar shows (it rises out when false)
   /**
    * `--castbar-h` on <html> while the bar shows: the page content gets room for it at its end (main on phones, the page below
    * the footer on desktop); the offline banner and the toasts move up by it. The room is set before the bar rises in and kept
@@ -132,8 +154,8 @@
   $: if (!pageReady || publicPage) barHeld = false; // no bar here to rise out
   $: if (typeof document !== 'undefined') { const st = document.documentElement.style; if (castBarOn || barHeld) st.setProperty('--castbar-h', `${$mobile ? CASTBAR_H.phone : CASTBAR_H.desktop}px`); else st.removeProperty('--castbar-h'); }
   /** phone header: the casting indicator (a cast that plays or is on its way; not a failed one) */
-  $: castHeader = $mobile && !tv && !kidsUi && liveCast($castSession) && $castSession?.state !== 'failed';
-  function openCastRemote() { const c = get(castSession); if (c) void goto('/watch/' + c.itemId); }
+  $: castHeader = $mobile && !tv && !kidsUi && liveCast($barSess) && $barSess?.state !== 'failed'; // the engine's cast, or the app's (barSrc)
+  function openCastRemote() { barSrc.open(); } // engine: the watch page as the remote; app: castControl open
   $: kidsMode.set(kidsUi); // shared flag for components (no social UI on kids profiles)
   // ---- phone: chip bar + "Kategorien" overlay (the desktop dropdown lives in DeskBar) ----
   let catOpen = false, catGenres: string[] | null = null, catKind: Kind = 'movies', catBtn: HTMLElement | null = null;
@@ -781,7 +803,7 @@
         <span class="mbg" aria-hidden="true"></span>
         <div class="mrow">
           <a class="mlogo" href="/" aria-label={$t('shell.nav.homeLink')} aria-current={path === '/' ? 'page' : undefined}><Logo size={28} label="" /><span class="wm" aria-hidden="true">FriendFlix</span></a>
-          <span class="sp">{#if castHeader && $castSession}<button type="button" class="icon-btn castind" aria-label={$t('player.castBar.castingTo', { device: $castSession.device })} on:click={openCastRemote}><Icon name="cast" size={24} /></button>{/if}</span>
+          <span class="sp">{#if castHeader && $barSess}<button type="button" class="icon-btn castind" aria-label={$t('player.castBar.castingTo', { device: $barSess.device })} on:click={openCastRemote}><Icon name="cast" size={24} /></button>{/if}</span>
           <a class="icon-btn" href="/search" aria-label={$t('shell.mobile.search')} aria-current={path.startsWith('/search') ? 'page' : undefined}><Icon name="search" size={24} /></a>
           <a class="avatar" href="/me" aria-label={unread ? $t('shell.mobile.meUnread', { n: unread }) : $t('shell.mobile.me')}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span>{#if unread}<span class="dot" aria-hidden="true">{unread}</span>{/if}</a>
         </div>
@@ -820,7 +842,7 @@
     {#if $mobile}<MobilePreviewSheet {canDownload} />{/if}
   {/if}
 
-  <CastBar show={castBarOn} phone={$mobile} tabbar={!kidsUi && !profilesPage} on:gone={() => { barHeld = false; clearTimeout(barHeldTimer); barHeldTimer = undefined; }} />
+  <CastBar source={barSrc} show={castBarOn} phone={$mobile} tabbar={!kidsUi && !profilesPage} on:gone={() => { barHeld = false; clearTimeout(barHeldTimer); barHeldTimer = undefined; }} />
   {#if !online}<div class="offbar" class:notab={kidsUi || profilesPage} role="status">{$t('shell.offline.bar')} <a href="/offline" data-sveltekit-reload>{$t('shell.offline.toDownloads')}</a></div>{/if}
   {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:calc(5rem + var(--safe-top));left:50%;transform:translateX(-50%)"><b>{$t('shell.tvReplaced.text')}</b> <button on:click={() => location.reload()}>{$t('shell.tvReplaced.reconnect')}</button></div>{/if}
   {#if modalId && Modal}<svelte:component this={Modal} id={modalId} />{/if}

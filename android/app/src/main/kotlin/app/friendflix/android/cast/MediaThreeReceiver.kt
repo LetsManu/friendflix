@@ -52,7 +52,10 @@ class TokenConverter(private val custom: Boolean) : MediaItemConverter {
     /** the cast id of a receiver item (null: not one of ours) */
     fun castIdOf(q: MediaQueueItem?): String? {
         val media = q?.media ?: return null
-        val tagged = media.customData?.optJSONObject("ff")?.optString("castId")?.takeIf { entries.containsKey(it) }
+        // the token in the item's own URL names it (sha256, as the server's castId): also after an app restart, and a sender on the
+        // network cannot claim another's id through custom data; the custom data only serves a URL without a token
+        CastIds.ofContentUrl(media.contentId)?.let { return it }
+        val tagged = media.customData?.optJSONObject("ff")?.optString("castId")?.takeIf(CastIds::valid)
         return tagged ?: entries.entries.firstOrNull { it.value.info.contentUrl == media.contentId }?.key
     }
 
@@ -62,7 +65,7 @@ class TokenConverter(private val custom: Boolean) : MediaItemConverter {
     }
 
     override fun toMediaItem(mediaQueueItem: MediaQueueItem): MediaItem =
-        MediaItem.Builder().setMediaId(castIdOf(mediaQueueItem) ?: FOREIGN).build()
+        MediaItem.Builder().setMediaId(castIdOf(mediaQueueItem) ?: FOREIGN).setUri(mediaQueueItem.media?.contentId).build()
 
     companion object {
         const val FOREIGN = "foreign"
@@ -116,7 +119,7 @@ class MediaThreeReceiver(
     private val castContext: CastContext,
     override val custom: Boolean,
     private val events: Events,
-) : CastReceiver {
+) : CastLink {
     interface Events {
         /** the viewer picked a Cast device (a new session) */
         fun onSessionStarted()
@@ -181,10 +184,10 @@ class MediaThreeReceiver(
     }
 
     /** a Cast session is connected */
-    val connected: Boolean get() = castContext.sessionManager.currentCastSession?.isConnected == true
+    override val connected: Boolean get() = castContext.sessionManager.currentCastSession?.isConnected == true
 
     /** the TV's name for the "playing on" line (shown, never logged) */
-    val deviceName: String? get() = castContext.sessionManager.currentCastSession?.castDevice?.friendlyName
+    override val deviceName: String? get() = castContext.sessionManager.currentCastSession?.castDevice?.friendlyName
 
     override fun load(info: CastInfo, subIndex: Int?, autoplay: Boolean) {
         lastLoaded = null
@@ -219,7 +222,22 @@ class MediaThreeReceiver(
         try { castContext.sessionManager.endCurrentSession(true) } catch (_: RuntimeException) { }
     }
 
-    fun release() {
+    override fun current(): ReceiverMedia? = mediaAt(player.currentMediaItemIndex)
+
+    override fun queuedNext(): ReceiverMedia? = mediaAt(player.nextMediaItemIndex)
+
+    private fun mediaAt(index: Int): ReceiverMedia? {
+        if (index < 0 || index >= player.mediaItemCount) return null
+        val item = player.getMediaItemAt(index)
+        val url = item.localConfiguration?.uri?.toString() ?: return null
+        return ReceiverMedia(item.mediaId.takeIf { it != TokenConverter.FOREIGN }, url)
+    }
+
+    override fun togglePause() {
+        if (player.playWhenReady) player.pause() else player.play()
+    }
+
+    override fun release() {
         if (released) return
         released = true
         player.removeListener(playerListener)
@@ -248,12 +266,13 @@ class MediaThreeReceiver(
     }
 
     /** Mirrors the receiver into the controller; called on every player event and about once a second while casting (positions). */
-    fun publish() {
+    override fun publish() {
         if (released) return
         val item = player.currentMediaItem
         val state = player.playbackState
         val id = item?.mediaId?.takeIf { it != TokenConverter.FOREIGN }
-        val loaded = id != null && (state == Player.STATE_READY || state == Player.STATE_BUFFERING)
+        // media without a FriendFlix token is loaded too (castId null): the controller sees it as another sender's
+        val loaded = item != null && (state == Player.STATE_READY || state == Player.STATE_BUFFERING)
         val idle = state == Player.STATE_IDLE || state == Player.STATE_ENDED
         val duration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0L
         events.onState(ReceiverState(

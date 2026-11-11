@@ -404,8 +404,10 @@ everything, so cookies, settings and keys never go into a cloud or device-to-dev
 `addJavascriptInterface`, so other origins and frames get no object at all). Every message is checked again: the sender's origin
 must be the app origin and the sender must be the main frame, otherwise the answer is `forbidden` and the frame is never used as a
 reply target. Messages are size-capped JSON with a fixed method list (`capabilities`, `play`, `download`, `downloads`,
-`deleteDownload`, `openSettings`); ids, numbers and fields are validated and unknown fields refused. Nothing in it reads files,
-cookies or other origins: `play` and `download` take ids that the server checks again on every request.
+`deleteDownload`, `openSettings`, `castState`, `castControl`, `sessionChanged`); ids, numbers and fields are validated and unknown
+fields refused. Nothing in it reads files, cookies or other origins: `play` and `download` take ids that the server checks again on
+every request. `castState` returns the running cast without any token or URL, `castControl` takes one of four fixed actions
+(`playPause`, `next`, `stop`, `open`), and `sessionChanged` only names the active profile or `null` after sign-out so the cast follows.
 
 **Cookie reuse, origin only.** The player, the downloader, the notification poller and the Cast sender call the server with the
 WebView's session cookie. Their HTTP client has a cookie jar that hands the cookie out only for the exact app origin (scheme, host,

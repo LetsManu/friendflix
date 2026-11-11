@@ -42,6 +42,9 @@ jobs:
       # All modules (phone app and Fire TV app); the AAB only for the phone app.
       - name: Lint, unit tests, unsigned release build (APKs + phone AAB)
         run: ./gradlew lint testDebugUnitTest assembleRelease :app:bundleRelease
+      # Installable preview of the phone app (debug key, com.friendflix.preview) for testing the PR on a phone; see docs/android.md.
+      - name: Preview APK (installable, for testing this PR)
+        run: ./gradlew :app:assemblePreview
       # Fire OS has no Google Play services: the Fire TV app must not depend on them.
       - name: "Fire TV: no Google Play services"
         run: |
@@ -58,6 +61,12 @@ jobs:
         with:
           name: friendflix-android-unsigned-apk
           path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: friendflix-android-preview-apk
+          path: android/app/build/outputs/apk/preview/*.apk
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

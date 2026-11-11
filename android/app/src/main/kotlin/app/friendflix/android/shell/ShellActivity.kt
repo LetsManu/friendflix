@@ -28,6 +28,8 @@ import app.friendflix.android.bridge.DownloadSink
 import app.friendflix.android.bridge.NativeBridge
 import app.friendflix.android.bridge.PlayRequest
 import app.friendflix.android.bridge.PlayerLauncher
+import app.friendflix.android.cast.CastHub
+import app.friendflix.android.cast.HubCastRemote
 import app.friendflix.android.notify.NotificationScheduler
 import app.friendflix.android.notify.NotifyLinks
 import app.friendflix.android.offline.NetworkWatch
@@ -84,19 +86,39 @@ class ShellActivity : ComponentActivity() {
             val downloads = offline.downloads.queue
             downloads.resumeAll() // app start: downloads paused by a sign-out continue (one try; a 401 pauses them again)
             offline.startInBackground() // keys, licence check, position sync
+            // a cast still on the TV from before (the app was closed or killed) is picked up again once the receiver reports it
+            if (settings.castEnabled.first()) CastHub.init(applicationContext)
             watch = NetworkWatch(this@ShellActivity) { offline.reconnectInBackground() }.also { it.start() }
             launch { openOfflineIfUnreachable(origin, offline) }
             // the first start with a server asks for the notification permission once (Android 13+); after that only the settings screen does
             launch { NotifyPermission.askOnce(this@ShellActivity, AppSettings.from(applicationContext), askNotify) }
             // every hand-over from the web UI names the active profile: the offline list shows that profile's downloads
             val sink = object : DownloadSink by downloads {
-                override fun enqueue(req: DownloadRequest): Boolean { offline.noteProfile(req.profileId); return downloads.enqueue(req) }
+                override fun enqueue(req: DownloadRequest): Boolean {
+                    offline.noteProfile(req.profileId)
+                    CastHub.noteProfile(req.profileId)
+                    return downloads.enqueue(req)
+                }
             }
             val player = object : PlayerLauncher {
-                override fun launch(req: PlayRequest): Boolean { offline.noteProfile(req.profileId); return native.launch(req) }
+                // a cast of another profile ends here (the server revoked the device's casts when the profile was switched)
+                override fun launch(req: PlayRequest): Boolean {
+                    offline.noteProfile(req.profileId)
+                    CastHub.noteProfile(req.profileId)
+                    return native.launch(req)
+                }
             }
-            val bridge = NativeBridge(policy, player, sink, Capabilities(play = true, download = true, cast = true), openSettings = ::openSettings)
+            // the web UI's cast bar: reads and drives the app's cast; "open" starts the player as the remote of the cast's item
+            val castRemote = HubCastRemote(
+                openRemote = { itemId -> offline.state.lastProfileId?.let { native.launch(PlayRequest(itemId, it, null, null, null, null)) } ?: false },
+                profileNoted = offline::noteProfile,
+            )
+            val bridge = NativeBridge(
+                policy, player, sink, Capabilities(play = true, download = true, cast = true, castBar = true), cast = castRemote,
+                openSettings = ::openSettings,
+            )
             this@ShellActivity.bridge = bridge
+            launch { CastHub.state.collect { bridge.emitCast(it) } }
             launch {
                 var last = emptyList<DownloadEntry>()
                 downloads.observeWeb().collect { now ->
