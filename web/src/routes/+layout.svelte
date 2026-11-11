@@ -17,6 +17,9 @@
   import { castCapableBrowser, initCast, onCastEvent } from '#lib/cast';
   import { readHint as readCastHint } from '#lib/cast/resume';
   import { interceptWatch } from '#lib/native/watch';
+  import { native, refreshNativeCast } from '#lib/native/bridge';
+  import { nativeCaps } from '#lib/native/play';
+  import { engineSource, nativeSource, type CastBarSource } from '#lib/cast/barSource';
   import { bindCastMediaSession } from '#lib/cast/mediasession';
   import { avatarBg, initial } from '#lib/avatars';
   import { cachedCalm, loadList, loadPrefs, prefs } from '#lib/stores';
@@ -119,7 +122,15 @@
   /** kids profile: kids header, no footer links / tab bar / bell; the last /api/me answer decides until the fresh one arrives */
   $: kidsUi = me ? Boolean(me.kids) : Boolean(bootHint?.kids);
   $: if (typeof document !== 'undefined') document.documentElement.classList.toggle('kids', kidsUi);
-  $: castBarOn = pageReady && !publicPage && barVisible({ path, tv, session: $castSession }); // the bar shows (it rises out when false)
+  /** where the bar's session comes from: the page's cast engine, or (inside the Android app with the cast bar) the app's own Chromecast session */
+  let barSrc: CastBarSource = engineSource();
+  let barSess = barSrc.session;
+  $: barSess = barSrc.session;
+  onMount(() => {
+    if (!native.available) return;
+    void nativeCaps().then((c) => { if (c.castBar) { barSrc = nativeSource(); void refreshNativeCast(); } }); // events are not replayed to a loaded page: pull once, then follow them
+  });
+  $: castBarOn = pageReady && !publicPage && barVisible({ path, tv, session: $barSess }); // the bar shows (it rises out when false)
   /**
    * `--castbar-h` on <html> while the bar shows: the page content gets room for it at its end (main on phones, the page below
    * the footer on desktop); the offline banner and the toasts move up by it. The room is set before the bar rises in and kept
@@ -820,7 +831,7 @@
     {#if $mobile}<MobilePreviewSheet {canDownload} />{/if}
   {/if}
 
-  <CastBar show={castBarOn} phone={$mobile} tabbar={!kidsUi && !profilesPage} on:gone={() => { barHeld = false; clearTimeout(barHeldTimer); barHeldTimer = undefined; }} />
+  <CastBar source={barSrc} show={castBarOn} phone={$mobile} tabbar={!kidsUi && !profilesPage} on:gone={() => { barHeld = false; clearTimeout(barHeldTimer); barHeldTimer = undefined; }} />
   {#if !online}<div class="offbar" class:notab={kidsUi || profilesPage} role="status">{$t('shell.offline.bar')} <a href="/offline" data-sveltekit-reload>{$t('shell.offline.toDownloads')}</a></div>{/if}
   {#if replaced}<div class="panel" role="alert" style="position:fixed;z-index:90;top:calc(5rem + var(--safe-top));left:50%;transform:translateX(-50%)"><b>{$t('shell.tvReplaced.text')}</b> <button on:click={() => location.reload()}>{$t('shell.tvReplaced.reconnect')}</button></div>{/if}
   {#if modalId && Modal}<svelte:component this={Modal} id={modalId} />{/if}
