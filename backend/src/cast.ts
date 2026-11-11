@@ -79,7 +79,19 @@ export interface CastRecord {
   hlsSubIndex?: number;
   /** the subtitle tracks of the cast (index, language, title; URLs are never stored here) */
   subs?: CastSubtitleInfo[];
+  /**
+   * Continuous AirPlay (admin switch CAST_AIRPLAY_CONTINUOUS, Jellyfin only): the episodes ONE token streams in a row, in order, at
+   * least two. Item 0 is the record's own item (the fields above describe it); absent = an ordinary single-item token. Minting needs the
+   * switch; resolving and serving never check it, so a joined stream minted before the admin turned it off plays to its end.
+   */
+  items?: JoinedItem[];
 }
+/**
+ * One episode of a joined AirPlay stream: its own media source and play session (the gateway checks each path against exactly this
+ * tuple). `hlsPath` = its Jellyfin HLS master as minted, without the `/media` prefix (never a credential: no api key, no token);
+ * `hlsSubIndex` = the source's subtitle stream index of its one WebVTT rendition (absent = this part carries none).
+ */
+export interface JoinedItem { itemId: string; mediaSourceId: string; playSessionId: string; runtimeTicks?: number; hlsPath: string; hlsSubIndex?: number }
 export interface CastSubtitleInfo { index: number; language?: string; title: string }
 
 export interface CastAuth {
@@ -89,7 +101,13 @@ export interface CastAuth {
   maxBitrate: number;
   maxHeight: number;
   kind: 'media' | 'img';
-  scope: { itemId: string; mediaSourceId: string; playSessionId: string; /** AirPlay token whose stream carries one subtitle rendition: the gateway keeps it */ hlsSub?: boolean; hlsSubIndex?: number };
+  scope: {
+    itemId: string; mediaSourceId: string; playSessionId: string;
+    /** AirPlay token whose stream carries one subtitle rendition: the gateway keeps it */
+    hlsSub?: boolean; hlsSubIndex?: number;
+    /** a joined AirPlay token (media only): each episode it streams, item 0 = the fields above (see CastRecord.items) */
+    items?: Array<Omit<JoinedItem, 'runtimeTicks'>>;
+  };
 }
 
 export const hashToken = (ct: string) => createHash('sha256').update(ct).digest('hex');
@@ -177,7 +195,9 @@ export async function createCast(ctx: Ctx, rec: Omit<CastRecord, 'exp' | 'create
   const mint = async (kind: 'media' | 'img', extra: Partial<IdxEntry> = {}) => {
     const ct = randomBytes(32).toString('base64url');
     const hash = hashToken(ct);
-    await ctx.kv.set(dataKey(hash), JSON.stringify({ ...rec, kind, exp, createdAt: now, seen: now } satisfies CastRecord), ttl);
+    // a poster token never carries a joined stream's items (their HLS paths are the media token's business only)
+    const { items: _joined, ...plain } = rec;
+    await ctx.kv.set(dataKey(hash), JSON.stringify({ ...(kind === 'media' ? rec : plain), kind, exp, createdAt: now, seen: now } satisfies CastRecord), ttl);
     await ctx.kv.set(idxKey(rec.userId, castIdOf(hash)), JSON.stringify({ hash, createdAt: now, deviceId: rec.deviceId, kind, ...extra } satisfies IdxEntry), ttl);
     if (kind === 'media' && predPin) {
       await ctx.kv.set(pinKey(hash), predPin, ttl);
@@ -341,7 +361,14 @@ export async function resolveCast(ctx: Ctx, ct: string, client: string): Promise
         maxBitrate: Math.min(role.maxBitrate, rec.maxBitrate),
         maxHeight: Math.min(role.maxHeight ?? CAST_MAX_HEIGHT, CAST_MAX_HEIGHT),
         kind: rec.kind ?? 'media',
-        scope: { itemId: rec.itemId, mediaSourceId: rec.mediaSourceId, playSessionId: rec.playSessionId, ...(rec.hlsSub && Number.isInteger(rec.hlsSubIndex) && rec.via === 'airplay' && (rec.kind ?? 'media') === 'media' ? { hlsSub: true, hlsSubIndex: rec.hlsSubIndex } : {}) },
+        scope: {
+          itemId: rec.itemId, mediaSourceId: rec.mediaSourceId, playSessionId: rec.playSessionId,
+          ...(rec.hlsSub && Number.isInteger(rec.hlsSubIndex) && rec.via === 'airplay' && (rec.kind ?? 'media') === 'media' ? { hlsSub: true, hlsSubIndex: rec.hlsSubIndex } : {}),
+          // a joined AirPlay token lists its episodes as tuples (never checks the admin switch: a running joined stream plays to its end)
+          ...(rec.items && rec.items.length > 1 && rec.via === 'airplay' && (rec.kind ?? 'media') === 'media'
+            ? { items: rec.items.map(({ itemId, mediaSourceId, playSessionId, hlsPath, hlsSubIndex }) => ({ itemId, mediaSourceId, playSessionId, hlsPath, ...(Number.isInteger(hlsSubIndex) ? { hlsSubIndex } : {}) })) }
+            : {}),
+        },
       };
       if (Date.now() - (rec.seen ?? rec.createdAt) > CAST_TOUCH_MS) await touch(ctx, hash, rec, user.name, prof.name, overlap);
     }

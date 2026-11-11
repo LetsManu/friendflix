@@ -3,20 +3,84 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { CAST_MAX_BITRATE, airplayContinuousOn, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, castLookup, castNextTtlSeconds, castPinned, CastUnpinnedError, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
+import { CAST_MAX_BITRATE, airplayContinuousOn, type JoinedItem, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, castLookup, castNextTtlSeconds, castPinned, CastUnpinnedError, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
 import type { Ctx } from '../ctx.js';
 import { receiverCaps } from '../media/clientCaps.js';
-import { MediaError, type HevcGate } from '../media/types.js';
+import { MediaError, type HevcGate, type ItemDto, type PlaybackDto } from '../media/types.js';
 import { bindHevcGrant, hevcGate as gateHevc, noteHevcFailure } from '../hevcenc.js';
 import { countLive } from '../live.js';
 import { clientAddress, isHomeRequest } from '../netaddr.js';
 import { playbackReport } from './media.js';
+import { loadPrefs } from './prefs.js';
 import { effectiveLimits } from '../limits.js';
 import { remoteBitrateCap } from '../roles.js';
 import { loadSession, requireUser } from '../session.js';
 import { id32 as itemId } from './_shared.js';
+import type { JfUser } from '../types.js';
 
 const psId = z.string().regex(/^[\w-]{8,64}$/);
+
+/** a joined AirPlay stream carries at most this much runtime from the start position on (the token's absolute cap is 6 h) */
+const JOINED_MAX_TICKS = 6 * 3600 * 10_000_000;
+const hlsSubOf = (hlsUrl: string) => new URL(hlsUrl, 'http://x').searchParams.get('SubtitleMethod') === 'Hls';
+interface JoinedPart { item: ItemDto; info: PlaybackDto; runtimeTicks: number; sub?: number }
+
+/**
+ * Continuous AirPlay (spec device-handoff §5): the episode being cast plus up to two following ones (the series order, across seasons),
+ * at most `max`, while the joined runtime from `startTicks` on stays within 6 h. null = a single token (the profile's autoplay is off,
+ * the item is no episode of a series, no next episode, or a runtime is unknown). Each later episode gets ONE PlaybackInfo from its start,
+ * with the first episode's bitrate / height, its audio language and the subtitle of the first episode's subtitle language (index from
+ * the episode's own streams; none = that part carries no subtitle). A later episode that fails its lookup ends the join there.
+ */
+async function joinedParts(ctx: Ctx, jfUser: JfUser, a: {
+  userId: string; profileId: string; item: ItemDto; info: PlaybackDto; startTicks: number; max: number; maxBitrate: number; maxHeight: number; hlsSubIndex?: number;
+}, log: { warn(o: unknown, msg?: string): void }): Promise<JoinedPart[] | null> {
+  const { item, info } = a;
+  if (a.max < 2 || item.type !== 'Episode' || !item.seriesId || !info.runtimeTicks) return null;
+  if (!(await loadPrefs(ctx, a.userId, a.profileId)).autoplayNext) return null;
+  const parts: JoinedPart[] = [{ item, info, runtimeTicks: info.runtimeTicks, ...(a.hlsSubIndex !== undefined ? { sub: a.hlsSubIndex } : {}) }];
+  const audio = info.audioIndex !== undefined ? info.audioTracks.find((t) => t.index === info.audioIndex) : info.audioTracks.find((t) => t.isDefault) ?? info.audioTracks[0];
+  const audioLang = audio?.language;
+  const subLang = a.hlsSubIndex !== undefined ? info.subtitles.find((t) => t.index === a.hlsSubIndex)?.language : undefined;
+  let total = info.runtimeTicks;
+  let cur = item;
+  while (parts.length < a.max) {
+    try {
+      const nx = await ctx.jf.nextEpisode(jfUser, item.seriesId, cur.id);
+      // trailing episodes are left out while the joined runtime from the start position would pass 6 h
+      if (!nx || !nx.runtimeTicks || total + nx.runtimeTicks - a.startTicks > JOINED_MAX_TICKS) break;
+      const sub = subLang ? (await ctx.jf.tracks(jfUser, nx.id)).subtitles.find((t) => t.language === subLang)?.index : undefined;
+      const ni = await ctx.jf.playbackInfo(jfUser, nx.id, {
+        maxBitrate: a.maxBitrate, maxHeight: a.maxHeight, startTicks: 0, cast: true, ...(audioLang ? { audioLang } : {}), ...(sub !== undefined ? { hlsSubtitleIndex: sub } : {}),
+      });
+      const rt = ni.runtimeTicks ?? nx.runtimeTicks;
+      if (total + rt - a.startTicks > JOINED_MAX_TICKS) break;
+      // the rendition exists only when the URL the plan built asks for it (a track that is no text subtitle is never carried)
+      parts.push({ item: nx, info: ni, runtimeTicks: rt, ...(sub !== undefined && hlsSubOf(ni.hlsUrl) ? { sub } : {}) });
+      total += rt;
+      cur = nx;
+    } catch (e) {
+      if (!(e instanceof MediaError)) throw e;
+      log.warn({ status: e.status, part: parts.length + 1 }, 'cast: continuous AirPlay ends before a part that failed its lookup');
+      break;
+    }
+  }
+  return parts.length > 1 ? parts : null;
+}
+
+const joinedTimeline = (parts: JoinedPart[]) => {
+  let start = 0;
+  return parts.map((p) => {
+    const duration = p.runtimeTicks / 10_000_000;
+    const out = {
+      itemId: p.item.id, title: p.item.name,
+      ...(p.item.parentIndexNumber !== undefined ? { season: p.item.parentIndexNumber } : {}), ...(p.item.indexNumber !== undefined ? { episode: p.item.indexNumber } : {}),
+      start, duration,
+    };
+    start += duration;
+    return out;
+  });
+};
 
 export function castRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
@@ -121,8 +185,19 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       }
       started = info.playSessionId;
       // the rendition exists only when the HLS URL the server plan built asks for it (a track that is not a text subtitle is not carried)
-      const hlsSub = hlsSubtitleIndex !== undefined && new URL(info.hlsUrl, 'http://x').searchParams.get('SubtitleMethod') === 'Hls';
-      const ownTtl = castTtlSeconds(info.runtimeTicks, startTicks);
+      const hlsSub = hlsSubtitleIndex !== undefined && hlsSubOf(info.hlsUrl);
+      // continuous AirPlay: one token (one stream) for this and the following episodes; `b.continuous` already passed the admin switch above
+      const parts = b.continuous
+        ? await joinedParts(ctx, req.jfUser!, {
+          userId: req.user!.id, profileId: req.profile!.id, item, info, startTicks, max: b.maxEpisodes ?? 3, maxBitrate, maxHeight, ...(hlsSub ? { hlsSubIndex: hlsSubtitleIndex } : {}),
+        }, req.log)
+        : null;
+      const items: JoinedItem[] | undefined = parts?.map((p) => ({
+        itemId: p.item.id, mediaSourceId: p.info.mediaSourceId, playSessionId: p.info.playSessionId, runtimeTicks: p.runtimeTicks,
+        hlsPath: p.info.hlsUrl.slice('/media'.length), ...(p.sub !== undefined ? { hlsSubIndex: p.sub } : {}),
+      }));
+      const joinedTicks = parts?.reduce((n, p) => n + p.runtimeTicks, 0);
+      const ownTtl = castTtlSeconds(joinedTicks ?? info.runtimeTicks, startTicks);
       // a queued token outlives the episode it follows (queued from the start of that episode)
       const ttl = pred ? castNextTtlSeconds(ownTtl, pred.exp) : ownTtl;
       const rec = {
@@ -131,6 +206,7 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         ...(hlsSub ? { hlsSub: true, hlsSubIndex: hlsSubtitleIndex } : {}),
         runtimeTicks: info.runtimeTicks, ...(item.seriesName ? { seriesName: item.seriesName } : {}),
         subs: info.subtitles.map((s) => ({ index: s.index, ...(s.language ? { language: s.language } : {}), title: s.title })),
+        ...(items ? { items } : {}),
       } as const;
       const { ct, imgCt, castId, expiresAt } = await createCast(ctx, rec, ttl, Boolean(item.image), pred ?? undefined);
       const report = b.receiver && rec.via === 'chromecast' && castReceiverAppId(ctx) ? castReportToken(ctx, rec, { castId, expiresAt }) : undefined;
@@ -149,7 +225,7 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       const after = await loadSession(ctx, req.sid);
       if (!after || (after.profileId && after.profileId !== rec.profileId)) {
         await revokeCast(ctx, req.user!.id, castId);
-        await ctx.jf.stopEncoding(req.jfUser!, info.playSessionId).catch(() => undefined);
+        for (const ps of items ? items.map((i) => i.playSessionId) : [info.playSessionId]) await ctx.jf.stopEncoding(req.jfUser!, ps).catch(() => undefined);
         return reply.code(409).send({ error: 'profile_changed' });
       }
       reply.header('Cache-Control', 'no-store');
@@ -159,9 +235,12 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         expiresAt,
         playSessionId: info.playSessionId,
         mediaSourceId: info.mediaSourceId,
-        runtimeTicks: info.runtimeTicks,
+        // a joined stream: its whole runtime; `startTime` stays the offset in its first episode (= in the joined stream)
+        runtimeTicks: joinedTicks ?? info.runtimeTicks,
         startTime: Math.floor(startTicks / 10_000_000),
-        contentUrl: abs(info.hlsUrl),
+        contentUrl: parts ? abs('/media/joined/master.m3u8') : abs(info.hlsUrl),
+        // the joined timeline in stream seconds (start = the runtimes before it); `subtitles` = every part carries the subtitle rendition
+        ...(parts ? { joined: { items: joinedTimeline(parts), subtitles: parts.every((p) => p.sub !== undefined) } } : {}),
         contentType: 'application/x-mpegURL',
         // fMP4 when the plan carries HEVC or surround (SegmentContainer=mp4 in the URL the plan built); only a cast with receiver caps can have one
         ...(fmp4 ? { hlsSegmentFormat: 'fmp4', hlsVideoSegmentFormat: 'fmp4' } : { hlsSegmentFormat: 'ts' }),

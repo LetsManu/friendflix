@@ -281,7 +281,13 @@ export interface MediaCollection { id: string; name: string; parts: Array<{ item
 /** Metadata FriendFlix classifies on (e.g. "is this an anime"): genres, tags, production countries. */
 export interface ItemTraits { genres: string[]; tags: string[]; countries: string[] }
 export interface PersonDto { id: string; name: string; overview?: string; birthYear?: number; image: boolean }
-export interface TrackList { audio: Array<{ language: string; title: string; isDefault: boolean }>; subtitles: Array<{ language: string; title: string }>; runtimeTicks?: number; type: string }
+export interface TrackList {
+  audio: Array<{ language: string; title: string; isDefault: boolean }>;
+  /** `index` = the source's stream index of that language's first subtitle track (Jellyfin; continuous AirPlay picks a later episode's subtitle by it) */
+  subtitles: Array<{ language: string; title: string; index?: number }>;
+  runtimeTicks?: number;
+  type: string;
+}
 export interface Segment { type: string; start: number; end: number }
 export interface SubtitleHit { id: string; name: string; provider: string; format?: string; downloads?: number; rating?: number }
 /** Audio / subtitle languages of one library item (raw codes, normalised by the caller); `seriesId` for episodes. */

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { airplayContinuousOn } from '../src/cast.js';
-import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
+import { airplayContinuousOn, castTtlSeconds, hashToken } from '../src/cast.js';
+import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const ID = 'a'.repeat(32);
 const MS = 'b'.repeat(32);
@@ -105,5 +105,231 @@ describe('after the Plex block', () => {
 
   it('a fresh Jellyfin env is unaffected by the Plex one (each describe owns its database state)', async () => {
     expect((await h.call('GET', '/api/cast/config')).json()).toEqual({ enabled: true, airplayContinuous: false });
+  });
+});
+
+/**
+ * The joined AirPlay token (Task 16; ported from the spike's joinedSpike test): one token for the episode and up to two following
+ * ones. Saltwater Almanac (fictional): S1 E10 is the last of its season, S2 E1-E3 follow; E3 is the series' last episode.
+ */
+describe('joined AirPlay token', () => {
+  const SERIES = 'e'.repeat(32);
+  const FILM = 'f'.repeat(32);
+  type Stream = { Index: number; Language?: string; IsDefault?: boolean };
+  type Ep = { id: string; ms: string; ps: string; name: string; season: number; ix: number; rt: number; audio: Stream[]; subs: Stream[] };
+  const ger = { Index: 1, Language: 'ger', IsDefault: true };
+  const eng = { Index: 2, Language: 'eng' };
+  const base = (): Ep[] => [
+    { id: '1'.repeat(32), ms: 'a'.repeat(32), ps: 'ps-night-market', name: 'Night Market', season: 1, ix: 10, rt: 2832e7, audio: [ger, eng], subs: [{ Index: 3, Language: 'ger' }] },
+    { id: '2'.repeat(32), ms: 'b'.repeat(32), ps: 'ps-toll-keeper', name: 'The Toll Keeper', season: 2, ix: 1, rt: 2643e7, audio: [ger, eng], subs: [{ Index: 3, Language: 'ger' }] },
+    { id: '3'.repeat(32), ms: 'c'.repeat(32), ps: 'ps-glass-tides', name: 'Glass Tides', season: 2, ix: 2, rt: 2970e7, audio: [ger, { Index: 5, Language: 'eng' }], subs: [{ Index: 2, Language: 'eng' }, { Index: 4, Language: 'ger' }] },
+    { id: '4'.repeat(32), ms: 'd'.repeat(32), ps: 'ps-low-water', name: 'Low Water', season: 2, ix: 3, rt: 2000e7, audio: [ger], subs: [] },
+  ];
+  let EPS = base();
+  const streams = (e: Ep) => [
+    { Index: 0, Type: 'Video', Codec: 'h264', Height: 1080 },
+    ...e.audio.map((a) => ({ ...a, Type: 'Audio', Codec: 'aac', Channels: 2 })),
+    ...e.subs.map((x) => ({ ...x, Type: 'Subtitle', Codec: 'srt', IsTextSubtitleStream: true })),
+  ];
+  const epDto = (e: Ep) => ({
+    Id: e.id, Name: e.name, Type: 'Episode', SeriesId: SERIES, SeriesName: 'Saltwater Almanac', ParentIndexNumber: e.season, IndexNumber: e.ix, RunTimeTicks: e.rt,
+    ImageTags: { Primary: 'x' }, UserData: { PlaybackPositionTicks: 0 }, MediaSources: [{ Id: e.ms, MediaStreams: streams(e) }],
+  });
+  const H = { 'x-internal-secret': cfg.INTERNAL_SECRET };
+  let env: TestEnv;
+  let admin: Sess;
+  beforeAll(async () => {
+    env = await makeEnv({
+      'GET /Users/[^/]+/Items/[^/]+': (u) => {
+        if (u.pathname.endsWith(FILM)) return { json: { Id: FILM, Name: 'Film', Type: 'Movie', RunTimeTicks: 5400e7, UserData: {} } };
+        return { json: epDto(EPS.find((e) => u.pathname.endsWith(e.id)) ?? EPS[0]!) };
+      },
+      [`GET /Shows/${SERIES}/Episodes`]: (u) => {
+        const i = EPS.findIndex((e) => e.id === u.searchParams.get('startItemId'));
+        return { json: { Items: EPS.slice(i, i + Number(u.searchParams.get('limit') ?? 2)).map(epDto) } };
+      },
+      'POST /Items/[^/]+/PlaybackInfo': (u) => {
+        if (u.pathname.includes(FILM)) return { json: { PlaySessionId: 'ps-film-0001', MediaSources: [{ Id: MS, Container: 'mkv', Bitrate: 4_000_000, RunTimeTicks: 5400e7, MediaStreams: [{ Index: 0, Type: 'Video', Height: 1080 }, { Index: 1, Type: 'Audio' }] }] } };
+        const e = EPS.find((x) => u.pathname.includes(x.id))!;
+        return { json: { PlaySessionId: e.ps, MediaSources: [{ Id: e.ms, Container: 'mkv', Bitrate: 4_000_000, RunTimeTicks: e.rt, MediaStreams: streams(e) }] } };
+      },
+      'DELETE /Videos/ActiveEncodings': () => ({ status: 204 }),
+    });
+    admin = await env.login(ADMIN);
+    expect((await call('PUT', '/api/admin/settings', { values: { CAST_AIRPLAY_CONTINUOUS: true } })).statusCode).toBe(200);
+  });
+  afterAll(() => env.close());
+  const call = (method: string, url: string, body?: unknown) =>
+    env.app.inject({ method: method as 'GET', url, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf, 'x-forwarded-for': `10.3.${Math.floor(++n / 250)}.${n % 250}` }, payload: body as object });
+  const joined = async (body: Record<string, unknown> = {}) => {
+    const r = await call('POST', '/api/cast/session', { itemId: EPS[0]!.id, via: 'airplay', continuous: true, ...body });
+    expect(r.statusCode, r.body).toBe(200);
+    const j = r.json();
+    const ct = /\/media\/c\/([\w-]{43})\//.exec(j.contentUrl)![1]!;
+    const rec = JSON.parse((await env.kv.get(`cast:${hashToken(ct)}`))!);
+    return { j, ct, rec };
+  };
+  const pbCalls = (id: string) => env.jfCalls.filter((c) => c.method === 'POST' && c.path === `/Items/${id}/PlaybackInfo`).length;
+  const q = (path: string) => new URL(path, 'http://x').searchParams;
+
+  it('continuous picks the episode and the next two, across a season', async () => {
+    const { j, ct, rec } = await joined();
+    const [r1, r2, r3] = EPS.map((e) => e.rt / 1e7);
+    expect(j.contentUrl).toBe(`https://portal.example.com/media/c/${ct}/joined/master.m3u8`);
+    expect(j.contentUrl.endsWith('/joined/master.m3u8')).toBe(true);
+    expect(j.runtimeTicks).toBe(EPS[0]!.rt + EPS[1]!.rt + EPS[2]!.rt);
+    expect(j.joined).toEqual({
+      subtitles: false,
+      items: [
+        { itemId: EPS[0]!.id, title: 'Night Market', season: 1, episode: 10, start: 0, duration: r1 },
+        { itemId: EPS[1]!.id, title: 'The Toll Keeper', season: 2, episode: 1, start: r1, duration: r2 },
+        { itemId: EPS[2]!.id, title: 'Glass Tides', season: 2, episode: 2, start: r1! + r2!, duration: r3 },
+      ],
+    });
+    // the record's own fields are item 0; each item keeps its own media source, play session and HLS master (no credential)
+    expect(rec.itemId).toBe(EPS[0]!.id);
+    expect(rec.items.map((i: { itemId: string; mediaSourceId: string; playSessionId: string; runtimeTicks: number }) => [i.itemId, i.mediaSourceId, i.playSessionId, i.runtimeTicks]))
+      .toEqual(EPS.slice(0, 3).map((e) => [e.id, e.ms, e.ps, e.rt]));
+    expect(rec.items[0]).toMatchObject({ itemId: rec.itemId, mediaSourceId: rec.mediaSourceId, playSessionId: rec.playSessionId, runtimeTicks: rec.runtimeTicks });
+    for (const [k, i] of (rec.items as Array<{ hlsPath: string }>).entries()) {
+      expect(i.hlsPath).toMatch(new RegExp(`^/Videos/${EPS[k]!.id}/master\\.m3u8\\?`));
+      expect(i.hlsPath).not.toMatch(/api_key|ApiKey|Token=|X-Emby|\/media\//i);
+      expect(i.hlsPath).not.toContain(ct);
+      expect(q(i.hlsPath).get('PlaySessionId')).toBe(EPS[k]!.ps);
+      expect(q(i.hlsPath).has('StartTimeTicks')).toBe(false);
+    }
+    // TTL follows the joined runtime (+1 h, at most 6 h)
+    const ttl = castTtlSeconds(EPS[0]!.rt + EPS[1]!.rt + EPS[2]!.rt, 0);
+    expect(j.expiresAt - Date.now()).toBeGreaterThan((ttl - 60) * 1000);
+    expect(j.expiresAt - Date.now()).toBeLessThanOrEqual(ttl * 1000);
+    // the answer carries nothing beyond today's single-token fields: no per-item path, play session of a later part or token
+    expect(JSON.stringify(j)).not.toMatch(/hlsPath|ps-toll-keeper|ps-glass-tides/);
+  });
+
+  it('maxEpisodes 2 gives two', async () => {
+    const { j, rec } = await joined({ maxEpisodes: 2 });
+    expect(j.joined.items.map((i: { itemId: string }) => i.itemId)).toEqual([EPS[0]!.id, EPS[1]!.id]);
+    expect(rec.items).toHaveLength(2);
+    expect(j.runtimeTicks).toBe(EPS[0]!.rt + EPS[1]!.rt);
+    // maxEpisodes 1 = a single token
+    const one = await call('POST', '/api/cast/session', { itemId: EPS[0]!.id, via: 'airplay', continuous: true, maxEpisodes: 1 });
+    expect(one.json().joined).toBeUndefined();
+    expect(one.json().contentUrl).toMatch(/\/Videos\/1{32}\/master\.m3u8\?/);
+  });
+
+  it('autoplay off, a film, or the last episode give a single token', async () => {
+    const single = async (itemId: string) => {
+      const r = await call('POST', '/api/cast/session', { itemId, via: 'airplay', continuous: true });
+      expect(r.statusCode, r.body).toBe(200);
+      const j = r.json();
+      expect(j.joined).toBeUndefined();
+      expect(j.contentUrl).toMatch(new RegExp(`/media/c/[\\w-]{43}/Videos/${itemId}/master\\.m3u8\\?`));
+      const ct = /\/media\/c\/([\w-]{43})\//.exec(j.contentUrl)![1]!;
+      expect(JSON.parse((await env.kv.get(`cast:${hashToken(ct)}`))!).items).toBeUndefined();
+      return j;
+    };
+    expect((await call('PUT', '/api/prefs', { autoplayNext: false })).statusCode).toBe(200);
+    try {
+      const j = await single(EPS[0]!.id);
+      expect(j.runtimeTicks).toBe(EPS[0]!.rt);
+    } finally { expect((await call('PUT', '/api/prefs', { autoplayNext: true })).statusCode).toBe(200); }
+    await single(FILM);
+    await single(EPS[3]!.id);
+  });
+
+  it('cap keeps the joined runtime under 6 h', async () => {
+    try {
+      EPS[0]!.rt = 2.5 * 3600e7;
+      EPS[1]!.rt = 3 * 3600e7; // 5.5 h, a third (0.825 h) would make 6.3 h
+      let { j } = await joined();
+      expect(j.joined.items).toHaveLength(2);
+      expect(j.runtimeTicks).toBe(5.5 * 3600e7);
+      expect(j.expiresAt - Date.now()).toBeLessThanOrEqual(6 * 3600 * 1000);
+      // what is left from the start position counts: an hour in, the third fits (6.3 h - 1 h)
+      ({ j } = await joined({ startTicks: 3600e7 }));
+      expect(j.joined.items).toHaveLength(3);
+      expect(j.startTime).toBe(3600);
+      // the first episode alone over 6 h: a single token
+      EPS[0]!.rt = 6.5 * 3600e7;
+      const r = await call('POST', '/api/cast/session', { itemId: EPS[0]!.id, via: 'airplay', continuous: true });
+      expect(r.json().joined).toBeUndefined();
+    } finally { EPS = base(); }
+  });
+
+  it('audio and subtitle by language per episode', async () => {
+    const before = EPS.map((e) => pbCalls(e.id));
+    // episode 1: English audio (index 2, not the default), German subtitle index 3; episode 3 has English at index 5 and German subtitles at 4
+    const { j, rec } = await joined({ audioIndex: 2, subtitleIndex: 3 });
+    expect(j.joined.subtitles).toBe(true);
+    expect(j.hlsSub).toBe(true);
+    expect(rec.items.map((i: { hlsSubIndex?: number }) => i.hlsSubIndex)).toEqual([3, 3, 4]);
+    const [p1, p2, p3] = (rec.items as Array<{ hlsPath: string }>).map((i) => q(i.hlsPath));
+    expect([p1!.get('AudioStreamIndex'), p2!.get('AudioStreamIndex'), p3!.get('AudioStreamIndex')]).toEqual(['2', '2', '5']);
+    expect([p1!.get('SubtitleStreamIndex'), p2!.get('SubtitleStreamIndex'), p3!.get('SubtitleStreamIndex')]).toEqual(['3', '3', '4']);
+    expect(p3!.get('SubtitleMethod')).toBe('Hls');
+    // one PlaybackInfo per episode, never a second one for the subtitle
+    expect(EPS.slice(0, 3).map((e, k) => pbCalls(e.id) - before[k]!)).toEqual([1, 1, 1]);
+  });
+
+  it('a part without that subtitle -> joined.subtitles false', async () => {
+    try {
+      EPS[1]!.subs = [{ Index: 3, Language: 'eng' }];
+      const { j, rec } = await joined({ subtitleIndex: 3 });
+      expect(j.joined.items).toHaveLength(3);
+      expect(j.joined.subtitles).toBe(false);
+      expect(rec.items.map((i: { hlsSubIndex?: number }) => i.hlsSubIndex)).toEqual([3, undefined, 4]);
+      expect(q(rec.items[1].hlsPath).has('SubtitleStreamIndex')).toBe(false);
+    } finally { EPS = base(); }
+  });
+
+  it('scope lists each item as a tuple', async () => {
+    const { ct, rec } = await joined({ subtitleIndex: 3 });
+    const a = await env.app.inject({ method: 'POST', url: '/internal/authz', headers: H, payload: { ct, client: '198.51.100.7' } });
+    expect(a.statusCode, a.body).toBe(200);
+    const scope = a.json().scope;
+    expect(scope).toMatchObject({ itemId: EPS[0]!.id, mediaSourceId: EPS[0]!.ms, playSessionId: EPS[0]!.ps, hlsSub: true, hlsSubIndex: 3 });
+    expect(scope.items).toEqual(EPS.slice(0, 3).map((e, k) => ({ itemId: e.id, mediaSourceId: e.ms, playSessionId: e.ps, hlsPath: rec.items[k].hlsPath, hlsSubIndex: k === 2 ? 4 : 3 })));
+    for (const i of scope.items) expect(i).not.toHaveProperty('runtimeTicks');
+    // a single token has no items in its scope
+    const one = await call('POST', '/api/cast/session', { itemId: EPS[0]!.id, via: 'airplay' });
+    const ct1 = /\/media\/c\/([\w-]{43})\//.exec(one.json().contentUrl)![1]!;
+    const a1 = await env.app.inject({ method: 'POST', url: '/internal/authz', headers: H, payload: { ct: ct1, client: '198.51.100.7' } });
+    expect(a1.json().scope.items).toBeUndefined();
+  });
+
+  it('a joined token keeps its scope after the switch is turned off', async () => {
+    const { ct } = await joined();
+    expect((await call('PUT', '/api/admin/settings', { values: { CAST_AIRPLAY_CONTINUOUS: false } })).statusCode).toBe(200);
+    try {
+      expect(airplayContinuousOn(env.ctx)).toBe(false);
+      const a = await env.app.inject({ method: 'POST', url: '/internal/authz', headers: H, payload: { ct, client: '198.51.100.8' } });
+      expect(a.statusCode, a.body).toBe(200);
+      expect(a.json().scope.items.map((i: { itemId: string }) => i.itemId)).toEqual(EPS.slice(0, 3).map((e) => e.id));
+      // new requests get no joined token
+      expect((await call('POST', '/api/cast/session', { itemId: EPS[0]!.id, via: 'airplay', continuous: true })).json()).toEqual({ error: 'continuous_off' });
+    } finally { expect((await call('PUT', '/api/admin/settings', { values: { CAST_AIRPLAY_CONTINUOUS: true } })).statusCode).toBe(200); }
+  });
+
+  // last in this describe: it switches the session's profile
+  it('the profile-switch race revokes a joined token too', async () => {
+    const p = await call('POST', '/api/profiles', { name: 'Kind' });
+    expect(p.statusCode, p.body).toBe(201);
+    const pid = p.json().profile.id as string;
+    const jf = env.ctx.jf as unknown as { playbackInfo: (...a: unknown[]) => Promise<unknown> };
+    const orig = jf.playbackInfo;
+    let k = 0;
+    // the switch lands while the mint is in flight: after the last part's PlaybackInfo, before the token exists
+    jf.playbackInfo = async (...a) => { const r = await orig.apply(env.ctx.jf, a); if (++k === 3) await call('POST', `/api/profiles/${pid}/select`, {}); return r; };
+    const calls = env.jfCalls.length;
+    try {
+      const r = await call('POST', '/api/cast/session', { itemId: EPS[0]!.id, via: 'airplay', continuous: true });
+      expect(k).toBe(3);
+      expect(r.statusCode).toBe(409);
+      expect(r.json()).toEqual({ error: 'profile_changed' });
+    } finally { jf.playbackInfo = orig; }
+    expect(await env.kv.keys('cast:')).toEqual([]);
+    expect(await env.kv.keys('castidx:')).toEqual([]);
+    const stopped = env.jfCalls.slice(calls).filter((c) => c.method === 'DELETE' && c.path === '/Videos/ActiveEncodings').map((c) => new URLSearchParams(c.search).get('playSessionId'));
+    expect(stopped).toEqual(expect.arrayContaining(EPS.slice(0, 3).map((e) => e.ps)));
   });
 });

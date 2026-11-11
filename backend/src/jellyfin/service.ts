@@ -4,7 +4,7 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { KV } from '../kv.js';
 import type {
   ClipTranscode, ExternalSession, IdentityPolicy, ItemDto, ItemMediaTraits, ItemQuery, ItemStreams, ItemTraits, MediaAdmin, MediaTraits, MediaCapabilities, MediaCredentials, MediaServer,
-  MediaEvent, PersonDto, PlaybackDto, PlaybackReport, SegmentType,
+  MediaEvent, PersonDto, PlaybackDto, PlaybackReport, SegmentType, TrackList,
 } from '../media/types.js';
 import type { JfUser } from '../types.js';
 import { JellyfinClient, JellyfinError, mediaBrowserHeader, policyFromTemplate } from './client.js';
@@ -324,7 +324,7 @@ export class JellyfinService implements MediaServer {
   }
 
   /** Audio languages and text subtitles of the first media source (for the language picker before playing). */
-  async tracks(user: JfUser, id: string): Promise<{ audio: Array<{ language: string; title: string; isDefault: boolean }>; subtitles: Array<{ language: string; title: string }>; runtimeTicks?: number; type: string }> {
+  async tracks(user: JfUser, id: string): Promise<TrackList> {
     const uid = user.jellyfin_user_id;
     const i = await this.compat<any>(user, 'item', [`/Items/${id}?userId=${uid}`, `/Users/${uid}/Items/${id}`]);
     const streams: Array<Record<string, any>> = (i.MediaSources ?? [])[0]?.MediaStreams ?? i.MediaStreams ?? [];
@@ -332,7 +332,8 @@ export class JellyfinService implements MediaServer {
     const audio = streams.filter((s) => s.Type === 'Audio').map((s) => ({ language: String(s.Language ?? 'und'), title: String(s.DisplayTitle ?? s.Language ?? 'Spur'), isDefault: Boolean(s.IsDefault) }))
       .filter((a) => !seen.has(a.language) && seen.add(a.language));
     const seenS = new Set<string>();
-    const subtitles = streams.filter((s) => s.Type === 'Subtitle').map((s) => ({ language: String(s.Language ?? 'und'), title: String(s.DisplayTitle ?? s.Language ?? 'Untertitel') }))
+    const subtitles = streams.filter((s) => s.Type === 'Subtitle')
+      .map((s) => ({ language: String(s.Language ?? 'und'), title: String(s.DisplayTitle ?? s.Language ?? 'Untertitel'), ...(Number.isInteger(s.Index) ? { index: s.Index as number } : {}) }))
       .filter((a) => !seenS.has(a.language) && seenS.add(a.language));
     return { audio, subtitles, runtimeTicks: i.RunTimeTicks, type: String(i.Type ?? '') };
   }
