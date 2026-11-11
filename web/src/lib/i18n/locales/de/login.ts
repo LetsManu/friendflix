@@ -6,6 +6,7 @@ const login = {
   loading: 'Anmeldung wird vorbereitet …',
   busy: 'Einen Moment …',
   inviteGone: 'Diese Einladung ist nicht mehr gültig. Wenn du schon ein Konto hast, melde dich einfach an.',
+  stale: { title: 'Anmeldung nicht bestätigt', text: 'Authentik hat die Anmeldung nicht erneut abgefragt, deshalb hat FriendFlix sie abgelehnt. Versuch es in einer halben Minute noch einmal. Passiert das immer wieder, gehen die Uhren von Server und Authentik womöglich unterschiedlich (ein Admin kann das prüfen).', retry: 'Erneut anmelden' },
   identify: {
     title: 'Willkommen zurück',
     text: 'Melde dich an, um weiterzuschauen.',

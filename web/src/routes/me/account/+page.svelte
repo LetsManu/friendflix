@@ -45,7 +45,7 @@
 <svelte:head><title>{$t('common.pageTitle', { page: $t('account.account.pageTitle') })}</title></svelte:head>
 <div class="acct">
   <h1>{$t('account.account.title')}</h1>
-  {#if reauthFailed}<p class="err banner" role="alert">{$t('account.account.reauthFailed')}</p>{/if}
+  {#if reauthFailed}<p class="err banner" role="alert">{$t('account.account.reauthFailed')}</p><p class="muted hint" data-hint="reauth-failed">{$t('account.account.reauthFailedHint')}</p>{/if}
 
   {#if phase === 'loading'}<div class="skeleton sk" aria-hidden="true"></div>
   {:else if phase === 'owner'}<p class="muted">{$t('account.account.ownerOnly')}</p>
@@ -68,6 +68,7 @@
   .acct { max-width: 1000px; margin: 0 auto; }
   h1 { margin: .4rem 0 1rem; }
   .banner { padding: .7rem 1rem; border: 1px solid currentColor; border-radius: 8px; }
+  .hint { margin: .4rem 0 1rem; font-size: .88rem; line-height: 1.4; }
   .sk { height: 320px; border-radius: 8px; }
   .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
   @media (min-width: 900px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .wide { grid-column: 1 / -1; } }

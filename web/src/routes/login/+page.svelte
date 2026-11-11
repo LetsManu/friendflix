@@ -32,8 +32,15 @@
   let enrolling = false;
   /** `?reset=1`: the new password was set on /reset */
   let resetDone = false;
+  /** `?stale=1`: a sign-in through the identity provider's page was refused because it did not ask for the login again (backend /auth/callback) */
+  let stale = false;
+  /** the stale banner fades (it keeps its space) once the person has started or advanced the sign-in */
+  let staleFaded = false;
+  let shows = 0;
   let leaving = false;
   $: classic = classicHref(invite);
+  /** the stale notice replaces the classic redirect in `authentik` mode */
+  $: staleNotice = stale && cfg?.mode === 'authentik';
   /** notices the page shows for these stages; anything else without a screen here continues on the sign-in page */
   const SCREENS = new Set(['identify', 'password', 'mfa', 'email-sent', 'prompt', 'totp-setup', 'recovery-codes']);
   const NOTICES = new Set(['denied', 'locked', 'expired', 'unavailable', 'classic']);
@@ -47,6 +54,7 @@
     invite = inv.length > 0 && inv.length <= 128 ? inv : '';
     enrolling = invite !== '' && q.get('enroll') === '1';
     resetDone = q.get('reset') === '1';
+    stale = q.get('stale') === '1';
     void boot();
   });
 
@@ -59,7 +67,8 @@
       view = { stage: 'unavailable' };
       return;
     }
-    if (cfg.mode === 'authentik') return leave(classicHref(invite));
+    // the classic mode would go straight back to the sign-in that was just refused: the notice (with its retry) stays instead
+    if (cfg.mode === 'authentik') return stale ? void (view = { stage: 'classic', reason: 'unsupported_stage' }) : leave(classicHref(invite));
     await begin(enrolling ? 'enroll' : 'login');
   }
 
@@ -89,6 +98,7 @@
   }
 
   function show(r: FlowReply) {
+    if (++shows > 1) staleFaded = true; // the first screen is the start of the attempt itself
     if (r.stage === 'done') leave(safeNext(r.next));
     else view = r;
   }
@@ -101,11 +111,12 @@
 <svelte:head><title>{$t('common.pageTitle', { page: $t('login.pageTitle') })}</title></svelte:head>
 <AuthShell>
   {#if resetDone && view && !leaving}<p class="ok" role="status">{$t('login.reset.banner')}</p>{/if}
+  {#if stale && view && !leaving && cfg?.mode !== 'authentik'}<p class="gone stale" class:faded={staleFaded} role={staleFaded ? undefined : 'alert'} aria-hidden={staleFaded ? 'true' : undefined} data-notice="stale">{$t('login.stale.text')}</p>{/if}
   {#if inviteGone}<p class="gone" role="status">{$t('login.inviteGone')}</p>{/if}
   {#if !view || leaving}
     <p class="loading muted" role="status">{$t('login.loading')}</p>
   {:else if notice}
-    <Notice kind={notice} classicHref={classic} on:retry={() => begin(enrolling ? 'enroll' : 'login')} on:restart={() => begin(enrolling ? 'enroll' : 'login')} />
+    <Notice kind={notice} classicHref={classic} title={staleNotice ? 'login.stale.title' : null} text={staleNotice ? 'login.stale.text' : null} classicLabel={staleNotice ? 'login.stale.retry' : null} on:retry={() => begin(enrolling ? 'enroll' : 'login')} on:restart={() => begin(enrolling ? 'enroll' : 'login')} />
   {:else if view.stage === 'identify'}
     <Identify step={view} classicHref={classic} on:next={(e) => show(e.detail)} on:done={(e) => leave(safeNext(e.detail.next))}
       on:invite={(e) => goto(`/invite/${encodeURIComponent(e.detail.token)}`)} />
@@ -129,5 +140,7 @@
 <style>
   .loading { margin: 0; text-align: center; padding: 1rem 0; }
   .ok { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--tone-ok, rgba(46, 160, 100, .22)); font-size: .88rem; }
+  .stale { transition: opacity .3s; }
+  .stale.faded { opacity: 0; pointer-events: none; }
   .gone { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--tone-warn); font-size: .88rem; }
 </style>

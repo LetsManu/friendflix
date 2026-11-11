@@ -431,6 +431,8 @@ const dict: Translation<typeof de> = {
     passkeysOut: 'On the sign-in page',
     passkeySignIn: 'Passkey sign-in',
     passkeySignInState: { ok: 'Offered in FriendFlix', no_stage: 'Not offered (stage missing)', rp_mismatch: 'Not offered (wrong host)', off: 'On the sign-in page', unknown: 'Unknown' },
+    passkeyUv: 'User verification',
+    passkeyUvState: { required: 'Required', preferred: 'Preferred (not enforced)', discouraged: 'Discouraged (not enforced)', unknown: 'Not set (FriendFlix asks for it)' },
     ok: 'Everything is fine.',
     loadFailed: 'The sign-in check could not be loaded.',
     coverLabel: 'Cover wall behind the sign-in',
@@ -457,7 +459,7 @@ const dict: Translation<typeof de> = {
       passkeys_not_configured: 'Passkeys run on the sign-in page only: Authentik is not connected.',
       passkeys_no_stage: 'The sign-in screen offers no passkey: the login flow\'s identification stage has no WebAuthn validation stage. In Authentik open Flows and Stages → Stages → default-authentication-identification → Edit, set "WebAuthn Authenticator Validation Stage" to a validation stage with the WebAuthn device class, and save. "Repair" below does it when you tick "Offer passkey sign-in"; that also applies to other applications using Authentik\'s default sign-in.',
       passkeys_rp_mismatch: 'The sign-in screen offers no passkey: Authentik issues the passkey challenge for another host than PUBLIC_URL (RP ID mismatch), so something on the way replaces X-Forwarded-Host. Let the backend reach Authentik under its public name (AUTHENTIK_URL) over a direct route only it uses, not through the public reverse proxy, and cover that route in AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS on the Authentik server and worker.',
-      passkeys_uv_not_required: 'Passkey sign-in works, but the passkey check does not require user verification (fingerprint, face or PIN), so "Confirm with a passkey instead" stays off for re-authentication. Set "User verification" to "required" on the identification stage\'s WebAuthn validation stage (friendflix-passkey-validation already does).',
+      passkeys_uv_not_required: 'Passkey sign-in works, but the passkey check does not require user verification (fingerprint, face or PIN), so signing in itself may not verify the person: a device alone can be enough. "Confirm with a passkey instead" stays off for re-authentication for the same reason. Set "User verification" to "required" on the identification stage\'s WebAuthn validation stage (friendflix-passkey-validation already does).',
     },
   },
 };

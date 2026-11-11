@@ -431,6 +431,8 @@ const dict: Translation<typeof de> = {
     passkeysOut: 'Giriş sayfasında',
     passkeySignIn: 'Passkey ile giriş',
     passkeySignInState: { ok: 'FriendFlix içinde sunuluyor', no_stage: 'Sunulmuyor (aşama eksik)', rp_mismatch: 'Sunulmuyor (yanlış ana bilgisayar)', off: 'Giriş sayfasında', unknown: 'Bilinmiyor' },
+    passkeyUv: 'Kullanıcı doğrulaması',
+    passkeyUvState: { required: 'Zorunlu', preferred: 'Tercih ediliyor (zorlanmıyor)', discouraged: 'Önerilmiyor (zorlanmıyor)', unknown: 'Ayarlanmamış (FriendFlix ister)' },
     ok: 'Her şey yolunda.',
     loadFailed: 'Giriş denetimi yüklenemedi.',
     coverLabel: 'Girişin arkasında kapaklar',
@@ -457,7 +459,7 @@ const dict: Translation<typeof de> = {
       passkeys_not_configured: 'Passkey’ler yalnızca giriş sayfasında çalışır: Authentik bağlı değil.',
       passkeys_no_stage: 'Giriş ekranı passkey sunmuyor: giriş akışının kimlik belirleme aşamasında WebAuthn doğrulama aşaması yok. Authentik’te Flows and Stages → Stages → default-authentication-identification → Düzenle’yi aç, “WebAuthn Authenticator Validation Stage” için WebAuthn cihaz sınıfına sahip bir doğrulama aşaması seç ve kaydet. Aşağıdaki “Onar”, “Passkey ile girişi sun” işaretliyse bunu yapar; bu, Authentik’in varsayılan girişini kullanan diğer uygulamalar için de geçerlidir.',
       passkeys_rp_mismatch: 'Giriş ekranı passkey sunmuyor: Authentik passkey isteğini PUBLIC_URL’den farklı bir ana bilgisayar için veriyor (RP ID uyuşmuyor), yani yolda bir şey X-Forwarded-Host’u değiştiriyor. Arka ucun Authentik’e genel adıyla (AUTHENTIK_URL) yalnızca kendisinin kullandığı doğrudan bir yoldan ulaşmasını sağla, genel ters proxy üzerinden değil, ve bu yolu Authentik sunucusunda ve worker’ında AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS ile kapsa.',
-      passkeys_uv_not_required: 'Passkey ile giriş çalışıyor, ancak kontrol kullanıcı doğrulaması (parmak izi, yüz veya PIN) istemiyor; bu yüzden yeniden kimlik doğrulamada “Passkey ile onayla” kapalı kalır. Kimlik belirleme aşamasının WebAuthn doğrulama aşamasında “User verification” değerini “required” yap (friendflix-passkey-validation bunu zaten yapar).',
+      passkeys_uv_not_required: 'Passkey ile giriş çalışıyor, ancak kontrol kullanıcı doğrulaması (parmak izi, yüz veya PIN) istemiyor; bu yüzden girişin kendisi kişiyi doğrulamayabilir: tek başına bir cihaz yeterli olabilir. Aynı nedenle yeniden kimlik doğrulamada “Passkey ile onayla” kapalı kalır. Kimlik belirleme aşamasının WebAuthn doğrulama aşamasında “User verification” değerini “required” yap (friendflix-passkey-validation bunu zaten yapar).',
     },
   },
 };

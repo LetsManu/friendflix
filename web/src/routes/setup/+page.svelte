@@ -31,6 +31,8 @@
   let loadFailed = false, loading = false;
   let step: N = 1;
   let expired = false;
+  /** `/setup?stale=1`: the first admin's sign-in was refused because the identity provider did not ask for the login again (setup session still valid) */
+  let stale = false;
   /** the public address typed on this visit; until then the backend's (the saved one, else the origin this browser used) */
   let publicUrl = '';
   let stepEl: HTMLElement;
@@ -90,6 +92,7 @@
   onMount(() => {
     // the backend sends a sign-in whose setup session ran out back here (/setup?expired=1): the code step says why
     if (new URLSearchParams(location.search).get('expired') === '1') expired = true;
+    stale = new URLSearchParams(location.search).get('stale') === '1';
     const pre = publicLocale();
     if (pre) void setLocale(pre);
     void refresh({ start: true });
@@ -102,6 +105,7 @@
   <main class="card" id="main">
     <h1>{$t('setup.title')}</h1>
     <p class="muted intro">{$t('setup.intro')}</p>
+    {#if stale}<Notice tone="warn"><p>{$t('login.stale.text')}</p></Notice>{/if}
     {#if loadFailed}
       <Notice tone="err">
         <p>{$t('setup.loadFailed')}</p>

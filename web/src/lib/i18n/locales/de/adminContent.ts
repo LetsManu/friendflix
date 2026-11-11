@@ -430,6 +430,8 @@ export default {
     passkeysOut: 'Auf der Anmeldeseite',
     passkeySignIn: 'Anmeldung mit Passkey',
     passkeySignInState: { ok: 'In FriendFlix angeboten', no_stage: 'Nicht angeboten (Stage fehlt)', rp_mismatch: 'Nicht angeboten (falscher Host)', off: 'Auf der Anmeldeseite', unknown: 'Unbekannt' },
+    passkeyUv: 'Nutzerprüfung',
+    passkeyUvState: { required: 'Erforderlich', preferred: 'Bevorzugt (nicht erzwungen)', discouraged: 'Unerwünscht (nicht erzwungen)', unknown: 'Nicht gesetzt (FriendFlix verlangt sie)' },
     ok: 'Alles in Ordnung.',
     loadFailed: 'Die Anmelde-Prüfung konnte nicht geladen werden.',
     coverLabel: 'Titelbilder hinter der Anmeldung',
@@ -456,7 +458,7 @@ export default {
       passkeys_not_configured: 'Passkeys laufen nur auf der Anmeldeseite: Authentik ist nicht angebunden.',
       passkeys_no_stage: 'Die Anmeldung bietet keinen Passkey an: der Identifikations-Stage des Anmeldeablaufs fehlt eine WebAuthn-Validierungs-Stage. Öffne in Authentik Flows and Stages → Stages → default-authentication-identification → Bearbeiten, wähle bei „WebAuthn Authenticator Validation Stage“ eine Validierungs-Stage mit der Geräteklasse WebAuthn und speichere. „Reparieren“ unten erledigt das, wenn du „Anmeldung mit Passkey anbieten“ ankreuzt; das gilt dann auch für andere Anwendungen mit der Standard-Anmeldung von Authentik.',
       passkeys_rp_mismatch: 'Die Anmeldung bietet keinen Passkey an: Authentik stellt die Passkey-Anfrage für einen anderen Host als PUBLIC_URL aus (RP-ID passt nicht), unterwegs ersetzt also etwas X-Forwarded-Host. Lass das Backend Authentik unter dessen öffentlichem Namen (AUTHENTIK_URL) über einen direkten Weg erreichen, den nur es nutzt, nicht über den öffentlichen Reverse Proxy, und decke diesen Weg beim Authentik-Server und -Worker in AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS ab.',
-      passkeys_uv_not_required: 'Die Anmeldung mit Passkey funktioniert, aber die Passkey-Prüfung verlangt keine Nutzerprüfung (Fingerabdruck, Gesicht oder PIN), deshalb bleibt „Stattdessen mit Passkey bestätigen“ bei der erneuten Anmeldung aus. Stell an der WebAuthn-Validierungs-Stage der Identifikations-Stage „User verification“ auf „required“ (friendflix-passkey-validation tut das schon).',
+      passkeys_uv_not_required: 'Die Anmeldung mit Passkey funktioniert, aber die Passkey-Prüfung verlangt keine Nutzerprüfung (Fingerabdruck, Gesicht oder PIN). Schon die Anmeldung selbst prüft die Person womöglich nicht: ein Gerät allein kann genügen. Aus demselben Grund bleibt „Stattdessen mit Passkey bestätigen“ bei der erneuten Anmeldung aus. Stell an der WebAuthn-Validierungs-Stage der Identifikations-Stage „User verification“ auf „required“ (friendflix-passkey-validation tut das schon).',
     },
   },
 } as const;

@@ -363,7 +363,9 @@ describe('re-authentication, security actions', () => {
       expect((await b.post('answer', { step: step.step, stage: 'identify', passkey: CRED })).json()).toEqual({ stage: 'denied' });
       expect((await sessionOf(s)).reauthAt).toBeUndefined();
       // another host; user verification only `preferred` (a device alone must not re-authenticate); no passkey challenge
-      for (const ident of [identPk('auth.example.com'), identPk('friend.example.com', 'preferred'), fixture('identification')]) {
+      // (a challenge that names no user verification, or an unknown value, is sent to the browser as required but is not Authentik's demand)
+      const noUv = () => { const c = identPk(); delete (c.passkey_challenge as Record<string, unknown>).userVerification; return c; };
+      for (const ident of [identPk('auth.example.com'), identPk('friend.example.com', 'preferred'), noUv(), identPk('friend.example.com', 'mandatory'), fixture('identification')]) {
         w = installWorld(env, { [LOGIN]: [{ challenge: ident, answer: () => true }, loginStages()[1]!] });
         const pw = (await b.post('start', { kind: 'reauth' })).json() as Record<string, unknown>;
         expect(pw.stage).toBe('password');

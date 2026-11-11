@@ -436,6 +436,8 @@ const dict: Translation<typeof de> = {
     passkeysOut: 'Na stronie logowania',
     passkeySignIn: 'Logowanie passkeyem',
     passkeySignInState: { ok: 'Oferowane w FriendFlix', no_stage: 'Nieoferowane (brak etapu)', rp_mismatch: 'Nieoferowane (zły host)', off: 'Na stronie logowania', unknown: 'Nieznane' },
+    passkeyUv: 'Weryfikacja użytkownika',
+    passkeyUvState: { required: 'Wymagana', preferred: 'Preferowana (niewymuszana)', discouraged: 'Niezalecana (niewymuszana)', unknown: 'Nie ustawiono (FriendFlix jej żąda)' },
     ok: 'Wszystko w porządku.',
     loadFailed: 'Nie udało się wczytać sprawdzenia logowania.',
     coverLabel: 'Okładki za ekranem logowania',
@@ -462,7 +464,7 @@ const dict: Translation<typeof de> = {
       passkeys_not_configured: 'Passkey działają tylko na stronie logowania: Authentik nie jest połączony.',
       passkeys_no_stage: 'Logowanie nie oferuje passkey: etap identyfikacji przepływu logowania nie ma etapu walidacji WebAuthn. W Authentik otwórz Flows and Stages → Stages → default-authentication-identification → Edytuj, wybierz w „WebAuthn Authenticator Validation Stage” etap walidacji z klasą urządzeń WebAuthn i zapisz. „Napraw” poniżej zrobi to, jeśli zaznaczysz „Oferuj logowanie passkeyem”; dotyczy to też innych aplikacji korzystających z domyślnego logowania Authentik.',
       passkeys_rp_mismatch: 'Logowanie nie oferuje passkey: Authentik wystawia wyzwanie passkey dla innego hosta niż PUBLIC_URL (niezgodny RP ID), więc coś po drodze podmienia X-Forwarded-Host. Niech backend łączy się z Authentik pod jego publiczną nazwą (AUTHENTIK_URL) bezpośrednią drogą, z której korzysta tylko on, nie przez publiczne reverse proxy, i obejmij tę drogę w AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS na serwerze i workerze Authentik.',
-      passkeys_uv_not_required: 'Logowanie passkeyem działa, ale sprawdzanie nie wymaga weryfikacji użytkownika (odcisk palca, twarz lub PIN), więc „Potwierdź passkeyem” przy ponownym uwierzytelnianiu pozostaje wyłączone. Ustaw „User verification” na „required” w etapie walidacji WebAuthn etapu identyfikacji (friendflix-passkey-validation już to robi).',
+      passkeys_uv_not_required: 'Logowanie passkeyem działa, ale sprawdzanie nie wymaga weryfikacji użytkownika (odcisk palca, twarz lub PIN), więc samo logowanie może nie weryfikować osoby: samo urządzenie może wystarczyć. Z tego samego powodu „Potwierdź passkeyem” przy ponownym uwierzytelnianiu pozostaje wyłączone. Ustaw „User verification” na „required” w etapie walidacji WebAuthn etapu identyfikacji (friendflix-passkey-validation już to robi).',
     },
   },
 };

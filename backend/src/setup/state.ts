@@ -58,6 +58,8 @@ export function isOperational(ctx: Pick<Ctx, 'db' | 'settings' | 'cfg'>): boolea
 
 /** where a sign-in during setup goes when its setup session is gone: the wizard's code step with the "session expired" note */
 export const SETUP_EXPIRED = '/setup?expired=1';
+/** the first admin's sign-in was refused as stale (the IdP did not ask for the login again); the setup session is still valid */
+export const SETUP_STALE = '/setup?stale=1';
 /**
  * Set once the Authentik automation applied and saved the sign-in (routes/setup.ts: step 5 then says "Sign in with Authentik"); holds no
  * value, only the path taken. completeSetup deletes it.

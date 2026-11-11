@@ -164,6 +164,42 @@ describe('invites', () => {
     expect((await env.app.inject(`/auth/enroll?invite=${token}`)).statusCode).toBe(410); // used up
   });
 
+  it('enrollment callback needs an auth_time from after the start: a leftover IdP session of an existing account gets no session through an invite', async () => {
+    const mkToken = async () => (await adm('POST', '/api/admin/invites', { role: 'family', ttlHours: 24 })).json().link.split('/').pop() as string;
+    const token = await mkToken();
+    const sub = 'sub-admin'; // an existing account
+    const run = async (offsetS: number | undefined) => {
+      const e = await env.app.inject(`/auth/enroll?invite=${token}&classic=1`);
+      const state = e.cookies.find((c) => c.name === 'ff_oidc')!.value;
+      const saved = JSON.parse((await env.kv.get(`oidc:${state}`))!);
+      expect(saved.enroll).toBe(true);
+      expect(typeof saved.startedAt).toBe('number');
+      const authTime = offsetS === undefined ? undefined : Math.floor(saved.startedAt / 1000) + offsetS;
+      env.claims.current = { sub, email: 'admin@example.com', name: 'Admin', groups: ['friendflix-admins'], authTime } as typeof env.claims.current;
+      return env.app.inject({ url: `/auth/callback?state=${state}&code=c`, cookies: { ff_oidc: state } });
+    };
+    for (const off of [-3600, -31, undefined]) {
+      const cb = await run(off);
+      expect([cb.statusCode, cb.headers.location]).toEqual([302, `/login?stale=1&invite=${token}`]);
+      expect(cb.cookies.find((c) => c.name === 'ff_sid')).toBeUndefined();
+    }
+    // an auth_time from after the start (the enrollment flow's own login) passes
+    const ok = await run(5);
+    expect(ok.statusCode).toBe(302);
+    expect(ok.headers.location).not.toMatch(/stale/);
+    expect(ok.cookies.find((c) => c.name === 'ff_sid')).toBeTruthy();
+  });
+
+  it('a stale sign-in keeps the invite for the retry', async () => {
+    const token = (await adm('POST', '/api/admin/invites', { role: 'family', ttlHours: 24, enroll: false })).json().link.split('/').pop() as string;
+    const l = await env.app.inject(`/auth/login?invite=${token}&classic=1`);
+    const st = l.cookies.find((c) => c.name === 'ff_oidc')!.value;
+    const saved = JSON.parse((await env.kv.get(`oidc:${st}`))!);
+    env.claims.current = { ...env.claims.current, authTime: Math.floor(saved.startedAt / 1000) - 3600 } as typeof env.claims.current;
+    const cb = await env.app.inject({ url: `/auth/callback?state=${st}&code=c`, cookies: { ff_oidc: st } });
+    expect([cb.statusCode, cb.headers.location]).toEqual([302, `/login?stale=1&invite=${token}`]);
+  });
+
   it('invite for an existing Authentik user skips enrollment', async () => {
     const r = (await adm('POST', '/api/admin/invites', { role: 'guest', ttlHours: 1, enroll: false })).json();
     expect(r.authentik).toBe('skipped');

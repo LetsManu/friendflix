@@ -17,6 +17,8 @@
   export let text: TKey | null = null;
   /** the label of the classic link (default: "continue on the sign-in page") */
   export let classicLabel: TKey | null = null;
+  /** a more precise heading than the kind's default */
+  export let title: TKey | null = null;
 
   const dispatch = createEventDispatcher<{ retry: void; restart: void }>();
   const TEXT: Record<typeof kind, { title: TKey; text: TKey; icon: string }> = {
@@ -32,7 +34,7 @@
 
 <div class="af-form af-center" role={kind === 'unavailable' ? 'alert' : undefined} data-notice={kind}>
   <div class="af-big" aria-hidden="true"><Icon name={TEXT[kind].icon} size={30} /></div>
-  <h1 bind:this={heading} tabindex="-1">{$t(TEXT[kind].title)}</h1>
+  <h1 bind:this={heading} tabindex="-1">{$t(title ?? TEXT[kind].title)}</h1>
   <p class="af-sub">{$t(text ?? TEXT[kind].text)}</p>
   {#if kind === 'classic'}
     <a class="btn af-pri" href={classicHref}>{$t(classicLabel ?? 'login.notice.classic')}</a>

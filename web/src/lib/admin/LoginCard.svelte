@@ -106,6 +106,7 @@
         <div><dt>{$t('adminContent.login.mode')}</dt><dd>{check.mode === 'app' ? $t('adminContent.login.modeApp') : $t('adminContent.login.modeAuthentik')}</dd></div>
         <div><dt>{$t('adminContent.login.passkeys')}</dt><dd>{check.passkeys === 'in-app' ? $t('adminContent.login.passkeysIn') : $t('adminContent.login.passkeysOut')}</dd></div>
         {#if check.passkeySignIn}<div><dt>{$t('adminContent.login.passkeySignIn')}</dt><dd data-check="passkey-sign-in">{$t(`adminContent.login.passkeySignInState.${check.passkeySignIn}` as TKey)}</dd></div>{/if}
+        {#if check.passkeyUv}<div><dt>{$t('adminContent.login.passkeyUv')}</dt><dd data-check="passkey-uv">{$t(`adminContent.login.passkeyUvState.${check.passkeyUv}` as TKey)}</dd></div>{/if}
       </dl>
       {#if check.flows.length}
         <ul class="flows">

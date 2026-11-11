@@ -200,6 +200,22 @@ test.describe('admin health page', () => {
     await expect(card.getByText(/RP-ID passt nicht.*AUTHENTIK_URL/)).toBeVisible();
   });
 
+  test('sign-in card: the passkey user verification setting is shown, and the warning says sign-in itself may not verify the person', async ({ page, api }) => {
+    const card = page.getByRole('region', { name: 'Anmeldung', exact: true });
+    for (const [uv, label] of [['required', 'Erforderlich'], ['preferred', 'Bevorzugt (nicht erzwungen)'], ['discouraged', 'Unerwünscht (nicht erzwungen)'], ['unknown', 'Nicht gesetzt (FriendFlix verlangt sie)']] as const) {
+      api.admin.loginCheck = { ...loginCheckOk(), passkeyUv: uv, warnings: uv === 'required' ? [] : ['passkeys:uv_not_required'] };
+      await page.goto('/admin/status');
+      await expect(card.locator('[data-check="passkey-uv"]')).toHaveText(label);
+      if (uv === 'required') await expect(card.getByText('Schon die Anmeldung selbst prüft die Person womöglich nicht')).toHaveCount(0);
+      else await expect(card.getByText('Schon die Anmeldung selbst prüft die Person womöglich nicht')).toBeVisible();
+    }
+    // no passkey challenge: no row
+    api.admin.loginCheck = { ...loginCheckOk(), passkeyUv: null };
+    await page.goto('/admin/status');
+    await expect(card.locator('[data-check="passkey-sign-in"]')).toBeVisible();
+    await expect(card.locator('[data-check="passkey-uv"]')).toHaveCount(0);
+  });
+
   test('Repair sets the passkey check only when "Anmeldung mit Passkey anbieten" is ticked, and says it affects other applications', async ({ page, api }) => {
     api.admin.loginCheck = { ...loginCheckOk(), passkeySignIn: 'no_stage', warnings: ['passkeys:no_stage'] };
     await page.goto('/admin/status');

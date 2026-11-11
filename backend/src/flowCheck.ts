@@ -46,6 +46,12 @@ export interface LoginCheck {
    * executor check failed.
    */
   passkeySignIn: PasskeySignIn | null;
+  /**
+   * the `userVerification` Authentik's passkey challenge asks for (what the sign-in's passkey ceremony runs with); `unknown` when the
+   * challenge names none or something else (FriendFlix then sends `required`, see flowSteps.ts). Null without a passkey challenge or
+   * when the executor check failed.
+   */
+  passkeyUv?: PasskeyUv | null;
   /** Authentik did not answer (some rows are unknown); the card says so instead of calling flows missing */
   unreachable: boolean;
   /** the service token: accepted at all, and the read permissions Authentik refused (null: no API configured) */
@@ -61,6 +67,7 @@ export interface LoginCheck {
   warnings: string[];
 }
 
+export type PasskeyUv = 'required' | 'preferred' | 'discouraged' | 'unknown';
 export type PasskeySignIn = 'ok' | 'no_stage' | 'rp_mismatch' | 'off' | 'unknown';
 
 /**
@@ -111,13 +118,14 @@ export async function checkLoginFlows(ctx: CheckCtx, opts: { fresh?: boolean } =
  * The login flow's first executor call, made the way a sign-in makes it (createJar: the same slug and the same forwarded-host decision),
  * then the Authentik session it opened is ended. Nothing is answered: it shows only whether Authentik serves the flow to this backend.
  */
-async function executorCheck(ctx: CheckCtx): Promise<{ executor: NonNullable<LoginCheck['executor']>; passkeySignIn: PasskeySignIn | null; passkeyUv?: boolean }> {
+async function executorCheck(ctx: CheckCtx): Promise<{ executor: NonNullable<LoginCheck['executor']>; passkeySignIn: PasskeySignIn | null; passkeyUv?: PasskeyUv | null }> {
   try {
     const jar = await createJar(ctx, 'login');
     const { challenge } = await akExec(ctx, jar, 'GET');
     await endAkSession(ctx, jar);
-    const uv = (challenge.passkey_challenge as { userVerification?: unknown } | null | undefined)?.userVerification;
-    return { executor: { ok: true }, passkeySignIn: passkeySignInState(challenge, jar.forwardHost, appHost(ctx.cfg)), passkeyUv: uv === 'required' };
+    const pk = challenge.passkey_challenge as { userVerification?: unknown } | null | undefined;
+    const uv = pk && typeof pk === 'object' ? (pk.userVerification === 'required' || pk.userVerification === 'preferred' || pk.userVerification === 'discouraged' ? pk.userVerification : 'unknown') : null;
+    return { executor: { ok: true }, passkeySignIn: passkeySignInState(challenge, jar.forwardHost, appHost(ctx.cfg)), passkeyUv: uv };
   } catch (e) {
     if (e instanceof AkUpstreamError) {
       const { cls, status, endpoint } = e.failure;
@@ -140,7 +148,7 @@ async function run(ctx: CheckCtx): Promise<LoginCheck> {
   // no Authentik API: nothing to read, the classic sign-in page is the only mode
   if (!cfg.AUTHENTIK_URL || !cfg.AUTHENTIK_API_TOKEN) {
     return {
-      ...base, mode: 'authentik', flows: [], implicitConsent: null, authCodeGrant: null, unreachable: false, serviceToken: null, executor: null, passkeySignIn: null,
+      ...base, mode: 'authentik', flows: [], implicitConsent: null, authCodeGrant: null, unreachable: false, serviceToken: null, executor: null, passkeySignIn: null, passkeyUv: null,
       lastFailures: [], warnings: [],
     };
   }
@@ -196,9 +204,9 @@ async function run(ctx: CheckCtx): Promise<LoginCheck> {
   if (base.passkeys === 'sign-in page' && passkeys.reason !== 'disabled') warnings.push(`passkeys:${passkeys.reason}`);
   // the passkey button needs Authentik to send a passkey challenge on the identification stage (its WebAuthn validation stage), for the app host
   if (passkeys.reason !== 'disabled' && (passkeySignIn === 'no_stage' || passkeySignIn === 'rp_mismatch')) warnings.push(`passkeys:${passkeySignIn}`);
-  // a passkey that need not verify the person: sign-in works, but "confirm with a passkey" stays off (a device alone must not re-authenticate)
-  if (passkeys.reason !== 'disabled' && passkeySignIn === 'ok' && !passkeyUv) warnings.push('passkeys:uv_not_required');
-  return { ...base, flows, implicitConsent, authCodeGrant, unreachable, serviceToken, executor, passkeySignIn, lastFailures: [], warnings };
+  // a passkey check that need not verify the person: sign-in itself may accept a device alone, and "confirm with a passkey" stays off
+  if (passkeys.reason !== 'disabled' && passkeySignIn === 'ok' && passkeyUv !== 'required') warnings.push('passkeys:uv_not_required');
+  return { ...base, flows, implicitConsent, authCodeGrant, unreachable, serviceToken, executor, passkeySignIn, passkeyUv: passkeyUv ?? null, lastFailures: [], warnings };
 }
 
 function row(kind: CheckedKind, slug: string, f: FlowStages): FlowCheckRow {

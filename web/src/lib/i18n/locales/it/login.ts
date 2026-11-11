@@ -8,6 +8,7 @@ const login: Translation<typeof de> = {
   loading: 'Preparazione dell’accesso …',
   busy: 'Un momento …',
   inviteGone: 'Questo invito non è più valido. Se hai già un account, accedi semplicemente.',
+  stale: { title: 'Accesso non confermato', text: 'Authentik non ha richiesto di nuovo l’accesso, quindi FriendFlix lo ha rifiutato. Riprova tra mezzo minuto. Se continua a succedere, gli orologi del server e di Authentik potrebbero non coincidere (un amministratore può controllare).', retry: 'Accedi di nuovo' },
   identify: {
     title: 'Bentornato',
     text: 'Accedi per continuare a guardare.',

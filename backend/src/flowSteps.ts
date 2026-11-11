@@ -135,8 +135,9 @@ function passkeyGet(v: unknown): PasskeyGet | null {
   const allowCredentials = credentialDescriptors(v.allowCredentials);
   if (!challenge || typeof v.rpId !== 'string' || !allowCredentials) return null;
   const out: PasskeyGet = { challenge, rpId: v.rpId, allowCredentials };
-  const uv = oneOf(v.userVerification, USER_VERIFICATION);
-  if (uv) out.userVerification = uv;
+  // an assertion without user verification is a device alone, not the person: a missing or unknown value is never left to the browser's
+  // default ("preferred"), it becomes "required" (a known value from Authentik is kept as it is)
+  out.userVerification = oneOf(v.userVerification, USER_VERIFICATION) ?? 'required';
   const t = timeout(v.timeout);
   if (t) out.timeout = t;
   return out;
