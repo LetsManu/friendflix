@@ -194,3 +194,112 @@ test('the card is solid on TV, top right of the tile inside the gutter, after th
   expect(g.afterTitle).toBe(true);
   expect(g.beforePlay).toBe(true);
 });
+
+test.describe('old TV engines (Chromium 85 / 87: no inert)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => { delete (HTMLElement.prototype as unknown as { inert?: boolean }).inert; });
+  });
+
+  test('the faded card is skipped by the fallback: data-nav-skip, aria-hidden, tabindex -1', async ({ page, api }) => {
+    api.handoff.home = offer();
+    await setTv(page);
+    await page.goto('/');
+    await expect(go(page)).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('main .rows .card .thumb:focus')).toHaveCount(1);
+    const card = page.locator('[data-handoff]');
+    await expect(card).toHaveAttribute('data-nav-skip', '');
+    await expect(card).toHaveAttribute('aria-hidden', 'true');
+    for (const el of await card.locator('a, button').all()) await expect(el).toHaveAttribute('tabindex', '-1');
+    await page.keyboard.press('ArrowUp'); // the tile, never the hidden card
+    await expect(tilePlay(page)).toBeFocused();
+    await expect(card).not.toHaveAttribute('data-nav-skip', '');
+    await expect(card).not.toHaveAttribute('aria-hidden', 'true');
+    for (const el of await card.locator('a, button').all()) await expect(el).not.toHaveAttribute('tabindex', '-1');
+  });
+
+  test('Back from a detail page: the restored row card keeps the focus when the answer comes, and OK does not play the hand-off', async ({ page, api }) => {
+    api.handoff.home = offer();
+    await setTv(page);
+    await page.goto('/');
+    await expect(go(page)).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowRight');
+    const card = page.locator('main .rows .card .thumb:focus');
+    await expect(card).toHaveCount(1);
+    const href = (await card.getAttribute('href')) ?? (await card.evaluate((e) => e.closest('a')?.getAttribute('href') ?? ''));
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/item\//);
+    // the answer on the way back comes a little after the layout restored the row card, well within 2 s
+    await page.route('**/api/handoff*', async (r) => { await new Promise((x) => setTimeout(x, 600)); await r.fallback(); });
+    await page.keyboard.press('Escape');
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.locator('main .rows .card .thumb:focus')).toHaveCount(1);
+    await expect(page.locator('[data-handoff]')).toHaveCount(1);
+    await page.waitForTimeout(400);
+    await expect(page.locator('main .rows .card .thumb:focus')).toHaveCount(1); // not pulled to the hidden card
+    expect(await page.evaluate(() => Boolean(document.activeElement?.closest('[data-handoff]')))).toBe(false);
+    await page.keyboard.press('Enter');
+    await expect(page).not.toHaveURL(/\/watch\//);
+    if (href) await expect(page).toHaveURL((u) => u.pathname + u.search === href || u.pathname.startsWith('/item/'));
+  });
+});
+
+test('the leave fade is skipped and hidden at once', async ({ page, api }) => {
+  api.handoff.home = offer();
+  await setTv(page);
+  await page.emulateMedia({ reducedMotion: 'no-preference' }); // the fade lasts 180 ms
+  await page.goto('/');
+  await expect(go(page)).toBeFocused();
+  const s = await page.evaluate(async () => {
+    const card = document.querySelector<HTMLElement>('[data-handoff]')!;
+    card.querySelector<HTMLButtonElement>('button')!.click();
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    return { skip: card.hasAttribute('data-nav-skip'), hidden: card.getAttribute('aria-hidden'), tab: [...card.querySelectorAll('a, button')].map((e) => e.getAttribute('tabindex')), connected: card.isConnected, focus: Boolean(document.activeElement?.closest('section.tile [data-autofocus]')) };
+  });
+  expect(s).toEqual({ skip: true, hidden: 'true', tab: ['-1', '-1'], connected: true, focus: true });
+  await expect(region(page)).toHaveCount(0);
+});
+
+test('a refresh that removes the focused card puts the focus on the tile', async ({ page, api }) => {
+  api.handoff.home = offer();
+  await setTv(page);
+  await page.goto('/');
+  await expect(go(page)).toBeFocused();
+  api.handoff.home = null; // played on elsewhere and finished: no offer any more
+  await page.waitForTimeout(5200); // the page re-reads progress at most every 5 s
+  const answered = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/handoff');
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await answered;
+  await expect(page.locator('[data-handoff]')).toHaveCount(0);
+  await expect(tilePlay(page)).toBeFocused();
+});
+
+for (const [w, h, maxLines] of [[1280, 720, 2], [960, 540, 3]] as const) {
+  test.describe(`${w}x${h}`, () => {
+    test.use({ viewport: { width: w, height: h } });
+    test(`the card stays inside the tile, the action label on at most ${maxLines} lines`, async ({ page, api }) => {
+      // a long device line and an h:mm:ss position
+      api.handoff.home = offer({ positionTicks: 50_000_000_000, device: { kind: 'web', name: 'Safari auf iPhone', via: 'airplay' } });
+      await setTv(page);
+      await page.goto('/');
+      await expect(go(page)).toBeFocused();
+      await expect(go(page)).toHaveText('Hier weiterschauen ab 1:23:20');
+      const g = await page.evaluate(() => {
+        const tile = document.querySelector('section.tile')!.getBoundingClientRect();
+        const el = document.querySelector('[data-handoff]')!;
+        const card = el.getBoundingClientRect();
+        const span = el.querySelector('a span')!;
+        const lines = Math.round(span.getBoundingClientRect().height / parseFloat(getComputedStyle(span).lineHeight));
+        const overflow = [...el.querySelectorAll('a, button, p')].some((e) => e.getBoundingClientRect().right > card.right + 0.5 || e.getBoundingClientRect().bottom > card.bottom + 0.5);
+        return { bottom: card.bottom, tileBottom: tile.bottom, right: tile.right - card.right, lines, overflow };
+      });
+      expect(g.bottom).toBeLessThanOrEqual(g.tileBottom);
+      expect(Math.round(g.right)).toBe(56);
+      expect(g.lines).toBeLessThanOrEqual(maxLines); // 960 px (Fire TV): no thumbnail, the label may take a third line
+      expect(g.overflow).toBe(false);
+    });
+  });
+}

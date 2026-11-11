@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { createEventDispatcher, onDestroy } from 'svelte';
+  import { createEventDispatcher, onDestroy, tick } from 'svelte';
   import { img } from '#lib/api';
   import { playOrCast } from '#lib/cast/playOrCast';
   import { t } from '#lib/i18n';
@@ -41,6 +41,8 @@
   $: label = h ? $t('home.handoff.playAria', { title, time, device }) : '';
   $: tv = layout === 'tv';
   $: away = tv && !tvVisible;
+  /** not to be reached (faded for the rows, or fading out after Ausblenden): skipped by the remote, Tab and assistive tech */
+  $: off = away || leaving;
   /** the entrance ran (or the card arrived hidden): showing it again is a plain fade, it does not drop in a second time */
   let entered = false;
   $: if (away) entered = true;
@@ -78,12 +80,19 @@
     node.addEventListener('ff-nav', on);
     return { destroy: () => node.removeEventListener('ff-nav', on) };
   }
+  /** TV: a refresh took the card away while it held the focus: the focus goes to the tile instead of falling to <body> */
+  let root: HTMLElement | undefined;
+  $: if (!handoff) release();
+  function release() {
+    if (!tv || !root?.contains(document.activeElement)) return;
+    void tick().then(() => { if (!document.activeElement || document.activeElement === document.body) focusTile(); });
+  }
   onDestroy(() => clearTimeout(timer));
 </script>
 
 {#if h}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions (only the remote's Back, bubbling from the buttons) -->
-  <div class="hc frost frost-safe frost-panel {layout}" class:leaving class:away class:entered style="--fr-scrim-safe:{SCRIM_SAFE_DIM}" role="region" aria-label={$t('home.handoff.region')} aria-hidden={away ? 'true' : undefined} inert={away || undefined} data-nav-skip={away ? '' : undefined} data-handoff
+  <div class="hc frost frost-safe frost-panel {layout}" class:leaving class:away class:entered style="--fr-scrim-safe:{SCRIM_SAFE_DIM}" role="region" aria-label={$t('home.handoff.region')} aria-hidden={off ? 'true' : undefined} inert={off || undefined} data-nav-skip={off ? '' : undefined} data-handoff bind:this={root}
     on:animationend={(e) => { if (e.target === e.currentTarget) entered = true; }} on:keydown={onKey} use:remote>
     {#if layout !== 'phone'}<img class="thumb" src={img(h.imageId, 320)} alt="" width="96" height="54" loading="eager" decoding="async" />{/if}
     <div class="txt">
@@ -93,8 +102,8 @@
     {#if tv}
       <!-- the tile's buttons: the focus is the white fill; Right goes from the action to Ausblenden on the same line -->
       <div class="acts">
-        <a class="go tv-btn" href={handoffHref(h)} aria-label={label} tabindex={away ? -1 : undefined} on:click={go}><Icon name="play" size={28} /><span>{$t('home.handoff.play', { time })}</span></a>
-        <button type="button" class="x2 tv-btn2" aria-label={$t('home.handoff.dismiss')} title={$t('home.handoff.dismiss')} tabindex={away ? -1 : undefined} on:click={close}><Icon name="x" size={28} /></button>
+        <a class="go tv-btn" href={handoffHref(h)} aria-label={label} tabindex={off ? -1 : undefined} on:click={go}><Icon name="play" size={28} /><span>{$t('home.handoff.play', { time })}</span></a>
+        <button type="button" class="x2 tv-btn2" aria-label={$t('home.handoff.dismiss')} title={$t('home.handoff.dismiss')} tabindex={off ? -1 : undefined} on:click={close}><Icon name="x" size={28} /></button>
       </div>
     {:else}
       <a class="play" href={handoffHref(h)} aria-label={label} on:click={go}><Icon name="play" size={20} /><span>{$t('home.handoff.play', { time })}</span></a>
@@ -116,19 +125,29 @@
   .hc.tv { top: var(--tv-gutter); right: var(--tv-gutter); width: min(34rem, calc(48% - 2 * var(--tv-gutter) - 1.5rem)); gap: 1rem 1.25rem; padding: 1.5rem; align-items: center; }
   .tv .thumb { width: 10rem; height: 5.625rem; border-radius: var(--tv-radius); }
   .tv .txt { padding-right: 0; gap: .375rem; }
-  .tv .last { font-size: 1.125rem; font-weight: 500; }
+  .tv .last { font-size: 1.125rem; font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; }
   .tv .name { font-size: 1.5rem; line-height: 1.25; }
   .acts { grid-column: 1 / -1; display: flex; gap: .75rem; min-width: 0; }
   /* a narrow TV viewport wraps the label inside the button rather than overflowing the panel */
   .acts .go { flex: 1 1 auto; min-width: 0; white-space: normal; line-height: 1.2; padding-block: .5rem; }
   .acts .x2 { flex: none; width: 3.5rem; padding: 0; }
-  /* smaller TV viewports (1280 px; 960 px on some 4K panels): a smaller thumbnail, then none and a tighter button, never overflowing */
-  @media (max-width: 1599px) { .tv .thumb { width: 7.5rem; height: 4.21875rem; } .tv .name { font-size: 1.25rem; } }
-  @media (max-width: 1199px) {
-    .tv .thumb { display: none; }
-    .tv .txt { grid-column: 1 / -1; }
+  /* smaller TV viewports (1280 x 720; 960 x 540 in the Fire TV WebView): the card stays inside the tile (50vh). A smaller
+     thumbnail, tighter panel and a smaller action label without its icon (two lines at most), then no thumbnail, one-line
+     device line and the card nearer the top. */
+  @media (max-width: 1599px) {
+    .hc.tv { padding: 1.125rem; gap: .75rem 1rem; }
+    .tv .thumb { width: 7.5rem; height: 4.21875rem; }
+    .tv .last { font-size: 1rem; -webkit-line-clamp: 2; line-clamp: 2; }
+    .tv .name { font-size: 1.25rem; }
     .acts .go { font-size: 1.125rem; padding-inline: 1rem; }
     .acts .go :global(svg) { display: none; }
+  }
+  @media (max-width: 1199px) {
+    .hc.tv { top: 1.5rem; padding: 1rem; }
+    .tv .thumb { display: none; }
+    .tv .txt { grid-column: 1 / -1; gap: .25rem; }
+    .tv .last { -webkit-line-clamp: 1; line-clamp: 1; }
+    .tv .name { font-size: 1.125rem; }
   }
   /* faded out while the focus is in the rows (not dismissed): opacity only, nothing moves */
   .hc.away { opacity: 0; pointer-events: none; }

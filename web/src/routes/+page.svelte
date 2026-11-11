@@ -2,6 +2,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
+  import { afterNavigate } from '$app/navigation';
   import { get } from 'svelte/store';
   import { api, ApiError, getActiveProfile, type Item } from '#lib/api';
   import BrandHubs from '#lib/BrandHubs.svelte';
@@ -157,7 +158,9 @@
     if (!document.activeElement || document.activeElement === document.body) document.querySelector<HTMLElement>('[data-autofocus]')?.focus({ preventScroll: true });
   }
   // ---- TV remote: the card's action takes the focus only if it shows within 2 s of mount and before any key (spec 2.4) ----
-  let mountedAt = 0, keyPressed = false, focusDecided = false;
+  let mountedAt = 0, keyPressed = false, focusDecided = false, backNav = false;
+  // Back / Forward to the start page: the layout puts the focus back where the viewer was (a row card, a button); the card never competes
+  afterNavigate((nav) => { if (nav.type === 'popstate') backNav = true; });
   onMount(() => {
     mountedAt = Date.now();
     const onKey = () => { keyPressed = true; };
@@ -171,9 +174,13 @@
   $: if (tvOffer && !focusDecided) void takeFocus();
   async function takeFocus() {
     focusDecided = true;
-    if (!shouldTakeFocus({ mountedAt, arrivedAt: Date.now(), keyPressed })) return;
+    if (backNav || !shouldTakeFocus({ mountedAt, arrivedAt: Date.now(), keyPressed })) return;
     await tick();
-    if (!keyPressed) document.querySelector<HTMLElement>('section.tile [data-handoff] a[href]')?.focus({ preventScroll: true });
+    // only while the card shows (focus in the tile) and the focus is not placed yet, or rests on the tile's Play (the layout's
+    // first focus). Not relying on `inert`: Chromium 85 / 87 lack it, and `.focus()` would land on the faded card there.
+    const a = document.activeElement;
+    const free = !a || a === document.body || a.matches('section.tile [data-autofocus]');
+    if (!keyPressed && free && get(tvFocus) === null) document.querySelector<HTMLElement>('section.tile [data-handoff] a[href]')?.focus({ preventScroll: true });
   }
   onMount(() => {
     rowsAt = Date.now(); // the first screen just loaded them
