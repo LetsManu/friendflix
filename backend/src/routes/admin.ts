@@ -7,6 +7,7 @@ import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
 import type { Ctx } from '../ctx.js';
 import { revokeSessions } from '../devices.js';
 import { loginUi } from '../akflow.js';
+import { dropPartyDenied } from '../partySockets.js';
 import { adminOverview, revokeLicense } from '../downloads.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { ERROR_SOURCES, listErrors } from '../errorlog.js';
@@ -266,7 +267,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const role = (req.params as { role: string }).role;
     if (!(await roleExists(ctx, role))) return reply.code(404).send({ error: 'not_found' });
     const { changed, reapplied } = await writeRole(ctx, req.user!.id, role, rolePatch.parse(req.body));
-    if (changed.includes('party')) await (await import('../partySockets.js')).dropPartyDenied(ctx); // the role's accounts that lost `party` lose their open party sockets
+    if (changed.includes('party')) await dropPartyDenied(ctx); // the role's accounts that lost `party` lose their open party sockets
     if (reapplied.failed) return reply.code(502).send({ error: 'policy_partial', failed: reapplied.failed, identities: reapplied.identities });
     return { ok: true, reapplied };
   });

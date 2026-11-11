@@ -29,7 +29,7 @@ const fakeSession = (userId: string, sid: string) =>
 beforeAll(async () => {
   env = await makeEnv({
     'POST /Users/[^/]+/Policy': (u) => (failPolicyFor && u.pathname.includes(failPolicyFor) ? { status: 500, raw: 'nope' } : { status: 204 }),
-  }, { seerr: { 'GET /api/v1/user/[0-9]+': (u) => ({ json: { id: Number(u.pathname.split('/').pop()) } }) } });
+  }, { seerr: { 'GET /api/v1/user': () => ({ json: { results: [], pageInfo: { results: 0 } } }), 'POST /api/v1/user/import-from-jellyfin': () => ({ status: 500, raw: 'nope' }), 'GET /api/v1/user/[0-9]+': (u) => ({ json: { id: Number(u.pathname.split('/').pop()) } }) } });
   admin = await env.login();
   adminId = (await env.pool.query("select id from users where authentik_sub='sub-admin'")).rows[0].id;
   ids.anna = await addUser('anna', 'Anna', 'friend');
@@ -469,5 +469,17 @@ describe('rights filters, columns and bulk rights', () => {
     const r = await bulk({ ids: [ids.anna, ids.ben], action: 'repair' });
     expect([r.statusCode, r.json()]).toEqual([200, { done: 1, failed: 1 }]);
     expect((await audits('user.repair', ids.ben!)).length).toBe(1); // still audited
+  });
+
+  it('perm filter: the admin role has every switch on, a stored override does not count', async () => {
+    await env.pool.query("insert into user_limits(user_id, perms) values ($1, '{\"party\": false}')", [adminId]);
+    expect(await names('?perm=party:on')).toContain('Admin');
+    expect(await names('?perm=party:off')).not.toContain('Admin');
+  });
+
+  it('bulk repair of an unmapped account whose request-service user cannot be created counts it as failed', async () => {
+    await env.pool.query('update users set seerr_user_id = null where id=$1', [ids.ben]);
+    const r = await bulk({ ids: [ids.anna, ids.ben], action: 'repair' });
+    expect([r.statusCode, r.json()]).toEqual([200, { done: 1, failed: 1 }]);
   });
 });
