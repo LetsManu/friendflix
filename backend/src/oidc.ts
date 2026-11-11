@@ -20,6 +20,24 @@ export const RESET_PIN_MAX_AGE = 120;
 export const freshAuth = (authTime: number | undefined, maxAge: number, nowMs = Date.now()): boolean =>
   typeof authTime === 'number' && Number.isFinite(authTime) && nowMs / 1000 - authTime <= maxAge + 30 && authTime - nowMs / 1000 <= 30;
 
+/**
+ * max_age (seconds) of a sign-in through the identity provider's own page. Authentik 2026.8.3 honours a positive max_age on every request
+ * (authorize.py l.535-549: the session's login event older than max_age sends the person to the login page; after that login the event
+ * is new, so it cannot loop unless more than this many seconds pass between the login stage and the authorize request), whereas max_age=0
+ * is ignored (l.145, l.535: falsy) and prompt=login works once per session only (l.552-560). 60 s leaves room for a slow second factor.
+ */
+export const SIGNIN_MAX_AGE = 60;
+/** clock skew (seconds) allowed between this server and the identity provider */
+export const AUTH_SKEW_S = 30;
+
+/**
+ * true when the IdP login (`authTime`, seconds) happened no earlier than `startedMs` (when this sign-in began, from the saved login)
+ * minus the skew, and not in the future (+ skew). The sign-in's own rule: it holds whatever the IdP did with prompt/max_age.
+ */
+export const signedInAfter = (authTime: number | undefined, startedMs: number | undefined, nowMs = Date.now()): boolean =>
+  typeof authTime === 'number' && Number.isFinite(authTime) && typeof startedMs === 'number' && Number.isFinite(startedMs)
+  && authTime >= startedMs / 1000 - AUTH_SKEW_S && authTime <= nowMs / 1000 + AUTH_SKEW_S;
+
 export interface LoginStart {
   url: string;
   state: string;
@@ -31,9 +49,10 @@ export interface LoginStart {
 export interface OidcProvider {
   /**
    * forceLogin: re-authentication (prompt=login, max_age=0), used by the forgotten-PIN reset and /auth/reauth.
+   * maxAge: a plain sign-in through the IdP's page: max_age (positive, SIGNIN_MAX_AGE), no prompt.
    * silent: prompt=none, the in-app sign-in's authorize through the flow executor's Authentik session (never shown to a browser).
    */
-  start(opts?: { forceLogin?: boolean; silent?: boolean }): Promise<LoginStart>;
+  start(opts?: { forceLogin?: boolean; silent?: boolean; maxAge?: number }): Promise<LoginStart>;
   /** maxAge: the id_token must carry an auth_time at most that many seconds old (validated by openid-client) */
   finish(currentUrl: URL, saved: Omit<LoginStart, 'url'>, opts?: { maxAge?: number }): Promise<OidcClaims>;
   /** drops a cached discovery (createLazyOidc); called when PUBLIC_URL or an OIDC_* setting changes */
@@ -119,7 +138,7 @@ export async function createAuthentikProvider(cfg: Config): Promise<OidcProvider
         code_challenge_method: 'S256',
         state,
         nonce,
-        ...(opts?.forceLogin ? { prompt: 'login', max_age: '0' } : opts?.silent ? { prompt: 'none' } : {}),
+        ...(opts?.forceLogin ? { prompt: 'login', max_age: '0' } : opts?.silent ? { prompt: 'none' } : opts?.maxAge ? { max_age: String(opts.maxAge) } : {}),
       });
       return { url: url.toString(), state, nonce, codeVerifier };
     },

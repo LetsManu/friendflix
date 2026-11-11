@@ -15,11 +15,11 @@ import { deviceHasSession } from '../devices.js';
 import { deletePushSubscriptions } from '../push.js';
 import { enrollFlowUrl, lookupInvite } from '../invites.js';
 import { listProfiles, publicProfile } from '../profiles.js';
-import { freshAuth, RESET_PIN_MAX_AGE, type OidcClaims } from '../oidc.js';
+import { freshAuth, RESET_PIN_MAX_AGE, SIGNIN_MAX_AGE, signedInAfter, type OidcClaims } from '../oidc.js';
 import { HttpError, accountSerial, getUserById, getUserBySub, provisionUser } from '../users.js';
 import { restoreDeletion } from '../deletion.js';
 import {
-  accountBeingDeleted, applyAdminPolicy, issueSession, kidLockedDevice, PENDING_COOKIE, RESET_BLOCKED, RESTORE_COOKIE, resolveLogin,
+  accountBeingDeleted, applyAdminPolicy, issueSession, kidLockedDevice, PENDING_COOKIE, RESET_BLOCKED, RESET_STALE, RESTORE_COOKIE, resolveLogin,
   restorableUntil, verifyPending, verifyRestore,
 } from '../loginFinish.js';
 import { REAUTH_MAX_AGE, stampReauth } from '../reauth.js';
@@ -41,6 +41,8 @@ const ENROLL_TTL = 1800;
 /** where a re-authentication may return to: a local path only (no `//host`, no scheme, no backslash) */
 const REAUTH_NEXT = /^\/(?!\/)[A-Za-z0-9/_?=&.-]{0,200}$/;
 const REAUTH_DEFAULT_NEXT = '/me/account';
+/** the sign-in page's notice for a sign-in through the IdP's page that the IdP did not ask credentials for again */
+export const LOGIN_STALE = '/login?stale=1';
 const REAUTH_FAILED = '/me/account?reauth=failed';
 
 /** The OIDC flow state kept in kv `oidc:<state>` between /auth/login (… /auth/reauth) and /auth/callback. */
@@ -48,6 +50,8 @@ interface SavedLogin {
   state: string;
   nonce: string;
   codeVerifier: string;
+  /** ms since epoch when this sign-in began: the IdP login (auth_time) must not be older than this minus the clock skew */
+  startedAt?: number;
   invite?: string;
   resetPin?: boolean;
   /** the invite enrollment's authorize (/auth/enroll): the IdP session is created by the enrollment flow itself, so no forced login */
@@ -66,13 +70,17 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /**
    * Starts an OIDC login; the invite (if any) travels in the server-side state to /auth/callback.
-   * Every interactive sign-in forces a new login at the IdP (prompt=login, max_age=0): FriendFlix's logout does not end the IdP session,
-   * so without it a live IdP cookie would sign the person in again with no passkey or password. Only the invite enrollment is exempt.
+   * FriendFlix's logout does not end the IdP session, so a live IdP cookie must not sign the person in again with no passkey or password.
+   * The rule that holds whatever the IdP does: the callback accepts a login only when its auth_time is not older than `startedAt` (saved
+   * here) minus the clock skew. The request asks for it with max_age=SIGNIN_MAX_AGE (Authentik 2026.8.3 honours a positive value on every
+   * request and shows its login page for an older session; prompt=login would do so once per session only and max_age=0 is ignored, see
+   * oidc.ts). A re-authentication keeps prompt=login + max_age=0. The invite enrollment sends no parameter (its flow logs the new person
+   * in itself, possibly minutes later) but is checked against its start like the others.
    */
   async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number, opts: { resetPin?: boolean; reauth?: SavedLogin['reauth']; setup?: string; enroll?: boolean } = {}) {
-    const s = await ctx.oidc.start(opts.enroll ? undefined : { forceLogin: true });
+    const s = await ctx.oidc.start(opts.enroll ? undefined : opts.reauth ? { forceLogin: true } : { maxAge: SIGNIN_MAX_AGE });
     const saved: SavedLogin = {
-      state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite,
+      state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, startedAt: Date.now(), invite,
       ...(opts.resetPin ? { resetPin: true } : {}), ...(opts.reauth ? { reauth: opts.reauth } : {}), ...(opts.setup ? { setup: opts.setup } : {}), ...(opts.enroll ? { enroll: true } : {}),
     };
     await ctx.kv.set(`oidc:${s.state}`, JSON.stringify(saved), ttl);
@@ -195,11 +203,14 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       if (firstAdmin && (saved.reauth || !(await isSetupSession(ctx, req, saved.setup)))) return reply.redirect(SETUP_EXPIRED);
       // order matters (phase 2 ruling F15): a re-authentication is handled first, before any account lookup or provisioning
       if (saved.reauth) return await finishReauth(req, reply, { ...saved, reauth: saved.reauth });
-      // forgotten PIN: the IdP must really have asked for the login again (auth_time), a still valid IdP session is not enough
-      // every other interactive sign-in too: the id_token must carry an auth_time at most RESET_PIN_MAX_AGE old (openid-client validates
-      // maxAge, the freshAuth check below is the same rule on the claims, with the clock skew), so a surviving IdP session is not enough
-      const claims = await ctx.oidc.finish(callbackUrl(req), saved, saved.enroll ? undefined : { maxAge: RESET_PIN_MAX_AGE });
-      if (!saved.enroll && !saved.resetPin && !freshAuth(claims.authTime, RESET_PIN_MAX_AGE)) throw new Error('stale or missing auth_time'); // 401 login_failed; the reset has its own screen
+      // the IdP must really have asked for the login for this sign-in (auth_time not before its start, and, apart from the enrollment, not
+      // older than RESET_PIN_MAX_AGE), a still valid IdP session is not enough. The check is ours (no maxAge for the library): a refused one
+      // is a page that says what happened, not a JSON answer
+      const claims = await ctx.oidc.finish(callbackUrl(req), saved);
+      if (!signedInAfter(claims.authTime, saved.startedAt) || (!saved.enroll && !freshAuth(claims.authTime, RESET_PIN_MAX_AGE))) {
+        req.log.warn({ route: '/auth/callback', code: claims.authTime === undefined ? 'auth_time_missing' : 'auth_time_stale' }, 'sign-in refused: the identity provider did not authenticate again');
+        return reply.redirect(firstAdmin ? SETUP_EXPIRED : saved.resetPin ? RESET_STALE : LOGIN_STALE);
+      }
       if (firstAdmin) {
         // the account is being deleted (claimed by the deletion tick): no first admin either (F15 step 2; resolveLogin checks it below)
         if (await accountBeingDeleted(ctx, claims.sub)) return reply.code(403).send({ error: 'account_deleted' });

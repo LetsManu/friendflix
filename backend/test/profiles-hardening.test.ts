@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
-import { freshAuth, RESET_PIN_MAX_AGE } from '../src/oidc.js';
+import { freshAuth, SIGNIN_MAX_AGE } from '../src/oidc.js';
 import { ownerProfile } from '../src/profiles.js';
 import { makeEnv, type Handler, type TestEnv } from './helpers.js';
 
@@ -160,15 +160,15 @@ describe('profile hardening', () => {
     const oid = await ownerId();
     expect((await call(s, 'PUT', `/api/profiles/${oid}/pin`, { pin: '1234' })).statusCode).toBe(200);
     await env.kv.set(`pinfail:${oid}`, '5', 60);
-    const starts: Array<{ forceLogin?: boolean } | undefined> = [];
+    const starts: Array<{ forceLogin?: boolean; maxAge?: number } | undefined> = [];
     const orig = env.ctx.oidc.start;
     env.ctx.oidc.start = (o) => { starts.push(o); return orig(o); };
     // plain login keeps the PIN
     await env.login();
     expect((await env.pool.query('select pin_hash from profiles where id=$1', [oid])).rows[0].pin_hash).toBeTruthy();
-    expect(starts.at(-1)).toEqual({ forceLogin: true }); // every sign-in forces the IdP login now
+    expect(starts.at(-1)).toEqual({ maxAge: SIGNIN_MAX_AGE }); // every sign-in asks the IdP for a login at most that old
     const l = await env.app.inject('/auth/login?resetPin=1');
-    expect(starts.at(-1)).toEqual({ forceLogin: true });
+    expect(starts.at(-1)).toEqual({ maxAge: SIGNIN_MAX_AGE });
     const st = l.cookies.find((x) => x.name === 'ff_oidc')!.value;
     expect(JSON.parse((await env.kv.get(`oidc:${st}`))!).resetPin).toBe(true);
     const cb = await env.app.inject({ url: `/auth/callback?state=${st}&code=c`, cookies: { ff_oidc: st } });
@@ -199,11 +199,11 @@ describe('profile hardening', () => {
       expect(cb.cookies.find((c) => c.name === 'ff_sid')).toBeUndefined();
       expect(await pin()).toBeTruthy();
     }
-    expect(seen.at(-1)).toEqual({ maxAge: RESET_PIN_MAX_AGE });
+    expect(seen.at(-1)).toBeUndefined(); // the freshness check is bound to the start of the sign-in (auth.ts), not to the library's maxAge
     // a normal login needs a fresh auth_time as well (same bound)
     env.claims.current = { ...env.claims.current, authTime: Math.floor(Date.now() / 1000) } as typeof env.claims.current;
     await env.login();
-    expect(seen.at(-1)).toEqual({ maxAge: RESET_PIN_MAX_AGE });
+    expect(seen.at(-1)).toBeUndefined();
     expect((await reset(Math.floor(Date.now() / 1000) - 10)).headers.location).toBe('/');
     expect(await pin()).toBeNull();
   });

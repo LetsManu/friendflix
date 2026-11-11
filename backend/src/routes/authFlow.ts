@@ -200,6 +200,9 @@ function outcomeStep(out: LoginOutcome): FlowStep {
   }
 }
 
+/** whether Authentik's own passkey challenge asks for user verification (not the default FriendFlix fills in for the browser) */
+const idpDemandsUv = (challenge: RawChallenge): boolean => (challenge.passkey_challenge as { userVerification?: unknown } | null | undefined)?.userVerification === 'required';
+
 type SilentResult = { claims: OidcClaims } | { step: FlowStep };
 
 /**
@@ -562,7 +565,8 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     const first = ident ? toStep(challenge, jar, jar.step, appHost(ctx.cfg)) : null;
     // a re-authentication proves presence of the person, not only of a device: offered only when Authentik demands user verification
     // (fingerprint, face or PIN) for this passkey; a stage with `preferred` / `discouraged` keeps the password
-    const passkeyAlt = first !== null && 'stage' in first && first.stage === 'identify' && first.passkey !== null && first.passkey.userVerification === 'required';
+    // (Authentik's own value: a challenge that names none is sent to the browser as required, but that is not Authentik's demand)
+    const passkeyAlt = first !== null && 'stage' in first && first.stage === 'identify' && first.passkey !== null && idpDemandsUv(challenge);
     if (method === 'passkey') {
       if (!passkeyAlt) {
         await endAkSession(ctx, jar);
@@ -593,7 +597,7 @@ export function authFlowRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       const { challenge } = await akExec(ctx, jar, 'GET', undefined, req.ip);
       const step = challenge.component === 'ak-stage-identification' ? toStep(challenge, jar, jar.step, appHost(ctx.cfg)) : null;
-      if (step && 'stage' in step && step.stage === 'identify' && step.passkey?.userVerification === 'required') {
+      if (step && 'stage' in step && step.stage === 'identify' && step.passkey !== null && idpDemandsUv(challenge)) {
         const { out, live } = await advance(req, reply, flowId, jar, challenge, true);
         if (live) {
           setAltCookie(reply, flowId);
