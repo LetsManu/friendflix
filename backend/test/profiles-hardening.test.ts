@@ -166,7 +166,7 @@ describe('profile hardening', () => {
     // plain login keeps the PIN
     await env.login();
     expect((await env.pool.query('select pin_hash from profiles where id=$1', [oid])).rows[0].pin_hash).toBeTruthy();
-    expect(starts.at(-1)?.forceLogin).toBeFalsy();
+    expect(starts.at(-1)).toEqual({ forceLogin: true }); // every sign-in forces the IdP login now
     const l = await env.app.inject('/auth/login?resetPin=1');
     expect(starts.at(-1)).toEqual({ forceLogin: true });
     const st = l.cookies.find((x) => x.name === 'ff_oidc')!.value;
@@ -200,10 +200,10 @@ describe('profile hardening', () => {
       expect(await pin()).toBeTruthy();
     }
     expect(seen.at(-1)).toEqual({ maxAge: RESET_PIN_MAX_AGE });
-    // a normal login is not affected by an old auth_time
-    env.claims.current = { ...env.claims.current, authTime: 1 } as typeof env.claims.current;
+    // a normal login needs a fresh auth_time as well (same bound)
+    env.claims.current = { ...env.claims.current, authTime: Math.floor(Date.now() / 1000) } as typeof env.claims.current;
     await env.login();
-    expect(seen.at(-1)).toBeUndefined();
+    expect(seen.at(-1)).toEqual({ maxAge: RESET_PIN_MAX_AGE });
     expect((await reset(Math.floor(Date.now() / 1000) - 10)).headers.location).toBe('/');
     expect(await pin()).toBeNull();
   });

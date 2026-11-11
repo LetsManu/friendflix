@@ -15,7 +15,7 @@ import { deviceHasSession } from '../devices.js';
 import { deletePushSubscriptions } from '../push.js';
 import { enrollFlowUrl, lookupInvite } from '../invites.js';
 import { listProfiles, publicProfile } from '../profiles.js';
-import { RESET_PIN_MAX_AGE, type OidcClaims } from '../oidc.js';
+import { freshAuth, RESET_PIN_MAX_AGE, type OidcClaims } from '../oidc.js';
 import { HttpError, accountSerial, getUserById, getUserBySub, provisionUser } from '../users.js';
 import { restoreDeletion } from '../deletion.js';
 import {
@@ -50,6 +50,8 @@ interface SavedLogin {
   codeVerifier: string;
   invite?: string;
   resetPin?: boolean;
+  /** the invite enrollment's authorize (/auth/enroll): the IdP session is created by the enrollment flow itself, so no forced login */
+  enroll?: boolean;
   /** a re-authentication of the session of `userId`: the callback only stamps that session, then returns to `next` */
   reauth?: { userId: string; next: string };
   /**
@@ -64,13 +66,14 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /**
    * Starts an OIDC login; the invite (if any) travels in the server-side state to /auth/callback.
-   * resetPin (forgotten owner PIN) and reauth (re-authentication of a session) force a new login at the IdP.
+   * Every interactive sign-in forces a new login at the IdP (prompt=login, max_age=0): FriendFlix's logout does not end the IdP session,
+   * so without it a live IdP cookie would sign the person in again with no passkey or password. Only the invite enrollment is exempt.
    */
-  async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number, opts: { resetPin?: boolean; reauth?: SavedLogin['reauth']; setup?: string } = {}) {
-    const s = await ctx.oidc.start({ forceLogin: Boolean(opts.resetPin || opts.reauth) });
+  async function startLogin(reply: FastifyReply, invite: string | undefined, ttl: number, opts: { resetPin?: boolean; reauth?: SavedLogin['reauth']; setup?: string; enroll?: boolean } = {}) {
+    const s = await ctx.oidc.start(opts.enroll ? undefined : { forceLogin: true });
     const saved: SavedLogin = {
       state: s.state, nonce: s.nonce, codeVerifier: s.codeVerifier, invite,
-      ...(opts.resetPin ? { resetPin: true } : {}), ...(opts.reauth ? { reauth: opts.reauth } : {}), ...(opts.setup ? { setup: opts.setup } : {}),
+      ...(opts.resetPin ? { resetPin: true } : {}), ...(opts.reauth ? { reauth: opts.reauth } : {}), ...(opts.setup ? { setup: opts.setup } : {}), ...(opts.enroll ? { enroll: true } : {}),
     };
     await ctx.kv.set(`oidc:${s.state}`, JSON.stringify(saved), ttl);
     reply.setCookie(OIDC_COOKIE, s.state, { httpOnly: true, secure: secure(), sameSite: 'lax', path: '/auth', maxAge: ttl }); // binds the flow to this browser
@@ -107,7 +110,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!invite || !inv) return reply.code(410).send({ error: 'invite_invalid' });
     if (!inv.authentik_invite || !enrollFlowUrl(ctx.cfg, inv.authentik_invite)) return reply.redirect(`/auth/login?invite=${encodeURIComponent(invite)}`);
     if (await appLogin(req.query as Record<string, string | undefined>)) return reply.redirect(`/login?invite=${encodeURIComponent(invite)}&enroll=1`);
-    const authorize = await startLogin(reply, invite, ENROLL_TTL);
+    const authorize = await startLogin(reply, invite, ENROLL_TTL, { enroll: true });
     return reply.redirect(enrollFlowUrl(ctx.cfg, inv.authentik_invite, authorize)!);
   });
 
@@ -193,7 +196,10 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       // order matters (phase 2 ruling F15): a re-authentication is handled first, before any account lookup or provisioning
       if (saved.reauth) return await finishReauth(req, reply, { ...saved, reauth: saved.reauth });
       // forgotten PIN: the IdP must really have asked for the login again (auth_time), a still valid IdP session is not enough
-      const claims = await ctx.oidc.finish(callbackUrl(req), saved, saved.resetPin ? { maxAge: RESET_PIN_MAX_AGE } : undefined);
+      // every other interactive sign-in too: the id_token must carry an auth_time at most RESET_PIN_MAX_AGE old (openid-client validates
+      // maxAge, the freshAuth check below is the same rule on the claims, with the clock skew), so a surviving IdP session is not enough
+      const claims = await ctx.oidc.finish(callbackUrl(req), saved, saved.enroll ? undefined : { maxAge: RESET_PIN_MAX_AGE });
+      if (!saved.enroll && !saved.resetPin && !freshAuth(claims.authTime, RESET_PIN_MAX_AGE)) throw new Error('stale or missing auth_time'); // 401 login_failed; the reset has its own screen
       if (firstAdmin) {
         // the account is being deleted (claimed by the deletion tick): no first admin either (F15 step 2; resolveLogin checks it below)
         if (await accountBeingDeleted(ctx, claims.sub)) return reply.code(403).send({ error: 'account_deleted' });
