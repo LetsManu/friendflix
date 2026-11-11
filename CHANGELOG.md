@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [3.3.0] – Churros – 2026-11-11
+
 ### Upgrade notes
 - **HEVC conversions are off until Jellyfin and a test allow them.** `HEVC_STREAMS` is `2` by default, but the server never converts to HEVC until a timed test of its encoder has passed, and it allows only one at a time while that test stayed below 3× real time. To use it, switch on hardware encoding, *Allow encoding in HEVC format* and, on an Intel N5095 class chip, the low-power HEVC encoder in Jellyfin, then press *Check HEVC now* in *Admin → Status*. HEVC files that a device plays, HEVC remuxing and 5.1 sound need no setup. Steps: [docs/operations.md](docs/operations.md#hevc-umwandlung-und-surround-ton). HEVC and surround on FriendFlix's own Chromecast receiver need nothing either, but only a registered receiver ([docs/cast-receiver.md](docs/cast-receiver.md)) can use them.
 
