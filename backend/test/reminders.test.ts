@@ -17,9 +17,11 @@ let env: TestEnv;
 let a: { cookies: Record<string, string>; csrf: string };
 let b: { cookies: Record<string, string>; csrf: string };
 const mediaStatus: Record<string, number | undefined> = {};
+/** Jellyfin users that may not see the film (library access) */
+const hiddenFor = new Set<string>();
 const library = new Map<string, string>(); // 'movie:603' -> jf id
 /** a title enters the library: the provider id index (kv, 30 min) forgets what it knew */
-const own = async (key: string, id: string) => { library.set(key, id); for (const k of await env.kv.keys('jf:providers')) await env.kv.del(k); };
+const own = async (key: string, id: string) => { library.set(key, id); await (env.ctx.jf as any).resetLibraryIndex(); };
 const episodes = new Map<string, { virtual: boolean }>();
 const realEps = new Map<string, Array<{ Id: string; IndexNumber: number; LocationType: string }>>(); // `${series}:${season}`
 let seriesHasFile = false;
@@ -34,6 +36,7 @@ beforeAll(async () => {
       const id = u.pathname.split('/').pop()!;
       if (id === EP || id === EP2) return { json: epJson(id) };
       if (id === SERIES) return { json: { Id: SERIES, Name: 'Show', Type: 'Series' } };
+      if (id === MOVIE && hiddenFor.has(u.searchParams.get('userId') ?? '')) return { status: 404 };
       if (id === MOVIE) return { json: { Id: MOVIE, Name: 'Film', Type: 'Movie' } };
       return { status: 404 };
     },
@@ -115,6 +118,21 @@ describe('reminders', () => {
     expect((await call(a, 'GET', '/api/reminders')).json().reminders).toEqual([]);
     const n = (await env.pool.query("select link from notifications where kind='reminder'")).rows[0];
     expect(n.link).toBe(`/item/${MOVIE}`);
+  });
+
+  it('the reminder links to the title only for a recipient who can see it', async () => {
+    await env.pool.query('truncate reminders');
+    await env.pool.query('truncate notifications');
+    const [ua, ub] = [await uid('Admin'), await uid('Bea')];
+    for (const w of [a, b]) expect((await call(w, 'POST', '/api/reminders', { mediaType: 'movie', tmdbId: 1300 })).statusCode).toBe(200);
+    await own('movie:1300', MOVIE);
+    hiddenFor.add((await env.pool.query('select jellyfin_user_id from users where id=$1', [ub])).rows[0].jellyfin_user_id);
+    try {
+      const r = await env.app.inject({ method: 'POST', url: '/internal/webhook/seerr', headers: secret, payload: { notification_type: 'MEDIA_AVAILABLE', subject: 'Dunmoor 4', media: { media_type: 'movie', tmdbId: '1300' }, request: { request_id: '78' } } });
+      expect(r.statusCode).toBe(200);
+    } finally { hiddenFor.clear(); }
+    const links = Object.fromEntries((await env.pool.query("select user_id, link from notifications where kind='reminder'")).rows.map((n) => [n.user_id, n.link]));
+    expect(links).toEqual({ [ua]: `/item/${MOVIE}`, [ub]: '/' }); // Bea cannot see it: no link to a page that would say "not found"
   });
 
   it('personal push never reaches Discord or the global ntfy topic', async () => {

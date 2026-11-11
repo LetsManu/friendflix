@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { handleMediaEvent } from '../src/media/events.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 
 // Jellyfin's /Items has no provider id filter (anyProviderIdEquals is ignored, the library's first items come back): the lookups by TMDB / TVDB id
@@ -28,7 +29,8 @@ beforeAll(async () => {
 afterAll(() => env.close());
 afterEach(() => { vi.useRealTimers(); });
 beforeEach(async () => {
-  for (const k of await env.kv.keys('jf:provider')) await env.kv.del(k);
+  await (env.ctx.jf as any).resetLibraryIndex(); // memory and kv
+  vi.useRealTimers();
   items = []; failListing = false; listings = 0; env.jfCalls.length = 0;
 });
 
@@ -78,22 +80,103 @@ describe('library lookups by provider id (index of the admin listing)', () => {
     failListing = true;
     const r = await Promise.allSettled([env.ctx.jf.findByTmdb(5, 'movie'), env.ctx.jf.findSeriesByTvdb!(7)]);
     expect(r.map((x) => x.status)).toEqual(['rejected', 'rejected']);
-    expect(await env.kv.keys('jf:provider')).toEqual([]);
+    expect(await env.kv.keys('jf:provider')).toEqual(['jf:providers:fail']); // no index, only the minute's memory of the failure
     failListing = false;
+    await (env.ctx.jf as any).resetLibraryIndex();
     expect(await env.ctx.jf.findByTmdb(5, 'movie')).toEqual({ id: lib(1).Id, name: 'Fiction 1' });
   });
 
-  it('a miss against an index older than a minute builds it once more (a title added since is found), a fresh index is not rebuilt for a miss', async () => {
+  const MIN = 60_000;
+  const at = (ms: number) => vi.setSystemTime(new Date(Date.parse('2026-11-11T10:00:00Z') + ms));
+  const settle = () => vi.waitFor(() => { if ((env.ctx.jf as any).providerIndexBuild) throw new Error('building'); });
+
+  it('the parsed index stays in memory: later lookups read neither kv nor the listing', async () => {
+    items = [lib(1, { Type: 'Movie', ProviderIds: { Tmdb: '5' } })];
+    await env.ctx.jf.findByTmdb(5, 'movie');
+    const realGet = env.kv.get.bind(env.kv);
+    let reads = 0;
+    env.kv.get = async (k: string) => { if (k.startsWith('jf:providers')) reads++; return realGet(k); };
+    try {
+      for (let i = 0; i < 20; i++) await env.ctx.jf.findByTmdb(i % 2 ? 5 : 99, 'movie');
+    } finally { env.kv.get = realGet; }
+    expect(reads).toBe(0);
+    expect(listing().length).toBe(1);
+  });
+
+  it('after a restart (memory empty) the kv copy is used and parsed once', async () => {
+    items = [lib(1, { Type: 'Movie', ProviderIds: { Tmdb: '5' } })];
+    await env.ctx.jf.findByTmdb(5, 'movie');
+    (env.ctx.jf as any).providerMemo = null; // what a new process has
+    expect(await env.ctx.jf.findByTmdb(5, 'movie')).not.toBeNull();
+    expect(listing().length).toBe(1);
+  });
+
+  it('an index past its lifetime answers at once from the stale copy and is refreshed in the background; a miss never rebuilds', async () => {
     items = [lib(1, { Type: 'Movie', ProviderIds: { Tmdb: '5' } })];
     vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-11T10:00:00Z') });
+    await env.ctx.jf.findByTmdb(5, 'movie');
+    expect(await env.ctx.jf.findByTmdb(6, 'movie')).toBeNull(); // a miss: no rebuild however old the copy is not yet
+    at(10 * MIN);
     expect(await env.ctx.jf.findByTmdb(6, 'movie')).toBeNull();
-    expect(await env.ctx.jf.findByTmdb(7, 'movie')).toBeNull();
-    expect(listing().length).toBe(1); // a second miss within the minute: no new listing
-    items.push(lib(2, { Type: 'Movie', ProviderIds: { Tmdb: '6' } }));
-    vi.setSystemTime(new Date('2026-11-11T10:01:30Z'));
-    expect(await env.ctx.jf.findByTmdb(5, 'movie')).not.toBeNull(); // a hit never rebuilds
     expect(listing().length).toBe(1);
+    items.push(lib(2, { Type: 'Movie', ProviderIds: { Tmdb: '6' } }));
+    at(31 * MIN);
+    expect(await env.ctx.jf.findByTmdb(6, 'movie')).toBeNull(); // answered from the stale copy, no waiting
+    expect(await env.ctx.jf.findByTmdb(5, 'movie')).not.toBeNull();
+    await settle();
+    expect(listing().length).toBe(2); // one refresh, however many lookups
     expect(await env.ctx.jf.findByTmdb(6, 'movie')).toEqual({ id: lib(2).Id, name: 'Fiction 2' });
+    expect(listing().length).toBe(2);
+  });
+
+  it('a cold start (no copy anywhere) waits for the listing', async () => {
+    items = [lib(1, { Type: 'Series', ProviderIds: { Tvdb: '9' } })];
+    expect(await env.ctx.jf.findSeriesByTvdb!(9)).toEqual({ id: lib(1).Id, name: 'Fiction 1' });
+    expect(listing().length).toBe(1);
+  });
+
+  it('a failed build is remembered for 60 s (memory and kv): lookups throw at once without listing again, then it is tried again', async () => {
+    items = [lib(1, { Type: 'Movie', ProviderIds: { Tmdb: '5' } })];
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-11T10:00:00Z') });
+    failListing = true;
+    await expect(env.ctx.jf.findByTmdb(5, 'movie')).rejects.toThrow();
+    expect(listing().length).toBe(1);
+    failListing = false;
+    at(30_000);
+    await expect(env.ctx.jf.findByTmdb(5, 'movie')).rejects.toThrow();
+    (env.ctx.jf as any).providerFailure = null; // another process / a restart: the kv marker alone does it
+    await expect(env.ctx.jf.findSeriesByTvdb!(5)).rejects.toThrow();
+    expect(listing().length).toBe(1);
+    at(61_000);
+    expect(await env.ctx.jf.findByTmdb(5, 'movie')).not.toBeNull();
+    expect(listing().length).toBe(2);
+  });
+
+  it('a failing refresh keeps the stale copy in service', async () => {
+    items = [lib(1, { Type: 'Movie', ProviderIds: { Tmdb: '5' } })];
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-11T10:00:00Z') });
+    await env.ctx.jf.findByTmdb(5, 'movie');
+    failListing = true;
+    at(31 * MIN);
+    expect(await env.ctx.jf.findByTmdb(5, 'movie')).not.toBeNull();
+    await settle();
+    expect(await env.ctx.jf.findByTmdb(5, 'movie')).not.toBeNull(); // still answered, the failure only blocks new tries for a minute
+  });
+
+  it('the library change signal (itemAdded / itemRemoved of a film or series on the media event path) marks the index stale: the next lookup refreshes it in the background', async () => {
+    items = [lib(1, { Type: 'Movie', ProviderIds: { Tmdb: '5' } })];
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-11T10:00:00Z') });
+    await env.ctx.jf.findByTmdb(5, 'movie');
+    items.push(lib(2, { Type: 'Movie', ProviderIds: { Tmdb: '6' } }));
+    await handleMediaEvent(env.ctx, { type: 'itemAdded', itemId: lib(2).Id, itemType: 'Movie' });
+    at(2 * MIN); // past the minimum gap between refreshes
+    expect(await env.ctx.jf.findByTmdb(6, 'movie')).toBeNull(); // the stale copy answers first
+    await settle();
+    expect(await env.ctx.jf.findByTmdb(6, 'movie')).toEqual({ id: lib(2).Id, name: 'Fiction 2' });
+    expect(listing().length).toBe(2);
+    await handleMediaEvent(env.ctx, { type: 'itemAdded', itemId: 'x', itemType: 'Episode' }); // an episode changes no film or series id
+    await env.ctx.jf.findByTmdb(6, 'movie');
+    await settle();
     expect(listing().length).toBe(2);
   });
 });

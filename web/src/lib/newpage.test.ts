@@ -6,7 +6,7 @@ import { LOCALES, setLocale, tr } from '#lib/i18n';
 import { reasonText } from './reason';
 import {
   daysSince, episodeItem, filterItems, filterKeyTarget, filterSearch, freshText, kindOf, matchesFilter, NEW_TITLE_DAYS, parseFilter, planSections, withinDays,
-  availableTabs, forYouItems, completeSuggestions, earlySuggestions, openRequests, wishStateOf, pageSearch, parseTab, quotaExhausted, quotaLeft, tabKeyTarget,
+  availableTabs, forYouItems, completeSuggestions, earlySuggestions, runGuard, openRequests, wishStateOf, pageSearch, parseTab, quotaExhausted, quotaLeft, tabKeyTarget,
   type NewData, type NewEpisode, type Suggestion, type Up,
 } from './newpage';
 
@@ -239,6 +239,20 @@ describe('suggestions and wishes', () => {
     const done = completeSuggestions(shown, first, late);
     expect(ids(done)).toEqual([1, 2, 10, 11, 12, 3, 4]); // the shown prefix is intact, the late half comes next, then the rest of the early one
     expect(ids(done.slice(0, shown.length))).toEqual(ids(shown));
+  });
+  it('under a film-only or series-only filter the early half is not capped: the other half holds no slots', () => {
+    const first = [sug(1, 'movie'), sug(2, 'movie'), sug(3, 'movie'), sug(4, 'movie'), sug(5, 'movie')];
+    expect(ids(earlySuggestions(first, 4, false))).toEqual([1, 2, 3, 4]);
+    expect(ids(earlySuggestions(first, 4, true))).toEqual([1, 2]);
+  });
+  it('a run guard lets only the latest run write', () => {
+    const g = runGuard();
+    const a = g.start();
+    expect(g.stale(a)).toBe(false);
+    const b = g.start(); // the service went away and came back: a second run
+    expect([g.stale(a), g.stale(b)]).toEqual([true, false]);
+    g.cancel(); // the service went away
+    expect(g.stale(b)).toBe(true);
   });
   it('a half that is empty or failed leaves its slots to the other; doubles are dropped; the list is capped', () => {
     const first = [sug(1, 'movie'), sug(2, 'movie'), sug(3, 'movie')];

@@ -148,6 +148,18 @@ test.describe('new & upcoming, variant B (desktop)', () => {
     await expect(ms.locator('li.skc')).toHaveCount(0);
   });
 
+  test('under the films filter a slow series list holds no slots: the films show in full and the filler takes the rest at once', async ({ page, api }) => {
+    test.setTimeout(30_000);
+    api.newPage.suggestions = { ...SUGGESTIONS };
+    await page.route('**/api/library/request-suggestions?type=series', async (r) => { await new Promise((res) => setTimeout(res, 5000)); await r.fallback(); });
+    await page.goto('/new?type=movie');
+    const ms = region(page, 'Noch nicht bei uns');
+    await expect(ms.getByText('Tin Meadow')).toBeVisible({ timeout: 3000 });
+    await expect(ms.getByText('Copper Sky')).toBeVisible();
+    await expect(ms.getByRole('button', { name: /Etwas fehlt\?/ })).toBeVisible({ timeout: 3000 }); // not after the 5 s of the series
+    await expect(ms.locator('li.skc')).toHaveCount(0);
+  });
+
   test('the request service is slow: Für dich and the library do not wait for it, and nothing moves when it gives up', async ({ page, api }) => {
     test.setTimeout(70_000);
     api.newPage.suggestions = { ...SUGGESTIONS };

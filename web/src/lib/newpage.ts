@@ -108,7 +108,14 @@ export const quotaExhausted = (q: Quota | null | undefined): boolean => quotaLef
  * The films and the series suggestions arrive separately (a cached list is quick, a cold one is not) and the cards on screen must not move when the
  * second one comes. The first to arrive shows at most half of the slots (rounded up), the other slots stay placeholders ...
  */
-export const earlySuggestions = (first: readonly Suggestion[], slots: number): Suggestion[] => first.slice(0, Math.ceil(slots / 2));
+export const earlySuggestions = (first: readonly Suggestion[], slots: number, shared = true): Suggestion[] => first.slice(0, shared ? Math.ceil(slots / 2) : slots);
+/** (`shared` = both halves count for the current filter; under a film-only or series-only filter the other half holds no slots, so the early one takes them all) */
+
+/** Lets only the latest of several overlapping loads write its result (the service may go away and come back while a load is in flight). */
+export function runGuard() {
+  let n = 0;
+  return { start: (): number => ++n, cancel: (): void => { n++; }, stale: (run: number): boolean => run !== n };
+}
 /** ... and the late half goes behind what is shown, then the rest of the early one (an empty or failed half leaves its slots to the other); a title that came twice stays once, at most `max`. */
 export function completeSuggestions(shown: readonly Suggestion[], first: readonly Suggestion[], late: readonly Suggestion[], max = 12): Suggestion[] {
   const out: Suggestion[] = [], seen = new Set<string>();

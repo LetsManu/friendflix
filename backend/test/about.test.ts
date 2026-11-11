@@ -148,7 +148,8 @@ beforeEach(async () => {
   for (const n of ['tmdb', 'omdb'] as const) { await removeSourceKey(env.ctx, n); await resetSourceState(env.ctx, n); }
   await env.kv.del(`src:omdb:calls:${new Date().toISOString().slice(0, 10)}`);
   extCalls.length = 0;
-  for (const k of [...await env.kv.keys('about:'), ...await env.kv.keys('jf:providers')]) await env.kv.del(k);
+  for (const k of await env.kv.keys('about:')) await env.kv.del(k);
+  await (env.ctx.jf as any).resetLibraryIndex();
   tmdbMode = 'ok'; omdbMode = 'ok'; libHasPart3 = false; providerFilterIgnored = false;
   await env.pool.query("update users set role='admin' where authentik_sub='sub-admin'");
   await env.pool.query("update users set role='friend' where authentik_sub='sub-b'");
@@ -323,7 +324,8 @@ describe('fix round 1: collection edge cases', () => {
     await about(bea, CUR);
     expect(lookups()).toBe(1);
     libHasPart3 = true;
-    for (const k of [...await env.kv.keys('about:'), ...await env.kv.keys('jf:providers')]) await env.kv.del(k); // the library changed: the lookups start afresh
+    for (const k of await env.kv.keys('about:')) await env.kv.del(k);
+  await (env.ctx.jf as any).resetLibraryIndex(); // the library changed: the lookups start afresh
     // the "in the library" answer still goes through the viewer's item(): hidden → omitted
     await about(owner);
     const b = await about(bea);

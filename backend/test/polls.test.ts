@@ -11,11 +11,13 @@ const A = 'a'.repeat(32), B = 'b'.repeat(32), SERIES = 'c'.repeat(32);
 let env: TestEnv;
 let admin: { cookies: Record<string, string>; csrf: string };
 let libraryHasDune = false;
+/** the library has the title but the creator may not see it (library access) */
+let hideDune = false;
 let imported = '';
 
 beforeAll(async () => {
   env = await makeEnv({
-    'GET /Items/[^/]+': (u) => { const id = u.pathname.split('/').pop()!; return { json: { Id: id, Name: id === A ? 'Ashfall' : id === B ? 'Brasswind' : 'Serie', Type: id === SERIES ? 'Series' : 'Movie' } }; },
+    'GET /Items/[^/]+': (u) => { const id = u.pathname.split('/').pop()!; if (hideDune && id === 'd'.repeat(32)) return { status: 404 }; return { json: { Id: id, Name: id === A ? 'Ashfall' : id === B ? 'Brasswind' : 'Serie', Type: id === SERIES ? 'Series' : 'Movie' } }; },
     'GET /Items': (u) => u.searchParams.get('ids') ? { json: { Items: u.searchParams.get('ids')!.split(',').map((Id) => ({ Id, Name: Id === A ? 'Ashfall' : 'Brasswind', Type: 'Movie' })) } } : (u.searchParams.get('fields') === 'ProviderIds'
       ? { json: { Items: libraryHasDune ? [{ Id: 'd'.repeat(32), Name: 'Dunmoor', Type: 'Movie', ProviderIds: { Tmdb: '900001' } }] : [] } } // the listing of the provider id index; the real server has no provider id filter
       : { json: { Items: [] } }),
@@ -76,11 +78,25 @@ describe('polls', () => {
     await resolveRequestedPolls(env.ctx);
     expect((await call('GET', `/api/polls/${id}`)).json().status).toBe('requested'); // not in library yet
     libraryHasDune = true;
-    for (const k of await env.kv.keys('jf:providers')) await env.kv.del(k);
+    await (env.ctx.jf as any).resetLibraryIndex();
+    hideDune = true; // the poll's creator cannot see the title: it is not scheduled for a party that cannot play it
+    await seerrHooks.run(env.ctx, { type: 'available', tmdbId: 900001, mediaType: 'movie' });
+    expect((await call('GET', `/api/polls/${id}`)).json().status).toBe('requested');
+    hideDune = false;
     await seerrHooks.run(env.ctx, { type: 'available', tmdbId: 900001, mediaType: 'movie' });
     const done = (await call('GET', `/api/polls/${id}`)).json();
     expect(done.status).toBe('scheduled');
     expect(parties.get(done.roomId)!.itemId).toBe('d'.repeat(32));
+  });
+
+  it('a wish option whose title is in the library but not visible to the creator is left out', async () => {
+    libraryHasDune = true; hideDune = true;
+    await (env.ctx.jf as any).resetLibraryIndex();
+    for (const u of (await env.pool.query<{ jellyfin_user_id: string }>('select jellyfin_user_id from users')).rows) await env.ctx.jf.touchUserData(u.jellyfin_user_id); // the earlier tests memoised the item as visible
+    try {
+      const r = await call('POST', '/api/polls', { title: 'Unsichtbar', options: [{ tmdbId: 900001, mediaType: 'movie' }, { jfItemId: A }], closesInMinutes: 5 });
+      expect(r.statusCode).toBe(400); // one option is left: "need two distinct options"
+    } finally { libraryHasDune = false; hideDune = false; await (env.ctx.jf as any).resetLibraryIndex(); }
   });
 
   it('polls without votes are cancelled; invalid options rejected', async () => {

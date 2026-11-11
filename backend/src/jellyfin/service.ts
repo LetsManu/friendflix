@@ -25,10 +25,15 @@ import type { CapReason, EncoderSettings } from '../media/types.js';
 const TOKEN_TTL = 6 * 3600;
 const BOXSET_INDEX_KEY = 'jf:boxsets:v1';
 const PROVIDER_INDEX_KEY = 'jf:providers:v1';
-const PROVIDER_INDEX_TTL = 30 * 60;
+const PROVIDER_FAIL_KEY = 'jf:providers:fail';
+const PROVIDER_INDEX_TTL_MS = 30 * 60_000;
+/** the kv copy outlives the 30 minutes: a restart answers from it (stale) while the refresh runs */
+const PROVIDER_INDEX_KV_TTL = 24 * 3600;
+const PROVIDER_FAIL_MS = 60_000;
+/** refreshes of the index start at least this far apart, however often the library changes */
+const PROVIDER_INDEX_MIN_GAP_MS = 60_000;
 const PROVIDER_INDEX_PAGE = 500;
-const PROVIDER_INDEX_MISS_REFRESH_MS = 60_000;
-interface ProviderIndex { at: number; map: Map<string, { id: string; name: string }> }
+interface ProviderIndex { at: number; /** when the listing began: a change after that leaves the index stale */ startedAt: number; map: Map<string, { id: string; name: string }> }
 /** a safety stop: 200 000 titles */
 const PROVIDER_INDEX_MAX = 200_000;
 const BOXSET_INDEX_TTL = 3600;
@@ -726,42 +731,100 @@ export class JellyfinService implements MediaServer {
     if (!res.ok) throw new JellyfinError(res.status, `report ${kind} -> ${res.status}`);
   }
 
+  private providerMemo: ProviderIndex | null = null;
   private providerIndexBuild: Promise<ProviderIndex> | null = null;
+  private providerFailure: { until: number; message: string } | null = null;
+  private providerChangedAt = 0;
+  private providerRefreshAt = 0;
+
+  /** A film or series was added or removed (the media event path): the index is stale, the next lookup refreshes it in the background. */
+  invalidateLibraryIndex(): void {
+    this.providerChangedAt = Date.now();
+  }
+
+  /** Forgets the index everywhere (memory and kv); the next lookup lists the library again. */
+  async resetLibraryIndex(): Promise<void> {
+    this.providerMemo = null; this.providerFailure = null; this.providerChangedAt = 0; this.providerRefreshAt = 0;
+    await this.kv.del(PROVIDER_INDEX_KEY).catch(() => undefined);
+    await this.kv.del(PROVIDER_FAIL_KEY).catch(() => undefined);
+  }
+
+  /** a failed build is remembered for a minute (memory and kv, so other processes and restarts do not list a broken server again at once) */
+  private async recentFailure(): Promise<Error | null> {
+    const now = Date.now();
+    if (this.providerFailure && this.providerFailure.until > now) return new Error(this.providerFailure.message);
+    const until = Number(await this.kv.get(PROVIDER_FAIL_KEY).catch(() => null));
+    return until > now ? new Error('library listing failed a moment ago') : null;
+  }
+
   /**
    * Films and series by provider id: `tmdb:Movie:<id>`, `tmdb:Series:<id>`, `tvdb:Series:<id>` -> { id, name }. Jellyfin's /Items has no provider id filter
    * (an `anyProviderIdEquals` parameter is silently ignored and the first items of the library come back), so the index is built from a paged admin
-   * listing with fields=ProviderIds, kept 30 minutes in kv and built once at a time. The ids are compared exactly (the map key). A failing page rejects the build.
+   * listing with fields=ProviderIds. The parsed index stays in memory; the kv copy (written over, never deleted) serves a restart. Past its lifetime
+   * (30 min) or after a library change (invalidateLibraryIndex) it keeps answering while one background refresh runs (at most one a minute); only a
+   * cold start with no copy waits for the listing. A failed build rejects (callers treat that as "unknown") and is not retried for a minute.
    */
-  private providerIndex(): Promise<ProviderIndex> {
-    if (this.providerIndexBuild) return this.providerIndexBuild;
-    const build = (async () => {
+  private async providerIndex(): Promise<Map<string, { id: string; name: string }>> {
+    let memo = this.providerMemo;
+    if (!memo) {
       const cached = await this.kv.get(PROVIDER_INDEX_KEY).catch(() => null);
       if (cached) {
         try {
           const c = JSON.parse(cached) as { at: number; e: Array<[string, string, string]> };
-          return { at: c.at, map: new Map(c.e.map(([k, id, name]) => [k, { id, name }] as const)) };
+          memo = { at: c.at, startedAt: c.at, map: new Map(c.e.map(([k, id, name]) => [k, { id, name }] as const)) };
+          this.providerMemo = memo;
         } catch { /* rebuild */ }
       }
-      const index = new Map<string, { id: string; name: string }>();
-      for (let start = 0; start < PROVIDER_INDEX_MAX; start += PROVIDER_INDEX_PAGE) {
-        const p = new URLSearchParams({
-          recursive: 'true', includeItemTypes: 'Movie,Series', sortBy: 'SortName,Id', sortOrder: 'Ascending', fields: 'ProviderIds',
-          enableImages: 'false', enableUserData: 'false', enableTotalRecordCount: 'false', startIndex: String(start), limit: String(PROVIDER_INDEX_PAGE),
-        });
-        const r = await this.client.adminJson<{ Items?: Array<{ Id?: string; Name?: string; Type?: string; ProviderIds?: Record<string, unknown> }> }>(`/Items?${p}`);
-        const page = r?.Items ?? [];
-        for (const i of page) {
-          if (!i?.Id || (i.Type !== 'Movie' && i.Type !== 'Series')) continue;
-          const ids = toProviderIds(i.ProviderIds);
-          const entry = { id: i.Id, name: String(i.Name ?? '') };
-          if (ids.tmdb && /^\d+$/.test(ids.tmdb) && !index.has(`tmdb:${i.Type}:${ids.tmdb}`)) index.set(`tmdb:${i.Type}:${ids.tmdb}`, entry);
-          if (i.Type === 'Series' && ids.tvdb && /^\d+$/.test(ids.tvdb) && !index.has(`tvdb:Series:${ids.tvdb}`)) index.set(`tvdb:Series:${ids.tvdb}`, entry);
+    }
+    if (memo) {
+      if (Date.now() - memo.at >= PROVIDER_INDEX_TTL_MS || this.providerChangedAt >= memo.startedAt) this.refreshProviderIndex();
+      return memo.map;
+    }
+    const failed = await this.recentFailure();
+    if (failed) throw failed;
+    return (await this.buildProviderIndex()).map;
+  }
+
+  private refreshProviderIndex(): void {
+    if (this.providerIndexBuild || Date.now() - this.providerRefreshAt < PROVIDER_INDEX_MIN_GAP_MS) return;
+    if (this.providerFailure && this.providerFailure.until > Date.now()) return;
+    this.buildProviderIndex().catch(() => undefined); // the stale copy keeps serving
+  }
+
+  private buildProviderIndex(): Promise<ProviderIndex> {
+    if (this.providerIndexBuild) return this.providerIndexBuild;
+    const startedAt = Date.now();
+    this.providerRefreshAt = startedAt;
+    const build = (async () => {
+      try {
+        const index = new Map<string, { id: string; name: string }>();
+        for (let start = 0; start < PROVIDER_INDEX_MAX; start += PROVIDER_INDEX_PAGE) {
+          const p = new URLSearchParams({
+            recursive: 'true', includeItemTypes: 'Movie,Series', sortBy: 'SortName,Id', sortOrder: 'Ascending', fields: 'ProviderIds',
+            enableImages: 'false', enableUserData: 'false', enableTotalRecordCount: 'false', startIndex: String(start), limit: String(PROVIDER_INDEX_PAGE),
+          });
+          const r = await this.client.adminJson<{ Items?: Array<{ Id?: string; Name?: string; Type?: string; ProviderIds?: Record<string, unknown> }> }>(`/Items?${p}`);
+          const page = r?.Items ?? [];
+          for (const i of page) {
+            if (!i?.Id || (i.Type !== 'Movie' && i.Type !== 'Series')) continue;
+            const ids = toProviderIds(i.ProviderIds);
+            const entry = { id: i.Id, name: String(i.Name ?? '') };
+            if (ids.tmdb && /^\d+$/.test(ids.tmdb) && !index.has(`tmdb:${i.Type}:${ids.tmdb}`)) index.set(`tmdb:${i.Type}:${ids.tmdb}`, entry);
+            if (i.Type === 'Series' && ids.tvdb && /^\d+$/.test(ids.tvdb) && !index.has(`tvdb:Series:${ids.tvdb}`)) index.set(`tvdb:Series:${ids.tvdb}`, entry);
+          }
+          if (page.length < PROVIDER_INDEX_PAGE) break;
         }
-        if (page.length < PROVIDER_INDEX_PAGE) break;
+        const memo: ProviderIndex = { at: Date.now(), startedAt, map: index };
+        this.providerMemo = memo;
+        this.providerFailure = null;
+        await this.kv.set(PROVIDER_INDEX_KEY, JSON.stringify({ at: memo.at, e: [...index].map(([k, v]) => [k, v.id, v.name]) }), PROVIDER_INDEX_KV_TTL).catch(() => undefined);
+        return memo;
+      } catch (e) {
+        const until = Date.now() + PROVIDER_FAIL_MS;
+        this.providerFailure = { until, message: e instanceof Error ? e.message : 'library listing failed' };
+        await this.kv.set(PROVIDER_FAIL_KEY, String(until), Math.ceil(PROVIDER_FAIL_MS / 1000)).catch(() => undefined);
+        throw e;
       }
-      const at = Date.now();
-      await this.kv.set(PROVIDER_INDEX_KEY, JSON.stringify({ at, e: [...index].map(([k, v]) => [k, v.id, v.name]) }), PROVIDER_INDEX_TTL).catch(() => undefined);
-      return { at, map: index };
     })();
     this.providerIndexBuild = build;
     const clear = () => { if (this.providerIndexBuild === build) this.providerIndexBuild = null; };
@@ -772,23 +835,13 @@ export class JellyfinService implements MediaServer {
   /** Library lookup by TMDB id (used to link finished requests to library items, the request suggestions, polls, reminders). Throws when the library cannot be listed. */
   async findByTmdb(tmdbId: number, mediaType: string): Promise<{ id: string; name: string } | null> {
     if (!Number.isInteger(tmdbId) || tmdbId <= 0) return null;
-    return this.lookup(`tmdb:${mediaType === 'tv' ? 'Series' : 'Movie'}:${tmdbId}`);
-  }
-
-  /** From the index; a miss against an index older than a minute builds it once more first (a title added since is found soon, a stream of misses costs one listing a minute). */
-  private async lookup(key: string): Promise<{ id: string; name: string } | null> {
-    let idx = await this.providerIndex();
-    const hit = idx.map.get(key);
-    if (hit || Date.now() - idx.at < PROVIDER_INDEX_MISS_REFRESH_MS) return hit ?? null;
-    await this.kv.del(PROVIDER_INDEX_KEY).catch(() => undefined);
-    idx = await this.providerIndex();
-    return idx.map.get(key) ?? null;
+    return (await this.providerIndex()).get(`tmdb:${mediaType === 'tv' ? 'Series' : 'Movie'}:${tmdbId}`) ?? null;
   }
 
   /** Series lookup by TVDB id (libraries without TMDB ids, typical for anime). */
   async findSeriesByTvdb(tvdbId: number): Promise<{ id: string; name: string } | null> {
     if (!Number.isInteger(tvdbId) || tvdbId <= 0) return null;
-    return this.lookup(`tvdb:Series:${tvdbId}`);
+    return (await this.providerIndex()).get(`tvdb:Series:${tvdbId}`) ?? null;
   }
 
   /** A series counts as available once at least one real (non-placeholder) episode exists. */

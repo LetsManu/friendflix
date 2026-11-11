@@ -24,7 +24,7 @@
   import { t } from '#lib/i18n';
   import { runtimeLabel, sortUpcoming } from '#lib/mobile';
   import {
-    episodeItem, FILTER_PARAM, SUGGEST_TIMEOUT_MS, availableTabs, forYouItems, freshText, completeSuggestions, earlySuggestions, NEW_TITLE_DAYS, openRequests, pageSearch, parseFilter, parseTab, planSections, quotaLeft, TAB_PARAM,
+    episodeItem, FILTER_PARAM, SUGGEST_TIMEOUT_MS, availableTabs, forYouItems, freshText, completeSuggestions, earlySuggestions, runGuard, NEW_TITLE_DAYS, openRequests, pageSearch, parseFilter, parseTab, planSections, quotaLeft, TAB_PARAM,
     withinDays, type NewData, type NewEpisode, type NewFilter, type NewTab, type Suggestion, type Up,
   } from '#lib/newpage';
   import FilterBar from '#lib/new/FilterBar.svelte';
@@ -48,8 +48,11 @@
   const SECTION_TIMEOUT_MS = 8000;
   /** the calls the first view waits for: given up sooner (the server keeps building and caches it for the next visit); the suggestions have their own, longer SUGGEST_TIMEOUT_MS */
   const FAST_TIMEOUT_MS = 4000;
-  /** one half of the suggestions is still on its way */
-  let suggestLoading = false;
+  /** which halves of the suggestions are still on their way */
+  let pendingMovies = false, pendingSeries = false;
+  /** a placeholder is only kept for a half that counts under the filter */
+  $: suggestLoading = (pendingMovies && filter !== 'series') || (pendingSeries && filter !== 'movie');
+  const wishRun = runGuard();
   let d: NewData = { forYou: null, newSeries: null, newMovies: null, episodes: null, week: null, upcoming: null, suggest: null };
   let now = Date.now();
   let mounted = false;
@@ -114,7 +117,8 @@
   $: if (!requests && wishStarted) {
     wishStarted = false;
     d = { ...d, suggest: null, upcoming: null };
-    suggestLoading = false;
+    wishRun.cancel();
+    pendingMovies = pendingSeries = false;
   }
   async function loadWishData() {
     void Promise.all([section<Up>('/api/seerr/upcoming?type=movie', (r) => r.results), section<Up>('/api/seerr/upcoming?type=tv', (r) => r.results)])
@@ -127,19 +131,20 @@
     // the first to arrive takes at most half of the slots, the second fills the others behind it: the cards on screen never move
     let m: Answer | null = null, s: Answer | null = null;
     let early: Suggestion[] | null = null, shown: Suggestion[] = [];
-    suggestLoading = true;
+    const run = wishRun.start(); // a load that is overtaken (the service went away and came back) writes nothing
+    pendingMovies = pendingSeries = true;
     const arrive = (items: Suggestion[]) => {
-      if (!requests) return; // the request service went away while this was on its way
-      if (early === null) { early = items; shown = earlySuggestions(items, slots); set('suggest', shown); }
+      if (wishRun.stale(run)) return;
+      if (early === null) { early = items; shown = earlySuggestions(items, slots, filter === 'all'); set('suggest', shown); }
       else set('suggest', completeSuggestions(shown, early, items));
     };
     await Promise.all([
-      fetchJson<Answer>('/api/library/request-suggestions?type=movie', SUGGEST_TIMEOUT_MS).then((r) => { m = r; arrive(r?.items ?? []); }),
-      fetchJson<Answer>('/api/library/request-suggestions?type=series', SUGGEST_TIMEOUT_MS).then((r) => { s = r; arrive(r?.items ?? []); }),
+      fetchJson<Answer>('/api/library/request-suggestions?type=movie', SUGGEST_TIMEOUT_MS).then((r) => { m = r; if (!wishRun.stale(run)) pendingMovies = false; arrive(r?.items ?? []); }),
+      fetchJson<Answer>('/api/library/request-suggestions?type=series', SUGGEST_TIMEOUT_MS).then((r) => { s = r; if (!wishRun.stale(run)) pendingSeries = false; arrive(r?.items ?? []); }),
     ]);
+    if (wishRun.stale(run)) return;
     const q = m?.quota ?? s?.quota ?? null;
     if (q) quota.set(q); else void loadQuota();
-    suggestLoading = false;
   }
 
   /** grown-up profile with a request service (as far as we know: the hint of the last visit until /api/me answered) */

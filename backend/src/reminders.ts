@@ -3,13 +3,15 @@
 import type { Ctx } from './ctx.js';
 import { m } from './i18n.js';
 import { notify } from './notify.js';
-import type { JfUser, UserRow } from './types.js';
+import { jfUserFor } from './profiles.js';
+import type { JfUser, ProfileRow, UserRow } from './types.js';
 
 type Db = Pick<Ctx, 'db' | 'cfg' | 'fetchImpl'>;
 
 interface ReminderRow {
   id: string;
   user_id: string;
+  profile_id: string | null;
   kind: 'tmdb' | 'episode';
   media_type: 'movie' | 'tv' | null;
   tmdb_id: number | null;
@@ -48,6 +50,7 @@ export async function fireTmdb(ctx: Db & Pick<Ctx, 'jf'>, mediaType: string, tmd
   // a series shell with only announced (virtual) episodes is not watchable yet
   if (mediaType === 'tv' && !(itemId && (await seriesHasEpisode(ctx, itemId).catch(() => false)))) return 0;
   let sent = 0;
+  const sees = new Map<string, boolean>(); // per viewer identity: one item() call, however many reminders
   for (const r of rows) {
     if (!(await claim(ctx, r.id))) continue;
     // the requester already gets "avail-<seerr request id>" for the same title: one notification is enough
@@ -56,12 +59,25 @@ export async function fireTmdb(ctx: Db & Pick<Ctx, 'jf'>, mediaType: string, tmd
         where s.user_id = $1 and s.tmdb_id = $2 and s.media_type = $3`, [r.user_id, tmdbId, mediaType]);
     if (req.rowCount) continue;
     const ok = await notify(ctx, {
-      userId: r.user_id, kind: 'reminder', title: m('title.available', { title: r.title }), link: itemId ? `/item/${itemId}` : '/',
+      userId: r.user_id, kind: 'reminder', title: m('title.available', { title: r.title }), link: itemId && (await canSee(ctx, sees, r, itemId)) ? `/item/${itemId}` : '/',
       dedupe: `remind-${r.id}`, personal: true,
     });
     if (ok) sent++;
   }
   return sent;
+}
+
+/** The title was found with the admin key: only a recipient (the profile that asked) who may see it gets a link to it. Not knowing counts as not seeing. */
+async function canSee(ctx: Db & Pick<Ctx, 'jf'>, memo: Map<string, boolean>, r: ReminderRow, itemId: string): Promise<boolean> {
+  try {
+    const u = (await ctx.db.query<UserRow>('select * from users where id=$1', [r.user_id])).rows[0];
+    if (!u) return false;
+    const p = r.profile_id ? (await ctx.db.query<ProfileRow>('select * from profiles where id=$1 and user_id=$2', [r.profile_id, r.user_id])).rows[0] : undefined;
+    const viewer = p ? jfUserFor(u, p) : u;
+    const key = viewer.jellyfin_user_id;
+    if (!memo.has(key)) memo.set(key, await ctx.jf.item(viewer, itemId).then(() => true, () => false));
+    return memo.get(key)!;
+  } catch { return false; }
 }
 
 async function fireEpisodeRow(ctx: Db, r: ReminderRow, realId: string): Promise<boolean> {
