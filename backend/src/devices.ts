@@ -4,6 +4,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { revokeCasts } from './cast.js';
 import type { Ctx } from './ctx.js';
+import { noteClientKind } from './deviceKind.js';
 import { revokeDownloads } from './downloads.js';
 import { m, msg, userLanguage, type Language } from './i18n.js';
 import { notify } from './notify.js';
@@ -27,13 +28,16 @@ export async function registerDevice(ctx: Ctx, req: FastifyRequest, reply: Fasti
   if (!dev || !/^[\w-]{20,60}$/.test(dev)) dev = randomBytes(24).toString('base64url');
   reply.setCookie(DEVICE_COOKIE, dev, { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: 365 * 86400 });
   const existing = await ctx.db.query<{ approved: boolean }>('select approved from devices where user_id=$1 and device_id=$2', [userId, dev]);
+  const ua = String(req.headers['user-agent'] ?? '');
   if (existing.rows[0]) {
     await ctx.db.query('update devices set last_seen=now() where user_id=$1 and device_id=$2', [userId, dev]);
+    await noteClientKind(ctx, userId, dev, ua);
     return { deviceId: dev, approved: existing.rows[0].approved };
   }
-  const name = deviceLabel(String(req.headers['user-agent'] ?? ''), await userLanguage(ctx, userId));
+  const name = deviceLabel(ua, await userLanguage(ctx, userId));
   // atomic (advisory lock inside the sql function): two simultaneous first logins cannot both be auto-approved; null = lost an insert race for the same device
   const ins = await ctx.db.query<{ a: boolean | null }>('select register_device($1,$2,$3) a', [userId, dev, name]);
+  await noteClientKind(ctx, userId, dev, ua);
   const approved = ins.rows[0]!.a ?? (await ctx.db.query<{ approved: boolean }>('select approved from devices where user_id=$1 and device_id=$2', [userId, dev])).rows[0]?.approved ?? false;
   // tell the user's already approved devices (bell + push) that a new one is waiting, with a link to the approval list
   if (!approved) await notify(ctx, { userId, kind: 'device_pending', title: m('device.pending.title'), body: m('device.pending.body', { name }), link: '/devices' }).catch(() => false);

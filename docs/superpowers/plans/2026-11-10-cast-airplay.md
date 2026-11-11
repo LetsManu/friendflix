@@ -598,6 +598,8 @@ Task counts: Phase 1: 14, Phase 2: 4, Phase 3: 10 (5 of them only on GO), Phase 
 - [ ] **Step 3: Verify** root `npm run typecheck`; the three test files.
 - [ ] **Step 4: Commit** `feat(airplay): subtitles travel inside the stream, with a fallback for TVs that refuse them`
 
+> **Superseded (2026-11-11):** Tasks 22–28 below are replaced by Tasks 15–23 of `docs/superpowers/plans/2026-11-11-device-handoff.md` (spec `2026-11-11-device-handoff-design.md` §5: no GO gate, admin switch alone, spike conditions, LG-only acceptance). Do not execute them from here.
+
 ### Task 22: Spike – continuous AirPlay (throwaway branch) + owner GO / NO-GO
 
 **Implementer:** backend + frontend · hard

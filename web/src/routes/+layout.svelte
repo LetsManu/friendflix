@@ -397,6 +397,11 @@
         if (el) return put(el);
       } else if (main?.querySelector('[data-autofocus]') ? focusFirst(main, false) : i >= 4 && focusFirst(main, false)) return;
     }
+    // TV: the remembered element never came (e.g. the hand-off card's link: no card on the way back from the player). The focus
+    // must not stay on <body> with nothing on screen focused: the page's first element ([data-autofocus] first) takes it.
+    if (!want || !tv || my !== settleSeq) return;
+    const main = document.querySelector('main'), now = document.activeElement;
+    if (!(now instanceof HTMLElement && now !== document.body && now.isConnected && main?.contains(now))) focusFirst(main, false);
   }
   afterNavigate((nav) => {
     const { to, type } = nav;

@@ -435,7 +435,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   const dropHint = (s: Live) => { if (!s.air) clearHint(deps.store); };
   const report = (s: Live, kind: 'start' | 'progress' | 'stop', ci: CastInfo, keepalive = false): Promise<unknown> => call(`/api/playback/${kind}`, {
     method: 'POST',
-    body: { itemId: s.view.itemId, playSessionId: ci.playSessionId, mediaSourceId: ci.mediaSourceId, positionTicks: secToTicks(s.view.position), isPaused: s.view.paused, audioIndex: s.audioIndex, playMethod: 'Transcode' },
+    body: { itemId: s.view.itemId, playSessionId: ci.playSessionId, mediaSourceId: ci.mediaSourceId, positionTicks: secToTicks(s.view.position), isPaused: s.view.paused, audioIndex: s.audioIndex, playMethod: 'Transcode', via: s.view.kind },
     ...(keepalive ? { keepalive } : {}),
   }).catch(() => undefined);
   /** the owed `stop` for the live token (resolves at once when none is owed) */
@@ -1202,7 +1202,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
    */
   function closeEnded(p: CastLookup) {
     closed.add(p.castId);
-    void call('/api/playback/stop', { method: 'POST', body: { itemId: p.itemId, playSessionId: p.playSessionId, mediaSourceId: p.mediaSourceId, positionTicks: p.runtimeTicks ?? 0, isPaused: false, playMethod: 'Transcode' } })
+    void call('/api/playback/stop', { method: 'POST', body: { itemId: p.itemId, playSessionId: p.playSessionId, mediaSourceId: p.mediaSourceId, positionTicks: p.runtimeTicks ?? 0, isPaused: false, playMethod: 'Transcode', via: p.via } })
       .catch(() => undefined)
       .then(() => revokeId(p.castId));
     log('info', 'queue', 'ended episode closed after resume');

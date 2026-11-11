@@ -306,6 +306,13 @@ backend --signed request--> updater --(internal net)--> docker-proxy --ro--> /va
 
 **Disable** by adding `compose.no-updater.yaml` to the compose command (or `COMPOSE_FILE`) and removing the running `updater` and `docker-proxy` containers once ([setup.md, Turn it off](setup.md#updater)); nothing else depends on them.
 
+## Continue on another device
+
+- **The answer carries no ids.** `GET /api/handoff` returns the title, the position, the age and the device's kind and name. It has no device id, play session id, address or URL. Its `id` is an opaque hash that only tells the page whether it is the same playback as before. It is `no-store` and rate limited, and the server decides everything from its own clock.
+- **Per profile.** Rows, answers and dismissals belong to one profile. The item is loaded as that profile's media user, so a kids cap or a library change applies; a title that is gone or not allowed deletes the row. Kids profiles get no card.
+- **Hand-off rows are not trusted input.** Only the playback report writes them, from the caller's own session and approved device; the TV probe writes none. They go with the device, the profile or the account.
+- **Renaming is for your own devices.** `PATCH /api/devices/:id` is for grown-ups only, needs the CSRF token and matches the device on the caller's account: a foreign or missing id answers the same 404. The server cleans the name (NFC, at most 40 characters; control, surrogate and direction characters, including the LRM, RLM and ALM marks, are refused; a name of only invisible characters resets to the detected name, and invisible characters inside a visible name are kept). Pages show it as text. The audit entry `device.rename` carries no name.
+
 ## Casts that outlive the tab
 
 A Chromecast cast keeps running when the tab is closed or reloaded (the browser no longer revokes on `pagehide`; AirPlay still does). What changes for the threat model:

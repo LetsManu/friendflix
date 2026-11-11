@@ -113,7 +113,7 @@ export async function activeStreams(ctx: Ctx): Promise<StreamsView> {
   const withDevice = portal.filter((l) => l.deviceId);
   if (withDevice.length) {
     const r = await ctx.db.query<{ user_id: string; device_id: string; label: string | null }>(
-      'select user_id, device_id, label from devices where (user_id, device_id) in (select * from unnest($1::uuid[], $2::text[]))',
+      'select user_id, device_id, coalesce(name, label) as label from devices where (user_id, device_id) in (select * from unnest($1::uuid[], $2::text[]))',
       [withDevice.map((l) => l.userId), withDevice.map((l) => l.deviceId!)]);
     for (const x of r.rows) if (x.label) labels.set(`${x.user_id}|${x.device_id}`, x.label);
   }

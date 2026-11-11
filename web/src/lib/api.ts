@@ -149,7 +149,10 @@ export interface AccountSecurity {
   problem?: 'service_token' | 'unreachable' | 'error' | 'not_configured' | null;
 }
 /** GET /api/devices: the account's own devices */
-export interface OwnDevice { id: string; label: string; approved: boolean; current: boolean; created_at: string; last_seen: string }
+/** what kind of client a device is (from its user agent; null until known) */
+export type ClientKind = 'web' | 'tizen' | 'webos' | 'firetv' | 'desktop' | 'android';
+/** `label` is the auto-detected label and `name` the user's own name; show `deviceName(d, tf)` (#lib/handoff/deviceName), never `label` alone */
+export interface OwnDevice { id: string; label: string; name: string | null; kind: ClientKind | null; approved: boolean; current: boolean; created_at: string; last_seen: string }
 export interface MeProfile { id: string; name: string; avatar: string; isOwner: boolean; kids?: boolean; /** parental cap of a kids profile (0/6/12) */ maxRating?: number }
 
 // ---- shared item cache: the modal / item page render instantly from what a card already had, then revalidate ----

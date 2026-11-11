@@ -134,7 +134,7 @@ export function usageRoutes(app: FastifyInstance, ctx: Ctx) {
            left join play_seconds p on p.user_id = $1 and p.day = g.day::date
           group by g.day order by g.day`, [userId, days]),
       ctx.db.query<{ device_id: string; label: string; last_seen: Date; approved: boolean }>(
-        'select device_id, label, last_seen, approved from devices where user_id = $1', [userId]),
+        'select device_id, coalesce(name, label) as label, last_seen, approved from devices where user_id = $1', [userId]),
       ctx.db.query<{ device_id: string; streams: string; transcodes: string; last_day: string }>(
         `select device_id, sum(streams) streams, sum(transcodes) transcodes, max(day)::text last_day
            from play_daily where user_id = $1 and day > current_date - $2::int group by device_id`, [userId, days]),

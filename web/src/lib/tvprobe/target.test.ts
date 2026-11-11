@@ -30,7 +30,7 @@ describe('fetchProbeTarget', () => {
     await t.report();
     const stop = s.calls.find((c) => c.path === '/api/playback/stop')!;
     expect(stop.init.headers['x-csrf-token']).toBe('tok-1');
-    expect(s.body('/api/playback/stop')).toMatchObject({ itemId: 'i1', playSessionId: 'ps', positionTicks: 4_200_000_000, playMethod: 'DirectPlay' });
+    expect(s.body('/api/playback/stop')).toMatchObject({ itemId: 'i1', playSessionId: 'ps', positionTicks: 4_200_000_000, playMethod: 'DirectPlay', probe: true }); // a test play: never a hand-off source
   });
   it('sends 0 when the info has no resume point', async () => {
     const s = setup();

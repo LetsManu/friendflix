@@ -304,6 +304,22 @@ class CastControllerTest {
         assertEquals(1, host.casting)
     }
 
+    @Test fun reportBodiesCarryVia() {
+        val (_, c) = controller()
+        calls.clear()
+        c.start(film())
+        c.onReceiver(playing("c1", 61_000))
+        c.onReceiver(playing("c1", 62_000))
+        clock += CastController.PROGRESS_MS
+        c.tick()
+        c.stop()
+        val reports = calls.filter { it.first.startsWith("POST /api/playback/") }
+        assertEquals(listOf("stop", "start", "progress", "stop"), reports.map { it.first.removePrefix("POST /api/playback/") })
+        // the phone's own playback (the local reporter's stop before the cast) played on the device itself: no via
+        assertFalse(reports[0].second!!.has("via"))
+        for (r in reports.drop(1)) assertEquals(r.first, "chromecast", r.second!!.getString("via"))
+    }
+
     @Test fun returningResumesAtTheReceiverPosition() {
         val (_, c) = controller()
         c.start(film())
@@ -723,6 +739,7 @@ class CastControllerTest {
         val stop = calls.single { it.first == "POST /api/playback/stop" }.second!!
         assertEquals("ps-$oldId", stop.getString("playSessionId"))
         assertEquals(30L * 60 * 10_000_000, stop.getLong("positionTicks"))
+        assertEquals("a cast report (device hand-off)", "chromecast", stop.getString("via"))
         assertEquals(1, calls.count { it.first == "DELETE /api/cast/session/$oldId" })
         // the hint now names the playing token
         assertEquals(tokenId, hints.h!!.castId)

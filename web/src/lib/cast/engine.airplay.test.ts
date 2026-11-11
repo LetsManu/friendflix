@@ -198,7 +198,7 @@ describe('cast engine: AirPlay adopt', () => {
     env.video.currentTime = 62;
     env.video.fire('playing');
     expect(env.reports()).toEqual(['start']);
-    expect(env.calls[0]!.init.body).toEqual({ itemId: 'film', playSessionId: 'ps-a1', mediaSourceId: 'ms-a1', positionTicks: secToTicks(62), isPaused: false, audioIndex: 1, playMethod: 'Transcode' });
+    expect(env.calls[0]!.init.body).toEqual({ itemId: 'film', playSessionId: 'ps-a1', mediaSourceId: 'ms-a1', positionTicks: secToTicks(62), isPaused: false, audioIndex: 1, playMethod: 'Transcode', via: 'airplay' });
     expect(get(env.out)).toMatchObject({ state: 'playing', buffering: false, position: 62 });
     env.video.fire('playing');
     env.video.currentTime = 70;
@@ -533,6 +533,18 @@ describe('cast engine: AirPlay route loss and reconnect', () => {
 });
 
 describe('cast engine: AirPlay end and stop', () => {
+  it('report bodies carry via', async () => {
+    const env = await setup({ started: false });
+    await env.adopt();
+    env.video.currentTime = 62;
+    env.video.fire('playing');
+    await env.advance(PROGRESS_MS);
+    await env.engine.stop();
+    const sent = env.calls.filter((c) => c.path.startsWith('/api/playback/'));
+    expect(sent.map((c) => c.path)).toEqual(['/api/playback/start', '/api/playback/progress', '/api/playback/stop']);
+    for (const c of sent) expect(c.init.body.via).toBe('airplay');
+  });
+
   it('stop(): controller destroyed, src removed, element removed, null', async () => {
     const env = await setup();
     await env.adopt();

@@ -12,6 +12,7 @@ import { roleAllowsDownloads } from '../downloads.js';
 import { effectiveLimits } from '../limits.js';
 import { DEFAULT_ROLES } from '../roles.js';
 import { deviceHasSession } from '../devices.js';
+import { noteClientKind } from '../deviceKind.js';
 import { deletePushSubscriptions } from '../push.js';
 import { enrollFlowUrl, lookupInvite } from '../invites.js';
 import { listProfiles, publicProfile } from '../profiles.js';
@@ -290,6 +291,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/me', { preHandler: requireUser(ctx, { allowPendingDevice: true, allowNoProfile: true, skipProfileHeader: true }) }, async (req) => {
     const u = req.user!;
+    if (req.session!.deviceId) await noteClientKind(ctx, u.id, req.session!.deviceId, String(req.headers['user-agent'] ?? ''), true);
     const profileCount = (await listProfiles(ctx, u.id)).length;
     const dlRole = await effectiveLimits(ctx, u); // role + the user's own overrides
     const [instLang, profLang, onboarded] = await Promise.all([instanceLanguage(ctx), profileLanguage(ctx, req.profile?.id), profileOnboarded(ctx, req.profile?.id)]);

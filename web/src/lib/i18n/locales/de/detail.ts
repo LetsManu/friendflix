@@ -11,6 +11,9 @@ export default {
     continue: 'Weiter',
     /** resume line of a series: "S2:F5 · Noch 23 Min." */
     episodeCode: 'S{s}:F{e}',
+    /** the title page's hand-off hint replaces the resume line: "Weiter ab {time} (zuletzt auf {device})" */
+    handoffLine: 'Weiter ab {time} (zuletzt auf {device})',
+    handoffAria: '{play}, weiter ab {time}, zuletzt auf {device}',
     myList: 'Merkliste',
     addToList: 'Zur Merkliste hinzufügen',
     removeFromList: 'Von der Merkliste entfernen',

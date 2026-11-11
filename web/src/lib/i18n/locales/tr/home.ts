@@ -64,6 +64,15 @@ const tr: Translation<typeof de> = {
     label: 'Senin için en iyiler',
     slide: '{m} içinde {n}',
   },
+  /** the start page's "continue here" card: what another device played last (spec device hand-off 2.4) */
+  handoff: {
+    region: 'Başka bir cihazda başlatıldı',
+    last: 'Son olarak {device} · {age}',
+    play: 'Buradan devam et, {time}',
+    playAria: 'Buradan devam et: {title}, {time}, son olarak {device}',
+    dismiss: 'Gizle',
+    justNow: 'az önce',
+  },
   row: {
     showAll: 'Tümünü göster',
     prev: 'Geri kaydır',

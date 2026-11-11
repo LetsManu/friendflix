@@ -80,6 +80,20 @@ describe('playOrCast', () => {
       expect(nat.goto).not.toHaveBeenCalled();
     });
 
+    it('explicitStart passes the position on (the hand-off card promises one)', async () => {
+      nat.available = true;
+      const e = tap();
+      expect(playOrCast(e, { id: 'e1', positionTicks: 13_900_000_000 }, { explicitStart: true })).toBe(true);
+      expect(nat.tryPlay).toHaveBeenCalledWith({ id: 'e1', positionTicks: 13_900_000_000 }, {});
+      await settled();
+    });
+
+    it('explicitStart on a cast still plays on the TV at that position', () => {
+      (session.current as Writable<unknown>).set({ device: 'Wohnzimmer-TV' });
+      expect(playOrCast(ev(), { id: 'e1', positionTicks: 13_900_000_000 }, { explicitStart: true })).toBe(true);
+      expect(playOnTv).toHaveBeenCalledWith('e1', 1390);
+    });
+
     /** proves the previous request is finished (pending flag cleared): a tap starts a new request, answered "yes" so it navigates nowhere */
     const settled = async () => {
       nat.tryPlay.mockResolvedValue(true);

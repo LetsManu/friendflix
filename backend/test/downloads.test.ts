@@ -520,6 +520,8 @@ describe('admin overview', () => {
     expect(o).toMatchObject({ enabled: true, diskBytes: 5000, jobCounts: { ready: 1 } });
     expect(o.jobs[0]).toMatchObject({ item_id: MOVIE, licenses: 1 });
     expect(o.licenses[0]).toMatchObject({ id: l.id, user_name: 'Fam', title: 'Der Film' });
+    await env.pool.query("update devices set name = 'Wohnzimmer' where device_id = $1", [o.licenses[0].device_id]);
+    expect((await call(admin, 'GET', '/api/admin/downloads')).json().licenses[0].device_label).toBe('Wohnzimmer'); // the custom name wins
     expect((await call(family, 'GET', '/api/admin/downloads')).statusCode).toBe(403);
     expect((await call(admin, 'DELETE', `/api/admin/downloads/${l.id}`)).statusCode).toBe(200);
     expect((await call(admin, 'DELETE', `/api/admin/downloads/${l.id}`)).statusCode).toBe(404);

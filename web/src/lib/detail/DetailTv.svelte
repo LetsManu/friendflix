@@ -34,6 +34,8 @@
   export let playBase = '';
   export let playHref = '';
   export let playLabel = '';
+  export let handoffProgress = 0;
+  export let playAria: string | undefined = undefined;
   /** audio / subtitle choice as a query string for the player links */
   export let qs = '';
   /** the title Play resumes (a series: its next episode) */
@@ -66,7 +68,8 @@
   $: info = tileInfo(item, $t, $badges[badgeId ?? ''], Date.now());
   $: eyebrow = info.labels.join(' · ');
   $: actors = people.filter((p) => p.type === 'Actor' && p.name).slice(0, 3).map((p) => p.name);
-  $: pct = resumeFrom?.positionTicks && resumeFrom.runtimeTicks ? Math.min(100, Math.max(2, (resumeFrom.positionTicks / resumeFrom.runtimeTicks) * 100)) : 0;
+  $: localPct = resumeFrom?.positionTicks && resumeFrom.runtimeTicks ? Math.min(100, Math.max(2, (resumeFrom.positionTicks / resumeFrom.runtimeTicks) * 100)) : 0;
+  $: pct = localPct ? (handoffProgress ? handoffProgress * 100 : localPct) : 0;
   let logoFailed: Record<string, boolean> = {};
 
   // ---- "story so far" (series): the button only when there is one to show ----
@@ -229,7 +232,7 @@
         {#each ids as id, i (id)}
           <div class="it" data-st hidden={id === 'langs' && !langsOk}>
             {#if id === 'play'}
-              <a class="tv-btn play" data-autofocus={i === 0 ? '' : undefined} href={playHref} use:playPrefetch><Icon name="play" size={24} />{playLabel}</a>
+              <a class="tv-btn play" data-autofocus={i === 0 ? '' : undefined} href={playHref} aria-label={playAria} use:playPrefetch><Icon name="play" size={24} />{playLabel}</a>
             {:else if id === 'restart'}
               <a class="tv-btn" href={restartHref} use:playPrefetch><Icon name="refresh" size={24} />{$t('tv.detail.restart')}</a>
             {:else if id === 'trailer'}
@@ -292,7 +295,8 @@
   .tag { margin: .9rem 0 0; font-size: 1.4rem; font-weight: 500; line-height: 1.35; color: var(--tv-white-88); max-width: 46ch; }
   .ov { margin: .75rem 0 0; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .with { margin: .75rem 0 0; max-width: 46ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  :global(html.tv) .resume { margin: .75rem 0 0; display: flex; align-items: center; gap: .9rem; color: var(--tv-white-88); }
+  :global(html.tv) .resume { margin: .75rem 0 0; max-width: 100%; display: flex; align-items: center; gap: .9rem; color: var(--tv-white-88); }
+  :global(html.tv) .resume > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .bar { position: relative; flex: none; width: 7.5rem; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .22); overflow: hidden; }
   .bar span { position: absolute; inset: 0; background: var(--acc); transform-origin: left center; border-radius: 2px; }
 

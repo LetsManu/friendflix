@@ -394,7 +394,7 @@ describe('cast engine: resume (re-adoption)', () => {
     await flush();
     expect(env.reports()).toEqual(['stop']);
     expect(env.calls.find((c) => c.path === '/api/playback/stop')!.init.body).toEqual({
-      itemId: 'dun4', playSessionId: 'ps-dun4', mediaSourceId: 'ms-dun4', positionTicks: 30_000_000_000, isPaused: false, playMethod: 'Transcode' });
+      itemId: 'dun4', playSessionId: 'ps-dun4', mediaSourceId: 'ms-dun4', positionTicks: 30_000_000_000, isPaused: false, playMethod: 'Transcode', via: 'chromecast' });
     expect(env.deletes()).toEqual([A]);
     expect(get(env.out)).toMatchObject({ itemId: 'dun5', state: 'playing', castId: B });
     expect(env.hint()?.castId).toBe(B);

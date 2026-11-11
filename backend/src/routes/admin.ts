@@ -17,6 +17,7 @@ import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
 import { defaultLimit } from '../requestlimit.js';
 import { DEFAULT_ROLES, INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
+import { cleanDeviceName } from '../deviceName.js';
 import { requireGrownUp } from '../kids.js';
 import { recoIndexState } from '../reco/indexJob.js';
 import { recoStats } from '../reco/engine.js';
@@ -391,13 +392,13 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/admin/devices', admin, async (req) => {
     const p = pageQuery.extend({ status: z.enum(['pending', 'approved']).optional() }).parse(req.query);
     const w = new Where();
-    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(u.name ilike ${m} or coalesce(d.label,'') ilike ${m})`); }
+    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(u.name ilike ${m} or coalesce(d.name, d.label, '') ilike ${m})`); }
     if (p.status) w.add(p.status === 'pending' ? 'not d.approved' : 'd.approved');
-    const order = orderBy({ user: 'lower(u.name)', device: "lower(coalesce(d.label,''))", lastSeen: 'd.last_seen', status: 'd.approved' }, p.sort, p.dir, 'd.approved, d.last_seen desc, d.device_id');
+    const order = orderBy({ user: 'lower(u.name)', device: "lower(coalesce(d.name, d.label, ''))", lastSeen: 'd.last_seen', status: 'd.approved' }, p.sort, p.dir, 'd.approved, d.last_seen desc, d.device_id');
     const from = 'from devices d join users u on u.id = d.user_id';
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c ${from} ${w.sql}`, w.params)).rows[0]!.c);
     const pending = Number((await ctx.db.query<{ c: string }>('select count(*) c from devices where not approved')).rows[0]!.c);
-    const r = await ctx.db.query(`select d.user_id, d.device_id, d.label, d.approved, d.last_seen, u.name ${from} ${w.sql} ${order} limit ${p.limit ?? 300} offset ${p.offset ?? 0}`, w.params);
+    const r = await ctx.db.query(`select d.user_id, d.device_id, coalesce(d.name, d.label) as label, d.approved, d.last_seen, u.name ${from} ${w.sql} ${order} limit ${p.limit ?? 300} offset ${p.offset ?? 0}`, w.params);
     // `current`: the device this admin is using right now (the page offers no revoke for it)
     return { devices: r.rows.map((d) => ({ ...d, current: d.user_id === req.user!.id && d.device_id === req.session!.deviceId })), total, pending };
   });
@@ -439,8 +440,19 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { revoked: n };
   });
   app.get('/api/devices', { preHandler: requireGrownUp(ctx, { allowPendingDevice: true, allowNoProfile: true }) }, async (req) => {
-    const r = await ctx.db.query('select device_id, label, approved, created_at, last_seen from devices where user_id=$1 order by created_at', [req.user!.id]);
-    return { devices: r.rows.map((d) => ({ ...d, id: d.device_id, current: d.device_id === req.session!.deviceId })) };
+    const r = await ctx.db.query('select device_id, label, name, client, approved, created_at, last_seen from devices where user_id=$1 order by created_at', [req.user!.id]);
+    return { devices: r.rows.map(({ client, ...d }) => ({ ...d, kind: client ?? null, id: d.device_id, current: d.device_id === req.session!.deviceId })) };
+  });
+  // the user's own name for one of their devices (null or blank = back to the automatic name); never in the audit meta
+  app.patch('/api/devices/:id', { preHandler: requireGrownUp(ctx), config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);
+    const b = z.object({ name: z.string().nullable() }).safeParse(req.body);
+    const n = cleanDeviceName(b.success ? b.data.name : undefined);
+    if (!n.ok) return reply.code(400).send({ error: 'invalid_name' });
+    const r = await ctx.db.query('update devices set name=$3 where user_id=$1 and device_id=$2', [req.user!.id, id, n.name]);
+    if (!r.rowCount) return reply.code(404).send({ error: 'not_found' });
+    await audit(ctx, req.user!.id, 'device.rename', req.user!.id);
+    return { ok: true, name: n.name };
   });
   app.post('/api/devices/:id/approve', { preHandler: requireOwner(ctx) }, async (req, reply) => {
     const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);

@@ -393,7 +393,7 @@ describe('GET /api/account/export', () => {
     const { s } = await setup();
     fakeHistory();
     const db = env.ctx.db;
-    env.ctx.db = { query: ((sql: string, p?: unknown[]) => (sql.startsWith('select label, approved, created_at, last_seen from devices')
+    env.ctx.db = { query: ((sql: string, p?: unknown[]) => (sql.startsWith('select label, name, approved, created_at, last_seen from devices')
       ? new Promise((_, rej) => setTimeout(() => rej(new Error('db gone')), 50)) : db.query(sql, p))) as typeof db.query };
     const r = await env.app.inject({ method: 'GET', url: '/api/account/export', cookies: s.cookies }).catch((e: Error) => e);
     // before the first bytes reached the socket Fastify still answers 500; after that the transfer is cut off. Never a

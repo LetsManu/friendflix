@@ -287,7 +287,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       ctx.db.query<{ downloads: string; requests: string }>(
         "select (select count(*) from downloads where user_id=$1) downloads, (select count(*) from seerr_requests where user_id=$1 and source='user') requests", [id]),
       listProfiles(ctx, id),
-      ctx.db.query<{ id: string; name: string; last_seen: Date; approved: boolean }>('select device_id id, label name, last_seen, approved from devices where user_id=$1 order by last_seen desc, device_id', [id]),
+      ctx.db.query<{ id: string; name: string; last_seen: Date; approved: boolean }>('select device_id id, coalesce(name, label) name, last_seen, approved from devices where user_id=$1 order by last_seen desc, device_id', [id]),
       userLicenses(ctx, id),
       liveSessions(ctx, id),
       akMfaState(ctx, user.authentik_sub).catch(() => null), // Authentik down: shown like "no Authentik API"

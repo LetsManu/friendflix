@@ -185,9 +185,9 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
   }
   yield field('requests', requests);
 
-  yield field('devices', (await q<{ label: string; approved: boolean; created_at: Date; last_seen: Date }>(
-    'select label, approved, created_at, last_seen from devices where user_id=$1 order by created_at'))
-    .map((d) => ({ label: d.label, approved: d.approved, createdAt: d.created_at, lastSeen: d.last_seen })));
+  yield field('devices', (await q<{ label: string; name: string | null; approved: boolean; created_at: Date; last_seen: Date }>(
+    'select label, name, approved, created_at, last_seen from devices where user_id=$1 order by created_at'))
+    .map((d) => ({ label: d.label, name: d.name, approved: d.approved, createdAt: d.created_at, lastSeen: d.last_seen })));
 
   // notification settings are account level (user_prefs); the ntfy topic is a secret, so only whether one is set. Own notices
   // without title, body and link: they are rendered with other people's names, lists and parties (invites, recommendations,

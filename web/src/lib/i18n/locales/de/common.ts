@@ -25,6 +25,16 @@ export default {
   off: 'Aus',
   standard: 'Standard',
   unknown: 'unbekannt',
+  /** client kinds of the hand-off display rule; airplay/chromecast wrap the sending device's name */
+  deviceKind: {
+    tizen: 'Samsung-Fernseher',
+    webos: 'LG-Fernseher',
+    firetv: 'Fire TV',
+    desktop: 'Windows-App',
+    android: 'Android-App',
+    airplay: 'AirPlay ({sender})',
+    chromecast: 'Chromecast ({sender})',
+  },
   movies: 'Filme',
   series: 'Serien',
   /** run times, see fmtDuration() */

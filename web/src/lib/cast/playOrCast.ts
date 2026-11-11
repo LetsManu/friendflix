@@ -20,7 +20,10 @@ import { toast } from '#lib/ui/toast';
 import { liveCast } from './bar';
 import { castEngine, castSession } from './engine';
 
-export function playOrCast(e: MouseEvent, item: { id: string; positionTicks?: number }, opts?: { audio?: string; subtitle?: string }): boolean {
+/** `explicitStart`: the position is a promise made on screen (the hand-off card), so the native player starts exactly there */
+export interface PlayOpts { audio?: string; subtitle?: string; explicitStart?: boolean }
+
+export function playOrCast(e: MouseEvent, item: { id: string; positionTicks?: number }, opts?: PlayOpts): boolean {
   if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return false;
   const s = get(castSession);
   if (!liveCast(s)) return playNatively(e, item, opts); // a detached cast takes no title: it plays here
@@ -34,7 +37,7 @@ export function playOrCast(e: MouseEvent, item: { id: string; positionTicks?: nu
 /** a native play request waits for the app's answer; further taps meanwhile are swallowed (no double start) */
 let pendingPlay = false;
 
-function playNatively(e: MouseEvent, item: { id: string; positionTicks?: number }, opts?: { audio?: string; subtitle?: string }): boolean {
+function playNatively(e: MouseEvent, item: { id: string; positionTicks?: number }, opts?: PlayOpts): boolean {
   if (!native.available) return false;
   const a = (e.currentTarget as Element | null)?.closest?.('a');
   const href = a?.getAttribute('href') || `/watch/${item.id}`;
@@ -43,8 +46,10 @@ function playNatively(e: MouseEvent, item: { id: string; positionTicks?: number 
   noteInteraction();
   pendingPlay = true;
   const where = location.href;
-  // no start position: the native player asks the server for the resume point, which a card's copy may predate (watched elsewhere since)
-  void tryNativePlay({ id: item.id }, opts)
+  // no start position: the native player asks the server for the resume point, which a card's copy may predate (watched elsewhere since);
+  // except for an explicit one (the hand-off card names a position and plays from it)
+  const { explicitStart, ...rest } = opts ?? {};
+  void tryNativePlay(explicitStart ? { id: item.id, positionTicks: item.positionTicks ?? 0 } : { id: item.id }, opts ? rest : undefined)
     .then((ok) => {
       // the viewer went elsewhere while the app was thinking: do not drag them to the player now
       if (!ok && location.href === where) { allowWebWatchOnce(href); void goto(href); }

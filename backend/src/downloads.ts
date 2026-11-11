@@ -637,7 +637,7 @@ export async function adminOverview(ctx: Pick<Ctx, 'db'>) {
        from download_jobs j order by j.created_at desc limit 200`,
   )).rows;
   const licenses = (await ctx.db.query(
-    `select d.id, d.user_id, u.name user_name, d.device_id, dv.label device_label, d.item_id, d.quality, d.status, d.created_at, d.fetched_at, d.expires_at, d.meta->>'title' title, d.meta->>'seriesName' series_name
+    `select d.id, d.user_id, u.name user_name, d.device_id, coalesce(dv.name, dv.label) device_label, d.item_id, d.quality, d.status, d.created_at, d.fetched_at, d.expires_at, d.meta->>'title' title, d.meta->>'seriesName' series_name
        from downloads d join users u on u.id=d.user_id left join devices dv on dv.user_id=d.user_id and dv.device_id=d.device_id
       where d.status in ('pending','fetched') order by d.created_at desc limit 300`,
   )).rows;

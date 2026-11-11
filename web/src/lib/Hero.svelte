@@ -104,6 +104,8 @@
 
 {#if portrait && $mobile}
   <section class="mh" data-play-scope aria-label={$t('home.hero.label')}>
+    <!-- the page's "continue here" card (absolute below the header: it covers the top of the poster card, the page below never moves) -->
+    <slot name="handoff" />
     {#if item}
       {#if item.image || item.backdrop}<img class="blurbg" src={item.image ? img(item.id, 120) : backdrop(item.id, 320)} alt="" aria-hidden="true" />{/if}
       <div class="mshade"></div>
