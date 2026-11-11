@@ -406,8 +406,8 @@ export function adminSummary(st: AdminState) {
   const pendingReq = st.requests.filter((r) => r.status === PENDING).length;
   const locked = st.users.filter((u) => u.disabled).length;
   return {
-    users: { total: st.users.length, active: st.users.length - locked, locked },
-    pending: { requests: st.seerrUp ? pendingReq : null, devices: st.devices.filter((d) => !d.approved).length, polls: st.polls.length, invites: st.invites.filter((i) => i.uses < i.max_uses && i.expires_at > new Date().toISOString()).length, previewsFailed: 10 },
+    users: { total: st.users.length, active: st.users.length - locked, locked, expiring: st.users.filter((u) => u.access_until != null && Date.parse(u.access_until) >= Date.now() && Date.parse(u.access_until) <= Date.now() + WEEK).length },
+    pending: { requests: st.seerrUp ? pendingReq : null, devices: st.devices.filter((d) => !d.approved).length, polls: st.polls.length, invites: st.invites.filter((i) => i.uses < i.max_uses && i.expires_at > new Date().toISOString()).length, approvals: st.approvals.length, previewsFailed: 10 },
     requests: st.seerrUp ? { pending: pendingReq, approved: st.requests.filter((r) => r.status === 'genehmigt').length, processing: 1, available: st.requests.filter((r) => r.status === 'verfügbar').length, declined: 2, total: st.requests.length + 3 } : null,
     storage: { downloadsEnabled: true, downloadsBytes: 12.4 * 1024 ** 3, downloadsMaxBytes: 50 * 1024 ** 3, previewBytes: 99e6, previewClips: 30 },
     playbackCheck: { finishedAt: ago(2), total: 20, failed: 1 },

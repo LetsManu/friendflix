@@ -14,8 +14,8 @@ import { createInvite, deleteAuthentikInvitation } from '../invites.js';
 import { getUserLimits } from '../limits.js';
 import { accountJellyfinIds, getProfile, jfUserFor, listProfiles, publicProfile } from '../profiles.js';
 import { roleLimitFor } from '../requestlimit.js';
-import { roleExists } from '../rolecat.js';
-import { INVITABLE_ROLES, effectiveRole } from '../roles.js';
+import { ROLE_KEY_RE, invitableRoles, roleExists } from '../rolecat.js';
+import { effectiveRole } from '../roles.js';
 import { requestsEnabled } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireAdmin, type Session } from '../session.js';
@@ -241,7 +241,9 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/api/admin/approvals/:id/approve', admin, async (req) => {
     const id = uuid.parse((req.params as { id: string }).id);
-    const b = z.object({ role: z.enum([...INVITABLE_ROLES, 'admin']), accessUntil: accessUntil.optional() }).parse(req.body);
+    const b = z.object({ role: z.string().regex(ROLE_KEY_RE), accessUntil: accessUntil.optional() }).parse(req.body);
+    // any invitable role of the catalogue, or admin (never invitable, but an approval may grant it)
+    if (b.role !== 'admin' && !(await invitableRoles(ctx)).includes(b.role)) throw new HttpError(400, 'role_not_invitable');
     // serialized: a double click must not provision the same person twice
     return serial(async () => ({ id: await approveRequest(ctx, req.user!.id, id, b.role, toDate(b.accessUntil ?? null)) }));
   });
@@ -511,7 +513,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   // ---- invites: multi-use (maxUses), optional access days for the accounts they create ----
   app.post('/api/admin/invites', admin, async (req) => {
     const b = z.object({
-      role: z.enum(INVITABLE_ROLES),
+      role: z.string().regex(ROLE_KEY_RE),
       ttlHours: z.number().int().min(1).max(24 * 14).default(48),
       note: z.string().max(100).optional(),
       /** false: the person already has an Authentik account, skip enrollment */
@@ -521,6 +523,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       /** access_until of each new account = now + accessDays; null = no end */
       accessDays: z.number().int().min(1).max(3650).nullable().default(null),
     }).parse(req.body);
+    if (!(await invitableRoles(ctx)).includes(b.role)) throw new HttpError(400, 'role_not_invitable');
     const inv = await createInvite(ctx, req.user!.id, b, req.log);
     await audit(ctx, req.user!.id, 'invite.create', inv.id, { role: b.role, authentik: inv.authentik, maxUses: b.maxUses, accessDays: b.accessDays });
     // token is shown exactly once

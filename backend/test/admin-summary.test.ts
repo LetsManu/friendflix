@@ -30,14 +30,25 @@ describe('GET /api/admin/summary', () => {
     const r = await env.app.inject({ url: '/api/admin/summary', cookies: admin.cookies });
     expect(r.statusCode).toBe(200);
     const j = r.json();
-    expect(j.users).toEqual({ total: 2, active: 1, locked: 1 });
-    expect(j.pending).toEqual({ requests: 2, devices: 1, polls: 0, invites: 0, previewsFailed: 1 });
+    expect(j.users).toEqual({ total: 2, active: 1, locked: 1, expiring: 0 });
+    expect(j.pending).toEqual({ requests: 2, devices: 1, polls: 0, invites: 0, previewsFailed: 1, approvals: 0 });
     expect(j.requests).toEqual({ pending: 2, approved: 3, processing: 1, available: 2, declined: 1, total: 9 });
     expect(j.storage).toMatchObject({ downloadsBytes: 0, previewBytes: 1500, previewClips: 2 });
     expect(typeof j.storage.downloadsMaxBytes).toBe('number');
     expect(j.services).toEqual({ jellyfin: true, seerr: true });
     expect(j.playbackCheck).toBeNull();
     expect(j.live).toEqual({ streams: 0, partyRooms: 0 });
+  });
+
+  it('summary counts open approvals and expiring access', async () => {
+    await env.pool.query("insert into approval_requests(id, authentik_sub, name) values (gen_random_uuid(), 'o1', 'O1'), (gen_random_uuid(), 'o2', 'O2')");
+    await env.pool.query("insert into approval_requests(id, authentik_sub, name, rejected_at) values (gen_random_uuid(), 'o3', 'O3', now())");
+    await env.pool.query("update users set access_until = now() + interval '3 days' where id=$1", [bobId]);
+    const j = (await env.app.inject({ url: '/api/admin/summary', cookies: admin.cookies })).json();
+    await env.pool.query("update users set access_until = null where id=$1", [bobId]);
+    await env.pool.query("delete from approval_requests");
+    expect(j.pending.approvals).toBe(2);
+    expect(j.users.expiring).toBe(1);
   });
 
   it('survives an unreachable Seerr (requests unknown, not an error)', async () => {

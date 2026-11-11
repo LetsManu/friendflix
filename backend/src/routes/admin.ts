@@ -63,8 +63,9 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const { listLive } = await import('../live.js');
     const { parties } = await import('./party.js');
     const one = async <T>(sql: string): Promise<T> => (await ctx.db.query(sql)).rows[0] as T;
-    const [users, devices, invites, polls, previews, downloads, check, seerr, jellyfin, live] = await Promise.all([
-      one<{ total: string; locked: string }>('select count(*) total, count(*) filter (where disabled) locked from users'),
+    const [users, approvals, devices, invites, polls, previews, downloads, check, seerr, jellyfin, live] = await Promise.all([
+      one<{ total: string; locked: string; expiring: string }>("select count(*) total, count(*) filter (where disabled) locked, count(*) filter (where access_until between now() and now() + interval '7 days') expiring from users"),
+      one<{ n: string }>('select count(*) n from approval_requests where rejected_at is null'),
       one<{ n: string }>('select count(*) n from devices where not approved'),
       one<{ n: string }>('select count(*) n from invites where uses < max_uses and expires_at > now()'),
       one<{ n: string }>("select count(*) n from polls where status='needs_approval'"),
@@ -81,12 +82,13 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     ]);
     const total = Number(users.total), locked = Number(users.locked);
     return {
-      users: { total, active: total - locked, locked },
+      users: { total, active: total - locked, locked, expiring: Number(users.expiring) },
       pending: {
         requests: seerr ? seerr.pending : null,
         devices: Number(devices.n),
         polls: Number(polls.n),
         invites: Number(invites.n),
+        approvals: Number(approvals.n),
         previewsFailed: Number(previews.failed),
       },
       requests: seerr ? { pending: seerr.pending, approved: seerr.approved, processing: seerr.processing, available: seerr.available, declined: seerr.declined, total: seerr.total } : null,

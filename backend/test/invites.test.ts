@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256 } from '../src/crypto.js';
-import { invalidateRoles } from '../src/roles.js';
+import { DEFAULT_ROLES, invalidateRoles } from '../src/roles.js';
 import { claimInvite, releaseInvite } from '../src/invites.js';
-import { deleteRole } from '../src/rolecat.js';
+import { deleteRole, syncRoles } from '../src/rolecat.js';
 import { provisionUser } from '../src/users.js';
 
 // the sign-in path calls the real provisionUser; a test can run a step (a role delete) just before it, after the invite was claimed
@@ -563,5 +563,46 @@ describe('admin user management', () => {
     expect((await adm('DELETE', `/api/admin/roles/${key}`, { moveTo: 'guest' })).statusCode).toBe(200);
     expect((await inviteLogin(token, 'moved1')).statusCode).toBe(302);
     expect((await env.pool.query("select role from users where authentik_sub='moved1'")).rows).toEqual([{ role: 'guest' }]);
+  });
+});
+
+describe('invites and approvals for any invitable role', () => {
+  it('invite for an env role: the redeemed account holds it', async () => {
+    env.ctx.roles.oma = { ...DEFAULT_ROLES.friend!, label: 'Oma' };
+    await syncRoles(env.ctx);
+    invalidateRoles(env.ctx);
+    const r = await adm('POST', '/api/admin/invites', { role: 'oma', ttlHours: 1 });
+    expect(r.statusCode).toBe(200);
+    const token = r.json().link.split('/').pop();
+    expect((await inviteLogin(token, 'omauser')).statusCode).toBe(302);
+    expect((await env.pool.query("select role from users where authentik_sub='omauser'")).rows).toEqual([{ role: 'oma' }]);
+  });
+
+  it('a role switched to not invitable is refused', async () => {
+    await env.pool.query("update roles set invitable=false where key='oma'");
+    invalidateRoles(env.ctx);
+    const r = await adm('POST', '/api/admin/invites', { role: 'oma', ttlHours: 1 });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toBe('role_not_invitable');
+    await env.pool.query("update roles set invitable=true where key='oma'");
+    invalidateRoles(env.ctx);
+  });
+
+  it('admin is never invitable, approval may grant admin', async () => {
+    const r = await adm('POST', '/api/admin/invites', { role: 'admin', ttlHours: 1 });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toBe('role_not_invitable');
+    const ids: string[] = [];
+    for (const sub of ['ap1', 'ap2', 'ap3']) {
+      ids.push((await env.pool.query("insert into approval_requests(id, authentik_sub, email, name) values (gen_random_uuid(), $1, $2, $1) returning id", [sub, `${sub}@x.de`])).rows[0].id);
+    }
+    expect((await adm('POST', `/api/admin/approvals/${ids[0]}/approve`, { role: 'admin' })).statusCode).toBe(200);
+    expect((await adm('POST', `/api/admin/approvals/${ids[1]}/approve`, { role: 'oma' })).statusCode).toBe(200);
+    await env.pool.query("update roles set invitable=false where key='oma'");
+    invalidateRoles(env.ctx);
+    const bad = await adm('POST', `/api/admin/approvals/${ids[2]}/approve`, { role: 'oma' });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toBe('role_not_invitable');
+    expect((await env.pool.query("select authentik_sub, role from users where authentik_sub in ('ap1','ap2') order by 1")).rows).toEqual([{ authentik_sub: 'ap1', role: 'admin' }, { authentik_sub: 'ap2', role: 'oma' }]);
   });
 });

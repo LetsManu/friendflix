@@ -36,6 +36,7 @@ export const DEFAULT_ROLES: Record<string, RoleTemplate> = {
   admin: { label: 'Admin', libraries: 'all', maxParentalRating: null, maxBitrate: 60_000_000, remoteMaxBitrate: 12_000_000, maxStreams: 6, transcoding: true, maxHeight: null, download: true, maxDownloads: 50, downloadMaxHeight: 1080, downloadDays: 30 },
 };
 
+/** @deprecated the catalogue decides (rolecat invitableRoles); no route uses this any more, kept exported for one release */
 export const INVITABLE_ROLES = ['friend', 'family', 'guest'] as const;
 
 /**
