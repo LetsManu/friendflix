@@ -9,6 +9,7 @@
  * - creditsStart / activeSkip: the same rules as the web player (web/src/lib/player/nextup.ts, engine.ts atPosition).
  * - step / view: the TV's next-up card, its countdown, "still watching?" and the skip button.
  * - createReporter: start / progress / stop of the playing token to /api/cast/report with its report token.
+ * - probeCaps / buildCaps: what this TV (and the AVR behind it) confirms it plays, as the `caps` message the sender attaches to its cast request.
  */
 
 export const NS = 'urn:x-cast:com.friendflix.cast';
@@ -37,6 +38,7 @@ const pick = (v, list, dflt) => (typeof v === 'string' && list.includes(v) ? v :
  * @typedef {{ size: string, color: string, background: string, font: string }} SubStyle
  * @typedef {{ next: string, upNext: string, watchCredits: string, startsIn: string[], stillTitle: string, stillText: string, keepWatching: string, skip: { intro: string, recap: string } }} Strings
  * @typedef {{ t: 'tok', castId: string, rt: string }
+ *   | { t: 'caps?' }
  *   | { t: 'item', castId: string, episode: boolean, segs: Segment[], next: Next | null }
  *   | { t: 'ui', strings: Strings, sub: SubStyle, countdown: number }} Message
  */
@@ -62,6 +64,7 @@ export function parseMessage(raw) {
   }
   if (!m || typeof m !== 'object') return null;
   const o = /** @type {Record<string, unknown>} */ (m);
+  if (o.t === 'caps?') return { t: 'caps?' }; // the sender asks what this TV plays; nothing in it is taken over
   if (o.t === 'tok') {
     const castId = str(o.castId, 32), rt = str(o.rt, 1100);
     return castId && CAST_ID.test(castId) && rt && RT.test(rt) ? { t: 'tok', castId, rt } : null;
@@ -103,6 +106,39 @@ export function parseMessage(raw) {
     };
   }
   return null;
+}
+
+/**
+ * The `canDisplayType(mimeType, codecs, width, height, framerate)` questions (CAF `CastReceiverContext`). HEVC is asked as `hvc1` (the tag Jellyfin
+ * writes for every HEVC stream, so an `hev1`-only answer would not help) Main and Main 10, Level 4.1, 1920x1080. Dolby as `ec-3` / `ac-3`, which the
+ * framework answers from the HDMI sink the TV reports (the AVR). TODO verify on hardware: the exact answers per device (docs/cast-receiver.md).
+ */
+export const CAPS_PROBES = {
+  hevc: ['video/mp4', 'hvc1.1.6.L123.B0', 1920, 1080, 30],
+  hevc10: ['video/mp4', 'hvc1.2.4.L123.B0', 1920, 1080, 30],
+  eac3: ['audio/mp4', 'ec-3'],
+  ac3: ['audio/mp4', 'ac-3'],
+};
+
+/**
+ * Runs the probes. Only a plain `true` is a yes: unknown, "maybe", undefined or a throw (no such API on this firmware) is a no, and one failing
+ * probe never stops the others.
+ * @param {(...args: any[]) => unknown} canDisplay `context.canDisplayType` bound to the context
+ */
+export function probeCaps(canDisplay) {
+  /** @param {any[]} args */
+  const ask = (args) => { try { return canDisplay(...args) === true; } catch { return false; } };
+  return { hevc: ask(CAPS_PROBES.hevc), hevc10: ask(CAPS_PROBES.hevc10), eac3: ask(CAPS_PROBES.eac3), ac3: ask(CAPS_PROBES.ac3) };
+}
+
+/**
+ * The `caps` message for the private channel. Never a claim before a positive answer: Main 10 only counts together with Main.
+ * @param {{ hevc?: unknown, hevc10?: unknown, eac3?: unknown, ac3?: unknown } | null | undefined} probe answers of probeCaps
+ */
+export function buildCaps(probe) {
+  const p = probe ?? {};
+  const hevc = p.hevc === true;
+  return { t: /** @type {const} */ ('caps'), v: /** @type {const} */ (1), hevc, hevc10: hevc && p.hevc10 === true, surround: [...(p.eac3 === true ? ['eac3'] : []), ...(p.ac3 === true ? ['ac3'] : [])] };
 }
 
 /**

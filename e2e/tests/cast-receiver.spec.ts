@@ -49,6 +49,94 @@ test('sender: without an app ID the Default Media Receiver as before (no receive
   expect(await sdk.calls()).not.toContain('addMessageListener');
 });
 
+/** the answer of the server to a cast that sent receiver caps: a Dolby Digital Plus 5.1 HEVC stream as fMP4 (Dunmoor S1 E5 "Wrenfield Pier") */
+const wrenfield = (b: Record<string, unknown>) => (b.caps ? { hlsSegmentFormat: 'fmp4', hlsVideoSegmentFormat: 'fmp4',
+  delivery: { video: 'copy', videoCodec: 'hevc', audio: 'copy', audioCodec: 'eac3', channels: 6, why: ['hevc_device', 'surround_device'] } } : undefined);
+const CONFIRMED = { hevc: true, hevc10: false, surround: ['eac3'] };
+
+test('sender: what the receiver confirms (HEVC, Dolby) rides the cast request and the fMP4 answer is loaded as fMP4', async ({ page, api: _api }) => {
+  await mockPlayer(page);
+  await castOn(page, true, 'A1B2C3D4');
+  const sdk = await fakeCastSdk(page, { caps: CONFIRMED });
+  const { sessions } = await castSessions(page, { report: RT, deliver: wrenfield });
+  await page.goto('/watch/' + MOVIE.id);
+  await videoReady(page);
+  await sdk.start();
+  await expect(page.locator('.castov')).toContainText('Wohnzimmer-TV');
+  await expect.poll(() => sdk.loads()).toHaveLength(1);
+  expect(sessions).toHaveLength(1);
+  expect(sessions[0]).toMatchObject({ itemId: MOVIE.id, receiver: true, caps: CONFIRMED });
+  expect(await sdk.messages()).toContainEqual({ ns: 'urn:x-cast:com.friendflix.cast', msg: { t: 'caps?' } });
+  expect((await sdk.loads())[0]).toMatchObject({ hlsSegmentFormat: 'fmp4', hlsVideoSegmentFormat: 'fmp4' });
+});
+
+test('sender: a TV that refuses the HEVC / Dolby stream gets one new cast without it, remembered for that TV (nothing else changes)', async ({ page, api: _api }) => {
+  await mockPlayer(page);
+  await castOn(page, true, 'A1B2C3D4');
+  const sdk = await fakeCastSdk(page, { caps: CONFIRMED, refuseFmp4: true });
+  const { sessions, deleted } = await castSessions(page, { report: RT, deliver: wrenfield });
+  await page.goto('/watch/' + MOVIE.id);
+  await videoReady(page);
+  await sdk.start();
+  await expect.poll(() => sdk.loads()).toHaveLength(2);
+  expect(sessions).toHaveLength(2);
+  expect(sessions[0]).toMatchObject({ receiver: true, caps: CONFIRMED });
+  expect(sessions[1]).toMatchObject({ itemId: MOVIE.id, receiver: true, fellBack: 'both', prevPs: 'air-ps' });
+  expect(sessions[1]).not.toHaveProperty('caps');
+  expect((await sdk.loads()).map((l) => (l as { hlsSegmentFormat: string }).hlsSegmentFormat)).toEqual(['fmp4', 'ts']);
+  expect(deleted).toContain('c'.repeat(32)); // the refused token was revoked
+  await expect(page.locator('.castov')).toContainText('Wohnzimmer-TV');
+  const avoid = await page.evaluate(() => JSON.parse(localStorage.getItem('ff-cast-avoid') ?? 'null') as Record<string, Record<string, number>>);
+  expect(Object.keys(avoid)).toEqual(['Wohnzimmer-TV']);
+  expect(Object.keys(avoid['Wohnzimmer-TV']!).sort()).toEqual(['hevc', 'surround']);
+  await page.waitForTimeout(500);
+  expect(sessions).toHaveLength(2); // one fallback, never a loop
+});
+
+test('sender: a receiver that never states its caps is asked for nothing special (the request goes out after a short wait)', async ({ page, api: _api }) => {
+  await mockPlayer(page);
+  await castOn(page, true, 'A1B2C3D4');
+  const sdk = await fakeCastSdk(page, { caps: null });
+  const { sessions } = await castSessions(page, { report: RT });
+  await page.goto('/watch/' + MOVIE.id);
+  await videoReady(page);
+  await sdk.start();
+  await expect.poll(() => sessions.length, { timeout: 8000 }).toBe(1);
+  expect(sessions[0]).toMatchObject({ receiver: true });
+  expect(sessions[0]).not.toHaveProperty('caps');
+  await expect.poll(() => sdk.loads()).toHaveLength(1);
+  expect((await sdk.loads())[0]).toMatchObject({ hlsSegmentFormat: 'ts', hlsVideoSegmentFormat: null });
+});
+
+test('receiver page: states what the TV confirms when a sender connects and when asked, and claims nothing without a positive probe', async ({ page, api: _api }) => {
+  const caf = await fakeCaf(page, { canDisplay: ['hvc1.1', 'ec-3'] });
+  await page.goto('/cast-receiver/');
+  await expect.poll(() => caf.calls()).toContain('start');
+  const sent = async () => (await caf.calls()).filter((c) => c.startsWith('sent:'));
+  await caf.connect('sender-1');
+  await expect.poll(sent).toEqual(['sent:{"t":"caps","v":1,"hevc":true,"hevc10":false,"surround":["eac3"]}']);
+  expect(await caf.calls()).toContain('to:sender-1');
+  // the questions: hvc1 Main and Main 10 at 1920x1080, then Dolby Digital Plus and Dolby Digital
+  expect((await caf.calls()).filter((c) => c.startsWith('can:'))).toEqual(['can:video/mp4|hvc1.1.6.L123.B0|1920x1080', 'can:video/mp4|hvc1.2.4.L123.B0|1920x1080', 'can:audio/mp4|ec-3|x', 'can:audio/mp4|ac-3|x']);
+  // a sender that joined before this page loaded asks: it is answered (and only it)
+  await caf.message({ t: 'caps?' });
+  await expect.poll(async () => (await sent()).length).toBe(2);
+  expect(await caf.calls()).toContain('to:s1');
+  // anything but the exact request is ignored
+  await caf.message({ t: 'caps', v: 1, hevc: true });
+  await caf.message({ t: 'caps?x' });
+  await page.waitForTimeout(200);
+  expect(await sent()).toHaveLength(2);
+});
+
+test('receiver page: a framework without canDisplayType (or a TV that confirms nothing) claims nothing', async ({ page, api: _api }) => {
+  const caf = await fakeCaf(page, { canDisplay: null });
+  await page.goto('/cast-receiver/');
+  await expect.poll(() => caf.calls()).toContain('start');
+  await caf.message({ t: 'caps?' });
+  await expect.poll(async () => (await caf.calls()).filter((c) => c.startsWith('sent:'))).toEqual(['sent:{"t":"caps","v":1,"hevc":false,"hevc10":false,"surround":[]}']);
+});
+
 test('receiver page: own CSP, brand while idle, next-up countdown, still watching, skip, reports with the report token', async ({ page, api: _api }) => {
   const caf = await fakeCaf(page);
   const reports: Array<Record<string, unknown>> = [];

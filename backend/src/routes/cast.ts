@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, castLookup, castNextTtlSeconds, castPinned, CastUnpinnedError, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
 import type { Ctx } from '../ctx.js';
-import { MediaError } from '../media/types.js';
+import { receiverCaps } from '../media/clientCaps.js';
+import { MediaError, type HevcGate } from '../media/types.js';
+import { bindHevcGrant, hevcGate as gateHevc, noteHevcFailure } from '../hevcenc.js';
 import { countLive } from '../live.js';
 import { clientAddress, isHomeRequest } from '../netaddr.js';
 import { playbackReport } from './media.js';
@@ -12,6 +15,8 @@ import { effectiveLimits } from '../limits.js';
 import { remoteBitrateCap } from '../roles.js';
 import { loadSession, requireUser } from '../session.js';
 import { id32 as itemId } from './_shared.js';
+
+const psId = z.string().regex(/^[\w-]{8,64}$/);
 
 export function castRoutes(app: FastifyInstance, ctx: Ctx) {
   const pre = { preHandler: requireUser(ctx) };
@@ -37,6 +42,11 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       after: z.string().regex(/^[0-9a-f]{32}$/).optional(),
       /** the sender casts to FriendFlix's own receiver: the answer carries its report token (`report`, see cast.ts castReportToken) */
       receiver: z.boolean().optional(),
+      /** FriendFlix's own receiver only: what it confirmed it plays (receiverCaps); anything malformed is ignored, never an error */
+      caps: z.unknown().optional(),
+      /** the sender's one automatic fallback after the receiver failed a stream with that feature, and the play session it replaces */
+      fellBack: z.enum(['hevc', 'surround', 'both']).optional(),
+      prevPs: psId.optional(),
     }).parse(req.body);
     // the queue is Chromecast only (an AirPlay token has a two-address pin, a queued token never takes a pin of its own)
     if (b.next && b.via === 'airplay') return reply.code(400).send({ error: 'bad_request' });
@@ -63,9 +73,30 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       const maxBitrate = Math.min(ceiling, CAST_MAX_BITRATE, b.maxBitrate ?? CAST_MAX_BITRATE);
       const maxHeight = Math.min(role.maxHeight ?? CAST_MAX_HEIGHT, CAST_MAX_HEIGHT);
       // `after` = the predecessor's play session (server-resolved), so the Plex stream limit lets the queued episode overlap only that one
-      const opts = { maxBitrate, maxHeight, startTicks, audioIndex: b.audioIndex, cast: true, ...(pred ? { after: pred.playSessionId } : {}) };
+      // HEVC / Dolby surround only for FriendFlix's own receiver (the Default Media Receiver and AirPlay never state them), on Jellyfin, and only
+      // when the receiver confirmed something: otherwise the URL and the answer are exactly today's
+      const own = Boolean(b.receiver) && (b.via ?? 'chromecast') === 'chromecast' && castReceiverAppId(ctx) !== '' && ctx.jf.kind === 'jellyfin';
+      const clientCaps = own ? receiverCaps(b.caps) : null;
+      const grantId = randomUUID();
+      // a conversion for the receiver follows the player's rules: remote only, the server's HEVC gate (probe, limit, failure pause)
+      const gate = (): Promise<HevcGate> => gateHevc(ctx, { userId: req.user!.id, deviceId, playSessionIdHint: grantId });
+      // the receiver failed a stream that was a HEVC conversion: it counts against the server's HEVC state (as a player fallback does)
+      if ((b.fellBack === 'hevc' || b.fellBack === 'both') && b.prevPs) {
+        let prev: { video?: unknown } | null;
+        try { prev = JSON.parse((await ctx.kv.get(`pbinfo:${req.user!.id}:${b.prevPs}`).catch(() => null)) ?? 'null'); } catch { prev = null; }
+        if (prev?.video === 'hevc') await noteHevcFailure(ctx, deviceId);
+      }
+      const opts = {
+        maxBitrate, maxHeight, startTicks, audioIndex: b.audioIndex, cast: true, ...(pred ? { after: pred.playSessionId } : {}),
+        ...(clientCaps ? { clientCaps, remote, surround: ctx.cfg.SURROUND_AUDIO !== 'false', ...(ctx.cfg.HEVC_STREAMS > 0 ? { hevcGate: gate } : {}) } : {}),
+      };
       let info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts);
       if (ctx.jf.preparePlayback) info = await ctx.jf.preparePlayback(req.jfUser!, info, opts);
+      if (clientCaps) {
+        await bindHevcGrant(ctx, grantId, info.delivery?.video === 'hevc' ? info.playSessionId : null); // a grant only lives on for a conversion
+        // the server's HEVC count and the next fallback look at the fixed codes of this play session (as /api/playback/info writes them)
+        if (info.delivery) await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ video: info.delivery.video, audio: info.delivery.audio }), 6 * 3600).catch(() => undefined);
+      }
       started = info.playSessionId;
       const ownTtl = castTtlSeconds(info.runtimeTicks, startTicks);
       // a queued token outlives the episode it follows (queued from the start of that episode)
@@ -97,6 +128,7 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         return reply.code(409).send({ error: 'profile_changed' });
       }
       reply.header('Cache-Control', 'no-store');
+      const fmp4 = new URL(info.hlsUrl, 'http://x').searchParams.get('SegmentContainer') === 'mp4';
       return {
         castId,
         expiresAt,
@@ -106,13 +138,16 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         startTime: Math.floor(startTicks / 10_000_000),
         contentUrl: abs(info.hlsUrl),
         contentType: 'application/x-mpegURL',
-        hlsSegmentFormat: 'ts',
+        // fMP4 when the plan carries HEVC or surround (SegmentContainer=mp4 in the URL the plan built); only a cast with receiver caps can have one
+        ...(fmp4 ? { hlsSegmentFormat: 'fmp4', hlsVideoSegmentFormat: 'fmp4' } : { hlsSegmentFormat: 'ts' }),
         title: item.name,
         seriesName: item.seriesName,
         // the poster gets its own image-only token: the media token must never appear in a URL the receiver shows or fetches as an image
         imageUrl: imgCt ? absWith(imgCt, `/media/Items/${b.itemId}/Images/Primary?maxWidth=600`) : undefined,
         subtitles: info.subtitles.map((s) => ({ index: s.index, language: s.language, title: s.title, url: subUrl(s.url) })),
         ...(report ? { report } : {}),
+        // what the stream carries, as fixed codes (never a URL or title); only with receiver caps, so any other answer stays as it was
+        ...(clientCaps && info.delivery ? { delivery: info.delivery } : {}),
       };
     } catch (e) {
       if (e instanceof CastUnpinnedError) {

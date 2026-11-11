@@ -11,6 +11,8 @@ streaming-app features:
 - **Progress and "watched" while the phone sleeps:** the TV reports start, progress and stop itself.
 - **Your subtitle style** (size, colour, background, font from *Account → Playback → Subtitles*) on the TV.
 - **Skip intro / Skip recap** on the TV as well as on the phone.
+- **HEVC and Dolby surround** when the TV (and the AV receiver behind it) confirms them: the receiver asks the TV what it plays and the
+  stream is planned for exactly that (see below). Other TVs, the Default Media Receiver and AirPlay keep getting H.264 stereo.
 - FriendFlix's look (coral accent, dark), readable from 3 m, reduced motion respected (no card animation).
 
 Nothing changes for AirPlay, and nothing changes for Chromecast as long as `CAST_RECEIVER_APP_ID` is empty.
@@ -49,6 +51,7 @@ To go back, empty the field: the next cast uses the Default Media Receiver again
 | Progress / watched with the phone asleep | lost until the phone wakes | reported by the TV |
 | Subtitle style | the TV's default | your style |
 | Skip intro / recap | phone only | TV and phone |
+| HEVC and Dolby surround | no (H.264, AAC stereo) | when the TV / AV receiver confirms them (fMP4) |
 
 Limits: the TV only plays what the phone queued. With the phone asleep the TV moves on by **one** episode (the one queued while
 the phone was awake); the one after that is queued once the phone wakes again. An answer to *Still there?* given more than about
@@ -65,6 +68,21 @@ the phone was awake); the one after that is queued once the phone wakes again. A
   backend runs the same report logic as `/api/playback/*` for the token's account, profile and device.
 - Security: see [security.md, "Cast receiver"](security.md#cast-receiver).
 
+## HEVC and Dolby surround
+
+- **The receiver states only what the TV confirmed.** `context.canDisplayType` is asked for `hvc1` Main and Main 10 (Level 4.1, 1920×1080)
+  and for Dolby Digital Plus (`ec-3`) and Dolby Digital (`ac-3`); the framework answers for the display and the HDMI sink (the AV
+  receiver). Only a plain `true` counts: unknown, an error or a framework without `canDisplayType` is "no". Main 10 counts only
+  together with Main. It sends `{ t: 'caps', v: 1, hevc, hevc10, surround: ['eac3', 'ac3'] }` on the private channel when a sender
+  connects and whenever the sender asks with `{ t: 'caps?' }` (asked again every time: the HDMI sink can change).
+- **The sender adds it to the cast request** (`caps`), for the own receiver only, after waiting up to 2 s for the answer of a new
+  session; without an answer it claims nothing. The server plans the stream like for the player (HEVC SDR remux, Dolby passthrough or
+  conversion to Dolby Digital Plus / Dolby Digital, fMP4 segments, `hlsSegmentFormat` and `hlsVideoSegmentFormat` `fmp4`; the HEVC
+  conversion for viewers away from home only with the server's proven encoder and a free slot). Details and the table: [cast.md](cast.md#hevc-und-raumklang-mit-dem-eigenen-empfänger) (German).
+- **Nothing confirmed, nothing changes:** the cast URL and answer are exactly the Default Media Receiver's.
+- **If the TV refuses such a stream** (the load fails, or it reports an error right at the start) the phone starts the same title
+  once more without HEVC / surround and remembers it for this TV's name for 30 days (`ff-cast-avoid`, in the browser).
+
 ## Check on real hardware
 
 CI runs the sender against a fake Cast SDK and the receiver page against a fake receiver framework. Only a real device shows:
@@ -72,6 +90,10 @@ CI runs the sender against a fake Cast SDK and the receiver page against a fake 
 - The receiver starts (registered test device, app ID), the page's CSP allows everything Google's framework loads (the player
   libraries under `https://www.gstatic.com/cast/sdk/libs/`; if a device loads one from another Google path, add only that path in
   `web/src/lib/cast/receiverPage.ts`).
+- What `canDisplayType` answers on a Chromecast with Google TV and on the AV receiver behind it (`hvc1.1.6.L123.B0` and `hvc1.2.4.L123.B0`
+  at 1920×1080, `ec-3`, `ac-3`), with the AV receiver on and off, and whether the framework plays fMP4 HLS with HEVC and Dolby Digital
+  Plus: *Wrenfield Pier* (HEVC with a Dolby Digital Plus 5.1 track) should show Dolby Digital Plus on the AV receiver, the picture
+  without a re-encode; a TV that refuses HEVC leads to one new cast without it.
 - HLS/TS playback through the framework with the page's own `<video>` element; subtitles render with the chosen style.
 - *Next episode* at the end of the countdown moves the queue on (`QUEUE_UPDATE` jump); otherwise the fallback plays to the end.
 - A queued item with `autoplay: false` waits paused; *Still there?* is answered by OK, the remote's play button and the phone.

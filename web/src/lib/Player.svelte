@@ -51,7 +51,7 @@
   import { frameShown, snapshotFrame, swapAllowed } from '#lib/player/freshvideo';
   import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
-  import { castBody, castConfigEnabled, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastEvent, type CastInfo } from '#lib/cast';
+  import { castBody, castCapsReady, castConfigEnabled, castFellBack, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastEvent, type CastInfo } from '#lib/cast';
   import { CAST_VIDEO_ATTR, castEngine, castSession, type CastSession } from '#lib/cast/engine';
   import type { Item } from '#lib/api';
   import { SEEK_COMMIT_MS, seekCancel, seekCommit, seekStep, type SeekPreview } from '#lib/player/tvSeek';
@@ -711,7 +711,11 @@
   // ---- Chromecast session lifecycle ----
   const castErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
     : e?.body?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
-  const castRequest = (pos: number, via?: 'airplay') => api<CastInfo>('/api/cast/session', { method: 'POST', body: castBody({ itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via }) });
+  // (FriendFlix's own receiver is given a moment to state what it plays first: castCapsReady; `again` names the stream the TV just refused)
+  const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }) => {
+    if (via !== 'airplay') await castCapsReady();
+    return api<CastInfo>('/api/cast/session', { method: 'POST', body: castBody({ itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}) }) });
+  };
   const castRevoke = (ci: CastInfo | null) => { if (ci) api(`/api/cast/session/${ci.castId}`, { method: 'DELETE' }).catch(() => undefined); };
 
   /** what the cast engine needs to own this title's cast session */
@@ -738,7 +742,17 @@
     let ci: CastInfo | null = null;
     try {
       ci = await castRequest(pos);
-      if (!(await loadOnCast(ci, subIndex))) throw new Error('load');
+      if (!(await loadOnCast(ci, subIndex))) {
+        // FriendFlix's own receiver refused a HEVC / surround stream: remembered for this TV, and one more cast without it
+        const fb = castFellBack(ci);
+        if (!fb) throw new Error('load');
+        castRevoke(ci);
+        flash(tr('player.switchingCompatible'), 2500);
+        const prev = ci;
+        ci = null;
+        ci = await castRequest(pos, undefined, { fellBack: fb, prevPs: prev.playSessionId });
+        if (!(await loadOnCast(ci, subIndex))) throw new Error('load');
+      }
     } catch (e) {
       castRevoke(ci);
       castBusy = false;

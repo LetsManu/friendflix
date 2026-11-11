@@ -8,7 +8,7 @@ import { COUNTDOWN_SECONDS } from '#lib/player/nextup';
 import { consumeAutoplay, noteAutoplay, noteInteraction, shouldAsk } from '#lib/stillwatching';
 import { DEFAULT_PREFS } from '#lib/stores';
 import { ADVANCE_WAIT_MS, ENDED_HIDE_MS, ENDED_IDLE_MS, PROGRESS_MS, RENEW_BEFORE_MS, UNPINNED_RETRY_MS, type PlayerHandoff } from './engine';
-import { ci, deferred, flush, handoff, hex, items, playing, playingSession, setup, T0, type Env } from '../../test-utils/fake-cast-engine';
+import { ci, deferred, flush, handoff, hex, idle, items, playing, playingSession, setup, T0, type Env } from '../../test-utils/fake-cast-engine';
 
 describe('cast engine: adopt (Chromecast)', () => {
   it('adopt mirrors the receiver and reports start once, progress every 10 s and on pause', async () => {
@@ -1530,4 +1530,133 @@ describe('cast engine: FriendFlix\'s own receiver (CAST_RECEIVER_APP_ID)', () =>
     expect(env.queuePosts()).toHaveLength(0);
     expect(env.cast.queueOnCast).not.toHaveBeenCalled();
   });
+  // ---- HEVC / Dolby from the receiver's caps (Task 7): the request waits for them, a failure is asked again once without them ----
+  /** a delivery block as the server answers a cast with receiver caps (fixed codes) */
+  const wrenfield = { video: 'copy', videoCodec: 'hevc', audio: 'copy', audioCodec: 'eac3', channels: 6, why: ['hevc_device', 'surround_device'] } as const;
+  const surroundOnly = { video: 'copy', videoCodec: 'h264', audio: 'surround', audioCodec: 'eac3', channels: 6, why: ['surround_device'] } as const;
+  const plain = { video: 'copy', videoCodec: 'h264', audio: 'copy', audioCodec: 'aac', channels: 2, why: [] } as const;
+  /** the caps part of #lib/cast: castFellBack answers what the cast carried (and remembers it per device name there) */
+  function withCaps(env: Env) {
+    const tv = custom(env);
+    const ready = deferred<void>();
+    const fell = vi.fn((c: CastInfo) => {
+      const u = [...(c.delivery?.videoCodec === 'hevc' ? ['hevc'] : []), ...((c.delivery?.channels ?? 2) > 2 ? ['surround'] : [])];
+      return u.length === 2 ? 'both' : (u[0] as 'hevc' | 'surround' | undefined) ?? null;
+    });
+    Object.assign(env.cast, { castCapsReady: vi.fn(() => ready.promise), castFellBack: fell });
+    return { ...tv, ready, fell };
+  }
+
+  it('every token request of the own receiver waits for its caps (switch, queued next episode)', async () => {
+    const env = setup();
+    const tv = withCaps(env);
+    await playingSession(env, ep1);
+    await flush();
+    expect(env.queuePosts()).toHaveLength(0); // the queue request waits too
+    const p = env.engine.playOnTv('film', 0);
+    await flush();
+    expect(env.tokenPosts()).toHaveLength(0);
+    tv.ready.resolve();
+    await p;
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(env.tokenPosts()[0]!.init.body).toEqual({ itemId: 'film', startTicks: 0, maxBitrate: 8_000_000, receiver: true });
+  });
+
+  it('a Default Media Receiver session never asks for caps and never falls back', async () => {
+    const env = setup();
+    const fell = vi.fn(() => 'hevc' as const);
+    Object.assign(env.cast, { castFellBack: fell, castCapsReady: vi.fn(async () => undefined) });
+    await playingSession(env);
+    env.posts.push(async () => ci('h1', { delivery: wrenfield as never }));
+    env.setLoad(async () => false);
+    await env.engine.playOnTv('film', 0);
+    expect(fell).not.toHaveBeenCalled();
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(get(env.out)?.state).toBe('failed');
+  });
+
+  it('the receiver refuses a HEVC / surround stream: it is remembered, the same title is asked once more without, from the same position', async () => {
+    const env = setup();
+    const tv = withCaps(env);
+    tv.ready.resolve();
+    await playingSession(env);
+    env.posts.push(async () => ci('h1', { delivery: wrenfield as never, startTime: 0 }));
+    env.setLoad(async (info) => info.castId !== 'h1');
+    await env.engine.playOnTv('ep2', 120);
+    expect(tv.fell).toHaveBeenCalledTimes(1);
+    expect(env.tokenPosts()).toHaveLength(2);
+    expect(env.tokenPosts()[0]!.init.body).toEqual({ itemId: 'ep2', startTicks: secToTicks(120), maxBitrate: 8_000_000, receiver: true });
+    // the second request names what failed and the play session it replaces (the server counts a failed conversion), nothing else new
+    expect(env.tokenPosts()[1]!.init.body).toEqual({ itemId: 'ep2', startTicks: secToTicks(120), maxBitrate: 8_000_000, receiver: true, fellBack: 'both', prevPs: 'ps-h1' });
+    expect(env.deletes()).toContain('h1'); // the refused token is revoked
+    expect(env.loads.map((l) => l.info.castId)).toEqual(['h1', 'n1']);
+    expect(env.toast.mock.calls).toEqual([['info', 'Wechsle zu einem Stream, den dieses Gerät abspielt']]);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'connecting' });
+    expect(env.logs.some((l) => l.level === 'warn' && l.tag === 'load' && /asking again without/.test(l.text))).toBe(true);
+    expect(JSON.stringify(env.logs)).not.toMatch(/ps-h1|h1000/);
+    env.state.set(playing({ currentTime: 121 }));
+    expect(env.reports().filter((r) => r === 'start')).toHaveLength(1);
+  });
+
+  it('never twice: when the second stream (without the features) is refused too, the cast fails as before', async () => {
+    const env = setup();
+    const tv = withCaps(env);
+    tv.ready.resolve();
+    await playingSession(env);
+    env.posts.push(async () => ci('h1', { delivery: surroundOnly as never }));
+    env.setLoad(async () => false);
+    await env.engine.playOnTv('ep2', 0);
+    expect(env.tokenPosts()).toHaveLength(2);
+    expect(env.tokenPosts()[1]!.init.body).toMatchObject({ fellBack: 'surround', prevPs: 'ps-h1' });
+    expect(tv.fell).toHaveBeenCalledTimes(2); // the second answer carried nothing to give up
+    expect(get(env.out)?.state).toBe('failed');
+    expect(env.toast.mock.calls.filter((c) => c[0] === 'error')).toHaveLength(1);
+    await env.advance(60_000);
+    expect(env.tokenPosts()).toHaveLength(2); // no loop
+  });
+
+  it('a cast that carried nothing special fails as before (no second request)', async () => {
+    const env = setup();
+    const tv = withCaps(env);
+    tv.ready.resolve();
+    await playingSession(env);
+    env.posts.push(async () => ci('p1', { delivery: plain as never }));
+    env.setLoad(async () => false);
+    await env.engine.playOnTv('ep2', 0);
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(get(env.out)?.state).toBe('failed');
+  });
+
+  it('the receiver goes idle with ERROR right at the start of a HEVC stream: one new cast without it at the same position', async () => {
+    const env = setup();
+    const tv = withCaps(env);
+    tv.ready.resolve();
+    await playingSession(env, { cast: ci('c1', { delivery: wrenfield as never, startTime: 60 }), position: 60 });
+    env.state.set(playing({ currentTime: 62 }));
+    env.state.set({ ...idle, idleReason: 'ERROR', currentTime: 0 });
+    env.emit('media-end');
+    await flush();
+    expect(tv.fell).toHaveBeenCalledTimes(1);
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(env.tokenPosts()[0]!.init.body).toMatchObject({ itemId: 'film', startTicks: secToTicks(62), fellBack: 'both', prevPs: 'ps-c1', receiver: true });
+    expect(env.deletes()).toContain('c1');
+    expect(env.loads.map((l) => l.info.castId)).toEqual(['n1']);
+    expect(get(env.out)?.state).not.toBe('ended');
+    expect(env.toast.mock.calls).toEqual([['info', 'Wechsle zu einem Stream, den dieses Gerät abspielt']]);
+  });
+
+  it('an ERROR long into the stream is a plain failure (a network problem is not the codec): nothing is remembered', async () => {
+    const env = setup();
+    const tv = withCaps(env);
+    tv.ready.resolve();
+    await playingSession(env, { cast: ci('c1', { delivery: wrenfield as never, startTime: 60 }), position: 60 });
+    env.state.set(playing({ currentTime: 900 }));
+    env.state.set({ ...idle, idleReason: 'ERROR' });
+    env.emit('media-end');
+    await flush();
+    expect(tv.fell).not.toHaveBeenCalled();
+    expect(env.tokenPosts()).toHaveLength(0);
+    expect(get(env.out)).toBeNull(); // the session ended as it did before
+  });
+
 });

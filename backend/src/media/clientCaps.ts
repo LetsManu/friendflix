@@ -15,8 +15,8 @@ export interface ClientVideoCap {
 /** dynamic ranges the device shows correctly; absent = not stated (no range condition, as before) */
 export type CapRange = 'sdr' | 'hdr10' | 'hlg' | 'hdr10plus' | 'dovi';
 export interface ClientCaps {
-  /** `web`: a browser that probed itself (web/src/lib/player/devicecaps.ts) */
-  client: 'android' | 'windows' | 'tizen' | 'webos' | 'firetv' | 'web';
+  /** `web`: a browser that probed itself (web/src/lib/player/devicecaps.ts); `cast`: FriendFlix's own Chromecast receiver (receiverCaps, never accepted from a client block) */
+  client: 'android' | 'windows' | 'tizen' | 'webos' | 'firetv' | 'web' | 'cast';
   /** strict x.y.z */
   appVersion: string;
   containers: string[];
@@ -127,3 +127,36 @@ export function parseClientCaps(body: unknown): ClientCaps | null {
 
 /** true when the profile string names a 10-bit video profile (HEVC "main 10", H.264 "high 10", …) */
 export const isTenBitProfile = (p: string) => /(^|[^0-9])10([^0-9]|$)/.test(p);
+
+/**
+ * What FriendFlix's own Chromecast receiver confirmed with `canDisplayType` (web/static/cast-receiver/logic.js buildCaps), as the sender passes it
+ * with POST /api/cast/session. Anything malformed is ignored (null, never an error): the cast then is exactly today's H.264 stereo stream.
+ */
+const receiverShape = z.object({
+  hevc: z.boolean(),
+  hevc10: z.boolean().optional(),
+  surround: z.array(z.enum(['eac3', 'ac3'])).max(2),
+});
+
+/**
+ * The cast `ClientCaps` for a receiver claim: SDR only, `hls` claims, 6 output channels when it confirmed Dolby. `null` when it claims
+ * nothing (no HEVC, no Dolby): then the cast is byte-identical to the Default Media Receiver's. `hevc10` counts only together with `hevc`.
+ * H.264 and AAC stereo are what every receiver plays; the HLS stream carries AAC or the confirmed Dolby codecs only (never mp3).
+ */
+export function receiverCaps(raw: unknown): ClientCaps | null {
+  const r = receiverShape.safeParse(raw);
+  if (!r.success) return null;
+  const surround = [...new Set(r.data.surround)].sort((a, b) => (a === 'eac3' ? -1 : b === 'eac3' ? 1 : 0)) as Array<'eac3' | 'ac3'>;
+  const hevc = r.data.hevc;
+  if (!hevc && !surround.length) return null;
+  return {
+    client: 'cast', appVersion: '1.0.0',
+    containers: ['ts', 'mp4'],
+    video: [{ codec: 'h264' }, ...(hevc ? [{ codec: 'hevc', profiles: r.data.hevc10 ? ['main', 'main10'] : ['main'], tags: ['hvc1'] }] : [])],
+    audio: ['aac', ...surround],
+    subtitles: [],
+    ranges: ['sdr'],
+    hls: { video: hevc ? ['h264', 'hevc'] : ['h264'], audio: ['aac', ...surround], surround },
+    ...(surround.length ? { audioChannels: 6 } : {}),
+  };
+}

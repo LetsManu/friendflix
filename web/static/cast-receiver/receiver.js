@@ -10,9 +10,11 @@
  * - report start / progress / stop of the playing token to /api/cast/report with that token's report token, which the sender
  *   hands over on the private channel (logic.js NS). The report token is never logged, never put into the page or metadata;
  * - show the next-up card, its countdown and "still watching?" for the episode the SENDER queued (it never asks the server for
- *   another title: the queue + `next: true` token flow stays the boundary), and the intro / recap skip button.
+ *   another title: the queue + `next: true` token flow stays the boundary), and the intro / recap skip button;
+ * - state what this TV (and the AVR behind it) confirms it plays (HEVC, Dolby Digital / Digital Plus) on the same channel as `caps`, when a
+ *   sender connects and when it asks (`caps?`). The sender attaches that to its cast request; nothing is claimed before a positive probe.
  */
-import { NS, DEFAULT_STRINGS, createReporter, initialState, parseMessage, step, textTrackStyle, view } from './logic.js';
+import { NS, DEFAULT_STRINGS, buildCaps, createReporter, initialState, parseMessage, probeCaps, step, textTrackStyle, view } from './logic.js';
 
 const fw = cast.framework;
 const context = fw.CastReceiverContext.getInstance();
@@ -40,6 +42,11 @@ const playing = () => pm.getPlayerState() === fw.messages.PlayerState.PLAYING;
 
 /** tell the senders (the phone) about input on the TV */
 const toSenders = (t) => { try { context.sendCustomMessage(NS, undefined, { t }); } catch { /* no sender connected */ } };
+
+/** what this TV confirms right now (asked again every time: the HDMI sink can change); a framework without canDisplayType claims nothing */
+const capsMessage = () => buildCaps(probeCaps((...args) => context.canDisplayType(...args)));
+/** @param {string | undefined} to a sender id (the asker); undefined = every connected sender */
+function sendCaps(to) { try { context.sendCustomMessage(NS, to, capsMessage()); } catch { /* no sender connected */ } }
 
 function jump() {
   try {
@@ -121,7 +128,8 @@ $('skip').addEventListener('click', () => run({ type: 'skip' }));
 context.addCustomMessageListener(NS, (e) => {
   const m = parseMessage(e.data);
   if (!m) return;
-  if (m.t === 'tok') reporter.token(m.castId, m.rt);
+  if (m.t === 'caps?') sendCaps(typeof e.senderId === 'string' ? e.senderId : undefined);
+  else if (m.t === 'tok') reporter.token(m.castId, m.rt);
   else if (m.t === 'item') run({ type: 'item', msg: m });
   else if (m.t === 'ui') {
     strings = m.strings;
@@ -162,6 +170,9 @@ pm.addEventListener(E.MEDIA_FINISHED, (e) => {
 });
 // the countdown also moves while no time update arrives (some players send them rarely)
 setInterval(() => { if (playing()) { const now = performance.now(); const dt = now - lastTick; if (dt > 900) { lastTick = now; run({ type: 'time', pos: pm.getCurrentTimeSec(), dur: pm.getDurationSec(), playing: true, dt }); } } }, 1000);
+
+// a sender that connects gets the caps at once (it asks again with `caps?` when it joined before this page loaded)
+try { context.addEventListener(fw.system.EventType.SENDER_CONNECTED, (e) => sendCaps(typeof e?.senderId === 'string' ? e.senderId : undefined)); } catch { /* older framework: the sender asks */ }
 
 const options = new fw.CastReceiverOptions();
 options.customNamespaces = { [NS]: fw.system.MessageType.JSON };

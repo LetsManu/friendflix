@@ -13,6 +13,8 @@
 import { get, writable } from 'svelte/store';
 import { api } from '#lib/api';
 import { castLog, noteCastDevice } from '#lib/cast/castLog';
+import { applyAvoid, avoidedOf, castCapsBody, noteAvoid, parseReceiverCaps, usedFeatures, type CastDelivery, type CastFeature, type ReceiverCaps } from '#lib/cast/caps';
+import type { Store } from '#lib/cast/resume';
 
 declare global {
   interface Window {
@@ -80,7 +82,8 @@ interface ChromeCast {
     QueueInsertItemsRequest: new (items: unknown[]) => Record<string, unknown>;
     QueueRemoveItemsRequest: new (ids: number[]) => unknown;
     StreamType: { BUFFERED: string };
-    HlsSegmentFormat: { TS: string };
+    HlsSegmentFormat: { TS: string; FMP4?: string };
+    HlsVideoSegmentFormat?: { FMP4?: string };
     MetadataType: { MOVIE: number; TV_SHOW: number };
     TrackType: { TEXT: string };
     TextTrackType: { SUBTITLES: string };
@@ -104,6 +107,10 @@ export interface CastInfo {
   subtitles: Array<{ index: number; language?: string; title: string; url: string }>;
   /** FriendFlix's own receiver only: the token it reports this play session with (sent to it on CAST_NS, never in media metadata) */
   report?: string;
+  /** 'fmp4' for a HEVC / surround stream (the answer then also carries `hlsVideoSegmentFormat`); absent otherwise */
+  hlsVideoSegmentFormat?: string;
+  /** what the stream carries (fixed codes, see caps.ts); only in the answer to a cast that sent receiver caps */
+  delivery?: CastDelivery;
 }
 
 export interface CastState {
@@ -193,9 +200,57 @@ export function castConfigEnabled(): Promise<boolean> {
 export const CAST_NS = 'urn:x-cast:com.friendflix.cast';
 /** the sender casts to FriendFlix's own receiver */
 export const castCustomReceiver = () => receiverId !== '';
-/** a POST /api/cast/session body for the Chromecast: with the own receiver it asks for the receiver's report token too */
+/**
+ * a POST /api/cast/session body for the Chromecast: with the own receiver it asks for the receiver's report token too, and carries
+ * what that receiver confirmed it plays (`caps`: HEVC, Dolby; see caps.ts) minus what failed on this TV before. Nothing is claimed
+ * before the receiver stated it (an old receiver, a slow one, the Default Media Receiver and AirPlay never carry caps).
+ */
 export function castBody<T extends Record<string, unknown>>(b: T): T {
-  return receiverId && b.via !== 'airplay' ? { ...b, receiver: true } : b;
+  if (!receiverId || b.via === 'airplay') return b;
+  const caps = castCapsBody(rxCaps ? applyAvoid(rxCaps, { ...avoidedOf(store(), deviceNameNow(), Date.now()), ...sessionAvoid }) : null);
+  return { ...b, receiver: true, ...(caps ? { caps } : {}) };
+}
+
+/** localStorage (null: blocked) for the per-device avoid memory */
+function store(): Store {
+  try { return typeof localStorage === 'undefined' ? null : localStorage; } catch { return null; }
+}
+const deviceNameNow = () => ctxT?.getCurrentSession()?.getCastDevice().friendlyName ?? '';
+
+/** how long a token request waits for the receiver's caps (it states them when a sender connects and answers `caps?` at once) */
+export const CAPS_WAIT_MS = 2000;
+/** what the own receiver confirmed for the current session (null: not yet, or it never answers); reset with every session */
+let rxCaps: ReceiverCaps | null = null;
+/** the receiver did not answer in time this session: later requests do not wait again (a late answer still counts) */
+let capsGaveUp = false;
+/** features that failed on the current session's TV (also without a usable device name): dropped from the caps at once */
+let sessionAvoid: Partial<Record<CastFeature, boolean>> = {};
+const capsWaiters: Array<() => void> = [];
+const capsFlush = () => capsWaiters.splice(0).forEach((fn) => fn());
+function capsReset() { rxCaps = null; capsGaveUp = false; sessionAvoid = {}; capsFlush(); }
+/**
+ * Resolves once a token request can be built: at once for the Default Media Receiver, without a session or when the receiver already
+ * answered (or did not, this session); otherwise when its caps arrive, at the latest after CAPS_WAIT_MS.
+ */
+export function castCapsReady(): Promise<void> {
+  if (!receiverId || rxCaps || capsGaveUp || !ctxT?.getCurrentSession()) return Promise.resolve();
+  return new Promise((done) => {
+    const t = setTimeout(() => { capsGaveUp = true; capsFlush(); }, CAPS_WAIT_MS);
+    capsWaiters.push(() => { clearTimeout(t); done(); });
+  });
+}
+/**
+ * The own receiver failed a stream (the load was refused, or it went idle with an error right at the start): which of HEVC / surround it
+ * carried (the answer's fixed `delivery` codes) is remembered for this TV's name for 30 days and dropped from the caps of this session,
+ * so the next request is the same title without them. null: not the own receiver, or the stream carried neither (then it is no codec problem).
+ */
+export function castFellBack(info: CastInfo): 'hevc' | 'surround' | 'both' | null {
+  const used = receiverId ? usedFeatures(info.delivery) : [];
+  if (!used.length) return null;
+  for (const f of used) sessionAvoid[f] = true;
+  noteAvoid(store(), deviceNameNow(), used, Date.now());
+  castLog({ level: 'warn', tag: 'receiver', text: `the TV could not play ${used.join(' and ')} · remembered for this device` });
+  return used.length === 2 ? 'both' : used[0]!;
 }
 const rxListeners = new Set<(m: Record<string, unknown>) => void>();
 /** messages from the own receiver (TV remote input, "still watching" answered on the TV); returns the unsubscribe function */
@@ -214,11 +269,18 @@ function listen() {
   const sess = ctxT?.getCurrentSession();
   if (!receiverId || !sess?.addMessageListener || listened.has(sess)) return;
   listened.add(sess);
+  capsReset(); // a new session: what the last TV confirmed says nothing about this one
   sess.addMessageListener(CAST_NS, (_ns, raw) => {
     let m: unknown;
     try { m = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return; }
+    if (m && typeof m === 'object' && (m as { t?: unknown }).t === 'caps') {
+      const c = parseReceiverCaps(m);
+      if (c) { rxCaps = c; capsFlush(); }
+      return;
+    }
     if (m && typeof m === 'object' && typeof (m as { t?: unknown }).t === 'string') rxListeners.forEach((fn) => fn(m as Record<string, unknown>));
   });
+  castSendMessage({ t: 'caps?' }); // the receiver also states them by itself when a sender connects: whichever comes first
 }
 /** the receiver's report token of a just loaded / queued token goes over the private channel */
 const sendReport = (info: CastInfo) => { if (info.report) castSendMessage({ t: 'tok', castId: info.castId, rt: info.report }); };
@@ -305,6 +367,7 @@ function setup() {
       emit('session-resume');
     } else if (e.sessionState === fw.SessionState.SESSION_ENDED) {
       lastLoaded = false;
+      capsReset();
       castLog({ level: 'info', tag: 'session', text: 'session ended' });
       castState.update((s) => ({ ...s, connected: false, deviceName: '', state: 'idle', loaded: false }));
       emit('session-end');
@@ -344,7 +407,11 @@ function mediaOf(info: CastInfo, ch: ChromeCast): Record<string, unknown> {
   const m = ch.media;
   const media = new m.MediaInfo(info.contentUrl, info.contentType);
   media.streamType = m.StreamType.BUFFERED;
-  media.hlsSegmentFormat = m.HlsSegmentFormat.TS;
+  // a HEVC / surround stream (the server's answer says so) is fMP4: the receiver must not expect MPEG-TS segments; every other stream stays as it was
+  if (info.hlsSegmentFormat === 'fmp4') {
+    media.hlsSegmentFormat = m.HlsSegmentFormat.FMP4 ?? 'fmp4';
+    media.hlsVideoSegmentFormat = m.HlsVideoSegmentFormat?.FMP4 ?? 'fmp4';
+  } else media.hlsSegmentFormat = m.HlsSegmentFormat.TS;
   if (info.runtimeTicks) media.duration = info.runtimeTicks / 10_000_000;
   const meta = info.seriesName ? new m.TvShowMediaMetadata() : new m.MovieMediaMetadata();
   meta.metadataType = info.seriesName ? m.MetadataType.TV_SHOW : m.MetadataType.MOVIE;

@@ -18,6 +18,8 @@ let admin: Sess;
 let visible = true;
 /** the play session id the fake server gives the next PlaybackInfo (default: one fixed id) */
 let psNext: string | null = null;
+/** the media streams the fake server's next PlaybackInfo lists (default: a 2160p source without codec facts) */
+let srcStreams: unknown[] | null = null;
 const runtime = 7200 * 10_000_000;
 
 beforeAll(async () => {
@@ -29,7 +31,7 @@ beforeAll(async () => {
     'POST /Items/[^/]+/PlaybackInfo': () => ({
       json: {
         PlaySessionId: psNext ?? 'ps-12345678',
-        MediaSources: [{ Id: MS, Container: 'mkv', SupportsDirectPlay: true, Bitrate: 4_000_000, RunTimeTicks: runtime, MediaStreams: [{ Index: 0, Type: 'Video', Height: 2160 }, { Index: 1, Type: 'Audio' }, { Index: 2, Type: 'Subtitle', Codec: 'srt', Language: 'ger' }] }],
+        MediaSources: [{ Id: MS, Container: 'mkv', SupportsDirectPlay: true, Bitrate: 4_000_000, RunTimeTicks: runtime, MediaStreams: srcStreams ?? [{ Index: 0, Type: 'Video', Height: 2160 }, { Index: 1, Type: 'Audio' }, { Index: 2, Type: 'Subtitle', Codec: 'srt', Language: 'ger' }] }],
       },
     }),
   });
@@ -1125,5 +1127,217 @@ describe('cast: the queued next token is pinned at mint and its life follows its
     expect(b.exp).toBeGreaterThan(a.exp);
     expect(b.exp - nx.j.expiresAt).toBe(0);
     expect(b.exp - Date.now()).toBeLessThanOrEqual(6 * 3600_000);
+  });
+});
+
+describe('cast: HEVC and surround with FriendFlix\'s own receiver', () => {
+  const APP = 'A1B2C3D4';
+  let was = '';
+  beforeAll(() => { was = env.ctx.cfg.CAST_RECEIVER_APP_ID; env.ctx.cfg = { ...env.ctx.cfg, CAST_RECEIVER_APP_ID: APP }; });
+  afterAll(() => { env.ctx.cfg = { ...env.ctx.cfg, CAST_RECEIVER_APP_ID: was }; });
+  afterEach(() => { srcStreams = null; psNext = null; });
+  const sub = { Index: 9, Type: 'Subtitle', Codec: 'srt', Language: 'ger' };
+  /** Dunmoor S1 E5 "Wrenfield Pier": HEVC Main SDR 1080p with a Dolby Digital Plus 5.1 track */
+  const wrenfield = [
+    { Index: 0, Type: 'Video', Codec: 'hevc', Profile: 'Main', Width: 1920, Height: 1080, BitRate: 3_000_000, VideoRangeType: 'SDR' },
+    { Index: 1, Type: 'Audio', Codec: 'eac3', Channels: 6, BitRate: 640_000, IsDefault: true }, sub,
+  ];
+  /** Saltwater Almanac S2 E1 "Night Market": H.264 with a DTS 5.1 track */
+  const nightMarket = [
+    { Index: 0, Type: 'Video', Codec: 'h264', Profile: 'High', Width: 1920, Height: 1080, BitRate: 3_000_000, VideoRangeType: 'SDR' },
+    { Index: 1, Type: 'Audio', Codec: 'dts', Channels: 6, BitRate: 1_500_000, IsDefault: true }, sub,
+  ];
+  const stereoH264 = [
+    { Index: 0, Type: 'Video', Codec: 'h264', Profile: 'High', Width: 1920, Height: 1080, BitRate: 3_000_000, VideoRangeType: 'SDR' },
+    { Index: 1, Type: 'Audio', Codec: 'aac', Channels: 2, BitRate: 160_000, IsDefault: true }, sub,
+  ];
+  const caps = { hevc: true, surround: ['eac3'] };
+  /** the same URL with the token taken out, to compare two casts */
+  const shape = (j: { contentUrl: string }) => j.contentUrl.replace(/\/media\/c\/[\w-]{43}\//, '/media/c/TOKEN/');
+  const params = (j: { contentUrl: string }) => new URL(j.contentUrl).searchParams;
+  /** a cast from a public address (remote: the plan may ask the HEVC gate) */
+  const remote = (body: Record<string, unknown>) => env.app.inject({
+    method: 'POST', url: '/api/cast/session', cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf, 'x-forwarded-for': `203.0.113.${(++n % 250) + 1}` }, payload: { itemId: ID, receiver: true, ...body },
+  });
+
+  it('without caps the URL and the answer are byte-identical to today\'s (own receiver, Default Media Receiver, AirPlay, invalid caps, no claim)', async () => {
+    srcStreams = wrenfield;
+    const base = (await create(admin, { receiver: true })).j;
+    expect(base.hlsSegmentFormat).toBe('ts');
+    expect(base.hlsVideoSegmentFormat).toBeUndefined();
+    expect(base.delivery).toBeUndefined();
+    expect(params(base).get('VideoCodec')).toBe('h264');
+    expect(params(base).get('AudioCodec')).toBe('aac');
+    expect(params(base).get('SegmentContainer')).toBe('ts');
+    expect(params(base).get('TranscodingMaxAudioChannels')).toBe('2');
+    expect(params(base).get('Level')).toBe('41');
+    expect(params(base).get('RequireAvc')).toBe('true');
+    const keys = (j: Record<string, unknown>) => Object.keys(j).filter((k) => k !== 'report').sort();
+    for (const body of [
+      { receiver: true, caps: { hevc: false, surround: [] } }, // the receiver confirmed nothing
+      { receiver: true, caps: { hevc: 'yes', surround: ['dts'] } }, // malformed: ignored, never an error
+      { receiver: true, caps: { hevc: true, surround: ['eac3', 'dts'] } },
+      { caps }, // a Default Media Receiver session ignores any caps
+      { receiver: true, via: 'airplay', caps },
+    ]) {
+      const { r, j } = await create(admin, body);
+      expect(r.statusCode, JSON.stringify(body)).toBe(200);
+      expect(shape(j), JSON.stringify(body)).toBe(shape(base));
+      expect(keys(j), JSON.stringify(body)).toEqual(keys(base));
+      expect(j.hlsSegmentFormat).toBe('ts');
+    }
+  });
+
+  it('HEVC source + {hevc, eac3}: fMP4 remux, HEVC copied, the 5.1 track passed through, the answer names fMP4', async () => {
+    srcStreams = wrenfield;
+    const { r, j, ct } = await create(admin, { receiver: true, caps });
+    expect(r.statusCode).toBe(200);
+    const p = params(j);
+    expect(p.get('VideoCodec')).toContain('hevc');
+    expect(p.get('AudioCodec')!.startsWith('eac3')).toBe(true);
+    expect(p.get('SegmentContainer')).toBe('mp4');
+    expect(p.get('TranscodingMaxAudioChannels')).toBe('6');
+    expect(p.get('hevc-codectag')).toBe('hvc1');
+    expect(p.get('hevc-rangetype')).toBe('SDR|DOVIWithSDR'); // SDR only: never HDR / Dolby Vision
+    expect(p.get('h264-level')).toBe('41');
+    expect(p.get('h264-videobitdepth')).toBe('8');
+    expect(p.has('Level') || p.has('MaxVideoBitDepth') || p.has('RequireAvc')).toBe(false);
+    expect(p.get('EnableAdaptiveBitrateStreaming')).toBe('false'); // one variant: the receiver gets no extra HDR-copy variants
+    expect(p.get('EnableTrickplay')).toBe('false');
+    expect(j.hlsSegmentFormat).toBe('fmp4');
+    expect(j.hlsVideoSegmentFormat).toBe('fmp4');
+    expect(j.delivery).toMatchObject({ video: 'copy', videoCodec: 'hevc', audio: 'copy', audioCodec: 'eac3', channels: 6 });
+    // the cast profile Jellyfin gets is unchanged (the plan decides the stream), and the token never reaches it
+    const pb = env.jfCalls.filter((c) => c.path.endsWith('/PlaybackInfo')).at(-1)!;
+    expect(pb.body.DeviceProfile.DirectPlayProfiles).toEqual([]);
+    expect(JSON.stringify(pb)).not.toContain(ct);
+    expect(j.contentUrl).not.toMatch(/api_key|ApiKey/i);
+    expect(j.report).toMatch(/^[\w-]+\.[\w-]{43}$/);
+  });
+
+  it('only the surround claim: the DTS 5.1 track of an H.264 file is converted to Dolby Digital Plus, the picture is copied', async () => {
+    srcStreams = nightMarket;
+    const { j } = await create(admin, { receiver: true, caps: { hevc: false, surround: ['eac3', 'ac3'] } });
+    const p = params(j);
+    expect(p.get('VideoCodec')).toBe('h264');
+    expect(p.get('AudioCodec')).toBe('eac3,ac3');
+    expect(p.get('SegmentContainer')).toBe('mp4');
+    expect(p.get('AudioChannels')).toBe('6');
+    expect(j.hlsSegmentFormat).toBe('fmp4');
+    expect(j.hlsVideoSegmentFormat).toBe('fmp4');
+    expect(j.delivery).toMatchObject({ video: 'copy', videoCodec: 'h264', audio: 'surround', audioCodec: 'eac3', channels: 6 });
+  });
+
+  it('claims that change nothing for this file (an H.264 stereo file, HEVC claimed) keep the TS stream; the answer still says TS', async () => {
+    srcStreams = stereoH264;
+    const base = (await create(admin, { receiver: true })).j;
+    const { j } = await create(admin, { receiver: true, caps });
+    expect(shape(j)).toBe(shape(base));
+    expect(j.hlsSegmentFormat).toBe('ts');
+    expect(j.hlsVideoSegmentFormat).toBeUndefined();
+    expect(j.delivery).toMatchObject({ video: 'copy', videoCodec: 'h264', audio: 'copy', channels: 2 });
+  });
+
+  it('a device that confirms HEVC but no Main 10 gets only Main; a Main 10 file is not copied as HEVC then', async () => {
+    srcStreams = [{ ...wrenfield[0]!, Profile: 'Main 10' }, wrenfield[1], sub];
+    const main = (await create(admin, { receiver: true, caps: { hevc: true, surround: [] } })).j;
+    expect(params(main).get('hevc-profile')).toBe('main');
+    expect(main.delivery.video).toBe('h264');
+    const ten = (await create(admin, { receiver: true, caps: { hevc: true, hevc10: true, surround: [] } })).j;
+    expect(params(ten).get('hevc-profile')).toBe('main,main10');
+    expect(ten.delivery).toMatchObject({ video: 'copy', videoCodec: 'hevc' });
+  });
+
+  it('hevc10 without hevc claims nothing', async () => {
+    srcStreams = wrenfield;
+    const base = (await create(admin, { receiver: true })).j;
+    const { j } = await create(admin, { receiver: true, caps: { hevc: false, hevc10: true, surround: [] } });
+    expect(shape(j)).toBe(shape(base));
+  });
+
+  it('a Dolby Vision source is never HEVC-copied into the stream (SDR only)', async () => {
+    srcStreams = [{ ...wrenfield[0]!, VideoRangeType: 'DOVI' }, wrenfield[1], sub];
+    const { j } = await create(admin, { receiver: true, caps });
+    expect(j.delivery.video).toBe('h264');
+    expect(params(j).get('hevc-rangetype')).toBe('SDR|DOVIWithSDR');
+  });
+
+  it('remote: the HEVC gate is asked once for a conversion; its answer shapes the plan; a refusal keeps H.264 and names the reason', async () => {
+    srcStreams = [{ ...wrenfield[0]!, BitRate: 60_000_000 }, wrenfield[1], sub];
+    const gate = vi.fn(async (): Promise<{ ok: true } | { ok: false; why: 'h264_busy' }> => ({ ok: true }));
+    const orig = env.ctx.jf.playbackInfo.bind(env.ctx.jf);
+    const spy = vi.spyOn(env.ctx.jf, 'playbackInfo').mockImplementation((u, i, o) => orig(u, i, { ...o, hevcGate: o.hevcGate ? gate : undefined }));
+    try {
+      const r = await remote({ caps });
+      expect(r.statusCode).toBe(200);
+      expect(gate).toHaveBeenCalledTimes(1);
+      expect(r.json().delivery).toMatchObject({ video: 'hevc', videoCodec: 'hevc' });
+      expect(r.json().delivery.why).toContain('hevc_upload');
+      expect(params(r.json()).get('VideoCodec')).toBe('hevc,h264');
+      expect(r.json().hlsSegmentFormat).toBe('fmp4');
+      // a conversion is remembered for the server's count (fixed codes only)
+      const uid = (await call(admin, 'GET', '/api/me')).json().id as string;
+      expect(JSON.parse((await env.kv.get(`pbinfo:${uid}:${r.json().playSessionId}`))!)).toEqual({ video: 'hevc', audio: 'copy' });
+      gate.mockResolvedValueOnce({ ok: false, why: 'h264_busy' });
+      const refused = await remote({ caps });
+      expect(refused.json().delivery).toMatchObject({ video: 'h264' });
+      expect(refused.json().delivery.why[0]).toBe('h264_busy');
+      expect(params(refused.json()).get('VideoCodec')).toBe('h264,hevc'); // copying stays possible
+      // at home the gate is never asked
+      gate.mockClear();
+      await create(admin, { receiver: true, caps });
+      expect(gate).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); }
+  });
+
+  it('remote without a ready probe (the real gate) or with HEVC_STREAMS 0: H.264 with the fixed reason', async () => {
+    srcStreams = [{ ...wrenfield[0]!, BitRate: 60_000_000 }, wrenfield[1], sub];
+    expect((await remote({ caps })).json().delivery.why[0]).toBe('h264_unproven');
+    env.ctx.cfg = { ...env.ctx.cfg, HEVC_STREAMS: 0 };
+    try { expect((await remote({ caps })).json().delivery.why[0]).toBe('h264_off'); } finally { env.ctx.cfg = { ...env.ctx.cfg, HEVC_STREAMS: 2 }; }
+  });
+
+  it('surround is off with SURROUND_AUDIO=false: the 5.1 track stays stereo', async () => {
+    srcStreams = nightMarket;
+    env.ctx.cfg = { ...env.ctx.cfg, SURROUND_AUDIO: 'false' };
+    try {
+      const { j } = await create(admin, { receiver: true, caps: { hevc: false, surround: ['eac3'] } });
+      expect(j.delivery).toMatchObject({ audio: 'stereo', channels: 2 });
+      expect(params(j).get('AudioCodec')).toBe('aac');
+      expect(j.hlsSegmentFormat).toBe('ts');
+    } finally { env.ctx.cfg = { ...env.ctx.cfg, SURROUND_AUDIO: 'true' }; }
+  });
+
+  it('a queued next episode carries the same caps (fMP4 too)', async () => {
+    const uid = (await call(admin, 'GET', '/api/me')).json().id as string;
+    await revokeSessions(env.ctx, uid);
+    admin = await env.login();
+    for (const k of [...await env.kv.keys(`play:${uid}:`), ...await env.kv.keys('castnext:')]) await env.kv.del(k);
+    const role = env.ctx.roles.admin!, before = role.maxStreams;
+    role.maxStreams = 3;
+    try {
+      srcStreams = wrenfield;
+      const cur = await create(admin, { receiver: true, caps });
+      expect((await authz({ ct: cur.ct, client: '198.51.100.1' })).statusCode).toBe(200);
+      psNext = 'ps-next-7001';
+      const nx = await create(admin, { receiver: true, caps, next: true, after: cur.j.castId });
+      expect(nx.r.statusCode).toBe(200);
+      expect(nx.j.hlsSegmentFormat).toBe('fmp4');
+      expect(shape(nx.j).replace('ps-next-7001', 'ps-12345678')).toBe(shape(cur.j));
+    } finally { role.maxStreams = before; psNext = null; }
+  });
+
+  it('a receiver failure that follows a conversion counts against the server\'s HEVC state once, like a player fallback', async () => {
+    const uid = (await call(admin, 'GET', '/api/me')).json().id as string;
+    await env.kv.set(`pbinfo:${uid}:ps-failed-hevc`, JSON.stringify({ video: 'hevc', audio: 'copy' }), 600);
+    await env.kv.set(`pbinfo:${uid}:ps-failed-copy`, JSON.stringify({ video: 'copy', audio: 'copy' }), 600);
+    await env.kv.del('hevcenc:failures');
+    srcStreams = stereoH264;
+    await create(admin, { receiver: true, caps, fellBack: 'surround', prevPs: 'ps-failed-hevc' }); // not a HEVC fallback
+    await create(admin, { receiver: true, caps, fellBack: 'hevc', prevPs: 'ps-failed-copy' }); // a remux failure never counts
+    expect(await env.kv.get('hevcenc:failures')).toBeNull();
+    const r = await create(admin, { receiver: true, caps, fellBack: 'hevc', prevPs: 'ps-failed-hevc' });
+    expect(r.r.statusCode).toBe(200);
+    expect(JSON.parse((await env.kv.get('hevcenc:failures'))!)).toHaveLength(1);
   });
 });
