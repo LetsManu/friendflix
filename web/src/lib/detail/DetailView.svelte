@@ -264,6 +264,8 @@
   $: hint = hintFor(handoff, playTarget);
   $: playQs = [qs, hint && `t=${Math.floor(hint.positionTicks / 1e7)}`].filter(Boolean).join('&');
   $: handoffLine = hint ? $t('detail.view.handoffLine', { time: handoffTime(hint.positionTicks), device: handoffDevice(hint, $t) }) : '';
+  /** how far the hint's position is (0..1; 0 = unknown): the progress bar names the same position as the text */
+  $: handoffProgress = hint && (hint.runtimeTicks ?? resumeFrom?.runtimeTicks) ? Math.min(1, Math.max(0.02, hint.positionTicks / (hint.runtimeTicks ?? resumeFrom!.runtimeTicks!))) : 0;
   const handoffName = (label: string, h: Handoff | null) => (h ? $t('detail.view.handoffAria', { play: label, time: handoffTime(h.positionTicks), device: handoffDevice(h, $t) }) : undefined);
   /** while casting, Play sends the title (the next episode for a series) to the TV; a series without an episode keeps its /item link */
   function castPlay(e: MouseEvent) { if (playBase) playOrCast(e, { id: playTarget, positionTicks: hint ? hint.positionTicks : resumeFrom?.positionTicks }, { audio: lgA || undefined, subtitle: lgS || undefined, explicitStart: Boolean(hint) }); }
@@ -273,8 +275,11 @@
   $: remaining = resumeFrom ? remainingLabel(resumeFrom.positionTicks, resumeFrom.runtimeTicks) : '';
   $: playLabel = $t(item ? (item.type === 'Series' ? (next ? (next.positionTicks ? 'detail.view.resume' : 'detail.view.continue') : 'detail.view.play') : item.positionTicks ? 'detail.view.resume' : 'detail.view.play') : 'detail.view.play');
   /** the line under Play: with a hint its text takes the place of the remaining time; where the page has no line, none is added (nothing moves) */
-  $: shownRemaining = remaining && hint ? handoffLine : remaining;
-  $: resumeLine = item?.type === 'Series' && next ? [$t('detail.view.episodeCode', { s: String(next.parentIndexNumber ?? '?'), e: String(next.indexNumber ?? '?') }), hint ? handoffLine : remaining].filter(Boolean).join(' · ') : shownRemaining;
+  $: epCode = item?.type === 'Series' && next ? $t('detail.view.episodeCode', { s: String(next.parentIndexNumber ?? '?'), e: String(next.indexNumber ?? '?') }) : '';
+  /** the hint's full line: "S1:F4 · Weiter ab 23:10 (zuletzt auf LG-Fernseher)" (a film: without the code) */
+  $: hintLine = [epCode, handoffLine].filter(Boolean).join(' · ');
+  $: shownRemaining = remaining && hint ? hintLine : remaining;
+  $: resumeLine = epCode ? (hint ? hintLine : [epCode, remaining].filter(Boolean).join(' · ')) : shownRemaining;
   $: len = item ? lengthLabel(item) : '';
   $: badge = item ? ratingBadge(item, Date.now()) : '';
   /** the star rating moves to the ratings line; the meta line keeps it only when "about" has none (older server, failed request) */
@@ -482,9 +487,9 @@
   <!-- ================= TV: one screen, a button list instead of the scrolling sections (friends, comments, download, share stay off) ================= -->
   {#if item}
     {#if sub}
-    <TvSub {sub} {item} {about} {facts} {people} {extras} {more} {seasons} bind:season {episodes} {next} {seriesKnown} {qs} {overview} {playHref} {playLabel} {titleId} />
+    <TvSub {sub} {item} {about} {facts} {people} {extras} {more} {seasons} bind:season {episodes} {next} {seriesKnown} {qs} {overview} {playHref} {playLabel} playAria={handoffName(playLabel, hint)} {titleId} />
     {:else}
-    <DetailTv {item} {about} {facts} {people} {extras} {playTarget} {playBase} {playHref} ready={playKnown} {playLabel} playAria={handoffName(playLabel, hint)} {qs} {resumeFrom} {resumeLine} {tagline} {overview} {inList} {titleId}
+    <DetailTv {item} {about} {facts} {people} {extras} {playTarget} {playBase} {playHref} ready={playKnown} {playLabel} playAria={handoffName(playLabel, hint)} {handoffProgress} {qs} {resumeFrom} {resumeLine} {tagline} {overview} {inList} {titleId}
       bind:thumb bind:audio={lgA} bind:sub={lgS} playing={heroPlaying} loop={!autoOn && !heroByUser} userTrailer={heroByUser} bind:video={hv} bind:loaded={heroLoaded}
       onMyList={toggleMine} onTrailer={tvTrailer} {onThumb} onEnded={onHeroEnded} />
     {/if}
@@ -497,7 +502,7 @@
   {:else if variant === 'desk'}
   <!-- ================= desktop: cinematic full page (fixed backdrop, left column, tabs with content only) ================= -->
   {#if item}
-    <DetailDesk {item} {about} {facts} {people} {extras} {more} {seasons} bind:season {episodes} {next} {qs} {playTarget} {playBase} {playHref} {playLabel} {handoffLine} playAria={handoffName(phonePlay, hint)}
+    <DetailDesk {item} {about} {facts} {people} {extras} {more} {seasons} bind:season {episodes} {next} {qs} {playTarget} {playBase} {playHref} {playLabel} handoffLine={hint ? hintLine : ''} {handoffProgress} playAria={handoffName(phonePlay, hint)}
       {resumeFrom} {tagline} {overview} {langs} {inList} {titleId} bind:thumb bind:audio={lgA} bind:sub={lgS} {moreActions} {social}
       canTrailer={canPreview && !heroPlaying} playing={heroPlaying} loop={!autoOn} bind:video={hv} bind:loaded={heroLoaded} bind:stage={heroEl}
       {counting} {autoLeft} bind:autoEl onCancelAuto={() => cancelAuto(true)} onMyList={toggleMine} {onThumb} onTrailer={() => startHero(true)}
@@ -765,7 +770,7 @@
   .rb { width: 44px; min-height: 44px; height: 44px; padding: 0; border-radius: 50%; background: rgba(42, 42, 42, .7); border: 2px solid rgba(255, 255, 255, .55); color: #fff; }
   .rb:hover:not(:disabled) { border-color: #fff; background: rgba(42, 42, 42, .95); }
   .rb.on { color: #fff; border-color: #fff; }
-  .resume { margin: -.3rem 0 0; font-size: .95rem; font-weight: 600; color: #e8e8e8; text-shadow: 0 1px 8px #000; }
+  .resume { margin: -.3rem 0 0; font-size: .95rem; font-weight: 600; color: #e8e8e8; text-shadow: 0 1px 8px #000; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .snd { position: absolute; right: 2rem; bottom: 1.6rem; z-index: 3; width: 44px; min-height: 44px; height: 44px; padding: 0; border-radius: 50%; background: rgba(42, 42, 42, .7); border: 2px solid rgba(255, 255, 255, .55); color: #fff; }
   .vp .snd { right: var(--pad-x); bottom: 2.2rem; }
   .snd:hover:not(:disabled) { border-color: #fff; background: rgba(42, 42, 42, .95); }
