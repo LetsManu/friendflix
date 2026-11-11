@@ -74,7 +74,8 @@ export async function airplayRemote(page: Page, o: { tracks?: boolean } = {}) {
     resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: 'ps1', roleMaxBitrate: 20_000_000, ...TRACKS,
     hlsUrl: '/media/hls/4000000/out.m3u8', maxBitrate: 4_000_000, transcodeReason: 'network',
   } }));
-  await castSessions(page);
+  // a token asked with `subtitleIndex` carries the rendition (the server's `hlsSub`)
+  const { sessions } = await castSessions(page, { deliver: (b) => (b.subtitleIndex === undefined ? undefined : { hlsSub: true }) });
   await page.goto('/');
   await page.waitForLoadState('networkidle');
   await clientNav(page, '/watch/' + episodes[0]!.id);
@@ -84,6 +85,7 @@ export async function airplayRemote(page: Page, o: { tracks?: boolean } = {}) {
   if (await page.locator('.ctl.hide').count()) await page.locator('.stage').click({ position: { x: 30, y: 200 } });
   await playOnAirPlay(page);
   await expect(page.getByTestId('airplay-active')).toContainText('Läuft über AirPlay');
+  return { sessions };
 }
 
 /** the screen's visible buttons, each at least 44 x 44 px */

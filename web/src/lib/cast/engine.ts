@@ -50,6 +50,7 @@ import { airLog } from '#lib/player/airplayLog';
 import { motionAllowed } from '#lib/preview';
 import { formFactor } from './playOn';
 import { castLog, type CastLogEntry } from './castLog';
+import { forgetSubsRefused, rememberSubsRefused, subsRefusedRecently } from './airsubs';
 import { castIdOfContentUrl, clearHint, lookupToCastInfo, readHint, sha256Hex, writeHint, type CastHint, type CastLookup, type Store } from './resume';
 import { barTitles, firstInfoBody } from '#lib/player/bar';
 import { episodeLabel } from './remoteview';
@@ -136,6 +137,8 @@ export interface EngineDeps {
   onWake(fn: () => void): () => void;
   body(): HTMLElement; onPageHide(fn: () => void): () => void; toast(kind: 'info' | 'error', msg: string): void;
   prefs(): Prefs; timers: { set(fn: () => void, ms: number): unknown; clear(t: unknown): void; now(): number };
+  /** the media server can put one subtitle rendition into an AirPlay stream (`capabilities.castHlsSubtitles`; undefined = yes) */
+  subsInStream?(): boolean;
   /** the page was hidden (visibilitychange): only logged */
   onHidden(fn: () => void): () => void;
   /** localStorage (null: blocked): the resume hint `ff-cast-hint` */
@@ -811,6 +814,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   }
 
   // ---- AirPlay ----
+  const subsOk = () => deps.subsInStream?.() ?? true;
   const airNote = (s: Live, ev: 'adopt' | 'switch' | 'reconnect' | 'stop', why?: string) => {
     if (s.air) airLog('engine', { src: s.air.video.src, state: s.view.state, note: why ? `${ev}: ${why}` : ev });
   };
@@ -827,11 +831,13 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   /** the controller's callbacks while the engine owns it */
   function airDeps(s: Live, a: AirLive): AirPlayDeps {
     return {
-      request(pos) {
+      request(pos, o) {
         const w = a.want, at = w ? w.at : pos;
+        // the chosen subtitle rides inside the stream (text only: the server ignores an image track); not after the TV refused one, not without the server's capability
+        const sub = !o?.noSubs && s.subIndex >= 0 && subsOk() && !subsRefusedRecently(deps.store, deps.timers.now()) ? { subtitleIndex: s.subIndex } : {};
         return call<CastInfo>('/api/cast/session', {
           method: 'POST',
-          body: { itemId: w?.itemId ?? s.view.itemId, startTicks: at === undefined ? undefined : secToTicks(at), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, via: 'airplay' },
+          body: { itemId: w?.itemId ?? s.view.itemId, startTicks: at === undefined ? undefined : secToTicks(at), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, via: 'airplay', ...sub },
         });
       },
       // the server counts the stream until its `stop` arrived: revoke after it (pagehide: now, with keepalive)
@@ -870,6 +876,14 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
         // the TV still has the previous token, whose stop is reported: it must not keep playing unreported
         a.video.pause();
         patch(s, { state: 'reconnect', paused: true, buffering: false });
+      },
+      subsRefused() {
+        if (cur !== s) return;
+        // the retry without subtitles is already under way (its request leaves out the key): remember, switch the chip off, tell
+        rememberSubsRefused(deps.store, deps.timers.now());
+        s.subIndex = -1;
+        patch(s, { subIndex: -1 });
+        deps.toast('info', tr('player.castRemote.subsRefused'));
       },
       change(st) {
         if (cur !== s) return;
@@ -1109,14 +1123,16 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     leaving = false;
     // a hand-off: the cast was started in this tab, it is this tab's (the lock is taken if free; resume() holds it already)
     if (h.kind === 'chromecast' && how === 'adopt') void ownLock(true).then(() => { if (!cur) freeLock(); });
+    // AirPlay: a TV that refused subtitles lately (or a server that cannot send them) starts without
+    const subOf = (x: PlayerHandoff) => (x.kind === 'airplay' && (!subsOk() || subsRefusedRecently(deps.store, timers.now())) ? -1 : x.subIndex);
     const s: Live = {
       view: { kind: h.kind, device: h.kind === 'airplay' ? tr('player.castBar.airplayDevice') : 'Chromecast', itemId: h.itemId, seriesId: h.seriesId, title: h.title, subtitle: h.subtitle, posterId: h.itemId, isEpisode: h.isEpisode,
         position: h.position, duration: h.duration, paused: h.paused, buffering: false, state: h.started ? 'playing' : 'connecting',
-        audioTracks: h.audioTracks ?? [], subtitles: h.subtitles ?? [], audioIndex: h.audioIndex, subIndex: h.subIndex,
+        audioTracks: h.audioTracks ?? [], subtitles: h.subtitles ?? [], audioIndex: h.audioIndex, subIndex: subOf(h),
         autoplay: deps.prefs().autoplayNext && !h.sleepAfterEpisode, castId: h.cast.castId },
       // hold: a resumed, never reported cast on a paused TV counts as started once it is seen paused (as a paused renewal)
       ci: h.cast, started: h.started, busy: false, stopping: Promise.resolve(), lastPaused: null, hold,
-      audioIndex: h.audioIndex, subIndex: h.subIndex, maxBitrate: h.maxBitrate, sleepAfterEpisode: h.sleepAfterEpisode,
+      audioIndex: h.audioIndex, subIndex: subOf(h), maxBitrate: h.maxBitrate, sleepAfterEpisode: h.sleepAfterEpisode,
       // a resumed cast first looks at the receiver's own queue (restoreQueue): nothing is queued before that
       retry: null, offs: [], segs: [], credits: false, queueAsked: how === 'resume', going: false,
       autoSet: null, queueing: false, unpinRetried: false, label: labelOf(null, h.isEpisode), line: '', stallLogged: false, renewing: false,
@@ -1453,9 +1469,19 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     setSubtitle(index) {
       const s = cur;
       if (!s) return;
+      if (s.air) {
+        // AirPlay: the TV only shows a track inside the stream, so a change is a new token at the position (like an audio change)
+        if (index === s.subIndex || (index >= 0 && !subsOk())) return;
+        if (index >= 0) forgetSubsRefused(deps.store); // picked again: the refusal is forgotten
+        const had = s.ci?.hlsSub === true;
+        s.subIndex = index;
+        patch(s, { subIndex: index });
+        if (s.ci && (index >= 0 || had)) void swap(s, s.view.itemId, s.view.position, false);
+        return;
+      }
       s.subIndex = index;
       patch(s, { subIndex: index });
-      if (s.ci && !s.air) cast.castSetSubtitle(index); // AirPlay: the receiver only shows tracks inside the stream
+      if (s.ci) cast.castSetSubtitle(index);
     },
     release() {
       const s = cur;
@@ -1522,6 +1548,7 @@ const browserDeps: EngineDeps = {
   api,
   item: async (id) => cachedItem(id) ?? (await api<ItemDetail>(`/api/items/${id}`)).item,
   cast: { castState, onCastEvent, loadOnCast, castPlayPause, castSeek, castStop, castSetSubtitle, queueOnCast, castQueueRemove, castQueueNext, castAdoptTracks, castActiveSubtitle, castCustomReceiver, castBody, castCapsReady, castFellBack, castSendMessage, onReceiverMessage },
+  subsInStream: () => get(serverCaps).castHlsSubtitles,
   async segments(id) {
     const caps = get(serverCaps);
     if (!caps.segments.length) return [];

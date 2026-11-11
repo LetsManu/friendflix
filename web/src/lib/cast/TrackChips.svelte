@@ -4,15 +4,18 @@
   /**
    * The remote's Audio and Subtitles chips: each opens a glass menu (`role="menu"` of `menuitemradio`, the keys of
    * `ui/menuKeys`; Escape closes and gives the focus back to the chip). Audio asks the engine for a new token with that track
-   * (`refresh`), subtitles switch on the receiver (`setSubtitle`). AirPlay carries only the Audio chip until the stream has its
-   * subtitles.
+   * (`refresh`), subtitles switch on the receiver (`setSubtitle`). On AirPlay the subtitles ride inside the stream: the chip asks
+   * the engine for a new token; without the server's capability it is disabled ("Off"), and after a TV refused them lately
+   * (< 30 days, nothing picked since) it reads "Off (TV refused)".
    */
   import { tick } from 'svelte';
+  import { serverCaps } from '#lib/capabilities';
   import { growBoth } from '#lib/glass/fx';
   import { SCRIM_MENU } from '#lib/glass/tone';
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import { menuKeys } from '#lib/ui/menuKeys';
+  import { subsRefusedRecently } from './airsubs';
   import { castEngine, type CastSession, type CastTrack } from './engine';
 
   export let session: CastSession;
@@ -23,6 +26,8 @@
   export let compact = false;
   /** a switch is under way: the chips show, nothing opens */
   export let disabled = false;
+  /** id of the hint under the chips (AirPlay subtitles), named as the Subtitles chip's description */
+  export let describedby: string | undefined = undefined;
 
   type Which = 'audio' | 'subs';
   let open: Which | null = null;
@@ -34,16 +39,22 @@
   $: subs = session.subtitles;
   $: audioSel = session.audioIndex ?? audio.find((a) => a.isDefault)?.index ?? audio[0]?.index;
   $: audioValue = nameOf(audio.find((a) => a.index === audioSel));
-  $: subValue = session.subIndex === -1 ? $t('player.castRemote.off') : nameOf(subs.find((x) => x.index === session.subIndex)) || $t('player.castRemote.off');
+  /** AirPlay and the server cannot put subtitles into the stream: the chip stays, disabled, at Off */
+  $: noServer = airplay && !$serverCaps.castHlsSubtitles;
+  $: refused = airplay && !noServer && session.subIndex === -1 && recentRefusal();
+  function recentRefusal(): boolean {
+    try { return subsRefusedRecently(typeof localStorage === 'undefined' ? null : localStorage, Date.now()); } catch { return false; }
+  }
+  $: subValue = noServer ? $t('player.castRemote.off') : refused ? $t('player.castRemote.offRefused') : session.subIndex === -1 ? $t('player.castRemote.off') : nameOf(subs.find((x) => x.index === session.subIndex)) || $t('player.castRemote.off');
   $: showAudio = audio.length > 0;
-  $: showSubs = !airplay && subs.length > 0;
+  $: showSubs = subs.length > 0;
   $: items = open === 'audio' ? audio.map((a) => ({ index: a.index, name: nameOf(a) })) : [{ index: -1, name: $t('player.castRemote.off') }, ...subs.map((x) => ({ index: x.index, name: nameOf(x) }))];
   $: selected = open === 'audio' ? audioSel : session.subIndex;
   $: if (!showAudio && open === 'audio') open = null;
   $: if (!showSubs && open === 'subs') open = null;
 
   async function toggle(w: Which) {
-    if (disabled) return;
+    if (disabled || (w === 'subs' && noServer)) return;
     if (open === w) { open = null; return; }
     open = w;
     await tick();
@@ -81,7 +92,7 @@
       {#if on}
         {@const which = w as Which}
         <div class="anchor" class:r={which === 'subs' && showAudio}>
-          <button type="button" class="frost-btn chip" bind:this={btn[which]} aria-haspopup="menu" aria-expanded={open === which} aria-disabled={disabled ? 'true' : undefined}
+          <button type="button" class="frost-btn chip" bind:this={btn[which]} aria-haspopup="menu" aria-expanded={open === which} aria-disabled={disabled || (which === 'subs' && noServer) ? 'true' : undefined} aria-describedby={which === 'subs' ? describedby : undefined}
             aria-label={$t(which === 'audio' ? 'player.castRemote.audioChip' : 'player.castRemote.subsChip', { value: which === 'audio' ? audioValue : subValue })}
             on:click={() => toggle(which)}>
             {#if icons}<Icon name={which === 'audio' ? 'volume' : 'subtitles'} size={18} />{/if}

@@ -207,11 +207,11 @@ test('subtitles chip switches the TV\'s track', async ({ page, api: _api }) => {
   expect(await sdk.calls()).toContain('editTracksInfo');
 });
 
-test('airplay: only the Audio chip', async ({ page, api: _api }) => {
+test('airplay: Audio and Subtitles chips (subtitles ride inside the stream)', async ({ page, api: _api }) => {
   await airplayRemote(page, { tracks: true });
   const screen = page.getByTestId('airplay-active');
   await expect(screen.getByRole('button', { name: 'Audio: Deutsch' })).toBeVisible();
-  await expect(screen.getByRole('button', { name: /^Untertitel/ })).toHaveCount(0);
+  await expect(screen.getByRole('button', { name: 'Untertitel: Aus' })).toBeVisible();
 });
 
 test('hint is dismissed for good', async ({ page, api: _api }) => {

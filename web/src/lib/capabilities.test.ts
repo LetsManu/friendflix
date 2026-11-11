@@ -17,6 +17,11 @@ describe('server capabilities', () => {
     const jf = { segments: ['intro', 'outro', 'recap', 'preview'], trickplay: true, upcoming: true, subtitleSearch: true, webhooks: true, changeFeed: false, planB: true, subtitleExtract: false, chapters: true };
     expect(capsFrom(jf)).toEqual(ALL_CAPS);
   });
+  it('castHlsSubtitles: on by default, off only when the server says so (Plex)', () => {
+    expect(ALL_CAPS.castHlsSubtitles).toBe(true);
+    expect(capsFrom({ castHlsSubtitles: false }).castHlsSubtitles).toBe(false);
+    expect(capsFrom({ castHlsSubtitles: 'no' }).castHlsSubtitles).toBe(true);
+  });
   it('a reduced server hides exactly what it lacks', () => {
     const c = capsFrom({ segments: ['intro', 'outro', 7], upcoming: false, subtitleSearch: false, trickplay: 'yes' });
     expect(c.segments).toEqual(['intro', 'outro']);

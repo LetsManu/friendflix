@@ -1044,3 +1044,74 @@ describe('AirPlay controller: shared with the cast engine', () => {
     expect(readAirLog().some((e) => e.note?.includes('remote playback connected'))).toBe(true);
   });
 });
+
+describe('subtitle rendition refused by the TV (code 4 on a token with subtitles)', () => {
+  const MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nmain.m3u8\n';
+  const serve = () => probeFetch.mockImplementation(async (u: string) => new Response(u.includes('master') ? MASTER : '#EXTM3U\n', { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } }));
+  const WITH: CastInfo = { ...CI, hlsSub: true };
+  const evs = () => readAirLog().map((e) => e.ev);
+
+  it('code 4 with subtitles retries once without, then the variant fallback; never a third request', async () => {
+    serve();
+    const request = vi.fn().mockResolvedValueOnce(WITH).mockResolvedValue(CI2);
+    const subsRefused = vi.fn();
+    const { v, c, deps } = setup({ request, subsRefused });
+    v.paused = false;
+    v.currentTime = 300;
+    await airplayOn(v, c);
+    expect(request).toHaveBeenCalledOnce();
+    c.videoError(4);
+    await flush(); await flush();
+    expect(subsRefused).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls[1]).toEqual([300, { noSubs: true }]);
+    expect(deps.revoke).toHaveBeenCalledWith(WITH);
+    expect(v.src).toBe(CI2.contentUrl);
+    expect(evs()).toContain('fallback-subs');
+    expect(evs()).not.toContain('fallback-variant');
+    // second error: the token has no subtitles, so the variant fallback applies as today
+    c.videoError(4);
+    await flush(); await flush();
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(subsRefused).toHaveBeenCalledOnce();
+    expect(evs()).toContain('fallback-variant');
+    expect(deps.fail).not.toHaveBeenCalled();
+    c.videoError(4); // the variant fails as well: the old error behaviour, still no third request
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(c.state.error).toBe(true);
+  });
+
+  it('a token without subtitles goes straight to the variant fallback', async () => {
+    serve();
+    const subsRefused = vi.fn();
+    const { v, c, deps } = setup({ subsRefused });
+    await airplayOn(v, c);
+    c.videoError(4);
+    await flush(); await flush();
+    expect(subsRefused).not.toHaveBeenCalled();
+    expect(deps.request).toHaveBeenCalledOnce();
+    expect(evs()).toContain('fallback-variant');
+  });
+
+  it('other error codes do not retry without subtitles', async () => {
+    const request = vi.fn().mockResolvedValue(WITH);
+    const subsRefused = vi.fn();
+    const { v, c } = setup({ request, subsRefused });
+    await airplayOn(v, c);
+    c.videoError(2);
+    await flush();
+    expect(subsRefused).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it('the retry without subtitles failing leaves the error state (no endless retry)', async () => {
+    const request = vi.fn().mockResolvedValueOnce(WITH).mockRejectedValue(Object.assign(new Error('x'), { status: 429 }));
+    const { v, c, deps } = setup({ request, subsRefused: vi.fn() });
+    await airplayOn(v, c);
+    c.videoError(4);
+    await flush(); await flush();
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(c.state.error).toBe(true);
+    expect(deps.fail).toHaveBeenCalledOnce();
+  });
+});

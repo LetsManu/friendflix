@@ -41,6 +41,9 @@
  *   master, which is fetched without credentials; it must stay under /media/c/<token>/) replaces the master on the element at the
  *   same position / play state. It still counts as our token stream (`tokenOnElement`). If that fails too (or the master has no
  *   usable variant): the error behaviour below. A new token (retry / refresh) starts with its master again.
+ * - Subtitle fallback (before the variant fallback): the same code 4 on a token that carries the subtitle rendition (`ci.hlsSub`)
+ *   first gets ONE new token without subtitles (`request(pos, { noSubs: true })`, `subsRefused` first); that token has none, so a
+ *   second code 4 goes on to the variant fallback as above. Never more than that one extra request per token.
  * - Every decision is written to the AirPlay event log (airplayLog.ts, /diagnose) without URLs, tokens or cast ids.
  *
  * Other notes:
@@ -100,7 +103,7 @@ export interface AirPlayState {
 
 export interface AirPlayDeps {
   /** POST /api/cast/session for the current item at `pos` (audio track, quality are the player's) */
-  request(pos: number): Promise<CastInfo>;
+  request(pos: number, o?: { noSubs?: boolean }): Promise<CastInfo>;
   /** DELETE /api/cast/session/<castId> (fire and forget) */
   revoke(ci: CastInfo): void;
   /** before the token stream: report the local stop, drop hls.js, cancel pending attaches */
@@ -111,6 +114,8 @@ export interface AirPlayDeps {
   restore(pos: number, play: boolean, ci: CastInfo | null): void | Promise<void>;
   /** the token stream failed (toast) */
   fail(e: unknown): void;
+  /** the TV refused a stream with the subtitle rendition (code 4): one new token without it follows; remember it, tell the person */
+  subsRefused?(): void;
   change(s: AirPlayState): void;
 }
 
@@ -174,6 +179,8 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
   const flags = () => `${available ? 'v' : ''}${active ? 'A' : ''}${busy ? 'B' : ''}${ready ? 'R' : ''}${error ? 'E' : ''}${tokenOnElement ? 'T' : ''}${settleT !== undefined ? 'S' : ''}${offT !== undefined ? 'O' : ''}${autoUsed ? 'U' : ''}`;
   const log = (ev: string, o: { wireless?: boolean; note?: string } = {}) => { if (!dead) airLog(ev, { ...o, src: video.src, state: flags() }); };
   const trustedLog = (ev: string, note: string) => { if (!dead) airLog(ev, { src: video.src, state: flags(), note, trusted: true }); };
+  /** casts whose stream with subtitles was already retried without them (once per token) */
+  const subsRetried = new Set<string>();
   /** casts whose variant fallback was already used (once per token) */
   const fellBack = new Set<string>();
   /** the variant fallback's master fetch is running: further element errors are ignored meanwhile */
@@ -317,7 +324,7 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
   }
 
   /** automatic request (route without our token), Retry, or a new token for the running / ready session (audio track, quality, renewal) */
-  async function switchTo(old: CastInfo | null, from?: number, why = 'auto', forcePlay = false) {
+  async function switchTo(old: CastInfo | null, from?: number, why = 'auto', forcePlay = false, noSubs = false) {
     const my = ++seq, pos = from ?? position(), wasPlaying = forcePlay || !video.paused;
     if (!ready) active = true;
     busy = true; emit();
@@ -325,7 +332,7 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
       await d.detach();
       if (my !== seq) return;
       log('token-start', { note: why });
-      const ci = await d.request(pos);
+      const ci = await (noSubs ? d.request(pos, { noSubs: true }) : d.request(pos));
       if (my !== seq || dead) { d.revoke(ci); return; } // AirPlay ended (or the player closed) meanwhile
       log('token-ok', { note: why });
       startProbe(ci);
@@ -377,6 +384,17 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
     } catch {
       return null;
     }
+  }
+
+  /** code 4 on a token with the subtitle rendition: one new token without it (before the variant fallback); false = not applicable */
+  function trySubsFallback(code: number | undefined): boolean {
+    const ci = info;
+    if (code !== 4 || !ci?.hlsSub || tokenOnElement !== ci || !(ready || active) || subsRetried.has(ci.castId)) return false;
+    subsRetried.add(ci.castId);
+    log('fallback-subs', { note: 'stream with subtitles not supported: new token without them' });
+    try { d.subsRefused?.(); } catch { /* the hint is a courtesy */ }
+    void switchTo(ci, undefined, 'no-subs', false, true);
+    return true;
   }
 
   /** code 4 on our token's master: put its variant playlist on the element instead (once per token); false = not applicable */
@@ -441,6 +459,7 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
       if (msg) trustedLog('video-error', `code ${code ?? '?'} ${w} msg ${msg}${flag}`);
       else log('video-error', { note: `code ${code ?? '?'} ${w}${flag}` });
       if (busy || error || fallingBack) return;
+      if (trySubsFallback(code)) return;
       if (tryVariant(code)) return;
       failed();
     },

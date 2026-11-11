@@ -9,6 +9,7 @@
    */
   import { onMount } from 'svelte';
   import { api, cachedItem } from '#lib/api';
+  import { serverCaps } from '#lib/capabilities';
   import { castCapableBrowser, castConfigEnabled, castCustomReceiver, castState, castTestClip, initCast, requestCastSession, whenCastReady } from '#lib/cast';
   import Icon from '#lib/Icon.svelte';
   import { fmtTime, t } from '#lib/i18n';
@@ -76,7 +77,7 @@
     capable, enabled, custom, state: $castState, session: $castSession,
     lookup: $castSession?.kind === 'chromecast' ? lookup : null, errors, now, tf: $t, otherTab: otherTab && !$castSession, item: $castSession ? cachedItem($castSession.itemId) : null,
   });
-  $: ap = airplayRows({ available: airAvailable, continuous: null, subsInStream: false, last: air, lookup: $castSession?.kind === 'airplay' ? lookup : null, pinned: lookup?.pinFamily, tf: $t });
+  $: ap = airplayRows({ available: airAvailable, continuous: null, subsInStream: $serverCaps.castHlsSubtitles, last: air, lookup: $castSession?.kind === 'airplay' ? lookup : null, pinned: lookup?.pinFamily, tf: $t });
 
   $: castBusy = $castSession !== null || otherTab;
   $: canTest = capable && enabled && ready && !busy && !castBusy;
