@@ -57,7 +57,7 @@ export interface Taste {
 /** One play of a title by the profile (episodes rolled up into their series), when it last happened (ms). */
 export interface PlayAt { item: string; at: number }
 
-const ANCHORS_KEPT = 8;
+const ANCHORS_KEPT = 16; // the request suggestions look at up to 12 of one type, the rest of the engine at the first few
 
 const DAY_MS = 86_400_000;
 

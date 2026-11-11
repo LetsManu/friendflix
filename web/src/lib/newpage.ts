@@ -11,6 +11,12 @@ import type { TFn } from '#lib/i18n';
 const DAY = 86_400_000;
 /** "new" for series and films: added to the library at most this many days ago (the window of the fresh badges, backend fresh.ts) */
 export const NEW_TITLE_DAYS = 14;
+/**
+ * How long the page waits for "Noch nicht bei uns". A list that is not cached is built by the server from the taste profile, a few media
+ * server lookups and the request service (up to 15 s per call), far beyond the 4 s of the quick sections; giving up early would show
+ * the filler although the server finishes (and caches) the list a moment later. The skeleton keeps the slot meanwhile.
+ */
+export const SUGGEST_TIMEOUT_MS = 20_000;
 
 // ---- filter ----
 export type NewFilter = 'all' | 'series' | 'movie';
@@ -98,15 +104,24 @@ export const quotaLeft = (q: Quota | null | undefined): number | null => (q && q
 /** the quota is used up; an unlimited or unknown quota never is */
 export const quotaExhausted = (q: Quota | null | undefined): boolean => quotaLeft(q) === 0;
 
-/** the films and the series suggestions as one list: they alternate (film, series, film …), a title that came twice stays once, at most `max` */
-export function mergeSuggestions(movies: readonly Suggestion[], series: readonly Suggestion[], max = 12): Suggestion[] {
+/**
+ * The films and the series suggestions arrive separately (a cached list is quick, a cold one is not) and the cards on screen must not move when the
+ * second one comes. The first to arrive shows at most half of the slots (rounded up), the other slots stay placeholders ...
+ */
+export const earlySuggestions = (first: readonly Suggestion[], slots: number, shared = true): Suggestion[] => first.slice(0, shared ? Math.ceil(slots / 2) : slots);
+/** (`shared` = both halves count for the current filter; under a film-only or series-only filter the other half holds no slots, so the early one takes them all) */
+
+/** Lets only the latest of several overlapping loads write its result (the service may go away and come back while a load is in flight). */
+export function runGuard() {
+  let n = 0;
+  return { start: (): number => ++n, cancel: (): void => { n++; }, stale: (run: number): boolean => run !== n };
+}
+/** ... and the late half goes behind what is shown, then the rest of the early one (an empty or failed half leaves its slots to the other); a title that came twice stays once, at most `max`. */
+export function completeSuggestions(shown: readonly Suggestion[], first: readonly Suggestion[], late: readonly Suggestion[], max = 12): Suggestion[] {
   const out: Suggestion[] = [], seen = new Set<string>();
-  for (let i = 0; i < Math.max(movies.length, series.length); i++) {
-    for (const s of [movies[i], series[i]]) {
-      if (!s) continue;
-      const k = `${s.mediaType}:${s.tmdbId}`;
-      if (!seen.has(k)) { seen.add(k); out.push(s); }
-    }
+  for (const s of [...shown, ...late, ...first]) {
+    const k = `${s.mediaType}:${s.tmdbId}`;
+    if (!seen.has(k)) { seen.add(k); out.push(s); }
   }
   return out.slice(0, max);
 }

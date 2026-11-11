@@ -45,7 +45,7 @@ const GLOBAL_HIDDEN = new Set([HIDLIB, INVIS, DUP]);
 const KID_HIDDEN = new Set([PC]);
 let kidJf = '';
 let libHasPart3 = false;
-/** a media server that ignores anyProviderIdEquals answers every lookup with its first movie */
+/** the listing has a second entry for the copy MOV under another TMDB id */
 let providerFilterIgnored = false;
 const hidden = (uid: string | null, item: string) => GLOBAL_HIDDEN.has(item) || (uid === kidJf && KID_HIDDEN.has(item));
 
@@ -61,12 +61,10 @@ const jellyfin: Record<string, Handler> = {
     const ids = (u.searchParams.get('ids') ?? '').split(',').filter(Boolean);
     const parent = u.searchParams.get('parentId');
     if (!uid) { // admin key
-      const any = u.searchParams.get('anyProviderIdEquals');
-      if (any) {
-        const t = any.replace('tmdb.', '');
-        if (providerFilterIgnored) return { json: { Items: [{ Id: MOV, Name: 'Ashfall' }] } };
-        const hit = Object.values(raw).find((r) => (r.ProviderIds as { Tmdb?: string } | undefined)?.Tmdb === t && (r.Id !== HIDLIB || libHasPart3));
-        return { json: { Items: hit ? [{ Id: hit.Id, Name: hit.Name }] : [] } };
+      if (u.searchParams.get('fields') === 'ProviderIds') { // the library listing the provider id index is built from (the real server has no provider id filter)
+        const all = Object.values(raw).filter((r) => (r.Type === 'Movie' || r.Type === 'Series') && (r.Id !== HIDLIB || libHasPart3)).map((r) => ({ Id: r.Id, Name: r.Name, Type: r.Type, ProviderIds: r.ProviderIds }));
+        // two library entries that are the one copy (TMDB part 200 is also MOV)
+        return { json: { Items: providerFilterIgnored ? [...all, { Id: MOV, Name: 'Ashfall', Type: 'Movie', ProviderIds: { Tmdb: '200' } }] : all } };
       }
       if (u.searchParams.get('includeItemTypes') === 'BoxSet') return { json: { Items: Object.keys(members).map((b) => ({ Id: b })) } };
       if (parent) return { json: { Items: (members[parent] ?? []).map((c) => ({ Id: c })) } };
@@ -151,6 +149,7 @@ beforeEach(async () => {
   await env.kv.del(`src:omdb:calls:${new Date().toISOString().slice(0, 10)}`);
   extCalls.length = 0;
   for (const k of await env.kv.keys('about:')) await env.kv.del(k);
+  await (env.ctx.jf as any).resetLibraryIndex();
   tmdbMode = 'ok'; omdbMode = 'ok'; libHasPart3 = false; providerFilterIgnored = false;
   await env.pool.query("update users set role='admin' where authentik_sub='sub-admin'");
   await env.pool.query("update users set role='friend' where authentik_sub='sub-b'");
@@ -317,14 +316,17 @@ describe('fix round 1: collection edge cases', () => {
     expect(names(await about(owner))).toEqual(['Eins', 'Ashfall', 'Vier', 'Drei']);
   });
 
-  it('library lookups of TMDB parts are kv-cached across requests and viewers; visibility is still checked per viewer', async () => {
+  it('library lookups of TMDB parts come from one cached listing across requests and viewers; visibility is still checked per viewer', async () => {
+    env.jfCalls.length = 0;
     await keys(true, false);
-    const lookups = () => env.jfCalls.filter((c) => c.search.includes('anyProviderIdEquals=tmdb.361')).length;
-    const before = lookups();
+    const lookups = () => env.jfCalls.filter((c) => c.search.includes('fields=ProviderIds&')).length; // the library listing behind the lookups: built once, then reused
     await about(owner, CUR);
     await about(bea, CUR);
-    expect(lookups() - before).toBe(1);
-    libHasPart3 = true; // a cached "in the library" answer still goes through the viewer's item(): hidden → omitted
+    expect(lookups()).toBe(1);
+    libHasPart3 = true;
+    for (const k of await env.kv.keys('about:')) await env.kv.del(k);
+  await (env.ctx.jf as any).resetLibraryIndex(); // the library changed: the lookups start afresh
+    // the "in the library" answer still goes through the viewer's item(): hidden → omitted
     await about(owner);
     const b = await about(bea);
     expect(names(b)).toEqual(['Eins', 'Ashfall', 'Drei']);

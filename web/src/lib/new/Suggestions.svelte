@@ -16,6 +16,8 @@
   /** null while the suggestions load */
   export let items: Suggestion[] | null;
   export let slots = 4;
+  /** the list is partly there (one of the two answers is still on its way): the empty slots stay skeletons, no filler yet */
+  export let loading = false;
   export let title: string;
   export let sub = '';
   const dispatch = createEventDispatcher<{ wish: void }>();
@@ -45,7 +47,9 @@
           </div>
         </li>
       {/each}
-      {#if items.length < slots}
+      {#if items.length < slots && loading}
+        {#each Array(slots - items.length) as _}<li class="c skc skeleton" aria-hidden="true"></li>{/each}
+      {:else if items.length < slots}
         <li class="c fill" class:one={slots - items.length === 1} style="--n:{slots - items.length}">
           <button type="button" class="fillbtn" on:click={() => dispatch('wish')}><Icon name="plus" size={20} /><b>{$t('home.new.barTitle')}</b><span>{$t('home.new.barSub')}</span></button>
         </li>
@@ -76,9 +80,12 @@
   @keyframes ms-in { from { opacity: 0; } }
   .c.skc { border: 0; background: #1b2127; }
   .skc::before { display: none; }
-  .fill { grid-column: span var(--n); background: rgba(255, 255, 255, .04); }
+  /* the quiet glass filler: milk over scrim like .frost, the dashed edge marks it as a gap. The global button rule paints the accent fill, so the button is cleared below */
+  .fill { grid-column: span var(--n); border: 1px dashed rgba(255, 255, 255, .4); background: linear-gradient(180deg, rgba(var(--fr-milk-top), calc(var(--fr-milk-a2) * .5)), rgba(var(--fr-milk), calc(var(--fr-milk-a1) * .5))), rgba(var(--fr-scrim-rgb), var(--fr-scrim)); }
   .fill::before { display: none; }
   .fillbtn { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .3rem; padding: 1rem; color: #fff; text-align: center; font: inherit; border-radius: inherit; }
+  .fill .fillbtn { background: none; }
+  .fill .fillbtn:hover:not(:disabled) { background: rgba(255, 255, 255, .06); }
   .fillbtn b { font-size: 1.05rem; font-weight: 800; }
   .fillbtn span { font-size: .85rem; color: rgba(255, 255, 255, .8); }
   .fillbtn :global(svg) { color: var(--acc-text); }

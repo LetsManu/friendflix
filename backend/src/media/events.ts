@@ -10,6 +10,8 @@ import type { MediaEvent } from './types.js';
 
 /** Applies one neutral media server event: "Erinnere mich" reminders, "now playing" entries, user-data caches. */
 export async function handleMediaEvent(ctx: Ctx, e: MediaEvent): Promise<void> {
+  // a film or series came or went: the provider id index of the library is stale (before the reminders below look titles up)
+  if ((e.type === 'itemAdded' || e.type === 'itemRemoved') && (e.itemType === 'Movie' || e.itemType === 'Series')) ctx.jf.invalidateLibraryIndex?.();
   if (e.type === 'itemAdded') {
     // library hygiene: an early incremental scan (Block 22)
     if (e.itemType === 'Movie' || e.itemType === 'Series' || e.itemType === 'Episode') await hygieneSoon(ctx);

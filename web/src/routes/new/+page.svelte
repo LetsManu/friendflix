@@ -24,7 +24,7 @@
   import { t } from '#lib/i18n';
   import { runtimeLabel, sortUpcoming } from '#lib/mobile';
   import {
-    episodeItem, FILTER_PARAM, availableTabs, forYouItems, freshText, mergeSuggestions, NEW_TITLE_DAYS, openRequests, pageSearch, parseFilter, parseTab, planSections, quotaLeft, TAB_PARAM,
+    episodeItem, FILTER_PARAM, SUGGEST_TIMEOUT_MS, availableTabs, forYouItems, freshText, completeSuggestions, earlySuggestions, runGuard, NEW_TITLE_DAYS, openRequests, pageSearch, parseFilter, parseTab, planSections, quotaLeft, TAB_PARAM,
     withinDays, type NewData, type NewEpisode, type NewFilter, type NewTab, type Suggestion, type Up,
   } from '#lib/newpage';
   import FilterBar from '#lib/new/FilterBar.svelte';
@@ -46,8 +46,13 @@
 
   /** a section that does not answer within this long is left out (never a skeleton forever) */
   const SECTION_TIMEOUT_MS = 8000;
-  /** the calls the first view waits for and the suggestions: given up sooner (the server keeps building and caches it for the next visit) */
+  /** the calls the first view waits for: given up sooner (the server keeps building and caches it for the next visit); the suggestions have their own, longer SUGGEST_TIMEOUT_MS */
   const FAST_TIMEOUT_MS = 4000;
+  /** which halves of the suggestions are still on their way */
+  let pendingMovies = false, pendingSeries = false;
+  /** a placeholder is only kept for a half that counts under the filter */
+  $: suggestLoading = (pendingMovies && filter !== 'series') || (pendingSeries && filter !== 'movie');
+  const wishRun = runGuard();
   let d: NewData = { forYou: null, newSeries: null, newMovies: null, episodes: null, week: null, upcoming: null, suggest: null };
   let now = Date.now();
   let mounted = false;
@@ -112,6 +117,8 @@
   $: if (!requests && wishStarted) {
     wishStarted = false;
     d = { ...d, suggest: null, upcoming: null };
+    wishRun.cancel();
+    pendingMovies = pendingSeries = false;
   }
   async function loadWishData() {
     void Promise.all([section<Up>('/api/seerr/upcoming?type=movie', (r) => r.results), section<Up>('/api/seerr/upcoming?type=tv', (r) => r.results)])
@@ -120,10 +127,23 @@
     if (tv) { set('suggest', []); return; }
     void loadMine();
     type Answer = { items: Suggestion[]; quota: { limit: number | null; used: number; resetsAt: string } | null };
-    const [m, s] = await Promise.all([fetchJson<Answer>('/api/library/request-suggestions?type=movie', FAST_TIMEOUT_MS), fetchJson<Answer>('/api/library/request-suggestions?type=series', FAST_TIMEOUT_MS)]);
+    // each half is shown as soon as it arrives (a cached one is quick, a cold build is not); the slots of the other stay skeletons meanwhile
+    // the first to arrive takes at most half of the slots, the second fills the others behind it: the cards on screen never move
+    let early: Suggestion[] | null = null, shown: Suggestion[] = [];
+    const run = wishRun.start(); // a load that is overtaken (the service went away and came back) writes nothing
+    pendingMovies = pendingSeries = true;
+    const arrive = (items: Suggestion[]) => {
+      if (wishRun.stale(run)) return;
+      if (early === null) { early = items; shown = earlySuggestions(items, slots, filter === 'all'); set('suggest', shown); }
+      else set('suggest', completeSuggestions(shown, early, items));
+    };
+    const [m, s] = await Promise.all([
+      fetchJson<Answer>('/api/library/request-suggestions?type=movie', SUGGEST_TIMEOUT_MS).then((r) => { if (!wishRun.stale(run)) pendingMovies = false; arrive(r?.items ?? []); return r; }),
+      fetchJson<Answer>('/api/library/request-suggestions?type=series', SUGGEST_TIMEOUT_MS).then((r) => { if (!wishRun.stale(run)) pendingSeries = false; arrive(r?.items ?? []); return r; }),
+    ]);
+    if (wishRun.stale(run)) return;
     const q = m?.quota ?? s?.quota ?? null;
     if (q) quota.set(q); else void loadQuota();
-    set('suggest', mergeSuggestions(m?.items ?? [], s?.items ?? []));
   }
 
   /** grown-up profile with a request service (as far as we know: the hint of the last visit until /api/me answered) */
@@ -252,7 +272,7 @@
             {#if $mobile && plan.forYou.length > 1}<div class="bleed"><Row title={$t('home.new.moreForYou')} items={plan.forYou.slice(1)} portrait notes={forYouNote} /></div>{/if}
           {/if}
           {#if canWish}
-            <Suggestions items={d.suggest === null ? null : plan.suggestions.slice(0, slots)} {slots} title={$t('home.new.missing')} sub={$t('home.new.missingSub')} on:wish={wish} />
+            <Suggestions items={d.suggest === null ? null : plan.suggestions.slice(0, slots)} loading={suggestLoading} {slots} title={$t('home.new.missing')} sub={$t('home.new.missingSub')} on:wish={wish} />
           {/if}
           {#if plan.episodes.length}
             {#if $mobile}<div class="bleed"><NewEpisodes title={$t('home.new.newEpisodes')} items={plan.episodes} {now} /></div>

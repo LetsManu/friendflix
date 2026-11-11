@@ -22,7 +22,7 @@ import type {
 } from '../media/types.js';
 import type { HygieneFacts, ServerSession } from '../media/types.js'; // Block 22
 import type { ItemFeatures, SeriesStatus } from '../media/types.js'; // 1.1 engine v2 + post-play
-import { tmdbGuids, tmdbIdOf, toPlexAbout, type AboutRow } from './about.js';
+import { tmdbGuids, tmdbIdOf, tvdbGuids, toPlexAbout, type AboutRow } from './about.js';
 import { plexHygienePage, plexServerSessions, toPlexHygieneFacts } from './care.js'; // Block 22
 import { loadPolicy, paramList, refreshAges, resolveAccess, visibleSql, type Access, type Param } from './access.js';
 import { PlexError, type PlexClient } from './client.js';
@@ -963,6 +963,13 @@ export class PlexMediaServer implements MediaServer {
     const r = await this.q<{ rating_key: string; title: string }>(
       `select rating_key, title from plex_items where type = $1 and guids && $2::text[] order by rating_key limit 1`,
       [mediaType === 'tv' ? 'show' : 'movie', tmdbGuids(tmdbId)]);
+    return r[0] ? { id: encodePlexId('item', r[0].rating_key), name: r[0].title } : null;
+  }
+
+  async findSeriesByTvdb(tvdbId: number): Promise<{ id: string; name: string } | null> {
+    if (!Number.isInteger(tvdbId) || tvdbId <= 0) return null;
+    const r = await this.q<{ rating_key: string; title: string }>(
+      `select rating_key, title from plex_items where type = 'show' and guids && $1::text[] order by rating_key limit 1`, [tvdbGuids(tvdbId)]);
     return r[0] ? { id: encodePlexId('item', r[0].rating_key), name: r[0].title } : null;
   }
 
