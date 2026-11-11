@@ -8,7 +8,7 @@ const base: Handoff = {
   id: 'h1', itemId: 'e4', type: 'Episode', title: 'The Lantern Road', seriesName: 'Dunmoor', season: 1, episode: 4, imageId: 'e4',
   positionTicks: 13_900_000_000, runtimeTicks: 27_000_000_000, ageSec: 720, device: { kind: 'webos' },
 };
-const film: Handoff = { ...base, id: 'h2', itemId: 'f1', type: 'Movie', title: 'Harbor Lights', year: 2019, seriesName: undefined, season: undefined, episode: undefined };
+const film: Handoff = { ...base, id: 'h2', itemId: 'f1', type: 'Movie', title: 'Saltmarsh Light', year: 2019, seriesName: undefined, season: undefined, episode: undefined };
 
 /** a Storage in a Map */
 const memory = (): Storage => {
@@ -62,8 +62,8 @@ describe('handoff helpers', () => {
 
   it('title lines', () => {
     expect(handoffTitle(base, tr)).toBe('Dunmoor S1:F4 · The Lantern Road');
-    expect(handoffTitle(film, tr)).toBe('Harbor Lights · 2019');
-    expect(handoffTitle({ ...film, year: undefined }, tr)).toBe('Harbor Lights');
+    expect(handoffTitle(film, tr)).toBe('Saltmarsh Light · 2019');
+    expect(handoffTitle({ ...film, year: undefined }, tr)).toBe('Saltmarsh Light');
   });
 
   it('href', () => {

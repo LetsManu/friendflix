@@ -99,6 +99,30 @@ test('Ausblenden hides it for good', async ({ page, api }) => {
   await expect(region(page)).toBeVisible();
 });
 
+test.describe('full motion', () => {
+  test.use({ reducedMotion: 'no-preference' });
+  test('a newer hand-off on the same open page shows after Ausblenden (the leave state is not kept)', async ({ page, api }) => {
+    api.handoff.home = offer();
+    await mockPlayer(page);
+    await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} })); // full motion starts the billboard trailer
+    await page.goto('/');
+    await expect(region(page)).toBeVisible();
+    await region(page).getByRole('button', { name: 'Ausblenden' }).click();
+    await expect(region(page)).toHaveCount(0);
+    api.handoff.home = offer({ id: 'hd-2', positionTicks: 15_000_000_000 }); // the other device played on
+    await page.waitForTimeout(5200); // the refresh is rate-limited to every 5 s
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    const r = region(page);
+    await expect(r).toBeVisible();
+    await expect(r).toHaveCSS('opacity', '1');
+    const go = r.getByRole('link', { name: /^Hier weiterschauen:/ });
+    await expect(go).toContainText('ab 25:00');
+    expect(await r.evaluate((e) => ({ inert: (e as HTMLElement).inert, hidden: e.getAttribute('aria-hidden'), skip: e.hasAttribute('data-nav-skip') }))).toEqual({ inert: false, hidden: null, skip: false });
+    await go.focus();
+    await expect(go).toBeFocused();
+  });
+});
+
 test.describe('no card', () => {
   test.use({ allowedConsole: /status of 500/ }); // the mocked failing request
   test('when there is none or the request fails', async ({ page, api }) => {

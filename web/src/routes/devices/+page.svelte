@@ -106,7 +106,7 @@
             {#if editing === d.id}
               <!-- svelte-ignore a11y_no_noninteractive_element_interactions (Escape on any control of the form cancels it) -->
               <form class="edit" on:submit|preventDefault={() => saveName(d, draft)} on:keydown={(e) => { if (e.key === 'Escape' || isBackKey(e)) { e.preventDefault(); e.stopPropagation(); void stopEdit(d.id); } }}>
-                <input class="fld" type="text" maxlength="40" autocomplete="off" spellcheck="false" aria-label={$t('account.devices.nameLabel')} placeholder={auto(d)} bind:value={draft}
+                <input class="fld" type="text" autocomplete="off" spellcheck="false" aria-label={$t('account.devices.nameLabel')} placeholder={auto(d)} bind:value={draft}
                   aria-invalid={invalid ? 'true' : undefined} aria-describedby="dev-bad-{d.id}" on:input={() => { invalid = false; }} use:focusField />
                 <button type="submit" disabled={saving}>{$t('common.save')}</button>
                 <button type="button" class="sec" on:click={() => stopEdit(d.id)}>{$t('common.cancel')}</button>

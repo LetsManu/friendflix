@@ -31,13 +31,29 @@ const ys = async (page: Page) => {
 };
 
 test.describe('devices page: renaming', () => {
+  test('a name of exactly 40 emoji (80 UTF-16 units) is accepted, 41 are refused', async ({ page, api }) => {
+    await open(page, api);
+    await page.getByRole('button', { name: 'LG-Fernseher umbenennen' }).click();
+    const field = page.getByLabel('Gerätename');
+    const forty = '😀'.repeat(40);
+    await field.fill(forty);
+    expect(await field.inputValue()).toBe(forty); // not cut at 20
+    await field.press('Enter');
+    await expect.poll(() => patches(api)).toEqual([`PATCH /api/devices/${TV} {"name":"${forty}"} -> 200`]);
+    await page.getByRole('button', { name: `${forty} umbenennen` }).click();
+    await field.fill('😀'.repeat(41));
+    await field.press('Enter');
+    await expect(page.getByRole('alert').filter({ hasText: /\S/ })).toBeVisible();
+    expect(patches(api)).toHaveLength(1);
+  });
+
   test('rename a device to Wohnzimmer', async ({ page, api }) => {
     await open(page, api);
     const before = await ys(page);
     await page.getByRole('button', { name: 'LG-Fernseher umbenennen' }).click();
     const field = page.getByLabel('Gerätename');
     await expect(field).toBeFocused();
-    await expect(field).toHaveAttribute('maxlength', '40');
+    await expect(field).not.toHaveAttribute('maxlength'); // maxlength counts UTF-16 units; the 40 code points are checked on save
     await expect(field).toHaveAttribute('placeholder', 'LG-Fernseher');
     expect(await ys(page)).toEqual(before); // opening the form moves nothing
     await field.fill('Wohnzimmer');

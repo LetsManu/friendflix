@@ -163,6 +163,28 @@ test('a late answer while the focus is in the rows arrives hidden and shows once
 
 test.describe('full motion', () => {
   test.use({ reducedMotion: 'no-preference' });
+  test('a newer hand-off on the same open page shows after Ausblenden and Up reaches it', async ({ page, api }) => {
+    api.handoff.home = offer();
+    await setTv(page);
+    await page.route('**/api/items/*/trailer', (r) => r.fulfill({ json: {} }));
+    await page.goto('/');
+    await expect(go(page)).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter'); // Ausblenden
+    await expect(region(page)).toHaveCount(0);
+    await expect(tilePlay(page)).toBeFocused();
+    api.handoff.home = offer({ id: 'hd-2', positionTicks: 15_000_000_000 });
+    await page.waitForTimeout(5200);
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    const r = region(page);
+    await expect(r).toBeVisible();
+    await expect.poll(() => opacity(page)).toBe('1');
+    expect(await r.evaluate((e) => ({ inert: (e as HTMLElement).inert, hidden: e.getAttribute('aria-hidden'), skip: e.hasAttribute('data-nav-skip') }))).toEqual({ inert: false, hidden: null, skip: false });
+    await expect(tilePlay(page)).toBeFocused(); // a late card never steals focus ...
+    await page.keyboard.press('ArrowUp'); // ... and Up from the tile reaches it
+    await expect(go(page)).toBeFocused();
+    await expect(go(page)).toContainText('ab 25:00');
+  });
   test('the card fades (opacity only) and does not drop in again when it comes back', async ({ page, api }) => {
     api.handoff.home = offer();
     await setTv(page);

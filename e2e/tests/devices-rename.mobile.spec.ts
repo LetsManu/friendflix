@@ -46,7 +46,7 @@ test.describe('devices page: renaming (phone)', () => {
     await page.getByRole('button', { name: 'LG-Fernseher umbenennen' }).click();
     const field = page.getByLabel('Gerätename');
     await expect(field).toBeFocused();
-    await expect(field).toHaveAttribute('maxlength', '40');
+    await expect(field).not.toHaveAttribute('maxlength');
     await expect(field).toHaveAttribute('placeholder', 'LG-Fernseher');
     expect(await ys(page)).toEqual(before); // opening the form moves nothing
     const save = (await page.getByRole('button', { name: 'Speichern' }).boundingBox())!;

@@ -32,6 +32,9 @@
   /** the moment the card was built: the age counts from there, so the line does not change while it shows */
   const now = Date.now();
   const LEAVE_MS = 180;
+  /** another hand-off (a new id) on the same open page is a new card: the leave state of the dismissed one does not carry over */
+  let shownId = '';
+  $: if ((handoff?.id ?? '') !== shownId) { shownId = handoff?.id ?? ''; leaving = false; clearTimeout(timer); }
 
   $: h = handoff;
   $: device = h ? handoffDevice(h, $t) : '';

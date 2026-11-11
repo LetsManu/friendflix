@@ -6,7 +6,7 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ### Watching
 - **Continue on another device.** Stop a title on one device and open FriendFlix on another within 6 hours: the start page shows a card ("Last on Living room · 12 min ago") and one tap continues at that minute, in the browser, the Windows app, the Android app and the TV apps. Nothing shown at 90 % watched or more, and kids profiles get no card. The title page says where you stopped on the other device, without moving anything. On a TV the card takes the focus only when it arrives quickly and before any key; otherwise Up reaches it. Dismiss works per device.
-- **Name your devices.** *Devices* has a rename button for each device ("Living room", "Bedroom"). The name shows on the card, on the title page and in the admin views. The detected name comes back with *Use automatic name*.
+- **Name your devices.** *Devices* has a rename button for each device ("Living room", "Bedroom"). The name shows on the card, on the title page and in the admin views. The detected name comes back with *Use the detected name*.
 
 ## [3.3.0] – Churros – 2026-11-11
 
