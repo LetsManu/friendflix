@@ -22,6 +22,7 @@
   {:else if name === 'arrow-left'}<path d="M19 12H5M12 19l-7-7 7-7" />
   {:else if name === 'shuffle'}<path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
   {:else if name === 'heart'}<path d="M12 21s-8-5.2-8-11a4.5 4.5 0 018-2.8A4.5 4.5 0 0120 10c0 5.8-8 11-8 11z" />
+  {:else if name === 'pencil'}<path d="M4 20h4L19 9l-4-4L4 16zM13.500 6.500l4 4" />
   {:else if name === 'x'}<path d="M6 6l12 12M18 6L6 18" />
   {:else if name === 'users'}<circle cx="9" cy="8" r="3" /><path d="M3 20c0-3 3-5 6-5s6 2 6 5M16 5a3 3 0 010 6M18 15c2 .5 3 2 3 5" />
   {:else if name === 'user'}<circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 4-6 8-6s8 2 8 6" />

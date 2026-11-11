@@ -268,6 +268,13 @@ const fr: Translation<typeof de> = {
     lastSeen: 'Dernière activité',
     thisDevice: 'cet appareil',
     remove: 'Supprimer',
+    rename: 'Renommer',
+    renameAria: 'Renommer {name}',
+    nameLabel: 'Nom de l’appareil',
+    useAuto: 'Utiliser le nom détecté',
+    renamed: 'L’appareil s’appelle maintenant « {name} ».',
+    nameInvalid: 'Utilisez 1 à 40 caractères, sans caractères de contrôle.',
+    renameFailed: 'Impossible de renommer l’appareil. Veuillez réessayer.',
   },
   invite: {
     pageTitle: 'Invitation',

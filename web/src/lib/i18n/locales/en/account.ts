@@ -267,6 +267,13 @@ const en: Translation<typeof de> = {
     lastSeen: 'Last seen',
     thisDevice: 'this device',
     remove: 'Remove',
+    rename: 'Rename',
+    renameAria: 'Rename {name}',
+    nameLabel: 'Device name',
+    useAuto: 'Use the detected name',
+    renamed: 'The device is now called “{name}”.',
+    nameInvalid: 'Use 1 to 40 characters, no control characters.',
+    renameFailed: 'Could not rename the device. Please try again.',
   },
   invite: {
     pageTitle: 'Invitation',

@@ -268,6 +268,13 @@ const es: Translation<typeof de> = {
     lastSeen: 'Visto por última vez',
     thisDevice: 'este dispositivo',
     remove: 'Quitar',
+    rename: 'Cambiar nombre',
+    renameAria: 'Cambiar el nombre de {name}',
+    nameLabel: 'Nombre del dispositivo',
+    useAuto: 'Usar el nombre detectado',
+    renamed: 'El dispositivo ahora se llama «{name}».',
+    nameInvalid: 'Usa de 1 a 40 caracteres, sin caracteres de control.',
+    renameFailed: 'No se pudo cambiar el nombre. Inténtalo de nuevo.',
   },
   invite: {
     pageTitle: 'Invitación',

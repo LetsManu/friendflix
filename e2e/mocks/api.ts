@@ -105,7 +105,7 @@ export interface MockSecurity {
   usernameChange?: boolean;
   problem?: 'service_token' | 'unreachable' | 'error' | 'not_configured' | null;
 }
-export interface MockDevice { id: string; label: string; approved: boolean; current: boolean; created_at: string; last_seen: string }
+export interface MockDevice { id: string; label: string; /** the user's own name (PATCH /api/devices/:id) */ name: string | null; kind: 'web' | 'tizen' | 'webos' | 'firetv' | 'desktop' | 'android' | null; approved: boolean; current: boolean; created_at: string; last_seen: string }
 
 const daysAgo = (n: number): string => new Date(Date.now() - n * 864e5).toISOString();
 /** GET /api/library/new-for-you: a film with a seed and a trait, a series with only a trait, a film without a reason (v1 style) */
@@ -147,8 +147,8 @@ export function freshState(): MockState {
     resumeGone: new Set(),
     account: { name: 'Tester', email: 'tester@example.com', avatar: 'blue', mfa: { totp: true, webauthn: false, static: true }, manageUrl: 'https://login.example.com/if/user/#/settings', reauthUntil: null },
     devices: [
-      { id: 'dev-current-0000000001', label: 'Chrome auf Linux', approved: true, current: true, created_at: '2026-09-01T10:00:00Z', last_seen: '2026-10-14T09:00:00Z' },
-      { id: 'dev-phone-00000000002', label: 'Safari auf iOS', approved: true, current: false, created_at: '2026-09-02T10:00:00Z', last_seen: '2026-10-12T20:15:00Z' },
+      { id: 'dev-current-0000000001', label: 'Chrome auf Linux', name: null, kind: 'web', approved: true, current: true, created_at: '2026-09-01T10:00:00Z', last_seen: '2026-10-14T09:00:00Z' },
+      { id: 'dev-phone-00000000002', label: 'Safari auf iOS', name: null, kind: 'web', approved: true, current: false, created_at: '2026-09-02T10:00:00Z', last_seen: '2026-10-12T20:15:00Z' },
     ],
     revokedOthers: 2,
     loginArt: { status: 200, images: [] },
@@ -271,6 +271,12 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     if (p === '/api/devices' && m === 'GET') return J({ devices: st.devices });
     if ((mm = p.match(/^\/api\/devices\/([^/]+)\/sign-out$/)) && m === 'POST') return J({ revoked: 1 }); // the device stays (approved)
+    if ((mm = p.match(/^\/api\/devices\/([^/]+)$/)) && m === 'PATCH') {
+      const d = st.devices.find((x) => x.id === mm![1]);
+      if (!d) return J({ error: 'not_found' }, 404);
+      d.name = (body() as { name: string | null }).name;
+      return J({ ok: true, name: d.name });
+    }
     if ((mm = p.match(/^\/api\/devices\/([^/]+)$/)) && m === 'DELETE') { st.devices = st.devices.filter((d) => d.id !== mm![1]); return J({ ok: true }); }
     if (p === '/api/sessions/revoke-others' && m === 'POST') return J({ revoked: st.revokedOthers });
     if (p === '/api/notifications') return J({ notifications: [{ id: 'n1', title: 'Anna hat dich zur Liste „Annas Klassiker“ eingeladen', link: '/lists/' + st.lists[1]!.id, read: false }] });

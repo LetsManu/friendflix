@@ -272,13 +272,13 @@ Two TVs of the same make read the same name; the owner wants "Wohnzimmer" and "S
   are focusable in reading order).
 - **API:** `PATCH /api/devices/:id` with `{ name: string | null }` (`requireGrownUp`; CSRF as every write; rate limit 30/min).
   Only a device of the caller's own account (`where user_id = <account> and device_id = :id`; anything else 404, the same answer
-  for a foreign and a missing id). `null` or a name that is empty after trimming clears the custom name. Audited as
+  for a foreign and a missing id). `null` or a name with no visible character (see Validation) resets the custom name. Audited as
   `device.rename` without the name.
 - **Validation (server is the authority, the form mirrors it):** Unicode NFC, trimmed, inner whitespace runs collapsed to one
   space; 1 to 40 characters (code points) after that; control characters (`\p{Cc}`), lone surrogates, the bidirectional controls
   U+202A–U+202E and U+2066–U+2069 and the direction marks U+200E, U+200F, U+061C are refused with `400 invalid_name` (emoji,
-  including joiners, are fine). A name with no visible character (only spaces, zero-width characters, joiners or variation
-  selectors) counts as blank and resets the name. Two devices may share a name.
+  including joiners, are fine). A name with no visible character (only spaces, zero-width characters, joiners, variation
+  selectors, default-ignorable code points such as the Hangul fillers, or the braille blank U+2800) counts as blank and resets the name. Two devices may share a name.
 - **Display rule, everywhere:** custom name → otherwise the client kind's name (section 2.6; not for `web`) → otherwise the
   stored label. Used by *Geräte*, the account page's sessions card, the hand-off card and title hint (including the sender in
   "AirPlay ({sender})"), and the admin device views (`coalesce(name, label)`). The notification sent when a new device

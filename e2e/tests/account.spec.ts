@@ -119,7 +119,7 @@ test.describe('account page (/me/account)', () => {
   });
 
   test('waiting devices link to the approval page', async ({ page, api }) => {
-    api.devices.push({ id: 'dev-new-0000000000003', label: 'Firefox auf Windows', approved: false, current: false, created_at: '2026-10-14T08:00:00Z', last_seen: '2026-10-14T08:00:00Z' });
+    api.devices.push({ id: 'dev-new-0000000000003', label: 'Firefox auf Windows', name: null, kind: 'web', approved: false, current: false, created_at: '2026-10-14T08:00:00Z', last_seen: '2026-10-14T08:00:00Z' });
     await page.goto('/me/account');
     const sessions = page.getByRole('region', { name: 'Sitzungen & Geräte' });
     await expect(sessions.getByText('1 Gerät wartet auf Freigabe.')).toBeVisible();

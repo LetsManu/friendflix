@@ -121,5 +121,35 @@
   "input": "a\u200bb",
   "ok": true,
   "normalized": "a\u200bb"
+ },
+ {
+  "input": "\u3164",
+  "ok": true,
+  "normalized": null
+ },
+ {
+  "input": "\u115f",
+  "ok": true,
+  "normalized": null
+ },
+ {
+  "input": "\uffa0",
+  "ok": true,
+  "normalized": null
+ },
+ {
+  "input": "\u034f",
+  "ok": true,
+  "normalized": null
+ },
+ {
+  "input": "\u2800",
+  "ok": true,
+  "normalized": null
+ },
+ {
+  "input": "Wohn\u2800zimmer",
+  "ok": true,
+  "normalized": "Wohn\u2800zimmer"
  }
 ]
