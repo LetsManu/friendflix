@@ -165,10 +165,22 @@ In the native player the Cast button shows whenever the phone can cast: your ser
 
 - Casting uses the same short-lived cast tokens as the web UI. If the server sets `CAST_RECEIVER_APP_ID`, the TV runs FriendFlix's own receiver, otherwise Google's Default Media Receiver ([cast.md](cast.md)). The app reads that setting when it starts, so after a change restart the app.
 - The next episode is queued on the TV when autoplay allows it; the phone keeps the controls, also on the lock screen.
-- Stopping the cast continues on the phone where the TV was. Closing the player stops the cast.
+- Stopping the cast continues on the phone where the TV was. Closing the player does **not** stop the cast: the TV keeps playing and the app keeps the cast ([below](#casting-outside-the-player)).
 - Downloads are never cast; the Cast button is hidden while you play one.
 - Audio, subtitle and quality changes, speed, subtitle search, *Clear voices* and *Night mode* are not offered while casting; choose them before. *Episodes*, *Scenes*, bookmarks, the sleep timer and *Cast & info* act on the TV ([Player](#player)).
 - The Cast feature comes from Google's Cast SDK, which brings Google's own Cast telemetry (it reports to Google as in every app that uses Google Cast). FriendFlix itself sends no analytics. On a phone without Google Play services there is no Cast button; everything else works. Details: [security.md, Android app](security.md#android-app).
+
+
+### Casting outside the player
+
+The cast belongs to the app, not to the player screen.
+
+- **Closing the player keeps the cast.** The TV plays on, and the app keeps queueing and ending episodes in the background.
+- **The cast bar while browsing.** In the app's web UI the cast bar sits above the tab bar. It shows the title (with season and episode), the TV's name and the time left. *Pause* / *Play* control the TV. *Next* shows only while the next episode is queued on the TV. *End casting* asks first, then stops the TV. A tap on the bar opens the remote in the native player. An episode that runs to its end starts the next one, and the bar follows.
+- **Another title while casting.** *Play* on a title while casting switches the TV to that title. A download plays on the phone only; the TV keeps playing.
+- **After the app was closed.** Swipe the app away and open it again: it finds the cast that still runs on the TV and shows the bar again with the right title and position. If the TV shows something that FriendFlix did not start (another app cast to it), FriendFlix lets go after about 20 seconds without touching that video, and the bar disappears.
+- **Profile switch and sign-out end the cast.** The web UI tells the app (bridge method `sessionChanged`), and the app stops the TV. Sign-out waits at most 4 seconds for this. If the server answers 401 (session over), the app ends the cast as well.
+- **An older app version** (bridge API 1) keeps the old behaviour of the web UI: no cast bar while browsing in the app, and nothing is sent about profile or sign-out. Update the app to get the bar.
 
 ## Troubleshooting
 
@@ -341,10 +353,10 @@ Unit tests and the emulator in CI cover the logic; these points need a real phon
 50. Default Media Receiver (no `CAST_RECEIVER_APP_ID`): plays from the phone's position with the chosen subtitle; pause and seek work; progress shows in the admin view.
 51. Own receiver: set `CAST_RECEIVER_APP_ID`, open a title once, restart the app, cast: the own receiver starts, its reports arrive, its next-up card is in the app's language.
 52. Episode with autoplay: about 40 min before the end the next episode is queued; at the end the TV moves on by itself, also with the phone locked, and the phone's title updates.
-53. Stop casting from the Cast dialog → local playback continues at the TV's position (paused if the TV was paused). Turn the TV off or cut its network → the phone takes over at the last position. Close the player while casting → the TV stops.
+53. Stop casting from the Cast dialog → local playback continues at the TV's position (paused if the TV was paused). Turn the TV off or cut its network → the phone takes over at the last position. Close the player while casting → the TV keeps playing and the cast bar shows on Home.
 54. Account at its stream limit → casting shows the limit and local playback goes on. A role without transcoding → "Chromecast needs transcoding …".
 55. Cast for over 50 min, also with the phone locked → the TV keeps playing after a short reload (token renewal; if it stops, check whether Doze suspended the app).
-56. Notification and lock screen controls while casting work; tapping brings the player back. Kill the app while casting: the TV may play on until the token expires; reopening starts nothing by itself.
+56. Notification and lock screen controls while casting work; tapping brings the player back. Kill the app while casting: the TV plays on; reopening shows the cast bar again with the right title and position.
 57. The player's menus and the Cast dialog look right in light and dark system mode.
 58. While casting: *Episodes* plays the picked episode on the TV; *Scenes* and a bookmark jump on the TV; a new bookmark takes the TV's position; *Cast & info* shows the TV's title, also after the TV moved on to the next episode. *Audio and subtitles*, the quality chip, the next-episode button, speed, quality, lock and picture-in-picture are gone. The Chromecast button stays in the top bar left of *Cast & info* and More shows *Playing on TV*.
 59. Stop casting: *Audio and subtitles*, the quality chip and the next-episode button are back.
