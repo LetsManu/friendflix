@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { MIGRATIONS, migrate } from '../src/db.js';
 import { roleLabel } from '../src/i18n.js';
 import { catalogueLabel, invalidateCatalogue, invitableRoles, listRoles, roleExists, roleLabelArgs, syncRoles } from '../src/rolecat.js';
-import { DEFAULT_ROLES, invalidateRoles, loadRoles } from '../src/roles.js';
+import { DEFAULT_ROLES, effectiveRole, invalidateRoles, loadRoles } from '../src/roles.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { ENC_KEY, makeEnv, resetDb, type TestEnv } from './helpers.js';
 
@@ -236,5 +236,52 @@ describe('role existence in the admin API', () => {
     const r = await patch({ role: 'nobody' });
     expect(r.statusCode).toBe(400);
     expect(r.json().error).toBe('unknown_role');
+  });
+
+  // roles that exist only in the catalogue (no ROLE_TEMPLATES key): an admin-created role and an env role that left ROLE_TEMPLATES
+  describe('catalogue-only roles', () => {
+    const as = (method: 'GET' | 'POST' | 'PUT', url: string, payload?: object) =>
+      env.app.inject({ method, url, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, ...(payload ? { payload } : {}) });
+    beforeAll(async () => {
+      await env.pool.query("insert into roles(key, label, base, origin, position) values ('kino', 'Kino', 'family', 'admin', 5), ('opa', null, 'family', 'env', 6)");
+      await env.pool.query(`insert into role_settings(role, template) values ('kino', '{"maxStreams": 3}')`);
+      invalidateRoles(env.ctx);
+    });
+
+    it('PATCH user role', async () => {
+      expect((await patch({ role: 'kino' })).statusCode).toBe(200);
+      expect((await env.pool.query('select role from users where id=$1', [ben])).rows[0].role).toBe('kino');
+      const policy = env.jfCalls.filter((c) => c.path === `/Users/${'ben'.padEnd(32, '0')}/Policy`).at(-1);
+      expect(policy?.body.MaxActiveSessions).toBe(3);
+    });
+
+    it('bulk role', async () => {
+      const r = await as('POST', '/api/admin/users/bulk', { ids: [ben], action: 'role', role: 'opa' });
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toMatchObject({ done: 1 });
+      expect((await env.pool.query('select role from users where id=$1', [ben])).rows[0].role).toBe('opa');
+    });
+
+    it('PUT /api/admin/roles/:role', async () => {
+      const r = await as('PUT', '/api/admin/roles/kino', { transcoding: false, maxHeight: 1080 });
+      expect(r.statusCode).toBe(200);
+      expect(await effectiveRole(env.ctx, 'kino')).toMatchObject({ label: 'Kino', maxStreams: 3, transcoding: false, maxHeight: 1080 });
+      expect((await as('PUT', '/api/admin/roles/nobody', { transcoding: false })).statusCode).toBe(404);
+      // the legacy editor's columns reach role_settings.template; a reset (null) removes the field again, other fields stay
+      expect((await as('PUT', '/api/admin/roles/kino', { remoteMaxBitrate: 5_000_000 })).statusCode).toBe(200);
+      expect(await effectiveRole(env.ctx, 'kino')).toMatchObject({ remoteMaxBitrate: 5_000_000, maxStreams: 3, transcoding: false });
+      expect((await as('PUT', '/api/admin/roles/kino', { remoteMaxBitrate: null })).statusCode).toBe(200);
+      expect(await effectiveRole(env.ctx, 'kino')).toMatchObject({ remoteMaxBitrate: DEFAULT_ROLES.family!.remoteMaxBitrate, maxStreams: 3 });
+      expect((await env.pool.query("select template from role_settings where role='kino'")).rows[0].template).toEqual({ maxStreams: 3, transcoding: false, maxHeight: 1080 });
+    });
+
+    it('/api/me roleLabel of an env role that left ROLE_TEMPLATES is the translated label of its base', async () => {
+      await env.pool.query("update users set role='opa' where id=$1", [ben]);
+      const ses = await env.login({ sub: 'ben', email: 'ben@example.com', name: 'Ben Muster', groups: [] });
+      const me = (await env.app.inject({ url: '/api/me', cookies: ses.cookies })).json();
+      expect(me).toMatchObject({ role: 'opa', roleLabel: 'Familie' });
+      await env.pool.query("update users set role='kino' where id=$1", [ben]);
+      expect((await env.app.inject({ url: '/api/me', cookies: ses.cookies })).json()).toMatchObject({ role: 'kino', roleLabel: 'Kino' });
+    });
   });
 });
