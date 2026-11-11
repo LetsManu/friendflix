@@ -27,6 +27,7 @@ Everything else (browsing, profiles, watch parties, requests, settings of your a
 - [Troubleshooting](#troubleshooting)
 - [Owner steps: signing and Google Play](#owner-steps-signing-and-google-play)
 - [Manual device checklist](#manual-device-checklist)
+- [Testing a pull request on your phone](#testing-a-pull-request-on-your-phone)
 - [Building it yourself](#building-it-yourself)
 
 ## Install
@@ -377,6 +378,18 @@ Unit tests and the emulator in CI cover the logic; these points need a real phon
 68. Phone on wired headphones or the speaker: same result, stereo and no switch.
 69. Phone or Android TV box on an HDMI receiver or soundbar that takes Dolby: the switch *Surround sound* shows, the receiver shows 5.1 (Dolby Digital Plus, Dolby Digital or multichannel PCM); turn the switch off, the stream reloads at the same position with stereo; turn it on again, 5.1 returns.
 70. A HEVC title in a converted stream on a phone with HEVC hardware: it plays; the admin's now-playing shows the stream. Force a failure on a test server (for example block the HEVC stream): one automatic fallback, no loop, and the choice is remembered.
+
+## Testing a pull request on your phone
+
+Every pull request that touches the Android app builds an installable **preview** app (signed with the standard debug key, not the release key).
+
+1. On the pull request, open the **Checks** tab, then the **Android** run, and download the artifact `friendflix-android-preview-apk` (a zip; it is kept for 14 days). Unzip it.
+2. Copy the APK to the phone and install it (allow your browser or file manager to install unknown apps when Android asks).
+3. It is a separate app called **FriendFlix Preview** (`com.friendflix.preview`) that installs next to the real FriendFlix and does not touch it. Log in once; its settings and downloads are separate from the real app.
+4. Passkey login may not work in the preview: the `assetlinks.json` entry only lists the real app's package and key. Use a password or another login method to test.
+5. Uninstall it when you are done (this deletes its downloads).
+
+Never distribute the preview APK: the debug key is public knowledge, so anyone could publish a lookalike update.
 
 ## Building it yourself
 
