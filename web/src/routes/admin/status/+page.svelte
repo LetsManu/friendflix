@@ -17,6 +17,7 @@
   import StreamsCard from '#lib/admin/StreamsCard.svelte';
   import ErrorsCard from '#lib/admin/ErrorsCard.svelte';
   import LoginCard from '#lib/admin/LoginCard.svelte';
+  import SuggestionsCard from '#lib/admin/SuggestionsCard.svelte';
   import { errorText } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import StatTile from '#lib/ui/StatTile.svelte';
@@ -90,6 +91,8 @@
 </div>
 
 <LoginCard />
+
+<SuggestionsCard />
 
 <section aria-labelledby="st-num">
   <h2 id="st-num">{$t('adminContent.status.numbers')}</h2>

@@ -106,6 +106,42 @@ test.describe('admin health page', () => {
     await expect(db.getByRole('progressbar')).toHaveCount(0);
   });
 
+  test('suggestions card: counts per type, hints for "all in the library" and "no starting titles"', async ({ page, api }) => {
+    const base = { anchors: 6, seeds: 9, seedsWithoutTmdb: 1, seedsFoundByName: 2, recommendations: 40, inLibrary: 12, inLibraryByTvdb: 3, lookupFailures: 0, seedSearchFailures: 0, ageFiltered: 4, final: 24 };
+    api.newPage.suggestions.debug = {
+      movie: base,
+      series: { ...base, anchors: 0, seeds: 0, seedsWithoutTmdb: 0, seedsFoundByName: 0, recommendations: 0, inLibrary: 0, inLibraryByTvdb: 0, ageFiltered: 0, final: 0 },
+    };
+    await page.goto('/admin/status');
+    const card = page.getByRole('region', { name: 'Vorschläge (Noch nicht bei uns)' });
+    const movie = card.locator('[data-type="movie"]'), series = card.locator('[data-type="series"]');
+    await expect(movie.getByRole('heading', { name: 'Filme' })).toBeVisible();
+    await expect(movie.locator('dt')).toHaveCount(11);
+    await expect(movie.locator('[data-field="recommendations"]')).toHaveText('40');
+    await expect(movie.locator('[data-field="inLibrary"]')).toHaveText('12');
+    await expect(movie.locator('[data-field="final"]')).toHaveText('24');
+    await expect(movie.getByRole('note')).toHaveCount(0);
+    await expect(series.getByRole('heading', { name: 'Serien' })).toBeVisible();
+    await expect(series.getByRole('note')).toContainText('Keine Ausgangstitel');
+    // nearly everything recommended is already here
+    api.newPage.suggestions.debug = { movie: { ...base, recommendations: 40, inLibrary: 39, final: 1 }, series: base };
+    await page.reload();
+    await expect(card.locator('[data-type="movie"]').getByRole('note')).toContainText('schon in der Bibliothek');
+    await expect(card.locator('[data-type="series"]').getByRole('note')).toHaveCount(0);
+  });
+
+  test.describe('suggestions card without counts', () => {
+    test.use({ allowedConsole: /status of (500|404)/ }); // the 404 requests_disabled is the answer under test
+    test('suggestions card: without counts (not the owner profile) and without a request service it says so', async ({ page, api }) => {
+      await page.goto('/admin/status');
+      const card = page.getByRole('region', { name: 'Vorschläge (Noch nicht bei uns)' });
+      await expect(card).toContainText('nur für den Admin auf dem Besitzer-Profil');
+      api.newPage.suggestions.error = 'disabled';
+      await page.reload();
+      await expect(card).toContainText('Kein Wunsch-Dienst eingerichtet');
+    });
+  });
+
   test('streams: transcode row shows reason "Videoformat" and "Hardware"; details false → muted hint', async ({ page, api }) => {
     await page.goto('/admin/status');
     const card = page.getByRole('region', { name: 'Wiedergaben' });

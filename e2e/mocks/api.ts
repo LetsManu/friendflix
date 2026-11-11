@@ -65,7 +65,7 @@ export interface MockState {
     /** the recommendation engine answered by new-for-you (v1 = just the newest titles: the page must not show them as "for you") */
     engine: 'v1' | 'v2';
     /** GET /api/library/request-suggestions by type; `error` answers 404 requests_disabled / a 500 instead */
-    suggestions: { movie: unknown[]; series: unknown[]; error: null | 'disabled' | 'fail' };
+    suggestions: { movie: unknown[]; series: unknown[]; error: null | 'disabled' | 'fail'; /** the admin's `debug` counts per type (only sent when set) */ debug?: { movie?: Record<string, number>; series?: Record<string, number> } };
     /** the quota of GET /api/requests/quota and of the suggestions (the mock does not count POSTs) */
     quota: { limit: number | null; used: number; resetsAt: string } | null;
     /** GET /api/requests/mine; GET /api/seerr/search */
@@ -327,7 +327,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       if (np.kids) return J({ error: 'kids_profile' }, 403);
       if (np.suggestions.error === 'disabled') return J({ error: 'requests_disabled' }, 404);
       if (np.suggestions.error === 'fail') return J({ error: 'boom' }, 500);
-      return J({ items: sp.get('type') === 'series' ? np.suggestions.series : np.suggestions.movie, quota: np.quota });
+      const ty = sp.get('type') === 'series' ? 'series' : 'movie', debug = np.suggestions.debug?.[ty];
+      return J({ items: np.suggestions[ty], quota: np.quota, ...(debug ? { debug } : {}) });
     }
     if (p === '/api/requests' && m === 'POST') {
       const np = st.newPage;
