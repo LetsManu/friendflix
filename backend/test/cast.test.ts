@@ -1376,17 +1376,24 @@ describe('cast: HEVC and surround with FriendFlix\'s own receiver', () => {
     expect(params((await create(admin, { receiver: true, caps })).j).has('hevc-level')).toBe(false); // no HEVC in this plan: as before
   });
 
-  it('cast HEVC failures are counted per TV (a hash of its name), not per sender phone', async () => {
+  it('cast HEVC failures count once per account: repeated fallbacks look like one device, and a play session counts once', async () => {
     const uid = (await call(admin, 'GET', '/api/me')).json().id as string;
-    await env.kv.set(`pbinfo:${uid}:ps-tv-failed1`, JSON.stringify({ video: 'hevc', audio: 'copy' }), 600);
+    for (const ps of ['ps-tv-failed1', 'ps-tv-failed2']) await env.kv.set(`pbinfo:${uid}:${ps}`, JSON.stringify({ video: 'hevc', audio: 'copy' }), 600);
     await env.kv.del('hevcenc:failures');
     srcStreams = stereoH264;
-    await create(admin, { receiver: true, caps, fellBack: 'hevc', prevPs: 'ps-tv-failed1', tv: 'Living Room TV' });
-    await create(admin, { receiver: true, caps, fellBack: 'hevc', prevPs: 'ps-tv-failed1', tv: 'Living Room TV' });
-    const { createHash } = await import('node:crypto');
-    const want = createHash('sha256').update(`cast:${uid}:Living Room TV`).digest('hex').slice(0, 16);
+    await create(admin, { receiver: true, caps, fellBack: 'hevc', prevPs: 'ps-tv-failed1' });
+    await create(admin, { receiver: true, caps, fellBack: 'hevc', prevPs: 'ps-tv-failed1' }); // consumed: no second count
+    expect(JSON.parse((await env.kv.get('hevcenc:failures'))!)).toHaveLength(1);
+    await create(admin, { receiver: true, caps, fellBack: 'hevc', prevPs: 'ps-tv-failed2', tv: 'Spoofed 2' }); // a sender-supplied name changes nothing
     const fails = JSON.parse((await env.kv.get('hevcenc:failures'))!) as Array<{ device: string }>;
-    expect(fails.map((f) => f.device)).toEqual([createHash('sha256').update(`cast:${uid}:Living Room TV`).digest('hex').slice(0, 16), want]);
-    expect(JSON.stringify(fails)).not.toContain('Living');
+    expect(new Set(fails.map((f) => f.device)).size).toBe(1); // one device, however often it falls back
+    expect(JSON.stringify(fails)).not.toContain('Spoofed');
+  });
+
+  it('a source above HEVC Level 4.1 is not predicted as a copy for the cast (the plan caps hevc-level)', async () => {
+    srcStreams = [{ ...wrenfield[0]!, Level: 153 }, wrenfield[1], sub];
+    expect((await create(admin, { receiver: true, caps })).j.delivery.video).toBe('h264');
+    srcStreams = [{ ...wrenfield[0]!, Level: 123 }, wrenfield[1], sub];
+    expect((await create(admin, { receiver: true, caps })).j.delivery).toMatchObject({ video: 'copy', videoCodec: 'hevc' });
   });
 });

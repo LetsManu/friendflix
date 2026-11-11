@@ -47,8 +47,6 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       /** the sender's one automatic fallback after the receiver failed a stream with that feature, and the play session it replaces */
       fellBack: z.enum(['hevc', 'surround', 'both']).optional(),
       prevPs: psId.optional(),
-      /** the receiver's name (what the sender shows as the TV): cast HEVC failures are counted per TV, not per sender phone */
-      tv: z.string().max(80).optional(),
     }).parse(req.body);
     // the queue is Chromecast only (an AirPlay token has a two-address pin, a queued token never takes a pin of its own)
     if (b.next && b.via === 'airplay') return reply.code(400).send({ error: 'bad_request' });
@@ -88,8 +86,12 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       if ((b.fellBack === 'hevc' || b.fellBack === 'both') && b.prevPs) {
         let prev: { video?: unknown } | null;
         try { prev = JSON.parse((await ctx.kv.get(`pbinfo:${req.user!.id}:${b.prevPs}`).catch(() => null)) ?? 'null'); } catch { prev = null; }
-        // counted per TV (user + receiver name, hashed in noteHevcFailure): two phones casting to one TV that misreports HEVC are one device
-        if (prev?.video === 'hevc') await noteHevcFailure(ctx, b.tv ? `cast:${req.user!.id}:${b.tv}` : deviceId);
+        // counted once per account (a sender-supplied name or id could make one phone look like many devices and pause HEVC for everyone), and the
+        // record is consumed: the same play session never counts twice
+        if (prev?.video === 'hevc') {
+          await ctx.kv.del(`pbinfo:${req.user!.id}:${b.prevPs}`).catch(() => undefined);
+          await noteHevcFailure(ctx, `cast:${req.user!.id}`);
+        }
       }
       const opts = {
         maxBitrate, maxHeight, startTicks, audioIndex: b.audioIndex, cast: true, ...(pred ? { after: pred.playSessionId } : {}),

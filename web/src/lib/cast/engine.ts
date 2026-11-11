@@ -1010,7 +1010,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     try {
       ci = await call<CastInfo>('/api/cast/session', {
         method: 'POST',
-        body: await castReq({ itemId, startTicks: startAt === undefined ? undefined : secToTicks(startAt), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, ...(fb ? { fellBack: fb.kind, prevPs: fb.prevPs, tv: s.view.device } : {}) }),
+        body: await castReq({ itemId, startTicks: startAt === undefined ? undefined : secToTicks(startAt), audioIndex: s.audioIndex, maxBitrate: s.maxBitrate ?? firstInfoBody(deps.prefs()).maxBitrate, ...(fb ? { fellBack: fb.kind, prevPs: fb.prevPs } : {}) }),
       });
     } catch (e) {
       if (my !== seq) return;

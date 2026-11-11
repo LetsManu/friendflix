@@ -84,6 +84,7 @@ export function sourceFacts(src: Record<string, any>, audioIndex?: number): Sour
   return {
     videoCodec: String(v?.Codec ?? '').toLowerCase(), videoBitrate: num(v?.BitRate), height: Number(v?.Height ?? 0), width: Number(v?.Width ?? 0), range,
     ...(typeof v?.Profile === 'string' && v.Profile ? { profile: v.Profile } : {}),
+    ...(num(v?.Level) ? { level: num(v?.Level) } : {}),
     ...(a ? { audio: { codec: String(a.Codec ?? '').toLowerCase(), channels: Number(a.Channels ?? 0), ...(num(a.BitRate) ? { bitrate: num(a.BitRate) } : {}) } } : {}),
   };
 }

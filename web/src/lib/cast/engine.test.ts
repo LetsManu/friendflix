@@ -1587,7 +1587,7 @@ describe('cast engine: FriendFlix\'s own receiver (CAST_RECEIVER_APP_ID)', () =>
     expect(env.tokenPosts()).toHaveLength(2);
     expect(env.tokenPosts()[0]!.init.body).toEqual({ itemId: 'ep2', startTicks: secToTicks(120), maxBitrate: 8_000_000, receiver: true });
     // the second request names what failed and the play session it replaces (the server counts a failed conversion), nothing else new
-    expect(env.tokenPosts()[1]!.init.body).toEqual({ itemId: 'ep2', startTicks: secToTicks(120), maxBitrate: 8_000_000, receiver: true, fellBack: 'both', prevPs: 'ps-h1', tv: 'Wohnzimmer-TV' });
+    expect(env.tokenPosts()[1]!.init.body).toEqual({ itemId: 'ep2', startTicks: secToTicks(120), maxBitrate: 8_000_000, receiver: true, fellBack: 'both', prevPs: 'ps-h1' });
     expect(env.deletes()).toContain('h1'); // the refused token is revoked
     expect(env.loads.map((l) => l.info.castId)).toEqual(['h1', 'n1']);
     expect(env.toast.mock.calls).toEqual([['info', 'Wechsle zu einem Stream, den dieses Gerät abspielt']]);
