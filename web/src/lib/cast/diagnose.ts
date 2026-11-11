@@ -66,8 +66,11 @@ export function airplayRows(o: {
   lookup: CastLookup | null; tf: TFn;
   /** the address family the TV's pin is on (the lookup's `pinFamily`); unknown: no Network row */
   pinned?: 'v4' | 'v6' | null;
+  /** false = the account may not cast (me.perms.cast): said instead of the browser check, nothing else is listed */
+  allowed?: boolean;
 }): DiagRow[] {
   const { tf } = o;
+  if (o.allowed === false) return [{ label: tf('diagnose.cast.inBrowser'), value: tf('ui.error.castForbidden'), tone: 'warn' }];
   const rows: DiagRow[] = [{ label: tf('diagnose.cast.inBrowser'), value: tf(o.available ? 'diagnose.cast.airOk' : 'diagnose.cast.airNo'), tone: o.available ? 'ok' : 'none' }];
   if (o.continuous) rows.push({ label: tf('diagnose.cast.continuous'), value: tf(o.continuous === 'on' ? 'diagnose.cast.continuousOn' : 'diagnose.cast.continuousOff'), tone: 'none' });
   if (o.subsInStream) rows.push({ label: tf('diagnose.cast.subtitles'), value: tf('diagnose.cast.subsInStream'), tone: 'none' });

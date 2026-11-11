@@ -15,6 +15,18 @@ const lookup = (o: Partial<CastLookup> = {}): CastLookup => ({ castId: 'a'.repea
 const base = { capable: true, enabled: true, custom: true, state: state(), session: session(), lookup: lookup(), errors: 0, now: NOW, tf: tr };
 const val = (rows: Array<{ label: string; value: string }>, label: string) => rows.find((r) => r.label === label)?.value;
 
+describe('airplayRows without the cast right', () => {
+  const air = { available: true, continuous: null, subsInStream: true, last: null, lookup: null, tf: tr };
+  it('says the account may not cast instead of "available" and lists nothing else', () => {
+    const rows = airplayRows({ ...air, allowed: false });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.value).toBe(tr('ui.error.castForbidden'));
+    expect(rows[0]!.tone).toBe('warn');
+    expect(airplayRows({ ...air, allowed: true }).length).toBeGreaterThan(1);
+    expect(airplayRows(air)[0]!.value).toBe(tr('diagnose.cast.airOk'));
+  });
+});
+
 describe('chromecastRows without the cast right', () => {
   it('says the account may not cast instead of blaming the browser, and lists nothing else', () => {
     const rows = chromecastRows({ ...base, allowed: false });
