@@ -668,11 +668,18 @@
   // a Chromecast cast may still run from an earlier page: load the Cast SDK so the bar can come back (nobody else pays for it).
   // The SDK joined a running session (also one found at its setup, emitted synchronously from it): the engine re-adopts our
   // media, so the listener is registered before initCast().
-  onMount(() => {
-    const off = onCastEvent((e) => { if (e === 'session-resume') void castEngine.resume(); });
+  /** loads the Cast SDK when a cast may still run; asked again when the cast right arrives after mount (a stale hint denied it) */
+  let castResumeReady = false;
+  function resumeCastSdk() {
     let store: Storage | null = null;
     try { store = localStorage; } catch { /* storage blocked */ }
     if (castAllowed() && castCapableBrowser() && readCastHint(store, Date.now())) void initCast();
+  }
+  $: if ($perms.cast && castResumeReady) resumeCastSdk();
+  onMount(() => {
+    const off = onCastEvent((e) => { if (e === 'session-resume') void castEngine.resume(); });
+    castResumeReady = true;
+    resumeCastSdk();
     return off;
   });
   onMount(() => {

@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { items, SERIES } from '../mocks/fixtures.js';
 import { MOVIE as WATCH_MOVIE } from '../mocks/fixtures.js';
-import { available, castOn, castSessions, mockHls, playOnAirPlay, playOnButton, stubAirPlay } from '../mocks/cast.js';
+import { available, wireless, castOn, castSessions, fakeCastSdk, mockHls, playOnAirPlay, playOnButton, stubAirPlay } from '../mocks/cast.js';
 import { mockPlayer } from '../mocks/scenes.js';
 import { dunmoor, playOnPlayer } from './cast-remote-setup.js';
 
@@ -134,6 +134,28 @@ test.describe('AirPlay follows the cast right', () => {
   });
 });
 
+test.describe('AirPlay refused while the TV is the target', () => {
+  test.use({ allowedConsole: /status of 403/ });
+  test('cast_forbidden: the box says so and has no Retry; any other failure keeps Retry', async ({ page, api: _api }) => {
+    await stubAirPlay(page);
+    await mockPlayer(page);
+    await castOn(page);
+    await mockHls(page);
+    await castSessions(page);
+    await page.route('**/api/cast/session', (r) => r.fulfill({ status: 403, json: { error: 'cast_forbidden' } }));
+    await page.goto('/watch/' + WATCH_MOVIE.id);
+    await page.waitForFunction(() => (document.querySelector('video')?.duration ?? 0) > 20);
+    await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
+    await available(page);
+    await wireless(page, true);
+    const box = page.getByTestId('airplay-active');
+    await expect(box).toContainText('Übertragen ist für dein Konto nicht freigeschaltet.');
+    await expect(box).not.toContainText('fehlgeschlagen');
+    await expect(box.getByRole('button', { name: 'Erneut versuchen' })).toHaveCount(0);
+    await expect(box.getByRole('button', { name: 'AirPlay-Gerät wechseln' })).toBeVisible();
+  });
+});
+
 test.describe('the boot hint holds a rights list per profile', () => {
   const HINT = (noPerms: unknown) => JSON.stringify({ approved: true, multi: true, tv: false, noPerms });
   const commentButtons = (page: Page) => page.locator('button.cmbtn');
@@ -189,5 +211,25 @@ test.describe('the requests right folds into the request service flag (layout bo
   test('requests on: the link is there', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByRole('contentinfo').getByRole('link', { name: 'Demnächst' })).toBeVisible();
+  });
+});
+
+test.describe('the layout resumes a running cast when the right arrives late', () => {
+  test('a stale hint denied cast, /api/me allows it: the Cast SDK loads afterwards', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('ff-boot-hint', JSON.stringify({ approved: true, multi: true, tv: false, noPerms: { p1: ['cast'] } }));
+      sessionStorage.setItem('ff-active-profile', 'p1'); sessionStorage.setItem('ff-profile-picked', '1');
+      localStorage.setItem('ff-cast-hint', JSON.stringify({ castId: 'c'.repeat(32), itemId: 'abc', device: 'Wohnzimmer-TV', exp: Date.now() + 3600_000, at: Date.now() }));
+    });
+    await castOn(page);
+    await fakeCastSdk(page);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route('**/api/me', async (r) => { await held; return r.fallback(); });
+    await page.goto('/', { waitUntil: 'commit' });
+    await page.waitForTimeout(800);
+    expect(await page.evaluate(() => Boolean((window as unknown as { __castFake?: unknown }).__castFake))).toBe(false); // the hint denies: nothing loaded yet
+    release();
+    await page.waitForFunction(() => Boolean((window as unknown as { __castFake?: unknown }).__castFake));
   });
 });

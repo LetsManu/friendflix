@@ -872,6 +872,9 @@
     await load(was?.position);
   }
   // ---- AirPlay session lifecycle (the controller tells when Safari's playback target becomes / stops being wireless) ----
+  /** the last token refusal was 403 cast_forbidden: the error box says so and offers no Retry (the next refusal would be the same) */
+  let airForbidden = false;
+  $: if (!airState.error) airForbidden = false;
   const airErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
     : e?.body?.error === 'cast_forbidden' ? tr('ui.error.castForbidden')
     : e?.body?.error === 'transcoding_disabled' ? tr('player.airplay.needsTranscode') : tr('player.airplay.failed');
@@ -903,7 +906,7 @@
         wantAutoplay = play;
         await load(pos);
       },
-      fail: (e) => flash(airErr(e), 4000),
+      fail: (e) => { airForbidden = (e as { body?: { error?: unknown } } | null)?.body?.error === 'cast_forbidden'; flash(airErr(e), 4000); },
       change: (st) => {
         airState = st;
         if (st.active && !st.error && !st.busy && airInfo && !handedOff) handOverAirPlay(); // the TV plays our token
@@ -1764,8 +1767,9 @@
     <div class="center castov" role="status" data-testid="airplay-active"><div class="castbox">
       <Icon name="airplay" size={56} />
       {#if airState.error}
-        <b>{$t('player.airplay.failed')}</b><span class="airhint">{$t('player.airplay.endHint')}</span>
-        <button class="btn light ui" on:click|stopPropagation={() => air?.retry()}>{$t('player.error.retry')}</button>
+        {#if airForbidden}<b>{$t('ui.error.castForbidden')}</b><span class="airhint">{$t('player.airplay.endHint')}</span>
+        {:else}<b>{$t('player.airplay.failed')}</b><span class="airhint">{$t('player.airplay.endHint')}</span>
+        <button class="btn light ui" on:click|stopPropagation={() => air?.retry()}>{$t('player.error.retry')}</button>{/if}
       {:else}<b>{$t('player.airplay.playing')}</b>{/if}
       <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.change')}</button>
     </div></div>
