@@ -267,7 +267,7 @@ describe('role existence in the admin API', () => {
       expect(r.statusCode).toBe(200);
       expect(await effectiveRole(env.ctx, 'kino')).toMatchObject({ label: 'Kino', maxStreams: 3, transcoding: false, maxHeight: 1080 });
       expect((await as('PUT', '/api/admin/roles/nobody', { transcoding: false })).statusCode).toBe(404);
-      // the legacy editor's columns reach role_settings.template; a reset (null) removes the field again, other fields stay
+      // the fields reach role_settings.template; a reset (null) removes the field again, other fields stay
       expect((await as('PUT', '/api/admin/roles/kino', { remoteMaxBitrate: 5_000_000 })).statusCode).toBe(200);
       expect(await effectiveRole(env.ctx, 'kino')).toMatchObject({ remoteMaxBitrate: 5_000_000, maxStreams: 3, transcoding: false });
       expect((await as('PUT', '/api/admin/roles/kino', { remoteMaxBitrate: null })).statusCode).toBe(200);
@@ -275,14 +275,16 @@ describe('role existence in the admin API', () => {
       expect((await env.pool.query("select template from role_settings where role='kino'")).rows[0].template).toEqual({ maxStreams: 3, transcoding: false, maxHeight: 1080 });
     });
 
-    it('the legacy role PUT writes the columns and the template together or not at all', async () => {
-      const before = (await env.pool.query("select download_days from role_settings where role='kino'")).rows[0].download_days;
-      await env.pool.query("update role_settings set template = '5'::jsonb where role='kino'"); // the template step fails on a scalar
+    it('the role PUT writes the catalogue, the template and the old columns together or not at all', async () => {
+      const before = (await env.pool.query("select template, download_days from role_settings where role='kino'")).rows[0];
+      // the role_settings step fails (a check the write cannot meet) after the catalogue step ran
+      await env.pool.query('alter table role_settings add constraint t3_refuse check (download_days is distinct from 9) not valid');
       try {
-        expect((await as('PUT', '/api/admin/roles/kino', { downloadDays: 9 })).statusCode).toBe(500);
-        expect((await env.pool.query("select download_days from role_settings where role='kino'")).rows[0].download_days).toBe(before);
+        expect((await as('PUT', '/api/admin/roles/kino', { label: 'Kino neu', downloadDays: 9 })).statusCode).toBe(500);
+        expect((await env.pool.query("select template, download_days from role_settings where role='kino'")).rows[0]).toEqual(before);
+        expect((await env.pool.query("select label from roles where key='kino'")).rows[0].label).toBe('Kino');
       } finally {
-        await env.pool.query(`update role_settings set template = '{"maxStreams": 3, "transcoding": false, "maxHeight": 1080}' where role='kino'`);
+        await env.pool.query('alter table role_settings drop constraint t3_refuse');
         invalidateRoles(env.ctx);
       }
     });

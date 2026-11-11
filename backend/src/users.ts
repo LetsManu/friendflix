@@ -86,8 +86,8 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, 
   }
 }
 
-/** Re-applies the effective role policy to all non-disabled users of a role. Returns the number of failures. */
-export async function reapplyRole(ctx: Ctx, role: string): Promise<number> {
+/** Re-applies the effective role policy to all non-disabled users of a role (account and profile identities): how many, how many failed. */
+export async function reapplyRole(ctx: Ctx, role: string): Promise<{ identities: number; failed: number }> {
   const r = await ctx.db.query<{ id: string; jellyfin_user_id: string; hidden: boolean }>(
     `select id, jellyfin_user_id, false hidden from users where role=$1 and not disabled
      union all select u.id, p.jellyfin_user_id, true from profiles p join users u on u.id=p.user_id
@@ -96,7 +96,7 @@ export async function reapplyRole(ctx: Ctx, role: string): Promise<number> {
   );
   let failed = 0;
   for (const u of r.rows) await applyRole(ctx, u.jellyfin_user_id, role, false, { hidden: u.hidden, userId: u.id }).catch(() => { failed++; });
-  return failed;
+  return { identities: r.rows.length, failed };
 }
 
 /** One-time startup job (flag in app_flags): old accounts still carry the pre-maxHeight policies (e.g. guests without transcoding). Call after migrate. */
@@ -104,7 +104,7 @@ export async function reapplyPoliciesOnce(ctx: Ctx, flag = 'reapply_roles_v1'): 
   const got = await ctx.db.query('insert into app_flags(key) values ($1) on conflict do nothing returning key', [flag]);
   if (!got.rowCount) return;
   let failed = 0;
-  for (const { key } of await listRoles(ctx)) failed += await reapplyRole(ctx, key);
+  for (const { key } of await listRoles(ctx)) failed += (await reapplyRole(ctx, key)).failed;
   if (failed) await ctx.db.query('delete from app_flags where key=$1', [flag]); // retry on next start
 }
 

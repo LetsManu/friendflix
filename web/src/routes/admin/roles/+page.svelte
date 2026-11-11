@@ -52,9 +52,10 @@
   /** only the fields that differ from the loaded state (so untouched settings keep their default/override status) */
   function diff(c: Card): Record<string, unknown> {
     const f = c.form, b = c.base, body: Record<string, unknown> = {};
-    if (f.unlimited !== b.unlimited || (!f.unlimited && int(f.perMonth) !== int(b.perMonth))) body.requestsPerMonth = f.unlimited ? null : int(f.perMonth);
+    // 'unlimited' lifts the limit; null would mean "back to the default" (the role API's encoding)
+    if (f.unlimited !== b.unlimited || (!f.unlimited && int(f.perMonth) !== int(b.perMonth))) body.requestsPerMonth = f.unlimited ? 'unlimited' : int(f.perMonth);
     if (f.transcoding !== b.transcoding) body.transcoding = f.transcoding;
-    if (f.maxHeight !== b.maxHeight) body.maxHeight = f.maxHeight ? Number(f.maxHeight) : null;
+    if (f.maxHeight !== b.maxHeight) body.maxHeight = f.maxHeight ? Number(f.maxHeight) : 'unlimited';
     if (f.download !== b.download) body.download = f.download;
     if (f.download && int(f.maxDownloads) !== int(b.maxDownloads)) body.maxDownloads = int(f.maxDownloads);
     if (f.dlHeight !== b.dlHeight) body.downloadMaxHeight = f.dlHeight ? Number(f.dlHeight) : LIKE_PLAYBACK;

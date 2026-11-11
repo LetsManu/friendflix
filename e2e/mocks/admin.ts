@@ -559,7 +559,12 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   if (p === '/api/admin/roles' && m === 'GET') {
     return J({ roles: ROLES, invitable: ['friend', 'family', 'guest'], limits: Object.entries(ROLES).map(([role, r], i) => ({ role, label: r.label, builtinLabel: true, requestsPerMonth: i === 0 ? null : 3, isDefault: i === 2, transcoding: i !== 3, maxHeight: i === 1 ? 1080 : null, download: i < 2, maxDownloads: 5, downloadMaxHeight: 720, downloadDays: 30, maxBitrate: role === 'guest' ? 2_000_000 * 4 : 40_000_000, remoteMaxBitrate: role === 'family' ? 12_000_000 : role === 'guest' ? 4_000_000 : 8_000_000, remoteDefault: role === 'guest' ? 4_000_000 : 8_000_000, remoteIsDefault: role !== 'family' })) });
   }
-  if (/^\/api\/admin\/roles\/[^/]+$/.test(p) && m === 'PUT') return ok();
+  if (/^\/api\/admin\/roles\/[^/]+$/.test(p) && m === 'PUT') {
+    // the role API's encodings: null = back to the inherited value, 'unlimited' lifts a cap (a number otherwise)
+    const capOk = (v: unknown) => v === undefined || v === null || v === 'unlimited' || typeof v === 'number';
+    if (!capOk(body?.maxHeight) || !capOk(body?.requestsPerMonth) || !capOk(body?.maxParentalRating)) return J({ error: 'bad_request' }, 400);
+    return J({ ok: true, reapplied: { identities: 0, failed: 0 } });
+  }
   if (p === '/api/admin/devices') return J(devicesList(st, sp));
   if (p === '/api/admin/devices/approve' && m === 'POST') {
     const d = st.devices.find((x) => x.user_id === body.userId && x.device_id === body.deviceId);

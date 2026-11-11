@@ -63,8 +63,9 @@ export type TemplateKey = Exclude<keyof RoleTemplate, 'label'>;
 export const TEMPLATE_KEYS: readonly TemplateKey[] = ['libraries', 'maxParentalRating', 'maxBitrate', 'remoteMaxBitrate', 'maxStreams', 'transcoding', 'maxHeight', 'download', 'maxDownloads', 'downloadMaxHeight', 'downloadDays'];
 /** which layer decided a template field of a role: the code default, ROLE_TEMPLATES, or the role row (role_settings.template) */
 export type RoleLayer = 'default' | 'env' | 'role';
-type Stored = { template: Partial<Omit<RoleTemplate, 'label'>>; perms: unknown };
-const cache = new WeakMap<object, { at: number; rows: Map<string, Stored> }>();
+/** a role_settings row as the resolver reads it: the template already filtered by readTemplate, perms raw (rights.ts reads them) */
+export type StoredRole = { template: Partial<Omit<RoleTemplate, 'label'>>; perms: unknown };
+const cache = new WeakMap<object, { at: number; rows: Map<string, StoredRole> }>();
 type RoleCtx = Pick<Ctx, 'db' | 'roles'>;
 
 /**
@@ -83,7 +84,7 @@ export function readTemplate(raw: unknown): Partial<Omit<RoleTemplate, 'label'>>
 }
 
 /** the role_settings row of a role (template, perms), cached ~30 s per ctx with all rows */
-export async function storedRole(ctx: Pick<Ctx, 'db'>, role: string): Promise<Stored | undefined> {
+export async function storedRole(ctx: Pick<Ctx, 'db'>, role: string): Promise<StoredRole | undefined> {
   let c = cache.get(ctx);
   if (!c || Date.now() - c.at > TTL_MS) {
     const r = await ctx.db.query<{ role: string; template: unknown; perms: unknown }>('select role, template, perms from role_settings');
@@ -100,17 +101,18 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
  * (role_settings.template). A role without a ROLE_TEMPLATES key (admin-created, or an env role that left ROLE_TEMPLATES) starts from
  * the code default of its catalogue base. `base` picks the default permissions; `perms` is the stored perms JSON (rights.ts reads it).
  * An env field equal to the code default counts as `default`. undefined for a role that is neither in ctx.roles nor in the catalogue.
+ * `row`: resolve over this role_settings row instead of the cached one (null = no row); the role editor resolves a row it is writing.
  */
-export async function resolveRole(ctx: RoleCtx, role: string): Promise<{ template: RoleTemplate; sources: Record<TemplateKey, RoleLayer>; base: string; perms: unknown } | undefined> {
+export async function resolveRole(ctx: RoleCtx, role: string, row?: StoredRole | null): Promise<{ template: RoleTemplate; sources: Record<TemplateKey, RoleLayer>; base: string; perms: unknown } | undefined> {
   const env = own(ctx.roles, role);
-  const row = (await listRoles(ctx)).find((r) => r.key === role);
-  if (!env && !row) return undefined;
-  const base = row?.base ?? (Object.hasOwn(DEFAULT_ROLES, role) ? role : 'friend');
+  const cat = (await listRoles(ctx)).find((r) => r.key === role);
+  if (!env && !cat) return undefined;
+  const base = cat?.base ?? (Object.hasOwn(DEFAULT_ROLES, role) ? role : 'friend');
   const code = own(DEFAULT_ROLES, env ? role : base) ?? DEFAULT_ROLES.friend!;
   const from = env ?? code;
-  const template: RoleTemplate = { ...from, label: row?.label ?? from.label };
+  const template: RoleTemplate = { ...from, label: cat?.label ?? from.label };
   const sources = Object.fromEntries(TEMPLATE_KEYS.map((k) => [k, env && !same(env[k], code[k]) ? 'env' : 'default'])) as Record<TemplateKey, RoleLayer>;
-  const stored = await storedRole(ctx, role);
+  const stored = row === undefined ? await storedRole(ctx, role) : (row ?? undefined);
   for (const [k, v] of Object.entries(stored?.template ?? {}) as Array<[TemplateKey, never]>) {
     template[k] = v;
     sources[k] = 'role';
@@ -123,31 +125,12 @@ export async function effectiveRole(ctx: RoleCtx, role: string): Promise<RoleTem
   return (await resolveRole(ctx, role))?.template;
 }
 
-/** the old role_settings columns (dual-written for one release) and the template field each one holds */
+/** the old role_settings columns (dual-written for one release by roleWrite.ts, never read) and the template field each one holds */
 export const LEGACY_COLUMNS = {
   transcoding: 'transcoding', maxHeight: 'max_height', download: 'download', maxDownloads: 'max_downloads',
   downloadMaxHeight: 'download_max_height', downloadDays: 'download_days', remoteMaxBitrate: 'remote_max_bitrate',
 } as const satisfies Partial<Record<TemplateKey, string>>;
 export type LegacyKey = keyof typeof LEGACY_COLUMNS;
-
-/**
- * The legacy role editor (PUT /api/admin/roles/:role until the role matrix replaces it) writes the old role_settings columns: this
- * copies the given fields from their columns into `template` with migration 47's mapping (null = inherit, removed from the template;
- * max_height 0 = unlimited, JSON null). Other template keys stay.
- */
-export async function mirrorLegacyColumns(ctx: Pick<Ctx, 'db'>, role: string, keys: readonly LegacyKey[] = Object.keys(LEGACY_COLUMNS) as LegacyKey[]): Promise<void> {
-  if (!keys.length) return;
-  const row = (await ctx.db.query<Record<string, unknown>>(`select ${keys.map((k) => LEGACY_COLUMNS[k]).join(', ')} from role_settings where role=$1`, [role])).rows[0];
-  if (!row) return;
-  const set: Record<string, unknown> = {};
-  const drop: string[] = [];
-  for (const k of keys) {
-    const v = row[LEGACY_COLUMNS[k]];
-    if (v === null) drop.push(k);
-    else set[k] = k === 'maxHeight' && v === 0 ? null : v;
-  }
-  await ctx.db.query('update role_settings set template = (template - $2::text[]) || $3::jsonb where role=$1', [role, drop, JSON.stringify(set)]);
-}
 
 /** bitrate ceiling for a viewer outside the home networks: the remote cap, never above the role's own limit */
 export const remoteBitrateCap = (role: Pick<RoleTemplate, 'maxBitrate' | 'remoteMaxBitrate'>) => Math.min(role.maxBitrate, role.remoteMaxBitrate);

@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MIGRATIONS } from '../src/db.js';
 import { forgetDownloadVisibility, qualityOptions } from '../src/downloads.js';
-import { DEFAULT_ROLES, invalidateRoles, mirrorLegacyColumns } from '../src/roles.js';
+import { DEFAULT_ROLES, invalidateRoles } from '../src/roles.js';
+import { writeRole, type RolePatch } from '../src/roleWrite.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const enqueued: string[] = [];
@@ -45,15 +46,8 @@ async function newUser(role: 'family' | 'guest' | 'friend', sub: string): Promis
 const call = (s: Sess, method: string, url: string, body?: unknown) =>
   env.app.inject({ method: method as 'GET', url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: body as object });
 const uid = async (name: string) => (await env.pool.query('select id from users where name=$1', [name])).rows[0].id as string;
-const setRole = async (role: string, cols: Record<string, unknown>) => {
-  const keys = Object.keys(cols);
-  await env.pool.query(
-    `insert into role_settings(role, ${keys.join(',')}) values ($1, ${keys.map((_, i) => `$${i + 2}`).join(',')}) on conflict (role) do update set ${keys.map((k, i) => `${k}=$${i + 2}`).join(',')}`,
-    [role, ...Object.values(cols)],
-  );
-  await mirrorLegacyColumns(env.ctx, role); // the old columns, as the legacy role editor writes them, into role_settings.template
-  invalidateRoles(env.ctx);
-};
+/** a role setting through the role editor's write path (role_settings.template and the old columns) */
+const setRole = async (role: string, patch: RolePatch) => { await writeRole(env.ctx, null, role, patch); };
 const resetRole = async () => { await env.pool.query('delete from role_settings'); invalidateRoles(env.ctx); };
 const authz = (s: Sess, dl: string) => env.app.inject({ method: 'POST', url: '/internal/authz', headers: H, payload: { sid: s.cookies.ff_sid, dl } });
 
@@ -222,14 +216,14 @@ describe('options and creation', () => {
   });
 
   it('refuses qualities above the role cap', async () => {
-    await setRole('family', { download_max_height: 720 });
+    await setRole('family', { downloadMaxHeight: 720 });
     const r = await create(family, { itemId: MOVIE, quality: 'fhd' });
     expect(r.statusCode).toBe(400);
     expect(r.json().error).toBe('quality_unavailable');
   });
 
   it('enforces maxDownloads per account', async () => {
-    await setRole('family', { max_downloads: 2 });
+    await setRole('family', { maxDownloads: 2 });
     expect((await create(family, { itemId: EPS[0] })).statusCode).toBe(200);
     expect((await create(family, { itemId: EPS[1] })).statusCode).toBe(200);
     const r = await create(family, { itemId: EPS[2] });
@@ -242,7 +236,7 @@ describe('options and creation', () => {
   });
 
   it('a batch is refused as a whole when it does not fit', async () => {
-    await setRole('family', { max_downloads: 2 });
+    await setRole('family', { maxDownloads: 2 });
     const r = await create(family, { seriesId: SERIES, fromEpisodeId: EPS[0], count: 3 });
     expect(r.statusCode).toBe(409);
     expect((await env.pool.query('select count(*) n from downloads')).rows[0].n).toBe('0');
@@ -651,7 +645,7 @@ describe('creation is atomic and never waits', () => {
 
 describe('role caps are part of the job key', () => {
   it('two roles with different effective caps get different jobs; equal caps share one', async () => {
-    await setRole('family', { download_max_height: 360 });
+    await setRole('family', { downloadMaxHeight: 360 });
     const a = (await create(family, { itemId: MOVIE, quality: 'sd' })).json().licenses[0];
     const b = (await create(admin, { itemId: MOVIE, quality: 'sd' })).json().licenses[0];
     const ja = await jobOf(a.id), jb = await jobOf(b.id);
@@ -662,7 +656,7 @@ describe('role caps are part of the job key', () => {
     const c = (await create(guest, { itemId: MOVIE })).statusCode; // guest cannot download at all
     expect(c).toBe(403);
     // same effective caps (hd, 720) from two roles -> one job
-    await setRole('family', { download_max_height: 720 });
+    await setRole('family', { downloadMaxHeight: 720 });
     const x = (await create(family, { itemId: EPS[0] })).json().licenses[0];
     const y = (await create(admin, { itemId: EPS[0] })).json().licenses[0];
     expect((await jobOf(x.id)).id).toBe((await jobOf(y.id)).id);

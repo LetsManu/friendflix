@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { z } from 'zod';
-import { castEnabled } from './cast.js';
-import type { Ctx } from './ctx.js';
-import { requestsEnabled } from './seerr/client.js';
 
 /**
  * The permission registry (spec §1): on/off switches per role (role_settings.perms) and per account (user_limits.perms). Downloads stay
@@ -71,7 +68,3 @@ export const MATRIX_FIELDS: readonly MatrixField[] = [
   { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv' },
 ];
 
-/** which optional features this install has (the editor hides the rows of absent ones); Live TV detection ships with Live TV Phase 1b */
-export function featureFlags(ctx: Ctx): { requests: boolean; cast: boolean; livetv: boolean } {
-  return { requests: requestsEnabled(ctx), cast: castEnabled(ctx), livetv: false };
-}

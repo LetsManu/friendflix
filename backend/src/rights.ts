@@ -4,8 +4,8 @@ import type { Ctx } from './ctx.js';
 // rights.ts and limits.ts import each other: neither may use the other's exports at module load, only inside functions
 import { getUserOverrides, type EffectiveLimits, type UserOverrides } from './limits.js';
 import { DEFAULT_PERMS, KIDS_OFF, PERM_KEYS, readPerms, type PermKey, type Perms } from './perms.js';
-import { roleLimitRow } from './requestlimit.js';
-import { resolveRole, type RoleTemplate, type TemplateKey } from './roles.js';
+import { defaultLimit, roleLimitRow } from './requestlimit.js';
+import { readTemplate, resolveRole, type RoleTemplate, type TemplateKey } from './roles.js';
 import type { ProfileRow } from './types.js';
 
 /**
@@ -27,9 +27,19 @@ let without = new WeakMap<object, Map<PermKey, { at: number; ids: string[] }>>()
 
 const defaultPerms = (base: string): Perms => ({ ...(Object.hasOwn(DEFAULT_PERMS, base) ? DEFAULT_PERMS[base as keyof typeof DEFAULT_PERMS] : DEFAULT_PERMS.friend) });
 
-/** A role's rights without any account: template (with requestsPerMonth), switches and their sources. undefined for an unknown role. */
-export async function roleRights(ctx: RightsCtx, role: string): Promise<{ template: EffectiveLimits; perms: Perms; sources: Record<RightKey, RoleSource> } | undefined> {
-  const [r, req] = await Promise.all([resolveRole(ctx, role), roleLimitRow(ctx, role)]);
+/** a role_settings row as stored (raw template and perms JSON, the requests_per_month column) */
+export interface RoleSettingsRow { template: unknown; perms: unknown; requestsPerMonth: number | null }
+
+/**
+ * A role's rights without any account: template (with requestsPerMonth), switches and their sources. undefined for an unknown role.
+ * `row`: resolve over this role_settings row instead of the stored one (null = no row); the role editor compares before and after.
+ */
+export async function roleRights(ctx: RightsCtx, role: string, row?: RoleSettingsRow | null): Promise<{ template: EffectiveLimits; perms: Perms; sources: Record<RightKey, RoleSource> } | undefined> {
+  const explicit = row === undefined ? undefined : row && { template: readTemplate(row.template), perms: row.perms };
+  const [r, req] = await Promise.all([
+    resolveRole(ctx, role, explicit),
+    row === undefined ? roleLimitRow(ctx, role) : row ? { limit: row.requestsPerMonth, set: true } : { limit: defaultLimit(role), set: false },
+  ]);
   if (!r) return undefined;
   const perms = defaultPerms(r.base);
   const permSources = Object.fromEntries(PERM_KEYS.map((k) => [k, 'default'])) as Record<PermKey, RoleSource>;
