@@ -22,7 +22,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl
 
-/** The server's TV interface in one full-screen WebView. The remote's Back and media keys go to the page first (see [FireTvKeys]). */
+/**
+ * The server's TV interface in one full-screen WebView. The remote's Back, media and live-TV keys (channel, digits, last
+ * channel, Info, Guide) go to the page first (see [FireTvKeys]).
+ */
 class TvShellActivity : ComponentActivity() {
     private var webView: WebView? = null
     private var origin: HttpUrl? = null
