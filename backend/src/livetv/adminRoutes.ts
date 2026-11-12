@@ -9,7 +9,9 @@ import { roleExists } from '../rolecat.js';
 import { requireAdmin } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
 import { detectLivetv, enableBenchmark, livetvInstalled, livetvSystem } from './detect.js';
+import { LivetvError } from './client.js';
 import { gpuAdvice } from './gpu.js';
+import { liveStatus, stopStream } from './status.js';
 import { isOwnFeeds } from './channels.js';
 import { refreshRunning, refreshSource } from './refresh.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
@@ -372,5 +374,26 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       return { ok: true, ...(await deleteFeed(ctx, req.user!.id, cid, req.log)) };
     } catch (e) { return feedRefused(e, reply); }
+  });
+
+  // ---- Live-Status (spec §9.5): one answer for the tab; never a URL, a stream key or a stream id ----
+
+  app.get('/api/admin/livetv/status', admin, async (_req, reply) => {
+    reply.header('cache-control', 'no-store');
+    return liveStatus(ctx);
+  });
+
+  // *Stoppen* (and *Neu starten*: the next watcher starts the channel again); audited with the channel id only
+  app.post('/api/admin/livetv/streams/:channelId/stop', admin, async (req, reply) => {
+    const cid = id.safeParse((req.params as { channelId?: string }).channelId).data;
+    if (!cid) return reply.code(404).send({ error: 'not_found' });
+    try {
+      await stopStream(ctx, cid);
+    } catch (e) {
+      if (e instanceof LivetvError) return reply.code(503).send({ error: 'livetv_unreachable' });
+      throw e;
+    }
+    await audit(ctx, req.user!.id, 'livetv.stream.stop', cid, { fields: [] });
+    return { ok: true };
   });
 }
