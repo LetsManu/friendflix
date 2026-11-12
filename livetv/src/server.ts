@@ -6,7 +6,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { log as defaultLog, type Log } from './log.js';
+import { dnsLookup, ownSubnets } from './netguard.js';
 import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
+import { fetchRoutes } from './routes/fetch.js';
 import { createRun } from './run.js';
 import { systemView, type SystemView } from './system.js';
 
@@ -154,8 +156,12 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   const cfg = loadConfig(env);
   const log = o.log ?? defaultLog;
   const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
-  const system = systemView({ fs, run: createRun(), cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts });
-  const app = createApp({ verifier, version: cfg.version, bootId: randomBytes(8).toString('hex'), system, warn: log });
+  const run = createRun();
+  const system = systemView({ fs, run, cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts });
+  // the production guard: the system resolver and this container's own subnets, read once here (never a test `dial`)
+  const guard = { lookup: dnsLookup, own: ownSubnets() };
+  const routes = [...fetchRoutes({ guard, run })];
+  const app = createApp({ verifier, version: cfg.version, bootId: randomBytes(8).toString('hex'), system, routes, warn: log });
   const server = createServer((req, res) => { void app(req, res); });
   server.requestTimeout = 10_000;
   server.headersTimeout = 5_000;

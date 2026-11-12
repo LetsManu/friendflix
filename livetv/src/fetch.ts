@@ -22,8 +22,13 @@ export class FetchError extends Error {
 
 /** `dial` is a test hook only: it maps the checked address to the one actually connected to (a local test server) */
 export type GuardDeps = { lookup(h: string): Promise<string[]>; own: readonly Cidr[]; dial?(ip: string, port: number): string };
-export type GuardedResponse = { status: number; headers: Record<string, string>; body: AsyncIterable<Uint8Array> };
-export type FetchOptions = { allowLan: boolean; userAgent?: string; timeoutMs: number; connectTimeoutMs?: number; maxBytes: number };
+/**
+ * `url`: the URL of the last hop (after redirects), the base for resolving relative references in the body (HLS playlists).
+ * Internal only: never put it in an error, a log line or an answer.
+ */
+export type GuardedResponse = { status: number; url: string; headers: Record<string, string>; body: AsyncIterable<Uint8Array> };
+/** `signal`: the caller's own abort (its client went away); it ends the fetch and its body at once, like the timeout does */
+export type FetchOptions = { allowLan: boolean; userAgent?: string; timeoutMs: number; connectTimeoutMs?: number; maxBytes: number; signal?: AbortSignal };
 
 export const CONNECT_TIMEOUT_MS = 10_000;
 export const MAX_REDIRECTS = 3;
@@ -105,6 +110,23 @@ async function* readBody(res: http.IncomingMessage, maxBytes: number, signal: Ab
   }
 }
 
+/**
+ * The body as given to callers: `return()` closes the connection even when nothing was read yet (a generator that never started
+ * would otherwise skip its `finally` and keep the socket open until the fetch timeout).
+ */
+function closable(gen: AsyncGenerator<Uint8Array>, close: () => void): AsyncIterableIterator<Uint8Array> {
+  let started = false;
+  const it: AsyncIterableIterator<Uint8Array> = {
+    next: () => { started = true; return gen.next(); },
+    return: (v?: unknown) => {
+      if (!started) { started = true; close(); }
+      return gen.return(v as undefined);
+    },
+    [Symbol.asyncIterator]: () => it,
+  };
+  return it;
+}
+
 function flatHeaders(h: http.IncomingHttpHeaders): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(h)) if (v !== undefined) out[k] = Array.isArray(v) ? v.join(', ') : v;
@@ -119,6 +141,9 @@ function flatHeaders(h: http.IncomingHttpHeaders): Record<string, string> {
 export async function guardedFetch(raw: string, o: FetchOptions, deps: GuardDeps): Promise<GuardedResponse> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), o.timeoutMs);
+  const outer = () => ac.abort();
+  if (o.signal?.aborted) ac.abort();
+  else o.signal?.addEventListener('abort', outer, { once: true });
   try {
     let url = checked(raw);
     const scheme = url.protocol;
@@ -150,11 +175,13 @@ export async function guardedFetch(raw: string, o: FetchOptions, deps: GuardDeps
       }
       const onAbort = () => res.destroy(new FetchError('timeout'));
       ac.signal.addEventListener('abort', onAbort, { once: true });
-      const done = () => { clearTimeout(timer); ac.signal.removeEventListener('abort', onAbort); };
-      return { status, headers: flatHeaders(res.headers), body: readBody(res, o.maxBytes, ac.signal, done) };
+      const done = () => { clearTimeout(timer); ac.signal.removeEventListener('abort', onAbort); o.signal?.removeEventListener('abort', outer); };
+      const body = closable(readBody(res, o.maxBytes, ac.signal, done), () => { done(); res.destroy(); });
+      return { status, url: url.href, headers: flatHeaders(res.headers), body };
     }
   } catch (e) {
     clearTimeout(timer);
+    o.signal?.removeEventListener('abort', outer);
     throw failure(e, ac.signal);
   }
 }

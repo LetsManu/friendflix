@@ -1,0 +1,6 @@
+{
+  "streams": [
+    { "index": 0, "codec_name": "hevc", "codec_type": "video", "profile": "Main 10", "width": 3840, "height": 2160, "r_frame_rate": "50/1", "avg_frame_rate": "0/0" },
+    { "index": 1, "codec_name": "eac3", "codec_type": "audio", "sample_rate": "48000", "channels": 6 }
+  ]
+}

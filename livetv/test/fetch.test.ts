@@ -102,11 +102,31 @@ describe('guardedFetch', () => {
     expect(await codeOf(guardedFetch(url('/up'), O, deps(['192.0.2.10'])))).toBe('scheme');
     // r2 -> r3 -> r4 -> r5 is three redirects: allowed; r1 -> ... -> r5 is four: refused
     const three = deps(['192.0.2.10'], ['192.0.2.11']);
-    expect(await text((await guardedFetch(url('/r2'), O, three)).body)).toBe('end');
+    const followed = await guardedFetch(url('/r2'), O, three);
+    // the last hop's URL is the base for relative references in the body
+    expect(followed.url).toBe(url('/r5'));
+    expect(await text(followed.body)).toBe('end');
+    expect((await guardedFetch(url('/plain?x=1'), O, deps(['192.0.2.10']))).url).toBe(url('/plain?x=1'));
     expect(three.dialed).toEqual(['192.0.2.10', '192.0.2.11', '192.0.2.11', '192.0.2.11']);
     expect(await codeOf(guardedFetch(url('/r1'), O, deps(['192.0.2.10'])))).toBe('redirects');
     // each hop is resolved and checked again: a rebinding answer on the second hop is refused
     expect(await codeOf(guardedFetch(url('/r4'), O, deps(['192.0.2.10'], ['10.0.0.5'])))).toBe('address_refused');
+  });
+
+  it('return() on a body that was never read closes the connection at once', async () => {
+    let closedAt = 0;
+    const s = await serve((_req, res) => { res.on('close', () => { closedAt = Date.now(); }); res.writeHead(200); res.write('x'); });
+    const r = await guardedFetch(`http://iptv.example.com:${s.port}/live.ts`, { ...O, timeoutMs: 30_000 }, deps(['192.0.2.10']));
+    const t = Date.now();
+    await r.body[Symbol.asyncIterator]().return?.();
+    for (let i = 0; i < 100 && !closedAt; i++) await new Promise((res) => setTimeout(res, 20));
+    expect(closedAt).toBeGreaterThan(0);
+    expect(closedAt - t).toBeLessThan(2_000);
+    // a body read to its end still closes cleanly
+    const done = await guardedFetch(`http://iptv.example.com:${s.port}/x`, { ...O, timeoutMs: 30_000 }, deps(['192.0.2.10']));
+    const it = done.body[Symbol.asyncIterator]();
+    expect((await it.next()).done).toBe(false);
+    expect((await it.return?.())?.done).toBe(true);
   });
 
   it('status codes map to fixed errors', async () => {
