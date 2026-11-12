@@ -23,6 +23,8 @@ const dict: Translation<typeof de> = {
     restart: 'Yeniden başlat',
     working: 'Canlı TV kuruluyor …',
     checking: 'Canlı TV denetleniyor …',
+    updaterOld: 'Bu güncelleyici Canlı TV\'yi henüz tanımıyor. Önce güncelleyiciyi güncelleyin: Admin → Güncelleme → “Güncelleyiciyi güncelle”, sonra burada açın.',
+    updaterOldGo: 'Önce güncelleyiciyi güncelle',
   },
   err: {
     pull_failed: 'İmaj indirilemedi. Sunucunun internet bağlantısını kontrol edin.',
@@ -32,6 +34,9 @@ const dict: Translation<typeof de> = {
     unexpected_image: 'İndirilen imaj beklenen imaj değil. Hiçbir şey başlatılmadı.',
     config_mismatch: 'Compose dosyaları bu imajla uyuşmuyor.',
     compose_config: 'Compose yapılandırması geçersiz veya Canlı TV\'yi tanımıyor.',
+    updater_outdated: 'Bu güncelleyici Canlı TV\'yi henüz tanımıyor. Önce güncelleyiciyi güncelleyin (Admin → Güncelleme → “Güncelleyiciyi güncelle”).',
+    compose_outdated: 'compose.prod.yaml dosyanız Canlı TV\'den önceki bir sürümden. Yığın klasöründe güncel sürümdekiyle değiştirin ve orada bir kez docker compose up -d çalıştırın.',
+    network_missing: 'Backend ve ağ geçidi henüz livetv ağında değil. Yığın klasöründe bir kez docker compose up -d çalıştırın, sonra tekrar deneyin.',
     remove_failed: 'Kaldırma işlemi başarısız oldu. İmaj veya veriler hâlâ duruyor olabilir.',
     rollback_failed: 'Başarısız başlangıçtan sonra temizlik yapılamadı. Kapsayıcı hâlâ çalışıyor olabilir.',
     no_updater: 'Güncelleyici olmadan bunun elle yapılması gerekir.',

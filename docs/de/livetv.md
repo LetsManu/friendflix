@@ -14,6 +14,16 @@ wird nichts geladen oder gestartet und FriendFlix sieht aus wie vorher. Diese Se
 - **Von Hand:** `COMPOSE_PROFILES=livetv` in die `.env` schreiben und `docker compose -f compose.prod.yaml up -d` ausführen
   (oder `docker compose -f compose.prod.yaml --profile livetv up -d`). Vorher prüfen: `docker compose -f compose.prod.yaml --profile livetv config -q`.
 
+**Bei einer Installation von vor Live-TV** einmal in dieser Reihenfolge (die Seite nennt den Schritt, der fehlt):
+
+1. *Admin → Update → Updater aktualisieren* (ein älterer Updater kennt Live-TV nicht: „Erst den Updater aktualisieren“).
+2. `compose.prod.yaml` im Stack-Ordner durch die aus dem aktuellen Release ersetzen und einmal
+   `docker compose -f compose.prod.yaml up -d` ausführen. Damit hängen Backend und Gateway im internen Netz `livetv`, und der
+   Dienst `bootstrap` schreibt den Schlüssel von livetv (fehlt das: „Deine compose.prod.yaml stammt von vor Live-TV“ oder
+   „Backend und Gateway hängen noch nicht im Netz livetv“). Ein Update über den Updater dazwischen ist kein Problem: Es erstellt
+   Backend und Gateway im neuen Netz neu.
+3. *Admin → Live-TV* → aktivieren.
+
 Der Dienst hat keinen Docker-Socket, ein schreibgeschütztes Root-Dateisystem und keine Capabilities; Backend und Gateway
 erreichen ihn im internen Netz `livetv` unter `LIVETV_URL` (Standard `http://livetv:8090`, braucht keine Einstellung).
 Der Updater behält die Overlay-Dateien, mit denen du den Stack gestartet hast; ein Overlay in `COMPOSE_FILE` bleibt bei Updates erhalten.

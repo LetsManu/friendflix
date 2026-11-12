@@ -23,6 +23,8 @@ const dict: Translation<typeof de> = {
     restart: 'Uruchom ponownie',
     working: 'Przygotowywanie telewizji na żywo …',
     checking: 'Sprawdzanie telewizji na żywo …',
+    updaterOld: 'Ten aktualizator nie zna jeszcze telewizji na żywo. Najpierw zaktualizuj aktualizator: Admin → Aktualizacja → „Zaktualizuj aktualizator”, potem włącz ją tutaj.',
+    updaterOldGo: 'Najpierw zaktualizuj aktualizator',
   },
   err: {
     pull_failed: 'Nie udało się pobrać obrazu. Sprawdź połączenie serwera z internetem.',
@@ -32,6 +34,9 @@ const dict: Translation<typeof de> = {
     unexpected_image: 'Pobrany obraz nie jest tym oczekiwanym. Nic nie zostało uruchomione.',
     config_mismatch: 'Pliki compose nie pasują do tego obrazu.',
     compose_config: 'Konfiguracja compose jest nieprawidłowa lub nie zna telewizji na żywo.',
+    updater_outdated: 'Ten aktualizator nie zna jeszcze telewizji na żywo. Najpierw zaktualizuj aktualizator (Admin → Aktualizacja → „Zaktualizuj aktualizator”).',
+    compose_outdated: 'Twój compose.prod.yaml pochodzi sprzed telewizji na żywo. Zastąp go w folderze stosu plikiem z bieżącego wydania i uruchom tam raz docker compose up -d.',
+    network_missing: 'Backend i bramka nie są jeszcze w sieci livetv. Uruchom raz docker compose up -d w folderze stosu i spróbuj ponownie.',
     remove_failed: 'Usuwanie się nie powiodło. Obraz lub dane mogą nadal istnieć.',
     rollback_failed: 'Sprzątanie po nieudanym starcie się nie powiodło. Kontener może nadal działać.',
     no_updater: 'Bez aktualizatora trzeba to zrobić ręcznie.',

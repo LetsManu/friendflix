@@ -24,6 +24,12 @@ describe('enableMode', () => {
     expect(enableMode(withUpdater(base(), { stack: 'foreign' }))).toBe('portainer');
     expect(enableMode(withUpdater(base(), { available: false, stack: 'foreign' }))).toBe('portainer');
   });
+  it('an own stack whose updater is from before livetv (no livetv in its status): update the updater first, no button', () => {
+    expect(enableMode(withUpdater(base(), { livetv: null }))).toBe('updaterOld');
+    // a foreign stack or no usable updater keep their own manual lines
+    expect(enableMode(withUpdater(base(), { livetv: null, stack: 'foreign' }))).toBe('portainer');
+    expect(enableMode(withUpdater(base(), { livetv: null, available: false, stack: null }))).toBe('env');
+  });
   it('no updater, or one that does not know its stack, shows the .env line', () => {
     expect(enableMode(withUpdater(base(), { available: false, stack: null }))).toBe('env');
     expect(enableMode(withUpdater(base(), { stack: null }))).toBe('env');
@@ -74,6 +80,8 @@ describe('phase', () => {
 describe('errorKey', () => {
   it('maps the known codes and nothing else', () => {
     for (const c of ['pull_failed', 'verify_failed', 'restart_failed', 'unhealthy', 'unexpected_image', 'config_mismatch', 'compose_config', 'remove_failed', 'rollback_failed', 'no_updater', 'foreign_stack', 'busy']) expect(errorKey(c)).toBe(c);
+    // installs from before Live TV (1b review I3): each its own advice, never the generic line or "unexpected image"
+    for (const c of ['updater_outdated', 'compose_outdated', 'network_missing']) expect(errorKey(c)).toBe(c);
     expect(errorKey('rm -rf')).toBe('generic');
     expect(errorKey(null)).toBe('generic');
     expect(errorKey('weird_new_code')).toBe('generic');

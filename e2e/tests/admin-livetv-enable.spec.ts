@@ -60,6 +60,35 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
     await expect(page.getByText('Der Dienst läuft aber nicht')).toHaveCount(0);
   });
 
+  test('an updater from before Live TV: no enable button, "update the updater first" leads to Admin → Update (1b review I3)', async ({ page, api }) => {
+    api.admin.livetv.ltOld = true;
+    await page.goto('/admin/livetv');
+    const c = card(page);
+    await expect(c.locator('[data-mode="updaterOld"]')).toContainText('Dieser Updater kennt Live-TV noch nicht.');
+    await expect(c.getByRole('button', { name: 'Live-TV aktivieren' })).toHaveCount(0);
+    const go = c.getByRole('link', { name: 'Erst den Updater aktualisieren' });
+    await expect(go).toHaveAttribute('href', '/admin/update');
+    const box = await go.boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+    expect(api.admin.livetv.posts).toEqual([]);
+  });
+
+  for (const [code, text] of [
+    ['compose_outdated', 'Deine compose.prod.yaml stammt von vor Live-TV.'],
+    ['network_missing', 'Backend und Gateway hängen noch nicht im Netz livetv.'],
+  ] as const) {
+    test(`an enable on an install from before Live TV ends with its own advice: ${code}`, async ({ page, api }) => {
+      api.admin.livetv.outcome = 'failed';
+      api.admin.livetv.failCode = code;
+      await page.goto('/admin/livetv');
+      await card(page).getByRole('button', { name: 'Live-TV aktivieren' }).click();
+      const res = card(page).locator('[data-result="failed"]');
+      await expect(res).toContainText(text, { timeout: 20_000 });
+      await expect(res).toContainText('docker compose up -d');
+      await expect(res).not.toContainText('nicht das erwartete');
+    });
+  }
+
   test('no updater shows the .env line and copies it', async ({ page, api, context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     api.admin.livetv.updater = false;

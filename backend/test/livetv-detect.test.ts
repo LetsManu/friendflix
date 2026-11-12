@@ -246,6 +246,18 @@ describe('enable / disable', () => {
     expect(await audits('livetv.disable')).toEqual([{ removeImage: false, removeCache: false, outcome: 'no_updater' }]);
   });
 
+  it('an updater from before livetv → 409 updater_outdated, nothing posted, wanted unchanged (1b review I3)', async () => {
+    fake.livetvState = undefined;
+    await withApp(async (call) => {
+      const r = await call('POST', '/api/admin/livetv/enable');
+      expect([r.statusCode, r.json()]).toEqual([409, { error: 'updater_outdated', wanted: false }]);
+      expect((await call('GET', '/api/admin/livetv/state')).json().updater).toMatchObject({ available: true, livetv: null });
+    });
+    expect(posts()).toEqual([]);
+    expect(wanted()).toBe('false');
+    expect(await audits('livetv.enable')).toEqual([{ outcome: 'updater_outdated' }]);
+  });
+
   it('foreign stack → 409 foreign_stack', async () => {
     fake.stack = 'foreign';
     await withApp(async (call) => {

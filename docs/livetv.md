@@ -14,6 +14,16 @@ sections follow with the features.
 - **By hand:** put `COMPOSE_PROFILES=livetv` into `.env` and run `docker compose -f compose.prod.yaml up -d` (or
   `docker compose -f compose.prod.yaml --profile livetv up -d`). Check first: `docker compose -f compose.prod.yaml --profile livetv config -q`.
 
+**On an install from before Live TV** do these once, in this order (the page names the step that is missing):
+
+1. *Admin → Update → Update the updater* (an older updater does not know Live TV: "update the updater first").
+2. Replace `compose.prod.yaml` in the stack folder with the one from the current release and run
+   `docker compose -f compose.prod.yaml up -d` once. This puts backend and gateway on the internal `livetv` network and lets the
+   `bootstrap` service write livetv's key (missing: "your compose.prod.yaml is from before Live TV" or "backend and gateway are
+   not on the livetv network yet"). An update through the updater in between is fine: it recreates backend and gateway on the
+   new network.
+3. *Admin → Live-TV* → enable.
+
 The service has no Docker socket, a read-only root file system and no capabilities; backend and gateway reach it on the
 internal `livetv` network at `LIVETV_URL` (default `http://livetv:8090`, needs no setting). Details: [security.md](security.md#the-livetv-container).
 The updater keeps the overlay files you started the stack with, so an overlay in `COMPOSE_FILE` stays on updates.

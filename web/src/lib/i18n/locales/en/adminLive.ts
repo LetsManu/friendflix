@@ -23,6 +23,8 @@ const dict: Translation<typeof de> = {
     restart: 'Start again',
     working: 'Setting up Live TV …',
     checking: 'Checking Live TV …',
+    updaterOld: 'This updater does not know Live TV yet. Update the updater first: Admin → Update → “Update the updater”, then turn it on here.',
+    updaterOldGo: 'Update the updater first',
   },
   err: {
     pull_failed: 'The image could not be downloaded. Check the server\'s internet connection.',
@@ -32,6 +34,9 @@ const dict: Translation<typeof de> = {
     unexpected_image: 'The downloaded image is not the expected one. Nothing was started.',
     config_mismatch: 'The compose files do not match this image.',
     compose_config: 'The compose configuration is invalid or does not know Live TV.',
+    updater_outdated: 'This updater does not know Live TV yet. Update the updater first (Admin → Update → “Update the updater”).',
+    compose_outdated: 'Your compose.prod.yaml is from before Live TV. Replace it in the stack folder with the one from the current release and run docker compose up -d there once.',
+    network_missing: 'Backend and gateway are not on the livetv network yet. Run docker compose up -d once in the stack folder, then try again.',
     remove_failed: 'Removing did not work. The image or data may still be there.',
     rollback_failed: 'Cleaning up after the failed start did not work. The container may still be running.',
     no_updater: 'Without the updater this has to be done by hand.',

@@ -22,7 +22,7 @@ export type UpdaterJobAction = UpdateJobAction | 'livetv-enable' | 'livetv-disab
 const JOB_ACTIONS: readonly UpdaterJobAction[] = [...UPDATER_ACTIONS, 'livetv-enable', 'livetv-disable', 'livetv-remove'];
 /** the optional livetv service: the body of POST /v1/livetv (the updater refuses anything else, updater/src/policy.ts parseLivetvBody) */
 export type LivetvOp = { op: 'enable' } | { op: 'disable' } | { op: 'remove'; data: boolean };
-const LIVETV_ERRORS = ['pull_failed', 'unexpected_image', 'config_mismatch', 'compose_config', 'verify_failed', 'restart_failed', 'unhealthy'] as const;
+const LIVETV_ERRORS = ['pull_failed', 'unexpected_image', 'config_mismatch', 'compose_config', 'compose_outdated', 'verify_failed', 'restart_failed', 'unhealthy'] as const;
 export type LivetvError = (typeof LIVETV_ERRORS)[number];
 const STEP_NAMES = ['pull', 'verify', 'restart', 'health', 'rollback'] as const;
 const STEP_STATES = ['pending', 'running', 'ok', 'failed', 'skipped'] as const;
@@ -224,15 +224,20 @@ function livetvBody(op: LivetvOp | null | undefined): string | null {
 /**
  * Enables, disables or removes the optional livetv service through the updater (POST /v1/livetv, spec §4.2) and audits it like
  * startJob (start now, result from the next status read). A foreign (Portainer) stack is refused up front: the updater would
- * refuse it too, and Portainer cannot start a single profile service, so the page shows the manual steps instead.
+ * refuse it too, and Portainer cannot start a single profile service, so the page shows the manual steps instead. An updater
+ * from before livetv (its status has no `livetv`, or it answers the route 404) is `updater_outdated`: the admin updates the
+ * updater first (1b review I3). `view`: the status the caller already read (one signed status read per request).
  */
-export async function startLivetvJob(ctx: Ctx, op: LivetvOp, actor: string): Promise<StartResult> {
+export async function startLivetvJob(ctx: Ctx, op: LivetvOp, actor: string, view?: UpdaterView): Promise<StartResult> {
   const body = livetvBody(op);
   if (!body) return { ok: false, status: 400, error: 'invalid' };
-  const pre = await updaterView(ctx);
+  const pre = view ?? await updaterView(ctx);
   if ('status' in pre && portainerStack(ctx, pre.status)) return { ok: false, status: 409, error: 'foreign_stack' };
+  if ('status' in pre && pre.status.livetv === null) return { ok: false, status: 409, error: 'updater_outdated' };
   const action = `livetv-${op.op}` as const;
-  const job = startedJob(await call(ctx, 'POST', '/v1/livetv', body), action);
+  const r = await call(ctx, 'POST', '/v1/livetv', body);
+  if (r?.status === 404) return { ok: false, status: 409, error: 'updater_outdated' };
+  const job = startedJob(r, action);
   if (!job.ok) return job;
   const meta = { action, ...(op.op === 'remove' ? { data: op.data } : {}), from: job.job.from, to: job.job.to };
   await ctx.kv.set(`${PENDING}${job.job.id}`, JSON.stringify({ actor, action: 'livetv' satisfies UpdaterAction, op: op.op }), 7 * 86_400).catch(() => undefined);

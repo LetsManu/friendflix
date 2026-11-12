@@ -127,6 +127,8 @@ export interface LivetvMock {
   stack: 'own' | 'foreign' | null;
   ltState: 'absent' | 'disabled' | 'enabled' | 'stop_failed';
   ltError: string | null;
+  /** an updater from before livetv: its status carries no livetv (null), POST answers 409 updater_outdated */
+  ltOld: boolean;
   job: any;
   tick: number;
   jobPolls: number;
@@ -291,7 +293,7 @@ const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemI
 
 export function livetvMock(): LivetvMock {
   return {
-    installed: false, wanted: false, offerHidden: false, updater: true, stack: 'own', ltState: 'absent', ltError: null, job: null, tick: 0, jobPolls: 2, outcome: 'succeeded', failCode: null,
+    installed: false, wanted: false, offerHidden: false, updater: true, stack: 'own', ltState: 'absent', ltError: null, ltOld: false, job: null, tick: 0, jobPolls: 2, outcome: 'succeeded', failCode: null,
     benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, lagLeft: 0, gets: 0, posts: [],
   };
 }
@@ -582,7 +584,7 @@ function livetvState(lt: LivetvMock) {
     installed: lt.installed, reachable: lt.installed, version: lt.installed ? '1.0.0' : null, wanted: lt.wanted, offerHidden: lt.offerHidden,
     updater: {
       available: lt.updater, stack: lt.updater ? lt.stack : null, job: lt.updater ? lt.job : null,
-      livetv: lt.updater ? { state: lt.ltState, container: lt.installed ? 'running' : null, error: lt.ltError } : null,
+      livetv: lt.updater && !lt.ltOld ? { state: lt.ltState, container: lt.installed ? 'running' : null, error: lt.ltError } : null,
     },
     envLine: ENV_LINE, benchmark: lt.installed ? lt.benchmark : null,
     gpu: { jellyfin: lt.installed ? 'qsv' : null, livetv: lt.installed ? { driver: 'iHD', devices: 1 } : null, advice: lt.installed ? lt.advice : null },
@@ -597,6 +599,7 @@ function livetvRoute(lt: LivetvMock, m: string, p: string, body: any, J: Reply):
     if (lt.refuse) { const r = lt.refuse; lt.refuse = null; return refuse(r.status, r.error); }
     if (!lt.updater) return refuse(409, 'no_updater', { envLine: ENV_LINE });
     if (lt.stack === 'foreign') return refuse(409, 'foreign_stack', { envLine: ENV_LINE });
+    if (lt.ltOld) return refuse(409, 'updater_outdated');
     if (lt.job?.state === 'running') return refuse(409, 'busy');
     if (path === 'disable' && body?.removeCache && !body?.removeImage) return J({ error: 'invalid', field: 'removeCache' }, 400);
     lt.tick = 0;

@@ -21,6 +21,8 @@ export default {
     restart: 'Wieder starten',
     working: 'Live-TV wird eingerichtet …',
     checking: 'Live-TV wird geprüft …',
+    updaterOld: 'Dieser Updater kennt Live-TV noch nicht. Erst den Updater aktualisieren: Admin → Update → „Updater aktualisieren“, danach hier einschalten.',
+    updaterOldGo: 'Erst den Updater aktualisieren',
   },
   err: {
     pull_failed: 'Das Image ließ sich nicht laden. Prüfe die Internetverbindung des Servers.',
@@ -30,6 +32,9 @@ export default {
     unexpected_image: 'Das geladene Image ist nicht das erwartete. Es wurde nichts gestartet.',
     config_mismatch: 'Die Compose-Dateien passen nicht zu diesem Image.',
     compose_config: 'Die Compose-Konfiguration ist ungültig oder kennt Live-TV nicht.',
+    updater_outdated: 'Dieser Updater kennt Live-TV noch nicht. Erst den Updater aktualisieren (Admin → Update → „Updater aktualisieren“).',
+    compose_outdated: 'Deine compose.prod.yaml stammt von vor Live-TV. Ersetze sie im Stack-Ordner durch die aus dem aktuellen Release und führe dort einmal docker compose up -d aus.',
+    network_missing: 'Backend und Gateway hängen noch nicht im Netz livetv. Führe im Stack-Ordner einmal docker compose up -d aus und versuch es dann noch einmal.',
     remove_failed: 'Das Entfernen hat nicht geklappt. Image oder Daten sind vielleicht noch da.',
     rollback_failed: 'Das Aufräumen nach dem Fehlstart hat nicht geklappt. Der Container läuft vielleicht noch.',
     no_updater: 'Ohne Updater geht das nur von Hand.',

@@ -23,6 +23,8 @@ const dict: Translation<typeof de> = {
     restart: 'Riavvia',
     working: 'Configurazione della TV in diretta …',
     checking: 'Verifica della TV in diretta …',
+    updaterOld: 'Questo updater non conosce ancora la TV in diretta. Prima aggiorna l’updater: Admin → Aggiornamento → «Aggiorna l’updater», poi attivala qui.',
+    updaterOldGo: 'Prima aggiorna l’updater',
   },
   err: {
     pull_failed: 'Non è stato possibile scaricare l’immagine. Controlla la connessione internet del server.',
@@ -32,6 +34,9 @@ const dict: Translation<typeof de> = {
     unexpected_image: 'L’immagine scaricata non è quella prevista. Non è stato avviato nulla.',
     config_mismatch: 'I file compose non corrispondono a questa immagine.',
     compose_config: 'La configurazione compose non è valida o non conosce la TV in diretta.',
+    updater_outdated: 'Questo updater non conosce ancora la TV in diretta. Prima aggiorna l’updater (Admin → Aggiornamento → «Aggiorna l’updater»).',
+    compose_outdated: 'Il tuo compose.prod.yaml è precedente alla TV in diretta. Sostituiscilo nella cartella dello stack con quello della release attuale ed esegui lì una volta docker compose up -d.',
+    network_missing: 'Backend e gateway non sono ancora sulla rete livetv. Esegui una volta docker compose up -d nella cartella dello stack, poi riprova.',
     remove_failed: 'La rimozione non è riuscita. L’immagine o i dati potrebbero esserci ancora.',
     rollback_failed: 'La pulizia dopo l’avvio fallito non è riuscita. Il container potrebbe essere ancora in esecuzione.',
     no_updater: 'Senza l’updater si fa a mano.',

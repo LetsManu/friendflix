@@ -31,10 +31,13 @@ export interface LivetvAdminState {
   gpu: { jellyfin: string | null; livetv: { driver: string | null; devices: number } | null; /** null = no advice */ advice: GpuAdvice | null };
 }
 
-export type EnableMode = 'updater' | 'env' | 'portainer';
-/** how this install can turn Live TV on: the updater (own stack), by hand in Portainer, or by the .env line */
+export type EnableMode = 'updater' | 'updaterOld' | 'env' | 'portainer';
+/**
+ * how this install can turn Live TV on: the updater (own stack), by hand in Portainer, or by the .env line; `updaterOld`: an own
+ * stack whose updater is from before livetv (its status has no livetv), so the admin updates the updater first
+ */
 export function enableMode(s: LivetvAdminState): EnableMode {
-  if (s.updater.available && s.updater.stack === 'own') return 'updater';
+  if (s.updater.available && s.updater.stack === 'own') return s.updater.livetv === null ? 'updaterOld' : 'updater';
   if (s.updater.stack === 'foreign') return 'portainer';
   return 'env';
 }
@@ -69,7 +72,7 @@ export function phase(s: LivetvAdminState, settling: boolean): Phase {
   return 'offer';
 }
 
-const ERRORS = ['pull_failed', 'verify_failed', 'restart_failed', 'unhealthy', 'unexpected_image', 'config_mismatch', 'compose_config', 'remove_failed', 'rollback_failed', 'no_updater', 'foreign_stack', 'busy'] as const;
+const ERRORS = ['pull_failed', 'verify_failed', 'restart_failed', 'unhealthy', 'unexpected_image', 'config_mismatch', 'compose_config', 'updater_outdated', 'compose_outdated', 'network_missing', 'remove_failed', 'rollback_failed', 'no_updater', 'foreign_stack', 'busy'] as const;
 export type ErrorKey = (typeof ERRORS)[number] | 'generic';
 /** the message key (adminLive.err.<key>) of an updater / route code; an unknown code is "generic", never shown raw */
 export function errorKey(code: string | null | undefined): ErrorKey {
