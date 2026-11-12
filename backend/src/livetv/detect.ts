@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { claimBenchAttempt, startBenchmark } from '../convbench.js';
-import { readBench } from '../convbudget.js';
+import { startBenchmark } from '../convbench.js';
 import type { Ctx } from '../ctx.js';
 import { livetvCall, livetvHealth } from './client.js';
 import type { Encoder, LivetvSystem } from './wire.js';
@@ -14,9 +13,14 @@ import type { Encoder, LivetvSystem } from './wire.js';
  */
 export interface LivetvState { reachable: boolean; installed: boolean; version: string | null; bootId: string | null; checkedAt: number }
 
-interface Slot { state: LivetvState | null; flight: Promise<LivetvState> | null }
+/** how the benchmark after enabling went: started, or why it was refused (busy, running, no_user, unsupported) or failed to start */
+export type EnableBenchmark = 'started' | 'busy' | 'running' | 'no_user' | 'unsupported' | 'error';
+interface Slot { state: LivetvState | null; flight: Promise<LivetvState> | null; bench: EnableBenchmark | null }
 const slots = new WeakMap<object, Slot>();
-const slotOf = (ctx: Ctx): Slot => { let s = slots.get(ctx); if (!s) slots.set(ctx, s = { state: null, flight: null }); return s; };
+const slotOf = (ctx: Ctx): Slot => { let s = slots.get(ctx); if (!s) slots.set(ctx, s = { state: null, flight: null, bench: null }); return s; };
+
+/** how the benchmark after the last enable went (null: none yet); shown in the admin state */
+export const enableBenchmark = (ctx: Ctx): EnableBenchmark | null => slots.get(ctx)?.bench ?? null;
 
 /** last known, no request */
 export function livetvInstalled(ctx: Ctx): boolean {
@@ -28,8 +32,13 @@ async function check(ctx: Ctx, slot: Slot): Promise<LivetvState> {
   const next: LivetvState = { reachable: h !== null, installed: h !== null && h.api === 1, version: h?.version ?? null, bootId: h?.bootId ?? null, checkedAt: Date.now() };
   const was = slot.state?.installed; // undefined until the first look: a backend that starts next to a running livetv is not "just enabled"
   slot.state = next;
+  if (!next.installed) slot.bench = null; // it belongs to this appearance
   // the first look after enabling (spec §5.3): measure the encoder livetv would use; one attempt per appearance
-  if (was === false && next.installed && ctx.cfg.LIVETV_WANTED === 'true') void startBenchmark(ctx, 'enable').catch(() => undefined); // a refusal ({ ok: false }) is retried by the tick
+  if (was === false && next.installed && ctx.cfg.LIVETV_WANTED === 'true') {
+    slot.bench = null;
+    // one attempt per appearance; a refusal ({ ok: false }) is kept for the admin state, not retried here
+    void startBenchmark(ctx, 'enable').then((r) => { slot.bench = r.ok ? 'started' : r.why; }, () => { slot.bench = 'error'; });
+  }
   return next;
 }
 
@@ -41,17 +50,9 @@ export async function detectLivetv(ctx: Ctx, maxAgeMs = 10_000): Promise<LivetvS
   return slot.flight;
 }
 
-/**
- * every 60 s (server.ts): a fresh check, which also notices the first appearance after enabling. While livetv is installed and its
- * benchmark record is missing (enabled by hand, someone was watching at the first look, a refusal) the measurement is retried, at most
- * once per 30 min (the benchmark's attempt key); a restart alone is not an enable, but a missing record gets measured eventually.
- */
+/** every 60 s (server.ts): a fresh check, which also notices the first appearance after enabling */
 export async function livetvDetectTick(ctx: Ctx): Promise<void> {
-  const st = await detectLivetv(ctx, 0);
-  if (!st.installed) return;
-  if ((await readBench(ctx, 1).catch(() => null))?.livetv) return;
-  if (!(await claimBenchAttempt(ctx))) return;
-  await startBenchmark(ctx, 'enable').catch(() => undefined); // { ok: false } (busy, running, ...) is simply tried again later
+  await detectLivetv(ctx, 0);
 }
 
 const SYSTEM_MEMO_MS = 10_000;

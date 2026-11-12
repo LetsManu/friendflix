@@ -6,7 +6,7 @@ import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { requireAdmin } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
-import { detectLivetv, livetvSystem } from './detect.js';
+import { detectLivetv, enableBenchmark, livetvSystem } from './detect.js';
 import { gpuAdvice } from './gpu.js';
 
 /** the line for an install without the updater (spec §4.3); the page shows it with the compose commands */
@@ -68,6 +68,8 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
         livetv: status?.livetv ? { state: status.livetv.state, container: status.livetv.container, error: status.livetv.error } : null,
       },
       envLine: ENV_LINE,
+      // the measurement started when livetv first appeared after enabling: started, or why it was refused (the admin can press Neu messen)
+      benchmark: enableBenchmark(ctx),
       gpu: {
         jellyfin,
         livetv: sys ? { driver: sys.gpu.driver, devices: sys.gpu.devices.length } : null,

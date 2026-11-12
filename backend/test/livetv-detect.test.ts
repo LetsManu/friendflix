@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { buildApp } from '../src/app.js';
 import { startBenchmark } from '../src/convbench.js';
 import { featureFlags } from '../src/features.js';
-import { detectLivetv, livetvDetectTick, livetvInstalled } from '../src/livetv/detect.js';
+import { detectLivetv, enableBenchmark, livetvDetectTick, livetvInstalled } from '../src/livetv/detect.js';
 import { gpuAdvice } from '../src/livetv/gpu.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 
@@ -153,28 +153,38 @@ describe('detection', () => {
   });
 });
 
-describe('a missing livetv benchmark record', () => {
-  it('is retried while livetv is installed, once per attempt window, refusals included', async () => {
-    await env.kv.del('conv:bench:livetv');
+describe('the benchmark after enabling', () => {
+  it('a refusal is kept for the state, not lost and not retried', async () => {
     vi.mocked(startBenchmark).mockResolvedValue({ ok: false, why: 'busy', reason: 'watching' });
-    await livetvDetectTick(env.ctx); // not installed: nothing
-    expect(startBenchmark).not.toHaveBeenCalled();
+    await env.ctx.settings.save({ LIVETV_WANTED: 'true' }, null);
     fake.livetv = 'api1';
-    await livetvDetectTick(env.ctx); // appears (not wanted: a manual enable) with no record: tried, refused
-    expect(startBenchmark).toHaveBeenCalledTimes(1);
-    await livetvDetectTick(env.ctx); // within 30 min: not again
+    await livetvDetectTick(env.ctx);
+    await vi.waitFor(() => expect(enableBenchmark(env.ctx)).toBe('busy'));
+    await livetvDetectTick(env.ctx);
     await livetvDetectTick(env.ctx);
     expect(startBenchmark).toHaveBeenCalledTimes(1);
-    await env.kv.del('conv:bench:attempt'); // the window passed
+    await withApp(async (call) => { expect((await call('GET', '/api/admin/livetv/state')).json().benchmark).toBe('busy'); });
+    // a throw is noted too, and the next appearance starts over
+    fake.livetv = 'down';
+    await livetvDetectTick(env.ctx);
     vi.mocked(startBenchmark).mockRejectedValueOnce(new Error('boom'));
+    fake.livetv = 'api1';
     await livetvDetectTick(env.ctx);
-    expect(startBenchmark).toHaveBeenCalledTimes(2);
-    // a record ends it
-    await env.kv.del('conv:bench:attempt');
-    await env.kv.set('conv:bench:livetv', JSON.stringify({ speed: 4, hwAccel: 'h264_qsv', fingerprint: 'x', at: Date.now() }), 600);
-    await livetvDetectTick(env.ctx);
-    expect(startBenchmark).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(enableBenchmark(env.ctx)).toBe('error'));
     vi.mocked(startBenchmark).mockResolvedValue({ ok: true });
+    fake.livetv = 'down';
+    await livetvDetectTick(env.ctx);
+    fake.livetv = 'api1';
+    await livetvDetectTick(env.ctx);
+    await vi.waitFor(() => expect(enableBenchmark(env.ctx)).toBe('started'));
+  });
+
+  it('without a record and without an enable nothing is started on a tick', async () => {
+    await env.kv.del('conv:bench:livetv');
+    fake.livetv = 'api1';
+    await livetvDetectTick(env.ctx);
+    await livetvDetectTick(env.ctx);
+    expect(startBenchmark).not.toHaveBeenCalled();
   });
 });
 
@@ -296,7 +306,7 @@ describe('GET /api/admin/livetv/state', () => {
       const r = await call('GET', '/api/admin/livetv/state');
       expect(r.headers['cache-control']).toBe('no-store');
       expect(r.json()).toEqual({
-        installed: false, reachable: false, version: null, wanted: false, offerHidden: false,
+        installed: false, reachable: false, version: null, wanted: false, offerHidden: false, benchmark: null,
         updater: { available: true, stack: 'own', job: null, livetv: { state: 'stop_failed', container: 'running', error: 'unhealthy' } },
         envLine: 'COMPOSE_PROFILES=livetv',
         gpu: { jellyfin: null, livetv: null, advice: null },
