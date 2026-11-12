@@ -268,17 +268,21 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!b) return reply;
     try {
       const s = await updateSource(ctx, req.user!.id, sid, b);
+      // switching a source on or off adds or withdraws its push feeds in livetv (Task 20)
+      if (s && b.enabled !== undefined && (await ctx.db.query("select 1 from livetv_channels where source_id = $1 and ingest = 'push' limit 1", [sid])).rowCount) {
+        await syncIngest(ctx, req.log);
+      }
       return s ?? reply.code(404).send({ error: 'not_found' });
     } catch (e) { return refused(e, reply); }
   });
 
   app.delete('/api/admin/livetv/sources/:id', admin, async (req, reply) => {
     const sid = groupId(req);
-    // deleting the own-feeds source deletes its push feeds: livetv must stop accepting their credentials (Task 20)
-    const pushed = sid ? (await ctx.db.query("select 1 from livetv_channels where source_id = $1 and ingest = 'push' limit 1", [sid])).rowCount : 0;
     const r = sid ? await deleteSource(ctx, req.user!.id, sid) : null;
-    if (r && pushed) await syncIngest(ctx, req.log);
-    return r ?? reply.code(404).send({ error: 'not_found' });
+    if (!r) return reply.code(404).send({ error: 'not_found' });
+    // push feeds went with it (counted in the delete's transaction): livetv must stop accepting their credentials (Task 20)
+    if (r.push) await syncIngest(ctx, req.log);
+    return { channels: r.channels };
   });
 
   // ---- Eigene Streams (spec §3.5, §9.1): pull URLs and push credentials are secrets (F13). Bodies are never logged with an error
@@ -335,8 +339,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     const cid = groupId(req);
     if (!cid) return reply.code(404).send({ error: 'not_found' });
     try {
-      await deleteFeed(ctx, req.user!.id, cid, req.log);
-      return { ok: true };
+      return { ok: true, ...(await deleteFeed(ctx, req.user!.id, cid, req.log)) };
     } catch (e) { return feedRefused(e, reply); }
   });
 }

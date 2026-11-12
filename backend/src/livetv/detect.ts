@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { startBenchmark } from '../convbench.js';
 import type { Ctx } from '../ctx.js';
-import { livetvCall, livetvHealth } from './client.js';
+import { LivetvError, livetvCall, livetvHealth } from './client.js';
 import type { Encoder, LivetvSystem } from './wire.js';
 
 /**
@@ -60,14 +60,10 @@ const ENCODERS: readonly string[] = ['h264_qsv', 'h264_vaapi', 'h264_nvenc', 'li
 const memo = new WeakMap<object, { at: number; sys: LivetvSystem | null }>();
 const strings = (v: unknown, max: number): string[] | null => (Array.isArray(v) && v.length <= max && v.every((x) => typeof x === 'string' && x.length <= 120) ? (v as string[]) : null);
 
-/** `GET /v1/system` as far as the admin page needs it (cached 10 s; null = not installed, not answering or an unexpected shape) */
-export async function livetvSystem(ctx: Ctx): Promise<LivetvSystem | null> {
-  if (!livetvInstalled(ctx)) return null;
-  const hit = memo.get(ctx);
-  if (hit && Date.now() - hit.at < SYSTEM_MEMO_MS) return hit.sys;
-  const raw = await livetvCall<Partial<LivetvSystem> | null>(ctx, 'GET', '/v1/system', undefined, { timeoutMs: 3_000 }).catch(() => null);
+/** the `GET /v1/system` answer, read defensively; null = an unexpected shape */
+function parseSystem(raw: Partial<LivetvSystem> | null | undefined): LivetvSystem | null {
   const devices = strings(raw?.gpu?.devices, 32), encoders = strings(raw?.encoders, 8);
-  const sys: LivetvSystem | null = raw && raw.gpu && devices && encoders && encoders.every((e) => ENCODERS.includes(e)) ? {
+  return raw && raw.gpu && devices && encoders && encoders.every((e) => ENCODERS.includes(e)) ? {
     cpu: { model: String(raw.cpu?.model ?? '').slice(0, 120), cores: Number(raw.cpu?.cores) || 0, loadPct: Number(raw.cpu?.loadPct) || 0 },
     gpu: { devices, driver: typeof raw.gpu.driver === 'string' ? raw.gpu.driver.slice(0, 60) : null, readable: raw.gpu.readable === true, busyPct: typeof raw.gpu.busyPct === 'number' ? raw.gpu.busyPct : null },
     encoders: encoders as Encoder[],
@@ -75,6 +71,24 @@ export async function livetvSystem(ctx: Ctx): Promise<LivetvSystem | null> {
     recordings: raw.recordings ? { usedBytes: Number(raw.recordings.usedBytes) || 0, freeBytes: Number(raw.recordings.freeBytes) || 0 } : null,
     srt: { ports: Array.isArray(raw.srt?.ports) ? raw.srt.ports.filter((p): p is number => Number.isInteger(p)).slice(0, 100) : [] },
   } : null;
+}
+
+/**
+ * `GET /v1/system`, uncached and whether or not the last detection saw livetv: a LivetvError when livetv does not answer
+ * (`invalid_answer` for an unexpected shape). For callers that must say why (own feeds: 503 `livetv_unreachable`).
+ */
+export async function readLivetvSystem(ctx: Ctx): Promise<LivetvSystem> {
+  const sys = parseSystem(await livetvCall<Partial<LivetvSystem> | null>(ctx, 'GET', '/v1/system', undefined, { timeoutMs: 3_000 }));
+  if (!sys) throw new LivetvError(200, 'invalid_answer');
+  return sys;
+}
+
+/** `GET /v1/system` as far as the admin page needs it (cached 10 s; null = not installed, not answering or an unexpected shape) */
+export async function livetvSystem(ctx: Ctx): Promise<LivetvSystem | null> {
+  if (!livetvInstalled(ctx)) return null;
+  const hit = memo.get(ctx);
+  if (hit && Date.now() - hit.at < SYSTEM_MEMO_MS) return hit.sys;
+  const sys = await readLivetvSystem(ctx).catch(() => null);
   memo.set(ctx, { at: Date.now(), sys });
   return sys;
 }

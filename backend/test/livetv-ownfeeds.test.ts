@@ -8,7 +8,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decrypt, encrypt, keyFromBase64 } from '../src/crypto.js';
 import type { LiveEvent } from '../src/livetv/events.js';
-import { forgetSrtPorts, syncIngest } from '../src/livetv/ownfeeds.js';
+import { detectLivetv } from '../src/livetv/detect.js';
+import { INGEST_DIRTY_KEY, forgetSrtPorts, livetvIngestTick, syncIngest } from '../src/livetv/ownfeeds.js';
 import { ENC_KEY, fakeHttp, makeEnv, type Call, type Handler, type TestEnv } from './helpers.js';
 
 const events: Array<Omit<LiveEvent, 'at'>> = [];
@@ -39,6 +40,7 @@ const calls: Call[] = [];
 let ports: number[];
 let ingest: Handler;
 let ingestState: Handler;
+let health: Handler;
 const ingestBodies = () => calls.filter((c) => c.method === 'PUT' && c.path === '/v1/ingest').map((c) => c.body as { feeds: Array<{ channelId: string; port: number; streamId: string; passphrase: string }> });
 const lastIngest = () => ingestBodies().at(-1)!;
 const system = () => ({
@@ -59,8 +61,10 @@ beforeEach(async () => {
   ports = range(9000, 10);
   ingest = () => ({ json: { ok: true, listening: ports } });
   ingestState = () => ({ json: [] });
+  health = () => ({ json: { ok: true, api: 1, version: '3.3.0', bootId: '0123456789abcdef' } });
+  await env.kv.del(INGEST_DIRTY_KEY);
   forgetSrtPorts(env.ctx);
-  env.ctx.fetchImpl = fakeHttp({ 'GET /v1/system': () => ({ json: system() }), 'PUT /v1/ingest': (...a) => ingest(...a), 'GET /v1/ingest': (...a) => ingestState(...a) }, calls);
+  env.ctx.fetchImpl = fakeHttp({ 'GET /v1/system': () => ({ json: system() }), 'PUT /v1/ingest': (...a) => ingest(...a), 'GET /v1/ingest': (...a) => ingestState(...a), 'GET /healthz': (...a) => health(...a) }, calls);
 });
 
 describe('push credentials (spec §3.5)', () => {
@@ -68,6 +72,7 @@ describe('push credentials (spec §3.5)', () => {
     const r = await push();
     expect(r.statusCode).toBe(201);
     expect(r.headers['cache-control']).toBe('no-store');
+    expect(r.json().synced).toBe(true);
     const { channel, push: p } = r.json();
     expect(p.streamId).toMatch(STREAM_ID_RE);
     expect(p.passphrase).toMatch(PASSPHRASE_RE);
@@ -126,12 +131,32 @@ describe('push credentials (spec §3.5)', () => {
     }
   });
 
+  it('an IPv6 SRT host is bracketed in the URL', async () => {
+    const saved = env.ctx.cfg;
+    try {
+      env.ctx.cfg = { ...saved, LIVETV_SRT_HOST: '2001:db8::10' };
+      const p = (await push()).json().push;
+      expect(p.host).toBe('[2001:db8::10]');
+      expect(p.url).toMatch(/^srt:\/\/\[2001:db8::10\]:9000\?streamid=ff-/);
+    } finally {
+      env.ctx.cfg = saved;
+    }
+  });
+
+  it('two feeds created at once get different ports', async () => {
+    const [a, b] = await Promise.all([push('Kamera 1'), push('Kamera 2')]);
+    expect([a.statusCode, b.statusCode]).toEqual([201, 201]);
+    expect([a.json().push.port, b.json().push.port].sort()).toEqual([9000, 9001]);
+    expect((await env.pool.query('select push_port from livetv_channels order by push_port')).rows).toEqual([{ push_port: 9000 }, { push_port: 9001 }]);
+    expect((await env.pool.query('select count(*)::int as n from livetv_sources')).rows[0].n).toBe(1);
+  });
+
   it('ports are the lowest free', async () => {
     const a = (await push('Hafenkanal Live')).json();
     const b = (await push('Kinderinsel Live')).json();
     expect([a.push.port, b.push.port]).toEqual([9000, 9001]);
     const del = await call('DELETE', `/api/admin/livetv/channels/${a.channel.id}`);
-    expect([del.statusCode, del.json()]).toEqual([200, { ok: true }]);
+    expect([del.statusCode, del.json()]).toEqual([200, { ok: true, synced: true }]);
     // the freed port is gone from livetv's set at once
     expect(lastIngest().feeds.map((f) => f.channelId)).toEqual([b.channel.id]);
     const c = (await push('Sternwarte 24')).json();
@@ -166,6 +191,7 @@ describe('push credentials (spec §3.5)', () => {
     const r = await call('POST', `/api/admin/livetv/channels/${id}/push-credentials`);
     expect(r.statusCode).toBe(200);
     expect(r.headers['cache-control']).toBe('no-store');
+    expect(r.json().synced).toBe(true);
     const p = r.json().push;
     expect(p.streamId).toMatch(STREAM_ID_RE);
     expect(p.passphrase).toMatch(PASSPHRASE_RE);
@@ -198,7 +224,7 @@ describe('push credentials (spec §3.5)', () => {
     expect(lastIngest()).toEqual({ feeds: [] });
 
     const r = await call('POST', `/api/admin/livetv/channels/${id}/push-port`);
-    expect([r.statusCode, r.json()]).toEqual([200, { port: 9100 }]);
+    expect([r.statusCode, r.json()]).toEqual([200, { port: 9100, synced: true }]);
     expect(r.body).not.toContain(first.push.passphrase);
     const after = await row(id);
     expect(after.push_port).toBe(9100);
@@ -206,6 +232,10 @@ describe('push credentials (spec §3.5)', () => {
     expect([after.push_stream_id_enc, after.push_passphrase_enc]).toEqual([before.push_stream_id_enc, before.push_passphrase_enc]);
     expect(lastIngest()).toEqual({ feeds: [{ channelId: id, port: 9100, streamId: first.push.streamId, passphrase: first.push.passphrase }] });
     expect((await call('GET', `/api/admin/livetv/channels/${id}`)).json().push.portInRange).toBe(true);
+    // a port still in the range is never moved (a working encoder would be cut off)
+    const inRange = await call('POST', `/api/admin/livetv/channels/${id}/push-port`);
+    expect([inRange.statusCode, inRange.json()]).toEqual([409, { error: 'port_in_range' }]);
+    expect((await row(id)).push_port).toBe(9100);
 
     // a full new range refuses the move
     ports = [9100];
@@ -284,14 +314,87 @@ describe('ingest sync', () => {
     ingest = () => ({ status: 404, json: { error: 'not_found' } });
     const r = await push();
     expect(r.statusCode).toBe(201);
+    expect(r.json().synced).toBe(false);
     expect(events).toEqual([{ level: 'info', code: 'ingest_sync_pending' }]);
+    // the flag is already set: no second event while it stays
     expect(await syncIngest(env.ctx)).toBe('pending');
-    expect(events).toHaveLength(2);
     ingest = () => ({ status: 500, json: { error: 'boom' } });
     expect(await syncIngest(env.ctx)).toBe('failed');
+    expect(events).toHaveLength(1);
+    expect(await env.kv.get(INGEST_DIRTY_KEY)).not.toBeNull();
     ingest = () => ({ json: { ok: true, listening: [9000] } });
     expect(await syncIngest(env.ctx)).toBe('ok');
-    expect(events).toHaveLength(2);
+    expect(await env.kv.get(INGEST_DIRTY_KEY)).toBeNull();
+    expect(events).toHaveLength(1);
+  });
+
+  it('a failed sync on rotate leaves the flag set; the next tick re-syncs and clears it', async () => {
+    await detectLivetv(env.ctx, 0);
+    const first = (await push()).json();
+    ingest = () => ({ status: 503, json: { error: 'busy' } });
+    const r = await call('POST', `/api/admin/livetv/channels/${first.channel.id}/push-credentials`);
+    expect(r.statusCode).toBe(200);
+    expect(r.json().synced).toBe(false);
+    const p = r.json().push;
+    expect(await env.kv.get(INGEST_DIRTY_KEY)).not.toBeNull();
+    expect(events).toEqual([{ level: 'info', code: 'ingest_sync_pending' }]);
+    // still failing: the tick tries and keeps the flag
+    const before = ingestBodies().length;
+    await livetvIngestTick(env.ctx);
+    expect(ingestBodies()).toHaveLength(before + 1);
+    expect(await env.kv.get(INGEST_DIRTY_KEY)).not.toBeNull();
+    ingest = () => ({ json: { ok: true, listening: [9000] } });
+    await livetvIngestTick(env.ctx);
+    expect(lastIngest()).toEqual({ feeds: [{ channelId: first.channel.id, port: 9000, streamId: p.streamId, passphrase: p.passphrase }] });
+    expect(await env.kv.get(INGEST_DIRTY_KEY)).toBeNull();
+    // nothing to do without the flag
+    const n = ingestBodies().length;
+    await livetvIngestTick(env.ctx);
+    expect(ingestBodies()).toHaveLength(n);
+  });
+
+  it('a delete whose sync failed is retried, and the old credentials disappear', async () => {
+    await detectLivetv(env.ctx, 0);
+    const a = (await push()).json();
+    ingest = () => ({ status: 500, json: { error: 'boom' } });
+    const del = await call('DELETE', `/api/admin/livetv/channels/${a.channel.id}`);
+    expect([del.statusCode, del.json()]).toEqual([200, { ok: true, synced: false }]);
+    expect(await row(a.channel.id)).toBeUndefined();
+    ingest = () => ({ json: { ok: true, listening: [] } });
+    await livetvIngestTick(env.ctx);
+    expect(lastIngest()).toEqual({ feeds: [] });
+    expect(await env.kv.get(INGEST_DIRTY_KEY)).toBeNull();
+  });
+
+  it('the retry waits while livetv is not installed', async () => {
+    await push();
+    await env.kv.set(INGEST_DIRTY_KEY, '1', 60);
+    health = () => ({ status: 404 });
+    await detectLivetv(env.ctx, 0);
+    const n = ingestBodies().length;
+    await livetvIngestTick(env.ctx);
+    expect(ingestBodies()).toHaveLength(n);
+    expect(await env.kv.get(INGEST_DIRTY_KEY)).not.toBeNull();
+  });
+
+  it('a disabled source or a hidden feed leaves the ingest set', async () => {
+    const a = (await push('Hafenkanal Live')).json();
+    const b = (await push('Kinderinsel Live')).json();
+    const src = a.channel.sourceId as string;
+    const off = await call('PATCH', `/api/admin/livetv/sources/${src}`, { enabled: false });
+    expect(off.statusCode).toBe(200);
+    expect(lastIngest()).toEqual({ feeds: [] });
+    expect((await call('GET', '/api/admin/livetv/ingest')).json().feeds.map((f: { state: string }) => f.state)).toEqual(['off', 'off']);
+    expect((await call('PATCH', `/api/admin/livetv/sources/${src}`, { enabled: true })).statusCode).toBe(200);
+    expect(lastIngest().feeds.map((f) => f.channelId)).toEqual([a.channel.id, b.channel.id]);
+    // a renamed source does not re-send
+    const n = ingestBodies().length;
+    await call('PATCH', `/api/admin/livetv/sources/${src}`, { name: 'Meine Streams' });
+    expect(ingestBodies()).toHaveLength(n);
+    // a hidden feed is withdrawn (Task 19's hide paths must call syncIngest)
+    await env.pool.query('update livetv_channels set hidden = true where id = $1', [a.channel.id]);
+    expect(await syncIngest(env.ctx)).toBe('ok');
+    expect(lastIngest().feeds.map((f) => f.channelId)).toEqual([b.channel.id]);
   });
 
   it('deleting the own-feeds source drops its push feeds from livetv', async () => {

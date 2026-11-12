@@ -8,8 +8,8 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
 import { CHANNEL_SELECT, OWN_FEEDS_KIND, isOwnFeeds } from './channels.js';
 import { LivetvError, livetvCall, livetvStream } from './client.js';
-import { invalidateLivetvRights } from './rights.js';
-import { checkSourceUrl, maskUrl, type SourceUrlCode } from './urls.js';
+import { livetvWrite } from './tx.js';
+import { checkSourceUrl, maskUrl, urlRefusal } from './urls.js';
 import type { FetchM3uAnswer } from './wire.js';
 
 /**
@@ -156,9 +156,7 @@ export class SourceRefusal extends Error {
 /** the save-time URL check as a refusal: a wrong scheme or no URL is `invalid` (as the schema answers it), a single-label host `refused` */
 function checkUrl(raw: string, allowLan: boolean, field: 'url' | 'epgUrl'): void {
   const r = checkSourceUrl(raw, { allowLan, schemes: SCHEMES });
-  if (r.ok) return;
-  const code: Record<SourceUrlCode, 'invalid' | 'lan_required' | 'refused'> = { invalid: 'invalid', scheme: 'invalid', host: 'refused', lan_required: 'lan_required', refused: 'refused' };
-  throw new SourceRefusal(code[r.code], field);
+  if (!r.ok) throw new SourceRefusal(urlRefusal(r.code), field);
 }
 
 // ---- reading ----
@@ -236,22 +234,8 @@ export async function sourceSecrets(ctx: Pick<Ctx, 'db' | 'encKey'>, id: string)
 // ---- writing ----
 type WriteCtx = Pick<Ctx, 'db' | 'encKey'>;
 
-/** runs `fn` in one transaction; the cached channel sets are dropped afterwards (also after a rollback: harmless) */
-async function write<T>(ctx: Pick<Ctx, 'db'>, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
-  const c = await (ctx.db as pg.Pool).connect();
-  try {
-    await c.query('begin');
-    const out = await fn(c);
-    await c.query('commit');
-    return out;
-  } catch (e) {
-    await c.query('rollback').catch(() => undefined);
-    throw e;
-  } finally {
-    c.release();
-    invalidateLivetvRights();
-  }
-}
+/** one transaction; the cached channel sets are dropped afterwards (tx.ts) */
+const write = <T>(ctx: Pick<Ctx, 'db'>, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> => livetvWrite(ctx, fn);
 
 /** the field names of a body in a fixed order (audit meta: names only, never values) */
 const FIELD_ORDER = Object.keys(fields);
@@ -329,15 +313,19 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
   return found ? sourceView(ctx, id) : null;
 }
 
-/** Deletes the source; its channels (with their overrides, favourites and recent entries) go with it. null = no such source. */
-export async function deleteSource(ctx: Pick<Ctx, 'db'>, actor: string, id: string): Promise<{ channels: number } | null> {
+/**
+ * Deletes the source; its channels (with their overrides, favourites and recent entries) go with it. null = no such source. `push` =
+ * push feeds went with it (counted inside the transaction), so the caller re-sends livetv's ingest set (ownfeeds.ts syncIngest).
+ */
+export async function deleteSource(ctx: Pick<Ctx, 'db'>, actor: string, id: string): Promise<{ channels: number; push: boolean } | null> {
   return write(ctx, async (c) => {
     const s = (await c.query('select id from livetv_sources where id = $1 for update', [id])).rows[0];
     if (!s) return null;
-    const channels = (await c.query<{ n: number }>('select count(*)::int as n from livetv_channels where source_id = $1', [id])).rows[0]!.n;
+    const n = (await c.query<{ n: number; push: number }>(
+      "select count(*)::int as n, count(*) filter (where ingest = 'push')::int as push from livetv_channels where source_id = $1", [id])).rows[0]!;
     await c.query('delete from livetv_sources where id = $1', [id]);
-    await auditInTx({ db: c }, actor, 'livetv.source.delete', id, { fields: [], channels });
-    return { channels };
+    await auditInTx({ db: c }, actor, 'livetv.source.delete', id, { fields: [], channels: n.n });
+    return { channels: n.n, push: n.push > 0 };
   });
 }
 

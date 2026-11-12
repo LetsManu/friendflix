@@ -8,17 +8,18 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
 import { CHANNEL_COLUMNS, CHANNEL_FROM, OWN_FEEDS_KIND, isOwnFeeds, srtHost, type EffectiveRow, type EpgShiftFrom, type Ingest, type ProbeRec, type StreamKind } from './channels.js';
 import { LivetvError, livetvCall } from './client.js';
+import { livetvInstalled, readLivetvSystem } from './detect.js';
 import { pushEvent } from './events.js';
-import { invalidateLivetvRights } from './rights.js';
-import { checkSourceUrl, type SourceUrlCode } from './urls.js';
-import type { LivetvSystem } from './wire.js';
+import { livetvWrite } from './tx.js';
+import { checkSourceUrl, urlRefusal } from './urls.js';
 
 /**
  * Own feeds (spec §3.5, §9.1): channels the admin adds by hand to the *Eigene Streams* source (stored kind 'manual' = OWN_FEEDS_KIND,
  * 'feeds' on the wire, F16), created on first use. A feed is pulled (an HLS / MPEG-TS / SRT-caller URL, checked like a provider URL
  * and stored encrypted) or pushed: an encoder sends SRT to one UDP port of LIVETV_SRT_PORTS (the lowest free one), with a generated
  * stream id and passphrase (both stored encrypted, shown once). livetv learns the complete push set through `PUT /v1/ingest`
- * (`syncIngest`), sent after every push change.
+ * (`syncIngest`), sent after every push change; a sync that fails leaves the KV flag `ltv:ingest:dirty`, and `livetvIngestTick` sends
+ * again every minute until one succeeds. Only feeds of an enabled source that are not hidden are in the set.
  *
  * Credentials (stream id, passphrase) and pull URLs are secrets (F13): never logged, never in audit meta (field names only), never in
  * an error text, never answered except in the one-time push result. Every write runs in one transaction under one advisory lock (the
@@ -29,9 +30,11 @@ import type { LivetvSystem } from './wire.js';
 export const OWN_FEEDS_NAME = 'Eigene Streams';
 /** `/v1/system.srt.ports` is read at most once a minute (plan Task 20) */
 const PORTS_MEMO_MS = 60_000;
-const PORTS_TIMEOUT_MS = 3_000;
 const INGEST_TIMEOUT_MS = 10_000;
 const LOCK_KEY = 'livetv:ownfeeds';
+/** set while livetv may hold an older ingest set than the DB (a failed sync); cleared by the next successful one */
+export const INGEST_DIRTY_KEY = 'ltv:ingest:dirty';
+const DIRTY_TTL_S = 30 * 24 * 3600;
 const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const PULL_SCHEMES: Array<'http:' | 'https:' | 'srt:'> = ['http:', 'https:', 'srt:'];
 /** where a failed ingest sync is reported (the request log; codes only) */
@@ -139,20 +142,18 @@ export function forgetSrtPorts(ctx: Ctx): void {
   portsMemo.delete(ctx);
 }
 
-/** `/v1/system.srt.ports`, sorted and deduplicated, cached 60 s; livetv not answering = FeedError 503 `livetv_unreachable` (not cached) */
+/** `/v1/system.srt.ports` (detect.ts parses the answer), sorted and deduplicated, cached 60 s; livetv not answering = FeedError 503 `livetv_unreachable` (not cached) */
 export async function srtPorts(ctx: Ctx): Promise<number[]> {
   const hit = portsMemo.get(ctx);
   if (hit && Date.now() - hit.at < PORTS_MEMO_MS) return hit.ports;
-  let raw: Partial<LivetvSystem> | null | undefined;
+  let list: number[];
   try {
-    raw = await livetvCall<Partial<LivetvSystem> | null>(ctx, 'GET', '/v1/system', undefined, { timeoutMs: PORTS_TIMEOUT_MS });
+    list = (await readLivetvSystem(ctx)).srt.ports;
   } catch (e) {
     if (e instanceof LivetvError) throw unreachable();
     throw e;
   }
-  const list = raw?.srt?.ports;
-  if (!Array.isArray(list)) throw unreachable();
-  const ports = [...new Set(list.filter((p): p is number => Number.isInteger(p) && p >= 1 && p <= 65_535))].sort((a, b) => a - b).slice(0, 1000);
+  const ports = [...new Set(list.filter((p) => p >= 1 && p <= 65_535))].sort((a, b) => a - b);
   portsMemo.set(ctx, { at: Date.now(), ports });
   return ports;
 }
@@ -177,29 +178,16 @@ const newPassphrase = (): string => randomBytes(24).toString('base64url');
 const hintOf = (streamId: string): string => streamId.slice(0, 9);
 
 function credentials(ctx: Ctx, port: number, streamId: string, passphrase: string): PushCredentials {
-  const host = srtHost(ctx);
+  const raw = srtHost(ctx);
+  // an IPv6 literal goes into a URL in brackets (PUBLIC_URL's hostname and the validated setting already carry them)
+  const host = raw !== null && raw.includes(':') && !raw.startsWith('[') ? `[${raw}]` : raw;
   const url = host === null ? null : `srt://${host}:${port}?streamid=${streamId}&passphrase=${passphrase}&pbkeylen=32&mode=caller&latency=200000`;
   return { host, port, streamId, passphrase, url };
 }
 
 // ---- writing ----
-/** one transaction under the own-feeds lock; the cached channel sets are dropped afterwards (also after a rollback: harmless) */
-async function write<T>(ctx: Pick<Ctx, 'db'>, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
-  const c = await (ctx.db as pg.Pool).connect();
-  try {
-    await c.query('begin');
-    await c.query('select pg_advisory_xact_lock(hashtext($1))', [LOCK_KEY]);
-    const out = await fn(c);
-    await c.query('commit');
-    return out;
-  } catch (e) {
-    await c.query('rollback').catch(() => undefined);
-    throw e;
-  } finally {
-    c.release();
-    invalidateLivetvRights();
-  }
-}
+/** one transaction under the own-feeds lock (tx.ts); the cached channel sets are dropped afterwards */
+const write = <T>(ctx: Pick<Ctx, 'db'>, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> => livetvWrite(ctx, fn, { lock: LOCK_KEY });
 
 /** the *Eigene Streams* source, created on first use (no URL: the refresh and EPG ticks skip it) */
 async function ownSource(c: pg.PoolClient, actor: string): Promise<string> {
@@ -209,17 +197,14 @@ async function ownSource(c: pg.PoolClient, actor: string): Promise<string> {
   await c.query(
     `insert into livetv_sources(id, kind, name, position) values ($1, $2, $3, (select coalesce(max(position) + 1, 0) from livetv_sources))`,
     [id, OWN_FEEDS_KIND, OWN_FEEDS_NAME]);
-  await auditInTx({ db: c }, actor, 'livetv.source.create', id, { fields: [], kind: 'feeds' });
+  await auditInTx({ db: c }, actor, 'livetv.source.create', id, { fields: [] });
   return id;
 }
 
 /** the pull URL check (spec §3.4, `srt:` allowed) as a fixed refusal on `url` */
 function checkPullUrl(raw: string, allowLan: boolean): URL {
   const r = checkSourceUrl(raw, { allowLan, schemes: PULL_SCHEMES });
-  if (!r.ok) {
-    const code: Record<SourceUrlCode, string> = { invalid: 'invalid', scheme: 'invalid', host: 'refused', lan_required: 'lan_required', refused: 'refused' };
-    throw new FeedError(400, { error: code[r.code], field: 'url' });
-  }
+  if (!r.ok) throw new FeedError(400, { error: urlRefusal(r.code), field: 'url' });
   return new URL(raw);
 }
 
@@ -235,8 +220,9 @@ const named = (b: object) => FIELD_ORDER.filter((k) => k in b && (b as Record<st
 /**
  * *Stream hinzufügen*: a pull or push feed in the own-feeds source. A push feed gets the lowest free port of the range and new
  * credentials; the answer carries them once. Refusals are FeedError (400 with field, 409 `srt_ports_full`, 503 `livetv_unreachable`).
+ * `synced` = livetv took the new ingest set (always true for a pull feed); false = it is retried by livetvIngestTick.
  */
-export async function createFeed(ctx: Ctx, actor: string, b: FeedBody, log?: Log): Promise<{ channel: AdminChannel; push?: PushCredentials }> {
+export async function createFeed(ctx: Ctx, actor: string, b: FeedBody, log?: Log): Promise<{ channel: AdminChannel; push?: PushCredentials; synced: boolean }> {
   let kind: StreamKind = 'srt';
   if (b.ingest === 'pull') {
     const url = checkPullUrl(b.url, b.allowLan);
@@ -266,12 +252,12 @@ export async function createFeed(ctx: Ctx, actor: string, b: FeedBody, log?: Log
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [...base, creds.port, encrypt(ctx.encKey, creds.streamId), hintOf(creds.streamId), encrypt(ctx.encKey, creds.passphrase)]);
     }
-    await auditInTx({ db: c }, actor, 'livetv.channel.create', id, { fields: named(b), ingest: b.ingest });
+    await auditInTx({ db: c }, actor, 'livetv.channel.create', id, { fields: named(b) });
     return creds;
   });
-  if (push) await syncIngest(ctx, log);
+  const synced = push ? (await syncIngest(ctx, log)) === 'ok' : true;
   const channel = (await adminChannel(ctx, id))!;
-  return push ? { channel, push: credentials(ctx, push.port, push.streamId, push.passphrase) } : { channel };
+  return push ? { channel, push: credentials(ctx, push.port, push.streamId, push.passphrase), synced } : { channel, synced };
 }
 
 /** the channel row the push routes need, locked; FeedError 404 (none) / 409 `not_push` (a pull or provider channel) */
@@ -283,7 +269,7 @@ async function pushRow(c: pg.PoolClient, id: string): Promise<{ push_port: numbe
 }
 
 /** *Zugangsdaten neu erzeugen*: a new stream id and passphrase on the same port (the old ones stop working with the sync) */
-export async function regenerateCredentials(ctx: Ctx, actor: string, id: string, log?: Log): Promise<{ channel: AdminChannel; push: PushCredentials }> {
+export async function regenerateCredentials(ctx: Ctx, actor: string, id: string, log?: Log): Promise<{ channel: AdminChannel; push: PushCredentials; synced: boolean }> {
   const creds = await write(ctx, async (c) => {
     const r = await pushRow(c, id);
     const next = { port: r.push_port, streamId: newStreamId(), passphrase: newPassphrase() };
@@ -292,49 +278,66 @@ export async function regenerateCredentials(ctx: Ctx, actor: string, id: string,
     await auditInTx({ db: c }, actor, 'livetv.channel.credentials', id, { fields: ['streamId', 'passphrase'] });
     return next;
   });
-  await syncIngest(ctx, log);
-  return { channel: (await adminChannel(ctx, id))!, push: credentials(ctx, creds.port, creds.streamId, creds.passphrase) };
+  const synced = (await syncIngest(ctx, log)) === 'ok';
+  return { channel: (await adminChannel(ctx, id))!, push: credentials(ctx, creds.port, creds.streamId, creds.passphrase), synced };
 }
 
-/** *Neuen Port zuweisen* (spec §19): the lowest free port of the current range; the credentials stay */
-export async function reassignPort(ctx: Ctx, actor: string, id: string, log?: Log): Promise<{ port: number }> {
+/**
+ * *Neuen Port zuweisen* (spec §19): the lowest free port of the current range; the credentials stay. Only for a port that left the
+ * range: a port still in it is never moved (FeedError 409 `port_in_range`), so a working encoder is not cut off.
+ */
+export async function reassignPort(ctx: Ctx, actor: string, id: string, log?: Log): Promise<{ port: number; synced: boolean }> {
   const ports = await srtPorts(ctx);
   const port = await write(ctx, async (c) => {
-    await pushRow(c, id);
+    const r = await pushRow(c, id);
+    if (ports.includes(r.push_port)) throw new FeedError(409, { error: 'port_in_range' });
     const p = await freePort(c, ports, id);
     await c.query('update livetv_channels set push_port = $2 where id = $1', [id, p]);
     await auditInTx({ db: c }, actor, 'livetv.channel.port', id, { fields: ['port'] });
     return p;
   });
-  await syncIngest(ctx, log);
-  return { port };
+  return { port, synced: (await syncIngest(ctx, log)) === 'ok' };
 }
 
 /** deletes a channel of the own-feeds source (a push feed frees its port); FeedError 404 / 409 `not_own_feed` (provider channels) */
-export async function deleteFeed(ctx: Ctx, actor: string, id: string, log?: Log): Promise<void> {
+export async function deleteFeed(ctx: Ctx, actor: string, id: string, log?: Log): Promise<{ synced: boolean }> {
   const ingest = await write(ctx, async (c) => {
     const r = (await c.query<{ ingest: Ingest; kind: string }>(
       'select c.ingest, s.kind from livetv_channels c join livetv_sources s on s.id = c.source_id where c.id = $1 for update of c', [id])).rows[0];
     if (!r) throw notFound();
     if (!isOwnFeeds(r.kind)) throw new FeedError(409, { error: 'not_own_feed' });
     await c.query('delete from livetv_channels where id = $1', [id]);
-    await auditInTx({ db: c }, actor, 'livetv.channel.delete', id, { fields: [], ingest: r.ingest });
+    await auditInTx({ db: c }, actor, 'livetv.channel.delete', id, { fields: [] });
     return r.ingest;
   });
-  if (ingest === 'push') await syncIngest(ctx, log);
+  return { synced: ingest === 'push' ? (await syncIngest(ctx, log)) === 'ok' : true };
 }
 
 // ---- ingest sync (spec §3.2 `PUT /v1/ingest`) ----
 const syncChains = new WeakMap<object, Promise<unknown>>();
 
+/** the push feeds livetv should accept: an enabled source, not hidden (a disabled or hidden feed is withdrawn) */
+const ACTIVE_PUSH = `select c.id, c.push_port, c.push_stream_id_enc, c.push_passphrase_enc from livetv_channels c
+  join livetv_sources s on s.id = c.source_id
+  where c.ingest = 'push' and c.push_port is not null and s.enabled and not c.hidden order by c.push_port`;
+
 /**
- * Sends livetv the complete set of push feeds whose port is in the range (`PUT /v1/ingest`). Syncs run one at a time per backend, and
- * each reads the feeds when it runs, so the last one sent carries the newest state. `pending` = livetv has no ingest endpoint yet
- * (404, ruling 24; one `ingest_sync_pending` event), `failed` = livetv not reached or refused (logged to `log` with the code only). Never throws.
+ * Sends livetv the complete set of active push feeds whose port is in the range (`PUT /v1/ingest`). Syncs run one at a time per backend,
+ * and each reads the feeds when it runs, so the last one sent carries the newest state. `pending` = livetv has no ingest endpoint yet
+ * (404, ruling 24), `failed` = livetv not reached or refused (logged to `log` with the code only). Either leaves the dirty flag, which
+ * livetvIngestTick retries; one `ingest_sync_pending` event when the flag is newly set. Success clears it. Never throws.
  */
 export function syncIngest(ctx: Ctx, log?: Log): Promise<'ok' | 'pending' | 'failed'> {
   const prev = syncChains.get(ctx) ?? Promise.resolve();
-  const run = prev.then(() => sendIngest(ctx, log), () => sendIngest(ctx, log));
+  const run = prev.then(() => sendIngest(ctx, log), () => sendIngest(ctx, log)).then(async (r) => {
+    try {
+      if (r === 'ok') await ctx.kv.del(INGEST_DIRTY_KEY);
+      else if (await ctx.kv.setnx(INGEST_DIRTY_KEY, '1', DIRTY_TTL_S)) await pushEvent(ctx, { level: 'info', code: 'ingest_sync_pending' });
+    } catch {
+      log?.warn({ code: 'kv' }, 'livetv ingest flag not stored');
+    }
+    return r;
+  });
   syncChains.set(ctx, run.catch(() => undefined));
   return run;
 }
@@ -342,19 +345,14 @@ export function syncIngest(ctx: Ctx, log?: Log): Promise<'ok' | 'pending' | 'fai
 async function sendIngest(ctx: Ctx, log: Log | undefined): Promise<'ok' | 'pending' | 'failed'> {
   try {
     const ports = new Set(await srtPorts(ctx));
-    const rows = (await ctx.db.query<{ id: string; push_port: number; push_stream_id_enc: string; push_passphrase_enc: string }>(
-      `select id, push_port, push_stream_id_enc, push_passphrase_enc from livetv_channels
-        where ingest = 'push' and push_port is not null order by push_port`)).rows;
+    const rows = (await ctx.db.query<{ id: string; push_port: number; push_stream_id_enc: string; push_passphrase_enc: string }>(ACTIVE_PUSH)).rows;
     const feeds = rows.filter((r) => ports.has(r.push_port)).map((r) => ({
       channelId: r.id, port: r.push_port, streamId: decrypt(ctx.encKey, r.push_stream_id_enc), passphrase: decrypt(ctx.encKey, r.push_passphrase_enc),
     }));
     await livetvCall(ctx, 'PUT', '/v1/ingest', { feeds }, { timeoutMs: INGEST_TIMEOUT_MS });
     return 'ok';
   } catch (e) {
-    if (e instanceof LivetvError && e.status === 404) {
-      await pushEvent(ctx, { level: 'info', code: 'ingest_sync_pending' }).catch(() => undefined);
-      return 'pending';
-    }
+    if (e instanceof LivetvError && e.status === 404) return 'pending';
     // only a fixed code: the request body holds credentials and must never reach a log
     const code = e instanceof LivetvError ? e.code : e instanceof FeedError ? e.body.error : 'error';
     log?.warn({ code }, 'livetv ingest sync failed');
@@ -362,14 +360,22 @@ async function sendIngest(ctx: Ctx, log: Log | undefined): Promise<'ok' | 'pendi
   }
 }
 
+/** every minute (server.ts, behind op()): while livetv is installed and the last sync failed, send the ingest set again */
+export async function livetvIngestTick(ctx: Ctx, log?: Log): Promise<void> {
+  if (!livetvInstalled(ctx)) return;
+  if (!(await ctx.kv.get(INGEST_DIRTY_KEY))) return;
+  await syncIngest(ctx, log);
+}
+
 // ---- the *Eigene Streams* card (spec §9.1): host, range and the state of each push feed ----
 
 /**
  * The state of a push feed on the card: `receiving` / `idle` as livetv reports it (`GET /v1/ingest`), `pending` = livetv does not know
  * the feed yet (no ingest endpoint before PR 1d, ruling 24, or not synced yet), `out_of_range` = its port left LIVETV_SRT_PORTS
- * (*Neuen Port zuweisen*), `error` = livetv not reached or an unexpected answer.
+ * (*Neuen Port zuweisen*), `off` = withdrawn from livetv (the channel is hidden or the source disabled), `error` = livetv not reached
+ * or an unexpected answer.
  */
-export type FeedState = 'receiving' | 'idle' | 'pending' | 'out_of_range' | 'error';
+export type FeedState = 'receiving' | 'idle' | 'pending' | 'out_of_range' | 'off' | 'error';
 export interface IngestView {
   /** srtHost: null before PUBLIC_URL / LIVETV_SRT_HOST are known */
   host: string | null;
@@ -400,14 +406,16 @@ async function ingestStates(ctx: Ctx): Promise<Map<string, { receiving: boolean;
 
 /** `GET /api/admin/livetv/ingest`: never a stream id, passphrase or peer address (livetv does not report them either) */
 export async function ingestView(ctx: Ctx): Promise<IngestView> {
-  const rows = (await ctx.db.query<{ id: string; push_port: number }>(
-    "select id, push_port from livetv_channels where ingest = 'push' and push_port is not null order by push_port")).rows;
+  const rows = (await ctx.db.query<{ id: string; push_port: number; active: boolean }>(
+    `select c.id, c.push_port, (s.enabled and not c.hidden) as active from livetv_channels c join livetv_sources s on s.id = c.source_id
+      where c.ingest = 'push' and c.push_port is not null order by c.push_port`)).rows;
   const ports = await srtPorts(ctx).catch(() => null);
   const live = rows.length ? await ingestStates(ctx) : 'pending';
   const feeds = rows.map((r) => {
     const item = typeof live === 'string' ? undefined : live.get(r.id);
     let state: FeedState;
-    if (ports !== null && !ports.includes(r.push_port)) state = 'out_of_range';
+    if (!r.active) state = 'off';
+    else if (ports !== null && !ports.includes(r.push_port)) state = 'out_of_range';
     else if (live === 'error' || ports === null) state = 'error';
     else if (live === 'pending' || !item) state = 'pending';
     else state = item.receiving ? 'receiving' : 'idle';
