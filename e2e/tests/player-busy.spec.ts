@@ -149,7 +149,8 @@ test.describe('player: server busy', () => {
       await playButton(page).hover();
       await answered;
       await page.waitForTimeout(300); // the refused prefetch has dropped its entry
-      await playButton(page).click();
+      // the click event alone: a real click's pointerdown (or a focus) would start a new prefetch, which the player would then take
+      await playButton(page).dispatchEvent('click');
       await expect(page).toHaveURL(new RegExp(`/watch/${MOVIE.id}$`));
       await expect(page.getByRole('alertdialog')).toContainText(BUSY);
       await expect.poll(() => calls).toBe(2);
