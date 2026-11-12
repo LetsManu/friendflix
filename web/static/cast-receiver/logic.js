@@ -23,6 +23,8 @@ export const PAUSE_SHOW_MS = 1500;
 export const WHO_MS = 5000;
 /** a buffering stall this long mid-playback shows the paused layout with "Loading…" */
 export const STALL_SHOW_MS = 3000;
+/** a live channel's card (logo, name, the *Jetzt* line) stays this long after its first frame (it shows from the load on) */
+export const LIVE_CARD_MS = 5000;
 
 const CAST_ID = /^[0-9a-f]{32}$/;
 const RT = /^[A-Za-z0-9_-]{16,1024}\.[A-Za-z0-9_-]{43}$/;
@@ -43,7 +45,9 @@ const pick = (v, list, dflt) => (typeof v === 'string' && list.includes(v) ? v :
  * @typedef {{ castId: string, label: string, auto: boolean, ask: boolean, meta?: Meta | null }} Next
  * @typedef {{ size: string, color: string, background: string, font: string }} SubStyle
  * @typedef {{ next: string, upNext: string, watchCredits: string, startsIn: string[], stillTitle: string, stillText: string, keepWatching: string, skip: { intro: string, recap: string },
- *   upNextIn: string[], upNextTitle: string, playNow: string, keys: string, phoneCancel: string, stopHere: string, stillKeys: string, loading: string, stall: string, paused: string }} Strings
+ *   upNextIn: string[], upNextTitle: string, playNow: string, keys: string, phoneCancel: string, stopHere: string, stillKeys: string, loading: string, stall: string, paused: string,
+ *   now: string, live: string }} Strings
+ * @typedef {{ name: string, now: string }} LiveInfo
  * @typedef {{ title: string, line: string }} Meta
  * @typedef {{ t: 'tok', castId: string, rt: string }
  *   | { t: 'caps?' }
@@ -59,8 +63,21 @@ export const DEFAULT_STRINGS = /** @type {Strings} */ ({
   skip: { intro: 'Skip intro', recap: 'Skip recap' },
   upNextIn: Array.from({ length: COUNTDOWN_SECONDS }, (_, i) => `Up next in ${i + 1} s`), upNextTitle: 'Up next', playNow: 'Play now',
   keys: 'OK plays now · Back stops here', phoneCancel: 'Cancel on your phone', stopHere: 'Stop here', stillKeys: 'OK keeps watching',
-  loading: 'Getting ready…', stall: 'Loading…', paused: 'Paused',
+  loading: 'Getting ready…', stall: 'Loading…', paused: 'Paused', now: 'Now', live: 'LIVE',
 });
+
+/**
+ * A live channel's media (the sender's LOAD: `customData.ui.live`, a LIVE stream, title = channel name, subtitle = the programme now;
+ * the same shape the Android app sends), else null. Only bounded strings are taken over.
+ * @param {unknown} media the LOAD request's MediaInformation
+ * @returns {LiveInfo | null}
+ */
+export function liveOf(media) {
+  const m = /** @type {Record<string, any> | null} */ (media && typeof media === 'object' ? media : null);
+  if (!m || m.customData?.ui?.live !== true) return null;
+  const meta = /** @type {Record<string, unknown>} */ (m.metadata && typeof m.metadata === 'object' ? m.metadata : {});
+  return { name: (str(meta.title, 200) ?? '').trim(), now: (str(meta.subtitle, 200) ?? '').trim() };
+}
 
 /**
  * A message from the sender, or null when it is not one we accept (anything else is ignored).
@@ -123,6 +140,7 @@ export function parseMessage(raw) {
         upNextIn: list(s.upNextIn, DEFAULT_STRINGS.upNextIn), upNextTitle: text('upNextTitle', DEFAULT_STRINGS.upNextTitle), playNow: text('playNow', DEFAULT_STRINGS.playNow), keys: text('keys', DEFAULT_STRINGS.keys), phoneCancel: text('phoneCancel', DEFAULT_STRINGS.phoneCancel),
         stopHere: text('stopHere', DEFAULT_STRINGS.stopHere), stillKeys: text('stillKeys', DEFAULT_STRINGS.stillKeys), loading: text('loading', DEFAULT_STRINGS.loading),
         stall: text('stall', DEFAULT_STRINGS.stall), paused: text('paused', DEFAULT_STRINGS.paused),
+        now: text('now', DEFAULT_STRINGS.now), live: text('live', DEFAULT_STRINGS.live),
       },
       sub: { size: pick(sub.size, SIZES, 'm'), color: pick(sub.color, COLORS, 'white'), background: pick(sub.background, BACKS, 'semi'), font: pick(sub.font, FONTS, 'sans') },
       countdown: cd !== null && cd >= 3 && cd <= 60 ? Math.round(cd) : COUNTDOWN_SECONDS,
@@ -215,13 +233,14 @@ export function textTrackStyle(sub) {
  *   credits: boolean, elapsed: number, dismissed: boolean, answered: boolean, jumped: boolean,
  *   still: boolean, prevNext: Next | null,
  *   now: number, paused: boolean, pausedAt: number | null, loading: 'first' | 'stall' | null, firstFrame: boolean, stallAt: number | null,
- *   keySeen: boolean, touch: boolean, meta: Meta | null, who: string, whoUntil: number, motion: boolean
+ *   keySeen: boolean, touch: boolean, meta: Meta | null, who: string, whoUntil: number, motion: boolean,
+ *   live: LiveInfo | null, liveUntil: number
  * }} State
  * @typedef {{ type: 'time', pos: number, dur: number, playing: boolean, dt: number }
  *   | { type: 'media', castId: string }
  *   | { type: 'item', msg: Extract<Message, { t: 'item' }> }
  *   | { type: 'countdown', seconds: number }
- *   | { type: 'load', at?: number } | { type: 'firstFrame' } | { type: 'buffering', on: boolean, at: number } | { type: 'pause', paused: boolean, at: number }
+ *   | { type: 'load', at?: number, live?: LiveInfo | null } | { type: 'firstFrame' } | { type: 'buffering', on: boolean, at: number } | { type: 'pause', paused: boolean, at: number }
  *   | { type: 'key' } | { type: 'touch' } | { type: 'clock', now: number } | { type: 'ui', who: string, motion: boolean }
  *   | { type: 'cancel' } | { type: 'playNow' } | { type: 'confirm' } | { type: 'skip' }} Event
  * @typedef {'jump' | 'pause' | 'play' | 'send-cancel' | 'send-interaction' | { seek: number }} Action
@@ -231,7 +250,8 @@ export function textTrackStyle(sub) {
 export function initialState() {
   return { castId: '', pos: 0, dur: 0, playing: false, segs: [], episode: false, next: null, countdown: COUNTDOWN_SECONDS,
     credits: false, elapsed: 0, dismissed: false, answered: false, jumped: false, still: false, prevNext: null,
-    now: 0, paused: false, pausedAt: null, loading: null, firstFrame: false, stallAt: null, keySeen: false, touch: false, meta: null, who: '', whoUntil: 0, motion: true };
+    now: 0, paused: false, pausedAt: null, loading: null, firstFrame: false, stallAt: null, keySeen: false, touch: false, meta: null, who: '', whoUntil: 0, motion: true,
+    live: null, liveUntil: 0 };
 }
 
 /**
@@ -279,9 +299,13 @@ export function step(st, ev) {
     case 'load': // new media: the loading screen until the first frame, the sender pill for WHO_MS
       s.now = ev.at ?? s.now;
       s.meta = null; // the previous title is not this one's
+      // a live channel: its card shows from here until LIVE_CARD_MS after the first frame; a title's segments and next do not apply
+      s.live = ev.live ?? null; s.liveUntil = 0;
+      if (s.live) { s.segs = []; s.next = null; s.episode = false; s.credits = false; }
       s.loading = 'first'; s.firstFrame = false; s.stallAt = null; s.paused = false; s.pausedAt = null; s.whoUntil = s.now + WHO_MS;
       break;
     case 'firstFrame':
+      if (s.live && !s.firstFrame) s.liveUntil = s.now + LIVE_CARD_MS;
       s.firstFrame = true;
       if (s.loading === 'first') s.loading = null;
       break;
@@ -350,11 +374,22 @@ export function view(s, t) {
   const hintText = hint === 'keys' ? t.keys : hint === 'phone' ? t.phoneCancel : '';
   const stalled = s.loading === 'stall' && s.stallAt !== null && s.now - s.stallAt >= STALL_SHOW_MS;
   const paused = s.paused && s.pausedAt !== null && s.now - s.pausedAt >= PAUSE_SHOW_MS;
+  const lv = s.live;
+  /** a live channel's *Jetzt* line ("Now: Die Leuchtturmwärter"); '' without a programme */
+  const nowLine = lv && lv.now ? `${t.now}: ${lv.now}` : '';
+  // a live channel has no position in a programme: its pause screen carries no progress bar and no times (`live`)
   const pause = !s.still && s.loading !== 'first' && (stalled || paused)
-    ? { label: stalled ? t.stall : t.paused, title: s.meta?.title ?? '', line: s.meta?.line ?? '', pos: s.pos, dur: s.dur } : null;
-  const load = !s.still && s.loading === 'first' ? { title: s.meta?.title ?? '', line: s.meta?.line ?? '', label: t.loading } : null;
+    ? (lv ? { label: stalled ? t.stall : t.paused, title: lv.name, line: nowLine, pos: 0, dur: 0, live: true }
+      : { label: stalled ? t.stall : t.paused, title: s.meta?.title ?? '', line: s.meta?.line ?? '', pos: s.pos, dur: s.dur })
+    : null;
+  // the channel card on load: the loading screen names the channel and its *Jetzt* line
+  const load = !s.still && s.loading === 'first'
+    ? (lv ? { title: lv.name, line: nowLine, label: t.loading, live: true } : { title: s.meta?.title ?? '', line: s.meta?.line ?? '', label: t.loading })
+    : null;
   return {
     pause, load,
+    /** a live channel: the LIVE badge (always) and its card (logo, name, *Jetzt*) for LIVE_CARD_MS after the first frame */
+    live: lv ? { badge: t.live, card: !load && !pause && s.now < s.liveUntil ? { name: lv.name, now: nowLine } : null } : null,
     who: s.who && (s.now < s.whoUntil || pause || load || c || s.still) ? s.who : null,
     hint,
     skip: k ? { end: k.end, text: k.type === 'recap' ? t.skip.recap : t.skip.intro } : null,

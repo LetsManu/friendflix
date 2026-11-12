@@ -144,7 +144,9 @@ function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask'; pick?:
     getCastDevice: () => ({ friendlyName: 'Wohnzimmer-TV' }),
     async loadMedia(req: Rec): Promise<string | undefined> {
       const media = req.args[0] as Rec;
-      w.__castLoads.push({ contentId: media.args[0], contentType: media.args[1], currentTime: req.currentTime, activeTrackIds: req.activeTrackIds ?? [], customData: media.customData ?? null, hlsSegmentFormat: media.hlsSegmentFormat ?? null, hlsVideoSegmentFormat: media.hlsVideoSegmentFormat ?? null });
+      const meta = (media.metadata ?? {}) as Rec & { images?: Rec[] };
+      w.__castLoads.push({ contentId: media.args[0], contentType: media.args[1], currentTime: req.currentTime, activeTrackIds: req.activeTrackIds ?? [], customData: media.customData ?? null, hlsSegmentFormat: media.hlsSegmentFormat ?? null, hlsVideoSegmentFormat: media.hlsVideoSegmentFormat ?? null,
+        streamType: media.streamType ?? null, title: meta.title ?? null, subtitle: meta.subtitle ?? null, images: (meta.images ?? []).map((i) => i.args[0]) });
       if (w.__castLoadFails) throw new Error('LOAD_FAILED'); // the receiver cannot play it
       if (opts.refuseFmp4 && media.hlsSegmentFormat === 'fmp4') throw new Error('LOAD_FAILED'); // a TV that cannot play HEVC / Dolby streams
       setTimeout(() => {
@@ -192,10 +194,10 @@ function castSdkScript(opts: { queue?: boolean; survive?: 'join' | 'ask'; pick?:
     Image: class extends R {},
     media: {
       DEFAULT_MEDIA_RECEIVER_APP_ID: 'CC1AD845',
-      MediaInfo: class extends R {}, LoadRequest: class extends R {}, MovieMediaMetadata: class extends R {}, TvShowMediaMetadata: class extends R {},
+      MediaInfo: class extends R {}, LoadRequest: class extends R {}, MovieMediaMetadata: class extends R {}, TvShowMediaMetadata: class extends R {}, GenericMediaMetadata: class extends R {},
       Track: class extends R {}, EditTracksInfoRequest: class extends R {},
       ...(opts.queue ? { QueueItem: class extends R {}, QueueInsertItemsRequest: class extends R {}, QueueRemoveItemsRequest: class extends R {} } : {}),
-      StreamType: { BUFFERED: 'BUFFERED' }, HlsSegmentFormat: { TS: 'ts', FMP4: 'fmp4' }, HlsVideoSegmentFormat: { FMP4: 'fmp4' }, MetadataType: { MOVIE: 1, TV_SHOW: 2 }, TrackType: { TEXT: 'TEXT' }, TextTrackType: { SUBTITLES: 'SUBTITLES' },
+      StreamType: { BUFFERED: 'BUFFERED', LIVE: 'LIVE' }, HlsSegmentFormat: { TS: 'ts', FMP4: 'fmp4' }, HlsVideoSegmentFormat: { FMP4: 'fmp4' }, MetadataType: { MOVIE: 1, TV_SHOW: 2 }, TrackType: { TEXT: 'TEXT' }, TextTrackType: { SUBTITLES: 'SUBTITLES' },
     },
   };
   function start() {

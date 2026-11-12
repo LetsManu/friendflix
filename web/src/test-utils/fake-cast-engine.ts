@@ -7,7 +7,8 @@
 import { writable } from 'svelte/store';
 import { vi } from 'vitest';
 import { ApiError, secToTicks, type Item } from '#lib/api';
-import type { CastEvent, CastInfo, CastState } from '#lib/cast';
+import type { CastEvent, CastInfo, CastState, LiveCastMedia } from '#lib/cast';
+import type { LiveList, WatchAnswer } from '#lib/live/api';
 import type { CastLogEntry } from '#lib/cast/castLog';
 import { createCastEngine, type CastSession, type EngineDeps, type PlayerHandoff } from '#lib/cast/engine';
 import { readHint, sha256Hex, type CastHint, type CastLookup, type Store } from '#lib/cast/resume';
@@ -105,9 +106,17 @@ export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock; store?: Retu
   const queuePostAnswers: Array<() => Promise<CastInfo>> = [];
   /** GET /api/cast/session/:castId (absent: 404) */
   const lookups: Record<string, CastLookup> = o.lookups ?? {};
+  /** live TV: POST /api/livetv/channels/:id/watch answers (absent: a fresh token for that channel), the list for ▲/▼, revoked live tokens */
+  const watchAnswers: Record<string, () => Promise<WatchAnswer>> = {};
+  let wn = 0;
+  const liveList: { list: LiveList | null } = { list: null };
   const api = vi.fn(async (path: string, init: Init = {}) => {
     calls.push({ path, init });
     order.push(`${init.method ?? 'GET'} ${path}`);
+    const w = /^\/api\/livetv\/channels\/([^/]+)\/watch$/.exec(path);
+    if (w) { const id = decodeURIComponent(w[1]!); const a = watchAnswers[id]; return a ? a() : liveAnswer(id, `tok-${id}-${++wn}`); }
+    if (path === '/api/livetv/watch') return null;
+    if (path === '/api/livetv/channels') return liveList.list;
     if (path === '/api/cast/session' && init.body?.next) { const next = queuePostAnswers.shift(); return next ? next() : ci(`q${++qn}`); } // the receiver queue's token (own ids)
     if (path === '/api/cast/session') { const next = posts.shift(); return next ? next() : ci(`n${++n}`); }
     const lk = /^\/api\/cast\/session\/([^/]+)$/.exec(path);
@@ -126,7 +135,10 @@ export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock; store?: Retu
   /** the receiver's queue: refused (null) unless a test accepts it */
   const queued: CastInfo[] = [];
   let queueImpl: (info: CastInfo) => number | null = () => null;
+  const liveLoads: LiveCastMedia[] = [];
+  let liveLoadImpl: (m: LiveCastMedia) => Promise<boolean> = async () => true;
   const cast = {
+    loadLiveOnCast: vi.fn(async (m: LiveCastMedia) => { liveLoads.push(m); return liveLoadImpl(m); }),
     castState,
     onCastEvent: vi.fn((fn: (e: CastEvent) => void) => { events.add(fn); return () => { events.delete(fn); }; }),
     loadOnCast: vi.fn(async (info: CastInfo, sub = -1) => { loads.push({ info, sub }); return loadImpl(info); }),
@@ -180,11 +192,16 @@ export function setup(o: { prefs?: Partial<Prefs>; lock?: FakeLock; store?: Retu
     requestSession: vi.fn(() => requestImpl()), leave: vi.fn(), whenReady: vi.fn((fn: () => void) => { readies.push(fn); }),
     lock: lock.acquire,
     onRestore: vi.fn((fn: () => void) => { restores.add(fn); }),
+    origin: () => 'https://friend.example.com',
     profileName: () => o.profile ?? 'Anna', formFactor: () => o.form ?? 'computer', /* mirrors motionAllowed(): calm mode means no motion (the real link is browserDeps.motion) */ motion: () => o.motion ?? !o.prefs?.calm,
   };
   const out = writable<CastSession | null>(null);
   const engine = createCastEngine(deps, out);
   return {
+    watchAnswers, liveList, liveLoads, setLiveLoad: (f: (m: LiveCastMedia) => Promise<boolean>) => { liveLoadImpl = f; },
+    /** the live tokens revoked with DELETE /api/livetv/watch */
+    liveStops: () => calls.filter((c) => c.path === '/api/livetv/watch' && c.init.method === 'DELETE').map((c) => String(c.init.body?.token)),
+    watches: () => calls.filter((c) => /^\/api\/livetv\/channels\/[^/]+\/watch$/.test(c.path)),
     engine, out, deps, calls, order, posts, queuePostAnswers, lookups, api, state, cast, events, loads, toast, timers: timerDeps, hides, item, store, logs, lock,
     /** the page came back from the back/forward cache */
     restore: () => restores.forEach((fn) => fn()),
@@ -217,4 +234,20 @@ export async function playingSession(env: Env, over: Partial<PlayerHandoff> = {}
   env.state.set(playing());
   env.engine.adopt(handoff({ started: true, ...over }));
   await flush();
+}
+
+/** a watch answer for a channel of the live tests (Nordlicht TV, Hafenkanal; fictional) */
+export const LIVE_CH: Record<string, { number: number; name: string; now: string; next: string }> = {
+  'ch-nord': { number: 1, name: 'Nordlicht TV', now: 'Die Leuchtturmwärter', next: 'Wetter am Hafen' },
+  'ch-hafen': { number: 4, name: 'Hafenkanal', now: 'Wetter am Hafen', next: 'Abenteuer Wattenmeer' },
+};
+export function liveAnswer(id: string, token: string, over: Partial<WatchAnswer> = {}): WatchAnswer {
+  const c = LIVE_CH[id] ?? { number: 9, name: id, now: 'Sternstunde Physik', next: 'Wetter am Hafen' };
+  return {
+    token, url: `/media/l/${token}/index.m3u8`, expiresAt: T0 + 12 * 3600_000, dvrSeconds: 1800, mode: 'remux',
+    channel: { id, number: c.number, name: c.name, logo: null },
+    now: { title: c.now, start: '2026-11-12T19:15:00.000Z', end: '2026-11-12T20:00:00.000Z' },
+    next: { title: c.next, start: '2026-11-12T20:00:00.000Z', end: '2026-11-12T20:15:00.000Z' },
+    ...over,
+  };
 }

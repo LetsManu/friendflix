@@ -97,6 +97,21 @@ body.idle .brand { display: grid; }
 .ind i { display: block; width: 40%; height: 100%; background: var(--acc); animation: slide 1400ms ease-in-out infinite; }
 .load .label { font-size: calc(24 * var(--u)); color: var(--dim); }
 
+/* a live channel: the LIVE badge top right (solid, a dot and the text), the channel card bottom left, the logo square on the
+   loading screen, no progress bar or times on the pause screen */
+.badge { position: fixed; z-index: 3; right: var(--safe); top: var(--safe); display: flex; align-items: center; gap: calc(10 * var(--u)); padding: calc(8 * var(--u)) calc(20 * var(--u));
+  border-radius: 999px; background: var(--acc-fill); color: #fff; font-size: calc(22 * var(--u)); font-weight: 800; letter-spacing: .04em; }
+.badge i { width: calc(12 * var(--u)); height: calc(12 * var(--u)); border-radius: 50%; background: #fff; }
+.lcard { position: fixed; left: var(--safe); bottom: var(--safe); width: calc(560 * var(--u)); max-width: calc(100vw - 2 * var(--safe)); padding: calc(24 * var(--u));
+  display: grid; grid-template-columns: auto 1fr; gap: calc(20 * var(--u)); align-items: center; }
+.lcard .logo, .load.live .art { width: calc(112 * var(--u)); height: calc(112 * var(--u)); }
+.lcard .logo img, .load.live .art img { object-fit: contain; }
+.art.none { display: none; }
+.lcard.nologo { grid-template-columns: 1fr; }
+.lcard h2 { font-size: calc(36 * var(--u)); line-height: 1.15; font-weight: 700; }
+.lcard .line { margin-top: calc(6 * var(--u)); font-size: calc(24 * var(--u)); color: var(--dim); }
+.pause.live .pbar, .pause.live .times { display: none; }
+
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 
 /* calm mode (the sender says motion: false) and the TV's own reduced motion: nothing moves, the loading bar stands still */

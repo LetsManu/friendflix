@@ -72,6 +72,14 @@ export function receiverHtml(): string {
 <div class="ind"><i></i></div>
 <p id="load-label" class="label"></p>
 </section>
+<div id="badge" class="badge fx" aria-hidden="true"><i></i><span id="badge-text"></span></div>
+<section id="lcard" class="lcard panel fx" aria-live="polite">
+<div class="art logo"><img id="lcard-img" alt="" hidden></div>
+<div>
+<h2 id="lcard-name" class="clamp"></h2>
+<p id="lcard-now" class="line clamp"></p>
+</div>
+</section>
 <section id="still" class="hold fx flat" aria-live="assertive">
 <div class="panel">
 <h2 id="still-title"></h2>

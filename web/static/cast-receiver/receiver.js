@@ -12,10 +12,13 @@
  * - show the next-up card, its countdown and "still watching?" for the episode the SENDER queued (it never asks the server for
  *   another title: the queue + `next: true` token flow stays the boundary), the intro / recap skip button, the pause and loading screens
  *   and the sender pill. Everything the sender wrote (names, titles, lines) is put on the page with textContent only, never as HTML;
+ * - show a live channel the sender loads (`customData.ui.live`, live TV spec §13): its channel card (logo, name, the *Jetzt* line) on load
+ *   and for a few seconds after the first frame, the LIVE badge, and no progress bar. A live channel has no report token (the stream's
+ *   own fetches keep its token and viewer alive);
  * - state what this TV (and the AVR behind it) confirms it plays (HEVC, Dolby Digital / Digital Plus) on the same channel as `caps`, when a
  *   sender connects and when it asks (`caps?`). The sender attaches that to its cast request; nothing is claimed before a positive probe.
  */
-import { NS, DEFAULT_STRINGS, buildCaps, createReporter, formatTime, initialState, parseMessage, probeCaps, seekTarget, step, textTrackStyle, view } from './logic.js';
+import { NS, DEFAULT_STRINGS, buildCaps, createReporter, formatTime, initialState, liveOf, parseMessage, probeCaps, seekTarget, step, textTrackStyle, view } from './logic.js';
 
 const fw = cast.framework;
 const context = fw.CastReceiverContext.getInstance();
@@ -135,6 +138,7 @@ function render() {
     setText($('pause-pos'), formatTime(v.pause.pos));
     setText($('pause-dur'), formatTime(v.pause.dur));
     $('pause').style.setProperty('--p', String(v.pause.dur > 0 ? Math.min(1, v.pause.pos / v.pause.dur) : 0));
+    $('pause').classList.toggle('live', Boolean(v.pause.live)); // a live channel: no progress bar, no times
   }
 
   // loading, until the first frame
@@ -145,7 +149,21 @@ function render() {
     setText($('load-label'), v.load.label);
     $('load-title').hidden = !v.load.title;
     $('load-line').hidden = !v.load.line;
+    $('load').classList.toggle('live', Boolean(v.load.live)); // the channel's logo, not a poster
     setArt($('load-art'), poster);
+    $('load-art').parentElement?.classList.toggle('none', Boolean(v.load.live) && !poster); // a channel without a logo: no empty box
+  }
+
+  // a live channel: the LIVE badge, and its card after the first frame
+  show($('badge'), Boolean(v.live));
+  if (v.live) setText($('badge-text'), v.live.badge);
+  show($('lcard'), Boolean(v.live?.card));
+  if (v.live?.card) {
+    setText($('lcard-name'), v.live.card.name);
+    setText($('lcard-now'), v.live.card.now);
+    setArt($('lcard-img'), poster);
+    $('lcard-img').parentElement?.classList.toggle('none', !poster);
+    $('lcard').classList.toggle('nologo', !poster);
   }
 
   // "Still there?" while the queued episode waits paused
@@ -240,7 +258,9 @@ pm.setMessageInterceptor(fw.messages.MessageType.PLAY, (req) => {
 pm.setMessageInterceptor(fw.messages.MessageType.LOAD, (req) => {
   run({ type: 'clock', now: nowMs() });
   loadingMedia = req?.media ?? null;
-  run({ type: 'load', at: nowMs() });
+  const live = liveOf(req?.media);
+  if (live) reporter.media(''); // a live channel replaces a title: that one is stopped, nothing is reported for the channel
+  run({ type: 'load', at: nowMs(), live });
   return req;
 });
 

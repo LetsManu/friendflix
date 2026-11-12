@@ -4,14 +4,15 @@ import { img } from '#lib/api';
 import type { TFn } from '#lib/i18n';
 import type { Item } from '#lib/api';
 import type { CastSession } from './engine';
+import type { LiveInfo } from './liveInfo';
 import { deviceLabel } from './remoteview';
 
 /** the engine drives this session (a `detached` one is only known from the hint: no lock screen, no remote, taps play here) */
 export const liveCast = (s: CastSession | null): s is CastSession => s !== null && s.state !== 'detached';
 
-/** The cast bar shows while a title plays on a TV, except on the immersive pages (watch, party) and in TV mode. */
+/** The cast bar shows while a title plays on a TV, except on the immersive pages (watch, party, the live player) and in TV mode. */
 export function barVisible(o: { path: string; tv: boolean; session: CastSession | null }): boolean {
-  return o.session !== null && !o.tv && !/^\/(watch|party)\//.test(o.path);
+  return o.session !== null && !o.tv && !/^\/(watch|party|live\/watch)\//.test(o.path);
 }
 
 /** Second bar line: "subtitle · auf Gerät" (just "auf Gerät" for films). */
@@ -30,6 +31,15 @@ export const barHasProgress = (s: Pick<CastSession, 'isLive'>): boolean => !s.is
 
 /** a live channel has no remote screen to open: the bar's text is not a button */
 export const barOpens = (s: Pick<CastSession, 'isLive'>): boolean => !s.isLive;
+
+/**
+ * What the bars and the remote screen show for a session: a title's scrubber, or a live channel's LIVE pill (no scrubber, no
+ * progress) and, where the source can switch channels (`canZap`: the web engine's cast), channel ▲/▼. Never both.
+ */
+export function castParts(s: Pick<CastSession, 'live' | 'isLive'>, canZap: boolean): { scrubber: boolean; livePill: boolean; channelKeys: boolean } {
+  const live = Boolean(s.live) || s.isLive === true;
+  return { scrubber: !live, livePill: live, channelKeys: live && canZap };
+}
 
 /** Poster for the bar: landscape still for episodes, portrait poster for films; none for a live channel (its id is no media-server item). */
 export function barThumb(s: CastSession): { src: string; ratio: '16/9' | '2/3' } | null {
@@ -57,8 +67,16 @@ export function episodeCode(s: Pick<CastSession, 'subtitle'>, it: Pick<Item, 'pa
   const lead = s.subtitle.split(' ')[0] ?? '';
   return /^[A-Z]\d+:[A-Z]\d+$/.test(lead) ? lead : '';
 }
-/** first bar line: the title; an episode adds its code ("Dunmoor · S1:E4"; the episode's name lives in the expanded bar) */
-export function barLine1(s: Pick<CastSession, 'title' | 'isEpisode' | 'subtitle'>, it: Pick<Item, 'parentIndexNumber' | 'indexNumber'> | null | undefined, tf: TFn): string {
+/** a live channel's name as the bar writes it: "4 Hafenkanal" (the name alone without a number) */
+export const liveTitle = (l: Pick<LiveInfo, 'number' | 'name'>): string => (l.number !== null ? `${l.number} ${l.name}` : l.name);
+/** the now / next lines of a live channel ("Jetzt: Die Leuchtturmwärter", "Danach: 21:00 Wetter am Hafen"); without a programme "Live" and no next */
+export function liveLines(l: LiveInfo, tf: TFn): { now: string; next: string } {
+  return { now: l.now ? `${tf('live.now')}: ${l.now}` : tf('live.liveOnly'), next: l.now && l.next ? `${tf('live.next')}: ${l.next}` : '' };
+}
+
+/** first bar line: the title; an episode adds its code ("Dunmoor · S1:E4"; the episode's name lives in the expanded bar); a live channel "4 Hafenkanal" */
+export function barLine1(s: Pick<CastSession, 'title' | 'isEpisode' | 'subtitle' | 'live'>, it: Pick<Item, 'parentIndexNumber' | 'indexNumber'> | null | undefined, tf: TFn): string {
+  if (s.live) return liveTitle(s.live);
   const code = s.isEpisode ? episodeCode(s, it, tf) : '';
   return code ? `${s.title} \u00b7 ${code}` : s.title;
 }
@@ -88,6 +106,8 @@ export function barLine2(s: CastSession, now: number, tf: TFn, o: { choose?: boo
     case 'detached': return o.choose ? { text: tf('player.airplay.chooseHint'), tone: 'none' } : { text: tf('player.castRemote.lost'), tone: 'warn' };
     case 'failed': return { text: tf('player.castRemote.cannotPlay'), tone: 'error' };
     default: {
+      // a live channel: the programme now and the TV ("Die Leuchtturmwärter · auf Wohnzimmer-TV"), never minutes left
+      if (s.live) return s.live.now ? { text: `${s.live.now} \u00b7 ${tf('player.castBar.on', { device })}`, tone: 'none', device } : { text: tf('player.castBar.playingOn', { device }), tone: 'none', device };
       if (s.next) {
         const secs = nextSecondsLeft(s.next.startsAt, now);
         const line = tf('player.castBar.upNextLine', { device, label: s.next.label });
@@ -102,7 +122,8 @@ export function barLine2(s: CastSession, now: number, tf: TFn, o: { choose?: boo
 }
 
 /** expanded bar, first line: "Dunmoor · S1:E4 · The Lantern Road" (a film: its title) */
-export function barTitleFull(s: Pick<CastSession, 'title' | 'isEpisode' | 'subtitle'>, it: Pick<Item, 'name' | 'parentIndexNumber' | 'indexNumber'> | null | undefined, tf: TFn): string {
+export function barTitleFull(s: Pick<CastSession, 'title' | 'isEpisode' | 'subtitle' | 'live'>, it: Pick<Item, 'name' | 'parentIndexNumber' | 'indexNumber'> | null | undefined, tf: TFn): string {
+  if (s.live) return liveTitle(s.live);
   if (!s.isEpisode) return s.title;
   const head = barLine1(s, it, tf);
   const name = it?.name ?? s.subtitle.replace(/^\S*\d\S*\s+/, '');
