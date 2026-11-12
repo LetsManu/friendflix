@@ -567,3 +567,97 @@ describe('person profiles tab', () => {
     expect(css(page)).not.toMatch(/transition\s*:|@keyframes/);
   });
 });
+
+describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
+  const src = read('./livetv/OrderView.svelte');
+  const css = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('takes the rows and a required save, and knows no endpoint', () => {
+    expect([...src.matchAll(/export let (\w+)/g)].map((m) => m[1])).toEqual(['rows', 'save', 'locked', 'dirty']); // dirty is the one output (bind:dirty): the shown order is not stored yet
+    expect(src).toMatch(/export let save: \(ids: string\[\]\) => Promise<void>;/);
+    expect(src).toMatch(/runAction\(\{ key: busyKey, run: \(\) => save\(ids\)/);
+    let code = src, prev: string;
+    do { prev = code; code = code.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, ''); } while (code !== prev); // until stable: no comment survives
+    expect(code).not.toMatch(/api\(|fetch\(|\/order/);
+  });
+
+  it('animates transform only (the lifted row follows by transform, the others slide by FLIP) and has no keyframes', () => {
+    const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+    const vals = [...css.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)].map((m) => m[1]!);
+    expect(vals.length).toBeGreaterThan(0);
+    for (const v of vals) if (!/^\s*none/.test(v)) expect(v).toMatch(/^\s*transform\b[^,]*$/);
+    for (const v of vals) expect(v).not.toMatch(LAYOUT);
+    expect(css).not.toMatch(/@keyframes/);
+    expect(src).toContain('row.style.transform = `translateY(${y - row.offsetTop}px)`;');
+    expect(src).toContain("el.style.transform = `translateY(${d}px)`;");
+    expect(src).toMatch(/flipOffsets\(before, after\)/);
+  });
+
+  it('the pointer drag survives the keyed list moving the lifted row: capture on the list, events on the window', () => {
+    // the grip's <li> is moved by the keyed each while the order changes, which drops a capture held by the grip
+    expect(src).toContain('list.setPointerCapture(e.pointerId)');
+    expect(src).not.toMatch(/currentTarget as HTMLElement\)\.setPointerCapture|lostpointercapture/);
+    expect(src).toMatch(/<svelte:window[^>]*on:pointermove=\{onMove\} on:pointerup=\{onUp\} on:pointercancel=\{onPointerCancel\}/);
+    expect(src).toMatch(/e\.pointerId !== drag\.pointerId/);
+    expect(src).toContain('if (e.repeat) return;');
+  });
+
+  it('a mouse move with no button down is a pointer up: a swallowed release never leaves a row stuck lifted', () => {
+    const fn = src.match(/function onMove\(e: PointerEvent\) \{[\s\S]*?\n {2}\}/)![0];
+    expect(fn).toMatch(/e\.pointerType === 'mouse' && e\.buttons === 0/);
+    expect(fn).toMatch(/void onUp\(e\)/);
+    // the check comes before the move is used
+    expect(fn.indexOf('e.buttons === 0')).toBeLessThan(fn.indexOf('drag.y = e.clientY'));
+  });
+
+  it('calm mode, TV and reduced motion: no transitions at all', () => {
+    expect(css).toMatch(/:global\(html\.m-still\) \.order :global\(\*\), :global\(html\.tv\) \.order :global\(\*\) \{ transition: none !important; animation: none !important; \}/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.order :global\(\*\) \{ transition: none !important; animation: none !important; \} \}/);
+    expect(src).toMatch(/fxMode\(\) === 'still'/);
+  });
+
+  it('44 px handles (54 px on TV), a polite live region, touch drags instead of scrolling', () => {
+    expect(css).toMatch(/\.grip \{[^}]*width: 44px; height: 44px;[^}]*touch-action: none;/);
+    expect(css).toContain(':global(html.tv) .grip { width: 54px; height: 54px; }');
+    expect(src).toContain('<p class="sr-only" aria-live="polite">{status}</p>');
+    for (const k of ['orderPicked', 'orderMoved', 'orderDropped', 'orderCancelled']) expect(src).toContain(`'adminLive.ch.${k}'`);
+  });
+
+  it('text on the list panel and on the lifted row\'s solid fill keeps 4.5:1; the lifted row also has a white ring', () => {
+    for (const bg of ON_GLASS) {
+      expect(textContrast(bg), 'name').toBeGreaterThanOrEqual(AA);
+      expect(textContrast(bg, MUT), 'number').toBeGreaterThanOrEqual(AA);
+    }
+    expect(css).toMatch(/\.row\.lifted \{[^}]*background: var\(--fr-solid\); box-shadow: 0 0 0 2px #fff/);
+  });
+});
+
+/** Live-TV → Live-Status and Programmführer (Task 26): the stylesheet scan reaches the new files too (glass spec constraints) */
+describe('Live-TV status and guide tabs (Task 26)', () => {
+  const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+  const files = ['./livetv/StatusTab.svelte', './livetv/GuideTab.svelte'];
+  const cssOf = (f: string) => [...read(f).matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('they animate nothing but transform and opacity (no keyframes, no colour, background or layout transition)', () => {
+    for (const f of files) {
+      expect(cssOf(f), f).not.toMatch(/@keyframes|animation\s*:/);
+      for (const m of cssOf(f).matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) {
+        if (/^\s*none/.test(m[1]!)) continue;
+        expect(m[1], f).not.toMatch(LAYOUT);
+        expect(m[1], f).not.toMatch(/all|color|background|border|filter|shadow/);
+      }
+    }
+  });
+
+  it('the pieces that load keep their space: the tiles\' figure line, the tables and the guide line reserve a height', () => {
+    const tab = cssOf(files[0]!), guide = cssOf(files[1]!);
+    expect(tab).toMatch(/\.tiles :global\(\.val\) \{ min-height: calc\(1\.6rem \* 1\.15\); \}/);
+    expect(tab).toMatch(/\.table-a \{ min-height: [\d.]+rem; \}/);
+    expect(tab).toMatch(/\.table-b \{ min-height: [\d.]+rem; \}/);
+    expect(guide).toMatch(/\.line \{ min-height: [\d.]+rem;/);
+  });
+
+  it('the grey lines use the glass text levels, never a colour of their own', () => {
+    for (const f of files) expect(cssOf(f), f).not.toMatch(/(?<![-\w])color\s*:\s*(#|rgb)/);
+  });
+});

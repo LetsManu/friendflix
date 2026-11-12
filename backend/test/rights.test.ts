@@ -244,8 +244,10 @@ describe('effectiveRights', () => {
 
   it('effective values identical before and after migration 47', async () => {
     // rewind 47, seed 3.3-shape rows (every old role_settings column combination, user_limits), migrate: the backfilled template must
-    // give the values the 3.3 code computed from the old columns (SNAPSHOT_33, recorded with the pre-Task-2 resolver)
+    // give the values the 3.3 code computed from the old columns (SNAPSHOT_33, recorded with the pre-Task-2 resolver). livetv_group_roles
+    // (migration 48) references roles: it goes first, and 48 recreates it when the migrations run again
     await pool.query(`
+      drop table if exists livetv_group_roles;
       drop index if exists audit_log_target;
       drop index if exists audit_log_action;
       drop table if exists roles;

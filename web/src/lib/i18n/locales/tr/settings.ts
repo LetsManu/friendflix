@@ -8,7 +8,7 @@ const settings: Translation<typeof de> = {
   loadFailed: 'Ayarlar yüklenemedi.',
   groups: {
     general: 'Genel', signin: 'Oturum açma', media: 'Medya sunucusu', requests: 'İstekler', notifications: 'Bildirimler', push: 'Anlık bildirimler',
-    sources: 'Veri kaynakları', downloads: 'İndirmeler', playback: 'Oynatma', recommendations: 'Öneriler', updates: 'Güncellemeler', health: 'Sistem durumu', sessions: 'Oturumlar', server: 'Sunucu',
+    sources: 'Veri kaynakları', downloads: 'İndirmeler', playback: 'Oynatma', livetv: 'Canlı TV', recommendations: 'Öneriler', updates: 'Güncellemeler', health: 'Sistem durumu', sessions: 'Oturumlar', server: 'Sunucu',
   },
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Değişiklikler yeniden başlatmadan hemen geçerli olur. Uzman ayarları (RECO_COEFFS ve dizin ağırlıkları RECO_W_*) yalnızca .env dosyasında yapılır.' },
@@ -76,6 +76,7 @@ const settings: Translation<typeof de> = {
     invalid_number: 'Lütfen bir sayı gir.',
     invalid_option: 'Lütfen sunulan değerlerden birini seç.',
     invalid_cidr: 'Lütfen 192.168.0.0/16 gibi ağları virgülle ayırarak gir.',
+    invalid_host: 'Yalnızca bir ana bilgisayar adı veya IP adresi, şema ve port olmadan.',
     invalid_json: 'Geçersiz JSON.',
     too_small: 'Değer çok küçük.',
     too_big: 'Değer çok büyük.',
@@ -108,7 +109,7 @@ const settings: Translation<typeof de> = {
     PLEX_URL: { invalid_url: 'Lütfen yalnızca sunucu adresini gir: http:// veya https:// ile başlayan, kullanıcı adı ve parola içermeyen, ? veya # işaretinden sonra hiçbir şey olmayan bir adres. Token, Plex token’ı alanına girilir.' },
   },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
-  options: { auto: 'Otomatik', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (kendi zevk modeli)', shadow: 'Shadow (v2, v1’in yanında)' }, UPDATE_CHANNEL: { stable: 'Kararlı', nightly: 'Nightly', pinned: 'Sabit sürüm' }, AUTO_UPDATE: { off: 'Kapalı', 'nightly-window': 'Gece penceresi' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Otomatik', off: 'Kapalı' } },
+  options: { auto: 'Otomatik', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (kendi zevk modeli)', shadow: 'Shadow (v2, v1’in yanında)' }, UPDATE_CHANNEL: { stable: 'Kararlı', nightly: 'Nightly', pinned: 'Sabit sürüm' }, AUTO_UPDATE: { off: 'Kapalı', 'nightly-window': 'Gece penceresi' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Otomatik', off: 'Kapalı' }, LIVETV_ENCODER: { auto: 'Otomatik', qsv: 'Intel Quick Sync (QSV)', vaapi: 'VA-API', nvenc: 'NVIDIA NVENC', software: 'Yazılım (işlemci)' } },
   keys: {
     PUBLIC_URL: { label: 'Genel adres', help: 'Herkesin FriendFlix’e ulaştığı adres, ör. https://friend.example.com. Bağlantılar, oturum açma ve yayın buna dayanır.' },
     WEBHOOK_SECRET: { label: 'Webhook sırrı', help: 'Medya sunucusu ve istek hizmetinin webhook’ları için ortak sır.' },
@@ -165,6 +166,8 @@ const settings: Translation<typeof de> = {
     CONVERSION_SLOTS: { label: 'Eşzamanlı dönüştürmeler', help: 'Sunucunun aynı anda kaç videoyu dönüştürebileceği: filmler ve diziler, canlı TV, kayıtlar ve indirmeler birlikte. Boş = otomatik (FriendFlix sunucuyu ölçer ve değeri seçer). Çalışma → Oynatma denetimi bölümünden ayarlamak daha kolaydır.' },
     CONVERSION_PRIORITY: { label: 'Dönüştürme önceliği', help: 'Yerler kıt olduğunda kimin önce geleceği: filmler ve diziler, canlı TV veya eşit. 2 veya daha fazla yerde biri öncelikli taraf için boş kalır; "eşit" seçeneğinde hiçbiri.' },
     SURROUND_AUDIO: { label: 'Surround ses', help: '5.1 çıkışı olan cihazlar (TV uygulamaları, ses sistemine bağlı Android, 5.1 çıkışlı tarayıcılar) filmin surround kanalını veya onun 5.1 dönüşümünü alır. Diğer tüm cihazlar stereo alır. Kapalı = herkes için stereo.' },
+    LIVETV_ENCODER: { label: 'Canlı TV kodlayıcısı', help: 'Canlı TV’nin olduğu gibi oynatılamayan kanalları neyle dönüştürdüğü. Otomatik: Canlı TV erişebiliyorsa Jellyfin’in kullandığı grafik birimi, değilse VA-API, sonra NVENC, o da yoksa işlemci. Bir sonraki kanal başlatmadan itibaren geçerlidir.' },
+    LIVETV_SRT_HOST: { label: 'Gönderilen yayınlar için adres', help: 'Gönderilen yayınların (SRT) kurulumunda gösterilen sunucu adresi: srt:// ve port olmadan bir ana bilgisayar adı veya IP adresi. Boş = genel adresin ana bilgisayarı. Genel ad UDP geçirmeyen bir CDN üzerinden geçiyorsa (ör. proxy açık Cloudflare), buraya yalnızca DNS olan bir ad veya genel IP girin.' },
     GITHUB_TOKEN: { label: 'GitHub token’ı', help: 'İsteğe bağlı: yeni sürümleri ararken daha yüksek sorgu sınırı.' },
     PORTAINER_WEBHOOK_URL: { label: 'Portainer stack webhook’u', help: 'Tek tıkla güncelleme için stack’in webhook adresi. Adresin kendisi anahtardır.' },
     PORTAINER_URL: { label: 'Portainer adresi', help: 'Webhook yerine: API anahtarı ve stack kimliğiyle Portainer adresi.' },

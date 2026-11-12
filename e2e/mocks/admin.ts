@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { ltvStatusMock, ltvStatusRoute, type LtvStatusMock } from './livetvStatus.js';
 import { advanceLivetvJob, livetvJob, type LivetvJobOutcome } from './updater.js';
 /**
  * Admin API fixtures for the mocked FriendFlix backend (shapes follow backend/src/routes/admin.ts, seerr.ts, polls.ts,
@@ -168,7 +169,167 @@ export interface LivetvMock {
   /** GET state calls and the POSTed bodies, in order */
   gets: number;
   posts: Array<{ path: 'enable' | 'disable'; body: any }>;
+  /** the installed area's *Quellen* tab (Task 21, built on the contracts of Tasks 15, 16, 20) */
+  area: LivetvAreaMock;
+  /** the *Live-Status* tab and the guide counts (Task 26, mocks/livetvStatus.ts) */
+  status: LtvStatusMock;
 }
+/** a source as `GET /api/admin/livetv/sources` answers it (backend SourceView, Task 15): never a URL, only `urlHint` / `epgHint` */
+export interface LtvSourceMock {
+  id: string; kind: 'm3u' | 'feeds'; name: string; urlHint: string | null; epgHint: string | null; userAgent: string | null; allowLan: boolean;
+  refresh: '6h' | '12h' | '24h' | 'weekly' | 'manual'; skipGroups: string[]; numbering: 'chno' | 'order'; numberBase: number; logoPref: 'm3u' | 'xmltv';
+  epgShiftMin: number; maxStreams: number | null; enabled: boolean; position: number; channelCount: number; pendingGroups: number;
+  state: {
+    lastRefreshAt: string | null; lastOkAt: string | null; lastError: string | null; counts: { channels: number; added: number; removed: number } | null;
+    epg: { lastRefreshAt: string | null; lastOkAt: string | null; lastError: string | null; programmes: number | null };
+  };
+}
+/**
+ * an own feed (a channel of the `feeds` source): the AdminChannel fields the card reads (plan Task 19, backend ownfeeds.ts); `push` only
+ * on push feeds (`hint` = 'ff-' + 6, no ellipsis; `portInRange` is computed from `ports` when answered); `ingest` = what livetv's
+ * GET /v1/ingest says about a push feed (`pending` = livetv does not know it yet)
+ */
+export interface LtvFeedMock {
+  id: string; sourceId: string; name: string; number: number | null; streamKind: 'hls' | 'ts' | 'srt';
+  push?: { port: number; hint: string };
+  ingest: { state: 'receiving' | 'idle' | 'pending'; rejected1h: number } | null;
+  /** hidden channel: withdrawn from livetv (ingest state `off`, as for a disabled source) */
+  hidden?: boolean;
+}
+/**
+ * a channel of the *Kanäle* tab (Task 23, on backend adminChannels.ts `AdminChannel`): the import values and the overrides are kept apart, so
+ * the view can answer `overridden` and the reset can drop them; `shiftOv` is `epg_shift_override_min`, `base` the inherited offset
+ */
+export interface LtvChanMock {
+  id: string; sourceId: string; streamKind: 'hls' | 'ts' | 'srt'; ingest: 'pull' | 'push';
+  importName: string; importNumber: number | null; importGroup: string | null;
+  nameOv: string | null; numberOv: number | null; groupOv: string | null; logoHash: string | null; logoOv: boolean;
+  hidden: boolean; missing: boolean; epg: boolean; epgOff: boolean;
+  base: { min: number; from: 'list' | 'source' | 'none' }; shiftOv: number | null;
+  mode: 'passthrough' | 'remux' | 'transcode' | null; probeError: string | null;
+  push?: { port: number; hint: string };
+}
+export const LTV_GROUP_NAMES: Record<string, string> = { 'g-regional': 'Regional', 'g-sport': 'Sport' };
+/** a channel group as `GET /api/admin/livetv/groups` answers it (backend GroupView, Task 18) */
+export interface LtvGroupMock { id: string; name: string; kidFriendly: boolean; roles: string[]; released: boolean; position: number; channels: number; providerGroups: string[] }
+export interface LivetvAreaMock {
+  sources: LtvSourceMock[];
+  /** the *Kanäle* list (Task 23) and the query strings of its list requests */
+  channels: LtvChanMock[];
+  chQueries: string[];
+  /** the next stream test(s): the probe facts, or a refusal; `chTestBusy` answers 409 test_running once */
+  chTest: { ok: true } | { ok: false; error: string } | { status: number; error: string };
+  chTestBusy: boolean;
+  /** the raw logo uploads that reached the server */
+  logoPuts: Array<{ id: string; type: string; bytes: number }>;
+  feeds: LtvFeedMock[];
+  /** *Gruppen & Rechte* (Task 25): the groups, and the per-person exceptions by user id (livetv_group_users) */
+  groups: LtvGroupMock[];
+  exceptions: Record<string, { allow: string[]; deny: string[] }>;
+  /** LIVETV_SRT_PORTS as livetv's /v1/system reports it, and the host shown to encoders (LIVETV_SRT_HOST) */
+  ports: number[];
+  /** livetv reports its range (false: `GET /ingest` answers `ports: null`, every feed `error`) */
+  portsKnown: boolean;
+  host: string | null;
+  /** the answer of POST /sources/test: the result, or a 422 code */
+  test: { channels: number; groups: Array<{ name: string; channels: number }>; samples: string[]; epgChannels: number | null; epgError: string | null } | { error: string; status?: number };
+  /** the next POST /sources/test answers 409 test_running once (another check of this admin still runs) */
+  testBusy: boolean;
+  /** whether livetv takes the new ingest set on push writes (`synced` of Task 20's answers) */
+  synced: boolean;
+  /** a started refresh finishes after this many GETs of /sources, with this outcome */
+  refreshPolls: number;
+  refreshOutcome: { counts: { channels: number; added: number; removed: number } } | { error: string };
+  refreshing: Record<string, number>;
+  /** livetv's GET /v1/ingest fails: every push feed in range is `error` */
+  ingestFails: boolean;
+  /** every write, in order (method, path, body) */
+  calls: Array<{ m: string; p: string; body: any }>;
+  seq: number;
+}
+const ltvState = (o: Partial<LtvSourceMock['state']> = {}): LtvSourceMock['state'] => ({
+  lastRefreshAt: null, lastOkAt: null, lastError: null, counts: null, epg: { lastRefreshAt: null, lastOkAt: null, lastError: null, programmes: null }, ...o,
+});
+const ltvSource = (o: Partial<LtvSourceMock> & Pick<LtvSourceMock, 'id' | 'kind' | 'name'>): LtvSourceMock => ({
+  urlHint: null, epgHint: null, userAgent: null, allowLan: false, refresh: '24h', skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0,
+  maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, state: ltvState(), ...o,
+});
+/** the provider's 18 groups as `POST /sources/test` lists them (Task 22's picker): 412 channels, "Erwachsene" 100 of them */
+export const LTV_GROUPS: Array<{ name: string; channels: number }> = [
+  ['DE | Sport', 42], ['DE | Nachrichten', 30], ['DE | Kinder', 20], ['DE | Dokumentation', 25], ['DE | Unterhaltung', 40], ['AT | Sport', 12],
+  ['AT | Regional', 18], ['CH | Regional', 15], ['Erwachsene', 100], ['Musik', 22], ['Filme', 30], ['Serien', 28], ['Natur & Tiere', 10],
+  ['Wetter', 5], ['Bergblick Sport', 8], ['Hafenregion', 3], ['Sternwarte', 2], ['Radio-Visuell', 2],
+].map(([name, channels]) => ({ name: name as string, channels: channels as number }));
+/** 232 channels: the provider's 1…230 (Nordlicht TV first) and the two own feeds 801 / 802 */
+function ltvChannels(): LtvChanMock[] {
+  const base = (over: Partial<LtvChanMock> & Pick<LtvChanMock, 'id' | 'importName' | 'importNumber'>): LtvChanMock => ({
+    sourceId: 'src-nordlicht', streamKind: 'hls', ingest: 'pull', importGroup: 'g-regional', nameOv: null, numberOv: null, groupOv: null, logoHash: null, logoOv: false,
+    hidden: false, missing: false, epg: true, epgOff: false, base: { min: 0, from: 'none' }, shiftOv: null, mode: null, probeError: null, ...over,
+  });
+  const named: Record<number, string> = { 1: 'Nordlicht TV', 2: 'Wetterkanal Küste', 3: 'Bergblick Sport', 4: 'Kids Insel', 5: 'Sternwarte 24' };
+  const rows = Array.from({ length: 230 }, (_, i) => base({ id: `ch-${i + 1}`, importName: named[i + 1] ?? `Regionalkanal ${i + 1}`, importNumber: i + 1 }));
+  const at = (n: number) => rows[n - 1]!;
+  Object.assign(at(1), { base: { min: 60, from: 'list' }, logoHash: 'a'.repeat(64) });
+  Object.assign(at(3), { importGroup: 'g-sport', mode: 'passthrough' });
+  Object.assign(at(4), { nameOv: 'Kinderinsel', importGroup: null, mode: 'remux' });
+  Object.assign(at(5), { epg: false });
+  Object.assign(at(7), { hidden: true });
+  Object.assign(at(8), { missing: true });
+  Object.assign(at(9), { probeError: 'timeout' });
+  Object.assign(at(10), { importGroup: 'g-sport', base: { min: -60, from: 'source' } });
+  return [
+    ...rows,
+    base({ id: 'ch-hafen', sourceId: 'src-feeds', importName: 'Hafenkanal', importNumber: 801, importGroup: null, epg: false }),
+    base({ id: 'ch-wolkenlos', sourceId: 'src-feeds', importName: 'Kanal Wolkenlos', importNumber: 802, importGroup: null, epg: false, streamKind: 'srt', ingest: 'push', push: { port: 9001, hint: 'ff-QW7RT5' } }),
+  ];
+}
+const ltvGroup = (o: Partial<LtvGroupMock> & Pick<LtvGroupMock, 'id' | 'name' | 'position' | 'channels'>): LtvGroupMock => ({ kidFriendly: false, roles: [], released: true, providerGroups: [], ...o });
+export function livetvAreaMock(): LivetvAreaMock {
+  const today = (h: number, m: number) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
+  return {
+    sources: [
+      ltvSource({
+        id: 'src-nordlicht', kind: 'm3u', name: 'Nordlicht Paket', urlHint: 'https://iptv.example.com/…', epgHint: 'https://iptv.example.com/…', channelCount: 412, pendingGroups: 2, position: 0,
+        state: ltvState({ lastRefreshAt: today(6, 12), lastOkAt: today(6, 12), counts: { channels: 412, added: 3, removed: 1 }, epg: { lastRefreshAt: today(6, 12), lastOkAt: today(6, 12), lastError: null, programmes: 6812 } }),
+      }),
+      ltvSource({ id: 'src-feeds', kind: 'feeds', name: 'Eigene Streams', refresh: 'manual', channelCount: 2, position: 1 }),
+    ],
+    feeds: [
+      { id: 'ch-hafen', sourceId: 'src-feeds', name: 'Hafenkanal', number: 801, streamKind: 'hls', ingest: null },
+      { id: 'ch-wolkenlos', sourceId: 'src-feeds', name: 'Kanal Wolkenlos', number: 802, streamKind: 'srt', push: { port: 9001, hint: 'ff-QW7RT5' }, ingest: { state: 'receiving', rejected1h: 2 } },
+    ],
+    // Task 25: five released groups (Kinderinsel + Natur & Tiere are kid-friendly: 11 + 12 = 23 channels), two the import left unreleased (matches the source card's "2 neue Gruppen")
+    groups: [
+      ltvGroup({ id: 'g-sport', name: 'Sport', roles: ['family', 'friend'], position: 0, channels: 34, providerGroups: ['DE | Sport', 'DE | Sport HD'] }),
+      ltvGroup({ id: 'g-nachrichten', name: 'Nachrichten', roles: ['family', 'friend', 'guest'], position: 1, channels: 18, providerGroups: ['DE | News'] }),
+      ltvGroup({ id: 'g-kinder', name: 'Kinderinsel', kidFriendly: true, roles: ['family', 'friend'], position: 2, channels: 11, providerGroups: ['DE | Kids'] }),
+      ltvGroup({ id: 'g-natur', name: 'Natur & Tiere', kidFriendly: true, roles: ['family'], position: 3, channels: 12, providerGroups: ['DE | Doku Natur'] }),
+      ltvGroup({ id: 'g-regional', name: 'Regional', position: 4, channels: 9 }),
+      ltvGroup({ id: 'g-kino', name: 'Kinofilme', released: false, position: 5, channels: 41, providerGroups: ['DE | Cinema'] }),
+      ltvGroup({ id: 'g-musik', name: 'Musik & Konzert', released: false, position: 6, channels: 27, providerGroups: ['DE | Konzert', 'DE | Musik'] }),
+    ],
+    exceptions: {},
+    ports: Array.from({ length: 10 }, (_, i) => 9000 + i),
+    portsKnown: true,
+    host: 'friend.example.com',
+    test: { channels: 412, groups: LTV_GROUPS, samples: ['Nordlicht TV', 'Hafenkanal', 'Bergblick Sport', 'Kinderinsel', 'Sternwarte 24'], epgChannels: 398, epgError: null },
+    refreshPolls: 1,
+    refreshOutcome: { counts: { channels: 415, added: 3, removed: 0 } },
+    refreshing: {},
+    ingestFails: false,
+    testBusy: false,
+    synced: true,
+    channels: ltvChannels(),
+    chQueries: [],
+    chTest: { ok: true },
+    chTestBusy: false,
+    logoPuts: [],
+    calls: [],
+    seq: 0,
+  };
+}
+/** the backend's maskUrl (Task 15): scheme + host + "/…", never a path, query or credentials */
+const maskUrl = (raw: string): string => { const u = new URL(raw); return `${u.protocol}//${u.host}/…`; };
 export interface MatrixMockRole {
   key: string; label: string | null; builtinLabel: boolean; base: 'family' | 'friend' | 'guest' | 'admin'; origin: 'code' | 'env' | 'admin'; invitable: boolean;
   /** false = an env-only role: not in the roles table (the order write ignores its key) */
@@ -317,7 +478,7 @@ const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemI
 export function livetvMock(): LivetvMock {
   return {
     installed: false, wanted: false, offerHidden: false, updater: true, stack: 'own', ltState: 'absent', ltError: null, ltOld: false, updaterError: null, job: null, tick: 0, jobPolls: 2, outcome: 'succeeded', failCode: null,
-    benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, offLag: 2, lagLeft: 0, lagTo: true, gets: 0, posts: [],
+    benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, offLag: 2, lagLeft: 0, lagTo: true, gets: 0, posts: [], area: livetvAreaMock(), status: ltvStatusMock(),
   };
 }
 
@@ -650,7 +811,7 @@ function livetvState(lt: LivetvMock) {
     gpu: { jellyfin: lt.installed ? 'qsv' : null, livetv: lt.installed ? { driver: 'iHD', devices: 1 } : null, advice: lt.installed ? lt.advice : null },
   };
 }
-function livetvRoute(lt: LivetvMock, m: string, p: string, body: any, J: Reply): Promise<void> | null {
+function livetvRoute(lt: LivetvMock, m: string, p: string, sp: URLSearchParams, body: any, J: Reply): Promise<void> | null {
   if (p === '/api/admin/livetv/state' && m === 'GET') return J(livetvState(lt));
   if ((p === '/api/admin/livetv/enable' || p === '/api/admin/livetv/disable') && m === 'POST') {
     const path = p.endsWith('enable') ? 'enable' : 'disable';
@@ -668,7 +829,279 @@ function livetvRoute(lt: LivetvMock, m: string, p: string, body: any, J: Reply):
     if (path === 'enable') lt.wanted = true; else lt.wanted = false;
     return J({ job: lt.job, wanted: path === 'enable' }, 202);
   }
+  return ltvStatusRoute(lt.status, m, p, J) ?? livetvAreaRoute(lt.area, lt.installed, m, p, sp, body, J);
+}
+
+/**
+ * The *Quellen* tab's routes, as the plan's contracts declare them: sources CRUD + test (Task 15), refresh 202 with the result through
+ * GET (Task 16, spec §10), own feeds with the one-time push answer, ports and ingest state (Task 20).
+ */
+function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: string, sp: URLSearchParams, body: any, J: Reply): Promise<void> | null {
+  let mm: RegExpMatchArray | null;
+  if (m !== 'GET') a.calls.push({ m, p, body });
+  const inRange = (port: number) => !a.portsKnown || a.ports.includes(port);
+  const feedView = (f: LtvFeedMock) => ({
+    id: f.id, name: f.name, number: f.number, groupId: null, sourceId: f.sourceId, streamKind: f.streamKind, ingest: f.push ? 'push' : 'pull',
+    ...(f.push ? { push: { port: f.push.port, hint: f.push.hint, portInRange: inRange(f.push.port) } } : {}),
+  });
+  const httpUrl = (v: unknown) => { try { const u = new URL(String(v)); return u.protocol === 'http:' || u.protocol === 'https:' ? u : null; } catch { return null; } };
+  const nowIso = () => new Date().toISOString();
+  /** `checkSourceUrl` refuses single-label hosts (`http://backend/list`, `localhost`) with `refused` */
+  const singleLabel = (u: URL) => !u.hostname.includes('.') && !u.hostname.includes(':');
+
+  if (p === '/api/admin/livetv/sources' && m === 'GET') {
+    for (const [id, left] of Object.entries(a.refreshing)) {
+      if (left > 1) { a.refreshing[id] = left - 1; continue; }
+      delete a.refreshing[id];
+      const s = a.sources.find((x) => x.id === id);
+      if (!s) continue;
+      const at = nowIso(), o = a.refreshOutcome;
+      if ('error' in o) s.state = { ...s.state, lastRefreshAt: at, lastError: o.error };
+      else { s.state = { ...s.state, lastRefreshAt: at, lastOkAt: at, lastError: null, counts: o.counts }; s.channelCount = o.counts.channels; }
+    }
+    return J(a.sources); // a bare array (backend adminRoutes.ts → listSources)
+  }
+  if (p === '/api/admin/livetv/sources/test' && m === 'POST') {
+    if (a.testBusy) { a.testBusy = false; return J({ error: 'test_running' }, 409); }
+    for (const field of ['url', 'epgUrl'] as const) {
+      if (body?.[field] === undefined || (field === 'epgUrl' && (body.epgUrl === null || body.epgUrl === ''))) continue; // null / '' = no guide
+      const u = httpUrl(body[field]);
+      if (!u) return J({ error: 'invalid', field }, 400);
+      if (singleLabel(u)) return J({ error: 'refused', field }, 400);
+    }
+    if (body?.url === undefined && !body?.sourceId) return J({ error: 'invalid', field: 'url' }, 400);
+    // livetv's refusals answer 422 { error }, an unreached livetv 503 livetv_unreachable (Task 15 as built)
+    return 'error' in a.test ? J({ error: a.test.error }, a.test.status ?? 422) : J(a.test);
+  }
+  if (p === '/api/admin/livetv/sources' && m === 'POST') {
+    const u = httpUrl(body?.url);
+    if (!u) return J({ error: 'invalid', field: 'url' }, 400);
+    if (singleLabel(u)) return J({ error: 'refused', field: 'url' }, 400);
+    if (typeof body?.name !== 'string' || !body.name.trim()) return J({ error: 'invalid', field: 'name' }, 400);
+    const s = ltvSource({
+      id: `src-${++a.seq}`, kind: 'm3u', name: body.name, urlHint: maskUrl(u.href), epgHint: body.epgUrl ? maskUrl(body.epgUrl) : null, userAgent: body.userAgent ?? null,
+      allowLan: Boolean(body.allowLan), refresh: body.refresh ?? '24h', skipGroups: body.skipGroups ?? [], numbering: body.numbering ?? 'chno', numberBase: body.numberBase ?? 1, logoPref: body.logoPref ?? 'm3u',
+      epgShiftMin: body.epgShiftMin ?? 0, maxStreams: body.maxStreams ?? null, position: a.sources.length,
+    });
+    a.sources.push(s);
+    return J(s, 201);
+  }
+  if ((mm = p.match(/^\/api\/admin\/livetv\/sources\/([^/]+)(\/refresh)?$/))) {
+    const s = a.sources.find((x) => x.id === mm![1]);
+    if (!s) return J({ error: 'not_found' }, 404);
+    if (mm[2] && m === 'POST') {
+      // Task 16 (livetv16 af2c8fc4): own feeds have no list, nothing loads while livetv is not installed, a running one is not restarted
+      if (s.kind === 'feeds') return J({ error: 'no_list' }, 409);
+      if (!installed) return J({ error: 'livetv_off' }, 409);
+      if (a.refreshing[s.id]) return J({ started: false }, 202);
+      a.refreshing[s.id] = a.refreshPolls;
+      return J({ started: true }, 202);
+    }
+    if (!mm[2] && m === 'PATCH') {
+      const b = body ?? {};
+      if (b.url !== undefined) { const u = httpUrl(b.url); if (!u) return J({ error: 'invalid', field: 'url' }, 400); s.urlHint = maskUrl(u.href); }
+      if (b.epgUrl === null || b.epgUrl === '') s.epgHint = null; else if (b.epgUrl !== undefined) s.epgHint = maskUrl(b.epgUrl);
+      for (const k of ['name', 'userAgent', 'allowLan', 'refresh', 'skipGroups', 'numbering', 'numberBase', 'logoPref', 'epgShiftMin', 'maxStreams', 'enabled'] as const) {
+        if (b[k] !== undefined) (s as any)[k] = b[k];
+      }
+      return J(s);
+    }
+    if (!mm[2] && m === 'DELETE') {
+      a.sources = a.sources.filter((x) => x.id !== s.id);
+      return J({ channels: s.channelCount });
+    }
+  }
+  const kanaele = channelsRoute(a, m, p, sp, body, J);
+  if (kanaele) return kanaele;
+  if (p === '/api/admin/livetv/channels' && m === 'GET') {
+    const rows = a.feeds.filter((f) => f.sourceId === sp.get('source'));
+    return J({ channels: rows.map(feedView), total: rows.length });
+  }
+  if (p === '/api/admin/livetv/ingest' && m === 'GET') {
+    // backend ownfeeds.ts ingestView: out of range first, then livetv not reached / range unknown, then livetv's own word
+    const feeds = a.feeds.filter((f) => f.push).map((f) => {
+      const active = !f.hidden && a.sources.find((x) => x.id === f.sourceId)?.enabled !== false;
+      const state = !active ? 'off' : a.portsKnown && !a.ports.includes(f.push!.port) ? 'out_of_range' : a.ingestFails || !a.portsKnown ? 'error' : f.ingest?.state ?? 'pending';
+      return { channelId: f.id, state, rejected1h: a.ingestFails ? 0 : f.ingest?.rejected1h ?? 0 };
+    });
+    const ports = a.portsKnown && a.ports.length ? { from: Math.min(...a.ports), to: Math.max(...a.ports) } : null;
+    return J({ host: a.host, ports, feeds });
+  }
+  if (p === '/api/admin/livetv/channels' && m === 'POST') {
+    const b = body ?? {};
+    if (typeof b.name !== 'string' || !b.name.trim()) return J({ error: 'invalid', field: 'name' }, 400);
+    let feeds = a.sources.find((x) => x.kind === 'feeds');
+    const port = b.ingest === 'push' ? a.ports.find((pt) => !a.feeds.some((f) => f.push?.port === pt)) : undefined;
+    if (b.ingest === 'push' && port === undefined) return J({ error: 'srt_ports_full', n: a.ports.length }, 409);
+    let found: 'hls' | 'ts' | 'srt' = 'srt';
+    if (b.ingest === 'pull') {
+      let u: URL;
+      try { u = new URL(b.url); if (!['http:', 'https:', 'srt:'].includes(u.protocol)) throw new Error('scheme'); } catch { return J({ error: 'invalid', field: 'url' }, 400); }
+      if (singleLabel(u)) return J({ error: 'refused', field: 'url' }, 400);
+      found = u.protocol === 'srt:' ? 'srt' : /\.ts$/i.test(u.pathname) ? 'ts' : 'hls';
+      if (b.kind !== undefined && (b.kind === 'srt') !== (found === 'srt')) return J({ error: 'invalid', field: 'kind' }, 400);
+    }
+    if (!feeds) { feeds = ltvSource({ id: `src-${++a.seq}`, kind: 'feeds', name: 'Eigene Streams', refresh: 'manual', position: a.sources.length }); a.sources.push(feeds); }
+    const id = `ch-${++a.seq}`;
+    const f: LtvFeedMock = b.ingest === 'push'
+      ? { id, sourceId: feeds.id, name: b.name, number: b.number ?? null, streamKind: 'srt', push: { port: port!, hint: 'ff-AB12CD' }, ingest: { state: 'idle', rejected1h: 0 } }
+      : { id, sourceId: feeds.id, name: b.name, number: b.number ?? null, streamKind: b.kind ?? found, ingest: null };
+    a.feeds.push(f);
+    feeds.channelCount = a.feeds.filter((x) => x.sourceId === feeds!.id).length;
+    return J({ channel: feedView(f), ...(f.push ? { push: pushAnswer(a, f.push.port) } : {}), synced: f.push ? a.synced : true }, 201);
+  }
+  if ((mm = p.match(/^\/api\/admin\/livetv\/channels\/([^/]+)(\/push-credentials|\/push-port)?$/))) {
+    const f = a.feeds.find((x) => x.id === mm![1]);
+    if (!f) return J({ error: 'not_found' }, 404);
+    if (mm[2] === '/push-credentials' && m === 'POST') return f.push ? J({ channel: feedView(f), push: pushAnswer(a, f.push.port), synced: a.synced }) : J({ error: 'not_push' }, 409);
+    if (mm[2] === '/push-port' && m === 'POST') {
+      const port = a.ports.find((pt) => !a.feeds.some((x) => x.push?.port === pt));
+      if (!f.push) return J({ error: 'not_push' }, 409);
+      if (inRange(f.push.port)) return J({ error: 'port_in_range' }, 409); // a working encoder is never cut off
+      if (port === undefined) return J({ error: 'srt_ports_full', n: a.ports.length }, 409);
+      f.push = { ...f.push, port };
+      return J({ port, synced: a.synced });
+    }
+    if (!mm[2] && m === 'DELETE') { a.feeds = a.feeds.filter((x) => x.id !== f.id); return J({ ok: true, synced: f.push ? a.synced : true }); }
+  }
   return null;
+}
+/** the programme "now" of a channel at its effective offset: Nordlicht TV has one at +1 h and another at +1,5 h, nothing at other offsets */
+function ltvNow(c: LtvChanMock, min: number): { title: string; start: string; end: string } | null {
+  if (c.id !== 'ch-1') return null;
+  const at = (h: number, m: number) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
+  if (min === 60) return { title: 'Wetter am Hafen', start: at(19, 45), end: at(20, 15) };
+  if (min === 90) return { title: 'Die Leuchtturmwärter', start: at(20, 15), end: at(21, 0) };
+  return null;
+}
+/** one channel as `AdminChannel` (backend adminChannels.ts toAdmin) */
+function ltvChanView(a: LivetvAreaMock, c: LtvChanMock) {
+  const overridden: Record<string, unknown> = {};
+  if (c.nameOv !== null) overridden.name = c.importName;
+  if (c.numberOv !== null) overridden.number = c.importNumber;
+  if (c.groupOv !== null) overridden.group = c.importGroup;
+  if (c.logoOv) overridden.logo = true;
+  const shift = c.shiftOv !== null ? { min: c.shiftOv, from: 'channel' } : c.base;
+  const number = c.numberOv ?? c.importNumber;
+  return {
+    id: c.id, number, name: c.nameOv ?? c.importName, groupId: c.groupOv ?? c.importGroup, sourceId: c.sourceId, streamKind: c.streamKind, ingest: c.ingest,
+    logoHash: c.logoHash, hidden: c.hidden, missing: c.missing, epg: c.epg, now: c.epg ? ltvNow(c, shift.min) : null, mode: c.probeError ? null : c.mode, probeError: c.probeError,
+    overridden, dupNumber: !c.missing && number !== null && a.channels.some((o) => o !== c && !o.missing && (o.numberOv ?? o.importNumber) === number), epgShift: shift,
+    ...(c.push ? { push: { port: c.push.port, hint: c.push.hint, portInRange: a.ports.includes(c.push.port) } } : {}),
+  };
+}
+const LTV_FACTS = { video: { codec: 'h264', width: 1920, height: 1080, fps: 25 }, audio: { codec: 'aac', channels: 2 }, needs: 'remux' } as const;
+/**
+ * The *Kanäle* tab's routes (Task 19 as built: list with filters and 100-row pages, one channel, PATCH answering the channel, bulk, the
+ * stream test with its one-flight 409, the raw logo upload). `limit=200` is the own-feeds card's list and stays with it.
+ */
+function channelsRoute(a: LivetvAreaMock, m: string, p: string, sp: URLSearchParams, body: any, J: Reply): Promise<void> | null {
+  const byId = (id: string | undefined) => a.channels.find((c) => c.id === id);
+  if (p === '/api/admin/livetv/channels' && m === 'GET' && sp.get('limit') !== '200') {
+    a.chQueries.push(sp.toString());
+    const q = (sp.get('q') ?? '').trim().toLowerCase();
+    let rows = a.channels.filter((c) => {
+      const v = ltvChanView(a, c);
+      if (q && !(v.name.toLowerCase().includes(q) || String(v.number) === q)) return false;
+      if (sp.get('source') && c.sourceId !== sp.get('source')) return false;
+      const g = sp.get('group');
+      if (g === 'none' ? v.groupId !== null : g && v.groupId !== g) return false;
+      const st = sp.get('state');
+      if (st === 'visible' && (c.hidden || c.missing)) return false;
+      if (st === 'hidden' && (!c.hidden || c.missing)) return false;
+      if (st === 'missing' && !c.missing) return false;
+      if (sp.get('epg') === 'yes' && !c.epg) return false;
+      if (sp.get('epg') === 'no' && c.epg) return false;
+      if (sp.get('error') === '1' && c.probeError === null) return false;
+      return true;
+    }).map((c) => ltvChanView(a, c));
+    const dir = sp.get('dir') === 'desc' ? -1 : 1;
+    const key = sp.get('sort') ?? 'number';
+    rows = rows.sort((x, y) => dir * (key === 'name' ? x.name.localeCompare(y.name) : key === 'source' ? x.sourceId.localeCompare(y.sourceId) || (x.number ?? 0) - (y.number ?? 0) : (x.number ?? 1e9) - (y.number ?? 1e9)));
+    const offset = Number(sp.get('offset') ?? 0), limit = Number(sp.get('limit') ?? 100);
+    return J({ channels: rows.slice(offset, offset + limit), total: rows.length });
+  }
+  if (p === '/api/admin/livetv/channels/bulk' && m === 'POST') {
+    const ids: string[] = Array.isArray(body?.ids) ? body.ids : [];
+    const rows = ids.map(byId).filter((c): c is LtvChanMock => Boolean(c));
+    if (!ids.length || !['hide', 'show', 'group', 'renumber', 'reset', 'test'].includes(body?.action)) return J({ error: 'invalid', field: 'action' }, 400);
+    if (body.action === 'test') {
+      if (new Set(ids).size > 20) return J({ error: 'invalid', field: 'ids' }, 400);
+      if (a.chTestBusy) { a.chTestBusy = false; return J({ error: 'test_running' }, 409); }
+      return J({ results: rows.map((c) => {
+        const ok = !('status' in a.chTest) && a.chTest.ok;
+        if (ok) { c.mode = 'remux'; c.probeError = null; return { id: c.id, ok: true, needs: 'remux' }; }
+        c.mode = null; c.probeError = 'error' in a.chTest ? a.chTest.error : 'timeout';
+        return { id: c.id, ok: false, error: c.probeError };
+      }) });
+    }
+    if (body.action === 'group' && body.groupId !== null && !(body.groupId in LTV_GROUP_NAMES)) return J({ error: 'invalid', field: 'groupId' }, 400);
+    if (body.action === 'renumber') {
+      if (!Number.isInteger(body.from) || body.from < 1) return J({ error: 'invalid', field: 'from' }, 400);
+      rows.sort((x, y) => (x.numberOv ?? x.importNumber ?? 1e9) - (y.numberOv ?? y.importNumber ?? 1e9) || (x.nameOv ?? x.importName).localeCompare(y.nameOv ?? y.importName)).forEach((c, i) => { c.numberOv = body.from + i; });
+    }
+    for (const c of rows) {
+      if (body.action === 'hide') c.hidden = true;
+      else if (body.action === 'show') c.hidden = false;
+      else if (body.action === 'group') c.groupOv = body.groupId;
+      else if (body.action === 'reset') { c.nameOv = c.numberOv = c.groupOv = c.shiftOv = null; c.logoOv = false; c.epgOff = false; }
+    }
+    return J({ changed: rows.length });
+  }
+  // *Reihenfolge* → Speichern (Task 19 orderChannels): consecutive numbers in the given order, from the smallest number of the set
+  if (p === '/api/admin/livetv/channels/order' && m === 'PUT') {
+    const ids: unknown = body?.ids;
+    if (!Array.isArray(ids) || !ids.length || ids.some((i) => typeof i !== 'string') || new Set(ids).size !== ids.length) return J({ error: 'invalid', field: 'ids' }, 400);
+    const rows = (ids as string[]).map(byId);
+    if (rows.some((c) => !c)) return J({ error: 'invalid', field: 'ids' }, 400);
+    const have = (rows as LtvChanMock[]).map((c) => c.numberOv ?? c.importNumber).filter((n): n is number => n !== null);
+    const from = have.length ? Math.min(...have) : 1;
+    (rows as LtvChanMock[]).forEach((c, i) => { c.numberOv = from + i; });
+    return J({ from });
+  }
+  const mm = p.match(/^\/api\/admin\/livetv\/channels\/([^/]+?)(\/test|\/logo)?$/);
+  const c = mm ? byId(mm[1]) : undefined;
+  if (!mm || !c || mm[1] === 'bulk' || mm[1] === 'order') return null;
+  if (!mm[2] && m === 'GET') return J(ltvChanView(a, c));
+  if (!mm[2] && m === 'PATCH') {
+    const b = body ?? {};
+    const bad = (field: string) => J({ error: 'invalid', field }, 400);
+    for (const k of Object.keys(b)) if (!['name', 'number', 'groupId', 'hidden', 'epg', 'epgShiftMin'].includes(k)) return bad(k);
+    if ('name' in b && b.name !== null && !(typeof b.name === 'string' && b.name.trim().length >= 1 && b.name.trim().length <= 60)) return bad('name');
+    if ('groupId' in b && b.groupId !== null && !(b.groupId in LTV_GROUP_NAMES)) return bad('groupId');
+    if ('epgShiftMin' in b && b.epgShiftMin !== null && !(Number.isInteger(b.epgShiftMin) && b.epgShiftMin % 30 === 0 && b.epgShiftMin >= -720 && b.epgShiftMin <= 840)) return bad('epgShiftMin');
+    if ('name' in b) c.nameOv = b.name === null ? null : b.name.trim();
+    if ('number' in b) c.numberOv = b.number;
+    if ('groupId' in b) c.groupOv = b.groupId;
+    if ('hidden' in b) c.hidden = b.hidden;
+    if ('epg' in b) c.epgOff = b.epg === false;
+    if ('epgShiftMin' in b) c.shiftOv = b.epgShiftMin;
+    return J(ltvChanView(a, c));
+  }
+  if (mm[2] === '/test' && m === 'POST') {
+    if (a.chTestBusy) { a.chTestBusy = false; return J({ error: 'test_running' }, 409); }
+    const t = a.chTest;
+    if ('status' in t) return J({ error: t.error }, t.status);
+    if (!t.ok) { c.mode = null; c.probeError = t.error; return J({ ok: false, video: null, audio: null, needs: null, error: t.error }); }
+    c.mode = 'remux'; c.probeError = null;
+    return J({ ok: true, ...LTV_FACTS });
+  }
+  if (mm[2] === '/logo' && m === 'PUT') {
+    const up = body as { contentType: string; bytes: number };
+    a.logoPuts.push({ id: c.id, type: up.contentType, bytes: up.bytes });
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(up.contentType)) return J({ error: 'unsupported_type' }, 415);
+    if (up.bytes > 512 * 1024) return J({ error: 'too_large' }, 413);
+    c.logoHash = 'b'.repeat(64); c.logoOv = true;
+    return J(ltvChanView(a, c));
+  }
+  if (mm[2] === '/logo' && m === 'DELETE') { c.logoOv = false; c.logoHash = c.id === 'ch-1' ? 'a'.repeat(64) : null; return J(ltvChanView(a, c)); }
+  return null;
+}
+/** the one-time push answer (Task 20): stream id "ff-" + 16 characters, a 32-character passphrase, the full SRT URL */
+function pushAnswer(a: LivetvAreaMock, port: number) {
+  const streamId = 'ff-AB12CDEFGH2345JK', passphrase = 'Zq3xV9mB2nK7pL4wR8tY6uH1jG5fD0sA';
+  // no host (neither LIVETV_SRT_HOST nor PUBLIC_URL known): no URL either
+  return { host: a.host, port, streamId, passphrase, url: a.host ? `srt://${a.host}:${port}?streamid=${streamId}&passphrase=${passphrase}&pbkeylen=32&mode=caller&latency=200000` : null };
 }
 
 // ---- Task 22: audit samples of `user.rights` (backend userRights.ts: `{ from, to, layer?, stored?, note? }`) and a role.delete with its label ----
@@ -676,6 +1109,99 @@ function livetvRoute(lt: LivetvMock, m: string, p: string, body: any, J: Reply):
  * newest first; `user` is the person the entries are about, `actor` the admin. As the backend writes them (rights.ts diffRights): a changed value
  * has no `layer`; `layer` appears only when the value stayed and the deciding layer moved (sample 9002).
  */
+/** the groups in the backend's list order: unreleased first, then by position */
+const ltvSorted = (a: LivetvAreaMock) => [...a.groups].sort((x, y) => Number(x.released) - Number(y.released) || x.position - y.position || x.name.localeCompare(y.name));
+/** a person's exceptions as the backend's `userGroups` answers them (id + name, in group order) */
+function ltvExceptionsOf(a: LivetvAreaMock, userId: string) {
+  const e = a.exceptions[userId] ?? { allow: [], deny: [] };
+  const ref = (ids: string[]) => ltvSorted(a).filter((g) => ids.includes(g.id)).map((g) => ({ id: g.id, name: g.name }));
+  return { allow: ref(e.allow), deny: ref(e.deny) };
+}
+/**
+ * The channel groups routes (backend livetv/adminRoutes.ts, groups.ts; Task 18). Every write is recorded in `area.calls`; refusals as the
+ * backend has them: 400 { error: 'invalid', field }, 404 not_found, 409 name_taken. A role that is not stored (an env-only one) and an
+ * unknown one are `400 invalid roles`.
+ */
+function ltvGroupsRoute(st: AdminState, m: string, p: string, body: any, J: Reply): Promise<void> | null {
+  const a = st.livetv.area;
+  if (m !== 'GET') a.calls.push({ m, p, body });
+  const catalogue = st.matrix.roles.map((r) => r.key);
+  const view = (g: LtvGroupMock) => ({ ...g, roles: catalogue.filter((k) => g.roles.includes(k)) });
+  const bad = (field: string) => J({ error: 'invalid', field }, 400);
+  const rolesOk = (rs: unknown): rs is string[] => Array.isArray(rs) && rs.every((k) => st.matrix.roles.some((r) => r.key === k && r.stored));
+  const nameOk = (n: unknown): n is string => typeof n === 'string' && n.trim().length >= 1 && n.trim().length <= 40;
+  const taken = (n: string, except?: string) => a.groups.some((g) => g.id !== except && g.name.toLowerCase() === n.trim().toLowerCase());
+  const known = (ids: unknown): ids is string[] => Array.isArray(ids) && ids.every((i) => typeof i === 'string' && a.groups.some((g) => g.id === i));
+  const strict = (b: any, keys: string[]) => typeof b === 'object' && b !== null && Object.keys(b).every((k) => keys.includes(k));
+  let mm: RegExpMatchArray | null;
+
+  if (p === '/api/admin/livetv/groups' && m === 'GET') return J({ groups: ltvSorted(a).map(view), pending: a.groups.filter((g) => !g.released).length });
+  if (p === '/api/admin/livetv/groups' && m === 'POST') {
+    if (!strict(body, ['name', 'kidFriendly', 'roles', 'released']) || !nameOk(body?.name)) return bad('name');
+    if (body.roles !== undefined && !rolesOk(body.roles)) return bad('roles');
+    if (taken(body.name)) return J({ error: 'name_taken' }, 409);
+    const g = ltvGroup({ id: `g-new-${++a.seq}`, name: body.name.trim(), kidFriendly: body.kidFriendly === true, roles: [...new Set<string>(body.roles ?? [])], released: body.released ?? true, position: Math.max(-1, ...a.groups.map((x) => x.position)) + 1, channels: 0 });
+    a.groups.push(g);
+    return J(view(g), 201);
+  }
+  if (p === '/api/admin/livetv/groups/release' && m === 'POST') {
+    if (!strict(body, ['ids', 'roles', 'kidFriendly']) || !Array.isArray(body?.ids) || !body.ids.length || typeof body.kidFriendly !== 'boolean') return bad('body');
+    if (!rolesOk(body.roles)) return bad('roles');
+    const hit = a.groups.filter((g) => body.ids.includes(g.id));
+    for (const g of hit) Object.assign(g, { released: true, kidFriendly: body.kidFriendly, roles: [...new Set<string>(body.roles)] });
+    return J({ released: hit.length });
+  }
+  if (p === '/api/admin/livetv/groups/order' && m === 'PUT') {
+    if (!strict(body, ['ids']) || !Array.isArray(body?.ids)) return bad('ids');
+    const rest = ltvSorted(a).filter((g) => !body.ids.includes(g.id)).map((g) => g.id);
+    [...body.ids, ...rest].forEach((id: string, i: number) => { const g = a.groups.find((x) => x.id === id); if (g) g.position = i; });
+    return J({ ok: true });
+  }
+  if (p === '/api/admin/livetv/groups/merge' && m === 'POST') {
+    if (!strict(body, ['ids', 'into']) || !Array.isArray(body?.ids) || !body.ids.length || typeof body.into !== 'string') return bad('body');
+    const into = a.groups.find((g) => g.id === body.into);
+    const ids: string[] = body.ids.filter((i: string) => i !== body.into);
+    if (!ids.length || !known(ids)) return bad('ids');
+    if (!into) return J({ error: 'not_found' }, 404);
+    for (const g of a.groups.filter((x) => ids.includes(x.id))) { into.providerGroups = [...new Set([...into.providerGroups, ...g.providerGroups])].sort(); into.channels += g.channels; }
+    a.groups = a.groups.filter((g) => !ids.includes(g.id));
+    for (const e of Object.values(a.exceptions)) { e.allow = e.allow.filter((i) => !ids.includes(i)); e.deny = e.deny.filter((i) => !ids.includes(i)); }
+    return J(view(into));
+  }
+  if ((mm = p.match(/^\/api\/admin\/livetv\/groups\/([^/]+)$/))) {
+    const g = a.groups.find((x) => x.id === mm![1]);
+    if (m === 'GET') return g ? J(view(g)) : J({ error: 'not_found' }, 404);
+    if (!g) return J({ error: 'not_found' }, 404);
+    if (m === 'DELETE') {
+      a.groups = a.groups.filter((x) => x.id !== g.id);
+      for (const e of Object.values(a.exceptions)) { e.allow = e.allow.filter((i) => i !== g.id); e.deny = e.deny.filter((i) => i !== g.id); }
+      return J({ ok: true });
+    }
+    if (m === 'PATCH') {
+      if (!strict(body, ['name', 'kidFriendly', 'roles', 'released'])) return bad('body');
+      if (body.name !== undefined && !nameOk(body.name)) return bad('name');
+      if (body.roles !== undefined && !rolesOk(body.roles)) return bad('roles');
+      if (body.name !== undefined && taken(body.name, g.id)) return J({ error: 'name_taken' }, 409);
+      if (body.name !== undefined) g.name = body.name.trim();
+      if (body.kidFriendly !== undefined) g.kidFriendly = body.kidFriendly;
+      if (body.roles !== undefined) g.roles = [...new Set<string>(body.roles)];
+      if (body.released !== undefined) g.released = body.released;
+      return J(view(g));
+    }
+  }
+  return null;
+}
+/** `livetvCheck` (backend livetv/rights.ts): every group with whether the profile sees it and why not; null when Live TV is not installed or the account lacks `liveTv` */
+function ltvCheckMock(st: AdminState, u: AdminUser, p: DetailProfile) {
+  const a = st.livetv.area;
+  if (!st.livetv.installed || viewRows(st, u, p).find((r) => r.key === 'liveTv')?.value !== true) return null;
+  const ex = a.exceptions[u.id] ?? { allow: [], deny: [] };
+  const groups = ltvSorted(a).map((g) => {
+    const reason = !g.released ? 'notReleased' : p.kids && !g.kidFriendly ? 'notKidFriendly' : u.role === 'admin' ? null : ex.deny.includes(g.id) ? 'denied' : g.roles.includes(u.role) || ex.allow.includes(g.id) ? null : 'notGranted';
+    return { id: g.id, name: g.name, visible: reason === null, reason, channels: g.channels };
+  });
+  return { groups: groups.map(({ channels: _c, ...g }) => g), channels: groups.filter((g) => g.visible).reduce((n, g) => n + g.channels, 0) };
+}
 export function rightsAuditSamples(user: { id: string; name: string }, actor = 'Ben Muster'): AuditRow[] {
   const row = (id: number, minutes: number, action: string, meta: Record<string, unknown>): AuditRow => ({ id, at: new Date(Date.now() - minutes * 60000).toISOString(), action, target: user.id, meta, actor, target_name: user.name });
   return [
@@ -725,7 +1251,8 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       v2: { impressions: 0, clicks: 0, plays: 0, dismisses: 0, ctr: null, playRate: null },
     },
   });
-  if (p.startsWith('/api/admin/livetv/')) return livetvRoute(st.livetv, m, p, body, J);
+  if (p.startsWith('/api/admin/livetv/groups')) return ltvGroupsRoute(st, m, p, body, J);
+  if (p.startsWith('/api/admin/livetv/')) return livetvRoute(st.livetv, m, p, sp, body, J);
   if (p === '/api/admin/summary') return st.summaryFails ? J({ error: 'boom' }, 500) : J(adminSummary(st));
   if (p === '/api/admin/status') {
     const s = adminSummary(st);
@@ -763,6 +1290,18 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       if (m === 'PUT') { const to = { ...cur, ...body }; log('user.limits', u.id, { from: cur, to }, u.name); st.limits[u.id] = to; return J({ limits: to }); }
     }
     // ---- Sicht prüfen (backend viewcheck.ts, adminUsers.ts): the rights of one profile, its library counts and the title check ----
+    if (rest === '/livetv-groups' && m === 'PUT') {
+      // backend adminUsers.ts: the body is strict, an overlap is 400 invalid deny, an admin takes none, an unknown group is 400 invalid
+      const a = st.livetv.area, ids = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+      if (typeof body !== 'object' || body === null || Object.keys(body).some((k) => k !== 'allow' && k !== 'deny') || !ids(body.allow) || !ids(body.deny)) return J({ error: 'invalid', field: 'body' }, 400);
+      a.calls.push({ m, p, body });
+      if (body.allow.some((g: string) => body.deny.includes(g))) return J({ error: 'invalid', field: 'deny' }, 400);
+      if (u.role === 'admin' && (body.allow.length || body.deny.length)) return J({ error: 'admin_groups_locked' }, 400);
+      for (const k of ['allow', 'deny'] as const) if (body[k].some((g: string) => !a.groups.some((x) => x.id === g))) return J({ error: 'invalid', field: k }, 400);
+      log('user.livetv_groups', u.id, { allow: body.allow, deny: body.deny }, u.name);
+      a.exceptions[u.id] = { allow: [...new Set<string>(body.allow)], deny: [...new Set<string>(body.deny)] };
+      return J({ livetvGroups: ltvExceptionsOf(a, u.id) });
+    }
     if (rest === '/rights' && m === 'GET' && sp.has('profile')) return viewRights(st, u, sp.get('profile')!, J);
     if (rest === '/check' && (m === 'GET' || m === 'POST')) return viewCheck(st, u, m, m === 'GET' ? { profileId: sp.get('profile') } : body, J, log);
     // every matrix row of the account (backend userRights.ts rightsView): effective value, the role's value, the stored override (null = none; an admin's
@@ -776,7 +1315,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
         const rows = MATRIX_FIELDS_MOCK.map((f) => rowOf(f.key as string));
         const libs = rows.find((r) => r.key === 'libraries')!.value;
         const missing = Array.isArray(libs) ? libs.filter((n) => !st.matrix.libraries.some((l) => l.name.toLowerCase() === String(n).toLowerCase())) : [];
-        return J({ role: u.role, note: u.note ?? null, rows, profile: null, hardKids: [], missingLibraries: missing });
+        return J({ role: u.role, note: u.note ?? null, rows, profile: null, hardKids: [], missingLibraries: missing, livetvGroups: ltvExceptionsOf(st.livetv.area, u.id) });
       }
       if (m === 'PUT') {
         const o = (body?.overrides ?? {}) as Record<string, unknown>;
@@ -955,6 +1494,8 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
         roles: rows.map((r, position) => ({
           key: r.key, label: r.label, builtinLabel: r.builtinLabel, base: r.base, origin: r.origin, invitable: r.invitable, position,
           envGone: r.envGone, stored: r.stored, accounts: r.accounts, profiles: r.profiles, kidsProfiles: r.kidsProfiles, values: r.values, sources: r.sources, missingLibraries: r.missingLibraries,
+          // backend roleGroupNames: the released groups the role sees (the admin: all), in group order
+          livetvGroups: ltvSorted(st.livetv.area).filter((g) => g.released && (r.key === 'admin' || g.roles.includes(r.key))).sort((x, y) => x.position - y.position).map((g) => g.name),
           // the value without the role's own row (the backend's roleRights(ctx, key, null))
           defaults: Object.fromEntries(MATRIX_FIELDS_MOCK.map((f) => [f.key as string, inheritedValue(r, f.key as string)])),
         })),
@@ -1367,7 +1908,7 @@ function viewRights(st: AdminState, u: AdminUser, pid: string, J: Reply): Promis
   if (!pidOk(pid)) return J({ error: 'bad_request' }, 400);
   const p = profileOf(st, u, pid);
   if (!p) return J({ error: 'not_found' }, 404);
-  return J({ role: u.role, note: u.note ?? null, rows: viewRows(st, u, p), profile: { id: p.id, name: p.name, kids: p.kids, maxRating: kidsCap(p) }, hardKids: p.kids ? KIDS_OFF_MOCK : [], missingLibraries: [] });
+  return J({ role: u.role, note: u.note ?? null, rows: viewRows(st, u, p), profile: { id: p.id, name: p.name, kids: p.kids, maxRating: kidsCap(p) }, hardKids: p.kids ? KIDS_OFF_MOCK : [], missingLibraries: [], livetvGroups: ltvExceptionsOf(st.livetv.area, u.id) });
 }
 function viewCheck(st: AdminState, u: AdminUser, m: string, body: any, J: Reply, log: (a: string, t: string | null, meta?: Record<string, unknown>, n?: string | null) => void): Promise<void> {
   // the route's rate limit runs first: 30 a minute (fastify's 429 answer)
@@ -1389,7 +1930,7 @@ function viewCheck(st: AdminState, u: AdminUser, m: string, body: any, J: Reply,
     return J({ libraries: st.matrix.libraries.map((l) => {
       const t = VIEW_TOTALS[l.name] ?? { total: 10, seen: { none: 10, '12': 10, '6': 10, '0': 10 } }, vis = shared(l.name);
       return { id: l.id, name: l.name, visible: vis, seen: vis ? t.seen[cap === null ? 'none' : String(cap)] ?? t.total : null, total: t.total };
-    }) });
+    }), livetv: ltvCheckMock(st, u, p) });
   }
   // exactly one of query (2-100 characters) and itemId (32 hex)
   const q = typeof body.query === 'string' ? body.query.trim() : undefined, id = body.itemId;

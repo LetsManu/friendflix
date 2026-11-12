@@ -8,7 +8,7 @@ const settings: Translation<typeof de> = {
   loadFailed: 'Impossibile caricare le impostazioni.',
   groups: {
     general: 'Generale', signin: 'Accesso', media: 'Media server', requests: 'Richieste', notifications: 'Notifiche', push: 'Notifiche push',
-    sources: 'Fonti di dati', downloads: 'Download', playback: 'Riproduzione', recommendations: 'Consigli', updates: 'Aggiornamenti', health: 'Stato del sistema', sessions: 'Sessioni', server: 'Server',
+    sources: 'Fonti di dati', downloads: 'Download', playback: 'Riproduzione', livetv: 'TV in diretta', recommendations: 'Consigli', updates: 'Aggiornamenti', health: 'Stato del sistema', sessions: 'Sessioni', server: 'Server',
   },
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Le modifiche valgono subito, senza riavvio. La regolazione fine per esperti (RECO_COEFFS e i pesi dell’indice RECO_W_*) si imposta solo nel file .env.' },
@@ -77,6 +77,7 @@ const settings: Translation<typeof de> = {
     invalid_number: 'Inserisci un numero.',
     invalid_option: 'Scegli uno dei valori proposti.',
     invalid_cidr: 'Inserisci reti come 192.168.0.0/16, separate da virgole.',
+    invalid_host: 'Solo un nome host o un indirizzo IP, senza schema né porta.',
     invalid_json: 'JSON non valido.',
     too_small: 'Il valore è troppo piccolo.',
     too_big: 'Il valore è troppo grande.',
@@ -109,7 +110,7 @@ const settings: Translation<typeof de> = {
     PLEX_URL: { invalid_url: 'Inserisci solo l’indirizzo del server: che inizi con http:// o https://, senza nome utente e password e senza nulla dopo ? o #. Il token va nel campo Token Plex.' },
   },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
-  options: { auto: 'Automatico', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (modello dei gusti proprio)', shadow: 'Shadow (v2 accanto a v1)' }, UPDATE_CHANNEL: { stable: 'Stabile', nightly: 'Nightly', pinned: 'Versione fissa' }, AUTO_UPDATE: { off: 'Disattivati', 'nightly-window': 'Finestra notturna' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatico', off: 'Disattivato' } },
+  options: { auto: 'Automatico', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (modello dei gusti proprio)', shadow: 'Shadow (v2 accanto a v1)' }, UPDATE_CHANNEL: { stable: 'Stabile', nightly: 'Nightly', pinned: 'Versione fissa' }, AUTO_UPDATE: { off: 'Disattivati', 'nightly-window': 'Finestra notturna' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatico', off: 'Disattivato' }, LIVETV_ENCODER: { auto: 'Automatico', qsv: 'Intel Quick Sync (QSV)', vaapi: 'VA-API', nvenc: 'NVIDIA NVENC', software: 'Software (processore)' } },
   keys: {
     PUBLIC_URL: { label: 'Indirizzo pubblico', help: 'L’indirizzo con cui tutti raggiungono FriendFlix, ad es. https://friend.example.com. Link, accesso e streaming si basano su di esso.' },
     WEBHOOK_SECRET: { label: 'Segreto webhook', help: 'Segreto condiviso per i webhook del media server e del servizio richieste.' },
@@ -166,6 +167,8 @@ const settings: Translation<typeof de> = {
     CONVERSION_SLOTS: { label: 'Conversioni contemporanee', help: 'Quanti video il server può convertire contemporaneamente: film e serie, TV in diretta, registrazioni e download insieme. Vuoto = automatico (FriendFlix misura il server e sceglie il valore). Più facile da impostare in Gestione → Test di riproduzione.' },
     CONVERSION_PRIORITY: { label: 'Priorità delle conversioni', help: 'Chi passa per primo quando i posti scarseggiano: film e serie, TV in diretta o pari priorità. Da 2 posti ne resta uno libero per la parte con la priorità; con «pari priorità» nessuno.' },
     SURROUND_AUDIO: { label: 'Audio surround', help: 'I dispositivi con uscita 5.1 (app TV, Android su un impianto audio, browser con uscita 5.1) ricevono la traccia surround del film o una sua conversione in 5.1. Tutti gli altri ricevono lo stereo. Disattivato = stereo per tutti.' },
+    LIVETV_ENCODER: { label: 'Encoder della TV in diretta', help: 'Con cosa la TV in diretta converte i canali che non si possono riprodurre così come sono. Automatico usa l’unità grafica usata da Jellyfin se la TV in diretta può raggiungerla, altrimenti VA-API, poi NVENC, altrimenti il processore. Vale dal prossimo avvio di un canale.' },
+    LIVETV_SRT_HOST: { label: 'Indirizzo per gli stream inviati', help: 'L’indirizzo del server mostrato dalla configurazione degli stream inviati (SRT): un nome host o un indirizzo IP, senza srt:// né porta. Vuoto = l’host dell’indirizzo pubblico. Se il nome pubblico passa da una CDN che non lascia passare UDP (ad es. Cloudflare con proxy), inserisci qui un nome solo DNS o l’IP pubblico.' },
     GITHUB_TOKEN: { label: 'Token GitHub', help: 'Facoltativo: limite di richieste più alto nella ricerca di nuove versioni.' },
     PORTAINER_WEBHOOK_URL: { label: 'Webhook dello stack Portainer', help: 'Indirizzo webhook dello stack per gli aggiornamenti con un clic. L’indirizzo stesso è la chiave.' },
     PORTAINER_URL: { label: 'Indirizzo di Portainer', help: 'Al posto del webhook: indirizzo di Portainer, con chiave API e ID dello stack.' },

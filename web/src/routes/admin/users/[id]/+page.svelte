@@ -273,7 +273,7 @@
     {:else if tab === 'downloads'}<Downloads licenses={d.licenses} profiles={d.profiles} on:changed={load} />
     {:else if tab === 'activity'}{#key u.id}<Activity userId={u.id} />{/key}
     {:else if tab === 'rights'}{#key `${u.id}:${u.role}`}<Rights userId={u.id} name={u.name} bind:dirty={rightsDirty} {loadRoles} />{/key}
-    {:else if tab === 'check'}{#key u.id}<CheckView userId={u.id} profiles={d.profiles} />{/key}
+    {:else if tab === 'check'}{#key u.id}<CheckView userId={u.id} profiles={d.profiles} role={rname(u.role)} />{/key}
     {:else if tab === 'audit'}{#key u.id}<Audit userId={u.id} {loadRoles} />{/key}
     {:else}<Overview userId={u.id} detail={d} on:changed={load} />{/if}
   </div>

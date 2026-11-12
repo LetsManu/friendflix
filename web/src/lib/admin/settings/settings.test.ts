@@ -11,7 +11,7 @@ import {
   submitValue, takePending,
 } from './form';
 
-/** every visible setting of the registry (spec Part A: 48, plus the nine of phase 3, plus UPDATE_CHANNEL, plus the four recommendation settings, plus the three updater settings, plus the server upload, plus HEVC_STREAMS and SURROUND_AUDIO, plus CONVERSION_SLOTS and CONVERSION_PRIORITY (also edited on Betrieb → Wiedergabe-Check), plus CAST_AIRPLAY_CONTINUOUS, plus LIVETV_OFFER_HIDDEN) */
+/** every visible setting of the registry (spec Part A: 48, plus the nine of phase 3, plus UPDATE_CHANNEL, plus the four recommendation settings, plus the three updater settings, plus the server upload, plus HEVC_STREAMS and SURROUND_AUDIO, plus CONVERSION_SLOTS and CONVERSION_PRIORITY (also edited on Betrieb → Wiedergabe-Check), plus CAST_AIRPLAY_CONTINUOUS, plus LIVETV_OFFER_HIDDEN, plus LIVETV_ENCODER and LIVETV_SRT_HOST (group livetv, listed while Live TV is installed)) */
 const KEYS = ['PUBLIC_URL', 'WEBHOOK_SECRET', 'API_COMPRESSION', 'OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET', 'ADMIN_GROUP', 'AUTHENTIK_URL',
   'AUTHENTIK_API_TOKEN', 'AUTHENTIK_ENROLL_FLOW', 'AUTHENTIK_RECOVERY_FLOW', 'AUTHENTIK_TOTP_SETUP_FLOW', 'JELLYFIN_URL', 'JELLYFIN_ADMIN_API_KEY', 'REQUESTS_URL',
   'REQUESTS_API_KEY', 'NTFY_URL', 'NTFY_BASE_URL', 'DISCORD_WEBHOOK_URL', 'VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'VAPID_SUBJECT', 'TMDB_API_KEY', 'OMDB_API_KEY',
@@ -22,7 +22,7 @@ const KEYS = ['PUBLIC_URL', 'WEBHOOK_SECRET', 'API_COMPRESSION', 'OIDC_ISSUER', 
   'HEALTH_DISK_CRIT_PCT', 'HEALTH_DB_WARN_GB', 'SESSION_TTL_SECONDS', 'SESSION_IDLE_SECONDS',
   'LOGIN_UI', 'AUTHENTIK_LOGIN_FLOW', 'AUTHENTIK_INVALIDATION_FLOW', 'PASSKEYS_IN_APP', 'LOGIN_COVER_WALL', 'LIVETV_OFFER_HIDDEN',
   'AUTHENTIK_STATIC_SETUP_FLOW', 'AUTHENTIK_WEBAUTHN_SETUP_FLOW', 'AUTHENTIK_PASSWORD_CHANGE_FLOW', 'AUTHENTIK_EMAIL_CHANGE_FLOW',
-  'RECO_ENGINE', 'RECO_EXPLORE', 'RECO_HALF_LIFE_DAYS', 'POSTPLAY_ENABLED'];
+  'RECO_ENGINE', 'RECO_EXPLORE', 'RECO_HALF_LIFE_DAYS', 'POSTPLAY_ENABLED', 'LIVETV_ENCODER', 'LIVETV_SRT_HOST'];
 
 const view = (over: Partial<SettingView> & Pick<SettingView, 'key' | 'kind'>): SettingView => ({
   source: 'db', value: null, set: false, apply: 'live', restartPending: false, invalid: false, envNames: [over.key, `${over.key}_FILE`], updatedAt: null, ...over,
@@ -39,7 +39,7 @@ describe('experimental settings', () => {
 
 describe('settings texts', () => {
   it('every visible setting has a label and a help text; the request service is never named after a product', async () => {
-    expect(KEYS).toHaveLength(72);
+    expect(KEYS).toHaveLength(74);
     for (const k of KEYS) {
       expect(hasKey(`settings.keys.${k}.label`), k).toBe(true);
       expect(hasKey(`settings.keys.${k}.help`), k).toBe(true);
@@ -95,6 +95,30 @@ describe('settings texts', () => {
     expect(errorText('invalid_url', 'PLEX_URL')).toContain('Bitte nur die Serveradresse eingeben');
     expect(errorText('invalid_url', 'plex_url')).toBe(errorText('invalid_url'));
     expect(errorText('<b>', 'PLEX_URL')).toBe('Ungültiger Wert.');
+  });
+
+  it('livetv group: a title, the encoder option labels and the push-host texts, in every language', async () => {
+    const titles = new Map<string, string>();
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
+      await setLocale(l);
+      const title = tr('settings.groups.livetv');
+      expect(title, l).not.toBe('settings.groups.livetv');
+      titles.set(l, title);
+      const opts = enumOptions(view({ key: 'LIVETV_ENCODER', kind: 'enum', options: ['auto', 'qsv', 'vaapi', 'nvenc', 'software'] }));
+      expect(opts.map((o) => o.value), l).toEqual(['auto', 'qsv', 'vaapi', 'nvenc', 'software']);
+      expect(opts.every((o) => o.label !== o.value), l).toBe(true);
+      expect(keyHelp('LIVETV_SRT_HOST'), l).toMatch(/srt:\/\//);
+      // the backend's invalid_host code has its own text, not the generic one
+      expect(errorText('invalid_host', 'LIVETV_SRT_HOST'), l).not.toBe(tr('settings.errors.invalid'));
+      expect(errorText('invalid_host'), l).toBe(errorText('invalid_host', 'LIVETV_SRT_HOST'));
+    }
+    expect([titles.get('de'), titles.get('en')]).toEqual(['Live-TV', 'Live TV']);
+    await setLocale('de');
+    expect([keyLabel('LIVETV_ENCODER'), keyLabel('LIVETV_SRT_HOST')]).toEqual(['Encoder für Live-TV', 'Adresse für gesendete Streams']);
+    expect(errorText('invalid_host', 'LIVETV_SRT_HOST')).toBe('Nur ein Hostname oder eine IP-Adresse, ohne Schema und Port.');
+    await setLocale('en');
+    expect([keyLabel('LIVETV_ENCODER'), keyLabel('LIVETV_SRT_HOST')]).toEqual(['Live TV encoder', 'Address for pushed streams']);
+    expect(errorText('invalid_host', 'LIVETV_SRT_HOST')).toBe('Only a host name or IP address, without scheme or port.');
   });
 
   it('recommendations group: a title, a note that the expert keys stay in .env, engine option labels, in every language', async () => {

@@ -72,6 +72,9 @@ const de = {
   'notify.deletion.done': 'Das Konto {pseudonym} wurde endgültig gelöscht',
   // approval queue (login without an invite)
   'notify.approval.new': 'Neue Zugangsanfrage von {name}',
+  // Live TV: a provider list failed three refreshes in a row (admins)
+  'livetv.source.failed.title': 'Senderliste lässt sich nicht aktualisieren',
+  'livetv.source.failed.body': 'Senderliste {source} lässt sich nicht aktualisieren',
   // achievements
   'achievement.unlocked': 'Achievement freigeschaltet: {name}',
   'ach.first_play.title': 'Premiere', 'ach.first_play.desc': 'Zum ersten Mal etwas geschaut',
@@ -161,6 +164,8 @@ const en: Catalog = {
   'notify.deletion.done': 'Account {pseudonym} has been permanently deleted',
   // approval queue (login without an invite)
   'notify.approval.new': 'New access request from {name}',
+  'livetv.source.failed.title': 'Channel list cannot be updated',
+  'livetv.source.failed.body': 'Channel list {source} cannot be updated',
   'achievement.unlocked': 'Achievement unlocked: {name}',
   'ach.first_play.title': 'Premiere', 'ach.first_play.desc': 'Watched something for the first time',
   'ach.hours_10.title': 'Couch potato', 'ach.hours_10.desc': 'Watched 10 hours',
@@ -244,6 +249,8 @@ const fr: Catalog = {
   'notify.deletion.done': 'Le compte {pseudonym} a été définitivement supprimé',
   // approval queue (login without an invite)
   'notify.approval.new': 'Nouvelle demande d’accès de {name}',
+  'livetv.source.failed.title': 'Impossible de mettre à jour la liste des chaînes',
+  'livetv.source.failed.body': 'Impossible de mettre à jour la liste des chaînes {source}',
   'achievement.unlocked': 'Succès débloqué : {name}',
   'ach.first_play.title': 'Première', 'ach.first_play.desc': 'Premier titre regardé',
   'ach.hours_10.title': 'Pantouflard', 'ach.hours_10.desc': '10 heures regardées',
@@ -327,6 +334,8 @@ const es: Catalog = {
   'notify.deletion.done': 'La cuenta {pseudonym} se eliminó definitivamente',
   // approval queue (login without an invite)
   'notify.approval.new': 'Nueva solicitud de acceso de {name}',
+  'livetv.source.failed.title': 'No se puede actualizar la lista de canales',
+  'livetv.source.failed.body': 'No se puede actualizar la lista de canales {source}',
   'achievement.unlocked': 'Logro desbloqueado: {name}',
   'ach.first_play.title': 'Estreno', 'ach.first_play.desc': 'Viste algo por primera vez',
   'ach.hours_10.title': 'Teleadicto', 'ach.hours_10.desc': '10 horas vistas',
@@ -410,6 +419,8 @@ const it: Catalog = {
   'notify.deletion.done': 'L’account {pseudonym} è stato eliminato definitivamente',
   // approval queue (login without an invite)
   'notify.approval.new': 'Nuova richiesta di accesso da {name}',
+  'livetv.source.failed.title': 'Impossibile aggiornare l’elenco dei canali',
+  'livetv.source.failed.body': 'Impossibile aggiornare l’elenco dei canali {source}',
   'achievement.unlocked': 'Traguardo sbloccato: {name}',
   'ach.first_play.title': 'Prima visione', 'ach.first_play.desc': 'Hai guardato qualcosa per la prima volta',
   'ach.hours_10.title': 'Pigro da divano', 'ach.hours_10.desc': '10 ore guardate',
@@ -493,6 +504,8 @@ const tr: Catalog = {
   'notify.deletion.done': '{pseudonym} hesabı kalıcı olarak silindi',
   // approval queue (login without an invite)
   'notify.approval.new': '{name} erişim talep ediyor',
+  'livetv.source.failed.title': 'Kanal listesi güncellenemiyor',
+  'livetv.source.failed.body': '{source} kanal listesi güncellenemiyor',
   'achievement.unlocked': 'Başarım açıldı: {name}',
   'ach.first_play.title': 'İlk gösterim', 'ach.first_play.desc': 'İlk kez bir şey izledin',
   'ach.hours_10.title': 'Kanepe patatesi', 'ach.hours_10.desc': '10 saat izledin',
@@ -581,6 +594,8 @@ const pl: Catalog = {
   'notify.deletion.done': 'Konto {pseudonym} zostało trwale usunięte',
   // approval queue (login without an invite)
   'notify.approval.new': 'Nowa prośba o dostęp od {name}',
+  'livetv.source.failed.title': 'Nie można zaktualizować listy kanałów',
+  'livetv.source.failed.body': 'Nie można zaktualizować listy kanałów {source}',
   'achievement.unlocked': 'Odblokowano osiągnięcie: {name}',
   'ach.first_play.title': 'Premiera', 'ach.first_play.desc': 'Pierwszy raz coś obejrzano',
   'ach.hours_10.title': 'Kanapowiec', 'ach.hours_10.desc': 'Obejrzano 10 godzin',

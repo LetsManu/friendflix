@@ -66,7 +66,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const { listLive } = await import('../live.js');
     const { parties } = await import('./party.js');
     const one = async <T>(sql: string): Promise<T> => (await ctx.db.query(sql)).rows[0] as T;
-    const [users, approvals, devices, invites, polls, previews, downloads, check, seerr, jellyfin, live] = await Promise.all([
+    const [users, approvals, devices, invites, polls, previews, downloads, check, seerr, jellyfin, live, livetvFailed] = await Promise.all([
       one<{ total: string; locked: string; expiring: string }>("select count(*) total, count(*) filter (where disabled) locked, count(*) filter (where access_until between now() and now() + interval '7 days') expiring from users"),
       one<{ n: string }>('select count(*) n from approval_requests where rejected_at is null'),
       one<{ n: string }>('select count(*) n from devices where not approved'),
@@ -82,6 +82,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
         return media ? media.level === 'ok' || media.level === 'warn' : ctx.jf.admin.ping();
       }).catch(() => false),
       listLive(ctx).then((l) => l.length).catch(() => 0),
+      // enabled provider lists whose last refresh failed (the own-feeds source has no list and never fails)
+      one<{ n: string }>("select count(*) n from livetv_sources where kind = 'm3u' and enabled and last_error is not null"),
     ]);
     const total = Number(users.total), locked = Number(users.locked);
     return {
@@ -105,8 +107,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       playbackCheck: check ? { finishedAt: check.finished_at.toISOString(), total: check.results.length, failed: check.results.filter((x) => !x.ok).length } : null,
       services: { jellyfin: Boolean(jellyfin), seerr: seerr !== null },
       live: { streams: live, partyRooms: parties.rooms.size },
-      // the optional Live-TV module: detected (last check), the entry hidden by the admin, sources whose last import failed (Task 16)
-      livetv: { installed: livetvInstalled(ctx), offerHidden: ctx.cfg.LIVETV_OFFER_HIDDEN === 'true', failedSources: 0 },
+      // the optional Live-TV module: detected (last check), the entry hidden by the admin, enabled provider lists whose last refresh failed
+      livetv: { installed: livetvInstalled(ctx), offerHidden: ctx.cfg.LIVETV_OFFER_HIDDEN === 'true', failedSources: Number(livetvFailed.n) },
       // the people list's "without 2FA" filter needs the provider's API (adminUsers.ts ignores it otherwise)
       mfaFilter: akActions(ctx).recovery,
       // R1: size and age of the recommendation item index (counts and a timestamp only)

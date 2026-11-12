@@ -7,6 +7,7 @@ import { createLiveCtx, type Ctx } from '../src/ctx.js';
 import { keyFromBase64 } from '../src/crypto.js';
 import { migrate } from '../src/db.js';
 import { MemoryKV } from '../src/kv.js';
+import { healthProof, livetvKey } from '../src/livetv/client.js';
 import { createMediaServer } from '../src/media/index.js';
 import { SeerrClient } from '../src/seerr/client.js';
 import type { OidcClaims } from '../src/oidc.js';
@@ -44,7 +45,7 @@ export const cfg: Config = {
   LOGIN_UI: undefined, AUTHENTIK_LOGIN_FLOW: 'default-authentication-flow', AUTHENTIK_STATIC_SETUP_FLOW: 'default-authenticator-static-setup',
   AUTHENTIK_WEBAUTHN_SETUP_FLOW: 'default-authenticator-webauthn-setup', AUTHENTIK_PASSWORD_CHANGE_FLOW: 'default-password-change',
   AUTHENTIK_INVALIDATION_FLOW: 'default-invalidation-flow', AUTHENTIK_EMAIL_CHANGE_FLOW: 'friendflix-email-change', PASSKEYS_IN_APP: 'auto', LOGIN_COVER_WALL: 'true', POSTPLAY_ENABLED: 'true', HEVC_STREAMS: 2, SURROUND_AUDIO: 'true',
-  CONVERSION_PRIORITY: 'films',
+  CONVERSION_PRIORITY: 'films', LIVETV_ENCODER: 'auto', LIVETV_SRT_HOST: undefined,
 };
 
 export type Handler = (url: URL, init: RequestInit, body: any) => { status?: number; json?: unknown; raw?: string | Uint8Array; type?: string } | undefined;
@@ -61,7 +62,13 @@ export function fakeHttp(routes: Record<string, Handler>, calls: Call[] = []): t
       const [m, p] = k.split(' ');
       return m === method && new RegExp(`^${p}$`).test(url.pathname);
     });
-    const r = key ? routes[key]!(url, init, body) : undefined;
+    let r = key ? routes[key]!(url, init, body) : undefined;
+    if (method === 'GET' && url.pathname === '/healthz') {
+      // livetv counts as installed only with a proof of key for the asked nonce (1b): a fake livetv that is up answers it like the real one
+      const up = key ? r?.json !== undefined && (r.json as { ok?: unknown }).ok === true && !('proof' in (r.json as object)) : true;
+      const n = url.searchParams.get('n');
+      if (up && n) r = { status: 200, ...r, json: { ok: true, api: 1, version: '1.0.0', bootId: '0123456789abcdef', ...(r?.json as object | undefined), proof: healthProof(livetvKey(cfg.INTERNAL_SECRET), n) } };
+    }
     const status = r?.status ?? (key ? 200 : 404);
     if (r?.raw !== undefined) return new Response(r.raw as BodyInit, { status, ...(r.type ? { headers: { 'content-type': r.type } } : {}) });
     return new Response(status === 204 || r?.json === undefined ? null : JSON.stringify(r.json), { status, headers: { 'content-type': 'application/json' } });
