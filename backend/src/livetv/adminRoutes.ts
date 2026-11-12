@@ -6,6 +6,7 @@ import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { requireAdmin } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
+import { dropLivetvProof } from './client.js';
 import { detectLivetv, enableBenchmark, livetvSystem } from './detect.js';
 import { gpuAdvice } from './gpu.js';
 
@@ -108,6 +109,8 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!('status' in view)) return refuse(502, view.error === 'unauthorized' ? 'unauthorized' : 'updater_error');
     const r = await startLivetvJob(ctx, op, actor, view);
     if (r.ok && 'job' in r) {
+      // from now on the name `livetv` may stop resolving to livetv: no signed call on the strength of an earlier proof
+      if (op.op !== 'enable') dropLivetvProof(ctx);
       await want(op.op === 'enable', actor, log);
       await audit(ctx, actor, action, undefined, { ...meta, outcome: 'started' });
       // what is stored now, read back: an env-locked or failing store keeps the old value, and the answer must not claim otherwise

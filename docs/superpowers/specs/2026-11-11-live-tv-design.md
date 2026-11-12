@@ -439,7 +439,7 @@ MPEG-TS) stays exactly as it is; push is a second way to add an own feed.
   backend to livetv, never livetv to the backend, and while the profile is off the name `livetv` can resolve to a LAN host. So
   every check sends a fresh random nonce (`/healthz?n=<32 hex>`) and livetv answers `proof = HMAC(key, 'healthz:' + nonce)`; the
   backend compares it in constant time. A wrong or missing proof is "reachable, not installed" (a rate-limited warning, no
-  secrets). No signed call (so no decrypted URL or other secret) is sent without a proof younger than 60 s. A setting `LIVETV_WANTED` (internal, not shown) remembers that an admin turned
+  secrets). No signed call (so no decrypted URL or other secret) is sent without a proof younger than 10 s (withdrawn at once by a failed connection or an accepted disable / remove; the remaining ≤ 10 s window is an accepted residual, signed responses are not part of Phase 1). A setting `LIVETV_WANTED` (internal, not shown) remembers that an admin turned
   it on, so "wanted but not reachable" can be told apart from "never enabled".
 - `/api/me` gains `features.livetv: boolean` = installed ∧ `perms.liveTv` ∧ the active profile sees ≥ 1 channel (cached
   60 s per profile, invalidated on rights/group changes). It drives the tab.

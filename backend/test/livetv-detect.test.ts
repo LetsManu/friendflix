@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { buildApp } from '../src/app.js';
 import { startBenchmark } from '../src/convbench.js';
 import { featureFlags } from '../src/features.js';
+import { livetvCall } from '../src/livetv/client.js';
 import { detectLivetv, enableBenchmark, livetvDetectTick, livetvInstalled } from '../src/livetv/detect.js';
 import { gpuAdvice } from '../src/livetv/gpu.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
@@ -256,6 +257,38 @@ describe('enable / disable', () => {
       });
       expect(wanted()).toBe('false');
     } finally { save.mockRestore(); }
+  });
+
+  it('an accepted disable or remove withdraws the proof of key; an enable or a refused disable does not (re-review concern 3)', async () => {
+    fake.livetv = 'api1';
+    await detectLivetv(env.ctx, 0); // proven
+    let checks = 0;
+    const inner = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async (...a: Parameters<typeof fetch>) => { if (new URL(String(a[0])).pathname === '/healthz') checks++; return inner(...a); }) as typeof fetch;
+    const system = () => livetvCall(env.ctx, 'GET', '/v1/system');
+    try {
+      await system();
+      expect(checks).toBe(0); // the proof from the detection stands
+      await withApp(async (call) => { expect((await call('POST', '/api/admin/livetv/enable')).statusCode).toBe(202); });
+      await system();
+      expect(checks).toBe(0);
+      for (const body of [{ removeImage: false, removeCache: false }, { removeImage: true, removeCache: true }]) {
+        await detectLivetv(env.ctx, 0);
+        checks = 0;
+        await withApp(async (call) => { expect((await call('POST', '/api/admin/livetv/disable', body)).statusCode).toBe(202); });
+        await system();
+        expect(checks, JSON.stringify(body)).toBe(1); // proved again before the call
+      }
+      // a refused disable (busy) changes nothing
+      await detectLivetv(env.ctx, 0);
+      checks = 0;
+      const counting = env.ctx.fetchImpl;
+      env.ctx.fetchImpl = (async (i: RequestInfo | URL, init?: RequestInit) => (String(i).endsWith('/v1/livetv') ? json({ error: 'busy' }, 409) : counting(i, init))) as typeof fetch;
+      await withApp(async (call) => { expect((await call('POST', '/api/admin/livetv/disable', { removeImage: false, removeCache: false })).statusCode).toBe(409); });
+      env.ctx.fetchImpl = counting;
+      await system();
+      expect(checks).toBe(0);
+    } finally { env.ctx.fetchImpl = inner; }
   });
 
   it('one signed status read per enable / disable (1b review M14)', async () => {

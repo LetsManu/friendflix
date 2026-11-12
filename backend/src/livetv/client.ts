@@ -16,8 +16,8 @@ import type { Ctx } from '../ctx.js';
  * The signature authenticates the backend to livetv, never livetv to the backend, and while the profile is off the name `livetv`
  * may resolve to any host on the LAN (Docker forwards unknown names upstream). So livetv proves its key first (1b review I2): the
  * health check sends a fresh random nonce and livetv answers HMAC(key, "healthz:" + nonce). Nothing signed (and so no provider URL
- * or other secret in a body) is sent unless a proof younger than PROOF_TTL_MS stands; a stale one is renewed first, a missing or
- * wrong one refuses the call (`unproven`).
+ * or other secret in a body) is sent unless a proof younger than PROOF_TTL_MS (10 s) stands; a stale one is renewed first, a missing
+ * or wrong one refuses the call (`unproven`).
  */
 const KEY_LABEL = 'friendflix-livetv/v1';
 const CODE_RE = /^[a-z_]{1,40}$/;
@@ -25,8 +25,12 @@ const VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 const BOOT_ID_RE = /^[0-9a-f]{16}$/;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 3_000;
-/** how long a proof of key stands: the detection tick (60 s) renews it; a call after that proves again first */
-export const PROOF_TTL_MS = 60_000;
+/**
+ * how long a proof of key stands; a call after that proves again first (one /healthz on the internal network). Short on purpose
+ * (1b re-review concern 3): the window in which a host that took the name `livetv` after livetv stopped could still receive a
+ * signed call. Any connection failure and any accepted disable / remove withdraw it at once.
+ */
+export const PROOF_TTL_MS = 10_000;
 /** a missing or wrong proof is logged at most this often (a host posing as livetv would otherwise log every minute) */
 const PROOF_WARN_MS = 10 * 60_000;
 
@@ -76,6 +80,7 @@ async function signedFetch(ctx: Ctx, method: Method, path: string, body: unknown
   try {
     return await ctx.fetchImpl(url.href, { method, headers, body: raw || undefined, signal, redirect: 'error' });
   } catch {
+    dropLivetvProof(ctx); // livetv may be gone: whoever answers to the name next proves its key first
     throw new LivetvError(null, 'unreachable');
   }
 }
@@ -125,6 +130,12 @@ export interface LivetvHealth { api: number; version: string | null; bootId: str
 interface ProofSlot { at: number; flight: Promise<boolean> | null; warnedAt: number }
 const proofs = new WeakMap<object, ProofSlot>();
 const proofOf = (ctx: Ctx): ProofSlot => { let p = proofs.get(ctx); if (!p) proofs.set(ctx, p = { at: 0, flight: null, warnedAt: -Infinity }); return p; };
+
+/** withdraws the standing proof: the next signed call proves the key first (livetv unreachable, or a disable / remove accepted) */
+export function dropLivetvProof(ctx: Ctx): void {
+  const p = proofs.get(ctx);
+  if (p) p.at = 0;
+}
 
 /** a proof younger than PROOF_TTL_MS stands; otherwise one health check (shared by concurrent callers) decides */
 async function proven(ctx: Ctx): Promise<boolean> {

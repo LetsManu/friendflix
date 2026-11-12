@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { livetvKeyHex } from '../src/bootstrap.js';
 import type { Ctx } from '../src/ctx.js';
-import { LivetvError, PROOF_TTL_MS, healthProof, livetvCall, livetvHealth, livetvKey, livetvStream, signLivetv } from '../src/livetv/client.js';
+import { LivetvError, PROOF_TTL_MS, dropLivetvProof, healthProof, livetvCall, livetvHealth, livetvKey, livetvStream, signLivetv } from '../src/livetv/client.js';
 
 // The backend side of the signed livetv API (livetv/src/protocol.ts): shared vectors, error codes, timeouts. No database: the
 // client only needs the config and the fetch of the context.
@@ -307,8 +307,34 @@ describe('nothing signed leaves before livetv proved its key', () => {
       await livetvCall(ctx, 'GET', '/v1/system');
       expect(ctx.health).toHaveLength(2);
       expect(ctx.seen).toHaveLength(5);
-      expect(PROOF_TTL_MS).toBe(60_000);
+      expect(PROOF_TTL_MS).toBe(10_000); // re-review concern 3: a short window
     } finally { vi.useRealTimers(); }
+  });
+
+  it('a connection that fails withdraws the proof: the next call proves the key first (re-review concern 3)', async () => {
+    let down = false;
+    const ctx = ctxWith(() => { if (down) throw new TypeError('fetch failed'); return json({}); });
+    await livetvCall(ctx, 'GET', '/v1/system');
+    expect(ctx.health).toHaveLength(1);
+    down = true;
+    expect((await caught(livetvCall(ctx, 'GET', '/v1/system'))).code).toBe('unreachable');
+    down = false;
+    await livetvCall(ctx, 'GET', '/v1/system'); // well inside the TTL, still a fresh proof first
+    expect(ctx.health).toHaveLength(2);
+    // a timeout counts the same
+    const slow = ctxWith((_s, init) => new Promise<Response>((_r, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason))));
+    await caught(livetvCall(slow, 'GET', '/v1/system', undefined, { timeoutMs: 30 }));
+    await caught(livetvCall(slow, 'GET', '/v1/system', undefined, { timeoutMs: 30 }));
+    expect(slow.health).toHaveLength(2);
+  });
+
+  it('dropLivetvProof withdraws a standing proof (used when a disable or remove is accepted)', async () => {
+    const ctx = ctxWith(() => json({}));
+    await livetvCall(ctx, 'GET', '/v1/system');
+    dropLivetvProof(ctx);
+    await livetvCall(ctx, 'GET', '/v1/system');
+    expect(ctx.health).toHaveLength(2);
+    dropLivetvProof(ctxWith(() => json({}))); // a context that never proved anything: nothing to do
   });
 
   it('a later check without a valid proof withdraws the standing one at once (not after the TTL)', async () => {
