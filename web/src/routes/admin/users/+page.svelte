@@ -28,6 +28,7 @@
   import { activeChips, emptyFilters, fromQuery, toQuery, type UserFilters } from '#lib/admin/userFilters';
   import { deletionLabel } from '#lib/admin/user/detail';
   import { refreshSummary, summary } from '#lib/admin/summary';
+  import type { MatrixRole } from '#lib/admin/rights/model';
   import { roleName, type RoleInfo } from '#lib/roles';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import { toast } from '#lib/ui/toast';
@@ -71,6 +72,7 @@
 
   let rows: U[] | null = null, total = 0, error: string | null = null;
   let roles: Record<string, RoleInfo> = {}, invitable: string[] = ['friend', 'family', 'guest'], meId = '';
+  let matrixRoles: MatrixRole[] = [];
   let approvals: number | null = null;
   let q = '', sort: SortState | null = null, page = 0;
   /** the filters except the search text */
@@ -125,8 +127,9 @@
     f = { ...fromQuery(new URLSearchParams($page$.url.search)), q: '' };
     void load();
     void refreshSummary();
-    api<{ roles: Record<string, RoleInfo>; invitable?: string[] }>('/api/admin/roles').then((r) => {
+    api<{ roles: Record<string, RoleInfo>; invitable?: string[]; matrix?: { roles: MatrixRole[] } }>('/api/admin/roles').then((r) => {
       roles = r.roles;
+      matrixRoles = r.matrix?.roles ?? [];
       if (r.invitable?.length) invitable = r.invitable;
     }, () => undefined);
     api<{ id: string }>('/api/me').then((m) => (meId = m.id), () => undefined);
@@ -352,9 +355,9 @@
 
 <div id="ut-panel" role="tabpanel" aria-labelledby="ut-{tab}">
   {#if tab === 'approvals'}
-    <ApprovalsPanel {roles} {invitable} on:count={(e) => (approvals = e.detail)} on:decided={() => void refreshSummary()} />
+    <ApprovalsPanel {invitable} {matrixRoles} on:count={(e) => (approvals = e.detail)} on:decided={() => void refreshSummary()} />
   {:else if tab === 'invites'}
-    <InvitesPanel {roles} {invitable} />
+    <InvitesPanel {roles} {invitable} {matrixRoles} />
   {:else}
     {#if selected.size}
       <section class="bulk" aria-label={$t('adminPeople.bulk.label')} aria-busy={busyBulk ? 'true' : undefined}>

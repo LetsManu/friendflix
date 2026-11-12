@@ -19,6 +19,8 @@
   import CopyField from '#lib/ui/CopyField.svelte';
   import DataTable from '#lib/ui/DataTable.svelte';
   import Field from '#lib/ui/Field.svelte';
+  import RolePicker from '#lib/admin/RolePicker.svelte';
+  import type { MatrixRole } from '#lib/admin/rights/model';
   import Select from '#lib/ui/Select.svelte';
   import StatusPill, { type Tone } from '#lib/ui/StatusPill.svelte';
   import Toggle from '#lib/ui/Toggle.svelte';
@@ -28,6 +30,8 @@
   /** role labels and the roles an invite may grant (loaded by the page) */
   export let roles: Record<string, RoleInfo> = {};
   export let invitable: string[] = ['friend', 'family', 'guest'];
+  /** the role catalogue (matrix) for the picker; empty until loaded */
+  export let matrixRoles: MatrixRole[] = [];
 
   interface I {
     id: string; role: string; note: string | null; created_at?: string; expires_at: string; used_at: string | null; used_by_name: string | null
@@ -47,7 +51,9 @@
   /** accounts per invite (undefined = not loaded, null = failed) */
   let uses: Record<string, Use[] | null | undefined> = {};
 
-  $: if (invitable.length && !invitable.includes(role)) role = invitable[0]!;
+  /** the roles an invite may grant: the catalogue's invitable ones once loaded, else the page's list */
+  $: grantable = matrixRoles.length ? matrixRoles.filter((r) => r.invitable).sort((a, b) => a.position - b.position).map((r) => r.key) : invitable;
+  $: if (grantable.length && !grantable.includes(role)) role = grantable[0]!;
 
   async function load() {
     const my = ++seq;
@@ -76,7 +82,6 @@
   }
 
   $: rname = (k: string): string => roleName(k, roles[k]);
-  $: roleOptions = invitable.map((k) => ({ value: k, label: rname(k) }));
   $: expiryOptions = EXPIRY_PRESETS.map((p) => ({ value: p.id, label: trDynamic(`adminPeople.invites.expiryOptions.${p.id}`) }));
   $: statusOptions = [{ value: '', label: $t('adminPeople.invites.all') }, { value: 'open', label: $t('adminPeople.invites.open') }, { value: 'used', label: $t('adminPeople.invites.used') }, { value: 'expired', label: $t('adminPeople.invites.expired') }];
   $: columns = [
@@ -156,7 +161,7 @@
   <h2 id="inv-new">{$t('adminPeople.invites.newTitle')}</h2>
   <p class="hint">{$t('adminPeople.invites.intro')}</p>
   <form class="form" on:submit|preventDefault={create} novalidate>
-    <Select label={$t('adminPeople.invites.role')} options={roleOptions} bind:value={role} />
+    <RolePicker label={$t('adminPeople.invites.role')} roles={matrixRoles} bind:value={role} />
     <Select label={$t('adminPeople.invites.expiry')} options={expiryOptions} bind:value={expiry} />
     <Field type="number" label={$t('adminPeople.invites.maxUses')} bind:value={maxUses} min={1} max={50} step={1} hint={$t('adminPeople.invites.maxUsesHint')} error={maxUsesErr} />
     <Field type="number" label={$t('adminPeople.invites.accessDays')} bind:value={accessDays} min={1} max={3650} step={1} placeholder={$t('adminPeople.invites.accessUnlimited')} hint={$t('adminPeople.invites.accessDaysHint')} error={accessDaysErr} />

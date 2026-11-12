@@ -9,16 +9,18 @@
   import { api, ApiError } from '#lib/api';
   import { fmtDateTime, fmtRelative, t, tr } from '#lib/i18n';
   import { accessPreset, futureDayEnd, today } from '#lib/admin/people';
-  import { roleName, type RoleInfo } from '#lib/roles';
   import { errorText, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
+  import RolePicker from '#lib/admin/RolePicker.svelte';
+  import type { MatrixRole } from '#lib/admin/rights/model';
   import Select from '#lib/ui/Select.svelte';
   import Skeleton from '#lib/ui/Skeleton.svelte';
 
-  export let roles: Record<string, RoleInfo> = {};
   /** the roles an approval may grant */
   export let invitable: string[] = ['friend', 'family', 'guest'];
+  /** the role catalogue (matrix) for the picker; empty until loaded */
+  export let matrixRoles: MatrixRole[] = [];
 
   interface R { id: string; name: string; email: string | null; requested_at: string }
   /** per request: chosen role, access choice ('' = unlimited, p30, p90, date), its day, reject form */
@@ -40,7 +42,6 @@
   const set = (id: string, patch: Partial<Draft>) => { drafts = { ...drafts, [id]: { ...drafts[id]!, ...patch } }; };
   const val = (e: Event): string => (e.target as HTMLInputElement | HTMLSelectElement).value;
 
-  $: roleOptions = invitable.map((k) => ({ value: k, label: roleName(k, roles[k]) }));
   $: accessOptions = [
     { value: '', label: $t('adminPeople.access.unlimited') }, { value: 'p30', label: $t('adminPeople.access.p30') },
     { value: 'p90', label: $t('adminPeople.access.p90') }, { value: 'date', label: $t('adminPeople.access.date') },
@@ -105,7 +106,7 @@
             <p class="sub">{r.email ?? $t('adminPeople.approvals.noEmail')} · <time datetime={r.requested_at} title={fmtDateTime(r.requested_at)}>{$t('adminPeople.approvals.requested', { time: fmtRelative(r.requested_at) })}</time></p>
           </div>
           <div class="choose">
-            <Select label={$t('adminPeople.approvals.role')} options={roleOptions} value={d.role} on:change={(e) => set(r.id, { role: val(e) })} />
+            <RolePicker label={$t('adminPeople.approvals.role')} roles={matrixRoles} includeAdmin value={d.role} on:change={(e) => set(r.id, { role: val(e) })} />
             <Select label={$t('adminPeople.access.label')} options={accessOptions} value={d.access} on:change={(e) => set(r.id, { access: val(e) })} />
             {#if d.access === 'date'}<Field type="date" label={$t('adminPeople.access.day')} value={d.day} min={today()} required on:input={(e) => set(r.id, { day: val(e) })} on:change={(e) => set(r.id, { day: val(e) })} />{/if}
           </div>

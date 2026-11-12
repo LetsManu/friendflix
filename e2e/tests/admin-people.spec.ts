@@ -282,6 +282,16 @@ test.describe('admin people (desktop)', () => {
       await expect(page.getByText('Niemand wartet auf Freigabe.')).toBeVisible();
     });
 
+    test('approval offers Admin, invite does not', async ({ page }) => {
+      await page.goto('/admin/users?tab=approvals');
+      const card = page.getByRole('region', { name: 'Mia Neu' });
+      await expect(card.getByRole('combobox', { name: 'Rolle' }).getByRole('option', { name: /^Admin · / })).toHaveCount(1);
+      await page.goto('/admin/users?tab=invites');
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      await expect(form.getByRole('combobox', { name: 'Rolle' }).locator('option').first()).toHaveText(/^Familie/);
+      await expect(form.getByRole('combobox', { name: 'Rolle' }).getByRole('option', { name: /^Admin/ })).toHaveCount(0);
+    });
+
     test('approvals: the old ?tab=pending link opens the tab; an already handled request drops its card', async ({ page, api }) => {
       await page.goto('/admin/users?tab=pending');
       await expect(page.getByRole('tab', { name: 'Warten auf Freigabe (2)' })).toHaveAttribute('aria-selected', 'true');
@@ -396,6 +406,21 @@ test.describe('admin people (desktop)', () => {
   });
 
   test.describe('invites', () => {
+    test('invite offers the env role with its summary', async ({ page, api }) => {
+      const crew = api.admin.matrix.roles.find((r) => r.key === 'crew')!;
+      crew.label = 'Oma';
+      crew.values = { ...crew.values, maxStreams: 2, maxBitrate: 8_000_000, maxParentalRating: 12, download: false };
+      await page.goto('/admin/users?tab=invites');
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      const pick = form.getByRole('combobox', { name: 'Rolle' });
+      await expect(pick.getByRole('option', { name: /^Oma · 2 Streams · .*ab 12 · Downloads aus$/ })).toHaveCount(1);
+      await expect(pick.getByRole('option', { name: /^Admin/ })).toHaveCount(0);
+      await expect(pick.locator('option')).toHaveText([/^Familie/, /^Freund/, /^Gast/, /^Oma/]);
+      await pick.selectOption('crew');
+      await form.getByRole('button', { name: 'Einladung erstellen' }).click();
+      await expect.poll(() => logged(api, /POST \/api\/admin\/invites .*"role":"crew"/)).toBe(true);
+    });
+
     test('create → one-time link with Copy and QR; list with status pills', async ({ page, api, context }) => {
       await context.grantPermissions(['clipboard-read', 'clipboard-write']);
       await page.goto('/admin/users?tab=invites');
