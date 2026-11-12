@@ -315,6 +315,13 @@ for (const vp of [{ w: 390, h: 844 }, { w: 900, h: 800 }, { w: 1280, h: 800 }]) 
     for (const q of ['.now', '.unslot', '.mid', '.cp', '.times', '.tp', '.disc']) expect(after[q], q).toEqual(before[q]);
     const [c, u] = await Promise.all([card.boundingBox(), screen.locator('.unslot').boundingBox()]);
     expect(c!.y + c!.height).toBeLessThanOrEqual(u!.y + u!.height + 1); // the card fits the reserved room
+    // autoplay off: the card loses its "starts by itself" lines; the room must not shrink, nothing moves
+    await card.getByRole('switch', { name: 'Nächste Folge automatisch abspielen' }).click();
+    await expect(card).toContainText('Startet, wenn du es willst.');
+    await page.waitForTimeout(300);
+    const fewer = await boxes(screen);
+    const scrolled = fewer['.now']![1]! - before['.now']![1]!; // tapping the switch may scroll the phone's page; what counts is the layout relative to it
+    for (const q of ['.now', '.unslot', '.mid', '.cp', '.times', '.tp', '.disc']) expect(fewer[q]!.map((n, i) => (i === 1 ? n - scrolled : n)), q).toEqual(before[q]);
     // the disabled Previous names the truth: this is episode 1, the first
     await expect(screen.getByRole('button', { name: 'Vorherige Folge (keine: das ist die erste)' })).toHaveAttribute('aria-disabled', 'true');
   });

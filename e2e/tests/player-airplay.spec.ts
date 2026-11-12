@@ -275,7 +275,6 @@ async function joinedOnTv(page: Page, at: number) {
   await page.waitForFunction(([sel, t]) => (document.querySelector<HTMLVideoElement>(sel as string)?.currentTime ?? 0) >= (t as number), [el, at] as const);
   return el;
 }
-const tOf = (u: URL) => Number(u.searchParams.get('t'));
 
 /** the start (seconds) of every local playback request from now on */
 function infoStarts(page: Page) {

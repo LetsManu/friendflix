@@ -205,7 +205,8 @@
             {/if}
             {#if mode === 'card' && next}
               <div class="unfx" transition:fade={{ duration: motionAllowed() ? 200 : 0 }}><UpNextCard session={s} compact={phone} /></div>
-            {:else if ghost}
+            {/if}
+            {#if ghost}
               <div class="unfx ghost" aria-hidden="true" inert><UpNextCard session={ghost} compact={phone} /></div>
             {/if}
           </div>
@@ -244,7 +245,7 @@
               </button>
             {:else if phone && !(keptJoin || cv)}<span class="gap" aria-hidden="true"></span>{/if}
             {#if keptJoin || cv}
-              {@const pl = panel?.prevDisabled ? $t('player.castRemote.prevNone') : $t('player.castRemote.prev')}
+              {@const pl = (panel ? panel.prevDisabled : !s.isEpisode) ? $t('player.castRemote.prevNone') : $t('player.castRemote.prev')}
               <button type="button" class="tb" aria-disabled={live && cv && !cv.prevDisabled ? undefined : 'true'} aria-label={pl} title={pl} on:click={goPrev}><Icon name="skip-prev" size={28} /></button>
             {/if}
             <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('player.controls.back10')} title={$t('player.controls.back10')} on:click={() => seekBy(-10)}><Icon name="rewind10" size={30} /></button>

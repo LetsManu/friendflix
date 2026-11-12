@@ -974,7 +974,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     const auth = await authorizeCast(ct, ip);
     const authzMs = performance.now() - t0;
     if (auth === 'error') { castCount('503'); cors(503, 'unavailable'); return null; }
-    if (!auth || !auth.scope) { noteFail(ip, sha256(ct)); castCount('401'); cors(401, 'unauthorized'); return null; }
+    if (!auth || !auth.scope) { joinedCache.delete(sha256(ct)); noteFail(ip, sha256(ct)); castCount('401'); cors(401, 'unauthorized'); return null; } // a revoked token keeps no playlists
     // single-item and poster tokens have no joined stream; nor has a scope longer than the cap
     const n = auth.scope.items?.length ?? 0;
     if (auth.kind === 'img' || n < 2 || n > JOINED_MAX_ITEMS) { castCount('403'); cors(403, 'forbidden'); return null; }

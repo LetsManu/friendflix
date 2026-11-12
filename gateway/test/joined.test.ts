@@ -39,6 +39,8 @@ const CT_IMG = 'I'.repeat(43); // a poster token (never has a joined stream)
 const CT_DOWN = 'D'.repeat(43); // the backend fails for this one
 const CT_ONCE = 'C'.repeat(43); // a fresh joined token for the build-once count
 const CT_SHIFT = 'S'.repeat(43); // joined token whose authz answer changes item 2's play session after the build (shift.v)
+const CT_REVOKE = 'R'.repeat(43); // joined token the backend can revoke (revoked.v): a 401 drops its cached playlists
+const revoked = { v: false };
 const CT_FOUR = 'Q'.repeat(43); // a scope listing four items (the cap is three)
 /** a fresh joined token of the three short episodes per hostile-upstream case (own build) */
 const hostileCt = (k: string) => `${k}_`.padEnd(43, 'H');
@@ -159,7 +161,7 @@ beforeAll(async () => {
       const item = (e: Ep) => ({ itemId: e.id, mediaSourceId: e.ms, playSessionId: e.ps, hlsPath: `/Videos/${e.id}/master.m3u8?${q(e)}`, hlsSubIndex: e.sub });
       const base = { userId: 'u1', token: TOKEN, deviceId: 'gw', maxBitrate: 8_000_000, kind: 'media' };
       const first = (e: Ep) => ({ itemId: e.id, mediaSourceId: e.ms, playSessionId: e.ps, hlsSub: true, hlsSubIndex: e.sub });
-      if ([CT_JOIN, CT_FOREIGN, CT_WARM, CT_ONCE].includes(j.ct!) || /H{20}$/.test(j.ct!)) return res.end(JSON.stringify({ ...base, scope: { ...first(EP[0]!), items: EP.map(item) } }));
+      if ([CT_JOIN, CT_FOREIGN, CT_WARM, CT_ONCE].includes(j.ct!) || (j.ct === CT_REVOKE && !revoked.v) || /H{20}$/.test(j.ct!)) return res.end(JSON.stringify({ ...base, scope: { ...first(EP[0]!), items: EP.map(item) } }));
       if (j.ct === CT_SHIFT) return res.end(JSON.stringify({ ...base, scope: { ...first(EP[0]!), items: EP.map((e, i) => ({ ...item(e), ...(i === 1 && shift.v ? { playSessionId: 'ps-shifted' } : {}) })) } }));
       if (j.ct === CT_FOUR) return res.end(JSON.stringify({ ...base, scope: { ...first(EP[0]!), items: [...EP, LONG[0]!].map(item) } }));
       if (j.ct === CT_LONG) return res.end(JSON.stringify({ ...base, scope: { ...first(LONG[0]!), items: LONG.map(item) } }));
@@ -448,6 +450,18 @@ describe('fix round 1: both scope layers of /s, guards, caps', () => {
     const n0 = upstreamLog.length;
     for (const p of ['s/1/1.ts', 's/1/0.ts', 's/0/0.ts']) expect((await get(`${H}/${p}`)).status, p).toBe(502);
     expect(segLog(n0)).toEqual([]);
+  });
+  it('a 401 (revoked token) drops the token\'s cached playlists', async () => {
+    const R = `/media/c/${CT_REVOKE}/joined`;
+    const playlists = (from: number) => upstreamLog.slice(from).filter((l) => /\.m3u8/.test(l));
+    const n0 = upstreamLog.length;
+    expect((await get(`${R}/main.m3u8`, '10.8.0.1')).status).toBe(200);
+    expect(playlists(n0)).toHaveLength(9); // built and cached
+    revoked.v = true;
+    try { expect((await get(`${R}/main.m3u8`, '10.8.0.2')).status).toBe(401); } finally { revoked.v = false; }
+    const n1 = upstreamLog.length;
+    expect((await get(`${R}/main.m3u8`, '10.8.0.3')).status).toBe(200); // a fresh authz answer: the entry was dropped, so it builds again
+    expect(playlists(n1)).toHaveLength(9);
   });
   it('every /s request re-checks the expanded URI against the token\'s current scope (never the cached build alone)', async () => {
     const X = `/media/c/${CT_SHIFT}`;

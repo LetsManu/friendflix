@@ -66,10 +66,12 @@ export function bindCastMediaSession(
 ): () => void {
   if (!ms) return () => undefined;
   let bound = false, lastKey = '', lastPrev: boolean | null = null;
+  /** which timeline the lock screen shows now: the joined stream's (true) or the episode's */
+  let published = false;
   const set = (a: string, fn: MediaSessionHandler | null) => setActionHandlerSafe(ms, a, fn);
   const clear = () => {
     if (!bound) return;
-    bound = false; lastKey = ''; lastPrev = null;
+    bound = false; lastKey = ''; lastPrev = null; published = false;
     // give up ownership first; blank only if nobody (the player) took over in the meantime
     if (releaseMediaSession(CAST_OWNER) && mediaSessionOwner() === null) clearMediaSession(ms, CAST_ACTIONS);
   };
@@ -87,7 +89,7 @@ export function bindCastMediaSession(
         if (typeof d.seekTime !== 'number') return;
         const j = cur?.joined;
         // a hidden page published the stream's timeline: the seek is a stream position (a skip by the difference), not episode seconds
-        if (j && page !== undefined && !page.visible()) eng.skip(d.seekTime - j.streamPosition);
+        if (j && published) eng.skip(d.seekTime - j.streamPosition);
         else eng.seek(d.seekTime);
       });
       set('seekbackward', (d) => eng.skip(-(d.seekOffset || 10)));
@@ -96,6 +98,7 @@ export function bindCastMediaSession(
     const j = s.joined;
     // a joined stream while the page is hidden: the series and the episode range, the position on the whole stream (the page cannot follow the episodes)
     const series = Boolean(j) && page !== undefined && !page.visible();
+    published = series;
     // previous episode only inside a joined stream, after the first episode
     const prev = Boolean(j && j.index > 0);
     if (prev !== lastPrev) { lastPrev = prev; set('previoustrack', prev ? () => eng.prev() : null); }

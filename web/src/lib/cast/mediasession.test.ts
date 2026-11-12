@@ -69,6 +69,18 @@ describe('cast media session (lock screen / Control Center drive the TV)', () =>
     expect(eng.seek).toHaveBeenCalledWith(100);
   });
 
+  it('seekto follows the timeline last published, not the page state at the moment of the action', () => {
+    const { ms, handlers, eng } = fake();
+    const s = writable<CastSession | null>(null);
+    let visible = false;
+    bindCastMediaSession(s, eng, ms, (m) => m, { visible: () => visible, onChange: () => () => undefined }); // no change event reaches the binding
+    s.set(jview(1)); // published: the stream's timeline (position 650)
+    visible = true; // the page woke, the lock screen still shows the stream
+    handlers.get('seekto')!({ seekTime: 100 });
+    expect(eng.skip).toHaveBeenCalledWith(100 - 650);
+    expect(eng.seek).not.toHaveBeenCalled();
+  });
+
   it('nexttrack is not armed on the last joined episode', () => {
     const { ms, handlers, eng } = fake();
     const s = writable<CastSession | null>(null);
