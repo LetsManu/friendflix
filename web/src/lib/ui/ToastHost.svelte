@@ -91,12 +91,12 @@
 <style>
   /* centred at the bottom on every layout (glass spec §5): 36 px up on desktop, above the tab bar on phones (--toast-b). Above the
      cast bar and the save bar of staged rights while they show: lifted by their rooms (--castbar-h, --savebar-h); above an open
-     bottom sheet (--sheet-h, 12 px clear of its top edge) and left of a right-hand sheet (--sheet-w, centred in the rest), so a toast
+     bottom sheet (--sheet-h, 12 px clear of its top edge) and left of a right-hand sheet (--sheet-w, centred in the rest and never wider than it), so a toast
      never covers a sheet's buttons (lib/glass/sheetRoom). All by a transform that glides like the bars (240 ms, GLASS_OUT): a room
      that comes or goes never makes a toast jump; `bottom` stays fixed */
   .toasts { --toast-b: 36px; position: fixed; z-index: 120; left: 50%; bottom: var(--toast-b);
     transform: translate(calc(-50% - var(--sheet-w, 0px) / 2), calc(-1 * max(var(--castbar-h, 0px) + var(--savebar-h, 0px), var(--sheet-h, 0px) - var(--toast-b) + 12px)));
-    transition: transform 240ms var(--fr-out); width: max-content; max-width: min(560px, calc(100vw - 2rem)); pointer-events: none; }
+    transition: transform 240ms var(--fr-out); width: max-content; max-width: min(560px, calc(100vw - var(--sheet-w, 0px) - 2rem)); pointer-events: none; }
   ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; gap: .5rem; }
   .toast { pointer-events: auto; display: flex; align-items: center; gap: 10px; max-width: 100%; box-sizing: border-box; padding: 4px 4px 4px 18px; min-height: 52px; font-weight: 700; }
   .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--mut); }

@@ -693,6 +693,26 @@ test.describe('Rollen & Rechte: toasts and the save bar', () => {
     });
   });
 
+  test('a long toast beside the role sheet stays on screen and left of the sheet (800 px)', async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 900 });
+    await page.goto('/admin/roles');
+    await (await menu(page, 'Familie')).getByRole('button', { name: 'Duplizieren' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Rolle „Familie“ duplizieren' });
+    await dlg.getByRole('textbox', { name: 'Name' }).fill('Oma & Opa aus dem Nachbardorf');
+    await dlg.getByRole('button', { name: 'Anlegen' }).click();
+    const toast = toasts(page).getByRole('listitem').filter({ hasText: 'Rolle „Oma & Opa aus dem Nachbardorf“ angelegt.' });
+    await expect(toast).toBeVisible();
+    await page.getByRole('button', { name: 'Rolle „Gast“ bearbeiten' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Rolle „Gast“' });
+    await expect(sheet).toBeVisible();
+    await expect(toast).toBeVisible();
+    // the sheet is narrower than the window: the toast is centred in the rest and never wider than it
+    await expect.poll(async () => {
+      const [a, b] = await Promise.all([toast.boundingBox(), sheet.boundingBox()]);
+      return a && b ? { left: a.x >= 0, beside: Math.round(a.x + a.width) <= Math.round(b.x), sheetLeft: Math.round(b.x) } : null;
+    }).toEqual({ left: true, beside: true, sheetLeft: 360 });
+  });
+
   test('without a bar the toast stands still (cards below 900 px)', async ({ page }) => {
     await page.setViewportSize({ width: 800, height: 900 });
     await page.goto('/admin/roles');
