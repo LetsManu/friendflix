@@ -251,6 +251,23 @@ describe('planStream: review fixes', () => {
     expect(sourceFacts(src).audio).toMatchObject({ codec: 'eac3', channels: 6 });
     expect(sourceFacts(src, 3).audio).toMatchObject({ codec: 'aac' });
   });
+  it('a matched default track (hlsAudioIndex) is named in the HLS URL and read by the plan, but keeps direct play and no DTO audioIndex', () => {
+    const info = { PlaySessionId: 'ps-12345678', MediaSources: [{ Id: 'ms1', Container: 'mp4', SupportsDirectPlay: true, Bitrate: 4_000_000, MediaStreams: [
+      { Index: 0, Type: 'Video', Codec: 'h264', Height: 1080, Width: 1920 },
+      { Index: 1, Type: 'Audio', Language: 'fre', Codec: 'eac3', Channels: 6 },
+      { Index: 2, Type: 'Audio', Language: 'ger', Codec: 'aac', Channels: 2, IsDefault: true },
+    ] }] };
+    const mk = (hlsAudioIndex?: number, noDirect?: boolean) => toPlaybackDto({ itemId: 'a'.repeat(32), info, deviceId: 'ff-d1', maxBitrate: 20_000_000, resumeTicks: 0, hlsAudioIndex, noDirect });
+    const hls = mk(2, true);
+    expect([query(hls).get('AudioStreamIndex'), hls.audioIndex, hls.directUrl, hls.delivery?.audio]).toEqual(['2', undefined, undefined, 'copy']); // stereo AAC: copied
+    expect(hls.transcodeReason).not.toBe('audioTrack');
+    const direct = mk(2);
+    expect(direct.directUrl).toBeTruthy();
+    expect(new URLSearchParams(direct.directUrl!.split('?')[1]).get('AudioStreamIndex')).toBeNull();
+    expect([direct.audioIndex, direct.transcodeReason]).toEqual([undefined, undefined]);
+    // without it: Jellyfin's HLS would take track 1 (French) and the plan says so
+    expect([query(mk(undefined, true)).get('AudioStreamIndex'), mk(undefined, true).delivery?.audio]).toEqual([null, 'stereo']); // 5.1 E-AC-3: converted
+  });
   it('a source wider than the box is not predicted as a copy (2048x858 in a 1080 box)', () => {
     expect(planStream(input({ src: { ...wrenfield, width: 2048, height: 858 } })).delivery.video).toBe('h264');
     expect(planStream(input({ src: { ...wrenfield, width: 1920, height: 800 } })).delivery.video).toBe('copy');
