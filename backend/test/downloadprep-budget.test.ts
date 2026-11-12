@@ -5,8 +5,8 @@ import { mkdtempSync } from 'node:fs';
 import { copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { __resetConvMemo, admitConversion } from '../src/convbudget.js';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { __resetConvMemo, admitConversion, countConversions } from '../src/convbudget.js';
 import { preparer, type FfmpegRunner } from '../src/downloadprep.js';
 import { previews } from '../src/previews.js';
 import { fragment, initSegment } from './fmp4build.js';
@@ -194,8 +194,76 @@ describe('download preparation and the conversion budget', () => {
     expect(psCount).toBe(3);
     expect(seen).toHaveLength(3);
     expect(seen[0]).toEqual(['conv:grant:ps-seam-1']);
-    expect(seen[1]).toEqual(['conv:grant:ps-seam-2']); // moved over from the first attempt's session, not lost
+    expect(seen[1]).toEqual(['conv:grant:ps-seam-2']); // admitted again for the restart and bound to its own session
     expect(seen[2]).toEqual(['conv:grant:ps-seam-3']);
     expect(await grants()).toEqual([]);
+  });
+
+  it('a paused download that resumes above the limit waits for a slot (never fails, never runs above L)', async () => {
+    env.ctx.cfg = { ...env.ctx.cfg, CONVERSION_SLOTS: 1 };
+    const pv = previews(env.ctx);
+    const fetched: number[] = [];
+    onSeg = (n) => { fetched.push(n); if (n === 2) pv.paused = true; }; // the nightly check pauses it after segment 2
+    const id = await job();
+    const p = preparer(env.ctx);
+    const logs: string[] = [];
+    const log = p.log;
+    p.log = (m) => logs.push(m);
+    try {
+      void p.tick();
+      await vi.waitFor(() => expect(p.pausedJobs.has(id)).toBe(true), { timeout: 5000, interval: 5 });
+      // paused: its transcode is stopped and it counts nothing, so a film takes the only slot
+      expect(await env.kv.keys('conv:dl:')).toEqual([]);
+      expect(await grants()).toEqual([]);
+      expect(await ask('film')).toEqual({ ok: true });
+      raw = [converting('ps-film-2')];
+      pv.paused = false; // the pause ends while the film converts
+      await new Promise((r) => setTimeout(r, 150)); // many poll rounds (pollMs 5): a negative check, the wait is the point
+      expect(fetched.filter((n) => n > 2)).toEqual([]); // not resumed above L = 1
+      expect(p.pausedJobs.has(id)).toBe(true);
+      expect(await status(id)).toMatchObject({ status: 'preparing', error: null });
+      expect(logs.filter((l) => l.includes(`download ${id} waits for a conversion slot`))).toHaveLength(1);
+      // the film ends: the download resumes by itself and finishes
+      raw = [];
+      for (const k of await grants()) await env.kv.del(k);
+      await p.whenIdle();
+      expect(await status(id)).toMatchObject({ status: 'ready' });
+      expect(fetched.filter((n) => n > 2).length).toBeGreaterThan(0);
+      expect(await env.kv.keys('conv:dl:')).toEqual([]);
+    } finally { p.log = log; pv.paused = false; }
+  });
+
+  it('a running download counts from its own state, with no session listed and its grant gone', async () => {
+    env.ctx.cfg = { ...env.ctx.cfg, CONVERSION_SLOTS: 1 };
+    const p = preparer(env.ctx);
+    const beatMs = p.beatMs;
+    p.beatMs = 5;
+    const set = vi.spyOn(env.kv, 'set');
+    let counted: Awaited<ReturnType<typeof countConversions>> = null;
+    let film: Awaited<ReturnType<typeof ask>> | undefined;
+    const orig = env.ctx.jf.mediaFetch.bind(env.ctx.jf);
+    // segment 3 takes a while: meanwhile the 30-s grant has run out and the server lists nothing (raw = [])
+    vi.spyOn(env.ctx.jf, 'mediaFetch').mockImplementation(async (u, path, ...rest) => {
+      if (/hls1\/main\/3\.mp4/.test(path) && !film) {
+        for (const k of await grants()) await env.kv.del(k);
+        await new Promise((r) => setTimeout(r, 40)); // the pass keeps running: its mark is refreshed meanwhile
+        counted = await countConversions(env.ctx);
+        film = await ask('film');
+      }
+      return orig(u, path, ...rest);
+    });
+    const id = await job();
+    try {
+      await p.tick();
+      await p.whenIdle();
+    } finally { p.beatMs = beatMs; vi.restoreAllMocks(); }
+    expect(counted).toEqual([expect.objectContaining({ kind: 'download', key: PS, userId: expect.any(String), device: null })]);
+    expect(counted![0]!.pending).toBeUndefined(); // counted from its own running state, not from a grant
+    expect(film).toEqual({ ok: false, why: 'full' });
+    expect(set.mock.calls.filter(([k]) => k === `conv:dl:${id}`).length).toBeGreaterThanOrEqual(2); // refreshed while it ran
+    expect(set.mock.calls.find(([k]) => k === `conv:dl:${id}`)?.[2]).toBe(30);
+    expect(await status(id)).toMatchObject({ status: 'ready' });
+    expect(await env.kv.keys('conv:dl:')).toEqual([]); // finished: cleared
+    expect(await countConversions(env.ctx)).toEqual([]);
   });
 });

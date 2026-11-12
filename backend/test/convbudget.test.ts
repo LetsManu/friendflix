@@ -7,6 +7,7 @@ import {
   CONV_DEFAULT_SLOTS, CONV_EXEMPT_TTL_S, CONV_GRANT_TTL_S, __resetConvMemo, admitConversion, admits, bindConvGrant, conversionLimit, countConversions, dropConvGrant, holdback,
   markConvExempt, readBench, recommend, type BenchRecord, type ConvKind, type ConvPriority,
 } from '../src/convbudget.js';
+import { clearDownloadConv, markDownloadConv } from '../src/convexempt.js';
 import { fingerprint, probeHevcEncoder } from '../src/hevcenc.js';
 import { setLive } from '../src/live.js';
 import type { EncoderSettings, MediaTraits } from '../src/media/types.js';
@@ -167,6 +168,27 @@ describe('countConversions', () => {
     // a finished job's session is a film again (the play session id outlives the preparation)
     await env.pool.query("update download_jobs set status = 'ready'");
     expect((await countConversions(env.ctx))!.map((e) => e.kind)).toEqual(['film']);
+  });
+  it('a running download counts from its mark, once per play session, listed or not', async () => {
+    const jobId = randomUUID();
+    await env.pool.query("insert into download_jobs(id, item_id, quality, status, play_session_id) values ($1, $2, 'hd', 'preparing', 'ps-dl2')", [jobId, 'a'.repeat(32)]);
+    await markDownloadConv(env.ctx, jobId, { ps: 'ps-dl2', label: 'Dunmoor', user: ANNA });
+    expect(await countConversions(env.ctx)).toEqual([{ kind: 'download', key: 'ps-dl2', label: 'Dunmoor', since: null, device: null, userId: ANNA }]);
+    // its grant and the server's own entry for the same play session do not add up
+    await admitConversion(env.ctx, { kind: 'download', userId: ANNA, hint: `dl:${jobId}` });
+    await bindConvGrant(env.ctx, `dl:${jobId}`, 'ps-dl2');
+    expect((await countConversions(env.ctx))!.map((e) => [e.kind, e.key])).toEqual([['download', 'ps-dl2']]);
+    raw = [converting('ps-dl2')];
+    expect((await countConversions(env.ctx))!.map((e) => [e.kind, e.key])).toEqual([['download', 'ps-dl2']]);
+    // paused (mark gone, session stopped, grant dropped): nothing
+    raw = [];
+    await clearDownloadConv(env.ctx, jobId);
+    await dropConvGrant(env.ctx, 'ps-dl2');
+    expect(await countConversions(env.ctx)).toEqual([]);
+    // a mark of a job that is no longer preparing does not count
+    await markDownloadConv(env.ctx, jobId, { ps: 'ps-dl2' });
+    await env.pool.query("update download_jobs set status = 'ready'");
+    expect(await countConversions(env.ctx)).toEqual([]);
   });
   it('pending grants count once', async () => {
     expect(await ask({ deviceId: 'd1', hint: 'h1' })).toEqual({ ok: true });

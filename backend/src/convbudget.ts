@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
 import type { Ctx } from './ctx.js';
-import { CONV_EXEMPT_PREFIX, within, type SessionRead } from './convexempt.js';
+import { CONV_DL_PREFIX, CONV_EXEMPT_PREFIX, within, type DownloadMark, type SessionRead } from './convexempt.js';
 import { HEVC_SESSIONS_TIMEOUT_MS, fingerprint } from './hevcenc.js';
 import { listLive } from './live.js';
 import type { EncoderSettings, ServerSession } from './media/types.js';
@@ -140,8 +140,9 @@ const decided = (s: ServerSession | undefined) => Boolean(s && (s.videoDirect !=
 
 /**
  * What converts now, one entry per play session: the media server's converting sessions (any app; preview clips, the HEVC probe and
- * the benchmark are exempt; a preparing download's session counts as `download`), plus grants whose session the server does not list
- * yet, plus portal streams the server does not list whose pbinfo record says they convert (two devices of one profile share one
+ * the benchmark are exempt; a preparing download's session counts as `download`), plus running download preparations from their own
+ * job state (`conv:dl:<job>`, convexempt.ts; once per play session, whether the server lists it or not), plus grants whose session the
+ * server does not list yet, plus portal streams the server does not list whose pbinfo record says they convert (two devices of one profile share one
  * server session, so the server's list alone can undercount, as in hevcGate). With exceptUser + exceptDevice that device's own streams
  * and grants are left out (its new stream replaces them, as in hevcGate). null: the session list did not answer within 800 ms
  * (unknown). A server without a session list counts grants and portal records only. `sessions`: a request's shared read.
@@ -166,15 +167,17 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
   const candidates = sessions.flatMap((s, i) => (converts(s) ? [{ s, key: s.playSessionId ?? `anon:${i}` }] : []));
   const withPs = candidates.flatMap((c) => (c.s.playSessionId ? [c.s.playSessionId] : []));
   const exempt = new Set<string>();
-  const downloads = new Set<string>();
-  if (withPs.length) {
-    const marks = await ctx.kv.mget(withPs.map((ps) => `${CONV_EXEMPT_PREFIX}${ps}`)).catch(() => [] as Array<string | null>);
-    withPs.forEach((ps, i) => { if (marks[i] != null) exempt.add(ps); });
-    const rows = await ctx.db.query<{ play_session_id: string }>(
-      "select play_session_id from download_jobs where status = 'preparing' and play_session_id = any($1::text[])", [withPs],
-    ).catch(() => ({ rows: [] as Array<{ play_session_id: string }> }));
-    for (const r of rows.rows) downloads.add(r.play_session_id);
-  }
+  // preparing downloads: their play session (a listed one counts as `download`) and their own running mark, in one mget with the exempt marks
+  const jobs = (await ctx.db.query<{ id: string; play_session_id: string | null }>("select id, play_session_id from download_jobs where status = 'preparing'")
+    .catch(() => ({ rows: [] as Array<{ id: string; play_session_id: string | null }> }))).rows;
+  const downloads = new Set(jobs.flatMap((r) => (r.play_session_id ? [r.play_session_id] : [])));
+  const markKeys = [...withPs.map((ps) => `${CONV_EXEMPT_PREFIX}${ps}`), ...jobs.map((r) => `${CONV_DL_PREFIX}${r.id}`)];
+  const marks = markKeys.length ? await ctx.kv.mget(markKeys).catch(() => [] as Array<string | null>) : [];
+  withPs.forEach((ps, i) => { if (marks[i] != null) exempt.add(ps); });
+  const running = jobs.flatMap((r, i) => {
+    const m = parse<DownloadMark>(marks[withPs.length + i]);
+    return m && typeof m.ps === 'string' ? [{ job: r.id, ...m }] : [];
+  });
 
   const out = new Map<string, ConvEntry>();
   for (const { s, key } of candidates) {
@@ -185,6 +188,13 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
       kind, key, ...(kind === 'film' && s.videoCodec === 'hevc' ? { hevc: true as const } : {}),
       label: s.item.seriesName || s.item.name || null, since: null, device: l?.deviceId ?? null, userId: l?.userId ?? null,
     });
+  }
+
+  // a running download preparation counts from its own state when the server does not say what its session does (not listed)
+  for (const d of running) {
+    const key = d.ps || `dl:${d.job}`;
+    if (out.has(key) || exempt.has(key) || decided(bySession.get(key))) continue;
+    out.set(key, { kind: 'download', key, label: d.label ?? null, since: null, device: null, userId: d.user ?? null });
   }
 
   const mine = o.exceptUser !== undefined && o.exceptDevice !== undefined;
