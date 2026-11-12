@@ -536,20 +536,30 @@ test.describe('admin people (desktop)', () => {
       await page.goto('/admin/users');
       const strip = page.getByRole('region', { name: 'Überblick' });
       await expect(strip.getByText('Personen', { exact: true })).toBeVisible();
-      await expect(strip.getByRole('link', { name: /2\s*Warten auf Freigabe/ })).toHaveAttribute('href', /\?tab=approvals$/);
+      const waiting = strip.getByRole('link', { name: /2\s*Warten auf Freigabe/ });
+      await expect(waiting).toHaveAttribute('href', /\?tab=approvals$/);
+      await expect(waiting).toHaveClass(/\bwarn\b/); // amber while someone waits
       await expect(strip.getByRole('link', { name: /Offene Einladungen/ })).toBeVisible();
       await expect(strip.getByText('Läuft bald ab', { exact: true })).toBeVisible();
       // the sidebar item of the people page carries the number of waiting sign-ups
       await expect(page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: /Nutzer.*2 offen/ })).toBeVisible();
       await strip.getByRole('link', { name: /Warten auf Freigabe/ }).click();
       await expect(page.getByRole('tab', { name: /Warten auf Freigabe/ })).toHaveAttribute('aria-selected', 'true');
+      // approving one updates the badge, the tile and the people total at once (no 60 s wait)
+      await page.getByRole('region', { name: 'Mia Neu' }).getByRole('button', { name: 'Freigeben' }).click();
+      await expect(toasts(page).getByText('Mia Neu freigegeben.')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: /Nutzer.*1 offen/ })).toBeVisible();
+      await expect(strip.getByRole('link', { name: /1\s*Warten auf Freigabe/ })).toBeVisible();
+      await expect(strip.getByText('14', { exact: true })).toBeVisible();
     });
 
     test('no tile is amber and no badge shows without waiting sign-ups', async ({ page, api }) => {
       api.admin.approvals = [];
       await page.goto('/admin/users');
       const strip = page.getByRole('region', { name: 'Überblick' });
-      await expect(strip.getByText('Warten auf Freigabe', { exact: true })).toBeVisible();
+      const waiting = strip.getByRole('link', { name: /0\s*Warten auf Freigabe/ });
+      await expect(waiting).toBeVisible();
+      await expect(waiting).not.toHaveClass(/\bwarn\b/);
       await expect(page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: /Nutzer.*offen/ })).toHaveCount(0);
     });
 
@@ -599,6 +609,43 @@ test.describe('admin people (desktop)', () => {
       await expect(table(page).getByRole('row', { name: /Anna Beispiel/ })).toHaveCount(0);
     });
 
+    test('Warten auf Freigabe and the right / 2FA filters exclude each other (the backend answers 400 for the pair)', async ({ page }) => {
+      const calls = watchList(page);
+      await page.goto('/admin/users');
+      const chips = page.getByRole('group', { name: 'Filter' });
+      await page.getByRole('combobox', { name: 'Recht' }).selectOption('cast:off');
+      await expect(page.getByRole('combobox', { name: 'Status' }).locator('option[value="pending"]')).toBeDisabled();
+      await page.getByRole('combobox', { name: 'Recht' }).selectOption('');
+      await chips.getByRole('button', { name: 'Ohne 2FA' }).click();
+      await expect(page.getByRole('combobox', { name: 'Status' }).locator('option[value="pending"]')).toBeDisabled();
+      await chips.getByRole('button', { name: 'Ohne 2FA' }).click();
+      // the other way round: with pending chosen, both are off and disabled; choosing it clears a set one
+      await page.getByRole('combobox', { name: 'Recht' }).selectOption('cast:off');
+      await page.getByRole('combobox', { name: 'Status' }).selectOption('active');
+      await page.getByRole('combobox', { name: 'Recht' }).selectOption('');
+      await page.getByRole('combobox', { name: 'Status' }).selectOption('pending');
+      await expect(page.getByRole('combobox', { name: 'Recht' })).toBeDisabled();
+      await expect(chips.getByRole('button', { name: 'Ohne 2FA' })).toBeDisabled();
+      await expect(table(page).getByRole('row', { name: /Mia Neu/ })).toBeVisible();
+      expect(calls.some((l) => /status=pending/.test(l) && /(perm|mfa)=/.test(l))).toBe(false);
+    });
+
+    test('a pending status in the URL drops perm and mfa instead of failing the list', async ({ page }) => {
+      await page.goto('/admin/users?status=pending&mfa=off&perm=cast%3Aoff');
+      await expect(table(page).getByRole('row', { name: /Mia Neu/ })).toBeVisible();
+      await expect(page.getByText('Das ließ sich nicht laden')).toHaveCount(0);
+      await expect(page.getByRole('combobox', { name: 'Recht' })).toBeDisabled();
+    });
+
+    test('mfa=off in the URL without the provider API is dropped: no pressed chip, no chip at all', async ({ page, api }) => {
+      api.admin.authentik.recovery = false;
+      await page.goto('/admin/users?mfa=off');
+      await expect(page.getByRole('group', { name: 'Filter' }).getByRole('button', { name: 'Mit Ausnahmen' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Ohne 2FA' })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Alle Filter löschen' })).toHaveCount(0);
+      await expect(page).not.toHaveURL(/mfa=/);
+    });
+
     test('no Ohne 2FA chip without the provider API', async ({ page, api }) => {
       api.admin.authentik.recovery = false;
       await page.goto('/admin/users');
@@ -611,7 +658,17 @@ test.describe('admin people (desktop)', () => {
       const anna = table(page).getByRole('row', { name: /Anna Beispiel/ });
       await expect(anna.getByTitle('1 Kinderprofil')).toBeVisible();
       await expect(anna.getByRole('link', { name: 'Anna Beispiel' })).toBeVisible();
-      await expect(anna.getByText('Notiz: Teilt das Konto mit ihrer Familie')).toBeAttached();
+      // the note opens from a button (keyboard, tap) and closes with Escape
+      const note = anna.getByRole('button', { name: 'Notiz' });
+      await note.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('note')).toHaveText('Teilt das Konto mit ihrer Familie');
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('note')).toHaveCount(0);
+      await note.click();
+      await expect(page.getByRole('note')).toBeVisible();
+      await page.getByRole('heading', { level: 1 }).click();
+      await expect(page.getByRole('note')).toHaveCount(0);
       await expect(table(page).getByRole('row', { name: /Clara Fischer/ }).getByTitle('2 Kinderprofile')).toBeVisible();
     });
 

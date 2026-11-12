@@ -569,6 +569,8 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   }
 
   // ---- people ----
+  // open requests have no rights or 2FA state (backend: 400 bad_request)
+  if (p === '/api/admin/users' && sp.get('status') === 'pending' && (sp.has('perm') || sp.has('mfa'))) return J({ error: 'bad_request' }, 400);
   if (p === '/api/admin/users') return J(usersList(st, sp));
   // ---- user detail (Block 23) ----
   if ((mm = p.match(/^\/api\/admin\/users\/([0-9a-f-]{36}|u1)(\/.*)?$/)) && !(m === 'PATCH' && !mm[2]) && mm[2] !== '/revoke-sessions') {

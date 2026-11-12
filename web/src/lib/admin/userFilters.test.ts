@@ -38,6 +38,13 @@ describe('toQuery / fromQuery', () => {
   });
 });
 
+describe('pending requests have no rights or 2FA', () => {
+  it('fromQuery lets the status win over perm and mfa', () => {
+    const f = fromQuery(new URLSearchParams('status=pending&perm=cast:off&mfa=off&overrides=1'));
+    expect(f).toEqual({ ...emptyFilters(), status: 'pending', overrides: true });
+  });
+});
+
 describe('activeChips', () => {
   it('lists nothing for no filters, and never the search text', () => {
     expect(activeChips(emptyFilters())).toEqual([]);

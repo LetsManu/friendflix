@@ -51,14 +51,24 @@ test.describe('admin people (phone)', () => {
     await expect(row.getByRole('button', { name: 'Mit Ausnahmen' })).toBeVisible();
     await expect.poll(() => row.evaluate((el) => el.scrollWidth > el.clientWidth + 8)).toBe(true);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
-    const box = await row.getByRole('button', { name: 'Mit Ausnahmen' }).boundingBox();
-    expect(box!.height).toBeGreaterThanOrEqual(44);
+    await expect.poll(async () => (await row.getByRole('button', { name: 'Mit Ausnahmen' }).boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
     await row.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
     await expect.poll(() => row.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
     // the last chip can be reached by scrolling and works there
     await row.getByRole('button', { name: 'Ohne 2FA' }).click();
     await expect(row.getByRole('button', { name: 'Ohne 2FA' })).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+  });
+
+  test('the note opens by tap from a 44 px button and stays inside the screen', async ({ page }) => {
+    await page.goto('/admin/users');
+    const note = page.getByRole('row', { name: /Anna Beispiel/ }).getByRole('button', { name: 'Notiz' });
+    await expect.poll(async () => (await note.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+    await note.tap();
+    const pop = page.getByRole('note');
+    await expect(pop).toHaveText('Teilt das Konto mit ihrer Familie');
+    await expect.poll(async () => { const b = await pop.boundingBox(); return b ? b.x >= 0 && b.x + b.width <= 390 : false; }).toBe(true);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 
@@ -72,8 +82,7 @@ test.describe('admin people (phone)', () => {
     await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('cast');
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
     for (const n of ['Erlauben', 'Verbieten', 'Wie Rolle', 'Richtlinien neu anwenden']) {
-      const b = await bar.getByRole('button', { name: n }).boundingBox();
-      expect(b!.height, n).toBeGreaterThanOrEqual(44);
+      await expect.poll(async () => (await bar.getByRole('button', { name: n }).boundingBox())?.height ?? 0, n).toBeGreaterThanOrEqual(44);
     }
     await bar.getByRole('button', { name: 'Verbieten' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();

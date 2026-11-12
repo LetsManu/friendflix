@@ -135,6 +135,7 @@ describe('admin glass: text contrast (B′)', () => {
     expect(src('../../routes/admin/hubs/+page.svelte')).toMatch(/\.tag \{[^}]*color: var\(--mut\); background: var\(--wash-muted\);/);
     expect(src('../../routes/admin/playback/+page.svelte')).toMatch(/\.fails li \{[^}]*background: var\(--wash-err\);/);
     expect(src('../../routes/admin/devices/+page.svelte')).toMatch(/\.waiting \{[^}]*background: var\(--wash-warn\); color: var\(--warn\);/);
+    expect(src('../../routes/admin/users/+page.svelte')).toMatch(/\.badge \{[^}]*background: var\(--wash-warn\); color: var\(--warn\);/);
     expect(src('./settings/SettingRow.svelte')).toMatch(/\.moved \{[^}]*background: var\(--wash-info\); color: var\(--fg\);/);
     for (const bg of ON_GLASS) {
       expect(cr(GLASS.ok, wash('ok', bg)), 'probe ok').toBeGreaterThanOrEqual(AA);
@@ -144,6 +145,7 @@ describe('admin glass: text contrast (B′)', () => {
       expect(cr(MUT, wash('muted', bg)), 'hub tag').toBeGreaterThanOrEqual(AA);
       expect(cr(MUT, wash('err', bg)), 'playback .72').toBeGreaterThanOrEqual(AA);
       expect(cr(GLASS.warn, wash('warn', bg)), 'devices waiting').toBeGreaterThanOrEqual(AA);
+      expect(cr(GLASS.warn, wash('warn', bg)), 'people exceptions badge').toBeGreaterThanOrEqual(4.5);
       expect(textContrast(wash('info', bg)), 'moved hint').toBeGreaterThanOrEqual(AA);
     }
     // why: the plain washes on the card over the peak (the review's figures)

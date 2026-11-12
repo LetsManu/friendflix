@@ -23,7 +23,6 @@ const dict: Translation<typeof de> = {
     filters: 'Filtreler',
     removeFilter: '“{filter}” filtresini kaldır',
     noteLabel: 'Not',
-    rightsOf: '{name} kişisinin istisnalarını göster',
     overridesBadge: { one: '{n} istisna', other: '{n} istisna' },
     kidsCount: { one: '{n} çocuk profili', other: '{n} çocuk profili' },
     searchPlaceholder: 'Ad, e-posta veya kullanıcı adı ara …',

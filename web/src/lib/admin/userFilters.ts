@@ -48,6 +48,8 @@ export function fromQuery(p: URLSearchParams): UserFilters {
   f.kids = p.get('kids') === '1';
   f.noMfa = p.get('mfa') === 'off';
   if (perm?.length === 2 && (PERM_KEYS as readonly string[]).includes(perm[0]!) && (perm[1] === 'on' || perm[1] === 'off')) f.perm = { key: perm[0] as PermKey, on: perm[1] === 'on' };
+  // open approval requests have no rights and no 2FA state: the backend refuses the pair (400), so the status wins
+  if (f.status === 'pending') { f.perm = null; f.noMfa = false; }
   return f;
 }
 

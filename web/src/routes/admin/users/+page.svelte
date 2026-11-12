@@ -21,6 +21,7 @@
   import Icon from '#lib/Icon.svelte';
   import { pageStore } from '#lib/page';
   import { PERM_KEYS, type PermKey } from '#lib/perms';
+  import NoteTip from '#lib/admin/NoteTip.svelte';
   import ApprovalsPanel from '#lib/admin/ApprovalsPanel.svelte';
   import InvitesPanel from '#lib/admin/InvitesPanel.svelte';
   import { accessPreset, accountGuardText, bulkSummary, deletionErrorText, futureDayEnd, restoredText, today } from '#lib/admin/people';
@@ -98,6 +99,8 @@
   /** changes filters: back to the first page, the URL follows, the list reloads */
   function setF(patch: Partial<UserFilters>) {
     f = { ...f, ...patch };
+    // open requests have no rights or 2FA state (the backend answers 400 for the pair): the newer choice wins
+    if (patch.status === 'pending') f = { ...f, perm: null, noMfa: false };
     page = 0; cur = { ...cur, offset: 0 };
     if (tab === 'users') void goto(usersUrl(), { replaceState: true, reset: false });
     void load();
@@ -111,7 +114,11 @@
     setF({ perm: v ? { key: key as PermKey, on: state === 'on' } : null });
   }
   /** the 2FA filter needs the sign-in provider's API (the backend ignores it otherwise) */
-  $: mfaChip = $summary?.mfaFilter === true || f.noMfa;
+  $: mfaChip = $summary?.mfaFilter === true;
+  // without the API the backend ignores the filter: a leftover one (URL) must not show as applied
+  $: if ($summary && $summary.mfaFilter !== true && f.noMfa) setF({ noMfa: false });
+  $: pendingOnly = f.status === 'pending';
+  $: rightsOn = f.perm !== null || f.noMfa;
   const rightName = (k: PermKey): string => tr(`adminPeople.roles.f.${k}`);
 
   onMount(() => {
@@ -140,7 +147,7 @@
   $: statusOptions = [
     { value: '', label: $t('adminPeople.users.allStatus') }, { value: 'active', label: $t('adminPeople.users.active') },
     { value: 'locked', label: $t('adminPeople.users.locked') }, { value: 'expiring', label: $t('adminPeople.users.expiring') },
-    { value: 'pending', label: $t('adminPeople.users.pending') }, { value: 'deleting', label: $t('adminPeople.users.deleting') },
+    { value: 'pending', label: $t('adminPeople.users.pending'), disabled: rightsOn }, { value: 'deleting', label: $t('adminPeople.users.deleting') },
   ];
   $: lastActiveOptions = [
     { value: '', label: $t('adminPeople.users.anyTime') }, { value: '7', label: $t('adminPeople.users.lastActive.d7') },
@@ -297,7 +304,7 @@
     if (r.ok && failed) toast.error(tr('adminPeople.bulk.repairPartial', { done: r.value?.done ?? 0, n: failed }));
     // reload either way: a failure in the middle can leave some accounts changed (the selection stays for a retry)
     void load();
-    if (b.action === 'lock' || b.action === 'unlock') void refreshSummary();
+    if (b.action === 'lock' || b.action === 'unlock' || b.action === 'access') void refreshSummary();
     // a partial failure keeps the selection: the failed accounts can be tried again
     if (r.ok && !failed) selected = new Map();
     return r.ok;
@@ -345,7 +352,7 @@
 
 <div id="ut-panel" role="tabpanel" aria-labelledby="ut-{tab}">
   {#if tab === 'approvals'}
-    <ApprovalsPanel {roles} {invitable} on:count={(e) => (approvals = e.detail)} />
+    <ApprovalsPanel {roles} {invitable} on:count={(e) => (approvals = e.detail)} on:decided={() => void refreshSummary()} />
   {:else if tab === 'invites'}
     <InvitesPanel {roles} {invitable} />
   {:else}
@@ -378,7 +385,7 @@
     <div class="chips" role="group" aria-label={$t('adminPeople.users.filters')}>
       <button type="button" class="chip frost-pill" class:on={f.overrides} aria-pressed={f.overrides} on:click={() => setF({ overrides: !f.overrides })}>{$t('adminPeople.users.filterOverrides')}{#if f.overrides}<Icon name="x" size={14} />{/if}</button>
       <button type="button" class="chip frost-pill" class:on={f.kids} aria-pressed={f.kids} on:click={() => setF({ kids: !f.kids })}>{$t('adminPeople.users.filterKids')}{#if f.kids}<Icon name="x" size={14} />{/if}</button>
-      {#if mfaChip}<button type="button" class="chip frost-pill" class:on={f.noMfa} aria-pressed={f.noMfa} on:click={() => setF({ noMfa: !f.noMfa })}>{$t('adminPeople.users.filterNoMfa')}{#if f.noMfa}<Icon name="x" size={14} />{/if}</button>{/if}
+      {#if mfaChip}<button type="button" class="chip frost-pill" class:on={f.noMfa} aria-pressed={f.noMfa} disabled={pendingOnly} on:click={() => setF({ noMfa: !f.noMfa })}>{$t('adminPeople.users.filterNoMfa')}{#if f.noMfa}<Icon name="x" size={14} />{/if}</button>{/if}
       <!-- the dropdown filters show as chips while active (the toggles above are their own chips) -->
       {#each chips.filter((c) => c.id !== 'overrides' && c.id !== 'kids' && c.id !== 'noMfa') as c (c.id)}
         <button type="button" class="chip frost-pill on" aria-label={$t('adminPeople.users.removeFilter', { filter: c.label })} on:click={() => clearOne(c.id)}>{c.label}<Icon name="x" size={14} /></button>
@@ -398,7 +405,7 @@
         <Select label={$t('adminPeople.users.filterRole')} options={roleFilterOptions} value={f.role ?? ''} on:change={(e) => setF({ role: (e.target as HTMLSelectElement).value || null })} hideLabel />
         <Select label={$t('adminPeople.users.filterStatus')} options={statusOptions} value={f.status ?? ''} on:change={(e) => setF({ status: (e.target as HTMLSelectElement).value || null })} hideLabel />
         <Select label={$t('adminPeople.users.filterLastActive')} options={lastActiveOptions} value={f.lastActive ?? ''} on:change={(e) => setF({ lastActive: (e.target as HTMLSelectElement).value || null })} hideLabel />
-        <Select label={$t('adminPeople.users.filterRight')} options={permOptions} value={permValue} on:change={(e) => setPerm((e.target as HTMLSelectElement).value)} hideLabel />
+        <Select label={$t('adminPeople.users.filterRight')} options={permOptions} value={permValue} disabled={pendingOnly} on:change={(e) => setPerm((e.target as HTMLSelectElement).value)} hideLabel />
         {#if pageSelectable.length}
           <label class="all"><input type="checkbox" checked={allOnPage} on:change={(e) => togglePage(e.currentTarget.checked)} />{$t('adminPeople.users.selectPage')}</label>
         {/if}
@@ -419,7 +426,7 @@
                 {:else if row.disabled}<StatusPill tone="err" label={$t('adminPeople.users.locked')} icon="lock" />
                 {:else}<StatusPill tone="ok" label={$t('adminPeople.users.active')} />{/if}
                 {#if row.jellyfin_username}<span class="sub">{row.jellyfin_username}</span>{/if}
-                {#if row.note}<span class="note" title={row.note}><Icon name="message" size={14} /><span class="sr-only">{$t('adminPeople.users.noteLabel')}: {row.note}</span></span>{/if}
+                {#if row.note}<NoteTip note={row.note} />{/if}
               </span>
             </span>
           </span>
@@ -457,11 +464,11 @@
   .chip { flex: none; display: inline-flex; align-items: center; gap: .4rem; min-height: 44px; padding: 0 16px; background: rgba(var(--fr-scrim-rgb), .5); color: rgba(255, 255, 255, .9); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .35); font-size: .9rem; font-weight: 600; white-space: nowrap; }
   .chip:hover:not(:disabled) { background: rgba(var(--fr-scrim-rgb), .5); color: #fff; }
   .chip.on, .chip.on:hover:not(:disabled) { background: var(--fr-sel); color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .6); }
+  .chip:disabled { opacity: .5; cursor: default; }
   .chip.clear { background: transparent; box-shadow: none; text-decoration: underline; }
   .chip:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-  .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.6rem; height: 1.6rem; padding: 0 .4rem; border-radius: 999px; background: var(--tone-warn); color: var(--warn); font-weight: 700; font-size: .85rem; text-decoration: none; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.6rem; height: 1.6rem; padding: 0 .4rem; border-radius: 999px; background: var(--wash-warn); color: var(--warn); font-weight: 700; font-size: .85rem; text-decoration: none; font-variant-numeric: tabular-nums; }
   .kids { display: inline-flex; align-items: center; gap: .2rem; margin-inline-start: .5rem; color: var(--mut); font-size: .85rem; vertical-align: middle; }
-  .note { display: inline-flex; align-items: center; color: var(--mut); cursor: help; }
   @media (pointer: coarse) { .badge { min-width: 44px; min-height: 44px; } }
   .tabs { display: flex; gap: .4rem; overflow-x: auto; scrollbar-width: none; margin-bottom: 1rem; border-bottom: 1px solid var(--line); }
   .tabs::-webkit-scrollbar { display: none; }

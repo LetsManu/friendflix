@@ -23,7 +23,6 @@ const dict: Translation<typeof de> = {
     filters: 'Filters',
     removeFilter: 'Remove filter “{filter}”',
     noteLabel: 'Note',
-    rightsOf: 'View exceptions of {name}',
     overridesBadge: { one: '{n} exception', other: '{n} exceptions' },
     kidsCount: { one: '{n} kids profile', other: '{n} kids profiles' },
     searchPlaceholder: 'Search name, email or login …',

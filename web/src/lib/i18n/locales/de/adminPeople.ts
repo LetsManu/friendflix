@@ -22,7 +22,6 @@ export default {
     filters: 'Filter',
     removeFilter: 'Filter „{filter}“ entfernen',
     noteLabel: 'Notiz',
-    rightsOf: 'Ausnahmen von {name} ansehen',
     overridesBadge: { one: '{n} Ausnahme', other: '{n} Ausnahmen' },
     kidsCount: { one: '{n} Kinderprofil', other: '{n} Kinderprofile' },
     searchPlaceholder: 'Name, E-Mail oder Login suchen …',

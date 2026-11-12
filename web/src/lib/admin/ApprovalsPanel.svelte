@@ -23,7 +23,7 @@
   interface R { id: string; name: string; email: string | null; requested_at: string }
   /** per request: chosen role, access choice ('' = unlimited, p30, p90, date), its day, reject form */
   interface Draft { role: string; access: string; day: string; rejecting: boolean; message: string }
-  const dispatch = createEventDispatcher<{ count: number }>();
+  const dispatch = createEventDispatcher<{ count: number; decided: void }>();
   let rows: R[] | null = null, error: string | null = null;
   let drafts: Record<string, Draft> = {};
 
@@ -71,6 +71,7 @@
       error: (e) => (handled(e) ? tr('adminPeople.approvals.alreadyHandled', { name: r.name }) : errorText(e)),
     });
     if (!res.ok && handled(res.error)) void load(); // the server's list drops the card again
+    if (res.ok) dispatch('decided'); // the server has it now: the shell's badge and the summary can re-read
   }
   function approve(r: R) {
     const d = drafts[r.id]!;
