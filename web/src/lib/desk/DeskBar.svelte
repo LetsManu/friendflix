@@ -172,8 +172,10 @@
     fillOn = true;
   }
   // (guarded on the path itself: bind:this re-binds on updates, so a statement on pill/fill would re-run without end)
-  let placedFor = '';
-  $: if (path !== placedFor && pill && fill) { placedFor = path; void placeFill(true); }
+  // (and on the set of tabs: Live-TV arriving with /api/me shifts the tabs after Filme, so the fill is placed again once they are drawn)
+  let placedFor = '', placedTabs = '';
+  $: tabKey = tabs.map((x) => x[0]).join('|');
+  $: if ((path !== placedFor || tabKey !== placedTabs) && pill && fill) { placedFor = path; placedTabs = tabKey; void tick().then(() => placeFill(true)); }
 
   // ---- search inside the pill (spec §1): the magnifier is the pill's last item; opening it makes the pill itself grow with a
   // spring and the field appears at its right end. On /search typing drives /search?q= (no second input on that page);

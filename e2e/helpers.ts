@@ -99,14 +99,13 @@ export async function seamColumns(page: Page, box: { x: number; y: number; width
 }
 
 /**
- * Clicks and expects the player route `/live/watch/<id>`. That page is Task 39's: until it exists SvelteKit's goto refuses with
- * `navigation_route_missing` (the attempt itself is what this checks); once it exists the URL changes. The pageerror is only
- * allowed in the test that asks for it.
+ * Clicks and expects the player route `/live/watch/<id>`: returns as soon as the URL is that path, so a wrong channel (or none)
+ * fails. The player page itself is Task 39's: a full page load of it is answered with a stub document (a client-side navigation
+ * never asks the server, so this changes nothing once the page exists).
  */
 export async function opensPlayer(page: Page, click: () => Promise<void>, id: string) {
-  const refused = page.waitForEvent('pageerror', { timeout: 4000 }).then((e) => e.message, () => '');
-  await click();
-  const err = await refused;
-  if (err) expect(err).toContain('navigation_route_missing');
-  else await expect(page).toHaveURL((u) => u.pathname === `/live/watch/${id}`);
+  await page.route('**/live/watch/**', (r) => (r.request().isNavigationRequest() ? r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>player</title>' }) : r.fallback()));
+  const path = `/live/watch/${encodeURIComponent(id)}`;
+  await Promise.all([page.waitForURL((u) => u.pathname === path, { waitUntil: 'commit' }), click()]);
+  expect(new URL(page.url()).pathname).toBe(path);
 }

@@ -12,7 +12,8 @@
    * A preview shows only while the channel is running, else the logo sits centred on the tile's glass. Bottom: number and name,
    * the programme title with the time left right-aligned in a slot reserved for the longest form (tabular figures), and a 3 px
    * progress line (`scaleX`, minute steps). A tile is one button named like a row. The head leaves a slot for *Ordnen* (Task 38).
-   * On phones the tiles form a swipeable strip (scroll snap) instead of a wrapping row.
+   * On a desktop the tiles wrap into rows (at most 12, no sideways scrolling a mouse could not reach); on phones they form a
+   * swipeable strip (scroll snap).
    */
   export let channels: LiveChannel[];
   export let now: Date;
@@ -66,8 +67,7 @@
   .head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 44px; margin-bottom: .4rem; }
   h2 { margin: 0; font-size: 1.15rem; }
   .order { display: inline-flex; align-items: center; min-height: 44px; }
-  .strip { display: flex; gap: .9rem; margin: 0; padding: 4px 4px 10px; list-style: none; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; }
-  .strip::-webkit-scrollbar { display: none; }
+  .strip { display: flex; flex-wrap: wrap; gap: .9rem; margin: 0; padding: 4px 4px 10px; list-style: none; }
   .cell { flex: none; scroll-snap-align: start; --tw: 264px; width: var(--tw); height: calc(var(--tw) * 9 / 16); }
   /* the global coral button look does not apply: restated, also for hover and press */
   .tile, .tile:hover:not(:disabled), .tile:active:not(:disabled) {
@@ -89,13 +89,14 @@
   .nm { min-width: 0; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .l2 { font-size: .84rem; color: rgba(255, 255, 255, .86); }
   .ti { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  /* the longest form ("noch 1 Std. 20 Min."), tabular figures: a changing value never moves its neighbours */
-  .left { flex: none; width: 9.2em; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* the longest form of any language (Polish "jeszcze 12 godz. 59 min"), tabular figures: a changing value never moves its neighbours */
+  .left { flex: none; width: 12.4em; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .bar { height: 3px; margin-top: 5px; border-radius: 2px; overflow: hidden; background: rgba(255, 255, 255, .28); }
   .bar > i { display: block; height: 100%; background: #fff; transform-origin: 0 50%; }
 
   @media (max-width: 720px) {
     .cell { --tw: min(78vw, 300px); }
-    .strip { scroll-snap-type: x mandatory; scroll-padding-left: 4px; }
+    .strip { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x mandatory; scroll-padding-left: 4px; }
+    .strip::-webkit-scrollbar { display: none; }
   }
 </style>

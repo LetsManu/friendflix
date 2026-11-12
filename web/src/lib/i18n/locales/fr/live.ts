@@ -49,9 +49,9 @@ const dict: Translation<typeof de> = {
   recentChip: 'Vues récemment',
   rowName: '{number} {name}, en ce moment : {title}, jusqu’à {time}',
   groups: 'Groupes de chaînes',
-  empty: 'Aucune chaîne n’est encore disponible pour toi.',
-  emptyFav: 'Pas encore de favoris. Touche l’étoile d’une chaîne.',
-  emptyRecent: 'Tu n’as encore regardé aucune chaîne.',
+  empty: 'Aucune chaîne n’est encore disponible pour vous.',
+  emptyFav: 'Pas encore de favoris. Touchez l’étoile d’une chaîne.',
+  emptyRecent: 'Vous n’avez encore regardé aucune chaîne.',
   emptyGroup: 'Aucune chaîne dans ce groupe pour le moment.',
   loadFailed: 'La liste des chaînes n’a pas pu être chargée.',
   number: {

@@ -60,7 +60,8 @@
   $: if (list && ((filter === 'recent' && !recent.length) || (filter !== 'all' && filter !== 'fav' && filter !== 'recent' && !groups.some((g) => g.id === filter)))) filter = 'all';
   $: shown = list ? channelOrder(list.channels, filter, list.favourites, list.recent) : [];
 
-  const open = (c: LiveChannel) => { void goto(watchPath(c.id)); };
+  /** the player; a route the client does not know (a build without it) is a plain page load, so a tap never does nothing */
+  const open = (c: LiveChannel) => { const to = watchPath(c.id); void goto(to).catch(() => { location.href = to; }); };
 
   /** the star: the list changes at once (favourites keep their order, a new one goes last); a refused call puts it back with a toast */
   function setFavourite(id: string, on: boolean) {

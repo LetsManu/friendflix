@@ -38,7 +38,7 @@
       <span class="bar"><i style="transform:scaleX({p})"></i></span>
     </span>
   </button>
-  <button type="button" class="star" class:on={channel.favourite} aria-pressed={channel.favourite} aria-label={`${$t(channel.favourite ? 'live.unfavourite' : 'live.favourite')}: ${channel.name}`} on:click={() => dispatch('star', channel)}>
+  <button type="button" class="star" class:on={channel.favourite} aria-pressed={channel.favourite} aria-label={`${$t('live.favourite')}: ${channel.name}`} on:click={() => dispatch('star', channel)}>
     <Icon name="star" size={22} fill={channel.favourite} />
   </button>
 </li>
@@ -63,7 +63,7 @@
   .txt { display: grid; grid-template-rows: 20px 17px 17px 3px; row-gap: 2px; min-width: 0; }
   .name { font-weight: 700; font-size: .98rem; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ln { display: flex; gap: .45rem; min-width: 0; font-size: .84rem; line-height: 17px; color: rgba(255, 255, 255, .78); }
-  .lb { flex: none; width: 3.7em; font-style: normal; font-weight: 600; color: rgba(255, 255, 255, .78); }
+  .lb { flex: none; width: 5.9em; font-style: normal; font-weight: 600; color: rgba(255, 255, 255, .78); }
   .tx { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
   .bar { align-self: end; height: 3px; border-radius: 2px; overflow: hidden; background: rgba(255, 255, 255, .22); }
   .bar > i { display: block; height: 100%; background: #fff; transform-origin: 0 50%; }

@@ -13,8 +13,6 @@ const favs = (page: Page) => page.getByRole('region', { name: 'Läuft gerade bei
 const tabbar = (page: Page) => page.getByRole('navigation', { name: 'Mobile Navigation' });
 
 test.describe('Live-TV tab (phone)', () => {
-  // "a row opens the player": the player route is Task 39's, so goto refuses with this until it exists (see opensPlayer)
-  test.use({ allowedConsole: /navigation_route_missing/ });
   test.beforeEach(async ({ page, api }) => {
     api.features = { livetv: true };
     await page.clock.install({ time: NOW });

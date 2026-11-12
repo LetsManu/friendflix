@@ -18,8 +18,6 @@ const chips = (page: Page) => page.getByRole('group', { name: 'Sendergruppen' })
 const names = (loc: Locator) => loc.locator('.name').allTextContents();
 
 test.describe('Live-TV tab (desktop)', () => {
-  // "a row opens the player": the player route is Task 39's, so goto refuses with this until it exists (see opensPlayer)
-  test.use({ allowedConsole: /navigation_route_missing/ });
   test.beforeEach(async ({ page, api }) => {
     api.features = { livetv: true };
     await page.clock.install({ time: NOW });
@@ -106,7 +104,8 @@ test.describe('Live-TV tab (desktop)', () => {
 
   test('star toggles', async ({ page, api }) => {
     await page.goto('/live');
-    const star = (pressed: boolean) => rowOf(page, 'Bergblick Sport').getByRole('button', { name: pressed ? 'Aus Favoriten entfernen: Bergblick Sport' : 'Zu Favoriten: Bergblick Sport' });
+    // the label stays, aria-pressed carries the state
+    const star = (_pressed: boolean) => rowOf(page, 'Bergblick Sport').getByRole('button', { name: 'Zu Favoriten: Bergblick Sport' });
     await expect(star(false)).toHaveAttribute('aria-pressed', 'false');
     const box = (await star(false).boundingBox())!;
     expect(box.width).toBeGreaterThanOrEqual(44);
@@ -147,6 +146,42 @@ test.describe('Live-TV tab (desktop)', () => {
   test('a row opens the player', async ({ page }) => {
     await page.goto('/live');
     await opensPlayer(page, () => rowOf(page, 'Hafenkanal').getByRole('button').first().click(), 'ch-hafen');
+  });
+
+  test('twelve favourites wrap into rows: every tile is inside the width, nothing scrolls sideways', async ({ page, api }) => {
+    const first = api.livetv.channels[0]!;
+    api.livetv.channels = [...api.livetv.channels, ...Array.from({ length: 6 }, (_, i) => ({ ...first, id: `ch-x${i}`, number: 40 + i, name: `Zusatz ${i + 1}` }))];
+    api.livetv.favourites = api.livetv.channels.map((c) => c.id);
+    await page.goto('/live');
+    const tiles = favs(page).getByRole('button');
+    await expect(tiles).toHaveCount(12);
+    const vw = page.viewportSize()!.width;
+    const boxes = await tiles.evaluateAll((l) => l.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, r: r.right, y: Math.round(r.y) }; }));
+    for (const b of boxes) { expect(b.x).toBeGreaterThanOrEqual(0); expect(b.r).toBeLessThanOrEqual(vw); }
+    expect(new Set(boxes.map((b) => b.y)).size).toBeGreaterThan(1); // more than one row
+    expect(await favs(page).getByRole('list').evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);
+  });
+
+  test('the active tab fill lines up with Neu when Live-TV is in the header', async ({ page }) => {
+    await page.goto('/new');
+    const tab = nav(page).locator('a.tab.active');
+    await expect(tab).toHaveText(/^Neu/);
+    const fill = nav(page).locator('.fill');
+    await expect.poll(async () => Math.abs(((await fill.boundingBox())?.x ?? -99) - ((await tab.boundingBox())?.x ?? 99)), { timeout: 5000 }).toBeLessThan(3);
+  });
+
+  test('the slots fit the longest words of every language', async ({ page, api }) => {
+    patchChannel(api.livetv, 'ch-nord', { now: progAt('Die Leuchtturmwärter', [19, 0], [22, 0]) });
+    await page.goto('/live');
+    const tile = favs(page).getByRole('button', { name: /^1 Nordlicht TV/ });
+    await expect(tile).toContainText('noch 1 Std. 23 Min.'); // the long form
+    // the longest time left (Polish) and the longest label (French) still fit their reserved slots
+    const fits = await page.evaluate(() => {
+      const left = document.querySelector('.cap .left') as HTMLElement, lb = document.querySelector('.row .lb') as HTMLElement;
+      left.textContent = 'jeszcze 12 godz. 59 min'; lb.textContent = 'Maintenant';
+      return [[left.scrollWidth, left.clientWidth], [lb.scrollWidth, lb.clientWidth]];
+    });
+    for (const [scroll, client] of fits as Array<[number, number]>) expect(scroll).toBeLessThanOrEqual(client);
   });
 
   test('now/next arriving moves nothing', async ({ page, api }) => {
