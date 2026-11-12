@@ -38,6 +38,10 @@ export interface MatrixRole {
   /** effective template + perms (+ requestsPerMonth); null = no cap (height, rating, requests per month); libraries 'all' | names; bitrates in bit/s */
   values: Record<string, unknown>;
   sources: Record<string, RightSource | undefined>;
+  /** the same fields without the role's own stored row (ROLE_TEMPLATES, else the base's code default): "geändert (Standard: …)" */
+  defaults: Record<string, unknown>;
+  /** an env role whose key left ROLE_TEMPLATES ("nicht mehr in .env"; it can be deleted) */
+  envGone: boolean;
   /** library names of the role the media server no longer has */
   missingLibraries: string[];
 }
@@ -78,6 +82,13 @@ export function cellText(f: MatrixField, v: unknown): string {
   }
 }
 
+/** the kind of every matrix field by key (backend perms.ts MATRIX_FIELDS), for places that have no matrix at hand (the audit sentences) */
+export const FIELD_KINDS: Readonly<Record<string, FieldKind>> = {
+  libraries: 'libraries', maxParentalRating: 'rating', maxStreams: 'int', maxBitrate: 'bitrate', remoteMaxBitrate: 'bitrate', transcoding: 'bool', maxHeight: 'height',
+  download: 'bool', maxDownloads: 'int', downloadMaxHeight: 'height', downloadDays: 'int', requests: 'bool', requestsPerMonth: 'int', party: 'bool',
+  partySchedule: 'bool', comments: 'bool', cast: 'bool', liveTv: 'bool', liveRecord: 'bool',
+};
+
 export const fieldLabel = (key: string): string => trDynamic(`adminPeople.roles.f.${key}`);
 
 /**
@@ -93,6 +104,23 @@ export function cellName(roleLabel: string, f: MatrixField, v: unknown, changed:
 /** unsaved changes: role key → field key → new value */
 export type Stage = Record<string, Record<string, unknown>>;
 
+/** besides the matrix fields the role sheet stages two settings of the role itself: `label` (its name) and `invitable` */
+
+/** the loaded value of a staged key: the displayed name, the invitable flag, or the matrix value */
+function loadedValue(r: MatrixRole | undefined, key: string): unknown {
+  if (!r) return undefined;
+  if (key === 'label') return roleName(r);
+  if (key === 'invitable') return r.invitable;
+  return r.values[key];
+}
+
+/** "geändert (Standard: ab 12)": the saved value of a role-set field that differs from its default; null otherwise (the tooltip falls back to "in dieser Rolle geändert") */
+export function changedFromText(r: Pick<MatrixRole, 'values' | 'sources' | 'defaults'>, f: MatrixField): string | null {
+  if (r.sources[f.key] !== 'role' || !Object.hasOwn(r.defaults, f.key) || same(r.values[f.key], r.defaults[f.key])) return null;
+  const d = r.defaults[f.key];
+  return tr('adminPeople.roles.changedFrom', { v: f.kind === 'bool' ? tr(d ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied') : cellText(f, d) });
+}
+
 function same(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) && Array.isArray(b)) {
     if (a.length !== b.length) return false;
@@ -104,7 +132,7 @@ function same(a: unknown, b: unknown): boolean {
 
 /** stages a value (a new Stage); the loaded value itself clears the entry (and an emptied role) */
 export function stageSet(s: Stage, m: RoleMatrix, role: string, key: string, v: unknown): Stage {
-  const loaded = m.roles.find((r) => r.key === role)?.values[key];
+  const loaded = loadedValue(m.roles.find((r) => r.key === role), key);
   const { [role]: cur = {}, ...others } = s;
   const { [key]: _drop, ...rest } = cur;
   const next = same(v, loaded) ? rest : { ...rest, [key]: v };
@@ -152,6 +180,11 @@ export function reviewLines(s: Stage, m: RoleMatrix): Array<{ role: string; fiel
     for (const f of m.fields) {
       if (!Object.hasOwn(fields, f.key)) continue;
       lines.push({ role: roleName(r), field: fieldLabel(f.key), from: cellText(f, r.values[f.key]), to: cellText(f, fields[f.key]) });
+    }
+    if (Object.hasOwn(fields, 'label')) lines.push({ role: roleName(r), field: tr('adminPeople.roles.fLabel'), from: roleName(r), to: String(fields.label) });
+    if (Object.hasOwn(fields, 'invitable')) {
+      const word = (v: unknown) => tr(v ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied');
+      lines.push({ role: roleName(r), field: tr('adminPeople.roles.fInvitable'), from: word(r.invitable), to: word(fields.invitable) });
     }
   }
   return lines;

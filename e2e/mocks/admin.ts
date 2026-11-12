@@ -101,6 +101,10 @@ export interface MatrixMockRole {
   key: string; label: string | null; builtinLabel: boolean; base: 'family' | 'friend' | 'guest' | 'admin'; origin: 'code' | 'env' | 'admin'; invitable: boolean;
   /** false = an env-only role: not in the roles table (the order write ignores its key) */
   stored: boolean; accounts: number; profiles: number; kidsProfiles: number;
+  /** open invites holding the role (a delete needs a target while any exist) */
+  invites: number;
+  /** an env role whose key left ROLE_TEMPLATES ("nicht mehr in .env"): deletable */
+  envGone: boolean;
   values: Record<string, unknown>; sources: Record<string, 'default' | 'env' | 'role' | 'admin'>; missingLibraries: string[];
 }
 export interface MatrixMock {
@@ -114,6 +118,9 @@ export interface MatrixMock {
   roles: MatrixMockRole[];
   /** the bodies of the role writes, per role key */
   puts: Array<{ role: string; body: Record<string, unknown> }>;
+  /** the role deletes that went through (the target the people moved to) and the key lists of the order writes */
+  deletes: Array<{ role: string; moveTo: string | null }>;
+  orders: string[][];
 }
 /** field table of backend/src/perms.ts MATRIX_FIELDS */
 export const MATRIX_FIELDS_MOCK: Array<Record<string, unknown>> = [
@@ -157,7 +164,7 @@ const inheritedValue = (r: Pick<MatrixMockRole, 'key' | 'base'>, k: string): unk
 function matrixRole(key: string, label: string | null, base: MatrixMockRole['base'], origin: MatrixMockRole['origin'], accounts: number, profiles: number, kids: number): MatrixMockRole {
   const values = { ...MATRIX_BASE_VALUES, ...MATRIX_INHERITED[key] };
   return {
-    key, label, builtinLabel: origin === 'code', base, origin, invitable: key !== 'admin', stored: origin !== 'env', accounts, profiles, kidsProfiles: kids,
+    key, label, builtinLabel: origin === 'code', base, origin, invitable: key !== 'admin', stored: origin !== 'env', accounts, profiles, kidsProfiles: kids, invites: 0, envGone: false,
     values, sources: Object.fromEntries(Object.keys(values).map((k) => [k, origin === 'env' ? 'env' : 'default'])), missingLibraries: [],
   };
 }
@@ -175,7 +182,7 @@ export function matrixMock(): MatrixMock {
       matrixRole('guest', 'Gast', 'guest', 'code', 3, 5, 2),
       matrixRole('crew', 'Crew', 'friend', 'env', 2, 2, 0),
     ],
-    puts: [],
+    puts: [], deletes: [], orders: [],
   };
 }
 export interface DetailLimits { maxStreams: number | null; remoteBitrate: number | null; maxDownloads: number | null; downloadMaxHeight: number | null; requestsPerMonth: number | null }
@@ -476,8 +483,8 @@ function invitesList(st: AdminState, sp: URLSearchParams) {
 }
 const AUDIT_ACTOR = 'Tester';
 function auditList(st: AdminState, sp: URLSearchParams) {
-  const q = norm(sp.get('q') ?? ''), action = sp.get('action'), actor = sp.get('actor'), from = sp.get('from'), to = sp.get('to');
-  let rows = st.audit.filter((e) => (!q || norm(`${e.action} ${e.actor ?? ''} ${e.target_name ?? ''}`).includes(q))
+  const target = sp.get('target'), q = norm(sp.get('q') ?? ''), action = sp.get('action'), actor = sp.get('actor'), from = sp.get('from'), to = sp.get('to');
+  let rows = st.audit.filter((e) => (!target || e.target === target) && (!q || norm(`${e.action} ${e.actor ?? ''} ${e.target_name ?? ''}`).includes(q))
     && (!action || e.action === action || e.action.startsWith(`${action}.`))
     && (!actor || (actor === 'system' ? e.actor === null : e.actor === AUDIT_ACTOR))
     && (!from || e.at >= from) && (!to || e.at <= to));
@@ -651,7 +658,9 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
         fields: MATRIX_FIELDS_MOCK, features: mx.features, libraries: mx.libraries,
         roles: rows.map((r, position) => ({
           key: r.key, label: r.label, builtinLabel: r.builtinLabel, base: r.base, origin: r.origin, invitable: r.invitable, position,
-          accounts: r.accounts, profiles: r.profiles, kidsProfiles: r.kidsProfiles, values: r.values, sources: r.sources, missingLibraries: r.missingLibraries,
+          envGone: r.envGone, accounts: r.accounts, profiles: r.profiles, kidsProfiles: r.kidsProfiles, values: r.values, sources: r.sources, missingLibraries: r.missingLibraries,
+          // the value without the role's own row (the backend's roleRights(ctx, key, null))
+          defaults: Object.fromEntries(MATRIX_FIELDS_MOCK.map((f) => [f.key as string, inheritedValue(r, f.key as string)])),
         })),
       },
     });
@@ -663,6 +672,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (new Set(keys).size !== keys.length || keys.length !== stored.length) return J({ error: 'bad_order' }, 400);
     const rest = st.matrix.roles.filter((r) => !r.stored);
     st.matrix.roles = [...keys.map((k: string) => st.matrix.roles.find((r) => r.key === k)!), ...rest];
+    st.matrix.orders.push(Array.isArray(body?.keys) ? body.keys : []);
     log('role.order', null, { keys });
     return ok();
   }
@@ -675,10 +685,10 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (!/^[a-z]/.test(key)) key = `r-${key}`;
     const taken = new Set(st.matrix.roles.map((r) => r.key));
     for (let n = 2; taken.has(key); n++) key = `${key.replace(/-\d+$/, '')}-${n}`;
-    const copy: MatrixMockRole = { ...src, key, label, builtinLabel: false, origin: 'admin', stored: true, accounts: 0, profiles: 0, kidsProfiles: 0, values: { ...src.values }, sources: Object.fromEntries(Object.keys(src.values).map((k) => [k, 'role' as const])), missingLibraries: [] };
+    const copy: MatrixMockRole = { ...src, key, label, builtinLabel: false, origin: 'admin', stored: true, envGone: false, accounts: 0, profiles: 0, kidsProfiles: 0, invites: 0, values: { ...src.values }, sources: Object.fromEntries(Object.keys(src.values).map((k) => [k, 'role' as const])), missingLibraries: [] };
     const at = st.matrix.roles.findIndex((r) => !r.stored);
     st.matrix.roles.splice(at < 0 ? st.matrix.roles.length : at, 0, copy);
-    log('role.create', key, { from: src.key });
+    log('role.create', key, { from: src.key, label });
     return J({ key }, 201);
   }
   if ((mm = p.match(/^\/api\/admin\/roles\/([^/]+)$/)) && m === 'PUT') {
@@ -694,11 +704,14 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       if (v === undefined) return;
       if (v === null) { role.values[k] = inheritedValue(role, k); role.sources[k] = role.origin === 'env' ? 'env' : 'default'; } else { role.values[k] = v === 'unlimited' ? null : v; role.sources[k] = 'role'; }
     };
+    const before = { ...role.values };
     for (const [k, v] of Object.entries(body ?? {})) {
       if (k === 'label') { if (v === null) { role.label = null; role.builtinLabel = role.origin === 'code'; } else { role.label = String(v); role.builtinLabel = false; } } else if (k === 'invitable') role.invitable = Boolean(v);
       else if (k === 'perms' && v && typeof v === 'object') for (const [pk, pv] of Object.entries(v)) { if (PERM_KEYS_MOCK.includes(pk)) set(pk, pv); } else set(k, v);
     }
-    log('role.update', role.key, { keys: Object.keys(body ?? {}) });
+    // as the backend audits it: the changed effective values, before and after
+    const moved = MATRIX_FIELDS_MOCK.map((f) => f.key as string).filter((k) => JSON.stringify(before[k]) !== JSON.stringify(role.values[k]));
+    if (moved.length || 'label' in (body ?? {}) || 'invitable' in (body ?? {})) log('role.update', role.key, { from: Object.fromEntries(moved.map((k) => [k, before[k]])), to: Object.fromEntries(moved.map((k) => [k, role.values[k]])) });
     const identities = role.accounts + role.profiles;
     if (media && st.matrix.policyPartial) return J({ error: 'policy_partial', failed: st.matrix.failed, identities }, 502);
     return J({ ok: true, reapplied: { identities: media ? identities : 0, failed: 0 } });
@@ -707,14 +720,15 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     const role = st.matrix.roles.find((r) => r.key === mm![1]);
     if (!role) return J({ error: 'not_found' }, 404);
     if (role.origin === 'code') return J({ error: 'builtin_role' }, 400);
-    if (role.origin === 'env') return J({ error: 'env_role' }, 400);
+    if (role.origin === 'env' && !role.envGone) return J({ error: 'env_role' }, 400);
     const target = body?.moveTo === undefined ? undefined : st.matrix.roles.find((r) => r.key === body.moveTo);
     if (body?.moveTo !== undefined && (!target || target === role || target.base === 'admin')) return J({ error: 'bad_target' }, 400);
-    if (role.accounts > 0 && !target) return J({ error: 'role_in_use', accounts: role.accounts, invites: 0 }, 409);
-    if (target) { target.accounts += role.accounts; target.profiles += role.profiles; target.kidsProfiles += role.kidsProfiles; }
+    if ((role.accounts > 0 || role.invites > 0) && !target) return J({ error: 'role_in_use', accounts: role.accounts, invites: role.invites }, 409);
+    if (target) { target.accounts += role.accounts; target.profiles += role.profiles; target.kidsProfiles += role.kidsProfiles; target.invites += role.invites; }
     st.matrix.roles = st.matrix.roles.filter((r) => r !== role);
-    log('role.delete', role.key, { moveTo: target?.key ?? null });
-    return J({ ok: true, moved: role.accounts, invites: 0 });
+    st.matrix.deletes.push({ role: role.key, moveTo: target?.key ?? null });
+    log('role.delete', role.key, { moveTo: target?.key ?? null, accounts: target ? role.accounts : 0, invites: role.invites });
+    return J({ ok: true, moved: role.accounts, invites: role.invites });
   }
   if (p === '/api/admin/devices') return J(devicesList(st, sp));
   if (p === '/api/admin/devices/approve' && m === 'POST') {

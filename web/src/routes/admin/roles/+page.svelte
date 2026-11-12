@@ -5,6 +5,8 @@
    * Admin: Rollen & Rechte (spec §6.1). Desktop (≥ 900 px): the role matrix; edits are staged into the save bar, *Änderungen
    * prüfen* lists them, *Speichern* writes one role after the other (PUT /api/admin/roles/:role) with the progress in the bar;
    * a partial policy failure (502 policy_partial: the values are stored) offers *Erneut anwenden* with the role's last body.
+   * The column menus run here: *Duplizieren* (POST, asks for the name), *Löschen* (confirm, or the dialog that moves the people
+   * first, from the server's 409 role_in_use), *Nach links/rechts* and the drag handle (PUT /order, applied at once and reloaded).
    * Narrower screens keep the old card per role (requests / playback / downloads) until the phone cards replace it.
    * Either way an unsaved-changes guard asks before leaving.
    */
@@ -23,7 +25,9 @@
   import StatusPill from '#lib/ui/StatusPill.svelte';
   import { toast } from '#lib/ui/toast';
   import Toggle from '#lib/ui/Toggle.svelte';
-  import { partialText, policyLine, reviewLines, saveBarText, stageBodies, stageCounts, stageSet, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
+  import DeleteRoleDialog from '#lib/admin/rights/DeleteRoleDialog.svelte';
+  import { partialText, policyLine, reviewLines, roleName as roleLabel, saveBarText, stageBodies, stageCounts, stageSet, type MatrixRole, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
+  import NameDialog from '#lib/admin/rights/NameDialog.svelte';
   import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
   import RoleMatrixView from '#lib/admin/rights/RoleMatrix.svelte';
   import SaveBar from '#lib/admin/rights/SaveBar.svelte';
@@ -54,16 +58,26 @@
     perMonth: l.requestsPerMonth ?? 2, unlimited: l.requestsPerMonth === null, transcoding: l.transcoding, maxHeight: l.maxHeight ? String(l.maxHeight) : '',
     download: Boolean(l.download), maxDownloads: l.maxDownloads ?? 0, dlHeight: l.downloadMaxHeight && DL_HEIGHTS.includes(l.downloadMaxHeight) ? String(l.downloadMaxHeight) : '', days: l.downloadDays ?? 30, remoteCap: l.remoteIsDefault ? '' : String(l.remoteMaxBitrate), // '' = the role default
   });
+  const toCards = (limits: Limit[]): Card[] => limits.map((l) => ({ role: l.role, label: l.label, builtinLabel: Boolean(l.builtinLabel), isDefault: l.isDefault, maxBitrate: l.maxBitrate, remoteDefault: l.remoteDefault, form: toForm(l), base: toForm(l) }));
   async function load() {
     error = null;
     try {
       const r = await api<{ limits: Limit[]; matrix?: RoleMatrix }>('/api/admin/roles');
       matrix = r.matrix ?? null;
       stage = {};
-      cards = r.limits.map((l) => ({ role: l.role, label: l.label, builtinLabel: Boolean(l.builtinLabel), isDefault: l.isDefault, maxBitrate: l.maxBitrate, remoteDefault: l.remoteDefault, form: toForm(l), base: toForm(l) }));
+      cards = toCards(r.limits);
     } catch { error = tr('adminPeople.loadFailed'); }
   }
   onMount(load);
+  /** the matrix again after a role was created, deleted or moved: staged edits stay (those of a role that is gone drop); the phone cards follow while none is edited */
+  async function refresh() {
+    const r = await api<{ limits: Limit[]; matrix?: RoleMatrix }>('/api/admin/roles');
+    if (!r.matrix) return;
+    const keys = new Set(r.matrix.roles.map((x) => x.key));
+    matrix = r.matrix;
+    stage = Object.fromEntries(Object.entries(stage).filter(([k]) => keys.has(k)));
+    if (!cardsDirty) cards = toCards(r.limits);
+  }
 
   const int = (v: number | null) => Math.round(Number(v));
   const inRange = (v: number | null, lo: number, hi: number) => v !== null && v !== undefined && Number.isFinite(Number(v)) && int(v) >= lo && int(v) <= hi && String(v) !== '';
@@ -106,12 +120,16 @@
   let saving = false, progress: string | null = null, barError: string | null = null;
   let reviewing = false, reviewBtn: HTMLElement | null = null;
   let bar: SaveBar | undefined;
+  let view: RoleMatrixView | undefined;
 
   /** a written role: the values it carried become the loaded ones (set in the role itself now); staged entries equal to them go */
   function stored(j: Job) {
     const r = matrix?.roles.find((x) => x.key === j.role);
     if (!r || !matrix || !j.fields) return;
-    for (const [k, v] of Object.entries(j.fields)) { r.values[k] = v; r.sources[k] = 'role'; }
+    for (const [k, v] of Object.entries(j.fields)) {
+      if (k === 'label') { r.label = String(v); r.builtinLabel = false; } else if (k === 'invitable') r.invitable = Boolean(v);
+      else { r.values[k] = v; r.sources[k] = 'role'; }
+    }
     for (const [k, v] of Object.entries(stage[j.role] ?? {})) stage = stageSet(stage, matrix, j.role, k, v);
     matrix = matrix;
   }
@@ -190,6 +208,81 @@
   function discard(c: Card) { c.form = { ...c.base }; cards = cards; }
   const name = (c: Card): string => roleName(c.role, c);
 
+  // ---- role menu: duplicate, delete (with a move), order
+  let status = '';
+  interface Ask { role: MatrixRole; trigger: HTMLElement | null }
+  let dup: Ask | null = null, dupBusy = false, dupErr = '';
+  let del: (Ask & { accounts: number; invites: number }) | null = null, delBusy = false, delErr = '';
+  const inUse = (e: unknown) => (e instanceof ApiError && e.status === 409 && e.body?.error === 'role_in_use' ? { accounts: Number(e.body.accounts) || 0, invites: Number(e.body.invites) || 0 } : null);
+
+  function startDuplicate(a: Ask) { dup = a; dupErr = ''; dupBusy = false; }
+  async function duplicate(label: string) {
+    if (!dup || dupBusy) return;
+    dupBusy = true; dupErr = '';
+    try {
+      const { key } = await api<{ key: string }>('/api/admin/roles', { method: 'POST', body: { label, from: dup.role.key } });
+      dup = null;
+      await refresh();
+      toast.success(tr('adminPeople.roles.duplicated', { name: label }));
+      await view?.focusHead(key);
+    } catch (e) { dupErr = errorText(e); }
+    dupBusy = false;
+  }
+
+  /** the delete of a role: nobody holds it → a confirm; people do → the server's 409 role_in_use opens the dialog with its counts */
+  async function removeRole(a: Ask) {
+    const name = roleLabel(a.role);
+    if (a.role.accounts === 0 && !(await confirm({ title: tr('adminPeople.roles.deleteTitle', { name }), body: tr('adminPeople.roles.deleteNone'), danger: true, confirmLabel: tr('adminPeople.roles.delete') }))) { void tick().then(() => a.trigger?.focus({ preventScroll: true })); return; }
+    try {
+      await api(`/api/admin/roles/${encodeURIComponent(a.role.key)}`, { method: 'DELETE' });
+      await deleted(name);
+    } catch (e) {
+      const n = inUse(e);
+      if (n) { del = { ...a, ...n }; delErr = ''; delBusy = false; } else toast.error(errorText(e));
+    }
+  }
+  async function deleted(name: string) {
+    del = null;
+    await refresh();
+    toast.success(tr('adminPeople.roles.deleted', { name }));
+  }
+  async function removeMoved(to: string) {
+    if (!del || delBusy) return;
+    delBusy = true; delErr = '';
+    const name = roleLabel(del.role);
+    try {
+      await api(`/api/admin/roles/${encodeURIComponent(del.role.key)}`, { method: 'DELETE', body: { moveTo: to } });
+      await deleted(name);
+    } catch (e) {
+      const n = inUse(e);
+      if (n && del) del = { ...del, ...n };
+      delErr = errorText(e);
+    }
+    delBusy = false;
+  }
+  $: moveTargets = (matrix?.roles ?? []).filter((r) => r.key !== del?.role.key && r.base !== 'admin').map((r) => ({ key: r.key, name: roleLabel(r) }));
+
+  /** a column to a new place: shown at once, written with PUT /order (every key, the server ignores env-only ones), then read back */
+  async function moveRole({ key, to }: { key: string; to: number }) {
+    if (!matrix || saving) return;
+    const from = matrix.roles.findIndex((r) => r.key === key);
+    if (from < 0 || from === to || to < 0 || to >= matrix.roles.length) return;
+    const hadFocus = document.querySelector(`th[data-role="${CSS.escape(key)}"]`)?.contains(document.activeElement) ?? false;
+    const next = [...matrix.roles];
+    const [m] = next.splice(from, 1);
+    next.splice(to, 0, m!);
+    matrix = { ...matrix, roles: next.map((r, position) => ({ ...r, position })) };
+    status = tr('adminPeople.roles.movedTo', { name: roleLabel(m!), n: to + 1, total: next.length });
+    if (hadFocus) void view?.focusHead(key, 'menu');
+    try {
+      await api('/api/admin/roles/order', { method: 'PUT', body: { keys: next.map((r) => r.key) } });
+      await refresh();
+    } catch {
+      toast.error(tr('adminPeople.roles.orderFailed'));
+      await refresh().catch(() => undefined);
+    }
+  }
+
   let leaving = false;
   beforeNavigate((nav) => {
     if (leaving || !dirtyCount) return;
@@ -227,7 +320,7 @@
 {:else if !cards.length}
   <div class="state"><p>{$t('adminPeople.roles.empty')}</p></div>
 {:else if showMatrix && matrix}
-  <RoleMatrixView {matrix} bind:stage disabled={saving} />
+  <RoleMatrixView bind:this={view} {matrix} bind:stage disabled={saving} {status} on:duplicate={(e) => startDuplicate(e.detail)} on:remove={(e) => void removeRole(e.detail)} on:move={(e) => void moveRole(e.detail)} />
 {:else}
   <div class="grid">
     {#each cards as c (c.role)}
@@ -285,6 +378,14 @@
 {#if reviewing && matrix && counts}
   <ReviewSheet lines={reviewLines(stage, matrix)} policy={counts.policy ? policyLine(counts) : null} trigger={reviewBtn}
     on:close={() => (reviewing = false)} on:save={saveReviewed} />
+{/if}
+{#if dup}
+  <NameDialog title={tr('adminPeople.roles.duplicateTitle', { name: roleLabel(dup.role) })} hint={$t('adminPeople.roles.duplicateHint')} label={$t('adminPeople.roles.fLabel')} confirmLabel={$t('adminPeople.roles.create')}
+    busy={dupBusy} error={dupErr} trigger={dup.trigger} on:submit={(e) => void duplicate(e.detail)} on:cancel={() => (dup = null)} />
+{/if}
+{#if del}
+  <DeleteRoleDialog name={roleLabel(del.role)} targets={moveTargets} accounts={del.accounts} invites={del.invites} busy={delBusy} error={delErr} trigger={del.trigger}
+    on:confirm={(e) => void removeMoved(e.detail)} on:cancel={() => (del = null)} />
 {/if}
 
 <style>

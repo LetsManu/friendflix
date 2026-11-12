@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import {
-  cellName, cellText, partialText, peopleLine, policyLine, reviewLines, saveBarText, stageBodies, stageCounts, stageSet, summaryLine, visibleFields,
+  cellName, cellText, changedFromText, partialText, peopleLine, policyLine, reviewLines, saveBarText, stageBodies, stageCounts, stageSet, summaryLine, visibleFields,
   type MatrixField, type MatrixRole, type RoleMatrix, type Stage,
 } from './model';
 
@@ -18,7 +18,7 @@ const fields: MatrixField[] = [
 ];
 const role = (key: string, label: string | null, accounts: number, profiles: number, values: Record<string, unknown>): MatrixRole => ({
   key, label, builtinLabel: true, base: 'guest', origin: 'code', invitable: true, position: 0, accounts, profiles, kidsProfiles: 0, values,
-  sources: {}, missingLibraries: [],
+  sources: {}, defaults: values, envGone: false, missingLibraries: [],
 });
 const matrix = (features = { requests: false, cast: false, livetv: false }): RoleMatrix => ({
   fields, features, libraries: [{ id: 'l1', name: 'Filme' }, { id: 'l2', name: 'Serien' }, { id: 'l3', name: 'Musik' }],
@@ -139,5 +139,44 @@ describe('summaryLine', () => {
   it('en', async () => {
     await setLocale('en');
     expect(summaryLine({ ...r, values: { ...r.values, maxStreams: 2, maxBitrate: 20_000_000, download: true } })).toBe('2 streams · 20 Mbit/s · from 12 · Downloads on');
+  });
+});
+
+describe('changedFromText', () => {
+  const f = (k: string) => fields.find((x) => x.key === k)!;
+  const r = { ...role('guest', 'Gast', 4, 5, { maxParentalRating: 16, party: true, maxStreams: 1 }), sources: { maxParentalRating: 'role', party: 'role', maxStreams: 'role' } as MatrixRole['sources'], defaults: { maxParentalRating: 12, party: true, maxStreams: 1 } };
+  it('names the default when the stored value differs from it', () => {
+    expect(changedFromText(r, f('maxParentalRating'))).toBe('geändert (Standard: ab 12)');
+  });
+  it('is null when the value equals its default or comes from no role row', () => {
+    expect(changedFromText(r, f('party'))).toBeNull();
+    expect(changedFromText({ ...r, sources: {} }, f('maxParentalRating'))).toBeNull();
+    expect(changedFromText({ ...r, defaults: {} }, f('maxParentalRating'))).toBeNull();
+  });
+  it('writes a switch default in words', () => {
+    expect(changedFromText({ ...r, values: { party: false }, defaults: { party: true } }, f('party'))).toBe('geändert (Standard: erlaubt)');
+  });
+});
+
+describe('staging the name and the invitable switch', () => {
+  const m = matrix();
+  it('stages a new name, clears it when typed back', () => {
+    const s = stageSet({}, m, 'guest', 'label', 'Besucher');
+    expect(s).toEqual({ guest: { label: 'Besucher' } });
+    expect(stageSet(s, m, 'guest', 'label', 'Gast')).toEqual({});
+    expect(stageBodies(s)).toEqual({ guest: { label: 'Besucher' } });
+  });
+  it('invitable compares with the loaded flag', () => {
+    const s = stageSet({}, m, 'guest', 'invitable', false);
+    expect(s).toEqual({ guest: { invitable: false } });
+    expect(stageSet(s, m, 'guest', 'invitable', true)).toEqual({});
+  });
+  it('the review lists them after the fields', () => {
+    const s = stageSet(stageSet({}, m, 'guest', 'label', 'Besucher'), m, 'guest', 'maxStreams', 3);
+    expect(reviewLines(s, m)).toEqual([
+      { role: 'Gast', field: 'Gleichzeitige Streams', from: '1', to: '3' },
+      { role: 'Gast', field: 'Name', from: 'Gast', to: 'Besucher' },
+    ]);
+    expect(reviewLines(stageSet({}, m, 'guest', 'invitable', false), m)).toEqual([{ role: 'Gast', field: 'Für Einladungen wählbar', from: 'erlaubt', to: 'nicht erlaubt' }]);
   });
 });

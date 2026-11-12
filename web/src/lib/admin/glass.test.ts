@@ -429,6 +429,21 @@ describe('role matrix and save bar (rights)', () => {
     expect(css(matrix)).not.toMatch(/(^|[\s,}])\.lock\b/);
   });
 
+  it('the role sheet and the history: white text and the .9 notes on the menu scrim over any backdrop; the staged rail is --warn', () => {
+    for (const f of ['RoleSheet', 'RoleHistory']) {
+      const src = read(`./rights/${f}.svelte`);
+      expect(src, f).toContain('--fr-scrim-safe:{SCRIM_MENU}');
+      expect(css(src), f).toMatch(/color: rgba\(255, 255, 255, \.9\)/);
+    }
+    expect(css(read('./rights/RoleSheet.svelte'))).toMatch(/\.row\.staged \{ border-left-color: var\(--warn\); \}/);
+    for (const bg of [frostComposite(WHITE, SCRIM_MENU), frostComposite(AMB_PEAK, SCRIM_MENU), frostComposite(DARK_BASE, SCRIM_MENU)]) {
+      expect(textContrast(bg)).toBeGreaterThanOrEqual(AA);
+      expect(textContrast(bg, 0.9)).toBeGreaterThanOrEqual(AA);
+      // the rail is a graphic, not text: 3:1
+      expect(cr(GLASS.warn, bg)).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   it('the save bar: white text and the light error colour on the bar scrim over any backdrop', () => {
     expect(bar).toMatch(/class="sb frost frost-safe frost-panel" style="--fr-scrim-safe:\{SCRIM_BAR\}"/);
     expect(css(bar)).toContain('.tx.err { color: #ffbdbd; }');
@@ -441,7 +456,7 @@ describe('role matrix and save bar (rights)', () => {
   it('animates transform and opacity only, and every surface with motion switches it off in calm mode and for reduced motion', () => {
     const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
     const files = readdirSync(dir).filter((f) => f.endsWith('.svelte'));
-    expect(files).toEqual(expect.arrayContaining(['RoleMatrix.svelte', 'FieldControl.svelte', 'CellPopover.svelte', 'SaveBar.svelte', 'ReviewSheet.svelte']));
+    expect(files).toEqual(expect.arrayContaining(['RoleMatrix.svelte', 'FieldControl.svelte', 'CellPopover.svelte', 'SaveBar.svelte', 'ReviewSheet.svelte', 'RoleSheet.svelte', 'RoleHistory.svelte', 'DeleteRoleDialog.svelte', 'NameDialog.svelte']));
     const bad: string[] = [];
     for (const f of files) {
       const c = css(readFileSync(join(dir, f), 'utf8'));
@@ -453,11 +468,17 @@ describe('role matrix and save bar (rights)', () => {
     expect(read('./rights/CellPopover.svelte')).toContain('transition:growBoth|global={{ trigger }}');
     expect(bar).toMatch(/in:barRise out:barRise=\{\{ dir: 'out' \}\}/);
     expect(read('./rights/ReviewSheet.svelte')).toMatch(/sheetSlide\(node, \{ dir \}\)/);
-    for (const f of ['CellPopover', 'SaveBar', 'ReviewSheet']) {
+    // the role sheet and the history slide in from the right edge (translateX, the same sheetSlide)
+    for (const f of ['RoleSheet', 'RoleHistory']) expect(read(`./rights/${f}.svelte`), f).toMatch(/sheetSlide\(node, \{ dir, side: 'right' \}\)/);
+    // the dragged column and its neighbours move by transform only; a glide is a transform transition
+    expect(css(matrix)).toMatch(/\.glide \{ transition: transform 180ms var\(--fr-out\); \}/);
+    expect(matrix).toMatch(/style:transform=\{shift\(drag, c\)\}/);
+    for (const f of ['CellPopover', 'SaveBar', 'ReviewSheet', 'RoleSheet', 'RoleHistory', 'RoleMatrix']) {
       const src = read(`./rights/${f}.svelte`);
       expect(src, f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
       expect(src, f).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
     }
+    for (const f of ['DeleteRoleDialog', 'NameDialog']) expect(read(`./rights/${f}.svelte`), f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
   });
 
   it('the bar reserves its room before it rises: --savebar-h is set in a reactive statement (before the DOM update)', () => {
