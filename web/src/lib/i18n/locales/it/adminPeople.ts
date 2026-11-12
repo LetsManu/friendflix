@@ -448,6 +448,17 @@ const dict: Translation<typeof de> = {
     deletedRole: '«ruolo eliminato»',
     legacy: { request_limit: 'limite richieste', remote_cap: 'limite fuori casa', downloads: 'download', playback: 'riproduzione' },
   },
+  /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
+  sentenceRights: {
+    setValue: '{actor} ha impostato «{field}» di {target} su {value} (prima: {was})',
+    pinned: '{actor} ha fissato «{field}» solo per {target}: {value} (prima: {was})',
+    unpinned: '{actor} ha riportato «{field}» di {target} al ruolo: {value} (prima: {was})',
+    moved: '{actor} ha cambiato ciò che decide «{field}» per {target} (prima: {was}, ora: {now})',
+    noteChanged: '{actor} ha modificato la nota sui diritti di {target}',
+    storedOnly: '{actor} ha modificato eccezioni salvate di {target} che al momento non hanno effetto',
+    storedChip: '{field} (salvato)',
+    layer: { role: 'come il ruolo', user: 'fissato singolarmente', kids: 'profilo bambini', admin: 'admin', env: 'da .env' },
+  },
   devices: {
     thisDevice: 'Questo dispositivo',
     ownDevice: 'È il dispositivo con cui hai effettuato l’accesso: rimarresti chiuso fuori.',
@@ -589,6 +600,12 @@ const dict: Translation<typeof de> = {
     area: 'Area',
     empty: 'Ancora nessuna voce.',
     emptyFiltered: 'Nessuna voce corrisponde a questi filtri.',
+    /** Task 22: area Personen, the target filter and the link to the log */
+    people: 'Persone',
+    targetFilter: 'Riguarda: {name}',
+    targetClear: 'Rimuovi il filtro «Riguarda»',
+    targetUnknown: 'voce selezionata',
+    openInLog: 'Apri nel registro di audit',
     areas: {
       user: 'Utenti', device: 'Dispositivi', invite: 'Inviti', request: 'Richieste', poll: 'Sondaggi', list: 'Liste', hub: 'Riquadri dei marchi',
       role: 'Ruoli', profile: 'Profili', download: 'Download', digest: 'Riepilogo settimanale', settings: 'Impostazioni', system: 'Sistema',

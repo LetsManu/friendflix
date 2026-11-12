@@ -448,6 +448,17 @@ const dict: Translation<typeof de> = {
     deletedRole: '« rôle supprimé »',
     legacy: { request_limit: 'limite de demandes', remote_cap: 'limite hors du domicile', downloads: 'téléchargements', playback: 'lecture' },
   },
+  /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
+  sentenceRights: {
+    setValue: '{actor} a réglé « {field} » de {target} sur {value} (avant : {was})',
+    pinned: '{actor} a défini « {field} » individuellement pour {target} : {value} (avant : {was})',
+    unpinned: '{actor} a remis « {field} » de {target} sur le rôle : {value} (avant : {was})',
+    moved: '{actor} a changé ce qui décide « {field} » pour {target} (avant : {was}, maintenant : {now})',
+    noteChanged: '{actor} a modifié la note sur les droits de {target}',
+    storedOnly: '{actor} a modifié des exceptions enregistrées de {target} qui n’ont actuellement aucun effet',
+    storedChip: '{field} (enregistré)',
+    layer: { role: 'comme le rôle', user: 'défini individuellement', kids: 'profil enfant', admin: 'admin', env: 'depuis .env' },
+  },
   devices: {
     thisDevice: 'Cet appareil',
     ownDevice: 'C’est l’appareil avec lequel tu es connecté·e : tu te bloquerais toi-même.',
@@ -589,6 +600,12 @@ const dict: Translation<typeof de> = {
     area: 'Domaine',
     empty: "Aucune entrée pour l'instant.",
     emptyFiltered: 'Aucune entrée ne correspond à ces filtres.',
+    /** Task 22: area Personen, the target filter and the link to the log */
+    people: 'Personnes',
+    targetFilter: 'Concerne : {name}',
+    targetClear: 'Retirer le filtre « Concerne »',
+    targetUnknown: 'entrée sélectionnée',
+    openInLog: 'Ouvrir dans le journal d’audit',
     areas: {
       user: 'Utilisateurs', device: 'Appareils', invite: 'Invitations', request: 'Demandes', poll: 'Votes', list: 'Listes', hub: 'Tuiles de marque',
       role: 'Rôles', profile: 'Profils', download: 'Téléchargements', digest: 'Récap hebdomadaire', settings: 'Réglages', system: 'Système',

@@ -517,9 +517,13 @@ function invitesList(st: AdminState, sp: URLSearchParams) {
   return { invites: slice.map((i) => ({ ...i, created_at: i.expires_at })), total };
 }
 const AUDIT_ACTOR = 'Tester';
+/** `?area=people` (backend admin.ts): the audit categories about people and their roles */
+const AUDIT_PEOPLE = new Set(['user', 'role', 'invite', 'profile', 'device']);
 function auditList(st: AdminState, sp: URLSearchParams) {
+  const area = sp.get('area') === 'people';
   const target = sp.get('target'), q = norm(sp.get('q') ?? ''), action = sp.get('action'), actor = sp.get('actor'), from = sp.get('from'), to = sp.get('to');
   let rows = st.audit.filter((e) => (!target || e.target === target) && (!q || norm(`${e.action} ${e.actor ?? ''} ${e.target_name ?? ''}`).includes(q))
+    && (!area || AUDIT_PEOPLE.has(e.action.split('.')[0]!))
     && (!action || e.action === action || e.action.startsWith(`${action}.`))
     && (!actor || (actor === 'system' ? e.actor === null : e.actor === AUDIT_ACTOR))
     && (!from || e.at >= from) && (!to || e.at <= to));
@@ -527,6 +531,22 @@ function auditList(st: AdminState, sp: URLSearchParams) {
   const { slice, total } = paged(rows, sp, 100);
   return { entries: slice.map((e) => ({ ...e, actor_id: e.actor ? 'u1' : null })), total };
 }
+
+// ---- Task 22: audit samples of `user.rights` (backend userRights.ts: `{ from, to, layer?, stored?, note? }`) and a role.delete with its label ----
+/**
+ * newest first; `user` is the person the entries are about, `actor` the admin. As the backend writes them (rights.ts diffRights): a changed value
+ * has no `layer`; `layer` appears only when the value stayed and the deciding layer moved (sample 9002).
+ */
+export function rightsAuditSamples(user: { id: string; name: string }, actor = 'Ben Muster'): AuditRow[] {
+  const row = (id: number, minutes: number, action: string, meta: Record<string, unknown>): AuditRow => ({ id, at: new Date(Date.now() - minutes * 60000).toISOString(), action, target: user.id, meta, actor, target_name: user.name });
+  return [
+    row(9005, 0.5, 'user.rights', { from: { transcoding: true }, to: { transcoding: false } }),
+    row(9004, 1, 'user.rights', { from: {}, to: {}, stored: { cast: { from: true, to: null } } }),
+    row(9003, 2, 'user.rights', { from: { requestsPerMonth: 5 }, to: { requestsPerMonth: null } }),
+    row(9002, 3, 'user.rights', { from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'user' } } }),
+  ];
+}
+export const roleDeleteSample = (key: string, label: string): AuditRow => ({ id: 9100, at: new Date(Date.now() - 5 * 60000).toISOString(), action: 'role.delete', target: key, meta: { moveTo: null, accounts: 0, invites: 0, label }, actor: 'Ben Muster', target_name: null });
 
 export function adminSummary(st: AdminState) {
   const pendingReq = st.requests.filter((r) => r.status === PENDING).length;
@@ -928,7 +948,12 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     log('invite.revoke', mm[1]!);
     return ok();
   }
-  if (p === '/api/admin/audit') return J(auditList(st, sp));
+  if (p === '/api/admin/audit') {
+    // backend admin.ts: area is the literal 'people'; target 1..64 characters
+    const t = sp.get('target');
+    if ((sp.has('area') && sp.get('area') !== 'people') || (t !== null && (t.length < 1 || t.length > 64))) return J({ error: 'bad_request' }, 400);
+    return J(auditList(st, sp));
+  }
   if (p === '/api/admin/audit/filters') return J({ actors: [{ id: 'u1', name: AUDIT_ACTOR }], system: st.audit.some((e) => e.actor === null), categories: [...new Set(st.audit.map((e) => e.action.split('.')[0]!))].sort() });
 
   // ---- content ----

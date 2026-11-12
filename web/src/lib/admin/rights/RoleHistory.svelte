@@ -63,6 +63,7 @@
       {:else if !rows.length}
         <p class="empty">{$t('adminPeople.roles.historyEmpty')}</p>
       {:else}
+        <p class="open"><Button variant="ghost" icon="list" href="/admin/audit?target={encodeURIComponent(role.key)}">{$t('adminPeople.audit.openInLog')}</Button></p>
         <ul>
           {#each rows as { e, s } (e.id)}
             <li>
@@ -96,6 +97,7 @@
   .chips { display: flex; flex-wrap: wrap; gap: .4rem; }
   .chip { padding: .2rem .7rem; border-radius: var(--fr-r-pill, 99px); background: rgba(var(--fr-scrim-rgb), .25); font-size: .85rem; font-weight: 600; overflow-wrap: anywhere; }
   time { font-size: .8rem; color: rgba(255, 255, 255, .9); }
+  .open { margin: 0 0 .3rem; }
   .empty { margin: 1rem 0; color: rgba(255, 255, 255, .9); }
   .state { display: flex; flex-direction: column; align-items: center; gap: .6rem; text-align: center; padding: 1.5rem 0; }
   .state p { margin: 0; }

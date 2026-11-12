@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
-import { auid, type AdminState } from '../mocks/admin.js';
+import { auid, rightsAuditSamples, roleDeleteSample, type AdminState } from '../mocks/admin.js';
 
 const SHOTS = process.env.B18_SHOTS;
 const toasts = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Hinweise' });
@@ -562,6 +562,49 @@ test.describe('admin people (desktop)', () => {
       await expect(page.getByText('Keine Einträge mit diesen Filtern.')).toBeVisible();
       await page.getByRole('button', { name: 'Filter zurücksetzen' }).click();
       await expect(table.getByRole('row')).toHaveCount(10);
+    });
+
+    test('Bereich Personen filters: the request carries area=people', async ({ page }) => {
+      await page.goto('/admin/audit');
+      const table = page.getByRole('table', { name: 'Audit-Log' });
+      await expect(table.getByRole('row')).toHaveCount(10);
+      const asked = page.waitForRequest((r) => /\/api\/admin\/audit\?/.test(r.url()) && new URL(r.url()).searchParams.get('area') === 'people');
+      await page.getByRole('combobox', { name: 'Bereich' }).selectOption({ label: 'Personen' });
+      await asked;
+      // user, role, invite, profile and device entries stay (6 of the 9); wishes, lists, system entries go
+      await expect(table.getByRole('row')).toHaveCount(7);
+      await expect(table.getByText('Konto für Leon Richter angelegt')).toBeVisible();
+      await expect(table.getByText('Filmabend')).toHaveCount(0);
+      await page.getByRole('button', { name: 'Filter zurücksetzen' }).click();
+      await expect(table.getByRole('row')).toHaveCount(10);
+    });
+
+    test('the target filter comes from the link, shows who it is about and clears', async ({ page, api }) => {
+      api.admin.audit.unshift(...rightsAuditSamples({ id: auid(2), name: 'Anna Beispiel' }));
+      await page.goto(`/admin/audit?target=${auid(2)}`);
+      const table = page.getByRole('table', { name: 'Audit-Log' });
+      await expect(table.getByRole('row')).toHaveCount(5);
+      const chip = page.getByRole('group', { name: 'Betrifft: Anna Beispiel' });
+      await expect(chip).toBeVisible();
+      await expect(table.getByText('Ben Muster hat für Anna Beispiel „Umwandeln erlaubt“ auf nicht erlaubt gestellt (vorher: erlaubt)')).toBeVisible();
+      await chip.getByRole('button', { name: 'Filter „Betrifft“ entfernen' }).click();
+      await expect(page).toHaveURL(/\/admin\/audit$/);
+      await expect(chip).toHaveCount(0);
+      await expect(table.getByRole('row')).toHaveCount(14);
+    });
+
+    test('person Verlauf reads as sentences, with stored exceptions and a link to the log', async ({ page, api }) => {
+      api.admin.audit.unshift(...rightsAuditSamples({ id: auid(2), name: 'Anna Beispiel' }));
+      await page.goto(`/admin/users/${auid(2)}?tab=audit`);
+      const panel = page.getByRole('tabpanel', { name: 'Audit-Log' });
+      await expect(panel.getByText('Ben Muster hat für Anna Beispiel „Umwandeln erlaubt“ auf nicht erlaubt gestellt (vorher: erlaubt)')).toBeVisible();
+      await expect(panel.getByText('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ einzeln festgelegt: erlaubt (vorher: wie Rolle)')).toBeVisible();
+      await expect(panel.getByText('Ben Muster hat für Anna Beispiel „Wünsche pro Monat“ auf Unbegrenzt gestellt (vorher: 5)')).toBeVisible();
+      const stored = panel.getByRole('row').filter({ hasText: 'gespeicherte Ausnahmen geändert, die gerade nichts bewirken' });
+      await expect(stored.getByText('Auf Fernseher übertragen (gespeichert): erlaubt → wie Rolle')).toBeVisible();
+      await expect(panel).not.toContainText(/adminPeople|\{|undefined/);
+      await panel.getByRole('link', { name: 'Im Audit-Log öffnen' }).click();
+      await expect(page).toHaveURL(new RegExp(`/admin/audit\\?target=${auid(2)}`));
     });
 
     test('paging, sort by time, error with retry', async ({ page, api }) => {

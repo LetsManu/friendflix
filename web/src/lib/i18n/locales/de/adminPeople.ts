@@ -450,6 +450,17 @@ export default {
     deletedRole: '„gelöschte Rolle“',
     legacy: { request_limit: 'Wunsch-Limit', remote_cap: 'Limit unterwegs', downloads: 'Downloads', playback: 'Wiedergabe' },
   },
+  /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
+  sentenceRights: {
+    setValue: '{actor} hat für {target} „{field}“ auf {value} gestellt (vorher: {was})',
+    pinned: '{actor} hat für {target} „{field}“ einzeln festgelegt: {value} (vorher: {was})',
+    unpinned: '{actor} hat für {target} „{field}“ wieder auf die Rolle zurückgestellt: {value} (vorher: {was})',
+    moved: '{actor} hat bei {target} geändert, was „{field}“ bestimmt (vorher: {was}, jetzt: {now})',
+    noteChanged: '{actor} hat die Notiz zu den Rechten von {target} geändert',
+    storedOnly: '{actor} hat bei {target} gespeicherte Ausnahmen geändert, die gerade nichts bewirken',
+    storedChip: '{field} (gespeichert)',
+    layer: { role: 'wie Rolle', user: 'einzeln festgelegt', kids: 'Kinderprofil', admin: 'Admin', env: 'aus .env' },
+  },
   devices: {
     thisDevice: 'Dieses Gerät',
     ownDevice: 'Das ist das Gerät, mit dem du gerade angemeldet bist – du würdest dich selbst aussperren.',
@@ -591,6 +602,12 @@ export default {
     area: 'Bereich',
     empty: 'Noch keine Einträge.',
     emptyFiltered: 'Keine Einträge mit diesen Filtern.',
+    /** Task 22: area Personen, the target filter and the link to the log */
+    people: 'Personen',
+    targetFilter: 'Betrifft: {name}',
+    targetClear: 'Filter „Betrifft“ entfernen',
+    targetUnknown: 'ausgewählter Eintrag',
+    openInLog: 'Im Audit-Log öffnen',
     areas: {
       user: 'Nutzer', device: 'Geräte', invite: 'Einladungen', request: 'Wünsche', poll: 'Abstimmungen', list: 'Listen', hub: 'Marken-Kacheln',
       role: 'Rollen', profile: 'Profile', download: 'Downloads', digest: 'Wochenrückblick', settings: 'Einstellungen', system: 'System',
