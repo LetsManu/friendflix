@@ -253,7 +253,7 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     const items = page.getByRole('region', { name: 'Personen mit Ausnahmen' }).getByRole('listitem');
     await expect(items.filter({ hasText: 'Anna Beispiel' })).toContainText('Nicht freigegeben');
     await expect(items.filter({ hasText: 'Anna Beispiel' }).locator('.exc.plus')).toHaveCount(0);
-    await expect(items.filter({ hasText: 'Anna Beispiel' }).getByLabel(/^Nicht freigegeben, für niemanden sichtbar: Regional/)).toBeVisible();
+    await expect(items.filter({ hasText: 'Anna Beispiel' }).getByLabel(/^Nicht freigegeben, für niemanden sichtbar: \+ Regional/)).toBeVisible();
     // a released group's exception is still a plain plus
     await expect(items.filter({ hasText: 'Clara Fischer' })).not.toContainText('Nicht freigegeben');
     await expect(items.filter({ hasText: 'Clara Fischer' }).locator('.exc.plus')).toHaveCount(1);
@@ -273,6 +273,106 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     await expect(alert).toHaveCount(0);
     await expect(row(page, 'g-sport').getByRole('button', { name: 'Familie' })).toBeVisible();
     await expect(rows(page).nth(0).getByRole('button', { name: 'Freigeben …' })).toBeEnabled();
+  });
+
+  for (const [w, h] of [[1280, 800], [375, 800]] as const) {
+    test(`the roles error has its own room: the list does not move when it appears, is retried or goes (${w} px)`, async ({ page }) => {
+      await page.setViewportSize({ width: w, height: h });
+      let mode: 'fail' | 'hold' | 'ok' = 'fail';
+      let release = () => {};
+      const held = new Promise<void>((r) => { release = r; });
+      await page.route(/\/api\/admin\/roles$/, async (route) => {
+        if (mode === 'fail') return route.fulfill({ status: 500, json: { error: 'boom' } });
+        if (mode === 'hold') await held;
+        return route.fallback();
+      });
+      await page.goto('/admin/livetv?tab=groups');
+      const alert = page.getByRole('alert').filter({ hasText: 'Die Rollen ließen sich nicht laden' });
+      await expect(alert).toBeVisible();
+      const y = () => page.locator('ul.list').evaluate((el) => el.getBoundingClientRect().y + window.scrollY); // page position: a click may scroll the viewport
+      const withError = await y();
+      // Wiederholen with the list shown: the view stays mounted, the button shows the busy state, nothing moves
+      mode = 'hold';
+      await alert.getByRole('button', { name: 'Wiederholen' }).click();
+      await expect(alert.getByRole('button', { name: 'Wiederholen' })).toHaveAttribute('aria-busy', 'true');
+      await expect(page.locator('ul.list')).toBeVisible();
+      expect(await y()).toBe(withError);
+      release();
+      await expect(alert).toHaveCount(0);
+      await expect(row(page, 'g-sport').getByRole('button', { name: 'Familie' })).toBeVisible();
+      expect(await y()).toBe(withError);
+    });
+  }
+
+  test('a PATCH whose reload fails leaves the list stale: no second role click until Neu laden, which builds on the stored roles', async ({ page, api }) => {
+    let failReads = false;
+    await page.route(/\/api\/admin\/livetv\/groups$/, async (route) => (failReads && route.request().method() === 'GET' ? route.fulfill({ status: 500, json: { error: 'boom' } }) : route.fallback()));
+    await page.goto('/admin/livetv?tab=groups');
+    const sport = row(page, 'g-sport');
+    await expect(sport.getByRole('button', { name: 'Gast' })).toBeVisible();
+    failReads = true;
+    await sport.getByRole('button', { name: 'Gast' }).click();
+    const alert = page.getByRole('alert').filter({ hasText: 'Die Liste konnte nicht neu geladen werden.' });
+    await expect(alert).toBeVisible();
+    // the write went through, the list on screen is the old one: every chip waits, nothing is written on top of it
+    for (const n of ['Familie', 'Freund', 'Gast']) await expect(sport.getByRole('button', { name: n })).toBeDisabled();
+    await sport.getByRole('button', { name: 'Familie' }).click({ force: true });
+    expect(writes(api, 'PATCH', /groups\/g-sport$/).map((c) => c.body)).toEqual([{ roles: ['family', 'friend', 'guest'] }]);
+    // the matrix is locked the same way
+    await view(page, 'Nach Rolle').click();
+    await expect(page.getByRole('switch', { name: 'Sport für Familie' })).toBeDisabled();
+    await view(page, 'Liste').click();
+    // a failed Neu laden stays stale
+    await alert.getByRole('button', { name: 'Neu laden' }).click();
+    await expect(alert).toBeVisible();
+    await expect(sport.getByRole('button', { name: 'Familie' })).toBeDisabled();
+    // a good one shows the stored roles and the next click builds on them
+    failReads = false;
+    await alert.getByRole('button', { name: 'Neu laden' }).click();
+    await expect(alert).toHaveCount(0);
+    await expect(sport.getByRole('button', { name: 'Gast' })).toHaveAttribute('aria-pressed', 'true');
+    await sport.getByRole('button', { name: 'Familie' }).click();
+    await expect(sport.getByRole('button', { name: 'Familie' })).toHaveAttribute('aria-pressed', 'false');
+    expect(writes(api, 'PATCH', /groups\/g-sport$/).map((c) => c.body)).toEqual([{ roles: ['family', 'friend', 'guest'] }, { roles: ['friend', 'guest'] }]);
+  });
+
+  test('a refused PATCH keeps the chips locked until the reload has answered', async ({ page, api }) => {
+    await page.route(/\/api\/admin\/livetv\/groups\/g-sport$/, async (route) => (route.request().method() === 'PATCH' ? route.fulfill({ status: 500, json: { error: 'boom' } }) : route.fallback()));
+    await page.goto('/admin/livetv?tab=groups');
+    const sport = row(page, 'g-sport');
+    await sport.getByRole('button', { name: 'Gast' }).click();
+    // the reload after the refusal succeeds: the stored (unchanged) roles are shown and the chips are usable again
+    await expect(sport.getByRole('button', { name: 'Gast' })).toBeEnabled();
+    await expect(sport.getByRole('button', { name: 'Gast' })).toHaveAttribute('aria-pressed', 'false');
+    expect(api.admin.livetv.area.groups.find((g) => g.id === 'g-sport')!.roles).toEqual(['family', 'friend']);
+  });
+
+  test('two overlapping loads: the one that was started last wins even when the older answers last', async ({ page, api }) => {
+    await page.goto('/admin/livetv?tab=groups');
+    // the list as it is now: the stale answer the older load will bring
+    const stale = await page.evaluate(() => fetch('/api/admin/livetv/groups').then((r) => r.json()));
+    let reads = 0, staleSent = () => {};
+    const sent = new Promise<void>((r) => { staleSent = r; });
+    await page.route(/\/api\/admin\/livetv\/groups$/, async (route) => {
+      if (route.request().method() !== 'GET' || ++reads > 1) return route.fallback();
+      await new Promise((r) => setTimeout(r, 700));
+      await route.fulfill({ json: stale });
+      staleSent();
+    });
+    const kid = (id: string, name: string) => row(page, id).getByRole('switch', { name });
+    // write 1: its reload (read 1) is held back and will answer with the old list; write 2 starts meanwhile, its reload answers at once
+    await kid('g-kinder', 'Kinderfreundlich: Kinderinsel').click();
+    await expect.poll(() => reads).toBe(1);
+    await kid('g-sport', 'Kinderfreundlich: Sport').click();
+    await sent;
+    await page.waitForTimeout(250);
+    expect(api.admin.livetv.area.groups.find((g) => g.id === 'g-kinder')!.kidFriendly).toBe(false);
+    expect(api.admin.livetv.area.groups.find((g) => g.id === 'g-sport')!.kidFriendly).toBe(true);
+    await expect(kid('g-kinder', 'Kinderfreundlich: Kinderinsel')).toHaveAttribute('aria-checked', 'false');
+    await expect(kid('g-sport', 'Kinderfreundlich: Sport')).toHaveAttribute('aria-checked', 'true');
+    // and the list counts as fresh again: a role click goes through
+    await row(page, 'g-sport').getByRole('button', { name: 'Gast' }).click();
+    await expect(row(page, 'g-sport').getByRole('button', { name: 'Gast' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   test('people whose rights could not be read are counted', async ({ page, api }) => {
@@ -344,6 +444,21 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     const dlg = page.getByRole('alertdialog', { name: 'Gruppen zusammenführen' });
     await expect(dlg).toContainText('Das Ziel ist nicht freigegeben – die Sender bleiben für alle unsichtbar.');
     await expect(dlg).not.toContainText('sofort für alle sichtbar');
+  });
+
+  test('merge of a released group into one that is not released says the channels become invisible', async ({ page }) => {
+    await page.goto('/admin/livetv?tab=groups');
+    await row(page, 'g-sport').getByRole('checkbox').check();
+    await row(page, 'g-kino').getByRole('checkbox').check();
+    await bulk(page).getByRole('button', { name: 'Zusammenführen …' }).click();
+    const dlg = page.getByRole('alertdialog', { name: 'Gruppen zusammenführen' });
+    await dlg.getByLabel('Zusammenführen in').selectOption('g-kino');
+    await expect(dlg).toContainText('Das Ziel ist nicht freigegeben – die Sender sind danach für alle unsichtbar.');
+    await expect(dlg).not.toContainText('bleiben für alle unsichtbar');
+    await expect(dlg).not.toContainText('sofort für alle sichtbar');
+    // the other way round (released target): they are visible at once
+    await dlg.getByLabel('Zusammenführen in').selectOption('g-sport');
+    await expect(dlg).toContainText('sofort für alle sichtbar');
   });
 
   test('delete confirm', async ({ page, api }) => {

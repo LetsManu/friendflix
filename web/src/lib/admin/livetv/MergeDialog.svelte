@@ -31,6 +31,10 @@
 
   $: target = groups.find((g) => g.id === into);
   $: others = groups.filter((g) => g.id !== into);
+  /** an unreleased target: released sources turn invisible (they were visible before), unreleased ones stay invisible; a released target shows them at once */
+  $: warning = target && !target.released
+    ? $t(others.some((g) => g.released) ? 'adminLive.grp.mergeWarnHide' : 'adminLive.grp.mergeWarnOff')
+    : $t('adminLive.grp.mergeWarn', { into: target?.name ?? '' });
   $: options = groups.map((g) => ({ value: g.id, label: g.name }));
   const cancel = () => { if (!pending) dispatch('cancel'); };
   const confirm = () => { if (!pending && target && others.length) dispatch('confirm', { ids: others.map((g) => g.id), into: target.id }); };
@@ -41,7 +45,7 @@
     <h2 id="{id}-t">{$t('adminLive.grp.mergeTitle')}</h2>
     <p class="body" id="{id}-b">{$t('adminLive.grp.mergeBody', { names: chipsText(others.map((g) => g.name), 3), into: target?.name ?? '' })}</p>
     <Select label={$t('adminLive.grp.mergeInto')} bind:value={into} {options} disabled={pending} />
-    <p class="warn" role="note"><Icon name="alert" size={16} /><span>{target && !target.released ? $t('adminLive.grp.mergeWarnOff') : $t('adminLive.grp.mergeWarn', { into: target?.name ?? '' })}</span></p>
+    <p class="warn" role="note"><Icon name="alert" size={16} /><span>{warning}</span></p>
     {#if error}<p class="err" role="alert">{error}</p>{/if}
     <div class="acts">
       <Button variant="ghost" disabled={pending} on:click={() => shell.dismiss()}>{$t('common.cancel')}</Button>
