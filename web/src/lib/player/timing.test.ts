@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import { createTiming, deliveryOf, deviceClass, effectiveType, formatDelivery, formatTiming, outCodes, readLocalTimings, sendTiming, TIMING_ENDPOINT, TIMING_LOCAL_KEY, TIMING_LOCAL_MAX, type StoredTiming, type TimingReport } from './timing';
+import { CONTROLS_HIDE_MS, CONTROLS_HIDE_TV_MS, createTiming, deliveryOf, deviceClass, effectiveType, formatDelivery, formatTiming, outCodes, readLocalTimings, sendTiming, TIMING_ENDPOINT, TIMING_LOCAL_KEY, TIMING_LOCAL_MAX, type StoredTiming, type TimingReport } from './timing';
 
 const clock = () => { const c = { t: 1000, now: () => c.t, at: (ms: number) => { c.t = 1000 + ms; } }; return c; };
 function fakeStorage() {
@@ -316,5 +319,36 @@ describe('picture and sound out (Task 4)', () => {
     expect(formatDelivery({ videoOut: 'copy_h264', audioOut: 'copy' }, tr).sound).toBe('passed on');
     expect(formatDelivery({ videoOut: 'h264', audioOut: 'copy', audioCodec: 'dts', channels: 8 }, tr).sound).toBe('DTS 7.1 passed on');
     expect(formatDelivery({ videoOut: 'h264', audioOut: 'copy', audioCodec: 'http://x/y' }, tr).sound).toBe('passed on'); // never echoes anything that is not a short codec code
+  });
+});
+
+describe('live starts (mode live, Task 39)', () => {
+  it('a live session reports mode live and its first frame', () => {
+    const c = clock(), t = createTiming(c.now);
+    t.begin(); t.mode('live');
+    c.at(1800); t.playing();
+    expect(t.finish({ device: 'tv' })).toMatchObject({ mode: 'live', firstFrameMs: 1800 });
+  });
+
+  it('sends only the device, the mode and the first-frame time of a live start', () => {
+    const st = fakeStorage(), fetch = vi.fn(async () => ({}));
+    sendTiming(report({ device: 'tv', mode: 'live', firstFrameMs: 1800 }), { fetch, csrf: 'C', storage: st });
+    const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ device: 'tv', mode: 'live', firstFrameMs: 1800 });
+  });
+});
+
+describe('control auto-hide (F26)', () => {
+  it('the film player values moved here unchanged: 3 s, 5 s on TVs', () => {
+    expect(CONTROLS_HIDE_MS).toBe(3000);
+    expect(CONTROLS_HIDE_TV_MS).toBe(5000);
+  });
+
+  it('Player.svelte reads them instead of its own literals', () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'Player.svelte'), 'utf8');
+    expect(src).toMatch(/import\s*\{[^}]*\bCONTROLS_HIDE_MS\b[^}]*\}\s*from\s*'#lib\/player\/timing'/);
+    expect(src).toContain('CONTROLS_HIDE_TV_MS');
+    expect(src).not.toMatch(/hideMs\s*=\s*tvUi\s*\?\s*5000\s*:\s*3000/);
+    expect(src).not.toMatch(/let hideMs = 3000/);
   });
 });

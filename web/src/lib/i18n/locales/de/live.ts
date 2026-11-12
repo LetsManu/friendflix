@@ -31,6 +31,12 @@ export default {
     info: 'Programm',
     noChannel: 'Kein Sender {n}',
     notAvailable: 'Dieser Sender ist für dich nicht mehr verfügbar.',
+    back30: '30 Sekunden zurück',
+    fwd30: '30 Sekunden vor',
+    liveAria: 'Live',
+    behindAria: '{time} hinter live',
+    announce: '{number} {name}, {title}',
+    announceLeft: '{number} {name}, {title}, {left}',
   },
   full: {
     title: 'Gerade sind alle Live-Plätze belegt',

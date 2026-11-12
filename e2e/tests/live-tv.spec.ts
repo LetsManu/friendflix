@@ -3,7 +3,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { ME } from '../mocks/fixtures.js';
-import { opensPlayer } from '../helpers.js';
+import { mockLivePlayer, opensPlayer } from '../helpers.js';
 import type { MockChannel } from '../mocks/livetv.js';
 
 // Live TV on a television (Task 37, spec §11.3): the 10-foot list with its favourites row, focusable chips and 96 px rows, the D-pad
@@ -29,6 +29,7 @@ function longList(api: { livetv: { channels: MockChannel[] } }) {
 test.describe('Live TV on a TV', () => {
   test.beforeEach(async ({ page, api }) => {
     api.features = { livetv: true };
+    await mockLivePlayer(page);
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.clock.install({ time: NOW });
   });
@@ -319,9 +320,10 @@ test.describe('Live TV on a TV', () => {
   });
 
   test('play=last opens the player and Back returns to the list, Back again goes home', async ({ page, api }) => {
-    await page.route('**/live/watch/**', (r) => (r.request().isNavigationRequest() ? r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>player</title>' }) : r.fallback()));
     await page.goto('/live?play=last&tv=1');
     await expect.poll(() => new URL(page.url()).pathname).toBe('/live/watch/ch-kinder');
+    expect(new URL(page.url()).searchParams.has('play')).toBe(false); // the redirect replaced the play=last entry
+    await expect(page.locator('[data-live-state]')).toBeVisible(); // the real player, loaded on the shared mocks
     // the player committed PUT /last for what it played
     api.livetv.recent = ['ch-hafen', 'ch-kinder'];
     await page.goBack();
@@ -346,12 +348,12 @@ test.describe('Live TV on a TV', () => {
 test.describe('TV startet mit Live-TV', () => {
   test.beforeEach(async ({ page, api }) => {
     api.features = { livetv: true };
+    await mockLivePlayer(page);
     await page.routeWebSocket(/\/ws\/remote/, () => {});
   });
 
   test('/tv with startLive replaces to /live?play=last', async ({ page }) => {
     await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, tv: true, startLive: true, features: { livetv: true } } }));
-    await page.route('**/live/watch/**', (r) => (r.request().isNavigationRequest() ? r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>player</title>' }) : r.fallback()));
     const to = page.waitForRequest((r) => r.isNavigationRequest() && new URL(r.url()).pathname === '/live' && new URL(r.url()).search === '?play=last');
     await page.goto('/tv');
     await to;

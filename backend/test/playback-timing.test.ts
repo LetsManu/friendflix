@@ -204,6 +204,36 @@ describe('picture and sound out (video_out / audio_out)', () => {
   });
 });
 
+describe('live starts (mode live, Task 39)', () => {
+  // the per-IP limit (30/min) is already used up by the tests above: every post here comes from its own address
+  let n = 0;
+  const post = (s: Sess, payload: unknown) =>
+    env.app.inject({ method: 'POST', url: '/api/playback/timing', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: payload as object, remoteAddress: `198.51.100.${100 + ++n}` });
+  const extra = { delivery: 'remux', videoCopy: true, soundMode: 'night', audioRouted: true, droppedFrames: 12, totalFrames: 14_400, trackSwitch: true, reconnects: 2, avEvents: 3, fromNext: true, qualitySwitch: true, videoOut: 'h264', audioOut: 'copy' };
+
+  it('stores a live start with its first-frame time only; every other measurement is dropped', async () => {
+    expect((await post(friend, { ...base, ...extra, device: 'tv', mode: 'live', firstFrameMs: 1800 })).statusCode).toBe(204);
+    const r = await rows();
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({
+      device: 'tv', mode: 'live', first_frame_ms: 1800, quality_switch: false, bitrate: null, target_duration: null, info_ms: null, manifest_ms: null,
+      first_frag_ms: null, first_frag_bytes: null, first_frag_dl_ms: null, seeks: 0, seek_median_ms: null, seek_max_ms: null, stalls: 0, stall_ms: 0,
+      effective_type: null, delivery: null, video_copy: null, sound_mode: null, audio_routed: null, dropped_frames: null, total_frames: null,
+      track_switch: false, reconnects: 0, av_events: 0, from_next: false, video_out: null, audio_out: null,
+    });
+  });
+
+  it('a bare live report is accepted; film modes keep every field; other modes stay refused', async () => {
+    expect((await post(friend, { device: 'phone', mode: 'live', firstFrameMs: 2400 })).statusCode).toBe(204);
+    expect((await post(friend, { ...base, mode: 'hls' })).statusCode).toBe(204);
+    expect((await post(friend, { ...base, mode: 'dash' })).statusCode).toBe(400);
+    const r = await rows();
+    expect(r).toHaveLength(2);
+    expect(r[0]).toMatchObject({ device: 'phone', mode: 'live', first_frame_ms: 2400 });
+    expect(r[1]).toMatchObject({ mode: 'hls', info_ms: 300, first_frame_ms: 3000, seeks: 2 });
+  });
+});
+
 describe('cleanup', () => {
   it('pruneTimings / healthTick delete rows older than 14 days', async () => {
     await env.pool.query("insert into playback_timings(home, device, mode, created_at) values (true, 'pc', 'hls', now() - interval '15 days'), (true, 'pc', 'hls', now() - interval '13 days')");
