@@ -79,7 +79,8 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
         livetv: status?.livetv ? { state: status.livetv.state, container: status.livetv.container, error: status.livetv.error } : null,
       },
       envLine: ENV_LINE,
-      // the measurement started when livetv first appeared after enabling: started, or why it was refused (the admin can press Neu messen)
+      // the measurement launched when livetv first appeared after enabling: started (= launched; its result shows on the conversions
+      // card), or why it was refused (the admin can press Neu messen)
       benchmark: enableBenchmark(ctx),
       gpu: {
         jellyfin,
@@ -98,13 +99,15 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       await audit(ctx, actor, action, undefined, { ...meta, outcome: error });
       return reply.code(status).send({ error, ...extra, wanted: ctx.cfg.LIVETV_WANTED === 'true' });
     };
+    // one signed status read per request (1b review M14): startLivetvJob gets this view
     const view = await updaterView(ctx);
     if (!view.present || !('status' in view)) return refuse(409, 'no_updater', { envLine: ENV_LINE });
-    const r = await startLivetvJob(ctx, op, actor);
+    const r = await startLivetvJob(ctx, op, actor, view);
     if (r.ok && 'job' in r) {
       await want(op.op === 'enable', actor, log);
       await audit(ctx, actor, action, undefined, { ...meta, outcome: 'started' });
-      return reply.code(202).send({ job: r.job, wanted: op.op === 'enable' });
+      // what is stored now, read back: an env-locked or failing store keeps the old value, and the answer must not claim otherwise
+      return reply.code(202).send({ job: r.job, wanted: ctx.cfg.LIVETV_WANTED === 'true' });
     }
     if (r.ok) return refuse(409, 'foreign_stack', { envLine: ENV_LINE }); // a Portainer redeploy is not an enable
     log.warn({ op: op.op, error: r.error }, 'livetv job refused');

@@ -85,8 +85,6 @@ beforeEach(async () => {
   setCfg({ UPDATER_URL: 'http://updater:7070' });
   await env.pool.query("delete from audit_log where action like 'livetv.%'");
   await env.ctx.settings.save({ LIVETV_WANTED: 'false', LIVETV_OFFER_HIDDEN: 'false' }, null);
-  await env.kv.set('conv:bench:livetv', JSON.stringify({ speed: 4, hwAccel: 'h264_qsv', fingerprint: 'x', at: Date.now() }), 600);
-  await env.kv.del('conv:bench:attempt');
   await detectLivetv(env.ctx, 0);
 });
 
@@ -211,8 +209,7 @@ describe('the benchmark after enabling', () => {
     await vi.waitFor(() => expect(enableBenchmark(env.ctx)).toBe('started'));
   });
 
-  it('without a record and without an enable nothing is started on a tick', async () => {
-    await env.kv.del('conv:bench:livetv');
+  it('a tick without an enable starts nothing', async () => {
     fake.livetv = 'api1';
     await livetvDetectTick(env.ctx);
     await livetvDetectTick(env.ctx);
@@ -220,7 +217,52 @@ describe('the benchmark after enabling', () => {
   });
 });
 
+describe('the benchmark answer belongs to its appearance (1b review M2)', () => {
+  it('an answer that arrives after livetv vanished (and came back first seen at a fresh look) is dropped', async () => {
+    let answer!: (v: { ok: true }) => void;
+    vi.mocked(startBenchmark).mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    await env.ctx.settings.save({ LIVETV_WANTED: 'true' }, null);
+    fake.livetv = 'api1';
+    await livetvDetectTick(env.ctx); // the appearance after enabling: launched, no answer yet
+    expect(startBenchmark).toHaveBeenCalledTimes(1);
+    fake.livetv = 'down';
+    await livetvDetectTick(env.ctx); // gone (disabled)
+    answer({ ok: true });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(enableBenchmark(env.ctx)).toBeNull();
+    // back again: the old answer does not describe this appearance either
+    fake.livetv = 'api1';
+    vi.mocked(startBenchmark).mockImplementationOnce(() => new Promise(() => {})); // the new one never answers in this test
+    await livetvDetectTick(env.ctx);
+    expect(enableBenchmark(env.ctx)).toBeNull();
+  });
+
+  it('an answer while the same appearance runs is kept', async () => {
+    vi.mocked(startBenchmark).mockResolvedValueOnce({ ok: true });
+    await env.ctx.settings.save({ LIVETV_WANTED: 'true' }, null);
+    fake.livetv = 'api1';
+    await livetvDetectTick(env.ctx);
+    await vi.waitFor(() => expect(enableBenchmark(env.ctx)).toBe('started'));
+  });
+});
+
 describe('enable / disable', () => {
+  it('the 202 answers wanted as stored, read back: a store that refuses the write does not claim it (1b review M1)', async () => {
+    const save = vi.spyOn(env.ctx.settings, 'save').mockRejectedValueOnce(Object.assign(new Error('locked'), { code: 'env_locked' }));
+    try {
+      await withApp(async (call) => {
+        const r = await call('POST', '/api/admin/livetv/enable');
+        expect([r.statusCode, r.json().wanted]).toEqual([202, false]);
+      });
+      expect(wanted()).toBe('false');
+    } finally { save.mockRestore(); }
+  });
+
+  it('one signed status read per enable / disable (1b review M14)', async () => {
+    await withApp(async (call) => { expect((await call('POST', '/api/admin/livetv/enable')).statusCode).toBe(202); });
+    expect(fake.calls.filter((c) => c.path === '/v1/status')).toHaveLength(1);
+  });
+
   it('enable through the updater', async () => {
     await withApp(async (call) => {
       const r = await call('POST', '/api/admin/livetv/enable');

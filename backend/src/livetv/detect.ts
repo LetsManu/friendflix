@@ -14,11 +14,15 @@ import type { Encoder, LivetvSystem } from './wire.js';
  */
 export interface LivetvState { reachable: boolean; installed: boolean; version: string | null; bootId: string | null; checkedAt: number }
 
-/** how the benchmark after enabling went: started, or why it was refused (busy, running, no_user, unsupported) or failed to start */
+/**
+ * how the benchmark after enabling went: `started` = launched (it runs in the background; its result appears on the conversions
+ * card, not here), or why it was refused (busy, running, no_user, unsupported) or failed to launch
+ */
 export type EnableBenchmark = 'started' | 'busy' | 'running' | 'no_user' | 'unsupported' | 'error';
-interface Slot { state: LivetvState | null; flight: Promise<LivetvState> | null; bench: EnableBenchmark | null }
+/** `appearance` counts the checks that found livetv absent: a benchmark answer belongs to the appearance it was launched in */
+interface Slot { state: LivetvState | null; flight: Promise<LivetvState> | null; bench: EnableBenchmark | null; appearance: number }
 const slots = new WeakMap<object, Slot>();
-const slotOf = (ctx: Ctx): Slot => { let s = slots.get(ctx); if (!s) slots.set(ctx, s = { state: null, flight: null, bench: null }); return s; };
+const slotOf = (ctx: Ctx): Slot => { let s = slots.get(ctx); if (!s) slots.set(ctx, s = { state: null, flight: null, bench: null, appearance: 0 }); return s; };
 
 /** how the benchmark after the last enable went (null: none yet); shown in the admin state */
 export const enableBenchmark = (ctx: Ctx): EnableBenchmark | null => slots.get(ctx)?.bench ?? null;
@@ -35,12 +39,15 @@ async function check(ctx: Ctx, slot: Slot): Promise<LivetvState> {
   const next: LivetvState = { reachable: h !== null, installed: ok && h.api === 1, version: ok ? h.version : null, bootId: ok ? h.bootId : null, checkedAt: Date.now() };
   const was = slot.state?.installed; // undefined until the first look: a backend that starts next to a running livetv is not "just enabled"
   slot.state = next;
-  if (!next.installed) slot.bench = null; // it belongs to this appearance
+  if (!next.installed) { slot.bench = null; slot.appearance++; } // the outcome belongs to this appearance
   // the first look after enabling (spec §5.3): measure the encoder livetv would use; one attempt per appearance
   if (was === false && next.installed && ctx.cfg.LIVETV_WANTED === 'true') {
     slot.bench = null;
-    // one attempt per appearance; a refusal ({ ok: false }) is kept for the admin state, not retried here
-    void startBenchmark(ctx, 'enable').then((r) => { slot.bench = r.ok ? 'started' : r.why; }, () => { slot.bench = 'error'; });
+    // one attempt per appearance; a refusal ({ ok: false }) is kept for the admin state, not retried here. A late answer (livetv
+    // vanished meanwhile, maybe came back) is dropped: it would describe an appearance that is gone (1b review M2)
+    const mine = slot.appearance;
+    const keep = (b: EnableBenchmark) => { if (slot.appearance === mine && slot.state?.installed) slot.bench = b; };
+    void startBenchmark(ctx, 'enable').then((r) => keep(r.ok ? 'started' : r.why), () => keep('error'));
   }
   return next;
 }
