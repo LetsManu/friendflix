@@ -21,7 +21,7 @@ const deriveKey = (secret: string) => createHmac('sha256', secret).update('frien
 const key = deriveKey('server-test-secret-0123456789');
 const SYSTEM: SystemView = {
   cpu: { model: 'Fictional CPU 9000', cores: 4, loadPct: 12 },
-  gpu: { devices: ['/dev/dri/renderD128'], driver: 'i915', readable: true, busyPct: null },
+  gpu: { devices: ['/dev/dri/renderD128'], driver: 'i915', readable: true, busyPct: null, nvidia: false },
   encoders: ['h264_qsv', 'h264_vaapi', 'libx264'],
   cache: { usedBytes: 1024, maxBytes: 6 * 1024 ** 3 },
   recordings: null,

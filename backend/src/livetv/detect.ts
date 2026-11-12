@@ -72,7 +72,7 @@ export async function livetvSystem(ctx: Ctx): Promise<LivetvSystem | null> {
   const devices = strings(raw?.gpu?.devices, 32), encoders = strings(raw?.encoders, 8);
   const sys: LivetvSystem | null = raw && raw.gpu && devices && encoders && encoders.every((e) => ENCODERS.includes(e)) ? {
     cpu: { model: String(raw.cpu?.model ?? '').slice(0, 120), cores: Number(raw.cpu?.cores) || 0, loadPct: Number(raw.cpu?.loadPct) || 0 },
-    gpu: { devices, driver: typeof raw.gpu.driver === 'string' ? raw.gpu.driver.slice(0, 60) : null, readable: raw.gpu.readable === true, busyPct: typeof raw.gpu.busyPct === 'number' ? raw.gpu.busyPct : null },
+    gpu: { devices, driver: typeof raw.gpu.driver === 'string' ? raw.gpu.driver.slice(0, 60) : null, readable: raw.gpu.readable === true, busyPct: typeof raw.gpu.busyPct === 'number' ? raw.gpu.busyPct : null, nvidia: raw.gpu.nvidia === true },
     encoders: encoders as Encoder[],
     cache: { usedBytes: Number(raw.cache?.usedBytes) || 0, maxBytes: Number(raw.cache?.maxBytes) || 0 },
     recordings: raw.recordings ? { usedBytes: Number(raw.recordings.usedBytes) || 0, freeBytes: Number(raw.recordings.freeBytes) || 0 } : null,

@@ -16,7 +16,7 @@ vi.mock('../src/convbench.js', async (orig) => ({ ...(await orig<typeof import('
 const SECRET = 'internal-secret-123456';
 const JOB_ID = '0fedcba987654321';
 const SYSTEM = {
-  cpu: { model: 'Fictional CPU', cores: 4, loadPct: 3 }, gpu: { devices: ['renderD128'], driver: 'iHD', readable: true, busyPct: null },
+  cpu: { model: 'Fictional CPU', cores: 4, loadPct: 3 }, gpu: { devices: ['renderD128'], driver: 'iHD', readable: true, busyPct: null, nvidia: false },
   encoders: ['h264_qsv', 'libx264'], cache: { usedBytes: 0, maxBytes: 1000 }, recordings: null, srt: { ports: [9000] },
 };
 const fake = {
@@ -396,25 +396,34 @@ describe('summary', () => {
 });
 
 describe('gpuAdvice', () => {
-  const sys = (o: { devices?: string[]; readable?: boolean; driver?: string | null; encoders?: string[] } = {}) => ({
-    gpu: { devices: o.devices ?? [], readable: o.readable ?? false, driver: o.driver ?? null }, encoders: o.encoders ?? ['libx264'],
+  const sys = (o: { devices?: string[]; readable?: boolean; driver?: string | null; nvidia?: boolean } = {}) => ({
+    gpu: { devices: o.devices ?? [], readable: o.readable ?? false, driver: o.driver ?? null, nvidia: o.nvidia ?? false },
   });
   it('follows the five rows', () => {
     expect(gpuAdvice('qsv', sys())).toEqual({ level: 'warn', key: 'needsOverlay' });
     expect(gpuAdvice('vaapi', sys())).toEqual({ level: 'warn', key: 'needsOverlay' });
     expect(gpuAdvice('vaapi', sys({ devices: ['renderD128'] }))).toEqual({ level: 'warn', key: 'needsRenderGid' });
-    expect(gpuAdvice('nvenc', sys({ encoders: ['h264_vaapi', 'libx264'] }))).toEqual({ level: 'warn', key: 'needsNvidia' });
+    expect(gpuAdvice('nvenc', sys())).toEqual({ level: 'warn', key: 'needsNvidia' });
     expect(gpuAdvice('none', sys())).toEqual({ level: 'info', key: 'cpuOnly' });
     // a GPU type livetv has no overlay for, and nothing on its side: it runs on the processor (never "both")
     for (const hw of ['amf', 'v4l2m2m', 'rkmpp', 'videotoolbox']) expect(gpuAdvice(hw, sys()), hw).toEqual({ level: 'info', key: 'cpuOnly' });
     expect(gpuAdvice('amf', sys({ devices: ['renderD128'], readable: true, driver: 'radeonsi' }))).toEqual({ level: 'ok', key: 'both', driver: 'radeonsi' });
     expect(gpuAdvice(null, sys())).toEqual({ level: 'info', key: 'cpuOnly' });
-    expect(gpuAdvice('qsv', sys({ devices: ['renderD128'], readable: true, driver: 'iHD', encoders: ['h264_qsv', 'libx264'] }))).toEqual({ level: 'ok', key: 'both', driver: 'iHD' });
-    expect(gpuAdvice('nvenc', sys({ encoders: ['h264_nvenc', 'libx264'], driver: '550.1' }))).toEqual({ level: 'ok', key: 'both', driver: '550.1' });
+    expect(gpuAdvice('qsv', sys({ devices: ['renderD128'], readable: true, driver: 'iHD' }))).toEqual({ level: 'ok', key: 'both', driver: 'iHD' });
+    expect(gpuAdvice('nvenc', sys({ nvidia: true, driver: 'nvidia' }))).toEqual({ level: 'ok', key: 'both', driver: 'nvidia' });
   });
   it('rows are checked in order: no devices comes before unreadable; a device-less nvenc box is not told about overlays', () => {
     expect(gpuAdvice('qsv', sys({ readable: true }))).toEqual({ level: 'warn', key: 'needsOverlay' });
-    expect(gpuAdvice('nvenc', sys())).toEqual({ level: 'warn', key: 'needsNvidia' });
+    expect(gpuAdvice('nvenc', sys({ devices: ['renderD128'], readable: true, driver: 'i915' }))).toEqual({ level: 'warn', key: 'needsNvidia' });
+  });
+  it('NVIDIA is decided by the device node, not by encoders compiled into ffmpeg (1b review I5)', () => {
+    // what jellyfin-ffmpeg lists on any host: the old check read nvenc from here and answered "both" without the overlay
+    const compiled = { encoders: ['h264_qsv', 'h264_vaapi', 'h264_nvenc', 'libx264'] };
+    expect(gpuAdvice('nvenc', { ...sys(), ...compiled })).toEqual({ level: 'warn', key: 'needsNvidia' });
+    expect(gpuAdvice('qsv', { ...sys(), ...compiled })).toEqual({ level: 'warn', key: 'needsOverlay' });
+    expect(gpuAdvice('amf', { ...sys(), ...compiled })).toEqual({ level: 'info', key: 'cpuOnly' });
+    // an NVIDIA device makes an unknown GPU type "both" (it may well use it), never cpuOnly
+    expect(gpuAdvice('amf', sys({ nvidia: true, driver: 'nvidia' }))).toEqual({ level: 'ok', key: 'both', driver: 'nvidia' });
   });
 });
 
@@ -429,7 +438,7 @@ describe('wire.ts', () => {
       const i = src.indexOf(from);
       return norm(src.slice(src.indexOf('{', i), src.indexOf('\n}', i) + 2));
     };
-    const flat = (src: string) => norm(src).replace(/CpuInfo/g, '{ model: string; cores: number; loadPct: number }').replace(/GpuInfo/g, '{ devices: string[]; driver: string | null; readable: boolean; busyPct: number | null }');
+    const flat = (src: string) => norm(src).replace(/CpuInfo/g, '{ model: string; cores: number; loadPct: number }').replace(/GpuInfo/g, '{ devices: string[]; driver: string | null; readable: boolean; busyPct: number | null; nvidia: boolean }');
     expect(flat(fields(ours, 'interface LivetvSystem'))).toBe(flat(fields(theirs, 'interface SystemView')));
   });
 });
