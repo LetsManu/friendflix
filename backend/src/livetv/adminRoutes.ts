@@ -10,6 +10,7 @@ import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
 import { detectLivetv, enableBenchmark, livetvSystem } from './detect.js';
 import { gpuAdvice } from './gpu.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
+import { SourceRefusal, SourceTestError, createSource, deleteSource, listSources, sourceCreate, sourcePatch, sourceTestBody, testSource, updateSource } from './sources.js';
 
 /** the line for an install without the updater (spec §4.3); the page shows it with the compose commands */
 const ENV_LINE = 'COMPOSE_PROFILES=livetv';
@@ -217,5 +218,62 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     const gid = groupId(req);
     if (!gid || !(await deleteGroup(ctx, req.user!.id, gid))) return reply.code(404).send({ error: 'not_found' });
     return { ok: true };
+  });
+
+  // ---- Quellen (spec §9.1): provider URLs are secrets (F13). Bodies carrying them are never logged with an error (app.ts
+  // SENSITIVE_BODY), refusals are fixed codes with the field name, answers carry only the masked hints. ----
+
+  /** a refusal that is not a schema failure keeps its own code: `lan_required`, `refused` (Global Constraint *Errors*) */
+  const refused = (e: unknown, reply: Reply) => {
+    if (e instanceof SourceRefusal) return reply.code(400).send({ error: e.code, field: e.field });
+    throw e;
+  };
+
+  app.get('/api/admin/livetv/sources', admin, async (_req, reply) => {
+    reply.header('cache-control', 'no-store');
+    return listSources(ctx);
+  });
+
+  app.post('/api/admin/livetv/sources', admin, async (req, reply) => {
+    const b = parse(sourceCreate, req.body, reply);
+    if (!b) return reply;
+    try {
+      return reply.code(201).send(await createSource(ctx, req.user!.id, b));
+    } catch (e) { return refused(e, reply); }
+  });
+
+  // Prüfen: asks livetv, never the provider (spec §3.4); a static route, so it wins over /:id
+  app.post('/api/admin/livetv/sources/test', admin, async (req, reply) => {
+    const b = parse(sourceTestBody, req.body, reply);
+    if (!b) return reply;
+    reply.header('cache-control', 'no-store');
+    try {
+      return await testSource(ctx, b);
+    } catch (e) {
+      if (e instanceof SourceTestError) {
+        if (e.status === 404) return reply.code(404).send({ error: 'not_found' });
+        // livetv itself was not reached: not the provider's fault, so not the 422 of a provider failure
+        if (e.status === null) return reply.code(503).send({ error: 'livetv_unreachable' });
+        return reply.code(422).send({ error: e.code });
+      }
+      return refused(e, reply);
+    }
+  });
+
+  app.patch('/api/admin/livetv/sources/:id', admin, async (req, reply) => {
+    const sid = groupId(req);
+    if (!sid) return reply.code(404).send({ error: 'not_found' });
+    const b = parse(sourcePatch, req.body, reply);
+    if (!b) return reply;
+    try {
+      const s = await updateSource(ctx, req.user!.id, sid, b);
+      return s ?? reply.code(404).send({ error: 'not_found' });
+    } catch (e) { return refused(e, reply); }
+  });
+
+  app.delete('/api/admin/livetv/sources/:id', admin, async (req, reply) => {
+    const sid = groupId(req);
+    const r = sid ? await deleteSource(ctx, req.user!.id, sid) : null;
+    return r ?? reply.code(404).send({ error: 'not_found' });
   });
 }

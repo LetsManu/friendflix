@@ -19,3 +19,31 @@ export interface LivetvSystem {
   recordings: { usedBytes: number; freeBytes: number } | null;
   srt: { ports: number[] };
 }
+
+/** one live entry of a provider list (livetv/src/m3u.ts `M3uEntry`) */
+export interface M3uEntry {
+  key: string;
+  name: string;
+  tvgId?: string;
+  tvgName?: string;
+  chno?: number;
+  group?: string;
+  logo?: string;
+  shiftMin?: number;
+  pos: number /* 0-based among all live entries */;
+  url: string;
+  kind: 'hls' | 'ts' | 'srt';
+  userAgent?: string;
+}
+/**
+ * `POST /v1/fetch/m3u` (livetv/src/m3u.ts `M3uResult`). Refusals are `422 { error }` with a fixed code; `too_big` means more than
+ * 50 MB, more than 2 000 live groups or more than 200 000 live entries (Task 14 ruling), not only a large file.
+ */
+export interface FetchM3uAnswer {
+  entries: M3uEntry[];
+  /** every group of a live entry, in list order, with its count of live entries (skipped groups included) */
+  groups: Array<{ name: string; channels: number }>;
+  /** every live entry (skipped groups and entries over the limit included) */
+  listed: number;
+  skipped: { vod: number; invalid: number; overLimit: number; groups: number };
+}

@@ -75,8 +75,11 @@ export interface Extra {
   logger?: { stream: { write(line: string): void }; level?: string };
 }
 
-/** routes whose bodies hold secrets or one-time credentials (spec Part E3; the in-app sign-in's passwords and codes): never logged with an error */
-const SENSITIVE_BODY = /^\/(api\/(setup\/|admin\/settings|admin\/authentik\/)|auth\/flow\/)/;
+/**
+ * routes whose bodies hold secrets or one-time credentials (spec Part E3; the in-app sign-in's passwords and codes; Live TV provider
+ * URLs, F13): never logged with an error
+ */
+const SENSITIVE_BODY = /^\/(api\/(setup\/|admin\/settings|admin\/authentik\/|admin\/livetv\/sources)|auth\/flow\/)/;
 
 /**
  * What answers while setup is incomplete (spec Part E1, rulings D23): matched by the route pattern, so an unknown or encoded path is
