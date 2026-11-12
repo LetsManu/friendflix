@@ -165,6 +165,8 @@ export interface LtvFeedMock {
   id: string; sourceId: string; name: string; number: number | null; streamKind: 'hls' | 'ts' | 'srt';
   push?: { port: number; hint: string };
   ingest: { state: 'receiving' | 'idle' | 'pending'; rejected1h: number } | null;
+  /** hidden channel: withdrawn from livetv (ingest state `off`, as for a disabled source) */
+  hidden?: boolean;
 }
 export interface LivetvAreaMock {
   sources: LtvSourceMock[];
@@ -178,6 +180,8 @@ export interface LivetvAreaMock {
   test: { channels: number; groups: Array<{ name: string; channels: number }>; samples: string[]; epgChannels: number | null; epgError: string | null } | { error: string; status?: number };
   /** the next POST /sources/test answers 409 test_running once (another check of this admin still runs) */
   testBusy: boolean;
+  /** whether livetv takes the new ingest set on push writes (`synced` of Task 20's answers) */
+  synced: boolean;
   /** a started refresh finishes after this many GETs of /sources, with this outcome */
   refreshPolls: number;
   refreshOutcome: { counts: { channels: number; added: number; removed: number } } | { error: string };
@@ -218,6 +222,7 @@ export function livetvAreaMock(): LivetvAreaMock {
     refreshing: {},
     ingestFails: false,
     testBusy: false,
+    synced: true,
     calls: [],
     seq: 0,
   };
@@ -684,14 +689,14 @@ function livetvRoute(lt: LivetvMock, m: string, p: string, sp: URLSearchParams, 
     if (path === 'enable') lt.wanted = true; else lt.wanted = false;
     return J({ job: lt.job, wanted: path === 'enable' }, 202);
   }
-  return livetvAreaRoute(lt.area, m, p, sp, body, J);
+  return livetvAreaRoute(lt.area, lt.installed, m, p, sp, body, J);
 }
 
 /**
  * The *Quellen* tab's routes, as the plan's contracts declare them: sources CRUD + test (Task 15), refresh 202 with the result through
  * GET (Task 16, spec §10), own feeds with the one-time push answer, ports and ingest state (Task 20).
  */
-function livetvAreaRoute(a: LivetvAreaMock, m: string, p: string, sp: URLSearchParams, body: any, J: Reply): Promise<void> | null {
+function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: string, sp: URLSearchParams, body: any, J: Reply): Promise<void> | null {
   let mm: RegExpMatchArray | null;
   if (m !== 'GET') a.calls.push({ m, p, body });
   const inRange = (port: number) => !a.portsKnown || a.ports.includes(port);
@@ -744,9 +749,12 @@ function livetvAreaRoute(a: LivetvAreaMock, m: string, p: string, sp: URLSearchP
     const s = a.sources.find((x) => x.id === mm![1]);
     if (!s) return J({ error: 'not_found' }, 404);
     if (mm[2] && m === 'POST') {
-      if (a.refreshing[s.id]) return J({ error: 'refresh_running' }, 409);
+      // Task 16 (livetv16 af2c8fc4): own feeds have no list, nothing loads while livetv is not installed, a running one is not restarted
+      if (s.kind === 'feeds') return J({ error: 'no_list' }, 409);
+      if (!installed) return J({ error: 'livetv_off' }, 409);
+      if (a.refreshing[s.id]) return J({ started: false }, 202);
       a.refreshing[s.id] = a.refreshPolls;
-      return J({ ok: true }, 202);
+      return J({ started: true }, 202);
     }
     if (!mm[2] && m === 'PATCH') {
       const b = body ?? {};
@@ -769,7 +777,8 @@ function livetvAreaRoute(a: LivetvAreaMock, m: string, p: string, sp: URLSearchP
   if (p === '/api/admin/livetv/ingest' && m === 'GET') {
     // backend ownfeeds.ts ingestView: out of range first, then livetv not reached / range unknown, then livetv's own word
     const feeds = a.feeds.filter((f) => f.push).map((f) => {
-      const state = a.portsKnown && !a.ports.includes(f.push!.port) ? 'out_of_range' : a.ingestFails || !a.portsKnown ? 'error' : f.ingest?.state ?? 'pending';
+      const active = !f.hidden && a.sources.find((x) => x.id === f.sourceId)?.enabled !== false;
+      const state = !active ? 'off' : a.portsKnown && !a.ports.includes(f.push!.port) ? 'out_of_range' : a.ingestFails || !a.portsKnown ? 'error' : f.ingest?.state ?? 'pending';
       return { channelId: f.id, state, rejected1h: a.ingestFails ? 0 : f.ingest?.rejected1h ?? 0 };
     });
     const ports = a.portsKnown && a.ports.length ? { from: Math.min(...a.ports), to: Math.max(...a.ports) } : null;
@@ -797,20 +806,21 @@ function livetvAreaRoute(a: LivetvAreaMock, m: string, p: string, sp: URLSearchP
       : { id, sourceId: feeds.id, name: b.name, number: b.number ?? null, streamKind: b.kind ?? found, ingest: null };
     a.feeds.push(f);
     feeds.channelCount = a.feeds.filter((x) => x.sourceId === feeds!.id).length;
-    return J({ channel: feedView(f), ...(f.push ? { push: pushAnswer(a, f.push.port) } : {}) }, 201);
+    return J({ channel: feedView(f), ...(f.push ? { push: pushAnswer(a, f.push.port) } : {}), synced: f.push ? a.synced : true }, 201);
   }
   if ((mm = p.match(/^\/api\/admin\/livetv\/channels\/([^/]+)(\/push-credentials|\/push-port)?$/))) {
     const f = a.feeds.find((x) => x.id === mm![1]);
     if (!f) return J({ error: 'not_found' }, 404);
-    if (mm[2] === '/push-credentials' && m === 'POST') return f.push ? J({ channel: feedView(f), push: pushAnswer(a, f.push.port) }) : J({ error: 'not_push' }, 409);
+    if (mm[2] === '/push-credentials' && m === 'POST') return f.push ? J({ channel: feedView(f), push: pushAnswer(a, f.push.port), synced: a.synced }) : J({ error: 'not_push' }, 409);
     if (mm[2] === '/push-port' && m === 'POST') {
       const port = a.ports.find((pt) => !a.feeds.some((x) => x.push?.port === pt));
       if (!f.push) return J({ error: 'not_push' }, 409);
+      if (inRange(f.push.port)) return J({ error: 'port_in_range' }, 409); // a working encoder is never cut off
       if (port === undefined) return J({ error: 'srt_ports_full', n: a.ports.length }, 409);
       f.push = { ...f.push, port };
-      return J({ port });
+      return J({ port, synced: a.synced });
     }
-    if (!mm[2] && m === 'DELETE') { a.feeds = a.feeds.filter((x) => x.id !== f.id); return J({ ok: true }); }
+    if (!mm[2] && m === 'DELETE') { a.feeds = a.feeds.filter((x) => x.id !== f.id); return J({ ok: true, synced: f.push ? a.synced : true }); }
   }
   return null;
 }

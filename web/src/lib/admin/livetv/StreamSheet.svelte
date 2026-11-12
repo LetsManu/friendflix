@@ -32,7 +32,7 @@
   import { detectKind, sourceError, urlShapeOk } from './sources';
 
   /** show only the one-time result (new credentials of an existing feed) */
-  export let result: { name: string; push: PushResult } | null = null;
+  export let result: { name: string; push: PushResult; synced?: boolean } | null = null;
   /** the element the focus returns to on close */
   export let trigger: HTMLElement | null = null;
 
@@ -75,7 +75,7 @@
       const r = await addStream(body);
       done = true;
       dispatch('created', r.channel);
-      if (r.push) result = { name: r.channel.name, push: r.push };
+      if (r.push) result = { name: r.channel.name, push: r.push, synced: r.synced };
       else close(true);
     } catch (e) {
       const b = e instanceof ApiError ? (e.body as { error?: unknown; n?: unknown; field?: unknown } | null) : null;
@@ -129,6 +129,8 @@
       </header>
       <div class="body" data-push-result>
         <p class="warn" role="note"><Icon name="alert" size={18} /><span>{$t('adminLive.push.onceWarning')}</span></p>
+        <!-- livetv has not taken the new credentials yet (`synced: false`): the backend retries, the encoder may have to wait a moment -->
+        {#if result.synced === false}<p class="fw" data-syncing><Icon name="clock" size={18} /><span>{$t('adminLive.push.syncing')}</span></p>{/if}
         {#if result.push.host}<CopyField label={$t('adminLive.push.host')} value={result.push.host} />
         {:else}<p class="fw" data-no-host><Icon name="info" size={18} /><span>{$t('adminLive.push.noHost')}</span></p>{/if}
         <CopyField label={$t('adminLive.push.port')} value={String(result.push.port)} />

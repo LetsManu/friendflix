@@ -317,6 +317,46 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     await expect(card(page, 'Nordlicht Paket')).toContainText('Kein Programmführer');
   });
 
+  test('a refresh that already runs is not started twice; its outcome still comes', async ({ page, api }) => {
+    api.admin.livetv.area.refreshing['src-nordlicht'] = 2;
+    await page.goto('/admin/livetv');
+    const c = card(page, 'Nordlicht Paket');
+    const btn = c.getByRole('button', { name: 'Jetzt aktualisieren' });
+    await btn.click();
+    await expect(toasts(page).getByText('Die Quelle wird gerade schon aktualisiert.')).toBeVisible();
+    await expect(btn).toHaveAttribute('aria-busy', 'true');
+    await expect(toasts(page).getByText('Aktualisiert: 415 Sender (+3 / −0)')).toBeVisible();
+    await expect(btn).not.toHaveAttribute('aria-busy', 'true');
+  });
+
+  test('a write livetv has not taken yet says so; a hidden feed is off; an in-range port is not moved', async ({ page, api }) => {
+    const a = api.admin.livetv.area;
+    a.synced = false;
+    a.feeds.push({ id: 'ch-insel', sourceId: 'src-feeds', name: 'Kinderinsel', number: 804, streamKind: 'srt', push: { port: 9004, hint: 'ff-K1ND3R' }, ingest: { state: 'idle', rejected1h: 0 }, hidden: true });
+    await page.goto('/admin/livetv');
+    const own = card(page, 'Eigene Streams');
+    await expect(own.locator('li', { hasText: 'Kinderinsel' }).locator('[data-state="off"]')).toHaveText('Abgeschaltet');
+    // Kanal Wolkenlos (9001) is in the range: no "Neuen Port zuweisen"
+    await page.getByRole('button', { name: 'Aktionen für Kanal Wolkenlos' }).click();
+    const m = page.getByRole('dialog', { name: 'Kanal Wolkenlos' });
+    await expect(m.getByRole('button', { name: 'Zugangsdaten neu erzeugen' })).toBeVisible();
+    await expect(m.getByRole('button', { name: 'Neuen Port zuweisen' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    await own.getByRole('button', { name: 'Stream hinzufügen' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Stream hinzufügen' });
+    await dlg.getByRole('radio', { name: 'Encoder sendet an FriendFlix' }).click();
+    await dlg.getByRole('textbox', { name: 'Name', exact: true }).fill('Sternwarte 24');
+    await dlg.getByRole('button', { name: 'Anlegen' }).click();
+    const res = page.getByRole('dialog', { name: 'Zugangsdaten für Sternwarte 24' });
+    await expect(res.locator('[data-syncing]')).toHaveText('Wird an Live-TV übertragen …');
+    await res.getByRole('button', { name: 'Fertig' }).click();
+
+    await menu(page, 'Kinderinsel', 'Löschen');
+    await page.getByRole('alertdialog', { name: '„Kinderinsel“ löschen?' }).getByRole('button', { name: 'Löschen' }).click();
+    await expect(toasts(page).getByText('Stream gelöscht. Wird an Live-TV übertragen …')).toBeVisible();
+  });
+
   test.describe('refusals', () => {
     // mocked refusals: the browser logs the 4xx answers
     test.use({ allowedConsole: /Failed to load resource: the server responded with a status of (400|409|422|503)/ });

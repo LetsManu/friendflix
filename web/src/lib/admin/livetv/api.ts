@@ -101,10 +101,11 @@ export interface FeedChannel {
 }
 /**
  * The state of a push feed (Task 20): `receiving` / `idle` from livetv, `pending` = livetv does not know the feed yet, `out_of_range` =
- * its port left LIVETV_SRT_PORTS, `error` = livetv not reached.
+ * its port left LIVETV_SRT_PORTS, `off` = withdrawn from livetv (the channel is hidden or its source disabled), `error` = livetv not
+ * reached.
  */
-export type FeedState = 'receiving' | 'idle' | 'pending' | 'out_of_range' | 'error';
-export const FEED_STATES: readonly FeedState[] = ['receiving', 'idle', 'pending', 'out_of_range', 'error'];
+export type FeedState = 'receiving' | 'idle' | 'pending' | 'out_of_range' | 'off' | 'error';
+export const FEED_STATES: readonly FeedState[] = ['receiving', 'idle', 'pending', 'out_of_range', 'off', 'error'];
 /** `GET /api/admin/livetv/ingest` (Task 20): `ports` null while livetv cannot tell or the range is empty (then no ports line) */
 export interface IngestView {
   /** LIVETV_SRT_HOST / the PUBLIC_URL host; null while unknown (not shown on the card) */
@@ -130,15 +131,22 @@ export const listSources = () => api<SourceView[]>(`${B}/sources`);
 export const createSource = (b: SourceBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
 export const updateSource = (id: string, patch: SourcePatch) => api<SourceView>(`${B}/sources/${enc(id)}`, { method: 'PATCH', body: patch });
 export const deleteSource = (id: string) => api<{ channels: number }>(`${B}/sources/${enc(id)}`, { method: 'DELETE' });
-/** Task 16 (not built yet; spec §10): 202, the refresh runs in the background; its result arrives through polling `GET /sources` (spec §10) */
-export const refreshSource = (id: string) => api<unknown>(`${B}/sources/${enc(id)}/refresh`, { method: 'POST' });
+/**
+ * Task 16: 202 `{ started }`; the refresh runs in the background and its result arrives through polling `GET /sources` (`started: false`
+ * = one is already running, its result comes the same way). 409 `no_list` (the own-feeds source), 409 `livetv_off` (not installed).
+ */
+export const refreshSource = (id: string) => api<{ started: boolean }>(`${B}/sources/${enc(id)}/refresh`, { method: 'POST' });
 export const testSource = (b: SourceTestBody) => api<SourceTest>(`${B}/sources/test`, { method: 'POST', body: b });
 
 export const listFeeds = (sourceId: string) => api<{ channels: FeedChannel[]; total: number }>(`${B}/channels?source=${enc(sourceId)}&limit=200`);
 export const ingestView = () => api<IngestView>(`${B}/ingest`);
 /** `{ groups, pending }` (Task 18); only the groups are read */
 export const listGroups = () => api<{ groups: GroupOption[] }>(`${B}/groups`).then((r) => r.groups);
-export const addStream = (b: NewStream) => api<{ channel: FeedChannel; push?: PushResult }>(`${B}/channels`, { method: 'POST', body: b });
-export const newCredentials = (id: string) => api<{ channel: FeedChannel; push: PushResult }>(`${B}/channels/${enc(id)}/push-credentials`, { method: 'POST' });
-export const newPort = (id: string) => api<{ port: number }>(`${B}/channels/${enc(id)}/push-port`, { method: 'POST' });
-export const deleteChannel = (id: string) => api<unknown>(`${B}/channels/${enc(id)}`, { method: 'DELETE' });
+/**
+ * The own-feed writes (Task 20) answer `synced`: livetv took the new ingest set (always true for a pull feed); false = the backend retries
+ * it (livetvIngestTick), the page says "Wird an Live-TV übertragen …". push-port refuses a port still in the range (409 `port_in_range`).
+ */
+export const addStream = (b: NewStream) => api<{ channel: FeedChannel; push?: PushResult; synced: boolean }>(`${B}/channels`, { method: 'POST', body: b });
+export const newCredentials = (id: string) => api<{ channel: FeedChannel; push: PushResult; synced: boolean }>(`${B}/channels/${enc(id)}/push-credentials`, { method: 'POST' });
+export const newPort = (id: string) => api<{ port: number; synced: boolean }>(`${B}/channels/${enc(id)}/push-port`, { method: 'POST' });
+export const deleteChannel = (id: string) => api<{ ok: true; synced: boolean }>(`${B}/channels/${enc(id)}`, { method: 'DELETE' });

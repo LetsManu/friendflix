@@ -4,7 +4,8 @@
   /**
    * Admin → Live-TV → *Quellen* (spec §9.1): one card per provider list (SourceCard), the *Eigene Streams* card (OwnFeedsCard) once
    * that source exists, *Quelle hinzufügen* (SourceSheet; its kind *Eigene Streams* opens StreamSheet, which creates the own-feeds
-   * source on first use). *Jetzt aktualisieren* posts the refresh (202) and asks `GET /sources` every REFRESH_POLL_MS until the
+   * source on first use). *Jetzt aktualisieren* posts the refresh (202 `{ started }`; 409 `livetv_off` / `no_list` have their own
+   * text) and asks `GET /sources` every REFRESH_POLL_MS until the
    * source's `lastRefreshAt` moved, then says the outcome in a toast; the button keeps its spinner meanwhile. Deleting names how
    * many channels go. Loading keeps the cards' place with skeletons of their height.
    */
@@ -42,7 +43,7 @@
 
   // ---- the sheets
   let sheet: { source: SourceView | null; trigger: HTMLElement | null } | null = null;
-  let stream: { result: { name: string; push: PushResult } | null; trigger: HTMLElement | null } | null = null;
+  let stream: { result: { name: string; push: PushResult; synced?: boolean } | null; trigger: HTMLElement | null } | null = null;
   let feedsCard: OwnFeedsCard | undefined;
   const openAdd = (e: MouseEvent) => { sheet = { source: null, trigger: e.currentTarget instanceof HTMLElement ? e.currentTarget : null }; };
   function toOwn() {
@@ -79,11 +80,20 @@
   }
   async function refresh(s: SourceView) {
     const since = s.state.lastRefreshAt;
-    const r = await runAction({ key: `ltv-src-refresh:${s.id}`, run: async () => { await refreshSource(s.id); return untilRefreshed(s.id, since); }, error: false });
+    const r = await runAction({
+      key: `ltv-src-refresh:${s.id}`,
+      run: async () => {
+        // `started: false`: one already runs; its outcome arrives the same way, so the button keeps turning until then
+        const { started } = await refreshSource(s.id);
+        if (!started) toast.info(tr('adminLive.src.refreshRunning'));
+        return untilRefreshed(s.id, since);
+      },
+      error: false,
+    });
     if (r.skipped || gone) return;
     if (!r.ok) {
-      const busy = r.error instanceof ApiError && r.error.status === 409;
-      if (busy) toast.info(tr('adminLive.src.refreshRunning')); else toast.error(errorText(r.error));
+      const c = r.error instanceof ApiError && r.error.status === 409 ? r.error.body?.error : null;
+      toast.error(c === 'livetv_off' ? tr('adminLive.src.refreshOff') : c === 'no_list' ? tr('adminLive.src.refreshNoList') : errorText(r.error));
       return;
     }
     if (!r.value) { toast.info(tr('adminLive.src.refreshSlow')); return; }
@@ -143,7 +153,7 @@
     {/each}
     {#if feedsSource}
       {#key feedsSource.id}
-        <OwnFeedsCard bind:this={feedsCard} source={feedsSource} on:add={(e) => (stream = { result: null, trigger: e.detail })} on:result={(e) => (stream = { result: { name: e.detail.name, push: e.detail.push }, trigger: e.detail.trigger })} />
+        <OwnFeedsCard bind:this={feedsCard} source={feedsSource} on:add={(e) => (stream = { result: null, trigger: e.detail })} on:result={(e) => (stream = { result: { name: e.detail.name, push: e.detail.push, synced: e.detail.synced }, trigger: e.detail.trigger })} />
       {/key}
     {/if}
   {/if}

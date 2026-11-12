@@ -4,16 +4,18 @@
   /**
    * The *Eigene Streams* card (spec §9.1, §3.5): one row per own feed. A pulled feed shows its kind; a push feed its port, the
    * stream-id hint ("ff-AB12CD…"), the state chip of `GET /ingest` (*Sendet*, *Keine Übertragung*, *Noch nicht bereit*, *Port
-   * außerhalb des Bereichs*, *Zustand unbekannt*), the rejected handshakes of the last hour, and "Port {p} liegt nicht mehr im
+   * außerhalb des Bereichs*, *Abgeschaltet*, *Zustand unbekannt*), the rejected handshakes of the last hour, and "Port {p} liegt nicht mehr im
    * Bereich" when `LIVETV_SRT_PORTS` moved away from it. Menu: *Zugangsdaten neu erzeugen* (confirm, then the one-time result),
-   * *Neuen Port zuweisen*, *Löschen* (confirm; frees the port). Under the rows the line naming the UDP range (none while livetv cannot
+   * *Neuen Port zuweisen* (only while out of range), *Löschen* (confirm; frees the port). A write livetv has not taken yet (`synced:
+   * false`) adds "Wird an Live-TV übertragen …" to its toast. Under the rows the line naming the UDP range (none while livetv cannot
    * tell). The chip, the rejected line and the ports line keep their place while the ingest state loads.
    */
   import { createEventDispatcher, onMount } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
-  import { busyKeys, runAction } from '#lib/ui/action';
+  import { ApiError } from '#lib/api';
+  import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import ActionMenu from '#lib/ui/ActionMenu.svelte';
   import Button from '#lib/ui/Button.svelte';
   import { confirm } from '#lib/ui/confirm';
@@ -24,7 +26,7 @@
 
   export let source: SourceView;
 
-  const dispatch = createEventDispatcher<{ add: HTMLElement | null; result: { name: string; push: PushResult; trigger: HTMLElement | null } }>();
+  const dispatch = createEventDispatcher<{ add: HTMLElement | null; result: { name: string; push: PushResult; synced: boolean; trigger: HTMLElement | null } }>();
 
   let feeds: FeedChannel[] | null = null, failed = false;
   /** null while loading; false = the route did not answer (the chips say "Zustand unbekannt") */
@@ -39,7 +41,7 @@
   $: stateOf = (id: string) => (ingest ? ingest.feeds.find((f) => f.channelId === id) ?? null : null);
   const PILL: Record<FeedState, { tone: 'ok' | 'muted' | 'info' | 'err' | 'warn'; icon: string }> = {
     receiving: { tone: 'ok', icon: 'cast' }, idle: { tone: 'muted', icon: 'x' }, pending: { tone: 'info', icon: 'clock' },
-    out_of_range: { tone: 'err', icon: 'alert' }, error: { tone: 'warn', icon: 'alert' },
+    out_of_range: { tone: 'err', icon: 'alert' }, off: { tone: 'muted', icon: 'pause' }, error: { tone: 'warn', icon: 'alert' },
   };
   $: ports = ingest ? portsLine(ingest.ports) : '';
 
@@ -53,10 +55,15 @@
     const trigger = menuOf(f);
     if (!(await confirm({ title: tr('adminLive.push.regenerate'), body: tr('adminLive.push.regenerateBody'), confirmLabel: tr('adminLive.push.regenerate') }))) return;
     const r = await runAction({ key: `ltv-feed:${f.id}`, run: () => newCredentials(f.id) });
-    if (r.ok && r.value) dispatch('result', { name: r.value.channel.name, push: r.value.push, trigger });
+    if (r.ok && r.value) dispatch('result', { name: r.value.channel.name, push: r.value.push, synced: r.value.synced, trigger });
   }
   async function movePort(f: FeedChannel) {
-    const r = await runAction({ key: `ltv-feed:${f.id}`, run: () => newPort(f.id), success: (v) => tr('adminLive.push.portMoved', { port: String(v?.port ?? '') }) });
+    const r = await runAction({
+      key: `ltv-feed:${f.id}`,
+      run: () => newPort(f.id),
+      success: (v) => withSync(tr('adminLive.push.portMoved', { port: String(v?.port ?? '') }), v?.synced),
+      error: (e) => (e instanceof ApiError && e.body?.error === 'port_in_range' ? tr('adminLive.push.portInRange') : errorText(e)),
+    });
     if (r.ok) await reload();
   }
   async function remove(f: FeedChannel) {
@@ -66,15 +73,17 @@
       key: `ltv-feed:${f.id}`,
       apply: () => { const prev = feeds; feeds = (feeds ?? []).filter((x) => x.id !== f.id); return () => { feeds = prev; }; },
       run: () => deleteChannel(f.id),
-      success: tr('adminLive.push.deleted'),
+      success: (v) => withSync(tr('adminLive.push.deleted'), v?.synced),
     });
     if (r.ok) void reload();
   }
-  const items = (f: FeedChannel) => [
-    ...(f.push ? [
-      { id: 'cred', label: tr('adminLive.push.regenerate'), icon: 'key', run: () => regenerate(f) },
-      { id: 'port', label: tr('adminLive.push.newPort'), icon: 'refresh', run: () => movePort(f) },
-    ] : []),
+  /** a write livetv has not taken yet (`synced: false`; the backend retries it) says so after its own text */
+  const withSync = (text: string, synced: boolean | undefined) => (synced === false ? `${text} ${tr('adminLive.push.syncing')}` : text);
+  /** *Neuen Port zuweisen* only for a port that left the range (the backend refuses one still in it: 409 `port_in_range`) */
+  $: outOfRange = (f: FeedChannel) => Boolean(f.push && (!f.push.portInRange || stateOf(f.id)?.state === 'out_of_range'));
+  $: items = (f: FeedChannel) => [
+    ...(f.push ? [{ id: 'cred', label: tr('adminLive.push.regenerate'), icon: 'key', run: () => regenerate(f) }] : []),
+    ...(outOfRange(f) ? [{ id: 'port', label: tr('adminLive.push.newPort'), icon: 'refresh', run: () => movePort(f) }] : []),
     { id: 'del', label: tr('adminLive.push.delete'), icon: 'x', danger: true, run: () => remove(f) },
   ];
 </script>
