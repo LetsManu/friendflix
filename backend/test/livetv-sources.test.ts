@@ -238,7 +238,30 @@ describe('own feeds and import options', () => {
       await call('PATCH', `/api/admin/livetv/sources/${s.id}`, p);
       expect(await due()).toBe(true);
     }
+    // the same selection in another order is no change
+    await call('PATCH', `/api/admin/livetv/sources/${s.id}`, { skipGroups: ['Kinder', 'VOD'] });
+    await refreshed();
+    const same = await call('PATCH', `/api/admin/livetv/sources/${s.id}`, { skipGroups: ['VOD', 'Kinder', 'VOD'] });
+    expect(same.json().skipGroups).toEqual(['VOD', 'Kinder']);
+    expect(await due()).toBe(false);
     expect((await call('PATCH', `/api/admin/livetv/sources/${s.id}`, { epgShiftMin: 45 })).json()).toEqual({ error: 'invalid', field: 'epgShiftMin' });
+  });
+
+  it('an empty EPG field means no EPG', async () => {
+    const r = await create({ epgUrl: '' });
+    expect(r.statusCode).toBe(201);
+    expect(r.json().epgHint).toBeNull();
+    const id = r.json().id;
+    expect((await row(id)).epg_url_enc).toBeNull();
+    expect((await call('PATCH', `/api/admin/livetv/sources/${id}`, { epgUrl: SECRET_EPG })).json().epgHint).toBe(HINT);
+    expect((await call('PATCH', `/api/admin/livetv/sources/${id}`, { epgUrl: '  ' })).json().epgHint).toBeNull();
+    expect(await sourceSecrets(env.ctx, id)).toEqual({ url: SECRET_URL, epgUrl: null });
+    // the test route: '' overrides a stored EPG URL with none
+    await call('PATCH', `/api/admin/livetv/sources/${id}`, { epgUrl: SECRET_EPG });
+    calls.length = 0;
+    const t = await call('POST', '/api/admin/livetv/sources/test', { sourceId: id, allowLan: false, epgUrl: '' });
+    expect([t.statusCode, t.json().epgChannels]).toEqual([200, null]);
+    expect(calls.map((c) => c.path)).toEqual(['/v1/fetch/m3u']);
   });
 
   it('every write drops the cached channel sets and is audited with field names only', async () => {
@@ -319,6 +342,60 @@ describe('Prüfen', () => {
     const down = await test({ url: SECRET_URL });
     expect([down.statusCode, down.json()]).toEqual([503, { error: 'livetv_unreachable' }]);
   });
+
+  it('a malformed or empty answer from livetv is a refusal, not an error', async () => {
+    const test = () => call('POST', '/api/admin/livetv/sources/test', { url: SECRET_URL, allowLan: false });
+    for (const h of [
+      () => ({ json: { entries: 'x' } }), () => ({ json: { entries: [], groups: [] } }), () => ({ json: null }), () => ({ status: 204 }),
+      () => ({ raw: 'kein JSON', type: 'text/plain' }),
+    ] as Handler[]) {
+      m3u = h;
+      const r = await test();
+      expect([r.statusCode, r.json()]).toEqual([422, { error: 'invalid_answer' }]);
+    }
+    expect(logs.join('\n')).not.toContain('unhandled error');
+  });
+
+  it('a failed list cancels the EPG count', async () => {
+    let epgSignal: AbortSignal | undefined;
+    let epgStarted!: () => void;
+    const started = new Promise<void>((r) => { epgStarted = r; });
+    env.ctx.fetchImpl = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/fetch/xmltv') {
+        epgSignal = init.signal ?? undefined;
+        epgStarted();
+        // livetv still downloading the provider's XMLTV: ends only when the backend goes away
+        return new Promise<Response>((_res, rej) => init.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError'))));
+      }
+      await started; // the list fails while the EPG count runs
+      return new Response(JSON.stringify({ error: 'denied' }), { status: 422, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    const t0 = Date.now();
+    const r = await call('POST', '/api/admin/livetv/sources/test', { url: SECRET_URL, epgUrl: SECRET_EPG, allowLan: false });
+    expect([r.statusCode, r.json()]).toEqual([422, { error: 'denied' }]);
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    expect(epgSignal?.aborted).toBe(true);
+  });
+
+  it('one test per admin at a time', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const inner = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => { await gate; return inner(input, init); }) as typeof fetch;
+    const body = { url: SECRET_URL, allowLan: false };
+    const first = call('POST', '/api/admin/livetv/sources/test', body);
+    // the first one holds the lock until livetv answers
+    await expect.poll(async () => (await env.kv.keys('ltv:srctest:')).length).toBe(1);
+    const second = await call('POST', '/api/admin/livetv/sources/test', body);
+    expect([second.statusCode, second.json()]).toEqual([409, { error: 'test_running' }]);
+    release();
+    expect((await first).statusCode).toBe(200);
+    // released afterwards, also after a refusal
+    expect((await call('POST', '/api/admin/livetv/sources/test', { allowLan: false })).statusCode).toBe(400);
+    expect((await call('POST', '/api/admin/livetv/sources/test', body)).statusCode).toBe(200);
+    expect(await env.kv.keys('ltv:srctest:')).toEqual([]);
+  });
 });
 
 describe('secrets (F13)', () => {
@@ -381,6 +458,21 @@ describe('delete and access', () => {
     expect((await env.pool.query('select import_name from livetv_channels')).rows).toEqual([{ import_name: 'Kanal Wolkenlos' }]);
     expect((await call('DELETE', `/api/admin/livetv/sources/${id}`)).statusCode).toBe(404);
     expect((await call('GET', '/api/admin/livetv/sources')).json().map((s: { id: string }) => s.id)).toEqual([other]);
+  });
+
+  it('no session 401', async () => {
+    const id = (await create({})).json().id;
+    for (const [m, u, b] of [
+      ['GET', '/api/admin/livetv/sources', undefined], ['POST', '/api/admin/livetv/sources', { name: 'X', url: SECRET_URL }],
+      ['PATCH', `/api/admin/livetv/sources/${id}`, { name: 'X' }], ['DELETE', `/api/admin/livetv/sources/${id}`, undefined],
+      ['POST', '/api/admin/livetv/sources/test', { url: SECRET_URL, allowLan: false }], ['POST', '/api/admin/livetv/sources/test', { bad: 1 }],
+    ] as const) {
+      const r = await env.app.inject({ method: m, url: u, remoteAddress: '192.0.2.250', ...(b === undefined ? {} : { payload: b as object }) });
+      expect([m, u, r.statusCode]).toEqual([m, u, 401]);
+      expect(r.body).not.toContain('iptv.example.com');
+    }
+    expect(calls).toEqual([]);
+    expect((await row(id)).name).toBe('Anbieter');
   });
 
   it('non-admin 403', async () => {
