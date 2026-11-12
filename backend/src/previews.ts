@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { markConvExempt } from './convbudget.js';
 import type { Ctx } from './ctx.js';
 import { normaliseFmp4 } from './fmp4.js';
 import type { UserRow } from './types.js';
@@ -58,6 +59,7 @@ async function build(ctx: Ctx, user: UserRow, id: string): Promise<{ bytes: numb
   const { path: masterPath, playSessionId } = await ctx.jf.clipTranscode(user, info, {
     audioIndex: audio?.index, fmp4: true, videoBitrate: 1_200_000, audioBitrate: 128_000, maxWidth: 1280, stereo: true, maxBitrate: 1_500_000,
   });
+  await markConvExempt(ctx, playSessionId); // never throws: the stop below always runs; a preview clip is not counted by the budget
   try {
     const lines = (p: string) => p.split(/\r?\n/).map((l) => l.trim());
     const variant = lines(await (await fetchOk(ctx, user, masterPath)).text()).find((l) => l && !l.startsWith('#'));

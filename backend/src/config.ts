@@ -209,6 +209,10 @@ export const configSchema = z.object({
   UPLOAD_MBPS: z.preprocess(emptyAsUnset, z.coerce.number().min(1).max(100_000).optional()),
   /** HEVC conversions at once (0 = off; remote viewers only, once the server's HEVC conversion is proven; hevcenc.ts); HEVC remux and direct play do not depend on it */
   HEVC_STREAMS: z.coerce.number().int().min(0).max(4).default(2),
+  /** video conversions at once for the whole server: films, live TV, downloads, re-encodes (convbudget.ts); unset = automatic (the measured recommendation, else 2) */
+  CONVERSION_SLOTS: z.preprocess(emptyAsUnset, z.coerce.number().int().min(1).max(16).optional()),
+  /** which of films and live TV keeps one slot free from the other once there are 2 or more (convbudget.ts holdback) */
+  CONVERSION_PRIORITY: z.enum(['films', 'live', 'equal']).default('films'),
   /** surround sound (5.1) for devices that state a 5.1 output; false = stereo for everyone */
   SURROUND_AUDIO: z.enum(['true', 'false']).default('true'),
   /** comma-separated CIDRs counted as the home network (no remote bitrate cap); unknown/ambiguous addresses count as remote */

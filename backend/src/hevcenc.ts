@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, randomUUID } from 'node:crypto';
 import type { Ctx } from './ctx.js';
+import { markConvExempt } from './convbudget.js';
 import { listLive } from './live.js';
 import type { EncoderSettings, HevcGate } from './media/types.js';
 import { previews, serviceUser } from './previews.js';
@@ -71,8 +72,8 @@ const readFailures = async (ctx: Ctx): Promise<Array<{ at: number; device: strin
   return Array.isArray(l) ? l.filter((f): f is { at: number; device: string } => typeof f?.at === 'number' && typeof f?.device === 'string') : [];
 };
 
-/** Resolves with the promise's value, or undefined after `ms` / on a throw. */
-async function within<T>(fn: () => Promise<T>, ms: number): Promise<T | undefined> {
+/** Resolves with the promise's value, or undefined after `ms` / on a throw (shared with convbudget.ts). */
+export async function within<T>(fn: () => Promise<T>, ms: number): Promise<T | undefined> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([fn(), new Promise<undefined>((res) => { timer = setTimeout(() => res(undefined), ms); })]);
@@ -244,6 +245,7 @@ export async function probeHevcEncoder(ctx: Ctx, user: UserRow, deps: { now?: ()
       const info = await ctx.jf.playbackInfo(user, videoId, { maxBitrate: 8_000_000 });
       const clip = await ctx.jf.clipTranscode(user, info, { videoCodec: 'hevc', fmp4: true, videoBitrate: 6_000_000, audioBitrate: 128_000, maxWidth: 1920, maxHeight: 1080, segmentLength: SEGMENT_SECONDS });
       playSessionId = clip.playSessionId;
+      await markConvExempt(ctx, playSessionId); // a probe is not a conversion of the budget (ruling 8)
       const get = async (path: string): Promise<Response> => {
         const res = await ctx.jf.mediaFetch(user, path, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
         if (!res.ok) throw new HttpFail();

@@ -44,6 +44,7 @@ export const cfg: Config = {
   LOGIN_UI: undefined, AUTHENTIK_LOGIN_FLOW: 'default-authentication-flow', AUTHENTIK_STATIC_SETUP_FLOW: 'default-authenticator-static-setup',
   AUTHENTIK_WEBAUTHN_SETUP_FLOW: 'default-authenticator-webauthn-setup', AUTHENTIK_PASSWORD_CHANGE_FLOW: 'default-password-change',
   AUTHENTIK_INVALIDATION_FLOW: 'default-invalidation-flow', AUTHENTIK_EMAIL_CHANGE_FLOW: 'friendflix-email-change', PASSKEYS_IN_APP: 'auto', LOGIN_COVER_WALL: 'true', POSTPLAY_ENABLED: 'true', HEVC_STREAMS: 2, SURROUND_AUDIO: 'true',
+  CONVERSION_PRIORITY: 'films',
 };
 
 export type Handler = (url: URL, init: RequestInit, body: any) => { status?: number; json?: unknown; raw?: string | Uint8Array; type?: string } | undefined;
