@@ -46,6 +46,8 @@ export interface MatrixRole {
   stored: boolean;
   /** library names of the role the media server no longer has */
   missingLibraries: string[];
+  /** names of the released Live TV groups the role sees (the admin role: all), in group order; read-only (Live TV spec §8); only sent by a server with Live TV */
+  livetvGroups?: string[];
 }
 
 export interface RoleMatrix {

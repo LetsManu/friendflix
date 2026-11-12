@@ -8,7 +8,9 @@
    * each hit is visible or hidden with the reason). It only reads: no right, profile or setting changes. It never signs in to
    * FriendFlix as the person; the backend may sign in to the media server as the profile's media-server user for the probe (which updates that
    * user's last-login time there; docs/security.md, "The check view"). The backend audits every view (`user.check_viewed`).
-   * There is no Live-TV part: Live TV is not installed in this phase.
+   * *Live-TV* (only when the server answers it: Live TV installed and the profile may use it): every channel group with ✓ or – and why a
+   * hidden one is hidden (not kid-friendly, not released for the role, blocked for this person, not released yet), and how many channels the
+   * profile sees. The answer is null otherwise and the section is not there.
    */
   import { onDestroy } from 'svelte';
   import { api, ApiError } from '#lib/api';
@@ -21,10 +23,13 @@
   import { CHECK_HITS, summarySentences } from './checkText';
   import type { DetailProfile } from './detail';
   import type { RightsView } from './rights';
+  import type { LivetvCheck } from '#lib/admin/livetv/groups';
 
   export let userId: string;
   /** the person's profiles (the detail answer) */
   export let profiles: DetailProfile[];
+  /** the person's role as shown ("für Gast nicht freigegeben"); the role key when empty */
+  export let role = '';
 
   interface LibraryCount { id: string; name: string; visible: boolean; seen: number | null; total: number }
   type Why = 'library' | 'rating' | 'unrated' | 'unrated_kids' | null;
@@ -37,18 +42,18 @@
   let pid = '';
   $: if (!chips.some((p) => p.id === pid)) { pid = chips[0]?.id ?? ''; }
 
-  let view: RightsView | null = null, libs: LibraryCount[] | null = null, error: string | null = null;
+  let view: RightsView | null = null, libs: LibraryCount[] | null = null, livetv: LivetvCheck | null = null, error: string | null = null;
   let seq = 0;
   async function load(profile: string) {
     const my = ++seq;
-    view = null; libs = null; error = null; hits = null; searchError = null;
+    view = null; libs = null; livetv = null; error = null; hits = null; searchError = null;
     try {
       const [v, c] = await Promise.all([
         api<RightsView>(`/api/admin/users/${userId}/rights?profile=${profile}`),
-        api<{ libraries: LibraryCount[] }>(`/api/admin/users/${userId}/check?profile=${profile}`),
+        api<{ libraries: LibraryCount[]; livetv?: LivetvCheck | null }>(`/api/admin/users/${userId}/check?profile=${profile}`),
       ]);
       if (my !== seq) return;
-      view = v; libs = c.libraries;
+      view = v; libs = c.libraries; livetv = c.livetv ?? null;
       void search();
     } catch (e) {
       // the library counts share the check's 30-a-minute limit: that says so, not "could not load"
@@ -73,6 +78,15 @@
       case 'unrated_kids': return tr('adminPeople.check.hiddenUnrated');
       case 'unrated': return tr('adminPeople.check.hiddenUnratedAdult');
       default: return tr('adminPeople.check.hidden');
+    }
+  };
+
+  const livetvReason = (r: NonNullable<LivetvCheck['groups'][number]['reason']>): string => {
+    switch (r) {
+      case 'notReleased': return tr('adminPeople.check.livetvNotReleased');
+      case 'notKidFriendly': return tr('adminPeople.check.livetvNotKids');
+      case 'denied': return tr('adminPeople.check.livetvDenied');
+      default: return tr('adminPeople.check.livetvNotRole', { role: role || view?.role || '' });
     }
   };
 
@@ -140,6 +154,24 @@
         </ul>
       {:else}<p class="mut">{$t('adminPeople.check.noLibs')}</p>{/if}
     </section>
+
+    {#if livetv}
+      <section class="card sec" aria-labelledby="{id}-ltv">
+        <h3 id="{id}-ltv">{$t('adminPeople.check.livetv')}</h3>
+        <p class="mut">{$t('adminPeople.check.livetvChannels', { n: num(livetv.channels) })}</p>
+        {#if livetv.groups.length}
+          <ul class="libs">
+            {#each livetv.groups as gr (gr.id)}
+              <li class:off={!gr.visible}>
+                <span class="mk" aria-hidden="true">{gr.visible ? '✓' : '–'}</span>
+                <span class="lt">{gr.name}{#if gr.reason}{' · '}{$locale && livetvReason(gr.reason)}{/if}</span>
+                {#if gr.visible}<span class="sr-only">{$t('adminPeople.check.livetvVisible')}</span>{/if}
+              </li>
+            {/each}
+          </ul>
+        {:else}<p class="mut">{$t('adminPeople.check.livetvNoGroups')}</p>{/if}
+      </section>
+    {/if}
 
     <section class="card sec" aria-labelledby="{id}-tit">
       <h3 id="{id}-tit">{$t('adminPeople.check.titles')}</h3>

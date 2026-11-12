@@ -100,6 +100,16 @@
           {/each}
         </section>
       {/each}
+      <!-- Live TV spec §6.1, §8: the role's channel groups as chips, read-only; the groups are edited under Gruppen & Rechte -->
+      {#if matrix.features.livetv}
+        <section aria-labelledby="{id}-lg">
+          <h3 id="{id}-lg">{$t('adminLive.grp.rowLabel')}</h3>
+          {#if role.livetvGroups?.length}
+            <ul class="gchips">{#each role.livetvGroups as n (n)}<li>{n}</li>{/each}</ul>
+          {:else}<p class="note">{$t('adminLive.grp.rowNone')}</p>{/if}
+          <a class="glink" href="/admin/livetv?tab=groups">{$t('adminLive.grp.rowLink')}</a>
+        </section>
+      {/if}
     </div>
   </div>
 </div>
@@ -119,6 +129,10 @@
   section + section { border-top: 1px solid rgba(255, 255, 255, .12); padding-top: .9rem; }
   h3 { margin: 0; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: rgba(255, 255, 255, .9); }
   .note { margin: 0; font-size: .85rem; color: rgba(255, 255, 255, .9); }
+  .gchips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }
+  .gchips li { display: inline-flex; align-items: center; min-height: 32px; padding: 0 .8rem; border-radius: 99px; background: rgba(var(--fr-scrim-rgb), .25); font-size: .88rem; font-weight: 600; overflow-wrap: anywhere; }
+  .glink { display: inline-flex; align-items: center; align-self: flex-start; min-height: 44px; color: #fff; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  .glink:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 4px; }
   /* a staged field: the amber rail of the matrix's staged cell, on the left of its control */
   .row { padding-left: .7rem; border-left: 3px solid transparent; }
   .row.staged { border-left-color: var(--warn); }
