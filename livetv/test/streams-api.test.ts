@@ -140,6 +140,7 @@ describe('the streams API', () => {
       '/s/0123456789abcdef0123456789abcdef/index.m3u8', `/s/${streamKey.toUpperCase()}/index.m3u8`, `/s/${streamKey.slice(1)}/index.m3u8`,
       `/s/${streamKey}/index.m3u`, `/s/${streamKey}/00000000000.ts`, `/s/${streamKey}/0.mp4`, `/s/${streamKey}/..%2F..%2Fetc%2Fpasswd`,
       `/s/${streamKey}/init.mp4`, `/s/${streamKey}/0.m4s`, `/s/${streamKey}/a.ts`, `/s/${streamKey}`, `/s/${streamKey}/0.ts/x`,
+      `/s/${streamKey}/00.ts`, `/s/${streamKey}/01.ts`, `/s/${streamKey}/init-0.mp4`, `/s/${streamKey}/init-.mp4`, `/s/${streamKey}/init-00000000000.mp4`,
     ];
     for (const path of bad) {
       const r = await fetch(base + path);
@@ -225,6 +226,29 @@ describe('the safety net', () => {
     // the evicted window's playlist was rewritten
     const pl = mem.files.get(`/cache/${a.streamKey}/index.m3u8`)!.toString();
     expect(pl.split('\n').filter((l) => l.endsWith('.ts'))).toHaveLength(segs(a.streamKey));
+  });
+
+  it('an old init version is removed once the cache cap evicted its segments', async () => {
+    const fmp4: Driver = async (ctx) => {
+      ctx.window({ ext: 'm4s', init: true });
+      for (let i = 0; i < 8; i++) {
+        const init = i < 4 ? 0 : 1;
+        if (i % 4 === 0) await ctx.store.write(join(ctx.dir, `init-${init}.mp4`), 'init');
+        await ctx.store.write(join(ctx.dir, `${i}.m4s`), Buffer.alloc(100));
+        await ctx.segment({ file: `${i}.m4s`, duration: 4, bytes: 100, init });
+      }
+      await ctx.sleep(Number.MAX_SAFE_INTEGER);
+    };
+    streams = new Streams({ root: '/cache', maxBytes: 400, drivers: { passthrough: fmp4 }, store: mem.store, log: () => {} });
+    const { streamKey } = streams.start(startBody());
+    await flush();
+    const files = [...mem.files.keys()].filter((f) => f.startsWith(`/cache/${streamKey}/`)).map((f) => f.slice(`/cache/${streamKey}/`.length)).sort();
+    expect(files).toEqual(['4.m4s', '5.m4s', '6.m4s', '7.m4s', 'index.m3u8', 'init-1.mp4']);
+    expect(streams.file(streamKey, 'init-0.mp4')).toBeNull();
+    expect(streams.file(streamKey, 'init-1.mp4')).toEqual({ path: `/cache/${streamKey}/init-1.mp4`, type: 'video/mp4' });
+    const pl = mem.files.get(`/cache/${streamKey}/index.m3u8`)!.toString();
+    expect(pl).not.toContain('init-0.mp4');
+    expect(pl).toContain('#EXT-X-MAP:URI="init-1.mp4"');
   });
 
   it('a driver that throws fails the stream with a fixed code', async () => {

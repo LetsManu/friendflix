@@ -62,10 +62,12 @@ export interface DriverContext {
   /** the stream's window, created by the first call (`dvrSeconds` from the start body); later calls answer the same window */
   window(o: { ext: SegmentExt; init?: boolean }): SegmentWindow;
   /**
-   * a finished segment, already stored as `dir/file`: adds it to the window (`pdt` defaults to now − duration, ruling 47),
-   * rewrites the playlist, applies the cache cap; answers its local number (-1 after a stop)
+   * a finished segment, already stored as `dir/file` (and its init as `dir/init-<init>.mp4`): adds it to the window, rewrites the
+   * playlist, applies the cache cap; answers its local number (-1 after a stop). Without `pdt` (ruling 47, controller ruling
+   * R15): the first segment of a run (stream start, a discontinuity, the first after an outage) gets arrival − duration, every
+   * later one of the run the previous segment's date-time + its duration.
    */
-  segment(s: { file: string; duration: number; bytes: number; discontinuity?: boolean; pdt?: number }): Promise<number>;
+  segment(s: { file: string; duration: number; bytes: number; discontinuity?: boolean; pdt?: number; init?: number }): Promise<number>;
   /** the stream's bitrate in bit/s (a variant's BANDWIDTH, an encoder's rate) */
   bitrate(bps: number | null): void;
   /** the input failed: the first failure of an outage records `input_lost`; answers the delay before the next attempt */
@@ -76,7 +78,10 @@ export interface DriverContext {
   fail(code: string): void;
   /** waits `ms`; false when the stream was stopped meanwhile (the driver ends then) */
   sleep(ms: number): Promise<boolean>;
-  /** a log line about this stream; prefixed with the channel id. Fixed texts only. */
+  /**
+   * a log line about this stream, prefixed with the channel id. Fixed strings and numbers only: never provider text (a URL, a
+   * playlist line, an HTTP message) or ffmpeg output or arguments (Task 28 logs stderr only after `scrubLine`, and not through here).
+   */
   log(msg: string): void;
 }
 export type Driver = (ctx: DriverContext) => Promise<void>;
@@ -106,6 +111,8 @@ interface Entry {
   timer: NodeJS.Timeout | null;
   outageAt: number | null;
   attempt: number;
+  /** the next segment starts a run (start, outage): without a provider date-time it gets arrival − duration */
+  runBreak: boolean;
   /** the playlist writes of this stream, one after the other */
   writing: Promise<void>;
 }
@@ -137,7 +144,7 @@ export class Streams {
     const e: Entry = {
       view: { channelId: b.channelId, streamKey, mode: b.mode, since: now, state: 'starting', bitrate: null, errors: [], lastSegmentAt: null },
       dvrSeconds: b.dvrSeconds, dir: join(this.o.root, streamKey), window: null, dropped: [], ac: new AbortController(),
-      done: Promise.resolve(), lastTouch: now, timer: null, outageAt: null, attempt: 0, writing: Promise.resolve(),
+      done: Promise.resolve(), lastTouch: now, timer: null, outageAt: null, attempt: 0, runBreak: true, writing: Promise.resolve(),
     };
     this.byChannel.set(b.channelId, e);
     this.byKey.set(streamKey, e);
@@ -186,10 +193,7 @@ export class Streams {
     const w = e?.window;
     if (!e || !w || w.length === 0) return null;
     const ext = name.slice(name.lastIndexOf('.') + 1);
-    let file: string | null;
-    if (name === 'index.m3u8') file = name;
-    else if (name === 'init.mp4') file = w.init ? name : null;
-    else file = w.find(name);
+    const file = name === 'index.m3u8' ? name : w.find(name);
     return file ? { path: join(e.dir, file), type: TYPES[ext]! } : null;
   }
 
@@ -217,7 +221,10 @@ export class Streams {
         if (!live()) return -1;
         if (!e.window) throw new Error('window');
         const now = this.now();
-        const seq = e.window.add({ file: s.file, duration: s.duration, bytes: s.bytes, discontinuity: s.discontinuity, pdt: s.pdt ?? now - s.duration * 1000 });
+        const prev = e.window.newest();
+        const pdt = s.pdt ?? (prev && !e.runBreak && !s.discontinuity ? prev.pdt + prev.duration * 1000 : now - s.duration * 1000);
+        const seq = e.window.add({ file: s.file, duration: s.duration, bytes: s.bytes, discontinuity: s.discontinuity, pdt, ...(s.init !== undefined ? { init: s.init } : {}) });
+        e.runBreak = false;
         e.view.lastSegmentAt = now;
         if (e.view.state === 'starting') e.view.state = 'running';
         const gone = e.dropped.splice(0);
@@ -233,6 +240,7 @@ export class Streams {
           this.event(e, { at: e.outageAt, code: 'input_lost' });
           this.log(`stream ${id} input lost`);
         }
+        e.runBreak = true;
         if (e.view.state !== 'failed') e.view.state = 'reconnecting';
         return backoffDelay(e.attempt++);
       },
@@ -279,11 +287,14 @@ export class Streams {
     const out = evict(open.map((x) => ({ id: x.view.channelId, w: x.window! })), this.o.maxBytes);
     if (out.length === 0) return;
     const touched = new Set<Entry>();
-    await Promise.all(out.map(({ id, file }) => {
+    const files = out.map(({ id, file }) => {
       const x = this.byChannel.get(id)!;
       touched.add(x);
-      return this.store.remove(join(x.dir, file)).catch(() => {});
-    }));
+      return join(x.dir, file);
+    });
+    // init versions no kept segment uses any more came through `onDrop`
+    for (const x of touched) files.push(...x.dropped.splice(0).map((f) => join(x.dir, f)));
+    await Promise.all(files.map((f) => this.store.remove(f).catch(() => {})));
     await Promise.all([...touched].map((x) => this.writePlaylist(x)));
   }
 }

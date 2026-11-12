@@ -7,6 +7,10 @@
  * increasing for the stream's whole life, whatever the input does (a provider whose media sequence jumps back, an ffmpeg
  * restart); a gap or restart is a `#EXT-X-DISCONTINUITY`. Every segment line carries `#EXT-X-PROGRAM-DATE-TIME`. The window keeps
  * a segment while the newer ones still cover `dvrSeconds`, never fewer than the newest 3 (the live edge).
+ *
+ * fMP4 (controller ruling R16): every init version is its own immutable file `init-<n>.mp4` (n from 0 per stream, rising). The
+ * playlist maps the oldest kept segment's init at the top and again after each discontinuity where the init changed (an init
+ * change always is one); an init file leaves (through `onDrop`) once no kept segment uses it.
  */
 export const DVR_MAX_SECONDS = 7200;
 /** the live edge: never dropped, by the DVR length or the cache cap */
@@ -18,9 +22,9 @@ export interface WindowOptions {
   /** 0–7200 (ruling 47) */
   dvrSeconds: number;
   ext: SegmentExt;
-  /** fMP4: the playlist maps `init.mp4` */
+  /** fMP4 with init segments: every added segment names its init version */
   init?: boolean;
-  /** a segment the DVR length dropped: the caller deletes its file */
+  /** a file the window no longer needs (a segment the DVR length dropped, an init no kept segment uses): the caller deletes it */
   onDrop?: (file: string) => void;
 }
 export interface SegmentIn {
@@ -34,8 +38,12 @@ export interface SegmentIn {
   pdt: number;
   /** the stored size, for the cache cap */
   bytes?: number;
+  /** fMP4: the init version (`init-<n>.mp4`) this segment needs; a change from the previous segment is a discontinuity */
+  init?: number;
 }
-interface Seg { seq: number; file: string; duration: number; discontinuity: boolean; pdt: number; bytes: number }
+interface Seg { seq: number; file: string; duration: number; discontinuity: boolean; pdt: number; bytes: number; init: number | null }
+
+export const initName = (n: number): string => `init-${n}.mp4`;
 
 export class SegmentWindow {
   readonly dvrSeconds: number;
@@ -59,13 +67,17 @@ export class SegmentWindow {
     this.onDrop = o.onDrop ?? (() => {});
   }
 
-  /** adds the newest segment and answers its local number; segments past the DVR length leave through `onDrop` */
+  /** adds the newest segment and answers its local number; files past the DVR length leave through `onDrop` */
   add(s: SegmentIn): number {
     if (!(Number.isFinite(s.duration) && s.duration > 0)) throw new RangeError('duration');
     if (!Number.isFinite(s.pdt)) throw new RangeError('pdt');
+    const init = s.init ?? null;
+    if (this.init !== (init !== null) || (init !== null && !(Number.isInteger(init) && init >= 0))) throw new RangeError('init');
+    const prev = this.segs.at(-1);
     const seq = this.next++;
     const bytes = s.bytes ?? 0;
-    this.segs.push({ seq, file: s.file, duration: s.duration, discontinuity: s.discontinuity === true, pdt: s.pdt, bytes });
+    const discontinuity = s.discontinuity === true || (prev !== undefined && prev.init !== init);
+    this.segs.push({ seq, file: s.file, duration: s.duration, discontinuity, pdt: s.pdt, bytes, init });
     this.secs += s.duration;
     this.size += bytes;
     this.target = Math.max(this.target, Math.ceil(s.duration - EPS));
@@ -78,14 +90,22 @@ export class SegmentWindow {
     return s ? { seq: s.seq, pdt: s.pdt } : null;
   }
 
+  /** the newest segment's start and length (the next segment of the same run follows on from it) */
+  newest(): { pdt: number; duration: number } | null {
+    const s = this.segs.at(-1);
+    return s ? { pdt: s.pdt, duration: s.duration } : null;
+  }
+
   /** the cache cap's step: drops the oldest segment and answers its file; null when only the newest 3 are left */
   dropOldest(): string | null {
     return this.segs.length > KEEP_NEWEST ? this.shift() : null;
   }
 
-  /** the stored file of a local name (`<seq>.<ext>`), null when it is not in the window */
+  /** the stored file of a local name (`<seq>.<ext>` or `init-<n>.mp4`), null when it is not in the window */
   find(name: string): string | null {
-    const m = /^(\d{1,10})\.(ts|m4s)$/.exec(name);
+    const i = /^init-(0|[1-9]\d{0,9})\.mp4$/.exec(name);
+    if (i) return this.segs.some((s) => s.init === Number(i[1])) ? name : null;
+    const m = /^(0|[1-9]\d{0,9})\.(ts|m4s)$/.exec(name);
     if (!m || m[2] !== this.ext || this.segs.length === 0) return null;
     return this.segs[Number(m[1]) - this.segs[0]!.seq]?.file ?? null;
   }
@@ -98,9 +118,12 @@ export class SegmentWindow {
       `#EXT-X-MEDIA-SEQUENCE:${this.segs[0]?.seq ?? this.next}`,
       `#EXT-X-DISCONTINUITY-SEQUENCE:${this.discSeq}`,
     ];
-    if (this.init) out.push('#EXT-X-MAP:URI="init.mp4"');
+    let mapped: number | null = null;
     for (const s of this.segs) {
       if (s.discontinuity) out.push('#EXT-X-DISCONTINUITY');
+      // the oldest kept segment's init first, then again wherever it changes (always after a discontinuity tag)
+      if (s.init !== null && s.init !== mapped) out.push(`#EXT-X-MAP:URI="${initName(s.init)}"`);
+      mapped = s.init;
       out.push(`#EXT-X-PROGRAM-DATE-TIME:${new Date(s.pdt).toISOString()}`, `#EXTINF:${s.duration.toFixed(3)},`, `${s.seq}.${this.ext}`);
     }
     return `${out.join('\n')}\n`;
@@ -115,6 +138,7 @@ export class SegmentWindow {
     this.secs -= s.duration;
     this.size -= s.bytes;
     if (s.discontinuity) this.discSeq++;
+    if (s.init !== null && !this.segs.some((x) => x.init === s.init)) this.onDrop(initName(s.init));
     return s.file;
   }
 }

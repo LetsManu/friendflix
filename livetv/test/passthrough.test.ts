@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FetchError } from '../src/fetch.js';
-import { parseMedia, passthroughDriver } from '../src/passthrough.js';
+import { PlaylistRefused, parseMedia, passthroughDriver } from '../src/passthrough.js';
 import { PLAYLIST_MAX_BYTES, SEGMENT_MAX_BYTES } from '../src/probe.js';
 import { Streams, type StartBody } from '../src/streams.js';
 import { fakeFetch, flush, memoryStore, type Served } from './streams-helpers.js';
@@ -211,7 +211,7 @@ describe('passthrough', () => {
     expect(streams.list().map((v) => v.state)).toEqual(['failed']);
   });
 
-  it('fMP4: the init segment is stored as init.mp4 and the playlist maps it', async () => {
+  it('fMP4: the init segment is stored as init-0.mp4 and the playlist maps it', async () => {
     routes.set(MASTER, media(1, 2, { map: 'init.mp4?token=geheim', ext: 'm4s' }));
     const base = `${HOST}/live/anna/geheim`;
     routes.set(`${base}/init.mp4?token=geheim`, Buffer.from('init'));
@@ -220,12 +220,98 @@ describe('passthrough', () => {
     await flush();
     const text = playlist(streamKey);
     expect(text).toContain('#EXT-X-VERSION:7');
-    expect(text).toContain('#EXT-X-MAP:URI="init.mp4"');
+    expect(text).toContain('#EXT-X-MAP:URI="init-0.mp4"');
     expect(uris(text)).toEqual(['0.m4s', '1.m4s']);
-    expect(mem.files.get(`${ROOT}/${streamKey}/init.mp4`)).toEqual(Buffer.from('init'));
-    expect(streams.file(streamKey, 'init.mp4')).toEqual({ path: `${ROOT}/${streamKey}/init.mp4`, type: 'video/mp4' });
+    expect(mem.files.get(`${ROOT}/${streamKey}/init-0.mp4`)).toEqual(Buffer.from('init'));
+    expect(streams.file(streamKey, 'init-0.mp4')).toEqual({ path: `${ROOT}/${streamKey}/init-0.mp4`, type: 'video/mp4' });
+    expect(streams.file(streamKey, 'init.mp4')).toBeNull();
+    expect(streams.file(streamKey, 'init-1.mp4')).toBeNull();
     expect(streams.file(streamKey, '0.m4s')).toEqual({ path: `${ROOT}/${streamKey}/0.m4s`, type: 'video/mp4' });
     expect(streams.file(streamKey, '0.ts')).toBeNull();
+  });
+
+  it('a MAP change mid-stream is a new immutable init file and a discontinuity; the old init stays for seeking back', async () => {
+    let phase = 1;
+    routes.set(MASTER, () => (phase === 1 ? media(1, 2, { map: 'init-a.mp4', ext: 'm4s' }) : media(3, 2, { map: 'init-b.mp4', ext: 'm4s' })));
+    const base = `${HOST}/live/anna/geheim`;
+    routes.set(`${base}/init-a.mp4`, Buffer.from('A'));
+    routes.set(`${base}/init-b.mp4`, Buffer.from('B'));
+    segments(base, 1, 4, 'm4s');
+    const { streamKey } = streams.start(body());
+    await flush();
+    phase = 2;
+    await vi.advanceTimersByTimeAsync(2000);
+    await flush();
+    const body2 = playlist(streamKey).split('\n').filter((l) => /^#EXT-X-(MAP|DISCONTINUITY)$|^#EXT-X-(MAP|DISCONTINUITY):|\.m4s$/.test(l) && !l.startsWith('#EXT-X-DISCONTINUITY-SEQUENCE'));
+    expect(body2).toEqual(['#EXT-X-MAP:URI="init-0.mp4"', '0.m4s', '1.m4s', '#EXT-X-DISCONTINUITY', '#EXT-X-MAP:URI="init-1.mp4"', '2.m4s', '3.m4s']);
+    expect(mem.files.get(`${ROOT}/${streamKey}/init-0.mp4`)).toEqual(Buffer.from('A'));
+    expect(mem.files.get(`${ROOT}/${streamKey}/init-1.mp4`)).toEqual(Buffer.from('B'));
+    expect(streams.file(streamKey, 'init-0.mp4')).not.toBeNull();
+    expect(streams.file(streamKey, '0.m4s')).not.toBeNull();
+  });
+
+  it('pdt without a provider value: arrival − duration starts a run, the rest of the run follows on 4 s apart', async () => {
+    let phase = 1;
+    routes.set(MASTER, () => (phase === 1 ? media(10, 3) : media(2, 3)));
+    segments(`${HOST}/live/anna/geheim`, 10, 12);
+    segments(`${HOST}/live/anna/geheim`, 2, 4);
+    const { streamKey } = streams.start(body());
+    await flush();
+    const pdts = () => playlist(streamKey).split('\n').filter((l) => l.startsWith('#EXT-X-PROGRAM-DATE-TIME:')).map((l) => Date.parse(l.slice(25)));
+    expect(pdts()).toEqual([NOW - 4000, NOW, NOW + 4000]);
+    // the sequence jumps back: a discontinuity, a new run from the clock again
+    phase = 2;
+    await vi.advanceTimersByTimeAsync(2000);
+    await flush();
+    const at = NOW + 2000;
+    expect(pdts()).toEqual([NOW - 4000, NOW, NOW + 4000, at - 4000, at, at + 4000]);
+  });
+
+  it('a segment that already left the provider (404) is skipped with a discontinuity, no outage', async () => {
+    routes.set(MASTER, media(1, 3));
+    const base = `${HOST}/live/anna/geheim`;
+    segments(base, 1, 3);
+    routes.delete(`${base}/seg/2.ts?token=geheim`);
+    const { streamKey } = streams.start(body());
+    await flush();
+    const l = playlist(streamKey).split('\n');
+    expect(uris(l.join('\n'))).toEqual(['0.ts', '1.ts']);
+    expect(l[l.indexOf('#EXT-X-DISCONTINUITY') + 3]).toBe('1.ts');
+    expect(mem.files.get(`${ROOT}/${streamKey}/1.ts`)).toEqual(Buffer.alloc(188, 3));
+    const [view] = streams.list();
+    expect([view!.state, view!.errors]).toEqual(['running', []]);
+    // the skipped segment is not asked for again on the next poll
+    const n = ff.calls.length;
+    await vi.advanceTimersByTimeAsync(2000);
+    await flush();
+    expect(ff.calls.slice(n).map((c) => c.url)).toEqual([MASTER]);
+  });
+
+  it('an encrypted playlist fails with encrypted, byte ranges with invalid; neither is retried', async () => {
+    const cases: Array<[string, string]> = [
+      ['#EXT-X-KEY:METHOD=AES-128,URI="https://iptv.example.com/key"', 'encrypted'],
+      ['#EXT-X-KEY:METHOD=SAMPLE-AES,URI="k"', 'encrypted'],
+      ['#EXT-X-BYTERANGE:1000@0', 'invalid'],
+      ['#EXT-X-MAP:URI="init.mp4",BYTERANGE="700@0"', 'invalid'],
+    ];
+    for (const [tag, code] of cases) {
+      const url = `${HOST}/${code}-${cases.findIndex((c) => c[0] === tag)}.m3u8`;
+      routes.set(url, ['#EXTM3U', '#EXT-X-TARGETDURATION:4', tag, '#EXTINF:4,', 'seg/1.ts'].join('\n'));
+      const channelId = `ch-${cases.findIndex((c) => c[0] === tag)}`;
+      streams.start({ ...body(url), channelId });
+      await flush();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(ff.calls.filter((c) => c.url === url)).toHaveLength(1);
+      expect(streams.list().find((v) => v.channelId === channelId)!.state).toBe('failed');
+      expect(logs.join('\n')).toContain(`${channelId} failed (${code})`);
+    }
+    // METHOD=NONE is a clear playlist
+    routes.set(MASTER, ['#EXTM3U', '#EXT-X-TARGETDURATION:4', '#EXT-X-KEY:METHOD=NONE', '#EXTINF:4,', 'seg/1.ts?token=geheim'].join('\n'));
+    segments(`${HOST}/live/anna/geheim`, 1, 1);
+    streams.start(body());
+    await flush();
+    expect(streams.list().find((v) => v.channelId === 'ch-nordlicht')!.state).toBe('running');
+    expect(logs.join('\n')).not.toMatch(/iptv\.example|geheim/);
   });
 
   it('a playlist that is not HLS counts as an outage and is retried; a stop ends the loop', async () => {
@@ -261,5 +347,9 @@ describe('parseMedia', () => {
     expect(parseMedia('#EXTM3U\n#EXTINF:abc,\na.ts')).toBeNull();
     const p = parseMedia('#EXTM3U\na.ts')!;
     expect(p).toEqual({ targetDuration: 4, mediaSequence: 0, segments: [{ uri: 'a.ts', duration: 4, discontinuity: false, map: null }] });
+    expect(() => parseMedia('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128\n#EXTINF:4,\na.ts')).toThrow(PlaylistRefused);
+    expect(() => parseMedia('#EXTM3U\n#EXT-X-KEY:URI="k"\n#EXTINF:4,\na.ts')).toThrow('encrypted');
+    expect(() => parseMedia('#EXTM3U\n#EXTINF:4,\n#EXT-X-BYTERANGE:10@0\na.ts')).toThrow('invalid');
+    expect(parseMedia('﻿#EXTM3U\n#EXT-X-KEY:METHOD=NONE\n#EXTINF:4,\na.ts')!.segments).toHaveLength(1);
   });
 });

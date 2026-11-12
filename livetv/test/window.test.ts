@@ -91,9 +91,40 @@ describe('SegmentWindow', () => {
 
   it('fMP4 has the MAP line and version 7', () => {
     const w = new SegmentWindow({ dvrSeconds: 30, ext: 'm4s', init: true });
-    w.add({ file: 'a.m4s', duration: 4, pdt: T0 });
-    expect(lines(w).slice(0, 7)).toEqual(['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:4', '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-DISCONTINUITY-SEQUENCE:0', '#EXT-X-MAP:URI="init.mp4"', '#EXT-X-PROGRAM-DATE-TIME:2026-11-11T19:15:00.000Z']);
+    w.add({ file: 'a.m4s', duration: 4, pdt: T0, init: 0 });
+    expect(lines(w).slice(0, 7)).toEqual(['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:4', '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-DISCONTINUITY-SEQUENCE:0', '#EXT-X-MAP:URI="init-0.mp4"', '#EXT-X-PROGRAM-DATE-TIME:2026-11-11T19:15:00.000Z']);
     expect(uris(w)).toEqual(['0.m4s']);
+    // an init window needs an init version on every segment, a TS window none
+    expect(() => w.add({ file: 'b.m4s', duration: 4, pdt: T0 })).toThrow(RangeError);
+    expect(() => w.add({ file: 'b.m4s', duration: 4, pdt: T0, init: -1 })).toThrow(RangeError);
+    expect(() => new SegmentWindow({ dvrSeconds: 30, ext: 'ts' }).add({ file: 'b.ts', duration: 4, pdt: T0, init: 0 })).toThrow(RangeError);
+  });
+
+  it('an init change mid-stream: two MAP lines in place, each segment maps to its own init, the old init leaves with its segments', () => {
+    const dropped: string[] = [];
+    const w = new SegmentWindow({ dvrSeconds: 7200, ext: 'm4s', init: true, onDrop: (f) => dropped.push(f) });
+    w.add({ file: 'a.m4s', duration: 4, pdt: T0, init: 0 });
+    w.add({ file: 'b.m4s', duration: 4, pdt: T0 + 4000, init: 0 });
+    // the init changes: a discontinuity even though the caller did not mark one
+    w.add({ file: 'c.m4s', duration: 4, pdt: T0 + 8000, init: 1 });
+    w.add({ file: 'd.m4s', duration: 4, pdt: T0 + 12000, init: 1 });
+    w.add({ file: 'e.m4s', duration: 4, pdt: T0 + 16000, init: 1 });
+    const body = lines(w).slice(5).filter((l) => !l.startsWith('#EXT-X-PROGRAM-DATE-TIME') && !l.startsWith('#EXTINF'));
+    expect(body).toEqual(['#EXT-X-MAP:URI="init-0.mp4"', '0.m4s', '1.m4s', '#EXT-X-DISCONTINUITY', '#EXT-X-MAP:URI="init-1.mp4"', '2.m4s', '3.m4s', '4.m4s', '']);
+    // a seek back: segment 0 is still served, under the MAP of init-0, and init-0 still exists
+    expect(w.find('0.m4s')).toBe('a.m4s');
+    expect(w.find('init-0.mp4')).toBe('init-0.mp4');
+    expect(w.find('init-1.mp4')).toBe('init-1.mp4');
+    expect(w.find('init-2.mp4')).toBeNull();
+    expect(w.dropOldest()).toBe('a.m4s');
+    expect(dropped).toEqual([]);
+    expect(w.dropOldest()).toBe('b.m4s');
+    // its last segment left: init-0 goes too
+    expect(dropped).toEqual(['init-0.mp4']);
+    expect(w.find('init-0.mp4')).toBeNull();
+    const top = lines(w).slice(5, 8);
+    expect(top).toEqual(['#EXT-X-DISCONTINUITY', '#EXT-X-MAP:URI="init-1.mp4"', '#EXT-X-PROGRAM-DATE-TIME:2026-11-11T19:15:08.000Z']);
+    expect(w.newest()).toEqual({ pdt: T0 + 16000, duration: 4 });
   });
 
   it('find maps a local name to the stored file; dropOldest never takes the newest 3', () => {
@@ -101,7 +132,9 @@ describe('SegmentWindow', () => {
     fill(w, 4);
     expect(w.find('0.ts')).toBe('f0.ts');
     expect(w.find('3.ts')).toBe('f3.ts');
-    for (const bad of ['4.ts', '0.m4s', 'index.m3u8', '-1.ts', 'x.ts']) expect(w.find(bad)).toBeNull();
+    for (const bad of ['4.ts', '0.m4s', 'index.m3u8', '-1.ts', 'x.ts', '01.ts', '00.ts', 'init-0.mp4']) expect(w.find(bad)).toBeNull();
+    expect(new SegmentWindow({ dvrSeconds: 0, ext: 'ts' }).find('0.ts')).toBeNull();
+    expect(new SegmentWindow({ dvrSeconds: 0, ext: 'ts' }).newest()).toBeNull();
     expect(w.dropOldest()).toBe('f0.ts');
     expect(w.find('0.ts')).toBeNull();
     expect(w.dropOldest()).toBeNull();
