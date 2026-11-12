@@ -4,6 +4,7 @@
  * Live TV: `/media/l/<token>/<file>` (spec §7.3). A fake backend answers `/internal/authz/live`, a fake `livetv` serves
  * `/s/<streamKey>/<file>` (shaped like livetv/src/routes/files.ts), and the REAL gateway sits in front, without a media server.
  */
+import { connect } from 'node:net';
 import { createServer, request, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
@@ -17,6 +18,7 @@ const KEY_HOSTILE = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; // playlist with a forei
 const KEY_BIG = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'; // playlist over 2 MB
 const KEY_DOWN = 'cccccccccccccccccccccccccccccccc'; // livetv closes the connection
 const KEY_500 = 'dddddddddddddddddddddddddddddddd'; // livetv answers 500
+const KEY_HANG = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'; // livetv sends part of a segment and stalls
 const tok = (c: string) => c.repeat(43);
 const T_OK = tok('A');
 const T_GONE = tok('G'); // revoked: 410
@@ -31,7 +33,9 @@ const T_LVDOWN = tok('L');
 const T_500 = tok('E');
 const T_MEMO = tok('M'); // memo test only
 const T_NOSETUP = tok('N');
-const STREAM: Record<string, string> = { [T_OK]: KEY, [T_BADTYPE]: KEY_BADTYPE, [T_HOSTILE]: KEY_HOSTILE, [T_BIG]: KEY_BIG, [T_LVDOWN]: KEY_DOWN, [T_500]: KEY_500, [T_MEMO]: KEY, [T_NOSETUP]: KEY, [T_BADKEY]: '../v1/streams' };
+const T_SLOW = tok('S'); // the backend answers this one only when released
+const T_HANG = tok('P');
+const STREAM: Record<string, string> = { [T_OK]: KEY, [T_BADTYPE]: KEY_BADTYPE, [T_HOSTILE]: KEY_HOSTILE, [T_BIG]: KEY_BIG, [T_LVDOWN]: KEY_DOWN, [T_500]: KEY_500, [T_MEMO]: KEY, [T_NOSETUP]: KEY, [T_SLOW]: KEY, [T_HANG]: KEY_HANG, [T_BADKEY]: '../v1/streams' };
 const sha = (v: string) => createHash('sha256').update(v).digest('hex');
 
 const PLAYLIST = ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:4', '#EXT-X-MEDIA-SEQUENCE:5', '#EXT-X-DISCONTINUITY-SEQUENCE:0',
@@ -42,6 +46,8 @@ const SEGMENT = Buffer.alloc(188 * 50, 0x47);
 let be: Server, lv: Server, gw: Server, gwPort = 0, lvPort = 0;
 const authz: Array<{ token: string; ip: string; secret: string | undefined }> = [];
 const lvSeen: Array<{ method: string; url: string; headers: IncomingHttpHeaders }> = [];
+let releaseSlow: (() => void) | null = null;
+let hangClosed = 0;
 let mediaServer: string | null = null;
 let gwMetrics: () => string;
 
@@ -70,6 +76,11 @@ beforeAll(async () => {
       const b = JSON.parse(body) as { token: string; ip: string };
       authz.push({ token: b.token, ip: b.ip, secret: req.headers['x-internal-secret'] as string | undefined });
       const send = (code: number, j: unknown) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(j)); };
+      if (b.token === T_SLOW) {
+        const key = STREAM[b.token];
+        const gate = new Promise<void>((r) => { releaseSlow = r; });
+        return void gate.then(() => send(200, { streamKey: key, kind: 'live', maxAgeS: 2 }));
+      }
       if (b.token === T_GONE) return send(410, { error: 'gone' });
       if (b.token === T_FORB) return send(403, { error: 'forbidden' });
       if (b.token === T_DOWN) return send(500, { error: 'internal' });
@@ -83,6 +94,11 @@ beforeAll(async () => {
     const m = /^\/s\/([0-9a-f]{32})\/(.+)$/.exec(req.url ?? '');
     if (!m || req.method !== 'GET') { res.writeHead(404, { 'content-type': 'application/json' }); return void res.end('{"error":"not_found"}'); }
     const [, key, name] = m as unknown as [string, string, string];
+    if (key === KEY_HANG) {
+      res.on('close', () => { hangClosed++; });
+      res.writeHead(200, { 'content-type': 'video/mp4' });
+      return void res.write(SEGMENT);
+    }
     if (key === KEY_DOWN) return void req.socket.destroy();
     if (key === KEY_500) { res.writeHead(500, { 'content-type': 'application/json' }); return void res.end('{"error":"internal"}'); }
     if (key === KEY_BADTYPE) { res.writeHead(200, { 'content-type': 'text/html' }); return void res.end('<script>x</script>'); }
@@ -303,6 +319,11 @@ describe('/media/l/<token>/<file>', () => {
 
   it('distinct failing tokens from one address are blocked like cast tokens', async () => {
     const ip = '192.0.2.99';
+    const gwIp = '192.0.2.97';
+    for (let i = 0; i < 31; i++) { // 403 / 410 are no guessing signal: they never fill the limiter
+      expect((await raw(L(i % 2 ? T_GONE : T_FORB, 'index.m3u8'), { headers: { 'x-real-ip': gwIp } })).status).toBe(i % 2 ? 410 : 403);
+    }
+    expect((await raw(L(T_OK, 'index.m3u8'), { headers: { 'x-real-ip': gwIp } })).status).toBe(200);
     for (let i = 0; i < 31; i++) {
       const t = `Z${String(i).padStart(2, '0')}`.padEnd(43, 'z');
       expect((await raw(L(t, 'index.m3u8'), { headers: { 'x-real-ip': ip } })).status).toBe(401);
@@ -314,6 +335,31 @@ describe('/media/l/<token>/<file>', () => {
     expect(r.headers['access-control-allow-origin']).toBe('*');
     expect(authz.length).toBe(n);
     expect((await raw(L(T_OK, 'index.m3u8'), { headers: { 'x-real-ip': '192.0.2.98' } })).status).toBe(200);
+  });
+
+  it('a client leaving during authz or mid-segment leaks neither a livetv request nor the gauge', async () => {
+    const active = () => Number(/^friendflix_gateway_active_streams (\d+)$/m.exec(gwMetrics())![1]);
+    const before = active();
+    const n = lvSeen.length;
+    const sock = connect(gwPort, '127.0.0.1');
+    sock.write(`GET ${L(T_SLOW, '5.m4s')} HTTP/1.1\r\nHost: x\r\n\r\n`);
+    await vi.waitFor(() => expect(releaseSlow).not.toBeNull());
+    sock.destroy();
+    await new Promise((r) => setTimeout(r, 50));
+    releaseSlow!();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(lvSeen.length).toBe(n);
+    expect(active()).toBe(before);
+
+    // mid-segment: the gauge returns and livetv's request is aborted
+    const closed = hangClosed;
+    const s2 = connect(gwPort, '127.0.0.1');
+    let got = 0;
+    s2.on('data', (c) => { got += c.length; });
+    s2.write(`GET ${L(T_HANG, '5.m4s')} HTTP/1.1\r\nHost: x\r\n\r\n`);
+    await vi.waitFor(() => { expect(got).toBeGreaterThan(0); expect(active()).toBe(before + 1); });
+    s2.destroy();
+    await vi.waitFor(() => { expect(active()).toBe(before); expect(hangClosed).toBe(closed + 1); });
   });
 
   it('metrics carry only code labels', async () => {

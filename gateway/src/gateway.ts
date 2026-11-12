@@ -927,10 +927,14 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     if (isBlocked(ip)) return fail(429, 'too many requests', { 'retry-after': '300' });
     const token = mm[1]!;
     const file = mm[2]!;
+    // registered before the authz await: a client that leaves meanwhile must not cost livetv a request
+    const ac = new AbortController();
+    res.once('close', () => ac.abort());
     const auth = await authorizeLive(token, ip);
+    if (res.destroyed) return; // the client left during authz: nothing goes to livetv, nothing is counted
     if (auth === 'error') return fail(503, 'unavailable', { 'retry-after': '2' });
     if (typeof auth === 'number') {
-      noteFail(ip, sha256(token));
+      if (auth === 401) noteFail(ip, sha256(token)); // only an unknown token hints at guessing; 403/410 need a once-valid token
       return fail(auth, auth === 401 ? 'unauthorized' : auth === 403 ? 'forbidden' : 'gone');
     }
     if (!liveBase) return fail(503, 'unavailable', { 'retry-after': '5' });
@@ -938,8 +942,6 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
     if (target.origin !== liveBase.origin) return fail(503, 'unavailable'); // defence in depth: key and file are allowlisted above
 
     // no client header goes to livetv (no range, cookie, conditional or forwarding header): its answer depends on the path only
-    const ac = new AbortController();
-    res.once('close', () => ac.abort());
     // a playlist within 15 s (headers and body); a segment's headers within 15 s, its body then streams as long as the client reads
     const timer = setTimeout(() => ac.abort(), 15_000);
     let r: Response;
@@ -947,9 +949,11 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       r = await f(target.href, { method: 'GET', headers: { 'accept-encoding': 'identity' }, signal: ac.signal, redirect: 'manual' });
     } catch {
       clearTimeout(timer);
+      if (res.destroyed) return;
       return fail(503, 'unavailable', { 'retry-after': '2' });
     }
     const drop = () => { clearTimeout(timer); void r.body?.cancel().catch(() => {}); };
+    if (res.destroyed) { drop(); return; }
     if (r.status === 404) { drop(); return fail(404, 'not found'); }
     const ext = file.slice(file.lastIndexOf('.') + 1);
     const type = (r.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
@@ -960,6 +964,7 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       out['cache-control'] = 'no-store';
       const text = await readCapped(r, LIVE_PLAYLIST_MAX);
       clearTimeout(timer);
+      if (res.destroyed) return; // the client left while the playlist was read: not a gateway fault, not counted
       if (text === null || !liveUrisOk(text)) return fail(502, 'bad gateway');
       const body = Buffer.from(text, 'utf8');
       out['content-length'] = String(body.length);
