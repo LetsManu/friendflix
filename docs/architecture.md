@@ -89,7 +89,7 @@ flowchart TB
 | Service | Networks | Host port (127.0.0.1) | Holds |
 |---|---|---|---|
 | web | front | 3080 | nothing secret |
-| bootstrap (one-shot) | none | none | writes the generated secrets into the `bootstrap` volume and `INTERNAL_SECRET` into `bootstrap-gateway`, then exits; every other service waits for it |
+| bootstrap (one-shot) | none | none | writes the generated secrets into the `bootstrap` volume, `INTERNAL_SECRET` into `bootstrap-gateway` and the optional livetv service's derived key (never the secret) into `bootstrap-livetv`, then exits; every other service waits for it |
 | backend | front, db, media, egress | 3081 | `APP_ENC_KEY`, `INTERNAL_SECRET` and the database and Redis passwords (`bootstrap` volume, read-only); the settings with Jellyfin admin API key and OIDC client secret (encrypted in Postgres); sessions (cookie `ff_sid`) in Redis; per-user Jellyfin credentials encrypted in Postgres |
 | gateway | front, media | 3082 | `INTERNAL_SECRET` (`bootstrap-gateway` volume, read-only); pulls the media server URL from the backend; gets the user's media token per request from the backend (cached 5 s), never stores it |
 | postgres, redis | db (internal) | none | accounts, profiles, settings, sessions; their passwords come from the `bootstrap` volume |

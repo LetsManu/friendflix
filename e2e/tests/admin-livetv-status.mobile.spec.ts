@@ -7,8 +7,8 @@ import { expect, test } from '../fixtures.js';
 const card = (page: Page, name: string) => page.getByRole('region', { name, exact: true });
 
 test.describe('admin: Live-TV, Live-Status (phone)', () => {
-  // the mocked failing first load is a 503: the browser logs it
-  test.use({ allowedConsole: /Failed to load resource: the server responded with a status of 503/ });
+  // the mocked failing first load is a 500 (stop: 503): the browser logs it
+  test.use({ allowedConsole: /Failed to load resource: the server responded with a status of (500|503)/ });
   test.beforeEach(({ api }) => {
     api.asAdmin = true;
     Object.assign(api.admin.livetv, { installed: true, wanted: true, ltState: 'enabled' });

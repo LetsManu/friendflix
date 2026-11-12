@@ -19,7 +19,7 @@ docker compose logs -f backup                 # eine Zeile pro Lauf: "backup: OK
 ```bash
 ./scripts/backup-bootstrap.sh     # -> backups/friendflix-bootstrap-<UTC-Zeit>.tgz (Modus 0600, gehört dem Aufrufer)
 ```
-Die Datei getrennt von den Dumps aufbewahren (Passwort-Manager als Anhang, anderes Gerät). Andere Projektnamen: `COMPOSE_PROJECT_NAME=<name> ./scripts/backup-bootstrap.sh`; Zielordner `BACKUP_DIR`. Mit `compose.secrets.yaml` kommen `APP_ENC_KEY` und `INTERNAL_SECRET` aus `secrets/`; dann zusätzlich diesen Ordner sichern. Das Volume `bootstrap-gateway` braucht kein Backup (der Dienst `bootstrap` füllt es bei jedem Start neu).
+Die Datei getrennt von den Dumps aufbewahren (Passwort-Manager als Anhang, anderes Gerät). Andere Projektnamen: `COMPOSE_PROJECT_NAME=<name> ./scripts/backup-bootstrap.sh`; Zielordner `BACKUP_DIR`. Mit `compose.secrets.yaml` kommen `APP_ENC_KEY` und `INTERNAL_SECRET` aus `secrets/`; dann zusätzlich diesen Ordner sichern. Die Volumes `bootstrap-gateway` und `bootstrap-livetv` brauchen kein Backup (der Dienst `bootstrap` füllt sie bei jedem Start neu).
 
 **Wiederherstellung** (App gestoppt, damit keine Verbindungen offen sind):
 ```bash

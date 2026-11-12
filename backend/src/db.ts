@@ -1060,7 +1060,12 @@ export const MIGRATIONS: string[] = [
   );
   create index if not exists livetv_programmes_stage_run on livetv_programmes_stage(run_id);
   `,
-  // 50: live starts in the anonymous playback timing (Task 39, ruling R34): mode 'live' carries the first-frame time only (playtiming.ts
+  // Live TV 50 (1c final review M4): the group lookups (the group list's per-group count, group deletes and merges) no longer scan
+  `
+  create index if not exists livetv_group_map_group on livetv_group_map(group_id);
+  create index if not exists livetv_channels_group_override on livetv_channels(group_override) where group_override is not null;
+  `,
+  // 51: live starts in the anonymous playback timing (Task 39, ruling R34): mode 'live' carries the first-frame time only (playtiming.ts
   // keeps nothing else, no channel, no user). Widens migration 36's inline mode check, which Postgres auto-named
   // playback_timings_mode_check (dropped by name: a pattern match on "mode" would also hit sound_mode's check). Rerunnable.
   `

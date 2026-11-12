@@ -261,7 +261,7 @@ describe('own feeds and import options', () => {
     calls.length = 0;
     const t = await call('POST', '/api/admin/livetv/sources/test', { sourceId: id, allowLan: false, epgUrl: '' });
     expect([t.statusCode, t.json().epgChannels]).toEqual([200, null]);
-    expect(calls.map((c) => c.path)).toEqual(['/v1/fetch/m3u']);
+    expect(calls.map((c) => c.path).filter((p) => p !== '/healthz')).toEqual(['/v1/fetch/m3u']); // (a proof of key renewal may come first)
   });
 
   it('every write drops the cached channel sets and is audited with field names only', async () => {

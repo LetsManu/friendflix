@@ -6,13 +6,13 @@ import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ReplayCache, deriveKey, sign } from '../src/protocol.js';
+import { ReplayCache, sign } from '../src/protocol.js';
 import { fileRoutes } from '../src/routes/files.js';
 import { streamRoutes } from '../src/routes/streams.js';
 import { createApp, start } from '../src/server.js';
 import { IDLE_STOP_MS, Streams, type Driver, type StartBody } from '../src/streams.js';
 import type { SystemView } from '../src/system.js';
-import { flush, memoryStore } from './streams-helpers.js';
+import { deriveKey, flush, keyFile, memoryStore } from './streams-helpers.js';
 
 const key = deriveKey('streams-api-test-secret-0123');
 const NOW = Date.parse('2026-11-11T19:20:00.000Z');
@@ -309,7 +309,7 @@ describe('the safety net', () => {
 describe('start', () => {
   it('registers the stream and file routes in production', async () => {
     const free = await new Promise<number>((r) => { const s = netServer().listen(0, '127.0.0.1', () => { const n = (s.address() as AddressInfo).port; s.close(() => r(n)); }); });
-    const s = await start({ PORT: String(free), INTERNAL_SECRET: 'start-streams-secret-0123456789', LIVETV_SRT_PORTS: '9000' }, { log: () => {}, host: '127.0.0.1' });
+    const s = await start({ PORT: String(free), LIVETV_KEY_FILE: keyFile('start-streams-secret-0123456789'), LIVETV_SRT_PORTS: '9000' }, { log: () => {}, host: '127.0.0.1' });
     try {
       const k = deriveKey('start-streams-secret-0123456789');
       const r = await fetch(`http://127.0.0.1:${free}/v1/streams`, { headers: sign(k, 'GET', '/v1/streams', '') });

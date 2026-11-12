@@ -15,8 +15,18 @@ wird nichts geladen oder gestartet und FriendFlix sieht aus wie vorher. Diese Se
 - **Von Hand:** `COMPOSE_PROFILES=livetv` in die `.env` schreiben und `docker compose -f compose.prod.yaml up -d` ausführen
   (oder `docker compose -f compose.prod.yaml --profile livetv up -d`). Vorher prüfen: `docker compose -f compose.prod.yaml --profile livetv config -q`.
 
+**Bei einer Installation von vor Live-TV** einmal in dieser Reihenfolge (die Seite nennt den Schritt, der fehlt):
+
+1. *Admin → Update → Updater aktualisieren* (ein älterer Updater kennt Live-TV nicht: „Erst den Updater aktualisieren“).
+2. `compose.prod.yaml` im Stack-Ordner durch die aus dem aktuellen Release ersetzen und einmal
+   `docker compose -f compose.prod.yaml up -d` ausführen. Damit hängen Backend und Gateway im internen Netz `livetv`, und der
+   Dienst `bootstrap` schreibt den Schlüssel von livetv (fehlt das: „Deine compose.prod.yaml stammt von vor Live-TV“ oder
+   „Backend und Gateway hängen noch nicht im Netz livetv“). Ein Update über den Updater dazwischen ist kein Problem: Es erstellt
+   Backend und Gateway im neuen Netz neu.
+3. *Admin → Live-TV* → aktivieren.
+
 Der Dienst hat keinen Docker-Socket, ein schreibgeschütztes Root-Dateisystem und keine Capabilities; Backend und Gateway
-erreichen ihn im internen Netz `livetv` unter `LIVETV_URL` (Standard `http://livetv:8090`, braucht keine Einstellung).
+erreichen ihn im internen Netz `livetv` unter `LIVETV_URL` (Standard `http://livetv:8090`, braucht keine Einstellung). Details (englisch): [security.md](../security.md#the-livetv-container).
 Der Updater behält die Overlay-Dateien, mit denen du den Stack gestartet hast; ein Overlay in `COMPOSE_FILE` bleibt bei Updates erhalten.
 
 ## GPU
@@ -37,9 +47,10 @@ installieren, dann `-f compose.livetv-nvidia.yaml` hinzufügen (reserviert eine 
 ## Ports
 
 livetv veröffentlicht **nur UDP**: den Bereich `LIVETV_SRT_PORTS` (Standard `9000-9009`, 1–100 Ports) für SRT-Feeds, die du
-hineinschickst, auf der Host-Adresse `LIVETV_SRT_BIND` (Standard `0.0.0.0`; `127.0.0.1` schaltet Push von außen ab, ohne den Dienst
-zu entfernen). Den Bereich nur in der Firewall öffnen, **wenn du Feeds hineinschickst**; Listen und Streams abzurufen braucht keinen
-eingehenden Port. Die API (Port 8090) wird nie veröffentlicht. Anderer Bereich: `LIVETV_SRT_PORTS=9100-9104` in der `.env`.
+hineinschickst, auf der Host-Adresse `LIVETV_SRT_BIND`. Der Standard `127.0.0.1` lässt Push von außen aus. `LIVETV_SRT_BIND=0.0.0.0`
+(oder die LAN-Adresse des Servers) **nur dann** in die `.env` schreiben, **wenn du Feeds hineinschickst**. Docker veröffentlicht Ports
+auf den meisten Hosts an ufw und firewalld vorbei; eine Firewall-Regel allein schließt den Bereich also nicht, `LIVETV_SRT_BIND` schon.
+Listen und Streams abzurufen braucht keinen eingehenden Port. Die API (Port 8090) wird nie veröffentlicht. Anderer Bereich: `LIVETV_SRT_PORTS=9100-9104` in der `.env`.
 
 Weitere Einstellungen: `LIVETV_CACHE_MAX_GB` (Standard 6, der wegwerfbare Segment-Cache), `LIVETV_URL` (nur wenn du den Dienst verlegst), `RECORDINGS_PATH` (Host-Ordner für Aufnahmen, Phase 3; Standard das benannte Volume `recordings`; absoluter Pfad, beschreibbar für uid 10001).
 

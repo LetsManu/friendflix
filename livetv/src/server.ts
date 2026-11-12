@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { log as defaultLog, type Log } from './log.js';
 import { dnsLookup, ownSubnets } from './netguard.js';
-import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
+import { ReplayCache, healthProof, isNonce, verify, type Verifier } from './protocol.js';
 import { clearStale } from './cache.js';
 import { passthroughDriver } from './passthrough.js';
 import { Previews } from './preview.js';
@@ -23,13 +23,16 @@ import { Streams } from './streams.js';
 import { encoders, systemView, type Encoder, type SystemView } from './system.js';
 
 /**
- * livetv's internal API (spec §3.2; only on the internal `livetv` network, port 8090). `/healthz` is open; every `/v1/*` request
+ * livetv's internal API (spec §3.2; only on the internal `livetv` network, port 8090). `/healthz` is open (with `?n=<nonce>` it
+ * adds the proof of key, protocol.ts); every `/v1/*` request
  * is signed (protocol.ts), JSON only, at most 64 KB; `/s/*` (stream files for the gateway, Task 27) is unsigned and addressed by
  * a random stream key. Later tasks add their routes to the table (`AppDeps.routes`). `start()` also runs the SRT push ingest
  * (Task 29): one `srtgate` helper on LIVETV_SRT_PORTS, its set from `PUT /v1/ingest`, its feeds readable by the stream drivers.
  */
 export const API_VERSION = 1;
 export const MAX_BODY = 64 * 1024;
+/** the one route with a larger cap: POST /v1/fetch/m3u carries the skip list (2 000 names of up to 200 characters) */
+export const MAX_BODY_M3U = 512 * 1024;
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 export interface RouteCall {
@@ -46,6 +49,8 @@ export interface Route {
   method: Method;
   /** exact path, or a pattern anchored with ^...$ (its groups become `params`) */
   path: string | RegExp;
+  /** the signed body cap in bytes when it is not MAX_BODY */
+  maxBody?: number;
   handle(c: RouteCall): Promise<Answer | void>;
 }
 
@@ -73,17 +78,17 @@ function send(res: ServerResponse, status: number, body?: unknown): void {
 }
 
 /**
- * The body as text; `too_large` when it passes MAX_BODY (the rest is read and dropped, so the 413 still reaches the caller);
+ * The body as text; `too_large` when it passes the cap (MAX_BODY, or the route's own) (the rest is read and dropped, so the 413 still reaches the caller);
  * `broken` when the request stream fails (the caller aborted).
  */
-function readBody(req: IncomingMessage): Promise<{ body: string } | { error: 'too_large' | 'broken' }> {
+function readBody(req: IncomingMessage, max: number = MAX_BODY): Promise<{ body: string } | { error: 'too_large' | 'broken' }> {
   return new Promise((resolve) => {
-    if (Number(req.headers['content-length'] ?? 0) > MAX_BODY) { req.resume(); resolve({ error: 'too_large' }); return; }
+    if (Number(req.headers['content-length'] ?? 0) > max) { req.resume(); resolve({ error: 'too_large' }); return; }
     let size = 0;
     const chunks: Buffer[] = [];
     const onData = (c: Buffer) => {
       size += c.length;
-      if (size <= MAX_BODY) { chunks.push(c); return; }
+      if (size <= max) { chunks.push(c); return; }
       req.off('data', onData);
       chunks.length = 0;
       req.resume();
@@ -122,7 +127,13 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
     try {
       if (path === '/healthz') {
         if (method !== 'GET') return send(res, 405, { error: 'method_not_allowed' });
-        return send(res, 200, { ok: true, api: API_VERSION, version: deps.version, bootId: deps.bootId });
+        const health = { ok: true, api: API_VERSION, version: deps.version, bootId: deps.bootId };
+        // the Docker health check asks without a nonce; the backend's detection asks with one and checks the proof (1b review I2)
+        const q = new URLSearchParams(target.slice(path.length + 1));
+        if (!q.has('n')) return send(res, 200, health);
+        const n = q.getAll('n');
+        if (n.length !== 1 || !isNonce(n[0]!)) return send(res, 400, { error: 'invalid_nonce' });
+        return send(res, 200, { ...health, proof: healthProof(deps.verifier.key, n[0]!) });
       }
       const signed = path.startsWith('/v1/');
       if (!signed && !path.startsWith('/s/')) return send(res, 404, { error: 'not_found' });
@@ -138,7 +149,7 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
       if (!route || !params) return send(res, 405, { error: 'method_not_allowed' });
       let json: unknown = null;
       if (signed) {
-        const read = await readBody(req);
+        const read = await readBody(req, route.maxBody);
         if ('error' in read) return read.error === 'too_large' ? send(res, 413, { error: 'too_large' }) : send(res, 400, { error: 'bad_request' });
         const body = read.body;
         // the whole request target is signed: a query string cannot be changed or added on the way
@@ -166,7 +177,10 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
 export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log; host?: string } = {}): Promise<Server> {
   const cfg = loadConfig(env);
   const log = o.log ?? defaultLog;
-  const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
+  // never read: livetv signs with its own key only (config.ts). A value here would be the backend's key within reach of ffmpeg.
+  // Said first, before the SRT ingest's helper can log anything.
+  if (env.INTERNAL_SECRET || env.INTERNAL_SECRET_FILE) log('INTERNAL_SECRET is set in the environment of livetv but never used: remove it there');
+  const verifier: Verifier = { key: cfg.key, cache: new ReplayCache(), notBefore: Date.now() };
   const run = createRun();
   const system = systemView({ fs, run, cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts });
   // the encoders /v1/system lists, asked once (a failed or empty answer is asked again next time)
