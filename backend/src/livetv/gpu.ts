@@ -21,5 +21,8 @@ export function gpuAdvice(jfHwAccel: string | null, sys: { gpu: { devices: strin
   // a GPU type livetv has no overlay for (amf, v4l2m2m, rkmpp, videotoolbox ...): with no device at all it runs on the processor,
   // which is what the info row says; claiming "both use the GPU" would be wrong
   if (!dri && hw !== 'nvenc' && sys.gpu.devices.length === 0 && !sys.gpu.nvidia) return { level: 'info', key: 'cpuOnly' };
-  return { level: 'ok', key: 'both', ...(sys.gpu.driver ? { driver: sys.gpu.driver } : {}) };
+  // the line names the GPU both use: for nvenc that is NVIDIA, even when livetv also has an Intel / AMD render node (whose driver,
+  // e.g. i915, is what gpu.driver reports then)
+  const driver = hw === 'nvenc' ? 'nvidia' : sys.gpu.driver;
+  return { level: 'ok', key: 'both', ...(driver ? { driver } : {}) };
 }

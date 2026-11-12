@@ -553,6 +553,11 @@ describe('gpuAdvice', () => {
     expect(gpuAdvice('nvenc', { ...sys(), ...compiled })).toEqual({ level: 'warn', key: 'needsNvidia' });
     expect(gpuAdvice('qsv', { ...sys(), ...compiled })).toEqual({ level: 'warn', key: 'needsOverlay' });
     expect(gpuAdvice('amf', { ...sys(), ...compiled })).toEqual({ level: 'info', key: 'cpuOnly' });
+    // NVIDIA plus Intel: nvenc names NVIDIA, not the render node's i915 (re-review minor); qsv on the same host names i915
+    const both = sys({ devices: ['renderD128'], readable: true, driver: 'i915', nvidia: true });
+    expect(gpuAdvice('nvenc', both)).toEqual({ level: 'ok', key: 'both', driver: 'nvidia' });
+    expect(gpuAdvice('qsv', both)).toEqual({ level: 'ok', key: 'both', driver: 'i915' });
+    expect(gpuAdvice('nvenc', sys({ nvidia: true }))).toEqual({ level: 'ok', key: 'both', driver: 'nvidia' });
     // an NVIDIA device makes an unknown GPU type "both" (it may well use it), never cpuOnly
     expect(gpuAdvice('amf', sys({ nvidia: true, driver: 'nvidia' }))).toEqual({ level: 'ok', key: 'both', driver: 'nvidia' });
   });
