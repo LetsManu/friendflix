@@ -17,7 +17,8 @@ COPY livetv livetv
 RUN npm run build -w livetv
 
 # The Jellyfin repository key, checked before apt may trust it: the file must hold exactly one primary key, with the pinned
-# fingerprint (a swapped key or an extra appended one fails the build), and only that key is exported for apt's signed-by.
+# fingerprint (a swapped key or an extra appended one fails the build); then it is dearmored for apt's signed-by (no keyring
+# import: gpg 2.2 would start gpg-agent, which bookworm-slim does not ship).
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS jellyfin-key
 ARG JELLYFIN_KEY_FPR=4918AABC486CA052358D778D49023CD01DE21A7B
 RUN apt-get update \
@@ -26,8 +27,7 @@ RUN apt-get update \
   && export GNUPGHOME="$(mktemp -d)" \
   && test "$(gpg --batch --show-keys --with-colons /tmp/jellyfin.asc | awk -F: '$1 == "pub"' | wc -l)" = 1 \
   && test "$(gpg --batch --show-keys --with-colons /tmp/jellyfin.asc | awk -F: '$1 == "fpr" { print $10; exit }')" = "$JELLYFIN_KEY_FPR" \
-  && gpg --batch --quiet --import /tmp/jellyfin.asc \
-  && gpg --batch --export "$JELLYFIN_KEY_FPR" > /jellyfin.gpg \
+  && gpg --batch --dearmor < /tmp/jellyfin.asc > /jellyfin.gpg \
   && test -s /jellyfin.gpg
 
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
