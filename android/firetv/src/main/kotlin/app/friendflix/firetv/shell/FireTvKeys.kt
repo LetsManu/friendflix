@@ -60,18 +60,24 @@ object FireTvKeys {
         return if (action == KeyEvent.ACTION_DOWN && repeatCount == 0) Route.Dispatch(key) else Route.Swallow
     }
 
+    private val DIGITS = ('0'..'9').map { it.toString() }.toSet()
+
+    /** JS: true when the focused element `t` takes typed text (the test Back uses to leave a field, digits to type into it) */
+    private const val EDITABLE =
+        "(t.isContentEditable||t.tagName==='TEXTAREA'||(t.tagName==='INPUT'&&!/^(checkbox|radio|range|button|submit)\$/.test(t.type)))"
+
     /**
      * The script that fires [key] at the focused element (bubbling, cancelable) and returns `'handled'` when the page called
-     * preventDefault, `'blurred'` when Back left a text field, else `'unhandled'`. Only the known names are ever put in the script.
+     * preventDefault, `'blurred'` when Back left a text field, else `'unhandled'`. A digit while a text field has focus is typed
+     * into it instead (`insertText` fires the field's `input` event; an untrusted keydown would type nothing) and returns
+     * `'typed'`, so number-pad remotes and keyboards still fill search, PIN and code fields. Only the known names are ever put
+     * in the script.
      */
     fun script(key: String): String {
         require(key in KEYS.values) { "unknown key" }
-        val blur = if (key == BACK) {
-            "var n=t.tagName;if(t.isContentEditable||n==='TEXTAREA'||(n==='INPUT'&&!/^(checkbox|radio|range|button|submit)\$/.test(t.type))){t.blur();return 'blurred';}"
-        } else {
-            ""
-        }
-        return "(function(){var t=document.activeElement||document.body;if(!t)return 'unhandled';" +
+        val type = if (key in DIGITS) "if($EDITABLE){document.execCommand('insertText',false,'$key');return 'typed';}" else ""
+        val blur = if (key == BACK) "if($EDITABLE){t.blur();return 'blurred';}" else ""
+        return "(function(){var t=document.activeElement||document.body;if(!t)return 'unhandled';" + type +
             "var ok=t.dispatchEvent(new KeyboardEvent('keydown',{key:'$key',bubbles:true,cancelable:true}));" +
             "t.dispatchEvent(new KeyboardEvent('keyup',{key:'$key',bubbles:true}));" +
             "if(!ok)return 'handled';" + blur + "return 'unhandled';})()"

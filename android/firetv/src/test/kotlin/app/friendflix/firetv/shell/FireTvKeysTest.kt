@@ -78,4 +78,20 @@ class FireTvKeysTest {
         assertEquals(FireTvKeys.Route.Pass, FireTvKeys.route(1, 23, 0)) // up
         assertEquals(FireTvKeys.Route.Pass, FireTvKeys.route(1, 23, 7)) // up after a long hold
     }
+
+    @Test fun `a digit types into a focused text field instead of firing a keydown`() {
+        for (d in 0..9) {
+            val js = FireTvKeys.script("$d")
+            assertTrue(js.contains("t.isContentEditable||t.tagName==='TEXTAREA'||(t.tagName==='INPUT'"))
+            assertTrue(js.contains("document.execCommand('insertText',false,'$d');return 'typed';"))
+            // the field check comes before the keydown, so a typed digit never also reaches the page as a key
+            assertTrue(js.indexOf("insertText") < js.indexOf("KeyboardEvent('keydown'"))
+        }
+        for (name in listOf("ChannelUp", "ChannelDown", "PreviousChannel", "Info", "Guide", "MediaPlayPause", "GoBack")) {
+            assertFalse(name, FireTvKeys.script(name).contains("insertText"))
+            assertFalse(name, FireTvKeys.script(name).contains("'typed'"))
+        }
+        // Back keeps the same field test for leaving the field
+        assertTrue(FireTvKeys.script("GoBack").contains("t.isContentEditable||t.tagName==='TEXTAREA'"))
+    }
 }
