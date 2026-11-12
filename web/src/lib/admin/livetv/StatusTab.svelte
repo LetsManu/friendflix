@@ -41,15 +41,26 @@
   let st: LiveStatus | null = null, failed = false, gone = false, now = new Date();
   let sourceNames = new Map<string, string>();
 
-  /** a sequence number: an older answer (a slow poll) never overwrites a newer one */
-  let seq = 0;
-  async function load() {
-    const mine = ++seq;
+  /**
+   * One status request at a time: a tick that finds a load still running is skipped, so a slow answer (> 5 s) is applied when it
+   * arrives instead of being superseded by the next tick forever. A stop asks `loadFresh`, which waits for the running load (it may
+   * have started before the stop) and then asks once more.
+   */
+  let inflight: Promise<void> | null = null;
+  async function run() {
     try {
       const v = await loadStatus();
-      if (gone || mine !== seq) return;
+      if (gone) return;
       st = v; failed = false; now = new Date();
-    } catch { if (!gone && mine === seq && !st) failed = true; }
+    } catch { if (!gone && !st) failed = true; }
+  }
+  function load(): Promise<void> {
+    if (!inflight) inflight = run().finally(() => { inflight = null; });
+    return inflight;
+  }
+  async function loadFresh() {
+    if (inflight) await inflight;
+    await load();
   }
   let stopPoll = () => {};
   onMount(() => {
@@ -89,7 +100,7 @@
     if (res.skipped || gone) return;
     if (!res.ok) { toast.error(tr('adminLive.status.stopFailed')); return; }
     toast.success(tr(restart ? 'adminLive.status.restarted' : 'adminLive.status.stopped', { name: r.name }));
-    await load();
+    await loadFresh();
   }
 
   // ---- Gesendete Streams
@@ -166,7 +177,7 @@
 
   <AdminCard title={$t('adminLive.status.events')} description={$t('adminLive.status.eventsHint')}>
     <div class="reserve table-b" data-events>
-      <DataTable {rows} columns={eventCols} key={(r) => r.id} caption={$t('adminLive.status.events')} pageSize={10} skeletonRows={3} emptyText={$t('adminLive.status.emptyEvents')}>
+      <DataTable {rows} columns={eventCols} key={(r) => r.id} caption={$t('adminLive.status.events')} pageSize={10} skeletonRows={10} emptyText={$t('adminLive.status.emptyEvents')}>
         <svelte:fragment slot="cell" let:row let:col>
           {#if col.key === 'at'}
             {whenText(new Date(row.at), now)}
@@ -257,10 +268,27 @@
     .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .tiles > :global(:nth-child(5)) { grid-column: span 2; }
   }
-  /* the tables keep room for their rows before the answer arrives (header + three rows; the empty text fits too) */
+  /* The tables reserve their space before the answer arrives, so the card below never moves (measured, desktop / phone):
+     - *Laufende Sender*: header + 3 rows. A running row is 89 px (the input pill wraps), a phone card 235 px. The skeleton rows are
+       set to that height, so the skeleton, the error and the empty text all fill the same box; more channels than three grow it.
+     - *Ereignisse*: header + one full page of 10 rows (65 px; a phone card 184 px) + the pager row (44 px + .6rem), also when there
+       is only one page; the pager sits at the bottom of the box. Skeleton, error, empty text, 1 and 10 events: the same height. */
   .reserve { min-width: 0; }
-  .table-a { min-height: 11.5rem; }
-  .table-b { min-height: 13rem; }
+  .table-a { min-height: 19.5rem; }
+  .table-b { min-height: 46.5rem; }
+  .table-a { --sk: 5.5rem; }
+  .table-b { --sk: 65px; }
+  /* the table, the error and the empty text fill the box; the pager sits at its bottom */
+  .reserve :global(.dt) { display: flex; flex-direction: column; min-height: inherit; }
+  .reserve :global(.dt > .state) { flex: 1; justify-content: center; }
+  .reserve :global(.dt > .pager) { margin-top: auto; padding-top: .6rem; }
+  .table-a > .state { min-height: inherit; }
+  .reserve :global(tr.sk) { height: var(--sk); }
+  @media (max-width: 720px) {
+    .table-a { min-height: 45.6rem; --sk: 14.8rem; }
+    .table-b { min-height: 124rem; --sk: 11.5rem; }
+    .reserve :global(tr.sk) { height: auto; min-height: var(--sk); }
+  }
   .who { display: inline-flex; align-items: center; gap: .6rem; min-width: 0; }
   .logo { flex: none; width: 28px; height: 28px; border-radius: 6px; background: rgba(255,255,255,.06); display: grid; place-items: center; overflow: hidden; }
   .logo img { width: 28px; height: 28px; object-fit: contain; display: block; }
