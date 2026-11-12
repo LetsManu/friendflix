@@ -6,10 +6,13 @@
    * budget, what runs, *Neu messen*, the limit (automatic or own value 1–16) and the priority with the hint of the selected option.
    * `readOnly` (Live-Status reuses the card): the numbers and the list only, optionally with a `link` to the full card.
    * Polls every 5 s while the tab is visible. The measured line, the warning, the note under the button, the last outcome and the
-   * priority hint reserve their height, the stepper keeps its place while hidden, so switching options moves nothing.
+   * priority hint reserve their height, the stepper keeps its place while hidden, so switching options moves nothing. *Neu messen* exists
+   * only with Jellyfin (the server kind comes with /api/me, before admin pages render): there it keeps its place in the header from the
+   * start, invisible until the first answer; on Plex there is no slot at all, so no empty row and no disabled button flashing up.
    */
   import { onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
+  import { serverKind } from '#lib/capabilities';
   import Icon from '#lib/Icon.svelte';
   import { fmtNumber, t, tr } from '#lib/i18n';
   import { poll } from '#lib/adminContent/poll';
@@ -25,7 +28,7 @@
   export let readOnly = false;
   export let link: string | null = null;
 
-  const ids = { note: uid('cv-note'), slots: uid('cv-slots'), prio: uid('cv-prio') };
+  const ids = { note: uid('cv-note'), slots: uid('cv-slots'), prio: uid('cv-prio'), runs: uid('cv-runs') };
   let view: ConversionsView | null = null, loadErr = false, now = new Date();
   /** saves in flight or queued: a poll must not paint old numbers over the optimistic ones */
   let inflight = 0;
@@ -117,9 +120,11 @@
 
 <AdminCard title={$t('adminConv.title')} description={$t('adminConv.intro')}>
   <svelte:fragment slot="actions">
-    {#if link}<Button variant="secondary" href={link}>{$t('adminConv.details')}</Button>{/if}
-    {#if !readOnly && !unsupported}
-      <Button icon="refresh" pending={measuring} disabled={!view || (Boolean(reason) && !measuring)} aria-describedby={ids.note} on:click={measure}>{$t('adminConv.remeasure')}</Button>
+    <!-- no whitespace between the two blocks: with neither rendered the actions box stays :empty and takes no row (AdminCard) -->
+    {#if link}<Button variant="secondary" href={link}>{$t('adminConv.details')}</Button>{/if}{#if !readOnly && $serverKind === 'jellyfin'}
+      <span class="measure" class:hold={!view || unsupported} data-testid="conv-measure">
+        <Button icon="refresh" pending={measuring} disabled={!view || unsupported || (Boolean(reason) && !measuring)} aria-describedby={view ? ids.note : undefined} on:click={measure}>{$t('adminConv.remeasure')}</Button>
+      </span>
     {/if}
   </svelte:fragment>
 
@@ -185,9 +190,9 @@
       </div>
     {/if}
 
-    <h3 class="rh">{$t('adminConv.running.title')}</h3>
+    <h3 class="rh" id={ids.runs}>{$t('adminConv.running.title')}</h3>
     {#if view.running.length}
-      <ul class="runs" aria-label={$t('adminConv.running.title')}>
+      <ul class="runs" aria-labelledby={ids.runs}>
         {#each view.running as r, i (i)}
           <li>
             <Icon name={ICON[segOf(r.kind)]} size={18} />
@@ -204,6 +209,9 @@
 </AdminCard>
 
 <style>
+  /* reserved from the first paint; visibility (not display) keeps the size and takes it out of the tab order and the accessibility tree */
+  .measure { display: inline-flex; }
+  .measure.hold { visibility: hidden; }
   .big { font-size: 1.7rem; font-weight: 800; margin: 0 0 .7rem; font-variant-numeric: tabular-nums; }
   .muted { color: var(--mut); }
   .none { margin: .3rem 0 0; min-height: 1.45em; }

@@ -54,7 +54,7 @@ export interface ErrorHealth { level: Level; reason?: Reason; server15: number; 
 export interface HealthIssue { id: string; level: 'warn' | 'err'; reason: Reason; fp: string; detail?: Detail }
 export interface HealthSnapshot { at: string; services: ServiceHealth[]; disks: DiskHealth[]; errors: ErrorHealth; issues: HealthIssue[]; worst: Level }
 
-export const TC_REASONS = ['network', 'remoteCap', 'uploadCap', 'roleCap', 'container', 'videoCodec', 'audioCodec', 'audioTrack', 'subtitles', 'height', 'manual', 'other'] as const;
+export const TC_REASONS = ['network', 'remoteCap', 'uploadCap', 'roleCap', 'container', 'videoCodec', 'audioCodec', 'audioTrack', 'subtitles', 'height', 'manual', 'serverBusy', 'other'] as const;
 export type TranscodeReason = (typeof TC_REASONS)[number];
 export type StreamMethod = 'direct' | 'remux' | 'transcode';
 export interface StreamRow {

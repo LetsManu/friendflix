@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { backdrop, cachedDetail, cachedItem, CARD_WIDTHS, clearItemCache, img, primeDetail, primeItem, setCachedThumb, srcset, type Item } from './api';
+import { ApiError, apiCode, backdrop, cachedDetail, cachedItem, CARD_WIDTHS, clearItemCache, img, primeDetail, primeItem, setCachedThumb, srcset, type Item } from './api';
 
 const ID = 'a'.repeat(32);
 
@@ -60,5 +60,14 @@ describe('item cache', () => {
     for (let i = 0; i < 450; i++) primeItem(it0('i' + i), 0);
     expect(cachedItem('i0', 0)).toBeUndefined();
     expect(cachedItem('i449', 0)).toBeDefined();
+  });
+});
+
+describe('apiCode', () => {
+  it('the error code of an API answer, nothing for anything else', () => {
+    expect(apiCode(new ApiError(409, { error: 'name_taken' }))).toBe('name_taken');
+    expect(apiCode(new ApiError(500, null))).toBeUndefined();
+    expect(apiCode(new ApiError(400, { error: { nested: true } }))).toBeUndefined();
+    expect(apiCode(new Error('offline'))).toBeUndefined();
   });
 });

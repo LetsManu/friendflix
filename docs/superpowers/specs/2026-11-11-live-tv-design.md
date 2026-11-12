@@ -266,31 +266,38 @@ playback for everyone and should ship and settle on its own), Phase 2 plan, Phas
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    group_add: ["10001"] # reads bootstrap-gateway (internal_secret only)
+    group_add: ["10001"] # reads bootstrap-livetv (livetv_key only; see the ruling below)
     environment:
-      INTERNAL_SECRET: ${INTERNAL_SECRET:-} # unset: the copy in the bootstrap-gateway volume
       LIVETV_CACHE_MAX_GB: ${LIVETV_CACHE_MAX_GB:-6}
       LIVETV_SRT_PORTS: ${LIVETV_SRT_PORTS:-9000-9009}
       TZ: ${TZ:-Europe/Vienna}
     ports:
       # SRT push (§3.5): UDP only, same numbers outside and inside so the setup hint shows the real port.
-      - "${LIVETV_SRT_BIND:-0.0.0.0}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp"
+      - "${LIVETV_SRT_BIND:-127.0.0.1}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp"
     volumes:
       - livetv-cache:/cache                                   # DVR segments, previews (disposable)
       - ${RECORDINGS_PATH:-recordings}:/recordings             # Phase 3
-      - bootstrap-gateway:/run/friendflix-gateway:ro
+      - bootstrap-livetv:/run/friendflix-livetv:ro
     depends_on:
       bootstrap: { condition: service_completed_successfully }
     networks: [livetv, livetv-egress]
 ```
+
+- **Ruling (1b review): derived key, not the raw secret.** livetv never receives `INTERNAL_SECRET`. The `bootstrap` service
+  writes only `HMAC-SHA256(INTERNAL_SECRET, 'friendflix-livetv/v1')` (64 hex) as `livetv_key` into its own volume
+  `bootstrap-livetv` (root:10001, 0440, rewritten on every start), which only livetv mounts, read-only; the backend derives the
+  same key in memory. Why: `INTERNAL_SECRET` is the key to the backend's `/internal/*` routes (the media server token among
+  them) and the root of the updater key, and livetv parses hostile provider input with ffmpeg; a taken-over livetv must hold
+  nothing but its own key. Without the key file livetv refuses to start.
 
 - Networks (defined always, like `updater`): `livetv` (`internal: true`; backend, gateway and livetv join it) and
   `livetv-egress` (normal bridge; only livetv). Backend and gateway gain `livetv` in their `networks`; the gateway also mounts
   `${RECORDINGS_PATH:-recordings}:/data/recordings:ro` (Phase 3). Volumes `livetv-cache`, `recordings` are added to `volumes:`.
 - Env-only keys (`ENV_ONLY_KEYS`): `LIVETV_URL` (backend and gateway; default `http://livetv:8090`). Compose-only:
   `LIVETV_SRT_PORTS` (a range `A-B`, 1–100 ports, default `9000-9009`; also passed into `livetv`, which listens on exactly
-  these) and `LIVETV_SRT_BIND` (host address the range is published on, default `0.0.0.0`; `127.0.0.1` turns push off from
-  outside without removing the service).
+  these) and `LIVETV_SRT_BIND` (host address the range is published on, default `127.0.0.1` = push off from outside; `0.0.0.0` or
+  the LAN address only when push is used). **Ruling (1b review M11):** the default was `0.0.0.0`; Docker-published ports bypass
+  ufw/firewalld on most hosts, so the range would be open from outside as soon as livetv runs, push or not.
 - **Library overlay** (Phase 3, opt-in, `compose.livetv-library.yaml`): the one read-write mount into the media share, see
   §15.3.
 - **GPU overlays** (new files, opt-in like `compose.plex.yaml`):
@@ -307,7 +314,7 @@ Every `/v1/*` request is HMAC-signed like the updater (`signUpdater` scheme, key
 
 | Method & path | Body → answer |
 |---|---|
-| `GET /healthz` | `{ ok, version, bootId }` (unsigned) |
+| `GET /healthz` | `{ ok, version, bootId }` (unsigned); with `?n=<32 hex>` also `proof` = hex `HMAC(key, 'healthz:' + n)` (ruling 1b review I2, §4.1) |
 | `GET /v1/system` | `{ cpu: { model, cores, loadPct }, gpu: { devices: string[], driver: string \| null, readable: boolean, busyPct: number \| null }, encoders: Array<'h264_qsv'\|'h264_vaapi'\|'h264_nvenc'\|'libx264'>, cache: { usedBytes, maxBytes }, recordings: { usedBytes, freeBytes } \| null }` |
 | `POST /v1/fetch/m3u` | `{ url, userAgent?, allowLan, skipGroups?: string[] }` → `{ entries: [{ key, name, tvgId?, tvgName?, chno?, group?, logo?, shiftMin?, url, kind }], groups: [{ name, channels }], listed, skipped: { vod, invalid, overLimit, groups } }`; entries of `skipGroups` are dropped **before** the 20 000 cap, so a big list keeps the picked groups; `groups` and `listed` count every live entry (for the picker and the shrink guard); `shiftMin` = the entry's `tvg-shift`, else the `#EXTM3U` header's, in minutes |
 | `POST /v1/fetch/xmltv` | `{ url, userAgent?, allowLan, channels?: string[], from, to }` → NDJSON stream: `{ t:'channel', id, names[], icon? }` / `{ t:'prog', ch, start, end, title, subtitle?, desc?, cats?, episode?, seriesId?, isNew?, prevShown?, rating? }` |
@@ -428,7 +435,11 @@ MPEG-TS) stays exactly as it is; push is a second way to add an own feed.
 ### 4.1 Detection
 
 - The backend polls `GET ${LIVETV_URL}/healthz` every 60 s (and on every admin page load of the area, cached 10 s).
-  `installed = reachable && version compatible`. A setting `LIVETV_WANTED` (internal, not shown) remembers that an admin turned
+  `installed = reachable && version compatible && proof of key`. **Ruling (1b review I2):** the signature authenticates the
+  backend to livetv, never livetv to the backend, and while the profile is off the name `livetv` can resolve to a LAN host. So
+  every check sends a fresh random nonce (`/healthz?n=<32 hex>`) and livetv answers `proof = HMAC(key, 'healthz:' + nonce)`; the
+  backend compares it in constant time. A wrong or missing proof is "reachable, not installed" (a rate-limited warning, no
+  secrets). No signed call (so no decrypted URL or other secret) is sent without a proof younger than 10 s (withdrawn at once by a failed connection or an accepted disable / remove; the remaining ≤ 10 s window is an accepted residual, signed responses are not part of Phase 1). A setting `LIVETV_WANTED` (internal, not shown) remembers that an admin turned
   it on, so "wanted but not reachable" can be told apart from "never enabled".
 - `/api/me` gains `features.livetv: boolean` = installed ∧ `perms.liveTv` ∧ the active profile sees ≥ 1 channel (cached
   60 s per profile, invalidated on rights/group changes). It drives the tab.
@@ -1781,6 +1792,9 @@ Phase 2 has no implementation plan yet; this section is its binding requirement 
 | `adminLive.status.running` / `viewers` / `stop` / `restart` / `events` / `off` | Running channels / Viewers / Stop / Restart / Events / Turn off Live TV… | Laufende Sender / Zuschauer / Stoppen / Neu starten / Ereignisse / Live-TV ausschalten … |
 | `adminLive.off.removeImage` / `removeCache` / `keepsRecordings` | Remove image / Delete cache / Recordings are kept. | Image entfernen / Zwischenspeicher löschen / Aufnahmen bleiben erhalten. |
 | `adminLive.gpu.*` | (the five lines of §4.4) | (the five lines of §4.4) |
+| `adminLive.offer.updaterOld` / `updaterOldGo` (1b review I3) | This updater does not know Live TV yet. Update the updater first: Admin → Update → “Update the updater”, then turn it on here. / Update the updater first | Dieser Updater kennt Live-TV noch nicht. Erst den Updater aktualisieren: Admin → Update → „Updater aktualisieren“, danach hier einschalten. / Erst den Updater aktualisieren |
+| `adminLive.err.compose_outdated` / `network_missing` (1b review I3) | Your compose.prod.yaml is from before Live TV. Replace it in the stack folder with the one from the current release and run docker compose up -d there once. / Backend and gateway are not on the livetv network yet. Run docker compose up -d once in the stack folder, then try again. | Deine compose.prod.yaml stammt von vor Live-TV. Ersetze sie im Stack-Ordner durch die aus dem aktuellen Release und führe dort einmal docker compose up -d aus. / Backend und Gateway hängen noch nicht im Netz livetv. Führe im Stack-Ordner einmal docker compose up -d aus und versuch es dann noch einmal. |
+| `adminLive.err.unauthorized` (1b review M7; `updater_outdated`, `stop_failed`, `interrupted`, `no_target`, `updater_error`, `not_found` in the locale files) | The updater refuses the signature – update or restart the updater (Admin → Update). | Der Updater lehnt die Signatur ab – Updater aktualisieren oder neu starten (Admin → Update). |
 | `adminConv.title` / `used` / `measured` / `recommended` / `remeasure` / `auto` / `custom` / `noRealtime` | Conversions / {u} of {l} in use / Measured {s}× real time ({engine}) / recommended {n} / Measure again / Automatic ({n}) / Custom / The server cannot convert in real time. | Umwandlungen / {u} von {l} belegt / Gemessen {s}× Echtzeit ({engine}) / empfohlen {n} / Neu messen / Automatisch ({n}) / Eigener Wert / Der Server schafft keine Umwandlung in Echtzeit. |
 | `adminConv.priority.*` | Films & series first / Live TV first / Equal | Filme & Serien zuerst / Live-TV zuerst / Gleichrangig |
 | `adminConv.priority.hint.films` / `hint.live` / `hint.equal` (one per option, §5.6) | Live TV leaves one slot free for films & series (with 2 or more slots). / Films & series leave one slot free for Live TV (with 2 or more slots). / No slot is kept free – whoever comes first gets it. | Live-TV lässt einen Platz für Filme & Serien frei (ab 2 Plätzen). / Filme & Serien lassen einen Platz für Live-TV frei (ab 2 Plätzen). / Kein Platz wird freigehalten – wer zuerst kommt, bekommt ihn. |

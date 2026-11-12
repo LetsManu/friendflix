@@ -5,7 +5,7 @@ import type { Translation } from '../../types';
 
 const dict: Translation<typeof de> = {
   title: 'Conversions',
-  intro: 'How many videos the server may convert at the same time: films & series, Live TV and recordings together.',
+  intro: 'How many videos the server may convert at the same time: films & series, Live TV, recordings and downloads together.',
   used: '{u} of {l} in use',
   measured: 'Measured {s}× real time ({engine})',
   liveSpeed: 'Live TV {s}×',

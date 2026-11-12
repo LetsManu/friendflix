@@ -1,17 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { readFileSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import http from 'node:http';
 import { createServer as netServer, type AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { GuardDeps } from '../src/fetch.js';
-import { ReplayCache, deriveKey, sign } from '../src/protocol.js';
+import { ReplayCache, sign } from '../src/protocol.js';
 import { fetchRoutes } from '../src/routes/fetch.js';
 import type { Run } from '../src/run.js';
 import { createApp, start } from '../src/server.js';
 import type { SystemView } from '../src/system.js';
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
+/** what the bootstrap service writes into livetv's key file; livetv itself derives nothing */
+const deriveKey = (secret: string) => createHmac('sha256', secret).update('friendflix-livetv/v1').digest();
 const key = deriveKey('fetch-routes-test-secret-0123');
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
 
@@ -246,9 +251,11 @@ it('no log line names a provider URL, host or credential', () => {
 describe('start', () => {
   it('registers the fetch routes in production', async () => {
     const free = await new Promise<number>((r) => { const s = netServer().listen(0, '127.0.0.1', () => { const n = (s.address() as AddressInfo).port; s.close(() => r(n)); }); });
-    const s = await start({ PORT: String(free), INTERNAL_SECRET: 'start-fetch-secret-0123456789', LIVETV_SRT_PORTS: '9000' }, { log: () => {}, host: '127.0.0.1' });
+    const k = deriveKey('start-fetch-secret-0123456789');
+    const dir = mkdtempSync(join(tmpdir(), 'livetv-fetch-key-'));
+    writeFileSync(join(dir, 'livetv_key'), k.toString('hex'));
+    const s = await start({ PORT: String(free), LIVETV_KEY_FILE: join(dir, 'livetv_key'), LIVETV_SRT_PORTS: '9000' }, { log: () => {}, host: '127.0.0.1' });
     try {
-      const k = deriveKey('start-fetch-secret-0123456789');
       for (const path of ['/v1/fetch/m3u', '/v1/fetch/xmltv', '/v1/fetch/logo', '/v1/probe']) {
         const body = '{}';
         const r = await fetch(`http://127.0.0.1:${free}${path}`, { method: 'POST', body, headers: { ...sign(k, 'POST', path, body), 'content-type': 'application/json' } });

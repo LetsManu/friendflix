@@ -11,6 +11,11 @@ const tr: Translation<typeof de> = {
     title: 'Oynatılamıyor',
     generic: 'Oynatılamıyor.',
     maxStreams: { one: 'Aynı anda en fazla {n} yayın izlenebilir.', other: 'Aynı anda en fazla {n} yayın izlenebilir.' },
+    serverBusy: 'Sunucu şu anda meşgul. Birazdan yeniden dene.',
+    serverBusyQuality: 'Sunucu meşgul – kalite {q} olarak kalıyor',
+    serverBusyTrack: 'Sunucu meşgul – ses parçası değişmedi',
+    serverBusySurroundOn: 'Sunucu meşgul – surround ses açık kalıyor',
+    serverBusySurroundOff: 'Sunucu meşgul – surround ses kapalı kalıyor',
     connection: 'Sunucuyla bağlantı kesildi ya da video bozuk.',
     retry: 'Yeniden dene',
     back: 'Geri',
@@ -42,6 +47,7 @@ const tr: Translation<typeof de> = {
     /* chip in the control bar: how the picture reaches this device, and why it is converted */
     chipOriginal: 'Orijinal',
     chipConverted: 'Dönüştürüldü · {q}',
+    chipCopied: 'Kopyalandı · {q}',
     chipLabel: 'Oynatma türü',
     directInfo: 'Doğrudan oynatma, dönüştürme yok',
     reasonNetwork: 'Bağlantı yavaş – kalite otomatik ayarlanır',
@@ -55,6 +61,7 @@ const tr: Translation<typeof de> = {
     reasonSubtitles: 'Altyazılar görüntüye işlenir',
     reasonHeight: 'Çözünürlük bu cihaz için çok yüksek',
     reasonManual: 'Kaliteyi kendin seçtin',
+    reasonServerBusy: 'Sunucu meşgul',
     reasonOther: 'Bu cihazın dönüştürülmüş bir sürüme ihtiyacı var',
   },
   sleep: {

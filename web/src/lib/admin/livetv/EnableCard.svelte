@@ -3,7 +3,8 @@
 <script lang="ts">
   /**
    * The optional Live-TV entry before installation (spec §4.3, §4.5): what it is, what it needs, and how to turn it on: the button
-   * (updater, own stack), the .env line with a copy button (no updater), or the Portainer line (foreign stack). While a job runs the
+   * (updater, own stack), the .env line with a copy button (no updater), or the Portainer line (foreign stack); an updater from before
+   * livetv gets "update the updater first" with the way to Admin → Update instead of a button that cannot work. While a job runs the
    * card shows its steps. A refused request says so and nothing is claimed as turned on. The message slot keeps its space, so the
    * card does not jump when a result appears.
    */
@@ -60,6 +61,13 @@
         <Button icon="play" {pending} disabled={otherJob} on:click={() => dispatch('enable')}>{$t(phase === 'wantedDown' ? 'adminLive.offer.restart' : 'adminLive.offer.enable')}</Button>
         {#if otherJob}<span class="muted small" role="status" data-other-job><Icon name="clock" size={16} /> {$t('adminLive.err.updaterBusy')}</span>{/if}
       </div>
+    {:else if mode === 'updaterOld'}
+      <div class="manual old" data-mode="updaterOld">
+        <p><Icon name="info" size={18} />{$t('adminLive.offer.updaterOld')}</p>
+        <div class="row"><Button variant="secondary" icon="refresh" href="/admin/update">{$t('adminLive.offer.updaterOldGo')}</Button></div>
+      </div>
+    {:else if mode === 'updaterError'}
+      <p class="manual" data-mode="updaterError"><Icon name="alert" size={18} />{$t(s.updater.error === 'unauthorized' ? 'adminLive.err.unauthorized' : 'adminLive.err.updater_error')}</p>
     {:else if mode === 'portainer'}
       <p class="manual" data-mode="portainer"><Icon name="info" size={18} />{$t('adminLive.offer.portainer')}</p>
     {:else}
@@ -100,7 +108,8 @@
   .foot { margin-top: .6rem; }
   .prog { display: grid; gap: .8rem; max-width: 36rem; min-width: 0; margin: 0 0 .5rem; }
   .banner, .manual { display: flex; gap: .5rem; align-items: flex-start; margin: 0 0 1rem; padding: .6rem .8rem; border-radius: 8px; background: rgba(255,255,255,.05); overflow-wrap: anywhere; min-width: 0; }
-  .manual.env { display: grid; gap: .6rem; max-width: 36rem; }
+  .manual.env, .manual.old { display: grid; gap: .6rem; max-width: 36rem; }
+  .manual.old p { display: flex; gap: .5rem; align-items: flex-start; margin: 0; }
   .manual h3 { margin: 0; font-size: 1rem; }
   .manual :global(svg), .banner :global(svg), .msg :global(svg) { flex: none; margin-top: .1rem; }
   .small { font-size: .88rem; margin: 0; overflow-wrap: anywhere; }

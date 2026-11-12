@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
-import { auditSentence, sinceLatestCreate } from './auditText';
+import { fieldLabel } from './model';
+import { auditSentence, entrySentence, sinceLatestCreate } from './auditText';
 
 afterEach(async () => { await setLocale('de'); });
 const e = (action: string, meta: Record<string, unknown>, extra: { actorName?: string | null; targetName?: string | null; target?: string | null; roleName?: (k: string) => string | null } = {}) =>
@@ -36,9 +37,10 @@ describe('auditSentence', () => {
     expect(e('role.order', { keys: ['admin', 'family'] }).text).toBe('Tester hat die Reihenfolge der Rollen geändert');
   });
   it('user.rights, profile.admin_* and user.check_viewed name the person and show no ids, counts or terms', () => {
-    const r = e('user.rights', { from: { cast: false }, to: { cast: true } }, { targetName: 'Anna Beispiel' });
+    // several fields: one general sentence and a chip each
+    const r = e('user.rights', { from: { cast: false, party: true }, to: { cast: true, party: false } }, { targetName: 'Anna Beispiel' });
     expect(r.text).toBe('Tester hat die Rechte von Anna Beispiel geändert');
-    expect(r.chips).toEqual([{ label: 'Auf Fernseher übertragen', from: 'nicht erlaubt', to: 'erlaubt' }]);
+    expect(r.chips).toEqual([{ label: 'Watch-Partys', from: 'erlaubt', to: 'nicht erlaubt' }, { label: 'Auf Fernseher übertragen', from: 'nicht erlaubt', to: 'erlaubt' }]);
     expect(e('profile.admin_update', { profile: 'p-1', from: {}, to: { name: 'Geheim' } }, { targetName: 'Anna Beispiel' }).text).toBe('Tester hat ein Profil von Anna Beispiel geändert');
     expect(e('profile.admin_create', { profile: 'p-1' }, { targetName: 'Anna Beispiel' }).text).toBe('Tester hat ein Profil für Anna Beispiel angelegt');
     expect(e('profile.admin_delete', { profile: 'p-1' }, { targetName: 'Anna Beispiel' }).text).toBe('Tester hat ein Profil von Anna Beispiel gelöscht');
@@ -92,6 +94,85 @@ describe('auditSentence', () => {
       expect(r.text).not.toMatch(/adminPeople|sentence/);
       expect(r.chips).toHaveLength(1);
     }
+  });
+});
+
+describe('user.rights sentences (spec 6.6)', () => {
+  const anna = { targetName: 'Anna Beispiel', actorName: 'Ben Muster' };
+  const r = (meta: Record<string, unknown>) => e('user.rights', meta, anna);
+  it('one switch changed: the quoted right, the new state and what it was before', () => {
+    expect(r({ from: { cast: true }, to: { cast: false } }))
+      .toEqual({ text: 'Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ auf nicht erlaubt gestellt (vorher: erlaubt)', chips: [] });
+    expect(r({ from: { cast: false }, to: { cast: true } }).text).toBe('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ auf erlaubt gestellt (vorher: nicht erlaubt)');
+  });
+  it('a label that is a predicate never follows a verb: it is quoted in every language, for every switch', async () => {
+    const quotes = { de: ['„', '“'], en: ['“', '”'], es: ['«', '»'], fr: ['«\u00a0', '\u00a0»'], it: ['«', '»'], pl: ['„', '”'], tr: ['“', '”'] } as const;
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
+      await setLocale(l);
+      const [o, c] = quotes[l];
+      for (const k of ['transcoding', 'requests', 'cast', 'download', 'liveRecord']) {
+        for (const m of [{ from: { [k]: true }, to: { [k]: false } }, { from: { [k]: true }, to: { [k]: true }, layer: { [k]: { from: 'role', to: 'user' } } },
+          { from: { [k]: true }, to: { [k]: true }, layer: { [k]: { from: 'user', to: 'default' } } }, { from: { [k]: true }, to: { [k]: true }, layer: { [k]: { from: 'role', to: 'admin' } } }]) {
+          expect(r(m).text).toContain(`${o}${fieldLabel(k)}${c}`);
+        }
+      }
+    }
+  });
+  it('a number reads with its unit; a lifted cap as unlimited', () => {
+    expect(r({ from: { maxStreams: 2 }, to: { maxStreams: null } }).text).toBe('Ben Muster hat für Anna Beispiel „Gleichzeitige Streams“ auf Unbegrenzt gestellt (vorher: 2)');
+    expect(r({ from: { requestsPerMonth: 5 }, to: { requestsPerMonth: null } }).text).toContain('„Wünsche pro Monat“ auf');
+  });
+  it('a value that stayed while its layer moved: pinned, back to the role, or another layer', () => {
+    expect(r({ from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'user' } } }).text)
+      .toBe('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ einzeln festgelegt: erlaubt (vorher: wie Rolle)');
+    expect(r({ from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'user', to: 'default' } } }).text)
+      .toBe('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ wieder auf die Rolle zurückgestellt: erlaubt (vorher: einzeln festgelegt)');
+    expect(r({ from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'admin' } } }).text)
+      .toBe('Ben Muster hat bei Anna Beispiel geändert, was „Auf Fernseher übertragen“ bestimmt (vorher: wie Rolle, jetzt: Admin)');
+  });
+  it('the same value before and after without a layer is no "erlaubt (vorher: erlaubt)": the general sentence with its chip', () => {
+    const x = r({ from: { cast: true }, to: { cast: true } });
+    expect(x.text).toBe('Ben Muster hat die Rechte von Anna Beispiel geändert');
+    expect(x.chips).toHaveLength(1);
+  });
+  it('stored overrides that decide nothing are named, with their stored values as chips', () => {
+    const s = r({ from: {}, to: {}, stored: { cast: { from: false, to: null }, maxStreams: { from: 'unlimited', to: 3 } } });
+    expect(s.text).toBe('Ben Muster hat bei Anna Beispiel gespeicherte Ausnahmen geändert, die gerade nichts bewirken');
+    expect(s.chips).toEqual([
+      { label: 'Gleichzeitige Streams (gespeichert)', from: 'Unbegrenzt', to: '3' },
+      { label: 'Auf Fernseher übertragen (gespeichert)', from: 'nicht erlaubt', to: 'wie Rolle' },
+    ]);
+  });
+  it('stored next to changed values becomes chips of the general sentence; a note names no text', () => {
+    const s = r({ from: { cast: true }, to: { cast: false }, stored: { party: { from: null, to: true } } });
+    expect(s.text).toBe('Ben Muster hat die Rechte von Anna Beispiel geändert');
+    expect(s.chips.map((c) => c.label)).toEqual(['Auf Fernseher übertragen', 'Watch-Partys (gespeichert)']);
+    expect(r({ from: {}, to: {}, note: 'changed' }).text).toBe('Ben Muster hat die Notiz zu den Rechten von Anna Beispiel geändert');
+  });
+  it('reads in every language without a raw key', async () => {
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
+      await setLocale(l);
+      for (const m of [
+        { from: { cast: true }, to: { cast: false } }, { from: { maxStreams: 2 }, to: { maxStreams: null } },
+        { from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'user' } } }, { from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'user', to: 'role' } } },
+        { from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'kids' } } },
+        { from: {}, to: {}, stored: { cast: { from: false, to: null } } }, { from: {}, to: {}, note: 'changed' },
+      ]) {
+        const x = r(m);
+        expect(x.text).toContain('Anna Beispiel');
+        expect(JSON.stringify(x)).not.toMatch(/adminPeople|sentence|\{[a-z]+\}|undefined/);
+      }
+    }
+  });
+});
+
+describe('entrySentence', () => {
+  const row = (action: string, extra: Record<string, unknown> = {}) => ({ action, actor: 'Ben Muster', target: 'kino', target_name: null, meta: {}, ...extra });
+  it('people entries read as sentences; role entries only with the role names; everything else keeps the older wording (null)', () => {
+    expect(entrySentence(row('user.rights', { target_name: 'Anna Beispiel' }), null)?.text).toBe('Ben Muster hat die Rechte von Anna Beispiel geändert');
+    expect(entrySentence(row('role.delete', { meta: { label: 'Kino', moveTo: null } }), null)).toBeNull();
+    expect(entrySentence(row('role.delete', { meta: { label: 'Kino', moveTo: null } }), () => null)?.text).toBe('Ben Muster hat die Rolle Kino gelöscht');
+    expect(entrySentence(row('user.disable'), () => null)).toBeNull();
   });
 });
 

@@ -8,6 +8,7 @@ import type { Ctx } from '../ctx.js';
 import { roleExists } from '../rolecat.js';
 import { requireAdmin } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
+import { dropLivetvProof } from './client.js';
 import { detectLivetv, enableBenchmark, livetvInstalled, livetvSystem } from './detect.js';
 import { gpuAdvice } from './gpu.js';
 import {
@@ -32,6 +33,15 @@ const TEST_LOCK_TTL_S = 150;
 const CHANNEL_TEST_LOCK_TTL_S = 360;
 /** a bulk body of 20 000 ids is about 780 KB (the app's default limit is 256 KB) */
 const BULK_BODY_LIMIT = 1024 * 1024;
+/** after a livetv job ended, detection is asked fresh for this long (1b review I4: the page settles on what the job did) */
+const FRESH_AFTER_JOB_MS = 30_000;
+
+/** a livetv job of the updater that finished less than FRESH_AFTER_JOB_MS ago: the cached detection may predate its stop / start */
+function justFinished(job: { action: string; state: string; finishedAt: string | null } | null | undefined, now = Date.now()): boolean {
+  if (!job || !job.action.startsWith('livetv-') || job.state === 'running' || !job.finishedAt) return false;
+  const at = Date.parse(job.finishedAt);
+  return Number.isFinite(at) && now - at < FRESH_AFTER_JOB_MS;
+}
 
 const disableBody = z.object({ removeImage: z.boolean(), removeCache: z.boolean() });
 
@@ -91,7 +101,9 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/admin/livetv/state', admin, async (_req, reply) => {
     reply.header('cache-control', 'no-store');
-    const [det, view] = await Promise.all([detectLivetv(ctx, MEMO_MS), updaterView(ctx)]);
+    const view = await updaterView(ctx);
+    const job = view.present && 'status' in view ? view.status.job : null;
+    const det = await detectLivetv(ctx, justFinished(job) ? 0 : MEMO_MS);
     // the media server is asked only when there is something to compare it with
     const jellyfin = det.installed ? await jellyfinHwAccel() : null;
     const status = view.present && 'status' in view ? view.status : null;
@@ -101,11 +113,14 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       wanted: ctx.cfg.LIVETV_WANTED === 'true', offerHidden: ctx.cfg.LIVETV_OFFER_HIDDEN === 'true',
       updater: {
         available: status !== null, stack: status?.stack ?? null, job: status?.job ?? null,
+        // an updater that answers but refuses our signature or answers garbage: the page says so instead of the .env steps
+        error: view.present && 'error' in view ? view.error : null,
         // state: absent | disabled | enabled | stop_failed; error: why an update turned it off on its own (null = none); null = an updater from before livetv
         livetv: status?.livetv ? { state: status.livetv.state, container: status.livetv.container, error: status.livetv.error } : null,
       },
       envLine: ENV_LINE,
-      // the measurement started when livetv first appeared after enabling: started, or why it was refused (the admin can press Neu messen)
+      // the measurement launched when livetv first appeared after enabling: started (= launched; its result shows on the conversions
+      // card), or why it was refused (the admin can press Neu messen)
       benchmark: enableBenchmark(ctx),
       gpu: {
         jellyfin,
@@ -124,13 +139,19 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       await audit(ctx, actor, action, undefined, { ...meta, outcome: error });
       return reply.code(status).send({ error, ...extra, wanted: ctx.cfg.LIVETV_WANTED === 'true' });
     };
+    // one signed status read per request (1b review M14): startLivetvJob gets this view
     const view = await updaterView(ctx);
-    if (!view.present || !('status' in view)) return refuse(409, 'no_updater', { envLine: ENV_LINE });
-    const r = await startLivetvJob(ctx, op, actor);
+    if (!view.present) return refuse(409, 'no_updater', { envLine: ENV_LINE });
+    // there, but it refuses the signature (an updater with another INTERNAL_SECRET or from before a key change) or answers garbage
+    if (!('status' in view)) return refuse(502, view.error === 'unauthorized' ? 'unauthorized' : 'updater_error');
+    const r = await startLivetvJob(ctx, op, actor, view);
     if (r.ok && 'job' in r) {
+      // from now on the name `livetv` may stop resolving to livetv: no signed call on the strength of an earlier proof
+      if (op.op !== 'enable') dropLivetvProof(ctx);
       await want(op.op === 'enable', actor, log);
       await audit(ctx, actor, action, undefined, { ...meta, outcome: 'started' });
-      return reply.code(202).send({ job: r.job, wanted: op.op === 'enable' });
+      // what is stored now, read back: an env-locked or failing store keeps the old value, and the answer must not claim otherwise
+      return reply.code(202).send({ job: r.job, wanted: ctx.cfg.LIVETV_WANTED === 'true' });
     }
     if (r.ok) return refuse(409, 'foreign_stack', { envLine: ENV_LINE }); // a Portainer redeploy is not an enable
     log.warn({ op: op.op, error: r.error }, 'livetv job refused');

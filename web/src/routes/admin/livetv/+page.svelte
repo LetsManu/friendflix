@@ -23,7 +23,7 @@
   import SourcesTab from '#lib/admin/livetv/SourcesTab.svelte';
   import { TABS, tabOf, type Tab } from '#lib/admin/livetv/sources';
   import { pageStore } from '#lib/page';
-  import { POLL_MS, SETTLE_MS, enableMode, errorKey, jobRunning, livetvJob, phase, type LivetvAdminState, type LivetvJob } from '#lib/admin/livetv/state';
+  import { POLL_MS, SETTLE_MS, enableMode, errorKey, jobRunning, livetvJob, phase, settleAfter, settled, type LivetvAdminState, type LivetvJob, type Settle } from '#lib/admin/livetv/state';
   import { busyKeys, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import Skeleton from '#lib/ui/Skeleton.svelte';
@@ -32,7 +32,8 @@
   let s: LivetvAdminState | null = null, failed = false;
   /** a refused enable: the message key; '' = none */
   let refused = '', hideError = false;
-  let settleUntil = 0, settling = false;
+  /** the wait after a finished job until detection agrees (on / off), and its deadline; `settle` is the open one (null = none) */
+  let target: Settle = null, settleUntil = 0, settle: Settle = null;
   let timer: ReturnType<typeof setTimeout> | undefined, gone = false;
   let offOpen = false, offTrigger: HTMLElement | null = null;
 
@@ -48,24 +49,25 @@
   }
 
   $: mode = s ? enableMode(s) : 'env';
-  $: ph = s ? phase(s, settling) : 'offer';
+  $: ph = s ? phase(s, settle) : 'offer';
 
   const schedule = () => {
     clearTimeout(timer);
-    if (!gone && s && (jobRunning(s) || settling)) timer = setTimeout(load, POLL_MS);
+    if (!gone && s && (jobRunning(s) || settle)) timer = setTimeout(load, POLL_MS);
   };
   async function load() {
     const wasRunning = s ? jobRunning(s) : false, wasInstalled = s?.installed;
     try { s = await api<LivetvAdminState>('/api/admin/livetv/state'); failed = false; } catch { failed = true; }
     if (s) {
-      // a finished enable: detection may need a moment, so the page says "checking" instead of "not running"
+      // a finished job: detection may need a moment (it is cached), so the page keeps asking until it agrees, bounded by SETTLE_MS:
+      // "checking" after an enable instead of "not running", "being turned off" after a disable instead of "läuft"
       if (wasRunning && !jobRunning(s)) {
-        const j = livetvJob(s);
-        if (j?.action === 'livetv-enable' && j.state === 'succeeded' && !s.installed) settleUntil = Date.now() + SETTLE_MS;
+        target = settleAfter(livetvJob(s), s.installed);
+        settleUntil = target ? Date.now() + SETTLE_MS : 0;
         void refreshSummary();
       } else if (wasInstalled !== undefined && wasInstalled !== s.installed) void refreshSummary();
-      if (s.installed) settleUntil = 0;
-      settling = Date.now() < settleUntil && !s.installed && !jobRunning(s);
+      if (settled(target, s.installed)) { target = null; settleUntil = 0; }
+      settle = target && Date.now() < settleUntil && !jobRunning(s) ? target : null;
     }
     schedule();
   }
@@ -79,7 +81,7 @@
   const keepWanted = (e: unknown) => { const w = body(e)?.wanted; if (s && typeof w === 'boolean') s = { ...s, wanted: w }; };
 
   async function enable() {
-    refused = ''; settleUntil = 0; settling = false;
+    refused = ''; target = null; settleUntil = 0; settle = null;
     const r = await runAction({ key: 'livetv:enable', run: () => api<{ job: LivetvJob; wanted: boolean }>('/api/admin/livetv/enable', { method: 'POST' }), error: false });
     if (r.ok && r.value && s) {
       s = { ...s, wanted: r.value.wanted, updater: { ...s.updater, job: r.value.job } };
@@ -116,7 +118,7 @@
   {:else}
     <AdminCard><div class="sk" aria-hidden="true"><Skeleton w="14rem" h="1.6rem" /><Skeleton h="2.8rem" /></div><p class="sr-only" role="status">{$t('ui.table.loading')}</p></AdminCard>
   {/if}
-{:else if ph === 'area'}
+{:else if ph === 'area' || ph === 'stopping'}
   <div class="tabs" role="tablist" aria-label={$t('adminLive.tabs.label')}>
     {#each TABS as k (k)}
       <button type="button" role="tab" id="ltv-tab-{k}" class="tab" class:on={tab === k} aria-selected={tab === k} aria-controls="ltv-panel" tabindex={tab === k ? 0 : -1}
@@ -125,7 +127,7 @@
   </div>
   <div id="ltv-panel" role="tabpanel" aria-labelledby="ltv-tab-{tab}" tabindex="-1">
     {#if tab === 'sources'}<SourcesTab />
-    {:else if tab === 'status'}<MiniStatus {s} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />
+    {:else if tab === 'status'}<MiniStatus {s} stopping={ph === 'stopping'} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />
     {:else}<AdminCard><p class="soon">{$t('adminLive.tabs.soon')}</p></AdminCard>{/if}
   </div>
 {:else}

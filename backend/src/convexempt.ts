@@ -42,3 +42,21 @@ export function sharedSessionRead(ctx: Pick<Ctx, 'jf'>, ms: number): SessionRead
 export async function markConvExempt(ctx: Pick<Ctx, 'kv'>, playSessionId: string): Promise<void> {
   await ctx.kv.set(`${CONV_EXEMPT_PREFIX}${playSessionId}`, '1', CONV_EXEMPT_TTL_S).catch(() => undefined);
 }
+
+/**
+ * A download preparation's own job state for the budget (spec §5.1 "its job state"): `conv:dl:<jobId>` = { ps, label?, user? } while its
+ * transcode runs unpaused. The preparer writes it when a pass starts or leaves a pause and refreshes it every CONV_DL_BEAT_MS; a pause,
+ * the end of a pass (finish, failure, cancel) deletes it, and a crashed backend's mark ends with its 30-s TTL. It counts the download
+ * whether or not the media server lists its session (a transcode nobody reports as playing may not be listed).
+ */
+export const CONV_DL_PREFIX = 'conv:dl:';
+export const CONV_DL_TTL_S = 30;
+export const CONV_DL_BEAT_MS = 10_000;
+export interface DownloadMark { ps: string; label?: string; user?: string }
+/** never throws (a failed write leaves the last mark to its TTL) */
+export async function markDownloadConv(ctx: Pick<Ctx, 'kv'>, jobId: string, m: DownloadMark): Promise<void> {
+  await ctx.kv.set(`${CONV_DL_PREFIX}${jobId}`, JSON.stringify(m), CONV_DL_TTL_S).catch(() => undefined);
+}
+export async function clearDownloadConv(ctx: Pick<Ctx, 'kv'>, jobId: string): Promise<void> {
+  await ctx.kv.del(`${CONV_DL_PREFIX}${jobId}`).catch(() => undefined);
+}

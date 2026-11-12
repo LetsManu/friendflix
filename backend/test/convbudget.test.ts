@@ -7,6 +7,7 @@ import {
   CONV_DEFAULT_SLOTS, CONV_EXEMPT_TTL_S, CONV_GRANT_TTL_S, __resetConvMemo, admitConversion, admits, bindConvGrant, conversionLimit, countConversions, dropConvGrant, holdback,
   markConvExempt, readBench, recommend, type BenchRecord, type ConvKind, type ConvPriority,
 } from '../src/convbudget.js';
+import { clearDownloadConv, markDownloadConv } from '../src/convexempt.js';
 import { fingerprint, probeHevcEncoder } from '../src/hevcenc.js';
 import { setLive } from '../src/live.js';
 import type { EncoderSettings, MediaTraits } from '../src/media/types.js';
@@ -110,8 +111,8 @@ afterEach(() => {
 
 const live = (userId: string, ps: string, deviceId: string) =>
   setLive(env.ctx, { userId, userName: 'Anna Beispiel', itemId: 'a'.repeat(32), title: 'Dunmoor', positionTicks: 0, isPaused: false, playSessionId: ps, updatedAt: Date.now(), source: 'portal', deviceId });
-const ask = (o: { userId?: string; deviceId?: string; hint?: string; kind?: ConvKind } = {}) =>
-  admitConversion(env.ctx, { kind: o.kind ?? 'film', userId: o.userId ?? ANNA, ...(o.deviceId ? { deviceId: o.deviceId } : {}), hint: o.hint ?? randomUUID() });
+const ask = (o: { userId?: string; deviceId?: string; hint?: string; kind?: ConvKind; swap?: boolean } = {}) =>
+  admitConversion(env.ctx, { kind: o.kind ?? 'film', userId: o.userId ?? ANNA, ...(o.deviceId ? { deviceId: o.deviceId } : {}), hint: o.hint ?? randomUUID(), ...(o.swap ? { swap: true } : {}) });
 
 describe('readBench and conversionLimit', () => {
   it('nothing measured: automatic 2', async () => {
@@ -167,6 +168,27 @@ describe('countConversions', () => {
     // a finished job's session is a film again (the play session id outlives the preparation)
     await env.pool.query("update download_jobs set status = 'ready'");
     expect((await countConversions(env.ctx))!.map((e) => e.kind)).toEqual(['film']);
+  });
+  it('a running download counts from its mark, once per play session, listed or not', async () => {
+    const jobId = randomUUID();
+    await env.pool.query("insert into download_jobs(id, item_id, quality, status, play_session_id) values ($1, $2, 'hd', 'preparing', 'ps-dl2')", [jobId, 'a'.repeat(32)]);
+    await markDownloadConv(env.ctx, jobId, { ps: 'ps-dl2', label: 'Dunmoor', user: ANNA });
+    expect(await countConversions(env.ctx)).toEqual([{ kind: 'download', key: 'ps-dl2', label: 'Dunmoor', since: null, device: null, userId: ANNA }]);
+    // its grant and the server's own entry for the same play session do not add up
+    await admitConversion(env.ctx, { kind: 'download', userId: ANNA, hint: `dl:${jobId}` });
+    await bindConvGrant(env.ctx, `dl:${jobId}`, 'ps-dl2');
+    expect((await countConversions(env.ctx))!.map((e) => [e.kind, e.key])).toEqual([['download', 'ps-dl2']]);
+    raw = [converting('ps-dl2')];
+    expect((await countConversions(env.ctx))!.map((e) => [e.kind, e.key])).toEqual([['download', 'ps-dl2']]);
+    // paused (mark gone, session stopped, grant dropped): nothing
+    raw = [];
+    await clearDownloadConv(env.ctx, jobId);
+    await dropConvGrant(env.ctx, 'ps-dl2');
+    expect(await countConversions(env.ctx)).toEqual([]);
+    // a mark of a job that is no longer preparing does not count
+    await markDownloadConv(env.ctx, jobId, { ps: 'ps-dl2' });
+    await env.pool.query("update download_jobs set status = 'ready'");
+    expect(await countConversions(env.ctx)).toEqual([]);
   });
   it('pending grants count once', async () => {
     expect(await ask({ deviceId: 'd1', hint: 'h1' })).toEqual({ ok: true });
@@ -275,6 +297,53 @@ describe('admitConversion', () => {
     await live(ANNA, 'ps1', 'd1');
     expect(await ask({ userId: ANNA, deviceId: 'd1' })).toEqual({ ok: true });
     expect(await ask({ userId: BEN, deviceId: 'd2' })).toEqual({ ok: false, why: 'full' });
+  });
+  it('a device\'s new grant replaces its own pending grants; its playing stream\'s grant and other devices\' grants stay', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 4 };
+    const swap = (who: string, deviceId: string, hint: string) => ask({ userId: who, deviceId, hint, swap: true });
+    expect(await swap(ANNA, 'd1', 'hover1')).toEqual({ ok: true });
+    await bindConvGrant(env.ctx, 'hover1', 'ps-hover1'); // a prefetch answer nobody took
+    expect(await swap(ANNA, 'd1', 'hover2')).toEqual({ ok: true }); // stays on its hint (not bound yet)
+    expect(await swap(BEN, 'd2', 'ben1')).toEqual({ ok: true });
+    expect(await ask({ userId: ANNA, deviceId: 'd1', hint: 'cast1' })).toEqual({ ok: true }); // a cast grant (no swap) replaces nothing ...
+    expect((await env.kv.keys('conv:grant:')).sort()).toEqual(['conv:grant:ben1', 'conv:grant:cast1', 'conv:grant:hover2']);
+    expect(await swap(ANNA, 'd1', 'hover3')).toEqual({ ok: true });
+    // ... and is never replaced; the unbound swap grant is
+    expect((await env.kv.keys('conv:grant:')).sort()).toEqual(['conv:grant:ben1', 'conv:grant:cast1', 'conv:grant:hover3']);
+    await env.kv.del('conv:grant:cast1');
+    // a stream that plays (live record) or that the server lists keeps its grant
+    await bindConvGrant(env.ctx, 'hover3', 'ps-play');
+    await live(ANNA, 'ps-play', 'd1');
+    expect(await swap(ANNA, 'd1', 'next1')).toEqual({ ok: true });
+    await bindConvGrant(env.ctx, 'next1', 'ps-listed');
+    raw = [jfSession('ps-listed', { method: 'Transcode' })];
+    expect(await swap(ANNA, 'd1', 'next2')).toEqual({ ok: true });
+    expect((await env.kv.keys('conv:grant:')).sort()).toEqual(['conv:grant:ben1', 'conv:grant:next2', 'conv:grant:ps-listed', 'conv:grant:ps-play']);
+    // two hovers on one device hold one slot for everyone else
+    expect((await countConversions(env.ctx, { exceptUser: BEN, exceptDevice: 'd2' }))!.filter((e) => e.userId === ANNA && e.pending)).toHaveLength(2); // ps-play, next2
+  });
+  it('a refused ask replaces nothing', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    expect(await ask({ userId: ANNA, deviceId: 'd1', hint: 'mine', swap: true })).toEqual({ ok: true });
+    raw = [converting('x1'), converting('x2')];
+    expect(await ask({ userId: ANNA, deviceId: 'd1', hint: 'again', swap: true })).toEqual({ ok: false, why: 'full' });
+    expect(await env.kv.keys('conv:grant:')).toEqual(['conv:grant:mine']);
+  });
+  it('admission reads the grant index, never scans the keyspace; bind and drop keep the index', async () => {
+    const keys = vi.spyOn(env.kv, 'keys');
+    expect(await ask({ userId: ANNA, deviceId: 'd1', hint: 'i1' })).toEqual({ ok: true });
+    expect(await ask({ userId: BEN, deviceId: 'd2', hint: 'i2' })).toEqual({ ok: true });
+    expect(keys.mock.calls.filter(([p]) => p.startsWith('conv:grant'))).toEqual([]);
+    expect((await env.kv.indexMembers('conv:grants')).sort()).toEqual(['i1', 'i2']);
+    await bindConvGrant(env.ctx, 'i1', 'ps-i1');
+    expect((await env.kv.indexMembers('conv:grants')).sort()).toEqual(['i2', 'ps-i1']);
+    await dropConvGrant(env.ctx, 'i2');
+    expect(await env.kv.indexMembers('conv:grants')).toEqual(['ps-i1']);
+    expect((await countConversions(env.ctx))!.map((e) => e.key)).toEqual(['ps-i1']);
+    // a grant that could not be indexed is not written (the count could not see it): unknown, the caller treats it as busy
+    vi.spyOn(env.kv, 'indexAdd').mockRejectedValueOnce(new Error('down'));
+    expect(await ask({ userId: BEN, deviceId: 'd2', hint: 'i3' })).toEqual({ ok: false, why: 'unknown' });
+    expect(await env.kv.get('conv:grant:i3')).toBeNull();
   });
   it('unreadable list means unknown', async () => {
     env.ctx.jf.admin.transcodeSessions = () => new Promise(() => undefined);

@@ -25,6 +25,14 @@ export interface KV {
   decr(key: string): Promise<number>;
   /** Keys starting with prefix. */
   keys(prefix: string): Promise<string[]>;
+  /**
+   * A small index whose members expire on their own (Redis: a sorted set scored by expiry time): adds `member` or renews it for
+   * `ttlSeconds`. The index key itself lives as long as its longest member. Lets a caller list a few live keys without a keyspace SCAN.
+   */
+  indexAdd(key: string, member: string, ttlSeconds: number): Promise<void>;
+  indexRemove(key: string, member: string): Promise<void>;
+  /** The members that have not expired (expired ones are dropped on the way). */
+  indexMembers(key: string): Promise<string[]>;
   ping(): Promise<boolean>;
 }
 
@@ -78,6 +86,19 @@ export class RedisKV implements KV {
       out.push(...batch);
     } while (cursor !== '0');
     return out;
+  }
+  async indexAdd(key: string, member: string, ttl: number) {
+    // one atomic call: the member with its expiry as score, and the index key kept alive at least as long as this member
+    const lua = "redis.call('zadd', KEYS[1], ARGV[1], ARGV[2]) if redis.call('pttl', KEYS[1]) < tonumber(ARGV[3]) then redis.call('pexpire', KEYS[1], ARGV[3]) end return 1";
+    const ms = Math.round(ttl * 1000);
+    await this.redis.eval(lua, 1, key, String(Date.now() + ms), member, String(ms));
+  }
+  async indexRemove(key: string, member: string) {
+    await this.redis.zrem(key, member);
+  }
+  async indexMembers(key: string) {
+    const lua = "redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1]) return redis.call('zrange', KEYS[1], 0, -1)";
+    return (await this.redis.eval(lua, 1, key, String(Date.now()))) as string[];
   }
   async ping() {
     return (await this.redis.ping()) === 'PONG';
@@ -149,6 +170,32 @@ export class MemoryKV implements KV {
   }
   async keys(prefix: string) {
     return [...this.m.keys()].filter((k) => k.startsWith(prefix) && this.live(k) !== null);
+  }
+  /** an index is one entry of the map (listed by keys(), removed by del(), like the Redis key): member -> expiry (ms) */
+  private index(key: string): Record<string, number> {
+    const raw = this.live(key);
+    if (raw === null) return {};
+    try {
+      const o = JSON.parse(raw) as unknown;
+      return o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, number>) : {};
+    } catch { return {}; }
+  }
+  async indexAdd(key: string, member: string, ttl: number) {
+    const now = Date.now();
+    const idx = Object.fromEntries(Object.entries(this.index(key)).filter(([, e]) => e > now));
+    idx[member] = now + ttl * 1000;
+    this.m.set(key, { v: JSON.stringify(idx), exp: Math.max(...Object.values(idx)) });
+  }
+  async indexRemove(key: string, member: string) {
+    const idx = this.index(key);
+    const e = this.m.get(key);
+    if (!e || !(member in idx)) return;
+    delete idx[member];
+    this.m.set(key, { v: JSON.stringify(idx), exp: e.exp });
+  }
+  async indexMembers(key: string) {
+    const now = Date.now();
+    return Object.entries(this.index(key)).filter(([, e]) => e > now).map(([m]) => m);
   }
   async ping() {
     return true;

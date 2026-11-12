@@ -20,7 +20,7 @@ const LIVETV_STATES: readonly LivetvState[] = ['enabled', 'disabled', 'absent', 
  * missing or not resolving as expected (pull_failed, unexpected_image, config_mismatch, compose_config), not verified, not
  * started, not healthy
  */
-export const LIVETV_ERRORS = ['pull_failed', 'unexpected_image', 'config_mismatch', 'compose_config', 'verify_failed', 'restart_failed', 'unhealthy'] as const;
+export const LIVETV_ERRORS = ['pull_failed', 'unexpected_image', 'config_mismatch', 'compose_config', 'compose_outdated', 'verify_failed', 'restart_failed', 'unhealthy'] as const;
 export type LivetvError = (typeof LIVETV_ERRORS)[number];
 export type JobState = 'running' | 'succeeded' | 'failed' | 'rolled_back';
 

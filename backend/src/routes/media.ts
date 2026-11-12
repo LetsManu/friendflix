@@ -20,7 +20,7 @@ import { bumpHome } from '../homegen.js';
 import { nextUpItems, resumeItems } from '../resumeRows.js';
 import { createHash } from 'node:crypto';
 import { hevcStatus, noteHevcFailure, type HevcState } from '../hevcenc.js';
-import { convertsOf, filmGate, releaseGrants } from '../filmgate.js';
+import { convertsOf, copyFitsCap, filmGate, releaseGrants } from '../filmgate.js';
 import { itemsByIds, libraryBecause } from './discover.js';
 import { id32 as itemId, wrap as sharedWrap } from './_shared.js';
 
@@ -379,6 +379,10 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       /** the player's one automatic fallback: which feature failed, and the play session it replaces (accepted here, used by later steps) */
       fellBack: z.enum(['hevc', 'surround', 'both']).optional(),
       prevPs: psId.optional(),
+      /** maxBitrate is the player's 720p start on a device without a bandwidth estimate (a guess, not a pick or a measured line) */
+      startRung: z.literal(true).optional(),
+      /** asked by a hover / focus prefetch of the web (prefetch.ts), not by a player */
+      prefetch: z.literal(true).optional(),
     }).parse(req.body);
     const clientCaps = parseClientCaps(b.caps);
     const role = (await effectiveLimits(ctx, req.user!))!;
@@ -395,7 +399,9 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     // PlaybackInfo and the resume-position/trickplay lookup run in parallel (one Jellyfin /Items call instead of two sequential ones)
     // HEVC conversions: a gate only while HEVC_STREAMS > 0 (probe, limit from the server's session list, failure pause: hevcenc.ts);
     // every conversion also needs a slot of the shared budget (convbudget.ts, spec §5.5): one gate for both, one session-list read
-    const gate = filmGate(ctx, { userId: req.user!.id, deviceId: req.session?.deviceId });
+    // `swap`: only a hover / focus prefetch (prefetch.ts) replaces the device's earlier unused prefetch grant; a player's request (and the
+    // next episode prepared during the countdown) writes a grant no later request of the device can replace
+    const gate = filmGate(ctx, { userId: req.user!.id, deviceId: req.session?.deviceId, swap: b.prefetch === true });
     // the player left a HEVC conversion for H.264: counts against the server's HEVC state when that stream really was one
     if ((b.fellBack === 'hevc' || b.fellBack === 'both') && b.prevPs && req.session?.deviceId) {
       let prev: { video?: unknown } | null;
@@ -403,50 +409,64 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       if (prev?.video === 'hevc') await noteHevcFailure(ctx, req.session.deviceId);
     }
     const opts = { ...(clientCaps ? { clientCaps } : {}), remote, surround: ctx.cfg.SURROUND_AUDIO !== 'false', ...(ctx.cfg.HEVC_STREAMS > 0 ? { hevcGate: gate.hevc } : {}), maxBitrate: cap, capReason, maxHeight: role.maxHeight, startTicks: b.startTicks, audioIndex: b.audioIndex, audioLang: b.audioLang, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') };
-    const [first, meta] = await Promise.all([ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts), ctx.jf.playMeta(req.jfUser!, b.itemId)]);
-    let info = first;
-    // optional server step before the player loads the master playlist (decision call, audio/subtitle selection); Jellyfin has none
-    if (ctx.jf.preparePlayback) info = await ctx.jf.preparePlayback(req.jfUser!, info, opts);
-    // the budget's label: the title from the resume lookup (a series by its series name); none when that lookup failed
-    const label = meta?.seriesName || meta?.name;
-    // spec §5.5: a conversion the budget does not admit (full, or the session list did not answer in time) is asked for again as a copy at
-    // the ceiling (the viewer's own lower pick is dropped, the role / remote / upload cap stays). A copy (or direct play) is answered with
-    // the reason `serverBusy`; a title that still needs a conversion gets 503. No stream was fetched yet, so nothing has to be stopped.
-    // At the ceiling already (the viewer picked nothing lower), the copy request would plan the same answer: the copy decision and direct
-    // play depend on the bitrate, box, caps and source, all unchanged, and `noConvert` only takes away an HEVC encode (a conversion
-    // either way). So the 503 comes without a second round trip.
-    if (!(await gate.admit(info, label))) {
-      let fb: PlaybackDto | null = null;
-      if (cap < upload.cap) {
-        const fallback = { ...opts, noConvert: true, maxBitrate: upload.cap, capReason: 'serverBusy' as const };
-        fb = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, fallback);
-        if (ctx.jf.preparePlayback) fb = await ctx.jf.preparePlayback(req.jfUser!, fb, fallback);
+    // anything that throws between the HEVC closure (it may have admitted already) and the bind gives both grants back at once, instead
+    // of leaving them to count for 30 s (the 503 and 502 answers below release them themselves)
+    let info: PlaybackDto;
+    let label: string | undefined;
+    let meta: Awaited<ReturnType<typeof ctx.jf.playMeta>>;
+    try {
+      [info, meta] = await Promise.all([ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts), ctx.jf.playMeta(req.jfUser!, b.itemId)]);
+      // optional server step before the player loads the master playlist (decision call, audio/subtitle selection); Jellyfin has none
+      if (ctx.jf.preparePlayback) info = await ctx.jf.preparePlayback(req.jfUser!, info, opts);
+      // the budget's label: the title from the resume lookup (a series by its series name); none when that lookup failed
+      label = meta?.seriesName || meta?.name;
+      // spec §5.5: a conversion the budget does not admit (full, or the session list did not answer in time) is asked for again as a copy at
+      // the ceiling (the role / remote / upload cap stays). A copy (or direct play) is answered with the reason `serverBusy`; a title that
+      // still needs a conversion gets 503. No stream was fetched yet, so nothing has to be stopped.
+      // Owner ruling 2026-11-12: the copy carries the source's own bitrate, so it is offered only when the viewer's own cap (pick or line:
+      // data saver, a lower quality, ABR on a slow line) is at or above the source; a request below the source gets 503 (copyFitsCap).
+      // The 720p start of a device without a bandwidth estimate (`startRung`) is a guess, not the viewer's pick or line: for it the copy
+      // up to the ceiling stays, as for a request at the source.
+      // At the ceiling already (the viewer picked nothing lower), the copy request would plan the same answer: the copy decision and direct
+      // play depend on the bitrate, box, caps and source, all unchanged, and `noConvert` only takes away an HEVC encode (a conversion
+      // either way). So both 503s come without a second round trip.
+      if (!(await gate.admit(info, label))) {
+        let fb: PlaybackDto | null = null;
+        if (cap < upload.cap && copyFitsCap(info, b.startRung && b.reasonHint !== 'manual' ? upload.cap : cap)) {
+          const fallback = { ...opts, noConvert: true, maxBitrate: upload.cap, capReason: 'serverBusy' as const };
+          fb = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, fallback);
+          if (ctx.jf.preparePlayback) fb = await ctx.jf.preparePlayback(req.jfUser!, fb, fallback);
+        }
+        if (!fb || convertsOf(fb)) {
+          await gate.bind(null);
+          return reply.code(503).send({ error: 'server_busy' });
+        }
+        info = { ...fb, transcodeReason: 'serverBusy' };
       }
-      if (!fb || convertsOf(fb)) {
-        await gate.bind(null);
-        return reply.code(503).send({ error: 'server_busy' });
-      }
-      info = { ...fb, transcodeReason: 'serverBusy' };
-    }
-    info.roleMaxBitrate = ceiling;
-    let resume = b.startTicks ?? meta?.positionTicks;
-    if (resume === undefined) {
-      // The /Items lookup failed or came back empty: a silent 0 would let the first progress report overwrite the saved
-      // Jellyfin position, so ask the single-item endpoint instead and make the player retry (502) when that fails too.
-      resume = await ctx.jf.item(req.jfUser!, b.itemId).then((i) => i.positionTicks, () => undefined);
+      info.roleMaxBitrate = ceiling;
+      let resume = b.startTicks ?? meta?.positionTicks;
       if (resume === undefined) {
-        await gate.bind(null);
-        return reply.code(502).send({ error: 'jellyfin', reason: 'resume_unknown' });
+        // The /Items lookup failed or came back empty: a silent 0 would let the first progress report overwrite the saved
+        // Jellyfin position, so ask the single-item endpoint instead and make the player retry (502) when that fails too.
+        resume = await ctx.jf.item(req.jfUser!, b.itemId).then((i) => i.positionTicks, () => undefined);
+        if (resume === undefined) {
+          await gate.bind(null);
+          return reply.code(502).send({ error: 'jellyfin', reason: 'resume_unknown' });
+        }
       }
+      info.resumeTicks = resume;
+      await gate.bind(info, label); // the grants live on only for a stream that converts
+    } catch (e) {
+      await gate.bind(null);
+      throw e;
     }
-    info.resumeTicks = resume;
-    await gate.bind(info, label); // the grants live on only for a stream that converts
     info.trickplay = meta?.trickplay(info.mediaSourceId);
     // Block 22: remember the server's transcode reason for this play session; the stream is counted on "Playing" only
     // (the web prefetches info, Block 20), so a prefetch alone never counts
     // (plus the granted cap and remote flag: the upload-aware cap counts live remote streams with them; `conv`: this answer really
     // converts (ruling 6), so the budget counts it while the server lists only another device's play session of the same profile)
     await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ reason: info.transcodeReason ?? null, bitrate: info.maxBitrate, remote, ...(info.delivery ? { video: info.delivery.video, audio: info.delivery.audio } : {}), ...(convertsOf(info) ? { conv: true } : {}) }), 6 * 3600).catch(() => undefined);
+    delete info.sourceBitrate; // server-side only (the fallback decision above)
     return info;
   }));
 
@@ -457,7 +477,8 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       return 'error' in r ? reply.code(429).send(r) : r;
     });
   // the next episode's transcode the web player warmed during the autoplay countdown (web/src/lib/player/prefetch.ts) and nobody took:
-  // stopped on the media server. Only the caller's own device and play session; a session that started playing is never stopped here.
+  // stopped on the media server; also an unused prefetch answer that converts (replaced, expired, page hidden), which only gives its
+  // budget grants back. Only the caller's own play session; a session that started playing is never stopped here.
   app.post('/api/playback/warm/stop', pre, wrap(async (req) => {
     const b = z.object({ playSessionId: psId }).parse(req.body);
     // ownership: /api/playback/info wrote this record for the caller's own play session (Jellyfin kills by play session id alone)

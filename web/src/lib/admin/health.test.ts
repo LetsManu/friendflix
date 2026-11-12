@@ -35,6 +35,12 @@ describe('health view helpers', () => {
     expect(diskLabelKey({ id: 'downloads', level: 'ok', ownBytes: 0, sharedWith: 'previews' })).toBe('adminContent.health.disks.shared');
   });
 
+  it('serverBusy is a known transcode reason with its own label', () => {
+    expect(TC_REASONS).toContain('serverBusy');
+    expect(tcKey('serverBusy')).toBe('adminContent.health.tc.serverBusy');
+    expect(hasKey('adminContent.health.tc.serverBusy')).toBe(true);
+  });
+
   it('encoder advice: every code has a long text, unknown codes are dropped, order kept', () => {
     for (const a of ENCODER_ADVICE) expect(hasKey(`adminContent.health.advice.${a}`), a).toBe(true);
     expect(adviceKeys({ advice: ['no_throttle', 'bogus' as never, 'no_hw_accel'] })).toEqual(['adminContent.health.advice.no_throttle', 'adminContent.health.advice.no_hw_accel']);

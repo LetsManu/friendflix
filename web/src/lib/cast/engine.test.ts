@@ -208,6 +208,17 @@ describe('cast engine: playOnTv (Chromecast)', () => {
     expect(env.loads).toEqual([]);
   });
 
+  it('503 server_busy on a switch says the server is busy and does not retry by itself', async () => {
+    const env = setup();
+    await playingSession(env);
+    env.posts.push(() => Promise.reject(new ApiError(503, { error: 'server_busy' })));
+    await env.engine.playOnTv('ep2', 0);
+    await env.advance(60_000);
+    expect(env.tokenPosts()).toHaveLength(1);
+    expect(env.toast.mock.calls).toEqual([['error', 'Server gerade ausgelastet. Versuch es gleich noch einmal.']]);
+    expect(get(env.out)).toMatchObject({ itemId: 'ep2', state: 'reconnect' });
+  });
+
   it('token errors use the player texts (transcoding not allowed, other)', async () => {
     const env = setup();
     await playingSession(env);
@@ -1331,6 +1342,19 @@ describe('cast engine: Netflix-like next episode (credits, receiver queue, skip)
       await env2.advance(UNPINNED_RETRY_MS * 2);
       expect(env2.queuePosts()).toHaveLength(1);
     }
+  });
+
+  it('a queued next episode refused with 503 server_busy leaves the playing title alone: no toast, no retry', async () => {
+    const env = setup();
+    env.queuePostAnswers.push(() => Promise.reject(new ApiError(503, { error: 'server_busy' })));
+    await playingSession(env, ep1);
+    await flush();
+    await env.advance(UNPINNED_RETRY_MS * 2);
+    expect(env.queuePosts()).toHaveLength(1);
+    expect(env.queued).toHaveLength(0);
+    expect(env.toast).not.toHaveBeenCalled();
+    expect(get(env.out)).toMatchObject({ state: 'playing' });
+    expect(env.logs.find((l) => l.tag === 'queue')).toMatchObject({ level: 'warn', text: expect.stringContaining('503 server_busy') });
   });
 
   it('setAutoplay(false) cancels the countdown, dequeues and stops further queueing', async () => {

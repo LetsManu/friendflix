@@ -5,7 +5,7 @@ import type pg from 'pg';
 import type { Ctx } from '../ctx.js';
 import type { Db } from '../db.js';
 import { EFFECTIVE_SHIFT_SQL, isOwnFeeds } from './channels.js';
-import { LivetvError, livetvStream } from './client.js';
+import { LivetvError, dropLivetvProof, livetvStream } from './client.js';
 import { importLogos } from './logos.js';
 import { invalidateLivetvRights } from './rights.js';
 import { sourceSecrets, type SourceRow } from './sources.js';
@@ -324,7 +324,7 @@ async function readXmltv(ctx: Ctx, body: Record<string, unknown>, onItem: OnItem
   try {
     r = await livetvStream(ctx, '/v1/fetch/xmltv', body, { timeoutMs: XMLTV_TIMEOUT_MS });
   } catch (e) {
-    // TODO(1b merge): call dropLivetvProof(ctx) here when livetv was not reached (status null); PR 1b adds it, this lane lacks it
+    // (a failed connection already withdrew the proof, client.ts signedFetch)
     if (e instanceof LivetvError) return { error: e.status === null ? 'livetv_unreachable' : e.code };
     throw e;
   }
@@ -365,7 +365,7 @@ async function readXmltv(ctx: Ctx, body: Record<string, unknown>, onItem: OnItem
         chunk = x.value;
       } catch (e) {
         // the deadline aborts with a TimeoutError; anything else is a lost connection
-        // TODO(1b merge): call dropLivetvProof(ctx) for the lost connection (`livetv_unreachable`) once PR 1b's helper is in this lane
+        dropLivetvProof(ctx); // as livetvCall does when its body stops: whoever answers to the name next proves its key first
         return { error: (e as { name?: unknown } | null)?.name === 'TimeoutError' ? 'timeout' : 'livetv_unreachable' };
       }
       total += chunk.byteLength;

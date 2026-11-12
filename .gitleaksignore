@@ -53,3 +53,26 @@ d91da1dd0416136bf6b26d2bbb2a50c258a82d20:test-vectors/updater-hmac.json:generic-
 d91da1dd0416136bf6b26d2bbb2a50c258a82d20:test-vectors/updater-hmac.json:generic-api-key:4
 17c1d04a7a678fee8baa33c89b185cbf25194330:backend/test/updater.test.ts:generic-api-key:17
 2a18c41d4a9a0e085b2dd9cebec30d03896f3e14:backend/test/client-caps.test.ts:generic-api-key:57
+# livetv (Live TV 1b): the published test-only secret and derived key of the shared HMAC vectors (test-vectors/livetv-hmac.json;
+# the later commits of that file add only the comment and the health proofs, no new secret-looking line)
+7cf1df6ab5bf4bc34b26f821d6ded9807f8a026d:test-vectors/livetv-hmac.json:generic-api-key:3
+7cf1df6ab5bf4bc34b26f821d6ded9807f8a026d:test-vectors/livetv-hmac.json:generic-api-key:4
+# livetv (Live TV 1b): fictional test secrets of the livetv, bootstrap, client, detection, wire and updater tests (none is a credential)
+a12a81bdd3a6d0b515c63b4e3a30b03bf2eb9af2:backend/test/bootstrap.test.ts:generic-api-key:356
+7cf1df6ab5bf4bc34b26f821d6ded9807f8a026d:backend/test/livetv-client.test.ts:generic-api-key:14
+a776016c8a8232d2b89e8dd2df8305e339fc751e:backend/test/livetv-detect.test.ts:generic-api-key:16
+6b218f6ab82aed84400c06419a070c856885e423:backend/test/livetv-wire.test.ts:generic-api-key:19
+f34bba9b3d49987482cf7cc37faf64e7e3b3c4c2:backend/test/updater-livetv.test.ts:generic-api-key:10
+7cf1df6ab5bf4bc34b26f821d6ded9807f8a026d:livetv/test/config.test.ts:generic-api-key:12
+a12a81bdd3a6d0b515c63b4e3a30b03bf2eb9af2:livetv/test/config.test.ts:generic-api-key:51
+a12a81bdd3a6d0b515c63b4e3a30b03bf2eb9af2:livetv/test/config.test.ts:generic-api-key:57
+7cf1df6ab5bf4bc34b26f821d6ded9807f8a026d:livetv/test/server.test.ts:generic-api-key:153
+1f7793bdfa9b367f9e4ab3b114b091cf81e43ba5:livetv/test/server.test.ts:generic-api-key:154
+a12a81bdd3a6d0b515c63b4e3a30b03bf2eb9af2:livetv/test/server.test.ts:generic-api-key:225
+a12a81bdd3a6d0b515c63b4e3a30b03bf2eb9af2:livetv/test/server.test.ts:generic-api-key:230
+# livetv (Live TV 1b): not secrets: the Jellyfin repository's public GPG key fingerprint (livetv/Dockerfile JELLYFIN_KEY_FPR) and i18n
+# key / setting names (adminLive.offer.persistTip, AUTHENTIK_INVALIDATION_FLOW) misread as keys
+7cf1df6ab5bf4bc34b26f821d6ded9807f8a026d:livetv/Dockerfile:generic-api-key:21
+10938e4022e75ee698907d8fdc57ac8cc06d9c56:web/src/lib/admin/livetv/EnableCard.svelte:generic-api-key:75
+fc72062cb983ae92aacf7043487e77af97b2ab40:web/src/lib/admin/livetv/EnableCard.svelte:generic-api-key:89
+a776016c8a8232d2b89e8dd2df8305e339fc751e:web/src/lib/admin/settings/settings.test.ts:generic-api-key:23

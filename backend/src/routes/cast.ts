@@ -7,7 +7,7 @@ import type { Ctx } from '../ctx.js';
 import { receiverCaps } from '../media/clientCaps.js';
 import { MediaError, type HevcGate, type ItemDto, type PlaybackDto, type TrackList } from '../media/types.js';
 import { noteHevcFailure } from '../hevcenc.js';
-import { convertsOf, filmGate, type FilmGate } from '../filmgate.js';
+import { convertsOf, copyFitsCap, filmGate, type FilmGate } from '../filmgate.js';
 import { countLive } from '../live.js';
 import { clientAddress, isHomeRequest } from '../netaddr.js';
 import { playbackReport } from './media.js';
@@ -252,13 +252,14 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       };
       let info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts);
       if (ctx.jf.preparePlayback) info = await ctx.jf.preparePlayback(req.jfUser!, info, opts);
-      // the budget's copy fallback (as /api/playback/info): the cast ceiling without the sender's own lower pick; a title that still needs
-      // a conversion gets 503 before anything is minted (no stream was fetched, nothing to stop). Already at the cast ceiling, the copy
+      // the budget's copy fallback (as /api/playback/info): the cast ceiling, offered only when the sender's own pick is at or above the
+      // source (owner ruling 2026-11-12: a pick below the source gets 503, never the original's bitrate); a title that still needs a
+      // conversion gets 503 before anything is minted (no stream was fetched, nothing to stop). Already at the cast ceiling, the copy
       // request would plan the same answer, so the 503 comes without a second round trip.
       if (!(await fg.admit(info))) {
         const top = Math.min(ceiling, CAST_MAX_BITRATE);
         let fb: PlaybackDto | null = null;
-        if (maxBitrate < top) {
+        if (maxBitrate < top && copyFitsCap(info, maxBitrate)) {
           const fallback = { ...opts, noConvert: true, maxBitrate: top };
           fb = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, fallback);
           if (ctx.jf.preparePlayback) fb = await ctx.jf.preparePlayback(req.jfUser!, fb, fallback);

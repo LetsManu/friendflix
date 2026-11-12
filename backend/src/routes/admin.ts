@@ -7,6 +7,7 @@ import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
 import type { Ctx } from '../ctx.js';
 import { revokeSessions } from '../devices.js';
 import { loginUi } from '../akflow.js';
+import { akActions } from '../authentik.js';
 import { dropPartyDenied } from '../partySockets.js';
 import { adminOverview, revokeLicense } from '../downloads.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
@@ -108,6 +109,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       live: { streams: live, partyRooms: parties.rooms.size },
       // the optional Live-TV module: detected (last check), the entry hidden by the admin, enabled provider lists whose last refresh failed
       livetv: { installed: livetvInstalled(ctx), offerHidden: ctx.cfg.LIVETV_OFFER_HIDDEN === 'true', failedSources: Number(livetvFailed.n) },
+      // the people list's "without 2FA" filter needs the provider's API (adminUsers.ts ignores it otherwise)
+      mfaFilter: akActions(ctx).recovery,
       // R1: size and age of the recommendation item index (counts and a timestamp only)
       recoIndex: await recoIndexState(ctx).then((x) => ({ supported: x.supported, running: x.running, items: x.items, updatedAt: x.updatedAt }), () => null),
     };
