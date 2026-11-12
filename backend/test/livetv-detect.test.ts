@@ -61,7 +61,7 @@ const setCfg = (patch: Record<string, unknown>) => { env.ctx.cfg = { ...env.ctx.
 const audits = async (action: string) => (await env.pool.query<{ meta: Record<string, unknown> }>('select meta from audit_log where action=$1 order by id', [action])).rows.map((r) => r.meta);
 const wanted = () => env.ctx.cfg.LIVETV_WANTED;
 /** a fresh app on the same context: its own rate-limit counters */
-async function withApp<T>(fn: (call: (method: 'GET' | 'POST', url: string, body?: unknown, cookies?: Record<string, string>) => ReturnType<TestEnv['app']['inject']>) => Promise<T>): Promise<T> {
+async function withApp<T>(fn: (call: (method: 'GET' | 'POST', url: string, body?: unknown, cookies?: Record<string, string>) => Promise<Awaited<ReturnType<TestEnv['app']['inject']>>>) => Promise<T>): Promise<T> {
   const app = await buildApp(env.ctx);
   try { return await fn((method, url, body, cookies) => app.inject({ method, url, cookies: cookies ?? s.cookies, headers: { 'x-csrf-token': s.csrf }, ...(body === undefined ? {} : { payload: body as object }) })); } finally { await app.close(); }
 }
