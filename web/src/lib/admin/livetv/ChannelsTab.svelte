@@ -199,6 +199,12 @@
     if (!r.ok) return;
     selected = new Map();
     await load();
+    // a narrowing filter can empty the page we were on: step back to the last page that still has rows
+    if (rows && !rows.length && total > 0 && filter.offset > 0) {
+      const last = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+      page = last; filter = { ...filter, offset: last * PAGE_SIZE };
+      await load();
+    }
   }
   async function bulkReset() {
     const ok = await confirm({ title: tr('adminLive.ch.bulk.resetTitle'), body: tr('adminLive.ch.bulk.resetBody'), confirmLabel: tr('adminLive.ch.menu.reset') });
@@ -242,7 +248,7 @@
   const logoFailed = (hash: string) => { brokenLogos.add(hash); logoRev++; };
 </script>
 
-<div class="ch" class:has-bar={selected.size > 0} aria-busy={loading ? 'true' : undefined}>
+<div class="ch" aria-busy={loading ? 'true' : undefined}>
   <DataTable
     {rows} {columns} key={(c) => c.id} caption={$t('adminLive.ch.caption')} filterable filterPlaceholder={$t('adminLive.ch.search')}
     bind:q bind:sort bind:page pageSize={PAGE_SIZE} {total} error={loadError} on:retry={load} on:query={onQuery}
@@ -333,8 +339,8 @@
 
 <style>
   .ch { min-width: 0; }
-  /* the bulk bar floats above the bottom edge: the list pads its end while it is there, so the last rows stay reachable */
-  .ch.has-bar { padding-bottom: 7rem; }
+  /* the bulk bar floats above the bottom edge: the list always pads its end (nothing jumps when it appears), so the last rows stay reachable */
+  .ch { padding-bottom: 7rem; }
   .chips { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; flex: 1 1 100%; }
   .chips :global(.field) { flex: 0 1 12rem; min-width: 9rem; }
   .chip { min-height: 44px; padding: 0 1rem; border-radius: 999px; background: rgba(255, 255, 255, .06); border: 1px solid var(--fr-line, rgba(255, 255, 255, .2)); color: rgba(255, 255, 255, .85); font-weight: 600; }

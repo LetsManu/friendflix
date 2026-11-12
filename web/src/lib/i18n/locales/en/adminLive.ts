@@ -448,6 +448,7 @@ const dict: Translation<typeof de> = {
       no_video: 'No picture was found in the stream.',
       invalid: 'The stream delivers no readable data.',
       failed: 'The test failed.',
+      rejected: 'The change was not accepted.',
       too_large: 'The image is larger than 512 KB.',
       unsupported_type: 'This image format is not accepted. Use PNG, JPEG or WebP.',
       svg: 'SVG images are not accepted. Use PNG, JPEG or WebP.',

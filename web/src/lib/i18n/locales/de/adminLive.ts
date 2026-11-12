@@ -446,6 +446,7 @@ export default {
       no_video: 'Im Stream wurde kein Bild gefunden.',
       invalid: 'Der Stream liefert keine lesbaren Daten.',
       failed: 'Der Test ist fehlgeschlagen.',
+      rejected: 'Die Änderung wurde nicht angenommen.',
       too_large: 'Das Bild ist größer als 512 KB.',
       unsupported_type: 'Dieses Bildformat wird nicht angenommen. Nimm PNG, JPEG oder WebP.',
       svg: 'SVG-Bilder werden nicht angenommen. Nimm PNG, JPEG oder WebP.',

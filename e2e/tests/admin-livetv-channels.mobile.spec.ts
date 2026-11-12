@@ -52,7 +52,7 @@ test.describe('admin: Live-TV, Kanäle (phone, 375 px)', () => {
   test('the bulk bar and its prompt fit the phone', async ({ page }) => {
     await page.goto('/admin/livetv?tab=channels');
     await page.getByRole('checkbox', { name: 'Sender „Nordlicht TV“ auswählen' }).check();
-    const bar = page.getByRole('toolbar', { name: 'Aktionen für die Auswahl' });
+    const bar = page.getByRole('group', { name: 'Aktionen für die Auswahl' });
     await expect(bar).toBeVisible();
     await fits(bar, 'bulk bar');
     for (const n of ['Ausblenden', 'Einblenden', 'Gruppe ändern…', 'Ab Nummer … durchnummerieren', 'Überschreibungen zurücksetzen', 'Testen', 'Auswahl aufheben']) await fits(bar.getByRole('button', { name: n }), n, 44);

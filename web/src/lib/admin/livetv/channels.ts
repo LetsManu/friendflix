@@ -5,7 +5,7 @@
  * callers, and the pure text helpers the list and its sheets render from. The browser never gets a stream URL: a channel carries only
  * what the backend's `AdminChannel` allows (F13). Texts come out of `adminLive.ch.*`.
  */
-import { api, ApiError, getActiveProfile, getCsrf } from '#lib/api';
+import { api, ApiError } from '#lib/api';
 import { fmtTime, tr, type TKey } from '#lib/i18n';
 import { errorText } from '#lib/ui/action';
 import { shiftLabel } from './picker';
@@ -151,7 +151,12 @@ export function channelError(code: string | null | undefined): string {
 export const errorCode = (e: unknown): string | null => (e instanceof ApiError && typeof e.body?.error === 'string' ? e.body.error : null);
 
 /** the toast text of a failed channel call: the fixed code in words, else the generic text for the status */
-export const failText = (e: unknown): string => (errorCode(e) ? channelError(errorCode(e)) : errorText(e));
+export const failText = (e: unknown): string => {
+  const c = errorCode(e);
+  // `invalid` is the stream test's "no readable data" only there (TestSheet uses channelError); a PATCH / bulk 400 is a refused change
+  if (c === 'invalid') return tr('adminLive.ch.err.rejected');
+  return c ? channelError(c) : errorText(e);
+};
 
 /** the logo checks before anything is sent: null = fine, else the code `channelError` words */
 export function checkLogoFile(f: { name: string; type: string; size: number }): 'svg' | 'too_large' | 'unsupported_type' | null {
@@ -183,20 +188,7 @@ export interface TestAnswer { ok: boolean; video: ProbeFacts['video'] | null; au
 export const testChannel = (id: string) => api<TestAnswer>(`${B}/${enc(id)}/test`, { method: 'POST' });
 
 /** the logo upload is a raw image body (ruling 32), not JSON: 413 `too_large`, 415 `unsupported_type` */
-export async function uploadLogo(id: string, file: Blob): Promise<AdminChannel> {
-  const profile = getActiveProfile();
-  const res = await fetch(`${B}/${enc(id)}/logo`, {
-    method: 'PUT',
-    credentials: 'same-origin',
-    headers: { 'content-type': file.type, 'x-csrf-token': getCsrf(), ...(profile ? { 'x-ff-profile': profile } : {}) },
-    body: file,
-  });
-  const text = await res.text();
-  let json: unknown = null;
-  try { json = text ? JSON.parse(text) : null; } catch { /* a proxy's page */ }
-  if (!res.ok) throw new ApiError(res.status, json);
-  return json as AdminChannel;
-}
+export const uploadLogo = (id: string, file: Blob) => api<AdminChannel>(`${B}/${enc(id)}/logo`, { method: 'PUT', raw: file });
 export const dropLogo = (id: string) => api<AdminChannel>(`${B}/${enc(id)}/logo`, { method: 'DELETE' });
 /** a channel logo by its hash (the backend serves provider, XMLTV and uploaded logos here) */
 export const logoSrc = (hash: string) => `/api/livetv/logos/${enc(hash)}`;

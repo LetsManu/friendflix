@@ -53,7 +53,7 @@
 {#if count > 0}
   <div class="bb-wrap">
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="bb frost frost-safe frost-panel" style="--fr-scrim-safe:{SCRIM_BAR}" role="toolbar" aria-label={$t('adminLive.ch.bulk.label')} tabindex="-1"
+    <div class="bb frost frost-safe frost-panel" style="--fr-scrim-safe:{SCRIM_BAR}" role="group" aria-label={$t('adminLive.ch.bulk.label')} tabindex="-1"
       in:barRise out:barRise={{ dir: 'out' }} on:keydown={key}>
       <div class="head">
         <span class="sel" data-selected>{$t('adminLive.ch.bulk.selected', { n: count })}</span>
@@ -67,7 +67,7 @@
         <Button variant="secondary" disabled={busy} on:click={() => dispatch('reset')}>{$t('adminLive.ch.bulk.reset')}</Button>
         <Button variant="secondary" disabled={busy || count > TEST_MAX} on:click={() => dispatch('test')}>{$t('adminLive.ch.bulk.test')}</Button>
       </div>
-      {#if count > TEST_MAX}<p class="note">{$t('adminLive.ch.bulk.testMax', { n: TEST_MAX })}</p>{/if}
+      <p class="note" class:on={count > TEST_MAX} aria-hidden={count > TEST_MAX ? undefined : 'true'}>{$t('adminLive.ch.bulk.testMax', { n: TEST_MAX })}</p>
 
       {#if prompt}
         <div class="prompt frost frost-safe frost-menu" style="--fr-scrim-safe:{SCRIM_BAR}" data-bulk-prompt role="group" aria-label={prompt === 'group' ? $t('adminLive.ch.bulk.group') : $t('adminLive.ch.bulk.renumber')}>
@@ -93,8 +93,9 @@
   .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .sel { font-weight: 700; padding-left: 8px; }
   .acts { display: flex; flex-wrap: wrap; gap: 8px; }
-  .note { margin: 0; padding-left: 8px; font-size: .9rem; color: #ffbdbd; }
+  .note { margin: 0; min-height: 2.6em; opacity: 0; transition: opacity .15s; padding-left: 8px; font-size: .9rem; color: #ffbdbd; }
   /* the prompt overlays the page above the bar: it takes no room, so the bar never grows */
+  .note.on { opacity: 1; }
   .prompt { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); display: flex; flex-direction: column; gap: .7rem; padding: 14px; }
   .pa { display: flex; flex-wrap: wrap; gap: 8px; }
   @media (max-width: 720px) {

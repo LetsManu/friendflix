@@ -448,6 +448,7 @@ const dict: Translation<typeof de> = {
       no_video: 'Yayında görüntü bulunamadı.',
       invalid: 'Yayın okunabilir veri sağlamıyor.',
       failed: 'Test başarısız oldu.',
+      rejected: 'Değişiklik kabul edilmedi.',
       too_large: 'Görsel 512 KB’tan büyük.',
       unsupported_type: 'Bu görsel biçimi kabul edilmiyor. PNG, JPEG veya WebP kullan.',
       svg: 'SVG görseller kabul edilmez. PNG, JPEG veya WebP kullan.',

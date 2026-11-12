@@ -448,6 +448,7 @@ const dict: Translation<typeof de> = {
       no_video: 'Aucune image n’a été trouvée dans le flux.',
       invalid: 'Le flux ne fournit aucune donnée lisible.',
       failed: 'Le test a échoué.',
+      rejected: 'La modification n’a pas été acceptée.',
       too_large: 'L’image dépasse 512 Ko.',
       unsupported_type: 'Ce format d’image n’est pas accepté. Utilise PNG, JPEG ou WebP.',
       svg: 'Les images SVG ne sont pas acceptées. Utilise PNG, JPEG ou WebP.',

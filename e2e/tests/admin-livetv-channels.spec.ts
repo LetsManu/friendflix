@@ -170,9 +170,9 @@ test.describe('admin: Live-TV, Kanäle (desktop)', () => {
   test('bulk hide keeps the selection across pages', async ({ page, api }) => {
     await open(page);
     const box = (n: string) => page.getByRole('checkbox', { name: `Sender „${n}“ auswählen` });
-    await expect(page.getByRole('toolbar', { name: 'Aktionen für die Auswahl' })).toHaveCount(0);
+    await expect(page.getByRole('group', { name: 'Aktionen für die Auswahl' })).toHaveCount(0);
     await box('Nordlicht TV').check();
-    const bar = page.getByRole('toolbar', { name: 'Aktionen für die Auswahl' });
+    const bar = page.getByRole('group', { name: 'Aktionen für die Auswahl' });
     await expect(bar.locator('[data-selected]')).toHaveText('1 ausgewählt');
     await page.getByRole('button', { name: 'Nächste Seite' }).click();
     await expect(rowOf(page, 'Regionalkanal 150')).toBeVisible();
@@ -193,7 +193,7 @@ test.describe('admin: Live-TV, Kanäle (desktop)', () => {
   test('select the page, clear, and Einblenden / Zurücksetzen / Gruppe ändern', async ({ page, api }) => {
     await open(page);
     await page.getByRole('checkbox', { name: 'Diese Seite auswählen' }).check();
-    const bar = page.getByRole('toolbar', { name: 'Aktionen für die Auswahl' });
+    const bar = page.getByRole('group', { name: 'Aktionen für die Auswahl' });
     await expect(bar.locator('[data-selected]')).toHaveText('100 ausgewählt');
     await bar.getByRole('button', { name: 'Auswahl aufheben' }).click();
     await expect(bar).toHaveCount(0);
@@ -222,7 +222,7 @@ test.describe('admin: Live-TV, Kanäle (desktop)', () => {
     await open(page);
     await page.getByRole('checkbox', { name: 'Sender „Wetterkanal Küste“ auswählen' }).check();
     await page.getByRole('checkbox', { name: 'Sender „Bergblick Sport“ auswählen' }).check();
-    const bar = page.getByRole('toolbar', { name: 'Aktionen für die Auswahl' });
+    const bar = page.getByRole('group', { name: 'Aktionen für die Auswahl' });
     await bar.getByRole('button', { name: 'Ab Nummer … durchnummerieren' }).click();
     const grp = bar.getByRole('group', { name: 'Ab Nummer … durchnummerieren' });
     await grp.getByRole('spinbutton', { name: 'Erste Nummer' }).fill('100');
@@ -255,7 +255,7 @@ test.describe('admin: Live-TV, Kanäle (desktop)', () => {
     await page.getByRole('checkbox', { name: 'Sender „Nordlicht TV“ auswählen' }).check();
     await page.getByRole('checkbox', { name: 'Sender „Bergblick Sport“ auswählen' }).check();
     area(api).chTest = { ok: false, error: 'timeout' };
-    const bar = page.getByRole('toolbar', { name: 'Aktionen für die Auswahl' });
+    const bar = page.getByRole('group', { name: 'Aktionen für die Auswahl' });
     await bar.getByRole('button', { name: 'Testen' }).click();
     const dlg = page.getByRole('dialog', { name: 'Test von 2 Sendern' });
     await expect(dlg.getByRole('listitem')).toHaveCount(2);
@@ -361,7 +361,7 @@ test.describe('admin: Live-TV, Kanäle (desktop)', () => {
 
 // the refusals the server answers on purpose show up as failed requests in the browser's console: allowed here, and only here
 test.describe('admin: Live-TV, Kanäle (refusals)', () => {
-  test.use({ allowedConsole: /Failed to load resource: the server responded with a status of (409|415|422|500|503)/ });
+  test.use({ allowedConsole: /Failed to load resource: the server responded with a status of (409|413|415|422|500|503)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; install(api); });
 
   test('a failed test says why, in words', async ({ page, api }) => {
@@ -398,6 +398,15 @@ test.describe('admin: Live-TV, Kanäle (refusals)', () => {
     const dlg = page.getByRole('dialog', { name: 'Logo: Wetterkanal Küste' });
     await dlg.locator('input[type=file]').setInputFiles({ name: 'x.png', mimeType: 'image/png', buffer: PNG });
     await expect(dlg.getByRole('alert')).toHaveText('Dieses Bildformat wird nicht angenommen. Nimm PNG, JPEG oder WebP.');
+  });
+
+  test('a 413 too_large logo answer is worded', async ({ page }) => {
+    await page.route('**/api/admin/livetv/channels/ch-2/logo', (r) => r.fulfill({ status: 413, contentType: 'application/json', body: JSON.stringify({ error: 'too_large' }) }));
+    await open(page);
+    await menu(page, 'Wetterkanal Küste', 'Logo ändern');
+    const dlg = page.getByRole('dialog', { name: 'Logo: Wetterkanal Küste' });
+    await dlg.locator('input[type=file]').setInputFiles({ name: 'x.png', mimeType: 'image/png', buffer: PNG });
+    await expect(dlg.getByRole('alert')).toHaveText('Das Bild ist größer als 512 KB.');
   });
 
   test('a failed load says so and retries', async ({ page, api }) => {
