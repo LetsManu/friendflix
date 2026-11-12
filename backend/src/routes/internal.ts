@@ -12,6 +12,8 @@ import { addressOnly } from '../media/address.js';
 import { mediaGatewayKeys, mediaUrlKey } from '../media/index.js';
 import { MediaError, type ExternalSession } from '../media/types.js';
 import { effectiveLimits } from '../limits.js';
+import { streamBitrateFor, streamKeyFor } from '../livetv/streams.js';
+import { resolveLiveToken } from '../livetv/tokens.js';
 import { jfUserFor, resolveProfile } from '../profiles.js';
 import { isHomeAddress } from '../netaddr.js';
 import { effectiveRole, remoteBitrateCap } from '../roles.js';
@@ -143,6 +145,22 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     // no ip (an older gateway, or one that cannot tell) is ambiguous = remote
     const remote = body.data.ip === undefined || !isHomeAddress(body.data.ip, ctx.cfg.HOME_NETWORKS);
     return withoutRemoteCap(m, remote);
+  });
+
+  /**
+   * Live TV (spec §7.2/§7.3): the gateway's authz of `/media/l/<token>/<file>` (it memoises an answer `maxAgeS` per token + ip).
+   * `ip` = the caller's address as the gateway derived it (the pin). 200 { streamKey, kind, maxAgeS } or 401/403/410 { error }.
+   * The token is never logged (Fastify logs no bodies; the answers carry fixed codes only); rate limiting is off as for /internal/authz.
+   */
+  app.post('/internal/authz/live', { config: { rateLimit: false } }, async (req, reply) => {
+    if (!checkSecret(req, 'x-internal-secret', ctx.cfg.INTERNAL_SECRET)) return reply.code(403).send({ error: 'forbidden' });
+    const b = z.object({ token: z.string().regex(CAST_TOKEN_RE), ip: z.string().min(1).max(64) }).strict().safeParse(req.body);
+    if (!b.success) return reply.code(400).send({ error: 'bad_request' });
+    // the running stream of the token's channel as livetv lists it (livetv/streams.ts; not running = 410 stream gone)
+    const r = await resolveLiveToken(ctx, b.data.token, b.data.ip, { streamKeyFor: (channelId) => streamKeyFor(ctx, channelId), bitrateFor: (channelId) => streamBitrateFor(ctx, channelId) });
+    reply.header('cache-control', 'no-store');
+    if (r.status !== 200) return reply.code(r.status).send({ error: r.status === 401 ? 'unauthenticated' : r.status === 403 ? 'forbidden' : 'gone' });
+    return { streamKey: r.streamKey, kind: r.kind, maxAgeS: r.maxAgeS };
   });
 
   /**

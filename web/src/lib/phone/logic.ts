@@ -51,15 +51,16 @@ export function chipsTucked(o: { y: number; lastY: number; tucked: boolean }): b
   return o.tucked;
 }
 
-export type PhoneTab = { href: string; key: 'home' | 'new' | 'myList' | 'downloads'; icon: string };
+export type PhoneTab = { href: string; key: 'home' | 'new' | 'live' | 'myList' | 'downloads'; icon: string };
 
-/** bottom tab bar entries; Downloads only when the account may download */
-export function phoneTabs(canDownload: boolean): PhoneTab[] {
+/** bottom tab bar entries: Live-TV between Neu and Merkliste only while the feature is on; Downloads only when the account may download */
+export function phoneTabs(canDownload: boolean, live: boolean): PhoneTab[] {
   const tabs: PhoneTab[] = [
     { href: '/', key: 'home', icon: 'home' },
     { href: '/new', key: 'new', icon: 'star' },
-    { href: '/watchlist', key: 'myList', icon: 'bookmark' },
   ];
+  if (live) tabs.push({ href: '/live', key: 'live', icon: 'tv' });
+  tabs.push({ href: '/watchlist', key: 'myList', icon: 'bookmark' });
   if (canDownload) tabs.push({ href: '/downloads', key: 'downloads', icon: 'download' });
   return tabs;
 }

@@ -623,12 +623,20 @@ export async function resolveCastSubtitle(ctx: Ctx, r: CastSubtitleRef, sig: str
  */
 async function pinned(ctx: Ctx, hash: string, client: string, exp: number, slots: 0 | 1 | 2 = 1, twoPins = false): Promise<boolean> {
   const ttl = Math.max(1, Math.ceil((exp - Date.now()) / 1000));
-  const keys = twoPins ? [pinKey(hash), pin2Key(hash)] : [pinKey(hash)];
+  if (await takePin(ctx, twoPins ? [pinKey(hash), pin2Key(hash)] : [pinKey(hash)], client, ttl, slots)) return true;
+  await noteRefused(ctx, hash, client, Math.max(1, Math.min(CAST_IDLE_TTL, ttl))); // lives no longer than the token's idle window
+  return false;
+}
+
+/**
+ * The pin rule of a token-in-the-path credential (cast tokens here, live tokens in livetv/tokens.ts): `keys` = its pin slots in order;
+ * the first `slots` of them may still be taken (SET NX, first writer wins, `ttl` seconds); an address held in any slot passes.
+ */
+export async function takePin(ctx: Pick<Ctx, 'kv'>, keys: string[], client: string, ttl: number, slots: number): Promise<boolean> {
   for (const [i, key] of keys.entries()) {
     if (i < slots && (await ctx.kv.setnx(key, client, ttl))) return true;
     if ((await ctx.kv.get(key)) === client) return true;
   }
-  await noteRefused(ctx, hash, client, Math.max(1, Math.min(CAST_IDLE_TTL, ttl))); // lives no longer than the token's idle window
   return false;
 }
 

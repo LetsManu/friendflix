@@ -17,6 +17,7 @@ const pl: Translation<typeof de> = {
     /** label while no request service is set up */
     newOnly: 'Nowe',
     myList: 'Do obejrzenia',
+    live: 'Telewizja na żywo',
     categories: 'Kategorie',
   },
   mobile: {
@@ -101,6 +102,8 @@ const pl: Translation<typeof de> = {
     newShort: 'Nowe',
     newOnly: 'Nowe',
     downloadsShort: 'Pobrane',
+    live: 'Telewizja na żywo',
+    liveShort: 'Na żywo',
   },
   offline: {
     bar: 'Jesteś offline.',

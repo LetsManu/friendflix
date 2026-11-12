@@ -92,7 +92,19 @@ Pfeiltasten und Auswählen bewegen und öffnen wie in jedem Browser. Diese Taste
 | Zurückspulen | 30 Sekunden zurück. |
 | Weiter (wo die Fernbedienung sie hat) | Nächste Folge, wo es eine gibt. |
 
-Wer Vorspulen gedrückt hält, springt nur einmal, nicht minutenweit. Links am Rand öffnet das Seitenmenü, Rechts schließt es. Alle Bedienungen des TV-Modus (Playerleiste, Szenenvorschau, Panels) stehen in [tv-mode.md](../tv-mode.md). Dein **Handy als Fernbedienung** funktioniert wie an jedem Fernseher: Menü → Fernbedienung am Handy.
+Im Player von [Live-TV](livetv.md) gibt die App außerdem diese Tasten weiter, sofern die Fernbedienung sie hat:
+
+| Taste der Fire-TV-Fernbedienung | Was sie im Live-Player tut |
+|---|---|
+| CH+ · CH− | Nächster · vorheriger Sender. |
+| 0–9 | Sendernummer eingeben. Eine einzelne 0 springt zum letzten Sender zurück. |
+| Letzter Sender | Zurück zum letzten Sender. |
+| Info | Infos zur Sendung. |
+| Guide | Öffnet die *Senderliste*. |
+
+**Die meisten Fire-TV-Fernbedienungen haben keine Kanal-, Ziffern-, Info- oder Guide-Tasten, und sie werden auch nicht gebraucht:** ▲/▼ schalten um, solange die Bedienleiste ausgeblendet ist, OK blendet sie ein, mit gedrückt gehaltenem OK öffnet sich die *Senderliste*, und Zurück schließt erst das offene Panel, dann die Bedienleiste, dann den Player. Alles andere erreichst du mit den Pfeiltasten und OK.
+
+Wer Vorspulen gedrückt hält, springt nur einmal, nicht minutenweit. Wer CH+ oder CH− gedrückt hält, schaltet einen Sender weiter, nicht durch die ganze Liste. Links am Rand öffnet das Seitenmenü, Rechts schließt es. Alle Bedienungen des TV-Modus (Playerleiste, Szenenvorschau, Panels) stehen in [tv-mode.md](../tv-mode.md). Dein **Handy als Fernbedienung** funktioniert wie an jedem Fernseher: Menü → Fernbedienung am Handy.
 
 *(Ob jedes Fire-TV-Fernbedienungsmodell die Medientasten an die App schickt, ließ sich offline nicht prüfen; die Checkliste unten deckt es ab.)*
 
@@ -163,6 +175,7 @@ Geh das auf einem Fire TV Stick 4K oder Lite und auf einem Fire TV Cube durch, b
 2. Erster Start: Adresse eingeben, *… wird geöffnet* sehen, auf dem Kopplungsbildschirm landen.
 3. Mit dem QR-Code und mit dem getippten Code koppeln.
 4. Fernbedienungstasten: Pfeile, Auswählen, Zurück (zuerst das Seitenmenü, ein zweites Zurück auf der Startseite beendet die App), Play/Pause, Vorspulen und Zurückspulen im Player.
+   Mit Live-TV: ▲/▼ schalten um, OK blendet die Bedienleiste ein, gedrückt gehaltenes OK öffnet die *Senderliste*; auf einer Fernbedienung, die sie hat, auch CH+/CH−, Ziffern, Info und Guide.
 5. Einen Titel abspielen, der direkt läuft, und einen, der umgewandelt wird. Springen, Ton und Untertitel wechseln.
 6. Die Testzeile lesen; `screen=` sollte `1920x1080` sein.
 7. **Konto → Server wechseln**, zurück auf denselben Server.

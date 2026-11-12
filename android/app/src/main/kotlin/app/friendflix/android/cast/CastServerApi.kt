@@ -52,6 +52,26 @@ class CastServerApi(private val server: ServerApi, private val profileId: String
         }
     }
 
+    /**
+     * `POST /api/livetv/channels/:id/watch { via: 'chromecast' }` with the shell's session; the answer's relative URL is made absolute
+     * against the server origin ([ServerApi.resolve]). Null on every refusal (503 live_full / provider_limit, 502, 409, 429, 403, 404),
+     * on a malformed answer and on network trouble: the caller only learns "no". Nothing of the answer is logged.
+     */
+    override fun watchLive(channelId: String): LiveCastInfo? {
+        if (!LIVE_CHANNEL.matches(channelId)) return null
+        return try {
+            val (code, j) = server.sendJson("/api/livetv/channels/$channelId/watch", profileId, JSONObject().put("via", VIA)) ?: return null
+            if (code == 200 && j != null) LiveCastInfo.parse(j) { path -> server.resolve(path)?.toString() } else null
+        } catch (_: IOException) {
+            null
+        }
+    }
+
+    /** `DELETE /api/livetv/watch { token }`: the live token is revoked (best effort) */
+    override fun stopLive(token: String) {
+        try { server.sendJson("/api/livetv/watch", profileId, JSONObject().put("token", token), method = "DELETE") } catch (_: IOException) { }
+    }
+
     override fun report(kind: PlaybackReporter.Kind, body: JSONObject) = player.report(kind, body)
 
     override fun next(itemId: String): ItemInfo? = try { player.next(itemId) } catch (_: IOException) { null }
@@ -64,6 +84,10 @@ class CastServerApi(private val server: ServerApi, private val profileId: String
     }
 
     companion object {
+        /** the bridge's id shape (`ID_PATTERN`: letters, digits, `-`; no `_`, backend channel ids are GUIDs), checked again before it becomes part of a path */
+        private val LIVE_CHANNEL = Regex("^[A-Za-z0-9-]{1,64}$")
+        private const val VIA = "chromecast"
+
         /** `GET /api/cast/config` (null: not answered); blocking */
         fun config(server: ServerApi, profileId: String): CastConfig.Config? = try {
             val (code, j) = server.getJson("/api/cast/config", profileId)

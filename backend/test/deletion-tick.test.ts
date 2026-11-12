@@ -175,6 +175,25 @@ describe('deletionTick', () => {
     expect(JSON.stringify(rows)).not.toContain(TOKEN);
   });
 
+  it('the final deletion removes the account\'s Live-TV favourites and recently watched, not the channel or another account\'s rows (FK cascade)', async () => {
+    const d = await doomed();
+    const other = (await env.pool.query<{ id: string }>("select id from profiles where user_id=$1 and is_owner", [adminId])).rows[0]!.id;
+    const kid = (await env.pool.query<{ id: string }>('select id from profiles where user_id=$1 and not is_owner', [d.id])).rows[0]!.id;
+    const src = '22222222-2222-4222-8222-222222222222', ch = '33333333-3333-4333-8333-333333333333';
+    await env.pool.query("insert into livetv_sources(id, kind, name, url_enc) values ($1, 'm3u', 'Nordlicht TV', 'x') on conflict do nothing", [src]);
+    await env.pool.query("insert into livetv_channels(id, source_id, source_key, stream_url_enc, stream_kind, import_name) values ($1,$2,'k1','x','hls','Hafenkanal') on conflict do nothing", [ch, src]);
+    for (const p of [d.id, kid, other]) {
+      await env.pool.query('insert into livetv_favourites(profile_id, channel_id) values ($1,$2)', [p, ch]);
+      await env.pool.query('insert into livetv_recent(profile_id, channel_id) values ($1,$2)', [p, ch]);
+    }
+    await deletionTick(env.ctx);
+    for (const t of ['livetv_favourites', 'livetv_recent']) {
+      expect((await env.pool.query(`select profile_id from ${t} where channel_id=$1`, [ch])).rows, t).toEqual([{ profile_id: other }]);
+    }
+    expect((await env.pool.query('select 1 from livetv_channels where id=$1', [ch])).rowCount).toBe(1);
+    await env.pool.query('delete from livetv_sources where id=$1', [src]);
+  });
+
   it('a failing step 1 is retried next tick; steps run once; started audit and failure notice once', async () => {
     const d = await doomed();
     fail.jfDelete = 500;

@@ -13,12 +13,13 @@
   import { confirm } from '#lib/ui/confirm';
   import DataTable from '#lib/ui/DataTable.svelte';
   import Select from '#lib/ui/Select.svelte';
+  import Toggle from '#lib/ui/Toggle.svelte';
   import StatusPill from '#lib/ui/StatusPill.svelte';
   import type { Column, Query, SortState } from '#lib/ui/table';
   import type { MoreAction } from '#lib/MoreActions.svelte';
 
   /** current: the device this admin is using right now (cannot be revoked here – that would lock them out) */
-  interface D { user_id: string; device_id: string; label: string | null; approved: boolean; last_seen: string | null; name: string; current?: boolean }
+  interface D { user_id: string; device_id: string; label: string | null; approved: boolean; last_seen: string | null; name: string; current?: boolean; /** TV devices only (`tv-…`): the TV app opens Live TV at start (devices.start_live) */ startLive?: boolean }
   const PAGE = 25;
   let rows: D[] | null = null, total = 0, pending = 0, error: string | null = null;
   let q = '', sort: SortState | null = null, page = 0, statusFilter = '';
@@ -106,6 +107,17 @@
   $: actions = (d: D): MoreAction[] => d.current ? [] : d.approved
     ? [{ id: 'revoke', label: $t('adminPeople.devices.revoke'), icon: 'x', danger: true, run: () => revoke(d) }]
     : [{ id: 'approve', label: $t('adminPeople.devices.approve'), icon: 'check', run: () => approve(d) }, { id: 'decline', label: $t('adminPeople.devices.decline'), icon: 'x', danger: true, run: () => decline(d) }];
+
+  /** a paired TV (its device id starts with `tv-`) can open Live TV at start; the backend refuses anything else (400 not_tv) */
+  const isTv = (d: D) => d.device_id.startsWith('tv-');
+  /** "TV startet mit Live-TV": the switch moves at once; a refused change puts it back with the error toast */
+  function setStartLive(d: D, on: boolean) {
+    void runAction({
+      key: `dev-live:${rkey(d)}`,
+      apply: () => { const was = d.startLive === true; d.startLive = on; rows = rows; return () => { d.startLive = was; rows = rows; }; },
+      run: () => api(`/api/admin/devices/${encodeURIComponent(d.user_id)}/${encodeURIComponent(d.device_id)}`, { method: 'PATCH', body: { startLive: on } }),
+    });
+  }
 </script>
 
 {#if pending > 0}
@@ -126,6 +138,9 @@
     {#if col.key === 'user'}{row.name}
     {:else if col.key === 'device'}
       <span class="dev"><Icon name={deviceKind(row.label).icon} size={18} /><span>{dname(row)}</span></span>
+      {#if isTv(row)}
+        <span class="live"><Toggle label={$t('adminPeople.devices.startLive')} checked={row.startLive === true} pending={$busyKeys.has(`dev-live:${rkey(row)}`)} on:change={(e) => setStartLive(row, e.detail)} /></span>
+      {/if}
     {:else if col.key === 'lastSeen'}
       {#if row.last_seen}<time datetime={row.last_seen} title={fmtDateTime(row.last_seen)}>{fmtRelative(row.last_seen)}</time>{:else}<span class="sub">{$t('adminPeople.never')}</span>{/if}
     {:else if col.key === 'status'}
@@ -150,6 +165,7 @@
   .waiting { display: flex; align-items: center; gap: .5rem; margin: 0 0 .9rem; padding: .65rem .9rem; border-radius: 8px; background: var(--wash-warn); color: var(--warn); font-weight: 600; }
   .dev { display: inline-flex; align-items: center; gap: .5rem; min-width: 0; color: var(--fg); }
   .dev :global(svg) { color: var(--mut); flex: none; }
+  .live { display: block; margin-top: .25rem; }
   .sub { color: var(--mut); }
   time { white-space: nowrap; }
   .st { display: inline-flex; align-items: center; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }

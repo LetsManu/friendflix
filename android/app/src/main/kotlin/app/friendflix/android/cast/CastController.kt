@@ -33,6 +33,13 @@ interface CastServer {
     fun next(itemId: String): ItemInfo?
     /** the title's skip / credits segments the server offers */
     fun segments(itemId: String): List<Segment>
+    /**
+     * `POST /api/livetv/channels/:id/watch { via: 'chromecast' }` (the shell's session): the live stream for the TV, null on any refusal
+     * or failure
+     */
+    fun watchLive(channelId: String): LiveCastInfo? = null
+    /** `DELETE /api/livetv/watch { token }`, best effort */
+    fun stopLive(token: String) {}
 }
 
 /** The Cast receiver as the controller drives it (main thread). The real one is [MediaThreeReceiver]. */
@@ -41,6 +48,8 @@ interface CastReceiver {
     val custom: Boolean
     /** loads the token's media as the server answered it (URLs, subtitles, metadata unchanged) */
     fun load(info: CastInfo, subIndex: Int?, autoplay: Boolean)
+    /** loads a live channel ([TokenConverter.liveQueueItem]: stream type LIVE, the channel's name, programme and logo); plays at once */
+    fun loadLive(info: LiveCastInfo) {}
     /** the next title into the receiver's queue after the playing one; false: refused */
     fun queue(info: CastInfo, autoplay: Boolean): Boolean
     fun dequeue(castId: String)
@@ -207,6 +216,19 @@ class CastController(
     }
 
     private var cur: Live? = null
+
+    /** A live channel on the TV ([startLive]): no playback reports, no queue, no renewal (the token's 12-h cap ends it). */
+    private class LiveCast(val info: LiveCastInfo) {
+        var started = false
+        var paused = false
+        var positionMs = 0L
+        /** since when the receiver plays media that is not this channel (another sender took over); null: ours */
+        var foreignAt: Long? = null
+    }
+
+    private var live: LiveCast? = null
+    /** bumped by every [startLive], [start], [stop] and session end: an older watch answer that sees another value is dropped */
+    private var liveSeq = 0
     /** the delayed session end after a title finished on the TV (cancel); [stop] ends the session at once instead */
     private var pendingEnd: (() -> Unit)? = null
     /** bumped by every token switch and session end: an older async step that sees another value gives up */
@@ -220,14 +242,27 @@ class CastController(
     /** the bar's last state while the TV shows the end of a title (until [pendingEnd] runs) */
     private var ended: CastSnapshot? = null
 
-    /** a cast runs (or is being started) */
+    /** a cast of a title runs (or is being started) */
     val casting: Boolean get() = cur != null
+
+    /** a live channel plays on the TV ([startLive]) */
+    val liveCasting: Boolean get() = live != null
+
+    /** anything of ours is on the TV: a title or a live channel */
+    val active: Boolean get() = cur != null || live != null
 
     /** the item the receiver plays */
     val itemId: String? get() = cur?.itemId
 
     /** The cast as the bar shows it (null: none; the ended title for a moment after its end). [device] is the TV's name. */
     fun snapshot(device: String): CastSnapshot? {
+        live?.let { l ->
+            return CastSnapshot(
+                kind = CastKind.CHROMECAST, device = device, itemId = l.info.channelId, title = l.info.name, subtitle = l.info.now,
+                posterId = l.info.channelId, isEpisode = false, positionMs = l.positionMs, durationMs = 0, paused = l.paused,
+                state = if (l.started) CastPhase.PLAYING else CastPhase.CONNECTING, next = null, live = true,
+            )
+        }
         if (pendingEnd != null) ended?.let { return it.copy(device = device) }
         val s = cur ?: return null
         return view(s, device, if (s.ci != null && s.started) CastPhase.PLAYING else CastPhase.CONNECTING)
@@ -266,6 +301,8 @@ class CastController(
      */
     fun start(start: CastStart): Boolean {
         if (start.offline || cur != null) return false
+        liveSeq++ // a live channel asked for meanwhile is not loaded over this title
+        live?.let { endLive(it, endSession = false) } // a title replaces the live channel on the still-connected TV
         pendingEnd?.invoke(); pendingEnd = null; ended = null // a new cast on the still-connected TV
         val s = Live(start)
         cur = s
@@ -360,7 +397,7 @@ class CastController(
      * runs for the latter (the caller may try again later).
      */
     fun resume(receiverCastId: String?, contentUrl: String?, onUnknown: () -> Unit = {}) {
-        if (cur != null || resuming) return
+        if (cur != null || live != null || resuming) return
         val url = contentUrl?.takeIf { it.isNotEmpty() } ?: return
         val id = receiverCastId?.takeIf(CastIds::valid) ?: CastIds.ofContentUrl(url) ?: return
         resuming = true
@@ -382,7 +419,7 @@ class CastController(
                 resuming = false
                 val asked = stopAsked
                 stopAsked = false
-                if (cur != null || my != seq) {
+                if (cur != null || live != null || my != seq) {
                     // a hand-over or another cast came first; a stop in between still ends the TV's session of the cast found
                     if (asked && cur == null) receiver.end()
                     return@execute
@@ -438,6 +475,7 @@ class CastController(
 
     /** the receiver refused the loaded media (load error) */
     fun onLoadFailed() {
+        live?.let { endLive(it, endSession = true); return }
         val s = cur ?: return
         val ci = s.ci ?: return
         stopReport(s)
@@ -451,6 +489,7 @@ class CastController(
 
     /** A receiver status update (engine.ts `tick`). */
     fun onReceiver(st: ReceiverState) {
+        live?.let { liveState(it, st); return }
         val s = cur ?: return
         val ci = s.ci ?: return
         if (s.busy) return
@@ -491,6 +530,11 @@ class CastController(
 
     /** About once a second: the [PROGRESS_MS] progress report and the token renewal (engine.ts `arm`). */
     fun tick() {
+        live?.let { l ->
+            // another sender's media for ADVANCE_WAIT_MS: the channel is let go (its token revoked, the receiver left alone)
+            l.foreignAt?.let { if (now() - it >= ADVANCE_WAIT_MS) endLive(l, endSession = false) }
+            return
+        }
         val s = cur ?: return
         val ci = s.ci ?: return
         if (s.busy) return
@@ -504,6 +548,11 @@ class CastController(
 
     /** The receiver's media ended (engine.ts `onEvent` media-end); [castId] = the token that was loaded (null = unknown). */
     fun onMediaEnd(reason: IdleReason, castId: String? = null) {
+        live?.let { l ->
+            // a live stream has no end: the channel stopped or failed on the TV, the session ends
+            if (castId == null || castId == l.info.handle) endLive(l, endSession = true)
+            return
+        }
         val s = cur ?: return
         val ci = s.ci ?: return
         if (s.busy) return
@@ -537,6 +586,8 @@ class CastController(
 
     /** The Cast session ended (stopped from the Cast dialog, another sender, connection lost): back to the device at its position. */
     fun onSessionEnded() {
+        liveSeq++
+        live?.let { endLive(it, endSession = false); return }
         val s = cur ?: return
         val ci = s.ci
         dequeue(s)
@@ -567,6 +618,8 @@ class CastController(
      * cast too): queued token revoked, stop reported, token revoked, receiver stopped.
      */
     fun stop() {
+        liveSeq++ // a live watch on its way is not loaded after the stop (its token is revoked when it arrives)
+        live?.let { endLive(it, endSession = true); return }
         if (cur == null) {
             seq++ // a resume lookup in flight must not adopt a cast after the stop
             if (resuming) stopAsked = true
@@ -589,7 +642,100 @@ class CastController(
         receiver.end()
     }
 
+    /**
+     * A live channel on the connected TV (the shell's bridge `castLive`, spec §13): `POST /api/livetv/channels/:id/watch { via:
+     * 'chromecast' }`, then the stream is loaded as LIVE with the channel's metadata ([CastReceiver.loadLive]). A title cast that runs
+     * ends first (its stop report and revoke leave before the watch request, same ordered thread); the TV session stays. A live channel
+     * that plays stays until the new one is loaded (a refused switch leaves it playing), then its token is revoked. [done] (main
+     * thread, once): true = loaded on the TV; false = refused (any watch refusal), failed, overtaken by a stop or another cast, or no
+     * answer within [LIVE_WATCH_WAIT_MS] (a later answer's token is then revoked). A refusal with nothing else on the TV ends its session.
+     */
+    fun startLive(channelId: String, done: (Boolean) -> Unit) {
+        val my = ++liveSeq
+        cur?.let(::endTitle)
+        var answered = false
+        var cancelWait: () -> Unit = {}
+        val answer: (Boolean) -> Unit = { ok -> if (!answered) { answered = true; cancelWait(); done(ok) } }
+        cancelWait = schedule(LIVE_WATCH_WAIT_MS) {
+            if (!answered && my == liveSeq) { liveSeq++; endIfIdle() }
+            answer(false)
+        }
+        io.execute {
+            val info = server.watchLive(channelId)
+            main.execute { liveAnswered(my, info, answer) }
+        }
+    }
+
+    private fun liveAnswered(my: Int, info: LiveCastInfo?, done: (Boolean) -> Unit) {
+        if (my != liveSeq || cur != null) {
+            info?.let(::stopLive) // overtaken: the token minted for nothing is revoked
+            done(false)
+            return
+        }
+        if (info == null) { endIfIdle(); done(false); return }
+        // the TV's delayed session end after a finished title is cancelled only now: a refused watch still lets it run
+        pendingEnd?.invoke(); pendingEnd = null; ended = null
+        val old = live
+        live = LiveCast(info)
+        receiver.loadLive(info)
+        old?.let { stopLive(it.info) } // the channel it replaced (the server may have revoked it with this mint already)
+        liveUi()
+        changed()
+        done(true)
+    }
+
     // ---- internals ----
+
+    /** a refused live channel with nothing of ours on the TV (and no delayed end pending): the TV session ends, not left idle */
+    private fun endIfIdle() {
+        if (cur == null && live == null && pendingEnd == null) receiver.end()
+    }
+
+    /** the live channel ends: its token revoked; [endSession]: the receiver's session too (stop, the stream failed on the TV) */
+    private fun endLive(l: LiveCast, endSession: Boolean) {
+        if (live !== l) return
+        live = null
+        liveSeq++
+        stopLive(l.info)
+        if (endSession) receiver.end()
+        changed()
+    }
+
+    private fun stopLive(info: LiveCastInfo) { io.execute { server.stopLive(info.token) } }
+
+    /** a receiver status update while a live channel plays: the bar's play / pause; another sender's media is noted for [tick] */
+    private fun liveState(l: LiveCast, st: ReceiverState) {
+        if (!st.loaded) return
+        if (st.castId != l.info.handle) {
+            l.foreignAt = l.foreignAt ?: now()
+            changed()
+            return
+        }
+        l.foreignAt = null
+        if (!st.idle) {
+            if (st.playing) l.started = true
+            l.paused = st.paused
+            l.positionMs = st.positionMs
+        }
+        changed()
+    }
+
+    /** the title cast ends without ending the TV session (a live channel replaces it): stop reported, tokens revoked */
+    private fun endTitle(s: Live) {
+        dequeue(s)
+        stopReport(s)
+        s.ci?.let(::revoke)
+        s.ci = null
+        close(s)
+        host.onReturn(s.itemId, s.returnAt, play = false, ended = false) // an attached player screen is no remote of the TV any more
+    }
+
+    /** own receiver: its TV texts (the live card is the item's `customData.ui.live`) */
+    private fun liveUi() {
+        if (!receiver.custom || live == null) return
+        receiver.send(JSONObject().put("t", "ui").put("strings", host.receiverStrings()).put("sub", SubtitleStyle().toJson())
+            .put("countdown", COUNTDOWN_SECONDS))
+    }
 
     /**
      * Another sender took the TV over (engine.ts `letGo`): the owed stop is reported, the live and the queued token revoked, the
@@ -812,6 +958,11 @@ class CastController(
         const val UNPINNED_RETRY_MS = 60_000L
         /** engine.ts ADVANCE_WAIT_MS */
         const val ADVANCE_WAIT_MS = 20_000L
+        /**
+         * the longest a live channel waits for its watch answer (the server waits up to 15 s for the first segment, plus the CSRF
+         * request and the network); then [startLive] answers false
+         */
+        const val LIVE_WATCH_WAIT_MS = 25_000L
         /** engine.ts ENDED_HIDE_MS */
         const val ENDED_HIDE_MS = 5_000L
         /** engine.ts: idle within the last 20 s counts as the end */

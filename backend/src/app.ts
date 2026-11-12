@@ -107,8 +107,23 @@ const MUTATING: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']
 /** requests slower than this are logged (info) with their jf/db/kv breakdown */
 const SLOW_REQUEST_MS = 500;
 
+/**
+ * The request log's `req` (Fastify's default fields) with the signed logo `sig` redacted: it is the credential of the cast logo URL
+ * (`/api/livetv/logos/<hash>?exp=..&sig=..`) and must not land in the logs.
+ */
+export function reqSerializer(req: { method?: string; url?: string; host?: string; ip?: string; socket?: { remotePort?: number } }) {
+  return {
+    method: req.method,
+    url: req.url?.replace(/([?&]sig=)[^&#]*/g, '$1[redacted]'),
+    host: req.host,
+    remoteAddress: req.ip,
+    remotePort: req.socket?.remotePort,
+  };
+}
+
 export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInstance> {
-  const app = Fastify({ logger: extra.logger ?? process.env.NODE_ENV !== 'test', trustProxy: [...TRUSTED_PROXY_RANGES], bodyLimit: 256 * 1024 });
+  const logger = extra.logger ?? (process.env.NODE_ENV !== 'test' ? {} : false);
+  const app = Fastify({ logger: logger && { ...logger, serializers: { req: reqSerializer } }, trustProxy: [...TRUSTED_PROXY_RANGES], bodyLimit: 256 * 1024 });
   // Server-Timing: Postgres and Redis calls are booked on the current request (Jellyfin: JellyfinClient). Same objects underneath.
   ctx.db = timedDb(ctx.db);
   ctx.kv = timedKv(ctx.kv);

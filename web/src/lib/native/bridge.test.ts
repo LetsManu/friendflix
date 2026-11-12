@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { native, nativeCast, nativeDownloads, refreshNativeCast, refreshNativeDownloads } from './bridge';
+import { CAST_LIVE_TIMEOUT_MS, REQUEST_TIMEOUT_MS, native, nativeCast, nativeDownloads, refreshNativeCast, refreshNativeDownloads } from './bridge';
 
 type Listener = (e: { data: string }) => void;
 /** a fake of what the app injects: postMessage(string) in, 'message' events (data = JSON string) out */
@@ -256,6 +256,39 @@ describe('the app cast session (API 2)', () => {
     push({ id, ok: true, result: SNAP });
     await p;
     expect(get(nativeCast)).toBeNull();
+  });
+  it('castLive sends the method and answers the boolean', async () => {
+    const { sent } = installFake((req) => ({ ok: true, result: req.args.channelId === 'nordlicht-tv' }));
+    await expect(native.castLive('nordlicht-tv')).resolves.toBe(true);
+    await expect(native.castLive('hafenkanal')).resolves.toBe(false); // the server refused (live_full, max_streams, …)
+    expect(sent.map((r) => [r.method, r.args])).toEqual([['castLive', { channelId: 'nordlicht-tv' }], ['castLive', { channelId: 'hafenkanal' }]]);
+    installFake(() => ({ ok: false, error: 'bad_args' }));
+    await expect(native.castLive('nordlicht-tv')).resolves.toBe(false);
+    installFake(() => ({ ok: true, result: 'yes' }));
+    await expect(native.castLive('nordlicht-tv')).resolves.toBe(false);
+  });
+  it('castLive waits for the TV pick and the first segment, then falls back to false', async () => {
+    vi.useFakeTimers();
+    const { sent, push } = installFake(() => undefined);
+    let r: boolean | undefined;
+    const p = native.castLive('nordlicht-tv').then((v) => { r = v; });
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS + 1000);
+    expect(r).toBeUndefined(); // longer than the ordinary request timeout: the device chooser and the channel start take time
+    push({ id: sent[0].id, ok: true, result: true });
+    await p;
+    expect(r).toBe(true);
+    const late = native.castLive('hafenkanal');
+    await vi.advanceTimersByTimeAsync(CAST_LIVE_TIMEOUT_MS);
+    await expect(late).resolves.toBe(false);
+  });
+  it('castLive is false outside the app', async () => {
+    await expect(native.castLive('nordlicht-tv')).resolves.toBe(false);
+  });
+  it('a live snapshot carries the live flag', async () => {
+    installFake(() => ({ ok: true, result: { ...SNAP, itemId: 'nordlicht-tv', posterId: 'nordlicht-tv', title: 'Nordlicht TV', live: true } }));
+    await expect(native.castState()).resolves.toMatchObject({ itemId: 'nordlicht-tv', title: 'Nordlicht TV', live: true });
+    installFake(() => ({ ok: true, result: SNAP }));
+    expect((await native.castState())!).not.toHaveProperty('live');
   });
   it('refreshNativeCast does nothing outside the app', async () => {
     ua('Mozilla/5.0 Chrome/120');

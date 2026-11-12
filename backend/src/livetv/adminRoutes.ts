@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { roleExists } from '../rolecat.js';
-import { requireAdmin } from '../session.js';
+import { loadSession, requireAdmin } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
 import { dropLivetvProof } from './client.js';
 import { detectLivetv, enableBenchmark, livetvInstalled, livetvSystem } from './detect.js';
@@ -17,7 +17,10 @@ import {
   orderBody as channelOrderBody, orderChannels, patchChannel, setLogo, testChannel,
 } from './adminChannels.js';
 import { liveStatus, readHwAccel, stopStream } from './status.js';
-import { isOwnFeeds } from './channels.js';
+import { CHANNEL_SELECT, isOwnFeeds, toEffective, type EffectiveRow } from './channels.js';
+import { isHomeRequest } from '../netaddr.js';
+import { clearJoinMark, startOrJoin } from './streams.js';
+import { adminStopKey, liveSidHash, mintLiveToken, revokeLiveToken } from './tokens.js';
 import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource } from './refresh.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
@@ -45,6 +48,7 @@ function justFinished(job: { action: string; state: string; finishedAt: string |
 }
 
 const disableBody = z.object({ removeImage: z.boolean(), removeCache: z.boolean() });
+const startLiveBody = z.object({ startLive: z.boolean() }).strict();
 
 // ---- channel groups (spec §9.3) ----
 const id = z.guid();
@@ -395,6 +399,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       return { ok: true, ...(await deleteFeed(ctx, req.user!.id, cid, req.log)) };
     } catch (e) { return feedRefused(e, reply); }
   });
+
   // ---- Kanäle (spec §9.2): stream URLs never leave the backend (F13); answers carry AdminChannel only, refusals fixed codes ----
 
   const channelRefused = (e: unknown, reply: Reply) => {
@@ -474,12 +479,52 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // admin only; checks the channel and its source, never the viewing rights or the group's release (F10)
+  /**
+   * The preview of a stream test (Task 42, F10): the channel can start, so it starts (or joins) like a watch and the admin gets a test
+   * token of their own device. Only the channel and its source were checked (testChannel); the viewing rights and the group's release
+   * are not asked, and the test token lets the live authz skip them too. A refusal (budget, provider limit, unreachable, no device) is
+   * no error here: the answer then carries the facts only.
+   */
+  async function testPreview(req: FastifyRequest, id: string): Promise<{ url: string; token: string } | null> {
+    const deviceId = req.session!.deviceId;
+    if (!deviceId || !req.profile) return null;
+    try {
+      const row = (await ctx.db.query<EffectiveRow>(`${CHANNEL_SELECT} where c.id = $1`, [id])).rows[0];
+      if (!row) return null;
+      const ch = toEffective(row); // after the test: it carries the fresh probe, so the expected mode is the tested one
+      const who = { userId: req.user!.id, deviceId, role: req.user!.role };
+      await ctx.kv.del(adminStopKey(ch.id)); // *Neu starten* (stop, then this test start): the admin's own start lifts the stop marker
+      const r = await startOrJoin(ctx, who, ch, { id: req.profile.id, kids: Boolean(req.profile.kids) });
+      if ('status' in r) return null;
+      const minted = await mintLiveToken(ctx, {
+        userId: who.userId, profileId: req.profile.id, deviceId, sidHash: liveSidHash(req.sid!), channelId: ch.id, channelName: ch.name,
+        kind: 'live', via: 'local', remote: !isHomeRequest(req, ctx.cfg.HOME_NETWORKS), test: true,
+      });
+      await clearJoinMark(ctx, ch.id, { userId: who.userId, deviceId });
+      // the watch route's check: a profile switch that raced the mint revoked the device's tokens before this one existed (no rights check, F10)
+      const after = await loadSession(ctx, req.sid);
+      if (!after || (after.profileId && after.profileId !== req.profile.id)) {
+        await revokeLiveToken(ctx, minted.hash);
+        return null;
+      }
+      return { url: `/media/l/${minted.token}/index.m3u8`, token: minted.token };
+    } catch (e) {
+      req.log.warn({ err: e instanceof Error ? e.name : 'error' }, 'livetv test preview not started'); // never the token, never a URL
+      return null;
+    }
+  }
+
   app.post('/api/admin/livetv/channels/:id/test', admin, async (req, reply) => {
     const cid = paramId(req);
     if (!cid) return reply.code(404).send({ error: 'not_found' });
     reply.header('cache-control', 'no-store');
     try {
-      return await testLocked(req.user!.id, reply, (signal) => testChannel(ctx, req.user!.id, cid, signal));
+      return await testLocked(req.user!.id, reply, async (signal) => {
+        const facts = await testChannel(ctx, req.user!.id, cid, signal);
+        if (!facts.ok || signal.aborted) return facts;
+        const preview = await testPreview(req, cid);
+        return preview ? { ...facts, preview } : facts;
+      });
     } catch (e) { return channelRefused(e, reply); }
   });
 
@@ -520,7 +565,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     return liveStatus(ctx, jellyfinHwAccel);
   });
 
-  // *Stoppen* (and *Neu starten*: the next watcher starts the channel again); audited with the channel id only
+  // *Stoppen* (the web then stops the viewers and refuses a restart for 60 s; *Neu starten* is this stop plus the channel test start); audited with the channel id only
   app.post('/api/admin/livetv/streams/:channelId/stop', admin, async (req, reply) => {
     const cid = id.safeParse((req.params as { channelId?: string }).channelId).data;
     if (!cid) return reply.code(404).send({ error: 'not_found' });
@@ -531,6 +576,26 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       throw e;
     }
     await audit(ctx, req.user!.id, 'livetv.stream.stop', cid, { fields: [] });
+    return { ok: true };
+  });
+
+  // ---- TV startet mit Live-TV (spec §11.3, ruling 14): the switch of a paired TV in Admin -> Geräte ----
+
+  /**
+   * `PATCH /api/admin/devices/:userId/:deviceId { startLive }`: TVs only (device ids of paired TVs start with `tv-`), else 400 `not_tv`;
+   * a device that does not exist is a 404. Audited as `device.start_live` with the person as target and the new value, never the device id.
+   */
+  app.patch('/api/admin/devices/:userId/:deviceId', admin, async (req, reply) => {
+    const p = req.params as { userId?: string; deviceId?: string };
+    const b = parse(startLiveBody, req.body, reply);
+    if (!b) return;
+    const userId = id.safeParse(p.userId).data;
+    const deviceId = z.string().min(3).max(80).safeParse(p.deviceId).data;
+    if (!userId || !deviceId) return reply.code(404).send({ error: 'not_found' });
+    if (!deviceId.startsWith('tv-')) return reply.code(400).send({ error: 'not_tv' });
+    const r = await ctx.db.query('update devices set start_live = $3 where user_id = $1 and device_id = $2', [userId, deviceId, b.startLive]);
+    if (!r.rowCount) return reply.code(404).send({ error: 'not_found' });
+    await audit(ctx, req.user!.id, 'device.start_live', userId, { startLive: b.startLive });
     return { ok: true };
   });
 }

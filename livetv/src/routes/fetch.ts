@@ -6,6 +6,7 @@ import { M3uError, MAX_ENTRIES, USER_AGENT_RE, parseM3u, splitLines, type M3uRes
 import { probe, type StreamInput } from '../probe.js';
 import type { Run } from '../run.js';
 import { MAX_BODY_M3U, type Answer, type Route } from '../server.js';
+import type { IngestReader } from '../srtingest.js';
 import { XmltvError, parseXmltv, type XmlItem, type XmltvErrorCode } from '../xmltv.js';
 
 /**
@@ -14,7 +15,7 @@ import { XmltvError, parseXmltv, type XmlItem, type XmltvErrorCode } from '../xm
  * echoing input); provider and fetch failures answer `422 { error: code }` with a fixed code; XMLTV streams NDJSON and reports any
  * failure as its last line `{ "t": "error", "code" }` (always after a 200 head, also when nothing was sent yet); only a complete
  * stream ends with `{ "t": "end", programmes, channels }`, so a reader treats a stream without it as failed. Nothing here
- * logs; nothing answers a URL, a host or a parser message.
+ * logs; nothing answers a URL, a host or a parser message. A `{ push }` probe reads the ingest hub (Task 29).
  */
 export const M3U_MAX_BYTES = 50 * 1024 * 1024;
 export const M3U_TIMEOUT_MS = 60_000;
@@ -73,7 +74,8 @@ function time(b: Obj, field: string): number {
   return v;
 }
 
-function streamInput(v: unknown): StreamInput {
+/** a pulled or pushed input (`/v1/probe`, `/v1/streams`); throws `Invalid('input')` */
+export function streamInput(v: unknown): StreamInput {
   const i = obj(v, 'input');
   if ('push' in i) {
     if (typeof i.push !== 'string' || !/^[\w-]{1,100}$/.test(i.push)) throw new Invalid('input');
@@ -97,7 +99,7 @@ function guarded<T>(fn: (json: unknown) => Promise<T>): (json: unknown) => Promi
   };
 }
 
-export function fetchRoutes(deps: { guard: GuardDeps; run: Run }): Route[] {
+export function fetchRoutes(deps: { guard: GuardDeps; run: Run; ingest?: IngestReader }): Route[] {
   const m3u = guarded(async (json) => {
     const b = obj(json);
     const target = url(b);

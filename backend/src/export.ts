@@ -126,6 +126,24 @@ export async function* exportUserData(ctx: Ctx, user: UserRow): AsyncGenerator<s
       .map((r) => ({ profileId: r.profile_id, itemId: r.item_id, hiddenAt: r.hidden_at })),
   });
 
+  // Live TV (per profile): favourites in the person's order, Zuletzt gesehen newest first; channel id and current name only, never a
+  // stream address, provider or credential (those columns are not selected)
+  const favs = await q<{ profile_id: string; channel_id: string; name: string }>(
+    `select f.profile_id, f.channel_id, coalesce(c.name_override, c.import_name) as name
+       from livetv_favourites f join livetv_channels c on c.id=f.channel_id join profiles p on p.id=f.profile_id
+      where p.user_id=$1 order by f.position, f.channel_id`);
+  const recents = await q<{ profile_id: string; channel_id: string; name: string; at: Date }>(
+    `select r.profile_id, r.channel_id, coalesce(c.name_override, c.import_name) as name, r.at
+       from livetv_recent r join livetv_channels c on c.id=r.channel_id join profiles p on p.id=r.profile_id
+      where p.user_id=$1 order by r.at desc, r.channel_id`);
+  yield field('livetv', {
+    profiles: profiles.map((p) => ({
+      profileId: p.id,
+      favourites: favs.filter((r) => r.profile_id === p.id).map((r) => ({ channelId: r.channel_id, name: r.name })),
+      recent: recents.filter((r) => r.profile_id === p.id).map((r) => ({ channelId: r.channel_id, name: r.name, at: r.at })),
+    })),
+  });
+
   yield field('ratings', {
     stars: (await q<{ item_id: string; item_name: string; stars: number; review: string | null; created_at: Date }>(
       'select item_id, item_name, stars, review, created_at from ratings where user_id=$1 order by created_at'))

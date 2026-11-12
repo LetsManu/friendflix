@@ -11,7 +11,7 @@ import {
   submitValue, takePending,
 } from './form';
 
-/** every visible setting of the registry (spec Part A: 48, plus the nine of phase 3, plus UPDATE_CHANNEL, plus the four recommendation settings, plus the three updater settings, plus the server upload, plus HEVC_STREAMS and SURROUND_AUDIO, plus CONVERSION_SLOTS and CONVERSION_PRIORITY (also edited on Betrieb → Wiedergabe-Check), plus CAST_AIRPLAY_CONTINUOUS, plus LIVETV_OFFER_HIDDEN, plus LIVETV_ENCODER and LIVETV_SRT_HOST (group livetv, listed while Live TV is installed)) */
+/** every visible setting of the registry (spec Part A: 48, plus the nine of phase 3, plus UPDATE_CHANNEL, plus the four recommendation settings, plus the three updater settings, plus the server upload, plus HEVC_STREAMS and SURROUND_AUDIO, plus CONVERSION_SLOTS and CONVERSION_PRIORITY (also edited on Betrieb → Wiedergabe-Check), plus CAST_AIRPLAY_CONTINUOUS, plus LIVETV_OFFER_HIDDEN, plus LIVETV_ENCODER and LIVETV_SRT_HOST (group livetv, listed while Live TV is installed), plus LIVETV_DVR_MINUTES and LIVETV_MAX_BITRATE (Live TV Task 31)) */
 const KEYS = ['PUBLIC_URL', 'WEBHOOK_SECRET', 'API_COMPRESSION', 'OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET', 'ADMIN_GROUP', 'AUTHENTIK_URL',
   'AUTHENTIK_API_TOKEN', 'AUTHENTIK_ENROLL_FLOW', 'AUTHENTIK_RECOVERY_FLOW', 'AUTHENTIK_TOTP_SETUP_FLOW', 'JELLYFIN_URL', 'JELLYFIN_ADMIN_API_KEY', 'REQUESTS_URL',
   'REQUESTS_API_KEY', 'NTFY_URL', 'NTFY_BASE_URL', 'DISCORD_WEBHOOK_URL', 'VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'VAPID_SUBJECT', 'TMDB_API_KEY', 'OMDB_API_KEY',
@@ -22,7 +22,7 @@ const KEYS = ['PUBLIC_URL', 'WEBHOOK_SECRET', 'API_COMPRESSION', 'OIDC_ISSUER', 
   'HEALTH_DISK_CRIT_PCT', 'HEALTH_DB_WARN_GB', 'SESSION_TTL_SECONDS', 'SESSION_IDLE_SECONDS',
   'LOGIN_UI', 'AUTHENTIK_LOGIN_FLOW', 'AUTHENTIK_INVALIDATION_FLOW', 'PASSKEYS_IN_APP', 'LOGIN_COVER_WALL', 'LIVETV_OFFER_HIDDEN',
   'AUTHENTIK_STATIC_SETUP_FLOW', 'AUTHENTIK_WEBAUTHN_SETUP_FLOW', 'AUTHENTIK_PASSWORD_CHANGE_FLOW', 'AUTHENTIK_EMAIL_CHANGE_FLOW',
-  'RECO_ENGINE', 'RECO_EXPLORE', 'RECO_HALF_LIFE_DAYS', 'POSTPLAY_ENABLED', 'LIVETV_ENCODER', 'LIVETV_SRT_HOST'];
+  'RECO_ENGINE', 'RECO_EXPLORE', 'RECO_HALF_LIFE_DAYS', 'POSTPLAY_ENABLED', 'LIVETV_ENCODER', 'LIVETV_SRT_HOST', 'LIVETV_DVR_MINUTES', 'LIVETV_MAX_BITRATE'];
 
 const view = (over: Partial<SettingView> & Pick<SettingView, 'key' | 'kind'>): SettingView => ({
   source: 'db', value: null, set: false, apply: 'live', restartPending: false, invalid: false, envNames: [over.key, `${over.key}_FILE`], updatedAt: null, ...over,
@@ -39,7 +39,7 @@ describe('experimental settings', () => {
 
 describe('settings texts', () => {
   it('every visible setting has a label and a help text; the request service is never named after a product', async () => {
-    expect(KEYS).toHaveLength(74);
+    expect(KEYS).toHaveLength(76);
     for (const k of KEYS) {
       expect(hasKey(`settings.keys.${k}.label`), k).toBe(true);
       expect(hasKey(`settings.keys.${k}.help`), k).toBe(true);
@@ -115,6 +115,8 @@ describe('settings texts', () => {
     expect([titles.get('de'), titles.get('en')]).toEqual(['Live-TV', 'Live TV']);
     await setLocale('de');
     expect([keyLabel('LIVETV_ENCODER'), keyLabel('LIVETV_SRT_HOST')]).toEqual(['Encoder für Live-TV', 'Adresse für gesendete Streams']);
+    // spec §20 adminLive.dvrHint is the help of LIVETV_DVR_MINUTES
+    expect(keyHelp('LIVETV_DVR_MINUTES')).toBe('0 bis 120 Minuten. 120 Minuten eines HD-Senders brauchen ca. 5 GB Zwischenspeicher; LIVETV_CACHE_MAX_GB (Standard 6) begrenzt alle Sender zusammen.');
     expect(errorText('invalid_host', 'LIVETV_SRT_HOST')).toBe('Nur ein Hostname oder eine IP-Adresse, ohne Schema und Port.');
     await setLocale('en');
     expect([keyLabel('LIVETV_ENCODER'), keyLabel('LIVETV_SRT_HOST')]).toEqual(['Live TV encoder', 'Address for pushed streams']);

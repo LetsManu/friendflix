@@ -2,14 +2,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.friendflix.android.cast
 
+import app.friendflix.android.downloads.FakeCookies
+import app.friendflix.android.downloads.PROFILE
+import app.friendflix.android.downloads.ServerApi
 import app.friendflix.android.player.FlowPrefs
 import app.friendflix.android.player.ItemInfo
 import app.friendflix.android.player.PlaybackReporter
+import app.friendflix.android.player.PlayerApi
 import app.friendflix.android.player.Position
 import app.friendflix.android.player.ReportSession
 import app.friendflix.android.player.Segment
 import app.friendflix.android.player.StillWatching
 import com.google.android.gms.cast.CastMediaControlIntent
+import com.google.android.gms.cast.MediaInfo
+import com.google.android.gms.cast.MediaMetadata
+import mockwebserver3.Dispatcher
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
+import mockwebserver3.RecordedRequest
+import okhttp3.OkHttpClient
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,7 +30,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.io.IOException
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
+import java.util.concurrent.atomic.AtomicReference
+
+/** a signed logo URL as the watch route answers it for `via 'chromecast'` (Task 31, F11) */
+private const val LIVE_LOGO = "https://friend.example.com/api/livetv/logos/ab12cd?exp=1700000000000&sig=ef34"
 
 /**
  * The cast controller against the web's cast engine (web/src/lib/cast/engine.ts, lib/cast.ts, Player.svelte startCast). The request
@@ -55,8 +71,15 @@ class CastControllerTest {
         override fun report(kind: PlaybackReporter.Kind, body: JSONObject) { calls += "POST /api/playback/${kind.path}" to body }
         override fun next(itemId: String): ItemInfo? { calls += "GET /api/items/$itemId/next" to null; return nextItem }
         override fun segments(itemId: String): List<Segment> { segmentCalls++; return emptyList() }
+        override fun watchLive(channelId: String): LiveCastInfo? {
+            calls += "POST /api/livetv/channels/$channelId/watch" to null
+            return if (refuseLive) null else liveInfo(channelId)
+        }
+        override fun stopLive(token: String) { calls += "DELETE /api/livetv/watch" to JSONObject().put("token", token) }
     }
     private var segmentCalls = 0
+    /** the watch route refuses (live_full, max_streams, …: the app only learns "no") */
+    private var refuseLive = false
 
     private class FakeReceiver(override val custom: Boolean) : CastReceiver {
         val loads = mutableListOf<Triple<String, Int?, Boolean>>()
@@ -65,6 +88,8 @@ class CastControllerTest {
         val messages = mutableListOf<JSONObject>()
         var ended = 0
         override fun load(info: CastInfo, subIndex: Int?, autoplay: Boolean) { loads += Triple(info.castId, subIndex, autoplay) }
+        val liveLoads = mutableListOf<LiveCastInfo>()
+        override fun loadLive(info: LiveCastInfo) { liveLoads += info }
         override fun queue(info: CastInfo, autoplay: Boolean): Boolean { queued += info.castId to autoplay; return true }
         override fun dequeue(castId: String) { removed += castId }
         override fun send(msg: JSONObject) { messages += msg }
@@ -130,10 +155,19 @@ class CastControllerTest {
 
     private fun info(castId: String, runtimeMin: Long = 30) = CastInfo(
         castId = castId, expiresAt = clock + 60 * 60_000, playSessionId = "ps-$castId", mediaSourceId = "ms-$castId",
-        runtimeTicks = runtimeMin * 60 * 10_000_000, startTime = 60, contentUrl = "https://ff.example/media/c/$castId/master.m3u8",
+        runtimeTicks = runtimeMin * 60 * 10_000_000, startTime = 60, contentUrl = "https://friend.example.com/media/c/$castId/master.m3u8",
         contentType = "application/x-mpegURL", hlsSegmentFormat = "ts", title = "Film", seriesName = null, imageUrl = null,
         subtitles = emptyList(), report = if (castId.isNotEmpty()) "rt-$castId" else null,
     )
+
+    /** the watch answer as [CastServerApi.watchLive] hands it on: the URL already absolute against the server origin */
+    private fun liveInfo(channelId: String, logo: String? = LIVE_LOGO, now: String? = "Die Leuchtturmwärter") = LiveCastInfo(
+        channelId = channelId, token = tokenOf(channelId), contentUrl = "https://friend.example.com/media/l/${tokenOf(channelId)}/index.m3u8",
+        expiresAt = clock + 12 * 60 * 60_000, name = if (channelId == "hafenkanal") "Hafenkanal" else "Nordlicht TV", number = 1, logo = logo,
+        now = now,
+    )
+
+    private fun tokenOf(channelId: String) = (channelId.replace("-", "_") + "A".repeat(43)).take(43)
 
     private fun film(offline: Boolean = false) = CastStart(
         itemId = "film", positionMs = 60_000, audioIndex = 1, subIndex = null, maxBitrate = 8_000_000, prefsBitrate = 8_000_000,
@@ -148,6 +182,234 @@ class CastControllerTest {
         ReceiverState(castId = castId, loaded = true, playing = !paused, paused = paused, positionMs = positionMs, durationMs = durationMs, idle = false)
 
     private fun paths() = calls.map { it.first }
+
+    // ---- live channels (bridge castLive, spec §13) ----
+
+    @Test fun theControllerLoadsALiveStreamWithTheChannelMetadata() {
+        val (r, c) = controller(custom = true)
+        var answer: Boolean? = null
+        c.startLive("nordlicht-tv") { answer = it }
+        assertEquals(true, answer)
+        assertEquals(listOf("POST /api/livetv/channels/nordlicht-tv/watch"), paths())
+        val info = r.liveLoads.single()
+        assertEquals("https://friend.example.com/media/l/${tokenOf("nordlicht-tv")}/index.m3u8", info.contentUrl)
+        assertTrue(c.liveCasting)
+        assertFalse("a live channel is no title cast (no player screen becomes its remote)", c.casting)
+        // the bar: the channel's name, the programme now, no duration, connecting until the TV plays
+        val snap = c.snapshot("Wohnzimmer")!!
+        assertEquals("nordlicht-tv", snap.itemId)
+        assertEquals("Nordlicht TV", snap.title)
+        assertEquals("Die Leuchtturmwärter", snap.subtitle)
+        assertTrue(snap.live)
+        assertEquals(0L, snap.durationMs)
+        assertNull(snap.next)
+        assertEquals(CastPhase.CONNECTING, snap.state)
+        c.onReceiver(ReceiverState(info.handle, loaded = true, playing = true, paused = false, positionMs = 5_000, durationMs = 0, idle = false))
+        assertEquals(CastPhase.PLAYING, c.snapshot("Wohnzimmer")!!.state)
+        advance(CastController.PROGRESS_MS * 2)
+        c.tick()
+        assertTrue("no playback reports, no cast-token calls for a live channel", paths().none { it.startsWith("POST /api/playback") || it.contains("/api/cast/") })
+        // the own receiver gets its TV texts; the report token flow of titles is not used
+        assertTrue(r.messages.any { it.optString("t") == "ui" })
+        assertTrue(r.messages.none { it.optString("t") == "tok" })
+
+        // what the receiver is sent: LIVE, HLS, the channel's name / programme / signed logo, the live card flag
+        val q = TokenConverter.liveQueueItem(info)
+        val m = q.media!!
+        assertEquals(info.contentUrl, m.contentId)
+        assertEquals(MediaInfo.STREAM_TYPE_LIVE, m.streamType)
+        assertEquals("application/x-mpegURL", m.contentType)
+        val meta = m.metadata!!
+        assertEquals(MediaMetadata.MEDIA_TYPE_GENERIC, meta.mediaType)
+        assertEquals("Nordlicht TV", meta.getString(MediaMetadata.KEY_TITLE))
+        assertEquals("Die Leuchtturmwärter", meta.getString(MediaMetadata.KEY_SUBTITLE))
+        assertEquals(LIVE_LOGO, meta.images[0].url.toString())
+        assertTrue(m.customData!!.getJSONObject("ui").getBoolean("live"))
+        assertFalse(m.customData.toString().contains(info.token))
+        assertTrue(q.autoplay)
+        assertFalse(info.toString().contains(info.token))
+        assertFalse(info.handle.contains(info.token))
+        // without a logo or programme: no image, no subtitle
+        val bare = TokenConverter.liveQueueItem(liveInfo("hafenkanal", logo = null, now = null)).media!!.metadata!!
+        assertEquals("Hafenkanal", bare.getString(MediaMetadata.KEY_TITLE))
+        assertTrue(bare.images.isEmpty())
+        assertNull(bare.getString(MediaMetadata.KEY_SUBTITLE))
+    }
+
+    @Test fun aRefusedLiveWatchAnswersFalseAndLoadsNothing() {
+        val (r, c) = controller()
+        refuseLive = true
+        var answer: Boolean? = null
+        c.startLive("hafenkanal") { answer = it }
+        assertEquals(false, answer)
+        assertTrue(r.liveLoads.isEmpty())
+        assertFalse(c.liveCasting)
+        assertNull(c.snapshot("Wohnzimmer"))
+        assertEquals("nothing else runs on the TV: its session is not left idle", 1, r.ended)
+    }
+
+    @Test fun aTitleCastEndsBeforeTheLiveWatch() {
+        val (r, c) = controller()
+        c.start(film())
+        c.onReceiver(playing("c1", 61_000))
+        calls.clear()
+        c.startLive("nordlicht-tv") {}
+        assertEquals(listOf("POST /api/playback/stop", "DELETE /api/cast/session/c1", "POST /api/livetv/channels/nordlicht-tv/watch"), paths())
+        assertFalse(c.casting)
+        assertTrue(c.liveCasting)
+        assertEquals("the TV session stays for the channel", 0, r.ended)
+        // the player screen that was the title's remote gets the title back (like another sender taking over)
+        assertEquals(Triple("film", 61_000L, false), host.returned)
+        assertFalse(host.returnedEnded)
+    }
+
+    @Test fun aChannelSwitchLoadsTheNewChannelThenRevokesTheOld() {
+        val (r, c) = controller()
+        c.startLive("nordlicht-tv") {}
+        refuseLive = true
+        var refused: Boolean? = null
+        c.startLive("hafenkanal") { refused = it }
+        assertEquals(false, refused)
+        assertEquals("a refused switch leaves the channel playing", "Nordlicht TV", c.snapshot("Wohnzimmer")!!.title)
+        assertEquals(0, r.ended)
+        refuseLive = false
+        calls.clear()
+        c.startLive("hafenkanal") {}
+        assertEquals(listOf("POST /api/livetv/channels/hafenkanal/watch", "DELETE /api/livetv/watch"), paths())
+        assertEquals(tokenOf("nordlicht-tv"), calls.last().second!!.getString("token"))
+        assertEquals(listOf("nordlicht-tv", "hafenkanal"), r.liveLoads.map { it.channelId })
+        assertEquals("Hafenkanal", c.snapshot("Wohnzimmer")!!.title)
+    }
+
+    @Test fun stoppingALiveCastRevokesItsTokenAndEndsTheSession() {
+        val (r, c) = controller()
+        c.startLive("nordlicht-tv") {}
+        c.stop()
+        assertEquals("DELETE /api/livetv/watch", paths().last())
+        assertEquals(tokenOf("nordlicht-tv"), calls.last().second!!.getString("token"))
+        assertEquals(1, r.ended)
+        assertFalse(c.liveCasting)
+        assertNull(c.snapshot("Wohnzimmer"))
+    }
+
+    @Test fun aLiveStreamThatEndsOnTheTvEndsTheCast() {
+        val (r, c) = controller()
+        c.startLive("nordlicht-tv") {}
+        val handle = r.liveLoads.single().handle
+        c.onMediaEnd(IdleReason.ERROR, "live-000000000000000000000000") // an older item's end: not ours
+        assertTrue(c.liveCasting)
+        c.onMediaEnd(IdleReason.ERROR, handle)
+        assertFalse(c.liveCasting)
+        assertEquals("DELETE /api/livetv/watch", paths().last())
+        assertEquals(1, r.ended)
+    }
+
+    @Test fun aLiveAnswerAfterAStopIsRevokedNotLoaded() {
+        val r = FakeReceiver(false)
+        val c = CastController(server, r, host, still, io = manualIo, main = direct, now = { clock }, schedule = schedule)
+        var answer: Boolean? = null
+        c.startLive("nordlicht-tv") { answer = it }
+        c.stop()
+        runIo()
+        assertEquals(false, answer)
+        assertTrue(r.liveLoads.isEmpty())
+        assertEquals(listOf("POST /api/livetv/channels/nordlicht-tv/watch", "DELETE /api/livetv/watch"), paths())
+    }
+
+    @Test fun aWatchWithoutAnAnswerInTimeAnswersFalseAndItsLateTokenIsRevoked() {
+        val r = FakeReceiver(false)
+        val c = CastController(server, r, host, still, io = manualIo, main = direct, now = { clock }, schedule = schedule)
+        var answers = 0
+        var answer: Boolean? = null
+        c.startLive("nordlicht-tv") { answer = it; answers++ }
+        advance(CastController.LIVE_WATCH_WAIT_MS - 1)
+        assertNull(answer)
+        advance(1)
+        assertEquals(false, answer)
+        assertEquals("nothing on the TV: its session ends", 1, r.ended)
+        runIo() // the watch answers late
+        assertEquals(1, answers)
+        assertTrue(r.liveLoads.isEmpty())
+        assertFalse(c.liveCasting)
+        assertEquals(listOf("POST /api/livetv/channels/nordlicht-tv/watch", "DELETE /api/livetv/watch"), paths())
+    }
+
+    @Test fun aRefusedWatchLeavesTheFinishedTitlesDelayedEndRunning() {
+        val (r, c) = controller()
+        c.start(film())
+        c.onReceiver(playing("c1", 29 * 60_000))
+        c.onMediaEnd(IdleReason.FINISHED, "c1") // the title ended: the TV session ends after ENDED_HIDE_MS
+        refuseLive = true
+        c.startLive("hafenkanal") {}
+        assertEquals("the delayed end ends it, not the refusal", 0, r.ended)
+        advance(CastController.ENDED_HIDE_MS)
+        assertEquals(1, r.ended)
+    }
+
+    @Test fun theWatchRouteIsAskedWithTheShellSessionAndItsUrlMadeAbsolute() {
+        val tok = tokenOf("nordlicht-tv")
+        val seen = CopyOnWriteArrayList<RecordedRequest>()
+        val watch = AtomicReference(200 to """{"token":"$tok","url":"/media/l/$tok/index.m3u8","expiresAt":1700000000000,"dvrSeconds":1800,"mode":"remux",
+            "channel":{"id":"nordlicht-tv","number":1,"name":"Nordlicht TV","logo":"$LIVE_LOGO"},
+            "now":{"title":"Die Leuchtturmwärter","start":"2026-11-12T20:15:00Z","end":"2026-11-12T21:00:00Z"},"next":null}""")
+        val web = MockWebServer()
+        web.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                seen += request
+                val (code, body) = when ("${request.method} ${request.url.encodedPath}") {
+                    "GET /api/me" -> 200 to """{"csrfToken":"tok"}"""
+                    "POST /api/livetv/channels/nordlicht-tv/watch" -> watch.get()
+                    else -> 200 to "{}"
+                }
+                return MockResponse.Builder().code(code).addHeader("content-type", "application/json").body(body).build()
+            }
+        }
+        web.start()
+        try {
+            val cookies = FakeCookies().apply { jar[web.url("/").toString().trimEnd('/')] = "ff_sid=s3cret" }
+            val api = ServerApi(web.url("/"), OkHttpClient(), cookies)
+            val cs = CastServerApi(api, PROFILE, PlayerApi(api, PROFILE))
+            val info = cs.watchLive("nordlicht-tv")!!
+            assertEquals(web.url("/media/l/$tok/index.m3u8").toString(), info.contentUrl)
+            assertEquals("nordlicht-tv", info.channelId)
+            assertEquals("Nordlicht TV", info.name)
+            assertEquals(1, info.number)
+            assertEquals("the signed logo URL as the answer gives it", LIVE_LOGO, info.logo)
+            assertEquals("Die Leuchtturmwärter", info.now)
+            val req = seen.last { it.url.encodedPath == "/api/livetv/channels/nordlicht-tv/watch" }
+            assertEquals("POST", req.method)
+            assertEquals("chromecast", JSONObject(req.body!!.utf8()).getString("via"))
+            assertEquals(PROFILE, req.headers["x-ff-profile"])
+            assertEquals("tok", req.headers["x-csrf-token"])
+            // a channel without a logo and without EPG data
+            watch.set(200 to """{"token":"$tok","url":"/media/l/$tok/index.m3u8","expiresAt":1,"channel":{"id":"nordlicht-tv","number":null,"name":"Nordlicht TV","logo":null},"now":null,"next":null}""")
+            val bare = cs.watchLive("nordlicht-tv")!!
+            assertNull(bare.logo)
+            assertNull(bare.now)
+            assertNull(bare.number)
+            // every refusal of the route is a plain "no"
+            for ((code, body) in listOf(
+                503 to """{"error":"live_full","running":[]}""", 503 to """{"error":"provider_limit","max":1,"running":[]}""",
+                502 to """{"error":"channel_unreachable"}""", 409 to """{"error":"not_receiving"}""", 429 to """{"error":"max_streams","max":2}""",
+                403 to """{"error":"forbidden"}""", 404 to """{"error":"livetv_off"}""", 404 to """{"error":"unknown"}""",
+            )) {
+                watch.set(code to body)
+                assertNull("$code $body", cs.watchLive("nordlicht-tv"))
+            }
+            // an answer that is no live stream of this server is not loaded
+            watch.set(200 to """{"token":"$tok","url":"https://iptv.example.com/media/l/$tok/index.m3u8","channel":{"id":"nordlicht-tv","name":"Nordlicht TV"}}""")
+            assertNull(cs.watchLive("nordlicht-tv"))
+            val before = seen.size
+            assertNull(cs.watchLive("../x"))
+            assertEquals("a malformed id never reaches the server", before, seen.size)
+            cs.stopLive(tok)
+            val del = seen.last()
+            assertEquals("DELETE /api/livetv/watch", "${del.method} ${del.url.encodedPath}")
+            assertEquals(tok, JSONObject(del.body!!.utf8()).getString("token"))
+        } finally {
+            web.close()
+        }
+    }
 
     // ---- receiver app id ----
 
@@ -633,7 +895,7 @@ class CastControllerTest {
         subtitles = emptyList(),
     )
 
-    private val tokenUrl = "https://ff.example/media/c/" + "A".repeat(43) + "/master.m3u8"
+    private val tokenUrl = "https://friend.example.com/media/c/" + "A".repeat(43) + "/master.m3u8"
     private val tokenId = CastIds.ofContentUrl(tokenUrl)!!
 
     @Test fun resumeAdoptsOurMedia() {
@@ -701,7 +963,7 @@ class CastControllerTest {
     }
 
     @Test fun resumeTakesOverTheQueuedSuccessor() {
-        val qUrl = "https://ff.example/media/c/" + "B".repeat(43) + "/master.m3u8"
+        val qUrl = "https://friend.example.com/media/c/" + "B".repeat(43) + "/master.m3u8"
         val qId = CastIds.ofContentUrl(qUrl)!!
         lookups[tokenId] = lookup(tokenId); lookups[qId] = lookup(qId, itemId = "ep2", next = true, reported = false)
         val (r, c) = controller()
@@ -794,9 +1056,9 @@ class CastControllerTest {
     @Test fun castIdsMatchTheServersDerivation() {
         // sha256("A" * 43), first 32 hex characters (backend castIdOf(hashToken(token)))
         val expected = java.security.MessageDigest.getInstance("SHA-256").digest("A".repeat(43).toByteArray()).joinToString("") { "%02x".format(it) }.take(32)
-        assertEquals(expected, CastIds.ofContentUrl("https://ff.example/media/c/${"A".repeat(43)}/master.m3u8"))
-        assertNull(CastIds.ofContentUrl("https://ff.example/media/c/short/master.m3u8"))
-        assertNull(CastIds.ofContentUrl("https://ff.example/media/c/${"A".repeat(44)}/master.m3u8"))
+        assertEquals(expected, CastIds.ofContentUrl("https://friend.example.com/media/c/${"A".repeat(43)}/master.m3u8"))
+        assertNull(CastIds.ofContentUrl("https://friend.example.com/media/c/short/master.m3u8"))
+        assertNull(CastIds.ofContentUrl("https://friend.example.com/media/c/${"A".repeat(44)}/master.m3u8"))
         assertNull(CastIds.ofContentUrl(null))
     }
 
@@ -905,7 +1167,7 @@ class CastControllerTest {
     }
 
     @Test fun noSecondQueuedItemBehindADeadOne() {
-        val qUrl = "https://ff.example/media/c/" + "B".repeat(43) + "/master.m3u8"
+        val qUrl = "https://friend.example.com/media/c/" + "B".repeat(43) + "/master.m3u8"
         lookups[tokenId] = lookup(tokenId) // the queued item's lookup is a 404
         val (r, c) = controller()
         r.next = ReceiverMedia(null, qUrl)

@@ -90,10 +90,11 @@ describe('guardedFetch', () => {
 
   it('redirect re-checks', async () => {
     const s = await serve((req, res) => {
-      const to: Record<string, string> = { '/loop': 'http://127.0.0.1/', '/srt': 'srt://iptv.example.com:9000?streamid=x', '/up': 'https://iptv.example.com/x' };
+      const to = new Map([['/loop', 'http://127.0.0.1/'], ['/srt', 'srt://iptv.example.com:9000?streamid=x'], ['/up', 'https://iptv.example.com/x']]);
       const n = /^\/r([1-4])$/.exec(req.url ?? '');
       if (n) { res.writeHead(302, { location: `/r${Number(n[1]) + 1}` }); res.end(); return; }
-      if (to[req.url ?? '']) { res.writeHead(302, { location: to[req.url ?? ''] }); res.end(); return; }
+      const target = to.get(req.url ?? '');
+      if (target) { res.writeHead(302, { location: target }); res.end(); return; }
       res.end('end');
     });
     const url = (p: string) => `http://iptv.example.com:${s.port}${p}`;

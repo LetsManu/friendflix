@@ -8,6 +8,7 @@ import { publicOrigin, secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { authenticate, COOKIE, loadSession, requireUser } from '../session.js';
 import { revokeCasts } from '../cast.js';
+import { revokeLiveTokens } from '../livetv/tokens.js';
 import { roleAllowsDownloads } from '../downloads.js';
 import { effectiveLimits } from '../limits.js';
 import { permsOf } from '../permGuard.js';
@@ -298,6 +299,11 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     const profileCount = (await listProfiles(ctx, u.id)).length;
     const dlRole = await effectiveLimits(ctx, u); // role + the user's own overrides
     const [instLang, profLang, onboarded, perms] = await Promise.all([instanceLanguage(ctx), profileLanguage(ctx, req.profile?.id), profileOnboarded(ctx, req.profile?.id), permsOf(ctx, req)]);
+    const livetv = req.profile ? await livetvFeature(ctx, u, { id: req.profile.id, kids: Boolean(req.profile.kids) }) : false;
+    // a paired TV the admin set to start with Live TV (Live TV ruling 14): TV device ∧ devices.start_live ∧ features.livetv
+    const tvId = req.session!.deviceId;
+    const startLive = livetv && Boolean(tvId?.startsWith('tv-'))
+      && (await ctx.db.query<{ start_live: boolean }>('select start_live from devices where user_id = $1 and device_id = $2', [u.id, tvId])).rows[0]?.start_live === true;
     return {
       id: u.id,
       name: u.name,
@@ -341,8 +347,10 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
        *  livetv = installed, the account has liveTv and the active profile sees at least one channel (Live TV ruling 13) */
       features: {
         requests: requestsEnabled(ctx), postplay: postplayEnabled(ctx), surround: ctx.jf.kind === 'jellyfin' && ctx.cfg.SURROUND_AUDIO !== 'false',
-        livetv: req.profile ? await livetvFeature(ctx, u, { id: req.profile.id, kids: Boolean(req.profile.kids) }) : false,
+        livetv,
       },
+      /** this TV opens Live TV on its start page (`/tv` replaces to `/live?play=last`; spec §11.3) */
+      startLive,
     };
   });
 
@@ -360,9 +368,10 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     if (sent.length !== want.length || !timingSafeEqual(sent, want)) return reply.code(403).send({ error: 'csrf' });
     await ctx.kv.del(`sess:${sid}`);
     dropRemotePeers(s.userId, new Set([sid]));
-    // this device's push subscriptions and cast tokens must not outlive its login (unless another live session still uses the device)
+    // this device's push subscriptions, cast and live tokens must not outlive its login (unless another live session still uses the device)
     if (s.deviceId && !(await deviceHasSession(ctx, s.userId, s.deviceId))) {
       await revokeCasts(ctx, s.userId, s.deviceId);
+      await revokeLiveTokens(ctx, s.userId, s.deviceId);
       await deletePushSubscriptions(ctx, s.userId, s.deviceId);
     }
     reply.clearCookie(COOKIE, { path: '/' });

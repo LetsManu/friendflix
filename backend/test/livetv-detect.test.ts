@@ -597,4 +597,13 @@ describe('wire.ts', () => {
     const flat = (src: string) => norm(src).replace(/CpuInfo/g, '{ model: string; cores: number; loadPct: number }').replace(/GpuInfo/g, '{ devices: string[]; driver: string | null; readable: boolean; busyPct: number | null; nvidia: boolean }');
     expect(flat(fields(ours, 'interface LivetvSystem'))).toBe(flat(fields(theirs, 'interface SystemView')));
   });
+
+  it('Mode and StreamView are the declarations of livetv/src/streams.ts, field for field (F4)', () => {
+    const norm = (x: string) => x.replace(/\s+/g, ' ').replace(/ ?; ?}/g, ' }').trim();
+    const theirs = readFileSync(new URL('../../livetv/src/streams.ts', import.meta.url), 'utf8');
+    const ours = readFileSync(new URL('../src/livetv/wire.ts', import.meta.url), 'utf8');
+    const block = (src: string, from: string, close: string) => { const i = src.indexOf(from); return norm(src.slice(i, src.indexOf(close, i) + close.length)); };
+    expect(block(ours, 'export type Mode', ';')).toBe(block(theirs, 'export type Mode', ';'));
+    expect(block(ours, 'export interface StreamView', '\n}')).toBe(block(theirs, 'export interface StreamView', '\n}'));
+  });
 });

@@ -6,6 +6,7 @@ import { revokeCasts } from './cast.js';
 import type { Ctx } from './ctx.js';
 import { noteClientKind } from './deviceKind.js';
 import { revokeDownloads } from './downloads.js';
+import { revokeLiveTokens } from './livetv/tokens.js';
 import { m, msg, userLanguage, type Language } from './i18n.js';
 import { notify } from './notify.js';
 import { deletePushSubscriptions } from './push.js';
@@ -48,7 +49,7 @@ export async function registerDevice(ctx: Ctx, req: FastifyRequest, reply: Fasti
 export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string, exceptSid?: string): Promise<number> {
   let n = 0;
   const gone = new Set<string>();
-  // the session that stays logged in keeps its device's push subscriptions and cast tokens
+  // the session that stays logged in keeps its device's push subscriptions, cast and live tokens
   let keepDevice: string | undefined;
   if (exceptSid) {
     const raw = await ctx.kv.get(`sess:${exceptSid}`);
@@ -73,6 +74,7 @@ export async function revokeSessions(ctx: Ctx, userId: string, deviceId?: string
   }
   if (!(deviceId && deviceId === keepDevice)) {
     await revokeCasts(ctx, userId, deviceId, keepDevice);
+    await revokeLiveTokens(ctx, userId, deviceId, keepDevice);
     await deletePushSubscriptions(ctx, userId, deviceId, keepDevice);
     await revokeDownloads(ctx, userId, deviceId, keepDevice);
   }

@@ -198,3 +198,23 @@ export async function livetvHealth(ctx: Ctx): Promise<LivetvHealth | null> {
   }
   return h;
 }
+
+/**
+ * A signed GET whose answer is bytes (a preview JPEG), at most `maxBytes` (a bigger answer is `invalid_answer`). Refusals throw like
+ * livetvCall; the deadline also covers reading the body.
+ */
+export async function livetvBytes(ctx: Ctx, path: string, o: { timeoutMs?: number; maxBytes: number }): Promise<Buffer> {
+  const d = deadline(o.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  try {
+    const r = await signedFetch(ctx, 'GET', path, undefined, d.signal);
+    if (!r.ok) throw await refusal(r);
+    const declared = Number(r.headers.get('content-length'));
+    if (Number.isFinite(declared) && declared > o.maxBytes) throw new LivetvError(r.status, 'invalid_answer');
+    let buf: Buffer;
+    try { buf = Buffer.from(await r.arrayBuffer()); } catch { throw new LivetvError(null, 'unreachable'); }
+    if (buf.length > o.maxBytes) throw new LivetvError(r.status, 'invalid_answer');
+    return buf;
+  } finally {
+    d.clear();
+  }
+}

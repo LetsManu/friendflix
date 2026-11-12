@@ -165,3 +165,21 @@ export function expectAlongCurve(ys: number[], at: number[], from: number, to: n
   expect(ys.filter((y) => Math.min(from, to) + 1 < y && y < Math.max(from, to) - 1).length).toBeGreaterThanOrEqual(2);
   at.forEach((f, i) => expect(Math.abs(ys[i]! - (from + (to - from) * ease(f))), `at ${f}`).toBeLessThan(tol));
 }
+
+/** The one call of the live player (Task 39) that the shared API mock does not answer: it reports playback timing. */
+/** the live player's own calls besides livetv: the playback timing, and the cast switch it asks once (off; `castOn()` after this turns it on) */
+export const mockLivePlayer = async (page: Page) => {
+  await page.route('**/api/playback/timing', (r) => r.fulfill({ status: 204 }));
+  await page.route('**/api/cast/config', (r) => r.fulfill({ json: { enabled: false } }));
+};
+
+/**
+ * Clicks and expects the player route `/live/watch/<id>`: returns as soon as the URL is that path, so a wrong channel (or none)
+ * fails. The player is the real route: the spec installs `mockLivePlayer` (watch, beat, stop and the media playlist come from the
+ * shared livetv mock) so it loads without unmocked calls.
+ */
+export async function opensPlayer(page: Page, click: () => Promise<void>, id: string) {
+  const path = `/live/watch/${encodeURIComponent(id)}`;
+  await Promise.all([page.waitForURL((u) => u.pathname === path, { waitUntil: 'commit' }), click()]);
+  expect(new URL(page.url()).pathname).toBe(path);
+}

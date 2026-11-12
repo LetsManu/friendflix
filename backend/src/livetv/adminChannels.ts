@@ -10,7 +10,7 @@ import { LivetvError, livetvCall } from './client.js';
 import { matchIds, nowNext, type Prog } from './epg.js';
 import { sniffImage, storeLogo } from './logos.js';
 // ownfeeds.ts imports adminChannel from here and this module calls srtPorts / syncIngest from there: neither is used at module load
-import { srtPorts, syncIngest } from './ownfeeds.js';
+import { INGEST_DIRTY_KEY, srtPorts, syncIngest } from './ownfeeds.js';
 import { livetvWrite } from './tx.js';
 import type { ProbeResult, StreamInput } from './wire.js';
 
@@ -49,7 +49,12 @@ export interface AdminChannel {
   epgShift: { min: number; from: EpgShiftFrom };
   /** push feeds only: never the stream id or the passphrase, only the hint ('ff-' + 6) */
   push?: { port: number; hint: string; portInRange: boolean };
+  /** push feeds only: false while livetv has not taken the latest ingest set (a failed sync is retried every minute); never present for other channels */
+  synced?: boolean;
 }
+
+/** are livetv's ingest set and the DB the same as far as the last sync knows (the dirty flag of ownfeeds.ts)? An unreadable flag counts as not synced. */
+const ingestSynced = async (ctx: Ctx): Promise<boolean> => ctx.kv.get(INGEST_DIRTY_KEY).then((v) => v === null, () => false);
 
 /** a refusal answered as `status` with `body` (fixed codes; never an input value) */
 export class ChannelRefusal extends Error {
@@ -146,6 +151,7 @@ async function toAdmin(ctx: Ctx, rows: AdminRow[]): Promise<AdminChannel[]> {
   if (rows.length === 0) return [];
   const nn = await nowNext(ctx, rows.map((r) => r.id));
   const ports = rows.some((r) => r.ingest === 'push' && r.push_port !== null) ? await srtPorts(ctx).catch(() => null) : null;
+  const synced = rows.some((r) => r.ingest === 'push' && r.push_port !== null) ? await ingestSynced(ctx) : true;
   return rows.map((r) => {
     const overridden: AdminChannel['overridden'] = {};
     if (r.name_override !== null) overridden.name = r.import_name;
@@ -161,7 +167,10 @@ async function toAdmin(ctx: Ctx, rows: AdminRow[]): Promise<AdminChannel[]> {
       probeError: probe && !probe.ok ? (probe.error ?? 'failed') : null,
       overridden, dupNumber: r.dup_number, epgShift: { min: r.epg_shift_min, from: r.epg_shift_from },
     };
-    if (r.ingest === 'push' && r.push_port !== null) out.push = pushInfo(r.push_port, r.push_stream_id_hint, ports);
+    if (r.ingest === 'push' && r.push_port !== null) {
+      out.push = pushInfo(r.push_port, r.push_stream_id_hint, ports);
+      out.synced = synced;
+    }
     return out;
   });
 }
@@ -283,17 +292,19 @@ async function renumber(c: Db, ids: readonly string[], from: number): Promise<nu
  * `from` in the current order (number, then name), reset (every override back to the import value and the EPG mapping automatic
  * again). Unknown ids are skipped. Answers how many channels it changed. A hide or show that touches a push feed syncs livetv.
  */
-export async function bulkChannels(ctx: Ctx, actor: string, b: BulkBody, log?: Log): Promise<{ changed: number }> {
+export async function bulkChannels(ctx: Ctx, actor: string, b: BulkBody, log?: Log): Promise<{ changed: number; synced?: boolean }> {
   const ids = [...new Set(b.ids)];
   if (b.action === 'group' && b.groupId === undefined) throw invalid('groupId');
   if (b.action === 'renumber' && b.from === undefined) throw invalid('from');
   const r = await livetvWrite(ctx, async (c) => {
     let changed = 0;
     let sync = false;
+    let push = false;
     if (b.action === 'hide' || b.action === 'show') {
       const hidden = b.action === 'hide';
       changed = (await c.query('update livetv_channels set hidden = $2 where id = any($1::uuid[]) and hidden <> $2', [ids, hidden])).rowCount ?? 0;
-      sync = changed > 0 && (await anyPush(c, ids));
+      push = await anyPush(c, ids);
+      sync = changed > 0 && push;
     } else if (b.action === 'group') {
       if (b.groupId && !(await groupKnown(c, b.groupId))) throw invalid('groupId');
       changed = (await c.query('update livetv_channels set group_override = $2 where id = any($1::uuid[])', [ids, b.groupId ?? null])).rowCount ?? 0;
@@ -309,10 +320,11 @@ export async function bulkChannels(ctx: Ctx, actor: string, b: BulkBody, log?: L
       await rematch(c, wasNotAuto);
     }
     if (changed > 0) await auditInTx({ db: c }, actor, 'livetv.channel.bulk', undefined, { action: b.action, count: changed });
-    return { changed, sync };
+    return { changed, sync, push };
   });
-  if (r.sync) await syncIngest(ctx, log);
-  return { changed: r.changed };
+  const sent = r.sync ? await syncIngest(ctx, log) : null;
+  // `synced` only where a push feed is involved: whether livetv has the latest ingest set (this sync, else the last one's outcome)
+  return r.push ? { changed: r.changed, synced: sent !== null ? sent === 'ok' : await ingestSynced(ctx) } : { changed: r.changed };
 }
 
 /**

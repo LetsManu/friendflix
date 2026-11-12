@@ -6,7 +6,7 @@
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import { initial } from '#lib/avatars';
-  import { TV_RAIL, isTabActive, navLabel } from '#lib/menu';
+  import { LIVE_RAIL, TV_RAIL, isTabActive, liveTabs, navLabel } from '#lib/menu';
   import { features } from '#lib/capabilities';
   import { focusFirst, hasTarget } from '#lib/spatial';
   import { railKey, type RailAction, type RailInput } from './rail';
@@ -17,7 +17,9 @@
   export let who = '';
   export let faceStyle: string | undefined = undefined;
 
-  $: cur = TV_RAIL.findIndex(([href]) => isTabActive(href, path));
+  /** the rail: Live-TV after Filme while the feature is on */
+  $: rail = liveTabs(TV_RAIL, LIVE_RAIL, $features.livetv);
+  $: cur = rail.findIndex(([href]) => isTabActive(href, path));
 
   let nav: HTMLElement;
   let saved: HTMLElement | null = null; // what had the focus when the rail opened
@@ -100,8 +102,8 @@
 <nav class="rail" class:open data-scope={open ? '' : undefined} data-nav-skip={open ? undefined : ''} bind:this={nav} aria-label={$t('tv.rail.label')}
   on:keydown={onKeydown} on:focusin={onFocusin} on:focusout={onFocusout} on:click={onClick} on:pointermove={onPointerMove} on:pointerleave={onPointerLeave}>
   <ul>
-    {#each TV_RAIL as [href, label, icon], i (href)}
-      <li class:cur={isTabActive(href, path)} style="--i:{i};--ri:{TV_RAIL.length - 1 - i}"><a {href} aria-current={isTabActive(href, path) ? 'page' : undefined} aria-label={open ? undefined : $t(navLabel(label, $features.requests))}><span class="ic"><Icon name={icon} size={26} /></span><span class="lb">{$t(navLabel(label, $features.requests))}</span></a></li>
+    {#each rail as [href, label, icon], i (href)}
+      <li class:cur={isTabActive(href, path)} style="--i:{i};--ri:{rail.length - 1 - i}"><a {href} aria-current={isTabActive(href, path) ? 'page' : undefined} aria-label={open ? undefined : $t(navLabel(label, $features.requests))}><span class="ic"><Icon name={icon} size={26} /></span><span class="lb">{$t(navLabel(label, $features.requests))}</span></a></li>
     {/each}
     <!-- the active page's coral dot: one element that springs to the current item when the page changes (transform only) -->
     <li class="dot" class:on={cur >= 0} style="transform: translate3d(0, {Math.max(0, cur) * 66}px, 0)" aria-hidden="true"></li>

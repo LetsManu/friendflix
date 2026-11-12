@@ -18,6 +18,7 @@ The LG TV app is FriendFlix as an app on an LG smart TV with webOS (webOS 22 or 
 - [The 50-hour session](#the-50-hour-session)
 - [The TV interface](#the-tv-interface)
 - [The remote](#the-remote)
+  - [Live TV keys](#live-tv-keys)
 - [What direct play covers](#what-direct-play-covers)
 - [Change server](#change-server)
 - [The probe and how to read its line](#the-probe-and-how-to-read-its-line)
@@ -151,6 +152,22 @@ In the player (the keys are ignored elsewhere). Every function works with **OK, 
 | Info | `Info` | cast peek |
 
 **Back** (461) works everywhere: it goes one level back; in the player it first hides the control bar, then leaves. **On the TV-mode home screen Back opens the side menu first; Back again exits the app.** The control bar stays shown while you move along it and hides 5 seconds after the last key; when it hides it lets go of the selected button, so the next OK always means play/pause. The **Magic Remote** pointer works too: moving it shows the controls, hovering moves the focus ring, a click on a button presses it and a click on the picture plays or pauses. The arrow keys continue from where the pointer was. The general keys are in [tv-mode.md](tv-mode.md#bedienung-am-fernseher).
+
+### Live TV keys
+
+In Live TV (the Live list and the channel player) **▲/▼, OK and Back cover everything**: ▲/▼ switch the channel while the controls are hidden, OK shows the controls and the info banner (it never pauses while they are hidden), and a long OK (0.6 s) opens the *Senderliste*. **The CH +/− keys are not relied on:** LG says webOS web apps do not get them, so no screen promises them. If a TV does send them as PageUp / PageDown (key code 33 / 34), they act as channel keys (unverified, check on a real TV).
+
+| Key | Code | In the player | In the Live list |
+|---|---|---|---|
+| ▲ / ▼ | 38 / 40 | channel up / down (controls hidden) | one row up / down |
+| Digits | 48-57 | number entry, OK switches | number entry, OK focuses the row |
+| A lone 0 | 48 | last channel | focuses the last watched channel |
+| Red | 403 | last channel | focuses the last watched channel |
+| Blue | 406 | back to *Live* (the live edge) | nothing |
+| Info | 457 | programme info | programme info of the focused row |
+| PageUp / PageDown (only if sent) | 33 / 34 | channel up / down | jumps 8 rows |
+
+Films keep the keys above: there, key 33 still means next episode. The list's hint line names "CH ▲▼: 8 Zeilen" only after a PageUp / PageDown arrived; the D-pad hints are always shown. The colour keys are on the **123** panel of the 2025 Magic Remote.
 
 ## What direct play covers
 

@@ -8,6 +8,7 @@ import android.content.Intent
 import android.net.Uri
 import android.graphics.Color
 import android.os.Bundle
+import android.view.ContextThemeWrapper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -19,6 +20,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
+import androidx.mediarouter.app.MediaRouteChooserDialog
 import app.friendflix.android.BuildConfig
 import app.friendflix.android.R
 import app.friendflix.android.bridge.Capabilities
@@ -112,6 +114,7 @@ class ShellActivity : ComponentActivity() {
             val castRemote = HubCastRemote(
                 openRemote = { itemId -> offline.state.lastProfileId?.let { native.launch(PlayRequest(itemId, it, null, null, null, null)) } ?: false },
                 profileNoted = offline::noteProfile,
+                pickDevice = ::pickCastDevice,
             )
             val bridge = NativeBridge(
                 policy, player, sink, Capabilities(play = true, download = true, cast = true, castBar = true), cast = castRemote,
@@ -206,6 +209,24 @@ class ShellActivity : ComponentActivity() {
         if (WatchLinks.parse(url.toUri(), policy) == null) return // only the app's own watch page
         (view.webViewClient as? ShellWebViewClient)?.allowWebOnce(url)
         view.loadUrl(url)
+    }
+
+    /**
+     * The Cast device chooser for a live channel (bridge `castLive` without a connected TV); the channel goes to the TV picked there.
+     * False when the Cast framework is not up. The dialog is an AppCompat one: it gets the player's AppCompat theme.
+     */
+    private fun pickCastDevice(): Boolean {
+        val selector = CastHub.routeSelector ?: return false
+        if (isFinishing) return false
+        return try {
+            MediaRouteChooserDialog(ContextThemeWrapper(this, R.style.Theme_FriendFlix_Player)).apply {
+                routeSelector = selector
+                setOnDismissListener { CastHub.chooserClosed() } // closed without a pick: the web UI hears "no" at once
+            }.show()
+            true
+        } catch (_: RuntimeException) {
+            false
+        }
     }
 
     /** The web UI asked for the app's settings (bridge `openSettings()`). */

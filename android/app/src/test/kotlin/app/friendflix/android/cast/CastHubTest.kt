@@ -53,6 +53,12 @@ class CastHubTest {
         }
         override fun next(itemId: String): ItemInfo? = ItemInfo("ep2", "Episode", "Second", "Bright Valley", "s1", 1, 2)
         override fun segments(itemId: String): List<Segment> = emptyList()
+        override fun watchLive(channelId: String): LiveCastInfo {
+            calls += "POST /api/livetv/channels/$channelId/watch"
+            val token = "T".repeat(43)
+            return LiveCastInfo(channelId, token, "https://friend.example.com/media/l/$token/index.m3u8", clock + 60_000, "Nordlicht TV", 1, null, null)
+        }
+        override fun stopLive(token: String) { calls += "DELETE /api/livetv/watch" }
     }
 
     private class FakeLink(override val custom: Boolean) : CastLink {
@@ -60,7 +66,10 @@ class CastHubTest {
         var published = 0
         var playing: ReceiverMedia? = null
         val messages = mutableListOf<JSONObject>()
-        override val connected = true
+        override var connected = true
+        override var connecting = false
+        val liveLoads = mutableListOf<String>()
+        override fun loadLive(info: LiveCastInfo) { liveLoads += info.channelId }
         override val deviceName: String? = "Wohnzimmer-TV"
         override fun load(info: CastInfo, subIndex: Int?, autoplay: Boolean) {}
         override fun queue(info: CastInfo, autoplay: Boolean) = true
@@ -115,7 +124,7 @@ class CastHubTest {
 
     private fun info(castId: String) = CastInfo(
         castId = castId, expiresAt = clock + 60 * 60_000, playSessionId = "ps-$castId", mediaSourceId = "ms-$castId",
-        runtimeTicks = 30L * 60 * 10_000_000, startTime = 60, contentUrl = "https://ff.example/media/c/$castId/master.m3u8",
+        runtimeTicks = 30L * 60 * 10_000_000, startTime = 60, contentUrl = "https://friend.example.com/media/c/$castId/master.m3u8",
         contentType = "application/x-mpegURL", hlsSegmentFormat = "ts", title = "First", seriesName = "Bright Valley", imageUrl = null,
         subtitles = emptyList(), report = "rt-$castId",
     )
@@ -147,6 +156,90 @@ class CastHubTest {
         assertTrue(stopStart[1], stopStart[1].startsWith("start ep2"))
         assertTrue("the skip is no 'advanced' progress: " + reports, reports.none { it.startsWith("progress ep1") || it == "stop ep1 1800000" })
         assertFalse("the tap is an interaction: the autoplay chain starts over", still.shouldAsk(FlowPrefs()))
+    }
+
+    @Test fun castLiveWithoutATvOpensTheChooserAndPlaysOnThePickedOne() {
+        val h = hub()
+        val host = Host()
+        h.attach(host)
+        link.connected = false
+        var picks = 0
+        val answers = mutableListOf<Boolean>()
+        // no chooser can be shown: false at once
+        h.castLive("nordlicht-tv", { false }) { answers += it }
+        assertEquals(listOf(false), answers)
+        // the chooser opens; the channel waits for the TV the viewer picks, and goes there (not the player screen's title)
+        h.castLive("nordlicht-tv", { picks++; true }) { answers += it }
+        assertEquals(1, picks)
+        assertEquals(1, answers.size)
+        link.connected = true
+        events.onSessionStarted()
+        assertEquals(listOf(false, true), answers)
+        assertEquals(0, host.picked)
+        assertEquals(listOf("nordlicht-tv"), link.liveLoads)
+        assertTrue(h.state.value!!.live)
+        // the bar's play / pause drives the receiver; a profile switch ends the live cast
+        h.playPause()
+        assertEquals(1, link.toggled)
+        h.useProfile("p1")
+        h.noteProfile("p2")
+        assertNull(h.state.value)
+        assertEquals("DELETE /api/livetv/watch", calls.last())
+        // nobody picks a TV in time: false, and a later session start is an ordinary one
+        link.connected = false
+        h.castLive("hafenkanal", { true }) { answers += it }
+        advance(CastHubCore.PICK_WAIT_MS)
+        assertEquals(listOf(false, true, false), answers)
+        events.onSessionStarted()
+        assertEquals(1, host.picked)
+        assertEquals(listOf("nordlicht-tv"), link.liveLoads)
+    }
+
+    @Test fun aChooserClosedWithoutAPickAnswersFalseAtOnce() {
+        val h = hub()
+        h.attach(Host())
+        link.connected = false
+        val answers = mutableListOf<Boolean>()
+        h.castLive("nordlicht-tv", { true }) { answers += it }
+        h.chooserClosed()
+        advance(CastHubCore.DISMISS_GRACE_MS)
+        assertEquals("closed without a pick: no 40-s wait", listOf(false), answers)
+        // closed because a TV was picked: it is connecting, the channel waits for it
+        h.castLive("nordlicht-tv", { true }) { answers += it }
+        link.connecting = true
+        h.chooserClosed()
+        advance(CastHubCore.DISMISS_GRACE_MS)
+        assertEquals(listOf(false), answers)
+        link.connecting = false
+        link.connected = true
+        events.onSessionStarted()
+        assertEquals(listOf(false, true), answers)
+        assertEquals(listOf("nordlicht-tv"), link.liveLoads)
+    }
+
+    @Test fun aTvStillConnectingAtTheTimeoutGetsOneBoundedExtension() {
+        val h = hub()
+        val host = Host()
+        h.attach(host)
+        link.connected = false
+        val answers = mutableListOf<Boolean>()
+        h.castLive("nordlicht-tv", { true }) { answers += it }
+        link.connecting = true
+        advance(CastHubCore.PICK_WAIT_MS)
+        assertTrue("still connecting: it waits on", answers.isEmpty())
+        advance(CastHubCore.CONNECT_WAIT_MS - 1)
+        assertTrue(answers.isEmpty())
+        advance(1)
+        assertEquals("never longer than PICK_WAIT_MS + CONNECT_WAIT_MS", listOf(false), answers)
+        // connected within the extension: the channel goes there
+        link.connecting = true
+        h.castLive("hafenkanal", { true }) { answers += it }
+        advance(CastHubCore.PICK_WAIT_MS + 5_000)
+        link.connecting = false
+        link.connected = true
+        events.onSessionStarted()
+        assertEquals(listOf(false, true), answers)
+        assertEquals(0, host.picked)
     }
 
     @Test fun nextWithoutAQueuedEpisodeIsRefused() {
@@ -343,7 +436,7 @@ class CastHubTest {
     }
 
     @Test fun aCastTheTvKeepsPlayingIsPickedUpAfterARestart() {
-        val url = "https://ff.example/media/c/${"A".repeat(43)}/master.m3u8"
+        val url = "https://friend.example.com/media/c/${"A".repeat(43)}/master.m3u8"
         val id = CastIds.ofContentUrl(url)!!
         lookups[id] = CastLookup(id, "ep1", "ms", "ps", clock + 3_600_000, 1_800L * 10_000_000, "chromecast", false, true, "First", "Bright Valley", emptyList())
         val h = hub(custom = true)
@@ -361,7 +454,7 @@ class CastHubTest {
     }
 
     private fun ours(): Pair<String, String> {
-        val url = "https://ff.example/media/c/${"C".repeat(43)}/master.m3u8"
+        val url = "https://friend.example.com/media/c/${"C".repeat(43)}/master.m3u8"
         val id = CastIds.ofContentUrl(url)!!
         lookups[id] = CastLookup(id, "ep1", "ms", "ps", clock + 3_600_000, 1_800L * 10_000_000, "chromecast", false, true, "First", "Bright Valley", emptyList())
         return url to id
@@ -407,7 +500,7 @@ class CastHubTest {
     }
 
     @Test fun aStopWhileTheLookupIsInFlightLeavesAForeignCastAlone() {
-        val url = "https://ff.example/media/c/${"D".repeat(43)}/master.m3u8"
+        val url = "https://friend.example.com/media/c/${"D".repeat(43)}/master.m3u8"
         val id = CastIds.ofContentUrl(url)!!
         val h = hub(custom = true) // no lookup entry: not ours
         link.playing = ReceiverMedia(null, url)
@@ -421,7 +514,7 @@ class CastHubTest {
     }
 
     @Test fun foreignMediaOnTheTvIsLeftAlone() {
-        val url = "https://ff.example/media/c/${"B".repeat(43)}/master.m3u8"
+        val url = "https://friend.example.com/media/c/${"B".repeat(43)}/master.m3u8"
         val h = hub()
         link.playing = ReceiverMedia(null, url)
         events.onState(playing(CastIds.ofContentUrl(url)!!, 1_000)) // lookup answers 404
@@ -439,7 +532,7 @@ class CastHubTest {
     }
 
     @Test fun aLookupThatCouldNotBeAnsweredIsTriedAgainAfterThirtySeconds() {
-        val url = "https://ff.example/media/c/${"C".repeat(43)}/master.m3u8"
+        val url = "https://friend.example.com/media/c/${"C".repeat(43)}/master.m3u8"
         val id = CastIds.ofContentUrl(url)!!
         down += id
         val h = hub()
@@ -455,7 +548,7 @@ class CastHubTest {
     }
 
     @Test fun theRetryAsksTheReceiverAgainWithoutWaitingForATvEvent() {
-        val url = "https://ff.example/media/c/${"D".repeat(43)}/master.m3u8"
+        val url = "https://friend.example.com/media/c/${"D".repeat(43)}/master.m3u8"
         val id = CastIds.ofContentUrl(url)!!
         down += id
         val h = hub()

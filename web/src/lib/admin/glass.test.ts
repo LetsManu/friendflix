@@ -632,6 +632,116 @@ describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
   });
 });
 
+describe('Favoriten ordnen sheet (Task 38)', () => {
+  const src = read('../live/FavOrderSheet.svelte');
+  const css = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('takes the rows, a required save and the TV flag, and knows no endpoint', () => {
+    expect([...src.matchAll(/export let (\w+)/g)].map((m) => m[1])).toEqual(['rows', 'save', 'trigger', 'tv']);
+    expect(src).toMatch(/export let save: \(ids: string\[\]\) => Promise<void>;/);
+    expect(src).toMatch(/runAction\(\{ key: busyKey, run: \(\) => save\(ids\), success: tr\('common\.saved'\), undo: \{ run: \(\) => save\(prev\) \} \}\)/);
+    let code = src, prev: string;
+    do { prev = code; code = code.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, ''); } while (code !== prev); // until stable: no comment survives
+    expect(code).not.toMatch(/api\(|fetch\(|\/api\//);
+  });
+
+  it('animates transform only, has no keyframes, and the lifted row and the FLIP rows move by transform', () => {
+    const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+    const vals = [...css.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)].map((m) => m[1]!);
+    expect(vals.length).toBeGreaterThan(0);
+    for (const v of vals) if (!/^\s*none/.test(v)) expect(v).toMatch(/^\s*transform\b[^,]*$/);
+    for (const v of vals) expect(v).not.toMatch(LAYOUT);
+    expect(css).not.toMatch(/@keyframes/);
+    expect(src).toContain('row.style.transform = `translateY(${y - row.offsetTop}px)`;');
+    expect(src).toContain("el.style.transform = `translateY(${d}px)`;");
+    expect(src).toMatch(/flipOffsets\(before, after\)/);
+  });
+
+  it('the pointer drag survives the keyed list: capture on the list, events on the window by pointer id, a stuck mouse ends it', () => {
+    expect(src).toContain('list.setPointerCapture(e.pointerId)');
+    expect(src).not.toMatch(/currentTarget as HTMLElement\)\.setPointerCapture|lostpointercapture/);
+    expect(src).toMatch(/<svelte:window[^>]*on:pointermove=\{onMove\} on:pointerup=\{onUp\} on:pointercancel=\{onPointerCancel\}[^>]*on:blur=/);
+    expect(src).toMatch(/e\.pointerId !== drag\.pointerId/);
+    expect(src).toMatch(/e\.pointerType === 'mouse' && e\.buttons === 0\) \{ void onUp\(e\); return; \}/);
+    expect(src).toContain('if (e.repeat) return;');
+    // a reset of the rows clears every inline transform and transition and ends the drag
+    expect(src).toMatch(/endPointer\(\);[^}]*el\.style\.transition = ''; el\.style\.transform = '';/);
+  });
+
+  it('calm mode, TV, kids and reduced motion: no transitions at all', () => {
+    expect(css).toMatch(/:global\(html\.m-still\) \.fo-wrap :global\(\*\), :global\(html\.tv\) \.fo-wrap :global\(\*\), :global\(html\.kids\) \.fo-wrap :global\(\*\) \{ transition: none !important; animation: none !important; \}/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.fo-wrap :global\(\*\) \{ transition: none !important; animation: none !important; \} \}/);
+    expect(src).toMatch(/fxMode\(\) === 'still'/);
+    expect(src).toMatch(/transition:slide\|global/);
+    expect(src).toMatch(/sheetSlide\(node, \{ dir, side: tv \? 'right' : 'bottom' \}\)/);
+  });
+
+  it('44 px handles (54 px and more on TV), a polite live region with the four texts, touch drags instead of scrolling', () => {
+    expect(css).toMatch(/\.grip \{[^}]*width: 44px; height: 44px; min-height: 44px;[^}]*touch-action: none;/);
+    expect(css).toMatch(/\.tv \.grip[^{]*\{[^}]*min-height: 54px;/);
+    expect(src).toContain('<p class="sr-only" aria-live="polite">{status}</p>');
+    for (const k of ['orderPicked', 'orderMoved', 'orderDropped', 'orderCancelled']) expect(src).toContain(`'live.fav.${k}'`);
+  });
+
+  it('the lifted row sits on the solid fill with a white ring, the TV focus has the 3 px white ring', () => {
+    expect(css).toMatch(/\.row\.lifted \{[^}]*background: var\(--fr-solid\); box-shadow: 0 0 0 2px #fff/);
+    expect(css).toMatch(/\.tv \.row:focus-within \{ outline: 3px solid #fff;/);
+    for (const bg of ON_GLASS) expect(textContrast(bg, 0.78), 'number').toBeGreaterThanOrEqual(AA);
+  });
+});
+
+/**
+ * The Live-TV tab (Task 36, glass spec constraints): every live stylesheet animates transform and opacity only, switches its motion
+ * off in calm mode, and the grey line texts keep 4.5:1 on what they sit on (the page's ambient peak, the row's hover fill, the
+ * tiles' dark caption ramp over the brightest preview).
+ */
+describe('Live-TV tab surfaces', () => {
+  const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+  const styleOf = (src: string) => [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  const dirs = [fileURLToPath(new URL('../live/', import.meta.url)), fileURLToPath(new URL('../../routes/live/', import.meta.url))];
+  const files = dirs.flatMap((d) => readdirSync(d).filter((f) => f.endsWith('.svelte')).map((f) => join(d, f)));
+
+  it('the scan sees the live components', () => {
+    const names = files.map((f) => f.split(sep).pop());
+    expect(names).toEqual(expect.arrayContaining(['ChannelRow.svelte', 'FavTiles.svelte', 'GroupChips.svelte', 'LiveList.svelte', '+page.svelte']));
+  });
+
+  it('they animate transform and opacity only, and none of them uses a colour, background or layout transition', () => {
+    const bad: string[] = [];
+    let seen = 0;
+    for (const f of files) {
+      for (const m of styleOf(readFileSync(f, 'utf8')).matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) {
+        if (/^\s*none/.test(m[1]!)) continue;
+        seen++;
+        if (LAYOUT.test(m[1]!) || /all|color|background|border|filter|shadow/.test(m[1]!)) bad.push(`${f}: ${m[1]}`);
+      }
+      expect(styleOf(readFileSync(f, 'utf8')), f).not.toMatch(/@keyframes/);
+    }
+    expect(seen).toBeGreaterThan(2);
+    expect(bad).toEqual([]);
+  });
+
+  it('every live component with a transition switches it off in calm mode', () => {
+    for (const f of files) {
+      const css = styleOf(readFileSync(f, 'utf8'));
+      if (/transition\s*:\s*(?!none)/.test(css)) expect(css, f).toMatch(/:global\(html\.m-still\)/);
+    }
+  });
+
+  it('the grey line texts (white .78) keep 4.5:1 on the ambient peak with the row hover fill, and white on the caption ramp', () => {
+    const hover = over(AMB_PEAK, WHITE, 0.09);
+    for (const bg of [AMB_PEAK, DARK_BASE, hover, over(DARK_BASE, WHITE, 0.09)]) expect(textContrast(bg, 0.78)).toBeGreaterThanOrEqual(AA);
+    // the tile caption: a .78 black ramp over a white preview, the worst case
+    const ramp = over(WHITE, [0, 0, 0], 0.78);
+    expect(textContrast(ramp, 0.86)).toBeGreaterThanOrEqual(AA);
+    expect(textContrast(ramp)).toBeGreaterThanOrEqual(AA);
+    const row = readFileSync(join(dirs[0]!, 'ChannelRow.svelte'), 'utf8'), tiles = readFileSync(join(dirs[0]!, 'FavTiles.svelte'), 'utf8');
+    expect(row).toContain('color: rgba(255, 255, 255, .78)');
+    expect(tiles).toContain('rgba(0, 0, 0, .78) 55%');
+    expect(tiles).toContain('color: rgba(255, 255, 255, .86)');
+  });
+});
+
 /** Live-TV → Live-Status and Programmführer (Task 26): the stylesheet scan reaches the new files too (glass spec constraints) */
 describe('Live-TV status and guide tabs (Task 26)', () => {
   const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;

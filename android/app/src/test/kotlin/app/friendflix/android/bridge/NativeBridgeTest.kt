@@ -65,6 +65,13 @@ class NativeBridgeTest {
             calls += "session:$profileId"
             if (hold) held = done else done()
         }
+        /** what castLive answers; null: the answer is kept in [liveHeld] (the watch request is still on its way) */
+        var liveResult: Boolean? = true
+        var liveHeld: ((Boolean) -> Unit)? = null
+        override fun castLive(channelId: String, done: (Boolean) -> Unit) {
+            calls += "castLive:$channelId"
+            liveResult?.let(done) ?: run { liveHeld = done }
+        }
     }
 
     private class Timer(val delay: Long, val block: () -> Unit) { var cancelled = false }
@@ -446,6 +453,63 @@ class NativeBridgeTest {
         assertTrue(reply.sent[1].isNull("detail"))
         castBridge.emitCast(null) // still none: nothing new
         assertEquals(2, reply.sent.size)
+    }
+
+    // ---- live channels (castLive, spec §13) ----
+
+    @Test fun castLiveDispatchesTheChannelId() {
+        castCall("castLive", """{"channelId":"nordlicht-tv"}""")
+        assertEquals(listOf("castLive:nordlicht-tv"), cast.calls)
+        val r = reply.sent.single()
+        assertEquals("c1", r.getString("id"))
+        assertTrue(r.getBoolean("ok"))
+        assertTrue(r.getBoolean("result"))
+        // a refusal of the watch route is a false result, never an error
+        reply.sent.clear()
+        cast.liveResult = false
+        castCall("castLive", """{"channelId":"hafenkanal"}""", id = "c2")
+        assertFalse(reply.sent.single().getBoolean("result"))
+        assertTrue(reply.sent.single().getBoolean("ok"))
+        // the answer waits for the watch request and the load on the TV, and goes out once
+        reply.sent.clear()
+        cast.liveResult = null
+        castCall("castLive", """{"channelId":"nordlicht-tv"}""", id = "c3")
+        assertTrue(reply.sent.isEmpty())
+        cast.liveHeld!!(true)
+        cast.liveHeld!!(false)
+        val late = reply.sent.single()
+        assertEquals("c3", late.getString("id"))
+        assertTrue(late.getBoolean("result"))
+        // without a cast hub (the placeholder) the answer is false
+        reply.sent.clear()
+        call("castLive", """{"channelId":"nordlicht-tv"}""")
+        assertTrue(reply.sent.single().getBoolean("ok"))
+        assertFalse(reply.sent.single().getBoolean("result"))
+    }
+
+    @Test fun aMalformedChannelIdIsRefused() {
+        for (args in listOf(
+            "{}", """{"channelId":"../x"}""", """{"channelId":"nordlicht tv"}""", """{"channelId":"nordlicht_tv"}""", """{"channelId":""}""",
+            """{"channelId":"${"a".repeat(65)}"}""", """{"channelId":7}""", """{"channelId":null}""", """{"channelId":"a","via":"airplay"}""",
+        )) {
+            reply.sent.clear()
+            castCall("castLive", args)
+            assertEquals(args, "bad_args", reply.sent.single().getString("error"))
+        }
+        assertTrue(cast.calls.isEmpty())
+    }
+
+    @Test fun aLiveSnapshotCarriesTheLiveFlag() {
+        cast.snap = snapshot().copy(itemId = "nordlicht-tv", posterId = "nordlicht-tv", title = "Nordlicht TV", subtitle = "Die Leuchtturmwärter", durationMs = 0, live = true)
+        castCall("castState")
+        val r = reply.sent.single().getJSONObject("result")
+        assertTrue(r.getBoolean("live"))
+        assertEquals("Nordlicht TV", r.getString("title"))
+        assertEquals("Die Leuchtturmwärter", r.getString("subtitle"))
+        reply.sent.clear()
+        cast.snap = snapshot()
+        castCall("castState")
+        assertFalse(reply.sent.single().getJSONObject("result").has("live"))
     }
 
     // ---- S7: the cast follows the web session ----

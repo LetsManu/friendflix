@@ -48,6 +48,23 @@ export interface AdminChannel {
   epgShift: { min: number; from: ShiftFrom };
   /** push feeds only: the port and the hint, never the stream id */
   push?: { port: number; hint: string; portInRange: boolean };
+  /** push feeds only: false while livetv has not taken the latest ingest set ("wird übertragen …"); absent for other channels */
+  synced?: boolean;
+}
+
+/** the row shows "wird übertragen …": an own feed whose change is not applied in livetv yet */
+export const syncing = (c: Pick<AdminChannel, 'synced'>): boolean => c.synced === false;
+
+/** how often a page with a syncing row is read again to see it cleared (the backend retries a failed sync every minute) */
+export const SYNC_POLL_MS = 5000;
+
+/**
+ * `rows` with the `synced` flag of the same channels in `fresh` (a re-read of the page); nothing else of a row changes, so a re-read never
+ * overwrites an edit in progress. Rows `fresh` does not have, and rows whose flag did not change, are returned as they were.
+ */
+export function mergeSynced(rows: AdminChannel[], fresh: AdminChannel[]): AdminChannel[] {
+  const by = new Map(fresh.map((c) => [c.id, c.synced]));
+  return rows.map((r) => (by.has(r.id) && by.get(r.id) !== r.synced ? { ...r, synced: by.get(r.id) } : r));
 }
 
 export const PAGE_SIZE = 100;
@@ -204,12 +221,12 @@ export type BulkBody =
   | { ids: string[]; action: 'hide' | 'show' | 'reset' }
   | { ids: string[]; action: 'group'; groupId: string | null }
   | { ids: string[]; action: 'renumber'; from: number };
-export const bulkChannels = (body: BulkBody) => api<{ changed: number }>(`${B}/bulk`, { method: 'POST', body });
+export const bulkChannels = (body: BulkBody) => api<{ changed: number; synced?: boolean }>(`${B}/bulk`, { method: 'POST', body });
 export interface BulkTestResult { id: string; ok: boolean; needs?: Needs; error?: string }
 export const bulkTest = (ids: string[]) => api<{ results: BulkTestResult[] }>(`${B}/bulk`, { method: 'POST', body: { ids, action: 'test' } });
 
 /** `POST /channels/:id/test`: 409 `test_running` / `no_stream_url` / `source_disabled`, 503 `livetv_unreachable`, 502 `livetv_error` */
-export interface TestAnswer { ok: boolean; video: ProbeFacts['video'] | null; audio: ProbeFacts['audio'] | null; needs: Needs | null; error?: string }
+export interface TestAnswer { ok: boolean; video: ProbeFacts['video'] | null; audio: ProbeFacts['audio'] | null; needs: Needs | null; error?: string; /** the channel could start: a test token to play it for 10 s */ preview?: { url: string; token: string } }
 export const testChannel = (id: string) => api<TestAnswer>(`${B}/${enc(id)}/test`, { method: 'POST' });
 
 /** the logo upload is a raw image body (ruling 32), not JSON: 413 `too_large`, 415 `unsupported_type` */

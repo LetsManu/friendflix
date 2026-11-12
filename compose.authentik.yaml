@@ -33,6 +33,7 @@ services:
   ak-postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"] # the entrypoint drops to uid 70 by setuid(), which this allows
     environment:
       POSTGRES_USER: authentik
       POSTGRES_DB: authentik

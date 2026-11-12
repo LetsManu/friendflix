@@ -7,13 +7,16 @@
 const LG_KEYS: Record<number, string> = {
   415: 'MediaPlay', 19: 'MediaPause', 10252: 'MediaPlayPause', 413: 'MediaStop',
   417: 'MediaFastForward', 412: 'MediaRewind',
-  403: 'ColorF0Red', 404: 'ColorF1Green', 406: 'ColorF3Blue',
+  403: 'ColorF0Red', 404: 'ColorF1Green', 406: 'ColorF3Blue', 457: 'Info',
 };
 
 export function lgKeyName(keyCode: number): string | null {
   return LG_KEYS[keyCode] ?? null;
 }
 
+/** Some LG TVs send their channel keys as PageUp / PageDown with `Unidentified` as the key (live TV zapping); a real `e.key` is never overridden. */
+const LG_CHANNEL_KEYS: Record<number, string> = { 33: 'PageUp', 34: 'PageDown' };
+
 export function normaliseLgKey(e: { key: string; keyCode: number }): string {
-  return lgKeyName(e.keyCode) ?? e.key;
+  return lgKeyName(e.keyCode) ?? (e.key === 'Unidentified' ? LG_CHANNEL_KEYS[e.keyCode] : undefined) ?? e.key;
 }

@@ -32,6 +32,8 @@ export interface GatewayOptions {
    * `runtimeTicks`; a segment without a valid one reports nothing). Default: joinedProgressSender (the backend's per-episode progress).
    */
   onJoinedSegment?: (e: JoinedSegment) => void;
+  /** base URL of the `livetv` service (its unsigned `/s/<streamKey>/<file>` files); without it `/media/l/` answers 503 */
+  livetvUrl?: string;
 }
 
 /** a token's progress goes to the backend at once when its part changes, else at most this often */
@@ -133,6 +135,39 @@ const CAST_CORS: Record<string, string> = {
   'access-control-expose-headers': 'Content-Length, Content-Range, Accept-Ranges',
   'cross-origin-resource-policy': 'cross-origin',
 };
+
+// ---- Live TV: /media/l/<token>/<file> (spec §7.3) ----
+/**
+ * The only live paths, equal to livetv's file regex (routes/files.ts, R16): `index.m3u8`, the fMP4 init `init-<n>.mp4` (no plain
+ * `init.mp4`) and numbered `.ts` / `.m4s` segments without leading zeros. Matched on the raw request path (before
+ * URL normalisation), so a `..`, an encoded character or a second slash never reaches the backend or livetv.
+ */
+export const LIVE_ROUTE = /^\/media\/l\/([A-Za-z0-9_-]{43})\/(index\.m3u8|init-[0-9]{1,10}\.mp4|(?:0|[1-9][0-9]{0,9})\.(?:ts|m4s))$/;
+const LIVE_PREFIX = '/media/l/';
+/** a URI inside a live playlist: a bare file name of the route (resolved next to the playlist, so it stays under /media/l/<token>/) */
+const LIVE_FILE = /^(?:init-[0-9]{1,10}\.mp4|(?:0|[1-9][0-9]{0,9})\.(?:ts|m4s))$/;
+/** livetv's stream key (livetv/src/routes/files.ts STREAM_KEY_RE); anything else from the backend is refused, never put into a path */
+const LIVE_STREAM_KEY = /^[0-9a-f]{32}$/;
+/** a 120-minute DVR window at 2-s segments is ~400 KB */
+const LIVE_PLAYLIST_MAX = 2 * 1024 * 1024;
+const LIVE_MEMO_MS = 2_000;
+/** livetv's answer type per file extension: anything else (or a type that does not fit the name) is a 502 */
+const LIVE_TYPES: Record<string, string> = { m3u8: 'application/vnd.apple.mpegurl', ts: 'video/mp2t', m4s: 'video/mp4', mp4: 'video/mp4' };
+type LiveAuthz = { streamKey: string } | 401 | 403 | 410;
+
+/** true when every URI of a live playlist (lines and `URI="…"` attributes) is a bare file name of the route */
+export function liveUrisOk(text: string): boolean {
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    if (t.startsWith('#')) {
+      for (const m of t.matchAll(/URI\s*=\s*("?)([^",]*)\1/gi)) if (!LIVE_FILE.test(m[2]!)) return false;
+      continue;
+    }
+    if (!LIVE_FILE.test(t)) return false;
+  }
+  return true;
+}
 
 /**
  * Direct (original) streams bypass the transcoder, so the resolution cap and the download flag cannot be enforced on them.
@@ -394,12 +429,21 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
   };
   /** every /internal/authz* answer tells the settings revision; a newer one makes remoteConfig refetch the upstream */
   const noteRev = (r: Response) => opts.onConfigRev?.(r.headers.get('x-ff-config-rev'));
+  /** the livetv base (http/https only); null = live answers 503 */
+  const liveBase = ((): URL | null => {
+    try {
+      const u = opts.livetvUrl ? new URL(opts.livetvUrl) : null;
+      return u && (u.protocol === 'http:' || u.protocol === 'https:') ? u : null;
+    } catch {
+      return null;
+    }
+  })();
   const authCache = new Map<string, { exp: number; v: Authz | null }>();
   const castCache = new Map<string, { exp: number; v: Authz | null }>();
   const castFails = new Map<string, { start: number; hashes: Set<string>; blockedUntil: number }>();
   const dlOpen = new Map<string, number>();
   const dlCache = new Map<string, { exp: number; v: DownloadAuthz | 401 | 404 }>();
-  const m = { dlBytes: 0, bytes: 0, active: 0, req: new Map<string, number>(), cast: new Map<string, number>() };
+  const m = { dlBytes: 0, bytes: 0, active: 0, req: new Map<string, number>(), cast: new Map<string, number>(), live: new Map<string, number>() };
   const count = (k: string) => m.req.set(k, (m.req.get(k) ?? 0) + 1);
 
   const metrics = () =>
@@ -414,6 +458,8 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       ...[...m.req].map(([k, v]) => `friendflix_gateway_requests_total{code="${k}"} ${v}`),
       '# TYPE friendflix_gateway_cast_requests_total counter',
       ...[...m.cast].map(([k, v]) => `friendflix_gateway_cast_requests_total{code="${k}"} ${v}`),
+      '# TYPE friendflix_gateway_live_requests_total counter',
+      ...[...m.live].map(([k, v]) => `friendflix_gateway_live_requests_total{code="${k}"} ${v}`),
     ].join('\n') + '\n';
 
   /**
@@ -486,6 +532,9 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       if (opts.metricsToken && req.headers.authorization !== `Bearer ${opts.metricsToken}`) return end(res, 401, 'unauthorized');
       return end(res, 200, metrics(), 'text/plain; version=0.0.4');
     }
+    // live TV does not need the media server: before the "no media server yet" answer. Dispatched on the raw path too, so a
+    // `/media/l/<t>/../x` that URL normalisation would turn into another route is refused here.
+    if (url.pathname.startsWith(LIVE_PREFIX) || (req.url ?? '').startsWith(LIVE_PREFIX)) return handleLive(req, res);
     // no media server yet (setup not done): 503 before any backend call; /health stays 200 so the container is not restarted
     if (url.pathname.startsWith('/media/') && !upstreamBase()) {
       const cast = url.pathname.startsWith(CAST_PREFIX); // a receiver must be able to read the 503 (CORS), counted as a cast request
@@ -804,6 +853,141 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
       return cors(401, 'unauthorized');
     }
     return serveCast(req, res, url, path, subPath, auth as CastAuthz, authzMs);
+  }
+
+  // ---- Live TV: /media/l/<token>/<file> -> ${livetvUrl}/s/<streamKey>/<file> ----
+  const liveCount = (k: string) => m.live.set(k, (m.live.get(k) ?? 0) + 1);
+  /** keyed `sha256(token)|client` (never the raw token); 2 s for grants and denials alike, backend trouble is not memoised */
+  const liveCache = new Map<string, { exp: number; v: LiveAuthz }>();
+  const liveInflight = new Map<string, Promise<LiveAuthz | 'error'>>();
+
+  /** POST /internal/authz/live { token, ip }. Single flight per key: a player's playlist and segment fetch share one call. */
+  function authorizeLive(token: string, ip: string): Promise<LiveAuthz | 'error'> {
+    const key = `${sha256(token)}|${ip}`;
+    const hit = liveCache.get(key);
+    if (hit && hit.exp > Date.now()) return Promise.resolve(hit.v);
+    const running = liveInflight.get(key);
+    if (running) return running;
+    const p = (async (): Promise<LiveAuthz | 'error'> => {
+      let v: LiveAuthz;
+      try {
+        const r = await f(new URL('/internal/authz/live', opts.backendUrl), {
+          method: 'POST',
+          headers: { 'x-internal-secret': opts.internalSecret, 'content-type': 'application/json' },
+          body: JSON.stringify({ token, ip }),
+          signal: AbortSignal.timeout(5000),
+        });
+        noteRev(r);
+        if (r.ok) {
+          const j = (await r.json()) as { streamKey?: unknown; kind?: unknown };
+          // the key becomes a livetv path segment: only livetv's own shape is accepted
+          if (typeof j?.streamKey !== 'string' || !LIVE_STREAM_KEY.test(j.streamKey) || j.kind !== 'live') return 'error';
+          v = { streamKey: j.streamKey };
+        } else if (r.status === 401 || r.status === 403 || r.status === 410) {
+          await r.body?.cancel().catch(() => {});
+          v = r.status;
+        } else {
+          await r.body?.cancel().catch(() => {});
+          return 'error';
+        }
+      } catch {
+        return 'error';
+      }
+      liveCache.set(key, { exp: Date.now() + LIVE_MEMO_MS, v });
+      if (liveCache.size > 5000) liveCache.clear();
+      return v;
+    })().finally(() => liveInflight.delete(key));
+    liveInflight.set(key, p);
+    return p;
+  }
+
+  /**
+   * GET/HEAD/OPTIONS `/media/l/<token>/<file>`: path allowlist, no query, the cast limiter for failing tokens, live authz, then a GET of
+   * `/s/<streamKey>/<file>` from livetv without any client header. Playlists are buffered (≤ 2 MB, URIs checked) and never cached;
+   * segments and init files stream with `private, max-age=600` (their names never change content). CORS of the cast path on every
+   * answer (receivers fetch cross-origin). Nothing is logged; the metrics count codes only.
+   */
+  async function handleLive(req: IncomingMessage, res: ServerResponse) {
+    const fail = (code: number, body: string, extra: Record<string, string> = {}) => {
+      liveCount(String(code));
+      return end(res, code, body, 'text/plain', { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...CAST_CORS, ...extra });
+    };
+    const rawUrl = req.url ?? '';
+    const q = rawUrl.indexOf('?');
+    const mm = LIVE_ROUTE.exec(q === -1 ? rawUrl : rawUrl.slice(0, q));
+    if (!mm) return fail(403, 'forbidden');
+    if (req.method === 'OPTIONS') {
+      liveCount('204');
+      res.writeHead(204, { ...CAST_CORS, 'access-control-allow-methods': 'GET, HEAD, OPTIONS', 'access-control-allow-headers': 'Range, Content-Type', 'access-control-max-age': '600' });
+      return void res.end();
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') return fail(405, 'method not allowed', { allow: 'GET, HEAD, OPTIONS' });
+    if (q !== -1) return fail(403, 'forbidden'); // nothing in a query may shape what is served (also a bare "?")
+    const ip = clientKey(req);
+    if (isBlocked(ip)) return fail(429, 'too many requests', { 'retry-after': '300' });
+    const token = mm[1]!;
+    const file = mm[2]!;
+    // registered before the authz await: a client that leaves meanwhile must not cost livetv a request
+    const ac = new AbortController();
+    res.once('close', () => ac.abort());
+    const auth = await authorizeLive(token, ip);
+    if (res.destroyed) return; // the client left during authz: nothing goes to livetv, nothing is counted
+    if (auth === 'error') return fail(503, 'unavailable', { 'retry-after': '2' });
+    if (typeof auth === 'number') {
+      if (auth === 401) noteFail(ip, sha256(token)); // only an unknown token hints at guessing; 403/410 need a once-valid token
+      return fail(auth, auth === 401 ? 'unauthorized' : auth === 403 ? 'forbidden' : 'gone');
+    }
+    if (!liveBase) return fail(503, 'unavailable', { 'retry-after': '5' });
+    const target = new URL(`/s/${auth.streamKey}/${file}`, liveBase);
+    if (target.origin !== liveBase.origin) return fail(503, 'unavailable'); // defence in depth: key and file are allowlisted above
+
+    // no client header goes to livetv (no range, cookie, conditional or forwarding header): its answer depends on the path only
+    // a playlist within 15 s (headers and body); a segment's headers within 15 s, its body then streams as long as the client reads
+    const timer = setTimeout(() => ac.abort(), 15_000);
+    let r: Response;
+    try {
+      r = await f(target.href, { method: 'GET', headers: { 'accept-encoding': 'identity' }, signal: ac.signal, redirect: 'manual' });
+    } catch {
+      clearTimeout(timer);
+      if (res.destroyed) return;
+      return fail(503, 'unavailable', { 'retry-after': '2' });
+    }
+    const drop = () => { clearTimeout(timer); void r.body?.cancel().catch(() => {}); };
+    if (res.destroyed) { drop(); return; }
+    if (r.status === 404) { drop(); return fail(404, 'not found'); }
+    const ext = file.slice(file.lastIndexOf('.') + 1);
+    const type = (r.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+    if (r.status !== 200 || type !== LIVE_TYPES[ext]) { drop(); return fail(502, 'bad gateway'); }
+    const out: Record<string, string> = { 'content-type': LIVE_TYPES[ext]!, 'x-content-type-options': 'nosniff', ...CAST_CORS };
+
+    if (ext === 'm3u8') {
+      out['cache-control'] = 'no-store';
+      const text = await readCapped(r, LIVE_PLAYLIST_MAX);
+      clearTimeout(timer);
+      if (res.destroyed) return; // the client left while the playlist was read: not a gateway fault, not counted
+      if (text === null || !liveUrisOk(text)) return fail(502, 'bad gateway');
+      const body = Buffer.from(text, 'utf8');
+      out['content-length'] = String(body.length);
+      liveCount('200');
+      res.writeHead(200, out);
+      if (req.method === 'HEAD') return void res.end();
+      m.bytes += body.length;
+      return void res.end(body);
+    }
+
+    clearTimeout(timer);
+    out['cache-control'] = 'private, max-age=600';
+    const len = r.headers.get('content-length');
+    if (len && /^\d{1,15}$/.test(len) && !r.headers.get('content-encoding')) out['content-length'] = len;
+    liveCount('200');
+    res.writeHead(200, out);
+    if (!r.body || req.method === 'HEAD') { drop(); return void res.end(); }
+    m.active++;
+    res.once('close', () => { m.active--; });
+    const body = Readable.fromWeb(r.body as never);
+    body.on('data', (c: Buffer) => { m.bytes += c.length; });
+    body.on('error', () => res.destroy());
+    body.pipe(res);
   }
 
   /** the checks every authorised cast request passes (scope tuple, subtitle track, burn-in guard, adapter authz), then the proxy */
@@ -1170,6 +1354,33 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
   });
   server.keepAliveTimeout = 65_000;
   return { server, metrics };
+}
+
+/** the body as UTF-8 when it is at most `max` bytes (read in chunks, cancelled as soon as it is longer); else null */
+async function readCapped(r: Response, max: number): Promise<string | null> {
+  if (Number(r.headers.get('content-length') ?? 0) > max) {
+    await r.body?.cancel().catch(() => {});
+    return null;
+  }
+  if (!r.body) return '';
+  const reader = r.body.getReader();
+  const parts: Uint8Array[] = [];
+  let n = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.length;
+      if (n > max) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      parts.push(value);
+    }
+  } catch {
+    return null;
+  }
+  return Buffer.concat(parts).toString('utf8');
 }
 
 const ms = (v: number) => (Math.round(v * 10) / 10).toString();

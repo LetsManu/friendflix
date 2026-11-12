@@ -34,7 +34,7 @@
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
-  import { isRailTop, isTabActive, TV_RAIL } from '#lib/menu';
+  import { isRailTop, isTabActive, LIVE_RAIL, liveTabs, TV_RAIL } from '#lib/menu';
   import { deskGuardBudget, tvGuardBudget, deskPagePlan, frameGuard, framesIdle, framesResume, isDetailPage, motionLevel, motionTripped, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
@@ -215,7 +215,8 @@
   // /login, /reset, /confirm-email: the in-app sign-in, the recovery link and the e-mail change link (Block 23 phase 3); they never ask
   // /api/me (a 401 there would loop back to /auth/login → /login)
   $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending' || path === '/restore' || path === '/setup' || path === '/login' || path === '/reset' || path === '/confirm-email';
-  $: watchPage = path.startsWith('/watch/') || /^\/party\/[^/]+/.test(path); // immersive player pages: no navigation
+  // immersive player pages: no navigation (the film player, a party, the live player of Task 39)
+  $: watchPage = path.startsWith('/watch/') || path.startsWith('/live/watch/') || /^\/party\/[^/]+/.test(path);
   $: showRail = tv && !watchPage && !profilesPage && !kidsUi;
   // only the rail's own destinations, without a filter (a genre page from the home categories row is a drill-down: Back goes back)
   $: topLevel = !publicPage && isRailTop(path, $page.url.search); // (the prerendered /offline page has no search params)
@@ -413,7 +414,7 @@
     const { to, type } = nav;
     trackNav({ type, delta: 'delta' in nav ? (nav.delta as number) : undefined, index: historyIndex(history.state) }); // the desktop detail page's "‹ Back" (in-app history or home)
     settleSeq++; // every navigation ends an older settle (also into the player, which places its own focus)
-    if (!to || /^\/(watch|party)\//.test(to.url.pathname)) return;
+    if (!to || /^\/(watch|party|live\/watch)\//.test(to.url.pathname)) return;
     if (tv) void settleFocus(type === 'popstate' ? memo.get(to.url.pathname + to.url.search) : undefined);
     // desktop: only Back puts the focus somewhere (on the card the title was opened from; the row keeps its page: no scrolling)
     else if (desk && type === 'popstate') {
@@ -423,7 +424,7 @@
   });
 
   // ---- page transitions: View Transitions API where available (180 ms crossfade, main content rises 8 px; see app.css) ----
-  const immersive = (p: string) => /^\/(watch|party)\//.test(p);
+  const immersive = (p: string) => /^\/(watch|party|live\/watch)\//.test(p);
   const isWatch = (p: string) => p.startsWith('/watch/');
   // A transition started while another runs skips the first one, whose `finished` then settles: only the latest transition may
   // clean up the shared root classes, and each one only takes the shared name off the elements it named (unless the latest named them too).
@@ -482,7 +483,8 @@
 
   // ---- TV page transitions (spec 5.2; plan in lib/tv/motion.ts): artwork -> detail backdrop morph, rail pages slide, else crossfade ----
   let pageFadeIn = false; // no View Transitions API (TV, desktop detail): the new page fades in (afterNavigate)
-  const railAt = (p: string) => TV_RAIL.findIndex(([href]) => isTabActive(href, p));
+  $: tvRail = liveTabs(TV_RAIL, LIVE_RAIL, $features.livetv);
+  const railAt = (p: string) => tvRail.findIndex(([href]) => isTabActive(href, p));
   const onScreen = (el: Element | null | undefined): el is HTMLElement => {
     const r = el?.getBoundingClientRect();
     return !!r && r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
@@ -815,6 +817,7 @@
       <span class="sp"></span>
       <nav class="knav" aria-label={$t('kids.nav.label')}>
         <a class="kbtn" href="/kids/search" aria-label={$t('kids.nav.search')} aria-current={path.startsWith('/kids/search') ? 'page' : undefined}><Icon name="search" size={26} /></a>
+        {#if $features.livetv}<a class="kbtn" href="/live" aria-label={$t('kids.nav.live')} aria-current={path.startsWith('/live') ? 'page' : undefined}><Icon name="tv" size={26} /></a>{/if}
         <a class="kav" href="/profiles" aria-label={$t('kids.nav.switchProfile', { name: who })}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span></a>
       </nav>
     </header>
@@ -834,6 +837,7 @@
           <nav class="chipbar" class:tucked={mTucked} aria-label={$t('shell.cats.title')} inert={mTucked || undefined}>
             <a class="chip" href="/browse/series" class:on={path.startsWith('/browse/series')} aria-current={path.startsWith('/browse/series') ? 'page' : undefined}>{$t('shell.nav.series')}</a>
             <a class="chip" href="/browse/movies" class:on={path.startsWith('/browse/movies')} aria-current={path.startsWith('/browse/movies') ? 'page' : undefined}>{$t('shell.nav.movies')}</a>
+            {#if $features.livetv}<a class="chip" href="/live" class:on={path.startsWith('/live')} aria-current={path.startsWith('/live') ? 'page' : undefined}>{$t('shell.nav.live')}</a>{/if}
             <button type="button" class="chip" aria-haspopup="dialog" aria-expanded={catOpen} on:click={openCats}>{$t('shell.nav.categories')}<Icon name="chevron-down" size={16} /></button>
           </nav>
         {/if}

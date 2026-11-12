@@ -4,6 +4,7 @@ import { derived, get, type Readable } from 'svelte/store';
 import { goto } from '$app/navigation';
 import { native, nativeCast, type NativeCastSnapshot } from '#lib/native/bridge';
 import { castEngine, castSession, type CastSession } from './engine';
+import { liveFields } from './liveInfo';
 
 /** Where the cast bar gets its session from and where its buttons go: the page's own cast engine, or the Android app's Chromecast session. */
 export interface CastBarSource {
@@ -13,6 +14,8 @@ export interface CastBarSource {
   stop(): Promise<void>;
   /** the bar's text / thumbnail was tapped: show the remote */
   open(): void;
+  /** channel ▲ (1) / ▼ (-1) of a live cast (the web engine's; the app's live cast has none: absent) */
+  zap?(dir: 1 | -1): void;
   /** the bar can grow into the expanded sheet (the web engine's; the app has none) */
   canExpand: boolean;
   /** the session is the Android app's: its Next shows only while a next episode is queued (`session.upcoming`; the app's `next` answers false
@@ -27,7 +30,9 @@ export function engineSource(): CastBarSource {
     playPause: () => castEngine.playPause(),
     next: () => void castEngine.next(),
     stop: () => castEngine.stop(),
-    open: () => { const c = get(castSession); if (c) void goto('/watch/' + c.itemId); },
+    // a live channel's remote is the live player (it shows the remote screen while the channel plays on the TV)
+    open: () => { const c = get(castSession); if (c) void goto(c.live ? '/live/watch/' + encodeURIComponent(c.live.channelId) : '/watch/' + c.itemId); },
+    zap: (dir) => void castEngine.zapLive(dir),
     canExpand: true,
     fromApp: false,
   };
@@ -40,6 +45,8 @@ function toSession(n: NativeCastSnapshot): CastSession {
     position: n.positionMs / 1000, duration: n.durationMs / 1000, paused: n.paused, buffering: false, state: n.state,
     audioTracks: [], subtitles: [], subIndex: -1, autoplay: true,
     ...(n.next ? { upcoming: { itemId: n.next.itemId, label: n.next.label } } : {}),
+    // the app's live cast: the channel (its number is not in the snapshot), the programme now as its subtitle
+    ...(n.live ? liveFields({ channelId: n.itemId, number: null, name: n.title, ...(n.subtitle ? { now: n.subtitle } : {}) }) : {}),
   };
 }
 
@@ -50,7 +57,8 @@ export function nativeSource(): CastBarSource {
     playPause: () => void native.castControl('playPause'),
     next: () => void native.castControl('next'),
     stop: async () => { await native.castControl('stop'); },
-    open: () => void native.castControl('open'),
+    // a live channel has no remote screen in the app (its `open` would answer false): nothing is asked
+    open: () => { if (!get(nativeCast)?.live) void native.castControl('open'); },
     canExpand: false,
     fromApp: true,
   };

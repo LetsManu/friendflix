@@ -51,9 +51,26 @@ describe('chipsTucked', () => {
 
 describe('phoneTabs', () => {
   it('has four tabs with downloads', () => {
-    expect(phoneTabs(true).map((t) => t.href)).toEqual(['/', '/new', '/watchlist', '/downloads']);
+    expect(phoneTabs(true, false).map((t) => t.href)).toEqual(['/', '/new', '/watchlist', '/downloads']);
   });
   it('has three tabs without', () => {
-    expect(phoneTabs(false).map((t) => t.href)).toEqual(['/', '/new', '/watchlist']);
+    expect(phoneTabs(false, false).map((t) => t.href)).toEqual(['/', '/new', '/watchlist']);
+  });
+  it('Live sits between Neu and Merkliste: five tabs with downloads', () => {
+    const tabs = phoneTabs(true, true);
+    expect(tabs.map((t) => t.key)).toEqual(['home', 'new', 'live', 'myList', 'downloads']);
+    expect(tabs.map((t) => t.href)).toEqual(['/', '/new', '/live', '/watchlist', '/downloads']);
+    expect(tabs[2]).toEqual({ href: '/live', key: 'live', icon: 'tv' });
+    expect(phoneTabs(false, true).map((t) => t.key)).toEqual(['home', 'new', 'live', 'myList']);
+  });
+});
+
+describe('the tab labels (ruling 54: Merkliste stays)', () => {
+  it('the visible labels of five tabs: Start, Neu, Live, Merkliste, Downloads', async () => {
+    const { setLocale, tr } = await import('#lib/i18n');
+    await setLocale('de');
+    expect([tr('shell.tabs.home'), tr('shell.tabs.newShort'), tr('shell.tabs.liveShort'), tr('shell.tabs.myList'), tr('shell.tabs.downloadsShort')]).toEqual(['Start', 'Neu', 'Live', 'Merkliste', 'Downloads']);
+    expect(tr('shell.tabs.live')).toBe('Live-TV');
+    expect(tr('shell.nav.live')).toBe('Live-TV');
   });
 });

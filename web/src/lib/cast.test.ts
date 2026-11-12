@@ -713,6 +713,22 @@ describe('own receiver: what it confirms it plays (HEVC, Dolby)', () => {
   });
 });
 
+describe('loadLiveOnCast', () => {
+  it('sets no HLS segment format (livetv serves TS or fMP4 per stream mode)', async () => {
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    const ok = await C.loadLiveOnCast({
+      contentId: 'https://p/media/l/tok/index.m3u8', contentType: 'application/x-mpegURL', streamType: 'LIVE',
+      metadata: { title: 'Ch', subtitle: 'Now', images: [] }, customData: { ui: { live: true } },
+    });
+    expect(ok).toBe(true);
+    const media = sdk.session.loadMedia.mock.calls[0]![0].args[0];
+    expect(media.streamType).toBe('LIVE');
+    expect(media.hlsSegmentFormat).toBeUndefined();
+    expect('hlsSegmentFormat' in media).toBe(false);
+  });
+});
+
 describe('resume plumbing', () => {
   it('emits session-resume on SESSION_RESUMED and for a session present at setup', async () => {
     const sdk = await connectSdk();

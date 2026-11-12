@@ -13,6 +13,16 @@ import type { EncoderSettings, ServerSession } from './media/types.js';
  * priority (admits); running conversions are never stopped here, whoever started them. Grants, exempt marks and the lock live in KV
  * and carry only kinds, ids and a display label; no URL, token or path.
  */
+/**
+ * The live TV transcodes livetv runs, registered by livetv/streams.ts when it loads (no import back: convbudget is a leaf of that
+ * graph, so no load order can reach a half-initialised module). Without a registration there are none.
+ */
+export type LiveSource = (ctx: Ctx) => Promise<ConvEntry[]>;
+let liveSource: LiveSource = async () => [];
+export function setLiveSource(fn: LiveSource): void {
+  liveSource = fn;
+}
+
 export type ConvKind = 'film' | 'live' | 'record' | 'download' | 'reencode';
 export type ConvPriority = 'films' | 'live' | 'equal';
 export interface ConvEntry {
@@ -114,26 +124,51 @@ async function encoderSettings(ctx: Ctx, waitMs: number): Promise<EncoderSetting
 }
 
 /**
- * Both benchmark records; `stale` when the media server's encoder settings changed since its record. Unreadable or late settings are
- * not stale. `settingsMs`: how long to wait for the settings (admin views 3 s; the admission path 800 ms, never a slow start).
+ * Whether livetv's stored record measured another encoder than the one it would use now (LIVETV_ENCODER against what livetv can use),
+ * registered by convbench.ts when it loads (no import back, as for the live source). Without a registration a record is never stale.
+ * `jfHwAccel`: the media server's hardware acceleration the `auto` choice follows.
  */
-export async function readBench(ctx: Ctx, settingsMs = SETTINGS_TIMEOUT_MS): Promise<{ jellyfin: BenchRecord | null; livetv: BenchRecord | null; stale: boolean }> {
+export type LivetvEncoderCheck = (ctx: Ctx, rec: BenchRecord, jfHwAccel: string | null) => Promise<boolean>;
+let livetvEncoderChanged: LivetvEncoderCheck = async () => false;
+export function setLivetvEncoderCheck(fn: LivetvEncoderCheck): void {
+  livetvEncoderChanged = fn;
+}
+
+/** per ctx: the last `livetvStale` worked out (admin view, benchmark tick); the admission path reads only this, never livetv */
+const staleMemo = new WeakMap<object, boolean>();
+
+/**
+ * Both benchmark records; `stale` when the media server's encoder settings changed since its record, `livetvStale` when livetv's
+ * record measured another encoder than the configured one (the limit then ignores that record, see conversionLimit). Unreadable or
+ * late settings are not stale. `settingsMs`: how long to wait for the settings (admin views 3 s; the admission path 800 ms, never a
+ * slow start). `checkLivetv` false (the admission path): `livetvStale` is the last value an admin view or the tick worked out, and
+ * livetv is not asked.
+ */
+export async function readBench(ctx: Ctx, settingsMs = SETTINGS_TIMEOUT_MS, checkLivetv = true): Promise<{ jellyfin: BenchRecord | null; livetv: BenchRecord | null; stale: boolean; livetvStale: boolean }> {
   const [jf, lt] = await ctx.kv.mget([BENCH_KEY, BENCH_LIVETV_KEY]).catch(() => [null, null]);
   const jellyfin = benchOf(jf ?? null);
   const livetv = benchOf(lt ?? null);
-  if (!jellyfin) return { jellyfin, livetv, stale: false };
+  if (!jellyfin && !livetv) return { jellyfin, livetv, stale: false, livetvStale: false };
   const settings = await encoderSettings(ctx, settingsMs);
-  return { jellyfin, livetv, stale: settings !== null && jellyfin.fingerprint !== fingerprint(settings) };
+  let changed: boolean | undefined = false;
+  if (!livetv) staleMemo.delete(ctx);
+  else if (!checkLivetv) changed = staleMemo.get(ctx) ?? false;
+  else if (settings !== null) {
+    changed = await within(() => livetvEncoderChanged(ctx, livetv, settings.hwAccel ?? null).catch(() => false), settingsMs);
+    if (changed !== undefined) staleMemo.set(ctx, changed);
+  }
+  return { jellyfin, livetv, stale: jellyfin !== null && settings !== null && jellyfin.fingerprint !== fingerprint(settings), livetvStale: changed === true };
 }
 
 /**
  * The limit in force: the admin's CONVERSION_SLOTS, else automatic = the recommendation of a current benchmark, else 2.
  * `recommended` is null while nothing (current) is measured.
  */
-export async function conversionLimit(ctx: Ctx, o: { settingsMs?: number } = {}): Promise<{ limit: number; auto: number; custom: number | null; recommended: number | null; priority: ConvPriority }> {
+export async function conversionLimit(ctx: Ctx, o: { settingsMs?: number; checkLivetv?: boolean } = {}): Promise<{ limit: number; auto: number; custom: number | null; recommended: number | null; priority: ConvPriority }> {
   const { CONVERSION_SLOTS, CONVERSION_PRIORITY } = ctx.cfg;
-  const b = await readBench(ctx, o.settingsMs);
-  const recommended = b.jellyfin && !b.stale ? recommend({ jellyfin: b.jellyfin.speed, ...(b.livetv ? { livetv: b.livetv.speed } : {}) }) : null;
+  const b = await readBench(ctx, o.settingsMs, o.checkLivetv);
+  // a livetv record of another encoder counts as absent (R35): the films keep the limit a missing record gives until it is measured again
+  const recommended = b.jellyfin && !b.stale ? recommend({ jellyfin: b.jellyfin.speed, ...(b.livetv && !b.livetvStale ? { livetv: b.livetv.speed } : {}) }) : null;
   const auto = recommended ?? CONV_DEFAULT_SLOTS;
   const custom = CONVERSION_SLOTS ?? null;
   return { limit: custom ?? auto, auto, custom, recommended, priority: CONVERSION_PRIORITY };
@@ -148,14 +183,19 @@ const decided = (s: ServerSession | undefined) => Boolean(s && (s.videoDirect !=
  * What converts now, one entry per play session: the media server's converting sessions (any app; preview clips, the HEVC probe and
  * the benchmark are exempt; a preparing download's session counts as `download`), plus running download preparations from their own
  * job state (`conv:dl:<job>`, convexempt.ts; once per play session, whether the server lists it or not), plus grants whose session the
- * server does not list yet, plus portal streams the server does not list whose pbinfo record says they convert (two devices of one profile share one
+ * server does not list yet, plus live TV transcodes (`live:<channelId>`, livetv/streams.ts liveConversions), plus portal streams the server does not list whose pbinfo record says they convert (two devices of one profile share one
  * server session, so the server's list alone can undercount, as in hevcGate). With exceptUser + exceptDevice that device's own streams
  * and grants are left out (its new stream replaces them, as in hevcGate). null: the session list did not answer within 800 ms
- * (unknown). A server without a session list counts grants and portal records only. `sessions`: a request's shared read.
+ * (unknown). A server without a session list counts grants and portal records only. `sessions`: a request's shared read. `exceptLive`:
+ * a live channel left out (its entry `live:<id>`, listed by livetv or a grant bound to that key): the stream a channel switch releases
+ * (ruling 37, Task 32).
  */
-export async function countConversions(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; sessions?: SessionRead | null } = {}): Promise<ConvEntry[] | null> {
-  return (await count(ctx, o))?.entries ?? null;
+export async function countConversions(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; exceptLive?: string; sessions?: SessionRead | null } = {}): Promise<ConvEntry[] | null> {
+  const entries = (await count(ctx, o))?.entries ?? null;
+  return entries && o.exceptLive !== undefined ? withoutLive(entries, o.exceptLive) : entries;
 }
+/** the entries without the live channel's own (`live:<channelId>`: livetv's listing and the grant bound to that key share it, F8) */
+const withoutLive = (entries: ConvEntry[], channelId: string) => entries.filter((e) => e.key !== `live:${channelId}`);
 
 /**
  * countConversions plus `ownPending`: the excepted device's prefetch grants (`swap`) that no stream uses yet (the server does not say
@@ -166,7 +206,7 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
   const list = ctx.jf.admin.transcodeSessions?.bind(ctx.jf.admin);
   const sessions = list ? await (o.sessions ?? (() => within(list, HEVC_SESSIONS_TIMEOUT_MS)))() : [];
   if (!sessions) return null;
-  const live = await listLive(ctx).catch(() => []);
+  const [live, liveTv] = await Promise.all([listLive(ctx).catch(() => []), liveSource(ctx).catch(() => [] as ConvEntry[])]);
   const liveBy = new Map(live.map((l) => [l.playSessionId, l] as const));
   const bySession = new Map(sessions.flatMap((s) => (s.playSessionId ? [[s.playSessionId, s] as const] : [])));
 
@@ -202,6 +242,10 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
     if (out.has(key) || exempt.has(key) || decided(bySession.get(key))) continue;
     out.set(key, { kind: 'download', key, label: d.label ?? null, since: null, device: null, userId: d.user ?? null });
   }
+
+  // live TV transcodes livetv runs (Task 31), before the grants: a start's grant is bound to the same key `live:<channelId>`, so the
+  // grant loop skips it once livetv lists the stream (one entry per key, F8)
+  for (const e of liveTv) if (!out.has(e.key)) out.set(e.key, e);
 
   const mine = o.exceptUser !== undefined && o.exceptDevice !== undefined;
   const ownPending: string[] = [];
@@ -247,10 +291,13 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
  * them. Every media
  * server read on this path is bounded by 800 ms (settings and sessions run in parallel), so the answer comes within about 2 s at worst.
  * `unknown`: the lock or the session list could not be had in time; the caller treats it like `full` (a download waits for its next tick).
+ * `exceptLive` (a channel switch, ruling 37): the live channel the switch would release is left out of the count; `onlyWithout` says the
+ * admission passed only because of that (the same count with it would refuse). Both counts are decided here, under the one lock, so no
+ * other admission sees the slot in between; the caller must then release that channel or drop this grant.
  */
-export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: string; deviceId?: string; hint: string; hevc?: boolean; label?: string; swap?: boolean; sessions?: SessionRead | null }): Promise<{ ok: true } | { ok: false; why: 'full' | 'unknown' }> {
-  // the limit does not depend on the lock: its settings read (800 ms at most here) starts now and overlaps the wait and the count
-  const limP = conversionLimit(ctx, { settingsMs: HEVC_SESSIONS_TIMEOUT_MS });
+export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: string; deviceId?: string; hint: string; hevc?: boolean; label?: string; swap?: boolean; sessions?: SessionRead | null; exceptLive?: string }): Promise<{ ok: true; onlyWithout?: true } | { ok: false; why: 'full' | 'unknown' }> {
+  // the limit does not depend on the lock (livetv is never asked here, only the last livetvStale is read): its settings read (800 ms at most here) starts now and overlaps the wait and the count
+  const limP = conversionLimit(ctx, { settingsMs: HEVC_SESSIONS_TIMEOUT_MS, checkLivetv: false });
   limP.catch(() => undefined); // awaited below; never an unhandled rejection when the lock is not had
   const token = randomUUID();
   const until = Date.now() + LOCK_WAIT_MS;
@@ -263,7 +310,9 @@ export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: str
   try {
     const [lim, counted] = await Promise.all([limP, count(ctx, { ...(o.deviceId ? { exceptUser: o.userId, exceptDevice: o.deviceId } : {}), ...(o.sessions ? { sessions: o.sessions } : {}) })]);
     if (!counted) return { ok: false, why: 'unknown' };
-    if (!admits(o.kind, counted.entries.length, lim.limit, lim.priority)) return { ok: false, why: 'full' };
+    const withIt = admits(o.kind, counted.entries.length, lim.limit, lim.priority);
+    const onlyWithout = !withIt && o.exceptLive !== undefined && admits(o.kind, withoutLive(counted.entries, o.exceptLive).length, lim.limit, lim.priority);
+    if (!withIt && !onlyWithout) return { ok: false, why: 'full' };
     const g: Grant = { kind: o.kind, user: o.userId, ...(o.deviceId ? { device: o.deviceId } : {}), ...(o.hevc ? { hevc: true as const } : {}), ...(o.label ? { label: o.label } : {}), ...(o.swap && o.deviceId ? { swap: true as const } : {}) };
     const key = `${GRANT}${o.hint}`;
     // indexed first: a grant is never written where the count cannot see it (a failed write leaves a member without a grant: nothing)
@@ -271,7 +320,7 @@ export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: str
     if (!written) return { ok: false, why: 'unknown' };
     // the new grant is in: the device's own pending ones are replaced (a failed delete leaves one to its TTL, the safe direction)
     if (o.swap) await Promise.all(counted.ownPending.filter((k) => k !== key).map((k) => removeGrant(ctx, k.slice(GRANT.length))));
-    return { ok: true };
+    return onlyWithout ? { ok: true, onlyWithout: true } : { ok: true };
   } finally {
     await ctx.kv.delIfEquals(LOCK_KEY, token).catch(() => undefined);
   }

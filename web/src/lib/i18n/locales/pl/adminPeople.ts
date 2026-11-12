@@ -490,6 +490,7 @@ const dict: Translation<typeof de> = {
     confirmRevokeTitle: 'Cofnąć dostęp dla „{device}”?',
     confirmRevokeBody: 'Użytkownik {name} zostanie wylogowany na tym urządzeniu i będzie musiał je ponownie zatwierdzić.',
     unknownDevice: 'Nieznane urządzenie',
+    startLive: 'Telewizor uruchamia się z telewizją na żywo',
     empty: 'Nie zarejestrowano jeszcze urządzeń.',
     emptyFiltered: 'Żadne urządzenie nie pasuje do tych filtrów.',
   },

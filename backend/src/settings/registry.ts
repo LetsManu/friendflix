@@ -186,6 +186,8 @@ export const SETTINGS: readonly SettingDef[] = [
   // livetv: listed in Admin -> Settings only while the livetv container is detected (routes/adminSettings.ts, ruling 25)
   setting('LIVETV_ENCODER', { kind: 'enum', group: 'livetv' }), // read per stream start and benchmark
   setting('LIVETV_SRT_HOST', { kind: 'string', group: 'livetv' }), // read per request (srtHost)
+  setting('LIVETV_DVR_MINUTES', { kind: 'int', group: 'livetv' }), // read per stream start and watch answer (livetv/streams.ts)
+  setting('LIVETV_MAX_BITRATE', { kind: 'int', group: 'livetv' }), // read per stream start (livetv/streams.ts)
 ];
 
 /** Per container or per deployment, or shared with a container that reads env only: env > default, read-only in Admin -> Settings. */

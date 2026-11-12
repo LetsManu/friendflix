@@ -12,6 +12,7 @@ import { requireAdmin, requireUser } from './session.js';
  * "load" to playback info, playlist, first fragment and first frame, plus seeks and stalls, and the A/V-sync facts (delivery,
  * video copied, sound mode / Web Audio routing, dropped / total frames, A/V-affecting events). Anonymous on purpose: no user,
  * profile, item, address or user agent is stored, only `home` (the same home-network check as the remote bitrate cap).
+ * Live starts (mode 'live', the live player) keep their device and first-frame time only: no channel, nothing else.
  * Rows live 14 days (pruned by healthTick).
  */
 const MAX_MS = 600_000;
@@ -24,8 +25,8 @@ export const AUDIO_OUT = ['direct', 'copy', 'stereo', 'surround'] as const;
 
 export const timingBody = z.object({
   device: z.enum(['phone', 'pc', 'tv']),
-  /** null: left before the stream was attached (still a start that took too long) */
-  mode: z.enum(['direct', 'hls']).nullish(),
+  /** null: left before the stream was attached (still a start that took too long); 'live': a live start (first frame only) */
+  mode: z.enum(['direct', 'hls', 'live']).nullish(),
   /** the session started for a quality switch: a re-start, never counted as a start */
   qualitySwitch: z.boolean().default(false),
   bitrate: num(200_000_000),
@@ -62,9 +63,15 @@ export const timingBody = z.object({
 });
 export type TimingBody = z.infer<typeof timingBody>;
 
+/** a live start keeps its device and first-frame time only; every other field a client sends is dropped */
+function liveOnly(b: TimingBody): TimingBody {
+  return timingBody.parse({ device: b.device, mode: 'live', firstFrameMs: b.firstFrameMs ?? null });
+}
+
 const HOURLY_LIMIT = 120;
 
-export async function recordTiming(ctx: Pick<Ctx, 'db'>, b: TimingBody, home: boolean): Promise<void> {
+export async function recordTiming(ctx: Pick<Ctx, 'db'>, raw: TimingBody, home: boolean): Promise<void> {
+  const b = raw.mode === 'live' ? liveOnly(raw) : raw;
   // dropped frames above the total are a broken reading: both dropped
   const frames = b.droppedFrames != null && b.totalFrames != null && b.droppedFrames > b.totalFrames ? { d: null, t: null } : { d: b.droppedFrames ?? null, t: b.totalFrames ?? null };
   await ctx.db.query(
@@ -119,14 +126,15 @@ const pct = (col: string) =>
    percentile_cont(0.9) within group (order by ${col}) filter (where not quality_switch) as ${col}_p90`;
 
 async function groups(ctx: Pick<Ctx, 'db'>, window: string): Promise<TimingGroup[]> {
-  // step durations per row: each phase minus the last earlier phase that was measured (direct play has no playlist / fragment)
+  // step durations per row: each phase minus the last earlier phase that was measured (direct play has no playlist / fragment);
+  // live starts carry a first frame only and are left out of the film start statistics
   const r = await ctx.db.query(
     `with t as (
        select home, device, quality_switch, target_duration, seek_median_ms, stalls, stall_ms, first_frame_ms as s_total, info_ms as s_info,
          case when manifest_ms is not null then greatest(manifest_ms - coalesce(info_ms, 0), 0) end as s_manifest,
          case when first_frag_ms is not null then greatest(first_frag_ms - coalesce(manifest_ms, info_ms, 0), 0) end as s_frag,
          case when first_frame_ms is not null then greatest(first_frame_ms - coalesce(first_frag_ms, manifest_ms, info_ms, 0), 0) end as s_frame
-       from playback_timings where created_at > now() - $1::interval)
+       from playback_timings where created_at > now() - $1::interval and mode is distinct from 'live')
      select home, device, count(*) filter (where not quality_switch)::int as n, count(*) filter (where quality_switch)::int as switches,
        ${pct('s_total')}, ${pct('s_info')}, ${pct('s_manifest')}, ${pct('s_frag')}, ${pct('s_frame')},
        percentile_cont(0.5) within group (order by target_duration) as td, percentile_cont(0.5) within group (order by seek_median_ms) as seek,

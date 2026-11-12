@@ -89,3 +89,10 @@ a776016c8a8232d2b89e8dd2df8305e339fc751e:web/src/lib/admin/settings/settings.tes
 aa950f3a776bda07216c4ee19bf9048c35f83b10:backend/test/livetv-import.test.ts:generic-api-key:279
 aa950f3a776bda07216c4ee19bf9048c35f83b10:backend/test/livetv-import.test.ts:generic-api-key:289
 d621dd5eec11ab8f5215e2ed87e92b8790c67846:livetv/test/fetch-routes.test.ts:generic-api-key:212
+# Live TV 1d/1e lane test fixtures (fake push ids/passphrases, stream keys of the livetv/gateway/backend tests)
+7c73b6b210e190806834d8b5d1e6841171832e8e:backend/test/livetv-user.test.ts:generic-api-key:66
+5493f3e7e0ccd641ae953d63fbc3755e0c715126:backend/test/livetv-streams.test.ts:generic-api-key:105
+064bf72fae451b4b81110e4e1a0a28ccea3e7384:livetv/test/ffmpeg.test.ts:generic-api-key:11
+114b69128c8154c2dc35c9a4a47f5353100066b9:gateway/test/live.test.ts:generic-api-key:14
+91561e8f1526fbea1176f0e809ac88ee26fb8929:backend/test/livetv-status.test.ts:generic-api-key:27
+91561e8f1526fbea1176f0e809ac88ee26fb8929:backend/test/livetv-status.test.ts:generic-api-key:40

@@ -95,6 +95,11 @@
     <string name="cast_playing">Playing on the TV</string>
     <!-- the TV's next-up card (own receiver); %1$s is replaced by the TV with the episode -->
     <string name="cast_up_next">Next: %1$s</string>
+    <string name="cast_loading">Getting ready…</string>
+    <string name="cast_stall">Loading…</string>
+    <string name="cast_paused">Paused</string>
+    <string name="cast_now">Now</string>
+    <string name="cast_live">LIVE</string>
     <plurals name="cast_starts_in">
         <item quantity="one">Next episode starts in %d second</item>
         <item quantity="other">Next episode starts in %d seconds</item>

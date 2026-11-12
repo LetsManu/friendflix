@@ -3,12 +3,16 @@
 import { FetchError, guardedFetch, type FetchErrorCode, type GuardDeps } from './fetch.js';
 import { checkUrl, ipLiteralUrl, resolveChecked } from './netguard.js';
 import { TIMEOUT_CODE, type Run } from './run.js';
+import type { IngestReader } from './srtingest.js';
 
 /**
  * The stream probe of `POST /v1/probe` (spec §3.2, §3.3; plan ruling 3). ffprobe never opens a provider URL itself: HTTP(S)
  * bytes are fetched by `guardedFetch` and piped into `ffprobe -i pipe:0` (`-protocol_whitelist pipe`); an SRT caller input gets
- * its host replaced by the checked IP literal (`-protocol_whitelist srt,udp`). The whole probe has a 10 s budget. The answer
- * never carries a URL, a host or ffprobe output, only the stream facts or a fixed code.
+ * its host replaced by the checked IP literal (`-protocol_whitelist srt,udp`). A `{ push }` input (Task 29) is its feed's ring on
+ * stdin: the oldest of the last 4 s, then at most 4 s more of live data; a feed that is not receiving is `unreachable` without
+ * starting ffprobe, and without an ingest hub (a caller that wired none) a push input cannot be probed at all: `invalid`. The
+ * whole probe has a 10 s budget. The answer never carries a URL, a host or ffprobe output, only the stream facts or a fixed code.
+ * `deps.signal` (Task 28: the start probe of a stream that is stopped meanwhile) aborts every fetch and the ffprobe run at once.
  */
 export type StreamInput = { url: string; kind: 'hls' | 'ts' | 'srt'; userAgent?: string; allowLan: boolean } | { push: string };
 export type ProbeError = 'unreachable' | 'timeout' | 'denied' | 'no_video' | 'invalid' | 'address_refused';
@@ -28,6 +32,8 @@ export const SEGMENT_MAX_BYTES = 50 * 1024 * 1024;
 export const TS_PROBE_BYTES = 4 * 1024 * 1024;
 /** spec §3.3: the default `maxBitrate` of a passthrough variant */
 export const DEFAULT_MAX_BITRATE = 10_000_000;
+/** a push probe reads the ring and then live data for at most this long */
+export const PUSH_PROBE_MS = 4_000;
 
 const PIPE_ARGS = ['-hide_banner', '-v', 'error', '-protocol_whitelist', 'pipe', '-show_streams', '-of', 'json', '-i', 'pipe:0'];
 const srtArgs = (url: string) => ['-hide_banner', '-v', 'error', '-protocol_whitelist', 'srt,udp', '-show_streams', '-of', 'json', '-i', url];
@@ -119,6 +125,25 @@ async function* upTo(body: AsyncIterable<Uint8Array>, max: number, onError: (e: 
   }
 }
 
+/** `body` for at most `ms` from the first read (a live feed never ends by itself) */
+async function* during(body: AsyncIterable<Uint8Array>, ms: number): AsyncGenerator<Uint8Array> {
+  const it = body[Symbol.asyncIterator]();
+  const end = Date.now() + ms;
+  try {
+    for (;;) {
+      const rest = end - Date.now();
+      if (rest <= 0) return;
+      let t: NodeJS.Timeout | undefined;
+      const timeout = new Promise<null>((r) => { t = setTimeout(() => r(null), rest); });
+      const r = await Promise.race([it.next(), timeout]).finally(() => clearTimeout(t));
+      if (r === null || r.done) return;
+      yield r.value;
+    }
+  } finally {
+    void Promise.resolve(it.return?.()).catch(() => {});
+  }
+}
+
 function resolveUri(uri: string, base: string): string {
   try {
     return new URL(uri, base).href;
@@ -137,15 +162,34 @@ async function within<T>(p: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDeps }): Promise<ProbeResult> {
+export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDeps; signal?: AbortSignal; ingest?: IngestReader }): Promise<ProbeResult> {
   const deadline = Date.now() + PROBE_BUDGET_MS;
   const left = () => Math.max(1, deadline - Date.now());
+  const abort = deps.signal ? { signal: deps.signal } : {};
   // every response body opened here is closed when the probe ends, read or not (an init segment whose media segment failed, a
   // body ffprobe never asked for)
   const opened: AsyncIterable<Uint8Array>[] = [];
   try {
-    // `{ push }` reads livetv's own ingest (Task 29); until then there is nothing to probe
-    if ('push' in input) return fail('invalid');
+    if ('push' in input) {
+      // livetv's own ingest: no address is looked up or connected to
+      const ingest = deps.ingest;
+      // no hub wired: this caller cannot read push feeds at all (like an unsupported scheme), not a feed that is merely silent
+      if (!ingest) return fail('invalid');
+      if (!ingest.receiving(input.push)) return fail('unreachable');
+      const ring = ingest.reader(input.push);
+      opened.push(ring);
+      let ringError: unknown;
+      const stdin = upTo(during(ring, PUSH_PROBE_MS), TS_PROBE_BYTES, (e) => { ringError = e; });
+      const r = await deps.run('ffprobe', PIPE_ARGS, { timeoutMs: left(), stdin, ...abort });
+      if (r.code === TIMEOUT_CODE) return fail('timeout');
+      const { video, audio } = streamsOf(r.stdout);
+      if (!video) {
+        if (ringError !== undefined) throw ringError;
+        return fail('no_video');
+      }
+      return { ok: true, video, ...(audio ? { audio } : {}), needs: video.codec !== 'h264' ? 'transcode' : 'remux' };
+    }
+    if (deps.signal?.aborted) return fail('timeout');
     const srt = input.kind === 'srt';
     const c = checkUrl(input.url, srt ? ['srt:'] : ['http:', 'https:']);
     if ('error' in c) return fail(c.error === 'host' ? 'address_refused' : 'invalid');
@@ -153,10 +197,10 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
     let result;
     if (srt) {
       const ip = await within(resolveChecked(c.url.hostname, input.allowLan, deps.guard), left());
-      result = await deps.run('ffprobe', srtArgs(ipLiteralUrl(c.url, ip)), { timeoutMs: left() });
+      result = await deps.run('ffprobe', srtArgs(ipLiteralUrl(c.url, ip)), { timeoutMs: left(), ...abort });
     } else {
       const get = async (url: string, maxBytes: number) => {
-        const res = await guardedFetch(url, { allowLan: input.allowLan, userAgent: input.userAgent, timeoutMs: left(), maxBytes }, deps.guard);
+        const res = await guardedFetch(url, { allowLan: input.allowLan, userAgent: input.userAgent, timeoutMs: left(), maxBytes, ...abort }, deps.guard);
         opened.push(res.body);
         return res;
       };
@@ -188,7 +232,7 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
         const res = await get(c.url.href, Number.MAX_SAFE_INTEGER);
         stdin = upTo(res.body, TS_PROBE_BYTES, (e) => { pipeError = e; });
       }
-      result = await deps.run('ffprobe', PIPE_ARGS, { timeoutMs: left(), stdin });
+      result = await deps.run('ffprobe', PIPE_ARGS, { timeoutMs: left(), stdin, ...abort });
     }
     if (result.code === TIMEOUT_CODE) return fail('timeout');
     const { video, audio } = streamsOf(result.stdout);

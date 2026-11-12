@@ -34,9 +34,10 @@
 
   onMount(async () => {
     document.documentElement.classList.add('tv');
-    try { // already a paired TV: straight to the portal
+    try { // already a paired TV: straight to the portal (or, when the admin set "TV startet mit Live-TV", to the last live channel)
       const r = await fetch('/api/me', { credentials: 'same-origin' });
-      if (r.ok && (await r.json()).tv) { location.replace('/'); return; }
+      const me: { tv?: boolean; startLive?: boolean } | null = r.ok ? await r.json() : null;
+      if (me?.tv) { location.replace(me.startLive === true ? '/live?play=last' : '/'); return; }
     } catch { /* offline: show the code screen anyway */ }
     const pre = publicLocale();
     if (pre) { langSet = true; await setLocale(pre); }

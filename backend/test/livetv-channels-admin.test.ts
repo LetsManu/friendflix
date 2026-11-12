@@ -9,9 +9,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
-import { forgetSrtPorts } from '../src/livetv/ownfeeds.js';
+import { detectLivetv } from '../src/livetv/detect.js';
+import { INGEST_DIRTY_KEY, forgetSrtPorts, syncIngest } from '../src/livetv/ownfeeds.js';
 import { channelSet, invalidateLivetvRights } from '../src/livetv/rights.js';
-import { ADMIN, ENC_KEY, fakeHttp, makeEnv, type Call, type Handler, type TestEnv } from './helpers.js';
+import { invalidateLiveConversions } from '../src/livetv/streams.js';
+import { ADMIN, cfg, ENC_KEY, fakeHttp, makeEnv, type Call, type Handler, type TestEnv } from './helpers.js';
 
 type Sess = { cookies: Record<string, string>; csrf: string };
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -396,6 +398,38 @@ describe('bulk and order', () => {
   });
 });
 
+describe('synced: an own feed change is applied in livetv', () => {
+  const failing = () => fakeHttp({ 'GET /v1/system': () => ({ json: system() }), 'PUT /v1/ingest': () => ({ status: 502, json: { error: 'down' } }) }, calls);
+  afterEach(async () => { await env.kv.del(INGEST_DIRTY_KEY); });
+
+  it('PATCH answers synced for a push feed: true once livetv took the set, false while it is not applied', async () => {
+    const feed = (await call('POST', '/api/admin/livetv/channels', { ingest: 'push', name: 'Hafenkanal Live' })).json().channel;
+    const ok = await call('PATCH', `/api/admin/livetv/channels/${feed.id}`, { hidden: true });
+    expect(ok.json()).toMatchObject({ hidden: true, synced: true });
+    env.ctx.fetchImpl = failing();
+    const bad = await call('PATCH', `/api/admin/livetv/channels/${feed.id}`, { hidden: false });
+    expect(bad.json()).toMatchObject({ hidden: false, synced: false });
+    // a change that needs no sync still reports that the last one is not applied yet; the list says so too
+    expect((await call('PATCH', `/api/admin/livetv/channels/${feed.id}`, { name: 'Hafenkanal Kamera' })).json().synced).toBe(false);
+    expect((await list()).channels[0]!.synced).toBe(false);
+    // livetv is back: the minute tick sends the set, the next list is synced
+    env.ctx.fetchImpl = fakeHttp({ 'GET /v1/system': () => ({ json: system() }), 'PUT /v1/ingest': () => ({ json: { ok: true } }) }, calls);
+    await syncIngest(env.ctx);
+    expect((await list()).channels[0]!.synced).toBe(true);
+  });
+
+  it('bulk hide / show answers synced when it touches a push feed; no key for a pulled channel', async () => {
+    const src = await addSource();
+    const pulled = await addChannel(src, 'Nordlicht TV', { number: 1 });
+    expect((await call('PATCH', `/api/admin/livetv/channels/${pulled}`, { hidden: true })).json()).not.toHaveProperty('synced');
+    expect((await call('POST', '/api/admin/livetv/channels/bulk', { ids: [pulled], action: 'show' })).json()).toEqual({ changed: 1 });
+    const feed = (await call('POST', '/api/admin/livetv/channels', { ingest: 'push', name: 'Hafenkanal Live' })).json().channel;
+    expect((await call('POST', '/api/admin/livetv/channels/bulk', { ids: [feed.id, pulled], action: 'hide' })).json()).toEqual({ changed: 2, synced: true });
+    env.ctx.fetchImpl = failing();
+    expect((await call('POST', '/api/admin/livetv/channels/bulk', { ids: [feed.id, pulled], action: 'show' })).json()).toEqual({ changed: 2, synced: false });
+  });
+});
+
 describe('the stream test (ruling 15, F10)', () => {
   it('test stores the probe and answers no URL', async () => {
     const src = await addSource({ userAgent: 'Testgeraet/1.0' });
@@ -474,6 +508,179 @@ describe('the stream test (ruling 15, F10)', () => {
     const r = await call('POST', `/api/admin/livetv/channels/${a}/test`);
     expect([r.statusCode, r.json()]).toEqual([409, { error: 'test_running' }]);
     expect(probeBodies()).toEqual([]);
+  });
+});
+
+describe('the stream test preview (Task 42, F10)', () => {
+  const H = { 'x-internal-secret': cfg.INTERNAL_SECRET };
+  const streams = new Map<string, Record<string, unknown>>();
+  let posts: Array<Record<string, unknown>> = [];
+  let postStatus = 200;
+  let onStart: (() => Promise<void>) | undefined;
+  let deletes = false; // only the stop tests let livetv really end a stream
+  const preview = (r: { json(): any }) => (r.json() as { preview?: { url: string; token: string } }).preview;
+  const authz = (token: string) => env.app.inject({ method: 'POST', url: '/internal/authz/live', headers: H, payload: { token, ip: '192.0.2.250' } });
+  const livetv = () => fakeHttp({
+    'GET /healthz': () => ({ json: { ok: true, api: 1, version: '3.3.0', bootId: '0123456789abcdef' } }),
+    'GET /v1/system': () => ({ json: system() }), 'PUT /v1/ingest': () => ({ json: { ok: true } }), 'POST /v1/probe': (...a) => probe(...a),
+    'GET /v1/streams': () => ({ json: [...streams.values()] }),
+    ...(deletes ? { 'DELETE /v1/streams/[\\w-]+': (u: URL) => (streams.delete(u.pathname.split('/').pop()!) ? { status: 204 } : { status: 404, json: { error: 'not_found' } }) } : {}),
+    'POST /v1/streams': (_u, _i, b: Record<string, unknown>) => {
+      posts.push(b);
+      if (postStatus !== 200) return { status: postStatus, json: { error: 'start_failed' } };
+      const sv = { channelId: b.channelId, streamKey: 'ab'.repeat(16), mode: b.mode, since: Date.now(), state: 'running', bitrate: 4_000_000, errors: [], lastSegmentAt: Date.now() };
+      streams.set(String(b.channelId), sv);
+      return { json: { streamKey: sv.streamKey, state: 'running' } };
+    },
+  }, calls);
+  /** livetv, but a start first runs `onStart` (a request of the test lands while the start is in flight) */
+  const livetvWithHook = () => {
+    const inner = livetv();
+    return (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (onStart && (init?.method ?? 'GET') === 'POST' && new URL(String(input)).pathname === '/v1/streams') await onStart();
+      return inner(input, init);
+    }) as typeof fetch;
+  };
+  beforeEach(async () => {
+    streams.clear(); posts = []; postStatus = 200; onStart = undefined; deletes = false;
+    for (const k of await env.kv.keys('ltv')) { if (!k.startsWith('ltv:chtest:')) await env.kv.del(k); }
+    env.ctx.fetchImpl = livetv();
+    await detectLivetv(env.ctx, 0);
+    invalidateLiveConversions();
+  });
+
+  it('test answers a preview token only when the channel can start', async () => {
+    const src = await addSource();
+    const a = await addChannel(src, 'Nordlicht TV', { number: 1 });
+    const r = await call('POST', `/api/admin/livetv/channels/${a}/test`);
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ ok: true, needs: 'remux' });
+    const p = preview(r)!;
+    expect(p.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(p.url).toBe(`/media/l/${p.token}/index.m3u8`);
+    expect(Object.keys(r.json().preview).sort()).toEqual(['token', 'url']);
+    expect(posts.map((b) => b.channelId)).toEqual([a]);
+    // the token is a test token of the admin's own device, and it plays
+    const rec = JSON.parse((await env.kv.get(`ltv:${createHash('sha256').update(p.token).digest('hex')}`))!);
+    expect(rec).toMatchObject({ userId: adminId, channelId: a, kind: 'live', via: 'local', test: true });
+    expect((await authz(p.token)).statusCode).toBe(200);
+    // a second test of the same channel joins the running stream (no second start) and replaces the earlier test token
+    await env.kv.del(`ltv:chtest:${adminId}`);
+    const again = preview(await call('POST', `/api/admin/livetv/channels/${a}/test`))!;
+    expect(posts).toHaveLength(1);
+    expect((await authz(p.token)).statusCode).toBe(410);
+    expect((await authz(again.token)).statusCode).toBe(200);
+
+    // a probe that failed: no start, no preview, facts only
+    streams.clear(); posts = [];
+    probe = () => ({ json: { ok: false, needs: 'transcode', error: 'timeout' } });
+    const failed = await call('POST', `/api/admin/livetv/channels/${a}/test`);
+    expect(failed.json()).toEqual({ ok: false, video: null, audio: null, needs: null, error: 'timeout' });
+    expect(posts).toEqual([]);
+
+    // the provider's connection limit refuses the start: facts only
+    probe = () => ({ json: FACTS });
+    await env.pool.query('update livetv_sources set max_streams = 1 where id = $1', [src]);
+    const b = await addChannel(src, 'Hafenkanal', { number: 2 });
+    streams.set(b, { channelId: b, streamKey: 'cd'.repeat(16), mode: 'remux', since: Date.now(), state: 'running', bitrate: null, errors: [], lastSegmentAt: Date.now() });
+    invalidateLiveConversions();
+    const full = await call('POST', `/api/admin/livetv/channels/${a}/test`);
+    expect(full.statusCode).toBe(200);
+    expect(full.json()).toEqual({ ok: true, video: FACTS.video, audio: FACTS.audio, needs: 'remux' });
+    expect(posts).toEqual([]);
+
+    // livetv refuses the start itself: facts only
+    await env.pool.query('update livetv_sources set max_streams = null where id = $1', [src]);
+    streams.clear(); invalidateLiveConversions();
+    postStatus = 500;
+    const broken = await call('POST', `/api/admin/livetv/channels/${a}/test`);
+    expect([broken.statusCode, preview(broken)]).toEqual([200, undefined]);
+    // a disabled source is still refused, preview or not
+    await env.pool.query('update livetv_sources set enabled = false where id = $1', [src]);
+    expect((await call('POST', `/api/admin/livetv/channels/${a}/test`)).statusCode).toBe(409);
+  });
+
+  it('Neu starten: a stop leaves the marker, the admin test start clears it and starts again (final review I1)', async () => {
+    deletes = true;
+    env.ctx.fetchImpl = livetv(); // with a DELETE that really ends a stream
+    env.ctx.fetchImpl = livetv(); // with a DELETE that really ends a stream
+    const src = await addSource();
+    const a = await addChannel(src, 'Nordlicht TV', { number: 1 });
+    const first = preview(await call('POST', `/api/admin/livetv/channels/${a}/test`))!;
+    expect((await authz(first.token)).statusCode).toBe(200);
+    const stop = await call('POST', `/api/admin/livetv/streams/${a}/stop`);
+    expect(stop.statusCode).toBe(200);
+    expect(await env.kv.get(`ltv:adminstop:${a}`)).toBe('1');
+    expect((await authz(first.token)).statusCode).toBe(410); // the stop revoked it, test tokens too
+    await env.kv.del(`ltv:chtest:${adminId}`);
+    const again = preview(await call('POST', `/api/admin/livetv/channels/${a}/test`))!;
+    expect(again).toBeDefined();
+    expect(await env.kv.get(`ltv:adminstop:${a}`)).toBeNull();
+    expect(posts.map((b) => b.channelId)).toEqual([a, a]);
+    expect((await authz(again.token)).statusCode).toBe(200);
+  });
+
+  it('a profile switch that lands during the test start takes the test token back (final review M6)', async () => {
+    const src = await addSource();
+    const a = await addChannel(src, 'Nordlicht TV', { number: 1 });
+    const s2 = await env.login(); // a session of its own: the switch must not change the shared admin session
+    const h = { 'x-csrf-token': s2.csrf };
+    const made = await env.app.inject({ method: 'POST', url: '/api/profiles', cookies: s2.cookies, headers: h, payload: { name: 'Kinderinsel' } });
+    expect(made.statusCode, made.body).toBe(201);
+    const pid = made.json().profile.id as string;
+    env.ctx.fetchImpl = livetvWithHook();
+    onStart = async () => { await env.app.inject({ method: 'POST', url: `/api/profiles/${pid}/select`, cookies: s2.cookies, headers: h, payload: {} }); };
+    const r = await env.app.inject({ method: 'POST', url: `/api/admin/livetv/channels/${a}/test`, cookies: s2.cookies, headers: h, payload: {} });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ ok: true });
+    expect(preview(r)).toBeUndefined();
+    expect(posts).toHaveLength(1);
+    expect(await env.kv.keys('ltv:view:')).toEqual([]); // no token of the old profile stays alive
+  });
+
+  it('a full conversion budget gives the facts only: no preview, no token', async () => {
+    const src = await addSource();
+    const running = await addChannel(src, 'Nordlicht TV', { number: 1 });
+    const a = await addChannel(src, 'Hafenkanal', { number: 2, kind: 'ts' });
+    // the running live transcode fills a budget of one; the tested channel would need a transcode slot too
+    streams.set(running, { channelId: running, streamKey: 'cd'.repeat(16), mode: 'transcode', since: Date.now(), state: 'running', bitrate: null, errors: [], lastSegmentAt: Date.now() });
+    invalidateLiveConversions();
+    const was = env.ctx.cfg;
+    env.ctx.cfg = { ...was, CONVERSION_SLOTS: 1 };
+    probe = () => ({ json: { ...FACTS, needs: 'transcode' } });
+    try {
+      const r = await call('POST', `/api/admin/livetv/channels/${a}/test`);
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toEqual({ ok: true, video: FACTS.video, audio: FACTS.audio, needs: 'transcode' });
+      expect(posts).toEqual([]);
+      expect(await env.kv.keys(`ltvidx:${adminId}`)).toEqual([]);
+      expect(await env.kv.keys('ltv:view:')).toEqual([]);
+    } finally { env.ctx.cfg = was; }
+  });
+
+  it('an admin previews a channel of an unreleased group', async () => {
+    const src = await addSource();
+    const g = await addGroup('DE | Neu', false);
+    await mapGroup(src, 'DE | Neu', g);
+    await env.pool.query("insert into livetv_group_roles(group_id, role) values ($1, 'family')", [g]);
+    invalidateLivetvRights();
+    const id = await addChannel(src, 'Kanal Wolkenlos', { group: 'DE | Neu' });
+    const r = await call('POST', `/api/admin/livetv/channels/${id}/test`);
+    const p = preview(r);
+    expect(p).toBeDefined();
+    const ok = await authz(p!.token);
+    expect([ok.statusCode, ok.json()]).toEqual([200, expect.objectContaining({ streamKey: 'ab'.repeat(16) })]);
+    // a family member watching the same channel is refused: the release still counts for everybody else
+    const sub = 'anna-t42';
+    const annaId = randomUUID();
+    await env.pool.query(
+      `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values ($1, $2, $3, 'Anna Beispiel', 'family', $4, $2, $5)`,
+      [annaId, sub, `${sub}@friend.example.com`, annaId.replace(/-/g, '').slice(0, 32), encrypt(key, 'pw')]);
+    const anna = await env.login({ sub, email: `${sub}@friend.example.com`, name: 'Anna Beispiel', groups: [] });
+    await env.pool.query('update devices set approved = true where user_id = $1', [annaId]);
+    const w = await call('POST', `/api/livetv/channels/${id}/watch`, {}, anna);
+    expect(w.statusCode).toBe(403);
+    await env.pool.query('delete from users where id = $1', [annaId]);
   });
 });
 

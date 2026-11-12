@@ -129,6 +129,10 @@ Am Handy sieht der Player genauso aus: Titel unten links, Zeitleiste mit beiden 
 
 <p align="center"><img src="docs/images/de/player-scenes.jpg" alt="Player mit dem Szenen-Fenster und einem Vorschaubild je Kapitel" width="900"></p>
 
+#### Live-TV (optional)
+
+Ein Admin kann **Live-TV** einschalten: einen eigenen Container, der bis dahin aus und unsichtbar bleibt. Die Sender kommen aus der M3U-Liste eines IPTV-Anbieters (mit Programmdaten im XMLTV-Format) oder aus eigenen Feeds, abgeholt oder per SRT geschickt (zum Beispiel aus OBS); der Admin wählt die Gruppen, gibt sie frei und legt fest, welche Profile welche Sender sehen. Der Tab *Live-TV* zeigt, was jetzt und danach läuft, deine sortierten Favoriten und *Zuletzt gesehen*. Der Live-Player spult bis zu 30 Minuten zurück (der Admin kann bis zu 120 erlauben), hat *Von Anfang an*, ein Info-Banner und eine Senderliste und überträgt auf Chromecast und AirPlay, auch aus der Android-App. Am Fernseher schalten ▲/▼ um; Programm-, Zahlen- und Info-Tasten gehen, wo die Fernbedienung sie sendet. Alle, die einen Sender schauen, teilen sich einen Stream, und eine serverweite Grenze für Umwandlungen hält Filme abspielbar. Einrichtung: [docs/de/livetv.md](docs/de/livetv.md).
+
 ### Entdecken
 
 - **Marken-Hubs** – breite Kacheln, die der Admin aus deinen eigenen Jellyfin-Studios, -Sammlungen, -Tags oder -Genres baut (etwa „Anime“ oder „Dokus“) – führen auf eine eigene Seite mit *Neu*, *Beliebt*, *Filme*, *Serien* und A–Z.
@@ -178,7 +182,7 @@ App-artige Oberfläche mit Kopfzeile aus Milchglas und schwebender Glas-Tab-Leis
 
 **Downloads für Zug und Flugzeug:** Filme und Folgen herunterladen (bei Serien auch gleich die nächsten Folgen) und offline im Browser ansehen. Der Fortschritt wird beim nächsten Online-Sein abgeglichen. Lizenzen pro Gerät mit Ablaufdatum; funktioniert in Chrome, Edge, Firefox, Safari 17+ und als Home-Bildschirm-App auf iOS 17+. Auf Android (Chrome, Edge) laden Downloads auch im Hintergrund und bei geschlossener App weiter; auf dem iPhone pausieren sie, solange die App im Hintergrund ist, und laufen beim Öffnen sofort weiter.
 
-**Android-App:** FriendFlix als App für Android ab 8.0, geteilt über einen geschlossenen Test bei Google Play (oder als APK an jedem Release). Sie zeigt dieselbe Weboberfläche und bringt einen nativen Player (Direktwiedergabe, Bild-im-Bild, Ton im Hintergrund), Downloads im Hintergrund aufs Telefon oder eine SD-Karte, verschlüsselt gespeichert und offline abspielbar, Chromecast und Benachrichtigungen, die die App selbst bei deinem Server abholt – ohne Push-Dienst von Google, ohne Analyse. Installation, Einstellungen, Sicherheit und die Signatur-Schritte für den Betreiber: [docs/de/android.md](docs/de/android.md).
+**Android-App:** FriendFlix als App für Android ab 8.0, geteilt über einen geschlossenen Test bei Google Play (oder als APK an jedem Release). Sie zeigt dieselbe Weboberfläche und bringt einen nativen Player (Direktwiedergabe, Bild-im-Bild, Ton im Hintergrund), Downloads im Hintergrund aufs Telefon oder eine SD-Karte, verschlüsselt gespeichert und offline abspielbar, Chromecast (auch für Live-Sender) und Benachrichtigungen, die die App selbst bei deinem Server abholt – ohne Push-Dienst von Google, ohne Analyse. Installation, Einstellungen, Sicherheit und die Signatur-Schritte für den Betreiber: [docs/de/android.md](docs/de/android.md).
 
 **Windows-App:** FriendFlix als Programm für Windows 10 und 11, installiert aus dem GitHub-Release. Es zeigt dieselbe Weboberfläche und bringt einen nativen mpv-Player, der fast jede Datei direkt abspielt (AC3, DTS, TrueHD, HEVC, Bild-Untertitel), mit FriendFlix' eigener Bedienung, Fortsetzen und Fortschritt im Gleichklang mit Web, Android und TV, Tray-Symbol und automatischen Updates. Keine Downloads, kein Chromecast. Installation, Player-Tasten, Fehlersuche und die Update-Signatur-Schritte für den Betreiber: [docs/de/windows.md](docs/de/windows.md).
 

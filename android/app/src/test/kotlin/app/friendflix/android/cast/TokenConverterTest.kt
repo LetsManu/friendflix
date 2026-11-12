@@ -23,11 +23,11 @@ import org.robolectric.RobolectricTestRunner
 class TokenConverterTest {
     private val answer = JSONObject(
         """{"castId":"0123456789abcdef0123456789abcdef","expiresAt":1700000000000,"playSessionId":"ps1","mediaSourceId":"ms1",
-        "runtimeTicks":27000000000,"startTime":61,"contentUrl":"https://ff.example/media/c/TOKEN/videos/x/master.m3u8?MediaSourceId=ms1",
+        "runtimeTicks":27000000000,"startTime":61,"contentUrl":"https://friend.example.com/media/c/TOKEN/videos/x/master.m3u8?MediaSourceId=ms1",
         "contentType":"application/x-mpegURL","hlsSegmentFormat":"ts","title":"Second","seriesName":"Bright Valley",
-        "imageUrl":"https://ff.example/media/c/IMG/Items/x/Images/Primary?maxWidth=600",
-        "subtitles":[{"index":3,"language":"eng","title":"English","url":"https://ff.example/api/cast/subtitle/a/b/1/s/x/ms/3/stream.vtt"},
-        {"index":5,"title":"Deutsch","url":"https://ff.example/api/cast/subtitle/a/b/1/s/x/ms/5/stream.vtt"}],"report":"REPORT-TOKEN"}""",
+        "imageUrl":"https://friend.example.com/media/c/IMG/Items/x/Images/Primary?maxWidth=600",
+        "subtitles":[{"index":3,"language":"eng","title":"English","url":"https://friend.example.com/api/cast/subtitle/a/b/1/s/x/ms/3/stream.vtt"},
+        {"index":5,"title":"Deutsch","url":"https://friend.example.com/api/cast/subtitle/a/b/1/s/x/ms/5/stream.vtt"}],"report":"REPORT-TOKEN"}""",
     )
     private val info = CastInfo.parse(answer)!!
 
@@ -75,7 +75,7 @@ class TokenConverterTest {
     @Test fun itemsOfAnEarlierProcessAreStillOursByTheirToken() {
         // after an app restart the converter has never seen the token: its castId is the sha256 of the token in the receiver's own URL
         val token = "A".repeat(43)
-        val url = "https://ff.example/media/c/$token/videos/x/master.m3u8"
+        val url = "https://friend.example.com/media/c/$token/videos/x/master.m3u8"
         val fresh = TokenConverter(custom = false)
         val q = TokenConverter.queueItem(CastInfo.parse(JSONObject(answer.toString()).put("contentUrl", url))!!, null, true, false)
         val item = fresh.toMediaItem(q)
@@ -87,7 +87,7 @@ class TokenConverterTest {
     }
 
     @Test fun castInfoNeverPrintsItsUrls() {
-        assertFalse(info.toString().contains("ff.example"))
+        assertFalse(info.toString().contains("friend.example.com"))
         assertFalse(info.toString().contains("REPORT"))
     }
 }
