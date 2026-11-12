@@ -18,12 +18,10 @@ config:
 ---
 flowchart TB
   accTitle: FriendFlix containers and networks
-  accDescr: Viewers reach Nginx Proxy Manager, which routes to web, backend and gateway on the front network. The backend alone also reaches Postgres and Redis on the internal db network and the media services on the internal media network. Authentik is reached through the proxy. With the optional Live TV profile, backend and gateway reach the livetv service on its own internal network; livetv alone reaches the providers, and encoders can push SRT feeds into its UDP range. With the optional Live TV profile, backend and gateway reach the livetv service on its own internal network; livetv alone reaches the providers, and encoders can push SRT feeds into its UDP range.
+  accDescr: Viewers reach Nginx Proxy Manager, which routes to web, backend and gateway on the front network. The backend alone also reaches Postgres and Redis on the internal db network and the media services on the internal media network. Authentik is reached through the proxy. With the optional Live TV profile, backend and gateway reach the livetv service on its own internal network; livetv alone reaches the providers, and encoders can push SRT feeds into its UDP range.
   V("📺 <b>Viewers</b>"):::ext
   NPM("🛡️ <b>Nginx Proxy Manager</b><br/><small>:443 · TLS</small>"):::edge
   AK("🔑 <b>Authentik</b><br/><small>:9000 · own stack</small>"):::svc
-  PV("📡 <b>Providers · own feeds</b><br/><small>M3U · XMLTV · HLS · TS · SRT</small>"):::ext
-  ENC("🎥 <b>Encoders</b><br/><small>OBS · SRT push</small>"):::ext
   PV("📡 <b>Providers · own feeds</b><br/><small>M3U · XMLTV · HLS · TS · SRT</small>"):::ext
   ENC("🎥 <b>Encoders</b><br/><small>OBS · SRT push</small>"):::ext
   subgraph HOST["Docker host · ports on 127.0.0.1 only"]
@@ -35,9 +33,6 @@ flowchart TB
     subgraph MEDIA["media network · internal"]
       S("🎬 <b>jellyfin</b><br/><small>:8096</small>"):::media
       SE("🔔 <b>requests</b><br/><small>:5055</small>"):::svc
-    end
-    subgraph LTV["livetv network · internal · optional profile livetv"]
-      LT("📺 <b>livetv</b><br/><small>:8090 · ffmpeg · HLS proxy · DVR cache · SRT listener</small>"):::app
     end
     subgraph LTV["livetv network · internal · optional profile livetv"]
       LT("📺 <b>livetv</b><br/><small>:8090 · ffmpeg · HLS proxy · DVR cache · SRT listener</small>"):::app
@@ -64,10 +59,6 @@ flowchart TB
   GW -.->|"/media/l/token → /s/key"| LT
   LT -.->|"livetv-egress · fetch"| PV
   ENC -.->|"SRT push · UDP 9000-9009 · not via proxy"| LT
-  BE -.->|"signed HTTP · what to run"| LT
-  GW -.->|"/media/l/token → /s/key"| LT
-  LT -.->|"livetv-egress · fetch"| PV
-  ENC -.->|"SRT push · UDP 9000-9009 · not via proxy"| LT
   classDef ext fill:#30363d,stroke:#8b949e,stroke-width:1px,color:#f0f6fc
   classDef edge fill:#2d2a4a,stroke:#9d8cf0,stroke-width:1px,color:#f0f6fc
   classDef app fill:#4a1a24,stroke:#ff4f6d,stroke-width:1px,color:#fff5f7
@@ -80,7 +71,6 @@ flowchart TB
   style FRONT fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
   style DB fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
   style MEDIA fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
-  style LTV fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
   style LTV fill:none,stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 4
 ```
 
@@ -98,16 +88,6 @@ flowchart TB
 | Authentik (`compose.authentik.yaml`) | front, ak-db, egress | 9000 | identities |
 
 The browser only ever sees a session cookie and `/media/...` URLs, never a Jellyfin token.
-
-### Live TV (optional)
-
-The `livetv` service exists only with the compose profile `livetv` ([livetv.md](livetv.md)). Three components share the work:
-
-- **backend** owns all Live TV state (sources, channels, groups, guide, rights, push feeds), decides who may watch what, admits conversions against the shared budget, mints the watch tokens and tells `livetv` what to run with HMAC-signed requests. It never talks to provider hosts itself.
-- **livetv** (Node and jellyfin-ffmpeg) is the only component that fetches provider or own-feed addresses: lists, guides, logos, stream inputs, probes, benchmarks. It runs ffmpeg or acts as an HLS proxy, keeps the DVR cache, and listens for pushed SRT feeds. It holds no database and no credentials at rest: the backend sends each decrypted address in the signed start request and `livetv` keeps it in memory only.
-- **gateway** serves the live HLS from `livetv` under `/media/l/<token>/…` (the existing `/media` location of the proxy, so no proxy change), after the backend has authorised the token (`/internal/authz/live`).
-
-The updater has fixed actions to pull, start, stop and remove the `livetv` service ([security.md](security.md#updater)). Streams are shared: one per channel for all viewers, started on the first viewer and stopped 60 seconds after the last. Hardening and the token model: [security.md](security.md#the-livetv-container).
 
 ### Live TV (optional)
 

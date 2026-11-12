@@ -328,8 +328,8 @@ Optional, nur mit dem Compose-Profil `livetv` ([Einrichtung](de/livetv.md), [Eng
 |---|---|---|
 | `source_refresh_failed` | Quelle {Name}: Aktualisierung fehlgeschlagen ({Grund}) | Liste oder Programm nicht geladen; Gründe wie Zeitüberschreitung oder Zugang abgelehnt: [Fehlersuche](de/livetv.md#fehlersuche). Nach 3 Fehlern in Folge werden Admins benachrichtigt. |
 | `ingest_sync_pending` | Gesendete Streams werden noch an Live-TV übertragen | Das Backend konnte die Feed-Liste noch nicht an `livetv` senden und wiederholt es jede Minute. Bleibt es: läuft `livetv`? |
-| `stopped_by_admin` | Von einem Admin gestoppt | *Stoppen* in der Tabelle der laufenden Sender. |
-| `start_refused_full` | Start abgelehnt: alle Plätze belegt | Das Umwandlungs-Budget (siehe unten) oder das Limit *Max. gleichzeitige Sender* der Quelle war erreicht. |
+| `stopped_by_admin` | Von einem Admin gestoppt | *Stoppen* in der Tabelle der laufenden Sender; auch *Neu starten* schreibt es, weil es zuerst stoppt. |
+| `start_refused_full` | Start abgelehnt: alle Plätze belegt | Das Umwandlungs-Budget (siehe unten) war voll. Das Limit *Max. gleichzeitige Sender* der Quelle schreibt kein Ereignis; der Zuschauer sieht nur die Meldung „Dein Anbieter erlaubt nur n Sender gleichzeitig“. |
 | `start_failed` | Sender ließ sich nicht starten | `livetv` hat den Start abgelehnt oder es kam binnen 15 s kein Segment: den Sender testen (*Kanäle → Testen*). |
 | `input_lost` / `input_back` | Eingang verloren · {n} s bis zur Wiederverbindung / Eingang wieder da · nach {n} s | Anbieter oder Encoder hingen; `livetv` verbindet mit wachsenden Pausen neu (2, 4, 8, 15, dann alle 30 s). Bei Häufung Anbieter oder Leitung prüfen. |
 | `push_rejected` | Verbindung abgelehnt: falsche Kennung oder Passphrase | Ein Encoder hat falsche Zugangsdaten, oder ein zweiter sendet in einen belegten Feed (höchstens ein Ereignis pro Feed und 10 min). *Zugangsdaten neu erzeugen* und im Encoder eintragen. |
