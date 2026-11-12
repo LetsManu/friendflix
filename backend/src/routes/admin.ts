@@ -409,7 +409,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const from = 'from devices d join users u on u.id = d.user_id';
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c ${from} ${w.sql}`, w.params)).rows[0]!.c);
     const pending = Number((await ctx.db.query<{ c: string }>('select count(*) c from devices where not approved')).rows[0]!.c);
-    const r = await ctx.db.query(`select d.user_id, d.device_id, coalesce(d.name, d.label) as label, d.approved, d.last_seen, u.name ${from} ${w.sql} ${order} limit ${p.limit ?? 300} offset ${p.offset ?? 0}`, w.params);
+    const r = await ctx.db.query(`select d.user_id, d.device_id, coalesce(d.name, d.label) as label, d.approved, d.last_seen, d.start_live as "startLive", u.name ${from} ${w.sql} ${order} limit ${p.limit ?? 300} offset ${p.offset ?? 0}`, w.params);
     // `current`: the device this admin is using right now (the page offers no revoke for it)
     return { devices: r.rows.map((d) => ({ ...d, current: d.user_id === req.user!.id && d.device_id === req.session!.deviceId })), total, pending };
   });

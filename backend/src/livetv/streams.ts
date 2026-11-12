@@ -140,6 +140,7 @@ const good = new WeakMap<object, { at: number; list: StreamView[] }>();
 /** Drops the cached `GET /v1/streams` (after a start, a stop or a release): the next budget count and streamKeyFor ask livetv again. */
 export function invalidateLiveConversions(): void {
   lists = new WeakMap();
+  ingestReads = new WeakMap();
   misses = new WeakMap();
 }
 
@@ -226,6 +227,39 @@ export async function runningList(ctx: Ctx, user: LivetvUser, profile: LivetvPro
       const now = nn.get(c.id)?.now;
       return { id: c.id, number: c.number, name: c.name, logo: c.logoHash ? `/api/livetv/logos/${c.logoHash}` : null, ...(now ? { now } : {}) };
     });
+}
+
+/** the channels livetv runs right now (not failed), from the 5-s stream cache; null = livetv did not answer (the list then shows nothing running) */
+export async function runningChannelIds(ctx: Ctx): Promise<Set<string> | null> {
+  const l = await readStreams(ctx, LIST_CACHE_MS);
+  return l ? new Set(l.filter((s) => s.state !== 'failed').map((s) => s.channelId)) : null;
+}
+
+/** per ctx: the last `GET /v1/ingest` read (shared while it runs), so a household polling the list does not ask livetv per request */
+let ingestReads = new WeakMap<object, { at: number; p: Promise<Set<string> | null> }>();
+
+async function fetchReceiving(ctx: Ctx): Promise<Set<string> | null> {
+  try {
+    const raw = await livetvCall<unknown>(ctx, 'GET', '/v1/ingest', undefined, { timeoutMs: LIST_TIMEOUT_MS });
+    const out = new Set<string>();
+    for (const x of Array.isArray(raw) ? raw.slice(0, MAX_ITEMS) : []) {
+      const o = x && typeof x === 'object' ? (x as Record<string, unknown>) : null;
+      if (o && typeof o.channelId === 'string' && o.state === 'receiving') out.add(o.channelId);
+    }
+    return out;
+  } catch (e) {
+    // a livetv without the endpoint (404) receives nothing; any other failure = unknown
+    return e instanceof LivetvError && e.status === 404 ? new Set() : null;
+  }
+}
+
+/** the push feeds livetv receives from right now (`GET /v1/ingest`, state `receiving`), cached 5 s; null = livetv did not answer */
+export async function receivingChannelIds(ctx: Ctx): Promise<Set<string> | null> {
+  const hit = ingestReads.get(ctx);
+  if (hit && Date.now() - hit.at < LIST_CACHE_MS) return hit.p;
+  const p = fetchReceiving(ctx);
+  ingestReads.set(ctx, { at: Date.now(), p });
+  return p;
 }
 
 /** the budget (convbudget.ts) lists the live transcodes through this; registered here so convbudget imports nothing of livetv */
