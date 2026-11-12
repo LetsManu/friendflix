@@ -135,9 +135,10 @@ export async function mergeImport(
       'select ($2::text is null or updated_at::text = $2) as same from livetv_sources where id = $1 for update', [source.id, rev ?? null])).rows[0];
     if (!cur) return { error: 'changed' }; // deleted meanwhile
     if (!cur.same) return { error: 'changed' };
-    // sorted: two imports that create the same new groups take the unique-index entries in the same order (no deadlock, 40P01)
-    const groups = [...new Set(entries.map((e) => e.group).filter((g): g is string => !!g))]
-      .sort((a, b) => { const x = groupName(a).toLowerCase(), y = groupName(b).toLowerCase(); return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0; });
+    // provider-list order (new groups get their positions in that order). Two imports that create the same new groups are serialised
+    // here instead of sorting, so they never take the unique-index entries in opposite orders (no deadlock, 40P01)
+    const groups = [...new Set(entries.map((e) => e.group).filter((g): g is string => !!g))];
+    await c.query("select pg_advisory_xact_lock(hashtext('livetv:groups'))");
     const { created } = await mapGroups(c, source.id, groups);
 
     const existing = new Map<string, Existing>();

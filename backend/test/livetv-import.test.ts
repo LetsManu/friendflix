@@ -397,6 +397,13 @@ describe('an admin edit while a refresh runs (1c final review I1)', () => {
     ]);
     expect(await groups()).toHaveLength(40);
   });
+
+  it('new groups keep the provider list order for their positions', async () => {
+    const a = await addSource({ name: 'A' });
+    await mergeImport(env.ctx, await src(a), { entries: [entry('Kanal Z', 'Zeta Kanäle', 0), entry('Kanal A', 'Alpha Kanäle', 1)], listed: 2 });
+    const rows = (await env.pool.query<{ name: string }>("select name from livetv_groups where name in ('Zeta Kanäle', 'Alpha Kanäle') order by position")).rows;
+    expect(rows.map((r) => r.name)).toEqual(['Zeta Kanäle', 'Alpha Kanäle']);
+  });
 });
 
 describe('refresh failures (spec §19)', () => {

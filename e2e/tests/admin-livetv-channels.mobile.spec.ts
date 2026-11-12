@@ -78,7 +78,7 @@ test.describe('admin: Live-TV, Kanäle (phone, 375 px)', () => {
     expect(hit).toBe(true);
     await next.click();
     await expect(page.getByRole('button', { name: 'Vorherige Seite' })).toBeEnabled();
-    await expect(page.locator('[data-selected]')).toContainText('1');
+    await expect(page.locator('[data-selected]')).toHaveText('1 ausgewählt');
   });
 
   test('the sheets fit the phone', async ({ page }) => {
