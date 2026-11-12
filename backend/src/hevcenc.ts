@@ -71,7 +71,8 @@ const readFailures = async (ctx: Ctx): Promise<Array<{ at: number; device: strin
   return Array.isArray(l) ? l.filter((f): f is { at: number; device: string } => typeof f?.at === 'number' && typeof f?.device === 'string') : [];
 };
 
-const readSettings = async (ctx: Ctx, ms = 3000): Promise<EncoderSettings | null> => {
+/** The media server's encoder settings, bounded by `ms` (null: no such read, it failed or it was late). Shared with convbench.ts. */
+export const readSettings = async (ctx: Ctx, ms = 3000): Promise<EncoderSettings | null> => {
   const read = ctx.jf.admin.encoderSettings?.bind(ctx.jf.admin);
   return read ? ((await within(read, ms)) ?? null) : null;
 };

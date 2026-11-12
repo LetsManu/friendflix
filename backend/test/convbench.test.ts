@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BENCH_ATTEMPT_GAP_S, BENCH_TTL_S, conversionsView, convBenchTick, runBenchmark } from '../src/convbench.js';
+import { BENCH_ATTEMPT_GAP_S, BENCH_LAST_TTL_S, BENCH_TTL_S, conversionsView, convBenchTick, runBenchmark } from '../src/convbench.js';
 import { listErrors } from '../src/errorlog.js';
-import { __resetConvMemo, admitConversion, type BenchRecord } from '../src/convbudget.js';
+import { __resetConvMemo, admitConversion, markConvExempt, type BenchRecord } from '../src/convbudget.js';
 import { claimHevcProbe, fingerprint, probeHevcEncoder } from '../src/hevcenc.js';
 import { setLive } from '../src/live.js';
 import type { EncoderSettings, MediaTraits } from '../src/media/types.js';
@@ -40,7 +40,7 @@ let t = 0;
 const now = () => t;
 let stopped: string[] = [];
 let paths: string[] = [];
-let mode: { fail?: string; segMs?: number } = {};
+let mode: { fail?: string; segMs?: number; during?: () => Promise<void> } = {};
 const playlist = (n = 10) => ['#EXTM3U', '#EXT-X-MAP:URI="hls1/main/-1.mp4"', ...Array.from({ length: n }, (_, i) => `#EXTINF:3.0,\nhls1/main/${i}.mp4`)].join('\n');
 
 beforeAll(async () => {
@@ -70,6 +70,7 @@ beforeEach(async () => {
   vi.spyOn(env.ctx.jf, 'mediaFetch').mockImplementation(async (_u, path) => {
     paths.push(path);
     if (mode.fail && path.includes(mode.fail)) return new Response('x', { status: 500 });
+    if (path.includes('master.m3u8')) await mode.during?.();
     if (path.includes('master.m3u8')) return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nmain.m3u8?x=1\n');
     if (path.includes('main.m3u8')) return new Response(playlist());
     if (path.includes('-1.mp4')) return new Response(new Uint8Array(Buffer.from('....ftypiso6avcC....')));
@@ -87,6 +88,21 @@ afterEach(() => {
 const watch = (ps = 'ps-live', deviceId?: string) =>
   setLive(env.ctx, { userId: admin.id, userName: 'Anna Beispiel', itemId: 'a'.repeat(32), title: 'Dunmoor', positionTicks: 0, isPaused: false, playSessionId: ps, updatedAt: Date.now(), source: 'portal', ...(deviceId ? { deviceId } : {}) });
 const segNames = () => paths.map((p) => p.split('?')[0]!.split('/').pop());
+const benchErrors = async () => (await listErrors(env.ctx, { source: 'job' })).entries.filter((e) => e.code === 'conv-bench').reduce((a, e) => a + e.count, 0);
+/** the media server is Plex while fn runs */
+async function asPlex(fn: () => Promise<void>): Promise<void> {
+  const kind = Object.getOwnPropertyDescriptor(env.ctx.jf, 'kind');
+  Object.defineProperty(env.ctx.jf, 'kind', { value: 'plex', configurable: true, writable: true });
+  try { await fn(); } finally {
+    if (kind) Object.defineProperty(env.ctx.jf, 'kind', kind); else delete (env.ctx.jf as { kind?: string }).kind;
+  }
+}
+/** no admin account to convert as (serviceUser finds none) */
+function noServiceUser() {
+  const q = env.pool.query.bind(env.pool) as (...a: unknown[]) => unknown; // the pool under ctx.db's timing proxy (spying on the proxy recurses)
+  return vi.spyOn(env.pool, 'query').mockImplementation(((sql: unknown, ...rest: unknown[]) =>
+    (typeof sql === 'string' && sql.includes("role = 'admin' and not disabled") ? Promise.resolve({ rows: [] }) : q(sql, ...rest))) as never);
+}
 
 describe('runBenchmark', () => {
   it('measures 21 s of 1080p H.264 and stores the speed', async () => {
@@ -165,13 +181,74 @@ describe('runBenchmark', () => {
   });
 });
 
+describe('runBenchmark: outcomes for the card', () => {
+  it('every outcome but running is kept for 24 h; a failed run is a job error whatever the trigger', async () => {
+    const set = vi.spyOn(env.kv, 'set');
+    expect((await runBenchmark(env.ctx, 'admin', { now })).ok).toBe(true);
+    expect((await conversionsView(env.ctx)).measure.last).toEqual({ outcome: 'ok', at: new Date(t).toISOString() });
+    expect(set.mock.calls.find(([k]) => k === 'conv:bench:last')?.[2]).toBe(BENCH_LAST_TTL_S);
+    expect(BENCH_LAST_TTL_S).toBe(86_400);
+    const before = await benchErrors();
+    mode.fail = '2.mp4';
+    expect(await runBenchmark(env.ctx, 'admin', { now })).toEqual({ ok: false, why: 'failed' });
+    expect((await conversionsView(env.ctx)).measure.last).toMatchObject({ outcome: 'failed' });
+    expect(await benchErrors()).toBe(before + 1);
+    mode.fail = undefined;
+    vi.spyOn(env.ctx.jf, 'items').mockResolvedValue({ items: [], total: 0 });
+    expect(await runBenchmark(env.ctx, 'enable', { now })).toEqual({ ok: false, why: 'no_title' });
+    expect((await conversionsView(env.ctx)).measure.last).toMatchObject({ outcome: 'no_title' });
+    expect(await benchErrors()).toBe(before + 1); // no title is not an error
+    await watch();
+    expect(await runBenchmark(env.ctx, 'admin', { now })).toEqual({ ok: false, why: 'busy' });
+    expect((await conversionsView(env.ctx)).measure.last).toMatchObject({ outcome: 'busy' });
+    for (const k of await env.kv.keys('play:')) await env.kv.del(k);
+    await claimHevcProbe(env.ctx);
+    expect(await runBenchmark(env.ctx, 'admin', { now })).toEqual({ ok: false, why: 'running' });
+    expect((await conversionsView(env.ctx)).measure.last).toMatchObject({ outcome: 'busy' }); // a run that did not start leaves the last one
+  });
+  it('without an admin account to convert as: no_user, nothing converted', async () => {
+    noServiceUser();
+    expect(await runBenchmark(env.ctx, 'admin', { now })).toEqual({ ok: false, why: 'no_user' });
+    expect(env.ctx.jf.clipTranscode).not.toHaveBeenCalled();
+    expect((await conversionsView(env.ctx)).measure.last).toMatchObject({ outcome: 'no_user' });
+    expect(await env.kv.get('hevcenc:running')).toBeNull();
+  });
+  it('the benchmark\'s own clip is not someone watching', async () => {
+    let view: Awaited<ReturnType<typeof conversionsView>> | undefined;
+    vi.spyOn(env.ctx.jf, 'clipTranscode').mockImplementation(async () => {
+      raw = [converting('ps-bench-1')]; // the media server lists the clip as a conversion
+      return { path: '/Videos/x/master.m3u8?PlaySessionId=ps-bench-1', playSessionId: 'ps-bench-1' };
+    });
+    mode.during = async () => { view = await conversionsView(env.ctx); };
+    expect((await runBenchmark(env.ctx, 'admin', { now })).ok).toBe(true);
+    expect(view!.measure).toMatchObject({ running: true, busy: null });
+    expect(view!.used).toBe(0); // exempt from the budget too
+    raw = [converting('ps-other')];
+    expect((await conversionsView(env.ctx)).measure.busy).toBe('watching'); // another app's conversion still is
+  });
+  it('Plex is not measured: unsupported, and the budget stays at its default or the admin value', async () => {
+    await asPlex(async () => {
+      expect(await runBenchmark(env.ctx, 'admin', { now })).toEqual({ ok: false, why: 'unsupported' });
+      expect(await convBenchTick(env.ctx)).toBe(false);
+      expect(env.ctx.jf.clipTranscode).not.toHaveBeenCalled();
+      expect(await env.kv.get('conv:bench:attempt')).toBeNull();
+      expect(await env.kv.get('hevcenc:running')).toBeNull();
+      const v = await conversionsView(env.ctx);
+      expect(v.measure.last).toEqual({ outcome: 'unsupported', at: null });
+      expect(v).toMatchObject({ limit: 2, auto: 2, custom: null });
+      env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 4 };
+      expect(await conversionsView(env.ctx)).toMatchObject({ limit: 4, custom: 4 });
+    });
+  });
+});
+
 describe('conversionsView', () => {
   it('the admin view', async () => {
     await env.kv.set('conv:bench', JSON.stringify(bench()), 3600);
     const v = await conversionsView(env.ctx);
     expect(v).toMatchObject({ limit: 3, auto: 3, custom: null, priority: 'films', used: 0, running: [] });
     expect(v.bench).toEqual({ jellyfin: { speed: 4.6, hwAccel: 'qsv', at: expect.stringMatching(/^\d{4}-\d\d-\d\dT/) }, livetv: null, recommended: 3, stale: false, noRealtime: false });
-    expect(v.measure).toEqual({ running: false, busy: null });
+    expect(v.measure).toEqual({ running: false, busy: null, last: null });
 
     await env.kv.set('conv:bench', JSON.stringify(bench({ speed: 0.8 })), 3600);
     expect((await conversionsView(env.ctx)).bench).toMatchObject({ recommended: 1, noRealtime: true });
@@ -241,6 +318,17 @@ describe('convBenchTick', () => {
     await env.kv.del('hevcenc:running');
     expect(await convBenchTick(env.ctx)).toBe(true); // none of those used up the attempt
   });
+  it('skips quietly without an admin account to convert as, until one exists', async () => {
+    const before = await benchErrors();
+    const spy = noServiceUser();
+    expect(await convBenchTick(env.ctx)).toBe(false);
+    expect(await convBenchTick(env.ctx)).toBe(false);
+    expect(await env.kv.get('conv:bench:attempt')).toBeNull(); // no attempt used up
+    expect(await benchErrors()).toBe(before);
+    expect(env.ctx.jf.clipTranscode).not.toHaveBeenCalled();
+    spy.mockRestore();
+    expect(await convBenchTick(env.ctx)).toBe(true);
+  });
   it('stale fingerprint', async () => {
     await env.kv.set('conv:bench', JSON.stringify(bench()), 3600);
     expect(await convBenchTick(env.ctx)).toBe(false); // current
@@ -287,6 +375,28 @@ describe('admin API', () => {
     expect(await env.kv.get('hevcenc:running')).toBeNull(); // the claim taken for the check is released
     expect(env.ctx.jf.clipTranscode).not.toHaveBeenCalled();
   });
+  const settle = () => vi.waitFor(async () => expect((await get()).json().measure.running).toBe(false));
+  it('a preview clip that is being built does not refuse it (the run waits for previews)', async () => {
+    raw = [converting('ps-prev-9')];
+    await markConvExempt(env.ctx, 'ps-prev-9');
+    const r = await post();
+    expect([r.statusCode, r.json()]).toEqual([202, { started: true }]);
+    await settle();
+    expect((await get()).json().measure.last).toMatchObject({ outcome: 'ok' });
+  });
+  it('409 no_user without an admin account to convert as; 409 unsupported on Plex', async () => {
+    const spy = noServiceUser();
+    const r = await post();
+    expect([r.statusCode, r.json()]).toEqual([409, { error: 'no_user' }]);
+    expect(await env.kv.get('hevcenc:running')).toBeNull();
+    spy.mockRestore();
+    await asPlex(async () => {
+      const p = await post();
+      expect([p.statusCode, p.json()]).toEqual([409, { error: 'unsupported' }]);
+      expect((await get()).json().measure.last).toEqual({ outcome: 'unsupported', at: null });
+    });
+    expect(env.ctx.jf.clipTranscode).not.toHaveBeenCalled();
+  });
   it('is for admins only', async () => {
     const inv = await env.app.inject({ method: 'POST', url: '/api/admin/invites', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: { role: 'friend', ttlHours: 1 } });
     env.claims.current = { sub: 'sub-fr', email: 'fr@example.com', name: 'Fr', groups: [] };
@@ -298,6 +408,20 @@ describe('admin API', () => {
     env.claims.current = ADMIN;
     expect((await post(f)).statusCode).toBe(403);
     expect((await get(f)).statusCode).toBe(403);
+    expect(env.ctx.jf.clipTranscode).not.toHaveBeenCalled();
+  });
+});
+
+describe('admin API: rate limit', () => {
+  it('at most 6 per 10 minutes for the whole portal', async () => {
+    const s = await env.login(ADMIN);
+    const post = () => env.app.inject({ method: 'POST', url: '/api/admin/conversions/benchmark', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf } });
+    await watch(); // each answer is a quick 409 busy
+    const first = await post();
+    expect(first.headers['x-ratelimit-limit']).toBe('6');
+    const left = Number(first.headers['x-ratelimit-remaining']);
+    for (let i = 0; i < left; i++) expect((await post()).statusCode).toBe(409);
+    expect((await post()).statusCode).toBe(429);
     expect(env.ctx.jf.clipTranscode).not.toHaveBeenCalled();
   });
 });
