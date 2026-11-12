@@ -9,16 +9,15 @@
    * bar offers *Erneut anwenden* (the repair, which applies the policy again). An admin account's switches are locked.
    */
   import { onMount } from 'svelte';
-  import { beforeNavigate, goto } from '$app/navigation';
   import { api, ApiError } from '#lib/api';
   import { cellText, fieldLabel, partialText, visibleFields, type FieldGroup, type MatrixField, type RoleMatrix } from '#lib/admin/rights/model';
+  import { leaveGuard } from '#lib/admin/leaveGuard';
   import FieldControl from '#lib/admin/rights/FieldControl.svelte';
   import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
   import SaveBar from '#lib/admin/rights/SaveBar.svelte';
   import { locale, t, tr, trDynamic } from '#lib/i18n';
   import { PERM_KEYS } from '#lib/perms';
   import { errorText } from '#lib/ui/action';
-  import { confirm } from '#lib/ui/confirm';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
   import { uid } from '#lib/ui/ids';
@@ -112,7 +111,7 @@
   })();
 
   /** the PUT was stored: the staged edits go (they would show as unsaved), also when the reload after it failed */
-  function settle(sent: { note?: string }) {
+  function settle(sent: { note?: string | null }) {
     if (!view) return;
     staged = {}; view = { ...view, note: sent.note !== undefined ? sent.note : view.note }; note = view.note ?? '';
   }
@@ -156,16 +155,8 @@
   }
   function discard() { staged = {}; note = view?.note ?? ''; barError = null; partial = false; libError = null; }
   function openReview() { reviewBtn = document.activeElement as HTMLElement | null; reviewing = true; }
-  // staged edits are not lost silently: a tab switch (a goto) or any navigation asks first, as Rollen & Rechte does
-  let leaving = false;
-  beforeNavigate((nav) => {
-    if (leaving || !changes) return;
-    nav.cancel(); // unload: the browser asks itself
-    if (nav.willUnload || !nav.to) return;
-    const to = nav.to.url;
-    void confirm({ title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.rights.leaveBody', { name }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm') })
-      .then((ok) => { if (ok) { leaving = true; void goto(to); } });
-  });
+  // staged edits are not lost silently: a tab switch or any navigation asks first, as Rollen & Rechte does
+  leaveGuard(() => changes > 0, () => ({ title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.rights.leaveBody', { name }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm') }));
   async function saveReviewed() { reviewing = false; await save(); }
 </script>
 

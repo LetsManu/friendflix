@@ -313,6 +313,61 @@ test.describe('admin user detail (desktop)', () => {
     await expect(page).toHaveURL(/\/admin\/users$/);
   });
 
+  /** /admin → Nutzer → Anna → Rechte (the tab replaces its entry), one switch staged; the history length there */
+  async function stagedViaLinks(page: import('@playwright/test').Page): Promise<number> {
+    await page.goto('/admin');
+    await page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: 'Nutzer' }).click();
+    await page.getByRole('link', { name: 'Anna Beispiel' }).click();
+    await expect(page).toHaveURL(new RegExp(`/admin/users/${ANNA}$`));
+    await page.getByRole('tab', { name: 'Rechte' }).click();
+    await expect(page).toHaveURL(/\?tab=rights$/);
+    await rowOf(page, 'Auf Fernseher übertragen').getByText('Verbieten', { exact: true }).click();
+    await expect(saveBar(page)).toBeVisible();
+    return page.evaluate(() => history.length);
+  }
+  const historyLength = (page: import('@playwright/test').Page) => page.evaluate(() => history.length);
+  const back = (page: import('@playwright/test').Page) => page.evaluate(() => history.back());
+
+  test('leave guard: a tab switch after Verwerfen replaces its entry like any tab switch (Back leaves the person)', async ({ page }) => {
+    const n = await stagedViaLinks(page);
+    await page.getByRole('tab', { name: 'Profile' }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\?tab=profiles$/);
+    await expect(page.getByRole('tab', { name: 'Profile' })).toHaveAttribute('aria-selected', 'true');
+    await expect.poll(() => historyLength(page)).toBe(n);
+    await back(page);
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await back(page);
+    await expect(page).toHaveURL(/\/admin$/);
+  });
+
+  test('leave guard: a confirmed Back goes back once, the next Back goes back again', async ({ page }) => {
+    const n = await stagedViaLinks(page);
+    await back(page);
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect(page.getByRole('link', { name: 'Anna Beispiel' })).toBeVisible();
+    await expect.poll(() => historyLength(page)).toBe(n);
+    await back(page);
+    await expect(page).toHaveURL(/\/admin$/);
+    // forward again lands on the person, without the discarded edit and without a question
+    await page.evaluate(() => history.forward());
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await page.evaluate(() => history.forward());
+    await expect(page).toHaveURL(/\?tab=rights$/);
+    await expect(rowOf(page, 'Auf Fernseher übertragen').getByRole('radio', { name: 'Verbieten' })).not.toBeChecked();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  });
+
+  test('leave guard: Abbrechen on Back stays on the person with the edit staged', async ({ page }) => {
+    const n = await stagedViaLinks(page);
+    await back(page);
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(page).toHaveURL(/\?tab=rights$/);
+    await expect(rowOf(page, 'Auf Fernseher übertragen').getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+    await expect.poll(() => historyLength(page)).toBe(n);
+  });
+
   test('an admin account: switches are locked, numbers stay editable', async ({ page }) => {
     await page.goto('/admin/users/u1?tab=rights');
     const panel = rightsPanel(page);

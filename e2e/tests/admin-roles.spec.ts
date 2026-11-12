@@ -235,6 +235,36 @@ test.describe('Rollen & Rechte: role matrix (desktop)', () => {
     await nav.getByRole('link', { name: 'Nutzer' }).click();
     await expect(page).toHaveURL(/\/admin\/users$/);
   });
+
+  test('leaving by Back with staged changes: Verwerfen goes back once, the next Back goes back again', async ({ page }) => {
+    await page.goto('/admin');
+    const nav = page.getByRole('navigation', { name: 'Admin-Bereiche' });
+    await nav.getByRole('link', { name: 'Nutzer' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await nav.getByRole('link', { name: 'Rollen & Rechte' }).click();
+    await expect(page).toHaveURL(/\/admin\/roles$/);
+    await stageGuestRating(page);
+    const n = await page.evaluate(() => history.length);
+    await page.evaluate(() => history.back());
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect.poll(() => page.evaluate(() => history.length)).toBe(n);
+    await page.evaluate(() => history.back());
+    await expect(page).toHaveURL(/\/admin$/);
+  });
+
+  test('leaving by a link with staged changes: Verwerfen pushes one entry, as the link would', async ({ page }) => {
+    await page.goto('/admin/roles');
+    await stageGuestRating(page);
+    const n = await page.evaluate(() => history.length);
+    await page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: 'Nutzer' }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect.poll(() => page.evaluate(() => history.length)).toBe(n + 1);
+    await page.evaluate(() => history.back());
+    await expect(page).toHaveURL(/\/admin\/roles$/);
+    await expect(bar(page)).toHaveCount(0);
+  });
 });
 
 const head = (page: Page, name: string | RegExp) => grid(page).getByRole('columnheader', { name });
