@@ -11,6 +11,7 @@ import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
 import { detectLivetv, enableBenchmark, livetvSystem } from './detect.js';
 import { gpuAdvice } from './gpu.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
+import { FeedError, adminChannel, createFeed, deleteFeed, feedCreate, ingestView, reassignPort, regenerateCredentials, syncIngest } from './ownfeeds.js';
 import { SourceRefusal, SourceTestError, createSource, deleteSource, listSources, sourceCreate, sourcePatch, sourceTestBody, testSource, updateSource } from './sources.js';
 
 /** the line for an install without the updater (spec §4.3); the page shows it with the compose commands */
@@ -276,6 +277,10 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!b) return reply;
     try {
       const s = await updateSource(ctx, req.user!.id, sid, b);
+      // switching a source on or off adds or withdraws its push feeds in livetv (Task 20)
+      if (s && b.enabled !== undefined && (await ctx.db.query("select 1 from livetv_channels where source_id = $1 and ingest = 'push' limit 1", [sid])).rowCount) {
+        await syncIngest(ctx, req.log);
+      }
       return s ?? reply.code(404).send({ error: 'not_found' });
     } catch (e) { return refused(e, reply); }
   });
@@ -283,6 +288,67 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.delete('/api/admin/livetv/sources/:id', admin, async (req, reply) => {
     const sid = groupId(req);
     const r = sid ? await deleteSource(ctx, req.user!.id, sid) : null;
-    return r ?? reply.code(404).send({ error: 'not_found' });
+    if (!r) return reply.code(404).send({ error: 'not_found' });
+    // push feeds went with it (counted in the delete's transaction): livetv must stop accepting their credentials (Task 20)
+    if (r.push) await syncIngest(ctx, req.log);
+    return { channels: r.channels };
+  });
+
+  // ---- Eigene Streams (spec §3.5, §9.1): pull URLs and push credentials are secrets (F13). Bodies are never logged with an error
+  // (app.ts SENSITIVE_BODY), the push credentials are answered once (no-store) and never again: later answers carry port and hint. ----
+
+  const feedRefused = (e: unknown, reply: Reply) => {
+    if (e instanceof FeedError) return reply.code(e.status).send(e.body);
+    throw e;
+  };
+
+  app.post('/api/admin/livetv/channels', admin, async (req, reply) => {
+    const b = parse(feedCreate, req.body, reply);
+    if (!b) return reply;
+    reply.header('cache-control', 'no-store');
+    try {
+      return reply.code(201).send(await createFeed(ctx, req.user!.id, b, req.log));
+    } catch (e) { return feedRefused(e, reply); }
+  });
+
+  // the Eigene Streams card: host, port range and the state of each push feed (never a credential)
+  app.get('/api/admin/livetv/ingest', admin, async (_req, reply) => {
+    reply.header('cache-control', 'no-store');
+    return ingestView(ctx);
+  });
+
+  app.get('/api/admin/livetv/channels/:id', admin, async (req, reply) => {
+    const cid = groupId(req);
+    const c = cid ? await adminChannel(ctx, cid) : null;
+    reply.header('cache-control', 'no-store');
+    return c ?? reply.code(404).send({ error: 'not_found' });
+  });
+
+  // Zugangsdaten neu erzeugen: the same one-time answer with new values
+  app.post('/api/admin/livetv/channels/:id/push-credentials', admin, async (req, reply) => {
+    const cid = groupId(req);
+    if (!cid) return reply.code(404).send({ error: 'not_found' });
+    reply.header('cache-control', 'no-store');
+    try {
+      return await regenerateCredentials(ctx, req.user!.id, cid, req.log);
+    } catch (e) { return feedRefused(e, reply); }
+  });
+
+  // Neuen Port zuweisen (spec §19): a port that left LIVETV_SRT_PORTS; the credentials stay
+  app.post('/api/admin/livetv/channels/:id/push-port', admin, async (req, reply) => {
+    const cid = groupId(req);
+    if (!cid) return reply.code(404).send({ error: 'not_found' });
+    try {
+      return await reassignPort(ctx, req.user!.id, cid, req.log);
+    } catch (e) { return feedRefused(e, reply); }
+  });
+
+  // own feeds only (a provider channel comes back with the next import; it is hidden instead)
+  app.delete('/api/admin/livetv/channels/:id', admin, async (req, reply) => {
+    const cid = groupId(req);
+    if (!cid) return reply.code(404).send({ error: 'not_found' });
+    try {
+      return { ok: true, ...(await deleteFeed(ctx, req.user!.id, cid, req.log)) };
+    } catch (e) { return feedRefused(e, reply); }
   });
 }
