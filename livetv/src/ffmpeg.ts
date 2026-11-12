@@ -1,0 +1,100 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import type { Encoder } from './system.js';
+
+/**
+ * The ffmpeg command lines of the remux and transcode modes (spec §3.3; plan rulings 3 and 23) and the stderr scrubber.
+ * ffmpeg never opens a provider URL: an HTTP(S) input arrives on stdin (`-protocol_whitelist pipe`), an SRT input carries the
+ * checked IP literal (`-protocol_whitelist srt,udp`). The output is always `-f segment` MPEG-TS files `<dir>/<n>.ts`, each
+ * reported as a CSV line on stdout, so livetv owns the playlist (`SegmentWindow`) for every mode.
+ */
+export type FfInput = { kind: 'pipe' } | { kind: 'srt'; url: string };
+export interface FfmpegArgsIn {
+  mode: 'remux' | 'transcode';
+  input: FfInput;
+  encoder: Encoder;
+  audio: 'copy' | 'aac';
+  /** the source's lines (probe); null = unknown, treated as large */
+  srcHeight: number | null;
+  /** the stream's directory; segments are written as `<dir>/%d.ts` */
+  dir: string;
+  /** the first segment number (local numbering continues across ffmpeg restarts) */
+  startNumber: number;
+}
+
+export const SEGMENT_SECONDS = 4;
+/** transcodes are scaled to at most this many lines */
+export const MAX_LINES = 1080;
+/** the render node used for VA-API (the GPU overlay maps /dev/dri) */
+export const VAAPI_DEVICE = '/dev/dri/renderD128';
+export const AUDIO_BITRATE = 160_000;
+const HEAD = ['-hide_banner', '-loglevel', 'error'];
+const SCALE = `scale=-2:'min(${MAX_LINES},ih)'`;
+
+/** AAC and MP3 are copied; anything else (MP2, AC-3, none known) becomes stereo AAC */
+export function audioFor(codec: string | undefined): 'copy' | 'aac' {
+  return codec === 'aac' || codec === 'mp3' ? 'copy' : 'aac';
+}
+
+/** the video rate in bit/s: 6 Mbit/s, 3 Mbit/s for a source of at most 720 lines */
+export function videoBitrate(srcHeight: number | null): number {
+  return srcHeight !== null && srcHeight > 0 && srcHeight <= 720 ? 3_000_000 : 6_000_000;
+}
+
+/** options that must come before the input (the hardware device of VA-API) */
+export function hwArgs(encoder: Encoder): string[] {
+  return encoder === 'h264_vaapi' ? ['-vaapi_device', VAAPI_DEVICE] : [];
+}
+
+/**
+ * The transcode video options (also what the benchmark measures): H.264 High, ≤ 1080 lines, CBR-like rate, keyframes every 2 s.
+ * NVENC and QSV mark only IDR frames as key frames, and the segment muxer cuts only at key frames: their forced frames must be
+ * IDR (`-forced-idr` / `-forced_idr`), or segments would follow the encoder's own GOP instead of 4 s.
+ */
+export function videoArgs(encoder: Encoder, srcHeight: number | null): string[] {
+  const m = videoBitrate(srcHeight) / 1_000_000;
+  const filter = encoder === 'h264_vaapi' ? `${SCALE},format=nv12,hwupload` : encoder === 'h264_qsv' ? `${SCALE},format=nv12` : `${SCALE},format=yuv420p`;
+  return [
+    '-c:v', encoder,
+    ...(encoder === 'libx264' ? ['-preset', 'veryfast'] : []),
+    ...(encoder === 'h264_nvenc' ? ['-forced-idr', '1'] : []),
+    ...(encoder === 'h264_qsv' ? ['-forced_idr', '1'] : []),
+    '-profile:v', 'high',
+    '-vf', filter,
+    '-b:v', `${m}M`, '-maxrate', `${m}M`, '-bufsize', `${m * 2}M`,
+    '-force_key_frames', 'expr:gte(t,n_forced*2)',
+  ];
+}
+
+const audioArgs = (a: 'copy' | 'aac'): string[] => (a === 'copy' ? ['-c:a', 'copy'] : ['-c:a', 'aac', '-ac', '2', '-b:a', '160k']);
+
+export function ffmpegArgs(o: FfmpegArgsIn): string[] {
+  const input = o.input.kind === 'pipe' ? ['-protocol_whitelist', 'pipe', '-i', 'pipe:0'] : ['-protocol_whitelist', 'srt,udp', '-i', o.input.url];
+  const video = o.mode === 'remux' ? ['-c:v', 'copy'] : videoArgs(o.encoder, o.srcHeight);
+  return [
+    ...HEAD,
+    ...(o.mode === 'transcode' ? hwArgs(o.encoder) : []),
+    ...input,
+    '-map', '0:v:0', '-map', '0:a:0?',
+    ...video,
+    ...audioArgs(o.audio),
+    '-f', 'segment', '-segment_time', String(SEGMENT_SECONDS), '-segment_format', 'mpegts',
+    '-segment_list', 'pipe:1', '-segment_list_type', 'csv', '-segment_start_number', String(o.startNumber),
+    `${o.dir}/%d.ts`,
+  ];
+}
+
+/**
+ * One ffmpeg stderr line as it may be logged (run.ts also replaces the run's data arguments, absolute paths and stream keys):
+ * - a URL becomes `<input>`; a quoted one up to its closing quote (an SRT URL may hold a space), else up to the next space;
+ * - userinfo without a scheme (`anna:geheim@192.0.2.10`) becomes `•••@`;
+ * - the value after a credential-like name (any word containing user, pass, pwd, secret, auth, token, key or streamid, followed
+ *   by `=` or `:`) becomes `•••`.
+ */
+export function scrubLine(line: string): string {
+  return line
+    .replace(/(['"])[a-z][a-z0-9+.-]*:\/\/[^'"]*\1/gi, '$1<input>$1')
+    .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, '<input>')
+    .replace(/[^\s'"@/]+:[^\s'"@/]+@/g, '•••@')
+    .replace(/(\w*(?:user|pass|pwd|secret|auth|token|key|streamid)\w*)(\s*[:=]\s*)[^&\s'"]+/gi, '$1$2•••');
+}

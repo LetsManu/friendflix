@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GuardDeps } from '../src/fetch.js';
 import { pickVariant, probe, type StreamInput } from '../src/probe.js';
-import type { Run, RunResult } from '../src/run.js';
+import { TIMEOUT_CODE, type Run, type RunResult } from '../src/run.js';
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
 
@@ -229,6 +229,38 @@ describe('probe', () => {
     const r = await probe({ url: 'srt://192.0.2.30:9000', kind: 'srt', allowLan: false }, { run, guard: guard() });
     expect(r).toEqual({ ok: false, needs: 'transcode', error: 'timeout' });
     expect(run.calls[0]!.timeoutMs).toBeLessThanOrEqual(10_000);
+  });
+
+  it('an abort mid-probe reaches the ffprobe run (SRT and piped): the run gets the caller\'s signal and ends on it', async () => {
+    const s = await serve({ '/live.ts': (res) => { res.writeHead(200); res.write(Buffer.alloc(100)); /* then stays open */ } });
+    const inputs: StreamInput[] = [
+      { url: 'srt://192.0.2.30:9000', kind: 'srt', allowLan: false },
+      { url: `http://iptv.example.com:${s.port}/live.ts`, kind: 'ts', allowLan: false },
+    ];
+    for (const input of inputs) {
+      const ac = new AbortController();
+      const seen: Array<AbortSignal | undefined> = [];
+      let started: () => void = () => {};
+      const running = new Promise<void>((r) => { started = r; });
+      // a hanging ffprobe that only the signal ends (as run.ts does by killing the child); without a signal it answers at once, so a
+      // dropped signal fails the assertions below instead of hanging the test
+      const run = (async (_cmd, _args, o) => {
+        seen.push(o.signal);
+        started();
+        if (!o.signal) return { code: 0, stdout: Buffer.alloc(0), stderr: '' };
+        const signal = o.signal;
+        if (!signal.aborted) await new Promise<void>((r) => signal.addEventListener('abort', () => r(), { once: true }));
+        return { code: TIMEOUT_CODE, stdout: Buffer.alloc(0), stderr: '' };
+      }) as Run;
+      const p = probe(input, { run, guard: guard(), signal: ac.signal });
+      await running;
+      expect(seen[0]).toBe(ac.signal);
+      expect(seen[0]!.aborted).toBe(false);
+      ac.abort();
+      expect(await p).toEqual({ ok: false, needs: 'transcode', error: 'timeout' });
+      expect(seen).toHaveLength(1);
+      expect(seen[0]!.aborted).toBe(true);
+    }
   });
 
   it('no video stream, unreadable output or a crashing runner → no_video / invalid', async () => {
