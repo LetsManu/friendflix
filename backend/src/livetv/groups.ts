@@ -197,8 +197,8 @@ export async function orderGroups(ctx: Pick<Ctx, 'db'>, actor: string, ids: read
 
 /**
  * *Zusammenführen* (spec §9.3): the provider maps and the channel overrides of `ids` move to `into`, then those groups are deleted
- * (their roles, flags and per-person exceptions go with them; `into` keeps its own). null = `into` does not exist. The route refuses
- * `into` among `ids`, so every merge deletes at least one group.
+ * (their roles, flags and per-person exceptions go with them; `into` keeps its own). null = `into` does not exist. The route drops
+ * `into` from `ids` and refuses a merge with no other id, so every merge deletes at least one group.
  */
 export async function mergeGroups(ctx: Pick<Ctx, 'db'>, actor: string, ids: readonly string[], into: string): Promise<GroupView | null> {
   const from = [...new Set(ids)].filter((id) => id !== into);

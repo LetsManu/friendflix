@@ -187,10 +187,11 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.post('/api/admin/livetv/groups/merge', admin, async (req, reply) => {
     const b = parse(mergeBody, req.body, reply);
     if (!b) return reply;
-    // a merge into itself would delete nothing: refused, not audited
-    if (b.ids.includes(b.into)) return reply.code(400).send({ error: 'invalid', field: 'into' });
-    if ((await unknownGroups(ctx, b.ids)).length) return reply.code(400).send({ error: 'invalid', field: 'ids' });
-    const g = await mergeGroups(ctx, req.user!.id, b.ids, b.into);
+    // `into` among `ids` is dropped; with nothing else left the merge would change nothing: refused, not audited
+    const ids = b.ids.filter((g) => g !== b.into);
+    if (!ids.length) return reply.code(400).send({ error: 'invalid', field: 'ids' });
+    if ((await unknownGroups(ctx, ids)).length) return reply.code(400).send({ error: 'invalid', field: 'ids' });
+    const g = await mergeGroups(ctx, req.user!.id, ids, b.into);
     return g ?? reply.code(404).send({ error: 'not_found' });
   });
 

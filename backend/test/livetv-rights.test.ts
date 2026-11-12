@@ -314,9 +314,9 @@ describe('merge', () => {
     await channel('Kanal Wolkenlos', { importGroup: 'Sport Extra' });
     await call('PUT', `/api/admin/users/${BEN}/livetv-groups`, { allow: [hd], deny: [] });
     expect(await sees(who.ben())).toEqual(['Bergblick Sport HD', 'Hafenkanal']);
-    // a merge into itself is refused (and not audited)
-    expect((await call('POST', '/api/admin/livetv/groups/merge', { ids: [hd, sport], into: sport })).json()).toEqual({ error: 'invalid', field: 'into' });
-    const r = await call('POST', '/api/admin/livetv/groups/merge', { ids: [hd, extra], into: sport });
+    // a merge with nothing but `into` is refused (and not audited); `into` among other ids is dropped
+    expect((await call('POST', '/api/admin/livetv/groups/merge', { ids: [sport], into: sport })).json()).toEqual({ error: 'invalid', field: 'ids' });
+    const r = await call('POST', '/api/admin/livetv/groups/merge', { ids: [hd, extra, sport], into: sport });
     expect(r.statusCode).toBe(200);
     expect(r.json()).toEqual({ id: sport, name: 'Sport', kidFriendly: false, roles: ['family'], released: true, position: 0, channels: 4, providerGroups: ['DE | Sport', 'Sport Extra', 'Sport HD'] });
     expect((await env.pool.query('select group_override from livetv_channels where id = $1', [moved])).rows[0].group_override).toBe(sport);
@@ -329,6 +329,28 @@ describe('merge', () => {
     expect(merges[0].target).toBe(sport);
     expect([...merges[0].meta.ids].sort()).toEqual([hd, extra].sort());
     expect((await call('POST', '/api/admin/livetv/groups/merge', { ids: [sport], into: hd })).statusCode).toBe(404);
+  });
+});
+
+describe('merge with into among ids', () => {
+  it('ids [a, b] into b merges a into b', async () => {
+    const a = await group('Sport HD');
+    const b = await group('Sport');
+    await map('Sport HD', a);
+    await channel('Bergblick Sport HD', { importGroup: 'Sport HD' });
+    const r = await call('POST', '/api/admin/livetv/groups/merge', { ids: [a, b], into: b });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ id: b, providerGroups: ['Sport HD'], channels: 1 });
+    expect((await env.pool.query('select id from livetv_groups')).rows.map((x) => x.id)).toEqual([b]);
+    const merges = (await env.pool.query("select target, meta from audit_log where action = 'livetv.group.merge'")).rows;
+    expect(merges).toEqual([{ target: b, meta: { ids: [a] } }]);
+  });
+
+  it('ids [b] into b answers 400', async () => {
+    const b = await group('Sport');
+    expect((await call('POST', '/api/admin/livetv/groups/merge', { ids: [b], into: b })).json()).toEqual({ error: 'invalid', field: 'ids' });
+    expect((await env.pool.query("select count(*)::int n from audit_log where action = 'livetv.group.merge'")).rows[0].n).toBe(0);
+    expect((await env.pool.query('select id from livetv_groups')).rows.map((x) => x.id)).toEqual([b]);
   });
 });
 
