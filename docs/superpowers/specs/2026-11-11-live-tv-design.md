@@ -1110,6 +1110,13 @@ join, stop, tick), `logos.ts`, `recordings.ts` (Phase 3), `events.ts` (KV ring),
 guide would run dry), `livetvEpgPrune` daily 04:10 (programmes `end_at < now() − 1 day`, missing channels > 30 days,
 orphaned logos), `livetvReminderTick` 60 s (Phase 2), `convBenchTick` 10 min (one automatic first measurement).
 
+Ruling (Task 17 review): staging table, swap in one short transaction. The XMLTV import streams its programmes into the unlogged
+table `livetv_programmes_stage` (migration 49: the programme columns plus `run_id uuid not null`, `staged_at`; index on `(run_id)`)
+with short autocommitted inserts tagged with a fresh run id, so no connection or row lock is held while the stream is read. Only the
+`end` line triggers the swap: ONE short transaction deletes the source's programmes and inserts the run's staged rows. The run's
+staging rows are always deleted afterwards (success or failure); `livetvEpgPrune` drops staging rows older than 1 day (crashed runs). A
+broken stream never reaches the swap and changes nothing (ruling 27).
+
 **Import merge rules** (`sources.ts`): entries whose `group-title` is in the source's `skip_groups` are dropped first (and
 count as absent below); the rest are keyed by `source_key`; new → insert (group via `livetv_group_map`, creating the group
 **unreleased and granted to no role** if new, §8); existing → update `import_*` (number by the numbering policy, `tvg-shift`

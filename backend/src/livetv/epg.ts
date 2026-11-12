@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import type { Ctx } from '../ctx.js';
-import { isOwnFeeds } from './channels.js';
+import { EFFECTIVE_SHIFT_SQL, isOwnFeeds } from './channels.js';
 import { LivetvError, livetvStream } from './client.js';
 import { importLogos } from './logos.js';
 import { invalidateLivetvRights } from './rights.js';
@@ -15,8 +15,11 @@ import type { XmlItem } from './wire.js';
  * (`POST /v1/fetch/xmltv`, NDJSON), the automatic four-pass matching of channels to XMLTV channels, the EPG logos, now/next with the
  * channel's effective offset, and the daily prune.
  *
- * - A refresh replaces the source's imported programmes in one transaction, and only after a complete stream (its `end` line): an
- *   `error` line, a missing `end` line, a broken line or a failed request roll back and keep the old programmes (§19, ruling 27).
+ * - A refresh replaces the source's imported programmes, and only after a complete stream (its `end` line): the batches go into the
+ *   unlogged staging table `livetv_programmes_stage` (migration 49, short autocommitted inserts tagged with a run id, so no connection
+ *   or lock is held while the stream is read); the `end` line triggers ONE short transaction that deletes the source's programmes and
+ *   inserts the run's staged rows. An `error` line, a missing `end` line, a broken line or a failed request never reach the swap and
+ *   keep the old programmes (§19, ruling 27). The run's staging rows are always deleted afterwards; the daily prune drops stale ones.
  * - `<icon>` URLs are kept in memory only (ruling 43): the refresh hands them to the matcher, which fetches the logos of matched
  *   channels that need them (`importLogo`, 7-day memo) and stores only the hash.
  * - `epg_last_error` holds fixed codes only (`^[a-z_]{1,40}$`), never a URL or a provider text (F13).
@@ -27,7 +30,9 @@ import type { XmlItem } from './wire.js';
  * too, so a filter built from tvg-ids would break the case-insensitive pass 1 and the name passes 2-4. The filter is therefore built
  * from the source's stored XMLTV channel index: every stored id any channel could match in any pass. The index itself comes from an
  * unfiltered run without programmes (an empty time window), at least every 7 days and whenever the EPG URL changed. A filter over
- * 2 000 ids or 48 KB (livetv's body cap is 64 KB) is omitted, and that run then replaces the index as well.
+ * 2 000 ids or 48 KB (livetv's body cap is 64 KB) is omitted, and that run then replaces the index as well. An empty filter downloads
+ * nothing. A channel the provider adds to its XMLTV is invisible to matching until the next index run (up to 7 days; also a guide that
+ * had no channels is looked at only that often).
  */
 
 /** livetv's own XMLTV timeout is 10 min; the backend waits a little longer so livetv answers the code */
@@ -47,10 +52,10 @@ const MAX_PROGRAMMES = 300_000;
 const FILTER_MAX_IDS = 2_000;
 const FILTER_MAX_BYTES = 48 * 1024;
 const INDEX_TTL_S = 7 * 24 * 3600;
-/** the single-flight lock is renewed at most this often while a long stream is read */
+/** the single-flight lock is renewed on this timer while the EPG import runs (also while livetv is silent) */
 const HEARTBEAT_MS = 60_000;
 /** the logo step of one refresh stops after 5 minutes; the rest is fetched by the next refresh */
-const LOGO_BUDGET_MS = 5 * 60_000;
+export const LOGO_BUDGET_MS = 5 * 60_000;
 const CODE_RE = /^[a-z_]{1,40}$/;
 const PRUNE_HOUR = 4;
 const PRUNE_MINUTE = 10;
@@ -172,9 +177,10 @@ async function indexRows(ctx: Pick<Ctx, 'db'>, sourceId?: string): Promise<Array
 /**
  * Matches every channel with `epg_match = 'auto'` that is in the latest import (missing ones keep their mapping until they return or
  * are pruned); a channel without a match loses its mapping. With `icons` (the in-memory `<icon>` map of the refresh that just ran,
- * F17) the EPG logos follow (epgLogos); without, no logo is fetched and the stored `epg_logo_hash` values stay.
+ * F17) the EPG logos follow (epgLogos; `sources` = the sources that icon map is complete for); without, no logo is fetched and the
+ * stored `epg_logo_hash` values stay.
  */
-export async function autoMatch(ctx: Ctx, o: { icons?: Map<string /* sourceId|xmlId */, string> } = {}): Promise<{ matched: number; total: number }> {
+export async function autoMatch(ctx: Ctx, o: { icons?: Map<string /* sourceId|xmlId */, string>; sources?: string[] } = {}): Promise<{ matched: number; total: number }> {
   const idx = buildEpgIndex(await indexRows(ctx));
   const rows = (await ctx.db.query<{ id: string; source_id: string; tvg_id: string | null; tvg_name: string | null; import_name: string; epg_source_id: string | null; epg_channel_id: string | null }>(
     `select id, source_id, tvg_id, tvg_name, import_name, epg_source_id, epg_channel_id from livetv_channels
@@ -200,30 +206,34 @@ export async function autoMatch(ctx: Ctx, o: { icons?: Map<string /* sourceId|xm
          from unnest($1::uuid[], $2::uuid[], $3::text[]) as u(id, src, xml) where c.id = u.id and c.epg_match = 'auto'`,
       [ids.slice(i, i + BATCH), srcs.slice(i, i + BATCH), xmls.slice(i, i + BATCH)]);
   }
-  if (o.icons) await epgLogos(ctx, o.icons);
+  if (o.icons) await epgLogos(ctx, o.icons, { sources: o.sources });
   return { matched, total: rows.length };
 }
 
 /**
  * The XMLTV logos (ruling 43): a matched channel whose source prefers `xmltv`, or prefers `m3u` but has no import logo, gets the
  * `<icon>` of its XMLTV channel through importLogo (7-day memo per URL) as `epg_logo_hash`; one whose XMLTV channel has no icon gets
- * null; an unmatched channel is cleared. Only channels matched to a source the map covers (the refresh that built it) are judged; a
- * logo that could not be fetched this time leaves the stored hash as it is. Answers the count of channels given a logo.
+ * null; an unmatched channel is cleared. Only channels matched to a source the map covers (the sources of its keys, plus `o.sources`: the
+ * source of a full refresh, whose file may have no icon at all) are judged; a logo that could not be fetched this time leaves the stored
+ * hash as it is. Answers the count of channels given a logo.
  */
-export async function epgLogos(ctx: Ctx, icons: Map<string /* sourceId|xmlId */, string>): Promise<number> {
+export async function epgLogos(ctx: Ctx, icons: Map<string /* sourceId|xmlId */, string>, o: { sources?: string[] } = {}): Promise<number> {
   await ctx.db.query('update livetv_channels set epg_logo_hash = null where (epg_source_id is null or epg_channel_id is null) and epg_logo_hash is not null');
-  const covered = [...new Set([...icons.keys()].map((k) => k.slice(0, k.indexOf('|'))))];
+  const covered = [...new Set([...icons.keys()].map((k) => k.slice(0, k.indexOf('|'))).concat(o.sources ?? []))];
   if (covered.length === 0) return 0;
-  const rows = (await ctx.db.query<{ id: string; epg_source_id: string; epg_channel_id: string; allow_lan: boolean; epg_logo_hash: string | null }>(
-    `select c.id, c.epg_source_id, c.epg_channel_id, es.allow_lan, c.epg_logo_hash
+  const rows = (await ctx.db.query<{ id: string; epg_source_id: string; epg_channel_id: string; allow_lan: boolean; epg_logo_hash: string | null; need: boolean }>(
+    `select c.id, c.epg_source_id, c.epg_channel_id, es.allow_lan, c.epg_logo_hash, (s.logo_pref = 'xmltv' or c.import_logo_hash is null) as need
        from livetv_channels c join livetv_sources s on s.id = c.source_id join livetv_sources es on es.id = c.epg_source_id
-      where c.epg_channel_id is not null and c.epg_source_id = any($1::uuid[]) and (s.logo_pref = 'xmltv' or c.import_logo_hash is null)`,
+      where c.epg_channel_id is not null and c.epg_source_id = any($1::uuid[])`,
     [covered])).rows;
   const deadline = Date.now() + LOGO_BUDGET_MS;
   const urls = new Map<boolean, string[]>();
   for (const r of rows) {
-    const u = icons.get(iconKey(r.epg_source_id, r.epg_channel_id));
-    if (u) urls.set(r.allow_lan, [...(urls.get(r.allow_lan) ?? []), u]);
+    const u = r.need ? icons.get(iconKey(r.epg_source_id, r.epg_channel_id)) : undefined;
+    if (!u) continue;
+    const list = urls.get(r.allow_lan);
+    if (list) list.push(u);
+    else urls.set(r.allow_lan, [u]);
   }
   const found = new Map<string, string>(); // `${allowLan}|${url}` -> hash
   for (const [lan, list] of urls) {
@@ -234,7 +244,8 @@ export async function epgLogos(ctx: Ctx, icons: Map<string /* sourceId|xmlId */,
   let given = 0;
   for (const r of rows) {
     const u = icons.get(iconKey(r.epg_source_id, r.epg_channel_id));
-    const h = u ? found.get(`${r.allow_lan}|${u}`) : null;
+    // a channel that needs no logo keeps its hash while the file has an icon for it, and loses it when it has none
+    const h = u ? (r.need ? found.get(`${r.allow_lan}|${u}`) : undefined) : null;
     if (h === undefined) continue; // not fetched this time: unchanged
     if (h) given++;
     if (h === r.epg_logo_hash) continue;
@@ -259,8 +270,19 @@ const str = (v: unknown, max: number): v is string => typeof v === 'string' && v
 const optStr = (o: Record<string, unknown>, k: string, max: number) => (str(o[k], max) ? { [k]: o[k] as string } : {});
 const time = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 
+/** PostgreSQL refuses U+0000 in text and jsonb, and livetv passes it through: strip it from every string of an item (and of its lists) */
+const NUL = /\u0000/g;
+function scrub(o: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(o)) {
+    out[k] = typeof v === 'string' ? v.replace(NUL, '') : Array.isArray(v) ? v.map((x) => (typeof x === 'string' ? x.replace(NUL, '') : x)) : v;
+  }
+  return out;
+}
+
 /** one item line, read defensively (its strings come from a provider); null = dropped */
-function readItem(o: Record<string, unknown>): XmlItem | null {
+function readItem(raw: Record<string, unknown>): XmlItem | null {
+  const o = scrub(raw);
   if (o.t === 'channel') {
     if (!str(o.id, 500) || !Array.isArray(o.names)) return null;
     const names = o.names.filter((n): n is string => str(n, 200)).slice(0, 20);
@@ -284,7 +306,7 @@ function readItem(o: Record<string, unknown>): XmlItem | null {
  * Streams `/v1/fetch/xmltv` and hands each item to `onItem`. Complete only with the `end` line; anything else is a fixed code. The
  * body is cancelled whenever reading stops early (livetv then stops the provider download; client.ts clears its timer at once).
  */
-async function readXmltv(ctx: Ctx, body: Record<string, unknown>, onItem: OnItem, heartbeat?: () => Promise<unknown>): Promise<StreamEnd> {
+async function readXmltv(ctx: Ctx, body: Record<string, unknown>, onItem: OnItem): Promise<StreamEnd> {
   let r: Response;
   try {
     r = await livetvStream(ctx, '/v1/fetch/xmltv', body, { timeoutMs: XMLTV_TIMEOUT_MS });
@@ -299,7 +321,6 @@ async function readXmltv(ctx: Ctx, body: Record<string, unknown>, onItem: OnItem
   let parts: Uint8Array[] = [];
   let lineLen = 0;
   let total = 0;
-  let beatAt = Date.now();
 
   const line = async (bytes: Uint8Array): Promise<StreamEnd | null> => {
     const text = decoder.decode(bytes).trim();
@@ -347,10 +368,6 @@ async function readXmltv(ctx: Ctx, body: Record<string, unknown>, onItem: OnItem
         start = nl + 1;
         const end = await line(take());
         if (end) return end;
-        if (heartbeat && Date.now() - beatAt >= HEARTBEAT_MS) {
-          beatAt = Date.now();
-          await heartbeat();
-        }
       }
     }
     if (lineLen > 0) {
@@ -381,20 +398,21 @@ async function storeEpgChannels(db: Tx, sourceId: string, chans: Map<string, str
 }
 
 type ProgItem = Extract<XmlItem, { t: 'prog' }>;
-async function insertProgrammes(db: Tx, sourceId: string, batch: readonly ProgItem[]): Promise<void> {
+/** one batch into the staging table of `runId` (an autocommitted statement) */
+async function stageProgrammes(db: Tx, sourceId: string, runId: string, batch: readonly ProgItem[]): Promise<void> {
   if (batch.length === 0) return;
   const rows = batch.map((p) => ({
     ch: p.ch, s: p.start, e: p.end, title: p.title, subtitle: p.subtitle ?? null, descr: p.desc ?? null, cats: p.cats ?? null,
     episode: p.episode ?? null, series: p.seriesId ?? null, is_new: p.isNew ?? null, prev: p.prevShown ?? null, rating: p.rating ?? null,
   }));
   await db.query(
-    `insert into livetv_programmes(source_id, xml_channel, start_at, end_at, title, subtitle, description, categories, episode, series_key,
-       is_new, previously_shown, rating)
-     select $1, x.ch, to_timestamp(x.s / 1000.0), to_timestamp(x.e / 1000.0), x.title, x.subtitle, x.descr, x.cats, x.episode, x.series,
+    `insert into livetv_programmes_stage(run_id, source_id, xml_channel, start_at, end_at, title, subtitle, description, categories, episode,
+       series_key, is_new, previously_shown, rating)
+     select $3::uuid, $1, x.ch, to_timestamp(x.s / 1000.0), to_timestamp(x.e / 1000.0), x.title, x.subtitle, x.descr, x.cats, x.episode, x.series,
        x.is_new, x.prev, x.rating
        from jsonb_to_recordset($2::jsonb) as x(ch text, s bigint, e bigint, title text, subtitle text, descr text, cats text[], episode text,
          series text, is_new boolean, prev boolean, rating text)`,
-    [sourceId, JSON.stringify(rows)]);
+    [sourceId, JSON.stringify(rows), runId]);
 }
 
 /** the request filter: every stored xml id of this source any auto channel (or a manual mapping) could use; undefined = too big */
@@ -414,23 +432,25 @@ async function filterIds(ctx: Ctx, sourceId: string): Promise<string[] | undefin
   return ids;
 }
 
-async function importEpg(ctx: Ctx, source: SourceRow, url: string, icons: Map<string, string>, heartbeat?: () => Promise<unknown>): Promise<{ channels: number; programmes: number } | { error: string }> {
+async function importEpg(ctx: Ctx, source: SourceRow, url: string, icons: Map<string, string>): Promise<{ channels: number; programmes: number } | { error: string }> {
   const base = { url, allowLan: source.allow_lan, ...(source.user_agent ? { userAgent: source.user_agent } : {}) };
   const urlHash = sha256(url);
   const keepIcon = (it: Extract<XmlItem, { t: 'channel' }>) => { if (it.icon) icons.set(iconKey(source.id, it.id), it.icon); };
+  const pool = ctx.db as pg.Pool;
+  const storedCount = async () => (await ctx.db.query<{ n: number }>('select count(*)::int as n from livetv_epg_channels where source_id = $1', [source.id])).rows[0]!.n;
 
-  // the index of the source's XMLTV channels: from a run without programmes when it is older than 7 days or the URL changed
-  const stored = (await ctx.db.query<{ n: number }>('select count(*)::int as n from livetv_epg_channels where source_id = $1', [source.id])).rows[0]!.n;
-  if ((await ctx.kv.get(indexKey(source.id))) !== urlHash || stored === 0) {
+  // the index of the source's XMLTV channels: from a run without programmes when it is older than 7 days or the URL changed (a guide
+  // without channels is looked at again only then, too)
+  if ((await ctx.kv.get(indexKey(source.id))) !== urlHash) {
     const chans = new Map<string, string[]>();
     const r = await readXmltv(ctx, { ...base, from: 0, to: 1 }, (it) => {
       if (it.t !== 'channel') return;
       if (!chans.has(it.id) && chans.size >= MAX_EPG_CHANNELS) return 'too_big';
       chans.set(it.id, it.names);
       keepIcon(it);
-    }, heartbeat);
+    });
     if ('error' in r) return r;
-    const c = await (ctx.db as pg.Pool).connect();
+    const c = await pool.connect();
     try {
       await c.query('begin');
       await storeEpgChannels(c, source.id, chans, true);
@@ -445,14 +465,18 @@ async function importEpg(ctx: Ctx, source: SourceRow, url: string, icons: Map<st
   }
 
   const filter = await filterIds(ctx, source.id);
+  if (filter?.length === 0) {
+    // no channel could use this guide: nothing to download; the source's programmes go (one statement)
+    await ctx.db.query('delete from livetv_programmes where source_id = $1', [source.id]);
+    return { channels: await storedCount(), programmes: 0 };
+  }
   const now = Date.now();
-  const c = await (ctx.db as pg.Pool).connect();
+  const runId = randomUUID();
   try {
-    await c.query('begin');
-    await c.query('delete from livetv_programmes where source_id = $1', [source.id]);
     const chans = new Map<string, string[]>();
     let batch: ProgItem[] = [];
     let programmes = 0;
+    // the batches are staged with short autocommitted inserts: no transaction and no connection is held while the stream is read
     const r = await readXmltv(ctx, { ...base, ...(filter ? { channels: filter } : {}), from: now - WINDOW_BACK_MS, to: now + WINDOW_AHEAD_MS }, async (it) => {
       if (it.t === 'channel') {
         if (!chans.has(it.id) && chans.size >= MAX_EPG_CHANNELS) return 'too_big';
@@ -465,24 +489,35 @@ async function importEpg(ctx: Ctx, source: SourceRow, url: string, icons: Map<st
       if (batch.length >= BATCH) {
         const b = batch;
         batch = [];
-        await insertProgrammes(c, source.id, b);
+        await stageProgrammes(ctx.db, source.id, runId, b);
       }
-    }, heartbeat);
-    if ('error' in r) {
-      await c.query('rollback');
-      return r;
+    });
+    if ('error' in r) return r; // nothing was swapped in: the old programmes stay
+    await stageProgrammes(ctx.db, source.id, runId, batch);
+    // the end line: swap in one short transaction
+    const c = await pool.connect();
+    try {
+      await c.query('begin');
+      await c.query('delete from livetv_programmes where source_id = $1', [source.id]);
+      await c.query(
+        `insert into livetv_programmes(source_id, xml_channel, start_at, end_at, title, subtitle, description, categories, episode, series_key,
+           is_new, previously_shown, rating)
+         select source_id, xml_channel, start_at, end_at, title, subtitle, description, categories, episode, series_key,
+           is_new, previously_shown, rating from livetv_programmes_stage where run_id = $1`, [runId]);
+      // filtered: only the listed channels came, the others stay in the index; unfiltered: the run is a complete index
+      await storeEpgChannels(c, source.id, chans, filter === undefined);
+      await c.query('commit');
+    } catch (e) {
+      await c.query('rollback').catch(() => undefined);
+      throw e;
+    } finally {
+      c.release();
     }
-    await insertProgrammes(c, source.id, batch);
-    // filtered: only the listed channels came, the others stay in the index; unfiltered: the run is a complete index
-    await storeEpgChannels(c, source.id, chans, filter === undefined);
-    await c.query('commit');
     if (filter === undefined) await ctx.kv.set(indexKey(source.id), urlHash, INDEX_TTL_S);
     return { channels: chans.size, programmes };
-  } catch (e) {
-    await c.query('rollback').catch(() => undefined);
-    throw e;
   } finally {
-    c.release();
+    // success or failure: the run's staging rows go (a crashed process leaves them to the daily prune)
+    await ctx.db.query('delete from livetv_programmes_stage where run_id = $1', [runId]).catch(() => undefined);
   }
 }
 
@@ -496,10 +531,10 @@ async function record(ctx: Ctx, id: string, at: Date, error: string | null, coun
 
 /**
  * Refreshes the programmes of one source (ruling 27): streams its XMLTV through livetv, upserts `livetv_epg_channels` and, in one
- * transaction, replaces the source's imported programmes (batches of 5 000); any failure rolls back and keeps the old ones. The
+ * short transaction, replaces the source's imported programmes from the staging table (batches of 5 000); any failure keeps the old ones. The
  * outcome goes to `epg_last_*` (fixed codes only). After the commit the channels are matched again with the `<icon>` URLs held in
  * memory, so their logos are fetched in the same refresh (F17). The own-feeds source and a source without an EPG URL have nothing to
- * refresh (`no_epg`, nothing recorded). `heartbeat` is called at most every minute while the stream is read (the caller's lock).
+ * refresh (`no_epg`, nothing recorded). `heartbeat` is called every minute on a timer while the import runs (the caller's lock).
  * Unexpected errors are recorded as `internal` and rethrown.
  */
 export async function refreshEpg(ctx: Ctx, source: SourceRow, o: { heartbeat?: () => Promise<unknown> } = {}): Promise<{ channels: number; programmes: number } | { error: string }> {
@@ -509,14 +544,22 @@ export async function refreshEpg(ctx: Ctx, source: SourceRow, o: { heartbeat?: (
   const at = new Date();
   const icons = new Map<string, string>();
   let r: { channels: number; programmes: number } | { error: string };
+  // the caller's lock is renewed on a timer, not only when a line arrives: livetv can be silent for minutes while it downloads
+  const timer = o.heartbeat ? setInterval(() => { void o.heartbeat!().catch(() => undefined); }, HEARTBEAT_MS) : undefined;
+  timer?.unref();
   try {
-    r = await importEpg(ctx, source, epgUrl, icons, o.heartbeat);
+    r = await importEpg(ctx, source, epgUrl, icons);
     await record(ctx, source.id, at, 'error' in r ? r.error : null, 'error' in r ? null : r);
   } catch (e) {
     await record(ctx, source.id, at, 'internal', null).catch(() => undefined);
     throw e;
+  } finally {
+    if (timer) clearInterval(timer);
   }
-  if (!('error' in r)) await autoMatch(ctx, { icons });
+  // a full run hands over its icons and its source (stale logos of channels the file has no icon for are cleared); after a failed run
+  // the stored index still matches the channels the list step just imported (no logo step)
+  if (!('error' in r)) await autoMatch(ctx, { icons, sources: [source.id] });
+  else await autoMatch(ctx).catch(() => undefined);
   return r;
 }
 
@@ -539,7 +582,7 @@ export async function nowNext(ctx: Pick<Ctx, 'db'>, channelIds: string[], at: Da
     `select ch.id, ch.shift,
             n.title as n_title, n.subtitle as n_sub, n.start_at as n_start, n.end_at as n_end,
             x.title as x_title, x.subtitle as x_sub, x.start_at as x_start, x.end_at as x_end
-       from (select c.id, c.epg_source_id, c.epg_channel_id, coalesce(c.epg_shift_override_min, c.import_epg_shift_min, s.epg_shift_min) as shift
+       from (select c.id, c.epg_source_id, c.epg_channel_id, ${EFFECTIVE_SHIFT_SQL} as shift
                from livetv_channels c join livetv_sources s on s.id = c.source_id
               where c.id = any($1::uuid[]) and c.epg_source_id is not null and c.epg_channel_id is not null) ch
        cross join lateral (select $2::timestamptz - make_interval(mins => ch.shift) as t) q
@@ -584,6 +627,7 @@ export async function epgSummary(ctx: Pick<Ctx, 'db'>): Promise<{ matched: numbe
 export async function epgPrune(ctx: Pick<Ctx, 'db'>, now: Date = new Date()): Promise<{ programmes: number; channels: number; logos: number }> {
   const t = now.getTime();
   const programmes = (await ctx.db.query('delete from livetv_programmes where end_at < $1', [new Date(t - DAY)])).rowCount ?? 0;
+  await ctx.db.query('delete from livetv_programmes_stage where staged_at < $1', [new Date(t - DAY)]); // runs a crash left behind
   const channels = (await ctx.db.query('delete from livetv_channels where missing_since < $1', [new Date(t - 30 * DAY)])).rowCount ?? 0;
   if (channels > 0) invalidateLivetvRights();
   const logos = (await ctx.db.query(

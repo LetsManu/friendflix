@@ -8,7 +8,7 @@ import { notifyAdmins } from '../notify.js';
 import { isOwnFeeds } from './channels.js';
 import { LivetvError, livetvCall } from './client.js';
 import { livetvInstalled } from './detect.js';
-import { autoMatch, refreshEpg } from './epg.js';
+import { autoMatch, LOGO_BUDGET_MS, refreshEpg } from './epg.js';
 import { pushEvent } from './events.js';
 import { mergeImport, type ImportResult } from './import.js';
 import { importLogos } from './logos.js';
@@ -38,8 +38,6 @@ const RETRY_MS = 3600_000;
 const LIVETV_DOWN = 'livetv_unreachable';
 /** livetv's own M3U timeout is 60 s; the backend waits a little longer so livetv answers the code */
 const M3U_TIMEOUT_MS = 75_000;
-/** the logo step of one refresh stops after 5 minutes; the rest is fetched by the next refresh */
-const LOGO_BUDGET_MS = 5 * 60_000;
 const ADMIN_LINK = '/admin/livetv';
 
 export const REFRESH_INTERVAL_MS: Record<Exclude<Refresh, 'manual'>, number> = {
@@ -219,9 +217,9 @@ export async function refreshSourceEpg(ctx: Ctx, id: string): Promise<void> {
   }
 }
 
-/** EPG due: never refreshed or older than 24 h, whatever the source's list refresh is (also 'manual') */
-const epgDue = (s: { epg_last_refresh_at: Date | null }, now: number) =>
-  s.epg_last_refresh_at === null || now - s.epg_last_refresh_at.getTime() >= EPG_MAX_AGE_MS;
+/** EPG due: never refreshed or older than 24 h (1 h after a failed one, like the list), whatever the source's list refresh is (also 'manual') */
+const epgDue = (s: { epg_last_refresh_at: Date | null; epg_last_error: string | null }, now: number) =>
+  s.epg_last_refresh_at === null || now - s.epg_last_refresh_at.getTime() >= (s.epg_last_error === null ? EPG_MAX_AGE_MS : RETRY_MS);
 
 /**
  * due: never refreshed (or marked due by an edit, Task 15), or the last attempt is older than the source's interval; after a failed
@@ -251,8 +249,8 @@ export async function livetvRefreshTick(ctx: Ctx): Promise<void> {
   if (!(await ctx.kv.setnx(TICK_LOCK, token, TICK_LOCK_TTL_S))) return;
   let first: unknown;
   try {
-    type TickRow = Pick<SourceRow, 'id' | 'kind' | 'refresh' | 'enabled' | 'last_refresh_at' | 'last_error' | 'epg_last_refresh_at'> & { has_url: boolean; has_epg: boolean };
-    const sql = `select id, kind, refresh, enabled, last_refresh_at, last_error, epg_last_refresh_at, url_enc is not null as has_url,
+    type TickRow = Pick<SourceRow, 'id' | 'kind' | 'refresh' | 'enabled' | 'last_refresh_at' | 'last_error' | 'epg_last_refresh_at' | 'epg_last_error'> & { has_url: boolean; has_epg: boolean };
+    const sql = `select id, kind, refresh, enabled, last_refresh_at, last_error, epg_last_refresh_at, epg_last_error, url_enc is not null as has_url,
                         epg_url_enc is not null as has_epg
                    from livetv_sources order by position, created_at, id`;
     const rows = (await ctx.db.query<TickRow>(sql)).rows;
