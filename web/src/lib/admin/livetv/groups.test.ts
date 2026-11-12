@@ -84,9 +84,16 @@ describe('exceptionsOf', () => {
       { userId: 'u3', name: 'Carla Probe', livetvGroups: { allow: [ref('g1', 'Sport')], deny: [ref('g2', 'Kinderinsel')] } },
     ]);
     expect(out).toEqual([
-      { userId: 'u1', name: 'Anna Beispiel', plus: ['Sport'], minus: [] },
-      { userId: 'u3', name: 'Carla Probe', plus: ['Sport'], minus: ['Kinderinsel'] },
+      { userId: 'u1', name: 'Anna Beispiel', plus: ['Sport'], minus: [], plusOff: [], minusOff: [] },
+      { userId: 'u3', name: 'Carla Probe', plus: ['Sport'], minus: ['Kinderinsel'], plusOff: [], minusOff: [] },
     ]);
+  });
+  it('keeps an exception on an unreleased group apart: it is not effective (ruling 39)', () => {
+    const out = exceptionsOf(
+      [{ userId: 'u1', name: 'Anna Beispiel', livetvGroups: { allow: [ref('g1', 'Sport'), ref('g9', 'Kinofilme')], deny: [ref('g9', 'Kinofilme')] } }],
+      [g('g1', 'Sport'), g('g9', 'Kinofilme', { released: false })],
+    );
+    expect(out).toEqual([{ userId: 'u1', name: 'Anna Beispiel', plus: ['Sport'], minus: [], plusOff: ['Kinofilme'], minusOff: ['Kinofilme'] }]);
   });
   it('skips a row without the answer (a failed read)', () => {
     expect(exceptionsOf([{ userId: 'u1', name: 'Anna Beispiel', livetvGroups: null }])).toEqual([]);
@@ -125,11 +132,20 @@ describe('loadExceptions', () => {
       if (n === 3) throw new Error('boom');
       return { livetvGroups: { allow: n === 1 ? [{ id: 'g', name: 'Sport' }] : [], deny: [] } };
     });
-    const out = await loadExceptions(4);
+    const { rows: out, unread, capped } = await loadExceptions(4);
+    expect(unread).toBe(1);
+    expect(capped).toBe(false);
     expect(out.map((r) => r.userId)).toEqual(people.map((p) => p.id));
     expect(most).toBeLessThanOrEqual(4);
     expect(most).toBeGreaterThan(1);
     expect(out[3]!.livetvGroups).toBeNull();
     expect(exceptionsOf(out).map((p) => [p.userId, p.plus])).toEqual([['u1', ['Sport']]]);
+  });
+});
+
+describe('loadExceptions: a long account list', () => {
+  it('says so when the list is cut at 500', async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => (path.startsWith('/api/admin/users?') ? { total: 501, users: [{ id: 'u1', name: 'Anna', role: 'friend' }] } : { livetvGroups: { allow: [], deny: [] } }));
+    expect((await loadExceptions(4)).capped).toBe(true);
   });
 });

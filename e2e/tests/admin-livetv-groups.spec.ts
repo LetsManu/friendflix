@@ -26,7 +26,8 @@ async function menu(page: Page, group: string, item: string) {
 }
 
 test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
-  test.use({ allowedConsole: /status of (400|409)/ });
+  // 500: the tests that make a read fail on purpose
+  test.use({ allowedConsole: /status of (400|409|500)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; install(api); });
 
   test('unreleased groups come first with the chip and the notice', async ({ page }) => {
@@ -193,11 +194,107 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     await grid.getByRole('switch', { name: 'Sport für Familie' }).click();
     expect(writes(api, 'PATCH', /groups\/g-sport$/)[1]!.body).toEqual({ roles: ['friend', 'guest'] });
     // an unreleased group has no working switches (it is released first)
-    await expect(grid.getByRole('switch', { name: 'Kinofilme für Familie' })).toHaveAttribute('aria-disabled', 'true');
-    // aria-disabled: Playwright would wait for it to enable, so the click is forced
-    await grid.getByRole('switch', { name: 'Kinofilme für Familie' }).click({ force: true });
+    const off = grid.getByRole('switch', { name: 'Kinofilme für Familie: nicht freigegeben' });
+    await expect(off).toBeDisabled();
+    await off.click({ force: true });
     expect(writes(api, 'PATCH', /groups\/g-kino$/)).toHaveLength(0);
     await expect(page.getByText('Admins sehen alle freigegebenen Gruppen.')).toBeVisible();
+  });
+
+  test('matrix: an unreleased group\'s kept roles are not shown as granted', async ({ page, api }) => {
+    // the roles of an unreleased group stay stored (Freigabe zurücknehmen keeps them), but nobody sees the group
+    api.admin.livetv.area.groups.find((g) => g.id === 'g-kino')!.roles = ['family', 'friend'];
+    await page.goto('/admin/livetv?tab=groups');
+    await view(page, 'Nach Rolle').click();
+    const grid = page.getByRole('table', { name: 'Gruppen nach Rolle' });
+    const kino = grid.getByRole('row', { name: /Kinofilme/ });
+    await expect(kino.getByRole('switch')).toHaveCount(4);
+    await expect(kino.locator('[aria-checked="true"]')).toHaveCount(0);
+    for (const sw of await kino.getByRole('switch').all()) {
+      await expect(sw).toBeDisabled();
+      await expect(sw).toHaveAccessibleName(/nicht freigegeben$/);
+    }
+    // a released row still shows its grants
+    await expect(grid.getByRole('row', { name: /Sport/ }).locator('[aria-checked="true"]')).toHaveCount(2);
+  });
+
+  test('two quick role clicks on one group are written one after the other, the second on the first\'s result', async ({ page, api }) => {
+    // the first PATCH is held back: the second click must wait for it (all chips of the group are disabled) and then build on its answer
+    await page.route(/\/api\/admin\/livetv\/groups\/g-sport$/, async (route) => {
+      if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 400));
+      await route.fallback();
+    });
+    await page.goto('/admin/livetv?tab=groups');
+    const sport = row(page, 'g-sport');
+    await sport.getByRole('button', { name: 'Gast' }).click();
+    for (const n of ['Familie', 'Freund', 'Gast']) await expect(sport.getByRole('button', { name: n })).toBeDisabled();
+    // Playwright waits for the chip to enable again: the click lands after the first write and its reload
+    await sport.getByRole('button', { name: 'Familie' }).click();
+    await expect(sport.getByRole('button', { name: 'Familie' })).toHaveAttribute('aria-pressed', 'false');
+    const patches = writes(api, 'PATCH', /groups\/g-sport$/);
+    expect(patches.map((c) => c.body)).toEqual([{ roles: ['family', 'friend', 'guest'] }, { roles: ['friend', 'guest'] }]);
+    expect(api.admin.livetv.area.groups.find((g) => g.id === 'g-sport')!.roles).toEqual(['friend', 'guest']);
+    // the matrix goes through the same path: its cells wait while the group is written
+    await view(page, 'Nach Rolle').click();
+    const grid = page.getByRole('table', { name: 'Gruppen nach Rolle' });
+    await grid.getByRole('switch', { name: 'Sport für Familie' }).click();
+    await expect(grid.getByRole('switch', { name: 'Sport für Freund' })).toBeDisabled();
+    await expect(grid.getByRole('switch', { name: 'Sport für Freund' })).toBeEnabled();
+    expect(writes(api, 'PATCH', /groups\/g-sport$/).map((c) => c.body).at(-1)).toEqual({ roles: ['friend', 'guest', 'family'] });
+  });
+
+  test('an exception on an unreleased group is marked as not effective, in the exceptions list too', async ({ page, api }) => {
+    api.admin.livetv.area.exceptions = { [ANNA]: { allow: ['g-regional'], deny: [] }, [CLARA]: { allow: ['g-sport'], deny: [] } };
+    await page.goto('/admin/livetv?tab=groups');
+    await menu(page, 'Regional', 'Freigabe zurücknehmen');
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Freigabe zurücknehmen' }).click();
+    await expect(toasts(page).getByText('Freigabe zurückgenommen.')).toBeVisible();
+    await view(page, 'Nach Rolle').click();
+    const items = page.getByRole('region', { name: 'Personen mit Ausnahmen' }).getByRole('listitem');
+    await expect(items.filter({ hasText: 'Anna Beispiel' })).toContainText('Nicht freigegeben');
+    await expect(items.filter({ hasText: 'Anna Beispiel' }).locator('.exc.plus')).toHaveCount(0);
+    await expect(items.filter({ hasText: 'Anna Beispiel' }).getByLabel(/^Nicht freigegeben, für niemanden sichtbar: Regional/)).toBeVisible();
+    // a released group's exception is still a plain plus
+    await expect(items.filter({ hasText: 'Clara Fischer' })).not.toContainText('Nicht freigegeben');
+    await expect(items.filter({ hasText: 'Clara Fischer' }).locator('.exc.plus')).toHaveCount(1);
+  });
+
+  test('a failed roles read shows an error with Wiederholen, and the release sheet does not open without roles', async ({ page }) => {
+    let fail = true;
+    await page.route(/\/api\/admin\/roles$/, async (route) => (fail ? route.fulfill({ status: 500, json: { error: 'boom' } }) : route.fallback()));
+    await page.goto('/admin/livetv?tab=groups');
+    await expect(rows(page)).toHaveCount(7);
+    const alert = page.getByRole('alert').filter({ hasText: 'Die Rollen ließen sich nicht laden' });
+    await expect(alert).toBeVisible();
+    await expect(rows(page).nth(0).getByRole('button', { name: 'Freigeben …' })).toBeDisabled();
+    await expect(bulk(page).getByRole('button', { name: 'Freigeben …' })).toBeDisabled();
+    fail = false;
+    await alert.getByRole('button', { name: 'Wiederholen' }).click();
+    await expect(alert).toHaveCount(0);
+    await expect(row(page, 'g-sport').getByRole('button', { name: 'Familie' })).toBeVisible();
+    await expect(rows(page).nth(0).getByRole('button', { name: 'Freigeben …' })).toBeEnabled();
+  });
+
+  test('people whose rights could not be read are counted', async ({ page, api }) => {
+    api.admin.livetv.area.exceptions = { [ANNA]: { allow: ['g-regional'], deny: [] } };
+    await page.route(new RegExp(`/api/admin/users/${CLARA}/rights$`), (route) => route.fulfill({ status: 500, json: { error: 'boom' } }));
+    await page.goto('/admin/livetv?tab=groups');
+    await view(page, 'Nach Rolle').click();
+    const people = page.getByRole('region', { name: 'Personen mit Ausnahmen' });
+    await expect(people).toContainText('1 Person konnte nicht gelesen werden');
+    await expect(people.getByRole('listitem').filter({ hasText: 'Anna Beispiel' })).toBeVisible();
+  });
+
+  test('switching views while the people load starts one read, not two', async ({ page, api }) => {
+    api.admin.livetv.area.exceptions = { [ANNA]: { allow: ['g-regional'], deny: [] } };
+    let hits = 0;
+    await page.route(new RegExp(`/api/admin/users/${ANNA}/rights$`), async (route) => { hits++; await new Promise((r) => setTimeout(r, 500)); await route.fallback(); });
+    await page.goto('/admin/livetv?tab=groups');
+    await view(page, 'Nach Rolle').click();
+    await view(page, 'Liste').click();
+    await view(page, 'Nach Rolle').click();
+    await expect(page.getByRole('region', { name: 'Personen mit Ausnahmen' }).getByRole('listitem').filter({ hasText: 'Anna Beispiel' })).toBeVisible();
+    expect(hits).toBe(1);
   });
 
   test('a role defined only in .env is read-only', async ({ page, api }) => {
@@ -237,6 +334,16 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     await expect(row(page, 'g-sport')).toHaveCount(0);
     await expect(row(page, 'g-nachrichten')).toContainText('Sender: 52');
     await expect(row(page, 'g-nachrichten')).toContainText('aus: DE | News, DE | Sport, DE | Sport HD');
+  });
+
+  test('merge into a group that is not released says the channels stay invisible', async ({ page }) => {
+    await page.goto('/admin/livetv?tab=groups');
+    await row(page, 'g-kino').getByRole('checkbox').check();
+    await row(page, 'g-musik').getByRole('checkbox').check();
+    await bulk(page).getByRole('button', { name: 'Zusammenführen …' }).click();
+    const dlg = page.getByRole('alertdialog', { name: 'Gruppen zusammenführen' });
+    await expect(dlg).toContainText('Das Ziel ist nicht freigegeben – die Sender bleiben für alle unsichtbar.');
+    await expect(dlg).not.toContainText('sofort für alle sichtbar');
   });
 
   test('delete confirm', async ({ page, api }) => {
@@ -335,6 +442,27 @@ test.describe('admin: Live TV in the people pages (desktop)', () => {
     // saved at once: it is still there after a reload
     await page.reload();
     await expect(page.getByRole('region', { name: 'Kanalgruppen-Ausnahmen' }).getByRole('group', { name: 'Sieht nicht' }).getByRole('button', { name: 'Ausnahme für Nachrichten aufheben' })).toBeVisible();
+  });
+
+  test('Rechte tab marks an exception on a group that was withdrawn as not released', async ({ page, api }) => {
+    api.admin.livetv.area.exceptions = { [CLARA]: { allow: ['g-sport'], deny: ['g-nachrichten'] } };
+    await page.goto(`/admin/users/${CLARA}?tab=rights`);
+    const sec = page.getByRole('region', { name: 'Kanalgruppen-Ausnahmen' });
+    const plus = sec.getByRole('group', { name: 'Sieht zusätzlich' });
+    await expect(plus.getByRole('button', { name: 'Ausnahme für Sport aufheben' })).toBeVisible();
+    await expect(plus).not.toContainText('Nicht freigegeben');
+    // Freigabe zurücknehmen on the groups tab, then back to the person
+    await page.goto('/admin/livetv?tab=groups');
+    await menu(page, 'Sport', 'Freigabe zurücknehmen');
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Freigabe zurücknehmen' }).click();
+    await expect(toasts(page).getByText('Freigabe zurückgenommen.')).toBeVisible();
+    await page.goto(`/admin/users/${CLARA}?tab=rights`);
+    const chip = sec.getByRole('group', { name: 'Sieht zusätzlich' }).getByRole('button', { name: /^Ausnahme für Sport aufheben/ });
+    await expect(chip).toContainText('Nicht freigegeben');
+    await expect(chip).toHaveAccessibleName(/Für niemanden sichtbar/);
+    await expect(chip).toHaveClass(/off/);
+    // the other exception (released group) stays a plain minus
+    await expect(sec.getByRole('group', { name: 'Sieht nicht' })).not.toContainText('Nicht freigegeben');
   });
 
   test('an admin takes no group exceptions: none are offered, a refusal is shown', async ({ page, api }) => {

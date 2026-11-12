@@ -27,6 +27,7 @@
   import StatusPill from '#lib/ui/StatusPill.svelte';
   import Toggle from '#lib/ui/Toggle.svelte';
   import { uid } from '#lib/ui/ids';
+  import { toast } from '#lib/ui/toast';
   import GroupMatrix from './GroupMatrix.svelte';
   import GroupNameDialog from './GroupNameDialog.svelte';
   import MergeDialog from './MergeDialog.svelte';
@@ -34,7 +35,7 @@
   import ReleaseSheet from './ReleaseSheet.svelte';
   import {
     createGroup, deleteGroup, exceptionsOf, fetchGroups, groupErrorOf, kidsLine, loadExceptions, mergeGroups, orderGroups, patchGroup, pendingFirst, releaseGroups, rolesFor,
-    type GrantRole, type GroupsAnswer, type GroupView, type PersonExceptions,
+    EXCEPTIONS_MAX, type ExceptionRow, type GrantRole, type GroupsAnswer, type GroupView,
   } from './groups';
 
   const id = uid('grp');
@@ -44,11 +45,13 @@
 
   let data: GroupsAnswer | null = null, failed = false;
   let roles: GrantRole[] = [];
+  /** the roles are read once with the groups; the tab shows its content only after both settled, so a failed read is in the first picture */
+  let rolesState: 'loading' | 'ok' | 'failed' = 'loading';
   let view: View = 'list';
   let selected = new Set<string>();
   /** bumped after a refused write: the switches rebuild from the stored state */
   let rev = 0;
-  let people: PersonExceptions[] | null = null, peopleFailed = false;
+  let peopleRows: ExceptionRow[] | null = null, peopleFailed = false, peopleUnread = 0, peopleCapped = false, peopleLoading = false;
   let list: HTMLElement | undefined;
 
   async function load() {
@@ -57,14 +60,22 @@
     if (data) selected = new Set([...selected].filter((x) => data!.groups.some((g) => g.id === x)));
   }
   async function loadRoles() {
-    try { roles = rolesFor((await fetchRoles()).matrix?.roles ?? []); } catch { roles = []; }
+    rolesState = 'loading';
+    try {
+      const m = (await fetchRoles()).matrix;
+      if (!m) throw new Error('no matrix');
+      roles = rolesFor(m.roles); rolesState = 'ok';
+    } catch { roles = []; rolesState = 'failed'; }
   }
+  /** one read at a time (switching views while it runs must not start a second one: the cap of 4 holds overall, an older answer never lands after a newer one) */
   async function loadPeople() {
-    people = null; peopleFailed = false;
-    try { people = exceptionsOf(await loadExceptions(4)); } catch { peopleFailed = true; }
+    if (peopleLoading) return;
+    peopleLoading = true; peopleRows = null; peopleFailed = false; peopleUnread = 0; peopleCapped = false;
+    try { const r = await loadExceptions(4); peopleRows = r.rows; peopleUnread = r.unread; peopleCapped = r.capped; } catch { peopleFailed = true; }
+    peopleLoading = false;
   }
   onMount(() => { void load(); void loadRoles(); });
-  $: if (view === 'roles' && people === null && !peopleFailed) void loadPeople();
+  $: if (view === 'roles' && peopleRows === null && !peopleFailed && !peopleLoading) void loadPeople();
 
   /** `?pending=1`: only the groups that wait for a release; gone once none waits */
   $: pending = data?.pending ?? 0;
@@ -76,6 +87,8 @@
   }
 
   $: groups = data?.groups ?? [];
+  /** the people with exceptions; an exception on a group that is not released is kept apart (it is not effective, ruling 39) */
+  $: people = peopleRows ? exceptionsOf(peopleRows, groups) : null;
   $: shown = pendingFirst(groups, onlyPending);
   $: byPosition = [...groups].sort((a, b) => a.position - b.position);
   $: orderRows = byPosition.map((g) => ({ id: g.id, name: g.name, number: null, logoHash: null }));
@@ -83,28 +96,43 @@
   $: pickedGroups = shown.filter((g) => selected.has(g.id));
   $: pickedPending = pickedGroups.filter((g) => !g.released);
   $: busy = $busyKeys;
+  /** groups whose role set is being written (all their chips and cells wait) */
+  $: roleBusy = new Set(groups.filter((x) => busy.has(`grp:${x.id}:roles`)).map((x) => x.id));
 
   const toggleSel = (gid: string) => { const n = new Set(selected); if (n.has(gid)) n.delete(gid); else n.add(gid); selected = n; };
 
-  /** one write: busy key, the sentence of a refusal as the toast, a reload after it; false when it failed */
+  /**
+   * one write: busy key, the sentence of a refusal as the toast; false when it failed. The reload is part of the action (the key stays
+   * busy until the list is fresh again), so whatever the next write builds on is the stored state, never a stale row.
+   */
   async function write(key: string, run: () => Promise<unknown>, success: string): Promise<boolean> {
-    const r = await runAction({ key, run, success, error: groupErrorOf });
+    const r = await runAction({ key, run: async () => { try { return await run(); } finally { await load(); } }, success, error: groupErrorOf });
     if (!r.ok && !r.skipped) rev++;
-    await load();
     return r.ok;
   }
 
   // ---- the row's own switches
   const setKid = (g: GroupView, on: boolean) => write(`grp:${g.id}`, () => patchGroup(g.id, { kidFriendly: on }), tr('common.saved'));
+  /**
+   * PATCH replaces the whole role set, so the writes of one group run one after the other (one busy key per group, every chip and matrix
+   * cell of the group is disabled meanwhile) and the new set is built from the latest stored row at the moment the write starts.
+   */
   function setRole(g: GroupView, role: string, on: boolean) {
-    const next = on ? [...g.roles.filter((k) => k !== role), role] : g.roles.filter((k) => k !== role);
-    return write(`grp:${g.id}:${role}`, () => patchGroup(g.id, { roles: next }), tr('common.saved'));
+    return write(`grp:${g.id}:roles`, () => {
+      const cur = data?.groups.find((x) => x.id === g.id)?.roles ?? g.roles;
+      const next = on ? [...cur.filter((k) => k !== role), role] : cur.filter((k) => k !== role);
+      return patchGroup(g.id, { roles: next });
+    }, tr('common.saved'));
   }
 
   // ---- dialogs
   type Dialog = { kind: 'create' } | { kind: 'rename'; group: GroupView } | { kind: 'release'; groups: GroupView[] } | { kind: 'merge'; groups: GroupView[] };
   let dialog: Dialog | null = null, trigger: HTMLElement | null = null, dialogError = '';
-  const open = (d: Dialog, from: HTMLElement | null) => { dialogError = ''; trigger = from; dialog = d; };
+  const open = (d: Dialog, from: HTMLElement | null) => {
+    // no roles read: the sheet would offer none and a release would silently grant nobody, so it does not open (the error line says why)
+    if (d.kind === 'release' && rolesState !== 'ok') { toast.error(tr('adminLive.grp.rolesFailed')); return; }
+    dialogError = ''; trigger = from; dialog = d;
+  };
   const close = () => { dialog = null; dialogError = ''; };
   const rowMenu = (gid: string): HTMLElement | null => list?.querySelector<HTMLElement>(`[data-gid="${CSS.escape(gid)}"] .acts button`) ?? null;
   const here = (e: MouseEvent) => (e.currentTarget instanceof HTMLElement ? e.currentTarget : null);
@@ -153,8 +181,8 @@
   }
 </script>
 
-{#if !data}
-  {#if failed}
+{#if !data || rolesState === 'loading'}
+  {#if failed && !data}
     <AdminCard><div class="state" role="alert"><Icon name="alert" size={22} /><p>{$t('adminLive.loadFailed')}</p><Button variant="secondary" icon="refresh" on:click={load}>{$t('ui.retry')}</Button></div></AdminCard>
   {:else}
     <AdminCard><div class="sk" aria-hidden="true"><Skeleton w="14rem" h="1.6rem" /><Skeleton h="2.8rem" /><Skeleton h="2.8rem" /></div><p class="sr-only" role="status">{$t('ui.table.loading')}</p></AdminCard>
@@ -170,6 +198,10 @@
       <Button icon="plus" on:click={(e) => open({ kind: 'create' }, here(e))}>{$t('adminLive.grp.create')}</Button>
     </div>
 
+    {#if rolesState === 'failed'}
+      <div class="state panel rf" role="alert"><Icon name="alert" size={22} /><p>{$t('adminLive.grp.rolesFailed')}</p><Button size="sm" variant="secondary" icon="refresh" on:click={() => void loadRoles()}>{$t('adminLive.grp.retry')}</Button></div>
+    {/if}
+
     <p class="kids" aria-live="polite">{kids}</p>
 
     {#if pending > 0 && view === 'list'}
@@ -182,7 +214,7 @@
     {#if view === 'list'}
       <div class="bulk" role="group" aria-label={$t('adminLive.grp.bulk')}>
         <span class="count" aria-live="polite">{$t('adminLive.grp.selected', { n: selected.size })}</span>
-        <Button size="sm" variant="secondary" disabled={pickedPending.length === 0} on:click={(e) => open({ kind: 'release', groups: pickedPending }, here(e))}>{$t('adminLive.grp.release')}</Button>
+        <Button size="sm" variant="secondary" disabled={pickedPending.length === 0 || rolesState !== 'ok'} on:click={(e) => open({ kind: 'release', groups: pickedPending }, here(e))}>{$t('adminLive.grp.release')}</Button>
         <Button size="sm" variant="secondary" disabled={pickedGroups.length < 2} on:click={(e) => open({ kind: 'merge', groups: pickedGroups }, here(e))}>{$t('adminLive.grp.merge')}</Button>
       </div>
       {#if shown.length}
@@ -206,11 +238,11 @@
                     {#each roles as r (r.key)}
                       {@const on = g.roles.includes(r.key)}
                       <button type="button" class="rc" class:on class:ro={r.readOnly} aria-pressed={on} aria-disabled={r.readOnly ? 'true' : undefined} title={r.readOnly ? $t('adminLive.grp.envRole') : undefined}
-                        disabled={busy.has(`grp:${g.id}:${r.key}`)} on:click={() => { if (!r.readOnly) void setRole(g, r.key, !on); }}>{r.name}</button>
+                        disabled={roleBusy.has(g.id)} on:click={() => { if (!r.readOnly) void setRole(g, r.key, !on); }}>{r.name}</button>
                     {/each}
                   </div>
                 {:else}
-                  <Button size="sm" variant="secondary" on:click={(e) => open({ kind: 'release', groups: [g] }, here(e))}>{$t('adminLive.grp.release')}</Button>
+                  <Button size="sm" variant="secondary" disabled={rolesState !== 'ok'} on:click={(e) => open({ kind: 'release', groups: [g] }, here(e))}>{$t('adminLive.grp.release')}</Button>
                 {/if}
               </div>
               <span class="acts"><ActionMenu label={$t('ui.table.actionsFor', { name: g.name })} title={g.name} busy={busy.has(`grp:${g.id}`)} items={items(g, $locale)} /></span>
@@ -221,14 +253,20 @@
         <AdminCard><p class="empty">{$t('adminLive.grp.empty')}</p></AdminCard>
       {/if}
     {:else if view === 'roles'}
-      <GroupMatrix groups={pendingFirst(groups, false)} {roles} busy={new Set([...busy].filter((k) => k.startsWith('grp:')).map((k) => k.slice(4)))} on:toggle={(e) => setRole(e.detail.group, e.detail.role, e.detail.on)} />
+      <GroupMatrix groups={pendingFirst(groups, false)} {roles} busy={roleBusy} on:toggle={(e) => setRole(e.detail.group, e.detail.role, e.detail.on)} />
       <section class="people" aria-labelledby="{id}-p">
         <h3 id="{id}-p">{$t('adminLive.grp.people')}</h3>
         {#if peopleFailed}
           <div class="state"><p>{$t('adminLive.grp.peopleFailed')}</p><Button size="sm" variant="secondary" icon="refresh" on:click={() => void loadPeople()}>{$t('ui.retry')}</Button></div>
         {:else if people === null}
           <div class="sk" aria-busy="true"><Skeleton h="2.6rem" /><Skeleton h="2.6rem" /></div>
-        {:else if people.length}
+        {:else}
+          <!-- the notes about an incomplete read keep their room (two lines), so the list below does not move when one appears -->
+          <div class="pnotes" aria-live="polite">
+            <p>{peopleCapped ? $t('adminLive.grp.peopleCapped', { n: EXCEPTIONS_MAX }) : ''}</p>
+            <p>{peopleUnread > 0 ? $t('adminLive.grp.peopleUnread', { n: peopleUnread }) : ''}</p>
+          </div>
+        {#if people.length}
           <ul class="plist panel">
             {#each people as p (p.userId)}
               <li>
@@ -236,12 +274,17 @@
                 <span class="ex">
                   {#if p.plus.length}<span class="exc plus" aria-label={$t('adminLive.grp.plusLabel', { list: p.plus.join(', ') })}><span aria-hidden="true">+ {p.plus.join(', ')}</span></span>{/if}
                   {#if p.minus.length}<span class="exc minus" aria-label={$t('adminLive.grp.minusLabel', { list: p.minus.join(', ') })}><span aria-hidden="true">− {p.minus.join(', ')}</span></span>{/if}
+                  <!-- on a group that is not released: neutral, not a grant, nobody sees that group -->
+                  {#each [...p.plusOff.map((n) => `+ ${n}`), ...p.minusOff.map((n) => `− ${n}`)] as off (off)}
+                    <span class="exc off" aria-label={$t('adminLive.grp.excOff', { list: off.slice(2) })}><Icon name="eye-off" size={14} /><span aria-hidden="true">{off} · {$t('adminLive.grp.unreleased')}</span></span>
+                  {/each}
                 </span>
               </li>
             {/each}
           </ul>
         {:else}
           <p class="empty">{$t('adminLive.grp.peopleNone')}</p>
+        {/if}
         {/if}
       </section>
     {:else}
@@ -310,6 +353,11 @@
   .exc { display: inline-flex; align-items: center; min-height: 32px; padding: 0 .7rem; border-radius: 99px; font-size: .85rem; font-weight: 600; background: rgba(var(--fr-scrim-rgb), .25); overflow-wrap: anywhere; }
   .exc.plus { color: var(--ok); }
   .exc.minus { color: var(--warn); }
+  /* an exception on an unreleased group: neutral, never green */
+  .exc.off { gap: .35rem; color: var(--mut); box-shadow: inset 0 0 0 1px var(--fr-line, var(--line)); }
+  .pnotes { min-height: 2.9em; margin: 0 0 .4rem; font-size: .85rem; color: var(--mut); }
+  .pnotes p { margin: 0; min-height: 1.45em; overflow-wrap: anywhere; }
+  .rf { padding: .6rem .9rem; }
   @media (max-width: 720px) {
     .row { grid-template-columns: auto minmax(0, 1fr) auto; }
     .ctl { grid-column: 2 / -1; justify-content: flex-start; }
