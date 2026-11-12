@@ -29,6 +29,8 @@
   export let save: (ids: string[]) => Promise<void>;
   /** another write of the page runs: the order can neither be changed nor saved meanwhile */
   export let locked = false;
+  /** output (`bind:dirty`): the shown order differs from the stored one, so leaving the view would lose it */
+  export let dirty = false;
 
   const busyKey = uid('order');
   let s: DragState = idle([]);

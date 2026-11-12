@@ -573,7 +573,7 @@ describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
   const css = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
 
   it('takes the rows and a required save, and knows no endpoint', () => {
-    expect([...src.matchAll(/export let (\w+)/g)].map((m) => m[1])).toEqual(['rows', 'save', 'locked']);
+    expect([...src.matchAll(/export let (\w+)/g)].map((m) => m[1])).toEqual(['rows', 'save', 'locked', 'dirty']); // dirty is the one output (bind:dirty): the shown order is not stored yet
     expect(src).toMatch(/export let save: \(ids: string\[\]\) => Promise<void>;/);
     expect(src).toMatch(/runAction\(\{ key: busyKey, run: \(\) => save\(ids\)/);
     expect(src.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, '')).not.toMatch(/api\(|fetch\(|\/order/);

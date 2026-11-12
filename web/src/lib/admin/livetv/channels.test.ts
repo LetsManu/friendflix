@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import {
-  channelError, checkLogoFile, factsLine, kindChip, nowLine, ORDER_MAX, orderFilter, overrideHint, queryString, shiftFromLine, TEST_MAX,
+  afterOrderSave, channelError, checkLogoFile, factsLine, forOrder, kindChip, nowLine, ORDER_MAX, orderFilter, overrideHint, queryString, shiftFromLine, TEST_MAX,
   type AdminChannel, type ChannelFilter,
 } from './channels';
 
@@ -30,6 +30,18 @@ describe('orderFilter (Kanäle → Reihenfolge)', () => {
   it('asks for up to 500 rows', () => {
     expect(ORDER_MAX).toBe(500);
     expect(queryString({ ...F, group: 'g-1' }, ORDER_MAX)).toBe('group=g-1&sort=number&dir=asc&limit=500&offset=0');
+  });
+});
+
+describe('forOrder / afterOrderSave', () => {
+  it('turns "Ohne Gruppe" into no group and leaves everything else alone', () => {
+    expect(forOrder({ ...F, group: 'none', source: 's-1' })).toEqual({ ...F, group: null, source: 's-1' });
+    expect(forOrder({ ...F, group: 'g-1' })).toEqual({ ...F, group: 'g-1' });
+  });
+  it('lists the saved order with the numbers of the answer', () => {
+    const rows = [ch({ id: 'a', number: 4 }), ch({ id: 'b', number: 7 }), ch({ id: 'c', number: 9 })];
+    expect(afterOrderSave(rows, ['c', 'a', 'b'], 10).map((c) => [c.id, c.number])).toEqual([['c', 10], ['a', 11], ['b', 12]]);
+    expect(afterOrderSave(rows, ['b', 'zz'], 1).map((c) => c.id)).toEqual(['b']); // an id that is gone is left out
   });
 });
 

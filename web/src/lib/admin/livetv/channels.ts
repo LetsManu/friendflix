@@ -84,6 +84,17 @@ export function orderFilter(f: ChannelFilter): ChannelFilter | null {
   return { ...emptyFilter(), source: f.source, group };
 }
 
+/** entering *Reihenfolge*: *Ohne Gruppe* is no group there (the select does not offer it), so it counts as "all groups" */
+export const forOrder = (f: ChannelFilter): ChannelFilter => (f.group === 'none' ? { ...f, group: null } : f);
+
+/** the rows after a saved order: in the saved order, numbered from the `from` the answer names (never guessed from the old numbers) */
+export function afterOrderSave(rows: AdminChannel[], ids: string[], from: number): AdminChannel[] {
+  const by = new Map(rows.map((c) => [c.id, c]));
+  const out: AdminChannel[] = [];
+  ids.forEach((id, i) => { const c = by.get(id); if (c) out.push({ ...c, number: from + i }); });
+  return out;
+}
+
 /** the query of `GET /channels`: set filters in a fixed order, then sort, direction, the page size and the offset */
 export function queryString(f: ChannelFilter, limit: number = PAGE_SIZE): string {
   const p: string[] = [];

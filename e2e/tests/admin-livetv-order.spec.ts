@@ -246,6 +246,9 @@ test.describe('admin: Live-TV, Kanäle → Reihenfolge (desktop)', () => {
     await expect(pressed(page)).toHaveCount(1);
     // the stage changes under the held mouse: the source filter makes the rows load again
     await page.getByLabel('Quelle', { exact: true }).selectOption({ label: 'Nordlicht Paket' });
+    // the row is lifted, so the order is dirty: the question comes first. The mouse stays down, the answer goes by keyboard.
+    await dialog(page).getByRole('button', { name: 'Verwerfen' }).focus();
+    await page.keyboard.press('Enter');
     await expect.poll(() => area(api).chQueries.length).toBeGreaterThan(before);
     await expect(pressed(page)).toHaveCount(0);
     await page.mouse.up();
@@ -262,5 +265,235 @@ test.describe('admin: Live-TV, Kanäle → Reihenfolge (desktop)', () => {
       expect(b.width).toBeGreaterThanOrEqual(44);
       expect(b.height).toBeGreaterThanOrEqual(44);
     }
+  });
+
+  // ---- R29: an unsaved order is never dropped silently, and no row of another selection shows
+  const dialog = (page: Page) => page.getByRole('alertdialog', { name: 'Reihenfolge verwerfen?' });
+  const KEPT = ['Regionalkanal 7', 'Kinderinsel', 'Regionalkanal 9'];
+  const ORIGINAL = ['Kinderinsel', 'Regionalkanal 7', 'Regionalkanal 9'];
+  /** Kinderinsel one place down, dropped: the shown order is not stored */
+  async function dirty(page: Page) {
+    await grips(page).first().focus();
+    await page.keyboard.press('Space');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Space');
+    await expect(saveBtn(page)).toBeEnabled();
+    expect(await names(page)).toEqual(KEPT);
+  }
+
+  test('a dirty order and the Liste radio: Weiter ordnen keeps it, Verwerfen leaves and drops it', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await open(page);
+    await dirty(page);
+    await page.getByRole('radio', { name: 'Liste' }).click();
+    await expect(dialog(page)).toBeVisible();
+    await expect(dialog(page)).toContainText('Die geänderte Reihenfolge ist noch nicht gespeichert.');
+    await dialog(page).getByRole('button', { name: 'Weiter ordnen' }).click();
+    await expect(dialog(page)).toHaveCount(0);
+    await expect(page.getByRole('radio', { name: 'Reihenfolge' })).toHaveAttribute('aria-checked', 'true');
+    expect(await names(page)).toEqual(KEPT);
+    await expect(saveBtn(page)).toBeEnabled();
+    await page.getByRole('radio', { name: 'Liste' }).click();
+    await dialog(page).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page.getByRole('table', { name: 'Kanäle' })).toBeVisible();
+    await expect(order(page)).toHaveCount(0);
+    expect(puts(api)).toHaveLength(0);
+    // the order view opens on the stored order again
+    await page.getByRole('radio', { name: 'Reihenfolge' }).click();
+    await expect(rows(page)).toHaveCount(3);
+    expect(await names(page)).toEqual(ORIGINAL);
+    await expect(saveBtn(page)).toBeDisabled();
+    // a clean order leaves without a question
+    await page.getByRole('radio', { name: 'Liste' }).click();
+    await expect(page.getByRole('table', { name: 'Kanäle' })).toBeVisible();
+    await expect(dialog(page)).toHaveCount(0);
+  });
+
+  test('a dirty order and the Gruppe select: cancel keeps the order and the shown group, confirm loads the other group', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await open(page);
+    await dirty(page);
+    const select = page.getByLabel('Gruppe', { exact: true });
+    const before = area(api).chQueries.length;
+    await select.selectOption({ label: 'Regional' });
+    await expect(dialog(page)).toBeVisible();
+    await dialog(page).getByRole('button', { name: 'Weiter ordnen' }).click();
+    await expect(dialog(page)).toHaveCount(0);
+    await expect(select).toHaveValue('g-sport'); // the select reads what is still shown
+    await expect(select).toBeFocused();
+    expect(await names(page)).toEqual(KEPT);
+    await expect(saveBtn(page)).toBeEnabled();
+    expect(area(api).chQueries.length).toBe(before); // nothing was loaded
+    await select.selectOption({ label: 'Regional' });
+    await dialog(page).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(select).toHaveValue('g-regional');
+    await expect.poll(() => area(api).chQueries.at(-1)).toContain('group=g-regional');
+    await expect(rows(page).first()).toBeVisible();
+    expect(await names(page)).not.toContain('Kinderinsel');
+    await expect(saveBtn(page)).toBeDisabled();
+    expect(puts(api)).toHaveLength(0);
+  });
+
+  test('a dirty order and the Quelle select: the same question', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await open(page);
+    await dirty(page);
+    const select = page.getByLabel('Quelle', { exact: true });
+    await select.selectOption({ label: 'Eigene Streams' });
+    await dialog(page).getByRole('button', { name: 'Weiter ordnen' }).click();
+    await expect(select).toHaveValue('');
+    expect(await names(page)).toEqual(KEPT);
+    await select.selectOption({ label: 'Eigene Streams' });
+    await dialog(page).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect.poll(() => area(api).chQueries.at(-1)).toMatch(/^source=[^&]+&group=g-sport&/);
+    await expect(page.locator('.order button:enabled', { hasText: 'Speichern' })).toHaveCount(0); // the dropped order cannot be saved
+  });
+
+  test('group A, then group B with a held answer: no row of A shows, nothing can be saved, and the list does not move', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await open(page);
+    const box = page.locator('.order ol.list, .order .list');
+    const y0 = (await box.first().boundingBox())!.y;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    await page.route((u) => u.pathname === '/api/admin/livetv/channels' && u.searchParams.get('group') === 'g-regional', async (route) => { await gate; await route.fallback(); });
+    await page.getByLabel('Gruppe', { exact: true }).selectOption({ label: 'Regional' });
+    await expect(order(page).getByRole('status')).toBeAttached();
+    // the held answer: the old rows are gone at once, the bar is there and cannot save, and the box has not moved
+    await expect(rows(page)).toHaveCount(0);
+    await expect(order(page).getByText('Kinderinsel')).toHaveCount(0);
+    await expect(saveBtn(page)).toBeDisabled();
+    await expect(order(page).getByRole('button', { name: 'Verwerfen', exact: true })).toBeDisabled();
+    expect((await box.first().boundingBox())!.y).toBeCloseTo(y0, 0);
+    release();
+    await expect(rows(page).first()).toBeVisible();
+    expect(await names(page)).not.toContain('Kinderinsel');
+    await expect(saveBtn(page)).toBeDisabled();
+    expect((await box.first().boundingBox())!.y).toBeCloseTo(y0, 0);
+    // back through the list view: the rows of the last selection do not show while the next ones load
+    await page.getByRole('radio', { name: 'Liste' }).click();
+    await page.getByRole('radio', { name: 'Reihenfolge' }).click();
+    await expect(rows(page).first()).toBeVisible();
+  });
+
+  test('the order view does not offer Ohne Gruppe, and a source with Ohne Gruppe from the list lists the whole source under "Alle Gruppen"', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await page.goto('/admin/livetv?tab=channels');
+    await expect(page.getByRole('table', { name: 'Kanäle' })).toBeVisible();
+    await page.getByLabel('Gruppe', { exact: true }).selectOption({ label: 'Ohne Gruppe' });
+    await page.getByLabel('Quelle', { exact: true }).selectOption({ label: 'Eigene Streams' });
+    await page.getByRole('radio', { name: 'Reihenfolge' }).click();
+    await expect(rows(page).first()).toBeVisible();
+    const select = page.getByLabel('Gruppe', { exact: true });
+    await expect(select).toHaveValue('');
+    const opts = await select.locator('option').allTextContents();
+    expect(opts).toContain('Alle Gruppen');
+    expect(opts).toContain('Sport');
+    expect(opts).not.toContain('Ohne Gruppe');
+    expect(area(api).chQueries.at(-1)).toMatch(/^source=[^&]+&sort=number&dir=asc&limit=500&offset=0$/);
+  });
+
+  test('the view bar keeps its height when the toggle flips (narrow)', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto('/admin/livetv?tab=channels');
+    await expect(page.getByRole('table', { name: 'Kanäle' })).toBeVisible();
+    const bar = page.locator('.viewbar');
+    const h = async () => (await bar.boundingBox())!.height;
+    const list = await h();
+    const top = (await bar.boundingBox())!.y;
+    await page.getByRole('radio', { name: 'Reihenfolge' }).click();
+    await expect(page.getByText('Wähle eine Gruppe oder eine Quelle')).toBeVisible();
+    expect(Math.abs((await h()) - list)).toBeLessThanOrEqual(1);
+    expect((await bar.boundingBox())!.y).toBeCloseTo(top, 0);
+  });
+
+  test('after a save the shown numbers are the answer\'s, not a guess from the old ones', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await open(page);
+    await page.route('**/api/admin/livetv/channels/order', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"from":50}' }));
+    await dirty(page);
+    await saveBtn(page).click();
+    await expect(toasts(page).getByText('Gespeichert')).toBeVisible();
+    await expect.poll(() => nums(page)).toEqual(['50', '51', '52']);
+    expect(await names(page)).toEqual(KEPT);
+    await expect(saveBtn(page)).toBeDisabled();
+  });
+
+  test('Verwerfen restores the stored order', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await open(page);
+    await dirty(page);
+    await order(page).getByRole('button', { name: 'Verwerfen', exact: true }).click();
+    await expect.poll(() => names(page)).toEqual(ORIGINAL);
+    expect(await nums(page)).toEqual(['4', '5', '6']);
+    await expect(saveBtn(page)).toBeDisabled();
+    await expect(dialog(page)).toHaveCount(0); // a clean order can leave
+    await page.getByRole('radio', { name: 'Liste' }).click();
+    await expect(page.getByRole('table', { name: 'Kanäle' })).toBeVisible();
+    expect(puts(api)).toHaveLength(0);
+  });
+
+  test.describe('a failed save, then a retry', () => {
+    test.use({ allowedConsole: /status of 500/ });
+    test('the second Speichern stores the order', async ({ page, api }) => {
+      seed(api, [4, 7, 9]);
+      await open(page);
+      let n = 0;
+      await page.route('**/api/admin/livetv/channels/order', (r) => (n++ === 0 ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"boom"}' }) : r.fallback()));
+      await dirty(page);
+      await saveBtn(page).click();
+      await expect(toasts(page).getByText('Die Reihenfolge konnte nicht gespeichert werden.')).toBeVisible();
+      await expect(saveBtn(page)).toBeEnabled();
+      await saveBtn(page).click();
+      await expect(toasts(page).getByText('Gespeichert', { exact: true })).toBeVisible();
+      expect(puts(api).map((c) => c.body)).toEqual([{ ids: ['ch-7', 'ch-4', 'ch-9'] }]);
+      await expect(saveBtn(page)).toBeDisabled();
+      expect(await names(page)).toEqual(KEPT);
+    });
+  });
+
+  test('html.m-still gives no transitions', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await open(page);
+    const td = () => rows(page).first().evaluate((e) => getComputedStyle(e).transitionDuration);
+    await expect.poll(td).toBe('0.18s');
+    await page.evaluate(() => document.documentElement.classList.add('m-still'));
+    await expect.poll(td).toBe('0s');
+    // and a keyboard move glides nowhere: no inline transform is ever left
+    await grips(page).first().focus();
+    await page.keyboard.press('Space');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Space');
+    expect(await transforms(page)).toEqual(['', '', '']);
+    await page.evaluate(() => document.documentElement.classList.remove('m-still'));
+    await expect.poll(td).toBe('0.18s');
+  });
+
+  test('group AND source both go into the order query (R28)', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await open(page);
+    await page.getByLabel('Quelle', { exact: true }).selectOption({ label: 'Nordlicht Paket' });
+    await expect.poll(() => area(api).chQueries.at(-1)).toMatch(/^source=[^&]+&group=g-sport&sort=number&dir=asc&limit=500&offset=0$/);
+    await expect(rows(page).first()).toBeVisible();
+  });
+
+  test('the list filters (state, search) never narrow the order load', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await page.goto('/admin/livetv?tab=channels');
+    const table = page.getByRole('table', { name: 'Kanäle' });
+    await expect(table).toBeVisible();
+    await page.getByRole('button', { name: 'Ausgeblendet', exact: true }).click();
+    await page.getByPlaceholder('Name, Nummer oder tvg-id suchen').fill('Nord');
+    await page.getByLabel('Gruppe', { exact: true }).selectOption({ label: 'Sport' });
+    await expect.poll(() => area(api).chQueries.at(-1)).toContain('q=Nord');
+    await page.getByRole('radio', { name: 'Reihenfolge' }).click();
+    await expect(rows(page)).toHaveCount(3);
+    expect(area(api).chQueries.at(-1)).toBe('group=g-sport&sort=number&dir=asc&limit=500&offset=0');
+    // back in the list the filters are still set
+    await page.getByRole('radio', { name: 'Liste' }).click();
+    await expect(page.getByRole('button', { name: 'Ausgeblendet', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByPlaceholder('Name, Nummer oder tvg-id suchen')).toHaveValue('Nord');
   });
 });

@@ -29,7 +29,7 @@
   import { listGroups, listSources, type GroupOption, type SourceView } from './api';
   import BulkBar from './BulkBar.svelte';
   import {
-    bulkChannels, channelError, emptyFilter, failText, getChannel, kindChip, listChannels, logoSrc, ORDER_MAX, orderChannels, orderFilter, overrideHint, patchChannel, PAGE_SIZE,
+    afterOrderSave, bulkChannels, channelError, emptyFilter, forOrder, failText, getChannel, kindChip, listChannels, logoSrc, ORDER_MAX, orderChannels, orderFilter, overrideHint, patchChannel, PAGE_SIZE,
     type AdminChannel, type BulkBody, type ChannelFilter, type ChannelPatch, type ChannelSort,
   } from './channels';
   import EpgShiftSheet from './EpgShiftSheet.svelte';
@@ -82,15 +82,20 @@
   let orderTotal = 0;
   let orderLoading = false;
   let orderFailed = false;
+  /** OrderView's `bind:dirty`: the shown order is not stored yet */
+  let orderDirty = false;
   let oseq = 0;
   let octl: AbortController | undefined;
+  /** rows are only ever those of the current selection: every (re)load and every leave starts from none (the skeleton), so no old row shows under new labels */
+  function dropOrder() { orderRows = null; orderTotal = 0; orderFailed = false; orderDirty = false; }
   async function loadOrder() {
     const f = orderFilter(filter);
     const mine = ++oseq;
     octl?.abort();
-    if (!f) { orderRows = null; orderTotal = 0; orderFailed = false; orderLoading = false; return; }
+    dropOrder();
+    if (!f) { orderLoading = false; return; }
     octl = new AbortController();
-    orderLoading = true; orderFailed = false;
+    orderLoading = true;
     try {
       const r = await listChannels(f, octl.signal, ORDER_MAX);
       if (mine !== oseq || gone) return;
@@ -102,21 +107,53 @@
   }
   /** the order rows load again when the view opens or the group / source changes (and only then) */
   $: orderKey = view === 'order' ? JSON.stringify([filter.source, filter.group]) : '';
-  $: { void orderKey; if (view === 'order') void loadOrder(); }
+  function closeOrder() { oseq++; octl?.abort(); orderLoading = false; dropOrder(); }
+  $: { void orderKey; if (view === 'order') void loadOrder(); else closeOrder(); }
   $: orderSet = view === 'order' && orderFilter(filter) !== null;
   $: tooMany = orderRows !== null && orderTotal > ORDER_MAX;
   const viewKey = (v: View) => (v === 'list' ? 'adminLive.grp.viewList' : 'adminLive.grp.viewOrder') as 'adminLive.grp.viewList';
-  function viewKeys(e: KeyboardEvent) {
+  /** the one gate before anything that drops the shown order (the *Liste* radio, the source / group select, *Wiederholen*): false = the person kept ordering */
+  async function leaveOk(): Promise<boolean> {
+    if (view !== 'order' || !orderDirty) return true;
+    const ok = await confirm({
+      title: tr('adminLive.ch.orderDiscardTitle'), body: tr('adminLive.ch.orderDiscardBody'),
+      confirmLabel: tr('adminLive.ch.orderDiscardConfirm'), cancelLabel: tr('adminLive.ch.orderKeep'),
+    });
+    if (ok) orderDirty = false;
+    return ok;
+  }
+  async function setView(v: View): Promise<boolean> {
+    if (v === view) return true;
+    if (!(await leaveOk())) return false;
+    // "Ohne Gruppe" is no choice of the order view: the select would read it while the whole source is listed
+    const f = forOrder(filter);
+    if (v === 'order' && f !== filter) { filter = f; listStale = true; }
+    view = v;
+    return true;
+  }
+  async function viewKeys(e: KeyboardEvent) {
     const i = VIEWS.indexOf(view);
     const n = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? (i + 1) % VIEWS.length : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? (i + VIEWS.length - 1) % VIEWS.length : -1;
     if (n < 0) return;
     e.preventDefault();
-    view = VIEWS[n]!;
-    queueMicrotask(() => document.getElementById(`${vid}-v-${view}`)?.focus());
+    const v = VIEWS[n]!;
+    if (await setView(v)) queueMicrotask(() => document.getElementById(`${vid}-v-${v}`)?.focus());
   }
-  /** the stored order is the new numbering: the list reads it again */
+  /** a select of the order view: a refused change (the order stays) shows the old value again, on a fresh select that keeps the focus */
+  let selRev = 0;
+  async function orderSelect(e: Event, id: string, patch: (v: string) => Partial<ChannelFilter>) {
+    const v = (e.target as HTMLSelectElement).value;
+    if (await leaveOk()) { setFilter(patch(v)); return; }
+    selRev++;
+    await tick();
+    document.getElementById(id)?.focus();
+  }
+  async function retryOrder() { if (await leaveOk()) void loadOrder(); }
+  /** the stored order is the new numbering: the shown rows take the answer's numbers, the list reads it again */
   async function saveOrder(ids: string[]) {
-    await orderChannels(ids);
+    const mine = oseq;
+    const r = await orderChannels(ids);
+    if (mine === oseq && orderRows && typeof r?.from === 'number') orderRows = afterOrderSave(orderRows, ids, r.from);
     listStale = true;
   }
   onMount(() => {
@@ -159,6 +196,8 @@
   $: hintOf = (c: AdminChannel) => overrideHint(c, { own: ownSource(c.sourceId), group: groupName });
   $: sourceOptions = [{ value: '', label: $t('adminLive.ch.filters.allSources') }, ...sources.map((s) => ({ value: s.id, label: s.name }))];
   $: groupFilterOptions = [{ value: '', label: $t('adminLive.ch.filters.allGroups') }, { value: 'none', label: $t('adminLive.ch.filters.noGroup') }, ...groups.map((g) => ({ value: g.id, label: g.name }))];
+  /** the order view has no "Ohne Gruppe": a set of channels without a group is no group to order */
+  $: groupOrderOptions = groupFilterOptions.filter((o) => o.value !== 'none');
   const IMPORT = '__import';
   // reactive on the group list: the template calls it, so a list that arrives later reaches the open selects
   $: groupOptions = (c: AdminChannel) => {
@@ -306,27 +345,44 @@
   <div class="viewbar">
     <div class="views" role="radiogroup" aria-label={$t('adminLive.grp.view')}>
       {#each VIEWS as v (v)}
-        <button type="button" role="radio" id="{vid}-v-{v}" class="vw" class:on={view === v} aria-checked={view === v} tabindex={view === v ? 0 : -1} on:click={() => (view = v)} on:keydown={viewKeys}>{$t(viewKey(v))}</button>
+        <button type="button" role="radio" id="{vid}-v-{v}" class="vw" class:on={view === v} aria-checked={view === v} tabindex={view === v ? 0 : -1} on:click={() => void setView(v)} on:keydown={viewKeys}>{$t(viewKey(v))}</button>
       {/each}
     </div>
     {#if view === 'order'}
-      <div class="chips">
-        <Select hideLabel label={$t('adminLive.ch.filters.source')} value={filter.source ?? ''} options={sourceOptions} on:change={(e) => setFilter({ source: (e.target as HTMLSelectElement).value || null })} />
-        <Select hideLabel label={$t('adminLive.ch.filters.group')} value={filter.group ?? ''} options={groupFilterOptions} on:change={(e) => setFilter({ group: (e.target as HTMLSelectElement).value || null })} />
-      </div>
+      {#key selRev}
+        <div class="chips">
+          <Select id="{vid}-src" hideLabel label={$t('adminLive.ch.filters.source')} value={filter.source ?? ''} options={sourceOptions} on:change={(e) => orderSelect(e, `${vid}-src`, (v) => ({ source: v || null }))} />
+          <Select id="{vid}-grp" hideLabel label={$t('adminLive.ch.filters.group')} value={filter.group ?? ''} options={groupOrderOptions} on:change={(e) => orderSelect(e, `${vid}-grp`, (v) => ({ group: v || null }))} />
+        </div>
+      {/key}
+    {:else}
+      <!-- the select row's space is kept in the list view: the bar does not grow when the toggle flips -->
+      <div class="chips ph" aria-hidden="true"></div>
     {/if}
   </div>
   {#if view === 'order'}
     {#if !orderSet}
       <p class="why">{$t('adminLive.ch.orderNeedsFilter')}</p>
     {:else if orderFailed}
-      <div class="why"><p>{$t('adminLive.ch.loadFailed')}</p><Button variant="secondary" icon="refresh" on:click={loadOrder}>{$t('ui.retry')}</Button></div>
+      <div class="why"><p>{$t('adminLive.ch.loadFailed')}</p><Button variant="secondary" icon="refresh" on:click={retryOrder}>{$t('ui.retry')}</Button></div>
+    {:else if !orderRows}
+      <!-- the rows of this selection are on their way: the bar and the list keep their places and size (nothing jumps when they arrive), and nothing can be saved -->
+      <div class="order skel">
+        <p class="sr-only" role="status">{$t('common.loading')}</p>
+        <div class="bar">
+          <Button variant="ghost" size="sm" disabled>{$t('adminPeople.roles.discard')}</Button>
+          <Button size="sm" disabled>{$t('common.save')}</Button>
+        </div>
+        <div class="list panel" aria-hidden="true">
+          {#each [0, 1, 2] as i (i)}<div class="srow"><span class="sg"></span><span class="st"></span><span class="sn"></span></div>{/each}
+        </div>
+      </div>
     {:else if tooMany}
       <p class="why">{$t('adminLive.ch.orderTooMany', { n: orderTotal, max: ORDER_MAX })}</p>
     {:else if orderRows && !orderRows.length}
       <p class="why">{$t('adminLive.ch.filters.empty')}</p>
     {:else if orderRows}
-      <OrderView rows={orderRows.map((c) => ({ id: c.id, name: c.name, number: c.number, logoHash: c.logoHash }))} locked={$busyKeys.has('ltv-ch-bulk')} save={saveOrder} />
+      <OrderView rows={orderRows.map((c) => ({ id: c.id, name: c.name, number: c.number, logoHash: c.logoHash }))} locked={$busyKeys.has('ltv-ch-bulk')} save={saveOrder} bind:dirty={orderDirty} />
     {/if}
   {:else}
   <DataTable
@@ -430,7 +486,18 @@
   .vw { min-height: 44px; min-width: 44px; padding: 0 1rem; border-radius: 9px; background: transparent; color: var(--mut); font-weight: 600; }
   .vw.on { background: var(--acc); color: #1a1a1a; }
   .vw:focus-visible { outline: 2px solid #fff; outline-offset: 1px; box-shadow: 0 0 0 4px var(--ring-dark, #000); }
+  /* the selects' row (a field is about 45 px high) has one height with or without the selects */
+  .viewbar .chips { min-height: 48px; }
   .why { margin: .5rem 0; color: var(--mut); }
+  /* the loading box has the bar and list of the OrderView (same gap, bar, row height, list padding) with room for three rows */
+  .skel { display: flex; flex-direction: column; gap: .75rem; }
+  .skel .bar { display: flex; justify-content: flex-end; gap: .5rem; }
+  .skel .list { margin: 0; padding: 8px; min-height: calc(3 * 56px + 16px); box-sizing: border-box; }
+  .srow { display: flex; align-items: center; gap: 12px; height: 56px; padding: 6px 10px 6px 4px; box-sizing: border-box; }
+  .srow span { display: block; border-radius: 8px; background: rgba(255, 255, 255, .08); }
+  .sg { flex: none; width: 44px; height: 24px; }
+  .st { flex: none; width: 40px; height: 40px; border-radius: 10px; }
+  .sn { flex: 0 1 12rem; height: 14px; }
   .chip { min-height: 44px; padding: 0 1rem; border-radius: 999px; background: rgba(255, 255, 255, .06); border: 1px solid var(--fr-line, rgba(255, 255, 255, .2)); color: rgba(255, 255, 255, .85); font-weight: 600; }
   .chip:hover:not(:disabled) { background: rgba(255, 255, 255, .12); color: #fff; }
   .chip[aria-pressed='true'] { background: #fff; color: #101418; border-color: #fff; }
@@ -459,5 +526,7 @@
     .dot .pt { display: none; }
     .gsel { min-width: 0; flex: 1 1 10rem; }
     .chips :global(.field) { flex: 1 1 100%; }
+    /* the bar's two selects share one row: the row has the same height in both views */
+    .viewbar .chips :global(.field) { flex: 1 1 9rem; }
   }
 </style>
