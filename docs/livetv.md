@@ -46,8 +46,9 @@ then add `-f compose.livetv-nvidia.yaml` (it reserves one GPU with the `gpu` and
 ## Ports
 
 livetv publishes **UDP only**: the range `LIVETV_SRT_PORTS` (default `9000-9009`, 1–100 ports) for SRT feeds that you push in,
-on the host address `LIVETV_SRT_BIND` (default `0.0.0.0`; `127.0.0.1` switches push off from outside without removing the
-service). Open the range on the firewall **only if you push feeds**; pulling lists and streams needs no inbound port. Its API
+on the host address `LIVETV_SRT_BIND`. The default `127.0.0.1` keeps push off from outside. Set `LIVETV_SRT_BIND=0.0.0.0` (or
+the server's LAN address) in `.env` **only when you push feeds**. Docker publishes ports past ufw and firewalld on most hosts,
+so a host firewall rule alone does not close the range; `LIVETV_SRT_BIND` does. Pulling lists and streams needs no inbound port. Its API
 (port 8090) is never published. A different range: `LIVETV_SRT_PORTS=9100-9104` in `.env`.
 
 Other settings: `LIVETV_CACHE_MAX_GB` (default 6, the disposable segment cache), `LIVETV_URL` (only if you move the service), `RECORDINGS_PATH` (host folder for recordings, Phase 3; default the named volume `recordings`; absolute path, writable by uid 10001).

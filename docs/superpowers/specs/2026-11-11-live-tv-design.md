@@ -273,7 +273,7 @@ playback for everyone and should ship and settle on its own), Phase 2 plan, Phas
       TZ: ${TZ:-Europe/Vienna}
     ports:
       # SRT push (§3.5): UDP only, same numbers outside and inside so the setup hint shows the real port.
-      - "${LIVETV_SRT_BIND:-0.0.0.0}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp"
+      - "${LIVETV_SRT_BIND:-127.0.0.1}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp"
     volumes:
       - livetv-cache:/cache                                   # DVR segments, previews (disposable)
       - ${RECORDINGS_PATH:-recordings}:/recordings             # Phase 3
@@ -295,8 +295,9 @@ playback for everyone and should ship and settle on its own), Phase 2 plan, Phas
   `${RECORDINGS_PATH:-recordings}:/data/recordings:ro` (Phase 3). Volumes `livetv-cache`, `recordings` are added to `volumes:`.
 - Env-only keys (`ENV_ONLY_KEYS`): `LIVETV_URL` (backend and gateway; default `http://livetv:8090`). Compose-only:
   `LIVETV_SRT_PORTS` (a range `A-B`, 1–100 ports, default `9000-9009`; also passed into `livetv`, which listens on exactly
-  these) and `LIVETV_SRT_BIND` (host address the range is published on, default `0.0.0.0`; `127.0.0.1` turns push off from
-  outside without removing the service).
+  these) and `LIVETV_SRT_BIND` (host address the range is published on, default `127.0.0.1` = push off from outside; `0.0.0.0` or
+  the LAN address only when push is used). **Ruling (1b review M11):** the default was `0.0.0.0`; Docker-published ports bypass
+  ufw/firewalld on most hosts, so the range would be open from outside as soon as livetv runs, push or not.
 - **Library overlay** (Phase 3, opt-in, `compose.livetv-library.yaml`): the one read-write mount into the media share, see
   §15.3.
 - **GPU overlays** (new files, opt-in like `compose.plex.yaml`):

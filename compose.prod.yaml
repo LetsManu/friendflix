@@ -290,7 +290,8 @@ services:
 
   # Live TV (optional): only with the profile `livetv` (Admin -> Live-TV aktivieren through the updater, or COMPOSE_PROFILES=livetv
   # in .env). Fetches provider lists, EPG and streams; the backend tells it what to run. No Docker socket. Its only published
-  # ports are the UDP range for pushed SRT feeds (LIVETV_SRT_PORTS; open them on the firewall only if you push feeds).
+  # ports are the UDP range for pushed SRT feeds (LIVETV_SRT_PORTS), on 127.0.0.1 unless LIVETV_SRT_BIND says otherwise: set it to
+  # 0.0.0.0 (or the LAN address) only when you push feeds. Docker-published ports bypass ufw/firewalld on most hosts.
   livetv:
     profiles: [livetv]
     image: ${FF_REGISTRY:-ghcr.io/letsmanu}/friendflix-livetv:${FF_TAG:-latest}
@@ -308,7 +309,7 @@ services:
       TZ: ${TZ:-Europe/Vienna}
     ports:
       # SRT push (§3.5): UDP only, same numbers outside and inside so the setup hint shows the real port.
-      - "${LIVETV_SRT_BIND:-0.0.0.0}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp"
+      - "${LIVETV_SRT_BIND:-127.0.0.1}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp"
     volumes:
       - livetv-cache:/cache                                   # DVR segments, previews (disposable)
       - ${RECORDINGS_PATH:-recordings}:/recordings             # Phase 3

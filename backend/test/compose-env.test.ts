@@ -127,7 +127,9 @@ describe.each(['compose.prod.yaml', 'compose.yaml'])('%s livetv', (file) => {
     const ports = lines.slice(from).filter((l, i, a) => /^ {6}- /.test(l) && a.slice(0, i).every((x) => !/^ {4}[a-z]/.test(x)));
     expect(ports.length).toBeGreaterThan(0);
     for (const p of ports) expect(p, p).toMatch(/\/udp"$/);
-    expect(b).toContain('${LIVETV_SRT_BIND:-0.0.0.0}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp');
+    // 1b review M11: nothing is reachable from outside until the admin opens push (Docker-published ports bypass ufw)
+    expect(b).toContain('${LIVETV_SRT_BIND:-127.0.0.1}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp');
+    expect(b).not.toContain('${LIVETV_SRT_BIND:-0.0.0.0}');
     expect(b).toContain('LIVETV_SRT_PORTS: ${LIVETV_SRT_PORTS:-9000-9009}');
     expect(b).toContain('LIVETV_CACHE_MAX_GB: ${LIVETV_CACHE_MAX_GB:-6}');
     expect(networksOf(b)).toEqual(['livetv', 'livetv-egress']);

@@ -46,9 +46,10 @@ installieren, dann `-f compose.livetv-nvidia.yaml` hinzufügen (reserviert eine 
 ## Ports
 
 livetv veröffentlicht **nur UDP**: den Bereich `LIVETV_SRT_PORTS` (Standard `9000-9009`, 1–100 Ports) für SRT-Feeds, die du
-hineinschickst, auf der Host-Adresse `LIVETV_SRT_BIND` (Standard `0.0.0.0`; `127.0.0.1` schaltet Push von außen ab, ohne den Dienst
-zu entfernen). Den Bereich nur in der Firewall öffnen, **wenn du Feeds hineinschickst**; Listen und Streams abzurufen braucht keinen
-eingehenden Port. Die API (Port 8090) wird nie veröffentlicht. Anderer Bereich: `LIVETV_SRT_PORTS=9100-9104` in der `.env`.
+hineinschickst, auf der Host-Adresse `LIVETV_SRT_BIND`. Der Standard `127.0.0.1` lässt Push von außen aus. `LIVETV_SRT_BIND=0.0.0.0`
+(oder die LAN-Adresse des Servers) **nur dann** in die `.env` schreiben, **wenn du Feeds hineinschickst**. Docker veröffentlicht Ports
+auf den meisten Hosts an ufw und firewalld vorbei; eine Firewall-Regel allein schließt den Bereich also nicht, `LIVETV_SRT_BIND` schon.
+Listen und Streams abzurufen braucht keinen eingehenden Port. Die API (Port 8090) wird nie veröffentlicht. Anderer Bereich: `LIVETV_SRT_PORTS=9100-9104` in der `.env`.
 
 Weitere Einstellungen: `LIVETV_CACHE_MAX_GB` (Standard 6, der wegwerfbare Segment-Cache), `LIVETV_URL` (nur wenn du den Dienst verlegst), `RECORDINGS_PATH` (Host-Ordner für Aufnahmen, Phase 3; Standard das benannte Volume `recordings`; absoluter Pfad, beschreibbar für uid 10001).
 
