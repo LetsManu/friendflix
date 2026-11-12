@@ -347,32 +347,126 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     expect(api.admin.livetv.area.groups.find((g) => g.id === 'g-sport')!.roles).toEqual(['family', 'friend']);
   });
 
-  test('two overlapping loads: the one that was started last wins even when the older answers last', async ({ page, api }) => {
+  test('a second write waits for the first one and its reload; the older reload never frees the chips', async ({ page, api }) => {
     await page.goto('/admin/livetv?tab=groups');
-    // the list as it is now: the stale answer the older load will bring
-    const stale = await page.evaluate(() => fetch('/api/admin/livetv/groups').then((r) => r.json()));
-    let reads = 0, staleSent = () => {};
-    const sent = new Promise<void>((r) => { staleSent = r; });
+    // the list as it is now: the answer a slow reload brings after a later write has changed things
+    const old = await page.evaluate(() => fetch('/api/admin/livetv/groups').then((r) => r.json()));
+    let reads = 0;
     await page.route(/\/api\/admin\/livetv\/groups$/, async (route) => {
       if (route.request().method() !== 'GET' || ++reads > 1) return route.fallback();
-      await new Promise((r) => setTimeout(r, 700));
-      await route.fulfill({ json: stale });
-      staleSent();
+      await new Promise((r) => setTimeout(r, 600));
+      await route.fulfill({ json: old });
     });
     const kid = (id: string, name: string) => row(page, id).getByRole('switch', { name });
-    // write 1: its reload (read 1) is held back and will answer with the old list; write 2 starts meanwhile, its reload answers at once
     await kid('g-kinder', 'Kinderfreundlich: Kinderinsel').click();
     await expect.poll(() => reads).toBe(1);
+    // the reload is on its way: the other kid switch waits (disabled), nothing is written on top
+    await expect(kid('g-sport', 'Kinderfreundlich: Sport')).toBeDisabled();
+    expect(writes(api, 'PATCH', /groups\/g-sport$/)).toHaveLength(0);
+    await expect(kid('g-sport', 'Kinderfreundlich: Sport')).toBeEnabled();
     await kid('g-sport', 'Kinderfreundlich: Sport').click();
-    await sent;
-    await page.waitForTimeout(250);
+    await expect(kid('g-sport', 'Kinderfreundlich: Sport')).toHaveAttribute('aria-checked', 'true');
+    await expect(row(page, 'g-sport').getByRole('button', { name: 'Gast' })).toBeEnabled();
     expect(api.admin.livetv.area.groups.find((g) => g.id === 'g-kinder')!.kidFriendly).toBe(false);
     expect(api.admin.livetv.area.groups.find((g) => g.id === 'g-sport')!.kidFriendly).toBe(true);
-    await expect(kid('g-kinder', 'Kinderfreundlich: Kinderinsel')).toHaveAttribute('aria-checked', 'false');
-    await expect(kid('g-sport', 'Kinderfreundlich: Sport')).toHaveAttribute('aria-checked', 'true');
-    // and the list counts as fresh again: a role click goes through
+    // the list counts as fresh again: a role click goes through
     await row(page, 'g-sport').getByRole('button', { name: 'Gast' }).click();
     await expect(row(page, 'g-sport').getByRole('button', { name: 'Gast' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('role chips stay disabled through a release and until a load that started after it has applied', async ({ page, api }) => {
+    let holdPost = false, holdRead = false, reads = 0, postDone = false;
+    await page.route(/\/api\/admin\/livetv\/groups\/release$/, async (route) => {
+      if (holdPost) await new Promise((r) => setTimeout(r, 500));
+      await route.fallback();
+      postDone = true;
+    });
+    await page.route(/\/api\/admin\/livetv\/groups$/, async (route) => {
+      if (route.request().method() === 'GET') { reads++; if (holdRead) await new Promise((r) => setTimeout(r, 600)); }
+      await route.fallback();
+    });
+    await page.goto('/admin/livetv?tab=groups');
+    const sport = row(page, 'g-sport');
+    // write A: a kid toggle; its reload lands and frees the chips
+    await row(page, 'g-kinder').getByRole('switch', { name: 'Kinderfreundlich: Kinderinsel' }).click();
+    await expect(sport.getByRole('button', { name: 'Gast' })).toBeEnabled();
+    // write B: a release whose request is held back; A's reload is long done, the chips still wait for B
+    holdPost = true; holdRead = true;
+    const readsBefore = reads;
+    await row(page, 'g-kino').getByRole('button', { name: 'Freigeben …' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Gruppen freigeben' });
+    await dlg.getByRole('button', { name: 'Freigeben', exact: true }).click();
+    await expect(sport.getByRole('button', { name: 'Gast' })).toBeDisabled();
+    expect(postDone).toBe(false);
+    await sport.getByRole('button', { name: 'Gast' }).click({ force: true });
+    // the POST has settled, its reload is running (held): the list on screen is still the one from before B
+    await expect.poll(() => postDone).toBe(true);
+    await expect.poll(() => reads).toBe(readsBefore + 1);
+    await expect(sport.getByRole('button', { name: 'Gast' })).toBeDisabled();
+    await sport.getByRole('button', { name: 'Gast' }).click({ force: true });
+    expect(writes(api, 'PATCH', /groups\/g-sport$/)).toHaveLength(0);
+    // the reload that started after B settled has applied: usable again
+    await expect(sport.getByRole('button', { name: 'Gast' })).toBeEnabled();
+    await expect(row(page, 'g-kino').getByRole('switch', { name: 'Kinderfreundlich: Kinofilme' })).toBeVisible();
+    await sport.getByRole('button', { name: 'Gast' }).click();
+    await expect(sport.getByRole('button', { name: 'Gast' })).toHaveAttribute('aria-pressed', 'true');
+    expect(writes(api, 'PATCH', /groups\/g-sport$/)).toHaveLength(1);
+    expect(writes(api, 'POST', /\/groups\/release$/)).toHaveLength(1);
+  });
+
+  test('while a write runs every other write control of the tab is disabled', async ({ page, api }) => {
+    await page.route(/\/api\/admin\/livetv\/groups\/g-sport$/, async (route) => {
+      if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 900));
+      await route.fallback();
+    });
+    await page.goto('/admin/livetv?tab=groups');
+    // two groups selected, so the bulk buttons would be enabled if nothing ran
+    await rows(page).nth(0).getByRole('checkbox', { name: 'Kinofilme auswählen' }).check();
+    await rows(page).nth(1).getByRole('checkbox', { name: 'Musik & Konzert auswählen' }).check();
+    await expect(bulk(page).getByRole('button', { name: 'Zusammenführen …' })).toBeEnabled();
+    await expect(bulk(page).getByRole('button', { name: 'Freigeben …' })).toBeEnabled();
+    await row(page, 'g-sport').getByRole('switch', { name: 'Kinderfreundlich: Sport' }).click();
+    await expect(row(page, 'g-sport').getByRole('switch', { name: 'Kinderfreundlich: Sport' })).toHaveAttribute('aria-busy', 'true');
+    await expect(row(page, 'g-kinder').getByRole('switch', { name: 'Kinderfreundlich: Kinderinsel' })).toBeDisabled();
+    for (const n of ['Familie', 'Freund', 'Gast']) await expect(row(page, 'g-kinder').getByRole('button', { name: n })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Gruppe anlegen' })).toBeDisabled();
+    await expect(bulk(page).getByRole('button', { name: 'Zusammenführen …' })).toBeDisabled();
+    await expect(bulk(page).getByRole('button', { name: 'Freigeben …' })).toBeDisabled();
+    await expect(row(page, 'g-kino').getByRole('button', { name: 'Freigeben …' })).toBeDisabled();
+    await view(page, 'Nach Rolle').click();
+    await expect(page.getByRole('switch', { name: 'Sport für Familie' })).toBeDisabled();
+    await expect(page.getByRole('switch', { name: 'Kinderinsel für Familie' })).toBeDisabled();
+    // done: everything is back
+    await expect(page.getByRole('switch', { name: 'Kinderinsel für Familie' })).toBeEnabled();
+    await view(page, 'Liste').click();
+    await expect(page.getByRole('button', { name: 'Gruppe anlegen' })).toBeEnabled();
+    await expect(row(page, 'g-kinder').getByRole('switch', { name: 'Kinderfreundlich: Kinderinsel' })).toBeEnabled();
+    await expect(bulk(page).getByRole('button', { name: 'Zusammenführen …' })).toBeEnabled();
+    expect(writes(api, 'PATCH', /groups\/g-sport$/)).toHaveLength(1);
+  });
+
+  test('roles failed and list stale together: one Neu laden reloads both', async ({ page }) => {
+    let failList = false, failRoles = true;
+    await page.route(/\/api\/admin\/livetv\/groups$/, async (route) => (failList && route.request().method() === 'GET' ? route.fulfill({ status: 500, json: { error: 'boom' } }) : route.fallback()));
+    await page.route(/\/api\/admin\/roles$/, async (route) => (failRoles ? route.fulfill({ status: 500, json: { error: 'boom' } }) : route.fallback()));
+    await page.goto('/admin/livetv?tab=groups');
+    const alert = page.getByRole('alert').filter({ hasText: 'Die Rollen ließen sich nicht laden' });
+    await expect(alert).toBeVisible();
+    failList = true;
+    await row(page, 'g-sport').getByRole('switch', { name: 'Kinderfreundlich: Sport' }).click();
+    // both messages in the one slot, one button
+    await expect(alert).toContainText('Die Liste konnte nicht neu geladen werden.');
+    await expect(alert.getByRole('button')).toHaveCount(1);
+    await expect(alert.getByRole('button', { name: 'Neu laden' })).toBeVisible();
+    // it fails again: still both
+    await alert.getByRole('button', { name: 'Neu laden' }).click();
+    await expect(alert.getByRole('button', { name: 'Neu laden' })).toBeEnabled();
+    await expect(alert).toContainText('Die Liste konnte nicht neu geladen werden.');
+    failList = false; failRoles = false;
+    await alert.getByRole('button', { name: 'Neu laden' }).click();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(row(page, 'g-sport').getByRole('button', { name: 'Gast' })).toBeEnabled();
+    await expect(row(page, 'g-sport').getByRole('switch', { name: 'Kinderfreundlich: Sport' })).toHaveAttribute('aria-checked', 'true');
   });
 
   test('people whose rights could not be read are counted', async ({ page, api }) => {
