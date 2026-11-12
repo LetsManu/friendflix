@@ -143,7 +143,7 @@ export async function livetvHealth(ctx: Ctx): Promise<LivetvHealth | null> {
   const p = proofOf(ctx);
   p.at = 0; // a new check replaces the old proof, whatever it finds
   const nonce = randomBytes(16).toString('hex');
-  let h: LivetvHealth | null = null;
+  let h: LivetvHealth;
   try {
     const r = await ctx.fetchImpl(`${ctx.cfg.LIVETV_URL}/healthz?n=${nonce}`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS), redirect: 'error' });
     if (!r.ok) return null;

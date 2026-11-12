@@ -33,7 +33,7 @@ function key(env: NodeJS.ProcessEnv): Buffer {
     raw = readFileSync(file, 'utf8');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') throw new Error(`missing key file ${file}: run docker compose up -d once (the bootstrap service writes it)`);
+    if (code === 'ENOENT') throw new Error(`missing key file ${file}: run docker compose up -d once (the bootstrap service writes it)`, { cause: err });
     throw new Error(`key file ${file} is not readable (${code})`, { cause: err });
   }
   const v = raw.replace(/(\r?\n)+$/, ''); // the bootstrap volume's contract (backend/src/volumeValue.ts): trailing newlines only
