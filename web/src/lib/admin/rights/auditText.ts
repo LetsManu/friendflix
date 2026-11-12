@@ -80,3 +80,12 @@ export function auditSentence(e: AuditInput): { text: string; chips: AuditChip[]
     }
   }
 }
+
+/**
+ * A role's own history: the entries (newest first) up to and including its latest `role.create`. A role deleted and made again under
+ * the same key (a name gives the same slug) starts a new life; its predecessor's updates and delete do not belong to it.
+ */
+export function sinceLatestCreate<T extends { action: string; target: string | null }>(entries: readonly T[], key: string): T[] {
+  const at = entries.findIndex((e) => e.action === 'role.create' && e.target === key);
+  return at < 0 ? [...entries] : entries.slice(0, at + 1);
+}

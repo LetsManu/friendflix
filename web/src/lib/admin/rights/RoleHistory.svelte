@@ -17,7 +17,7 @@
   import Button from '#lib/ui/Button.svelte';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import { uid } from '#lib/ui/ids';
-  import { auditSentence } from './auditText';
+  import { auditSentence, sinceLatestCreate } from './auditText';
   import { roleName, type MatrixRole } from './model';
 
   export let role: MatrixRole;
@@ -35,7 +35,7 @@
     error = false;
     try { entries = (await api<{ entries: Entry[] }>(`/api/admin/audit?target=${encodeURIComponent(role.key)}&limit=100`)).entries; } catch { error = true; }
   }
-  $: rows = (entries ?? []).map((e) => ({ e, s: auditSentence({ action: e.action, actorName: e.actor, targetName: roleName(role), target: e.target, meta: e.meta ?? {}, roleName: names }) }));
+  $: rows = sinceLatestCreate(entries ?? [], role.key).map((e) => ({ e, s: auditSentence({ action: e.action, actorName: e.actor, targetName: roleName(role), target: e.target, meta: e.meta ?? {}, roleName: names }) }));
 
   function close() {
     dispatch('close');

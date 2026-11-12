@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
-import { auditSentence } from './auditText';
+import { auditSentence, sinceLatestCreate } from './auditText';
 
 afterEach(async () => { await setLocale('de'); });
 const e = (action: string, meta: Record<string, unknown>, extra: { actorName?: string | null; targetName?: string | null; target?: string | null; roleName?: (k: string) => string | null } = {}) =>
@@ -92,5 +92,21 @@ describe('auditSentence', () => {
       expect(r.text).not.toMatch(/adminPeople|sentence/);
       expect(r.chips).toHaveLength(1);
     }
+  });
+});
+
+describe('sinceLatestCreate', () => {
+  const en = (id: number, action: string, target = 'oma') => ({ id, action, target });
+  it('a re-created role shows only the entries since its latest role.create', () => {
+    const list = [en(6, 'role.update'), en(5, 'role.create'), en(4, 'role.delete'), en(3, 'role.update'), en(2, 'role.create'), en(1, 'role.update', 'other')];
+    expect(sinceLatestCreate(list, 'oma').map((x) => x.id)).toEqual([6, 5]);
+  });
+  it('a role that was never created here (a built-in) keeps its whole list', () => {
+    const list = [en(2, 'role.update', 'guest'), en(1, 'role.update', 'guest')];
+    expect(sinceLatestCreate(list, 'guest')).toEqual(list);
+  });
+  it('a create of another key does not cut', () => {
+    const list = [en(2, 'role.update'), en(1, 'role.create', 'other')];
+    expect(sinceLatestCreate(list, 'oma')).toHaveLength(2);
   });
 });
