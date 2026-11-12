@@ -133,8 +133,8 @@ test.describe('Rollen & Rechte (phone)', () => {
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
     await expect(toasts(page).getByText('Rolle „Oma & Opa“ angelegt.')).toBeVisible();
     await expect(card(page, 'Oma & Opa').getByRole('button', { name: 'Rolle „Oma & Opa“ bearbeiten' })).toBeFocused();
-    const names = await page.getByRole('listitem').filter({ has: page.getByRole('button', { name: /bearbeiten/ }) }).locator('.rn').allTextContents();
-    expect(names).toEqual(['Admin', 'Familie', 'Freund', 'Gast', 'Crew', 'Oma & Opa', 'Kombüse']);
+    const names = () => page.getByRole('listitem').filter({ has: page.getByRole('button', { name: /bearbeiten/ }) }).locator('.rn').allTextContents();
+    await expect.poll(names).toEqual(['Admin', 'Familie', 'Freund', 'Gast', 'Crew', 'Oma & Opa', 'Kombüse']);
     // up, then delete the empty role (asks once)
     await (await menu(page, 'Oma & Opa')).getByRole('button', { name: 'Nach oben' }).click();
     await expect.poll(() => api.admin.matrix.orders.at(-1)).toEqual(['admin', 'family', 'friend', 'guest', 'oma-opa', 'crew', 'Küche Crew']);
