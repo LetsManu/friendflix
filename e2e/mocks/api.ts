@@ -537,12 +537,16 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       st.admin.conv.limit = st.admin.conv.custom ?? st.admin.conv.auto;
       if (prio === 'films' || prio === 'live' || prio === 'equal') st.admin.conv.priority = prio;
     }
+    // Live TV channel logos by hash (Task 19): any hash is a small image
+    if (p.startsWith('/api/livetv/logos/') && m === 'GET') return route.fulfill({ status: 200, contentType: 'image/png', body: pngFor(p) });
     if (p.startsWith('/api/admin/updater') && st.asAdmin) { const r = updaterRoute(st.updater, st.settings, m, p, J); if (r) return r; }
     if (p.startsWith('/api/admin/settings')) { const r = settingsRoute(st.settings, m, p, body(), J); if (r) return r; }
     if (p.startsWith('/api/admin/')) {
       // Live TV: the offer is hidden by the LIVETV_OFFER_HIDDEN setting (the "Nicht mehr anzeigen" save and the Settings switch)
       st.admin.livetv.offerHidden = st.settings.groups.flatMap((g) => g.items).find((i) => i.key === 'LIVETV_OFFER_HIDDEN')?.value === true;
-      const r = adminRoute(st.admin, m, p, sp, body(), J); if (r) return r; }
+      // the logo upload is a raw image body (Task 19, ruling 32): the route sees its type and size instead of a JSON body
+      const logoPut = m === 'PUT' && /^\/api\/admin\/livetv\/channels\/[^/]+\/logo$/.test(p);
+      const r = adminRoute(st.admin, m, p, sp, logoPut ? { contentType: req.headers()['content-type'] ?? '', bytes: req.postDataBuffer()?.length ?? 0 } : body(), J); if (r) return r; }
 
     st.unmocked.add(`${m} ${p}${u.search ? '?…' : ''}`);
     return J({ items: [] });

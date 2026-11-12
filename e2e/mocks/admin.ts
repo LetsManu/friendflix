@@ -193,8 +193,30 @@ export interface LtvFeedMock {
   /** hidden channel: withdrawn from livetv (ingest state `off`, as for a disabled source) */
   hidden?: boolean;
 }
+/**
+ * a channel of the *Kanäle* tab (Task 23, on backend adminChannels.ts `AdminChannel`): the import values and the overrides are kept apart, so
+ * the view can answer `overridden` and the reset can drop them; `shiftOv` is `epg_shift_override_min`, `base` the inherited offset
+ */
+export interface LtvChanMock {
+  id: string; sourceId: string; streamKind: 'hls' | 'ts' | 'srt'; ingest: 'pull' | 'push';
+  importName: string; importNumber: number | null; importGroup: string | null;
+  nameOv: string | null; numberOv: number | null; groupOv: string | null; logoHash: string | null; logoOv: boolean;
+  hidden: boolean; missing: boolean; epg: boolean; epgOff: boolean;
+  base: { min: number; from: 'list' | 'source' | 'none' }; shiftOv: number | null;
+  mode: 'passthrough' | 'remux' | 'transcode' | null; probeError: string | null;
+  push?: { port: number; hint: string };
+}
+export const LTV_GROUP_NAMES: Record<string, string> = { 'g-regional': 'Regional', 'g-sport': 'Sport' };
 export interface LivetvAreaMock {
   sources: LtvSourceMock[];
+  /** the *Kanäle* list (Task 23) and the query strings of its list requests */
+  channels: LtvChanMock[];
+  chQueries: string[];
+  /** the next stream test(s): the probe facts, or a refusal; `chTestBusy` answers 409 test_running once */
+  chTest: { ok: true } | { ok: false; error: string } | { status: number; error: string };
+  chTestBusy: boolean;
+  /** the raw logo uploads that reached the server */
+  logoPuts: Array<{ id: string; type: string; bytes: number }>;
   feeds: LtvFeedMock[];
   /** LIVETV_SRT_PORTS as livetv's /v1/system reports it, and the host shown to encoders (LIVETV_SRT_HOST) */
   ports: number[];
@@ -230,6 +252,29 @@ export const LTV_GROUPS: Array<{ name: string; channels: number }> = [
   ['AT | Regional', 18], ['CH | Regional', 15], ['Erwachsene', 100], ['Musik', 22], ['Filme', 30], ['Serien', 28], ['Natur & Tiere', 10],
   ['Wetter', 5], ['Bergblick Sport', 8], ['Hafenregion', 3], ['Sternwarte', 2], ['Radio-Visuell', 2],
 ].map(([name, channels]) => ({ name: name as string, channels: channels as number }));
+/** 232 channels: the provider's 1…230 (Nordlicht TV first) and the two own feeds 801 / 802 */
+function ltvChannels(): LtvChanMock[] {
+  const base = (over: Partial<LtvChanMock> & Pick<LtvChanMock, 'id' | 'importName' | 'importNumber'>): LtvChanMock => ({
+    sourceId: 'src-nordlicht', streamKind: 'hls', ingest: 'pull', importGroup: 'g-regional', nameOv: null, numberOv: null, groupOv: null, logoHash: null, logoOv: false,
+    hidden: false, missing: false, epg: true, epgOff: false, base: { min: 0, from: 'none' }, shiftOv: null, mode: null, probeError: null, ...over,
+  });
+  const named: Record<number, string> = { 1: 'Nordlicht TV', 2: 'Wetterkanal Küste', 3: 'Bergblick Sport', 4: 'Kids Insel', 5: 'Sternwarte 24' };
+  const rows = Array.from({ length: 230 }, (_, i) => base({ id: `ch-${i + 1}`, importName: named[i + 1] ?? `Regionalkanal ${i + 1}`, importNumber: i + 1 }));
+  const at = (n: number) => rows[n - 1]!;
+  Object.assign(at(1), { base: { min: 60, from: 'list' }, logoHash: 'a'.repeat(64) });
+  Object.assign(at(3), { importGroup: 'g-sport', mode: 'passthrough' });
+  Object.assign(at(4), { nameOv: 'Kinderinsel', importGroup: null, mode: 'remux' });
+  Object.assign(at(5), { epg: false });
+  Object.assign(at(7), { hidden: true });
+  Object.assign(at(8), { missing: true });
+  Object.assign(at(9), { probeError: 'timeout' });
+  Object.assign(at(10), { importGroup: 'g-sport', base: { min: -60, from: 'source' } });
+  return [
+    ...rows,
+    base({ id: 'ch-hafen', sourceId: 'src-feeds', importName: 'Hafenkanal', importNumber: 801, importGroup: null, epg: false }),
+    base({ id: 'ch-wolkenlos', sourceId: 'src-feeds', importName: 'Kanal Wolkenlos', importNumber: 802, importGroup: null, epg: false, streamKind: 'srt', ingest: 'push', push: { port: 9001, hint: 'ff-QW7RT5' } }),
+  ];
+}
 export function livetvAreaMock(): LivetvAreaMock {
   const today = (h: number, m: number) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
   return {
@@ -254,6 +299,11 @@ export function livetvAreaMock(): LivetvAreaMock {
     ingestFails: false,
     testBusy: false,
     synced: true,
+    channels: ltvChannels(),
+    chQueries: [],
+    chTest: { ok: true },
+    chTestBusy: false,
+    logoPuts: [],
     calls: [],
     seq: 0,
   };
@@ -841,6 +891,8 @@ function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: st
       return J({ channels: s.channelCount });
     }
   }
+  const kanaele = channelsRoute(a, m, p, sp, body, J);
+  if (kanaele) return kanaele;
   if (p === '/api/admin/livetv/channels' && m === 'GET') {
     const rows = a.feeds.filter((f) => f.sourceId === sp.get('source'));
     return J({ channels: rows.map(feedView), total: rows.length });
@@ -893,6 +945,126 @@ function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: st
     }
     if (!mm[2] && m === 'DELETE') { a.feeds = a.feeds.filter((x) => x.id !== f.id); return J({ ok: true, synced: f.push ? a.synced : true }); }
   }
+  return null;
+}
+/** the programme "now" of a channel at its effective offset: Nordlicht TV has one at +1 h and another at +1,5 h, nothing at other offsets */
+function ltvNow(c: LtvChanMock, min: number): { title: string; start: string; end: string } | null {
+  if (c.id !== 'ch-1') return null;
+  const at = (h: number, m: number) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
+  if (min === 60) return { title: 'Wetter am Hafen', start: at(19, 45), end: at(20, 15) };
+  if (min === 90) return { title: 'Die Leuchtturmwärter', start: at(20, 15), end: at(21, 0) };
+  return null;
+}
+/** one channel as `AdminChannel` (backend adminChannels.ts toAdmin) */
+function ltvChanView(a: LivetvAreaMock, c: LtvChanMock) {
+  const overridden: Record<string, unknown> = {};
+  if (c.nameOv !== null) overridden.name = c.importName;
+  if (c.numberOv !== null) overridden.number = c.importNumber;
+  if (c.groupOv !== null) overridden.group = c.importGroup;
+  if (c.logoOv) overridden.logo = true;
+  const shift = c.shiftOv !== null ? { min: c.shiftOv, from: 'channel' } : c.base;
+  const number = c.numberOv ?? c.importNumber;
+  return {
+    id: c.id, number, name: c.nameOv ?? c.importName, groupId: c.groupOv ?? c.importGroup, sourceId: c.sourceId, streamKind: c.streamKind, ingest: c.ingest,
+    logoHash: c.logoHash, hidden: c.hidden, missing: c.missing, epg: c.epg, now: c.epg ? ltvNow(c, shift.min) : null, mode: c.probeError ? null : c.mode, probeError: c.probeError,
+    overridden, dupNumber: !c.missing && number !== null && a.channels.some((o) => o !== c && !o.missing && (o.numberOv ?? o.importNumber) === number), epgShift: shift,
+    ...(c.push ? { push: { port: c.push.port, hint: c.push.hint, portInRange: a.ports.includes(c.push.port) } } : {}),
+  };
+}
+const LTV_FACTS = { video: { codec: 'h264', width: 1920, height: 1080, fps: 25 }, audio: { codec: 'aac', channels: 2 }, needs: 'remux' } as const;
+/**
+ * The *Kanäle* tab's routes (Task 19 as built: list with filters and 100-row pages, one channel, PATCH answering the channel, bulk, the
+ * stream test with its one-flight 409, the raw logo upload). `limit=200` is the own-feeds card's list and stays with it.
+ */
+function channelsRoute(a: LivetvAreaMock, m: string, p: string, sp: URLSearchParams, body: any, J: Reply): Promise<void> | null {
+  const byId = (id: string | undefined) => a.channels.find((c) => c.id === id);
+  if (p === '/api/admin/livetv/channels' && m === 'GET' && sp.get('limit') !== '200') {
+    a.chQueries.push(sp.toString());
+    const q = (sp.get('q') ?? '').trim().toLowerCase();
+    let rows = a.channels.filter((c) => {
+      const v = ltvChanView(a, c);
+      if (q && !(v.name.toLowerCase().includes(q) || String(v.number) === q)) return false;
+      if (sp.get('source') && c.sourceId !== sp.get('source')) return false;
+      const g = sp.get('group');
+      if (g === 'none' ? v.groupId !== null : g && v.groupId !== g) return false;
+      const st = sp.get('state');
+      if (st === 'visible' && (c.hidden || c.missing)) return false;
+      if (st === 'hidden' && (!c.hidden || c.missing)) return false;
+      if (st === 'missing' && !c.missing) return false;
+      if (sp.get('epg') === 'yes' && !c.epg) return false;
+      if (sp.get('epg') === 'no' && c.epg) return false;
+      if (sp.get('error') === '1' && c.probeError === null) return false;
+      return true;
+    }).map((c) => ltvChanView(a, c));
+    const dir = sp.get('dir') === 'desc' ? -1 : 1;
+    const key = sp.get('sort') ?? 'number';
+    rows = rows.sort((x, y) => dir * (key === 'name' ? x.name.localeCompare(y.name) : key === 'source' ? x.sourceId.localeCompare(y.sourceId) || (x.number ?? 0) - (y.number ?? 0) : (x.number ?? 1e9) - (y.number ?? 1e9)));
+    const offset = Number(sp.get('offset') ?? 0), limit = Number(sp.get('limit') ?? 100);
+    return J({ channels: rows.slice(offset, offset + limit), total: rows.length });
+  }
+  if (p === '/api/admin/livetv/channels/bulk' && m === 'POST') {
+    const ids: string[] = Array.isArray(body?.ids) ? body.ids : [];
+    const rows = ids.map(byId).filter((c): c is LtvChanMock => Boolean(c));
+    if (!ids.length || !['hide', 'show', 'group', 'renumber', 'reset', 'test'].includes(body?.action)) return J({ error: 'invalid', field: 'action' }, 400);
+    if (body.action === 'test') {
+      if (new Set(ids).size > 20) return J({ error: 'invalid', field: 'ids' }, 400);
+      if (a.chTestBusy) { a.chTestBusy = false; return J({ error: 'test_running' }, 409); }
+      return J({ results: rows.map((c) => {
+        const ok = !('status' in a.chTest) && a.chTest.ok;
+        if (ok) { c.mode = 'remux'; c.probeError = null; return { id: c.id, ok: true, needs: 'remux' }; }
+        c.mode = null; c.probeError = 'error' in a.chTest ? a.chTest.error : 'timeout';
+        return { id: c.id, ok: false, error: c.probeError };
+      }) });
+    }
+    if (body.action === 'group' && body.groupId !== null && !(body.groupId in LTV_GROUP_NAMES)) return J({ error: 'invalid', field: 'groupId' }, 400);
+    if (body.action === 'renumber') {
+      if (!Number.isInteger(body.from) || body.from < 1) return J({ error: 'invalid', field: 'from' }, 400);
+      rows.sort((x, y) => (x.numberOv ?? x.importNumber ?? 1e9) - (y.numberOv ?? y.importNumber ?? 1e9) || (x.nameOv ?? x.importName).localeCompare(y.nameOv ?? y.importName)).forEach((c, i) => { c.numberOv = body.from + i; });
+    }
+    for (const c of rows) {
+      if (body.action === 'hide') c.hidden = true;
+      else if (body.action === 'show') c.hidden = false;
+      else if (body.action === 'group') c.groupOv = body.groupId;
+      else if (body.action === 'reset') { c.nameOv = c.numberOv = c.groupOv = c.shiftOv = null; c.logoOv = false; c.epgOff = false; }
+    }
+    return J({ changed: rows.length });
+  }
+  const mm = p.match(/^\/api\/admin\/livetv\/channels\/([^/]+?)(\/test|\/logo)?$/);
+  const c = mm ? byId(mm[1]) : undefined;
+  if (!mm || !c || mm[1] === 'bulk' || mm[1] === 'order') return null;
+  if (!mm[2] && m === 'GET') return J(ltvChanView(a, c));
+  if (!mm[2] && m === 'PATCH') {
+    const b = body ?? {};
+    const bad = (field: string) => J({ error: 'invalid', field }, 400);
+    for (const k of Object.keys(b)) if (!['name', 'number', 'groupId', 'hidden', 'epg', 'epgShiftMin'].includes(k)) return bad(k);
+    if ('name' in b && b.name !== null && !(typeof b.name === 'string' && b.name.trim().length >= 1 && b.name.trim().length <= 60)) return bad('name');
+    if ('groupId' in b && b.groupId !== null && !(b.groupId in LTV_GROUP_NAMES)) return bad('groupId');
+    if ('epgShiftMin' in b && b.epgShiftMin !== null && !(Number.isInteger(b.epgShiftMin) && b.epgShiftMin % 30 === 0 && b.epgShiftMin >= -720 && b.epgShiftMin <= 840)) return bad('epgShiftMin');
+    if ('name' in b) c.nameOv = b.name === null ? null : b.name.trim();
+    if ('number' in b) c.numberOv = b.number;
+    if ('groupId' in b) c.groupOv = b.groupId;
+    if ('hidden' in b) c.hidden = b.hidden;
+    if ('epg' in b) c.epgOff = b.epg === false;
+    if ('epgShiftMin' in b) c.shiftOv = b.epgShiftMin;
+    return J(ltvChanView(a, c));
+  }
+  if (mm[2] === '/test' && m === 'POST') {
+    if (a.chTestBusy) { a.chTestBusy = false; return J({ error: 'test_running' }, 409); }
+    const t = a.chTest;
+    if ('status' in t) return J({ error: t.error }, t.status);
+    if (!t.ok) { c.mode = null; c.probeError = t.error; return J({ ok: false, video: null, audio: null, needs: null, error: t.error }); }
+    c.mode = 'remux'; c.probeError = null;
+    return J({ ok: true, ...LTV_FACTS });
+  }
+  if (mm[2] === '/logo' && m === 'PUT') {
+    const up = body as { contentType: string; bytes: number };
+    a.logoPuts.push({ id: c.id, type: up.contentType, bytes: up.bytes });
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(up.contentType)) return J({ error: 'unsupported_type' }, 415);
+    if (up.bytes > 512 * 1024) return J({ error: 'too_large' }, 413);
+    c.logoHash = 'b'.repeat(64); c.logoOv = true;
+    return J(ltvChanView(a, c));
+  }
+  if (mm[2] === '/logo' && m === 'DELETE') { c.logoOv = false; c.logoHash = c.id === 'ch-1' ? 'a'.repeat(64) : null; return J(ltvChanView(a, c)); }
   return null;
 }
 /** the one-time push answer (Task 20): stream id "ff-" + 16 characters, a 32-character passphrase, the full SRT URL */
