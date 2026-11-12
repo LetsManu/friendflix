@@ -5,6 +5,7 @@ import type { Ctx } from './ctx.js';
 import { CONV_DL_PREFIX, CONV_EXEMPT_PREFIX, within, type DownloadMark, type SessionRead } from './convexempt.js';
 import { HEVC_SESSIONS_TIMEOUT_MS, fingerprint } from './hevcenc.js';
 import { listLive } from './live.js';
+import { liveConversions } from './livetv/streams.js';
 import type { EncoderSettings, ServerSession } from './media/types.js';
 
 /**
@@ -148,7 +149,7 @@ const decided = (s: ServerSession | undefined) => Boolean(s && (s.videoDirect !=
  * What converts now, one entry per play session: the media server's converting sessions (any app; preview clips, the HEVC probe and
  * the benchmark are exempt; a preparing download's session counts as `download`), plus running download preparations from their own
  * job state (`conv:dl:<job>`, convexempt.ts; once per play session, whether the server lists it or not), plus grants whose session the
- * server does not list yet, plus portal streams the server does not list whose pbinfo record says they convert (two devices of one profile share one
+ * server does not list yet, plus live TV transcodes (`live:<channelId>`, livetv/streams.ts liveConversions), plus portal streams the server does not list whose pbinfo record says they convert (two devices of one profile share one
  * server session, so the server's list alone can undercount, as in hevcGate). With exceptUser + exceptDevice that device's own streams
  * and grants are left out (its new stream replaces them, as in hevcGate). null: the session list did not answer within 800 ms
  * (unknown). A server without a session list counts grants and portal records only. `sessions`: a request's shared read.
@@ -166,7 +167,7 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
   const list = ctx.jf.admin.transcodeSessions?.bind(ctx.jf.admin);
   const sessions = list ? await (o.sessions ?? (() => within(list, HEVC_SESSIONS_TIMEOUT_MS)))() : [];
   if (!sessions) return null;
-  const live = await listLive(ctx).catch(() => []);
+  const [live, liveTv] = await Promise.all([listLive(ctx).catch(() => []), liveConversions(ctx).catch(() => [] as ConvEntry[])]);
   const liveBy = new Map(live.map((l) => [l.playSessionId, l] as const));
   const bySession = new Map(sessions.flatMap((s) => (s.playSessionId ? [[s.playSessionId, s] as const] : [])));
 
@@ -202,6 +203,10 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
     if (out.has(key) || exempt.has(key) || decided(bySession.get(key))) continue;
     out.set(key, { kind: 'download', key, label: d.label ?? null, since: null, device: null, userId: d.user ?? null });
   }
+
+  // live TV transcodes livetv runs (Task 31), before the grants: a start's grant is bound to the same key `live:<channelId>`, so the
+  // grant loop skips it once livetv lists the stream (one entry per key, F8)
+  for (const e of liveTv) if (!out.has(e.key)) out.set(e.key, e);
 
   const mine = o.exceptUser !== undefined && o.exceptDevice !== undefined;
   const ownPending: string[] = [];

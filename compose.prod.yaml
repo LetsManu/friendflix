@@ -232,6 +232,8 @@ services:
       LIVETV_WANTED: ${LIVETV_WANTED:-}
       LIVETV_ENCODER: ${LIVETV_ENCODER:-}
       LIVETV_SRT_HOST: ${LIVETV_SRT_HOST:-}
+      LIVETV_DVR_MINUTES: ${LIVETV_DVR_MINUTES:-}
+      LIVETV_MAX_BITRATE: ${LIVETV_MAX_BITRATE:-}
       # <<< Admin -> Settings
     # root fs is read-only. PREVIEWS_PATH / DOWNLOADS_PATH: named volume by default, or a host folder
     # (e.g. /mnt/data/friendflix/downloads, must be writable by uid 1000) - see docs/downloads.md "Speicherort"

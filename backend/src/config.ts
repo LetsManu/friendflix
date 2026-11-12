@@ -207,6 +207,10 @@ export const configSchema = z.object({
   LIVETV_ENCODER: z.preprocess(emptyAsUnset, z.enum(['auto', 'qsv', 'vaapi', 'nvenc', 'software']).default('auto')),
   /** the host shown in the SRT push setup hint (spec §3.5); unset = the host of PUBLIC_URL, derived when read (livetv/channels.ts srtHost) */
   LIVETV_SRT_HOST: z.preprocess((v) => (typeof v === 'string' && !v.trim() ? undefined : v), hostSchema.optional()),
+  /** the rewind buffer of a live channel in minutes (spec §3.3, ruling 47: 0-120); read per stream start and per watch answer */
+  LIVETV_DVR_MINUTES: z.preprocess(emptyAsUnset, z.coerce.number().int().min(0).max(120).default(30)),
+  /** the highest bitrate livetv picks from a provider's HLS variants (spec §3.3), bit/s; read per stream start */
+  LIVETV_MAX_BITRATE: z.preprocess(emptyAsUnset, z.coerce.number().int().min(1_000_000).max(40_000_000).default(10_000_000)),
   /** automatic updates through the updater: off (default) or once a night at AUTO_UPDATE_TIME (server time zone TZ) */
   AUTO_UPDATE: z.preprocess(emptyAsUnset, z.enum(['off', 'nightly-window']).default('off')),
   AUTO_UPDATE_TIME: z.preprocess(emptyAsUnset, z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/).default('04:00')),
