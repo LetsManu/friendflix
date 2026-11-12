@@ -9,6 +9,7 @@ export default {
     title: 'Wiedergabe nicht möglich',
     generic: 'Wiedergabe nicht möglich.',
     maxStreams: { one: 'Maximal {n} gleichzeitiger Stream erlaubt.', other: 'Maximal {n} gleichzeitige Streams erlaubt.' },
+    serverBusy: 'Server gerade ausgelastet. Versuch es gleich noch einmal.',
     connection: 'Die Verbindung zum Server wurde unterbrochen oder das Video ist beschädigt.',
     retry: 'Erneut versuchen',
     back: 'Zurück',
@@ -55,6 +56,7 @@ export default {
     reasonSubtitles: 'Untertitel werden ins Bild eingebrannt',
     reasonHeight: 'Die Auflösung ist für dieses Gerät zu hoch',
     reasonManual: 'Du hast die Qualität selbst gewählt',
+    reasonServerBusy: 'Server ausgelastet',
     reasonOther: 'Dieses Gerät braucht eine umgewandelte Fassung',
   },
   sleep: {

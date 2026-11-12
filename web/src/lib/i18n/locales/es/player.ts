@@ -11,6 +11,7 @@ const es: Translation<typeof de> = {
     title: 'No se puede reproducir',
     generic: 'No se puede reproducir.',
     maxStreams: { one: 'Se permite como máximo {n} reproducción simultánea.', many: 'Se permiten como máximo {n} reproducciones simultáneas.', other: 'Se permiten como máximo {n} reproducciones simultáneas.' },
+    serverBusy: 'El servidor está ocupado ahora mismo. Inténtalo de nuevo en un momento.',
     connection: 'Se ha perdido la conexión con el servidor o el vídeo está dañado.',
     retry: 'Reintentar',
     back: 'Volver',
@@ -55,6 +56,7 @@ const es: Translation<typeof de> = {
     reasonSubtitles: 'Los subtítulos se incrustan en la imagen',
     reasonHeight: 'La resolución es demasiado alta para este dispositivo',
     reasonManual: 'Elegiste la calidad tú mismo',
+    reasonServerBusy: 'Servidor ocupado',
     reasonOther: 'Este dispositivo necesita una versión convertida',
   },
   sleep: {

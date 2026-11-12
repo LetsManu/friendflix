@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
 import { MOVIE, items } from './fixtures.js';
+import { HLS_INIT, HLS_PLAYLIST, HLS_SEGMENTS } from './hls.js';
 
 /** Block 17 P1: shared mocks of the player specs (cast & info, chapters, sound). */
 
@@ -47,6 +48,31 @@ export async function mockPlayer(page: Page, o: { chapters?: unknown[] } = {}) {
   await page.route('**/api/items/*/segments', (r) => r.fulfill({ json: { segments: [] } }));
   await page.route('**/api/items/*/castinfo', (r) => r.fulfill({ json: CAST }));
   await page.route('**/api/items/*/chapters', (r) => r.fulfill({ json: { supported: true, chapters: o.chapters ?? CHAPTERS } }));
+}
+
+/**
+ * /api/playback/info as the server answers when the conversion budget is full (Task 2): `copy` = the stream plan that copies the picture,
+ * with `transcodeReason: 'serverBusy'` (a real 30 s HLS stream); `busy` = `503 { error: 'server_busy' }`. `mode` is switchable while the page runs;
+ * `calls` counts the info requests.
+ */
+export async function mockServerBusy(page: Page, first: 'copy' | 'busy') {
+  await mockPlayer(page);
+  const st = { mode: first, calls: 0 };
+  await page.route('**/api/playback/info', (r) => {
+    st.calls++;
+    if (st.mode === 'busy') return r.fulfill({ status: 503, json: { error: 'server_busy' } });
+    return r.fulfill({ json: { resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: `ps${st.calls}`, roleMaxBitrate: 20_000_000, subtitles: [], audioTracks: [],
+      hlsUrl: '/media/hls/busy/out.m3u8', maxBitrate: 8_000_000, transcodeReason: 'serverBusy', delivery: { video: 'copy', videoCodec: 'h264', audio: 'copy', audioCodec: 'aac', channels: 2, why: [] } } });
+  });
+  await page.route('**/media/hls/**', (r) => {
+    const file = new URL(r.request().url()).pathname.split('/').pop()!;
+    const seg = /^s(\d+)\.m4s$/.exec(file);
+    if (file === 'out.m3u8') return r.fulfill({ contentType: 'application/vnd.apple.mpegurl', body: HLS_PLAYLIST });
+    if (file === 'init.mp4') return r.fulfill({ contentType: 'video/mp4', body: HLS_INIT });
+    if (seg) return r.fulfill({ contentType: 'video/mp4', body: HLS_SEGMENTS[Number(seg[1])]! }).catch(() => undefined);
+    return r.fulfill({ status: 404 });
+  });
+  return st;
 }
 
 /** the <video> has its real duration (metadata loaded) */

@@ -529,6 +529,13 @@
       info = got;
       timing.info(sentBps);
     } catch (e: any) {
+      // the conversion budget is full and this title needs a conversion (spec §5.5): an honest state, no backoff (a spinner or a retry loop
+      // would only add load); the viewer retries when they like
+      if (e instanceof ApiError && e.status === 503 && e.body?.error === 'server_busy') {
+        clearTimeout(retryT); reconnecting = 0; waiting = false; errNote = '';
+        errTitle = tr('player.error.title'); error = tr('player.error.serverBusy');
+        return;
+      }
       if (!(e instanceof ApiError) || e.status >= 500) { recover('network', true); return; } // server/network hiccup: retry with backoff
       reconnecting = 0;
       errNote = e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) }) : '';
@@ -749,6 +756,7 @@
 
   // ---- Chromecast session lifecycle ----
   const castErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
+    : e?.body?.error === 'server_busy' ? tr('player.error.serverBusy')
     : e?.body?.error === 'cast_forbidden' ? tr('ui.error.castForbidden') // the right was switched off meanwhile: said once, no retry
     : e?.body?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
   // (FriendFlix's own receiver is given a moment to state what it plays first: castCapsReady; `again` names the stream the TV just refused)
@@ -929,6 +937,7 @@
   let airForbidden = false;
   $: if (!airState.error) airForbidden = false;
   const airErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
+    : e?.body?.error === 'server_busy' ? tr('player.error.serverBusy')
     : e?.body?.error === 'cast_forbidden' ? tr('ui.error.castForbidden')
     : e?.body?.error === 'transcoding_disabled' ? tr('player.airplay.needsTranscode') : tr('player.airplay.failed');
   /** the subtitle index the current AirPlay token was requested with (-1 = none): the hand-off tells the engine this, not the menu's later choice */

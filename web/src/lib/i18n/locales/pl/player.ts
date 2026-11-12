@@ -16,6 +16,7 @@ const pl: Translation<typeof de> = {
       many: 'Dozwolonych maksymalnie {n} jednoczesnych strumieni.',
       other: 'Dozwolonego maksymalnie {n} jednoczesnego strumienia.',
     },
+    serverBusy: 'Serwer jest teraz zajęty. Spróbuj ponownie za chwilę.',
     connection: 'Połączenie z serwerem zostało przerwane lub wideo jest uszkodzone.',
     retry: 'Spróbuj ponownie',
     back: 'Wstecz',
@@ -70,6 +71,7 @@ const pl: Translation<typeof de> = {
     reasonSubtitles: 'Napisy są wtopione w obraz',
     reasonHeight: 'Rozdzielczość jest za wysoka dla tego urządzenia',
     reasonManual: 'Jakość wybrano ręcznie',
+    reasonServerBusy: 'Serwer zajęty',
     reasonOther: 'To urządzenie potrzebuje przekonwertowanej wersji',
   },
   sleep: {

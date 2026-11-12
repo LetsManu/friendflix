@@ -91,6 +91,13 @@ describe('prefetchPlayback / takePrefetched', () => {
     expect(api).toHaveBeenCalledTimes(2);
   });
 
+  it('503 server_busy drops the entry quietly; the player then asks itself and shows its busy state', async () => {
+    api.mockRejectedValue(Object.assign(new Error('API 503'), { status: 503, body: { error: 'server_busy' } }));
+    prefetchPlayback('m1');
+    await flush();
+    expect(takePrefetched('m1', playerBody('m1'))).toBeNull();
+  });
+
   it('a new item replaces the old entry (one in flight)', () => {
     api.mockReturnValue(new Promise(() => undefined));
     prefetchPlayback('m1'); prefetchPlayback('m2');
@@ -359,6 +366,15 @@ describe('next episode: prepareNext / releaseNext / takeNext', () => {
     await flush(); await flush();
     expect(takeNext('n1', body())).toBeNull();
     expect(fetched).toEqual([]);
+  });
+
+  it('a 503 server_busy for the next episode drops it without a warm-up or a stop; the current playback is untouched', async () => {
+    api.mockRejectedValue(Object.assign(new Error('API 503'), { status: 503, body: { error: 'server_busy' } }));
+    prepareNext('n1', body(), { warm: true });
+    await flush(); await flush();
+    expect(takeNext('n1', body())).toBeNull();
+    expect(fetched).toEqual([]);
+    expect(stops()).toHaveLength(0);
   });
 
   it('survives holdPrefetch of the episode that ends (the hold only concerns that title)', async () => {

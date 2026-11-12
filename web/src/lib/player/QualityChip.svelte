@@ -13,7 +13,7 @@
   const REASONS = {
     network: 'player.quality.reasonNetwork', remoteCap: 'player.quality.reasonRemoteCap', uploadCap: 'player.quality.reasonUploadCap', roleCap: 'player.quality.reasonRoleCap', container: 'player.quality.reasonContainer',
     videoCodec: 'player.quality.reasonVideoCodec', audioCodec: 'player.quality.reasonAudioCodec', audioTrack: 'player.quality.reasonAudioTrack', subtitles: 'player.quality.reasonSubtitles',
-    height: 'player.quality.reasonHeight', manual: 'player.quality.reasonManual', other: 'player.quality.reasonOther',
+    height: 'player.quality.reasonHeight', manual: 'player.quality.reasonManual', serverBusy: 'player.quality.reasonServerBusy', other: 'player.quality.reasonOther',
   } as const satisfies Record<string, TKey>;
   const reasonKey = (r: string): TKey => (r in REASONS ? REASONS[r as keyof typeof REASONS] : REASONS.other);
 </script>

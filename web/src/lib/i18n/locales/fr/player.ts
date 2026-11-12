@@ -11,6 +11,7 @@ const fr: Translation<typeof de> = {
     title: 'Lecture impossible',
     generic: 'Lecture impossible.',
     maxStreams: { one: '{n} flux simultané maximum autorisé.', many: '{n} flux simultanés maximum autorisés.', other: '{n} flux simultanés maximum autorisés.' },
+    serverBusy: 'Le serveur est occupé en ce moment. Réessayez dans un instant.',
     connection: 'La connexion au serveur a été interrompue ou la vidéo est endommagée.',
     retry: 'Réessayer',
     back: 'Retour',
@@ -55,6 +56,7 @@ const fr: Translation<typeof de> = {
     reasonSubtitles: 'Les sous-titres sont incrustés dans l’image',
     reasonHeight: 'La résolution est trop élevée pour cet appareil',
     reasonManual: 'Vous avez choisi la qualité vous-même',
+    reasonServerBusy: 'Serveur occupé',
     reasonOther: 'Cet appareil a besoin d’une version convertie',
   },
   sleep: {

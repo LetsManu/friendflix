@@ -11,6 +11,7 @@ const tr: Translation<typeof de> = {
     title: 'Oynatılamıyor',
     generic: 'Oynatılamıyor.',
     maxStreams: { one: 'Aynı anda en fazla {n} yayın izlenebilir.', other: 'Aynı anda en fazla {n} yayın izlenebilir.' },
+    serverBusy: 'Sunucu şu anda meşgul. Birazdan yeniden dene.',
     connection: 'Sunucuyla bağlantı kesildi ya da video bozuk.',
     retry: 'Yeniden dene',
     back: 'Geri',
@@ -55,6 +56,7 @@ const tr: Translation<typeof de> = {
     reasonSubtitles: 'Altyazılar görüntüye işlenir',
     reasonHeight: 'Çözünürlük bu cihaz için çok yüksek',
     reasonManual: 'Kaliteyi kendin seçtin',
+    reasonServerBusy: 'Sunucu meşgul',
     reasonOther: 'Bu cihazın dönüştürülmüş bir sürüme ihtiyacı var',
   },
   sleep: {
