@@ -15,7 +15,7 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
-  import { busyKeys, runAction } from '#lib/ui/action';
+  import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import { confirm } from '#lib/ui/confirm';
   import DataTable from '#lib/ui/DataTable.svelte';
@@ -28,6 +28,7 @@
   import { toast } from '#lib/ui/toast';
   import { listGroups, listSources, type GroupOption, type SourceView } from './api';
   import BulkBar from './BulkBar.svelte';
+  import { confirmOrderDiscard, guardLeave } from './discard';
   import {
     afterOrderSave, bulkChannels, channelError, emptyFilter, forOrder, failText, getChannel, kindChip, listChannels, logoSrc, ORDER_MAX, orderChannels, orderFilter, overrideHint, patchChannel, PAGE_SIZE,
     type AdminChannel, type BulkBody, type ChannelFilter, type ChannelPatch, type ChannelSort,
@@ -49,6 +50,8 @@
   /** the selection by id, with the name it had (for the bulk test's list), kept across pages and filters */
   let selected = new Map<string, string>();
   let loading = false;
+  /** the bulk bar's measured height: the list reserves it at its end (the pager stays reachable) */
+  let bulkH = 0;
   let gone = false;
 
   // ---- loading
@@ -65,7 +68,7 @@
       rows = r.channels; total = r.total; loadError = null;
     } catch (e) {
       if (mine !== seq || gone || (e instanceof DOMException && e.name === 'AbortError')) return;
-      if (rows) toast.error(failText(e)); else loadError = tr('adminLive.ch.loadFailed');
+      if (rows) toast.error(errorText(e)); else loadError = tr('adminLive.ch.loadFailed');
     } finally { if (mine === seq) loading = false; }
   }
 
@@ -115,13 +118,12 @@
   /** the one gate before anything that drops the shown order (the *Liste* radio, the source / group select, *Wiederholen*): false = the person kept ordering */
   async function leaveOk(): Promise<boolean> {
     if (view !== 'order' || !orderDirty) return true;
-    const ok = await confirm({
-      title: tr('adminLive.ch.orderDiscardTitle'), body: tr('adminLive.ch.orderDiscardBody'),
-      confirmLabel: tr('adminLive.ch.orderDiscardConfirm'), cancelLabel: tr('adminLive.ch.orderKeep'),
-    });
+    const ok = await confirmOrderDiscard();
     if (ok) orderDirty = false;
     return ok;
   }
+  // an area tab, a `?tab=` link, a sidebar link or Back: the unsaved order asks first, like the controls above
+  guardLeave(() => view === 'order' && orderDirty, () => { orderDirty = false; }, confirmOrderDiscard);
   async function setView(v: View): Promise<boolean> {
     if (v === view) return true;
     if (!(await leaveOk())) return false;
@@ -341,7 +343,7 @@
   const logoFailed = (hash: string) => { brokenLogos.add(hash); logoRev++; };
 </script>
 
-<div class="ch" aria-busy={loading || orderLoading ? 'true' : undefined}>
+<div class="ch" style="--bb-h:{bulkH}px" aria-busy={loading || orderLoading ? 'true' : undefined}>
   <div class="viewbar">
     <div class="views" role="radiogroup" aria-label={$t('adminLive.grp.view')}>
       {#each VIEWS as v (v)}
@@ -440,7 +442,7 @@
       {:else if col.key === 'kind'}
         <StatusPill tone="muted" icon="" label={$t(kindChip(row))} />
       {:else if col.key === 'mode'}
-        {#if row.probeError}<span title={channelError(row.probeError)}><StatusPill tone="err" label={$t('adminLive.ch.mode.error')} /></span>
+        {#if row.probeError}<span title={channelError(row.probeError)}><StatusPill tone="err" label={$t('adminLive.ch.mode.error')} /><span class="sr-only">{channelError(row.probeError)}</span></span>
         {:else if row.mode}<StatusPill tone="ok" label={$t(`adminLive.ch.mode.${row.mode}`)} />
         {:else}<StatusPill tone="muted" icon="" label={$t('adminLive.ch.mode.none')} />{/if}
       {:else if col.key === 'epg'}
@@ -458,7 +460,7 @@
   {/if}
 </div>
 
-<BulkBar count={view === 'list' ? selected.size : 0} {groups} busy={$busyKeys.has('ltv-ch-bulk')}
+<BulkBar count={view === 'list' ? selected.size : 0} bind:height={bulkH} {groups} busy={$busyKeys.has('ltv-ch-bulk')}
   on:clear={() => (selected = new Map())}
   on:hide={() => bulk({ ids, action: 'hide' })} on:show={() => bulk({ ids, action: 'show' })}
   on:group={(e) => bulk({ ids, action: 'group', groupId: e.detail.groupId })} on:renumber={(e) => bulk({ ids, action: 'renumber', from: e.detail.from })}
@@ -476,8 +478,9 @@
 
 <style>
   .ch { min-width: 0; }
-  /* the bulk bar floats above the bottom edge: the list always pads its end (nothing jumps when it appears), so the last rows stay reachable */
-  .ch { padding-bottom: 7rem; }
+  /* the bulk bar floats above the bottom edge: the list pads its end by the bar's measured height (--bb-h, 0 without a selection) plus the
+     bar's distance from the edge, never less than 7rem, so the pager and the last rows stay reachable and the bar's arrival moves nothing */
+  .ch { padding-bottom: max(7rem, calc(var(--bb-h, 0px) + 2rem)); }
   .chips { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; flex: 1 1 100%; }
   .chips :global(.field) { flex: 0 1 12rem; min-width: 9rem; }
   .viewbar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; margin-bottom: .75rem; }
@@ -525,6 +528,7 @@
     .dot .tx { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; font-size: .85rem; color: var(--mut); }
     .dot .pt { display: none; }
     .gsel { min-width: 0; flex: 1 1 10rem; }
+    .ch { padding-bottom: max(7rem, calc(var(--bb-h, 0px) + var(--tabbar-h, 0px) + var(--safe-bottom, 0px) + 1.6rem)); }
     .chips :global(.field) { flex: 1 1 100%; }
     /* the bar's two selects share one row: the row has the same height in both views */
     .viewbar .chips :global(.field) { flex: 1 1 9rem; }

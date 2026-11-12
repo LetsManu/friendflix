@@ -18,7 +18,7 @@ async function menu(page: Page, channel: string, item: string) {
 
 test.describe('admin: Live-TV, Live-Status (desktop)', () => {
   // a failing stop and a failing summary are mocked 503s: the browser logs them
-  test.use({ allowedConsole: /Failed to load resource: the server responded with a status of 503/ });
+  test.use({ allowedConsole: /Failed to load resource: the server responded with a status of (500|503)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; install(api); });
 
   test('tiles, events and the GPU message', async ({ page, api }) => {

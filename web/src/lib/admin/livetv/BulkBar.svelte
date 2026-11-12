@@ -22,6 +22,10 @@
   export let groups: Array<{ id: string; name: string }> = [];
   /** a bulk call is running */
   export let busy = false;
+  /** output (`bind:height`): the bar's real height in px (0 while it is not shown), so the list can reserve exactly that much room at its end */
+  export let height = 0;
+  let barH = 0;
+  $: height = count > 0 ? barH : 0;
 
   const dispatch = createEventDispatcher<{ hide: void; show: void; reset: void; test: void; clear: void; group: { groupId: string | null }; renumber: { from: number } }>();
   let prompt: 'group' | 'renumber' | null = null;
@@ -53,7 +57,7 @@
 {#if count > 0}
   <div class="bb-wrap">
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="bb frost frost-safe frost-panel" style="--fr-scrim-safe:{SCRIM_BAR}" role="group" aria-label={$t('adminLive.ch.bulk.label')} tabindex="-1"
+    <div class="bb frost frost-safe frost-panel" style="--fr-scrim-safe:{SCRIM_BAR}" role="group" aria-label={$t('adminLive.ch.bulk.label')} tabindex="-1" bind:offsetHeight={barH}
       in:barRise out:barRise={{ dir: 'out' }} on:keydown={key}>
       <div class="head">
         <span class="sel" data-selected>{$t('adminLive.ch.bulk.selected', { n: count })}</span>

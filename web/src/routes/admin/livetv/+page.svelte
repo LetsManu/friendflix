@@ -133,8 +133,7 @@
     {:else if tab === 'channels'}<ChannelsTab />
     {:else if tab === 'groups'}<GroupsTab />
     {:else if tab === 'guide'}<GuideTab />
-    {:else if tab === 'status'}<StatusTab {s} stopping={ph === 'stopping'} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />
-    {:else}<AdminCard><p class="soon">{$t('adminLive.tabs.soon')}</p></AdminCard>{/if}
+    {:else}<StatusTab {s} stopping={ph === 'stopping'} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />{/if}
   </div>
 {:else}
   <EnableCard {s} {mode} phase={ph} {refused} {hideError} pending={$busyKeys.has('livetv:enable')} hiding={$busyKeys.has('livetv:hide')} on:enable={enable} on:hide={hide} />
@@ -146,7 +145,6 @@
   .state { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; min-height: 3rem; }
   .state p { margin: 0; flex: 1 1 14rem; }
   .sk { display: grid; gap: .8rem; min-height: 6rem; }
-  .soon { margin: 0; }
   #ltv-panel { outline: none; min-width: 0; }
 
   /* the area's tabs: underlined labels next to the sidebar; on a phone a scrolling row of chips (spec §9) */
