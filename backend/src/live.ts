@@ -20,7 +20,8 @@ export interface Live {
   isPaused: boolean;
   playSessionId: string;
   updatedAt: number;
-  source: 'portal' | 'jellyfin';
+  /** 'livetv': a live TV view (livetv/tokens.ts; itemId 'ch:<channelId>', play session 'ltv-<24 hex>', title = channel name) */
+  source: 'portal' | 'jellyfin' | 'livetv';
   /** Block 22 (portal streams): direct / remux / transcode as counted in play_daily, the server's reason, the FriendFlix device */
   playMethod?: 'direct' | 'remux' | 'transcode';
   transcodeReason?: TranscodeReason;

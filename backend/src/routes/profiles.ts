@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type pg from 'pg';
 import { audit, auditInTx } from '../audit.js';
 import { revokeCasts } from '../cast.js';
+import { revokeLiveTokens } from '../livetv/tokens.js';
 import { secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { hashPin, verifyPin } from '../crypto.js';
@@ -273,6 +274,9 @@ export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
       // the new session is saved and the old sid is on its grace: a KV error here must not turn the switch into a 500 (logout 15 s later)
       try { await revokeCasts(ctx, req.user!.id, req.session!.deviceId!); }
       catch { req.log.warn({ userId: req.user!.id }, 'profile select: revoking the device casts failed'); } // no token / key in the log
+      // live TV tokens belong to one profile as well (spec §7.1); the same rule, separately so one failure does not keep the other
+      try { await revokeLiveTokens(ctx, req.user!.id, req.session!.deviceId!); }
+      catch { req.log.warn({ userId: req.user!.id }, 'profile select: revoking the device live tokens failed'); } // no token / key in the log
     }
     forgetAuth(oldSid);
     renamePeerSid(req.user!.id, oldSid, newSid);
