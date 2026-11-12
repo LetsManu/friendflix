@@ -336,7 +336,14 @@ An AirPlay token can carry one text subtitle inside the stream (Jellyfin only). 
 - **Image subtitles** are never offered; the backend ignores a track that is not a text subtitle of the source.
 - **Limits unchanged:** address pin, single-title scope, idle expiry, cap and revoke apply as for any AirPlay token. The token is still never logged. See [cast.md](cast.md#airplay-untertitel).
 
-Continuous AirPlay (several episodes in one token) is not available; no such token exists.
+### Continuous AirPlay token
+
+With the admin switch `CAST_AIRPLAY_CONTINUOUS` on (off by default; off answers `400 continuous_off` and no such token is minted), an AirPlay token can cover **up to three episodes** of the same account and profile ([cast.md](cast.md#durchgehendes-airplay-experimentell-standardmäßig-aus)).
+
+- **Tuple scope.** Each listed item is allowed only with its own media source and play session; subtitle paths and the no-burn-in guard use that item's subtitle index. A path for any other item, source or index is refused. The token still counts as one stream, and the address pin, two-address window, idle expiry, cap and revoke paths are those of any AirPlay token.
+- **Short segment URIs.** The joined playlist (`joined/master.m3u8`) refers to segments as `../s/<part>/<n>.ts`. Only the gateway expands them, from the per-item query stored with the token, and the expanded URI must pass the same token-path check as every other cast URI. If any part fails that check, the whole joined stream is refused. The receiver never sees an item id, media source or `api_key`.
+- **The internal progress call.** The gateway reports which episode is being fetched to the backend with `POST /internal/cast/progress` (token hash, item id, position). It is an internal route between gateway and backend, not reachable through the public proxy, and it cannot mint tokens or fetch media; the backend checks the item against the token's tuple before it writes a start, progress or stop for the token's own account, profile and device.
+- **Nothing logged.** Tokens stay hashed at rest and are never logged, nor are the expanded segment URIs or item ids.
 
 ## Cast receiver
 
