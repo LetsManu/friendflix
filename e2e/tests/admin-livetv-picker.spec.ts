@@ -142,7 +142,9 @@ test.describe('admin: Live-TV, Gruppenauswahl und Import (desktop)', () => {
     await page.goto('/admin/livetv');
     const c = card(page, 'Nordlicht Paket');
     await expect(c.locator('[data-skipped]')).toHaveText('Ohne 6 Gruppen · Auswahl ändern');
-    await c.getByRole('button', { name: 'Auswahl ändern' }).click();
+    const change = c.getByRole('button', { name: 'Auswahl ändern' });
+    expect((await change.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await change.click();
     const dlg = page.getByRole('dialog', { name: 'Quelle bearbeiten' });
     // Prüfen ran at once, for the stored list
     await expect(dlg.locator('[data-picker]')).toBeVisible();
@@ -161,15 +163,38 @@ test.describe('admin: Live-TV, Gruppenauswahl und Import (desktop)', () => {
     await expect(card(page, 'Nordlicht Paket').locator('[data-skipped]')).toHaveText('Ohne 5 Gruppen · Auswahl ändern');
   });
 
-  test('a skipped group the list no longer has is dropped', async ({ page, api }) => {
+  test('a skipped group the list does not have stays skipped: a note, not dirty, an explicit save still sends it', async ({ page, api }) => {
     api.admin.livetv.area.sources[0]!.skipGroups = ['Erwachsene', 'Alte Gruppe'];
     await page.goto('/admin/livetv');
     await card(page, 'Nordlicht Paket').getByRole('button', { name: 'Auswahl ändern' }).click();
     const dlg = page.getByRole('dialog', { name: 'Quelle bearbeiten' });
     await expect(dlg.locator('[data-picker-total]')).toHaveText('312 von 412 Sendern werden übernommen');
+    await expect(dlg.locator('[data-picker-kept]')).toHaveText('1 ausgeschlossene Gruppe ist in dieser Liste gerade nicht dabei – sie bleibt ausgeschlossen.');
+    // untouched: not dirty, so Abbrechen closes without asking and nothing is written
+    await dlg.getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(dlg).toHaveCount(0);
+    expect(writes(api, 'PATCH', /\/sources\//)).toHaveLength(0);
+    // a change of what is visible saves the union
+    await card(page, 'Nordlicht Paket').getByRole('button', { name: 'Auswahl ändern' }).click();
+    await expect(dlg.locator('[data-picker]')).toBeVisible();
+    await row(dlg, 'Musik · 22 Sender').uncheck();
     await dlg.getByRole('button', { name: 'Speichern' }).click();
     await expect(dlg).toHaveCount(0);
-    expect(writes(api, 'PATCH', /\/sources\/src-nordlicht$/)[0]!.body).toEqual({ skipGroups: ['Erwachsene'] });
+    expect(writes(api, 'PATCH', /\/sources\/src-nordlicht$/)[0]!.body).toEqual({ skipGroups: ['Erwachsene', 'Musik', 'Alte Gruppe'] });
+  });
+
+  test('an untouched selection sends no skipGroups, so the kept name stays as stored', async ({ page, api }) => {
+    api.admin.livetv.area.sources[0]!.skipGroups = ['Erwachsene', 'Alte Gruppe'];
+    await page.goto('/admin/livetv');
+    await card(page, 'Nordlicht Paket').getByRole('button', { name: 'Auswahl ändern' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Quelle bearbeiten' });
+    await expect(dlg.locator('[data-picker-kept]')).toBeVisible();
+    // a rename makes the sheet dirty; the unchanged selection sends no skipGroups, the stored list stays whole on the server
+    await dlg.getByRole('textbox', { name: 'Name', exact: true }).fill('Nordlicht Neu');
+    await dlg.getByRole('button', { name: 'Speichern' }).click();
+    await expect(dlg).toHaveCount(0);
+    expect(writes(api, 'PATCH', /\/sources\/src-nordlicht$/)[0]!.body).toEqual({ name: 'Nordlicht Neu' });
+    expect(api.admin.livetv.area.sources[0]!.skipGroups).toEqual(['Erwachsene', 'Alte Gruppe']);
   });
 
   test('a card without skipped groups shows no selection line', async ({ page }) => {
@@ -189,6 +214,20 @@ test.describe('admin: Live-TV, Gruppenauswahl und Import (desktop)', () => {
 
   test.describe('refusals', () => {
     test.use({ allowedConsole: /status of (422|409)/ }); // the mocked refusals
+
+    test('a failed new Prüfen keeps the result, the picker and the selection, and says why', async ({ page, api }) => {
+      const dlg = await checked(page);
+      await row(dlg, 'Erwachsene · 100 Sender').uncheck();
+      const before = await dlg.locator('.foot').boundingBox();
+      api.admin.livetv.area.testBusy = true;
+      await dlg.getByRole('button', { name: 'Prüfen' }).click();
+      await expect(dlg.getByRole('alert')).toContainText('Eine Prüfung läuft gerade schon.');
+      await expect(dlg.locator('[data-picker]')).toBeVisible();
+      await expect(dlg.getByRole('checkbox')).toHaveCount(18);
+      await expect(row(dlg, 'Erwachsene · 100 Sender')).not.toBeChecked();
+      await expect(dlg.locator('[data-picker-total]')).toHaveText('312 von 412 Sendern werden übernommen');
+      expect(await dlg.locator('.foot').boundingBox()).toEqual(before);
+    });
 
     test('Prüfen refusals say what is wrong: too big, or another check running', async ({ page, api }) => {
       api.admin.livetv.area.test = { error: 'too_big' };

@@ -31,7 +31,7 @@
   import { confirmDiscard, guardLeave } from './discard';
   import GroupPicker from './GroupPicker.svelte';
   import ImportOptions from './ImportOptions.svelte';
-  import { initPicker, skipList, type PickerState } from './picker';
+  import { initPicker, pickChanged as pickDiffers, saveList, type PickerState } from './picker';
   import SecretInput from './SecretInput.svelte';
   import { sourceError, urlShapeOk } from './sources';
 
@@ -63,13 +63,12 @@
   /** the first number as a number; null while the field holds something else than a whole number in range */
   $: baseValue = /^\d+$/.test(String(numberBase).trim()) && Number(numberBase) >= BASE_MIN && Number(numberBase) <= BASE_MAX ? Number(numberBase) : null;
   const start = JSON.stringify({ name, allowLan, refresh, userAgent, maxStreams, numbering, numberBase: String(numberBase), logoPref, epgShiftMin });
-  /** a set of group names as one comparable text */
-  const sigOf = (names: readonly string[]) => [...names].sort().join('\u0000');
   // the picker: made from each good *Prüfen*; its selection counts only while the result is current
   let picker: PickerState | null = null;
   $: pickerOn = Boolean(picker) && tested;
-  $: skipNow = pickerOn && picker ? skipList(picker) : null;
-  $: pickChanged = skipNow !== null && sigOf(skipNow) !== sigOf(source?.skipGroups ?? []);
+  // what a save sends: the visible unticked groups plus the stored names this list does not have (kept, never a change by themselves)
+  $: skipNow = pickerOn && picker ? saveList(picker) : null;
+  $: pickChanged = pickerOn && picker ? pickDiffers(picker, source?.skipGroups ?? []) : false;
   $: dirty = Boolean(url || epgUrl || epgRemove) || pickChanged
     || JSON.stringify({ name, allowLan, refresh, userAgent, maxStreams, numbering, numberBase: String(numberBase), logoPref, epgShiftMin }) !== start;
 
@@ -109,11 +108,11 @@
         ...(source ? { sourceId: source.id } : {}),
       });
       testedSig = mySig;
-      // a new result keeps the selection made so far (names the list no longer has drop out)
-      picker = initPicker(test.groups, picker ? skipList(picker) : source?.skipGroups ?? []);
+      // a new result keeps the selection made so far (names the list does not have stay in `kept`)
+      picker = initPicker(test.groups, picker ? saveList(picker) : source?.skipGroups ?? []);
       if (autoTest && !shownOnce) { shownOnce = true; void tick().then(() => pickerBox?.scrollIntoView({ block: 'start' })); }
     } catch (e) {
-      test = null; testedSig = '';
+      // the previous result and the picker stay (the selection too); only the error line is new
       // 400 names the field (`invalid`: not a URL / wrong scheme; `refused`: a single-label host or an internal address; `lan_required`:
       // *Heimnetz erlauben* would allow it); 409 `test_running`: another check of this admin still runs (Prüfen stays usable)
       const c = code(e), field = e instanceof ApiError && e.status === 400 ? e.body?.field : null;

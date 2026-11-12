@@ -80,6 +80,8 @@
   .state :global(svg) { flex: none; margin-top: .1rem; color: var(--err); }
   .state.failed { font-weight: 600; }
   .picked { display: flex; flex-wrap: wrap; align-items: center; gap: 0 .3rem; font-size: .92rem; }
+  /* the same 44 px target the picker's buttons have, on a fine pointer too */
+  .picked :global(.ui-btn) { min-height: 44px; }
   .pending { font-size: .9rem; }
   .pending a { display: inline-flex; gap: .4rem; align-items: center; min-height: 44px; color: inherit; text-decoration: underline; text-underline-offset: 3px; }
   .row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .6rem 1rem; margin-top: .7rem; }
