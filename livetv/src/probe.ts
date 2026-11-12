@@ -140,6 +140,9 @@ async function within<T>(p: Promise<T>, ms: number): Promise<T> {
 export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDeps }): Promise<ProbeResult> {
   const deadline = Date.now() + PROBE_BUDGET_MS;
   const left = () => Math.max(1, deadline - Date.now());
+  // every response body opened here is closed when the probe ends, read or not (an init segment whose media segment failed, a
+  // body ffprobe never asked for)
+  const opened: AsyncIterable<Uint8Array>[] = [];
   try {
     // `{ push }` reads livetv's own ingest (Task 29); until then there is nothing to probe
     if ('push' in input) return fail('invalid');
@@ -152,16 +155,23 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
       const ip = await within(resolveChecked(c.url.hostname, input.allowLan, deps.guard), left());
       result = await deps.run('ffprobe', srtArgs(ipLiteralUrl(c.url, ip)), { timeoutMs: left() });
     } else {
-      const get = (url: string, maxBytes: number) => guardedFetch(url, { allowLan: input.allowLan, userAgent: input.userAgent, timeoutMs: left(), maxBytes }, deps.guard);
+      const get = async (url: string, maxBytes: number) => {
+        const res = await guardedFetch(url, { allowLan: input.allowLan, userAgent: input.userAgent, timeoutMs: left(), maxBytes }, deps.guard);
+        opened.push(res.body);
+        return res;
+      };
       let stdin: AsyncIterable<Uint8Array>;
       if (input.kind === 'hls') {
-        let base = c.url.href;
-        let media = await readText((await get(base, PLAYLIST_MAX_BYTES)).body);
+        // relative references resolve against the URL a playlist was finally served from (after redirects)
+        const master = await get(c.url.href, PLAYLIST_MAX_BYTES);
+        let base = master.url;
+        let media = await readText(master.body);
         if (!media.trimStart().startsWith('#EXTM3U')) return fail('invalid');
         const variant = pickVariant(media, DEFAULT_MAX_BITRATE);
         if (variant) {
-          base = resolveUri(variant.uri, base);
-          media = await readText((await get(base, PLAYLIST_MAX_BYTES)).body);
+          const list = await get(resolveUri(variant.uri, base), PLAYLIST_MAX_BYTES);
+          base = list.url;
+          media = await readText(list.body);
           if (!media.trimStart().startsWith('#EXTM3U')) return fail('invalid');
         }
         const lines = media.split(/\r?\n/).map((l) => l.trim());
@@ -192,5 +202,7 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
     if (e instanceof ProbeFail) return fail(e.code);
     if (e instanceof FetchError) return fail(fromFetch(e.code));
     return fail('invalid');
+  } finally {
+    for (const b of opened) void Promise.resolve(b[Symbol.asyncIterator]().return?.()).catch(() => {});
   }
 }

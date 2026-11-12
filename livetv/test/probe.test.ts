@@ -111,6 +111,40 @@ describe('probe', () => {
     expect(run.calls[0]!.stdin).toBe(6000);
   });
 
+  it('HLS behind a redirect: relative variant and segment URIs resolve against the redirected URL', async () => {
+    const s = await serve({
+      '/get/nordlicht.m3u8': (res) => { res.writeHead(302, { location: '/cdn/edge7/nordlicht/master.m3u8?sig=abc' }); res.end(); },
+      '/cdn/edge7/nordlicht/master.m3u8': (res) => res.end(MASTER),
+      '/cdn/edge7/nordlicht/fhd/index.m3u8': (res) => { res.writeHead(302, { location: '/cdn/edge9/fhd/live.m3u8' }); res.end(); },
+      '/cdn/edge9/fhd/live.m3u8': (res) => res.end(MEDIA),
+      '/cdn/edge9/fhd/seg-812.ts': (res) => res.end(Buffer.alloc(1000)),
+    });
+    const run = fakeRun(fixture('ffprobe-h264-aac.json'));
+    const r = await probe({ url: `http://iptv.example.com:${s.port}/get/nordlicht.m3u8`, kind: 'hls', allowLan: false }, { run, guard: guard() });
+    expect(r).toMatchObject({ ok: true, needs: 'passthrough' });
+    expect(s.paths).toEqual([
+      '/get/nordlicht.m3u8', '/cdn/edge7/nordlicht/master.m3u8?sig=abc', '/cdn/edge7/nordlicht/fhd/index.m3u8', '/cdn/edge9/fhd/live.m3u8', '/cdn/edge9/fhd/seg-812.ts?sig=1',
+    ]);
+    expect(run.calls[0]!.stdin).toBe(1000);
+  });
+
+  it('HLS: an init segment whose media segment fails is closed at once, not at the timeout', async () => {
+    let initClosed: () => void = () => {};
+    const closed = new Promise<void>((r) => { initClosed = r; });
+    const s = await serve({
+      '/m.m3u8': (res) => res.end('#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg-1.m4s\n'),
+      // the init segment never ends: only closing it from our side ends the response
+      '/init.mp4': (res) => { res.on('close', () => initClosed()); res.writeHead(200); res.write(Buffer.alloc(100)); },
+      '/seg-1.m4s': (res) => { res.statusCode = 403; res.end(); },
+    });
+    const run = fakeRun(fixture('ffprobe-h264-aac.json'));
+    const t = Date.now();
+    expect((await probe({ url: `http://iptv.example.com:${s.port}/m.m3u8`, kind: 'hls', allowLan: false }, { run, guard: guard() })).error).toBe('denied');
+    await closed;
+    expect(Date.now() - t).toBeLessThan(3_000);
+    expect(run.calls).toHaveLength(0);
+  });
+
   it('HLS failures answer fixed codes: denied, unreachable, not a playlist, no segment', async () => {
     const s = await serve({
       '/denied.m3u8': (res) => { res.statusCode = 403; res.end(); },

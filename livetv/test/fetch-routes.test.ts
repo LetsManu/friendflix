@@ -28,7 +28,24 @@ const providerRoutes: Record<string, (res: http.ServerResponse) => void> = {
   '/logo.svg': (res) => { res.setHeader('content-type', 'image/png'); res.end('<svg xmlns="http://www.w3.org/2000/svg"/>'); },
   '/huge.png': (res) => res.end(Buffer.concat([PNG, Buffer.alloc(600 * 1024)])),
   '/stream.ts': (res) => res.end(Buffer.alloc(1000, 0x47)),
+  // a guide that never ends and holds nothing for the window: the route has nothing to write while it downloads
+  '/endless.xml': (res) => {
+    res.writeHead(200);
+    res.write('<tv>');
+    const t = setInterval(() => res.write('<programme start="20200101200000" stop="20200101210000" channel="fremd"><title>Wetter am Hafen</title></programme>'), 20);
+    res.on('close', () => { clearInterval(t); endlessDone(); });
+    endlessStarted();
+  },
+  '/many-groups.m3u': (res) => {
+    const out = ['#EXTM3U'];
+    for (let i = 0; i <= 2000; i++) out.push(`#EXTINF:-1 group-title="Gruppe ${i}",Kanal Wolkenlos ${i}`, `http://iptv.example.com/live/${i}.ts`);
+    res.end(out.join('\n'));
+  },
 };
+let endlessStarted: () => void = () => {};
+let endlessDone: () => void = () => {};
+const endlessOpened = new Promise<void>((r) => { endlessStarted = r; });
+const endlessClosed = new Promise<void>((r) => { endlessDone = r; });
 const seen: Array<{ path: string; ua?: string }> = [];
 const lookups: string[] = [];
 const guard: GuardDeps = { own: [], lookup: async (h) => { lookups.push(h); return h === 'lan.example.com' ? ['192.168.1.20'] : ['192.0.2.40']; }, dial: () => '127.0.0.1' };
@@ -64,9 +81,9 @@ afterAll(async () => {
 });
 afterEach(() => { seen.length = 0; runCalls.length = 0; });
 
-const post = (path: string, body: unknown) => {
+const post = (path: string, body: unknown, signal?: AbortSignal) => {
   const s = JSON.stringify(body);
-  return fetch(base + path, { method: 'POST', body: s, headers: { ...sign(key, 'POST', path, s), 'content-type': 'application/json' } });
+  return fetch(base + path, { method: 'POST', body: s, headers: { ...sign(key, 'POST', path, s), 'content-type': 'application/json' }, signal });
 };
 const p = (path: string) => `http://iptv.example.com:${port}${path}`;
 const ndjson = async (r: Response) => (await r.text()).split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
@@ -87,6 +104,7 @@ describe('POST /v1/fetch/m3u', () => {
   it('provider and fetch failures are 422 with a fixed code, never the URL', async () => {
     const cases: Array<[unknown, string]> = [
       [{ url: p('/html.m3u'), allowLan: false }, 'not_m3u'],
+      [{ url: p('/many-groups.m3u'), allowLan: false }, 'too_big'],
       [{ url: p('/missing.m3u'), allowLan: false }, 'not_found'],
       [{ url: p('/big.m3u'), allowLan: false }, 'too_big'],
       [{ url: `http://lan.example.com:${port}/get.php`, allowLan: false }, 'address_refused'],
@@ -125,15 +143,34 @@ describe('POST /v1/fetch/xmltv', () => {
     expect(r.status).toBe(200);
     expect(r.headers.get('content-type')).toBe('application/x-ndjson');
     const lines = await ndjson(r);
-    expect(lines.map((l) => l.t)).toEqual(['channel', 'prog', 'prog']);
+    expect(lines.map((l) => l.t)).toEqual(['channel', 'prog', 'prog', 'end']);
     expect(lines[1]).toMatchObject({ ch: 'nordlicht.de', title: 'Die Leuchtturmwärter', start: Date.UTC(2026, 10, 11, 19, 15) });
   });
 
-  it('a broken file ends with an error line after the items already sent', async () => {
+  it('a complete stream ends with the end line and its counts', async () => {
+    const lines = await ndjson(await post('/v1/fetch/xmltv', { url: p('/epg.xml.gz'), allowLan: false, ...window }));
+    expect(lines.at(-1)).toEqual({ t: 'end', programmes: 4, channels: 3 });
+    expect(lines.filter((l) => l.t === 'end')).toHaveLength(1);
+    expect(lines.some((l) => l.t === 'error')).toBe(false);
+  });
+
+  it('a broken file ends with an error line after the items already sent, and never an end line', async () => {
     const lines = await ndjson(await post('/v1/fetch/xmltv', { url: p('/broken.xml'), allowLan: false, ...window }));
     expect(lines.length).toBeGreaterThan(1);
     expect(lines.at(-1)).toEqual({ t: 'error', code: 'invalid' });
     expect(lines.filter((l) => l.t === 'error')).toHaveLength(1);
+    expect(lines.some((l) => l.t === 'end')).toBe(false);
+  });
+
+  it('a caller that goes away stops the provider download at once, even while nothing is written', async () => {
+    const t = Date.now();
+    const ac = new AbortController();
+    const r = await post('/v1/fetch/xmltv', { url: p('/endless.xml'), allowLan: false, ...window }, ac.signal);
+    expect(r.status).toBe(200);
+    await endlessOpened;
+    ac.abort();
+    await endlessClosed;
+    expect(Date.now() - t).toBeLessThan(5_000);
   });
 
   it('a failure before the first item answers the same way: 200 and a single error line', async () => {

@@ -32,7 +32,7 @@ export interface M3uResult {
 }
 
 export class M3uError extends Error {
-  constructor(readonly code: 'not_m3u') {
+  constructor(readonly code: 'not_m3u' | 'too_big') {
     super(code);
     this.name = 'M3uError';
   }
@@ -40,6 +40,12 @@ export class M3uError extends Error {
 
 export const MAX_LINE = 8 * 1024;
 export const MAX_ENTRIES = 20_000;
+/** more distinct live groups than this (the bound of `skipGroups`) ends the parse with `too_big` */
+export const MAX_GROUPS = 2_000;
+/** more live entries listed than this (skipped groups included) ends the parse with `too_big` */
+export const MAX_LISTED = 200_000;
+/** what a user agent may be (it becomes an HTTP header): printable ASCII, 1–512 characters; the routes check the same */
+export const USER_AGENT_RE = /^[ -~]{1,512}$/;
 const SHIFT_MIN_H = -12;
 const SHIFT_MAX_H = 14;
 
@@ -53,11 +59,12 @@ export function parseShift(raw: string | undefined): number | undefined {
 }
 
 /**
- * A channel name for matching: lowercase, NFKD without combining marks, only letters and digits, a trailing `hd|fhd|uhd|4k`
- * dropped. Copied verbatim into the backend's `epg.ts` (Task 17), pinned by `test-vectors/livetv-normname.json`.
+ * A channel name for matching: NFKD without combining marks, then lowercase (so compatibility letters such as `ℌ` fold too),
+ * only letters and digits, a trailing `hd|fhd|uhd|4k` dropped. Copied verbatim into the backend's `epg.ts` (Task 17), pinned by
+ * `test-vectors/livetv-normname.json`.
  */
 export function normName(s: string): string {
-  return s.toLowerCase().normalize('NFKD').replace(/\p{M}/gu, '').replace(/[^\p{L}\p{N}]/gu, '').replace(/(?:fhd|uhd|hd|4k)$/, '');
+  return s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '').replace(/(?:fhd|uhd|hd|4k)$/, '');
 }
 
 /**
@@ -145,6 +152,7 @@ type Pending = { info?: Map<string, string>; title?: string; group?: string; use
  * 8 KB anywhere in the entry, a URL without `#EXTINF`, a URL that is not http/https/srt, no name. VOD (§3.4) is counted apart.
  * Every other entry is live: it counts in `listed`, `groups` and `pos`, gets its key (duplicates `:2`, `:3`, counted over all live
  * entries so a selection never changes a key); then entries of `skipGroups` are dropped, and past `max` kept ones `overLimit`.
+ * More than MAX_LISTED live entries or MAX_GROUPS distinct groups (counted before skipping) → `too_big`.
  */
 export async function parseM3u(lines: AsyncIterable<string>, o: { max: number; skipGroups?: ReadonlySet<string> }): Promise<M3uResult> {
   const entries: M3uEntry[] = [];
@@ -172,9 +180,14 @@ export async function parseM3u(lines: AsyncIterable<string>, o: { max: number; s
     const name = cur.title || tvgName;
     if (!name) { skipped.invalid++; return; }
     if (VOD.test(url.pathname)) { skipped.vod++; return; }
+    // the work per list is bounded before any selection applies: the keys and groups kept here never grow past these limits
+    if (listed >= MAX_LISTED) throw new M3uError('too_big');
     const pos = listed++;
     const group = nonEmpty(cur.info.get('group-title')) ?? nonEmpty(cur.group);
-    if (group !== undefined) groups.set(group, (groups.get(group) ?? 0) + 1);
+    if (group !== undefined) {
+      if (!groups.has(group) && groups.size >= MAX_GROUPS) throw new M3uError('too_big');
+      groups.set(group, (groups.get(group) ?? 0) + 1);
+    }
     const tvgId = nonEmpty(cur.info.get('tvg-id'));
     const base = entryKey({ tvgId, name, url: url.href });
     const n = (seenKeys.get(base) ?? 0) + 1;
@@ -217,7 +230,9 @@ export async function parseM3u(lines: AsyncIterable<string>, o: { max: number; s
     } else if (line.startsWith('#EXTGRP:')) {
       p.group = line.slice(8).trim();
     } else if (/^#EXTVLCOPT:http-user-agent=/i.test(line)) {
-      p.userAgent = nonEmpty(line.slice(line.indexOf('=') + 1).trim());
+      // only a value the routes would accept as a user agent; anything else is dropped (the entry stays)
+      const ua = line.slice(line.indexOf('=') + 1).trim();
+      p.userAgent = USER_AGENT_RE.test(ua) ? ua : undefined;
     }
   }
   if (!header) throw new M3uError('not_m3u');

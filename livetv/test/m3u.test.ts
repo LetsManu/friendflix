@@ -181,6 +181,46 @@ describe('normName', () => {
     expect(normName('Die Leuchtturmwärter')).toBe('dieleuchtturmwarter');
     expect(normName('Kinderinsel ①')).toBe('kinderinsel1');
   });
+
+  it('NFKD comes before lowercasing: compatibility letters and umlauts fold', () => {
+    expect(normName('ℌafenkanal')).toBe('hafenkanal');
+    expect(normName('ℌ')).toBe('h');
+    expect(normName('Ärzte TV')).toBe('arztetv');
+    expect(normName('ÄRZTE TV HD')).toBe('arztetv');
+  });
+});
+
+describe('parseM3u limits', () => {
+  const codeOf = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => (e instanceof M3uError ? e.code : `other:${String(e)}`));
+  const list = (n: number, group: (i: number) => string) => {
+    const out = ['#EXTM3U'];
+    for (let i = 0; i < n; i++) out.push(`#EXTINF:-1 group-title="${group(i)}",K${i}`, `http://iptv.example.com/${i}.ts`);
+    return out.join('\n');
+  };
+
+  it('more than 2 000 distinct groups → too_big (2 000 are fine), counted before skipping', async () => {
+    expect(await codeOf(parse(list(2_000, (i) => `Gruppe ${i}`)))).toBe('ok');
+    expect(await codeOf(parse(list(2_001, (i) => `Gruppe ${i}`)))).toBe('too_big');
+    const all = new Set(Array.from({ length: 2_001 }, (_, i) => `Gruppe ${i}`));
+    expect(await codeOf(parse(list(2_001, (i) => `Gruppe ${i}`), { skipGroups: all }))).toBe('too_big');
+  });
+
+  it('more than 200 000 live entries listed → too_big (200 000 are fine), skipped ones included', async () => {
+    const skip = { skipGroups: new Set(['Gesperrt']) };
+    const at = await parse(list(200_000, () => 'Gesperrt'), skip);
+    expect(at.listed).toBe(200_000);
+    expect(at.entries).toHaveLength(0);
+    expect(await codeOf(parse(list(200_001, () => 'Gesperrt'), skip))).toBe('too_big');
+  }, 60_000);
+});
+
+describe('#EXTVLCOPT user agent', () => {
+  it('kept only when it is printable ASCII of 1–512 characters; the entry stays either way', async () => {
+    const entry = (ua: string) => `#EXTINF:-1,Hafenkanal\n#EXTVLCOPT:http-user-agent=${ua}\nhttp://iptv.example.com/live/2.ts\n`;
+    const r = await parse(`#EXTM3U\n${entry('Hafenkanal-Box/1.0')}${entry('Bóx/1.0')}${entry('x'.repeat(513))}${entry('a\tb')}${entry('')}`);
+    expect(r.entries.map((e) => e.userAgent)).toEqual(['Hafenkanal-Box/1.0', undefined, undefined, undefined, undefined]);
+    expect(r.entries[1]).not.toHaveProperty('userAgent');
+  });
 });
 
 describe('splitLines', () => {

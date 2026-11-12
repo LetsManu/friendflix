@@ -1,18 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { FetchError, guardedFetch, type GuardDeps } from '../fetch.js';
+import { FetchError, guardedFetch, type FetchErrorCode, type GuardDeps } from '../fetch.js';
 import { LogoError, fetchLogo } from '../logo.js';
-import { M3uError, MAX_ENTRIES, parseM3u, splitLines, type M3uResult } from '../m3u.js';
+import { M3uError, MAX_ENTRIES, USER_AGENT_RE, parseM3u, splitLines, type M3uResult } from '../m3u.js';
 import { probe, type StreamInput } from '../probe.js';
 import type { Run } from '../run.js';
 import type { Answer, Route } from '../server.js';
-import { XmltvError, parseXmltv } from '../xmltv.js';
+import { XmltvError, parseXmltv, type XmlItem, type XmltvErrorCode } from '../xmltv.js';
 
 /**
  * The fetch routes of spec §3.2: `POST /v1/fetch/m3u`, `/v1/fetch/xmltv`, `/v1/fetch/logo` and `/v1/probe` (all signed; the
  * signature is checked by server.ts before a route runs). Bodies are checked by hand (`400 { error: 'invalid', field }`, never
  * echoing input); provider and fetch failures answer `422 { error: code }` with a fixed code; XMLTV streams NDJSON and reports any
- * failure as its last line `{ "t": "error", "code" }` (always after a 200 head, also when nothing was sent yet). Nothing here
+ * failure as its last line `{ "t": "error", "code" }` (always after a 200 head, also when nothing was sent yet); only a complete
+ * stream ends with `{ "t": "end", programmes, channels }`, so a reader treats a stream without it as failed. Nothing here
  * logs; nothing answers a URL, a host or a parser message.
  */
 export const M3U_MAX_BYTES = 50 * 1024 * 1024;
@@ -26,6 +27,11 @@ const MAX_CHANNELS = 20_000;
 const MAX_NAME = 500;
 
 export type M3uAnswer = M3uResult;
+/** one line of the `/v1/fetch/xmltv` NDJSON answer; the last line is `end` (complete) or `error` (failed), never both */
+export type XmltvLine =
+  | XmlItem
+  | { t: 'end'; programmes: number; channels: number }
+  | { t: 'error'; code: FetchErrorCode | XmltvErrorCode };
 
 class Invalid extends Error {
   constructor(readonly field: string) { super('invalid'); }
@@ -52,7 +58,7 @@ function bool(b: Obj, field: string): boolean {
 function userAgent(b: Obj): string | undefined {
   const v = b.userAgent;
   if (v === undefined) return undefined;
-  if (typeof v !== 'string' || !/^[\x20-\x7e]{1,512}$/.test(v)) throw new Invalid('userAgent');
+  if (typeof v !== 'string' || !USER_AGENT_RE.test(v)) throw new Invalid('userAgent');
   return v;
 }
 function names(b: Obj, field: string, max: number): string[] | undefined {
@@ -74,7 +80,7 @@ function streamInput(v: unknown): StreamInput {
     return { push: i.push };
   }
   if (typeof i.url !== 'string' || i.url.length > MAX_URL || (i.kind !== 'hls' && i.kind !== 'ts' && i.kind !== 'srt') || typeof i.allowLan !== 'boolean') throw new Invalid('input');
-  if (i.userAgent !== undefined && (typeof i.userAgent !== 'string' || !/^[\x20-\x7e]{1,512}$/.test(i.userAgent))) throw new Invalid('input');
+  if (i.userAgent !== undefined && (typeof i.userAgent !== 'string' || !USER_AGENT_RE.test(i.userAgent))) throw new Invalid('input');
   return { url: i.url, kind: i.kind, allowLan: i.allowLan, ...(i.userAgent !== undefined ? { userAgent: i.userAgent as string } : {}) };
 }
 
@@ -140,20 +146,34 @@ export function fetchRoutes(deps: { guard: GuardDeps; run: Run }): Route[] {
         }
         const { res } = c;
         res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
+        // the head goes out now: the caller learns at once that the request was taken, before the provider answers
+        res.flushHeaders();
         let gone = false;
-        res.on('close', () => { gone = true; });
-        const write = async (line: unknown) => {
+        // the caller went away: the provider download stops at once, also while the parser is between lines
+        const abort = new AbortController();
+        res.on('close', () => { gone = true; abort.abort(); });
+        const write = async (line: XmltvLine) => {
           if (gone) return;
-          if (!res.write(`${JSON.stringify(line)}\n`)) await new Promise<void>((r) => { res.once('drain', r); res.once('close', r); });
+          if (res.write(`${JSON.stringify(line)}\n`)) return;
+          await new Promise<void>((r) => {
+            const go = () => { res.off('drain', go); res.off('close', go); r(); };
+            res.on('drain', go);
+            res.on('close', go);
+          });
         };
+        let programmes = 0;
+        let chans = 0;
         try {
-          const f = await guardedFetch(target, { allowLan, userAgent: ua, timeoutMs: XMLTV_TIMEOUT_MS, maxBytes: XMLTV_MAX_BYTES }, deps.guard);
+          const f = await guardedFetch(target, { allowLan, userAgent: ua, timeoutMs: XMLTV_TIMEOUT_MS, maxBytes: XMLTV_MAX_BYTES, signal: abort.signal }, deps.guard);
           const items = parseXmltv(f.body, { from, to, maxProgrammes: XMLTV_MAX_PROGRAMMES, ...(channels ? { channels: new Set(channels) } : {}) });
           for await (const item of items) {
-            await write(item);
-            // the caller went away: stop (leaving the loop closes the parser and the provider connection)
+            // leaving the loop closes the parser and the provider connection
             if (gone) break;
+            if (item.t === 'prog') programmes++;
+            else chans++;
+            await write(item);
           }
+          if (!gone) await write({ t: 'end', programmes, channels: chans });
         } catch (e) {
           await write({ t: 'error', code: e instanceof FetchError || e instanceof XmltvError ? e.code : 'invalid' });
         }
