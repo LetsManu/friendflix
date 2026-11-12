@@ -243,7 +243,7 @@ async function rightsOf(ctx: Ctx, hash: string, rec: StoredRec): Promise<{ userN
  * delay that first write).
  */
 export async function resolveLiveToken(
-  ctx: Ctx, token: string, ip: string, deps: { streamKeyFor(channelId: string): Promise<string | null> },
+  ctx: Ctx, token: string, ip: string, deps: { streamKeyFor(channelId: string): Promise<string | null>; bitrateFor?(channelId: string): Promise<number | null> },
 ): Promise<{ status: 200; streamKey: string; kind: 'live'; maxAgeS: number } | { status: 401 | 403 | 410 }> {
   if (!CAST_TOKEN_RE.test(token)) return { status: 401 };
   const hash = hashToken(token);
@@ -257,12 +257,12 @@ export async function resolveLiveToken(
   const airplay = rec.via === 'airplay';
   const slots = airplay && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1;
   if (!(await takePin(ctx, airplay ? [pinKey(hash), pin2Key(hash)] : [pinKey(hash)], ip, pinTtl(rec.exp), slots))) return { status: 403 };
-  if (rec.seen === undefined || Date.now() - rec.seen >= LIVE_TOUCH_MS) await touch(ctx, hash, rec, owner);
+  if (rec.seen === undefined || Date.now() - rec.seen >= LIVE_TOUCH_MS) await touch(ctx, hash, rec, owner, await deps.bitrateFor?.(rec.channelId).catch(() => null) ?? null);
   return { status: 200, streamKey, kind: 'live', maxAgeS: LIVE_AUTHZ_MAX_AGE_S };
 }
 
 /** sliding refresh + viewer key + live record (replace only: a token revoked in between is never resurrected) */
-async function touch(ctx: Ctx, hash: string, rec: StoredRec, owner: { userName: string; profileName: string }) {
+async function touch(ctx: Ctx, hash: string, rec: StoredRec, owner: { userName: string; profileName: string }, bitrate: number | null) {
   const now = Date.now();
   const ttl = keyTtl(rec.exp, now);
   if (ttl <= 0 || !(await ctx.kv.replace(dataKey(hash), JSON.stringify({ ...rec, seen: now } satisfies StoredRec), ttl))) return;
@@ -270,10 +270,11 @@ async function touch(ctx: Ctx, hash: string, rec: StoredRec, owner: { userName: 
   const ps = livePlaySessionId(hash);
   const cur = await getLive(ctx, rec.userId, ps);
   await setLive(ctx, cur
-    ? { ...cur, updatedAt: now }
+    ? { ...cur, updatedAt: now, ...(bitrate !== null ? { bitrate } : {}) }
     : {
       userId: rec.userId, userName: owner.userName, profileName: owner.profileName, itemId: `ch:${rec.channelId}`, title: rec.channelName,
       positionTicks: 0, isPaused: false, playSessionId: ps, updatedAt: now, source: 'livetv', deviceId: rec.deviceId, remote: rec.remote,
+      ...(bitrate !== null ? { bitrate } : {}),
     });
   if (await ctx.kv.get(goneKey(hash))) await forgetView(ctx, hash, rec.userId);
 }

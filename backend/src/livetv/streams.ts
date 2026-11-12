@@ -184,6 +184,16 @@ async function readStreams(ctx: Ctx, maxAgeMs = 0): Promise<StreamView[] | null>
 const activeOf = (list: readonly StreamView[] | null, channelId: string) => list?.find((s) => s.channelId === channelId && s.state !== 'failed');
 
 /**
+ * The bit/s livetv reports for a channel's running stream, from the 5-s cache (never an extra read: the live record is written on
+ * every touch). null = not running or not measured yet.
+ */
+export async function streamBitrateFor(ctx: Ctx, channelId: string): Promise<number | null> {
+  if (!livetvInstalled(ctx)) return null;
+  const b = activeOf(await readStreams(ctx, LIST_CACHE_MS), channelId)?.bitrate;
+  return typeof b === 'number' && Number.isFinite(b) && b > 0 ? Math.round(b) : null;
+}
+
+/**
  * The stream key of a running channel for `/internal/authz/live` (null = not running: the token answers 410). From the 5-s cache; a
  * channel the cached list does not have is asked for once more (a stream started since that read).
  */
