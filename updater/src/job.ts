@@ -3,7 +3,10 @@
 import { randomBytes } from 'node:crypto';
 import { StepError, type ImageInfo, type LivetvContainer } from './docker.js';
 import { FF_SERVICES, LIVETV_SERVICE, SELF_SERVICE, SHA_TAG_RE, channelTag, shaTag, type Channel, type LivetvOp } from './policy.js';
-import type { Job, JobAction, LivetvError, LivetvState, State, StateStore, StepName } from './state.js';
+import { LIVETV_ERRORS, type Job, type JobAction, type LivetvError, type LivetvState, type State, type StateStore, type StepName } from './state.js';
+
+/** what an update does with livetv at a tag: nothing (not enabled), start it (pulled and verified), or drop it for this reason */
+type LivetvPlan = 'off' | 'up' | LivetvError;
 
 /** What a job needs from Docker (docker.ts in production, a fake in the tests). */
 export interface Ops {
@@ -211,12 +214,14 @@ export class Updater {
    * is verified too; it is started after the core services and, when it fails to start or to get healthy, stopped and disabled
    * (dropLivetv) while the job goes on: livetv is optional and never fails or rolls back a core update.
    */
-  private async bringUp(job: Job, tag: string, images: Record<string, string>, steps: boolean, livetv: boolean): Promise<string | null> {
+  private async bringUp(job: Job, tag: string, images: Record<string, string>, steps: boolean, livetv: LivetvPlan): Promise<string | null> {
     const newSha = (await this.ops.imageInfo(images.backend!))?.gitSha ?? null;
-    let ltUp = livetv;
+    let ltUp = livetv === 'up';
     const restart = async () => {
       await this.ops.up(tag, FF_SERVICES);
-      if (!livetv) return;
+      // only once the core services were recreated: a core failure that restarted nothing leaves livetv as it was
+      if (livetv === 'off') return;
+      if (livetv !== 'up') return this.dropLivetv(livetv, tag);
       try { await this.ops.up(tag, LIVETV); } catch { ltUp = false; await this.dropLivetv('restart_failed', tag); }
     };
     if (steps) await this.step(job, 'restart', restart); else await restart();
@@ -239,7 +244,12 @@ export class Updater {
     try {
       image = (await this.ops.images(tag, LIVETV))[LIVETV_SERVICE]!;
       await this.ops.pull(tag, LIVETV);
-    } catch { return 'pull_failed'; }
+    } catch (e) {
+      // the real code (a changed config, an unexpected image, compose failing, the pull), with its fixed detail
+      const code = LIVETV_ERRORS.find((c) => e instanceof StepError && c === e.code) ?? 'pull_failed';
+      this.log.add(`livetv: ${code}${e instanceof StepError && e.detail ? ` (${e.detail})` : ''}`);
+      return code;
+    }
     if (!(await this.ops.verify(image).catch(() => false))) { this.log.add(`signature check failed for ${image}`); return 'verify_failed'; }
     this.log.add(`signature ok: ${image}`);
     return null;
@@ -251,11 +261,15 @@ export class Updater {
    * one fixed log line, and completes for the core services. An unverified livetv image is never started.
    */
   private async dropLivetv(code: LivetvError, tag: string): Promise<void> {
-    try { await this.ops.stop(LIVETV); await this.ops.rm(LIVETV); } catch { this.log.add('livetv could not be stopped'); }
-    this.state.livetv = 'disabled';
     this.state.livetvError = code;
+    this.state.livetv = (await this.stopLivetv()) ? 'disabled' : 'stop_failed';
     this.persist();
     this.log.add(`livetv disabled: ${code} at ${tag}`);
+  }
+
+  /** compose stop + rm -f livetv; false (logged) when it did not go through */
+  private async stopLivetv(): Promise<boolean> {
+    try { await this.ops.stop(LIVETV); await this.ops.rm(LIVETV); return true; } catch { this.log.add('livetv could not be stopped'); return false; }
   }
 
   /** remembers the image id livetv runs (remove deletes it later, also after a disable) */
@@ -269,9 +283,18 @@ export class Updater {
    * write, or COMPOSE_PROFILES=livetv) is adopted as enabled, so updates keep it on the same build. It only ever started from a
    * verified image (enable) or by the admin's own compose command. `enabled` without a container is left as it is and logged.
    */
-  private async reconcileLivetv(): Promise<void> {
+  private async reconcileLivetv(stackChecked = false): Promise<void> {
     let c: LivetvContainer | null;
-    try { c = await this.ops.livetvContainer(); } catch { return; }
+    try {
+      // never on a stack the updater does not manage (the job then fails with foreign_stack where it always did)
+      if (!stackChecked) await this.ops.ownStack();
+      c = await this.ops.livetvContainer();
+    } catch { return; }
+    if (this.state.livetv === 'stop_failed') {
+      // a job disabled livetv but could not stop it: stop it again (never adopt it), keep the reason
+      if (!c || (await this.stopLivetv())) { this.state.livetv = 'disabled'; this.persist(); this.log.add('livetv stopped'); }
+      return;
+    }
     if (c?.state === 'running' && this.state.livetv !== 'enabled') {
       this.state.livetv = 'enabled';
       this.state.livetvError = null;
@@ -289,7 +312,7 @@ export class Updater {
     const prevTag = shaTag(before?.gitSha);
     if (prevTag) job.from = prevTag;
     let images: Record<string, string>;
-    let livetv: boolean;
+    let livetv: LivetvPlan;
     try {
       images = await this.prepare(job, job.to, FF_SERVICES);
       livetv = await this.livetvFor(job.to);
@@ -321,12 +344,10 @@ export class Updater {
     }
   }
 
-  /** whether livetv goes along with `tag`: only while enabled, and only with its image pulled and verified (else it is dropped) */
-  private async livetvFor(tag: string): Promise<boolean> {
-    if (this.state.livetv !== 'enabled') return false;
-    const code = await this.prepareLivetv(tag);
-    if (code) await this.dropLivetv(code, tag);
-    return code === null;
+  /** whether livetv goes along with `tag`: only while enabled, and only with its image pulled and verified (else it is dropped by bringUp) */
+  private async livetvFor(tag: string): Promise<LivetvPlan> {
+    if (this.state.livetv !== 'enabled') return 'off';
+    return (await this.prepareLivetv(tag)) ?? 'up';
   }
 
   /** livetv running and healthy (where it has a check) within the livetv health timeout */
@@ -382,7 +403,7 @@ export class Updater {
     try {
       await this.step(job, 'restart', async () => {
         await this.ops.ownStack();
-        await this.reconcileLivetv();
+        await this.reconcileLivetv(true);
         const c = await this.ops.livetvContainer();
         if (c) {
           await this.ops.stop(LIVETV);

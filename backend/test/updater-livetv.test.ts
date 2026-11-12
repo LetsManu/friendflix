@@ -133,7 +133,9 @@ describe('status: livetv', () => {
     expect(parseStatus({ channel: 'stable' })!.livetv).toBeNull(); // an updater from before livetv
     expect(parseStatus({ channel: 'stable', livetv: { state: 'enabled', container: 'running', error: null } })!.livetv).toEqual({ state: 'enabled', container: 'running', error: null });
     expect(parseStatus({ channel: 'stable', livetv: { state: 'disabled', container: null, error: 'unhealthy' } })!.livetv).toEqual({ state: 'disabled', container: null, error: 'unhealthy' });
-    for (const e of ['pull_failed', 'verify_failed', 'restart_failed']) expect(parseStatus({ channel: 'stable', livetv: { state: 'disabled', error: e } })!.livetv?.error).toBe(e);
+    for (const e of ['pull_failed', 'unexpected_image', 'config_mismatch', 'compose_config', 'verify_failed', 'restart_failed']) expect(parseStatus({ channel: 'stable', livetv: { state: 'disabled', error: e } })!.livetv?.error).toBe(e);
+    // disabled by a job that could not stop the container (the updater stops it on its next job)
+    expect(parseStatus({ channel: 'stable', livetv: { state: 'stop_failed', container: 'running', error: 'unhealthy' } })!.livetv).toEqual({ state: 'stop_failed', container: 'running', error: 'unhealthy' });
     expect(parseStatus({ channel: 'stable', livetv: { state: '<b>', container: 'paused', error: 'token ghp_x' } })!.livetv).toEqual({ state: 'absent', container: null, error: null });
     expect(parseStatus({ channel: 'stable', livetv: 'enabled' })!.livetv).toBeNull();
     for (const a of ['livetv-enable', 'livetv-disable', 'livetv-remove']) {

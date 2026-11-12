@@ -22,7 +22,7 @@ export type UpdaterJobAction = UpdateJobAction | 'livetv-enable' | 'livetv-disab
 const JOB_ACTIONS: readonly UpdaterJobAction[] = [...UPDATER_ACTIONS, 'livetv-enable', 'livetv-disable', 'livetv-remove'];
 /** the optional livetv service: the body of POST /v1/livetv (the updater refuses anything else, updater/src/policy.ts parseLivetvBody) */
 export type LivetvOp = { op: 'enable' } | { op: 'disable' } | { op: 'remove'; data: boolean };
-const LIVETV_ERRORS = ['pull_failed', 'verify_failed', 'restart_failed', 'unhealthy'] as const;
+const LIVETV_ERRORS = ['pull_failed', 'unexpected_image', 'config_mismatch', 'compose_config', 'verify_failed', 'restart_failed', 'unhealthy'] as const;
 export type LivetvError = (typeof LIVETV_ERRORS)[number];
 const STEP_NAMES = ['pull', 'verify', 'restart', 'health', 'rollback'] as const;
 const STEP_STATES = ['pending', 'running', 'ok', 'failed', 'skipped'] as const;
@@ -60,10 +60,11 @@ export interface UpdaterStatus {
   projectDir: string | null;
   /**
    * the optional livetv service as the updater sees it: enabled (it started it), disabled (container removed), absent (never
-   * enabled, or removed with its image); container running / exited / none; error: why an update or rollback disabled it on its
-   * own (its image missing or unverified for that build, it did not start or get healthy). null = an updater from before livetv.
+   * enabled, or removed with its image), stop_failed (disabled by a job that could not stop its container; the next job stops it);
+   * container running / exited / none; error: why an update or rollback disabled it on its own (its image missing, not resolving
+   * as expected or unverified for that build, it did not start or get healthy). null = an updater from before livetv.
    */
-  livetv: { state: 'enabled' | 'disabled' | 'absent'; container: 'running' | 'exited' | null; error: LivetvError | null } | null;
+  livetv: { state: 'enabled' | 'disabled' | 'absent' | 'stop_failed'; container: 'running' | 'exited' | null; error: LivetvError | null } | null;
 }
 export type UpdaterView = { present: false } | { present: true; error: 'unauthorized' | 'invalid_answer' } | { present: true; status: UpdaterStatus };
 
@@ -112,7 +113,7 @@ export function parseStatus(raw: unknown): UpdaterStatus | null {
 function parseLivetv(raw: unknown): UpdaterStatus['livetv'] {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const l = raw as Record<string, unknown>;
-  return { state: pick(l.state, ['enabled', 'disabled', 'absent'] as const) ?? 'absent', container: pick(l.container, ['running', 'exited'] as const), error: pick(l.error, LIVETV_ERRORS) };
+  return { state: pick(l.state, ['enabled', 'disabled', 'absent', 'stop_failed'] as const) ?? 'absent', container: pick(l.container, ['running', 'exited'] as const), error: pick(l.error, LIVETV_ERRORS) };
 }
 
 type Answer = { status: number; json: unknown } | null;

@@ -8,12 +8,20 @@ export type StepName = 'pull' | 'verify' | 'restart' | 'health' | 'rollback';
 export type StepState = 'pending' | 'running' | 'ok' | 'failed' | 'skipped';
 export type JobAction = 'update' | 'rollback' | 'self-update' | 'livetv-enable' | 'livetv-disable' | 'livetv-remove';
 const JOB_ACTIONS: readonly JobAction[] = ['update', 'rollback', 'self-update', 'livetv-enable', 'livetv-disable', 'livetv-remove'];
-/** the optional livetv service: enabled (the updater started it; it follows every update), disabled (container removed), absent (never enabled or removed with its image) */
-export type LivetvState = 'enabled' | 'disabled' | 'absent';
-const LIVETV_STATES: readonly LivetvState[] = ['enabled', 'disabled', 'absent'];
-/** why an update or rollback disabled livetv on its own (livetv never holds back or rolls back the core services) */
-export type LivetvError = 'pull_failed' | 'verify_failed' | 'restart_failed' | 'unhealthy';
-const LIVETV_ERRORS: readonly LivetvError[] = ['pull_failed', 'verify_failed', 'restart_failed', 'unhealthy'];
+/**
+ * the optional livetv service: enabled (the updater started it; it follows every update), disabled (container removed), absent
+ * (never enabled or removed with its image), stop_failed (a job disabled it but could not stop its container: the next job
+ * stops it again, it is never adopted as enabled meanwhile)
+ */
+export type LivetvState = 'enabled' | 'disabled' | 'absent' | 'stop_failed';
+const LIVETV_STATES: readonly LivetvState[] = ['enabled', 'disabled', 'absent', 'stop_failed'];
+/**
+ * why an update or rollback disabled livetv on its own (livetv never holds back or rolls back the core services): its image
+ * missing or not resolving as expected (pull_failed, unexpected_image, config_mismatch, compose_config), not verified, not
+ * started, not healthy
+ */
+export const LIVETV_ERRORS = ['pull_failed', 'unexpected_image', 'config_mismatch', 'compose_config', 'verify_failed', 'restart_failed', 'unhealthy'] as const;
+export type LivetvError = (typeof LIVETV_ERRORS)[number];
 export type JobState = 'running' | 'succeeded' | 'failed' | 'rolled_back';
 
 export interface Job {

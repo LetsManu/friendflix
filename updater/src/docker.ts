@@ -324,10 +324,17 @@ export class Docker {
     await this.rmImages(refs);
   }
 
-  /** `docker image rm` (never forced); an image that is not there is fine */
+  /**
+   * `docker image rm`, one reference per call (never forced): a reference that is not there is fine, one that is in use or fails
+   * otherwise is remove_failed (several references in one call would hide that behind another's "No such image")
+   */
   private async rmImages(refs: readonly string[]): Promise<void> {
-    const r = await this.run('docker', ['image', 'rm', ...refs], { env: this.env(), timeoutMs: 2 * MIN });
-    if (r.code !== 0 && !/no such image/i.test(r.stderr)) throw new StepError('remove_failed');
+    let failed = false;
+    for (const ref of refs) {
+      const r = await this.run('docker', ['image', 'rm', ref], { env: this.env(), timeoutMs: 2 * MIN });
+      if (r.code !== 0 && !/no such image/i.test(r.stderr)) failed = true;
+    }
+    if (failed) throw new StepError('remove_failed');
   }
 
   /** the tags of a local image; null when it is not there or cannot be read */
