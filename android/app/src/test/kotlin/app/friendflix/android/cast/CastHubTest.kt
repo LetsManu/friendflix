@@ -124,7 +124,7 @@ class CastHubTest {
 
     private fun info(castId: String) = CastInfo(
         castId = castId, expiresAt = clock + 60 * 60_000, playSessionId = "ps-$castId", mediaSourceId = "ms-$castId",
-        runtimeTicks = 30L * 60 * 10_000_000, startTime = 60, contentUrl = "https://ff.example/media/c/$castId/master.m3u8",
+        runtimeTicks = 30L * 60 * 10_000_000, startTime = 60, contentUrl = "https://friend.example.com/media/c/$castId/master.m3u8",
         contentType = "application/x-mpegURL", hlsSegmentFormat = "ts", title = "First", seriesName = "Bright Valley", imageUrl = null,
         subtitles = emptyList(), report = "rt-$castId",
     )
@@ -436,7 +436,7 @@ class CastHubTest {
     }
 
     @Test fun aCastTheTvKeepsPlayingIsPickedUpAfterARestart() {
-        val url = "https://ff.example/media/c/${"A".repeat(43)}/master.m3u8"
+        val url = "https://friend.example.com/media/c/${"A".repeat(43)}/master.m3u8"
         val id = CastIds.ofContentUrl(url)!!
         lookups[id] = CastLookup(id, "ep1", "ms", "ps", clock + 3_600_000, 1_800L * 10_000_000, "chromecast", false, true, "First", "Bright Valley", emptyList())
         val h = hub(custom = true)
@@ -454,7 +454,7 @@ class CastHubTest {
     }
 
     private fun ours(): Pair<String, String> {
-        val url = "https://ff.example/media/c/${"C".repeat(43)}/master.m3u8"
+        val url = "https://friend.example.com/media/c/${"C".repeat(43)}/master.m3u8"
         val id = CastIds.ofContentUrl(url)!!
         lookups[id] = CastLookup(id, "ep1", "ms", "ps", clock + 3_600_000, 1_800L * 10_000_000, "chromecast", false, true, "First", "Bright Valley", emptyList())
         return url to id
@@ -500,7 +500,7 @@ class CastHubTest {
     }
 
     @Test fun aStopWhileTheLookupIsInFlightLeavesAForeignCastAlone() {
-        val url = "https://ff.example/media/c/${"D".repeat(43)}/master.m3u8"
+        val url = "https://friend.example.com/media/c/${"D".repeat(43)}/master.m3u8"
         val id = CastIds.ofContentUrl(url)!!
         val h = hub(custom = true) // no lookup entry: not ours
         link.playing = ReceiverMedia(null, url)
@@ -514,7 +514,7 @@ class CastHubTest {
     }
 
     @Test fun foreignMediaOnTheTvIsLeftAlone() {
-        val url = "https://ff.example/media/c/${"B".repeat(43)}/master.m3u8"
+        val url = "https://friend.example.com/media/c/${"B".repeat(43)}/master.m3u8"
         val h = hub()
         link.playing = ReceiverMedia(null, url)
         events.onState(playing(CastIds.ofContentUrl(url)!!, 1_000)) // lookup answers 404
@@ -532,7 +532,7 @@ class CastHubTest {
     }
 
     @Test fun aLookupThatCouldNotBeAnsweredIsTriedAgainAfterThirtySeconds() {
-        val url = "https://ff.example/media/c/${"C".repeat(43)}/master.m3u8"
+        val url = "https://friend.example.com/media/c/${"C".repeat(43)}/master.m3u8"
         val id = CastIds.ofContentUrl(url)!!
         down += id
         val h = hub()
@@ -548,7 +548,7 @@ class CastHubTest {
     }
 
     @Test fun theRetryAsksTheReceiverAgainWithoutWaitingForATvEvent() {
-        val url = "https://ff.example/media/c/${"D".repeat(43)}/master.m3u8"
+        val url = "https://friend.example.com/media/c/${"D".repeat(43)}/master.m3u8"
         val id = CastIds.ofContentUrl(url)!!
         down += id
         val h = hub()

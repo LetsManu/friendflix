@@ -948,7 +948,11 @@
     }
     if (!remoteOn) return;
     remoteOn = false;
-    if (!hiding) void start(curId); // the cast ended: the channel plays here again (not while the page unloads: pageshow decides then)
+    // the cast ended: the channel plays here again. Not while the page unloads (pageshow decides then): the engine's own pagehide
+    // listener can run first and end the cast, and this reactive update lands before the player's listener has set `hiding`, so
+    // the restart waits one task and looks again
+    const id = curId;
+    setTimeout(() => { if (!hiding && !destroyed && !remoteOn) void start(id); }, 0);
   }
   /** pagehide until the next pageshow: the engine's cast ends with the page (the TV keeps playing), so nothing starts here meanwhile */
   let hiding = false;
@@ -1121,7 +1125,7 @@
 
   {#if ui.k === 'buffering'}<div class="lbuf" aria-hidden="true"><i></i></div>{/if}
 
-  <div class="ltop" class:hide={!controls}>
+  <div class="ltop" class:hide={!controls} data-nav>
     <button type="button" class="ib" aria-label={$t('player.error.back')} on:click={leave}><Icon name="arrow-left" size={24} /></button>
     {#if cur}
       <span class="tlogo" aria-hidden="true">{#if cur.logo}<img src={cur.logo} alt="" width="40" height="40" decoding="async" />{/if}</span>
@@ -1155,9 +1159,11 @@
     <button type="button" class="pp" bind:this={playBtn} aria-busy={starting} aria-label={paused ? $t('player.controls.play') : $t('player.controls.pause')} on:click={togglePlay}>
       {#if starting}<span class="spinner" aria-hidden="true"></span>{:else}<Icon name={paused ? 'play' : 'pause'} size={26} />{/if}
     </button>
+    {#if !phoneUi}
     <span class="restartslot">
       {#if restartAt !== null}<button type="button" class="ib" aria-label={$t('live.player.restart')} title={$t('live.player.restart')} on:click={restart}><Icon name="skip-prev" size={24} /></button>{/if}
     </span>
+    {/if}
     {#if !phoneUi}
       <button type="button" class="ib" bind:this={backBtn} aria-label={$t('live.player.back30')} title={$t('live.player.back30')} on:click={() => seekBy(-30)}><span class="n" aria-hidden="true">−30</span></button>
       <button type="button" class="ib" bind:this={fwdBtn} aria-label={$t('live.player.fwd30')} title={$t('live.player.fwd30')} disabled={edgeNow} on:click={() => seekBy(30)}><span class="n" aria-hidden="true">+30</span></button>
@@ -1269,9 +1275,9 @@
   .vol { flex: none; width: 96px; accent-color: #fff; }
 
   .lplayer.phone .ctl { left: 8px; right: 8px; gap: 4px; padding: 6px 8px; bottom: calc(8px + var(--safe-bottom, 0px)); }
-  .lplayer.phone .pill { width: 5.6em; padding: 0 8px; }
-  .lplayer.phone .pill.edge { padding-left: 20px; }
-  .lplayer.phone .pill.edge::before { left: 9px; }
+  .lplayer.phone .pill { width: 4.4em; padding: 0 4px; }
+  .lplayer.phone .pill.edge { padding-left: 16px; }
+  .lplayer.phone .pill.edge::before { left: 6px; }
   .lplayer.phone .ttime { display: none; }
   .lplayer.phone .left { width: 8.5em; }
 

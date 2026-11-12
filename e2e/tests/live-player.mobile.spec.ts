@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Locator, Page } from '@playwright/test';
 import { expect, test, type MockState } from '../fixtures.js';
+import { castOn, fakeCastSdk } from '../mocks/cast.js';
 
 // The live player on a phone (Task 39, spec §12.3): a horizontal swipe on the centre zone switches the channel (left = next,
 // right = previous), the side zones keep brightness (left) and volume (right); with reduced motion (the suite's default) nothing
@@ -89,5 +90,27 @@ test.describe('live player (phone)', () => {
     await expect(live(page)).toHaveAttribute('data-live-state', 'playing', { timeout: 15_000 });
     await stillSurfaces(page, 'after the switch');
     expect(api.livetv.watches.slice(before), `all watches: ${JSON.stringify(api.livetv.watches)}`).toEqual(['ch-hafen']);
+  });
+
+  test('360 px with the cast button: every control of the bar lies inside the screen and Info is clickable', async ({ page, api }) => {
+    await page.setViewportSize({ width: 360, height: 740 });
+    await arm(page, api);
+    await castOn(page); // after arm(): the most recent route wins; the Cast button shows when a TV is around
+    await fakeCastSdk(page, { pick: true });
+    await open(page);
+    await expect(bar(page).getByRole('button', { name: 'Abspielen auf …' })).toBeVisible();
+    const vw = 360;
+    const boxes = await bar(page).getByRole('button').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { n: e.getAttribute('aria-label'), l: r.left, r: r.right, w: r.width, h: r.height }; }));
+    expect(boxes.length).toBeGreaterThanOrEqual(6);
+    for (const b of boxes) {
+      expect(b.l, `${b.n} left`).toBeGreaterThanOrEqual(0);
+      expect(b.r, `${b.n} right`).toBeLessThanOrEqual(vw);
+      expect(b.w, `${b.n} width`).toBeGreaterThanOrEqual(44);
+      expect(b.h, `${b.n} height`).toBeGreaterThanOrEqual(44);
+    }
+    // the bar's own content fits it (nothing is clipped by the player)
+    expect(await bar(page).evaluate((e) => e.scrollWidth <= e.clientWidth + 1)).toBe(true);
+    await bar(page).getByRole('button', { name: 'Programm' }).click();
+    await expect(page.getByRole('dialog', { name: 'Programm' })).toBeVisible();
   });
 });

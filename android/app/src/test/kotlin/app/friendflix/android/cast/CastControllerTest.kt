@@ -155,7 +155,7 @@ class CastControllerTest {
 
     private fun info(castId: String, runtimeMin: Long = 30) = CastInfo(
         castId = castId, expiresAt = clock + 60 * 60_000, playSessionId = "ps-$castId", mediaSourceId = "ms-$castId",
-        runtimeTicks = runtimeMin * 60 * 10_000_000, startTime = 60, contentUrl = "https://ff.example/media/c/$castId/master.m3u8",
+        runtimeTicks = runtimeMin * 60 * 10_000_000, startTime = 60, contentUrl = "https://friend.example.com/media/c/$castId/master.m3u8",
         contentType = "application/x-mpegURL", hlsSegmentFormat = "ts", title = "Film", seriesName = null, imageUrl = null,
         subtitles = emptyList(), report = if (castId.isNotEmpty()) "rt-$castId" else null,
     )
@@ -895,7 +895,7 @@ class CastControllerTest {
         subtitles = emptyList(),
     )
 
-    private val tokenUrl = "https://ff.example/media/c/" + "A".repeat(43) + "/master.m3u8"
+    private val tokenUrl = "https://friend.example.com/media/c/" + "A".repeat(43) + "/master.m3u8"
     private val tokenId = CastIds.ofContentUrl(tokenUrl)!!
 
     @Test fun resumeAdoptsOurMedia() {
@@ -963,7 +963,7 @@ class CastControllerTest {
     }
 
     @Test fun resumeTakesOverTheQueuedSuccessor() {
-        val qUrl = "https://ff.example/media/c/" + "B".repeat(43) + "/master.m3u8"
+        val qUrl = "https://friend.example.com/media/c/" + "B".repeat(43) + "/master.m3u8"
         val qId = CastIds.ofContentUrl(qUrl)!!
         lookups[tokenId] = lookup(tokenId); lookups[qId] = lookup(qId, itemId = "ep2", next = true, reported = false)
         val (r, c) = controller()
@@ -1056,9 +1056,9 @@ class CastControllerTest {
     @Test fun castIdsMatchTheServersDerivation() {
         // sha256("A" * 43), first 32 hex characters (backend castIdOf(hashToken(token)))
         val expected = java.security.MessageDigest.getInstance("SHA-256").digest("A".repeat(43).toByteArray()).joinToString("") { "%02x".format(it) }.take(32)
-        assertEquals(expected, CastIds.ofContentUrl("https://ff.example/media/c/${"A".repeat(43)}/master.m3u8"))
-        assertNull(CastIds.ofContentUrl("https://ff.example/media/c/short/master.m3u8"))
-        assertNull(CastIds.ofContentUrl("https://ff.example/media/c/${"A".repeat(44)}/master.m3u8"))
+        assertEquals(expected, CastIds.ofContentUrl("https://friend.example.com/media/c/${"A".repeat(43)}/master.m3u8"))
+        assertNull(CastIds.ofContentUrl("https://friend.example.com/media/c/short/master.m3u8"))
+        assertNull(CastIds.ofContentUrl("https://friend.example.com/media/c/${"A".repeat(44)}/master.m3u8"))
         assertNull(CastIds.ofContentUrl(null))
     }
 
@@ -1167,7 +1167,7 @@ class CastControllerTest {
     }
 
     @Test fun noSecondQueuedItemBehindADeadOne() {
-        val qUrl = "https://ff.example/media/c/" + "B".repeat(43) + "/master.m3u8"
+        val qUrl = "https://friend.example.com/media/c/" + "B".repeat(43) + "/master.m3u8"
         lookups[tokenId] = lookup(tokenId) // the queued item's lookup is a 404
         val (r, c) = controller()
         r.next = ReceiverMedia(null, qUrl)

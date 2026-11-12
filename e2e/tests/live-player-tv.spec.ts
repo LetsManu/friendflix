@@ -261,6 +261,31 @@ test.describe('live player on a TV remote', () => {
     await page.keyboard.press('Enter');
     await expect.poll(() => api.livetv.watches).toEqual(['ch-nord', 'ch-kinder']);
   });
+
+  test('▲ on the visible controls reaches the top bar, ◀ ▶ move in it and ▼ comes back', async ({ page }) => {
+    await open(page);
+    await hideByClock(page);
+    await page.keyboard.press('Enter');
+    await expect(focused(page)).toHaveAccessibleName('Pause');
+    const zone = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.closest('.ltop') ? 'top' : (document.activeElement as HTMLElement | null)?.closest('.ctl') ? 'bar' : 'other');
+    const who = () => page.evaluate(() => { const e = document.activeElement as HTMLElement | null; return `${e?.className}|${e?.getAttribute('aria-label') ?? ''}`; });
+    await page.keyboard.press('ArrowUp');
+    await expect.poll(zone).toBe('top');
+    const seen = new Set([await who()]);
+    await page.keyboard.press('ArrowLeft');
+    expect(await zone()).toBe('top');
+    seen.add(await who());
+    await page.keyboard.press('ArrowRight');
+    expect(await zone()).toBe('top');
+    seen.add(await who());
+    await page.keyboard.press('ArrowRight');
+    expect(await zone()).toBe('top');
+    seen.add(await who());
+    expect(seen.size, 'the arrows move the focus between the buttons of the top bar').toBeGreaterThan(1);
+    await page.keyboard.press('ArrowDown');
+    await expect.poll(zone).toBe('bar');
+    expect(await paused(page)).toBe(false);
+  });
 });
 
 test.describe('live player Senderliste (desktop)', () => {
