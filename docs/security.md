@@ -200,6 +200,7 @@ What it contains:
 - **Watchlist and more:** watchlist, bookmarks with notes, reminders, followed series, series audio/subtitle choices, titles hidden from *Continue watching*.
 - **Ratings:** stars with reviews, thumbs, reactions with comments.
 - **History:** the media server's watch history per profile (up to 1,000 items each, marked `truncated` when there is more and `error` when the media server could not answer), plus FriendFlix's own watch-time totals per title and per day.
+- **Live TV:** per profile, your favourites in your order and *Zuletzt gesehen* newest first, each as channel id and channel name, for *Zuletzt gesehen* with the time last opened. Never stream URLs, source credentials or tokens.
 - **Requests:** title, type, date and current state (the state is asked of the request service for the newest 100).
 - **Devices:** label, approved, first and last seen.
 - **Notifications:** weekly digest on/off, whether an ntfy topic is set, the number of push subscriptions, and each notice's kind, date and read state.

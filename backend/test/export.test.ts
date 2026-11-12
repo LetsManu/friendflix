@@ -137,7 +137,7 @@ describe('GET /api/account/export', () => {
     }
     // A's own data is all there
     expect(doc).toMatchObject({ format: 'friendflix-export', version: 1 });
-    expect(Object.keys(doc)).toEqual(['format', 'version', 'exportedAt', 'account', 'profiles', 'lists', 'watchlist', 'ratings', 'history', 'requests', 'devices', 'notifications',
+    expect(Object.keys(doc)).toEqual(['format', 'version', 'exportedAt', 'account', 'profiles', 'lists', 'watchlist', 'livetv', 'ratings', 'history', 'requests', 'devices', 'notifications',
       'social', 'achievements']);
     expect(doc.account).toMatchObject({ name: 'Admin', email: 'admin@example.com', role: 'admin', avatar: 'teal' });
     expect(Object.keys(doc.account).sort()).toEqual(['accessUntil', 'avatar', 'createdAt', 'email', 'id', 'name', 'role']);
@@ -159,6 +159,35 @@ describe('GET /api/account/export', () => {
     expect(doc.achievements).toEqual([{ key: 'akey-achievement', earnedAt: expect.any(String) }]);
     expect(doc.watchlist.seriesLanguages).toEqual([expect.objectContaining({ seriesId: 'aseries-lang', audio: 'jpn', subtitle: 'ger' })]);
     expect(doc.watchlist.hiddenFromResume).toEqual([expect.objectContaining({ itemId: 'aitem-hidden' })]);
+  });
+
+  it('Live-TV favourites and recently watched: own profiles only, in order, channel id and name, never stream URL or credentials', async () => {
+    const { s, a, aKid, b, bKid } = await setup();
+    fakeHistory();
+    const q = (sql: string, p: unknown[] = []) => env.pool.query(sql, p);
+    const src = randomUUID();
+    await q("insert into livetv_sources(id, kind, name, url_enc, url_hint) values ($1, 'm3u', 'Nordlicht TV', $2, 'https://provider.example.com/…')",
+      [src, encrypt(env.ctx.encKey, 'https://provider.example.com/list/anna/zugang')]);
+    const ch = async (name: string, override: string | null = null) => {
+      const id = randomUUID();
+      await q(`insert into livetv_channels(id, source_id, source_key, stream_url_enc, stream_kind, import_name, name_override) values ($1,$2,$3,$4,'hls',$5,$6)`,
+        [id, src, `k-${id}`, encrypt(env.ctx.encKey, `https://provider.example.com/live/anna/zugang/${name}.m3u8`), name, override]);
+      return id;
+    };
+    const hafen = await ch('Hafenkanal'), nord = await ch('Nordlicht Eins', 'Nordlicht Zwei'), kanal = await ch('Kanal Probe'), fremd = await ch('Fremdsender Muster');
+    await q('insert into livetv_favourites(profile_id, channel_id, position) values ($1,$2,1), ($1,$3,0), ($4,$5,0), ($6,$5,0)', [a, hafen, nord, aKid, kanal, b]);
+    await q("insert into livetv_recent(profile_id, channel_id, at) values ($1,$2,'2026-10-01T10:00:00Z'), ($1,$3,'2026-10-02T10:00:00Z'), ($4,$5,now())", [a, hafen, nord, bKid, fremd]);
+    const text = (await get(s)).body;
+    const doc = JSON.parse(text);
+    const of = (id: string) => doc.livetv.profiles.find((p: { profileId: string }) => p.profileId === id);
+    expect(of(a)).toEqual({
+      profileId: a,
+      favourites: [{ channelId: nord, name: 'Nordlicht Zwei' }, { channelId: hafen, name: 'Hafenkanal' }],
+      recent: [{ channelId: nord, name: 'Nordlicht Zwei', at: expect.any(String) }, { channelId: hafen, name: 'Hafenkanal', at: expect.any(String) }],
+    });
+    expect(of(aKid)).toEqual({ profileId: aKid, favourites: [{ channelId: kanal, name: 'Kanal Probe' }], recent: [] });
+    expect(doc.livetv.profiles).toHaveLength(2);
+    for (const v of ['provider.example.com', 'zugang', '.m3u8', 'Fremdsender Muster', fremd, bKid, b, 'Nordlicht Eins']) expect(text, v).not.toContain(v);
   });
 
   it('notification texts are not exported: invites, recommendations and admin notices name other people', async () => {
