@@ -6,6 +6,7 @@ import { m } from '../i18n.js';
 import { notifyAdmins } from '../notify.js';
 import { isOwnFeeds } from './channels.js';
 import { LivetvError, livetvCall } from './client.js';
+import { autoMatch, refreshEpg } from './epg.js';
 import { pushEvent } from './events.js';
 import { mergeImport, type ImportResult } from './import.js';
 import { importLogos } from './logos.js';
@@ -15,9 +16,10 @@ import type { FetchM3uAnswer, M3uEntry } from './wire.js';
 
 /**
  * Refreshing a provider source (spec §10 jobs, §19): `/v1/fetch/m3u` through livetv with the source's skip list, the import merge,
- * the logos, then the `last_*` columns. A failure changes no channel; it is stored as a fixed code in `last_error` (never a URL or
- * a provider text, F13), pushed as the event `source_refresh_failed` (F20), and the third failure in a row tells the admins
- * (`livetv.source.failed`, once a day per source). `livetvRefreshTick` (every 5 min, server.ts) refreshes the due sources.
+ * the logos, then the `last_*` columns, then the EPG step (epg.ts; at least every 24 h through the tick). A list failure changes no
+ * channel; it is stored as a fixed code in `last_error` (never a URL or a provider text, F13), pushed as the event
+ * `source_refresh_failed` (F20), and the third failure in a row tells the admins (`livetv.source.failed`, once a day per source).
+ * `livetvRefreshTick` (every 5 min, server.ts) refreshes the due sources.
  */
 
 const LOCK_TTL_S = 15 * 60;
@@ -26,6 +28,8 @@ const TICK_LOCK_TTL_S = 30 * 60;
 /** consecutive failures; kept long enough for three weekly refreshes in a row */
 const FAILS_TTL_S = 30 * 24 * 3600;
 const NOTIFY_AFTER = 3;
+/** spec §10 jobs: the EPG of a source is refreshed at least this often, also for sources with refresh 'manual' (the guide would run dry) */
+export const EPG_MAX_AGE_MS = 24 * 3600_000;
 /** livetv's own M3U timeout is 60 s; the backend waits a little longer so livetv answers the code */
 const M3U_TIMEOUT_MS = 75_000;
 /** the logo step of one refresh stops after 5 minutes; the rest is fetched by the next refresh */
@@ -154,19 +158,51 @@ export async function refreshSource(ctx: Ctx, id: string, trigger: 'tick' | 'adm
       throw e;
     }
 
-    // ---- Task 17: the EPG step (epg_url_enc, `epg_last_*`) goes here, after the list step ----
-    // (the list step may have taken minutes: renew the single-flight lock before a long step, never taking over another owner's)
-    await ctx.kv.refreshIfEquals(lockKey(id), token, LOCK_TTL_S);
-
     const counts = { channels: r.total, added: r.added, updated: r.updated, removed: r.missing, returned: r.returned, listed: r.listed, newGroups: r.newGroups };
     await ctx.db.query(
       'update livetv_sources set last_refresh_at = $2, last_ok_at = $2, last_error = null, last_counts = $3 where id = $1',
       [id, now, JSON.stringify(counts)]);
     await ctx.kv.del(failsKey(id));
+
+    // the EPG step, after the list (its result is stored first, so the admin sees it while the EPG runs). The list step may have taken
+    // minutes: renew the single-flight lock before the long step, never taking over another owner's; the EPG step renews it again.
+    await ctx.kv.refreshIfEquals(lockKey(id), token, LOCK_TTL_S);
+    if (hasEpg(source)) await epgStep(ctx, source, token);
+    // no EPG of its own: the new channels are still matched against the other sources' EPG (no logo fetch without icons)
+    else await autoMatch(ctx);
   } finally {
     await ctx.kv.delIfEquals(lockKey(id), token);
   }
 }
+
+/** F16: the own-feeds source and a source without an EPG URL have no EPG step, and so never an EPG error */
+const hasEpg = (s: { kind: string; has_epg: boolean } | SourceRow) =>
+  !isOwnFeeds(s.kind) && ('has_epg' in s ? s.has_epg : s.epg_url_enc !== null);
+
+/** the EPG step under the caller's lock (renewed while the XMLTV stream is read); its outcome is in `epg_last_*` (epg.ts) */
+async function epgStep(ctx: Ctx, source: SourceRow, token: string): Promise<void> {
+  await refreshEpg(ctx, source, { heartbeat: () => ctx.kv.refreshIfEquals(lockKey(source.id), token, LOCK_TTL_S) });
+}
+
+/**
+ * Refreshes only the EPG of a source (the tick's 24-h due check), under the same single-flight lock as refreshSource. The own-feeds
+ * source and a source without an EPG URL are skipped (F16).
+ */
+export async function refreshSourceEpg(ctx: Ctx, id: string): Promise<void> {
+  const token = randomBytes(12).toString('hex');
+  if (!(await ctx.kv.setnx(lockKey(id), token, LOCK_TTL_S))) return;
+  try {
+    const source = (await ctx.db.query<SourceRow>('select * from livetv_sources where id = $1', [id])).rows[0];
+    if (!source || !hasEpg(source)) return;
+    await epgStep(ctx, source, token);
+  } finally {
+    await ctx.kv.delIfEquals(lockKey(id), token);
+  }
+}
+
+/** EPG due: never refreshed or older than 24 h, whatever the source's list refresh is (also 'manual') */
+const epgDue = (s: { epg_last_refresh_at: Date | null }, now: number) =>
+  s.epg_last_refresh_at === null || now - s.epg_last_refresh_at.getTime() >= EPG_MAX_AGE_MS;
 
 /** due: never refreshed (or marked due by an edit, Task 15) or the last attempt is older than the source's interval */
 function due(s: { refresh: Refresh; last_refresh_at: Date | null }, now: number): boolean {
@@ -184,17 +220,26 @@ export async function livetvRefreshTick(ctx: Ctx): Promise<void> {
   if (!(await ctx.kv.setnx(TICK_LOCK, token, TICK_LOCK_TTL_S))) return;
   let first: unknown;
   try {
-    const rows = (await ctx.db.query<Pick<SourceRow, 'id' | 'kind' | 'refresh' | 'enabled' | 'last_refresh_at'> & { has_url: boolean }>(
-      `select id, kind, refresh, enabled, last_refresh_at, url_enc is not null as has_url
-         from livetv_sources order by position, created_at, id`)).rows;
+    type TickRow = Pick<SourceRow, 'id' | 'kind' | 'refresh' | 'enabled' | 'last_refresh_at' | 'epg_last_refresh_at'> & { has_url: boolean; has_epg: boolean };
+    const sql = `select id, kind, refresh, enabled, last_refresh_at, epg_last_refresh_at, url_enc is not null as has_url, epg_url_enc is not null as has_epg
+                   from livetv_sources order by position, created_at, id`;
+    const rows = (await ctx.db.query<TickRow>(sql)).rows;
     for (const s of rows) {
       if (isOwnFeeds(s.kind) || !s.has_url) continue; // F16: no list to fetch, never an error
       if (!s.enabled || !due(s, Date.now())) continue;
+      // a refresh with its EPG step can take minutes: the tick keeps its own lock while it works through the sources
+      await ctx.kv.refreshIfEquals(TICK_LOCK, token, TICK_LOCK_TTL_S);
       // one failing source must not stop the others; the first unexpected error is rethrown at the end (jobFailed logs it)
       try { await refreshSource(ctx, s.id, 'tick'); } catch (e) { first ??= e; }
     }
 
-    // ---- Task 17: EPG due (never rarer than every 24 h, also for 'manual' sources) goes here ----
+    // EPG due (spec §10 jobs): never rarer than every 24 h, also for 'manual' sources and for sources whose list just failed; read again,
+    // since the list refreshes above ran their EPG step already. No EPG URL or the own-feeds source: skipped, never an error (F16).
+    for (const s of (await ctx.db.query<TickRow>(sql)).rows) {
+      if (!hasEpg(s) || !s.enabled || !epgDue(s, Date.now())) continue;
+      await ctx.kv.refreshIfEquals(TICK_LOCK, token, TICK_LOCK_TTL_S);
+      try { await refreshSourceEpg(ctx, s.id); } catch (e) { first ??= e; }
+    }
   } finally {
     await ctx.kv.delIfEquals(TICK_LOCK, token);
   }

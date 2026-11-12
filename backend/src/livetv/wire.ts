@@ -47,3 +47,23 @@ export interface FetchM3uAnswer {
   listed: number;
   skipped: { vod: number; invalid: number; overLimit: number; groups: number };
 }
+
+/** livetv/src/fetch.ts `FetchErrorCode` */
+export type FetchErrorCode = 'unreachable' | 'denied' | 'timeout' | 'too_big' | 'address_refused' | 'scheme' | 'redirects' | 'not_found' | 'http_error';
+/** livetv/src/xmltv.ts `XmltvErrorCode` */
+export type XmltvErrorCode = 'doctype' | 'invalid' | 'ratio' | 'too_big';
+/** one item of an XMLTV file (livetv/src/xmltv.ts `XmlItem`); `start`/`end` are epoch ms (UTC) */
+export type XmlItem =
+  | { t: 'channel'; id: string; names: string[]; icon?: string /* first <icon src>, http(s) only */ }
+  | {
+    t: 'prog'; ch: string; start: number; end: number; title: string; subtitle?: string; desc?: string; cats?: string[]; episode?: string;
+    seriesId?: string; isNew?: boolean; prevShown?: boolean; rating?: string;
+  };
+/**
+ * One line of the `POST /v1/fetch/xmltv` NDJSON answer (livetv/src/routes/fetch.ts `XmltvLine`); the last line is `end` (complete) or
+ * `error` (failed), never both. A stream without its `end` line failed.
+ */
+export type XmltvLine =
+  | XmlItem
+  | { t: 'end'; programmes: number; channels: number }
+  | { t: 'error'; code: FetchErrorCode | XmltvErrorCode };

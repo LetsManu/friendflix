@@ -188,6 +188,12 @@ describe('normName', () => {
     expect(normName('Ärzte TV')).toBe('arztetv');
     expect(normName('ÄRZTE TV HD')).toBe('arztetv');
   });
+
+  it('matches the shared vectors (F18: the backend copy in backend/src/livetv/epg.ts asserts the same file)', () => {
+    const rows = JSON.parse(readFileSync(new URL('../../test-vectors/livetv-normname.json', import.meta.url), 'utf8')) as Array<{ in: string; out: string }>;
+    expect(rows.length).toBeGreaterThan(20);
+    for (const r of rows) expect(normName(r.in), r.in).toBe(r.out);
+  });
 });
 
 describe('parseM3u limits', () => {

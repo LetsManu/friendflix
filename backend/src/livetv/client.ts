@@ -104,8 +104,11 @@ export async function livetvStream(ctx: Ctx, path: string, body: unknown, o: { t
     const r = await signedFetch(ctx, 'POST', path, body, d.signal);
     if (!r.ok) throw await refusal(r);
     if (!r.body) { d.clear(); return r; }
-    // the deadline (and `signal`) stay armed while the caller reads; the timer and the abort listener go once the body is read
-    const read = r.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ flush: () => d.clear() }));
+    // the deadline (and `signal`) stay armed while the caller reads; the timer and the abort listener go once the body is read, or at
+    // once when the caller cancels it (a reader that stops early)
+    // (`cancel` is a Transformer hook of the Streams standard and Node; TypeScript's DOM lib does not declare it yet)
+    const pass: Transformer<Uint8Array, Uint8Array> & { cancel(): void } = { flush: () => d.clear(), cancel: () => d.clear() };
+    const read = r.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>(pass));
     return new Response(read, { status: r.status, statusText: r.statusText, headers: r.headers });
   } catch (e) {
     d.clear(); // a refusal or a failed request leaves nobody to read the answer: the timer must not outlive the call
