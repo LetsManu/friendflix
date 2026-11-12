@@ -9,6 +9,7 @@ export default {
     /** the logo link: starts with its visible text (the wordmark and badge) for voice control */
     homeLink: 'FriendFlix Kids – Start',
     search: 'Suchen',
+    live: 'Fernsehen',
     switchProfile: 'Profil wechseln (gerade: {name})',
   },
   home: {

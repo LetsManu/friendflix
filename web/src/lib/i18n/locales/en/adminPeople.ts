@@ -490,6 +490,7 @@ const dict: Translation<typeof de> = {
     confirmRevokeTitle: 'Revoke access for “{device}”?',
     confirmRevokeBody: '{name} is signed out on this device and has to get it approved again.',
     unknownDevice: 'Unknown device',
+    startLive: 'TV starts with Live TV',
     empty: 'No devices registered yet.',
     emptyFiltered: 'No devices match these filters.',
   },

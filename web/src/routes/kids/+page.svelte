@@ -5,6 +5,7 @@
   import { onMount } from 'svelte';
   import { api, type Item, type Me } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
+  import { features } from '#lib/capabilities';
   import { t, type TKey } from '#lib/i18n';
   import KidsTile from './KidsTile.svelte';
 
@@ -45,6 +46,7 @@
       <h1>{$t('kids.home.title')}</h1>
     </div>
     <a class="bigsearch" href="/kids/search" data-autofocus><Icon name="search" size={28} /><span>{$t('kids.nav.search')}</span></a>
+    {#if $features.livetv}<a class="bigsearch" href="/live"><Icon name="tv" size={28} /><span>{$t('kids.nav.live')}</span></a>{/if}
   </div>
 
   {#if failed}

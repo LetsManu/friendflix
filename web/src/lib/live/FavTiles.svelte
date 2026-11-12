@@ -19,6 +19,8 @@
   export let now: Date;
   /** the list has not arrived yet: tiles of the final size stand in */
   export let loading = false;
+  /** the TV layout (spec 11.3): 360 px tiles at 1080p in one row the D-pad walks, no time-left slot, focus = scale(1.08) + the white ring */
+  export let tv = false;
 
   const MAX = 12;
   const dispatch = createEventDispatcher<{ open: LiveChannel }>();
@@ -30,7 +32,7 @@
 </script>
 
 {#if loading || tiles.length}
-  <section class="fav" aria-labelledby="live-fav-h" aria-busy={loading ? 'true' : undefined}>
+  <section class="fav" class:tv aria-labelledby="live-fav-h" aria-busy={loading ? 'true' : undefined}>
     <div class="head">
       <h2 id="live-fav-h">{$t('live.favourites')}</h2>
       <span class="order"><slot name="order" /></span>
@@ -42,7 +44,7 @@
         {#each tiles as c (c.id)}
           {@const left = c.receiving !== false && c.epg === 'ok' ? timeLeft(c.now, now) : null}
           <li class="cell">
-            <button type="button" class="tile frost frost-tile" aria-label={rowName(c, now)} on:click={() => dispatch('open', c)}>
+            <button type="button" class="tile frost frost-tile" data-ch={c.id} aria-label={rowName(c, now)} on:click={() => dispatch('open', c)}>
               <span class="media" aria-hidden="true">
                 {#if c.running && c.preview}
                   <img class="pv" src={c.preview} alt="" loading="lazy" decoding="async" use:fadeIn />
@@ -64,7 +66,7 @@
 {/if}
 
 <style>
-  .fav { margin: 0 0 1.4rem; }
+  .fav { margin: 0 0 1.4rem; --u: calc(100vw / 1920); }
   /* the head always keeps the height of a 44 px button, so *Ordnen* arriving there moves nothing */
   .head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 44px; margin-bottom: .4rem; }
   h2 { margin: 0; font-size: 1.15rem; }
@@ -98,6 +100,17 @@
   .sz { visibility: hidden; height: 0; overflow: hidden; }
   .bar { height: 3px; margin-top: 5px; border-radius: 2px; overflow: hidden; background: rgba(255, 255, 255, .28); }
   .bar > i { display: block; height: 100%; background: #fff; transform-origin: 0 50%; }
+
+  /* TV: one row of 360 px tiles (1u = 1 px at a 1080p viewport); room around the strip for the focus ring and the 1.08 scale; the caption text is 28 px */
+  .tv h2 { font-size: calc(var(--u) * 32); }
+  .tv .cell { --tw: calc(var(--u) * 360); }
+  .tv .strip { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; scroll-snap-type: none; gap: calc(var(--u) * 28); padding: calc(var(--u) * 24) calc(var(--u) * 28); }
+  .tv .strip::-webkit-scrollbar { display: none; }
+  .tv .l1, .tv .l2 { font-size: calc(var(--u) * 28); line-height: calc(var(--u) * 32); }
+  .tv .left { display: none; }
+  .tv .cap { padding: calc(var(--u) * 28) calc(var(--u) * 14) calc(var(--u) * 12); }
+  .tv .tile, .tv .tile:hover:not(:disabled), .tv .tile:active:not(:disabled) { transition: none; }
+  .tv .tile:focus-visible, .tv .tile:focus-visible:hover:not(:disabled) { transform: scale(1.08); z-index: 2; }
 
   @media (max-width: 720px) {
     .cell { --tw: min(78vw, 300px); }

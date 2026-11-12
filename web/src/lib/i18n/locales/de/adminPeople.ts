@@ -492,6 +492,7 @@ export default {
     confirmRevokeTitle: 'Zugriff für „{device}“ entziehen?',
     confirmRevokeBody: '{name} wird auf diesem Gerät abgemeldet und muss es neu freigeben lassen.',
     unknownDevice: 'Unbekanntes Gerät',
+    startLive: 'TV startet mit Live-TV',
     empty: 'Noch keine Geräte registriert.',
     emptyFiltered: 'Keine Geräte mit diesen Filtern.',
   },

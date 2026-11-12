@@ -490,6 +490,7 @@ const dict: Translation<typeof de> = {
     confirmRevokeTitle: "Retirer l'accès pour « {device} » ?",
     confirmRevokeBody: "{name} est déconnecté(e) sur cet appareil et doit le faire approuver à nouveau.",
     unknownDevice: 'Appareil inconnu',
+    startLive: 'La TV démarre sur la TV en direct',
     empty: "Aucun appareil enregistré pour l'instant.",
     emptyFiltered: 'Aucun appareil ne correspond à ces filtres.',
   },

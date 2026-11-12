@@ -21,7 +21,7 @@ export interface AdminUser { id: string; name: string; email: string | null; rol
   perms?: Record<string, boolean>; otherOverrides?: number; /** the stored non-switch overrides in the PUT encoding (null never stored; 'unlimited' lifts a cap); their count is `otherOverrides` once written */ ov?: Record<string, unknown>; kidsProfiles?: number; note?: string | null; mfaOff?: boolean }
 /** a claimed deletion whose users row is gone (status=deleting lists it by pseudonym); step = the step in work (1-6) */
 export interface AdminCleanup { id: string; pseudonym: string; started_at: string; step: number; error: string | null }
-export interface AdminDevice { user_id: string; device_id: string; label: string; approved: boolean; last_seen: string; name: string; /** the admin's own device (backend: current) */ current?: boolean }
+export interface AdminDevice { user_id: string; device_id: string; label: string; approved: boolean; last_seen: string; name: string; /** the admin's own device (backend: current) */ current?: boolean; /** TV devices (`tv-…` ids): opens Live TV at start (devices.start_live) */ startLive?: boolean }
 export interface AdminRequest { id: number; title: string; mediaType: 'movie' | 'tv'; requestedBy: string; status: string; createdAt: string }
 export interface AdminInvite { id: string; role: string; note: string | null; expires_at: string; used_at: string | null; used_by_name: string | null; uses: number; max_uses: number; access_days: number | null }
 /** open approval request (GET /api/admin/approvals) */
@@ -1374,6 +1374,14 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return J({ ok: true, accounts: role.accounts, invites: role.invites });
   }
   if (p === '/api/admin/devices') return J(devicesList(st, sp));
+  // Task 33: PATCH /api/admin/devices/:userId/:deviceId { startLive }, TV devices only (400 not_tv otherwise)
+  if ((mm = p.match(/^\/api\/admin\/devices\/([^/]+)\/([^/]+)$/)) && m === 'PATCH') {
+    const d = st.devices.find((x) => x.user_id === decodeURIComponent(mm![1]!) && x.device_id === decodeURIComponent(mm![2]!));
+    if (!d) return J({ error: 'not_found' }, 404);
+    if (!d.device_id.startsWith('tv-')) return J({ error: 'not_tv' }, 400);
+    d.startLive = Boolean(body.startLive); log('device.start_live', d.user_id, { startLive: d.startLive }, d.name);
+    return ok();
+  }
   if (p === '/api/admin/devices/approve' && m === 'POST') {
     const d = st.devices.find((x) => x.user_id === body.userId && x.device_id === body.deviceId);
     if (!d) return J({ error: 'not_found' }, 404);
