@@ -347,7 +347,7 @@ All admin routes: `requireAdmin` (admin account acting as its owner profile), CS
 5. Next release: drop the old `role_settings` columns and the legacy endpoints (own migration, own PR).
 
 Rollback to 3.3 after Phase 0: works (old columns are current; `roles`, new `user_limits` columns and indexes are ignored by
-3.3). The one caveat: 3.3 does not know admin-created roles (`effectiveRole` answers `undefined`, playback fails for those
+3.3). Caveats: 3.3 does not know admin-created roles (`effectiveRole` answers `undefined`, playback fails for those
 accounts). The release notes say: before rolling back, move accounts of admin-created roles to a built-in role (bulk *Rolle
 ändern*). Built-in and env roles are unaffected.
 Second caveat: values only the new model can hold are ignored by 3.3 (per role: streams, bitrate, age cap, libraries, switches;
