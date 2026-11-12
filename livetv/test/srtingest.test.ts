@@ -21,7 +21,7 @@ import { flush, memoryStore } from './streams-helpers.js';
 /**
  * Task 29: the SRT push ingest. `IngestHub` runs against `fake-srtgate.mjs` (a real child process speaking srtgate's frame
  * protocol, no libsrt, no network); its clock is the fake `now`, timers and pipes are real. The remux driver and the probe take a
- * stub ingest under fake timers.
+ * stub ingest under fake timers. The per-address ban lives in srtgate and is covered by `srtgate --selftest` (image build).
  */
 const NOW = Date.parse('2026-11-12T20:15:00.000Z');
 const MIN = 60_000;
@@ -217,18 +217,21 @@ describe('IngestHub', () => {
     await vi.waitFor(() => expect(counts()).toEqual({ [NORD.channelId]: 2, [HAFEN.channelId]: 0 }));
 
     h.clock.t = NOW + 30 * MIN;
-    // every fixed reason counts, a second sender too; a rejection on a port without a feed counts for nobody
-    h.do([rejected(9000, 'conflict'), rejected(9001, 'forbidden'), rejected(9005, 'forbidden')]);
-    await vi.waitFor(() => expect(counts()).toEqual({ [NORD.channelId]: 3, [HAFEN.channelId]: 1 }));
+    // a conflict does NOT count: it is a second sender with the right stream id while one is connected — no credential was
+    // judged, and it is what the owner's own encoder gets while it reconnects before srtgate let go of the old connection
+    // (counting it would raise a "falsche Kennung oder Passphrase" event for a working feed; srtgate keeps it out of the
+    // per-address ban for the same reason). A rejection on a port without a feed counts for nobody.
+    h.do([rejected(9000, 'conflict'), rejected(9000, 'conflict'), rejected(9001, 'forbidden'), rejected(9005, 'forbidden')]);
+    await vi.waitFor(() => expect(counts()).toEqual({ [NORD.channelId]: 2, [HAFEN.channelId]: 1 }));
     expect(h.hub.state()).toHaveLength(2);
 
     // new credentials for the same feed (*Zugangsdaten neu erzeugen*) keep its count
     h.hub.setFeeds([{ ...NORD, passphrase: 'aNewPassphraseFor-Nordlicht-2026' }, HAFEN]);
-    expect(counts()).toEqual({ [NORD.channelId]: 3, [HAFEN.channelId]: 1 });
+    expect(counts()).toEqual({ [NORD.channelId]: 2, [HAFEN.channelId]: 1 });
 
-    // the two of 20:15 leave the hour, the ones of 20:45 stay
+    // the two of 20:15 leave the hour, the one of 20:45 stays
     h.clock.t = NOW + 60 * MIN + 1;
-    expect(counts()).toEqual({ [NORD.channelId]: 1, [HAFEN.channelId]: 1 });
+    expect(counts()).toEqual({ [NORD.channelId]: 0, [HAFEN.channelId]: 1 });
     h.clock.t = NOW + 90 * MIN + 1;
     expect(counts()).toEqual({ [NORD.channelId]: 0, [HAFEN.channelId]: 0 });
   });

@@ -20,8 +20,11 @@
 // The handshake (srt_listen_callback, libsrt's receive thread): the caller's stream id is compared in constant time with the
 // feed of the port it called; a match gets that feed's passphrase (SRTO_PASSPHRASE, SRTO_PBKEYLEN 32) set on the new socket, and
 // libsrt's key exchange (SRTO_ENFORCEDENCRYPTION) refuses a wrong passphrase. A handshake the callback let through that never
-// reaches srt_accept within PENDING_TIMEOUT_S counts as a passphrase rejection. An address with 20 rejections within 1 min is
-// ignored for 10 min (refused without an event).
+// reaches srt_accept within PENDING_TIMEOUT_S counts as a passphrase rejection. An address with 20 counted rejections within 1 min
+// is ignored for 10 min (refused without an event). Only refusals that judged a credential count: a wrong stream id on a port
+// with a feed, a failed key exchange. Not counted (still reported): `conflict`, which checks no passphrase and is what the owner's
+// own encoder gets while it reconnects before the old connection is let go; and any refusal on a port without a feed, which is
+// every encoder after a livetv restart until the backend sends the set again.
 
 #include <errno.h>
 #include <pthread.h>
@@ -315,6 +318,8 @@ static int listen_hook(void *opaq, SRTSOCKET ns, int hsversion, const struct soc
   char pass[PASS_MAX + 1];
   size_t pass_len = 0;
   int reason = R_NONE;
+  // whether this refusal counts toward the per-address ban: only one that judged a credential against a feed
+  int counted = 0;
   size_t sl = streamid ? strnlen(streamid, SID_MAX + 1) : 0;
   key_of(peer, &k);
 
@@ -325,10 +330,16 @@ static int listen_hook(void *opaq, SRTSOCKET ns, int hsversion, const struct soc
     return -1;
   }
   int match = ct_equal(streamid ? streamid : "", sl > SID_MAX ? SID_MAX : sl, s->sid, s->sid_len);
-  if (hsversion < 5 || !s->has_feed || sl == 0 || sl > SID_MAX || !match) reason = R_FORBIDDEN;
-  else if (s->sender != SRT_INVALID_SOCK) reason = R_CONFLICT;
+  if (hsversion < 5 || !s->has_feed || sl == 0 || sl > SID_MAX || !match) {
+    reason = R_FORBIDDEN;
+    // a port without a feed (after a livetv restart, before the backend re-sent the set) judged nothing: never a ban
+    counted = s->has_feed;
+  } else if (s->sender != SRT_INVALID_SOCK) {
+    // checked no passphrase; typically the owner's encoder reconnecting while its old connection is still held: never a ban
+    reason = R_CONFLICT;
+  }
   if (reason != R_NONE) {
-    thr_hit(&k, now);
+    if (counted) thr_hit(&k, now);
     ev_push(idx, reason);
   } else {
     memcpy(pass, s->pass, s->pass_len);
@@ -665,10 +676,8 @@ static void accept_on(int idx) {
     int sl = (int)sizeof sa;
     SRTSOCKET a = srt_accept(g_slots[idx].lsn, (struct sockaddr *)&sa, &sl);
     if (a == SRT_INVALID_SOCK) return;
-    addrkey_t k;
     unsigned gen = 0;
     int ok, busy;
-    key_of((struct sockaddr *)&sa, &k);
     pthread_mutex_lock(&g_mu);
     slot_t *s = &g_slots[idx];
     int found = pend_take(a, &gen);
@@ -678,12 +687,11 @@ static void accept_on(int idx) {
     if (ok && !busy) {
       s->sender = a;
       s->kick = 0;
-    } else if (ok && busy) {
-      thr_hit(&k, mono());
     }
     pthread_mutex_unlock(&g_mu);
     if (!ok || busy) {
       srt_close(a);
+      // a second sender: reported, never counted toward the ban (see the handshake)
       if (ok) emit_rejected(idx, R_CONFLICT);
       continue;
     }
@@ -802,6 +810,8 @@ static int parse_ports(const char *s, int *a, int *b) {
 #define ST_SID_B "ff-BBBBBBBBBBBBBBBB"
 #define ST_PASS_A "selftest-passphrase-A-0123456789"
 #define ST_PASS_B "selftest-passphrase-B-0123456789"
+/** more refusals than the ban needs: had they counted, the address would be banned before the loop ends */
+#define ST_MANY (THROTTLE_HITS + 5)
 
 static void *gate_thread(void *arg) {
   (void)arg;
@@ -853,13 +863,23 @@ static int st_fail(const char *what) {
   return 1;
 }
 
+// the feeds line for the selftest: port A always, port B only when `with_b`
+static int st_feeds(int pa, int pb, int with_b) {
+  char line[512];
+  if (with_b) {
+    snprintf(line, sizeof line,
+             "{\"t\":\"feeds\",\"feeds\":[{\"port\":%d,\"streamId\":\"" ST_SID_A "\",\"passphrase\":\"" ST_PASS_A "\"},"
+             "{\"port\":%d,\"streamId\":\"" ST_SID_B "\",\"passphrase\":\"" ST_PASS_B "\"}]}", pa, pb);
+  } else {
+    snprintf(line, sizeof line,
+             "{\"t\":\"feeds\",\"feeds\":[{\"port\":%d,\"streamId\":\"" ST_SID_A "\",\"passphrase\":\"" ST_PASS_A "\"}]}", pa);
+  }
+  return apply_line(line, strlen(line));
+}
+
 static int selftest_body(void) {
   int pa = g_slots[0].port, pb = g_slots[1].port, rej;
-  char line[512];
-  snprintf(line, sizeof line,
-           "{\"t\":\"feeds\",\"feeds\":[{\"port\":%d,\"streamId\":\"" ST_SID_A "\",\"passphrase\":\"" ST_PASS_A "\"},"
-           "{\"port\":%d,\"streamId\":\"" ST_SID_B "\",\"passphrase\":\"" ST_PASS_B "\"}]}", pa, pb);
-  if (!apply_line(line, strlen(line))) return st_fail("the feeds line was not taken");
+  if (!st_feeds(pa, pb, 1)) return st_fail("the feeds line was not taken");
 
   // a wrong passphrase: refused in the key exchange, counted as a passphrase rejection
   if (st_call(pa, ST_SID_A, "a-wrong-passphrase-0123456789abc", NULL) != SRT_INVALID_SOCK) return st_fail("a wrong passphrase was accepted");
@@ -881,15 +901,54 @@ static int selftest_body(void) {
   if (srt_sendmsg(ok, pkt, (int)sizeof pkt, -1, 1) == SRT_ERROR) { srt_close(ok); return st_fail("the sender could not send"); }
   if (!st_wait(&g_seen.data[0], (long)sizeof pkt, 3.0)) { srt_close(ok); return st_fail("the sender's data did not arrive"); }
 
-  // a second sender with valid credentials: conflict
-  rej = 0;
-  if (st_call(pa, ST_SID_A, ST_PASS_A, &rej) != SRT_INVALID_SOCK) { srt_close(ok); return st_fail("a second sender was accepted"); }
-  if (rej != SRT_REJX_CONFLICT) { srt_close(ok); return st_fail("a second sender was not refused as conflict"); }
+  // a second sender with valid credentials: conflict, every time, and it never counts toward the ban (an encoder retrying
+  // while its old connection is still held must not lock itself out)
+  for (int i = 0; i < ST_MANY; i++) {
+    rej = 0;
+    if (st_call(pa, ST_SID_A, ST_PASS_A, &rej) != SRT_INVALID_SOCK) { srt_close(ok); return st_fail("a second sender was accepted"); }
+    if (rej != SRT_REJX_CONFLICT) { srt_close(ok); return st_fail("a repeated second sender was not refused as conflict"); }
+  }
+  if (!st_wait(&g_seen.rejected[0][R_CONFLICT], ST_MANY, 2.0)) { srt_close(ok); return st_fail("conflicts were not reported"); }
 
-  // the sender goes: closed
+  // the sender goes: closed; the same encoder connects again at once
   srt_close(ok);
   if (!st_wait(&g_seen.closed[0], 1, 10.0)) return st_fail("a closed sender was not reported");
   if (st_seen(&g_seen.accepted[1]) != 0 || st_seen(&g_seen.data[1]) != 0) return st_fail("the other port saw a sender");
+  ok = st_call(pa, ST_SID_A, ST_PASS_A, NULL);
+  if (ok == SRT_INVALID_SOCK) return st_fail("conflicts locked the right pair out");
+  if (!st_wait(&g_seen.accepted[0], 2, 3.0)) { srt_close(ok); return st_fail("the reconnect was not reported accepted"); }
+  srt_close(ok);
+  if (!st_wait(&g_seen.closed[0], 2, 10.0)) return st_fail("the reconnected sender's close was not reported");
+
+  // a port without a feed (a livetv restart before the backend re-sent the set): refused and reported every time, never counted,
+  // so the encoder's retries cannot ban it before its feed arrives
+  if (!st_feeds(pa, pb, 0)) return st_fail("the feeds line without port B was not taken");
+  long before = st_seen(&g_seen.rejected[1][R_FORBIDDEN]);
+  for (int i = 0; i < ST_MANY; i++) {
+    rej = 0;
+    if (st_call(pb, ST_SID_B, ST_PASS_B, &rej) != SRT_INVALID_SOCK) return st_fail("a port without a feed accepted a sender");
+    if (rej != SRT_REJX_FORBIDDEN) return st_fail("a port without a feed did not refuse as forbidden");
+  }
+  if (!st_wait(&g_seen.rejected[1][R_FORBIDDEN], before + ST_MANY, 2.0)) return st_fail("refusals on a port without a feed were not reported");
+  if (!st_feeds(pa, pb, 1)) return st_fail("the feeds line with port B again was not taken");
+  ok = st_call(pb, ST_SID_B, ST_PASS_B, NULL);
+  if (ok == SRT_INVALID_SOCK) return st_fail("refusals on a port without a feed locked its encoder out");
+  if (!st_wait(&g_seen.accepted[1], 1, 3.0)) { srt_close(ok); return st_fail("port B's sender was not reported accepted"); }
+  srt_close(ok);
+  if (!st_wait(&g_seen.closed[1], 1, 10.0)) return st_fail("port B's sender's close was not reported");
+
+  // the ban itself (last: it locks out 127.0.0.1): counted refusals (another port's stream id on a port with a feed) reach 20 within
+  // a minute, then the address is ignored — the right pair too, and without an event
+  for (int i = 0; i < THROTTLE_HITS; i++) {
+    if (st_call(pa, ST_SID_B, ST_PASS_B, NULL) != SRT_INVALID_SOCK) return st_fail("a wrong stream id was accepted");
+  }
+  nap_ms(300);
+  long reported = st_seen(&g_seen.rejected[0][R_FORBIDDEN]);
+  rej = 0;
+  if (st_call(pa, ST_SID_A, ST_PASS_A, &rej) != SRT_INVALID_SOCK) return st_fail("a banned address was accepted");
+  if (rej != SRT_REJX_FORBIDDEN) return st_fail("a banned address was not refused as forbidden");
+  nap_ms(300);
+  if (st_seen(&g_seen.rejected[0][R_FORBIDDEN]) != reported) return st_fail("a banned address was reported");
   return 0;
 }
 

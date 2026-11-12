@@ -17,11 +17,12 @@ RUN npm ci
 COPY livetv livetv
 RUN npm run build -w livetv
 
-# srtgate: built against Debian's libsrt (OpenSSL flavour); its selftest runs in-process callers on loopback (right pair accepted,
-# wrong passphrase refused, another port's stream id refused, a second sender refused) and fails the build otherwise.
+# srtgate: built against Debian's libsrt (OpenSSL flavour), its flags from pkg-config (srt.pc); its selftest runs in-process
+# callers on loopback (right pair accepted, wrong passphrase refused, another port's stream id refused, a second sender refused,
+# the ban and its exemptions) and fails the build otherwise.
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS srtgate
 RUN apt-get update \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc make libc6-dev libsrt-openssl-dev \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc make libc6-dev pkg-config libsrt-openssl-dev \
   && rm -rf /var/lib/apt/lists/*
 COPY livetv/native /src
 RUN make -C /src clean all \

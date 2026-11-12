@@ -13,10 +13,11 @@ import type { Log } from './log.js';
  * srtgate.
  *
  * `IngestHub` keeps the set in memory only (the backend sends it again with `PUT /v1/ingest` after a livetv restart), a 4-s ring
- * per feed, the receiving state (an accepted connection with data in the last 5 s) and the rejections of the last hour. An exited
- * helper is started again with backoff and gets the current set at once; a frame the protocol does not allow (unknown type, an
- * event over 4 KB, a data frame over 1 MB) replaces the helper. Logs: channel ids, fixed texts and exit codes only; the helper's
- * stderr is never read into a log.
+ * per feed, the receiving state (an accepted connection with data in the last 5 s) and the rejections of the last hour (wrong
+ * stream id or passphrase; a `conflict`, a second sender while one is connected, is logged but not counted). An exited helper is
+ * started again with backoff and gets the current set at once; a frame the protocol does not allow (unknown type, an event over
+ * 4 KB, a data frame over 1 MB) replaces the helper. Logs: channel ids, fixed texts and exit codes only; the helper's stderr is
+ * never read into a log.
  */
 export interface Feed { channelId: string; port: number; streamId: string; passphrase: string }
 /** `GET /v1/ingest` items; re-declared field for field in backend/src/livetv/wire.ts (F4) */
@@ -364,7 +365,9 @@ export class IngestHub implements IngestReader {
       this.deps.log(`ingest ${id} sender gone`);
     } else if (t === 'rejected') {
       const now = this.deps.now();
-      this.countRejection(id, now);
+      // `rejected1h` feeds the "falsche Kennung oder Passphrase" event (spec §3.5); a conflict checked no credential (usually the
+      // owner's own encoder reconnecting while the old connection is still held), so it is logged but not counted
+      if (reason !== 'conflict') this.countRejection(id, now);
       const last = this.rejectLogged.get(id);
       if (last === undefined || now - last >= REJECT_LOG_MS) {
         this.rejectLogged.set(id, now);
