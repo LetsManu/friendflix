@@ -697,6 +697,23 @@ test.describe('admin people (desktop)', () => {
       await expect(table(page).getByRole('row', { name: /Clara Fischer/ }).getByTitle('2 Kinderprofile')).toBeVisible();
     });
 
+    test('a note near the bottom of the screen opens above its button and stays inside', async ({ page }) => {
+      await page.setViewportSize({ width: 1280, height: 420 });
+      await page.goto('/admin/users');
+      const note = table(page).getByRole('row', { name: /Anna Beispiel/ }).getByRole('button', { name: 'Notiz' });
+      await note.evaluate((el) => el.scrollIntoView({ block: 'end' }));
+      await note.click();
+      const pop = page.getByRole('note');
+      await expect(pop).toBeVisible();
+      await expect.poll(async () => {
+        const [b, p] = [await note.boundingBox(), await pop.boundingBox()];
+        return !!b && !!p && p.y + p.height <= b.y && p.y >= 0;
+      }).toBe(true);
+      // closing is animated and ends with the popover gone
+      await page.keyboard.press('Escape');
+      await expect(pop).toHaveCount(0);
+    });
+
     test('bulk Recht setzen: Übertragen verbieten after a confirm that names both', async ({ page, api }) => {
       await page.goto('/admin/users');
       await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
