@@ -481,6 +481,8 @@ describe('role matrix and save bar (rights)', () => {
       expect(src, f).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
     }
     for (const f of ['DeleteRoleDialog', 'NameDialog']) expect(read(`./rights/${f}.svelte`), f).toContain('ModalShell');
+    // the confirm dialog (Verwerfen, delete, …) sits in the same shell, so its calm mode is the shell's
+    expect(read('../ui/ConfirmHost.svelte')).toMatch(/<ModalShell\b/);
     expect(read('../ui/ModalShell.svelte')).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
   });
 
