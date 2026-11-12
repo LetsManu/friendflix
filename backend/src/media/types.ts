@@ -169,6 +169,11 @@ export interface PlaybackDto {
   /** effective ceiling for this request (role limit, lowered to the remote cap outside the home networks): upper bound for the quality menu */
   roleMaxBitrate?: number;
   /**
+   * the source's total bitrate as the server states it (Jellyfin MediaSource.Bitrate; absent when unknown or on Plex). Server-side only: the
+   * budget's copy fallback is the source's own bitrate, so it is offered only to a request that asked for at least that much (routes strip it)
+   */
+  sourceBitrate?: number;
+  /**
    * Why this session is transcoded; undefined for direct play, except the `serverBusy` fallback. Codec/container/height/subtitle/audio-track
    * reasons come from the server, 'remoteCap' / 'uploadCap' / 'roleCap' / 'manual' / 'network' from the bitrate cap that applied (the client's
    * choice is 'manual' or 'network' via reasonHint). 'serverBusy': the conversion budget was full, so this is the copy (or direct-play)

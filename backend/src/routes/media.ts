@@ -20,7 +20,7 @@ import { bumpHome } from '../homegen.js';
 import { nextUpItems, resumeItems } from '../resumeRows.js';
 import { createHash } from 'node:crypto';
 import { hevcStatus, noteHevcFailure, type HevcState } from '../hevcenc.js';
-import { convertsOf, filmGate, releaseGrants } from '../filmgate.js';
+import { convertsOf, copyFitsCap, filmGate, releaseGrants } from '../filmgate.js';
 import { itemsByIds, libraryBecause } from './discover.js';
 import { id32 as itemId, wrap as sharedWrap } from './_shared.js';
 
@@ -410,14 +410,16 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     // the budget's label: the title from the resume lookup (a series by its series name); none when that lookup failed
     const label = meta?.seriesName || meta?.name;
     // spec §5.5: a conversion the budget does not admit (full, or the session list did not answer in time) is asked for again as a copy at
-    // the ceiling (the viewer's own lower pick is dropped, the role / remote / upload cap stays). A copy (or direct play) is answered with
-    // the reason `serverBusy`; a title that still needs a conversion gets 503. No stream was fetched yet, so nothing has to be stopped.
+    // the ceiling (the role / remote / upload cap stays). A copy (or direct play) is answered with the reason `serverBusy`; a title that
+    // still needs a conversion gets 503. No stream was fetched yet, so nothing has to be stopped.
+    // Owner ruling 2026-11-12: the copy carries the source's own bitrate, so it is offered only when the viewer's own cap (pick or line:
+    // data saver, a lower quality, ABR on a slow line) is at or above the source; a request below the source gets 503 (copyFitsCap).
     // At the ceiling already (the viewer picked nothing lower), the copy request would plan the same answer: the copy decision and direct
     // play depend on the bitrate, box, caps and source, all unchanged, and `noConvert` only takes away an HEVC encode (a conversion
-    // either way). So the 503 comes without a second round trip.
+    // either way). So both 503s come without a second round trip.
     if (!(await gate.admit(info, label))) {
       let fb: PlaybackDto | null = null;
-      if (cap < upload.cap) {
+      if (cap < upload.cap && copyFitsCap(info, cap)) {
         const fallback = { ...opts, noConvert: true, maxBitrate: upload.cap, capReason: 'serverBusy' as const };
         fb = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, fallback);
         if (ctx.jf.preparePlayback) fb = await ctx.jf.preparePlayback(req.jfUser!, fb, fallback);
@@ -447,6 +449,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     // (plus the granted cap and remote flag: the upload-aware cap counts live remote streams with them; `conv`: this answer really
     // converts (ruling 6), so the budget counts it while the server lists only another device's play session of the same profile)
     await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ reason: info.transcodeReason ?? null, bitrate: info.maxBitrate, remote, ...(info.delivery ? { video: info.delivery.video, audio: info.delivery.audio } : {}), ...(convertsOf(info) ? { conv: true } : {}) }), 6 * 3600).catch(() => undefined);
+    delete info.sourceBitrate; // server-side only (the fallback decision above)
     return info;
   }));
 

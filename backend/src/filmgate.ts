@@ -20,6 +20,14 @@ export const releaseGrants = async (ctx: Ctx, playSessionId: string): Promise<vo
 export const convertsOf = (info: PlaybackDto): boolean => !info.directUrl && Boolean(info.delivery) && info.delivery!.video !== 'copy';
 
 /**
+ * Owner ruling of 2026-11-12: the budget's copy fallback carries the source at its own bitrate. It is offered only to a request that asked
+ * for at least that much; a request whose own cap (`cap`, the viewer's pick or line: data saver, a lower quality, ABR on a slow line) lies
+ * below the source gets `503 server_busy` instead of a copy above what it asked for. An unknown source bitrate counts as above (never a copy
+ * of unknown size for a viewer who asked for less).
+ */
+export const copyFitsCap = (info: Pick<PlaybackDto, 'sourceBitrate'>, cap: number): boolean => info.sourceBitrate !== undefined && info.sourceBitrate <= cap;
+
+/**
  * The conversion gate of one film playback or cast request (spec §5.5, rulings 6 and 7). One grant id serves the HEVC gate
  * (`hevcgrant:`) and the budget (`conv:grant:`); both gates share one session-list read (sharedSessionRead), and the budget is asked at
  * most once per request, so their worst cases do not add up:

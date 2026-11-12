@@ -20,6 +20,8 @@ const E: EncoderSettings = { hwAccel: 'qsv', tonemap: true, throttle: true, keyf
 interface Source { container: string; bitrate: number; video: Record<string, unknown> }
 /** H.264 8 Mbit/s 1080p in Matroska: a browser cannot direct-play it, but HLS can copy it at a cap of 8.2 Mbit/s or more */
 const H264_8M: Source = { container: 'mkv', bitrate: 8_200_000, video: { Codec: 'h264', BitRate: 8_000_000, Width: 1920, Height: 1080, VideoRangeType: 'SDR' } };
+/** 1080p at 3 Mbit/s: a 4 Mbit/s pick (720p box) converts it, the ceiling's 1080p box copies it at its own 3.2 Mbit/s (at or below the pick) */
+const SMALL_1080: Source = { container: 'mkv', bitrate: 3_200_000, video: { Codec: 'h264', BitRate: 3_000_000, Width: 1920, Height: 1080, VideoRangeType: 'SDR' } };
 /** above the friend's 20 Mbit/s: converted */
 const H264_25M: Source = { container: 'mkv', bitrate: 25_200_000, video: { Codec: 'h264', BitRate: 25_000_000, Width: 1920, Height: 1080, VideoRangeType: 'SDR' } };
 /** HEVC for a browser without HEVC: never copyable */
@@ -164,15 +166,38 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
   it('full budget falls back to copy', async () => {
     env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
     sessions = async () => [foreign('ps-foreign-1')];
+    src = SMALL_1080; // the viewer's 4 Mbit/s lies above the source: only the 720p box made it a conversion
     const before = stops();
     const r = await info(friend, { maxBitrate: 4_000_000, reasonHint: 'manual' });
     expect(r.statusCode).toBe(200);
-    expect(pb.map((p) => p.max)).toEqual([4_000_000, 20_000_000]); // the viewer's own pick is dropped, the role ceiling stays
+    expect(pb.map((p) => p.max)).toEqual([4_000_000, 20_000_000]); // the copy is asked at the role ceiling (its bitrate is the source's)
     expect(r.json()).toMatchObject({ delivery: { video: 'copy' }, transcodeReason: 'serverBusy', maxBitrate: 20_000_000, roleMaxBitrate: 20_000_000 });
     expect(await grants()).toEqual([]);
     expect(await pbinfo(friendId, r.json().playSessionId)).toMatchObject({ reason: 'serverBusy', video: 'copy' });
     expect(await pbinfo(friendId, r.json().playSessionId)).not.toHaveProperty('conv');
     expect(stops()).toBe(before); // the foreign conversion is never stopped
+  });
+
+  it('owner ruling: a viewer who asked below the source gets 503, not the original\'s bitrate as a copy', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    sessions = async () => [foreign('ps-foreign-1')];
+    src = H264_8M; // copyable at the ceiling, but 8.2 Mbit/s is above what the viewer asked for
+    const before = stops();
+    for (const reasonHint of ['manual', 'network'] as const) { // data saver / a lower pick, and ABR on a slow line
+      pb = [];
+      const r = await info(friend, { maxBitrate: 4_000_000, reasonHint });
+      expect(r.statusCode).toBe(503);
+      expect(r.json()).toEqual({ error: 'server_busy' });
+      expect(pb.map((p) => p.max)).toEqual([4_000_000]); // no copy request above the viewer's own cap
+    }
+    expect(await grants()).toEqual([]);
+    expect(stops()).toBe(before);
+    // at or above the source, the same viewer still gets the copy
+    pb = [];
+    const ok = await info(friend, { maxBitrate: 8_500_000, reasonHint: 'manual' });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ delivery: { video: 'copy' } });
+    expect(ok.json()).not.toHaveProperty('sourceBitrate'); // server-side only
   });
 
   it('no copy possible -> 503 server_busy', async () => {
@@ -223,13 +248,13 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
     expect(await env.kv.keys('hevcgrant:')).toEqual([]);
     expect(await grants()).toEqual([]);
 
-    // a source that fits the remote ceiling (8 Mbit/s) falls to a copy when the viewer's lower pick wanted an HEVC conversion
+    // a source that fits the remote ceiling (8 Mbit/s) but lies above the viewer's lower pick (which wanted an HEVC conversion): no copy
+    // above the pick (owner ruling), 503 without a second request
     src = { container: 'mkv', bitrate: 6_200_000, video: { Codec: 'h264', BitRate: 6_000_000, Width: 1920, Height: 1080, VideoRangeType: 'SDR' } };
     pb = [];
-    const copy = await info(friend, { caps: hevcCaps, maxBitrate: 4_000_000 }, REMOTE);
-    expect(copy.statusCode).toBe(200);
-    expect(copy.json()).toMatchObject({ delivery: { video: 'copy' }, transcodeReason: 'serverBusy' });
-    expect(pb.map((p) => p.max)).toEqual([4_000_000, 8_000_000]);
+    const below = await info(friend, { caps: hevcCaps, maxBitrate: 4_000_000 }, REMOTE);
+    expect(below.statusCode).toBe(503);
+    expect(pb.map((p) => p.max)).toEqual([4_000_000]);
     expect(await env.kv.keys('hevcgrant:')).toEqual([]);
     expect(await grants()).toEqual([]);
   });
@@ -250,6 +275,7 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
 
   it('slow session list falls back to copy, not a hard error', async () => {
     sessions = () => new Promise<ServerSession[]>(() => undefined);
+    src = SMALL_1080;
     // a title that can be copied still plays
     let t0 = performance.now();
     const copy = await info(friend, { maxBitrate: 4_000_000 });
@@ -313,11 +339,24 @@ describe('POST /api/cast/session admits conversions against the budget', () => {
   it('a full budget casts a copy at the cast ceiling', async () => {
     env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
     sessions = async () => [foreign('ps-foreign-1')];
+    src = SMALL_1080;
     const r = await cast(admin, { maxBitrate: 4_000_000 });
     expect(r.statusCode).toBe(200);
     expect(pb.map((p) => p.max)).toEqual([4_000_000, 20_000_000]);
     expect(r.json().contentUrl).toContain('MaxStreamingBitrate=20000000');
     expect(await grants()).toEqual([]);
+  });
+
+  it('owner ruling: a cast pick below the source gets 503, not the original as a copy', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    sessions = async () => [foreign('ps-foreign-1')];
+    src = H264_8M;
+    const minted = (await env.kv.keys('cast:')).length;
+    const r = await cast(admin, { maxBitrate: 4_000_000 });
+    expect(r.statusCode).toBe(503);
+    expect(r.json()).toEqual({ error: 'server_busy' });
+    expect(pb.map((p) => p.max)).toEqual([4_000_000]);
+    expect(await env.kv.keys('cast:')).toHaveLength(minted); // nothing minted
   });
 
   it('a cast conversion with a free slot takes it and binds it', async () => {
