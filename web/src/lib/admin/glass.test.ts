@@ -511,6 +511,15 @@ describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
     expect(src).toMatch(/flipOffsets\(before, after\)/);
   });
 
+  it('the pointer drag survives the keyed list moving the lifted row: capture on the list, events on the window', () => {
+    // the grip's <li> is moved by the keyed each while the order changes, which drops a capture held by the grip
+    expect(src).toContain('list.setPointerCapture(e.pointerId)');
+    expect(src).not.toMatch(/currentTarget as HTMLElement\)\.setPointerCapture|lostpointercapture/);
+    expect(src).toMatch(/<svelte:window[^>]*on:pointermove=\{onMove\} on:pointerup=\{onUp\} on:pointercancel=\{onPointerCancel\}/);
+    expect(src).toMatch(/e\.pointerId !== drag\.pointerId/);
+    expect(src).toContain('if (e.repeat) return;');
+  });
+
   it('calm mode, TV and reduced motion: no transitions at all', () => {
     expect(css).toMatch(/:global\(html\.m-still\) \.order :global\(\*\), :global\(html\.tv\) \.order :global\(\*\) \{ transition: none !important; animation: none !important; \}/);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.order :global\(\*\) \{ transition: none !important; animation: none !important; \} \}/);
