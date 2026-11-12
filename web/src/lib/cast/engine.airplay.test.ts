@@ -1052,6 +1052,18 @@ describe('cast engine: continuous AirPlay (a joined stream)', () => {
     expect(body).not.toHaveProperty('maxEpisodes');
   });
 
+  it('the stream stays on the session view after a re-mint to a single token (the remote keeps its continuous slot for the session)', async () => {
+    const env = await joinedEnv();
+    expect(get(env.out)).toMatchObject({ stream: { items: J.items } });
+    playing(env, 6000);
+    await env.engine.refresh({ audioIndex: 3 });
+    const v = get(env.out)!;
+    expect(v.joined).toBeUndefined();
+    expect(v.stream?.items).toEqual(J.items);
+    await env.engine.stop();
+    expect(get(env.out)).toBeNull();
+  });
+
   it('a re-mint from a later episode names the episode its tracks belong to; the answer\'s tracks become the session\'s', async () => {
     const env = await setup({ started: false, continuous: true, first: { joined: J, runtimeTicks: secToTicks(8132), hlsSub: true }, at: 2900 });
     await env.adopt({ itemId: 'ep1', seriesId: 's1', title: 'Bright Valley', isEpisode: true, position: 2900, audioIndex: 2, subIndex: 3,

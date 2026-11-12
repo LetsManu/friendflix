@@ -130,7 +130,7 @@ test('the remote screen says Verbinde mit AirPlay …, then Läuft über AirPlay
   const screen = page.getByTestId('airplay-active');
   await expect(screen.getByRole('status').filter({ hasText: 'Verbinde mit AirPlay …' })).toHaveCount(1);
   await expect(layout(page)).toHaveCount(0); // the remote screen replaces the layout
-  const eyebrow = screen.locator('.eyebrow');
+  const eyebrow = screen.locator('.now .eyebrow');
   await expect(eyebrow).toHaveCSS('opacity', '0'); // its room is kept, nothing says "plays" yet
   const before = await eyebrow.boundingBox();
   await page.evaluate(() => document.querySelector('video')!.dispatchEvent(new Event('playing')));
@@ -204,8 +204,8 @@ test('the connecting layout does not jump after it mounts, and Back stays reacha
 });
 
 /** Dunmoor's first three episodes as one joined stream (44 and 47 min for the last two) */
-const joinedOf = () => ({
-  items: [1, 2, 3].map((n) => ({ itemId: episodes[n - 1]!.id, title: `Folge ${n}`, season: 1, episode: n, start: [0, 2700, 5340][n - 1]!, duration: [2700, 2640, 2820][n - 1]! })),
+const joinedOf = (count = 3) => ({
+  items: [1, 2, 3].slice(0, count).map((n) => ({ itemId: episodes[n - 1]!.id, title: `Folge ${n}`, season: 1, episode: n, start: [0, 2700, 5340][n - 1]!, duration: [2700, 2640, 2820][n - 1]! })),
   subtitles: false,
 });
 const TRACKS = {
@@ -213,11 +213,11 @@ const TRACKS = {
   audioTracks: [{ index: 1, title: 'Deutsch', language: 'deu', isDefault: true }, { index: 2, title: 'English', language: 'eng', isDefault: false }],
 };
 /** the continuous remote: the TV picked while the token is still paused, so the screen starts in its connecting state; the first token is joined, later ones are single */
-async function joinedRemote(page: Page, o: { next?: boolean; renew?: boolean } = {}) {
+async function joinedRemote(page: Page, o: { next?: boolean; renew?: boolean; count?: number } = {}) {
   await stubAirPlay(page);
   await mockPlayer(page);
   // after mockPlayer (its routes would win otherwise): the offer a single token shows is episode 2
-  if (o.next) await page.route('**/api/items/*/next', (r) => r.fulfill({ json: { item: r.request().url().includes(episodes[0]!.id) ? episodes[1] : null } }));
+  if (o.next) await page.route('**/api/items/*/next', (r) => { const u = r.request().url(); return r.fulfill({ json: { item: u.includes(episodes[0]!.id) ? episodes[1] : u.includes(episodes[1]!.id) ? episodes[2] : null } }); });
   await castOn(page, true, undefined, { airplayContinuous: true });
   await mockHls(page);
   await page.route('**/api/playback/info', (r) => r.fulfill({ json: {
@@ -228,7 +228,7 @@ async function joinedRemote(page: Page, o: { next?: boolean; renew?: boolean } =
   const { sessions } = await castSessions(page, { deliver: (b) => {
     const sub = b.subtitleIndex === undefined ? {} : { hlsSub: true };
     // `renew`: the first token expires soon, so the Player's own renewal (no track change) brings the single token
-    return ++n === 1 ? { joined: joinedOf(), runtimeTicks: 81_600_000_000, ...(o.renew ? { expiresAt: Date.now() + 10 * 60_000 + 5000 } : {}), ...sub } : { ...sub, runtimeTicks: 27_000_000_000 };
+    return ++n === 1 ? { joined: joinedOf(o.count), runtimeTicks: 81_600_000_000, ...(o.renew ? { expiresAt: Date.now() + 10 * 60_000 + 5000 } : {}), ...sub } : { ...sub, runtimeTicks: 27_000_000_000 };
   } });
   await page.goto('/watch/' + episodes[0]!.id);
   await page.waitForFunction(() => (document.querySelector('video')?.duration ?? 0) > 20);
@@ -252,11 +252,11 @@ for (const vp of [{ w: 390, h: 844 }, { w: 900, h: 800 }, { w: 1280, h: 800 }]) 
   test(`continuous remote ${vp.w}: nothing moves from connecting to playing, nor when a re-mint turns the stream single`, async ({ page, api: _api }) => {
     await page.setViewportSize({ width: vp.w, height: vp.h });
     const { screen, sessions } = await joinedRemote(page);
-    await expect(screen.locator('.eyebrow')).toHaveCSS('opacity', '0'); // really connecting
+    await expect(screen.locator('.now .eyebrow')).toHaveCSS('opacity', '0'); // really connecting
     const connecting = await boxes(screen);
     expect(connecting['.cont']).not.toBeNull(); // the panel's room is there from the first frame
     await page.evaluate(() => document.querySelector('video')!.dispatchEvent(new Event('playing')));
-    await expect(screen.locator('.eyebrow')).toHaveText('Läuft über AirPlay');
+    await expect(screen.locator('.now .eyebrow')).toHaveText('Läuft über AirPlay');
     await page.waitForTimeout(300);
     const playing = await boxes(screen);
     expect(playing).toEqual(connecting);
@@ -280,7 +280,7 @@ for (const vp of [{ w: 390, h: 844 }, { w: 900, h: 800 }, { w: 1280, h: 800 }]) 
 test('continuous remote shows Folge 1 von 3 and the list', async ({ page, api: _api }) => {
   const { screen } = await joinedRemote(page);
   await page.evaluate(() => document.querySelector('video')!.dispatchEvent(new Event('playing')));
-  await expect(screen.locator('.eyebrow')).toHaveText('Läuft über AirPlay');
+  await expect(screen.locator('.now .eyebrow')).toHaveText('Läuft über AirPlay');
   await expect(screen.locator('.times.ep')).toHaveText('0:00 gesehen · Folge 1 von 3 · noch 45:00');
   await expect(screen.getByRole('heading', { name: 'Durchgehende Wiedergabe' })).toBeVisible();
   await expect(screen.getByText('Experimentell')).toBeVisible();
@@ -299,7 +299,7 @@ for (const vp of [{ w: 390, h: 844 }, { w: 900, h: 800 }, { w: 1280, h: 800 }]) 
     await page.setViewportSize({ width: vp.w, height: vp.h });
     const { screen, sessions } = await joinedRemote(page, { next: true, renew: true });
     await page.evaluate(() => document.querySelector('video')!.dispatchEvent(new Event('playing')));
-    await expect(screen.locator('.eyebrow')).toHaveText('Läuft über AirPlay');
+    await expect(screen.locator('.now .eyebrow')).toHaveText('Läuft über AirPlay');
     await expect(screen.locator('.rows li')).toHaveCount(3);
     const before = await boxes(screen);
     await expect.poll(() => sessions.length, { timeout: 20_000 }).toBe(2); // the renewal: a single token of the same episode
@@ -309,7 +309,7 @@ for (const vp of [{ w: 390, h: 844 }, { w: 900, h: 800 }, { w: 1280, h: 800 }]) 
       await page.evaluate(() => { const v = document.querySelector('video')!; v.dispatchEvent(new Event('playing')); v.dispatchEvent(new Event('timeupdate')); });
       await expect(card).toBeVisible({ timeout: 500 });
     }).toPass({ timeout: 10_000 });
-    await expect(screen.locator('.rows')).toHaveCount(0);
+    await expect(screen.locator('.rows')).toBeHidden(); // the list keeps its room, unseen
     await page.waitForTimeout(400);
     const after = await boxes(screen);
     for (const q of ['.now', '.unslot', '.mid', '.cp', '.times', '.tp', '.disc']) expect(after[q], q).toEqual(before[q]);
@@ -317,5 +317,41 @@ for (const vp of [{ w: 390, h: 844 }, { w: 900, h: 800 }, { w: 1280, h: 800 }]) 
     expect(c!.y + c!.height).toBeLessThanOrEqual(u!.y + u!.height + 1); // the card fits the reserved room
     // the disabled Previous names the truth: this is episode 1, the first
     await expect(screen.getByRole('button', { name: 'Vorherige Folge (keine: das ist die erste)' })).toHaveAttribute('aria-disabled', 'true');
+  });
+}
+
+/** the TV moves to the next episode (a tap on the card): the watch page follows it and builds a new remote screen */
+for (const vp of [{ w: 390, h: 844 }, { w: 900, h: 800 }, { w: 1280, h: 800 }]) {
+  test(`continuous remote ${vp.w}: the TV moving on keeps the continuous room, inside the stream and past it`, async ({ page, api: _api }) => {
+    await page.setViewportSize({ width: vp.w, height: vp.h });
+    const { sessions } = await joinedRemote(page, { next: true, renew: true, count: 2 });
+    const screen = page.getByTestId('airplay-active');
+    const play = () => page.evaluate(() => { const v = document.querySelector('video')!; v.dispatchEvent(new Event('playing')); v.dispatchEvent(new Event('timeupdate')); });
+    const KEEP = ['.now', '.unslot', '.mid', '.cp', '.times', '.tp', '.disc'];
+    const same = async (a: Awaited<ReturnType<typeof boxes>>) => { const b = await boxes(page.getByTestId('airplay-active')); for (const q of KEEP) b[q]!.forEach((n, i) => expect(Math.abs(n - a[q]![i]!), `${q}[${i}]`).toBeLessThanOrEqual(1)); }; // a sub-pixel text height may round one px apart
+    await play();
+    await expect(screen.locator('.rows li')).toHaveCount(2);
+    const first = await boxes(screen);
+    // the renewal's single token of episode 1 offers episode 2 (the card); tap Play now
+    await expect(async () => { await play(); await expect(screen.getByRole('region', { name: 'Als Nächstes' })).toBeVisible({ timeout: 500 }); }).toPass({ timeout: 20_000 });
+    await same(first);
+    await screen.getByRole('button', { name: 'Jetzt abspielen' }).click();
+    await expect(page).toHaveURL(new RegExp(episodes[1]!.id));
+    await expect.poll(() => sessions.length).toBeGreaterThanOrEqual(3);
+    // inside the stream: the list is back, Previous is there, nothing moved
+    const next = page.getByTestId('airplay-active');
+    await expect(next.locator('.rows li').nth(1)).toContainText('Jetzt');
+    await expect(next.getByRole('button', { name: 'Vorherige Folge' })).toHaveAttribute('aria-disabled', 'true');
+    await same(first);
+    // episode 2 plays and offers episode 3, which is not in the stream: the plain slot, still the same room
+    await expect(async () => { await play(); await expect(next.getByRole('region', { name: 'Als Nächstes' })).toBeVisible({ timeout: 500 }); }).toPass({ timeout: 20_000 });
+    await same(first);
+    await next.getByRole('button', { name: 'Jetzt abspielen' }).click();
+    await expect(page).toHaveURL(new RegExp(episodes[2]!.id));
+    await expect(page.getByTestId('airplay-active')).toBeVisible();
+    await page.waitForTimeout(500);
+    await expect(page.getByTestId('airplay-active').locator('.rows')).toHaveCount(0); // never a stale list
+    await same(first);
+    await expect(page.getByTestId('airplay-active').getByRole('button', { name: 'Vorherige Folge' })).toBeVisible();
   });
 }

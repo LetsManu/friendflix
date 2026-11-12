@@ -91,6 +91,11 @@ export interface CastSession {
    * `itemId` / `title` / `subtitle` / `position` / `duration` describe; the stream's own position and length are here
    */
   joined?: { items: JoinedInfo['items']; index: number; streamPosition: number; streamDuration: number };
+  /**
+   * the stream this session was in (its episodes and the series name): set with `joined` and kept after a re-mint to a single token or a
+   * switch of episode until the session ends, so the remote keeps its continuous room (and survives the watch page re-creating it)
+   */
+  stream?: { items: JoinedInfo['items']; title: string };
 }
 export interface PlayerHandoff {
   kind: CastKind; itemId: string; seriesId?: string; title: string; subtitle: string; isEpisode: boolean;
@@ -458,7 +463,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     const { index, offset } = joinedAt(j.items, t), it = j.items[index]!;
     const { title, sub } = episodeOf(j.series, it);
     return { itemId: it.itemId, title, subtitle: sub, posterId: it.itemId, isEpisode: true, position: offset, duration: it.duration,
-      joined: { items: j.items, index, streamPosition: t, streamDuration: j.length } };
+      joined: { items: j.items, index, streamPosition: t, streamDuration: j.length }, stream: { items: j.items, title: j.series } };
   };
   /**
    * The session moves to `next` (an `episodeView`): another episode is logged and named in the cast log. `played`: the TV got there by

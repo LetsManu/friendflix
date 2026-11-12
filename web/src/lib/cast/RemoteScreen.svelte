@@ -49,15 +49,15 @@
   $: st = s ? statusOf(s, $t) : null;
   /** continuous AirPlay (a joined stream): the info card and the list replace the up-next card; the scrubber is the episode's */
   $: cv = s ? continuousView(s, $t) : null;
-  // once joined, the panel's room stays until the session ends: a re-mint to a single token (last episode, a track change, a renewal) must not move the controls
-  let keptJoin: { items: NonNullable<CastSession['joined']>['items']; title: string; index: number } | null = null;
-  $: if (s?.joined) keptJoin = { items: s.joined.items, title: s.title, index: s.joined.index }; else if (!s) keptJoin = null;
-  /** the kept list's "now" row: the episode the single token plays (else the last one the stream was in) */
-  const nowIn = (k: NonNullable<typeof keptJoin>, id: string) => { const i = k.items.findIndex((x) => x.itemId === id); return i >= 0 ? i : k.index; };
-  const inKept = (k: NonNullable<typeof keptJoin>, id: string) => k.items.some((x) => x.itemId === id);
+  // once joined, the continuous room stays until the session ends (the engine keeps the stream on the session; a re-mint to a single
+  // token, a track change or the TV moving to another episode, which re-creates this screen, must not move the controls)
+  $: keptJoin = s?.stream ?? null;
+  const indexIn = (k: NonNullable<typeof keptJoin>, id: string) => k.items.findIndex((x) => x.itemId === id);
   /** the list's content (also the scrubber's "Folge n von m"): a joined stream, or a single token of one of its episodes; never for another item */
-  $: panel = cv ?? (s && keptJoin && inKept(keptJoin, s.itemId) ? continuousView({ ...s, title: keptJoin.title, joined: { items: keptJoin.items, index: nowIn(keptJoin, s.itemId), streamPosition: 0, streamDuration: 0 } }, $t) : null);
-  $: mode = s ? slotMode(s, keptJoin, Boolean(s.next || upNextOf(s))) : 'plain';
+  $: panel = cv ?? (s && keptJoin && indexIn(keptJoin, s.itemId) >= 0 ? continuousView({ ...s, title: keptJoin.title, joined: { items: keptJoin.items, index: indexIn(keptJoin, s.itemId), streamPosition: 0, streamDuration: 0 } }, $t) : null);
+  $: mode = s ? slotMode(s, keptJoin, Boolean(upNextOf(s))) : 'plain';
+  /** a card nobody sees: it gives the room the height of the card in this language, so the list and the card swap without a move */
+  $: ghost = s ? { ...s, kind: 'airplay' as const, state: 'playing' as const, isEpisode: true, autoplay: true, next: undefined, upcoming: { itemId: s.itemId, label: 'S00:F00' } } : null;
 
   // ---- artwork: the fallback chain advances when an image fails ----
   let bgI = 0, thI = 0, artFor = '';
@@ -193,17 +193,20 @@
 
         {#if keptJoin || cv}
           <div class="unslot keep">
-            {#if mode === 'list' && panel}
-              <section class="cont frost frost-safe frost-panel" aria-labelledby="rs-cont">
-                <div class="conthead"><h2 id="rs-cont">{$t('player.castRemote.continuous')}</h2><StatusPill tone="warn" label={$t('common.experimental')} /></div>
+            {#if panel}
+              <section class="cont frost frost-safe frost-panel" class:ghost={mode !== 'list'} aria-labelledby={mode === 'list' ? 'rs-cont' : undefined} aria-hidden={mode === 'list' ? undefined : 'true'} inert={mode !== 'list'}>
+                <div class="conthead"><h2 id={mode === 'list' ? 'rs-cont' : undefined}>{$t('player.castRemote.continuous')}</h2><StatusPill tone="warn" label={$t('common.experimental')} /></div>
                 <p class="continfo">{panel.info}</p>
                 <h3 class="rowshead">{$t('player.castRemote.inARow')}</h3>
                 <ul class="rows">
                   {#each panel.list as r}<li class:now={r.now} aria-current={r.now ? 'true' : undefined}><span class="rl">{r.label}</span><span class="rn">{r.note}</span></li>{/each}
                 </ul>
               </section>
-            {:else if mode === 'card' && next}
+            {/if}
+            {#if mode === 'card' && next}
               <div class="unfx" transition:fade={{ duration: motionAllowed() ? 200 : 0 }}><UpNextCard session={s} compact={phone} /></div>
+            {:else if ghost}
+              <div class="unfx ghost" aria-hidden="true" inert><UpNextCard session={ghost} compact={phone} /></div>
             {/if}
           </div>
         {:else if s.isEpisode || everEpisode}
@@ -318,9 +321,9 @@
   .unfx { display: block; }
   .wide .unslot { min-height: 0; }
   /* a session that was joined keeps this height for the rest of the session, whether the list, the card or nothing is in it */
-  .unslot.keep { min-height: 224px; } /* the up-next card's own height (stacked) */
-  .phone .unslot.keep { min-height: 263px; }
-  .wide .unslot.keep { min-height: 267px; }
+  .unslot.keep { min-height: 0; display: grid; }
+  .unslot.keep > * { grid-area: 1 / 1; min-width: 0; align-self: start; }
+  .ghost { visibility: hidden; pointer-events: none; }
   /* continuous mode: the card is as tall as its content (the stream's list never changes length, and it stays after a re-mint to a single token) */
   .cont { padding: 10px 16px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .conthead { display: flex; align-items: center; gap: 10px; min-width: 0; }
