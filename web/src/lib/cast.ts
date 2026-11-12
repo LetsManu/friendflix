@@ -522,7 +522,6 @@ export async function loadLiveOnCast(l: LiveCastMedia): Promise<boolean> {
   const m = ch.media;
   const media = new m.MediaInfo(l.contentId, l.contentType);
   media.streamType = m.StreamType.LIVE ?? 'LIVE';
-  media.hlsSegmentFormat = m.HlsSegmentFormat.TS;
   const meta = new (m.GenericMediaMetadata ?? m.MovieMediaMetadata)();
   meta.metadataType = 0; // GENERIC
   meta.title = l.metadata.title;
