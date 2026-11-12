@@ -8,6 +8,7 @@ import { publicOrigin, secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { authenticate, COOKIE, loadSession, requireUser } from '../session.js';
 import { revokeCasts } from '../cast.js';
+import { revokeLiveTokens } from '../livetv/tokens.js';
 import { roleAllowsDownloads } from '../downloads.js';
 import { effectiveLimits } from '../limits.js';
 import { permsOf } from '../permGuard.js';
@@ -360,9 +361,10 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     if (sent.length !== want.length || !timingSafeEqual(sent, want)) return reply.code(403).send({ error: 'csrf' });
     await ctx.kv.del(`sess:${sid}`);
     dropRemotePeers(s.userId, new Set([sid]));
-    // this device's push subscriptions and cast tokens must not outlive its login (unless another live session still uses the device)
+    // this device's push subscriptions, cast and live tokens must not outlive its login (unless another live session still uses the device)
     if (s.deviceId && !(await deviceHasSession(ctx, s.userId, s.deviceId))) {
       await revokeCasts(ctx, s.userId, s.deviceId);
+      await revokeLiveTokens(ctx, s.userId, s.deviceId);
       await deletePushSubscriptions(ctx, s.userId, s.deviceId);
     }
     reply.clearCookie(COOKIE, { path: '/' });
