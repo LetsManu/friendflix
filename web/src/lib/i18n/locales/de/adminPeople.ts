@@ -536,7 +536,6 @@ export default {
     inviteOf: 'Einladung ({role})',
   },
   check: {
-    profile: 'Profil',
     pick: 'Profil wählen',
     kids: 'Kinderprofil',
     summary: 'Kurzfassung',
@@ -556,6 +555,8 @@ export default {
     noHits: 'Keine Treffer.',
     searching: 'Suche läuft …',
     searchFailed: 'Die Suche ist fehlgeschlagen. Bitte noch einmal versuchen.',
+    tooMany: 'Zu viele Prüfungen in kurzer Zeit. Bitte eine Minute warten.',
+    hitsCapped: { one: 'Höchstens {n} Treffer. Für weitere den Titel genauer eingeben.', other: 'Höchstens {n} Treffer. Für weitere den Titel genauer eingeben.' },
     noLibs: 'Keine Bibliotheken gefunden.',
     type: {
       Movie: 'Film',
@@ -574,6 +575,7 @@ export default {
       permsYes: 'Darf: {list}.',
       permsNo: 'Darf nicht: {list}.',
       kids: 'Kinderprofil: ab {n}, Titel ohne Freigabe sind ausgeblendet, keine Kommentare, keine Partys.',
+      kidsNoCap: 'Kinderprofil ohne Altersgrenze: Titel ohne Freigabe sind ausgeblendet, keine Kommentare, keine Partys.',
     },
     perm: {
       requests: 'Wünsche',

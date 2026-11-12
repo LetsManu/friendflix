@@ -906,6 +906,7 @@ test.describe('admin user deletion', () => {
 });
 
 test.describe('admin user detail: Sicht prüfen (desktop)', () => {
+  test.use({ allowedConsole: /status of (400|404|429)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   const checkPanel = (page: import('@playwright/test').Page) => page.getByRole('tabpanel', { name: 'Sicht prüfen' });
@@ -953,6 +954,86 @@ test.describe('admin user detail: Sicht prüfen (desktop)', () => {
     await panel.getByRole('group', { name: 'Profil wählen' }).getByRole('button', { name: /^Kinder/ }).click();
     await expect(rows.filter({ hasText: 'Dunmoor Origins' })).toContainText('ausgeblendet · ohne Freigabe (Kinderprofil)');
     expect(api.admin.audit.some((e) => e.action === 'user.check_viewed' && e.target === CLARA)).toBe(true);
+  });
+
+  test('title check: the 30-a-minute limit has its own message, not the generic failure', async ({ page, api }) => {
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const panel = checkPanel(page);
+    await expect(panel.getByRole('region', { name: 'Kurzfassung' })).toContainText('Clara sieht');
+    // the limiter has seen 30 checks this minute
+    api.admin.checkTimes = Array.from({ length: 30 }, () => Date.now());
+    await panel.getByRole('searchbox', { name: 'Film oder Serie suchen' }).fill('Dunmoor');
+    const status = panel.getByRole('region', { name: 'Titel prüfen' }).getByRole('status');
+    await expect(status).toHaveText('Zu viele Prüfungen in kurzer Zeit. Bitte eine Minute warten.');
+    await expect(status).not.toContainText('fehlgeschlagen');
+    await expect.poll(() => logged(api, /POST .*\/check .* -> 429/)).toBe(true);
+  });
+
+  test('title check: an unrated title a grown-up\'s cap hides (adapters that say so) names that reason', async ({ page, api }) => {
+    api.admin.checkHidesUnrated = true;
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const panel = checkPanel(page);
+    await panel.getByRole('searchbox', { name: 'Film oder Serie suchen' }).fill('Dunmoor');
+    const rows = panel.getByRole('region', { name: 'Titel prüfen' }).getByRole('listitem');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.filter({ hasText: 'Dunmoor Origins' })).toContainText('ausgeblendet · ohne Altersfreigabe');
+    await expect(rows.filter({ hasText: 'Dunmoor Origins' })).not.toContainText('Kinderprofil');
+  });
+
+  test('title check: at most 8 hits, and the list says it may be cut', async ({ page }) => {
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const panel = checkPanel(page);
+    await panel.getByRole('searchbox', { name: 'Film oder Serie suchen' }).fill('Harbour');
+    const sec = panel.getByRole('region', { name: 'Titel prüfen' });
+    await expect(sec.getByRole('listitem')).toHaveCount(8);
+    await expect(sec.getByText('Höchstens 8 Treffer. Für weitere den Titel genauer eingeben.')).toBeVisible();
+    await panel.getByRole('searchbox', { name: 'Film oder Serie suchen' }).fill('Dunmoor');
+    await expect(sec.getByRole('listitem')).toHaveCount(2);
+    await expect(sec.getByText(/Höchstens 8 Treffer/)).toHaveCount(0);
+  });
+
+  test('kids summary: the effective limit from the rows (a lower account cap wins), none said honestly, never a guessed one', async ({ page, api }) => {
+    const clara = api.admin.users.find((u) => u.id === CLARA)!;
+    clara.ov = { ...clara.ov, maxParentalRating: 0 };
+    api.admin.userProfiles[CLARA] = [
+      { id: `${CLARA.slice(0, -4)}p001`, name: 'Clara', kids: false, maxRating: null, avatar: 'a1', lastUsed: null, isOwner: true, hasPin: false },
+      { id: `${CLARA.slice(0, -4)}p002`, name: 'Kinder', kids: true, maxRating: 12, avatar: 'a4', lastUsed: null, isOwner: false, hasPin: false },
+    ];
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const panel = checkPanel(page);
+    const summary = panel.getByRole('region', { name: 'Kurzfassung' });
+    await panel.getByRole('group', { name: 'Profil wählen' }).getByRole('button', { name: /^Kinder/ }).click();
+    await expect(summary).toContainText('Kinderprofil: ab 0, Titel ohne Freigabe sind ausgeblendet');
+    await expect(summary).not.toContainText('ab 12');
+    // a kids profile whose rows carry no limit at all: said as such (the answer is changed in the page, after the mock's route)
+    await page.addInitScript((part) => {
+      const orig = window.fetch.bind(window);
+      window.fetch = async (input, init) => {
+        const res = await orig(input, init);
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (!url.includes(part)) return res;
+        const v = await res.clone().json() as { rows: Array<{ key: string; value: unknown }>; profile: { maxRating: unknown } };
+        v.rows = v.rows.map((row) => (row.key === 'maxParentalRating' ? { ...row, value: null } : row));
+        v.profile.maxRating = null;
+        return new Response(JSON.stringify(v), { status: res.status, headers: res.headers });
+      };
+    }, `/api/admin/users/${CLARA}/rights?profile=`);
+    await page.reload();
+    await panel.getByRole('group', { name: 'Profil wählen' }).getByRole('button', { name: /^Kinder/ }).click();
+    await expect(summary).toContainText('Kinderprofil ohne Altersgrenze: Titel ohne Freigabe sind ausgeblendet, keine Kommentare, keine Partys.');
+    await expect(summary).not.toContainText(/ab \d/);
+  });
+
+  test('a malformed profile id is 400 (the route\'s schema), an unknown one 404', async ({ page }) => {
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    await expect(checkPanel(page).getByRole('region', { name: 'Kurzfassung' })).toContainText('Clara sieht');
+    /** the status of a request the page sends (the mock answers the page's requests); `post` is a JSON body */
+    const status = (url: string, post?: unknown) => page.evaluate(async ([u, b]) => (await fetch(u, b === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) })).status, [url, post] as const);
+    const base = `/api/admin/users/${CLARA}`;
+    expect(await status(`${base}/check?profile=not-a-profile`)).toBe(400);
+    expect(await status(`${base}/rights?profile=not-a-profile`)).toBe(400);
+    expect(await status(`${base}/check`, { profileId: 'x', query: 'Dunmoor' })).toBe(400);
+    expect(await status(`${base}/check?profile=${CLARA.slice(0, -4)}p099`)).toBe(404);
   });
 
   test('title check: nothing is sent under 2 characters', async ({ page, api }) => {

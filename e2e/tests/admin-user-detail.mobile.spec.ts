@@ -13,7 +13,7 @@ test.describe('admin user detail (phone)', () => {
     await page.goto(`/admin/users/${ANNA}`);
     const list = page.getByRole('tablist', { name: 'Bereiche von Anna Beispiel' });
     await expect(list).toBeVisible();
-    // seven tabs do not fit 390px: the strip scrolls sideways, the page does not
+    // eight tabs do not fit 390px: the strip scrolls sideways, the page does not
     const strip = await list.evaluate((el) => ({ overflow: getComputedStyle(el).overflowX, scroll: el.scrollWidth, client: el.clientWidth }));
     expect(strip.overflow).toBe('auto');
     expect(strip.scroll).toBeGreaterThan(strip.client);

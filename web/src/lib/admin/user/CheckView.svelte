@@ -11,14 +11,14 @@
    * There is no Live-TV part: Live TV is not installed in this phase.
    */
   import { onDestroy } from 'svelte';
-  import { api } from '#lib/api';
+  import { api, ApiError } from '#lib/api';
   import { fmtNumber, locale, t, tr, trDynamic } from '#lib/i18n';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
   import Icon from '#lib/Icon.svelte';
   import { uid } from '#lib/ui/ids';
   import Skeleton from '#lib/ui/Skeleton.svelte';
-  import { summarySentences } from './checkText';
+  import { CHECK_HITS, summarySentences } from './checkText';
   import type { DetailProfile } from './detail';
   import type { RightsView } from './rights';
 
@@ -58,13 +58,13 @@
   $: if (pid) void load(pid);
 
   $: profile = chips.find((p) => p.id === pid);
-  $: kids = view?.profile?.kids ? { maxRating: ([0, 6, 12] as const).find((n) => n === view!.profile!.maxRating) ?? 12 } : null;
+  /** the profile's effective age limit (the kids overlay included); null: none */
+  $: capValue = ((v: unknown): number | null => (typeof v === 'number' ? v : null))(view?.rows.find((r) => r.key === 'maxParentalRating')?.value);
+  // a kids profile's sentence says its effective limit as the row has it, and says so when there is none (never a guessed one)
+  $: kids = view?.profile?.kids ? { maxRating: capValue } : null;
   $: sentences = view && libs && profile && $locale ? summarySentences(profile.name, view.rows, { visible: libs.filter((l) => l.visible).length, total: libs.length }, kids) : [];
   const num = (n: number) => fmtNumber(n);
-  $: cap = ((): string => {
-    const v = view?.rows.find((r) => r.key === 'maxParentalRating')?.value;
-    return typeof v === 'number' ? tr('adminPeople.check.capName', { n: v }) : '–';
-  })();
+  $: cap = capValue === null ? '–' : tr('adminPeople.check.capName', { n: capValue });
   const reason = (h: Hit): string => {
     switch (h.why) {
       case 'rating': return tr('adminPeople.check.hiddenRating', { r: h.rating ?? '–', cap });
@@ -96,8 +96,9 @@
     try {
       const r = await api<{ hits: Hit[] }>(`/api/admin/users/${userId}/check`, { method: 'POST', body: { profileId: asked, query: v } });
       if (my === sseq) hits = r.hits;
-    } catch {
-      if (my === sseq) { hits = null; searchError = tr('adminPeople.check.searchFailed'); }
+    } catch (e) {
+      // the check is limited to 30 a minute: that says so, not "try again"
+      if (my === sseq) { hits = null; searchError = tr(e instanceof ApiError && e.status === 429 ? 'adminPeople.check.tooMany' : 'adminPeople.check.searchFailed'); }
     } finally {
       if (my === sseq) searching = false;
     }
@@ -161,6 +162,7 @@
             </li>
           {/each}
         </ul>
+        {#if hits.length >= CHECK_HITS}<p class="mut small">{$t('adminPeople.check.hitsCapped', { n: CHECK_HITS })}</p>{/if}
       {/if}
     </section>
   {/if}

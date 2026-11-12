@@ -534,7 +534,6 @@ const dict: Translation<typeof de> = {
     inviteOf: 'Zaproszenie ({role})',
   },
   check: {
-    profile: 'Profil',
     pick: 'Wybierz profil',
     kids: 'Profil dziecka',
     summary: 'W skrócie',
@@ -554,6 +553,8 @@ const dict: Translation<typeof de> = {
     noHits: 'Brak wyników.',
     searching: 'Szukam …',
     searchFailed: 'Wyszukiwanie nie powiodło się. Spróbuj ponownie.',
+    tooMany: 'Zbyt wiele sprawdzeń w krótkim czasie. Odczekaj minutę.',
+    hitsCapped: { one: 'Najwyżej {n} wynik. Wpisz więcej z tytułu, aby znaleźć inne.', few: 'Najwyżej {n} wyniki. Wpisz więcej z tytułu, aby znaleźć inne.', many: 'Najwyżej {n} wyników. Wpisz więcej z tytułu, aby znaleźć inne.', other: 'Najwyżej {n} wyniku. Wpisz więcej z tytułu, aby znaleźć inne.' },
     noLibs: 'Nie znaleziono bibliotek.',
     type: {
       Movie: 'Film',
@@ -572,6 +573,7 @@ const dict: Translation<typeof de> = {
       permsYes: 'Może: {list}.',
       permsNo: 'Nie może: {list}.',
       kids: 'Profil dziecka: od {n} lat, tytuły bez oznaczenia wieku są ukryte, bez komentarzy, bez wspólnych seansów.',
+      kidsNoCap: 'Profil dziecka bez ograniczenia wieku: tytuły bez oznaczenia wieku są ukryte, bez komentarzy, bez wspólnych seansów.',
     },
     perm: {
       requests: 'prośby o tytuły',

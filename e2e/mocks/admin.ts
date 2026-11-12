@@ -101,6 +101,10 @@ export interface AdminState {
   profileSeq: number;
   /** the media server refuses the policy of the next kids changes (PATCH …/profiles/:pid → 502 jellyfin, stored and audited anyway) */
   profileMediaFails: boolean;
+  /** Sicht prüfen: when each /check request came (the route allows 30 a minute, then 429) */
+  checkTimes: number[];
+  /** Sicht prüfen on an adapter that hides unrated titles under any cap (Plex: an explicit age null): a grown-up's cap hides them as `unrated` */
+  checkHidesUnrated: boolean;
   activityCalls: number;
   /** licences revoked via DELETE /api/admin/downloads/:id */
   revokedLicences: string[];
@@ -348,6 +352,8 @@ export function adminState(): AdminState {
     keptCap: new Map(),
     profileSeq: 0,
     profileMediaFails: false,
+    checkTimes: [],
+    checkHidesUnrated: false,
     activityCalls: 0,
     revokedLicences: [],
   };
@@ -1153,7 +1159,13 @@ const VIEW_TITLES = [
   { id: '0000000000000000000000000000d001', name: 'Dunmoor', year: 2021, type: 'Movie', rating: 'FSK-16', age: 16, library: 'Filme' },
   { id: '0000000000000000000000000000d002', name: 'Dunmoor Origins', year: 2014, type: 'Movie', rating: null, age: null, library: 'Filme' },
   { id: '0000000000000000000000000000d003', name: 'Saltwater Almanac', year: 2019, type: 'Series', rating: 'FSK-6', age: 6, library: 'Serien' },
+  // ten matches for "Harbour": the answer stops at CHECK_HITS
+  ...Array.from({ length: 10 }, (_, i) => ({ id: `00000000000000000000000000000e${String(i).padStart(2, '0')}`, name: `Quiet Harbour ${i + 1}`, year: 2010 + i, type: 'Movie', rating: 'FSK-0', age: 0, library: 'Filme' })),
 ];
+/** the most hits a title check answers with (backend viewcheck.ts) */
+const CHECK_HITS = 8;
+/** a profile id the route's zod schema takes (a uuid; the mock's profile ids end in `p001`, so letters count as well); anything else is 400 before a lookup */
+const pidOk = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}$/.test(v);
 const profileOf = (st: AdminState, u: AdminUser, pid: string | null | undefined) => (pid ? profilesOf(st, u).find((p) => p.id === pid) : undefined);
 const kidsCap = (p: DetailProfile): number | null => (p.kids ? (p.maxRating ?? 12) : null);
 /** one Rechte row of the account (backend userRights.ts rightsView): effective value, the role's, the stored override and the deciding layer */
@@ -1207,19 +1219,29 @@ function viewRows(st: AdminState, u: AdminUser, p: DetailProfile) {
     const roleValue = role.values[k];
     const override = u.role === 'admin' && perm ? null : (perm ? u.perms?.[k] : u.ov?.[k]) ?? null;
     let value = override === null ? roleValue : override === 'unlimited' ? null : override, source: string = override === null ? role.sources[k] ?? 'default' : 'user';
-    if (kc !== null && k === 'maxParentalRating') { value = kc; source = 'kids'; }
+    // backend rights.ts: the kids cap, or the account's lower one
+    if (kc !== null && k === 'maxParentalRating') { const eff = value === null ? kc : Math.min(value as number, kc); if (eff !== value) { value = eff; source = 'kids'; } }
     if (kc !== null && KIDS_OFF_MOCK.includes(k)) { value = false; source = 'kids'; }
     return { key: k, value, roleValue, override, source };
   });
 }
 function viewRights(st: AdminState, u: AdminUser, pid: string, J: Reply): Promise<void> {
+  if (!pidOk(pid)) return J({ error: 'bad_request' }, 400);
   const p = profileOf(st, u, pid);
   if (!p) return J({ error: 'not_found' }, 404);
   return J({ role: u.role, note: u.note ?? null, rows: viewRows(st, u, p), profile: { id: p.id, name: p.name, kids: p.kids, maxRating: kidsCap(p) }, hardKids: p.kids ? KIDS_OFF_MOCK : [], missingLibraries: [] });
 }
 function viewCheck(st: AdminState, u: AdminUser, m: string, body: any, J: Reply, log: (a: string, t: string | null, meta?: Record<string, unknown>, n?: string | null) => void): Promise<void> {
-  const p = profileOf(st, u, m === 'GET' ? body.profileId : typeof body?.profileId === 'string' ? body.profileId : null);
-  if (!p) return J({ error: m === 'GET' || typeof body?.profileId === 'string' ? 'not_found' : 'bad_request' }, m === 'GET' || typeof body?.profileId === 'string' ? 404 : 400);
+  // the route's rate limit runs first: 30 a minute (fastify's 429 answer)
+  const now = Date.now();
+  st.checkTimes = st.checkTimes.filter((t) => t > now - 60_000);
+  if (st.checkTimes.length >= 30) return J({ statusCode: 429, error: 'Too Many Requests', message: 'Rate limit exceeded, retry in 1 minute' }, 429);
+  st.checkTimes.push(now);
+  // then the schema (a missing or malformed profile id is 400), then the lookup (404)
+  const pid = m === 'GET' ? body.profileId : body?.profileId;
+  if (!pidOk(pid)) return J({ error: 'bad_request' }, 400);
+  const p = profileOf(st, u, pid);
+  if (!p) return J({ error: 'not_found' }, 404);
   const rows = viewRows(st, u, p);
   const val = (k: string) => rows.find((r) => r.key === k)!.value;
   const shared = (lib: string) => val('libraries') === 'all' || (val('libraries') as string[]).some((n) => n.toLowerCase() === lib.toLowerCase());
@@ -1235,8 +1257,9 @@ function viewCheck(st: AdminState, u: AdminUser, m: string, body: any, J: Reply,
   const q = typeof body.query === 'string' ? body.query.trim() : undefined, id = body.itemId;
   if ((q === undefined) === (id === undefined) || (q !== undefined && (q.length < 2 || q.length > 100)) || (id !== undefined && !/^[0-9a-f]{32}$/.test(String(id)))) return J({ error: 'bad_request' }, 400);
   const found = VIEW_TITLES.filter((t) => (q !== undefined ? t.name.toLowerCase().includes(q.toLowerCase()) : t.id === id));
-  const hits = found.map((t) => {
-    const why = !shared(t.library) ? 'library' : t.age !== null && cap !== null && t.age > cap ? 'rating' : t.age === null && p.kids ? 'unrated_kids' : null;
+  const hits = found.slice(0, CHECK_HITS).map((t) => {
+    const why = !shared(t.library) ? 'library' : t.age !== null && cap !== null && t.age > cap ? 'rating' : t.age === null && p.kids ? 'unrated_kids'
+      : t.age === null && cap !== null && st.checkHidesUnrated ? 'unrated' : null;
     return { id: t.id, name: t.name, year: t.year, type: t.type, visible: why === null, why, rating: t.rating, library: t.library };
   });
   log('user.check_viewed', u.id, { profile: p.id, hits: hits.length }, u.name);

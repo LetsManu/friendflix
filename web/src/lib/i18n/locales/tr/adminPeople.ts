@@ -534,7 +534,6 @@ const dict: Translation<typeof de> = {
     inviteOf: 'Davet ({role})',
   },
   check: {
-    profile: 'Profil',
     pick: 'Profil seç',
     kids: 'Çocuk profili',
     summary: 'Özet',
@@ -554,6 +553,8 @@ const dict: Translation<typeof de> = {
     noHits: 'Sonuç yok.',
     searching: 'Aranıyor …',
     searchFailed: 'Arama başarısız oldu. Tekrar dene.',
+    tooMany: 'Kısa sürede çok fazla kontrol. Lütfen bir dakika bekle.',
+    hitsCapped: { one: 'En fazla {n} sonuç. Diğerlerini bulmak için başlığın daha fazlasını yaz.', other: 'En fazla {n} sonuç. Diğerlerini bulmak için başlığın daha fazlasını yaz.' },
     noLibs: 'Kütüphane bulunamadı.',
     type: {
       Movie: 'Film',
@@ -572,6 +573,7 @@ const dict: Translation<typeof de> = {
       permsYes: 'Yapabilir: {list}.',
       permsNo: 'Yapamaz: {list}.',
       kids: 'Çocuk profili: {n} yaşından itibaren, derecesiz başlıklar gizli, yorum yok, parti yok.',
+      kidsNoCap: 'Yaş sınırı olmayan çocuk profili: derecesiz başlıklar gizli, yorum yok, parti yok.',
     },
     perm: {
       requests: 'istekler',

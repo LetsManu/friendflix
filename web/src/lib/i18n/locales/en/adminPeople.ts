@@ -534,7 +534,6 @@ const dict: Translation<typeof de> = {
     inviteOf: 'Invitation ({role})',
   },
   check: {
-    profile: 'Profile',
     pick: 'Choose a profile',
     kids: 'Kids profile',
     summary: 'In short',
@@ -554,6 +553,8 @@ const dict: Translation<typeof de> = {
     noHits: 'No matches.',
     searching: 'Searching …',
     searchFailed: 'The search failed. Please try again.',
+    tooMany: 'Too many checks in a short time. Please wait a minute.',
+    hitsCapped: { one: 'At most {n} match. Type more of the title to find others.', other: 'At most {n} matches. Type more of the title to find others.' },
     noLibs: 'No libraries found.',
     type: {
       Movie: 'Film',
@@ -572,6 +573,7 @@ const dict: Translation<typeof de> = {
       permsYes: 'May: {list}.',
       permsNo: 'May not: {list}.',
       kids: 'Kids profile: from {n}, unrated titles are hidden, no comments, no parties.',
+      kidsNoCap: 'Kids profile without an age limit: unrated titles are hidden, no comments, no parties.',
     },
     perm: {
       requests: 'requests',

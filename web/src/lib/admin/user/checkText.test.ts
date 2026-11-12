@@ -64,4 +64,13 @@ describe('summarySentences', () => {
     await setLocale('en');
     expect(summarySentences('Kids', kids, { visible: 2, total: 3 }, { maxRating: 6 })).toContain('Kids profile: from 6, unrated titles are hidden, no comments, no parties.');
   });
+  it('a kids profile without any limit says so, it never guesses one', async () => {
+    await setLocale('de');
+    const kids = [row('maxParentalRating', null), row('party', false), row('comments', false)];
+    const s = summarySentences('Kinder', kids, { visible: 3, total: 3 }, { maxRating: null });
+    expect(s).toContain('Kinderprofil ohne Altersgrenze: Titel ohne Freigabe sind ausgeblendet, keine Kommentare, keine Partys.');
+    expect(s.join(' ')).not.toMatch(/ab \d/);
+    await setLocale('en');
+    expect(summarySentences('Kids', kids, { visible: 3, total: 3 }, { maxRating: null })).toContain('Kids profile without an age limit: unrated titles are hidden, no comments, no parties.');
+  });
 });
