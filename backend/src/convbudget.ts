@@ -42,6 +42,12 @@ const LOCK_TTL_S = 3;
 const LOCK_STEP_MS = 100;
 const LOCK_WAIT_MS = 1000;
 const GRANT = 'conv:grant:';
+/**
+ * The ids of the grant keys (conv:grant:<id>) in one KV index (a sorted set by expiry), kept by admit / bind / drop, so an admission under the
+ * lock reads O(grants), never the keyspace. A member lives 1 s longer than its 30-s grant; a member whose grant is gone reads as null.
+ */
+const GRANT_INDEX = 'conv:grants';
+const INDEX_TTL_S = CONV_GRANT_TTL_S + 1;
 /** the record /api/playback/info and cast write per play session (`conv`: that answer really converts, ruling 6) */
 const PBINFO = 'pbinfo:';
 const BENCH_KEY = 'conv:bench';
@@ -199,7 +205,7 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
 
   const mine = o.exceptUser !== undefined && o.exceptDevice !== undefined;
   const ownPending: string[] = [];
-  const grantKeys = await ctx.kv.keys(GRANT).catch(() => [] as string[]);
+  const grantKeys = (await ctx.kv.indexMembers(GRANT_INDEX).catch(() => [] as string[])).map((id) => `${GRANT}${id}`);
   const grants = grantKeys.length ? await ctx.kv.mget(grantKeys).catch(() => [] as Array<string | null>) : [];
   grantKeys.forEach((k, i) => {
     const g = parse<Grant>(grants[i]);
@@ -260,10 +266,11 @@ export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: str
     if (!admits(o.kind, counted.entries.length, lim.limit, lim.priority)) return { ok: false, why: 'full' };
     const g: Grant = { kind: o.kind, user: o.userId, ...(o.deviceId ? { device: o.deviceId } : {}), ...(o.hevc ? { hevc: true as const } : {}), ...(o.label ? { label: o.label } : {}), ...(o.swap && o.deviceId ? { swap: true as const } : {}) };
     const key = `${GRANT}${o.hint}`;
-    const written = await ctx.kv.set(key, JSON.stringify(g), CONV_GRANT_TTL_S).then(() => true, () => false);
+    // indexed first: a grant is never written where the count cannot see it (a failed write leaves a member without a grant: nothing)
+    const written = await ctx.kv.indexAdd(GRANT_INDEX, o.hint, INDEX_TTL_S).then(() => ctx.kv.set(key, JSON.stringify(g), CONV_GRANT_TTL_S)).then(() => true, () => false);
     if (!written) return { ok: false, why: 'unknown' };
     // the new grant is in: the device's own pending ones are replaced (a failed delete leaves one to its TTL, the safe direction)
-    if (o.swap) await Promise.all(counted.ownPending.filter((k) => k !== key).map((k) => ctx.kv.del(k).catch(() => undefined)));
+    if (o.swap) await Promise.all(counted.ownPending.filter((k) => k !== key).map((k) => removeGrant(ctx, k.slice(GRANT.length))));
     return { ok: true };
   } finally {
     await ctx.kv.delIfEquals(LOCK_KEY, token).catch(() => undefined);
@@ -282,11 +289,17 @@ export async function bindConvGrant(ctx: Ctx, hint: string, playSessionId: strin
     const moved: Grant = { ...g, ...(o.label ? { label: o.label } : {}), ps: playSessionId };
     if (o.hevc === true) moved.hevc = true;
     else if (o.hevc === false) delete moved.hevc;
-    // the new key first: a count between the two writes sees this grant under both keys (one slot too many for a moment, safe). When the
-    // new key cannot be written the hint key stays, so the grant still counts until its TTL ends (never dropped by a failed write).
-    const written = await ctx.kv.set(`${GRANT}${playSessionId}`, JSON.stringify(moved), CONV_GRANT_TTL_S).then(() => true, () => false);
+    // the new key first (indexed, then written): a count between the writes sees this grant under both keys (one slot too many for a
+    // moment, safe). When the new key cannot be indexed or written the hint key stays, so the grant still counts until its TTL ends.
+    const written = await ctx.kv.indexAdd(GRANT_INDEX, playSessionId, INDEX_TTL_S)
+      .then(() => ctx.kv.set(`${GRANT}${playSessionId}`, JSON.stringify(moved), CONV_GRANT_TTL_S)).then(() => true, () => false);
     if (!written) return;
   }
-  if (hint !== playSessionId) await ctx.kv.del(`${GRANT}${hint}`).catch(() => undefined);
+  if (hint !== playSessionId) await removeGrant(ctx, hint);
 }
+/** a grant and its index entry go (never throws; a member left behind reads as null and expires with its TTL) */
+const removeGrant = async (ctx: Ctx, id: string): Promise<void> => {
+  await ctx.kv.del(`${GRANT}${id}`).catch(() => undefined);
+  await ctx.kv.indexRemove(GRANT_INDEX, id).catch(() => undefined);
+};
 export const dropConvGrant = (ctx: Ctx, hint: string) => bindConvGrant(ctx, hint, null);

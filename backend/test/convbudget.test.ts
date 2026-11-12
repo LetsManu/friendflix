@@ -329,6 +329,22 @@ describe('admitConversion', () => {
     expect(await ask({ userId: ANNA, deviceId: 'd1', hint: 'again', swap: true })).toEqual({ ok: false, why: 'full' });
     expect(await env.kv.keys('conv:grant:')).toEqual(['conv:grant:mine']);
   });
+  it('admission reads the grant index, never scans the keyspace; bind and drop keep the index', async () => {
+    const keys = vi.spyOn(env.kv, 'keys');
+    expect(await ask({ userId: ANNA, deviceId: 'd1', hint: 'i1' })).toEqual({ ok: true });
+    expect(await ask({ userId: BEN, deviceId: 'd2', hint: 'i2' })).toEqual({ ok: true });
+    expect(keys.mock.calls.filter(([p]) => p.startsWith('conv:grant'))).toEqual([]);
+    expect((await env.kv.indexMembers('conv:grants')).sort()).toEqual(['i1', 'i2']);
+    await bindConvGrant(env.ctx, 'i1', 'ps-i1');
+    expect((await env.kv.indexMembers('conv:grants')).sort()).toEqual(['i2', 'ps-i1']);
+    await dropConvGrant(env.ctx, 'i2');
+    expect(await env.kv.indexMembers('conv:grants')).toEqual(['ps-i1']);
+    expect((await countConversions(env.ctx))!.map((e) => e.key)).toEqual(['ps-i1']);
+    // a grant that could not be indexed is not written (the count could not see it): unknown, the caller treats it as busy
+    vi.spyOn(env.kv, 'indexAdd').mockRejectedValueOnce(new Error('down'));
+    expect(await ask({ userId: BEN, deviceId: 'd2', hint: 'i3' })).toEqual({ ok: false, why: 'unknown' });
+    expect(await env.kv.get('conv:grant:i3')).toBeNull();
+  });
   it('unreadable list means unknown', async () => {
     env.ctx.jf.admin.transcodeSessions = () => new Promise(() => undefined);
     const t0 = Date.now();
