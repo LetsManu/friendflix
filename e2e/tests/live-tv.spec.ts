@@ -232,6 +232,25 @@ test.describe('Live TV on a TV', () => {
     expect(new URL(page.url()).pathname).toBe('/live');
   });
 
+  test('Info opens the panel, OK on its Close button closes it and the focus returns to the row', async ({ page }) => {
+    await page.goto('/live?tv=1');
+    await expect(focused(page)).toHaveAccessibleName(/^12 Kinderinsel/);
+    await remote(page, 'Info');
+    const panel = page.getByRole('dialog', { name: 'Kinderinsel' });
+    await expect(panel).toBeVisible();
+    await expect(focused(page)).toHaveText('Schließen');
+    await page.keyboard.press('Enter');
+    await expect(panel).toHaveCount(0);
+    await expect(focused(page)).toHaveAccessibleName(/^12 Kinderinsel/);
+    // a pointer click on Close works as well
+    await remote(page, 'Info');
+    await expect(panel).toBeVisible();
+    await panel.getByRole('button', { name: 'Schließen' }).click();
+    await expect(panel).toHaveCount(0);
+    await expect(focused(page)).toHaveAccessibleName(/^12 Kinderinsel/);
+    expect(new URL(page.url()).pathname).toBe('/live');
+  });
+
   test('play=last opens the player and Back returns to the list, Back again goes home', async ({ page, api }) => {
     await page.route('**/live/watch/**', (r) => (r.request().isNavigationRequest() ? r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>player</title>' }) : r.fallback()));
     await page.goto('/live?play=last&tv=1');

@@ -69,6 +69,28 @@ test.describe('Live TV for kids', () => {
     expect(new URL(page.url()).pathname).toBe('/live');
   });
 
+  test('a long OK that loses the focus or the window fires nothing', async ({ page, api }) => {
+    await page.goto('/live');
+    const pixel = tiles(page).getByRole('button', { name: /Pixel Piraten/ });
+    await pixel.focus();
+    await page.keyboard.down('Enter');
+    await page.clock.runFor(300);
+    await page.getByRole('button', { name: /Kinderinsel/ }).first().focus(); // the focus moves while OK is held
+    await page.clock.runFor(650);
+    await page.keyboard.up('Enter');
+    expect(api.livetv.calls).toEqual([]);
+    expect(new URL(page.url()).pathname).toBe('/live');
+
+    await pixel.focus();
+    await page.keyboard.down('Enter');
+    await page.clock.runFor(300);
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await page.clock.runFor(650);
+    await page.keyboard.up('Enter');
+    expect(api.livetv.calls).toEqual([]);
+    expect(new URL(page.url()).pathname).toBe('/live');
+  });
+
   test('a tap opens the player', async ({ page }) => {
     await page.route('**/live/watch/**', (r) => (r.request().isNavigationRequest() ? r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>player</title>' }) : r.fallback()));
     await page.goto('/live');

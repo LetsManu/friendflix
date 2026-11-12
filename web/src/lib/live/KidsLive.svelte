@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { createEventDispatcher, onDestroy } from 'svelte';
+  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import { nowLines, type LiveChannel } from './api';
@@ -57,7 +57,13 @@
     held = c;
     longOk.down(e);
   }
-  onDestroy(() => { cancel(); longOk.cancel(); });
+  /** a held OK that loses the window or the tile fires nothing, on that tile or any other */
+  function dropOk() { held = null; longOk.cancel(); }
+  onMount(() => {
+    window.addEventListener('blur', dropOk);
+    return () => window.removeEventListener('blur', dropOk);
+  });
+  onDestroy(() => { cancel(); dropOk(); });
 
   const title = (c: LiveChannel): string => (c.receiving !== false && c.epg === 'ok' && c.now ? c.now.title : nowLines(c).now);
   $: sections = [
@@ -82,7 +88,7 @@
               <li class="cell">
                 <button type="button" class="tile" aria-label={rowName(c, now)}
                   on:pointerdown={(e) => down(e, c)} on:pointermove={move} on:pointerup={cancel} on:pointerleave={cancel} on:pointercancel={cancel}
-                  on:contextmenu|preventDefault on:click={() => click(c)} on:keydown={(e) => key(e, c)} on:keyup={(e) => { if (e.key === 'Enter') longOk.up(); }}>
+                  on:contextmenu|preventDefault on:click={() => click(c)} on:keydown={(e) => key(e, c)} on:blur={dropOk} on:keyup={(e) => { if (e.key === 'Enter') longOk.up(); }}>
                   <span class="logo" aria-hidden="true">{#if c.logo}<img src={c.logo} alt="" width="96" height="96" loading="lazy" decoding="async" use:fadeIn />{/if}</span>
                   <span class="nm" aria-hidden="true"><b class="num">{c.number}</b> {c.name}</span>
                   <span class="ti" aria-hidden="true">{#if c.receiving !== false && c.epg === 'ok' && c.now}<i class="lb">{$t('live.now')}</i> {/if}{title(c)}</span>

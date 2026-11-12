@@ -156,6 +156,20 @@
     }
   }
 
+  /** the first favourite makes the favourites row appear above the list: the focused element is put back in the middle third */
+  let favCount = favs.length;
+  function favsChanged(n: number) {
+    const was = favCount;
+    favCount = n;
+    if (was === 0 && n > 0) {
+      void tick().then(() => {
+        const a = document.activeElement as HTMLElement | null;
+        if (a && a !== document.body && root?.contains(a)) centre(a);
+      });
+    }
+  }
+  $: favsChanged(favs.length);
+
   // ---- long OK ----
   let pressed: HTMLElement | null = null;
   const longOk = createLongOk({
@@ -212,19 +226,21 @@
 
   // ---- keys ----
   function stop(e: Event) { e.preventDefault(); e.stopPropagation(); }
+  /** the rail has the focus or a modal is up: the list's shortcuts stay quiet */
+  const overShell = (): boolean => !!document.activeElement?.closest('nav.rail') || !!document.querySelector('[aria-modal="true"]');
   function onKeyDown(e: KeyboardEvent) {
     if (!root?.isConnected) return;
     const s = noteKey(e.key);
     if (s.size !== seen.size) seen = s;
     if (e.ctrlKey || e.metaKey || e.altKey || e.key.startsWith('Arrow')) return;
     const back = e.key === 'Escape' || isBackKey(e);
-    if (info) { // the panel owns Back, Info and OK on its button
+    if (info) { // the panel owns Back and Info; OK on its button is left alone, the button's own click closes it
       if (back || e.key === 'Info') { stop(e); void closeInfo(); }
       return;
     }
     if (back) {
       if (number || noMatch) { stop(e); closeNumber(); clearTimeout(msgT); noMatch = ''; return; }
-      if (!document.activeElement?.closest('nav.rail') && !document.querySelector('[aria-modal="true"]')) { stop(e); void goto('/'); } // Back from the list goes Home
+      if (!overShell()) { stop(e); void goto('/', { replaceState: true }); } // Back from the list goes Home (no history entry piles up)
       return;
     }
     if (e.key === 'Enter') {
@@ -234,7 +250,7 @@
       return;
     }
     const act = resolveLiveKey(e, { tv: true, lg: isLgApp(), controlsVisible: false, onBody: false, overlayOpen: false, numberOpen: !!number });
-    if (!act) return;
+    if (!act || overShell()) return; // the rail or a modal owns the keys
     if (act.type === 'digit') { stop(e); digit(act.d); }
     else if (act.type === 'chDown') { stop(e); jump(JUMP); }
     else if (act.type === 'chUp') { stop(e); jump(-JUMP); }
@@ -303,7 +319,7 @@
       <h2>{info.number} {info.name}</h2>
       <p class="il"><b>{$t('live.now')}</b> {lines.now}{#if left} <span class="left">{timeLeftText(left)}</span>{/if}</p>
       <p class="il">{#if lines.next}<b>{$t('live.next')}</b> {lines.next}{/if}</p>
-      <button type="button" class="close">{$t('common.close')}</button>
+      <button type="button" class="close" on:click={() => void closeInfo()}>{$t('common.close')}</button>
     </div>
   </div>
 {/if}
