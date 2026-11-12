@@ -496,8 +496,9 @@
   let fallbackRestart = false;
   const isBusy = (e: unknown) => e instanceof ApiError && e.status === 503 && (e.body as { error?: unknown } | null)?.error === 'server_busy';
   /**
-   * `restore`: a switch (quality, track) stopped the old session before asking; when the server is busy the previous choice is put back,
-   * said once in a toast, and that stream is asked for again at the same position (its slot was just freed). Only a second refusal shows the busy state.
+   * `restore`: a switch (a quality pick, a track, surround) stopped the old session before asking; when the server is busy the previous
+   * choice is put back and that stream is asked for again at the same position (its slot was just freed); the toast says so once that
+   * stream is given. A second refusal shows the busy state alone. An ABR step-down passes none (its old rung stalled).
    */
   async function load(startSec?: number, restore?: { undo: () => void; toast: string }): Promise<'busy' | undefined> {
     cancelFirstFrame();
@@ -539,7 +540,13 @@
       if (isBusy(e)) {
         clearTimeout(retryT); reconnecting = 0; hls?.stopLoad();
         pendingFallback = fell; // a retry after a codec fallback still names what failed
-        if (restore) { restore.undo(); flash(restore.toast, 3000); return load(startSec); }
+        if (restore) {
+          restore.undo();
+          // the toast only when the old choice really plays again: a second refusal shows the busy state alone (no toast, then a dialog)
+          const again = await load(startSec);
+          if (again !== 'busy') flash(restore.toast, 3000);
+          return again;
+        }
         waiting = false; video?.pause(); errNote = '';
         errTitle = tr('player.error.title'); error = tr('player.error.serverBusy');
         return 'busy';
@@ -1163,7 +1170,9 @@
     try {
       await send('stop');
       let kept = false;
-      const r = await load(pos, { undo: () => { kept = true; quality = prev.quality; reqHint = prev.reqHint; abr = prev.abr; shownQ = prev.shownQ; }, toast: tr('player.error.serverBusyQuality', { q: rungLabel(prev.bps) }) });
+      // only the viewer's own pick puts the old rung back on a refusal: an ABR step-down left a rung that stalled, so a refusal there
+      // shows the honest busy state instead of reloading the stalling stream
+      const r = await load(pos, how === 'manual' ? { undo: () => { kept = true; quality = prev.quality; reqHint = prev.reqHint; abr = prev.abr; shownQ = prev.shownQ; }, toast: tr('player.error.serverBusyQuality', { q: rungLabel(prev.bps) }) } : undefined);
       if (r !== 'busy') {
         if (wasPlaying) video?.play().catch(() => undefined);
         if (!kept) flash(msg || qualityToast(bps), ms); // a refused switch already said that the quality stays
