@@ -33,6 +33,10 @@ export interface LtvStatusMock {
   gets: number;
   /** POST stop calls: the channel ids, in order */
   stops: string[];
+  /** POST /channels/:id/test of a listed channel (the start half of Neu starten): the channel ids, in order */
+  starts: string[];
+  /** the test start is refused (budget, provider limit): the facts answer carries no preview */
+  startRefused: boolean;
 }
 
 const GB = 1024 ** 3;
@@ -52,7 +56,7 @@ export function ltvStatusMock(): LtvStatusMock {
       { at: minutesAgo(60), level: 'error', code: 'source_refresh_failed', sourceId: 'src-nordlicht', reason: 'timeout' },
     ],
     summary: { matched: 398, total: 412, unmatched: 14 },
-    stopFails: false, failFirst: false, names: {}, gets: 0, stops: [],
+    stopFails: false, failFirst: false, names: {}, gets: 0, stops: [], starts: [], startRefused: false,
   };
   for (const x of s.streams) s.names[x.channelId] = x.name;
   return s;
@@ -78,6 +82,13 @@ export function ltvStatusRoute(s: LtvStatusMock, m: string, p: string, J: Reply)
     s.streams = s.streams.filter((x) => x.channelId !== id);
     s.events = [{ at: Date.now(), level: 'info', code: 'stopped_by_admin', channelId: id }, ...s.events];
     return J({ ok: true });
+  }
+  const start = p.match(/^\/api\/admin\/livetv\/channels\/([^/]+)\/test$/);
+  if (start && m === 'POST' && s.names[decodeURIComponent(start[1]!)]) {
+    const id = decodeURIComponent(start[1]!);
+    s.starts.push(id);
+    const facts = { ok: true, video: { codec: 'h264', width: 1920, height: 1080, fps: 25 }, audio: { codec: 'aac', channels: 2 }, needs: 'remux' };
+    return J(s.startRefused ? facts : { ...facts, preview: { url: `/media/l/${'t'.repeat(43)}/index.m3u8`, token: 't'.repeat(43) } });
   }
   return null;
 }

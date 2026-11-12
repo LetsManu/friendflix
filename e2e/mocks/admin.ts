@@ -220,6 +220,8 @@ export interface LivetvAreaMock {
   /** the next stream test(s): the probe facts, or a refusal; `chTestBusy` answers 409 test_running once */
   chTest: { ok: true } | { ok: false; error: string } | { status: number; error: string };
   chTestBusy: boolean;
+  /** the next stream tests answer a preview (the channel could start): url and token of a test token */
+  chPreview: boolean;
   /** the raw logo uploads that reached the server */
   logoPuts: Array<{ id: string; type: string; bytes: number }>;
   feeds: LtvFeedMock[];
@@ -323,6 +325,7 @@ export function livetvAreaMock(): LivetvAreaMock {
     chQueries: [],
     chTest: { ok: true },
     chTestBusy: false,
+    chPreview: false,
     logoPuts: [],
     calls: [],
     seq: 0,
@@ -1084,7 +1087,7 @@ function channelsRoute(a: LivetvAreaMock, m: string, p: string, sp: URLSearchPar
     if ('status' in t) return J({ error: t.error }, t.status);
     if (!t.ok) { c.mode = null; c.probeError = t.error; return J({ ok: false, video: null, audio: null, needs: null, error: t.error }); }
     c.mode = 'remux'; c.probeError = null;
-    return J({ ok: true, ...LTV_FACTS });
+    return J({ ok: true, ...LTV_FACTS, ...(a.chPreview ? { preview: { url: `/media/l/${'p'.repeat(43)}/index.m3u8`, token: 'p'.repeat(43) } } : {}) });
   }
   if (mm[2] === '/logo' && m === 'PUT') {
     const up = body as { contentType: string; bytes: number };

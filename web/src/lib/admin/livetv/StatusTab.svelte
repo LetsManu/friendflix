@@ -29,7 +29,7 @@
   import JobSteps from '../JobSteps.svelte';
   import { listSources } from './api';
   import { whenText } from './sources';
-  import { STATUS_POLL_MS, bitrateText, cacheLine, eventText, inputText, levelWord, loadStatus, modeText, stopChannel, type EventLevel, type InputState, type LiveEvent, type LiveStatus, type StatusFeed, type StatusStream } from './status';
+  import { STATUS_POLL_MS, bitrateText, cacheLine, eventText, inputText, levelWord, loadStatus, modeText, startChannel, stopChannel, type EventLevel, type InputState, type LiveEvent, type LiveStatus, type StatusFeed, type StatusStream } from './status';
   import UpdaterNotes from './UpdaterNotes.svelte';
   import { errorKey, gpuKey, jobRunning, livetvJob, livetvRunning, livetvSteps, otherJobRunning, type LivetvAdminState } from './state';
   import type { Column } from '#lib/ui/table';
@@ -95,13 +95,15 @@
       { id: 'restart', label: $t('adminLive.status.restart'), icon: 'refresh', run: () => stop(r, true) },
     ];
   }
-  /** *Stoppen* asks first; *Neu starten* does not (the viewers' players ask for the channel again, which starts it) */
+  /** *Stoppen* asks first; *Neu starten* does not: it stops the stream and starts it again with the stream test (`startChannel`); the viewers' players ask again anyway */
   async function stop(r: StatusStream, restart = false) {
     if (!restart && !(await confirm({ title: tr('adminLive.status.stopTitle', { name: r.name }), body: tr('adminLive.status.stopBody'), danger: true, confirmLabel: tr('adminLive.status.stopConfirm') }))) return;
     const res = await runAction({ key: `ltv-stop:${r.channelId}`, run: () => stopChannel(r.channelId), error: false });
     if (res.skipped || gone) return;
     if (!res.ok) { toast.error(tr('adminLive.status.stopFailed')); return; }
-    toast.success(tr(restart ? 'adminLive.status.restarted' : 'adminLive.status.stopped', { name: r.name }));
+    if (!restart) toast.success(tr('adminLive.status.stopped', { name: r.name }));
+    else if (await startChannel(r.channelId)) toast.success(tr('adminLive.status.restarted', { name: r.name }));
+    else if (!gone) toast.info(tr('adminLive.status.restartLater', { name: r.name }));
     await loadFresh();
   }
 

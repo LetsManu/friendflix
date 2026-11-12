@@ -209,7 +209,7 @@ export interface BulkTestResult { id: string; ok: boolean; needs?: Needs; error?
 export const bulkTest = (ids: string[]) => api<{ results: BulkTestResult[] }>(`${B}/bulk`, { method: 'POST', body: { ids, action: 'test' } });
 
 /** `POST /channels/:id/test`: 409 `test_running` / `no_stream_url` / `source_disabled`, 503 `livetv_unreachable`, 502 `livetv_error` */
-export interface TestAnswer { ok: boolean; video: ProbeFacts['video'] | null; audio: ProbeFacts['audio'] | null; needs: Needs | null; error?: string }
+export interface TestAnswer { ok: boolean; video: ProbeFacts['video'] | null; audio: ProbeFacts['audio'] | null; needs: Needs | null; error?: string; /** the channel could start: a test token to play it for 10 s */ preview?: { url: string; token: string } }
 export const testChannel = (id: string) => api<TestAnswer>(`${B}/${enc(id)}/test`, { method: 'POST' });
 
 /** the logo upload is a raw image body (ruling 32), not JSON: 413 `too_large`, 415 `unsupported_type` */

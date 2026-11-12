@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
@@ -17,7 +17,10 @@ import {
   orderBody as channelOrderBody, orderChannels, patchChannel, setLogo, testChannel,
 } from './adminChannels.js';
 import { liveStatus, readHwAccel, stopStream } from './status.js';
-import { isOwnFeeds } from './channels.js';
+import { CHANNEL_SELECT, isOwnFeeds, toEffective, type EffectiveRow } from './channels.js';
+import { isHomeRequest } from '../netaddr.js';
+import { clearJoinMark, startOrJoin } from './streams.js';
+import { liveSidHash, mintLiveToken } from './tokens.js';
 import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource } from './refresh.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
@@ -476,12 +479,45 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // admin only; checks the channel and its source, never the viewing rights or the group's release (F10)
+  /**
+   * The preview of a stream test (Task 42, F10): the channel can start, so it starts (or joins) like a watch and the admin gets a test
+   * token of their own device. Only the channel and its source were checked (testChannel); the viewing rights and the group's release
+   * are not asked, and the test token lets the live authz skip them too. A refusal (budget, provider limit, unreachable, no device) is
+   * no error here: the answer then carries the facts only.
+   */
+  async function testPreview(req: FastifyRequest, id: string): Promise<{ url: string; token: string } | null> {
+    const deviceId = req.session!.deviceId;
+    if (!deviceId || !req.profile) return null;
+    try {
+      const row = (await ctx.db.query<EffectiveRow>(`${CHANNEL_SELECT} where c.id = $1`, [id])).rows[0];
+      if (!row) return null;
+      const ch = toEffective(row); // after the test: it carries the fresh probe, so the expected mode is the tested one
+      const who = { userId: req.user!.id, deviceId, role: req.user!.role };
+      const r = await startOrJoin(ctx, who, ch, { id: req.profile.id, kids: Boolean(req.profile.kids) });
+      if ('status' in r) return null;
+      const minted = await mintLiveToken(ctx, {
+        userId: who.userId, profileId: req.profile.id, deviceId, sidHash: liveSidHash(req.sid!), channelId: ch.id, channelName: ch.name,
+        kind: 'live', via: 'local', remote: !isHomeRequest(req, ctx.cfg.HOME_NETWORKS), test: true,
+      });
+      await clearJoinMark(ctx, ch.id, { userId: who.userId, deviceId });
+      return { url: `/media/l/${minted.token}/index.m3u8`, token: minted.token };
+    } catch (e) {
+      req.log.warn({ err: e instanceof Error ? e.name : 'error' }, 'livetv test preview not started'); // never the token, never a URL
+      return null;
+    }
+  }
+
   app.post('/api/admin/livetv/channels/:id/test', admin, async (req, reply) => {
     const cid = paramId(req);
     if (!cid) return reply.code(404).send({ error: 'not_found' });
     reply.header('cache-control', 'no-store');
     try {
-      return await testLocked(req.user!.id, reply, (signal) => testChannel(ctx, req.user!.id, cid, signal));
+      return await testLocked(req.user!.id, reply, async (signal) => {
+        const facts = await testChannel(ctx, req.user!.id, cid, signal);
+        if (!facts.ok || signal.aborted) return facts;
+        const preview = await testPreview(req, cid);
+        return preview ? { ...facts, preview } : facts;
+      });
     } catch (e) { return channelRefused(e, reply); }
   });
 
