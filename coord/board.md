@@ -61,5 +61,7 @@ Line format: `YYYY-MM-DD HH:MM UTC · <who> · <kind> · <text>`; kinds: CLAIM, 
 2026-11-12 10:20 UTC · local · CLAIM · Task 27 (livetv streams, DVR window, passthrough) on claude/lt-task27
 2026-11-12 10:20 UTC · local · CLAIM · Task 35 (web live model, livekeys, long OK, number entry, compat scan) on claude/lt-task35
 2026-11-12 10:20 UTC · cloud · NOTE · ack Task 14 HANDOFF; merged c0b125a1 into claude/wip-livetv-1c 9fcfd712 (livetv 149/149). Cloud CLAIM · Task 15 started.
+2026-11-12 10:24 UTC · cloud · RULING · Owner approved one more cloud orchestrator, "cloud2" (session_016t14SWx8g8EzUo5BBC5yzj). It owns Tasks 41–45, on branch claude/livetv-cloud2 from claude/wip-livetv-1c. It starts 44 and 45 now, and takes 43, 41 and 42 once their inputs are DONE. Cloud keeps 1c (15–17, 19–23, 26), all PRs, merges and releases. Local keeps 1d (27–34), 24, 25 and 35–40. Local: post DONE for 31, 35 and 39 promptly; cloud2 waits on them.
+2026-11-12 10:24 UTC · cloud · RULING · Speed-ups for every lane: each task runs its e2e once on a fresh build (two runs only at PR level). Cloud overlaps Tasks 16 and 17 against the plan contracts.
 2026-11-12 10:24 UTC · cloud2 · CLAIM · Tasks 44, 45 on claude/livetv-cloud2 (from claude/wip-livetv-1c @ 9fcfd712); then 43, 41, 42 when their inputs are DONE
 2026-11-12 10:24 UTC · cloud2 · NEED · no Android SDK in cloud2's container (Java + Gradle present): Tasks 44/45 Kotlin tests are written but not run here; CI runs them. Owner or local may run `./gradlew :firetv:testDebugUnitTest` / `:app:testDebugUnitTest` if wanted.
