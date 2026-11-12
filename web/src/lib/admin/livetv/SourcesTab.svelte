@@ -42,7 +42,7 @@
   const replace = (v: SourceView) => { sources = sources ? (sources.some((s) => s.id === v.id) ? sources.map((s) => (s.id === v.id ? v : s)) : [...sources, v]) : [v]; };
 
   // ---- the sheets
-  let sheet: { source: SourceView | null; trigger: HTMLElement | null } | null = null;
+  let sheet: { source: SourceView | null; trigger: HTMLElement | null; autoTest?: boolean } | null = null;
   let stream: { result: { name: string; push: PushResult; synced?: boolean } | null; trigger: HTMLElement | null } | null = null;
   let feedsCard: OwnFeedsCard | undefined;
   const openAdd = (e: MouseEvent) => { sheet = { source: null, trigger: e.currentTarget instanceof HTMLElement ? e.currentTarget : null }; };
@@ -149,7 +149,7 @@
   {:else}
     {#each lists as s (s.id)}
       <SourceCard source={s} {now} refreshing={$busyKeys.has(`ltv-src-refresh:${s.id}`)} busy={$busyKeys.has(`ltv-src:${s.id}`)}
-        on:refresh={() => refresh(s)} on:edit={(e) => (sheet = { source: s, trigger: e.detail })} on:toggle={() => toggle(s)} on:remove={() => remove(s)} on:interval={(e) => setInterval_(s, e.detail)} />
+        on:refresh={() => refresh(s)} on:edit={(e) => (sheet = { source: s, trigger: e.detail })} on:pick={(e) => (sheet = { source: s, trigger: e.detail, autoTest: true })} on:toggle={() => toggle(s)} on:remove={() => remove(s)} on:interval={(e) => setInterval_(s, e.detail)} />
     {/each}
     {#if feedsSource}
       {#key feedsSource.id}
@@ -160,7 +160,7 @@
 </div>
 
 {#if sheet}
-  <SourceSheet source={sheet.source} trigger={sheet.trigger} on:close={() => (sheet = null)} on:saved={saved} on:own={toOwn} />
+  <SourceSheet source={sheet.source} trigger={sheet.trigger} autoTest={sheet.autoTest ?? false} on:close={() => (sheet = null)} on:saved={saved} on:own={toOwn} />
 {/if}
 {#if stream}
   <StreamSheet result={stream.result} trigger={stream.trigger} on:close={() => (stream = null)} on:created={streamCreated} />
