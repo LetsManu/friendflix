@@ -6,12 +6,13 @@
    * budget, what runs, *Neu messen*, the limit (automatic or own value 1–16) and the priority with the hint of the selected option.
    * `readOnly` (Live-Status reuses the card): the numbers and the list only, optionally with a `link` to the full card.
    * Polls every 5 s while the tab is visible. The measured line, the warning, the note under the button, the last outcome and the
-   * priority hint reserve their height, the stepper keeps its place while hidden, so switching options moves nothing. *Neu messen* keeps its
-   * place in the header from the start: invisible until the first answer says whether there is anything to measure (Plex: never shown,
-   * the place stays, so the header does not move and no disabled button flashes up).
+   * priority hint reserve their height, the stepper keeps its place while hidden, so switching options moves nothing. *Neu messen* exists
+   * only with Jellyfin (the server kind comes with /api/me, before admin pages render): there it keeps its place in the header from the
+   * start, invisible until the first answer; on Plex there is no slot at all, so no empty row and no disabled button flashing up.
    */
   import { onDestroy, onMount } from 'svelte';
   import { api } from '#lib/api';
+  import { serverKind } from '#lib/capabilities';
   import Icon from '#lib/Icon.svelte';
   import { fmtNumber, t, tr } from '#lib/i18n';
   import { poll } from '#lib/adminContent/poll';
@@ -119,8 +120,8 @@
 
 <AdminCard title={$t('adminConv.title')} description={$t('adminConv.intro')}>
   <svelte:fragment slot="actions">
-    {#if link}<Button variant="secondary" href={link}>{$t('adminConv.details')}</Button>{/if}
-    {#if !readOnly}
+    <!-- no whitespace between the two blocks: with neither rendered the actions box stays :empty and takes no row (AdminCard) -->
+    {#if link}<Button variant="secondary" href={link}>{$t('adminConv.details')}</Button>{/if}{#if !readOnly && $serverKind === 'jellyfin'}
       <span class="measure" class:hold={!view || unsupported} data-testid="conv-measure">
         <Button icon="refresh" pending={measuring} disabled={!view || unsupported || (Boolean(reason) && !measuring)} aria-describedby={view ? ids.note : undefined} on:click={measure}>{$t('adminConv.remeasure')}</Button>
       </span>
