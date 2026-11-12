@@ -652,12 +652,18 @@ export class JellyfinService implements MediaServer {
       body: JSON.stringify({ DeviceProfile: profile, SubtitleStreamIndex: -1 }),
     });
     if (info.ErrorCode) throw new JellyfinError(403, `playback blocked: ${info.ErrorCode}`);
-    // preferred audio language: our HLS URL carries AudioStreamIndex itself, so a non-default track needs no second PlaybackInfo
+    // preferred audio language: our HLS URL carries AudioStreamIndex itself, so a non-default track needs no second PlaybackInfo.
+    // A matched default track stays out of the direct decision (direct play plays the container's default track) but the HLS URL names it:
+    // without an AudioStreamIndex Jellyfin's HLS streams the first track with channels, not the IsDefault one (dto.ts sourceFacts).
     let audioIndex = opts.audioIndex;
+    let hlsAudioIndex: number | undefined;
     if (audioIndex === undefined && opts.audioLang) {
       const streams: Array<Record<string, any>> = info.MediaSources?.[0]?.MediaStreams ?? [];
       const want = streams.find((s) => s.Type === 'Audio' && s.Language === opts.audioLang);
-      if (want && !want.IsDefault && typeof want.Index === 'number') audioIndex = want.Index;
+      if (want && typeof want.Index === 'number') {
+        if (want.IsDefault) hlsAudioIndex = want.Index;
+        else audioIndex = want.Index;
+      }
     }
     // the stream plan: HEVC copy / conversion, surround, reasons. A gate is passed only while HEVC_STREAMS > 0 (no gate = conversions off) and is
     // asked only when the plan wants an HEVC conversion; an error from it counts as busy.
@@ -666,11 +672,11 @@ export class JellyfinService implements MediaServer {
     if (src0) {
       plan = planStream({
         caps: opts.clientCaps ?? null, cast: Boolean(opts.cast), remote: Boolean(opts.remote), maxBitrate: opts.maxBitrate, boxHeight: boxHeightFor(opts.maxBitrate, opts.maxHeight),
-        src: sourceFacts(src0, audioIndex), surroundOn: Boolean(opts.surround), hevcStreams: opts.hevcGate ? 1 : 0, // the count itself is the gate's business (hevcenc.ts)
+        src: sourceFacts(src0, audioIndex ?? hlsAudioIndex), surroundOn: Boolean(opts.surround), hevcStreams: opts.hevcGate ? 1 : 0, // the count itself is the gate's business (hevcenc.ts)
       });
       if (plan.wantsHevcEncode) plan = applyGate(plan, await Promise.resolve().then(() => opts.hevcGate!()).catch((): HevcGate => ({ ok: false, why: 'h264_busy' })));
     }
-    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect, capReason: opts.capReason, directContainers: caps?.containers, plan, hlsSubtitleIndex: opts.hlsSubtitleIndex });
+    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex, hlsAudioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect, capReason: opts.capReason, directContainers: caps?.containers, plan, hlsSubtitleIndex: opts.hlsSubtitleIndex });
   }
 
   /** PlaybackInfo with the "FriendFlix Download" profile: source details + (unless 'original') the fMP4 HLS master the preparer pulls. */

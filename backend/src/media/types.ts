@@ -170,7 +170,7 @@ export interface PlaybackDto {
    * 'remoteCap' / 'uploadCap' / 'roleCap' / 'manual' / 'network' from the bitrate cap that applied (the client's choice is 'manual' or 'network' via reasonHint).
    */
   transcodeReason?: TranscodeReason;
-  /** audio track baked into hlsUrl (explicit audioIndex or the matched audioLang); undefined = source default */
+  /** audio track baked into hlsUrl (explicit audioIndex or the matched audioLang); undefined = source default (Jellyfin: a matched default track is still named in hlsUrl, see dto.ts) */
   audioIndex?: number;
   /** the server's plan for the HLS stream (Jellyfin only): what the picture and sound are given and why; fixed reason codes, nothing else */
   delivery?: StreamDelivery;

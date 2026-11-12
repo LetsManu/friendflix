@@ -13,6 +13,8 @@ const item = (id: string, extra = {}) => ({ Id: id, Name: 'Film ' + id.slice(0, 
 let env: TestEnv;
 /** extra media streams of the PlaybackInfo answer (the stream plan reads the video and audio facts from them) */
 let extraStreams: Array<Record<string, unknown>> = [];
+/** fields that replace those of the PlaybackInfo answer's media source (container, streams); reset by the test that sets them */
+let sourceOver: Record<string, unknown> = {};
 let s: { cookies: Record<string, string>; csrf: string };
 
 beforeAll(async () => {
@@ -31,7 +33,7 @@ beforeAll(async () => {
           { Index: 3, Type: 'Subtitle', Language: 'ger', Codec: 'subrip', IsTextSubtitleStream: true, DisplayTitle: 'Deutsch' },
           { Index: 4, Type: 'Subtitle', Codec: 'pgssub', IsTextSubtitleStream: false },
           ...extraStreams,
-        ] }],
+        ], ...sourceOver }],
       },
     }),
     'GET /Shows/NextUp': () => ({ json: { Items: [] } }),
@@ -160,6 +162,37 @@ describe('playback', () => {
     expect(none.audioIndex).toBeUndefined();
     const explicit = (await call('POST', '/api/playback/info', { itemId: ID, audioLang: 'eng', audioIndex: 1 })).json();
     expect(explicit.audioIndex).toBe(1);
+  });
+  it('playback info: a matched default track that is not the first one is named in the HLS URL (Jellyfin streams the first track), never for direct play', async () => {
+    const index = (url: string) => new URL(url, 'https://x').searchParams.get('AudioStreamIndex');
+    const MediaStreams = [
+      { Index: 1, Type: 'Audio', Language: 'fre', DisplayTitle: 'Français', Codec: 'eac3', Channels: 6 },
+      { Index: 2, Type: 'Audio', Language: 'ger', DisplayTitle: 'Deutsch', Codec: 'aac', Channels: 2, IsDefault: true },
+    ];
+    try {
+      // HLS (Matroska: no browser container): the German default track is named, the plan reads its facts, the reason is not the audio track
+      sourceOver = { Container: 'mkv', MediaStreams };
+      const hls = (await call('POST', '/api/playback/info', { itemId: ID, audioLang: 'ger' })).json();
+      expect(hls.directUrl).toBeUndefined();
+      expect(index(hls.hlsUrl)).toBe('2');
+      expect(hls.audioIndex).toBeUndefined();
+      expect(hls.transcodeReason).not.toBe('audioTrack');
+      expect(hls.delivery.audio).toBe('copy'); // the German stereo AAC track, not the French 5.1 E-AC-3 one
+      // direct play (mp4 within the caps): unchanged, the default track stays unnamed and keeps direct play
+      sourceOver = { MediaStreams };
+      const direct = (await call('POST', '/api/playback/info', { itemId: ID, audioLang: 'ger' })).json();
+      expect(direct.directUrl).toBeTruthy();
+      expect(index(direct.directUrl)).toBeNull();
+      expect(direct.audioIndex).toBeUndefined();
+      expect(direct.transcodeReason).toBeUndefined();
+      // its HLS fallback (a browser that cannot play the file, a failed direct start) still plays the German track
+      expect(index(direct.hlsUrl)).toBe('2');
+      // a non-default match: named as before (HLS only)
+      const fr = (await call('POST', '/api/playback/info', { itemId: ID, audioLang: 'fre' })).json();
+      expect([fr.audioIndex, index(fr.hlsUrl), fr.directUrl]).toEqual([1, '1', undefined]);
+    } finally {
+      sourceOver = {};
+    }
   });
   describe('stream plan', () => {
     const webCaps = (hls: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
