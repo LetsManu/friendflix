@@ -152,6 +152,16 @@ export async function deviceLiveSessions(ctx: Ctx, userId: string, deviceId: str
 }
 
 /**
+ * The device's current live view (ruling 36): its newest normal token, which the device's next watch replaces (mintLiveToken). A watch
+ * for another channel from this device is a channel switch (Task 32). Admin test previews are not views a watch replaces (R8).
+ */
+export async function deviceLiveView(ctx: Ctx, userId: string, deviceId: string): Promise<{ hash: string; channelId: string } | null> {
+  const mine = (await listTokens(ctx, userId)).filter((t) => t.rec.deviceId === deviceId && !t.rec.test).sort(older);
+  const t = mine[mine.length - 1];
+  return t ? { hash: t.hash, channelId: t.rec.channelId } : null;
+}
+
+/**
  * Revokes the account's tokens, or only those minted on one device; `exceptDevice` spares one device. Called next to revokeCasts
  * (sign-out / revokeSessions, device removal, account lock, profile switch, logout). Returns the count.
  */
