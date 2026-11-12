@@ -44,7 +44,7 @@
   import { firstPlaybackRequest, noEstimateStart, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
   import { playerReportBody } from '#lib/player/reportbody';
   import { holdPrefetch, prepareNext, releaseNext, takeNext, takePrefetched } from '#lib/player/prefetch';
-  import { createTiming, deviceClass, effectiveType, sendTiming } from '#lib/player/timing';
+  import { CONTROLS_HIDE_MS, CONTROLS_HIDE_TV_MS, createTiming, deviceClass, effectiveType, sendTiming } from '#lib/player/timing';
   import EpisodesPanel from '#lib/player/EpisodesPanel.svelte';
   import CastInfoPanel from '#lib/player/CastInfoPanel.svelte';
   import CastPeek from '#lib/player/CastPeek.svelte';
@@ -331,10 +331,10 @@
   let ripple: { zone: Zone; total: number; n: number } | null = null, rippleT: ReturnType<typeof setTimeout>;
   let help = false, live = '', liveN = 0;
   /** the bar hides after this long without input; the TV gets longer (moving along the bar with the D-pad takes time) */
-  let hideMs = 3000;
+  let hideMs = CONTROLS_HIDE_MS;
   // ---- TV (spec 4): own control layer, seek preview, overlays, pause screen. `tvUi` follows html.tv (set once /api/me answered) ----
   let tvUi = false, sp: SeekPreview = seekCancel(), spT: ReturnType<typeof setTimeout>, pausedAt = 0, wasPaused = true, skipFocused = -1;
-  $: hideMs = tvUi ? 5000 : 3000; // the D-pad needs longer to reach a button than a mouse
+  $: hideMs = tvUi ? CONTROLS_HIDE_TV_MS : CONTROLS_HIDE_MS; // the D-pad needs longer to reach a button than a mouse
   $: if (paused !== wasPaused) { wasPaused = paused; if (paused) pausedAt = Date.now(); }
   /** after 8 s paused without a key (TV, not in calm mode): dimmed picture + "You're watching" */
   $: pauseOn = tvUi && paused && started && !error && !remote && !locked && !reconnecting && menu === '' && !sp.active && !xray && !peek && !subDlg && !help && credits === 'off'

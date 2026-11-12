@@ -33,6 +33,12 @@ const dict: Translation<typeof de> = {
     info: 'Programa',
     noChannel: 'No hay canal {n}',
     notAvailable: 'Este canal ya no está disponible para ti.',
+    back30: '30 segundos atrás',
+    fwd30: '30 segundos adelante',
+    liveAria: 'En directo',
+    behindAria: '{time} por detrás del directo',
+    announce: '{number} {name}, {title}',
+    announceLeft: '{number} {name}, {title}, {left}',
   },
   full: {
     title: 'Ahora mismo todas las plazas en directo están ocupadas',

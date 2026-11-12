@@ -10,11 +10,16 @@
  * audio converted, transcode), the sound mode and whether the sound ran through Web Audio, dropped / total video frames
  * (getVideoPlaybackQuality) and the A/V-affecting events (seeks, a track / quality switch that started the session, reconnects).
  * Like the timings: no user, profile, title or address.
+ *
+ * Live starts (LivePlayer.svelte, mode 'live') send their first-frame time only: no channel, no user, no other measurement.
  */
 export type Device = 'phone' | 'pc' | 'tv';
-export type Mode = 'direct' | 'hls';
+export type Mode = 'direct' | 'hls' | 'live';
 export type Delivery = 'direct' | 'remux' | 'transcode';
 export type SoundMode = 'off' | 'voices' | 'night' | 'both';
+
+/** the player's controls hide after this long without input; the TV gets longer (moving along the bar with the D-pad takes time). Film and live player (F26). */
+export const CONTROLS_HIDE_MS = 3000, CONTROLS_HIDE_TV_MS = 5000;
 
 export interface TimingReport {
   device: Device;
@@ -256,6 +261,14 @@ export function readLocalTimings(storage?: Pick<Storage, 'getItem'> | null): Sto
   } catch { return []; }
 }
 
+/** what goes over the wire: a live start carries its device and first-frame time only; the rest drops the device-only fields */
+function wireOf(r: TimingReport): Record<string, unknown> {
+  if (r.mode === 'live') return { device: r.device, mode: 'live', firstFrameMs: r.firstFrameMs };
+  const wire: Record<string, unknown> = { ...r };
+  for (const k of LOCAL_ONLY) delete wire[k]; // reasons and codec names are for this device's Diagnose only
+  return wire;
+}
+
 /** keepalive fetch (survives the page unload; a beacon cannot carry the csrf header) + local copy; every error is swallowed */
 export function sendTiming(r: TimingReport, env: TimingEnv): void {
   try {
@@ -264,10 +277,8 @@ export function sendTiming(r: TimingReport, env: TimingEnv): void {
   } catch { /* storage blocked / full */ }
   try {
     const f = env.fetch ?? globalThis.fetch;
-    const wire: Record<string, unknown> = { ...r };
-    for (const k of LOCAL_ONLY) delete wire[k]; // reasons and codec names are for this device's Diagnose only
     void f?.(TIMING_ENDPOINT, {
-      method: 'POST', keepalive: true, credentials: 'same-origin', body: JSON.stringify(wire),
+      method: 'POST', keepalive: true, credentials: 'same-origin', body: JSON.stringify(wireOf(r)),
       headers: { 'content-type': 'application/json', 'x-csrf-token': env.csrf, ...(env.profile ? { 'x-ff-profile': env.profile } : {}) },
     })?.catch?.(() => undefined);
   } catch { /* no fetch / refused */ }
