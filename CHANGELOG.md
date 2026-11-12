@@ -4,6 +4,8 @@ All notable changes, grouped by what you notice. Each release has its own sectio
 
 ## [Unreleased]
 
+## [3.4.0] – Churros – 2026-11-12
+
 ### Upgrade notes
 - **Turning on Live TV on an existing install (optional; nothing changes until you do).** Three steps, in this order: *Admin → Update → Update the updater*; replace `compose.prod.yaml` in the stack folder with the one from this release and run `docker compose -f compose.prod.yaml up -d` once (backend and gateway join the new internal `livetv` network, and the `bootstrap` service writes livetv's own key into the new `bootstrap-livetv` volume); then *Admin → Live-TV → Live-TV aktivieren*. The page names a missing step instead of a generic error: "update the updater first", "your compose.prod.yaml is from before Live TV" or "backend and gateway are not on the livetv network yet". Updates through the updater keep working with the new compose file before that `up -d`: recreating backend and gateway attaches them to the new network.
 - **Before a rollback to 3.3:** move the people in admin-created roles to a built-in role (bulk *Rolle ändern*). 3.3 does not know roles an admin created (they only exist in the new role catalogue), so those accounts could not play. Built-in roles and roles from `ROLE_TEMPLATES` are unaffected.
