@@ -1,0 +1,20 @@
+#EXTM3U url-tvg="https://iptv.example.com/epg.xml.gz"
+#EXTINF:-1 tvg-id="nordlicht.de" tvg-name="Nordlicht TV" tvg-logo="https://iptv.example.com/logo/nordlicht.png" tvg-chno="1" group-title="DE | Sport",Nordlicht TV HD
+https://iptv.example.com/live/nordlicht/index.m3u8
+#EXTINF:-1 tvg-id=hafenkanal.de tvg-chno=2 group-title="DE | Sport",Hafenkanal
+#EXTVLCOPT:http-user-agent=Hafenkanal-Box/1.0
+http://iptv.example.com/live/hafenkanal.ts
+#EXTINF:-1 tvg-name="Bergblick Sport" group-title="DE | Sport" tvg-shift="-1.5",Bergblick Sport
+srt://192.0.2.20:9000?streamid=bergblick
+#EXTINF:-1 tvg-id="kinderinsel.de",Kinderinsel
+#EXTGRP:Kinder
+http://iptv.example.com/live/kinderinsel.ts
+#EXTINF:-1 group-title="Kinder",Kinderinsel Plus
+http://iptv.example.com/live/kinderinsel-plus.m3u8
+#EXTINF:-1 group-title="Filme",Die Leuchtturmwärter (Film)
+http://iptv.example.com/movie/anna/geheim/4711.ts
+#EXTINF:-1 group-title="Filme",Abenteuer Wattenmeer
+http://iptv.example.com/vod/abenteuer-wattenmeer.mkv
+
+#EXTINF:-1 tvg-id="sternwarte24.de" group-title="Nachrichten",Sternwarte 24
+http://iptv.example.com/live/sternwarte24.ts
