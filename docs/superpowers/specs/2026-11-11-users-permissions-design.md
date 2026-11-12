@@ -298,9 +298,9 @@ All admin routes: `requireAdmin` (admin account acting as its owner profile), CS
   `/Items?searchTerm` without a user, Plex: its library search), then asks the profile's own identity (`jfUserFor`) whether it
   can open each hit (`ctx.jf.item`). Without `findItems` (an adapter that lacks it) the search runs as the first active admin
   account (`serviceUser`, `previews.ts:17`) and `why` is `null`. Answer per hit:
-  `{ id, name, year, type, visible: boolean, why: 'library'|'rating'|'unrated_kids'|null, rating: string|null, library: string }`
+  `{ id, name, year, type, visible: boolean, why: 'library'|'rating'|'unrated'|'unrated_kids'|null, rating: string|null, library: string }`
   (`why` derived from the admin-key facts: library not in the effective list → `library`; rating above cap → `rating`; kids and
-  unrated → `unrated_kids`). Rate limit 30/min. Audited `user.check_viewed` (`{ profile, hits }`, no titles), like the activity
+  unrated → `unrated_kids`; a grown-up's profile with an age cap and unrated → `unrated`, as Plex hides those under any cap). Rate limit 30/min. Audited `user.check_viewed` (`{ profile, hits }`, no titles), like the activity
   tab.
 
 ### 4.3 Profiles (admin)
@@ -427,7 +427,7 @@ A read-only panel for one profile (profile switcher chips at the top: owner firs
    library ("Filme · 812 von 1 204"), counted with the profile's own identity (`ctx.jf.items` with `limit 0` → total) and the
    admin key; cached 10 min.
 3. **Titel prüfen** — search field; results as compact rows (poster thumb, name, year, rating) with "sichtbar" (✓) or
-   "ausgeblendet · Altersfreigabe 16 über FSK 12" / "· Bibliothek nicht freigegeben" / "· ohne Freigabe (Kinderprofil)"
+   "ausgeblendet · Altersfreigabe 16 über FSK 12" / "· Bibliothek nicht freigegeben" / "· ohne Freigabe (Kinderprofil)" / "· ohne Altersfreigabe"
    (`POST /check`).
 4. **Live-TV** (when installed) — channel groups and the number of channels the profile sees, with the reason for hidden
    groups ("nicht kinderfreundlich", "für Gast nicht freigegeben").
@@ -469,7 +469,7 @@ Detail page *Verlauf* and role *Verlauf* render audit entries as sentences with 
 | `adminPeople.bulk.perm` / `repair` | Set right… / Re-apply policies | Recht setzen … / Richtlinien neu anwenden |
 | `adminPeople.summary.people` / `waiting` / `openInvites` / `expiring` | People / Waiting for approval / Open invites / Access ends soon | Personen / Warten auf Freigabe / Offene Einladungen / Läuft bald ab |
 | `adminPeople.check.tab` / `summary` / `libraries` / `titles` / `titlesHint` | Check view / In short / Libraries / Check a title / Search a film or series | Sicht prüfen / Kurzfassung / Bibliotheken / Titel prüfen / Film oder Serie suchen |
-| `adminPeople.check.visible` / `hiddenRating` / `hiddenLibrary` / `hiddenUnrated` | visible / hidden · rated {r}, above {cap} / hidden · library not shared / hidden · no rating (kids profile) | sichtbar / ausgeblendet · Freigabe {r} über {cap} / ausgeblendet · Bibliothek nicht freigegeben / ausgeblendet · ohne Freigabe (Kinderprofil) |
+| `adminPeople.check.visible` / `hiddenRating` / `hiddenLibrary` / `hiddenUnrated` / `hiddenUnratedAdult` | visible / hidden · rated {r}, above {cap} / hidden · library not shared / hidden · no rating (kids profile) / hidden · no age rating | sichtbar / ausgeblendet · Freigabe {r} über {cap} / ausgeblendet · Bibliothek nicht freigegeben / ausgeblendet · ohne Freigabe (Kinderprofil) / ausgeblendet · ohne Altersfreigabe |
 | `adminPeople.check.libCount` | {lib} · {n} of {m} | {lib} · {n} von {m} |
 | `adminPeople.profiles.kidsSwitch` / `maxRating` / `createKids` / `delete` / `deleteBody` | Kids profile / Age limit / Create kids profile / Delete profile / The profile's list, history and favourites are deleted. | Kinderprofil / Altersgrenze / Kinderprofil anlegen / Profil löschen / Merkliste, Verlauf und Favoriten des Profils werden gelöscht. |
 | `adminPeople.audit.area` / `people` | Area / People | Bereich / Personen |
