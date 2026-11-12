@@ -224,6 +224,12 @@ const ltvSource = (o: Partial<LtvSourceMock> & Pick<LtvSourceMock, 'id' | 'kind'
   urlHint: null, epgHint: null, userAgent: null, allowLan: false, refresh: '24h', skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0,
   maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, state: ltvState(), ...o,
 });
+/** the provider's 18 groups as `POST /sources/test` lists them (Task 22's picker): 412 channels, "Erwachsene" 100 of them */
+export const LTV_GROUPS: Array<{ name: string; channels: number }> = [
+  ['DE | Sport', 42], ['DE | Nachrichten', 30], ['DE | Kinder', 20], ['DE | Dokumentation', 25], ['DE | Unterhaltung', 40], ['AT | Sport', 12],
+  ['AT | Regional', 18], ['CH | Regional', 15], ['Erwachsene', 100], ['Musik', 22], ['Filme', 30], ['Serien', 28], ['Natur & Tiere', 10],
+  ['Wetter', 5], ['Bergblick Sport', 8], ['Hafenregion', 3], ['Sternwarte', 2], ['Radio-Visuell', 2],
+].map(([name, channels]) => ({ name: name as string, channels: channels as number }));
 export function livetvAreaMock(): LivetvAreaMock {
   const today = (h: number, m: number) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
   return {
@@ -241,7 +247,7 @@ export function livetvAreaMock(): LivetvAreaMock {
     ports: Array.from({ length: 10 }, (_, i) => 9000 + i),
     portsKnown: true,
     host: 'friend.example.com',
-    test: { channels: 412, groups: Array.from({ length: 18 }, (_, i) => ({ name: `Gruppe ${i + 1}`, channels: i < 16 ? 23 : 22 })), samples: ['Nordlicht TV', 'Hafenkanal', 'Bergblick Sport', 'Kinderinsel', 'Sternwarte 24'], epgChannels: 398, epgError: null },
+    test: { channels: 412, groups: LTV_GROUPS, samples: ['Nordlicht TV', 'Hafenkanal', 'Bergblick Sport', 'Kinderinsel', 'Sternwarte 24'], epgChannels: 398, epgError: null },
     refreshPolls: 1,
     refreshOutcome: { counts: { channels: 415, added: 3, removed: 0 } },
     refreshing: {},
@@ -804,7 +810,8 @@ function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: st
     if (typeof body?.name !== 'string' || !body.name.trim()) return J({ error: 'invalid', field: 'name' }, 400);
     const s = ltvSource({
       id: `src-${++a.seq}`, kind: 'm3u', name: body.name, urlHint: maskUrl(u.href), epgHint: body.epgUrl ? maskUrl(body.epgUrl) : null, userAgent: body.userAgent ?? null,
-      allowLan: Boolean(body.allowLan), refresh: body.refresh ?? '24h', skipGroups: body.skipGroups ?? [], maxStreams: body.maxStreams ?? null, position: a.sources.length,
+      allowLan: Boolean(body.allowLan), refresh: body.refresh ?? '24h', skipGroups: body.skipGroups ?? [], numbering: body.numbering ?? 'chno', numberBase: body.numberBase ?? 1, logoPref: body.logoPref ?? 'm3u',
+      epgShiftMin: body.epgShiftMin ?? 0, maxStreams: body.maxStreams ?? null, position: a.sources.length,
     });
     a.sources.push(s);
     return J(s, 201);
