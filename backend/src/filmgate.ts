@@ -38,6 +38,7 @@ export const copyFitsCap = (info: Pick<PlaybackDto, 'sourceBitrate'>, cap: numbe
  *  - `bind`: the grants follow the answer given (null: nothing is given, both are dropped). Never stops a running conversion.
  *  - `release`: an error after `bind` (the cast token was taken back, its mint failed): the bound grants of that play session go.
  * `label` (title; a series by its series name): given at construction, or to `admit` / `bind` when it is known only later.
+ * `swap`: /api/playback/info (the web prefetches it on hover and focus): this grant replaces the device's own unused ones (admitConversion).
  */
 export interface FilmGate {
   hevc: () => Promise<HevcGate>;
@@ -46,12 +47,12 @@ export interface FilmGate {
   release: (playSessionId: string) => Promise<void>;
 }
 
-export function filmGate(ctx: Ctx, o: { userId: string; deviceId?: string; label?: string }): FilmGate {
+export function filmGate(ctx: Ctx, o: { userId: string; deviceId?: string; label?: string; swap?: boolean }): FilmGate {
   const grantId = randomUUID();
   const sessions = sharedSessionRead(ctx, HEVC_SESSIONS_TIMEOUT_MS);
   let budget: Promise<Admission> | undefined;
   const ask = (hevc: boolean, label = o.label): Promise<Admission> => (budget ??= admitConversion(ctx, {
-    kind: 'film', userId: o.userId, ...(o.deviceId ? { deviceId: o.deviceId } : {}), hint: grantId, ...(hevc ? { hevc: true } : {}), ...(label ? { label } : {}), sessions,
+    kind: 'film', userId: o.userId, ...(o.deviceId ? { deviceId: o.deviceId } : {}), hint: grantId, ...(hevc ? { hevc: true } : {}), ...(label ? { label } : {}), ...(o.swap ? { swap: true } : {}), sessions,
   }).catch((): Admission => ({ ok: false, why: 'unknown' })));
   return {
     hevc: async () => {

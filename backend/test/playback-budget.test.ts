@@ -133,6 +133,21 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
     expect(JSON.parse((await env.kv.get(`conv:grant:${ep.json().playSessionId}`))!)).toMatchObject({ label: 'Saltwater Almanac' });
   });
 
+  it('two hovers on one device hold at most one slot; another device is not refused because of hovers', async () => {
+    src = H264_25M; // every answer converts
+    const hover1 = (await info(friend)).json().playSessionId as string; // prefetches: nobody plays them
+    const hover2 = (await info(friend)).json().playSessionId as string;
+    expect(hover2).not.toBe(hover1);
+    expect(await grants()).toEqual([`conv:grant:${hover2}`]); // the device's new grant replaced its first
+    // L = 2: the admin's device still gets a conversion (before: two phantom grants, "2 von 2 belegt", refused)
+    src = HEVC_SRC; // never copyable: the admin's answer is a conversion too
+    const other = await info(admin);
+    expect(other.statusCode).toBe(200);
+    expect(other.json().delivery.video).toBe('h264');
+    expect(other.json().transcodeReason).not.toBe('serverBusy');
+    expect(await grants()).toHaveLength(2);
+  });
+
   it('a 502 resume_unknown after admission leaves no grant', async () => {
     src = H264_25M;
     vi.spyOn(env.ctx.jf, 'playMeta').mockResolvedValue(null);

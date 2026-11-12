@@ -52,7 +52,8 @@ const SETTINGS_TIMEOUT_MS = 3000;
 const SAFETY = 0.7;
 const MAX_SLOTS = 16;
 
-interface Grant { kind: ConvKind; user: string; device?: string; hevc?: true; label?: string; ps?: string }
+/** `swap`: a /api/playback/info grant (prefetches included): the same device's next such grant replaces it while no stream uses it */
+interface Grant { kind: ConvKind; user: string; device?: string; hevc?: true; label?: string; ps?: string; swap?: true }
 
 /** 1 slot kept free for the preferred kind once there are 2 slots or more; none when both rank equal */
 export const holdback = (limit: number, p: ConvPriority): 0 | 1 => (limit >= 2 && p !== 'equal' ? 1 : 0);
@@ -146,6 +147,15 @@ const decided = (s: ServerSession | undefined) => Boolean(s && (s.videoDirect !=
  * (unknown). A server without a session list counts grants and portal records only. `sessions`: a request's shared read.
  */
 export async function countConversions(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; sessions?: SessionRead | null } = {}): Promise<ConvEntry[] | null> {
+  return (await count(ctx, o))?.entries ?? null;
+}
+
+/**
+ * countConversions plus `ownPending`: the excepted device's playback-info grants (`swap`) that no stream uses yet (the server does not say
+ * what it does with their play session and no live record plays it: a hover / focus prefetch, an answer nobody took). A cast or download
+ * grant is never among them (a cast's stream plays on the receiver, which reports later).
+ */
+async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; sessions?: SessionRead | null }): Promise<{ entries: ConvEntry[]; ownPending: string[] } | null> {
   const list = ctx.jf.admin.transcodeSessions?.bind(ctx.jf.admin);
   const sessions = list ? await (o.sessions ?? (() => within(list, HEVC_SESSIONS_TIMEOUT_MS)))() : [];
   if (!sessions) return null;
@@ -178,12 +188,16 @@ export async function countConversions(ctx: Ctx, o: { exceptUser?: string; excep
   }
 
   const mine = o.exceptUser !== undefined && o.exceptDevice !== undefined;
+  const ownPending: string[] = [];
   const grantKeys = await ctx.kv.keys(GRANT).catch(() => [] as string[]);
   const grants = grantKeys.length ? await ctx.kv.mget(grantKeys).catch(() => [] as Array<string | null>) : [];
   grantKeys.forEach((k, i) => {
     const g = parse<Grant>(grants[i]);
     if (!g || typeof g.kind !== 'string') return;
-    if (mine && g.user === o.exceptUser && g.device === o.exceptDevice) return; // this device's earlier grant is replaced
+    if (mine && g.user === o.exceptUser && g.device === o.exceptDevice) { // this device's earlier grant is replaced
+      if (g.swap && (!g.ps || (!decided(bySession.get(g.ps)) && !liveBy.has(g.ps)))) ownPending.push(k);
+      return;
+    }
     if (g.ps && decided(bySession.get(g.ps))) return; // the server says what it does: its own entry counts (or not)
     const key = g.ps ?? `grant:${k.slice(GRANT.length)}`;
     if (out.has(key) || exempt.has(key)) return;
@@ -206,16 +220,19 @@ export async function countConversions(ctx: Ctx, o: { exceptUser?: string; excep
   }
 
   if (mine) for (const l of live) if (l.userId === o.exceptUser && l.deviceId === o.exceptDevice) out.delete(l.playSessionId);
-  return [...out.values()];
+  return { entries: [...out.values()], ownPending };
 }
 
 /**
  * May this conversion start? One asker at a time (KV lock, waited for in 100-ms steps up to about 1 s), count without the asker's own
- * device, apply the priority rule, then write a 30-s grant under `hint` (bindConvGrant moves it to the real play session). Every media
+ * device, apply the priority rule, then write a 30-s grant under `hint` (bindConvGrant moves it to the real play session). With `swap`
+ * (/api/playback/info, whose answers the web also prefetches on hover and focus) the device's own pending swap grants go with it: its new
+ * grant replaces them, so a browsing device holds at most one slot, never one per hover, and other devices are not refused because of
+ * them. Every media
  * server read on this path is bounded by 800 ms (settings and sessions run in parallel), so the answer comes within about 2 s at worst.
  * `unknown`: the lock or the session list could not be had in time; the caller treats it like `full` (a download waits for its next tick).
  */
-export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: string; deviceId?: string; hint: string; hevc?: boolean; label?: string; sessions?: SessionRead | null }): Promise<{ ok: true } | { ok: false; why: 'full' | 'unknown' }> {
+export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: string; deviceId?: string; hint: string; hevc?: boolean; label?: string; swap?: boolean; sessions?: SessionRead | null }): Promise<{ ok: true } | { ok: false; why: 'full' | 'unknown' }> {
   // the limit does not depend on the lock: its settings read (800 ms at most here) starts now and overlaps the wait and the count
   const limP = conversionLimit(ctx, { settingsMs: HEVC_SESSIONS_TIMEOUT_MS });
   limP.catch(() => undefined); // awaited below; never an unhandled rejection when the lock is not had
@@ -228,12 +245,16 @@ export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: str
   }
   if (!locked) return { ok: false, why: 'unknown' };
   try {
-    const [lim, running] = await Promise.all([limP, countConversions(ctx, { ...(o.deviceId ? { exceptUser: o.userId, exceptDevice: o.deviceId } : {}), ...(o.sessions ? { sessions: o.sessions } : {}) })]);
-    if (!running) return { ok: false, why: 'unknown' };
-    if (!admits(o.kind, running.length, lim.limit, lim.priority)) return { ok: false, why: 'full' };
-    const g: Grant = { kind: o.kind, user: o.userId, ...(o.deviceId ? { device: o.deviceId } : {}), ...(o.hevc ? { hevc: true as const } : {}), ...(o.label ? { label: o.label } : {}) };
-    const written = await ctx.kv.set(`${GRANT}${o.hint}`, JSON.stringify(g), CONV_GRANT_TTL_S).then(() => true, () => false);
-    return written ? { ok: true } : { ok: false, why: 'unknown' };
+    const [lim, counted] = await Promise.all([limP, count(ctx, { ...(o.deviceId ? { exceptUser: o.userId, exceptDevice: o.deviceId } : {}), ...(o.sessions ? { sessions: o.sessions } : {}) })]);
+    if (!counted) return { ok: false, why: 'unknown' };
+    if (!admits(o.kind, counted.entries.length, lim.limit, lim.priority)) return { ok: false, why: 'full' };
+    const g: Grant = { kind: o.kind, user: o.userId, ...(o.deviceId ? { device: o.deviceId } : {}), ...(o.hevc ? { hevc: true as const } : {}), ...(o.label ? { label: o.label } : {}), ...(o.swap && o.deviceId ? { swap: true as const } : {}) };
+    const key = `${GRANT}${o.hint}`;
+    const written = await ctx.kv.set(key, JSON.stringify(g), CONV_GRANT_TTL_S).then(() => true, () => false);
+    if (!written) return { ok: false, why: 'unknown' };
+    // the new grant is in: the device's own pending ones are replaced (a failed delete leaves one to its TTL, the safe direction)
+    if (o.swap) await Promise.all(counted.ownPending.filter((k) => k !== key).map((k) => ctx.kv.del(k).catch(() => undefined)));
+    return { ok: true };
   } finally {
     await ctx.kv.delIfEquals(LOCK_KEY, token).catch(() => undefined);
   }

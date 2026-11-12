@@ -110,8 +110,8 @@ afterEach(() => {
 
 const live = (userId: string, ps: string, deviceId: string) =>
   setLive(env.ctx, { userId, userName: 'Anna Beispiel', itemId: 'a'.repeat(32), title: 'Dunmoor', positionTicks: 0, isPaused: false, playSessionId: ps, updatedAt: Date.now(), source: 'portal', deviceId });
-const ask = (o: { userId?: string; deviceId?: string; hint?: string; kind?: ConvKind } = {}) =>
-  admitConversion(env.ctx, { kind: o.kind ?? 'film', userId: o.userId ?? ANNA, ...(o.deviceId ? { deviceId: o.deviceId } : {}), hint: o.hint ?? randomUUID() });
+const ask = (o: { userId?: string; deviceId?: string; hint?: string; kind?: ConvKind; swap?: boolean } = {}) =>
+  admitConversion(env.ctx, { kind: o.kind ?? 'film', userId: o.userId ?? ANNA, ...(o.deviceId ? { deviceId: o.deviceId } : {}), hint: o.hint ?? randomUUID(), ...(o.swap ? { swap: true } : {}) });
 
 describe('readBench and conversionLimit', () => {
   it('nothing measured: automatic 2', async () => {
@@ -275,6 +275,37 @@ describe('admitConversion', () => {
     await live(ANNA, 'ps1', 'd1');
     expect(await ask({ userId: ANNA, deviceId: 'd1' })).toEqual({ ok: true });
     expect(await ask({ userId: BEN, deviceId: 'd2' })).toEqual({ ok: false, why: 'full' });
+  });
+  it('a device\'s new grant replaces its own pending grants; its playing stream\'s grant and other devices\' grants stay', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 4 };
+    const swap = (who: string, deviceId: string, hint: string) => ask({ userId: who, deviceId, hint, swap: true });
+    expect(await swap(ANNA, 'd1', 'hover1')).toEqual({ ok: true });
+    await bindConvGrant(env.ctx, 'hover1', 'ps-hover1'); // a prefetch answer nobody took
+    expect(await swap(ANNA, 'd1', 'hover2')).toEqual({ ok: true }); // stays on its hint (not bound yet)
+    expect(await swap(BEN, 'd2', 'ben1')).toEqual({ ok: true });
+    expect(await ask({ userId: ANNA, deviceId: 'd1', hint: 'cast1' })).toEqual({ ok: true }); // a cast grant (no swap) replaces nothing ...
+    expect((await env.kv.keys('conv:grant:')).sort()).toEqual(['conv:grant:ben1', 'conv:grant:cast1', 'conv:grant:hover2']);
+    expect(await swap(ANNA, 'd1', 'hover3')).toEqual({ ok: true });
+    // ... and is never replaced; the unbound swap grant is
+    expect((await env.kv.keys('conv:grant:')).sort()).toEqual(['conv:grant:ben1', 'conv:grant:cast1', 'conv:grant:hover3']);
+    await env.kv.del('conv:grant:cast1');
+    // a stream that plays (live record) or that the server lists keeps its grant
+    await bindConvGrant(env.ctx, 'hover3', 'ps-play');
+    await live(ANNA, 'ps-play', 'd1');
+    expect(await swap(ANNA, 'd1', 'next1')).toEqual({ ok: true });
+    await bindConvGrant(env.ctx, 'next1', 'ps-listed');
+    raw = [jfSession('ps-listed', { method: 'Transcode' })];
+    expect(await swap(ANNA, 'd1', 'next2')).toEqual({ ok: true });
+    expect((await env.kv.keys('conv:grant:')).sort()).toEqual(['conv:grant:ben1', 'conv:grant:next2', 'conv:grant:ps-listed', 'conv:grant:ps-play']);
+    // two hovers on one device hold one slot for everyone else
+    expect((await countConversions(env.ctx, { exceptUser: BEN, exceptDevice: 'd2' }))!.filter((e) => e.userId === ANNA && e.pending)).toHaveLength(2); // ps-play, next2
+  });
+  it('a refused ask replaces nothing', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    expect(await ask({ userId: ANNA, deviceId: 'd1', hint: 'mine', swap: true })).toEqual({ ok: true });
+    raw = [converting('x1'), converting('x2')];
+    expect(await ask({ userId: ANNA, deviceId: 'd1', hint: 'again', swap: true })).toEqual({ ok: false, why: 'full' });
+    expect(await env.kv.keys('conv:grant:')).toEqual(['conv:grant:mine']);
   });
   it('unreadable list means unknown', async () => {
     env.ctx.jf.admin.transcodeSessions = () => new Promise(() => undefined);

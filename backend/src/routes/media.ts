@@ -395,7 +395,8 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     // PlaybackInfo and the resume-position/trickplay lookup run in parallel (one Jellyfin /Items call instead of two sequential ones)
     // HEVC conversions: a gate only while HEVC_STREAMS > 0 (probe, limit from the server's session list, failure pause: hevcenc.ts);
     // every conversion also needs a slot of the shared budget (convbudget.ts, spec §5.5): one gate for both, one session-list read
-    const gate = filmGate(ctx, { userId: req.user!.id, deviceId: req.session?.deviceId });
+    // `swap`: the web asks this on hover and focus too (prefetch.ts); a device's new grant replaces its own unused ones
+    const gate = filmGate(ctx, { userId: req.user!.id, deviceId: req.session?.deviceId, swap: true });
     // the player left a HEVC conversion for H.264: counts against the server's HEVC state when that stream really was one
     if ((b.fellBack === 'hevc' || b.fellBack === 'both') && b.prevPs && req.session?.deviceId) {
       let prev: { video?: unknown } | null;
@@ -460,7 +461,8 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       return 'error' in r ? reply.code(429).send(r) : r;
     });
   // the next episode's transcode the web player warmed during the autoplay countdown (web/src/lib/player/prefetch.ts) and nobody took:
-  // stopped on the media server. Only the caller's own device and play session; a session that started playing is never stopped here.
+  // stopped on the media server; also an unused prefetch answer that converts (replaced, expired, page hidden), which only gives its
+  // budget grants back. Only the caller's own play session; a session that started playing is never stopped here.
   app.post('/api/playback/warm/stop', pre, wrap(async (req) => {
     const b = z.object({ playSessionId: psId }).parse(req.body);
     // ownership: /api/playback/info wrote this record for the caller's own play session (Jellyfin kills by play session id alone)
