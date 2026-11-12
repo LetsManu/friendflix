@@ -40,6 +40,10 @@ describe('Chromium 85 compat scan', () => {
       expect(scanned).toContain(f);
     }
   });
+  it('the Senderliste files of Task 40 are scanned (their test is not)', () => {
+    for (const f of ['lib/live/ChannelPanel.svelte', 'lib/live/PanelRow.svelte', 'lib/live/panel.ts', 'lib/live/InfoPanel.svelte']) expect(scanned).toContain(f);
+    expect(scanned).not.toContain('lib/live/panel.test.ts');
+  });
   it.each(scanned)('%s uses nothing newer than Chromium 85', (f) => {
     const abs = join(SRC, f);
     expect(existsSync(abs), `${f}: a named file is missing, the scan cannot check it`).toBe(true);
