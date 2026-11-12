@@ -221,7 +221,7 @@ class NotificationPollerTest {
     }
 
     // ---- links ----
-    private val origin = okhttp3.HttpUrl.Builder().scheme("https").host("ff.example").port(8443).build()
+    private val origin = okhttp3.HttpUrl.Builder().scheme("https").host("friend.example.com").port(8443).build()
 
     @Test fun stringAndNumberIdsAreBothUnderstood() {
         // node-pg returns bigserial as a string
@@ -239,7 +239,7 @@ class NotificationPollerTest {
     }
 
     @Test fun theTapUrlIsRevalidated() {
-        assertEquals("https://ff.example:8443/requests?x=1", NotifyLinks.urlFor(origin, "/requests?x=1"))
+        assertEquals("https://friend.example.com:8443/requests?x=1", NotifyLinks.urlFor(origin, "/requests?x=1"))
         assertNull(NotifyLinks.urlFor(origin, "https://evil.example/"))
         assertNull(NotifyLinks.urlFor(origin, null))
     }
@@ -247,7 +247,7 @@ class NotificationPollerTest {
     @Test fun onlyOwnOriginPathsAreAccepted() {
         assertEquals("/requests", NotifyLinks.safePath(origin, "/requests"))
         assertEquals("/watch/abc?t=30", NotifyLinks.safePath(origin, "/watch/abc?t=30#x"))
-        for (bad in listOf(null, "", "requests", "//evil.example/x", "https://evil.example/", "https://ff.example:8443/x", "/\\evil.example", "/a\nb", "javascript:alert(1)", "intent://x#Intent;end", "/" + "a".repeat(600))) {
+        for (bad in listOf(null, "", "requests", "//evil.example/x", "https://evil.example/", "https://friend.example.com:8443/x", "/\\evil.example", "/a\nb", "javascript:alert(1)", "intent://x#Intent;end", "/" + "a".repeat(600))) {
             assertNull("$bad", NotifyLinks.safePath(origin, bad))
         }
     }

@@ -350,6 +350,48 @@ describe('cast engine: live load races', () => {
     expect(get(env.out)).toBeNull();
   });
 
+  it('Stop, a new loadLive, the old load answers late: the newer media is not stopped', async () => {
+    const env = setup();
+    connected(env);
+    const gate = deferred<boolean>();
+    env.setLiveLoad(() => gate.promise);
+    const old = env.engine.loadLive('ch-nord');
+    await flush();
+    await env.engine.stop();
+    env.setLiveLoad(() => Promise.resolve(true));
+    await env.engine.loadLive('ch-hafen'); // the newer channel is on the TV
+    const stops = env.cast.castStop.mock.calls.length;
+    gate.resolve(true); // the old load's receiver answer comes last
+    await expect(old).rejects.toMatchObject({ code: 'superseded' });
+    await settle();
+    expect(env.cast.castStop.mock.calls.length).toBe(stops); // the old one does not stop the newer media
+    expect(env.liveStops()).toEqual(['tok-ch-nord-1']); // its own token still goes
+    expect(get(env.out)).toMatchObject({ itemId: 'ch-hafen', isLive: true });
+  });
+
+  it('a refused loadLive does not cancel a resume that is on its way', async () => {
+    const store = memStore();
+    const env = setup({ store });
+    connected(env);
+    await env.engine.loadLive('ch-hafen');
+    tvPlays(env);
+    await settle();
+    const url = env.liveLoads[0]!.contentId;
+    env.pagehide(); // the tab closes, the hint stays
+    await flush();
+    const next = setup({ store });
+    next.liveList.list = { groups: [], favourites: [], recent: [], last: null, dvrSeconds: 1800, channels: [
+      { id: 'ch-hafen', number: 4, name: 'Hafenkanal', logo: null, groupId: null, running: true, epg: 'ok', favourite: false, now: { title: 'Wetter am Hafen', start: '2026-11-12T19:30:00.000Z', end: '2026-11-12T20:30:00.000Z' } },
+    ] };
+    next.state.set(playing({ contentId: url, duration: 0 }));
+    const resumed = next.engine.resume(); // on its way (it is waiting for the lock and the media)
+    next.watchAnswers['ch-nord'] = () => Promise.reject(new ApiError(503, { error: 'live_full', running: [] }));
+    await expect(next.engine.loadLive('ch-nord')).rejects.toMatchObject({ code: 'live_full' });
+    expect(await resumed).toBe(true); // the refusal did not turn it stale
+    await settle();
+    expect(get(next.out)).toMatchObject({ itemId: 'ch-hafen', isLive: true });
+  });
+
   it('a refused renewal is retried after 60 s, then 120 s, not every 10 s', async () => {
     const env = setup();
     connected(env);

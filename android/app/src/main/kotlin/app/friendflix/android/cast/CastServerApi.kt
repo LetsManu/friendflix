@@ -84,7 +84,7 @@ class CastServerApi(private val server: ServerApi, private val profileId: String
     }
 
     companion object {
-        /** the bridge's id shape (`ID_PATTERN`), checked again before it becomes part of a path */
+        /** the bridge's id shape (`ID_PATTERN`: letters, digits, `-`; no `_`, backend channel ids are GUIDs), checked again before it becomes part of a path */
         private val LIVE_CHANNEL = Regex("^[A-Za-z0-9-]{1,64}$")
         private const val VIA = "chromecast"
 

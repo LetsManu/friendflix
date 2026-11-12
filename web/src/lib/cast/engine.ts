@@ -501,6 +501,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   let liveSeq = 0;
   /** the number of Stops: a `loadLive` that a Stop overtook stops the TV again if the receiver took its channel (m1) */
   let stopCount = 0;
+  let loadSinceStop = 0; // live loads started since the last Stop: a late, overtaken load must not stop what a newer one put on the TV
   /** bumped by every switch and by the end of a session: an older async step that sees another value gives up */
   let seq = 0;
   /** this page left a Chromecast cast running (pagehide): the SDK's session end that follows is no stop */
@@ -1660,14 +1661,14 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     if (!load) throw new LiveCastError('load_failed');
     const my = ++liveSeq;
     const stops = stopCount;
-    gen++; // a resume / detached reconnect on its way gives up
+    loadSinceStop++;
     return liveLoadRun(channelId, o, load, my, stops);
   }
   async function liveLoadRun(channelId: string, o: { order?: string[]; renew?: boolean }, load: NonNullable<typeof cast.loadLiveOnCast>, my: number, stops: number): Promise<void> {
     /** the load was overtaken: its token goes; when a Stop did it, the TV (which may have taken the channel) is stopped again */
     const overtaken = (token: string, onTv: boolean): never => {
       liveRevoke(token);
-      if (onTv && stopCount !== stops) cast.castStop();
+      if (onTv && stopCount !== stops && loadSinceStop === 0) cast.castStop();
       throw new LiveCastError('superseded');
     };
     const prev = lc;
@@ -1687,6 +1688,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       throw new LiveCastError(ref ? ref.error : 'network', ref ?? undefined);
     }
     if (my !== liveSeq) overtaken(a.token, false);
+    gen++; // only now (not before a refusable watch) does a resume / detached reconnect on its way give up
     // the watch went through: only now does the title on the TV end (a refusal leaves it playing), and a detached title's handles go
     const s = cur;
     if (s) {
@@ -1837,6 +1839,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     },
     async stop() {
       stopCount++;
+      loadSinceStop = 0;
       liveSeq++; // a load on its way (also a first one, still at its watch) gives up, revokes what it gets and stops the TV again
       const l = lc;
       if (l) {

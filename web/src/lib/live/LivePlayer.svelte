@@ -948,7 +948,11 @@
     }
     if (!remoteOn) return;
     remoteOn = false;
-    if (!hiding) void start(curId); // the cast ended: the channel plays here again (not while the page unloads: pageshow decides then)
+    // the cast ended: the channel plays here again. Not while the page unloads (pageshow decides then): the engine's own pagehide
+    // listener can run first and end the cast, and this reactive update lands before the player's listener has set `hiding`, so
+    // the restart waits one task and looks again
+    const id = curId;
+    setTimeout(() => { if (!hiding && !destroyed && !remoteOn) void start(id); }, 0);
   }
   /** pagehide until the next pageshow: the engine's cast ends with the page (the TV keeps playing), so nothing starts here meanwhile */
   let hiding = false;
