@@ -22,24 +22,33 @@ function defaultStore(): StorageLike | null {
   try { return typeof localStorage === 'undefined' ? null : localStorage; } catch { return null; }
 }
 
-/** The classes this device has sent before. Empty storage, a blocked storage and garbage all mean: none (D-pad hints only). */
+/**
+ * What this page has seen this session, whatever the storage did: a storage that throws on read or write (private mode, blocked
+ * site data) must not make a seen hint vanish again, because every call used to rebuild the set from storage alone.
+ */
+const memory = new Set<SeenKey>();
+/** forgets the in-page keys (tests; a page never calls it) */
+export function forgetSeenKeys(): void { memory.clear(); }
+
+/** The classes this device has sent before: storage and this page's own memory. Empty storage, a blocked storage and garbage all mean: none (D-pad hints only). */
 export function seenKeys(store?: StorageLike): Set<SeenKey> {
-  const out = new Set<SeenKey>();
+  const out = new Set<SeenKey>(memory);
   try {
     const s = store ?? defaultStore();
     const raw = s ? s.getItem(KEY) : null;
     const v: unknown = raw ? JSON.parse(raw) : [];
     if (Array.isArray(v)) for (const x of v) if (CLASSES.includes(x as SeenKey)) out.add(x as SeenKey);
-  } catch { /* unreadable: no keys known */ }
+  } catch { /* unreadable: the page's own memory still counts */ }
   return out;
 }
 
-/** Remembers the class of a keydown (once per class) and returns what this device has sent so far. A failing storage is swallowed. */
+/** Remembers the class of a keydown (once per class) and returns what this device has sent so far. A failing storage is swallowed: the memory keeps the hint. */
 export function noteKey(key: string, store?: StorageLike): Set<SeenKey> {
   const seen = seenKeys(store);
   const c = classify(key);
   if (!c || seen.has(c)) return seen;
   seen.add(c);
+  memory.add(c);
   try {
     const s = store ?? defaultStore();
     if (s) s.setItem(KEY, JSON.stringify([...seen]));

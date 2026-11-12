@@ -11,7 +11,7 @@
   /**
    * Phone tab bar (not kids): a floating glass pill (the glass material with its own safe scrim, SCRIM_TAB: the inactive labels
    * at white .72 and the active one on the light pill pass AA over pure white, as posters and artwork scroll under it; glass
-   * spec §6, press feedback §8.9) above the home indicator with Home, New, My list and (where the
+   * spec §6, press feedback §8.9) above the home indicator with Home, New, Live (only with Live TV on, short label "Live") My list and (where the
    * account may download) Downloads. A highlight springs to the active tab (transform only). Visible only on phones;
    * hidden on wider screens here and in TV mode by app.css (`html.tv .tabbar`).
    */
@@ -22,16 +22,17 @@
   const LABEL: Record<PhoneTab['key'], [TKey, TKey]> = {
     home: ['shell.tabs.home', 'shell.tabs.home'],
     new: ['shell.tabs.new', 'shell.tabs.newShort'],
+    live: ['shell.tabs.live', 'shell.tabs.liveShort'],
     myList: ['shell.tabs.myList', 'shell.tabs.myList'],
     downloads: ['shell.tabs.downloads', 'shell.tabs.downloadsShort'],
   };
   const isOn = (href: string, p: string) => (href === '/' ? p === '/' : p === href || p.startsWith(href + '/'));
 
-  $: tabs = phoneTabs(canDownload);
+  $: tabs = phoneTabs(canDownload, $features.livetv);
   $: active = tabs.findIndex((tab) => isOn(tab.href, path));
 </script>
 
-<nav class="tabbar frost frost-pill frost-safe" aria-label={$t('shell.mobile.tabbar')} style="--n:{tabs.length};--i:{Math.max(0, active)};--fr-scrim-safe:{SCRIM_TAB}">
+<nav class="tabbar frost frost-pill frost-safe" class:five={tabs.length > 4} aria-label={$t('shell.mobile.tabbar')} style="--n:{tabs.length};--i:{Math.max(0, active)};--fr-scrim-safe:{SCRIM_TAB}">
   <span class="hl" class:off={active < 0} aria-hidden="true"></span>
   {#each tabs as tab, k (tab.key)}
     {@const only = tab.key === 'new' && !$features.requests}
@@ -59,6 +60,9 @@
       position: relative; flex: 1 1 0; min-width: 0; min-height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center;
       gap: 2px; padding: 0 2px; border-radius: 24px; font-size: .66rem; font-weight: 600; letter-spacing: -.005em; color: rgba(255,255,255,.72);
     }
+    /* five tabs (with Live-TV and Downloads): a little less type and side margin keep "Downloads" whole at 320 px */
+    .tabbar.five a { font-size: .62rem; padding: 0 1px; letter-spacing: -.01em; }
+    @media (max-width: 340px) { .tabbar.five { left: 8px; right: 8px; } }
     a.active { color: #fff; }
     .ico { flex: none; width: 24px; height: 24px; display: grid; place-items: center; }
     span:not(.ico):not(.hl) { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

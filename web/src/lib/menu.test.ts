@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { LOCALES, setLocale, tr } from '#lib/i18n';
-import { FOOTER_COLUMNS, HEADER_TABS, MENU_LINKS, groupLinks, isRailTop, isTabActive, linksFor, navLabel } from './menu';
+import { FOOTER_COLUMNS, HEADER_TABS, LIVE_HEADER, LIVE_RAIL, MENU_LINKS, TV_RAIL, groupLinks, isRailTop, isTabActive, linksFor, liveTabs, navLabel } from './menu';
 
 describe('menu', () => {
   it('every account link stays reachable on /me (grouped)', () => {
@@ -59,5 +59,32 @@ describe('isRailTop (TV: Back opens the rail)', () => {
     expect(isRailTop('/', '?ff_app=webos')).toBe(true);
     expect(isRailTop('/watchlist', '?tv=1')).toBe(true);
     expect(isRailTop('/browse/movies', '?ff_app=webos&genre=Drama')).toBe(false);
+  });
+});
+
+describe('liveTabs (the Live-TV entry only while the feature is on)', () => {
+  it('goes after Filme in the header and the TV rail', () => {
+    expect(liveTabs(HEADER_TABS, LIVE_HEADER, true).map((t) => t[0])).toEqual(['/', '/browse/series', '/browse/movies', '/live', '/new', '/watchlist']);
+    expect(liveTabs(TV_RAIL, LIVE_RAIL, true).map((t) => t[0])).toEqual(['/search', '/', '/browse/series', '/browse/movies', '/live', '/new', '/watchlist']);
+    expect(LIVE_HEADER).toEqual(['/live', 'shell.nav.live']);
+    expect(LIVE_RAIL).toEqual(['/live', 'shell.nav.live', 'tv']);
+  });
+  it('off: the very same entries, no copy of a different order', () => {
+    expect(liveTabs(HEADER_TABS, LIVE_HEADER, false)).toEqual(HEADER_TABS);
+    expect(liveTabs(TV_RAIL, LIVE_RAIL, false).map((t) => t[0])).not.toContain('/live');
+  });
+  it('does not change its input and does not add the entry twice', () => {
+    const before = HEADER_TABS.map((t) => t[0]);
+    const once = liveTabs(HEADER_TABS, LIVE_HEADER, true);
+    expect(HEADER_TABS.map((t) => t[0])).toEqual(before);
+    expect(liveTabs(once, LIVE_HEADER, true)).toEqual(once);
+  });
+  it('without a Filme entry it goes last', () => {
+    expect(liveTabs([['/a', 'shell.nav.home']], LIVE_HEADER, true).map((t) => t[0])).toEqual(['/a', '/live']);
+  });
+  it('the page is a rail destination for the TV Back key, and the nav is active on it', () => {
+    expect(isRailTop('/live', '')).toBe(true);
+    expect(isRailTop('/live', '?play=last')).toBe(false);
+    expect(isTabActive('/live', '/live/watch/abc')).toBe(true);
   });
 });

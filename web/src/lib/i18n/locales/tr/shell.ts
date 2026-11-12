@@ -17,6 +17,7 @@ const tr: Translation<typeof de> = {
     /** label while no request service is set up */
     newOnly: 'Yeni',
     myList: 'İzleme listesi',
+    live: 'Canlı TV',
     categories: 'Kategoriler',
   },
   mobile: {
@@ -96,6 +97,8 @@ const tr: Translation<typeof de> = {
     newShort: 'Yeni',
     newOnly: 'Yeni',
     downloadsShort: 'İndirilen',
+    live: 'Canlı TV',
+    liveShort: 'Canlı',
   },
   offline: {
     bar: 'Çevrimdışısın.',

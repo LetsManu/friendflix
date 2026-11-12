@@ -47,6 +47,13 @@ const dict: Translation<typeof de> = {
   timeLeftLong: '{h} sa {m} dk kaldı',
   endingNow: 'birazdan bitiyor',
   recentChip: 'Son izlenenler',
+  rowName: '{number} {name}, şimdi: {title}, bitiş {time}',
+  groups: 'Kanal grupları',
+  empty: 'Senin için henüz kanal açılmadı.',
+  emptyFav: 'Henüz favori yok. Bir kanalın yıldızına dokun.',
+  emptyRecent: 'Henüz hiç kanal izlemedin.',
+  emptyGroup: 'Bu grupta şu anda kanal yok.',
+  loadFailed: 'Kanal listesi yüklenemedi.',
   number: {
     last: '0 · Son kanal: {number} {name}',
     noLast: 'Son kanal yok',

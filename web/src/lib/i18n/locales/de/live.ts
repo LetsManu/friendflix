@@ -45,6 +45,13 @@ export default {
   timeLeftLong: 'noch {h} Std. {m} Min.',
   endingNow: 'endet gleich',
   recentChip: 'Zuletzt gesehen',
+  rowName: '{number} {name}, jetzt: {title}, bis {time}',
+  groups: 'Sendergruppen',
+  empty: 'Für dich sind noch keine Sender freigegeben.',
+  emptyFav: 'Noch keine Favoriten. Tippe bei einem Sender auf den Stern.',
+  emptyRecent: 'Du hast noch keinen Sender gesehen.',
+  emptyGroup: 'In dieser Gruppe ist gerade kein Sender.',
+  loadFailed: 'Die Senderliste konnte nicht geladen werden.',
   number: {
     last: '0 · Letzter Sender: {number} {name}',
     noLast: 'Kein letzter Sender',

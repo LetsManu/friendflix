@@ -43,6 +43,17 @@ export const FOOTER_COLUMNS: MenuLink[][] = [
 /** Slim desktop header: everything else sits in the avatar menu, the footer and on /me. */
 export const HEADER_TABS: Array<[href: string, label: TKey]> = [['/', 'shell.nav.home'], ['/browse/series', 'shell.nav.series'], ['/browse/movies', 'shell.nav.movies'], ['/new', 'shell.nav.new'], ['/watchlist', 'shell.nav.myList']];
 
+/** The Live-TV entries (spec §11): they join the header and the TV rail only through `liveTabs`, i.e. while `features.livetv` is on. */
+export const LIVE_HEADER: [href: string, label: TKey] = ['/live', 'shell.nav.live'];
+export const LIVE_RAIL: [href: string, label: TKey, icon: string] = ['/live', 'shell.nav.live', 'tv'];
+
+/** `tabs` with `entry` after *Filme* (last when there is no such entry) while `on`; the input is never changed, an entry already there is not added twice */
+export function liveTabs<T extends [string, ...unknown[]]>(tabs: T[], entry: T, on: boolean): T[] {
+  if (!on || tabs.some((t) => t[0] === entry[0])) return tabs;
+  const at = tabs.findIndex((t) => t[0] === '/browse/movies');
+  return at < 0 ? [...tabs, entry] : [...tabs.slice(0, at + 1), entry, ...tabs.slice(at + 1)];
+}
+
 /**
  * The label of a nav entry: the new-titles page is "Neu & demnächst" only while a request service gives it a "Demnächst" part
  * (`features.requests`); without one it is just "Neu". Every surface (desktop bar, phone tab bar, TV side bar) asks here.
@@ -65,4 +76,4 @@ const APP_PARAMS = new Set(['ff_app', 'tv']);
  * The Alles / Serien / Filme filter of the new-titles page (`/new?type=series`) is a view of the same page, not a drill-down.
  */
 export const isRailTop = (path: string, search: string): boolean =>
-  TV_RAIL.some(([h]) => h === path) && [...new URLSearchParams(search).keys()].every((k) => APP_PARAMS.has(k) || (path === '/new' && k === 'type'));
+  (path === LIVE_RAIL[0] || TV_RAIL.some(([h]) => h === path)) && [...new URLSearchParams(search).keys()].every((k) => APP_PARAMS.has(k) || (path === '/new' && k === 'type'));

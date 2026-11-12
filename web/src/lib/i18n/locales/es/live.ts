@@ -47,6 +47,13 @@ const dict: Translation<typeof de> = {
   timeLeftLong: 'quedan {h} h {m} min',
   endingNow: 'termina ya',
   recentChip: 'Vistos hace poco',
+  rowName: '{number} {name}, ahora: {title}, hasta las {time}',
+  groups: 'Grupos de canales',
+  empty: 'Todavía no se ha habilitado ningún canal para ti.',
+  emptyFav: 'Aún no hay favoritos. Toca la estrella de un canal.',
+  emptyRecent: 'Todavía no has visto ningún canal.',
+  emptyGroup: 'Ahora mismo no hay ningún canal en este grupo.',
+  loadFailed: 'No se pudo cargar la lista de canales.',
   number: {
     last: '0 · Último canal: {number} {name}',
     noLast: 'No hay último canal',

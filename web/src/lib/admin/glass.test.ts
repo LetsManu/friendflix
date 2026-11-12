@@ -541,3 +541,55 @@ describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
     expect(css).toMatch(/\.row\.lifted \{[^}]*background: var\(--fr-solid\); box-shadow: 0 0 0 2px #fff/);
   });
 });
+
+/**
+ * The Live-TV tab (Task 36, glass spec constraints): every live stylesheet animates transform and opacity only, switches its motion
+ * off in calm mode, and the grey line texts keep 4.5:1 on what they sit on (the page's ambient peak, the row's hover fill, the
+ * tiles' dark caption ramp over the brightest preview).
+ */
+describe('Live-TV tab surfaces', () => {
+  const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+  const styleOf = (src: string) => [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  const dirs = [fileURLToPath(new URL('../live/', import.meta.url)), fileURLToPath(new URL('../../routes/live/', import.meta.url))];
+  const files = dirs.flatMap((d) => readdirSync(d).filter((f) => f.endsWith('.svelte')).map((f) => join(d, f)));
+
+  it('the scan sees the live components', () => {
+    const names = files.map((f) => f.split(sep).pop());
+    expect(names).toEqual(expect.arrayContaining(['ChannelRow.svelte', 'FavTiles.svelte', 'GroupChips.svelte', 'LiveList.svelte', '+page.svelte']));
+  });
+
+  it('they animate transform and opacity only, and none of them uses a colour, background or layout transition', () => {
+    const bad: string[] = [];
+    let seen = 0;
+    for (const f of files) {
+      for (const m of styleOf(readFileSync(f, 'utf8')).matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) {
+        if (/^\s*none/.test(m[1]!)) continue;
+        seen++;
+        if (LAYOUT.test(m[1]!) || /all|color|background|border|filter|shadow/.test(m[1]!)) bad.push(`${f}: ${m[1]}`);
+      }
+      expect(styleOf(readFileSync(f, 'utf8')), f).not.toMatch(/@keyframes/);
+    }
+    expect(seen).toBeGreaterThan(2);
+    expect(bad).toEqual([]);
+  });
+
+  it('every live component with a transition switches it off in calm mode', () => {
+    for (const f of files) {
+      const css = styleOf(readFileSync(f, 'utf8'));
+      if (/transition\s*:\s*(?!none)/.test(css)) expect(css, f).toMatch(/:global\(html\.m-still\)/);
+    }
+  });
+
+  it('the grey line texts (white .78) keep 4.5:1 on the ambient peak with the row hover fill, and white on the caption ramp', () => {
+    const hover = over(AMB_PEAK, WHITE, 0.09);
+    for (const bg of [AMB_PEAK, DARK_BASE, hover, over(DARK_BASE, WHITE, 0.09)]) expect(textContrast(bg, 0.78)).toBeGreaterThanOrEqual(AA);
+    // the tile caption: a .78 black ramp over a white preview, the worst case
+    const ramp = over(WHITE, [0, 0, 0], 0.78);
+    expect(textContrast(ramp, 0.86)).toBeGreaterThanOrEqual(AA);
+    expect(textContrast(ramp)).toBeGreaterThanOrEqual(AA);
+    const row = readFileSync(join(dirs[0]!, 'ChannelRow.svelte'), 'utf8'), tiles = readFileSync(join(dirs[0]!, 'FavTiles.svelte'), 'utf8');
+    expect(row).toContain('color: rgba(255, 255, 255, .78)');
+    expect(tiles).toContain('rgba(0, 0, 0, .78) 55%');
+    expect(tiles).toContain('color: rgba(255, 255, 255, .86)');
+  });
+});

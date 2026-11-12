@@ -97,3 +97,16 @@ export async function seamColumns(page: Page, box: { x: number; y: number; width
   }
   return out;
 }
+
+/**
+ * Clicks and expects the player route `/live/watch/<id>`. That page is Task 39's: until it exists SvelteKit's goto refuses with
+ * `navigation_route_missing` (the attempt itself is what this checks); once it exists the URL changes. The pageerror is only
+ * allowed in the test that asks for it.
+ */
+export async function opensPlayer(page: Page, click: () => Promise<void>, id: string) {
+  const refused = page.waitForEvent('pageerror', { timeout: 4000 }).then((e) => e.message, () => '');
+  await click();
+  const err = await refused;
+  if (err) expect(err).toContain('navigation_route_missing');
+  else await expect(page).toHaveURL((u) => u.pathname === `/live/watch/${id}`);
+}
