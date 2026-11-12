@@ -455,7 +455,17 @@ export interface MediaAdmin {
   loginArtIds?(q: { ratings: readonly string[]; limit: number }): Promise<string[]>;
   /** Block 23 phase 3 (optional): a downscaled poster of one item (admin key); null when it has none or cannot be read. */
   posterThumb?(id: string, maxWidth: number): Promise<{ bytes: Uint8Array; type: 'image/jpeg' | 'image/webp' } | null>;
+  /**
+   * Users & permissions (optional): films and series whose title matches `q`, searched with the admin key over every library (no viewer),
+   * at most `limit` hits, each with its own rating (raw, null = unrated) and the name of its library ('' when it cannot be told). Only
+   * the admin's title check uses it, and it answers the profile's view itself (viewcheck.ts). Errors never carry `q`. Absent: the check
+   * searches as the service user and cannot say why a title is hidden.
+   */
+  findItems?(q: string, limit: number): Promise<FoundItem[]>;
 }
+
+/** one hit of MediaAdmin.findItems */
+export interface FoundItem { id: string; name: string; year?: number; type: 'Movie' | 'Series'; rating: string | null; library: string }
 
 /** Everything routes and jobs use. Per-user calls act as that user on the server, so its access rules apply. */
 export interface MediaServer {

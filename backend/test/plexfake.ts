@@ -263,6 +263,21 @@ export class PlexFake {
         .map((x) => this.listForm(x, q.get('includeGuids') === '1'));
       return { status: 200, json: this.page(list, q, { librarySectionID: sid }) };
     }
+    // the section search (title check, MediaAdmin.findItems): `type` + `query` (substring, case-insensitive); like PMS every hit carries
+    // its library's librarySectionTitle
+    m = /^\/library\/sections\/(\d+)\/search$/.exec(path);
+    if (m) {
+      const sid = Number(m[1]);
+      const sec = this.sections.find((s) => Number(s.key) === sid);
+      if (!sec) return { status: 404 };
+      const type = Number(q.get('type') ?? (sec.type === 'movie' ? 1 : 2));
+      const needle = (q.get('query') ?? '').toLowerCase();
+      const list = [...this.items.values()]
+        .filter((x) => Number(x.librarySectionID) === sid && TYPE_NUM[x.type] === type && String(x.title ?? '').toLowerCase().includes(needle))
+        .sort((a, b) => Number(a.ratingKey) - Number(b.ratingKey))
+        .map((x) => ({ ...this.listForm(x, false), librarySectionID: sid, librarySectionTitle: sec.title }));
+      return { status: 200, json: this.page(list, q, { librarySectionID: sid, librarySectionTitle: sec.title }) };
+    }
     m = /^\/library\/sections\/(\d+)\/collections$/.exec(path);
     if (m) {
       const sid = Number(m[1]);

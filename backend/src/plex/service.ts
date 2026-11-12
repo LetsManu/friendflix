@@ -22,6 +22,7 @@ import type {
 } from '../media/types.js';
 import type { HygieneFacts, ServerSession } from '../media/types.js'; // Block 22
 import type { ItemFeatures, SeriesStatus } from '../media/types.js'; // 1.1 engine v2 + post-play
+import type { FoundItem } from '../media/types.js'; // users & permissions: title check
 import { tmdbGuids, tmdbIdOf, tvdbGuids, toPlexAbout, type AboutRow } from './about.js';
 import { plexHygienePage, plexServerSessions, toPlexHygieneFacts } from './care.js'; // Block 22
 import { loadPolicy, paramList, refreshAges, resolveAccess, visibleSql, type Access, type Param } from './access.js';
@@ -74,6 +75,8 @@ const PERSON_TYPE: Record<string, string> = { actor: 'Actor', director: 'Directo
 const CONTINUING_DAYS = 60;
 /** lifetime of a library-wide snapshot behind libraryMediaTraits / libraryContinuingSeriesIds (one paging pass of fresh.ts) */
 const SNAPSHOT_MS = 120_000;
+/** the admin's title check (MediaAdmin.findItems): hits per search */
+const FIND_MAX = 50;
 const like = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 const cloneItem = (i: ItemDto): ItemDto => ({ ...i, genres: [...i.genres], ...(i.imageTags ? { imageTags: { ...i.imageTags } } : {}) });
 
@@ -242,8 +245,8 @@ export class PlexMediaServer implements MediaServer {
       ${o.order ? `order by ${o.order}` : ''} ${o.limit !== undefined ? `limit ${Math.max(0, Math.floor(o.limit))}` : ''} ${offset ? `offset ${offset}` : ''}`;
     const rows = await this.q<ItemRow & { total_count?: string }>(sql, params);
     let total = rows[0]?.total_count !== undefined ? Number(rows[0].total_count) : rows.length;
-    // a page past the end has no row to carry count(*) over(): count separately instead of answering total = 0
-    if (o.total && !rows.length && offset > 0) total = Number((await this.q<{ n: string }>(`select count(*) n from (${base}) x`, params))[0]?.n ?? 0);
+    // a page past the end (or a count-only call, limit 0) has no row to carry count(*) over(): count separately instead of answering total = 0
+    if (o.total && !rows.length && (offset > 0 || o.limit === 0)) total = Number((await this.q<{ n: string }>(`select count(*) n from (${base}) x`, params))[0]?.n ?? 0);
     return { items: rows.map(toItemDto), total };
   }
 
@@ -1157,6 +1160,30 @@ export class PlexMediaServer implements MediaServer {
       posterThumb: async (id, maxWidth) => {
         await this.ready();
         return plexPosterThumb(this.db, this.client, id, maxWidth);
+      },
+      // Users & permissions: the admin's title check. Plex's own search of every film and series section (admin token, no viewer);
+      // the library is the hit's librarySectionTitle. PlexClient errors name the path without its query, so `q` never reaches one.
+      findItems: async (q, limit) => {
+        const n = Math.max(1, Math.min(Math.trunc(limit) || 1, FIND_MAX));
+        const secs = (await this.client.sections()).filter((s) => (s.type === 'movie' || s.type === 'show') && /^\d{1,9}$/.test(String(s.key)));
+        const pages = await Promise.all(secs.map(async (s) => {
+          const query = new URLSearchParams({ type: s.type === 'movie' ? '1' : '2', query: q, 'X-Plex-Container-Start': '0', 'X-Plex-Container-Size': String(n) });
+          const c = await this.client.container(`/library/sections/${String(s.key)}/search?${query}`);
+          return (c.Metadata ?? []).map((m) => ({ m, library: m.librarySectionTitle ?? c.librarySectionTitle ?? s.title }));
+        }));
+        const out: FoundItem[] = [];
+        for (const { m, library } of pages.flat()) {
+          if (out.length >= n) break;
+          if ((m.type !== 'movie' && m.type !== 'show') || !/^\d{1,15}$/.test(String(m.ratingKey ?? '')) || typeof m.title !== 'string') continue;
+          out.push({
+            id: encodePlexId('item', String(m.ratingKey)), name: m.title,
+            ...(Number.isInteger(m.year) ? { year: m.year as number } : {}),
+            type: m.type === 'movie' ? 'Movie' : 'Series',
+            rating: typeof m.contentRating === 'string' && m.contentRating.trim() ? m.contentRating : null,
+            library: typeof library === 'string' ? library : '',
+          });
+        }
+        return out;
       },
     };
   }

@@ -26,12 +26,15 @@ import type { ProfileRow, UserRow } from '../types.js';
 import { rightsBody, rightsView, writeRights, type RightsBody } from '../userRights.js';
 import { HttpError, accessEnded, accountSerial, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser, type LockReason } from '../users.js';
 import { pendingNoticeKey } from '../pending.js';
+import { checkTitles, libraryCounts } from '../viewcheck.js';
 import { dropPartyDenied, dropPartyPeers } from '../partySockets.js';
 import { policyChanged } from '../hooks.js';
 import { forgetAuth } from './internal.js';
 import { dropProfileSessions, profileSids } from './profiles.js';
 
 const uuid = z.guid();
+/** POST /api/admin/users/:id/check: one profile of the account and a title search (never logged or audited) */
+const checkBody = z.object({ profileId: uuid, query: z.string().trim().min(2).max(100) });
 /** ISO date-time with offset, or null (= no end) */
 const accessUntil = z.iso.datetime({ offset: true }).nullable();
 const toDate = (s: string | null) => (s === null ? null : new Date(s));
@@ -604,6 +607,34 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       if (reapplied.failed) return reply.code(502).send({ error: 'policy_partial', failed: reapplied.failed, identities: reapplied.identities });
       return { ok: true, reapplied };
     });
+  });
+
+  // "Can this profile see it?" (spec §6.4, plan ruling 1), read-only. The title search uses the media server's admin key but answers as the
+  // profile's own identity (visible + why only); the library counts are cached 10 min per profile. Both views are audited
+  // `user.check_viewed` with counts only and before answering (no entry, no answer): the query and the titles never reach the audit, a
+  // log line or an error. A profile of another account is 404 like an unknown one.
+  const checkOpts = { ...admin, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } };
+  const checkProfile = async (id: string, pid: string) => {
+    const user = await userOr404(id);
+    const profile = await getProfile(ctx, id, pid);
+    if (!profile) throw new HttpError(404, 'not_found');
+    return { user, profile };
+  };
+  app.post('/api/admin/users/:id/check', checkOpts, async (req) => {
+    const id = idParam(req);
+    const b = checkBody.parse(req.body);
+    const { user, profile } = await checkProfile(id, b.profileId);
+    const hits = await checkTitles(ctx, user, profile, b.query);
+    await auditInTx(ctx, req.user!.id, 'user.check_viewed', id, { profile: profile.id, hits: hits.length });
+    return { hits };
+  });
+  app.get('/api/admin/users/:id/check', checkOpts, async (req) => {
+    const id = idParam(req);
+    const { profile: pid } = z.object({ profile: uuid }).parse(req.query);
+    const { user, profile } = await checkProfile(id, pid);
+    const libraries = await libraryCounts(ctx, user, profile);
+    await auditInTx(ctx, req.user!.id, 'user.check_viewed', id, { profile: profile.id, libraries: libraries.length });
+    return { libraries };
   });
 
   // legacy (one release): the old editor's five fields on the /rights write (audited user.rights); answer and 502 `jellyfin` unchanged
