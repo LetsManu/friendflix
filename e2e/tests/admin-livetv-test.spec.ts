@@ -50,6 +50,24 @@ test.describe('admin: stream test preview and running streams', () => {
     await expect.poll(() => api.livetv.stops).toEqual([PREVIEW_TOKEN]);
   });
 
+  test('a test answer that arrives after the sheet closed lets its token go and plays nothing', async ({ page, api }) => {
+    api.admin.livetv.area.chPreview = true;
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    let asked = false;
+    await page.route('**/api/admin/livetv/channels/*/test', async (route) => { asked = true; await gate; await route.fallback(); });
+    await page.goto('/admin/livetv?tab=channels');
+    await menu(page, 'Nordlicht TV', 'Testen');
+    const dlg = page.getByRole('dialog', { name: 'Stream testen: Nordlicht TV' });
+    await expect.poll(() => asked).toBe(true);
+    await dlg.getByRole('button', { name: 'Schließen' }).first().click();
+    await expect(dlg).toHaveCount(0);
+    expect(api.livetv.stops).toEqual([]);
+    open();
+    await expect.poll(() => api.livetv.stops).toEqual([PREVIEW_TOKEN]);
+    expect(api.livetv.playlistLoads).toBe(0);
+  });
+
   test('Live-Status lists running channels; Stoppen confirms', async ({ page, api }) => {
     await page.goto('/admin/livetv?tab=status');
     const run = page.getByRole('region', { name: 'Laufende Sender', exact: true });

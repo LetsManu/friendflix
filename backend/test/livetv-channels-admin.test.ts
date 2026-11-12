@@ -500,7 +500,7 @@ describe('the stream test preview (Task 42, F10)', () => {
   }, calls);
   beforeEach(async () => {
     streams.clear(); posts = []; postStatus = 200;
-    for (const k of await env.kv.keys('ltv:')) await env.kv.del(k);
+    for (const k of await env.kv.keys('ltv')) { if (!k.startsWith('ltv:chtest:')) await env.kv.del(k); }
     env.ctx.fetchImpl = livetv();
     await detectLivetv(env.ctx, 0);
     invalidateLiveConversions();
@@ -555,6 +555,26 @@ describe('the stream test preview (Task 42, F10)', () => {
     // a disabled source is still refused, preview or not
     await env.pool.query('update livetv_sources set enabled = false where id = $1', [src]);
     expect((await call('POST', `/api/admin/livetv/channels/${a}/test`)).statusCode).toBe(409);
+  });
+
+  it('a full conversion budget gives the facts only: no preview, no token', async () => {
+    const src = await addSource();
+    const running = await addChannel(src, 'Nordlicht TV', { number: 1 });
+    const a = await addChannel(src, 'Hafenkanal', { number: 2, kind: 'ts' });
+    // the running live transcode fills a budget of one; the tested channel would need a transcode slot too
+    streams.set(running, { channelId: running, streamKey: 'cd'.repeat(16), mode: 'transcode', since: Date.now(), state: 'running', bitrate: null, errors: [], lastSegmentAt: Date.now() });
+    invalidateLiveConversions();
+    const was = env.ctx.cfg;
+    env.ctx.cfg = { ...was, CONVERSION_SLOTS: 1 };
+    probe = () => ({ json: { ...FACTS, needs: 'transcode' } });
+    try {
+      const r = await call('POST', `/api/admin/livetv/channels/${a}/test`);
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toEqual({ ok: true, video: FACTS.video, audio: FACTS.audio, needs: 'transcode' });
+      expect(posts).toEqual([]);
+      expect(await env.kv.keys(`ltvidx:${adminId}`)).toEqual([]);
+      expect(await env.kv.keys('ltv:view:')).toEqual([]);
+    } finally { env.ctx.cfg = was; }
   });
 
   it('an admin previews a channel of an unreleased group', async () => {

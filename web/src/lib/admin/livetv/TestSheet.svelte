@@ -77,7 +77,10 @@
     }
   }
 
+  /** the newest run; an answer of an older one is stale */
+  let runId = 0;
   async function run() {
+    const mine = ++runId;
     endPreview(false); ended = false;
     running = true; facts = ''; failure = ''; results = [];
     try {
@@ -86,7 +89,11 @@
         const a = await testChannel(channel.id);
         if (a.ok) facts = factsLine({ video: a.video ?? undefined, audio: a.audio ?? undefined, needs: a.needs }) || tr('adminLive.ch.mode.none');
         else failure = channelError(a.error ?? 'failed');
-        if (a.ok && a.preview && !gone) void startPreview(a.preview);
+        // an answer that arrives after the sheet closed (or after a newer run) never plays: its test token is let go at once
+        if (a.ok && a.preview) {
+          if (gone || mine !== runId) void stopWatching(a.preview.token, true).catch(() => undefined);
+          else void startPreview(a.preview);
+        }
       }
       if (!gone) dispatch('tested');
     } catch (e) {
