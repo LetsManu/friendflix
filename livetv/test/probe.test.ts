@@ -17,8 +17,10 @@ async function serve(routes: Record<string, (res: http.ServerResponse) => void>)
   const paths: string[] = [];
   const srv = http.createServer((req, res) => {
     paths.push(req.url ?? '');
-    const h = new Map(Object.entries(routes)).get((req.url ?? '').split('?')[0]!);
-    if (h) h(res);
+    // own, function-valued routes only (the path comes from the request)
+    const path = (req.url ?? '').split('?')[0]!;
+    const h = Object.prototype.hasOwnProperty.call(routes, path) ? routes[path] : undefined;
+    if (typeof h === 'function') h(res);
     else { res.statusCode = 404; res.end(); }
   });
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
