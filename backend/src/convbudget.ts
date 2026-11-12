@@ -161,11 +161,16 @@ const decided = (s: ServerSession | undefined) => Boolean(s && (s.videoDirect !=
  * server does not list yet, plus live TV transcodes (`live:<channelId>`, livetv/streams.ts liveConversions), plus portal streams the server does not list whose pbinfo record says they convert (two devices of one profile share one
  * server session, so the server's list alone can undercount, as in hevcGate). With exceptUser + exceptDevice that device's own streams
  * and grants are left out (its new stream replaces them, as in hevcGate). null: the session list did not answer within 800 ms
- * (unknown). A server without a session list counts grants and portal records only. `sessions`: a request's shared read.
+ * (unknown). A server without a session list counts grants and portal records only. `sessions`: a request's shared read. `exceptLive`:
+ * a live channel left out (its entry `live:<id>`, listed by livetv or a grant bound to that key): the stream a channel switch releases
+ * (ruling 37, Task 32).
  */
-export async function countConversions(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; sessions?: SessionRead | null } = {}): Promise<ConvEntry[] | null> {
-  return (await count(ctx, o))?.entries ?? null;
+export async function countConversions(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; exceptLive?: string; sessions?: SessionRead | null } = {}): Promise<ConvEntry[] | null> {
+  const entries = (await count(ctx, o))?.entries ?? null;
+  return entries && o.exceptLive !== undefined ? withoutLive(entries, o.exceptLive) : entries;
 }
+/** the entries without the live channel's own (`live:<channelId>`: livetv's listing and the grant bound to that key share it, F8) */
+const withoutLive = (entries: ConvEntry[], channelId: string) => entries.filter((e) => e.key !== `live:${channelId}`);
 
 /**
  * countConversions plus `ownPending`: the excepted device's prefetch grants (`swap`) that no stream uses yet (the server does not say
@@ -261,8 +266,11 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
  * them. Every media
  * server read on this path is bounded by 800 ms (settings and sessions run in parallel), so the answer comes within about 2 s at worst.
  * `unknown`: the lock or the session list could not be had in time; the caller treats it like `full` (a download waits for its next tick).
+ * `exceptLive` (a channel switch, ruling 37): the live channel the switch would release is left out of the count; `onlyWithout` says the
+ * admission passed only because of that (the same count with it would refuse). Both counts are decided here, under the one lock, so no
+ * other admission sees the slot in between; the caller must then release that channel or drop this grant.
  */
-export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: string; deviceId?: string; hint: string; hevc?: boolean; label?: string; swap?: boolean; sessions?: SessionRead | null }): Promise<{ ok: true } | { ok: false; why: 'full' | 'unknown' }> {
+export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: string; deviceId?: string; hint: string; hevc?: boolean; label?: string; swap?: boolean; sessions?: SessionRead | null; exceptLive?: string }): Promise<{ ok: true; onlyWithout?: true } | { ok: false; why: 'full' | 'unknown' }> {
   // the limit does not depend on the lock: its settings read (800 ms at most here) starts now and overlaps the wait and the count
   const limP = conversionLimit(ctx, { settingsMs: HEVC_SESSIONS_TIMEOUT_MS });
   limP.catch(() => undefined); // awaited below; never an unhandled rejection when the lock is not had
@@ -277,7 +285,9 @@ export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: str
   try {
     const [lim, counted] = await Promise.all([limP, count(ctx, { ...(o.deviceId ? { exceptUser: o.userId, exceptDevice: o.deviceId } : {}), ...(o.sessions ? { sessions: o.sessions } : {}) })]);
     if (!counted) return { ok: false, why: 'unknown' };
-    if (!admits(o.kind, counted.entries.length, lim.limit, lim.priority)) return { ok: false, why: 'full' };
+    const withIt = admits(o.kind, counted.entries.length, lim.limit, lim.priority);
+    const onlyWithout = !withIt && o.exceptLive !== undefined && admits(o.kind, withoutLive(counted.entries, o.exceptLive).length, lim.limit, lim.priority);
+    if (!withIt && !onlyWithout) return { ok: false, why: 'full' };
     const g: Grant = { kind: o.kind, user: o.userId, ...(o.deviceId ? { device: o.deviceId } : {}), ...(o.hevc ? { hevc: true as const } : {}), ...(o.label ? { label: o.label } : {}), ...(o.swap && o.deviceId ? { swap: true as const } : {}) };
     const key = `${GRANT}${o.hint}`;
     // indexed first: a grant is never written where the count cannot see it (a failed write leaves a member without a grant: nothing)
@@ -285,7 +295,7 @@ export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: str
     if (!written) return { ok: false, why: 'unknown' };
     // the new grant is in: the device's own pending ones are replaced (a failed delete leaves one to its TTL, the safe direction)
     if (o.swap) await Promise.all(counted.ownPending.filter((k) => k !== key).map((k) => removeGrant(ctx, k.slice(GRANT.length))));
-    return { ok: true };
+    return onlyWithout ? { ok: true, onlyWithout: true } : { ok: true };
   } finally {
     await ctx.kv.delIfEquals(LOCK_KEY, token).catch(() => undefined);
   }

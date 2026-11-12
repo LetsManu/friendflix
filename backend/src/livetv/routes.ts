@@ -13,7 +13,7 @@ import { livetvInstalled } from './detect.js';
 import { nowNext } from './epg.js';
 import { readLogo } from './logos.js';
 import { channelSet } from './rights.js';
-import { startOrJoin } from './streams.js';
+import { clearJoinMark, startOrJoin } from './streams.js';
 import { beatLiveToken, deviceLiveSessions, endLiveToken, LIVE_CAP_S, liveSidHash, mintLiveToken, revokeLiveToken } from './tokens.js';
 
 /** a logo never changes under its hash (sha256 of the bytes): the browser keeps it a week without asking again */
@@ -110,6 +110,8 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
       userId: u.id, profileId: profile.id, deviceId, sidHash: liveSidHash(req.sid!), channelId: ch.id, channelName: ch.name, kind: 'live', via: v,
       remote: !isHomeRequest(req, ctx.cfg.HOME_NETWORKS),
     });
+    // the token's viewer key now keeps the stream (F9); the join marker would only hold off a later release of this channel
+    await clearJoinMark(ctx, ch.id, { userId: u.id, deviceId });
     // a profile switch or sign-out that raced this request revoked the device's tokens before this one existed: take it back
     const after = await loadSession(ctx, req.sid);
     if (!after || (after.profileId && after.profileId !== profile.id)) {
