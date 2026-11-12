@@ -3,9 +3,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { hashToken } from '../src/cast.js';
 import { __resetConvMemo } from '../src/convbudget.js';
+import { filmGate } from '../src/filmgate.js';
 import { fingerprint } from '../src/hevcenc.js';
 import { setLive } from '../src/live.js';
-import type { EncoderSettings, ServerSession } from '../src/media/types.js';
+import type { EncoderSettings, PlaybackDto, ServerSession } from '../src/media/types.js';
 import { writeRole } from '../src/roleWrite.js';
 import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 
@@ -146,6 +147,44 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
     expect(other.json().delivery.video).toBe('h264');
     expect(other.json().transcodeReason).not.toBe('serverBusy');
     expect(await grants()).toHaveLength(2);
+  });
+
+  it('a PlaybackInfo that throws after the HEVC closure admitted gives both grants back at once', async () => {
+    await hevcReady();
+    let admitted: unknown;
+    vi.spyOn(env.ctx.jf, 'playbackInfo').mockImplementation(async (_u, _id, o) => {
+      admitted = await o.hevcGate!(); // the closure ran (HEVC grant + budget grant written) ...
+      throw new Error('upstream gone'); // ... then the media server call fails
+    });
+    const r = await info(friend, { caps: hevcCaps }, REMOTE);
+    expect(r.statusCode).toBeGreaterThanOrEqual(500);
+    expect(admitted).toEqual({ ok: true });
+    expect(await env.kv.keys('hevcgrant:')).toEqual([]);
+    expect(await grants()).toEqual([]);
+  });
+
+  it('a request without a device id is its own device: never hides or replaces another request\'s grant, never counts its own', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    const conv = (ps: string): PlaybackDto => ({ itemId: ID, playSessionId: ps, mediaSourceId: 'ms1', hlsUrl: '/x', resumeTicks: 0, maxBitrate: 4_000_000, audioTracks: [], subtitles: [],
+      delivery: { video: 'h264', videoCodec: 'h264', audio: 'copy', audioCodec: 'aac', channels: 2, why: [] } });
+    // one request asks twice (HEVC closure and post-check share one admission): one grant, admitted in the only slot
+    const a = filmGate(env.ctx, { userId: friendId, swap: true });
+    expect(await a.admit(conv('ps-a'))).toBe(true);
+    expect(await a.admit(conv('ps-a'))).toBe(true);
+    await a.bind(conv('ps-a'));
+    expect(await grants()).toEqual(['conv:grant:ps-a']);
+    expect(JSON.parse((await env.kv.get('conv:grant:ps-a'))!).device).toMatch(/^req:/);
+    // a second deviceless request of the same account: the first one's grant counts (safe direction) and is not replaced
+    const b = filmGate(env.ctx, { userId: friendId, swap: true });
+    expect(await b.admit(conv('ps-b'))).toBe(false);
+    await b.bind(null);
+    expect(await grants()).toEqual(['conv:grant:ps-a']);
+    // with room for both, the second gets its own grant and the first keeps its own
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 2 };
+    const c = filmGate(env.ctx, { userId: friendId, swap: true });
+    expect(await c.admit(conv('ps-c'))).toBe(true);
+    await c.bind(conv('ps-c'));
+    expect(await grants()).toEqual(['conv:grant:ps-a', 'conv:grant:ps-c']);
   });
 
   it('a 502 resume_unknown after admission leaves no grant', async () => {

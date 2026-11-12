@@ -50,9 +50,14 @@ export interface FilmGate {
 export function filmGate(ctx: Ctx, o: { userId: string; deviceId?: string; label?: string; swap?: boolean }): FilmGate {
   const grantId = randomUUID();
   const sessions = sharedSessionRead(ctx, HEVC_SESSIONS_TIMEOUT_MS);
+  // A request without a device id (no session device) is its own "device": user + this request's id. Its own grants never count against
+  // it, and it never hides or replaces a grant of another request of the same account. (Leaving the own-device rule out by user alone
+  // would hide another app's or tab's real grants of that account: an undercount. This way an earlier deviceless request's grant still
+  // counts until it is bound, released or its 30 s end: the safe direction.)
+  const device = o.deviceId ?? `req:${grantId}`;
   let budget: Promise<Admission> | undefined;
   const ask = (hevc: boolean, label = o.label): Promise<Admission> => (budget ??= admitConversion(ctx, {
-    kind: 'film', userId: o.userId, ...(o.deviceId ? { deviceId: o.deviceId } : {}), hint: grantId, ...(hevc ? { hevc: true } : {}), ...(label ? { label } : {}), ...(o.swap ? { swap: true } : {}), sessions,
+    kind: 'film', userId: o.userId, deviceId: device, hint: grantId, ...(hevc ? { hevc: true } : {}), ...(label ? { label } : {}), ...(o.swap ? { swap: true } : {}), sessions,
   }).catch((): Admission => ({ ok: false, why: 'unknown' })));
   return {
     hevc: async () => {
