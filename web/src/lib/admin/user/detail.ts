@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/** Admin user detail page (/admin/users/<id>): API shapes (backend/src/routes/adminUsers.ts), tabs, header pills, limits form, Authentik errors. */
+/** Admin user detail page (/admin/users/<id>): API shapes (backend/src/routes/adminUsers.ts), tabs, header pills, Authentik errors. */
 import { ApiError } from '#lib/api';
-import { fmtDate, fmtNumber, tr } from '#lib/i18n';
+import { fmtDate, tr } from '#lib/i18n';
 import { errorText } from '#lib/ui/action';
 import type { Tone } from '#lib/ui/StatusPill.svelte';
 
@@ -34,9 +34,10 @@ export interface UserDetail {
   licenses: DetailLicense[];
 }
 
-export const DETAIL_TABS = ['overview', 'profiles', 'devices', 'downloads', 'activity', 'limits', 'audit'] as const;
+export const DETAIL_TABS = ['overview', 'rights', 'check', 'profiles', 'devices', 'downloads', 'activity', 'audit'] as const;
 export type DetailTab = typeof DETAIL_TABS[number];
-export const detailTab = (v: string | null): DetailTab => (DETAIL_TABS.includes(v as DetailTab) ? (v as DetailTab) : 'overview');
+/** the tab of `?tab=`; the old `limits` links open Rechte */
+export const detailTab = (v: string | null): DetailTab => (v === 'limits' ? 'rights' : DETAIL_TABS.includes(v as DetailTab) ? (v as DetailTab) : 'overview');
 
 export interface Pill { tone: Tone; label: string; icon?: string }
 const LOCK_LABEL: Record<string, string> = { manual: 'lockedManual', expired: 'lockedExpired', deletion: 'lockedDeletion' };
@@ -89,53 +90,4 @@ export function akError(e: unknown): string {
     if (e.status === 503) return tr('adminPeople.detail.ak.unavailable');
   }
   return errorText(e);
-}
-
-// ---- limits ----
-export interface Limits { maxStreams: number | null; remoteBitrate: number | null; maxDownloads: number | null; downloadMaxHeight: number | null; requestsPerMonth: number | null }
-export type LimitKey = keyof Limits;
-export type LimitsForm = Record<LimitKey, string>;
-/** the form fields: bounds in form units (same as the API's limitsBody); the bitrate is edited in Mbit/s */
-export const LIMIT_FIELDS: ReadonlyArray<{ key: LimitKey; min: number; max: number; scale: number; step: number }> = [
-  { key: 'maxStreams', min: 1, max: 50, scale: 1, step: 1 },
-  { key: 'remoteBitrate', min: 0.3, max: 200, scale: 1_000_000, step: 0.1 },
-  { key: 'maxDownloads', min: 0, max: 200, scale: 1, step: 1 },
-  { key: 'downloadMaxHeight', min: 0, max: 2160, scale: 1, step: 1 },
-  { key: 'requestsPerMonth', min: 0, max: 100, scale: 1, step: 1 },
-];
-const field = (k: LimitKey) => LIMIT_FIELDS.find((f) => f.key === k)!;
-
-/** saved overrides as form values ('' = as role) */
-export function limitsForm(l: Limits): LimitsForm {
-  const out = {} as LimitsForm;
-  for (const f of LIMIT_FIELDS) { const v = l[f.key]; out[f.key] = v === null ? '' : String(v / f.scale); }
-  return out;
-}
-
-/** one form value in API units: null = as role, undefined = invalid */
-export function parseLimit(k: LimitKey, s: string): number | null | undefined {
-  const t = s.trim();
-  if (!t) return null;
-  const f = field(k), n = Number(t.replace(',', '.'));
-  if (!Number.isFinite(n) || n < f.min || n > f.max) return undefined;
-  const v = Math.round(n * f.scale);
-  return f.scale === 1 && !Number.isInteger(n) ? undefined : v;
-}
-
-/** the fields that differ from the saved overrides (PUT body); null when a field is invalid */
-export function limitsPatch(saved: Limits, form: LimitsForm): Partial<Limits> | null {
-  const out: Partial<Limits> = {};
-  for (const f of LIMIT_FIELDS) {
-    const v = parseLimit(f.key, form[f.key]);
-    if (v === undefined) return null;
-    if (v !== saved[f.key]) out[f.key] = v;
-  }
-  return out;
-}
-
-/** placeholder and hint of a limit field: the role's value ("wie Rolle: 2"); null = unlimited, download height 0 = no downloads */
-export function roleHint(k: LimitKey, roleValue: number | null): string {
-  // download height 0: the role allows no downloads at all
-  if (k === 'downloadMaxHeight' && roleValue === 0) return tr('adminPeople.detail.limits.asRole', { value: tr('adminPeople.detail.limits.noDownloads') });
-  return tr('adminPeople.detail.limits.asRole', { value: roleValue === null ? tr('adminPeople.detail.limits.unlimited') : fmtNumber(roleValue / field(k).scale, { useGrouping: false }) });
 }

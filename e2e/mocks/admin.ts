@@ -16,7 +16,7 @@ export const auid = (n: number): string => `00000000-0000-4000-a000-${n.toString
 
 export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null; access_until?: string | null; profiles?: number; /** why a locked account is locked (default manual) */ locked_reason?: 'manual' | 'expired' | 'deletion'; /** scheduled deletion (Block 23 self-service) */ deletion_at?: string | null; /** claimed by the deletion tick, users row still there (steps 1-4) */ cleanup?: { step: number; error: string | null };
   /** switch overrides of the person (user_limits.perms; backend counts them in `overrides`), the other stored overrides (limits), the admin's note, no 2FA at the sign-in provider */
-  perms?: Record<string, boolean>; otherOverrides?: number; kidsProfiles?: number; note?: string | null; mfaOff?: boolean }
+  perms?: Record<string, boolean>; otherOverrides?: number; /** the stored non-switch overrides in the PUT encoding (null never stored; 'unlimited' lifts a cap); their count is `otherOverrides` once written */ ov?: Record<string, unknown>; kidsProfiles?: number; note?: string | null; mfaOff?: boolean }
 /** a claimed deletion whose users row is gone (status=deleting lists it by pseudonym); step = the step in work (1-6) */
 export interface AdminCleanup { id: string; pseudonym: string; started_at: string; step: number; error: string | null }
 export interface AdminDevice { user_id: string; device_id: string; label: string; approved: boolean; last_seen: string; name: string; /** the admin's own device (backend: current) */ current?: boolean }
@@ -248,7 +248,7 @@ const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemI
 
 /** rights facts of the first accounts (Anna: a switch exception, a limit and a kids profile with a note; Ben and Clara have no 2FA) */
 const SEED: Array<Partial<AdminUser>> = [
-  { perms: { party: false }, otherOverrides: 1, kidsProfiles: 1, note: 'Teilt das Konto mit ihrer Familie' },
+  { perms: { party: false }, otherOverrides: 1, ov: { maxStreams: 3 }, kidsProfiles: 1, note: 'Teilt das Konto mit ihrer Familie' },
   { mfaOff: true },
   { kidsProfiles: 2, mfaOff: true },
 ];
@@ -597,6 +597,53 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       const cur = (st.limits[u.id] ??= { maxStreams: null, remoteBitrate: null, maxDownloads: null, downloadMaxHeight: null, requestsPerMonth: null });
       if (m === 'GET') return J({ limits: cur, role: DETAIL_ROLE_LIMITS });
       if (m === 'PUT') { const to = { ...cur, ...body }; log('user.limits', u.id, { from: cur, to }, u.name); st.limits[u.id] = to; return J({ limits: to }); }
+    }
+    // every matrix row of the account (backend userRights.ts rightsView): effective value, the role's value, the stored override (null = none; an admin's
+    // switches never show one) and the deciding layer; PUT is partial (null = back to the role, a value equal to the role's is not stored)
+    if (rest === '/rights') {
+      const role = st.matrix.roles.find((r) => r.key === u.role);
+      if (!role) return J({ error: 'unknown_role' }, 409);
+      const isAdmin = u.role === 'admin';
+      const rowOf = (k: string) => {
+        const perm = PERM_KEYS_MOCK.includes(k);
+        if (perm && isAdmin) return { key: k, value: true, roleValue: true, override: null, source: 'admin' };
+        const roleValue = role.values[k];
+        const override = perm ? u.perms?.[k] ?? null : u.ov?.[k] ?? null;
+        return { key: k, value: override === null ? roleValue : override === 'unlimited' ? null : override, roleValue, override, source: override === null ? role.sources[k] ?? 'default' : 'user' };
+      };
+      if (m === 'GET') {
+        const rows = MATRIX_FIELDS_MOCK.map((f) => rowOf(f.key as string));
+        const libs = rows.find((r) => r.key === 'libraries')!.value;
+        const missing = Array.isArray(libs) ? libs.filter((n) => !st.matrix.libraries.some((l) => l.name === n)) : [];
+        return J({ role: u.role, note: u.note ?? null, rows, profile: null, hardKids: [], missingLibraries: missing });
+      }
+      if (m === 'PUT') {
+        const o = (body?.overrides ?? {}) as Record<string, unknown>;
+        const keys = MATRIX_FIELDS_MOCK.map((f) => f.key as string);
+        if (typeof body !== 'object' || Object.keys(body ?? {}).some((k) => k !== 'overrides' && k !== 'note') || Object.keys(o).some((k) => !keys.includes(k))) return J({ error: 'bad_request' }, 400);
+        if (body?.note !== undefined && body.note !== null && (typeof body.note !== 'string' || body.note.trim().length > 200)) return J({ error: 'bad_request' }, 400);
+        // the admin role's switches are always on: none can be set, a stored one may be cleared (null)
+        if (isAdmin && PERM_KEYS_MOCK.some((k) => o[k] !== undefined && o[k] !== null)) return J({ error: 'admin_perms_locked' }, 400);
+        if (Array.isArray(o.libraries) && o.libraries.some((n) => !st.matrix.libraries.some((l) => l.name === n))) return J({ error: 'unknown_library' }, 400);
+        const before = Object.fromEntries(keys.map((k) => [k, rowOf(k).value]));
+        const store = (k: string, v: unknown) => {
+          const perm = PERM_KEYS_MOCK.includes(k), target = perm ? (u.perms ??= {}) : (u.ov ??= {}) as Record<string, unknown>;
+          const eff = v === 'unlimited' ? null : v;
+          if (v === null || JSON.stringify(eff) === JSON.stringify(role.values[k])) delete target[k]; else target[k] = v;
+        };
+        for (const [k, v] of Object.entries(o)) if (v !== undefined) store(k, v);
+        if (u.perms && !Object.keys(u.perms).length) delete u.perms;
+        u.otherOverrides = Object.keys(u.ov ?? {}).length;
+        const noteWas = u.note ?? null;
+        if (body?.note !== undefined) u.note = body.note === null || body.note.trim() === '' ? null : body.note.trim();
+        const moved = keys.filter((k) => JSON.stringify(before[k]) !== JSON.stringify(rowOf(k).value));
+        const from = Object.fromEntries(moved.map((k) => [k, before[k]])), to = Object.fromEntries(moved.map((k) => [k, rowOf(k).value]));
+        const noteChanged = (u.note ?? null) !== noteWas;
+        if (moved.length || noteChanged) log('user.rights', u.id, { from, to, ...(noteChanged ? { note: 'changed' } : {}) }, u.name);
+        const media = moved.some((k) => MEDIA_KEYS_MOCK.includes(k));
+        if (media && st.matrix.policyPartial) return J({ error: 'policy_partial', failed: st.matrix.failed, identities: 2 }, 502);
+        return J({ ok: true, reapplied: { identities: media ? 2 : 0, failed: 0 } });
+      }
     }
     if (rest === '/repair' && m === 'POST') {
       st.linkedOk = { jellyfin: st.linkedOk.jellyfin === false ? true : st.linkedOk.jellyfin, requests: true };

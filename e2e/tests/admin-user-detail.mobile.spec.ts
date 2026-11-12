@@ -32,11 +32,35 @@ test.describe('admin user detail (phone)', () => {
     await page.keyboard.press('Escape');
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
 
-    await list.getByRole('tab', { name: 'Limits' }).click();
+    await list.getByRole('tab', { name: 'Rechte' }).click();
     await expect(page.getByRole('spinbutton', { name: 'Gleichzeitige Streams' })).toBeVisible();
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
     await list.getByRole('tab', { name: 'Profile' }).click();
     await expect(page.getByRole('tabpanel', { name: 'Profile' }).getByRole('row', { name: /Kinder/ })).toBeVisible();
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+  });
+
+  test('Rechte: rows stack, segments are 44 px, nothing scrolls sideways', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const panel = page.getByRole('tabpanel', { name: 'Rechte' });
+    const group = panel.getByRole('radiogroup', { name: 'Auf Fernseher übertragen' });
+    await expect(group).toBeVisible();
+    const row = panel.getByRole('listitem').filter({ has: page.getByRole('radiogroup', { name: 'Auf Fernseher übertragen' }) });
+    const label = row.locator('.lab');
+    await expect.poll(async () => {
+      const [l, g] = [await label.boundingBox(), await group.boundingBox()];
+      return Boolean(l && g && g.y >= l.y + l.height - 1);
+    }).toBe(true);
+    for (const name of ['Wie Rolle', 'Erlauben', 'Verbieten']) {
+      const seg = row.getByRole('radio', { name }).locator('..');
+      const box = await seg.boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+      expect(box!.width).toBeGreaterThanOrEqual(44);
+    }
+    const rowBox = await row.boundingBox();
+    expect(rowBox!.x + rowBox!.width).toBeLessThanOrEqual(391);
+    await row.getByText('Verbieten', { exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Ungespeicherte Änderungen' })).toBeVisible();
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 });

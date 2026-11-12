@@ -4,7 +4,7 @@
   /**
    * Admin: one user. Header (avatar, name, e-mail, role, status and 2FA pills) with the quick actions (lock/unlock, sign out
    * everywhere, change role, extend access, Authentik e-mails; a scheduled deletion: restore or delete now), then tabs in the URL (`?tab=`): overview (totals, linked
-   * accounts), profiles, devices, downloads, activity (loads only when opened: viewing is audited), limits, audit.
+   * accounts), profiles, devices, downloads, activity (loads only when opened: viewing is audited), rights (the person's exceptions to the role), audit.
    * Never shows credentials, tokens or the Authentik id (the API does not send them).
    */
   import { onMount } from 'svelte';
@@ -22,9 +22,9 @@
   import Audit from '#lib/admin/user/Audit.svelte';
   import Devices from '#lib/admin/user/Devices.svelte';
   import Downloads from '#lib/admin/user/Downloads.svelte';
-  import Limits from '#lib/admin/user/Limits.svelte';
-  import Overview from '#lib/admin/user/Overview.svelte';
+    import Overview from '#lib/admin/user/Overview.svelte';
   import Profiles from '#lib/admin/user/Profiles.svelte';
+  import Rights from '#lib/admin/user/Rights.svelte';
   import { roleName, type RoleInfo } from '#lib/roles';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
@@ -37,14 +37,16 @@
 
   const page$ = pageStore();
   $: id = $page$.params.id ?? '';
-  $: tab = detailTab($page$.url.searchParams.get('tab'));
+  $: tab = ((v) => (v === 'check' ? 'overview' : v))(detailTab($page$.url.searchParams.get('tab')));
+  /** the tab strip: the view check ("Sicht prüfen") has no panel yet, so it has no tab (its URL falls back to the overview) */
+  const TABS = DETAIL_TABS.filter((k) => k !== 'check');
   const select = (to: DetailTab) => goto(to === 'overview' ? $page$.url.pathname : `?tab=${to}`, { replaceState: true, reset: false });
   function tabKey(e: KeyboardEvent) {
-    const i = DETAIL_TABS.indexOf(tab), last = DETAIL_TABS.length - 1;
-    const n = e.key === 'ArrowRight' ? (i + 1) % DETAIL_TABS.length : e.key === 'ArrowLeft' ? (i + last) % DETAIL_TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? last : -1;
+    const i = Math.max(0, TABS.indexOf(tab)), last = TABS.length - 1;
+    const n = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i + last) % TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? last : -1;
     if (n < 0) return;
-    e.preventDefault(); void select(DETAIL_TABS[n]!);
-    queueMicrotask(() => { const el = document.getElementById(`udt-${DETAIL_TABS[n]!}`); el?.focus(); el?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); });
+    e.preventDefault(); void select(TABS[n]!);
+    queueMicrotask(() => { const el = document.getElementById(`udt-${TABS[n]!}`); el?.focus(); el?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); });
   }
 
   let d: UserDetail | null = null, error: string | null = null, notFound = false;
@@ -254,7 +256,7 @@
   {/if}
 
   <div class="tabs" role="tablist" aria-label={$t('adminPeople.detail.tabs.label', { name: u.name })}>
-    {#each DETAIL_TABS as k (k)}
+    {#each TABS as k (k)}
       <button type="button" role="tab" id="udt-{k}" class="tab" class:on={tab === k} aria-selected={tab === k} aria-controls="udt-panel" tabindex={tab === k ? 0 : -1} on:click={() => select(k)} on:keydown={tabKey}>{tabLabel(k)}</button>
     {/each}
   </div>
@@ -264,7 +266,7 @@
     {:else if tab === 'devices'}<Devices userId={u.id} devices={d.devices} on:changed={load} />
     {:else if tab === 'downloads'}<Downloads licenses={d.licenses} profiles={d.profiles} on:changed={load} />
     {:else if tab === 'activity'}{#key u.id}<Activity userId={u.id} />{/key}
-    {:else if tab === 'limits'}{#key u.id}<Limits userId={u.id} />{/key}
+    {:else if tab === 'rights'}{#key u.id}<Rights userId={u.id} name={u.name} />{/key}
     {:else if tab === 'audit'}{#key u.id}<Audit userId={u.id} />{/key}
     {:else}<Overview userId={u.id} detail={d} on:changed={load} />{/if}
   </div>

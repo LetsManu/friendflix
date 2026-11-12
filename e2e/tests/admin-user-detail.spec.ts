@@ -13,7 +13,7 @@ const menu = async (page: import('@playwright/test').Page) => {
 };
 
 test.describe('admin user detail (desktop)', () => {
-  test.use({ allowedConsole: /status of (404|409|500|501)/ });
+  test.use({ allowedConsole: /status of (404|409|500|501|502)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   test('detail shows header and totals', async ({ page }) => {
@@ -80,28 +80,148 @@ test.describe('admin user detail (desktop)', () => {
     expect(api.admin.activityCalls).toBe(2);
   });
 
-  test('limits save sends only changed fields', async ({ page, api }) => {
-    api.admin.limits[ANNA] = { maxStreams: 2, remoteBitrate: null, maxDownloads: null, downloadMaxHeight: null, requestsPerMonth: null };
-    await page.goto(`/admin/users/${ANNA}?tab=limits`);
-    const streams = page.getByRole('spinbutton', { name: 'Gleichzeitige Streams' });
-    await expect(streams).toHaveValue('2');
-    const req = page.getByRole('spinbutton', { name: 'Wünsche pro Monat' });
-    await expect(req).toHaveValue('');
-    await expect(req).toHaveAttribute('placeholder', 'wie Rolle: 3');
-    await expect(page.getByRole('spinbutton', { name: /Limit unterwegs/ })).toHaveAttribute('placeholder', 'wie Rolle: 8');
-    await req.fill('5');
-    await streams.fill('');
-    await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(toasts(page).getByText('Limits gespeichert.')).toBeVisible();
-    const put = api.log.filter((l) => l.startsWith(`PUT /api/admin/users/${ANNA}/limits`));
-    expect(put).toHaveLength(1);
-    expect(JSON.parse(put[0]!.split(' ')[2]!)).toEqual({ maxStreams: null, requestsPerMonth: 5 });
-    await expect(streams).toHaveAttribute('placeholder', 'wie Rolle: 2');
+  // ---- Rechte ----
+  const BEN = auid(3);
+  const rightsPuts = (api: { log: string[] }, id: string) => api.log.filter((l) => l.startsWith(`PUT /api/admin/users/${id}/rights`))
+    .map((l) => JSON.parse(l.slice(l.indexOf('{'), l.lastIndexOf(' -> '))) as Record<string, unknown>);
+  const rightsPanel = (page: import('@playwright/test').Page) => page.getByRole('tabpanel', { name: 'Rechte' });
+  const rowOf = (page: import('@playwright/test').Page, name: string) => rightsPanel(page).getByRole('listitem').filter({ has: page.getByRole('radiogroup', { name, exact: true }) });
+  const saveBar = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Ungespeicherte Änderungen' });
+  const saveViaReview = async (page: import('@playwright/test').Page) => {
+    await saveBar(page).getByRole('button', { name: 'Änderungen prüfen' }).click();
+    await page.getByRole('dialog', { name: 'Änderungen prüfen' }).getByRole('button', { name: 'Speichern' }).click();
+  };
 
-    await req.fill('101');
-    await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(page.getByText('Bitte 0 bis 100 eingeben oder leer lassen.')).toBeVisible();
-    expect(api.log.filter((l) => l.startsWith(`PUT /api/admin/users/${ANNA}/limits`))).toHaveLength(1);
+  test('3-way switch: Übertragen -> Verbieten stages, saves only that key, chip says Ausnahme', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    await expect(page.getByRole('tab', { name: 'Rechte' })).toHaveAttribute('aria-selected', 'true');
+    const panel = rightsPanel(page);
+    await expect(panel.getByRole('heading', { level: 3, name: 'Übertragen' })).toBeVisible();
+    const row = rowOf(page, 'Auf Fernseher übertragen');
+    await expect(row.getByRole('radio', { name: 'Wie Rolle' })).toBeChecked();
+    await expect(row).toContainText('Rolle: erlaubt');
+    await expect(row.getByText('Rolle', { exact: true })).toBeVisible();
+    // an existing exception shows as such
+    const party = rowOf(page, 'Watch-Partys');
+    await expect(party.getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+    await expect(party).toContainText('Ausnahme');
+    await expect(saveBar(page)).toHaveCount(0);
+
+    await row.getByText('Verbieten', { exact: true }).click();
+    await expect(row.getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+    await expect(saveBar(page)).toContainText('1 Änderung an den Rechten von Anna Beispiel');
+    await saveViaReview(page);
+    await expect(toasts(page).getByText('Rechte von Anna Beispiel gespeichert.')).toBeVisible();
+    await expect(saveBar(page)).toHaveCount(0);
+    expect(rightsPuts(api, ANNA)).toEqual([{ overrides: { cast: false } }]);
+    await expect(row).toContainText('Ausnahme');
+    await expect(row.getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+
+    // back to the role: null, the exception goes
+    await row.getByText('Wie Rolle', { exact: true }).click();
+    await saveViaReview(page);
+    await expect(toasts(page).getByText('Rechte von Anna Beispiel gespeichert.').nth(1)).toBeVisible();
+    expect(rightsPuts(api, ANNA)[1]).toEqual({ overrides: { cast: null } });
+    await expect(row).not.toContainText('Ausnahme');
+  });
+
+  test('3-way switch is a radiogroup: arrow keys move the selection; discard drops the staging', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const row = rowOf(page, 'Auf Fernseher übertragen');
+    await row.getByRole('radio', { name: 'Wie Rolle' }).focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(row.getByRole('radio', { name: 'Erlauben' })).toBeChecked();
+    await expect(row.getByRole('radio', { name: 'Erlauben' })).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(row.getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+    await expect(saveBar(page)).toBeVisible();
+    await saveBar(page).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(row.getByRole('radio', { name: 'Wie Rolle' })).toBeChecked();
+    await expect(saveBar(page)).toHaveCount(0);
+  });
+
+  test('numbers: role value shown, a changed number and the reset save as one body', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const panel = rightsPanel(page);
+    const streams = panel.getByRole('spinbutton', { name: 'Gleichzeitige Streams' });
+    const row = panel.getByRole('listitem').filter({ has: page.getByRole('spinbutton', { name: 'Gleichzeitige Streams' }) });
+    await expect(streams).toHaveValue('3');
+    await expect(row).toContainText('Rolle: 2');
+    await streams.fill('4');
+    await expect(saveBar(page)).toBeVisible();
+    await row.getByRole('button', { name: 'Wie Rolle' }).click();
+    await expect(streams).toHaveValue('2');
+    await saveViaReview(page);
+    await expect(toasts(page).getByText('Rechte von Anna Beispiel gespeichert.')).toBeVisible();
+    expect(rightsPuts(api, ANNA)).toEqual([{ overrides: { maxStreams: null } }]);
+    await expect(row).not.toContainText('Ausnahme');
+  });
+
+  test('note: typed, counted, saved; the list shows it as a tooltip after a reload', async ({ page, api }) => {
+    await page.goto(`/admin/users/${BEN}?tab=rights`);
+    const note = rightsPanel(page).getByRole('textbox', { name: 'Notiz' });
+    await expect(rightsPanel(page)).toContainText('0 / 200');
+    await note.fill('Gast von Oma Inge');
+    await expect(rightsPanel(page)).toContainText('17 / 200');
+    await saveViaReview(page);
+    await expect(toasts(page).getByText('Rechte von Ben Test gespeichert.')).toBeVisible();
+    expect(rightsPuts(api, BEN)).toEqual([{ overrides: {}, note: 'Gast von Oma Inge' }]);
+    await page.goto('/admin/users');
+    await page.reload();
+    const ben = page.getByRole('row', { name: /Ben Test/ });
+    // the list may still be settling (late data, hydration): a press that gets lost is repeated, an open tooltip is kept
+    const tip = page.getByRole('note');
+    await expect(async () => {
+      if (!(await tip.isVisible())) await ben.getByRole('button', { name: 'Notiz' }).click();
+      await expect(tip).toHaveText('Gast von Oma Inge', { timeout: 1500 });
+    }).toPass();
+  });
+
+  test('old ?tab=limits opens Rechte', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=limits`);
+    await expect(page.getByRole('tab', { name: 'Rechte' })).toHaveAttribute('aria-selected', 'true');
+    await expect(rightsPanel(page).getByRole('radiogroup', { name: 'Auf Fernseher übertragen' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Limits' })).toHaveCount(0);
+  });
+
+  test('a missing library shows as not available and can be removed', async ({ page, api }) => {
+    api.admin.users.find((u) => u.id === BEN)!.ov = { libraries: ['Filme', 'Altes Archiv'] };
+    await page.goto(`/admin/users/${BEN}?tab=rights`);
+    const libs = rightsPanel(page).getByRole('listitem').filter({ has: page.getByRole('group', { name: 'Bibliotheken' }) });
+    await expect(libs.getByRole('checkbox', { name: 'Altes Archiv' })).toBeChecked();
+    await expect(libs.getByText('nicht mehr vorhanden')).toBeVisible();
+    await expect(libs.getByText('Altes Archiv', { exact: true }).first()).toBeVisible();
+    // taken out of the list, it leaves the checklist and the flag with it
+    await libs.getByRole('checkbox', { name: 'Altes Archiv' }).click();
+    await expect(libs.getByRole('checkbox', { name: 'Altes Archiv' })).toHaveCount(0);
+    await expect(libs.getByText('nicht mehr vorhanden')).toHaveCount(0);
+    await saveViaReview(page);
+    await expect(toasts(page).getByText('Rechte von Ben Test gespeichert.')).toBeVisible();
+    expect(rightsPuts(api, BEN)).toEqual([{ overrides: { libraries: ['Filme'] } }]);
+    await expect(libs.getByText('nicht mehr vorhanden')).toHaveCount(0);
+  });
+
+  test('policy_partial: the rights are stored, the bar offers Erneut anwenden (repair)', async ({ page, api }) => {
+    api.admin.matrix.policyPartial = true;
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const streams = rightsPanel(page).getByRole('spinbutton', { name: 'Gleichzeitige Streams' });
+    await streams.fill('5');
+    await saveViaReview(page);
+    await expect(saveBar(page)).toContainText('2 Konten konnten nicht aktualisiert werden.');
+    await expect(rightsPanel(page).getByRole('spinbutton', { name: 'Gleichzeitige Streams' })).toHaveValue('5');
+    api.admin.matrix.policyPartial = false;
+    await saveBar(page).getByRole('button', { name: 'Erneut anwenden' }).click();
+    await expect(toasts(page).getByText('Rechte von Anna Beispiel erneut angewendet.')).toBeVisible();
+    await expect(saveBar(page)).toHaveCount(0);
+    expect(logged(api, new RegExp(`POST /api/admin/users/${ANNA}/repair`))).toBe(true);
+  });
+
+  test('an admin account: switches are locked, numbers stay editable', async ({ page }) => {
+    await page.goto('/admin/users/u1?tab=rights');
+    const panel = rightsPanel(page);
+    await expect(panel.getByRole('radiogroup')).toHaveCount(0);
+    await expect(panel.getByText('Admins dürfen immer alles').first()).toBeVisible();
+    await expect(panel.getByRole('spinbutton', { name: 'Gleichzeitige Streams' })).toBeEnabled();
   });
 
   test('extend access +30 days', async ({ page, api }) => {
@@ -317,15 +437,15 @@ test.describe('admin user detail (desktop)', () => {
     await page.goto(`/admin/users/${ANNA}`);
     const list = page.getByRole('tablist', { name: 'Bereiche von Anna Beispiel' });
     await expect(list).toBeVisible();
-    const names = ['Übersicht', 'Profile', 'Geräte', 'Downloads', 'Verlauf', 'Limits', 'Audit-Log'];
+    const names = ['Übersicht', 'Rechte', 'Profile', 'Geräte', 'Downloads', 'Verlauf', 'Audit-Log'];
     for (const n of names) await expect(list.getByRole('tab', { name: n, exact: true })).toBeVisible();
     await expect(list.getByRole('tab', { name: 'Übersicht' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('tabpanel', { name: 'Übersicht' })).toBeVisible();
     await list.getByRole('tab', { name: 'Übersicht' }).focus();
     await page.keyboard.press('ArrowRight');
-    await expect(list.getByRole('tab', { name: 'Profile' })).toBeFocused();
-    await expect(list.getByRole('tab', { name: 'Profile' })).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByRole('tabpanel', { name: 'Profile' })).toBeVisible();
+    await expect(list.getByRole('tab', { name: 'Rechte' })).toBeFocused();
+    await expect(list.getByRole('tab', { name: 'Rechte' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tabpanel', { name: 'Rechte' })).toBeVisible();
   });
 });
 

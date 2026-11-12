@@ -636,6 +636,14 @@ test.describe('admin people (desktop)', () => {
       // the badge of the person opens the rights tab of that person
       await expect(table(page).getByRole('row', { name: /Anna Beispiel/ }).getByRole('link', { name: /2 Ausnahmen/ })).toHaveAttribute('href', `/admin/users/${auid(2)}?tab=rights`);
       await expect(page).toHaveURL(/overrides=1/);
+      // ... and clicking it really opens the Rechte tab
+      await table(page).getByRole('row', { name: /Anna Beispiel/ }).getByRole('link', { name: /2 Ausnahmen/ }).click();
+      await expect(page).toHaveURL(new RegExp(`/admin/users/${auid(2)}\\?tab=rights$`));
+      await expect(page.getByRole('tab', { name: 'Rechte' })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByRole('tabpanel', { name: 'Rechte' }).getByRole('radiogroup', { name: 'Watch-Partys' })).toBeVisible();
+      await page.goBack();
+      await expect(page).toHaveURL(/overrides=1/);
+      await expect(chip).toHaveAttribute('aria-pressed', 'true');
       await chip.click(); // pressed: the chip shows × and clears the filter
       await expect(chip).toHaveAttribute('aria-pressed', 'false');
       await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
