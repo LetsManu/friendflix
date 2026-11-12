@@ -111,7 +111,7 @@ beforeAll(async () => {
 });
 afterAll(() => env.close());
 beforeEach(async () => {
-  await env.pool.query(`delete from livetv_programmes; delete from livetv_epg_channels; delete from livetv_recent; delete from livetv_favourites;
+  await env.pool.query(`delete from livetv_programmes; delete from livetv_programmes_stage; delete from livetv_epg_channels; delete from livetv_recent; delete from livetv_favourites;
     delete from livetv_channels; delete from livetv_group_map; delete from livetv_groups; delete from livetv_logos; delete from livetv_sources`);
   for (const k of [...await env.kv.keys('ltv'), ...await env.kv.keys('ltvlogo:')]) await env.kv.del(k);
   calls.length = 0;
@@ -128,6 +128,38 @@ beforeEach(async () => {
   calls.length = 0;
 });
 afterEach(() => { vi.useRealTimers(); });
+
+/**
+ * Replaces livetv's XMLTV answer of the NEXT main run (a request with a time window) by a stream that sends its channel and `n` programmes
+ * at once and then waits for `finish`: the stream is "in progress" while the test looks at the database. The index run (from 0) is
+ * answered from `guides` as usual.
+ */
+function holdStream(n = 5001) {
+  const prior = env.ctx.fetchImpl;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  let started = false;
+  let end = true;
+  env.ctx.fetchImpl = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const body = init.body ? JSON.parse(String(init.body)) : {};
+    if (!String(input).endsWith('/v1/fetch/xmltv') || body.from === 0) return prior(input, init);
+    const enc = new TextEncoder();
+    const lines = [JSON.stringify({ t: 'channel', id: 'nordlicht.de', names: ['Nordlicht TV'] }),
+      ...Array.from({ length: n }, (_, i) => JSON.stringify({ t: 'prog', ch: 'nordlicht.de', start: at(0) + i * 60_000, end: at(0) + (i + 1) * 60_000, title: `Folge ${i}` }))];
+    return new Response(new ReadableStream({
+      async start(c) {
+        started = true;
+        c.enqueue(enc.encode(lines.join('\n') + '\n'));
+        await gate;
+        if (end) c.enqueue(enc.encode(JSON.stringify({ t: 'end', programmes: n, channels: 1 }) + '\n'));
+        c.close();
+      },
+    }));
+  }) as typeof fetch;
+  return { started: () => started, finish: (withEnd = true) => { end = withEnd; release(); } };
+}
+const stageCount = async () => (await env.pool.query('select count(*)::int as n from livetv_programmes_stage')).rows[0].n as number;
+const idleInTx = async () => (await env.pool.query("select count(*)::int as n from pg_stat_activity where datname = current_database() and state like 'idle in transaction%'")).rows[0].n as number;
 
 describe('XMLTV import (ruling 27, spec §19)', () => {
   it('a broken file keeps the old programmes', async () => {
@@ -158,6 +190,83 @@ describe('XMLTV import (ruling 27, spec §19)', () => {
     // only fixed codes, never a URL or a provider text
     const s = await src(id);
     expect(s.epg_last_error).toMatch(/^[a-z_]{1,40}$/);
+  });
+
+  it('holds no transaction while the stream is read; the swap is one short transaction', async () => {
+    guides.set(EPG_A, nordGuide());
+    const id = await addSource({ epg: EPG_A });
+    await addChannel(id, 'Nordlicht TV', { tvgId: 'nordlicht.de' });
+    await refreshEpg(env.ctx, await src(id));
+    const before = await progs(id);
+    expect(before).toHaveLength(2); // the two Nordlicht programmes
+    const gate = holdStream(); // 5 001 programmes: one full batch is staged while the stream is still open
+    const p = refreshEpg(env.ctx, await src(id));
+    await vi.waitFor(async () => expect(await stageCount()).toBeGreaterThanOrEqual(5000), { timeout: 15_000, interval: 25 });
+    expect(await idleInTx()).toBe(0); // no transaction is open mid-stream
+    expect(await progs(id)).toEqual(before); // the old programmes are untouched and readable
+    gate.finish();
+    expect(await p).toMatchObject({ programmes: 5001 });
+    expect(await idleInTx()).toBe(0);
+    expect(await stageCount()).toBe(0); // the run's staging rows are gone
+    const after = await progs(id);
+    expect(after).toHaveLength(5001); // the good stream replaced the old rows
+    expect(after.some((x) => x.title === 'Folge 5000')).toBe(true);
+    expect(after.some((x) => x.title === 'Wetter am Hafen')).toBe(false);
+  });
+
+  it('a stream without its end line changes nothing and leaves no staging rows', async () => {
+    guides.set(EPG_A, nordGuide());
+    const id = await addSource({ epg: EPG_A });
+    await addChannel(id, 'Nordlicht TV', { tvgId: 'nordlicht.de' });
+    await refreshEpg(env.ctx, await src(id));
+    const before = await progs(id);
+    const gate = holdStream();
+    const p = refreshEpg(env.ctx, await src(id));
+    await vi.waitFor(async () => expect(await stageCount()).toBeGreaterThanOrEqual(5000), { timeout: 15_000, interval: 25 });
+    gate.finish(false);
+    expect(await p).toEqual({ error: 'incomplete' });
+    expect(await progs(id)).toEqual(before);
+    expect(await stageCount()).toBe(0);
+    expect((await src(id)).epg_last_error).toBe('incomplete');
+  });
+
+  it('a NUL character in provider text does not break the import', async () => {
+    guides.set(EPG_A, {
+      channels: [{ id: 'nordlicht.de', names: ['Nord\u0000licht TV'], icon: ICON }],
+      progs: [{ ch: 'nordlicht.de', start: at(20), end: at(21), title: 'Abend\u0000journal', subtitle: 'Sturm\u0000 und Stille' }],
+    });
+    const id = await addSource({ epg: EPG_A });
+    const ch = await addChannel(id, 'Nordlicht TV');
+    expect(await refreshEpg(env.ctx, await src(id))).toEqual({ channels: 1, programmes: 1 });
+    expect((await src(id)).epg_last_error).toBeNull();
+    const [row] = (await env.pool.query('select xml_channel, title, subtitle from livetv_programmes where source_id = $1', [id])).rows;
+    expect(row).toEqual({ xml_channel: 'nordlicht.de', title: 'Abendjournal', subtitle: 'Sturm und Stille' });
+    expect((await env.pool.query('select xml_id, names from livetv_epg_channels where source_id = $1', [id])).rows).toEqual([{ xml_id: 'nordlicht.de', names: ['Nordlicht TV'] }]);
+    expect((await chan(ch)).epg_channel_id).toBe('nordlicht.de');
+  });
+
+  it('a guide without icons clears the stale epg_logo_hash of its matched channels', async () => {
+    guides.set(EPG_A, nordGuide());
+    const id = await addSource({ epg: EPG_A, logoPref: 'xmltv' });
+    const ch = await addChannel(id, 'Nordlicht TV', { tvgId: 'nordlicht.de' });
+    await refreshEpg(env.ctx, await src(id));
+    const hash = (await chan(ch)).epg_logo_hash as string | null;
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    // the provider drops its icons: the next full run clears the hash
+    guides.set(EPG_A, { ...nordGuide(), channels: nordGuide().channels.map(({ id: cid, names }) => ({ id: cid, names })) });
+    await refreshEpg(env.ctx, await src(id));
+    expect((await chan(ch)).epg_logo_hash).toBeNull();
+  });
+
+  it('a failed EPG run still matches the channels the list step just imported (stored index)', async () => {
+    guides.set(EPG_A, nordGuide());
+    const id = await addSource({ epg: EPG_A });
+    await addChannel(id, 'Hafenkanal'); // present from the first refresh on, matched then
+    await refreshEpg(env.ctx, await src(id));
+    const late = await addChannel(id, 'Nordlicht TV');
+    guides.set(EPG_A, { ...nordGuide(), fail: 'noend' });
+    expect(await refreshEpg(env.ctx, await src(id))).toEqual({ error: 'incomplete' });
+    expect((await chan(late)).epg_channel_id).toBe('nordlicht.de');
   });
 
   it('UTC is stored', async () => {
@@ -211,9 +320,17 @@ describe('XMLTV import (ruling 27, spec §19)', () => {
   it('an EPG nobody can use stores no programmes', async () => {
     guides.set(EPG_A, nordGuide());
     const id = await addSource({ epg: EPG_A });
-    expect(await refreshEpg(env.ctx, await src(id))).toEqual({ channels: 0, programmes: 0 });
-    expect(xmltvCalls()[1]!.body.channels).toEqual([]);
-    // the index still holds every XMLTV channel (for matching and the Phase 2 picker)
+    // an empty filter downloads nothing: only the index run happened
+    expect(await refreshEpg(env.ctx, await src(id))).toEqual({ channels: 2, programmes: 0 });
+    expect(xmltvCalls()).toHaveLength(1);
+    expect(xmltvCalls()[0]!.body.from).toBe(0);
+    // the guide without channels is not indexed again on every refresh, and an old programme of the source goes
+    calls.length = 0;
+    await addProg(id, 'nordlicht.de', 'Alt', at(20), at(21));
+    await refreshEpg(env.ctx, await src(id));
+    expect(xmltvCalls()).toHaveLength(0);
+    expect(await progs(id)).toEqual([]);
+    // the index holds every XMLTV channel (for matching and the Phase 2 picker)
     expect((await env.pool.query('select xml_id from livetv_epg_channels where source_id = $1 order by xml_id', [id])).rows.map((r) => r.xml_id))
       .toEqual(['hafenkanal.de', 'nordlicht.de']);
   });
@@ -231,20 +348,32 @@ describe('XMLTV import (ruling 27, spec §19)', () => {
     expect((await env.pool.query("select count(*)::int as n from livetv_channels where epg_channel_id is not null")).rows[0].n).toBe(n);
   });
 
-  it('the EPG import renews the refresh lock while it reads', async () => {
+  it('the EPG import renews the refresh lock on a timer while livetv is silent', async () => {
     guides.set(EPG_A, nordGuide());
     const id = await addSource({ epg: EPG_A });
+    await addChannel(id, 'Nordlicht TV', { tvgId: 'nordlicht.de' });
+    await refreshEpg(env.ctx, await src(id)); // the index is stored
+    const gate = holdStream(2);
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     const beats: number[] = [];
-    const now = Date.now();
-    const spy = vi.spyOn(Date, 'now');
-    let t = now;
-    spy.mockImplementation(() => (t += 61_000)); // every look at the clock is a minute later
-    try {
-      await refreshEpg(env.ctx, await src(id), { heartbeat: async () => { beats.push(1); } });
-    } finally {
-      spy.mockRestore();
-    }
-    expect(beats.length).toBeGreaterThan(0);
+    const p = refreshEpg(env.ctx, await src(id), { heartbeat: async () => { beats.push(1); } });
+    await vi.waitFor(() => expect(gate.started()).toBe(true));
+    expect(beats).toHaveLength(0);
+    vi.advanceTimersByTime(61_000);
+    expect(beats).toHaveLength(1); // no line arrived: the timer renewed
+    vi.advanceTimersByTime(60_000);
+    expect(beats).toHaveLength(2);
+    expect(vi.getTimerCount()).toBe(1);
+    gate.finish();
+    expect(await p).toMatchObject({ programmes: 2 });
+    expect(vi.getTimerCount()).toBe(0); // cleared in the finally
+    // and on a failure
+    const gate2 = holdStream(1);
+    const p2 = refreshEpg(env.ctx, await src(id), { heartbeat: async () => undefined });
+    await vi.waitFor(() => expect(gate2.started()).toBe(true));
+    gate2.finish(false);
+    expect(await p2).toEqual({ error: 'incomplete' });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('a cancelled stream clears its deadline at once', async () => {
@@ -544,7 +673,12 @@ describe('prune and summary', () => {
     }
     await addChannel(id, 'Nordlicht TV', { importLogo: used, missingSince: new Date(now.getTime() - 29 * day) });
     await addChannel(id, 'Hafenkanal', { missingSince: new Date(now.getTime() - 31 * day) });
+    const run = randomUUID();
+    for (const t of [new Date(now.getTime() - 2 * day), new Date(now.getTime() - 3600_000)]) {
+      await env.pool.query("insert into livetv_programmes_stage(run_id, staged_at, source_id, xml_channel, start_at, end_at, title) values ($1, $2, $3, 'x', $4, $5, 'Stage')", [run, t, id, now, new Date(now.getTime() + 1)]);
+    }
     expect(await epgPrune(env.ctx, now)).toEqual({ programmes: 1, channels: 1, logos: 1 });
+    expect(await stageCount()).toBe(1); // the crashed run's rows older than a day are gone
     expect((await progs(id)).map((p) => p.title)).toEqual(['Wetter am Hafen']);
     expect((await env.pool.query('select hash from livetv_logos order by hash')).rows.map((r) => r.hash)).toEqual([used, fresh]);
     expect(await epgPrune(env.ctx, now)).toEqual({ programmes: 0, channels: 0, logos: 0 });

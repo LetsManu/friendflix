@@ -1044,6 +1044,22 @@ export const MIGRATIONS: string[] = [
   create index if not exists livetv_recent_profile on livetv_recent(profile_id, at desc);
   alter table devices add column if not exists start_live boolean not null default false;
   `,
+  // Live TV 49 (Task 17 review ruling): the XMLTV import streams into this staging table (short autocommitted inserts tagged with a run id)
+  // and swaps into livetv_programmes in one short transaction, so no connection or row lock is held while the stream is read.
+  `
+  create unlogged table if not exists livetv_programmes_stage (
+    run_id uuid not null,
+    staged_at timestamptz not null default now(),
+    source_id uuid not null,
+    xml_channel text not null,
+    start_at timestamptz not null,
+    end_at timestamptz not null,
+    title text not null,
+    subtitle text, description text, categories text[], episode text, series_key text,
+    is_new boolean, previously_shown boolean, rating text
+  );
+  create index if not exists livetv_programmes_stage_run on livetv_programmes_stage(run_id);
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
