@@ -39,11 +39,25 @@ function checked(raw: string): URL {
 const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return s; } };
 const failure = (e: unknown, signal: AbortSignal) => (e instanceof FetchError ? e : new FetchError(signal.aborted ? 'timeout' : 'unreachable'));
 
+/** `p`, unless the whole-fetch budget runs out first (a hanging DNS lookup): then `timeout` */
+async function withinBudget<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new FetchError('timeout'));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([p, aborted]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
 /** one GET to the checked address of `url`; resolves with the response head */
 async function requestOnce(url: URL, o: FetchOptions, deps: GuardDeps, signal: AbortSignal): Promise<http.IncomingMessage> {
   const host = url.hostname.replace(/^\[(.*)\]$/, '$1');
-  const ip = await resolveChecked(host, o.allowLan, deps);
-  if (signal.aborted) throw new FetchError('timeout');
+  const ip = await withinBudget(resolveChecked(host, o.allowLan, deps), signal);
   const secure = url.protocol === 'https:';
   const port = url.port ? Number(url.port) : secure ? 443 : 80;
   const target = deps.dial ? deps.dial(ip, port) : ip;
@@ -75,7 +89,7 @@ async function requestOnce(url: URL, o: FetchOptions, deps: GuardDeps, signal: A
 }
 
 /** the body as a stream that stops at `maxBytes` (`too_big`) and fails with fixed codes only */
-async function* readBody(res: http.IncomingMessage, maxBytes: number, done: () => void): AsyncGenerator<Uint8Array> {
+async function* readBody(res: http.IncomingMessage, maxBytes: number, signal: AbortSignal, done: () => void): AsyncGenerator<Uint8Array> {
   let n = 0;
   try {
     for await (const c of res as AsyncIterable<Buffer>) {
@@ -84,7 +98,7 @@ async function* readBody(res: http.IncomingMessage, maxBytes: number, done: () =
       yield c;
     }
   } catch (e) {
-    throw e instanceof FetchError ? e : new FetchError('unreachable');
+    throw failure(e, signal);
   } finally {
     done();
     res.destroy();
@@ -137,7 +151,7 @@ export async function guardedFetch(raw: string, o: FetchOptions, deps: GuardDeps
       const onAbort = () => res.destroy(new FetchError('timeout'));
       ac.signal.addEventListener('abort', onAbort, { once: true });
       const done = () => { clearTimeout(timer); ac.signal.removeEventListener('abort', onAbort); };
-      return { status, headers: flatHeaders(res.headers), body: readBody(res, o.maxBytes, done) };
+      return { status, headers: flatHeaders(res.headers), body: readBody(res, o.maxBytes, ac.signal, done) };
     }
   } catch (e) {
     clearTimeout(timer);

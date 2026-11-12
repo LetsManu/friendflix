@@ -140,6 +140,13 @@ describe('guardedFetch', () => {
     expect(await codeOf(text(r.body))).toBe('timeout');
   });
 
+  it('a DNS lookup that never answers is bounded by timeoutMs', async () => {
+    const t = Date.now();
+    const hang: GuardDeps = { lookup: () => new Promise<string[]>(() => {}), own: [] };
+    expect(await codeOf(guardedFetch('http://iptv.example.com/list.m3u', { ...O, timeoutMs: 200 }, hang))).toBe('timeout');
+    expect(Date.now() - t).toBeLessThan(2_000);
+  });
+
   it('credentials never in errors', async () => {
     const closed = await serve(() => {});
     const port = closed.port;

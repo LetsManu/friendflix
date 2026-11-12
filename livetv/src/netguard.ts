@@ -53,27 +53,46 @@ function inRange(a: readonly number[], r: Range): boolean {
   return true;
 }
 
-const REFUSED_V4 = [range('127.0.0.0', 8), range('0.0.0.0', 8), range('169.254.0.0', 16), range('224.0.0.0', 4), range('100.64.0.0', 10), range('255.255.255.255', 32)];
+// 240.0.0.0/4 (reserved) includes the broadcast address 255.255.255.255
+const REFUSED_V4 = [
+  range('127.0.0.0', 8), range('0.0.0.0', 8), range('169.254.0.0', 16), range('224.0.0.0', 4), range('100.64.0.0', 10), range('240.0.0.0', 4),
+  range('192.0.0.0', 24), range('198.18.0.0', 15),
+];
 const REFUSED_V6 = [range('::1', 128), range('::', 128), range('fe80::', 10), range('ff00::', 8)];
 const PRIVATE_V4 = [range('10.0.0.0', 8), range('172.16.0.0', 12), range('192.168.0.0', 16)];
 const PRIVATE_V6 = [range('fc00::', 7)];
-/** IPv6 forms that carry an IPv4 address in their last 32 bits: IPv4-mapped and the NAT64 well-known prefix */
-const EMBEDS_V4 = [range('::ffff:0:0', 96), range('64:ff9b::', 96)];
+/**
+ * IPv6 forms that carry an IPv4 address, with the byte offset of that address: IPv4-mapped `::ffff:0:0/96`, SIIT
+ * `::ffff:0:0:0/96`, NAT64 `64:ff9b::/96` and local-use NAT64 `64:ff9b:1::/48`, IPv4-compatible `::/96` (`::` and `::1` are
+ * refused before this) in the last 32 bits; 6to4 `2002::/16` in bits 16-47.
+ */
+const EMBEDS_V4: Array<[Range, number]> = [
+  [range('::ffff:0:0', 96), 12], [range('::ffff:0:0:0', 96), 12], [range('64:ff9b::', 96), 12], [range('64:ff9b:1::', 48), 12],
+  [range('::', 96), 12], [range('2002::', 16), 2],
+];
+/** the IPv4 inside an embedding IPv6 form, else the address itself */
+function effective(b: number[]): number[] {
+  if (b.length !== 16) return b;
+  const e = EMBEDS_V4.find(([r]) => inRange(b, r));
+  return e ? b.slice(e[1], e[1] + 4) : b;
+}
 
 /**
- * refused: loopback, `0.0.0.0/8`, `::`, link-local (incl. cloud metadata), multicast, `100.64.0.0/10`, broadcast, the container's
- * own subnets (`own`), and anything that is not an IP literal; private: `10/8`, `172.16/12`, `192.168/16`, `fc00::/7`;
- * IPv4-mapped and NAT64 addresses by their embedded IPv4; everything else public.
+ * refused: loopback, `0.0.0.0/8`, `::`, link-local (incl. cloud metadata), multicast, `100.64.0.0/10`, `240.0.0.0/4` (incl.
+ * broadcast), `192.0.0.0/24`, `198.18.0.0/15`, the container's own subnets (`own`), and anything that is not an IP literal;
+ * private: `10/8`, `172.16/12`, `192.168/16`, `fc00::/7`; the IPv6 forms of EMBEDS_V4 by their embedded IPv4; everything
+ * else public.
  */
 export function classifyAddress(ip: string, own: readonly Cidr[]): AddressClass {
   const b = toBytes(ip);
   if (!b) return 'refused';
-  const a = b.length === 16 && EMBEDS_V4.some((r) => inRange(b, r)) ? b.slice(12) : b;
+  if (b.length === 16 && REFUSED_V6.some((r) => inRange(b, r))) return 'refused';
+  const a = effective(b);
   const v4 = a.length === 4;
   if ((v4 ? REFUSED_V4 : REFUSED_V6).some((r) => inRange(a, r))) return 'refused';
   for (const c of own) {
     const cb = toBytes(c.addr);
-    if (cb && inRange(a, { bytes: cb, bits: c.bits })) return 'refused';
+    if (cb && (inRange(a, { bytes: cb, bits: c.bits }) || inRange(b, { bytes: cb, bits: c.bits }))) return 'refused';
   }
   if ((v4 ? PRIVATE_V4 : PRIVATE_V6).some((r) => inRange(a, r))) return 'private';
   return 'public';

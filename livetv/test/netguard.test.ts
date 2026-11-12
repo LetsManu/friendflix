@@ -34,6 +34,20 @@ describe('classifyAddress', () => {
     for (const r of vectors.rows) expect([r.ip, classifyAddress(r.ip, [])]).toEqual([r.ip, r.class]);
   });
 
+  it('every IPv6 form that embeds an IPv4 is classified by it; reserved IPv4 ranges are refused', () => {
+    const cases: Array<[string, string]> = [
+      ['::127.0.0.1', 'refused'], ['::192.168.1.5', 'private'], ['::192.0.2.10', 'public'],
+      ['::ffff:0:127.0.0.1', 'refused'], ['::ffff:0:a00:5', 'private'],
+      ['64:ff9b:1::7f00:1', 'refused'], ['64:ff9b:1:ffff::a00:5', 'private'], ['64:ff9b:2::7f00:1', 'public'],
+      ['2002:7f00:1::', 'refused'], ['2002:c0a8:0105::', 'private'], ['2002:c000:20a:ffff::1', 'public'],
+      ['240.0.0.1', 'refused'], ['255.255.255.254', 'refused'], ['192.0.0.170', 'refused'], ['198.18.0.1', 'refused'], ['198.19.1.1', 'refused'],
+      ['::', 'refused'], ['::1', 'refused'],
+    ];
+    for (const [ip, c] of cases) expect([ip, classifyAddress(ip, [])]).toEqual([ip, c]);
+    // an own IPv4 subnet also covers its 6to4 form
+    expect(classifyAddress('2002:ac12:9::1', [{ addr: '172.18.0.0', bits: 16 }])).toBe('refused');
+  });
+
   it('the container networks own subnets are refused even when private, in every form', () => {
     const own: Cidr[] = [{ addr: '172.18.0.2', bits: 16 }, { addr: 'fd00:ff::5', bits: 64 }, { addr: '192.0.2.0', bits: 28 }];
     expect(classifyAddress('172.18.200.1', own)).toBe('refused');
