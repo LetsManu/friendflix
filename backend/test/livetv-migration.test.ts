@@ -77,7 +77,7 @@ beforeAll(async () => {
 afterAll(async () => { await env.close(); });
 
 describe('migration 48', () => {
-  it('is the 48th migration (49 adds the XMLTV staging table; later ones append)', () => {
+  it('is the 48th migration (49 adds the XMLTV staging table, 50 the group indexes; later ones append)', () => {
     expect(MIGRATIONS.length).toBeGreaterThanOrEqual(49);
   });
 

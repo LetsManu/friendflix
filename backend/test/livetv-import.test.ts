@@ -330,6 +330,75 @@ describe('import merge (spec §10)', () => {
   });
 });
 
+describe('an admin edit while a refresh runs (1c final review I1)', () => {
+  /** runs `edit` once, when the refresh first asks livetv for `path`: the edit lands while the refresh is in flight */
+  const editDuring = (path: string, edit: () => Promise<unknown>) => {
+    const inner = env.ctx.fetchImpl;
+    let done = false;
+    env.ctx.fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!done && new URL(String(input)).pathname === path) { done = true; await edit(); }
+      return inner(input, init);
+    }) as typeof fetch;
+  };
+  const OLD = new Date(Date.now() - 3 * 24 * 3600_000);
+  const edited = (id: string, sql: string, vals: unknown[] = []) => () => setSource(id, `${sql}, updated_at = now()`, vals);
+
+  it('an edit made while the list is fetched is kept: no import, the source stays due, the next run picks it up', async () => {
+    const id = await addSource({ last_refresh_at: OLD });
+    editDuring('/v1/fetch/m3u', edited(id, 'skip_groups = $2, last_refresh_at = null', [['Kinder']]));
+    await refresh(id);
+    const s = await src(id);
+    expect(s.skip_groups).toEqual(['Kinder']);
+    expect(s.last_refresh_at).toBeNull();
+    expect(s.last_ok_at).toBeNull();
+    expect(await channels(id)).toHaveLength(0);
+    await refresh(id); // the next tick
+    expect((await channels(id)).map((c) => c.import_group).sort()).toEqual(['DE | Sport', 'DE | Sport', 'DE | Sport', 'Nachrichten']);
+    expect((await src(id)).last_refresh_at).not.toBeNull();
+  });
+
+  it('an edit that lands after the merge keeps its mark and its shrink-guard reset', async () => {
+    list = six().map((e, i) => ({ ...e, logo: `https://iptv.example.com/logo/${i}.png` }));
+    const id = await addSource({ last_refresh_at: OLD });
+    await setSource(id, `last_counts = '{"listed": 6}'`);
+    editDuring('/v1/fetch/logo', edited(id, `last_counts = last_counts - 'listed', last_refresh_at = null`));
+    await refresh(id);
+    const s = await src(id);
+    expect(s.last_refresh_at).toBeNull();
+    expect(s.last_counts).not.toHaveProperty('listed');
+    expect(await channels(id)).toHaveLength(6); // the merge itself was before the edit
+  });
+
+  it('a failure while the source was edited does not clear its mark either', async () => {
+    m3u = () => ({ status: 502 });
+    const id = await addSource({ last_refresh_at: OLD });
+    editDuring('/v1/fetch/m3u', edited(id, 'last_refresh_at = null'));
+    await refresh(id);
+    expect((await src(id)).last_refresh_at).toBeNull();
+  });
+
+  it('without an edit the refresh succeeds as before', async () => {
+    const id = await addSource({ last_refresh_at: OLD });
+    await refresh(id);
+    const s = await src(id);
+    expect(s.last_refresh_at!.getTime()).toBeGreaterThan(OLD.getTime());
+    expect(s.last_ok_at).not.toBeNull();
+    expect(s.last_error).toBeNull();
+    expect(s.last_counts).toMatchObject({ channels: 6, listed: 6 });
+  });
+
+  it('two imports creating the same new groups in different order do not deadlock', async () => {
+    const a = await addSource({ name: 'A' }), b = await addSource({ name: 'B' });
+    const names = Array.from({ length: 40 }, (_, i) => `Gemeinsam ${String(i).padStart(2, '0')}`);
+    const ents = (order: string[]) => order.map((g, i) => entry(`Kanal ${g}`, g, i));
+    await Promise.all([
+      mergeImport(env.ctx, await src(a), { entries: ents(names), listed: 40 }),
+      mergeImport(env.ctx, await src(b), { entries: ents([...names].reverse()), listed: 40 }),
+    ]);
+    expect(await groups()).toHaveLength(40);
+  });
+});
+
 describe('refresh failures (spec §19)', () => {
   it('three failures notify the admins once', async () => {
     m3u = () => ({ status: 502 });

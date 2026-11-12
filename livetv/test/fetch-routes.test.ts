@@ -106,6 +106,17 @@ describe('POST /v1/fetch/m3u', () => {
     expect(seen).toEqual([{ path: '/get.php', ua: 'Nordlicht-Box/2.0' }]);
   });
 
+  it('a near-max skip list (2 000 names of 200 characters, over 64 KB) is accepted; other routes keep the 64 KB cap', async () => {
+    const skipGroups = Array.from({ length: 2000 }, (_, i) => `${String(i).padStart(4, '0')}${'g'.repeat(196)}`);
+    expect(JSON.stringify({ skipGroups }).length).toBeGreaterThan(400_000);
+    const r = await post('/v1/fetch/m3u', { url: p('/get.php'), allowLan: false, skipGroups });
+    expect(r.status).toBe(200);
+    const over = await post('/v1/fetch/m3u', { url: p('/get.php'), allowLan: false, skipGroups: ['x'.repeat(520 * 1024)] });
+    expect(over.status).toBe(413);
+    const other = await post('/v1/fetch/xmltv', { url: p('/epg.xml.gz'), allowLan: false, channels: ['x'.repeat(70 * 1024)] });
+    expect(other.status).toBe(413);
+  });
+
   it('provider and fetch failures are 422 with a fixed code, never the URL', async () => {
     const cases: Array<[unknown, string]> = [
       [{ url: p('/html.m3u'), allowLan: false }, 'not_m3u'],

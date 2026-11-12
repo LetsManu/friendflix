@@ -5,7 +5,7 @@ import { LogoError, fetchLogo } from '../logo.js';
 import { M3uError, MAX_ENTRIES, USER_AGENT_RE, parseM3u, splitLines, type M3uResult } from '../m3u.js';
 import { probe, type StreamInput } from '../probe.js';
 import type { Run } from '../run.js';
-import type { Answer, Route } from '../server.js';
+import { MAX_BODY_M3U, type Answer, type Route } from '../server.js';
 import { XmltvError, parseXmltv, type XmlItem, type XmltvErrorCode } from '../xmltv.js';
 
 /**
@@ -117,7 +117,7 @@ export function fetchRoutes(deps: { guard: GuardDeps; run: Run }): Route[] {
   });
 
   return [
-    { method: 'POST', path: '/v1/fetch/m3u', handle: (c) => m3u(c.json) },
+    { method: 'POST', path: '/v1/fetch/m3u', maxBody: MAX_BODY_M3U, handle: (c) => m3u(c.json) },
     {
       method: 'POST', path: '/v1/fetch/logo',
       handle: async (c) => {

@@ -95,7 +95,8 @@ async function signedFetch(ctx: Ctx, method: Method, path: string, body: unknown
 /** a refused answer as an error: livetv's code when it is one, else livetv_error */
 async function refusal(r: Response): Promise<LivetvError> {
   const j = (await r.json().catch(() => null)) as { error?: unknown } | null;
-  const code = typeof j?.error === 'string' && CODE_RE.test(j.error) ? j.error : 'livetv_error';
+  // a 413 is `too_large` whatever the body says (the web shows its own text for that code)
+  const code = r.status === 413 ? 'too_large' : typeof j?.error === 'string' && CODE_RE.test(j.error) ? j.error : 'livetv_error';
   return new LivetvError(r.status, code);
 }
 

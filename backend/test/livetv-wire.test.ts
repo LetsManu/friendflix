@@ -73,4 +73,12 @@ describe('backend -> real livetv, keyed by the bootstrap service', () => {
       warn.mockRestore();
     }
   });
+  it('a near-max skip list (2 000 names of 200 characters) reaches the fetch route: livetv takes 512 KB there (1c final review I2)', async () => {
+    const skipGroups = Array.from({ length: 2000 }, (_, i) => `${String(i).padStart(4, '0')}${'g'.repeat(196)}`);
+    // an ftp URL is refused by the route itself (422 scheme): the body got through the cap and the signature
+    await expect(livetvCall(ctx(), 'POST', '/v1/fetch/m3u', { url: 'ftp://iptv.example.com/list.m3u', allowLan: false, skipGroups }))
+      .rejects.toMatchObject({ status: 422, code: 'scheme' });
+    await expect(livetvCall(ctx(), 'POST', '/v1/fetch/m3u', { url: 'ftp://iptv.example.com/list.m3u', allowLan: false, skipGroups: ['x'.repeat(600 * 1024)] }))
+      .rejects.toMatchObject({ status: 413, code: 'too_large' });
+  });
 });
