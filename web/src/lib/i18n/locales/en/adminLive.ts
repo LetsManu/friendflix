@@ -294,6 +294,10 @@ const dict: Translation<typeof de> = {
     loadFailed: 'Your own streams could not be loaded.',
   },
   ch: {
+    orderPicked: '{name} picked up, position {n} of {m}',
+    orderMoved: 'Position {n} of {m}',
+    orderDropped: '{name} dropped at position {n}',
+    orderCancelled: 'Move cancelled',
     caption: 'Channels',
     search: 'Search name, number or tvg-id',
     loadFailed: 'The channels could not be loaded.',

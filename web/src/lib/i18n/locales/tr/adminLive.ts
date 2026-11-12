@@ -294,6 +294,10 @@ const dict: Translation<typeof de> = {
     loadFailed: 'Kendi yayınların yüklenemedi.',
   },
   ch: {
+    orderPicked: '{name} alındı, konum {n}/{m}',
+    orderMoved: 'Konum {n}/{m}',
+    orderDropped: '{name} {n}. konuma bırakıldı',
+    orderCancelled: 'Taşıma iptal edildi',
     caption: 'Kanallar',
     search: 'Ad, numara veya tvg-id ara',
     loadFailed: 'Kanallar yüklenemedi.',

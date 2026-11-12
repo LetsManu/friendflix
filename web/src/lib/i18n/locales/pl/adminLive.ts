@@ -294,6 +294,10 @@ const dict: Translation<typeof de> = {
     loadFailed: 'Nie udało się wczytać własnych strumieni.',
   },
   ch: {
+    orderPicked: '{name} podniesiony, pozycja {n} z {m}',
+    orderMoved: 'Pozycja {n} z {m}',
+    orderDropped: '{name} upuszczony na pozycji {n}',
+    orderCancelled: 'Przenoszenie anulowane',
     caption: 'Kanały',
     search: 'Szukaj nazwy, numeru lub tvg-id',
     loadFailed: 'Nie udało się wczytać kanałów.',

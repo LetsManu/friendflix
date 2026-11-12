@@ -292,6 +292,11 @@ export default {
     loadFailed: 'Die eigenen Streams ließen sich nicht laden.',
   },
   ch: {
+    /** Kanäle → Reihenfolge: the polite announcements of the keyboard and drag order (spec §9.2) */
+    orderPicked: '{name} aufgenommen, Position {n} von {m}',
+    orderMoved: 'Position {n} von {m}',
+    orderDropped: '{name} abgelegt auf Position {n}',
+    orderCancelled: 'Verschieben abgebrochen',
     caption: 'Kanäle',
     search: 'Name, Nummer oder tvg-id suchen',
     loadFailed: 'Die Kanäle ließen sich nicht laden.',

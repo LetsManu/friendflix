@@ -294,6 +294,10 @@ const dict: Translation<typeof de> = {
     loadFailed: 'Tes flux personnels n’ont pas pu être chargés.',
   },
   ch: {
+    orderPicked: '{name} saisi, position {n} sur {m}',
+    orderMoved: 'Position {n} sur {m}',
+    orderDropped: '{name} déposé en position {n}',
+    orderCancelled: 'Déplacement annulé',
     caption: 'Chaînes',
     search: 'Rechercher un nom, un numéro ou un tvg-id',
     loadFailed: 'Les chaînes n’ont pas pu être chargées.',
