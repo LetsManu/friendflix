@@ -108,5 +108,6 @@
   .chk input { width: 20px; height: 20px; margin: 0; accent-color: var(--acc); flex: none; }
   .chk:has(input:disabled) { cursor: default; color: var(--mut); }
   .chk span { min-width: 0; overflow-wrap: anywhere; }
-  .min { margin: .2rem .5rem 0; min-height: 1.2em; font-size: .82rem; color: var(--hint, var(--mut)); }
+  /* two lines of room: the hint wraps in the 300 px popover (German, Polish), and the popover never grows when it appears */
+  .min { margin: .2rem .5rem 0; line-height: 1.35; height: calc(2 * 1.35em); font-size: .82rem; color: var(--hint, var(--mut)); }
 </style>

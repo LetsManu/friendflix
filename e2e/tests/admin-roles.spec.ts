@@ -78,6 +78,9 @@ test.describe('Rollen & Rechte: role matrix (desktop)', () => {
     await bar(page).getByRole('button', { name: 'Erneut anwenden' }).click();
     await expect(bar(page)).not.toContainText('Konten konnten nicht');
     await expect(bar(page)).toContainText('1 Änderung in 1 Rolle · betrifft 7 Personen');
+    // the newer edit is still staged: not "Änderungen gespeichert."
+    await expect(toasts(page).getByText('1 fehlgeschlagene Rolle gespeichert.')).toBeVisible();
+    await expect(toasts(page).getByText('Änderungen gespeichert.')).toHaveCount(0);
     expect(api.admin.matrix.puts).toEqual([{ role: 'guest', body: { maxParentalRating: 16 } }, { role: 'guest', body: { maxParentalRating: 16 } }]);
     await expect(cell(page, 'Freund, Watch-Partys: nicht erlaubt, nicht gespeichert')).toHaveClass(/staged/);
   });
@@ -87,12 +90,14 @@ test.describe('Rollen & Rechte: role matrix (desktop)', () => {
     await cell(page, 'Familie, Bibliotheken: alle').click();
     const pop = page.getByRole('dialog', { name: 'Familie · Bibliotheken' });
     await pop.getByRole('checkbox', { name: 'Alle Bibliotheken' }).uncheck();
+    const before = await pop.boundingBox();
     await pop.getByRole('checkbox', { name: 'Filme' }).uncheck();
     await pop.getByRole('checkbox', { name: 'Serien' }).uncheck();
     const last = pop.getByRole('checkbox', { name: 'Musik' });
     await expect(last).toBeChecked();
     await expect(last).toBeDisabled();
     await expect(pop.getByText('Mindestens eine Bibliothek bleibt freigegeben.')).toBeVisible();
+    expect(await pop.boundingBox()).toEqual(before); // the hint's room was there: the popover does not grow
     await page.keyboard.press('Escape');
     await expect(cell(page, 'Familie, Bibliotheken: 1 Bibliothek, nicht gespeichert')).toBeVisible();
     await expect(bar(page)).toContainText('1 Änderung in 1 Rolle');
@@ -227,5 +232,64 @@ test.describe('Rollen & Rechte: role matrix (desktop)', () => {
     await bar(page).getByRole('button', { name: 'Verwerfen' }).click();
     await nav.getByRole('link', { name: 'Nutzer' }).click();
     await expect(page).toHaveURL(/\/admin\/users$/);
+  });
+});
+
+/** toasts are lifted above the save bar by a transform that glides; without a bar they stand still */
+test.describe('Rollen & Rechte: toasts and the save bar', () => {
+  test.beforeEach(({ api }) => { api.asAdmin = true; });
+
+  /** the bottom edge of the toast area, every frame while a toast shows (until n samples) */
+  async function sampleToasts(page: Page, n: number): Promise<void> {
+    await page.evaluate((count) => {
+      const w = window as unknown as { __toastY: Array<[number, number]> };
+      w.__toastY = [];
+      const loop = () => {
+        const host = document.querySelector('.toasts');
+        if (host?.querySelector('li')) w.__toastY.push([performance.now(), host.getBoundingClientRect().bottom]);
+        if (w.__toastY.length < count) requestAnimationFrame(loop);
+      };
+      requestAnimationFrame(loop);
+    }, n);
+  }
+  const samples = (page: Page) => page.evaluate(() => (window as unknown as { __toastY: Array<[number, number]> }).__toastY);
+
+  test.describe('with motion', () => {
+    test.use({ reducedMotion: 'no-preference' });
+
+    test('the success toast glides down as the bar leaves (no snap)', async ({ page }) => {
+      await page.goto('/admin/roles');
+      await stageGuestRating(page);
+      await bar(page).getByRole('button', { name: 'Änderungen prüfen' }).click();
+      await sampleToasts(page, 60);
+      await page.getByRole('dialog', { name: 'Änderungen prüfen' }).getByRole('button', { name: 'Speichern' }).click();
+      await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
+      await expect.poll(async () => (await samples(page)).length, { timeout: 5000 }).toBe(60);
+      const ys = await samples(page);
+      const vh = await page.evaluate(() => window.innerHeight);
+      // starts lifted above the bar's room (96 px), ends at its own place (36 px up), monotonic in between
+      expect(ys[0]![1]).toBeCloseTo(vh - 36 - 96, 0);
+      expect(ys.at(-1)![1]).toBeCloseTo(vh - 36, 0);
+      const between = ys.filter(([, y]) => y > ys[0]![1] + 1 && y < ys.at(-1)![1] - 1);
+      expect(between.length).toBeGreaterThanOrEqual(2);
+      for (let i = 1; i < ys.length; i++) {
+        const [t0, y0] = ys[i - 1]!, [t1, y1] = ys[i]!;
+        expect(y1).toBeGreaterThanOrEqual(y0 - 0.5);
+        expect((y1 - y0) / Math.max(1, (t1 - t0) / 16)).toBeLessThan(40);
+      }
+    });
+  });
+
+  test('without a bar the toast stands still (cards below 900 px)', async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 900 });
+    await page.goto('/admin/roles');
+    const card = page.getByRole('form', { name: 'Freund' });
+    await card.getByRole('switch', { name: 'Umwandeln erlaubt' }).click();
+    await card.getByRole('button', { name: 'Speichern' }).click();
+    const t = toasts(page).getByText('Rolle „Freund“ gespeichert.');
+    await expect(t).toBeVisible();
+    const a = await toasts(page).boundingBox();
+    await page.waitForTimeout(350);
+    expect(await toasts(page).boundingBox()).toEqual(a);
   });
 });

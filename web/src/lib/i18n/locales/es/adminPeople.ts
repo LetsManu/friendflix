@@ -334,6 +334,7 @@ const dict: Translation<typeof de> = {
     cellTitle: '{role} · {field}',
     cellNameUnsaved: '{role}, {field}: {value}, sin guardar',
     libsMin: 'Al menos una biblioteca sigue compartida.',
+    retryDone: { one: '{n} rol fallido guardado.', many: '{n} roles fallidos guardados.', other: '{n} roles fallidos guardados.' },
   },
   devices: {
     thisDevice: 'Este dispositivo',

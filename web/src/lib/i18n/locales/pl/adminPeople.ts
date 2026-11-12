@@ -334,6 +334,7 @@ const dict: Translation<typeof de> = {
     cellTitle: '{role} · {field}',
     cellNameUnsaved: '{role}, {field}: {value}, niezapisane',
     libsMin: 'Co najmniej jedna biblioteka pozostaje udostępniona.',
+    retryDone: { one: 'Zapisano {n} rolę, której nie udało się zastosować.', few: 'Zapisano {n} role, których nie udało się zastosować.', many: 'Zapisano {n} ról, których nie udało się zastosować.', other: 'Zapisano {n} roli, których nie udało się zastosować.' },
   },
   devices: {
     thisDevice: 'To urządzenie',

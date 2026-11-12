@@ -334,6 +334,7 @@ const dict: Translation<typeof de> = {
     cellTitle: '{role} · {field}',
     cellNameUnsaved: '{role}, {field}: {value}, kaydedilmedi',
     libsMin: 'En az bir kütüphane paylaşılmış kalır.',
+    retryDone: { one: 'Başarısız {n} rol kaydedildi.', other: 'Başarısız {n} rol kaydedildi.' },
   },
   devices: {
     thisDevice: 'Bu cihaz',

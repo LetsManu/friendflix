@@ -147,7 +147,11 @@
     // a role written twice (failed before, staged again) counts with its latest answer
     const accounts = [...new Map(failures.map((f) => [f.role, f.failed])).values()].reduce((a, n) => a + n, 0);
     barError = hard ?? (failures.length ? partialText(accounts) : null);
-    if (!barError) toast.success(tr('adminPeople.roles.savedAll'));
+    // all written: "Änderungen gespeichert." only when nothing is left staged (a retry leaves newer edits staged)
+    if (!barError) {
+      const roles = new Set(jobs.map((j) => j.role)).size;
+      toast.success(Object.keys(stage).length ? tr('adminPeople.roles.retryDone', { n: roles }) : tr('adminPeople.roles.savedAll'));
+    }
   }
   /** *Speichern* in the review sheet: the failed roles again, then everything staged */
   const apply = () => run([...failures, ...stagedJobs()]);

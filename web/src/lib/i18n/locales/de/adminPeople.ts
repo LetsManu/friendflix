@@ -336,6 +336,7 @@ export default {
     cellTitle: '{role} · {field}',
     cellNameUnsaved: '{role}, {field}: {value}, nicht gespeichert',
     libsMin: 'Mindestens eine Bibliothek bleibt freigegeben.',
+    retryDone: { one: '{n} fehlgeschlagene Rolle gespeichert.', other: '{n} fehlgeschlagene Rollen gespeichert.' },
   },
   devices: {
     thisDevice: 'Dieses Gerät',
