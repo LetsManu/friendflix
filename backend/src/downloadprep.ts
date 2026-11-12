@@ -150,6 +150,11 @@ class Preparer {
   cancel(jobId: string) {
     const i = this.waiting.findIndex((w) => w.jobId === jobId);
     if (i >= 0) this.waiting.splice(i, 1)[0]!.drop();
+    this.forget(jobId);
+  }
+
+  /** A job left the queue without being admitted (cancelled, expired, removed): forget its wait notes. */
+  forget(jobId: string) {
     this.blocked.delete(jobId);
     this.slotWait.delete(jobId);
   }
@@ -188,7 +193,7 @@ class Preparer {
   private async run(jobId: string): Promise<void> {
     const { ctx } = this;
     const job = (await ctx.db.query<JobRow>('select * from download_jobs where id = $1', [jobId])).rows[0];
-    if (!job || (job.status !== 'queued' && job.status !== 'preparing')) return;
+    if (!job || (job.status !== 'queued' && job.status !== 'preparing')) { this.forget(jobId); await dropConvGrant(ctx, `dl:${jobId}`); return; }
     try {
       await mkdir(ctx.cfg.DOWNLOAD_DIR, { recursive: true });
       if (job.quality === 'original') {
@@ -205,6 +210,8 @@ class Preparer {
       if (!go.rowCount) { await dropConvGrant(ctx, `dl:${jobId}`); return; } // cancelled in the meantime
       await this.prepare(user, job);
     } catch (e) {
+      await dropConvGrant(ctx, `dl:${jobId}`); // admitted but not bound yet: free the slot now (a no-op once bound or dropped)
+      this.forget(jobId);
       if (e instanceof Cancelled) {
         await rm(partFile(ctx, jobId), { force: true });
         return;
@@ -335,20 +342,24 @@ class Preparer {
     // with a seam is checked (seamGaps) and, when it jumps, prepared again from the first segment in a fresh session. After
     // SEAM_RESTARTS such tries the last pass runs without pausing: one transcode from start to end.
     let resume = true;
+    let carry = `dl:${job.id}`; // the grant key the slot sits under: the hint, then each attempt's play session
     for (let attempt = 0; ; attempt++) {
       const src = await ctx.jf.downloadSource(user, job.item_id, { quality: job.quality, audioIndex, maxHeight, maxBitrate });
       if (!src.masterPath) throw new Error('no master playlist');
       const playSessionId = src.playSessionId; // the session the master playlist belongs to (stopEncoding / resume bookkeeping)
-      await bindConvGrant(ctx, `dl:${job.id}`, playSessionId); // the slot granted in run() now belongs to this session
+      await bindConvGrant(ctx, carry, playSessionId); // the slot granted in run() (or kept from the previous attempt) now belongs to this session
+      carry = playSessionId;
+      let retry = false;
       try {
         const jump = await this.pass(user, job, src.masterPath, src.mediaSourceId, playSessionId, { resume, pause: attempt < SEAM_RESTARTS });
         if (jump === null) break;
         this.log(`download job ${job.id}: timestamps jump where a restarted transcode was appended (${jump}); preparing again from the first segment`);
         resume = false;
+        retry = true; // keep the slot for the next attempt's session
       } finally {
         this.pausedJobs.delete(job.id);
         await ctx.jf.stopEncoding(user, playSessionId); // always: Jellyfin keeps the transcode (and its temp files) alive otherwise
-        await dropConvGrant(ctx, playSessionId); // the slot is free now, not after the grant's 30 s
+        if (!retry) await dropConvGrant(ctx, playSessionId); // the slot is free now, not after the grant's 30 s
       }
     }
     await this.finish(job);
@@ -471,6 +482,7 @@ export async function gcDownloads(ctx: Ctx, now = Date.now(), reserve = 0): Prom
       [id, protectAfter],
     );
     if (!del.rowCount) return;
+    preparer(ctx).forget(id);
     await rm(downloadFile(ctx, id), { force: true });
     await rm(partFile(ctx, id), { force: true });
     removed++;

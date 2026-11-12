@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { __resetConvMemo, admitConversion } from '../src/convbudget.js';
 import { preparer, type FfmpegRunner } from '../src/downloadprep.js';
+import { previews } from '../src/previews.js';
 import { fragment, initSegment } from './fmp4build.js';
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
@@ -16,7 +17,7 @@ import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const PS = 'ps-dl-budget1';
 const INIT = initSegment();
-const SEGS = 3;
+const SEGS = 6;
 type RawSession = Record<string, unknown>;
 const converting = (ps: string): RawSession => ({
   Id: `s-${ps}`, UserId: 'jf-u1', DeviceId: `dev-${ps}`, Client: 'Other app', DeviceName: 'Wohnzimmer',
@@ -29,6 +30,12 @@ let env: TestEnv;
 let dir: string;
 let raw: RawSession[] = [];
 let onSeg: (n: number) => void = () => undefined;
+let failInfo = false;
+/** every PlaybackInfo opens a new play session when set (a restarted pass gets its own) */
+let psCount = 0;
+let freshPs = false;
+let transcode = 0;
+let restartGap = 0;
 const runner: FfmpegRunner = { remux: async (input, output) => { await copyFile(input, output); } };
 const origSessions = () => origSessionsFn;
 let origSessionsFn: typeof env.ctx.jf.admin.transcodeSessions;
@@ -55,9 +62,9 @@ beforeAll(async () => {
     'GET /Sessions': () => ({ json: raw }),
     'GET /Items/[^/]+': (u) => ({ json: { Id: u.pathname.split('/').pop(), Name: 'Der Film', Type: 'Movie', RunTimeTicks: 90 * 600_000_000, UserData: {} } }),
     'GET /Users/[^/]+/Items/[^/]+': (u) => ({ json: { Id: u.pathname.split('/').pop(), Name: 'Der Film', Type: 'Movie', RunTimeTicks: 90 * 600_000_000, UserData: {} } }),
-    'POST /Items/[^/]+/PlaybackInfo': () => ({
+    'POST /Items/[^/]+/PlaybackInfo': () => failInfo ? { status: 500, raw: 'boom' } : ({
       json: {
-        PlaySessionId: PS,
+        PlaySessionId: freshPs ? `ps-seam-${++psCount}` : PS,
         MediaSources: [{
           Id: 'ms1', Container: 'mkv', Bitrate: 9_000_000, Size: 7_000_000_000, RunTimeTicks: 90 * 600_000_000,
           MediaStreams: [{ Type: 'Video', Index: 0, Codec: 'h264', Height: 1080 }, { Type: 'Audio', Index: 1, Codec: 'ac3', Language: 'eng', IsDefault: true }],
@@ -69,9 +76,9 @@ beforeAll(async () => {
     'GET /Videos/[^/]+/hls1/main/[^/]+': (u) => {
       const n = parseInt(u.pathname.split('/').pop()!, 10);
       if (n >= 0) onSeg(n);
-      return { raw: n < 0 ? INIT : fragment(n, { restartGapSec: 0 }) };
+      return { raw: n < 0 ? INIT : fragment(n, { restartGapSec: transcode * restartGap }) };
     },
-    'DELETE /Videos/ActiveEncodings': () => ({ status: 204 }),
+    'DELETE /Videos/ActiveEncodings': () => { transcode++; return { status: 204 }; },
   }, { ctxPatch: (c) => { c.cfg = { ...c.cfg, DOWNLOAD_DIR: dir }; } });
   await env.login();
   origSessionsFn = env.ctx.jf.admin.transcodeSessions;
@@ -86,6 +93,7 @@ beforeEach(async () => {
   __resetConvMemo();
   raw = [];
   onSeg = () => undefined;
+  failInfo = false; freshPs = false; psCount = 0; transcode = 0; restartGap = 0;
   for (const k of await env.kv.keys('conv:')) await env.kv.del(k);
   await env.pool.query('delete from downloads'); await env.pool.query('delete from download_jobs');
 });
@@ -158,4 +166,36 @@ describe('download preparation and the conversion budget', () => {
     await p.tick(); await p.whenIdle();
     expect(await status(id)).toMatchObject({ status: 'ready' });
   }, 15_000);
+
+  it('a failure before the play session is known frees the slot at once', async () => {
+    failInfo = true; // the first downloadSource throws
+    const id = await job();
+    const p = preparer(env.ctx);
+    const warn = console.warn;
+    console.warn = () => undefined;
+    try { await p.tick(); await p.whenIdle(); } finally { console.warn = warn; }
+    expect(await status(id)).toMatchObject({ status: 'failed' });
+    expect(await grants()).toEqual([]);
+  });
+
+  it('a seam restart keeps the slot: every attempt binds its own play session', async () => {
+    freshPs = true;
+    restartGap = 0.03;
+    const pv = previews(env.ctx);
+    const seen: string[][] = [];
+    onSeg = (n) => {
+      if (n === 0) void grants().then((g) => seen.push(g));
+      if (n === 2) { pv.paused = true; setTimeout(() => { pv.paused = false; }, 15); }
+    };
+    const id = await job();
+    const p = preparer(env.ctx);
+    try { await p.tick(); await p.whenIdle(); } finally { pv.paused = false; }
+    expect(await status(id)).toMatchObject({ status: 'ready' });
+    expect(psCount).toBe(3);
+    expect(seen).toHaveLength(3);
+    expect(seen[0]).toEqual(['conv:grant:ps-seam-1']);
+    expect(seen[1]).toEqual(['conv:grant:ps-seam-2']); // moved over from the first attempt's session, not lost
+    expect(seen[2]).toEqual(['conv:grant:ps-seam-3']);
+    expect(await grants()).toEqual([]);
+  });
 });
