@@ -50,7 +50,7 @@ describe('hwLabel', () => {
 });
 
 describe('measuredLine', () => {
-  const bench = { jellyfin: { speed: 4.6, hwAccel: 'qsv', at: at(3, 10) }, livetv: { speed: 4.4, encoder: 'h264_qsv', at: at(3, 9) }, recommended: 3, stale: false, noRealtime: false };
+  const bench = { jellyfin: { speed: 4.6, hwAccel: 'qsv', at: at(3, 10) }, livetv: { speed: 4.4, encoder: 'h264_qsv', at: at(5, 0) }, recommended: 3, stale: false, noRealtime: false };
   const now = new Date(2026, 10, 12, 9, 0);
 
   it('German: speed, engine, Live-TV, recommendation, last check today', () => {
@@ -70,6 +70,10 @@ describe('measuredLine', () => {
   it('never measured: the default is named; on a server that is not measured the line is empty', () => {
     expect(measuredLine(view({ auto: 2 }), now)).toBe('Noch nicht gemessen · bis dahin 2');
     expect(measuredLine(view({ measure: { running: false, busy: null, last: { outcome: 'unsupported', at: null } } }), now)).toBe('');
+  });
+  it('the check time is the Jellyfin record\'s even when Live TV was measured later; Live TV stands in without a Jellyfin record', () => {
+    expect(measuredLine(view({ bench }), now)).toContain('geprüft heute 03:10');
+    expect(measuredLine(view({ bench: { ...bench, jellyfin: null } }), now)).toBe('Live-TV 4,4× · empfohlen 3 · geprüft heute 05:00');
   });
   it('an unparsable time never shows NaN', () => {
     const line = measuredLine(view({ bench: { ...bench, jellyfin: { ...bench.jellyfin, at: 'x' }, livetv: null } }), now);

@@ -131,7 +131,7 @@ test.describe('admin: Umwandlungen card on the Wiedergabe-Check page', () => {
     const cases: Array<[number, Record<string, unknown>, string]> = [
       [409, { error: 'running' }, 'Es läuft schon eine Messung.'],
       [409, { error: 'busy', reason: 'unknown' }, 'Der Medienserver antwortet gerade nicht, deshalb lässt sich noch nicht sagen, ob jemand schaut.'],
-      [409, { error: 'no_user' }, 'Es gibt kein Admin-Konto, mit dem der Medienserver für die Messung umwandeln kann.'],
+      [409, { error: 'no_user' }, 'Für die Messung fehlt ein Admin-Konto, mit dem der Medienserver umwandeln kann.'],
       [409, { error: 'unsupported' }, 'Messung nur mit Jellyfin'],
       [429, { error: 'rate_limited' }, 'Zu viele Messungen in kurzer Zeit. Bitte in ein paar Minuten noch einmal versuchen.'],
     ];
@@ -159,7 +159,7 @@ test.describe('admin: Umwandlungen card on the Wiedergabe-Check page', () => {
     await expect(card(page).getByText(/Letzte Messung nicht möglich: kein geeigneter Titel/)).toBeVisible();
   });
 
-  test('never measured, too slow and out of date are said in words', async ({ page, api }) => {
+  test('never measured is said in words', async ({ page, api }) => {
     api.admin.conv.bench = { jellyfin: null, livetv: null, recommended: null, stale: false, noRealtime: false };
     await page.goto('/admin/playback');
     await expect(card(page).getByText('Noch nicht gemessen · bis dahin 3')).toBeVisible();
@@ -190,6 +190,21 @@ test.describe('admin: Umwandlungen card on the Wiedergabe-Check page', () => {
     await page.clock.fastForward(5500);
     await expect(c.getByText('3 von 3 belegt')).toBeVisible();
     await expect(c.getByRole('list', { name: 'Läuft gerade' })).toContainText('Saltwater Almanac');
+  });
+
+  test('a session that appears does not move any control (the list is last)', async ({ page, api }) => {
+    await page.clock.install();
+    await page.goto('/admin/playback');
+    const c = card(page);
+    await expect(c.getByText('2 von 3 belegt')).toBeVisible();
+    const targets = [c.getByRole('button', { name: 'Neu messen' }), c.getByRole('radio', { name: 'Eigener Wert' }), c.getByRole('radio', { name: 'Live-TV zuerst' }), c.getByRole('radio', { name: 'Gleichrangig' })];
+    const ys = async () => Promise.all(targets.map(async (t) => (await t.boundingBox())!.y));
+    const before = await ys();
+    api.admin.conv.running = [...api.admin.conv.running, { kind: 'live', hevc: false, label: 'Saltwater Almanac', since: null, device: null }];
+    await page.clock.fastForward(5500);
+    await expect(c.getByText('3 von 3 belegt')).toBeVisible();
+    await expect(c.getByRole('list', { name: 'Läuft gerade' }).getByRole('listitem')).toHaveCount(3);
+    await expect.poll(ys).toEqual(before);
   });
 
   test('Admin → Einstellungen shows proper labels for the two keys', async ({ page }) => {

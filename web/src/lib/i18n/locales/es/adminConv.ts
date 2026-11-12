@@ -45,7 +45,7 @@ const dict: Translation<typeof de> = {
     label: 'Prioridad',
     films: 'Películas y series primero',
     live: 'TV en directo primero',
-    equal: 'Igualdad',
+    equal: 'Misma prioridad',
     hint: {
       films: 'La TV en directo deja una plaza libre para películas y series (a partir de 2 plazas).',
       live: 'Las películas y series dejan una plaza libre para la TV en directo (a partir de 2 plazas).',

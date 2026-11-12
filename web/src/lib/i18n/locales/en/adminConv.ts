@@ -63,7 +63,7 @@ const dict: Translation<typeof de> = {
   err: {
     running: 'A measurement is already running.',
     busyUnknown: 'The media server is not answering right now, so it is not clear whether anyone is watching.',
-    noUser: 'There is no admin account the media server can convert as for the measurement.',
+    noUser: 'The measurement needs an admin account the media server can convert as, and there is none.',
     unsupported: 'Measuring works only with Jellyfin',
     tooMany: 'Too many measurements in a short time. Please try again in a few minutes.',
     locked: 'Set in the environment – cannot be changed here.',

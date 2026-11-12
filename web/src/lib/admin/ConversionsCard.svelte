@@ -118,8 +118,8 @@
 <AdminCard title={$t('adminConv.title')} description={$t('adminConv.intro')}>
   <svelte:fragment slot="actions">
     {#if link}<Button variant="secondary" href={link}>{$t('adminConv.details')}</Button>{/if}
-    {#if view && !readOnly && !unsupported}
-      <Button icon="refresh" pending={measuring} disabled={Boolean(reason) && !measuring} aria-describedby={ids.note} on:click={measure}>{$t('adminConv.remeasure')}</Button>
+    {#if !readOnly && !unsupported}
+      <Button icon="refresh" pending={measuring} disabled={!view || (Boolean(reason) && !measuring)} aria-describedby={ids.note} on:click={measure}>{$t('adminConv.remeasure')}</Button>
     {/if}
   </svelte:fragment>
 
@@ -139,21 +139,6 @@
         </span>
       {/each}
     </div>
-
-    {#if view.running.length}
-      <ul class="runs" aria-label={$t('adminConv.running.title')}>
-        {#each view.running as r, i (i)}
-          <li>
-            <Icon name={ICON[segOf(r.kind)]} size={18} />
-            <span class="what"><b>{r.label ?? kindText(r.kind)}</b><span class="kind">{kindText(r.kind)}</span></span>
-            <span class="meta">{runningSince(r.since, now)}</span>
-            <span class="meta dev">{r.device ?? '–'}</span>
-          </li>
-        {/each}
-      </ul>
-    {:else}
-      <p class="muted none">{$t('adminConv.running.none')}</p>
-    {/if}
 
     <p class="line meas" data-testid="conv-measured">{measuredLine(view, now)}</p>
     <div class="line warns" data-testid="conv-warn">
@@ -199,13 +184,29 @@
         </div>
       </div>
     {/if}
+
+    <h3 class="rh">{$t('adminConv.running.title')}</h3>
+    {#if view.running.length}
+      <ul class="runs" aria-label={$t('adminConv.running.title')}>
+        {#each view.running as r, i (i)}
+          <li>
+            <Icon name={ICON[segOf(r.kind)]} size={18} />
+            <span class="what"><b>{r.label ?? kindText(r.kind)}</b><span class="kind">{kindText(r.kind)}</span></span>
+            <span class="meta">{runningSince(r.since, now)}</span>
+            <span class="meta dev">{r.device ?? '–'}</span>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="muted none">{$t('adminConv.running.none')}</p>
+    {/if}
   {/if}
 </AdminCard>
 
 <style>
   .big { font-size: 1.7rem; font-weight: 800; margin: 0 0 .7rem; font-variant-numeric: tabular-nums; }
   .muted { color: var(--mut); }
-  .none { margin: .8rem 0 0; min-height: 1.45em; }
+  .none { margin: .3rem 0 0; min-height: 1.45em; }
   .state { display: flex; flex-direction: column; align-items: center; gap: .6rem; text-align: center; padding: 1.2rem 1rem; }
   .state p { margin: 0; } .state :global(svg) { color: var(--err); }
 
@@ -218,7 +219,8 @@
   .seg-cell.over { border: 2px solid var(--err); }
   .seg-cell.over :global(svg) { color: var(--err); }
 
-  .runs { list-style: none; margin: .8rem 0 0; padding: 0; display: grid; gap: .3rem; }
+  .rh { font-size: .95rem; margin: 1.3rem 0 .2rem; }
+  .runs { list-style: none; margin: .3rem 0 0; padding: 0; display: grid; gap: .3rem; }
   .runs li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: .2rem .7rem; min-height: 44px; padding: .2rem .1rem; border-bottom: 1px solid rgba(255, 255, 255, .06); }
   .what { display: flex; flex-direction: column; min-width: 0; }
   .what b { overflow-wrap: anywhere; }

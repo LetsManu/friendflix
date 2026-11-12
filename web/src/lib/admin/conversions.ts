@@ -80,8 +80,9 @@ export function measuredLine(v: ConversionsView, now: Date): string {
   if (jellyfin) parts.push(tr('adminConv.measured', { s: speed(jellyfin.speed), engine: `Jellyfin, ${hwLabel(jellyfin.hwAccel)}` }));
   if (livetv) parts.push(tr('adminConv.liveSpeed', { s: speed(livetv.speed) }));
   if (recommended !== null) parts.push(tr('adminConv.recommended', { n: fmtNumber(recommended) }));
-  const times = [jellyfin?.at, livetv?.at].flatMap((x) => { const d = validDate(x); return d ? [d] : []; });
-  if (times.length) parts.push(tr('adminConv.checked', { when: whenText(new Date(Math.max(...times.map((d) => d.getTime()))), now) }));
+  // the check time is the Jellyfin record's; the Live TV one only stands in while there is no Jellyfin record
+  const checked = validDate(jellyfin ? jellyfin.at : livetv?.at);
+  if (checked) parts.push(tr('adminConv.checked', { when: whenText(checked, now) }));
   return parts.join(' · ');
 }
 
