@@ -30,6 +30,8 @@ import { checkItem, checkTitles, libraryCounts } from '../viewcheck.js';
 import { dropPartyDenied, dropPartyPeers } from '../partySockets.js';
 import { policyChanged } from '../hooks.js';
 import { forgetAuth } from './internal.js';
+import { setUserGroups, unknownGroups, userGroups } from '../livetv/groups.js';
+import { livetvCheck } from '../livetv/rights.js';
 import { dropProfileSessions, profileSids } from './profiles.js';
 
 const uuid = z.guid();
@@ -44,6 +46,8 @@ const checkBody = z.object({
 }).refine((b) => (b.itemId === undefined) !== (b.query === undefined), { path: ['query'], message: 'itemId or query' });
 /** ISO date-time with offset, or null (= no end) */
 const accessUntil = z.iso.datetime({ offset: true }).nullable();
+/** PUT /api/admin/users/:id/livetv-groups: the account's Live TV group exceptions, replaced as a whole (spec §8) */
+const livetvGroupsBody = z.object({ allow: z.array(uuid).max(500), deny: z.array(uuid).max(500) }).strict();
 const toDate = (s: string | null) => (s === null ? null : new Date(s));
 /** the approved person's /pending page may answer "approved" this long (as long as its cookie lives) */
 const PENDING_NOTICE_TTL = 30 * 86400;
@@ -604,7 +608,23 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     const { profile: pid } = z.object({ profile: uuid.optional() }).parse(req.query);
     const profile = pid ? await getProfile(ctx, user.id, pid) : null;
     if (pid && !profile) throw new HttpError(404, 'not_found');
-    return rightsView(ctx, user, profile);
+    const [view, livetvGroups] = await Promise.all([rightsView(ctx, user, profile), userGroups(ctx, user.id)]);
+    return { ...view, livetvGroups };
+  });
+
+  // the Live TV group exceptions (spec §8): allow adds a group to what the role sees, deny removes one; an unreleased group stays
+  // invisible either way (ruling 39). A group in both lists is 400; the admin role sees every group, so it takes none (400).
+  app.put('/api/admin/users/:id/livetv-groups', admin, async (req, reply) => {
+    const user = await userOr404(idParam(req));
+    const p = livetvGroupsBody.safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: 'invalid', field: String(p.error.issues[0]?.path[0] ?? 'body') });
+    const { allow, deny } = p.data;
+    const denied = new Set(deny);
+    if (allow.some((g) => denied.has(g))) return reply.code(400).send({ error: 'invalid', field: 'deny' });
+    if (user.role === 'admin' && (allow.length || deny.length)) return reply.code(400).send({ error: 'admin_groups_locked' });
+    if ((await unknownGroups(ctx, allow)).length) return reply.code(400).send({ error: 'invalid', field: 'allow' });
+    if ((await unknownGroups(ctx, deny)).length) return reply.code(400).send({ error: 'invalid', field: 'deny' });
+    return { livetvGroups: await setUserGroups(ctx, req.user!.id, user.id, allow, deny) };
   });
 
   // partial: an omitted field stays, null goes back to the role, an override equal to the role is not stored. 502 policy_partial when
@@ -635,16 +655,17 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     const b = checkBody.parse(req.body);
     const { user, profile } = await checkProfile(id, b.profileId);
     const hits = b.itemId !== undefined ? await checkItem(ctx, user, profile, b.itemId) : await checkTitles(ctx, user, profile, b.query!);
+    const livetv = await livetvCheck(ctx, user, { id: profile.id, kids: Boolean(profile.kids) });
     await auditInTx(ctx, req.user!.id, 'user.check_viewed', id, { profile: profile.id, hits: hits.length });
-    return { hits };
+    return { hits, livetv };
   });
   app.get('/api/admin/users/:id/check', checkOpts, async (req) => {
     const id = idParam(req);
     const { profile: pid } = z.object({ profile: uuid }).parse(req.query);
     const { user, profile } = await checkProfile(id, pid);
-    const libraries = await libraryCounts(ctx, user, profile);
+    const [libraries, livetv] = await Promise.all([libraryCounts(ctx, user, profile), livetvCheck(ctx, user, { id: profile.id, kids: Boolean(profile.kids) })]);
     await auditInTx(ctx, req.user!.id, 'user.check_viewed', id, { profile: profile.id, libraries: libraries.length });
-    return { libraries };
+    return { libraries, livetv };
   });
 
   // legacy (one release): the old editor's five fields on the /rights write (audited user.rights); answer and 502 `jellyfin` unchanged

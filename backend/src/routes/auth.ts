@@ -34,6 +34,7 @@ import { postplayEnabled } from './postplay.js';
 import { isSetupSession, setupSessionHash } from '../setup/code.js';
 import { claimSetup, isSetupComplete, SETUP_EXPIRED, SETUP_STALE } from '../setup/state.js';
 import type { UserRow } from '../types.js';
+import { livetvFeature } from '../livetv/rights.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, languageFromAcceptLanguage, profileLanguage, roleLabel } from '../i18n.js';
 
 export { PENDING_COOKIE, RESTORE_COOKIE } from '../loginFinish.js';
@@ -336,8 +337,12 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
       suggestedLanguage: languageFromAcceptLanguage(req.headers['accept-language']),
       /** media server kind + what it supports: the client hides UI for anything missing (see media/types.ts) */
       server: { kind: ctx.jf.kind, capabilities: publicCapabilities(ctx.jf.capabilities) },
-      /** optional services of this instance: requests = a request service is set up (else the client hides wishes and requests) */
-      features: { requests: requestsEnabled(ctx), postplay: postplayEnabled(ctx), surround: ctx.jf.kind === 'jellyfin' && ctx.cfg.SURROUND_AUDIO !== 'false' },
+      /** optional services of this instance: requests = a request service is set up (else the client hides wishes and requests);
+       *  livetv = installed, the account has liveTv and the active profile sees at least one channel (Live TV ruling 13) */
+      features: {
+        requests: requestsEnabled(ctx), postplay: postplayEnabled(ctx), surround: ctx.jf.kind === 'jellyfin' && ctx.cfg.SURROUND_AUDIO !== 'false',
+        livetv: req.profile ? await livetvFeature(ctx, u, { id: req.profile.id, kids: Boolean(req.profile.kids) }) : false,
+      },
     };
   });
 
