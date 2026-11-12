@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Locator, Page } from '@playwright/test';
 import { expect, test, type MockState } from '../fixtures.js';
+import { mockLivePlayer } from '../helpers.js';
 import { livePlaylist, patchChannel, type LivetvMock } from '../mocks/livetv.js';
 
 // The live player on a desktop (Task 39, spec §12, §21): it starts and plays a mocked live HLS stream with a rewind buffer
@@ -33,7 +34,7 @@ async function arm(page: Page, api: MockState, o: { dvrMin?: number; runningMin?
   api.livetv.dvrPlaylist = true;
   if (o.dvrMin !== undefined) api.livetv.dvrSeconds = o.dvrMin * 60;
   api.livetv.liveStart = Date.now() - (o.runningMin ?? 10) * MIN;
-  await page.route('**/api/playback/timing', (r) => r.fulfill({ status: 204 }));
+  await mockLivePlayer(page);
   api.livetv.timeShift = NOW.getTime() - Date.now();
   await page.clock.install({ time: NOW });
 }
