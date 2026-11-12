@@ -100,8 +100,8 @@ const ms = (x: number) => Math.max(0, Math.round(x));
 
 /** transcode reasons that make the server convert the picture itself (a bitrate / height cap below the source, a codec the device lacks) */
 const VIDEO_REASONS = new Set(['videoCodec', 'height', 'network', 'remoteCap', 'uploadCap', 'roleCap', 'manual']);
-/** reasons where the picture is usually copied and only the audio or the container changes */
-const REMUX_REASONS = new Set(['audioCodec', 'audioTrack', 'container']);
+/** reasons where the picture is usually copied and only the audio or the container changes (`serverBusy`: the conversion budget was full, the copy plays instead) */
+const REMUX_REASONS = new Set(['audioCodec', 'audioTrack', 'container', 'serverBusy']);
 /**
  * How the stream reaches the player: the server's own answer (`videoCopy`, from its transcode info) wins; without it the transcode
  * reason gives a best guess; null when neither says it.

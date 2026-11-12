@@ -73,7 +73,8 @@ function time(b: Obj, field: string): number {
   return v;
 }
 
-function streamInput(v: unknown): StreamInput {
+/** a pulled or pushed input (`/v1/probe`, `/v1/streams`); throws `Invalid('input')` */
+export function streamInput(v: unknown): StreamInput {
   const i = obj(v, 'input');
   if ('push' in i) {
     if (typeof i.push !== 'string' || !/^[\w-]{1,100}$/.test(i.push)) throw new Invalid('input');

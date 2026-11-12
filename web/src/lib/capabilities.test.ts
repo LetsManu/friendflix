@@ -44,10 +44,16 @@ describe('server capabilities', () => {
 describe('instance features', () => {
   it('default: everything on except surround (before /api/me, older backends); only an explicit false turns requests off', () => {
     expect(get(features)).toEqual(ALL_FEATURES);
-    for (const raw of [undefined, null, 'x', {}, { requests: 'no' }, { requests: true }]) expect(featuresFrom(raw)).toEqual({ requests: true, postplay: true, surround: false });
-    expect(featuresFrom({ requests: false })).toEqual({ requests: false, postplay: true, surround: false });
-    expect(featuresFrom({ postplay: false })).toEqual({ requests: true, postplay: false, surround: false });
+    for (const raw of [undefined, null, 'x', {}, { requests: 'no' }, { requests: true }]) expect(featuresFrom(raw)).toEqual({ requests: true, postplay: true, surround: false, livetv: false });
+    expect(featuresFrom({ requests: false })).toEqual({ requests: false, postplay: true, surround: false, livetv: false });
+    expect(featuresFrom({ postplay: false })).toEqual({ requests: true, postplay: false, surround: false, livetv: false });
     expect(featuresFrom({ surround: true }).surround).toBe(true);
+  });
+  it('live TV is off unless the answer says an explicit true', () => {
+    expect(featuresFrom({}).livetv).toBe(false);
+    expect(featuresFrom({ livetv: true }).livetv).toBe(true);
+    for (const v of ['true', 1, 'yes', null, false]) expect(featuresFrom({ livetv: v }).livetv).toBe(false);
+    expect(featuresOfMe({ features: { livetv: true } }).livetv).toBe(true);
   });
   it('without a request service the upcoming and admin requests links are hidden; /requests stays (reminders)', () => {
     const off = featuresFrom({ requests: false });

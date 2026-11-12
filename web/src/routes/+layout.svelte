@@ -34,7 +34,7 @@
   import Intro from '#lib/Intro.svelte';
   import { loadIntroSettings, markSessionSeen, readSessionSeen, shouldPlayIntro } from '#lib/intro';
   import { mobile } from '#lib/viewport';
-  import { isRailTop, isTabActive, TV_RAIL } from '#lib/menu';
+  import { isRailTop, isTabActive, LIVE_RAIL, liveTabs, TV_RAIL } from '#lib/menu';
   import { deskGuardBudget, tvGuardBudget, deskPagePlan, frameGuard, framesIdle, framesResume, isDetailPage, motionLevel, motionTripped, stagger, tvPagePlan, VT_ART, watchFrames } from '#lib/tv/motion';
   import { motionAllowed } from '#lib/preview';
   import TvRail from '#lib/tv/TvRail.svelte';
@@ -482,7 +482,8 @@
 
   // ---- TV page transitions (spec 5.2; plan in lib/tv/motion.ts): artwork -> detail backdrop morph, rail pages slide, else crossfade ----
   let pageFadeIn = false; // no View Transitions API (TV, desktop detail): the new page fades in (afterNavigate)
-  const railAt = (p: string) => TV_RAIL.findIndex(([href]) => isTabActive(href, p));
+  $: tvRail = liveTabs(TV_RAIL, LIVE_RAIL, $features.livetv);
+  const railAt = (p: string) => tvRail.findIndex(([href]) => isTabActive(href, p));
   const onScreen = (el: Element | null | undefined): el is HTMLElement => {
     const r = el?.getBoundingClientRect();
     return !!r && r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
@@ -834,6 +835,7 @@
           <nav class="chipbar" class:tucked={mTucked} aria-label={$t('shell.cats.title')} inert={mTucked || undefined}>
             <a class="chip" href="/browse/series" class:on={path.startsWith('/browse/series')} aria-current={path.startsWith('/browse/series') ? 'page' : undefined}>{$t('shell.nav.series')}</a>
             <a class="chip" href="/browse/movies" class:on={path.startsWith('/browse/movies')} aria-current={path.startsWith('/browse/movies') ? 'page' : undefined}>{$t('shell.nav.movies')}</a>
+            {#if $features.livetv}<a class="chip" href="/live" class:on={path.startsWith('/live')} aria-current={path.startsWith('/live') ? 'page' : undefined}>{$t('shell.nav.live')}</a>{/if}
             <button type="button" class="chip" aria-haspopup="dialog" aria-expanded={catOpen} on:click={openCats}>{$t('shell.nav.categories')}<Icon name="chevron-down" size={16} /></button>
           </nav>
         {/if}

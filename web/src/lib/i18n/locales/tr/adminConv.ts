@@ -5,7 +5,7 @@ import type { Translation } from '../../types';
 
 const dict: Translation<typeof de> = {
   title: 'Dönüştürmeler',
-  intro: 'Sunucunun aynı anda kaç videoyu dönüştürebileceği: filmler ve diziler, canlı TV ve kayıtlar birlikte.',
+  intro: 'Sunucunun aynı anda kaç videoyu dönüştürebileceği: filmler ve diziler, canlı TV, kayıtlar ve indirmeler birlikte.',
   used: '{u} / {l} kullanımda',
   measured: '{s}× gerçek zamanlı ölçüldü ({engine})',
   liveSpeed: 'Canlı TV {s}×',

@@ -12,6 +12,7 @@
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import { dialogKeys } from '#lib/actions';
   import { scrimFade, sheetSlide, twoWay } from '#lib/glass/fx';
+  import { sheetRoom } from '#lib/glass/sheetRoom';
   import { SCRIM_MENU } from '#lib/glass/tone';
   import Icon from '#lib/Icon.svelte';
   import { locale, t } from '#lib/i18n';
@@ -73,7 +74,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="frost-dim" aria-hidden="true" on:click={close} transition:scrimFade|global></div>
   <div class="rs frost frost-safe frost-sheet" bind:this={panel} role="dialog" aria-modal="true" aria-labelledby="{id}-t" tabindex="-1"
-    style="--fr-scrim-safe:{SCRIM_MENU}" use:dialogKeys={{ close }} transition:slide|global>
+    style="--fr-scrim-safe:{SCRIM_MENU}" use:dialogKeys={{ close }} use:sheetRoom={'right'} transition:slide|global>
     <header>
       <h2 id="{id}-t">{$locale && $t('adminPeople.roles.sheetTitle', { name: roleName(role) })}</h2>
       <button type="button" class="x" aria-label={$t('common.close')} title={$t('common.close')} on:click={close}><Icon name="x" size={20} /></button>
@@ -99,6 +100,16 @@
           {/each}
         </section>
       {/each}
+      <!-- Live TV spec §6.1, §8: the role's channel groups as chips, read-only; the groups are edited under Gruppen & Rechte -->
+      {#if matrix.features.livetv}
+        <section aria-labelledby="{id}-lg">
+          <h3 id="{id}-lg">{$t('adminLive.grp.rowLabel')}</h3>
+          {#if role.livetvGroups?.length}
+            <ul class="gchips">{#each role.livetvGroups as n (n)}<li>{n}</li>{/each}</ul>
+          {:else}<p class="note">{$t('adminLive.grp.rowNone')}</p>{/if}
+          <a class="glink" href="/admin/livetv?tab=groups">{$t('adminLive.grp.rowLink')}</a>
+        </section>
+      {/if}
     </div>
   </div>
 </div>
@@ -112,10 +123,16 @@
   .x { flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; display: grid; place-items: center; border-radius: 50%; background: transparent; color: #fff; }
   .x:hover:not(:disabled) { background: rgba(255, 255, 255, .1); }
   .body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: .4rem 18px calc(18px + var(--safe-bottom, 0px)); display: flex; flex-direction: column; gap: 1.1rem; }
+  /* full width (phones): no room beside it for a toast (sheetRoom), so its end keeps the toast's room free: the last field scrolls above it */
+  @media (max-width: 440px) { .body { padding-bottom: calc(18px + var(--safe-bottom, 0px) + var(--tabbar-h, 64px) + 4.5rem); } }
   section { display: flex; flex-direction: column; gap: .8rem; min-width: 0; }
   section + section { border-top: 1px solid rgba(255, 255, 255, .12); padding-top: .9rem; }
   h3 { margin: 0; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: rgba(255, 255, 255, .9); }
   .note { margin: 0; font-size: .85rem; color: rgba(255, 255, 255, .9); }
+  .gchips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }
+  .gchips li { display: inline-flex; align-items: center; min-height: 32px; padding: 0 .8rem; border-radius: 99px; background: rgba(var(--fr-scrim-rgb), .25); font-size: .88rem; font-weight: 600; overflow-wrap: anywhere; }
+  .glink { display: inline-flex; align-items: center; align-self: flex-start; min-height: 44px; color: #fff; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  .glink:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 4px; }
   /* a staged field: the amber rail of the matrix's staged cell, on the left of its control */
   .row { padding-left: .7rem; border-left: 3px solid transparent; }
   .row.staged { border-left-color: var(--warn); }

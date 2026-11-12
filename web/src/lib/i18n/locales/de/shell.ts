@@ -17,6 +17,7 @@ export default {
     /** label while no request service is set up */
     newOnly: 'Neu',
     myList: 'Merkliste',
+    live: 'Live-TV',
     categories: 'Kategorien',
   },
   mobile: {
@@ -97,6 +98,8 @@ export default {
     newShort: 'Neu',
     newOnly: 'Neu',
     downloadsShort: 'Downloads',
+    live: 'Live-TV',
+    liveShort: 'Live',
   },
   offline: {
     bar: 'Du bist offline.',

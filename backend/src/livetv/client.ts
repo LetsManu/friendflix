@@ -38,12 +38,19 @@ export class LivetvError extends Error {
 
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
-/** an abort after `ms` (a plain timer, so the deadline also covers reading the body; `clear` once it is read) */
-function deadline(ms: number): { signal: AbortSignal; clear(): void } {
+/**
+ * an abort after `ms` (a plain timer, so the deadline also covers reading the body; `clear` once it is read), or as soon as the
+ * caller's `outer` signal aborts (a caller that no longer needs the answer)
+ */
+function deadline(ms: number, outer?: AbortSignal): { signal: AbortSignal; clear(): void } {
   const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(new DOMException('livetv timeout', 'TimeoutError')), ms);
+  const clear = () => { clearTimeout(t); outer?.removeEventListener('abort', stop); };
+  const stop = () => { clear(); ac.abort(outer?.reason); };
+  const t = setTimeout(() => { clear(); ac.abort(new DOMException('livetv timeout', 'TimeoutError')); }, ms);
   t.unref?.();
-  return { signal: ac.signal, clear: () => clearTimeout(t) };
+  if (outer?.aborted) stop();
+  else outer?.addEventListener('abort', stop, { once: true });
+  return { signal: ac.signal, clear };
 }
 
 /** one signed request; network errors and timeouts become LivetvError(null, 'unreachable'), a path off livetv `invalid_path` */
@@ -69,9 +76,12 @@ async function refusal(r: Response): Promise<LivetvError> {
   return new LivetvError(r.status, code);
 }
 
-/** A signed JSON call (default 10 s). An empty answer (204) is undefined; a 2xx that is not JSON is `invalid_answer`. */
-export async function livetvCall<T>(ctx: Ctx, method: Method, path: string, body?: unknown, o: { timeoutMs?: number } = {}): Promise<T> {
-  const d = deadline(o.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+/**
+ * A signed JSON call (default 10 s; `signal` cancels it early, as `unreachable`). An empty answer (204) is undefined; a 2xx that is not
+ * JSON is `invalid_answer`.
+ */
+export async function livetvCall<T>(ctx: Ctx, method: Method, path: string, body?: unknown, o: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T> {
+  const d = deadline(o.timeoutMs ?? DEFAULT_TIMEOUT_MS, o.signal);
   try {
     const r = await signedFetch(ctx, method, path, body, d.signal);
     if (!r.ok) throw await refusal(r);
@@ -85,15 +95,21 @@ export async function livetvCall<T>(ctx: Ctx, method: Method, path: string, body
 }
 
 /**
- * A signed POST whose answer is streamed (NDJSON, image bytes); the timeout keeps running while the caller reads it. Refusals
- * throw like livetvCall.
+ * A signed POST whose answer is streamed (NDJSON, image bytes); the timeout (and `signal`, which cancels early) keeps running while
+ * the caller reads it. Refusals throw like livetvCall.
  */
-export async function livetvStream(ctx: Ctx, path: string, body: unknown, o: { timeoutMs: number }): Promise<Response> {
-  const d = deadline(o.timeoutMs);
+export async function livetvStream(ctx: Ctx, path: string, body: unknown, o: { timeoutMs: number; signal?: AbortSignal }): Promise<Response> {
+  const d = deadline(o.timeoutMs, o.signal);
   try {
     const r = await signedFetch(ctx, 'POST', path, body, d.signal);
     if (!r.ok) throw await refusal(r);
-    return r;
+    if (!r.body) { d.clear(); return r; }
+    // the deadline (and `signal`) stay armed while the caller reads; the timer and the abort listener go once the body is read, or at
+    // once when the caller cancels it (a reader that stops early)
+    // (`cancel` is a Transformer hook of the Streams standard and Node; TypeScript's DOM lib does not declare it yet)
+    const pass: Transformer<Uint8Array, Uint8Array> & { cancel(): void } = { flush: () => d.clear(), cancel: () => d.clear() };
+    const read = r.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>(pass));
+    return new Response(read, { status: r.status, statusText: r.statusText, headers: r.headers });
   } catch (e) {
     d.clear(); // a refusal or a failed request leaves nobody to read the answer: the timer must not outlive the call
     throw e;

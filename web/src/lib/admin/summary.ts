@@ -14,6 +14,8 @@ export interface AdminSummary {
   live: { streams: number; partyRooms: number };
   /** Live TV: detected (the container answers), the offer hidden by the admin, sources whose last refresh failed */
   livetv: { installed: boolean; offerHidden: boolean; failedSources: number };
+  /** the sign-in provider's API answers 2FA state, so the people list may filter by it (backend: `mfaFilter`); absent on older backends */
+  mfaFilter?: boolean;
   /** recommendation item index (R1); null when the lookup failed */
   recoIndex?: { supported: boolean; running: boolean; items: number; updatedAt: string | null } | null;
 }

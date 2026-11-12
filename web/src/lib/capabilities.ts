@@ -64,12 +64,14 @@ export interface Features {
   postplay: boolean;
   /** SURROUND_AUDIO is on and the server is Jellyfin: the per-device "Surround sound" switch is offered (only an explicit true counts) */
   surround: boolean;
+  /** the optional Live TV container is installed and switched on (only an explicit true counts) */
+  livetv: boolean;
 }
-export const ALL_FEATURES: Features = { requests: true, postplay: true, surround: false };
-/** Lenient parse: only an explicit false turns a feature off (`surround` is the reverse: only an explicit true turns it on). */
+export const ALL_FEATURES: Features = { requests: true, postplay: true, surround: false, livetv: false };
+/** Lenient parse: only an explicit false turns a feature off (`surround` and `livetv` are the reverse: only an explicit true turns them on). */
 export function featuresFrom(raw: unknown): Features {
   const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  return { requests: r.requests !== false, postplay: r.postplay !== false, surround: r.surround === true };
+  return { requests: r.requests !== false, postplay: r.postplay !== false, surround: r.surround === true, livetv: r.livetv === true };
 }
 /** The features the person gets from an /api/me answer: no right to request = like no request service (one fold for every reader). */
 export const featuresOfMe = (m: { features?: unknown; perms?: unknown }): Features => {

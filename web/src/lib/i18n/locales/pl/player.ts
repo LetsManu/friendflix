@@ -16,6 +16,11 @@ const pl: Translation<typeof de> = {
       many: 'Dozwolonych maksymalnie {n} jednoczesnych strumieni.',
       other: 'Dozwolonego maksymalnie {n} jednoczesnego strumienia.',
     },
+    serverBusy: 'Serwer jest teraz zajęty. Spróbuj ponownie za chwilę.',
+    serverBusyQuality: 'Serwer zajęty – jakość pozostaje na {q}',
+    serverBusyTrack: 'Serwer zajęty – ścieżka dźwiękowa się nie zmienia',
+    serverBusySurroundOn: 'Serwer zajęty – dźwięk przestrzenny pozostaje włączony',
+    serverBusySurroundOff: 'Serwer zajęty – dźwięk przestrzenny pozostaje wyłączony',
     connection: 'Połączenie z serwerem zostało przerwane lub wideo jest uszkodzone.',
     retry: 'Spróbuj ponownie',
     back: 'Wstecz',
@@ -57,6 +62,7 @@ const pl: Translation<typeof de> = {
     /* chip in the control bar: how the picture reaches this device, and why it is converted */
     chipOriginal: 'Oryginał',
     chipConverted: 'Przekonwertowane · {q}',
+    chipCopied: 'Skopiowane · {q}',
     chipLabel: 'Rodzaj odtwarzania',
     directInfo: 'Odtwarzanie bezpośrednie, bez konwersji',
     reasonNetwork: 'Wolne łącze – jakość dostosowuje się automatycznie',
@@ -70,6 +76,7 @@ const pl: Translation<typeof de> = {
     reasonSubtitles: 'Napisy są wtopione w obraz',
     reasonHeight: 'Rozdzielczość jest za wysoka dla tego urządzenia',
     reasonManual: 'Jakość wybrano ręcznie',
+    reasonServerBusy: 'Serwer zajęty',
     reasonOther: 'To urządzenie potrzebuje przekonwertowanej wersji',
   },
   sleep: {

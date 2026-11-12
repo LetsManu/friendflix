@@ -135,6 +135,7 @@ describe('admin glass: text contrast (B′)', () => {
     expect(src('../../routes/admin/hubs/+page.svelte')).toMatch(/\.tag \{[^}]*color: var\(--mut\); background: var\(--wash-muted\);/);
     expect(src('../../routes/admin/playback/+page.svelte')).toMatch(/\.fails li \{[^}]*background: var\(--wash-err\);/);
     expect(src('../../routes/admin/devices/+page.svelte')).toMatch(/\.waiting \{[^}]*background: var\(--wash-warn\); color: var\(--warn\);/);
+    expect(src('../../routes/admin/users/+page.svelte')).toMatch(/\.badge \{[^}]*background: var\(--wash-warn\); color: var\(--warn\);/);
     expect(src('./settings/SettingRow.svelte')).toMatch(/\.moved \{[^}]*background: var\(--wash-info\); color: var\(--fg\);/);
     for (const bg of ON_GLASS) {
       expect(cr(GLASS.ok, wash('ok', bg)), 'probe ok').toBeGreaterThanOrEqual(AA);
@@ -144,6 +145,7 @@ describe('admin glass: text contrast (B′)', () => {
       expect(cr(MUT, wash('muted', bg)), 'hub tag').toBeGreaterThanOrEqual(AA);
       expect(cr(MUT, wash('err', bg)), 'playback .72').toBeGreaterThanOrEqual(AA);
       expect(cr(GLASS.warn, wash('warn', bg)), 'devices waiting').toBeGreaterThanOrEqual(AA);
+      expect(cr(GLASS.warn, wash('warn', bg)), 'people exceptions badge').toBeGreaterThanOrEqual(4.5);
       expect(textContrast(wash('info', bg)), 'moved hint').toBeGreaterThanOrEqual(AA);
     }
     // why: the plain washes on the card over the peak (the review's figures)
@@ -478,12 +480,226 @@ describe('role matrix and save bar (rights)', () => {
       expect(src, f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
       expect(src, f).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
     }
-    for (const f of ['DeleteRoleDialog', 'NameDialog']) expect(read(`./rights/${f}.svelte`), f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+    for (const f of ['DeleteRoleDialog', 'NameDialog']) expect(read(`./rights/${f}.svelte`), f).toContain('ModalShell');
+    // the confirm dialog (Verwerfen, delete, …) sits in the same shell, so its calm mode is the shell's
+    expect(read('../ui/ConfirmHost.svelte')).toMatch(/<ModalShell\b/);
+    expect(read('../ui/ModalShell.svelte')).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
   });
 
   it('the bar reserves its room before it rises: --savebar-h is set in a reactive statement (before the DOM update)', () => {
     expect(bar).toMatch(/\$: reserve\(shown\);/);
     expect(bar).toContain("st.setProperty('--savebar-h'");
     expect(read('../../routes/admin/roles/+page.svelte')).toMatch(/\.roles \{ padding-bottom: var\(--savebar-h, 0px\); \}/);
+  });
+
+  it('open sheets keep a room for the toasts (--sheet-h / --sheet-w): the toasts move by their transform, calm mode at once', () => {
+    const host = read('../ui/ToastHost.svelte');
+    expect(host).toMatch(/transform: translate\(calc\(-50% - var\(--sheet-w, 0px\) \/ 2\), calc\(-1 \* max\(var\(--castbar-h, 0px\) \+ var\(--savebar-h, 0px\), var\(--sheet-h, 0px\) - var\(--toast-b\) \+ 12px\)\)\);/);
+    expect(host).toMatch(/transition: transform 240ms var\(--fr-out\)/);
+    expect(host).toMatch(/:global\(html\.m-still\) \.toasts \{ transition: none; \}/);
+    expect(read('./rights/ReviewSheet.svelte')).toContain('use:sheetRoom transition:slide|global');
+    expect(read('./user/KidsSheet.svelte')).toContain('use:sheetRoom transition:slide|global');
+    expect(read('./rights/RoleSheet.svelte')).toContain("use:sheetRoom={'right'} transition:slide|global");
+  });
+});
+
+/** The person's Rechte tab (users & permissions spec §8): the muted role value and the three-way switch, and the motion rule */
+describe('person rights tab', () => {
+  const src = read('./user/Rights.svelte');
+  const css = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  /** the track is the darker scrim fill (as the matrix chips): it only adds contrast */
+  const TRACK = 0.25;
+
+  it('animates only transform and opacity (the thumb), nothing else', () => {
+    const t = [...css.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)].map((m) => m[1]!);
+    expect(t.length).toBeGreaterThan(0);
+    for (const v of t) expect(v, v).toMatch(/^\s*(transform|none)\b/);
+    expect(css).not.toMatch(/@keyframes/);
+    expect(css).toMatch(/\.thumb \{[^}]*transform: translateX\(/);
+  });
+
+  it('the role value is the .72 muted text; it keeps 4.5:1 on every glass surface', () => {
+    expect(css).toMatch(/\.role \{[^}]*color: var\(--mut\);/);
+    for (const bg of ON_GLASS) expect(textContrast(bg, MUT), `${bg}`).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('the switch: unselected labels (.72) on the track, the selected one dark on the coral thumb', () => {
+    expect(css).toMatch(/\.seg \{[^}]*color: var\(--mut\);/);
+    expect(css).toMatch(/\.seg\.on \{ color: #1a1a1a; \}/);
+    expect(css).toMatch(/\.thumb \{[^}]*background: var\(--acc\);/);
+    expect(css).toMatch(/\.tri \{[^}]*background: rgba\(var\(--fr-scrim-rgb\), \.25\);/);
+    for (const bg of ON_GLASS) expect(textContrast(over(bg, SCRIM_RGB, TRACK), MUT), `${bg}`).toBeGreaterThanOrEqual(AA);
+    expect(contrast(hex('#1a1a1a'), hex('#ff4f6d'))).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('the source chips are StatusPills (info / muted tones, checked with the pills above); the library error is --err text', () => {
+    expect(src).toContain("tone={chip(row) === 'user' ? 'info' : 'muted'}");
+    expect(css).toMatch(/\.lib-err \{[^}]*color: var\(--err\);/);
+  });
+});
+
+/** The person's Profile tab (users & permissions spec §6.3): the create sheet's motion and the reserved age-limit room */
+describe('person profiles tab', () => {
+  const sheet = read('./user/KidsSheet.svelte');
+  const page = read('./user/Profiles.svelte');
+  const css = (src: string) => [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('the create sheet slides up both ways, sits on the menu scrim, animates nothing itself and stands still in calm mode', () => {
+    expect(sheet).toMatch(/sheetSlide\(node, \{ dir \}\)/);
+    expect(sheet).toMatch(/transition:slide\|global/);
+    expect(sheet).toMatch(/transition:scrimFade\|global/);
+    expect(sheet).toContain('--fr-scrim-safe:{SCRIM_MENU}');
+    expect(css(sheet).replace(/transition: none !important/g, '')).not.toMatch(/transition\s*:|@keyframes/);
+    expect(css(sheet)).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+    expect(css(sheet)).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+    for (const bg of [frostComposite(WHITE, SCRIM_MENU), frostComposite(AMB_PEAK, SCRIM_MENU), frostComposite(DARK_BASE, SCRIM_MENU)]) expect(textContrast(bg, 0.9)).toBeGreaterThanOrEqual(AA);
+    // its error line is bold .9 white text; the light error colour is only the icon (a graphic: 3:1)
+    expect(css(sheet)).toContain('.err { display: flex; gap: .55rem; align-items: flex-start; margin: 0; color: rgba(255, 255, 255, .9); font-weight: 700; }');
+    for (const bg of [frostComposite(WHITE, SCRIM_MENU), frostComposite(AMB_PEAK, SCRIM_MENU), frostComposite(DARK_BASE, SCRIM_MENU)]) expect(contrast(hex('#ffbdbd'), bg)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('every profile row keeps the room of its age limit, with or without a live select', () => {
+    expect(css(page)).toMatch(/\.cap, \.pin \{[^}]*min-height: 44px;/);
+    // a grown-up profile holds it with the same select, unseen and out of reach
+    expect(page).toMatch(/class:ghost=\{!row\.kids\} aria-hidden=\{row\.kids \? undefined : 'true'\} inert=\{!row\.kids\}/);
+    expect(css(page)).toMatch(/\.ghost \{ visibility: hidden; \}/);
+    // the page itself animates nothing
+    expect(css(page)).not.toMatch(/transition\s*:|@keyframes/);
+  });
+});
+
+describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
+  const src = read('./livetv/OrderView.svelte');
+  const css = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('takes the rows and a required save, and knows no endpoint', () => {
+    expect([...src.matchAll(/export let (\w+)/g)].map((m) => m[1])).toEqual(['rows', 'save', 'locked']);
+    expect(src).toMatch(/export let save: \(ids: string\[\]\) => Promise<void>;/);
+    expect(src).toMatch(/runAction\(\{ key: busyKey, run: \(\) => save\(ids\)/);
+    expect(src.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, '')).not.toMatch(/api\(|fetch\(|\/order/);
+  });
+
+  it('animates transform only (the lifted row follows by transform, the others slide by FLIP) and has no keyframes', () => {
+    const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+    const vals = [...css.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)].map((m) => m[1]!);
+    expect(vals.length).toBeGreaterThan(0);
+    for (const v of vals) if (!/^\s*none/.test(v)) expect(v).toMatch(/^\s*transform\b[^,]*$/);
+    for (const v of vals) expect(v).not.toMatch(LAYOUT);
+    expect(css).not.toMatch(/@keyframes/);
+    expect(src).toContain('row.style.transform = `translateY(${y - row.offsetTop}px)`;');
+    expect(src).toContain("el.style.transform = `translateY(${d}px)`;");
+    expect(src).toMatch(/flipOffsets\(before, after\)/);
+  });
+
+  it('the pointer drag survives the keyed list moving the lifted row: capture on the list, events on the window', () => {
+    // the grip's <li> is moved by the keyed each while the order changes, which drops a capture held by the grip
+    expect(src).toContain('list.setPointerCapture(e.pointerId)');
+    expect(src).not.toMatch(/currentTarget as HTMLElement\)\.setPointerCapture|lostpointercapture/);
+    expect(src).toMatch(/<svelte:window[^>]*on:pointermove=\{onMove\} on:pointerup=\{onUp\} on:pointercancel=\{onPointerCancel\}/);
+    expect(src).toMatch(/e\.pointerId !== drag\.pointerId/);
+    expect(src).toContain('if (e.repeat) return;');
+  });
+
+  it('calm mode, TV and reduced motion: no transitions at all', () => {
+    expect(css).toMatch(/:global\(html\.m-still\) \.order :global\(\*\), :global\(html\.tv\) \.order :global\(\*\) \{ transition: none !important; animation: none !important; \}/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.order :global\(\*\) \{ transition: none !important; animation: none !important; \} \}/);
+    expect(src).toMatch(/fxMode\(\) === 'still'/);
+  });
+
+  it('44 px handles (54 px on TV), a polite live region, touch drags instead of scrolling', () => {
+    expect(css).toMatch(/\.grip \{[^}]*width: 44px; height: 44px;[^}]*touch-action: none;/);
+    expect(css).toContain(':global(html.tv) .grip { width: 54px; height: 54px; }');
+    expect(src).toContain('<p class="sr-only" aria-live="polite">{status}</p>');
+    for (const k of ['orderPicked', 'orderMoved', 'orderDropped', 'orderCancelled']) expect(src).toContain(`'adminLive.ch.${k}'`);
+  });
+
+  it('text on the list panel and on the lifted row\'s solid fill keeps 4.5:1; the lifted row also has a white ring', () => {
+    for (const bg of ON_GLASS) {
+      expect(textContrast(bg), 'name').toBeGreaterThanOrEqual(AA);
+      expect(textContrast(bg, MUT), 'number').toBeGreaterThanOrEqual(AA);
+    }
+    expect(css).toMatch(/\.row\.lifted \{[^}]*background: var\(--fr-solid\); box-shadow: 0 0 0 2px #fff/);
+  });
+});
+
+/**
+ * The Live-TV tab (Task 36, glass spec constraints): every live stylesheet animates transform and opacity only, switches its motion
+ * off in calm mode, and the grey line texts keep 4.5:1 on what they sit on (the page's ambient peak, the row's hover fill, the
+ * tiles' dark caption ramp over the brightest preview).
+ */
+describe('Live-TV tab surfaces', () => {
+  const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+  const styleOf = (src: string) => [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  const dirs = [fileURLToPath(new URL('../live/', import.meta.url)), fileURLToPath(new URL('../../routes/live/', import.meta.url))];
+  const files = dirs.flatMap((d) => readdirSync(d).filter((f) => f.endsWith('.svelte')).map((f) => join(d, f)));
+
+  it('the scan sees the live components', () => {
+    const names = files.map((f) => f.split(sep).pop());
+    expect(names).toEqual(expect.arrayContaining(['ChannelRow.svelte', 'FavTiles.svelte', 'GroupChips.svelte', 'LiveList.svelte', '+page.svelte']));
+  });
+
+  it('they animate transform and opacity only, and none of them uses a colour, background or layout transition', () => {
+    const bad: string[] = [];
+    let seen = 0;
+    for (const f of files) {
+      for (const m of styleOf(readFileSync(f, 'utf8')).matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) {
+        if (/^\s*none/.test(m[1]!)) continue;
+        seen++;
+        if (LAYOUT.test(m[1]!) || /all|color|background|border|filter|shadow/.test(m[1]!)) bad.push(`${f}: ${m[1]}`);
+      }
+      expect(styleOf(readFileSync(f, 'utf8')), f).not.toMatch(/@keyframes/);
+    }
+    expect(seen).toBeGreaterThan(2);
+    expect(bad).toEqual([]);
+  });
+
+  it('every live component with a transition switches it off in calm mode', () => {
+    for (const f of files) {
+      const css = styleOf(readFileSync(f, 'utf8'));
+      if (/transition\s*:\s*(?!none)/.test(css)) expect(css, f).toMatch(/:global\(html\.m-still\)/);
+    }
+  });
+
+  it('the grey line texts (white .78) keep 4.5:1 on the ambient peak with the row hover fill, and white on the caption ramp', () => {
+    const hover = over(AMB_PEAK, WHITE, 0.09);
+    for (const bg of [AMB_PEAK, DARK_BASE, hover, over(DARK_BASE, WHITE, 0.09)]) expect(textContrast(bg, 0.78)).toBeGreaterThanOrEqual(AA);
+    // the tile caption: a .78 black ramp over a white preview, the worst case
+    const ramp = over(WHITE, [0, 0, 0], 0.78);
+    expect(textContrast(ramp, 0.86)).toBeGreaterThanOrEqual(AA);
+    expect(textContrast(ramp)).toBeGreaterThanOrEqual(AA);
+    const row = readFileSync(join(dirs[0]!, 'ChannelRow.svelte'), 'utf8'), tiles = readFileSync(join(dirs[0]!, 'FavTiles.svelte'), 'utf8');
+    expect(row).toContain('color: rgba(255, 255, 255, .78)');
+    expect(tiles).toContain('rgba(0, 0, 0, .78) 55%');
+    expect(tiles).toContain('color: rgba(255, 255, 255, .86)');
+  });
+});
+
+/** Live-TV → Live-Status and Programmführer (Task 26): the stylesheet scan reaches the new files too (glass spec constraints) */
+describe('Live-TV status and guide tabs (Task 26)', () => {
+  const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+  const files = ['./livetv/StatusTab.svelte', './livetv/GuideTab.svelte'];
+  const cssOf = (f: string) => [...read(f).matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('they animate nothing but transform and opacity (no keyframes, no colour, background or layout transition)', () => {
+    for (const f of files) {
+      expect(cssOf(f), f).not.toMatch(/@keyframes|animation\s*:/);
+      for (const m of cssOf(f).matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) {
+        if (/^\s*none/.test(m[1]!)) continue;
+        expect(m[1], f).not.toMatch(LAYOUT);
+        expect(m[1], f).not.toMatch(/all|color|background|border|filter|shadow/);
+      }
+    }
+  });
+
+  it('the pieces that load keep their space: the tiles\' figure line, the tables and the guide line reserve a height', () => {
+    const tab = cssOf(files[0]!), guide = cssOf(files[1]!);
+    expect(tab).toMatch(/\.tiles :global\(\.val\) \{ min-height: calc\(1\.6rem \* 1\.15\); \}/);
+    expect(tab).toMatch(/\.table-a \{ min-height: [\d.]+rem; \}/);
+    expect(tab).toMatch(/\.table-b \{ min-height: [\d.]+rem; \}/);
+    expect(guide).toMatch(/\.line \{ min-height: [\d.]+rem;/);
+  });
+
+  it('the grey lines use the glass text levels, never a colour of their own', () => {
+    for (const f of files) expect(cssOf(f), f).not.toMatch(/(?<![-\w])color\s*:\s*(#|rgb)/);
   });
 });

@@ -299,7 +299,7 @@ export default {
       unknownTitle: 'Unbekannter Titel',
       last: 'zuletzt {time}',
     },
-    tc: { network: 'Leitung', remoteCap: 'Unterwegs-Grenze', uploadCap: 'Upload-Grenze', roleCap: 'Rollen-Grenze', container: 'Dateiformat', videoCodec: 'Videoformat', audioCodec: 'Tonformat', audioTrack: 'Tonspur', subtitles: 'Untertitel', height: 'Auflösung', manual: 'Manuell', misc: 'Sonstiges' },
+    tc: { network: 'Leitung', remoteCap: 'Unterwegs-Grenze', uploadCap: 'Upload-Grenze', roleCap: 'Rollen-Grenze', container: 'Dateiformat', videoCodec: 'Videoformat', audioCodec: 'Tonformat', audioTrack: 'Tonspur', subtitles: 'Untertitel', height: 'Auflösung', manual: 'Manuell', serverBusy: 'Server ausgelastet', misc: 'Sonstiges' },
     errors: {
       title: 'Fehler (24 Std.)',
       none: 'Keine Fehler in den letzten 24 Stunden.',

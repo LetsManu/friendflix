@@ -11,6 +11,11 @@ const en: Translation<typeof de> = {
     title: 'Can’t play this',
     generic: 'Can’t play this.',
     maxStreams: { one: 'At most {n} stream at a time is allowed.', other: 'At most {n} streams at a time are allowed.' },
+    serverBusy: 'The server is busy right now. Try again in a moment.',
+    serverBusyQuality: 'Server busy – quality stays at {q}',
+    serverBusyTrack: 'Server busy – the audio track stays as it was',
+    serverBusySurroundOn: 'Server busy – surround sound stays on',
+    serverBusySurroundOff: 'Server busy – surround sound stays off',
     connection: 'The connection to the server was lost or the video is damaged.',
     retry: 'Try again',
     back: 'Back',
@@ -42,6 +47,7 @@ const en: Translation<typeof de> = {
     /* chip in the control bar: how the picture reaches this device, and why it is converted */
     chipOriginal: 'Original',
     chipConverted: 'Converted · {q}',
+    chipCopied: 'Copied · {q}',
     chipLabel: 'Playback type',
     directInfo: 'Direct playback, no conversion',
     reasonNetwork: 'Slow connection – quality adjusts automatically',
@@ -55,6 +61,7 @@ const en: Translation<typeof de> = {
     reasonSubtitles: 'Subtitles are burned into the picture',
     reasonHeight: 'The resolution is too high for this device',
     reasonManual: 'You chose the quality yourself',
+    reasonServerBusy: 'Server busy',
     reasonOther: 'This device needs a converted version',
   },
   sleep: {

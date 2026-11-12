@@ -21,7 +21,7 @@ const PLAYLIST = ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:2', '#EX
 const MASTER = ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Deutsch 5.1",DEFAULT=YES,AUTOSELECT=YES,LANGUAGE="ger",URI="audio.m3u8"',
   '#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS="vp09.00.51.08,mp4a.40.2",AUDIO="aud"', 'out.m3u8', ''].join('\n');
 
-async function mock(page: Page, o: { audioCodecFails?: boolean; hevc?: boolean; slowMs?: number; corruptFrom?: number; videoFailsAfterFallback?: boolean; gate?: Promise<void> } = {}) {
+async function mock(page: Page, o: { audioCodecFails?: boolean; hevc?: boolean; slowMs?: number; corruptFrom?: number; videoFailsAfterFallback?: boolean; gate?: Promise<void>; refuse?: number[] } = {}) {
   // the browser states a 6-channel output; every decode query passes (the codec checks themselves are in devicecaps.test.ts)
   await page.addInitScript((fail) => {
     Object.defineProperty(BaseAudioContext.prototype, 'destination', { configurable: true, get: () => ({ maxChannelCount: 6 }) });
@@ -41,6 +41,7 @@ async function mock(page: Page, o: { audioCodecFails?: boolean; hevc?: boolean; 
   await page.route('**/api/playback/info', async (r) => {
     const b = r.request().postDataJSON() as InfoCall;
     calls.push(b);
+    if (o.refuse?.includes(calls.length)) return r.fulfill({ status: 503, json: { error: 'server_busy' } }); // the conversion budget is full for this one
     if (b.fellBack && o.videoFailsAfterFallback) await page.evaluate(() => { (window as unknown as { __videoFail: boolean }).__videoFail = true; }); // the reloaded stream's picture cannot be appended either
     const surround = (b.caps?.audioChannels ?? 2) >= 6 && (b.caps?.hls?.surround.length ?? 0) > 0 && !b.fellBack;
     return r.fulfill({ json: {
@@ -104,6 +105,26 @@ test.describe('player: surround sound switch', () => {
     await expect(sw).toHaveAttribute('aria-checked', 'true');
     await expect.poll(() => calls.length).toBe(3);
     expect(calls[2]!.caps).toMatchObject({ audioChannels: 6 });
+  });
+
+  test.describe('a full conversion budget', () => {
+    test.use({ allowedConsole: /status of 503/ });
+    test('a refused surround switch keeps the sound as it was and says so in its own words', async ({ page, api: _api }) => {
+      const calls = await mock(page, { refuse: [2] });
+      await page.goto('/watch/' + MOVIE.id);
+      await playing(page);
+      const menu = await openMenu(page);
+      const sw = menu.getByRole('switch', { name: /Raumklang/ });
+      await expect(sw).toHaveAttribute('aria-checked', 'true');
+      await sw.click(); // off: refused
+      await expect(page.locator('.toast', { hasText: 'Server ausgelastet – Raumklang bleibt an' })).toBeVisible();
+      await expect.poll(() => calls.length).toBe(3);
+      expect(calls[1]!.caps).toMatchObject({ audioChannels: 2 });
+      expect(calls[2]!.caps).toMatchObject({ audioChannels: 6 }); // the surround stream again, at the position
+      await expect(sw).toHaveAttribute('aria-checked', 'true');
+      expect(await page.evaluate(() => localStorage.getItem('ff_audio_stereo'))).not.toBe('1');
+      await expect(page.locator('.toast', { hasText: 'Tonspur' })).toHaveCount(0);
+    });
   });
 
   test('the stored timing names the choice: stereo_choice, not the server\'s stereo_device', async ({ page, api: _api }) => {

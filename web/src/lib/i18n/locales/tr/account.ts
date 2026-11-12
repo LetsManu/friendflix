@@ -335,7 +335,7 @@ const tr: Translation<typeof de> = {
     retry: 'Tekrar dene',
     reauthFailed: 'Oturum açma doğrulanamadı. Lütfen tekrar dene.',
     reauthFailedHint: 'Yine olmazsa yarım dakika sonra dene; sürekli olursa sunucunun ve Authentik’in saatleri farklı olabilir (bir yönetici kontrol edebilir).',
-    privacy: 'Yöneticiler son izlediğin başlıkları görebilir. Her görüntüleme denetim günlüğüne kaydedilir.',
+    privacy: 'Yöneticiler son izlediğin başlıkları görebilir. Her görüntüleme denetim günlüğüne kaydedilir. Yöneticiler bir profilin hangi başlıkları görebildiğini kontrol edebilir.',
     data: {
       title: 'Verilerin',
       download: 'Verilerimi indir',

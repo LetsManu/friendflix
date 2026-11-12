@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { buildApp } from '../src/app.js';
 import { startBenchmark } from '../src/convbench.js';
 import { featureFlags } from '../src/features.js';
-import { detectLivetv, enableBenchmark, livetvDetectTick, livetvInstalled } from '../src/livetv/detect.js';
+import { detectLivetv, enableBenchmark, livetvDetectTick, livetvInstalled, readLivetvSystem } from '../src/livetv/detect.js';
 import { gpuAdvice } from '../src/livetv/gpu.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 
@@ -388,6 +388,26 @@ describe('gpuAdvice', () => {
   });
 });
 
+describe('GET /v1/system', () => {
+  it('an encoder this backend does not know is left out, never a reason to refuse the answer', async () => {
+    fake.livetv = 'api1';
+    const saved = SYSTEM.encoders;
+    try {
+      SYSTEM.encoders = ['h264_qsv', 'av1_qsv', 'libx264', 'h264_qsv', 'hevc_future_encoder_with_a_rather_long_name'];
+      const sys = await readLivetvSystem(env.ctx);
+      expect(sys.encoders).toEqual(['h264_qsv', 'libx264']);
+      expect(sys.srt.ports).toEqual([9000]);
+      SYSTEM.encoders = ['av1_qsv'];
+      expect((await readLivetvSystem(env.ctx)).encoders).toEqual([]);
+      // a shape that is not a list still is an unexpected answer
+      SYSTEM.encoders = 'libx264' as unknown as string[];
+      await expect(readLivetvSystem(env.ctx)).rejects.toMatchObject({ code: 'invalid_answer' });
+    } finally {
+      SYSTEM.encoders = saved;
+    }
+  });
+});
+
 describe('wire.ts', () => {
   it('Encoder and LivetvSystem are the declarations of livetv/src/system.ts, field for field', () => {
     const norm = (x: string) => x.replace(/\s+/g, ' ').replace(/ ?; ?}/g, ' }').trim();
@@ -401,5 +421,14 @@ describe('wire.ts', () => {
     };
     const flat = (src: string) => norm(src).replace(/CpuInfo/g, '{ model: string; cores: number; loadPct: number }').replace(/GpuInfo/g, '{ devices: string[]; driver: string | null; readable: boolean; busyPct: number | null }');
     expect(flat(fields(ours, 'interface LivetvSystem'))).toBe(flat(fields(theirs, 'interface SystemView')));
+  });
+
+  it('Mode and StreamView are the declarations of livetv/src/streams.ts, field for field (F4)', () => {
+    const norm = (x: string) => x.replace(/\s+/g, ' ').replace(/ ?; ?}/g, ' }').trim();
+    const theirs = readFileSync(new URL('../../livetv/src/streams.ts', import.meta.url), 'utf8');
+    const ours = readFileSync(new URL('../src/livetv/wire.ts', import.meta.url), 'utf8');
+    const block = (src: string, from: string, close: string) => { const i = src.indexOf(from); return norm(src.slice(i, src.indexOf(close, i) + close.length)); };
+    expect(block(ours, 'export type Mode', ';')).toBe(block(theirs, 'export type Mode', ';'));
+    expect(block(ours, 'export interface StreamView', '\n}')).toBe(block(theirs, 'export interface StreamView', '\n}'));
   });
 });

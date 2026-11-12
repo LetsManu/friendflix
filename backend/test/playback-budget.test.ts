@@ -3,9 +3,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { hashToken } from '../src/cast.js';
 import { __resetConvMemo } from '../src/convbudget.js';
+import { filmGate } from '../src/filmgate.js';
 import { fingerprint } from '../src/hevcenc.js';
 import { setLive } from '../src/live.js';
-import type { EncoderSettings, ServerSession } from '../src/media/types.js';
+import type { EncoderSettings, PlaybackDto, ServerSession } from '../src/media/types.js';
 import { writeRole } from '../src/roleWrite.js';
 import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 
@@ -20,6 +21,8 @@ const E: EncoderSettings = { hwAccel: 'qsv', tonemap: true, throttle: true, keyf
 interface Source { container: string; bitrate: number; video: Record<string, unknown> }
 /** H.264 8 Mbit/s 1080p in Matroska: a browser cannot direct-play it, but HLS can copy it at a cap of 8.2 Mbit/s or more */
 const H264_8M: Source = { container: 'mkv', bitrate: 8_200_000, video: { Codec: 'h264', BitRate: 8_000_000, Width: 1920, Height: 1080, VideoRangeType: 'SDR' } };
+/** 1080p at 3 Mbit/s: a 4 Mbit/s pick (720p box) converts it, the ceiling's 1080p box copies it at its own 3.2 Mbit/s (at or below the pick) */
+const SMALL_1080: Source = { container: 'mkv', bitrate: 3_200_000, video: { Codec: 'h264', BitRate: 3_000_000, Width: 1920, Height: 1080, VideoRangeType: 'SDR' } };
 /** above the friend's 20 Mbit/s: converted */
 const H264_25M: Source = { container: 'mkv', bitrate: 25_200_000, video: { Codec: 'h264', BitRate: 25_000_000, Width: 1920, Height: 1080, VideoRangeType: 'SDR' } };
 /** HEVC for a browser without HEVC: never copyable */
@@ -131,6 +134,102 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
     expect(JSON.parse((await env.kv.get(`conv:grant:${ep.json().playSessionId}`))!)).toMatchObject({ label: 'Saltwater Almanac' });
   });
 
+  it('two hovers on one device hold at most one slot; another device is not refused because of hovers', async () => {
+    src = H264_25M; // every answer converts
+    const hover1 = (await info(friend, { prefetch: true })).json().playSessionId as string; // prefetches: nobody plays them
+    const hover2 = (await info(friend, { prefetch: true })).json().playSessionId as string;
+    expect(hover2).not.toBe(hover1);
+    expect(await grants()).toEqual([`conv:grant:${hover2}`]); // the device's new grant replaced its first
+    // L = 2: the admin's device still gets a conversion (before: two phantom grants, "2 von 2 belegt", refused)
+    src = HEVC_SRC; // never copyable: the admin's answer is a conversion too
+    const other = await info(admin);
+    expect(other.statusCode).toBe(200);
+    expect(other.json().delivery.video).toBe('h264');
+    expect(other.json().transcodeReason).not.toBe('serverBusy');
+    expect(await grants()).toHaveLength(2);
+  });
+
+  it('a PlaybackInfo that throws after the HEVC closure admitted gives both grants back at once', async () => {
+    await hevcReady();
+    let admitted: unknown;
+    vi.spyOn(env.ctx.jf, 'playbackInfo').mockImplementation(async (_u, _id, o) => {
+      admitted = await o.hevcGate!(); // the closure ran (HEVC grant + budget grant written) ...
+      throw new Error('upstream gone'); // ... then the media server call fails
+    });
+    const r = await info(friend, { caps: hevcCaps }, REMOTE);
+    expect(r.statusCode).toBeGreaterThanOrEqual(500);
+    expect(admitted).toEqual({ ok: true });
+    expect(await env.kv.keys('hevcgrant:')).toEqual([]);
+    expect(await grants()).toEqual([]);
+  });
+
+  it('a request without a device id is its own device: never hides or replaces another request\'s grant, never counts its own', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    const conv = (ps: string): PlaybackDto => ({ itemId: ID, playSessionId: ps, mediaSourceId: 'ms1', hlsUrl: '/x', resumeTicks: 0, maxBitrate: 4_000_000, audioTracks: [], subtitles: [],
+      delivery: { video: 'h264', videoCodec: 'h264', audio: 'copy', audioCodec: 'aac', channels: 2, why: [] } });
+    // one request asks twice (HEVC closure and post-check share one admission): one grant, admitted in the only slot
+    const a = filmGate(env.ctx, { userId: friendId, swap: true });
+    expect(await a.admit(conv('ps-a'))).toBe(true);
+    expect(await a.admit(conv('ps-a'))).toBe(true);
+    await a.bind(conv('ps-a'));
+    expect(await grants()).toEqual(['conv:grant:ps-a']);
+    expect(JSON.parse((await env.kv.get('conv:grant:ps-a'))!).device).toMatch(/^req:/);
+    // a second deviceless request of the same account: the first one's grant counts (safe direction) and is not replaced
+    const b = filmGate(env.ctx, { userId: friendId, swap: true });
+    expect(await b.admit(conv('ps-b'))).toBe(false);
+    await b.bind(null);
+    expect(await grants()).toEqual(['conv:grant:ps-a']);
+    // with room for both, the second gets its own grant and the first keeps its own
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 2 };
+    const c = filmGate(env.ctx, { userId: friendId, swap: true });
+    expect(await c.admit(conv('ps-c'))).toBe(true);
+    await c.bind(conv('ps-c'));
+    expect(await grants()).toEqual(['conv:grant:ps-a', 'conv:grant:ps-c']);
+  });
+
+  it('a hover prefetch during the same device\'s in-flight player request keeps the player\'s grant', async () => {
+    src = H264_25M;
+    // the player's request is held between its admission and its bind (its grant still sits under the hint, unbound)
+    const realGet = env.kv.get.bind(env.kv);
+    let reach!: () => void, release!: () => void;
+    const reached = new Promise<void>((r) => { reach = r; });
+    const held = new Promise<void>((r) => { release = r; });
+    let first = true;
+    vi.spyOn(env.kv, 'get').mockImplementation(async (k: string) => {
+      if (first && k.startsWith('conv:grant:')) { first = false; reach(); await held; }
+      return realGet(k);
+    });
+    const player = info(friend);
+    await reached;
+    const hover = await info(friend, { prefetch: true }); // the same device hovers another play button meanwhile
+    expect(hover.statusCode).toBe(200);
+    release();
+    const ps = (await player).json().playSessionId as string;
+    expect(await grants()).toEqual([`conv:grant:${hover.json().playSessionId}`, `conv:grant:${ps}`].sort()); // the player's grant was not replaced
+    // the next prefetch replaces only the earlier prefetch
+    const hover2 = await info(friend, { prefetch: true });
+    expect(await grants()).toEqual([`conv:grant:${hover2.json().playSessionId}`, `conv:grant:${ps}`].sort());
+  });
+
+  it('the no-estimate start rung keeps the copy fallback at a full budget; a measured line below the source gets 503', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    sessions = async () => [foreign('ps-foreign-1')];
+    src = H264_8M; // above the 4 Mbit/s start, copyable at the ceiling
+    const start = await info(friend, { maxBitrate: 4_000_000, reasonHint: 'network', startRung: true });
+    expect(start.statusCode).toBe(200);
+    expect(start.json()).toMatchObject({ delivery: { video: 'copy' }, transcodeReason: 'serverBusy', maxBitrate: 20_000_000 });
+    expect(pb.map((p) => p.max)).toEqual([4_000_000, 20_000_000]);
+    // the same rung from a real stored estimate (no flag) is the viewer's line: 503 without a copy request
+    pb = [];
+    const line = await info(friend, { maxBitrate: 4_000_000, reasonHint: 'network' });
+    expect(line.statusCode).toBe(503);
+    expect(pb.map((p) => p.max)).toEqual([4_000_000]);
+    // a manual pick that carries the flag (a client bug) is still the viewer's pick
+    pb = [];
+    expect((await info(friend, { maxBitrate: 4_000_000, reasonHint: 'manual', startRung: true })).statusCode).toBe(503);
+    expect(await grants()).toEqual([]);
+  });
+
   it('a 502 resume_unknown after admission leaves no grant', async () => {
     src = H264_25M;
     vi.spyOn(env.ctx.jf, 'playMeta').mockResolvedValue(null);
@@ -164,15 +263,38 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
   it('full budget falls back to copy', async () => {
     env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
     sessions = async () => [foreign('ps-foreign-1')];
+    src = SMALL_1080; // the viewer's 4 Mbit/s lies above the source: only the 720p box made it a conversion
     const before = stops();
     const r = await info(friend, { maxBitrate: 4_000_000, reasonHint: 'manual' });
     expect(r.statusCode).toBe(200);
-    expect(pb.map((p) => p.max)).toEqual([4_000_000, 20_000_000]); // the viewer's own pick is dropped, the role ceiling stays
+    expect(pb.map((p) => p.max)).toEqual([4_000_000, 20_000_000]); // the copy is asked at the role ceiling (its bitrate is the source's)
     expect(r.json()).toMatchObject({ delivery: { video: 'copy' }, transcodeReason: 'serverBusy', maxBitrate: 20_000_000, roleMaxBitrate: 20_000_000 });
     expect(await grants()).toEqual([]);
     expect(await pbinfo(friendId, r.json().playSessionId)).toMatchObject({ reason: 'serverBusy', video: 'copy' });
     expect(await pbinfo(friendId, r.json().playSessionId)).not.toHaveProperty('conv');
     expect(stops()).toBe(before); // the foreign conversion is never stopped
+  });
+
+  it('owner ruling: a viewer who asked below the source gets 503, not the original\'s bitrate as a copy', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    sessions = async () => [foreign('ps-foreign-1')];
+    src = H264_8M; // copyable at the ceiling, but 8.2 Mbit/s is above what the viewer asked for
+    const before = stops();
+    for (const reasonHint of ['manual', 'network'] as const) { // data saver / a lower pick, and ABR on a slow line
+      pb = [];
+      const r = await info(friend, { maxBitrate: 4_000_000, reasonHint });
+      expect(r.statusCode).toBe(503);
+      expect(r.json()).toEqual({ error: 'server_busy' });
+      expect(pb.map((p) => p.max)).toEqual([4_000_000]); // no copy request above the viewer's own cap
+    }
+    expect(await grants()).toEqual([]);
+    expect(stops()).toBe(before);
+    // at or above the source, the same viewer still gets the copy
+    pb = [];
+    const ok = await info(friend, { maxBitrate: 8_500_000, reasonHint: 'manual' });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ delivery: { video: 'copy' } });
+    expect(ok.json()).not.toHaveProperty('sourceBitrate'); // server-side only
   });
 
   it('no copy possible -> 503 server_busy', async () => {
@@ -223,13 +345,13 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
     expect(await env.kv.keys('hevcgrant:')).toEqual([]);
     expect(await grants()).toEqual([]);
 
-    // a source that fits the remote ceiling (8 Mbit/s) falls to a copy when the viewer's lower pick wanted an HEVC conversion
+    // a source that fits the remote ceiling (8 Mbit/s) but lies above the viewer's lower pick (which wanted an HEVC conversion): no copy
+    // above the pick (owner ruling), 503 without a second request
     src = { container: 'mkv', bitrate: 6_200_000, video: { Codec: 'h264', BitRate: 6_000_000, Width: 1920, Height: 1080, VideoRangeType: 'SDR' } };
     pb = [];
-    const copy = await info(friend, { caps: hevcCaps, maxBitrate: 4_000_000 }, REMOTE);
-    expect(copy.statusCode).toBe(200);
-    expect(copy.json()).toMatchObject({ delivery: { video: 'copy' }, transcodeReason: 'serverBusy' });
-    expect(pb.map((p) => p.max)).toEqual([4_000_000, 8_000_000]);
+    const below = await info(friend, { caps: hevcCaps, maxBitrate: 4_000_000 }, REMOTE);
+    expect(below.statusCode).toBe(503);
+    expect(pb.map((p) => p.max)).toEqual([4_000_000]);
     expect(await env.kv.keys('hevcgrant:')).toEqual([]);
     expect(await grants()).toEqual([]);
   });
@@ -250,6 +372,7 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
 
   it('slow session list falls back to copy, not a hard error', async () => {
     sessions = () => new Promise<ServerSession[]>(() => undefined);
+    src = SMALL_1080;
     // a title that can be copied still plays
     let t0 = performance.now();
     const copy = await info(friend, { maxBitrate: 4_000_000 });
@@ -313,11 +436,24 @@ describe('POST /api/cast/session admits conversions against the budget', () => {
   it('a full budget casts a copy at the cast ceiling', async () => {
     env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
     sessions = async () => [foreign('ps-foreign-1')];
+    src = SMALL_1080;
     const r = await cast(admin, { maxBitrate: 4_000_000 });
     expect(r.statusCode).toBe(200);
     expect(pb.map((p) => p.max)).toEqual([4_000_000, 20_000_000]);
     expect(r.json().contentUrl).toContain('MaxStreamingBitrate=20000000');
     expect(await grants()).toEqual([]);
+  });
+
+  it('owner ruling: a cast pick below the source gets 503, not the original as a copy', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    sessions = async () => [foreign('ps-foreign-1')];
+    src = H264_8M;
+    const minted = (await env.kv.keys('cast:')).length;
+    const r = await cast(admin, { maxBitrate: 4_000_000 });
+    expect(r.statusCode).toBe(503);
+    expect(r.json()).toEqual({ error: 'server_busy' });
+    expect(pb.map((p) => p.max)).toEqual([4_000_000]);
+    expect(await env.kv.keys('cast:')).toHaveLength(minted); // nothing minted
   });
 
   it('a cast conversion with a free slot takes it and binds it', async () => {

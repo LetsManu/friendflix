@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { ltvStatusMock, ltvStatusRoute, type LtvStatusMock } from './livetvStatus.js';
 import { advanceLivetvJob, livetvJob, type LivetvJobOutcome } from './updater.js';
 /**
  * Admin API fixtures for the mocked FriendFlix backend (shapes follow backend/src/routes/admin.ts, seerr.ts, polls.ts,
@@ -15,7 +16,9 @@ const accessEnded = (until: string | null): boolean => until !== null && Date.pa
 /** uuid-shaped ids (the backend validates uuids for users/devices) */
 export const auid = (n: number): string => `00000000-0000-4000-a000-${n.toString().padStart(12, '0')}`;
 
-export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null; access_until?: string | null; profiles?: number; /** why a locked account is locked (default manual) */ locked_reason?: 'manual' | 'expired' | 'deletion'; /** scheduled deletion (Block 23 self-service) */ deletion_at?: string | null; /** claimed by the deletion tick, users row still there (steps 1-4) */ cleanup?: { step: number; error: string | null } }
+export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null; access_until?: string | null; profiles?: number; /** why a locked account is locked (default manual) */ locked_reason?: 'manual' | 'expired' | 'deletion'; /** scheduled deletion (Block 23 self-service) */ deletion_at?: string | null; /** claimed by the deletion tick, users row still there (steps 1-4) */ cleanup?: { step: number; error: string | null };
+  /** switch overrides of the person (user_limits.perms; backend counts them in `overrides`), the other stored overrides (limits), the admin's note, no 2FA at the sign-in provider */
+  perms?: Record<string, boolean>; otherOverrides?: number; /** the stored non-switch overrides in the PUT encoding (null never stored; 'unlimited' lifts a cap); their count is `otherOverrides` once written */ ov?: Record<string, unknown>; kidsProfiles?: number; note?: string | null; mfaOff?: boolean }
 /** a claimed deletion whose users row is gone (status=deleting lists it by pseudonym); step = the step in work (1-6) */
 export interface AdminCleanup { id: string; pseudonym: string; started_at: string; step: number; error: string | null }
 export interface AdminDevice { user_id: string; device_id: string; label: string; approved: boolean; last_seen: string; name: string; /** the admin's own device (backend: current) */ current?: boolean }
@@ -96,6 +99,8 @@ export interface AdminState {
   usageCalls: string[];
   usageDetailCalls: string[];
   usageSince: string | null;
+  /** accounts the next bulk `repair` fails on (the answer is then `{ done, failed }`) */
+  repairFails: Set<string>;
   /** Block 23 user detail (/api/admin/users/:id*): Authentik state (mfa null = no Authentik API), link health, limits, profiles, activity calls */
   detailMfa: { totp: boolean; webauthn: boolean; static: boolean } | null;
   /** Block 23 self-service: deletions whose users row is gone, and ids the deletion tick has claimed (restore answers 409) */
@@ -105,6 +110,16 @@ export interface AdminState {
   linkedOk: { jellyfin: boolean | null; requests: boolean };
   limits: Record<string, DetailLimits>;
   userProfiles: Record<string, DetailProfile[]>;
+  /** the cap a profile had before it stopped being a kids profile (the DB column keeps it) */
+  keptCap: Map<string, number>;
+  /** the last profile number handed out (new kids profiles) */
+  profileSeq: number;
+  /** the media server refuses the policy of the next kids changes (PATCH …/profiles/:pid → 502 jellyfin, stored and audited anyway) */
+  profileMediaFails: boolean;
+  /** Sicht prüfen: when each /check request came (the route allows 30 a minute, then 429) */
+  checkTimes: number[];
+  /** Sicht prüfen on an adapter that hides unrated titles under any cap (Plex: an explicit age null): a grown-up's cap hides them as `unrated` */
+  checkHidesUnrated: boolean;
   activityCalls: number;
   /** licences revoked via DELETE /api/admin/downloads/:id */
   revokedLicences: string[];
@@ -143,7 +158,117 @@ export interface LivetvMock {
   /** GET state calls and the POSTed bodies, in order */
   gets: number;
   posts: Array<{ path: 'enable' | 'disable'; body: any }>;
+  /** the installed area's *Quellen* tab (Task 21, built on the contracts of Tasks 15, 16, 20) */
+  area: LivetvAreaMock;
+  /** the *Live-Status* tab and the guide counts (Task 26, mocks/livetvStatus.ts) */
+  status: LtvStatusMock;
 }
+/** a source as `GET /api/admin/livetv/sources` answers it (backend SourceView, Task 15): never a URL, only `urlHint` / `epgHint` */
+export interface LtvSourceMock {
+  id: string; kind: 'm3u' | 'feeds'; name: string; urlHint: string | null; epgHint: string | null; userAgent: string | null; allowLan: boolean;
+  refresh: '6h' | '12h' | '24h' | 'weekly' | 'manual'; skipGroups: string[]; numbering: 'chno' | 'order'; numberBase: number; logoPref: 'm3u' | 'xmltv';
+  epgShiftMin: number; maxStreams: number | null; enabled: boolean; position: number; channelCount: number; pendingGroups: number;
+  state: {
+    lastRefreshAt: string | null; lastOkAt: string | null; lastError: string | null; counts: { channels: number; added: number; removed: number } | null;
+    epg: { lastRefreshAt: string | null; lastOkAt: string | null; lastError: string | null; programmes: number | null };
+  };
+}
+/**
+ * an own feed (a channel of the `feeds` source): the AdminChannel fields the card reads (plan Task 19, backend ownfeeds.ts); `push` only
+ * on push feeds (`hint` = 'ff-' + 6, no ellipsis; `portInRange` is computed from `ports` when answered); `ingest` = what livetv's
+ * GET /v1/ingest says about a push feed (`pending` = livetv does not know it yet)
+ */
+export interface LtvFeedMock {
+  id: string; sourceId: string; name: string; number: number | null; streamKind: 'hls' | 'ts' | 'srt';
+  push?: { port: number; hint: string };
+  ingest: { state: 'receiving' | 'idle' | 'pending'; rejected1h: number } | null;
+  /** hidden channel: withdrawn from livetv (ingest state `off`, as for a disabled source) */
+  hidden?: boolean;
+}
+/** a channel group as `GET /api/admin/livetv/groups` answers it (backend GroupView, Task 18) */
+export interface LtvGroupMock { id: string; name: string; kidFriendly: boolean; roles: string[]; released: boolean; position: number; channels: number; providerGroups: string[] }
+export interface LivetvAreaMock {
+  sources: LtvSourceMock[];
+  feeds: LtvFeedMock[];
+  /** *Gruppen & Rechte* (Task 25): the groups, and the per-person exceptions by user id (livetv_group_users) */
+  groups: LtvGroupMock[];
+  exceptions: Record<string, { allow: string[]; deny: string[] }>;
+  /** LIVETV_SRT_PORTS as livetv's /v1/system reports it, and the host shown to encoders (LIVETV_SRT_HOST) */
+  ports: number[];
+  /** livetv reports its range (false: `GET /ingest` answers `ports: null`, every feed `error`) */
+  portsKnown: boolean;
+  host: string | null;
+  /** the answer of POST /sources/test: the result, or a 422 code */
+  test: { channels: number; groups: Array<{ name: string; channels: number }>; samples: string[]; epgChannels: number | null; epgError: string | null } | { error: string; status?: number };
+  /** the next POST /sources/test answers 409 test_running once (another check of this admin still runs) */
+  testBusy: boolean;
+  /** whether livetv takes the new ingest set on push writes (`synced` of Task 20's answers) */
+  synced: boolean;
+  /** a started refresh finishes after this many GETs of /sources, with this outcome */
+  refreshPolls: number;
+  refreshOutcome: { counts: { channels: number; added: number; removed: number } } | { error: string };
+  refreshing: Record<string, number>;
+  /** livetv's GET /v1/ingest fails: every push feed in range is `error` */
+  ingestFails: boolean;
+  /** every write, in order (method, path, body) */
+  calls: Array<{ m: string; p: string; body: any }>;
+  seq: number;
+}
+const ltvState = (o: Partial<LtvSourceMock['state']> = {}): LtvSourceMock['state'] => ({
+  lastRefreshAt: null, lastOkAt: null, lastError: null, counts: null, epg: { lastRefreshAt: null, lastOkAt: null, lastError: null, programmes: null }, ...o,
+});
+const ltvSource = (o: Partial<LtvSourceMock> & Pick<LtvSourceMock, 'id' | 'kind' | 'name'>): LtvSourceMock => ({
+  urlHint: null, epgHint: null, userAgent: null, allowLan: false, refresh: '24h', skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0,
+  maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, state: ltvState(), ...o,
+});
+/** the provider's 18 groups as `POST /sources/test` lists them (Task 22's picker): 412 channels, "Erwachsene" 100 of them */
+export const LTV_GROUPS: Array<{ name: string; channels: number }> = [
+  ['DE | Sport', 42], ['DE | Nachrichten', 30], ['DE | Kinder', 20], ['DE | Dokumentation', 25], ['DE | Unterhaltung', 40], ['AT | Sport', 12],
+  ['AT | Regional', 18], ['CH | Regional', 15], ['Erwachsene', 100], ['Musik', 22], ['Filme', 30], ['Serien', 28], ['Natur & Tiere', 10],
+  ['Wetter', 5], ['Bergblick Sport', 8], ['Hafenregion', 3], ['Sternwarte', 2], ['Radio-Visuell', 2],
+].map(([name, channels]) => ({ name: name as string, channels: channels as number }));
+const ltvGroup = (o: Partial<LtvGroupMock> & Pick<LtvGroupMock, 'id' | 'name' | 'position' | 'channels'>): LtvGroupMock => ({ kidFriendly: false, roles: [], released: true, providerGroups: [], ...o });
+export function livetvAreaMock(): LivetvAreaMock {
+  const today = (h: number, m: number) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
+  return {
+    sources: [
+      ltvSource({
+        id: 'src-nordlicht', kind: 'm3u', name: 'Nordlicht Paket', urlHint: 'https://iptv.example.com/…', epgHint: 'https://iptv.example.com/…', channelCount: 412, pendingGroups: 2, position: 0,
+        state: ltvState({ lastRefreshAt: today(6, 12), lastOkAt: today(6, 12), counts: { channels: 412, added: 3, removed: 1 }, epg: { lastRefreshAt: today(6, 12), lastOkAt: today(6, 12), lastError: null, programmes: 6812 } }),
+      }),
+      ltvSource({ id: 'src-feeds', kind: 'feeds', name: 'Eigene Streams', refresh: 'manual', channelCount: 2, position: 1 }),
+    ],
+    feeds: [
+      { id: 'ch-hafen', sourceId: 'src-feeds', name: 'Hafenkanal', number: 801, streamKind: 'hls', ingest: null },
+      { id: 'ch-wolkenlos', sourceId: 'src-feeds', name: 'Kanal Wolkenlos', number: 802, streamKind: 'srt', push: { port: 9001, hint: 'ff-QW7RT5' }, ingest: { state: 'receiving', rejected1h: 2 } },
+    ],
+    // Task 25: five released groups (Kinderinsel + Natur & Tiere are kid-friendly: 11 + 12 = 23 channels), two the import left unreleased (matches the source card's "2 neue Gruppen")
+    groups: [
+      ltvGroup({ id: 'g-sport', name: 'Sport', roles: ['family', 'friend'], position: 0, channels: 34, providerGroups: ['DE | Sport', 'DE | Sport HD'] }),
+      ltvGroup({ id: 'g-nachrichten', name: 'Nachrichten', roles: ['family', 'friend', 'guest'], position: 1, channels: 18, providerGroups: ['DE | News'] }),
+      ltvGroup({ id: 'g-kinder', name: 'Kinderinsel', kidFriendly: true, roles: ['family', 'friend'], position: 2, channels: 11, providerGroups: ['DE | Kids'] }),
+      ltvGroup({ id: 'g-natur', name: 'Natur & Tiere', kidFriendly: true, roles: ['family'], position: 3, channels: 12, providerGroups: ['DE | Doku Natur'] }),
+      ltvGroup({ id: 'g-regional', name: 'Regional', position: 4, channels: 9 }),
+      ltvGroup({ id: 'g-kino', name: 'Kinofilme', released: false, position: 5, channels: 41, providerGroups: ['DE | Cinema'] }),
+      ltvGroup({ id: 'g-musik', name: 'Musik & Konzert', released: false, position: 6, channels: 27, providerGroups: ['DE | Konzert', 'DE | Musik'] }),
+    ],
+    exceptions: {},
+    ports: Array.from({ length: 10 }, (_, i) => 9000 + i),
+    portsKnown: true,
+    host: 'friend.example.com',
+    test: { channels: 412, groups: LTV_GROUPS, samples: ['Nordlicht TV', 'Hafenkanal', 'Bergblick Sport', 'Kinderinsel', 'Sternwarte 24'], epgChannels: 398, epgError: null },
+    refreshPolls: 1,
+    refreshOutcome: { counts: { channels: 415, added: 3, removed: 0 } },
+    refreshing: {},
+    ingestFails: false,
+    testBusy: false,
+    synced: true,
+    calls: [],
+    seq: 0,
+  };
+}
+/** the backend's maskUrl (Task 15): scheme + host + "/…", never a path, query or credentials */
+const maskUrl = (raw: string): string => { const u = new URL(raw); return `${u.protocol}//${u.host}/…`; };
 export interface MatrixMockRole {
   key: string; label: string | null; builtinLabel: boolean; base: 'family' | 'friend' | 'guest' | 'admin'; origin: 'code' | 'env' | 'admin'; invitable: boolean;
   /** false = an env-only role: not in the roles table (the order write ignores its key) */
@@ -239,7 +364,7 @@ export function matrixMock(): MatrixMock {
   };
 }
 export interface DetailLimits { maxStreams: number | null; remoteBitrate: number | null; maxDownloads: number | null; downloadMaxHeight: number | null; requestsPerMonth: number | null }
-export interface DetailProfile { id: string; name: string; kids: boolean; maxRating: string | null; avatar: string; lastUsed: string | null; isOwner: boolean; hasPin: boolean }
+export interface DetailProfile { id: string; name: string; kids: boolean; /** the age cap of a kids profile (0/6/12), null on a grown-up one */ maxRating: number | null; avatar: string; lastUsed: string | null; isOwner: boolean; hasPin: boolean }
 /** role values the limits page shows as placeholders */
 export const DETAIL_ROLE_LIMITS: DetailLimits = { maxStreams: 2, remoteBitrate: 8_000_000, maxDownloads: 5, downloadMaxHeight: 720, requestsPerMonth: 3 };
 export type HygieneCode = 'no_overview' | 'no_poster' | 'no_backdrop' | 'no_year' | 'no_ids' | 'no_audio' | 'audio_unknown' | 'foreign_no_subs' | 'forced_only' | 'image_subs_only' | 'dup_ids' | 'dup_title' | 'dup_episode' | 'no_source' | 'zero_runtime' | 'heavy_bitrate' | 'hevc_10bit' | 'video_codec' | 'audio_codec';
@@ -292,14 +417,22 @@ const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemI
 export function livetvMock(): LivetvMock {
   return {
     installed: false, wanted: false, offerHidden: false, updater: true, stack: 'own', ltState: 'absent', ltError: null, job: null, tick: 0, jobPolls: 2, outcome: 'succeeded', failCode: null,
-    benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, lagLeft: 0, gets: 0, posts: [],
+    benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, lagLeft: 0, gets: 0, posts: [], area: livetvAreaMock(), status: ltvStatusMock(),
   };
 }
+
+/** rights facts of the first accounts (Anna: a switch exception, a limit and a kids profile with a note; Ben and Clara have no 2FA).
+ *  Cloned per state: the mock writes into `perms`/`ov`, and a shared object would carry one test's save into the next test of the worker */
+const SEED: Array<Partial<AdminUser>> = [
+  { perms: { party: false }, otherOverrides: 1, ov: { maxStreams: 3 }, kidsProfiles: 1, note: 'Teilt das Konto mit ihrer Familie' },
+  { mfaOff: true },
+  { kidsProfiles: 2, mfaOff: true },
+];
 
 export function adminState(): AdminState {
   const users: AdminUser[] = [
     { id: 'u1', name: 'Tester', email: 'tester@example.org', role: 'admin', disabled: false, jellyfin_username: 'tester', seerr_user_id: 1, created_at: ago(24 * 400), last_seen: ago(0.1) },
-    ...NAMES.map((n, i) => ({ id: auid(i + 2), name: n, email: i % 3 === 2 ? null : `${n.split(' ')[0]!.toLowerCase()}@example.org`, role: ['friend', 'family', 'guest', 'friend'][i % 4]!, disabled: i === 4, jellyfin_username: n.split(' ')[0]!.toLowerCase(), seerr_user_id: null, created_at: ago(24 * (i + 3)), last_seen: ago(i * 7) })),
+    ...NAMES.map((n, i) => ({ id: auid(i + 2), name: n, email: i % 3 === 2 ? null : `${n.split(' ')[0]!.toLowerCase()}@example.org`, role: ['friend', 'family', 'guest', 'friend'][i % 4]!, disabled: i === 4, jellyfin_username: n.split(' ')[0]!.toLowerCase(), seerr_user_id: null, created_at: ago(24 * (i + 3)), last_seen: ago(i * 7), ...structuredClone(SEED[i]) })),
   ];
   return {
     users,
@@ -385,12 +518,18 @@ export function adminState(): AdminState {
     usageDetailCalls: [],
     usageSince: leaveDay(-10),
     detailMfa: { totp: true, webauthn: false, static: true },
+    repairFails: new Set(),
     cleanups: [],
     claimed: new Set(),
     authentik: { recovery: true, mfaSetup: false },
     linkedOk: { jellyfin: true, requests: true },
     limits: {},
     userProfiles: {},
+    keptCap: new Map(),
+    profileSeq: 0,
+    profileMediaFails: false,
+    checkTimes: [],
+    checkHidesUnrated: false,
     activityCalls: 0,
     revokedLicences: [],
   };
@@ -398,7 +537,7 @@ export function adminState(): AdminState {
 
 const profilesOf = (st: AdminState, u: AdminUser): DetailProfile[] => (st.userProfiles[u.id] ??= [
   { id: `${u.id.slice(0, -4)}p001`, name: u.name.split(' ')[0]!, kids: false, maxRating: null, avatar: 'a2', lastUsed: u.last_seen, isOwner: true, hasPin: false },
-  { id: `${u.id.slice(0, -4)}p002`, name: 'Kinder', kids: true, maxRating: 'FSK-6', avatar: 'a4', lastUsed: null, isOwner: false, hasPin: true },
+  { id: `${u.id.slice(0, -4)}p002`, name: 'Kinder', kids: true, maxRating: 6, avatar: 'a4', lastUsed: null, isOwner: false, hasPin: true },
 ]);
 /** GET /api/admin/users/:id (shape of backend/src/routes/adminUsers.ts; never credentials or the Authentik sub) */
 function userDetail(st: AdminState, u: AdminUser) {
@@ -517,21 +656,35 @@ function sorted<T>(rows: T[], sp: URLSearchParams, keys: Record<string, (r: T) =
   return [...rows].sort((a, b) => { const x = k(a), y = k(b); return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y))) * dir; });
 }
 const WEEK = 7 * 86400e3;
+/** the backend's `overrides` count: stored switch exceptions plus the other stored limits (an admin's switches never count) */
+const overridesOf = (u: AdminUser): number => (u.otherOverrides ?? 0) + (u.role === 'admin' ? 0 : Object.keys(u.perms ?? {}).length);
+/** the switch the person effectively has */
+function effectivePerm(st: AdminState, row: { id: string; role: string | null }, key: string): boolean {
+  if (row.role === 'admin') return true;
+  const own = st.users.find((x) => x.id === row.id)?.perms?.[key];
+  return own ?? (st.matrix.roles.find((r) => r.key === row.role)?.values[key] === true);
+}
 function usersList(st: AdminState, sp: URLSearchParams) {
+  // perm=key:on|off and mfa=off as the backend: the effective switch (role value, the person's exception on top; admins may do everything); mfa only with the provider's API
+  const permFilter = sp.get('perm')?.split(':') ?? null, mfaOff = sp.get('mfa') === 'off' && st.authentik.recovery;
   const q = norm(sp.get('q') ?? ''), status = sp.get('status'), inactive = sp.get('lastActive') === '90+', lastActive = inactive ? 0 : Number(sp.get('lastActive') ?? 0), now = Date.now();
   // status=pending: the open approval requests in the same row shape (backend: pending true, role null)
   const all = status === 'pending'
-    ? st.approvals.map((a) => ({ id: a.id, name: a.name, email: a.email, role: null as unknown as string, disabled: false, jellyfin_username: '', seerr_user_id: null, created_at: a.requested_at, last_seen: null, access_until: null, locked_reason: null, deletion_at: null as string | null, cleanup: null as { step: number; error: string | null; gone: boolean } | null, profiles: 0, devices: 0, pending: true }))
+    ? st.approvals.map((a) => ({ id: a.id, name: a.name, email: a.email, role: null as unknown as string, disabled: false, jellyfin_username: '', seerr_user_id: null, created_at: a.requested_at, last_seen: null, access_until: null, locked_reason: null, deletion_at: null as string | null, cleanup: null as { step: number; error: string | null; gone: boolean } | null, profiles: 0, devices: 0, pending: true, overrides: 0, kidsProfiles: 0, note: null }))
     : st.users.map((u) => ({ ...u, access_until: u.access_until ?? null, locked_reason: u.disabled ? (u.locked_reason ?? 'manual') : null, deletion_at: u.deletion_at ?? null,
-      cleanup: status === 'deleting' && u.cleanup ? { ...u.cleanup, gone: false } : null, profiles: u.profiles ?? 1, devices: st.devices.filter((d) => d.user_id === u.id).length, pending: false }))
+      cleanup: status === 'deleting' && u.cleanup ? { ...u.cleanup, gone: false } : null, profiles: u.profiles ?? 1, devices: st.devices.filter((d) => d.user_id === u.id).length, pending: false,
+      overrides: overridesOf(u), kidsProfiles: u.kidsProfiles ?? 0, note: u.note ?? null }))
       // status=deleting: plus the cleanup rows (backend: pseudonym as name, no e-mail or role, cleanup {step, error})
-      .concat(status === 'deleting' ? st.cleanups.map((c) => ({ id: c.id, name: c.pseudonym, email: null, role: null as unknown as string, disabled: true, jellyfin_username: '', seerr_user_id: null, created_at: c.started_at, last_seen: null, access_until: null, locked_reason: 'deletion' as const, deletion_at: null, profiles: 0, devices: 0, pending: false, cleanup: { step: c.step, error: c.error, gone: true } })) : []);
+      .concat(status === 'deleting' ? st.cleanups.map((c) => ({ id: c.id, name: c.pseudonym, email: null, role: null as unknown as string, disabled: true, jellyfin_username: '', seerr_user_id: null, created_at: c.started_at, last_seen: null, access_until: null, locked_reason: 'deletion' as const, deletion_at: null, profiles: 0, devices: 0, pending: false, overrides: 0, kidsProfiles: 0, note: null, cleanup: { step: c.step, error: c.error, gone: true } })) : []);
   let rows = all.filter((u) => (!q || norm(`${u.name} ${u.email ?? ''} ${u.jellyfin_username}`).includes(q)) && (!sp.get('role') || u.role === sp.get('role'))
     && (!status || status === 'pending' || (status === 'locked' && u.disabled) || (status === 'active' && !u.disabled && !u.deletion_at)
       || (status === 'deleting' && (Boolean(u.deletion_at) || Boolean(u.cleanup)))
       || (status === 'expiring' && u.access_until !== null && Date.parse(u.access_until) >= now && Date.parse(u.access_until) <= now + WEEK))
     && (!lastActive || (u.last_seen !== null && Date.parse(u.last_seen) >= now - lastActive * 86400e3))
-    && (!inactive || u.last_seen === null || Date.parse(u.last_seen) < now - 90 * 86400e3));
+    && (!inactive || u.last_seen === null || Date.parse(u.last_seen) < now - 90 * 86400e3)
+    && (sp.get('overrides') !== '1' || u.overrides > 0) && (sp.get('kids') !== '1' || u.kidsProfiles > 0)
+    && (!permFilter || (u.role !== null && effectivePerm(st, u, permFilter[0]!) === (permFilter[1] === 'on')))
+    && (!mfaOff || ('mfaOff' in u && u.mfaOff === true)));
   rows = sorted(rows, sp, { name: (u) => u.name, email: (u) => u.email ?? '', role: (u) => u.role, status: (u) => Number(u.disabled), lastSeen: (u) => u.last_seen ?? '', accessUntil: (u) => u.access_until ?? '', profiles: (u) => u.profiles, devices: (u) => u.devices });
   const { slice, total } = paged(rows, sp, 1000);
   return { users: slice, total };
@@ -553,9 +706,13 @@ function invitesList(st: AdminState, sp: URLSearchParams) {
   return { invites: slice.map((i) => ({ ...i, created_at: i.expires_at })), total };
 }
 const AUDIT_ACTOR = 'Tester';
+/** `?area=people` (backend admin.ts): the audit categories about people and their roles */
+const AUDIT_PEOPLE = new Set(['user', 'role', 'invite', 'profile', 'device']);
 function auditList(st: AdminState, sp: URLSearchParams) {
+  const area = sp.get('area') === 'people';
   const target = sp.get('target'), q = norm(sp.get('q') ?? ''), action = sp.get('action'), actor = sp.get('actor'), from = sp.get('from'), to = sp.get('to');
   let rows = st.audit.filter((e) => (!target || e.target === target) && (!q || norm(`${e.action} ${e.actor ?? ''} ${e.target_name ?? ''}`).includes(q))
+    && (!area || AUDIT_PEOPLE.has(e.action.split('.')[0]!))
     && (!action || e.action === action || e.action.startsWith(`${action}.`))
     && (!actor || (actor === 'system' ? e.actor === null : e.actor === AUDIT_ACTOR))
     && (!from || e.at >= from) && (!to || e.at <= to));
@@ -588,7 +745,7 @@ function livetvState(lt: LivetvMock) {
     gpu: { jellyfin: lt.installed ? 'qsv' : null, livetv: lt.installed ? { driver: 'iHD', devices: 1 } : null, advice: lt.installed ? lt.advice : null },
   };
 }
-function livetvRoute(lt: LivetvMock, m: string, p: string, body: any, J: Reply): Promise<void> | null {
+function livetvRoute(lt: LivetvMock, m: string, p: string, sp: URLSearchParams, body: any, J: Reply): Promise<void> | null {
   if (p === '/api/admin/livetv/state' && m === 'GET') return J(livetvState(lt));
   if ((p === '/api/admin/livetv/enable' || p === '/api/admin/livetv/disable') && m === 'POST') {
     const path = p.endsWith('enable') ? 'enable' : 'disable';
@@ -604,8 +761,256 @@ function livetvRoute(lt: LivetvMock, m: string, p: string, body: any, J: Reply):
     if (path === 'enable') lt.wanted = true; else lt.wanted = false;
     return J({ job: lt.job, wanted: path === 'enable' }, 202);
   }
+  return ltvStatusRoute(lt.status, m, p, J) ?? livetvAreaRoute(lt.area, lt.installed, m, p, sp, body, J);
+}
+
+/**
+ * The *Quellen* tab's routes, as the plan's contracts declare them: sources CRUD + test (Task 15), refresh 202 with the result through
+ * GET (Task 16, spec §10), own feeds with the one-time push answer, ports and ingest state (Task 20).
+ */
+function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: string, sp: URLSearchParams, body: any, J: Reply): Promise<void> | null {
+  let mm: RegExpMatchArray | null;
+  if (m !== 'GET') a.calls.push({ m, p, body });
+  const inRange = (port: number) => !a.portsKnown || a.ports.includes(port);
+  const feedView = (f: LtvFeedMock) => ({
+    id: f.id, name: f.name, number: f.number, groupId: null, sourceId: f.sourceId, streamKind: f.streamKind, ingest: f.push ? 'push' : 'pull',
+    ...(f.push ? { push: { port: f.push.port, hint: f.push.hint, portInRange: inRange(f.push.port) } } : {}),
+  });
+  const httpUrl = (v: unknown) => { try { const u = new URL(String(v)); return u.protocol === 'http:' || u.protocol === 'https:' ? u : null; } catch { return null; } };
+  const nowIso = () => new Date().toISOString();
+  /** `checkSourceUrl` refuses single-label hosts (`http://backend/list`, `localhost`) with `refused` */
+  const singleLabel = (u: URL) => !u.hostname.includes('.') && !u.hostname.includes(':');
+
+  if (p === '/api/admin/livetv/sources' && m === 'GET') {
+    for (const [id, left] of Object.entries(a.refreshing)) {
+      if (left > 1) { a.refreshing[id] = left - 1; continue; }
+      delete a.refreshing[id];
+      const s = a.sources.find((x) => x.id === id);
+      if (!s) continue;
+      const at = nowIso(), o = a.refreshOutcome;
+      if ('error' in o) s.state = { ...s.state, lastRefreshAt: at, lastError: o.error };
+      else { s.state = { ...s.state, lastRefreshAt: at, lastOkAt: at, lastError: null, counts: o.counts }; s.channelCount = o.counts.channels; }
+    }
+    return J(a.sources); // a bare array (backend adminRoutes.ts → listSources)
+  }
+  if (p === '/api/admin/livetv/sources/test' && m === 'POST') {
+    if (a.testBusy) { a.testBusy = false; return J({ error: 'test_running' }, 409); }
+    for (const field of ['url', 'epgUrl'] as const) {
+      if (body?.[field] === undefined || (field === 'epgUrl' && (body.epgUrl === null || body.epgUrl === ''))) continue; // null / '' = no guide
+      const u = httpUrl(body[field]);
+      if (!u) return J({ error: 'invalid', field }, 400);
+      if (singleLabel(u)) return J({ error: 'refused', field }, 400);
+    }
+    if (body?.url === undefined && !body?.sourceId) return J({ error: 'invalid', field: 'url' }, 400);
+    // livetv's refusals answer 422 { error }, an unreached livetv 503 livetv_unreachable (Task 15 as built)
+    return 'error' in a.test ? J({ error: a.test.error }, a.test.status ?? 422) : J(a.test);
+  }
+  if (p === '/api/admin/livetv/sources' && m === 'POST') {
+    const u = httpUrl(body?.url);
+    if (!u) return J({ error: 'invalid', field: 'url' }, 400);
+    if (singleLabel(u)) return J({ error: 'refused', field: 'url' }, 400);
+    if (typeof body?.name !== 'string' || !body.name.trim()) return J({ error: 'invalid', field: 'name' }, 400);
+    const s = ltvSource({
+      id: `src-${++a.seq}`, kind: 'm3u', name: body.name, urlHint: maskUrl(u.href), epgHint: body.epgUrl ? maskUrl(body.epgUrl) : null, userAgent: body.userAgent ?? null,
+      allowLan: Boolean(body.allowLan), refresh: body.refresh ?? '24h', skipGroups: body.skipGroups ?? [], numbering: body.numbering ?? 'chno', numberBase: body.numberBase ?? 1, logoPref: body.logoPref ?? 'm3u',
+      epgShiftMin: body.epgShiftMin ?? 0, maxStreams: body.maxStreams ?? null, position: a.sources.length,
+    });
+    a.sources.push(s);
+    return J(s, 201);
+  }
+  if ((mm = p.match(/^\/api\/admin\/livetv\/sources\/([^/]+)(\/refresh)?$/))) {
+    const s = a.sources.find((x) => x.id === mm![1]);
+    if (!s) return J({ error: 'not_found' }, 404);
+    if (mm[2] && m === 'POST') {
+      // Task 16 (livetv16 af2c8fc4): own feeds have no list, nothing loads while livetv is not installed, a running one is not restarted
+      if (s.kind === 'feeds') return J({ error: 'no_list' }, 409);
+      if (!installed) return J({ error: 'livetv_off' }, 409);
+      if (a.refreshing[s.id]) return J({ started: false }, 202);
+      a.refreshing[s.id] = a.refreshPolls;
+      return J({ started: true }, 202);
+    }
+    if (!mm[2] && m === 'PATCH') {
+      const b = body ?? {};
+      if (b.url !== undefined) { const u = httpUrl(b.url); if (!u) return J({ error: 'invalid', field: 'url' }, 400); s.urlHint = maskUrl(u.href); }
+      if (b.epgUrl === null || b.epgUrl === '') s.epgHint = null; else if (b.epgUrl !== undefined) s.epgHint = maskUrl(b.epgUrl);
+      for (const k of ['name', 'userAgent', 'allowLan', 'refresh', 'skipGroups', 'numbering', 'numberBase', 'logoPref', 'epgShiftMin', 'maxStreams', 'enabled'] as const) {
+        if (b[k] !== undefined) (s as any)[k] = b[k];
+      }
+      return J(s);
+    }
+    if (!mm[2] && m === 'DELETE') {
+      a.sources = a.sources.filter((x) => x.id !== s.id);
+      return J({ channels: s.channelCount });
+    }
+  }
+  if (p === '/api/admin/livetv/channels' && m === 'GET') {
+    const rows = a.feeds.filter((f) => f.sourceId === sp.get('source'));
+    return J({ channels: rows.map(feedView), total: rows.length });
+  }
+  if (p === '/api/admin/livetv/ingest' && m === 'GET') {
+    // backend ownfeeds.ts ingestView: out of range first, then livetv not reached / range unknown, then livetv's own word
+    const feeds = a.feeds.filter((f) => f.push).map((f) => {
+      const active = !f.hidden && a.sources.find((x) => x.id === f.sourceId)?.enabled !== false;
+      const state = !active ? 'off' : a.portsKnown && !a.ports.includes(f.push!.port) ? 'out_of_range' : a.ingestFails || !a.portsKnown ? 'error' : f.ingest?.state ?? 'pending';
+      return { channelId: f.id, state, rejected1h: a.ingestFails ? 0 : f.ingest?.rejected1h ?? 0 };
+    });
+    const ports = a.portsKnown && a.ports.length ? { from: Math.min(...a.ports), to: Math.max(...a.ports) } : null;
+    return J({ host: a.host, ports, feeds });
+  }
+  if (p === '/api/admin/livetv/channels' && m === 'POST') {
+    const b = body ?? {};
+    if (typeof b.name !== 'string' || !b.name.trim()) return J({ error: 'invalid', field: 'name' }, 400);
+    let feeds = a.sources.find((x) => x.kind === 'feeds');
+    const port = b.ingest === 'push' ? a.ports.find((pt) => !a.feeds.some((f) => f.push?.port === pt)) : undefined;
+    if (b.ingest === 'push' && port === undefined) return J({ error: 'srt_ports_full', n: a.ports.length }, 409);
+    let found: 'hls' | 'ts' | 'srt' = 'srt';
+    if (b.ingest === 'pull') {
+      let u: URL;
+      try { u = new URL(b.url); if (!['http:', 'https:', 'srt:'].includes(u.protocol)) throw new Error('scheme'); } catch { return J({ error: 'invalid', field: 'url' }, 400); }
+      if (singleLabel(u)) return J({ error: 'refused', field: 'url' }, 400);
+      found = u.protocol === 'srt:' ? 'srt' : /\.ts$/i.test(u.pathname) ? 'ts' : 'hls';
+      if (b.kind !== undefined && (b.kind === 'srt') !== (found === 'srt')) return J({ error: 'invalid', field: 'kind' }, 400);
+    }
+    if (!feeds) { feeds = ltvSource({ id: `src-${++a.seq}`, kind: 'feeds', name: 'Eigene Streams', refresh: 'manual', position: a.sources.length }); a.sources.push(feeds); }
+    const id = `ch-${++a.seq}`;
+    const f: LtvFeedMock = b.ingest === 'push'
+      ? { id, sourceId: feeds.id, name: b.name, number: b.number ?? null, streamKind: 'srt', push: { port: port!, hint: 'ff-AB12CD' }, ingest: { state: 'idle', rejected1h: 0 } }
+      : { id, sourceId: feeds.id, name: b.name, number: b.number ?? null, streamKind: b.kind ?? found, ingest: null };
+    a.feeds.push(f);
+    feeds.channelCount = a.feeds.filter((x) => x.sourceId === feeds!.id).length;
+    return J({ channel: feedView(f), ...(f.push ? { push: pushAnswer(a, f.push.port) } : {}), synced: f.push ? a.synced : true }, 201);
+  }
+  if ((mm = p.match(/^\/api\/admin\/livetv\/channels\/([^/]+)(\/push-credentials|\/push-port)?$/))) {
+    const f = a.feeds.find((x) => x.id === mm![1]);
+    if (!f) return J({ error: 'not_found' }, 404);
+    if (mm[2] === '/push-credentials' && m === 'POST') return f.push ? J({ channel: feedView(f), push: pushAnswer(a, f.push.port), synced: a.synced }) : J({ error: 'not_push' }, 409);
+    if (mm[2] === '/push-port' && m === 'POST') {
+      const port = a.ports.find((pt) => !a.feeds.some((x) => x.push?.port === pt));
+      if (!f.push) return J({ error: 'not_push' }, 409);
+      if (inRange(f.push.port)) return J({ error: 'port_in_range' }, 409); // a working encoder is never cut off
+      if (port === undefined) return J({ error: 'srt_ports_full', n: a.ports.length }, 409);
+      f.push = { ...f.push, port };
+      return J({ port, synced: a.synced });
+    }
+    if (!mm[2] && m === 'DELETE') { a.feeds = a.feeds.filter((x) => x.id !== f.id); return J({ ok: true, synced: f.push ? a.synced : true }); }
+  }
   return null;
 }
+/** the one-time push answer (Task 20): stream id "ff-" + 16 characters, a 32-character passphrase, the full SRT URL */
+function pushAnswer(a: LivetvAreaMock, port: number) {
+  const streamId = 'ff-AB12CDEFGH2345JK', passphrase = 'Zq3xV9mB2nK7pL4wR8tY6uH1jG5fD0sA';
+  // no host (neither LIVETV_SRT_HOST nor PUBLIC_URL known): no URL either
+  return { host: a.host, port, streamId, passphrase, url: a.host ? `srt://${a.host}:${port}?streamid=${streamId}&passphrase=${passphrase}&pbkeylen=32&mode=caller&latency=200000` : null };
+}
+
+// ---- Task 22: audit samples of `user.rights` (backend userRights.ts: `{ from, to, layer?, stored?, note? }`) and a role.delete with its label ----
+/**
+ * newest first; `user` is the person the entries are about, `actor` the admin. As the backend writes them (rights.ts diffRights): a changed value
+ * has no `layer`; `layer` appears only when the value stayed and the deciding layer moved (sample 9002).
+ */
+/** the groups in the backend's list order: unreleased first, then by position */
+const ltvSorted = (a: LivetvAreaMock) => [...a.groups].sort((x, y) => Number(x.released) - Number(y.released) || x.position - y.position || x.name.localeCompare(y.name));
+/** a person's exceptions as the backend's `userGroups` answers them (id + name, in group order) */
+function ltvExceptionsOf(a: LivetvAreaMock, userId: string) {
+  const e = a.exceptions[userId] ?? { allow: [], deny: [] };
+  const ref = (ids: string[]) => ltvSorted(a).filter((g) => ids.includes(g.id)).map((g) => ({ id: g.id, name: g.name }));
+  return { allow: ref(e.allow), deny: ref(e.deny) };
+}
+/**
+ * The channel groups routes (backend livetv/adminRoutes.ts, groups.ts; Task 18). Every write is recorded in `area.calls`; refusals as the
+ * backend has them: 400 { error: 'invalid', field }, 404 not_found, 409 name_taken. A role that is not stored (an env-only one) and an
+ * unknown one are `400 invalid roles`.
+ */
+function ltvGroupsRoute(st: AdminState, m: string, p: string, body: any, J: Reply): Promise<void> | null {
+  const a = st.livetv.area;
+  if (m !== 'GET') a.calls.push({ m, p, body });
+  const catalogue = st.matrix.roles.map((r) => r.key);
+  const view = (g: LtvGroupMock) => ({ ...g, roles: catalogue.filter((k) => g.roles.includes(k)) });
+  const bad = (field: string) => J({ error: 'invalid', field }, 400);
+  const rolesOk = (rs: unknown): rs is string[] => Array.isArray(rs) && rs.every((k) => st.matrix.roles.some((r) => r.key === k && r.stored));
+  const nameOk = (n: unknown): n is string => typeof n === 'string' && n.trim().length >= 1 && n.trim().length <= 40;
+  const taken = (n: string, except?: string) => a.groups.some((g) => g.id !== except && g.name.toLowerCase() === n.trim().toLowerCase());
+  const known = (ids: unknown): ids is string[] => Array.isArray(ids) && ids.every((i) => typeof i === 'string' && a.groups.some((g) => g.id === i));
+  const strict = (b: any, keys: string[]) => typeof b === 'object' && b !== null && Object.keys(b).every((k) => keys.includes(k));
+  let mm: RegExpMatchArray | null;
+
+  if (p === '/api/admin/livetv/groups' && m === 'GET') return J({ groups: ltvSorted(a).map(view), pending: a.groups.filter((g) => !g.released).length });
+  if (p === '/api/admin/livetv/groups' && m === 'POST') {
+    if (!strict(body, ['name', 'kidFriendly', 'roles', 'released']) || !nameOk(body?.name)) return bad('name');
+    if (body.roles !== undefined && !rolesOk(body.roles)) return bad('roles');
+    if (taken(body.name)) return J({ error: 'name_taken' }, 409);
+    const g = ltvGroup({ id: `g-new-${++a.seq}`, name: body.name.trim(), kidFriendly: body.kidFriendly === true, roles: [...new Set<string>(body.roles ?? [])], released: body.released ?? true, position: Math.max(-1, ...a.groups.map((x) => x.position)) + 1, channels: 0 });
+    a.groups.push(g);
+    return J(view(g), 201);
+  }
+  if (p === '/api/admin/livetv/groups/release' && m === 'POST') {
+    if (!strict(body, ['ids', 'roles', 'kidFriendly']) || !Array.isArray(body?.ids) || !body.ids.length || typeof body.kidFriendly !== 'boolean') return bad('body');
+    if (!rolesOk(body.roles)) return bad('roles');
+    const hit = a.groups.filter((g) => body.ids.includes(g.id));
+    for (const g of hit) Object.assign(g, { released: true, kidFriendly: body.kidFriendly, roles: [...new Set<string>(body.roles)] });
+    return J({ released: hit.length });
+  }
+  if (p === '/api/admin/livetv/groups/order' && m === 'PUT') {
+    if (!strict(body, ['ids']) || !Array.isArray(body?.ids)) return bad('ids');
+    const rest = ltvSorted(a).filter((g) => !body.ids.includes(g.id)).map((g) => g.id);
+    [...body.ids, ...rest].forEach((id: string, i: number) => { const g = a.groups.find((x) => x.id === id); if (g) g.position = i; });
+    return J({ ok: true });
+  }
+  if (p === '/api/admin/livetv/groups/merge' && m === 'POST') {
+    if (!strict(body, ['ids', 'into']) || !Array.isArray(body?.ids) || !body.ids.length || typeof body.into !== 'string') return bad('body');
+    const into = a.groups.find((g) => g.id === body.into);
+    const ids: string[] = body.ids.filter((i: string) => i !== body.into);
+    if (!ids.length || !known(ids)) return bad('ids');
+    if (!into) return J({ error: 'not_found' }, 404);
+    for (const g of a.groups.filter((x) => ids.includes(x.id))) { into.providerGroups = [...new Set([...into.providerGroups, ...g.providerGroups])].sort(); into.channels += g.channels; }
+    a.groups = a.groups.filter((g) => !ids.includes(g.id));
+    for (const e of Object.values(a.exceptions)) { e.allow = e.allow.filter((i) => !ids.includes(i)); e.deny = e.deny.filter((i) => !ids.includes(i)); }
+    return J(view(into));
+  }
+  if ((mm = p.match(/^\/api\/admin\/livetv\/groups\/([^/]+)$/))) {
+    const g = a.groups.find((x) => x.id === mm![1]);
+    if (m === 'GET') return g ? J(view(g)) : J({ error: 'not_found' }, 404);
+    if (!g) return J({ error: 'not_found' }, 404);
+    if (m === 'DELETE') {
+      a.groups = a.groups.filter((x) => x.id !== g.id);
+      for (const e of Object.values(a.exceptions)) { e.allow = e.allow.filter((i) => i !== g.id); e.deny = e.deny.filter((i) => i !== g.id); }
+      return J({ ok: true });
+    }
+    if (m === 'PATCH') {
+      if (!strict(body, ['name', 'kidFriendly', 'roles', 'released'])) return bad('body');
+      if (body.name !== undefined && !nameOk(body.name)) return bad('name');
+      if (body.roles !== undefined && !rolesOk(body.roles)) return bad('roles');
+      if (body.name !== undefined && taken(body.name, g.id)) return J({ error: 'name_taken' }, 409);
+      if (body.name !== undefined) g.name = body.name.trim();
+      if (body.kidFriendly !== undefined) g.kidFriendly = body.kidFriendly;
+      if (body.roles !== undefined) g.roles = [...new Set<string>(body.roles)];
+      if (body.released !== undefined) g.released = body.released;
+      return J(view(g));
+    }
+  }
+  return null;
+}
+/** `livetvCheck` (backend livetv/rights.ts): every group with whether the profile sees it and why not; null when Live TV is not installed or the account lacks `liveTv` */
+function ltvCheckMock(st: AdminState, u: AdminUser, p: DetailProfile) {
+  const a = st.livetv.area;
+  if (!st.livetv.installed || viewRows(st, u, p).find((r) => r.key === 'liveTv')?.value !== true) return null;
+  const ex = a.exceptions[u.id] ?? { allow: [], deny: [] };
+  const groups = ltvSorted(a).map((g) => {
+    const reason = !g.released ? 'notReleased' : p.kids && !g.kidFriendly ? 'notKidFriendly' : u.role === 'admin' ? null : ex.deny.includes(g.id) ? 'denied' : g.roles.includes(u.role) || ex.allow.includes(g.id) ? null : 'notGranted';
+    return { id: g.id, name: g.name, visible: reason === null, reason, channels: g.channels };
+  });
+  return { groups: groups.map(({ channels: _c, ...g }) => g), channels: groups.filter((g) => g.visible).reduce((n, g) => n + g.channels, 0) };
+}
+export function rightsAuditSamples(user: { id: string; name: string }, actor = 'Ben Muster'): AuditRow[] {
+  const row = (id: number, minutes: number, action: string, meta: Record<string, unknown>): AuditRow => ({ id, at: new Date(Date.now() - minutes * 60000).toISOString(), action, target: user.id, meta, actor, target_name: user.name });
+  return [
+    row(9005, 0.5, 'user.rights', { from: { transcoding: true }, to: { transcoding: false } }),
+    row(9004, 1, 'user.rights', { from: {}, to: {}, stored: { cast: { from: true, to: null } } }),
+    row(9003, 2, 'user.rights', { from: { requestsPerMonth: 5 }, to: { requestsPerMonth: null } }),
+    row(9002, 3, 'user.rights', { from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'user' } } }),
+  ];
+}
+export const roleDeleteSample = (key: string, label: string): AuditRow => ({ id: 9100, at: new Date(Date.now() - 5 * 60000).toISOString(), action: 'role.delete', target: key, meta: { moveTo: null, accounts: 0, invites: 0, label }, actor: 'Ben Muster', target_name: null });
 
 export function adminSummary(st: AdminState) {
   const pendingReq = st.requests.filter((r) => r.status === PENDING).length;
@@ -619,6 +1024,7 @@ export function adminSummary(st: AdminState) {
     services: { jellyfin: true, seerr: st.seerrUp },
     live: { streams: 2, partyRooms: 1 },
     livetv: { installed: st.livetv.installed, offerHidden: st.livetv.offerHidden, failedSources: st.livetv.failedSources },
+    mfaFilter: st.authentik.recovery,
     recoIndex: st.recoIndex,
   };
 }
@@ -644,7 +1050,8 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       v2: { impressions: 0, clicks: 0, plays: 0, dismisses: 0, ctr: null, playRate: null },
     },
   });
-  if (p.startsWith('/api/admin/livetv/')) return livetvRoute(st.livetv, m, p, body, J);
+  if (p.startsWith('/api/admin/livetv/groups')) return ltvGroupsRoute(st, m, p, body, J);
+  if (p.startsWith('/api/admin/livetv/')) return livetvRoute(st.livetv, m, p, sp, body, J);
   if (p === '/api/admin/summary') return st.summaryFails ? J({ error: 'boom' }, 500) : J(adminSummary(st));
   if (p === '/api/admin/status') {
     const s = adminSummary(st);
@@ -652,6 +1059,8 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   }
 
   // ---- people ----
+  // open requests have no rights or 2FA state (backend: 400 bad_request)
+  if (p === '/api/admin/users' && sp.get('status') === 'pending' && (sp.has('perm') || sp.has('mfa'))) return J({ error: 'bad_request' }, 400);
   if (p === '/api/admin/users') return J(usersList(st, sp));
   // ---- user detail (Block 23) ----
   if ((mm = p.match(/^\/api\/admin\/users\/([0-9a-f-]{36}|u1)(\/.*)?$/)) && !(m === 'PATCH' && !mm[2]) && mm[2] !== '/revoke-sessions') {
@@ -679,7 +1088,56 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       if (m === 'GET') return J({ limits: cur, role: DETAIL_ROLE_LIMITS });
       if (m === 'PUT') { const to = { ...cur, ...body }; log('user.limits', u.id, { from: cur, to }, u.name); st.limits[u.id] = to; return J({ limits: to }); }
     }
+    // ---- Sicht prüfen (backend viewcheck.ts, adminUsers.ts): the rights of one profile, its library counts and the title check ----
+    if (rest === '/livetv-groups' && m === 'PUT') {
+      // backend adminUsers.ts: the body is strict, an overlap is 400 invalid deny, an admin takes none, an unknown group is 400 invalid
+      const a = st.livetv.area, ids = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+      if (typeof body !== 'object' || body === null || Object.keys(body).some((k) => k !== 'allow' && k !== 'deny') || !ids(body.allow) || !ids(body.deny)) return J({ error: 'invalid', field: 'body' }, 400);
+      a.calls.push({ m, p, body });
+      if (body.allow.some((g: string) => body.deny.includes(g))) return J({ error: 'invalid', field: 'deny' }, 400);
+      if (u.role === 'admin' && (body.allow.length || body.deny.length)) return J({ error: 'admin_groups_locked' }, 400);
+      for (const k of ['allow', 'deny'] as const) if (body[k].some((g: string) => !a.groups.some((x) => x.id === g))) return J({ error: 'invalid', field: k }, 400);
+      log('user.livetv_groups', u.id, { allow: body.allow, deny: body.deny }, u.name);
+      a.exceptions[u.id] = { allow: [...new Set<string>(body.allow)], deny: [...new Set<string>(body.deny)] };
+      return J({ livetvGroups: ltvExceptionsOf(a, u.id) });
+    }
+    if (rest === '/rights' && m === 'GET' && sp.has('profile')) return viewRights(st, u, sp.get('profile')!, J);
+    if (rest === '/check' && (m === 'GET' || m === 'POST')) return viewCheck(st, u, m, m === 'GET' ? { profileId: sp.get('profile') } : body, J, log);
+    // every matrix row of the account (backend userRights.ts rightsView): effective value, the role's value, the stored override (null = none; an admin's
+    // switches never show one) and the deciding layer; PUT is partial (null = back to the role, a value equal to the role's is not stored)
+    if (rest === '/rights') {
+      const role = st.matrix.roles.find((r) => r.key === u.role);
+      if (!role) return J({ error: 'unknown_role' }, 409);
+      const isAdmin = u.role === 'admin';
+      const rowOf = (k: string) => rightsRow(role, u, k);
+      if (m === 'GET') {
+        const rows = MATRIX_FIELDS_MOCK.map((f) => rowOf(f.key as string));
+        const libs = rows.find((r) => r.key === 'libraries')!.value;
+        const missing = Array.isArray(libs) ? libs.filter((n) => !st.matrix.libraries.some((l) => l.name.toLowerCase() === String(n).toLowerCase())) : [];
+        return J({ role: u.role, note: u.note ?? null, rows, profile: null, hardKids: [], missingLibraries: missing, livetvGroups: ltvExceptionsOf(st.livetv.area, u.id) });
+      }
+      if (m === 'PUT') {
+        const o = (body?.overrides ?? {}) as Record<string, unknown>;
+        const keys = MATRIX_FIELDS_MOCK.map((f) => f.key as string);
+        if (typeof body !== 'object' || Object.keys(body ?? {}).some((k) => k !== 'overrides' && k !== 'note') || Object.keys(o).some((k) => !keys.includes(k))) return J({ error: 'bad_request' }, 400);
+        if (body?.note !== undefined && body.note !== null && (typeof body.note !== 'string' || body.note.trim().length > 200)) return J({ error: 'bad_request' }, 400);
+        // the backend resolves library names first (case-insensitive, the server's spelling): 400 unknown_library; then, in the write, the admin lock
+        if (Array.isArray(o.libraries)) {
+          const known = o.libraries.map((n) => st.matrix.libraries.find((l) => l.name.toLowerCase() === String(n).toLowerCase())?.name);
+          if (known.includes(undefined)) return J({ error: 'unknown_library' }, 400);
+          o.libraries = [...new Set(known as string[])];
+        }
+        // the admin role's switches are always on: none can be set, a stored one may be cleared (null)
+        if (isAdmin && PERM_KEYS_MOCK.some((k) => o[k] !== undefined && o[k] !== null)) return J({ error: 'admin_perms_locked' }, 400);
+        const { changed } = writeRightsMock(role, u, o, body?.note, log);
+        const media = changed.some((k) => MEDIA_KEYS_MOCK.includes(k));
+        if (media && st.matrix.policyPartial) return J({ error: 'policy_partial', failed: st.matrix.failed, identities: 2 }, 502);
+        return J({ ok: true, reapplied: { identities: media ? 2 : 0, failed: 0 } });
+      }
+    }
     if (rest === '/repair' && m === 'POST') {
+      // identities that still fail (matrix.policyPartial): a 200 with ok:false, nothing healed
+      if (st.matrix.policyPartial) { log('user.repair', u.id, { failed: st.matrix.failed }, u.name); return J({ ok: false, jellyfin: { identities: 2, failed: st.matrix.failed }, requests: { ok: true, id: 7 } }); }
       st.linkedOk = { jellyfin: st.linkedOk.jellyfin === false ? true : st.linkedOk.jellyfin, requests: true };
       log('user.repair', u.id, {}, u.name);
       return J({ ok: true, jellyfin: { identities: 2, failed: 0 }, requests: { ok: true, id: 7 } });
@@ -704,15 +1162,66 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       return ok();
     }
     if ((sub = rest.match(/^\/sessions\/([^/]+)\/revoke$/)) && m === 'POST') { log('user.revoke_device', u.id, { deviceId: sub[1] }, u.name); return J({ revoked: 1 }); }
+    // profiles (backend/src/routes/adminUsers.ts): PATCH rename / resetPin / kids / maxRating, POST a kids profile, DELETE a kids profile.
+    // Order as there: body check (400 bad_request), account (404), deletion claim (409 deletion_in_progress), then the profile's own errors.
+    const own = (n: Record<string, unknown>, allowed: string[]) => typeof n === 'object' && n !== null && Object.keys(n).every((k) => allowed.includes(k));
+    const nameOk = (v: unknown) => typeof v === 'string' && v.trim().length >= 1 && v.trim().length <= 20;
+    const capOk = (v: unknown) => v === 0 || v === 6 || v === 12;
+    const pub = (x: DetailProfile) => ({ id: x.id, name: x.name, avatar: x.avatar, isOwner: x.isOwner, kids: x.kids, ...(x.kids ? { maxRating: x.maxRating } : {}), hasPin: x.hasPin });
+    const recount = () => { const l = profilesOf(st, u); u.profiles = l.length; u.kidsProfiles = l.filter((x) => x.kids).length; };
+    const taken = (name: string, except?: DetailProfile) => profilesOf(st, u).some((x) => x !== except && x.name.toLowerCase() === name.trim().toLowerCase());
+    if (rest === '/profiles' && m === 'POST') {
+      if (!own(body, ['name', 'kids', 'maxRating', 'avatar']) || !nameOk(body.name) || body.kids !== true || !capOk(body.maxRating)
+        || (body.avatar !== undefined && !/^[a-z0-9-]{1,20}$/.test(String(body.avatar)))) return J({ error: 'bad_request' }, 400);
+      if (st.claimed.has(u.id)) return J({ error: 'deletion_in_progress' }, 409);
+      const list = profilesOf(st, u);
+      if (list.length >= 5) return J({ error: 'max_profiles' }, 409);
+      if (taken(body.name)) return J({ error: 'name_taken' }, 409);
+      const pr: DetailProfile = { id: `${u.id.slice(0, -4)}p${String(100 + ++st.profileSeq)}`, name: body.name.trim(), kids: true, maxRating: body.maxRating, avatar: body.avatar ?? 'red', lastUsed: null, isOwner: false, hasPin: false };
+      list.push(pr);
+      recount();
+      log('profile.admin_create', u.id, { profile: pr.id, maxRating: pr.maxRating }, u.name);
+      return J({ profile: pub(pr) }, 201);
+    }
     if ((sub = rest.match(/^\/profiles\/([^/]+)$/)) && m === 'PATCH') {
+      const keys = ['name', 'resetPin', 'kids', 'maxRating'];
+      if (!own(body, keys) || !keys.some((k) => body[k] !== undefined) || (body.name !== undefined && !nameOk(body.name)) || (body.resetPin !== undefined && body.resetPin !== true)
+        || (body.kids !== undefined && typeof body.kids !== 'boolean') || (body.maxRating !== undefined && !capOk(body.maxRating))) return J({ error: 'bad_request' }, 400);
+      if (st.claimed.has(u.id)) return J({ error: 'deletion_in_progress' }, 409);
       const pr = profilesOf(st, u).find((x) => x.id === sub![1]);
       if (!pr) return J({ error: 'not_found' }, 404);
-      if (body.name && profilesOf(st, u).some((x) => x !== pr && x.name.toLowerCase() === String(body.name).toLowerCase())) return J({ error: 'name_taken' }, 409);
-      const from = { name: pr.name, hasPin: pr.hasPin };
-      if (body.name) pr.name = body.name;
+      if (body.kids !== undefined && pr.isOwner) return J({ error: 'owner_not_kids' }, 400);
+      const kids = body.kids ?? pr.kids;
+      if (body.maxRating !== undefined && !kids) return J({ error: 'not_kids' }, 400);
+      if (body.name && taken(body.name, pr)) return J({ error: 'name_taken' }, 409);
+      const from: Record<string, unknown> = { name: pr.name, hasPin: pr.hasPin };
+      const kidsFrom = { kids: pr.kids, maxRating: pr.maxRating };
+      if (body.name) pr.name = body.name.trim();
       if (body.resetPin) pr.hasPin = false;
-      log('profile.admin_update', u.id, { from, to: { name: pr.name, hasPin: pr.hasPin } }, u.name);
-      return J({ profile: pr });
+      // the DB keeps the cap of a profile that stops being a kids one (shown as null), a new kids profile starts at 12
+      if (!pr.kids && kids) pr.maxRating = body.maxRating ?? st.keptCap.get(pr.id) ?? 12;
+      else if (pr.kids && !kids) { st.keptCap.set(pr.id, pr.maxRating ?? 12); pr.maxRating = null; }
+      else if (kids && body.maxRating !== undefined) pr.maxRating = body.maxRating;
+      pr.kids = kids;
+      const to: Record<string, unknown> = { name: pr.name, hasPin: pr.hasPin };
+      if (kidsFrom.kids !== pr.kids || kidsFrom.maxRating !== pr.maxRating) { Object.assign(from, kidsFrom); Object.assign(to, { kids: pr.kids, maxRating: pr.maxRating }); }
+      recount();
+      log('profile.admin_update', u.id, { profile: pr.id, from, to }, u.name);
+      // a kids change the media server did not take: stored and audited, the answer says so (Repair re-applies it)
+      if (st.profileMediaFails && (body.kids !== undefined || body.maxRating !== undefined)) return J({ error: 'jellyfin' }, 502);
+      return J({ profile: pub(pr) });
+    }
+    if ((sub = rest.match(/^\/profiles\/([^/]+)$/)) && m === 'DELETE') {
+      if (st.claimed.has(u.id)) return J({ error: 'deletion_in_progress' }, 409);
+      const list = profilesOf(st, u);
+      const pr = list.find((x) => x.id === sub![1]);
+      if (!pr) return J({ error: 'not_found' }, 404);
+      if (pr.isOwner) return J({ error: 'owner_profile' }, 400);
+      if (!pr.kids) return J({ error: 'not_kids_profile' }, 400);
+      st.userProfiles[u.id] = list.filter((x) => x !== pr);
+      recount();
+      log('profile.admin_delete', u.id, { profile: pr.id }, u.name);
+      return ok();
     }
     return null;
   }
@@ -736,9 +1245,18 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (users.some((u) => !u)) return J({ error: 'not_found' }, 404);
     if ((body.action === 'lock' || (body.action === 'role' && body.role !== 'admin')) && body.ids.includes('u1')) return J({ error: 'cannot_lock_yourself_out' }, 400);
     if (body.action === 'unlock' && (users as AdminUser[]).some((u) => u.disabled && accessEnded(u.access_until ?? null))) return J({ error: 'access_expired' }, 409);
-    let done = 0;
+    // the admin role's switches are locked: refused as a whole before the first write (clearing stays possible)
+    if (body.action === 'perm' && body.value !== null && (users as AdminUser[]).some((u) => u.role === 'admin')) return J({ error: 'admin_perms_locked' }, 400);
+    let done = 0, failed = 0;
     for (const u of users as AdminUser[]) {
-      if (body.action === 'lock' || body.action === 'unlock') {
+      if (body.action === 'repair') {
+        if (st.repairFails.has(u.id)) { failed++; continue; }
+        log('user.repair', u.id, {}, u.name);
+      } else if (body.action === 'perm') {
+        // the same per-account write as PUT /rights (backend adminUsers bulk → putRights): counted only when something changed
+        const role = st.matrix.roles.find((r) => r.key === u.role);
+        if (!role || !writeRightsMock(role, u, { [body.perm]: body.value }, undefined, log).changed.length) continue;
+      } else if (body.action === 'lock' || body.action === 'unlock') {
         const d = body.action === 'lock';
         if (u.disabled === d) continue;
         u.disabled = d; log(d ? 'user.disable' : 'user.enable', u.id, {}, u.name);
@@ -750,7 +1268,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       }
       done++;
     }
-    return J({ done });
+    return J(failed ? { done, failed } : { done });
   }
   if (p === '/api/admin/approvals' && m === 'GET') return J({ requests: st.approvals });
   if ((mm = p.match(/^\/api\/admin\/approvals\/([^/]+)\/(approve|reject)$/)) && m === 'POST') {
@@ -775,6 +1293,8 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
         roles: rows.map((r, position) => ({
           key: r.key, label: r.label, builtinLabel: r.builtinLabel, base: r.base, origin: r.origin, invitable: r.invitable, position,
           envGone: r.envGone, stored: r.stored, accounts: r.accounts, profiles: r.profiles, kidsProfiles: r.kidsProfiles, values: r.values, sources: r.sources, missingLibraries: r.missingLibraries,
+          // backend roleGroupNames: the released groups the role sees (the admin: all), in group order
+          livetvGroups: ltvSorted(st.livetv.area).filter((g) => g.released && (r.key === 'admin' || g.roles.includes(r.key))).sort((x, y) => x.position - y.position).map((g) => g.name),
           // the value without the role's own row (the backend's roleRights(ctx, key, null))
           defaults: Object.fromEntries(MATRIX_FIELDS_MOCK.map((f) => [f.key as string, inheritedValue(r, f.key as string)])),
         })),
@@ -886,7 +1406,12 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     log('invite.revoke', mm[1]!);
     return ok();
   }
-  if (p === '/api/admin/audit') return J(auditList(st, sp));
+  if (p === '/api/admin/audit') {
+    // backend admin.ts: area is the literal 'people'; target 1..64 characters
+    const t = sp.get('target');
+    if ((sp.has('area') && sp.get('area') !== 'people') || (t !== null && (t.length < 1 || t.length > 64))) return J({ error: 'bad_request' }, 400);
+    return J(auditList(st, sp));
+  }
   if (p === '/api/admin/audit/filters') return J({ actors: [{ id: 'u1', name: AUDIT_ACTOR }], system: st.audit.some((e) => e.actor === null), categories: [...new Set(st.audit.map((e) => e.action.split('.')[0]!))].sort() });
 
   // ---- content ----
@@ -1096,4 +1621,125 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return J({ ...UPDATE_RELEASE, current: { sha: 'c0be6c5deadbeef', builtAt: ago(70), version: '1.0.0', codename: 'Arancini' }, latest: { sha: 'ff00aa1deadbeef', date: ago(5), runUrl: 'https://example.org/run' }, behind: 3, portainer: { configured: true, mode: 'webhook' }, autoUpdateNote: true, commits: [{ sha: 'ff00aa1', url: 'https://example.org/c/1', message: 'feat(wishes): local request-service users', author: 'Manu', date: ago(5) }, { sha: 'ee11bb2', url: 'https://example.org/c/2', message: 'ci: signing', author: 'Manu', date: ago(9) }] });
   }
   return null;
+}
+
+
+// ---- Sicht prüfen: GET /rights?profile=, GET/POST /check (backend userRights.ts, viewcheck.ts; spec §4.2, §6.4) ----
+const KIDS_OFF_MOCK = ['requests', 'party', 'partySchedule', 'comments', 'liveRecord'];
+/** the library totals of the mocked media server and what a profile sees of them under each age cap (null = no cap) */
+const VIEW_TOTALS: Record<string, { total: number; seen: Record<string, number> }> = {
+  Filme: { total: 1204, seen: { none: 1204, '12': 812, '6': 212, '0': 40 } },
+  Serien: { total: 340, seen: { none: 340, '12': 301, '6': 61, '0': 9 } },
+  Musik: { total: 80, seen: { none: 80, '12': 80, '6': 80, '0': 80 } },
+};
+/** the searchable titles: age is null for an unrated one */
+const VIEW_TITLES = [
+  { id: '0000000000000000000000000000d001', name: 'Dunmoor', year: 2021, type: 'Movie', rating: 'FSK-16', age: 16, library: 'Filme' },
+  { id: '0000000000000000000000000000d002', name: 'Dunmoor Origins', year: 2014, type: 'Movie', rating: null, age: null, library: 'Filme' },
+  { id: '0000000000000000000000000000d003', name: 'Saltwater Almanac', year: 2019, type: 'Series', rating: 'FSK-6', age: 6, library: 'Serien' },
+  // ten matches for "Harbour": the answer stops at CHECK_HITS
+  ...Array.from({ length: 10 }, (_, i) => ({ id: `00000000000000000000000000000e${String(i).padStart(2, '0')}`, name: `Quiet Harbour ${i + 1}`, year: 2010 + i, type: 'Movie', rating: 'FSK-0', age: 0, library: 'Filme' })),
+];
+/** the most hits a title check answers with (backend viewcheck.ts) */
+const CHECK_HITS = 8;
+/** a profile id the route's zod schema takes (a uuid; the mock's profile ids end in `p001`, so letters count as well); anything else is 400 before a lookup */
+const pidOk = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}$/.test(v);
+const profileOf = (st: AdminState, u: AdminUser, pid: string | null | undefined) => (pid ? profilesOf(st, u).find((p) => p.id === pid) : undefined);
+const kidsCap = (p: DetailProfile): number | null => (p.kids ? (p.maxRating ?? 12) : null);
+/** one Rechte row of the account (backend userRights.ts rightsView): effective value, the role's, the stored override and the deciding layer */
+function rightsRow(role: MatrixMockRole, u: AdminUser, k: string) {
+  const perm = PERM_KEYS_MOCK.includes(k);
+  if (perm && u.role === 'admin') return { key: k, value: true as unknown, roleValue: true as unknown, override: null as unknown, source: 'admin' };
+  const roleValue = role.values[k];
+  const override = perm ? u.perms?.[k] ?? null : u.ov?.[k] ?? null;
+  return { key: k, value: (override === null ? roleValue : override === 'unlimited' ? null : override) as unknown, roleValue, override: override as unknown, source: override === null ? role.sources[k] ?? 'default' : 'user' };
+}
+/**
+ * The write of PUT /rights and of the bulk `perm` (backend userRights.writeRights): partial (null = back to the role), a value equal to the
+ * role's is not stored. One `user.rights` entry `{ from, to, layer?, stored?, note? }`: `from`/`to` for every key whose effective value or
+ * deciding layer changed, `layer` for the keys that only moved between layers, `stored` for a switch cleared on an admin account (it
+ * decides nothing). Returns the changed keys (value or layer), as the backend's `changed`.
+ */
+function writeRightsMock(role: MatrixMockRole, u: AdminUser, o: Record<string, unknown>, note: string | null | undefined, log: (a: string, t: string | null, meta?: Record<string, unknown>, n?: string | null) => void): { changed: string[] } {
+  const keys = MATRIX_FIELDS_MOCK.map((f) => f.key as string);
+  const before = Object.fromEntries(keys.map((k) => [k, rightsRow(role, u, k)]));
+  const store = (k: string, v: unknown) => {
+    const perm = PERM_KEYS_MOCK.includes(k), target = perm ? (u.perms ??= {}) : (u.ov ??= {}) as Record<string, unknown>;
+    const eff = v === 'unlimited' ? null : v;
+    const lc = (x: unknown) => (Array.isArray(x) ? JSON.stringify([...new Set(x.map((n) => String(n).toLowerCase()))].sort()) : JSON.stringify(x));
+    if (v === null || lc(eff) === lc(role.values[k])) delete target[k]; else target[k] = v;
+  };
+  const stored: Record<string, { from: unknown; to: unknown }> = {};
+  if (u.role === 'admin') for (const k of PERM_KEYS_MOCK) if (o[k] === null && u.perms?.[k] !== undefined) stored[k] = { from: u.perms[k], to: null };
+  for (const [k, v] of Object.entries(o)) if (v !== undefined) store(k, v);
+  if (u.perms && !Object.keys(u.perms).length) delete u.perms;
+  u.otherOverrides = Object.keys(u.ov ?? {}).length;
+  const noteWas = u.note ?? null;
+  if (note !== undefined) u.note = note === null || note.trim() === '' ? null : note.trim();
+  const from: Record<string, unknown> = {}, to: Record<string, unknown> = {}, layer: Record<string, { from: string; to: string }> = {};
+  for (const k of keys) {
+    const a = before[k]!, b = rightsRow(role, u, k);
+    if (JSON.stringify(a.value) !== JSON.stringify(b.value)) { from[k] = a.value; to[k] = b.value; }
+    else if (a.source !== b.source) { from[k] = a.value; to[k] = b.value; layer[k] = { from: a.source, to: b.source }; }
+  }
+  const noteChanged = (u.note ?? null) !== noteWas;
+  if (Object.keys(to).length || noteChanged || Object.keys(stored).length) {
+    log('user.rights', u.id, { from, to, ...(Object.keys(layer).length ? { layer } : {}), ...(Object.keys(stored).length ? { stored } : {}), ...(noteChanged ? { note: 'changed' } : {}) }, u.name);
+  }
+  return { changed: Object.keys(to) };
+}
+/** the effective rows of the account with the kids overlay of the profile (kids cap, KIDS_OFF switched off) */
+function viewRows(st: AdminState, u: AdminUser, p: DetailProfile) {
+  const role = st.matrix.roles.find((r) => r.key === u.role)!;
+  const kc = kidsCap(p);
+  return MATRIX_FIELDS_MOCK.map((f) => {
+    const k = f.key as string, perm = PERM_KEYS_MOCK.includes(k);
+    const roleValue = role.values[k];
+    const override = u.role === 'admin' && perm ? null : (perm ? u.perms?.[k] : u.ov?.[k]) ?? null;
+    let value = override === null ? roleValue : override === 'unlimited' ? null : override, source: string = override === null ? role.sources[k] ?? 'default' : 'user';
+    // backend rights.ts: the kids cap, or the account's lower one
+    if (kc !== null && k === 'maxParentalRating') { const eff = value === null ? kc : Math.min(value as number, kc); if (eff !== value) { value = eff; source = 'kids'; } }
+    if (kc !== null && KIDS_OFF_MOCK.includes(k)) { value = false; source = 'kids'; }
+    return { key: k, value, roleValue, override, source };
+  });
+}
+function viewRights(st: AdminState, u: AdminUser, pid: string, J: Reply): Promise<void> {
+  if (!pidOk(pid)) return J({ error: 'bad_request' }, 400);
+  const p = profileOf(st, u, pid);
+  if (!p) return J({ error: 'not_found' }, 404);
+  return J({ role: u.role, note: u.note ?? null, rows: viewRows(st, u, p), profile: { id: p.id, name: p.name, kids: p.kids, maxRating: kidsCap(p) }, hardKids: p.kids ? KIDS_OFF_MOCK : [], missingLibraries: [], livetvGroups: ltvExceptionsOf(st.livetv.area, u.id) });
+}
+function viewCheck(st: AdminState, u: AdminUser, m: string, body: any, J: Reply, log: (a: string, t: string | null, meta?: Record<string, unknown>, n?: string | null) => void): Promise<void> {
+  // the route's rate limit runs first: 30 a minute (fastify's 429 answer)
+  const now = Date.now();
+  st.checkTimes = st.checkTimes.filter((t) => t > now - 60_000);
+  if (st.checkTimes.length >= 30) return J({ statusCode: 429, error: 'Too Many Requests', message: 'Rate limit exceeded, retry in 1 minute' }, 429);
+  st.checkTimes.push(now);
+  // then the schema (a missing or malformed profile id is 400), then the lookup (404)
+  const pid = m === 'GET' ? body.profileId : body?.profileId;
+  if (!pidOk(pid)) return J({ error: 'bad_request' }, 400);
+  const p = profileOf(st, u, pid);
+  if (!p) return J({ error: 'not_found' }, 404);
+  const rows = viewRows(st, u, p);
+  const val = (k: string) => rows.find((r) => r.key === k)!.value;
+  const shared = (lib: string) => val('libraries') === 'all' || (val('libraries') as string[]).some((n) => n.toLowerCase() === lib.toLowerCase());
+  const cap = val('maxParentalRating') as number | null;
+  if (m === 'GET') {
+    log('user.check_viewed', u.id, { profile: p.id, libraries: st.matrix.libraries.length }, u.name);
+    return J({ libraries: st.matrix.libraries.map((l) => {
+      const t = VIEW_TOTALS[l.name] ?? { total: 10, seen: { none: 10, '12': 10, '6': 10, '0': 10 } }, vis = shared(l.name);
+      return { id: l.id, name: l.name, visible: vis, seen: vis ? t.seen[cap === null ? 'none' : String(cap)] ?? t.total : null, total: t.total };
+    }), livetv: ltvCheckMock(st, u, p) });
+  }
+  // exactly one of query (2-100 characters) and itemId (32 hex)
+  const q = typeof body.query === 'string' ? body.query.trim() : undefined, id = body.itemId;
+  if ((q === undefined) === (id === undefined) || (q !== undefined && (q.length < 2 || q.length > 100)) || (id !== undefined && !/^[0-9a-f]{32}$/.test(String(id)))) return J({ error: 'bad_request' }, 400);
+  const found = VIEW_TITLES.filter((t) => (q !== undefined ? t.name.toLowerCase().includes(q.toLowerCase()) : t.id === id));
+  const hits = found.slice(0, CHECK_HITS).map((t) => {
+    const why = !shared(t.library) ? 'library' : t.age !== null && cap !== null && t.age > cap ? 'rating' : t.age === null && p.kids ? 'unrated_kids'
+      : t.age === null && cap !== null && st.checkHidesUnrated ? 'unrated' : null;
+    return { id: t.id, name: t.name, year: t.year, type: t.type, visible: why === null, why, rating: t.rating, library: t.library };
+  });
+  log('user.check_viewed', u.id, { profile: p.id, hits: hits.length }, u.name);
+  return J({ hits });
 }

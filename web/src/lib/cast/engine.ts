@@ -353,6 +353,7 @@ function castErr(e: unknown, kind: CastKind = 'chromecast'): string {
   const b = (e as { body?: { error?: string; max?: unknown } } | null)?.body;
   const k = kind === 'airplay' ? 'airplay' : 'cast';
   return b?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(b.max) })
+    : b?.error === 'server_busy' ? tr('player.error.serverBusy') // the conversion budget is full: said as it is, the retry is the viewer's
     : b?.error === 'transcoding_disabled' ? tr(`player.${k}.needsTranscode`) : tr(`player.${k}.failed`);
 }
 

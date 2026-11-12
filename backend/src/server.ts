@@ -16,7 +16,10 @@ import { syncRoles } from './rolecat.js';
 import { loadRoles } from './roles.js';
 import { nightlyTick } from './healthcheck.js';
 import { convBenchTick } from './convbench.js';
-import { detectLivetv, livetvDetectTick } from './livetv/detect.js';
+import { detectLivetv, livetvDetectTick, livetvInstalled } from './livetv/detect.js';
+import { livetvEpgPruneTick } from './livetv/epg.js';
+import { livetvIngestTick } from './livetv/ownfeeds.js';
+import { livetvRefreshTick } from './livetv/refresh.js';
 import { hevcTick } from './hevcenc.js';
 import { digestTick } from './digest.js';
 import { expiryTick } from './expiry.js';
@@ -124,6 +127,16 @@ timers.push(setInterval(() => { if (op()) void hevcTick(ctx).catch(jobFailed(ctx
 timers.push(setInterval(() => { if (op()) void convBenchTick(ctx).catch(jobFailed(ctx, app.log, 'conv-bench', 'conversion benchmark failed')); }, 600_000)); // the conversion benchmark once while unmeasured (or stale) and idle
 void detectLivetv(ctx).catch(() => undefined); // the first look at the optional livetv container, so a running one is not mistaken for a new one
 timers.push(setInterval(() => { void livetvDetectTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-detect', 'livetv detection failed')); }, 60_000)); // installed or not: featureFlags, the admin entry, the benchmark after enabling
+timers.push(setInterval(() => { if (op()) void livetvIngestTick(ctx, app.log).catch(jobFailed(ctx, app.log, 'livetv-ingest', 'livetv ingest retry failed')); }, 60_000)); // re-sends the SRT push set after a failed sync (ltv:ingest:dirty), only while livetv is installed
+let livetvRefreshBusy = false;
+timers.push(setInterval(() => {
+  // provider lists due for a refresh (spec §10 jobs); only while livetv is there, else every source would fail and notify the admins
+  if (livetvRefreshBusy || !op() || !livetvInstalled(ctx)) return;
+  livetvRefreshBusy = true;
+  void livetvRefreshTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-refresh', 'livetv refresh tick failed')).finally(() => { livetvRefreshBusy = false; });
+}, 300_000));
+// livetvEpgPrune (spec §10 jobs): once a day from 04:10 server time (a KV day key keeps it to one run across processes); database only
+timers.push(setInterval(() => { if (op()) void livetvEpgPruneTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-epg-prune', 'livetv EPG prune failed')); }, 600_000));
 timers.push(setInterval(() => { if (op()) void digestTick(ctx).catch(jobFailed(ctx, app.log, 'digest', 'digest tick failed')); }, 600_000));
 let expiryBusy = false; // a slow tick (media server) must not overlap the next one
 timers.push(setInterval(() => {

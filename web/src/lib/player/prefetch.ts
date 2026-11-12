@@ -30,8 +30,30 @@ export function prefetchPlayer(): void {
 export const PREFETCH_TTL_MS = 30_000;
 /** hover must rest this long on a play control (sweeping the mouse across a row fires nothing) */
 export const HOVER_DWELL_MS = 150;
-interface Entry { itemId: string; key: string; profile: string | null; at: number; promise: Promise<PlaybackDto> }
+/** `done`: taken by the player, or given back (release) */
+interface Entry { itemId: string; key: string; profile: string | null; at: number; promise: Promise<PlaybackDto>; done?: boolean; ttl?: ReturnType<typeof setTimeout> }
 const entries = new Map<string, Entry>();
+
+/** the answer converts the picture on the server (backend convertsOf): it holds a slot of the shared conversion budget until it is used */
+const converts = (info: PlaybackDto | null | undefined): info is PlaybackDto =>
+  Boolean(info && info.playSessionId && !info.directUrl && info.delivery && info.delivery.video !== 'copy');
+const stopWarm = (ps: string, keepalive: boolean) =>
+  void api('/api/playback/warm/stop', { method: 'POST', body: { playSessionId: ps }, ...(keepalive ? { keepalive: true } : {}) }).catch(() => undefined);
+
+/**
+ * An unused prefetch (replaced, expired, the page goes away) whose answer converts gives its budget slot back at once: warm/stop releases
+ * the grants of the caller's own play session (it never stops a stream that started playing). A copy or direct-play answer holds nothing.
+ */
+function release(e: Entry, keepalive = false): void {
+  clearTimeout(e.ttl);
+  if (e.done) return;
+  e.done = true;
+  void e.promise.then((info) => { if (converts(info)) stopWarm(info.playSessionId, keepalive); }, () => undefined);
+}
+function dropEntries(keepalive = false): void {
+  for (const e of entries.values()) release(e, keepalive);
+  entries.clear();
+}
 /** the player's stop report while it is on its way: the resume position it writes must be in before a new info is asked for */
 let hold: Promise<void> | null = null;
 /** a stop that never answers releases the hold after this long (prefetch must not stay off until a reload) */
@@ -44,7 +66,7 @@ export const HOLD_TIMEOUT_MS = 4000;
  * after HOLD_TIMEOUT_MS.
  */
 export function holdPrefetch(p: Promise<unknown>): void {
-  entries.clear();
+  dropEntries();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<void>((r) => { timer = setTimeout(r, HOLD_TIMEOUT_MS); });
   const settled = Promise.resolve(p).then(() => undefined, () => undefined);
@@ -54,9 +76,11 @@ export function holdPrefetch(p: Promise<unknown>): void {
 
 /**
  * Starts POST /api/playback/info for `itemId` with the body the player will send first (saved quality or the rung for the
- * remembered bandwidth, reason hint, preferred audio). The route has no side effects (no stream slot, no live session,
- * no transcode: that starts with the stream URL), so an unused prefetch costs one Jellyfin PlaybackInfo. At most one
- * item is kept: a new one replaces the old entry. Errors (429 max_streams, network) drop the entry; the player then asks itself.
+ * remembered bandwidth, reason hint, preferred audio). The route starts no stream (no stream slot, no live session, no transcode:
+ * that starts with the stream URL), but an answer that converts takes a slot of the shared conversion budget for up to 30 s. So an
+ * unused prefetch that converts is given back (release: replaced, expired, page hidden), and the server replaces a device's earlier
+ * unused prefetch grant with its new one (the body says `prefetch`), so a browsing device never holds more than one slot. At most one item is kept: a new one replaces
+ * the old entry. Errors (429 max_streams, 503 server_busy, network) drop the entry; the player then asks itself.
  * Servers whose playback info starts the transcode (capability playbackPrefetch=false, e.g. Plex) are never prefetched: every
  * hover would start a stream and take a stream slot.
  */
@@ -71,9 +95,12 @@ export function prefetchPlayback(itemId: string, o: { audio?: string; startSec?:
   const key = bodyKey(body), profile = getActiveProfile(), now = Date.now();
   const cur = entries.get(itemId);
   if (cur && cur.key === key && cur.profile === profile && now - cur.at < PREFETCH_TTL_MS) return; // already on its way
-  entries.clear();
-  const e: Entry = { itemId, key, profile, at: now, promise: api<PlaybackDto>('/api/playback/info', { method: 'POST', body }) };
+  dropEntries();
+  hookHide();
+  // `prefetch`: only such a grant may replace this device's earlier one on the server (never the player's or the next episode's)
+  const e: Entry = { itemId, key, profile, at: now, promise: api<PlaybackDto>('/api/playback/info', { method: 'POST', body: { ...body, prefetch: true } }) };
   e.promise.catch(() => { if (entries.get(itemId) === e) entries.delete(itemId); });
+  e.ttl = setTimeout(() => { if (entries.get(itemId) === e) entries.delete(itemId); release(e); }, PREFETCH_TTL_MS);
   entries.set(itemId, e);
 }
 
@@ -82,7 +109,9 @@ export function takePrefetched(itemId: string, body: object): Promise<PlaybackDt
   const e = entries.get(itemId);
   if (!e) return null;
   entries.delete(itemId);
-  if (Date.now() - e.at >= PREFETCH_TTL_MS || e.profile !== getActiveProfile() || e.key !== bodyKey(body)) return null;
+  if (Date.now() - e.at >= PREFETCH_TTL_MS || e.profile !== getActiveProfile() || e.key !== bodyKey(body)) { release(e); return null; }
+  clearTimeout(e.ttl);
+  e.done = true; // the player plays it: never given back
   return e.promise;
 }
 
@@ -92,10 +121,11 @@ export function takePrefetched(itemId: string, body: object): Promise<PlaybackDt
  * the stream will be converted and starts at the beginning, its transcoder is warmed: master playlist, variant playlist and the headers
  * of the first segment, so Jellyfin has the first segments ready when the player asks for exactly this play session. Rules:
  * - Jellyfin only (serverCaps.playbackPrefetch; Plex starts a transcode with every playback info), one entry at a time;
- * - a 429 at the stream limit simply drops it (the info route counts nothing; the warm takes no stream slot either);
+ * - a 429 at the stream limit simply drops it (the info route counts no stream; the warm takes no stream slot either);
  * - released (countdown stopped, player gone) -> stopped after WARM_GRACE_MS unless the next player took it in time; never taken ->
  *   stopped PREFETCH_TTL_MS after it began. A stop aborts the requests and asks the server to end the warmed transcode
- *   (POST /api/playback/warm/stop), so a second transcode never runs longer than that.
+ *   (POST /api/playback/warm/stop), so a second transcode never runs longer than that. An answer that converts was not warmed is
+ *   given back the same way (its conversion budget slot, prefetchPlayback).
  */
 export const WARM_GRACE_MS = 8_000;
 /** a resume point beyond this (ticks) starts elsewhere: warming segment 0 would be wasted */
@@ -104,6 +134,8 @@ interface Next {
   itemId: string; key: string; profile: string | null; at: number; promise: Promise<PlaybackDto>; ac: AbortController;
   /** play session of the answer; `sent` = a segment request went out (the transcoder may run) */
   ps?: string; sent: boolean; taken: boolean; ttl?: ReturnType<typeof setTimeout>; grace?: ReturnType<typeof setTimeout>;
+  /** the answer converts: it holds a conversion budget slot, given back on a stop even without a warm-up */
+  conv?: boolean;
 }
 let next: Next | null = null;
 
@@ -137,14 +169,20 @@ function stopNext(n: Next, keepalive = false): void {
   if (next === n) next = null;
   if (n.taken) return;
   n.ac.abort();
-  if (n.sent && n.ps) void api('/api/playback/warm/stop', { method: 'POST', body: { playSessionId: n.ps }, ...(keepalive ? { keepalive: true } : {}) }).catch(() => undefined);
+  if (n.ps) { if (n.sent || n.conv) stopWarm(n.ps, keepalive); return; }
+  // the answer is still on its way: a conversion gives its slot back once it arrives
+  void n.promise.then((info) => { if (converts(info)) stopWarm(info.playSessionId, keepalive); }, () => undefined);
 }
 
-/** the tab closes or navigates away hard: an unused warm-up is stopped now, not by the media server's idle kill */
+/** the tab closes or navigates away hard: an unused warm-up is stopped now, not by the media server's idle kill; unused prefetches go too */
 export function stopNextOnHide(): void {
   if (next) stopNext(next, true);
+  dropEntries(true);
 }
 let hideHooked = false;
+function hookHide(): void {
+  if (!hideHooked && typeof window.addEventListener === 'function') { hideHooked = true; window.addEventListener('pagehide', stopNextOnHide); }
+}
 
 /** prepares (and with `warm`, pre-starts) the next episode; again for the same item and body only cancels a pending release */
 export function prepareNext(itemId: string, body: InfoBody, o: { warm: boolean }): void {
@@ -152,12 +190,13 @@ export function prepareNext(itemId: string, body: InfoBody, o: { warm: boolean }
   const key = nextKey(body), profile = getActiveProfile();
   if (next && next.itemId === itemId && next.key === key && next.profile === profile) { clearTimeout(next.grace); return; }
   if (next) stopNext(next);
-  if (!hideHooked && typeof window.addEventListener === 'function') { hideHooked = true; window.addEventListener('pagehide', stopNextOnHide); }
+  hookHide();
   const n: Next = { itemId, key, profile, at: Date.now(), ac: new AbortController(), sent: false, taken: false, promise: api<PlaybackDto>('/api/playback/info', { method: 'POST', body }) };
   next = n;
   n.ttl = setTimeout(() => stopNext(n), PREFETCH_TTL_MS);
   n.promise.then((info) => {
     n.ps = info?.playSessionId;
+    n.conv = converts(info);
     if (!o.warm || n.taken || next !== n || !info || info.directUrl || (info.resumeTicks ?? 0) > WARM_MAX_RESUME_TICKS || !info.hlsUrl) return;
     return warm(n, info.hlsUrl);
   }).catch(() => { if (!n.sent && next === n) { clearTimeout(n.ttl); next = null; } }); // failed info: nothing runs; a failed warm keeps the info
@@ -236,4 +275,4 @@ export function playPrefetch(node: HTMLElement): { destroy(): void } {
 }
 
 /** tests only */
-export function _resetPrefetch(): void { entries.clear(); hold = null; if (next) { clearTimeout(next.ttl); clearTimeout(next.grace); } next = null; }
+export function _resetPrefetch(): void { for (const e of entries.values()) clearTimeout(e.ttl); entries.clear(); hold = null; if (next) { clearTimeout(next.ttl); clearTimeout(next.grace); } next = null; }

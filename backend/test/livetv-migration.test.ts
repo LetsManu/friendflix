@@ -11,7 +11,7 @@ import { makeEnv, type TestEnv } from './helpers.js';
 // Live TV Phase 1, Task 12: migration 48 (spec §6.1), the `livetv` settings group (§6.4, ruling 25) and the effective channel values
 // (§6.1 "Derived values", channels.ts). The migration is tested against the real one: rewind past 47, migrate again.
 const TABLES = ['livetv_channels', 'livetv_epg_channels', 'livetv_favourites', 'livetv_group_map', 'livetv_group_roles', 'livetv_group_users',
-  'livetv_groups', 'livetv_logos', 'livetv_programmes', 'livetv_recent', 'livetv_sources'];
+  'livetv_groups', 'livetv_logos', 'livetv_programmes', 'livetv_programmes_stage', 'livetv_recent', 'livetv_sources'];
 
 let env: TestEnv;
 let livetvUp = false;
@@ -76,8 +76,8 @@ beforeAll(async () => {
 afterAll(async () => { await env.close(); });
 
 describe('migration 48', () => {
-  it('is the 48th migration', () => {
-    expect(MIGRATIONS.length).toBe(48);
+  it('is the 48th migration (49 adds the XMLTV staging table; later ones append)', () => {
+    expect(MIGRATIONS.length).toBeGreaterThanOrEqual(49);
   });
 
   it('all tables and the devices column exist', async () => {
