@@ -18,6 +18,7 @@ import { nightlyTick } from './healthcheck.js';
 import { convBenchTick } from './convbench.js';
 import { detectLivetv, livetvDetectTick, livetvInstalled } from './livetv/detect.js';
 import { livetvEpgPruneTick } from './livetv/epg.js';
+import { livetvIngestTick } from './livetv/ownfeeds.js';
 import { livetvRefreshTick } from './livetv/refresh.js';
 import { hevcTick } from './hevcenc.js';
 import { digestTick } from './digest.js';
@@ -126,6 +127,7 @@ timers.push(setInterval(() => { if (op()) void hevcTick(ctx).catch(jobFailed(ctx
 timers.push(setInterval(() => { if (op()) void convBenchTick(ctx).catch(jobFailed(ctx, app.log, 'conv-bench', 'conversion benchmark failed')); }, 600_000)); // the conversion benchmark once while unmeasured (or stale) and idle
 void detectLivetv(ctx).catch(() => undefined); // the first look at the optional livetv container, so a running one is not mistaken for a new one
 timers.push(setInterval(() => { void livetvDetectTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-detect', 'livetv detection failed')); }, 60_000)); // installed or not: featureFlags, the admin entry, the benchmark after enabling
+timers.push(setInterval(() => { if (op()) void livetvIngestTick(ctx, app.log).catch(jobFailed(ctx, app.log, 'livetv-ingest', 'livetv ingest retry failed')); }, 60_000)); // re-sends the SRT push set after a failed sync (ltv:ingest:dirty), only while livetv is installed
 let livetvRefreshBusy = false;
 timers.push(setInterval(() => {
   // provider lists due for a refresh (spec §10 jobs); only while livetv is there, else every source would fail and notify the admins

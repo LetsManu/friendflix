@@ -8,8 +8,8 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
 import { CHANNEL_SELECT, OWN_FEEDS_KIND, isOwnFeeds } from './channels.js';
 import { LivetvError, livetvCall, livetvStream } from './client.js';
-import { invalidateLivetvRights } from './rights.js';
-import { checkSourceUrl, maskUrl, type SourceUrlCode } from './urls.js';
+import { livetvWrite } from './tx.js';
+import { checkSourceUrl, maskUrl, urlRefusal } from './urls.js';
 import type { FetchM3uAnswer } from './wire.js';
 
 /**
@@ -158,9 +158,7 @@ export class SourceRefusal extends Error {
 /** the save-time URL check as a refusal: a wrong scheme or no URL is `invalid` (as the schema answers it), a single-label host `refused` */
 function checkUrl(raw: string, allowLan: boolean, field: 'url' | 'epgUrl'): void {
   const r = checkSourceUrl(raw, { allowLan, schemes: SCHEMES });
-  if (r.ok) return;
-  const code: Record<SourceUrlCode, 'invalid' | 'lan_required' | 'refused'> = { invalid: 'invalid', scheme: 'invalid', host: 'refused', lan_required: 'lan_required', refused: 'refused' };
-  throw new SourceRefusal(code[r.code], field);
+  if (!r.ok) throw new SourceRefusal(urlRefusal(r.code), field);
 }
 
 // ---- reading ----
@@ -238,22 +236,8 @@ export async function sourceSecrets(ctx: Pick<Ctx, 'db' | 'encKey'>, id: string)
 // ---- writing ----
 type WriteCtx = Pick<Ctx, 'db' | 'encKey'>;
 
-/** runs `fn` in one transaction; the cached channel sets are dropped afterwards (also after a rollback: harmless) */
-async function write<T>(ctx: Pick<Ctx, 'db'>, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
-  const c = await (ctx.db as pg.Pool).connect();
-  try {
-    await c.query('begin');
-    const out = await fn(c);
-    await c.query('commit');
-    return out;
-  } catch (e) {
-    await c.query('rollback').catch(() => undefined);
-    throw e;
-  } finally {
-    c.release();
-    invalidateLivetvRights();
-  }
-}
+/** one transaction; the cached channel sets are dropped afterwards (tx.ts) */
+const write = <T>(ctx: Pick<Ctx, 'db'>, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> => livetvWrite(ctx, fn);
 
 /** the field names of a body in a fixed order (audit meta: names only, never values) */
 const FIELD_ORDER = Object.keys(fields);
@@ -287,7 +271,7 @@ const sameSet = (a: readonly string[], b: readonly string[]) => {
  * Changes the fields `patch` names: an absent `url`/`epgUrl` stays as stored, `epgUrl: null` removes it. The stored URLs are checked
  * again against the resulting `allowLan` (turning *LAN erlauben* off under a LAN address is refused). The own-feeds source has no list
  * and no EPG URL (`invalid`). A changed `skipGroups`, `numbering` or `numberBase` marks the source due (`last_refresh_at` cleared), so
- * the next refresh tick re-imports it. null = no such source.
+ * the next refresh tick re-imports it. A new `url` drops `last_counts.listed`, the shrink guard's reference. null = no such source.
  */
 export async function updateSource(ctx: WriteCtx, actor: string, id: string, patch: Partial<SourceBody>): Promise<SourceView | null> {
   const found = await write(ctx, async (c) => {
@@ -326,6 +310,8 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
       || (patch.numbering !== undefined && patch.numbering !== s.numbering)
       || (patch.numberBase !== undefined && patch.numberBase !== s.number_base);
     if (due) set.push('last_refresh_at = null');
+    // another list: the 20 % shrink guard must not compare it with the old one (it would refuse a smaller list for ever)
+    if (patch.url !== undefined) set.push("last_counts = last_counts - 'listed'");
     set.push('updated_at = now()');
     vals.push(id);
     await c.query(`update livetv_sources set ${set.join(', ')} where id = $${vals.length}`, vals);
@@ -335,15 +321,19 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
   return found ? sourceView(ctx, id) : null;
 }
 
-/** Deletes the source; its channels (with their overrides, favourites and recent entries) go with it. null = no such source. */
-export async function deleteSource(ctx: Pick<Ctx, 'db'>, actor: string, id: string): Promise<{ channels: number } | null> {
+/**
+ * Deletes the source; its channels (with their overrides, favourites and recent entries) go with it. null = no such source. `push` =
+ * push feeds went with it (counted inside the transaction), so the caller re-sends livetv's ingest set (ownfeeds.ts syncIngest).
+ */
+export async function deleteSource(ctx: Pick<Ctx, 'db'>, actor: string, id: string): Promise<{ channels: number; push: boolean } | null> {
   return write(ctx, async (c) => {
     const s = (await c.query('select id from livetv_sources where id = $1 for update', [id])).rows[0];
     if (!s) return null;
-    const channels = (await c.query<{ n: number }>('select count(*)::int as n from livetv_channels where source_id = $1', [id])).rows[0]!.n;
+    const n = (await c.query<{ n: number; push: number }>(
+      "select count(*)::int as n, count(*) filter (where ingest = 'push')::int as push from livetv_channels where source_id = $1", [id])).rows[0]!;
     await c.query('delete from livetv_sources where id = $1', [id]);
-    await auditInTx({ db: c }, actor, 'livetv.source.delete', id, { fields: [], channels });
-    return { channels };
+    await auditInTx({ db: c }, actor, 'livetv.source.delete', id, { fields: [], channels: n.n });
+    return { channels: n.n, push: n.push > 0 };
   });
 }
 

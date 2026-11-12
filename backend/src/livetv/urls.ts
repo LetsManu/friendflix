@@ -128,6 +128,12 @@ export function checkSourceUrl(raw: string, o: { allowLan: boolean; schemes: Arr
   return { ok: true };
 }
 
+/** a failed save-time check as the fixed refusal code a route answers: a wrong scheme or no URL is `invalid` (as the schema answers it), a single-label host `refused` */
+export function urlRefusal(code: SourceUrlCode): 'invalid' | 'lan_required' | 'refused' {
+  const map: Record<SourceUrlCode, 'invalid' | 'lan_required' | 'refused'> = { invalid: 'invalid', scheme: 'invalid', host: 'refused', lan_required: 'lan_required', refused: 'refused' };
+  return map[code];
+}
+
 /**
  * The only form of a provider URL a browser ever sees (F13): scheme, host (with a port when the URL names one), then "/…" — never
  * userinfo, a path, a query or a fragment. Something that is not a URL is "…".

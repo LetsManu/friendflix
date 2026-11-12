@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { CHANNEL_SELECT } from '../src/livetv/channels.js';
 import { livetvStream } from '../src/livetv/client.js';
+import { detectLivetv } from '../src/livetv/detect.js';
 import { autoMatch, buildEpgIndex, epgPrune, livetvEpgPruneTick, matchChannel, normName, nowNext, refreshEpg } from '../src/livetv/epg.js';
 import { livetvRefreshTick, refreshSource } from '../src/livetv/refresh.js';
 import type { SourceRow } from '../src/livetv/sources.js';
@@ -117,10 +118,14 @@ beforeEach(async () => {
   guides.clear();
   list = [];
   env.ctx.fetchImpl = fakeHttp({
+    // livetv is installed (detection: healthz api 1): the refresh tick runs only then
+    'GET /healthz': () => ({ json: { ok: true, api: 1, version: '1.0.0', bootId: '0123456789abcdef' } }),
     'POST /v1/fetch/m3u': () => ({ json: { entries: list, groups: [], listed: list.length, skipped: { vod: 0, invalid: 0, overLimit: 0, groups: 0 } } }),
     'POST /v1/fetch/xmltv': (_u, _i, body) => xmltvAnswer(body),
     'POST /v1/fetch/logo': () => ({ raw: PNG, type: 'image/png' }),
   }, calls);
+  await detectLivetv(env.ctx, 0);
+  calls.length = 0;
 });
 afterEach(() => { vi.useRealTimers(); });
 

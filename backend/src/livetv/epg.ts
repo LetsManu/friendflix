@@ -289,6 +289,7 @@ async function readXmltv(ctx: Ctx, body: Record<string, unknown>, onItem: OnItem
   try {
     r = await livetvStream(ctx, '/v1/fetch/xmltv', body, { timeoutMs: XMLTV_TIMEOUT_MS });
   } catch (e) {
+    // TODO(1b merge): call dropLivetvProof(ctx) here when livetv was not reached (status null); PR 1b adds it, this lane lacks it
     if (e instanceof LivetvError) return { error: e.status === null ? 'livetv_unreachable' : e.code };
     throw e;
   }
@@ -330,6 +331,7 @@ async function readXmltv(ctx: Ctx, body: Record<string, unknown>, onItem: OnItem
         chunk = x.value;
       } catch (e) {
         // the deadline aborts with a TimeoutError; anything else is a lost connection
+        // TODO(1b merge): call dropLivetvProof(ctx) for the lost connection (`livetv_unreachable`) once PR 1b's helper is in this lane
         return { error: (e as { name?: unknown } | null)?.name === 'TimeoutError' ? 'timeout' : 'livetv_unreachable' };
       }
       total += chunk.byteLength;
