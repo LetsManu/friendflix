@@ -215,7 +215,8 @@
   // /login, /reset, /confirm-email: the in-app sign-in, the recovery link and the e-mail change link (Block 23 phase 3); they never ask
   // /api/me (a 401 there would loop back to /auth/login → /login)
   $: publicPage = path.startsWith('/invite/') || path === '/tv' || path === '/offline' || path === '/pending' || path === '/restore' || path === '/setup' || path === '/login' || path === '/reset' || path === '/confirm-email';
-  $: watchPage = path.startsWith('/watch/') || /^\/party\/[^/]+/.test(path); // immersive player pages: no navigation
+  // immersive player pages: no navigation (the film player, a party, the live player of Task 39)
+  $: watchPage = path.startsWith('/watch/') || path.startsWith('/live/watch/') || /^\/party\/[^/]+/.test(path);
   $: showRail = tv && !watchPage && !profilesPage && !kidsUi;
   // only the rail's own destinations, without a filter (a genre page from the home categories row is a drill-down: Back goes back)
   $: topLevel = !publicPage && isRailTop(path, $page.url.search); // (the prerendered /offline page has no search params)
@@ -413,7 +414,7 @@
     const { to, type } = nav;
     trackNav({ type, delta: 'delta' in nav ? (nav.delta as number) : undefined, index: historyIndex(history.state) }); // the desktop detail page's "‹ Back" (in-app history or home)
     settleSeq++; // every navigation ends an older settle (also into the player, which places its own focus)
-    if (!to || /^\/(watch|party)\//.test(to.url.pathname)) return;
+    if (!to || /^\/(watch|party|live\/watch)\//.test(to.url.pathname)) return;
     if (tv) void settleFocus(type === 'popstate' ? memo.get(to.url.pathname + to.url.search) : undefined);
     // desktop: only Back puts the focus somewhere (on the card the title was opened from; the row keeps its page: no scrolling)
     else if (desk && type === 'popstate') {
@@ -423,7 +424,7 @@
   });
 
   // ---- page transitions: View Transitions API where available (180 ms crossfade, main content rises 8 px; see app.css) ----
-  const immersive = (p: string) => /^\/(watch|party)\//.test(p);
+  const immersive = (p: string) => /^\/(watch|party|live\/watch)\//.test(p);
   const isWatch = (p: string) => p.startsWith('/watch/');
   // A transition started while another runs skips the first one, whose `finished` then settles: only the latest transition may
   // clean up the shared root classes, and each one only takes the shared name off the elements it named (unless the latest named them too).
@@ -816,6 +817,7 @@
       <span class="sp"></span>
       <nav class="knav" aria-label={$t('kids.nav.label')}>
         <a class="kbtn" href="/kids/search" aria-label={$t('kids.nav.search')} aria-current={path.startsWith('/kids/search') ? 'page' : undefined}><Icon name="search" size={26} /></a>
+        {#if $features.livetv}<a class="kbtn" href="/live" aria-label={$t('kids.nav.live')} aria-current={path.startsWith('/live') ? 'page' : undefined}><Icon name="tv" size={26} /></a>{/if}
         <a class="kav" href="/profiles" aria-label={$t('kids.nav.switchProfile', { name: who })}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span></a>
       </nav>
     </header>

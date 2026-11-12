@@ -10,17 +10,23 @@ import { dnsLookup, ownSubnets } from './netguard.js';
 import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
 import { clearStale } from './cache.js';
 import { passthroughDriver } from './passthrough.js';
+import { Previews } from './preview.js';
+import { remuxDriver } from './remux.js';
+import { benchmarkRoutes } from './routes/benchmark.js';
 import { fetchRoutes } from './routes/fetch.js';
 import { fileRoutes } from './routes/files.js';
+import { ingestRoutes } from './routes/ingest.js';
 import { streamRoutes } from './routes/streams.js';
 import { createRun } from './run.js';
+import { IngestHub, srtgateSpawner } from './srtingest.js';
 import { Streams } from './streams.js';
-import { systemView, type SystemView } from './system.js';
+import { encoders, systemView, type Encoder, type SystemView } from './system.js';
 
 /**
  * livetv's internal API (spec §3.2; only on the internal `livetv` network, port 8090). `/healthz` is open; every `/v1/*` request
  * is signed (protocol.ts), JSON only, at most 64 KB; `/s/*` (stream files for the gateway, Task 27) is unsigned and addressed by
- * a random stream key. Later tasks add their routes to the table (`AppDeps.routes`).
+ * a random stream key. Later tasks add their routes to the table (`AppDeps.routes`). `start()` also runs the SRT push ingest
+ * (Task 29): one `srtgate` helper on LIVETV_SRT_PORTS, its set from `PUT /v1/ingest`, its feeds readable by the stream drivers.
  */
 export const API_VERSION = 1;
 export const MAX_BODY = 64 * 1024;
@@ -163,16 +169,36 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
   const run = createRun();
   const system = systemView({ fs, run, cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts });
+  // the encoders /v1/system lists, asked once (a failed or empty answer is asked again next time)
+  let encoderList: Encoder[] | null = null;
+  const listEncoders = async (): Promise<Encoder[]> => {
+    if (!encoderList) {
+      const l = await encoders(run);
+      if (l.length) encoderList = l;
+    }
+    return encoderList ?? [];
+  };
   // the production guard: the system resolver and this container's own subnets, read once here (never a test `dial`)
   const guard = { lookup: dnsLookup, own: ownSubnets() };
   // the DVR cache: directories of a previous process are left over (its streams are gone)
   void clearStale(cfg.cacheDir);
-  const streams = new Streams({ root: cfg.cacheDir, maxBytes: cfg.cacheMaxBytes, drivers: { passthrough: passthroughDriver({ guard }) }, log });
-  const routes = [...fetchRoutes({ guard, run }), ...streamRoutes(streams), ...fileRoutes(streams)];
+  // the SRT push ingest: srtgate listens on every port of the range; its feed set arrives with PUT /v1/ingest
+  const ingest = new IngestHub({ spawn: srtgateSpawner(cfg.srtPorts), now: Date.now, log });
+  const previews = new Previews({ run, log });
+  const media = remuxDriver({ run, guard, log, ingest });
+  const streams = new Streams({
+    root: cfg.cacheDir, maxBytes: cfg.cacheMaxBytes, drivers: { passthrough: passthroughDriver({ guard }), remux: media, transcode: media }, log,
+    onSegment: (id, path) => previews.segment(id, path), onStop: (id) => previews.drop(id),
+  });
+  const routes = [
+    ...fetchRoutes({ guard, run, ingest }), ...streamRoutes(streams, { encoders: listEncoders, previews }),
+    ...benchmarkRoutes({ run, encoders: listEncoders, log }), ...fileRoutes(streams), ...ingestRoutes(ingest, { ports: cfg.srtPorts }),
+  ];
   const app = createApp({ verifier, version: cfg.version, bootId: randomBytes(8).toString('hex'), system, routes, warn: log });
   const server = createServer((req, res) => { void app(req, res); });
   server.requestTimeout = 10_000;
   server.headersTimeout = 5_000;
+  server.on('close', () => ingest.close());
   await new Promise<void>((resolve) => server.listen(cfg.port, o.host ?? '0.0.0.0', resolve));
   const srt = cfg.srtPorts.length === 1 ? `${cfg.srtPorts[0]}` : `${cfg.srtPorts[0]}-${cfg.srtPorts.at(-1)}`;
   log(`listening on :${cfg.port} (api ${API_VERSION}, version ${cfg.version ?? 'dev'}, SRT ports ${srt}, cache ${(cfg.cacheMaxBytes / 1024 ** 3).toFixed(1)} GB)`);

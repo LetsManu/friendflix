@@ -12,6 +12,7 @@ import { addressOnly } from '../media/address.js';
 import { mediaGatewayKeys, mediaUrlKey } from '../media/index.js';
 import { MediaError, type ExternalSession } from '../media/types.js';
 import { effectiveLimits } from '../limits.js';
+import { streamKeyFor } from '../livetv/streams.js';
 import { resolveLiveToken } from '../livetv/tokens.js';
 import { jfUserFor, resolveProfile } from '../profiles.js';
 import { isHomeAddress } from '../netaddr.js';
@@ -62,12 +63,6 @@ function withoutRemoteCap(a: MediaAuth | null, remote = false): Omit<MediaAuth, 
   const { remoteMaxBitrate, ...rest } = a;
   return remote && remoteMaxBitrate ? { ...rest, maxBitrate: Math.min(rest.maxBitrate, remoteMaxBitrate) } : rest;
 }
-
-/**
- * The running stream of a channel for /internal/authz/live. Placeholder until Task 31 wires `streamKeyFor` of livetv/streams.ts: no
- * stream runs before that, so every otherwise valid live token answers 410 (stream gone).
- */
-const liveStreams: { streamKeyFor(channelId: string): Promise<string | null> } = { streamKeyFor: () => Promise.resolve(null) };
 
 /** /internal/authz/item answers per session + item (5 s; errors are never memoised). */
 const ITEM_MEMO_MS = 5_000;
@@ -161,7 +156,8 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!checkSecret(req, 'x-internal-secret', ctx.cfg.INTERNAL_SECRET)) return reply.code(403).send({ error: 'forbidden' });
     const b = z.object({ token: z.string().regex(CAST_TOKEN_RE), ip: z.string().min(1).max(64) }).strict().safeParse(req.body);
     if (!b.success) return reply.code(400).send({ error: 'bad_request' });
-    const r = await resolveLiveToken(ctx, b.data.token, b.data.ip, liveStreams);
+    // the running stream of the token's channel as livetv lists it (livetv/streams.ts; not running = 410 stream gone)
+    const r = await resolveLiveToken(ctx, b.data.token, b.data.ip, { streamKeyFor: (channelId) => streamKeyFor(ctx, channelId) });
     reply.header('cache-control', 'no-store');
     if (r.status !== 200) return reply.code(r.status).send({ error: r.status === 401 ? 'unauthenticated' : r.status === 403 ? 'forbidden' : 'gone' });
     return { streamKey: r.streamKey, kind: r.kind, maxAgeS: r.maxAgeS };

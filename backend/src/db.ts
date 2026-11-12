@@ -1060,6 +1060,13 @@ export const MIGRATIONS: string[] = [
   );
   create index if not exists livetv_programmes_stage_run on livetv_programmes_stage(run_id);
   `,
+  // 50: live starts in the anonymous playback timing (Task 39, ruling R34): mode 'live' carries the first-frame time only (playtiming.ts
+  // keeps nothing else, no channel, no user). Widens migration 36's inline mode check, which Postgres auto-named
+  // playback_timings_mode_check (dropped by name: a pattern match on "mode" would also hit sound_mode's check). Rerunnable.
+  `
+  alter table playback_timings drop constraint if exists playback_timings_mode_check;
+  alter table playback_timings add constraint playback_timings_mode_check check (mode in ('direct','hls','live'));
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {
