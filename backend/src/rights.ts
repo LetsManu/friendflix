@@ -3,6 +3,8 @@
 import type { Ctx } from './ctx.js';
 // rights.ts and limits.ts import each other: neither may use the other's exports at module load, only inside functions
 import { getUserOverrides, type EffectiveLimits, type UserOverrides } from './limits.js';
+// likewise livetv/rights.ts (it resolves `liveTv` through effectiveRights; its channel sets follow every rights change)
+import { invalidateLivetvRights } from './livetv/rights.js';
 import { DEFAULT_PERMS, KIDS_OFF, MATRIX_FIELDS, PERM_KEYS, readPerms, type PermKey, type Perms } from './perms.js';
 import { defaultLimit, roleLimitRow } from './requestlimit.js';
 import { readTemplate, resolveRole, type RoleTemplate, type TemplateKey } from './roles.js';
@@ -190,9 +192,10 @@ export function diffRights(before: Resolved, after: Resolved): RightsDiff {
   return d;
 }
 
-/** Drops the cached overrides of one account (all without an id) and every accountsWithout answer. */
+/** Drops the cached overrides of one account (all without an id), every accountsWithout answer and every cached Live TV channel set. */
 export function invalidateRights(userId?: string): void {
   if (userId === undefined) overrides.clear();
   else overrides.delete(userId);
   without = new WeakMap();
+  invalidateLivetvRights();
 }

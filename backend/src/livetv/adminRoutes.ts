@@ -4,10 +4,12 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
+import { roleExists } from '../rolecat.js';
 import { requireAdmin } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
 import { detectLivetv, enableBenchmark, livetvSystem } from './detect.js';
 import { gpuAdvice } from './gpu.js';
+import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
 
 /** the line for an install without the updater (spec §4.3); the page shows it with the compose commands */
 const ENV_LINE = 'COMPOSE_PROFILES=livetv';
@@ -16,6 +18,25 @@ const JF_TIMEOUT_MS = 3_000;
 const MEMO_MS = 10_000;
 
 const disableBody = z.object({ removeImage: z.boolean(), removeCache: z.boolean() });
+
+// ---- channel groups (spec §9.3) ----
+const id = z.guid();
+const roleKeys = z.array(z.string().min(1).max(64)).max(50);
+const groupName = z.string().trim().min(1).max(40);
+const groupCreate = z.object({ name: groupName, kidFriendly: z.boolean().default(false), roles: roleKeys.default([]), released: z.boolean().default(true) }).strict();
+const groupPatch = z.object({ name: groupName, kidFriendly: z.boolean(), roles: roleKeys, released: z.boolean() }).partial().strict();
+const releaseBody = z.object({ ids: z.array(id).min(1).max(500), roles: roleKeys, kidFriendly: z.boolean() }).strict();
+const orderBody = z.object({ ids: z.array(id).max(5000) }).strict();
+const mergeBody = z.object({ ids: z.array(id).min(1).max(500), into: id }).strict();
+
+type Reply = { code(n: number): { send(b: unknown): unknown } };
+/** Zod safeParse with the fixed refusal `{ error: 'invalid', field }` (the input is never echoed) */
+function parse<T>(schema: z.ZodType<T>, body: unknown, reply: Reply): T | undefined {
+  const p = schema.safeParse(body ?? {});
+  if (p.success) return p.data;
+  reply.code(400).send({ error: 'invalid', field: String(p.error.issues[0]?.path[0] ?? 'body') });
+  return undefined;
+}
 
 /**
  * Admin -> Live-TV, the enable card and the off dialog (spec §4.2-§4.5): the state the page polls (detection, the updater's livetv
@@ -115,5 +136,83 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (removeCache && !removeImage) return reply.code(400).send({ error: 'invalid', field: 'removeCache' });
     const actor = req.user!.id;
     return run(removeImage ? { op: 'remove', data: removeCache } : { op: 'disable' }, actor, reply, req.log, 'livetv.disable', { removeImage, removeCache });
+  });
+
+  // ---- Gruppen & Rechte (spec §8, §9.3): every write drops the cached channel sets (groups.ts) and is audited livetv.group.* ----
+
+  /**
+   * the role keys, deduplicated, or a 400 when one is not a role. livetv_group_roles references the roles table, so a role known only
+   * from ROLE_TEMPLATES without a stored row cannot be granted either (the same 400, not a foreign-key 500).
+   */
+  async function knownRoles(roles: readonly string[], reply: Reply): Promise<string[] | undefined> {
+    const keys = [...new Set(roles)];
+    const stored = new Set((await ctx.db.query<{ key: string }>('select key from roles where key = any($1::text[])', [keys])).rows.map((r) => r.key));
+    for (const k of keys) {
+      if (!stored.has(k) || !(await roleExists(ctx, k))) { reply.code(400).send({ error: 'invalid', field: 'roles' }); return undefined; }
+    }
+    return keys;
+  }
+  const groupId = (req: { params: unknown }) => id.safeParse((req.params as { id?: string }).id).data;
+
+  app.get('/api/admin/livetv/groups', admin, async (_req, reply) => {
+    reply.header('cache-control', 'no-store');
+    return listGroups(ctx);
+  });
+
+  // a group the admin creates starts released unless the body says otherwise (spec §8)
+  app.post('/api/admin/livetv/groups', admin, async (req, reply) => {
+    const b = parse(groupCreate, req.body, reply);
+    if (!b) return reply;
+    const roles = await knownRoles(b.roles, reply);
+    if (!roles) return reply;
+    return reply.code(201).send(await createGroup(ctx, req.user!.id, { ...b, roles }));
+  });
+
+  // { released: true } with roles in one call: POST /groups/release; static routes win over /:id
+  app.post('/api/admin/livetv/groups/release', admin, async (req, reply) => {
+    const b = parse(releaseBody, req.body, reply);
+    if (!b) return reply;
+    const roles = await knownRoles(b.roles, reply);
+    if (!roles) return reply;
+    return { released: await releaseGroups(ctx, req.user!.id, b.ids, roles, b.kidFriendly) };
+  });
+
+  app.put('/api/admin/livetv/groups/order', admin, async (req, reply) => {
+    const b = parse(orderBody, req.body, reply);
+    if (!b) return reply;
+    await orderGroups(ctx, req.user!.id, b.ids);
+    return { ok: true };
+  });
+
+  app.post('/api/admin/livetv/groups/merge', admin, async (req, reply) => {
+    const b = parse(mergeBody, req.body, reply);
+    if (!b) return reply;
+    if ((await unknownGroups(ctx, b.ids)).length) return reply.code(400).send({ error: 'invalid', field: 'ids' });
+    const g = await mergeGroups(ctx, req.user!.id, b.ids, b.into);
+    return g ?? reply.code(404).send({ error: 'not_found' });
+  });
+
+  // partial; { released: false } = Freigabe zurücknehmen (roles kept)
+  app.patch('/api/admin/livetv/groups/:id', admin, async (req, reply) => {
+    const gid = groupId(req);
+    if (!gid) return reply.code(404).send({ error: 'not_found' });
+    const b = parse(groupPatch, req.body, reply);
+    if (!b) return reply;
+    const roles = b.roles === undefined ? undefined : await knownRoles(b.roles, reply);
+    if (b.roles !== undefined && !roles) return reply;
+    const g = await updateGroup(ctx, req.user!.id, gid, { ...b, ...(roles ? { roles } : {}) });
+    return g ?? reply.code(404).send({ error: 'not_found' });
+  });
+
+  app.get('/api/admin/livetv/groups/:id', admin, async (req, reply) => {
+    const gid = groupId(req);
+    const g = gid ? await groupView(ctx, gid) : null;
+    return g ?? reply.code(404).send({ error: 'not_found' });
+  });
+
+  app.delete('/api/admin/livetv/groups/:id', admin, async (req, reply) => {
+    const gid = groupId(req);
+    if (!gid || !(await deleteGroup(ctx, req.user!.id, gid))) return reply.code(404).send({ error: 'not_found' });
+    return { ok: true };
   });
 }

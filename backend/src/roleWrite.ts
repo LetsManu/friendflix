@@ -10,6 +10,7 @@ import { fetchLibraries, knownLibraries, missingLibraries, type Library } from '
 import { defaultLimit } from './requestlimit.js';
 import { diffRights, invalidateRights, roleRights, same, valueOf, type RightKey, type RightSource } from './rights.js';
 import { invitableRoles, listRoles, roleLabelArgs, type RoleRow } from './rolecat.js';
+import { roleGroupNames } from './livetv/groups.js';
 import { wellFormed } from './wellFormed.js';
 import { DEFAULT_ROLES, LEGACY_COLUMNS, TEMPLATE_KEYS, legacyColumns, invalidateRoles, own, readTemplate, type RoleTemplate } from './roles.js';
 import { HttpError, accountSerial, reapplyRole } from './users.js';
@@ -169,6 +170,8 @@ export interface MatrixRole {
   /** has a row in the roles table: only these can be ordered (an env-only key is listed after them, fixed) */
   stored: boolean;
   accounts: number; profiles: number; kidsProfiles: number;
+  /** names of the released Live TV groups the role sees (the admin role: all), in group order (Live TV spec §8: *Kanalgruppen* chips) */
+  livetvGroups: string[];
   /** effective template + switches + requestsPerMonth, keyed by MatrixField.key */
   values: Record<string, unknown>;
   sources: Record<string, RoleSourceName>;
@@ -188,13 +191,14 @@ export interface RolesOverview {
 
 /** the role editor's data: legacy `roles` / `invitable` / `limits` (unchanged fields) and the role matrix (spec §4.1, ruling 3) */
 export async function rolesOverview(ctx: Ctx): Promise<RolesOverview> {
-  const [catalogue, invitable, libs, counts] = await Promise.all([
+  const [catalogue, invitable, libs, counts, groups] = await Promise.all([
     listRoles(ctx),
     invitableRoles(ctx),
     fetchLibraries(ctx),
     ctx.db.query<{ role: string; accounts: number; profiles: number; kids: number }>(
       `select u.role, count(distinct u.id)::int accounts, count(p.id)::int profiles, (count(p.id) filter (where p.kids))::int kids
          from users u left join profiles p on p.user_id = u.id group by u.role`),
+    roleGroupNames(ctx),
   ]);
   const count = new Map(counts.rows.map((r) => [r.role, r]));
   const roles: RolesOverview['roles'] = {};
@@ -221,6 +225,7 @@ export async function rolesOverview(ctx: Ctx): Promise<RolesOverview> {
       key: row.key, label: configured ?? null, builtinLabel: configured !== undefined && configured === builtinGerman, base: row.base,
       origin: row.origin, invitable: row.invitable && row.key !== 'admin', position: row.position, envGone: row.origin === 'env' && !Object.hasOwn(ctx.roles, row.key), stored: row.stored,
       accounts: n?.accounts ?? 0, profiles: n?.profiles ?? 0, kidsProfiles: n?.kids ?? 0,
+      livetvGroups: groups.get(row.key) ?? [],
       values: Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, valueOf(r, f.key)])),
       sources: Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, r.sources[f.key as RightKey]])),
       defaults: Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, valueOf(without, f.key)])),
