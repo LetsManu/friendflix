@@ -911,6 +911,139 @@ export const MIGRATIONS: string[] = [
   create index if not exists audit_log_target on audit_log(target, id desc) where target is not null;
   create index if not exists audit_log_action on audit_log(action, id desc);
   `,
+  // 48: Live TV core (sources with import options, groups with release, rights, channels, logos, EPG, favourites, recent channels; devices.start_live)
+  // Spec §6.1 SQL (2026-11-12); `if not exists` on every object makes it rerunnable. The own-feeds source kind is stored as 'manual'
+  // (API and web say 'feeds'). Derived channel values (name, number, group, logo, EPG offset) live in livetv/channels.ts, not in a view.
+  `
+  -- 48: Live TV core. Sources and channel stream URLs are stored encrypted (APP_ENC_KEY blob, like settings.enc); *_hint is a
+  -- masked display form (scheme://host/…) for the admin. Import fields (import_*) are rewritten by every refresh; admin
+  -- overrides (*_override, hidden, group_id) never are. Programmes are EPG facts only (no user data) and are pruned daily.
+  create table if not exists livetv_sources (
+    id uuid primary key,
+    kind text not null check (kind in ('m3u','manual')),
+    name text not null check (char_length(name) between 1 and 60),
+    url_enc text,                       -- m3u only
+    url_hint text,
+    epg_url_enc text,
+    epg_hint text,
+    user_agent text check (char_length(user_agent) <= 200),
+    allow_lan boolean not null default false,
+    refresh text not null default '24h' check (refresh in ('6h','12h','24h','weekly','manual')),
+    skip_groups text[] not null default '{}', -- provider group-titles the admin did not pick (§9.1); never imported
+    numbering text not null default 'chno' check (numbering in ('chno','order')), -- tvg-chno first, or list order only
+    number_base int not null default 1,
+    logo_pref text not null default 'm3u' check (logo_pref in ('m3u','xmltv')), -- which imported logo wins (own upload always)
+    epg_shift_min int not null default 0 check (epg_shift_min between -720 and 840), -- EPG time offset of the source
+    max_streams int check (max_streams between 1 and 50), -- provider's limit of channels at once; null = unknown
+    enabled boolean not null default true,
+    position int not null default 0,
+    last_refresh_at timestamptz, last_ok_at timestamptz, last_error text, last_counts jsonb,
+    epg_last_refresh_at timestamptz, epg_last_ok_at timestamptz, epg_last_error text, epg_counts jsonb,
+    created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+    check ((kind = 'm3u') = (url_enc is not null))
+  );
+  create table if not exists livetv_groups (
+    id uuid primary key,
+    name text not null check (char_length(name) between 1 and 40),
+    kid_friendly boolean not null default false,
+    released boolean not null default true, -- false: created by an import; hidden from every user until the admin releases it
+    position int not null default 0,
+    created_at timestamptz not null default now()
+  );
+  create unique index if not exists livetv_groups_name on livetv_groups(lower(name));
+  create table if not exists livetv_group_map (           -- provider group-title -> group
+    source_id uuid not null references livetv_sources(id) on delete cascade,
+    provider_group text not null,
+    group_id uuid not null references livetv_groups(id) on delete cascade,
+    primary key (source_id, provider_group)
+  );
+  create table if not exists livetv_group_roles (
+    group_id uuid not null references livetv_groups(id) on delete cascade,
+    role text not null references roles(key) on delete cascade, -- roles table from migration 47 (Phase 0)
+    primary key (group_id, role)
+  );
+  create table if not exists livetv_group_users (         -- per-user exception: allow = true adds, false removes
+    group_id uuid not null references livetv_groups(id) on delete cascade,
+    user_id uuid not null references users(id) on delete cascade,
+    allow boolean not null,
+    primary key (group_id, user_id)
+  );
+  create table if not exists livetv_channels (
+    id uuid primary key,
+    source_id uuid not null references livetv_sources(id) on delete cascade,
+    source_key text not null,               -- tvg-id, else sha256(name + url without query)[0..32]
+    stream_url_enc text,                    -- pulled feeds; null for push feeds
+    stream_kind text not null check (stream_kind in ('hls','ts','srt')),
+    ingest text not null default 'pull' check (ingest in ('pull','push')), -- push = SRT listener (§3.5), manual source only
+    push_port int unique check (push_port between 1 and 65535),
+    push_stream_id_enc text,                -- APP_ENC_KEY blob; push_stream_id_hint = first 6 chars for the admin
+    push_stream_id_hint text,
+    push_passphrase_enc text,
+    allow_lan boolean,                      -- manual feeds; null = the source's value
+    import_name text not null, import_number int, import_group text, import_logo_hash text, tvg_id text, tvg_name text,
+    import_epg_shift_min int,               -- M3U tvg-shift (entry, else #EXTM3U header), in minutes; null = none
+    name_override text check (char_length(name_override) between 1 and 60),
+    number_override int check (number_override between 1 and 99999),
+    group_override uuid references livetv_groups(id) on delete set null,
+    logo_override_hash text,
+    epg_shift_override_min int check (epg_shift_override_min between -720 and 840),
+    hidden boolean not null default false,
+    epg_source_id uuid references livetv_sources(id) on delete set null,
+    epg_channel_id text,
+    epg_match text not null default 'auto' check (epg_match in ('auto','manual','none')),
+    epg_logo_hash text,                     -- <icon> of the matched XMLTV channel (fetched during the EPG refresh)
+    probe jsonb,                            -- last probe: { at, ok, video, audio, needs }
+    missing_since timestamptz,              -- not in the latest import; deleted 30 days later
+    created_at timestamptz not null default now(),
+    unique (source_id, source_key),
+    check ((ingest = 'pull') = (stream_url_enc is not null)),
+    check ((ingest = 'push') = (push_port is not null and push_stream_id_enc is not null and push_passphrase_enc is not null
+                                and stream_kind = 'srt'))
+  );
+  create index if not exists livetv_channels_epg on livetv_channels(epg_source_id, epg_channel_id);
+  create table if not exists livetv_logos (
+    hash text primary key,                  -- sha256 of the bytes
+    mime text not null check (mime in ('image/png','image/jpeg','image/webp')),
+    bytes bytea not null check (octet_length(bytes) <= 524288),
+    fetched_at timestamptz not null default now()
+  );
+  create table if not exists livetv_epg_channels (
+    source_id uuid not null references livetv_sources(id) on delete cascade,
+    xml_id text not null,
+    names text[] not null,
+    primary key (source_id, xml_id)
+  );
+  create table if not exists livetv_programmes (
+    id bigserial primary key,
+    source_id uuid references livetv_sources(id) on delete cascade, -- imported
+    xml_channel text,
+    channel_id uuid references livetv_channels(id) on delete cascade, -- manual entries (Phase 2)
+    rule_id uuid,                                                      -- manual rule (Phase 2)
+    start_at timestamptz not null,
+    end_at timestamptz not null check (end_at > start_at),
+    title text not null,
+    subtitle text, description text, categories text[], episode text, series_key text,
+    is_new boolean, previously_shown boolean, rating text,
+    check ((source_id is not null and xml_channel is not null) or channel_id is not null)
+  );
+  create index if not exists livetv_programmes_src on livetv_programmes(source_id, xml_channel, start_at);
+  create index if not exists livetv_programmes_ch on livetv_programmes(channel_id, start_at) where channel_id is not null;
+  create index if not exists livetv_programmes_end on livetv_programmes(end_at);
+  create table if not exists livetv_favourites (
+    profile_id uuid not null references profiles(id) on delete cascade,
+    channel_id uuid not null references livetv_channels(id) on delete cascade,
+    position int not null default 0,
+    primary key (profile_id, channel_id)
+  );
+  create table if not exists livetv_recent (              -- Zuletzt gesehen: newest first, at most 10 rows per profile (trimmed on write)
+    profile_id uuid not null references profiles(id) on delete cascade,
+    channel_id uuid not null references livetv_channels(id) on delete cascade,
+    at timestamptz not null default now(),
+    primary key (profile_id, channel_id)
+  );
+  create index if not exists livetv_recent_profile on livetv_recent(profile_id, at desc);
+  alter table devices add column if not exists start_live boolean not null default false;
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

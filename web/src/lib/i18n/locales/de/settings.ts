@@ -6,7 +6,7 @@ export default {
   loadFailed: 'Einstellungen konnten nicht geladen werden.',
   groups: {
     general: 'Allgemein', signin: 'Anmeldung', media: 'Mediaserver', requests: 'Anfragen', notifications: 'Benachrichtigungen', push: 'Push-Mitteilungen',
-    sources: 'Datenquellen', downloads: 'Downloads', playback: 'Wiedergabe', recommendations: 'Empfehlungen', updates: 'Updates', health: 'Systemzustand', sessions: 'Sitzungen', server: 'Server',
+    sources: 'Datenquellen', downloads: 'Downloads', playback: 'Wiedergabe', livetv: 'Live-TV', recommendations: 'Empfehlungen', updates: 'Updates', health: 'Systemzustand', sessions: 'Sitzungen', server: 'Server',
   },
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Änderungen gelten sofort, ohne Neustart. Die Feineinstellung für Fachleute (RECO_COEFFS und die Index-Gewichte RECO_W_*) wird nur in der .env gesetzt.' },
@@ -103,7 +103,7 @@ export default {
     PLEX_URL: { invalid_url: 'Bitte nur die Serveradresse eingeben: mit http:// oder https://, ohne Benutzername und Passwort und ohne etwas nach ? oder #. Der Token gehört in das Feld Plex-Token.' },
   },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
-  options: { auto: 'Automatisch', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (eigenes Geschmacksmodell)', shadow: 'Shadow (v2 neben v1)' }, UPDATE_CHANNEL: { stable: 'Stabil', nightly: 'Nightly', pinned: 'Feste Version' }, AUTO_UPDATE: { off: 'Aus', 'nightly-window': 'Nachtfenster' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatisch', off: 'Aus' } },
+  options: { auto: 'Automatisch', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (eigenes Geschmacksmodell)', shadow: 'Shadow (v2 neben v1)' }, UPDATE_CHANNEL: { stable: 'Stabil', nightly: 'Nightly', pinned: 'Feste Version' }, AUTO_UPDATE: { off: 'Aus', 'nightly-window': 'Nachtfenster' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatisch', off: 'Aus' }, LIVETV_ENCODER: { auto: 'Automatisch', qsv: 'Intel Quick Sync (QSV)', vaapi: 'VA-API', nvenc: 'NVIDIA NVENC', software: 'Software (Prozessor)' } },
   keys: {
     PUBLIC_URL: { label: 'Öffentliche Adresse', help: 'Unter dieser Adresse erreichen alle FriendFlix, z. B. https://friend.example.com. Links, Anmeldung und Streaming bauen darauf auf.' },
     WEBHOOK_SECRET: { label: 'Webhook-Geheimnis', help: 'Gemeinsames Geheimnis für die Webhooks von Mediaserver und Anfragen-Dienst.' },
@@ -160,6 +160,8 @@ export default {
     CONVERSION_SLOTS: { label: 'Umwandlungen gleichzeitig', help: 'Wie viele Videos der Server gleichzeitig umwandeln darf: für Filme & Serien, Live-TV und Aufnahmen zusammen. Leer = automatisch (FriendFlix misst den Server und wählt den Wert). Einfacher einzustellen unter Betrieb → Wiedergabe-Check.' },
     CONVERSION_PRIORITY: { label: 'Vorrang bei Umwandlungen', help: 'Wer bei knappen Plätzen zuerst drankommt: Filme & Serien, Live-TV oder gleichrangig. Ab 2 Plätzen bleibt einer für die andere Seite frei, bei „gleichrangig“ keiner.' },
     SURROUND_AUDIO: { label: 'Raumklang', help: 'Geräte mit 5.1-Ausgabe (TV-Apps, Android an einer Anlage, Browser an einem 5.1-Ausgang) bekommen die Raumklang-Spur des Films oder eine 5.1-Umwandlung davon. Alle anderen bekommen Stereo. Aus = Stereo für alle.' },
+    LIVETV_ENCODER: { label: 'Encoder für Live-TV', help: 'Womit Live-TV Sender umwandelt, die sich nicht direkt abspielen lassen. Automatisch nimmt die Grafikeinheit, die Jellyfin nutzt, sofern Live-TV sie erreicht, sonst VA-API, dann NVENC, sonst den Prozessor. Gilt ab dem nächsten Senderstart.' },
+    LIVETV_SRT_HOST: { label: 'Adresse für gesendete Streams', help: 'Die Server-Adresse, die die Einrichtung gesendeter Streams (SRT) anzeigt: ein Hostname oder eine IP-Adresse, ohne srt:// und Port. Leer = der Host der öffentlichen Adresse. Läuft die öffentliche Adresse über ein CDN ohne UDP (z. B. Cloudflare mit Proxy), hier einen Namen nur mit DNS oder die öffentliche IP eintragen.' },
     GITHUB_TOKEN: { label: 'GitHub-Token', help: 'Optional: höheres Abruflimit bei der Suche nach neuen Versionen.' },
     PORTAINER_WEBHOOK_URL: { label: 'Portainer-Stack-Webhook', help: 'Webhook-Adresse des Stacks für Updates mit einem Klick. Die Adresse ist selbst der Schlüssel.' },
     PORTAINER_URL: { label: 'Portainer-Adresse', help: 'Statt des Webhooks: Adresse von Portainer, mit API-Schlüssel und Stack-ID.' },

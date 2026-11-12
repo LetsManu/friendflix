@@ -8,7 +8,7 @@ const settings: Translation<typeof de> = {
   loadFailed: 'No se pudieron cargar los ajustes.',
   groups: {
     general: 'General', signin: 'Inicio de sesión', media: 'Servidor multimedia', requests: 'Peticiones', notifications: 'Notificaciones', push: 'Notificaciones push',
-    sources: 'Fuentes de datos', downloads: 'Descargas', playback: 'Reproducción', recommendations: 'Recomendaciones', updates: 'Actualizaciones', health: 'Estado del sistema', sessions: 'Sesiones', server: 'Servidor',
+    sources: 'Fuentes de datos', downloads: 'Descargas', playback: 'Reproducción', livetv: 'TV en directo', recommendations: 'Recomendaciones', updates: 'Actualizaciones', health: 'Estado del sistema', sessions: 'Sesiones', server: 'Servidor',
   },
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Los cambios se aplican al instante, sin reiniciar. El ajuste fino para expertos (RECO_COEFFS y los pesos del índice RECO_W_*) solo se define en .env.' },
@@ -109,7 +109,7 @@ const settings: Translation<typeof de> = {
     PLEX_URL: { invalid_url: 'Introduce solo la dirección del servidor: que empiece por http:// o https://, sin usuario ni contraseña y sin nada después de ? o #. El token va en el campo Token de Plex.' },
   },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
-  options: { auto: 'Automático', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (modelo de gustos propio)', shadow: 'Shadow (v2 junto a v1)' }, UPDATE_CHANNEL: { stable: 'Estable', nightly: 'Nightly', pinned: 'Versión fija' }, AUTO_UPDATE: { off: 'Desactivadas', 'nightly-window': 'Ventana nocturna' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automático', off: 'Desactivado' } },
+  options: { auto: 'Automático', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (modelo de gustos propio)', shadow: 'Shadow (v2 junto a v1)' }, UPDATE_CHANNEL: { stable: 'Estable', nightly: 'Nightly', pinned: 'Versión fija' }, AUTO_UPDATE: { off: 'Desactivadas', 'nightly-window': 'Ventana nocturna' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automático', off: 'Desactivado' }, LIVETV_ENCODER: { auto: 'Automático', qsv: 'Intel Quick Sync (QSV)', vaapi: 'VA-API', nvenc: 'NVIDIA NVENC', software: 'Software (procesador)' } },
   keys: {
     PUBLIC_URL: { label: 'Dirección pública', help: 'La dirección con la que todos acceden a FriendFlix, p. ej. https://friend.example.com. Enlaces, inicio de sesión y streaming dependen de ella.' },
     WEBHOOK_SECRET: { label: 'Secreto de webhook', help: 'Secreto compartido para los webhooks del servidor multimedia y del servicio de peticiones.' },
@@ -166,6 +166,8 @@ const settings: Translation<typeof de> = {
     CONVERSION_SLOTS: { label: 'Conversiones simultáneas', help: 'Cuántos vídeos puede convertir el servidor a la vez: películas y series, TV en directo y grabaciones juntas. Vacío = automático (FriendFlix mide el servidor y elige el valor). Más fácil de ajustar en Operación → Prueba de reproducción.' },
     CONVERSION_PRIORITY: { label: 'Prioridad en las conversiones', help: 'Quién va primero cuando faltan plazas: películas y series, TV en directo o igualdad. A partir de 2 plazas queda una libre para la otra parte; con «igualdad», ninguna.' },
     SURROUND_AUDIO: { label: 'Sonido envolvente', help: 'Los dispositivos con salida 5.1 (apps de TV, Android en un equipo de sonido, navegadores con salida 5.1) reciben la pista envolvente de la película o una conversión a 5.1. Los demás reciben estéreo. Desactivado = estéreo para todos.' },
+    LIVETV_ENCODER: { label: 'Codificador de TV en directo', help: 'Con qué convierte la TV en directo los canales que no se pueden reproducir tal cual. Automático usa la unidad gráfica que usa Jellyfin si la TV en directo puede acceder a ella; si no, VA-API, luego NVENC y, si no, el procesador. Se aplica desde el siguiente inicio de canal.' },
+    LIVETV_SRT_HOST: { label: 'Dirección para streams enviados', help: 'La dirección del servidor que muestra la configuración de streams enviados (SRT): un nombre de host o una dirección IP, sin srt:// ni puerto. Vacío = el host de la dirección pública. Si el nombre público pasa por una CDN que no deja pasar UDP (p. ej. Cloudflare con proxy), introduce aquí un nombre solo DNS o la IP pública.' },
     GITHUB_TOKEN: { label: 'Token de GitHub', help: 'Opcional: límite de consultas más alto al buscar versiones nuevas.' },
     PORTAINER_WEBHOOK_URL: { label: 'Webhook del stack de Portainer', help: 'Dirección de webhook del stack para actualizar con un clic. La propia dirección es la clave.' },
     PORTAINER_URL: { label: 'Dirección de Portainer', help: 'En lugar del webhook: dirección de Portainer, con clave de API e ID del stack.' },

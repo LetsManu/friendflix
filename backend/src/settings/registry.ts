@@ -13,7 +13,7 @@ export { publicUrlSchema };
  */
 export type SettingKind = 'string' | 'url' | 'secret' | 'int' | 'number' | 'bool' | 'enum' | 'cidrList' | 'json';
 export type SettingGroup = 'general' | 'signin' | 'media' | 'requests' | 'notifications' | 'push' | 'sources'
-  | 'downloads' | 'playback' | 'recommendations' | 'updates' | 'health' | 'sessions';
+  | 'downloads' | 'playback' | 'livetv' | 'recommendations' | 'updates' | 'health' | 'sessions';
 export type ProbeId = 'publicUrl' | 'media' | 'oidc' | 'authentik' | 'requests' | 'tmdb' | 'omdb' | 'portainer' | 'github';
 
 export interface SettingDef {
@@ -183,6 +183,9 @@ export const SETTINGS: readonly SettingDef[] = [
   setting('LOGIN_COVER_WALL', { kind: 'bool', group: 'general' }),
   setting('LIVETV_OFFER_HIDDEN', { kind: 'bool', group: 'general' }), // read per request
   setting('LIVETV_WANTED', { kind: 'bool', group: 'general', visible: false }), // written by the livetv enable/disable routes
+  // livetv: listed in Admin -> Settings only while the livetv container is detected (routes/adminSettings.ts, ruling 25)
+  setting('LIVETV_ENCODER', { kind: 'enum', group: 'livetv' }), // read per stream start and benchmark
+  setting('LIVETV_SRT_HOST', { kind: 'string', group: 'livetv' }), // read per request (srtHost)
 ];
 
 /** Per container or per deployment, or shared with a container that reads env only: env > default, read-only in Admin -> Settings. */
