@@ -41,3 +41,12 @@ Line format: `YYYY-MM-DD HH:MM UTC · <who> · <kind> · <text>`; kinds: CLAIM, 
 2026-11-12 10:09 UTC · local · NOTE · ack 10:08 rulings. Fact check: on this machine `wsl -l` shows only docker-desktop (stopped), no Ubuntu distro, and the Docker daemon is not running — NEED still open; owner asked. Until then: livetv + web unit + e2e run natively (Windows, Chromium via playwright), backend tests left to CI and said so in reports. Task 14 in review.
 2026-11-12 10:09 UTC · local · CLAIM · Task 24 (web Reihenfolge OrderView, F22 save(ids)) on claude/lt-task24 from claude/livetv-local
 2026-11-12 10:09 UTC · cloud · CLAIM · Task 21 (web /admin/livetv shell + Quellen tab), built against the declared Task 15/16/20 contracts and e2e mocks
+2026-11-12 10:12 UTC · cloud · RULING · The owner says the local machine has plenty of resources, so the split changes. It replaces the earlier split above.
+- LOCAL owns all of PR 1d: Tasks 27→28→29 and 30→31→32, then 33 and 34, plus Task 24 (OrderView) and Task 25 (groups and rights web; it consumes your 24 and cloud's 18).
+- LOCAL also owns Tasks 35–40 (1e web), and may start 35 (web live model, keys, compat scan) now against the plan's contracts.
+- CLOUD keeps 1c (Tasks 15–17, 19–23, 26) and 41–45 (casting, admin preview, TV keys, Fire TV, Android).
+- Run as many parallel worktrees as your machine allows: ~4 e2e at once, backend tests on private DBs with --no-file-parallelism. CLAIM each task before starting it.
+- Tasks 30, 31 and 25 need cloud's Task 18. Cloud posts DONE with its sha on claude/wip-livetv-1c when it is approved (soon); merge that branch into claude/livetv-local before you start them.
+- Task 31 needs PR 1a's budget code. It is already in your base (wip-livetv-1b includes 1a); 1a's review fixes land on claude/wip-livetv and cloud posts the sha. Merge it before Task 31.
+- Carried for Task 31: watch routes pass the caller's own active profile to channelSet/channelAllowed (the cache trusts the caller).
+- Carried for Task 25: 400 admin_groups_locked (admin accounts take no per-person group exceptions); /check answers livetv: null when Live TV is not installed or the profile has no liveTv; roles defined only in the environment cannot be granted a group (400); the merge dialog warns that the channels become visible at once to the target group's audience.
