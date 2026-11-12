@@ -1,8 +1,14 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  /** Admin: roles – one card per role (requests / playback / downloads), only changed fields are saved, unsaved-changes guard. */
-  import { onMount } from 'svelte';
+  /**
+   * Admin: Rollen & Rechte (spec §6.1). Desktop (≥ 900 px): the role matrix; edits are staged into the save bar, *Änderungen
+   * prüfen* lists them, *Speichern* writes one role after the other (PUT /api/admin/roles/:role) with the progress in the bar;
+   * a partial policy failure (502 policy_partial: the values are stored) offers *Erneut anwenden* with the role's last body.
+   * Narrower screens keep the old card per role (requests / playback / downloads) until the phone cards replace it.
+   * Either way an unsaved-changes guard asks before leaving.
+   */
+  import { onMount, tick } from 'svelte';
   import { beforeNavigate, goto } from '$app/navigation';
   import { api, ApiError } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
@@ -15,7 +21,12 @@
   import Select from '#lib/ui/Select.svelte';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import StatusPill from '#lib/ui/StatusPill.svelte';
+  import { toast } from '#lib/ui/toast';
   import Toggle from '#lib/ui/Toggle.svelte';
+  import { partialText, policyLine, reviewLines, saveBarText, stageBodies, stageCounts, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
+  import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
+  import RoleMatrixView from '#lib/admin/rights/RoleMatrix.svelte';
+  import SaveBar from '#lib/admin/rights/SaveBar.svelte';
 
   interface Form { perMonth: number | null; unlimited: boolean; transcoding: boolean; maxHeight: string; download: boolean; maxDownloads: number | null; dlHeight: string; days: number | null; remoteCap: string }
   interface Card { role: string; label: string; builtinLabel: boolean; isDefault: boolean; maxBitrate: number; remoteDefault: number; form: Form; base: Form }
@@ -26,6 +37,18 @@
   const REMOTE_CAPS = [2, 4, 8, 12, 20, 40]; // Mbit/s
   const LIKE_PLAYBACK = 2160; // no extra cap for downloads
   let cards: Card[] | null = null, error: string | null = null;
+  let matrix: RoleMatrix | null = null;
+
+  /** the matrix from 900 px on (the admin sidebar's breakpoint); below it the cards */
+  const WIDE = '(min-width: 900px)';
+  let wide = typeof matchMedia === 'undefined' || matchMedia(WIDE).matches;
+  onMount(() => {
+    const mq = matchMedia(WIDE);
+    const sync = () => (wide = mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  });
 
   const toForm = (l: Limit): Form => ({
     perMonth: l.requestsPerMonth ?? 2, unlimited: l.requestsPerMonth === null, transcoding: l.transcoding, maxHeight: l.maxHeight ? String(l.maxHeight) : '',
@@ -34,7 +57,9 @@
   async function load() {
     error = null;
     try {
-      const r = await api<{ limits: Limit[] }>('/api/admin/roles');
+      const r = await api<{ limits: Limit[]; matrix?: RoleMatrix }>('/api/admin/roles');
+      matrix = r.matrix ?? null;
+      stage = {};
       cards = r.limits.map((l) => ({ role: l.role, label: l.label, builtinLabel: Boolean(l.builtinLabel), isDefault: l.isDefault, maxBitrate: l.maxBitrate, remoteDefault: l.remoteDefault, form: toForm(l), base: toForm(l) }));
     } catch { error = tr('adminPeople.loadFailed'); }
   }
@@ -64,7 +89,74 @@
     return body;
   }
   const dirty = (c: Card): boolean => Object.keys(diff(c)).length > 0;
-  $: dirtyCount = (cards ?? []).filter(dirty).length;
+  $: cardsDirty = (cards ?? []).filter(dirty).length;
+
+  // ---- the matrix: staged changes, the save bar, the review sheet, the sequential save
+  let stage: Stage = {};
+  $: counts = matrix ? stageCounts(stage, matrix) : null;
+  $: showMatrix = wide && matrix !== null;
+  $: dirtyCount = showMatrix ? counts?.roles ?? 0 : cardsDirty;
+  type Body = Record<string, unknown>;
+  /** roles whose values are stored but whose accounts did not all take the policy (502 policy_partial): the body to re-send */
+  let failures: Array<{ role: string; body: Body; failed: number }> = [];
+  let saving = false, progress: string | null = null, barError: string | null = null;
+  let reviewing = false, reviewBtn: HTMLElement | null = null;
+  let bar: SaveBar | undefined;
+
+  /** a written role: its staged values become the loaded ones (set in the role itself now) and leave the stage */
+  function stored(role: string) {
+    const r = matrix?.roles.find((x) => x.key === role);
+    const fields = stage[role];
+    if (!r || !fields) return;
+    for (const [k, v] of Object.entries(fields)) { r.values[k] = v; r.sources[k] = 'role'; }
+    const { [role]: _done, ...rest } = stage;
+    stage = rest;
+    matrix = matrix;
+  }
+  /** writes the failed roles again and then the staged ones, one PUT after the other, the progress in the bar */
+  async function apply() {
+    if (!matrix || saving) return;
+    const bodies = stageBodies(stage);
+    const jobs = [
+      ...failures.map((f) => ({ role: f.role, body: f.body, again: true })),
+      ...matrix.roles.filter((r) => bodies[r.key]).map((r) => ({ role: r.key, body: bodies[r.key]!, again: false })),
+    ];
+    if (!jobs.length) return;
+    saving = true; barError = null;
+    const failed: typeof failures = [];
+    let hard: string | null = null, i = 0;
+    for (; i < jobs.length; i++) {
+      const j = jobs[i]!;
+      progress = tr('adminPeople.roles.applying', { i: i + 1, n: jobs.length });
+      try {
+        await api(`/api/admin/roles/${encodeURIComponent(j.role)}`, { method: 'PUT', body: j.body });
+        if (!j.again) stored(j.role);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 502 && e.body?.error === 'policy_partial') {
+          if (!j.again) stored(j.role); // stored either way
+          failed.push({ role: j.role, body: j.body, failed: Number(e.body?.failed) || 0 });
+        } else { hard = errorText(e); break; }
+      }
+    }
+    // a hard error stops the run: failures not tried again stay (staged roles stay staged by themselves)
+    failures = [...failed, ...jobs.slice(i).filter((j) => j.again).map((j) => failures.find((f) => f.role === j.role)!)];
+    saving = false; progress = null;
+    // a role written twice (failed before, staged again) counts with its latest answer
+    const accounts = [...new Map(failures.map((f) => [f.role, f.failed])).values()].reduce((a, n) => a + n, 0);
+    barError = hard ?? (failures.length ? partialText(accounts) : null);
+    if (!barError) toast.success(tr('adminPeople.roles.savedAll'));
+  }
+  function discardAll() { stage = {}; failures = []; barError = null; }
+  function openReview() {
+    reviewBtn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    reviewing = true;
+  }
+  async function saveReviewed() {
+    reviewing = false;
+    await tick();
+    bar?.focus();
+    await apply();
+  }
 
   async function save(c: Card) {
     if (Object.keys(errorsOf(c.form)).length) { cards = cards; return; }
@@ -108,10 +200,13 @@
   $: dlOptions = [...DL_HEIGHTS.map((h) => ({ value: String(h), label: `${h}p` })), { value: '', label: $t('adminPeople.roles.likePlayback') }];
 </script>
 
+<div class="roles">
 <p class="intro">{$t('adminPeople.roles.intro')}</p>
 
 {#if error}
   <div class="state" role="alert"><Icon name="alert" size={22} /><p>{error}</p><Button variant="secondary" icon="refresh" on:click={load}>{$t('ui.retry')}</Button></div>
+{:else if cards === null && wide}
+  <div class="panel loading" aria-busy="true"><Skeleton w="30%" h="1.2rem" /><Skeleton lines={8} /></div>
 {:else if cards === null}
   <div class="grid" aria-busy="true">
     {#each [0, 1, 2] as i (i)}
@@ -120,6 +215,8 @@
   </div>
 {:else if !cards.length}
   <div class="state"><p>{$t('adminPeople.roles.empty')}</p></div>
+{:else if showMatrix && matrix}
+  <RoleMatrixView {matrix} bind:stage disabled={saving} />
 {:else}
   <div class="grid">
     {#each cards as c (c.role)}
@@ -168,8 +265,21 @@
     {/each}
   </div>
 {/if}
+</div>
+
+{#if showMatrix && counts}
+  <SaveBar bind:this={bar} count={counts.changes} text={saveBarText(counts)} busy={saving} {progress} error={barError}
+    on:discard={discardAll} on:review={openReview} on:retry={apply} />
+{/if}
+{#if reviewing && matrix && counts}
+  <ReviewSheet lines={reviewLines(stage, matrix)} policy={counts.policy ? policyLine(counts) : null} trigger={reviewBtn}
+    on:close={() => (reviewing = false)} on:save={saveReviewed} />
+{/if}
 
 <style>
+  /* the save bar's room at the page's end (set before it rises in): nothing above it moves */
+  .roles { padding-bottom: var(--savebar-h, 0px); }
+  .loading { display: flex; flex-direction: column; gap: 1rem; }
   .intro { color: var(--mut); margin: 0 0 1rem; max-width: 60ch; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; align-items: start; }
   .card { margin-bottom: 0; display: flex; flex-direction: column; gap: 1rem; min-width: 0; }

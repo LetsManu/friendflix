@@ -392,3 +392,75 @@ describe('AirPlay connecting layout (device hand-off spec 4)', () => {
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
   });
 });
+
+/** Rollen & Rechte (users & permissions spec §6.1, §8): the matrix's marks on the glass panel, the save bar, and the motion rule */
+describe('role matrix and save bar (rights)', () => {
+  const dir = fileURLToPath(new URL('./rights/', import.meta.url));
+  const matrix = read('./rights/RoleMatrix.svelte'), bar = read('./rights/SaveBar.svelte');
+  const css = (src: string) => [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  /** the bar floats over anything: its scrim over pure white, the ambient peak, the base, the solid fallback (as the cast bar) */
+  const BAR = [frostComposite(WHITE, SCRIM_BAR), frostComposite(AMB_PEAK, SCRIM_BAR), frostComposite(DARK_BASE, SCRIM_BAR), SOLID];
+
+  it('a staged cell has the amber --warn outline; it keeps 4.5:1 on the panel, the solid first column and the chip fill', () => {
+    expect(css(matrix)).toMatch(/td\.staged::after \{ box-shadow: inset 0 0 0 2px var\(--warn\); \}/);
+    for (const bg of [...ON_GLASS, ...ON_GLASS.map((b) => over(b, SCRIM_RGB, 0.4))]) expect(cr(GLASS.warn, bg), `${bg}`).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('muted role values (.72 white: people line, corner, group labels, a denied switch) on the panel and the solid sticky cells', () => {
+    const c = css(matrix);
+    expect(c).toMatch(/\.rp \{[^}]*color: var\(--mut\);/);
+    expect(c).toMatch(/\.chip\.off \{ color: var\(--mut\); \}/);
+    expect(c).toMatch(/thead th \{[^}]*background: var\(--fr-solid\);/);
+    // the chips' fill is the darker scrim (.25, .4 on hover): it only adds contrast
+    expect(c).toMatch(/\.chip \{[^}]*background: rgba\(var\(--fr-scrim-rgb\), \.25\);/);
+    expect(c).toMatch(/td:hover:not\(\.lock\) \.chip \{ background: rgba\(var\(--fr-scrim-rgb\), \.4\); \}/);
+    for (const bg of [...ON_GLASS, ...ON_GLASS.flatMap((b) => [over(b, SCRIM_RGB, 0.25), over(b, SCRIM_RGB, 0.4)])]) {
+      expect(textContrast(bg, MUT), `${bg}`).toBeGreaterThanOrEqual(AA);
+      expect(cr(GLASS.ok, bg), 'allowed tick').toBeGreaterThanOrEqual(AA);
+    }
+  });
+
+  it('the changed dot (--info) stands out from the panel; its words are the tooltip and the cell name, not the colour', () => {
+    expect(css(matrix)).toMatch(/\.dot \{[^}]*background: var\(--info\);/);
+    for (const bg of ON_GLASS) expect(cr(GLASS.info, bg)).toBeGreaterThanOrEqual(AA);
+    expect(matrix).toContain("tr('adminPeople.roles.changedHere')");
+    expect(matrix).toMatch(/cellName\(roleName\(role\), f, v, staged \|\| src === 'role'\)/);
+  });
+
+  it('the save bar: white text and the light error colour on the bar scrim over any backdrop', () => {
+    expect(bar).toMatch(/class="sb frost frost-safe frost-panel" style="--fr-scrim-safe:\{SCRIM_BAR\}"/);
+    expect(css(bar)).toContain('.tx.err { color: #ffbdbd; }');
+    for (const bg of BAR) {
+      expect(textContrast(bg)).toBeGreaterThanOrEqual(AA);
+      expect(contrast(hex('#ffbdbd'), bg)).toBeGreaterThanOrEqual(AA);
+    }
+  });
+
+  it('animates transform and opacity only, and every surface with motion switches it off in calm mode and for reduced motion', () => {
+    const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+    const files = readdirSync(dir).filter((f) => f.endsWith('.svelte'));
+    expect(files).toEqual(expect.arrayContaining(['RoleMatrix.svelte', 'FieldControl.svelte', 'CellPopover.svelte', 'SaveBar.svelte', 'ReviewSheet.svelte']));
+    const bad: string[] = [];
+    for (const f of files) {
+      const c = css(readFileSync(join(dir, f), 'utf8'));
+      for (const [, v] of c.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) if (!/^\s*none/.test(v!) && (LAYOUT.test(v!) || /\ball\b|color|background|border|filter|shadow/.test(v!))) bad.push(`${f}: ${v}`);
+      expect(c, f).not.toMatch(/@keyframes/);
+    }
+    expect(bad).toEqual([]);
+    // the moving surfaces use the glass transitions (transform / opacity) and stand still in calm mode
+    expect(read('./rights/CellPopover.svelte')).toContain('transition:growBoth|global={{ trigger }}');
+    expect(bar).toMatch(/in:barRise out:barRise=\{\{ dir: 'out' \}\}/);
+    expect(read('./rights/ReviewSheet.svelte')).toMatch(/sheetSlide\(node, \{ dir \}\)/);
+    for (const f of ['CellPopover', 'SaveBar', 'ReviewSheet']) {
+      const src = read(`./rights/${f}.svelte`);
+      expect(src, f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+      expect(src, f).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+    }
+  });
+
+  it('the bar reserves its room before it rises: --savebar-h is set in a reactive statement (before the DOM update)', () => {
+    expect(bar).toMatch(/\$: reserve\(shown\);/);
+    expect(bar).toContain("st.setProperty('--savebar-h'");
+    expect(read('../../routes/admin/roles/+page.svelte')).toMatch(/\.roles \{ padding-bottom: var\(--savebar-h, 0px\); \}/);
+  });
+});

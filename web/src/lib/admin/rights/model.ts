@@ -67,26 +67,23 @@ function mbit(bps: number): string {
 }
 
 /** the compact text of one cell value ("✓", "20 Mbit/s", "1080p", "ab 12", "3 Bibliotheken") */
-export function cellText(f: MatrixField, v: unknown, _libCount: number): string {
+export function cellText(f: MatrixField, v: unknown): string {
   switch (f.kind) {
     case 'bool': return v ? '✓' : '–';
     case 'int': return unlimited(v) ? tr('adminPeople.roles.unlimited') : String(v);
     case 'bitrate': return typeof v === 'number' ? mbit(v) : tr('adminPeople.roles.unlimited');
-    case 'height': return typeof v === 'number' ? (v > 0 ? `${v}p` : '–') : tr('adminPeople.roles.ratingAll');
+    case 'height': return typeof v === 'number' ? (v > 0 ? `${v}p` : '–') : tr('adminPeople.roles.heightAll');
     case 'rating': return typeof v === 'number' ? tr('adminPeople.roles.ratingFrom', { n: v }) : tr('adminPeople.roles.ratingAll');
-    case 'libraries': {
-      if (Array.isArray(v)) return tr('adminPeople.roles.libs', { n: v.length });
-      if (typeof v === 'number') return tr('adminPeople.roles.libs', { n: v });
-      return tr('adminPeople.roles.ratingAll');
-    }
+    case 'libraries': return Array.isArray(v) ? tr('adminPeople.roles.libs', { n: v.length }) : tr('adminPeople.roles.ratingAll');
   }
 }
 
 export const fieldLabel = (key: string): string => trDynamic(`adminPeople.roles.f.${key}`);
 
-/** the accessible name of a cell: "Gast, Altersfreigabe: ab 12, geändert" */
+/** the accessible name of a cell: "Gast, Altersfreigabe: ab 12, geändert"; a switch says "erlaubt" / "nicht erlaubt" in words */
 export function cellName(roleLabel: string, f: MatrixField, v: unknown, changed: boolean): string {
-  const params = { role: roleLabel, field: fieldLabel(f.key), value: cellText(f, v, 0) };
+  const value = f.kind === 'bool' ? tr(v ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied') : cellText(f, v);
+  const params = { role: roleLabel, field: fieldLabel(f.key), value };
   return tr(changed ? 'adminPeople.roles.cellNameChanged' : 'adminPeople.roles.cellName', params);
 }
 
@@ -94,7 +91,11 @@ export function cellName(roleLabel: string, f: MatrixField, v: unknown, changed:
 export type Stage = Record<string, Record<string, unknown>>;
 
 function same(a: unknown, b: unknown): boolean {
-  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    const sa = [...a].sort(), sb = [...b].sort();
+    return sa.every((x, i) => x === sb[i]);
+  }
   return Object.is(a ?? null, b ?? null);
 }
 
@@ -147,7 +148,7 @@ export function reviewLines(s: Stage, m: RoleMatrix): Array<{ role: string; fiel
     if (!r) continue;
     for (const f of m.fields) {
       if (!Object.hasOwn(fields, f.key)) continue;
-      lines.push({ role: roleName(r), field: fieldLabel(f.key), from: cellText(f, r.values[f.key], m.libraries.length), to: cellText(f, fields[f.key], m.libraries.length) });
+      lines.push({ role: roleName(r), field: fieldLabel(f.key), from: cellText(f, r.values[f.key]), to: cellText(f, fields[f.key]) });
     }
   }
   return lines;
@@ -166,8 +167,26 @@ export function summaryLine(r: MatrixRole): string {
   const by = (k: string, kind: FieldKind) => ({ key: k, group: 'access' as const, kind });
   return [
     tr('adminPeople.roles.sumStreams', { n: Number(v.maxStreams ?? 0) }),
-    cellText(by('maxBitrate', 'bitrate'), v.maxBitrate, 0),
-    cellText(by('maxParentalRating', 'rating'), v.maxParentalRating, 0),
+    cellText(by('maxBitrate', 'bitrate'), v.maxBitrate),
+    cellText(by('maxParentalRating', 'rating'), v.maxParentalRating),
     tr(v.download ? 'adminPeople.roles.sumDownloadsOn' : 'adminPeople.roles.sumDownloadsOff'),
   ].join(' · ');
 }
+
+export type StageCounts = ReturnType<typeof stageCounts>;
+
+/** the save bar's line, every count in its plural form: "1 Änderung in 1 Rolle · betrifft 3 Personen" */
+export const saveBarText = (c: StageCounts): string => tr('adminPeople.roles.saveBar', {
+  n: c.changes, roles: tr('adminPeople.roles.saveBarRoles', { n: c.roles }), people: tr('adminPeople.roles.saveBarPeople', { n: c.people }),
+});
+
+/** the column head's second line: "8 Personen · 2 Kinderprofile" */
+export const peopleLine = (r: Pick<MatrixRole, 'accounts' | 'kidsProfiles'>): string =>
+  tr('adminPeople.roles.people', { n: r.accounts, kids: tr('adminPeople.roles.peopleKids', { n: r.kidsProfiles }) });
+
+/** what saving re-applies on the media server: "Die Freigaben von 4 Personen und 6 Profilen werden … aktualisiert." */
+export const policyLine = (c: StageCounts): string =>
+  tr('adminPeople.roles.reviewPolicy', { n: c.people, profiles: tr('adminPeople.roles.reviewProfiles', { n: c.profiles }) });
+
+/** a partial policy failure: "2 Konten konnten nicht aktualisiert werden." */
+export const partialText = (failed: number): string => tr('adminPeople.roles.partialRetry', { n: failed });

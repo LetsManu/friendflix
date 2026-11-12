@@ -328,7 +328,10 @@ test.describe('admin people (desktop)', () => {
     });
   });
 
-  test.describe('roles', () => {
+  // the card per role stays below 900 px until the phone cards replace it; the desktop matrix: admin-roles.spec.ts
+  test.describe('roles (cards below 900 px)', () => {
+    test.use({ viewport: { width: 800, height: 900 } });
+
     test('one card per role; only changed fields are saved; validation; discard', async ({ page, api }) => {
       await page.goto('/admin/roles');
       await expect(page.getByRole('heading', { level: 1, name: 'Rollen' })).toBeVisible();
@@ -344,7 +347,7 @@ test.describe('admin people (desktop)', () => {
       await expect(card.getByText('Bitte eine Zahl von 0 bis 100 eingeben.')).toBeVisible();
       await save.click();
       expect(logged(api, /PUT \/api\/admin\/roles\/friend/)).toBe(false);
-      await card.getByRole('button', { name: 'Zurücksetzen' }).click();
+      await card.getByRole('button', { name: 'Verwerfen' }).click();
       await expect(perMonth).toHaveValue('3');
       await perMonth.fill('7');
       await card.getByRole('switch', { name: 'Umwandeln erlaubt' }).click();
@@ -419,23 +422,23 @@ test.describe('admin people (desktop)', () => {
       await page.goto('/admin/roles');
       const card = page.getByRole('form', { name: 'Familie' });
       await card.getByRole('spinbutton', { name: 'Wünsche pro Monat' }).fill('9');
-      const nav = page.getByRole('navigation', { name: 'Admin-Bereiche' });
-      await nav.getByRole('link', { name: 'Nutzer' }).click();
+      const back = page.getByRole('link', { name: 'Zurück zur Admin-Übersicht' });
+      await back.click();
       const dlg = page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' });
       await expect(dlg).toBeVisible();
       await expect(dlg).toContainText('1 Rolle hat ungespeicherte Änderungen');
       await dlg.getByRole('button', { name: 'Abbrechen' }).click();
       await expect(page).toHaveURL(/\/admin\/roles$/);
-      await nav.getByRole('link', { name: 'Nutzer' }).click();
+      await back.click();
       await dlg.getByRole('button', { name: 'Verwerfen' }).click();
-      await expect(page).toHaveURL(/\/admin\/users$/);
+      await expect(page).toHaveURL(/\/admin$/);
     });
 
     test('no changes: leaving needs no question', async ({ page }) => {
       await page.goto('/admin/roles');
       await expect(page.getByRole('form', { name: 'Freund' })).toBeVisible();
-      await page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: 'Nutzer' }).click();
-      await expect(page).toHaveURL(/\/admin\/users$/);
+      await page.getByRole('link', { name: 'Zurück zur Admin-Übersicht' }).click();
+      await expect(page).toHaveURL(/\/admin$/);
     });
   });
 

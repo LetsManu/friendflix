@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import {
-  cellName, cellText, reviewLines, stageBodies, stageCounts, stageSet, summaryLine, visibleFields,
+  cellName, cellText, partialText, peopleLine, policyLine, reviewLines, saveBarText, stageBodies, stageCounts, stageSet, summaryLine, visibleFields,
   type MatrixField, type MatrixRole, type RoleMatrix, type Stage,
 } from './model';
 
@@ -29,18 +29,18 @@ const matrix = (features = { requests: false, cast: false, livetv: false }): Rol
 });
 
 describe('cellText', () => {
-  const m = matrix();
   const f = (k: string) => fields.find((x) => x.key === k)!;
   it.each([
     ['download', true, '✓'], ['download', false, '–'], ['maxStreams', 2, '2'],
     ['maxBitrate', 8_000_000, '8 Mbit/s'], ['maxBitrate', 1_500_000, '1,5 Mbit/s'], ['maxBitrate', 20_000_000, '20 Mbit/s'],
     ['maxHeight', 1080, '1080p'], ['maxHeight', null, 'alle'], ['maxParentalRating', 12, 'ab 12'], ['maxParentalRating', null, 'alle'],
     ['libraries', 'all', 'alle'], ['libraries', ['a', 'b', 'c'], '3 Bibliotheken'], ['libraries', ['a'], '1 Bibliothek'],
-  ])('%s %j -> %s', (k, v, out) => { expect(cellText(f(k), v, m.libraries.length)).toBe(out); });
+  ])('%s %j -> %s', (k, v, out) => { expect(cellText(f(k), v)).toBe(out); });
   it('english', async () => {
     await setLocale('en');
-    expect(cellText(f('maxBitrate'), 1_500_000, 3)).toBe('1.5 Mbit/s');
-    expect(cellText(f('maxParentalRating'), 16, 3)).toBe('from 16');
+    expect(cellText(f('maxBitrate'), 1_500_000)).toBe('1.5 Mbit/s');
+    expect(cellText(f('maxParentalRating'), 16)).toBe('from 16');
+    expect(cellText(f('maxHeight'), null)).toBe('all');
   });
 });
 
@@ -49,6 +49,11 @@ describe('cellName', () => {
     const f = fields.find((x) => x.key === 'maxParentalRating')!;
     expect(cellName('Gast', f, 12, true)).toBe('Gast, Altersfreigabe: ab 12, geändert');
     expect(cellName('Gast', f, 12, false)).toBe('Gast, Altersfreigabe: ab 12');
+  });
+  it('switches say allowed / not allowed in words', () => {
+    const f = fields.find((x) => x.key === 'party')!;
+    expect(cellName('Gast', f, true, false)).toBe('Gast, Watch-Partys: erlaubt');
+    expect(cellName('Gast', f, false, true)).toBe('Gast, Watch-Partys: nicht erlaubt, geändert');
   });
 });
 
@@ -84,6 +89,33 @@ describe('staging', () => {
       { role: 'Gast', field: 'Altersfreigabe', from: 'ab 12', to: 'ab 16' },
       { role: 'Gast', field: 'Downloads erlaubt', from: '–', to: '✓' },
     ]);
+  });
+});
+
+describe('counted texts (plural forms)', () => {
+  const c = (changes: number, roles: number, people: number, profiles = 0) => ({ changes, roles, people, profiles, policy: true });
+  it('save bar, de', () => {
+    expect(saveBarText(c(1, 1, 3))).toBe('1 Änderung in 1 Rolle · betrifft 3 Personen');
+    expect(saveBarText(c(3, 2, 11))).toBe('3 Änderungen in 2 Rollen · betrifft 11 Personen');
+    expect(saveBarText(c(2, 1, 1))).toBe('2 Änderungen in 1 Rolle · betrifft 1 Person');
+  });
+  it('save bar, en and pl', async () => {
+    await setLocale('en');
+    expect(saveBarText(c(1, 1, 1))).toBe('1 change in 1 role · affects 1 person');
+    expect(saveBarText(c(3, 2, 11))).toBe('3 changes in 2 roles · affects 11 people');
+    await setLocale('pl');
+    expect(saveBarText(c(1, 1, 1))).toBe('1 zmiana w 1 roli · dotyczy 1 osoby');
+    expect(saveBarText(c(3, 2, 4))).toBe('3 zmiany w 2 rolach · dotyczy 4 osób');
+    expect(saveBarText(c(5, 5, 22))).toBe('5 zmian w 5 rolach · dotyczy 22 osób');
+  });
+  it('column head, policy sentence, partial failure', () => {
+    const r = matrix().roles[0]!;
+    expect(peopleLine(r)).toBe('4 Personen · 0 Kinderprofile');
+    expect(peopleLine({ ...r, accounts: 1, kidsProfiles: 1 })).toBe('1 Person · 1 Kinderprofil');
+    expect(policyLine(c(1, 1, 4, 6))).toBe('Die Freigaben von 4 Personen und 6 Profilen werden auf dem Medienserver aktualisiert.');
+    expect(policyLine(c(1, 1, 1, 1))).toBe('Die Freigaben von 1 Person und 1 Profil werden auf dem Medienserver aktualisiert.');
+    expect(partialText(2)).toBe('2 Konten konnten nicht aktualisiert werden.');
+    expect(partialText(1)).toBe('1 Konto konnte nicht aktualisiert werden.');
   });
 });
 

@@ -150,15 +150,17 @@ function matrixRole(key: string, label: string | null, base: MatrixMockRole['bas
     values, defaults: { ...values }, sources: Object.fromEntries(Object.keys(values).map((k) => [k, origin === 'env' ? 'env' : 'default'])), missingLibraries: [],
   };
 }
-/** three built-ins (Gast, Freund, Familie) and one env role (Crew, base friend) */
+/** the built-ins (Admin first, as the catalogue stores it, then Gast, Freund, Familie) and one env role (Crew, base friend) */
 export function matrixMock(): MatrixMock {
+  const admin = { ...matrixRole('admin', 'Admin', 'admin', 'code', 1, 2, 0, { maxStreams: 4, maxBitrate: 40_000_000, download: true, maxDownloads: 25, partySchedule: true }), invitable: false };
   return {
     features: { requests: true, cast: true, livetv: false },
     policyPartial: false,
     failed: 2,
     libraries: [{ id: 'lib1', name: 'Filme' }, { id: 'lib2', name: 'Serien' }, { id: 'lib3', name: 'Musik' }],
     roles: [
-      matrixRole('guest', 'Gast', 'guest', 'code', 4, 5, 2, { maxParentalRating: 12, maxStreams: 1, maxBitrate: 8_000_000, remoteMaxBitrate: 4_000_000, maxHeight: 1080, maxDownloads: 0, downloadMaxHeight: 0, requests: false, party: false, comments: false, cast: false }),
+      admin,
+      matrixRole('guest', 'Gast', 'guest', 'code', 3, 5, 2, { maxParentalRating: 12, maxStreams: 1, maxBitrate: 8_000_000, remoteMaxBitrate: 4_000_000, maxHeight: 1080, maxDownloads: 0, downloadMaxHeight: 0, requests: false, party: false, comments: false, cast: false }),
       matrixRole('friend', 'Freund', 'friend', 'code', 7, 9, 1, {}),
       matrixRole('family', 'Familie', 'family', 'code', 3, 6, 3, { maxStreams: 4, maxBitrate: 40_000_000, download: true, maxDownloads: 25, downloadMaxHeight: 1080, partySchedule: true }),
       matrixRole('crew', 'Crew', 'friend', 'env', 2, 2, 0, { maxStreams: 3, partySchedule: true }),
