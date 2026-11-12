@@ -134,7 +134,7 @@ const dict: Translation<typeof de> = {
     stopBody: 'Anyone watching loses the picture. The channel starts again as soon as someone tunes in.',
     stopConfirm: 'Stop',
     stopped: '“{name}” stopped.',
-    restarted: '“{name}” is restarting.',
+    restarted: '“{name}” stopped – it restarts when someone watches.',
     stopFailed: 'The channel could not be stopped: Live TV is not answering.',
     loadFailed: 'Live status could not be loaded.',
     unknownSource: 'unknown',

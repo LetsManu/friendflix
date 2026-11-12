@@ -5,7 +5,7 @@
  * Streams and ingest come from livetv (`GET /v1/streams`, `GET /v1/ingest`); a 404 from either means "none yet" (ruling 24). Nothing in
  * the answer is a URL, a stream key or a stream id.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { detectLivetv } from '../src/livetv/detect.js';
 import { pushEvent } from '../src/livetv/events.js';
@@ -118,6 +118,36 @@ describe('GET /api/admin/livetv/status', () => {
     expect(ev.map((e: { code: string }) => e.code)).toEqual(['stopped_by_admin', 'start_refused_full']);
   });
 
+  it('names every channel an event names, running or not (ids and names only)', async () => {
+    const stopped = await channel('Hafenkanal');
+    const other = await channel('Nordlicht TV');
+    await pushEvent(env.ctx, { level: 'info', code: 'stopped_by_admin', channelId: stopped });
+    await pushEvent(env.ctx, { level: 'warn', code: 'start_refused_full' });
+    await pushEvent(env.ctx, { level: 'warn', code: 'input_lost', channelId: '00000000-0000-4000-8000-000000000000' });
+    const r = await call('GET', '/api/admin/livetv/status');
+    // no stream is running: the name still comes with the event; a channel that is gone and a channel without an event are not in the map
+    expect(r.json().streams).toEqual([]);
+    expect(r.json().channels).toEqual({ [stopped]: 'Hafenkanal' });
+    expect(r.json().channels).not.toHaveProperty(other);
+  });
+
+  it('asks Jellyfin for its encoder settings at most every 10 s, however often the tab polls', async () => {
+    const spy = vi.spyOn(env.ctx.jf.admin, 'encoderSettings').mockResolvedValue({ hwAccel: 'vaapi' } as never);
+    try {
+      const sample = vi.spyOn(Date, 'now');
+      const t0 = Date.now();
+      sample.mockReturnValue(t0 + 20_000);
+      await call('GET', '/api/admin/livetv/status');
+      await call('GET', '/api/admin/livetv/status');
+      await call('GET', '/api/admin/livetv/status');
+      expect(spy).toHaveBeenCalledTimes(1);
+      sample.mockReturnValue(t0 + 31_000);
+      await call('GET', '/api/admin/livetv/status');
+      expect(spy).toHaveBeenCalledTimes(2);
+      sample.mockRestore();
+    } finally { spy.mockRestore(); }
+  });
+
   it('no URL in the status answer', async () => {
     const a = await channel('Nordlicht TV');
     const p = await channel('Hafenkanal Live', { kind: 'manual', ingest: 'push', port: 9000 });
@@ -149,6 +179,19 @@ describe('POST /api/admin/livetv/streams/:channelId/stop', () => {
     // and says so in the event ring
     const ev = (await call('GET', '/api/admin/livetv/status')).json().events;
     expect(ev).toEqual([expect.objectContaining({ code: 'stopped_by_admin', level: 'info', channelId: c })]);
+  });
+
+  it('a failing event ring does not turn a done stop into a 500 without an audit entry', async () => {
+    const c = await channel('Nordlicht TV');
+    const real = env.ctx.kv.setnx.bind(env.ctx.kv);
+    // only the event ring's lock fails (the session and the limiter use the same store)
+    const spy = vi.spyOn(env.ctx.kv, 'setnx').mockImplementation(async (k, v, ttl) => { if (k === 'ltv:events:lock') throw new Error('kv down'); return real(k, v, ttl); });
+    try {
+      const r = await call('POST', `/api/admin/livetv/streams/${c}/stop`);
+      expect([r.statusCode, r.json()]).toEqual([200, { ok: true }]);
+    } finally { spy.mockRestore(); }
+    expect(calls.filter((x) => x.method === 'DELETE')).toHaveLength(1);
+    expect((await env.pool.query("select 1 from audit_log where action = 'livetv.stream.stop'")).rowCount).toBe(1);
   });
 
   it('a 404 from livetv is tolerated (nothing was running)', async () => {

@@ -134,7 +134,7 @@ const dict: Translation<typeof de> = {
     stopBody: 'İzleyenlerin görüntüsü kesilir. Kanal, biri açar açmaz yeniden başlar.',
     stopConfirm: 'Durdur',
     stopped: '“{name}” durduruldu.',
-    restarted: '“{name}” yeniden başlatılıyor.',
+    restarted: '“{name}” durduruldu – biri izlediğinde yeniden başlar.',
     stopFailed: 'Kanal durdurulamadı: Canlı TV yanıt vermiyor.',
     loadFailed: 'Canlı TV durumu yüklenemedi.',
     unknownSource: 'bilinmiyor',

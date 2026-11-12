@@ -70,6 +70,8 @@ export interface LiveStatus {
   streams: StatusStream[];
   ingest: StatusFeed[];
   events: LiveEvent[];
+  /** channel id -> name for every channel an event names, running or not */
+  channels: Record<string, string>;
   gpu: { advice: GpuAdvice | null };
 }
 /** `GET /api/admin/livetv/epg/summary` (Task 17): channels with a programme mapped, all channels, and those without */

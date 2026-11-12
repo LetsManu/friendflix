@@ -134,7 +134,7 @@ const dict: Translation<typeof de> = {
     stopBody: 'Quien esté viendo pierde la imagen. El canal vuelve a arrancar en cuanto alguien lo enciende.',
     stopConfirm: 'Detener',
     stopped: '«{name}» detenido.',
-    restarted: '«{name}» se está reiniciando.',
+    restarted: '«{name}» detenido: se reiniciará cuando alguien lo vea.',
     stopFailed: 'No se pudo detener el canal: la TV en directo no responde.',
     loadFailed: 'No se pudo cargar el estado de la TV en directo.',
     unknownSource: 'desconocida',

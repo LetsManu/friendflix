@@ -41,12 +41,15 @@
   let st: LiveStatus | null = null, failed = false, gone = false, now = new Date();
   let sourceNames = new Map<string, string>();
 
+  /** a sequence number: an older answer (a slow poll) never overwrites a newer one */
+  let seq = 0;
   async function load() {
+    const mine = ++seq;
     try {
       const v = await loadStatus();
-      if (gone) return;
+      if (gone || mine !== seq) return;
       st = v; failed = false; now = new Date();
-    } catch { if (!st) failed = true; }
+    } catch { if (!gone && mine === seq && !st) failed = true; }
   }
   let stopPoll = () => {};
   onMount(() => {
@@ -100,7 +103,8 @@
 
   // ---- Ereignisse
   type Row = LiveEvent & { id: string };
-  $: names = new Map<string, string>([...(st?.streams ?? []), ...(st?.ingest ?? [])].map((x) => [x.channelId, x.name]));
+  /** the names of every channel an event names (the answer's map), also those that are not running */
+  $: names = new Map<string, string>([...Object.entries(st?.channels ?? {}), ...(st?.streams ?? []).map((x): [string, string] => [x.channelId, x.name]), ...(st?.ingest ?? []).map((x): [string, string] => [x.channelId, x.name])]);
   $: rows = st ? st.events.map((e, i): Row => ({ ...e, id: `${i}` })) : null;
   $: eventCols = [
     { key: 'at', label: $t('adminLive.status.colTime'), value: (r) => new Date(r.at), width: '10rem', sortable: false },
@@ -123,10 +127,6 @@
 <div class="stack">
   <ConversionsCard readOnly link="/admin/playback" />
 
-  {#if failed}
-    <AdminCard><div class="state" role="alert"><Icon name="alert" size={22} /><p>{$t('adminLive.status.loadFailed')}</p><Button variant="secondary" icon="refresh" on:click={load}>{$t('ui.retry')}</Button></div></AdminCard>
-  {/if}
-
   <div class="tiles" role="group" aria-label={$t('adminLive.status.overview')}>
     <StatTile icon="tv" label={$t('adminLive.status.running')} value={st ? fmtNumber(st.streams.length) : null} />
     <StatTile icon="users" label={$t('adminLive.status.viewers')} value={st ? fmtNumber(viewers) : null} />
@@ -137,6 +137,10 @@
 
   <AdminCard title={$t('adminLive.status.running')}>
     <div class="reserve table-a" data-streams>
+      {#if failed && !st}
+        <!-- a failed first load: the error takes the place of the table's skeleton, in the slot that is already there, so nothing moves -->
+        <div class="state" role="alert"><Icon name="alert" size={22} /><p>{$t('adminLive.status.loadFailed')}</p><Button variant="secondary" icon="refresh" on:click={load}>{$t('ui.retry')}</Button></div>
+      {:else}
       <DataTable rows={st ? st.streams : null} columns={streamCols} key={(r) => r.channelId} caption={$t('adminLive.status.running')} pageSize={0} skeletonRows={3}
         emptyText={$t('adminLive.status.emptyStreams')} actions={menu} rowLabel={(r) => r.name} busyKey={(r) => `ltv-stop:${r.channelId}`}>
         <svelte:fragment slot="cell" let:row let:col>
@@ -155,6 +159,7 @@
           {/if}
         </svelte:fragment>
       </DataTable>
+      {/if}
     </div>
     <p class="hintline">{$t('adminLive.status.viewersNote')}</p>
   </AdminCard>

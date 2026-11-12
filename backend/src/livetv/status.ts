@@ -22,6 +22,8 @@ export interface LiveStatus {
   streams: Array<{ channelId: string; name: string; logoHash: string | null; mode: Mode; viewers: number; since: number; bitrate: number | null; input: 'ok' | 'reconnecting' | 'failed'; reconnects: number }>;
   ingest: Array<{ channelId: string; name: string; port: number; state: IngestState['state']; since: number | null; bitrate: number | null; rejected1h: number }>;
   events: LiveEvent[];
+  /** channel id -> name for every channel an event names (running or not); ids and names only */
+  channels: Record<string, string>;
   gpu: { advice: GpuAdvice | null };
 }
 
@@ -96,8 +98,8 @@ function parseIngest(raw: unknown[]): IngestState[] {
   return out;
 }
 
-/** Jellyfin's hardware acceleration for the GPU advice: null = unknown (Plex, unreachable, slow) */
-async function jellyfinHwAccel(ctx: Ctx): Promise<string | null> {
+/** (none when off); null = unknown (Plex, unreachable, slow) */
+export async function readHwAccel(ctx: Ctx): Promise<string | null> {
   const read = ctx.jf.admin.encoderSettings?.bind(ctx.jf.admin);
   if (!read) return null;
   let timer: NodeJS.Timeout | undefined;
@@ -107,7 +109,8 @@ async function jellyfinHwAccel(ctx: Ctx): Promise<string | null> {
   } catch { return null; } finally { clearTimeout(timer); }
 }
 
-export async function liveStatus(ctx: Ctx): Promise<LiveStatus> {
+/** `hwAccel`: Jellyfin's hardware acceleration, memoised by the caller (the tab polls every 5 s; the memo holds it 10 s) */
+export async function liveStatus(ctx: Ctx, hwAccel: () => Promise<string | null> = () => readHwAccel(ctx)): Promise<LiveStatus> {
   const [det, budget, sys, rawStreams, rawIngest, events] = await Promise.all([
     detectLivetv(ctx, MEMO_MS),
     conversionsView(ctx),
@@ -116,10 +119,10 @@ export async function liveStatus(ctx: Ctx): Promise<LiveStatus> {
     list(ctx, '/v1/ingest'),
     listEvents(ctx),
   ]);
-  const jellyfin = sys ? await jellyfinHwAccel(ctx) : null;
+  const jellyfin = sys ? await hwAccel() : null;
   const running = parseStreams(rawStreams);
   const feeds = parseIngest(rawIngest);
-  const [facts, viewers] = await Promise.all([channelFacts(ctx, [...running, ...feeds].map((x) => x.channelId)), viewersOf(ctx, running.map((s) => s.channelId))]);
+  const [facts, viewers] = await Promise.all([channelFacts(ctx, [...running, ...feeds, ...events].map((x) => x.channelId).filter((i): i is string => typeof i === 'string')), viewersOf(ctx, running.map((s) => s.channelId))]);
 
   const streams = running.flatMap((s) => {
     const f = facts.get(s.channelId);
@@ -140,19 +143,21 @@ export async function liveStatus(ctx: Ctx): Promise<LiveStatus> {
     streams,
     ingest,
     events,
+    channels: Object.fromEntries(events.flatMap((e) => { const f = e.channelId ? facts.get(e.channelId) : undefined; return e.channelId && f ? [[e.channelId, f.name] as const] : []; })),
     gpu: { advice: sys && jellyfin !== null ? gpuAdvice(jellyfin, sys) : null },
   };
 }
 
 /**
  * *Stoppen* / *Neu starten*: `DELETE /v1/streams/:channelId` (a stream that is not running answers 204 too; a 404 from an older livetv is
- * tolerated). Throws the LivetvError when livetv is not reached; only then nothing is recorded. The event says *stopped_by_admin*.
+ * tolerated). Throws the LivetvError when livetv is not reached; only then nothing is recorded (a failing event push is logged, not thrown). The event says *stopped_by_admin*.
  */
-export async function stopStream(ctx: Ctx, channelId: string): Promise<void> {
+export async function stopStream(ctx: Ctx, channelId: string, log?: { warn(o: object, m: string): void }): Promise<void> {
   try {
     await livetvCall<undefined>(ctx, 'DELETE', `/v1/streams/${channelId}`, undefined, { timeoutMs: 10_000 });
   } catch (e) {
     if (!(e instanceof LivetvError && e.status === 404)) throw e;
   }
-  await pushEvent(ctx, { level: 'info', code: 'stopped_by_admin', channelId });
+  // the stop happened; a failing event ring must not turn it into a 500 without an audit entry
+  await pushEvent(ctx, { level: 'info', code: 'stopped_by_admin', channelId }).catch((err: unknown) => log?.warn({ err }, 'livetv stop event not recorded'));
 }

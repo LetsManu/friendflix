@@ -132,7 +132,7 @@ export default {
     stopBody: 'Wer gerade zuschaut, verliert das Bild. Der Sender startet wieder, sobald jemand ihn einschaltet.',
     stopConfirm: 'Stoppen',
     stopped: '„{name}“ gestoppt.',
-    restarted: '„{name}“ wird neu gestartet.',
+    restarted: '„{name}“ gestoppt – startet beim nächsten Zuschauen neu.',
     stopFailed: 'Der Sender ließ sich nicht stoppen: Live-TV antwortet nicht.',
     loadFailed: 'Der Live-Status ließ sich nicht laden.',
     unknownSource: 'unbekannt',
