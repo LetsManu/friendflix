@@ -19,6 +19,8 @@ const pl: Translation<typeof de> = {
     serverBusy: 'Serwer jest teraz zajęty. Spróbuj ponownie za chwilę.',
     serverBusyQuality: 'Serwer zajęty – jakość pozostaje na {q}',
     serverBusyTrack: 'Serwer zajęty – ścieżka dźwiękowa się nie zmienia',
+    serverBusySurroundOn: 'Serwer zajęty – dźwięk przestrzenny pozostaje włączony',
+    serverBusySurroundOff: 'Serwer zajęty – dźwięk przestrzenny pozostaje wyłączony',
     connection: 'Połączenie z serwerem zostało przerwane lub wideo jest uszkodzone.',
     retry: 'Spróbuj ponownie',
     back: 'Wstecz',

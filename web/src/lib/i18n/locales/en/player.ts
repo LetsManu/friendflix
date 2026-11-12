@@ -14,6 +14,8 @@ const en: Translation<typeof de> = {
     serverBusy: 'The server is busy right now. Try again in a moment.',
     serverBusyQuality: 'Server busy – quality stays at {q}',
     serverBusyTrack: 'Server busy – the audio track stays as it was',
+    serverBusySurroundOn: 'Server busy – surround sound stays on',
+    serverBusySurroundOff: 'Server busy – surround sound stays off',
     connection: 'The connection to the server was lost or the video is damaged.',
     retry: 'Try again',
     back: 'Back',

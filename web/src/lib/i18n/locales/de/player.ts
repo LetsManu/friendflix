@@ -12,6 +12,8 @@ export default {
     serverBusy: 'Server gerade ausgelastet. Versuch es gleich noch einmal.',
     serverBusyQuality: 'Server ausgelastet – Qualität bleibt bei {q}',
     serverBusyTrack: 'Server ausgelastet – Tonspur bleibt wie sie war',
+    serverBusySurroundOn: 'Server ausgelastet – Raumklang bleibt an',
+    serverBusySurroundOff: 'Server ausgelastet – Raumklang bleibt aus',
     connection: 'Die Verbindung zum Server wurde unterbrochen oder das Video ist beschädigt.',
     retry: 'Erneut versuchen',
     back: 'Zurück',

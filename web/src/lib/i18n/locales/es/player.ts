@@ -14,6 +14,8 @@ const es: Translation<typeof de> = {
     serverBusy: 'El servidor está ocupado ahora mismo. Inténtalo de nuevo en un momento.',
     serverBusyQuality: 'Servidor ocupado: la calidad se queda en {q}',
     serverBusyTrack: 'Servidor ocupado: la pista de audio no cambia',
+    serverBusySurroundOn: 'Servidor ocupado: el sonido envolvente sigue activado',
+    serverBusySurroundOff: 'Servidor ocupado: el sonido envolvente sigue desactivado',
     connection: 'Se ha perdido la conexión con el servidor o el vídeo está dañado.',
     retry: 'Reintentar',
     back: 'Volver',

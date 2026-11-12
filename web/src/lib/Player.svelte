@@ -1296,7 +1296,9 @@
     const pos = video?.currentTime ?? 0;
     await send('stop');
     trackSwitching = true;
-    let r; try { r = await load(pos, { undo: () => { stereo = !stereo; setStereoOnly(stereo); }, toast: tr('player.error.serverBusyTrack') }); } finally { trackSwitching = false; }
+    // refused: the switch goes back (turning surround on keeps it off, turning it off keeps it on) and says so in its own words
+    const kept = tr(stereo ? 'player.error.serverBusySurroundOn' : 'player.error.serverBusySurroundOff');
+    let r; try { r = await load(pos, { undo: () => { stereo = !stereo; setStereoOnly(stereo); }, toast: kept }); } finally { trackSwitching = false; }
     if (r !== 'busy') video?.play().catch(() => undefined);
   }
   /** a remembered mode needs a running AudioContext: the first key / tap after an autoplayed start switches it on */

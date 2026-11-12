@@ -14,6 +14,8 @@ const tr: Translation<typeof de> = {
     serverBusy: 'Sunucu şu anda meşgul. Birazdan yeniden dene.',
     serverBusyQuality: 'Sunucu meşgul – kalite {q} olarak kalıyor',
     serverBusyTrack: 'Sunucu meşgul – ses parçası değişmedi',
+    serverBusySurroundOn: 'Sunucu meşgul – surround ses açık kalıyor',
+    serverBusySurroundOff: 'Sunucu meşgul – surround ses kapalı kalıyor',
     connection: 'Sunucuyla bağlantı kesildi ya da video bozuk.',
     retry: 'Yeniden dene',
     back: 'Geri',
