@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -26,6 +26,7 @@ beforeEach(() => {
   dir = join(root, 'friendflix');
   gatewayDir = join(root, 'friendflix-gateway');
   livetvDir = join(root, 'friendflix-livetv');
+  mkdirSync(livetvDir); // compose creates the mount point of the bootstrap-livetv volume (compose files from 1b on)
   chowns = [];
   lines = [];
 });
@@ -344,12 +345,48 @@ describe('the livetv key (1b review I1: livetv never gets INTERNAL_SECRET)', () 
     expect(read('livetv_key', livetvDir)).toBe(key);
     expect(lines).toContain('livetv_key: kept');
     expect(readdirSync(livetvDir)).toEqual(['livetv_key']); // no temp file left behind
-    // an install from before Live TV: the volume is new and empty
+    // compose files refreshed to 1b on an existing install: the volume is new and empty
     rmSync(livetvDir, { recursive: true, force: true });
+    mkdirSync(livetvDir);
     lines = [];
     run();
     expect(read('livetv_key', livetvDir)).toBe(key);
     expect(lines).toContain('livetv_key: generated');
+  });
+
+  it('compose files from before 1b (no livetv volume, read-only root fs): every other secret is written, the key is skipped, no throw (re-review C1)', () => {
+    rmSync(livetvDir, { recursive: true, force: true });
+    expect(() => run()).not.toThrow();
+    expect(readdirSync(dir).sort()).toEqual(FILES);
+    expect(readdirSync(gatewayDir)).toEqual(['internal_secret']);
+    expect(read('internal_secret', gatewayDir)).toBe(read('internal_secret'));
+    expect(existsSync(livetvDir)).toBe(false); // never created
+    expect(lines).toContain('livetv_key: skipped (no livetv volume)');
+    expect(lines.filter((l) => l.startsWith('livetv_key'))).toEqual(['livetv_key: skipped (no livetv volume)']);
+    expect(chowns.some(([p]) => p.startsWith(livetvDir))).toBe(false);
+    // a second run on the same old files: same, and the entry point's other work is unchanged
+    lines = [];
+    run();
+    for (const f of FILES) expect(lines).toContain(`${f}: kept`);
+    expect(lines).toContain('livetv_key: skipped (no livetv volume)');
+  });
+
+  it('a livetv path that is not a writable directory (a read-only mount point, a file) is skipped too', () => {
+    rmSync(livetvDir, { recursive: true, force: true });
+    writeFileSync(livetvDir, 'not a directory');
+    expect(() => run()).not.toThrow();
+    expect(lines).toContain('livetv_key: skipped (no livetv volume)');
+    expect(readdirSync(dir).sort()).toEqual(FILES);
+    rmSync(livetvDir);
+    mkdirSync(livetvDir);
+    chmodSync(livetvDir, 0o555); // as on a read-only file system (without root: no write permission)
+    lines = [];
+    try {
+      if (process.getuid?.() !== 0) {
+        expect(() => run()).not.toThrow();
+        expect(lines).toContain('livetv_key: skipped (no livetv volume)');
+      }
+    } finally { chmodSync(livetvDir, 0o755); }
   });
 
   it('follows INTERNAL_SECRET from the environment, and a damaged copy is rewritten', () => {

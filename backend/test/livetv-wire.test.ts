@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { createServer as netServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -31,6 +31,7 @@ async function startLivetv(keyFile: string): Promise<{ server: Server; base: str
 const close = (s: Server) => new Promise<void>((r) => s.close(() => r()));
 
 beforeAll(async () => {
+  mkdirSync(join(root, 'l')); // the bootstrap-livetv mount point compose creates
   runBootstrap({ dir: join(root, 'b'), gatewayDir: join(root, 'g'), livetvDir: join(root, 'l'), env: { INTERNAL_SECRET: SECRET }, gid: 10001, chown: () => {}, log: () => {} });
   ({ server, base } = await startLivetv(join(root, 'l', 'livetv_key')));
 });

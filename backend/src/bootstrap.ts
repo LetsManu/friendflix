@@ -7,7 +7,7 @@
 // Dependency-free on purpose (node: modules and the import-free volumeValue.ts only): it must not load the app, its config or its
 // database code.
 import { createHmac, randomBytes } from 'node:crypto';
-import { chmodSync, chownSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
+import { accessSync, chmodSync, chownSync, closeSync, constants, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { stripNewlines } from './volumeValue.js';
@@ -32,7 +32,11 @@ export const livetvKeyHex = (internalSecret: string): string => createHmac('sha2
 export interface BootstrapOptions {
   dir: string;
   gatewayDir: string;
-  /** the `bootstrap-livetv` volume: only `livetv_key`, mounted read-only by the optional livetv service alone */
+  /**
+   * the `bootstrap-livetv` volume: only `livetv_key`, mounted read-only by the optional livetv service alone. Written only when the
+   * directory already exists and is writable (compose creates the mount point); compose files from before Live TV do not mount it
+   * and the root fs is read-only, so it is skipped then, never created (1b re-review C1).
+   */
   livetvDir: string;
   env: NodeJS.ProcessEnv;
   /** the group that may read the files (FF_SECRETS_GID, 10001): services that need them get it via group_add */
@@ -55,6 +59,17 @@ function redisArg(v: string): string {
 
 const readOr = (path: string): string | undefined => (existsSync(path) ? readFileSync(path, 'utf8') : undefined);
 
+/** an existing directory this process may write into (a mounted volume); false for a missing path or a read-only file system */
+function writableDir(path: string): boolean {
+  try {
+    if (!statSync(path).isDirectory()) return false;
+    accessSync(path, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** fsync a file or directory, so a renamed file survives a power loss with its content */
 function sync(path: string, flags: string): void {
   const fd = openSync(path, flags);
@@ -74,7 +89,8 @@ function sync(path: string, flags: string): void {
  */
 export function runBootstrap(opts: BootstrapOptions): void {
   const { dir, gatewayDir, livetvDir, env, gid, chown, log } = opts;
-  for (const d of [dir, gatewayDir, livetvDir]) {
+  const livetv = writableDir(livetvDir);
+  for (const d of [dir, gatewayDir, ...(livetv ? [livetvDir] : [])]) {
     mkdirSync(d, { recursive: true });
     chown(d, 0, gid);
     chmodSync(d, 0o750);
@@ -146,7 +162,12 @@ export function runBootstrap(opts: BootstrapOptions): void {
   log(`gateway internal_secret: ${gwAction === 'kept' ? 'kept' : gwExisted ? 'updated' : 'generated'}`);
 
   // livetv: the derived key only (root:gid 0440, livetv runs as 10001 in that group). Rewritten from INTERNAL_SECRET on every run,
-  // so an existing install gets it on its next `up` and a changed secret changes it too.
+  // so an existing install gets it on its next `up` and a changed secret changes it too. Without the volume (compose files from
+  // before Live TV) there is nothing to write and nothing fails: a livetv started there refuses with "missing key file".
+  if (!livetv) {
+    log('livetv_key: skipped (no livetv volume)');
+    return;
+  }
   const lk = join(livetvDir, 'livetv_key');
   const lkExisted = existsSync(lk);
   const lkAction = put(lk, livetvKeyHex(values.internal_secret!));
