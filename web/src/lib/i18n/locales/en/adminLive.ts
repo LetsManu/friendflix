@@ -37,6 +37,7 @@ const dict: Translation<typeof de> = {
     no_updater: 'Without the updater this has to be done by hand.',
     foreign_stack: 'This stack is managed by Portainer or another tool. Change it there.',
     busy: 'The updater is busy right now. Try again in a moment.',
+    updaterBusy: 'An update is running right now. Try again afterwards.',
     tooSoon: 'Too many attempts. Wait a few minutes.',
     generic: 'That did not work.',
     rolled_back: 'Live TV could not be started and was removed again. {reason}',
@@ -83,6 +84,7 @@ const dict: Translation<typeof de> = {
     confirm: 'Turn off',
     cancel: 'Cancel',
     manualBody: 'Without the updater you turn it off by hand. Run this in the stack folder, then remove the line COMPOSE_PROFILES=livetv from the .env:',
+    manualBodyPortainer: "This stack is not managed by the updater. Run the command on the server, or stop the livetv service in the stack of your management tool (e.g. Portainer), then remove COMPOSE_PROFILES=livetv from the stack's environment variables:",
     manualCommand: 'Command',
   },
 };

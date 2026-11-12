@@ -27,6 +27,8 @@ test.describe('admin: Live-TV entry (phone, 375 px)', () => {
     api.admin.livetv.updater = false;
     await page.reload();
     await expect(card.getByRole('button', { name: 'Kopieren' })).toBeVisible();
+    const kb = await card.getByRole('button', { name: 'Kopieren' }).boundingBox();
+    expect(kb && kb.height >= 44 && kb.x + kb.width <= 375, 'Kopieren').toBe(true);
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 
@@ -38,9 +40,14 @@ test.describe('admin: Live-TV entry (phone, 375 px)', () => {
     await expect(dlg).toBeVisible();
     const box = await dlg.boundingBox();
     expect(box && box.x >= 0 && box.x + box.width <= 375).toBe(true);
-    for (const name of ['Image entfernen', 'Ausschalten', 'Abbrechen']) {
-      const b = await dlg.getByText(name, { exact: true }).first().boundingBox();
-      expect(b && b.height >= 20, name).toBe(true);
+    await dlg.getByRole('checkbox', { name: 'Image entfernen' }).check();
+    for (const row of await dlg.locator('label.opt').all()) {
+      const b = await row.boundingBox();
+      expect(b && b.height >= 44, 'checkbox row').toBe(true);
+    }
+    for (const name of ['Ausschalten', 'Abbrechen']) {
+      const b = await dlg.getByRole('button', { name, exact: true }).boundingBox();
+      expect(b && b.height >= 44 && b.x >= 0 && b.x + b.width <= 375, name).toBe(true);
     }
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });

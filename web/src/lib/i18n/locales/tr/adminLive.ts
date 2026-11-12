@@ -37,6 +37,7 @@ const dict: Translation<typeof de> = {
     no_updater: 'Güncelleyici olmadan bunun elle yapılması gerekir.',
     foreign_stack: 'Bu yığını Portainer veya başka bir araç yönetiyor. Değişikliği orada yapın.',
     busy: 'Güncelleyici şu anda meşgul. Birazdan tekrar deneyin.',
+    updaterBusy: 'Şu anda bir güncelleme çalışıyor. Bittikten sonra tekrar deneyin.',
     tooSoon: 'Çok fazla deneme. Birkaç dakika bekleyin.',
     generic: 'Bu işe yaramadı.',
     rolled_back: 'Canlı TV başlatılamadı ve yeniden kaldırıldı. {reason}',
@@ -83,6 +84,7 @@ const dict: Translation<typeof de> = {
     confirm: 'Kapat',
     cancel: 'İptal',
     manualBody: 'Güncelleyici olmadan elle kapatırsınız. Bunu yığın klasöründe çalıştırın, ardından .env dosyasından COMPOSE_PROFILES=livetv satırını kaldırın:',
+    manualBodyPortainer: 'Bu yığın güncelleyici tarafından yönetilmiyor. Komutu sunucuda çalıştırın veya yönetim aracınızın (ör. Portainer) yığınında livetv hizmetini durdurun, ardından COMPOSE_PROFILES=livetv satırını yığının ortam değişkenlerinden kaldırın:',
     manualCommand: 'Komut',
   },
 };

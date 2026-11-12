@@ -37,6 +37,7 @@ const dict: Translation<typeof de> = {
     no_updater: 'Sans l’updater, cela se fait à la main.',
     foreign_stack: 'Ce stack est géré par Portainer ou un autre outil. Modifiez-le là-bas.',
     busy: 'L’updater est occupé pour le moment. Réessayez dans un instant.',
+    updaterBusy: 'Une mise à jour est en cours. Réessayez ensuite.',
     tooSoon: 'Trop de tentatives. Attendez quelques minutes.',
     generic: 'Cela n’a pas fonctionné.',
     rolled_back: 'La TV en direct n’a pas pu démarrer et a été de nouveau supprimée. {reason}',
@@ -83,6 +84,7 @@ const dict: Translation<typeof de> = {
     confirm: 'Désactiver',
     cancel: 'Annuler',
     manualBody: 'Sans l’updater, on la désactive à la main. Exécutez ceci dans le dossier du stack, puis supprimez la ligne COMPOSE_PROFILES=livetv du .env :',
+    manualBodyPortainer: 'Ce stack n’est pas géré par l’updater. Exécutez la commande sur le serveur ou arrêtez le service livetv dans le stack de votre outil de gestion (p. ex. Portainer), puis retirez COMPOSE_PROFILES=livetv des variables d’environnement du stack :',
     manualCommand: 'Commande',
   },
 };

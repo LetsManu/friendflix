@@ -32,6 +32,7 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
     expect(await page.evaluate(() => (window as unknown as { __kept?: number }).__kept)).toBe(1);
     expect(api.admin.livetv.posts).toEqual([{ path: 'enable', body: {} }]);
     // installed: no chip any more, the entry stays
+    await expect(nav(page).getByRole('link', { name: /Live-TV/ })).toBeVisible();
     await expect(nav(page).getByRole('link', { name: /Live-TV/ })).not.toContainText('optional');
   });
 
@@ -111,6 +112,25 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
     expect(api.admin.livetv.posts.map((p) => p.path)).toEqual(['enable']);
   });
 
+  test('right after the job ended the page says it is checking, then shows the area', async ({ page, api }) => {
+    test.setTimeout(60_000);
+    api.admin.livetv.detectLag = 2;
+    await page.goto('/admin/livetv');
+    await card(page).getByRole('button', { name: 'Live-TV aktivieren' }).click();
+    await expect(card(page).getByText('Live-TV wird geprüft …')).toBeVisible({ timeout: 20_000 });
+    // never "turned on but not running" in the gap
+    await expect(page.getByText('Der Dienst läuft aber nicht')).toHaveCount(0);
+    await expect(page.getByText('Live-TV läuft.')).toBeVisible({ timeout: 25_000 });
+  });
+
+  test('an app update running is named next to the disabled enable button; hiding stays possible', async ({ page, api }) => {
+    api.admin.livetv.job = { id: 'a1', action: 'update', state: 'running', step: 'pull', from: null, to: 'sha-abc1234', startedAt: new Date().toISOString(), finishedAt: null, error: null, steps: { pull: 'running', verify: 'pending', restart: 'pending', health: 'pending', rollback: 'skipped' } };
+    await page.goto('/admin/livetv');
+    await expect(card(page).getByText('Ein Update läuft gerade. Danach geht es wieder.')).toBeVisible();
+    await expect(card(page).getByRole('button', { name: 'Live-TV aktivieren' })).toBeDisabled();
+    await expect(card(page).getByRole('button', { name: 'Nicht mehr anzeigen' })).toBeEnabled();
+  });
+
   test('stop_failed and a job that an update dropped are said honestly', async ({ page, api }) => {
     api.admin.livetv.ltState = 'stop_failed';
     api.admin.livetv.ltError = 'unhealthy';
@@ -134,6 +154,31 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
       await expect(page.getByText('Die Messung wurde nicht gestartet, weil gerade jemand schaut.')).toBeVisible();
       await expect(page.getByText('Neu messen', { exact: false })).toBeVisible();
       await expect(page.getByRole('link', { name: 'Zu den Umwandlungen' })).toHaveAttribute('href', '/admin/playback');
+    });
+
+    test('stop_failed and an update that turned it off are said while it still runs', async ({ page, api }) => {
+      api.admin.livetv.ltState = 'stop_failed';
+      api.admin.livetv.ltError = 'unhealthy';
+      await page.goto('/admin/livetv');
+      await expect(page.getByText('Live-TV läuft.')).toBeVisible();
+      await expect(page.getByText('der Container ließ sich aber nicht stoppen. Der nächste Auftrag versucht es noch einmal.')).toBeVisible();
+      await expect(page.getByText('Ein Update hat Live-TV ausgeschaltet. Der Container startete, wurde aber nicht gesund.')).toBeVisible();
+    });
+
+    test('an app update running names itself next to the disabled off button', async ({ page, api }) => {
+      api.admin.livetv.job = { id: 'a1', action: 'update', state: 'running', step: 'pull', from: null, to: 'sha-abc1234', startedAt: new Date().toISOString(), finishedAt: null, error: null, steps: { pull: 'running', verify: 'pending', restart: 'pending', health: 'pending', rollback: 'skipped' } };
+      await page.goto('/admin/livetv');
+      await expect(page.getByRole('button', { name: 'Live-TV ausschalten …' })).toBeDisabled();
+      await expect(page.getByText('Ein Update läuft gerade. Danach geht es wieder.')).toBeVisible();
+    });
+
+    test('a foreign stack gets the Portainer wording in the manual off dialog', async ({ page, api }) => {
+      api.admin.livetv.stack = 'foreign';
+      await page.goto('/admin/livetv');
+      await page.getByRole('button', { name: 'Live-TV ausschalten …' }).click();
+      const dlg = page.getByRole('dialog', { name: 'Live-TV ausschalten?' });
+      await expect(dlg).toContainText('im Stack deiner Verwaltung (z. B. Portainer)');
+      await expect(dlg.getByLabel('Befehl')).toHaveValue('docker compose stop livetv && docker compose rm -f livetv');
     });
 
     test('a started benchmark is said as started', async ({ page, api }) => {

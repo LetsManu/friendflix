@@ -137,6 +137,9 @@ export interface LivetvMock {
   /** the next enable / disable answers this (status, code) */
   refuse: { status: number; error: string } | null;
   failedSources: number;
+  /** after a succeeded enable the detection needs this many more GETs of the state before `installed` flips (the page says "wird geprüft") */
+  detectLag: number;
+  lagLeft: number;
   /** GET state calls and the POSTed bodies, in order */
   gets: number;
   posts: Array<{ path: 'enable' | 'disable'; body: any }>;
@@ -289,7 +292,7 @@ const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemI
 export function livetvMock(): LivetvMock {
   return {
     installed: false, wanted: false, offerHidden: false, updater: true, stack: 'own', ltState: 'absent', ltError: null, job: null, tick: 0, jobPolls: 2, outcome: 'succeeded', failCode: null,
-    benchmark: null, advice: null, refuse: null, failedSources: 0, gets: 0, posts: [],
+    benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, lagLeft: 0, gets: 0, posts: [],
   };
 }
 
@@ -564,12 +567,14 @@ function auditList(st: AdminState, sp: URLSearchParams) {
 const ENV_LINE = 'COMPOSE_PROFILES=livetv';
 function livetvState(lt: LivetvMock) {
   lt.gets++;
-  // the job moves one step per poll; its end flips installed (enable) or clears it (disable / remove)
-  if (lt.job?.state === 'running') {
+  const install = () => { lt.installed = true; lt.ltState = 'enabled'; lt.ltError = null; };
+  if (lt.lagLeft > 0 && --lt.lagLeft === 0) install();
+  // the job moves one step per poll; its end flips installed (enable, after `detectLag` more polls) or clears it (disable / remove)
+  if (lt.job?.state === 'running' && String(lt.job.action).startsWith('livetv-')) {
     if (advanceLivetvJob(lt.job, lt.tick++, lt.jobPolls, lt.outcome, lt.failCode)) {
       if (lt.job.state === 'succeeded') {
-        const enable = lt.job.action === 'livetv-enable';
-        lt.installed = enable; lt.ltState = enable ? 'enabled' : lt.job.action === 'livetv-remove' ? 'absent' : 'disabled'; lt.ltError = null;
+        if (lt.job.action === 'livetv-enable') { if (lt.detectLag > 0) lt.lagLeft = lt.detectLag; else install(); }
+        else { lt.installed = false; lt.ltState = lt.job.action === 'livetv-remove' ? 'absent' : 'disabled'; lt.ltError = null; }
       } else if (lt.job.action === 'livetv-enable') lt.ltState = 'disabled'; // the backend keeps `wanted` after a failed enable
     }
   }

@@ -16,7 +16,8 @@
   import Button from '#lib/ui/Button.svelte';
   import CopyField from '#lib/ui/CopyField.svelte';
   import JobSteps from '../JobSteps.svelte';
-  import { errorKey, livetvJob, livetvSteps, type EnableMode, type LivetvAdminState, type Phase } from './state';
+  import UpdaterNotes from './UpdaterNotes.svelte';
+  import { errorKey, livetvJob, livetvSteps, otherJobRunning, type EnableMode, type LivetvAdminState, type Phase } from './state';
 
   export let s: LivetvAdminState;
   export let mode: EnableMode;
@@ -33,8 +34,7 @@
   $: ended = job && job.state !== 'running' ? job : null;
   /** why it is not there although a job ran or an update dropped it */
   $: reason = (c: string | null) => $t(`adminLive.err.${errorKey(c)}` as 'adminLive.err.generic');
-  $: stopFailed = s.updater.livetv?.state === 'stop_failed';
-  $: dropped = s.updater.livetv?.error && s.updater.livetv.state !== 'enabled' ? s.updater.livetv.error : null;
+  $: otherJob = otherJobRunning(s);
   $: resultText = ended && ended.state === 'rolled_back' ? $t('adminLive.err.rolled_back', { reason: reason(ended.error) })
     : ended && ended.state === 'failed' ? reason(ended.error) : '';
 </script>
@@ -57,7 +57,8 @@
 
     {#if mode === 'updater'}
       <div class="row">
-        <Button icon="play" {pending} on:click={() => dispatch('enable')}>{$t(phase === 'wantedDown' ? 'adminLive.offer.restart' : 'adminLive.offer.enable')}</Button>
+        <Button icon="play" {pending} disabled={otherJob} on:click={() => dispatch('enable')}>{$t(phase === 'wantedDown' ? 'adminLive.offer.restart' : 'adminLive.offer.enable')}</Button>
+        {#if otherJob}<span class="muted small" role="status" data-other-job><Icon name="clock" size={16} /> {$t('adminLive.err.updaterBusy')}</span>{/if}
       </div>
     {:else if mode === 'portainer'}
       <p class="manual" data-mode="portainer"><Icon name="info" size={18} />{$t('adminLive.offer.portainer')}</p>
@@ -70,21 +71,6 @@
     {/if}
   {/if}
 
-  <!-- the slot for a refusal or the result of a job: its space is always reserved -->
-  <div class="slot">
-    {#if refused}
-      <p class="msg err" role="alert"><Icon name="alert" size={18} /><span>{$t(`adminLive.err.${refused}` as 'adminLive.err.generic')} {$t('adminLive.err.notEnabled')}</span></p>
-    {:else if resultText && !working}
-      <p class="msg err" role="alert" data-result={ended?.state}><Icon name="alert" size={18} /><span>{resultText}</span></p>
-    {:else if stopFailed}
-      <p class="msg" role="status"><Icon name="alert" size={18} /><span>{$t('adminLive.err.stopFailed')}</span></p>
-    {/if}
-    {#if dropped && !working}
-      <p class="msg" role="status"><Icon name="info" size={18} /><span>{$t('adminLive.err.dropped', { reason: reason(dropped) })}</span></p>
-    {/if}
-    {#if hideError}<p class="msg err" role="alert"><Icon name="alert" size={18} /><span>{$t('adminLive.offer.hideFailed')}</span></p>{/if}
-  </div>
-
   {#if mode === 'updater' && !working}
     <p class="muted small tip"><Rich key="adminLive.offer.persistTip" /></p>
   {/if}
@@ -92,6 +78,19 @@
   <div class="row foot">
     <Button variant="ghost" pending={hiding} disabled={working} on:click={() => dispatch('hide')}>{$t('adminLive.offer.hide')}</Button>
   </div>
+
+  <!-- below the controls: the messages can grow without moving them -->
+  <!-- the slot for a refusal or the result of a job: its space is always reserved -->
+  <div class="slot">
+    {#if !working}<UpdaterNotes {s} />{/if}
+    {#if refused}
+      <p class="msg err" role="alert"><Icon name="alert" size={18} /><span>{$t(`adminLive.err.${refused}` as 'adminLive.err.generic')} {$t('adminLive.err.notEnabled')}</span></p>
+    {:else if resultText && !working}
+      <p class="msg err" role="alert" data-result={ended?.state}><Icon name="alert" size={18} /><span>{resultText}</span></p>
+    {/if}
+    {#if hideError}<p class="msg err" role="alert"><Icon name="alert" size={18} /><span>{$t('adminLive.offer.hideFailed')}</span></p>{/if}
+  </div>
+
 </AdminCard>
 
 <style>
@@ -106,7 +105,7 @@
   .manual :global(svg), .banner :global(svg), .msg :global(svg) { flex: none; margin-top: .1rem; }
   .small { font-size: .88rem; margin: 0; overflow-wrap: anywhere; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: rgba(255,255,255,.07); padding: .05rem .4rem; border-radius: 4px; }
-  .slot { min-height: 3.2rem; margin-top: .6rem; display: grid; gap: .4rem; align-content: start; min-width: 0; }
+  .slot { min-height: 3.2rem; margin-top: .4rem; display: grid; gap: .4rem; align-content: start; min-width: 0; }
   .msg { display: flex; gap: .5rem; align-items: flex-start; margin: 0; overflow-wrap: anywhere; min-width: 0; }
   .msg.err :global(svg) { color: var(--err); }
   .tip { margin: .4rem 0 0; max-width: 70ch; }

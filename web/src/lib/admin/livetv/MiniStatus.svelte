@@ -13,14 +13,17 @@
   import Button from '#lib/ui/Button.svelte';
   import Progress from '#lib/ui/Progress.svelte';
   import JobSteps from '../JobSteps.svelte';
-  import { errorKey, gpuKey, jobRunning, livetvJob, livetvSteps, type LivetvAdminState } from './state';
+  import UpdaterNotes from './UpdaterNotes.svelte';
+  import { errorKey, gpuKey, jobRunning, livetvJob, livetvRunning, livetvSteps, otherJobRunning, type LivetvAdminState } from './state';
 
   export let s: LivetvAdminState;
   /** the dialog grows out of the button that was pressed */
   const dispatch = createEventDispatcher<{ off: HTMLElement | null }>();
 
   $: job = livetvJob(s);
-  $: running = jobRunning(s);
+  $: running = livetvRunning(s);
+  $: busy = jobRunning(s);
+  $: other = otherJobRunning(s);
   $: gpu = gpuKey(s.gpu.advice);
   $: gpuIcon = s.gpu.advice?.level === 'warn' ? 'alert' : s.gpu.advice?.level === 'ok' ? 'check' : 'info';
   $: failed = job && job.state !== 'running' && job.state !== 'succeeded' ? job : null;
@@ -30,6 +33,8 @@
 <AdminCard title={$t('adminLive.mini.title')}>
   <p class="ok" role="status"><Icon name="check" size={18} />{$t('adminLive.mini.running')}</p>
   <dl class="ver"><div><dt>{$t('adminLive.mini.version')}</dt><dd><code>{s.version ?? '–'}</code></dd></div></dl>
+
+  <UpdaterNotes {s} />
 
   {#if gpu}
     <p class="note" data-gpu={s.gpu.advice?.key} data-level={s.gpu.advice?.level}>
@@ -55,7 +60,8 @@
   </div>
 
   <div class="row">
-    <Button variant="secondary" icon="x" disabled={running} on:click={(e) => dispatch('off', e.currentTarget instanceof HTMLElement ? e.currentTarget : null)}>{$t('adminLive.status.off')}</Button>
+    <Button variant="secondary" icon="x" disabled={busy} on:click={(e) => dispatch('off', e.currentTarget instanceof HTMLElement ? e.currentTarget : null)}>{$t('adminLive.status.off')}</Button>
+    {#if other}<span class="muted small" role="status" data-other-job><Icon name="clock" size={16} /> {$t('adminLive.err.updaterBusy')}</span>{/if}
   </div>
 </AdminCard>
 
@@ -72,6 +78,7 @@
   .note :global(kbd) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
   .prog { display: grid; gap: .8rem; max-width: 36rem; min-width: 0; margin: 0 0 .8rem; }
   .slot { min-height: 0; }
-  .row { display: flex; flex-wrap: wrap; gap: .8rem; }
+  .row { display: flex; flex-wrap: wrap; gap: .8rem; align-items: center; }
+  .small { font-size: .88rem; }
   @media (max-width: 560px) { .ver > div { grid-template-columns: minmax(0, 1fr); gap: .2rem; } }
 </style>

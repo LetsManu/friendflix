@@ -106,7 +106,7 @@
   <EnableCard {s} {mode} phase={ph} {refused} {hideError} pending={$busyKeys.has('livetv:enable')} hiding={$busyKeys.has('livetv:hide')} on:enable={enable} on:hide={hide} />
 {/if}
 
-<OffDialog open={offOpen} manual={mode !== 'updater'} trigger={offTrigger} pending={$busyKeys.has('livetv:disable')} on:close={() => (offOpen = false)} on:confirm={disable} />
+<OffDialog open={offOpen} manual={mode !== 'updater'} foreign={mode === 'portainer'} trigger={offTrigger} pending={$busyKeys.has('livetv:disable')} on:close={() => (offOpen = false)} on:confirm={disable} />
 
 <style>
   .state { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; min-height: 3rem; }

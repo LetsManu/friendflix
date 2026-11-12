@@ -16,6 +16,8 @@
   export let open = false;
   /** no updater to do it: show the command */
   export let manual = false;
+  /** the stack is Portainer's (or another tool's): the manual text names that */
+  export let foreign = false;
   export let pending = false;
   /** the button that opened it (the dialog grows out of it and focus goes back to it) */
   export let trigger: HTMLElement | null = null;
@@ -43,7 +45,7 @@
     <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="lt-off-t" bind:this={box} transition:growBoth={{ trigger }} use:dialogKeys={{ close }}>
       <h2 id="lt-off-t">{$t('adminLive.off.title')}</h2>
       {#if manual}
-        <p class="body">{$t('adminLive.off.manualBody')}</p>
+        <p class="body">{$t(foreign ? 'adminLive.off.manualBodyPortainer' : 'adminLive.off.manualBody')}</p>
         <CopyField label={$t('adminLive.off.manualCommand')} value={COMMAND} />
       {:else}
         <p class="body">{$t('adminLive.off.body')}</p>

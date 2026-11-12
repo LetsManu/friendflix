@@ -35,6 +35,7 @@ export default {
     no_updater: 'Ohne Updater geht das nur von Hand.',
     foreign_stack: 'Dieser Stack wird von Portainer oder einem anderen Werkzeug verwaltet. Ändere es dort.',
     busy: 'Der Updater ist gerade beschäftigt. Versuch es gleich noch einmal.',
+    updaterBusy: 'Ein Update läuft gerade. Danach geht es wieder.',
     tooSoon: 'Zu viele Versuche. Warte ein paar Minuten.',
     generic: 'Das hat nicht geklappt.',
     rolled_back: 'Live-TV ließ sich nicht starten und wurde wieder entfernt. {reason}',
@@ -81,6 +82,7 @@ export default {
     confirm: 'Ausschalten',
     cancel: 'Abbrechen',
     manualBody: 'Ohne Updater schaltest du es von Hand aus. Führe im Stack-Ordner aus und entferne danach die Zeile COMPOSE_PROFILES=livetv aus der .env:',
+    manualBodyPortainer: 'Dieser Stack wird nicht vom Updater verwaltet. Führe den Befehl auf dem Server aus oder stoppe den Dienst livetv im Stack deiner Verwaltung (z. B. Portainer) und entferne danach COMPOSE_PROFILES=livetv aus den Umgebungsvariablen des Stacks:',
     manualCommand: 'Befehl',
   },
 } as const;

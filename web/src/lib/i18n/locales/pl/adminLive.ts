@@ -37,6 +37,7 @@ const dict: Translation<typeof de> = {
     no_updater: 'Bez aktualizatora trzeba to zrobić ręcznie.',
     foreign_stack: 'Ten stos jest zarządzany przez Portainera lub inne narzędzie. Zmień to tam.',
     busy: 'Aktualizator jest teraz zajęty. Spróbuj za chwilę.',
+    updaterBusy: 'Trwa aktualizacja. Spróbuj po jej zakończeniu.',
     tooSoon: 'Zbyt wiele prób. Poczekaj kilka minut.',
     generic: 'To się nie udało.',
     rolled_back: 'Telewizji na żywo nie udało się uruchomić i została ponownie usunięta. {reason}',
@@ -83,6 +84,7 @@ const dict: Translation<typeof de> = {
     confirm: 'Wyłącz',
     cancel: 'Anuluj',
     manualBody: 'Bez aktualizatora wyłączasz ją ręcznie. Uruchom to w folderze stosu, a potem usuń linię COMPOSE_PROFILES=livetv z pliku .env:',
+    manualBodyPortainer: 'Ten stos nie jest zarządzany przez aktualizator. Uruchom polecenie na serwerze lub zatrzymaj usługę livetv w stosie swojego narzędzia zarządzania (np. Portainer), a potem usuń COMPOSE_PROFILES=livetv ze zmiennych środowiskowych stosu:',
     manualCommand: 'Polecenie',
   },
 };

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AdminSummary } from '../summary';
-import { enableMode, errorKey, gpuKey, jobRunning, livetvJob, navShown, phase, type LivetvAdminState } from './state';
+import { enableMode, errorKey, gpuKey, jobRunning, livetvJob, navGuess, navShown, otherJobRunning, phase, rememberNav, type LivetvAdminState } from './state';
 
 const base = (): LivetvAdminState => ({
   installed: false, reachable: false, version: null, wanted: false, offerHidden: false,
@@ -87,5 +87,32 @@ describe('gpuKey', () => {
     expect(gpuKey({ level: 'ok', key: 'both', driver: 'iHD' })).toBe('both');
     expect(gpuKey({ level: 'ok', key: 'both' })).toBe('bothPlain');
     expect(gpuKey({ level: 'warn', key: 'needsOverlay' })).toBe('needsOverlay');
+  });
+});
+
+describe('other jobs', () => {
+  it('an app update running is not a livetv job: no "working", but it is named', () => {
+    const s = withUpdater(base(), { job: job({ action: 'update' }) });
+    expect(phase(s, false)).toBe('offer');
+    expect(otherJobRunning(s)).toBe(true);
+    expect(otherJobRunning(withUpdater(base(), { job: job() }))).toBe(false);
+  });
+});
+
+describe('navGuess', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it('remembers whether the row was shown; the first visit guesses shown', () => {
+    const m = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) });
+    expect(navGuess()).toBe(true);
+    rememberNav(false);
+    expect(navGuess()).toBe(false);
+    rememberNav(true);
+    expect(navGuess()).toBe(true);
+  });
+  it('without storage it guesses shown', () => {
+    vi.stubGlobal('localStorage', { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); } });
+    expect(navGuess()).toBe(true);
+    expect(() => rememberNav(false)).not.toThrow();
   });
 });

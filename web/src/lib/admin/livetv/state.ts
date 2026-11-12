@@ -48,6 +48,11 @@ export const jobRunning = (s: LivetvAdminState): boolean => s.updater.job?.state
 /** the last job when it is one of livetv's (an update's job says nothing about Live TV) */
 export const livetvJob = (s: LivetvAdminState): LivetvJob | null => (s.updater.job?.action.startsWith('livetv-') ? s.updater.job : null);
 
+/** a livetv job of the updater is running */
+export const livetvRunning = (s: LivetvAdminState): boolean => livetvJob(s)?.state === 'running';
+/** another updater job (an app update, a rollback) is running: livetv cannot be started or stopped meanwhile */
+export const otherJobRunning = (s: LivetvAdminState): boolean => jobRunning(s) && !livetvRunning(s);
+
 export type Phase = 'area' | 'working' | 'settling' | 'wantedDown' | 'offer';
 /**
  * What the page shows: the area while installed; the job's steps while one runs; "checking" for a moment after a job
@@ -55,7 +60,7 @@ export type Phase = 'area' | 'working' | 'settling' | 'wantedDown' | 'offer';
  */
 export function phase(s: LivetvAdminState, settling: boolean): Phase {
   if (s.installed) return 'area';
-  if (jobRunning(s)) return 'working';
+  if (livetvRunning(s)) return 'working';
   if (settling) return 'settling';
   // the backend keeps `wanted` once it accepted an enable, even when the job then failed or was rolled back: that is not "turned on"
   const j = livetvJob(s);
@@ -81,6 +86,19 @@ export function gpuKey(a: GpuAdvice | null): 'needsOverlay' | 'needsRenderGid' |
 export function livetvSteps(j: LivetvJob): Array<keyof LivetvJob['steps']> {
   const order = ['pull', 'verify', 'restart', 'health', 'rollback'] as const;
   return order.filter((k) => j.steps[k] !== 'skipped' && (k !== 'rollback' || j.steps[k] !== 'pending'));
+}
+
+const NAV_KEY = 'ff-admin-livetv-nav';
+/**
+ * Whether the Live-TV nav row was shown the last time (the admin summary decides, but it arrives after the first paint). The shell
+ * reserves a row of the same height by this guess while the summary loads, so the group below never shifts for a returning admin;
+ * the first visit guesses "shown" (the default is an offer that is not hidden).
+ */
+export function navGuess(): boolean {
+  try { return localStorage.getItem(NAV_KEY) !== '0'; } catch { return true; }
+}
+export function rememberNav(shown: boolean): void {
+  try { localStorage.setItem(NAV_KEY, shown ? '1' : '0'); } catch { /* private mode: no memory */ }
 }
 
 /** polling every 3 s while a job runs (spec §4.5) */
