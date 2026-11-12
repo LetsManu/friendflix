@@ -88,3 +88,45 @@ None.
   - CHANGELOG has a "Live TV (optional)" entry. README (EN and DE) and ROADMAP are updated.
   - Spot checks against the code match: 90 s idle and 20 s touch, the 12 h cap, 4 tokens, the 45 s viewer window, the AirPlay 120 s window, the 15 s tick and 60 s stop, the event codes table, the DVR range 0–120 / 30, and the provider limit writing no event.
   - Docs use only placeholder hosts (`friend.example.com`, `iptv.example.com`, `192.0.2.x`) and the fictional name "Nordlicht TV". "Netflix" and "Seerr" appear nowhere.
+
+## Re-review (fix round: claude/lt-final-fixes c0a50e35, commits 12453050 + 515b6e66)
+
+### Verdict
+**Ready.** I1 and M1–M3 and M5–M7 are fixed. M4 was left as instructed (carried race). Nothing is Critical or Important. Two new Minors are listed below and are optional.
+
+### I1: admin *Stoppen* (fixed)
+- **Order in stopStream** (`backend/src/livetv/status.ts` stopStream):
+  1. `ltv:adminstop:<id>` is set (60 s) before the DELETE.
+  2. If the DELETE fails with anything other than a 404, the marker is deleted and the error is rethrown. The route answers 503 and records nothing.
+  3. Then `revokeChannelTokens` runs. It walks every `ltvidx:*` index, so it reaches every account, cast and test token, and stale index members are pruned on the way (`tokens.ts` revokeChannelTokens).
+  4. Then the grant is dropped and the caches are invalidated.
+- **Refusal:** `startOrJoin` returns 502 `channel_unreachable` at entry while the marker lives (`streams.ts` startOrJoin, first statement). It applies to joins and starts alike.
+- **Clearing:** testPreview deletes the marker before its own start (`adminRoutes.ts` testPreview), so *Neu starten* (stop, then test start) works. Any admin *Testen* of the channel also lifts a stop, which is acceptable because it is an admin action.
+- **Race, beat after revoke:** the gone marker makes the beat answer 410. The one rewatch meets the adminstop marker and gets 502, so the error state shows. Fine.
+- **Race, watch between marker and revoke:** a watch that enters startOrJoin after the marker is set is refused. A join that passed the marker check just before the stop may mint after the revoke. Its token survives, but the stream is gone, so authz answers 410, the rewatch gets 502, and the error state shows. Fine.
+- **Residual race (Minor N1):** a *start* that passed the marker check before the stop and holds `ltv:start:<id>` can still send its `POST /v1/streams` after the admin's DELETE. If it mints after `revokeChannelTokens`, the channel runs again with that one viewer. It needs a first viewer and *Stoppen* within the same ~1 s, so it is very narrow.
+  - Fix: in `start()`, re-check `adminStopKey` right after `refreshIfEquals` and before the POST. If it is set, give the grant back and return unreachable. Small.
+- **Note:** the web player retries `channel_unreachable` with growing pauses, so after 60 s a still-open player can start the channel again. That matches the docs ("refused for 60 seconds") and is within the spec's intent.
+
+### M6: testPreview profile check (fixed)
+The order is mint, then `loadSession`, then revoke the token on a mismatch. This is the same order as the watch route, and it is the safe one. A profile switch revokes the device tokens that exist at that moment. A check made before the mint would miss a switch that lands between the check and the mint, while a check after the mint catches it. The token is never returned on a mismatch.
+
+### M7: request serializer (fixed)
+- **What changed:** `reqSerializer` in `backend/src/app.ts` reproduces Fastify 5.12's default `req` serializer (method, url, host, remoteAddress, remotePort), with the value of any `sig=` query parameter replaced by `[redacted]`.
+- **Log shape:** it applies to every route's `req` log field, but the shape is unchanged except that `version` (the `accept-version` header) is dropped. Nothing in the repo reads that field. `err` and `res` serializers are untouched. A test logger (`extra.logger`) gets the serializer too, and under `NODE_ENV=test` with no logger there is still no logger.
+- **Other credential-like query parameters** (invite codes and OIDC `code`/`state` on `/auth/*`) are still logged. They are older than this branch and out of scope; the slow-request line already strips the query.
+
+### M5: livetv-only benchmark failure (fixed)
+`measureLivetv` returns a boolean. When it fails on the livetvOnly path, runBenchmark returns the default `out` (`failed`), which notes `failed` and records the `conv-bench` job error in `finally`. The full path still ignores a livetv failure on purpose, because the media server's measurement succeeded.
+
+### Docs M1–M3 (accurate)
+- privacy.md and de/privacy.md now mention the home-network flag, which matches `playtiming.ts`.
+- security.md now separates revocations from 403 refusals and describes the admin stop with its 60 s refusal.
+- livetv.md, de/livetv.md, android.md and de/android.md now say a Chromecast switch never releases the old channel early, and the Live-Status line describes *Stoppen*.
+- All of these match the code.
+
+### Regressions
+None found. The fixer's runs cover the switch, status, tokens, streams, channels-admin and convbench suites plus the new logo-log test. I ran no tests myself because nothing gave me a concrete doubt.
+
+### New Minor
+- **N1 (`streams.ts` start):** the start-in-flight race described under I1. Small.

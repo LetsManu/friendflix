@@ -78,3 +78,49 @@ Size: small.
 - Accessibility: polite live region for zaps (`LivePlayer.svelte:1211`); `role="alert"` cards; labelled controls and `aria-expanded` / `aria-haspopup`; Senderliste focus trap and roving tabindex (`ChannelPanel.svelte`); LIVE pill as shape plus text in the cast bars.
 - Routing and gating: `/live` and `/live/watch` redirect when livetv is off; kids gate allows `/live` (`gate.ts`); `?play=last` replaces the history entry before opening the player; the player route re-creates only on real navigation (`{#key id}` + `afterNavigate`).
 - R30 (chip picked in the panel becomes the zapping filter, `LivePlayer.svelte:698, 1023-1029`): implemented as ruled.
+
+## Re-review (fix round eaafa3c1 + 1f82f50e, worktree ff-ff at c0a50e35, base d7b43619)
+
+Read: the web/, e2e/ and android/ hunks of fix-round-pkg.md, plus fix-web-report.md; InfoPanel.svelte, i18n `live.player.behind` and bridge `ID_PATTERN` in the worktree. No tests were run: nothing here needed a test to settle it.
+
+### Verdict
+**Ready.** No Critical and no Important finding is open. 3 new Minors (R1–R3), none of which blocks the merge.
+
+### Status of the first round's findings
+- **I1: fixed.** `.ltop` now has `data-nav` (`LivePlayer.svelte`, the `.ltop` div). The focus path is complete:
+  - ▲ from the bar reaches the top bar, because the scope is the body.
+  - ◀ / ▶ move between the Back button and `.tinfo`. They sit in one row with vertical overlap, which `score()` requires for left/right.
+  - ▼ returns to `.ctl`.
+  - Zapping with ▲ / ▼ while the controls are hidden is unchanged. Hiding the controls moves a TV's focus to `root` (`hideControls`, Back's `hideControls` step, `closeList` → stage). The focus is then outside every `[data-nav]`, so spatial navigation stays off and `resolveLiveKey` zaps.
+  - The new TV e2e covers ▲, ◀, ▶ and ▼ and that nothing pauses.
+- **I2: fixed, with one residual (R1).**
+  - On phones the restart slot is gone (R36). The info sheet still offers *Von Anfang an* (`InfoPanel.svelte:59-61`) inside `.rslot { min-height: 44px }` (`:97`). That slot is reserved, so nothing jumps when the button appears.
+  - Every bar target is still at least 44 px: `.ib` 44, `.pp` 52, pill height 44. The new 360 px e2e with the cast button asserts the boxes, `scrollWidth`, and that Info can be clicked.
+  - Only `width` / `padding` changed in the CSS. Animations stay transform / opacity.
+- **M1: fixed, with a narrower residual (R2).**
+- **M2: fixed, with a new narrow race (R3).**
+- **M3: fixed** (judged by reading). `followCast` now restarts one macrotask later, guarded by `!hiding && !destroyed && !remoteOn`, and captures `curId`. By then the player's pagehide listener has set `hiding`, and a cast that comes back in that task is respected. On a normal cast end the cost is one task of delay.
+- **M6: my premise was wrong.** `ID_PATTERN` is `^[A-Za-z0-9-]{1,64}$` (`BridgeMessages.kt:137`) and does not allow `_`; I had mixed it up with `REQUEST_ID`. The fixer's comment is correct.
+- **M7: fixed.** No `ff.example` is left under android/. The remaining hits are older web tests outside this PR's diff. `evil.example` stays, which is fine for negative tests.
+- **M4, M5:** left open as instructed.
+
+### New Minors
+- **R1 (phone LIVE pill, I2):** behind times over 100 minutes may not fit the pill.
+  - `fmtBehind` writes minutes:seconds with no hours, so the longest text is "−120:00" (7 glyphs), not "−1:02:30".
+  - At 16 px Inter weight 800 with tabular figures and `letter-spacing: .02em`, that text is about 64–66 px (estimated, not measured). The pill's content box is 70.4 − 8 = 62.4 px, so behind times of 100 minutes or more (only with a buffer over 100 minutes) run about 2–4 px into the 4 px padding, up to the inset ring.
+  - Fix: `.lplayer.phone .pill { letter-spacing: 0; font-size: .9em }`, and add "−119:59" to the 360 px e2e (set `behindSec` through a long buffer mock). Size: small.
+- **R2 (M1 residual, `engine.ts` `liveLoad` / `overtaken`):** a refused newer load still blocks the cleanup.
+  - `loadSinceStop` counts loads that *started*. Sequence: Stop, then loadLive(B) is refused at its watch, then A's receiver load resolves late. `loadSinceStop` is 1, so `castStop()` is skipped. A's channel stays on the TV with its token already revoked: the stream dies there and no bar shows.
+  - Fix: raise `loadSinceStop` right before `await load(media)` in `liveLoadRun`, i.e. count only loads that reached the receiver. Size: small.
+- **R3 (new, from M2):** a resume that adopts a live cast during a first loadLive's watch is overwritten without being ended.
+  - With `gen++` after the watch, a `doResume()` → `resumeLive` can set `lc = R` while a first loadLive (`prev = null`) waits for its watch.
+  - `liveLoadRun` then takes the else branch at the end and replaces `lc` without `endLive(R)`. R's store, cast-event and pagehide subscriptions stay registered. They are inert, because each checks `lc !== l`, and R's loop stops itself. The server revokes R's cast-slot token on the new mint.
+  - This needs a user cast tap inside the ≤ 3 s resume window, so it is rare.
+  - Fix: in that else branch, `if (lc && lc !== prev) endLive(lc, 'replaced', { revoke: false, keepHint: true });` before `lc = l`. Size: small.
+
+### Regressions checked
+- The InfoPanel's `rslot` reservation is unchanged.
+- Desktop and TV still render the restart slot (`!phoneUi`).
+- The mobile test uses the `castOn` / `fakeCastSdk` mocks; no real host is involved.
+- engine.live.test has new cases for M1 and M2. Both were red before the fix and green after, per the fixer's report.
+- The Kotlin changes are comments and test strings only. The Kotlin tests were not run (no SDK), which is acceptable for string edits.

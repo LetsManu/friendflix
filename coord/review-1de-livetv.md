@@ -72,3 +72,20 @@ The carried issue (provider `max_streams` checked outside `conv:gate`) lives in 
   - The idle timer is cleared on stop; preview results of a dropped stream are discarded.
 - **Wire types:** `StreamView`, `IngestState`, `StartBody`, `BenchAnswer` and the error codes (`invalid` + field, `unsupported_mode`, `encoder_unavailable`, `busy`) match `backend/src/livetv/wire.ts` field for field.
 - **Dockerfile** (apart from C1): every base image is pinned by digest, the Jellyfin key fingerprint is checked, the image runs as `USER 10001`, `srtgate --selftest` runs in both stages, and there is no Docker socket. Compose runs the service with `read_only`, `cap_drop: ALL` and `no-new-privileges`, on an internal network plus an egress network.
+
+## Re-review (fix commit c6d417c9, in claude/lt-final-fixes head c0a50e35; livetv/ and gateway/ only)
+
+### Verdict
+**Ready.** All five findings are fixed. No Critical or Important finding is left, and I found no regression. The diff from d7b43619 touches 8 files in livetv/ and gateway/: the Dockerfile, gateway.ts, srtgate.c, preview.ts, srtingest.ts and three test files.
+
+- **C1, resolved.** `livetv/Dockerfile:61` now ends in `libsrt1.5-openssl \`, and `&& echo 'deb …'` starts the next line. The file has no other literal `\n` (grep). No continuation runs into a blank or comment line; a script flagged line 52, but that was a false positive (the line has no trailing backslash). I take the fixer's report of a green `docker build` with both `srtgate --selftest` runs as given; I did not rebuild.
+- **M1, resolved.** `LIVE_ROUTE` is now `…/(index\.m3u8|init-[0-9]{1,10}\.mp4|(?:0|[1-9][0-9]{0,9})\.(?:ts|m4s))$`. Both it and `LIVE_FILE` are character for character the R16 alternation, apart from the non-capturing groups. The test refuses `init.mp4`, `007.ts` and `00.m4s`. The playlist URI check (`liveUrisOk`) uses the same `LIVE_FILE`, and livetv's own playlist only writes `init-<n>.mp4` and `<seq>.<ext>` with seq starting at 0 and no leading zeros, so valid playlists still pass.
+- **M2, resolved.** `ok = s->has_feed && found && gen == s->gen` (`srtgate.c:~686`).
+  - Valid handshakes still go through: the callback adds every handshake it lets through to the pending table, and libsrt queues the socket for accept as soon as its conclusion answer is sent. The main loop accepts within its 100-ms poll.
+  - Residual (not blocking): if livetv stops reading srtgate's stdout for more than 3 s, `write_all` blocks the main thread. When it wakes, `check_pending` runs before `accept_on`, so a valid pending sender can now be refused and counted. Before the fix it was accepted but still counted. The encoder just retries, and the ban needs 20 such refusals within 1 min. Optional hardening: call `accept_on` for ready listeners before `check_pending`, or measure the timeout from the last loop pass.
+- **M3, resolved.** `awaitClose` is set only when the port's previous slot is connected. srtgate always kicks that sender (new credentials), so a `closed` event always follows and clears the flag.
+  - The new sender's frames cannot be dropped: srtgate writes the `closed` frame of the old sender before the new sender's `accepted` frame, and `accepted` also clears the flag.
+  - The port cannot get stuck: if srtgate dies, `onGone` disconnects every slot, the restarted helper has no old sender, and the next `accepted` clears the flag. No data can arrive before that `accepted`.
+  - Residual edge: if the port is handed over a second time before `closed` arrives, the newest slot sees `connected=false` and gets no flag. That takes two set changes within one srtgate loop pass. Ignorable.
+- **M4, resolved.** `-f mpegts` sits right before `-i`, so it applies to the input. The output keeps its own `-f image2` after `-i`. The test pins the order.
+- **Regressions:** none found. The gateway changes only narrow what it accepts. `onEvent` keeps its order (the flag is cleared before the `accepted`/`closed` handling). `newSlot` sets the new field. No other caller depends on the old regexes.
