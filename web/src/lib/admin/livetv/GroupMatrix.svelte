@@ -16,7 +16,7 @@
 
   export let groups: GroupView[];
   export let roles: GrantRole[];
-  /** `group:role` keys whose write runs */
+  /** ids of the groups whose role set is being written: every cell of such a row waits (PATCH replaces the whole set) */
   export let busy: ReadonlySet<string> = new Set();
 
   const dispatch = createEventDispatcher<{ toggle: { group: GroupView; role: string; on: boolean } }>();
@@ -43,13 +43,16 @@
               {#if !g.released}<span class="gs"><Icon name="eye-off" size={14} />{$t('adminLive.grp.unreleased')}</span>{/if}
             </th>
             {#each roles as r (r.key)}
-              {@const on = g.roles.includes(r.key)}
+              {@const kept = g.roles.includes(r.key)}
+              {@const on = kept && g.released}
               {@const locked = r.readOnly || !g.released}
               <td>
-                <button type="button" role="switch" class="sw" class:on class:locked aria-checked={on} aria-disabled={locked ? 'true' : undefined}
-                  aria-label={$t('adminLive.grp.cell', { group: g.name, role: r.name })} title={r.readOnly ? $t('adminLive.grp.envRole') : !g.released ? $t('adminLive.grp.unreleasedLine') : undefined}
-                  disabled={busy.has(`${g.id}:${r.key}`)} on:click={() => { if (!locked) dispatch('toggle', { group: g, role: r.key, on: !on }); }}>
-                  <span class="chip" aria-hidden="true"><Icon name={r.readOnly ? 'lock' : on ? 'check' : 'x'} size={16} /></span>
+                <!-- an unreleased group grants nothing to anyone: its kept roles show a neutral eye-off, never a check, and `aria-checked` is false -->
+                <button type="button" role="switch" class="sw" class:on class:locked class:off={!g.released} aria-checked={on} aria-disabled={locked ? 'true' : undefined}
+                  aria-label={g.released ? $t('adminLive.grp.cell', { group: g.name, role: r.name }) : $t('adminLive.grp.cellOff', { group: g.name, role: r.name })}
+                  title={r.readOnly ? $t('adminLive.grp.envRole') : !g.released ? $t('adminLive.grp.unreleasedLine') : undefined}
+                  disabled={!g.released || busy.has(g.id)} on:click={() => { if (!locked) dispatch('toggle', { group: g, role: r.key, on: !kept }); }}>
+                  <span class="chip" aria-hidden="true"><Icon name={!g.released ? 'eye-off' : r.readOnly ? 'lock' : on ? 'check' : 'x'} size={16} /></span>
                 </button>
               </td>
             {/each}
@@ -84,6 +87,8 @@
   .sw:hover:not(.locked):not(:disabled) .chip { background: rgba(var(--fr-scrim-rgb), .4); }
   .sw:focus-visible { outline: 2px solid #fff; outline-offset: 1px; box-shadow: 0 0 0 4px var(--ring-dark, #000); }
   .sw:disabled { opacity: .6; cursor: progress; }
+  .sw.off:disabled { cursor: default; }
+  .sw.off .chip { opacity: .5; }
   .note { margin: 0 0 1rem; font-size: .85rem; color: var(--mut); }
   @media (max-width: 720px) { .corner, .fh { min-width: 8.5rem; } }
 </style>

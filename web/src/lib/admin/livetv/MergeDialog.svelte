@@ -4,7 +4,7 @@
   /**
    * *Zusammenführen …* (spec §9.3): the selected groups (two or more) move into the one chosen here: their provider groups and channel
    * overrides go over, the other groups are deleted. The dialog warns that the moved channels are visible at once to the audience of
-   * the target group. The tab does the write (`pending`, `error` come back from it). A modal dialog: Tab stays inside, Escape or a
+   * the target group (an unreleased target: that they stay invisible to everyone). The tab does the write (`pending`, `error` come back from it). A modal dialog: Tab stays inside, Escape or a
    * press on the dimmed page cancels, focus returns to `trigger`. Mounted while open.
    *   <MergeDialog {groups} {pending} {error} {trigger} on:confirm={(e) => merge(e.detail)} on:cancel={close} />
    */
@@ -41,7 +41,7 @@
     <h2 id="{id}-t">{$t('adminLive.grp.mergeTitle')}</h2>
     <p class="body" id="{id}-b">{$t('adminLive.grp.mergeBody', { names: chipsText(others.map((g) => g.name), 3), into: target?.name ?? '' })}</p>
     <Select label={$t('adminLive.grp.mergeInto')} bind:value={into} {options} disabled={pending} />
-    <p class="warn" role="note"><Icon name="alert" size={16} /><span>{$t('adminLive.grp.mergeWarn', { into: target?.name ?? '' })}</span></p>
+    <p class="warn" role="note"><Icon name="alert" size={16} /><span>{target && !target.released ? $t('adminLive.grp.mergeWarnOff') : $t('adminLive.grp.mergeWarn', { into: target?.name ?? '' })}</span></p>
     {#if error}<p class="err" role="alert">{error}</p>{/if}
     <div class="acts">
       <Button variant="ghost" disabled={pending} on:click={() => shell.dismiss()}>{$t('common.cancel')}</Button>

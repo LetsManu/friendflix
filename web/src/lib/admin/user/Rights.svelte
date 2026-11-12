@@ -19,6 +19,7 @@
   import { locale, t, tr, trDynamic } from '#lib/i18n';
   import { PERM_KEYS } from '#lib/perms';
   import { fetchGroups, groupErrorOf, putUserGroups, type GroupView, type UserGroups } from '#lib/admin/livetv/groups';
+  import Icon from '#lib/Icon.svelte';
   import { errorText, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
@@ -77,6 +78,9 @@
     groupsAsked = true;
     try { released = (await fetchGroups()).groups.filter((g) => g.released); } catch { groupsFailed = true; }
   }
+  /** an exception on a group that is not released does not reach anybody (ruling 39): its chip says so and is not styled as a grant */
+  $: liveIds = new Set((released ?? []).map((g) => g.id));
+  const exName = (g: { id: string; name: string }, live: ReadonlySet<string>): string => (live.has(g.id) ? tr('adminPeople.rights.livetvRemove', { name: g.name }) : `${tr('adminPeople.rights.livetvRemove', { name: g.name })}. ${tr('adminLive.grp.unreleased')}: ${tr('adminLive.grp.unreleasedLine')}`);
   $: taken = new Set([...exc.allow, ...exc.deny].map((g) => g.id));
   // a plus adds a group the role does not see, a minus takes away one it does
   $: plusOptions = (released ?? []).filter((g) => !taken.has(g.id) && !g.roles.includes(view?.role ?? ''));
@@ -262,7 +266,7 @@
               <span class="ll">{$t('adminPeople.rights.livetvPlus')}</span>
               <ul class="lchips">
                 {#each exc.allow as g (g.id)}
-                  <li><button type="button" class="lc allow" disabled={excBusy} aria-label={$t('adminPeople.rights.livetvRemove', { name: g.name })} on:click={() => dropFrom(g.id)}><span aria-hidden="true">+ {g.name} ×</span></button></li>
+                  <li><button type="button" class="lc allow" class:off={!liveIds.has(g.id)} disabled={excBusy} aria-label={$locale && exName(g, liveIds)} title={liveIds.has(g.id) ? undefined : $t('adminLive.grp.unreleasedLine')} on:click={() => dropFrom(g.id)}><span aria-hidden="true">+ {g.name} ×</span>{#if !liveIds.has(g.id)}<span class="lm" aria-hidden="true"><Icon name="eye-off" size={14} />{$t('adminLive.grp.unreleased')}</span>{/if}</button></li>
                 {:else}<li class="mut">{$t('adminPeople.rights.livetvNone')}</li>{/each}
               </ul>
               <div class="lsel">
@@ -274,7 +278,7 @@
               <span class="ll">{$t('adminPeople.rights.livetvMinus')}</span>
               <ul class="lchips">
                 {#each exc.deny as g (g.id)}
-                  <li><button type="button" class="lc deny" disabled={excBusy} aria-label={$t('adminPeople.rights.livetvRemove', { name: g.name })} on:click={() => dropFrom(g.id)}><span aria-hidden="true">− {g.name} ×</span></button></li>
+                  <li><button type="button" class="lc deny" class:off={!liveIds.has(g.id)} disabled={excBusy} aria-label={$locale && exName(g, liveIds)} title={liveIds.has(g.id) ? undefined : $t('adminLive.grp.unreleasedLine')} on:click={() => dropFrom(g.id)}><span aria-hidden="true">− {g.name} ×</span>{#if !liveIds.has(g.id)}<span class="lm" aria-hidden="true"><Icon name="eye-off" size={14} />{$t('adminLive.grp.unreleased')}</span>{/if}</button></li>
                 {:else}<li class="mut">{$t('adminPeople.rights.livetvNone')}</li>{/each}
               </ul>
               <div class="lsel">
@@ -343,6 +347,10 @@
   .lc { min-height: 44px; min-width: 44px; padding: 0 .9rem; border-radius: 99px; font-weight: 600; font-size: .88rem; background: rgba(var(--fr-scrim-rgb), .25); box-shadow: inset 0 0 0 1px var(--fr-line, var(--line)); overflow-wrap: anywhere; }
   .lc.allow { color: var(--ok); }
   .lc.deny { color: var(--warn); }
+  /* on a group that is not released: neutral (not a grant, not a block), with the marker */
+  .lc.off { color: var(--mut); }
+  .lc { display: inline-flex; align-items: center; gap: .5rem; }
+  .lm { display: inline-flex; align-items: center; gap: .25rem; font-size: .78rem; font-weight: 600; color: var(--mut); }
   .lc:focus-visible { outline: 2px solid #fff; outline-offset: 2px; box-shadow: 0 0 0 4px var(--ring-dark, #000); }
   .note { max-width: 40rem; }
   .count { display: block; margin-top: .25rem; font-size: .82rem; color: var(--hint, var(--mut)); text-align: right; }

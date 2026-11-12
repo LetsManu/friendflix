@@ -78,34 +78,49 @@ export function pendingFirst(groups: readonly GroupView[], onlyPending: boolean)
 
 /** one person for the exceptions list: the answer of `GET /users/:id/rights` (null = the read failed) */
 export interface ExceptionRow { userId: string; name: string; livetvGroups: UserGroups | null }
-export interface PersonExceptions { userId: string; name: string; plus: string[]; minus: string[] }
-/** the people with at least one plus or minus, with the group names */
-export function exceptionsOf(rows: readonly ExceptionRow[]): PersonExceptions[] {
+/**
+ * `plus` / `minus` are the exceptions on released groups (effective); `plusOff` / `minusOff` are those on a group that is not released:
+ * nobody sees such a group, an exception does not reach it (ruling 39), so the tab shows them as not effective, never as a grant.
+ */
+export interface PersonExceptions { userId: string; name: string; plus: string[]; minus: string[]; plusOff: string[]; minusOff: string[] }
+/** the people with at least one plus or minus, with the group names; `groups` (when given) tells which of them are released */
+export function exceptionsOf(rows: readonly ExceptionRow[], groups?: readonly GroupView[]): PersonExceptions[] {
+  const live = groups ? new Set(groups.filter((x) => x.released).map((x) => x.id)) : null;
+  const split = (l: GroupRef[]) => ({ on: l.filter((x) => !live || live.has(x.id)).map((x) => x.name), off: l.filter((x) => live && !live.has(x.id)).map((x) => x.name) });
   const out: PersonExceptions[] = [];
   for (const r of rows) {
     const e = r.livetvGroups;
-    if (e && (e.allow.length || e.deny.length)) out.push({ userId: r.userId, name: r.name, plus: e.allow.map((x) => x.name), minus: e.deny.map((x) => x.name) });
+    if (e && (e.allow.length || e.deny.length)) {
+      const p = split(e.allow), m = split(e.deny);
+      out.push({ userId: r.userId, name: r.name, plus: p.on, minus: m.on, plusOff: p.off, minusOff: m.off });
+    }
   }
   return out;
 }
 
+/** how many accounts one read looks at; more than this and the tab says only the first ones were checked */
+export const EXCEPTIONS_MAX = 500;
+/** the result of `loadExceptions`: the rows, how many accounts could not be read, and whether the list was cut at `EXCEPTIONS_MAX` */
+export interface ExceptionsRead { rows: ExceptionRow[]; unread: number; capped: boolean }
+
 /**
  * Reads the exceptions of every non-admin account: the users list, then `GET /users/:id/rights` per account, at most `limit` at a time
- * (no route lists them all, ruling R21). A failed read leaves that person out (`livetvGroups: null`).
+ * (no route lists them all, ruling R21). A failed read leaves that person out (`livetvGroups: null`) and is counted in `unread`;
+ * `capped` = the account list has more than `EXCEPTIONS_MAX` entries.
  */
-export async function loadExceptions(limit = 4): Promise<ExceptionRow[]> {
-  const list = await api<{ users: Array<{ id: string; name: string; role: string | null; pending?: boolean }>; total: number }>('/api/admin/users?limit=500');
+export async function loadExceptions(limit = 4): Promise<ExceptionsRead> {
+  const list = await api<{ users: Array<{ id: string; name: string; role: string | null; pending?: boolean }>; total: number }>(`/api/admin/users?limit=${EXCEPTIONS_MAX}`);
   const people = list.users.filter((u) => u.role && u.role !== 'admin' && !u.pending);
-  const out: ExceptionRow[] = new Array(people.length);
-  let next = 0;
+  const rows: ExceptionRow[] = new Array(people.length);
+  let next = 0, unread = 0;
   await Promise.all(Array.from({ length: Math.min(limit, people.length) }, async () => {
     for (let i = next++; i < people.length; i = next++) {
       const u = people[i]!;
-      const livetvGroups = await api<{ livetvGroups?: UserGroups }>(`/api/admin/users/${encodeURIComponent(u.id)}/rights`).then((r) => r.livetvGroups ?? null, () => null);
-      out[i] = { userId: u.id, name: u.name, livetvGroups };
+      const livetvGroups = await api<{ livetvGroups?: UserGroups }>(`/api/admin/users/${encodeURIComponent(u.id)}/rights`).then((r) => r.livetvGroups ?? null, () => { unread++; return null; });
+      rows[i] = { userId: u.id, name: u.name, livetvGroups };
     }
   }));
-  return out;
+  return { rows, unread, capped: list.total > EXCEPTIONS_MAX };
 }
 
 /** a role as the grants offer it: `readOnly` = defined only in `.env`, the backend refuses to grant it a group (400), so the UI only shows it */
