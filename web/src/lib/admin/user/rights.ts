@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** The Rechte tab of a person (GET/PUT /api/admin/users/:id/rights, backend userRights.ts): row shapes, the three-way state, the PUT patch. */
+import type { UserGroups } from '#lib/admin/livetv/groups';
 import { tr } from '#lib/i18n';
 import type { ConfirmOptions } from '#lib/ui/confirm';
 
@@ -22,6 +23,8 @@ export interface RightsView {
   hardKids: string[];
   /** library names of the effective list the media server no longer has */
   missingLibraries: string[];
+  /** the person's Live TV group exceptions (backend adminUsers.ts; only an account's own answer, not a profile's overlay) */
+  livetvGroups?: UserGroups;
 }
 export type Tri = 'role' | 'allow' | 'deny';
 export const NOTE_MAX = 200;

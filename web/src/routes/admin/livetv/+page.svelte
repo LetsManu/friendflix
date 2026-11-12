@@ -20,6 +20,7 @@
   import ChannelsTab from '#lib/admin/livetv/ChannelsTab.svelte';
   import EnableCard from '#lib/admin/livetv/EnableCard.svelte';
   import GuideTab from '#lib/admin/livetv/GuideTab.svelte';
+  import GroupsTab from '#lib/admin/livetv/GroupsTab.svelte';
   import OffDialog from '#lib/admin/livetv/OffDialog.svelte';
   import SourcesTab from '#lib/admin/livetv/SourcesTab.svelte';
   import StatusTab from '#lib/admin/livetv/StatusTab.svelte';
@@ -130,6 +131,7 @@
   <div id="ltv-panel" role="tabpanel" aria-labelledby="ltv-tab-{tab}" tabindex="-1">
     {#if tab === 'sources'}<SourcesTab />
     {:else if tab === 'channels'}<ChannelsTab />
+    {:else if tab === 'groups'}<GroupsTab />
     {:else if tab === 'guide'}<GuideTab />
     {:else if tab === 'status'}<StatusTab {s} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />
     {:else}<AdminCard><p class="soon">{$t('adminLive.tabs.soon')}</p></AdminCard>{/if}

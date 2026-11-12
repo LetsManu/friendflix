@@ -210,6 +210,8 @@ export interface LtvChanMock {
   push?: { port: number; hint: string };
 }
 export const LTV_GROUP_NAMES: Record<string, string> = { 'g-regional': 'Regional', 'g-sport': 'Sport' };
+/** a channel group as `GET /api/admin/livetv/groups` answers it (backend GroupView, Task 18) */
+export interface LtvGroupMock { id: string; name: string; kidFriendly: boolean; roles: string[]; released: boolean; position: number; channels: number; providerGroups: string[] }
 export interface LivetvAreaMock {
   sources: LtvSourceMock[];
   /** the *Kanäle* list (Task 23) and the query strings of its list requests */
@@ -221,6 +223,9 @@ export interface LivetvAreaMock {
   /** the raw logo uploads that reached the server */
   logoPuts: Array<{ id: string; type: string; bytes: number }>;
   feeds: LtvFeedMock[];
+  /** *Gruppen & Rechte* (Task 25): the groups, and the per-person exceptions by user id (livetv_group_users) */
+  groups: LtvGroupMock[];
+  exceptions: Record<string, { allow: string[]; deny: string[] }>;
   /** LIVETV_SRT_PORTS as livetv's /v1/system reports it, and the host shown to encoders (LIVETV_SRT_HOST) */
   ports: number[];
   /** livetv reports its range (false: `GET /ingest` answers `ports: null`, every feed `error`) */
@@ -278,6 +283,7 @@ function ltvChannels(): LtvChanMock[] {
     base({ id: 'ch-wolkenlos', sourceId: 'src-feeds', importName: 'Kanal Wolkenlos', importNumber: 802, importGroup: null, epg: false, streamKind: 'srt', ingest: 'push', push: { port: 9001, hint: 'ff-QW7RT5' } }),
   ];
 }
+const ltvGroup = (o: Partial<LtvGroupMock> & Pick<LtvGroupMock, 'id' | 'name' | 'position' | 'channels'>): LtvGroupMock => ({ kidFriendly: false, roles: [], released: true, providerGroups: [], ...o });
 export function livetvAreaMock(): LivetvAreaMock {
   const today = (h: number, m: number) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
   return {
@@ -292,6 +298,17 @@ export function livetvAreaMock(): LivetvAreaMock {
       { id: 'ch-hafen', sourceId: 'src-feeds', name: 'Hafenkanal', number: 801, streamKind: 'hls', ingest: null },
       { id: 'ch-wolkenlos', sourceId: 'src-feeds', name: 'Kanal Wolkenlos', number: 802, streamKind: 'srt', push: { port: 9001, hint: 'ff-QW7RT5' }, ingest: { state: 'receiving', rejected1h: 2 } },
     ],
+    // Task 25: five released groups (Kinderinsel + Natur & Tiere are kid-friendly: 11 + 12 = 23 channels), two the import left unreleased (matches the source card's "2 neue Gruppen")
+    groups: [
+      ltvGroup({ id: 'g-sport', name: 'Sport', roles: ['family', 'friend'], position: 0, channels: 34, providerGroups: ['DE | Sport', 'DE | Sport HD'] }),
+      ltvGroup({ id: 'g-nachrichten', name: 'Nachrichten', roles: ['family', 'friend', 'guest'], position: 1, channels: 18, providerGroups: ['DE | News'] }),
+      ltvGroup({ id: 'g-kinder', name: 'Kinderinsel', kidFriendly: true, roles: ['family', 'friend'], position: 2, channels: 11, providerGroups: ['DE | Kids'] }),
+      ltvGroup({ id: 'g-natur', name: 'Natur & Tiere', kidFriendly: true, roles: ['family'], position: 3, channels: 12, providerGroups: ['DE | Doku Natur'] }),
+      ltvGroup({ id: 'g-regional', name: 'Regional', position: 4, channels: 9 }),
+      ltvGroup({ id: 'g-kino', name: 'Kinofilme', released: false, position: 5, channels: 41, providerGroups: ['DE | Cinema'] }),
+      ltvGroup({ id: 'g-musik', name: 'Musik & Konzert', released: false, position: 6, channels: 27, providerGroups: ['DE | Konzert', 'DE | Musik'] }),
+    ],
+    exceptions: {},
     ports: Array.from({ length: 10 }, (_, i) => 9000 + i),
     portsKnown: true,
     host: 'friend.example.com',
@@ -910,7 +927,6 @@ function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: st
     const ports = a.portsKnown && a.ports.length ? { from: Math.min(...a.ports), to: Math.max(...a.ports) } : null;
     return J({ host: a.host, ports, feeds });
   }
-  if (p === '/api/admin/livetv/groups' && m === 'GET') return J({ groups: [{ id: 'g-regional', name: 'Regional' }, { id: 'g-sport', name: 'Sport' }] });
   if (p === '/api/admin/livetv/channels' && m === 'POST') {
     const b = body ?? {};
     if (typeof b.name !== 'string' || !b.name.trim()) return J({ error: 'invalid', field: 'name' }, 400);
@@ -1082,6 +1098,99 @@ function pushAnswer(a: LivetvAreaMock, port: number) {
  * newest first; `user` is the person the entries are about, `actor` the admin. As the backend writes them (rights.ts diffRights): a changed value
  * has no `layer`; `layer` appears only when the value stayed and the deciding layer moved (sample 9002).
  */
+/** the groups in the backend's list order: unreleased first, then by position */
+const ltvSorted = (a: LivetvAreaMock) => [...a.groups].sort((x, y) => Number(x.released) - Number(y.released) || x.position - y.position || x.name.localeCompare(y.name));
+/** a person's exceptions as the backend's `userGroups` answers them (id + name, in group order) */
+function ltvExceptionsOf(a: LivetvAreaMock, userId: string) {
+  const e = a.exceptions[userId] ?? { allow: [], deny: [] };
+  const ref = (ids: string[]) => ltvSorted(a).filter((g) => ids.includes(g.id)).map((g) => ({ id: g.id, name: g.name }));
+  return { allow: ref(e.allow), deny: ref(e.deny) };
+}
+/**
+ * The channel groups routes (backend livetv/adminRoutes.ts, groups.ts; Task 18). Every write is recorded in `area.calls`; refusals as the
+ * backend has them: 400 { error: 'invalid', field }, 404 not_found, 409 name_taken. A role that is not stored (an env-only one) and an
+ * unknown one are `400 invalid roles`.
+ */
+function ltvGroupsRoute(st: AdminState, m: string, p: string, body: any, J: Reply): Promise<void> | null {
+  const a = st.livetv.area;
+  if (m !== 'GET') a.calls.push({ m, p, body });
+  const catalogue = st.matrix.roles.map((r) => r.key);
+  const view = (g: LtvGroupMock) => ({ ...g, roles: catalogue.filter((k) => g.roles.includes(k)) });
+  const bad = (field: string) => J({ error: 'invalid', field }, 400);
+  const rolesOk = (rs: unknown): rs is string[] => Array.isArray(rs) && rs.every((k) => st.matrix.roles.some((r) => r.key === k && r.stored));
+  const nameOk = (n: unknown): n is string => typeof n === 'string' && n.trim().length >= 1 && n.trim().length <= 40;
+  const taken = (n: string, except?: string) => a.groups.some((g) => g.id !== except && g.name.toLowerCase() === n.trim().toLowerCase());
+  const known = (ids: unknown): ids is string[] => Array.isArray(ids) && ids.every((i) => typeof i === 'string' && a.groups.some((g) => g.id === i));
+  const strict = (b: any, keys: string[]) => typeof b === 'object' && b !== null && Object.keys(b).every((k) => keys.includes(k));
+  let mm: RegExpMatchArray | null;
+
+  if (p === '/api/admin/livetv/groups' && m === 'GET') return J({ groups: ltvSorted(a).map(view), pending: a.groups.filter((g) => !g.released).length });
+  if (p === '/api/admin/livetv/groups' && m === 'POST') {
+    if (!strict(body, ['name', 'kidFriendly', 'roles', 'released']) || !nameOk(body?.name)) return bad('name');
+    if (body.roles !== undefined && !rolesOk(body.roles)) return bad('roles');
+    if (taken(body.name)) return J({ error: 'name_taken' }, 409);
+    const g = ltvGroup({ id: `g-new-${++a.seq}`, name: body.name.trim(), kidFriendly: body.kidFriendly === true, roles: [...new Set<string>(body.roles ?? [])], released: body.released ?? true, position: Math.max(-1, ...a.groups.map((x) => x.position)) + 1, channels: 0 });
+    a.groups.push(g);
+    return J(view(g), 201);
+  }
+  if (p === '/api/admin/livetv/groups/release' && m === 'POST') {
+    if (!strict(body, ['ids', 'roles', 'kidFriendly']) || !Array.isArray(body?.ids) || !body.ids.length || typeof body.kidFriendly !== 'boolean') return bad('body');
+    if (!rolesOk(body.roles)) return bad('roles');
+    const hit = a.groups.filter((g) => body.ids.includes(g.id));
+    for (const g of hit) Object.assign(g, { released: true, kidFriendly: body.kidFriendly, roles: [...new Set<string>(body.roles)] });
+    return J({ released: hit.length });
+  }
+  if (p === '/api/admin/livetv/groups/order' && m === 'PUT') {
+    if (!strict(body, ['ids']) || !Array.isArray(body?.ids)) return bad('ids');
+    const rest = ltvSorted(a).filter((g) => !body.ids.includes(g.id)).map((g) => g.id);
+    [...body.ids, ...rest].forEach((id: string, i: number) => { const g = a.groups.find((x) => x.id === id); if (g) g.position = i; });
+    return J({ ok: true });
+  }
+  if (p === '/api/admin/livetv/groups/merge' && m === 'POST') {
+    if (!strict(body, ['ids', 'into']) || !Array.isArray(body?.ids) || !body.ids.length || typeof body.into !== 'string') return bad('body');
+    const into = a.groups.find((g) => g.id === body.into);
+    const ids: string[] = body.ids.filter((i: string) => i !== body.into);
+    if (!ids.length || !known(ids)) return bad('ids');
+    if (!into) return J({ error: 'not_found' }, 404);
+    for (const g of a.groups.filter((x) => ids.includes(x.id))) { into.providerGroups = [...new Set([...into.providerGroups, ...g.providerGroups])].sort(); into.channels += g.channels; }
+    a.groups = a.groups.filter((g) => !ids.includes(g.id));
+    for (const e of Object.values(a.exceptions)) { e.allow = e.allow.filter((i) => !ids.includes(i)); e.deny = e.deny.filter((i) => !ids.includes(i)); }
+    return J(view(into));
+  }
+  if ((mm = p.match(/^\/api\/admin\/livetv\/groups\/([^/]+)$/))) {
+    const g = a.groups.find((x) => x.id === mm![1]);
+    if (m === 'GET') return g ? J(view(g)) : J({ error: 'not_found' }, 404);
+    if (!g) return J({ error: 'not_found' }, 404);
+    if (m === 'DELETE') {
+      a.groups = a.groups.filter((x) => x.id !== g.id);
+      for (const e of Object.values(a.exceptions)) { e.allow = e.allow.filter((i) => i !== g.id); e.deny = e.deny.filter((i) => i !== g.id); }
+      return J({ ok: true });
+    }
+    if (m === 'PATCH') {
+      if (!strict(body, ['name', 'kidFriendly', 'roles', 'released'])) return bad('body');
+      if (body.name !== undefined && !nameOk(body.name)) return bad('name');
+      if (body.roles !== undefined && !rolesOk(body.roles)) return bad('roles');
+      if (body.name !== undefined && taken(body.name, g.id)) return J({ error: 'name_taken' }, 409);
+      if (body.name !== undefined) g.name = body.name.trim();
+      if (body.kidFriendly !== undefined) g.kidFriendly = body.kidFriendly;
+      if (body.roles !== undefined) g.roles = [...new Set<string>(body.roles)];
+      if (body.released !== undefined) g.released = body.released;
+      return J(view(g));
+    }
+  }
+  return null;
+}
+/** `livetvCheck` (backend livetv/rights.ts): every group with whether the profile sees it and why not; null when Live TV is not installed or the account lacks `liveTv` */
+function ltvCheckMock(st: AdminState, u: AdminUser, p: DetailProfile) {
+  const a = st.livetv.area;
+  if (!st.livetv.installed || viewRows(st, u, p).find((r) => r.key === 'liveTv')?.value !== true) return null;
+  const ex = a.exceptions[u.id] ?? { allow: [], deny: [] };
+  const groups = ltvSorted(a).map((g) => {
+    const reason = !g.released ? 'notReleased' : p.kids && !g.kidFriendly ? 'notKidFriendly' : u.role === 'admin' ? null : ex.deny.includes(g.id) ? 'denied' : g.roles.includes(u.role) || ex.allow.includes(g.id) ? null : 'notGranted';
+    return { id: g.id, name: g.name, visible: reason === null, reason, channels: g.channels };
+  });
+  return { groups: groups.map(({ channels: _c, ...g }) => g), channels: groups.filter((g) => g.visible).reduce((n, g) => n + g.channels, 0) };
+}
 export function rightsAuditSamples(user: { id: string; name: string }, actor = 'Ben Muster'): AuditRow[] {
   const row = (id: number, minutes: number, action: string, meta: Record<string, unknown>): AuditRow => ({ id, at: new Date(Date.now() - minutes * 60000).toISOString(), action, target: user.id, meta, actor, target_name: user.name });
   return [
@@ -1131,6 +1240,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       v2: { impressions: 0, clicks: 0, plays: 0, dismisses: 0, ctr: null, playRate: null },
     },
   });
+  if (p.startsWith('/api/admin/livetv/groups')) return ltvGroupsRoute(st, m, p, body, J);
   if (p.startsWith('/api/admin/livetv/')) return livetvRoute(st.livetv, m, p, sp, body, J);
   if (p === '/api/admin/summary') return st.summaryFails ? J({ error: 'boom' }, 500) : J(adminSummary(st));
   if (p === '/api/admin/status') {
@@ -1169,6 +1279,18 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       if (m === 'PUT') { const to = { ...cur, ...body }; log('user.limits', u.id, { from: cur, to }, u.name); st.limits[u.id] = to; return J({ limits: to }); }
     }
     // ---- Sicht prüfen (backend viewcheck.ts, adminUsers.ts): the rights of one profile, its library counts and the title check ----
+    if (rest === '/livetv-groups' && m === 'PUT') {
+      // backend adminUsers.ts: the body is strict, an overlap is 400 invalid deny, an admin takes none, an unknown group is 400 invalid
+      const a = st.livetv.area, ids = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+      if (typeof body !== 'object' || body === null || Object.keys(body).some((k) => k !== 'allow' && k !== 'deny') || !ids(body.allow) || !ids(body.deny)) return J({ error: 'invalid', field: 'body' }, 400);
+      a.calls.push({ m, p, body });
+      if (body.allow.some((g: string) => body.deny.includes(g))) return J({ error: 'invalid', field: 'deny' }, 400);
+      if (u.role === 'admin' && (body.allow.length || body.deny.length)) return J({ error: 'admin_groups_locked' }, 400);
+      for (const k of ['allow', 'deny'] as const) if (body[k].some((g: string) => !a.groups.some((x) => x.id === g))) return J({ error: 'invalid', field: k }, 400);
+      log('user.livetv_groups', u.id, { allow: body.allow, deny: body.deny }, u.name);
+      a.exceptions[u.id] = { allow: [...new Set<string>(body.allow)], deny: [...new Set<string>(body.deny)] };
+      return J({ livetvGroups: ltvExceptionsOf(a, u.id) });
+    }
     if (rest === '/rights' && m === 'GET' && sp.has('profile')) return viewRights(st, u, sp.get('profile')!, J);
     if (rest === '/check' && (m === 'GET' || m === 'POST')) return viewCheck(st, u, m, m === 'GET' ? { profileId: sp.get('profile') } : body, J, log);
     // every matrix row of the account (backend userRights.ts rightsView): effective value, the role's value, the stored override (null = none; an admin's
@@ -1182,7 +1304,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
         const rows = MATRIX_FIELDS_MOCK.map((f) => rowOf(f.key as string));
         const libs = rows.find((r) => r.key === 'libraries')!.value;
         const missing = Array.isArray(libs) ? libs.filter((n) => !st.matrix.libraries.some((l) => l.name.toLowerCase() === String(n).toLowerCase())) : [];
-        return J({ role: u.role, note: u.note ?? null, rows, profile: null, hardKids: [], missingLibraries: missing });
+        return J({ role: u.role, note: u.note ?? null, rows, profile: null, hardKids: [], missingLibraries: missing, livetvGroups: ltvExceptionsOf(st.livetv.area, u.id) });
       }
       if (m === 'PUT') {
         const o = (body?.overrides ?? {}) as Record<string, unknown>;
@@ -1361,6 +1483,8 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
         roles: rows.map((r, position) => ({
           key: r.key, label: r.label, builtinLabel: r.builtinLabel, base: r.base, origin: r.origin, invitable: r.invitable, position,
           envGone: r.envGone, stored: r.stored, accounts: r.accounts, profiles: r.profiles, kidsProfiles: r.kidsProfiles, values: r.values, sources: r.sources, missingLibraries: r.missingLibraries,
+          // backend roleGroupNames: the released groups the role sees (the admin: all), in group order
+          livetvGroups: ltvSorted(st.livetv.area).filter((g) => g.released && (r.key === 'admin' || g.roles.includes(r.key))).sort((x, y) => x.position - y.position).map((g) => g.name),
           // the value without the role's own row (the backend's roleRights(ctx, key, null))
           defaults: Object.fromEntries(MATRIX_FIELDS_MOCK.map((f) => [f.key as string, inheritedValue(r, f.key as string)])),
         })),
@@ -1773,7 +1897,7 @@ function viewRights(st: AdminState, u: AdminUser, pid: string, J: Reply): Promis
   if (!pidOk(pid)) return J({ error: 'bad_request' }, 400);
   const p = profileOf(st, u, pid);
   if (!p) return J({ error: 'not_found' }, 404);
-  return J({ role: u.role, note: u.note ?? null, rows: viewRows(st, u, p), profile: { id: p.id, name: p.name, kids: p.kids, maxRating: kidsCap(p) }, hardKids: p.kids ? KIDS_OFF_MOCK : [], missingLibraries: [] });
+  return J({ role: u.role, note: u.note ?? null, rows: viewRows(st, u, p), profile: { id: p.id, name: p.name, kids: p.kids, maxRating: kidsCap(p) }, hardKids: p.kids ? KIDS_OFF_MOCK : [], missingLibraries: [], livetvGroups: ltvExceptionsOf(st.livetv.area, u.id) });
 }
 function viewCheck(st: AdminState, u: AdminUser, m: string, body: any, J: Reply, log: (a: string, t: string | null, meta?: Record<string, unknown>, n?: string | null) => void): Promise<void> {
   // the route's rate limit runs first: 30 a minute (fastify's 429 answer)
@@ -1795,7 +1919,7 @@ function viewCheck(st: AdminState, u: AdminUser, m: string, body: any, J: Reply,
     return J({ libraries: st.matrix.libraries.map((l) => {
       const t = VIEW_TOTALS[l.name] ?? { total: 10, seen: { none: 10, '12': 10, '6': 10, '0': 10 } }, vis = shared(l.name);
       return { id: l.id, name: l.name, visible: vis, seen: vis ? t.seen[cap === null ? 'none' : String(cap)] ?? t.total : null, total: t.total };
-    }) });
+    }), livetv: ltvCheckMock(st, u, p) });
   }
   // exactly one of query (2-100 characters) and itemId (32 hex)
   const q = typeof body.query === 'string' ? body.query.trim() : undefined, id = body.itemId;
