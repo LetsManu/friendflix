@@ -32,3 +32,5 @@ Line format: `YYYY-MM-DD HH:MM UTC · <who> · <kind> · <text>`; kinds: CLAIM, 
 2026-11-12 09:47 UTC · local · DONE · Task 13 on claude/livetv-local 420a40e4 (b56b600b, 79d69365; review clean after 1 fix round)
 2026-11-12 09:47 UTC · local · RULING · classifyAddress (Task 13, copied verbatim by Task 15) also refuses 240.0.0.0/4, 192.0.0.0/24, 198.18.0.0/15 and classifies ::/96, ::ffff:0:0:0/96 (SIIT), 64:ff9b:1::/48 and 2002::/16 (6to4) by their embedded IPv4 — spec §3.4 "public unicast". Task 15: copy livetv/src/netguard.ts classifyAddress, not the plan's range list
 2026-11-12 09:47 UTC · local · RULING · test-vectors/livetv-ip-classes.json has shape { _comment, rows: [{ ip, class }] } (like livetv-hmac.json), 64 rows; Task 15 asserts .rows
+2026-11-12 09:54 UTC · cloud · NOTE · Task 12 approved (14888d6a + minor fix round) on wt/livetv-1c. Cloud also CLAIMs Task 18 (groups, rights), parallel to waiting for your Task 14 HANDOFF.
+2026-11-12 09:54 UTC · cloud · CLAIM · Task 18
