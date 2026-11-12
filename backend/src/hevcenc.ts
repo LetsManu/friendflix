@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, randomUUID } from 'node:crypto';
+import { timedClip } from './cliptime.js';
 import type { Ctx } from './ctx.js';
-import { markConvExempt, within } from './convexempt.js';
+import { within } from './convexempt.js';
 import { listLive } from './live.js';
-import type { EncoderSettings, HevcGate } from './media/types.js';
+import type { EncoderSettings, HevcGate, ServerSession } from './media/types.js';
 import { previews, serviceUser } from './previews.js';
 import type { UserRow } from './types.js';
 
@@ -35,9 +36,7 @@ const FAIL_KEY = 'hevcenc:failures';
 const LOCK_KEY = 'hevcenc:gate';
 const RUN_KEY = 'hevcenc:running';
 const RUN_TTL_S = 600;
-const TITLE_SCAN = 20;
 const GRANT = 'hevcgrant:';
-const FETCH_TIMEOUT_MS = 30_000;
 const PROBE_SEGMENTS = 4;
 const SEGMENT_SECONDS = 3;
 
@@ -72,7 +71,8 @@ const readFailures = async (ctx: Ctx): Promise<Array<{ at: number; device: strin
   return Array.isArray(l) ? l.filter((f): f is { at: number; device: string } => typeof f?.at === 'number' && typeof f?.device === 'string') : [];
 };
 
-const readSettings = async (ctx: Ctx, ms = 3000): Promise<EncoderSettings | null> => {
+/** The media server's encoder settings, bounded by `ms` (null: no such read, it failed or it was late). Shared with convbench.ts. */
+export const readSettings = async (ctx: Ctx, ms = 3000): Promise<EncoderSettings | null> => {
   const read = ctx.jf.admin.encoderSettings?.bind(ctx.jf.admin);
   return read ? ((await within(read, ms)) ?? null) : null;
 };
@@ -180,26 +180,9 @@ export async function claimHevcProbe(ctx: Ctx): Promise<string | null> {
   const token = randomUUID();
   return (await ctx.kv.setnx(RUN_KEY, token, RUN_TTL_S).catch(() => false)) ? token : null;
 }
-
-const resolveUri = (base: string, uri: string) => { const u = new URL(uri, new URL(base, 'http://jf.invalid')); return u.pathname + u.search; };
-const lines = (p: string) => p.split(/\r?\n/).map((l) => l.trim());
-
-/** The first of the first 20 library titles that is SDR and 720-1080p (a series by its first episode); the conversions the gate allows look like this. */
-async function pickTitle(ctx: Ctx, user: UserRow): Promise<string | null> {
-  const traits = ctx.jf.mediaTraits?.bind(ctx.jf);
-  if (!traits) return null;
-  const page = (await ctx.jf.items(user, { types: 'Movie,Series', limit: TITLE_SCAN, start: 0 })).items;
-  for (const it of page) {
-    let id = it.id;
-    if (it.type === 'Series') {
-      const ep = await ctx.jf.firstEpisode(user, it.id);
-      if (!ep) continue;
-      id = ep.id;
-    }
-    const t = await traits(user, id).catch(() => null);
-    if (t && t.resolution === 'hd' && t.hdr === null && t.sdr === true) return id; // an unknown range is not SDR
-  }
-  return null;
+/** Releases the claim taken with `token` (never another holder's). Never throws. */
+export async function releaseHevcProbe(ctx: Ctx, token: string): Promise<void> {
+  await ctx.kv.delIfEquals(RUN_KEY, token).catch(() => undefined);
 }
 
 /**
@@ -216,7 +199,6 @@ export async function probeHevcEncoder(ctx: Ctx, user: UserRow, deps: { now?: ()
   const pv = previews(ctx);
   const wasPaused = pv.paused;
   pv.paused = true;
-  let playSessionId: string | undefined;
   try {
     const settings = await readSettings(ctx);
     const fp = settings ? fingerprint(settings) : '';
@@ -228,63 +210,40 @@ export async function probeHevcEncoder(ctx: Ctx, user: UserRow, deps: { now?: ()
     try {
       await pv.whenIdle();
       if (await hevcBusy(ctx)) return null; // someone started watching while a preview clip finished: nothing is converted or stored
-      const videoId = await pickTitle(ctx, user);
-      if (!videoId) return await done({ ok: false, reason: 'no_title' });
-      const info = await ctx.jf.playbackInfo(user, videoId, { maxBitrate: 8_000_000 });
-      const clip = await ctx.jf.clipTranscode(user, info, { videoCodec: 'hevc', fmp4: true, videoBitrate: 6_000_000, audioBitrate: 128_000, maxWidth: 1920, maxHeight: 1080, segmentLength: SEGMENT_SECONDS });
-      playSessionId = clip.playSessionId;
-      await markConvExempt(ctx, playSessionId); // a probe is not a conversion of the budget (ruling 8)
-      const get = async (path: string): Promise<Response> => {
-        const res = await ctx.jf.mediaFetch(user, path, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-        if (!res.ok) throw new HttpFail();
-        return res;
-      };
-      const master = lines(await (await get(clip.path)).text()).find((l) => l && !l.startsWith('#'));
-      if (!master) throw new HttpFail();
-      const variantPath = resolveUri(clip.path, master);
-      const variant = lines(await (await get(variantPath)).text());
-      const mapUri = /#EXT-X-MAP:.*URI="([^"]+)"/.exec(variant.find((l) => l.startsWith('#EXT-X-MAP')) ?? '')?.[1];
-      if (!mapUri) return await done({ ok: false, reason: 'not_hevc' });
-      const init = Buffer.from(await (await get(resolveUri(variantPath, mapUri))).arrayBuffer());
-      if (!init.includes('hvcC')) return await done({ ok: false, reason: 'not_hevc' });
-      const segs: Array<{ uri: string; dur: number }> = [];
-      variant.forEach((l, i) => {
-        if (!l || l.startsWith('#')) return;
-        const dur = Number(/^#EXTINF:([\d.]+)/.exec(variant[i - 1] ?? '')?.[1]);
-        segs.push({ uri: l, dur: Number.isFinite(dur) && dur > 0 ? dur : SEGMENT_SECONDS });
-      });
-      const run = segs.slice(0, PROBE_SEGMENTS);
-      if (!run.length) throw new HttpFail();
-      const t0 = now();
-      for (const s of run) {
-        const body = Buffer.from(await (await get(resolveUri(variantPath, s.uri))).arrayBuffer());
-        if (!body.length) throw new HttpFail();
-      }
-      const seconds = Math.max((now() - t0) / 1000, 0.001);
-      const speed = Math.round((run.reduce((a, s) => a + s.dur, 0) / seconds) * 100) / 100;
-      return await done(speed < HEVC_MIN_SPEED ? { ok: false, reason: 'slow', speed } : { ok: true, speed });
+      const r = await timedClip(ctx, user, { videoCodec: 'hevc', segments: PROBE_SEGMENTS, segmentSeconds: SEGMENT_SECONDS, checkInit: (init) => init.includes('hvcC'), now });
+      if (!r.ok) return await done({ ok: false, reason: r.reason });
+      return await done(r.speed < HEVC_MIN_SPEED ? { ok: false, reason: 'slow', speed: r.speed } : { ok: true, speed: r.speed });
     } catch {
       return await done({ ok: false, reason: 'http' });
     }
   } finally {
-    if (playSessionId) await ctx.jf.stopEncoding(user, playSessionId).catch(() => undefined);
     pv.paused = wasPaused;
-    await ctx.kv.delIfEquals(RUN_KEY, token).catch(() => undefined);
+    await releaseHevcProbe(ctx, token);
   }
 }
-class HttpFail extends Error {}
 
 /**
  * Why the media server may not be disturbed: `watching` = a live portal stream or any transcode on the media server (an app of its
  * own); `unknown` = its session list could not be read in time (the probe would measure nothing useful anyway). null = free.
  */
 export async function hevcBusyReason(ctx: Ctx): Promise<'watching' | 'unknown' | null> {
-  if ((await listLive(ctx).catch(() => [{}])).length > 0) return 'watching';
+  const live = await listLive(ctx).catch(() => null);
+  const early = busyFrom(live, []); // the live list alone decides first: the session list is not read while someone watches
+  if (early) return early;
   const list = ctx.jf.admin.transcodeSessions?.bind(ctx.jf.admin);
   if (!list) return null;
-  const sessions = await within(list, HEVC_SESSIONS_TIMEOUT_MS);
-  if (!sessions) return 'unknown';
-  return sessions.some((s) => s.playMethod === 'Transcode') ? 'watching' : null;
+  return busyFrom(live, (await within(list, HEVC_SESSIONS_TIMEOUT_MS)) ?? null);
+}
+
+/**
+ * Pure rule behind hevcBusyReason (and the conversion benchmark's busy check): `watching` when the live list is unreadable (null) or
+ * holds a portal stream, `unknown` when the session list is unreadable (null; [] = a server without one), `watching` when any session
+ * transcodes, unless its play session is in `skip` (FriendFlix's own exempt clips, for the benchmark). null = free.
+ */
+export function busyFrom(live: readonly unknown[] | null, sessions: readonly ServerSession[] | null, skip: ReadonlySet<string> = new Set()): 'watching' | 'unknown' | null {
+  if (live === null || live.length > 0) return 'watching';
+  if (sessions === null) return 'unknown';
+  return sessions.some((s) => s.playMethod === 'Transcode' && !(s.playSessionId && skip.has(s.playSessionId))) ? 'watching' : null;
 }
 export const hevcBusy = async (ctx: Ctx): Promise<boolean> => (await hevcBusyReason(ctx)) !== null;
 
