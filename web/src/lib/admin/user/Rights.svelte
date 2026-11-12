@@ -111,6 +111,11 @@
     return lines;
   })();
 
+  /** the PUT was stored: the staged edits go (they would show as unsaved), also when the reload after it failed */
+  function settle(sent: { note?: string }) {
+    if (!view) return;
+    staged = {}; view = { ...view, note: sent.note !== undefined ? sent.note : view.note }; note = view.note ?? '';
+  }
   async function save() {
     if (!patch || saving) return;
     const sent = patch;
@@ -119,19 +124,19 @@
       await api(`/api/admin/users/${userId}/rights`, { method: 'PUT', body: sent });
       saving = false;
       toast.success(tr('adminPeople.rights.saved', { name }));
-      // saved either way: if the reload fails the staged edits must not stay (they would show as unsaved)
-      if (!(await load()) && view) { staged = {}; view = { ...view, note: sent.note !== undefined ? sent.note : view.note }; note = view.note ?? ''; }
+      if (!(await load())) settle(sent);
     } catch (e) {
-      saving = false;
       const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
       if (e instanceof ApiError && e.status === 502 && code === 'policy_partial') {
-        // stored either way: show the stored values, offer the policy again
+        // stored either way: reload the stored values while the bar still shows the save running, then show the error once with
+        // its final buttons (*Schließen* · *Erneut anwenden*): no staged edits left, so nothing swaps under the pointer
+        if (!(await load())) settle(sent);
         partial = true;
         barError = partialText(Number((e.body as { failed?: number }).failed) || 0);
-        await load();
       } else if (e instanceof ApiError && e.status === 400 && code === 'unknown_library') {
         libError = tr('adminPeople.rights.unknownLibrary');
       } else barError = errorText(e);
+      saving = false;
     }
     bar?.focus();
   }
