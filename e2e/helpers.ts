@@ -114,23 +114,27 @@ export const frOut = cubicBezier(0.22, 1, 0.36, 1);
 
 /**
  * Arms a catch for the next `transform` CSS transition of `selector`: once a style change on <html> (a room variable such as
- * --castbar-h or --savebar-h) starts one, it is paused at once, so the test can seek it (seekTransition). Waits for transitions
- * still running on the element first and returns where its `edge` stands before the change.
+ * --castbar-h or --savebar-h) starts one, it is paused at once, so the test can seek it (seekTransition). With `unset`, only a
+ * change after which that variable is no longer set counts; the glides of rooms that come or go before it land at once. Waits for transitions still
+ * running on the element first and returns where its `edge` stands before the change.
  */
-export async function armTransition(page: Page, selector: string, edge: 'top' | 'bottom' = 'bottom'): Promise<number> {
-  return page.evaluate(async ({ selector, edge }) => {
+export async function armTransition(page: Page, selector: string, edge: 'top' | 'bottom' = 'bottom', unset?: string): Promise<number> {
+  return page.evaluate(async ({ selector, edge, unset }) => {
     const el = document.querySelector(selector)!;
     await Promise.all(el.getAnimations().map((a) => a.finished.catch(() => undefined)));
     const w = window as unknown as { __caught?: CSSTransition | null };
     w.__caught = null;
     const mo = new MutationObserver(() => {
+      const isLift = (x: Animation): x is CSSTransition => x instanceof CSSTransition && x.transitionProperty === 'transform';
+      // another room came or went first: that glide lands at once, so the one under test starts from a settled place
+      if (unset && document.documentElement.style.getPropertyValue(unset) !== '') { el.getAnimations().filter(isLift).forEach((x) => x.finish()); return; }
       // getAnimations() flushes style, so a transition the change starts exists here, before any frame ran
-      const a = el.getAnimations().find((x): x is CSSTransition => x instanceof CSSTransition && x.transitionProperty === 'transform');
+      const a = el.getAnimations().find(isLift);
       if (a) { a.pause(); w.__caught = a; mo.disconnect(); }
     });
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
     return el.getBoundingClientRect()[edge];
-  }, { selector, edge });
+  }, { selector, edge, unset });
 }
 
 /**

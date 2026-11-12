@@ -572,6 +572,52 @@ test.describe('admin user detail (desktop)', () => {
     await expect(panel.getByRole('button', { name: 'Kinderprofil anlegen' })).toBeFocused();
   });
 
+  /** the toast's lower edge is above the top edge of `target` (a sheet's footer button), so the button takes the click */
+  const toastAbove = async (page: import('@playwright/test').Page, toast: import('@playwright/test').Locator, target: import('@playwright/test').Locator) => {
+    await expect.poll(async () => {
+      const [a, b] = await Promise.all([toast.boundingBox(), target.boundingBox()]);
+      return a && b ? Math.round(b.y - (a.y + a.height)) : -1;
+    }).toBeGreaterThanOrEqual(0);
+  };
+
+  test('sheets keep their footer free: a toast glides above the Kinderprofil sheet, Anlegen takes the click', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    await panel.getByRole('combobox', { name: 'Altersgrenze von „Kinder“' }).selectOption('12');
+    const toast = toasts(page).getByRole('listitem').filter({ hasText: 'Altersgrenze von „Kinder“ gespeichert.' });
+    await expect(toast).toBeVisible();
+    await panel.getByRole('button', { name: 'Kinderprofil anlegen' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Kinderprofil anlegen' });
+    await sheet.getByRole('textbox', { name: 'Name' }).fill('Lena');
+    const create = sheet.getByRole('button', { name: 'Anlegen' });
+    await expect(toast).toBeVisible();
+    await toastAbove(page, toast, sheet.getByRole('button', { name: 'Abbrechen' }));
+    await toastAbove(page, toast, create);
+    await create.click();
+    await expect(toasts(page).getByText('„Lena“ angelegt.')).toBeVisible();
+    expect(logged(api, /POST \/api\/admin\/users\/.*\/profiles \{"name":"Lena"/)).toBe(true);
+    // the sheet has gone: its room with it, the toasts are back at their place
+    await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--sheet-h'))).toBe('');
+  });
+
+  test('sheets keep their footer free: a toast glides above Änderungen prüfen, Speichern takes the click', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const streams = rightsPanel(page).getByRole('spinbutton', { name: 'Gleichzeitige Streams' });
+    await streams.fill('4');
+    await saveViaReview(page);
+    const toast = toasts(page).getByRole('listitem').filter({ hasText: 'Rechte von Anna Beispiel gespeichert.' });
+    await expect(toast).toBeVisible();
+    await streams.fill('5');
+    await saveBar(page).getByRole('button', { name: 'Änderungen prüfen' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Änderungen prüfen' });
+    const save = sheet.getByRole('button', { name: 'Speichern' });
+    await expect(toast).toBeVisible();
+    await toastAbove(page, toast, save);
+    await save.click();
+    await expect(sheet).toHaveCount(0);
+    await expect(streams).toHaveValue('5');
+  });
+
   test('profiles: delete asks first, then removes', async ({ page, api }) => {
     await page.goto(`/admin/users/${ANNA}?tab=profiles`);
     const panel = page.getByRole('tabpanel', { name: 'Profile' });

@@ -489,6 +489,16 @@ describe('role matrix and save bar (rights)', () => {
     expect(bar).toContain("st.setProperty('--savebar-h'");
     expect(read('../../routes/admin/roles/+page.svelte')).toMatch(/\.roles \{ padding-bottom: var\(--savebar-h, 0px\); \}/);
   });
+
+  it('open sheets keep a room for the toasts (--sheet-h / --sheet-w): the toasts move by their transform, calm mode at once', () => {
+    const host = read('../ui/ToastHost.svelte');
+    expect(host).toMatch(/transform: translate\(calc\(-50% - var\(--sheet-w, 0px\) \/ 2\), calc\(-1 \* max\(var\(--castbar-h, 0px\) \+ var\(--savebar-h, 0px\), var\(--sheet-h, 0px\) - var\(--toast-b\) \+ 12px\)\)\);/);
+    expect(host).toMatch(/transition: transform 240ms var\(--fr-out\)/);
+    expect(host).toMatch(/:global\(html\.m-still\) \.toasts \{ transition: none; \}/);
+    expect(read('./rights/ReviewSheet.svelte')).toContain('use:sheetRoom transition:slide|global');
+    expect(read('./user/KidsSheet.svelte')).toContain('use:sheetRoom transition:slide|global');
+    expect(read('./rights/RoleSheet.svelte')).toContain("use:sheetRoom={'right'} transition:slide|global");
+  });
 });
 
 /** The person's Rechte tab (users & permissions spec §8): the muted role value and the three-way switch, and the motion rule */

@@ -681,11 +681,11 @@ test.describe('Rollen & Rechte: toasts and the save bar', () => {
       await stageGuestRating(page);
       await bar(page).getByRole('button', { name: 'Änderungen prüfen' }).click();
       const vh = await page.evaluate(() => window.innerHeight);
-      // lifted above the bar's room (96 px) while the bar shows
-      expect(await armTransition(page, '.toasts')).toBeCloseTo(vh - 36 - 96, 0);
+      // the review sheet's room goes when it closes, the bar's room (96 px) once the bar has gone: catch that one
+      await armTransition(page, '.toasts', 'bottom', '--savebar-h');
       await page.getByRole('dialog', { name: 'Änderungen prüfen' }).getByRole('button', { name: 'Speichern' }).click();
       await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
-      // the bar's room goes: the lift is a 240 ms transform transition on the glass curve, seeked (not sampled per frame)
+      // from above the bar down to its own place: a 240 ms transform transition on the glass curve, seeked (not sampled per frame)
       const { duration, ys } = await seekTransition(page, '.toasts', AT);
       expect(duration).toBe(240);
       expectAlongCurve(ys, AT, vh - 36 - 96, vh - 36);

@@ -69,6 +69,26 @@ test.describe('admin user detail (phone)', () => {
     await expect(sheet).toHaveCount(0);
   });
 
+  test('Profile: a toast glides above the Kinderprofil sheet, its fields and buttons stay free', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    await panel.getByRole('combobox', { name: 'Altersgrenze von „Kinder“' }).selectOption('12');
+    const toast = page.getByRole('region', { name: 'Hinweise' }).getByRole('listitem').filter({ hasText: 'Altersgrenze von „Kinder“ gespeichert.' });
+    await expect(toast).toBeVisible();
+    await panel.getByRole('button', { name: 'Kinderprofil anlegen' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Kinderprofil anlegen' });
+    await expect(sheet).toBeVisible();
+    await expect(toast).toBeVisible();
+    // the whole sheet stays free: the toast sits above its top edge
+    await expect.poll(async () => {
+      const [a, b] = await Promise.all([toast.boundingBox(), sheet.boundingBox()]);
+      return a && b ? Math.round(b.y - (a.y + a.height)) : -1;
+    }).toBeGreaterThanOrEqual(0);
+    await sheet.getByRole('textbox', { name: 'Name' }).fill('Lena');
+    await sheet.getByRole('button', { name: 'Anlegen' }).click();
+    await expect(sheet).toHaveCount(0);
+  });
+
   test('Rechte: rows stack, segments are 44 px, nothing scrolls sideways', async ({ page }) => {
     await page.goto(`/admin/users/${ANNA}?tab=rights`);
     const panel = page.getByRole('tabpanel', { name: 'Rechte' });
