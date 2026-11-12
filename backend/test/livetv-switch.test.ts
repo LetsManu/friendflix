@@ -512,6 +512,21 @@ describe('release on switch', () => {
     expect(await grants()).toEqual([`conv:grant:live:${a}`]);
   });
 
+  it('a device with a cast on A that zaps its local view B to C never releases A (R14)', async () => {
+    const src = await addSource();
+    const a = await addChannel(src, 'Hafenkanal', 4);
+    const b = await addChannel(src, 'Nordlicht TV', 1);
+    const c = await addChannel(src, 'Sternwarte 24', 2);
+    const cast = await watch(anna, a, { via: 'chromecast' });
+    expect(cast.statusCode, cast.body).toBe(200);
+    expect((await watch(anna, b)).statusCode).toBe(200);
+    const wc = await watch(anna, c);
+    expect(wc.statusCode, wc.body).toBe(200);
+    expect(dels()).not.toContain(`DELETE:${a}`);
+    expect(await released()).not.toContain(a);
+    expect((await authz(cast.json().token)).statusCode).toBe(200); // the cast is still a viewer of A
+  });
+
   it('the old token is still replaced', async () => {
     const one = await addSource(1);
     const a = await addChannel(one, 'Hafenkanal', 4);

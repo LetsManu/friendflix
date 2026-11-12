@@ -9,8 +9,15 @@ import type { CastInfo } from '#lib/cast';
 
 export const CAST_HINT_KEY = 'ff-cast-hint', CAST_LAST_KEY = 'ff-cast-last', HINT_SEEN_KEY = 'ff-cast-hint-seen';
 
-/** `next`: the public handle of the queued successor on the receiver (a detached Stop revokes it too) */
-export interface CastHint { castId: string; itemId: string; device: string; exp: number; at: number; next?: string }
+/**
+ * `next`: the public handle of the queued successor on the receiver (a detached Stop revokes it too).
+ * `kind: 'live'`: a live channel (live TV spec §13): `itemId` is the channel id, `castId` the first 32 hex of sha256(the live token in the
+ * receiver's content URL), `live` what the bar shows before anything is known (never the token or the URL).
+ */
+export interface CastHint {
+  castId: string; itemId: string; device: string; exp: number; at: number; next?: string;
+  kind?: 'live'; live?: { number: number | null; name: string };
+}
 export type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
 
 /** answer of GET /api/cast/session/:castId (token-free; see backend `CastLookup`) */
@@ -36,6 +43,8 @@ export interface CastLookup {
 const CAST_ID = /^[0-9a-f]{32}$/;
 /** an item id that is safe in a path segment (`/api/items/<id>`, `/watch/<id>`) */
 const ITEM_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** a live channel id (a provider entry's key may carry a `:2` suffix) */
+const CHANNEL_ID = /^[A-Za-z0-9_:.-]{1,80}$/;
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
 /** the hint if it is well formed and not expired (`exp` and `now` in the same unit, ms); null otherwise, also when storage throws */
@@ -46,8 +55,15 @@ export function readHint(store: Store, now: number): CastHint | null {
     const h = JSON.parse(raw) as Partial<CastHint> | null;
     if (!h || typeof h !== 'object') return null;
     if (typeof h.castId !== 'string' || !CAST_ID.test(h.castId)) return null;
-    if (typeof h.itemId !== 'string' || !ITEM_ID.test(h.itemId) || typeof h.device !== 'string' || !finite(h.exp) || !finite(h.at)) return null;
+    const live = h.kind === 'live';
+    if (typeof h.itemId !== 'string' || !(live ? CHANNEL_ID : ITEM_ID).test(h.itemId) || typeof h.device !== 'string' || !finite(h.exp) || !finite(h.at)) return null;
     if (h.exp <= now) return null;
+    if (live) {
+      const l = (h.live && typeof h.live === 'object' ? h.live : {}) as Partial<NonNullable<CastHint['live']>>;
+      const name = typeof l.name === 'string' ? l.name.slice(0, 200) : '';
+      const number = typeof l.number === 'number' && Number.isInteger(l.number) && l.number > 0 ? l.number : null;
+      return { castId: h.castId, itemId: h.itemId, device: h.device, exp: h.exp, at: h.at, kind: 'live', live: { number, name } };
+    }
     const next = typeof h.next === 'string' && CAST_ID.test(h.next) ? h.next : undefined;
     return { castId: h.castId, itemId: h.itemId, device: h.device, exp: h.exp, at: h.at, ...(next ? { next } : {}) };
   } catch {
@@ -55,7 +71,8 @@ export function readHint(store: Store, now: number): CastHint | null {
   }
 }
 export function writeHint(store: Store, h: CastHint): void {
-  const v = { castId: h.castId, itemId: h.itemId, device: h.device, exp: h.exp, at: h.at, ...(h.next ? { next: h.next } : {}) };
+  const v = { castId: h.castId, itemId: h.itemId, device: h.device, exp: h.exp, at: h.at, ...(h.next ? { next: h.next } : {}),
+    ...(h.kind === 'live' ? { kind: 'live', live: h.live ?? { number: null, name: '' } } : {}) };
   try { store?.setItem(CAST_HINT_KEY, JSON.stringify(v)); } catch { /* storage full or blocked */ }
 }
 export function clearHint(store: Store): void {
@@ -80,6 +97,12 @@ export function rememberDevice(store: Store, name: string): void {
 /** the 43-char base64url token right after `/media/c/` of a cast content URL, else null */
 export function tokenOfContentUrl(url: string): string | null {
   const m = /\/media\/c\/([A-Za-z0-9_-]{43})(?![A-Za-z0-9_-])/.exec(url);
+  return m ? m[1]! : null;
+}
+
+/** the live token right after `/media/l/` of a live content URL (`/media/l/<token>/index.m3u8`), else null */
+export function tokenOfLiveUrl(url: string): string | null {
+  const m = /\/media\/l\/([A-Za-z0-9_-]{1,128})\//.exec(url);
   return m ? m[1]! : null;
 }
 

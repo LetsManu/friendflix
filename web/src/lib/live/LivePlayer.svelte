@@ -6,6 +6,14 @@
   import type Hls from 'hls.js';
   import type { ErrorData } from 'hls.js';
   import { ApiError, getActiveProfile, getCsrf } from '#lib/api';
+  import { castCapableBrowser, castState, initCast, onCastEvent } from '#lib/cast';
+  import { readHint } from '#lib/cast/resume';
+  import PlayOnSheet from '#lib/cast/PlayOnSheet.svelte';
+  import RemoteScreen from '#lib/cast/RemoteScreen.svelte';
+  import { castEngine, castSession, LiveCastError, liveErrText, type CastSession } from '#lib/cast/engine';
+  import { get } from 'svelte/store';
+  import { native } from '#lib/native/bridge';
+  import { perms } from '#lib/perms';
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
   import { kidsMode } from '#lib/kids';
@@ -20,6 +28,7 @@
   import { parseVolume } from '#lib/player/volume';
   import { beat, channels as fetchChannels, clock, nowLines, setLast, stopWatching, watch, type LiveChannel, type LiveList, type Prog, type RunningChannel, type WatchAnswer } from './api';
   import { BANNER_HOLD_MS, bannerVisible } from './banner';
+  import { startsLocally } from './castGate';
   import { atEdge, behind, oldestPoint, restartTarget, resumePoint } from './dvr';
   import { minute } from './fade';
   import { pickHeld, type Held } from './held';
@@ -72,6 +81,17 @@
    * `panelKey`; its OK switches through the same switcher / start() path as a zap (one watch at a time). Closing it gives the focus
    * back to the stage (TV: the controls stay hidden) or to its button (desktop). Back follows `backStep`. Every keydown goes
    * through `noteKey` (the list's hints); the TV controls' footer shows the D-pad hint "Lang OK: Senderliste".
+   *
+   * Casting (Task 41, spec §13), the *Abspielen auf …* button (PlayOnSheet):
+   * - Chromecast: the cast engine's `loadLive` (its own `via: 'chromecast'` token; the backend lets this player's token go as it mints
+   *   it, so the stream here is held like during a switch until it answered). While the engine's live cast runs, this player is its
+   *   remote (RemoteScreen, live variant) and plays nothing itself; opening another channel then plays that one on the TV. When the cast
+   *   ends, the channel plays here again.
+   * - Inside the Android app: `native.castLive` (ruling R1; up to 90 s; false = not cast, nothing alarming, the channel plays on here);
+   *   true: the app's cast bar takes over, the player closes.
+   * - AirPlay (Safari): from the tap the `<video>` gets a `via: 'airplay'` token URL (native HLS, no hls.js), then the system picker
+   *   (after the await it may need the *AirPlay-Gerät wählen* prompt); a zap while AirPlaying is a new token and a `src` swap. A route
+   *   that stays off for AIR_OFF_GRACE_MS brings the stream here (hls.js) back.
    */
   export let channelId: string;
   export let filter: LiveFilter = 'all';
@@ -86,6 +106,7 @@
   const SWIPE_PX = 40;
   const RESUME_MARGIN_S = 2;
   const LIST_REFRESH_MS = 60_000;
+  const AIR_OFF_GRACE_MS = 3000;
   type Timer = ReturnType<typeof setTimeout>;
   type Refusal = Extract<LiveUi, { k: 'full' } | { k: 'providerLimit' }>;
   type OldestSrc = Parameters<typeof oldestPoint>[0];
@@ -131,6 +152,20 @@
   let stopFrame: (() => void) | null = null;
   const timing = createTiming();
   let session: ReturnType<typeof bindPlayerMediaSession> | null = null;
+
+  // ---- casting (spec §13) ----
+  /** the engine's live cast runs: this player is its remote and plays nothing itself */
+  let remoteOn = false;
+  let playOnOpen = false, playOnTrigger: HTMLElement | null = null, castBtn: HTMLButtonElement | undefined;
+  /** a cast is on its way (loadLive, the app's castLive): the stream here is held */
+  let castBusy = false, inShell = false;
+  /** AirPlay: a target is in reach, the element plays a `via: 'airplay'` token, the route points at the TV */
+  let airAvail = false, airMode = false, airWireless = false, airOffT: Timer | undefined, airProbe: HTMLVideoElement | null = null;
+  type AirVideo = HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void; webkitCurrentPlaybackTargetIsWireless?: boolean };
+  $: tvLive = $castSession && $castSession.live && $castSession.kind === 'chromecast' && $castSession.state !== 'detached' ? $castSession : null;
+  $: followCast(tvLive);
+  $: castShown = !tv && (inShell || ($perms.cast && ((castCapableBrowser() && ($castState.available || $castState.connected)) || airAvail)));
+  $: castWhat = cur ? `${cur.number} ${cur.name}${prog ? ` · ${prog.title}` : ''}` : '';
 
   // ---- what is shown ----
   function shell(id: string, number: number, name: string, logo: string | null, now?: Prog, next?: Prog): LiveChannel {
@@ -238,7 +273,7 @@
     ui = { k: 'starting' };
     switchingAt = Date.now(); firstFrameAt = null;
     let r: Awaited<ReturnType<typeof watch>>;
-    try { r = await watch(id); } catch {
+    try { r = await watch(id, airMode ? 'airplay' : undefined); } catch {
       if (g !== gen || destroyed) return 'moved';
       startPending = false;
       dropStream(); onFail({ k: 'lost', attempt: 0 });
@@ -266,7 +301,11 @@
       dropStream(); onFail(u);
       return 'moved';
     }
-    const a = r.answer;
+    useAnswer(r.answer, id, g);
+    return 'moved';
+  }
+  /** a watch answer becomes what plays: the old token goes, the new one is beaten and attached */
+  function useAnswer(a: WatchAnswer, id: string, g: number): void {
     const old = token;
     teardownHls();
     if (old && old !== a.token) void stopWatching(old, false).catch(() => undefined);
@@ -275,7 +314,6 @@
     startBeat();
     replaceUrl(id);
     void attach(a.url, g);
-    return 'moved';
   }
 
   function onFail(u: LiveUi): void {
@@ -344,6 +382,8 @@
       if (startPending) hold(noFrame, true); // a switch's watch is out: firstFrameAt is the new channel's
       else if (firstFrameAt === null) noFrame();
     });
+    // AirPlay: the TV is handed the element's URL, so the token URL goes on the element itself (native HLS, never MSE)
+    if (airMode) { v.src = url; void playV(); return; }
     let H: typeof Hls | null = null;
     try { H = await loadHls(); } catch { H = null; }
     if (g !== attachedGen || destroyed) return;
@@ -607,11 +647,11 @@
   function wake(): void {
     controls = true;
     clearTimeout(hideT);
-    if (paused || panelOpen || listOpen || refusal) return;
+    if (paused || panelOpen || listOpen || refusal || playOnOpen) return;
     hideT = setTimeout(hideControls, tv ? CONTROLS_HIDE_TV_MS : CONTROLS_HIDE_MS);
   }
   function hideControls(): void {
-    if (paused || panelOpen || listOpen) return;
+    if (paused || panelOpen || listOpen || playOnOpen) return;
     controls = false;
     const a = document.activeElement;
     if (tv && a instanceof HTMLElement && root && root !== a && root.contains(a)) root.focus({ preventScroll: true });
@@ -735,6 +775,10 @@
     const s = noteKey(key);
     if (s.size !== seen.size) seen = s;
     const back = e.key === 'Escape' || (tv && isBackKey(e));
+    // the Play on sheet: Back closes it (focus back to its button); its own keys stay with it
+    if (playOnOpen) { if (back) { e.preventDefault(); e.stopImmediatePropagation(); closePlayOn(); } return; }
+    // the remote screen of a live cast: Back leaves the player, every other key belongs to its buttons
+    if (remoteOn) { if (back) { e.preventDefault(); e.stopImmediatePropagation(); leave(); } return; }
     if (back) { e.preventDefault(); e.stopImmediatePropagation(); goBack(); return; }
     if (listOpen) { listKey(e, key); return; }
     if (refusal) return; // the sheet's buttons own the keys
@@ -838,6 +882,131 @@
   }
   function gCancel(): void { gst = null; }
 
+
+  // ---- casting (spec §13) ----
+  function openPlayOn(el?: HTMLElement | null): void { playOnTrigger = el ?? castBtn ?? null; playOnOpen = true; controls = true; clearTimeout(hideT); }
+  function closePlayOn(): void { playOnOpen = false; const b = playOnTrigger; void tick().then(() => (b?.isConnected ? b : root)?.focus({ preventScroll: true })); wake(); }
+  /** the cast button: inside the Android app the app's own cast (castLive), elsewhere the Play on sheet */
+  function onCastBtn(e: MouseEvent): void {
+    if (inShell) { void castViaApp(); return; }
+    openPlayOn(e.currentTarget as HTMLElement);
+  }
+  /** a cast that did not happen: the held stream here acts again (like a refused switch) */
+  function releaseHold(): void {
+    if (remoteOn || destroyed) return;
+    startPending = false;
+    const h = held;
+    held = null;
+    h?.run();
+  }
+  /** Chromecast (the browser holds a cast session): the engine plays the channel on the TV, this player becomes its remote */
+  async function castViaChromecast(): Promise<void> {
+    if (castBusy || remoteOn || destroyed) return;
+    castBusy = true;
+    startPending = true; // the backend lets this player's token go as it mints the cast token: nothing here acts meanwhile
+    try {
+      await castEngine.loadLive(curId, { order: order.map((c) => c.id) });
+    } catch (e) {
+      if (!(e instanceof LiveCastError && e.code === 'superseded')) toast.error(liveErrText(e));
+      releaseHold();
+    } finally {
+      castBusy = false;
+    }
+  }
+  /** inside the Android app (ruling R1): the app casts the channel itself; false (refused, no TV, an older app) changes nothing here */
+  async function castViaApp(): Promise<void> {
+    if (castBusy || destroyed) return;
+    castBusy = true;
+    startPending = true;
+    const ok = await native.castLive(curId);
+    castBusy = false;
+    if (destroyed) return;
+    if (!ok) { releaseHold(); return; }
+    gen++;
+    startPending = false;
+    dropStream(); // the app's token replaced this one on the server
+    leave(); // the app's cast bar shows the channel outside the player
+  }
+  /** the engine's live cast came or went: remote screen on (nothing plays here), or the channel plays here again */
+  function followCast(s: CastSession | null): void {
+    if (destroyed) return;
+    if (s?.live) {
+      const id = s.live.channelId;
+      if (!remoteOn) {
+        remoteOn = true;
+        gen++;
+        startPending = false;
+        clearTimeout(retryT); clearTimeout(pollT); clearTimeout(leaveT);
+        lostCycle = null;
+        dropStream(); // the cast token replaced this one on the server
+        sheet = null; ui = { k: 'playing' }; switchingAt = null;
+        if (listOpen) closeList();
+        if (panelOpen) panelOpen = false;
+      }
+      if (id !== curId) { curId = id; cardId = id; replaceUrl(id); }
+      return;
+    }
+    if (!remoteOn) return;
+    remoteOn = false;
+    if (!hiding) void start(curId); // the cast ended: the channel plays here again (not while the page unloads: pageshow decides then)
+  }
+  /** pagehide until the next pageshow: the engine's cast ends with the page (the TV keeps playing), so nothing starts here meanwhile */
+  let hiding = false;
+  /**
+   * A local watch next to a live cast that this browser left on the TV would start a second stream: with a live hint the engine first
+   * gets a bounded chance to re-adopt the cast (the player then follows it as its remote); only without one the channel starts here.
+   */
+  async function startGuarded(id: string): Promise<void> {
+    const hasHint = (): boolean => { try { return readHint(localStorage, Date.now())?.kind === 'live'; } catch { return false; } };
+    const g = gen;
+    const local = await startsLocally({ hint: hasHint(), inShell, resume: () => castEngine.resume(), hasLive: () => Boolean(get(castSession)?.live) || remoteOn });
+    if (!local || destroyed || g !== gen) return;
+    void start(id);
+  }
+  /** AirPlay row (inside the tap): the token URL on the element, then the picker; once it is there the picker alone */
+  function airTap(): void {
+    if (airMode) { pickAir(); return; }
+    void airStart();
+  }
+  function pickAir(): void {
+    try { (video as AirVideo | undefined)?.webkitShowPlaybackTargetPicker?.(); } catch { /* no picker: the prompt stays */ }
+  }
+  async function airStart(): Promise<void> {
+    if (castBusy || destroyed) return;
+    castBusy = true;
+    const g = ++gen;
+    startPending = true;
+    let r: Awaited<ReturnType<typeof watch>> | null = null;
+    try { r = await watch(curId, 'airplay'); } catch { r = null; }
+    castBusy = false;
+    if (g !== gen || destroyed) { if (r?.ok) void stopWatching(r.answer.token, false).catch(() => undefined); return; }
+    if (!r || !r.ok) {
+      toast.error(r ? liveErrText(new LiveCastError(r.error.error, r.error)) : $t('player.airplay.failed'));
+      releaseHold();
+      return;
+    }
+    startPending = false;
+    airMode = true;
+    useAnswer(r.answer, curId, g);
+    pickAir(); // WebKit may not open it after the await: the "AirPlay-Gerät wählen" prompt opens it from a fresh tap
+  }
+  function onAirAvail(e: Event): void { if ((e as Event & { availability?: string }).availability === 'available') airAvail = true; }
+  function onWireless(): void {
+    const on = Boolean((video as AirVideo | undefined)?.webkitCurrentPlaybackTargetIsWireless);
+    clearTimeout(airOffT);
+    if (on) { airWireless = airMode; return; }
+    if (!airWireless) return;
+    // a route that stays off (AirPlay ended in the picker, the TV gone): the stream here again
+    airOffT = setTimeout(() => { if (!(video as AirVideo | undefined)?.webkitCurrentPlaybackTargetIsWireless) airEnd(); }, AIR_OFF_GRACE_MS);
+  }
+  function airEnd(): void {
+    if (!airMode) return;
+    airMode = false; airWireless = false;
+    void start(curId);
+  }
+  /** "Hier weiterschauen" in the sheet: AirPlay ends here (a Chromecast cast is stopped by the sheet; followCast plays on here) */
+  function onContinued(): void { playOnOpen = false; if (airMode) airEnd(); wake(); }
+
   // ---- Media Session, URL, page life ----
   function msItem(c: LiveChannel | null) {
     return { title: c?.now?.title ?? c?.name ?? '', artist: c ? `${c.number} ${c.name}` : '', artworkIds: [] as string[] };
@@ -859,6 +1028,7 @@
     } catch { /* the router is not ready yet */ }
   }
   function onPageHide(): void {
+    hiding = true;
     if (startPending) { gen++; clearInterval(beatT); beatT = undefined; } // a late answer of the watch out goes through start()'s stop branch
     const tk = token;
     if (!tk) return;
@@ -867,7 +1037,8 @@
   }
   /** back from the back/forward cache: the stream was let go at pagehide, so the channel starts again */
   function onPageShow(e: PageTransitionEvent): void {
-    if (e.persisted && !destroyed) void start(curId);
+    hiding = false;
+    if (e.persisted && !destroyed) void startGuarded(curId);
   }
   const onFs = () => { fullscreen = Boolean(document.fullscreenElement); };
 
@@ -882,6 +1053,20 @@
     try { const v = parseVolume(localStorage.getItem('ff_vol')); if (v !== null && video) { volume = v; video.volume = v; } } catch { /* storage blocked */ }
     seen = seenKeys();
     remote = liveRemote(); // Samsung: registers the live keys now that the player is open
+    inShell = native.available;
+    if (!tv && !inShell) void initCast();
+    // a TV picked in the browser's cast dialog (Play on, or the browser's own cast menu): the channel goes there
+    const offCast = onCastEvent((e) => { if (e === 'session-start' && !remoteOn && !tv && !inShell) void castViaChromecast(); });
+    const v0 = video as AirVideo | undefined;
+    if (v0 && typeof v0.webkitShowPlaybackTargetPicker === 'function') {
+      // hls.js may disable remote playback on the element (ManagedMediaSource): a hidden probe hears the availability too
+      airProbe = document.createElement('video');
+      airProbe.className = 'airprobe';
+      airProbe.setAttribute('aria-hidden', 'true');
+      root?.appendChild(airProbe);
+      for (const el of [v0, airProbe]) el.addEventListener('webkitplaybacktargetavailabilitychanged', onAirAvail);
+      v0.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', onWireless);
+    }
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('blur', onBlur);
@@ -892,7 +1077,10 @@
     listT = setInterval(() => { if (!document.hidden) void loadList(); }, LIST_REFRESH_MS);
     if (video) session = bindPlayerMediaSession(video, msItem(cur), msActions);
     void loadList();
-    void start(channelId);
+    // a live cast runs: this player is its remote (another channel opened now plays on the TV); otherwise the channel plays here
+    const tvNow = tvLive?.live;
+    if (!tvNow) void startGuarded(channelId);
+    else if (tvNow.channelId !== channelId) void castEngine.loadLive(channelId).catch((e: unknown) => { if (!(e instanceof LiveCastError && e.code === 'superseded')) toast.error(liveErrText(e)); });
     wake();
     root?.focus({ preventScroll: true });
     return () => {
@@ -903,12 +1091,15 @@
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('pageshow', onPageShow);
       document.removeEventListener('fullscreenchange', onFs);
+      offCast();
+      if (v0) { v0.removeEventListener('webkitplaybacktargetavailabilitychanged', onAirAvail); v0.removeEventListener('webkitcurrentplaybacktargetiswirelesschanged', onWireless); }
+      airProbe?.remove();
     };
   });
   onDestroy(() => {
     destroyed = true;
     gen++;
-    for (const h of [hideT, retryT, pollT, leaveT, stallT, numT, tapT]) clearTimeout(h);
+    for (const h of [hideT, retryT, pollT, leaveT, stallT, numT, tapT, airOffT]) clearTimeout(h);
     clearInterval(beatT); clearInterval(tickT); clearInterval(listT);
     switcher.dispose();
     longOk.cancel(); // route change
@@ -973,6 +1164,11 @@
     {/if}
     <button type="button" class="pill" class:edge={edgeNow} aria-label={edgeNow ? $t('live.player.liveAria') : $t('live.player.behindAria', { time: behindText })} title={$t('live.player.toLive')} on:click={toLive}>{edgeNow ? $t('live.player.live') : $t('live.player.behind', { time: behindText })}</button>
     <span class="sp"></span>
+    <!-- after the spacer: when it appears only the spacer gives way, nothing else moves -->
+    {#if castShown}
+      <button type="button" class="ib" bind:this={castBtn} class:on={airMode} aria-haspopup={inShell ? undefined : 'dialog'} aria-expanded={inShell ? undefined : playOnOpen} aria-busy={castBusy}
+        aria-label={$t('player.castPicker.open')} title={$t('player.castPicker.open')} on:click={onCastBtn}><Icon name={airMode ? 'airplay' : 'cast'} size={24} /></button>
+    {/if}
     <button type="button" class="ib" aria-label={$t('live.player.chUp')} title={up ? `${up.number} ${up.name}` : undefined} disabled={!up} on:click={() => switcher.press(1)}><Icon name="chevron-up" size={24} /></button>
     <button type="button" class="ib" aria-label={$t('live.player.chDown')} title={down ? `${down.number} ${down.name}` : undefined} disabled={!down} on:click={() => switcher.press(-1)}><Icon name="chevron-down" size={24} /></button>
     {#if !phoneUi}
@@ -997,6 +1193,17 @@
   {/if}
   {#if refusal}
     <FullSheet ui={refusal} phone={phoneUi} {still} on:join={(e) => join(e.detail)} on:close={closeRefusal} />
+  {/if}
+  {#if airMode && !airWireless}
+    <!-- the token URL is on the element; WebKit opens its picker only from a fresh tap -->
+    <button type="button" class="frost-btn airask" on:click={pickAir}><Icon name="airplay" size={20} />{$t('player.airplay.choose')}</button>
+  {/if}
+  {#if remoteOn}
+    <div class="lremote"><RemoteScreen on:close={leave} on:pick={(e) => openPlayOn(e.detail)} /></div>
+  {/if}
+  {#if !tv && !inShell}
+    <PlayOnSheet open={playOnOpen} trigger={playOnTrigger} whatText={castWhat} title={cur?.name ?? ''} airplay={airAvail} airplayActive={airMode && airWireless} sheet={phoneUi}
+      onAirPlay={airTap} onConnected={() => void castViaChromecast()} on:close={closePlayOn} on:continued={onContinued} />
   {/if}
   {#if num || numMsg}
     <NumberCard digits={num?.digits ?? ''} match={num?.match ?? null} zero={num?.zero ?? false} last={prev} message={numMsg} />
@@ -1054,6 +1261,11 @@
   .pill.edge { background: var(--acc-fill); box-shadow: none; padding-left: 26px; }
   .pill.edge::before { content: ''; position: absolute; left: 14px; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 50%; background: #fff; }
   .sp { flex: 1 1 auto; }
+  .ib.on { background: var(--fr-sel); }
+  /* the remote screen of a live cast covers the player (its controls, banner and cards stay underneath, nothing plays there) */
+  .lremote { position: absolute; z-index: 40; left: 0; top: 0; right: 0; bottom: 0; }
+  .airask { position: absolute; z-index: 8; right: max(20px, var(--safe-right, 0px)); top: calc(76px + var(--safe-top, 0px)); gap: 8px; padding: 0 16px; }
+  .lplayer :global(.airprobe) { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   .vol { flex: none; width: 96px; accent-color: #fff; }
 
   .lplayer.phone .ctl { left: 8px; right: 8px; gap: 4px; padding: 6px 8px; bottom: calc(8px + var(--safe-bottom, 0px)); }

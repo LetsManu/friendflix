@@ -312,6 +312,34 @@ describe('live tokens', () => {
     expect(await status(t2)).toBe(200);
   });
 
+  it('a local and a chromecast token of one device are separate slots (R14)', async () => {
+    const dev = { deviceId: 'dev-anna-1' };
+    const l1 = (await mint({ ...dev, via: 'local' })).token;
+    skipClock(5);
+    const c1 = (await mint({ ...dev, via: 'chromecast' })).token;
+    skipClock(5);
+    expect(await status(l1)).toBe(200);
+    expect(await status(c1)).toBe(200);
+    const l2 = (await mint({ ...dev, via: 'local' })).token; // a local mint leaves the cast alone
+    skipClock(5);
+    expect(await status(l1)).toBe(410);
+    expect(await status(c1)).toBe(200);
+    const c2 = (await mint({ ...dev, via: 'chromecast' })).token; // a second cast replaces only the first cast
+    skipClock(5);
+    expect(await status(c1)).toBe(410);
+    expect(await status(c2)).toBe(200);
+    expect(await status(l2)).toBe(200);
+    const ap = (await mint({ ...dev, via: 'airplay' })).token; // airplay shares the local slot
+    skipClock(5);
+    expect(await status(l2)).toBe(410);
+    expect(await status(c2)).toBe(200);
+    expect(await status(ap)).toBe(200);
+    const l3 = (await mint({ ...dev, via: 'local' })).token;
+    expect(await status(ap)).toBe(410);
+    expect(await status(l3)).toBe(200);
+    expect(await status(c2)).toBe(200);
+  });
+
   it('concurrent mints converge', async () => {
     const ts = await Promise.all([1, 2, 3, 4, 5, 6].map((i) => mint({ deviceId: `dev-anna-${i}` }).then((m) => m.token)));
     const codes = await Promise.all(ts.map((t) => status(t)));

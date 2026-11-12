@@ -32,6 +32,7 @@
   import { castEngine, castSession, type CastSession } from './engine';
   import { HINT_SEEN_KEY } from './resume';
   import { castBackdrops, castThumbs, deviceLabel, playingLine } from './remoteview';
+  import { castParts, liveLines, liveTitle } from './bar';
   import CastScrubber from './CastScrubber.svelte';
   import { applePlatform, continuousView, nowLine, remoteLayout, slotMode, statusOf, upNextLine, upNextOf, volumeLine } from './remotescreen';
   import TrackChips from './TrackChips.svelte';
@@ -61,15 +62,19 @@
 
   // ---- artwork: the fallback chain advances when an image fails ----
   let bgI = 0, thI = 0, artFor = '';
-  $: bgs = s ? castBackdrops(s) : [];
-  $: thumbs = s ? castThumbs(s) : [];
+  // a live channel is no media-server item: no artwork from there (the TV shows the logo)
+  $: bgs = s && !s.live ? castBackdrops(s) : [];
+  $: thumbs = s && !s.live ? castThumbs(s) : [];
+  /** a live channel (live TV spec §13): no scrubber, the LIVE pill, channel ▲/▼ (a new token and loadLive), the now / next lines */
+  $: cp = s ? castParts(s, true) : null;
+  $: ll = s?.live ? liveLines(s.live, $t) : null;
   $: if ((s?.itemId ?? '') !== artFor) { artFor = s?.itemId ?? ''; bgI = 0; thI = 0; }
 
   // ---- what plays ----
   let fetched: Item | undefined;
   $: item = s ? cachedItem(s.itemId) ?? (fetched?.id === s.itemId ? fetched : undefined) : undefined;
   let askedFor = ''; // one request per title, also when it fails
-  $: if (s && s.itemId !== askedFor && !cachedItem(s.itemId)) { askedFor = s.itemId; void loadItem(s.itemId); }
+  $: if (s && !s.live && s.itemId !== askedFor && !cachedItem(s.itemId)) { askedFor = s.itemId; void loadItem(s.itemId); }
   async function loadItem(id: string) {
     try { const r = await api<{ item: Item }>(`/api/items/${id}`); if (get(castSession)?.itemId === id) fetched = r.item; } catch { /* the session's own subtitle */ }
   }
@@ -180,8 +185,15 @@
           {/if}
           <div class="txt">
             <p class="eyebrow" class:wait={airWait} aria-hidden={airWait ? 'true' : undefined}>{playingLine(s, $t)}</p>
+            {#if s.live && ll}
+              <h1 class="title" id="rs-title" title={liveTitle(s.live)}>{liveTitle(s.live)}</h1>
+              <!-- both programme lines are always reserved -->
+              <p class="sub lline">{ll.now}</p>
+              <p class="sub lline">{ll.next}</p>
+            {:else}
             <h1 class="title" class:one={phone && Boolean(keptJoin || cv)} id="rs-title" title={s.title}>{s.title}</h1>
             {#if line}<p class="sub">{line}</p>{/if}
+            {/if}
             {#if !air && !seenAtOpen}
               <div class="hint" class:off={hintOff} inert={hintOff}>
                 <p>{$t('player.castRemote.hint')}</p>
@@ -234,7 +246,12 @@
       </div>
 
       <div class="cp frost frost-safe frost-panel" role="group" aria-label={$t('player.controls.toolbar')}>
-        <CastScrubber bind:this={scrubber} session={s} label={$t('player.castRemote.position')} episodeOnly={Boolean(panel)} episodeLine={panel?.line ?? ''} />
+        {#if cp?.scrubber}
+          <CastScrubber bind:this={scrubber} session={s} label={$t('player.castRemote.position')} episodeOnly={Boolean(panel)} episodeLine={panel?.line ?? ''} />
+        {:else}
+          <!-- a live channel has no position: the LIVE pill in the scrubber's row -->
+          <div class="lrow"><span class="lpill">{$t('live.player.live')}</span></div>
+        {/if}
 
         <div class="ctrl">
           {#if everChips}<div class="cl">{#if hasChips && chipSession}<TrackChips session={chipSession} airplay={air} icons={w >= 1200} compact={phone} disabled={s.state === 'connecting'} describedby={subsShown ? 'rs-subs-hint' : undefined} />{/if}</div>{/if}
@@ -248,12 +265,20 @@
               {@const pl = (panel ? panel.prevDisabled : !s.isEpisode) ? $t('player.castRemote.prevNone') : $t('player.castRemote.prev')}
               <button type="button" class="tb" aria-disabled={live && cv && !cv.prevDisabled ? undefined : 'true'} aria-label={pl} title={pl} on:click={goPrev}><Icon name="skip-prev" size={28} /></button>
             {/if}
+            {#if cp?.channelKeys}
+              <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('live.player.chDown')} title={$t('live.player.chDown')} on:click={() => { if (live) void castEngine.zapLive(-1); }}><Icon name="chevron-down" size={30} /></button>
+            {:else}
             <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('player.controls.back10')} title={$t('player.controls.back10')} on:click={() => seekBy(-10)}><Icon name="rewind10" size={30} /></button>
+            {/if}
             <button type="button" class="tb disc" aria-disabled={live ? undefined : 'true'} aria-busy={s.state === 'connecting' ? 'true' : undefined}
               aria-label={$t(s.paused ? 'player.controls.play' : 'player.controls.pause')} on:click={playPause}>
               {#if s.state === 'connecting'}<span class="spin" aria-hidden="true"></span>{:else}<Icon name={s.paused ? 'play' : 'pause'} size={phone ? 36 : 30} />{/if}
             </button>
+            {#if cp?.channelKeys}
+              <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('live.player.chUp')} title={$t('live.player.chUp')} on:click={() => { if (live) void castEngine.zapLive(1); }}><Icon name="chevron-up" size={30} /></button>
+            {:else}
             <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('player.controls.forward10')} title={$t('player.controls.forward10')} on:click={() => seekBy(10)}><Icon name="forward10" size={30} /></button>
+            {/if}
             {#if s.isEpisode}
               <button type="button" class="tb" aria-disabled={(cv ? live && !cv.nextDisabled : live || s.state === 'ended') ? undefined : 'true'} aria-label={$t('player.controls.next')} title={$t('player.controls.next')} on:click={goNext}><Icon name="skip-next" size={28} /></button>
             {:else if phone}<span class="gap" aria-hidden="true"></span>{/if}
@@ -314,6 +339,11 @@
   .sub { margin: 0; color: rgba(255, 255, 255, .72); font-size: 1rem; overflow-wrap: anywhere; }
   .phone .now { padding: 14px 16px; display: block; }
   .phone .title { font-size: 34px; }
+  .lline { min-height: 1.4em; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* the LIVE pill (shape and text, not colour alone) in the reserved row of the scrubber */
+  .lrow { min-height: 44px; display: flex; align-items: center; }
+  .lpill { position: relative; display: inline-block; padding: 4px 14px 4px 28px; border-radius: 999px; background: var(--acc-fill); color: #fff; font-weight: 800; letter-spacing: .02em; }
+  .lpill::before { content: ''; position: absolute; left: 12px; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 50%; background: #fff; }
   /* continuous mode on the phone: one line, so the list stays above the fold (the full title is the tooltip) */
   .title.one { -webkit-line-clamp: 1; line-clamp: 1; }
 

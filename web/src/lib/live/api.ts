@@ -76,7 +76,8 @@ export type WatchError =
   | { status: 404; error: 'livetv_off' }
   | { status: 404; error: 'not_found' };
 
-function watchError(e: ApiError): WatchError | null {
+/** a refusal of `watch` as its typed error (null: not one of them); the cast engine reads its own calls' errors with it too */
+export function watchError(e: ApiError): WatchError | null {
   const b = (e.body && typeof e.body === 'object' ? e.body : {}) as Record<string, unknown>;
   const running = Array.isArray(b.running) ? (b.running as RunningChannel[]) : [];
   const max = typeof b.max === 'number' ? b.max : 0;

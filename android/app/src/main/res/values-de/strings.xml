@@ -91,6 +91,11 @@
     <string name="cast_playing_on">Wird auf %1$s abgespielt</string>
     <string name="cast_playing">Wird auf dem Fernseher abgespielt</string>
     <string name="cast_up_next">Als Nächstes: %1$s</string>
+    <string name="cast_loading">Wird vorbereitet …</string>
+    <string name="cast_stall">Lädt …</string>
+    <string name="cast_paused">Pausiert</string>
+    <string name="cast_now">Jetzt</string>
+    <string name="cast_live">LIVE</string>
     <plurals name="cast_starts_in">
         <item quantity="one">Nächste Folge startet in %d Sekunde</item>
         <item quantity="other">Nächste Folge startet in %d Sekunden</item>
