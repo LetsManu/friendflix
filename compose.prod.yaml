@@ -228,6 +228,8 @@ services:
       AUTHENTIK_EMAIL_CHANGE_FLOW: ${AUTHENTIK_EMAIL_CHANGE_FLOW:-}
       PASSKEYS_IN_APP: ${PASSKEYS_IN_APP:-}
       LOGIN_COVER_WALL: ${LOGIN_COVER_WALL:-}
+      LIVETV_OFFER_HIDDEN: ${LIVETV_OFFER_HIDDEN:-}
+      LIVETV_WANTED: ${LIVETV_WANTED:-}
       # <<< Admin -> Settings
     # root fs is read-only. PREVIEWS_PATH / DOWNLOADS_PATH: named volume by default, or a host folder
     # (e.g. /mnt/data/friendflix/downloads, must be writable by uid 1000) - see docs/downloads.md "Speicherort"

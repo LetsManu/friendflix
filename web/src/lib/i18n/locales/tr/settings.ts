@@ -131,6 +131,7 @@ const settings: Translation<typeof de> = {
     AUTHENTIK_EMAIL_CHANGE_FLOW: { label: 'E-posta değiştirme akışı', help: 'Onay bağlantısından sonra yeni e-posta adresini devralan akışın slug’ı (şablon: friendflix-email-change).' },
     PASSKEYS_IN_APP: { label: 'FriendFlix içinde passkey', help: 'Otomatik: Authentik izin veriyorsa FriendFlix içinde passkey. Kapalı: passkey yalnızca Authentik giriş sayfasında.' },
     LOGIN_COVER_WALL: { label: 'Girişin arkasında kapaklar', help: 'Girişin arkasında kütüphaneden kapaklar gösterir (yalnızca 12 yaşa kadar derecelendirmeler, derecesiz hiçbir şey yok). Görseller giriş yapmadan alınabilir.' },
+    LIVETV_OFFER_HIDDEN: { label: 'İsteğe bağlı Canlı TV modülünü öner', help: 'Canlı TV kurulu değilken İçerik altında “Canlı TV (isteğe bağlı)” girişini gösterir.' },
     JELLYFIN_URL: { label: 'Jellyfin adresi', help: 'Medya sunucusunun iç adresi, ör. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Jellyfin API anahtarı (yönetici)', help: 'Yönetici yetkili API anahtarı (Jellyfin → Kontrol paneli → API anahtarları).' },
     PLEX_URL: { label: 'Plex adresi', help: 'Backend’in ve medya geçidinin Plex sunucusuna ulaştığı iç adres. Yalnızca adres: token kendi alanına girilir, asla adrese değil.' },

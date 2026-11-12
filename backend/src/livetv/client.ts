@@ -90,9 +90,14 @@ export async function livetvCall<T>(ctx: Ctx, method: Method, path: string, body
  */
 export async function livetvStream(ctx: Ctx, path: string, body: unknown, o: { timeoutMs: number }): Promise<Response> {
   const d = deadline(o.timeoutMs);
-  const r = await signedFetch(ctx, 'POST', path, body, d.signal);
-  if (!r.ok) { const e = await refusal(r); d.clear(); throw e; }
-  return r;
+  try {
+    const r = await signedFetch(ctx, 'POST', path, body, d.signal);
+    if (!r.ok) throw await refusal(r);
+    return r;
+  } catch (e) {
+    d.clear(); // a refusal or a failed request leaves nobody to read the answer: the timer must not outlive the call
+    throw e;
+  }
 }
 
 /** `GET /healthz` (unsigned, 3 s): null when livetv is not there or answers something else (spec §4.1; installed = api 1). */

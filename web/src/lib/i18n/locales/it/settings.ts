@@ -132,6 +132,7 @@ const settings: Translation<typeof de> = {
     AUTHENTIK_EMAIL_CHANGE_FLOW: { label: 'Flusso di cambio e-mail', help: 'Slug del flusso che adotta un nuovo indirizzo e-mail dopo un link di conferma (modello: friendflix-email-change).' },
     PASSKEYS_IN_APP: { label: 'Passkey in FriendFlix', help: 'Automatico: passkey dentro FriendFlix se Authentik lo consente. Disattivato: passkey solo nella pagina di Authentik.' },
     LOGIN_COVER_WALL: { label: 'Copertine dietro l’accesso', help: 'Mostra copertine della libreria (solo classificazioni fino a 12 anni, niente senza classificazione) dietro l’accesso. Le immagini sono raggiungibili senza accedere.' },
+    LIVETV_OFFER_HIDDEN: { label: 'Offri il modulo opzionale TV in diretta', help: 'Mostra la voce «TV in diretta (opzionale)» sotto Contenuti finché la TV in diretta non è configurata.' },
     JELLYFIN_URL: { label: 'Indirizzo di Jellyfin', help: 'Indirizzo interno del media server, ad es. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Chiave API di Jellyfin (admin)', help: 'Chiave API con diritti di amministratore (Jellyfin → Dashboard → Chiavi API).' },
     PLEX_URL: { label: 'Indirizzo di Plex', help: 'Indirizzo interno con cui il backend e il gateway multimediale raggiungono il server Plex. Solo l’indirizzo: il token va nel suo campo, mai nell’indirizzo.' },

@@ -171,6 +171,19 @@ describe('livetvStream', () => {
     const down = await caught(livetvStream(ctxWith(() => { throw new TypeError('fetch failed'); }), '/v1/fetch/logo', {}, { timeoutMs: 1_000 }));
     expect(down.code).toBe('unreachable');
   });
+
+  it('the deadline timer is cleared when the request throws or is refused, kept while a good answer is read', async () => {
+    vi.useFakeTimers();
+    try {
+      const base = vi.getTimerCount();
+      await caught(livetvStream(ctxWith(() => { throw new TypeError('fetch failed'); }), '/v1/fetch/logo', {}, { timeoutMs: 60_000 }));
+      await caught(livetvStream(ctxWith(() => json({ error: 'address_refused' }, 422)), '/v1/fetch/logo', {}, { timeoutMs: 60_000 }));
+      await caught(livetvStream(ctxWith(() => json({})), '//evil.example.com/x', {}, { timeoutMs: 60_000 })); // invalid_path throws before the fetch
+      expect(vi.getTimerCount()).toBe(base);
+      await livetvStream(ctxWith(() => json({})), '/v1/fetch/logo', {}, { timeoutMs: 60_000 });
+      expect(vi.getTimerCount()).toBe(base + 1); // the caller is still reading
+    } finally { vi.useRealTimers(); }
+  });
 });
 
 describe('livetvHealth', () => {

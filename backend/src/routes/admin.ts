@@ -26,6 +26,7 @@ import { recoStats } from '../reco/engine.js';
 import { requireAdmin, requireOwner } from '../session.js';
 import { portainerMode, redeployViaPortainer, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
+import { livetvInstalled } from '../livetv/detect.js';
 import { accountSerial, getUserById } from '../users.js';
 import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, isLanguage, roleLabel, setInstanceLanguage } from '../i18n.js';
 
@@ -103,6 +104,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       playbackCheck: check ? { finishedAt: check.finished_at.toISOString(), total: check.results.length, failed: check.results.filter((x) => !x.ok).length } : null,
       services: { jellyfin: Boolean(jellyfin), seerr: seerr !== null },
       live: { streams: live, partyRooms: parties.rooms.size },
+      // the optional Live-TV module: detected (last check), the entry hidden by the admin, sources whose last import failed (Task 16)
+      livetv: { installed: livetvInstalled(ctx), offerHidden: ctx.cfg.LIVETV_OFFER_HIDDEN === 'true', failedSources: 0 },
       // R1: size and age of the recommendation item index (counts and a timestamp only)
       recoIndex: await recoIndexState(ctx).then((x) => ({ supported: x.supported, running: x.running, items: x.items, updatedAt: x.updatedAt }), () => null),
     };

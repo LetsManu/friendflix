@@ -181,6 +181,8 @@ export const SETTINGS: readonly SettingDef[] = [
   setting('PASSKEYS_IN_APP', { kind: 'enum', group: 'signin' }),
   // group general, not signin: saving a signin-group key clears the wizard's SIGNIN_VIA note (routes/setup.ts), and the wall is no credential
   setting('LOGIN_COVER_WALL', { kind: 'bool', group: 'general' }),
+  setting('LIVETV_OFFER_HIDDEN', { kind: 'bool', group: 'general' }), // read per request
+  setting('LIVETV_WANTED', { kind: 'bool', group: 'general', visible: false }), // written by the livetv enable/disable routes
 ];
 
 /** Per container or per deployment, or shared with a container that reads env only: env > default, read-only in Admin -> Settings. */
