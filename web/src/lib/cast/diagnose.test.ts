@@ -83,6 +83,11 @@ describe('airplayRows', () => {
     expect(val(airplayRows({ ...air, available: false }), 'In diesem Browser')).toBe('Hier nicht verfügbar (AirPlay braucht Safari)');
     expect(val(airplayRows(air), 'In diesem Browser')).toBe('Verfügbar');
   });
+  it('Diagnose shows continuous on only with the switch', () => {
+    const v = (c: 'on' | null) => val(airplayRows({ ...air, continuous: c }), 'Durchgehend abspielen (experimentell)');
+    expect(v(null)).toBeUndefined();
+    expect(v('on')).toBe('An (Einstellung)');
+  });
   it('no continuous row while continuous is null; no subtitles row until it is turned on', () => {
     const labels = (o: Partial<Parameters<typeof airplayRows>[0]>) => airplayRows({ ...air, ...o }).map((r) => r.label);
     expect(labels({})).toEqual(['In diesem Browser']);

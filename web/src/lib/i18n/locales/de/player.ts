@@ -178,6 +178,7 @@ export default {
     left: 'noch {time}',
     prev: 'Vorherige Folge',
     prevNone: 'Vorherige Folge (keine: das ist die erste)',
+    episodeRange: 'S{s}:F{a}–F{b}',
   },
   castTv: {
     fromPhone: 'Vom Handy von {name}',
@@ -223,8 +224,6 @@ export default {
     chromecast: 'Chromecast',
     airplay: 'AirPlay …',
     airplayHint: 'Apple TV und AirPlay-Fernseher',
-    continuous: 'Folgen am Stück abspielen',
-    continuousHint: 'Ohne Tippen dazwischen',
     thisPhone: 'Dieses Handy',
     thisTablet: 'Dieses Tablet',
     thisComputer: 'Dieser Computer',

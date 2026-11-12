@@ -182,9 +182,36 @@ Ein **Textuntertitel** reist im AirPlay-Stream selbst mit (als WebVTT-Spur in de
 
 **Gateway:** Die Untertitel-Playlist (`…/Subtitles/<n>/subtitles.m3u8`) und ihre Segmente (`…/stream.vtt`) sind nur für ein AirPlay-Token erlaubt, das genau diese Spur angefragt hat (Index fest im Token), mit schmaler Pfad- und Query-Erlaubnisliste. `api_key` wird entfernt, abweichende Überschreibungen (z. B. `itemId`, `index`, `format`) werden abgelehnt. Details in [security.md](security.md#airplay-subtitle-rendition).
 
-### Durchgehendes AirPlay (nicht verfügbar)
+### Durchgehendes AirPlay (experimentell, standardmäßig aus)
 
-**Noch nicht verfügbar.** Ob mehrere Folgen am Stück laufen können, ohne dass das iPhone dazwischen wach sein muss, ist nicht entschieden. Ein Prototyp existiert; die Entscheidung hängt an einem Test des Betreibers mit echter Hardware (Apple TV und LG webOS). Bis dahin gilt weiter: Sperrt sich das iPhone, startet die nächste Folge, sobald man es entsperrt (der Hinweis steht in der Fernbedienung). Es gibt keine Einstellung dafür und keinen Zeitplan.
+**Experimentell und aus.** Ein Betreiber schaltet es unter *Admin → Einstellungen → Wiedergabe* mit **Durchgehendes AirPlay (experimentell)** ein (`CAST_AIRPLAY_CONTINUOUS`, Standard `false`, wirkt sofort). Ausgeliefert ist es ruhend: Es bleibt aus, bis der Betreiber den Test unten mit dem eigenen Fernseher bestanden hat.
+
+**Was es tut.** Mit dem Schalter an fragt der Browser bei einer AirPlay-Übertragung einer Folge (Autoplay an, „Pause nach dieser Folge“ nicht gesetzt) ein Token für **bis zu drei Folgen** hintereinander an (`continuous: true`). Der Fernseher bekommt einen einzigen Stream (`joined/master.m3u8`, eine Variante plus die Untertitelgruppe) und wechselt zwischen den Folgen von selbst, ohne dass das iPhone dazwischen wach sein muss. Es zählt als **ein** Stream. Es gilt für **jedes Profil**; es gibt keine Einstellung pro Profil. Nur Jellyfin; Plex bekommt weiter einzelne Tokens. Ist der Schalter aus, antwortet `POST /api/cast/session` mit `continuous: true` mit `400 continuous_off`, die Seite fragt stillschweigend ein Einzel-Token an, und `/diagnose` zeigt die Zeile nicht. Schaltet man ihn aus, während ein verbundener Stream läuft, läuft dieser bis zur letzten Folge oder bis *Übertragung beenden* weiter; neue Anfragen bekommen Einzel-Tokens.
+
+**Ohne die Seite.** Das Gateway erkennt am Abruf der Segmente, welche Folge läuft, und meldet Start, Fortschritt (höchstens alle 15 s, sofort bei einem Folgenwechsel) und Stopp pro Folge an das Backend (`POST /internal/cast/progress`, nur zwischen Gateway und Backend). „Weiterschauen“ und „gesehen“ stimmen deshalb auch bei gesperrtem iPhone. Die Position kommt aus dem Start des abgerufenen Segments (aus dessen `runtimeTicks`), nicht aus seiner Länge und nicht aus Index mal Segmentlänge. Eine Korrektur des Vorlaufs (der Server liegt dem Bild des Fernsehers etwas voraus) gibt es noch nicht; Beobachtung O2 unten entscheidet darüber.
+
+**Fernbedienung.** Hat ein Handy einen durchgehenden Stream übernommen, behält dessen Fernbedienung für die ganze Übertragung das durchgehende Layout (Folgenliste, reservierter Platz, „Zurück“); die Karte „Nächste Folge“ nimmt denselben Platz ein. Die Zeitleiste zeigt nur die aktuelle Folge, mit deren Intro-/Rückblick-Markierungen; „Intro überspringen“ sowie Abspann und „Nächste Folge“-Angebot gibt es in einem verbundenen Stream nicht. „Nächste“ und „Zurück“ springen an die Folgengrenzen, der Sperrbildschirm spult im Stream.
+
+**Zur Umsetzung (Abweichung von der Planung).** Die Untertitel der Folgen 2 und 3 werden nicht beim Ausstellen des Tokens vorbereitet, sondern im Gateway gleich nach dem ersten Bau der verbundenen Playlist, wenn der Fernseher `joined/master.m3u8` abruft: nur das Gateway hält die Untertitel-Playlists der Teile. Die Untertitelsprachen kommen aus den Streams der Folgen statt aus einem zweiten PlaybackInfo.
+
+**Grenzen:**
+
+- Autoplay lässt sich mitten im Stream nur mit *Übertragung beenden* abbrechen; „Schaust du noch?“ wird beim Anlegen entschieden.
+- Ein Wechsel von Audiospur oder Untertitel erzeugt den ganzen verbundenen Stream an der aktuellen Stelle neu (jede Neuerzeugung startet bei (Folge, Stelle)); eine Pause über die 6-Stunden-Grenze beendet ihn.
+- Höchstens **drei** Folgen pro Token; danach folgt ein neues Token wie bisher.
+- Es gibt keine Seiten-Meldungen und keine Abspann-/„Nächste Folge“-Logik des Players pro Titel für verbundene Tokens; das Gateway meldet.
+- Ein Film, der später in derselben Übertragung gestartet wird, behält das durchgehende Layout, bis die Übertragung endet (bekannt, vorerst akzeptiert).
+- Der Vorlauf des Servers gegenüber dem Bild ist noch nicht korrigiert (O2).
+- Weil der Schalter für alle Profile gilt, ist ein Fernseher, der den Test später nicht besteht, ein Grund, ihn wieder auszuschalten.
+
+**Test des Betreibers (nur LG webOS mit AirPlay, auf dem gemergten Stand, Schalter an).** Drei aufeinanderfolgende Folgen einer Serie (Text-Untertitel optional):
+
+- **P1:** Die drei Folgen laufen bis zum Ende der dritten, das iPhone ab Minute 1 der ersten Folge gesperrt und ohne Berührung.
+- **P2:** An den beiden Folgengrenzen ist das Bild innerhalb von **5 s** zurück (Stoppuhr), kein AirPlay-Platzhalter, die Route fällt nie auf das iPhone zurück.
+- **Bestanden (P1 und P2)** → der Schalter bleibt an. **Nicht bestanden** → der Schalter geht aus, die Funktion bleibt ruhend, und dieser Abschnitt sagt es.
+- **Beobachtungen, nicht bindend:** O1 die Admin-Ansicht zeigt einen Stream und `cast_requests_total` bekommt kein 401, 403 oder 502; O2 der Vorlauf der Serverposition gegenüber dem Bild des Fernsehers in Folge 2 (drei Stichproben); O3 CPU und Transkodierungen am Server an einer Folgengrenze. Ein anderer AirPlay-Fernseher (z. B. Samsung) ist nur eine Beobachtung. Die Kriterien für Apple TV (früher P3 bis P6) entfallen.
+
+Ergebnis des Tests: noch offen.
 
 ### HEVC und Raumklang mit dem eigenen Empfänger
 
@@ -237,5 +264,5 @@ AirPlay (iPhone/iPad/Mac mit Safari und einem Apple TV oder AirPlay-2-Fernseher;
 - Ob Safari die Playlist selbst lädt und von welcher Adresse (Zwei-Adressen-Bindung reicht? IPv4/IPv6-Wechsel?), Verhalten im Hintergrund und bei gesperrtem Bildschirm, Token-Erneuerung bei langen Filmen, Wechsel von Audiospur/Qualität während AirPlay.
 - Tipp → Token-URL am Video (Position, Wiedergabe), ob sich die Geräteauswahl nach dem Warten auf das Token noch von selbst öffnet oder erst über „Fernseher auswählen“, ob der Fernseher danach sofort spielt, Rückkehr zu hls.js nach 90 s ohne Auswahl, ob das unsichtbare Prüf-`<video>` Empfänger meldet, Fehleranzeige mit „Erneut versuchen“.
 - **AirPlay-Untertitel** (Apple TV und LG webOS, jeweils Jellyfin mit einer Folge, die Textuntertitel hat): Der Untertitel erscheint und ist im Takt mit dem Ton; Wechsel der Spur auf der Fernbedienung und Ausschalten/Einschalten wirken; ein Fernseher, der den Stream ablehnt, fällt **einmal** auf „ohne Untertitel“ zurück (Hinweis erscheint, danach „Aus (vom Fernseher abgelehnt)“); bei Plex ist der Chip ausgegraut. Außerdem auf dem echten Server: Die Gateway-Logs zeigen **kein 403** für `subtitles.m3u8` und `stream.vtt` (Jellyfins echte Untertitel-URLs passen zur Erlaubnisliste).
-- **Durchgehendes AirPlay:** Der Betreiber-Test (GO-Kriterien P1 bis P6 am Apple TV, P1 und P2 am LG) steht noch aus; bis dahin ist die Funktion nicht verfügbar.
+- **Durchgehendes AirPlay:** Der Test des Betreibers steht noch aus (nur LG webOS, P1, P2, Beobachtungen O1 bis O3, siehe „Durchgehendes AirPlay“). Bestanden → Schalter an, nicht bestanden → er bleibt aus.
 - iPhone-PWA → LG webOS: höchstens eine Token-Anfrage pro Tipp im Backend-Log (keine 429-Serien), kein kurzes Umschalten zurück aufs Handy; bei Problemen `/diagnose` → „AirPlay-Protokoll“ kopieren.

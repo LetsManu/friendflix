@@ -8,6 +8,9 @@
 import { fmtList, hasKey, tr, trDynamic } from '#lib/i18n';
 import type { ProbeResult, SettingGroup, SettingView } from './api';
 
+/** Settings shown with an "Experimental" badge. */
+export const EXPERIMENTAL_KEYS: ReadonlySet<string> = new Set(['CAST_AIRPLAY_CONTINUOUS']);
+
 /** A field's edited value: text, a switch, or null (a secret marked "remove"). */
 export type Draft = string | boolean | null;
 

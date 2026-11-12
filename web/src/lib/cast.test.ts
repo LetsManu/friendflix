@@ -63,11 +63,12 @@ let classes: Set<string>;
 let scripts: Array<{ src: string; async: boolean }>;
 let win: Record<string, any>;
 let castEnabled: boolean | 'error';
+let airplayCont: boolean | undefined;
 /** /api/cast/config `receiverAppId` ('' = not in the answer, as without CAST_RECEIVER_APP_ID) */
 let appId = '';
 const fetchMock = vi.fn(async (_url: string) => {
   if (castEnabled === 'error') return new Response('{}', { status: 500 });
-  return new Response(JSON.stringify({ enabled: castEnabled, ...(appId ? { receiverAppId: appId } : {}) }));
+  return new Response(JSON.stringify({ enabled: castEnabled, ...(appId ? { receiverAppId: appId } : {}), ...(airplayCont === undefined ? {} : { airplayContinuous: airplayCont }) }));
 });
 type Cast = typeof import('./cast');
 let C: Cast;
@@ -78,6 +79,7 @@ beforeEach(async () => {
   classes = new Set();
   scripts = [];
   castEnabled = true;
+  airplayCont = undefined;
   appId = '';
   fetchMock.mockClear();
   win = {};
@@ -144,6 +146,57 @@ describe('castConfigEnabled', () => {
     castEnabled = false;
     await expect(C.castConfigEnabled()).resolves.toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('castConfigAirplayContinuous', () => {
+  it('is false until /api/cast/config answered, then follows the answer', async () => {
+    airplayCont = true;
+    expect(C.castConfigAirplayContinuous()).toBe(false);
+    await C.castConfigEnabled();
+    expect(C.castConfigAirplayContinuous()).toBe(true);
+  });
+
+  it('stays false when the answer says off or lacks the field', async () => {
+    airplayCont = false;
+    await C.castConfigEnabled();
+    expect(C.castConfigAirplayContinuous()).toBe(false);
+    vi.resetModules();
+    C = await import('./cast');
+    airplayCont = undefined;
+    await C.castConfigEnabled();
+    expect(C.castConfigAirplayContinuous()).toBe(false);
+  });
+});
+
+describe('continuousFields', () => {
+  const on = { episode: true, autoplay: true, sleepAfter: false, maxEpisodes: 3 };
+  it('is empty while the config is off, for a film, with autoplay off and with sleep-after', async () => {
+    expect(C.continuousFields(on)).toEqual({});
+    airplayCont = true;
+    await C.castConfigEnabled();
+    expect(C.continuousFields({ ...on, episode: false })).toEqual({});
+    expect(C.continuousFields({ ...on, autoplay: false })).toEqual({});
+    expect(C.continuousFields({ ...on, sleepAfter: true })).toEqual({});
+    expect(C.continuousFields({ ...on, maxEpisodes: 2 })).toEqual({ continuous: true, maxEpisodes: 2 });
+  });
+});
+
+describe('postAirPlayToken', () => {
+  const posts: Array<Record<string, unknown>> = [];
+  const answer = (status: number, json: unknown) => new Response(JSON.stringify(json), { status });
+  beforeEach(() => { posts.length = 0; });
+  it('continuous_off retries once without continuous', async () => {
+    const replies = [answer(400, { error: 'continuous_off' }), answer(200, { castId: 'c' })];
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init: { body: string }) => { posts.push(JSON.parse(init.body)); return replies.shift()!; }));
+    await expect(C.postAirPlayToken({ itemId: 'i', via: 'airplay', continuous: true, maxEpisodes: 2 })).resolves.toMatchObject({ castId: 'c' });
+    expect(posts).toEqual([{ itemId: 'i', via: 'airplay', continuous: true, maxEpisodes: 2 }, { itemId: 'i', via: 'airplay' }]);
+  });
+  it('any other error is thrown and a body without continuous is not retried', async () => {
+    const f = vi.fn(async () => answer(400, { error: 'continuous_off' }));
+    vi.stubGlobal('fetch', f);
+    await expect(C.postAirPlayToken({ itemId: 'i', via: 'airplay' })).rejects.toMatchObject({ body: { error: 'continuous_off' } });
+    expect(f).toHaveBeenCalledTimes(1);
   });
 });
 

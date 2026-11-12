@@ -529,13 +529,11 @@ and the continuous-AirPlay keys of the cast spec §11 that already ship (`player
 
 Two plans:
 
-1. **New plan `2026-11-11-device-handoff`** for A, C and D, two pull requests: PR 1 = A (migration, server, card, title hint,
-   device renaming, docs); PR 2 = C and D (web player only). They share no code with E and are low-risk.
-2. **E stays in the existing cast plan.** An amendment section in `docs/superpowers/plans/2026-11-10-cast-airplay.md` adjusts
-   Task 22 (no spike gate), Tasks 23–25 (spike conditions), Task 26 (switch help copy, `continuous_off`, no profile
-   preference) and Task 28 (docs
-   after acceptance), and links this spec. One pull request. It is backend and gateway heavy, needs the owner's TV, and must
-   not hold back A / C / D.
+1. **Plan `2026-11-11-device-handoff`** covers A, C, D **and E** (Tasks 15–23), in three pull requests: PR 1 = A (migration,
+   server, card, title hint, device renaming, docs); PR 2 = C and D (web player only); PR 3 = E (continuous AirPlay behind
+   the admin switch, Tasks 15–22, docs and the owner's acceptance checklist in Task 22, Task 23 after the acceptance).
+   E is folded into this plan; the amendment of `2026-11-10-cast-airplay.md` is no longer used.
+2. E is backend and gateway heavy and needs the owner's TV, so it is its own pull request and does not hold back A / C / D.
 
 Order: A first (most value for the owner's daily use), then C + D, then E. E's Task 25 writes hand-off rows through
 `playbackReport`, so it benefits from A being merged first but does not depend on it.

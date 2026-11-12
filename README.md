@@ -260,6 +260,7 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `DIGEST_DAY`, `DIGEST_HOUR` | `0` (Sunday), `18` | Weekly digest schedule; `-1` = off; can be changed in the admin area |
 | `CAST_ENABLED` | `true` | Chromecast and AirPlay (needs an https `PUBLIC_URL`); `false` with Plan B |
 | `CAST_RECEIVER_APP_ID` | – | App ID of FriendFlix's own Cast receiver (`/cast-receiver/`, registered in the Google Cast SDK Developer Console): next-up countdown, "Still there?" and progress on the TV; empty = Google's Default Media Receiver ([docs/cast-receiver.md](docs/cast-receiver.md)) |
+| `CAST_AIRPLAY_CONTINUOUS` | `false` | Experimental: an AirPlay cast of an episode can carry up to three episodes as one stream, so it keeps playing while the iPhone is locked (Jellyfin only; also in the admin settings; [docs/cast.md](docs/cast.md)) |
 | `POSTPLAY_ENABLED` | `true` | The post-play screen after a film or the last episode ("You're caught up", suggestions); `false` turns it off for everyone. See [docs/discovery.md](docs/discovery.md). Also editable in *Admin → Settings → Recommendations* (applies at once, no restart); a value set in `.env` wins and locks the field there |
 | `DOWNLOADS_ENABLED` | `true` | Offline downloads; `false` with Plan B |
 | `DOWNLOADS_PATH`, `PREVIEWS_PATH` | named volumes `downloads`, `previews` | Host folder (absolute path, writable by uid 1000) for prepared downloads and preview clips |

@@ -176,6 +176,7 @@ const en: Translation<typeof de> = {
     left: '{time} left',
     prev: 'Previous episode',
     prevNone: 'Previous episode (none: this is the first)',
+    episodeRange: 'S{s}:E{a}–E{b}',
   },
   castTv: {
     fromPhone: 'Cast from {name}\'s phone',
@@ -221,8 +222,6 @@ const en: Translation<typeof de> = {
     chromecast: 'Chromecast',
     airplay: 'AirPlay…',
     airplayHint: 'Apple TV and AirPlay TVs',
-    continuous: 'Play episodes back to back',
-    continuousHint: 'No taps in between',
     thisPhone: 'This phone',
     thisTablet: 'This tablet',
     thisComputer: 'This computer',

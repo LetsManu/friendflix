@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { tr } from '#lib/i18n';
 import { formFactor, playOnRows, whatLine } from './playOn';
 
-const none = { chromecast: false, devices: false, airplay: false, apple: false, continuousAvailable: false, episode: true, last: null, casting: null, form: 'computer' as const, tf: tr };
+const none = { chromecast: false, devices: false, airplay: false, last: null, casting: null, form: 'computer' as const, tf: tr };
 const ids = (o: Partial<Parameters<typeof playOnRows>[0]>) => playOnRows({ ...none, ...o }).map((r) => r.id);
 
 describe('playOnRows (spec §3)', () => {
@@ -21,7 +21,7 @@ describe('playOnRows (spec §3)', () => {
     expect(ids({ chromecast: true, devices: false, last: 'Wohnzimmer-TV' })).toEqual(['here']);
   });
   it('Safari with AirPlay: airplay, here', () => {
-    const rows = playOnRows({ ...none, airplay: true, apple: true });
+    const rows = playOnRows({ ...none, airplay: true });
     expect(rows.map((r) => r.id)).toEqual(['airplay', 'here']);
     expect(rows[0]).toMatchObject({ title: 'AirPlay …', hint: 'Apple TV und AirPlay-Fernseher' });
   });
@@ -40,16 +40,12 @@ describe('playOnRows (spec §3)', () => {
     expect(rows.find((r) => r.id === 'another')!.checked).toBe(false);
   });
   it('casting AirPlay checks the AirPlay row', () => {
-    const rows = playOnRows({ ...none, airplay: true, apple: true, casting: 'airplay' });
+    const rows = playOnRows({ ...none, airplay: true, casting: 'airplay' });
     expect(rows.find((r) => r.id === 'airplay')!.checked).toBe(true);
     expect(rows.find((r) => r.id === 'here')!.title).toBe('Hier weiterschauen');
   });
-  it('continuous never shows while it is not available, nor for films, nor without AirPlay', () => {
-    expect(ids({ airplay: true, apple: true, continuousAvailable: false })).not.toContain('continuous');
-    expect(ids({ airplay: true, apple: true, continuousAvailable: true, episode: false })).not.toContain('continuous');
-    expect(ids({ airplay: false, apple: true, continuousAvailable: true })).not.toContain('continuous');
-    expect(ids({ airplay: true, apple: false, continuousAvailable: true })).not.toContain('continuous');
-    expect(ids({ airplay: true, apple: true, continuousAvailable: true })).toEqual(['airplay', 'continuous', 'here']);
+  it('the sheet has no continuous row', () => {
+    expect(ids({ airplay: true })).toEqual(['airplay', 'here']);
   });
 });
 

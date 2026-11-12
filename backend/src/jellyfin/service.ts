@@ -4,12 +4,12 @@ import { decrypt, encrypt } from '../crypto.js';
 import type { KV } from '../kv.js';
 import type {
   ClipTranscode, ExternalSession, IdentityPolicy, ItemDto, ItemMediaTraits, ItemQuery, ItemStreams, ItemTraits, MediaAdmin, MediaTraits, MediaCapabilities, MediaCredentials, MediaServer,
-  MediaEvent, PersonDto, PlaybackDto, PlaybackReport, SegmentType,
+  MediaEvent, PersonDto, PlaybackDto, PlaybackReport, SegmentType, TrackList,
 } from '../media/types.js';
 import type { JfUser } from '../types.js';
 import { JellyfinClient, JellyfinError, mediaBrowserHeader, policyFromTemplate } from './client.js';
 import { jellyfinWebhookEvents } from './webhook.js';
-import { bestTraits, maxWidthFor, toDownloadSource, toItemDto, toMediaTraits, sourceFacts, toPlaybackDto, toTrickplayDto, type DownloadQuality, type DownloadSourceDto } from './dto.js';
+import { bestTraits, isTextSubtitle, maxWidthFor, toDownloadSource, toItemDto, toMediaTraits, sourceFacts, toPlaybackDto, toTrickplayDto, type DownloadQuality, type DownloadSourceDto } from './dto.js';
 import { toChapters, toCredits, toItemAbout, toProviderIds } from './dto.js'; // Block 17 P1, Block 21
 import { toHygieneFacts, toServerSession } from './dto.js'; // Block 22
 import { toItemFeatures } from './dto.js'; // R1
@@ -335,7 +335,7 @@ export class JellyfinService implements MediaServer {
   }
 
   /** Audio languages and text subtitles of the first media source (for the language picker before playing). */
-  async tracks(user: JfUser, id: string): Promise<{ audio: Array<{ language: string; title: string; isDefault: boolean }>; subtitles: Array<{ language: string; title: string }>; runtimeTicks?: number; type: string }> {
+  async tracks(user: JfUser, id: string): Promise<TrackList> {
     const uid = user.jellyfin_user_id;
     const i = await this.compat<any>(user, 'item', [`/Items/${id}?userId=${uid}`, `/Users/${uid}/Items/${id}`]);
     const streams: Array<Record<string, any>> = (i.MediaSources ?? [])[0]?.MediaStreams ?? i.MediaStreams ?? [];
@@ -343,9 +343,23 @@ export class JellyfinService implements MediaServer {
     const audio = streams.filter((s) => s.Type === 'Audio').map((s) => ({ language: String(s.Language ?? 'und'), title: String(s.DisplayTitle ?? s.Language ?? 'Spur'), isDefault: Boolean(s.IsDefault) }))
       .filter((a) => !seen.has(a.language) && seen.add(a.language));
     const seenS = new Set<string>();
-    const subtitles = streams.filter((s) => s.Type === 'Subtitle').map((s) => ({ language: String(s.Language ?? 'und'), title: String(s.DisplayTitle ?? s.Language ?? 'Untertitel') }))
-      .filter((a) => !seenS.has(a.language) && seenS.add(a.language));
-    return { audio, subtitles, runtimeTicks: i.RunTimeTicks, type: String(i.Type ?? '') };
+    const subs = streams.filter((s) => s.Type === 'Subtitle');
+    const langOf = (s: Record<string, any>) => String(s.Language ?? 'und');
+    // the track that stands for a language (continuous AirPlay carries it in a later episode): its first text, non-forced track, else its
+    // first text track; image-only languages have none (never burned in). The entries themselves (first track per language) stay as they are.
+    // `forcedIndex`: its first forced text track (a later episode follows episode 1's forced choice)
+    const textOf = (lang: string) => subs.filter((s) => langOf(s) === lang && isTextSubtitle(s) && Number.isInteger(s.Index));
+    const subtitles = subs.map((s) => ({ language: langOf(s), title: String(s.DisplayTitle ?? s.Language ?? 'Untertitel') }))
+      .filter((a) => !seenS.has(a.language) && seenS.add(a.language))
+      .map((a) => {
+        const text = textOf(a.language);
+        const index = (text.find((s) => !s.IsForced) ?? text[0])?.Index as number | undefined;
+        const forcedIndex = text.find((s) => s.IsForced)?.Index as number | undefined;
+        return { ...a, ...(index !== undefined ? { index } : {}), ...(forcedIndex !== undefined ? { forcedIndex } : {}) };
+      });
+    const indexed = streams.filter((s) => (s.Type === 'Audio' || s.Type === 'Subtitle') && Number.isInteger(s.Index))
+      .map((s) => ({ index: s.Index as number, kind: s.Type === 'Audio' ? 'audio' as const : 'subtitle' as const, language: String(s.Language ?? 'und') }));
+    return { audio, subtitles, indexed, runtimeTicks: i.RunTimeTicks, type: String(i.Type ?? '') };
   }
 
   /** Genre names of the viewer's libraries; cached 10 min per Jellyfin user (library visibility is per user). */
@@ -652,16 +666,16 @@ export class JellyfinService implements MediaServer {
       body: JSON.stringify({ DeviceProfile: profile, SubtitleStreamIndex: -1 }),
     });
     if (info.ErrorCode) throw new JellyfinError(403, `playback blocked: ${info.ErrorCode}`);
-    // preferred audio language: our HLS URL carries AudioStreamIndex itself, so a non-default track needs no second PlaybackInfo.
-    // A matched default track stays out of the direct decision (direct play plays the container's default track) but the HLS URL names it:
-    // without an AudioStreamIndex Jellyfin's HLS streams the first track with channels, not the IsDefault one (dto.ts sourceFacts).
+    // preferred audio language: our HLS URL carries AudioStreamIndex itself, so a non-default track needs no second PlaybackInfo. The local
+    // player leaves the default track unnamed (that keeps direct play, which plays the container's default track); a cast or the HLS URL
+    // names it, because without an AudioStreamIndex Jellyfin's HLS streams the first track with channels, not the IsDefault one (dto.ts sourceFacts).
     let audioIndex = opts.audioIndex;
     let hlsAudioIndex: number | undefined;
     if (audioIndex === undefined && opts.audioLang) {
       const streams: Array<Record<string, any>> = info.MediaSources?.[0]?.MediaStreams ?? [];
       const want = streams.find((s) => s.Type === 'Audio' && s.Language === opts.audioLang);
       if (want && typeof want.Index === 'number') {
-        if (want.IsDefault) hlsAudioIndex = want.Index;
+        if (want.IsDefault && !opts.cast) hlsAudioIndex = want.Index;
         else audioIndex = want.Index;
       }
     }

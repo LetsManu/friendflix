@@ -16,7 +16,7 @@
   import Toggle from '#lib/ui/Toggle.svelte';
   import { uid } from '#lib/ui/ids';
   import type { SettingView, Source } from './api';
-  import { enumOptions, keyHelp, keyLabel, shownDraft, type Draft } from './form';
+  import { EXPERIMENTAL_KEYS, enumOptions, keyHelp, keyLabel, shownDraft, type Draft } from './form';
 
   export let item: SettingView;
   export let draft: Draft | undefined = undefined;
@@ -61,6 +61,7 @@
     <span class="pills">
       {#if !secret}<StatusPill tone={TONE[item.source]} icon={ICON[item.source]} label={$t(`settings.source.${item.source}`)} />
       {:else if locked}<StatusPill tone="info" icon="lock" label={$t('settings.source.env')} />{/if}
+      {#if EXPERIMENTAL_KEYS.has(item.key)}<StatusPill tone="warn" label={$t('common.experimental')} />{/if}
       {#if item.apply === 'restart'}<StatusPill tone="warn" icon="refresh" label={$t('settings.restart')} />{/if}
     </span>
   </div>

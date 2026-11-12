@@ -72,7 +72,11 @@ export interface PlaybackReporter { user: UserRow; jfUser: JfUser; profile?: Pro
 export const abilityOf = (st: HevcState): 'ready' | 'off' | 'unproven' | 'unhealthy' =>
   st === 'ready' ? 'ready' : st === 'unproven' ? 'unproven' : st === 'failed' || st === 'slow' || st === 'runtime_failed' ? 'unhealthy' : 'off';
 
-export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackReportBody, who: PlaybackReporter): Promise<{ ok: true } | { error: 'max_streams'; max: number }> {
+/**
+ * `opts.elapsedMs`: the watch time this report closes, when the caller knows it better than the live record's last update (continuous
+ * AirPlay: the server is the only reporter and the token refresh moves `updatedAt` every 20 s). Absent = since the last update, at most 30 s.
+ */
+export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackReportBody, who: PlaybackReporter, opts: { elapsedMs?: number } = {}): Promise<{ ok: true } | { error: 'max_streams'; max: number }> {
   const user = who.user;
   const ticks = Math.floor(b.positionTicks);
   let live = await getLive(ctx, user.id, b.playSessionId);
@@ -122,7 +126,7 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
   }
   if (kind === 'Playing/Stopped') { await clearLive(ctx, user.id, b.playSessionId); await markStopped(ctx, user.id, b.playSessionId); }
   else { if (kind === 'Playing') await clearStopped(ctx, user.id, b.playSessionId); await setLive(ctx, live); }
-  await playbackHooks.run(ctx, { kind, user, live, elapsedMs: elapsed ? Math.min(Date.now() - prev, 30_000) : 0 });
+  await playbackHooks.run(ctx, { kind, user, live, elapsedMs: opts.elapsedMs ?? (elapsed ? Math.min(Date.now() - prev, 30_000) : 0) });
   return { ok: true };
 }
 

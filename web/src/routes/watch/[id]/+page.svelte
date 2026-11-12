@@ -272,7 +272,11 @@
   const tvMode = () => document.documentElement.classList.contains('tv');
   function onKey(e: KeyboardEvent) { if ((e.key === 'Escape' || (tvMode() && isBackKey(e))) && !document.fullscreenElement) { e.preventDefault(); back(); } }
   $: bt = barTitles(item, $t);
-  const playEpisode = (e: CustomEvent<{ id: string }>) => toEpisode(`/watch/${e.detail.id}${langQ ? '?' + langQ : ''}`);
+  /** `t`: from this second (the TV's position when a cast ends on another episode than this page's) */
+  const playEpisode = (e: CustomEvent<{ id: string; t?: number }>) => {
+    const q = [e.detail.t !== undefined && `t=${Math.floor(e.detail.t)}`, langQ].filter(Boolean).join('&');
+    return toEpisode(`/watch/${e.detail.id}${q ? '?' + q : ''}`);
+  };
   const label = (i: Item | null) => (i ? (i.seriesName ? `${i.seriesName} · S${i.parentIndexNumber}:E${i.indexNumber} ${i.name}` : i.name) : '');
   onDestroy(() => { stopCountdown(); clearInterval(credT); });
   // the player fills the whole screen: whatever the system draws over (status bar, home indicator) sits on black, not on the page colour

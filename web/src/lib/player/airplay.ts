@@ -57,6 +57,10 @@
  *   Positions up to 1 s are not held (the start, or the server's resume position, decides).
  * - A restore waits for a running `detach` (it would drop the restored stream), at most DETACH_WAIT_MS.
  * - Every decision is written to the AirPlay event log (airplayLog.ts, /diagnose) without URLs, tokens or cast ids.
+ * - A joined stream (continuous AirPlay, spec device-handoff §5.4 f): every new token for the stream on the element (refresh, Retry,
+ *   the subtitle fallback, a tap after a lost route; never `switchItem`) asks the owner where the element's position lies
+ *   (`joined`): the new token starts at that episode and its offset (`request(offset, { joined })`) and goes on the element at the
+ *   offset, because the new stream begins with that episode.
  *
  * Other notes:
  * - Feature detection only (no UA sniffing): the button exists when `webkitShowPlaybackTargetPicker` does and Safari reports a
@@ -138,8 +142,13 @@ export const airPhase = (s: AirPlayState): AirPhase =>
   s.error ? 'error' : s.connecting || (s.busy && !s.active) ? 'connecting' : s.ready ? 'prompt' : s.active ? 'active' : 'idle';
 
 export interface AirPlayDeps {
-  /** POST /api/cast/session for the current item at `pos` (audio track, quality are the player's) */
-  request(pos: number, o?: { noSubs?: boolean }): Promise<CastInfo>;
+  /**
+   * POST /api/cast/session for the current item at `pos` (audio track, quality are the player's). `joined`: a new token for a joined
+   * stream; it starts with that episode, `pos` is the offset in it, `left` = the episodes the stream has from there (that one included)
+   */
+  request(pos: number, o?: { noSubs?: boolean; joined?: { itemId: string; left: number } }): Promise<CastInfo>;
+  /** a new token for what plays on the element at `pos`: the episode, its offset and the episodes left when that is a joined stream; null / absent: `pos` as it is */
+  joined?(pos: number): { itemId: string; offset: number; left: number } | null;
   /** DELETE /api/cast/session/<castId> (fire and forget) */
   revoke(ci: CastInfo): void;
   /** before the token stream: report the local stop, drop hls.js, cancel pending attaches */
@@ -403,12 +412,14 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
   async function tokenFirst() {
     const my = ++seq, pos = video.currentTime, wasPlaying = !video.paused;
     busy = true; error = false; tapAt = { pos, play: wasPlaying }; emit();
+    // a joined stream still on the element (a tap after a lost route): the new token starts at the episode, at its offset
+    const ask = d.joined?.(pos) ?? null, at = ask ? ask.offset : pos;
     let ci: CastInfo;
     try {
       await detach();
       if (my !== seq || dead) return;
       log('token-start', { note: 'tap' });
-      ci = await d.request(pos);
+      ci = await (ask ? d.request(at, { joined: { itemId: ask.itemId, left: ask.left } }) : d.request(pos));
     } catch (e) {
       if (my !== seq || dead) return;
       tapAt = null;
@@ -427,23 +438,26 @@ export function createAirPlay(video: AirPlayVideo, deps: AirPlayDeps, probe?: Ev
     startProbe(ci);
     info = ci;
     d.started(ci);
-    play(ci, pos, wasPlaying);
+    play(ci, at, wasPlaying);
     busy = false;
     if (isWireless()) { active = true; startConnecting('already wireless after token'); emit(); log('wireless', { wireless: true, note: 'already wireless after token: started' }); return; } // a TV was picked meanwhile
-    armPos = pos; arm(); emit();
+    armPos = at; arm(); emit();
     picker(); // WebKit may still honour the tap's gesture; if not, the `ready` prompt opens it
   }
 
   /** automatic request (route without our token), Retry, or a new token for the running / ready session (audio track, quality, renewal) */
   async function switchTo(old: CastInfo | null, from?: number, why = 'auto', forcePlay = false, noSubs = false) {
-    const my = ++seq, pos = from ?? position(), wasPlaying = forcePlay || !video.paused;
+    const my = ++seq, from0 = from ?? position(), wasPlaying = forcePlay || !video.paused;
+    // a new token for a joined stream starts at the episode the element is in, at its offset (a switch's `from` is the new title's)
+    const ask = why === 'switch' ? null : d.joined?.(from0) ?? null, pos = ask ? ask.offset : from0;
+    const o = { ...(noSubs ? { noSubs: true } : {}), ...(ask ? { joined: { itemId: ask.itemId, left: ask.left } } : {}) };
     if (!ready) active = true;
     busy = true; emit();
     try {
       await detach();
       if (my !== seq) return;
-      log('token-start', { note: why });
-      const ci = await (noSubs ? d.request(pos, { noSubs: true }) : d.request(pos));
+      log('token-start', { note: ask ? `${why} (joined)` : why });
+      const ci = await (noSubs || ask ? d.request(pos, o) : d.request(pos));
       if (my !== seq || dead) { d.revoke(ci); return; } // AirPlay ended (or the player closed) meanwhile
       log('token-ok', { note: why });
       startProbe(ci);
