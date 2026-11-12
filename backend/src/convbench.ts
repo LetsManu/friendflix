@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { timedClip } from './cliptime.js';
-import { conversionLimit, countConversions, readBench, type BenchRecord, type ConvEntry, type ConvKind, type ConvPriority } from './convbudget.js';
+import { conversionLimit, countConversions, readBench, setLivetvEncoderCheck, type BenchRecord, type ConvEntry, type ConvKind, type ConvPriority } from './convbudget.js';
 import { CONV_EXEMPT_PREFIX, within } from './convexempt.js';
 import type { Ctx } from './ctx.js';
 import { recordError } from './errorlog.js';
 import { HEVC_SESSIONS_TIMEOUT_MS, busyFrom, claimHevcProbe, fingerprint, hevcProbeRunning, readSettings, releaseHevcProbe } from './hevcenc.js';
 import { listLive, type Live } from './live.js';
 import { livetvCall } from './livetv/client.js';
-import { livetvInstalled } from './livetv/detect.js';
-import { liveEncoder } from './livetv/encoder.js';
+import { livetvInstalled, livetvSystem } from './livetv/detect.js';
+import { liveEncoder, resolveEncoder } from './livetv/encoder.js';
 import type { BenchAnswer } from './livetv/wire.js';
 import type { ServerSession } from './media/types.js';
 import { previews, serviceUser } from './previews.js';
@@ -174,6 +174,16 @@ async function measureLivetv(ctx: Ctx, jfHwAccel: string | null, now: () => numb
 }
 
 /**
+ * A new encoder (LIVETV_ENCODER changed, or livetv can use another device now) makes livetv's record stale: it holds the encoder it
+ * measured in `hwAccel`. A livetv that does not answer its system view says nothing (not stale), so an outage never re-measures.
+ */
+setLivetvEncoderCheck(async (ctx, rec, jfHwAccel) => {
+  if (!livetvInstalled(ctx)) return false;
+  const sys = await livetvSystem(ctx);
+  return sys !== null && resolveEncoder(ctx.cfg.LIVETV_ENCODER, jfHwAccel, sys) !== rec.hwAccel;
+});
+
+/**
  * The admin's *Neu messen* (and Live TV's enable flow): refuses at once what cannot run now (not Jellyfin, a measurement holds the
  * claim, someone watches, no admin account to convert as), else measures in the background (about half a minute) under the claim it
  * took here, so `measure.running` is true from the answer on. The outcome lands in `measure.last`.
@@ -202,7 +212,7 @@ export async function convBenchTick(ctx: Ctx): Promise<boolean> {
   if (await hevcProbeRunning(ctx) || !previews(ctx).idle) return false;
   const b = await readBench(ctx);
   // measured and current; with livetv installed its record too (one attempt per 30 min until it exists, ruling R3)
-  if (b.jellyfin && !b.stale && (b.livetv || !livetvInstalled(ctx))) return false;
+  if (b.jellyfin && !b.stale && !b.livetvStale && (b.livetv || !livetvInstalled(ctx))) return false;
   if (await benchBusy(ctx)) return false;
   if (!(await serviceUser(ctx).catch(() => undefined))) return false;
   if (!(await ctx.kv.setnx(ATTEMPT_KEY, String(Date.now()), BENCH_ATTEMPT_GAP_S).catch(() => false))) return false;
@@ -265,7 +275,7 @@ export async function conversionsView(ctx: Ctx): Promise<ConversionsView> {
       jellyfin: b.jellyfin ? { speed: b.jellyfin.speed, hwAccel: b.jellyfin.hwAccel, at: new Date(b.jellyfin.at).toISOString() } : null,
       livetv: b.livetv ? { speed: b.livetv.speed, encoder: b.livetv.hwAccel, at: new Date(b.livetv.at).toISOString() } : null,
       recommended: lim.recommended,
-      stale: b.stale,
+      stale: b.stale || b.livetvStale,
       noRealtime: speeds.length > 0 && Math.min(...speeds) < 1,
     },
     measure: { running: measuring, busy: busyOf(live, sessions, exempt, running), last: measurable(ctx) ? last : { outcome: 'unsupported', at: null } },

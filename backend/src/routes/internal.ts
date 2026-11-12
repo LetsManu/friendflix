@@ -12,7 +12,7 @@ import { addressOnly } from '../media/address.js';
 import { mediaGatewayKeys, mediaUrlKey } from '../media/index.js';
 import { MediaError, type ExternalSession } from '../media/types.js';
 import { effectiveLimits } from '../limits.js';
-import { streamKeyFor } from '../livetv/streams.js';
+import { streamBitrateFor, streamKeyFor } from '../livetv/streams.js';
 import { resolveLiveToken } from '../livetv/tokens.js';
 import { jfUserFor, resolveProfile } from '../profiles.js';
 import { isHomeAddress } from '../netaddr.js';
@@ -157,7 +157,7 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     const b = z.object({ token: z.string().regex(CAST_TOKEN_RE), ip: z.string().min(1).max(64) }).strict().safeParse(req.body);
     if (!b.success) return reply.code(400).send({ error: 'bad_request' });
     // the running stream of the token's channel as livetv lists it (livetv/streams.ts; not running = 410 stream gone)
-    const r = await resolveLiveToken(ctx, b.data.token, b.data.ip, { streamKeyFor: (channelId) => streamKeyFor(ctx, channelId) });
+    const r = await resolveLiveToken(ctx, b.data.token, b.data.ip, { streamKeyFor: (channelId) => streamKeyFor(ctx, channelId), bitrateFor: (channelId) => streamBitrateFor(ctx, channelId) });
     reply.header('cache-control', 'no-store');
     if (r.status !== 200) return reply.code(r.status).send({ error: r.status === 401 ? 'unauthenticated' : r.status === 403 ? 'forbidden' : 'gone' });
     return { streamKey: r.streamKey, kind: r.kind, maxAgeS: r.maxAgeS };

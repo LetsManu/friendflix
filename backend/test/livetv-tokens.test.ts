@@ -17,7 +17,7 @@ import { invalidateRights } from '../src/rights.js';
 import { invalidateRoles } from '../src/roles.js';
 import { lockUser } from '../src/users.js';
 import { detectLivetv } from '../src/livetv/detect.js';
-import { invalidateLiveConversions } from '../src/livetv/streams.js';
+import { invalidateLiveConversions, streamBitrateFor, streamKeyFor } from '../src/livetv/streams.js';
 import { cfg, ENC_KEY, fakeHttp, makeEnv, type TestEnv } from './helpers.js';
 
 vi.mock('../src/livetv/detect.js', async (orig) => ({
@@ -52,13 +52,15 @@ let nord = '';
 let hafen = '';
 /** channel id -> running stream key (the fake streamKeyFor) */
 const running = new Map<string, string>();
+/** channel id -> the bitrate livetv reports for its stream (bit/s); none = null */
+const bitrates = new Map<string, number>();
 const deps = { streamKeyFor: async (id: string) => running.get(id) ?? null };
 /** what the route's real streamKeyFor reads: livetv's `GET /v1/streams` (stream keys are 32 hex there) */
 const hexOf = (k: string) => Buffer.from(k).toString('hex').padEnd(32, '0').slice(0, 32);
 const fakeLivetv = () => fakeHttp({
   'GET /healthz': () => ({ json: { ok: true, api: 1, version: '3.3.0', bootId: '0123456789abcdef' } }),
   'GET /v1/streams': () => ({ json: [...running].map(([channelId, k]) => ({
-    channelId, streamKey: hexOf(k), mode: 'passthrough', since: 1, state: 'running', bitrate: null, errors: [], lastSegmentAt: 2,
+    channelId, streamKey: hexOf(k), mode: 'passthrough', since: 1, state: 'running', bitrate: bitrates.get(channelId) ?? null, errors: [], lastSegmentAt: 2,
   })) }),
 });
 const authz = (token: string, ip = IP1) => resolveLiveToken(env.ctx, token, ip, deps);
@@ -403,6 +405,19 @@ describe('live tokens', () => {
     expect(await status(token)).toBe(200);
     expect(await env.kv.get(liveViewKey(hash))).toBe(nord);
     expect((await getLive(env.ctx, ANNA, ps))?.source).toBe('livetv');
+  });
+
+  it('the live record carries the stream bitrate, none while unknown', async () => {
+    const { token, hash } = await mint();
+    const ps = `ltv-${hash.slice(0, 24)}`;
+    const real = { streamKeyFor: (id: string) => streamKeyFor(env.ctx, id), bitrateFor: (id: string) => streamBitrateFor(env.ctx, id) };
+    expect((await resolveLiveToken(env.ctx, token, IP1, real)).status).toBe(200);
+    expect((await getLive(env.ctx, ANNA, ps))?.bitrate).toBeUndefined(); // livetv has not measured the stream yet
+    bitrates.set(nord, 4_200_000);
+    invalidateLiveConversions();
+    skipClock(21_000);
+    expect((await resolveLiveToken(env.ctx, token, IP1, real)).status).toBe(200);
+    expect((await getLive(env.ctx, ANNA, ps))?.bitrate).toBe(4_200_000);
   });
 
   it('an admin test token plays a channel of an unreleased group', async () => {
