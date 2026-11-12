@@ -1,0 +1,71 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import type de from '../de/live';
+import type { Translation } from '../../types';
+
+const dict: Translation<typeof de> = {
+  title: 'Canlı TV',
+  favourites: 'Şu an senin için yayında',
+  all: 'Tümü',
+  favouritesChip: 'Favoriler',
+  now: 'Şimdi',
+  next: 'Sonra',
+  noEpg: 'Program bilgisi yok',
+  liveOnly: 'Canlı',
+  favourite: 'Favorilere ekle',
+  unfavourite: 'Favorilerden çıkar',
+  player: {
+    live: 'CANLI',
+    behind: '−{time}',
+    toLive: 'Canlı yayına dön',
+    chUp: 'Sonraki kanal',
+    chDown: 'Önceki kanal',
+    lastChannel: 'Son kanal',
+    lastChannelTo: '{number} {name} kanalına dön',
+    starting: 'Kanal başlatılıyor…',
+    unreachable: 'Kanala şu an ulaşılamıyor',
+    reconnecting: 'Yeniden bağlanılıyor…',
+    retry: 'Tekrar dene',
+    off: 'Canlı TV şu an kapalı. Bir yönetici tekrar açabilir.',
+    pauseTooLong: 'Duraklatma {n} dakikadan uzun sürdü, kayıtlı en eski noktadan devam ediliyor.',
+    restart: 'Baştan',
+    channelList: 'Kanal listesi',
+    info: 'Program',
+    noChannel: '{n} numaralı kanal yok',
+    notAvailable: 'Bu kanal artık sana açık değil.',
+  },
+  full: {
+    title: 'Şu an tüm canlı yayın yerleri dolu',
+    body: 'Bu kanallar zaten açık ve hemen başlar:',
+    join: '{name} izle',
+  },
+  providerLimit: 'Sağlayıcın aynı anda yalnızca {n} kanala izin veriyor.',
+  tvHintFav: 'Uzun OK: favori',
+  notReceiving: 'Şu an yayın yok',
+  gap: 'Program şu an kullanılamıyor',
+  timeLeft: '{n} dk kaldı',
+  timeLeftLong: '{h} sa {m} dk kaldı',
+  endingNow: 'birazdan bitiyor',
+  recentChip: 'Son izlenenler',
+  number: {
+    last: '0 · Son kanal: {number} {name}',
+    noLast: 'Son kanal yok',
+  },
+  fav: {
+    order: 'Sırala',
+    orderTitle: 'Favorileri sırala',
+    orderDone: 'Tamam',
+    orderMove: 'taşı',
+    orderPicked: '{name} alındı, konum {n} / {m}',
+    orderMoved: 'Konum {n} / {m}',
+    orderDropped: '{name} {n}. konuma bırakıldı',
+    orderCancelled: 'Taşıma iptal edildi',
+  },
+  tvHint: {
+    ok: 'OK: izle',
+    chJump: 'CH ▲▼: 8 satır',
+    zeroLast: '0: son kanal',
+    longOkList: 'Uzun OK: kanal listesi',
+  },
+};
+export default dict;

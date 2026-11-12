@@ -1,0 +1,71 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import type de from '../de/live';
+import type { Translation } from '../../types';
+
+const dict: Translation<typeof de> = {
+  title: 'TV en directo',
+  favourites: 'En directo para ti',
+  all: 'Todos',
+  favouritesChip: 'Favoritos',
+  now: 'Ahora',
+  next: 'Después',
+  noEpg: 'Sin programación disponible',
+  liveOnly: 'En directo',
+  favourite: 'Añadir a favoritos',
+  unfavourite: 'Quitar de favoritos',
+  player: {
+    live: 'EN VIVO',
+    behind: '−{time}',
+    toLive: 'Volver al directo',
+    chUp: 'Canal siguiente',
+    chDown: 'Canal anterior',
+    lastChannel: 'Último canal',
+    lastChannelTo: 'Volver a {number} {name}',
+    starting: 'Iniciando el canal…',
+    unreachable: 'El canal no está disponible ahora mismo',
+    reconnecting: 'Reconectando…',
+    retry: 'Reintentar',
+    off: 'La TV en directo está desactivada ahora mismo. Un administrador puede volver a activarla.',
+    pauseTooLong: 'La pausa duró más de {n} minutos; se continúa desde el punto guardado más antiguo.',
+    restart: 'Desde el principio',
+    channelList: 'Lista de canales',
+    info: 'Programa',
+    noChannel: 'No hay canal {n}',
+    notAvailable: 'Este canal ya no está disponible para ti.',
+  },
+  full: {
+    title: 'Ahora mismo todas las plazas en directo están ocupadas',
+    body: 'Estos canales ya están en emisión y empiezan al instante:',
+    join: 'Ver {name}',
+  },
+  providerLimit: 'Tu proveedor solo permite {n} canales a la vez.',
+  tvHintFav: 'OK largo: favorito',
+  notReceiving: 'Sin emisión en este momento',
+  gap: 'Programación no disponible ahora mismo',
+  timeLeft: 'quedan {n} min',
+  timeLeftLong: 'quedan {h} h {m} min',
+  endingNow: 'termina ya',
+  recentChip: 'Vistos hace poco',
+  number: {
+    last: '0 · Último canal: {number} {name}',
+    noLast: 'No hay último canal',
+  },
+  fav: {
+    order: 'Ordenar',
+    orderTitle: 'Ordenar favoritos',
+    orderDone: 'Listo',
+    orderMove: 'mover',
+    orderPicked: '{name} recogido, posición {n} de {m}',
+    orderMoved: 'Posición {n} de {m}',
+    orderDropped: '{name} colocado en la posición {n}',
+    orderCancelled: 'Movimiento cancelado',
+  },
+  tvHint: {
+    ok: 'OK: ver',
+    chJump: 'CH ▲▼: 8 filas',
+    zeroLast: '0: último canal',
+    longOkList: 'OK largo: lista de canales',
+  },
+};
+export default dict;

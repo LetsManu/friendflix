@@ -31,8 +31,9 @@ import reco from './reco';
 import serverText from './serverText';
 import tv from './tv';
 import desk from './desk';
+import live from './live';
 import adminConv from './adminConv';
 import adminLive from './adminLive';
 
-const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, reco, ui, adminPeople, adminContent, serverText, tv, desk, adminConv, adminLive };
+const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, reco, ui, adminPeople, adminContent, serverText, tv, desk, live, adminConv, adminLive };
 export default dict;
