@@ -100,3 +100,98 @@ describe('updater default', () => {
     expect(read('compose.no-updater.yaml')).toMatch(/docker-proxy:\n {4}profiles: \[updater\]\n {2}updater:\n {4}profiles: \[updater\]/);
   });
 });
+
+/** one top-level service block of a compose file (text up to the next service or top-level key) */
+const service = (src: string, name: string): string => {
+  const at = src.indexOf(`\n  ${name}:\n`, src.indexOf('\nservices:\n'));
+  expect(at, `service ${name}`).toBeGreaterThan(-1);
+  return src.slice(at + 1).split(/\n(?: {2}[a-z][\w-]*:|[a-z])/)[0]!;
+};
+const networksOf = (block: string): string[] => {
+  const m = /^ {4}networks: \[([^\]]*)\]/m.exec(block);
+  return m ? m[1]!.split(',').map((s) => s.trim().replace(/:.*$/, '')) : [];
+};
+
+describe.each(['compose.prod.yaml', 'compose.yaml'])('%s livetv', (file) => {
+  const src = read(file);
+
+  it('livetv runs only with its profile, locked down, with UDP ports only and no Docker socket', () => {
+    const b = service(src, 'livetv');
+    expect(b).toMatch(/^ {4}profiles: \[livetv\]$/m);
+    expect(b).toMatch(/^ {4}read_only: true$/m);
+    expect(b).toMatch(/^ {4}cap_drop: \[ALL\]$/m);
+    expect(b).toContain('no-new-privileges:true');
+    expect(b).not.toContain('docker.sock');
+    const lines = b.split('\n');
+    const from = lines.findIndex((l) => /^ {4}ports:/.test(l)) + 1;
+    const ports = lines.slice(from).filter((l, i, a) => /^ {6}- /.test(l) && a.slice(0, i).every((x) => !/^ {4}[a-z]/.test(x)));
+    expect(ports.length).toBeGreaterThan(0);
+    for (const p of ports) expect(p, p).toMatch(/\/udp"$/);
+    // 1b review M11: nothing is reachable from outside until the admin opens push (Docker-published ports bypass ufw)
+    expect(b).toContain('${LIVETV_SRT_BIND:-127.0.0.1}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp');
+    expect(b).not.toContain('${LIVETV_SRT_BIND:-0.0.0.0}');
+    expect(b).toContain('LIVETV_SRT_PORTS: ${LIVETV_SRT_PORTS:-9000-9009}');
+    expect(b).toContain('LIVETV_CACHE_MAX_GB: ${LIVETV_CACHE_MAX_GB:-6}');
+    expect(networksOf(b)).toEqual(['livetv', 'livetv-egress']);
+    // image: its own, pulled only with the profile; the mounts of spec 3.1
+    expect(b).toContain('friendflix-livetv:');
+    expect(b).toContain('livetv-cache:/cache');
+    expect(b).toContain('${RECORDINGS_PATH:-recordings}:/recordings');
+    // its own signing key only (1b review I1): never INTERNAL_SECRET, never the gateway's copy of it
+    expect(b).toContain('bootstrap-livetv:/run/friendflix-livetv:ro');
+    expect(b).not.toMatch(/INTERNAL_SECRET(_FILE)?:/); // no such variable (the comment may name it)
+    expect(b).not.toContain('bootstrap-gateway');
+    expect(b).not.toMatch(/bootstrap:\/run/);
+  });
+
+  it('only the bootstrap service writes the livetv key volume, only livetv reads it', () => {
+    expect(service(src, 'bootstrap')).toContain('bootstrap-livetv:/run/friendflix-livetv\n');
+    const users = src.split(/\n {2}(?=[a-z-]+:\n)/).slice(1).filter((b) => b.includes('bootstrap-livetv:/run')).map((b) => b.split(':')[0]);
+    expect(users.sort()).toEqual(['bootstrap', 'livetv']);
+    expect(src.slice(src.indexOf('\nvolumes:\n'))).toMatch(/^ {2}bootstrap-livetv:/m);
+  });
+
+  it('defines the networks and volumes always; livetv is internal, only livetv-egress reaches out', () => {
+    const nets = src.slice(src.indexOf('\nnetworks:\n'), src.indexOf('\nservices:\n'));
+    expect(nets).toMatch(/^ {2}livetv:\n {4}internal: true$/m);
+    expect(nets).toMatch(/^ {2}livetv-egress: \{\}/m);
+    const vols = src.slice(src.indexOf('\nvolumes:\n'));
+    expect(vols).toMatch(/^ {2}livetv-cache:/m);
+    expect(vols).toMatch(/^ {2}recordings:/m);
+    for (const [name, block] of src.split(/\n {2}(?=[a-z-]+:\n)/).slice(1).map((b) => [b.split(':')[0]!, b] as const)) {
+      if (name !== 'livetv') expect(networksOf(block), name).not.toContain('livetv-egress');
+    }
+  });
+
+  it('backend and gateway reach livetv, web does not; nobody but docker-proxy has the socket', () => {
+    for (const svc of ['backend', 'gateway']) {
+      const b = service(src, svc);
+      expect(networksOf(b), svc).toContain('livetv');
+      expect(b, svc).toContain('LIVETV_URL: ${LIVETV_URL:-http://livetv:8090}');
+    }
+    const web = service(src, 'web');
+    expect(networksOf(web)).not.toContain('livetv');
+    expect(web).not.toContain('LIVETV_URL');
+    for (const svc of ['backend', 'gateway', 'web', 'livetv']) expect(service(src, svc), svc).not.toContain('docker.sock');
+  });
+});
+
+describe('livetv GPU overlays', () => {
+  it('compose.livetv-gpu.yaml maps /dev/dri and adds the render group; it needs RENDER_GID', () => {
+    const src = read('compose.livetv-gpu.yaml');
+    expect(src).toMatch(/^# SPDX-License-Identifier: AGPL-3.0-or-later$/m);
+    expect(src).toMatch(/^ {2}livetv:$/m);
+    expect(src).toContain('devices: ["/dev/dri:/dev/dri"]');
+    expect(src).toContain('group_add: ["${RENDER_GID:?');
+    expect(src).not.toMatch(/profiles:/);
+  });
+  it('compose.livetv-nvidia.yaml reserves one nvidia GPU with the video capability', () => {
+    const src = read('compose.livetv-nvidia.yaml');
+    expect(src).toMatch(/^# SPDX-License-Identifier: AGPL-3.0-or-later$/m);
+    expect(src).toMatch(/^ {2}livetv:$/m);
+    expect(src).toMatch(/driver: nvidia/);
+    expect(src).toMatch(/count: 1/);
+    expect(src).toMatch(/capabilities: \[gpu, video\]/);
+    expect(src).not.toMatch(/profiles:/);
+  });
+});

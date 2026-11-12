@@ -21,6 +21,7 @@ import { authentikRepairRoutes } from './routes/authentikRepair.js';
 import { adminRoutes, inviteRoutes } from './routes/admin.js';
 import { adminSettingsRoutes } from './routes/adminSettings.js';
 import { updaterRoutes } from './routes/updater.js';
+import { livetvAdminRoutes } from './livetv/adminRoutes.js';
 import { conversionRoutes } from './routes/conversions.js';
 import { adminUserRoutes } from './routes/adminUsers.js';
 import { authRoutes } from './routes/auth.js';
@@ -246,6 +247,7 @@ export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInst
   adminRoutes(app, ctx);
   adminSettingsRoutes(app, ctx);
   updaterRoutes(app, ctx);
+  livetvAdminRoutes(app, ctx);
   conversionRoutes(app, ctx);
   setupRoutes(app, ctx);
   adminUserRoutes(app, ctx);

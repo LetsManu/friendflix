@@ -91,3 +91,44 @@ export function updaterRoute(u: UpdaterMock | null, settings: SettingsMock, m: s
   }
   return null;
 }
+
+/**
+ * The updater's job of the optional livetv service (backend UpdaterJob, action livetv-enable / livetv-disable / livetv-remove). An enable
+ * walks pull -> verify -> restart -> health, a disable has only the restart step. `advanceLivetvJob` moves it one step per call and tells
+ * when it ended; `outcome` is how (succeeded, failed with `error`, or rolled_back with the rollback step, a failed first enable cleaned up).
+ */
+export type LivetvJobOutcome = 'succeeded' | 'failed' | 'rolled_back';
+export function livetvJob(action: 'livetv-enable' | 'livetv-disable' | 'livetv-remove'): any {
+  const enable = action === 'livetv-enable';
+  return {
+    id: 'fedcba9876543210', action, state: 'running', step: enable ? 'pull' : 'restart', from: null, to: 'sha-c0be6c5', startedAt: new Date().toISOString(), finishedAt: null, error: null,
+    steps: enable
+      ? { pull: 'running', verify: 'pending', restart: 'pending', health: 'pending', rollback: 'skipped' }
+      : { pull: 'skipped', verify: 'skipped', restart: 'running', health: 'skipped', rollback: 'skipped' },
+  };
+}
+/** one step further; returns true when the job ended in this call */
+export function advanceLivetvJob(j: any, tick: number, polls: number, outcome: LivetvJobOutcome, error: string | null): boolean {
+  if (!j || j.state !== 'running') return false;
+  const enable = j.action === 'livetv-enable';
+  const set = (step: string, steps: Record<string, string>) => { j.step = step; Object.assign(j.steps, steps); };
+  if (enable && tick < polls - 1) {
+    const order = ['pull', 'verify', 'restart', 'health'];
+    const i = Math.min(tick + 1, order.length - 1);
+    set(order[i]!, { ...Object.fromEntries(order.slice(0, i).map((k) => [k, 'ok'])), [order[i]!]: 'running' });
+    return false;
+  }
+  if (!enable && tick < polls - 1) return false;
+  j.finishedAt = new Date().toISOString();
+  if (outcome === 'succeeded') {
+    Object.assign(j.steps, enable ? { pull: 'ok', verify: 'ok', restart: 'ok', health: 'ok' } : { restart: 'ok' });
+    j.state = 'succeeded'; j.step = null;
+  } else if (outcome === 'rolled_back') {
+    Object.assign(j.steps, { pull: 'ok', verify: 'ok', restart: 'ok', health: 'failed', rollback: 'ok' });
+    j.state = 'rolled_back'; j.step = 'rollback'; j.error = error ?? 'unhealthy';
+  } else {
+    Object.assign(j.steps, enable ? { pull: 'failed' } : { restart: 'failed' });
+    j.state = 'failed'; j.step = null; j.error = error ?? 'pull_failed';
+  }
+  return true;
+}

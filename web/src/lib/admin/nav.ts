@@ -4,8 +4,9 @@
 import type { TKey } from '#lib/i18n';
 import type { AdminSummary } from './summary';
 
-export type BadgeKey = 'requests' | 'devices' | 'polls' | 'previews' | 'approvals';
-export interface NavItem { href: string; label: TKey; icon: string; badge?: BadgeKey }
+export type BadgeKey = 'requests' | 'devices' | 'polls' | 'previews' | 'approvals' | 'livetv';
+/** `chip`: a small word after the label (Live-TV: "optional" while it is not installed) */
+export interface NavItem { href: string; label: TKey; icon: string; badge?: BadgeKey; chip?: TKey }
 export interface NavGroup { id: 'people' | 'content' | 'operations'; label: TKey; items: NavItem[] }
 
 export const OVERVIEW: NavItem = { href: '/admin', label: 'admin.nav.overview', icon: 'grid' };
@@ -24,6 +25,7 @@ export const GROUPS: NavGroup[] = [
     { href: '/admin/leaving', label: 'fresh.admin.tab', icon: 'calendar' },
     { href: '/admin/previews', label: 'admin.tabs.previews', icon: 'film', badge: 'previews' },
     { href: '/admin/hygiene', label: 'admin.tabs.hygiene', icon: 'check' },
+    { href: '/admin/livetv', label: 'admin.tabs.livetv', icon: 'tv', chip: 'adminLive.optional', badge: 'livetv' },
   ] },
   { id: 'operations', label: 'admin.nav.groups.operations', items: [
     { href: '/admin/playback', label: 'admin.tabs.playback', icon: 'play' },
@@ -50,8 +52,10 @@ export function groupOf(item: NavItem | null): NavGroup | null {
 /** badge number for a nav item (0 = no badge; null summary = no badge yet) */
 export function badgeCount(s: AdminSummary | null, key: BadgeKey | undefined): number {
   if (!s || !key) return 0;
-  const v = key === 'previews' ? s.pending.previewsFailed : s.pending[key];
+  const v = key === 'previews' ? s.pending.previewsFailed : key === 'livetv' ? s.livetv.failedSources : s.pending[key];
   return typeof v === 'number' && v > 0 ? v : 0;
 }
 /** failures (red) vs. waiting for a decision (amber) */
-export const badgeTone = (key: BadgeKey): 'err' | 'warn' => (key === 'previews' ? 'err' : 'warn');
+export const badgeTone = (key: BadgeKey): 'err' | 'warn' => (key === 'previews' || key === 'livetv' ? 'err' : 'warn');
+/** the chip only while Live-TV is not installed */
+export const chipShown = (s: AdminSummary | null, it: NavItem): boolean => Boolean(it.chip) && s?.livetv.installed !== true;

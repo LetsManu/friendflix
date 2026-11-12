@@ -8,6 +8,7 @@ COPY backend/package.json backend/
 COPY gateway/package.json gateway/
 COPY web/package.json web/
 COPY updater/package.json updater/
+COPY livetv/package.json livetv/
 RUN npm ci
 COPY backend backend
 RUN npm run build -w backend
@@ -19,6 +20,7 @@ COPY backend/package.json backend/
 COPY gateway/package.json gateway/
 COPY web/package.json web/
 COPY updater/package.json updater/
+COPY livetv/package.json livetv/
 RUN npm ci --omit=dev -w backend
 
 FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5

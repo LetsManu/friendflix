@@ -7,6 +7,7 @@ export default {
     users: 'Nutzer', status: 'Status', previews: 'Vorschauen', playback: 'Wiedergabe-Check', digest: 'Wochenrückblick', sources: 'Datenquellen', invites: 'Einladungen',
     requests: 'Wünsche', polls: 'Abstimmungen', lists: 'Listen', roles: 'Rollen & Rechte', devices: 'Geräte', audit: 'Audit-Log', update: 'Update',
     hygiene: 'Bibliothekspflege',
+    livetv: 'Live-TV',
     settings: 'Einstellungen',
     usage: 'Nutzung',
   },

@@ -8,6 +8,7 @@ COPY backend/package.json backend/
 COPY gateway/package.json gateway/
 COPY web/package.json web/
 COPY updater/package.json updater/
+COPY livetv/package.json livetv/
 RUN npm ci
 # the footer shows version.json; the codename list is shared with backend + release script
 COPY version.json codenames.json ./

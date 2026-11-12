@@ -126,6 +126,7 @@ export default {
     AUTHENTIK_EMAIL_CHANGE_FLOW: { label: 'Ablauf für E-Mail-Änderung', help: 'Slug des Ablaufs, der eine neue E-Mail-Adresse per Bestätigungslink übernimmt (Vorlage: friendflix-email-change).' },
     PASSKEYS_IN_APP: { label: 'Passkeys in FriendFlix', help: 'Automatisch: Passkeys direkt in FriendFlix, wenn Authentik das zulässt. Aus: Passkeys nur auf der Anmeldeseite von Authentik.' },
     LOGIN_COVER_WALL: { label: 'Titelbilder hinter der Anmeldung', help: 'Zeigt Cover aus der Bibliothek (nur Altersfreigaben bis 12, nichts ohne Einstufung) hinter der Anmeldung. Die Bilder sind ohne Anmeldung abrufbar.' },
+    LIVETV_OFFER_HIDDEN: { label: 'Optionalen Live-TV-Eintrag ausblenden', help: 'Blendet im Admin-Bereich den Eintrag „Live-TV (optional)“ aus, solange Live-TV nicht eingerichtet ist.' },
     JELLYFIN_URL: { label: 'Jellyfin-Adresse', help: 'Interne Adresse des Mediaservers, z. B. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Jellyfin-API-Schlüssel (Admin)', help: 'API-Schlüssel mit Admin-Rechten (Jellyfin → Dashboard → API-Schlüssel).' },
     PLEX_URL: { label: 'Plex-Adresse', help: 'Interne Adresse des Plex-Servers, über die Backend und Medien-Gateway ihn erreichen. Nur die Adresse: Der Token gehört in sein eigenes Feld, nie in die Adresse.' },

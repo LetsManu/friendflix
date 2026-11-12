@@ -32,7 +32,7 @@ updates:
       desktop-npm:
         patterns: ["*"]
   - package-ecosystem: docker
-    directories: [/backend, /gateway, /web, /updater]
+    directories: [/backend, /gateway, /web, /updater, /livetv]
     schedule: { interval: monthly }
     cooldown: { default-days: 7 }
     rebase-strategy: disabled

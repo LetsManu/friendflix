@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { requireAdmin } from '../session.js';
-import { UPDATER_ACTIONS, startJob, updaterView, type UpdaterAction } from '../updater.js';
+import { UPDATER_ACTIONS, startJob, updaterView, type UpdateJobAction } from '../updater.js';
 import { portainerMode } from '../updates.js';
 
 /**
@@ -28,7 +28,7 @@ export function updaterRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ...(await updaterView(ctx)), autoUpdate: auto(), portainer: { configured: mode !== null, mode } };
   });
 
-  const action = z.object({ action: z.enum(UPDATER_ACTIONS as [UpdaterAction, ...UpdaterAction[]]) });
+  const action = z.object({ action: z.enum(UPDATER_ACTIONS as [UpdateJobAction, ...UpdateJobAction[]]) });
   // hook preHandler: the limiter runs after requireAdmin, so nobody but an admin can use up the portal-wide budget
   app.post('/api/admin/updater/:action', { ...admin, config: { rateLimit: { max: 3, timeWindow: '2 minutes', keyGenerator: () => 'updater', hook: 'preHandler' } } }, async (req, reply) => {
     const p = action.safeParse(req.params);

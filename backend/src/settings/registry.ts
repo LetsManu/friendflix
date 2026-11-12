@@ -181,11 +181,13 @@ export const SETTINGS: readonly SettingDef[] = [
   setting('PASSKEYS_IN_APP', { kind: 'enum', group: 'signin' }),
   // group general, not signin: saving a signin-group key clears the wizard's SIGNIN_VIA note (routes/setup.ts), and the wall is no credential
   setting('LOGIN_COVER_WALL', { kind: 'bool', group: 'general' }),
+  setting('LIVETV_OFFER_HIDDEN', { kind: 'bool', group: 'general' }), // read per request
+  setting('LIVETV_WANTED', { kind: 'bool', group: 'general', visible: false }), // written by the livetv enable/disable routes
 ];
 
 /** Per container or per deployment, or shared with a container that reads env only: env > default, read-only in Admin -> Settings. */
 export const ENV_ONLY_KEYS: readonly string[] = ['PORT', 'DIGEST_DAY', 'DIGEST_HOUR', 'MEDIA_SERVER', 'METRICS_TOKEN', 'ROLE_TEMPLATES',
-  'OIDC_ALLOW_INSECURE', 'PREVIEW_DIR', 'UPDATE_REPO', 'DOWNLOAD_DIR', 'BACKGROUND_JOBS', 'GATEWAY_URL', 'UPDATER_URL',
+  'OIDC_ALLOW_INSECURE', 'PREVIEW_DIR', 'UPDATE_REPO', 'DOWNLOAD_DIR', 'BACKGROUND_JOBS', 'GATEWAY_URL', 'UPDATER_URL', 'LIVETV_URL',
   // expert tuning of the recommendation engine v2 (Admin -> Settings, group recommendations, says they are set in .env)
   'RECO_W_GENRES', 'RECO_W_TAGS', 'RECO_W_STUDIOS', 'RECO_W_PEOPLE', 'RECO_W_TEXT', 'RECO_W_NUMERIC', 'RECO_W_COLLECTION', 'RECO_COEFFS'];
 /** Needed before the database can be read: env (incl. _FILE) > bootstrap volume file > default; never stored in the database. */

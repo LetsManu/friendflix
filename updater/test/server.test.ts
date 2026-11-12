@@ -19,6 +19,7 @@ function ops(): Ops {
     images: async (tag, s) => Object.fromEntries(s.map((x) => [x, `ghcr.io/letsmanu/friendflix-${x}:${tag}`])),
     pull: async (tag) => { started.push(tag); await new Promise<void>((r) => { release = r; }); },
     verify: async () => true, up: async () => {}, imageInfo: async () => info, running: async () => info, spawnSelfUpdate: async () => {}, healthy: async () => true,
+    ownStack: async () => {}, stop: async () => {}, rm: async () => {}, imageRm: async () => {}, volumeRm: async () => {}, livetvContainer: async () => null, livetvNetwork: async () => {},
   };
 }
 

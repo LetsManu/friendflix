@@ -104,6 +104,14 @@ so this decides how long a commit stays reproducible:
   the rebuild (`--out image.tar`; `scripts/reproduce-image.sh --diff a.tar b.tar` lists the files of differing layers),
   and the package versions in the published image are in its SBOM.
 
+## Exemption: `livetv`
+
+The optional `livetv` image (`ghcr.io/letsmanu/friendflix-livetv`) is **not** part of the `reproducible` job and
+`scripts/reproduce-image.sh livetv` refuses. It is Debian-based and installs `jellyfin-ffmpeg7` with `apt` from the Jellyfin
+repository, which keeps only current versions (no snapshot archive, so an exact pin would stop building) and whose apt/dpkg
+state is not shown to be byte-stable, so the Alpine ruling above cannot be extended to it. Its base images are digest-pinned
+and the image is built, scanned, SBOM'd and cosign-signed like the others; see [livetv.md](livetv.md#image-and-reproducible-builds-exemption). To lift the exemption, pin or vendor the Jellyfin `.deb`, then show two identical builds with `scripts/reproduce-image.sh livetv`.
+
 ## When the `reproducible` check fails
 
 The failing job prints which layer differs and the file listing (mode, owner, size, mtime, name) of that layer in both

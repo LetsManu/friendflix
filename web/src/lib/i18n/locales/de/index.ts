@@ -30,5 +30,6 @@ import serverText from './serverText';
 import tv from './tv';
 import desk from './desk';
 import adminConv from './adminConv';
+import adminLive from './adminLive';
 
-export default { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, reco, ui, adminPeople, adminContent, serverText, tv, desk, adminConv } as const;
+export default { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, reco, ui, adminPeople, adminContent, serverText, tv, desk, adminConv, adminLive } as const;

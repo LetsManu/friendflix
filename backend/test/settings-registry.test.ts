@@ -21,13 +21,13 @@ const def = (key: string) => {
 describe('key classification', () => {
   it('every key of the config schema is in exactly one of SETTINGS, ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS', () => {
     const keys = Object.keys(configSchema.shape);
-    expect(keys).toHaveLength(103); // + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
+    expect(keys).toHaveLength(106); // + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
     const classes = [SETTINGS.map((s) => s.key), ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS];
     for (const k of keys) expect(classes.filter((c) => c.includes(k)), k).toHaveLength(1);
     expect(classes.flat().sort()).toEqual([...keys].sort()); // nothing outside the schema, no duplicates
-    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 21, 4, 74]); // + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
-    expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(74);
-    expect(SETTINGS.filter((s) => s.visible === false).map((s) => s.key)).toEqual([]);
+    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 22, 4, 76]); // + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
+    expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(75);
+    expect(SETTINGS.filter((s) => s.visible === false).map((s) => s.key)).toEqual(['LIVETV_WANTED']);
   });
   it('each setting parses with the config schema field of the same key', () => {
     for (const s of SETTINGS) expect(s.schema, s.key).toBe(configSchema.shape[s.key as keyof typeof configSchema.shape]);

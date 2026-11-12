@@ -6,7 +6,22 @@ import { CHANNELS, SHA_TAG_RE, VERSION_RE, isTag, type Channel } from './policy.
 
 export type StepName = 'pull' | 'verify' | 'restart' | 'health' | 'rollback';
 export type StepState = 'pending' | 'running' | 'ok' | 'failed' | 'skipped';
-export type JobAction = 'update' | 'rollback' | 'self-update';
+export type JobAction = 'update' | 'rollback' | 'self-update' | 'livetv-enable' | 'livetv-disable' | 'livetv-remove';
+const JOB_ACTIONS: readonly JobAction[] = ['update', 'rollback', 'self-update', 'livetv-enable', 'livetv-disable', 'livetv-remove'];
+/**
+ * the optional livetv service: enabled (the updater started it; it follows every update), disabled (container removed), absent
+ * (never enabled or removed with its image), stop_failed (a job disabled it but could not stop its container: the next job
+ * stops it again, it is never adopted as enabled meanwhile)
+ */
+export type LivetvState = 'enabled' | 'disabled' | 'absent' | 'stop_failed';
+const LIVETV_STATES: readonly LivetvState[] = ['enabled', 'disabled', 'absent', 'stop_failed'];
+/**
+ * why an update or rollback disabled livetv on its own (livetv never holds back or rolls back the core services): its image
+ * missing or not resolving as expected (pull_failed, unexpected_image, config_mismatch, compose_config), not verified, not
+ * started, not healthy
+ */
+export const LIVETV_ERRORS = ['pull_failed', 'unexpected_image', 'config_mismatch', 'compose_config', 'compose_outdated', 'verify_failed', 'restart_failed', 'unhealthy'] as const;
+export type LivetvError = (typeof LIVETV_ERRORS)[number];
 export type JobState = 'running' | 'succeeded' | 'failed' | 'rolled_back';
 
 export interface Job {
@@ -33,10 +48,16 @@ export interface State {
   current: string | null;
   /** sha-<7> of the build that ran before the last successful update (the rollback target) */
   previous: string | null;
+  /** the optional livetv service (spec §4.2) */
+  livetv: LivetvState;
+  /** set when a job disabled livetv by itself (its image missing or unverified for the target build, or it did not get healthy) */
+  livetvError: LivetvError | null;
+  /** the image id the livetv container last ran (recorded when it got healthy): `remove` deletes it even after a disable */
+  livetvImage: string | null;
   lastJob: Job | null;
 }
 
-export const DEFAULT_STATE: State = { channel: 'stable', version: null, current: null, previous: null, lastJob: null };
+export const DEFAULT_STATE: State = { channel: 'stable', version: null, current: null, previous: null, livetv: 'absent', livetvError: null, livetvImage: null, lastJob: null };
 
 /** A malformed or tampered file falls back field by field to the defaults: nothing from it reaches compose unchecked. */
 export function sanitize(raw: unknown): State {
@@ -48,6 +69,9 @@ export function sanitize(raw: unknown): State {
     version,
     current: isTag(o.current) ? o.current : null,
     previous: typeof o.previous === 'string' && SHA_TAG_RE.test(o.previous) ? o.previous : null,
+    livetv: LIVETV_STATES.find((v) => v === o.livetv) ?? 'absent',
+    livetvError: LIVETV_ERRORS.find((v) => v === o.livetvError) ?? null,
+    livetvImage: typeof o.livetvImage === 'string' && /^sha256:[0-9a-f]{64}$/.test(o.livetvImage) ? o.livetvImage : null,
     lastJob: sanitizeJob(o.lastJob),
   };
 }
@@ -56,7 +80,7 @@ function sanitizeJob(raw: unknown): Job | null {
   if (!raw || typeof raw !== 'object') return null;
   const j = raw as Record<string, unknown>;
   if (typeof j.id !== 'string' || !/^[0-9a-f]{16}$/.test(j.id) || !isTag(j.to)) return null;
-  if (!['update', 'rollback', 'self-update'].includes(String(j.action)) || !['running', 'succeeded', 'failed', 'rolled_back'].includes(String(j.state))) return null;
+  if (!(JOB_ACTIONS as readonly string[]).includes(String(j.action)) || !['running', 'succeeded', 'failed', 'rolled_back'].includes(String(j.state))) return null;
   const steps = {} as Record<StepName, StepState>;
   for (const s of ['pull', 'verify', 'restart', 'health', 'rollback'] as const) {
     const v = (j.steps as Record<string, unknown> | undefined)?.[s];

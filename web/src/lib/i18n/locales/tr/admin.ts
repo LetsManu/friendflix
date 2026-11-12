@@ -10,6 +10,7 @@ const tr: Translation<typeof de> = {
     users: 'Kullanıcılar', status: 'Durum', previews: 'Önizlemeler', playback: 'Oynatma denetimi', digest: 'Haftalık özet', sources: 'Veri kaynakları', invites: 'Davetler',
     requests: 'İstekler', polls: 'Oylamalar', lists: 'Listeler', roles: 'Roller ve haklar', devices: 'Cihazlar', audit: 'Denetim günlüğü', update: 'Güncelleme',
     hygiene: 'Kitaplık bakımı',
+    livetv: 'Canlı TV',
     settings: 'Ayarlar',
     usage: 'Kullanım',
   },

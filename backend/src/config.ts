@@ -178,6 +178,12 @@ export const configSchema = z.object({
   UPDATE_VERSION: z.preprocess(emptyAsUnset, z.string().regex(/^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$/).optional()),
   /** the updater service (compose.prod.yaml; off with compose.no-updater.yaml): internal http URL; unset or unreachable = Admin -> Update shows the manual steps */
   UPDATER_URL: z.preprocess(emptyAsUnset, z.string().regex(/^http:\/\/[a-z0-9][a-z0-9.-]{0,62}(:[0-9]{2,5})?$/).optional()),
+  /** the optional livetv service (compose profile `livetv`, spec §3.1): internal http URL on the `livetv` network; unreachable = Live TV not installed */
+  LIVETV_URL: z.preprocess(emptyAsUnset, z.string().regex(/^http:\/\/[a-z0-9][a-z0-9.-]{0,62}(:[0-9]{2,5})?$/).default('http://livetv:8090')),
+  /** Admin -> Live-TV: the optional entry is hidden ("Nicht mehr anzeigen", spec §4.5) */
+  LIVETV_OFFER_HIDDEN: z.preprocess(emptyAsUnset, z.enum(['true', 'false']).default('false')),
+  /** the admin turned Live TV on (stored by the enable/disable routes, never shown as a setting): the first detection after it starts the benchmark */
+  LIVETV_WANTED: z.preprocess(emptyAsUnset, z.enum(['true', 'false']).default('false')),
   /** automatic updates through the updater: off (default) or once a night at AUTO_UPDATE_TIME (server time zone TZ) */
   AUTO_UPDATE: z.preprocess(emptyAsUnset, z.enum(['off', 'nightly-window']).default('off')),
   AUTO_UPDATE_TIME: z.preprocess(emptyAsUnset, z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/).default('04:00')),
