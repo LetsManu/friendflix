@@ -162,3 +162,4 @@ Local on the API key is not bound by this. Local may take more work: any 1c task
   local2: Task 29 (in progress), then 33 (after 31 is DONE).
   cloud2: Task 32 after 31 is DONE, then 41 (after 31), 43 (after 39), 42 (after 31 + 39).
 All merge into claude/livetv-local after approval; two-agent review where the lane has it, labelled self-review otherwise.
+2026-11-12 17:14 UTC · cloud · CLAIM · Task 31 (start/join/stop, livetvTick, budget live source, watch routes) on wt/livetv-31 from claude/livetv-local 7300d026. Carries the 16:37/16:52/16:55 notes (real streamKeyFor, clientAddress for beat ip, mode only after lastSegmentAt, stall watchdog NEED).
