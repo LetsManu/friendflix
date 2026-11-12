@@ -15,8 +15,12 @@ test.describe('admin: Umwandlungen card on the Wiedergabe-Check page', () => {
     await page.goto('/admin/playback');
     const c = card(page);
     await expect(c.getByText('2 von 3 belegt')).toBeVisible();
-    const rows = c.getByRole('list', { name: 'Läuft gerade' }).getByRole('listitem');
+    const list = c.getByRole('list', { name: 'Läuft gerade' });
+    const rows = list.getByRole('listitem');
     await expect(rows).toHaveCount(2);
+    // the list is named by its heading (one name, not the same words twice)
+    await expect(list).not.toHaveAttribute('aria-label', /./);
+    await expect(list).toHaveAttribute('aria-labelledby', (await c.getByRole('heading', { name: 'Läuft gerade' }).getAttribute('id'))!);
     await expect(rows.nth(0)).toContainText('Dunmoor');
     await expect(rows.nth(0)).toContainText('Film/Serie');
     await expect(rows.nth(0)).toContainText('Wohnzimmer-TV');
@@ -151,6 +155,35 @@ test.describe('admin: Umwandlungen card on the Wiedergabe-Check page', () => {
     await expect(c.getByText('Messung nur mit Jellyfin')).toBeVisible();
     await expect(c.getByRole('button', { name: 'Neu messen' })).toHaveCount(0);
     await expect(c.getByText(/Noch nicht gemessen/)).toHaveCount(0);
+  });
+
+  test('Neu messen keeps its place from the first paint: no button flashes up on Plex, the header does not move', async ({ page, api }) => {
+    for (const plex of [true, false]) {
+      api.admin.conv.measure = plex ? { running: false, busy: null, last: { outcome: 'unsupported', at: null } } : { running: false, busy: null, last: null };
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      await page.route('**/api/admin/conversions', async (r) => { await gate; await r.fallback(); });
+      await page.goto('/admin/playback');
+      const c = card(page);
+      const slot = c.getByTestId('conv-measure');
+      await expect(slot).toBeAttached();
+      await expect(c.getByRole('button', { name: 'Neu messen' })).toHaveCount(0); // reserved, not shown and not focusable
+      await expect(slot.locator('button')).not.toHaveAttribute('aria-describedby', /./); // its note does not exist yet
+      const head = c.locator('.head');
+      const before = (await head.boundingBox())!;
+      release();
+      await expect(c.getByTestId('conv-used')).toBeVisible();
+      if (plex) {
+        await expect(c.getByText('Messung nur mit Jellyfin')).toBeVisible();
+        await expect(c.getByRole('button', { name: 'Neu messen' })).toHaveCount(0);
+      } else {
+        await expect(c.getByRole('button', { name: 'Neu messen' })).toBeEnabled();
+        await expect(slot.locator('button')).toHaveAttribute('aria-describedby', (await c.locator('.note').getAttribute('id'))!);
+      }
+      const after = (await head.boundingBox())!;
+      expect([after.y, after.height]).toEqual([before.y, before.height]);
+      await page.unroute('**/api/admin/conversions');
+    }
   });
 
   test('a measurement that failed is told in the reserved line', async ({ page, api }) => {
