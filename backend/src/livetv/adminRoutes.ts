@@ -35,6 +35,7 @@ const CHANNEL_TEST_LOCK_TTL_S = 360;
 const BULK_BODY_LIMIT = 1024 * 1024;
 
 const disableBody = z.object({ removeImage: z.boolean(), removeCache: z.boolean() });
+const startLiveBody = z.object({ startLive: z.boolean() }).strict();
 
 // ---- channel groups (spec §9.3) ----
 const id = z.guid();
@@ -511,6 +512,26 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       throw e;
     }
     await audit(ctx, req.user!.id, 'livetv.stream.stop', cid, { fields: [] });
+    return { ok: true };
+  });
+
+  // ---- TV startet mit Live-TV (spec §11.3, ruling 14): the switch of a paired TV in Admin -> Geräte ----
+
+  /**
+   * `PATCH /api/admin/devices/:userId/:deviceId { startLive }`: TVs only (device ids of paired TVs start with `tv-`), else 400 `not_tv`;
+   * a device that does not exist is a 404. Audited as `device.start_live` with the person as target and the new value, never the device id.
+   */
+  app.patch('/api/admin/devices/:userId/:deviceId', admin, async (req, reply) => {
+    const p = req.params as { userId?: string; deviceId?: string };
+    const b = parse(startLiveBody, req.body, reply);
+    if (!b) return;
+    const userId = id.safeParse(p.userId).data;
+    const deviceId = z.string().min(3).max(80).safeParse(p.deviceId).data;
+    if (!userId || !deviceId) return reply.code(404).send({ error: 'not_found' });
+    if (!deviceId.startsWith('tv-')) return reply.code(400).send({ error: 'not_tv' });
+    const r = await ctx.db.query('update devices set start_live = $3 where user_id = $1 and device_id = $2', [userId, deviceId, b.startLive]);
+    if (!r.rowCount) return reply.code(404).send({ error: 'not_found' });
+    await audit(ctx, req.user!.id, 'device.start_live', userId, { startLive: b.startLive });
     return { ok: true };
   });
 }

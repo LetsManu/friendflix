@@ -23,21 +23,26 @@
   import { atEdge, behind, oldestPoint, restartTarget, resumePoint } from './dvr';
   import { minute } from './fade';
   import { pickHeld, type Held } from './held';
+  import ChannelPanel from './ChannelPanel.svelte';
   import FullSheet from './FullSheet.svelte';
   import InfoBanner from './InfoBanner.svelte';
   import InfoPanel from './InfoPanel.svelte';
+  import { hintKeys, noteKey, seenKeys, type SeenKey } from './keyhints';
   import { resolveLiveKey, type LiveKeyAction } from './livekeys';
+  import { liveRemote, type LiveRemote } from './remotekeys';
+  import { createLongOk } from './longok';
   import { fromWatchError, lostDelay, nextLost, STALL_LOST_MS, type LiveUi, type LostUi } from './liveState';
   import NumberCard from './NumberCard.svelte';
   import { commitNumber, NUMBER_TIMEOUT_MS, typeDigit, type NumberState } from './numberEntry';
   import { channelOrder, neighbour, type LiveFilter } from './order';
+  import { backStep, openPanel as panelAt, panelFilters, panelKey, type PanelKey, type PanelState } from './panel';
   import { progressAt, timeLeft, timeLeftText, watchPath } from './progress';
   import { createSwitcher } from './switcher';
 
   /**
    * The live player (spec §12, §21), built from the film player's parts: hls.js with the live tuning (liveHlsConfig), volume,
    * gestures (zones), Media Session, the first-frame watchdog, the same control auto-hide (CONTROLS_HIDE_MS). No seek bar: Play/Pause,
-   * Von Anfang an (reserved slot), −30 s / +30 s, the LIVE pill, channel ▲/▼, a reserved slot for Task 40's Senderliste, Programm,
+   * Von Anfang an (reserved slot), −30 s / +30 s, the LIVE pill, channel ▲/▼, Senderliste (on phones in the info sheet), Programm,
    * volume, fullscreen. The info banner follows each zap at once; one watch goes out 400 ms after the last press. The watch token
    * lives in this component only (never in storage); it is beaten every 20 s (one beat at a time; a beat that outlives its channel is
    * ignored) and stopped (keepalive) on pagehide and close.
@@ -60,6 +65,13 @@
    * shimmer (`ff-shimmer`, transform only) and the starting spinner is the UI kit's `.spinner` (`ff-spin`). Calm mode and reduced
    * motion switch every transition and animation in the player off (the CastBar pattern, both triggers, !important so app.css's
    * reduced-motion rule cannot leave a .001 ms one); TV and kids: no transitions.
+   *
+   * TV remote (Task 40, spec §12.3): OK goes through `createLongOk` (600 ms). A short OK with the controls hidden shows them with
+   * the focus on Play/Pause (and the banner with them), it never pauses; a short OK on a focused control presses it; a long OK opens
+   * the *Senderliste* panel (ChannelPanel), like `ChannelList` / `Guide` (Phase 1) and the button. The panel's keys run through
+   * `panelKey`; its OK switches through the same switcher / start() path as a zap (one watch at a time). Closing it gives the focus
+   * back to the stage (TV: the controls stay hidden) or to its button (desktop). Back follows `backStep`. Every keydown goes
+   * through `noteKey` (the list's hints); the TV controls' footer shows the D-pad hint "Lang OK: Senderliste".
    */
   export let channelId: string;
   export let filter: LiveFilter = 'all';
@@ -92,6 +104,10 @@
   let paused = false, pausedWall: number | null = null, ignorePause = false, deliberate = false;
   let nowMs = Date.now(), switchingAt: number | null = nowMs, firstFrameAt: number | null = null, cardHoldUntil = 0;
   let controls = true, panelOpen = false, tv = false, coarse = false, motion = true, fullscreen = false;
+  /** the Senderliste panel (listOpen) and its state; `okHeld`: the OK that opened it by a long press is still down (its repeats switch nothing) */
+  let listOpen = false, pstate: PanelState | null = null, okHeld = false, okTarget: HTMLElement | null = null;
+  let listBtn: HTMLButtonElement | undefined;
+  let seen: Set<SeenKey> = new Set();
   let behindSec = 0, restartAt: number | null = null;
   let volume = 1, muted = false, brightness = 1;
   let announce = '';
@@ -140,7 +156,7 @@
   $: down = order.length ? neighbour(order, curId, -1) : null;
   $: errorUi = ERROR_KINDS.includes(ui.k);
   $: starting = ui.k === 'starting';
-  $: bannerOn = Boolean(card) && !panelOpen && !errorUi
+  $: bannerOn = Boolean(card) && !panelOpen && !listOpen && !errorUi
     && (nowMs < cardHoldUntil || bannerVisible({ starting, switchingAt, firstFrameAt, controlsVisible: controls, error: errorUi }, nowMs));
   $: refusal = sheet ?? (ui.k === 'full' || ui.k === 'providerLimit' ? ui : null);
   $: prog = cur && cur.epg === 'ok' && cur.receiving !== false ? cur.now ?? null : null;
@@ -153,6 +169,7 @@
   $: recheckRestart($minute, cur, dvrSeconds);
   $: session?.update(msItem(cur), msActions);
   $: cardMsg = cardText(ui);
+  $: hint = hintKeys('player', seen).map((k) => $t(k)).join(' · ');
 
   function cardText(u: LiveUi): string {
     switch (u.k) {
@@ -567,7 +584,9 @@
     ignorePause = false;
     paused = false;
     resumeCheck(); // a resume from outside the player (system, headset); the player's own resume has checked already
-    wake();
+    // a TV keeps hidden controls hidden: a switch's new stream starting must not bring them up (▲/▼ would move the focus instead of
+    // zapping, spec §12.3); visible ones get their full time again
+    if (!tv || controls) wake();
   }
   function onVolume(): void { const v = video; if (v) { volume = v.volume; muted = v.muted; } }
   function setVolume(x: number): void {
@@ -588,11 +607,11 @@
   function wake(): void {
     controls = true;
     clearTimeout(hideT);
-    if (paused || panelOpen || refusal) return;
+    if (paused || panelOpen || listOpen || refusal) return;
     hideT = setTimeout(hideControls, tv ? CONTROLS_HIDE_TV_MS : CONTROLS_HIDE_MS);
   }
   function hideControls(): void {
-    if (paused || panelOpen) return;
+    if (paused || panelOpen || listOpen) return;
     controls = false;
     const a = document.activeElement;
     if (tv && a instanceof HTMLElement && root && root !== a && root.contains(a)) root.focus({ preventScroll: true });
@@ -600,6 +619,94 @@
   function onMouse(): void { if (!coarse) wake(); }
   function openPanel(): void { panelOpen = true; controls = true; clearTimeout(hideT); }
   function closePanel(): void { panelOpen = false; wake(); void tick().then(() => infoBtn?.focus()); }
+
+  // ---- the Senderliste panel (spec §12.2, ruling 51, 59) ----
+  const panelCtx = (l: LiveList) => ({ list: l.channels, favourites: l.favourites, recentSnapshot: recentSnap ?? l.recent, playingId: curId });
+  /** opens on the player's filter with the focus on the playing channel; on a TV the controls go (they stay hidden when it closes) */
+  function openList(): void {
+    longOk.cancel(); // a dropped keyup must not leave a press open (Task 35 review)
+    const l = list;
+    if (!l || listOpen) return;
+    const ctx = panelCtx(l);
+    panelOpen = false;
+    pstate = panelAt({ ...ctx, filter, filters: panelFilters(l.groups, channelOrder(l.channels, 'recent', l.favourites, ctx.recentSnapshot).length > 0) });
+    listOpen = true;
+    clearTimeout(hideT);
+    if (tv) controls = false;
+  }
+  /** TV: the focus goes back to the stage and the controls stay hidden; desktop: to the Senderliste button; phone: the player */
+  function closeList(): void {
+    if (!listOpen) return;
+    listOpen = false;
+    pstate = null;
+    if (tv) {
+      // wake() may have shown the controls behind the panel without a hide timer: hide them again (paused: they stay, as always)
+      if (paused) wake(); else { controls = false; clearTimeout(hideT); }
+      void tick().then(() => stage?.focus({ preventScroll: true }));
+      return;
+    }
+    wake();
+    void tick().then(() => (phoneUi ? root : listBtn ?? root)?.focus({ preventScroll: true }));
+  }
+  /**
+   * A channel picked in the panel: the panel closes and the switch goes through the switcher like any zap (one start() at a time,
+   * the banner at once). A chip chosen in the panel becomes the zapping order. The playing channel itself only shows the banner.
+   */
+  function pickChannel(id: string): void {
+    const s = pstate;
+    const c = (s ? s.rows.find((x) => x.id === id) : undefined) ?? chOf(id, list, answer);
+    if (s && s.filter !== filter) { filter = s.filter; replaceFilter(s.filter); }
+    closeList();
+    if (!c) return;
+    if (c.id === curId) showCard(c);
+    else switcher.jump(c);
+  }
+  function listFilter(f: LiveFilter): void {
+    const s = pstate, l = list;
+    if (!s || !l) return;
+    pstate = panelAt({ ...panelCtx(l), filter: f, filters: s.filters });
+  }
+  const PANEL_KEYS: Record<string, PanelKey> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'ok' };
+  /** the keys while the panel is open (Back has gone to goBack before); Tab and the rest stay with the dialog */
+  function listKey(e: KeyboardEvent, key: string): void {
+    const s = pstate, l = list;
+    if (!s || !l || e.ctrlKey || e.metaKey || e.altKey) return;
+    const stop = () => { e.preventDefault(); e.stopImmediatePropagation(); };
+    if (key === 'ChannelList' || key === 'Guide') { stop(); closeList(); return; }
+    const k = PANEL_KEYS[key];
+    if (!k) return;
+    if (k === 'ok') {
+      if (e.repeat || okHeld) { stop(); return; } // the OK that opened the panel is still held
+      const a = document.activeElement;
+      if (!(a instanceof HTMLElement && a.classList.contains('prow'))) return; // a chip, the close button: their own click
+    }
+    stop();
+    const r = panelKey(s, k, panelCtx(l));
+    pstate = r.state;
+    if (r.act && 'switchTo' in r.act) {
+      if (k === 'ok') okHeld = true; // a held OK (repeats without repeat:true) must not reach the long-OK path; keyup / blur clear it
+      pickChannel(r.act.switchTo);
+    }
+    else if (r.act) closeList();
+  }
+
+  // ---- OK on a TV remote: short = show the controls (or press the focused control), long = the Senderliste ----
+  const longOk = createLongOk({
+    timers: { set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as Timer) },
+    onShort: () => {
+      const el = okTarget;
+      okTarget = null;
+      if (el && el.isConnected && controls) el.click();
+      else act({ type: 'showControls' });
+    },
+    onLong: () => { okTarget = null; okHeld = true; openList(); },
+  });
+  function onKeyUp(e: KeyboardEvent): void {
+    if (e.key !== 'Enter') return;
+    okHeld = false;
+    longOk.up();
+  }
+  function onBlur(): void { longOk.cancel(); okHeld = false; okTarget = null; }
 
   // ---- keys (one capture listener: the player owns its keys while it is open) ----
   function onBody(): boolean {
@@ -610,21 +717,39 @@
     if (history.length > 1) history.back();
     else void goto('/live', { replaceState: true });
   }
+  /** Back / Escape (spec §12.3 Close row, backStep): the Senderliste, a sheet, the number card, fullscreen, the TV controls, the player */
   function goBack(): void {
-    if (num || numMsg) { closeNumber(); return; }
-    if (panelOpen) { closePanel(); return; }
-    if (refusal) { closeRefusal(); return; }
+    const step = backStep({ panel: listOpen, sheet: panelOpen || Boolean(refusal), numberOpen: Boolean(num || numMsg), controls: tv && controls });
+    if (step === 'closePanel') { closeList(); return; }
+    if (step === 'closeSheet') { if (panelOpen) closePanel(); else closeRefusal(); return; }
+    if (step === 'closeNumber') { closeNumber(); return; }
     if (document.fullscreenElement) { void document.exitFullscreen().catch(() => undefined); return; }
-    if (tv && controls) { controls = false; clearTimeout(hideT); root?.focus({ preventScroll: true }); return; }
+    if (step === 'hideControls') { controls = false; clearTimeout(hideT); root?.focus({ preventScroll: true }); return; }
     leave();
   }
+  let remote: LiveRemote | null = null;
   function onKey(e: KeyboardEvent): void {
     if (destroyed) return;
+    // a TV remote sends many keys as 'Unidentified' + keyCode: the Samsung / LG maps give them their standard names first
+    const key = remote ? remote.keyName(e) : e.key;
+    const s = noteKey(key);
+    if (s.size !== seen.size) seen = s;
     const back = e.key === 'Escape' || (tv && isBackKey(e));
     if (back) { e.preventDefault(); e.stopImmediatePropagation(); goBack(); return; }
+    if (listOpen) { listKey(e, key); return; }
     if (refusal) return; // the sheet's buttons own the keys
     if (!tv) wake(); else if (controls) wake();
-    const a = resolveLiveKey(e, { tv, lg: false, controlsVisible: controls, onBody: onBody(), overlayOpen: panelOpen, numberOpen: num !== null });
+    if (tv && e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && !panelOpen && num === null) {
+      // OK is decided on its keyup (createLongOk): nothing is pressed on keydown, its repeats are ignored
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.repeat || okHeld) return;
+      const a = document.activeElement;
+      okTarget = a instanceof HTMLElement && !onBody() && Boolean(root?.contains(a)) ? a : null;
+      longOk.down(e);
+      return;
+    }
+    const a = resolveLiveKey(remote ? remote.input(e) : e, { tv, lg: remote?.lg ?? false, controlsVisible: controls, onBody: onBody(), overlayOpen: panelOpen, numberOpen: num !== null });
     if (!a) return;
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -647,7 +772,8 @@
       case 'mute': toggleMute(); break;
       case 'fullscreen': toggleFullscreen(); break;
       case 'close': goBack(); break;
-      default: break; // channelList: the panel of Task 40
+      case 'channelList': openList(); break;
+      default: break;
     }
   }
 
@@ -724,6 +850,14 @@
     if (location.pathname === watchPath(id)) return;
     try { replaceState(watchPath(id) + location.search, {}); } catch { /* the router is not ready yet: the address keeps the channel it opened with */ }
   }
+  /** a chip chosen in the panel is the zapping order now: the address keeps it (shallow, like a zap) */
+  function replaceFilter(f: LiveFilter): void {
+    try {
+      const q = new URLSearchParams(location.search);
+      q.set('f', f);
+      replaceState(location.pathname + '?' + q.toString(), {});
+    } catch { /* the router is not ready yet */ }
+  }
   function onPageHide(): void {
     if (startPending) { gen++; clearInterval(beatT); beatT = undefined; } // a late answer of the watch out goes through start()'s stop branch
     const tk = token;
@@ -746,7 +880,11 @@
     try { coarse = matchMedia('(pointer: coarse)').matches; } catch { coarse = false; }
     motion = motionAllowed();
     try { const v = parseVolume(localStorage.getItem('ff_vol')); if (v !== null && video) { volume = v; video.volume = v; } } catch { /* storage blocked */ }
+    seen = seenKeys();
+    remote = liveRemote(); // Samsung: registers the live keys now that the player is open
     window.addEventListener('keydown', onKey, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    window.addEventListener('blur', onBlur);
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('pageshow', onPageShow);
     document.addEventListener('fullscreenchange', onFs);
@@ -760,6 +898,8 @@
     return () => {
       mo.disconnect();
       window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+      window.removeEventListener('blur', onBlur);
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('pageshow', onPageShow);
       document.removeEventListener('fullscreenchange', onFs);
@@ -771,6 +911,7 @@
     for (const h of [hideT, retryT, pollT, leaveT, stallT, numT, tapT]) clearTimeout(h);
     clearInterval(beatT); clearInterval(tickT); clearInterval(listT);
     switcher.dispose();
+    longOk.cancel(); // route change
     stopFrame?.();
     if (hls) { try { hls.destroy(); } catch { /* already gone */ } hls = null; }
     session?.release();
@@ -782,7 +923,7 @@
 </script>
 
 <div class="lplayer" class:solid={still} class:phone={phoneUi} data-live-state={ui.k} bind:this={root} tabindex="-1" role="region" aria-label={$t('live.title')} on:mousemove={onMouse}>
-  <div class="lstage" bind:this={stage} role="presentation" on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} on:dblclick={() => { if (!coarse) toggleFullscreen(); }}>
+  <div class="lstage" bind:this={stage} tabindex="-1" role="presentation" on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} on:dblclick={() => { if (!coarse) toggleFullscreen(); }}>
     <video bind:this={video} playsinline crossorigin="use-credentials" style:filter={brightness < 1 ? `brightness(${brightness})` : null}
       on:playing={onPlaying} on:waiting={onWaiting} on:pause={onPause} on:play={onPlay} on:volumechange={onVolume}></video>
   </div>
@@ -834,7 +975,9 @@
     <span class="sp"></span>
     <button type="button" class="ib" aria-label={$t('live.player.chUp')} title={up ? `${up.number} ${up.name}` : undefined} disabled={!up} on:click={() => switcher.press(1)}><Icon name="chevron-up" size={24} /></button>
     <button type="button" class="ib" aria-label={$t('live.player.chDown')} title={down ? `${down.number} ${down.name}` : undefined} disabled={!down} on:click={() => switcher.press(-1)}><Icon name="chevron-down" size={24} /></button>
-    {#if !phoneUi}<span class="listslot" aria-hidden="true"></span>{/if}
+    {#if !phoneUi}
+      <button type="button" class="ib" bind:this={listBtn} aria-label={$t('live.player.channelList')} title={$t('live.player.channelList')} aria-haspopup="dialog" aria-expanded={listOpen} on:click={openList}><Icon name="list" size={24} /></button>
+    {/if}
     <button type="button" class="ib" bind:this={infoBtn} aria-label={$t('live.player.info')} title={$t('live.player.info')} aria-expanded={panelOpen} on:click={openPanel}><Icon name="info" size={24} /></button>
     {#if !phoneUi}
       <button type="button" class="ib" aria-label={muted ? $t('player.unmute') : $t('player.mute')} on:click={toggleMute}><Icon name={muted || volume === 0 ? 'volume-off' : volume < 0.5 ? 'volume-low' : 'volume'} size={24} /></button>
@@ -842,10 +985,15 @@
       <button type="button" class="ib" aria-label={fullscreen ? $t('player.controls.exitFullscreen') : $t('player.controls.fullscreen')} on:click={toggleFullscreen}><Icon name={fullscreen ? 'fullscreen-exit' : 'fullscreen'} size={24} /></button>
     {/if}
   </div>
+  {#if tv}<p class="ctlhint" class:hide={!controls}>{hint}</p>{/if}
 
   {#if panelOpen}
-    <InfoPanel channel={cur} now={$minute} canRestart={restartAt !== null} last={prev} phone={phoneUi} {still}
-      on:close={closePanel} on:restart={() => { closePanel(); restart(); }} on:last={() => { panelOpen = false; jumpLast(); wake(); }} />
+    <InfoPanel channel={cur} now={$minute} canRestart={restartAt !== null} last={prev} phone={phoneUi} {still} listButton={phoneUi}
+      on:close={closePanel} on:restart={() => { closePanel(); restart(); }} on:last={() => { panelOpen = false; jumpLast(); wake(); }} on:list={openList} />
+  {/if}
+  {#if listOpen && pstate}
+    <ChannelPanel state={pstate} groups={list?.groups ?? []} playingId={curId} now={$minute} phone={phoneUi} {still} {tv} trigger={listBtn ?? null}
+      on:pick={(e) => pickChannel(e.detail.id)} on:filter={(e) => listFilter(e.detail)} on:focusrow={(e) => { if (pstate) pstate = { ...pstate, focus: e.detail }; }} on:close={closeList} />
   {/if}
   {#if refusal}
     <FullSheet ui={refusal} phone={phoneUi} {still} on:join={(e) => join(e.detail)} on:close={closeRefusal} />
@@ -858,7 +1006,9 @@
 
 <style>
   .lplayer { position: fixed; left: 0; top: 0; right: 0; bottom: 0; z-index: 100; background: #000; color: #fff; overflow: hidden; outline: none; }
-  .lstage { position: absolute; left: 0; top: 0; right: 0; bottom: 0; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .lstage { position: absolute; left: 0; top: 0; right: 0; bottom: 0; touch-action: none; user-select: none; -webkit-user-select: none; outline: none; }
+  /* the stage takes the focus back from a closed panel: no ring around the whole picture (beats app.css html.tv :focus-visible) */
+  .lstage:focus-visible { outline: none; }
   video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
 
   /* buffering: the skeleton's sweep (app.css ff-shimmer, transform only) on a thin line */
@@ -898,7 +1048,7 @@
   .pp { flex: none; width: 52px; height: 52px; padding: 0; border-radius: 50%; background: #fff; color: #000; }
   /* starting: the UI kit's spinner (app.css .spinner, ff-spin) in the play slot */
   .pp .spinner { font-size: 24px; }
-  .restartslot, .listslot { flex: none; display: inline-flex; width: 44px; height: 44px; }
+  .restartslot { flex: none; display: inline-flex; width: 44px; height: 44px; }
   .pill { flex: none; position: relative; width: 7.5em; height: 44px; min-height: 44px; padding: 0 12px; border-radius: var(--fr-r-pill); background: transparent; color: #fff;
     box-shadow: inset 0 0 0 2px var(--acc-light); font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
   .pill.edge { background: var(--acc-fill); box-shadow: none; padding-left: 26px; }
@@ -924,7 +1074,13 @@
   }
   :global(html.tv) .ctl, :global(html.tv) .ltop, :global(html.kids) .ctl, :global(html.kids) .ltop { transition: none; }
 
-  :global(html.tv) .lplayer .ib, :global(html.tv) .lplayer .restartslot, :global(html.tv) .lplayer .listslot { width: 54px; height: 54px; }
+  :global(html.tv) .lplayer .ib, :global(html.tv) .lplayer .restartslot { width: 54px; height: 54px; }
+  /* the TV controls' footer: the D-pad hint under the bar, its line reserved (the bar sits above it), hidden with the controls */
+  :global(html.tv) .lplayer .ctl { bottom: calc(100vw / 1920 * 84); }
+  .ctlhint { position: absolute; z-index: 7; left: 0; right: 0; bottom: calc(100vw / 1920 * 20); height: calc(100vw / 1920 * 48); margin: 0; text-align: center;
+    color: rgba(255, 255, 255, .86); font-size: calc(100vw / 1920 * 28); line-height: calc(100vw / 1920 * 48); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, .8); pointer-events: none; }
+  .ctlhint.hide { opacity: 0; }
   :global(html.tv) .lplayer .pp { width: 64px; height: 64px; }
   :global(html.tv) .lplayer .pill { height: 54px; font-size: calc(100vw / 1920 * 26); }
   :global(html.tv) .lplayer .ltop { font-size: calc(100vw / 1920 * 30); }

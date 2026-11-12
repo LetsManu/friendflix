@@ -36,6 +36,26 @@ Die [LG-TV-App](webos.md) versteht im Player zusätzlich diese Tasten (außerhal
 
 Der Zeiger der Magic Remote bewegt den Fokus: Fährst du über eine Kachel, springt der Fokusrahmen dorthin, die Pfeiltasten machen von da aus weiter. Im Seitenmenü unter **Konto** gibt es **Server wechseln**; beim Start öffnet die blaue Taste, solange das Logo zu sehen ist, das Adressformular.
 
+### Live-TV am Fernseher
+Mit eingeschaltetem [Live-TV](de/livetv.md) läuft alles mit **▲/▼, OK und Zurück**; die übrigen Tasten sind Abkürzungen, die nur wirken, wenn deine Fernbedienung sie sendet. In der Senderliste ist ▲/▼ eine Zeile weiter; im Player schaltet ▲/▼ den Sender um, solange die Steuerung ausgeblendet ist.
+
+| Taste | Im Player | In der Senderliste |
+|---|---|---|
+| ▲ / ▼ | Sender hoch / runter (Steuerung ausgeblendet) | Zeile hoch / runter (gedrückt halten wiederholt) |
+| OK | zeigt Steuerung und Sender-Banner, Fokus auf Play/Pause (OK, OK pausiert); OK pausiert nie bei ausgeblendeter Steuerung | schaut den Sender |
+| Lang OK (ab 0,6 s) | öffnet die *Senderliste* | schaltet den Favoriten um |
+| ▶ auf einer Zeile | – | Fokus auf den Stern; OK schaltet den Favoriten um, ◀ zurück zur Zeile |
+| Kanal ▲/▼ (CH) | Sender hoch / runter | springt 8 Zeilen |
+| Ziffern, dann OK | wechselt zu dieser Sendernummer (2 s ohne Eingabe genügen) | fokussiert die Zeile dieses Senders |
+| eine einzelne 0 | letzter Sender | fokussiert den zuletzt gesehenen Sender |
+| Info | Programm-Info des Senders | Programm-Info des fokussierten Senders |
+| Senderliste / Guide (nur Samsung) | öffnet die *Senderliste* | – |
+| Zurück | schließt zuerst Fenster, dann die Steuerung, dann den Player | zurück zur Startseite |
+
+Die Hinweiszeile unter der Liste nennt nur Tasten, die dieser Fernseher wirklich gesendet hat: "CH ▲▼: 8 Zeilen" erscheint erst nach einer Kanal-Taste, "0: letzter Sender" erst nach einer Ziffer.
+
+- **Samsung (Tizen):** Die App meldet beim Öffnen von Live-TV `ChannelUp`, `ChannelDown`, `PreviousChannel` (letzter Sender), `Info`, `0`–`9`, Rot und Blau an; `ChannelList` und `Guide` nur, wenn der Fernseher sie unterstützt. Siehe [tizen.md](tizen.md#live-tv-keys).
+- **LG (webOS):** Die Kanal-Tasten (CH +/−) sind für Web-Apps **nicht verlässlich verfügbar (unverified)**; darauf verlässt sich nichts, ▲/▼ schaltet um. Sendet ein Fernseher sie doch als Bild-auf / Bild-ab (Code 33/34), wirken sie wie Kanal-Tasten. Ziffern kommen direkt, **Rot** = letzter Sender, **Blau** = zurück zu *Live*, **Info** (Code 457) = Programm-Info. Siehe [webos.md](webos.md#live-tv-keys).
 ### Fire-TV-App
 Die [Fire-TV-App](firetv.md) gibt diese Tasten an den TV-Modus weiter:
 

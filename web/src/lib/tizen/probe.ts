@@ -25,7 +25,12 @@ export interface AvPlayLike {
 }
 export interface WebApisLike { avplay?: AvPlayLike; productinfo?: { getModel?: () => string } }
 export interface TizenLike {
-  tvinputdevice?: { registerKey: (name: string) => void; getKey?: (name: string) => { code: number } };
+  tvinputdevice?: {
+    registerKey: (name: string) => void;
+    getKey?: (name: string) => { code: number };
+    /** the keys this TV can send (Live TV registers the optional ChannelList and Guide only when listed) */
+    getSupportedKeys?: () => Array<{ name: string; code: number }>;
+  };
   application?: { getCurrentApplication?: () => unknown };
   systeminfo?: { getCapability?: (key: string) => string };
 }

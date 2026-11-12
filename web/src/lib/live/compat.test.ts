@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SELF = 'lib/live/compat.test.ts';
 const DIRS = ['lib/live', 'routes/live'];
-const NAMED = ['lib/player/hls.ts', 'lib/ui/dragOrder.ts', 'lib/webos/keys.ts', 'routes/tv/+page.svelte'];
+const NAMED = ['lib/player/hls.ts', 'lib/tizen/livekeys.ts', 'lib/ui/dragOrder.ts', 'lib/webos/keys.ts', 'routes/tv/+page.svelte'];
 const FORBIDDEN = ['structuredClone(', '.at(', 'Object.hasOwn(', '.findLast(', 'aspect-ratio', 'inset:', ':has(', '@container'];
 
 const rel = (abs: string) => relative(SRC, abs).split(sep).join('/');
@@ -39,6 +39,10 @@ describe('Chromium 85 compat scan', () => {
     for (const f of ['lib/player/hls.ts', 'lib/live/LivePlayer.svelte', 'lib/live/liveState.ts', 'lib/live/dvr.ts', 'lib/live/banner.ts', 'lib/live/switcher.ts', 'routes/live/watch/[channelId]/+page.svelte']) {
       expect(scanned).toContain(f);
     }
+  });
+  it('the Senderliste files of Task 40 are scanned (their test is not)', () => {
+    for (const f of ['lib/live/ChannelPanel.svelte', 'lib/live/PanelRow.svelte', 'lib/live/panel.ts', 'lib/live/InfoPanel.svelte']) expect(scanned).toContain(f);
+    expect(scanned).not.toContain('lib/live/panel.test.ts');
   });
   it.each(scanned)('%s uses nothing newer than Chromium 85', (f) => {
     const abs = join(SRC, f);
