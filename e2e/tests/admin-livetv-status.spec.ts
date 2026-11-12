@@ -148,44 +148,76 @@ test.describe('admin: Live-TV, Live-Status (desktop)', () => {
     expect(api.admin.livetv.posts).toEqual([{ path: 'disable', body: { removeImage: false, removeCache: false } }]);
   });
 
-  test('nothing moves when the first answer arrives', async ({ page }) => {
+  // where the cards sit: the tiles, the table cards, the card after the events (Gesendete Streams has no place without push feeds, so
+  // the installed Live TV's own card follows) and the card's height. y is measured from the top of the page.
+  async function places(page: Page) {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const box = async (loc: ReturnType<typeof card>) => { const b = (await loc.boundingBox())!; return { y: b.y, h: b.height }; };
+    return { tiles: await box(page.getByRole('group', { name: 'Übersicht' })), run: await box(card(page, 'Laufende Sender')), events: await box(card(page, 'Ereignisse')), next: await box(card(page, 'Live-TV')) };
+  }
+  const events = (n: number) => Array.from({ length: n }, (_, i) => ({ at: Date.now() - (i + 1) * 60_000, level: 'warn' as const, code: 'input_lost', channelId: 'ch-hafenkanal', n: 12 }));
+
+  test('nothing moves when the first answer arrives', async ({ page, api }) => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((r) => { release = r; });
     await page.route('**/api/admin/livetv/status', async (route) => { await gate; await route.fallback(); });
     await page.goto('/admin/livetv?tab=status');
-    const tiles = page.getByRole('group', { name: 'Übersicht' });
-    await expect(tiles).toBeVisible();
-    const before = await tiles.boundingBox();
-    const run = await card(page, 'Laufende Sender').boundingBox();
+    await expect(page.locator('[data-events] tr.sk').first()).toBeVisible();
+    const skeleton = await places(page);
     release();
+    // 2 running rows, 3 events
     await expect(card(page, 'Laufende Sender').getByRole('row', { name: /Nordlicht TV/ })).toBeVisible();
-    const after = await tiles.boundingBox();
-    expect(after?.y).toBe(before?.y);
-    expect(after?.height).toBe(before?.height);
-    // the table card keeps at least the height it reserved
-    expect((await card(page, 'Laufende Sender').boundingBox())!.y).toBe(run!.y);
+    await expect(page.locator('[data-events] tbody tr')).toHaveCount(3);
+    expect(await places(page)).toEqual(skeleton);
+    // a later poll brings 9 events instead of 3: nothing below the events moves
+    api.admin.livetv.status.events = events(9);
+    await expect(page.locator('[data-events] tbody tr')).toHaveCount(9, { timeout: 15_000 });
+    expect(await places(page)).toEqual(skeleton);
+  });
+
+  test('the events card keeps one height for no, one and ten events (and more)', async ({ page, api }) => {
+    api.admin.livetv.status.events = [];
+    await page.goto('/admin/livetv?tab=status');
+    await expect(page.getByText('Keine Ereignisse.')).toBeVisible();
+    const empty = await places(page);
+    for (const n of [1, 10, 11]) {
+      api.admin.livetv.status.events = events(n);
+      await expect(page.locator('[data-events] tbody tr')).toHaveCount(Math.min(n, 10), { timeout: 15_000 });
+      expect(await places(page)).toEqual(empty);
+    }
   });
 
   test('nothing moves when the first answer fails and then arrives', async ({ page, api }) => {
     api.admin.livetv.status.failFirst = true;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => { release = r; });
+    await page.route('**/api/admin/livetv/status', async (route) => { await gate; await route.fallback(); });
     await page.goto('/admin/livetv?tab=status');
-    const tiles = page.getByRole('group', { name: 'Übersicht' });
+    await expect(page.locator('[data-events] tr.sk').first()).toBeVisible();
+    const skeleton = await places(page);
+    release();
     const run = card(page, 'Laufende Sender');
     // the error sits in the table's own slot: it is there, and the tiles and the cards are where the skeleton had them
     const alert = run.getByRole('alert');
     await expect(alert).toContainText('Der Live-Status ließ sich nicht laden.');
     // the budget card above has loaded too, and the page is measured from its top (the retry button may scroll)
     await expect(card(page, 'Umwandlungen').getByRole('link', { name: 'Zum Wiedergabe-Check' })).toBeVisible();
-    await page.evaluate(() => window.scrollTo(0, 0));
-    const tilesFailed = await tiles.boundingBox();
-    const runFailed = await run.boundingBox();
+    expect(await places(page)).toEqual(skeleton);
     await page.getByRole('button', { name: 'Erneut versuchen' }).click();
     await expect(run.getByRole('row', { name: /Nordlicht TV/ })).toBeVisible();
     await expect(alert).toHaveCount(0);
-    await page.evaluate(() => window.scrollTo(0, 0));
-    const tilesOk = await tiles.boundingBox();
-    expect(tilesOk?.y).toBe(tilesFailed?.y);
-    expect(tilesOk?.height).toBe(tilesFailed?.height);
-    expect((await run.boundingBox())!.y).toBe(runFailed!.y);
+    expect(await places(page)).toEqual(skeleton);
+    api.admin.livetv.status.events = events(9);
+    await expect(page.locator('[data-events] tbody tr')).toHaveCount(9, { timeout: 15_000 });
+    expect(await places(page)).toEqual(skeleton);
+  });
+
+  test('a status answer that takes longer than a poll is still applied', async ({ page }) => {
+    let calls = 0;
+    await page.route('**/api/admin/livetv/status', async (route) => { calls++; await new Promise((r) => setTimeout(r, 7000)); await route.fallback(); });
+    await page.goto('/admin/livetv?tab=status');
+    await expect(card(page, 'Laufende Sender').getByRole('row', { name: /Nordlicht TV/ })).toBeVisible({ timeout: 15_000 });
+    // one request at a time: the tick at 5 s did not start a second one while the first was running
+    expect(calls).toBe(1);
   });
 });
