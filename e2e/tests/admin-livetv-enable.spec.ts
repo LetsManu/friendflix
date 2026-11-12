@@ -108,7 +108,7 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
     const lt = api.admin.livetv;
     lt.installed = true; lt.wanted = true; lt.ltState = 'enabled';
     lt.outcome = 'failed'; lt.failCode = 'stop_failed';
-    await page.goto('/admin/livetv');
+    await page.goto('/admin/livetv?tab=status');
     await page.getByRole('button', { name: 'Live-TV ausschalten …' }).click();
     await page.getByRole('dialog', { name: 'Live-TV ausschalten?' }).getByRole('button', { name: 'Ausschalten' }).click();
     await expect(page.locator('[data-result="failed"]')).toContainText('Der Container ließ sich nicht stoppen.', { timeout: 20_000 });
@@ -223,7 +223,7 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
     test('stop_failed stored by an update that is still running is not shown until the job ends (re-review concern 4)', async ({ page, api }) => {
       api.admin.livetv.ltState = 'stop_failed';
       api.admin.livetv.job = { id: 'a1', action: 'update', state: 'running', step: 'restart', from: null, to: 'sha-abc1234', startedAt: new Date().toISOString(), finishedAt: null, error: null, steps: { pull: 'ok', verify: 'ok', restart: 'running', health: 'pending', rollback: 'skipped' } };
-      await page.goto('/admin/livetv');
+      await page.goto('/admin/livetv?tab=status');
       await expect(page.getByText('Ein Update läuft gerade. Danach geht es wieder.')).toBeVisible();
       await expect(page.locator('[data-note="stop_failed"]')).toHaveCount(0);
     });
@@ -291,7 +291,7 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
     test('after a disable the page waits for detection: "being turned off", never "läuft", then the offer (1b review I4)', async ({ page, api }) => {
       const lt = api.admin.livetv;
       lt.offLag = 2; // detection still says installed for two more polls after the job ended
-      await page.goto('/admin/livetv');
+      await page.goto('/admin/livetv?tab=status');
       await page.getByRole('button', { name: 'Live-TV ausschalten …' }).click();
       await page.getByRole('dialog', { name: 'Live-TV ausschalten?' }).getByRole('button', { name: 'Ausschalten' }).click();
       // the job ended (updater: disabled) while detection still answers installed: the page keeps asking and says so
