@@ -144,3 +144,24 @@ describe('copy', () => {
     }
   });
 });
+
+describe('help texts say what the budget does', () => {
+  it('the held slot is kept for the preferred kind; the limit and the card name downloads too', async () => {
+    const want: Record<string, { preferred: RegExp; downloads: RegExp }> = {
+      de: { preferred: /für die bevorzugte Seite frei/, downloads: /Downloads/ },
+      en: { preferred: /free for the preferred side/, downloads: /downloads/ },
+      es: { preferred: /para la parte preferida/, downloads: /descargas/ },
+      fr: { preferred: /pour le côté prioritaire/, downloads: /téléchargements/ },
+      it: { preferred: /per la parte con la priorità/, downloads: /download/ },
+      pl: { preferred: /dla strony z pierwszeństwem/, downloads: /pobrania/ },
+      tr: { preferred: /öncelikli taraf için/, downloads: /indirmeler/ },
+    };
+    for (const [l, w] of Object.entries(want)) {
+      await setLocale(l);
+      expect(tr('settings.keys.CONVERSION_PRIORITY.help' as never), l).toMatch(w.preferred);
+      expect(tr('settings.keys.CONVERSION_PRIORITY.help' as never), l).not.toMatch(/other side|andere Seite/);
+      expect(tr('settings.keys.CONVERSION_SLOTS.help' as never), l).toMatch(w.downloads);
+      expect(tr('adminConv.intro' as never), l).toMatch(w.downloads);
+    }
+  });
+});
