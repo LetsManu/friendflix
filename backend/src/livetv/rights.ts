@@ -68,11 +68,15 @@ async function computeSet(ctx: RightsCtx, user: LivetvUser, profile: LivetvProfi
   return new Set(rows.map((r) => r.id));
 }
 
-/** The ids of the channels the profile may watch (spec §8 steps 1-4), cached 60 s. The caller must not change the returned set. */
-export async function channelSet(ctx: RightsCtx, user: LivetvUser, profile: LivetvProfile): Promise<Set<string>> {
+/**
+ * The ids of the channels the profile may watch (spec §8 steps 1-4), cached 60 s. Every caller gets its own copy, typed read-only: the
+ * cached Set itself never leaves this module, so no caller can change what the next one is told (Object.freeze would not help, it
+ * does not stop a Set's add/delete). A copy of a few thousand ids per call is cheap next to the query it saves.
+ */
+export async function channelSet(ctx: RightsCtx, user: LivetvUser, profile: LivetvProfile): Promise<ReadonlySet<string>> {
   const key = `${user.id}|${user.role}|${profile.id}|${profile.kids ? 1 : 0}`;
   const hit = sets.get(ctx)?.get(key);
-  if (hit && Date.now() - hit.at <= TTL_MS) return hit.ids;
+  if (hit && Date.now() - hit.at <= TTL_MS) return new Set(hit.ids);
   const gen = generation;
   const ids = await computeSet(ctx, user, profile);
   if (gen === generation) {
@@ -80,7 +84,7 @@ export async function channelSet(ctx: RightsCtx, user: LivetvUser, profile: Live
     if (!per) sets.set(ctx, (per = new Map()));
     per.set(key, { at: Date.now(), ids });
   }
-  return ids;
+  return new Set(ids);
 }
 
 export async function channelAllowed(ctx: RightsCtx, user: LivetvUser, profile: LivetvProfile, channelId: string): Promise<boolean> {

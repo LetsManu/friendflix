@@ -314,7 +314,9 @@ describe('merge', () => {
     await channel('Kanal Wolkenlos', { importGroup: 'Sport Extra' });
     await call('PUT', `/api/admin/users/${BEN}/livetv-groups`, { allow: [hd], deny: [] });
     expect(await sees(who.ben())).toEqual(['Bergblick Sport HD', 'Hafenkanal']);
-    const r = await call('POST', '/api/admin/livetv/groups/merge', { ids: [hd, extra, sport], into: sport });
+    // a merge into itself is refused (and not audited)
+    expect((await call('POST', '/api/admin/livetv/groups/merge', { ids: [hd, sport], into: sport })).json()).toEqual({ error: 'invalid', field: 'into' });
+    const r = await call('POST', '/api/admin/livetv/groups/merge', { ids: [hd, extra], into: sport });
     expect(r.statusCode).toBe(200);
     expect(r.json()).toEqual({ id: sport, name: 'Sport', kidFriendly: false, roles: ['family'], released: true, position: 0, channels: 4, providerGroups: ['DE | Sport', 'Sport Extra', 'Sport HD'] });
     expect((await env.pool.query('select group_override from livetv_channels where id = $1', [moved])).rows[0].group_override).toBe(sport);
@@ -322,9 +324,10 @@ describe('merge', () => {
     // the merged groups' roles and exceptions went with them; Sport keeps its own
     expect(await sees(who.ben())).toEqual([]);
     expect(await sees(who.anna())).toEqual(['Bergblick Sport', 'Bergblick Sport HD', 'Hafenkanal', 'Kanal Wolkenlos']);
-    const [a] = (await env.pool.query("select target, meta from audit_log where action = 'livetv.group.merge'")).rows;
-    expect(a.target).toBe(sport);
-    expect([...a.meta.ids].sort()).toEqual([hd, extra].sort());
+    const merges = (await env.pool.query("select target, meta from audit_log where action = 'livetv.group.merge'")).rows;
+    expect(merges).toHaveLength(1);
+    expect(merges[0].target).toBe(sport);
+    expect([...merges[0].meta.ids].sort()).toEqual([hd, extra].sort());
     expect((await call('POST', '/api/admin/livetv/groups/merge', { ids: [sport], into: hd })).statusCode).toBe(404);
   });
 });
@@ -368,5 +371,91 @@ describe('Phase 0 people pages', () => {
     expect(of('friend')).toEqual(['Sport']);
     expect(of('guest')).toEqual([]);
     expect(of('admin')).toEqual(['Sport', 'Kinderinsel']); // released groups only
+  });
+});
+
+describe('fix round 1', () => {
+  const audits = async (action: string) => (await env.pool.query<{ target: string | null; meta: Record<string, unknown> }>(
+    'select target, meta from audit_log where action = $1 order by id', [action])).rows;
+
+  it('a per-user allow does not open a group that is not kid-friendly to a kids profile', async () => {
+    const sport = await group('Sport');
+    await channel('Bergblick Sport', { override: sport });
+    await call('PUT', `/api/admin/users/${ANNA}/livetv-groups`, { allow: [sport], deny: [] });
+    expect(await sees(who.anna())).toEqual(['Bergblick Sport']);
+    expect(await sees(who.annaKids())).toEqual([]);
+    expect(await livetvFeature(env.ctx, who.annaKids().user, who.annaKids().profile)).toBe(false);
+    const chk = (await call('GET', `/api/admin/users/${ANNA}/check?profile=${ANNA_KIDS}`)).json();
+    expect(chk.livetv.groups).toEqual([{ id: sport, name: 'Sport', visible: false, reason: 'notKidFriendly' }]);
+  });
+
+  it('caps id lists at 500 and refuses a blank name', async () => {
+    const g = await group('Sport');
+    const many = Array.from({ length: 501 }, (_, i) => `0d000000-0000-4000-a000-${String(i).padStart(12, '0')}`);
+    expect((await call('POST', '/api/admin/livetv/groups/release', { ids: many, roles: [], kidFriendly: false })).json()).toEqual({ error: 'invalid', field: 'ids' });
+    expect((await call('POST', '/api/admin/livetv/groups/merge', { ids: many, into: g })).json()).toEqual({ error: 'invalid', field: 'ids' });
+    expect((await call('PUT', `/api/admin/users/${BEN}/livetv-groups`, { allow: many, deny: [] })).json()).toEqual({ error: 'invalid', field: 'allow' });
+    expect((await call('PUT', `/api/admin/users/${BEN}/livetv-groups`, { allow: [], deny: many })).json()).toEqual({ error: 'invalid', field: 'deny' });
+    const blank = await call('POST', '/api/admin/livetv/groups', { name: '   ' });
+    expect(blank.statusCode).toBe(400);
+    expect(blank.json()).toEqual({ error: 'invalid', field: 'name' });
+    expect((await call('PATCH', `/api/admin/livetv/groups/${g}`, { name: ' ' })).json()).toEqual({ error: 'invalid', field: 'name' });
+    expect((await env.pool.query('select name from livetv_groups')).rows).toEqual([{ name: 'Sport' }]);
+  });
+
+  it('PATCH released: true is a release, audited like the release route', async () => {
+    const g = await group('DE | Doku', { released: false, roles: ['family'] });
+    await channel('Sternwarte 24', { override: g });
+    const r = await call('PATCH', `/api/admin/livetv/groups/${g}`, { released: true, name: 'Doku' });
+    expect(r.json()).toMatchObject({ released: true, roles: ['family'], kidFriendly: false, name: 'Doku' });
+    expect(await sees(who.anna())).toEqual(['Sternwarte 24']);
+    expect(await audits('livetv.group.release')).toEqual([{ target: null, meta: { ids: [g], roles: ['family'], kidFriendly: false } }]);
+    expect(await audits('livetv.group.update')).toEqual([{ target: g, meta: { fields: ['name'] } }]);
+    // with roles and the flag in the same patch: those are the release's
+    const h = await group('DE | Kinder', { released: false });
+    await call('PATCH', `/api/admin/livetv/groups/${h}`, { released: true, roles: ['friend', 'guest'], kidFriendly: true });
+    expect((await audits('livetv.group.release'))[1]).toEqual({ target: null, meta: { ids: [h], roles: ['friend', 'guest'], kidFriendly: true } });
+    expect(await audits('livetv.group.update')).toHaveLength(1);
+  });
+
+  it('writes that change nothing are not audited', async () => {
+    const g = await group('Sport', { roles: ['family'] });
+    const h = await group('Nachrichten');
+    // an empty patch, the same values again, an already released group released again as it is, an unknown id
+    expect((await call('PATCH', `/api/admin/livetv/groups/${g}`, {})).statusCode).toBe(200);
+    expect((await call('PATCH', `/api/admin/livetv/groups/${g}`, { name: 'Sport', kidFriendly: false, roles: ['family'], released: true })).statusCode).toBe(200);
+    expect((await call('POST', '/api/admin/livetv/groups/release', { ids: [g], roles: ['family'], kidFriendly: false })).json()).toEqual({ released: 1 });
+    expect((await call('POST', '/api/admin/livetv/groups/release', { ids: ['0d000000-0000-4000-a000-0000000000aa'], roles: [], kidFriendly: false })).json()).toEqual({ released: 0 });
+    expect((await call('PUT', '/api/admin/livetv/groups/order', { ids: [g, h] })).json()).toEqual({ ok: true });
+    await call('PUT', `/api/admin/users/${BEN}/livetv-groups`, { allow: [h], deny: [g] });
+    await call('PUT', `/api/admin/users/${BEN}/livetv-groups`, { allow: [h], deny: [g] });
+    const rows = (await env.pool.query<{ action: string }>('select action from audit_log order by id')).rows.map((r) => r.action);
+    expect(rows).toEqual(['user.livetv_groups']);
+    expect(await audits('user.livetv_groups')).toEqual([{ target: BEN, meta: { allow: [h], deny: [g] } }]);
+    // a real change is audited with what changed
+    await call('PATCH', `/api/admin/livetv/groups/${g}`, { kidFriendly: true, roles: ['family'] });
+    expect(await audits('livetv.group.update')).toEqual([{ target: g, meta: { fields: ['kidFriendly'] } }]);
+    await call('PUT', '/api/admin/livetv/groups/order', { ids: [h, g] });
+    expect(await audits('livetv.group.order')).toEqual([{ target: null, meta: { count: 2 } }]);
+  });
+
+  it('channelSet hands out a copy', async () => {
+    const g = await group('Nachrichten', { roles: ['family'] });
+    const ch = await channel('Nordlicht TV', { override: g });
+    const first = await channelSet(env.ctx, who.anna().user, who.anna().profile);
+    (first as Set<string>).delete(ch);
+    expect(await channelAllowed(env.ctx, who.anna().user, who.anna().profile, ch)).toBe(true);
+  });
+
+  it('features.livetv for a person who is not an admin', async () => {
+    const ben = await env.login({ sub: 'ben-sub', email: 'ben@friend.example.com', name: 'Ben Muster', groups: [] });
+    const me = async () => (await env.app.inject({ url: '/api/me', cookies: ben.cookies })).json();
+    const role = (await env.pool.query<{ role: string }>("select role from users where authentik_sub = 'ben-sub'")).rows[0]!.role;
+    expect(role).not.toBe('admin');
+    const g = (await call('POST', '/api/admin/livetv/groups', { name: 'Nachrichten', roles: [role] })).json().id as string;
+    await channel('Nordlicht TV', { override: g });
+    expect((await me()).features.livetv).toBe(true);
+    expect((await call('PUT', `/api/admin/users/${BEN}/rights`, { overrides: { liveTv: false } })).statusCode).toBe(200);
+    expect((await me()).features.livetv).toBe(false);
   });
 });
