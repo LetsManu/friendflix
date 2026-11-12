@@ -87,5 +87,11 @@ const dict: Translation<typeof de> = {
     manualBodyPortainer: 'Ten stos nie jest zarządzany przez aktualizator. Uruchom polecenie na serwerze lub zatrzymaj usługę livetv w stosie swojego narzędzia zarządzania (np. Portainer), a potem usuń COMPOSE_PROFILES=livetv ze zmiennych środowiskowych stosu:',
     manualCommand: 'Polecenie',
   },
+  ch: {
+    orderPicked: '{name} podniesiony, pozycja {n} z {m}',
+    orderMoved: 'Pozycja {n} z {m}',
+    orderDropped: '{name} upuszczony na pozycji {n}',
+    orderCancelled: 'Przenoszenie anulowane',
+  },
 };
 export default dict;

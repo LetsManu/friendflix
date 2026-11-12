@@ -87,5 +87,11 @@ const dict: Translation<typeof de> = {
     manualBodyPortainer: 'Este stack no lo gestiona el actualizador. Ejecuta el comando en el servidor o detén el servicio livetv en el stack de tu herramienta de gestión (p. ej. Portainer) y quita después COMPOSE_PROFILES=livetv de las variables de entorno del stack:',
     manualCommand: 'Comando',
   },
+  ch: {
+    orderPicked: '{name} levantado, posición {n} de {m}',
+    orderMoved: 'Posición {n} de {m}',
+    orderDropped: '{name} soltado en la posición {n}',
+    orderCancelled: 'Movimiento cancelado',
+  },
 };
 export default dict;
