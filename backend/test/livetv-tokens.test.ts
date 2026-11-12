@@ -90,7 +90,7 @@ beforeAll(async () => {
   adminDevice = (JSON.parse((await env.kv.get(`sess:${admin.cookies.ff_sid}`))!) as { deviceId: string }).deviceId;
   await account(ANNA, 'family', 'Anna Beispiel', '1'.repeat(32));
   await account(CARLA, 'admin', 'Carla Probe', '2'.repeat(32));
-  for (const [u, d] of [[ANNA, 'dev-anna-1'], [ANNA, 'dev-anna-2'], [ANNA, 'dev-anna-3'], [ANNA, 'dev-anna-4'], [ANNA, 'dev-anna-5'], [CARLA, 'dev-carla-1']]) {
+  for (const [u, d] of [[ANNA, 'dev-anna-1'], [ANNA, 'dev-anna-2'], [ANNA, 'dev-anna-3'], [ANNA, 'dev-anna-4'], [ANNA, 'dev-anna-5'], [ANNA, 'dev-anna-6'], [CARLA, 'dev-carla-1']]) {
     await env.pool.query("insert into devices(user_id, device_id, label, approved) values ($1, $2, 'Browser', true)", [u, d]);
   }
 });
@@ -263,6 +263,65 @@ describe('live tokens', () => {
     const r = await env.app.inject({ method: 'POST', url: '/internal/authz/live', headers: H, payload: { token: (await mint({ deviceId: 'dev-anna-2' })).token, ip: IP1 } });
     expect(r.statusCode).toBe(410);
     expect(r.json()).toEqual({ error: 'gone' });
+    // a 410 takes no pin: once the stream runs, any address may take the first one
+    const p = (await mint({ deviceId: 'dev-anna-3' })).token;
+    running.delete(nord);
+    expect(await status(p, IP1)).toBe(410);
+    running.set(nord, 'sk-nordlicht');
+    expect(await status(p, IP2)).toBe(200);
+    expect(await status(p, IP1)).toBe(403);
+  });
+
+  it('a mint revokes only the same device\'s tokens of the same kind (R8)', async () => {
+    const carla = { userId: CARLA, profileId: CARLA, deviceId: 'dev-carla-1', channelId: hafen, channelName: 'Hafenkanal' };
+    const n1 = (await mint({ ...carla, channelId: nord, channelName: 'Nordlicht TV' })).token;
+    skipClock(5);
+    const t1 = (await mint({ ...carla, test: true })).token;
+    skipClock(5);
+    expect(await status(n1)).toBe(200);
+    expect(await status(t1)).toBe(200);
+    const t2 = (await mint({ ...carla, test: true })).token;
+    skipClock(5);
+    expect(await status(t1)).toBe(410);
+    expect(await status(n1)).toBe(200);
+    expect(await status(t2)).toBe(200);
+    const n2 = (await mint({ ...carla, channelId: nord, channelName: 'Nordlicht TV' })).token;
+    expect(await status(n1)).toBe(410);
+    expect(await status(n2)).toBe(200);
+    expect(await status(t2)).toBe(200);
+  });
+
+  it('concurrent mints converge', async () => {
+    const ts = await Promise.all([1, 2, 3, 4, 5, 6].map((i) => mint({ deviceId: `dev-anna-${i}` }).then((m) => m.token)));
+    const codes = await Promise.all(ts.map((t) => status(t)));
+    expect(codes.filter((c) => c === 200)).toHaveLength(MAX_LIVE_TOKENS);
+    const same = await Promise.all([mint({ deviceId: 'dev-anna-1' }), mint({ deviceId: 'dev-anna-1' })]);
+    const sc = await Promise.all(same.map((m) => status(m.token)));
+    expect(sc.filter((c) => c === 200)).toHaveLength(1);
+  });
+
+  it('a beat of a refused token answers 410 and refreshes nothing', async () => {
+    const { token, hash } = await mint();
+    expect(await status(token)).toBe(200);
+    await env.pool.query('update livetv_channels set hidden = true where id = $1', [nord]);
+    invalidateLivetvRights();
+    const before = ttlMs(liveViewKey(hash));
+    skipClock(2_100);
+    expect(await beatLiveToken(env.ctx, token, { userId: ANNA, sidHash: SID_A, ip: IP2 })).toEqual({ ok: false, status: 410 });
+    expect(ttlMs(liveViewKey(hash))).toBeLessThanOrEqual(before! - 2_000); // not reset to VIEW_TTL_S
+    expect(await env.kv.get(`ltvpin:${hash}`)).toBe(IP1); // not re-pinned
+  });
+
+  it('logout through the route revokes the device\'s live tokens', async () => {
+    await revokeSessions(env.ctx, adminId);
+    const s = await env.login();
+    admin = s;
+    const dev = (JSON.parse((await env.kv.get(`sess:${s.cookies.ff_sid}`))!) as { deviceId: string }).deviceId;
+    const t = (await mint({ userId: adminId, profileId: adminId, deviceId: dev })).token;
+    expect(await status(t)).toBe(200);
+    const out = await env.app.inject({ method: 'POST', url: '/auth/logout', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf } });
+    expect(out.statusCode).toBe(200);
+    expect(await status(t)).toBe(410);
   });
 
   it('mint seeds the viewer key', async () => {
@@ -327,8 +386,8 @@ describe('live tokens', () => {
     try {
       const { token } = await mint();
       const live = (b: unknown, h: Record<string, string> = H) => env.app.inject({ method: 'POST', url: '/internal/authz/live', headers: h, payload: b as object });
-      expect((await live({ token, ip: IP1 })).statusCode).toBe(410); // placeholder streamKeyFor
-      expect((await live({ token, ip: IP2 })).statusCode).toBe(403); // pinned elsewhere
+      expect((await live({ token, ip: IP1 })).statusCode).toBe(410); // placeholder streamKeyFor (takes no pin)
+      expect((await live({ token, ip: IP2 })).statusCode).toBe(410);
       expect((await live({ token, ip: IP1 }, { 'x-internal-secret': 'wrong' })).statusCode).toBe(403);
       expect((await live({ token, ip: IP1, extra: 1 })).statusCode).toBe(400); // strict
       expect((await live({ token: `${token}x`, ip: IP1 })).statusCode).toBe(400);

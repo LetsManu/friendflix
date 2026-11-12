@@ -95,7 +95,8 @@ async function listTokens(ctx: Pick<Ctx, 'kv'>, userId: string): Promise<Array<{
 const rightsMemo = new Map<string, { exp: number; v: { userName: string; profileName: string } | null }>();
 
 /**
- * Mints a live token (32 random bytes, base64url). The same device's earlier tokens are revoked (a channel switch; spec §7.1) and at
+ * Mints a live token (32 random bytes, base64url). The same device's earlier tokens of the same kind (normal or admin test) are
+ * revoked (a channel switch; spec §7.1, R8: a stream-test preview never ends a live view on that device, nor the reverse) and at
  * most MAX_LIVE_TOKENS stay per account (the oldest go); both are enforced after the insert, so simultaneous mints converge instead of
  * racing past the limit. Seeds the viewer key at once (F9): a viewer who has not fetched a file yet already counts. Returns the raw
  * token (once) and its hash.
@@ -112,7 +113,7 @@ export async function mintLiveToken(ctx: Ctx, rec: Omit<LiveTokenRec, 'exp' | 'c
   await ctx.kv.set(liveViewKey(hash), rec.channelId, VIEW_TTL_S);
   const me = { hash, rec: full };
   for (const t of await listTokens(ctx, rec.userId)) {
-    if (t.hash !== hash && t.rec.deviceId === rec.deviceId && older(t, me) < 0) await revokeLiveToken(ctx, t.hash);
+    if (t.hash !== hash && t.rec.deviceId === rec.deviceId && Boolean(t.rec.test) === Boolean(full.test) && older(t, me) < 0) await revokeLiveToken(ctx, t.hash);
   }
   const all = (await listTokens(ctx, rec.userId)).sort(older);
   while (all.length > MAX_LIVE_TOKENS) await revokeLiveToken(ctx, all.shift()!.hash);
@@ -149,7 +150,7 @@ export async function revokeLiveTokens(ctx: Ctx, userId: string, deviceId?: stri
 /**
  * The player's heartbeat (every 20 s while open, playing or paused): slides the token's TTL and keeps its viewer key and live record.
  * A `local` token re-pins to `ip` when the beat comes from the session that minted it (Review Focus 4); a beat of any other session
- * only slides. Unknown, expired, revoked or another account's token -> 410.
+ * only slides. Unknown, expired, revoked, another account's or a token whose rights are refused (same 2 s memo as authz) -> 410.
  */
 export async function beatLiveToken(ctx: Ctx, token: string, who: { userId: string; sidHash: string; ip: string }): Promise<{ ok: true; expiresAt: number } | { ok: false; status: 410 }> {
   const gone = { ok: false, status: 410 } as const;
@@ -160,6 +161,7 @@ export async function beatLiveToken(ctx: Ctx, token: string, who: { userId: stri
   const now = Date.now();
   if (!rec || rec.exp <= now || rec.userId !== who.userId) return gone;
   const ttl = keyTtl(rec.exp, now);
+  if (!(await rightsOf(ctx, hash, rec))) return gone; // a refused token is no viewer: nothing slides, re-pins or refreshes
   if (ttl <= 0 || !(await ctx.kv.replace(dataKey(hash), JSON.stringify(rec), ttl))) return gone; // never resurrects a revoked one
   if (rec.via === 'local' && rec.sidHash === who.sidHash) {
     await ctx.kv.set(pinKey(hash), who.ip, pinTtl(rec.exp, now));
@@ -221,11 +223,11 @@ export async function resolveLiveToken(
   if (!rec || rec.exp <= Date.now()) return { status: 401 };
   const owner = await rightsOf(ctx, hash, rec);
   if (!owner) return { status: 403 };
+  const streamKey = await deps.streamKeyFor(rec.channelId); // before the pin: a refused (410) request never takes one
+  if (!streamKey) return { status: 410 };
   const airplay = rec.via === 'airplay';
   const slots = airplay && Date.now() - rec.createdAt <= AIRPLAY_PIN2_WINDOW_MS ? 2 : 1;
   if (!(await takePin(ctx, airplay ? [pinKey(hash), pin2Key(hash)] : [pinKey(hash)], ip, pinTtl(rec.exp), slots))) return { status: 403 };
-  const streamKey = await deps.streamKeyFor(rec.channelId);
-  if (!streamKey) return { status: 410 };
   if (rec.seen === undefined || Date.now() - rec.seen >= LIVE_TOUCH_MS) await touch(ctx, hash, rec, owner);
   return { status: 200, streamKey, kind: 'live', maxAgeS: LIVE_AUTHZ_MAX_AGE_S };
 }
