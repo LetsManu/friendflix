@@ -8,8 +8,13 @@ import { loadConfig } from './config.js';
 import { log as defaultLog, type Log } from './log.js';
 import { dnsLookup, ownSubnets } from './netguard.js';
 import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
+import { clearStale } from './cache.js';
+import { passthroughDriver } from './passthrough.js';
 import { fetchRoutes } from './routes/fetch.js';
+import { fileRoutes } from './routes/files.js';
+import { streamRoutes } from './routes/streams.js';
 import { createRun } from './run.js';
+import { Streams } from './streams.js';
 import { systemView, type SystemView } from './system.js';
 
 /**
@@ -160,7 +165,10 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   const system = systemView({ fs, run, cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts });
   // the production guard: the system resolver and this container's own subnets, read once here (never a test `dial`)
   const guard = { lookup: dnsLookup, own: ownSubnets() };
-  const routes = [...fetchRoutes({ guard, run })];
+  // the DVR cache: directories of a previous process are left over (its streams are gone)
+  void clearStale(cfg.cacheDir);
+  const streams = new Streams({ root: cfg.cacheDir, maxBytes: cfg.cacheMaxBytes, drivers: { passthrough: passthroughDriver({ guard }) }, log });
+  const routes = [...fetchRoutes({ guard, run }), ...streamRoutes(streams), ...fileRoutes(streams)];
   const app = createApp({ verifier, version: cfg.version, bootId: randomBytes(8).toString('hex'), system, routes, warn: log });
   const server = createServer((req, res) => { void app(req, res); });
   server.requestTimeout = 10_000;
