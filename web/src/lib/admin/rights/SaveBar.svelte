@@ -79,8 +79,10 @@
 {/if}
 
 <style>
-  /* desktop: floating, centred, 16 px above the bottom edge (above the cast bar's room); the page pads its end by --savebar-h */
-  .sb-wrap { position: fixed; z-index: 85; left: 0; right: 0; bottom: calc(16px + var(--castbar-h, 0px)); display: flex; justify-content: center; padding: 0 16px; pointer-events: none; }
+  /* desktop: floating, centred, 16 px above the bottom edge; `bottom` stays fixed and the cast bar's room (--castbar-h) lifts the wrapper
+     with a transform that glides like the bars (240 ms, GLASS_OUT), so a cast bar that comes or goes never makes it jump (barRise on
+     .sb has its own transform: the lift lives here). The page pads its end by --savebar-h */
+  .sb-wrap { position: fixed; z-index: 85; left: 0; right: 0; bottom: 16px; transform: translateY(calc(-1 * var(--castbar-h, 0px))); transition: transform 240ms var(--fr-out); display: flex; justify-content: center; padding: 0 16px; pointer-events: none; }
   .sb { pointer-events: auto; box-sizing: border-box; width: min(760px, 100%); min-height: 64px; padding: 10px 12px 10px 20px; display: flex; align-items: center; gap: 12px; outline: none; }
   .sb:focus-visible { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--ring-dark); }
   .tx { flex: 1; min-width: 0; margin: 0; display: flex; align-items: center; gap: .55rem; font-weight: 600; }
@@ -90,11 +92,11 @@
   .acts { flex: none; display: flex; gap: 8px; align-items: center; }
   /* phone: above the tab bar, the buttons under the line */
   @media (max-width: 720px) {
-    .sb-wrap { bottom: calc(var(--tabbar-h, 0px) + var(--safe-bottom, 0px) + .6rem + var(--castbar-h, 0px)); padding: 0 .6rem; }
+    .sb-wrap { bottom: calc(var(--tabbar-h, 0px) + var(--safe-bottom, 0px) + .6rem); padding: 0 .6rem; }
     .sb { flex-direction: column; align-items: stretch; padding: 12px; }
     .acts { justify-content: flex-end; flex-wrap: wrap; }
   }
   /* calm mode and reduced motion: nothing moves */
-  :global(html.m-still) .sb-wrap :global(*) { transition: none !important; animation: none !important; }
-  @media (prefers-reduced-motion: reduce) { .sb-wrap :global(*) { transition: none !important; animation: none !important; } }
+  :global(html.m-still) .sb-wrap, :global(html.m-still) .sb-wrap :global(*) { transition: none !important; animation: none !important; }
+  @media (prefers-reduced-motion: reduce) { .sb-wrap, .sb-wrap :global(*) { transition: none !important; animation: none !important; } }
 </style>
