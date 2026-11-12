@@ -54,18 +54,43 @@
   let peopleRows: ExceptionRow[] | null = null, peopleFailed = false, peopleUnread = 0, peopleCapped = false, peopleLoading = false;
   let list: HTMLElement | undefined;
 
+  /**
+   * A role PATCH replaces the whole role set, so it is never built from a stale list (ruling R25).
+   *  - `loadSeq` counts the started loads; only the answer of the latest started one is applied (an older one that lands last is dropped).
+   *  - `fresh`: false from the start of any write until a load that started after that write has succeeded (`writeMark` = loads started
+   *    when the write began). While it is false the role chips and matrix cells are disabled and `setRole` refuses.
+   *  - `reloadFailed`: the last load failed while a list is shown; the slot offers *Neu laden*. `loadsOpen`: loads in flight (busy state).
+   */
+  let loadSeq = 0, writeMark = 0, loadsOpen = 0;
+  let fresh = false, reloadFailed = false, rolesBusy = false;
+
   async function load() {
-    try { data = await fetchGroups(); failed = false; } catch { if (!data) failed = true; }
-    // a group that is gone (deleted, merged) is no longer selected
-    if (data) selected = new Set([...selected].filter((x) => data!.groups.some((g) => g.id === x)));
+    const mine = ++loadSeq;
+    loadsOpen++;
+    let ans: GroupsAnswer | null = null;
+    try { ans = await fetchGroups(); } catch { /* handled below */ }
+    loadsOpen--;
+    if (mine !== loadSeq) return; // a newer load was started meanwhile: only its answer counts
+    if (ans) {
+      data = ans; failed = false; reloadFailed = false;
+      if (mine > writeMark) fresh = true;
+      // a group that is gone (deleted, merged) is no longer selected
+      selected = new Set([...selected].filter((x) => ans!.groups.some((g) => g.id === x)));
+    } else if (!data) failed = true; else reloadFailed = true;
+  }
+  /** one write: from here on the list is not fresh; the reload follows whether it worked or not (a refused write may have changed things too) */
+  async function tracked<T>(run: () => Promise<T>): Promise<T> {
+    fresh = false; writeMark = loadSeq;
+    try { return await run(); } finally { await load(); }
   }
   async function loadRoles() {
-    rolesState = 'loading';
+    rolesBusy = true;
     try {
       const m = (await fetchRoles()).matrix;
       if (!m) throw new Error('no matrix');
       roles = rolesFor(m.roles); rolesState = 'ok';
     } catch { roles = []; rolesState = 'failed'; }
+    rolesBusy = false;
   }
   /** one read at a time (switching views while it runs must not start a second one: the cap of 4 holds overall, an older answer never lands after a newer one) */
   async function loadPeople() {
@@ -98,6 +123,10 @@
   $: busy = $busyKeys;
   /** groups whose role set is being written (all their chips and cells wait) */
   $: roleBusy = new Set(groups.filter((x) => busy.has(`grp:${x.id}:roles`)).map((x) => x.id));
+  /** groups whose chips and cells are disabled: the ones being written, and all of them while the list is not known to be fresh */
+  $: roleLocked = fresh ? roleBusy : new Set(groups.map((x) => x.id));
+  /** the list could not be reloaded after a write: the slot says so and offers *Neu laden* */
+  $: stale = reloadFailed && !fresh;
 
   const toggleSel = (gid: string) => { const n = new Set(selected); if (n.has(gid)) n.delete(gid); else n.add(gid); selected = n; };
 
@@ -106,7 +135,7 @@
    * busy until the list is fresh again), so whatever the next write builds on is the stored state, never a stale row.
    */
   async function write(key: string, run: () => Promise<unknown>, success: string): Promise<boolean> {
-    const r = await runAction({ key, run: async () => { try { return await run(); } finally { await load(); } }, success, error: groupErrorOf });
+    const r = await runAction({ key, run: () => tracked(run), success, error: groupErrorOf });
     if (!r.ok && !r.skipped) rev++;
     return r.ok;
   }
@@ -117,7 +146,9 @@
    * PATCH replaces the whole role set, so the writes of one group run one after the other (one busy key per group, every chip and matrix
    * cell of the group is disabled meanwhile) and the new set is built from the latest stored row at the moment the write starts.
    */
-  function setRole(g: GroupView, role: string, on: boolean) {
+  function setRole(g: GroupView, role: string, on: boolean): Promise<boolean> {
+    // the list is not known to be current (a write is running, or its reload failed): `next` would be built from stale roles
+    if (!fresh) return Promise.resolve(false);
     return write(`grp:${g.id}:roles`, () => {
       const cur = data?.groups.find((x) => x.id === g.id)?.roles ?? g.roles;
       const next = on ? [...cur.filter((k) => k !== role), role] : cur.filter((k) => k !== role);
@@ -138,21 +169,21 @@
   const here = (e: MouseEvent) => (e.currentTarget instanceof HTMLElement ? e.currentTarget : null);
 
   async function doCreate(name: string) {
-    const r = await runAction({ key: 'grp:new', run: () => createGroup({ name }), success: tr('adminLive.grp.created'), error: false });
-    if (r.ok) { close(); await load(); } else if (!r.skipped) dialogError = groupErrorOf(r.error);
+    const r = await runAction({ key: 'grp:new', run: () => tracked(() => createGroup({ name })), success: tr('adminLive.grp.created'), error: false });
+    if (r.ok) close(); else if (!r.skipped) dialogError = groupErrorOf(r.error);
   }
   async function doRename(g: GroupView, name: string) {
     if (name === g.name) { close(); return; }
-    const r = await runAction({ key: `grp:${g.id}`, run: () => patchGroup(g.id, { name }), success: tr('adminLive.grp.renamed'), error: false });
-    if (r.ok) { close(); await load(); } else if (!r.skipped) dialogError = groupErrorOf(r.error);
+    const r = await runAction({ key: `grp:${g.id}`, run: () => tracked(() => patchGroup(g.id, { name })), success: tr('adminLive.grp.renamed'), error: false });
+    if (r.ok) close(); else if (!r.skipped) dialogError = groupErrorOf(r.error);
   }
   async function doRelease(gs: GroupView[], d: { roles: string[]; kidFriendly: boolean }) {
     const ids = gs.map((g) => g.id);
     if (await write('grp:release', () => releaseGroups(ids, d.roles, d.kidFriendly), tr('adminLive.grp.released'))) { selected = new Set(); close(); }
   }
   async function doMerge(gs: GroupView[], d: { ids: string[]; into: string }) {
-    const r = await runAction({ key: 'grp:merge', run: () => mergeGroups(d.ids, d.into), success: tr('adminLive.grp.merged'), error: false });
-    if (r.ok) { selected = new Set(); close(); await load(); } else if (!r.skipped) dialogError = groupErrorOf(r.error);
+    const r = await runAction({ key: 'grp:merge', run: () => tracked(() => mergeGroups(d.ids, d.into)), success: tr('adminLive.grp.merged'), error: false });
+    if (r.ok) { selected = new Set(); close(); } else if (!r.skipped) dialogError = groupErrorOf(r.error);
   }
   async function unrelease(g: GroupView) {
     const ok = await confirm({ title: tr('adminLive.grp.unreleaseTitle', { name: g.name }), body: tr('adminLive.grp.unreleaseBody'), danger: true, confirmLabel: tr('adminLive.grp.unrelease') });
@@ -198,9 +229,14 @@
       <Button icon="plus" on:click={(e) => open({ kind: 'create' }, here(e))}>{$t('adminLive.grp.create')}</Button>
     </div>
 
-    {#if rolesState === 'failed'}
-      <div class="state panel rf" role="alert"><Icon name="alert" size={22} /><p>{$t('adminLive.grp.rolesFailed')}</p><Button size="sm" variant="secondary" icon="refresh" on:click={() => void loadRoles()}>{$t('adminLive.grp.retry')}</Button></div>
-    {/if}
+    <!-- always reserved, with or without a message, so the list below never moves; a retry keeps the message and the view and shows the busy state on the button -->
+    <div class="slot">
+      {#if rolesState === 'failed'}
+        <div class="smsg panel" role="alert"><Icon name="alert" size={22} /><p>{$t('adminLive.grp.rolesFailed')}</p><Button variant="secondary" icon="refresh" pending={rolesBusy} on:click={() => void loadRoles()}>{$t('adminLive.grp.retry')}</Button></div>
+      {:else if stale}
+        <div class="smsg panel" role="alert"><Icon name="alert" size={22} /><p>{$t('adminLive.grp.listStale')}</p><Button variant="secondary" icon="refresh" pending={loadsOpen > 0} on:click={() => void load()}>{$t('adminLive.grp.reload')}</Button></div>
+      {/if}
+    </div>
 
     <p class="kids" aria-live="polite">{kids}</p>
 
@@ -238,7 +274,7 @@
                     {#each roles as r (r.key)}
                       {@const on = g.roles.includes(r.key)}
                       <button type="button" class="rc" class:on class:ro={r.readOnly} aria-pressed={on} aria-disabled={r.readOnly ? 'true' : undefined} title={r.readOnly ? $t('adminLive.grp.envRole') : undefined}
-                        disabled={roleBusy.has(g.id)} on:click={() => { if (!r.readOnly) void setRole(g, r.key, !on); }}>{r.name}</button>
+                        disabled={roleLocked.has(g.id)} on:click={() => { if (!r.readOnly) void setRole(g, r.key, !on); }}>{r.name}</button>
                     {/each}
                   </div>
                 {:else}
@@ -253,7 +289,7 @@
         <AdminCard><p class="empty">{$t('adminLive.grp.empty')}</p></AdminCard>
       {/if}
     {:else if view === 'roles'}
-      <GroupMatrix groups={pendingFirst(groups, false)} {roles} busy={roleBusy} on:toggle={(e) => setRole(e.detail.group, e.detail.role, e.detail.on)} />
+      <GroupMatrix groups={pendingFirst(groups, false)} {roles} busy={roleLocked} on:toggle={(e) => setRole(e.detail.group, e.detail.role, e.detail.on)} />
       <section class="people" aria-labelledby="{id}-p">
         <h3 id="{id}-p">{$t('adminLive.grp.people')}</h3>
         {#if peopleFailed}
@@ -276,7 +312,7 @@
                   {#if p.minus.length}<span class="exc minus" aria-label={$t('adminLive.grp.minusLabel', { list: p.minus.join(', ') })}><span aria-hidden="true">− {p.minus.join(', ')}</span></span>{/if}
                   <!-- on a group that is not released: neutral, not a grant, nobody sees that group -->
                   {#each [...p.plusOff.map((n) => `+ ${n}`), ...p.minusOff.map((n) => `− ${n}`)] as off (off)}
-                    <span class="exc off" aria-label={$t('adminLive.grp.excOff', { list: off.slice(2) })}><Icon name="eye-off" size={14} /><span aria-hidden="true">{off} · {$t('adminLive.grp.unreleased')}</span></span>
+                    <span class="exc off" aria-label={$t('adminLive.grp.excOff', { list: off })}><Icon name="eye-off" size={14} /><span aria-hidden="true">{off} · {$t('adminLive.grp.unreleased')}</span></span>
                   {/each}
                 </span>
               </li>
@@ -289,7 +325,7 @@
       </section>
     {:else}
       <p class="hint">{$t('adminLive.grp.orderHint')}</p>
-      <OrderView rows={orderRows} save={async (ids) => { await orderGroups(ids); await load(); }} />
+      <OrderView rows={orderRows} save={(ids) => tracked(() => orderGroups(ids)).then(() => undefined)} />
     {/if}
   </div>
 {/if}
@@ -357,8 +393,15 @@
   .exc.off { gap: .35rem; color: var(--mut); box-shadow: inset 0 0 0 1px var(--fr-line, var(--line)); }
   .pnotes { min-height: 2.9em; margin: 0 0 .4rem; font-size: .85rem; color: var(--mut); }
   .pnotes p { margin: 0; min-height: 1.45em; overflow-wrap: anywhere; }
-  .rf { padding: .6rem .9rem; }
+  /* the slot keeps its height whether a message is in it or not (the message wraps within the same room; on a phone the button goes below the text) */
+  .slot { min-height: 4.6rem; }
+  .slot .smsg { display: flex; align-items: center; gap: .8rem; margin: 0; padding: .6rem .9rem; min-height: 4.6rem; box-sizing: border-box; }
+  .smsg p { margin: 0; flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; }
+  .smsg :global(svg) { flex: none; }
   @media (max-width: 720px) {
+    .slot, .slot .smsg { min-height: 9.8rem; }
+    .slot .smsg { flex-wrap: wrap; align-content: center; }
+    .smsg p { flex: 1 1 calc(100% - 3rem); }
     .row { grid-template-columns: auto minmax(0, 1fr) auto; }
     .ctl { grid-column: 2 / -1; justify-content: flex-start; }
     .acts { grid-column: 3; grid-row: 1; }
