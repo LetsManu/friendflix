@@ -41,6 +41,17 @@ None of this is included in Android cloud backups or device-to-device transfers.
 - Uninstalling the app deletes everything the app stored on the phone.
 - Your account on the server and the data stored there: delete it yourself under **My space → Account → Delete account** or ask the server's operator. Steps and what is kept: [account-deletion.md](account-deletion.md).
 
+## Live TV
+
+This section applies when the server you connect to has Live TV turned on ([livetv.md](livetv.md)). Live TV adds the following to what your FriendFlix server stores about you. The person who runs the server is responsible for it; the publisher of the app receives none of it.
+
+- **Zuletzt gesehen (recently watched):** per profile, the last 10 channels you opened and the time each was last opened. Nothing else: no durations, no programmes, no viewing history. Each time you open a channel, channels beyond the newest 10 are deleted.
+- **Favourites and last channel:** the channels you starred, in your order, and the channel you watched last, per profile. A channel you can no longer see is hidden from them, not deleted.
+- **While you watch:** a live view appears in the administrator's list of running streams (Admin → *Betrieb* → *Wiedergabe-Check*) like a film, with the channel name, your account name, your profile name and your device, until you stop. The Live-TV status page of the administrator only counts viewers per channel; it does not list names. It is not kept afterwards. Live views also count against your account's number of simultaneous streams.
+- **Playback measurement:** the anonymous measurement of a live view contains only how long the first picture took and the kind of device, without channel, account, profile or device name.
+- **Deleting:** favourites, *Zuletzt gesehen* and the last channel go with the profile or the account ([account-deletion.md](account-deletion.md)).
+- **Not stored:** provider addresses and passwords never reach your device or the app; the stream you watch is addressed by a temporary token that is not logged.
+
 ## Children
 
 The app has no account of its own and collects nothing for its publisher. Kids profiles are set up by the server's operator.
