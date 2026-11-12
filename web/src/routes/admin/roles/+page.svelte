@@ -15,7 +15,7 @@
   import { api, ApiError } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
-    import { errorText } from '#lib/ui/action';
+  import { errorText } from '#lib/ui/action';
   import { SCRIM_BAR } from '#lib/glass/tone';
   import SlidePill from '#lib/glass/SlidePill.svelte';
   import Button from '#lib/ui/Button.svelte';
@@ -38,7 +38,13 @@
   let wide = typeof matchMedia === 'undefined' || matchMedia(WIDE).matches;
   onMount(() => {
     const mq = matchMedia(WIDE);
-    const sync = () => (wide = mq.matches);
+    const sync = () => {
+      if (wide === mq.matches) return;
+      // the matrix and the cards swap: the focus follows to the same role instead of falling to <body>
+      const key = document.activeElement?.closest('[data-role]')?.getAttribute('data-role');
+      wide = mq.matches;
+      if (key) void tick().then(() => view?.focusHead(key, 'menu'));
+    };
     sync();
     mq.addEventListener('change', sync);
     return () => mq.removeEventListener('change', sync);

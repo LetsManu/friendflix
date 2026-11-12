@@ -24,7 +24,7 @@
   $: fields = visibleFields(matrix);
   $: field = fields.find((f) => f.key === picked) ?? fields[0];
   $: options = fields.map((f) => ({ value: f.key, label: $locale && fieldLabel(f.key) }));
-  $: question = field ? $locale && tr('adminPeople.roles.compareQ', { right: fieldLabel(field.key) }) : '';
+  $: question = field ? $locale && tr(field.kind === 'bool' ? 'adminPeople.roles.compareQ' : 'adminPeople.roles.compareQValue', { right: fieldLabel(field.key) }) : '';
 
   const isStaged = (s: Stage, r: MatrixRole, f: MatrixField): boolean => Object.hasOwn(s[r.key] ?? {}, f.key);
   const valueOf = (s: Stage, r: MatrixRole, f: MatrixField): unknown => (isStaged(s, r, f) ? s[r.key]![f.key] : r.values[f.key]);

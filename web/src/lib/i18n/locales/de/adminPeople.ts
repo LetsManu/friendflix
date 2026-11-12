@@ -312,6 +312,7 @@ export default {
     deleteMove: '{people} und {invites} bekommen die Rolle:',
     compare: 'Vergleich',
     compareQ: 'Wer darf {right}?',
+    compareQValue: '{right} je Rolle',
     viewRoles: 'Rollen',
     viewLabel: 'Ansicht',
     moveUp: 'Nach oben',

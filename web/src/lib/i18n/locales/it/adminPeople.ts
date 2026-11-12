@@ -310,6 +310,7 @@ const dict: Translation<typeof de> = {
     deleteMove: '{people} e {invites} ricevono il ruolo:',
     compare: 'Confronta',
     compareQ: 'Chi può {right}?',
+    compareQValue: '{right} per ruolo',
     viewRoles: 'Ruoli',
     viewLabel: 'Vista',
     moveUp: 'Sposta su',

@@ -61,7 +61,7 @@ test.describe('Rollen & Rechte (phone)', () => {
     await tabs.getByRole('tab', { name: 'Vergleich' }).click();
     await expect(tabs.getByRole('tab', { name: 'Vergleich' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('listitem').filter({ has: page.getByRole('button', { name: /bearbeiten/ }) })).toHaveCount(0);
-    const pick = page.getByRole('combobox', { name: /^Wer darf/ });
+    const pick = page.getByRole('combobox', { name: /^Wer darf|je Rolle$/ });
     await pick.selectOption('cast');
     await expect(pick).toHaveAccessibleName('Wer darf Auf Fernseher übertragen?');
     const guest = page.getByRole('switch', { name: 'Gast' });
@@ -88,8 +88,9 @@ test.describe('Rollen & Rechte (phone)', () => {
     guest.sources.maxStreams = 'role';
     await page.goto('/admin/roles');
     await page.getByRole('tab', { name: 'Vergleich' }).click();
-    await page.getByRole('combobox', { name: /^Wer darf/ }).selectOption('maxStreams');
+    await page.getByRole('combobox', { name: /^Wer darf|je Rolle$/ }).selectOption('maxStreams');
     await expect(page.getByText('geändert (Standard: 1)')).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Gleichzeitige Streams je Rolle' })).toBeVisible();
     await page.getByRole('spinbutton', { name: 'Gast' }).fill('5');
     await expect(bar(page)).toContainText('1 Änderung in 1 Rolle');
   });
@@ -124,6 +125,24 @@ test.describe('Rollen & Rechte (phone)', () => {
     await expect(card(page, 'Oma & Opa')).toHaveCount(0);
   });
 
+  test('the card menu button is a 44 px target', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/admin/roles');
+    const box = await page.getByRole('button', { name: 'Aktionen für Gast' }).boundingBox();
+    expect(box!.width).toBeGreaterThanOrEqual(44);
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+  });
+
+  test('crossing 900 px keeps the focus on the same role', async ({ page }) => {
+    await page.goto('/admin/roles');
+    await card(page, 'Gast').getByRole('button', { name: 'Aktionen für Gast' }).focus();
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(page.getByRole('grid')).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: /Gast/ }).getByRole('button', { name: 'Aktionen für Gast' })).toBeFocused();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(card(page, 'Gast').getByRole('button', { name: 'Aktionen für Gast' })).toBeFocused();
+  });
+
   test('the sheet opens from the menu (Umbenennen) and a rename stages', async ({ page }) => {
     await page.goto('/admin/roles');
     await (await menu(page, 'Freund')).getByRole('button', { name: 'Umbenennen' }).click();
@@ -141,7 +160,7 @@ test.describe('Rollen & Rechte (phone)', () => {
     api.admin.matrix.roles.find((r) => r.key === 'guest')!.values.cast = true;
     await page.goto('/admin/roles');
     await page.getByRole('tab', { name: 'Vergleich' }).click();
-    await page.getByRole('combobox', { name: /^Wer darf/ }).selectOption('cast');
+    await page.getByRole('combobox', { name: /^Wer darf|je Rolle$/ }).selectOption('cast');
     await page.getByRole('switch', { name: 'Gast' }).click();
     const back = page.getByRole('link', { name: 'Zurück zur Admin-Übersicht' });
     await back.click();
@@ -158,7 +177,7 @@ test.describe('Rollen & Rechte (phone)', () => {
     await page.route('**/api/admin/roles/guest', (r) => (r.request().method() === 'PUT' ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"x"}' }) : r.fallback()));
     await page.goto('/admin/roles');
     await page.getByRole('tab', { name: 'Vergleich' }).click();
-    await page.getByRole('combobox', { name: /^Wer darf/ }).selectOption('download');
+    await page.getByRole('combobox', { name: /^Wer darf|je Rolle$/ }).selectOption('download');
     await page.getByRole('switch', { name: 'Gast' }).click();
     await bar(page).getByRole('button', { name: 'Änderungen prüfen' }).click();
     await page.getByRole('dialog', { name: 'Änderungen prüfen' }).getByRole('button', { name: 'Speichern' }).click();
