@@ -49,6 +49,18 @@ export interface LivetvMock {
   mediaStatus: number;
   /** live playlists served with 200 */
   playlistLoads: number;
+  /**
+   * POST .../watch for channel `only` answers only after `ms` (real time): a switch whose watch is still out. With `release`, the
+   * watch lets that token go as it arrives, the way the backend releases the old channel before it starts the new one (spec §12.2):
+   * its media answers `media` (0: untouched; 200: a broken playlist) and, with `beat`, its beat answers 410.
+   */
+  watchHold: { only: string; ms: number; release?: { token: string; media: number; beat?: boolean } } | null;
+  /** tokens the backend has let go (a switch releases the old channel before it starts the new one, spec §12.2): their media answers this status */
+  mediaGone: Record<string, number>;
+  /** tokens whose beat answers 410 `gone` */
+  beatGone: string[];
+  /** media requests answered with a status from `mediaGone` */
+  goneLoads: number;
   /** the playlist keeps up to `dvrSeconds` of segments, each with its #EXT-X-PROGRAM-DATE-TIME; its newest segment ends now */
   dvrPlaylist: boolean;
   /** ms added to the real clock for the playlist's date-times (a spec with a fake page clock sets it so both clocks agree) */
@@ -95,6 +107,10 @@ export function livetvState(): LivetvMock {
     stops: [],
     mediaStatus: 200,
     playlistLoads: 0,
+    watchHold: null,
+    mediaGone: {},
+    beatGone: [],
+    goneLoads: 0,
     dvrPlaylist: false,
     timeShift: 0,
     liveStart: null,
@@ -166,19 +182,29 @@ export function livetvRoute(st: LivetvMock, m: string, p: string, body: any, hea
     const c = st.channels.find((x) => x.id === mm![1]);
     if (!c) return J({ error: 'not_found' }, 404);
     st.watches.push(c.id);
-    const err = st.watchError;
-    if (err && (!err.only || err.only === c.id)) return J(err.body, err.status);
-    st.calls.push(`POST ${p}`);
-    return J({
-      token: `tok-${c.id}`, url: `/media/l/tok-${c.id}/index.m3u8`, expiresAt: Date.now() + 60_000, dvrSeconds: st.dvrSeconds, mode: 'remux',
-      channel: { id: c.id, number: c.number, name: c.name, logo: c.logo }, now: c.now, next: c.next,
-    });
+    const answer = (): Promise<void> => {
+      const err = st.watchError;
+      if (err && (!err.only || err.only === c.id)) return J(err.body, err.status);
+      st.calls.push(`POST ${p}`);
+      return J({
+        token: `tok-${c.id}`, url: `/media/l/tok-${c.id}/index.m3u8`, expiresAt: Date.now() + 60_000, dvrSeconds: st.dvrSeconds, mode: 'remux',
+        channel: { id: c.id, number: c.number, name: c.name, logo: c.logo }, now: c.now, next: c.next,
+      });
+    };
+    const h = st.watchHold && st.watchHold.only === c.id ? st.watchHold : null;
+    if (!h) return answer();
+    if (h.release) {
+      if (h.release.media) st.mediaGone[h.release.token] = h.release.media;
+      if (h.release.beat) st.beatGone.push(h.release.token);
+    }
+    return new Promise<void>((r) => setTimeout(r, h.ms)).then(answer);
   }
   if (p === '/api/livetv/beat' && m === 'POST') {
     st.beats.push(String(body?.token));
+    if (st.beatGone.includes(String(body?.token))) return J({ error: 'gone' }, 410);
     const a = st.beatAnswers.shift();
     if (a) return J(a.body, a.status);
-    if (st.beatRepins) st.mediaStatus = 200; // the beat came from the same session: the token now follows the new address
+    if (st.beatRepins) { st.mediaStatus = 200; delete st.mediaGone[String(body?.token)]; } // the beat came from the same session: the token now follows the new address
     return J({ ok: true, expiresAt: Date.now() + 60_000 });
   }
   if (p === '/api/livetv/watch' && m === 'DELETE') { st.calls.push(`DELETE ${p}`); st.stops.push(String(body?.token)); return J({ ok: true }); }
@@ -207,10 +233,17 @@ export function livetvRoute(st: LivetvMock, m: string, p: string, body: any, hea
 
 /** `/media/l/<token>/…`: the sliding live playlist, its init segment and segments; null = not a live path */
 export function livetvMedia(st: LivetvMock, p: string, route: Route): Promise<void> | null {
-  const mm = p.match(/\/media\/l\/[^/]+\/([^/]+)$/);
+  const mm = p.match(/\/media\/l\/([^/]+)\/([^/]+)$/);
   if (!mm) return null;
   if (st.mediaStatus !== 200) return route.fulfill({ status: st.mediaStatus, body: '' });
-  const f = mm[1]!;
+  const gone = st.mediaGone[mm[1]!];
+  if (gone) {
+    st.goneLoads++;
+    // 200: a broken playlist (no target duration), which hls.js gives up on at once (a fatal LEVEL_PARSING_ERROR)
+    if (gone === 200) return route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', headers: { 'cache-control': 'no-store' }, body: '#EXTM3U\n#EXTINF:2.000000,\ns0.m4s\n' });
+    return route.fulfill({ status: gone, body: '' });
+  }
+  const f = mm[2]!;
   if (f === 'index.m3u8') {
     st.playlistLoads++;
     return route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', headers: { 'cache-control': 'no-store' }, body: livePlaylist(st, Date.now()) });

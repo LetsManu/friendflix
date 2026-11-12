@@ -52,7 +52,8 @@
    * at once: an answered beat re-pins the token and loading carries on; a beat 410, or a playlist refused again after that, leads to
    * the one new watch (`rewatched`), and that watch's answer decides through fromWatchError (403 / not_found: forbidden, anything
    * else the lost cycle). hls.js handlers belong to one attach (`attachedGen`), so a switch that is refused and keeps the old channel
-   * playing keeps that channel's handlers alive.
+   * playing keeps that channel's handlers alive. While a switch's watch is out (`startPending`) nothing of the old channel acts:
+   * its beat does not go out, its refusals and fatal errors are held (`held`) and run only if the switch is refused and it stays.
    *
    * The two moving indicators reuse the app's global keyframes instead of their own: the buffering line sweeps like the skeleton
    * shimmer (`ff-shimmer`, transform only) and the starting spinner is the UI kit's `.spinner` (`ff-spin`). Calm mode and reduced
@@ -98,6 +99,12 @@
   let gen = 0, attachedGen = -1, destroyed = false, rewatched = false;
   /** a watch is on its way: the attached stream (if any) belongs to the channel before and its media events change nothing */
   let startPending = false;
+  /**
+   * What the attached stream met while a watch was on its way (the backend lets the channel before go as it starts the new one,
+   * spec §12.2, so its media is refused or breaks meanwhile): nothing acts on it then. A switch that is refused keeps that stream,
+   * and this runs once it does (a fatal error before a refusal); a switch that goes through drops it with the stream.
+   */
+  let held: { run: () => void; fatal: boolean } | null = null;
   /** a refused media request: none, a beat is checking it, or loading carried on after an answered beat */
   let refused: 'none' | 'checking' | 'resumed' = 'none';
   let beatP: Promise<BeatResult> | null = null;
@@ -231,6 +238,9 @@
         // they are), the sheet offers what already runs (spec §12.2)
         curId = from; cardId = from; sheet = u; ui = { k: 'playing' };
         switchingAt = null; firstFrameAt = Date.now() - BANNER_HOLD_MS;
+        const h = held;
+        held = null;
+        h?.run(); // what the stream met while the watch was out
         return 'stay';
       }
       dropStream(); onFail(u);
@@ -295,7 +305,11 @@
       if (!v.paused) ignorePause = true;
       try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* nothing attached */ }
     }
-    pausedWall = null; behindSec = 0; restartAt = null; attachedGen = -1; refused = 'none';
+    pausedWall = null; behindSec = 0; restartAt = null; attachedGen = -1; refused = 'none'; held = null;
+  }
+  /** keeps what the stream met while a watch is out: the first fatal error wins over refusals, else the latest refusal */
+  function hold(run: () => void, fatal: boolean): void {
+    if (!held?.fatal) held = { run, fatal };
   }
 
   async function attach(url: string, g: number): Promise<void> {
@@ -304,8 +318,11 @@
     attachedGen = g;
     refused = 'none';
     timing.begin(); timing.mode('live');
+    const noFrame = () => { if (g === attachedGen) { dropStream(); onFail({ k: 'lost', attempt: 0 }); } };
     stopFrame = watchFirstFrame(v, START_WATCHDOG_MS, () => {
-      if (g === attachedGen && firstFrameAt === null) { dropStream(); onFail({ k: 'lost', attempt: 0 }); }
+      if (g !== attachedGen) return;
+      if (startPending) hold(noFrame, true); // a switch's watch is out: firstFrameAt is the new channel's
+      else if (firstFrameAt === null) noFrame();
     });
     let H: typeof Hls | null = null;
     try { H = await loadHls(); } catch { H = null; }
@@ -332,11 +349,20 @@
    * hls.js errors of the attached stream (`g` = its attach id). A 403 / 410 on a network request is a refusal by the gateway and
    * goes to onMediaRefused, fatal or not (hls.js never retries a 4xx). Other non-fatal errors are hls.js' own business; a fatal
    * media error is recovered, any other fatal error is input lost.
+   *
+   * While a switch's watch is out (`startPending`) the attached stream is the channel before, which the backend lets go as it
+   * starts the new one: its refusals and fatal errors act on nothing then (a new watch from here would be a second watch of the
+   * new channel, the lost card would end it as it arrives). They are held for a switch that is refused and keeps this stream.
    */
   function onHlsError(d: ErrorData, g: number): void {
     if (g !== attachedGen || !HlsCtor) return;
     const code = (d.response as { code?: number } | undefined)?.code;
-    if (d.type === HlsCtor.ErrorTypes.NETWORK_ERROR && (code === 403 || code === 410)) { onMediaRefused(d, g); return; }
+    const refusal = d.type === HlsCtor.ErrorTypes.NETWORK_ERROR && (code === 403 || code === 410);
+    if (startPending) {
+      if (refusal || d.fatal) hold(() => onHlsError(d, g), Boolean(d.fatal) && !refusal);
+      return;
+    }
+    if (refusal) { onMediaRefused(d, g); return; }
     if (!d.fatal) return;
     if (d.type === HlsCtor.ErrorTypes.MEDIA_ERROR && hls) { hls.recoverMediaError(); return; }
     dropStream(); onFail({ k: 'lost', attempt: 0 });
@@ -383,17 +409,21 @@
    * Beats the current token. Its answer counts only for the start it was sent in (a zap revokes the old token when the new one is
    * minted, ruling 36, so a late 410 for it must neither start a second watch nor end the new channel). 410 (and a 403, which the
    * backend does not send today): the token is gone, one new watch.
+   *
+   * While a switch's watch is out the token is the channel before's, which the backend lets go as it starts the new one: no beat
+   * goes out, and one that was out when the switch began is stale (its 410 would be a second watch of the new channel).
    */
   async function beatOnce(): Promise<BeatResult> {
     const tk = token, g = gen;
-    if (!tk) return 'stale';
+    if (!tk || startPending) return 'stale';
+    const stale = () => g !== gen || tk !== token || startPending || destroyed;
     try {
       await beat(tk);
-      if (g !== gen || tk !== token || destroyed) return 'stale';
+      if (stale()) return 'stale';
       rewatched = false;
       return 'ok';
     } catch (e) {
-      if (g !== gen || tk !== token || destroyed) return 'stale';
+      if (stale()) return 'stale';
       const st = e instanceof ApiError ? e.status : 0;
       if (st === 410 || st === 403) { rewatchOnce(); return 'gone'; }
       return 'failed';

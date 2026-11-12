@@ -473,6 +473,128 @@ test.describe('live player: refusals and errors (desktop)', () => {
   });
 });
 
+// A switch whose watch is still out (`startPending`): the backend let the channel before go as the new watch arrived (spec §12.2),
+// so that channel's media, its beat and its stream fail for as long as the new watch is out. None of that may act on the switch:
+// no second watch of the new channel (it would discard the first answer and stop a stream that is just starting), no lost card,
+// no forbidden card. If the switch is refused and the channel before stays, what it missed is checked then.
+test.describe('live player: a pending switch (desktop)', () => {
+  test.use({ allowedConsole: REFUSED });
+  const BAD = ['lost', 'unreachable', 'retry', 'forbidden'];
+
+  /** every data-live-state the player passes through, from the page's start */
+  async function recordStates(page: Page) {
+    await page.addInitScript(() => {
+      const w = window as unknown as { __states: string[] };
+      w.__states = [];
+      new MutationObserver(() => {
+        const s = document.querySelector('[data-live-state]')?.getAttribute('data-live-state');
+        if (s && w.__states[w.__states.length - 1] !== s) w.__states.push(s);
+      }).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-live-state'], childList: true });
+    });
+  }
+  const states = (page: Page) => page.evaluate(() => (window as unknown as { __states: string[] }).__states);
+  async function switchedToHafen(page: Page, api: MockState) {
+    await expect.poll(() => api.livetv.watches, { timeout: 10_000 }).toEqual(['ch-nord', 'ch-hafen']);
+    await expect(live(page)).toHaveAttribute('data-live-state', 'playing', { timeout: 15_000 });
+    await expect(topBar(page)).toContainText('Hafenkanal');
+  }
+
+  test('the old channel refusing its media while the new watch is out starts nothing', async ({ page, api }) => {
+    await recordStates(page);
+    await arm(page, api);
+    await open(page);
+    api.livetv.watchHold = { only: 'ch-hafen', ms: 3_000, release: { token: 'tok-ch-nord', media: 410, beat: true } };
+    await blur(page);
+    await page.keyboard.press('ArrowUp');
+    await switchedToHafen(page, api);
+    expect(api.livetv.goneLoads).toBeGreaterThan(0); // the old channel's media was refused while the watch was out
+    expect(api.livetv.watches).toEqual(['ch-nord', 'ch-hafen']); // exactly one watch of the new channel
+    expect(api.livetv.stops).not.toContain('tok-ch-hafen'); // its stream was never let go
+    expect((await states(page)).filter((s) => BAD.includes(s))).toEqual([]);
+    await expect(page.getByText(FORBIDDEN)).toHaveCount(0);
+    const t0 = await time(page);
+    await expect.poll(() => time(page), { timeout: 15_000 }).toBeGreaterThan(t0 + 1);
+  });
+
+  test('a beat of the old token while the new watch is out starts nothing', async ({ page, api }) => {
+    await recordStates(page);
+    await arm(page, api);
+    await open(page);
+    await holdClock(page);
+    api.livetv.watchHold = { only: 'ch-hafen', ms: 3_000, release: { token: 'tok-ch-nord', media: 0, beat: true } };
+    await blur(page);
+    await page.keyboard.press('ArrowUp');
+    await page.clock.runFor(500); // the switch commits 400 ms after the press
+    await expect.poll(() => api.livetv.watches).toEqual(['ch-nord', 'ch-hafen']);
+    await page.clock.runFor(20_000); // a beat falls due while the watch is out
+    await page.clock.resume();
+    await switchedToHafen(page, api);
+    expect(api.livetv.watches).toEqual(['ch-nord', 'ch-hafen']);
+    expect(api.livetv.stops).not.toContain('tok-ch-hafen');
+    expect((await states(page)).filter((s) => BAD.includes(s))).toEqual([]);
+  });
+
+  test('a fatal error of the old stream while the new watch is out shows no lost card', async ({ page, api }) => {
+    await recordStates(page);
+    await arm(page, api);
+    await open(page);
+    // not a refusal: a broken playlist, which hls.js gives up on (fatal)
+    api.livetv.watchHold = { only: 'ch-hafen', ms: 3_000, release: { token: 'tok-ch-nord', media: 200 } };
+    await blur(page);
+    await page.keyboard.press('ArrowUp');
+    await switchedToHafen(page, api);
+    expect(api.livetv.goneLoads).toBeGreaterThan(0);
+    expect(api.livetv.watches).toEqual(['ch-nord', 'ch-hafen']);
+    expect(api.livetv.stops).not.toContain('tok-ch-hafen');
+    expect((await states(page)).filter((s) => BAD.includes(s))).toEqual([]);
+  });
+
+  const runningNord = (api: MockState) => {
+    const c = api.livetv.channels.find((x) => x.id === 'ch-nord')!;
+    return { id: c.id, number: c.number, name: c.name, logo: c.logo, now: c.now };
+  };
+
+  // A switch that is refused keeps the channel before, which must not have gone deaf: its refusals are checked again (one beat,
+  // which re-pins, and loading carries on).
+  test('a refused switch checks the refusal the channel before met meanwhile', async ({ page, api }) => {
+    await arm(page, api);
+    await open(page);
+    api.livetv.watchError = { status: 503, body: { error: 'live_full', running: [runningNord(api)] }, only: 'ch-hafen' };
+    api.livetv.watchHold = { only: 'ch-hafen', ms: 3_000, release: { token: 'tok-ch-nord', media: 410 } };
+    api.livetv.beatRepins = true;
+    const b0 = api.livetv.beats.length;
+    await blur(page);
+    await page.keyboard.press('ArrowUp');
+    await expect(page.getByRole('dialog', { name: 'Gerade sind alle Live-Plätze belegt' })).toBeVisible({ timeout: 10_000 });
+    expect(api.livetv.goneLoads).toBeGreaterThan(0);
+    await expect.poll(() => api.livetv.beats.length, { timeout: 5_000 }).toBeGreaterThan(b0); // checked at once, not after 20 s
+    expect(api.livetv.beats.slice(b0)).toEqual(['tok-ch-nord']);
+    const loads0 = api.livetv.playlistLoads;
+    await expect.poll(() => api.livetv.playlistLoads, { timeout: 15_000 }).toBeGreaterThan(loads0); // loading carried on
+    expect(api.livetv.watches).toEqual(['ch-nord', 'ch-hafen']);
+    expect(api.livetv.stops).not.toContain('tok-ch-nord');
+    await expect(live(page)).toHaveAttribute('data-live-state', /^(playing|buffering)$/);
+  });
+
+  // hls.js gives a stream up after a fatal error and fires nothing more for it: the error the channel before met while the watch
+  // was out is acted on once the switch is refused and it stays (the lost card and its new watch), never a frozen "playing".
+  test('a refused switch acts on the fatal error the channel before met meanwhile', async ({ page, api }) => {
+    await recordStates(page);
+    await arm(page, api);
+    await open(page);
+    api.livetv.watchError = { status: 503, body: { error: 'live_full', running: [runningNord(api)] }, only: 'ch-hafen' };
+    api.livetv.watchHold = { only: 'ch-hafen', ms: 3_000, release: { token: 'tok-ch-nord', media: 200 } };
+    await blur(page);
+    await page.keyboard.press('ArrowUp');
+    await expect(page.getByRole('dialog', { name: 'Gerade sind alle Live-Plätze belegt' })).toBeVisible({ timeout: 10_000 });
+    expect(api.livetv.goneLoads).toBeGreaterThan(0);
+    await expect(live(page)).toHaveAttribute('data-live-state', 'lost', { timeout: 2_000 });
+    await expect.poll(() => api.livetv.stops).toContain('tok-ch-nord'); // the broken stream is let go
+    expect(api.livetv.watches).toEqual(['ch-nord', 'ch-hafen']);
+    expect((await states(page)).filter((s) => s === 'forbidden')).toEqual([]);
+  });
+});
+
 test.describe('the mocked DVR playlist (mocks/livetv.ts)', () => {
   test('every segment carries a date-time, the window holds the buffer, a payload restart is a discontinuity', async ({ api }) => {
     const st = api.livetv;
