@@ -46,7 +46,8 @@
   function onName(e: Event) {
     typed = (e.target as HTMLInputElement).value;
     const v = typed.trim();
-    if (v.length >= 1 && v.length <= 30) put('label', v);
+    // an empty or too long text stages nothing: the loaded name goes back in (which unstages an earlier valid prefix)
+    put('label', v.length >= 1 && v.length <= 30 ? v : roleName(role));
   }
 
   /** the visible fields under their groups; the admin's switches are locked and left out (its note says so) */
@@ -63,7 +64,7 @@
   function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
   const slide = (node: Element) => twoWay((dir) => sheetSlide(node, { dir, side: 'right' }));
   onMount(() => {
-    if (focusName) document.getElementById(`${id}-name`)?.focus({ preventScroll: true });
+    if (focusName && role.stored) document.getElementById(`${id}-name`)?.focus({ preventScroll: true });
     else panel?.focus({ preventScroll: true });
   });
 </script>
@@ -79,8 +80,9 @@
     </header>
     <div class="body">
       <section class="own" aria-label={$t('adminPeople.roles.fLabel')}>
-        <Field label={$t('adminPeople.roles.fLabel')} id="{id}-name" value={name} maxlength={30} error={nameErr} on:input={onName} />
-        {#if role.base !== 'admin'}
+        <!-- a role without a table row (a ROLE_TEMPLATES key the roles table cannot hold) has no name or invitable switch to write -->
+        {#if role.stored}<Field label={$t('adminPeople.roles.fLabel')} id="{id}-name" value={name} maxlength={30} error={nameErr} on:input={onName} />{/if}
+        {#if role.base !== 'admin' && role.stored}
           <Toggle label={$t('adminPeople.roles.fInvitable')} hint={$t('adminPeople.roles.invitableHint')} checked={Boolean(valueOf('invitable') ?? role.invitable)} on:change={(e) => put('invitable', e.detail)} />
         {/if}
         {#if role.envGone}<p class="note">{$t('adminPeople.roles.envGone')}</p>

@@ -63,19 +63,27 @@
 
   // ---- focus (one tab stop) and the editor
   let active: CellPos = { r: 0, c: 0 };
-  let editing: CellPos | null = null;
+  /** the open editor: the role's and the field's key, never grid indices (a reload that shifts the columns keeps it on its role) */
+  let editing: { role: string; field: string } | null = null;
   const cells: Record<string, HTMLElement> = {};
   const key = (p: CellPos) => `${p.r}:${p.c}`;
-  $: editKey = editing ? key(editing) : '';
-  $: editRole = editing ? roles[editing.c] : undefined;
-  $: editField = editing ? fields[editing.r] : undefined;
+  $: editRole = editing ? roles.find((r) => r.key === editing!.role) : undefined;
+  $: editField = editing ? fields.find((f) => f.key === editing!.field) : undefined;
+  /** the editor's cell (where it grows out of) and its identity: a role that is gone closes it */
+  $: editCell = editRole && editField ? key({ r: fields.indexOf(editField), c: roles.indexOf(editRole) }) : '';
+  $: editKey = editing ? `${editing.role}|${editing.field}` : '';
+  /** the role or the field of the open editor is gone (a reload): it closes */
+  function pruneEdit(rs: MatrixRole[], fs: MatrixField[]) {
+    if (editing && (!rs.some((r) => r.key === editing!.role) || !fs.some((f) => f.key === editing!.field))) editing = null;
+  }
+  $: pruneEdit(roles, fields);
   $: if (active.r >= fields.length || active.c >= roles.length) active = { r: 0, c: 0 };
 
   function open(p: CellPos) {
     active = p;
     const role = roles[p.c], f = fields[p.r];
     if (disabled || !role || !f || locked(role, f)) return;
-    editing = p;
+    editing = { role: role.key, field: f.key };
   }
   function onKey(e: KeyboardEvent) {
     const td = (e.target as HTMLElement).closest<HTMLElement>('[data-cell]');
@@ -115,7 +123,8 @@
     return [
       { id: 'edit', label: tr('adminPeople.roles.edit'), icon: 'pencil', disabled, run: () => { sheet = { key: role.key, rename: false, trigger: here() }; } },
       { id: 'duplicate', label: tr('adminPeople.roles.duplicate'), icon: 'copy', disabled, run: () => { dispatch('duplicate', { role, trigger: here() }); } },
-      { id: 'rename', label: tr('adminPeople.roles.rename'), icon: 'pencil', disabled, run: () => { sheet = { key: role.key, rename: true, trigger: here() }; } },
+      // an env-only role has no row for a name: nothing to rename
+      ...(role.stored ? [{ id: 'rename', label: tr('adminPeople.roles.rename'), icon: 'pencil', disabled, run: () => { sheet = { key: role.key, rename: true, trigger: here() }; } }] : []),
       { id: 'left', label: tr('adminPeople.roles.moveLeft'), icon: 'chevron-left', disabled: left, run: () => { dispatch('move', { key: role.key, to: c - 1 }); } },
       { id: 'right', label: tr('adminPeople.roles.moveRight'), icon: 'chevron-right', disabled: right, run: () => { dispatch('move', { key: role.key, to: c + 1 }); } },
       { id: 'history', label: tr('adminPeople.roles.history'), icon: 'clock', run: () => { history = { key: role.key, trigger: here() }; } },
@@ -214,7 +223,7 @@
                 {@const src = role.sources[f.key]}
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <td role="gridcell" data-cell="{r}:{c}" bind:this={cells[`${r}:${c}`]} tabindex={active.r === r && active.c === c ? 0 : -1}
-                  class:staged class:lock class:on={editKey === `${r}:${c}`} class:dragging={drag?.from === c} class:glide={drag !== null && drag.from !== c || drag?.settling === true}
+                  class:staged class:lock class:on={editing?.role === role.key && editing.field === f.key} class:dragging={drag?.from === c} class:glide={drag !== null && drag.from !== c || drag?.settling === true}
                   style:transform={shift(drag, c)} aria-disabled={lock ? 'true' : undefined}
                   aria-label={$locale && cellName(roleName(role), f, v, staged ? 'unsaved' : src === 'role')} title={tip(stage, role, f, $locale)}
                   on:click={() => open({ r, c })} on:focus={() => (active = { r, c })}>
@@ -241,8 +250,8 @@
 {/if}
 
 {#key editKey}
-  {#if editing && editRole && editField && cells[editKey]}
-    <CellPopover trigger={cells[editKey]} title={$t('adminPeople.roles.cellTitle', { role: roleName(editRole), field: fieldLabel(editField.key) })}
+  {#if editing && editRole && editField && cells[editCell]}
+    <CellPopover trigger={cells[editCell]} title={$t('adminPeople.roles.cellTitle', { role: roleName(editRole), field: fieldLabel(editField.key) })}
       field={editField} value={valueOf(stage, editRole, editField)} libraries={matrix.libraries}
       on:change={(e) => change(e.detail)} on:close={() => (editing = null)} />
   {/if}

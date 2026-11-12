@@ -53,7 +53,8 @@
     return [
       { id: 'edit', label: tr('adminPeople.roles.edit'), icon: 'pencil', disabled, run: () => { sheet = { key: role.key, rename: false, trigger: here() }; } },
       { id: 'duplicate', label: tr('adminPeople.roles.duplicate'), icon: 'copy', disabled, run: () => { dispatch('duplicate', { role, trigger: here() }); } },
-      { id: 'rename', label: tr('adminPeople.roles.rename'), icon: 'pencil', disabled, run: () => { sheet = { key: role.key, rename: true, trigger: here() }; } },
+      // an env-only role has no row for a name: nothing to rename
+      ...(role.stored ? [{ id: 'rename', label: tr('adminPeople.roles.rename'), icon: 'pencil', disabled, run: () => { sheet = { key: role.key, rename: true, trigger: here() }; } }] : []),
       { id: 'up', label: tr('adminPeople.roles.moveUp'), icon: 'chevron-up', disabled: up, run: () => { dispatch('move', { key: role.key, to: i - 1 }); } },
       { id: 'down', label: tr('adminPeople.roles.moveDown'), icon: 'chevron-down', disabled: down, run: () => { dispatch('move', { key: role.key, to: i + 1 }); } },
       { id: 'history', label: tr('adminPeople.roles.history'), icon: 'clock', run: () => { history = { key: role.key, trigger: here() }; } },
