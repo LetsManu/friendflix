@@ -67,7 +67,7 @@ beforeAll(async () => {
   provider = http.createServer((req, res) => {
     const path = (req.url ?? '').split('?')[0]!;
     seen.push({ path, ua: req.headers['user-agent'] });
-    const h = providerRoutes[path];
+    const h = new Map(Object.entries(providerRoutes)).get(path);
     if (h) h(res);
     else { res.statusCode = 404; res.end(); }
   });
