@@ -138,14 +138,14 @@ const CAST_CORS: Record<string, string> = {
 
 // ---- Live TV: /media/l/<token>/<file> (spec §7.3) ----
 /**
- * The only live paths: `index.m3u8`, the fMP4 init (`init-<n>.mp4` as livetv's playlist names it, window.ts initName; plain `init.mp4`
- * is kept from the spec and answered 404 by livetv) and numbered `.ts` / `.m4s` segments. Matched on the raw request path (before
+ * The only live paths, equal to livetv's file regex (routes/files.ts, R16): `index.m3u8`, the fMP4 init `init-<n>.mp4` (no plain
+ * `init.mp4`) and numbered `.ts` / `.m4s` segments without leading zeros. Matched on the raw request path (before
  * URL normalisation), so a `..`, an encoded character or a second slash never reaches the backend or livetv.
  */
-export const LIVE_ROUTE = /^\/media\/l\/([A-Za-z0-9_-]{43})\/(index\.m3u8|init(?:-[0-9]{1,10})?\.mp4|[0-9]{1,10}\.(?:ts|m4s))$/;
+export const LIVE_ROUTE = /^\/media\/l\/([A-Za-z0-9_-]{43})\/(index\.m3u8|init-[0-9]{1,10}\.mp4|(?:0|[1-9][0-9]{0,9})\.(?:ts|m4s))$/;
 const LIVE_PREFIX = '/media/l/';
 /** a URI inside a live playlist: a bare file name of the route (resolved next to the playlist, so it stays under /media/l/<token>/) */
-const LIVE_FILE = /^(?:init(?:-[0-9]{1,10})?\.mp4|[0-9]{1,10}\.(?:ts|m4s))$/;
+const LIVE_FILE = /^(?:init-[0-9]{1,10}\.mp4|(?:0|[1-9][0-9]{0,9})\.(?:ts|m4s))$/;
 /** livetv's stream key (livetv/src/routes/files.ts STREAM_KEY_RE); anything else from the backend is refused, never put into a path */
 const LIVE_STREAM_KEY = /^[0-9a-f]{32}$/;
 /** a 120-minute DVR window at 2-s segments is ~400 KB */

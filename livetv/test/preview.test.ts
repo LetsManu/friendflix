@@ -38,6 +38,7 @@ function fakeRun(answer: () => RunResult | Promise<RunResult> = () => ({ code: 0
 describe('previews', () => {
   it('one frame of the newest segment, 320 px wide, as JPEG on stdout', () => {
     const a = previewArgs(`${DIR}/7.ts`);
+    expect(has(a, ['-protocol_whitelist', 'file', '-f', 'mpegts', '-i', `${DIR}/7.ts`])).toBe(true); // only the MPEG-TS demuxer, never a guessed format
     expect(has(a, ['-i', `${DIR}/7.ts`, '-frames:v', '1', '-vf', 'scale=320:-2', '-f', 'image2', '-c:v', 'mjpeg', 'pipe:1'])).toBe(true);
     expect(a.at(-1)).toBe('pipe:1');
     expect(a.filter((x) => x === '-i')).toHaveLength(1);

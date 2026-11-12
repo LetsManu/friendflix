@@ -138,9 +138,11 @@ interface Slot {
   ring: Array<{ at: number; data: Buffer }>;
   ringBytes: number;
   readers: Set<Reader>;
+  /** the port was handed over while the old feed's sender was connected: its in-flight data is ignored until srtgate reports it gone */
+  awaitClose: boolean;
 }
 
-const newSlot = (f: Feed): Slot => ({ feed: { ...f }, connected: false, lastData: null, since: null, ring: [], ringBytes: 0, readers: new Set() });
+const newSlot = (f: Feed): Slot => ({ feed: { ...f }, connected: false, lastData: null, since: null, ring: [], ringBytes: 0, readers: new Set(), awaitClose: false });
 const nothing: AsyncIterable<Uint8Array> = {
   [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }),
 };
@@ -177,7 +179,10 @@ export class IngestHub implements IngestReader {
         kept.add(old);
         next.push(old);
       } else {
-        next.push(newSlot(f));
+        const fresh = newSlot(f);
+        // srtgate drops the old sender only on its next pass; frames it already wrote belong to the old feed
+        if (this.byPort.get(f.port)?.connected) fresh.awaitClose = true;
+        next.push(fresh);
       }
     }
     for (const s of this.slots) if (!kept.has(s)) this.disconnect(s);
@@ -331,7 +336,7 @@ export class IngestHub implements IngestReader {
 
   private onData(port: number, data: Buffer): void {
     const s = this.byPort.get(port);
-    if (!s || data.length === 0) return;
+    if (!s || s.awaitClose || data.length === 0) return;
     const now = this.deps.now();
     if (!this.isReceiving(s, now)) s.since = now;
     s.connected = true;
@@ -356,6 +361,7 @@ export class IngestHub implements IngestReader {
     const s = this.byPort.get(port);
     if (!s) return;
     const id = s.feed.channelId;
+    if (t === 'accepted' || t === 'closed') s.awaitClose = false;
     if (t === 'accepted') {
       this.disconnect(s, false);
       s.connected = true;

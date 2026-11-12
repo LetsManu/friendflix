@@ -175,6 +175,22 @@ describe('IngestHub', () => {
     expect(stateOf(h.hub, NORD.channelId)).toEqual(idle(NORD));
   });
 
+  it('a port handed to another feed ignores the old in-flight data until srtgate reports it gone', async () => {
+    const h = harness();
+    h.hub.setFeeds([NORD]);
+    h.do([accepted(9000), data(9000, 1)]);
+    await vi.waitFor(() => expect(h.hub.receiving(NORD.channelId)).toBe(true));
+    // the backend reuses port 9000 for another channel at once
+    const NEU: Feed = { ...HAFEN, port: 9000 };
+    h.hub.setFeeds([NEU]);
+    h.do([data(9000, 2)]); // the old sender's frame, still in the pipe
+    await vi.waitFor(() => expect(h.lines(0)).toHaveLength(2));
+    h.do([closed(9000), accepted(9000), data(9000, 3)]);
+    await vi.waitFor(() => expect(h.hub.receiving(NEU.channelId)).toBe(true));
+    const r = bytes(h.hub.reader(NEU.channelId));
+    expect((await r.read(1316))[0]).toBe(3); // only the new sender's bytes
+  });
+
   it('the reader yields the last 4 s', async () => {
     const h = harness();
     h.hub.setFeeds([NORD]);

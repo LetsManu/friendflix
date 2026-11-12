@@ -681,8 +681,9 @@ static void accept_on(int idx) {
     pthread_mutex_lock(&g_mu);
     slot_t *s = &g_slots[idx];
     int found = pend_take(a, &gen);
-    // the set changed between the handshake and now: these credentials no longer hold
-    ok = s->has_feed && (!found || gen == s->gen);
+    // the set changed between the handshake and now: these credentials no longer hold; an entry that is gone (expired after 3 s
+    // or pushed out of the table) cannot be checked, so the connection is refused
+    ok = s->has_feed && found && gen == s->gen;
     busy = s->sender != SRT_INVALID_SOCK;
     if (ok && !busy) {
       s->sender = a;
