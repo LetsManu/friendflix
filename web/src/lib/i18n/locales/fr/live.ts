@@ -1,0 +1,71 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import type de from '../de/live';
+import type { Translation } from '../../types';
+
+const dict: Translation<typeof de> = {
+  title: 'TV en direct',
+  favourites: 'En direct pour vous',
+  all: 'Toutes',
+  favouritesChip: 'Favoris',
+  now: 'Maintenant',
+  next: 'Ensuite',
+  noEpg: 'Aucun programme disponible',
+  liveOnly: 'En direct',
+  favourite: 'Ajouter aux favoris',
+  unfavourite: 'Retirer des favoris',
+  player: {
+    live: 'DIRECT',
+    behind: '−{time}',
+    toLive: 'Retour au direct',
+    chUp: 'Chaîne suivante',
+    chDown: 'Chaîne précédente',
+    lastChannel: 'Dernière chaîne',
+    lastChannelTo: 'Retour à {number} {name}',
+    starting: 'Démarrage de la chaîne…',
+    unreachable: 'Chaîne momentanément injoignable',
+    reconnecting: 'Reconnexion…',
+    retry: 'Réessayer',
+    off: 'La TV en direct est désactivée pour le moment. Un administrateur peut la réactiver.',
+    pauseTooLong: 'La pause a duré plus de {n} minutes ; la lecture reprend au point enregistré le plus ancien.',
+    restart: 'Depuis le début',
+    channelList: 'Liste des chaînes',
+    info: 'Programme',
+    noChannel: 'Pas de chaîne {n}',
+    notAvailable: 'Cette chaîne n’est plus disponible pour vous.',
+  },
+  full: {
+    title: 'Toutes les places en direct sont occupées pour le moment',
+    body: 'Ces chaînes sont déjà en cours et démarrent aussitôt :',
+    join: 'Regarder {name}',
+  },
+  providerLimit: 'Votre fournisseur n’autorise que {n} chaînes à la fois.',
+  tvHintFav: 'OK long : favori',
+  notReceiving: 'Aucune diffusion en ce moment',
+  gap: 'Programme momentanément indisponible',
+  timeLeft: 'encore {n} min',
+  timeLeftLong: 'encore {h} h {m} min',
+  endingNow: 'se termine',
+  recentChip: 'Vues récemment',
+  number: {
+    last: '0 · Dernière chaîne : {number} {name}',
+    noLast: 'Pas de dernière chaîne',
+  },
+  fav: {
+    order: 'Réorganiser',
+    orderTitle: 'Réorganiser les favoris',
+    orderDone: 'Terminé',
+    orderMove: 'déplacer',
+    orderPicked: '{name} saisie, position {n} sur {m}',
+    orderMoved: 'Position {n} sur {m}',
+    orderDropped: '{name} déposée en position {n}',
+    orderCancelled: 'Déplacement annulé',
+  },
+  tvHint: {
+    ok: 'OK : regarder',
+    chJump: 'CH ▲▼ : 8 lignes',
+    zeroLast: '0 : dernière chaîne',
+    longOkList: 'OK long : liste des chaînes',
+  },
+};
+export default dict;

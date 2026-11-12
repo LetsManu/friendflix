@@ -1,0 +1,71 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import type de from '../de/live';
+import type { Translation } from '../../types';
+
+const dict: Translation<typeof de> = {
+  title: 'TV in diretta',
+  favourites: 'In onda adesso per te',
+  all: 'Tutti',
+  favouritesChip: 'Preferiti',
+  now: 'Adesso',
+  next: 'Dopo',
+  noEpg: 'Nessun programma disponibile',
+  liveOnly: 'Diretta',
+  favourite: 'Aggiungi ai preferiti',
+  unfavourite: 'Rimuovi dai preferiti',
+  player: {
+    live: 'LIVE',
+    behind: '−{time}',
+    toLive: 'Torna alla diretta',
+    chUp: 'Canale successivo',
+    chDown: 'Canale precedente',
+    lastChannel: 'Ultimo canale',
+    lastChannelTo: 'Torna a {number} {name}',
+    starting: 'Avvio del canale…',
+    unreachable: 'Canale al momento non raggiungibile',
+    reconnecting: 'Riconnessione…',
+    retry: 'Riprova',
+    off: 'La TV in diretta è disattivata al momento. Un amministratore può riattivarla.',
+    pauseTooLong: 'La pausa è durata più di {n} minuti; si riprende dal punto salvato più vecchio.',
+    restart: 'Dall’inizio',
+    channelList: 'Elenco canali',
+    info: 'Programma',
+    noChannel: 'Nessun canale {n}',
+    notAvailable: 'Questo canale non è più disponibile per te.',
+  },
+  full: {
+    title: 'Al momento tutti i posti live sono occupati',
+    body: 'Questi canali sono già attivi e partono subito:',
+    join: 'Guarda {name}',
+  },
+  providerLimit: 'Il tuo provider consente solo {n} canali alla volta.',
+  tvHintFav: 'OK lungo: preferito',
+  notReceiving: 'Al momento nessuna trasmissione',
+  gap: 'Programma al momento non disponibile',
+  timeLeft: 'ancora {n} min',
+  timeLeftLong: 'ancora {h} h {m} min',
+  endingNow: 'sta per finire',
+  recentChip: 'Visti di recente',
+  number: {
+    last: '0 · Ultimo canale: {number} {name}',
+    noLast: 'Nessun ultimo canale',
+  },
+  fav: {
+    order: 'Ordina',
+    orderTitle: 'Ordina i preferiti',
+    orderDone: 'Fatto',
+    orderMove: 'sposta',
+    orderPicked: '{name} prelevato, posizione {n} di {m}',
+    orderMoved: 'Posizione {n} di {m}',
+    orderDropped: '{name} rilasciato in posizione {n}',
+    orderCancelled: 'Spostamento annullato',
+  },
+  tvHint: {
+    ok: 'OK: guarda',
+    chJump: 'CH ▲▼: 8 righe',
+    zeroLast: '0: ultimo canale',
+    longOkList: 'OK lungo: elenco canali',
+  },
+};
+export default dict;

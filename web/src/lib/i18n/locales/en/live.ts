@@ -1,0 +1,71 @@
+// SPDX-FileCopyrightText: 2026 Manuel Weißböck
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import type de from '../de/live';
+import type { Translation } from '../../types';
+
+const dict: Translation<typeof de> = {
+  title: 'Live TV',
+  favourites: 'On for you now',
+  all: 'All',
+  favouritesChip: 'Favourites',
+  now: 'Now',
+  next: 'Next',
+  noEpg: 'No programme available',
+  liveOnly: 'Live',
+  favourite: 'Add to favourites',
+  unfavourite: 'Remove from favourites',
+  player: {
+    live: 'LIVE',
+    behind: '−{time}',
+    toLive: 'Back to live',
+    chUp: 'Next channel',
+    chDown: 'Previous channel',
+    lastChannel: 'Last channel',
+    lastChannelTo: 'Back to {number} {name}',
+    starting: 'Starting channel…',
+    unreachable: 'Channel not reachable right now',
+    reconnecting: 'Reconnecting…',
+    retry: 'Try again',
+    off: 'Live TV is switched off right now. An admin can turn it back on.',
+    pauseTooLong: 'The pause was longer than {n} minutes, continuing at the oldest saved point.',
+    restart: 'From the start',
+    channelList: 'Channel list',
+    info: 'Programme',
+    noChannel: 'No channel {n}',
+    notAvailable: 'This channel is no longer available to you.',
+  },
+  full: {
+    title: 'All live slots are taken right now',
+    body: 'These channels are already on and start at once:',
+    join: 'Watch {name}',
+  },
+  providerLimit: 'Your provider allows only {n} channels at once.',
+  tvHintFav: 'Long OK: favourite',
+  notReceiving: 'Not broadcasting right now',
+  gap: 'Programme not available right now',
+  timeLeft: '{n} min left',
+  timeLeftLong: '{h} h {m} min left',
+  endingNow: 'ending now',
+  recentChip: 'Recently watched',
+  number: {
+    last: '0 · Last channel: {number} {name}',
+    noLast: 'No last channel',
+  },
+  fav: {
+    order: 'Arrange',
+    orderTitle: 'Arrange favourites',
+    orderDone: 'Done',
+    orderMove: 'move',
+    orderPicked: '{name} picked up, position {n} of {m}',
+    orderMoved: 'Position {n} of {m}',
+    orderDropped: '{name} dropped at position {n}',
+    orderCancelled: 'Move cancelled',
+  },
+  tvHint: {
+    ok: 'OK: watch',
+    chJump: 'CH ▲▼: 8 rows',
+    zeroLast: '0: last channel',
+    longOkList: 'Long OK: channel list',
+  },
+};
+export default dict;
