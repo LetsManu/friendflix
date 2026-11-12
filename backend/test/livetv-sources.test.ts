@@ -348,6 +348,7 @@ describe('Prüfen', () => {
     for (const h of [
       () => ({ json: { entries: 'x' } }), () => ({ json: { entries: [], groups: [] } }), () => ({ json: null }), () => ({ status: 204 }),
       () => ({ raw: 'kein JSON', type: 'text/plain' }),
+      () => ({ json: { ...answer([['Nachrichten', 1]]), groups: [null] } }), () => ({ json: { ...answer([['Nachrichten', 1]]), entries: [null] } }),
     ] as Handler[]) {
       m3u = h;
       const r = await test();

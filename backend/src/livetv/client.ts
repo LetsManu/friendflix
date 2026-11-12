@@ -44,12 +44,13 @@ type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
  */
 function deadline(ms: number, outer?: AbortSignal): { signal: AbortSignal; clear(): void } {
   const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(new DOMException('livetv timeout', 'TimeoutError')), ms);
+  const clear = () => { clearTimeout(t); outer?.removeEventListener('abort', stop); };
+  const stop = () => { clear(); ac.abort(outer?.reason); };
+  const t = setTimeout(() => { clear(); ac.abort(new DOMException('livetv timeout', 'TimeoutError')); }, ms);
   t.unref?.();
-  const stop = () => ac.abort(outer?.reason);
   if (outer?.aborted) stop();
   else outer?.addEventListener('abort', stop, { once: true });
-  return { signal: ac.signal, clear: () => { clearTimeout(t); outer?.removeEventListener('abort', stop); } };
+  return { signal: ac.signal, clear };
 }
 
 /** one signed request; network errors and timeouts become LivetvError(null, 'unreachable'), a path off livetv `invalid_path` */
@@ -102,7 +103,10 @@ export async function livetvStream(ctx: Ctx, path: string, body: unknown, o: { t
   try {
     const r = await signedFetch(ctx, 'POST', path, body, d.signal);
     if (!r.ok) throw await refusal(r);
-    return r;
+    if (!r.body) { d.clear(); return r; }
+    // the deadline (and `signal`) stay armed while the caller reads; the timer and the abort listener go once the body is read
+    const read = r.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ flush: () => d.clear() }));
+    return new Response(read, { status: r.status, statusText: r.statusText, headers: r.headers });
   } catch (e) {
     d.clear(); // a refusal or a failed request leaves nobody to read the answer: the timer must not outlive the call
     throw e;

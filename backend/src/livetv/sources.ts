@@ -371,7 +371,10 @@ export class SourceTestError extends Error {
 
 /** the M3U answer, read defensively (it is livetv's, but its names come from a provider) */
 function readM3u(a: FetchM3uAnswer | undefined): Omit<SourceTestAnswer, 'epgChannels' | 'epgError'> {
-  if (!a || !Array.isArray(a.groups) || !Array.isArray(a.entries) || typeof a.listed !== 'number') throw new LivetvError(200, 'invalid_answer');
+  const objects = (xs: unknown[]) => xs.every((x) => typeof x === 'object' && x !== null);
+  if (!a || typeof a !== 'object' || !Array.isArray(a.groups) || !Array.isArray(a.entries) || typeof a.listed !== 'number' || !objects(a.groups) || !objects(a.entries)) {
+    throw new LivetvError(200, 'invalid_answer');
+  }
   return {
     channels: a.listed,
     groups: a.groups.map((g) => ({ name: String(g.name), channels: Number(g.channels) || 0 })),

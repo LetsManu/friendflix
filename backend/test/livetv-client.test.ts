@@ -184,6 +184,32 @@ describe('livetvStream', () => {
       expect(vi.getTimerCount()).toBe(base + 1); // the caller is still reading
     } finally { vi.useRealTimers(); }
   });
+
+  it('a read answer drops the timer and the abort listener; the signal cancels while the answer is read', async () => {
+    const outer = new AbortController();
+    const added: unknown[] = [];
+    const removed: unknown[] = [];
+    const add = outer.signal.addEventListener.bind(outer.signal);
+    const rm = outer.signal.removeEventListener.bind(outer.signal);
+    outer.signal.addEventListener = ((t: string, l: EventListener, o?: AddEventListenerOptions) => { added.push(l); add(t, l, o); }) as typeof outer.signal.addEventListener;
+    outer.signal.removeEventListener = ((t: string, l: EventListener) => { removed.push(l); rm(t, l); }) as typeof outer.signal.removeEventListener;
+    vi.useFakeTimers();
+    try {
+      const base = vi.getTimerCount();
+      const r = await livetvStream(ctxWith(() => new Response('{"t":"end"}\n')), '/v1/fetch/xmltv', {}, { timeoutMs: 60_000, signal: outer.signal });
+      expect([vi.getTimerCount(), added.length, removed.length]).toEqual([base + 1, 1, 0]);
+      expect(await r.text()).toBe('{"t":"end"}\n');
+      expect([vi.getTimerCount(), removed]).toEqual([base, added]);
+    } finally { vi.useRealTimers(); }
+    // an abort while the body is read reaches the fetch's signal
+    const late = new AbortController();
+    let seen: AbortSignal | undefined;
+    const r2 = await livetvStream(ctxWith((_s, init) => { seen = init.signal ?? undefined; return new Response(new ReadableStream()); }), '/v1/fetch/xmltv', {}, { timeoutMs: 60_000, signal: late.signal });
+    expect(seen?.aborted).toBe(false);
+    late.abort();
+    expect(seen?.aborted).toBe(true);
+    await r2.body?.cancel();
+  });
 });
 
 describe('livetvHealth', () => {
