@@ -631,13 +631,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       const role = st.matrix.roles.find((r) => r.key === u.role);
       if (!role) return J({ error: 'unknown_role' }, 409);
       const isAdmin = u.role === 'admin';
-      const rowOf = (k: string) => {
-        const perm = PERM_KEYS_MOCK.includes(k);
-        if (perm && isAdmin) return { key: k, value: true, roleValue: true, override: null, source: 'admin' };
-        const roleValue = role.values[k];
-        const override = perm ? u.perms?.[k] ?? null : u.ov?.[k] ?? null;
-        return { key: k, value: override === null ? roleValue : override === 'unlimited' ? null : override, roleValue, override, source: override === null ? role.sources[k] ?? 'default' : 'user' };
-      };
+      const rowOf = (k: string) => rightsRow(role, u, k);
       if (m === 'GET') {
         const rows = MATRIX_FIELDS_MOCK.map((f) => rowOf(f.key as string));
         const libs = rows.find((r) => r.key === 'libraries')!.value;
@@ -657,26 +651,8 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
         }
         // the admin role's switches are always on: none can be set, a stored one may be cleared (null)
         if (isAdmin && PERM_KEYS_MOCK.some((k) => o[k] !== undefined && o[k] !== null)) return J({ error: 'admin_perms_locked' }, 400);
-        const before = Object.fromEntries(keys.map((k) => [k, rowOf(k).value]));
-        const store = (k: string, v: unknown) => {
-          const perm = PERM_KEYS_MOCK.includes(k), target = perm ? (u.perms ??= {}) : (u.ov ??= {}) as Record<string, unknown>;
-          const eff = v === 'unlimited' ? null : v;
-          const lc = (x: unknown) => (Array.isArray(x) ? JSON.stringify([...new Set(x.map((n) => String(n).toLowerCase()))].sort()) : JSON.stringify(x));
-          if (v === null || lc(eff) === lc(role.values[k])) delete target[k]; else target[k] = v;
-        };
-        // a switch stored under an earlier role that an admin account clears: audited as `stored` (it decides nothing)
-        const stored: Record<string, { from: unknown; to: unknown }> = {};
-        if (isAdmin) for (const k of PERM_KEYS_MOCK) if (o[k] === null && u.perms?.[k] !== undefined) stored[k] = { from: u.perms[k], to: null };
-        for (const [k, v] of Object.entries(o)) if (v !== undefined) store(k, v);
-        if (u.perms && !Object.keys(u.perms).length) delete u.perms;
-        u.otherOverrides = Object.keys(u.ov ?? {}).length;
-        const noteWas = u.note ?? null;
-        if (body?.note !== undefined) u.note = body.note === null || body.note.trim() === '' ? null : body.note.trim();
-        const moved = keys.filter((k) => JSON.stringify(before[k]) !== JSON.stringify(rowOf(k).value));
-        const from = Object.fromEntries(moved.map((k) => [k, before[k]])), to = Object.fromEntries(moved.map((k) => [k, rowOf(k).value]));
-        const noteChanged = (u.note ?? null) !== noteWas;
-        if (moved.length || noteChanged || Object.keys(stored).length) log('user.rights', u.id, { from, to, ...(Object.keys(stored).length ? { stored } : {}), ...(noteChanged ? { note: 'changed' } : {}) }, u.name);
-        const media = moved.some((k) => MEDIA_KEYS_MOCK.includes(k));
+        const { changed } = writeRightsMock(role, u, o, body?.note, log);
+        const media = changed.some((k) => MEDIA_KEYS_MOCK.includes(k));
         if (media && st.matrix.policyPartial) return J({ error: 'policy_partial', failed: st.matrix.failed, identities: 2 }, 502);
         return J({ ok: true, reapplied: { identities: media ? 2 : 0, failed: 0 } });
       }
@@ -797,10 +773,9 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
         if (st.repairFails.has(u.id)) { failed++; continue; }
         log('user.repair', u.id, {}, u.name);
       } else if (body.action === 'perm') {
-        const now = body.value === null ? undefined : body.value, was = u.perms?.[body.perm];
-        if (now === was) continue;
-        u.perms = { ...u.perms }; if (now === undefined) delete u.perms[body.perm]; else u.perms[body.perm] = now;
-        log('user.rights', u.id, { perms: { [body.perm]: { from: was ?? null, to: now ?? null } } }, u.name);
+        // the same per-account write as PUT /rights (backend adminUsers bulk → putRights): counted only when something changed
+        const role = st.matrix.roles.find((r) => r.key === u.role);
+        if (!role || !writeRightsMock(role, u, { [body.perm]: body.value }, undefined, log).changed.length) continue;
       } else if (body.action === 'lock' || body.action === 'unlock') {
         const d = body.action === 'lock';
         if (u.disabled === d) continue;
@@ -1173,6 +1148,48 @@ const VIEW_TITLES = [
 ];
 const profileOf = (st: AdminState, u: AdminUser, pid: string | null | undefined) => (pid ? profilesOf(st, u).find((p) => p.id === pid) : undefined);
 const kidsCap = (p: DetailProfile): number | null => (p.kids ? (p.maxRating ?? 12) : null);
+/** one Rechte row of the account (backend userRights.ts rightsView): effective value, the role's, the stored override and the deciding layer */
+function rightsRow(role: MatrixMockRole, u: AdminUser, k: string) {
+  const perm = PERM_KEYS_MOCK.includes(k);
+  if (perm && u.role === 'admin') return { key: k, value: true as unknown, roleValue: true as unknown, override: null as unknown, source: 'admin' };
+  const roleValue = role.values[k];
+  const override = perm ? u.perms?.[k] ?? null : u.ov?.[k] ?? null;
+  return { key: k, value: (override === null ? roleValue : override === 'unlimited' ? null : override) as unknown, roleValue, override: override as unknown, source: override === null ? role.sources[k] ?? 'default' : 'user' };
+}
+/**
+ * The write of PUT /rights and of the bulk `perm` (backend userRights.writeRights): partial (null = back to the role), a value equal to the
+ * role's is not stored. One `user.rights` entry `{ from, to, layer?, stored?, note? }`: `from`/`to` for every key whose effective value or
+ * deciding layer changed, `layer` for the keys that only moved between layers, `stored` for a switch cleared on an admin account (it
+ * decides nothing). Returns the changed keys (value or layer), as the backend's `changed`.
+ */
+function writeRightsMock(role: MatrixMockRole, u: AdminUser, o: Record<string, unknown>, note: string | null | undefined, log: (a: string, t: string | null, meta?: Record<string, unknown>, n?: string | null) => void): { changed: string[] } {
+  const keys = MATRIX_FIELDS_MOCK.map((f) => f.key as string);
+  const before = Object.fromEntries(keys.map((k) => [k, rightsRow(role, u, k)]));
+  const store = (k: string, v: unknown) => {
+    const perm = PERM_KEYS_MOCK.includes(k), target = perm ? (u.perms ??= {}) : (u.ov ??= {}) as Record<string, unknown>;
+    const eff = v === 'unlimited' ? null : v;
+    const lc = (x: unknown) => (Array.isArray(x) ? JSON.stringify([...new Set(x.map((n) => String(n).toLowerCase()))].sort()) : JSON.stringify(x));
+    if (v === null || lc(eff) === lc(role.values[k])) delete target[k]; else target[k] = v;
+  };
+  const stored: Record<string, { from: unknown; to: unknown }> = {};
+  if (u.role === 'admin') for (const k of PERM_KEYS_MOCK) if (o[k] === null && u.perms?.[k] !== undefined) stored[k] = { from: u.perms[k], to: null };
+  for (const [k, v] of Object.entries(o)) if (v !== undefined) store(k, v);
+  if (u.perms && !Object.keys(u.perms).length) delete u.perms;
+  u.otherOverrides = Object.keys(u.ov ?? {}).length;
+  const noteWas = u.note ?? null;
+  if (note !== undefined) u.note = note === null || note.trim() === '' ? null : note.trim();
+  const from: Record<string, unknown> = {}, to: Record<string, unknown> = {}, layer: Record<string, { from: string; to: string }> = {};
+  for (const k of keys) {
+    const a = before[k]!, b = rightsRow(role, u, k);
+    if (JSON.stringify(a.value) !== JSON.stringify(b.value)) { from[k] = a.value; to[k] = b.value; }
+    else if (a.source !== b.source) { from[k] = a.value; to[k] = b.value; layer[k] = { from: a.source, to: b.source }; }
+  }
+  const noteChanged = (u.note ?? null) !== noteWas;
+  if (Object.keys(to).length || noteChanged || Object.keys(stored).length) {
+    log('user.rights', u.id, { from, to, ...(Object.keys(layer).length ? { layer } : {}), ...(Object.keys(stored).length ? { stored } : {}), ...(noteChanged ? { note: 'changed' } : {}) }, u.name);
+  }
+  return { changed: Object.keys(to) };
+}
 /** the effective rows of the account with the kids overlay of the profile (kids cap, KIDS_OFF switched off) */
 function viewRows(st: AdminState, u: AdminUser, p: DetailProfile) {
   const role = st.matrix.roles.find((r) => r.key === u.role)!;

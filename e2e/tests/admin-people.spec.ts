@@ -835,6 +835,23 @@ test.describe('admin people (desktop)', () => {
       await expect.poll(() => logged(api, /POST \/api\/admin\/users\/bulk .*"perm":"party","value":true/)).toBe(true);
     });
 
+    test('bulk Erlauben writes like PUT /rights: a value equal to the role is not stored, only real changes count', async ({ page, api }) => {
+      // Anna (Freund) has party switched off as an exception, Ben (Familie) has it on through his role
+      await page.goto('/admin/users');
+      await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
+      await table(page).getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
+      const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
+      await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('party');
+      await bar.getByRole('button', { name: 'Erlauben' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();
+      await expect(toasts(page).getByText('1 Konto geändert.')).toBeVisible();
+      const anna = api.admin.users.find((u) => u.id === auid(2))!, ben = api.admin.users.find((u) => u.id === auid(3))!;
+      expect(anna.perms?.party).toBeUndefined(); // equal to the role: the exception goes, nothing stored
+      expect(ben.perms?.party).toBeUndefined();
+      const entries = api.admin.audit.filter((a) => a.action === 'user.rights');
+      expect(entries.map((a) => [a.target, a.meta])).toEqual([[auid(2), { from: { party: false }, to: { party: true } }]]);
+    });
+
     test('the buttons wait for a chosen right; an admin in the selection is refused with a clear text', async ({ page, api }) => {
       await page.goto('/admin/users');
       api.admin.users.find((u) => u.id === auid(3))!.role = 'admin';
