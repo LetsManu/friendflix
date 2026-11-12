@@ -25,7 +25,7 @@ wird nichts geladen oder gestartet und FriendFlix sieht aus wie vorher. Diese Se
 3. *Admin → Live-TV* → aktivieren.
 
 Der Dienst hat keinen Docker-Socket, ein schreibgeschütztes Root-Dateisystem und keine Capabilities; Backend und Gateway
-erreichen ihn im internen Netz `livetv` unter `LIVETV_URL` (Standard `http://livetv:8090`, braucht keine Einstellung).
+erreichen ihn im internen Netz `livetv` unter `LIVETV_URL` (Standard `http://livetv:8090`, braucht keine Einstellung). Details (englisch): [security.md](../security.md#the-livetv-container).
 Der Updater behält die Overlay-Dateien, mit denen du den Stack gestartet hast; ein Overlay in `COMPOSE_FILE` bleibt bei Updates erhalten.
 
 ## GPU
