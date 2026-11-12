@@ -608,6 +608,7 @@ const dict: Translation<typeof de> = {
     targetClear: 'Usuń filtr „Dotyczy”',
     targetUnknown: 'wybrany wpis',
     openInLog: 'Otwórz w dzienniku audytu',
+    openTargetInLog: 'Wpisy dotyczące tej osoby w dzienniku audytu',
     areas: {
       user: 'Użytkownicy', device: 'Urządzenia', invite: 'Zaproszenia', request: 'Prośby', poll: 'Głosowania', list: 'Listy', hub: 'Kafelki marek',
       role: 'Role', profile: 'Profile', download: 'Pobrania', digest: 'Podsumowanie tygodnia', settings: 'Ustawienia', system: 'System',

@@ -608,6 +608,7 @@ const dict: Translation<typeof de> = {
     targetClear: 'Retirer le filtre « Concerne »',
     targetUnknown: 'entrée sélectionnée',
     openInLog: 'Ouvrir dans le journal d’audit',
+    openTargetInLog: 'Entrées concernant cette personne dans le journal d’audit',
     areas: {
       user: 'Utilisateurs', device: 'Appareils', invite: 'Invitations', request: 'Demandes', poll: 'Votes', list: 'Listes', hub: 'Tuiles de marque',
       role: 'Rôles', profile: 'Profils', download: 'Téléchargements', digest: 'Récap hebdomadaire', settings: 'Réglages', system: 'Système',

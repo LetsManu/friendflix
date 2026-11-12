@@ -608,6 +608,7 @@ const dict: Translation<typeof de> = {
     targetClear: '“İlgili” filtresini kaldır',
     targetUnknown: 'seçilen kayıt',
     openInLog: 'Denetim günlüğünde aç',
+    openTargetInLog: 'Denetim günlüğünde bu kişiyle ilgili kayıtlar',
     areas: {
       user: 'Kullanıcılar', device: 'Cihazlar', invite: 'Davetler', request: 'İstekler', poll: 'Oylamalar', list: 'Listeler', hub: 'Marka kutuları',
       role: 'Roller', profile: 'Profiller', download: 'İndirmeler', digest: 'Haftalık özet', settings: 'Ayarlar', system: 'Sistem',

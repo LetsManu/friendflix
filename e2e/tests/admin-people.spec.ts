@@ -603,7 +603,8 @@ test.describe('admin people (desktop)', () => {
       const stored = panel.getByRole('row').filter({ hasText: 'gespeicherte Ausnahmen geändert, die gerade nichts bewirken' });
       await expect(stored.getByText('Auf Fernseher übertragen (gespeichert): erlaubt → wie Rolle')).toBeVisible();
       await expect(panel).not.toContainText(/adminPeople|\{|undefined/);
-      await panel.getByRole('link', { name: 'Im Audit-Log öffnen' }).click();
+      // the log filters by target only: the link says it opens the entries about Anna (the tab also lists what she did)
+      await panel.getByRole('link', { name: 'Einträge zu dieser Person im Audit-Log' }).click();
       await expect(page).toHaveURL(new RegExp(`/admin/audit\\?target=${auid(2)}`));
     });
 

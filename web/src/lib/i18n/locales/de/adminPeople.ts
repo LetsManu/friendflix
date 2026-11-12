@@ -610,6 +610,7 @@ export default {
     targetClear: 'Filter „Betrifft“ entfernen',
     targetUnknown: 'ausgewählter Eintrag',
     openInLog: 'Im Audit-Log öffnen',
+    openTargetInLog: 'Einträge zu dieser Person im Audit-Log',
     areas: {
       user: 'Nutzer', device: 'Geräte', invite: 'Einladungen', request: 'Wünsche', poll: 'Abstimmungen', list: 'Listen', hub: 'Marken-Kacheln',
       role: 'Rollen', profile: 'Profile', download: 'Downloads', digest: 'Wochenrückblick', settings: 'Einstellungen', system: 'System',

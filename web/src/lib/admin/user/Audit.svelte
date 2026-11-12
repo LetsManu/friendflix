@@ -70,7 +70,8 @@
     {/if}
   </svelte:fragment>
 </DataTable>
-<p class="more"><Button variant="ghost" icon="list" href="/admin/audit?target={encodeURIComponent(userId)}">{$t('adminPeople.audit.openInLog')}</Button></p>
+<!-- the log filters by target only (no "target or actor"): the link says it opens the entries about the person, not every entry of this tab -->
+<p class="more"><Button variant="ghost" icon="list" href="/admin/audit?target={encodeURIComponent(userId)}">{$t('adminPeople.audit.openTargetInLog')}</Button></p>
 
 <style>
   .ent { display: flex; align-items: flex-start; gap: .7rem; min-width: 0; text-align: left; }

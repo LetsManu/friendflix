@@ -608,6 +608,7 @@ const dict: Translation<typeof de> = {
     targetClear: 'Remove the “About” filter',
     targetUnknown: 'selected entry',
     openInLog: 'Open in the audit log',
+    openTargetInLog: 'Entries about this person in the audit log',
     areas: {
       user: 'Users', device: 'Devices', invite: 'Invitations', request: 'Requests', poll: 'Polls', list: 'Lists', hub: 'Brand tiles',
       role: 'Roles', profile: 'Profiles', download: 'Downloads', digest: 'Weekly recap', settings: 'Settings', system: 'System',
