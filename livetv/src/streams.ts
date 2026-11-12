@@ -38,6 +38,25 @@ export const IDLE_STOP_MS = 180_000;
 export const MAX_EVENTS = 50;
 const MAX_TIMER = 2 ** 31 - 1;
 
+/** R17: a chained date-time further than this from arrival − duration starts a new run (at least 30 s, else 3 target durations) */
+export const PDT_DRIFT_MIN_MS = 30_000;
+
+/**
+ * The date-time of a segment without a provider value (ruling 47, controller rulings R15, R17). A run starts at arrival −
+ * duration; later segments of the run follow on from the newest one (a burst of segments fetched together keeps its exact
+ * spacing). A run breaks at the stream start or after an outage (`runBreak`), at a discontinuity and at an init change. A chained
+ * value that drifted more than max(30 s, 3 × target duration) from arrival − duration (rounded EXTINF, a skewed encoder clock)
+ * re-anchors there: only the date-time jumps, no discontinuity is written.
+ */
+export function runPdt(w: SegmentWindow, s: { duration: number; discontinuity?: boolean; init?: number }, now: number, runBreak: boolean): number {
+  const arrival = now - s.duration * 1000;
+  const prev = w.newest();
+  if (!prev || runBreak || s.discontinuity || prev.init !== (s.init ?? null)) return arrival;
+  const chained = prev.pdt + prev.duration * 1000;
+  const tolerance = Math.max(PDT_DRIFT_MIN_MS, 3 * w.targetDuration * 1000);
+  return Math.abs(chained - arrival) > tolerance ? arrival : chained;
+}
+
 /** the delay before reconnect attempt `n` (0-based) */
 export const backoffDelay = (n: number): number => BACKOFF_MS[Math.min(Math.max(0, n), BACKOFF_MS.length - 1)]!;
 
@@ -64,8 +83,8 @@ export interface DriverContext {
   /**
    * a finished segment, already stored as `dir/file` (and its init as `dir/init-<init>.mp4`): adds it to the window, rewrites the
    * playlist, applies the cache cap; answers its local number (-1 after a stop). Without `pdt` (ruling 47, controller ruling
-   * R15): the first segment of a run (stream start, a discontinuity, the first after an outage) gets arrival − duration, every
-   * later one of the run the previous segment's date-time + its duration.
+   * R15): the first segment of a run (stream start, a discontinuity, an init change, the first after an outage) gets arrival −
+   * duration, every later one of the run the previous segment's date-time + its duration (see `runPdt` for the re-anchoring).
    */
   segment(s: { file: string; duration: number; bytes: number; discontinuity?: boolean; pdt?: number; init?: number }): Promise<number>;
   /** the stream's bitrate in bit/s (a variant's BANDWIDTH, an encoder's rate) */
@@ -221,8 +240,7 @@ export class Streams {
         if (!live()) return -1;
         if (!e.window) throw new Error('window');
         const now = this.now();
-        const prev = e.window.newest();
-        const pdt = s.pdt ?? (prev && !e.runBreak && !s.discontinuity ? prev.pdt + prev.duration * 1000 : now - s.duration * 1000);
+        const pdt = s.pdt ?? runPdt(e.window, s, now, e.runBreak);
         const seq = e.window.add({ file: s.file, duration: s.duration, bytes: s.bytes, discontinuity: s.discontinuity, pdt, ...(s.init !== undefined ? { init: s.init } : {}) });
         e.runBreak = false;
         e.view.lastSegmentAt = now;

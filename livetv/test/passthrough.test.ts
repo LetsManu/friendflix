@@ -287,6 +287,69 @@ describe('passthrough', () => {
     expect(ff.calls.slice(n).map((c) => c.url)).toEqual([MASTER]);
   });
 
+  it('a 404 on the last segment of a poll: the next poll\'s first segment taken carries the discontinuity', async () => {
+    let phase = 1;
+    routes.set(MASTER, () => (phase === 1 ? media(1, 3) : media(2, 3)));
+    const base = `${HOST}/live/anna/geheim`;
+    segments(base, 1, 4);
+    routes.delete(`${base}/seg/3.ts?token=geheim`);
+    const { streamKey } = streams.start(body());
+    await flush();
+    expect(uris(playlist(streamKey))).toEqual(['0.ts', '1.ts']);
+    expect(playlist(streamKey)).not.toContain('#EXT-X-DISCONTINUITY\n');
+    phase = 2;
+    await vi.advanceTimersByTimeAsync(2000);
+    await flush();
+    const l = playlist(streamKey).split('\n');
+    expect(uris(l.join('\n'))).toEqual(['0.ts', '1.ts', '2.ts']);
+    expect(l.filter((x) => x === '#EXT-X-DISCONTINUITY')).toHaveLength(1);
+    expect(l[l.indexOf('#EXT-X-DISCONTINUITY') + 3]).toBe('2.ts');
+    expect(mem.files.get(`${ROOT}/${streamKey}/2.ts`)).toEqual(Buffer.alloc(188, 4));
+    expect(streams.list()[0]!.errors).toEqual([]);
+  });
+
+  it('3 segments in a row gone (404) while the playlist loads are an outage with the backoff', async () => {
+    let phase = 1;
+    routes.set(MASTER, () => (phase === 1 ? media(1, 3) : media(2, 3)));
+    const base = `${HOST}/live/anna/geheim`;
+    segments(base, 4, 4);
+    const { streamKey } = streams.start(body());
+    await flush();
+    let [view] = streams.list();
+    expect([view!.state, view!.errors]).toEqual(['reconnecting', [{ at: NOW, code: 'input_lost' }]]);
+    const failedAt = ff.calls.at(-1)!.at;
+    phase = 2;
+    await vi.advanceTimersByTimeAsync(2000);
+    await flush();
+    expect(ff.calls.find((c) => c.at > failedAt)!.at - failedAt).toBe(2000);
+    [view] = streams.list();
+    expect(view!.state).toBe('running');
+    expect(view!.errors).toEqual([{ at: NOW, code: 'input_lost' }, { at: NOW + 2000, code: 'input_back', seconds: 2 }]);
+    const l = playlist(streamKey).split('\n');
+    expect(uris(l.join('\n'))).toEqual(['0.ts']);
+    expect(l).toContain('#EXT-X-DISCONTINUITY');
+  });
+
+  it('an init version that never got a segment is removed when the provider moves on', async () => {
+    let phase = 1;
+    routes.set(MASTER, () => (phase === 1 ? media(1, 1, { map: 'init-a.mp4', ext: 'm4s' }) : media(2, 1, { map: 'init-b.mp4', ext: 'm4s' })));
+    const base = `${HOST}/live/anna/geheim`;
+    routes.set(`${base}/init-a.mp4`, Buffer.from('A'));
+    routes.set(`${base}/init-b.mp4`, Buffer.from('B'));
+    segments(base, 2, 2, 'm4s');
+    const { streamKey } = streams.start(body());
+    await flush();
+    expect(mem.files.has(`${ROOT}/${streamKey}/init-0.mp4`)).toBe(true);
+    phase = 2;
+    await vi.advanceTimersByTimeAsync(2000);
+    await flush();
+    expect(mem.files.has(`${ROOT}/${streamKey}/init-0.mp4`)).toBe(false);
+    expect(mem.files.get(`${ROOT}/${streamKey}/init-1.mp4`)).toEqual(Buffer.from('B'));
+    const text = playlist(streamKey);
+    expect(text).toContain('#EXT-X-MAP:URI="init-1.mp4"');
+    expect(text).not.toContain('init-0.mp4');
+  });
+
   it('an encrypted playlist fails with encrypted, byte ranges with invalid; neither is retried', async () => {
     const cases: Array<[string, string]> = [
       ['#EXT-X-KEY:METHOD=AES-128,URI="https://iptv.example.com/key"', 'encrypted'],

@@ -90,11 +90,14 @@ export class SegmentWindow {
     return s ? { seq: s.seq, pdt: s.pdt } : null;
   }
 
-  /** the newest segment's start and length (the next segment of the same run follows on from it) */
-  newest(): { pdt: number; duration: number } | null {
+  /** the newest segment's start, length and init version (the next segment of the same run follows on from it) */
+  newest(): { pdt: number; duration: number; init: number | null } | null {
     const s = this.segs.at(-1);
-    return s ? { pdt: s.pdt, duration: s.duration } : null;
+    return s ? { pdt: s.pdt, duration: s.duration, init: s.init } : null;
   }
+
+  /** `#EXT-X-TARGETDURATION` in seconds */
+  get targetDuration(): number { return this.target; }
 
   /** the cache cap's step: drops the oldest segment and answers its file; null when only the newest 3 are left */
   dropOldest(): string | null {

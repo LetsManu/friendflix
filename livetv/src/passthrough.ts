@@ -24,6 +24,8 @@ export const START_SEGMENTS = 3;
 const MIN_POLL_S = 1;
 const MAX_POLL_S = 15;
 const MAX_DURATION_S = 120;
+/** this many segments in a row gone (404) while the playlist still loads count as an outage (`input_lost`, backoff) */
+export const SKIP_OUTAGE = 3;
 const FATAL = new Set(['address_refused', 'scheme']);
 
 export interface MediaSegment { uri: string; duration: number; pdt?: number; discontinuity: boolean; map: string | null }
@@ -128,21 +130,33 @@ export function passthroughDriver(d: { guard: GuardDeps } | { fetch: FetchFn }):
     /** the provider URL of the newest stored init and its version (`init-<n>.mp4`, immutable once written; ruling R16) */
     let initUrl: string | null = null;
     let initN = -1;
+    /** whether a segment of `init-<initN>.mp4` reached the window (else a newer init makes it an orphan, removed at once) */
+    let initUsed = false;
     let win: SegmentWindow | null = null;
     let n = 0;
     let variantRate: number | null = null;
+    /**
+     * the next segment taken starts a discontinuity (a jump, a gap, a skipped 404); kept across polls next to `last`, cleared
+     * only when a segment is really taken
+     */
+    let pendingDisc = false;
+    /** consecutive segments skipped as gone (404); SKIP_OUTAGE of them while playlists still load is an outage */
+    let skipped = 0;
 
-    /** fetches and stores one segment; false when it already left the provider's window (404): it is skipped */
-    const take = async (s: MediaSegment & { seq: number }, base: string, disc: boolean): Promise<boolean> => {
+    /** fetches and stores one segment; a segment that already left the provider's window (404) is skipped */
+    const take = async (s: MediaSegment & { seq: number }, base: string): Promise<void> => {
       win ??= ctx.window({ ext: extOf(s), init: s.map !== null });
-      let discontinuity = disc || s.discontinuity;
+      let discontinuity = pendingDisc || s.discontinuity;
       if (win.init) {
         // a segment without a MAP in an fMP4 window keeps the init in use (M-5: a MAP appearing later is not handled)
         const url = s.map ? resolve(s.map, base) : initUrl;
         if (url !== initUrl && url !== null) {
           const r = await get(url, SEGMENT_MAX_BYTES, SEGMENT_TIMEOUT_MS);
           await ctx.store.write(join(ctx.dir, initName(initN + 1)), r.body);
+          // the version before never got a segment: nothing will ever drop it, so it goes now
+          if (initN >= 0 && !initUsed) await ctx.store.remove(join(ctx.dir, initName(initN))).catch(() => {});
           initN++;
+          initUsed = false;
           // a new init (another encoder setup) is a discontinuity
           if (initUrl !== null) discontinuity = true;
           initUrl = url;
@@ -153,16 +167,21 @@ export function passthroughDriver(d: { guard: GuardDeps } | { fetch: FetchFn }):
         r = await get(resolve(s.uri, base), SEGMENT_MAX_BYTES, SEGMENT_TIMEOUT_MS);
       } catch (e) {
         if (!(e instanceof FetchError && e.code === 'not_found')) throw e;
+        // gone at the provider during a slow poll: a gap, so the next segment taken starts a discontinuity
         last = s.seq;
-        return false;
+        pendingDisc = true;
+        if (++skipped >= SKIP_OUTAGE) throw e;
+        return;
       }
       const file = `${n++}.${win.ext}`;
       const bytes = await ctx.store.write(join(ctx.dir, file), r.body);
-      if (ctx.signal.aborted) return true;
+      if (ctx.signal.aborted) return;
       await ctx.segment({ file, duration: s.duration, bytes, discontinuity, ...(s.pdt !== undefined ? { pdt: s.pdt } : {}), ...(win.init ? { init: initN } : {}) });
       if (variantRate === null) ctx.bitrate(Math.round((bytes * 8) / s.duration));
       last = s.seq;
-      return true;
+      pendingDisc = false;
+      skipped = 0;
+      initUsed = true;
     };
 
     while (!ctx.signal.aborted) {
@@ -183,27 +202,25 @@ export function passthroughDriver(d: { guard: GuardDeps } | { fetch: FetchFn }):
         if (!p) throw new Invalid();
         const segs = p.segments.map((s, i) => ({ ...s, seq: p.mediaSequence + i }));
         let next: typeof segs = [];
-        let disc = false;
         if (segs.length > 0) {
           const newest = segs.at(-1)!.seq;
           if (last === null) next = segs.slice(-START_SEGMENTS);
           else if (newest < last) {
             // the provider's sequence went back (encoder restart, reset to 0): a new start at its live edge
             next = segs.slice(-START_SEGMENTS);
-            disc = true;
+            pendingDisc = true;
           } else {
             next = segs.filter((s) => s.seq > last!);
             if (next.length > 0 && next[0]!.seq > last + 1) {
               // segments were missed (skipped by the provider or gone during an outage)
               next = next.slice(-START_SEGMENTS);
-              disc = true;
+              pendingDisc = true;
             }
           }
         }
         for (const s of next) {
           if (ctx.signal.aborted) break;
-          // a skipped segment (gone at the provider during a slow poll) leaves a gap: the next one starts a discontinuity
-          disc = !(await take(s, pl.base, disc));
+          await take(s, pl.base);
         }
         ctx.back();
         wait = Math.min(MAX_POLL_S, Math.max(MIN_POLL_S, p.targetDuration / 2)) * 1000;

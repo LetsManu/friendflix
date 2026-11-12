@@ -251,6 +251,50 @@ describe('the safety net', () => {
     expect(pl).toContain('#EXT-X-MAP:URI="init-1.mp4"');
   });
 
+  const pdtsOf = (key: string) => mem.files.get(`/cache/${key}/index.m3u8`)!.toString().split('\n')
+    .filter((l) => l.startsWith('#EXT-X-PROGRAM-DATE-TIME:')).map((l) => Date.parse(l.slice(25)));
+
+  it('a chained date-time re-anchors once it drifts past max(30 s, 3 target durations), without a discontinuity', async () => {
+    // EXTINF says 3.92 s (2 % short), a segment really arrives every 4 s: 80 ms of drift per segment
+    const short: Driver = async (ctx) => {
+      ctx.window({ ext: 'ts' });
+      for (let i = 0; ; i++) {
+        await ctx.segment({ file: `${i}.ts`, duration: 3.92, bytes: 10 });
+        if (!(await ctx.sleep(4000))) return;
+      }
+    };
+    streams = new Streams({ root: '/cache', maxBytes: 1024 ** 3, drivers: { passthrough: short }, store: mem.store, log: () => {} });
+    const { streamKey } = streams.start(startBody({ dvrSeconds: 7200 }));
+    await flush();
+    for (let t = 0; t < 400 * 4000; t += 100_000) { streams.touch(streamKey); await vi.advanceTimersByTimeAsync(100_000); }
+    const pdts = pdtsOf(streamKey);
+    expect(pdts.length).toBeGreaterThan(390);
+    const gaps = pdts.slice(1).map((p, i) => p - pdts[i]!);
+    // chained 3 920 ms apart until the error passes 30 s (segment 376: 376 × 80 ms = 30.08 s), then one re-anchor
+    // (date-times are whole milliseconds in the playlist: ±1 ms)
+    const jumps = gaps.map((g, i) => [i + 1, g] as const).filter(([, g]) => Math.abs(g - 3920) > 1);
+    expect(jumps.map(([i]) => i)).toEqual([376]);
+    expect(Math.abs(jumps[0]![1] - (4000 + 375 * 80))).toBeLessThanOrEqual(1);
+    expect(Math.abs(pdts[376]! - (NOW + 376 * 4000 - 3920))).toBeLessThanOrEqual(1);
+    // the segment before still chained: 375 × 80 ms = 30 s is not past the tolerance
+    expect(Math.abs(pdts[375]! - (NOW - 3920 + 375 * 3920))).toBeLessThanOrEqual(1);
+    expect(mem.files.get(`/cache/${streamKey}/index.m3u8`)!.toString()).not.toContain('#EXT-X-DISCONTINUITY\n');
+  });
+
+  it('a burst of 3 segments keeps its exact spacing; an init change starts a new run even without a discontinuity flag', async () => {
+    const burst: Driver = async (ctx) => {
+      ctx.window({ ext: 'm4s', init: true });
+      for (let i = 0; i < 3; i++) await ctx.segment({ file: `${i}.m4s`, duration: 4, bytes: 10, init: 0 });
+      // a driver restart with a new init that forgot to say discontinuity: no chaining across it
+      await ctx.segment({ file: '3.m4s', duration: 4, bytes: 10, init: 1 });
+      await ctx.sleep(Number.MAX_SAFE_INTEGER);
+    };
+    streams = new Streams({ root: '/cache', maxBytes: 1024 ** 3, drivers: { passthrough: burst }, store: mem.store, log: () => {} });
+    const { streamKey } = streams.start(startBody());
+    await flush();
+    expect(pdtsOf(streamKey)).toEqual([NOW - 4000, NOW, NOW + 4000, NOW - 4000]);
+  });
+
   it('a driver that throws fails the stream with a fixed code', async () => {
     const broken: Driver = async () => { throw new Error('http://iptv.example.com/geheim'); };
     streams = new Streams({ root: '/cache', maxBytes: 1000, drivers: { passthrough: broken }, store: mem.store, log: (m) => logs.push(m) });

@@ -124,7 +124,8 @@ describe('SegmentWindow', () => {
     expect(w.find('init-0.mp4')).toBeNull();
     const top = lines(w).slice(5, 8);
     expect(top).toEqual(['#EXT-X-DISCONTINUITY', '#EXT-X-MAP:URI="init-1.mp4"', '#EXT-X-PROGRAM-DATE-TIME:2026-11-11T19:15:08.000Z']);
-    expect(w.newest()).toEqual({ pdt: T0 + 16000, duration: 4 });
+    expect(w.newest()).toEqual({ pdt: T0 + 16000, duration: 4, init: 1 });
+    expect(w.targetDuration).toBe(4);
   });
 
   it('find maps a local name to the stored file; dropOldest never takes the newest 3', () => {
