@@ -26,6 +26,7 @@
   import Overview from '#lib/admin/user/Overview.svelte';
   import Profiles from '#lib/admin/user/Profiles.svelte';
   import Rights from '#lib/admin/user/Rights.svelte';
+  import { leaveQuestion } from '#lib/admin/user/rights';
   import { roleName, type RoleInfo } from '#lib/roles';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
@@ -154,9 +155,12 @@
     { value: '', label: $t('adminPeople.access.choose') }, { value: 'p30', label: $t('adminPeople.access.p30') }, { value: 'p90', label: $t('adminPeople.access.p90') },
     { value: 'unlimited', label: $t('adminPeople.access.unlimited') }, { value: 'date', label: $t('adminPeople.access.date') },
   ];
+  /** the Rechte tab has staged edits (bound from it); a role change remounts the tab, so it asks first like a navigation away */
+  let rightsDirty = false;
   async function applyRole() {
     if (!u || !newRole) return;
     const name = u.name, role = newRole;
+    if (tab === 'rights' && rightsDirty && !(await confirm(leaveQuestion(name)))) return;
     if (u.role === 'admin' && role !== 'admin') {
       const ok = await confirm({
         title: tr('adminPeople.detail.actions.demoteTitle', { name }), body: tr('adminPeople.detail.actions.demoteBody', { name, role: rname(role) }),
@@ -266,7 +270,7 @@
     {:else if tab === 'devices'}<Devices userId={u.id} devices={d.devices} on:changed={load} />
     {:else if tab === 'downloads'}<Downloads licenses={d.licenses} profiles={d.profiles} on:changed={load} />
     {:else if tab === 'activity'}{#key u.id}<Activity userId={u.id} />{/key}
-    {:else if tab === 'rights'}{#key `${u.id}:${u.role}`}<Rights userId={u.id} name={u.name} />{/key}
+    {:else if tab === 'rights'}{#key `${u.id}:${u.role}`}<Rights userId={u.id} name={u.name} bind:dirty={rightsDirty} />{/key}
     {:else if tab === 'check'}{#key u.id}<CheckView userId={u.id} profiles={d.profiles} />{/key}
     {:else if tab === 'audit'}{#key u.id}<Audit userId={u.id} />{/key}
     {:else}<Overview userId={u.id} detail={d} on:changed={load} />{/if}

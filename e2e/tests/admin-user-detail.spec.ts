@@ -368,6 +368,41 @@ test.describe('admin user detail (desktop)', () => {
     await expect.poll(() => historyLength(page)).toBe(n);
   });
 
+  test('staged edits: a role change in the header asks first instead of dropping them', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const tv = rowOf(page, 'Auf Fernseher übertragen');
+    await tv.getByText('Verbieten', { exact: true }).click();
+    await expect(saveBar(page)).toBeVisible();
+    await (await menu(page)).getByRole('button', { name: 'Rolle ändern' }).click();
+    const form = page.getByRole('form', { name: 'Rolle ändern' });
+    await form.getByRole('combobox', { name: 'Neue Rolle' }).selectOption('family');
+    await form.getByRole('button', { name: 'Übernehmen' }).click();
+    const ask = page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' });
+    await expect(ask).toContainText('ungespeicherte Änderungen an den Rechten von Anna Beispiel');
+    await ask.getByRole('button', { name: 'Abbrechen' }).click();
+    // nothing sent, the edit still staged, the role as it was
+    expect(logged(api, new RegExp(`PATCH /api/admin/users/${ANNA} `))).toBe(false);
+    await expect(tv.getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+    await expect(saveBar(page)).toBeVisible();
+    await form.getByRole('button', { name: 'Übernehmen' }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(toasts(page).getByText(/Anna Beispiel ist jetzt/)).toBeVisible();
+    await expect.poll(() => logged(api, new RegExp(`PATCH /api/admin/users/${ANNA} .*"role":"family"`))).toBe(true);
+    await expect(saveBar(page)).toHaveCount(0);
+    await expect(tv.getByRole('radio', { name: 'Verbieten' })).not.toBeChecked();
+  });
+
+  test('no staged edits: the header role change does not ask', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    await expect(rowOf(page, 'Auf Fernseher übertragen')).toBeVisible();
+    await (await menu(page)).getByRole('button', { name: 'Rolle ändern' }).click();
+    const form = page.getByRole('form', { name: 'Rolle ändern' });
+    await form.getByRole('combobox', { name: 'Neue Rolle' }).selectOption('family');
+    await form.getByRole('button', { name: 'Übernehmen' }).click();
+    await expect.poll(() => logged(api, new RegExp(`PATCH /api/admin/users/${ANNA} .*"role":"family"`))).toBe(true);
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  });
+
   test('an admin account: switches are locked, numbers stay editable', async ({ page }) => {
     await page.goto('/admin/users/u1?tab=rights');
     const panel = rightsPanel(page);

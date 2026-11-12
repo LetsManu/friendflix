@@ -24,11 +24,13 @@
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import StatusPill from '#lib/ui/StatusPill.svelte';
   import { toast } from '#lib/ui/toast';
-  import { NOTE_MAX, rightsPatch, sourceLabel, stagedValue, triOf, type RightSource, type RightsRow, type RightsView, type Tri } from './rights';
+  import { leaveQuestion, NOTE_MAX, rightsPatch, sourceLabel, stagedValue, triOf, type RightSource, type RightsRow, type RightsView, type Tri } from './rights';
 
   export let userId: string;
   /** the person's name (toasts, review sheet) */
   export let name: string;
+  /** read-only for the page (bind:dirty): something is staged; the header's role change asks first then (its key remounts this tab) */
+  export let dirty = false;
 
   const id = uid('rt');
   const TRIS: Tri[] = ['role', 'allow', 'deny'];
@@ -73,6 +75,7 @@
   $: patch = view ? rightsPatch(view.rows, staged, note, view.note) : null;
   $: changes = patch ? Object.keys(patch.overrides).length + (patch.note !== undefined ? 1 : 0) : 0;
   $: barText = $t('adminPeople.rights.saveBar', { n: changes, name });
+  $: dirty = changes > 0;
 
   /** the library names the media server no longer has that the (staged) list still holds */
   $: missing = ((): string[] => {
@@ -156,7 +159,7 @@
   function discard() { staged = {}; note = view?.note ?? ''; barError = null; partial = false; libError = null; }
   function openReview() { reviewBtn = document.activeElement as HTMLElement | null; reviewing = true; }
   // staged edits are not lost silently: a tab switch or any navigation asks first, as Rollen & Rechte does
-  leaveGuard(() => changes > 0, () => ({ title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.rights.leaveBody', { name }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm') }));
+  leaveGuard(() => changes > 0, () => leaveQuestion(name));
   async function saveReviewed() { reviewing = false; await save(); }
 </script>
 

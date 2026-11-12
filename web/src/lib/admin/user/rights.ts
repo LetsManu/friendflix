@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** The Rechte tab of a person (GET/PUT /api/admin/users/:id/rights, backend userRights.ts): row shapes, the three-way state, the PUT patch. */
 import { tr } from '#lib/i18n';
+import type { ConfirmOptions } from '#lib/ui/confirm';
 
 export type RightSource = 'default' | 'env' | 'role' | 'user' | 'kids' | 'admin';
 export interface RightsRow {
@@ -70,3 +71,8 @@ export function rightsPatch(rows: RightsRow[], staged: Record<string, unknown>, 
 
 /** the source chip text of a row */
 export const sourceLabel = (s: RightSource): string => tr(`adminPeople.rights.src.${s === 'default' ? 'role' : s}` as 'adminPeople.rights.src.role');
+
+/** the question before staged rights of `name` are dropped: a navigation away (leaveGuard) or a role change in the header */
+export const leaveQuestion = (name: string): ConfirmOptions => ({
+  title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.rights.leaveBody', { name }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm'),
+});
