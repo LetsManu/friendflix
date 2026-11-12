@@ -6,19 +6,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { FsLike, Run } from '../src/run.js';
-import { cacheUsage, cpuInfo, encoders, gpuInfo, parseSrtPorts, systemView } from '../src/system.js';
+import { CACHE_USAGE_TTL_MS, cacheUsage, cpuInfo, encoders, gpuInfo, parseSrtPorts, systemView } from '../src/system.js';
 
 /** a fake file system: directory listings, link targets and file contents by path; anything else is ENOENT */
 function fakeFs(o: { dirs?: Record<string, string[]>; links?: Record<string, string>; files?: Record<string, string>; rw?: (p: string) => boolean }): FsLike & { accessed: Array<[string, number]> } {
   const accessed: Array<[string, number]> = [];
   const enoent = (p: string) => Object.assign(new Error(`ENOENT ${p}`), { code: 'ENOENT' });
-  return {
+  const fake = {
     accessed,
-    readdir: (p) => { const d = o.dirs?.[p]; if (!d) throw enoent(p); return d; },
-    readlink: (p) => { const l = o.links?.[p]; if (!l) throw enoent(p); return l; },
-    readFile: (p) => { const f = o.files?.[p]; if (f === undefined) throw enoent(p); return f; },
-    canAccess: (p, mode) => { accessed.push([p, mode]); return o.rw ? o.rw(p) : true; },
+    readdirSync: (p: string) => { const d = o.dirs?.[p]; if (!d) throw enoent(p); return d; },
+    readlinkSync: (p: string) => { const l = o.links?.[p]; if (!l) throw enoent(p); return l; },
+    readFileSync: (p: string) => { const f = o.files?.[p]; if (f === undefined) throw enoent(p); return f; },
+    accessSync: (p: string, mode: number) => { accessed.push([p, mode]); if (o.rw && !o.rw(p)) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); },
   };
+  return fake as unknown as FsLike & { accessed: Array<[string, number]> };
 }
 
 /** the shape of `ffmpeg -hide_banner -encoders` (jellyfin-ffmpeg 7, shortened) */
@@ -94,6 +95,19 @@ describe('gpuInfo', () => {
     expect(gpuInfo(fs)).toEqual({ devices: ['/dev/dri/renderD128'], driver: 'i915', readable: false, busyPct: null });
   });
 
+  it('two render nodes: driver, readable and busy percentage all describe the first one livetv may open', () => {
+    const fs = fakeFs({
+      dirs: { '/dev/dri': ['renderD129', 'renderD128'] },
+      links: { '/sys/class/drm/renderD128/device/driver': 'drivers/i915', '/sys/class/drm/renderD129/device/driver': 'drivers/amdgpu' },
+      files: { '/sys/class/drm/renderD129/device/gpu_busy_percent': '12' },
+      rw: (p) => p === '/dev/dri/renderD129',
+    });
+    expect(gpuInfo(fs)).toEqual({ devices: ['/dev/dri/renderD128', '/dev/dri/renderD129'], driver: 'amdgpu', readable: true, busyPct: 12 });
+    // none usable: the first node in numeric order speaks
+    const none = fakeFs({ dirs: { '/dev/dri': ['renderD130', 'renderD129'] }, links: { '/sys/class/drm/renderD129/device/driver': 'drivers/i915', '/sys/class/drm/renderD130/device/driver': 'drivers/amdgpu' }, rw: () => false });
+    expect(gpuInfo(none)).toEqual({ devices: ['/dev/dri/renderD129', '/dev/dri/renderD130'], driver: 'i915', readable: false, busyPct: null });
+  });
+
   it('NVIDIA without /dev/dri: driver nvidia from /proc', () => {
     const fs = fakeFs({ files: { '/proc/driver/nvidia/version': 'NVRM version: NVIDIA UNIX x86_64 Kernel Module  550.54\n' } });
     expect(gpuInfo(fs)).toEqual({ devices: [], driver: 'nvidia', readable: false, busyPct: null });
@@ -162,6 +176,20 @@ describe('cacheUsage and systemView', () => {
     expect(Object.keys(a.cpu).sort()).toEqual(['cores', 'loadPct', 'model']);
     await view();
     expect(run.calls).toHaveLength(1);
+  });
+
+  it('the cache size is measured at most every 30 s', async () => {
+    let t = 1_000_000;
+    const sub = mkdtempSync(join(dir, 'memo-'));
+    writeFileSync(join(sub, 'a.ts'), Buffer.alloc(100));
+    const view = systemView({ fs: fakeFs({}), run: runOf(ENCODERS), cacheDir: sub, cacheMaxBytes: 1, srtPorts: [9000], now: () => t });
+    expect((await view()).cache.usedBytes).toBe(100);
+    writeFileSync(join(sub, 'b.ts'), Buffer.alloc(50));
+    t += CACHE_USAGE_TTL_MS - 1;
+    expect((await view()).cache.usedBytes).toBe(100);
+    t += 1;
+    expect((await view()).cache.usedBytes).toBe(150);
+    expect(CACHE_USAGE_TTL_MS).toBe(30_000);
   });
 
   it('a failed encoder probe is asked again next time', async () => {

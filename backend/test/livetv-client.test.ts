@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Ctx } from '../src/ctx.js';
 import { LivetvError, livetvCall, livetvHealth, livetvKey, livetvStream, signLivetv } from '../src/livetv/client.js';
 
@@ -109,11 +109,44 @@ describe('livetvCall', () => {
   });
 
   it('the default timeout is 10 s', async () => {
-    let signal: AbortSignal | undefined;
-    const ctx = ctxWith((_s, init) => { signal = init.signal ?? undefined; return json({}); });
-    await livetvCall(ctx, 'GET', '/v1/system');
-    expect(signal).toBeDefined();
-    expect(signal!.aborted).toBe(false);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const ctx = ctxWith((_s, init) => new Promise<Response>((_r, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason))));
+      let settled = false;
+      const p = caught(livetvCall(ctx, 'GET', '/v1/system')).finally(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const e = await p;
+      expect([e.status, e.code]).toEqual([null, 'unreachable']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('signs the request target exactly as fetch sends it: encoded, dot segments resolved', async () => {
+    const ctx = ctxWith(() => json({}));
+    const cases: Array<[string, string]> = [
+      ['/v1/streams/ch 1', '/v1/streams/ch%201'],
+      ['/v1/streams/känal?q=a b', '/v1/streams/k%C3%A4nal?q=a%20b'],
+      ['/v1/a/../system', '/v1/system'],
+    ];
+    for (const [given, sent] of cases) {
+      await livetvCall(ctx, 'GET', given);
+      const s = ctx.seen.at(-1)!;
+      expect(s.url).toBe(`${BASE}${sent}`);
+      expect(s.headers['x-ff-livetv-signature']).toBe(signLivetv(livetvKey(SECRET), 'GET', sent, '', s.headers['x-ff-livetv-ts'], s.headers['x-ff-livetv-nonce'])['x-ff-livetv-signature']);
+      expect(sigOk(s)).toBe(true);
+    }
+  });
+
+  it('a path that would leave livetv is refused before anything is sent', async () => {
+    const ctx = ctxWith(() => json({}));
+    for (const bad of ['//iptv.example.com/v1/system', 'http://iptv.example.com/v1/system', 'v1/system']) {
+      const e = await caught(livetvCall(ctx, 'GET', bad));
+      expect([e.status, e.code], bad).toEqual([null, 'invalid_path']);
+    }
+    expect(ctx.seen).toEqual([]);
   });
 
   it('a body that stops arriving counts as unreachable', async () => {

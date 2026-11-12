@@ -51,25 +51,28 @@ export function cpuInfo(os: OsLike = nodeOs): CpuInfo {
 const tryOr = <T>(f: () => T, fallback: T): T => { try { return f(); } catch { return fallback; } };
 
 /**
- * GPU facts for the setup check (spec §4.4): the render nodes in /dev/dri, the kernel driver of the first one (sysfs link) or
- * `nvidia` when the NVIDIA driver is visible, whether livetv may open a node (read + write: the render group, RENDER_GID), and
- * the AMD busy percentage (amdgpu only; Intel and NVIDIA expose none there).
+ * GPU facts for the setup check (spec §4.4): the render nodes in /dev/dri (numeric order) and the facts of ONE chosen node: the
+ * first one livetv may open for reading and writing (the render group, RENDER_GID), else the first one. Its kernel driver (sysfs
+ * link), else `nvidia` when the NVIDIA driver is visible; whether it is readable; its AMD busy percentage (amdgpu only; Intel and
+ * NVIDIA expose none there).
  */
 export function gpuInfo(fs: FsLike): GpuInfo {
-  const nodes = tryOr(() => fs.readdir('/dev/dri'), [] as string[])
+  const nodes = tryOr(() => fs.readdirSync('/dev/dri'), [] as string[])
     .filter((n) => /^renderD[0-9]{1,4}$/.test(n))
     .sort((x, y) => Number(x.slice(7)) - Number(y.slice(7)));
   const devices = nodes.map((n) => `/dev/dri/${n}`);
-  const sys = nodes[0] ? `/sys/class/drm/${nodes[0]}/device` : null;
-  let driver = sys ? tryOr(() => basename(fs.readlink(`${sys}/driver`)) || null, null) : null;
-  if (!driver && tryOr(() => fs.readFile('/proc/driver/nvidia/version').length > 0, false)) driver = 'nvidia';
-  const readable = devices.some((d) => fs.canAccess(d, constants.R_OK | constants.W_OK));
+  const rw = (n: string) => tryOr(() => { fs.accessSync(`/dev/dri/${n}`, constants.R_OK | constants.W_OK); return true; }, false);
+  const usable = nodes.find(rw);
+  const chosen = usable ?? nodes[0];
+  const sys = chosen ? `/sys/class/drm/${chosen}/device` : null;
+  let driver = sys ? tryOr(() => basename(fs.readlinkSync(`${sys}/driver`)) || null, null) : null;
+  if (!driver && tryOr(() => fs.readFileSync('/proc/driver/nvidia/version', 'utf8').length > 0, false)) driver = 'nvidia';
   let busyPct: number | null = null;
   if (sys && driver === 'amdgpu') {
-    const raw = tryOr(() => fs.readFile(`${sys}/gpu_busy_percent`).trim(), '');
+    const raw = tryOr(() => fs.readFileSync(`${sys}/gpu_busy_percent`, 'utf8').trim(), '');
     busyPct = /^[0-9]{1,3}$/.test(raw) && Number(raw) <= 100 ? Number(raw) : null;
   }
-  return { devices, driver, readable, busyPct };
+  return { devices, driver, readable: usable !== undefined, busyPct };
 }
 
 const ENCODER_LINE = /^\s*V[A-Z.]{5}\s+([A-Za-z0-9_]+)\s/;
@@ -97,21 +100,30 @@ export async function cacheUsage(dir: string): Promise<number> {
   return total;
 }
 
-export interface SystemDeps { fs: FsLike; run: Run; cacheDir: string; cacheMaxBytes: number; srtPorts: number[] }
+/** how long a measured cache size is reused (the walk lstats every DVR segment) */
+export const CACHE_USAGE_TTL_MS = 30_000;
 
-/** `GET /v1/system`; the encoder list is asked once per process (a failed probe is asked again next time). */
+export interface SystemDeps { fs: FsLike; run: Run; cacheDir: string; cacheMaxBytes: number; srtPorts: number[]; now?: () => number }
+
+/**
+ * `GET /v1/system`. The encoder list is asked once per process (a failed probe is asked again next time); the cache size is
+ * measured at most every 30 s.
+ */
 export function systemView(d: SystemDeps): () => Promise<SystemView> {
+  const now = d.now ?? Date.now;
   let enc: Encoder[] | null = null;
+  let used: { at: number; bytes: number } | null = null;
   return async () => {
     if (!enc) {
       const list = await encoders(d.run);
       if (list.length) enc = list;
     }
+    if (!used || now() - used.at >= CACHE_USAGE_TTL_MS) used = { at: now(), bytes: await cacheUsage(d.cacheDir) };
     return {
       cpu: cpuInfo(),
       gpu: gpuInfo(d.fs),
       encoders: enc ?? [],
-      cache: { usedBytes: await cacheUsage(d.cacheDir), maxBytes: d.cacheMaxBytes },
+      cache: { usedBytes: used.bytes, maxBytes: d.cacheMaxBytes },
       recordings: null,
       srt: { ports: d.srtPorts },
     };

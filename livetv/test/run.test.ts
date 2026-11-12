@@ -1,18 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { constants, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
-import { makeRun, nodeFs } from '../src/run.js';
+import { describe, expect, it } from 'vitest';
+import { TIMEOUT_CODE, createRun } from '../src/run.js';
 
-// The real process runner, with node standing in for ffmpeg (tests never need a real ffmpeg).
-const run = makeRun({ ffmpeg: process.execPath, ffprobe: process.execPath });
+// The real process runner, with node standing in for ffmpeg / ffprobe (tests never need a real ffmpeg).
+const run = createRun({ ffmpeg: process.execPath, ffprobe: process.execPath });
 
-describe('makeRun', () => {
-  it('runs the program without a shell and collects stdout, stderr and the exit code', async () => {
-    const r = await run('ffmpeg', ['-e', 'process.stdout.write("out;" + process.argv.slice(1).join(",")); process.stderr.write("err"); process.exit(3)', '$HOME', 'a b'], { timeoutMs: 5_000 });
-    expect(r).toEqual({ code: 3, stdout: Buffer.from('out;$HOME,a b'), stderr: 'err' });
+describe('createRun', () => {
+  it('no shell: every argument arrives literally; stdout and stderr are collected with the exit code', async () => {
+    const r = await run('ffmpeg', ['-e', 'process.stdout.write(JSON.stringify(process.argv.slice(1))); process.stderr.write("err"); process.exit(3)', '; echo x', '$HOME', 'a b', '`id`'], { timeoutMs: 5_000 });
+    expect(r).toEqual({ code: 3, stdout: Buffer.from(JSON.stringify(['; echo x', '$HOME', 'a b', '`id`'])), stderr: 'err' });
   });
 
   it('the child sees none of our environment (the secret stays here)', async () => {
@@ -25,25 +22,25 @@ describe('makeRun', () => {
     }
   });
 
-  it('pipes stdin and streams stdout to onStdout instead of collecting it', async () => {
-    const chunks: Buffer[] = [];
-    async function* input() { yield Buffer.from('hello '); yield Buffer.from('world'); }
-    const r = await run('ffmpeg', ['-e', 'process.stdin.pipe(process.stdout)'], { stdin: input(), timeoutMs: 5_000, onStdout: (c) => chunks.push(c) });
-    expect(r.code).toBe(0);
-    expect(r.stdout.length).toBe(0);
-    expect(Buffer.concat(chunks).toString()).toBe('hello world');
-  });
-
-  it('kills a program that runs past its time and reports a failure', async () => {
+  it('a process over timeoutMs is killed: code -1, which no exit code of ffmpeg can be', async () => {
     const t = Date.now();
-    const r = await run('ffmpeg', ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 200 });
-    expect(r.code).not.toBe(0);
+    const r = await run('ffmpeg', ['-e', 'process.stdout.write("started"); setInterval(() => {}, 1000)'], { timeoutMs: 300 });
+    expect(TIMEOUT_CODE).toBe(-1);
+    expect(r).toEqual({ code: -1, stdout: Buffer.from('started'), stderr: '' });
     expect(Date.now() - t).toBeLessThan(4_000);
   });
 
+  it('an error exit 1 stays 1 (told apart from a timeout)', async () => {
+    expect((await run('ffmpeg', ['-e', 'process.exit(1)'], { timeoutMs: 5_000 })).code).toBe(1);
+  });
+
   it('a missing program is exit code 127, not an exception', async () => {
-    const missing = makeRun({ ffmpeg: '/nonexistent/ffmpeg', ffprobe: '/nonexistent/ffprobe' });
-    expect((await missing('ffprobe', [], { timeoutMs: 1_000 })).code).toBe(127);
+    const missing = createRun({ ffmpeg: '/nonexistent/ffmpeg', ffprobe: '/nonexistent/ffprobe' });
+    expect(await missing('ffprobe', [], { timeoutMs: 1_000 })).toEqual({ code: 127, stdout: Buffer.alloc(0), stderr: '' });
+  });
+
+  it('the default programs are jellyfin-ffmpeg (absent here: 127)', async () => {
+    expect((await createRun()('ffmpeg', ['-version'], { timeoutMs: 1_000 })).code).toBe(127);
   });
 
   it('keeps only the tail of a long stderr', async () => {
@@ -51,21 +48,13 @@ describe('makeRun', () => {
     expect(r.stderr.length).toBeLessThanOrEqual(64 * 1024);
     expect(r.stderr.endsWith('END')).toBe(true);
   });
-});
 
-describe('nodeFs', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'ff-livetv-fs-'));
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
-
-  it('lists, reads links and files, checks access', () => {
-    mkdirSync(join(dir, 'd'));
-    writeFileSync(join(dir, 'd', 'f'), 'text');
-    symlinkSync('../../drivers/i915', join(dir, 'link'));
-    expect(nodeFs.readdir(join(dir, 'd'))).toEqual(['f']);
-    expect(nodeFs.readlink(join(dir, 'link'))).toBe('../../drivers/i915');
-    expect(nodeFs.readFile(join(dir, 'd', 'f'))).toBe('text');
-    expect(nodeFs.canAccess(join(dir, 'd', 'f'), constants.R_OK | constants.W_OK)).toBe(true);
-    expect(nodeFs.canAccess(join(dir, 'missing'), constants.R_OK)).toBe(false);
-    expect(() => nodeFs.readdir(join(dir, 'missing'))).toThrow();
+  it('stdout over 16 MB is cut there and flagged truncated', async () => {
+    const r = await run('ffmpeg', ['-e', 'const b = Buffer.alloc(1024 * 1024, 120); for (let i = 0; i < 17; i++) process.stdout.write(b)'], { timeoutMs: 10_000 });
+    expect(r.code).toBe(0);
+    expect(r.stdout.length).toBe(16 * 1024 * 1024);
+    expect(r.truncated).toBe(true);
+    const small = await run('ffmpeg', ['-e', 'process.stdout.write("x")'], { timeoutMs: 5_000 });
+    expect(small.truncated).toBeUndefined();
   });
 });

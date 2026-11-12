@@ -6,8 +6,9 @@ import type { Ctx } from '../ctx.js';
 /**
  * Client of the optional livetv container (livetv/, compose profile `livetv`, spec §3.2). Every `/v1/*` request is HMAC-signed
  * with a key derived from INTERNAL_SECRET under its own label (never the updater key): timestamp + nonce, livetv refuses replays
- * and anything outside 60 s. Signing must match livetv/src/protocol.ts byte for byte (test-vectors/livetv-hmac.json). The path
- * signed is the whole request target (query string included). The backend never imports from livetv/ (separate image).
+ * and anything outside 60 s. Signing must match livetv/src/protocol.ts byte for byte (test-vectors/livetv-hmac.json). What is
+ * signed is the request target exactly as fetch sends it: `new URL(path, LIVETV_URL)` pathname + search (percent-encoded, dot
+ * segments resolved), never the raw argument. The backend never imports from livetv/ (separate image).
  *
  * Errors are fixed codes: livetv's `{ error }` only when it looks like a code, never its text (it may come from a provider).
  */
@@ -37,13 +38,25 @@ export class LivetvError extends Error {
 
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
-/** one signed request; network errors and timeouts become LivetvError(null, 'unreachable') */
-async function signedFetch(ctx: Ctx, method: Method, path: string, body: unknown, timeoutMs: number): Promise<Response> {
+/** an abort after `ms` (a plain timer, so the deadline also covers reading the body; `clear` once it is read) */
+function deadline(ms: number): { signal: AbortSignal; clear(): void } {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(new DOMException('livetv timeout', 'TimeoutError')), ms);
+  t.unref?.();
+  return { signal: ac.signal, clear: () => clearTimeout(t) };
+}
+
+/** one signed request; network errors and timeouts become LivetvError(null, 'unreachable'), a path off livetv `invalid_path` */
+async function signedFetch(ctx: Ctx, method: Method, path: string, body: unknown, signal: AbortSignal): Promise<Response> {
   const raw = body === undefined ? '' : JSON.stringify(body);
-  const headers = signLivetv(livetvKey(ctx.cfg.INTERNAL_SECRET), method, path, raw);
+  const base = new URL(ctx.cfg.LIVETV_URL);
+  const url = new URL(path, base);
+  // a path is a path: `//host/…` or a full URL would leave livetv (and take the signature with it)
+  if (!path.startsWith('/') || path.startsWith('//') || url.origin !== base.origin) throw new LivetvError(null, 'invalid_path');
+  const headers = signLivetv(livetvKey(ctx.cfg.INTERNAL_SECRET), method, url.pathname + url.search, raw);
   if (raw) headers['content-type'] = 'application/json';
   try {
-    return await ctx.fetchImpl(`${ctx.cfg.LIVETV_URL}${path}`, { method, headers, body: raw || undefined, signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
+    return await ctx.fetchImpl(url.href, { method, headers, body: raw || undefined, signal, redirect: 'error' });
   } catch {
     throw new LivetvError(null, 'unreachable');
   }
@@ -58,18 +71,27 @@ async function refusal(r: Response): Promise<LivetvError> {
 
 /** A signed JSON call (default 10 s). An empty answer (204) is undefined; a 2xx that is not JSON is `invalid_answer`. */
 export async function livetvCall<T>(ctx: Ctx, method: Method, path: string, body?: unknown, o: { timeoutMs?: number } = {}): Promise<T> {
-  const r = await signedFetch(ctx, method, path, body, o.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  if (!r.ok) throw await refusal(r);
-  let text: string;
-  try { text = await r.text(); } catch { throw new LivetvError(null, 'unreachable'); } // the body stopped (reset, timeout)
-  if (text === '') return undefined as T;
-  try { return JSON.parse(text) as T; } catch { throw new LivetvError(r.status, 'invalid_answer'); }
+  const d = deadline(o.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  try {
+    const r = await signedFetch(ctx, method, path, body, d.signal);
+    if (!r.ok) throw await refusal(r);
+    let text: string;
+    try { text = await r.text(); } catch { throw new LivetvError(null, 'unreachable'); } // the body stopped (reset, timeout)
+    if (text === '') return undefined as T;
+    try { return JSON.parse(text) as T; } catch { throw new LivetvError(r.status, 'invalid_answer'); }
+  } finally {
+    d.clear();
+  }
 }
 
-/** A signed POST whose answer is streamed (NDJSON, image bytes); the timeout covers reading it too. Refusals throw like livetvCall. */
+/**
+ * A signed POST whose answer is streamed (NDJSON, image bytes); the timeout keeps running while the caller reads it. Refusals
+ * throw like livetvCall.
+ */
 export async function livetvStream(ctx: Ctx, path: string, body: unknown, o: { timeoutMs: number }): Promise<Response> {
-  const r = await signedFetch(ctx, 'POST', path, body, o.timeoutMs);
-  if (!r.ok) throw await refusal(r);
+  const d = deadline(o.timeoutMs);
+  const r = await signedFetch(ctx, 'POST', path, body, d.signal);
+  if (!r.ok) { const e = await refusal(r); d.clear(); throw e; }
   return r;
 }
 

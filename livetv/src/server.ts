@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomBytes } from 'node:crypto';
+import * as fs from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { log as defaultLog, type Log } from './log.js';
 import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
-import { makeRun, nodeFs } from './run.js';
+import { createRun } from './run.js';
 import { systemView, type SystemView } from './system.js';
 
 /**
@@ -58,10 +59,13 @@ function send(res: ServerResponse, status: number, body?: unknown): void {
   res.end(s);
 }
 
-/** the body as text, or null when it is larger than MAX_BODY (the rest is read and dropped, so the 413 still reaches the caller) */
-function readBody(req: IncomingMessage): Promise<string | null> {
+/**
+ * The body as text; `too_large` when it passes MAX_BODY (the rest is read and dropped, so the 413 still reaches the caller);
+ * `broken` when the request stream fails (the caller aborted).
+ */
+function readBody(req: IncomingMessage): Promise<{ body: string } | { error: 'too_large' | 'broken' }> {
   return new Promise((resolve) => {
-    if (Number(req.headers['content-length'] ?? 0) > MAX_BODY) { req.resume(); resolve(null); return; }
+    if (Number(req.headers['content-length'] ?? 0) > MAX_BODY) { req.resume(); resolve({ error: 'too_large' }); return; }
     let size = 0;
     const chunks: Buffer[] = [];
     const onData = (c: Buffer) => {
@@ -70,12 +74,23 @@ function readBody(req: IncomingMessage): Promise<string | null> {
       req.off('data', onData);
       chunks.length = 0;
       req.resume();
-      resolve(null);
+      resolve({ error: 'too_large' });
     };
     req.on('data', onData);
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', () => resolve(null));
+    req.on('end', () => resolve({ body: Buffer.concat(chunks).toString('utf8') }));
+    req.on('error', () => resolve({ error: 'broken' }));
   });
+}
+
+/**
+ * What a log line may show of a path: an exact route as it is; otherwise the prefix (`/v1/<area>`, `/s`) with every later
+ * segment replaced by `*`. Never the raw path: segments may be stream keys (`/s/<streamKey>/…`, a credential) or input.
+ */
+export function logPath(route: Route | undefined, path: string): string {
+  if (route && typeof route.path === 'string') return route.path;
+  const seg = path.split('/').slice(1);
+  const keep = seg[0] === 'v1' ? 2 : 1;
+  return '/' + seg.map((x, i) => (i < keep && /^[a-z0-9-]{1,40}$/.test(x) ? x : '*')).join('/');
 }
 
 const matches = (r: Route, path: string): string[] | null => {
@@ -90,6 +105,7 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
     const target = req.url ?? '/';
     const path = target.split('?')[0]!;
     const method = req.method ?? 'GET';
+    let route: Route | undefined;
     try {
       if (path === '/healthz') {
         if (method !== 'GET') return send(res, 405, { error: 'method_not_allowed' });
@@ -99,7 +115,6 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
       if (!signed && !path.startsWith('/s/')) return send(res, 404, { error: 'not_found' });
       let params: string[] | null = null;
       let known = false;
-      let route: Route | undefined;
       for (const r of routes) {
         const p = matches(r, path);
         if (!p) continue;
@@ -110,12 +125,13 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
       if (!route || !params) return send(res, 405, { error: 'method_not_allowed' });
       let json: unknown = null;
       if (signed) {
-        const body = await readBody(req);
-        if (body === null) return send(res, 413, { error: 'too_large' });
+        const read = await readBody(req);
+        if ('error' in read) return read.error === 'too_large' ? send(res, 413, { error: 'too_large' }) : send(res, 400, { error: 'bad_request' });
+        const body = read.body;
         // the whole request target is signed: a query string cannot be changed or added on the way
         const auth = verify(deps.verifier, { method, path: target, headers: req.headers, body });
         if (!auth.ok) {
-          deps.warn?.(`refused ${method} ${path}: ${auth.error}`);
+          deps.warn?.(`refused ${method} ${logPath(route, path)}: ${auth.error}`);
           return send(res, 401, { error: auth.error });
         }
         if (body !== '') {
@@ -126,7 +142,7 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
       const answer = await route.handle({ req, res, params, json });
       if (answer) send(res, answer.status, answer.json);
     } catch {
-      deps.warn?.(`route ${method} ${path} failed`);
+      deps.warn?.(`route ${method} ${logPath(route, path)} failed`);
       if (!res.headersSent) send(res, 500, { error: 'internal' });
       else res.destroy();
     }
@@ -138,7 +154,7 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   const cfg = loadConfig(env);
   const log = o.log ?? defaultLog;
   const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
-  const system = systemView({ fs: nodeFs, run: makeRun(), cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts });
+  const system = systemView({ fs, run: createRun(), cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts });
   const app = createApp({ verifier, version: cfg.version, bootId: randomBytes(8).toString('hex'), system, warn: log });
   const server = createServer((req, res) => { void app(req, res); });
   server.requestTimeout = 10_000;

@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
-import { createServer, request, type Server } from 'node:http';
+import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { PassThrough } from 'node:stream';
 import { createServer as netServer, type AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ReplayCache, deriveKey, sign, type Verifier } from '../src/protocol.js';
-import { createApp, start, type AppDeps, type Route } from '../src/server.js';
+import { createApp, logPath, start, type AppDeps, type Route } from '../src/server.js';
 import type { SystemView } from '../src/system.js';
 
 const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/livetv-hmac.json', import.meta.url), 'utf8')) as {
@@ -25,13 +26,15 @@ const echo: Route = { method: 'POST', path: /^\/v1\/echo\/([a-z0-9-]{1,40})$/, h
 const quiet: Route = { method: 'DELETE', path: '/v1/quiet', handle: async () => ({ status: 204 }) };
 const own: Route = { method: 'GET', path: '/v1/own', handle: async (c) => { c.res.writeHead(200, { 'content-type': 'text/plain' }); c.res.end('raw'); } };
 const boom: Route = { method: 'GET', path: '/v1/boom', handle: async () => { throw new Error('secret detail'); } };
+const boomKey: Route = { method: 'GET', path: /^\/v1\/streams\/([^/]+)\/preview\.jpg$/, handle: async () => { throw new Error('x'); } };
+const boomSeg: Route = { method: 'GET', path: /^\/s\/([0-9a-f]{32})\/(boom\.ts)$/, handle: async () => { throw new Error('x'); } };
 
 let server: Server, base: string, verifier: Verifier, warnings: string[];
 const deps = (): AppDeps => ({
   get verifier() { return verifier; },
   version: '3.4.0', bootId: '0123456789abcdef',
   system: async () => SYSTEM,
-  routes: [echo, quiet, own, boom],
+  routes: [echo, quiet, own, boom, boomKey, boomSeg],
   warn: (m) => warnings.push(m),
 });
 
@@ -143,6 +146,43 @@ describe('livetv HTTP API', () => {
     expect(b.status).toBe(500);
     expect(await b.json()).toEqual({ error: 'internal' });
     expect(warnings).toEqual(['route GET /v1/boom failed']);
+  });
+});
+
+describe('logs never carry a raw path', () => {
+  it('a failing pattern route logs its prefix with every later segment masked (stream keys are credentials)', async () => {
+    const key = '0123456789abcdef0123456789abcdef';
+    expect((await call('GET', '/v1/streams/ch-nordlicht-tv/preview.jpg')).status).toBe(500);
+    expect((await fetch(`${base}/s/${key}/boom.ts`)).status).toBe(500);
+    expect(warnings).toEqual(['route GET /v1/streams/*/* failed', 'route GET /s/*/* failed']);
+    expect(warnings.join(' ')).not.toContain(key);
+  });
+
+  it('a refused pattern route is logged masked too', async () => {
+    expect((await call('POST', '/v1/echo/hafenkanal', '{}', { unsigned: true })).status).toBe(401);
+    expect(warnings).toEqual(['refused POST /v1/echo/*: missing']);
+  });
+
+  it('logPath', () => {
+    expect(logPath(echo, '/v1/echo/abc')).toBe('/v1/echo/*');
+    expect(logPath(boom, '/v1/boom')).toBe('/v1/boom');
+    expect(logPath(undefined, '/s/key/0.ts')).toBe('/s/*/*');
+    expect(logPath(undefined, '/v1/Weird Area/x')).toBe('/v1/*/*');
+    expect(logPath(undefined, '/v1/')).toBe('/v1/*');
+  });
+});
+
+describe('request stream errors', () => {
+  it('a body that breaks off is 400 bad_request, not 413', async () => {
+    const app = createApp(deps());
+    const req = Object.assign(new PassThrough(), { method: 'POST', url: '/v1/echo/a', headers: { 'content-type': 'application/json' } }) as unknown as IncomingMessage;
+    const out: { status?: number; body?: string } = {};
+    const res = { headersSent: false, writeHead(status: number) { out.status = status; return this; }, end(b?: string) { out.body = b; } } as unknown as ServerResponse;
+    const done = app(req, res);
+    (req as unknown as PassThrough).write('{"a":');
+    (req as unknown as PassThrough).destroy(new Error('aborted'));
+    await done;
+    expect(out).toEqual({ status: 400, body: JSON.stringify({ error: 'bad_request' }) });
   });
 });
 

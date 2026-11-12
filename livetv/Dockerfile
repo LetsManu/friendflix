@@ -16,14 +16,19 @@ RUN npm ci
 COPY livetv livetv
 RUN npm run build -w livetv
 
-# The Jellyfin repository key, checked against its pinned fingerprint before apt may trust it (a swapped key fails the build).
+# The Jellyfin repository key, checked before apt may trust it: the file must hold exactly one primary key, with the pinned
+# fingerprint (a swapped key or an extra appended one fails the build), and only that key is exported for apt's signed-by.
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS jellyfin-key
 ARG JELLYFIN_KEY_FPR=4918AABC486CA052358D778D49023CD01DE21A7B
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl gpg \
   && curl -fsSL --proto '=https' --tlsv1.2 https://repo.jellyfin.org/jellyfin_team.gpg.key -o /tmp/jellyfin.asc \
-  && test "$(gpg --show-keys --with-colons /tmp/jellyfin.asc | awk -F: '$1 == "fpr" { print $10; exit }')" = "$JELLYFIN_KEY_FPR" \
-  && gpg --dearmor -o /jellyfin.gpg /tmp/jellyfin.asc
+  && export GNUPGHOME="$(mktemp -d)" \
+  && test "$(gpg --batch --show-keys --with-colons /tmp/jellyfin.asc | awk -F: '$1 == "pub"' | wc -l)" = 1 \
+  && test "$(gpg --batch --show-keys --with-colons /tmp/jellyfin.asc | awk -F: '$1 == "fpr" { print $10; exit }')" = "$JELLYFIN_KEY_FPR" \
+  && gpg --batch --quiet --import /tmp/jellyfin.asc \
+  && gpg --batch --export "$JELLYFIN_KEY_FPR" > /jellyfin.gpg \
+  && test -s /jellyfin.gpg
 
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 ARG GIT_SHA=dev
