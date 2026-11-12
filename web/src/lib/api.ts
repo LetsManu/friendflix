@@ -34,6 +34,22 @@ export function keepaliveDuring<T>(fn: () => T): T {
   try { return fn(); } finally { forceKeepalive = prev; }
 }
 
+/**
+ * The 401 path of every API call (a call that does not go through api(), like the live list's ETag fetch, calls it too): the session is
+ * gone, so the app hears the sign-out, the hint is dropped and the page goes to the sign-in (a TV re-pairs). Never resolves when it
+ * redirects; returns at once for any other status, a `reauth_required` 401 (the caller starts that) and the public pages.
+ */
+export async function sessionGone(status: number, json: any): Promise<void> {
+  // public pages (invite, TV pairing, waiting room, restore, setup, the in-app sign-in and reset) handle a 401 themselves: no redirect loop
+  // 401 reauth_required: the session is fine, only a sensitive action wants a fresh sign-in; the caller starts it (lib/account/reauth.ts)
+  if (status === 401 && json?.error !== 'reauth_required' && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv' && location.pathname !== '/pending' && location.pathname !== '/restore' && location.pathname !== '/setup' && location.pathname !== '/login' && location.pathname !== '/reset' && location.pathname !== '/confirm-email') {
+    if (!signOutTold) { signOutTold = true; void tellAppSession(null); } // the Android app's own cast must not stay controllable for whoever signs in next (fire and forget; no-op outside the app / with API 1)
+    clearHint(); // the session is gone: the next start must not render early with this account's hint/profile
+    location.href = localStorage.getItem('ff_tv_device') ? '/tv' : '/auth/login'; // a TV re-pairs instead of typing a login
+    await new Promise(() => undefined);
+  }
+}
+
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; signal?: AbortSignal; /** survive page unload (progress/stop reports) */ keepalive?: boolean } = {}): Promise<T> {
   const res = await fetch(path, {
     method: opts.method ?? 'GET',
@@ -46,14 +62,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   const text = await res.text();
   let json: any = null;
   try { json = text ? JSON.parse(text) : null; } catch (e) { if (res.status !== 401) throw e; } // a 401 from a proxy may not be JSON
-  // public pages (invite, TV pairing, waiting room, restore, setup, the in-app sign-in and reset) handle a 401 themselves: no redirect loop
-  // 401 reauth_required: the session is fine, only a sensitive action wants a fresh sign-in; the caller starts it (lib/account/reauth.ts)
-  if (res.status === 401 && json?.error !== 'reauth_required' && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv' && location.pathname !== '/pending' && location.pathname !== '/restore' && location.pathname !== '/setup' && location.pathname !== '/login' && location.pathname !== '/reset' && location.pathname !== '/confirm-email') {
-    if (!signOutTold) { signOutTold = true; void tellAppSession(null); } // the Android app's own cast must not stay controllable for whoever signs in next (fire and forget; no-op outside the app / with API 1)
-    clearHint(); // the session is gone: the next start must not render early with this account's hint/profile
-    location.href = localStorage.getItem('ff_tv_device') ? '/tv' : '/auth/login'; // a TV re-pairs instead of typing a login
-    await new Promise(() => undefined);
-  }
+  await sessionGone(res.status, json);
   if (res.status === 409 && json?.error === 'profile_required' && !/^\/(profiles|invite\/|tv$)/.test(location.pathname)) {
     location.href = '/profiles'; // no profile chosen (yet) for this session
     await new Promise(() => undefined);

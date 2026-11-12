@@ -17,6 +17,7 @@ const fr: Translation<typeof de> = {
     /** label while no request service is set up */
     newOnly: 'Nouveautés',
     myList: 'Mes envies',
+    live: 'TV en direct',
     categories: 'Catégories',
   },
   mobile: {
@@ -100,6 +101,8 @@ const fr: Translation<typeof de> = {
     newShort: 'Nouveau',
     newOnly: 'Nouveau',
     downloadsShort: 'Télécharg.',
+    live: 'TV en direct',
+    liveShort: 'Direct',
   },
   offline: {
     bar: 'Vous êtes hors ligne.',

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it } from 'vitest';
-import { classify, hintKeys, noteKey, seenKeys, type SeenKey } from './keyhints';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { classify, forgetSeenKeys, hintKeys, noteKey, seenKeys, type SeenKey } from './keyhints';
 
 const mem = () => {
   const m = new Map<string, string>();
@@ -20,6 +20,7 @@ describe('classify', () => {
 });
 
 describe('keyhints', () => {
+  beforeEach(() => forgetSeenKeys());
   it('fresh storage: the list shows OK and long OK only', () => {
     expect(hintKeys('list', seenKeys(mem()))).toEqual(['live.tvHint.ok', 'live.tvHintFav']);
   });
@@ -44,9 +45,28 @@ describe('keyhints', () => {
     expect(hintKeys('player', new Set<SeenKey>())).toEqual(['live.tvHint.longOkList']);
     expect(hintKeys('player', new Set<SeenKey>(['channel', 'digit']))).toEqual(['live.tvHint.longOkList']);
   });
-  it('a throwing storage gives D-pad hints and never throws', () => {
-    expect(() => noteKey('ChannelUp', boom)).not.toThrow();
+  it('a throwing storage gives D-pad hints until a key arrives, and never throws', () => {
     expect(hintKeys('list', seenKeys(boom))).toEqual(['live.tvHint.ok', 'live.tvHintFav']);
+    expect(() => noteKey('ChannelUp', boom)).not.toThrow();
+    expect(hintKeys('list', seenKeys(boom))).toEqual(['live.tvHint.ok', 'live.tvHintFav', 'live.tvHint.chJump']);
+  });
+  it('a throwing storage keeps the keys the device sent for the page lifetime (in-memory set)', () => {
+    noteKey('ChannelUp', boom);
+    expect(seenKeys(boom).has('channel')).toBe(true);
+    noteKey('5', boom);
+    expect([...seenKeys(boom)].sort()).toEqual(['channel', 'digit']);
+    expect(hintKeys('list', seenKeys(boom))).toEqual(['live.tvHint.ok', 'live.tvHintFav', 'live.tvHint.chJump', 'live.tvHint.zeroLast']);
+    // still there when another read goes to a working (empty) store
+    expect([...seenKeys(mem())].sort()).toEqual(['channel', 'digit']);
+  });
+  it('a store that fails once does not lose the classes it already held', () => {
+    const s = mem();
+    noteKey('ChannelDown', s);
+    let broken = false;
+    const flaky = { getItem: (k: string) => { if (broken) throw new Error('x'); return s.getItem(k); }, setItem: (k: string, v: string) => { if (broken) throw new Error('x'); s.setItem(k, v); } };
+    broken = true;
+    noteKey('7', flaky);
+    expect([...seenKeys(flaky)].sort()).toEqual(['channel', 'digit']);
   });
   it('garbage in storage is ignored', () => {
     const s = mem();

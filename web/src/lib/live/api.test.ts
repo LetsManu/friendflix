@@ -61,6 +61,19 @@ describe('calls', () => {
     stub(500, { error: 'boom' });
     await expect(channels()).rejects.toMatchObject({ status: 500 });
   });
+  it('channels: a 401 ends the session the way api() does (same redirect, never resolves), a reauth 401 does not', async () => {
+    const loc = { pathname: '/live', href: '' };
+    stub(401, { error: 'unauthorized' });
+    vi.stubGlobal('location', loc);
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined, removeItem: () => undefined });
+    let settled = false;
+    void channels().then(() => { settled = true; }, () => { settled = true; });
+    await vi.waitFor(() => expect(loc.href).toBe('/auth/login'));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(settled).toBe(false);
+    stub(401, { error: 'reauth_required' });
+    await expect(channels()).rejects.toMatchObject({ status: 401 });
+  });
   it('watch: the answer, or the typed refusal', async () => {
     const answer = { token: 't', url: '/media/l/t/index.m3u8', expiresAt: 1, dvrSeconds: 1800, mode: 'remux', channel: { id: 'a', number: 4, name: 'Hafenkanal', logo: null } };
     const f = stub(200, answer);

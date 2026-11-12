@@ -13,7 +13,7 @@
   import Icon from '#lib/Icon.svelte';
   import Logo from '#lib/Logo.svelte';
   import { avatarBg, initial } from '#lib/avatars';
-  import { HEADER_TABS, isTabActive, navLabel } from '#lib/menu';
+  import { HEADER_TABS, LIVE_HEADER, isTabActive, liveTabs, navLabel } from '#lib/menu';
   import { features } from '#lib/capabilities';
   import { categoryHref, kindFromPath, type Kind } from '#lib/mobile';
   import { langLabel } from '#lib/langs';
@@ -33,6 +33,8 @@
   import { nextId } from './searchSheet';
   import { menuKeys } from '#lib/ui/menuKeys';
 
+  /** the header tabs: Live-TV after Filme while the feature is on */
+  $: tabs = liveTabs(HEADER_TABS, LIVE_HEADER, $features.livetv);
   export let path: string;
   /** a page that starts with a billboard: the pill stays see-through at the very top */
   export let heroPage = false;
@@ -170,8 +172,10 @@
     fillOn = true;
   }
   // (guarded on the path itself: bind:this re-binds on updates, so a statement on pill/fill would re-run without end)
-  let placedFor = '';
-  $: if (path !== placedFor && pill && fill) { placedFor = path; void placeFill(true); }
+  // (and on the set of tabs: Live-TV arriving with /api/me shifts the tabs after Filme, so the fill is placed again once they are drawn)
+  let placedFor = '', placedTabs = '';
+  $: tabKey = tabs.map((x) => x[0]).join('|');
+  $: if ((path !== placedFor || tabKey !== placedTabs) && pill && fill) { placedFor = path; placedTabs = tabKey; void tick().then(() => placeFill(true)); }
 
   // ---- search inside the pill (spec §1): the magnifier is the pill's last item; opening it makes the pill itself grow with a
   // spring and the field appears at its right end. On /search typing drives /search?q= (no second input on that page);
@@ -402,7 +406,7 @@
     <span class="sclip" aria-hidden="true"></span>
     <div class="track" bind:this={track}>
       <span class="fill" aria-hidden="true" bind:this={fill}><i class="cap"></i><i class="mid" bind:this={mid}></i><i class="cap" bind:this={capR}></i></span>
-      {#each HEADER_TABS as [href, label] (href)}<a {href} class="tab" class:active={isTabActive(href, path)} class:gone={collapse && !isTabActive(href, path)} aria-current={isTabActive(href, path) ? 'page' : undefined}>{$t(navLabel(label, $features.requests))}</a>{/each}
+      {#each tabs as [href, label] (href)}<a {href} class="tab" class:active={isTabActive(href, path)} class:gone={collapse && !isTabActive(href, path)} aria-current={isTabActive(href, path) ? 'page' : undefined}>{$t(navLabel(label, $features.requests))}</a>{/each}
       <div class="pop-anchor" class:gone={collapse} on:focusout={onAnchorOut}>
         <!-- a disclosure (links and filters in a region), not a menu: no aria-haspopup -->
         <button type="button" class="tab cbtn" aria-expanded={cats} aria-controls={cats ? 'ff-cats' : undefined} bind:this={catBtn} on:click={toggleCats}>{$t('shell.nav.categories')}<i class="caret" class:up={cats}></i></button>

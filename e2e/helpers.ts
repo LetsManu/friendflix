@@ -97,3 +97,15 @@ export async function seamColumns(page: Page, box: { x: number; y: number; width
   }
   return out;
 }
+
+/**
+ * Clicks and expects the player route `/live/watch/<id>`: returns as soon as the URL is that path, so a wrong channel (or none)
+ * fails. The player page itself is Task 39's: a full page load of it is answered with a stub document (a client-side navigation
+ * never asks the server, so this changes nothing once the page exists).
+ */
+export async function opensPlayer(page: Page, click: () => Promise<void>, id: string) {
+  await page.route('**/live/watch/**', (r) => (r.request().isNavigationRequest() ? r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>player</title>' }) : r.fallback()));
+  const path = `/live/watch/${encodeURIComponent(id)}`;
+  await Promise.all([page.waitForURL((u) => u.pathname === path, { waitUntil: 'commit' }), click()]);
+  expect(new URL(page.url()).pathname).toBe(path);
+}

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { get } from 'svelte/store';
-import { api, ApiError, getActiveProfile, getCsrf } from '#lib/api';
+import { api, ApiError, getActiveProfile, getCsrf, sessionGone } from '#lib/api';
 import { t } from '#lib/i18n';
 
 /**
@@ -102,6 +102,7 @@ export async function channels(etag?: string): Promise<{ notModified: true } | {
   const text = await res.text();
   let json: unknown = null;
   try { json = text ? JSON.parse(text) : null; } catch { /* not JSON: handled below */ }
+  await sessionGone(res.status, json); // an expired session leaves like it does in api(): the same redirect
   if (!res.ok || !json) throw new ApiError(res.status, json);
   return { notModified: false, list: json as LiveList, etag: res.headers.get('etag') };
 }
@@ -132,7 +133,7 @@ export const favourite = (id: string, on: boolean) => api<{ ok: true }>(`/api/li
 export const setFavouriteOrder = (ids: string[]) => api<{ ok: true }>('/api/livetv/favourites', { method: 'PUT', body: { ids } });
 
 const two = (n: number) => (n < 10 ? `0${n}` : String(n));
-function clock(iso: string): string {
+export function clock(iso: string): string {
   const d = new Date(iso);
   return `${two(d.getHours())}:${two(d.getMinutes())}`;
 }

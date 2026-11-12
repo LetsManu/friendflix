@@ -7,6 +7,7 @@ import { adminRoute, adminState, type AdminState } from './admin.js';
 import { settingsRoute, settingsState, type SettingsMock } from './settings.js';
 import { setupRoute, type SetupMock } from './setup.js';
 import { updaterRoute, type UpdaterMock } from './updater.js';
+import { livetvMedia, livetvRoute, livetvState, type LivetvMock } from './livetv.js';
 
 /** Item whose reactions are locked (viewer has not seen it) / unlocked and contain an XSS probe. */
 export const LOCKED_ID = MOVIE.id;
@@ -53,7 +54,11 @@ export interface MockState {
   /** POST /api/account/delete answers 401 reauth_required even inside the reauth window (it ran out meanwhile) */
   reauthLapsed?: boolean;
   /** /api/me `features` (optional services); absent = the field is left out, like an older backend (everything on) */
-  features?: { requests?: boolean; postplay?: boolean; surround?: boolean };
+  features?: { requests?: boolean; postplay?: boolean; surround?: boolean; livetv?: boolean };
+  /** the user side of Live TV (mocks/livetv.ts): GET /api/livetv/channels and the rest, /media/l/** */
+  livetv: LivetvMock;
+  /** /api/me `downloads.allowed` (the phone tab bar then has its fifth tab) */
+  canDownload?: boolean;
   /** /api/me `perms` (the acting profile's effective rights); absent = the field is left out, like an older backend (everything allowed) */
   perms?: Partial<Record<'requests' | 'cast' | 'party' | 'partySchedule' | 'comments' | 'liveTv' | 'liveRecord', boolean>>;
   /** /api/me `server.kind` (absent = the field is left out, like an older backend: the app treats it as Jellyfin) */
@@ -148,6 +153,7 @@ export function freshState(): MockState {
     admin: adminState(),
     settings: settingsState(),
     updater: null,
+    livetv: livetvState(),
     build: { sha: 'c0be6c5deadbeef', build: 'release', channel: 'stable', label: '1.0.0' },
     asAdmin: false,
     resumeGone: new Set(),
@@ -182,7 +188,7 @@ const find = (id: string): MockItem | undefined => [...items, ...episodes].find(
 
 /** Fully mocks `/api/**` and `/media/**` for a browser context. The web app is a pure SPA (ssr = false), so nothing else is needed. */
 export async function installApi(ctx: BrowserContext, st: MockState): Promise<void> {
-  await ctx.route('**/media/**', (r) => r.fulfill({ status: 200, contentType: 'image/png', body: pngFor(r.request().url()) }));
+  await ctx.route('**/media/**', (r) => livetvMedia(st.livetv, new URL(r.request().url()).pathname, r) ?? r.fulfill({ status: 200, contentType: 'image/png', body: pngFor(r.request().url()) }));
   await ctx.route('**/api/**', async (route: Route) => {
     const req = route.request();
     const u = new URL(req.url());
@@ -246,10 +252,13 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       const withServer = st.serverKind || st.serverCaps ? { ...ME, server: { ...(st.serverKind ? { kind: st.serverKind } : {}), ...(st.serverCaps ? { capabilities: st.serverCaps } : {}) } } : ME;
       const withFeatures = st.features ? { ...withServer, features: st.features } : withServer;
       const base = st.perms ? { ...withFeatures, perms: st.perms } : withFeatures;
-      const me = st.asAdmin ? { ...base, role: 'admin', roleLabel: 'Admin', isAdmin: true } : base;
+      const withDl = st.canDownload ? { ...base, downloads: { allowed: true, max: 3 } } : base;
+      const me = st.asAdmin ? { ...withDl, role: 'admin', roleLabel: 'Admin', isAdmin: true } : withDl;
       const s = st.accountSaved;
       return J(s ? { ...me, name: s.name, profile: { ...me.profile, name: s.name.slice(0, 20), avatar: s.avatar } } : me);
     }
+    // Live TV, user side (mocks/livetv.ts)
+    if (p.startsWith('/api/livetv/')) { const r = livetvRoute(st.livetv, m, p, body(), await req.allHeaders(), J, route); if (r) return r; }
     // Block 23 self-service: the account page (/me/account)
     if (p === '/api/account' && m === 'GET') return J(st.account);
     if (p === '/api/account/profile' && m === 'PATCH') {
