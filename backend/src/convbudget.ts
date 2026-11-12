@@ -134,19 +134,29 @@ export function setLivetvEncoderCheck(fn: LivetvEncoderCheck): void {
   livetvEncoderChanged = fn;
 }
 
+/** per ctx: the last `livetvStale` worked out (admin view, benchmark tick); the admission path reads only this, never livetv */
+const staleMemo = new WeakMap<object, boolean>();
+
 /**
  * Both benchmark records; `stale` when the media server's encoder settings changed since its record, `livetvStale` when livetv's
- * record measured another encoder than the configured one (then automatic falls back to 2 until it is measured again). Unreadable or
+ * record measured another encoder than the configured one (the limit then ignores that record, see conversionLimit). Unreadable or
  * late settings are not stale. `settingsMs`: how long to wait for the settings (admin views 3 s; the admission path 800 ms, never a
- * slow start).
+ * slow start). `checkLivetv` false (the admission path): `livetvStale` is the last value an admin view or the tick worked out, and
+ * livetv is not asked.
  */
-export async function readBench(ctx: Ctx, settingsMs = SETTINGS_TIMEOUT_MS): Promise<{ jellyfin: BenchRecord | null; livetv: BenchRecord | null; stale: boolean; livetvStale: boolean }> {
+export async function readBench(ctx: Ctx, settingsMs = SETTINGS_TIMEOUT_MS, checkLivetv = true): Promise<{ jellyfin: BenchRecord | null; livetv: BenchRecord | null; stale: boolean; livetvStale: boolean }> {
   const [jf, lt] = await ctx.kv.mget([BENCH_KEY, BENCH_LIVETV_KEY]).catch(() => [null, null]);
   const jellyfin = benchOf(jf ?? null);
   const livetv = benchOf(lt ?? null);
   if (!jellyfin && !livetv) return { jellyfin, livetv, stale: false, livetvStale: false };
   const settings = await encoderSettings(ctx, settingsMs);
-  const changed = livetv && settings !== null ? await within(() => livetvEncoderChanged(ctx, livetv, settings.hwAccel ?? null).catch(() => false), settingsMs) : false;
+  let changed: boolean | undefined = false;
+  if (!livetv) staleMemo.delete(ctx);
+  else if (!checkLivetv) changed = staleMemo.get(ctx) ?? false;
+  else if (settings !== null) {
+    changed = await within(() => livetvEncoderChanged(ctx, livetv, settings.hwAccel ?? null).catch(() => false), settingsMs);
+    if (changed !== undefined) staleMemo.set(ctx, changed);
+  }
   return { jellyfin, livetv, stale: jellyfin !== null && settings !== null && jellyfin.fingerprint !== fingerprint(settings), livetvStale: changed === true };
 }
 
@@ -154,10 +164,11 @@ export async function readBench(ctx: Ctx, settingsMs = SETTINGS_TIMEOUT_MS): Pro
  * The limit in force: the admin's CONVERSION_SLOTS, else automatic = the recommendation of a current benchmark, else 2.
  * `recommended` is null while nothing (current) is measured.
  */
-export async function conversionLimit(ctx: Ctx, o: { settingsMs?: number } = {}): Promise<{ limit: number; auto: number; custom: number | null; recommended: number | null; priority: ConvPriority }> {
+export async function conversionLimit(ctx: Ctx, o: { settingsMs?: number; checkLivetv?: boolean } = {}): Promise<{ limit: number; auto: number; custom: number | null; recommended: number | null; priority: ConvPriority }> {
   const { CONVERSION_SLOTS, CONVERSION_PRIORITY } = ctx.cfg;
-  const b = await readBench(ctx, o.settingsMs);
-  const recommended = b.jellyfin && !b.stale && !b.livetvStale ? recommend({ jellyfin: b.jellyfin.speed, ...(b.livetv ? { livetv: b.livetv.speed } : {}) }) : null;
+  const b = await readBench(ctx, o.settingsMs, o.checkLivetv);
+  // a livetv record of another encoder counts as absent (R35): the films keep the limit a missing record gives until it is measured again
+  const recommended = b.jellyfin && !b.stale ? recommend({ jellyfin: b.jellyfin.speed, ...(b.livetv && !b.livetvStale ? { livetv: b.livetv.speed } : {}) }) : null;
   const auto = recommended ?? CONV_DEFAULT_SLOTS;
   const custom = CONVERSION_SLOTS ?? null;
   return { limit: custom ?? auto, auto, custom, recommended, priority: CONVERSION_PRIORITY };
@@ -285,8 +296,8 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
  * other admission sees the slot in between; the caller must then release that channel or drop this grant.
  */
 export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: string; deviceId?: string; hint: string; hevc?: boolean; label?: string; swap?: boolean; sessions?: SessionRead | null; exceptLive?: string }): Promise<{ ok: true; onlyWithout?: true } | { ok: false; why: 'full' | 'unknown' }> {
-  // the limit does not depend on the lock: its settings read (800 ms at most here) starts now and overlaps the wait and the count
-  const limP = conversionLimit(ctx, { settingsMs: HEVC_SESSIONS_TIMEOUT_MS });
+  // the limit does not depend on the lock (livetv is never asked here, only the last livetvStale is read): its settings read (800 ms at most here) starts now and overlaps the wait and the count
+  const limP = conversionLimit(ctx, { settingsMs: HEVC_SESSIONS_TIMEOUT_MS, checkLivetv: false });
   limP.catch(() => undefined); // awaited below; never an unhandled rejection when the lock is not had
   const token = randomUUID();
   const until = Date.now() + LOCK_WAIT_MS;

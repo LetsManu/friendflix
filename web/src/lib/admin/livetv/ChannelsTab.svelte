@@ -167,15 +167,19 @@
 
   // ---- own feeds: "wird übertragen …" while livetv has not taken the change; the page is read again until the flag clears
   let syncTimer: ReturnType<typeof setTimeout> | undefined;
-  $: if (!gone && !syncTimer && (rows ?? []).some(syncing)) syncTimer = setTimeout(pollSynced, SYNC_POLL_MS);
+  /** a poll's list read is running: the next poll is scheduled only when it has finished (success or error), so slow reads never overlap */
+  let polling = false;
+  $: if (!gone && !syncTimer && !polling && (rows ?? []).some(syncing)) syncTimer = setTimeout(pollSynced, SYNC_POLL_MS);
   async function pollSynced() {
     syncTimer = undefined;
     if (gone || !rows?.some(syncing)) return;
+    polling = true;
     try {
       const mine = seq; // a load that started meanwhile owns the rows
       const r = await listChannels(filter);
       if (!gone && mine === seq && rows) rows = mergeSynced(rows, r.channels);
     } catch { /* the next poll tries again */ }
+    polling = false;
     if (!gone && !syncTimer && rows?.some(syncing)) syncTimer = setTimeout(pollSynced, SYNC_POLL_MS);
   }
 

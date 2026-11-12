@@ -539,11 +539,11 @@ describe('a new encoder triggers a new livetv benchmark', () => {
     expect((await conversionsView(env.ctx)).bench).toMatchObject({ stale: false, recommended: 3 });
   });
 
-  it('another LIVETV_ENCODER: stale (automatic falls back to 2), the tick measures only livetv again', async () => {
+  it('another LIVETV_ENCODER: stale record shown, the films limit unchanged (R35), the tick measures only livetv again', async () => {
     env.ctx.cfg = { ...cfg, LIVETV_ENCODER: 'software' };
     const v = await conversionsView(env.ctx);
-    expect(v.bench).toMatchObject({ stale: true, recommended: null });
-    expect(v).toMatchObject({ limit: 2, auto: 2 });
+    expect(v.bench).toMatchObject({ stale: true, recommended: 3 });
+    expect(v).toMatchObject({ limit: 3, auto: 3 });
     const before = await env.kv.get('conv:bench');
     expect(await convBenchTick(env.ctx)).toBe(true);
     expect(benchCalls()).toEqual([{ encoder: 'libx264' }]);
@@ -552,6 +552,35 @@ describe('a new encoder triggers a new livetv benchmark', () => {
     expect((await conversionsView(env.ctx)).bench).toMatchObject({ stale: false, recommended: 2 });
     await env.kv.del('conv:bench:attempt');
     expect(await convBenchTick(env.ctx)).toBe(false); // current again
+  });
+
+  it('the livetv re-measure keeps failing: the stale record stays, the films limit stays at the recommendation', async () => {
+    env.ctx.cfg = { ...cfg, LIVETV_ENCODER: 'software' };
+    env.ctx.fetchImpl = fakeHttp({
+      'GET /healthz': () => ({ json: { ok: true, api: 1, version: '3.3.0', bootId: '0123456789abcdef' } }),
+      'GET /v1/system': () => ({ json: {
+        cpu: { model: 'Testprozessor', cores: 4, loadPct: 5 }, gpu: { devices: ['/dev/dri/renderD128'], driver: 'iHD', readable: true, busyPct: null },
+        encoders: ['h264_qsv', 'h264_vaapi', 'libx264'], cache: { usedBytes: 0, maxBytes: 1 }, recordings: null, srt: { ports: [] },
+      } }),
+      'POST /v1/benchmark': () => ({ status: 502, json: { error: 'encoder_failed' } }),
+    }, lcalls);
+    await detectLivetv(env.ctx, 0);
+    for (let i = 0; i < 3; i++) {
+      await env.kv.del('conv:bench:attempt');
+      expect(await convBenchTick(env.ctx)).toBe(true);
+      expect(JSON.parse((await env.kv.get('conv:bench:livetv'))!)).toMatchObject({ hwAccel: 'h264_qsv' });
+      expect(await conversionsView(env.ctx)).toMatchObject({ limit: 3, auto: 3, bench: { stale: true, recommended: 3 } });
+    }
+  });
+
+  it('admission never asks livetv: it reads the last livetvStale', async () => {
+    env.ctx.cfg = { ...cfg, LIVETV_ENCODER: 'software' };
+    await conversionsView(env.ctx); // works it out (and asks livetv)
+    lcalls.length = 0;
+    vi.useFakeTimers({ toFake: ['Date'] }); // past the 10-s memo of livetv's system view: a call would show
+    vi.setSystemTime(Date.now() + 11_000);
+    expect(await admitConversion(env.ctx, { kind: 'film', userId: admin.id, hint: 'h-1' })).toEqual({ ok: true });
+    expect(lcalls.filter((c) => c.path === '/v1/system')).toHaveLength(0);
   });
 
   it('a livetv that does not answer its system view is not stale', async () => {
