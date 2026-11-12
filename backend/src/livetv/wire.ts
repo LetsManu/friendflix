@@ -67,3 +67,16 @@ export type XmltvLine =
   | XmlItem
   | { t: 'end'; programmes: number; channels: number }
   | { t: 'error'; code: FetchErrorCode | XmltvErrorCode };
+
+/** the input of `POST /v1/probe` (body `{ input }`; livetv/src/probe.ts `StreamInput`); `{ push }` names the channel id of a push feed */
+export type StreamInput = { url: string; kind: 'hls' | 'ts' | 'srt'; userAgent?: string; allowLan: boolean } | { push: string };
+/** livetv/src/probe.ts `ProbeError` */
+export type ProbeError = 'unreachable' | 'timeout' | 'denied' | 'no_video' | 'invalid' | 'address_refused';
+/** `POST /v1/probe` (livetv/src/probe.ts `ProbeResult`); never a URL, a host or ffprobe output */
+export interface ProbeResult {
+  ok: boolean;
+  video?: { codec: string; width: number; height: number; fps: number };
+  audio?: { codec: string; channels: number };
+  needs: 'passthrough' | 'remux' | 'transcode';
+  error?: ProbeError;
+}

@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { buildApp } from '../src/app.js';
 import { startBenchmark } from '../src/convbench.js';
 import { featureFlags } from '../src/features.js';
-import { detectLivetv, enableBenchmark, livetvDetectTick, livetvInstalled } from '../src/livetv/detect.js';
+import { detectLivetv, enableBenchmark, livetvDetectTick, livetvInstalled, readLivetvSystem } from '../src/livetv/detect.js';
 import { gpuAdvice } from '../src/livetv/gpu.js';
 import { ADMIN, makeEnv, type TestEnv } from './helpers.js';
 
@@ -385,6 +385,26 @@ describe('gpuAdvice', () => {
   it('rows are checked in order: no devices comes before unreadable; a device-less nvenc box is not told about overlays', () => {
     expect(gpuAdvice('qsv', sys({ readable: true }))).toEqual({ level: 'warn', key: 'needsOverlay' });
     expect(gpuAdvice('nvenc', sys())).toEqual({ level: 'warn', key: 'needsNvidia' });
+  });
+});
+
+describe('GET /v1/system', () => {
+  it('an encoder this backend does not know is left out, never a reason to refuse the answer', async () => {
+    fake.livetv = 'api1';
+    const saved = SYSTEM.encoders;
+    try {
+      SYSTEM.encoders = ['h264_qsv', 'av1_qsv', 'libx264', 'h264_qsv', 'hevc_future_encoder_with_a_rather_long_name'];
+      const sys = await readLivetvSystem(env.ctx);
+      expect(sys.encoders).toEqual(['h264_qsv', 'libx264']);
+      expect(sys.srt.ports).toEqual([9000]);
+      SYSTEM.encoders = ['av1_qsv'];
+      expect((await readLivetvSystem(env.ctx)).encoders).toEqual([]);
+      // a shape that is not a list still is an unexpected answer
+      SYSTEM.encoders = 'libx264' as unknown as string[];
+      await expect(readLivetvSystem(env.ctx)).rejects.toMatchObject({ code: 'invalid_answer' });
+    } finally {
+      SYSTEM.encoders = saved;
+    }
   });
 });
 
