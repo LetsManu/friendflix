@@ -18,7 +18,7 @@ const markPlayArt = vi.fn();
 vi.mock('./transition', async (orig) => ({ ...(await orig<typeof import('./transition')>()), markPlayArt: (...a: unknown[]) => markPlayArt(...a) }));
 const { prepareNext, releaseNext, takeNext, WARM_GRACE_MS, WARM_MAX_RESUME_TICKS } = await import('./prefetch');
 const { HOLD_TIMEOUT_MS, holdPrefetch, playPrefetch, prefetchPlayback, takePrefetched, watchTarget, startSecond, _resetPrefetch, PREFETCH_TTL_MS } = await import('./prefetch');
-const { firstPlaybackRequest, playbackInfoBody, bodyKey } = await import('./infobody');
+const { firstPlaybackRequest, playbackInfoBody, bodyKey, noEstimateStart } = await import('./infobody');
 const { entryFadeMs, playTransition } = await import('./transition');
 const { prefs, DEFAULT_PREFS } = await import('#lib/stores');
 const { serverCaps, capsFrom } = await import('#lib/capabilities');
@@ -38,7 +38,8 @@ describe('prefetchPlayback / takePrefetched', () => {
     api.mockResolvedValue({ playSessionId: 'x' });
     prefetchPlayback('m1');
     expect(api).toHaveBeenCalledTimes(1);
-    expect(api).toHaveBeenCalledWith('/api/playback/info', { method: 'POST', body: { itemId: 'm1', maxBitrate: 4_000_000, reasonHint: 'network' } });
+    // no stored estimate: the 720p start is flagged; `prefetch` marks who asks (both stay out of bodyKey)
+    expect(api).toHaveBeenCalledWith('/api/playback/info', { method: 'POST', body: { itemId: 'm1', maxBitrate: 4_000_000, reasonHint: 'network', startRung: true, prefetch: true } });
   });
 
   it('never prefetches when the server starts its transcode in playback info (playbackPrefetch=false, Plex)', () => {
@@ -109,7 +110,7 @@ describe('prefetchPlayback / takePrefetched', () => {
     api.mockResolvedValue({});
     prefs.set({ ...DEFAULT_PREFS, quality: 8_000_000, audioLang: 'ger' });
     prefetchPlayback('m1', { audio: 'eng', startSec: 90 });
-    expect(api.mock.calls[0]![1].body).toEqual({ itemId: 'm1', startTicks: 900_000_000, maxBitrate: 8_000_000, reasonHint: 'manual', audioLang: 'eng' });
+    expect(api.mock.calls[0]![1].body).toEqual({ itemId: 'm1', startTicks: 900_000_000, maxBitrate: 8_000_000, reasonHint: 'manual', audioLang: 'eng', prefetch: true }); // a pick: no start flag
     expect(takePrefetched('m1', firstPlaybackRequest('m1', { quality: 8_000_000, audioLang: 'ger' }, 'eng', 90).body)).not.toBeNull();
   });
 });
@@ -273,8 +274,23 @@ describe('infobody', () => {
     expect(fr.bps).toBe(70_000_000);
     api.mockResolvedValue({});
     prefetchPlayback('a');
-    expect(api).toHaveBeenCalledWith('/api/playback/info', { method: 'POST', body: fr.body });
+    expect(api).toHaveBeenCalledWith('/api/playback/info', { method: 'POST', body: { ...fr.body, prefetch: true } });
     expect(takePrefetched('a', fr.body)).not.toBeNull();
+  });
+  it('the start flag goes only with the no-estimate 720p start: not with a stored estimate, a saved quality or the original', () => {
+    expect(firstPlaybackRequest('a', DEFAULT_PREFS).body).toEqual({ itemId: 'a', maxBitrate: 4_000_000, reasonHint: 'network', startRung: true });
+    localStorage.setItem('ff_bw', JSON.stringify({ bps: 6_000_000, at: Date.now() })); // a measured line: the same kind of rung, no flag
+    expect(firstPlaybackRequest('a', DEFAULT_PREFS).body).not.toHaveProperty('startRung');
+    localStorage.setItem('ff_bw', JSON.stringify({ bps: 6_000_000, at: Date.now() - 8 * 86_400_000 })); // older than a week: none again
+    expect(firstPlaybackRequest('a', DEFAULT_PREFS).body).toHaveProperty('startRung', true);
+    localStorage.removeItem('ff_bw');
+    expect(firstPlaybackRequest('a', { ...DEFAULT_PREFS, quality: 8_000_000 }).body).not.toHaveProperty('startRung'); // a saved pick
+    expect(playbackInfoBody({ itemId: 'a', bps: Infinity, hint: 'network', startRung: true })).not.toHaveProperty('startRung'); // original: no rung
+    expect(noEstimateStart(0, null)).toBe(true);
+    expect(noEstimateStart(0, 5_000_000)).toBe(false);
+    expect(noEstimateStart(4_000_000, null)).toBe(false);
+    // neither flag changes the comparison key, so a prefetch body still matches the player's
+    expect(bodyKey({ itemId: 'a', reasonHint: 'network', startRung: true, prefetch: true })).toBe(bodyKey({ itemId: 'a', reasonHint: 'network' }));
   });
   it('a slow link stays on the ladder', () => {
     localStorage.setItem('ff_bw', JSON.stringify({ bps: 10_000_000, at: Date.now() }));

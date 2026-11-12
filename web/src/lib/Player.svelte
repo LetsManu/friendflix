@@ -41,7 +41,7 @@
   import { appCaps, playerCapsSummary } from '#lib/webos/caps';
   import { avoidedUntil, capsPending, clientWhy, isFormatFailure, isProbedBlock, noteDirectFailure, noteHlsFailure, remeasureOutput, setStereoOnly, stereoOnly } from '#lib/player/devicecaps';
   import { firstFrameMs, watchFirstFrame } from '#lib/player/firstframe';
-  import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
+  import { firstPlaybackRequest, noEstimateStart, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
   import { playerReportBody } from '#lib/player/reportbody';
   import { holdPrefetch, prepareNext, releaseNext, takeNext, takePrefetched } from '#lib/player/prefetch';
   import { createTiming, deviceClass, effectiveType, sendTiming } from '#lib/player/timing';
@@ -520,7 +520,9 @@
     // first start: the device's decode probe (bounded) answers first, so this body equals the play button's prefetch body
     if (first) { const w = capsPending(); if (w) await w; }
     const fell = pendingFallback; pendingFallback = null;
-    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: appCaps(), fellBack: fell?.what, prevPs: fell?.prevPs });
+    // no ABR yet, no saved quality and nothing measured: the 720p start is a guess (the server keeps the copy fallback for it)
+    const startRung = !abr && reqHint === 'network' && noEstimateStart(quality, loadStoredEstimate());
+    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: appCaps(), fellBack: fell?.what, prevPs: fell?.prevPs, startRung });
     probedCaps = isProbedBlock(body.caps);
     const ask = () => api<Info | null>('/api/playback/info', { method: 'POST', body });
     // the next episode prepared during the countdown, else a hovered/focused play button: its request is (usually) already answered;

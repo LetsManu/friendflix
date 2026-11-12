@@ -79,7 +79,7 @@ export function holdPrefetch(p: Promise<unknown>): void {
  * remembered bandwidth, reason hint, preferred audio). The route starts no stream (no stream slot, no live session, no transcode:
  * that starts with the stream URL), but an answer that converts takes a slot of the shared conversion budget for up to 30 s. So an
  * unused prefetch that converts is given back (release: replaced, expired, page hidden), and the server replaces a device's earlier
- * unused grant with its new one, so a browsing device never holds more than one slot. At most one item is kept: a new one replaces
+ * unused prefetch grant with its new one (the body says `prefetch`), so a browsing device never holds more than one slot. At most one item is kept: a new one replaces
  * the old entry. Errors (429 max_streams, 503 server_busy, network) drop the entry; the player then asks itself.
  * Servers whose playback info starts the transcode (capability playbackPrefetch=false, e.g. Plex) are never prefetched: every
  * hover would start a stream and take a stream slot.
@@ -97,7 +97,8 @@ export function prefetchPlayback(itemId: string, o: { audio?: string; startSec?:
   if (cur && cur.key === key && cur.profile === profile && now - cur.at < PREFETCH_TTL_MS) return; // already on its way
   dropEntries();
   hookHide();
-  const e: Entry = { itemId, key, profile, at: now, promise: api<PlaybackDto>('/api/playback/info', { method: 'POST', body }) };
+  // `prefetch`: only such a grant may replace this device's earlier one on the server (never the player's or the next episode's)
+  const e: Entry = { itemId, key, profile, at: now, promise: api<PlaybackDto>('/api/playback/info', { method: 'POST', body: { ...body, prefetch: true } }) };
   e.promise.catch(() => { if (entries.get(itemId) === e) entries.delete(itemId); });
   e.ttl = setTimeout(() => { if (entries.get(itemId) === e) entries.delete(itemId); release(e); }, PREFETCH_TTL_MS);
   entries.set(itemId, e);

@@ -379,6 +379,10 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       /** the player's one automatic fallback: which feature failed, and the play session it replaces (accepted here, used by later steps) */
       fellBack: z.enum(['hevc', 'surround', 'both']).optional(),
       prevPs: psId.optional(),
+      /** maxBitrate is the player's 720p start on a device without a bandwidth estimate (a guess, not a pick or a measured line) */
+      startRung: z.literal(true).optional(),
+      /** asked by a hover / focus prefetch of the web (prefetch.ts), not by a player */
+      prefetch: z.literal(true).optional(),
     }).parse(req.body);
     const clientCaps = parseClientCaps(b.caps);
     const role = (await effectiveLimits(ctx, req.user!))!;
@@ -395,8 +399,9 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     // PlaybackInfo and the resume-position/trickplay lookup run in parallel (one Jellyfin /Items call instead of two sequential ones)
     // HEVC conversions: a gate only while HEVC_STREAMS > 0 (probe, limit from the server's session list, failure pause: hevcenc.ts);
     // every conversion also needs a slot of the shared budget (convbudget.ts, spec §5.5): one gate for both, one session-list read
-    // `swap`: the web asks this on hover and focus too (prefetch.ts); a device's new grant replaces its own unused ones
-    const gate = filmGate(ctx, { userId: req.user!.id, deviceId: req.session?.deviceId, swap: true });
+    // `swap`: only a hover / focus prefetch (prefetch.ts) replaces the device's earlier unused prefetch grant; a player's request (and the
+    // next episode prepared during the countdown) writes a grant no later request of the device can replace
+    const gate = filmGate(ctx, { userId: req.user!.id, deviceId: req.session?.deviceId, swap: b.prefetch === true });
     // the player left a HEVC conversion for H.264: counts against the server's HEVC state when that stream really was one
     if ((b.fellBack === 'hevc' || b.fellBack === 'both') && b.prevPs && req.session?.deviceId) {
       let prev: { video?: unknown } | null;
@@ -420,12 +425,14 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
       // still needs a conversion gets 503. No stream was fetched yet, so nothing has to be stopped.
       // Owner ruling 2026-11-12: the copy carries the source's own bitrate, so it is offered only when the viewer's own cap (pick or line:
       // data saver, a lower quality, ABR on a slow line) is at or above the source; a request below the source gets 503 (copyFitsCap).
+      // The 720p start of a device without a bandwidth estimate (`startRung`) is a guess, not the viewer's pick or line: for it the copy
+      // up to the ceiling stays, as for a request at the source.
       // At the ceiling already (the viewer picked nothing lower), the copy request would plan the same answer: the copy decision and direct
       // play depend on the bitrate, box, caps and source, all unchanged, and `noConvert` only takes away an HEVC encode (a conversion
       // either way). So both 503s come without a second round trip.
       if (!(await gate.admit(info, label))) {
         let fb: PlaybackDto | null = null;
-        if (cap < upload.cap && copyFitsCap(info, cap)) {
+        if (cap < upload.cap && copyFitsCap(info, b.startRung && b.reasonHint !== 'manual' ? upload.cap : cap)) {
           const fallback = { ...opts, noConvert: true, maxBitrate: upload.cap, capReason: 'serverBusy' as const };
           fb = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, fallback);
           if (ctx.jf.preparePlayback) fb = await ctx.jf.preparePlayback(req.jfUser!, fb, fallback);

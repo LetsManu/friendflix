@@ -38,7 +38,8 @@ export const copyFitsCap = (info: Pick<PlaybackDto, 'sourceBitrate'>, cap: numbe
  *  - `bind`: the grants follow the answer given (null: nothing is given, both are dropped). Never stops a running conversion.
  *  - `release`: an error after `bind` (the cast token was taken back, its mint failed): the bound grants of that play session go.
  * `label` (title; a series by its series name): given at construction, or to `admit` / `bind` when it is known only later.
- * `swap`: /api/playback/info (the web prefetches it on hover and focus): this grant replaces the device's own unused ones (admitConversion).
+ * `swap`: a hover / focus prefetch of /api/playback/info (body `prefetch`): this grant replaces the device's own unused prefetch grants
+ * (admitConversion). A player's grant never has it, so no prefetch can drop it.
  */
 export interface FilmGate {
   hevc: () => Promise<HevcGate>;

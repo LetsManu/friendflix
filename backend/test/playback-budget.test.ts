@@ -136,8 +136,8 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
 
   it('two hovers on one device hold at most one slot; another device is not refused because of hovers', async () => {
     src = H264_25M; // every answer converts
-    const hover1 = (await info(friend)).json().playSessionId as string; // prefetches: nobody plays them
-    const hover2 = (await info(friend)).json().playSessionId as string;
+    const hover1 = (await info(friend, { prefetch: true })).json().playSessionId as string; // prefetches: nobody plays them
+    const hover2 = (await info(friend, { prefetch: true })).json().playSessionId as string;
     expect(hover2).not.toBe(hover1);
     expect(await grants()).toEqual([`conv:grant:${hover2}`]); // the device's new grant replaced its first
     // L = 2: the admin's device still gets a conversion (before: two phantom grants, "2 von 2 belegt", refused)
@@ -185,6 +185,49 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
     expect(await c.admit(conv('ps-c'))).toBe(true);
     await c.bind(conv('ps-c'));
     expect(await grants()).toEqual(['conv:grant:ps-a', 'conv:grant:ps-c']);
+  });
+
+  it('a hover prefetch during the same device\'s in-flight player request keeps the player\'s grant', async () => {
+    src = H264_25M;
+    // the player's request is held between its admission and its bind (its grant still sits under the hint, unbound)
+    const realGet = env.kv.get.bind(env.kv);
+    let reach!: () => void, release!: () => void;
+    const reached = new Promise<void>((r) => { reach = r; });
+    const held = new Promise<void>((r) => { release = r; });
+    let first = true;
+    vi.spyOn(env.kv, 'get').mockImplementation(async (k: string) => {
+      if (first && k.startsWith('conv:grant:')) { first = false; reach(); await held; }
+      return realGet(k);
+    });
+    const player = info(friend);
+    await reached;
+    const hover = await info(friend, { prefetch: true }); // the same device hovers another play button meanwhile
+    expect(hover.statusCode).toBe(200);
+    release();
+    const ps = (await player).json().playSessionId as string;
+    expect(await grants()).toEqual([`conv:grant:${hover.json().playSessionId}`, `conv:grant:${ps}`].sort()); // the player's grant was not replaced
+    // the next prefetch replaces only the earlier prefetch
+    const hover2 = await info(friend, { prefetch: true });
+    expect(await grants()).toEqual([`conv:grant:${hover2.json().playSessionId}`, `conv:grant:${ps}`].sort());
+  });
+
+  it('the no-estimate start rung keeps the copy fallback at a full budget; a measured line below the source gets 503', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    sessions = async () => [foreign('ps-foreign-1')];
+    src = H264_8M; // above the 4 Mbit/s start, copyable at the ceiling
+    const start = await info(friend, { maxBitrate: 4_000_000, reasonHint: 'network', startRung: true });
+    expect(start.statusCode).toBe(200);
+    expect(start.json()).toMatchObject({ delivery: { video: 'copy' }, transcodeReason: 'serverBusy', maxBitrate: 20_000_000 });
+    expect(pb.map((p) => p.max)).toEqual([4_000_000, 20_000_000]);
+    // the same rung from a real stored estimate (no flag) is the viewer's line: 503 without a copy request
+    pb = [];
+    const line = await info(friend, { maxBitrate: 4_000_000, reasonHint: 'network' });
+    expect(line.statusCode).toBe(503);
+    expect(pb.map((p) => p.max)).toEqual([4_000_000]);
+    // a manual pick that carries the flag (a client bug) is still the viewer's pick
+    pb = [];
+    expect((await info(friend, { maxBitrate: 4_000_000, reasonHint: 'manual', startRung: true })).statusCode).toBe(503);
+    expect(await grants()).toEqual([]);
   });
 
   it('a 502 resume_unknown after admission leaves no grant', async () => {

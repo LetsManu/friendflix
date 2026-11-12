@@ -58,7 +58,7 @@ const SETTINGS_TIMEOUT_MS = 3000;
 const SAFETY = 0.7;
 const MAX_SLOTS = 16;
 
-/** `swap`: a /api/playback/info grant (prefetches included): the same device's next such grant replaces it while no stream uses it */
+/** `swap`: a hover / focus prefetch grant of /api/playback/info: the same device's next prefetch grant replaces it while no stream uses it */
 interface Grant { kind: ConvKind; user: string; device?: string; hevc?: true; label?: string; ps?: string; swap?: true }
 
 /** 1 slot kept free for the preferred kind once there are 2 slots or more; none when both rank equal */
@@ -158,7 +158,7 @@ export async function countConversions(ctx: Ctx, o: { exceptUser?: string; excep
 }
 
 /**
- * countConversions plus `ownPending`: the excepted device's playback-info grants (`swap`) that no stream uses yet (the server does not say
+ * countConversions plus `ownPending`: the excepted device's prefetch grants (`swap`) that no stream uses yet (the server does not say
  * what it does with their play session and no live record plays it: a hover / focus prefetch, an answer nobody took). A cast or download
  * grant is never among them (a cast's stream plays on the receiver, which reports later).
  */
@@ -242,7 +242,7 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
 /**
  * May this conversion start? One asker at a time (KV lock, waited for in 100-ms steps up to about 1 s), count without the asker's own
  * device, apply the priority rule, then write a 30-s grant under `hint` (bindConvGrant moves it to the real play session). With `swap`
- * (/api/playback/info, whose answers the web also prefetches on hover and focus) the device's own pending swap grants go with it: its new
+ * (a hover / focus prefetch of /api/playback/info) the device's own pending swap grants go with it: its new
  * grant replaces them, so a browsing device holds at most one slot, never one per hover, and other devices are not refused because of
  * them. Every media
  * server read on this path is bounded by 800 ms (settings and sessions run in parallel), so the answer comes within about 2 s at worst.
