@@ -27,7 +27,7 @@ export function registerLiveKeys(tz: TizenLike | undefined): Record<number, stri
   const names: string[] = [...TIZEN_LIVE_KEYS, ...TIZEN_OPTIONAL_KEYS.filter((n) => supported?.includes(n))];
   const map: Record<number, string> = {};
   for (const name of names) {
-    try { dev.registerKey(name); } catch { continue; } // this TV does not have the key: the others still register
+    try { dev.registerKey(name); } catch { /* refused (e.g. a repeat registration): the code is still mapped */ }
     let code: number | undefined;
     try { code = dev.getKey?.(name).code; } catch { /* the constant below */ }
     if (typeof code !== 'number') code = FALLBACK_CODE[name];

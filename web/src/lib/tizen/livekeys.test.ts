@@ -44,8 +44,13 @@ describe('registerLiveKeys', () => {
     expect(registered).toContain('ColorF3Blue');
     expect(registered).not.toContain('ChannelDown');
     expect(registered).not.toContain('3');
-    expect(map[428]).toBeUndefined();
     expect(map[427]).toBe('ChannelUp');
+  });
+  it("a throwing registerKey still maps the key's code", () => {
+    const tz: TizenLike = { tvinputdevice: { registerKey: (n: string) => { if (n === 'ChannelUp') throw new Error('no'); }, getKey: (n: string) => ({ code: n === 'ChannelUp' ? 427 : 0 }) } };
+    const map = registerLiveKeys(tz);
+    expect(map[427]).toBe('ChannelUp');
+    expect(normaliseTizenKey({ key: 'Unidentified', keyCode: 427 }, map)).toBe('ChannelUp');
   });
   it('no tizen object: the fallback map, nothing thrown', () => {
     expect(registerLiveKeys(undefined)).toEqual(FALLBACK);
