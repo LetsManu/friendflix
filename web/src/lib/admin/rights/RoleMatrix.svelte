@@ -264,7 +264,7 @@
   .top { display: flex; align-items: center; min-height: 40px; padding-right: 40px; }
   .mn { position: absolute; top: -2px; right: -4px; display: flex; z-index: 2; }
   /* a 44 px target (negative margins keep the head's height): the button is taller than the text, which clamps to two lines inside it */
-  .rn { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; max-width: 100%; min-height: 44px; margin: -2px 0; padding: 0; border: 0; border-radius: 4px; background: transparent;
+  .rn { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; justify-content: flex-start; max-width: 100%; min-height: 44px; margin: -2px 0; padding: 0; border: 0; border-radius: 4px; background: transparent;
     color: inherit; font: inherit; font-weight: 800; font-size: .98rem; text-align: left; cursor: pointer; position: relative; z-index: 1; }
   .rnt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; min-width: 0; overflow-wrap: anywhere; hyphens: auto; }
   .rn:disabled { cursor: default; text-decoration: none; }

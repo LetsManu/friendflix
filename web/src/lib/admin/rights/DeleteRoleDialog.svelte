@@ -31,11 +31,11 @@
   let to = '', box: HTMLElement | undefined;
 
   $: options = [{ value: '', label: $t('adminPeople.roles.deleteChoose'), disabled: true }, ...targets.map((r) => ({ value: r.key, label: r.name }))];
-  /** only the parts that are not zero: "2 Personen und 1 offene Einladung …", "3 Personen …", "1 offene Einladung …" */
+  /** only the parts that are not zero: "2 Personen und 1 offene Einladung …", "1 Person bekommt …", "3 offene Einladungen …" (each form agrees with its count) */
   $: people = tr('adminPeople.roles.deletePeople', { n: accounts });
   $: open = tr('adminPeople.roles.deleteInvites', { n: invites });
   $: line = accounts > 0 && invites > 0 ? tr('adminPeople.roles.deleteMove', { people, invites: open })
-    : invites > 0 ? tr('adminPeople.roles.deleteMoveInvites', { invites: open }) : tr('adminPeople.roles.deleteMovePeople', { people });
+    : invites > 0 ? tr('adminPeople.roles.deleteMoveInvites', { n: invites }) : tr('adminPeople.roles.deleteMovePeople', { n: accounts });
 
   function cancel() {
     if (busy) return;

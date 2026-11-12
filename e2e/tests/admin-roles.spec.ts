@@ -523,7 +523,8 @@ test.describe('Rollen & Rechte: role menu fixes', () => {
     api.admin.matrix.roles.splice(4, 0, { ...family, key: 'leer', label: 'Leer', builtinLabel: false, origin: 'admin', accounts: 0, profiles: 0, kidsProfiles: 0, invites: 0, values: { ...family.values } });
     await page.goto('/admin/roles');
     await expect(head(page, /Leer/)).toBeVisible();
-    await page.route('**/api/admin/roles', async (r) => { if (r.request().method() === 'GET') await r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"x"}' }); else await r.fallback(); });
+    let failedReads = 0;
+    await page.route('**/api/admin/roles', async (r) => { if (r.request().method() === 'GET') { failedReads++; await r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"x"}' }); } else await r.fallback(); });
     await (await menu(page, 'Familie')).getByRole('button', { name: 'Duplizieren' }).click();
     const dlg = page.getByRole('dialog', { name: 'Rolle „Familie“ duplizieren' });
     await dlg.getByRole('textbox', { name: 'Name' }).fill('Zwei');
@@ -536,6 +537,9 @@ test.describe('Rollen & Rechte: role menu fixes', () => {
     await (await menu(page, 'Leer')).getByRole('button', { name: 'Löschen' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'Löschen' }).click();
     await expect(toasts(page).getByText('Rolle „Leer“ gelöscht.')).toBeVisible();
+    // the failed read of the delete is told too (the toast list keeps three: the first note may have gone)
+    await expect(toasts(page).getByText('Das ließ sich nicht laden. Prüfe die Verbindung und versuche es erneut.').last()).toBeVisible();
+    expect(failedReads).toBe(2);
     expect(api.admin.matrix.deletes).toEqual([{ role: 'leer', moveTo: null }]);
   });
 
