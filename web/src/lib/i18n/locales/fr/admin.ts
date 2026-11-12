@@ -8,7 +8,7 @@ const fr: Translation<typeof de> = {
   title: 'Admin',
   tabs: {
     users: 'Utilisateurs', status: 'État', previews: 'Aperçus', playback: 'Test de lecture', digest: 'Récap hebdomadaire', sources: 'Sources de données', invites: 'Invitations',
-    requests: 'Demandes', polls: 'Votes', lists: 'Listes', roles: 'Rôles', devices: 'Appareils', audit: 'Journal d’audit', update: 'Mise à jour',
+    requests: 'Demandes', polls: 'Votes', lists: 'Listes', roles: 'Rôles et droits', devices: 'Appareils', audit: 'Journal d’audit', update: 'Mise à jour',
     hygiene: 'Entretien de la bibliothèque',
     settings: 'Paramètres',
     usage: 'Utilisation',

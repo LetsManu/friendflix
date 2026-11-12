@@ -19,6 +19,7 @@
   {:else if name === 'chevron-left'}<path d="M15 5l-7 7 7 7" />
   {:else if name === 'chevron-right'}<path d="M9 5l7 7-7 7" />
   {:else if name === 'chevron-down'}<path d="M5 9l7 7 7-7" />
+  {:else if name === 'chevron-up'}<path d="M5 15l7-7 7 7" />
   {:else if name === 'arrow-left'}<path d="M19 12H5M12 19l-7-7 7-7" />
   {:else if name === 'shuffle'}<path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
   {:else if name === 'heart'}<path d="M12 21s-8-5.2-8-11a4.5 4.5 0 018-2.8A4.5 4.5 0 0120 10c0 5.8-8 11-8 11z" />

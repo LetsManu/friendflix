@@ -348,6 +348,17 @@ test.describe('admin: settings', () => {
     await expect(server.getByRole('button')).toHaveCount(0);
   });
 
+  test('the server group notes where roles are changed now, while ROLE_TEMPLATES is listed', async ({ page, api }) => {
+    const note = 'Rollen lassen sich jetzt unter Personen → Rollen & Rechte ändern; .env-Werte gelten weiter darunter.';
+    await page.goto('/admin/settings');
+    await expect(card(page, 'Server').getByText(note)).toBeVisible();
+    const server = api.settings.groups.find((g) => g.id === 'server')!;
+    server.items = server.items.filter((i) => i.key !== 'ROLE_TEMPLATES');
+    await page.reload();
+    await expect(card(page, 'Server').getByText('PORT', { exact: true })).toBeVisible();
+    await expect(page.getByText(note)).toHaveCount(0);
+  });
+
   test('an edited ntfy URL that still carries the redaction marker is refused at the field, nothing is sent', async ({ page, api }) => {
     await page.goto('/admin/settings');
     const row = setting(page, 'ntfy-Kanal für Ankündigungen');

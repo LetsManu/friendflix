@@ -29,6 +29,8 @@ export interface RoleRow {
   invitable: boolean;
   position: number;
   createdAt: string;
+  /** has a row in the roles table (can be ordered); false for a ctx.roles key the table does not hold (listed after the stored ones) */
+  stored: boolean;
 }
 
 type CatCtx = Pick<Ctx, 'db' | 'roles'>;
@@ -44,7 +46,7 @@ async function storedRoles(ctx: CatCtx): Promise<RoleRow[]> {
   if (c && Date.now() - c.at <= TTL_MS) return c.rows;
   const r = await ctx.db.query<{ key: string; label: string | null; base: string; origin: RoleRow['origin']; invitable: boolean; position: number; created_at: Date }>(
     'select key, label, base, origin, invitable, position, created_at from roles order by position, key');
-  const rows = r.rows.map((x) => ({ key: x.key, label: x.label, base: x.base, origin: x.origin, invitable: x.invitable, position: x.position, createdAt: x.created_at.toISOString() }));
+  const rows = r.rows.map((x) => ({ key: x.key, label: x.label, base: x.base, origin: x.origin, invitable: x.invitable, position: x.position, createdAt: x.created_at.toISOString(), stored: true }));
   cache.set(ctx, { at: Date.now(), rows });
   return rows;
 }
@@ -61,7 +63,7 @@ export async function listRoles(ctx: CatCtx): Promise<RoleRow[]> {
   if (!extra.length) return rows;
   let pos = rows.reduce((m, r) => Math.max(m, r.position), -1);
   const at = new Date().toISOString();
-  return [...rows, ...extra.map((key): RoleRow => ({ key, label: null, base: baseOf(key), origin: 'env', invitable: storable(key) && key !== 'admin', position: ++pos, createdAt: at }))];
+  return [...rows, ...extra.map((key): RoleRow => ({ key, label: null, base: baseOf(key), origin: 'env', invitable: storable(key) && key !== 'admin', position: ++pos, createdAt: at, stored: false }))];
 }
 
 export async function roleExists(ctx: CatCtx, key: string): Promise<boolean> {
@@ -211,7 +213,7 @@ export async function deleteRole(ctx: Ctx, actor: string | null, key: string, mo
   try {
     await c.query('begin');
     for (const k of [...new Set([key, ...(moveTo !== undefined ? [moveTo] : [])])].sort()) await lockRole(c, k);
-    const locked = (await c.query<{ base: string }>('select base from roles where key=$1 for update', [key])).rows[0];
+    const locked = (await c.query<{ base: string; label: string | null }>('select base, label from roles where key=$1 for update', [key])).rows[0];
     if (!locked) throw new HttpError(404, 'not_found'); // deleted while this waited
     if (moveTo !== undefined && !Object.hasOwn(ctx.roles, moveTo) && !(await c.query('select 1 from roles where key=$1', [moveTo])).rowCount) throw new HttpError(400, 'bad_target');
     const accountIds = async () => (await c.query<{ id: string }>('select id from users where role=$1', [key])).rows.map((r) => r.id);
@@ -233,7 +235,9 @@ export async function deleteRole(ctx: Ctx, actor: string | null, key: string, mo
     }
     await c.query('delete from role_settings where role=$1', [key]);
     await c.query('delete from roles where key=$1', [key]);
-    await auditInTx({ db: c }, actor, 'role.delete', key, { moveTo: moveTo ?? null, accounts: moved, invites });
+    // the label (not the hidden key) is what a later history can name the role by
+    const label = locked.label ?? own(ctx.roles, key)?.label;
+    await auditInTx({ db: c }, actor, 'role.delete', key, { moveTo: moveTo ?? null, accounts: moved, invites, ...(label ? { label } : {}) });
     await c.query('commit');
     return { accounts: moved, invites };
   } catch (e) {

@@ -167,7 +167,9 @@ describe('admin audit: target and people area', () => {
     expect((await get(`/api/admin/audit?target=${ids.anna}`)).json().entries.map((e: any) => e.action).sort()).toEqual(['list.feature', 'user.role']);
     expect((await get('/api/admin/audit?target=guest&action=role.update&actor=' + adminId)).json().total).toBe(2);
     expect((await get('/api/admin/audit?target=guest&action=user')).json().total).toBe(0);
-    expect((await get("/api/admin/audit?target=Guest';drop")).statusCode).toBe(400);
+    // a bound parameter: odd text is just a target nobody has
+    expect((await get(`/api/admin/audit?target=${encodeURIComponent("Guest';drop")}`)).json().entries).toEqual([]);
+    expect((await get(`/api/admin/audit?target=${'x'.repeat(65)}`)).statusCode).toBe(400);
   });
   it('area=people excludes list and settings entries', async () => {
     const j = (await get('/api/admin/audit?area=people&limit=500')).json();

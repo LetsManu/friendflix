@@ -13,6 +13,7 @@ const settings: Translation<typeof de> = {
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Les modifications s’appliquent immédiatement, sans redémarrage. Le réglage fin pour experts (RECO_COEFFS et les poids d’index RECO_W_*) se fait uniquement dans .env.' },
   serverHelp: 'Valeurs de l’environnement du conteneur. Lecture seule ; les identifiants ne sont jamais affichés.',
+  roleTemplatesNote: 'Les rôles se modifient désormais sous Personnes → Rôles et droits ; les valeurs du .env continuent de s’appliquer en dessous.',
   source: { env: 'De l’environnement', db: 'Enregistré', default: 'Par défaut', bootstrap: 'Du fichier de démarrage', unset: 'Non défini' },
   locked: 'Vient de l’environnement (.env) et ne peut pas être modifié ici.',
   restart: 'Redémarrage requis',

@@ -138,6 +138,16 @@ describe('growFrom, sheetSlide, toastRise, scrimFade', () => {
     expect(growBoth(el)({ direction: 'in' }).duration).toBe(380);
   });
 
+  it('sheetSlide from the right edge moves on x with the same timing', () => {
+    const fin = sheetSlide(node, { mode: 'full', side: 'right' });
+    expect(fin.duration).toBe(380);
+    expect(fin.css(0, 1)).toBe('transform:translateX(100%)');
+    expect(fin.css(1, 0)).toBe('transform:translateX(0%)');
+    expect(sheetSlide(node, { dir: 'out', mode: 'full', side: 'right' }).css(0.25, 0.75)).toBe('transform:translateX(75%)');
+    expect(sheetSlide(node, { mode: 'reduced', side: 'right' }).css(0.5, 0.5)).toBe('opacity:0.5');
+    expect(sheetSlide(node, { mode: 'still', side: 'right' }).duration).toBe(0);
+  });
+
   it('sheetSlide per mode', () => {
     const fin = sheetSlide(node, { mode: 'full' });
     expect(fin.duration).toBe(SHEET_IN_MS);

@@ -13,6 +13,7 @@ const settings: Translation<typeof de> = {
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Değişiklikler yeniden başlatmadan hemen geçerli olur. Uzman ayarları (RECO_COEFFS ve dizin ağırlıkları RECO_W_*) yalnızca .env dosyasında yapılır.' },
   serverHelp: 'Konteyner ortamından gelen değerler. Salt okunur; kimlik bilgileri asla gösterilmez.',
+  roleTemplatesNote: 'Roller artık Kişiler → Roller ve haklar altında değiştirilebilir; .env değerleri altta geçerli olmaya devam eder.',
   source: { env: 'Ortamdan', db: 'Kayıtlı', default: 'Varsayılan', bootstrap: 'Başlangıç dosyasından', unset: 'Ayarlanmamış' },
   locked: 'Ortamdan (.env) gelir ve burada değiştirilemez.',
   restart: 'Yeniden başlatma gerekli',

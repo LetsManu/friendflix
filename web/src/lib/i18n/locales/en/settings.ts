@@ -13,6 +13,7 @@ const settings: Translation<typeof de> = {
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Changes apply at once, without a restart. Expert tuning (RECO_COEFFS and the item index weights RECO_W_*) is set in .env only.' },
   serverHelp: 'Values from the container environment. Read-only; credentials are never shown.',
+  roleTemplatesNote: 'Roles can now be changed under People → Roles & rights; values from .env still apply underneath.',
   source: { env: 'From environment', db: 'Saved', default: 'Default', bootstrap: 'From startup file', unset: 'Not set' },
   locked: 'Comes from the environment (.env) and cannot be changed here.',
   restart: 'Restart needed',

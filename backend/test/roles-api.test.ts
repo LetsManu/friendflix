@@ -86,6 +86,77 @@ describe('GET /api/admin/roles', () => {
     expect(after.sources.maxBitrate).toBe('default');
   });
 
+  it('defaults are the values without the role\'s own row', async () => {
+    const before = await roleOf('family');
+    expect(before.defaults).toEqual(before.values);
+    expect(Object.keys(before.defaults).sort()).toEqual(MATRIX_FIELDS.map((f) => f.key).sort());
+    expect((await put('family', { maxStreams: 3, perms: { comments: false }, requestsPerMonth: 7 })).statusCode).toBe(200);
+    const after = await roleOf('family');
+    expect(after.values).toMatchObject({ maxStreams: 3, comments: false, requestsPerMonth: 7 });
+    expect(after.defaults).toEqual(before.values);
+    // a copy starts from its base's code default; the admin's switches stay on
+    const key = (await call(admin, 'POST', '/api/admin/roles', { label: 'Oma und Opa', from: 'family' })).json().key as string;
+    expect(key).toBeTruthy();
+    await put(key, { maxStreams: 9 });
+    expect((await roleOf(key)).defaults.maxStreams).toBe(4);
+    expect((await roleOf('admin')).defaults.party).toBe(true);
+  });
+
+  it('defaults of an env role that also has a stored row are its ROLE_TEMPLATES values', async () => {
+    const saved = env.ctx.roles;
+    await env.pool.query("insert into roles(key, label, base, origin, position) values ('crew', 'Crew', 'friend', 'env', 8)");
+    env.ctx.roles = { ...saved, crew: { ...saved.friend!, label: 'Crew', maxStreams: 3 } };
+    invalidateRoles(env.ctx);
+    try {
+      expect((await put('crew', { maxStreams: 5 })).statusCode).toBe(200);
+      const crew = await roleOf('crew');
+      expect(crew.values.maxStreams).toBe(5);
+      expect(crew.sources.maxStreams).toBe('role');
+      expect(crew.defaults.maxStreams).toBe(3);
+    } finally {
+      env.ctx.roles = saved;
+      await env.pool.query("delete from role_settings where role = 'crew'").catch(() => undefined);
+      await env.pool.query("delete from roles where key = 'crew'");
+      invalidateRoles(env.ctx);
+    }
+  });
+
+  it('envGone marks an env role that left ROLE_TEMPLATES', async () => {
+    const saved = env.ctx.roles;
+    await env.pool.query("insert into roles(key, label, base, origin, position) values ('crew', 'Crew', 'friend', 'env', 8), ('old', 'Alt', 'friend', 'env', 9)");
+    env.ctx.roles = { ...saved, crew: { ...saved.friend!, label: 'Crew' } };
+    invalidateRoles(env.ctx);
+    try {
+      const m = (await get()).matrix;
+      const at = (k: string) => m.roles.find((r: { key: string }) => r.key === k);
+      expect(at('crew')).toMatchObject({ origin: 'env', envGone: false });
+      expect(at('old')).toMatchObject({ origin: 'env', envGone: true });
+      expect(at('family').envGone).toBe(false);
+    } finally {
+      env.ctx.roles = saved;
+      await env.pool.query("delete from roles where key in ('crew', 'old')");
+      invalidateRoles(env.ctx);
+    }
+  });
+
+  it('stored tells the roles with a table row from an env-only key, which stays last; its history can be asked for', async () => {
+    const saved = env.ctx.roles;
+    env.ctx.roles = { ...saved, 'Crew.X': { ...saved.friend!, label: 'Crew' } }; // not a valid key: it cannot be stored
+    invalidateRoles(env.ctx);
+    try {
+      const m = (await get()).matrix;
+      expect(m.roles.map((r: { key: string; stored: boolean }) => [r.key, r.stored])).toEqual([['admin', true], ['family', true], ['friend', true], ['guest', true], ['Crew.X', false]]);
+      expect((await call(admin, 'GET', '/api/admin/audit?target=Crew.X')).statusCode).toBe(200);
+      // any key the backend accepts (spaces, umlauts) can be asked for; the value is a bound parameter, so odd text just finds nothing
+      expect((await call(admin, 'GET', `/api/admin/audit?target=${encodeURIComponent('Käse Crew')}`)).json().entries).toEqual([]);
+      expect((await call(admin, 'GET', `/api/admin/audit?target=${encodeURIComponent("Crew';drop table roles;--")}`)).json().entries).toEqual([]);
+      expect((await call(admin, 'GET', `/api/admin/audit?target=${'x'.repeat(65)}`)).statusCode).toBe(400);
+    } finally {
+      env.ctx.roles = saved;
+      invalidateRoles(env.ctx);
+    }
+  });
+
   it('libraries answer [] while the media server cannot list them', async () => {
     folders = null as never; // the fake answers garbage: the list fails
     forgetLibraries(env.ctx);
@@ -468,7 +539,7 @@ describe('catalogue writes', () => {
     expect(await row(key)).toBeUndefined();
     const log = async (a: string) => (await env.pool.query('select target, meta from audit_log where action=$1', [a])).rows;
     expect((await log('user.role')).map((x) => x.meta)).toEqual([{ from: key, to: 'friend' }, { from: key, to: 'friend' }]);
-    expect(await log('role.delete')).toEqual([{ target: key, meta: { moveTo: 'friend', accounts: 2, invites: 1 } }]);
+    expect(await log('role.delete')).toEqual([{ target: key, meta: { moveTo: 'friend', accounts: 2, invites: 1, label: expect.any(String) } }]);
     expect((await get()).matrix.roles.some((x: { key: string }) => x.key === key)).toBe(false);
     expect(await invitableRoles(env.ctx)).not.toContain(key);
   });

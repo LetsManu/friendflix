@@ -280,6 +280,7 @@
             </div>
           {/each}
         </dl>
+        {#if server.items.some((s) => s.key === 'ROLE_TEMPLATES')}<p class="muted small note">{$t('settings.roleTemplatesNote')}</p>{/if}
       </AdminCard>
     {/if}
   {/if}
@@ -298,6 +299,7 @@
   .banner > div { flex: 1 1 14rem; display: grid; gap: .3rem; min-width: 0; }
   .banner :global(svg) { flex: none; }
   code { overflow-wrap: anywhere; }
+  .note { margin: .8rem 0 0; }
   .probe { margin: .4rem 0 0; padding: .6rem .8rem; border-radius: 6px; display: grid; gap: .4rem; justify-items: start; }
   .probe p { margin: 0; }
   .probe.ok { background: var(--wash-ok); color: var(--ok); } /* tone washes over the dark fill: AA on the glass card */
