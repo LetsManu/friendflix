@@ -6,14 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GuardDeps } from '../src/fetch.js';
 import { SEGMENT_SECONDS } from '../src/ffmpeg.js';
 import type { ProbeResult, StreamInput } from '../src/probe.js';
-import { deriveKey, sign } from '../src/protocol.js';
+import { sign } from '../src/protocol.js';
 import { STALL_MS, remuxDriver } from '../src/remux.js';
 import { streamRoutes } from '../src/routes/streams.js';
 import type { Run, RunOptions, RunResult } from '../src/run.js';
 import { start, type RouteCall } from '../src/server.js';
 import { BACKOFF_MS, Streams, type StartBody } from '../src/streams.js';
 import type { Encoder } from '../src/system.js';
-import { fakeFetch, flush, memoryStore, type Served } from './streams-helpers.js';
+import { deriveKey, fakeFetch, flush, keyFile, memoryStore, type Served } from './streams-helpers.js';
 
 const NOW = Date.parse('2026-11-11T20:15:00.000Z');
 const ROOT = '/cache';
@@ -387,7 +387,7 @@ describe('start', () => {
   it('registers the remux and transcode drivers; transcode needs an encoder of /v1/system', async () => {
     const free = await new Promise<number>((r) => { const s = netServer().listen(0, '127.0.0.1', () => { const n = (s.address() as AddressInfo).port; s.close(() => r(n)); }); });
     const secret = 'start-remux-secret-0123456789ab';
-    const s = await start({ PORT: String(free), INTERNAL_SECRET: secret, LIVETV_SRT_PORTS: '9000' }, { log: () => {}, host: '127.0.0.1' });
+    const s = await start({ PORT: String(free), LIVETV_KEY_FILE: keyFile(secret), LIVETV_SRT_PORTS: '9000' }, { log: () => {}, host: '127.0.0.1' });
     const k = deriveKey(secret);
     const call = (method: string, path: string, b?: unknown) => {
       const text = b === undefined ? '' : JSON.stringify(b);

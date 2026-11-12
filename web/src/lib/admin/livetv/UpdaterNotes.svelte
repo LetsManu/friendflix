@@ -3,15 +3,15 @@
 <script lang="ts">
   /**
    * What the updater says about Live TV on its own, also while detection still sees the container: `stop_failed` (a job turned it off
-   * but could not stop it; the next job retries) and "an update turned it off: reason" (the updater's `livetv.error`).
+   * but could not stop it; the next job retries; shown only while no job runs) and "an update turned it off: reason" (the updater's `livetv.error`).
    */
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
-  import { errorKey, type LivetvAdminState } from './state';
+  import { errorKey, stopFailedShown, type LivetvAdminState } from './state';
 
   export let s: LivetvAdminState;
   $: l = s.updater.livetv;
-  $: stopFailed = l?.state === 'stop_failed';
+  $: stopFailed = stopFailedShown(s);
   $: dropped = l?.error && l.state !== 'enabled' ? l.error : null;
   const reason = (c: string | null) => $t(`adminLive.err.${errorKey(c)}` as 'adminLive.err.generic');
 </script>

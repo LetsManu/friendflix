@@ -30,7 +30,8 @@ networks:
 services:
   # Init container (runs once per `up`, then exits): writes every secret needed before the database can be read into the
   # `bootstrap` volume (postgres_password, redis_password, redis.conf, app_enc_key, internal_secret; root:10001, 0440) and
-  # the gateway's copy of internal_secret into `bootstrap-gateway`. A new install sets none of them. Existing installs:
+  # the gateway's copy of internal_secret into `bootstrap-gateway`, and livetv's signing key (derived from internal_secret, never
+  # the secret itself) into `bootstrap-livetv`. A new install sets none of them. Existing installs:
   # the four values below win when set in .env and are copied into the volume on every start. It logs file names only.
   bootstrap:
     # same build as `backend` (the image tag must exist before `up`); `docker compose build` runs it twice, the second from cache
@@ -53,6 +54,7 @@ services:
     volumes:
       - bootstrap:/run/friendflix
       - bootstrap-gateway:/run/friendflix-gateway
+      - bootstrap-livetv:/run/friendflix-livetv
 
   postgres:
     image: postgres:17-alpine
@@ -276,7 +278,8 @@ services:
 
   # Live TV (optional): only with the profile `livetv` (Admin -> Live-TV aktivieren through the updater, or COMPOSE_PROFILES=livetv
   # in .env). Fetches provider lists, EPG and streams; the backend tells it what to run. No Docker socket. Its only published
-  # ports are the UDP range for pushed SRT feeds (LIVETV_SRT_PORTS; open them on the firewall only if you push feeds).
+  # ports are the UDP range for pushed SRT feeds (LIVETV_SRT_PORTS), on 127.0.0.1 unless LIVETV_SRT_BIND says otherwise: set it to
+  # 0.0.0.0 (or the LAN address) only when you push feeds. Docker-published ports bypass ufw/firewalld on most hosts.
   livetv:
     profiles: [livetv]
     build: { context: ., dockerfile: livetv/Dockerfile }
@@ -286,19 +289,19 @@ services:
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    group_add: ["10001"] # reads bootstrap-gateway (internal_secret only)
+    # reads bootstrap-livetv: its own signing key only, never INTERNAL_SECRET (the key to the backend's /internal/* routes)
+    group_add: ["10001"]
     environment:
-      INTERNAL_SECRET: ${INTERNAL_SECRET:-} # unset: the copy in the bootstrap-gateway volume
       LIVETV_CACHE_MAX_GB: ${LIVETV_CACHE_MAX_GB:-6}
       LIVETV_SRT_PORTS: ${LIVETV_SRT_PORTS:-9000-9009}
       TZ: ${TZ:-Europe/Vienna}
     ports:
       # SRT push (§3.5): UDP only, same numbers outside and inside so the setup hint shows the real port.
-      - "${LIVETV_SRT_BIND:-0.0.0.0}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp"
+      - "${LIVETV_SRT_BIND:-127.0.0.1}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp"
     volumes:
       - livetv-cache:/cache                                   # DVR segments, previews (disposable)
       - ${RECORDINGS_PATH:-recordings}:/recordings             # Phase 3
-      - bootstrap-gateway:/run/friendflix-gateway:ro
+      - bootstrap-livetv:/run/friendflix-livetv:ro
     depends_on:
       bootstrap: { condition: service_completed_successfully }
     networks: [livetv, livetv-egress]
@@ -399,6 +402,7 @@ volumes:
   # generated secrets (bootstrap service): back it up apart from the database dumps, see scripts/backup-bootstrap.sh
   bootstrap:
   bootstrap-gateway:
+  bootstrap-livetv: # livetv_key only (written by the bootstrap service on every start; no backup needed)
   pgdata:
   previews:
   downloads:

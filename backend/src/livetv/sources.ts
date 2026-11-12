@@ -7,7 +7,7 @@ import { auditInTx } from '../audit.js';
 import { decrypt, encrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
 import { CHANNEL_SELECT, OWN_FEEDS_KIND, isOwnFeeds } from './channels.js';
-import { LivetvError, livetvCall, livetvStream } from './client.js';
+import { LivetvError, dropLivetvProof, livetvCall, livetvStream } from './client.js';
 import { livetvWrite } from './tx.js';
 import { checkSourceUrl, maskUrl, urlRefusal } from './urls.js';
 import type { FetchM3uAnswer } from './wire.js';
@@ -377,7 +377,10 @@ async function epgChannels(ctx: Ctx, url: string, allowLan: boolean, userAgent: 
   try {
     const r = await livetvStream(ctx, '/v1/fetch/xmltv', { url, allowLan, ...(userAgent ? { userAgent } : {}), from: 0, to: 1 }, { timeoutMs: TEST_EPG_TIMEOUT_MS, signal });
     let text: string;
-    try { text = await r.text(); } catch { return { error: 'timeout' }; }
+    try { text = await r.text(); } catch {
+      if (!signal.aborted) dropLivetvProof(ctx); // not our own cancel: livetv may be gone
+      return { error: 'timeout' };
+    }
     let n = 0;
     for (const line of text.split('\n')) {
       if (!line) continue;

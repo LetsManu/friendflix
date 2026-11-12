@@ -117,11 +117,23 @@ export function runningNetworks(networks: unknown): string[] | null {
 
 export interface RunningConfig { ports: unknown; networks: unknown; project: string | null }
 
+/** the Docker name of the top-level network `key` as compose renders it (its `name`, else <project>_<key>); null = unknown */
+export function networkName(cfg: unknown, key: string, project: string | null): string | null {
+  const c = (cfg ?? {}) as { name?: unknown; networks?: Record<string, { name?: unknown } | null> };
+  const n = c.networks?.[key]?.name;
+  if (typeof n === 'string' && n) return n;
+  const p = typeof c.name === 'string' && c.name ? c.name : project;
+  return p ? `${p}_${key}` : null;
+}
+
 /**
  * Does recreating `service` from this rendered config change its published ports or its networks? 'ports' / 'networks' when
- * it would, null when it would not or a side cannot be read (that side is then not compared).
+ * it would, null when it would not or a side cannot be read (that side is then not compared). `mayJoin`: top-level network keys
+ * the service may newly join without that counting as drift (1b review I3: compose files from 1b add the internal `livetv`
+ * network to backend and gateway; recreating them is exactly what attaches them, so an update must not refuse it). Leaving a
+ * network, or joining any other, still counts.
  */
-export function configDrift(cfg: unknown, service: string, running: RunningConfig): 'ports' | 'networks' | null {
+export function configDrift(cfg: unknown, service: string, running: RunningConfig, mayJoin: readonly string[] = []): 'ports' | 'networks' | null {
   const c = (cfg ?? {}) as { name?: unknown; networks?: unknown; services?: Record<string, unknown> };
   const svc = c.services?.[service];
   if (!svc) return null;
@@ -129,6 +141,10 @@ export function configDrift(cfg: unknown, service: string, running: RunningConfi
   if (rp && xp && rp.join(',') !== xp.join(',')) return 'ports';
   const project = typeof c.name === 'string' && c.name ? c.name : running.project;
   const rn = renderedNetworks(svc, c.networks, project), xn = runningNetworks(running.networks);
-  if (rn && xn && rn.join(',') !== xn.join(',')) return 'networks';
+  if (rn && xn && rn.join(',') !== xn.join(',')) {
+    const allowed = new Set(mayJoin.map((k) => networkName(cfg, k, running.project)).filter((n): n is string => n !== null));
+    const joins = rn.filter((n) => !xn.includes(n)), leaves = xn.filter((n) => !rn.includes(n));
+    if (leaves.length || !joins.every((n) => allowed.has(n))) return 'networks';
+  }
   return null;
 }

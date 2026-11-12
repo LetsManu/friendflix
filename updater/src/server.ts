@@ -176,7 +176,7 @@ export function dockerOps(docker: Docker, healthUrl: string, fetchImpl: typeof f
     imageInfo: (r) => docker.imageInfo(r), running: (s) => docker.running(s), spawnSelfUpdate: (t) => docker.spawnSelfUpdate(t),
     healthy: healthProbe(docker, healthUrl, fetchImpl), composeFiles: () => docker.files,
     ownStack: async () => { await docker.refreshFiles(); },
-    stop: (s) => docker.stop(s), rm: (s) => docker.rm(s), livetvContainer: () => docker.livetvContainer(),
+    stop: (s) => docker.stop(s), rm: (s) => docker.rm(s), livetvContainer: () => docker.livetvContainer(), livetvNetwork: (t) => docker.livetvNetwork(t),
     imageRm: (ids) => docker.removeLivetvImages(ids),
     volumeRm: async () => {
       const name = await docker.cacheVolume();

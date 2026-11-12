@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared by the livetv and backend tests so both ends of the backend -> livetv signing (livetv/src/protocol.ts, backend/src/livetv/client.ts) can never drift apart. key = HMAC-SHA256(secret, 'friendflix-livetv/v1'); signature = 'v1=' + hex HMAC-SHA256(key, METHOD\\nPATH\\nTS\\nNONCE\\nhex(SHA256(body))). Headers x-ff-livetv-ts, x-ff-livetv-nonce, x-ff-livetv-signature. Bodies are fictional.",
+  "_comment": "Shared by the livetv and backend tests so both ends of the backend -> livetv signing (livetv/src/protocol.ts, backend/src/livetv/client.ts) can never drift apart. key = HMAC-SHA256(secret, 'friendflix-livetv/v1'): the backend derives it from INTERNAL_SECRET in memory, the bootstrap service writes it (64 hex) into livetv's key file; livetv holds only key, never secret. signature = 'v1=' + hex HMAC-SHA256(key, METHOD\\nPATH\\nTS\\nNONCE\\nhex(SHA256(body))). Headers x-ff-livetv-ts, x-ff-livetv-nonce, x-ff-livetv-signature. Bodies are fictional, secret and key are test-only values.",
   "secret": "test-internal-secret-livetv-0123456789",
   "key": "1cd764ece826b4219f388117b274348bba1341bfcc0a141706b021173a08e5c9",
   "cases": [
@@ -27,5 +27,10 @@
       "nonce": "0123456789abcdef0123456789abcdef",
       "signature": "v1=9fb2bde4ae379f0642ebe4c52ec5586416d73d51d85df559bd5c52e2ec00775c"
     }
+  ],
+  "_health": "GET /healthz?n=<nonce> answers proof = hex HMAC-SHA256(key, 'healthz:' + nonce): the backend accepts livetv as installed only with it.",
+  "health": [
+    { "nonce": "00112233445566778899aabbccddeeff", "proof": "b3a531913ec41043d3de7b8ce05ea3fa175be53b2f1c56fa1d16880aae5061a7" },
+    { "nonce": "9f8e7d6c5b4a39281706f5e4d3c2b1a0", "proof": "2e8c2291168d74d38579cee127f0b406cb74f20bb2b5df1b85e09ebe782e4682" }
   ]
 }

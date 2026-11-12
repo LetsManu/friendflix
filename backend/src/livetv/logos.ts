@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash } from 'node:crypto';
 import type { Ctx } from '../ctx.js';
-import { LivetvError, livetvStream } from './client.js';
+import { LivetvError, dropLivetvProof, livetvStream } from './client.js';
 
 /**
  * Channel logos (spec §6.1 `livetv_logos`, ruling 28). A logo URL from a provider list or an XMLTV `<icon>` is fetched through livetv
@@ -44,7 +44,7 @@ async function fetchBytes(ctx: Ctx, url: string, allowLan: boolean): Promise<{ m
   const r = await livetvStream(ctx, '/v1/fetch/logo', { url, allowLan }, { timeoutMs: TIMEOUT_MS });
   const mime = (r.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
   let bytes: Buffer | null;
-  try { bytes = await readCapped(r); } catch { throw new LivetvError(null, 'unreachable'); }
+  try { bytes = await readCapped(r); } catch { dropLivetvProof(ctx); throw new LivetvError(null, 'unreachable'); }
   if (!MIMES.includes(mime) || !bytes || bytes.length === 0) return null;
   return { mime, bytes };
 }

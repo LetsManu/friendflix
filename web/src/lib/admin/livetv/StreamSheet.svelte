@@ -20,6 +20,7 @@
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
   import Rich from '#lib/i18n/Rich.svelte';
+  import { errorText } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import CopyField from '#lib/ui/CopyField.svelte';
   import Field from '#lib/ui/Field.svelte';
@@ -84,7 +85,7 @@
       else if (b?.field === 'name') nameErr = tr('adminLive.push.nameMissing');
       else if (b?.field === 'kind') kindErr = tr('adminLive.push.kindMismatch'); // srt only with an srt:// address and back (backend createFeed)
       else if (b?.field === 'number') numErr = tr('adminLive.push.numberBad', { max: 99_999 });
-      else formErr = typeof b?.error === 'string' ? sourceError(b.error) : sourceError('unreachable');
+      else formErr = typeof b?.error === 'string' ? sourceError(b.error) : errorText(e);
     } finally { saving = false; }
   }
 

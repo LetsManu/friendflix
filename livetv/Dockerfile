@@ -30,7 +30,8 @@ RUN make -C /src clean all \
   && srtgate --selftest
 
 # The Jellyfin repository key, checked before apt may trust it: the file must hold exactly one primary key, with the pinned
-# fingerprint (a swapped key or an extra appended one fails the build), and only that key is exported for apt's signed-by.
+# fingerprint (a swapped key or an extra appended one fails the build); then it is dearmored for apt's signed-by (no keyring
+# import: gpg 2.2 would start gpg-agent, which bookworm-slim does not ship).
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS jellyfin-key
 ARG JELLYFIN_KEY_FPR=4918AABC486CA052358D778D49023CD01DE21A7B
 RUN apt-get update \
@@ -39,8 +40,7 @@ RUN apt-get update \
   && export GNUPGHOME="$(mktemp -d)" \
   && test "$(gpg --batch --show-keys --with-colons /tmp/jellyfin.asc | awk -F: '$1 == "pub"' | wc -l)" = 1 \
   && test "$(gpg --batch --show-keys --with-colons /tmp/jellyfin.asc | awk -F: '$1 == "fpr" { print $10; exit }')" = "$JELLYFIN_KEY_FPR" \
-  && gpg --batch --quiet --import /tmp/jellyfin.asc \
-  && gpg --batch --export "$JELLYFIN_KEY_FPR" > /jellyfin.gpg \
+  && gpg --batch --dearmor < /tmp/jellyfin.asc > /jellyfin.gpg \
   && test -s /jellyfin.gpg
 
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
@@ -56,10 +56,9 @@ WORKDIR /app
 COPY --from=jellyfin-key /jellyfin.gpg /etc/apt/keyrings/jellyfin.gpg
 # jellyfin-ffmpeg7 from the Jellyfin repository (signed-by the checked key only; installs to /usr/lib/jellyfin-ffmpeg). Not
 # version-pinned: old versions vanish from the repository, same ruling as the Alpine packages of the other images.
-# libstdc++6: the node binary links it; libsrt1.5-openssl: srtgate links it. Package lists and caches are dropped.
+# libstdc++6 and libatomic1: the node binary links them; libsrt1.5-openssl: srtgate links it. Package lists and caches are dropped.
 RUN apt-get update \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libstdc++6 libsrt1.5-openssl \
-  && echo 'deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/jellyfin.gpg] https://repo.jellyfin.org/debian bookworm main' > /etc/apt/sources.list.d/jellyfin.list \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libstdc++6 libatomic1 libsrt1.5-openssl \n  && echo 'deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/jellyfin.gpg] https://repo.jellyfin.org/debian bookworm main' > /etc/apt/sources.list.d/jellyfin.list \
   && apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jellyfin-ffmpeg7 \
   && test -x /usr/lib/jellyfin-ffmpeg/ffmpeg && test -x /usr/lib/jellyfin-ffmpeg/ffprobe \
@@ -70,6 +69,8 @@ COPY --from=srtgate /usr/local/bin/srtgate /usr/local/bin/srtgate
 # again against the runtime library: a missing or mismatched libsrt fails the build here, not at the first push
 RUN srtgate --selftest
 COPY --from=build /usr/local/bin/node /usr/local/bin/node
+# fail the build, not the container, when node misses a shared library
+RUN ["/usr/local/bin/node", "--version"]
 COPY --from=build --chown=10001:10001 /app/livetv/dist livetv/dist
 COPY --chown=10001:10001 livetv/package.json livetv/
 USER 10001:10001

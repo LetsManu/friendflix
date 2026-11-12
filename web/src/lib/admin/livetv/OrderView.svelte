@@ -29,6 +29,8 @@
   export let save: (ids: string[]) => Promise<void>;
   /** another write of the page runs: the order can neither be changed nor saved meanwhile */
   export let locked = false;
+  /** output (`bind:dirty`): the shown order differs from the stored one, so leaving the view would lose it */
+  export let dirty = false;
 
   const busyKey = uid('order');
   let s: DragState = idle([]);
@@ -196,6 +198,8 @@
   }
   function onMove(e: PointerEvent) {
     if (!drag || e.pointerId !== drag.pointerId) return;
+    // a mouse that moves with no button down lost its release (swallowed by a dialog, a context menu, another window): that is the drop
+    if (e.pointerType === 'mouse' && e.buttons === 0) { void onUp(e); return; }
     drag.y = e.clientY;
     schedule();
   }

@@ -8,8 +8,11 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { FsLike, Run } from '../src/run.js';
 import { CACHE_USAGE_TTL_MS, cacheUsage, cpuInfo, encoders, gpuInfo, parseSrtPorts, systemView } from '../src/system.js';
 
-/** a fake file system: directory listings, link targets and file contents by path; anything else is ENOENT */
-function fakeFs(o: { dirs?: Record<string, string[]>; links?: Record<string, string>; files?: Record<string, string>; rw?: (p: string) => boolean }): FsLike & { accessed: Array<[string, number]> } {
+/**
+ * a fake file system: directory listings, link targets and file contents by path; anything else is ENOENT. accessSync: render
+ * nodes per `rw` (default: usable), other device nodes exist only when listed in `nodes`.
+ */
+function fakeFs(o: { dirs?: Record<string, string[]>; links?: Record<string, string>; files?: Record<string, string>; rw?: (p: string) => boolean; nodes?: string[] }): FsLike & { accessed: Array<[string, number]> } {
   const accessed: Array<[string, number]> = [];
   const enoent = (p: string) => Object.assign(new Error(`ENOENT ${p}`), { code: 'ENOENT' });
   const fake = {
@@ -17,7 +20,11 @@ function fakeFs(o: { dirs?: Record<string, string[]>; links?: Record<string, str
     readdirSync: (p: string) => { const d = o.dirs?.[p]; if (!d) throw enoent(p); return d; },
     readlinkSync: (p: string) => { const l = o.links?.[p]; if (!l) throw enoent(p); return l; },
     readFileSync: (p: string) => { const f = o.files?.[p]; if (f === undefined) throw enoent(p); return f; },
-    accessSync: (p: string, mode: number) => { accessed.push([p, mode]); if (o.rw && !o.rw(p)) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); },
+    accessSync: (p: string, mode: number) => {
+      accessed.push([p, mode]);
+      if (!p.startsWith('/dev/dri/')) { if (!o.nodes?.includes(p)) throw enoent(p); return; }
+      if (o.rw && !o.rw(p)) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+    },
   };
   return fake as unknown as FsLike & { accessed: Array<[string, number]> };
 }
@@ -70,8 +77,8 @@ describe('parseSrtPorts', () => {
 describe('gpuInfo', () => {
   it('Intel (i915): the render node, its driver, readable, no busy percentage', () => {
     const fs = fakeFs({ dirs: { '/dev/dri': ['card0', 'renderD128', 'by-path'] }, links: { '/sys/class/drm/renderD128/device/driver': '../../../bus/pci/drivers/i915' } });
-    expect(gpuInfo(fs)).toEqual({ devices: ['/dev/dri/renderD128'], driver: 'i915', readable: true, busyPct: null });
-    expect(fs.accessed).toEqual([['/dev/dri/renderD128', constants.R_OK | constants.W_OK]]);
+    expect(gpuInfo(fs)).toEqual({ devices: ['/dev/dri/renderD128'], driver: 'i915', readable: true, busyPct: null, nvidia: false });
+    expect(fs.accessed).toEqual([['/dev/dri/renderD128', constants.R_OK | constants.W_OK], ['/dev/nvidiactl', constants.F_OK]]);
   });
 
   it('AMD (amdgpu): gpu_busy_percent is reported', () => {
@@ -80,7 +87,7 @@ describe('gpuInfo', () => {
       links: { '/sys/class/drm/renderD128/device/driver': '../../../../bus/pci/drivers/amdgpu' },
       files: { '/sys/class/drm/renderD128/device/gpu_busy_percent': '37\n' },
     });
-    expect(gpuInfo(fs)).toEqual({ devices: ['/dev/dri/renderD128', '/dev/dri/renderD129'], driver: 'amdgpu', readable: true, busyPct: 37 });
+    expect(gpuInfo(fs)).toEqual({ devices: ['/dev/dri/renderD128', '/dev/dri/renderD129'], driver: 'amdgpu', readable: true, busyPct: 37, nvidia: false });
   });
 
   it('AMD with an unreadable or odd busy file: null', () => {
@@ -92,7 +99,7 @@ describe('gpuInfo', () => {
 
   it('a render node without read and write access: readable false (RENDER_GID not set)', () => {
     const fs = fakeFs({ dirs: { '/dev/dri': ['renderD128'] }, links: { '/sys/class/drm/renderD128/device/driver': 'i915' }, rw: () => false });
-    expect(gpuInfo(fs)).toEqual({ devices: ['/dev/dri/renderD128'], driver: 'i915', readable: false, busyPct: null });
+    expect(gpuInfo(fs)).toEqual({ devices: ['/dev/dri/renderD128'], driver: 'i915', readable: false, busyPct: null, nvidia: false });
   });
 
   it('two render nodes: driver, readable and busy percentage all describe the first one livetv may open', () => {
@@ -102,20 +109,30 @@ describe('gpuInfo', () => {
       files: { '/sys/class/drm/renderD129/device/gpu_busy_percent': '12' },
       rw: (p) => p === '/dev/dri/renderD129',
     });
-    expect(gpuInfo(fs)).toEqual({ devices: ['/dev/dri/renderD128', '/dev/dri/renderD129'], driver: 'amdgpu', readable: true, busyPct: 12 });
+    expect(gpuInfo(fs)).toEqual({ devices: ['/dev/dri/renderD128', '/dev/dri/renderD129'], driver: 'amdgpu', readable: true, busyPct: 12, nvidia: false });
     // none usable: the first node in numeric order speaks
     const none = fakeFs({ dirs: { '/dev/dri': ['renderD130', 'renderD129'] }, links: { '/sys/class/drm/renderD129/device/driver': 'drivers/i915', '/sys/class/drm/renderD130/device/driver': 'drivers/amdgpu' }, rw: () => false });
-    expect(gpuInfo(none)).toEqual({ devices: ['/dev/dri/renderD129', '/dev/dri/renderD130'], driver: 'i915', readable: false, busyPct: null });
+    expect(gpuInfo(none)).toEqual({ devices: ['/dev/dri/renderD129', '/dev/dri/renderD130'], driver: 'i915', readable: false, busyPct: null, nvidia: false });
   });
 
-  it('NVIDIA without /dev/dri: driver nvidia from /proc', () => {
+  it('NVIDIA (the overlay is on): /dev/nvidiactl is there, driver nvidia', () => {
+    const fs = fakeFs({ nodes: ['/dev/nvidiactl', '/dev/nvidia0'] });
+    expect(gpuInfo(fs)).toEqual({ devices: [], driver: 'nvidia', readable: false, busyPct: null, nvidia: true });
+  });
+
+  it('the host NVIDIA driver visible in /proc is no NVIDIA device: without the overlay nvidia is false (1b review I5)', () => {
     const fs = fakeFs({ files: { '/proc/driver/nvidia/version': 'NVRM version: NVIDIA UNIX x86_64 Kernel Module  550.54\n' } });
-    expect(gpuInfo(fs)).toEqual({ devices: [], driver: 'nvidia', readable: false, busyPct: null });
+    expect(gpuInfo(fs)).toEqual({ devices: [], driver: null, readable: false, busyPct: null, nvidia: false });
+  });
+
+  it('an Intel render node next to NVIDIA: the node speaks for the driver, nvidia is reported apart', () => {
+    const fs = fakeFs({ dirs: { '/dev/dri': ['renderD128'] }, links: { '/sys/class/drm/renderD128/device/driver': 'i915' }, nodes: ['/dev/nvidiactl'] });
+    expect(gpuInfo(fs)).toEqual({ devices: ['/dev/dri/renderD128'], driver: 'i915', readable: true, busyPct: null, nvidia: true });
   });
 
   it('no GPU at all', () => {
-    expect(gpuInfo(fakeFs({}))).toEqual({ devices: [], driver: null, readable: false, busyPct: null });
-    expect(gpuInfo(fakeFs({ dirs: { '/dev/dri': ['card0'] } }))).toEqual({ devices: [], driver: null, readable: false, busyPct: null });
+    expect(gpuInfo(fakeFs({}))).toEqual({ devices: [], driver: null, readable: false, busyPct: null, nvidia: false });
+    expect(gpuInfo(fakeFs({ dirs: { '/dev/dri': ['card0'] } }))).toEqual({ devices: [], driver: null, readable: false, busyPct: null, nvidia: false });
   });
 });
 
@@ -166,7 +183,7 @@ describe('cacheUsage and systemView', () => {
     const view = systemView({ fs, run, cacheDir: dir, cacheMaxBytes: 6 * 1024 ** 3, srtPorts: [9000, 9001] });
     const a = await view();
     expect(a).toMatchObject({
-      gpu: { devices: ['/dev/dri/renderD128'], driver: 'i915', readable: true, busyPct: null },
+      gpu: { devices: ['/dev/dri/renderD128'], driver: 'i915', readable: true, busyPct: null, nvidia: false },
       encoders: ['h264_qsv', 'h264_vaapi', 'libx264'],
       cache: { usedBytes: 1024, maxBytes: 6 * 1024 ** 3 },
       recordings: null,

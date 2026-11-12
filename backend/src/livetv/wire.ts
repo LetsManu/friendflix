@@ -7,13 +7,13 @@
  * that first consumes another answer adds its shape to this file.
  */
 
-/** the H.264 encoders livetv can use (livetv/src/system.ts `Encoder`) */
+/** the H.264 encoders compiled into livetv's ffmpeg (livetv/src/system.ts `Encoder`; not a sign of hardware) */
 export type Encoder = 'h264_qsv' | 'h264_vaapi' | 'h264_nvenc' | 'libx264';
 
 /** `GET /v1/system` (spec §3.2; livetv/src/system.ts `SystemView`) */
 export interface LivetvSystem {
   cpu: { model: string; cores: number; loadPct: number };
-  gpu: { devices: string[]; driver: string | null; readable: boolean; busyPct: number | null };
+  gpu: { devices: string[]; driver: string | null; readable: boolean; busyPct: number | null; nvidia: boolean };
   encoders: Encoder[];
   cache: { usedBytes: number; maxBytes: number };
   recordings: { usedBytes: number; freeBytes: number } | null;

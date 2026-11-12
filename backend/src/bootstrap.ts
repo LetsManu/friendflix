@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The `bootstrap` init container (compose): generates every secret needed before the database can be read into the `bootstrap`
-// volume, and the gateway's copy of INTERNAL_SECRET into `bootstrap-gateway`. Runs as root without any capability but CHOWN, on a
+// volume, the gateway's copy of INTERNAL_SECRET into `bootstrap-gateway` and the livetv key (derived from INTERNAL_SECRET, never the
+// secret itself) into `bootstrap-livetv`. Runs as root without any capability but CHOWN, on a
 // read-only root fs without network, then exits; every other service waits for it (service_completed_successfully).
 // Dependency-free on purpose (node: modules and the import-free volumeValue.ts only): it must not load the app, its config or its
 // database code.
-import { randomBytes } from 'node:crypto';
-import { chmodSync, chownSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
+import { createHmac, randomBytes } from 'node:crypto';
+import { accessSync, chmodSync, chownSync, closeSync, constants, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { stripNewlines } from './volumeValue.js';
@@ -21,9 +22,22 @@ const SECRETS = [
 /** Regenerating these would orphan existing data (pgdata's password, encrypted rows), so an empty copy is an error, never replaced. */
 const PRECIOUS: ReadonlySet<string> = new Set(['postgres_password', 'app_enc_key']);
 
+/**
+ * The livetv signing key (spec §3.1 ruling, 1b review I1): livetv gets this, never INTERNAL_SECRET, which is the key to the
+ * backend's /internal/* routes. The backend derives the same key in memory (backend/src/livetv/client.ts livetvKey).
+ */
+export const LIVETV_KEY_LABEL = 'friendflix-livetv/v1';
+export const livetvKeyHex = (internalSecret: string): string => createHmac('sha256', internalSecret).update(LIVETV_KEY_LABEL).digest('hex');
+
 export interface BootstrapOptions {
   dir: string;
   gatewayDir: string;
+  /**
+   * the `bootstrap-livetv` volume: only `livetv_key`, mounted read-only by the optional livetv service alone. Written only when the
+   * directory already exists and is writable (compose creates the mount point); compose files from before Live TV do not mount it
+   * and the root fs is read-only, so it is skipped then, never created (1b re-review C1).
+   */
+  livetvDir: string;
   env: NodeJS.ProcessEnv;
   /** the group that may read the files (FF_SECRETS_GID, 10001): services that need them get it via group_add */
   gid: number;
@@ -45,6 +59,17 @@ function redisArg(v: string): string {
 
 const readOr = (path: string): string | undefined => (existsSync(path) ? readFileSync(path, 'utf8') : undefined);
 
+/** an existing directory this process may write into (a mounted volume); false for a missing path or a read-only file system */
+function writableDir(path: string): boolean {
+  try {
+    if (!statSync(path).isDirectory()) return false;
+    accessSync(path, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** fsync a file or directory, so a renamed file survives a power loss with its content */
 function sync(path: string, flags: string): void {
   const fd = openSync(path, flags);
@@ -63,8 +88,9 @@ function sync(path: string, flags: string): void {
  * refused (the run fails before writing anything, naming the file), the others are regenerated with a log line.
  */
 export function runBootstrap(opts: BootstrapOptions): void {
-  const { dir, gatewayDir, env, gid, chown, log } = opts;
-  for (const d of [dir, gatewayDir]) {
+  const { dir, gatewayDir, livetvDir, env, gid, chown, log } = opts;
+  const livetv = writableDir(livetvDir);
+  for (const d of [dir, gatewayDir, ...(livetv ? [livetvDir] : [])]) {
     mkdirSync(d, { recursive: true });
     chown(d, 0, gid);
     chmodSync(d, 0o750);
@@ -134,12 +160,24 @@ export function runBootstrap(opts: BootstrapOptions): void {
   const gwExisted = existsSync(gw);
   const gwAction = put(gw, values.internal_secret!);
   log(`gateway internal_secret: ${gwAction === 'kept' ? 'kept' : gwExisted ? 'updated' : 'generated'}`);
+
+  // livetv: the derived key only (root:gid 0440, livetv runs as 10001 in that group). Rewritten from INTERNAL_SECRET on every run,
+  // so an existing install gets it on its next `up` and a changed secret changes it too. Without the volume (compose files from
+  // before Live TV) there is nothing to write and nothing fails: a livetv started there refuses with "missing key file".
+  if (!livetv) {
+    log('livetv_key: skipped (no livetv volume)');
+    return;
+  }
+  const lk = join(livetvDir, 'livetv_key');
+  const lkExisted = existsSync(lk);
+  const lkAction = put(lk, livetvKeyHex(values.internal_secret!));
+  log(`livetv_key: ${lkAction === 'kept' ? 'kept' : lkExisted ? 'updated' : 'generated'}`);
 }
 
 // entry point of the init container: node backend/dist/bootstrap.js
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    runBootstrap({ dir: '/run/friendflix', gatewayDir: '/run/friendflix-gateway', env: process.env, gid: 10001, chown: chownSync, log: (l) => console.log(`bootstrap: ${l}`) });
+    runBootstrap({ dir: '/run/friendflix', gatewayDir: '/run/friendflix-gateway', livetvDir: '/run/friendflix-livetv', env: process.env, gid: 10001, chown: chownSync, log: (l) => console.log(`bootstrap: ${l}`) });
   } catch (err) {
     // fs errors name the path and the code, never file contents
     console.error(`bootstrap failed: ${err instanceof Error ? err.message : String(err)}`);

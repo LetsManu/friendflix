@@ -66,6 +66,55 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
     await expect(page.getByText('Der Dienst läuft aber nicht')).toHaveCount(0);
   });
 
+  test('an updater from before Live TV: no enable button, "update the updater first" leads to Admin → Update (1b review I3)', async ({ page, api }) => {
+    api.admin.livetv.ltOld = true;
+    await page.goto('/admin/livetv');
+    const c = card(page);
+    await expect(c.locator('[data-mode="updaterOld"]')).toContainText('Dieser Updater kennt Live-TV noch nicht.');
+    await expect(c.getByRole('button', { name: 'Live-TV aktivieren' })).toHaveCount(0);
+    const go = c.getByRole('link', { name: 'Erst den Updater aktualisieren' });
+    await expect(go).toHaveAttribute('href', '/admin/update');
+    const box = await go.boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+    expect(api.admin.livetv.posts).toEqual([]);
+  });
+
+  for (const [code, text] of [
+    ['compose_outdated', 'Deine compose.prod.yaml stammt von vor Live-TV.'],
+    ['network_missing', 'Backend und Gateway hängen noch nicht im Netz livetv.'],
+  ] as const) {
+    test(`an enable on an install from before Live TV ends with its own advice: ${code}`, async ({ page, api }) => {
+      api.admin.livetv.outcome = 'failed';
+      api.admin.livetv.failCode = code;
+      await page.goto('/admin/livetv');
+      await card(page).getByRole('button', { name: 'Live-TV aktivieren' }).click();
+      const res = card(page).locator('[data-result="failed"]');
+      await expect(res).toContainText(text, { timeout: 20_000 });
+      await expect(res).toContainText('docker compose up -d');
+      await expect(res).not.toContainText('nicht das erwartete');
+    });
+  }
+
+  test('an updater that refuses the signature is named, with no .env steps (1b review M7)', async ({ page, api }) => {
+    api.admin.livetv.updaterError = 'unauthorized';
+    await page.goto('/admin/livetv');
+    const c = card(page);
+    await expect(c.locator('[data-mode="updaterError"]')).toContainText('Der Updater lehnt die Signatur ab – Updater aktualisieren oder neu starten');
+    await expect(c.getByText('Von Hand einschalten')).toHaveCount(0);
+    await expect(c.getByRole('button', { name: 'Live-TV aktivieren' })).toHaveCount(0);
+  });
+
+  test('a disable that could not stop the container says so, not "Das hat nicht geklappt." (1b review M7)', async ({ page, api }) => {
+    const lt = api.admin.livetv;
+    lt.installed = true; lt.wanted = true; lt.ltState = 'enabled';
+    lt.outcome = 'failed'; lt.failCode = 'stop_failed';
+    await page.goto('/admin/livetv?tab=status');
+    await page.getByRole('button', { name: 'Live-TV ausschalten …' }).click();
+    await page.getByRole('dialog', { name: 'Live-TV ausschalten?' }).getByRole('button', { name: 'Ausschalten' }).click();
+    await expect(page.locator('[data-result="failed"]')).toContainText('Der Container ließ sich nicht stoppen.', { timeout: 20_000 });
+    await expect(page.getByText('Das hat nicht geklappt.')).toHaveCount(0);
+  });
+
   test('no updater shows the .env line and copies it', async ({ page, api, context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     api.admin.livetv.updater = false;
@@ -171,6 +220,14 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
       await expect(page.getByText('Ein Update hat Live-TV ausgeschaltet. Der Container startete, wurde aber nicht gesund.')).toBeVisible();
     });
 
+    test('stop_failed stored by an update that is still running is not shown until the job ends (re-review concern 4)', async ({ page, api }) => {
+      api.admin.livetv.ltState = 'stop_failed';
+      api.admin.livetv.job = { id: 'a1', action: 'update', state: 'running', step: 'restart', from: null, to: 'sha-abc1234', startedAt: new Date().toISOString(), finishedAt: null, error: null, steps: { pull: 'ok', verify: 'ok', restart: 'running', health: 'pending', rollback: 'skipped' } };
+      await page.goto('/admin/livetv?tab=status');
+      await expect(page.getByText('Ein Update läuft gerade. Danach geht es wieder.')).toBeVisible();
+      await expect(page.locator('[data-note="stop_failed"]')).toHaveCount(0);
+    });
+
     test('an app update running names itself next to the disabled off button', async ({ page, api }) => {
       api.admin.livetv.job = { id: 'a1', action: 'update', state: 'running', step: 'pull', from: null, to: 'sha-abc1234', startedAt: new Date().toISOString(), finishedAt: null, error: null, steps: { pull: 'running', verify: 'pending', restart: 'pending', health: 'pending', rollback: 'skipped' } };
       await page.goto('/admin/livetv?tab=status');
@@ -229,6 +286,25 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
       // the steps of the job, then the offer is back
       await expect(page.getByRole('region', { name: 'Live-TV (optional)' })).toBeVisible({ timeout: 20_000 });
       expect(api.admin.livetv.wanted).toBe(false);
+    });
+
+    test('after a disable the page waits for detection: "being turned off", never "läuft", then the offer (1b review I4)', async ({ page, api }) => {
+      const lt = api.admin.livetv;
+      lt.offLag = 2; // detection still says installed for two more polls after the job ended
+      await page.goto('/admin/livetv?tab=status');
+      await page.getByRole('button', { name: 'Live-TV ausschalten …' }).click();
+      await page.getByRole('dialog', { name: 'Live-TV ausschalten?' }).getByRole('button', { name: 'Ausschalten' }).click();
+      // the job ended (updater: disabled) while detection still answers installed: the page keeps asking and says so
+      await expect(page.locator('[data-stopping]')).toBeVisible({ timeout: 20_000 });
+      expect(lt.job.state).toBe('succeeded');
+      expect(lt.installed).toBe(true);
+      await expect(page.getByText('Live-TV läuft.')).toHaveCount(0);
+      await expect(page.getByText('Live-TV wird ausgeschaltet …').first()).toBeVisible();
+      await expect(page.getByRole('region', { name: 'Live-TV (optional)' })).toBeVisible({ timeout: 20_000 });
+      expect(lt.installed).toBe(false);
+      await expect(page.getByText('Live-TV läuft.')).toHaveCount(0);
+      // the nav shows the optional entry again (summary refreshed when installed flipped)
+      await expect(nav(page).getByRole('link', { name: /Live-TV/ })).toContainText('optional');
     });
 
     test('Escape closes the dialog without sending anything', async ({ page, api }) => {

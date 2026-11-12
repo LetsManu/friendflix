@@ -13,7 +13,9 @@ const fake = {
   busy: false, stack: undefined as 'own' | 'foreign' | undefined, status: 200, jobState: 'running', jobAction: '' as string, livetv: undefined as unknown, answer: undefined as unknown,
   calls: [] as Array<{ method: string; path: string; body: string; sigOk: boolean; type: string | null }>,
   portainer: [] as string[],
-  reset() { Object.assign(this, { busy: false, stack: undefined, status: 200, jobState: 'running', jobAction: '', livetv: undefined, answer: undefined, calls: [], portainer: [] }); },
+  /** livetv: what the status reports (undefined = an updater from before livetv); old: the route itself is unknown (404) */
+  old: false,
+  reset() { Object.assign(this, { busy: false, stack: undefined, status: 200, jobState: 'running', jobAction: '', livetv: { state: 'absent', container: null, error: null }, answer: undefined, calls: [], portainer: [], old: false }); },
 };
 const job = (action: string) => ({ id: JOB_ID, action, state: fake.jobState, step: fake.jobState === 'running' ? 'restart' : null, from: null, to: 'latest',
   steps: { pull: 'skipped', verify: 'skipped', restart: fake.jobState === 'running' ? 'running' : 'ok', health: 'skipped', rollback: 'skipped' },
@@ -38,7 +40,7 @@ const updaterFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     return j({ updater: { version: '3.3.0', sha: null }, channel: 'stable', version: null, targetTag: 'latest', current: 'latest', previous: null, busy: fake.busy,
       job: fake.jobAction ? job(fake.jobAction) : null, log: [], services: [], ...(fake.stack ? { stack: fake.stack } : {}), ...(fake.livetv !== undefined ? { livetv: fake.livetv } : {}) });
   }
-  if (u.pathname !== '/v1/livetv' || method !== 'POST') return j({ error: 'not_found' }, 404);
+  if (u.pathname !== '/v1/livetv' || method !== 'POST' || fake.old) return j({ error: 'not_found' }, 404);
   if (fake.status !== 200) return j({ error: 'x' }, fake.status);
   if (fake.busy) return j({ error: 'busy' }, 409);
   if (fake.answer !== undefined) return j(fake.answer, 202);
@@ -128,12 +130,28 @@ describe('startLivetvJob', () => {
   });
 });
 
+describe('an updater from before livetv (1b review I3)', () => {
+  it('a status without livetv: updater_outdated before anything is sent', async () => {
+    fake.livetv = undefined;
+    expect(await startLivetvJob(env.ctx, { op: 'enable' }, adminId)).toEqual({ ok: false, status: 409, error: 'updater_outdated' });
+    expect(posts()).toEqual([]);
+  });
+
+  it('the route answering 404 not_found is updater_outdated too, never a bare not_found', async () => {
+    fake.old = true;
+    const before = (await audits('system.updater_start')).length;
+    expect(await startLivetvJob(env.ctx, { op: 'enable' }, adminId)).toEqual({ ok: false, status: 409, error: 'updater_outdated' });
+    expect(await startLivetvJob(env.ctx, { op: 'disable' }, adminId)).toEqual({ ok: false, status: 409, error: 'updater_outdated' });
+    expect(await audits('system.updater_start')).toHaveLength(before); // nothing started
+  });
+});
+
 describe('status: livetv', () => {
   it('parses the livetv field and the three livetv job actions', () => {
     expect(parseStatus({ channel: 'stable' })!.livetv).toBeNull(); // an updater from before livetv
     expect(parseStatus({ channel: 'stable', livetv: { state: 'enabled', container: 'running', error: null } })!.livetv).toEqual({ state: 'enabled', container: 'running', error: null });
     expect(parseStatus({ channel: 'stable', livetv: { state: 'disabled', container: null, error: 'unhealthy' } })!.livetv).toEqual({ state: 'disabled', container: null, error: 'unhealthy' });
-    for (const e of ['pull_failed', 'unexpected_image', 'config_mismatch', 'compose_config', 'verify_failed', 'restart_failed']) expect(parseStatus({ channel: 'stable', livetv: { state: 'disabled', error: e } })!.livetv?.error).toBe(e);
+    for (const e of ['pull_failed', 'unexpected_image', 'config_mismatch', 'compose_config', 'compose_outdated', 'verify_failed', 'restart_failed']) expect(parseStatus({ channel: 'stable', livetv: { state: 'disabled', error: e } })!.livetv?.error).toBe(e);
     // disabled by a job that could not stop the container (the updater stops it on its next job)
     expect(parseStatus({ channel: 'stable', livetv: { state: 'stop_failed', container: 'running', error: 'unhealthy' } })!.livetv).toEqual({ state: 'stop_failed', container: 'running', error: 'unhealthy' });
     expect(parseStatus({ channel: 'stable', livetv: { state: '<b>', container: 'paused', error: 'token ghp_x' } })!.livetv).toEqual({ state: 'absent', container: null, error: null });
