@@ -1,12 +1,14 @@
 # Live TV with a shared conversion budget (design)
 
 Date: 2026-11-11 · Status: design approved by the owner in chat (option B); this spec writes it down, grounds it in the code
-and resolves the rest
+and resolves the rest · Updated 2026-11-12 with the owner-approved changes from the competitor research (*Owner decisions*,
+last entry)
 
 ## Goal
 
 FriendFlix gets Live TV that feels like the rest of the app: a *Live-TV* tab next to *Serien* and *Filme*, channels from an
-IPTV provider list and from the household's own feeds, a live player with pause and a 30-minute rewind buffer, channel
+IPTV provider list and from the household's own feeds, a live player with pause and a rewind buffer (30 minutes by default,
+up to 120), channel
 switching with the remote, casting, a programme guide (Phase 2) and recordings (Phase 3). It is **optional**: nothing is
 downloaded or run until an admin turns it on. A **server-wide conversion budget** (Phase 1, useful without Live TV) makes sure
 films, HEVC conversions, live channels and recordings never overload the server together.
@@ -89,6 +91,32 @@ failed, new series episode, storage nearly full).
 **Permissions.** Channel groups allowed per role, with per-user overrides (e.g. a guest gets "Sport"); groups can be marked
 kid-friendly; kids profiles see only kid-friendly groups (none → no tab). Favourites per profile.
 
+**Research follow-ups (owner decision, 2026-11-12).** The owner approved all eight changes proposed by the competitor
+research (report of 2026-11-12 comparing 16 live-TV apps; not in the repository). All eight are **Phase 1** and binding;
+where they change an earlier decision above, this entry wins:
+
+1. **Release the old stream on a switch** (§7.4, §12.2): when a person switches channel and was the old stream's only
+   viewer, and the new channel needs the provider connection or a conversion slot the old stream holds, the old stream stops
+   at once instead of lingering 60 s. Otherwise the 60-s linger stays.
+2. **Remote keys** (§11.3, §12.3, §12.4, §14): do not rely on LG CH+/CH− (LG staff: not available to webOS web apps).
+   ▲/▼ zap on every TV; the hint line shows only keys the device has actually sent; a lone **0** = last channel; Tizen registers
+   `ChannelList` and `Guide` where the TV supports them. Every live feature has a D-pad + OK + Back path.
+3. ***Von Anfang an*** (§12.1): restart the running programme when its start is still in the time-shift buffer.
+   `LIVETV_DVR_MINUTES` may be set up to **120** (default stays **30**) (§3.3, §6.4).
+4. **Info banner** (§12.2): the 1-second channel card becomes an info banner (logo, number, name, *Jetzt* + progress +
+   time left, *Danach*), shown until the first frame plus about 4 s.
+5. **TV remote in the player** (§12.3): OK shows the controls (it does not pause); a long OK opens the *Senderliste* panel;
+   Back from that panel (and, in Phase 2, from the guide) returns focus to the playing channel.
+6. **EPG matching basics in Phase 1c** (§6.1, §9.1, §9.4): a time offset per source and per channel (`tvg-shift`),
+   case-insensitive tvg-id → tvg-name → display name before any fuzzy match, a logo preference, a numbering policy.
+7. **Large provider lists** (§8, §9.1, §9.3): after *Prüfen* the admin picks which groups to import; new provider groups are
+   hidden and granted to no role until the admin releases them. This replaces the earlier default of granting new groups to
+   admin, family and friend.
+8. **Recently watched and ordered favourites** (§6.1, §11.1, §12.2): the last 10 channels (*Zuletzt gesehen*), favourites in
+   the person's own order, and a time-left label ("noch 23 Min.").
+
+Later items of the research stay out of Phases 1–3 (§25).
+
 ## Sources this spec is built from
 
 Code as of `main` = 3.3.0: `backend/src/hevcenc.ts` (probe, gate, grants), `media/streamplan.ts` (`applyGate`),
@@ -107,8 +135,8 @@ and `2026-11-11-users-permissions-design.md` (Phase 0).
 - No SRT push without a generated stream id + passphrase, no RTMP/WHIP/RTSP ingest, no TCP ingest ports: pushed feeds come in
   only over SRT on the published UDP range (§3.5).
 - No adaptive bitrate ladder for live: one rendition per channel (the *Mobile-Qualität* rendition stays a later, off option).
-- No catch-up / replay TV beyond the 30-minute buffer and recordings; no provider VOD (M3U entries for films and series are
-  skipped on import).
+- No catch-up / replay TV beyond the time-shift buffer (`LIVETV_DVR_MINUTES`, *Von Anfang an* included) and recordings; no
+  provider VOD (M3U entries for films and series are skipped on import). Provider catch-up stays a later item (§25).
 - No ad skipping, no DRM sources, no subtitles/teletext for live in these phases (DVB subtitles are dropped on remux; listed
   as a known limit).
 - No live TV in offline downloads.
@@ -127,6 +155,10 @@ and `2026-11-11-users-permissions-design.md` (Phase 0).
   the guide's red *jetzt* line and the red recording dot, both using the existing danger red token `--err`, each also carried
   by text or shape (never colour alone).
 - **i18n:** everything through `#lib/i18n`, seven locales (`de` source, `en` second); copy table in §20.
+- **Remote:** every live feature works with D-pad + OK + Back alone (the Android TV rule, and many remotes send nothing
+  else). Channel, digit, colour, Info, `ChannelList` and `Guide` keys and a long OK are shortcuts, never the only way.
+  Hints never name a key the device has not sent (§11.3).
+- **Old TV browsers:** web code reaches Tizen (Chromium 85) and webOS (Chromium 87); live files use nothing newer.
 - **Secrets:** provider URLs (and every channel stream URL, which usually carries the same credentials) are stored encrypted
   (`APP_ENC_KEY`, the settings-blob format), never sent to a browser, never logged, never in metrics labels, audit metadata,
   error texts or Diagnose output. Clients only ever see FriendFlix token paths.
@@ -147,11 +179,11 @@ The phase split (each PR leaves the app working; Live TV stays invisible until e
 | Phase | PR | Content |
 |---|---|---|
 | **0** | 0a–0c | Users & permissions remodel (`2026-11-11-users-permissions-design.md`): permission registry with `liveTv` / `liveRecord`, role editor, per-user overrides. Live TV depends on it. |
-| **1** | **1a** | Shared conversion budget + benchmark (backend `convbudget.ts`, `/api/playback/info` gate, Admin → *Wiedergabe* card). No Live TV needed. |
+| **1** | **1a** | Shared conversion budget + benchmark (backend `convbudget.ts`, `/api/playback/info` gate, card *Umwandlungen* in Admin → *Betrieb* → *Wiedergabe-Check*). No Live TV needed. |
 | | **1b** | `livetv` image + compose profile + GPU overlays + updater actions + backend detection + *Live-TV (optional)* entry + enable/disable flow. |
-| | **1c** | Sources, import (M3U/XMLTV), channels (pulled and pushed own feeds, §3.5), groups & rights, logos, admin *Quellen* / *Kanäle* / *Gruppen & Rechte* / *Live-Status*; now/next from XMLTV (auto-matching only). Migration 48. |
-| | **1d** | Watching: tokens, gateway route, shared streams (incl. SRT push ingest, §3.5), DVR, budget admission, the *Live-TV* tab (desktop, phone, kids, TV), live player, favourites, last channel, Chromecast/AirPlay, *TV startet mit Live-TV*. |
-| | **1e** | Platform keys and shells: Tizen key registration, webOS key mapping, Fire TV `FireTvKeys`, Android shell cast bridge `castLive`. |
+| | **1c** | Sources, import (M3U/XMLTV) with the group picker and unreleased new groups, numbering policy, logo preference, EPG time offsets, channels (pulled and pushed own feeds, §3.5), groups & rights, logos, admin *Quellen* / *Kanäle* / *Gruppen & Rechte* / *Live-Status*; now/next from XMLTV (automatic matching in four exact passes, §9.4). Migration 48. |
+| | **1d** | Watching: tokens, gateway route, shared streams (incl. SRT push ingest, §3.5), DVR up to 120 min, release on switch, budget admission, the *Live-TV* tab (desktop, phone, kids, TV), live player (info banner, *Von Anfang an*, *Senderliste* panel), favourites in own order, *Zuletzt gesehen*, last channel, Chromecast/AirPlay, *TV startet mit Live-TV*. |
+| | **1e** | Platform keys and shells: Tizen key registration (incl. `ChannelList`/`Guide`), webOS key mapping, Fire TV `FireTvKeys`, Android shell cast bridge `castLive`. |
 | **2** | 2a | EPG admin: *Programmführer* tab (matching with suggestions, unmatched list, manual EPG entries/rules). Migration 49. |
 | | 2b | EPG grid for users (desktop, phone, TV), detail sheet, reminders. |
 | **3** | 3a | Recordings backend + `livetv` recorder + storage modes (incl. the library sub-folder mount, §15.3) + budget reservation + notifications. Migration 50. |
@@ -250,8 +282,8 @@ Every `/v1/*` request is HMAC-signed like the updater (`signUpdater` scheme, key
 |---|---|
 | `GET /healthz` | `{ ok, version, bootId }` (unsigned) |
 | `GET /v1/system` | `{ cpu: { model, cores, loadPct }, gpu: { devices: string[], driver: string \| null, readable: boolean, busyPct: number \| null }, encoders: Array<'h264_qsv'\|'h264_vaapi'\|'h264_nvenc'\|'libx264'>, cache: { usedBytes, maxBytes }, recordings: { usedBytes, freeBytes } \| null }` |
-| `POST /v1/fetch/m3u` | `{ url, userAgent?, allowLan }` → `{ entries: [{ key, name, tvgId?, tvgName?, chno?, group?, logo?, url, kind }], skipped: { vod, invalid, overLimit } }` |
-| `POST /v1/fetch/xmltv` | `{ url, userAgent?, allowLan, channels?: string[], from, to }` → NDJSON stream: `{ t:'channel', id, names[] }` / `{ t:'prog', ch, start, end, title, subtitle?, desc?, cats?, episode?, seriesId?, isNew?, prevShown?, rating? }` |
+| `POST /v1/fetch/m3u` | `{ url, userAgent?, allowLan, skipGroups?: string[] }` → `{ entries: [{ key, name, tvgId?, tvgName?, chno?, group?, logo?, shiftMin?, url, kind }], groups: [{ name, channels }], listed, skipped: { vod, invalid, overLimit, groups } }`; entries of `skipGroups` are dropped **before** the 20 000 cap, so a big list keeps the picked groups; `groups` and `listed` count every live entry (for the picker and the shrink guard); `shiftMin` = the entry's `tvg-shift`, else the `#EXTM3U` header's, in minutes |
+| `POST /v1/fetch/xmltv` | `{ url, userAgent?, allowLan, channels?: string[], from, to }` → NDJSON stream: `{ t:'channel', id, names[], icon? }` / `{ t:'prog', ch, start, end, title, subtitle?, desc?, cats?, episode?, seriesId?, isNew?, prevShown?, rating? }` |
 | `POST /v1/fetch/logo` | `{ url, allowLan }` → image bytes (`image/png \| jpeg \| webp`) or 422 |
 | `POST /v1/probe` | `{ input }` → `{ ok, video?: { codec, width, height, fps }, audio?: { codec, channels }, needs: 'passthrough'\|'remux'\|'transcode', error?: code }` (10 s budget) |
 | `POST /v1/streams` | `{ channelId, input, mode, encoder, dvrSeconds, maxBitrate }` → `{ streamKey, state:'starting'\|'running' }` (idempotent per `channelId`) |
@@ -280,11 +312,16 @@ Every `/v1/*` request is HMAC-signed like the updater (`signUpdater` scheme, key
 | any source whose video is not H.264 (HEVC, MPEG-2) | **transcode**: H.264 High ≤ 1080p, 6 Mbit/s (720p: 3 Mbit/s), GOP 2 s, AAC stereo, HLS 4 s; encoder per `LIVETV_ENCODER` (§5.4) | yes |
 
 - **One stream per channel** for all viewers; viewers join a running stream without any new work.
-- **DVR window**: `LIVETV_DVR_MINUTES` (0–30, default 30) of segments on disk; the playlist is a sliding live playlist whose
-  window is the DVR length (no `EXT-X-PLAYLIST-TYPE`), so hls.js and Safari offer pause and rewind inside it. When
-  `livetv-cache` passes `LIVETV_CACHE_MAX_GB`, the oldest segments of the stream with the longest window are dropped first
-  (windows shrink, never the live edge).
-- **Stop**: the backend stops a stream 60 s after its last viewer left (§7.4). Safety net inside `livetv`: a stream with no
+- **DVR window**: `LIVETV_DVR_MINUTES` (0–120, **default 30**; owner decision 2026-11-12) of segments on disk; the playlist
+  is a sliding live playlist whose window is the DVR length (no `EXT-X-PLAYLIST-TYPE`), so hls.js and Safari offer pause and
+  rewind inside it. When `livetv-cache` passes `LIVETV_CACHE_MAX_GB`, the oldest segments of the stream with the longest
+  window are dropped first (windows shrink, never the live edge). Rough size: 120 min of a 6 Mbit/s channel ≈ 5.4 GB, so
+  with the default cache cap of 6 GB two long windows already shrink each other; the setting's help text says so.
+- **Wall-clock times:** every segment line carries `#EXT-X-PROGRAM-DATE-TIME` (the provider's value when its playlist has
+  one, else the time the segment arrived in `livetv` minus its duration), so the player can map a programme's start to a
+  position in the buffer (*Von Anfang an*, §12.1).
+- **Stop**: the backend stops a stream 60 s after its last viewer left, or at once on a switch that needs its connection or
+  slot (§7.4). Safety net inside `livetv`: a stream with no
   `/s/` fetch for 180 s stops by itself.
 - **Reconnect**: input errors retry with backoff 2, 4, 8, 15, 30 s (then every 30 s) while viewers exist; segments continue
   with a discontinuity; each outage is an event (`input_lost`, `input_back`, seconds) reported in `GET /v1/streams`.
@@ -502,15 +539,23 @@ pattern; unreadable session list within 800 ms = busy). In `routes/media.ts` aft
 Cast (`routes/cast.ts`) uses the same gate. A quality switch or audio change of the same device replaces its own running
 conversion (its own session is not counted, as in `hevcGate`).
 
-### 5.6 Admin UI (Admin → *Wiedergabe*, new first card *Umwandlungen*)
+### 5.6 Admin UI (new first card *Umwandlungen* on Admin → *Betrieb* → *Wiedergabe-Check*)
+
+Where it lives today: the admin sidebar group *Betrieb* (`admin.nav.groups.operations`) has the entry *Wiedergabe-Check*
+(`admin.tabs.playback`, `/admin/playback`, `web/src/lib/admin/nav.ts`); that page already lists the running streams. The
+card becomes its first card; the menu label stays *Wiedergabe-Check*.
 
 - Big number "2 von 3 belegt" with a slot bar (`3` segments, filled by kind: film / live / recording / other, icon + label per
   segment, never colour only); list of what runs (kind icon, label: title or channel name, since, device); *Neu messen* button
   (disabled with reason while busy).
-- "Gemessen 4,6× Echtzeit (Jellyfin, Intel QSV) · Live-TV 3,9× · empfohlen 3 · geprüft heute 03:10".
+- "Gemessen 4,6× Echtzeit (Jellyfin, Intel QSV) · Live-TV 4,4× · empfohlen 3 · geprüft heute 03:10" (§5.3:
+  floor(min(4,6; 4,4) × 0,7) = floor(3,08) = 3).
 - *Gleichzeitige Umwandlungen*: segmented *Automatisch (3)* / *Eigener Wert* + number stepper 1–16.
-- *Vorrang*: *Filme & Serien zuerst* / *Live-TV zuerst* / *Gleichrangig*, with a one-line explanation ("Live-TV lässt einen
-  Platz für Filme frei.").
+- *Vorrang*: *Filme & Serien zuerst* / *Live-TV zuerst* / *Gleichrangig*, with a one-line explanation **for the selected
+  option** (the same three texts in §20, `adminConv.priority.hint.*`):
+  - *Filme & Serien zuerst*: "Live-TV lässt einen Platz für Filme & Serien frei (ab 2 Plätzen)."
+  - *Live-TV zuerst*: "Filme & Serien lassen einen Platz für Live-TV frei (ab 2 Plätzen)."
+  - *Gleichrangig*: "Kein Platz wird freigehalten – wer zuerst kommt, bekommt ihn."
 - The same card (read-only, with a link) appears on *Live-Status*.
 
 ## 6. Data model
@@ -535,8 +580,11 @@ create table livetv_sources (
   user_agent text check (char_length(user_agent) <= 200),
   allow_lan boolean not null default false,
   refresh text not null default '24h' check (refresh in ('6h','12h','24h','weekly','manual')),
-  auto_roles text[] not null default '{admin,family,friend}', -- roles new provider groups are granted to
+  skip_groups text[] not null default '{}', -- provider group-titles the admin did not pick (§9.1); never imported
+  numbering text not null default 'chno' check (numbering in ('chno','order')), -- tvg-chno first, or list order only
   number_base int not null default 1,
+  logo_pref text not null default 'm3u' check (logo_pref in ('m3u','xmltv')), -- which imported logo wins (own upload always)
+  epg_shift_min int not null default 0 check (epg_shift_min between -720 and 840), -- EPG time offset of the source
   max_streams int check (max_streams between 1 and 50), -- provider's limit of channels at once; null = unknown
   enabled boolean not null default true,
   position int not null default 0,
@@ -549,6 +597,7 @@ create table livetv_groups (
   id uuid primary key,
   name text not null check (char_length(name) between 1 and 40),
   kid_friendly boolean not null default false,
+  released boolean not null default true, -- false: created by an import; hidden from every user until the admin releases it
   position int not null default 0,
   created_at timestamptz not null default now()
 );
@@ -583,14 +632,17 @@ create table livetv_channels (
   push_passphrase_enc text,
   allow_lan boolean,                      -- manual feeds; null = the source's value
   import_name text not null, import_number int, import_group text, import_logo_hash text, tvg_id text, tvg_name text,
+  import_epg_shift_min int,               -- M3U tvg-shift (entry, else #EXTM3U header), in minutes; null = none
   name_override text check (char_length(name_override) between 1 and 60),
   number_override int check (number_override between 1 and 99999),
   group_override uuid references livetv_groups(id) on delete set null,
   logo_override_hash text,
+  epg_shift_override_min int check (epg_shift_override_min between -720 and 840),
   hidden boolean not null default false,
   epg_source_id uuid references livetv_sources(id) on delete set null,
   epg_channel_id text,
   epg_match text not null default 'auto' check (epg_match in ('auto','manual','none')),
+  epg_logo_hash text,                     -- <icon> of the matched XMLTV channel (fetched during the EPG refresh)
   probe jsonb,                            -- last probe: { at, ok, video, audio, needs }
   missing_since timestamptz,              -- not in the latest import; deleted 30 days later
   created_at timestamptz not null default now(),
@@ -634,19 +686,26 @@ create table livetv_favourites (
   position int not null default 0,
   primary key (profile_id, channel_id)
 );
-create table livetv_last (
-  profile_id uuid primary key references profiles(id) on delete cascade,
-  channel_id uuid references livetv_channels(id) on delete set null,
-  previous_id uuid references livetv_channels(id) on delete set null,
-  at timestamptz not null default now()
+create table livetv_recent (              -- Zuletzt gesehen: newest first, at most 10 rows per profile (trimmed on write)
+  profile_id uuid not null references profiles(id) on delete cascade,
+  channel_id uuid not null references livetv_channels(id) on delete cascade,
+  at timestamptz not null default now(),
+  primary key (profile_id, channel_id)
 );
+create index livetv_recent_profile on livetv_recent(profile_id, at desc);
 alter table devices add column start_live boolean not null default false;
 ```
 
 Derived values (one SQL view `livetv_channels_v` or a function in `livetv/channels.ts`): effective name =
-`name_override ?? import_name`; number = `number_override ?? import_number ?? number_base + import position`; group =
-`group_override ?? group_map(source, import_group)`; logo = `logo_override_hash ?? import_logo_hash`. Duplicate effective
-numbers are allowed but flagged in the admin (number entry picks the channel with the lowest group position).
+`name_override ?? import_name`; number = `number_override ?? import_number`, where the import writes `import_number` by the
+source's numbering policy (`chno`: the entry's `tvg-chno`, else `number_base` + its position in the list; `order`:
+`number_base` + position, `tvg-chno` ignored; position counts every live entry of the list, skipped groups included, so a
+changed group selection never renumbers other channels); group = `group_override ?? group_map(source, import_group)`; logo =
+`logo_override_hash ??` (`logo_pref = 'm3u'`: `import_logo_hash ?? epg_logo_hash`; `'xmltv'`: `epg_logo_hash ??
+import_logo_hash`); EPG offset = `epg_shift_override_min ?? import_epg_shift_min ?? source.epg_shift_min` (the most specific
+value wins; offsets are applied when programmes are read, never stored into them, so one EPG channel can serve channels with
+different offsets). *Last channel* = the profile's newest `livetv_recent` row, *previous* = the second newest. Duplicate
+effective numbers are allowed but flagged in the admin (number entry picks the channel with the lowest group position).
 
 ### 6.2 Migration 49 (Phase 2) — manual EPG and reminders
 
@@ -739,7 +798,7 @@ create table livetv_recording_progress (
 | `LIVETV_WANTED` | bool, `visible: false` | false | 1b |
 | `LIVETV_ENCODER` | enum auto / qsv / vaapi / nvenc / software | auto | 1c |
 | `LIVETV_SRT_HOST` | string (host name or IP shown in the push setup hint) | host of `PUBLIC_URL` | 1c |
-| `LIVETV_DVR_MINUTES` | int 0–30 | 30 | 1d |
+| `LIVETV_DVR_MINUTES` | int 0–120 | 30 | 1d |
 | `LIVETV_MAX_BITRATE` | int bit/s 1–40 Mbit/s | 10 000 000 | 1d |
 | `LIVETV_RECORD_STORAGE` | enum ff / library / both | ff | 3 |
 | `LIVETV_RECORD_LIBRARY_ID` | string (Jellyfin library id) | – | 3 |
@@ -797,13 +856,29 @@ Env-only: `LIVETV_URL`; compose-only (not settings): `LIVETV_CACHE_MAX_GB`, `REC
   alive by the TV's own fetches, so a cast survives the sender tab closing.
 - Live views are also written as live playback records (`live.ts` `setLive`, `source: 'livetv'`, `itemId: 'ch:<channelId>'`,
   title = channel name, `bitrate` = the stream's bitrate, `remote` flag): so they count against the account's `maxStreams`,
-  appear in Admin → *Wiedergabe* streams, and the upload-aware cap (`uploadcap.ts`) counts remote live viewers.
+  appear in the running streams of Admin → *Betrieb* → *Wiedergabe-Check*, and the upload-aware cap (`uploadcap.ts`)
+  counts remote live viewers.
 - **Start:** `watch` on a channel that is not running: (1) budget: if the expected mode is `transcode` (from `probe`; SRT
   without a fresh probe counts as transcode) → `admitConversion('live')`, refused → 503 `live_full`; (2) `POST /v1/streams`;
   (3) wait for the first segment (≤ 15 s; the client shows "Sender wird gestartet …"); (4) when the probe at start says
   `remux` after all, the slot is released.
 - **Stop:** `livetvTick` (every 15 s, one runner via KV lock `ltv:tick`) stops a stream whose viewer count has been 0 for 60 s
   and no recording uses it (§15). Admin *Stoppen* stops it at once (viewers see the error state).
+- **Release on switch** (owner decision 2026-11-12): a `watch` from a device whose own live view is on another channel A is a
+  *switch*. The old stream A is stopped **at once**, before channel B starts, when all of these hold:
+  1. the switching device was A's only viewer (no other live token on A touched within 45 s, casts and admin test previews
+     count as viewers) and no recording uses A;
+  2. B is not running; and
+  3. B's start would otherwise be refused, and counting A as gone makes it pass: either B's source is at its *Max.
+     gleichzeitige Sender* and A belongs to the same source, or A holds a `live` budget slot (mode `transcode`) and B's
+     expected mode needs one while the budget is full.
+
+  The check and B's admission happen under the budget lock with A left out of the count; then A is marked *stopping*
+  (`ltv:stopping:<A>`), its viewers are counted once more (a viewer who joined meanwhile cancels the release: the marker is
+  removed and the switch gets the refusal it would have got, `live_full` / `provider_limit`), and A is stopped with its
+  grant dropped before B's `POST /v1/streams`. A `watch` on A while the marker exists waits (≤ 5 s) and then starts A again
+  through the normal start path. Event `released_on_switch` in *Live-Status*. In every other case A lingers for 60 s as
+  above, so switching back within a minute stays instant.
 - **Join:** a viewer on a running channel never touches the budget.
 
 ## 8. Rights
@@ -811,19 +886,23 @@ Env-only: `LIVETV_URL`; compose-only (not settings): `LIVETV_CACHE_MAX_GB`, `REC
 - **Effective channel set of a profile** (`livetv/rights.ts`, cached 60 s, invalidated on any group/channel/rights write):
   1. Account lacks `liveTv` (Phase 0 rights, kids overlay included) → no channels.
   2. Groups allowed = groups granted to the account's role (`livetv_group_roles`), plus `livetv_group_users.allow = true`,
-     minus `allow = false`. Admin role: all groups.
+     minus `allow = false`. Admin role: all groups. Groups with `released = false` are left out for everyone, admins
+     included (they see them only in the admin area).
   3. Kids profile → only allowed groups that are `kid_friendly` (a kids profile of an admin account sees kid-friendly groups
      only). No kid-friendly group → no tab.
   4. Channels: in those groups, not `hidden`, not `missing_since`, source enabled.
-- New groups created by an import are granted to the source's `auto_roles` (default admin, family, friend); a guest gets nothing
-  until the admin grants a group to the guest role or to that person.
+- **New provider groups are hidden** (owner decision 2026-11-12, replaces the earlier grant to admin/family/friend): a group
+  an import creates is `released = false`, granted to no role and not kid-friendly. Its channels are imported (so the admin
+  can test and sort them) but nobody sees them until the admin releases the group in *Gruppen & Rechte* (§9.3) and picks its
+  roles. Groups the admin creates by hand start released. A provider group that maps onto an existing group (same name, or
+  mapped earlier) keeps that group's state.
 - **Recording** (Phase 3): `liveRecord` (Phase 0 permission; default ✓ for admin/family/friend, – for guest; never kids) and
   the channel must be in the profile's set.
-- **Favourites** and *last channel* are per profile; a favourite of a channel the profile can no longer see is hidden (not
-  deleted) and comes back if the right returns.
+- **Favourites** (in the person's own order), *Zuletzt gesehen* (the last 10 channels) and *last channel* are per profile; a
+  favourite or recent channel the profile can no longer see is hidden (not deleted) and comes back if the right returns.
 - Phase 0 integration: the role matrix shows *Live-TV* (switch), *Darf aufnehmen* (switch) and *Kanalgruppen* (chips: "Sport,
   Nachrichten +2"); the person's *Rechte* tab shows group exceptions; *Sicht prüfen* shows the profile's groups and channel
-  count with reasons ("nicht kinderfreundlich", "für Gast nicht freigegeben").
+  count with reasons ("nicht kinderfreundlich", "für Gast nicht freigegeben", "Gruppe noch nicht freigegeben").
 
 ## 9. Admin area (`/admin/livetv`, after installation)
 
@@ -839,9 +918,25 @@ chip row; tables become row cards (the existing `DataTable` phone mode).
   Sendungen" or the error in words, §19), *Jetzt aktualisieren* (spinner in the button, result toast), menu *Bearbeiten*,
   *Deaktivieren*, *Löschen* (confirm names how many channels go; their overrides go too).
 - *Quelle hinzufügen* sheet: kind; for lists: name, M3U URL (password-type field with *anzeigen*; on edit the field is empty
-  with "unverändert lassen"), optional XMLTV URL, user agent (advanced), *LAN erlauben*, interval, *Neue Gruppen freigeben
-  für* (role chips). *Prüfen* runs `POST /sources/test` and shows "412 Sender in 18 Gruppen · EPG: 398 Kanäle" plus five sample
-  names, or the error, before *Speichern*.
+  with "unverändert lassen"), optional XMLTV URL, user agent (advanced), *LAN erlauben*, interval, and the import options
+  (owner decision 2026-11-12, all in the sheet's *Import* section):
+  - **Nummern:** segmented *Aus der Liste (tvg-chno)* (default) / *Nach Reihenfolge ab* + number field (`number_base`,
+    1–99 999); help line "Eigene Nummern aus *Kanäle* bleiben erhalten." (§6.1 derived number).
+  - **Senderlogos:** segmented *Aus der Senderliste zuerst* (default) / *Aus dem Programmführer zuerst*; help line "Ein
+    eigenes Logo geht immer vor."
+  - **Programm-Zeit verschieben:** stepper in hours, −12 to +14 in steps of 0,5 (`epg_shift_min`, default 0); help line
+    "Für Programmführer, deren Zeiten um Stunden daneben liegen. `tvg-shift` aus der Senderliste und Werte einzelner Sender
+    gehen vor."
+- **Prüfen and the group picker.** *Prüfen* runs `POST /sources/test` and shows "412 Sender in 18 Gruppen · EPG: 398 Kanäle"
+  plus five sample names, or the error, before *Speichern*. With a result, the sheet lists the provider groups as
+  **"18 Gruppen gefunden – welche übernehmen?"**: a search field (from 12 groups on), *Alle* / *Keine*, then one checkbox row
+  per group with its channel count ("DE | Sport · 42 Sender"), all ticked on first use; on edit, ticked = not in
+  `skip_groups`. The counter line under it says "312 von 412 Sendern werden übernommen". Unticked groups are stored in
+  `skip_groups` and never imported; their entries already imported become *missing* (hidden at once, deleted after 30
+  days, back with their overrides when ticked again). The line below the list: "Neue Gruppen bleiben verborgen, bis du sie
+  unter *Gruppen & Rechte* freigibst." The source card shows the selection ("Ohne 6 Gruppen · Auswahl ändern" opens the
+  sheet at the picker, which runs *Prüfen* again). New groups that appear in later refreshes are imported unreleased (§8),
+  never skipped, so a group the provider adds later (an adult group, say) reaches nobody until the admin releases it.
 - Own feeds (*Eigene Streams* source, created on first use): *Stream hinzufügen* sheet with a segmented choice
   *FriendFlix holt den Stream* (pull) / *Encoder sendet an FriendFlix* (push, SRT):
   - **pull** (unchanged): name, URL (`https://…m3u8`, `http://…ts`, `srt://192.0.2.10:9000?…`), kind auto-detected from the URL
@@ -877,6 +972,10 @@ chip row; tables become row cards (the existing `DataTable` phone mode).
   temporary admin token) and the probe facts ("H.264 1920×1080 25 fps · AAC 2.0 · wird umverpackt"); failures in words.
 - **Logo:** preview at the sizes users see (list, tile, TV); *Eigenes Logo hochladen* (PNG/JPEG/WebP ≤ 512 KB, checked by magic
   bytes, stored in `livetv_logos`).
+- **Programm-Zeit verschieben…** (row menu, owner decision 2026-11-12): a small sheet with the effective offset and where
+  it comes from ("+1 Std. · aus der Senderliste (tvg-shift)" / "aus der Quelle" / "keine"), a stepper −12 to +14 h in steps
+  of 0,5 (`epg_shift_override_min`) and *Zurücksetzen* (back to the inherited value). The *Jetzt* line in the sheet previews
+  the result at once.
 
 ### 9.3 Gruppen & Rechte
 
@@ -887,8 +986,28 @@ chip row; tables become row cards (the existing `DataTable` phone mode).
 - Matrix toggle *Nach Rolle*: groups × roles grid of switches (the Phase 0 matrix style), plus a *Personen mit Ausnahmen*
   list (person, +groups, −groups, link to their *Rechte* tab).
 - Kids preview line: "Kinderprofile sehen: Kinderinsel, Natur & Tiere (23 Sender)".
+- **Release** (owner decision 2026-11-12): groups an import created stay `released = false` until the admin releases them.
+  They are listed first with the chip *Nicht freigegeben* (icon + text) and the line "Für niemanden sichtbar"; above the
+  list a notice "{n} neue Gruppen warten auf Freigabe" with *Nur diese zeigen*. *Freigeben…* (row menu, or the bulk bar
+  for several selected groups) opens a sheet: role chips (none preselected), *Kinderfreundlich* (off) and the line "Danach
+  sehen Personen mit diesen Rollen die {n} Sender der Gruppe." *Freigeben* sets `released = true` with those roles (no
+  role is allowed: then only admins and per-person exceptions see it). The row menu of a released group offers *Freigabe
+  zurücknehmen* (confirm; hides it from everyone again, roles kept).
 
 ### 9.4 Programmführer (Phase 2; Phase 1 shows only the automatic match counts)
+
+**Automatic matching (Phase 1c, owner decision 2026-11-12).** For each channel with `epg_match = 'auto'`, four exact passes
+in this order; each pass looks at the channel's own source's EPG first, then at the other sources' EPG; a pass that finds
+exactly one XMLTV channel matches, a pass that finds none or several moves on to the next pass:
+
+1. `tvg-id` = XMLTV channel `id`, case-insensitive;
+2. `tvg-name` = an XMLTV `display-name`, case-insensitive, `_` and space treated alike, trimmed;
+3. the channel's import name = an XMLTV `display-name`, case-insensitive, same rules;
+4. `normName` equality (diacritics, punctuation and a trailing `HD`/`FHD`/`UHD`/`4K` dropped).
+
+No similarity ("fuzzy") match is ever applied automatically; the bigram suggestions below are Phase 2 and need *Übernehmen*.
+The channel's effective EPG offset (§6.1) shifts every programme time it shows (now/next, guide, recordings planned from
+the guide).
 
 - Counters: "398 von 412 Sendern mit Programm · 14 ohne". **Ohne Programm** list: channel, up to three suggestions
   ("Nordlicht TV HD · 92 %") from the EPG channel names (bigram Dice similarity on normalised names, ≥ 0.5), *Übernehmen*,
@@ -901,8 +1020,8 @@ chip row; tables become row cards (the existing `DataTable` phone mode).
 
 - Top: the budget card (§5.6, read-only) and system tiles: *Laufende Sender*, *Zuschauer*, *CPU* (%), *GPU* (or "–"), *DVR-Speicher*
   ("3,1 von 6 GB").
-- **Laufende Sender** table: logo, name, mode chip, viewers (count only: who watches is in Admin → *Wiedergabe* like films),
-  since, bitrate, input state (*läuft* / *verbinde neu (3)* / *gestört*), menu *Stoppen*, *Neu starten*.
+- **Laufende Sender** table: logo, name, mode chip, viewers (count only: who watches is in Admin → *Betrieb* →
+  *Wiedergabe-Check* like films), since, bitrate, input state (*läuft* / *verbinde neu (3)* / *gestört*), menu *Stoppen*, *Neu starten*.
 - **Ereignisse** (last 200, KV ring, no URLs): time, level (icon + word), channel, text ("Eingang verloren · 12 s bis zur
   Wiederverbindung", "Start abgelehnt: alle Plätze belegt", "Quelle Anbieter A: Aktualisierung fehlgeschlagen (Zeitüberschreitung)").
 - **Gesendete Streams** (only when push feeds exist): feed, port, state (*Sendet* since … / *Keine Übertragung*), bitrate,
@@ -930,12 +1049,12 @@ join, stop, tick), `logos.ts`, `recordings.ts` (Phase 3), `events.ts` (KV ring),
 |---|---|
 | `GET /api/admin/livetv/state` | `{ installed, reachable, version, wanted, offerHidden, updater: { available, stack, job }, envLine: 'COMPOSE_PROFILES=livetv', gpu: { jellyfin, livetv, advice } }` |
 | `POST /api/admin/livetv/enable` · `POST /api/admin/livetv/disable { removeImage, removeCache }` | 202 `{ job }`; 409 `no_updater` / `foreign_stack` with `envLine` |
-| `GET/POST /api/admin/livetv/sources`, `PATCH/DELETE /api/admin/livetv/sources/:id`, `POST …/:id/refresh`, `POST …/sources/test` | answers carry `urlHint`/`epgHint`, never URLs; `refresh` 202, result through polling `GET` |
+| `GET/POST /api/admin/livetv/sources`, `PATCH/DELETE /api/admin/livetv/sources/:id`, `POST …/:id/refresh`, `POST …/sources/test` | answers carry `urlHint`/`epgHint`, never URLs; `refresh` 202, result through polling `GET`; the source body carries the import options `skipGroups: string[]`, `numbering: 'chno' \| 'order'`, `numberBase`, `logoPref: 'm3u' \| 'xmltv'`, `epgShiftMin` (−720…840, multiples of 30); `test` answers `{ channels, groups: [{ name, channels }], samples, epgChannels }` (groups in list order, for the picker) |
 | `GET /api/admin/livetv/channels?q&source&group&state&epg&error&sort&dir&limit&offset` | `{ channels, total }` |
-| `POST /api/admin/livetv/channels` (own feed; `{ ingest: 'push', name, number?, groupId? }` answers 201 with `push: { host, port, streamId, passphrase, url }` **once**; 409 `srt_ports_full`) · `POST /api/admin/livetv/channels/:id/push-credentials` (regenerate; same one-time answer) · `PATCH /api/admin/livetv/channels/:id` `{ name?, number?, groupId?, hidden?, epg? }` (`null` = back to import) | |
+| `POST /api/admin/livetv/channels` (own feed; `{ ingest: 'push', name, number?, groupId? }` answers 201 with `push: { host, port, streamId, passphrase, url }` **once**; 409 `srt_ports_full`) · `POST /api/admin/livetv/channels/:id/push-credentials` (regenerate; same one-time answer) · `PATCH /api/admin/livetv/channels/:id` `{ name?, number?, groupId?, hidden?, epg?, epgShiftMin? }` (`null` = back to import / inherited) | |
 | `POST /api/admin/livetv/channels/bulk` `{ ids, action: 'hide'\|'show'\|'group'\|'renumber'\|'reset'\|'test', groupId?, from? }` | |
 | `PUT /api/admin/livetv/channels/order` `{ ids }` · `POST …/:id/test` · `PUT …/:id/logo` (multipart) · `DELETE …/:id/logo` | |
-| `GET/POST/PATCH/DELETE /api/admin/livetv/groups[/:id]` `{ name, kidFriendly, roles }` · `PUT …/groups/order` · `POST …/groups/merge { ids, into }` | |
+| `GET/POST/PATCH/DELETE /api/admin/livetv/groups[/:id]` `{ name, kidFriendly, roles, released }` · `PUT …/groups/order` · `POST …/groups/merge { ids, into }` · `POST …/groups/release { ids, roles, kidFriendly }` | answers carry `released` and `channels` |
 | `PUT /api/admin/users/:id/livetv-groups` `{ allow: string[], deny: string[] }` | Phase 0 *Rechte* tab |
 | `GET /api/admin/livetv/epg/unmatched` · `GET …/epg/channels?q` · `PUT /api/admin/livetv/channels/:id/epg` `{ sourceId, xmlId } \| { none: true } \| null` | Phase 2 |
 | `GET/POST/PATCH/DELETE /api/admin/livetv/epg/rules[/:id]` | Phase 2 |
@@ -947,12 +1066,12 @@ join, stop, tick), `logos.ts`, `recordings.ts` (Phase 3), `events.ts` (KV ring),
 
 | Route | Answer |
 |---|---|
-| `GET /api/livetv/channels` | `{ groups: [{ id, name }], channels: [{ id, number, name, logo, groupId, running, receiving?: boolean /* push feeds only */, preview?: string, now?: Prog, next?: Prog, favourite }], favourites: string[], last: { id, previous } \| null, dvrSeconds }`; `Prog = { title, start, end, subtitle? }`; ETag; 30 s client refresh of now/next |
+| `GET /api/livetv/channels` | `{ groups: [{ id, name }], channels: [{ id, number, name, logo, groupId, running, receiving?: boolean /* push feeds only */, preview?: string, now?: Prog, next?: Prog, favourite }], favourites: string[] /* the person's order */, recent: string[] /* newest first, ≤ 10 */, last: { id, previous } \| null, dvrSeconds }`; `Prog = { title, start, end, subtitle? }` (times with the channel's EPG offset applied); ETag; 30 s client refresh of now/next |
 | `GET /api/livetv/logos/:hash` | image, `cache-control: private, max-age=604800, immutable` |
 | `GET /api/livetv/channels/:id/preview.jpg` | only while running and allowed; `max-age=60` |
 | `POST /api/livetv/channels/:id/watch`, `POST /api/livetv/beat`, `DELETE /api/livetv/watch` | §7.2 |
-| `PUT /api/livetv/favourites` `{ ids }` · `POST/DELETE /api/livetv/favourites/:id` | per profile |
-| `PUT /api/livetv/last` `{ id }` | updates `livetv_last` (previous = old current) |
+| `PUT /api/livetv/favourites` `{ ids }` (the complete order) · `POST/DELETE /api/livetv/favourites/:id` (a new favourite goes last) | per profile |
+| `PUT /api/livetv/last` `{ id }` | records a watch in `livetv_recent` (`at = now()`, rows beyond the newest 10 deleted); *last* = newest, *previous* = second newest |
 | `GET /api/livetv/epg?start=<ISO, 6-h aligned UTC>&group=<id>` (Phase 2) | `{ start, end, programmes: { [channelId]: Prog[] } }`, ETag, server cache 5 min per (block, channel set) |
 | `GET /api/livetv/programme/:channelId/:start` (Phase 2) | detail incl. description, episode, recording state |
 | `POST/DELETE /api/livetv/reminders` (Phase 2, grown-ups) | |
@@ -963,26 +1082,35 @@ join, stop, tick), `logos.ts`, `recordings.ts` (Phase 3), `events.ts` (KV ring),
 guide would run dry), `livetvEpgPrune` daily 04:10 (programmes `end_at < now() − 1 day`, missing channels > 30 days,
 orphaned logos), `livetvReminderTick` 60 s (Phase 2), `convBenchTick` 10 min (one automatic first measurement).
 
-**Import merge rules** (`sources.ts`): entries keyed by `source_key`; new → insert (group via `livetv_group_map`, creating
-the group with the source's `auto_roles` if new); existing → update `import_*`, `stream_url_enc`, `stream_kind`, clear
-`missing_since`; absent → `missing_since = now()` (hidden from users at once, deleted after 30 days). Overrides are never
-touched. A refresh that returns 0 entries (or < 20 % of the previous count) is treated as a provider error: nothing is marked
-missing, the source shows "Die Liste war leer – nichts geändert".
+**Import merge rules** (`sources.ts`): entries whose `group-title` is in the source's `skip_groups` are dropped first (and
+count as absent below); the rest are keyed by `source_key`; new → insert (group via `livetv_group_map`, creating the group
+**unreleased and granted to no role** if new, §8); existing → update `import_*` (number by the numbering policy, `tvg-shift`
+into `import_epg_shift_min`), `stream_url_enc`, `stream_kind`, clear `missing_since`; absent → `missing_since = now()`
+(hidden from users at once, deleted after 30 days). Overrides are never touched. A refresh whose list has 0 live entries (or
+< 20 % of the previous list's live entries, counted **before** group skipping, so unticking groups never trips it) is
+treated as a provider error: nothing is marked missing, the source shows "Die Liste war leer – nichts geändert".
 
 ## 11. The Live-TV tab (`/live`)
 
 Navigation: desktop pill `HEADER_TABS` gains `['/live', 'shell.nav.live']` after *Filme*; phone chip bar under the header
-gains *Live-TV* after *Filme*; the phone **tab bar** gains *Live* (icon `tv`) between *Neu* and *Meine Liste* (5 tabs with
-downloads; the 320-px fit uses the short label "Live"); `TV_RAIL` gains it after *Filme*; the kids header gains a *Fernsehen*
+gains *Live-TV* after *Filme*; the phone **tab bar** gains *Live* (icon `tv`) between *Neu* (`shell.tabs.newShort`) and
+*Merkliste* (`shell.tabs.myList`, the app's current label) (5 tabs with downloads; the 320-px fit uses the short label "Live"); `TV_RAIL` gains it after *Filme*; the kids header gains a *Fernsehen*
 entry. All only when `me.features.livetv`.
 
 ### 11.1 Layout (desktop ≥ 900 px)
 
-1. **Läuft gerade bei dir** (favourites, max 12, hidden when none): a row of 16:9 `.frost-tile` tiles: preview image only if
-   the channel is running (§3.3) else the logo centred on the tile's glass; bottom: number + name, programme title, a 3-px
-   progress line (`scaleX`, minute steps). Tap = watch.
-2. **Group chips** (`frost-pill` chips, horizontally scrolling): *Alle*, *Favoriten*, then the groups in order. Selection
-   slides the pill highlight (`SlidePill`).
+1. **Läuft gerade bei dir** (favourites in the person's own order, max 12, hidden when none): a row of 16:9 `.frost-tile`
+   tiles: preview image only if the channel is running (§3.3) else the logo centred on the tile's glass; bottom: number +
+   name, programme title, a 3-px progress line (`scaleX`, minute steps) and the time left ("noch 23 Min.", §12.1) on the
+   title line, right-aligned in reserved space. Tap = watch. The row head has *Ordnen* (shown with ≥ 2 favourites): a sheet
+   with the favourites as rows, each with a drag handle (pointer and touch; the lifted row moves by `transform`, the others
+   slide FLIP-style) and the keyboard path of §9.2 (Space picks up, ↑/↓ move, Space drops, Escape cancels, announced);
+   *Fertig* saves with `PUT /api/livetv/favourites` (undo toast). On TV the same sheet is a move mode: OK picks the focused
+   row up ("verschieben"), ▲/▼ move it, OK drops and saves at once (undo toast), Back cancels a move in progress, a second
+   Back closes the sheet.
+2. **Group chips** (`frost-pill` chips, horizontally scrolling): *Alle*, *Favoriten* (in the person's order), *Zuletzt
+   gesehen* (shown when the profile has watched at least one channel; the last 10, newest first), then the groups in order.
+   Selection slides the pill highlight (`SlidePill`).
 3. **Channel grid**, two columns of rows (each 72 px): number (tabular), 48-px logo tile, name, two text lines **always
    reserved**: *Jetzt* line ("20:15 Die Leuchtturmwärter" + thin progress) and *Danach* line ("21:00 Wetter am Hafen"); without
    EPG: "Live" and "Kein Programm verfügbar"; a push feed that is not receiving: "Gerade keine Übertragung" (one line, the
@@ -992,8 +1120,9 @@ entry. All only when `me.features.livetv`.
 
 ### 11.2 Phone (≤ 720 px)
 
-Same order; favourites as a carousel (`Carousel.svelte`), chips sticky under the header, channels as a single-column compact
-list (64-px rows: logo, number + name, *Jetzt* line with progress, star). The *Danach* line moves into the info panel. Pull
+Same order; favourites as a carousel (`Carousel.svelte`) with *Ordnen* in its head, chips sticky under the header (with
+*Zuletzt gesehen*), channels as a single-column compact list (64-px rows: logo, number + name, *Jetzt* line with progress,
+star; no time-left label on rows, so nothing jumps). The *Danach* line moves into the info panel. Pull
 the list to refresh now/next (existing pull pattern if present on the page type; otherwise the 30-s refresh only).
 
 ### 11.3 TV apps (Tizen, webOS, Fire TV, `html.tv`)
@@ -1001,10 +1130,18 @@ the list to refresh now/next (existing pull pattern if present on the page type;
 - Big tiles: favourites row of 16:9 tiles (360 px wide at 1080p), then the group chips as a focusable row, then the channel list
   as large rows (96 px, logo 72 px, text ≥ 28 px). Focus = `scale(1.08)` + 3-px white ring; the list scrolls to keep the focused
   row in the middle third.
-- Keys in the list: ▲/▼ move; ◀ opens the rail (TV layout spec); OK watches; **ChannelUp/ChannelDown** (and PageUp/PageDown on
-  LG) jump 8 rows; **digits** start number entry (§12.4) and jump to that channel's row on OK; Info opens the info panel for the
-  focused channel; a long OK (≥ 600 ms) toggles favourite (hint in the footer line "Lang OK: Favorit").
-- **Remembers the last channel**: entering `/live` focuses the last watched channel's row.
+- Keys in the list (owner decision 2026-11-12: nothing depends on CH keys): ▲/▼ move (held: repeat); ◀ opens the rail (TV
+  layout spec); OK watches; ▶ on a row moves focus to its star (OK toggles favourite, ◀ back to the row); a long OK
+  (≥ 600 ms) toggles favourite as a shortcut. Shortcuts where the remote sends them: **ChannelUp/ChannelDown** (Tizen, Fire
+  TV; on LG only if the TV sends PageUp/PageDown, which LG says webOS web apps do not get) jump 8 rows; **digits** start
+  number entry (§12.4) and focus that channel's row on OK; a lone **0** focuses the last watched channel's row; Info opens
+  the info panel for the focused channel.
+- **Hint line** (footer): names only keys this device has actually sent. D-pad hints are always shown ("OK: ansehen ·
+  Lang OK: Favorit"); "CH ▲▼: 8 Zeilen" appears only after a ChannelUp/ChannelDown keydown, "0: letzter Sender" only after a
+  digit keydown, from this device. The keys seen are kept per device in `localStorage` (`ff-live-keys-seen`, wrapped in
+  try/catch; empty storage = D-pad hints only). The hint line's height is reserved, so a new hint never moves the list.
+- **Remembers the last channel**: entering `/live` focuses the last watched channel's row; Back from the player returns to
+  the list with focus on the row of the channel that was playing (owner decision 2026-11-12).
 - **TV startet mit Live-TV** (`devices.start_live`, set by the admin in Admin → *Geräte* for paired TVs): the TV app's start
   route opens `/live?play=last`, which starts the last channel of the profile (or shows the list if none). Back from that player
   goes to the Live list; Back from the list goes Home.
@@ -1020,46 +1157,84 @@ row (Phase 3) only with recordings shared with them from kid-friendly groups (§
 `web/src/lib/live/LivePlayer.svelte`, opened at `/live/watch/[channelId]` (desktop/phone/TV). It is built from the existing
 player parts so it looks and behaves like `Player.svelte`: the same stage, the same control bar classes and auto-hide, the
 same TV control layer style (`TvControls`), `lib/player/hls.ts` (`loadHls`, `hlsConfig` with live settings:
-`liveSyncDurationCount 3`, `liveMaxLatencyDurationCount 10`, `backBufferLength = dvrSeconds`), `volume.ts`, `gestures.ts`
+`liveSyncDurationCount 3`, `liveMaxLatencyDurationCount 10`, `backBufferLength = min(dvrSeconds, 1800)`, on TVs
+`min(dvrSeconds, 300)`: with a buffer of up to 120 min, old TV WebViews must not hold it in memory; seeking further back
+loads the segments again from `livetv`'s DVR), `volume.ts`, `gestures.ts`
 (zones), `mediasession.ts`, the cast engine and `PlayOnSheet`, `firstframe.ts`, the TV Back handling (`playerBack`). It does
 not reuse `Player.svelte`'s item logic (resume, episodes, credits, ABR ladder).
 
 ### 12.1 Controls
 
-- **No seek bar.** Bottom bar: Play/Pause (white disc, the one primary), −30 s, +30 s (disabled at the live edge), the **LIVE**
-  pill (filled coral with a dot when at the live edge; outlined with "−12:30" when behind; click/OK = jump to live), channel
-  ▲/▼ buttons with the neighbour's name in the tooltip, *Programm* (info panel), *Abspielen auf…* (cast), volume, fullscreen.
-- Top: channel logo, number + name, programme title and "20:15–21:00"; a thin programme progress line (not draggable).
+- **No seek bar.** Bottom bar: Play/Pause (white disc, the one primary), **Von Anfang an** (see below), −30 s, +30 s
+  (disabled at the live edge), the **LIVE** pill (filled coral with a dot when at the live edge; outlined with "−12:30" when
+  behind; click/OK = jump to live), channel ▲/▼ buttons with the neighbour's name in the tooltip, *Senderliste* (§12.2;
+  desktop and TV; on phones in the info sheet), *Programm* (info panel), *Abspielen auf…* (cast), volume, fullscreen. The
+  slot of *Von Anfang an* is reserved, so the bar never shifts when it appears.
+- Top: channel logo, number + name, programme title, "20:15–21:00" and the time left ("noch 23 Min."); a thin programme
+  progress line (not draggable).
+- **Time left** (owner decision 2026-11-12): "noch {n} Min." from the *Jetzt* programme's end, updated each minute (minute
+  steps, rounded up); "noch 1 Std. 20 Min." from 60 min; "endet gleich" under 1 min; nothing without EPG. Shown in the top
+  bar, the info banner, the info panel and the *Läuft gerade bei dir* tiles; never on list rows. Tabular figures in a
+  space reserved for the longest form, so a changing value never moves its neighbours.
+- **Von Anfang an** (owner decision 2026-11-12): restarts the running programme. Shown (enabled) only while the *Jetzt*
+  programme's start lies inside the buffer (`start ≥` the program date-time of the oldest segment, §3.3); otherwise its slot
+  stays empty. It seeks to `max(oldest, start − 30 s)` (a little before the start, because broadcasts rarely start on the
+  minute) and the player is then *behind* like after a rewind (LIVE pill "−…", *LIVE* returns to the edge). Also a button
+  in the info panel and in the info banner while it is shown on OK. Works for a person who joined a channel that was
+  already running: the shared DVR can hold the start from before they joined. Not offered without EPG or with
+  `LIVETV_DVR_MINUTES = 0`.
 - Pausing longer than the buffer: on resume, playback starts at the oldest available point with the toast "Die Pause war
-  länger als 30 Minuten – es geht am ältesten gespeicherten Punkt weiter."
-- **Info panel** (glass sheet on phone, side panel on desktop, TV panel): *Jetzt* (title, time, progress, description,
-  episode), *Danach*, a *Letzter Sender* button ("Zurück zu 4 Hafenkanal"), Phase 2 *Programmführer* and *Aufnehmen*.
+  länger als {n} Minuten – es geht am ältesten gespeicherten Punkt weiter." ({n} = the buffer length in minutes).
+- **Info panel** (glass sheet on phone, side panel on desktop, TV panel): *Jetzt* (title, time, progress, time left,
+  description, episode, *Von Anfang an*), *Danach*, a *Letzter Sender* button ("Zurück zu 4 Hafenkanal"), on phones the
+  *Senderliste* button, Phase 2 *Programmführer* and *Aufnehmen*.
 
 ### 12.2 Channel switching
 
-- Order = the effective list of the current group filter (or all) by number; wraps around.
-- Switching keeps the player open: the stage shows the next channel's logo + name in a centred glass card (fade, 1 s) while the
-  new token/stream starts; the old token is revoked; `PUT /api/livetv/last`. Rapid presses are debounced (the request goes
-  out 400 ms after the last press; the card follows each press at once).
-- **Last channel:** `livetv_last.previous_id`; key/button jumps there (§12.3).
+- Order = the effective list of the current filter, wrapping around: groups and *Alle* by number; *Favoriten* in the
+  person's own order; *Zuletzt gesehen* in the order it had when the filter was chosen (a snapshot, so zapping does not
+  reshuffle the list under the viewer).
+- Switching keeps the player open; the old token is revoked; `PUT /api/livetv/last`. Rapid presses are debounced (the request
+  goes out 400 ms after the last press; the banner follows each press at once). When the old stream is released at once
+  (§7.4), its picture ends when the new start begins; the banner covers the stage meanwhile.
+- **Info banner** (owner decision 2026-11-12; replaces the 1-s channel card): a glass banner over the lower third of the
+  stage (above the control bar when that is visible; it overlays, so nothing moves): logo, number + name, *Jetzt* title +
+  thin progress line + time left, *Danach* ("21:00 Wetter am Hafen"); without EPG "Live" / "Kein Programm verfügbar"; a push
+  feed that is not sending: "Gerade keine Übertragung". Both programme lines are always reserved. It appears at once on each
+  switch press (fade by opacity), shows "Sender wird gestartet …" while starting, stays until the first frame **plus 4 s**,
+  then fades out; an error state (§12.5) replaces it. On TV it also appears with the controls on OK (§12.3) and stays while
+  they are visible. Calm mode / reduced motion / TV / kids: it switches without fading.
+- **Senderliste panel** (all platforms; on TV also long OK, §12.3): a side panel over the player (TV and desktop; a sheet on
+  phones) with the filter chips of the list (*Alle*, *Favoriten*, *Zuletzt gesehen*, groups; it opens on the current filter)
+  and compact rows (number, logo, name, *Jetzt* title with progress), focus and scroll on the playing channel. ▲/▼ move,
+  ◀/▶ change the filter chip on TV, OK switches to the focused channel and closes the panel (the banner shows), Back (or
+  Escape, or a tap outside) closes it and returns focus to the player with the playing channel; controls stay hidden. On TV
+  the controls' footer line shows "Lang OK: Senderliste" (a D-pad hint, always shown).
+- **Last channel:** the profile's *previous* channel (second newest in `livetv_recent`); key/button jumps there (§12.3), and
+  jumping again toggles between the two.
 - A switch into a full budget shows the *alle Plätze belegt* sheet (§12.5) and stays on the current channel.
 
 ### 12.3 Input map (`web/src/lib/live/livekeys.ts`, pure like `keymap.ts`)
 
 | Action | Desktop | Phone | TV remote |
 |---|---|---|---|
-| Channel up / down | ↑ / ↓, PageUp / PageDown | horizontal swipe on the centre zone (left = next, right = previous; the side zones keep brightness/volume), ▲/▼ buttons | ChannelUp / ChannelDown; ▲ / ▼ while the controls are hidden; LG PageUp / PageDown |
-| Pause / play | Space, K, MediaPlayPause | tap Play/Pause | OK (controls hidden) / MediaPlayPause |
+| Channel up / down | ↑ / ↓, PageUp / PageDown | horizontal swipe on the centre zone (left = next, right = previous; the side zones keep brightness/volume), ▲/▼ buttons | **▲ / ▼ while the controls are hidden (the path on every TV)**; ChannelUp / ChannelDown where sent (Tizen, Fire TV); LG PageUp / PageDown only if the TV sends them (unverified, §14) |
+| Show controls | mouse move, any key | tap | **OK** (controls hidden): controls + info banner, focus on Play/Pause (so OK, OK pauses); any arrow except ▲/▼ |
+| Pause / play | Space, K, MediaPlayPause | tap Play/Pause | MediaPlayPause; OK on the focused Play/Pause button. OK never pauses while the controls are hidden. |
 | −30 s / +30 s in buffer | ← / → (10 s), J / L (30 s) | double-tap left / right (±10 s, the existing gesture) | ◀ / ▶ show the controls with focus on −30 s / +30 s; MediaRewind / MediaFastForward ±30 s |
+| Von Anfang an | button | button | button in the controls, info banner or info panel |
 | Live | End | LIVE pill | LIVE pill; Blue key on LG |
-| Info panel | I | tap the top title | Info; OK when controls visible and focus on the title |
-| Last channel | Q | button in the info panel | PreviousChannel (Tizen), KEYCODE_LAST_CHANNEL (Fire TV), Red key on LG; button in the info panel |
+| Info panel | I | tap the top title | Info; OK on *Programm* or on the title in the controls |
+| Senderliste panel | button | button in the info sheet | **long OK (≥ 600 ms)**; `ChannelList` (Tizen, where supported); `Guide` (Tizen where supported, Fire TV) in Phase 1, the grid from Phase 2; button in the controls |
+| Last channel | Q | button in the info panel | a lone **0** (§12.4); PreviousChannel (Tizen), KEYCODE_LAST_CHANNEL (Fire TV), Red key on LG; button in the info panel |
 | Number entry | digits, Enter | – (list search instead) | digits, OK (§12.4) |
 | Cast | – (button) | button | – |
-| Close | Escape (fullscreen first), browser back | back gesture | Back |
+| Close | Escape (fullscreen first), browser back | back gesture | Back: closes the open panel/sheet first (focus back on the player and the playing channel), then hides the controls, then closes the player (the list focuses the playing channel's row, §11.3) |
 
 `Q` is used for "last channel" on desktop because Backspace is a back key on TVs (`isBackKey`) and must not change meaning.
-In live mode PageUp/PageDown are channel keys, not "next episode" (`keymap.ts:64` stays for films).
+In live mode PageUp/PageDown are channel keys, not "next episode" (`keymap.ts:64` stays for films). D-pad-only path
+(Global constraints): zapping ▲/▼; controls, *Von Anfang an*, *Programm*, *Senderliste*, LIVE and *Letzter Sender* through
+OK and the focusable controls; long OK, digits, colour, Info, `ChannelList` and `Guide` are shortcuts only.
 
 ### 12.4 Number entry (TV, desktop)
 
@@ -1067,14 +1242,20 @@ Digits open a small glass card top right showing the typed digits ("1 2 _") and 
 is unique; OK/Enter (or 2 s without input) switches; up to 5 digits; no match → "Kein Sender 123" for 2 s. Works in the player
 and in the Live list (there it focuses the row).
 
+**A lone 0** (owner decision 2026-11-12, the Kodi convention): a "0" with no further digit before the 2-s timeout, or
+followed directly by OK/Enter, is *last channel* (the player jumps to the previous channel; the list focuses the last
+watched channel's row); the card shows "0 · Letzter Sender: 4 Hafenkanal" meanwhile. No channel has number 0 (§6.1 checks
+1–99 999); a leading 0 followed by more digits types a number as usual ("0 5" = channel 5). Without a previous channel it
+shows "Kein letzter Sender" for 2 s.
+
 ### 12.5 States and errors
 
 | State | Player shows |
 |---|---|
-| starting (≤ 15 s) | channel card + "Sender wird gestartet …" (spinner in the play slot) |
+| starting (≤ 15 s) | info banner (§12.2) with "Sender wird gestartet …" (spinner in the play slot) |
 | buffering | thin indeterminate line under the top bar (transform only) |
 | input lost (playlist stalls > 8 s, or 502 from `watch`) | overlay card "Sender gerade nicht erreichbar" + "Verbinde neu …"; the player retries (playlist reload, then a new `watch` after 30 s) with backoff up to 2 min, then *Erneut versuchen*; the channel keys keep working; every outage is an event in *Live-Status* |
-| `not_receiving` (push feed, §3.5) | channel card + "Gerade keine Übertragung"; polls every 10 s and starts by itself when the encoder sends; channel keys keep working |
+| `not_receiving` (push feed, §3.5) | info banner with "Gerade keine Übertragung"; polls every 10 s and starts by itself when the encoder sends; channel keys keep working |
 | `live_full` | sheet "Gerade sind alle Live-Plätze belegt" + "Diese Sender laufen schon und gehen sofort:" list of running channels (logo, number, name, *Jetzt* title) → tap joins; *Schließen* |
 | `max_streams` | the existing max-streams message of the film player |
 | right lost / channel hidden (403/410 during play) | "Dieser Sender ist für dich nicht mehr verfügbar." → back to the list |
@@ -1105,9 +1286,9 @@ user).
 |---|---|---|
 | Browsers (desktop, phone) | `LivePlayer` (hls.js; Safari native HLS) | §12.3 |
 | Windows app | the web `LivePlayer` in WebView2 (mpv stays for films) | same as desktop |
-| Tizen | web `LivePlayer` | `web/src/lib/tizen`: register `ChannelUp`, `ChannelDown`, `PreviousChannel`, `Info`, `0`–`9`, `ColorF0Red`, `ColorF3Blue` via `tizen.tvinputdevice.registerKey` when the Live area opens (in a try/catch, like `probe.ts`) |
-| webOS | web `LivePlayer` | channel keys arrive as PageUp/PageDown (`keyCode 33/34`), digits natively, Red/Blue via `normaliseLgKey`; Info = `keyCode 457` |
-| Fire TV | web `LivePlayer` in the shell | `FireTvKeys.kt`: add `KEYCODE_CHANNEL_UP/DOWN` → `ChannelUp/ChannelDown`, `KEYCODE_0..9` → `"0".."9"`, `KEYCODE_LAST_CHANNEL` → `PreviousChannel`, `KEYCODE_INFO` → `Info`, `KEYCODE_GUIDE` → `Guide` (Phase 2 opens the grid) |
+| Tizen | web `LivePlayer` | `web/src/lib/tizen`: register `ChannelUp`, `ChannelDown`, `PreviousChannel`, `Info`, `0`–`9`, `ColorF0Red`, `ColorF3Blue`, and **`ChannelList` (10073) and `Guide` (458) where the TV supports them** (`tizen.tvinputdevice.getSupportedKeys()`; owner decision 2026-11-12) via `tizen.tvinputdevice.registerKey` when the Live area opens (each in its own try/catch, like `probe.ts`). `ChannelList` opens the *Senderliste* panel in the player (in the list it does nothing); `Guide` does the same in Phase 1 and opens the grid from Phase 2 |
+| webOS | web `LivePlayer` | **CH+/CH− are not relied on** (owner decision 2026-11-12; LG staff: "Channel +/- keys are not available in webOS TV apps"): ▲/▼ zap. If a TV does send PageUp/PageDown (`keyCode 33/34`) they act as channel keys (unverified, on-device check). Digits natively, Red/Blue via `normaliseLgKey`; Info = `keyCode 457`. No copy promises CH keys on LG (§11.3 hint line) |
+| Fire TV | web `LivePlayer` in the shell | `FireTvKeys.kt`: add `KEYCODE_CHANNEL_UP/DOWN` → `ChannelUp/ChannelDown`, `KEYCODE_0..9` → `"0".."9"`, `KEYCODE_LAST_CHANNEL` → `PreviousChannel`, `KEYCODE_INFO` → `Info`, `KEYCODE_GUIDE` → `Guide` (Phase 1: the *Senderliste* panel; Phase 2 opens the grid). Most Fire TV remotes send none of these: ▲/▼, OK and Back cover everything |
 | Android app | web `LivePlayer` inside the shell (hls.js in WebView; films keep the native player) | swipe as phone; cast via `castLive` (§13). A native live mode in `PlayerActivity` is a later option, not in these phases. |
 | Chromecast receiver | own receiver: live card, no progress bar, LIVE badge | `ui.live = true` from the sender |
 
@@ -1275,7 +1456,10 @@ the recipient's own notifications (they chose to record it), never in admin broa
   column and header, tap = details; **TV:** ◀/▶ move to the previous/next programme of the row, ▲/▼ move to the programme in
   the row above/below that overlaps the **anchor time** (the start of the programme focused before the vertical move, kept
   while moving vertically), the grid scrolls so the focus stays inside the middle 60 %; OK = details; ChannelUp/Down = a page of
-  rows; Info = details; Guide (Fire TV) opens/closes the grid; Back closes the sheet, then the grid.
+  rows; Info = details; Guide (Fire TV, Tizen where supported) opens/closes the grid; Back closes the sheet, then the grid.
+  **Focus return** (owner decision 2026-11-12): a grid opened from the player returns to the player on Back, focus on the
+  playing channel; a grid opened from the list returns to the list with focus on the playing (or last watched) channel's
+  row.
 - **Reminders:** `livetv_reminders`, notified 5 min before start; the cell shows a bell icon.
 
 ## 18. Security & privacy summary
@@ -1287,7 +1471,7 @@ the recipient's own notifications (they chose to record it), never in admin broa
 - **Rewritten streams:** clients only see `/media/l/<token>/<local name>`; provider segment URLs live only in `livetv`.
 - **Tokens:** hashed in KV, pinned, short idle TTL, capped, revoked on every relevant change (§7.1), scoped to one channel or
   recording, never logged.
-- **Profile isolation:** favourites, last channel, reminders, recordings and progress are per profile; every user route checks
+- **Profile isolation:** favourites, *Zuletzt gesehen* (last channel), reminders, recordings and progress are per profile; every user route checks
   the profile's effective channel set; recordings are private by default; admins see recording metadata, not playback, unless
   shared.
 - **Kids:** only kid-friendly groups; no recording, no guide reminders; shared kid-friendly recordings only.
@@ -1301,8 +1485,10 @@ the recipient's own notifications (they chose to record it), never in admin broa
   logged with credentials or addresses (§3.5). Push data never leaves `livetv` except as HLS through the gateway.
 - **Media share:** `livetv` has read-write access to one dedicated sub-folder only (opt-in overlay, guarded by the marker
   file); nothing else of the media share is mounted into it (§15.3).
-- **Privacy notice** (`docs/privacy.md`, account page): which channels a profile watched is stored only as *last channel* and
-  favourites; live views appear in the admin's *Wiedergabe* list while they run (like films); no viewing history is kept for live.
+- **Privacy notice** (`docs/privacy.md`, account page): which channels a profile watched is stored only as *Zuletzt
+  gesehen* (the last 10 channels with the time each was last opened; older ones are deleted on each write) and favourites;
+  live views appear in the admin's *Wiedergabe-Check* list (Admin → *Betrieb*) while they run (like films); no other viewing
+  history (no durations, no programmes) is kept for live.
 
 ## 19. Errors and edge cases
 
@@ -1323,7 +1509,14 @@ the recipient's own notifications (they chose to record it), never in admin broa
 | EPG programme overlaps / gaps | cells drawn as given; overlaps: the later start wins the visible slot, the other is in the detail list |
 | channel hidden while someone watches | token revoked within 2 s (authz memo) → "nicht mehr verfügbar" |
 | role/group right removed while watching | same |
-| profile deleted | favourites, last, reminders, recordings, progress cascade |
+| profile deleted | favourites, *Zuletzt gesehen*, reminders, recordings, progress cascade |
+| a second viewer joins the old channel while a switch releases it (§7.4) | the release re-counts viewers after setting `ltv:stopping:<A>`: a viewer who came first keeps A and the switch gets `live_full` / `provider_limit`; a viewer who comes during the stop waits ≤ 5 s and starts A again through the normal start path (budget and provider limit apply), never a dead stream |
+| the switching person was not the only viewer, or B starts fine anyway | no release; A lingers 60 s as usual |
+| the admin unticks most groups in the picker | the shrink guard counts the list's live entries before group skipping, so it does not trip; the skipped groups' channels become missing |
+| a provider adds a new group later | imported unreleased (§8), invisible until released; the source card and *Gruppen & Rechte* show "{n} neue Gruppen warten auf Freigabe" |
+| `tvg-shift` with a fraction ("-1.5") or out of range | hours with up to two decimals, rounded to whole minutes; outside −12…+14 h the value is ignored (no offset from it) |
+| *Von Anfang an* while the programme start has just left the buffer | the button disappears at the next minute tick; a press that races it seeks to the oldest point instead |
+| 120-min buffer on a Chromium 85 TV | the player keeps ≤ 300 s behind the playhead in memory (§12); rewinding further loads from `livetv`, never a quota error |
 | `livetv` disabled with scheduled recordings | they fail with `livetv_off`, owners notified once |
 | Plex install | budget counts Plex transcodes via the adapter; library storage mode not offered |
 | push encoder not sending | channel shows "Gerade keine Übertragung"; `watch` 409 `not_receiving`; player waits and starts by itself |
@@ -1347,7 +1540,14 @@ the recipient's own notifications (they chose to record it), never in admin broa
 | `live.player.live` / `live.player.behind` / `live.player.toLive` | LIVE / −{time} / Back to live | LIVE / −{time} / Zurück zu live |
 | `live.player.chUp` / `chDown` / `lastChannel` / `lastChannelTo` | Next channel / Previous channel / Last channel / Back to {number} {name} | Nächster Sender / Vorheriger Sender / Letzter Sender / Zurück zu {number} {name} |
 | `live.player.starting` / `unreachable` / `reconnecting` / `retry` | Starting channel… / Channel not reachable right now / Reconnecting… / Try again | Sender wird gestartet … / Sender gerade nicht erreichbar / Verbinde neu … / Erneut versuchen |
-| `live.player.pauseTooLong` | The pause was longer than 30 minutes, continuing at the oldest saved point. | Die Pause war länger als 30 Minuten – es geht am ältesten gespeicherten Punkt weiter. |
+| `live.player.pauseTooLong` | The pause was longer than {n} minutes, continuing at the oldest saved point. | Die Pause war länger als {n} Minuten – es geht am ältesten gespeicherten Punkt weiter. |
+| `live.player.restart` / `channelList` | From the start / Channel list | Von Anfang an / Senderliste |
+| `live.timeLeft` / `timeLeftLong` / `endingNow` | {n} min left / {h} h {m} min left / ending now | noch {n} Min. / noch {h} Std. {m} Min. / endet gleich |
+| `live.recentChip` | Recently watched | Zuletzt gesehen |
+| `live.number.last` / `live.number.noLast` | 0 · Last channel: {number} {name} / No last channel | 0 · Letzter Sender: {number} {name} / Kein letzter Sender |
+| `live.fav.order` / `orderTitle` / `orderDone` / `orderMove` | Arrange / Arrange favourites / Done / move | Ordnen / Favoriten ordnen / Fertig / verschieben |
+| `live.fav.orderPicked` / `orderMoved` / `orderDropped` / `orderCancelled` | {name} picked up, position {n} of {m} / Position {n} of {m} / {name} dropped at position {n} / Move cancelled | {name} aufgenommen, Position {n} von {m} / Position {n} von {m} / {name} abgelegt auf Position {n} / Verschieben abgebrochen |
+| `live.tvHint.ok` / `chJump` / `zeroLast` / `longOkList` | OK: watch / CH ▲▼: 8 rows / 0: last channel / Long OK: channel list | OK: ansehen / CH ▲▼: 8 Zeilen / 0: letzter Sender / Lang OK: Senderliste |
 | `live.player.noChannel` / `notAvailable` | No channel {n} / This channel is no longer available to you. | Kein Sender {n} / Dieser Sender ist für dich nicht mehr verfügbar. |
 | `live.full.title` / `live.full.body` / `live.full.join` | All live slots are taken right now / These channels are already on and start at once: / Watch {name} | Gerade sind alle Live-Plätze belegt / Diese Sender laufen schon und gehen sofort: / {name} ansehen |
 | `live.providerLimit` | Your provider allows only {n} channels at once. | Dein Anbieter erlaubt nur {n} Sender gleichzeitig. |
@@ -1365,7 +1565,12 @@ the recipient's own notifications (they chose to record it), never in admin broa
 | `adminLive.offer.persistTip` | So that Live TV starts again after `docker compose down`, add COMPOSE_PROFILES=livetv to .env. | Damit Live-TV auch nach `docker compose down` wieder startet, trage COMPOSE_PROFILES=livetv in die .env ein. |
 | `adminLive.offer.wantedDown` / `restart` | Live TV is turned on, but the service is not running. / Start again | Live-TV ist eingeschaltet, der Dienst läuft aber nicht. / Wieder starten |
 | `adminLive.tabs.*` | Sources / Channels / Groups & rights / Programme guide / Live status / Recordings | Quellen / Kanäle / Gruppen & Rechte / Programmführer / Live-Status / Aufnahmen |
-| `adminLive.src.add` / `kindList` / `kindOwn` / `m3u` / `epg` / `lan` / `lanHint` / `interval` / `refreshNow` / `test` / `autoRoles` | Add source / Provider list / Own streams / Channel list URL (M3U) / Programme guide URL (XMLTV) / Allow home network / Only for addresses in your own network, e.g. a receiver at home. / Update / Update now / Check / Grant new groups to | Quelle hinzufügen / Anbieterliste / Eigene Streams / Senderliste (M3U-Adresse) / Programmführer (XMLTV-Adresse) / Heimnetz erlauben / Nur für Adressen in deinem eigenen Netz, z. B. ein Receiver zu Hause. / Aktualisieren / Jetzt aktualisieren / Prüfen / Neue Gruppen freigeben für |
+| `adminLive.src.add` / `kindList` / `kindOwn` / `m3u` / `epg` / `lan` / `lanHint` / `interval` / `refreshNow` / `test` | Add source / Provider list / Own streams / Channel list URL (M3U) / Programme guide URL (XMLTV) / Allow home network / Only for addresses in your own network, e.g. a receiver at home. / Update / Update now / Check | Quelle hinzufügen / Anbieterliste / Eigene Streams / Senderliste (M3U-Adresse) / Programmführer (XMLTV-Adresse) / Heimnetz erlauben / Nur für Adressen in deinem eigenen Netz, z. B. ein Receiver zu Hause. / Aktualisieren / Jetzt aktualisieren / Prüfen |
+| `adminLive.src.import` / `numbering` / `numChno` / `numOrder` / `numKeep` | Import / Channel numbers / From the list (tvg-chno) / In list order from / Numbers you set under Channels are kept. | Import / Nummern / Aus der Liste (tvg-chno) / Nach Reihenfolge ab / Eigene Nummern aus *Kanäle* bleiben erhalten. |
+| `adminLive.src.logoPref` / `logoM3u` / `logoXmltv` / `logoOwn` | Channel logos / Channel list first / Programme guide first / A logo you upload always wins. | Senderlogos / Aus der Senderliste zuerst / Aus dem Programmführer zuerst / Ein eigenes Logo geht immer vor. |
+| `adminLive.src.epgShift` / `epgShiftHint` / `hours` | Shift guide times / For programme guides whose times are hours off. tvg-shift from the channel list and values of single channels take precedence. / {n} h | Programm-Zeit verschieben / Für Programmführer, deren Zeiten um Stunden daneben liegen. tvg-shift aus der Senderliste und Werte einzelner Sender gehen vor. / {n} Std. |
+| `adminLive.src.pick.title` / `search` / `all` / `none` / `count` / `total` / `hiddenNote` | {n} groups found – which should be imported? / Search groups / All / None / {n} channels / {m} of {n} channels will be imported / New groups stay hidden until you release them under Groups & rights. | {n} Gruppen gefunden – welche übernehmen? / Gruppe suchen / Alle / Keine / {n} Sender / {m} von {n} Sendern werden übernommen / Neue Gruppen bleiben verborgen, bis du sie unter *Gruppen & Rechte* freigibst. |
+| `adminLive.src.skipped` / `changePick` / `pending` | Without {n} groups / Change selection / {n} new groups are waiting to be released | Ohne {n} Gruppen / Auswahl ändern / {n} neue Gruppen warten auf Freigabe |
 | `adminLive.src.interval.*` | Every 6 h / Every 12 h / Daily / Weekly / Manual only | Alle 6 Std. / Alle 12 Std. / Täglich / Wöchentlich / Nur von Hand |
 | `adminLive.src.state` / `stateEpg` / `unchanged` | Last updated {when} · {n} channels (+{a} / −{r}) / Guide: {n} programmes / leave unchanged | Zuletzt aktualisiert {when} · {n} Sender (+{a} / −{r}) / Programm: {n} Sendungen / unverändert lassen |
 | `adminLive.src.err.*` | Not reachable / Access denied (username or password?) / Timed out / List too big (over 50 MB) / Not a valid channel list / The list was empty, nothing changed / Address not allowed (internal network) | Nicht erreichbar / Zugang abgelehnt (Benutzername oder Passwort?) / Zeitüberschreitung / Liste zu groß (über 50 MB) / Keine gültige Senderliste / Die Liste war leer – nichts geändert / Adresse nicht erlaubt (internes Netz) |
@@ -1378,15 +1583,20 @@ the recipient's own notifications (they chose to record it), never in admin broa
 | `live.notReceiving` | Not broadcasting right now | Gerade keine Übertragung |
 | `adminLive.rec.libFits` / `libMismatch` / `libCreate` / `libNotDedicated` / `libSecurity` | fits / This library does not contain the recordings folder, so Jellyfin will not find the recordings. / Create library "Recordings" / The folder is not empty. Please use a separate, empty sub-folder just for recordings. / Live TV may write only into this one folder. Everyone who sees this library in Jellyfin sees all recordings in it. | passt / Diese Bibliothek enthält den Aufnahmeordner nicht – Jellyfin findet die Aufnahmen dann nicht. / Bibliothek „Aufnahmen“ anlegen / Der Ordner ist nicht leer. Bitte einen eigenen, leeren Unterordner nur für Aufnahmen verwenden. / Live-TV darf nur in diesen einen Ordner schreiben. Wer diese Bibliothek in Jellyfin sieht, sieht alle Aufnahmen darin. |
 | `adminLive.ch.mode.*` | Passed through / Repackaged / Converted | Durchgereicht / Umverpackt / Umgewandelt |
+| `adminLive.ch.epgShift` / `shiftFromList` / `shiftFromSource` / `shiftNone` / `shiftReset` | Shift guide times… / from the channel list (tvg-shift) / from the source / none / Reset | Programm-Zeit verschieben … / aus der Senderliste (tvg-shift) / aus der Quelle / keine / Zurücksetzen |
 | `adminLive.ch.hide` / `show` / `regroup` / `renumber` / `reset` / `order` / `dupNumber` / `changedFrom` | Hide / Show / Change group… / Number from… / Reset changes / Order / Duplicate number / changed (import: {v}) | Ausblenden / Einblenden / Gruppe ändern … / Ab Nummer … durchnummerieren / Änderungen zurücksetzen / Reihenfolge / Nummer doppelt / geändert (Import: {v}) |
 | `adminLive.grp.kidFriendly` / `merge` / `kidsSee` / `noGroup` | Kid-friendly / Merge… / Kids profiles see: {groups} ({n} channels) / No group | Kinderfreundlich / Zusammenführen … / Kinderprofile sehen: {groups} ({n} Sender) / Ohne Gruppe |
+| `adminLive.grp.unreleased` / `unreleasedLine` / `onlyPending` / `release` / `releaseBody` / `releaseDo` / `unrelease` | Not released / Visible to nobody / Show only these / Release… / People with these roles will then see the group's {n} channels. / Release / Withdraw release | Nicht freigegeben / Für niemanden sichtbar / Nur diese zeigen / Freigeben … / Danach sehen Personen mit diesen Rollen die {n} Sender der Gruppe. / Freigeben / Freigabe zurücknehmen |
+| `adminPeople.check.livetvNotReleased` | Group not released yet | Gruppe noch nicht freigegeben |
+| `adminLive.dvrHint` (settings help of `LIVETV_DVR_MINUTES`) | 0 to 120 minutes. 120 minutes of an HD channel take about 5 GB of cache; LIVETV_CACHE_MAX_GB (default 6) limits all channels together. | 0 bis 120 Minuten. 120 Minuten eines HD-Senders brauchen ca. 5 GB Zwischenspeicher; LIVETV_CACHE_MAX_GB (Standard 6) begrenzt alle Sender zusammen. |
+| `adminLive.ev.released_on_switch` | Stopped at once on a switch (slot or connection needed) | Beim Umschalten sofort beendet (Platz oder Verbindung gebraucht) |
 | `adminLive.epg.matched` / `unmatched` / `apply` / `other` / `none` | {m} of {n} channels with a guide · {u} without / Without a guide / Apply / Choose another… / No guide | {m} von {n} Sendern mit Programm · {u} ohne / Ohne Programm / Übernehmen / Andere wählen … / Kein Programm |
 | `adminLive.status.running` / `viewers` / `stop` / `restart` / `events` / `off` | Running channels / Viewers / Stop / Restart / Events / Turn off Live TV… | Laufende Sender / Zuschauer / Stoppen / Neu starten / Ereignisse / Live-TV ausschalten … |
 | `adminLive.off.removeImage` / `removeCache` / `keepsRecordings` | Remove image / Delete cache / Recordings are kept. | Image entfernen / Zwischenspeicher löschen / Aufnahmen bleiben erhalten. |
 | `adminLive.gpu.*` | (the five lines of §4.4) | (the five lines of §4.4) |
 | `adminConv.title` / `used` / `measured` / `recommended` / `remeasure` / `auto` / `custom` / `noRealtime` | Conversions / {u} of {l} in use / Measured {s}× real time ({engine}) / recommended {n} / Measure again / Automatic ({n}) / Custom / The server cannot convert in real time. | Umwandlungen / {u} von {l} belegt / Gemessen {s}× Echtzeit ({engine}) / empfohlen {n} / Neu messen / Automatisch ({n}) / Eigener Wert / Der Server schafft keine Umwandlung in Echtzeit. |
 | `adminConv.priority.*` | Films & series first / Live TV first / Equal | Filme & Serien zuerst / Live-TV zuerst / Gleichrangig |
-| `adminConv.priority.hint` | The other kind leaves one slot free. | Die andere Art lässt einen Platz frei. |
+| `adminConv.priority.hint.films` / `hint.live` / `hint.equal` (one per option, §5.6) | Live TV leaves one slot free for films & series (with 2 or more slots). / Films & series leave one slot free for Live TV (with 2 or more slots). / No slot is kept free – whoever comes first gets it. | Live-TV lässt einen Platz für Filme & Serien frei (ab 2 Plätzen). / Filme & Serien lassen einen Platz für Live-TV frei (ab 2 Plätzen). / Kein Platz wird freigehalten – wer zuerst kommt, bekommt ihn. |
 | `adminConv.busyMeasure` | Measuring works only while nobody is watching. | Messen geht nur, wenn gerade niemand schaut. |
 | `adminDevices.startLive` | TV starts with Live TV | TV startet mit Live-TV |
 | notification texts | §16 | §16 |
@@ -1396,7 +1606,12 @@ the recipient's own notifications (they chose to record it), never in admin broa
 - Channel rows/tiles: one button each with the accessible name "{number} {name}, jetzt: {title}, bis {time}"; the star is a
   separate toggle button. Group chips: `role="tablist"`-free toggle buttons with `aria-pressed` (they filter, they are not tabs).
 - Live player: control bar `role="group"`; LIVE pill announces "Live" / "{time} hinter live"; channel changes announce
-  "{number} {name}, {title}" politely; number entry announces the typed number and the match.
+  "{number} {name}, {title}, noch {n} Min." politely (the info banner itself is `aria-hidden`, so it is not read twice);
+  number entry announces the typed number and the match (a lone 0: "Letzter Sender: {number} {name}"); the *Senderliste*
+  panel is a dialog with a focus trap, rows are buttons named like list rows, Back/Escape closes it and focus returns to
+  the player; *Von Anfang an* is a normal button, absent (not just hidden) from the accessibility tree while unavailable.
+- Favourites order: the keyboard path and announcements of §9.2 (`live.fav.order*` texts); on TV the move mode announces
+  pick, position and drop the same way.
 - Guide: `role="grid"` with `aria-rowcount`/`aria-colcount` for the virtualised grid, row headers = channels, cells name
   "{title}, {start} bis {end}{, läuft}{, Aufnahme geplant}"; the *jetzt* line is decorative (`aria-hidden`), *Jetzt* button
   moves focus to the running programme of the first visible row.
@@ -1419,8 +1634,12 @@ Hosts `iptv.example.com`, `friend.example.com`, `192.0.2.10`. Fixture M3U/XMLTV 
   unknown id, another port's id, a wrong passphrase, a second sender; per-address throttle; `PUT /v1/ingest` replaces the set;
   no credential or address in any log line), library export (marker guard, not-empty refusal, name sanitising, no symlink
   follow, paths stay below `/library`).
-- **Unit (backend):** import merge (overrides survive, missing/return, shrink guard, group auto-create with `auto_roles`), rights
-  (roles, user allow/deny, admin, kids kid-friendly only, no group → no tab), tokens (hash only, pin, re-pin by beat, caps,
+- **Unit (backend):** import merge (overrides survive, missing/return, shrink guard counted before group skipping, skipped
+  groups, new groups created unreleased with no roles, numbering policies, `tvg-shift` header and entry), EPG matching (the
+  four passes in order, ambiguity moves on, own source first, offsets applied on read, logo preference), rights (roles, user
+  allow/deny, admin, unreleased groups invisible to everyone incl. admins, kids kid-friendly only, no group → no tab),
+  release on switch (only viewer + needed → stopped before the new start; another viewer → no release; a join during the
+  release restarts the stream; not needed → 60-s linger), *Zuletzt gesehen* (cap 10, last/previous), tokens (hash only, pin, re-pin by beat, caps,
   revoke paths), viewer/stop tick, budget counting (all kinds, grants, holdback per priority, HEVC sub-cap, never stops
   running), `/api/playback/info` fallback to copy and 503 `server_busy`, benchmark recommendation (4.6 → 3, 0.8 → 1 with
   warning), EPG now/next and 6-h blocks across DST, rules expansion, recording scheduler (padding, series only-new, keep-max,
@@ -1429,25 +1648,32 @@ Hosts `iptv.example.com`, `friend.example.com`, `192.0.2.10`. Fixture M3U/XMLTV 
 - **Unit (gateway):** `/media/l/` path allowlist, authz memo, headers, token never forwarded; `/media/r/` file serving bounds.
 - **Unit (updater):** `livetv` op parsing, compose argument building with `--profile livetv`, state persistence, update
   includes livetv only when enabled.
-- **Unit (web):** `livekeys.ts` map per platform, number entry, channel order/wrap, guide geometry (time → x, anchor-time
-  vertical move, DST day width), virtual window, favourites ordering.
+- **Unit (web):** `livekeys.ts` map per platform (OK shows controls and never pauses while they are hidden, long OK opens the
+  *Senderliste*, `ChannelList`/`Guide`), number entry (lone 0 = last channel, "0 5" = 5), keys-seen hint filter, channel
+  order/wrap (favourites order, *Zuletzt gesehen* snapshot), time left, *Von Anfang an* target, banner timing (first frame +
+  4 s), guide geometry (time → x, anchor-time vertical move, DST day width), virtual window, favourites ordering.
 - **e2e (Playwright, mocked API + a fake HLS server for the stream):** admin enable flow (updater job and `.env` fallback);
   sources add/test/error states; channels search, bulk, drag order with keyboard; groups & rights matrix; Live-Status; budget
   card and *Neu messen*; Live tab desktop/phone/kids/TV (spatial nav, channel keys, digits); live player pause/rewind/LIVE,
-  channel switch, unreachable and `live_full` states; Chromecast live with the cast SDK fake; guide navigation on desktop and
+  channel switch with the info banner, *Von Anfang an*, the *Senderliste* panel and focus return on Back, unreachable and
+  `live_full` states; the group picker and group release; favourites ordering (drag, keyboard, TV move mode); Chromecast
+  live with the cast SDK fake; guide navigation on desktop and
   TV; recordings scheduling, conflict warning, *Meine Aufnahmen*, recording playback through the source seam. German UI.
-- **On-device checks for the owner** (listed per phase in the plans): Tizen/webOS/Fire TV channel keys and digits, QSV
+- **On-device checks for the owner** (listed per phase in the plans): Tizen/webOS/Fire TV channel keys and digits (on LG:
+  whether CH+/− arrive at all), Tizen `ChannelList`/`Guide`, long OK on each remote, a 120-min buffer rewound 90 min on a TV,
+  zapping between two channels of a 1-connection provider, QSV
   transcode of an SRT test feed on the N5095, an OBS push through the opened UDP port (and a refused push with a wrong
   passphrase), a library recording appearing in the Jellyfin library, Chromecast and AirPlay live, 30-min pause on a TV.
 
 ## 23. Rollout
 
 - **Order:** Phase 0 → 1a (budget; release note: "Gleichzeitige Umwandlungen sind jetzt begrenzt – Standard 2 bis zur ersten
-  Messung, danach automatisch; Admin → Wiedergabe") → 1b–1e (one release; Live TV invisible until enabled) → 2 → 3.
+  Messung, danach automatisch; Admin → Betrieb → Wiedergabe-Check") → 1b–1e (one release; Live TV invisible until enabled) → 2 → 3.
 - **Migrations:** 46 is the device hand-off plan (builds first); 47 (Phase 0), 48 (1c), 49 (2a), 50 (3a); all additive; Live
   TV tables are empty until a source is added.
-- **Defaults:** budget automatic (2 before measuring), priority films; Live TV offered (hideable), not installed; DVR 30 min;
-  new groups visible to admin/family/friend; `liveRecord` off for guests; recording storage FriendFlix folder, 200 GB,
+- **Defaults:** budget automatic (2 before measuring), priority films; Live TV offered (hideable), not installed; DVR 30 min
+  (up to 120); new provider groups hidden and granted to no role until released; numbering from `tvg-chno`; logos from the
+  channel list first; EPG offset 0; `liveRecord` off for guests; recording storage FriendFlix folder, 200 GB,
   retention 30 days, padding 2/5 min; re-encode off.
 - **Docs:** new `docs/livetv.md` (German; enabling, sources, rights, GPU overlays, **SRT push: which ports — UDP
   `LIVETV_SRT_PORTS`, default 9000–9009, no TCP, not through the reverse proxy, only needed when a feed pushes — and the
@@ -1475,8 +1701,10 @@ Hosts `iptv.example.com`, `friend.example.com`, `192.0.2.10`. Fixture M3U/XMLTV 
    *Neu messen*).
 9. When enabled through the updater, `livetv` follows updates automatically (updater state); the `.env` line is still
    recommended to survive `docker compose down`.
-10. New provider groups are visible to admin/family/friend, not guests, until granted.
-11. Desktop "last channel" key is Q; channel keys on desktop are ↑/↓ and PageUp/PageDown; phones swipe horizontally.
+10. ~~New provider groups are visible to admin/family/friend, not guests, until granted.~~ Superseded by the owner decision
+    of 2026-11-12: new provider groups are hidden and granted to no role until the admin releases them (§8).
+11. Desktop "last channel" key is Q; channel keys on desktop are ↑/↓ and PageUp/PageDown; phones swipe horizontally; on TVs
+    ▲/▼ zap and a lone 0 is last channel (owner decision 2026-11-12).
 12. The Android app plays live in the shell's web player; a native live mode is a later option.
 13. Recordings are HLS folders in FriendFlix mode (seekable while recording) and one concatenated `.ts` file in library mode;
     library mode makes recordings visible to everyone with that library.
@@ -1485,3 +1713,31 @@ Hosts `iptv.example.com`, `friend.example.com`, `192.0.2.10`. Fixture M3U/XMLTV 
     credentials shown once; listening is cheap, ffmpeg runs only while watched or recorded (owner answer 1).
 16. Library recordings: the only write access into the media share is one dedicated sub-folder mounted read-write into
     `livetv` through an opt-in overlay, guarded by a marker file (owner answer 2).
+17. *Von Anfang an* seeks to 30 s before the programme start (clamped to the oldest buffered point); the player keeps at
+    most 300 s (TV) / 1 800 s (elsewhere) of back buffer in memory and reloads older parts from `livetv`.
+18. A changed group selection never renumbers other channels: list positions count skipped groups too.
+19. The *Senderliste* panel exists on every platform (button), with long OK, `ChannelList` and Phase-1 `Guide` as TV
+    shortcuts; OK on a row switches and closes it.
+20. Unreleased groups are invisible on the user side to admins too; the group picker starts with every group ticked (no
+    name pattern), because nothing imported is visible before release.
+21. EPG offsets: the most specific value wins (channel → `tvg-shift` of the entry → of the header → source), applied when
+    programmes are read.
+22. Zapping inside *Zuletzt gesehen* walks the order the filter had when it was chosen; on TV each drop in the favourites
+    move mode saves at once.
+
+## 25. Later (from the 2026-11-12 research, not in Phases 1–3)
+
+Kept as a list so they are not lost; none is planned or binding:
+
+- **Provider catch-up**: read the M3U `catchup*` tags at import and offer *Abspielen* on past guide cells (passthrough, no
+  storage, no budget).
+- **Picture-in-picture**: the browser PiP button on desktop and iPhone Safari (not on TV WebViews).
+- **Sleep timer** on TV: *Ausschalten nach 30 / 60 / 90 Min. / Ende der Sendung*.
+- **EPG search**: *Läuft gerade* / *Demnächst* hits in the global search (Phase 2 or later).
+- **Multiview**: not now (each tile is a stream, old TVs cannot decode four); maybe a desktop-only two-up.
+- **Phase 3 recording notes**: the conflict forecast also counts provider connections; *Aufnehmen* in the player starts
+  from the buffered programme start; a visible *Konflikt* marker in *Geplant* and the guide; a partial recording schedules
+  the next airing.
+- Other research suggestions the owner has not decided (Phase 2 guide paging and *Favoriten zuerst*, genre rows, audio
+  tracks, live hand-off, Chromecast programme metadata, a `max_streams` message naming the devices, the error action
+  *Zurück zu …*, Magic Remote hover rules, refresh at a fixed time) stay with the research report until decided.
