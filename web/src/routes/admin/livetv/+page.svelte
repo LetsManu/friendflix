@@ -17,6 +17,7 @@
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
   import { saveSettings } from '#lib/admin/settings/api';
   import { refreshSummary } from '#lib/admin/summary';
+  import ChannelsTab from '#lib/admin/livetv/ChannelsTab.svelte';
   import EnableCard from '#lib/admin/livetv/EnableCard.svelte';
   import MiniStatus from '#lib/admin/livetv/MiniStatus.svelte';
   import OffDialog from '#lib/admin/livetv/OffDialog.svelte';
@@ -127,6 +128,7 @@
   </div>
   <div id="ltv-panel" role="tabpanel" aria-labelledby="ltv-tab-{tab}" tabindex="-1">
     {#if tab === 'sources'}<SourcesTab />
+    {:else if tab === 'channels'}<ChannelsTab />
     {:else if tab === 'status'}<MiniStatus {s} stopping={ph === 'stopping'} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />
     {:else}<AdminCard><p class="soon">{$t('adminLive.tabs.soon')}</p></AdminCard>{/if}
   </div>
