@@ -43,8 +43,9 @@ let ingestState: Handler;
 let health: Handler;
 const ingestBodies = () => calls.filter((c) => c.method === 'PUT' && c.path === '/v1/ingest').map((c) => c.body as { feeds: Array<{ channelId: string; port: number; streamId: string; passphrase: string }> });
 const lastIngest = () => ingestBodies().at(-1)!;
+let encoders: unknown[];
 const system = () => ({
-  cpu: { model: 'Testprozessor', cores: 4, loadPct: 3 }, gpu: { devices: [], driver: null, readable: false, busyPct: null }, encoders: ['libx264'],
+  cpu: { model: 'Testprozessor', cores: 4, loadPct: 3 }, gpu: { devices: [], driver: null, readable: false, busyPct: null }, encoders,
   cache: { usedBytes: 0, maxBytes: 1 }, recordings: null, srt: { ports },
 });
 
@@ -59,6 +60,7 @@ beforeEach(async () => {
   logs.length = 0;
   events.length = 0;
   ports = range(9000, 10);
+  encoders = ['libx264'];
   ingest = () => ({ json: { ok: true, listening: ports } });
   ingestState = () => ({ json: [] });
   health = () => ({ json: { ok: true, api: 1, version: '3.3.0', bootId: '0123456789abcdef' } });
@@ -114,6 +116,14 @@ describe('push credentials (spec §3.5)', () => {
     expect(second.push.streamId).not.toBe(p.streamId);
     expect(second.push.passphrase).not.toBe(p.passphrase);
     expect((await env.pool.query('select count(*)::int as n from livetv_sources')).rows[0].n).toBe(1);
+  });
+
+  it('a livetv that reports an encoder this backend does not know still takes push feeds', async () => {
+    encoders = ['h264_qsv', 'av1_qsv', 'libx264'];
+    const r = await push();
+    expect(r.statusCode).toBe(201);
+    expect(r.json().channel.push).toMatchObject({ port: 9000, portInRange: true });
+    expect(lastIngest().feeds).toHaveLength(1);
   });
 
   it('no host is shown before PUBLIC_URL is known; LIVETV_SRT_HOST wins', async () => {

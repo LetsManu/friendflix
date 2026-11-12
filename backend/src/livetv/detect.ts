@@ -60,13 +60,17 @@ const ENCODERS: readonly string[] = ['h264_qsv', 'h264_vaapi', 'h264_nvenc', 'li
 const memo = new WeakMap<object, { at: number; sys: LivetvSystem | null }>();
 const strings = (v: unknown, max: number): string[] | null => (Array.isArray(v) && v.length <= max && v.every((x) => typeof x === 'string' && x.length <= 120) ? (v as string[]) : null);
 
-/** the `GET /v1/system` answer, read defensively; null = an unexpected shape */
+/**
+ * the `GET /v1/system` answer, read defensively; null = an unexpected shape. An encoder name this backend does not know (a newer
+ * livetv) is left out, never a reason to refuse the whole answer: the SRT ports and the GPU facts stay usable.
+ */
 function parseSystem(raw: Partial<LivetvSystem> | null | undefined): LivetvSystem | null {
-  const devices = strings(raw?.gpu?.devices, 32), encoders = strings(raw?.encoders, 8);
-  return raw && raw.gpu && devices && encoders && encoders.every((e) => ENCODERS.includes(e)) ? {
+  const devices = strings(raw?.gpu?.devices, 32);
+  const encoders = Array.isArray(raw?.encoders) ? (raw?.encoders as unknown[]).filter((e): e is Encoder => typeof e === 'string' && ENCODERS.includes(e)) : null;
+  return raw && raw.gpu && devices && encoders ? {
     cpu: { model: String(raw.cpu?.model ?? '').slice(0, 120), cores: Number(raw.cpu?.cores) || 0, loadPct: Number(raw.cpu?.loadPct) || 0 },
     gpu: { devices, driver: typeof raw.gpu.driver === 'string' ? raw.gpu.driver.slice(0, 60) : null, readable: raw.gpu.readable === true, busyPct: typeof raw.gpu.busyPct === 'number' ? raw.gpu.busyPct : null },
-    encoders: encoders as Encoder[],
+    encoders: [...new Set(encoders)],
     cache: { usedBytes: Number(raw.cache?.usedBytes) || 0, maxBytes: Number(raw.cache?.maxBytes) || 0 },
     recordings: raw.recordings ? { usedBytes: Number(raw.recordings.usedBytes) || 0, freeBytes: Number(raw.recordings.freeBytes) || 0 } : null,
     srt: { ports: Array.isArray(raw.srt?.ports) ? raw.srt.ports.filter((p): p is number => Number.isInteger(p)).slice(0, 100) : [] },

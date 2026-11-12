@@ -99,6 +99,8 @@ export interface EffectiveRow {
   probe: ProbeRec | null;
 }
 
+/** the effective EPG offset in minutes (override, else the list's tvg-shift, else the source's); one fragment for CHANNEL_COLUMNS and nowNext */
+export const EFFECTIVE_SHIFT_SQL = 'coalesce(c.epg_shift_override_min, c.import_epg_shift_min, s.epg_shift_min)';
 /** the effective columns over `livetv_channels c join livetv_sources s` (aliases `c`, `s` are part of the contract) */
 export const CHANNEL_COLUMNS = `c.id, c.source_id,
   coalesce(c.name_override, c.import_name) as name,
@@ -107,7 +109,7 @@ export const CHANNEL_COLUMNS = `c.id, c.source_id,
   coalesce(c.logo_override_hash, case when s.logo_pref = 'xmltv' then coalesce(c.epg_logo_hash, c.import_logo_hash)
     else coalesce(c.import_logo_hash, c.epg_logo_hash) end) as logo_hash,
   c.hidden, c.missing_since, c.stream_kind, c.ingest, c.epg_source_id, c.epg_channel_id,
-  coalesce(c.epg_shift_override_min, c.import_epg_shift_min, s.epg_shift_min) as epg_shift_min,
+  ${EFFECTIVE_SHIFT_SQL} as epg_shift_min,
   case when c.epg_shift_override_min is not null then 'channel' when c.import_epg_shift_min is not null then 'list'
     when s.epg_shift_min <> 0 then 'source' else 'none' end as epg_shift_from,
   c.probe`;
