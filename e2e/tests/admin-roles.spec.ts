@@ -4,7 +4,7 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
-import { envOnlyRole, type MatrixMockRole } from '../mocks/admin.js';
+import { envOnlyRole, roleDeleteSample, type MatrixMockRole } from '../mocks/admin.js';
 
 const grid = (page: Page) => page.getByRole('grid', { name: 'Rechte der Rollen' });
 const cell = (page: Page, name: string | RegExp) => grid(page).getByRole('gridcell', { name, exact: typeof name === 'string' ? true : undefined });
@@ -769,6 +769,21 @@ test.describe('Rollen & Rechte: final-review fixes', () => {
     expect(await page.evaluate(() => (window as unknown as { __orders: string[] }).__orders)).toEqual([
       'Admin,Familie,Freund,Gast,Crew', 'Admin,Freund,Familie,Gast,Crew', 'Admin,Freund,Gast,Familie,Crew',
     ]);
+  });
+
+  test('a role\'s history links to the audit page filtered by target; a deleted role is still named', async ({ page, api }) => {
+    api.admin.audit.unshift(roleDeleteSample('kino', 'Kino'));
+    await page.goto('/admin/roles');
+    await (await menu(page, 'Familie')).getByRole('button', { name: 'Verlauf' }).click();
+    await page.getByRole('dialog', { name: 'Verlauf · Familie' }).getByRole('link', { name: 'Im Audit-Log öffnen' }).click();
+    await expect(page).toHaveURL(/\/admin\/audit\?target=family/);
+    await expect(page.getByRole('group', { name: 'Betrifft: Familie' })).toBeVisible();
+    const table = page.getByRole('table', { name: 'Audit-Log' });
+    await expect(table.getByText('Tester hat „Wiedergabe“ der Rolle Familie geändert')).toBeVisible();
+    await expect(table.getByText('Kino')).toHaveCount(0);
+    // the deleted role's own entry: the history sheet cannot be opened any more, the log names it through its label
+    await page.goto('/admin/audit?target=kino');
+    await expect(page.getByRole('table', { name: 'Audit-Log' }).getByText('Ben Muster hat die Rolle Kino gelöscht')).toBeVisible();
   });
 
   test('a re-created role shows only the history since its latest creation', async ({ page, api }) => {

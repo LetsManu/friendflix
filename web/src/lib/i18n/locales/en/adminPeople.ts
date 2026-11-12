@@ -419,6 +419,20 @@ const dict: Translation<typeof de> = {
     deletedRole: '“deleted role”',
     legacy: { request_limit: 'request limit', remote_cap: 'limit away from home', downloads: 'downloads', playback: 'playback' },
   },
+  /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
+  sentenceRights: {
+    setBool: '{actor} {value} {field} for {target} (before: {was})',
+    setValue: '{actor} set {field} for {target} to {value} (before: {was})',
+    pinned: '{actor} set {field} for {target} individually: {value} (before: {was})',
+    unpinned: '{actor} put {field} for {target} back to the role: {value} (before: {was})',
+    moved: '{actor} changed what decides {field} for {target} (before: {was}, now: {now})',
+    noteChanged: '{actor} changed the note on the rights of {target}',
+    storedOnly: '{actor} changed stored exceptions of {target} that currently have no effect',
+    storedChip: '{field} (stored)',
+    on: 'allowed',
+    off: 'denied',
+    layer: { role: 'as role', user: 'set individually', kids: 'kids profile', admin: 'admin', env: 'from .env' },
+  },
   devices: {
     thisDevice: 'This device',
     ownDevice: 'This is the device you are signed in with – you would lock yourself out.',
@@ -512,6 +526,12 @@ const dict: Translation<typeof de> = {
     area: 'Area',
     empty: 'No entries yet.',
     emptyFiltered: 'No entries match these filters.',
+    /** Task 22: area Personen, the target filter and the link to the log */
+    people: 'People',
+    targetFilter: 'About: {name}',
+    targetClear: 'Remove the “About” filter',
+    targetUnknown: 'selected entry',
+    openInLog: 'Open in the audit log',
     areas: {
       user: 'Users', device: 'Devices', invite: 'Invitations', request: 'Requests', poll: 'Polls', list: 'Lists', hub: 'Brand tiles',
       role: 'Roles', profile: 'Profiles', download: 'Downloads', digest: 'Weekly recap', settings: 'Settings', system: 'System',

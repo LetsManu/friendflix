@@ -419,6 +419,20 @@ const dict: Translation<typeof de> = {
     deletedRole: '“silinmiş rol”',
     legacy: { request_limit: 'istek sınırı', remote_cap: 'evin dışındaki sınır', downloads: 'indirmeler', playback: 'oynatma' },
   },
+  /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
+  sentenceRights: {
+    setBool: '{actor}, {target} için {field} ayarını {value} yaptı (önce: {was})',
+    setValue: '{actor}, {target} için {field} değerini {value} olarak ayarladı (önce: {was})',
+    pinned: '{actor}, {target} için {field} değerini tek tek belirledi: {value} (önce: {was})',
+    unpinned: '{actor}, {target} için {field} değerini role geri aldı: {value} (önce: {was})',
+    moved: '{actor}, {target} için {field} değerini neyin belirlediğini değiştirdi (önce: {was}, şimdi: {now})',
+    noteChanged: '{actor}, {target} kişisinin haklarına ait notu değiştirdi',
+    storedOnly: '{actor}, {target} için şu an etkisi olmayan kayıtlı istisnaları değiştirdi',
+    storedChip: '{field} (kayıtlı)',
+    on: 'izinli',
+    off: 'yasak',
+    layer: { role: 'role gibi', user: 'tek tek belirlenmiş', kids: 'çocuk profili', admin: 'yönetici', env: '.env\'den' },
+  },
   devices: {
     thisDevice: 'Bu cihaz',
     ownDevice: 'Şu anda oturum açtığın cihaz bu – kendini dışarıda bırakırsın.',
@@ -512,6 +526,12 @@ const dict: Translation<typeof de> = {
     area: 'Alan',
     empty: 'Henüz kayıt yok.',
     emptyFiltered: 'Bu filtrelere uyan kayıt yok.',
+    /** Task 22: area Personen, the target filter and the link to the log */
+    people: 'Kişiler',
+    targetFilter: 'İlgili: {name}',
+    targetClear: '“İlgili” filtresini kaldır',
+    targetUnknown: 'seçilen kayıt',
+    openInLog: 'Denetim günlüğünde aç',
     areas: {
       user: 'Kullanıcılar', device: 'Cihazlar', invite: 'Davetler', request: 'İstekler', poll: 'Oylamalar', list: 'Listeler', hub: 'Marka kutuları',
       role: 'Roller', profile: 'Profiller', download: 'İndirmeler', digest: 'Haftalık özet', settings: 'Ayarlar', system: 'Sistem',

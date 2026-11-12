@@ -419,6 +419,20 @@ const dict: Translation<typeof de> = {
     deletedRole: '«rol eliminado»',
     legacy: { request_limit: 'límite de peticiones', remote_cap: 'límite fuera de casa', downloads: 'descargas', playback: 'reproducción' },
   },
+  /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
+  sentenceRights: {
+    setBool: '{actor} ha {value} {field} para {target} (antes: {was})',
+    setValue: '{actor} ha cambiado {field} de {target} a {value} (antes: {was})',
+    pinned: '{actor} ha fijado {field} solo para {target}: {value} (antes: {was})',
+    unpinned: '{actor} ha devuelto {field} de {target} al rol: {value} (antes: {was})',
+    moved: '{actor} ha cambiado qué decide {field} de {target} (antes: {was}, ahora: {now})',
+    noteChanged: '{actor} ha cambiado la nota sobre los derechos de {target}',
+    storedOnly: '{actor} ha cambiado excepciones guardadas de {target} que ahora no tienen efecto',
+    storedChip: '{field} (guardado)',
+    on: 'permitido',
+    off: 'prohibido',
+    layer: { role: 'como el rol', user: 'fijado individualmente', kids: 'perfil infantil', admin: 'admin', env: 'de .env' },
+  },
   devices: {
     thisDevice: 'Este dispositivo',
     ownDevice: 'Es el dispositivo con el que has iniciado sesión: te quedarías fuera.',
@@ -512,6 +526,12 @@ const dict: Translation<typeof de> = {
     area: 'Ámbito',
     empty: 'Aún no hay entradas.',
     emptyFiltered: 'Ninguna entrada coincide con estos filtros.',
+    /** Task 22: area Personen, the target filter and the link to the log */
+    people: 'Personas',
+    targetFilter: 'Afecta a: {name}',
+    targetClear: 'Quitar el filtro «Afecta a»',
+    targetUnknown: 'entrada seleccionada',
+    openInLog: 'Abrir en el registro de auditoría',
     areas: {
       user: 'Usuarios', device: 'Dispositivos', invite: 'Invitaciones', request: 'Peticiones', poll: 'Votaciones', list: 'Listas', hub: 'Mosaicos de marca',
       role: 'Roles', profile: 'Perfiles', download: 'Descargas', digest: 'Resumen semanal', settings: 'Ajustes', system: 'Sistema',

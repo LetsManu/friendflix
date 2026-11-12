@@ -419,6 +419,20 @@ const dict: Translation<typeof de> = {
     deletedRole: '„usunięta rola”',
     legacy: { request_limit: 'limit próśb', remote_cap: 'limit poza domem', downloads: 'pobieranie', playback: 'odtwarzanie' },
   },
+  /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
+  sentenceRights: {
+    setBool: '{actor}: {field} dla {target} – {value} (wcześniej: {was})',
+    setValue: '{actor}: {field} dla {target} ustawiono na {value} (wcześniej: {was})',
+    pinned: '{actor}: {field} dla {target} ustawiono indywidualnie – {value} (wcześniej: {was})',
+    unpinned: '{actor}: {field} dla {target} przywrócono do roli – {value} (wcześniej: {was})',
+    moved: '{actor}: zmieniono, co rozstrzyga o {field} dla {target} (wcześniej: {was}, teraz: {now})',
+    noteChanged: '{actor}: zmieniono notatkę o uprawnieniach {target}',
+    storedOnly: '{actor}: zmieniono zapisane wyjątki {target}, które teraz niczego nie zmieniają',
+    storedChip: '{field} (zapisane)',
+    on: 'dozwolone',
+    off: 'zabronione',
+    layer: { role: 'jak rola', user: 'ustawione indywidualnie', kids: 'profil dziecięcy', admin: 'admin', env: 'z .env' },
+  },
   devices: {
     thisDevice: 'To urządzenie',
     ownDevice: 'To urządzenie, na którym jesteś zalogowany(-a) – zablokował(a)byś sam(a) siebie.',
@@ -512,6 +526,12 @@ const dict: Translation<typeof de> = {
     area: 'Obszar',
     empty: 'Brak wpisów.',
     emptyFiltered: 'Żaden wpis nie pasuje do tych filtrów.',
+    /** Task 22: area Personen, the target filter and the link to the log */
+    people: 'Osoby',
+    targetFilter: 'Dotyczy: {name}',
+    targetClear: 'Usuń filtr „Dotyczy”',
+    targetUnknown: 'wybrany wpis',
+    openInLog: 'Otwórz w dzienniku audytu',
     areas: {
       user: 'Użytkownicy', device: 'Urządzenia', invite: 'Zaproszenia', request: 'Prośby', poll: 'Głosowania', list: 'Listy', hub: 'Kafelki marek',
       role: 'Role', profile: 'Profile', download: 'Pobrania', digest: 'Podsumowanie tygodnia', settings: 'Ustawienia', system: 'System',
