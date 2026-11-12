@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFile, mkdir, readdir, rename, rm, stat, statfs, truncate, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { admitConversion, bindConvGrant, dropConvGrant } from './convbudget.js';
 import type { Ctx } from './ctx.js';
 import { DOWNLOAD_PRESETS, type DownloadQuality } from './media/types.js';
 import { discontinuities, scanFmp4File } from './fmp4scan.js';
@@ -108,6 +109,8 @@ class Preparer {
   /** Test hook / log sink for "stays queued" notes. */
   log: (msg: string) => void = (msg) => console.warn(msg);
   private readonly blocked = new Set<string>();
+  /** Jobs whose "waits for a conversion slot" line was written (once per wait). */
+  private readonly slotWait = new Set<string>();
   /** Jobs whose Jellyfin transcode is currently stopped because of a pause (observable for tests). */
   pausedJobs = new Set<string>();
 
@@ -148,6 +151,7 @@ class Preparer {
     const i = this.waiting.findIndex((w) => w.jobId === jobId);
     if (i >= 0) this.waiting.splice(i, 1)[0]!.drop();
     this.blocked.delete(jobId);
+    this.slotWait.delete(jobId);
   }
 
   /** Picks up queued/preparing jobs (also after a restart). */
@@ -196,8 +200,9 @@ class Preparer {
       if (!user) return; // nobody to pull as yet: retried by the next tick
       if (!(await this.hasRoom(job))) return; // stays queued: retried by the next tick
       this.blocked.delete(jobId);
+      if (!(await this.hasSlot(job, user))) return; // the shared conversion budget is full (or unknown): stays queued, retried by the next tick
       const go = await ctx.db.query("update download_jobs set status = 'preparing', error = null, updated_at = now() where id = $1 and status in ('queued','preparing')", [jobId]);
-      if (!go.rowCount) return; // cancelled in the meantime
+      if (!go.rowCount) { await dropConvGrant(ctx, `dl:${jobId}`); return; } // cancelled in the meantime
       await this.prepare(user, job);
     } catch (e) {
       if (e instanceof Cancelled) {
@@ -208,6 +213,25 @@ class Preparer {
       await ctx.db.query("update download_jobs set status = 'failed', error = $2, updated_at = now() where id = $1", [jobId, errMsg(e)]);
       await rm(partFile(ctx, jobId), { force: true }).catch(() => undefined);
     }
+  }
+
+  /**
+   * A conversion slot from the shared budget (spec §5.2, ruling 10): a download runs only while nothing else needs the slot. Refused,
+   * unknown (the media server's session list did not answer) or an error all mean "wait": the job stays queued, never fails. The wait
+   * line is written once per job and carries the job id only.
+   */
+  private async hasSlot(job: JobRow, user: JfUser): Promise<boolean> {
+    const { ctx } = this;
+    const label = (await ctx.db.query<{ l: string | null }>(
+      "select coalesce(meta->>'seriesName', meta->>'title') l from downloads where job_id = $1 and meta->>'title' is not null order by created_at desc limit 1", [job.id],
+    ).catch(() => ({ rows: [] as Array<{ l: string | null }> }))).rows[0]?.l;
+    const got = await admitConversion(ctx, { kind: 'download', userId: user.id, hint: `dl:${job.id}`, ...(label ? { label } : {}) }).catch(() => ({ ok: false as const }));
+    if (got.ok) { this.slotWait.delete(job.id); return true; }
+    if (!this.slotWait.has(job.id)) {
+      this.slotWait.add(job.id);
+      this.log(`download ${job.id} waits for a conversion slot`);
+    }
+    return false;
   }
 
   private async fetchOk(user: JfUser, path: string): Promise<Response> {
@@ -315,6 +339,7 @@ class Preparer {
       const src = await ctx.jf.downloadSource(user, job.item_id, { quality: job.quality, audioIndex, maxHeight, maxBitrate });
       if (!src.masterPath) throw new Error('no master playlist');
       const playSessionId = src.playSessionId; // the session the master playlist belongs to (stopEncoding / resume bookkeeping)
+      await bindConvGrant(ctx, `dl:${job.id}`, playSessionId); // the slot granted in run() now belongs to this session
       try {
         const jump = await this.pass(user, job, src.masterPath, src.mediaSourceId, playSessionId, { resume, pause: attempt < SEAM_RESTARTS });
         if (jump === null) break;
@@ -323,6 +348,7 @@ class Preparer {
       } finally {
         this.pausedJobs.delete(job.id);
         await ctx.jf.stopEncoding(user, playSessionId); // always: Jellyfin keeps the transcode (and its temp files) alive otherwise
+        await dropConvGrant(ctx, playSessionId); // the slot is free now, not after the grant's 30 s
       }
     }
     await this.finish(job);

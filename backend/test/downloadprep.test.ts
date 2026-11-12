@@ -93,6 +93,7 @@ beforeAll(async () => {
       return { raw: n < 0 ? initBytes : seg(n, transcode) };
     },
     'DELETE /Videos/ActiveEncodings': () => { transcode++; return { status: 204 }; },
+    'GET /Sessions': () => ({ json: [] }), // the conversion budget reads the media server's session list (an unreadable one makes a download wait)
   }, { ctxPatch: (c) => { c.cfg = { ...c.cfg, DOWNLOAD_DIR: dir, DOWNLOAD_PAUSE_STREAMS: 2 }; } });
   await env.login(); // creates the admin service user
   const p = preparer(env.ctx);
