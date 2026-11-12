@@ -161,6 +161,7 @@ export default {
       count: { one: '{n} Sender', other: '{n} Sender' },
       total: '{m} von {n} Sendern werden übernommen',
       hiddenNote: 'Neue Gruppen bleiben verborgen, bis du sie unter <b>Gruppen & Rechte</b> freigibst.',
+      kept: { one: '{n} ausgeschlossene Gruppe ist in dieser Liste gerade nicht dabei – sie bleibt ausgeschlossen.', other: '{n} ausgeschlossene Gruppen sind in dieser Liste gerade nicht dabei – sie bleiben ausgeschlossen.' },
       empty: 'Keine Gruppe passt.',
     },
     refreshNow: 'Jetzt aktualisieren',

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
-import { initPicker, SEARCH_FROM, setAll, shiftLabel, shownGroups, skipList, stepShift, toggle, totals, type PickerState } from './picker';
+import { initPicker, pickChanged, saveList, SEARCH_FROM, setAll, shiftLabel, shownGroups, skipList, stepShift, toggle, totals, type PickerState } from './picker';
 
 const GROUPS = [
   { name: 'DE | Sport', channels: 42 },
@@ -22,9 +22,11 @@ describe('initPicker', () => {
     expect(s.q).toBe('');
     expect(s.groups).toEqual(GROUPS);
   });
-  it('drops skip names that are no longer in the list', () => {
-    const s = fresh(['Kinder', 'Erwachsene']);
+  it('keeps skip names that the list does not have apart from the ticks', () => {
+    const s = fresh(['Kinder', 'Erwachsene', 'Erwachsene']);
     expect([...s.skipped]).toEqual(['Kinder']);
+    expect(s.kept).toEqual(['Erwachsene']);
+    expect(fresh().kept).toEqual([]);
   });
   it('shows the search field from 12 groups on', () => {
     expect(SEARCH_FROM).toBe(12);
@@ -76,6 +78,35 @@ describe('totals and skipList', () => {
   it('lists the skipped groups in list order, whatever the order they were unticked in', () => {
     const s = toggle(toggle(toggle(fresh(), 'Natur & Tiere'), 'DE | Sport'), 'Kinder');
     expect(skipList(s)).toEqual(['DE | Sport', 'Kinder', 'Natur & Tiere']);
+  });
+});
+
+describe('saveList and pickChanged: stored skip names the list does not have', () => {
+  const stored = ['Kinder', 'Erwachsene', 'Alte Gruppe'];
+  it('saves the visible unticked groups plus the kept names (a union)', () => {
+    const s = fresh(stored);
+    expect(skipList(s)).toEqual(['Kinder']);
+    expect(saveList(s)).toEqual(['Kinder', 'Erwachsene', 'Alte Gruppe']);
+    expect(saveList(toggle(s, 'DE | Sport'))).toEqual(['DE | Sport', 'Kinder', 'Erwachsene', 'Alte Gruppe']);
+    expect(saveList(toggle(s, 'Kinder'))).toEqual(['Erwachsene', 'Alte Gruppe']);
+  });
+  it('an untouched picker is not a change, the kept names never count', () => {
+    expect(pickChanged(fresh(stored), stored)).toBe(false);
+    expect(pickChanged(fresh(['Erwachsene']), ['Erwachsene'])).toBe(false);
+    expect(pickChanged(fresh(), [])).toBe(false);
+  });
+  it('a toggle of a visible group is a change, and toggling it back is none', () => {
+    const s = toggle(fresh(stored), 'Kinder');
+    expect(pickChanged(s, stored)).toBe(true);
+    expect(pickChanged(toggle(s, 'Kinder'), stored)).toBe(false);
+    expect(pickChanged(toggle(fresh(stored), 'DE | Sport'), stored)).toBe(true);
+  });
+  it('a new check with the saved list keeps the kept names and shows the ones that came back', () => {
+    const s = initPicker(GROUPS.filter((g) => g.name !== 'Kinder'), saveList(fresh(stored)));
+    expect(s.kept).toEqual(['Kinder', 'Erwachsene', 'Alte Gruppe']);
+    const back = initPicker(GROUPS, saveList(s));
+    expect(skipList(back)).toEqual(['Kinder']);
+    expect(back.kept).toEqual(['Erwachsene', 'Alte Gruppe']);
   });
 });
 

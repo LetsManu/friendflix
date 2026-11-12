@@ -163,6 +163,7 @@ const dict: Translation<typeof de> = {
       count: { one: '{n} kanal', other: '{n} kanal' },
       total: '{n} kanaldan {m} tanesi alınacak',
       hiddenNote: 'Yeni gruplar, <b>Gruplar ve haklar</b> bölümünden yayına almana kadar gizli kalır.',
+      kept: { one: '{n} hariç tutulan grup şu anda bu listede yok; hariç tutulmaya devam ediyor.', other: '{n} hariç tutulan grup şu anda bu listede yok; hariç tutulmaya devam ediyor.' },
       empty: 'Hiçbir grup eşleşmiyor.',
     },
     refreshNow: 'Şimdi güncelle',

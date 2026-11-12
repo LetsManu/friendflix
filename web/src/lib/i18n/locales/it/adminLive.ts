@@ -163,6 +163,7 @@ const dict: Translation<typeof de> = {
       count: { one: '{n} canale', many: '{n} canali', other: '{n} canali' },
       total: 'Verranno importati {m} canali su {n}',
       hiddenNote: 'I nuovi gruppi restano nascosti finché non li pubblichi in <b>Gruppi e permessi</b>.',
+      kept: { one: '{n} gruppo escluso al momento non è in questo elenco: resta escluso.', many: '{n} gruppi esclusi al momento non sono in questo elenco: restano esclusi.', other: '{n} gruppi esclusi al momento non sono in questo elenco: restano esclusi.' },
       empty: 'Nessun gruppo corrisponde.',
     },
     refreshNow: 'Aggiorna ora',

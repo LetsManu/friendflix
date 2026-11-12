@@ -163,6 +163,7 @@ const dict: Translation<typeof de> = {
       count: { one: '{n} chaîne', many: '{n} chaînes', other: '{n} chaînes' },
       total: '{m} chaînes sur {n} seront importées',
       hiddenNote: 'Les nouveaux groupes restent masqués tant que tu ne les publies pas sous <b>Groupes et droits</b>.',
+      kept: { one: '{n} groupe exclu ne figure pas dans cette liste pour le moment : il reste exclu.', many: '{n} groupes exclus ne figurent pas dans cette liste pour le moment : ils restent exclus.', other: '{n} groupes exclus ne figurent pas dans cette liste pour le moment : ils restent exclus.' },
       empty: 'Aucun groupe ne correspond.',
     },
     refreshNow: 'Mettre à jour maintenant',

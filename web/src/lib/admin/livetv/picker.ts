@@ -11,8 +11,10 @@ import { tr } from '#lib/i18n';
 export interface PickerState {
   /** the provider's groups in list order (`POST /sources/test` → `groups`) */
   groups: Array<{ name: string; channels: number }>;
-  /** the unticked group names */
+  /** the unticked group names (only names the list has) */
   skipped: Set<string>;
+  /** stored skip names the list does not have right now: the admin cannot see or toggle them, but a save keeps them */
+  kept: string[];
   /** the search text */
   q: string;
 }
@@ -24,10 +26,13 @@ export const SHIFT_MIN = -720;
 export const SHIFT_MAX = 840;
 export const SHIFT_STEP = 30;
 
-/** a fresh picker: names of `skipGroups` that the list no longer has are dropped */
+/**
+ * a fresh picker: the names of `skipGroups` that the list has start unticked; the others are kept apart (`kept`), never dropped: a
+ * group the provider lists again later keeps its state (spec §8), so a skipped one must not turn visible by a save in between
+ */
 export function initPicker(groups: PickerState['groups'], skipGroups: string[]): PickerState {
   const known = new Set(groups.map((g) => g.name));
-  return { groups, skipped: new Set(skipGroups.filter((n) => known.has(n))), q: '' };
+  return { groups, skipped: new Set(skipGroups.filter((n) => known.has(n))), kept: [...new Set(skipGroups.filter((n) => !known.has(n)))], q: '' };
 }
 
 /** the groups whose name contains the search text (case-insensitive), in list order */
@@ -57,9 +62,22 @@ export function totals(s: PickerState): { picked: number; total: number } {
   return { picked, total };
 }
 
-/** the `skipGroups` to save, in list order */
+/** the unticked groups the admin can see and toggle, in list order (what `pickChanged` compares) */
 export function skipList(s: PickerState): string[] {
   return s.groups.filter((g) => s.skipped.has(g.name)).map((g) => g.name);
+}
+
+/** the `skipGroups` to save: the visible unticked groups in list order, then the kept names the list does not have */
+export function saveList(s: PickerState): string[] {
+  return [...skipList(s), ...s.kept];
+}
+
+/** whether the selection differs from the stored `skipGroups`, looking only at what the list shows (kept names never count) */
+export function pickChanged(s: PickerState, stored: readonly string[]): boolean {
+  const now = skipList(s);
+  const was = new Set(stored);
+  const before = s.groups.filter((g) => was.has(g.name)).map((g) => g.name);
+  return now.length !== before.length || now.some((n, i) => n !== before[i]);
 }
 
 /** "+1,5 Std.", "−2 Std.", "0" (the number and the unit follow the language) */

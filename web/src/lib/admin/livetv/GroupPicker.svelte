@@ -50,6 +50,7 @@
 
   <p class="total" aria-live="polite" data-picker-total>{$t('adminLive.src.pick.total', { m: sum.picked, n: sum.total })}</p>
   <p class="note"><Rich key="adminLive.src.pick.hiddenNote" /></p>
+  {#if state.kept.length > 0}<p class="note" data-picker-kept>{$t('adminLive.src.pick.kept', { n: state.kept.length })}</p>{/if}
 </section>
 
 <style>
