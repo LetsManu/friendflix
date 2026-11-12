@@ -334,6 +334,8 @@ export default {
     allLibraries: 'Alle Bibliotheken',
     errRange: 'Bitte eine Zahl von {min} bis {max} eingeben.',
     cellTitle: '{role} · {field}',
+    cellNameUnsaved: '{role}, {field}: {value}, nicht gespeichert',
+    libsMin: 'Mindestens eine Bibliothek bleibt freigegeben.',
   },
   devices: {
     thisDevice: 'Dieses Gerät',

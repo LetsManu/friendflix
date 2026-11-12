@@ -108,12 +108,12 @@
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <td role="gridcell" data-cell="{r}:{c}" bind:this={cells[`${r}:${c}`]} tabindex={active.r === r && active.c === c ? 0 : -1}
                   class:staged class:lock class:on={editKey === `${r}:${c}`} aria-disabled={lock ? 'true' : undefined}
-                  aria-label={$locale && cellName(roleName(role), f, v, staged || src === 'role')} title={tip(stage, role, f, $locale)}
+                  aria-label={$locale && cellName(roleName(role), f, v, staged ? 'unsaved' : src === 'role')} title={tip(stage, role, f, $locale)}
                   on:click={() => open({ r, c })} on:focus={() => (active = { r, c })}>
                   <span class="chip" class:bool={f.kind === 'bool'} class:off={f.kind === 'bool' && !v} aria-hidden="true">
                     {#if f.kind === 'bool'}<Icon name={v ? 'check' : 'x'} size={16} />{:else}{$locale && cellText(f, v)}{/if}
                   </span>
-                  {#if lock}<span class="lock" aria-hidden="true"><Icon name="lock" size={14} /></span>
+                  {#if lock}<span class="lk" aria-hidden="true"><Icon name="lock" size={14} /></span>
                   {:else if src === 'role' || src === 'env'}<span class="dot" class:env={src === 'env'} aria-hidden="true"></span>{/if}
                 </td>
               {/each}
@@ -163,7 +163,7 @@
   td.staged::after { box-shadow: inset 0 0 0 2px var(--warn); }
   td:focus-visible::after, td.on::after { box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 4px var(--ring-dark); }
   td.staged:focus-visible::after, td.staged.on::after { box-shadow: inset 0 0 0 2px var(--warn), inset 0 0 0 4px #fff; }
-  .lock { margin-left: .35rem; color: var(--mut); display: inline-grid; vertical-align: middle; }
+  .lk { margin-left: .35rem; color: var(--mut); display: inline-grid; vertical-align: middle; }
   /* a value set for this role (or from .env): the small dot; its words are the tooltip and the cell's name */
   .dot { position: absolute; top: 9px; right: 10px; width: 7px; height: 7px; border-radius: 50%; background: var(--info); }
   .dot.env { background: transparent; box-shadow: inset 0 0 0 1.5px var(--info); }

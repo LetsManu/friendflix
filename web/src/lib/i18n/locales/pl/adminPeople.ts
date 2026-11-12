@@ -332,6 +332,8 @@ const dict: Translation<typeof de> = {
     allLibraries: 'Wszystkie biblioteki',
     errRange: 'Podaj liczbę od {min} do {max}.',
     cellTitle: '{role} · {field}',
+    cellNameUnsaved: '{role}, {field}: {value}, niezapisane',
+    libsMin: 'Co najmniej jedna biblioteka pozostaje udostępniona.',
   },
   devices: {
     thisDevice: 'To urządzenie',

@@ -424,7 +424,9 @@ describe('role matrix and save bar (rights)', () => {
     expect(css(matrix)).toMatch(/\.dot \{[^}]*background: var\(--info\);/);
     for (const bg of ON_GLASS) expect(cr(GLASS.info, bg)).toBeGreaterThanOrEqual(AA);
     expect(matrix).toContain("tr('adminPeople.roles.changedHere')");
-    expect(matrix).toMatch(/cellName\(roleName\(role\), f, v, staged \|\| src === 'role'\)/);
+    expect(matrix).toMatch(/cellName\(roleName\(role\), f, v, staged \? 'unsaved' : src === 'role'\)/);
+    // the lock icon's class is not the locked cell's (a scoped `.lock` rule would style the <td> too)
+    expect(css(matrix)).not.toMatch(/(^|[\s,}])\.lock\b/);
   });
 
   it('the save bar: white text and the light error colour on the bar scrim over any backdrop', () => {

@@ -55,6 +55,12 @@ describe('cellName', () => {
     expect(cellName('Gast', f, true, false)).toBe('Gast, Watch-Partys: erlaubt');
     expect(cellName('Gast', f, false, true)).toBe('Gast, Watch-Partys: nicht erlaubt, geändert');
   });
+  it('a staged (unsaved) value says so, apart from a saved change', async () => {
+    const f = fields.find((x) => x.key === 'maxParentalRating')!;
+    expect(cellName('Gast', f, 16, 'unsaved')).toBe('Gast, Altersfreigabe: ab 16, nicht gespeichert');
+    await setLocale('en');
+    expect(cellName('Guest', f, 16, 'unsaved')).toBe('Guest, Age rating: from 16, not saved');
+  });
 });
 
 describe('staging', () => {

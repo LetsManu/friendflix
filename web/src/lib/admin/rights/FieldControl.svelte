@@ -63,12 +63,17 @@
     dispatch('change', Number.isInteger(n) && num !== null && num !== '' ? n : (field.min ?? 0));
   }
 
-  // ---- libraries: 'all' or the chosen names (names the server no longer has stay listed, so they can be removed)
+  // ---- libraries: 'all' or the chosen names (names the server no longer has stay listed, so they can be removed). At least one
+  // stays ticked (the role write refuses an empty list): the last ticked box is disabled, with the hint saying why.
   $: all = value === 'all' || value === null || value === undefined;
   $: chosen = Array.isArray(value) ? (value as string[]) : [];
   $: names = [...libraries.map((l) => l.name), ...chosen.filter((n) => !libraries.some((l) => l.name === n))];
   const allToggled = (e: Event) => dispatch('change', (e.currentTarget as HTMLInputElement).checked ? 'all' : [...names]);
-  const libToggled = (name: string, on: boolean) => dispatch('change', on ? [...chosen, name] : chosen.filter((n) => n !== name));
+  $: lastOne = !all && chosen.length === 1 ? chosen[0] : null;
+  const libToggled = (name: string, on: boolean) => {
+    const next = on ? [...chosen, name] : chosen.filter((n) => n !== name);
+    if (next.length) dispatch('change', next);
+  };
 </script>
 
 <div class="fc">
@@ -81,10 +86,13 @@
   {:else if field.kind === 'libraries'}
     <fieldset class="libs">
       <legend>{label}</legend>
-      <label class="chk all"><input type="checkbox" checked={all} on:change={allToggled} /><span>{$t('adminPeople.roles.allLibraries')}</span></label>
+      <label class="chk all"><input type="checkbox" checked={all} disabled={all && !names.length} on:change={allToggled} /><span>{$t('adminPeople.roles.allLibraries')}</span></label>
       {#each names as n, i (n)}
-        <label class="chk" for="{id}-{i}"><input id="{id}-{i}" type="checkbox" checked={all || chosen.includes(n)} disabled={all} on:change={(e) => libToggled(n, e.currentTarget.checked)} /><span>{n}</span></label>
+        <label class="chk" for="{id}-{i}"><input id="{id}-{i}" type="checkbox" checked={all || chosen.includes(n)} disabled={all || n === lastOne}
+          aria-describedby={n === lastOne ? `${id}-min` : undefined} on:change={(e) => libToggled(n, e.currentTarget.checked)} /><span>{n}</span></label>
       {/each}
+      <!-- the hint's line is always there (nothing moves when it appears) -->
+      <p class="min" id="{id}-min" aria-hidden={lastOne === null ? 'true' : undefined}>{lastOne === null ? '' : $t('adminPeople.roles.libsMin')}</p>
     </fieldset>
   {:else}
     <Select {label} {options} value={picked} on:change={pick} />
@@ -100,4 +108,5 @@
   .chk input { width: 20px; height: 20px; margin: 0; accent-color: var(--acc); flex: none; }
   .chk:has(input:disabled) { cursor: default; color: var(--mut); }
   .chk span { min-width: 0; overflow-wrap: anywhere; }
+  .min { margin: .2rem .5rem 0; min-height: 1.2em; font-size: .82rem; color: var(--hint, var(--mut)); }
 </style>

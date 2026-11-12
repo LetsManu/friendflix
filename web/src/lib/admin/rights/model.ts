@@ -80,11 +80,14 @@ export function cellText(f: MatrixField, v: unknown): string {
 
 export const fieldLabel = (key: string): string => trDynamic(`adminPeople.roles.f.${key}`);
 
-/** the accessible name of a cell: "Gast, Altersfreigabe: ab 12, geändert"; a switch says "erlaubt" / "nicht erlaubt" in words */
-export function cellName(roleLabel: string, f: MatrixField, v: unknown, changed: boolean): string {
+/**
+ * the accessible name of a cell: "Gast, Altersfreigabe: ab 12, geändert" (set in the role) or "…, nicht gespeichert" (staged);
+ * a switch says "erlaubt" / "nicht erlaubt" in words
+ */
+export function cellName(roleLabel: string, f: MatrixField, v: unknown, changed: boolean | 'unsaved'): string {
   const value = f.kind === 'bool' ? tr(v ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied') : cellText(f, v);
   const params = { role: roleLabel, field: fieldLabel(f.key), value };
-  return tr(changed ? 'adminPeople.roles.cellNameChanged' : 'adminPeople.roles.cellName', params);
+  return tr(changed === 'unsaved' ? 'adminPeople.roles.cellNameUnsaved' : changed ? 'adminPeople.roles.cellNameChanged' : 'adminPeople.roles.cellName', params);
 }
 
 /** unsaved changes: role key → field key → new value */

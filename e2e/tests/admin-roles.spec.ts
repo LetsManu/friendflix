@@ -44,7 +44,7 @@ test.describe('Rollen & Rechte: role matrix (desktop)', () => {
     await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
     expect(api.admin.matrix.puts).toEqual([{ role: 'guest', body: { maxParentalRating: 16 } }]);
     await expect(bar(page)).toHaveCount(0);
-    await expect(cell(page, /^Gast, Altersfreigabe: ab 16/)).toBeVisible();
+    await expect(cell(page, 'Gast, Altersfreigabe: ab 16, geändert')).toBeVisible();
   });
 
   test('partial failure offers retry', async ({ page, api }) => {
@@ -63,6 +63,41 @@ test.describe('Rollen & Rechte: role matrix (desktop)', () => {
     expect(api.admin.matrix.puts).toEqual([{ role: 'guest', body: { maxParentalRating: 16 } }, { role: 'guest', body: { maxParentalRating: 16 } }]);
   });
 
+  test('retry sends only the failed role\'s last body, not newer edits', async ({ page, api }) => {
+    api.admin.matrix.policyPartial = true;
+    await page.goto('/admin/roles');
+    await stageGuestRating(page);
+    await bar(page).getByRole('button', { name: 'Änderungen prüfen' }).click();
+    await page.getByRole('dialog', { name: 'Änderungen prüfen' }).getByRole('button', { name: 'Speichern' }).click();
+    await expect(bar(page)).toContainText('2 Konten konnten nicht aktualisiert werden.');
+    // a new edit while the failure stands
+    await cell(page, 'Freund, Watch-Partys: erlaubt').click();
+    await page.getByRole('dialog', { name: 'Freund · Watch-Partys' }).getByRole('switch', { name: 'Watch-Partys' }).click();
+    await page.keyboard.press('Escape');
+    api.admin.matrix.policyPartial = false;
+    await bar(page).getByRole('button', { name: 'Erneut anwenden' }).click();
+    await expect(bar(page)).not.toContainText('Konten konnten nicht');
+    await expect(bar(page)).toContainText('1 Änderung in 1 Rolle · betrifft 7 Personen');
+    expect(api.admin.matrix.puts).toEqual([{ role: 'guest', body: { maxParentalRating: 16 } }, { role: 'guest', body: { maxParentalRating: 16 } }]);
+    await expect(cell(page, 'Freund, Watch-Partys: nicht erlaubt, nicht gespeichert')).toHaveClass(/staged/);
+  });
+
+  test('libraries: the last ticked one cannot be unticked (a role keeps at least one)', async ({ page }) => {
+    await page.goto('/admin/roles');
+    await cell(page, 'Familie, Bibliotheken: alle').click();
+    const pop = page.getByRole('dialog', { name: 'Familie · Bibliotheken' });
+    await pop.getByRole('checkbox', { name: 'Alle Bibliotheken' }).uncheck();
+    await pop.getByRole('checkbox', { name: 'Filme' }).uncheck();
+    await pop.getByRole('checkbox', { name: 'Serien' }).uncheck();
+    const last = pop.getByRole('checkbox', { name: 'Musik' });
+    await expect(last).toBeChecked();
+    await expect(last).toBeDisabled();
+    await expect(pop.getByText('Mindestens eine Bibliothek bleibt freigegeben.')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(cell(page, 'Familie, Bibliotheken: 1 Bibliothek, nicht gespeichert')).toBeVisible();
+    await expect(bar(page)).toContainText('1 Änderung in 1 Rolle');
+  });
+
   test('grid keyboard', async ({ page }) => {
     await page.goto('/admin/roles');
     // one tab stop: the first cell
@@ -71,7 +106,7 @@ test.describe('Rollen & Rechte: role matrix (desktop)', () => {
     await cell(page, 'Gast, Altersfreigabe: ab 12').focus();
     await page.keyboard.press('ArrowDown');
     await expect(cell(page, 'Gast, Gleichzeitige Streams: 1')).toBeFocused();
-    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowLeft');
     await expect(cell(page, 'Freund, Gleichzeitige Streams: 2')).toBeFocused();
     await page.keyboard.press('End');
     await expect(cell(page, 'Crew, Gleichzeitige Streams: 3')).toBeFocused();
@@ -92,12 +127,12 @@ test.describe('Rollen & Rechte: role matrix (desktop)', () => {
     await select.selectOption('16');
     await page.keyboard.press('Escape');
     await expect(pop).toHaveCount(0);
-    await expect(cell(page, 'Gast, Altersfreigabe: ab 16, geändert')).toBeFocused();
+    await expect(cell(page, 'Gast, Altersfreigabe: ab 16, nicht gespeichert')).toBeFocused();
     // Space opens it too
     await page.keyboard.press(' ');
     await expect(pop).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(cell(page, 'Gast, Altersfreigabe: ab 16, geändert')).toBeFocused();
+    await expect(cell(page, 'Gast, Altersfreigabe: ab 16, nicht gespeichert')).toBeFocused();
   });
 
   test('admin switches are locked', async ({ page }) => {
@@ -105,7 +140,15 @@ test.describe('Rollen & Rechte: role matrix (desktop)', () => {
     const locked = cell(page, 'Admin, Watch-Partys: erlaubt');
     await expect(locked).toHaveAttribute('aria-disabled', 'true');
     await expect(locked).toHaveAttribute('title', 'Admins dürfen immer alles');
-    await expect(locked.locator('.lock')).toBeVisible();
+    await expect(locked.locator('.lk')).toBeVisible();
+    // a locked cell is a table cell like the others: same row box, same row line
+    const plain = cell(page, 'Familie, Watch-Partys: erlaubt');
+    expect(await locked.evaluate((el) => getComputedStyle(el).display)).toBe('table-cell');
+    const [a, b] = [(await locked.boundingBox())!, (await plain.boundingBox())!];
+    expect([a.y, a.height]).toEqual([b.y, b.height]);
+    expect(a.width).toBeGreaterThan(100);
+    const line = (el: Element) => { const c = getComputedStyle(el); return `${c.borderBottomWidth} ${c.borderBottomStyle} ${c.borderBottomColor}`; };
+    expect(await locked.evaluate(line)).toBe(await plain.evaluate(line));
     await locked.click({ force: true }); // aria-disabled: a press does nothing
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await locked.focus();
@@ -125,8 +168,8 @@ test.describe('Rollen & Rechte: role matrix (desktop)', () => {
     await pop.getByRole('switch', { name: 'Watch-Partys' }).click();
     await page.keyboard.press('Escape');
     await expect(bar(page)).toContainText('2 Änderungen in 2 Rollen · betrifft 10 Personen');
-    await expect(cell(page, 'Gast, Altersfreigabe: ab 16, geändert')).toHaveClass(/staged/);
-    await expect(cell(page, 'Freund, Watch-Partys: nicht erlaubt, geändert')).toHaveClass(/staged/);
+    await expect(cell(page, 'Gast, Altersfreigabe: ab 16, nicht gespeichert')).toHaveClass(/staged/);
+    await expect(cell(page, 'Freund, Watch-Partys: nicht erlaubt, nicht gespeichert')).toHaveClass(/staged/);
     await expect(grid(page).locator('.staged')).toHaveCount(2);
     await bar(page).getByRole('button', { name: 'Verwerfen' }).click();
     await expect(bar(page)).toHaveCount(0);

@@ -332,6 +332,8 @@ const dict: Translation<typeof de> = {
     allLibraries: 'All libraries',
     errRange: 'Please enter a number from {min} to {max}.',
     cellTitle: '{role} · {field}',
+    cellNameUnsaved: '{role}, {field}: {value}, not saved',
+    libsMin: 'At least one library stays shared.',
   },
   devices: {
     thisDevice: 'This device',

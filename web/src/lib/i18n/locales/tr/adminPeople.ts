@@ -332,6 +332,8 @@ const dict: Translation<typeof de> = {
     allLibraries: 'Tüm kütüphaneler',
     errRange: 'Lütfen {min} ile {max} arasında bir sayı gir.',
     cellTitle: '{role} · {field}',
+    cellNameUnsaved: '{role}, {field}: {value}, kaydedilmedi',
+    libsMin: 'En az bir kütüphane paylaşılmış kalır.',
   },
   devices: {
     thisDevice: 'Bu cihaz',

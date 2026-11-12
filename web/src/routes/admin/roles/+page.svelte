@@ -23,7 +23,7 @@
   import StatusPill from '#lib/ui/StatusPill.svelte';
   import { toast } from '#lib/ui/toast';
   import Toggle from '#lib/ui/Toggle.svelte';
-  import { partialText, policyLine, reviewLines, saveBarText, stageBodies, stageCounts, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
+  import { partialText, policyLine, reviewLines, saveBarText, stageBodies, stageCounts, stageSet, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
   import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
   import RoleMatrixView from '#lib/admin/rights/RoleMatrix.svelte';
   import SaveBar from '#lib/admin/rights/SaveBar.svelte';
@@ -97,31 +97,32 @@
   $: showMatrix = wide && matrix !== null;
   $: dirtyCount = showMatrix ? counts?.roles ?? 0 : cardsDirty;
   type Body = Record<string, unknown>;
+  /** one role write: its body and, for staged values, what was staged when it was built (null: re-sending a stored body) */
+  interface Job { role: string; body: Body; fields: Record<string, unknown> | null }
   /** roles whose values are stored but whose accounts did not all take the policy (502 policy_partial): the body to re-send */
-  let failures: Array<{ role: string; body: Body; failed: number }> = [];
+  let failures: Array<Job & { failed: number }> = [];
+  /** staged writes a hard error left unsent (that run's bodies; *Erneut anwenden* sends them, never newer edits) */
+  let pending: Job[] = [];
   let saving = false, progress: string | null = null, barError: string | null = null;
   let reviewing = false, reviewBtn: HTMLElement | null = null;
   let bar: SaveBar | undefined;
 
-  /** a written role: its staged values become the loaded ones (set in the role itself now) and leave the stage */
-  function stored(role: string) {
-    const r = matrix?.roles.find((x) => x.key === role);
-    const fields = stage[role];
-    if (!r || !fields) return;
-    for (const [k, v] of Object.entries(fields)) { r.values[k] = v; r.sources[k] = 'role'; }
-    const { [role]: _done, ...rest } = stage;
-    stage = rest;
+  /** a written role: the values it carried become the loaded ones (set in the role itself now); staged entries equal to them go */
+  function stored(j: Job) {
+    const r = matrix?.roles.find((x) => x.key === j.role);
+    if (!r || !matrix || !j.fields) return;
+    for (const [k, v] of Object.entries(j.fields)) { r.values[k] = v; r.sources[k] = 'role'; }
+    for (const [k, v] of Object.entries(stage[j.role] ?? {})) stage = stageSet(stage, matrix, j.role, k, v);
     matrix = matrix;
   }
-  /** writes the failed roles again and then the staged ones, one PUT after the other, the progress in the bar */
-  async function apply() {
-    if (!matrix || saving) return;
+  /** the staged roles as writes, in matrix order */
+  function stagedJobs(): Job[] {
     const bodies = stageBodies(stage);
-    const jobs = [
-      ...failures.map((f) => ({ role: f.role, body: f.body, again: true })),
-      ...matrix.roles.filter((r) => bodies[r.key]).map((r) => ({ role: r.key, body: bodies[r.key]!, again: false })),
-    ];
-    if (!jobs.length) return;
+    return (matrix?.roles ?? []).filter((r) => bodies[r.key]).map((r) => ({ role: r.key, body: bodies[r.key]!, fields: { ...stage[r.key] } }));
+  }
+  /** one PUT after the other, the progress in the bar; 502 policy_partial stores the values and keeps the body for a retry */
+  async function run(jobs: Job[]) {
+    if (!matrix || saving || !jobs.length) return;
     saving = true; barError = null;
     const failed: typeof failures = [];
     let hard: string | null = null, i = 0;
@@ -130,23 +131,29 @@
       progress = tr('adminPeople.roles.applying', { i: i + 1, n: jobs.length });
       try {
         await api(`/api/admin/roles/${encodeURIComponent(j.role)}`, { method: 'PUT', body: j.body });
-        if (!j.again) stored(j.role);
+        stored(j);
       } catch (e) {
         if (e instanceof ApiError && e.status === 502 && e.body?.error === 'policy_partial') {
-          if (!j.again) stored(j.role); // stored either way
-          failed.push({ role: j.role, body: j.body, failed: Number(e.body?.failed) || 0 });
+          stored(j); // stored either way
+          failed.push({ role: j.role, body: j.body, fields: null, failed: Number(e.body?.failed) || 0 });
         } else { hard = errorText(e); break; }
       }
     }
-    // a hard error stops the run: failures not tried again stay (staged roles stay staged by themselves)
-    failures = [...failed, ...jobs.slice(i).filter((j) => j.again).map((j) => failures.find((f) => f.role === j.role)!)];
+    // a hard error stops the run: what it did not send stays to be sent again (staged values also stay staged)
+    const rest = jobs.slice(i);
+    failures = [...failed, ...rest.filter((j) => !j.fields).map((j) => failures.find((f) => f.role === j.role && f.body === j.body)!).filter(Boolean)];
+    pending = rest.filter((j) => j.fields);
     saving = false; progress = null;
     // a role written twice (failed before, staged again) counts with its latest answer
     const accounts = [...new Map(failures.map((f) => [f.role, f.failed])).values()].reduce((a, n) => a + n, 0);
     barError = hard ?? (failures.length ? partialText(accounts) : null);
     if (!barError) toast.success(tr('adminPeople.roles.savedAll'));
   }
-  function discardAll() { stage = {}; failures = []; barError = null; }
+  /** *Speichern* in the review sheet: the failed roles again, then everything staged */
+  const apply = () => run([...failures, ...stagedJobs()]);
+  /** *Erneut anwenden*: only what failed (each role's last body) and what a hard error left unsent, never newer edits */
+  const retry = () => run([...failures, ...pending]);
+  function discardAll() { stage = {}; failures = []; pending = []; barError = null; }
   function openReview() {
     reviewBtn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     reviewing = true;
@@ -269,7 +276,7 @@
 
 {#if showMatrix && counts}
   <SaveBar bind:this={bar} count={counts.changes} text={saveBarText(counts)} busy={saving} {progress} error={barError}
-    on:discard={discardAll} on:review={openReview} on:retry={apply} />
+    on:discard={discardAll} on:review={openReview} on:retry={retry} />
 {/if}
 {#if reviewing && matrix && counts}
   <ReviewSheet lines={reviewLines(stage, matrix)} policy={counts.policy ? policyLine(counts) : null} trigger={reviewBtn}

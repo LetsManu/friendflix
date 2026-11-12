@@ -101,7 +101,7 @@ export interface MatrixMockRole {
   key: string; label: string | null; builtinLabel: boolean; base: 'family' | 'friend' | 'guest' | 'admin'; origin: 'code' | 'env' | 'admin'; invitable: boolean;
   /** false = an env-only role: not in the roles table (the order write ignores its key) */
   stored: boolean; accounts: number; profiles: number; kidsProfiles: number;
-  values: Record<string, unknown>; defaults: Record<string, unknown>; sources: Record<string, 'default' | 'env' | 'role' | 'admin'>; missingLibraries: string[];
+  values: Record<string, unknown>; sources: Record<string, 'default' | 'env' | 'role' | 'admin'>; missingLibraries: string[];
 }
 export interface MatrixMock {
   /** which optional features the server reports (a field with `requires` is hidden while its feature is off) */
@@ -139,31 +139,41 @@ export const MATRIX_FIELDS_MOCK: Array<Record<string, unknown>> = [
 ];
 const PERM_KEYS_MOCK = ['requests', 'cast', 'party', 'partySchedule', 'comments', 'liveTv', 'liveRecord'];
 const MEDIA_KEYS_MOCK = ['libraries', 'maxParentalRating', 'maxStreams', 'maxBitrate', 'transcoding', 'maxHeight', 'download'];
-function matrixRole(key: string, label: string | null, base: MatrixMockRole['base'], origin: MatrixMockRole['origin'], accounts: number, profiles: number, kids: number, v: Record<string, unknown>): MatrixMockRole {
-  const values = {
-    libraries: 'all', maxParentalRating: null, maxStreams: 2, maxBitrate: 20_000_000, remoteMaxBitrate: 8_000_000, transcoding: true, maxHeight: null,
-    download: false, maxDownloads: 15, downloadMaxHeight: 720, downloadDays: 30, requests: true, requestsPerMonth: 3,
-    party: true, partySchedule: false, comments: true, cast: true, liveTv: false, liveRecord: false, ...v,
-  };
+const MATRIX_BASE_VALUES: Record<string, unknown> = {
+  libraries: 'all', maxParentalRating: null, maxStreams: 2, maxBitrate: 20_000_000, remoteMaxBitrate: 8_000_000, transcoding: true, maxHeight: null,
+  download: false, maxDownloads: 15, downloadMaxHeight: 720, downloadDays: 30, requests: true, requestsPerMonth: 3,
+  party: true, partySchedule: false, comments: true, cast: true, liveTv: false, liveRecord: false,
+};
+/** what each mocked role inherits without a role row (code defaults of the built-ins, the env role's ROLE_TEMPLATES values) */
+const MATRIX_INHERITED: Record<string, Record<string, unknown>> = {
+  admin: { maxStreams: 4, maxBitrate: 40_000_000, download: true, maxDownloads: 25, partySchedule: true },
+  family: { maxStreams: 4, maxBitrate: 40_000_000, download: true, maxDownloads: 25, downloadMaxHeight: 1080, partySchedule: true },
+  friend: {},
+  guest: { maxParentalRating: 12, maxStreams: 1, maxBitrate: 8_000_000, remoteMaxBitrate: 4_000_000, maxHeight: 1080, maxDownloads: 0, downloadMaxHeight: 0, requests: false, party: false, comments: false, cast: false },
+  crew: { maxStreams: 3, partySchedule: true },
+};
+/** the inherited value of a field (PUT null): the role's own entry, else its base's (an admin-made copy) */
+const inheritedValue = (r: Pick<MatrixMockRole, 'key' | 'base'>, k: string): unknown => ({ ...MATRIX_BASE_VALUES, ...(MATRIX_INHERITED[r.key] ?? MATRIX_INHERITED[r.base]) })[k];
+function matrixRole(key: string, label: string | null, base: MatrixMockRole['base'], origin: MatrixMockRole['origin'], accounts: number, profiles: number, kids: number): MatrixMockRole {
+  const values = { ...MATRIX_BASE_VALUES, ...MATRIX_INHERITED[key] };
   return {
-    key, label, builtinLabel: origin === 'code', base, origin, invitable: true, stored: origin !== 'env', accounts, profiles, kidsProfiles: kids,
-    values, defaults: { ...values }, sources: Object.fromEntries(Object.keys(values).map((k) => [k, origin === 'env' ? 'env' : 'default'])), missingLibraries: [],
+    key, label, builtinLabel: origin === 'code', base, origin, invitable: key !== 'admin', stored: origin !== 'env', accounts, profiles, kidsProfiles: kids,
+    values, sources: Object.fromEntries(Object.keys(values).map((k) => [k, origin === 'env' ? 'env' : 'default'])), missingLibraries: [],
   };
 }
-/** the built-ins (Admin first, as the catalogue stores it, then Gast, Freund, Familie) and one env role (Crew, base friend) */
+/** the built-ins in the backend's catalogue order (position: Admin, Familie, Freund, Gast), then the env role (Crew, base friend) */
 export function matrixMock(): MatrixMock {
-  const admin = { ...matrixRole('admin', 'Admin', 'admin', 'code', 1, 2, 0, { maxStreams: 4, maxBitrate: 40_000_000, download: true, maxDownloads: 25, partySchedule: true }), invitable: false };
   return {
     features: { requests: true, cast: true, livetv: false },
     policyPartial: false,
     failed: 2,
     libraries: [{ id: 'lib1', name: 'Filme' }, { id: 'lib2', name: 'Serien' }, { id: 'lib3', name: 'Musik' }],
     roles: [
-      admin,
-      matrixRole('guest', 'Gast', 'guest', 'code', 3, 5, 2, { maxParentalRating: 12, maxStreams: 1, maxBitrate: 8_000_000, remoteMaxBitrate: 4_000_000, maxHeight: 1080, maxDownloads: 0, downloadMaxHeight: 0, requests: false, party: false, comments: false, cast: false }),
-      matrixRole('friend', 'Freund', 'friend', 'code', 7, 9, 1, {}),
-      matrixRole('family', 'Familie', 'family', 'code', 3, 6, 3, { maxStreams: 4, maxBitrate: 40_000_000, download: true, maxDownloads: 25, downloadMaxHeight: 1080, partySchedule: true }),
-      matrixRole('crew', 'Crew', 'friend', 'env', 2, 2, 0, { maxStreams: 3, partySchedule: true }),
+      matrixRole('admin', 'Admin', 'admin', 'code', 1, 2, 0),
+      matrixRole('family', 'Familie', 'family', 'code', 3, 6, 3),
+      matrixRole('friend', 'Freund', 'friend', 'code', 7, 9, 1),
+      matrixRole('guest', 'Gast', 'guest', 'code', 3, 5, 2),
+      matrixRole('crew', 'Crew', 'friend', 'env', 2, 2, 0),
     ],
     puts: [],
   };
@@ -665,7 +675,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (!/^[a-z]/.test(key)) key = `r-${key}`;
     const taken = new Set(st.matrix.roles.map((r) => r.key));
     for (let n = 2; taken.has(key); n++) key = `${key.replace(/-\d+$/, '')}-${n}`;
-    const copy: MatrixMockRole = { ...src, key, label, builtinLabel: false, origin: 'admin', stored: true, accounts: 0, profiles: 0, kidsProfiles: 0, values: { ...src.values }, defaults: { ...src.defaults }, sources: Object.fromEntries(Object.keys(src.values).map((k) => [k, 'role' as const])), missingLibraries: [] };
+    const copy: MatrixMockRole = { ...src, key, label, builtinLabel: false, origin: 'admin', stored: true, accounts: 0, profiles: 0, kidsProfiles: 0, values: { ...src.values }, sources: Object.fromEntries(Object.keys(src.values).map((k) => [k, 'role' as const])), missingLibraries: [] };
     const at = st.matrix.roles.findIndex((r) => !r.stored);
     st.matrix.roles.splice(at < 0 ? st.matrix.roles.length : at, 0, copy);
     log('role.create', key, { from: src.key });
@@ -682,7 +692,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     const media = Object.keys(body ?? {}).some((k) => MEDIA_KEYS_MOCK.includes(k));
     const set = (k: string, v: unknown) => {
       if (v === undefined) return;
-      if (v === null) { role.values[k] = role.defaults[k]; role.sources[k] = role.origin === 'env' ? 'env' : 'default'; } else { role.values[k] = v === 'unlimited' ? null : v; role.sources[k] = 'role'; }
+      if (v === null) { role.values[k] = inheritedValue(role, k); role.sources[k] = role.origin === 'env' ? 'env' : 'default'; } else { role.values[k] = v === 'unlimited' ? null : v; role.sources[k] = 'role'; }
     };
     for (const [k, v] of Object.entries(body ?? {})) {
       if (k === 'label') { if (v === null) { role.label = null; role.builtinLabel = role.origin === 'code'; } else { role.label = String(v); role.builtinLabel = false; } } else if (k === 'invitable') role.invitable = Boolean(v);
