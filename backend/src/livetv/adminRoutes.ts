@@ -12,6 +12,8 @@ import { gpuAdvice } from './gpu.js';
 /** the line for an install without the updater (spec §4.3); the page shows it with the compose commands */
 const ENV_LINE = 'COMPOSE_PROFILES=livetv';
 const JF_TIMEOUT_MS = 3_000;
+/** spec §4.1: the state is cached 10 s */
+const MEMO_MS = 10_000;
 
 const disableBody = z.object({ removeImage: z.boolean(), removeCache: z.boolean() });
 
@@ -26,8 +28,16 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   // hook preHandler: the limiter runs after requireAdmin, so nobody but an admin can use up the portal-wide budget
   const limited = { ...admin, config: { rateLimit: { max: 3, timeWindow: '2 minutes', keyGenerator: () => 'livetv', hook: 'preHandler' as const } } };
 
-  /** Jellyfin's hardware acceleration ('none' when off); null = unknown (Plex, unreachable, slow) */
+  /** Jellyfin's hardware acceleration, read at most every 10 s (the page polls every 3 s while a job runs) */
+  let hwMemo: { at: number; v: string | null } | undefined;
   async function jellyfinHwAccel(): Promise<string | null> {
+    if (hwMemo && Date.now() - hwMemo.at < MEMO_MS) return hwMemo.v;
+    const v = await readHwAccel();
+    hwMemo = { at: Date.now(), v };
+    return v;
+  }
+  /** ('none' when off); null = unknown (Plex, unreachable, slow) */
+  async function readHwAccel(): Promise<string | null> {
     const read = ctx.jf.admin.encoderSettings?.bind(ctx.jf.admin);
     if (!read) return null;
     let timer: NodeJS.Timeout | undefined;
@@ -44,7 +54,9 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/admin/livetv/state', admin, async (_req, reply) => {
     reply.header('cache-control', 'no-store');
-    const [det, view, jellyfin] = await Promise.all([detectLivetv(ctx, 2_000), updaterView(ctx), jellyfinHwAccel()]);
+    const [det, view] = await Promise.all([detectLivetv(ctx, MEMO_MS), updaterView(ctx)]);
+    // the media server is asked only when there is something to compare it with
+    const jellyfin = det.installed ? await jellyfinHwAccel() : null;
     const status = view.present && 'status' in view ? view.status : null;
     const sys = det.installed ? await livetvSystem(ctx) : null;
     return {
@@ -64,24 +76,33 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     };
   });
 
-  /** the updater job for `op`, or the fixed refusal (and the env line where the admin has to do it by hand) */
-  async function run(op: LivetvOp, actor: string, reply: { code(n: number): { send(b: unknown): unknown } }, log: { warn(o: object, m: string): void }) {
+  /**
+   * the updater job for `op`, or the fixed refusal (and the env line where the admin has to do it by hand). LIVETV_WANTED changes only
+   * when the updater accepted the job: a refusal leaves it as it was (`wanted` in the answer says what it is now) and is audited as such.
+   */
+  async function run(op: LivetvOp, actor: string, reply: { code(n: number): { send(b: unknown): unknown } }, log: { warn(o: object, m: string): void }, action: string, meta: Record<string, unknown>) {
+    const refuse = async (status: number, error: string, extra: Record<string, unknown> = {}) => {
+      await audit(ctx, actor, action, undefined, { ...meta, outcome: error });
+      return reply.code(status).send({ error, ...extra, wanted: ctx.cfg.LIVETV_WANTED === 'true' });
+    };
     const view = await updaterView(ctx);
-    if (!view.present || !('status' in view)) return reply.code(409).send({ error: 'no_updater', envLine: ENV_LINE });
+    if (!view.present || !('status' in view)) return refuse(409, 'no_updater', { envLine: ENV_LINE });
     const r = await startLivetvJob(ctx, op, actor);
-    if (r.ok && 'job' in r) return reply.code(202).send({ job: r.job });
-    if (r.ok) return reply.code(409).send({ error: 'foreign_stack', envLine: ENV_LINE }); // a Portainer redeploy is not an enable
+    if (r.ok && 'job' in r) {
+      await want(op.op === 'enable', actor, log);
+      await audit(ctx, actor, action, undefined, { ...meta, outcome: 'started' });
+      return reply.code(202).send({ job: r.job, wanted: op.op === 'enable' });
+    }
+    if (r.ok) return refuse(409, 'foreign_stack', { envLine: ENV_LINE }); // a Portainer redeploy is not an enable
     log.warn({ op: op.op, error: r.error }, 'livetv job refused');
-    if (r.error === 'foreign_stack') return reply.code(409).send({ error: 'foreign_stack', envLine: ENV_LINE });
-    if (r.error === 'not_available') return reply.code(409).send({ error: 'no_updater', envLine: ENV_LINE });
-    return reply.code(r.status).send({ error: r.error });
+    if (r.error === 'foreign_stack') return refuse(409, 'foreign_stack', { envLine: ENV_LINE });
+    if (r.error === 'not_available') return refuse(409, 'no_updater', { envLine: ENV_LINE });
+    return refuse(r.status, r.error);
   }
 
   app.post('/api/admin/livetv/enable', limited, async (req, reply) => {
     const actor = req.user!.id;
-    await want(true, actor, req.log);
-    await audit(ctx, actor, 'livetv.enable');
-    return run({ op: 'enable' }, actor, reply, req.log);
+    return run({ op: 'enable' }, actor, reply, req.log, 'livetv.enable', {});
   });
 
   app.post('/api/admin/livetv/disable', limited, async (req, reply) => {
@@ -91,8 +112,6 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     // the cache volume goes with the image only (the updater's one data-deleting op is `remove`)
     if (removeCache && !removeImage) return reply.code(400).send({ error: 'invalid', field: 'removeCache' });
     const actor = req.user!.id;
-    await want(false, actor, req.log);
-    await audit(ctx, actor, 'livetv.disable', undefined, { removeImage, removeCache });
-    return run(removeImage ? { op: 'remove', data: removeCache } : { op: 'disable' }, actor, reply, req.log);
+    return run(removeImage ? { op: 'remove', data: removeCache } : { op: 'disable' }, actor, reply, req.log, 'livetv.disable', { removeImage, removeCache });
   });
 }

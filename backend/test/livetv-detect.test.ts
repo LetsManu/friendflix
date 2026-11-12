@@ -77,6 +77,8 @@ beforeEach(async () => {
   setCfg({ UPDATER_URL: 'http://updater:7070' });
   await env.pool.query("delete from audit_log where action like 'livetv.%'");
   await env.ctx.settings.save({ LIVETV_WANTED: 'false', LIVETV_OFFER_HIDDEN: 'false' }, null);
+  await env.kv.set('conv:bench:livetv', JSON.stringify({ speed: 4, hwAccel: 'h264_qsv', fingerprint: 'x', at: Date.now() }), 600);
+  await env.kv.del('conv:bench:attempt');
   await detectLivetv(env.ctx, 0);
 });
 
@@ -151,6 +153,31 @@ describe('detection', () => {
   });
 });
 
+describe('a missing livetv benchmark record', () => {
+  it('is retried while livetv is installed, once per attempt window, refusals included', async () => {
+    await env.kv.del('conv:bench:livetv');
+    vi.mocked(startBenchmark).mockResolvedValue({ ok: false, why: 'busy', reason: 'watching' });
+    await livetvDetectTick(env.ctx); // not installed: nothing
+    expect(startBenchmark).not.toHaveBeenCalled();
+    fake.livetv = 'api1';
+    await livetvDetectTick(env.ctx); // appears (not wanted: a manual enable) with no record: tried, refused
+    expect(startBenchmark).toHaveBeenCalledTimes(1);
+    await livetvDetectTick(env.ctx); // within 30 min: not again
+    await livetvDetectTick(env.ctx);
+    expect(startBenchmark).toHaveBeenCalledTimes(1);
+    await env.kv.del('conv:bench:attempt'); // the window passed
+    vi.mocked(startBenchmark).mockRejectedValueOnce(new Error('boom'));
+    await livetvDetectTick(env.ctx);
+    expect(startBenchmark).toHaveBeenCalledTimes(2);
+    // a record ends it
+    await env.kv.del('conv:bench:attempt');
+    await env.kv.set('conv:bench:livetv', JSON.stringify({ speed: 4, hwAccel: 'h264_qsv', fingerprint: 'x', at: Date.now() }), 600);
+    await livetvDetectTick(env.ctx);
+    expect(startBenchmark).toHaveBeenCalledTimes(2);
+    vi.mocked(startBenchmark).mockResolvedValue({ ok: true });
+  });
+});
+
 describe('enable / disable', () => {
   it('enable through the updater', async () => {
     await withApp(async (call) => {
@@ -160,28 +187,34 @@ describe('enable / disable', () => {
     });
     expect(posts()).toEqual([{ method: 'POST', path: '/v1/livetv', body: '{"op":"enable"}', sigOk: true }]);
     expect(wanted()).toBe('true');
-    expect(await audits('livetv.enable')).toEqual([{}]);
+    expect(await audits('livetv.enable')).toEqual([{ outcome: 'started' }]);
   });
 
   it('no updater → 409 no_updater with envLine', async () => {
     setCfg({ UPDATER_URL: undefined });
     await withApp(async (call) => {
       const r = await call('POST', '/api/admin/livetv/enable');
-      expect([r.statusCode, r.json()]).toEqual([409, { error: 'no_updater', envLine: 'COMPOSE_PROFILES=livetv' }]);
+      expect([r.statusCode, r.json()]).toEqual([409, { error: 'no_updater', envLine: 'COMPOSE_PROFILES=livetv', wanted: false }]);
+      expect(wanted()).toBe('false'); // a refusal changes nothing
+      await env.ctx.settings.save({ LIVETV_WANTED: 'true' }, null);
       const d = await call('POST', '/api/admin/livetv/disable', { removeImage: false, removeCache: false });
-      expect([d.statusCode, d.json()]).toEqual([409, { error: 'no_updater', envLine: 'COMPOSE_PROFILES=livetv' }]);
+      expect([d.statusCode, d.json()]).toEqual([409, { error: 'no_updater', envLine: 'COMPOSE_PROFILES=livetv', wanted: true }]);
+      expect(wanted()).toBe('true');
     });
     expect(fake.calls).toEqual([]);
-    expect(wanted()).toBe('false'); // disable stored false; enable stored true first, disable overwrote it
+    expect(await audits('livetv.enable')).toEqual([{ outcome: 'no_updater' }]);
+    expect(await audits('livetv.disable')).toEqual([{ removeImage: false, removeCache: false, outcome: 'no_updater' }]);
   });
 
   it('foreign stack → 409 foreign_stack', async () => {
     fake.stack = 'foreign';
     await withApp(async (call) => {
       const r = await call('POST', '/api/admin/livetv/enable');
-      expect([r.statusCode, r.json()]).toEqual([409, { error: 'foreign_stack', envLine: 'COMPOSE_PROFILES=livetv' }]);
+      expect([r.statusCode, r.json()]).toEqual([409, { error: 'foreign_stack', envLine: 'COMPOSE_PROFILES=livetv', wanted: false }]);
+      expect(wanted()).toBe('false');
     });
     expect(posts()).toEqual([]);
+    expect(await audits('livetv.enable')).toEqual([{ outcome: 'foreign_stack' }]);
   });
 
   it('a busy or refusing updater passes its fixed code', async () => {
@@ -190,8 +223,14 @@ describe('enable / disable', () => {
     try {
       await withApp(async (call) => {
         const r = await call('POST', '/api/admin/livetv/enable');
-        expect([r.statusCode, r.json()]).toEqual([409, { error: 'busy' }]);
+        expect([r.statusCode, r.json()]).toEqual([409, { error: 'busy', wanted: false }]);
+        expect(wanted()).toBe('false');
+        await env.ctx.settings.save({ LIVETV_WANTED: 'true' }, null);
+        const d = await call('POST', '/api/admin/livetv/disable', { removeImage: false, removeCache: false });
+        expect([d.statusCode, d.json()]).toEqual([409, { error: 'busy', wanted: true }]); // still on: a refused disable does not turn it off
+        expect(wanted()).toBe('true');
       });
+      expect(await audits('livetv.enable')).toEqual([{ outcome: 'busy' }]);
     } finally { env.ctx.fetchImpl = inner; }
   });
 
@@ -200,6 +239,7 @@ describe('enable / disable', () => {
       await env.ctx.settings.save({ LIVETV_WANTED: 'true' }, null);
       const a = await call('POST', '/api/admin/livetv/disable', { removeImage: false, removeCache: false });
       expect(a.statusCode).toBe(202);
+      expect(a.json().wanted).toBe(false);
       expect(wanted()).toBe('false');
       const b = await call('POST', '/api/admin/livetv/disable', { removeImage: true, removeCache: false });
       expect(b.statusCode).toBe(202);
@@ -208,7 +248,7 @@ describe('enable / disable', () => {
     });
     expect(posts().map((p) => p.body)).toEqual(['{"op":"disable"}', '{"op":"remove","data":false}', '{"op":"remove","data":true}']);
     expect(await audits('livetv.disable')).toEqual([
-      { removeImage: false, removeCache: false }, { removeImage: true, removeCache: false }, { removeImage: true, removeCache: true },
+      { removeImage: false, removeCache: false, outcome: 'started' }, { removeImage: true, removeCache: false, outcome: 'started' }, { removeImage: true, removeCache: true, outcome: 'started' },
     ]);
   });
 
@@ -251,7 +291,7 @@ describe('enable / disable', () => {
 describe('GET /api/admin/livetv/state', () => {
   it('without livetv: updater facts, the env line, no gpu', async () => {
     fake.livetvState = { state: 'stop_failed', container: 'running', error: 'unhealthy' };
-    vi.spyOn(env.ctx.jf.admin, 'encoderSettings').mockResolvedValue({ hwAccel: 'vaapi' } as never);
+    const spy = vi.spyOn(env.ctx.jf.admin, 'encoderSettings').mockResolvedValue({ hwAccel: 'vaapi' } as never);
     await withApp(async (call) => {
       const r = await call('GET', '/api/admin/livetv/state');
       expect(r.headers['cache-control']).toBe('no-store');
@@ -259,8 +299,9 @@ describe('GET /api/admin/livetv/state', () => {
         installed: false, reachable: false, version: null, wanted: false, offerHidden: false,
         updater: { available: true, stack: 'own', job: null, livetv: { state: 'stop_failed', container: 'running', error: 'unhealthy' } },
         envLine: 'COMPOSE_PROFILES=livetv',
-        gpu: { jellyfin: 'vaapi', livetv: null, advice: null },
+        gpu: { jellyfin: null, livetv: null, advice: null },
       });
+      expect(spy).not.toHaveBeenCalled(); // nothing to compare it with
     });
   });
 
@@ -274,6 +315,22 @@ describe('GET /api/admin/livetv/state', () => {
       expect(j).toMatchObject({ installed: true, reachable: true, version: '1.0.0', updater: { available: false, stack: null, job: null, livetv: null } });
       expect(j.gpu).toEqual({ jellyfin: 'qsv', livetv: { driver: 'iHD', devices: 1 }, advice: { level: 'ok', key: 'both', driver: 'iHD' } });
     });
+  });
+
+  it('the state and the media server read are cached for 10 s', async () => {
+    fake.livetv = 'api1';
+    await detectLivetv(env.ctx, 0);
+    const spy = vi.spyOn(env.ctx.jf.admin, 'encoderSettings').mockResolvedValue({ hwAccel: 'qsv' } as never);
+    const healthz = vi.fn();
+    const inner = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async (...a: Parameters<typeof fetch>) => { if (String(a[0]).endsWith('/healthz')) healthz(); return inner(...a); }) as typeof fetch;
+    try {
+      await withApp(async (call) => {
+        for (let i = 0; i < 3; i++) await call('GET', '/api/admin/livetv/state');
+      });
+      expect(healthz).not.toHaveBeenCalled(); // the check above is younger than 10 s
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(1);
+    } finally { env.ctx.fetchImpl = inner; }
   });
 
   it('an unreadable media server leaves the jellyfin side and the advice null; the page still answers', async () => {
@@ -308,6 +365,9 @@ describe('gpuAdvice', () => {
     expect(gpuAdvice('vaapi', sys({ devices: ['renderD128'] }))).toEqual({ level: 'warn', key: 'needsRenderGid' });
     expect(gpuAdvice('nvenc', sys({ encoders: ['h264_vaapi', 'libx264'] }))).toEqual({ level: 'warn', key: 'needsNvidia' });
     expect(gpuAdvice('none', sys())).toEqual({ level: 'info', key: 'cpuOnly' });
+    // a GPU type livetv has no overlay for, and nothing on its side: it runs on the processor (never "both")
+    for (const hw of ['amf', 'v4l2m2m', 'rkmpp', 'videotoolbox']) expect(gpuAdvice(hw, sys()), hw).toEqual({ level: 'info', key: 'cpuOnly' });
+    expect(gpuAdvice('amf', sys({ devices: ['renderD128'], readable: true, driver: 'radeonsi' }))).toEqual({ level: 'ok', key: 'both', driver: 'radeonsi' });
     expect(gpuAdvice(null, sys())).toEqual({ level: 'info', key: 'cpuOnly' });
     expect(gpuAdvice('qsv', sys({ devices: ['renderD128'], readable: true, driver: 'iHD', encoders: ['h264_qsv', 'libx264'] }))).toEqual({ level: 'ok', key: 'both', driver: 'iHD' });
     expect(gpuAdvice('nvenc', sys({ encoders: ['h264_nvenc', 'libx264'], driver: '550.1' }))).toEqual({ level: 'ok', key: 'both', driver: '550.1' });

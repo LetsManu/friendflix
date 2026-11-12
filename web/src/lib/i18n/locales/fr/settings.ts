@@ -132,7 +132,7 @@ const settings: Translation<typeof de> = {
     AUTHENTIK_EMAIL_CHANGE_FLOW: { label: 'Flux de changement d’e-mail', help: 'Slug du flux qui reprend une nouvelle adresse e-mail après un lien de confirmation (modèle : friendflix-email-change).' },
     PASSKEYS_IN_APP: { label: 'Passkeys dans FriendFlix', help: 'Automatique : passkeys dans FriendFlix si Authentik le permet. Désactivé : passkeys uniquement sur la page d’Authentik.' },
     LOGIN_COVER_WALL: { label: 'Jaquettes derrière la connexion', help: 'Affiche des jaquettes de la bibliothèque (classifications jusqu’à 12 ans seulement, rien sans classification) derrière la connexion. Les images sont accessibles sans connexion.' },
-    LIVETV_OFFER_HIDDEN: { label: 'Proposer le module optionnel TV en direct', help: 'Affiche l’entrée « TV en direct (optionnel) » sous Contenu tant que la TV en direct n’est pas installée.' },
+    LIVETV_OFFER_HIDDEN: { label: 'Masquer l’entrée optionnelle TV en direct', help: 'Masque l’entrée « TV en direct (optionnel) » dans l’espace admin tant que la TV en direct n’est pas installée.' },
     JELLYFIN_URL: { label: 'Adresse de Jellyfin', help: 'Adresse interne du serveur multimédia, p. ex. http://jellyfin:8096.' },
     JELLYFIN_ADMIN_API_KEY: { label: 'Clé API Jellyfin (admin)', help: 'Clé API avec droits d’administration (Jellyfin → Tableau de bord → Clés API).' },
     PLEX_URL: { label: 'Adresse de Plex', help: 'Adresse interne par laquelle le backend et la passerelle multimédia joignent le serveur Plex. Seulement l’adresse : le jeton va dans son propre champ, jamais dans l’adresse.' },

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { startBenchmark } from '../convbench.js';
+import { claimBenchAttempt, startBenchmark } from '../convbench.js';
+import { readBench } from '../convbudget.js';
 import type { Ctx } from '../ctx.js';
 import { livetvCall, livetvHealth } from './client.js';
 import type { Encoder, LivetvSystem } from './wire.js';
@@ -28,7 +29,7 @@ async function check(ctx: Ctx, slot: Slot): Promise<LivetvState> {
   const was = slot.state?.installed; // undefined until the first look: a backend that starts next to a running livetv is not "just enabled"
   slot.state = next;
   // the first look after enabling (spec §5.3): measure the encoder livetv would use; one attempt per appearance
-  if (was === false && next.installed && ctx.cfg.LIVETV_WANTED === 'true') void startBenchmark(ctx, 'enable').catch(() => undefined);
+  if (was === false && next.installed && ctx.cfg.LIVETV_WANTED === 'true') void startBenchmark(ctx, 'enable').catch(() => undefined); // a refusal ({ ok: false }) is retried by the tick
   return next;
 }
 
@@ -40,9 +41,17 @@ export async function detectLivetv(ctx: Ctx, maxAgeMs = 10_000): Promise<LivetvS
   return slot.flight;
 }
 
-/** every 60 s (server.ts): a fresh check, which also notices the first appearance after enabling */
+/**
+ * every 60 s (server.ts): a fresh check, which also notices the first appearance after enabling. While livetv is installed and its
+ * benchmark record is missing (enabled by hand, someone was watching at the first look, a refusal) the measurement is retried, at most
+ * once per 30 min (the benchmark's attempt key); a restart alone is not an enable, but a missing record gets measured eventually.
+ */
 export async function livetvDetectTick(ctx: Ctx): Promise<void> {
-  await detectLivetv(ctx, 0);
+  const st = await detectLivetv(ctx, 0);
+  if (!st.installed) return;
+  if ((await readBench(ctx, 1).catch(() => null))?.livetv) return;
+  if (!(await claimBenchAttempt(ctx))) return;
+  await startBenchmark(ctx, 'enable').catch(() => undefined); // { ok: false } (busy, running, ...) is simply tried again later
 }
 
 const SYSTEM_MEMO_MS = 10_000;

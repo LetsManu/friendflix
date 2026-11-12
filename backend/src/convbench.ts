@@ -27,6 +27,11 @@ const LAST_KEY = 'conv:bench:last';
 const BENCH_SEGMENTS = 7;
 const BENCH_SEGMENT_SECONDS = 3;
 
+/** one attempt per 30 min across every caller that starts a measurement unasked (the tick of convBenchTick, the livetv detection tick) */
+export async function claimBenchAttempt(ctx: Ctx): Promise<boolean> {
+  return ctx.kv.setnx(ATTEMPT_KEY, String(Date.now()), BENCH_ATTEMPT_GAP_S).catch(() => false);
+}
+
 export type BenchTrigger = 'admin' | 'auto' | 'enable';
 export type BenchBusy = 'watching' | 'unknown';
 export type BenchRefusal = 'busy' | 'running' | 'no_title' | 'failed' | 'no_user' | 'unsupported';

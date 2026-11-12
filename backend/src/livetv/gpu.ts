@@ -17,5 +17,8 @@ export function gpuAdvice(jfHwAccel: string | null, sys: { gpu: { devices: strin
   if (hw !== null && hw !== 'none' && hw !== 'nvenc' && sys.gpu.devices.length > 0 && !sys.gpu.readable) return { level: 'warn', key: 'needsRenderGid' };
   if (hw === 'nvenc' && !sys.encoders.includes('h264_nvenc')) return { level: 'warn', key: 'needsNvidia' };
   if (hw === null || hw === 'none') return { level: 'info', key: 'cpuOnly' };
+  // a GPU type livetv has no overlay for (amf, v4l2m2m, rkmpp, videotoolbox ...): with no device and no hardware encoder it runs on the
+  // processor, which is what the info row says; claiming "both use the GPU" would be wrong
+  if (!dri && hw !== 'nvenc' && sys.gpu.devices.length === 0 && !sys.encoders.some((e) => e !== 'libx264')) return { level: 'info', key: 'cpuOnly' };
   return { level: 'ok', key: 'both', ...(sys.gpu.driver ? { driver: sys.gpu.driver } : {}) };
 }
