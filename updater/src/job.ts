@@ -265,7 +265,11 @@ export class Updater {
    * one fixed log line, and completes for the core services. An unverified livetv image is never started.
    */
   private async dropLivetv(code: LivetvError, tag: string): Promise<void> {
+    // persisted before the stop (1b review M13): an updater that dies during it restarts with livetv disabled and the reason kept,
+    // and `stop_failed` makes the next job stop the container again instead of adopting it as enabled
     this.state.livetvError = code;
+    this.state.livetv = 'stop_failed';
+    this.persist();
     this.state.livetv = (await this.stopLivetv()) ? 'disabled' : 'stop_failed';
     this.persist();
     this.log.add(`livetv disabled: ${code} at ${tag}`);

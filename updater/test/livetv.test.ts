@@ -62,6 +62,8 @@ interface WorldOpts {
   livetvDrift?: boolean;
   /** the compose files resolve livetv to another repository's image */
   livetvEvilImage?: boolean;
+  /** called when `compose stop` runs (before it changes anything) */
+  onStop?: () => void;
 }
 
 /** a fake Docker host: the FriendFlix stack runs, the livetv container as given */
@@ -109,6 +111,7 @@ function world(o: WorldOpts = {}) {
         if (args.includes('backend')) { w.coreSha = shaOf(tag); w.coreTag = tag; }
         return ok();
       case 'stop':
+        o.onStop?.();
         if (w.livetv) w.livetv = { state: 'exited', health: '' };
         return ok();
       case 'rm':
@@ -802,5 +805,23 @@ describe('enable on an install from before Live TV (1b review I3)', () => {
     m.u.start('update');
     await m.u.idle();
     expect(m.store.state).toMatchObject({ livetvError: 'compose_outdated', lastJob: { action: 'update', state: 'succeeded' } });
+  });
+});
+
+describe('dropLivetv persists first (1b review M13)', () => {
+  it('the reason and stop_failed are stored before the stop runs, so a crash during it neither loses the reason nor re-enables livetv', async () => {
+    const seen: Array<Partial<State>> = [];
+    let m: Made | null = null;
+    m = make({ livetv: { state: 'running', health: 'healthy' }, healthAfterUp: 'unhealthy', onStop: () => { if (m) seen.push({ livetv: m.store.state.livetv, livetvError: m.store.state.livetvError }); } }, { livetv: 'enabled' });
+    m.u.start('update');
+    await m.u.idle();
+    expect(seen[0]).toEqual({ livetv: 'stop_failed', livetvError: 'unhealthy' });
+    expect(m.store.state).toMatchObject({ livetv: 'disabled', livetvError: 'unhealthy', lastJob: { action: 'update', state: 'succeeded' } });
+    // what a restarted updater would find had it died during the stop: the next job stops livetv again, never adopts it
+    const after = make({ livetv: { state: 'running', health: 'healthy' } }, { livetv: 'stop_failed', livetvError: 'unhealthy' });
+    after.u.start('update');
+    await after.u.idle();
+    expect(after.store.state).toMatchObject({ livetv: 'disabled', livetvError: 'unhealthy' });
+    expect(changing(after)).toContain(`${P} stop livetv`);
   });
 });
