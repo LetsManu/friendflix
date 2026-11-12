@@ -20,6 +20,8 @@ import { systemView, type SystemView } from './system.js';
  */
 export const API_VERSION = 1;
 export const MAX_BODY = 64 * 1024;
+/** the one route with a larger cap: POST /v1/fetch/m3u carries the skip list (2 000 names of up to 200 characters) */
+export const MAX_BODY_M3U = 512 * 1024;
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 export interface RouteCall {
@@ -36,6 +38,8 @@ export interface Route {
   method: Method;
   /** exact path, or a pattern anchored with ^...$ (its groups become `params`) */
   path: string | RegExp;
+  /** the signed body cap in bytes when it is not MAX_BODY */
+  maxBody?: number;
   handle(c: RouteCall): Promise<Answer | void>;
 }
 
@@ -63,17 +67,17 @@ function send(res: ServerResponse, status: number, body?: unknown): void {
 }
 
 /**
- * The body as text; `too_large` when it passes MAX_BODY (the rest is read and dropped, so the 413 still reaches the caller);
+ * The body as text; `too_large` when it passes the cap (MAX_BODY, or the route's own) (the rest is read and dropped, so the 413 still reaches the caller);
  * `broken` when the request stream fails (the caller aborted).
  */
-function readBody(req: IncomingMessage): Promise<{ body: string } | { error: 'too_large' | 'broken' }> {
+function readBody(req: IncomingMessage, max: number = MAX_BODY): Promise<{ body: string } | { error: 'too_large' | 'broken' }> {
   return new Promise((resolve) => {
-    if (Number(req.headers['content-length'] ?? 0) > MAX_BODY) { req.resume(); resolve({ error: 'too_large' }); return; }
+    if (Number(req.headers['content-length'] ?? 0) > max) { req.resume(); resolve({ error: 'too_large' }); return; }
     let size = 0;
     const chunks: Buffer[] = [];
     const onData = (c: Buffer) => {
       size += c.length;
-      if (size <= MAX_BODY) { chunks.push(c); return; }
+      if (size <= max) { chunks.push(c); return; }
       req.off('data', onData);
       chunks.length = 0;
       req.resume();
@@ -134,7 +138,7 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
       if (!route || !params) return send(res, 405, { error: 'method_not_allowed' });
       let json: unknown = null;
       if (signed) {
-        const read = await readBody(req);
+        const read = await readBody(req, route.maxBody);
         if ('error' in read) return read.error === 'too_large' ? send(res, 413, { error: 'too_large' }) : send(res, 400, { error: 'bad_request' });
         const body = read.body;
         // the whole request target is signed: a query string cannot be changed or added on the way
