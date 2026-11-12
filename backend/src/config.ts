@@ -93,13 +93,16 @@ export const publicUrlSchema = z.string().transform((v, ctx) => {
 const HOST_LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
 const HOST_NAME_RE = new RegExp(`^${HOST_LABEL}(?:\\.${HOST_LABEL})*$`);
 /**
- * A bare host for display (the SRT push hint): a host name or an IPv4 literal, lower-cased; an IPv6 literal with or without brackets is
- * kept bracketed, as `URL.hostname` gives it. No scheme, port, userinfo or path (`invalid_host`).
+ * A bare host for display (the SRT push hint): a host name (one trailing dot allowed; the last label is never all digits, so `1` or
+ * `999.1.1.1` is no name) or a valid IPv4 literal, lower-cased; an IPv6 literal with or without brackets is kept bracketed, as
+ * `URL.hostname` gives it, never with a zone id (`%eth0`). No scheme, port, userinfo or path (`invalid_host`).
  */
 const hostSchema = z.string().trim().toLowerCase().transform((v, ctx) => {
   const bare = v.startsWith('[') && v.endsWith(']') ? v.slice(1, -1) : v;
-  if (isIP(bare) === 6) return `[${bare}]`;
-  if (bare === v && v.length <= 253 && (isIP(v) === 4 || HOST_NAME_RE.test(v))) return v;
+  if (!bare.includes('%') && isIP(bare) === 6) return `[${bare}]`;
+  if (bare === v && isIP(v) === 4) return v;
+  const name = v.endsWith('.') ? v.slice(0, -1) : v;
+  if (bare === v && name.length <= 253 && HOST_NAME_RE.test(name) && !/^[0-9]+$/.test(name.slice(name.lastIndexOf('.') + 1))) return v;
   ctx.addIssue({ code: 'custom', message: 'expected a host name or IP address without scheme or port', params: { code: 'invalid_host' } });
   return z.NEVER;
 });

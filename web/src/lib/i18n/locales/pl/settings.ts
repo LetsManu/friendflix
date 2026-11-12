@@ -78,6 +78,7 @@ const settings: Translation<typeof de> = {
     invalid_number: 'Wpisz liczbę.',
     invalid_option: 'Wybierz jedną z proponowanych wartości.',
     invalid_cidr: 'Wpisz sieci takie jak 192.168.0.0/16, oddzielone przecinkami.',
+    invalid_host: 'Tylko nazwa hosta lub adres IP, bez schematu i portu.',
     invalid_json: 'Nieprawidłowy JSON.',
     too_small: 'Wartość jest za mała.',
     too_big: 'Wartość jest za duża.',

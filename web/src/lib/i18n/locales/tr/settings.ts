@@ -76,6 +76,7 @@ const settings: Translation<typeof de> = {
     invalid_number: 'Lütfen bir sayı gir.',
     invalid_option: 'Lütfen sunulan değerlerden birini seç.',
     invalid_cidr: 'Lütfen 192.168.0.0/16 gibi ağları virgülle ayırarak gir.',
+    invalid_host: 'Yalnızca bir ana bilgisayar adı veya IP adresi, şema ve port olmadan.',
     invalid_json: 'Geçersiz JSON.',
     too_small: 'Değer çok küçük.',
     too_big: 'Değer çok büyük.',

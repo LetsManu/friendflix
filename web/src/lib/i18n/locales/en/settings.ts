@@ -73,6 +73,7 @@ const settings: Translation<typeof de> = {
     invalid_number: 'Please enter a number.',
     invalid_option: 'Please choose one of the offered values.',
     invalid_cidr: 'Please enter networks like 192.168.0.0/16, separated by commas.',
+    invalid_host: 'Only a host name or IP address, without scheme or port.',
     invalid_json: 'Invalid JSON.',
     too_small: 'The value is too small.',
     too_big: 'The value is too large.',

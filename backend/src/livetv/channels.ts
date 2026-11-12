@@ -112,7 +112,13 @@ export const CHANNEL_COLUMNS = `c.id, c.source_id,
     when s.epg_shift_min <> 0 then 'source' else 'none' end as epg_shift_from,
   c.probe`;
 export const CHANNEL_FROM = 'livetv_channels c join livetv_sources s on s.id = c.source_id';
-/** `${CHANNEL_SELECT} where …` reads effective channel rows; pass each through toEffective */
+/**
+ * `${CHANNEL_SELECT} where …` reads effective channel rows; pass each through toEffective. The effective columns (`name`, `number`,
+ * `group_id`, `logo_hash`, `epg_shift_min`, `epg_shift_from`) are select-list aliases, so a `where`/`order by`/`join` on them in the
+ * same query is invalid SQL (`where group_id = …`): to filter by the effective group (rights, group listings) wrap it
+ * (`select * from (${CHANNEL_SELECT}) e where e.group_id = any($1)`) or build the query from CHANNEL_COLUMNS / CHANNEL_FROM and repeat
+ * the coalesce expression in the condition.
+ */
 export const CHANNEL_SELECT = `select ${CHANNEL_COLUMNS} from ${CHANNEL_FROM}`;
 
 export function toEffective(r: EffectiveRow): EffectiveChannel {
@@ -134,7 +140,15 @@ export function toEffective(r: EffectiveRow): EffectiveChannel {
   };
 }
 
-/** the host shown in the SRT push setup hint (spec §3.5): LIVETV_SRT_HOST, else the host of PUBLIC_URL, derived when read */
-export function srtHost(ctx: Ctx): string {
-  return ctx.cfg.LIVETV_SRT_HOST ?? new URL(ctx.cfg.PUBLIC_URL).hostname;
+/**
+ * The host shown in the SRT push setup hint (spec §3.5): LIVETV_SRT_HOST, else the host of PUBLIC_URL, derived when read. null while
+ * neither is known (PUBLIC_URL is '' before setup): callers then show no host.
+ */
+export function srtHost(ctx: Ctx): string | null {
+  if (ctx.cfg.LIVETV_SRT_HOST) return ctx.cfg.LIVETV_SRT_HOST;
+  try {
+    return ctx.cfg.PUBLIC_URL ? new URL(ctx.cfg.PUBLIC_URL).hostname || null : null;
+  } catch {
+    return null;
+  }
 }

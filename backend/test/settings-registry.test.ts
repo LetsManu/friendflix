@@ -107,10 +107,12 @@ describe('key classification', () => {
     expect(loadConfig({ ...BOOT, LIVETV_SRT_HOST: '' }).LIVETV_SRT_HOST).toBeUndefined();
     expect(parseEnvValue(def('LIVETV_ENCODER'), 'nvenc')).toEqual({ ok: true, value: 'nvenc' });
     expect(parseEnvValue(def('LIVETV_ENCODER'), 'h264_qsv')).toEqual({ ok: false, code: 'invalid_option' });
-    for (const v of ['srt.example.com', 'tv-1.example.com', '192.0.2.10', '[2001:db8::1]']) expect(parseEnvValue(def('LIVETV_SRT_HOST'), v), v).toEqual({ ok: true, value: v });
+    for (const v of ['srt.example.com', 'srt.example.com.', 'tv-1.example.com', '1tv.example.com', 'xn--bcher-kva.example', 'localhost', '192.0.2.10', '[2001:db8::1]', '[::ffff:192.0.2.10]']) expect(parseEnvValue(def('LIVETV_SRT_HOST'), v), v).toEqual({ ok: true, value: v });
     expect(parseEnvValue(def('LIVETV_SRT_HOST'), ' SRT.Example.com ')).toEqual({ ok: true, value: 'srt.example.com' });
     expect(parseEnvValue(def('LIVETV_SRT_HOST'), '2001:db8::1')).toEqual({ ok: true, value: '[2001:db8::1]' });
-    for (const v of ['srt://srt.example.com', 'srt.example.com:9000', 'user@srt.example.com', 'a b', '-bad.example.com', 'x'.repeat(254), '[nope]']) {
+    for (const v of ['srt://srt.example.com', 'srt.example.com:9000', 'user@srt.example.com', 'srt.example.com/live', 'a b', '-bad.example.com', 'x'.repeat(254), '[nope]',
+      'srt.example.com..', 'a..b', '999.999.999.999', '256.1.1.1', '01.2.3.4', '192.0.2', '1', 'example.123', 'fe80::1%eth0', '[fe80::1%eth0]', '[192.0.2.10]',
+      '[2001:db8::1]:9000', '192.0.2.10:9000']) {
       expect(parseEnvValue(def('LIVETV_SRT_HOST'), v), v).toEqual({ ok: false, code: 'invalid_host' });
     }
   });

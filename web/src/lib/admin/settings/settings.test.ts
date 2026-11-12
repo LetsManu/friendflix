@@ -108,12 +108,17 @@ describe('settings texts', () => {
       expect(opts.map((o) => o.value), l).toEqual(['auto', 'qsv', 'vaapi', 'nvenc', 'software']);
       expect(opts.every((o) => o.label !== o.value), l).toBe(true);
       expect(keyHelp('LIVETV_SRT_HOST'), l).toMatch(/srt:\/\//);
+      // the backend's invalid_host code has its own text, not the generic one
+      expect(errorText('invalid_host', 'LIVETV_SRT_HOST'), l).not.toBe(tr('settings.errors.invalid'));
+      expect(errorText('invalid_host'), l).toBe(errorText('invalid_host', 'LIVETV_SRT_HOST'));
     }
     expect([titles.get('de'), titles.get('en')]).toEqual(['Live-TV', 'Live TV']);
     await setLocale('de');
     expect([keyLabel('LIVETV_ENCODER'), keyLabel('LIVETV_SRT_HOST')]).toEqual(['Encoder für Live-TV', 'Adresse für gesendete Streams']);
+    expect(errorText('invalid_host', 'LIVETV_SRT_HOST')).toBe('Nur ein Hostname oder eine IP-Adresse, ohne Schema und Port.');
     await setLocale('en');
     expect([keyLabel('LIVETV_ENCODER'), keyLabel('LIVETV_SRT_HOST')]).toEqual(['Live TV encoder', 'Address for pushed streams']);
+    expect(errorText('invalid_host', 'LIVETV_SRT_HOST')).toBe('Only a host name or IP address, without scheme or port.');
   });
 
   it('recommendations group: a title, a note that the expert keys stay in .env, engine option labels, in every language', async () => {

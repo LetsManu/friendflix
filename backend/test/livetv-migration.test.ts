@@ -214,6 +214,10 @@ describe('effective values', () => {
     const probe = { at: '2026-11-12T10:00:00.000Z', ok: true, video: { codec: 'h264', width: 1920, height: 1080, fps: 25 }, audio: { codec: 'aac', channels: 2 }, needs: 'passthrough' };
     await q('update livetv_channels set probe = $2 where id = $1', [plain, JSON.stringify(probe)]);
     expect(await effective(plain)).toMatchObject({ hidden: true, missing: true, epg: { sourceId: other, channelId: 'sternwarte.de' }, probe });
+    // filtering by the effective group: wrap the select (group_id is a select-list alias)
+    const inSport = (await q(`select e.id from (${CHANNEL_SELECT}) e where e.group_id = $1`, [sport])).rows.map((r) => r.id);
+    expect(inSport).toEqual([]); // the override moved the only mapped channel to kids
+    expect((await q(`select e.id from (${CHANNEL_SELECT}) e where e.group_id = $1`, [kids])).rows.map((r) => r.id)).toEqual([id]);
     // the effective row carries no encrypted column
     const raw = (await q(`${CHANNEL_SELECT} where c.id = $1`, [plain])).rows[0];
     expect(Object.keys(raw).filter((k) => k.endsWith('_enc'))).toEqual([]);
@@ -261,7 +265,14 @@ describe('effective values', () => {
     expect(srtHost(env.ctx)).toBe(new URL(env.ctx.cfg.PUBLIC_URL).hostname);
     const saved = env.ctx.cfg;
     env.ctx.cfg = { ...saved, LIVETV_SRT_HOST: 'srt.example.com' };
-    try { expect(srtHost(env.ctx)).toBe('srt.example.com'); } finally { env.ctx.cfg = saved; }
+    try {
+      expect(srtHost(env.ctx)).toBe('srt.example.com');
+      // before setup PUBLIC_URL is '': no host, no throw; a set LIVETV_SRT_HOST still wins
+      env.ctx.cfg = { ...saved, PUBLIC_URL: '', LIVETV_SRT_HOST: undefined };
+      expect(srtHost(env.ctx)).toBeNull();
+      env.ctx.cfg = { ...saved, PUBLIC_URL: '', LIVETV_SRT_HOST: '192.0.2.10' };
+      expect(srtHost(env.ctx)).toBe('192.0.2.10');
+    } finally { env.ctx.cfg = saved; }
   });
 });
 

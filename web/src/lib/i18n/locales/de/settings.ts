@@ -71,6 +71,7 @@ export default {
     invalid_number: 'Bitte eine Zahl eingeben.',
     invalid_option: 'Bitte einen der angebotenen Werte wählen.',
     invalid_cidr: 'Bitte Netze wie 192.168.0.0/16 eingeben, durch Kommas getrennt.',
+    invalid_host: 'Nur ein Hostname oder eine IP-Adresse, ohne Schema und Port.',
     invalid_json: 'Ungültiges JSON.',
     too_small: 'Der Wert ist zu klein.',
     too_big: 'Der Wert ist zu groß.',
