@@ -116,7 +116,8 @@ test.describe('Live TV on a TV', () => {
     await expect(hint(page)).toHaveText('OK: ansehen · Lang OK: Favorit · CH ▲▼: 8 Zeilen · 0: letzter Sender');
   });
 
-  test('D-pad only: ▶ star and OK toggle favourite (no long press)', async ({ page, api }) => {
+  /** D-pad to the ▶ star of Bergblick Sport (7), which is no favourite yet */
+  async function toBergStar(page: Page) {
     await page.goto('/live?tv=1');
     await expect(focused(page)).toHaveAccessibleName(/^12 Kinderinsel/);
     for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowUp'); // Nordlicht TV
@@ -126,8 +127,25 @@ test.describe('Live TV on a TV', () => {
     await page.keyboard.press('ArrowRight');
     await expect(focused(page)).toHaveAccessibleName('Zu Favoriten: Bergblick Sport');
     await expect(focused(page)).toHaveAttribute('aria-pressed', 'false');
+  }
+  /** holds every favourite request of the page until `release()`; `seen` counts the requests that reached the network */
+  async function holdStars(page: Page) {
+    const seen: string[] = [];
+    const gates: Array<() => void> = [];
+    await page.route('**/api/livetv/favourites/*', async (r) => {
+      seen.push(r.request().method());
+      await new Promise<void>((res) => gates.push(res));
+      await r.fallback();
+    });
+    return { seen, release: () => { gates.shift()?.(); } };
+  }
+
+  test('D-pad only: ▶ star and OK toggle favourite (no long press)', async ({ page, api }) => {
+    await toBergStar(page);
     await page.keyboard.press('Enter');
     await expect(focused(page)).toHaveAttribute('aria-pressed', 'true');
+    // the request is recorded (and answered) before the next step, so nothing here races the save
+    await expect.poll(() => api.livetv.calls.length).toBe(1);
     expect(api.livetv.calls).toEqual(['POST /api/livetv/favourites/ch-berg']);
     await expect(favs(page).locator('button.tile')).toHaveCount(4);
     // ◀ goes back to the row, nothing was opened
@@ -138,7 +156,56 @@ test.describe('Live TV on a TV', () => {
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('Enter');
     await expect(focused(page)).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => api.livetv.calls.length).toBe(2);
     expect(api.livetv.calls).toEqual(['POST /api/livetv/favourites/ch-berg', 'DELETE /api/livetv/favourites/ch-berg']);
+    await expect(favs(page).locator('button.tile')).toHaveCount(3);
+  });
+
+  test('OK twice in quick succession (R27): the second press is not lost, the final state is stored with 2 requests', async ({ page, api }) => {
+    await toBergStar(page);
+    const held = await holdStars(page);
+    await page.keyboard.press('Enter');
+    await expect.poll(() => held.seen.length).toBe(1); // the first save is on the wire and held
+    await page.keyboard.press('Enter'); // a press during the running save
+    await expect(focused(page)).toHaveAttribute('aria-pressed', 'false'); // the star shows the latest press at once
+    held.release();
+    await expect.poll(() => held.seen).toEqual(['POST', 'DELETE']); // exactly one more request, for the second press
+    held.release();
+    await expect.poll(() => api.livetv.calls.length).toBe(2);
+    expect(api.livetv.calls).toEqual(['POST /api/livetv/favourites/ch-berg', 'DELETE /api/livetv/favourites/ch-berg']);
+    expect(api.livetv.favourites).not.toContain('ch-berg');
+    await expect(focused(page)).toHaveAttribute('aria-pressed', 'false');
+    await expect(favs(page).locator('button.tile')).toHaveCount(3);
+  });
+
+  test('OK three times quickly: the final state, at most 2 requests', async ({ page, api }) => {
+    await toBergStar(page);
+    const held = await holdStars(page);
+    await page.keyboard.press('Enter');
+    await expect.poll(() => held.seen.length).toBe(1);
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    await expect(focused(page)).toHaveAttribute('aria-pressed', 'true');
+    held.release();
+    await expect(favs(page).locator('button.tile')).toHaveCount(4);
+    await expect.poll(() => api.livetv.favourites.includes('ch-berg')).toBe(true);
+    await page.waitForTimeout(300); // nothing more may follow
+    expect(held.seen.length).toBeLessThanOrEqual(2);
+    expect(api.livetv.calls).toEqual(['POST /api/livetv/favourites/ch-berg']);
+    await expect(focused(page)).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test.describe('a refused save', () => {
+    test.use({ allowedConsole: /Failed to load resource/ });
+    test('rolls the star back and shows the error toast', async ({ page, api }) => {
+      await toBergStar(page);
+      await page.route('**/api/livetv/favourites/*', (r) => r.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'error' }) }));
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('region', { name: 'Hinweise' })).toContainText(/\S/); // the error toast
+      await expect(focused(page)).toHaveAttribute('aria-pressed', 'false');
+      await expect(favs(page).locator('button.tile')).toHaveCount(3);
+      expect(api.livetv.calls).toEqual([]);
+    });
   });
 
   test('OK on a row watches it', async ({ page }) => {

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { GuardDeps } from '../src/fetch.js';
 import { pickVariant, probe, type StreamInput } from '../src/probe.js';
 import { TIMEOUT_CODE, type Run, type RunResult } from '../src/run.js';
+import type { IngestReader } from '../src/srtingest.js';
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
 
@@ -272,9 +273,42 @@ describe('probe', () => {
     expect((await probe(input, { run: throwing, guard: guard() })).error).toBe('invalid');
   });
 
-  it('{ push } → invalid until the ingest exists', async () => {
-    const run = fakeRun('{}');
-    expect(await probe({ push: 'ch-1' }, { run, guard: guard() })).toEqual({ ok: false, needs: 'transcode', error: 'invalid' });
-    expect(run.calls).toHaveLength(0);
+  it('{ push }: ffprobe reads the feed\'s ring on stdin; not receiving → unreachable; no ingest hub → invalid', async () => {
+    // the ring of a feed that is sending: three TS packets' worth, then the reader ends (srtingest.test.ts covers a live one)
+    const ring = Buffer.alloc(1316 * 3, 0x47);
+    const readers: string[] = [];
+    let closed = 0;
+    const ingest = (on: boolean): IngestReader => ({
+      receiving: () => on,
+      reader: (id) => {
+        readers.push(id);
+        return (async function* () {
+          try { yield ring; } finally { closed++; }
+        })();
+      },
+    });
+    const run = fakeRun(fixture('ffprobe-h264-aac.json'));
+    const g = guard();
+    expect(await probe({ push: 'ch-nordlicht' }, { run, guard: g, ingest: ingest(true) })).toEqual({
+      ok: true, video: { codec: 'h264', width: 1920, height: 1080, fps: 25 }, audio: { codec: 'aac', channels: 2 }, needs: 'remux',
+    });
+    expect(readers).toEqual(['ch-nordlicht']);
+    expect(closed).toBe(1);
+    expect(run.calls).toHaveLength(1);
+    const c = run.calls[0]!;
+    expect(c.cmd).toBe('ffprobe');
+    expect(c.stdin).toBe(ring.length);
+    expect(c.args).toContain('pipe:0');
+    expect(c.args.join(' ')).toContain('-protocol_whitelist pipe');
+    expect(c.args.some((a) => /srt|udp|http|ch-nordlicht/.test(a))).toBe(false);
+    // a push feed connects nowhere: no lookup at all
+    expect(g.lookups).toEqual([]);
+
+    // a feed that is not sending: ffprobe never waits on an empty ring
+    expect(await probe({ push: 'ch-nordlicht' }, { run, guard: g, ingest: ingest(false) })).toEqual({ ok: false, needs: 'transcode', error: 'unreachable' });
+    // a caller without an ingest hub cannot probe push feeds at all: a fixed code, never a hang or a throw
+    expect(await probe({ push: 'ch-nordlicht' }, { run, guard: g })).toEqual({ ok: false, needs: 'transcode', error: 'invalid' });
+    expect(run.calls).toHaveLength(1);
+    expect(readers).toEqual(['ch-nordlicht']);
   });
 });
