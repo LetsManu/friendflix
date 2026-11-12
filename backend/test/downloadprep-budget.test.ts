@@ -185,7 +185,13 @@ describe('download preparation and the conversion budget', () => {
     const seen: string[][] = [];
     onSeg = (n) => {
       if (n === 0) void grants().then((g) => seen.push(g));
-      if (n === 2) { pv.paused = true; setTimeout(() => { pv.paused = false; }, 15); }
+      if (n === 2) {
+        // pause after segment 2; the pause ends once the job really paused (not after a fixed time: under load the timer could end it
+        // before the pass looked, and no seam would be made)
+        pv.paused = true;
+        const end = () => { if (preparer(env.ctx).pausedJobs.size) pv.paused = false; else setTimeout(end, 2); };
+        setTimeout(end, 2);
+      }
     };
     const id = await job();
     const p = preparer(env.ctx);
