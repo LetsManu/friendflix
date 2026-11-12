@@ -9,7 +9,7 @@ const toasts = (page: import('@playwright/test').Page) => page.getByRole('region
 const logged = (api: { log: string[] }, re: RegExp) => api.log.some((l) => re.test(l));
 
 test.describe('admin people (desktop)', () => {
-  test.use({ allowedConsole: /status of (409|500|502)/ });
+  test.use({ allowedConsole: /status of (400|409|500|502)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   test.describe('users', () => {
@@ -520,6 +520,174 @@ test.describe('admin people (desktop)', () => {
       fail = false;
       await alert.getByRole('button', { name: 'Erneut versuchen' }).click();
       await expect(page.getByText('1–25 von 49')).toBeVisible();
+    });
+  });
+
+  test.describe('summary, rights filters and bulk rights', () => {
+    const table = (page: import('@playwright/test').Page) => page.getByRole('table', { name: 'Nutzer' });
+    /** the list requests of the page (the mock's log only holds writes): start before the first goto */
+    const watchList = (page: import('@playwright/test').Page): string[] => {
+      const urls: string[] = [];
+      page.on('request', (r) => { const u = new URL(r.url()); if (u.pathname === '/api/admin/users') urls.push(u.search); });
+      return urls;
+    };
+
+    test('summary tiles and approvals badge', async ({ page }) => {
+      await page.goto('/admin/users');
+      const strip = page.getByRole('region', { name: 'Überblick' });
+      await expect(strip.getByText('Personen', { exact: true })).toBeVisible();
+      await expect(strip.getByRole('link', { name: /2\s*Warten auf Freigabe/ })).toHaveAttribute('href', /\?tab=approvals$/);
+      await expect(strip.getByRole('link', { name: /Offene Einladungen/ })).toBeVisible();
+      await expect(strip.getByText('Läuft bald ab', { exact: true })).toBeVisible();
+      // the sidebar item of the people page carries the number of waiting sign-ups
+      await expect(page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: /Nutzer.*2 offen/ })).toBeVisible();
+      await strip.getByRole('link', { name: /Warten auf Freigabe/ }).click();
+      await expect(page.getByRole('tab', { name: /Warten auf Freigabe/ })).toHaveAttribute('aria-selected', 'true');
+    });
+
+    test('no tile is amber and no badge shows without waiting sign-ups', async ({ page, api }) => {
+      api.admin.approvals = [];
+      await page.goto('/admin/users');
+      const strip = page.getByRole('region', { name: 'Überblick' });
+      await expect(strip.getByText('Warten auf Freigabe', { exact: true })).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: /Nutzer.*offen/ })).toHaveCount(0);
+    });
+
+    test('filter chips: Mit Ausnahmen asks the backend, fills the chip and clears with ×', async ({ page }) => {
+      const calls = watchList(page);
+      await page.goto('/admin/users');
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
+      const chips = page.getByRole('group', { name: 'Filter' });
+      const chip = chips.getByRole('button', { name: 'Mit Ausnahmen' });
+      await expect(chip).toHaveAttribute('aria-pressed', 'false');
+      await chip.click();
+      await expect(chip).toHaveAttribute('aria-pressed', 'true');
+      await expect.poll(() => calls.some((l) => /[?&]overrides=1(&|\s|$)/.test(l))).toBe(true);
+      await expect(table(page).getByRole('row', { name: /Anna Beispiel/ })).toBeVisible();
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toHaveCount(0);
+      // the badge of the person opens the rights tab of that person
+      await expect(table(page).getByRole('row', { name: /Anna Beispiel/ }).getByRole('link', { name: /2 Ausnahmen/ })).toHaveAttribute('href', `/admin/users/${auid(2)}?tab=rights`);
+      await expect(page).toHaveURL(/overrides=1/);
+      await chip.click(); // pressed: the chip shows × and clears the filter
+      await expect(chip).toHaveAttribute('aria-pressed', 'false');
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
+      await expect(page).not.toHaveURL(/overrides/);
+    });
+
+    test('right filter, kids filter and clear all', async ({ page }) => {
+      const calls = watchList(page);
+      await page.goto('/admin/users');
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
+      await page.getByRole('combobox', { name: 'Recht' }).selectOption('cast:off');
+      await expect.poll(() => calls.some((l) => /perm=cast%3Aoff/.test(l))).toBe(true);
+      await page.getByRole('group', { name: 'Filter' }).getByRole('button', { name: 'Mit Kinderprofil' }).click();
+      await expect.poll(() => calls.some((l) => /kids=1/.test(l) && /perm=cast%3Aoff/.test(l))).toBe(true);
+      await expect(page.getByRole('group', { name: 'Filter' }).getByRole('button', { name: /Auf Fernseher übertragen: nein/ })).toBeVisible();
+      await page.getByRole('button', { name: 'Alle Filter löschen' }).click();
+      await expect(page.getByRole('button', { name: 'Alle Filter löschen' })).toHaveCount(0);
+      await expect(page.getByRole('combobox', { name: 'Recht' })).toHaveValue('');
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
+    });
+
+    test('Ohne 2FA only with the sign-in provider API', async ({ page }) => {
+      const calls = watchList(page);
+      await page.goto('/admin/users');
+      const chips = page.getByRole('group', { name: 'Filter' });
+      await chips.getByRole('button', { name: 'Ohne 2FA' }).click();
+      await expect.poll(() => calls.some((l) => /mfa=off/.test(l))).toBe(true);
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
+      await expect(table(page).getByRole('row', { name: /Anna Beispiel/ })).toHaveCount(0);
+    });
+
+    test('no Ohne 2FA chip without the provider API', async ({ page, api }) => {
+      api.admin.authentik.recovery = false;
+      await page.goto('/admin/users');
+      await expect(page.getByRole('group', { name: 'Filter' }).getByRole('button', { name: 'Mit Ausnahmen' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Ohne 2FA' })).toHaveCount(0);
+    });
+
+    test('columns: kids profiles count and the note as a tooltip', async ({ page }) => {
+      await page.goto('/admin/users');
+      const anna = table(page).getByRole('row', { name: /Anna Beispiel/ });
+      await expect(anna.getByTitle('1 Kinderprofil')).toBeVisible();
+      await expect(anna.getByRole('link', { name: 'Anna Beispiel' })).toBeVisible();
+      await expect(anna.getByText('Notiz: Teilt das Konto mit ihrer Familie')).toBeAttached();
+      await expect(table(page).getByRole('row', { name: /Clara Fischer/ }).getByTitle('2 Kinderprofile')).toBeVisible();
+    });
+
+    test('bulk Recht setzen: Übertragen verbieten after a confirm that names both', async ({ page, api }) => {
+      await page.goto('/admin/users');
+      await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
+      await table(page).getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
+      const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
+      await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('cast');
+      await bar.getByRole('button', { name: 'Verbieten' }).click();
+      const dlg = page.getByRole('alertdialog');
+      await expect(dlg).toContainText('Anna Beispiel, Ben Test');
+      await expect(dlg).toContainText('„Auf Fernseher übertragen“ für 2 Personen auf „nicht erlaubt“ setzen?');
+      await dlg.getByRole('button', { name: 'Abbrechen' }).click();
+      expect(logged(api, /\/api\/admin\/users\/bulk/)).toBe(false);
+      await bar.getByRole('button', { name: 'Verbieten' }).click();
+      await dlg.getByRole('button', { name: 'Übernehmen' }).click();
+      await expect(toasts(page).getByText('2 Konten geändert.')).toBeVisible();
+      const post = api.log.find((l) => l.startsWith('POST /api/admin/users/bulk '))!;
+      expect(JSON.parse(post.slice('POST /api/admin/users/bulk '.length, post.indexOf(' -> ')))).toEqual({ ids: [auid(2), auid(3)], action: 'perm', perm: 'cast', value: false });
+      // the new exception shows in the list at once
+      await expect(table(page).getByRole('row', { name: /Ben Test/ }).getByRole('link', { name: /1 Ausnahme/ })).toBeVisible();
+    });
+
+    test('bulk Wie Rolle sends null, Erlauben sends true', async ({ page, api }) => {
+      await page.goto('/admin/users');
+      await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
+      const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
+      await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('party');
+      await bar.getByRole('button', { name: 'Wie Rolle' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();
+      await expect.poll(() => logged(api, /POST \/api\/admin\/users\/bulk .*"perm":"party","value":null/)).toBe(true);
+      await expect(bar).toHaveCount(0); // the selection is cleared after a run
+      await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
+      await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('party');
+      await bar.getByRole('button', { name: 'Erlauben' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();
+      await expect.poll(() => logged(api, /POST \/api\/admin\/users\/bulk .*"perm":"party","value":true/)).toBe(true);
+    });
+
+    test('the buttons wait for a chosen right; an admin in the selection is refused with a clear text', async ({ page, api }) => {
+      await page.goto('/admin/users');
+      api.admin.users.find((u) => u.id === auid(3))!.role = 'admin';
+      await page.reload();
+      await table(page).getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
+      const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
+      await expect(bar.getByRole('button', { name: 'Verbieten' })).toBeDisabled();
+      await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('cast');
+      await bar.getByRole('button', { name: 'Verbieten' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();
+      await expect(toasts(page).getByText(/Admins dürfen immer alles/)).toBeVisible();
+    });
+
+    test('bulk Richtlinien neu anwenden: all done', async ({ page, api }) => {
+      await page.goto('/admin/users');
+      await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
+      await table(page).getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
+      await page.getByRole('region', { name: 'Aktionen für die Auswahl' }).getByRole('button', { name: 'Richtlinien neu anwenden' }).click();
+      const dlg = page.getByRole('alertdialog', { name: 'Richtlinien für 2 Personen neu anwenden?' });
+      await expect(dlg).toContainText('Anna Beispiel, Ben Test');
+      await dlg.getByRole('button', { name: 'Übernehmen' }).click();
+      await expect(toasts(page).getByText('Richtlinien für 2 Konten neu angewendet.')).toBeVisible();
+      await expect.poll(() => logged(api, /POST \/api\/admin\/users\/bulk .*"action":"repair"/)).toBe(true);
+    });
+
+    test('bulk repair shows a partial failure honestly: done and failed', async ({ page, api }) => {
+      api.admin.repairFails.add(auid(3));
+      await page.goto('/admin/users');
+      await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
+      await table(page).getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
+      await page.getByRole('region', { name: 'Aktionen für die Auswahl' }).getByRole('button', { name: 'Richtlinien neu anwenden' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();
+      await expect(toasts(page).getByText('1 aktualisiert, 1 Konto fehlgeschlagen.')).toBeVisible();
+      await expect(toasts(page)).not.toContainText('neu angewendet');
+      // the selection stays: the failed account can be tried again
+      await expect(page.getByRole('region', { name: 'Aktionen für die Auswahl' })).toContainText('2 ausgewählt');
     });
   });
 

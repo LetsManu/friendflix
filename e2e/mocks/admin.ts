@@ -14,7 +14,9 @@ const accessEnded = (until: string | null): boolean => until !== null && Date.pa
 /** uuid-shaped ids (the backend validates uuids for users/devices) */
 export const auid = (n: number): string => `00000000-0000-4000-a000-${n.toString().padStart(12, '0')}`;
 
-export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null; access_until?: string | null; profiles?: number; /** why a locked account is locked (default manual) */ locked_reason?: 'manual' | 'expired' | 'deletion'; /** scheduled deletion (Block 23 self-service) */ deletion_at?: string | null; /** claimed by the deletion tick, users row still there (steps 1-4) */ cleanup?: { step: number; error: string | null } }
+export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null; access_until?: string | null; profiles?: number; /** why a locked account is locked (default manual) */ locked_reason?: 'manual' | 'expired' | 'deletion'; /** scheduled deletion (Block 23 self-service) */ deletion_at?: string | null; /** claimed by the deletion tick, users row still there (steps 1-4) */ cleanup?: { step: number; error: string | null };
+  /** switch overrides of the person (user_limits.perms; backend counts them in `overrides`), the other stored overrides (limits), the admin's note, no 2FA at the sign-in provider */
+  perms?: Record<string, boolean>; otherOverrides?: number; kidsProfiles?: number; note?: string | null; mfaOff?: boolean }
 /** a claimed deletion whose users row is gone (status=deleting lists it by pseudonym); step = the step in work (1-6) */
 export interface AdminCleanup { id: string; pseudonym: string; started_at: string; step: number; error: string | null }
 export interface AdminDevice { user_id: string; device_id: string; label: string; approved: boolean; last_seen: string; name: string; /** the admin's own device (backend: current) */ current?: boolean }
@@ -82,6 +84,8 @@ export interface AdminState {
   usageCalls: string[];
   usageDetailCalls: string[];
   usageSince: string | null;
+  /** accounts the next bulk `repair` fails on (the answer is then `{ done, failed }`) */
+  repairFails: Set<string>;
   /** Block 23 user detail (/api/admin/users/:id*): Authentik state (mfa null = no Authentik API), link health, limits, profiles, activity calls */
   detailMfa: { totp: boolean; webauthn: boolean; static: boolean } | null;
   /** Block 23 self-service: deletions whose users row is gone, and ids the deletion tick has claimed (restore answers 409) */
@@ -242,10 +246,17 @@ const leavingRow = (itemId: string, days: number, note: string | null): LeavingR
 
 const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemId: 'it' + i, name: 'Titel Nummer ' + i, type: i % 3 ? 'Movie' : 'Series', status: (['ok', 'ok', 'ok', 'failed', 'missing', 'preparing'] as const)[i % 6]!, bytes: i % 6 < 3 ? 3_400_000 + i * 1000 : null, audioLang: i % 6 < 3 ? 'deu' : null, error: i % 6 === 3 ? 'ffmpeg exited with code 1' : null, createdAt: ago(i) }));
 
+/** rights facts of the first accounts (Anna: a switch exception, a limit and a kids profile with a note; Ben and Clara have no 2FA) */
+const SEED: Array<Partial<AdminUser>> = [
+  { perms: { party: false }, otherOverrides: 1, kidsProfiles: 1, note: 'Teilt das Konto mit ihrer Familie' },
+  { mfaOff: true },
+  { kidsProfiles: 2, mfaOff: true },
+];
+
 export function adminState(): AdminState {
   const users: AdminUser[] = [
     { id: 'u1', name: 'Tester', email: 'tester@example.org', role: 'admin', disabled: false, jellyfin_username: 'tester', seerr_user_id: 1, created_at: ago(24 * 400), last_seen: ago(0.1) },
-    ...NAMES.map((n, i) => ({ id: auid(i + 2), name: n, email: i % 3 === 2 ? null : `${n.split(' ')[0]!.toLowerCase()}@example.org`, role: ['friend', 'family', 'guest', 'friend'][i % 4]!, disabled: i === 4, jellyfin_username: n.split(' ')[0]!.toLowerCase(), seerr_user_id: null, created_at: ago(24 * (i + 3)), last_seen: ago(i * 7) })),
+    ...NAMES.map((n, i) => ({ id: auid(i + 2), name: n, email: i % 3 === 2 ? null : `${n.split(' ')[0]!.toLowerCase()}@example.org`, role: ['friend', 'family', 'guest', 'friend'][i % 4]!, disabled: i === 4, jellyfin_username: n.split(' ')[0]!.toLowerCase(), seerr_user_id: null, created_at: ago(24 * (i + 3)), last_seen: ago(i * 7), ...SEED[i] })),
   ];
   return {
     users,
@@ -320,6 +331,7 @@ export function adminState(): AdminState {
     usageDetailCalls: [],
     usageSince: leaveDay(-10),
     detailMfa: { totp: true, webauthn: false, static: true },
+    repairFails: new Set(),
     cleanups: [],
     claimed: new Set(),
     authentik: { recovery: true, mfaSetup: false },
@@ -452,21 +464,35 @@ function sorted<T>(rows: T[], sp: URLSearchParams, keys: Record<string, (r: T) =
   return [...rows].sort((a, b) => { const x = k(a), y = k(b); return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y))) * dir; });
 }
 const WEEK = 7 * 86400e3;
+/** the backend's `overrides` count: stored switch exceptions plus the other stored limits (an admin's switches never count) */
+const overridesOf = (u: AdminUser): number => (u.otherOverrides ?? 0) + (u.role === 'admin' ? 0 : Object.keys(u.perms ?? {}).length);
+/** the switch the person effectively has */
+function effectivePerm(st: AdminState, row: { id: string; role: string | null }, key: string): boolean {
+  if (row.role === 'admin') return true;
+  const own = st.users.find((x) => x.id === row.id)?.perms?.[key];
+  return own ?? (st.matrix.roles.find((r) => r.key === row.role)?.values[key] === true);
+}
 function usersList(st: AdminState, sp: URLSearchParams) {
+  // perm=key:on|off and mfa=off as the backend: the effective switch (role value, the person's exception on top; admins may do everything); mfa only with the provider's API
+  const permFilter = sp.get('perm')?.split(':') ?? null, mfaOff = sp.get('mfa') === 'off' && st.authentik.recovery;
   const q = norm(sp.get('q') ?? ''), status = sp.get('status'), inactive = sp.get('lastActive') === '90+', lastActive = inactive ? 0 : Number(sp.get('lastActive') ?? 0), now = Date.now();
   // status=pending: the open approval requests in the same row shape (backend: pending true, role null)
   const all = status === 'pending'
-    ? st.approvals.map((a) => ({ id: a.id, name: a.name, email: a.email, role: null as unknown as string, disabled: false, jellyfin_username: '', seerr_user_id: null, created_at: a.requested_at, last_seen: null, access_until: null, locked_reason: null, deletion_at: null as string | null, cleanup: null as { step: number; error: string | null; gone: boolean } | null, profiles: 0, devices: 0, pending: true }))
+    ? st.approvals.map((a) => ({ id: a.id, name: a.name, email: a.email, role: null as unknown as string, disabled: false, jellyfin_username: '', seerr_user_id: null, created_at: a.requested_at, last_seen: null, access_until: null, locked_reason: null, deletion_at: null as string | null, cleanup: null as { step: number; error: string | null; gone: boolean } | null, profiles: 0, devices: 0, pending: true, overrides: 0, kidsProfiles: 0, note: null }))
     : st.users.map((u) => ({ ...u, access_until: u.access_until ?? null, locked_reason: u.disabled ? (u.locked_reason ?? 'manual') : null, deletion_at: u.deletion_at ?? null,
-      cleanup: status === 'deleting' && u.cleanup ? { ...u.cleanup, gone: false } : null, profiles: u.profiles ?? 1, devices: st.devices.filter((d) => d.user_id === u.id).length, pending: false }))
+      cleanup: status === 'deleting' && u.cleanup ? { ...u.cleanup, gone: false } : null, profiles: u.profiles ?? 1, devices: st.devices.filter((d) => d.user_id === u.id).length, pending: false,
+      overrides: overridesOf(u), kidsProfiles: u.kidsProfiles ?? 0, note: u.note ?? null }))
       // status=deleting: plus the cleanup rows (backend: pseudonym as name, no e-mail or role, cleanup {step, error})
-      .concat(status === 'deleting' ? st.cleanups.map((c) => ({ id: c.id, name: c.pseudonym, email: null, role: null as unknown as string, disabled: true, jellyfin_username: '', seerr_user_id: null, created_at: c.started_at, last_seen: null, access_until: null, locked_reason: 'deletion' as const, deletion_at: null, profiles: 0, devices: 0, pending: false, cleanup: { step: c.step, error: c.error, gone: true } })) : []);
+      .concat(status === 'deleting' ? st.cleanups.map((c) => ({ id: c.id, name: c.pseudonym, email: null, role: null as unknown as string, disabled: true, jellyfin_username: '', seerr_user_id: null, created_at: c.started_at, last_seen: null, access_until: null, locked_reason: 'deletion' as const, deletion_at: null, profiles: 0, devices: 0, pending: false, overrides: 0, kidsProfiles: 0, note: null, cleanup: { step: c.step, error: c.error, gone: true } })) : []);
   let rows = all.filter((u) => (!q || norm(`${u.name} ${u.email ?? ''} ${u.jellyfin_username}`).includes(q)) && (!sp.get('role') || u.role === sp.get('role'))
     && (!status || status === 'pending' || (status === 'locked' && u.disabled) || (status === 'active' && !u.disabled && !u.deletion_at)
       || (status === 'deleting' && (Boolean(u.deletion_at) || Boolean(u.cleanup)))
       || (status === 'expiring' && u.access_until !== null && Date.parse(u.access_until) >= now && Date.parse(u.access_until) <= now + WEEK))
     && (!lastActive || (u.last_seen !== null && Date.parse(u.last_seen) >= now - lastActive * 86400e3))
-    && (!inactive || u.last_seen === null || Date.parse(u.last_seen) < now - 90 * 86400e3));
+    && (!inactive || u.last_seen === null || Date.parse(u.last_seen) < now - 90 * 86400e3)
+    && (sp.get('overrides') !== '1' || u.overrides > 0) && (sp.get('kids') !== '1' || u.kidsProfiles > 0)
+    && (!permFilter || (u.role !== null && effectivePerm(st, u, permFilter[0]!) === (permFilter[1] === 'on')))
+    && (!mfaOff || ('mfaOff' in u && u.mfaOff === true)));
   rows = sorted(rows, sp, { name: (u) => u.name, email: (u) => u.email ?? '', role: (u) => u.role, status: (u) => Number(u.disabled), lastSeen: (u) => u.last_seen ?? '', accessUntil: (u) => u.access_until ?? '', profiles: (u) => u.profiles, devices: (u) => u.devices });
   const { slice, total } = paged(rows, sp, 1000);
   return { users: slice, total };
@@ -510,6 +536,7 @@ export function adminSummary(st: AdminState) {
     playbackCheck: { finishedAt: ago(2), total: 20, failed: 1 },
     services: { jellyfin: true, seerr: st.seerrUp },
     live: { streams: 2, partyRooms: 1 },
+    mfaFilter: st.authentik.recovery,
     recoIndex: st.recoIndex,
   };
 }
@@ -626,9 +653,19 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (users.some((u) => !u)) return J({ error: 'not_found' }, 404);
     if ((body.action === 'lock' || (body.action === 'role' && body.role !== 'admin')) && body.ids.includes('u1')) return J({ error: 'cannot_lock_yourself_out' }, 400);
     if (body.action === 'unlock' && (users as AdminUser[]).some((u) => u.disabled && accessEnded(u.access_until ?? null))) return J({ error: 'access_expired' }, 409);
-    let done = 0;
+    // the admin role's switches are locked: refused as a whole before the first write (clearing stays possible)
+    if (body.action === 'perm' && body.value !== null && (users as AdminUser[]).some((u) => u.role === 'admin')) return J({ error: 'admin_perms_locked' }, 400);
+    let done = 0, failed = 0;
     for (const u of users as AdminUser[]) {
-      if (body.action === 'lock' || body.action === 'unlock') {
+      if (body.action === 'repair') {
+        if (st.repairFails.has(u.id)) { failed++; continue; }
+        log('user.repair', u.id, {}, u.name);
+      } else if (body.action === 'perm') {
+        const now = body.value === null ? undefined : body.value, was = u.perms?.[body.perm];
+        if (now === was) continue;
+        u.perms = { ...u.perms }; if (now === undefined) delete u.perms[body.perm]; else u.perms[body.perm] = now;
+        log('user.rights', u.id, { perms: { [body.perm]: { from: was ?? null, to: now ?? null } } }, u.name);
+      } else if (body.action === 'lock' || body.action === 'unlock') {
         const d = body.action === 'lock';
         if (u.disabled === d) continue;
         u.disabled = d; log(d ? 'user.disable' : 'user.enable', u.id, {}, u.name);
@@ -640,7 +677,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       }
       done++;
     }
-    return J({ done });
+    return J(failed ? { done, failed } : { done });
   }
   if (p === '/api/admin/approvals' && m === 'GET') return J({ requests: st.approvals });
   if ((mm = p.match(/^\/api\/admin\/approvals\/([^/]+)\/(approve|reject)$/)) && m === 'POST') {

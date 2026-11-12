@@ -36,6 +36,7 @@ describe('GET /api/admin/summary', () => {
     expect(j.storage).toMatchObject({ downloadsBytes: 0, previewBytes: 1500, previewClips: 2 });
     expect(typeof j.storage.downloadsMaxBytes).toBe('number');
     expect(j.services).toEqual({ jellyfin: true, seerr: true });
+    expect(typeof j.mfaFilter).toBe('boolean');
     expect(j.playbackCheck).toBeNull();
     expect(j.live).toEqual({ streams: 0, partyRooms: 0 });
   });

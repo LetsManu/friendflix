@@ -8,20 +8,29 @@
    * "Deletion pending" lists scheduled deletions (with their date; "Restore account" instead of unlock) and cleanup rows:
    * deletions under way, shown with the step in work and its error; they are not selectable and have no actions, and link to
    * the detail page only while the users row exists (gone: steps 5-6).
+   * Rights: a summary strip above the tabs; one scrolling chip row (with exceptions, with kids profile, without 2FA, the active
+   * dropdown filters with ×, clear all) and a right filter (the filters live in the URL: userFilters.ts); a column of exceptions
+   * (→ the person's rights tab), kids profiles in the profile count, the note as a tooltip; bulk: set one right (allow / deny /
+   * as the role) and re-apply the policies (a partial failure shows done and failed).
    */
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api } from '#lib/api';
+  import { api, ApiError } from '#lib/api';
   import { avatarBg, initial } from '#lib/avatars';
   import { fmtDate, fmtDateTime, fmtNumber, fmtRelative, locale, t, tr } from '#lib/i18n';
+  import Icon from '#lib/Icon.svelte';
   import { pageStore } from '#lib/page';
+  import { PERM_KEYS, type PermKey } from '#lib/perms';
   import ApprovalsPanel from '#lib/admin/ApprovalsPanel.svelte';
   import InvitesPanel from '#lib/admin/InvitesPanel.svelte';
   import { accessPreset, accountGuardText, bulkSummary, deletionErrorText, futureDayEnd, restoredText, today } from '#lib/admin/people';
+  import { activeChips, emptyFilters, fromQuery, toQuery, type UserFilters } from '#lib/admin/userFilters';
   import { deletionLabel } from '#lib/admin/user/detail';
-  import { refreshSummary } from '#lib/admin/summary';
+  import { refreshSummary, summary } from '#lib/admin/summary';
   import { roleName, type RoleInfo } from '#lib/roles';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
+  import { toast } from '#lib/ui/toast';
+  import StatTile from '#lib/ui/StatTile.svelte';
   import Button from '#lib/ui/Button.svelte';
   import { confirm } from '#lib/ui/confirm';
   import DataTable from '#lib/ui/DataTable.svelte';
@@ -35,6 +44,8 @@
     id: string; name: string; email: string | null; role: string | null; disabled: boolean; jellyfin_username: string | null; created_at: string
     last_seen: string | null; access_until: string | null; profiles: number; devices: number; pending: boolean
     deletion_at?: string | null; locked_reason?: string | null
+    /** stored exceptions (limits and switches) of the person, kids profiles among the profiles, the admin's note */
+    overrides?: number; kidsProfiles?: number; note?: string | null
     /** status=deleting only: a deletion under way (step = the step being worked on, 1-6; error = its last error code) */
     cleanup?: { step: number; error: string | null; gone: boolean } | null
   }
@@ -45,7 +56,10 @@
   const page$ = pageStore();
   // `pending` is the tab name older approval notices link to
   $: tab = ((v) => (v === 'pending' ? 'approvals' : TABS.includes(v as Tab) ? (v as Tab) : 'users'))($page$.url.searchParams.get('tab'));
-  const select = (to: Tab) => goto(to === 'users' ? $page$.url.pathname : `?tab=${to}`, { replaceState: true, reset: false });
+  /** the filters ride in the URL of the users tab (the search text is the table's own) */
+  const FILTER_PARAMS = ['role', 'status', 'lastActive', 'overrides', 'kids', 'mfa', 'perm'];
+  const usersUrl = (): string => { const qs = toQuery({ ...f, q: '' }).toString(); return $page$.url.pathname + (qs ? `?${qs}` : ''); };
+  const select = (to: Tab) => goto(to === 'users' ? usersUrl() : `?tab=${to}`, { replaceState: true, reset: false });
   function tabKey(e: KeyboardEvent) {
     const i = TABS.indexOf(tab), last = TABS.length - 1;
     const n = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i + last) % TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? last : -1;
@@ -57,7 +71,9 @@
   let rows: U[] | null = null, total = 0, error: string | null = null;
   let roles: Record<string, RoleInfo> = {}, invitable: string[] = ['friend', 'family', 'guest'], meId = '';
   let approvals: number | null = null;
-  let q = '', sort: SortState | null = null, page = 0, roleFilter = '', statusFilter = '', lastActive = '';
+  let q = '', sort: SortState | null = null, page = 0;
+  /** the filters except the search text */
+  let f: UserFilters = emptyFilters();
   let cur: Query = { q: '', sort: null, offset: 0, limit: PAGE };
   let seq = 0;
   /** selected accounts (id → name and role), kept across pages until an action ran or the selection is cleared */
@@ -66,12 +82,9 @@
 
   async function load() {
     const my = ++seq;
-    const p = new URLSearchParams({ limit: String(cur.limit), offset: String(cur.offset) });
-    if (cur.q.trim()) p.set('q', cur.q.trim());
+    const p = toQuery({ ...f, q: cur.q });
+    p.set('limit', String(cur.limit)); p.set('offset', String(cur.offset));
     if (cur.sort) { p.set('sort', cur.sort.key); p.set('dir', cur.sort.dir); }
-    if (roleFilter) p.set('role', roleFilter);
-    if (statusFilter) p.set('status', statusFilter);
-    if (lastActive) p.set('lastActive', lastActive);
     try {
       const r = await api<{ users: U[]; total: number }>(`/api/admin/users?${p}`);
       if (my !== seq) return;
@@ -82,10 +95,29 @@
   }
   function retry() { error = null; rows = null; void load(); }
   function onQuery(e: CustomEvent<Query>) { cur = e.detail; void load(); }
-  function refilter() { page = 0; cur = { ...cur, offset: 0 }; void load(); }
+  /** changes filters: back to the first page, the URL follows, the list reloads */
+  function setF(patch: Partial<UserFilters>) {
+    f = { ...f, ...patch };
+    page = 0; cur = { ...cur, offset: 0 };
+    if (tab === 'users') void goto(usersUrl(), { replaceState: true, reset: false });
+    void load();
+  }
+  const clearOne = (id: keyof UserFilters) => setF(id === 'overrides' || id === 'kids' || id === 'noMfa' ? { [id]: false } : { [id]: null });
+  $: chips = activeChips(f, (k) => rname(k));
+  $: anyFilter = chips.length > 0;
+  $: permValue = f.perm ? `${f.perm.key}:${f.perm.on ? 'on' : 'off'}` : '';
+  function setPerm(v: string) {
+    const [key, state] = v.split(':');
+    setF({ perm: v ? { key: key as PermKey, on: state === 'on' } : null });
+  }
+  /** the 2FA filter needs the sign-in provider's API (the backend ignores it otherwise) */
+  $: mfaChip = $summary?.mfaFilter === true || f.noMfa;
+  const rightName = (k: PermKey): string => tr(`adminPeople.roles.f.${k}`);
 
   onMount(() => {
+    f = { ...fromQuery(new URLSearchParams($page$.url.search)), q: '' };
     void load();
+    void refreshSummary();
     api<{ roles: Record<string, RoleInfo>; invitable?: string[] }>('/api/admin/roles').then((r) => {
       roles = r.roles;
       if (r.invitable?.length) invitable = r.invitable;
@@ -100,6 +132,10 @@
 
   $: rname = (k: string): string => roleName(k, roles[k]);
   $: roleOptions = Object.keys(roles).map((k) => ({ value: k, label: rname(k) }));
+  $: permOptions = [{ value: '', label: $t('adminPeople.users.anyRight') }, ...PERM_KEYS.flatMap((k) => [
+    { value: `${k}:on`, label: $t('adminPeople.users.filterRightOn', { right: rightName(k) }) },
+    { value: `${k}:off`, label: $t('adminPeople.users.filterRightOff', { right: rightName(k) }) },
+  ])];
   $: roleFilterOptions = [{ value: '', label: $t('adminPeople.users.allRoles') }, ...roleOptions];
   $: statusOptions = [
     { value: '', label: $t('adminPeople.users.allStatus') }, { value: 'active', label: $t('adminPeople.users.active') },
@@ -116,6 +152,7 @@
     { key: 'name', sortable: true, label: $t('adminPeople.users.col.name'), primary: true },
     { key: 'email', sortable: true, label: $t('adminPeople.users.col.email') },
     { key: 'role', sortable: true, label: $t('adminPeople.users.col.role') },
+    { key: 'overrides', sortable: false, label: $t('adminPeople.users.overrides'), align: 'center' },
     { key: 'profiles', sortable: true, label: $t('adminPeople.users.col.profiles'), align: 'end' },
     { key: 'devices', sortable: true, label: $t('adminPeople.users.col.devices'), align: 'end' },
     { key: 'lastSeen', sortable: true, label: $t('adminPeople.users.col.lastSeen') },
@@ -212,23 +249,32 @@
     { value: 'unlimited', label: $t('adminPeople.access.unlimited') }, { value: 'date', label: $t('adminPeople.access.date') },
   ];
 
-  type Bulk = { action: 'lock' | 'unlock' | 'revoke' } | { action: 'role'; role: string } | { action: 'access'; accessUntil: string | null };
+  type Bulk = { action: 'lock' | 'unlock' | 'revoke' | 'repair' } | { action: 'role'; role: string } | { action: 'access'; accessUntil: string | null }
+    | { action: 'perm'; perm: PermKey; value: boolean | null };
   function bulkTitle(b: Bulk, n: number): string {
     switch (b.action) {
       case 'role': return tr('adminPeople.bulk.confirmRole', { n, role: rname(b.role) });
       case 'lock': return tr('adminPeople.bulk.confirmLock', { n });
       case 'unlock': return tr('adminPeople.bulk.confirmUnlock', { n });
       case 'revoke': return tr('adminPeople.bulk.confirmSignOut', { n });
+      case 'repair': return tr('adminPeople.bulk.confirmRepair', { n });
+      case 'perm': return tr('adminPeople.bulk.confirmPerm', { n, right: rightName(b.perm), value: tr(b.value === null ? 'adminPeople.bulk.permValueRole' : b.value ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied') });
       case 'access': return b.accessUntil ? tr('adminPeople.bulk.confirmAccess', { n, date: fmtDate(b.accessUntil) }) : tr('adminPeople.bulk.confirmAccessUnlimited', { n });
     }
   }
   // validation and guards are all or nothing; anything else may have stopped halfway through the accounts
-  const bulkError = (e: unknown): string => accountGuardText(e) ?? `${errorText(e)} ${tr('adminPeople.bulk.partial')}`;
-  async function bulk(b: Bulk) {
+  const bulkError = (e: unknown): string => {
+    const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
+    if (code === 'admin_perms_locked') return tr('adminPeople.bulk.adminLocked');
+    if (code === 'deletion_in_progress') return deletionErrorText(e);
+    return accountGuardText(e) ?? `${errorText(e)} ${tr('adminPeople.bulk.partial')}`;
+  };
+  /** true when the call ran through (not cancelled, not failed) */
+  async function bulk(b: Bulk): Promise<boolean> {
     const ids = [...selected.keys()], picked = [...selected.values()];
-    if (!ids.length) return;
+    if (!ids.length) return false;
     const names10 = tr('adminPeople.bulk.names', { names: bulkSummary(picked.map((p) => p.name)) });
-    const note = b.action === 'lock' ? ` ${tr('adminPeople.bulk.lockNote')}` : b.action === 'revoke' ? ` ${tr('adminPeople.bulk.signOutNote')}` : '';
+    const note = b.action === 'lock' ? ` ${tr('adminPeople.bulk.lockNote')}` : b.action === 'revoke' ? ` ${tr('adminPeople.bulk.signOutNote')}` : b.action === 'repair' ? ` ${tr('adminPeople.bulk.repairNote')}` : '';
     // locking or demoting admins needs the same typed confirmation as the single lock: one admin = their name, several = their number
     const admins = picked.filter((p) => p.role === 'admin').map((p) => p.name);
     const guarded = admins.length > 0 && (b.action === 'lock' || (b.action === 'role' && b.role !== 'admin'));
@@ -239,17 +285,31 @@
       title: bulkTitle(b, ids.length), body: names10 + note + adminNote, danger, confirmLabel: label,
       ...(guarded ? { typed: admins.length === 1 ? admins[0]! : String(admins.length) } : {}),
     });
-    if (!ok) return;
+    if (!ok) return false;
     const r = await runAction({
       key: 'users:bulk',
-      run: () => api<{ done: number }>('/api/admin/users/bulk', { method: 'POST', body: { ids, ...b } }),
-      success: (res) => tr('adminPeople.bulk.done', { n: res?.done ?? 0 }),
+      run: () => api<{ done: number; failed?: number }>('/api/admin/users/bulk', { method: 'POST', body: { ids, ...b } }),
+      // a partly failed repair is no success: its toast (done and failed) is the error below
+      success: (res) => (res?.failed ? '' : tr(b.action === 'repair' ? 'adminPeople.bulk.repairDone' : 'adminPeople.bulk.done', { n: res?.done ?? 0 })),
       error: bulkError,
     });
+    const failed = r.value?.failed ?? 0;
+    if (r.ok && failed) toast.error(tr('adminPeople.bulk.repairPartial', { done: r.value?.done ?? 0, n: failed }));
     // reload either way: a failure in the middle can leave some accounts changed (the selection stays for a retry)
     void load();
     if (b.action === 'lock' || b.action === 'unlock') void refreshSummary();
-    if (r.ok) selected = new Map();
+    // a partial failure keeps the selection: the failed accounts can be tried again
+    if (r.ok && !failed) selected = new Map();
+    return r.ok;
+  }
+  let bulkPerm = '';
+  $: bulkPermOptions = [{ value: '', label: $t('adminPeople.bulk.perm') }, ...PERM_KEYS.map((k) => ({ value: k, label: rightName(k) }))];
+  /** the right select only picks; one of the three buttons runs */
+  async function applyPerm(value: boolean | null) {
+    const perm = bulkPerm as PermKey;
+    if (!perm) return;
+    // the choice stays while the confirm is open or after a cancel / failure, so the next button needs no second pick
+    if (await bulk({ action: 'perm', perm, value })) bulkPerm = '';
   }
   /** the bulk selects only pick; Apply runs (arrow keys on a closed select fire change in some browsers) */
   function applyRole() {
@@ -269,6 +329,13 @@
   $: busyBulk = $busyKeys.has('users:bulk');
   $: tabLabel = (id: Tab): string => (id === 'approvals' ? (approvals === null ? $t('adminPeople.tabs.approvals') : $t('adminPeople.tabs.approvalsN', { n: approvals })) : $t(`adminPeople.tabs.${id}`));
 </script>
+
+<section class="stats" aria-label={$t('adminPeople.summary.label')}>
+  <StatTile icon="users" label={$t('adminPeople.summary.people')} value={$summary ? fmtNumber($summary.users.total) : null} />
+  <StatTile icon="clock" label={$t('adminPeople.summary.waiting')} value={$summary ? fmtNumber($summary.pending.approvals) : null} href="/admin/users?tab=approvals" tone={$summary && $summary.pending.approvals > 0 ? 'warn' : 'default'} />
+  <StatTile icon="mail" label={$t('adminPeople.summary.openInvites')} value={$summary ? fmtNumber($summary.pending.invites) : null} href="/admin/users?tab=invites" />
+  <StatTile icon="calendar" label={$t('adminPeople.summary.expiring')} value={$summary ? fmtNumber($summary.users.expiring) : null} />
+</section>
 
 <div class="tabs" role="tablist" aria-label={$t('adminPeople.tabs.label')}>
   {#each TABS as id (id)}
@@ -297,22 +364,41 @@
           <Button type="submit" size="sm" variant="secondary" disabled={busyBulk || !bulkAccessReady}>{$t('adminPeople.bulk.apply')}</Button>
         </form>
         <Button variant="secondary" size="sm" icon="log-out" disabled={busyBulk} on:click={() => bulk({ action: 'revoke' })}>{$t('adminPeople.users.signOut')}</Button>
+        <div class="pickapply" role="group" aria-label={$t('adminPeople.bulk.perm')}>
+          <Select label={$t('adminPeople.bulk.perm')} options={bulkPermOptions} bind:value={bulkPerm} hideLabel disabled={busyBulk} />
+          <Button variant="secondary" size="sm" disabled={busyBulk || !bulkPerm} on:click={() => applyPerm(true)}>{$t('adminPeople.bulk.permAllow')}</Button>
+          <Button variant="secondary" size="sm" disabled={busyBulk || !bulkPerm} on:click={() => applyPerm(false)}>{$t('adminPeople.bulk.permDeny')}</Button>
+          <Button variant="secondary" size="sm" disabled={busyBulk || !bulkPerm} on:click={() => applyPerm(null)}>{$t('adminPeople.bulk.permRole')}</Button>
+        </div>
+        <Button variant="secondary" size="sm" icon="refresh" disabled={busyBulk} on:click={() => bulk({ action: 'repair' })}>{$t('adminPeople.bulk.repair')}</Button>
         <Button variant="ghost" size="sm" icon="x" on:click={() => (selected = new Map())}>{$t('adminPeople.bulk.clear')}</Button>
       </section>
     {/if}
+
+    <div class="chips" role="group" aria-label={$t('adminPeople.users.filters')}>
+      <button type="button" class="chip frost-pill" class:on={f.overrides} aria-pressed={f.overrides} on:click={() => setF({ overrides: !f.overrides })}>{$t('adminPeople.users.filterOverrides')}{#if f.overrides}<Icon name="x" size={14} />{/if}</button>
+      <button type="button" class="chip frost-pill" class:on={f.kids} aria-pressed={f.kids} on:click={() => setF({ kids: !f.kids })}>{$t('adminPeople.users.filterKids')}{#if f.kids}<Icon name="x" size={14} />{/if}</button>
+      {#if mfaChip}<button type="button" class="chip frost-pill" class:on={f.noMfa} aria-pressed={f.noMfa} on:click={() => setF({ noMfa: !f.noMfa })}>{$t('adminPeople.users.filterNoMfa')}{#if f.noMfa}<Icon name="x" size={14} />{/if}</button>{/if}
+      <!-- the dropdown filters show as chips while active (the toggles above are their own chips) -->
+      {#each chips.filter((c) => c.id !== 'overrides' && c.id !== 'kids' && c.id !== 'noMfa') as c (c.id)}
+        <button type="button" class="chip frost-pill on" aria-label={$t('adminPeople.users.removeFilter', { filter: c.label })} on:click={() => clearOne(c.id)}>{c.label}<Icon name="x" size={14} /></button>
+      {/each}
+      {#if anyFilter}<button type="button" class="chip frost-pill clear" on:click={() => setF({ ...emptyFilters(), q: '' })}>{$t('adminPeople.users.clearFilters')}</button>{/if}
+    </div>
 
     <div class="ulist">
     <DataTable
       caption={$t('admin.tabs.users')} {rows} {columns} key={(u) => u.id} {total} {error} pageSize={PAGE}
       filterable filterPlaceholder={$t('adminPeople.users.searchPlaceholder')}
-      bind:q bind:sort bind:page emptyText={roleFilter || statusFilter || lastActive ? $t('adminPeople.users.emptyFiltered') : $t('adminPeople.users.empty')}
+      bind:q bind:sort bind:page emptyText={anyFilter ? $t('adminPeople.users.emptyFiltered') : $t('adminPeople.users.empty')}
       {actions} rowLabel={(u) => u.name} busyKey={(u) => `user:${u.id}`}
       on:query={onQuery} on:retry={retry}
     >
       <svelte:fragment slot="toolbar">
-        <Select label={$t('adminPeople.users.filterRole')} options={roleFilterOptions} bind:value={roleFilter} on:change={refilter} hideLabel />
-        <Select label={$t('adminPeople.users.filterStatus')} options={statusOptions} bind:value={statusFilter} on:change={refilter} hideLabel />
-        <Select label={$t('adminPeople.users.filterLastActive')} options={lastActiveOptions} bind:value={lastActive} on:change={refilter} hideLabel />
+        <Select label={$t('adminPeople.users.filterRole')} options={roleFilterOptions} value={f.role ?? ''} on:change={(e) => setF({ role: (e.target as HTMLSelectElement).value || null })} hideLabel />
+        <Select label={$t('adminPeople.users.filterStatus')} options={statusOptions} value={f.status ?? ''} on:change={(e) => setF({ status: (e.target as HTMLSelectElement).value || null })} hideLabel />
+        <Select label={$t('adminPeople.users.filterLastActive')} options={lastActiveOptions} value={f.lastActive ?? ''} on:change={(e) => setF({ lastActive: (e.target as HTMLSelectElement).value || null })} hideLabel />
+        <Select label={$t('adminPeople.users.filterRight')} options={permOptions} value={permValue} on:change={(e) => setPerm((e.target as HTMLSelectElement).value)} hideLabel />
         {#if pageSelectable.length}
           <label class="all"><input type="checkbox" checked={allOnPage} on:change={(e) => togglePage(e.currentTarget.checked)} />{$t('adminPeople.users.selectPage')}</label>
         {/if}
@@ -333,6 +419,7 @@
                 {:else if row.disabled}<StatusPill tone="err" label={$t('adminPeople.users.locked')} icon="lock" />
                 {:else}<StatusPill tone="ok" label={$t('adminPeople.users.active')} />{/if}
                 {#if row.jellyfin_username}<span class="sub">{row.jellyfin_username}</span>{/if}
+                {#if row.note}<span class="note" title={row.note}><Icon name="message" size={14} /><span class="sr-only">{$t('adminPeople.users.noteLabel')}: {row.note}</span></span>{/if}
               </span>
             </span>
           </span>
@@ -343,7 +430,11 @@
             <span class="rolecell"><Select label={$t('adminPeople.users.roleOf', { name: row.name })} options={optionsFor(roleOptions, row.role)} value={row.role} hideLabel
               disabled={row.id === meId || $busyKeys.has(`user:${row.id}`)} on:change={(e) => changeRole(row, (e.target as HTMLSelectElement).value)} /></span>
           {/if}
-        {:else if col.key === 'profiles'}<span class="num">{fmtNumber(row.profiles)}</span>
+        {:else if col.key === 'overrides'}
+          {#if row.overrides && !row.pending && !row.cleanup}<a class="badge" href="/admin/users/{row.id}?tab=rights" aria-label={$t('adminPeople.users.overridesBadge', { n: row.overrides })}>{fmtNumber(row.overrides)}</a>
+          {:else}<span class="sub">–</span>{/if}
+        {:else if col.key === 'profiles'}
+          <span class="num">{fmtNumber(row.profiles)}</span>{#if row.kidsProfiles}<span class="kids" title={$t('adminPeople.users.kidsCount', { n: row.kidsProfiles })}><Icon name="smile" size={14} />{fmtNumber(row.kidsProfiles)}<span class="sr-only">{$t('adminPeople.users.kidsCount', { n: row.kidsProfiles })}</span></span>{/if}
         {:else if col.key === 'devices'}<span class="num">{fmtNumber(row.devices)}</span>
         {:else if col.key === 'lastSeen'}
           {#if row.last_seen}<time datetime={row.last_seen} title={fmtDateTime(row.last_seen)}>{fmtRelative(row.last_seen)}</time>{:else}<span class="sub">{$t('adminPeople.never')}</span>{/if}
@@ -359,6 +450,19 @@
 </div>
 
 <style>
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .8rem; margin-bottom: 1rem; }
+  /* the filter chips scroll inside their row (a fade at the right edge says there is more), never the page */
+  .chips { display: flex; flex-wrap: nowrap; gap: 8px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; margin-bottom: .8rem; padding-block: 2px; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { flex: none; display: inline-flex; align-items: center; gap: .4rem; min-height: 44px; padding: 0 16px; background: rgba(var(--fr-scrim-rgb), .5); color: rgba(255, 255, 255, .9); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .35); font-size: .9rem; font-weight: 600; white-space: nowrap; }
+  .chip:hover:not(:disabled) { background: rgba(var(--fr-scrim-rgb), .5); color: #fff; }
+  .chip.on, .chip.on:hover:not(:disabled) { background: var(--fr-sel); color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .6); }
+  .chip.clear { background: transparent; box-shadow: none; text-decoration: underline; }
+  .chip:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.6rem; height: 1.6rem; padding: 0 .4rem; border-radius: 999px; background: var(--tone-warn); color: var(--warn); font-weight: 700; font-size: .85rem; text-decoration: none; font-variant-numeric: tabular-nums; }
+  .kids { display: inline-flex; align-items: center; gap: .2rem; margin-inline-start: .5rem; color: var(--mut); font-size: .85rem; vertical-align: middle; }
+  .note { display: inline-flex; align-items: center; color: var(--mut); cursor: help; }
+  @media (pointer: coarse) { .badge { min-width: 44px; min-height: 44px; } }
   .tabs { display: flex; gap: .4rem; overflow-x: auto; scrollbar-width: none; margin-bottom: 1rem; border-bottom: 1px solid var(--line); }
   .tabs::-webkit-scrollbar { display: none; }
   .tab { flex: none; min-height: 44px; padding: 0 .9rem; background: transparent; color: var(--mut); border: 0; border-bottom: 2px solid transparent; border-radius: 0; font-weight: 600; white-space: nowrap; }
@@ -388,10 +492,10 @@
     .ulist :global(td.primary) { min-width: 11rem; }
     .em { display: block; max-width: 8.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
   }
-  /* next to the admin sidebar, below 1500 px the table does not fit with all ten columns: the 2FA placeholder and the access end
-     (both on the user's page) give way, so the name keeps its room and the page never scrolls sideways */
+  /* next to the admin sidebar, below 1500 px the table does not fit with all eleven columns: the device count, the 2FA placeholder and
+     the access end (all on the user's page) give way, so the name keeps its room and the page never scrolls sideways */
   @media (min-width: 721px) and (max-width: 1499px) {
-    .ulist :global(th:nth-child(8)), .ulist :global(td:nth-child(8)), .ulist :global(th:nth-child(9)), .ulist :global(td:nth-child(9)) { display: none; }
+    .ulist :global(th:nth-child(7)), .ulist :global(td:nth-child(7)), .ulist :global(th:nth-child(9)), .ulist :global(td:nth-child(9)), .ulist :global(th:nth-child(10)), .ulist :global(td:nth-child(10)) { display: none; }
   }
   /* phone card: the selection cell is the first line, keep its box clear of the actions button (top right) */
   /* touch: the row checkbox gets a 44 px hit box around its 20 px glyph (no label to click) */
@@ -404,7 +508,8 @@
   }
   @media (max-width: 720px) {
     .pickhit { margin-right: 3.2rem; } .bulk { position: static; }
-    :global(.dt .bar .field) { flex: 1 1 100%; } /* the three filters share one width */
+    :global(.dt .bar .field) { flex: 1 1 100%; } /* the four filters share one width */
+    .chips { padding-inline-end: 1.5rem; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent); }
     /* the tab strip scrolls: a fade at the right edge says there is more (the end padding keeps the last label clear of it) */
     .tabs { padding-inline-end: 1.5rem; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent); }
   }
