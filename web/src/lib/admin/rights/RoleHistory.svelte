@@ -22,6 +22,8 @@
 
   export let role: MatrixRole;
   export let trigger: HTMLElement | null = null;
+  /** a role's name by key (the matrix's labels); null = no such role any more */
+  export let names: (key: string) => string | null = () => null;
 
   interface Entry { id: number | string; at: string; action: string; target: string | null; meta: Record<string, unknown> | null; actor: string | null; target_name: string | null }
   const dispatch = createEventDispatcher<{ close: void }>();
@@ -33,7 +35,7 @@
     error = false;
     try { entries = (await api<{ entries: Entry[] }>(`/api/admin/audit?target=${encodeURIComponent(role.key)}&limit=100`)).entries; } catch { error = true; }
   }
-  $: rows = (entries ?? []).map((e) => ({ e, s: auditSentence({ action: e.action, actorName: e.actor, targetName: roleName(role), target: e.target, meta: e.meta ?? {} }) }));
+  $: rows = (entries ?? []).map((e) => ({ e, s: auditSentence({ action: e.action, actorName: e.actor, targetName: roleName(role), target: e.target, meta: e.meta ?? {}, roleName: names }) }));
 
   function close() {
     dispatch('close');

@@ -658,7 +658,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
         fields: MATRIX_FIELDS_MOCK, features: mx.features, libraries: mx.libraries,
         roles: rows.map((r, position) => ({
           key: r.key, label: r.label, builtinLabel: r.builtinLabel, base: r.base, origin: r.origin, invitable: r.invitable, position,
-          envGone: r.envGone, accounts: r.accounts, profiles: r.profiles, kidsProfiles: r.kidsProfiles, values: r.values, sources: r.sources, missingLibraries: r.missingLibraries,
+          envGone: r.envGone, stored: r.stored, accounts: r.accounts, profiles: r.profiles, kidsProfiles: r.kidsProfiles, values: r.values, sources: r.sources, missingLibraries: r.missingLibraries,
           // the value without the role's own row (the backend's roleRights(ctx, key, null))
           defaults: Object.fromEntries(MATRIX_FIELDS_MOCK.map((f) => [f.key as string, inheritedValue(r, f.key as string)])),
         })),
@@ -705,13 +705,18 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       if (v === null) { role.values[k] = inheritedValue(role, k); role.sources[k] = role.origin === 'env' ? 'env' : 'default'; } else { role.values[k] = v === 'unlimited' ? null : v; role.sources[k] = 'role'; }
     };
     const before = { ...role.values };
+    const was = { label: role.builtinLabel ? null : role.label, invitable: role.invitable };
     for (const [k, v] of Object.entries(body ?? {})) {
       if (k === 'label') { if (v === null) { role.label = null; role.builtinLabel = role.origin === 'code'; } else { role.label = String(v); role.builtinLabel = false; } } else if (k === 'invitable') role.invitable = Boolean(v);
       else if (k === 'perms' && v && typeof v === 'object') for (const [pk, pv] of Object.entries(v)) { if (PERM_KEYS_MOCK.includes(pk)) set(pk, pv); } else set(k, v);
     }
-    // as the backend audits it: the changed effective values, before and after
+    // as the backend audits it (roleWrite.ts): the changed effective values, then the catalogue's label / invitable, before and after
     const moved = MATRIX_FIELDS_MOCK.map((f) => f.key as string).filter((k) => JSON.stringify(before[k]) !== JSON.stringify(role.values[k]));
-    if (moved.length || 'label' in (body ?? {}) || 'invitable' in (body ?? {})) log('role.update', role.key, { from: Object.fromEntries(moved.map((k) => [k, before[k]])), to: Object.fromEntries(moved.map((k) => [k, role.values[k]])) });
+    const from: Record<string, unknown> = Object.fromEntries(moved.map((k) => [k, before[k]])), to: Record<string, unknown> = Object.fromEntries(moved.map((k) => [k, role.values[k]]));
+    const now = { label: role.builtinLabel ? null : role.label, invitable: role.invitable };
+    if (now.label !== was.label) { from.label = was.label; to.label = now.label; }
+    if (now.invitable !== was.invitable) { from.invitable = was.invitable; to.invitable = now.invitable; }
+    if (Object.keys(to).length) log('role.update', role.key, { from, to });
     const identities = role.accounts + role.profiles;
     if (media && st.matrix.policyPartial) return J({ error: 'policy_partial', failed: st.matrix.failed, identities }, 502);
     return J({ ok: true, reapplied: { identities: media ? identities : 0, failed: 0 } });
@@ -727,7 +732,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (target) { target.accounts += role.accounts; target.profiles += role.profiles; target.kidsProfiles += role.kidsProfiles; target.invites += role.invites; }
     st.matrix.roles = st.matrix.roles.filter((r) => r !== role);
     st.matrix.deletes.push({ role: role.key, moveTo: target?.key ?? null });
-    log('role.delete', role.key, { moveTo: target?.key ?? null, accounts: target ? role.accounts : 0, invites: role.invites });
+    log('role.delete', role.key, { moveTo: target?.key ?? null, accounts: target ? role.accounts : 0, invites: role.invites, ...(role.label ? { label: role.label } : {}) });
     return J({ ok: true, moved: role.accounts, invites: role.invites });
   }
   if (p === '/api/admin/devices') return J(devicesList(st, sp));

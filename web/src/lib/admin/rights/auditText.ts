@@ -17,15 +17,14 @@ export interface AuditInput {
   /** the name of what the entry is about (the person, the role's name); null = not known */
   targetName: string | null;
   meta: Record<string, unknown>;
-  /** the raw target (a role key); used for a built-in role's name when `targetName` is missing */
+  /** the raw target (a role key): named through `roleName` when `targetName` is missing */
   target?: string | null;
+  /** a role's name by key (from the matrix: its label, built-in or not); null = the role does not exist (any more) */
+  roleName?: (key: string) => string | null;
 }
 
-/** a built-in role's name in the UI language; any other key stands as it is */
-const roleText = (k: unknown): string => {
-  const s = typeof k === 'string' ? k : '';
-  return s && hasKey(`admin.roleNames.${s}`) ? trDynamic(`admin.roleNames.${s}`) : s;
-};
+/** a built-in role's name in the UI language; null for any other key (a key is never shown) */
+const builtinName = (k: unknown): string | null => (typeof k === 'string' && k && hasKey(`admin.roleNames.${k}`) ? trDynamic(`admin.roleNames.${k}`) : null);
 const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
 function valueText(key: string, v: unknown): string {
@@ -35,12 +34,19 @@ function valueText(key: string, v: unknown): string {
   return cellText(f, v);
 }
 
-/** one chip per known field that has a before and an after (an unknown key of another version is dropped, never shown raw) */
-function chipsOf(meta: Record<string, unknown>): AuditChip[] {
+/** one chip per known field that has a before and an after, in matrix order, then the name and the invitable switch (a key of another version is dropped, never shown raw) */
+function chipsOf(meta: Record<string, unknown>, was: string): AuditChip[] {
   const from = isObject(meta.from) ? meta.from : {}, to = isObject(meta.to) ? meta.to : {};
-  return Object.keys(FIELD_KINDS) // in matrix order
-    .filter((k) => Object.hasOwn(to, k) && Object.hasOwn(from, k) && hasKey(`adminPeople.roles.f.${k}`))
+  const both = (k: string) => Object.hasOwn(to, k) && Object.hasOwn(from, k);
+  const chips = Object.keys(FIELD_KINDS)
+    .filter((k) => both(k) && hasKey(`adminPeople.roles.f.${k}`))
     .map((k) => ({ label: fieldLabel(k), from: valueText(k, from[k]), to: valueText(k, to[k]) }));
+  const word = (v: unknown) => tr(v ? 'adminPeople.roles.allowed' : 'adminPeople.roles.denied');
+  // a name that was not set reads as the role's name before (the built-in one), or a dash
+  const str = (v: unknown, none: string) => (typeof v === 'string' && v ? v : none);
+  if (both('label')) chips.push({ label: tr('adminPeople.roles.fLabel'), from: str(from.label, was), to: str(to.label, '–') });
+  if (both('invitable')) chips.push({ label: tr('adminPeople.roles.fInvitable'), from: word(from.invitable), to: word(to.invitable) });
+  return chips;
 }
 
 const LEGACY = new Set(['request_limit', 'remote_cap', 'downloads', 'playback']);
@@ -48,18 +54,21 @@ const LEGACY = new Set(['request_limit', 'remote_cap', 'downloads', 'playback'])
 export function auditSentence(e: AuditInput): { text: string; chips: AuditChip[] } {
   const actor = e.actorName || tr('admin.audit.system');
   const person = e.targetName || tr('admin.activity.someone');
-  const role = e.targetName || roleText(e.target);
-  const t = (k: string, p: Record<string, string>) => trDynamic(`adminPeople.sentence.${k}`, { actor, ...p });
   const m = e.meta;
+  const label = typeof m.label === 'string' && m.label ? m.label : null;
+  /** a role by key: the matrix's name, the entry's own label (its target), a built-in's name; a role that is gone: a neutral phrase, never the key */
+  const ref = (key: unknown, own: string | null = null): string => (typeof key === 'string' ? e.roleName?.(key) : null) ?? own ?? builtinName(key) ?? tr('adminPeople.sentence.deletedRole');
+  const role = e.targetName || ref(e.target, label);
+  const t = (k: string, p: Record<string, string>) => trDynamic(`adminPeople.sentence.${k}`, { actor, ...p });
   switch (e.action) {
-    case 'role.update': return { text: t('roleUpdate', { target: role }), chips: chipsOf(m) };
+    case 'role.update': return { text: t('roleUpdate', { target: role }), chips: chipsOf(m, builtinName(e.target) ?? '–') };
     case 'role.create': {
-      const name = typeof m.label === 'string' && m.label ? m.label : role;
-      return { text: typeof m.from === 'string' && m.from ? t('roleCreateFrom', { target: name, from: roleText(m.from) }) : t('roleCreate', { target: name }), chips: [] };
+      const name = e.targetName || label || ref(e.target);
+      return { text: typeof m.from === 'string' && m.from ? t('roleCreateFrom', { target: name, from: ref(m.from) }) : t('roleCreate', { target: name }), chips: [] };
     }
-    case 'role.delete': return { text: typeof m.moveTo === 'string' && m.moveTo ? t('roleDeleteMoved', { target: role, to: roleText(m.moveTo) }) : t('roleDelete', { target: role }), chips: [] };
+    case 'role.delete': return { text: typeof m.moveTo === 'string' && m.moveTo ? t('roleDeleteMoved', { target: role, to: ref(m.moveTo) }) : t('roleDelete', { target: role }), chips: [] };
     case 'role.order': return { text: t('roleOrder', {}), chips: [] };
-    case 'user.rights': return { text: t('userRights', { target: person }), chips: chipsOf(m) };
+    case 'user.rights': return { text: t('userRights', { target: person }), chips: chipsOf({ from: m.from, to: m.to }, '–') };
     case 'profile.admin_create': return { text: t('profileCreate', { target: person }), chips: [] };
     case 'profile.admin_update': return { text: t('profileUpdate', { target: person }), chips: [] };
     case 'profile.admin_delete': return { text: t('profileDelete', { target: person }), chips: [] };

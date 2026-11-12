@@ -18,7 +18,7 @@ const fields: MatrixField[] = [
 ];
 const role = (key: string, label: string | null, accounts: number, profiles: number, values: Record<string, unknown>): MatrixRole => ({
   key, label, builtinLabel: true, base: 'guest', origin: 'code', invitable: true, position: 0, accounts, profiles, kidsProfiles: 0, values,
-  sources: {}, defaults: values, envGone: false, missingLibraries: [],
+  sources: {}, defaults: values, envGone: false, stored: true, missingLibraries: [],
 });
 const matrix = (features = { requests: false, cast: false, livetv: false }): RoleMatrix => ({
   fields, features, libraries: [{ id: 'l1', name: 'Filme' }, { id: 'l2', name: 'Serien' }, { id: 'l3', name: 'Musik' }],

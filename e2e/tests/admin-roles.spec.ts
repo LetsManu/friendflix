@@ -309,7 +309,7 @@ test.describe('Rollen & Rechte: role menu and sheet', () => {
     }
     await (await menu(page, 'Leer')).getByRole('button', { name: 'Löschen' }).click();
     const ask = page.getByRole('alertdialog', { name: 'Rolle „Leer“ löschen?' });
-    await expect(ask).toContainText('Niemand hat diese Rolle.');
+    await expect(ask).toContainText('Die Rolle wird entfernt.');
     await ask.getByRole('button', { name: 'Löschen' }).click();
     await expect(toasts(page).getByText('Rolle „Leer“ gelöscht.')).toBeVisible();
     expect(await headNames(page)).toEqual(['Admin', 'Familie', 'Freund', 'Gast', 'Crew']);
@@ -468,6 +468,163 @@ test.describe('Rollen & Rechte: role menu and sheet', () => {
     await page.getByRole('dialog', { name: 'Änderungen prüfen' }).getByRole('button', { name: 'Speichern' }).click();
     await expect(toasts(page).getByText('Änderungen gespeichert.').last()).toBeVisible();
     await expect(cell(page, 'Gast, Altersfreigabe: ab 12, geändert')).toHaveAttribute('title', 'in dieser Rolle geändert');
+  });
+});
+
+/** Fix round 1: audit names, reload errors, 44 px targets, env-only roles stay last, busy state, copy */
+test.describe('Rollen & Rechte: role menu fixes', () => {
+  test.use({ allowedConsole: /status of (409|500)/ });
+  test.beforeEach(({ api }) => { api.asAdmin = true; });
+
+  test('the history names roles, never a key: a copy of a copy, then the source deleted', async ({ page }) => {
+    await page.goto('/admin/roles');
+    const dupAs = async (from: string, name: string) => {
+      await (await menu(page, from)).getByRole('button', { name: 'Duplizieren' }).click();
+      const dlg = page.getByRole('dialog', { name: `Rolle „${from}“ duplizieren` });
+      await dlg.getByRole('textbox', { name: 'Name' }).fill(name);
+      await dlg.getByRole('button', { name: 'Anlegen' }).click();
+      await expect(toasts(page).getByText(`Rolle „${name}“ angelegt.`)).toBeVisible();
+    };
+    await dupAs('Familie', 'Oma & Opa');
+    await dupAs('Oma & Opa', 'Nachbarn');
+    await (await menu(page, 'Nachbarn')).getByRole('button', { name: 'Verlauf' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Verlauf · Nachbarn' });
+    await expect(sheet).toContainText('Tester hat die Rolle Nachbarn als Kopie von Oma & Opa angelegt');
+    await expect(sheet).not.toContainText(/oma-opa/);
+    await page.keyboard.press('Escape');
+    // the source is deleted (nobody holds it): the history says so without the key
+    await (await menu(page, 'Oma & Opa')).getByRole('button', { name: 'Löschen' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Löschen' }).click();
+    await expect(toasts(page).getByText('Rolle „Oma & Opa“ gelöscht.')).toBeVisible();
+    await (await menu(page, 'Nachbarn')).getByRole('button', { name: 'Verlauf' }).click();
+    const again = page.getByRole('dialog', { name: 'Verlauf · Nachbarn' });
+    await expect(again).toContainText('Kopie von „gelöschte Rolle“');
+    await expect(again).not.toContainText(/oma-opa/);
+  });
+
+  test('history shows a rename and the invitable switch as from → to', async ({ page }) => {
+    await page.goto('/admin/roles');
+    await head(page, /Gast/).getByRole('button', { name: 'Rolle „Gast“ bearbeiten' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Rolle „Gast“' });
+    await sheet.getByRole('textbox', { name: 'Name' }).fill('Besucher');
+    await sheet.getByRole('switch', { name: 'Für Einladungen wählbar' }).click();
+    await page.keyboard.press('Escape');
+    await bar(page).getByRole('button', { name: 'Änderungen prüfen' }).click();
+    await page.getByRole('dialog', { name: 'Änderungen prüfen' }).getByRole('button', { name: 'Speichern' }).click();
+    await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
+    await (await menu(page, 'Besucher')).getByRole('button', { name: 'Verlauf' }).click();
+    const h = page.getByRole('dialog', { name: 'Verlauf · Besucher' });
+    await expect(h.getByText('Name: Gast → Besucher')).toBeVisible();
+    await expect(h.getByText('Für Einladungen wählbar: erlaubt → nicht erlaubt')).toBeVisible();
+  });
+
+  test('a failed reload after a write keeps the success and says so (duplicate, delete)', async ({ page, api }) => {
+    const family = api.admin.matrix.roles.find((r) => r.key === 'family')!;
+    api.admin.matrix.roles.splice(4, 0, { ...family, key: 'leer', label: 'Leer', builtinLabel: false, origin: 'admin', accounts: 0, profiles: 0, kidsProfiles: 0, invites: 0, values: { ...family.values } });
+    await page.goto('/admin/roles');
+    await expect(head(page, /Leer/)).toBeVisible();
+    await page.route('**/api/admin/roles', async (r) => { if (r.request().method() === 'GET') await r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"x"}' }); else await r.fallback(); });
+    await (await menu(page, 'Familie')).getByRole('button', { name: 'Duplizieren' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Rolle „Familie“ duplizieren' });
+    await dlg.getByRole('textbox', { name: 'Name' }).fill('Zwei');
+    await dlg.getByRole('button', { name: 'Anlegen' }).click();
+    await expect(toasts(page).getByText('Rolle „Zwei“ angelegt.')).toBeVisible();
+    await expect(toasts(page).getByText('Das ließ sich nicht laden. Prüfe die Verbindung und versuche es erneut.')).toBeVisible();
+    await expect(dlg).toHaveCount(0);
+    expect(api.admin.matrix.roles.some((r) => r.label === 'Zwei')).toBe(true);
+    // delete: the success is a success, the failed read an extra note
+    await (await menu(page, 'Leer')).getByRole('button', { name: 'Löschen' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Löschen' }).click();
+    await expect(toasts(page).getByText('Rolle „Leer“ gelöscht.')).toBeVisible();
+    expect(api.admin.matrix.deletes).toEqual([{ role: 'leer', moveTo: null }]);
+  });
+
+  test('target sizes: the name is a 44 px button, the heads keep their height, the people line does not split a count', async ({ page }) => {
+    await page.goto('/admin/roles');
+    const gast = head(page, /Gast/);
+    await expect(gast).toBeVisible();
+    const h0 = (await gast.boundingBox())!.height;
+    const rn = (await gast.locator('.rn').boundingBox())!;
+    expect(rn.height).toBeGreaterThanOrEqual(44);
+    expect(rn.width).toBeGreaterThanOrEqual(44);
+    const g = await gast.locator('.grip').evaluate((el) => { const r = getComputedStyle(el, '::after'); return [parseFloat(r.width), parseFloat(r.height)]; });
+    expect(g[0]).toBeGreaterThanOrEqual(44);
+    expect(g[1]).toBeGreaterThanOrEqual(44);
+    for (const seg of await head(page, /Admin/).locator('.rp .seg').all()) expect((await seg.boundingBox())!.height).toBeLessThan(22);
+    expect(await head(page, /Admin/).locator('.rp').textContent()).toBe('1 Person · 0 Kinderprofile');
+    expect(h0).toBeGreaterThan(0);
+  });
+
+  test('env-only roles stay last: no move into or across them, the drag stops before them', async ({ page, api }) => {
+    await page.goto('/admin/roles');
+    await (await menu(page, 'Gast')).getByRole('button', { name: 'Nach rechts' }).waitFor();
+    await expect(page.getByRole('dialog', { name: 'Gast' }).getByRole('button', { name: 'Nach rechts' })).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await (await menu(page, 'Crew')).getByRole('button', { name: 'Nach links' }).waitFor();
+    const crew = page.getByRole('dialog', { name: 'Crew' });
+    await expect(crew.getByRole('button', { name: 'Nach links' })).toBeDisabled();
+    await expect(crew.getByRole('button', { name: 'Nach rechts' })).toBeDisabled();
+    await page.keyboard.press('Escape');
+    // dragging Gast past Crew: the column stops at the last stored place, and nothing is written
+    const gast = head(page, /Gast/);
+    const w = (await gast.boundingBox())!.width;
+    const g = (await gast.locator('.grip').boundingBox())!;
+    await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(g.x + g.width / 2 + w * 2, g.y + g.height / 2, { steps: 6 });
+    const rest = /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/; // at its own place (a clamped drag is an identity transform)
+    expect(await gast.evaluate((el) => getComputedStyle(el).transform)).toMatch(rest);
+    expect(await head(page, /Crew/).evaluate((el) => getComputedStyle(el).transform)).toMatch(rest);
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    expect(api.admin.matrix.orders).toEqual([]);
+    // Crew's grip does nothing
+    const cg = (await head(page, /Crew/).locator('.grip').boundingBox())!;
+    await page.mouse.move(cg.x + cg.width / 2, cg.y + cg.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(cg.x - w, cg.y + cg.height / 2, { steps: 4 });
+    expect(await head(page, /Crew/).evaluate((el) => getComputedStyle(el).transform)).toBe('none');
+    await page.mouse.up();
+    expect(await headNames(page)).toEqual(['Admin', 'Familie', 'Freund', 'Gast', 'Crew']);
+  });
+
+  test('while a save runs the menu cannot open the sheet, duplicate or delete', async ({ page }) => {
+    await page.goto('/admin/roles');
+    await stageGuestRating(page);
+    await bar(page).getByRole('button', { name: 'Änderungen prüfen' }).click();
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route('**/api/admin/roles/guest', async (r) => { if (r.request().method() === 'PUT') await held; await r.fallback(); });
+    await page.getByRole('dialog', { name: 'Änderungen prüfen' }).getByRole('button', { name: 'Speichern' }).click();
+    await expect(bar(page)).toContainText('Aktualisiere 1 von 1 …');
+    await expect(head(page, /Familie/).locator('.rn')).toBeDisabled();
+    const m = await menu(page, 'Familie');
+    for (const n of ['Bearbeiten', 'Duplizieren', 'Umbenennen', 'Nach links', 'Nach rechts']) await expect(m.getByRole('button', { name: n })).toBeDisabled();
+    await expect(m.getByRole('button', { name: 'Verlauf' })).toBeEnabled();
+    await page.keyboard.press('Escape');
+    release();
+    await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
+    await expect(head(page, /Familie/).locator('.rn')).toBeEnabled();
+  });
+
+  test('copy: only the parts that are not zero; a role with open invites and nobody else', async ({ page, api }) => {
+    const family = api.admin.matrix.roles.find((r) => r.key === 'family')!;
+    const mk = (key: string, label: string, accounts: number, invites: number) => ({ ...family, key, label, builtinLabel: false, origin: 'admin' as const, accounts, profiles: 0, kidsProfiles: 0, invites, values: { ...family.values } });
+    api.admin.matrix.roles.splice(4, 0, mk('leute', 'Leute', 3, 0), mk('einl', 'Einl', 0, 2));
+    await page.goto('/admin/roles');
+    await (await menu(page, 'Leute')).getByRole('button', { name: 'Löschen' }).click();
+    const a = page.getByRole('alertdialog', { name: 'Rolle „Leute“ löschen?' });
+    await expect(a).toContainText('3 Personen bekommen die Rolle:');
+    await expect(a).not.toContainText('Einladung');
+    await a.getByRole('button', { name: 'Abbrechen' }).click();
+    await (await menu(page, 'Einl')).getByRole('button', { name: 'Löschen' }).click();
+    const ask = page.getByRole('alertdialog', { name: 'Rolle „Einl“ löschen?' });
+    await expect(ask).not.toContainText('Niemand');
+    await expect(ask).toContainText('offene Einladungen');
+    await ask.getByRole('button', { name: 'Löschen' }).click();
+    const dlg = page.getByRole('alertdialog', { name: 'Rolle „Einl“ löschen?' });
+    await expect(dlg).toContainText('2 offene Einladungen bekommen die Rolle:');
+    await expect(dlg).not.toContainText('Personen');
   });
 });
 

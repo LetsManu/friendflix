@@ -215,18 +215,19 @@
   let del: (Ask & { accounts: number; invites: number }) | null = null, delBusy = false, delErr = '';
   const inUse = (e: unknown) => (e instanceof ApiError && e.status === 409 && e.body?.error === 'role_in_use' ? { accounts: Number(e.body.accounts) || 0, invites: Number(e.body.invites) || 0 } : null);
 
+  /** the matrix again after a write that went through: a failed read must not look like a failed write (the stale matrix stays, the person is told) */
+  async function reload(): Promise<boolean> {
+    try { await refresh(); return true; } catch { toast.error(tr('adminPeople.loadFailed')); return false; }
+  }
   function startDuplicate(a: Ask) { dup = a; dupErr = ''; dupBusy = false; }
   async function duplicate(label: string) {
     if (!dup || dupBusy) return;
     dupBusy = true; dupErr = '';
-    try {
-      const { key } = await api<{ key: string }>('/api/admin/roles', { method: 'POST', body: { label, from: dup.role.key } });
-      dup = null;
-      await refresh();
-      toast.success(tr('adminPeople.roles.duplicated', { name: label }));
-      await view?.focusHead(key);
-    } catch (e) { dupErr = errorText(e); }
-    dupBusy = false;
+    let key: string;
+    try { key = (await api<{ key: string }>('/api/admin/roles', { method: 'POST', body: { label, from: dup.role.key } })).key; } catch (e) { dupErr = errorText(e); dupBusy = false; return; }
+    dup = null; dupBusy = false;
+    toast.success(tr('adminPeople.roles.duplicated', { name: label }));
+    if (await reload()) await view?.focusHead(key);
   }
 
   /** the delete of a role: nobody holds it → a confirm; people do → the server's 409 role_in_use opens the dialog with its counts */
@@ -235,16 +236,18 @@
     if (a.role.accounts === 0 && !(await confirm({ title: tr('adminPeople.roles.deleteTitle', { name }), body: tr('adminPeople.roles.deleteNone'), danger: true, confirmLabel: tr('adminPeople.roles.delete') }))) { void tick().then(() => a.trigger?.focus({ preventScroll: true })); return; }
     try {
       await api(`/api/admin/roles/${encodeURIComponent(a.role.key)}`, { method: 'DELETE' });
-      await deleted(name);
     } catch (e) {
       const n = inUse(e);
       if (n) { del = { ...a, ...n }; delErr = ''; delBusy = false; } else toast.error(errorText(e));
+      return;
     }
+    await deleted(name);
   }
+  /** the role is gone: say so first, then read the matrix again */
   async function deleted(name: string) {
     del = null;
-    await refresh();
     toast.success(tr('adminPeople.roles.deleted', { name }));
+    await reload();
   }
   async function removeMoved(to: string) {
     if (!del || delBusy) return;
@@ -252,13 +255,15 @@
     const name = roleLabel(del.role);
     try {
       await api(`/api/admin/roles/${encodeURIComponent(del.role.key)}`, { method: 'DELETE', body: { moveTo: to } });
-      await deleted(name);
     } catch (e) {
       const n = inUse(e);
       if (n && del) del = { ...del, ...n };
       delErr = errorText(e);
+      delBusy = false;
+      return;
     }
     delBusy = false;
+    await deleted(name);
   }
   $: moveTargets = (matrix?.roles ?? []).filter((r) => r.key !== del?.role.key && r.base !== 'admin').map((r) => ({ key: r.key, name: roleLabel(r) }));
 
@@ -266,7 +271,9 @@
   async function moveRole({ key, to }: { key: string; to: number }) {
     if (!matrix || saving) return;
     const from = matrix.roles.findIndex((r) => r.key === key);
-    if (from < 0 || from === to || to < 0 || to >= matrix.roles.length) return;
+    // only roles with a table row can be ordered, and they stay in front of the env-only ones
+    const storedCount = matrix.roles.filter((r) => r.stored).length;
+    if (from < 0 || from === to || to < 0 || to >= storedCount || !matrix.roles[from]!.stored) return;
     const hadFocus = document.querySelector(`th[data-role="${CSS.escape(key)}"]`)?.contains(document.activeElement) ?? false;
     const next = [...matrix.roles];
     const [m] = next.splice(from, 1);
@@ -276,11 +283,12 @@
     if (hadFocus) void view?.focusHead(key, 'menu');
     try {
       await api('/api/admin/roles/order', { method: 'PUT', body: { keys: next.map((r) => r.key) } });
-      await refresh();
     } catch {
       toast.error(tr('adminPeople.roles.orderFailed'));
-      await refresh().catch(() => undefined);
+      await refresh().catch(() => undefined); // back to what the server has
+      return;
     }
+    await refresh().catch(() => undefined); // read back (the optimistic order stays if that fails)
   }
 
   let leaving = false;

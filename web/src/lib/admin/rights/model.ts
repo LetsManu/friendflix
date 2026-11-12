@@ -42,6 +42,8 @@ export interface MatrixRole {
   defaults: Record<string, unknown>;
   /** an env role whose key left ROLE_TEMPLATES ("nicht mehr in .env"; it can be deleted) */
   envGone: boolean;
+  /** has a row in the roles table: only these can be ordered (an env-only role is listed after them, fixed) */
+  stored: boolean;
   /** library names of the role the media server no longer has */
   missingLibraries: string[];
 }
@@ -104,9 +106,7 @@ export function cellName(roleLabel: string, f: MatrixField, v: unknown, changed:
 /** unsaved changes: role key → field key → new value */
 export type Stage = Record<string, Record<string, unknown>>;
 
-/** besides the matrix fields the role sheet stages two settings of the role itself: `label` (its name) and `invitable` */
-
-/** the loaded value of a staged key: the displayed name, the invitable flag, or the matrix value */
+/** the loaded value of a staged key (besides the matrix fields the role sheet stages `label`, the name, and `invitable`): the displayed name, the invitable flag, or the matrix value */
 function loadedValue(r: MatrixRole | undefined, key: string): unknown {
   if (!r) return undefined;
   if (key === 'label') return roleName(r);

@@ -38,6 +38,8 @@
 
   $: fields = visibleFields(matrix);
   $: roles = matrix.roles;
+  /** the stored roles come first; only they can be ordered */
+  $: storedCount = roles.filter((r) => r.stored).length;
   /** the visible fields under their groups, in field order */
   $: groups = fields.reduce<Array<{ id: FieldGroup; rows: Array<{ f: MatrixField; r: number }> }>>((acc, f, r) => {
     const last = acc[acc.length - 1];
@@ -106,16 +108,18 @@
   $: prune(roles);
   const here = (): HTMLElement | null => (document.activeElement instanceof HTMLElement ? document.activeElement : null);
   /** a menu item runs after the menu closed and gave the focus back to its button: that is where the focus returns to */
-  function items(role: MatrixRole, c: number, _l: unknown) {
+  function items(role: MatrixRole, c: number, _l: unknown, _busy: boolean, _n: number) {
     const canDelete = role.origin === 'admin' || role.envGone;
+    // a role without a table row (env-only) stays after the stored ones: it cannot move, and nothing moves past it
+    const left = disabled || !role.stored || c === 0, right = disabled || !role.stored || c + 1 >= storedCount;
     return [
-      { id: 'edit', label: tr('adminPeople.roles.edit'), icon: 'pencil', run: () => { sheet = { key: role.key, rename: false, trigger: here() }; } },
-      { id: 'duplicate', label: tr('adminPeople.roles.duplicate'), icon: 'copy', run: () => { dispatch('duplicate', { role, trigger: here() }); } },
-      { id: 'rename', label: tr('adminPeople.roles.rename'), icon: 'pencil', run: () => { sheet = { key: role.key, rename: true, trigger: here() }; } },
-      { id: 'left', label: tr('adminPeople.roles.moveLeft'), icon: 'chevron-left', disabled: disabled || c === 0, run: () => { dispatch('move', { key: role.key, to: c - 1 }); } },
-      { id: 'right', label: tr('adminPeople.roles.moveRight'), icon: 'chevron-right', disabled: disabled || c === roles.length - 1, run: () => { dispatch('move', { key: role.key, to: c + 1 }); } },
+      { id: 'edit', label: tr('adminPeople.roles.edit'), icon: 'pencil', disabled, run: () => { sheet = { key: role.key, rename: false, trigger: here() }; } },
+      { id: 'duplicate', label: tr('adminPeople.roles.duplicate'), icon: 'copy', disabled, run: () => { dispatch('duplicate', { role, trigger: here() }); } },
+      { id: 'rename', label: tr('adminPeople.roles.rename'), icon: 'pencil', disabled, run: () => { sheet = { key: role.key, rename: true, trigger: here() }; } },
+      { id: 'left', label: tr('adminPeople.roles.moveLeft'), icon: 'chevron-left', disabled: left, run: () => { dispatch('move', { key: role.key, to: c - 1 }); } },
+      { id: 'right', label: tr('adminPeople.roles.moveRight'), icon: 'chevron-right', disabled: right, run: () => { dispatch('move', { key: role.key, to: c + 1 }); } },
       { id: 'history', label: tr('adminPeople.roles.history'), icon: 'clock', run: () => { history = { key: role.key, trigger: here() }; } },
-      ...(canDelete ? [{ id: 'delete', label: tr('adminPeople.roles.delete'), icon: 'x', danger: true, run: () => { dispatch('remove', { role, trigger: here() }); } }] : []),
+      ...(canDelete ? [{ id: 'delete', label: tr('adminPeople.roles.delete'), icon: 'x', danger: true, disabled, run: () => { dispatch('remove', { role, trigger: here() }); } }] : []),
     ];
   }
   /** moves the focus to a column head's name button (a new role) or its menu button (a moved one) */
@@ -130,7 +134,7 @@
   let drag: Drag | null = null;
   const still = (): boolean => document.documentElement.classList.contains('m-still') || matchMedia('(prefers-reduced-motion: reduce)').matches;
   function gripDown(e: PointerEvent, c: number) {
-    if (disabled || drag || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (disabled || drag || !roles[c]?.stored || (e.pointerType === 'mouse' && e.button !== 0)) return;
     const th = (e.currentTarget as HTMLElement).closest('th');
     if (!th) return;
     e.preventDefault();
@@ -139,9 +143,9 @@
   }
   function gripMove(e: PointerEvent) {
     if (!drag || drag.settling) return;
-    const lo = -drag.from * drag.w, hi = (roles.length - 1 - drag.from) * drag.w;
+    const lo = -drag.from * drag.w, hi = (storedCount - 1 - drag.from) * drag.w;
     const dx = Math.min(hi, Math.max(lo, e.clientX - drag.x0));
-    drag = { ...drag, dx, to: Math.min(roles.length - 1, Math.max(0, drag.from + Math.round(dx / drag.w))) };
+    drag = { ...drag, dx, to: Math.min(storedCount - 1, Math.max(0, drag.from + Math.round(dx / drag.w))) };
   }
   function gripUp() {
     if (!drag || drag.settling) return;
@@ -178,18 +182,18 @@
             <th scope="col" class="rh" data-role={role.key} class:dragging={drag?.from === c} class:glide={drag !== null && drag.from !== c || drag?.settling === true} style:transform={shift(drag, c)}>
               <div class="hd">
                 <div class="top">
-                  <button type="button" class="rn" title={$locale && $t('adminPeople.roles.editRole', { name: headName(stage, role, $locale) })} aria-label={$locale && $t('adminPeople.roles.editRole', { name: headName(stage, role, $locale) })}
-                    on:click={(e) => (sheet = { key: role.key, rename: false, trigger: e.currentTarget })}>{headName(stage, role, $locale)}</button>
+                  <button type="button" class="rn" {disabled} title={$locale && $t('adminPeople.roles.editRole', { name: headName(stage, role, $locale) })} aria-label={$locale && $t('adminPeople.roles.editRole', { name: headName(stage, role, $locale) })}
+                    on:click={(e) => (sheet = { key: role.key, rename: false, trigger: e.currentTarget })}><span class="rnt">{headName(stage, role, $locale)}</span></button>
                 </div>
-                <span class="rp">{$locale && peopleLine(role)}</span>
+                <span class="rp">{#each ($locale && peopleLine(role) || '').split(' · ') as seg, i}{#if i}{' · '}{/if}<span class="seg">{seg}</span>{/each}</span>
                 {#if role.envGone}<span class="rt">{$t('adminPeople.roles.envGone')}</span>{:else if role.origin === 'env'}<span class="rt">{$t('adminPeople.roles.fromEnv')}</span>{/if}
                 <!-- the pointer's way to reorder; keyboard and screen reader use Nach links / Nach rechts in the menu -->
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <span class="grip" class:off={disabled} aria-hidden="true" title={$t('adminPeople.roles.dragHandle')} on:pointerdown={(e) => gripDown(e, c)} on:pointermove={gripMove}
+                <span class="grip" class:off={disabled || !role.stored} aria-hidden="true" title={$t('adminPeople.roles.dragHandle')} on:pointerdown={(e) => gripDown(e, c)} on:pointermove={gripMove}
                   on:pointerup={gripUp} on:pointercancel={gripCancel} on:lostpointercapture={gripCancel}>
                   <svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.4" /><circle cx="6" cy="2" r="1.4" /><circle cx="2" cy="7" r="1.4" /><circle cx="6" cy="7" r="1.4" /><circle cx="2" cy="12" r="1.4" /><circle cx="6" cy="12" r="1.4" /></svg>
                 </span>
-                <span class="mn"><ActionMenu label={$locale && $t('ui.table.actionsFor', { name: roleName(role) })} title={roleName(role)} items={items(role, c, $locale)} /></span>
+                <span class="mn"><ActionMenu label={$locale && $t('ui.table.actionsFor', { name: roleName(role) })} title={roleName(role)} items={items(role, c, $locale, disabled, storedCount)} /></span>
               </div>
             </th>
           {/each}
@@ -233,7 +237,7 @@
   <RoleSheet {matrix} role={sheetRole} bind:stage focusName={sheet.rename} trigger={sheet.trigger} on:close={() => (sheet = null)} />
 {/if}
 {#if history && historyRole}
-  <RoleHistory role={historyRole} trigger={history.trigger} on:close={() => (history = null)} />
+  <RoleHistory role={historyRole} trigger={history.trigger} names={(k) => { const r = roles.find((x) => x.key === k); return r ? roleName(r) : null; }} on:close={() => (history = null)} />
 {/if}
 
 {#key editKey}
@@ -258,15 +262,22 @@
   /* the head: the name beside the menu button (top right), the people under both; the drag handle sits in the left padding */
   .hd { position: relative; min-width: 0; }
   .top { display: flex; align-items: center; min-height: 40px; padding-right: 40px; }
-  .mn { position: absolute; top: -2px; right: -4px; display: flex; }
-  .rn { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; max-width: 100%; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 4px; background: transparent;
-    color: inherit; font: inherit; font-weight: 800; font-size: .98rem; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
-  .rn:hover { text-decoration: underline; }
+  .mn { position: absolute; top: -2px; right: -4px; display: flex; z-index: 2; }
+  /* a 44 px target (negative margins keep the head's height): the button is taller than the text, which clamps to two lines inside it */
+  .rn { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; max-width: 100%; min-height: 44px; margin: -2px 0; padding: 0; border: 0; border-radius: 4px; background: transparent;
+    color: inherit; font: inherit; font-weight: 800; font-size: .98rem; text-align: left; cursor: pointer; position: relative; z-index: 1; }
+  .rnt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; min-width: 0; overflow-wrap: anywhere; hyphens: auto; }
+  .rn:disabled { cursor: default; text-decoration: none; }
+  /* a count stays with its noun ("0 Kinderprofile" never splits) */
+  .seg { white-space: nowrap; }
+  .rn:hover:not(:disabled) { text-decoration: underline; }
   .rt { display: block; font-size: .75rem; color: var(--mut); }
   /* the drag handle: a pointer-only grip (the menu has the keyboard way); the column moves by transform, never by layout */
   .grip { position: absolute; left: -.85rem; top: 0; display: grid; place-items: center; width: 14px; height: 40px; color: var(--mut); cursor: grab; touch-action: none; border-radius: 6px; opacity: .6; }
   .grip:hover { color: var(--fg); background: rgba(255, 255, 255, .08); opacity: 1; }
   .grip.off { cursor: default; opacity: .3; }
+  /* a 44 px target: the pointer reaches past the dots (the name button and the menu sit above it) */
+  .grip::after { content: ''; position: absolute; inset: -2px -15px -2px -15px; }
   th.dragging, td.dragging { z-index: 5; }
   th.dragging { background: var(--fr-solid); }
   .glide { transition: transform 180ms var(--fr-out); }

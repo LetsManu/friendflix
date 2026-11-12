@@ -5,7 +5,7 @@ import { setLocale } from '#lib/i18n';
 import { auditSentence } from './auditText';
 
 afterEach(async () => { await setLocale('de'); });
-const e = (action: string, meta: Record<string, unknown>, extra: { actorName?: string | null; targetName?: string | null; target?: string | null } = {}) =>
+const e = (action: string, meta: Record<string, unknown>, extra: { actorName?: string | null; targetName?: string | null; target?: string | null; roleName?: (k: string) => string | null } = {}) =>
   auditSentence({ action, actorName: 'Tester', targetName: null, meta, ...extra });
 
 describe('auditSentence', () => {
@@ -45,6 +45,32 @@ describe('auditSentence', () => {
     const v = e('user.check_viewed', { profile: 'p-1', hits: 4 }, { targetName: 'Anna Beispiel' });
     expect(v.text).toBe('Tester hat die Inhaltsprüfung für Anna Beispiel angesehen');
     expect(v.text).not.toMatch(/p-1|4/);
+  });
+  it('names every role through the resolver and never prints a key', async () => {
+    const names: Record<string, string> = { 'oma-opa': 'Oma & Opa', crew: 'Crew', family: 'Verwandte' };
+    const roleName = (k: string) => names[k] ?? null;
+    expect(e('role.create', { from: 'oma-opa' }, { targetName: 'Kino', roleName }).text).toBe('Tester hat die Rolle Kino als Kopie von Oma & Opa angelegt');
+    expect(e('role.delete', { moveTo: 'crew' }, { targetName: 'Kino', roleName }).text).toBe('Tester hat die Rolle Kino gelöscht, ihre Konten wechselten zu Crew');
+    // the resolver beats the built-in word (the label the admin gave)
+    expect(e('role.update', {}, { target: 'family', roleName }).text).toBe('Tester hat die Rolle Verwandte geändert');
+    // a role that is gone: the entry's own label, else a neutral phrase
+    expect(e('role.delete', { moveTo: null, label: 'Kino' }, { target: 'kino', roleName }).text).toBe('Tester hat die Rolle Kino gelöscht');
+    const gone = e('role.delete', { moveTo: 'oma-opa-2' }, { target: 'kino-2', roleName });
+    expect(gone.text).toBe('Tester hat die Rolle „gelöschte Rolle“ gelöscht, ihre Konten wechselten zu „gelöschte Rolle“');
+    expect(gone.text).not.toMatch(/kino-2|oma-opa-2/);
+    expect(e('role.create', { from: 'weg-1' }, { target: 'neu-1', roleName }).text).not.toMatch(/weg-1|neu-1/);
+    await setLocale('en');
+    expect(e('role.update', {}, { target: 'x-gone', roleName }).text).toBe('Tester changed the role “deleted role”');
+  });
+  it('a rename and the invitable switch show from → to', () => {
+    const r = e('role.update', { from: { label: 'Gast', invitable: true, maxStreams: 1 }, to: { label: 'Besucher', invitable: false, maxStreams: 2 } }, { targetName: 'Besucher' });
+    expect(r.chips).toEqual([
+      { label: 'Gleichzeitige Streams', from: '1', to: '2' },
+      { label: 'Name', from: 'Gast', to: 'Besucher' },
+      { label: 'Für Einladungen wählbar', from: 'erlaubt', to: 'nicht erlaubt' },
+    ]);
+    // a name that was not set before reads as the built-in word
+    expect(e('role.update', { from: { label: null }, to: { label: 'Besucher' } }, { target: 'guest' }).chips).toEqual([{ label: 'Name', from: 'Gast', to: 'Besucher' }]);
   });
   it('the old role.* entries read as "… changed {field}" without chips', () => {
     expect(e('role.playback', { transcoding: true, maxHeight: 1080 }, { target: 'family' })).toEqual({ text: 'Tester hat „Wiedergabe“ der Rolle Familie geändert', chips: [] });
