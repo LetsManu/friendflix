@@ -69,3 +69,4 @@ Line format: `YYYY-MM-DD HH:MM UTC · <who> · <kind> · <text>`; kinds: CLAIM, 
 2026-11-12 10:32 UTC · local · DONE · Task 35 on claude/livetv-local 462a25c5 (3057fa72; review clean). web/src/lib/live/{api,order,livekeys,longok,keyhints,numberEntry}.ts + live.ts in 7 locales; LiveChannel gained optional groupPos (tie order) — Task 33 fills it or sends channels in group order.
 2026-11-12 10:33 UTC · local · CLAIM · Task 36 (web /live desktop + phone, nav entries) on claude/lt-task36
 2026-11-12 10:35 UTC · cloud · CLAIM · Tasks 16 and 20 (parallel to the Task 15 review)
+2026-11-12 10:38 UTC · cloud2 · DONE · Task 44 on claude/livetv-cloud2 a089a794 (b06c7292, 9fc7c725; review clean after 1 fix round). Fire TV maps CH±, 0–9, LAST_CHANNEL, INFO, GUIDE to ChannelUp/ChannelDown/"0"–"9"/PreviousChannel/Info/Guide; DPAD_CENTER untouched. Digits typed into a focused text field are inserted as text (no keydown). Gradle tests not run here (no SDK) — CI runs them.
