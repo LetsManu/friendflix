@@ -6,7 +6,9 @@ import { z } from 'zod';
 import { auditInTx } from '../audit.js';
 import { decrypt, encrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
-import { CHANNEL_COLUMNS, CHANNEL_FROM, OWN_FEEDS_KIND, isOwnFeeds, srtHost, type EffectiveRow, type EpgShiftFrom, type Ingest, type ProbeRec, type StreamKind } from './channels.js';
+// adminChannels.ts calls srtPorts / syncIngest from here and this module calls adminChannel from there: neither is used at module load
+import { adminChannel, type AdminChannel } from './adminChannels.js';
+import { OWN_FEEDS_KIND, isOwnFeeds, srtHost, type Ingest, type StreamKind } from './channels.js';
 import { LivetvError, livetvCall } from './client.js';
 import { livetvInstalled, readLivetvSystem } from './detect.js';
 import { pushEvent } from './events.js';
@@ -63,76 +65,8 @@ export class FeedError extends Error {
 const notFound = () => new FeedError(404, { error: 'not_found' });
 const unreachable = () => new FeedError(503, { error: 'livetv_unreachable' });
 
-// ---- the admin view of one channel (Task 19's AdminChannel shape) ----
-export interface Prog { title: string; start: string; end: string; subtitle?: string }
-export interface AdminChannel {
-  id: string;
-  number: number | null;
-  name: string;
-  groupId: string | null;
-  sourceId: string;
-  streamKind: StreamKind;
-  ingest: Ingest;
-  logoHash: string | null;
-  hidden: boolean;
-  missing: boolean;
-  epg: boolean;
-  now: Prog | null;
-  mode: 'passthrough' | 'remux' | 'transcode' | null;
-  probeError: string | null;
-  overridden: { name?: string; number?: number | null; group?: string | null; logo?: true };
-  dupNumber: boolean;
-  epgShift: { min: number; from: EpgShiftFrom };
-  /** push feeds only: never the stream id or the passphrase, only the hint ('ff-' + 6) */
-  push?: { port: number; hint: string; portInRange: boolean };
-}
-
 /** the one-time push result (spec §3.5): host null while neither LIVETV_SRT_HOST nor PUBLIC_URL is known (then no URL either) */
 export interface PushCredentials { host: string | null; port: number; streamId: string; passphrase: string; url: string | null }
-
-type AdminRow = EffectiveRow & {
-  import_name: string; import_number: number | null; name_override: string | null; number_override: number | null;
-  group_override: string | null; import_group_id: string | null; logo_override_hash: string | null;
-  push_port: number | null; push_stream_id_hint: string | null; dup_number: boolean;
-};
-
-/**
- * One channel as the admin sees it, or null. Task 19 builds the list and owns AdminChannel; this reads a single row the same way.
- * `now` stays null here (the EPG now line comes with Task 17's nowNext through Task 19). `portInRange` is true while the range is unknown.
- */
-export async function adminChannel(ctx: Ctx, id: string): Promise<AdminChannel | null> {
-  const r = (await ctx.db.query<AdminRow>(
-    `select ${CHANNEL_COLUMNS}, c.import_name, c.import_number, c.name_override, c.number_override, c.group_override,
-       (select m.group_id from livetv_group_map m where m.source_id = c.source_id and m.provider_group = c.import_group) as import_group_id,
-       c.logo_override_hash, c.push_port, c.push_stream_id_hint,
-       exists (select 1 from livetv_channels o where o.id <> c.id and o.missing_since is null
-                 and coalesce(o.number_override, o.import_number) = coalesce(c.number_override, c.import_number)) as dup_number
-     from ${CHANNEL_FROM} where c.id = $1`, [id])).rows[0];
-  if (!r) return null;
-  const overridden: AdminChannel['overridden'] = {};
-  if (r.name_override !== null) overridden.name = r.import_name;
-  if (r.number_override !== null) overridden.number = r.import_number;
-  if (r.group_override !== null) overridden.group = r.import_group_id;
-  if (r.logo_override_hash !== null) overridden.logo = true;
-  const probe: ProbeRec | null = r.probe;
-  const out: AdminChannel = {
-    id: r.id, number: r.number, name: r.name, groupId: r.group_id, sourceId: r.source_id, streamKind: r.stream_kind, ingest: r.ingest,
-    logoHash: r.logo_hash, hidden: r.hidden, missing: r.missing_since !== null, epg: r.epg_source_id !== null && r.epg_channel_id !== null,
-    now: null, mode: probe?.needs ?? null, probeError: probe && !probe.ok ? (probe.error ?? 'failed') : null, overridden,
-    dupNumber: r.number !== null && r.dup_number, epgShift: { min: r.epg_shift_min, from: r.epg_shift_from },
-  };
-  if (r.ingest === 'push' && r.push_port !== null) out.push = pushInfo(r.push_port, r.push_stream_id_hint, await srtPorts(ctx).catch(() => null));
-  return out;
-}
-
-/**
- * The push facts of one channel for any admin answer (Task 19's list puts them on each own-feed row): the port, the stored hint
- * ('ff-' + 6 characters, no ellipsis; the web adds "…") and whether the port is in livetv's range (`ports` null = unknown: true, so
- * an unreachable livetv does not offer *Neuen Port zuweisen*). Never the stream id or the passphrase.
- */
-export function pushInfo(port: number, hint: string | null, ports: readonly number[] | null): { port: number; hint: string; portInRange: boolean } {
-  return { port, hint: hint ?? '', portInRange: ports === null || ports.includes(port) };
-}
 
 // ---- the port range (livetv's parsed LIVETV_SRT_PORTS) ----
 const portsMemo = new WeakMap<object, { at: number; ports: number[] }>();

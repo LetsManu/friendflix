@@ -119,3 +119,32 @@ export async function importLogos(ctx: Ctx, urls: readonly string[], allowLan: b
   await Promise.all(Array.from({ length: Math.max(1, parallel) }, worker));
   return out;
 }
+
+// ---- own uploads (ruling 32) and serving ----
+
+export type LogoMime = 'image/png' | 'image/jpeg' | 'image/webp';
+
+/** the image type by its magic bytes (PNG signature, JPEG SOI + marker, RIFF….WEBP); null = none of the three */
+export function sniffImage(b: Uint8Array): LogoMime | null {
+  const at = (i: number, bytes: number[]) => bytes.every((x, j) => b[i + j] === x);
+  if (b.length >= 8 && at(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png';
+  if (b.length >= 3 && at(0, [0xff, 0xd8, 0xff])) return 'image/jpeg';
+  if (b.length >= 12 && at(0, [0x52, 0x49, 0x46, 0x46]) && at(8, [0x57, 0x45, 0x42, 0x50])) return 'image/webp';
+  return null;
+}
+
+/**
+ * Stores checked logo bytes by their sha256 (the caller sniffed them) and answers the hash. An existing row is touched (`fetched_at`),
+ * which also locks it, so the daily prune cannot drop it before the caller's transaction references it.
+ */
+export async function storeLogo(db: Pick<Ctx, 'db'>['db'], mime: LogoMime, bytes: Buffer): Promise<string> {
+  const hash = sha256(bytes);
+  await db.query('insert into livetv_logos(hash, mime, bytes) values ($1, $2, $3) on conflict (hash) do update set fetched_at = now()', [hash, mime, bytes]);
+  return hash;
+}
+
+/** a stored logo; null for a malformed or unknown hash */
+export async function readLogo(ctx: Pick<Ctx, 'db'>, hash: string): Promise<{ mime: string; bytes: Buffer } | null> {
+  if (!HASH_RE.test(hash)) return null;
+  return (await ctx.db.query<{ mime: string; bytes: Buffer }>('select mime, bytes from livetv_logos where hash = $1', [hash])).rows[0] ?? null;
+}

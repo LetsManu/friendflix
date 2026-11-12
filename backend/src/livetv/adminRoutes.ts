@@ -10,11 +10,15 @@ import { requireAdmin } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
 import { detectLivetv, enableBenchmark, livetvInstalled, livetvSystem } from './detect.js';
 import { gpuAdvice } from './gpu.js';
+import {
+  ChannelRefusal, LOGO_MAX_BYTES, LOGO_MIMES, MAX_BULK_TEST, adminChannel, bulkBody, bulkChannels, bulkTest, channelPatch, channelQuery, dropLogo, listChannels,
+  orderBody as channelOrderBody, orderChannels, patchChannel, setLogo, testChannel,
+} from './adminChannels.js';
 import { isOwnFeeds } from './channels.js';
 import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource } from './refresh.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
-import { FeedError, adminChannel, createFeed, deleteFeed, feedCreate, ingestView, reassignPort, regenerateCredentials, syncIngest } from './ownfeeds.js';
+import { FeedError, createFeed, deleteFeed, feedCreate, ingestView, reassignPort, regenerateCredentials, syncIngest } from './ownfeeds.js';
 import { SourceRefusal, SourceTestError, createSource, deleteSource, listSources, sourceCreate, sourcePatch, sourceTestBody, testSource, updateSource } from './sources.js';
 
 /** the line for an install without the updater (spec §4.3); the page shows it with the compose commands */
@@ -24,6 +28,10 @@ const JF_TIMEOUT_MS = 3_000;
 const MEMO_MS = 10_000;
 /** the source test's single flight per admin; longer than its slowest call (the EPG count, 120 s) */
 const TEST_LOCK_TTL_S = 150;
+/** the channel test's single flight per admin; longer than a bulk test of 20 channels at 15 s each */
+const CHANNEL_TEST_LOCK_TTL_S = 360;
+/** a bulk body of 20 000 ids is about 780 KB (the app's default limit is 256 KB) */
+const BULK_BODY_LIMIT = 1024 * 1024;
 
 const disableBody = z.object({ removeImage: z.boolean(), removeCache: z.boolean() });
 
@@ -346,12 +354,6 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     return ingestView(ctx);
   });
 
-  app.get('/api/admin/livetv/channels/:id', admin, async (req, reply) => {
-    const cid = groupId(req);
-    const c = cid ? await adminChannel(ctx, cid) : null;
-    reply.header('cache-control', 'no-store');
-    return c ?? reply.code(404).send({ error: 'not_found' });
-  });
 
   // Zugangsdaten neu erzeugen: the same one-time answer with new values
   app.post('/api/admin/livetv/channels/:id/push-credentials', admin, async (req, reply) => {
@@ -379,5 +381,109 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       return { ok: true, ...(await deleteFeed(ctx, req.user!.id, cid, req.log)) };
     } catch (e) { return feedRefused(e, reply); }
+  });
+  // ---- Kanäle (spec §9.2): stream URLs never leave the backend (F13); answers carry AdminChannel only, refusals fixed codes ----
+
+  const channelRefused = (e: unknown, reply: Reply) => {
+    if (e instanceof ChannelRefusal) return reply.code(e.status).send(e.body);
+    throw e;
+  };
+
+  /** one stream test per admin at a time (a probe may hold a provider connection for up to 10 s; a bulk test runs 20 of them) */
+  async function testLocked<T>(actor: string, reply: Reply, fn: () => Promise<T>): Promise<T | unknown> {
+    const lock = `ltv:chtest:${actor}`;
+    const token = randomUUID();
+    if (!(await ctx.kv.setnx(lock, token, CHANNEL_TEST_LOCK_TTL_S))) return reply.code(409).send({ error: 'test_running' });
+    try {
+      return await fn();
+    } finally {
+      await ctx.kv.delIfEquals(lock, token).catch(() => undefined);
+    }
+  }
+
+  app.get('/api/admin/livetv/channels', admin, async (req, reply) => {
+    const q = parse(channelQuery, req.query, reply);
+    if (!q) return reply;
+    reply.header('cache-control', 'no-store');
+    return listChannels(ctx, q);
+  });
+
+  // one row of the list (the own-feeds card reads it after a push change); never more than a list row carries
+  app.get('/api/admin/livetv/channels/:id', admin, async (req, reply) => {
+    const cid = groupId(req);
+    const c = cid ? await adminChannel(ctx, cid) : null;
+    reply.header('cache-control', 'no-store');
+    return c ?? reply.code(404).send({ error: 'not_found' });
+  });
+
+  // static routes (bulk, order) win over /:id
+  app.post('/api/admin/livetv/channels/bulk', { ...admin, bodyLimit: BULK_BODY_LIMIT }, async (req, reply) => {
+    const b = parse(bulkBody, req.body, reply);
+    if (!b) return reply;
+    reply.header('cache-control', 'no-store');
+    try {
+      if (b.action === 'test') {
+        if (new Set(b.ids).size > MAX_BULK_TEST) return reply.code(400).send({ error: 'invalid', field: 'ids' });
+        return await testLocked(req.user!.id, reply, () => bulkTest(ctx, req.user!.id, b.ids));
+      }
+      return await bulkChannels(ctx, req.user!.id, b, req.log);
+    } catch (e) { return channelRefused(e, reply); }
+  });
+
+  app.put('/api/admin/livetv/channels/order', admin, async (req, reply) => {
+    const b = parse(channelOrderBody, req.body, reply);
+    if (!b) return reply;
+    try {
+      return await orderChannels(ctx, req.user!.id, b.ids);
+    } catch (e) { return channelRefused(e, reply); }
+  });
+
+  app.patch('/api/admin/livetv/channels/:id', admin, async (req, reply) => {
+    const cid = groupId(req);
+    if (!cid) return reply.code(404).send({ error: 'not_found' });
+    const b = parse(channelPatch, req.body, reply);
+    if (!b) return reply;
+    reply.header('cache-control', 'no-store');
+    try {
+      return (await patchChannel(ctx, req.user!.id, cid, b, req.log)) ?? reply.code(404).send({ error: 'not_found' });
+    } catch (e) { return channelRefused(e, reply); }
+  });
+
+  // admin only; checks the channel and its source, never the viewing rights or the group's release (F10)
+  app.post('/api/admin/livetv/channels/:id/test', admin, async (req, reply) => {
+    const cid = groupId(req);
+    if (!cid) return reply.code(404).send({ error: 'not_found' });
+    reply.header('cache-control', 'no-store');
+    try {
+      return await testLocked(req.user!.id, reply, () => testChannel(ctx, req.user!.id, cid));
+    } catch (e) { return channelRefused(e, reply); }
+  });
+
+  app.delete('/api/admin/livetv/channels/:id/logo', admin, async (req, reply) => {
+    const cid = groupId(req);
+    const c = cid ? await dropLogo(ctx, req.user!.id, cid) : null;
+    return c ?? reply.code(404).send({ error: 'not_found' });
+  });
+
+  // the upload is a raw image body (ruling 32: no multipart plugin), parsed only in this context; anything else is 415, more than
+  // 512 KB is 413, both with fixed codes instead of the framework's messages
+  void app.register(async (sub) => {
+    sub.addContentTypeParser([...LOGO_MIMES], { parseAs: 'buffer', bodyLimit: LOGO_MAX_BYTES }, (_req, body, done) => done(null, body));
+    sub.setErrorHandler((err, _req, reply) => {
+      const code = (err as { code?: string }).code;
+      if (code === 'FST_ERR_CTP_BODY_TOO_LARGE') return reply.code(413).send({ error: 'too_large' });
+      if (code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE') return reply.code(415).send({ error: 'unsupported_type' });
+      throw err;
+    });
+    // the admin check runs before the body is read (onRequest): nobody else gets 512 KB parsed; the CSRF hook still runs (preHandler)
+    sub.put('/api/admin/livetv/channels/:id/logo', { onRequest: requireAdmin(ctx), bodyLimit: LOGO_MAX_BYTES }, async (req, reply) => {
+      const cid = groupId(req);
+      if (!cid) return reply.code(404).send({ error: 'not_found' });
+      const type = String(req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+      if (!Buffer.isBuffer(req.body) || !(LOGO_MIMES as readonly string[]).includes(type)) return reply.code(415).send({ error: 'unsupported_type' });
+      try {
+        return (await setLogo(ctx, req.user!.id, cid, type, req.body)) ?? reply.code(404).send({ error: 'not_found' });
+      } catch (e) { return channelRefused(e, reply); }
+    });
   });
 }
