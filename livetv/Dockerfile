@@ -43,9 +43,9 @@ WORKDIR /app
 COPY --from=jellyfin-key /jellyfin.gpg /etc/apt/keyrings/jellyfin.gpg
 # jellyfin-ffmpeg7 from the Jellyfin repository (signed-by the checked key only; installs to /usr/lib/jellyfin-ffmpeg). Not
 # version-pinned: old versions vanish from the repository, same ruling as the Alpine packages of the other images.
-# libstdc++6: the node binary links it. Package lists and caches are dropped.
+# libstdc++6 and libatomic1: the node binary links them. Package lists and caches are dropped.
 RUN apt-get update \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libstdc++6 libatomic1 \
   && echo 'deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/jellyfin.gpg] https://repo.jellyfin.org/debian bookworm main' > /etc/apt/sources.list.d/jellyfin.list \
   && apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jellyfin-ffmpeg7 \
@@ -54,6 +54,8 @@ RUN apt-get update \
   && groupadd -g 10001 livetv && useradd -u 10001 -g 10001 -M -d /tmp -s /usr/sbin/nologin livetv \
   && mkdir -p /cache /recordings && chown 10001:10001 /cache /recordings
 COPY --from=build /usr/local/bin/node /usr/local/bin/node
+# fail the build, not the container, when node misses a shared library
+RUN ["/usr/local/bin/node", "--version"]
 COPY --from=build --chown=10001:10001 /app/livetv/dist livetv/dist
 COPY --chown=10001:10001 livetv/package.json livetv/
 USER 10001:10001
