@@ -351,7 +351,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       actor: z.union([uuid, z.literal('system')]).optional(),
       action: z.string().regex(/^[a-z_]+(\.[a-z_]+)?$/).optional(),
       // a role key as the backend knows it (a ROLE_TEMPLATES key need not match ROLE_KEY_RE) or a user id
-      target: z.union([uuid, z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/)]).optional(),
+      target: z.string().min(1).max(64).optional(),
       area: z.literal('people').optional(),
       from: z.coerce.date().optional(),
       to: z.coerce.date().optional(),

@@ -102,6 +102,25 @@ describe('GET /api/admin/roles', () => {
     expect((await roleOf('admin')).defaults.party).toBe(true);
   });
 
+  it('defaults of an env role that also has a stored row are its ROLE_TEMPLATES values', async () => {
+    const saved = env.ctx.roles;
+    await env.pool.query("insert into roles(key, label, base, origin, position) values ('crew', 'Crew', 'friend', 'env', 8)");
+    env.ctx.roles = { ...saved, crew: { ...saved.friend!, label: 'Crew', maxStreams: 3 } };
+    invalidateRoles(env.ctx);
+    try {
+      expect((await put('crew', { maxStreams: 5 })).statusCode).toBe(200);
+      const crew = await roleOf('crew');
+      expect(crew.values.maxStreams).toBe(5);
+      expect(crew.sources.maxStreams).toBe('role');
+      expect(crew.defaults.maxStreams).toBe(3);
+    } finally {
+      env.ctx.roles = saved;
+      await env.pool.query("delete from role_settings where role = 'crew'").catch(() => undefined);
+      await env.pool.query("delete from roles where key = 'crew'");
+      invalidateRoles(env.ctx);
+    }
+  });
+
   it('envGone marks an env role that left ROLE_TEMPLATES', async () => {
     const saved = env.ctx.roles;
     await env.pool.query("insert into roles(key, label, base, origin, position) values ('crew', 'Crew', 'friend', 'env', 8), ('old', 'Alt', 'friend', 'env', 9)");
@@ -128,7 +147,10 @@ describe('GET /api/admin/roles', () => {
       const m = (await get()).matrix;
       expect(m.roles.map((r: { key: string; stored: boolean }) => [r.key, r.stored])).toEqual([['admin', true], ['family', true], ['friend', true], ['guest', true], ['Crew.X', false]]);
       expect((await call(admin, 'GET', '/api/admin/audit?target=Crew.X')).statusCode).toBe(200);
-      expect((await call(admin, 'GET', "/api/admin/audit?target=Crew';x")).statusCode).toBe(400);
+      // any key the backend accepts (spaces, umlauts) can be asked for; the value is a bound parameter, so odd text just finds nothing
+      expect((await call(admin, 'GET', `/api/admin/audit?target=${encodeURIComponent('Käse Crew')}`)).json().entries).toEqual([]);
+      expect((await call(admin, 'GET', `/api/admin/audit?target=${encodeURIComponent("Crew';drop table roles;--")}`)).json().entries).toEqual([]);
+      expect((await call(admin, 'GET', `/api/admin/audit?target=${'x'.repeat(65)}`)).statusCode).toBe(400);
     } finally {
       env.ctx.roles = saved;
       invalidateRoles(env.ctx);
