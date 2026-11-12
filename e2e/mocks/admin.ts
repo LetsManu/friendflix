@@ -161,14 +161,20 @@ const MATRIX_INHERITED: Record<string, Record<string, unknown>> = {
 };
 /** the inherited value of a field (PUT null): the role's own entry, else its base's (an admin-made copy) */
 const inheritedValue = (r: Pick<MatrixMockRole, 'key' | 'base'>, k: string): unknown => ({ ...MATRIX_BASE_VALUES, ...(MATRIX_INHERITED[r.key] ?? MATRIX_INHERITED[r.base]) })[k];
-function matrixRole(key: string, label: string | null, base: MatrixMockRole['base'], origin: MatrixMockRole['origin'], accounts: number, profiles: number, kids: number): MatrixMockRole {
+function matrixRole(key: string, label: string | null, base: MatrixMockRole['base'], origin: MatrixMockRole['origin'], accounts: number, profiles: number, kids: number, stored = true): MatrixMockRole {
   const values = { ...MATRIX_BASE_VALUES, ...MATRIX_INHERITED[key] };
   return {
-    key, label, builtinLabel: origin === 'code', base, origin, invitable: key !== 'admin', stored: origin !== 'env', accounts, profiles, kidsProfiles: kids, invites: 0, envGone: false,
+    key, label, builtinLabel: origin === 'code', base, origin, invitable: key !== 'admin', stored, accounts, profiles, kidsProfiles: kids, invites: 0, envGone: false,
     values, sources: Object.fromEntries(Object.keys(values).map((k) => [k, origin === 'env' ? 'env' : 'default'])), missingLibraries: [],
   };
 }
-/** the built-ins in the backend's catalogue order (position: Admin, Familie, Freund, Gast), then the env role (Crew, base friend) */
+/**
+ * An env role whose key the roles table cannot hold (ROLE_TEMPLATES key outside the role-key shape, here with a space and an umlaut): `stored: false`,
+ * kept behind the stored roles, no rename / invitable / order. A normal env role (Crew) has a row like any other, as the backend's syncRoles makes it.
+ */
+export const ENV_ONLY_KEY = 'Küche Crew';
+export const envOnlyRole = (): MatrixMockRole => matrixRole(ENV_ONLY_KEY, 'Kombüse', 'friend', 'env', 0, 0, 0, false);
+/** the built-ins in the backend's catalogue order (position: Admin, Familie, Freund, Gast), then the env role (Crew, base friend, stored) */
 export function matrixMock(): MatrixMock {
   return {
     features: { requests: true, cast: true, livetv: false },
@@ -695,8 +701,10 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     // the role API's encodings: null = back to the inherited value, 'unlimited' lifts a cap (a number otherwise)
     const capOk = (v: unknown) => v === undefined || v === null || v === 'unlimited' || typeof v === 'number';
     if (!capOk(body?.maxHeight) || !capOk(body?.requestsPerMonth) || !capOk(body?.maxParentalRating)) return J({ error: 'bad_request' }, 400);
-    const role = st.matrix.roles.find((r) => r.key === mm![1]);
+    const role = st.matrix.roles.find((r) => r.key === decodeURIComponent(mm![1]!));
     if (!role) return J({ error: 'not_found' }, 404);
+    // a ROLE_TEMPLATES key the catalogue cannot hold has no row for the name or the invitable switch
+    if (!role.stored && (body?.label !== undefined || body?.invitable !== undefined)) return J({ error: 'not_in_catalogue' }, 400);
     if (role.base === 'admin' && body?.perms) return J({ error: 'admin_perms_locked' }, 400);
     st.matrix.puts.push({ role: role.key, body });
     const media = Object.keys(body ?? {}).some((k) => MEDIA_KEYS_MOCK.includes(k));
@@ -722,7 +730,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return J({ ok: true, reapplied: { identities: media ? identities : 0, failed: 0 } });
   }
   if ((mm = p.match(/^\/api\/admin\/roles\/([^/]+)$/)) && m === 'DELETE') {
-    const role = st.matrix.roles.find((r) => r.key === mm![1]);
+    const role = st.matrix.roles.find((r) => r.key === decodeURIComponent(mm![1]!));
     if (!role) return J({ error: 'not_found' }, 404);
     if (role.origin === 'code') return J({ error: 'builtin_role' }, 400);
     if (role.origin === 'env' && !role.envGone) return J({ error: 'env_role' }, 400);
@@ -733,7 +741,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     st.matrix.roles = st.matrix.roles.filter((r) => r !== role);
     st.matrix.deletes.push({ role: role.key, moveTo: target?.key ?? null });
     log('role.delete', role.key, { moveTo: target?.key ?? null, accounts: target ? role.accounts : 0, invites: role.invites, ...(role.label ? { label: role.label } : {}) });
-    return J({ ok: true, moved: role.accounts, invites: role.invites });
+    return J({ ok: true, accounts: role.accounts, invites: role.invites });
   }
   if (p === '/api/admin/devices') return J(devicesList(st, sp));
   if (p === '/api/admin/devices/approve' && m === 'POST') {
