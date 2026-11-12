@@ -106,7 +106,8 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
 
     const limits = (await effectiveLimits(ctx, u))!;
     const prefix = `play:${u.id}:`;
-    const own = new Set(await deviceLiveSessions(ctx, u.id, deviceId));
+    const v = b.data.via ?? 'local';
+    const own = new Set(await deviceLiveSessions(ctx, u.id, deviceId, v));
     const counted = (await ctx.kv.keys(prefix)).filter((k) => !own.has(k.slice(prefix.length))).length;
     if (counted >= limits.maxStreams) return reply.code(429).send({ error: 'max_streams', max: limits.maxStreams });
 
@@ -115,7 +116,6 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
       const { status, ...body } = r;
       return reply.code(status).send(body);
     }
-    const v = b.data.via ?? 'local';
     const minted = await mintLiveToken(ctx, {
       userId: u.id, profileId: profile.id, deviceId, sidHash: liveSidHash(req.sid!), channelId: ch.id, channelName: ch.name, kind: 'live', via: v,
       remote: !isHomeRequest(req, ctx.cfg.HOME_NETWORKS),

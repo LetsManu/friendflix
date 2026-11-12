@@ -91,12 +91,17 @@ async function listTokens(ctx: Pick<Ctx, 'kv'>, userId: string): Promise<Array<{
   return out;
 }
 
+/** the replacement slot class of a token's `via` (R14): a Chromecast token is a `cast`; local and AirPlay views are `local` */
+const viaClass = (via: LiveTokenRec['via']): 'cast' | 'local' => (via === 'chromecast' ? 'cast' : 'local');
+
 /** token hash -> the owner's display names while account, role, profile, device and the channel right hold (null = refused) */
 const rightsMemo = new Map<string, { exp: number; v: { userName: string; profileName: string } | null }>();
 
 /**
- * Mints a live token (32 random bytes, base64url). The same device's earlier tokens of the same kind (normal or admin test) are
- * revoked (a channel switch; spec §7.1, R8: a stream-test preview never ends a live view on that device, nor the reverse) and at
+ * Mints a live token (32 random bytes, base64url). The same device's earlier tokens of the same slot are revoked (a channel switch;
+ * spec §7.1). A slot is (normal or admin test, cast or local): a stream-test preview never ends a live view on that device, nor the
+ * reverse (R8), and a cast (`chromecast`) never replaces the device's own local view, nor the reverse (R14); `local` and `airplay`
+ * share the local slot. At
  * most MAX_LIVE_TOKENS stay per account (the oldest go); both are enforced after the insert, so simultaneous mints converge instead of
  * racing past the limit. Seeds the viewer key at once (F9): a viewer who has not fetched a file yet already counts. Returns the raw
  * token (once) and its hash.
@@ -113,7 +118,7 @@ export async function mintLiveToken(ctx: Ctx, rec: Omit<LiveTokenRec, 'exp' | 'c
   await ctx.kv.set(liveViewKey(hash), rec.channelId, VIEW_TTL_S);
   const me = { hash, rec: full };
   for (const t of await listTokens(ctx, rec.userId)) {
-    if (t.hash !== hash && t.rec.deviceId === rec.deviceId && Boolean(t.rec.test) === Boolean(full.test) && older(t, me) < 0) await revokeLiveToken(ctx, t.hash);
+    if (t.hash !== hash && t.rec.deviceId === rec.deviceId && Boolean(t.rec.test) === Boolean(full.test) && viaClass(t.rec.via) === viaClass(full.via) && older(t, me) < 0) await revokeLiveToken(ctx, t.hash);
   }
   const all = (await listTokens(ctx, rec.userId)).sort(older);
   while (all.length > MAX_LIVE_TOKENS) await revokeLiveToken(ctx, all.shift()!.hash);
@@ -144,19 +149,21 @@ export async function endLiveToken(ctx: Ctx, token: string, userId: string): Pro
 }
 
 /**
- * The live records (play sessions) of a device's live tokens that its next watch replaces (mintLiveToken revokes them): the watch route
- * leaves them out of the `maxStreams` count (spec §7.2). Admin test previews are not replaced by a watch, so they are not among them.
+ * The live records (play sessions) of a device's live tokens that its next watch of `via` replaces (mintLiveToken revokes them): the
+ * watch route leaves them out of the `maxStreams` count (spec §7.2). Admin test previews and the other slot (cast or local, R14) are
+ * not replaced by that watch, so they are not among them.
  */
-export async function deviceLiveSessions(ctx: Ctx, userId: string, deviceId: string): Promise<string[]> {
-  return (await listTokens(ctx, userId)).filter((t) => t.rec.deviceId === deviceId && !t.rec.test).map((t) => livePlaySessionId(t.hash));
+export async function deviceLiveSessions(ctx: Ctx, userId: string, deviceId: string, via: LiveTokenRec['via'] = 'local'): Promise<string[]> {
+  return (await listTokens(ctx, userId)).filter((t) => t.rec.deviceId === deviceId && !t.rec.test && viaClass(t.rec.via) === viaClass(via)).map((t) => livePlaySessionId(t.hash));
 }
 
 /**
- * The device's current live view (ruling 36): its newest normal token, which the device's next watch replaces (mintLiveToken). A watch
- * for another channel from this device is a channel switch (Task 32). Admin test previews are not views a watch replaces (R8).
+ * The device's current live view (ruling 36): its newest normal `local` token (local or AirPlay), which the device's next local watch
+ * replaces (mintLiveToken). A watch for another channel from this device is a channel switch (Task 32). Admin test previews are not
+ * views a watch replaces (R8), and neither is a cast (R14): a Chromecast token is a viewer of its channel, never the device's own view.
  */
 export async function deviceLiveView(ctx: Ctx, userId: string, deviceId: string): Promise<{ hash: string; channelId: string } | null> {
-  const mine = (await listTokens(ctx, userId)).filter((t) => t.rec.deviceId === deviceId && !t.rec.test).sort(older);
+  const mine = (await listTokens(ctx, userId)).filter((t) => t.rec.deviceId === deviceId && !t.rec.test && viaClass(t.rec.via) === 'local').sort(older);
   const t = mine[mine.length - 1];
   return t ? { hash: t.hash, channelId: t.rec.channelId } : null;
 }
