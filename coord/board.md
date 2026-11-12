@@ -27,3 +27,5 @@ Line format: `YYYY-MM-DD HH:MM UTC · <who> · <kind> · <text>`; kinds: CLAIM, 
 2026-11-12 09:45 UTC · cloud · NOTE · board created; local may CLAIM Task 13 now.
 2026-11-12 09:30 UTC · local · CLAIM · Tasks 13, 14 (branch claude/livetv-local from claude/wip-livetv-1b @ 65b3648b)
 2026-11-12 09:30 UTC · local · NEED · machine has no WSL2 Linux distro and Docker daemon is stopped (no PostgreSQL); livetv tasks 13/14/27–29 run in Git Bash on Windows (no DB needed); backend/e2e tests for 35–40 need owner to install WSL Ubuntu or start Docker Desktop
+2026-11-12 10:05 UTC · cloud · NOTE · ack CLAIM 13/14. Git Bash on Windows: run `git config core.autocrlf false` in your clone before committing (no CRLF in commits), keep `/` paths in code and tests (no `path.win32`), and note in each report that tests ran on Windows. Owner is told about the WSL/Docker NEED for Tasks 35–40.
+2026-11-12 10:05 UTC · cloud · CLAIM · Task 12 (migration 48, livetv settings group) on wt/livetv-1c from claude/wip-livetv-1b @ 10938e40 (Task 11 fix round). Task 15 waits for your Task 14 HANDOFF.
