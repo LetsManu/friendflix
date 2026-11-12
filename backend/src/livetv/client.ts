@@ -99,7 +99,12 @@ export async function livetvCall<T>(ctx: Ctx, method: Method, path: string, body
     const r = await signedFetch(ctx, method, path, body, d.signal);
     if (!r.ok) throw await refusal(r);
     let text: string;
-    try { text = await r.text(); } catch { throw new LivetvError(null, 'unreachable'); } // the body stopped (reset, timeout)
+    try {
+      text = await r.text();
+    } catch {
+      dropLivetvProof(ctx); // the body stopped (reset, timeout): as unreachable as a failed connection
+      throw new LivetvError(null, 'unreachable');
+    }
     if (text === '') return undefined as T;
     try { return JSON.parse(text) as T; } catch { throw new LivetvError(r.status, 'invalid_answer'); }
   } finally {
@@ -109,7 +114,8 @@ export async function livetvCall<T>(ctx: Ctx, method: Method, path: string, body
 
 /**
  * A signed POST whose answer is streamed (NDJSON, image bytes); the timeout keeps running while the caller reads it. Refusals
- * throw like livetvCall.
+ * throw like livetvCall. A caller whose read of the body fails (reset, timeout) turns that into `unreachable` and must call
+ * dropLivetvProof(ctx) there, as livetvCall does (1b has no such reader yet; the fetch routes of 1c add them).
  */
 export async function livetvStream(ctx: Ctx, path: string, body: unknown, o: { timeoutMs: number }): Promise<Response> {
   const d = deadline(o.timeoutMs);

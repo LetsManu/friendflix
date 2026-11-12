@@ -328,6 +328,26 @@ describe('nothing signed leaves before livetv proved its key', () => {
     expect(slow.health).toHaveLength(2);
   });
 
+  it('a body that breaks off (reset, timeout while reading) withdraws the proof too', async () => {
+    let broken = true;
+    const ctx = ctxWith(() => {
+      if (!broken) return json({});
+      const stalled = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('{"a"')); c.error(new Error('reset')); } });
+      return new Response(stalled, { status: 200 });
+    });
+    expect((await caught(livetvCall(ctx, 'GET', '/v1/system'))).code).toBe('unreachable');
+    expect(ctx.health).toHaveLength(1);
+    broken = false;
+    await livetvCall(ctx, 'GET', '/v1/system'); // inside the TTL, but the proof was withdrawn: proved again first
+    expect(ctx.health).toHaveLength(2);
+    // a body read cut by the deadline counts the same
+    // (as fetch does: the request's abort signal also errors the body being read)
+    const slowBody = ctxWith((_s, init) => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('{')); init.signal!.addEventListener('abort', () => c.error(init.signal!.reason)); } }), { status: 200 }));
+    expect((await caught(livetvCall(slowBody, 'GET', '/v1/system', undefined, { timeoutMs: 50 }))).code).toBe('unreachable');
+    await caught(livetvCall(slowBody, 'GET', '/v1/system', undefined, { timeoutMs: 50 }));
+    expect(slowBody.health).toHaveLength(2);
+  });
+
   it('dropLivetvProof withdraws a standing proof (used when a disable or remove is accepted)', async () => {
     const ctx = ctxWith(() => json({}));
     await livetvCall(ctx, 'GET', '/v1/system');
