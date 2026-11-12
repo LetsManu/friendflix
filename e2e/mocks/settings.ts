@@ -43,6 +43,7 @@ const GROUPS: Array<[string, Array<[string, Spec]>]> = [
     ['WEBHOOK_SECRET', { kind: 'secret', source: 'db', set: true, generate: 'webhookSecret' }],
     ['API_COMPRESSION', { kind: 'bool', source: 'default', value: true }],
     ['LOGIN_COVER_WALL', { kind: 'bool', source: 'default', value: true }],
+    ['LIVETV_OFFER_HIDDEN', { kind: 'bool', source: 'default', value: false }],
   ]],
   ['signin', [
     ['OIDC_ISSUER', { kind: 'url', source: 'db', value: 'https://auth.example.com/application/o/friendflix/' }],

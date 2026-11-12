@@ -17,6 +17,7 @@ describe('admin summary store', () => {
     playbackCheck: null,
     services: { jellyfin: true, seerr: false },
     live: { streams: 0, partyRooms: 0 },
+    livetv: { installed: false, offerHidden: false, failedSources: 0 },
   };
   beforeEach(() => {
     answer = { status: 200, body: base };

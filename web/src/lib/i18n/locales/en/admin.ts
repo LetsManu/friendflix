@@ -10,6 +10,7 @@ const en: Translation<typeof de> = {
     users: 'Users', status: 'Status', previews: 'Previews', playback: 'Playback check', digest: 'Weekly recap', sources: 'Data sources', invites: 'Invitations',
     requests: 'Requests', polls: 'Polls', lists: 'Lists', roles: 'Roles & rights', devices: 'Devices', audit: 'Audit log', update: 'Update',
     hygiene: 'Library care',
+    livetv: 'Live TV',
     settings: 'Settings',
     usage: 'Usage',
   },

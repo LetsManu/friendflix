@@ -1,0 +1,6 @@
+{
+  "streams": [
+    { "index": 0, "codec_name": "h264", "codec_type": "video", "profile": "High", "width": 1920, "height": 1080, "r_frame_rate": "50/1", "avg_frame_rate": "25/1" },
+    { "index": 1, "codec_name": "aac", "codec_type": "audio", "sample_rate": "48000", "channels": 2 }
+  ]
+}

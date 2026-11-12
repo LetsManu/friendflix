@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<tv>
+  <channel id="nordlicht.de"><display-name>Nordlicht TV</display-name></channel>
+  <programme start="20261111201500 +0100" stop="20261111210000 +0100" channel="nordlicht.de">
+    <title>Die Leuchtturmw&custom;rter</title>
+  </programme>
+</tv>

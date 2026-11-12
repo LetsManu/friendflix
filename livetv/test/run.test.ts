@@ -57,4 +57,63 @@ describe('createRun', () => {
     const small = await run('ffmpeg', ['-e', 'process.stdout.write("x")'], { timeoutMs: 5_000 });
     expect(small.truncated).toBeUndefined();
   });
+
+  it('stdin is piped and closed: every chunk reaches the child, its end is the child\'s EOF', async () => {
+    async function* input(): AsyncGenerator<Uint8Array> {
+      yield Buffer.from('Nordlicht ');
+      yield new Uint8Array(Buffer.from('TV'));
+      yield Buffer.alloc(200_000, 0x41);
+    }
+    const r = await run('ffprobe', ['-e', 'let n = 0, head = ""; process.stdin.on("data", (c) => { if (n < 12) head += c.toString().slice(0, 12 - n); n += c.length; }); process.stdin.on("end", () => process.stdout.write(head + ":" + n))'], { timeoutMs: 5_000, stdin: input() });
+    expect(r).toEqual({ code: 0, stdout: Buffer.from('Nordlicht TV:200012'), stderr: '' });
+  });
+
+  it('without stdin the child reads EOF at once (stdin is not piped)', async () => {
+    const r = await run('ffprobe', ['-e', 'let n = 0; process.stdin.on("data", (c) => { n += c.length; }); process.stdin.on("end", () => process.stdout.write("eof:" + n))'], { timeoutMs: 5_000 });
+    expect(r.stdout.toString()).toBe('eof:0');
+  });
+
+  it('onStdout sees each chunk as it arrives; stdout is still collected', async () => {
+    const seen: string[] = [];
+    const r = await run('ffmpeg', ['-e', 'process.stdout.write("a"); setTimeout(() => process.stdout.write("b"), 100)'], { timeoutMs: 5_000, onStdout: (c) => seen.push(c.toString()) });
+    expect(seen).toEqual(['a', 'b']);
+    expect(r.stdout.toString()).toBe('ab');
+    const throwing = await run('ffmpeg', ['-e', 'process.stdout.write("x")'], { timeoutMs: 5_000, onStdout: () => { throw new Error('listener bug'); } });
+    expect(throwing).toEqual({ code: 0, stdout: Buffer.from('x'), stderr: '' });
+  });
+
+  it('a child that exits early (or closes stdin) does not crash livetv and stops pulling the input', async () => {
+    let pulled = 0;
+    let closed = 0;
+    async function* endless(): AsyncGenerator<Uint8Array> {
+      try {
+        for (;;) { pulled++; yield Buffer.alloc(64 * 1024, 0x47); }
+      } finally { closed++; }
+    }
+    const r = await run('ffmpeg', ['-e', 'process.stdin.once("data", () => process.exit(4))'], { timeoutMs: 5_000, stdin: endless() });
+    expect(r.code).toBe(4);
+    await new Promise((res) => setTimeout(res, 100));
+    expect(closed).toBe(1);
+    const after = pulled;
+    await new Promise((res) => setTimeout(res, 100));
+    expect(pulled).toBe(after);
+    const shut = await run('ffmpeg', ['-e', 'process.stdin.destroy(); setTimeout(() => process.stdout.write("done"), 300)'], { timeoutMs: 5_000, stdin: endless() });
+    expect(shut).toEqual({ code: 0, stdout: Buffer.from('done'), stderr: '' });
+    await new Promise((res) => setTimeout(res, 100));
+    expect(closed).toBe(2);
+  });
+
+  it('a failing input ends stdin (the child sees EOF); a missing program with stdin is still 127', async () => {
+    async function* failing(): AsyncGenerator<Uint8Array> { yield Buffer.from('abc'); throw new Error('source gone'); }
+    const r = await run('ffprobe', ['-e', 'let n = 0; process.stdin.on("data", (c) => { n += c.length; }); process.stdin.on("end", () => process.stdout.write("eof:" + n))'], { timeoutMs: 5_000, stdin: failing() });
+    expect(r.stdout.toString()).toBe('eof:3');
+    const missing = createRun({ ffprobe: '/nonexistent/ffprobe' });
+    expect((await missing('ffprobe', [], { timeoutMs: 1_000, stdin: failing() })).code).toBe(127);
+  });
+
+  it('a child killed at the timeout while reading stdin is code -1', async () => {
+    async function* slow(): AsyncGenerator<Uint8Array> { for (;;) { yield Buffer.from('x'); await new Promise((r) => setTimeout(r, 50)); } }
+    const r = await run('ffprobe', ['-e', 'process.stdin.resume()'], { timeoutMs: 300, stdin: slow() });
+    expect(r.code).toBe(-1);
+  });
 });
