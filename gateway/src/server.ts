@@ -21,6 +21,7 @@ const { server } = createGateway({
   backendUrl,
   internalSecret: secret,
   downloadDir: process.env.DOWNLOAD_DIR || undefined,
+  livetvUrl: optional(process.env, 'LIVETV_URL') ?? 'http://livetv:8090',
   metricsToken: process.env.METRICS_TOKEN || undefined,
 });
 const port = Number(process.env.PORT ?? 4000);
