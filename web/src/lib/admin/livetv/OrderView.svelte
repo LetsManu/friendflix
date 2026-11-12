@@ -42,13 +42,17 @@
 
   $: reset(rows);
   function reset(r: OrderRow[]) {
+    const lifted = s.picked !== null;
     endPointer();
+    // a drag or a glide left inline transforms behind: the new rows stand in their places at once
+    for (const id in els) { const el = els[id]; if (el) { el.style.transition = ''; el.style.transform = ''; } }
     byId = new Map(r.map((x) => [x.id, x]));
     numbers = new Map(r.map((x) => [x.id, x.number]));
     hasNumbers = r.some((x) => x.number !== null);
     base = r.map((x) => x.id);
     s = idle(base);
     mode = null;
+    if (lifted) say(tr('adminLive.ch.orderCancelled'));
   }
 
   $: shown = renumber(s.ids, numbers);
@@ -104,6 +108,7 @@
     if (busy || mode === 'pointer') return;
     if (e.key === ' ' || e.key === 'Spacebar') {
       e.preventDefault();
+      if (e.repeat) return; // a held Space does not toggle pick and drop
       if (s.picked === null) {
         s = pick(s, id);
         mode = 'key';
@@ -146,8 +151,12 @@
     }
   }
 
-  // ---- pointer and touch: the row follows the pointer by transform, the others slide by FLIP; the list scrolls at its edges
-  interface Drag { id: string; grab: number; y: number; raf: number; scroller: HTMLElement | null }
+  // ---- pointer and touch: the row follows the pointer by transform, the others slide by FLIP; the list scrolls at its edges.
+  // The grip only starts the drag. The keyed list moves the lifted row's own <li> (with its grip) while the order changes, and
+  // a browser drops a pointer capture held by a node that is moved, so the capture sits on the list (it never moves) and the
+  // move / up / cancel events are read on the window, filtered by the pointer's id. A lost capture ends nothing; pointer up
+  // drops, pointer cancel, Escape and a window blur cancel.
+  interface Drag { id: string; pointerId: number; grab: number; y: number; raf: number; scroller: HTMLElement | null }
   let drag: Drag | null = null;
   /** the nearest scrolling ancestor (null: the page) */
   function scrollerOf(el: HTMLElement): HTMLElement | null {
@@ -174,15 +183,15 @@
     const row = els[id];
     if (!row) return;
     e.preventDefault();
-    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* the pointer is already gone */ }
-    drag = { id, grab: e.clientY - row.getBoundingClientRect().top, y: e.clientY, raf: 0, scroller: scrollerOf(list) };
+    try { list.setPointerCapture(e.pointerId); } catch { /* the pointer is already gone: the window listeners still see it */ }
+    drag = { id, pointerId: e.pointerId, grab: e.clientY - row.getBoundingClientRect().top, y: e.clientY, raf: 0, scroller: scrollerOf(list) };
     s = pick(s, id);
     mode = 'pointer';
     say(tr('adminLive.ch.orderPicked', { name: nameOf(id), n: posOf(s, id), m: s.ids.length }));
     schedule();
   }
   function onMove(e: PointerEvent) {
-    if (!drag) return;
+    if (!drag || e.pointerId !== drag.pointerId) return;
     drag.y = e.clientY;
     schedule();
   }
@@ -214,7 +223,8 @@
     row.style.transform = `translateY(${y - row.offsetTop}px)`;
   }
   /** pointer up: the row glides from under the pointer into its place */
-  async function onUp() {
+  async function onUp(e: PointerEvent) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
     const d = endPointer();
     if (!d) return;
     const n = posOf(s, d.id);
@@ -225,7 +235,10 @@
     if (row) row.style.transform = '';
     say(tr('adminLive.ch.orderDropped', { name: nameOf(d.id), n }));
   }
-  /** pointer cancelled (the system took it, or Escape while dragging): the row goes back where it was picked up */
+  function onPointerCancel(e: PointerEvent) {
+    if (drag && e.pointerId === drag.pointerId) void onCancel();
+  }
+  /** pointer cancelled (the system took it, Escape, the window lost focus): the row goes back where it was picked up */
   async function onCancel() {
     const d = endPointer();
     if (!d) return;
@@ -241,6 +254,7 @@
     if (!d) return null;
     if (d.raf) cancelAnimationFrame(d.raf);
     drag = null;
+    try { if (list && list.hasPointerCapture(d.pointerId)) list.releasePointerCapture(d.pointerId); } catch { /* already released */ }
     return d;
   }
   function onWindowKey(e: KeyboardEvent) {
@@ -260,7 +274,7 @@
   }
 </script>
 
-<svelte:window on:keydown|capture={onWindowKey} />
+<svelte:window on:keydown|capture={onWindowKey} on:pointermove={onMove} on:pointerup={onUp} on:pointercancel={onPointerCancel} on:blur={() => { if (drag) void onCancel(); }} />
 
 <div class="order">
   <p class="sr-only" aria-live="polite">{status}</p>
@@ -275,7 +289,7 @@
         <button type="button" class="grip" aria-label={row?.name ?? ''} aria-pressed={s.picked === r.id ? 'true' : 'false'} title={$t('adminPeople.roles.dragHandle')}
           disabled={busy} bind:this={handles[r.id]}
           on:keydown={(e) => onKey(e, r.id)} on:blur={() => onBlur(r.id)}
-          on:pointerdown={(e) => onDown(e, r.id)} on:pointermove={onMove} on:pointerup={onUp} on:pointercancel={onCancel} on:lostpointercapture={onCancel}>
+          on:pointerdown={(e) => onDown(e, r.id)}>
           <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true"><circle cx="2.5" cy="2.5" r="1.5" /><circle cx="7.5" cy="2.5" r="1.5" /><circle cx="2.5" cy="8" r="1.5" /><circle cx="7.5" cy="8" r="1.5" /><circle cx="2.5" cy="13.5" r="1.5" /><circle cx="7.5" cy="13.5" r="1.5" /></svg>
         </button>
         {#if row?.logoHash}
