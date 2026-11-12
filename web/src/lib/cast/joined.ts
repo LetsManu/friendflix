@@ -41,15 +41,23 @@ export function episodeOf(series: string, it: JoinedItem): { title: string; sub:
   return barTitles({ name: it.title, seriesName: series, indexNumber: it.episode, parentIndexNumber: it.season });
 }
 
+/** the first and last episode number of the stream; unless every episode has one, their positions in the stream (1..n) */
+export function episodeSpan(items: JoinedInfo['items']): { a: number; b: number; numbered: boolean } {
+  const numbered = items.length > 0 && items.every((x) => x.episode != null);
+  return numbered ? { a: items[0]!.episode!, b: items.at(-1)!.episode!, numbered } : { a: 1, b: items.length, numbered };
+}
+
 /**
  * The episodes a joined stream carries as one label: "S2:F1\u2013F3" within a season, "S1:F9\u2013S2:F1" across seasons; without season
- * numbers "F1\u2013F3"; without episode numbers the first and last positions in the stream.
+ * numbers "F1\u2013F3". Episode numbers are used only when every episode has one, else the positions 1..n (never a mixed, inverted range).
  */
 export function episodeRange(items: JoinedInfo['items'], tf: TFn): string {
-  const a = items[0], b = items.at(-1);
-  if (!a || !b) return '';
-  const ea = a.episode ?? 1, eb = b.episode ?? items.length;
-  if (a.season == null || b.season == null) return `${tf('player.episodeOnly', { e: ea })}\u2013${tf('player.episodeOnly', { e: eb })}`;
-  if (a.season === b.season) return tf('player.castRemote.episodeRange', { s: a.season, a: ea, b: eb });
-  return `${tf('detail.view.episodeCode', { s: a.season, e: ea })}\u2013${tf('detail.view.episodeCode', { s: b.season, e: eb })}`;
+  const first = items[0], last = items.at(-1);
+  if (!first || !last) return '';
+  const { a, b, numbered } = episodeSpan(items);
+  const seasons = items.every((x) => x.season != null);
+  const same = seasons && first.season === last.season;
+  if (same) return tf('player.castRemote.episodeRange', { s: first.season!, a, b });
+  if (seasons && numbered) return `${tf('detail.view.episodeCode', { s: first.season!, e: a })}\u2013${tf('detail.view.episodeCode', { s: last.season!, e: b })}`;
+  return `${tf('player.episodeOnly', { e: a })}\u2013${tf('player.episodeOnly', { e: b })}`;
 }

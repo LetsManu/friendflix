@@ -10,7 +10,7 @@ import type { TFn } from '#lib/i18n';
 import type { Segment } from '#lib/player/nextup';
 import { nextSecondsLeft } from './bar';
 import type { CastKind, CastSession } from './engine';
-import { episodeOf, episodeRange } from './joined';
+import { episodeOf, episodeSpan } from './joined';
 import { deviceLabel } from './remoteview';
 
 /** ≥ 1100 px: now-playing and up-next side by side; 721–1099: up-next under the now-playing panel; ≤ 720: the phone layout */
@@ -140,9 +140,9 @@ export interface ContinuousView {
 export function continuousView(s: CastSession, tf: TFn): ContinuousView | null {
   const j = s.joined;
   if (!j || !j.items.length) return null;
-  const first = j.items[0]!, last = j.items.at(-1)!;
+  const { a, b } = episodeSpan(j.items);
   return {
-    info: tf('player.castRemote.continuousInfo', { a: first.episode ?? 1, b: last.episode ?? j.items.length }),
+    info: tf('player.castRemote.continuousInfo', { a, b }),
     line: tf('player.castRemote.episodeOf', { n: j.index + 1, m: j.items.length }),
     list: j.items.map((it, i) => ({ label: episodeOf(s.title, it).sub, note: i === j.index ? tf('player.castRemote.now') : tf('player.castRemote.minutes', { n: Math.round(it.duration / 60) }), now: i === j.index })),
     prevDisabled: j.index <= 0,

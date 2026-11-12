@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { secToTicks } from '#lib/api';
-import { episodeOf, joinedAsk, joinedAt, joinedLength } from './joined';
+import { tr } from '#lib/i18n';
+import { episodeRange, episodeOf, joinedAsk, joinedAt, joinedLength } from './joined';
 
 const items = [
   { itemId: 'ep1', title: 'First', season: 1, episode: 1, start: 0, duration: 2832 },
@@ -51,5 +52,20 @@ describe('episodeOf', () => {
   it('the bar\'s two lines of an episode of the stream (series name, then code and name)', () => {
     expect(episodeOf('Bright Valley', items[1]!)).toEqual({ title: 'Bright Valley', sub: 'S1:F2 Second' });
     expect(episodeOf('Bright Valley', { itemId: 'x', title: 'Pilot', start: 0, duration: 1 })).toEqual({ title: 'Bright Valley', sub: 'Pilot' });
+  });
+});
+
+describe('episodeRange', () => {
+  const it3 = (over: Array<Record<string, unknown>>) => items.map((x, i) => ({ ...x, ...over[i] })) as typeof items;
+  it('within a season, and across seasons', () => {
+    expect(episodeRange(items, tr)).toBe('S1:F1\u2013F3');
+    expect(episodeRange(it3([{}, { season: 2, episode: 1 }, { season: 2, episode: 2 }]), tr)).toBe('S1:F1\u2013S2:F2');
+  });
+  it('no season numbers: the episode numbers alone', () => {
+    expect(episodeRange(it3([{ season: undefined }, { season: undefined }, { season: undefined }]), tr)).toBe('F1\u2013F3');
+  });
+  it('no episode numbers: positions, never an inverted range', () => {
+    expect(episodeRange(it3([{ season: 2, episode: undefined }, { season: 2, episode: undefined }, { season: 2, episode: undefined }]), tr)).toBe('S2:F1\u2013F3');
+    expect(episodeRange(it3([{ season: 2, episode: 4 }, {}, { season: 2, episode: undefined }]), tr)).toBe('S2:F1\u2013F3'); // a mix: positions, not S2:F4\u2013F3
   });
 });

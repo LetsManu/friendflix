@@ -7,8 +7,8 @@
  */
 import type { Readable } from 'svelte/store';
 import { img } from '#lib/api';
-import type { CastEngine, CastSession } from './engine';
 import { tr } from '#lib/i18n';
+import type { CastEngine, CastSession } from './engine';
 import { liveCast } from './bar';
 import { episodeRange } from './joined';
 
@@ -83,7 +83,13 @@ export function bindCastMediaSession(
       claimMediaSession(CAST_OWNER);
       set('play', () => { if (cur?.paused) eng.playPause(); });
       set('pause', () => { if (cur && !cur.paused) eng.playPause(); });
-      set('seekto', (d) => { if (typeof d.seekTime === 'number') eng.seek(d.seekTime); });
+      set('seekto', (d) => {
+        if (typeof d.seekTime !== 'number') return;
+        const j = cur?.joined;
+        // a hidden page published the stream's timeline: the seek is a stream position (a skip by the difference), not episode seconds
+        if (j && page !== undefined && !page.visible()) eng.skip(d.seekTime - j.streamPosition);
+        else eng.seek(d.seekTime);
+      });
       set('seekbackward', (d) => eng.skip(-(d.seekOffset || 10)));
       set('seekforward', (d) => eng.skip(d.seekOffset || 10));
     }
@@ -94,10 +100,12 @@ export function bindCastMediaSession(
     const prev = Boolean(j && j.index > 0);
     if (prev !== lastPrev) { lastPrev = prev; set('previoustrack', prev ? () => eng.prev() : null); }
     // the next-episode button only for episodes (the engine's next(): the offered one, else the one after)
-    const key = series && j ? `series|${s.title}|${j.items.length}|${j.items[0]?.itemId}` : `${s.itemId}|${s.title}|${s.subtitle}|${s.isEpisode}`;
+    const lastEp = Boolean(j && j.index >= j.items.length - 1); // the engine has no next boundary after the last episode
+    const next = s.isEpisode && !lastEp;
+    const key = `${series && j ? `series|${s.title}|${j.items.length}|${j.items[0]?.itemId}` : `${s.itemId}|${s.title}|${s.subtitle}|${s.isEpisode}`}|${next}`;
     if (key !== lastKey) {
       lastKey = key;
-      set('nexttrack', s.isEpisode ? () => void eng.next() : null);
+      set('nexttrack', next ? () => void eng.next() : null);
       try {
         ms.metadata = series && j
           ? meta({ title: s.title, artist: episodeRange(j.items, tr), artwork: [{ src: img(s.seriesId ?? s.posterId, 512), sizes: '512x512' }] })

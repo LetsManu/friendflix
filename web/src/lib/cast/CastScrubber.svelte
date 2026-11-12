@@ -89,7 +89,7 @@
     <span class="bubble" class:on={drag !== null} aria-hidden="true" style="transform:translateX({bubbleX}px)">{fmtClock(drag === null ? 0 : drag * dur)}</span>
   </div>
   {#if episodeOnly}
-    <div class="times ep" aria-hidden="true"><span>{$t('player.castRemote.played', { time: tl.elapsed })}</span><span class="mid">{episodeLine}</span><span>{$t('player.castRemote.left', { time: tl.remaining.replace('\u2212', '') })}</span></div>
+    <div class="times ep" aria-hidden="true"><span>{[$t('player.castRemote.played', { time: tl.elapsed }), episodeLine, $t('player.castRemote.left', { time: fmtClock(Math.max(0, dur - (drag === null ? pos : drag * dur))) })].filter(Boolean).join(' \u00b7 ')}</span></div>
   {:else}
     <div class="times" aria-hidden="true"><span>{tl.elapsed}</span><span>{tl.remaining}</span></div>
   {/if}
@@ -115,8 +115,8 @@
   @keyframes cs-buf { from { transform: scaleX(.3) translateX(-100%); } to { transform: scaleX(.3) translateX(333%); } }
   .times { display: flex; justify-content: space-between; font-size: .85rem; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, .78); margin-top: -4px; }
 
-  .times.ep { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; }
-  .times.ep .mid { text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .times.ep { justify-content: center; }
+  .times.ep span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* calm mode and reduced motion: nothing moves */
   :global(html.m-still) .scrubwrap :is(*, *::before, *::after) { transition: none !important; animation: none !important; }

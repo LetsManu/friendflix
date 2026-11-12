@@ -55,6 +55,32 @@ describe('cast media session (lock screen / Control Center drive the TV)', () =>
     expect(ms.pos.at(-1)).toEqual({ duration: 1800, position: 1250, playbackRate: 1 });
   });
 
+  it('joined, hidden: seekto lands on the stream timeline the position state shows', () => {
+    const { ms, handlers, eng } = fake();
+    const s = writable<CastSession | null>(null);
+    const pg = page(false);
+    bindCastMediaSession(s, eng, ms, (m) => m, pg.p);
+    s.set(jview(1)); // stream position 650
+    handlers.get('seekto')!({ seekTime: 100 });
+    expect(eng.seek).not.toHaveBeenCalled();
+    expect(eng.skip).toHaveBeenCalledWith(100 - 650); // stream second 100, whichever episode that is
+    pg.set(true); // visible: the episode's own seconds
+    handlers.get('seekto')!({ seekTime: 100 });
+    expect(eng.seek).toHaveBeenCalledWith(100);
+  });
+
+  it('nexttrack is not armed on the last joined episode', () => {
+    const { ms, handlers, eng } = fake();
+    const s = writable<CastSession | null>(null);
+    bindCastMediaSession(s, eng, ms, (m) => m, page(true).p);
+    s.set(jview(1));
+    expect(handlers.get('nexttrack')).toBeTypeOf('function');
+    s.set(jview(2));
+    expect(handlers.get('nexttrack')).toBeNull();
+    s.set(jview(1, { joined: { items: JI, index: 1, streamPosition: 700, streamDuration: 1800 } }));
+    expect(handlers.get('nexttrack')).toBeTypeOf('function');
+  });
+
   it('joined across seasons: two episode codes in the artist line', () => {
     const { ms, eng } = fake();
     const items = [{ ...JI[0]!, season: 1, episode: 9 }, { ...JI[1]!, season: 2, episode: 1 }];
