@@ -63,4 +63,21 @@ test.describe('admin user detail (phone)', () => {
     await expect(page.getByRole('region', { name: 'Ungespeicherte Änderungen' })).toBeVisible();
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
+
+  test('Sicht prüfen: chips and results fit 390px, targets are 44px', async ({ page }) => {
+    await page.goto(`/admin/users/${auid(4)}?tab=check`);
+    const panel = page.getByRole('tabpanel', { name: 'Sicht prüfen' });
+    const chips = panel.getByRole('group', { name: 'Profil wählen' }).getByRole('button');
+    await expect(chips).toHaveCount(2);
+    for (const c of await chips.all()) expect((await c.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await panel.getByRole('searchbox', { name: 'Film oder Serie suchen' }).fill('Dunmoor');
+    const rows = panel.getByRole('region', { name: 'Titel prüfen' }).getByRole('listitem');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.filter({ hasNotText: 'Origins' })).toContainText('ausgeblendet · Freigabe FSK-16 über FSK 12');
+    for (const r of await rows.all()) {
+      const b = (await r.boundingBox())!;
+      expect(b.x + b.width).toBeLessThanOrEqual(391);
+    }
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+  });
 });

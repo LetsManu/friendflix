@@ -595,3 +595,73 @@ test.describe('admin user deletion', () => {
     expect(anna).toMatchObject({ disabled: false, deletion_at: null });
   });
 });
+
+test.describe('admin user detail: Sicht prüfen (desktop)', () => {
+  test.beforeEach(({ api }) => { api.asAdmin = true; });
+
+  const CLARA = auid(4);
+  const checkPanel = (page: import('@playwright/test').Page) => page.getByRole('tabpanel', { name: 'Sicht prüfen' });
+  const checkPosts = (api: { log: string[] }) => api.log.filter((l) => l.startsWith('POST ') && l.includes('/check '));
+
+  test('kids profile view: the chips switch the profile, the summary and the library counts follow', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=check`);
+    await expect(page.getByRole('tab', { name: 'Sicht prüfen' })).toHaveAttribute('aria-selected', 'true');
+    const panel = checkPanel(page);
+    const chips = panel.getByRole('group', { name: 'Profil wählen' }).getByRole('button');
+    // the owner first, the kids profile marked
+    await expect(chips).toHaveText([/^Anna/, /^Kinder.*Kinderprofil/]);
+    await expect(chips.first()).toHaveAttribute('aria-pressed', 'true');
+    const summary = panel.getByRole('region', { name: 'Kurzfassung' });
+    await expect(summary).toContainText('Anna sieht alle Bibliotheken.');
+    await expect(summary).toContainText('Keine Altersgrenze.');
+    await expect(summary).toContainText('Darf nicht herunterladen.');
+    const libs = panel.getByRole('region', { name: 'Bibliotheken' });
+    await expect(libs.getByRole('listitem').filter({ hasText: 'Filme' })).toHaveText(/Filme · 1\.204 von 1\.204/);
+    await chips.nth(1).click();
+    await expect(chips.nth(1)).toHaveAttribute('aria-pressed', 'true');
+    await expect(summary).toContainText('Kinderprofil: ab 6, Titel ohne Freigabe sind ausgeblendet, keine Kommentare, keine Partys.');
+    await expect(summary).not.toContainText('Keine Altersgrenze.');
+    await expect(libs.getByRole('listitem').filter({ hasText: 'Filme' })).toHaveText(/Filme · 212 von 1\.204/);
+    await expect(libs.getByRole('listitem').filter({ hasText: 'Serien' })).toHaveText(/Serien · 61 von 340/);
+    await expect(page.locator('main')).not.toContainText('undefined');
+    expect(checkPosts(api)).toEqual([]);
+  });
+
+  test('title check: a hidden title names its reason, a visible one says so', async ({ page, api }) => {
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const panel = checkPanel(page);
+    // a guest: age limit 12
+    await expect(panel.getByRole('region', { name: 'Kurzfassung' })).toContainText('Titel bis FSK 12.');
+    await panel.getByRole('searchbox', { name: 'Film oder Serie suchen' }).fill('Dunmoor');
+    const rows = panel.getByRole('region', { name: 'Titel prüfen' }).getByRole('listitem');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.filter({ hasText: 'Dunmoor Origins' })).toContainText('sichtbar');
+    const hidden = rows.filter({ hasNotText: 'Origins' });
+    await expect(hidden).toContainText('ausgeblendet · Freigabe FSK-16 über FSK 12');
+    await expect(hidden).toContainText('2021');
+    expect(checkPosts(api)).toHaveLength(1);
+    expect(JSON.parse(checkPosts(api)[0]!.slice(checkPosts(api)[0]!.indexOf('{'), checkPosts(api)[0]!.lastIndexOf(' -> ')))).toEqual({ profileId: `${CLARA.slice(0, -4)}p001`, query: 'Dunmoor' });
+    // the kids profile: an unrated title is hidden with its own reason
+    await panel.getByRole('group', { name: 'Profil wählen' }).getByRole('button', { name: /^Kinder/ }).click();
+    await expect(rows.filter({ hasText: 'Dunmoor Origins' })).toContainText('ausgeblendet · ohne Freigabe (Kinderprofil)');
+    expect(api.admin.audit.some((e) => e.action === 'user.check_viewed' && e.target === CLARA)).toBe(true);
+  });
+
+  test('title check: nothing is sent under 2 characters', async ({ page, api }) => {
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const panel = checkPanel(page);
+    const box = panel.getByRole('searchbox', { name: 'Film oder Serie suchen' });
+    await expect(panel.getByRole('region', { name: 'Kurzfassung' })).toContainText('Clara sieht');
+    await box.fill('D');
+    await expect(panel.getByText('Mindestens 2 Zeichen eingeben.')).toBeVisible();
+    // a negative: give the 300 ms debounce more than its time before looking
+    await page.waitForTimeout(700);
+    expect(checkPosts(api)).toEqual([]);
+    await box.fill('Salt');
+    await expect(panel.getByRole('region', { name: 'Titel prüfen' }).getByRole('listitem')).toHaveCount(1);
+    await box.fill('S');
+    await expect(panel.getByText('Mindestens 2 Zeichen eingeben.')).toBeVisible();
+    await expect(panel.getByRole('region', { name: 'Titel prüfen' }).getByRole('listitem')).toHaveCount(0);
+    expect(checkPosts(api)).toHaveLength(1);
+  });
+});
