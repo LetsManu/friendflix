@@ -133,7 +133,7 @@
     {:else if tab === 'channels'}<ChannelsTab />
     {:else if tab === 'groups'}<GroupsTab />
     {:else if tab === 'guide'}<GuideTab />
-    {:else if tab === 'status'}<StatusTab {s} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />
+    {:else if tab === 'status'}<StatusTab {s} stopping={ph === 'stopping'} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />
     {:else}<AdminCard><p class="soon">{$t('adminLive.tabs.soon')}</p></AdminCard>{/if}
   </div>
 {:else}
