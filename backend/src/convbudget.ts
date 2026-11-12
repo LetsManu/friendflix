@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
 import type { Ctx } from './ctx.js';
-import { CONV_EXEMPT_PREFIX, within } from './convexempt.js';
+import { CONV_EXEMPT_PREFIX, within, type SessionRead } from './convexempt.js';
 import { HEVC_SESSIONS_TIMEOUT_MS, fingerprint } from './hevcenc.js';
 import { listLive } from './live.js';
 import type { EncoderSettings, ServerSession } from './media/types.js';
@@ -34,7 +34,7 @@ export interface BenchRecord { speed: number; hwAccel: string; fingerprint: stri
 
 export const CONV_DEFAULT_SLOTS = 2;
 export const CONV_GRANT_TTL_S = 30;
-export { CONV_EXEMPT_TTL_S, markConvExempt } from './convexempt.js';
+export { CONV_EXEMPT_TTL_S, markConvExempt, sharedSessionRead, type SessionRead } from './convexempt.js';
 
 const LOCK_KEY = 'conv:gate';
 const LOCK_TTL_S = 3;
@@ -42,6 +42,8 @@ const LOCK_TTL_S = 3;
 const LOCK_STEP_MS = 100;
 const LOCK_WAIT_MS = 1000;
 const GRANT = 'conv:grant:';
+/** the record /api/playback/info and cast write per play session (`conv`: that answer really converts, ruling 6) */
+const PBINFO = 'pbinfo:';
 const BENCH_KEY = 'conv:bench';
 const BENCH_LIVETV_KEY = 'conv:bench:livetv';
 const SETTINGS_MEMO_MS = 60_000;
@@ -132,16 +134,20 @@ export async function conversionLimit(ctx: Ctx, o: { settingsMs?: number } = {})
 
 /** the server converts this session's picture (or does not say and transcodes: counted, fail-safe) */
 const converts = (s: ServerSession) => s.videoDirect === false || (s.videoDirect === undefined && s.playMethod === 'Transcode');
+/** the server says what it does with this play session (its own entry counts, or not) */
+const decided = (s: ServerSession | undefined) => Boolean(s && (s.videoDirect !== undefined || s.playMethod === 'Transcode'));
 
 /**
  * What converts now, one entry per play session: the media server's converting sessions (any app; preview clips, the HEVC probe and
  * the benchmark are exempt; a preparing download's session counts as `download`), plus grants whose session the server does not list
- * yet. With exceptUser + exceptDevice that device's own streams and grants are left out (its new stream replaces them, as in hevcGate).
- * null: the session list did not answer within 800 ms (unknown). A server without a session list counts grants only.
+ * yet, plus portal streams the server does not list whose pbinfo record says they convert (two devices of one profile share one
+ * server session, so the server's list alone can undercount, as in hevcGate). With exceptUser + exceptDevice that device's own streams
+ * and grants are left out (its new stream replaces them, as in hevcGate). null: the session list did not answer within 800 ms
+ * (unknown). A server without a session list counts grants and portal records only. `sessions`: a request's shared read.
  */
-export async function countConversions(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string } = {}): Promise<ConvEntry[] | null> {
+export async function countConversions(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; sessions?: SessionRead | null } = {}): Promise<ConvEntry[] | null> {
   const list = ctx.jf.admin.transcodeSessions?.bind(ctx.jf.admin);
-  const sessions = list ? await within(list, HEVC_SESSIONS_TIMEOUT_MS) : [];
+  const sessions = list ? await (o.sessions ?? (() => within(list, HEVC_SESSIONS_TIMEOUT_MS)))() : [];
   if (!sessions) return null;
   const live = await listLive(ctx).catch(() => []);
   const liveBy = new Map(live.map((l) => [l.playSessionId, l] as const));
@@ -178,14 +184,26 @@ export async function countConversions(ctx: Ctx, o: { exceptUser?: string; excep
     const g = parse<Grant>(grants[i]);
     if (!g || typeof g.kind !== 'string') return;
     if (mine && g.user === o.exceptUser && g.device === o.exceptDevice) return; // this device's earlier grant is replaced
-    const listed = g.ps ? bySession.get(g.ps) : undefined;
-    if (listed && (listed.videoDirect !== undefined || listed.playMethod === 'Transcode')) return; // the server says what it does: its own entry counts (or not)
+    if (g.ps && decided(bySession.get(g.ps))) return; // the server says what it does: its own entry counts (or not)
     const key = g.ps ?? `grant:${k.slice(GRANT.length)}`;
     if (out.has(key) || exempt.has(key)) return;
     out.set(key, {
       kind: g.kind, key, ...(g.hevc ? { hevc: true as const } : {}), label: g.label ?? null, since: null, device: g.device ?? null, userId: g.user ?? null, pending: true,
     });
   });
+
+  // portal streams the server does not list (yet, or behind another device's play session in the one session of their profile)
+  const unlisted = live.filter((l) => !out.has(l.playSessionId) && !exempt.has(l.playSessionId) && !decided(bySession.get(l.playSessionId)));
+  if (unlisted.length) {
+    const recs = await ctx.kv.mget(unlisted.map((l) => `${PBINFO}${l.userId}:${l.playSessionId}`)).catch(() => [] as Array<string | null>);
+    unlisted.forEach((l, i) => {
+      const r = parse<{ conv?: unknown; video?: unknown }>(recs[i]);
+      if (r?.conv !== true || out.has(l.playSessionId)) return; // `video` alone also describes direct-play answers: only `conv` counts
+      out.set(l.playSessionId, {
+        kind: 'film', key: l.playSessionId, ...(r.video === 'hevc' ? { hevc: true as const } : {}), label: l.seriesName || l.title || null, since: null, device: l.deviceId ?? null, userId: l.userId,
+      });
+    });
+  }
 
   if (mine) for (const l of live) if (l.userId === o.exceptUser && l.deviceId === o.exceptDevice) out.delete(l.playSessionId);
   return [...out.values()];
@@ -197,7 +215,7 @@ export async function countConversions(ctx: Ctx, o: { exceptUser?: string; excep
  * server read on this path is bounded by 800 ms (settings and sessions run in parallel), so the answer comes within about 2 s at worst.
  * `unknown`: the lock or the session list could not be had in time; the caller treats it like `full` (a download waits for its next tick).
  */
-export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: string; deviceId?: string; hint: string; hevc?: boolean; label?: string }): Promise<{ ok: true } | { ok: false; why: 'full' | 'unknown' }> {
+export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: string; deviceId?: string; hint: string; hevc?: boolean; label?: string; sessions?: SessionRead | null }): Promise<{ ok: true } | { ok: false; why: 'full' | 'unknown' }> {
   // the limit does not depend on the lock: its settings read (800 ms at most here) starts now and overlaps the wait and the count
   const limP = conversionLimit(ctx, { settingsMs: HEVC_SESSIONS_TIMEOUT_MS });
   limP.catch(() => undefined); // awaited below; never an unhandled rejection when the lock is not had
@@ -210,7 +228,7 @@ export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: str
   }
   if (!locked) return { ok: false, why: 'unknown' };
   try {
-    const [lim, running] = await Promise.all([limP, countConversions(ctx, o.deviceId ? { exceptUser: o.userId, exceptDevice: o.deviceId } : {})]);
+    const [lim, running] = await Promise.all([limP, countConversions(ctx, { ...(o.deviceId ? { exceptUser: o.userId, exceptDevice: o.deviceId } : {}), ...(o.sessions ? { sessions: o.sessions } : {}) })]);
     if (!running) return { ok: false, why: 'unknown' };
     if (!admits(o.kind, running.length, lim.limit, lim.priority)) return { ok: false, why: 'full' };
     const g: Grant = { kind: o.kind, user: o.userId, ...(o.deviceId ? { device: o.deviceId } : {}), ...(o.hevc ? { hevc: true as const } : {}), ...(o.label ? { label: o.label } : {}) };
@@ -221,13 +239,23 @@ export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: str
   }
 }
 
-/** After the media server answered: the grant written for `hint` now belongs to the real play session (null: no conversion, dropped). */
-export async function bindConvGrant(ctx: Ctx, hint: string, playSessionId: string | null): Promise<void> {
+/**
+ * After the media server answered: the grant written for `hint` now belongs to the real play session (null: no conversion, dropped).
+ * `hevc` / `label`: what the answer turned out to be (an HEVC plan refused by the HEVC gate converts H.264; the title is known late).
+ */
+export async function bindConvGrant(ctx: Ctx, hint: string, playSessionId: string | null, o: { hevc?: boolean; label?: string } = {}): Promise<void> {
   const raw = await ctx.kv.get(`${GRANT}${hint}`).catch(() => null);
   if (raw === null) return;
   const g = parse<Grant>(raw);
-  // the new key first: a count in between sees the grant twice (safe), never not at all
-  if (playSessionId && g) await ctx.kv.set(`${GRANT}${playSessionId}`, JSON.stringify({ ...g, ps: playSessionId } satisfies Grant), CONV_GRANT_TTL_S).catch(() => undefined);
+  if (playSessionId && g) {
+    const moved: Grant = { ...g, ...(o.label ? { label: o.label } : {}), ps: playSessionId };
+    if (o.hevc === true) moved.hevc = true;
+    else if (o.hevc === false) delete moved.hevc;
+    // the new key first: a count between the two writes sees this grant under both keys (one slot too many for a moment, safe). When the
+    // new key cannot be written the hint key stays, so the grant still counts until its TTL ends (never dropped by a failed write).
+    const written = await ctx.kv.set(`${GRANT}${playSessionId}`, JSON.stringify(moved), CONV_GRANT_TTL_S).then(() => true, () => false);
+    if (!written) return;
+  }
   if (hint !== playSessionId) await ctx.kv.del(`${GRANT}${hint}`).catch(() => undefined);
 }
 export const dropConvGrant = (ctx: Ctx, hint: string) => bindConvGrant(ctx, hint, null);

@@ -100,6 +100,8 @@ export function defaultJellyfin(): Record<string, Handler> {
     'POST /Users/AuthenticateByName': (_u, _i, b) => ({ json: { AccessToken: `tok-${b.Username}`, User: { Id: 'x', Name: b.Username } } }),
     'GET /Library/MediaFolders': () => ({ json: { Items: [{ Id: 'f1', Name: 'Filme' }, { Id: 'f2', Name: 'Serien' }] } }),
     'GET /System/Ping': () => ({ json: 'Jellyfin Server' }),
+    // an idle server's session list (a real Jellyfin always has one): the conversion budget treats an unreadable list as busy (spec §5.5)
+    'GET /Sessions': () => ({ json: [] }),
   };
 }
 

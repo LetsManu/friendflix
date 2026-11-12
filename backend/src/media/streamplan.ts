@@ -28,7 +28,7 @@ export type PlanWhy = 'hevc_device' | 'hevc_upload' | 'h264_device' | 'h264_home
   | 'surround_device' | 'stereo_device' | 'stereo_bitrate' | 'stereo_off' | 'stereo_source';
 export type HevcGate = { ok: true } | { ok: false; why: 'h264_off' | 'h264_unproven' | 'h264_unhealthy' | 'h264_busy' };
 export interface SourceFacts { videoCodec: string; videoBitrate?: number; height: number; /** absent = not checked; 0 = unknown (the server refuses a copy then) */ width?: number; range: string; profile?: string; /** the source's codec level as Jellyfin states it (HEVC: 30 x level, so 4.1 = 123); absent = unknown */ level?: number; audio?: { codec: string; channels: number; bitrate?: number } }
-export interface PlanInput { caps: ClientCaps | null; cast: boolean; remote: boolean; maxBitrate: number; boxHeight: number; src: SourceFacts; surroundOn: boolean; hevcStreams: number }
+export interface PlanInput { caps: ClientCaps | null; cast: boolean; remote: boolean; maxBitrate: number; boxHeight: number; src: SourceFacts; surroundOn: boolean; hevcStreams: number; /** the conversion budget is full (PlaybackOptions.noConvert): never an HEVC encode */ noConvert?: boolean }
 export interface StreamDelivery { video: VideoOut; videoCodec: 'h264' | 'hevc'; audio: AudioOut; audioCodec: string; channels: number; why: PlanWhy[] }
 export interface StreamPlan {
   segment: 'ts' | 'mp4'; videoCodecs: Array<'h264' | 'hevc'>; codecParams: Record<string, string>;
@@ -127,7 +127,7 @@ export function planStream(i: PlanInput): StreamPlan {
   // a cast plan is capped at the HEVC level the receiver was probed for (hevc-level below): a source above it is not copied (unknown level: no prediction)
   const levelOk = !i.cast || srcCodec !== 'hevc' || i.src.level === undefined || i.src.level <= HEVC_CAST_LEVEL;
   const copyVideo = codecOk && profileOk && rangeOk && heightOk && fits && levelOk;
-  const wantsHevcEncode = hevcOk && i.remote && i.hevcStreams > 0 && !copyVideo && exceeds && i.src.range === 'SDR';
+  const wantsHevcEncode = !i.noConvert && hevcOk && i.remote && i.hevcStreams > 0 && !copyVideo && exceeds && i.src.range === 'SDR';
 
   const videoCodecs: StreamPlan['videoCodecs'] = hevcOk && (srcCodec === 'hevc' || wantsHevcEncode) ? ['h264', 'hevc'] : ['h264'];
   const codecParams: Record<string, string> = {};
