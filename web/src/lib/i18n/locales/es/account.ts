@@ -335,7 +335,7 @@ const es: Translation<typeof de> = {
     retry: 'Reintentar',
     reauthFailed: 'No se pudo confirmar el inicio de sesión. Inténtalo de nuevo.',
     reauthFailedHint: 'Si vuelve a fallar, inténtalo en medio minuto; si sigue ocurriendo, los relojes del servidor y de Authentik pueden no coincidir (un administrador puede comprobarlo).',
-    privacy: 'Los admins pueden ver qué títulos has visto recientemente. Cada consulta queda registrada en el registro de auditoría.',
+    privacy: 'Los admins pueden ver qué títulos has visto recientemente. Cada consulta queda registrada en el registro de auditoría. Los admins pueden comprobar qué títulos puede ver un perfil.',
     data: {
       title: 'Tus datos',
       download: 'Descargar mis datos',

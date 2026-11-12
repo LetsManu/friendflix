@@ -7,6 +7,7 @@ import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
 import type { Ctx } from '../ctx.js';
 import { revokeSessions } from '../devices.js';
 import { loginUi } from '../akflow.js';
+import { akActions } from '../authentik.js';
 import { dropPartyDenied } from '../partySockets.js';
 import { adminOverview, revokeLicense } from '../downloads.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
@@ -103,6 +104,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
       playbackCheck: check ? { finishedAt: check.finished_at.toISOString(), total: check.results.length, failed: check.results.filter((x) => !x.ok).length } : null,
       services: { jellyfin: Boolean(jellyfin), seerr: seerr !== null },
       live: { streams: live, partyRooms: parties.rooms.size },
+      // the people list's "without 2FA" filter needs the provider's API (adminUsers.ts ignores it otherwise)
+      mfaFilter: akActions(ctx).recovery,
       // R1: size and age of the recommendation item index (counts and a timestamp only)
       recoIndex: await recoIndexState(ctx).then((x) => ({ supported: x.supported, running: x.running, items: x.items, updatedAt: x.updatedAt }), () => null),
     };

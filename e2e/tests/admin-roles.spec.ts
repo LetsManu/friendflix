@@ -3,13 +3,15 @@
 /** Rollen & Rechte on the desktop (spec §6.1): the role matrix, staged edits, the save bar and the review sheet (mocked API). */
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
-import { noHorizontalOverflow } from '../helpers.js';
-import { envOnlyRole, type MatrixMockRole } from '../mocks/admin.js';
+import { armTransition, expectAlongCurve, noHorizontalOverflow, seekTransition } from '../helpers.js';
+import { envOnlyRole, roleDeleteSample, type MatrixMockRole } from '../mocks/admin.js';
 
 const grid = (page: Page) => page.getByRole('grid', { name: 'Rechte der Rollen' });
 const cell = (page: Page, name: string | RegExp) => grid(page).getByRole('gridcell', { name, exact: typeof name === 'string' ? true : undefined });
 const bar = (page: Page) => page.getByRole('region', { name: 'Ungespeicherte Änderungen' });
 const toasts = (page: Page) => page.getByRole('region', { name: 'Hinweise' });
+/** the points (fractions of the duration) a seeked transition is read at */
+const AT = [0, 0.125, 0.25, 0.5, 0.75, 1];
 
 /** guest: Altersfreigabe ab 12 → ab 16 through the cell's popover */
 async function stageGuestRating(page: Page): Promise<void> {
@@ -232,6 +234,36 @@ test.describe('Rollen & Rechte: role matrix (desktop)', () => {
     await bar(page).getByRole('button', { name: 'Verwerfen' }).click();
     await nav.getByRole('link', { name: 'Nutzer' }).click();
     await expect(page).toHaveURL(/\/admin\/users$/);
+  });
+
+  test('leaving by Back with staged changes: Verwerfen goes back once, the next Back goes back again', async ({ page }) => {
+    await page.goto('/admin');
+    const nav = page.getByRole('navigation', { name: 'Admin-Bereiche' });
+    await nav.getByRole('link', { name: 'Nutzer' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await nav.getByRole('link', { name: 'Rollen & Rechte' }).click();
+    await expect(page).toHaveURL(/\/admin\/roles$/);
+    await stageGuestRating(page);
+    const n = await page.evaluate(() => history.length);
+    await page.evaluate(() => history.back());
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect.poll(() => page.evaluate(() => history.length)).toBe(n);
+    await page.evaluate(() => history.back());
+    await expect(page).toHaveURL(/\/admin$/);
+  });
+
+  test('leaving by a link with staged changes: Verwerfen pushes one entry, as the link would', async ({ page }) => {
+    await page.goto('/admin/roles');
+    await stageGuestRating(page);
+    const n = await page.evaluate(() => history.length);
+    await page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: 'Nutzer' }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect.poll(() => page.evaluate(() => history.length)).toBe(n + 1);
+    await page.evaluate(() => history.back());
+    await expect(page).toHaveURL(/\/admin\/roles$/);
+    await expect(bar(page)).toHaveCount(0);
   });
 });
 
@@ -641,21 +673,6 @@ test.describe('Rollen & Rechte: role menu fixes', () => {
 test.describe('Rollen & Rechte: toasts and the save bar', () => {
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
-  /** the bottom edge of the toast area, every frame while a toast shows (until n samples) */
-  async function sampleToasts(page: Page, n: number): Promise<void> {
-    await page.evaluate((count) => {
-      const w = window as unknown as { __toastY: Array<[number, number]> };
-      w.__toastY = [];
-      const loop = () => {
-        const host = document.querySelector('.toasts');
-        if (host?.querySelector('li')) w.__toastY.push([performance.now(), host.getBoundingClientRect().bottom]);
-        if (w.__toastY.length < count) requestAnimationFrame(loop);
-      };
-      requestAnimationFrame(loop);
-    }, n);
-  }
-  const samples = (page: Page) => page.evaluate(() => (window as unknown as { __toastY: Array<[number, number]> }).__toastY);
-
   test.describe('with motion', () => {
     test.use({ reducedMotion: 'no-preference' });
 
@@ -663,23 +680,37 @@ test.describe('Rollen & Rechte: toasts and the save bar', () => {
       await page.goto('/admin/roles');
       await stageGuestRating(page);
       await bar(page).getByRole('button', { name: 'Änderungen prüfen' }).click();
-      await sampleToasts(page, 60);
+      const vh = await page.evaluate(() => window.innerHeight);
+      // the review sheet's room goes when it closes, the bar's room (96 px) once the bar has gone: catch that one
+      await armTransition(page, '.toasts', 'bottom', '--savebar-h');
       await page.getByRole('dialog', { name: 'Änderungen prüfen' }).getByRole('button', { name: 'Speichern' }).click();
       await expect(toasts(page).getByText('Änderungen gespeichert.')).toBeVisible();
-      await expect.poll(async () => (await samples(page)).length, { timeout: 5000 }).toBe(60);
-      const ys = await samples(page);
-      const vh = await page.evaluate(() => window.innerHeight);
-      // starts lifted above the bar's room (96 px), ends at its own place (36 px up), monotonic in between
-      expect(ys[0]![1]).toBeCloseTo(vh - 36 - 96, 0);
-      expect(ys.at(-1)![1]).toBeCloseTo(vh - 36, 0);
-      const between = ys.filter(([, y]) => y > ys[0]![1] + 1 && y < ys.at(-1)![1] - 1);
-      expect(between.length).toBeGreaterThanOrEqual(2);
-      for (let i = 1; i < ys.length; i++) {
-        const [t0, y0] = ys[i - 1]!, [t1, y1] = ys[i]!;
-        expect(y1).toBeGreaterThanOrEqual(y0 - 0.5);
-        expect((y1 - y0) / Math.max(1, (t1 - t0) / 16)).toBeLessThan(40);
-      }
+      // from above the bar down to its own place: a 240 ms transform transition on the glass curve, seeked (not sampled per frame)
+      const { duration, ys } = await seekTransition(page, '.toasts', AT);
+      expect(duration).toBe(240);
+      expectAlongCurve(ys, AT, vh - 36 - 96, vh - 36);
+      await expect.poll(() => toasts(page).evaluate((el) => el.getBoundingClientRect().bottom)).toBeCloseTo(vh - 36, 0);
     });
+  });
+
+  test('a long toast beside the role sheet stays on screen and left of the sheet (800 px)', async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 900 });
+    await page.goto('/admin/roles');
+    await (await menu(page, 'Familie')).getByRole('button', { name: 'Duplizieren' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Rolle „Familie“ duplizieren' });
+    await dlg.getByRole('textbox', { name: 'Name' }).fill('Oma & Opa aus dem Nachbardorf');
+    await dlg.getByRole('button', { name: 'Anlegen' }).click();
+    const toast = toasts(page).getByRole('listitem').filter({ hasText: 'Rolle „Oma & Opa aus dem Nachbardorf“ angelegt.' });
+    await expect(toast).toBeVisible();
+    await page.getByRole('button', { name: 'Rolle „Gast“ bearbeiten' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Rolle „Gast“' });
+    await expect(sheet).toBeVisible();
+    await expect(toast).toBeVisible();
+    // the sheet is narrower than the window: the toast is centred in the rest and never wider than it
+    await expect.poll(async () => {
+      const [a, b] = await Promise.all([toast.boundingBox(), sheet.boundingBox()]);
+      return a && b ? { left: a.x >= 0, beside: Math.round(a.x + a.width) <= Math.round(b.x), sheetLeft: Math.round(b.x) } : null;
+    }).toEqual({ left: true, beside: true, sheetLeft: 360 });
   });
 
   test('without a bar the toast stands still (cards below 900 px)', async ({ page }) => {
@@ -713,20 +744,12 @@ test.describe('Rollen & Rechte: final-review fixes', () => {
       await page.goto('/admin/roles');
       await stageGuestRating(page);
       await expect(bar(page)).toBeVisible();
-      await page.waitForTimeout(400); // the bar's own rise is over
-      const ys = await page.evaluate(() => new Promise<number[]>((done) => {
-        const el = document.querySelector('.sb-wrap')!, out: number[] = [];
-        out.push(el.getBoundingClientRect().bottom);
-        document.documentElement.style.setProperty('--castbar-h', '92px');
-        out.push(el.getBoundingClientRect().bottom); // the same frame: no jump
-        const loop = () => { out.push(el.getBoundingClientRect().bottom); if (out.length < 40) requestAnimationFrame(loop); else done(out); };
-        requestAnimationFrame(loop);
-      }));
-      expect(Math.abs(ys[1]! - ys[0]!)).toBeLessThan(2);
-      expect(ys[0]! - ys.at(-1)!).toBeCloseTo(92, 0);
-      const between = ys.filter((y) => y < ys[0]! - 1 && y > ys.at(-1)! + 1);
-      expect(between.length).toBeGreaterThanOrEqual(2);
-      for (let i = 1; i < ys.length; i++) expect(ys[i - 1]! - ys[i]!).toBeLessThan(40);
+      const from = await armTransition(page, '.sb-wrap'); // after the bar's own rise
+      await page.evaluate(() => document.documentElement.style.setProperty('--castbar-h', '92px'));
+      // the same moment: no jump; then 240 ms on the glass curve up to 92 px higher, seeked (not sampled per frame)
+      const { duration, ys } = await seekTransition(page, '.sb-wrap', AT);
+      expect(duration).toBe(240);
+      expectAlongCurve(ys, AT, from, from - 92);
     });
   });
 
@@ -769,6 +792,22 @@ test.describe('Rollen & Rechte: final-review fixes', () => {
     expect(await page.evaluate(() => (window as unknown as { __orders: string[] }).__orders)).toEqual([
       'Admin,Familie,Freund,Gast,Crew', 'Admin,Freund,Familie,Gast,Crew', 'Admin,Freund,Gast,Familie,Crew',
     ]);
+  });
+
+  test('a role\'s history links to the audit page filtered by target; a deleted role is still named', async ({ page, api }) => {
+    api.admin.audit.unshift(roleDeleteSample('kino', 'Kino'));
+    await page.goto('/admin/roles');
+    await (await menu(page, 'Familie')).getByRole('button', { name: 'Verlauf' }).click();
+    await page.getByRole('dialog', { name: 'Verlauf · Familie' }).getByRole('link', { name: 'Im Audit-Log öffnen' }).click();
+    await expect(page).toHaveURL(/\/admin\/audit\?target=family/);
+    await expect(page.getByRole('group', { name: 'Betrifft: Familie' })).toBeVisible();
+    const table = page.getByRole('table', { name: 'Audit-Log' });
+    await expect(table.getByText('Tester hat „Wiedergabe“ der Rolle Familie geändert')).toBeVisible();
+    await expect(table.getByText('Kino')).toHaveCount(0);
+    // the deleted role's own entry: the history sheet cannot be opened any more, the log names it through its label
+    await page.goto('/admin/audit?target=kino');
+    await expect(page.getByRole('group', { name: 'Betrifft: Kino' })).toBeVisible();
+    await expect(page.getByRole('table', { name: 'Audit-Log' }).getByText('Ben Muster hat die Rolle Kino gelöscht')).toBeVisible();
   });
 
   test('a re-created role shows only the history since its latest creation', async ({ page, api }) => {

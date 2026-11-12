@@ -25,6 +25,17 @@ beforeAll(async () => {
 });
 afterAll(() => env.close());
 
+describe('GET /api/admin/summary: mfaFilter', () => {
+  it('follows the sign-in provider setup (the 2FA filter of the people list needs its API)', async () => {
+    const get = async () => (await env.app.inject({ url: '/api/admin/summary', cookies: admin.cookies })).json().mfaFilter;
+    expect(await get()).toBe(false);
+    const before = env.ctx.cfg;
+    env.ctx.cfg = { ...before, AUTHENTIK_URL: 'https://auth.example.com', AUTHENTIK_API_TOKEN: 'tok' };
+    try { expect(await get()).toBe(true); } finally { env.ctx.cfg = before; }
+    expect(await get()).toBe(false);
+  });
+});
+
 describe('GET /api/admin/summary', () => {
   it('returns counts for the shell badges and the overview', async () => {
     const r = await env.app.inject({ url: '/api/admin/summary', cookies: admin.cookies });
