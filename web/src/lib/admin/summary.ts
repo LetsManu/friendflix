@@ -12,6 +12,8 @@ export interface AdminSummary {
   playbackCheck: { finishedAt: string; total: number; failed: number } | null;
   services: { jellyfin: boolean; seerr: boolean };
   live: { streams: number; partyRooms: number };
+  /** Live TV: detected (the container answers), the offer hidden by the admin, sources whose last refresh failed */
+  livetv: { installed: boolean; offerHidden: boolean; failedSources: number };
   /** recommendation item index (R1); null when the lookup failed */
   recoIndex?: { supported: boolean; running: boolean; items: number; updatedAt: string | null } | null;
 }

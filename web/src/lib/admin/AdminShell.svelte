@@ -10,7 +10,8 @@
   import { pageStore } from '#lib/page';
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
-  import { GROUPS, OVERVIEW, activeItem, badgeCount, badgeTone, groupOf } from './nav';
+  import { GROUPS, OVERVIEW, activeItem, badgeCount, badgeTone, chipShown, groupOf } from './nav';
+  import { navGuess, navShown, rememberNav } from './livetv/state';
   import { refreshSummary, summary } from './summary';
   import { features, linkShown, serverCaps } from '#lib/capabilities';
   import { perms } from '#lib/perms';
@@ -22,7 +23,12 @@
   $: overview = item === OVERVIEW;
   $: title = item && !overview ? $t(item.label) : $t('admin.title');
   // entries of a service this instance has not set up (e.g. requests) are left out
-  $: groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => linkShown($serverCaps, i.href, $features, $perms)) }));
+  $: groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => linkShown($serverCaps, i.href, $features, $perms) && (!isLt(i.href) || ($summary ? navShown($summary) : guess))) }));
+
+  // the Live-TV row: until the summary is there a placeholder of the same height stands in by the last known answer, so nothing below shifts
+  const guess = navGuess();
+  $: if ($summary) rememberNav(navShown($summary));
+  const isLt = (href: string) => href === '/admin/livetv';
 
   let sideEl: HTMLElement | undefined;
 
@@ -46,12 +52,16 @@
         <ul aria-labelledby="adm-g-{g.id}">
           {#each g.items as it (it.href)}
             {@const n = badgeCount($summary, it.badge)}
+            {#if isLt(it.href) && !$summary}
+              <li class="ph" aria-hidden="true"></li>
+            {:else}
             <li>
               <a class="ni fill-hover" href={it.href} aria-current={item === it ? 'page' : undefined}>
-                <Icon name={it.icon} size={20} /><span class="nl">{$t(it.label)}</span>
+                <Icon name={it.icon} size={20} /><span class="nl">{$t(it.label)}</span>{#if chipShown($summary, it)}<span class="chip">{$t(it.chip!)}</span>{/if}
                 {#if n && it.badge}<span class="cnt {badgeTone(it.badge)}" aria-hidden="true">{n}</span><span class="sr-only">({badgeTone(it.badge) === 'err' ? $t('admin.nav.failing', { n }) : $t('admin.nav.pending', { n })})</span>{/if}
               </a>
             </li>
+            {/if}
           {/each}
         </ul>
       {/each}
@@ -76,9 +86,11 @@
             <ul class="lst frost-flat frost-text">
               {#each g.items as it (it.href)}
                 {@const n = badgeCount($summary, it.badge)}
-                <li><a class="fill-hover" href={it.href}><Icon name={it.icon} size={20} /><span class="nl">{$t(it.label)}</span>
+                {#if isLt(it.href) && !$summary}<li class="ph" aria-hidden="true"></li>{:else}
+                <li><a class="fill-hover" href={it.href}><Icon name={it.icon} size={20} /><span class="nl">{$t(it.label)}</span>{#if chipShown($summary, it)}<span class="chip">{$t(it.chip!)}</span>{/if}
                   {#if n && it.badge}<span class="cnt {badgeTone(it.badge)}" aria-hidden="true">{n}</span><span class="sr-only">({badgeTone(it.badge) === 'err' ? $t('admin.nav.failing', { n }) : $t('admin.nav.pending', { n })})</span>{/if}
                   <Icon name="chevron-right" size={18} /></a></li>
+                {/if}
               {/each}
             </ul>
           </section>
@@ -119,6 +131,10 @@
   .ni[aria-current='page']::after { opacity: 0; }
   .nl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cnt { flex: none; min-width: 1.5rem; height: 1.5rem; padding: 0 .4rem; border-radius: 99px; display: inline-grid; place-items: center; font-size: .75rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+  /* a word, not a colour: the small "optional" tag after the label */
+  .chip { flex: none; font-size: .7rem; font-weight: 700; letter-spacing: .02em; padding: .1rem .5rem; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
+  .side .ph { min-height: 44px; }
+  .lst .ph { min-height: 48px; }
   .cnt.warn { background: var(--warn); color: #1a1200; }
   .cnt.err { background: var(--err); color: #200; }
 

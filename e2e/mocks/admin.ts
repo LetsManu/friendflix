@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { advanceLivetvJob, livetvJob, type LivetvJobOutcome } from './updater.js';
 /**
  * Admin API fixtures for the mocked FriendFlix backend (shapes follow backend/src/routes/admin.ts, seerr.ts, polls.ts,
  * hubs.ts, digest.ts). Stateful: mutations change the state, so specs can assert what the UI did.
@@ -62,6 +63,8 @@ export interface AdminState {
   seerrUp: boolean;
   /** make GET /api/admin/summary fail (500) */
   summaryFails: boolean;
+  /** Admin -> Live-TV (enable card, enable / disable) */
+  livetv: LivetvMock;
   /** recommendation item index (summary.recoIndex) */
   recoIndex: { supported: boolean; running: boolean; items: number; updatedAt: string | null };
   /** removal dates ("Bald weg", /api/admin/leaving) */
@@ -107,6 +110,39 @@ export interface AdminState {
   revokedLicences: string[];
   /** the role matrix behind GET/PUT/POST/DELETE /api/admin/roles* (spec §4.1) */
   matrix: MatrixMock;
+}
+/**
+ * Admin -> Live-TV (backend/src/livetv/adminRoutes.ts): the state the page polls, enable and disable. An enable job moves one step per
+ * GET of the state and, after `jobPolls` of them, ends with `outcome`: succeeded flips `installed` (no reload on the page). A refused
+ * request (no updater, foreign stack, busy, `refuse`) leaves `wanted` as it was.
+ */
+export interface LivetvMock {
+  installed: boolean;
+  /** what the admin asked for (LIVETV_WANTED) */
+  wanted: boolean;
+  /** LIVETV_OFFER_HIDDEN, kept in step with the settings row by mocks/api.ts */
+  offerHidden: boolean;
+  /** an updater answers (status.stack says whose stack it is) */
+  updater: boolean;
+  stack: 'own' | 'foreign' | null;
+  ltState: 'absent' | 'disabled' | 'enabled' | 'stop_failed';
+  ltError: string | null;
+  job: any;
+  tick: number;
+  jobPolls: number;
+  outcome: LivetvJobOutcome;
+  failCode: string | null;
+  benchmark: 'started' | 'busy' | 'running' | 'no_user' | 'unsupported' | 'error' | null;
+  advice: { level: 'warn' | 'info' | 'ok'; key: string; driver?: string } | null;
+  /** the next enable / disable answers this (status, code) */
+  refuse: { status: number; error: string } | null;
+  failedSources: number;
+  /** after a succeeded enable the detection needs this many more GETs of the state before `installed` flips (the page says "wird geprüft") */
+  detectLag: number;
+  lagLeft: number;
+  /** GET state calls and the POSTed bodies, in order */
+  gets: number;
+  posts: Array<{ path: 'enable' | 'disable'; body: any }>;
 }
 export interface MatrixMockRole {
   key: string; label: string | null; builtinLabel: boolean; base: 'family' | 'friend' | 'guest' | 'admin'; origin: 'code' | 'env' | 'admin'; invitable: boolean;
@@ -253,6 +289,13 @@ const leavingRow = (itemId: string, days: number, note: string | null): LeavingR
 
 const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemId: 'it' + i, name: 'Titel Nummer ' + i, type: i % 3 ? 'Movie' : 'Series', status: (['ok', 'ok', 'ok', 'failed', 'missing', 'preparing'] as const)[i % 6]!, bytes: i % 6 < 3 ? 3_400_000 + i * 1000 : null, audioLang: i % 6 < 3 ? 'deu' : null, error: i % 6 === 3 ? 'ffmpeg exited with code 1' : null, createdAt: ago(i) }));
 
+export function livetvMock(): LivetvMock {
+  return {
+    installed: false, wanted: false, offerHidden: false, updater: true, stack: 'own', ltState: 'absent', ltError: null, job: null, tick: 0, jobPolls: 2, outcome: 'succeeded', failCode: null,
+    benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, lagLeft: 0, gets: 0, posts: [],
+  };
+}
+
 export function adminState(): AdminState {
   const users: AdminUser[] = [
     { id: 'u1', name: 'Tester', email: 'tester@example.org', role: 'admin', disabled: false, jellyfin_username: 'tester', seerr_user_id: 1, created_at: ago(24 * 400), last_seen: ago(0.1) },
@@ -321,6 +364,7 @@ export function adminState(): AdminState {
     seerrUp: true,
     summaryFails: false,
     recoIndex: { supported: true, running: false, items: 1234, updatedAt: ago(3) },
+    livetv: livetvMock(),
     leaving: [leavingRow('00000000000000000000000000000001', 1, 'Lizenz endet'), leavingRow('00000000000000000000000000000002', 5, null), leavingRow('00000000000000000000000000000003', 20, 'Rechte laufen aus')],
     sources: [{ name: 'tmdb', set: false, last4: null, from: null, invalid: false }, { name: 'omdb', set: true, last4: 'k3y9', from: 'db', invalid: false, usedToday: 12, budget: 900 }],
     health: healthOk(),
@@ -520,6 +564,49 @@ function auditList(st: AdminState, sp: URLSearchParams) {
   return { entries: slice.map((e) => ({ ...e, actor_id: e.actor ? 'u1' : null })), total };
 }
 
+const ENV_LINE = 'COMPOSE_PROFILES=livetv';
+function livetvState(lt: LivetvMock) {
+  lt.gets++;
+  const install = () => { lt.installed = true; lt.ltState = 'enabled'; lt.ltError = null; };
+  if (lt.lagLeft > 0 && --lt.lagLeft === 0) install();
+  // the job moves one step per poll; its end flips installed (enable, after `detectLag` more polls) or clears it (disable / remove)
+  if (lt.job?.state === 'running' && String(lt.job.action).startsWith('livetv-')) {
+    if (advanceLivetvJob(lt.job, lt.tick++, lt.jobPolls, lt.outcome, lt.failCode)) {
+      if (lt.job.state === 'succeeded') {
+        if (lt.job.action === 'livetv-enable') { if (lt.detectLag > 0) lt.lagLeft = lt.detectLag; else install(); }
+        else { lt.installed = false; lt.ltState = lt.job.action === 'livetv-remove' ? 'absent' : 'disabled'; lt.ltError = null; }
+      } else if (lt.job.action === 'livetv-enable') lt.ltState = 'disabled'; // the backend keeps `wanted` after a failed enable
+    }
+  }
+  return {
+    installed: lt.installed, reachable: lt.installed, version: lt.installed ? '1.0.0' : null, wanted: lt.wanted, offerHidden: lt.offerHidden,
+    updater: {
+      available: lt.updater, stack: lt.updater ? lt.stack : null, job: lt.updater ? lt.job : null,
+      livetv: lt.updater ? { state: lt.ltState, container: lt.installed ? 'running' : null, error: lt.ltError } : null,
+    },
+    envLine: ENV_LINE, benchmark: lt.installed ? lt.benchmark : null,
+    gpu: { jellyfin: lt.installed ? 'qsv' : null, livetv: lt.installed ? { driver: 'iHD', devices: 1 } : null, advice: lt.installed ? lt.advice : null },
+  };
+}
+function livetvRoute(lt: LivetvMock, m: string, p: string, body: any, J: Reply): Promise<void> | null {
+  if (p === '/api/admin/livetv/state' && m === 'GET') return J(livetvState(lt));
+  if ((p === '/api/admin/livetv/enable' || p === '/api/admin/livetv/disable') && m === 'POST') {
+    const path = p.endsWith('enable') ? 'enable' : 'disable';
+    lt.posts.push({ path, body });
+    const refuse = (status: number, error: string, extra: Record<string, unknown> = {}) => J({ error, ...extra, wanted: lt.wanted }, status);
+    if (lt.refuse) { const r = lt.refuse; lt.refuse = null; return refuse(r.status, r.error); }
+    if (!lt.updater) return refuse(409, 'no_updater', { envLine: ENV_LINE });
+    if (lt.stack === 'foreign') return refuse(409, 'foreign_stack', { envLine: ENV_LINE });
+    if (lt.job?.state === 'running') return refuse(409, 'busy');
+    if (path === 'disable' && body?.removeCache && !body?.removeImage) return J({ error: 'invalid', field: 'removeCache' }, 400);
+    lt.tick = 0;
+    lt.job = livetvJob(path === 'enable' ? 'livetv-enable' : body?.removeImage ? 'livetv-remove' : 'livetv-disable');
+    if (path === 'enable') lt.wanted = true; else lt.wanted = false;
+    return J({ job: lt.job, wanted: path === 'enable' }, 202);
+  }
+  return null;
+}
+
 export function adminSummary(st: AdminState) {
   const pendingReq = st.requests.filter((r) => r.status === PENDING).length;
   const locked = st.users.filter((u) => u.disabled).length;
@@ -531,6 +618,7 @@ export function adminSummary(st: AdminState) {
     playbackCheck: { finishedAt: ago(2), total: 20, failed: 1 },
     services: { jellyfin: true, seerr: st.seerrUp },
     live: { streams: 2, partyRooms: 1 },
+    livetv: { installed: st.livetv.installed, offerHidden: st.livetv.offerHidden, failedSources: st.livetv.failedSources },
     recoIndex: st.recoIndex,
   };
 }
@@ -556,6 +644,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       v2: { impressions: 0, clicks: 0, plays: 0, dismisses: 0, ctr: null, playRate: null },
     },
   });
+  if (p.startsWith('/api/admin/livetv/')) return livetvRoute(st.livetv, m, p, body, J);
   if (p === '/api/admin/summary') return st.summaryFails ? J({ error: 'boom' }, 500) : J(adminSummary(st));
   if (p === '/api/admin/status') {
     const s = adminSummary(st);
