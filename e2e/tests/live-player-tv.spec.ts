@@ -156,6 +156,33 @@ test.describe('live player on a TV remote', () => {
     await expect(focused(page)).toHaveAttribute('aria-current', 'true');
   });
 
+  test('closing the panel re-arms the control hiding: a pointer wake behind the panel does not strand the controls', async ({ page, api }) => {
+    await open(page);
+    await hideByClock(page);
+    await remote(page, 'ChannelList');
+    await expect(panel(page)).toBeVisible();
+    await page.mouse.move(300, 300); // an LG pointer / media session wakes the controls behind the panel
+    await page.mouse.move(340, 320);
+    await page.keyboard.press('Escape'); // Back closes the panel
+    await expect(panel(page)).toHaveCount(0);
+    await expect(bar(page)).toHaveClass(/\bhide\b/);
+    await page.keyboard.press('ArrowDown'); // so the next ▼ zaps instead of moving the focus
+    await expect.poll(() => api.livetv.watches.length).toBe(2);
+  });
+
+  test('a held OK after a panel pick (repeat:false) does not reopen the panel', async ({ page }) => {
+    await open(page);
+    await hideByClock(page);
+    await remote(page, 'ChannelList');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.down('Enter'); // the pick; the key stays down
+    await expect(panel(page)).toHaveCount(0);
+    await remote(page, 'Enter'); // a TV's key repeat that says repeat:false
+    await page.clock.runFor(900);
+    await expect(panel(page)).toHaveCount(0);
+    await page.keyboard.up('Enter');
+  });
+
   test('Back closes the panel and focus returns to the player; Back hides the controls; Back goes to the list with the playing row focused', async ({ page, api }) => {
     await page.goto('/live?tv=1');
     await expect(focused(page)).toHaveAccessibleName(/^12 Kinderinsel/);

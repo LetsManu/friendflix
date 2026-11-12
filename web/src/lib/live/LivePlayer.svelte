@@ -638,7 +638,12 @@
     if (!listOpen) return;
     listOpen = false;
     pstate = null;
-    if (tv) { void tick().then(() => stage?.focus({ preventScroll: true })); return; }
+    if (tv) {
+      // wake() may have shown the controls behind the panel without a hide timer: hide them again (paused: they stay, as always)
+      if (paused) wake(); else { controls = false; clearTimeout(hideT); }
+      void tick().then(() => stage?.focus({ preventScroll: true }));
+      return;
+    }
     wake();
     void tick().then(() => (phoneUi ? root : listBtn ?? root)?.focus({ preventScroll: true }));
   }
@@ -677,7 +682,10 @@
     stop();
     const r = panelKey(s, k, panelCtx(l));
     pstate = r.state;
-    if (r.act && 'switchTo' in r.act) pickChannel(r.act.switchTo);
+    if (r.act && 'switchTo' in r.act) {
+      if (k === 'ok') okHeld = true; // a held OK (repeats without repeat:true) must not reach the long-OK path; keyup / blur clear it
+      pickChannel(r.act.switchTo);
+    }
     else if (r.act) closeList();
   }
 
