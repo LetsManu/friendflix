@@ -102,6 +102,24 @@ describe('GET /api/admin/roles', () => {
     expect((await roleOf('admin')).defaults.party).toBe(true);
   });
 
+  it('envGone marks an env role that left ROLE_TEMPLATES', async () => {
+    const saved = env.ctx.roles;
+    await env.pool.query("insert into roles(key, label, base, origin, position) values ('crew', 'Crew', 'friend', 'env', 8), ('old', 'Alt', 'friend', 'env', 9)");
+    env.ctx.roles = { ...saved, crew: { ...saved.friend!, label: 'Crew' } };
+    invalidateRoles(env.ctx);
+    try {
+      const m = (await get()).matrix;
+      const at = (k: string) => m.roles.find((r: { key: string }) => r.key === k);
+      expect(at('crew')).toMatchObject({ origin: 'env', envGone: false });
+      expect(at('old')).toMatchObject({ origin: 'env', envGone: true });
+      expect(at('family').envGone).toBe(false);
+    } finally {
+      env.ctx.roles = saved;
+      await env.pool.query("delete from roles where key in ('crew', 'old')");
+      invalidateRoles(env.ctx);
+    }
+  });
+
   it('libraries answer [] while the media server cannot list them', async () => {
     folders = null as never; // the fake answers garbage: the list fails
     forgetLibraries(env.ctx);
