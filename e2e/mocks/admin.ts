@@ -601,6 +601,9 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       if (m === 'GET') return J({ limits: cur, role: DETAIL_ROLE_LIMITS });
       if (m === 'PUT') { const to = { ...cur, ...body }; log('user.limits', u.id, { from: cur, to }, u.name); st.limits[u.id] = to; return J({ limits: to }); }
     }
+    // ---- Sicht prüfen (backend viewcheck.ts, adminUsers.ts): the rights of one profile, its library counts and the title check ----
+    if (rest === '/rights' && m === 'GET' && sp.has('profile')) return viewRights(st, u, sp.get('profile')!, J);
+    if (rest === '/check' && (m === 'GET' || m === 'POST')) return viewCheck(st, u, m, m === 'GET' ? { profileId: sp.get('profile') } : body, J, log);
     // every matrix row of the account (backend userRights.ts rightsView): effective value, the role's value, the stored override (null = none; an admin's
     // switches never show one) and the deciding layer; PUT is partial (null = back to the role, a value equal to the role's is not stored)
     if (rest === '/rights') {
@@ -1125,4 +1128,66 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return J({ ...UPDATE_RELEASE, current: { sha: 'c0be6c5deadbeef', builtAt: ago(70), version: '1.0.0', codename: 'Arancini' }, latest: { sha: 'ff00aa1deadbeef', date: ago(5), runUrl: 'https://example.org/run' }, behind: 3, portainer: { configured: true, mode: 'webhook' }, autoUpdateNote: true, commits: [{ sha: 'ff00aa1', url: 'https://example.org/c/1', message: 'feat(wishes): local request-service users', author: 'Manu', date: ago(5) }, { sha: 'ee11bb2', url: 'https://example.org/c/2', message: 'ci: signing', author: 'Manu', date: ago(9) }] });
   }
   return null;
+}
+
+
+// ---- Sicht prüfen: GET /rights?profile=, GET/POST /check (backend userRights.ts, viewcheck.ts; spec §4.2, §6.4) ----
+const KIDS_OFF_MOCK = ['requests', 'party', 'partySchedule', 'comments', 'liveRecord'];
+/** the library totals of the mocked media server and what a profile sees of them under each age cap (null = no cap) */
+const VIEW_TOTALS: Record<string, { total: number; seen: Record<string, number> }> = {
+  Filme: { total: 1204, seen: { none: 1204, '12': 812, '6': 212, '0': 40 } },
+  Serien: { total: 340, seen: { none: 340, '12': 301, '6': 61, '0': 9 } },
+  Musik: { total: 80, seen: { none: 80, '12': 80, '6': 80, '0': 80 } },
+};
+/** the searchable titles: age is null for an unrated one */
+const VIEW_TITLES = [
+  { id: '0000000000000000000000000000d001', name: 'Dunmoor', year: 2021, type: 'Movie', rating: 'FSK-16', age: 16, library: 'Filme' },
+  { id: '0000000000000000000000000000d002', name: 'Dunmoor Origins', year: 2014, type: 'Movie', rating: null, age: null, library: 'Filme' },
+  { id: '0000000000000000000000000000d003', name: 'Saltwater Almanac', year: 2019, type: 'Series', rating: 'FSK-6', age: 6, library: 'Serien' },
+];
+const profileOf = (st: AdminState, u: AdminUser, pid: string | null | undefined) => (pid ? profilesOf(st, u).find((p) => p.id === pid) : undefined);
+const kidsCap = (p: DetailProfile): number | null => (p.kids ? Number(/\d+/.exec(p.maxRating ?? '')?.[0] ?? 0) : null);
+/** the effective rows of the account with the kids overlay of the profile (kids cap, KIDS_OFF switched off) */
+function viewRows(st: AdminState, u: AdminUser, p: DetailProfile) {
+  const role = st.matrix.roles.find((r) => r.key === u.role)!;
+  const kc = kidsCap(p);
+  return MATRIX_FIELDS_MOCK.map((f) => {
+    const k = f.key as string, perm = PERM_KEYS_MOCK.includes(k);
+    const roleValue = role.values[k];
+    const override = u.role === 'admin' && perm ? null : (perm ? u.perms?.[k] : u.ov?.[k]) ?? null;
+    let value = override === null ? roleValue : override === 'unlimited' ? null : override, source: string = override === null ? role.sources[k] ?? 'default' : 'user';
+    if (kc !== null && k === 'maxParentalRating') { value = kc; source = 'kids'; }
+    if (kc !== null && KIDS_OFF_MOCK.includes(k)) { value = false; source = 'kids'; }
+    return { key: k, value, roleValue, override, source };
+  });
+}
+function viewRights(st: AdminState, u: AdminUser, pid: string, J: Reply): Promise<void> {
+  const p = profileOf(st, u, pid);
+  if (!p) return J({ error: 'not_found' }, 404);
+  return J({ role: u.role, note: u.note ?? null, rows: viewRows(st, u, p), profile: { id: p.id, name: p.name, kids: p.kids, maxRating: kidsCap(p) }, hardKids: p.kids ? KIDS_OFF_MOCK : [], missingLibraries: [] });
+}
+function viewCheck(st: AdminState, u: AdminUser, m: string, body: any, J: Reply, log: (a: string, t: string | null, meta?: Record<string, unknown>, n?: string | null) => void): Promise<void> {
+  const p = profileOf(st, u, m === 'GET' ? body.profileId : typeof body?.profileId === 'string' ? body.profileId : null);
+  if (!p) return J({ error: m === 'GET' || typeof body?.profileId === 'string' ? 'not_found' : 'bad_request' }, m === 'GET' || typeof body?.profileId === 'string' ? 404 : 400);
+  const rows = viewRows(st, u, p);
+  const val = (k: string) => rows.find((r) => r.key === k)!.value;
+  const shared = (lib: string) => val('libraries') === 'all' || (val('libraries') as string[]).some((n) => n.toLowerCase() === lib.toLowerCase());
+  const cap = val('maxParentalRating') as number | null;
+  if (m === 'GET') {
+    log('user.check_viewed', u.id, { profile: p.id, libraries: st.matrix.libraries.length }, u.name);
+    return J({ libraries: st.matrix.libraries.map((l) => {
+      const t = VIEW_TOTALS[l.name] ?? { total: 10, seen: { none: 10, '12': 10, '6': 10, '0': 10 } }, vis = shared(l.name);
+      return { id: l.id, name: l.name, visible: vis, seen: vis ? t.seen[cap === null ? 'none' : String(cap)] ?? t.total : null, total: t.total };
+    }) });
+  }
+  // exactly one of query (2-100 characters) and itemId (32 hex)
+  const q = typeof body.query === 'string' ? body.query.trim() : undefined, id = body.itemId;
+  if ((q === undefined) === (id === undefined) || (q !== undefined && (q.length < 2 || q.length > 100)) || (id !== undefined && !/^[0-9a-f]{32}$/.test(String(id)))) return J({ error: 'bad_request' }, 400);
+  const found = VIEW_TITLES.filter((t) => (q !== undefined ? t.name.toLowerCase().includes(q.toLowerCase()) : t.id === id));
+  const hits = found.map((t) => {
+    const why = !shared(t.library) ? 'library' : t.age !== null && cap !== null && t.age > cap ? 'rating' : t.age === null && p.kids ? 'unrated_kids' : null;
+    return { id: t.id, name: t.name, year: t.year, type: t.type, visible: why === null, why, rating: t.rating, library: t.library };
+  });
+  log('user.check_viewed', u.id, { profile: p.id, hits: hits.length }, u.name);
+  return J({ hits });
 }

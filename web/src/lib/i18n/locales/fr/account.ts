@@ -335,7 +335,7 @@ const fr: Translation<typeof de> = {
     retry: 'Réessayer',
     reauthFailed: 'La connexion n’a pas pu être confirmée. Réessaie.',
     reauthFailedHint: 'Si cela échoue encore, réessaie dans une demi-minute ; si cela se répète, les horloges du serveur et d’Authentik diffèrent peut-être (un administrateur peut vérifier).',
-    privacy: 'Les admins peuvent voir les titres que tu as regardés récemment. Chaque consultation est consignée dans le journal d’audit.',
+    privacy: 'Les admins peuvent voir les titres que tu as regardés récemment. Chaque consultation est consignée dans le journal d’audit. Les admins peuvent vérifier quels titres un profil peut voir.',
     data: {
       title: 'Tes données',
       download: 'Télécharger mes données',

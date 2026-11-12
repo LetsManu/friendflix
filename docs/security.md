@@ -151,7 +151,7 @@ Since the in-app sign-in, `/login` is FriendFlix's own page and the backend play
 
 Each person manages their own account on *My space → Account* (`/me/account`, main profile only; kids and other profiles cannot open it). Admins have matching actions on *Admin → Users →* a person. Everything here is audited; self-service entries record which fields changed (`{ fields }`), never the old or new values.
 
-The account page also tells the person what admins can see: **"Admins can see which titles you watched recently. Every look at them is recorded in the audit log."** This is the same history view described under [Security requirements](#security-requirements) (`user.activity_viewed`).
+The account page also tells the person what admins can see: **"Admins can see which titles you watched recently. Every look at them is recorded in the audit log. Admins can check which titles a profile can see."** The first sentences are the history view described under [Security requirements](#security-requirements) (`user.activity_viewed`); the last one is the *Sicht prüfen* check (`user.check_viewed`), which shows what a profile can see and never signs in as the person.
 
 ### Re-authentication
 

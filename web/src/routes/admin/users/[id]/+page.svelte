@@ -4,7 +4,7 @@
   /**
    * Admin: one user. Header (avatar, name, e-mail, role, status and 2FA pills) with the quick actions (lock/unlock, sign out
    * everywhere, change role, extend access, Authentik e-mails; a scheduled deletion: restore or delete now), then tabs in the URL (`?tab=`): overview (totals, linked
-   * accounts), profiles, devices, downloads, activity (loads only when opened: viewing is audited), rights (the person's exceptions to the role), audit.
+   * accounts), profiles, devices, downloads, activity (loads only when opened: viewing is audited), rights (the person's exceptions to the role), check (Sicht prüfen: what a profile can see), audit.
    * Never shows credentials, tokens or the Authentik id (the API does not send them).
    */
   import { onMount } from 'svelte';
@@ -20,6 +20,7 @@
   import { DETAIL_TABS, akError, detailTab, lockAction, mfaChips, statusPills, type DetailTab, type UserDetail } from '#lib/admin/user/detail';
   import Activity from '#lib/admin/user/Activity.svelte';
   import Audit from '#lib/admin/user/Audit.svelte';
+  import CheckView from '#lib/admin/user/CheckView.svelte';
   import Devices from '#lib/admin/user/Devices.svelte';
   import Downloads from '#lib/admin/user/Downloads.svelte';
   import Overview from '#lib/admin/user/Overview.svelte';
@@ -37,9 +38,8 @@
 
   const page$ = pageStore();
   $: id = $page$.params.id ?? '';
-  $: tab = ((v) => (v === 'check' ? 'overview' : v))(detailTab($page$.url.searchParams.get('tab')));
-  /** the tab strip: the view check ("Sicht prüfen") has no panel yet, so it has no tab (its URL falls back to the overview) */
-  const TABS = DETAIL_TABS.filter((k) => k !== 'check');
+  $: tab = detailTab($page$.url.searchParams.get('tab'));
+  const TABS = DETAIL_TABS;
   const select = (to: DetailTab) => goto(to === 'overview' ? $page$.url.pathname : `?tab=${to}`, { replaceState: true, reset: false });
   function tabKey(e: KeyboardEvent) {
     const i = Math.max(0, TABS.indexOf(tab)), last = TABS.length - 1;
@@ -267,6 +267,7 @@
     {:else if tab === 'downloads'}<Downloads licenses={d.licenses} profiles={d.profiles} on:changed={load} />
     {:else if tab === 'activity'}{#key u.id}<Activity userId={u.id} />{/key}
     {:else if tab === 'rights'}{#key `${u.id}:${u.role}`}<Rights userId={u.id} name={u.name} />{/key}
+    {:else if tab === 'check'}{#key u.id}<CheckView userId={u.id} profiles={d.profiles} />{/key}
     {:else if tab === 'audit'}{#key u.id}<Audit userId={u.id} />{/key}
     {:else}<Overview userId={u.id} detail={d} on:changed={load} />{/if}
   </div>
