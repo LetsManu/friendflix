@@ -355,7 +355,7 @@ const pl: Translation<typeof de> = {
     retry: 'Spróbuj ponownie',
     reauthFailed: 'Nie udało się potwierdzić logowania. Spróbuj ponownie.',
     reauthFailedHint: 'Jeśli znów się nie uda, spróbuj za pół minuty; jeśli to się powtarza, zegary serwera i Authentika mogą się różnić (administrator może to sprawdzić).',
-    privacy: 'Administratorzy widzą, jakie tytuły ostatnio oglądałeś(-aś). Każdy taki wgląd jest zapisywany w dzienniku audytu.',
+    privacy: 'Administratorzy widzą, jakie tytuły ostatnio oglądałeś(-aś). Każdy taki wgląd jest zapisywany w dzienniku audytu. Administratorzy mogą sprawdzić, jakie tytuły widzi dany profil.',
     data: {
       title: 'Twoje dane',
       download: 'Pobierz moje dane',

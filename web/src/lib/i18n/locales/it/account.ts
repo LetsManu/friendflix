@@ -335,7 +335,7 @@ const it: Translation<typeof de> = {
     retry: 'Riprova',
     reauthFailed: 'Non è stato possibile confermare l’accesso. Riprova.',
     reauthFailedHint: 'Se fallisce ancora, riprova tra mezzo minuto; se continua a succedere, gli orologi del server e di Authentik potrebbero non coincidere (un amministratore può controllare).',
-    privacy: 'Gli admin possono vedere quali titoli hai guardato di recente. Ogni consultazione viene registrata nel registro di audit.',
+    privacy: 'Gli admin possono vedere quali titoli hai guardato di recente. Ogni consultazione viene registrata nel registro di audit. Gli admin possono controllare quali titoli può vedere un profilo.',
     data: {
       title: 'I tuoi dati',
       download: 'Scarica i miei dati',

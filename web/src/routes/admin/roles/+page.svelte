@@ -11,7 +11,6 @@
    * segmented control; the same staging, save bar and review. An unsaved-changes guard asks before leaving, at any width.
    */
   import { onMount, tick } from 'svelte';
-  import { beforeNavigate, goto } from '$app/navigation';
   import { api, ApiError } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
@@ -22,6 +21,7 @@
   import { confirm } from '#lib/ui/confirm';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import { toast } from '#lib/ui/toast';
+  import { leaveGuard } from '#lib/admin/leaveGuard';
   import CompareView from '#lib/admin/rights/CompareView.svelte';
   import DeleteRoleDialog from '#lib/admin/rights/DeleteRoleDialog.svelte';
   import { partialText, policyLine, reviewLines, roleName as roleLabel, saveBarText, stageBodies, stageCounts, stageSet, type MatrixRole, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
@@ -254,15 +254,7 @@
   }
   let orderQueue: Promise<void> = Promise.resolve(), movesOpen = 0;
 
-  let leaving = false;
-  beforeNavigate((nav) => {
-    if (leaving || !dirtyCount) return;
-    nav.cancel(); // unload: the browser asks itself
-    if (nav.willUnload || !nav.to) return;
-    const to = nav.to.url;
-    void confirm({ title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.roles.leaveBody', { n: dirtyCount }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm') })
-      .then((ok) => { if (ok) { leaving = true; void goto(to); } });
-  });
+  leaveGuard(() => dirtyCount > 0, () => ({ title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.roles.leaveBody', { n: dirtyCount }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm') }));
 
 </script>
 

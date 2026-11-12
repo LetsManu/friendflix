@@ -4,7 +4,7 @@
 import type { TKey } from '#lib/i18n';
 import type { AdminSummary } from './summary';
 
-export type BadgeKey = 'requests' | 'devices' | 'polls' | 'previews' | 'livetv';
+export type BadgeKey = 'requests' | 'devices' | 'polls' | 'previews' | 'approvals' | 'livetv';
 /** `chip`: a small word after the label (Live-TV: "optional" while it is not installed) */
 export interface NavItem { href: string; label: TKey; icon: string; badge?: BadgeKey; chip?: TKey }
 export interface NavGroup { id: 'people' | 'content' | 'operations'; label: TKey; items: NavItem[] }
@@ -12,7 +12,7 @@ export interface NavGroup { id: 'people' | 'content' | 'operations'; label: TKey
 export const OVERVIEW: NavItem = { href: '/admin', label: 'admin.nav.overview', icon: 'grid' };
 export const GROUPS: NavGroup[] = [
   { id: 'people', label: 'admin.nav.groups.people', items: [
-    { href: '/admin/users', label: 'admin.tabs.users', icon: 'users' },
+    { href: '/admin/users', label: 'admin.tabs.users', icon: 'users', badge: 'approvals' },
     { href: '/admin/roles', label: 'admin.tabs.roles', icon: 'key' },
     { href: '/admin/devices', label: 'admin.tabs.devices', icon: 'monitor', badge: 'devices' },
     { href: '/admin/usage', label: 'admin.tabs.usage', icon: 'bar-chart' },

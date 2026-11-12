@@ -3,40 +3,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { ApiError } from '#lib/api';
 import { setLocale } from '#lib/i18n';
-import { akError, detailTab, limitsForm, limitsPatch, lockAction, mfaChips, roleHint, statusPills, type Limits } from './detail';
+import { akError, detailTab, lockAction, mfaChips, statusPills, DETAIL_TABS } from './detail';
 
 afterEach(async () => { await setLocale('de'); });
-
-const saved: Limits = { maxStreams: 2, remoteBitrate: 8_000_000, maxDownloads: null, downloadMaxHeight: null, requestsPerMonth: null };
-
-describe('limits form', () => {
-  it('shows overrides in form units (bitrate in Mbit/s) and empty for "as role"', () => {
-    expect(limitsForm(saved)).toEqual({ maxStreams: '2', remoteBitrate: '8', maxDownloads: '', downloadMaxHeight: '', requestsPerMonth: '' });
-  });
-
-  it('sends only the changed fields; empty goes back to the role (null)', () => {
-    expect(limitsPatch(saved, limitsForm(saved))).toEqual({});
-    expect(limitsPatch(saved, { ...limitsForm(saved), maxStreams: '3', requestsPerMonth: '5' })).toEqual({ maxStreams: 3, requestsPerMonth: 5 });
-    expect(limitsPatch(saved, { ...limitsForm(saved), maxStreams: '', remoteBitrate: '12.5' })).toEqual({ maxStreams: null, remoteBitrate: 12_500_000 });
-    expect(limitsPatch(saved, { ...limitsForm(saved), maxStreams: ' 2 ' })).toEqual({});
-  });
-
-  it('rejects values outside the API bounds (null = invalid form)', () => {
-    expect(limitsPatch(saved, { ...limitsForm(saved), maxStreams: '0' })).toBeNull();
-    expect(limitsPatch(saved, { ...limitsForm(saved), maxStreams: '1.5' })).toBeNull();
-    expect(limitsPatch(saved, { ...limitsForm(saved), remoteBitrate: '0.1' })).toBeNull();
-    expect(limitsPatch(saved, { ...limitsForm(saved), requestsPerMonth: '101' })).toBeNull();
-    expect(limitsPatch(saved, { ...limitsForm(saved), downloadMaxHeight: 'abc' })).toBeNull();
-  });
-
-  it('role value as placeholder text', () => {
-    expect(roleHint('maxStreams', 2)).toBe('wie Rolle: 2');
-    expect(roleHint('remoteBitrate', 4_000_000)).toBe('wie Rolle: 4');
-    expect(roleHint('requestsPerMonth', null)).toBe('wie Rolle: unbegrenzt');
-    expect(roleHint('downloadMaxHeight', 0)).toBe('wie Rolle: keine Downloads');
-    expect(roleHint('downloadMaxHeight', 1080)).toBe('wie Rolle: 1080');
-  });
-});
 
 describe('akError', () => {
   const err = (status: number, error: string) => new ApiError(status, { error });
@@ -94,7 +63,9 @@ describe('header', () => {
   });
 
   it('tab from the URL, overview by default', () => {
-    expect(detailTab('limits')).toBe('limits');
+    expect(detailTab('rights')).toBe('rights');
+    expect(detailTab('limits')).toBe('rights');
+    expect(DETAIL_TABS.slice(0, 3)).toEqual(['overview', 'rights', 'check']);
     expect(detailTab('nope')).toBe('overview');
     expect(detailTab(null)).toBe('overview');
   });

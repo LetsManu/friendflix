@@ -15,7 +15,9 @@ const accessEnded = (until: string | null): boolean => until !== null && Date.pa
 /** uuid-shaped ids (the backend validates uuids for users/devices) */
 export const auid = (n: number): string => `00000000-0000-4000-a000-${n.toString().padStart(12, '0')}`;
 
-export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null; access_until?: string | null; profiles?: number; /** why a locked account is locked (default manual) */ locked_reason?: 'manual' | 'expired' | 'deletion'; /** scheduled deletion (Block 23 self-service) */ deletion_at?: string | null; /** claimed by the deletion tick, users row still there (steps 1-4) */ cleanup?: { step: number; error: string | null } }
+export interface AdminUser { id: string; name: string; email: string | null; role: string; disabled: boolean; jellyfin_username: string; seerr_user_id: number | null; created_at: string; last_seen: string | null; access_until?: string | null; profiles?: number; /** why a locked account is locked (default manual) */ locked_reason?: 'manual' | 'expired' | 'deletion'; /** scheduled deletion (Block 23 self-service) */ deletion_at?: string | null; /** claimed by the deletion tick, users row still there (steps 1-4) */ cleanup?: { step: number; error: string | null };
+  /** switch overrides of the person (user_limits.perms; backend counts them in `overrides`), the other stored overrides (limits), the admin's note, no 2FA at the sign-in provider */
+  perms?: Record<string, boolean>; otherOverrides?: number; /** the stored non-switch overrides in the PUT encoding (null never stored; 'unlimited' lifts a cap); their count is `otherOverrides` once written */ ov?: Record<string, unknown>; kidsProfiles?: number; note?: string | null; mfaOff?: boolean }
 /** a claimed deletion whose users row is gone (status=deleting lists it by pseudonym); step = the step in work (1-6) */
 export interface AdminCleanup { id: string; pseudonym: string; started_at: string; step: number; error: string | null }
 export interface AdminDevice { user_id: string; device_id: string; label: string; approved: boolean; last_seen: string; name: string; /** the admin's own device (backend: current) */ current?: boolean }
@@ -96,6 +98,8 @@ export interface AdminState {
   usageCalls: string[];
   usageDetailCalls: string[];
   usageSince: string | null;
+  /** accounts the next bulk `repair` fails on (the answer is then `{ done, failed }`) */
+  repairFails: Set<string>;
   /** Block 23 user detail (/api/admin/users/:id*): Authentik state (mfa null = no Authentik API), link health, limits, profiles, activity calls */
   detailMfa: { totp: boolean; webauthn: boolean; static: boolean } | null;
   /** Block 23 self-service: deletions whose users row is gone, and ids the deletion tick has claimed (restore answers 409) */
@@ -105,6 +109,16 @@ export interface AdminState {
   linkedOk: { jellyfin: boolean | null; requests: boolean };
   limits: Record<string, DetailLimits>;
   userProfiles: Record<string, DetailProfile[]>;
+  /** the cap a profile had before it stopped being a kids profile (the DB column keeps it) */
+  keptCap: Map<string, number>;
+  /** the last profile number handed out (new kids profiles) */
+  profileSeq: number;
+  /** the media server refuses the policy of the next kids changes (PATCH …/profiles/:pid → 502 jellyfin, stored and audited anyway) */
+  profileMediaFails: boolean;
+  /** Sicht prüfen: when each /check request came (the route allows 30 a minute, then 429) */
+  checkTimes: number[];
+  /** Sicht prüfen on an adapter that hides unrated titles under any cap (Plex: an explicit age null): a grown-up's cap hides them as `unrated` */
+  checkHidesUnrated: boolean;
   activityCalls: number;
   /** licences revoked via DELETE /api/admin/downloads/:id */
   revokedLicences: string[];
@@ -250,7 +264,7 @@ export function matrixMock(): MatrixMock {
   };
 }
 export interface DetailLimits { maxStreams: number | null; remoteBitrate: number | null; maxDownloads: number | null; downloadMaxHeight: number | null; requestsPerMonth: number | null }
-export interface DetailProfile { id: string; name: string; kids: boolean; maxRating: string | null; avatar: string; lastUsed: string | null; isOwner: boolean; hasPin: boolean }
+export interface DetailProfile { id: string; name: string; kids: boolean; /** the age cap of a kids profile (0/6/12), null on a grown-up one */ maxRating: number | null; avatar: string; lastUsed: string | null; isOwner: boolean; hasPin: boolean }
 /** role values the limits page shows as placeholders */
 export const DETAIL_ROLE_LIMITS: DetailLimits = { maxStreams: 2, remoteBitrate: 8_000_000, maxDownloads: 5, downloadMaxHeight: 720, requestsPerMonth: 3 };
 export type HygieneCode = 'no_overview' | 'no_poster' | 'no_backdrop' | 'no_year' | 'no_ids' | 'no_audio' | 'audio_unknown' | 'foreign_no_subs' | 'forced_only' | 'image_subs_only' | 'dup_ids' | 'dup_title' | 'dup_episode' | 'no_source' | 'zero_runtime' | 'heavy_bitrate' | 'hevc_10bit' | 'video_codec' | 'audio_codec';
@@ -307,10 +321,18 @@ export function livetvMock(): LivetvMock {
   };
 }
 
+/** rights facts of the first accounts (Anna: a switch exception, a limit and a kids profile with a note; Ben and Clara have no 2FA).
+ *  Cloned per state: the mock writes into `perms`/`ov`, and a shared object would carry one test's save into the next test of the worker */
+const SEED: Array<Partial<AdminUser>> = [
+  { perms: { party: false }, otherOverrides: 1, ov: { maxStreams: 3 }, kidsProfiles: 1, note: 'Teilt das Konto mit ihrer Familie' },
+  { mfaOff: true },
+  { kidsProfiles: 2, mfaOff: true },
+];
+
 export function adminState(): AdminState {
   const users: AdminUser[] = [
     { id: 'u1', name: 'Tester', email: 'tester@example.org', role: 'admin', disabled: false, jellyfin_username: 'tester', seerr_user_id: 1, created_at: ago(24 * 400), last_seen: ago(0.1) },
-    ...NAMES.map((n, i) => ({ id: auid(i + 2), name: n, email: i % 3 === 2 ? null : `${n.split(' ')[0]!.toLowerCase()}@example.org`, role: ['friend', 'family', 'guest', 'friend'][i % 4]!, disabled: i === 4, jellyfin_username: n.split(' ')[0]!.toLowerCase(), seerr_user_id: null, created_at: ago(24 * (i + 3)), last_seen: ago(i * 7) })),
+    ...NAMES.map((n, i) => ({ id: auid(i + 2), name: n, email: i % 3 === 2 ? null : `${n.split(' ')[0]!.toLowerCase()}@example.org`, role: ['friend', 'family', 'guest', 'friend'][i % 4]!, disabled: i === 4, jellyfin_username: n.split(' ')[0]!.toLowerCase(), seerr_user_id: null, created_at: ago(24 * (i + 3)), last_seen: ago(i * 7), ...structuredClone(SEED[i]) })),
   ];
   return {
     users,
@@ -396,12 +418,18 @@ export function adminState(): AdminState {
     usageDetailCalls: [],
     usageSince: leaveDay(-10),
     detailMfa: { totp: true, webauthn: false, static: true },
+    repairFails: new Set(),
     cleanups: [],
     claimed: new Set(),
     authentik: { recovery: true, mfaSetup: false },
     linkedOk: { jellyfin: true, requests: true },
     limits: {},
     userProfiles: {},
+    keptCap: new Map(),
+    profileSeq: 0,
+    profileMediaFails: false,
+    checkTimes: [],
+    checkHidesUnrated: false,
     activityCalls: 0,
     revokedLicences: [],
   };
@@ -409,7 +437,7 @@ export function adminState(): AdminState {
 
 const profilesOf = (st: AdminState, u: AdminUser): DetailProfile[] => (st.userProfiles[u.id] ??= [
   { id: `${u.id.slice(0, -4)}p001`, name: u.name.split(' ')[0]!, kids: false, maxRating: null, avatar: 'a2', lastUsed: u.last_seen, isOwner: true, hasPin: false },
-  { id: `${u.id.slice(0, -4)}p002`, name: 'Kinder', kids: true, maxRating: 'FSK-6', avatar: 'a4', lastUsed: null, isOwner: false, hasPin: true },
+  { id: `${u.id.slice(0, -4)}p002`, name: 'Kinder', kids: true, maxRating: 6, avatar: 'a4', lastUsed: null, isOwner: false, hasPin: true },
 ]);
 /** GET /api/admin/users/:id (shape of backend/src/routes/adminUsers.ts; never credentials or the Authentik sub) */
 function userDetail(st: AdminState, u: AdminUser) {
@@ -528,21 +556,35 @@ function sorted<T>(rows: T[], sp: URLSearchParams, keys: Record<string, (r: T) =
   return [...rows].sort((a, b) => { const x = k(a), y = k(b); return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y))) * dir; });
 }
 const WEEK = 7 * 86400e3;
+/** the backend's `overrides` count: stored switch exceptions plus the other stored limits (an admin's switches never count) */
+const overridesOf = (u: AdminUser): number => (u.otherOverrides ?? 0) + (u.role === 'admin' ? 0 : Object.keys(u.perms ?? {}).length);
+/** the switch the person effectively has */
+function effectivePerm(st: AdminState, row: { id: string; role: string | null }, key: string): boolean {
+  if (row.role === 'admin') return true;
+  const own = st.users.find((x) => x.id === row.id)?.perms?.[key];
+  return own ?? (st.matrix.roles.find((r) => r.key === row.role)?.values[key] === true);
+}
 function usersList(st: AdminState, sp: URLSearchParams) {
+  // perm=key:on|off and mfa=off as the backend: the effective switch (role value, the person's exception on top; admins may do everything); mfa only with the provider's API
+  const permFilter = sp.get('perm')?.split(':') ?? null, mfaOff = sp.get('mfa') === 'off' && st.authentik.recovery;
   const q = norm(sp.get('q') ?? ''), status = sp.get('status'), inactive = sp.get('lastActive') === '90+', lastActive = inactive ? 0 : Number(sp.get('lastActive') ?? 0), now = Date.now();
   // status=pending: the open approval requests in the same row shape (backend: pending true, role null)
   const all = status === 'pending'
-    ? st.approvals.map((a) => ({ id: a.id, name: a.name, email: a.email, role: null as unknown as string, disabled: false, jellyfin_username: '', seerr_user_id: null, created_at: a.requested_at, last_seen: null, access_until: null, locked_reason: null, deletion_at: null as string | null, cleanup: null as { step: number; error: string | null; gone: boolean } | null, profiles: 0, devices: 0, pending: true }))
+    ? st.approvals.map((a) => ({ id: a.id, name: a.name, email: a.email, role: null as unknown as string, disabled: false, jellyfin_username: '', seerr_user_id: null, created_at: a.requested_at, last_seen: null, access_until: null, locked_reason: null, deletion_at: null as string | null, cleanup: null as { step: number; error: string | null; gone: boolean } | null, profiles: 0, devices: 0, pending: true, overrides: 0, kidsProfiles: 0, note: null }))
     : st.users.map((u) => ({ ...u, access_until: u.access_until ?? null, locked_reason: u.disabled ? (u.locked_reason ?? 'manual') : null, deletion_at: u.deletion_at ?? null,
-      cleanup: status === 'deleting' && u.cleanup ? { ...u.cleanup, gone: false } : null, profiles: u.profiles ?? 1, devices: st.devices.filter((d) => d.user_id === u.id).length, pending: false }))
+      cleanup: status === 'deleting' && u.cleanup ? { ...u.cleanup, gone: false } : null, profiles: u.profiles ?? 1, devices: st.devices.filter((d) => d.user_id === u.id).length, pending: false,
+      overrides: overridesOf(u), kidsProfiles: u.kidsProfiles ?? 0, note: u.note ?? null }))
       // status=deleting: plus the cleanup rows (backend: pseudonym as name, no e-mail or role, cleanup {step, error})
-      .concat(status === 'deleting' ? st.cleanups.map((c) => ({ id: c.id, name: c.pseudonym, email: null, role: null as unknown as string, disabled: true, jellyfin_username: '', seerr_user_id: null, created_at: c.started_at, last_seen: null, access_until: null, locked_reason: 'deletion' as const, deletion_at: null, profiles: 0, devices: 0, pending: false, cleanup: { step: c.step, error: c.error, gone: true } })) : []);
+      .concat(status === 'deleting' ? st.cleanups.map((c) => ({ id: c.id, name: c.pseudonym, email: null, role: null as unknown as string, disabled: true, jellyfin_username: '', seerr_user_id: null, created_at: c.started_at, last_seen: null, access_until: null, locked_reason: 'deletion' as const, deletion_at: null, profiles: 0, devices: 0, pending: false, overrides: 0, kidsProfiles: 0, note: null, cleanup: { step: c.step, error: c.error, gone: true } })) : []);
   let rows = all.filter((u) => (!q || norm(`${u.name} ${u.email ?? ''} ${u.jellyfin_username}`).includes(q)) && (!sp.get('role') || u.role === sp.get('role'))
     && (!status || status === 'pending' || (status === 'locked' && u.disabled) || (status === 'active' && !u.disabled && !u.deletion_at)
       || (status === 'deleting' && (Boolean(u.deletion_at) || Boolean(u.cleanup)))
       || (status === 'expiring' && u.access_until !== null && Date.parse(u.access_until) >= now && Date.parse(u.access_until) <= now + WEEK))
     && (!lastActive || (u.last_seen !== null && Date.parse(u.last_seen) >= now - lastActive * 86400e3))
-    && (!inactive || u.last_seen === null || Date.parse(u.last_seen) < now - 90 * 86400e3));
+    && (!inactive || u.last_seen === null || Date.parse(u.last_seen) < now - 90 * 86400e3)
+    && (sp.get('overrides') !== '1' || u.overrides > 0) && (sp.get('kids') !== '1' || u.kidsProfiles > 0)
+    && (!permFilter || (u.role !== null && effectivePerm(st, u, permFilter[0]!) === (permFilter[1] === 'on')))
+    && (!mfaOff || ('mfaOff' in u && u.mfaOff === true)));
   rows = sorted(rows, sp, { name: (u) => u.name, email: (u) => u.email ?? '', role: (u) => u.role, status: (u) => Number(u.disabled), lastSeen: (u) => u.last_seen ?? '', accessUntil: (u) => u.access_until ?? '', profiles: (u) => u.profiles, devices: (u) => u.devices });
   const { slice, total } = paged(rows, sp, 1000);
   return { users: slice, total };
@@ -564,9 +606,13 @@ function invitesList(st: AdminState, sp: URLSearchParams) {
   return { invites: slice.map((i) => ({ ...i, created_at: i.expires_at })), total };
 }
 const AUDIT_ACTOR = 'Tester';
+/** `?area=people` (backend admin.ts): the audit categories about people and their roles */
+const AUDIT_PEOPLE = new Set(['user', 'role', 'invite', 'profile', 'device']);
 function auditList(st: AdminState, sp: URLSearchParams) {
+  const area = sp.get('area') === 'people';
   const target = sp.get('target'), q = norm(sp.get('q') ?? ''), action = sp.get('action'), actor = sp.get('actor'), from = sp.get('from'), to = sp.get('to');
   let rows = st.audit.filter((e) => (!target || e.target === target) && (!q || norm(`${e.action} ${e.actor ?? ''} ${e.target_name ?? ''}`).includes(q))
+    && (!area || AUDIT_PEOPLE.has(e.action.split('.')[0]!))
     && (!action || e.action === action || e.action.startsWith(`${action}.`))
     && (!actor || (actor === 'system' ? e.actor === null : e.actor === AUDIT_ACTOR))
     && (!from || e.at >= from) && (!to || e.at <= to));
@@ -625,6 +671,22 @@ function livetvRoute(lt: LivetvMock, m: string, p: string, body: any, J: Reply):
   return null;
 }
 
+// ---- Task 22: audit samples of `user.rights` (backend userRights.ts: `{ from, to, layer?, stored?, note? }`) and a role.delete with its label ----
+/**
+ * newest first; `user` is the person the entries are about, `actor` the admin. As the backend writes them (rights.ts diffRights): a changed value
+ * has no `layer`; `layer` appears only when the value stayed and the deciding layer moved (sample 9002).
+ */
+export function rightsAuditSamples(user: { id: string; name: string }, actor = 'Ben Muster'): AuditRow[] {
+  const row = (id: number, minutes: number, action: string, meta: Record<string, unknown>): AuditRow => ({ id, at: new Date(Date.now() - minutes * 60000).toISOString(), action, target: user.id, meta, actor, target_name: user.name });
+  return [
+    row(9005, 0.5, 'user.rights', { from: { transcoding: true }, to: { transcoding: false } }),
+    row(9004, 1, 'user.rights', { from: {}, to: {}, stored: { cast: { from: true, to: null } } }),
+    row(9003, 2, 'user.rights', { from: { requestsPerMonth: 5 }, to: { requestsPerMonth: null } }),
+    row(9002, 3, 'user.rights', { from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'user' } } }),
+  ];
+}
+export const roleDeleteSample = (key: string, label: string): AuditRow => ({ id: 9100, at: new Date(Date.now() - 5 * 60000).toISOString(), action: 'role.delete', target: key, meta: { moveTo: null, accounts: 0, invites: 0, label }, actor: 'Ben Muster', target_name: null });
+
 export function adminSummary(st: AdminState) {
   const pendingReq = st.requests.filter((r) => r.status === PENDING).length;
   const locked = st.users.filter((u) => u.disabled).length;
@@ -637,6 +699,7 @@ export function adminSummary(st: AdminState) {
     services: { jellyfin: true, seerr: st.seerrUp },
     live: { streams: 2, partyRooms: 1 },
     livetv: { installed: st.livetv.installed, offerHidden: st.livetv.offerHidden, failedSources: st.livetv.failedSources },
+    mfaFilter: st.authentik.recovery,
     recoIndex: st.recoIndex,
   };
 }
@@ -670,6 +733,8 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
   }
 
   // ---- people ----
+  // open requests have no rights or 2FA state (backend: 400 bad_request)
+  if (p === '/api/admin/users' && sp.get('status') === 'pending' && (sp.has('perm') || sp.has('mfa'))) return J({ error: 'bad_request' }, 400);
   if (p === '/api/admin/users') return J(usersList(st, sp));
   // ---- user detail (Block 23) ----
   if ((mm = p.match(/^\/api\/admin\/users\/([0-9a-f-]{36}|u1)(\/.*)?$/)) && !(m === 'PATCH' && !mm[2]) && mm[2] !== '/revoke-sessions') {
@@ -697,7 +762,44 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       if (m === 'GET') return J({ limits: cur, role: DETAIL_ROLE_LIMITS });
       if (m === 'PUT') { const to = { ...cur, ...body }; log('user.limits', u.id, { from: cur, to }, u.name); st.limits[u.id] = to; return J({ limits: to }); }
     }
+    // ---- Sicht prüfen (backend viewcheck.ts, adminUsers.ts): the rights of one profile, its library counts and the title check ----
+    if (rest === '/rights' && m === 'GET' && sp.has('profile')) return viewRights(st, u, sp.get('profile')!, J);
+    if (rest === '/check' && (m === 'GET' || m === 'POST')) return viewCheck(st, u, m, m === 'GET' ? { profileId: sp.get('profile') } : body, J, log);
+    // every matrix row of the account (backend userRights.ts rightsView): effective value, the role's value, the stored override (null = none; an admin's
+    // switches never show one) and the deciding layer; PUT is partial (null = back to the role, a value equal to the role's is not stored)
+    if (rest === '/rights') {
+      const role = st.matrix.roles.find((r) => r.key === u.role);
+      if (!role) return J({ error: 'unknown_role' }, 409);
+      const isAdmin = u.role === 'admin';
+      const rowOf = (k: string) => rightsRow(role, u, k);
+      if (m === 'GET') {
+        const rows = MATRIX_FIELDS_MOCK.map((f) => rowOf(f.key as string));
+        const libs = rows.find((r) => r.key === 'libraries')!.value;
+        const missing = Array.isArray(libs) ? libs.filter((n) => !st.matrix.libraries.some((l) => l.name.toLowerCase() === String(n).toLowerCase())) : [];
+        return J({ role: u.role, note: u.note ?? null, rows, profile: null, hardKids: [], missingLibraries: missing });
+      }
+      if (m === 'PUT') {
+        const o = (body?.overrides ?? {}) as Record<string, unknown>;
+        const keys = MATRIX_FIELDS_MOCK.map((f) => f.key as string);
+        if (typeof body !== 'object' || Object.keys(body ?? {}).some((k) => k !== 'overrides' && k !== 'note') || Object.keys(o).some((k) => !keys.includes(k))) return J({ error: 'bad_request' }, 400);
+        if (body?.note !== undefined && body.note !== null && (typeof body.note !== 'string' || body.note.trim().length > 200)) return J({ error: 'bad_request' }, 400);
+        // the backend resolves library names first (case-insensitive, the server's spelling): 400 unknown_library; then, in the write, the admin lock
+        if (Array.isArray(o.libraries)) {
+          const known = o.libraries.map((n) => st.matrix.libraries.find((l) => l.name.toLowerCase() === String(n).toLowerCase())?.name);
+          if (known.includes(undefined)) return J({ error: 'unknown_library' }, 400);
+          o.libraries = [...new Set(known as string[])];
+        }
+        // the admin role's switches are always on: none can be set, a stored one may be cleared (null)
+        if (isAdmin && PERM_KEYS_MOCK.some((k) => o[k] !== undefined && o[k] !== null)) return J({ error: 'admin_perms_locked' }, 400);
+        const { changed } = writeRightsMock(role, u, o, body?.note, log);
+        const media = changed.some((k) => MEDIA_KEYS_MOCK.includes(k));
+        if (media && st.matrix.policyPartial) return J({ error: 'policy_partial', failed: st.matrix.failed, identities: 2 }, 502);
+        return J({ ok: true, reapplied: { identities: media ? 2 : 0, failed: 0 } });
+      }
+    }
     if (rest === '/repair' && m === 'POST') {
+      // identities that still fail (matrix.policyPartial): a 200 with ok:false, nothing healed
+      if (st.matrix.policyPartial) { log('user.repair', u.id, { failed: st.matrix.failed }, u.name); return J({ ok: false, jellyfin: { identities: 2, failed: st.matrix.failed }, requests: { ok: true, id: 7 } }); }
       st.linkedOk = { jellyfin: st.linkedOk.jellyfin === false ? true : st.linkedOk.jellyfin, requests: true };
       log('user.repair', u.id, {}, u.name);
       return J({ ok: true, jellyfin: { identities: 2, failed: 0 }, requests: { ok: true, id: 7 } });
@@ -722,15 +824,66 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       return ok();
     }
     if ((sub = rest.match(/^\/sessions\/([^/]+)\/revoke$/)) && m === 'POST') { log('user.revoke_device', u.id, { deviceId: sub[1] }, u.name); return J({ revoked: 1 }); }
+    // profiles (backend/src/routes/adminUsers.ts): PATCH rename / resetPin / kids / maxRating, POST a kids profile, DELETE a kids profile.
+    // Order as there: body check (400 bad_request), account (404), deletion claim (409 deletion_in_progress), then the profile's own errors.
+    const own = (n: Record<string, unknown>, allowed: string[]) => typeof n === 'object' && n !== null && Object.keys(n).every((k) => allowed.includes(k));
+    const nameOk = (v: unknown) => typeof v === 'string' && v.trim().length >= 1 && v.trim().length <= 20;
+    const capOk = (v: unknown) => v === 0 || v === 6 || v === 12;
+    const pub = (x: DetailProfile) => ({ id: x.id, name: x.name, avatar: x.avatar, isOwner: x.isOwner, kids: x.kids, ...(x.kids ? { maxRating: x.maxRating } : {}), hasPin: x.hasPin });
+    const recount = () => { const l = profilesOf(st, u); u.profiles = l.length; u.kidsProfiles = l.filter((x) => x.kids).length; };
+    const taken = (name: string, except?: DetailProfile) => profilesOf(st, u).some((x) => x !== except && x.name.toLowerCase() === name.trim().toLowerCase());
+    if (rest === '/profiles' && m === 'POST') {
+      if (!own(body, ['name', 'kids', 'maxRating', 'avatar']) || !nameOk(body.name) || body.kids !== true || !capOk(body.maxRating)
+        || (body.avatar !== undefined && !/^[a-z0-9-]{1,20}$/.test(String(body.avatar)))) return J({ error: 'bad_request' }, 400);
+      if (st.claimed.has(u.id)) return J({ error: 'deletion_in_progress' }, 409);
+      const list = profilesOf(st, u);
+      if (list.length >= 5) return J({ error: 'max_profiles' }, 409);
+      if (taken(body.name)) return J({ error: 'name_taken' }, 409);
+      const pr: DetailProfile = { id: `${u.id.slice(0, -4)}p${String(100 + ++st.profileSeq)}`, name: body.name.trim(), kids: true, maxRating: body.maxRating, avatar: body.avatar ?? 'red', lastUsed: null, isOwner: false, hasPin: false };
+      list.push(pr);
+      recount();
+      log('profile.admin_create', u.id, { profile: pr.id, maxRating: pr.maxRating }, u.name);
+      return J({ profile: pub(pr) }, 201);
+    }
     if ((sub = rest.match(/^\/profiles\/([^/]+)$/)) && m === 'PATCH') {
+      const keys = ['name', 'resetPin', 'kids', 'maxRating'];
+      if (!own(body, keys) || !keys.some((k) => body[k] !== undefined) || (body.name !== undefined && !nameOk(body.name)) || (body.resetPin !== undefined && body.resetPin !== true)
+        || (body.kids !== undefined && typeof body.kids !== 'boolean') || (body.maxRating !== undefined && !capOk(body.maxRating))) return J({ error: 'bad_request' }, 400);
+      if (st.claimed.has(u.id)) return J({ error: 'deletion_in_progress' }, 409);
       const pr = profilesOf(st, u).find((x) => x.id === sub![1]);
       if (!pr) return J({ error: 'not_found' }, 404);
-      if (body.name && profilesOf(st, u).some((x) => x !== pr && x.name.toLowerCase() === String(body.name).toLowerCase())) return J({ error: 'name_taken' }, 409);
-      const from = { name: pr.name, hasPin: pr.hasPin };
-      if (body.name) pr.name = body.name;
+      if (body.kids !== undefined && pr.isOwner) return J({ error: 'owner_not_kids' }, 400);
+      const kids = body.kids ?? pr.kids;
+      if (body.maxRating !== undefined && !kids) return J({ error: 'not_kids' }, 400);
+      if (body.name && taken(body.name, pr)) return J({ error: 'name_taken' }, 409);
+      const from: Record<string, unknown> = { name: pr.name, hasPin: pr.hasPin };
+      const kidsFrom = { kids: pr.kids, maxRating: pr.maxRating };
+      if (body.name) pr.name = body.name.trim();
       if (body.resetPin) pr.hasPin = false;
-      log('profile.admin_update', u.id, { from, to: { name: pr.name, hasPin: pr.hasPin } }, u.name);
-      return J({ profile: pr });
+      // the DB keeps the cap of a profile that stops being a kids one (shown as null), a new kids profile starts at 12
+      if (!pr.kids && kids) pr.maxRating = body.maxRating ?? st.keptCap.get(pr.id) ?? 12;
+      else if (pr.kids && !kids) { st.keptCap.set(pr.id, pr.maxRating ?? 12); pr.maxRating = null; }
+      else if (kids && body.maxRating !== undefined) pr.maxRating = body.maxRating;
+      pr.kids = kids;
+      const to: Record<string, unknown> = { name: pr.name, hasPin: pr.hasPin };
+      if (kidsFrom.kids !== pr.kids || kidsFrom.maxRating !== pr.maxRating) { Object.assign(from, kidsFrom); Object.assign(to, { kids: pr.kids, maxRating: pr.maxRating }); }
+      recount();
+      log('profile.admin_update', u.id, { profile: pr.id, from, to }, u.name);
+      // a kids change the media server did not take: stored and audited, the answer says so (Repair re-applies it)
+      if (st.profileMediaFails && (body.kids !== undefined || body.maxRating !== undefined)) return J({ error: 'jellyfin' }, 502);
+      return J({ profile: pub(pr) });
+    }
+    if ((sub = rest.match(/^\/profiles\/([^/]+)$/)) && m === 'DELETE') {
+      if (st.claimed.has(u.id)) return J({ error: 'deletion_in_progress' }, 409);
+      const list = profilesOf(st, u);
+      const pr = list.find((x) => x.id === sub![1]);
+      if (!pr) return J({ error: 'not_found' }, 404);
+      if (pr.isOwner) return J({ error: 'owner_profile' }, 400);
+      if (!pr.kids) return J({ error: 'not_kids_profile' }, 400);
+      st.userProfiles[u.id] = list.filter((x) => x !== pr);
+      recount();
+      log('profile.admin_delete', u.id, { profile: pr.id }, u.name);
+      return ok();
     }
     return null;
   }
@@ -754,9 +907,18 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     if (users.some((u) => !u)) return J({ error: 'not_found' }, 404);
     if ((body.action === 'lock' || (body.action === 'role' && body.role !== 'admin')) && body.ids.includes('u1')) return J({ error: 'cannot_lock_yourself_out' }, 400);
     if (body.action === 'unlock' && (users as AdminUser[]).some((u) => u.disabled && accessEnded(u.access_until ?? null))) return J({ error: 'access_expired' }, 409);
-    let done = 0;
+    // the admin role's switches are locked: refused as a whole before the first write (clearing stays possible)
+    if (body.action === 'perm' && body.value !== null && (users as AdminUser[]).some((u) => u.role === 'admin')) return J({ error: 'admin_perms_locked' }, 400);
+    let done = 0, failed = 0;
     for (const u of users as AdminUser[]) {
-      if (body.action === 'lock' || body.action === 'unlock') {
+      if (body.action === 'repair') {
+        if (st.repairFails.has(u.id)) { failed++; continue; }
+        log('user.repair', u.id, {}, u.name);
+      } else if (body.action === 'perm') {
+        // the same per-account write as PUT /rights (backend adminUsers bulk → putRights): counted only when something changed
+        const role = st.matrix.roles.find((r) => r.key === u.role);
+        if (!role || !writeRightsMock(role, u, { [body.perm]: body.value }, undefined, log).changed.length) continue;
+      } else if (body.action === 'lock' || body.action === 'unlock') {
         const d = body.action === 'lock';
         if (u.disabled === d) continue;
         u.disabled = d; log(d ? 'user.disable' : 'user.enable', u.id, {}, u.name);
@@ -768,7 +930,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       }
       done++;
     }
-    return J({ done });
+    return J(failed ? { done, failed } : { done });
   }
   if (p === '/api/admin/approvals' && m === 'GET') return J({ requests: st.approvals });
   if ((mm = p.match(/^\/api\/admin\/approvals\/([^/]+)\/(approve|reject)$/)) && m === 'POST') {
@@ -904,7 +1066,12 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     log('invite.revoke', mm[1]!);
     return ok();
   }
-  if (p === '/api/admin/audit') return J(auditList(st, sp));
+  if (p === '/api/admin/audit') {
+    // backend admin.ts: area is the literal 'people'; target 1..64 characters
+    const t = sp.get('target');
+    if ((sp.has('area') && sp.get('area') !== 'people') || (t !== null && (t.length < 1 || t.length > 64))) return J({ error: 'bad_request' }, 400);
+    return J(auditList(st, sp));
+  }
   if (p === '/api/admin/audit/filters') return J({ actors: [{ id: 'u1', name: AUDIT_ACTOR }], system: st.audit.some((e) => e.actor === null), categories: [...new Set(st.audit.map((e) => e.action.split('.')[0]!))].sort() });
 
   // ---- content ----
@@ -1114,4 +1281,125 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return J({ ...UPDATE_RELEASE, current: { sha: 'c0be6c5deadbeef', builtAt: ago(70), version: '1.0.0', codename: 'Arancini' }, latest: { sha: 'ff00aa1deadbeef', date: ago(5), runUrl: 'https://example.org/run' }, behind: 3, portainer: { configured: true, mode: 'webhook' }, autoUpdateNote: true, commits: [{ sha: 'ff00aa1', url: 'https://example.org/c/1', message: 'feat(wishes): local request-service users', author: 'Manu', date: ago(5) }, { sha: 'ee11bb2', url: 'https://example.org/c/2', message: 'ci: signing', author: 'Manu', date: ago(9) }] });
   }
   return null;
+}
+
+
+// ---- Sicht prüfen: GET /rights?profile=, GET/POST /check (backend userRights.ts, viewcheck.ts; spec §4.2, §6.4) ----
+const KIDS_OFF_MOCK = ['requests', 'party', 'partySchedule', 'comments', 'liveRecord'];
+/** the library totals of the mocked media server and what a profile sees of them under each age cap (null = no cap) */
+const VIEW_TOTALS: Record<string, { total: number; seen: Record<string, number> }> = {
+  Filme: { total: 1204, seen: { none: 1204, '12': 812, '6': 212, '0': 40 } },
+  Serien: { total: 340, seen: { none: 340, '12': 301, '6': 61, '0': 9 } },
+  Musik: { total: 80, seen: { none: 80, '12': 80, '6': 80, '0': 80 } },
+};
+/** the searchable titles: age is null for an unrated one */
+const VIEW_TITLES = [
+  { id: '0000000000000000000000000000d001', name: 'Dunmoor', year: 2021, type: 'Movie', rating: 'FSK-16', age: 16, library: 'Filme' },
+  { id: '0000000000000000000000000000d002', name: 'Dunmoor Origins', year: 2014, type: 'Movie', rating: null, age: null, library: 'Filme' },
+  { id: '0000000000000000000000000000d003', name: 'Saltwater Almanac', year: 2019, type: 'Series', rating: 'FSK-6', age: 6, library: 'Serien' },
+  // ten matches for "Harbour": the answer stops at CHECK_HITS
+  ...Array.from({ length: 10 }, (_, i) => ({ id: `00000000000000000000000000000e${String(i).padStart(2, '0')}`, name: `Quiet Harbour ${i + 1}`, year: 2010 + i, type: 'Movie', rating: 'FSK-0', age: 0, library: 'Filme' })),
+];
+/** the most hits a title check answers with (backend viewcheck.ts) */
+const CHECK_HITS = 8;
+/** a profile id the route's zod schema takes (a uuid; the mock's profile ids end in `p001`, so letters count as well); anything else is 400 before a lookup */
+const pidOk = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}$/.test(v);
+const profileOf = (st: AdminState, u: AdminUser, pid: string | null | undefined) => (pid ? profilesOf(st, u).find((p) => p.id === pid) : undefined);
+const kidsCap = (p: DetailProfile): number | null => (p.kids ? (p.maxRating ?? 12) : null);
+/** one Rechte row of the account (backend userRights.ts rightsView): effective value, the role's, the stored override and the deciding layer */
+function rightsRow(role: MatrixMockRole, u: AdminUser, k: string) {
+  const perm = PERM_KEYS_MOCK.includes(k);
+  if (perm && u.role === 'admin') return { key: k, value: true as unknown, roleValue: true as unknown, override: null as unknown, source: 'admin' };
+  const roleValue = role.values[k];
+  const override = perm ? u.perms?.[k] ?? null : u.ov?.[k] ?? null;
+  return { key: k, value: (override === null ? roleValue : override === 'unlimited' ? null : override) as unknown, roleValue, override: override as unknown, source: override === null ? role.sources[k] ?? 'default' : 'user' };
+}
+/**
+ * The write of PUT /rights and of the bulk `perm` (backend userRights.writeRights): partial (null = back to the role), a value equal to the
+ * role's is not stored. One `user.rights` entry `{ from, to, layer?, stored?, note? }`: `from`/`to` for every key whose effective value or
+ * deciding layer changed, `layer` for the keys that only moved between layers, `stored` for a switch cleared on an admin account (it
+ * decides nothing). Returns the changed keys (value or layer), as the backend's `changed`.
+ */
+function writeRightsMock(role: MatrixMockRole, u: AdminUser, o: Record<string, unknown>, note: string | null | undefined, log: (a: string, t: string | null, meta?: Record<string, unknown>, n?: string | null) => void): { changed: string[] } {
+  const keys = MATRIX_FIELDS_MOCK.map((f) => f.key as string);
+  const before = Object.fromEntries(keys.map((k) => [k, rightsRow(role, u, k)]));
+  const store = (k: string, v: unknown) => {
+    const perm = PERM_KEYS_MOCK.includes(k), target = perm ? (u.perms ??= {}) : (u.ov ??= {}) as Record<string, unknown>;
+    const eff = v === 'unlimited' ? null : v;
+    const lc = (x: unknown) => (Array.isArray(x) ? JSON.stringify([...new Set(x.map((n) => String(n).toLowerCase()))].sort()) : JSON.stringify(x));
+    if (v === null || lc(eff) === lc(role.values[k])) delete target[k]; else target[k] = v;
+  };
+  const stored: Record<string, { from: unknown; to: unknown }> = {};
+  if (u.role === 'admin') for (const k of PERM_KEYS_MOCK) if (o[k] === null && u.perms?.[k] !== undefined) stored[k] = { from: u.perms[k], to: null };
+  for (const [k, v] of Object.entries(o)) if (v !== undefined) store(k, v);
+  if (u.perms && !Object.keys(u.perms).length) delete u.perms;
+  u.otherOverrides = Object.keys(u.ov ?? {}).length;
+  const noteWas = u.note ?? null;
+  if (note !== undefined) u.note = note === null || note.trim() === '' ? null : note.trim();
+  const from: Record<string, unknown> = {}, to: Record<string, unknown> = {}, layer: Record<string, { from: string; to: string }> = {};
+  for (const k of keys) {
+    const a = before[k]!, b = rightsRow(role, u, k);
+    if (JSON.stringify(a.value) !== JSON.stringify(b.value)) { from[k] = a.value; to[k] = b.value; }
+    else if (a.source !== b.source) { from[k] = a.value; to[k] = b.value; layer[k] = { from: a.source, to: b.source }; }
+  }
+  const noteChanged = (u.note ?? null) !== noteWas;
+  if (Object.keys(to).length || noteChanged || Object.keys(stored).length) {
+    log('user.rights', u.id, { from, to, ...(Object.keys(layer).length ? { layer } : {}), ...(Object.keys(stored).length ? { stored } : {}), ...(noteChanged ? { note: 'changed' } : {}) }, u.name);
+  }
+  return { changed: Object.keys(to) };
+}
+/** the effective rows of the account with the kids overlay of the profile (kids cap, KIDS_OFF switched off) */
+function viewRows(st: AdminState, u: AdminUser, p: DetailProfile) {
+  const role = st.matrix.roles.find((r) => r.key === u.role)!;
+  const kc = kidsCap(p);
+  return MATRIX_FIELDS_MOCK.map((f) => {
+    const k = f.key as string, perm = PERM_KEYS_MOCK.includes(k);
+    const roleValue = role.values[k];
+    const override = u.role === 'admin' && perm ? null : (perm ? u.perms?.[k] : u.ov?.[k]) ?? null;
+    let value = override === null ? roleValue : override === 'unlimited' ? null : override, source: string = override === null ? role.sources[k] ?? 'default' : 'user';
+    // backend rights.ts: the kids cap, or the account's lower one
+    if (kc !== null && k === 'maxParentalRating') { const eff = value === null ? kc : Math.min(value as number, kc); if (eff !== value) { value = eff; source = 'kids'; } }
+    if (kc !== null && KIDS_OFF_MOCK.includes(k)) { value = false; source = 'kids'; }
+    return { key: k, value, roleValue, override, source };
+  });
+}
+function viewRights(st: AdminState, u: AdminUser, pid: string, J: Reply): Promise<void> {
+  if (!pidOk(pid)) return J({ error: 'bad_request' }, 400);
+  const p = profileOf(st, u, pid);
+  if (!p) return J({ error: 'not_found' }, 404);
+  return J({ role: u.role, note: u.note ?? null, rows: viewRows(st, u, p), profile: { id: p.id, name: p.name, kids: p.kids, maxRating: kidsCap(p) }, hardKids: p.kids ? KIDS_OFF_MOCK : [], missingLibraries: [] });
+}
+function viewCheck(st: AdminState, u: AdminUser, m: string, body: any, J: Reply, log: (a: string, t: string | null, meta?: Record<string, unknown>, n?: string | null) => void): Promise<void> {
+  // the route's rate limit runs first: 30 a minute (fastify's 429 answer)
+  const now = Date.now();
+  st.checkTimes = st.checkTimes.filter((t) => t > now - 60_000);
+  if (st.checkTimes.length >= 30) return J({ statusCode: 429, error: 'Too Many Requests', message: 'Rate limit exceeded, retry in 1 minute' }, 429);
+  st.checkTimes.push(now);
+  // then the schema (a missing or malformed profile id is 400), then the lookup (404)
+  const pid = m === 'GET' ? body.profileId : body?.profileId;
+  if (!pidOk(pid)) return J({ error: 'bad_request' }, 400);
+  const p = profileOf(st, u, pid);
+  if (!p) return J({ error: 'not_found' }, 404);
+  const rows = viewRows(st, u, p);
+  const val = (k: string) => rows.find((r) => r.key === k)!.value;
+  const shared = (lib: string) => val('libraries') === 'all' || (val('libraries') as string[]).some((n) => n.toLowerCase() === lib.toLowerCase());
+  const cap = val('maxParentalRating') as number | null;
+  if (m === 'GET') {
+    log('user.check_viewed', u.id, { profile: p.id, libraries: st.matrix.libraries.length }, u.name);
+    return J({ libraries: st.matrix.libraries.map((l) => {
+      const t = VIEW_TOTALS[l.name] ?? { total: 10, seen: { none: 10, '12': 10, '6': 10, '0': 10 } }, vis = shared(l.name);
+      return { id: l.id, name: l.name, visible: vis, seen: vis ? t.seen[cap === null ? 'none' : String(cap)] ?? t.total : null, total: t.total };
+    }) });
+  }
+  // exactly one of query (2-100 characters) and itemId (32 hex)
+  const q = typeof body.query === 'string' ? body.query.trim() : undefined, id = body.itemId;
+  if ((q === undefined) === (id === undefined) || (q !== undefined && (q.length < 2 || q.length > 100)) || (id !== undefined && !/^[0-9a-f]{32}$/.test(String(id)))) return J({ error: 'bad_request' }, 400);
+  const found = VIEW_TITLES.filter((t) => (q !== undefined ? t.name.toLowerCase().includes(q.toLowerCase()) : t.id === id));
+  const hits = found.slice(0, CHECK_HITS).map((t) => {
+    const why = !shared(t.library) ? 'library' : t.age !== null && cap !== null && t.age > cap ? 'rating' : t.age === null && p.kids ? 'unrated_kids'
+      : t.age === null && cap !== null && st.checkHidesUnrated ? 'unrated' : null;
+    return { id: t.id, name: t.name, year: t.year, type: t.type, visible: why === null, why, rating: t.rating, library: t.library };
+  });
+  log('user.check_viewed', u.id, { profile: p.id, hits: hits.length }, u.name);
+  return J({ hits });
 }

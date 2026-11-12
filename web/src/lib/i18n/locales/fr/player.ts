@@ -11,6 +11,11 @@ const fr: Translation<typeof de> = {
     title: 'Lecture impossible',
     generic: 'Lecture impossible.',
     maxStreams: { one: '{n} flux simultané maximum autorisé.', many: '{n} flux simultanés maximum autorisés.', other: '{n} flux simultanés maximum autorisés.' },
+    serverBusy: 'Le serveur est occupé en ce moment. Réessayez dans un instant.',
+    serverBusyQuality: 'Serveur occupé – la qualité reste à {q}',
+    serverBusyTrack: 'Serveur occupé – la piste audio reste inchangée',
+    serverBusySurroundOn: 'Serveur occupé – le son surround reste activé',
+    serverBusySurroundOff: 'Serveur occupé – le son surround reste désactivé',
     connection: 'La connexion au serveur a été interrompue ou la vidéo est endommagée.',
     retry: 'Réessayer',
     back: 'Retour',
@@ -42,6 +47,7 @@ const fr: Translation<typeof de> = {
     /* chip in the control bar: how the picture reaches this device, and why it is converted */
     chipOriginal: 'Original',
     chipConverted: 'Converti · {q}',
+    chipCopied: 'Copié · {q}',
     chipLabel: 'Type de lecture',
     directInfo: 'Lecture directe, sans conversion',
     reasonNetwork: 'Connexion lente – la qualité s’ajuste automatiquement',
@@ -55,6 +61,7 @@ const fr: Translation<typeof de> = {
     reasonSubtitles: 'Les sous-titres sont incrustés dans l’image',
     reasonHeight: 'La résolution est trop élevée pour cet appareil',
     reasonManual: 'Vous avez choisi la qualité vous-même',
+    reasonServerBusy: 'Serveur occupé',
     reasonOther: 'Cet appareil a besoin d’une version convertie',
   },
   sleep: {

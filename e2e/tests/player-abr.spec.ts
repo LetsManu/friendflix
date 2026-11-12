@@ -13,13 +13,14 @@ interface InfoCall { maxBitrate?: number; reasonHint?: string; startTicks?: numb
  * /api/playback/info answers like the server: no maxBitrate = original (direct play of the file), otherwise a transcode at that rung
  * (a real 30 s HLS stream). `stallAt` = rungs whose segments from the 4th on arrive after 7 s, so playback really runs dry at about 6 s.
  */
-async function mockAbr(page: Page, o: { stallAt?: number[]; slowFirst?: number[]; tracks?: boolean; direct?: boolean; sourceBps?: number } = {}) {
+async function mockAbr(page: Page, o: { stallAt?: number[]; slowFirst?: number[]; tracks?: boolean; direct?: boolean; sourceBps?: number; busyFrom?: number } = {}) {
   await mockPlayer(page);
   const calls: InfoCall[] = [];
   const firstSeg = new Set<number>();
   await page.route('**/api/playback/info', async (r) => {
     const b = r.request().postDataJSON() as InfoCall;
     calls.push(b);
+    if (o.busyFrom !== undefined && calls.length >= o.busyFrom) return r.fulfill({ status: 503, json: { error: 'server_busy' } }); // the conversion budget is full
     const base = { resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: `ps${calls.length}`, roleMaxBitrate: 20_000_000, subtitles: [],
       audioTracks: o.tracks ? [{ index: 1, title: 'Deutsch', language: 'ger', isDefault: true }, { index: 2, title: 'English', language: 'eng', isDefault: false }] : [] };
     if (b.audioIndex !== undefined) Object.assign(base, { audioIndex: b.audioIndex });
@@ -190,5 +191,24 @@ test.describe('player: adaptive quality', () => {
     await page.waitForTimeout(400);
     expect(new URL(page.url()).pathname).toBe('/watch/' + MOVIE.id);
     await expect(page.locator('video')).toBeVisible();
+  });
+});
+
+test.describe('player: adaptive quality and a full conversion budget', () => {
+  test.beforeEach(({ api }) => { api.features = { requests: true, postplay: false }; });
+  test.use({ allowedConsole: /status of 503/ });
+
+  test('an ABR step-down into a 503 shows the busy state and never reloads the rung that stalled', async ({ page, api: _api }) => {
+    test.setTimeout(60_000); // a real stall (7 s)
+    const calls = await mockAbr(page, { stallAt: [4_000_000], busyFrom: 2 });
+    await page.goto('/watch/' + MOVIE.id);
+    await playing(page);
+    const box = page.getByRole('alertdialog');
+    await expect(box).toContainText('Server gerade ausgelastet. Versuch es gleich noch einmal.', { timeout: 25_000 });
+    await expect.poll(() => calls.length).toBe(2);
+    expect(calls[1]).toMatchObject({ maxBitrate: 1_500_000, reasonHint: 'network' });
+    await page.waitForTimeout(3000); // a negative check: the stalled 720p stream is not asked for again
+    expect(calls).toHaveLength(2);
+    await expect(page.locator('.toast', { hasText: 'Qualität bleibt bei' })).toHaveCount(0);
   });
 });

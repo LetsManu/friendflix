@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import {
+  grantableRoles,
   cellName, cellText, changedFromText, compareQuestion, fieldLabel, partialText, peopleLine, policyLine, reviewLines, saveBarText, stageBodies, stageCounts, stageSet, summaryLine, visibleFields,
   type MatrixField, type MatrixRole, type RoleMatrix, type Stage,
 } from './model';
@@ -198,5 +199,15 @@ describe('compareQuestion', () => {
     await setLocale('de');
     expect(compareQuestion('maxStreams')).toBe(`${fieldLabel('maxStreams')} je Rolle`);
     expect(compareQuestion('download')).toBe('Wer darf herunterladen?');
+  });
+});
+
+describe('grantableRoles', () => {
+  const r = (key: string, invitable: boolean, position: number) => ({ key, invitable, position });
+  const roles = [r('guest', true, 3), r('admin', false, 0), r('friend', true, 2), r('crew', false, 4), r('family', true, 1)];
+  it('the invitable roles in catalogue order, Admin only for an approval', () => {
+    expect(grantableRoles(roles).map((x) => x.key)).toEqual(['family', 'friend', 'guest']);
+    expect(grantableRoles(roles, true).map((x) => x.key)).toEqual(['admin', 'family', 'friend', 'guest']);
+    expect(roles.map((x) => x.key)).toEqual(['guest', 'admin', 'friend', 'crew', 'family']); // the input stays as it was
   });
 });

@@ -11,6 +11,11 @@ const es: Translation<typeof de> = {
     title: 'No se puede reproducir',
     generic: 'No se puede reproducir.',
     maxStreams: { one: 'Se permite como máximo {n} reproducción simultánea.', many: 'Se permiten como máximo {n} reproducciones simultáneas.', other: 'Se permiten como máximo {n} reproducciones simultáneas.' },
+    serverBusy: 'El servidor está ocupado ahora mismo. Inténtalo de nuevo en un momento.',
+    serverBusyQuality: 'Servidor ocupado: la calidad se queda en {q}',
+    serverBusyTrack: 'Servidor ocupado: la pista de audio no cambia',
+    serverBusySurroundOn: 'Servidor ocupado: el sonido envolvente sigue activado',
+    serverBusySurroundOff: 'Servidor ocupado: el sonido envolvente sigue desactivado',
     connection: 'Se ha perdido la conexión con el servidor o el vídeo está dañado.',
     retry: 'Reintentar',
     back: 'Volver',
@@ -42,6 +47,7 @@ const es: Translation<typeof de> = {
     /* chip in the control bar: how the picture reaches this device, and why it is converted */
     chipOriginal: 'Original',
     chipConverted: 'Convertido · {q}',
+    chipCopied: 'Copiado · {q}',
     chipLabel: 'Tipo de reproducción',
     directInfo: 'Reproducción directa, sin conversión',
     reasonNetwork: 'Conexión lenta: la calidad se ajusta automáticamente',
@@ -55,6 +61,7 @@ const es: Translation<typeof de> = {
     reasonSubtitles: 'Los subtítulos se incrustan en la imagen',
     reasonHeight: 'La resolución es demasiado alta para este dispositivo',
     reasonManual: 'Elegiste la calidad tú mismo',
+    reasonServerBusy: 'Servidor ocupado',
     reasonOther: 'Este dispositivo necesita una versión convertida',
   },
   sleep: {

@@ -135,6 +135,7 @@ describe('admin glass: text contrast (B′)', () => {
     expect(src('../../routes/admin/hubs/+page.svelte')).toMatch(/\.tag \{[^}]*color: var\(--mut\); background: var\(--wash-muted\);/);
     expect(src('../../routes/admin/playback/+page.svelte')).toMatch(/\.fails li \{[^}]*background: var\(--wash-err\);/);
     expect(src('../../routes/admin/devices/+page.svelte')).toMatch(/\.waiting \{[^}]*background: var\(--wash-warn\); color: var\(--warn\);/);
+    expect(src('../../routes/admin/users/+page.svelte')).toMatch(/\.badge \{[^}]*background: var\(--wash-warn\); color: var\(--warn\);/);
     expect(src('./settings/SettingRow.svelte')).toMatch(/\.moved \{[^}]*background: var\(--wash-info\); color: var\(--fg\);/);
     for (const bg of ON_GLASS) {
       expect(cr(GLASS.ok, wash('ok', bg)), 'probe ok').toBeGreaterThanOrEqual(AA);
@@ -144,6 +145,7 @@ describe('admin glass: text contrast (B′)', () => {
       expect(cr(MUT, wash('muted', bg)), 'hub tag').toBeGreaterThanOrEqual(AA);
       expect(cr(MUT, wash('err', bg)), 'playback .72').toBeGreaterThanOrEqual(AA);
       expect(cr(GLASS.warn, wash('warn', bg)), 'devices waiting').toBeGreaterThanOrEqual(AA);
+      expect(cr(GLASS.warn, wash('warn', bg)), 'people exceptions badge').toBeGreaterThanOrEqual(4.5);
       expect(textContrast(wash('info', bg)), 'moved hint').toBeGreaterThanOrEqual(AA);
     }
     // why: the plain washes on the card over the peak (the review's figures)
@@ -478,12 +480,90 @@ describe('role matrix and save bar (rights)', () => {
       expect(src, f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
       expect(src, f).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
     }
-    for (const f of ['DeleteRoleDialog', 'NameDialog']) expect(read(`./rights/${f}.svelte`), f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+    for (const f of ['DeleteRoleDialog', 'NameDialog']) expect(read(`./rights/${f}.svelte`), f).toContain('ModalShell');
+    // the confirm dialog (Verwerfen, delete, …) sits in the same shell, so its calm mode is the shell's
+    expect(read('../ui/ConfirmHost.svelte')).toMatch(/<ModalShell\b/);
+    expect(read('../ui/ModalShell.svelte')).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
   });
 
   it('the bar reserves its room before it rises: --savebar-h is set in a reactive statement (before the DOM update)', () => {
     expect(bar).toMatch(/\$: reserve\(shown\);/);
     expect(bar).toContain("st.setProperty('--savebar-h'");
     expect(read('../../routes/admin/roles/+page.svelte')).toMatch(/\.roles \{ padding-bottom: var\(--savebar-h, 0px\); \}/);
+  });
+
+  it('open sheets keep a room for the toasts (--sheet-h / --sheet-w): the toasts move by their transform, calm mode at once', () => {
+    const host = read('../ui/ToastHost.svelte');
+    expect(host).toMatch(/transform: translate\(calc\(-50% - var\(--sheet-w, 0px\) \/ 2\), calc\(-1 \* max\(var\(--castbar-h, 0px\) \+ var\(--savebar-h, 0px\), var\(--sheet-h, 0px\) - var\(--toast-b\) \+ 12px\)\)\);/);
+    expect(host).toMatch(/transition: transform 240ms var\(--fr-out\)/);
+    expect(host).toMatch(/:global\(html\.m-still\) \.toasts \{ transition: none; \}/);
+    expect(read('./rights/ReviewSheet.svelte')).toContain('use:sheetRoom transition:slide|global');
+    expect(read('./user/KidsSheet.svelte')).toContain('use:sheetRoom transition:slide|global');
+    expect(read('./rights/RoleSheet.svelte')).toContain("use:sheetRoom={'right'} transition:slide|global");
+  });
+});
+
+/** The person's Rechte tab (users & permissions spec §8): the muted role value and the three-way switch, and the motion rule */
+describe('person rights tab', () => {
+  const src = read('./user/Rights.svelte');
+  const css = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  /** the track is the darker scrim fill (as the matrix chips): it only adds contrast */
+  const TRACK = 0.25;
+
+  it('animates only transform and opacity (the thumb), nothing else', () => {
+    const t = [...css.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)].map((m) => m[1]!);
+    expect(t.length).toBeGreaterThan(0);
+    for (const v of t) expect(v, v).toMatch(/^\s*(transform|none)\b/);
+    expect(css).not.toMatch(/@keyframes/);
+    expect(css).toMatch(/\.thumb \{[^}]*transform: translateX\(/);
+  });
+
+  it('the role value is the .72 muted text; it keeps 4.5:1 on every glass surface', () => {
+    expect(css).toMatch(/\.role \{[^}]*color: var\(--mut\);/);
+    for (const bg of ON_GLASS) expect(textContrast(bg, MUT), `${bg}`).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('the switch: unselected labels (.72) on the track, the selected one dark on the coral thumb', () => {
+    expect(css).toMatch(/\.seg \{[^}]*color: var\(--mut\);/);
+    expect(css).toMatch(/\.seg\.on \{ color: #1a1a1a; \}/);
+    expect(css).toMatch(/\.thumb \{[^}]*background: var\(--acc\);/);
+    expect(css).toMatch(/\.tri \{[^}]*background: rgba\(var\(--fr-scrim-rgb\), \.25\);/);
+    for (const bg of ON_GLASS) expect(textContrast(over(bg, SCRIM_RGB, TRACK), MUT), `${bg}`).toBeGreaterThanOrEqual(AA);
+    expect(contrast(hex('#1a1a1a'), hex('#ff4f6d'))).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('the source chips are StatusPills (info / muted tones, checked with the pills above); the library error is --err text', () => {
+    expect(src).toContain("tone={chip(row) === 'user' ? 'info' : 'muted'}");
+    expect(css).toMatch(/\.lib-err \{[^}]*color: var\(--err\);/);
+  });
+});
+
+/** The person's Profile tab (users & permissions spec §6.3): the create sheet's motion and the reserved age-limit room */
+describe('person profiles tab', () => {
+  const sheet = read('./user/KidsSheet.svelte');
+  const page = read('./user/Profiles.svelte');
+  const css = (src: string) => [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('the create sheet slides up both ways, sits on the menu scrim, animates nothing itself and stands still in calm mode', () => {
+    expect(sheet).toMatch(/sheetSlide\(node, \{ dir \}\)/);
+    expect(sheet).toMatch(/transition:slide\|global/);
+    expect(sheet).toMatch(/transition:scrimFade\|global/);
+    expect(sheet).toContain('--fr-scrim-safe:{SCRIM_MENU}');
+    expect(css(sheet).replace(/transition: none !important/g, '')).not.toMatch(/transition\s*:|@keyframes/);
+    expect(css(sheet)).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+    expect(css(sheet)).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+    for (const bg of [frostComposite(WHITE, SCRIM_MENU), frostComposite(AMB_PEAK, SCRIM_MENU), frostComposite(DARK_BASE, SCRIM_MENU)]) expect(textContrast(bg, 0.9)).toBeGreaterThanOrEqual(AA);
+    // its error line is bold .9 white text; the light error colour is only the icon (a graphic: 3:1)
+    expect(css(sheet)).toContain('.err { display: flex; gap: .55rem; align-items: flex-start; margin: 0; color: rgba(255, 255, 255, .9); font-weight: 700; }');
+    for (const bg of [frostComposite(WHITE, SCRIM_MENU), frostComposite(AMB_PEAK, SCRIM_MENU), frostComposite(DARK_BASE, SCRIM_MENU)]) expect(contrast(hex('#ffbdbd'), bg)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('every profile row keeps the room of its age limit, with or without a live select', () => {
+    expect(css(page)).toMatch(/\.cap, \.pin \{[^}]*min-height: 44px;/);
+    // a grown-up profile holds it with the same select, unseen and out of reach
+    expect(page).toMatch(/class:ghost=\{!row\.kids\} aria-hidden=\{row\.kids \? undefined : 'true'\} inert=\{!row\.kids\}/);
+    expect(css(page)).toMatch(/\.ghost \{ visibility: hidden; \}/);
+    // the page itself animates nothing
+    expect(css(page)).not.toMatch(/transition\s*:|@keyframes/);
   });
 });

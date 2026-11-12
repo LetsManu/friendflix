@@ -339,7 +339,7 @@ export default {
     retry: 'Erneut versuchen',
     reauthFailed: 'Die Anmeldung konnte nicht bestätigt werden. Bitte versuch es noch einmal.',
     reauthFailedHint: 'Klappt es wieder nicht, versuch es in einer halben Minute; passiert es immer wieder, gehen die Uhren von Server und Authentik womöglich unterschiedlich (ein Admin kann das prüfen).',
-    privacy: 'Admins können sehen, welche Titel du zuletzt geschaut hast. Jeder Blick darauf wird im Audit-Log festgehalten.',
+    privacy: 'Admins können sehen, welche Titel du zuletzt geschaut hast. Jeder Blick darauf wird im Audit-Log festgehalten. Admins können prüfen, welche Titel ein Profil sehen kann.',
     data: {
       title: 'Deine Daten',
       download: 'Meine Daten herunterladen',

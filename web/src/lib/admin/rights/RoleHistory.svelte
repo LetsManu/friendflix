@@ -18,6 +18,7 @@
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import { uid } from '#lib/ui/ids';
   import { auditSentence, sinceLatestCreate } from './auditText';
+  import AuditChips from './AuditChips.svelte';
   import { roleName, type MatrixRole } from './model';
 
   export let role: MatrixRole;
@@ -63,14 +64,13 @@
       {:else if !rows.length}
         <p class="empty">{$t('adminPeople.roles.historyEmpty')}</p>
       {:else}
+        <p class="open"><Button variant="ghost" icon="list" href="/admin/audit?target={encodeURIComponent(role.key)}">{$t('adminPeople.audit.openInLog')}</Button></p>
         <ul>
           {#each rows as { e, s } (e.id)}
             <li>
               <span class="tx">{s.text}</span>
               {#if s.chips.length}
-                <ul class="chips">
-                  {#each s.chips as c (c.label)}<li class="chip">{$t('adminPeople.roles.auditChip', { field: c.label, from: c.from, to: c.to })}</li>{/each}
-                </ul>
+                <AuditChips chips={s.chips} glass />
               {/if}
               <time datetime={e.at}>{fmtDateTime(e.at)}</time>
             </li>
@@ -93,9 +93,8 @@
   ul { list-style: none; margin: 0; padding: 0; }
   .body > ul > li { display: grid; gap: .35rem; padding: .7rem .1rem; border-bottom: 1px solid rgba(255, 255, 255, .12); }
   .tx { overflow-wrap: anywhere; }
-  .chips { display: flex; flex-wrap: wrap; gap: .4rem; }
-  .chip { padding: .2rem .7rem; border-radius: var(--fr-r-pill, 99px); background: rgba(var(--fr-scrim-rgb), .25); font-size: .85rem; font-weight: 600; overflow-wrap: anywhere; }
   time { font-size: .8rem; color: rgba(255, 255, 255, .9); }
+  .open { margin: 0 0 .3rem; }
   .empty { margin: 1rem 0; color: rgba(255, 255, 255, .9); }
   .state { display: flex; flex-direction: column; align-items: center; gap: .6rem; text-align: center; padding: 1.5rem 0; }
   .state p { margin: 0; }
