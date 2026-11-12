@@ -7,6 +7,7 @@ import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
 import type { Ctx } from '../ctx.js';
 import { revokeSessions } from '../devices.js';
 import { loginUi } from '../akflow.js';
+import { dropPartyDenied } from '../partySockets.js';
 import { adminOverview, revokeLicense } from '../downloads.js';
 import { checkState, startPlaybackCheck } from '../healthcheck.js';
 import { ERROR_SOURCES, listErrors } from '../errorlog.js';
@@ -15,15 +16,17 @@ import { claimHevcProbe, hevcBusyReason, hevcProbeRunning, hevcProbeWanted, hevc
 import { activeStreams } from '../playstats.js';
 import { clipPath, libraryItems, previews, serviceUser } from '../previews.js';
 import { stat } from 'node:fs/promises';
-import { defaultLimit } from '../requestlimit.js';
-import { DEFAULT_ROLES, INVITABLE_ROLES, effectiveRole, invalidateRoles } from '../roles.js';
+import { RoleInUse, createRole, deleteRole, orderRoles, roleExists, roleLabelArgs } from '../rolecat.js';
+import { invalidateRoles } from '../roles.js';
+import { rolePatch, roleLabelInput, rolesOverview, writeRole } from '../roleWrite.js';
+import { cleanDeviceName } from '../deviceName.js';
 import { requireGrownUp } from '../kids.js';
 import { recoIndexState } from '../reco/indexJob.js';
 import { recoStats } from '../reco/engine.js';
 import { requireAdmin, requireOwner } from '../session.js';
 import { portainerMode, redeployViaPortainer, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
-import { getUserById, reapplyRole } from '../users.js';
+import { accountSerial, getUserById } from '../users.js';
 import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, isLanguage, roleLabel, setInstanceLanguage } from '../i18n.js';
 
 const uuid = z.guid();
@@ -61,8 +64,9 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const { listLive } = await import('../live.js');
     const { parties } = await import('./party.js');
     const one = async <T>(sql: string): Promise<T> => (await ctx.db.query(sql)).rows[0] as T;
-    const [users, devices, invites, polls, previews, downloads, check, seerr, jellyfin, live] = await Promise.all([
-      one<{ total: string; locked: string }>('select count(*) total, count(*) filter (where disabled) locked from users'),
+    const [users, approvals, devices, invites, polls, previews, downloads, check, seerr, jellyfin, live] = await Promise.all([
+      one<{ total: string; locked: string; expiring: string }>("select count(*) total, count(*) filter (where disabled) locked, count(*) filter (where access_until between now() and now() + interval '7 days') expiring from users"),
+      one<{ n: string }>('select count(*) n from approval_requests where rejected_at is null'),
       one<{ n: string }>('select count(*) n from devices where not approved'),
       one<{ n: string }>('select count(*) n from invites where uses < max_uses and expires_at > now()'),
       one<{ n: string }>("select count(*) n from polls where status='needs_approval'"),
@@ -79,12 +83,13 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     ]);
     const total = Number(users.total), locked = Number(users.locked);
     return {
-      users: { total, active: total - locked, locked },
+      users: { total, active: total - locked, locked, expiring: Number(users.expiring) },
       pending: {
         requests: seerr ? seerr.pending : null,
         devices: Number(devices.n),
         polls: Number(polls.n),
         invites: Number(invites.n),
+        approvals: Number(approvals.n),
         previewsFailed: Number(previews.failed),
       },
       requests: seerr ? { pending: seerr.pending, approved: seerr.approved, processing: seerr.processing, available: seerr.available, declined: seerr.declined, total: seerr.total } : null,
@@ -249,54 +254,48 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/admin/hevc-check', admin, async () => ({ running: await hevcProbeRunning(ctx), ...(await hevcStatus(ctx)) }));
   app.get('/api/admin/playback-check', admin, async () => checkState(ctx));
 
-  // `roles`/`invitable` feed the users page; `limits` is the per-role monthly Seerr wish limit (null = unlimited) plus playback settings (transcoding, maxHeight null = unlimited)
+  // legacy `roles` / `invitable` / `limits` (the old roles page, one release) plus `matrix` (spec §4.1): fields, features, roles with their
+  // effective values and sources, the media server's libraries
   app.get('/api/admin/roles', admin, async () => {
     invalidateRoles(ctx);
-    const set = new Map((await ctx.db.query<{ role: string; requests_per_month: number | null }>('select role, requests_per_month from role_settings')).rows.map((r) => [r.role, r.requests_per_month]));
-    const remoteSet = new Set((await ctx.db.query<{ role: string }>('select role from role_settings where remote_max_bitrate is not null')).rows.map((r) => r.role));
-    // builtinLabel: the label is the built-in (German) default of that role → the web app shows its translation; a label
-    // renamed via ROLES_JSON is shown as configured (same rule as roleLabel() in /api/me and /api/invite)
-    const builtin = (k: string, label: string) => Boolean(DEFAULT_ROLES[k] && DEFAULT_ROLES[k]!.label === label);
-    const roles = Object.fromEntries(await Promise.all(Object.keys(ctx.roles).map(async (k) => { const r = (await effectiveRole(ctx, k))!; return [k, { ...r, builtinLabel: builtin(k, r.label) }] as const; })));
-    const limits = Object.entries(roles).map(([role, t]) => ({ role, label: t.label, builtinLabel: t.builtinLabel, requestsPerMonth: set.has(role) ? set.get(role)! : defaultLimit(role), isDefault: !set.has(role), transcoding: t.transcoding, maxHeight: t.maxHeight, download: t.download, maxDownloads: t.maxDownloads, downloadMaxHeight: t.downloadMaxHeight, downloadDays: t.downloadDays, maxBitrate: t.maxBitrate, remoteMaxBitrate: t.remoteMaxBitrate, remoteDefault: ctx.roles[role]!.remoteMaxBitrate, remoteIsDefault: !remoteSet.has(role) }));
-    return { roles, invitable: INVITABLE_ROLES, limits };
+    return rolesOverview(ctx);
   });
 
+  // partial: only the fields in the body change (null = back to the inherited value, 'unlimited' lifts a cap); 502 policy_partial when
+  // some identities did not take the new policy (the settings are stored either way)
   app.put('/api/admin/roles/:role', admin, async (req, reply) => {
     const role = (req.params as { role: string }).role;
-    if (!Object.hasOwn(ctx.roles, role)) return reply.code(404).send({ error: 'not_found' });
-    const b = z.object({
-      requestsPerMonth: z.number().int().min(0).max(100).nullable().optional(),
-      transcoding: z.boolean().optional(),
-      maxHeight: z.number().int().min(144).max(4320).nullable().optional(), // null = unlimited
-      download: z.boolean().optional(),
-      maxDownloads: z.number().int().min(0).max(200).optional(),
-      downloadMaxHeight: z.number().int().min(0).max(2160).optional(), // 0 = no downloads
-      downloadDays: z.number().int().min(1).max(90).optional(),
-      remoteMaxBitrate: z.number().int().min(300_000).max(200_000_000).nullable().optional(), // bit/s outside the home networks; null = back to the role default
-    }).parse(req.body);
-    const before = await effectiveRole(ctx, role);
-    const cur = (await ctx.db.query<{ requests_per_month: number | null }>('select requests_per_month from role_settings where role=$1', [role])).rows[0];
-    const limit = b.requestsPerMonth !== undefined ? b.requestsPerMonth : cur ? cur.requests_per_month : defaultLimit(role);
-    await ctx.db.query(
-      `insert into role_settings(role, requests_per_month, transcoding, max_height, download, max_downloads, download_max_height, download_days, remote_max_bitrate) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       on conflict (role) do update set requests_per_month=$2, transcoding=coalesce($3, role_settings.transcoding), max_height=coalesce($4, role_settings.max_height),
-         download=coalesce($5, role_settings.download), max_downloads=coalesce($6, role_settings.max_downloads), download_max_height=coalesce($7, role_settings.download_max_height),
-         download_days=coalesce($8, role_settings.download_days), remote_max_bitrate=case when $10 then null else coalesce($9, role_settings.remote_max_bitrate) end, updated_at=now()`,
-      [role, limit, b.transcoding ?? null, b.maxHeight === undefined ? null : (b.maxHeight ?? 0), b.download ?? null, b.maxDownloads ?? null, b.downloadMaxHeight ?? null, b.downloadDays ?? null, b.remoteMaxBitrate ?? null, b.remoteMaxBitrate === null],
-    );
-    invalidateRoles(ctx);
-    const after = (await effectiveRole(ctx, role))!;
-    if (b.requestsPerMonth !== undefined) await audit(ctx, req.user!.id, 'role.request_limit', role, { requestsPerMonth: b.requestsPerMonth });
-    if (after.remoteMaxBitrate !== before?.remoteMaxBitrate) await audit(ctx, req.user!.id, 'role.remote_cap', role, { remoteMaxBitrate: after.remoteMaxBitrate });
-    const dlChanged = after.download !== before?.download || after.maxDownloads !== before?.maxDownloads || after.downloadMaxHeight !== before?.downloadMaxHeight || after.downloadDays !== before?.downloadDays;
-    if (dlChanged) await audit(ctx, req.user!.id, 'role.downloads', role, { download: after.download, maxDownloads: after.maxDownloads, downloadMaxHeight: after.downloadMaxHeight, downloadDays: after.downloadDays });
-    if (after.transcoding !== before?.transcoding || after.maxHeight !== before?.maxHeight || after.download !== before?.download) {
-      if (after.transcoding !== before?.transcoding || after.maxHeight !== before?.maxHeight) await audit(ctx, req.user!.id, 'role.playback', role, { transcoding: after.transcoding, maxHeight: after.maxHeight });
-      const failed = await reapplyRole(ctx, role); // push the new policy to existing Jellyfin accounts
-      if (failed) return reply.code(502).send({ error: 'policy_partial', failed });
-    }
+    if (!(await roleExists(ctx, role))) return reply.code(404).send({ error: 'not_found' });
+    const { changed, reapplied } = await writeRole(ctx, req.user!.id, role, rolePatch.parse(req.body));
+    if (changed.includes('party')) await dropPartyDenied(ctx); // the role's accounts that lost `party` lose their open party sockets
+    if (reapplied.failed) return reply.code(502).send({ error: 'policy_partial', failed: reapplied.failed, identities: reapplied.identities });
+    return { ok: true, reapplied };
+  });
+
+  // duplicates a role: the new row holds a full snapshot of `from` (the key is derived from the label)
+  app.post('/api/admin/roles', admin, async (req, reply) => {
+    const body = z.object({ label: roleLabelInput, from: z.string().min(1).max(64) }).strict().parse(req.body);
+    return reply.code(201).send({ key: await createRole(ctx, req.user!.id, body.label, body.from) });
+  });
+
+  // `order` is a reserved role key (a static route wins over `:role`)
+  app.put('/api/admin/roles/order', admin, async (req) => {
+    const { keys } = z.object({ keys: z.array(z.string().max(64)).max(500) }).strict().parse(req.body);
+    await orderRoles(ctx, req.user!.id, keys);
     return { ok: true };
+  });
+
+  // 409 role_in_use while accounts or open invites hold the role and no `moveTo` is given
+  app.delete('/api/admin/roles/:role', admin, async (req, reply) => {
+    const role = (req.params as { role: string }).role;
+    const { moveTo } = z.object({ moveTo: z.string().min(1).max(64).optional() }).strict().parse(req.body ?? {});
+    try {
+      const r = await accountSerial(() => deleteRole(ctx, req.user!.id, role, moveTo));
+      return { ok: true, ...r };
+    } catch (e) {
+      if (e instanceof RoleInUse) return reply.code(409).send({ error: 'role_in_use', accounts: e.accounts, invites: e.invites });
+      throw e;
+    }
   });
 
   // ---- offline downloads: prepared jobs, disk usage, active licenses ----
@@ -346,15 +345,20 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true, featured: b.featured };
   });
 
-  // ?actor=<user id>|system &action=<category ("user") or full action ("user.role")> &from=&to= (ISO times) &q= (actor/target/action) &dir=asc|desc &limit= (default 100) &offset=
+  // ?actor=<user id>|system &target=<user id | role key> (exact) &area=people (user, role, invite, profile, device actions) &action=<category ("user") or full action ("user.role")> &from=&to= (ISO times) &q= (actor/target/action) &dir=asc|desc &limit= (default 100) &offset=
   app.get('/api/admin/audit', admin, async (req) => {
     const p = pageQuery.extend({
       actor: z.union([uuid, z.literal('system')]).optional(),
       action: z.string().regex(/^[a-z_]+(\.[a-z_]+)?$/).optional(),
+      // a role key as the backend knows it (a ROLE_TEMPLATES key need not match ROLE_KEY_RE) or a user id
+      target: z.string().min(1).max(64).optional(),
+      area: z.literal('people').optional(),
       from: z.coerce.date().optional(),
       to: z.coerce.date().optional(),
     }).parse(req.query);
     const w = new Where();
+    if (p.target) w.add('a.target = ?', p.target);
+    if (p.area) w.add(`split_part(a.action, '.', 1) in ('user','role','invite','profile','device')`);
     if (p.actor === 'system') w.add('a.actor is null');
     else if (p.actor) w.add('a.actor = ?', p.actor);
     if (p.action?.includes('.')) w.add('a.action = ?', p.action);
@@ -391,13 +395,13 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/admin/devices', admin, async (req) => {
     const p = pageQuery.extend({ status: z.enum(['pending', 'approved']).optional() }).parse(req.query);
     const w = new Where();
-    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(u.name ilike ${m} or coalesce(d.label,'') ilike ${m})`); }
+    if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(u.name ilike ${m} or coalesce(d.name, d.label, '') ilike ${m})`); }
     if (p.status) w.add(p.status === 'pending' ? 'not d.approved' : 'd.approved');
-    const order = orderBy({ user: 'lower(u.name)', device: "lower(coalesce(d.label,''))", lastSeen: 'd.last_seen', status: 'd.approved' }, p.sort, p.dir, 'd.approved, d.last_seen desc, d.device_id');
+    const order = orderBy({ user: 'lower(u.name)', device: "lower(coalesce(d.name, d.label, ''))", lastSeen: 'd.last_seen', status: 'd.approved' }, p.sort, p.dir, 'd.approved, d.last_seen desc, d.device_id');
     const from = 'from devices d join users u on u.id = d.user_id';
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c ${from} ${w.sql}`, w.params)).rows[0]!.c);
     const pending = Number((await ctx.db.query<{ c: string }>('select count(*) c from devices where not approved')).rows[0]!.c);
-    const r = await ctx.db.query(`select d.user_id, d.device_id, d.label, d.approved, d.last_seen, u.name ${from} ${w.sql} ${order} limit ${p.limit ?? 300} offset ${p.offset ?? 0}`, w.params);
+    const r = await ctx.db.query(`select d.user_id, d.device_id, coalesce(d.name, d.label) as label, d.approved, d.last_seen, u.name ${from} ${w.sql} ${order} limit ${p.limit ?? 300} offset ${p.offset ?? 0}`, w.params);
     // `current`: the device this admin is using right now (the page offers no revoke for it)
     return { devices: r.rows.map((d) => ({ ...d, current: d.user_id === req.user!.id && d.device_id === req.session!.deviceId })), total, pending };
   });
@@ -439,8 +443,19 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { revoked: n };
   });
   app.get('/api/devices', { preHandler: requireGrownUp(ctx, { allowPendingDevice: true, allowNoProfile: true }) }, async (req) => {
-    const r = await ctx.db.query('select device_id, label, approved, created_at, last_seen from devices where user_id=$1 order by created_at', [req.user!.id]);
-    return { devices: r.rows.map((d) => ({ ...d, id: d.device_id, current: d.device_id === req.session!.deviceId })) };
+    const r = await ctx.db.query('select device_id, label, name, client, approved, created_at, last_seen from devices where user_id=$1 order by created_at', [req.user!.id]);
+    return { devices: r.rows.map(({ client, ...d }) => ({ ...d, kind: client ?? null, id: d.device_id, current: d.device_id === req.session!.deviceId })) };
+  });
+  // the user's own name for one of their devices (null or blank = back to the automatic name); never in the audit meta
+  app.patch('/api/devices/:id', { preHandler: requireGrownUp(ctx), config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);
+    const b = z.object({ name: z.string().nullable() }).safeParse(req.body);
+    const n = cleanDeviceName(b.success ? b.data.name : undefined);
+    if (!n.ok) return reply.code(400).send({ error: 'invalid_name' });
+    const r = await ctx.db.query('update devices set name=$3 where user_id=$1 and device_id=$2', [req.user!.id, id, n.name]);
+    if (!r.rowCount) return reply.code(404).send({ error: 'not_found' });
+    await audit(ctx, req.user!.id, 'device.rename', req.user!.id);
+    return { ok: true, name: n.name };
   });
   app.post('/api/devices/:id/approve', { preHandler: requireOwner(ctx) }, async (req, reply) => {
     const id = z.string().min(10).max(80).parse((req.params as { id: string }).id);
@@ -484,6 +499,6 @@ export function inviteRoutes(app: FastifyInstance, ctx: Ctx) {
     const defaultLanguage = (await instanceLanguage(ctx)) ?? FALLBACK_LANGUAGE;
     const lang = isLanguage(q) ? q : defaultLanguage;
     // defaultLanguage: a new invitee without a stored UI language sees the page in the instance language (or the browser's)
-    return { defaultLanguage, role: inv.role, roleLabel: roleLabel(lang, inv.role, ctx.roles[inv.role]?.label, DEFAULT_ROLES[inv.role]?.label), expiresAt: inv.expires_at, enrollUrl: enroll ? (loginUi(ctx.cfg) === 'app' ? `/login?invite=${encodeURIComponent(token)}&enroll=1` : `/auth/enroll?invite=${encodeURIComponent(token)}`) : undefined };
+    return { defaultLanguage, role: inv.role, roleLabel: roleLabel(lang, ...(await roleLabelArgs(ctx, inv.role))), expiresAt: inv.expires_at, enrollUrl: enroll ? (loginUi(ctx.cfg) === 'app' ? `/login?invite=${encodeURIComponent(token)}&enroll=1` : `/auth/enroll?invite=${encodeURIComponent(token)}`) : undefined };
   });
 }

@@ -3,6 +3,7 @@
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, api } from '#lib/api';
+import { tr } from '#lib/i18n';
 import { busyKeys, deferredCount, errorText, flushDeferred, isBusy, runAction } from './action';
 import { dismissAll, runToastAction, toasts } from './toast';
 
@@ -108,5 +109,15 @@ describe('runAction', () => {
   it('maps errors to texts', () => {
     expect(errorText(new TypeError('Failed to fetch'))).toBe(errorText(new TypeError('x')));
     expect(errorText(new ApiError(500, null))).not.toBe(errorText(new ApiError(404, null)));
+  });
+  it('maps the permission 403 codes to their own text, any other 403 stays generic', () => {
+    const forbidden = errorText(new ApiError(403, {}));
+    for (const [code, key] of [['cast_forbidden', 'castForbidden'], ['party_forbidden', 'partyForbidden'], ['requests_forbidden', 'requestsForbidden']] as const) {
+      const txt = errorText(new ApiError(403, { error: code }));
+      expect(txt).toBe(tr(`ui.error.${key}`));
+      expect(txt).not.toBe(forbidden);
+    }
+    expect(errorText(new ApiError(403, { error: 'kids_profile' }))).toBe(forbidden);
+    expect(errorText(new ApiError(404, { error: 'cast_forbidden' }))).toBe(errorText(new ApiError(404, null)));
   });
 });

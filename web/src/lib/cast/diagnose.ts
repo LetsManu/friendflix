@@ -25,18 +25,21 @@ const codeOfLabel = (label: string): string => /^(.+?) · /.exec(label)?.[1] ?? 
 export function chromecastRows(o: {
   capable: boolean; enabled: boolean; custom: boolean; state: CastState; session: CastSession | null; lookup: CastLookup | null;
   errors: number; now: number; tf: TFn;
+  /** false = the account may not cast (me.perms.cast): said instead of the browser / service check */
+  allowed?: boolean;
   /** another tab of this browser holds the cast lock (it controls the cast; this tab shows nothing) */
   otherTab?: boolean;
   /** the playing item, for its episode code (the engine's cache) */
   item?: Pick<Item, 'parentIndexNumber' | 'indexNumber'> | null;
 }): DiagRow[] {
   const { tf } = o;
-  const support: DiagRow = !o.capable ? { label: tf('diagnose.cast.support'), value: tf('diagnose.cast.supportNoBrowser'), tone: 'warn' }
+  const support: DiagRow = o.allowed === false ? { label: tf('diagnose.cast.support'), value: tf('ui.error.castForbidden'), tone: 'warn' }
+    : !o.capable ? { label: tf('diagnose.cast.support'), value: tf('diagnose.cast.supportNoBrowser'), tone: 'warn' }
     : !o.enabled ? { label: tf('diagnose.cast.support'), value: tf('diagnose.cast.supportOff'), tone: 'warn' }
     : { label: tf('diagnose.cast.support'), value: tf(o.custom ? 'diagnose.cast.supportReady' : 'diagnose.cast.supportDefault'), tone: 'ok' };
   const device = o.session?.device || (o.state.connected ? o.state.deviceName : '');
   const rows: DiagRow[] = [support];
-  if (!o.capable || !o.enabled) return rows;
+  if (o.allowed === false || !o.capable || !o.enabled) return rows;
   const s = o.session;
   rows.push({
     label: tf('diagnose.cast.session'),
@@ -63,8 +66,11 @@ export function airplayRows(o: {
   lookup: CastLookup | null; tf: TFn;
   /** the address family the TV's pin is on (the lookup's `pinFamily`); unknown: no Network row */
   pinned?: 'v4' | 'v6' | null;
+  /** false = the account may not cast (me.perms.cast): said instead of the browser check, nothing else is listed */
+  allowed?: boolean;
 }): DiagRow[] {
   const { tf } = o;
+  if (o.allowed === false) return [{ label: tf('diagnose.cast.inBrowser'), value: tf('ui.error.castForbidden'), tone: 'warn' }];
   const rows: DiagRow[] = [{ label: tf('diagnose.cast.inBrowser'), value: tf(o.available ? 'diagnose.cast.airOk' : 'diagnose.cast.airNo'), tone: o.available ? 'ok' : 'none' }];
   if (o.continuous) rows.push({ label: tf('diagnose.cast.continuous'), value: tf(o.continuous === 'on' ? 'diagnose.cast.continuousOn' : 'diagnose.cast.continuousOff'), tone: 'none' });
   if (o.subsInStream) rows.push({ label: tf('diagnose.cast.subtitles'), value: tf('diagnose.cast.subsInStream'), tone: 'none' });

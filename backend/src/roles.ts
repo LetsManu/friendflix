@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { z } from 'zod';
+// roles.ts and rolecat.ts import each other: neither may use the other's exports at module load, only inside functions
+import type { Ctx } from './ctx.js';
+import { invalidateCatalogue, listRoles } from './rolecat.js';
 
 export const roleTemplateSchema = z.object({
   label: z.string(),
@@ -33,43 +36,113 @@ export const DEFAULT_ROLES: Record<string, RoleTemplate> = {
   admin: { label: 'Admin', libraries: 'all', maxParentalRating: null, maxBitrate: 60_000_000, remoteMaxBitrate: 12_000_000, maxStreams: 6, transcoding: true, maxHeight: null, download: true, maxDownloads: 50, downloadMaxHeight: 1080, downloadDays: 30 },
 };
 
+/** @deprecated the catalogue decides (rolecat invitableRoles); no route uses this any more, kept exported for one release */
 export const INVITABLE_ROLES = ['friend', 'family', 'guest'] as const;
+
+/**
+ * `o[key]` only when `key` is an own property: role keys come from env, the database and URLs, and a key like `constructor` must never
+ * read Object.prototype (a hollow template that silently drops the base's caps).
+ */
+export const own = <T>(o: Record<string, T>, key: string): T | undefined => (Object.hasOwn(o, key) ? o[key] : undefined);
 
 export function loadRoles(overrideJson?: string): Record<string, RoleTemplate> {
   if (!overrideJson) return DEFAULT_ROLES;
   const o = z.record(z.string(), roleTemplateSchema.partial()).parse(JSON.parse(overrideJson));
   const out: Record<string, RoleTemplate> = { ...DEFAULT_ROLES };
-  for (const [k, v] of Object.entries(o)) out[k] = { ...(DEFAULT_ROLES[k] ?? DEFAULT_ROLES.friend!), ...v } as RoleTemplate;
+  // defineProperty: a key `__proto__` becomes an own role, never the object's prototype
+  for (const [k, v] of Object.entries(o)) {
+    Object.defineProperty(out, k, { value: { ...(own(DEFAULT_ROLES, k) ?? DEFAULT_ROLES.friend!), ...v } as RoleTemplate, enumerable: true, writable: true, configurable: true });
+  }
   return out;
 }
 
 export const MAX_HEIGHTS = [720, 1080, 1440, 2160] as const;
 const TTL_MS = 30_000;
-const cache = new WeakMap<object, { at: number; rows: Map<string, { remoteMaxBitrate: number | null; transcoding: boolean | null; maxHeight: number | null; download: boolean | null; maxDownloads: number | null; downloadMaxHeight: number | null; downloadDays: number | null }> }>();
 
-/** Code default <- ROLE_TEMPLATES env (ctx.roles) <- role_settings row (admin UI). Cached ~30 s per ctx; max_height 0 = unlimited. */
-export async function effectiveRole(ctx: { roles: Record<string, RoleTemplate>; db: { query: (q: string) => Promise<{ rows: any[] }> } }, role: string): Promise<RoleTemplate | undefined> {
-  const base = ctx.roles[role];
-  if (!base) return undefined;
+/** the template fields a role row or an account override can set (the label lives in the role catalogue) */
+export type TemplateKey = Exclude<keyof RoleTemplate, 'label'>;
+export const TEMPLATE_KEYS: readonly TemplateKey[] = ['libraries', 'maxParentalRating', 'maxBitrate', 'remoteMaxBitrate', 'maxStreams', 'transcoding', 'maxHeight', 'download', 'maxDownloads', 'downloadMaxHeight', 'downloadDays'];
+/** which layer decided a template field of a role: the code default, ROLE_TEMPLATES, or the role row (role_settings.template) */
+export type RoleLayer = 'default' | 'env' | 'role';
+/** a role_settings row as the resolver reads it: the template already filtered by readTemplate, perms raw (rights.ts reads them) */
+export type StoredRole = { template: Partial<Omit<RoleTemplate, 'label'>>; perms: unknown };
+const cache = new WeakMap<object, { at: number; rows: Map<string, StoredRole> }>();
+type RoleCtx = Pick<Ctx, 'db' | 'roles'>;
+
+/**
+ * A stored partial template (role_settings.template) → the known fields whose value fits the field; anything else is ignored, never an
+ * error. An explicit null is "unlimited" for maxHeight and maxParentalRating (their schemas allow it), for no other field.
+ */
+export function readTemplate(raw: unknown): Partial<Omit<RoleTemplate, 'label'>> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, unknown> = {};
+  for (const k of TEMPLATE_KEYS) {
+    if (!Object.hasOwn(raw, k)) continue;
+    const v = roleTemplateSchema.shape[k].safeParse((raw as Record<string, unknown>)[k]);
+    if (v.success) out[k] = v.data;
+  }
+  return out as Partial<Omit<RoleTemplate, 'label'>>;
+}
+
+/** the role_settings row of a role (template, perms), cached ~30 s per ctx with all rows */
+export async function storedRole(ctx: Pick<Ctx, 'db'>, role: string): Promise<StoredRole | undefined> {
   let c = cache.get(ctx);
   if (!c || Date.now() - c.at > TTL_MS) {
-    const r = await ctx.db.query('select role, remote_max_bitrate, transcoding, max_height, download, max_downloads, download_max_height, download_days from role_settings');
-    c = { at: Date.now(), rows: new Map(r.rows.map((x) => [x.role as string, { remoteMaxBitrate: x.remote_max_bitrate, transcoding: x.transcoding, maxHeight: x.max_height, download: x.download, maxDownloads: x.max_downloads, downloadMaxHeight: x.download_max_height, downloadDays: x.download_days }])) };
+    const r = await ctx.db.query<{ role: string; template: unknown; perms: unknown }>('select role, template, perms from role_settings');
+    c = { at: Date.now(), rows: new Map(r.rows.map((x) => [x.role, { template: readTemplate(x.template), perms: x.perms }])) };
     cache.set(ctx, c);
   }
-  const o = c.rows.get(role);
-  if (!o) return base;
-  return {
-    ...base,
-    remoteMaxBitrate: o.remoteMaxBitrate ?? base.remoteMaxBitrate,
-    transcoding: o.transcoding ?? base.transcoding,
-    maxHeight: o.maxHeight === null ? base.maxHeight : o.maxHeight === 0 ? null : o.maxHeight,
-    download: o.download ?? base.download,
-    maxDownloads: o.maxDownloads ?? base.maxDownloads,
-    downloadMaxHeight: o.downloadMaxHeight ?? base.downloadMaxHeight,
-    downloadDays: o.downloadDays ?? base.downloadDays,
-  };
+  return c.rows.get(role);
 }
+
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * A role's template with the layer that decided each field: code default ← ROLE_TEMPLATES (ctx.roles) ← role row
+ * (role_settings.template). A role without a ROLE_TEMPLATES key (admin-created, or an env role that left ROLE_TEMPLATES) starts from
+ * the code default of its catalogue base. `base` picks the default permissions; `perms` is the stored perms JSON (rights.ts reads it).
+ * An env field equal to the code default counts as `default`. undefined for a role that is neither in ctx.roles nor in the catalogue.
+ * `row`: resolve over this role_settings row instead of the cached one (null = no row); the role editor resolves a row it is writing.
+ */
+export async function resolveRole(ctx: RoleCtx, role: string, row?: StoredRole | null): Promise<{ template: RoleTemplate; sources: Record<TemplateKey, RoleLayer>; base: string; perms: unknown } | undefined> {
+  const env = own(ctx.roles, role);
+  const cat = (await listRoles(ctx)).find((r) => r.key === role);
+  if (!env && !cat) return undefined;
+  const base = cat?.base ?? (Object.hasOwn(DEFAULT_ROLES, role) ? role : 'friend');
+  const code = own(DEFAULT_ROLES, env ? role : base) ?? DEFAULT_ROLES.friend!;
+  const from = env ?? code;
+  const template: RoleTemplate = { ...from, label: cat?.label ?? from.label };
+  const sources = Object.fromEntries(TEMPLATE_KEYS.map((k) => [k, env && !same(env[k], code[k]) ? 'env' : 'default'])) as Record<TemplateKey, RoleLayer>;
+  const stored = row === undefined ? await storedRole(ctx, role) : (row ?? undefined);
+  for (const [k, v] of Object.entries(stored?.template ?? {}) as Array<[TemplateKey, never]>) {
+    template[k] = v;
+    sources[k] = 'role';
+  }
+  return { template, sources, base, perms: stored?.perms };
+}
+
+/** Code default <- ROLE_TEMPLATES env (ctx.roles) <- role_settings.template (admin UI); also catalogue-only roles. Cached ~30 s per ctx. */
+export async function effectiveRole(ctx: RoleCtx, role: string): Promise<RoleTemplate | undefined> {
+  return (await resolveRole(ctx, role))?.template;
+}
+
+/** the old role_settings columns (dual-written for one release by roleWrite.ts, never read) and the template field each one holds */
+export const LEGACY_COLUMNS = {
+  transcoding: 'transcoding', maxHeight: 'max_height', download: 'download', maxDownloads: 'max_downloads',
+  downloadMaxHeight: 'download_max_height', downloadDays: 'download_days', remoteMaxBitrate: 'remote_max_bitrate',
+} as const satisfies Partial<Record<TemplateKey, string>>;
+export type LegacyKey = keyof typeof LEGACY_COLUMNS;
+
+/** the old role_settings columns from a template (max_height 0 = unlimited; null = inherit, as 3.3 reads them) */
+export function legacyColumns(t: Partial<Omit<RoleTemplate, 'label'>>): unknown[] {
+  return (Object.keys(LEGACY_COLUMNS) as Array<keyof typeof LEGACY_COLUMNS>).map((k) => {
+    if (!Object.hasOwn(t, k)) return null;
+    const v = t[k];
+    return k === 'maxHeight' && v === null ? 0 : v;
+  });
+}
+
 /** bitrate ceiling for a viewer outside the home networks: the remote cap, never above the role's own limit */
 export const remoteBitrateCap = (role: Pick<RoleTemplate, 'maxBitrate' | 'remoteMaxBitrate'>) => Math.min(role.maxBitrate, role.remoteMaxBitrate);
-export const invalidateRoles = (ctx: object) => void cache.delete(ctx);
+/** forgets the cached role settings and the role catalogue (rolecat.ts) of this ctx */
+export const invalidateRoles = (ctx: object) => { cache.delete(ctx); invalidateCatalogue(ctx); };

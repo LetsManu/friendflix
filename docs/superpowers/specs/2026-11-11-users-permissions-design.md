@@ -163,7 +163,7 @@ missing `perms` (older backend) counts as "everything allowed" in the web (`capa
 ### 2.3 Per-user overrides (G3)
 
 Every template field and every permission can be overridden per account (`user_limits`, §3). New override fields:
-`transcoding`, `maxHeight`, `download`, `maxParentalRating`, `libraries`, `maxBitrate`, `perms`, plus a free-text `note`
+`transcoding`, `maxHeight`, `download`, `downloadDays`, `maxParentalRating`, `libraries`, `maxBitrate`, `perms`, plus a free-text `note`
 ("why", max 200 chars, shown in the list tooltip and the detail page). With Live TV: channel-group exceptions per user (Live TV
 spec §8). Policies follow as today: any override that the media server enforces (`libraries`, `maxParentalRating`,
 `maxStreams`, `maxBitrate`, `transcoding`, `maxHeight`) re-applies the account's identities (`reapplyAccount`), the gateway
@@ -219,6 +219,7 @@ alter table user_limits
   add column if not exists download boolean,
   add column if not exists max_bitrate int check (max_bitrate between 300000 and 200000000),
   add column if not exists max_parental_rating int check (max_parental_rating between -1 and 21),
+  add column if not exists download_days int check (download_days between 1 and 90),
   add column if not exists libraries jsonb,
   add column if not exists perms jsonb not null default '{}',
   add column if not exists note text check (char_length(note) <= 200);
@@ -233,7 +234,7 @@ Semantics:
   its column (`reserve_request_slot` and `roleLimitFor` read it). For admin-created roles the row holds the full template.
 - `role_settings.perms` / `user_limits.perms`: `{ [PermKey]: boolean }`, unknown keys rejected by zod on write and ignored on
   read (a key removed in a later version never breaks a load).
-- `user_limits.max_parental_rating`: `null` = as role, `-1` = unrestricted, `0..21` = cap. `libraries`: `null` = as role,
+- `user_limits.max_parental_rating`: `null` = as role, `-1` = unrestricted, `0..21` = cap. `download_days`: `null` = as role, `1..90` days. `libraries`: `null` = as role,
   `"all"` or an array of library names (the format of `RoleTemplate.libraries`).
 - Old `role_settings` columns: written alongside `template` by `PUT /api/admin/roles/:role` for one release, never read;
   migration "drop old role_settings columns" ships in the release after Phase 0.
@@ -288,8 +289,9 @@ All admin routes: `requireAdmin` (admin account acting as its owner profile), CS
     hardKids: string[] }   // perms the kids overlay switches off
   ```
 - `PUT /api/admin/users/:id/rights` — partial `{ overrides: { [field]: value | null }, note?: string | null }`; replaces
-  `PUT /:id/limits` (kept as an alias mapping its five fields for one release). Audited `user.rights` with `{ from, to }` of the
-  changed fields only. 409 `deletion_in_progress` as today; the admin cannot lower their own `perms`/rights in a way that locks
+  `PUT /:id/limits` (kept as an alias mapping its five fields for one release). Audited `user.rights` with `{ from, to, layer?, stored?, note? }`: `from`/`to` hold the changed effective values only, `layer`
+  says which layer (role, user, kids, admin) decides each of them, `stored` lists the overrides that moved neither value nor
+  layer (for example clearing a switch on an admin account) by their stored values. 409 `deletion_in_progress` as today; the admin cannot lower their own `perms`/rights in a way that locks
   them out (admin perms are locked anyway; own role change is already refused).
 - `POST /api/admin/users/:id/check` `{ profileId, itemId? , query? }` — "Can this profile see this title?" (§6.4). With
   `query` (2–100 chars) the backend searches with the media server's **admin** key through a new optional seam method
@@ -297,9 +299,9 @@ All admin routes: `requireAdmin` (admin account acting as its owner profile), CS
   `/Items?searchTerm` without a user, Plex: its library search), then asks the profile's own identity (`jfUserFor`) whether it
   can open each hit (`ctx.jf.item`). Without `findItems` (an adapter that lacks it) the search runs as the first active admin
   account (`serviceUser`, `previews.ts:17`) and `why` is `null`. Answer per hit:
-  `{ id, name, year, type, visible: boolean, why: 'library'|'rating'|'unrated_kids'|null, rating: string|null, library: string }`
+  `{ id, name, year, type, visible: boolean, why: 'library'|'rating'|'unrated'|'unrated_kids'|null, rating: string|null, library: string }`
   (`why` derived from the admin-key facts: library not in the effective list → `library`; rating above cap → `rating`; kids and
-  unrated → `unrated_kids`). Rate limit 30/min. Audited `user.check_viewed` (`{ profile, hits }`, no titles), like the activity
+  unrated → `unrated_kids`; a grown-up's profile with an age cap and unrated → `unrated`, as Plex hides those under any cap). Rate limit 30/min. Audited `user.check_viewed` (`{ profile, hits }`, no titles), like the activity
   tab.
 
 ### 4.3 Profiles (admin)
@@ -326,10 +328,10 @@ All admin routes: `requireAdmin` (admin account acting as its owner profile), CS
 
 ### 4.5 Audit (G6)
 
-- Every role write audits **one** entry `role.update` with `meta { from: {changed fields}, to: {changed fields} }` (replaces
+- Every role write audits **one** entry `role.update` with `meta { from: {changed fields}, to: {changed fields}, layer?: {field: layer} }` (replaces
   the four partial actions `role.request_limit` / `role.remote_cap` / `role.downloads` / `role.playback`; old entries stay
-  readable). New: `role.create`, `role.delete` (`{ moveTo, accounts }`), `role.order`, `user.rights`, `user.check_viewed`,
-  `profile.admin_create`, `profile.admin_delete`.
+  readable). New: `role.create`, `role.delete` (`{ moveTo, accounts }`), `role.order`, `user.rights` (`{ from, to, layer?, stored? }`, also written by the legacy `PUT /limits`), `user.check_viewed`
+  (`{ profile, hits }` or `{ profile, libraries }`, counts only), `profile.admin_create`, `profile.admin_delete`.
 - `GET /api/admin/audit` gains `target=<id|role key>` and `area=people` (actions `user.*`, `role.*`, `invite.*`, `profile.*`,
   `device.*`). The role editor's *Verlauf* and the detail page's *Verlauf* use it.
 - Audit metadata never holds secrets, PINs, tokens or titles (activity and check views store counts only).
@@ -345,9 +347,13 @@ All admin routes: `requireAdmin` (admin account acting as its owner profile), CS
 5. Next release: drop the old `role_settings` columns and the legacy endpoints (own migration, own PR).
 
 Rollback to 3.3 after Phase 0: works (old columns are current; `roles`, new `user_limits` columns and indexes are ignored by
-3.3). The one caveat: 3.3 does not know admin-created roles (`effectiveRole` answers `undefined`, playback fails for those
+3.3). Caveats: 3.3 does not know admin-created roles (`effectiveRole` answers `undefined`, playback fails for those
 accounts). The release notes say: before rolling back, move accounts of admin-created roles to a built-in role (bulk *Rolle
 ändern*). Built-in and env roles are unaffected.
+Second caveat: values only the new model can hold are ignored by 3.3 (per role: streams, bitrate, age cap, libraries, switches;
+per person: age cap, libraries, transcoding, maxHeight, download, maxBitrate, downloadDays, switches). FriendFlix limits revert
+at once; media-server policies revert at the next 3.3 re-apply, so a tightened age cap or library list loosens without notice.
+The release notes say so.
 
 ## 6. Admin UI
 
@@ -426,7 +432,7 @@ A read-only panel for one profile (profile switcher chips at the top: owner firs
    library ("Filme · 812 von 1 204"), counted with the profile's own identity (`ctx.jf.items` with `limit 0` → total) and the
    admin key; cached 10 min.
 3. **Titel prüfen** — search field; results as compact rows (poster thumb, name, year, rating) with "sichtbar" (✓) or
-   "ausgeblendet · Altersfreigabe 16 über FSK 12" / "· Bibliothek nicht freigegeben" / "· ohne Freigabe (Kinderprofil)"
+   "ausgeblendet · Altersfreigabe 16 über FSK 12" / "· Bibliothek nicht freigegeben" / "· ohne Freigabe (Kinderprofil)" / "· ohne Altersfreigabe"
    (`POST /check`).
 4. **Live-TV** (when installed) — channel groups and the number of channels the profile sees, with the reason for hidden
    groups ("nicht kinderfreundlich", "für Gast nicht freigegeben").
@@ -468,7 +474,7 @@ Detail page *Verlauf* and role *Verlauf* render audit entries as sentences with 
 | `adminPeople.bulk.perm` / `repair` | Set right… / Re-apply policies | Recht setzen … / Richtlinien neu anwenden |
 | `adminPeople.summary.people` / `waiting` / `openInvites` / `expiring` | People / Waiting for approval / Open invites / Access ends soon | Personen / Warten auf Freigabe / Offene Einladungen / Läuft bald ab |
 | `adminPeople.check.tab` / `summary` / `libraries` / `titles` / `titlesHint` | Check view / In short / Libraries / Check a title / Search a film or series | Sicht prüfen / Kurzfassung / Bibliotheken / Titel prüfen / Film oder Serie suchen |
-| `adminPeople.check.visible` / `hiddenRating` / `hiddenLibrary` / `hiddenUnrated` | visible / hidden · rated {r}, above {cap} / hidden · library not shared / hidden · no rating (kids profile) | sichtbar / ausgeblendet · Freigabe {r} über {cap} / ausgeblendet · Bibliothek nicht freigegeben / ausgeblendet · ohne Freigabe (Kinderprofil) |
+| `adminPeople.check.visible` / `hiddenRating` / `hiddenLibrary` / `hiddenUnrated` / `hiddenUnratedAdult` | visible / hidden · rated {r}, above {cap} / hidden · library not shared / hidden · no rating (kids profile) / hidden · no age rating | sichtbar / ausgeblendet · Freigabe {r} über {cap} / ausgeblendet · Bibliothek nicht freigegeben / ausgeblendet · ohne Freigabe (Kinderprofil) / ausgeblendet · ohne Altersfreigabe |
 | `adminPeople.check.libCount` | {lib} · {n} of {m} | {lib} · {n} von {m} |
 | `adminPeople.profiles.kidsSwitch` / `maxRating` / `createKids` / `delete` / `deleteBody` | Kids profile / Age limit / Create kids profile / Delete profile / The profile's list, history and favourites are deleted. | Kinderprofil / Altersgrenze / Kinderprofil anlegen / Profil löschen / Merkliste, Verlauf und Favoriten des Profils werden gelöscht. |
 | `adminPeople.audit.area` / `people` | Area / People | Bereich / Personen |

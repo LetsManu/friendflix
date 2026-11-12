@@ -12,6 +12,7 @@
   import RatingButton from '#lib/RatingButton.svelte';
   import { fmtDate, t, tr } from '#lib/i18n';
   import { kidsMode } from '#lib/kids';
+  import { features } from '#lib/capabilities';
   import { motionAllowed } from '#lib/preview';
   import { episodeKey, loadReminders, remindKeys, toggleReminder } from '#lib/reminders';
   import { focusFirst, isBackKey } from '#lib/spatial';
@@ -164,7 +165,7 @@
       {#if p.remind && !$kidsMode}
         <button type="button" class="btn sec" data-autofocus={!next ? '' : undefined} aria-pressed={reminded} on:click={remind}><Icon name={reminded ? 'check' : 'bell'} size={20} />{reminded ? $t('postplay.action.reminded') : $t('postplay.action.remind')}</button>
       {/if}
-      {#if wish && !$kidsMode}
+      {#if wish && !$kidsMode && $features.requests}
         <button type="button" class="btn sec" aria-disabled={wishState !== '' ? 'true' : undefined} on:click={wishSeason}>{wishState === 'done' ? $t('postplay.action.wished') : $t('postplay.action.wish')}</button>
         {#if wish.quota.remaining !== null && wishState !== 'done'}<span class="muted small">{$t('postplay.action.wishLeft', { n: wish.quota.remaining })}</span>{/if}
       {/if}

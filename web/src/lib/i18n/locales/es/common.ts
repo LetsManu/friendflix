@@ -27,6 +27,16 @@ const es: Translation<typeof de> = {
   off: 'No',
   standard: 'Predeterminado',
   unknown: 'desconocido',
+  /** client kinds of the hand-off display rule; airplay/chromecast wrap the sending device's name */
+  deviceKind: {
+    tizen: 'TV Samsung',
+    webos: 'TV LG',
+    firetv: 'Fire TV',
+    desktop: 'App de Windows',
+    android: 'App de Android',
+    airplay: 'AirPlay ({sender})',
+    chromecast: 'Chromecast ({sender})',
+  },
   movies: 'Películas',
   series: 'Series',
   duration: { hm: '{h} h {m} min', h: '{h} h', m: '{m} min', s: '{s} s' },

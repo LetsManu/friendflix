@@ -9,8 +9,9 @@
   import { prefs, prefsLoaded, saveAudioFx } from '#lib/stores';
   import { features, segmentShown, serverCaps } from '#lib/capabilities';
   import { subClasses } from '#lib/substyle';
-  import { noteInteraction } from '#lib/stillwatching';
+  import { episodesBeforeAsk, noteInteraction } from '#lib/stillwatching';
   import { nowPlaying } from '#lib/remote';
+  import { bindPlayerMediaSession } from '#lib/player/mediasession';
   import { isBackKey } from '#lib/spatial';
   import { isLgApp } from '#lib/webos/detect';
   import { isTvApp } from '#lib/tvapp';
@@ -25,9 +26,11 @@
   import { TvWheelStepper, WheelAccumulator } from '#lib/player/wheel';
   import { parseVolume, stepVolume } from '#lib/player/volume';
   import { hlsConfig, loadHls } from '#lib/player/hls';
-  import { airPlaySupported, createAirPlay, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
+  import { airPhase, airPlaySupported, createAirPlay, type AirPlayController, type AirPlayState } from '#lib/player/airplay';
+  import { castBackdrops } from '#lib/cast/remoteview';
   import { airLog } from '#lib/player/airplayLog';
   import RemoteScreen from '#lib/cast/RemoteScreen.svelte';
+  import AirPlayConnecting from '#lib/player/AirPlayConnecting.svelte';
   import PlayOnSheet from '#lib/cast/PlayOnSheet.svelte';
   import { episodeCode } from '#lib/cast/bar';
   import { airSubBody, rememberSubsRefused } from '#lib/cast/airsubs';
@@ -39,6 +42,7 @@
   import { avoidedUntil, capsPending, clientWhy, isFormatFailure, isProbedBlock, noteDirectFailure, noteHlsFailure, remeasureOutput, setStereoOnly, stereoOnly } from '#lib/player/devicecaps';
   import { firstFrameMs, watchFirstFrame } from '#lib/player/firstframe';
   import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
+  import { playerReportBody } from '#lib/player/reportbody';
   import { holdPrefetch, prepareNext, releaseNext, takeNext, takePrefetched } from '#lib/player/prefetch';
   import { createTiming, deviceClass, effectiveType, sendTiming } from '#lib/player/timing';
   import EpisodesPanel from '#lib/player/EpisodesPanel.svelte';
@@ -52,8 +56,9 @@
   import { frameShown, snapshotFrame, swapAllowed } from '#lib/player/freshvideo';
   import { fmtDuration, getLocale, t, tr, type TFn, type TKey } from '#lib/i18n';
   import { animeAudio, animeDefaultApplies, animeSubtitle } from '#lib/player/anime';
-  import { castBody, castCapsReady, castConfigEnabled, castFellBack, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastEvent, type CastInfo } from '#lib/cast';
+  import { castBody, castCapsReady, castConfigEnabled, castFellBack, continuousFields, postAirPlayToken, castSetVolume, castState, castToggleMute, initCast, loadOnCast, onCastEvent, requestCastSession, type CastEvent, type CastInfo } from '#lib/cast';
   import { CAST_VIDEO_ATTR, castEngine, castSession, type CastSession } from '#lib/cast/engine';
+  import { episodeOf, joinedAsk, joinedAt, type JoinedItem } from '#lib/cast/joined';
   import type { Item } from '#lib/api';
   import { SEEK_COMMIT_MS, seekCancel, seekCommit, seekStep, type SeekPreview } from '#lib/player/tvSeek';
   import { pauseScreenDue, playerBack, tvPlayerButtons, type TvButton, type TvLayer } from '#lib/player/tvLayer';
@@ -71,6 +76,7 @@
   import { motionAllowed } from '#lib/preview';
   import { motionLevel, motionTripped } from '#lib/tv/motion';
   import { kidsMode } from '#lib/kids';
+  import { perms } from '#lib/perms';
   import { growOrigin, moreExtras, panelAnchor, panelBox, phoneOrient, phonePlayer, phoneSub, phoneTools, type PhoneOrient } from '#lib/player/phone/logic';
   import BackLayer from '#lib/player/phone/BackLayer.svelte';
   import PhoneTitle from '#lib/player/phone/PhoneTitle.svelte';
@@ -136,6 +142,8 @@
   export let extPanel = false;
   /** the next episode's id while the page's autoplay countdown runs: its playback info is prepared and its transcoder warmed (prefetch.ts) */
   export let prepNext: string | null = null;
+  /** the episode before this one (lock screen / media keys "previous"); null = none, a film or not known yet */
+  export let prevEpisodeId: string | null = null;
   const dispatch = createEventDispatcher();
 
   type Info = PlaybackDto;
@@ -160,10 +168,38 @@
   $: casting = remote && $castSession?.kind === 'chromecast';
   let castBusy = false, castOff: (() => void) | null = null;
   // ---- AirPlay (Safari): the <video> itself plays on the receiver, from a cast token URL (lib/player/airplay.ts) ----
-  const AIR_IDLE: AirPlayState = { available: false, active: false, busy: false, ready: false, error: false };
+  const AIR_IDLE: AirPlayState = { available: false, active: false, busy: false, ready: false, error: false, connecting: false };
   let air: AirPlayController | null = null, airState: AirPlayState = AIR_IDLE, airInfo: CastInfo | null = null, airProbe: HTMLVideoElement | null = null;
+  $: airPh = airPhase(airState);
+  /** the connecting layout is up: it alone acts (only Back stays), like the remote screen */
+  $: aconn = airPh === 'connecting' && !tvSession && !handedOff;
+  /** its picture: the remote screen's candidates (an episode's still, the series backdrop); no backdrop (`poster.backdrop === false`) goes straight to the primary image */
+  $: airArt = castBackdrops({ itemId, isEpisode: item?.type === 'Episode', seriesId: item?.seriesId }).filter((_, i, a) => !(i === 0 && poster?.backdrop === false && !(item?.type === 'Episode') && a.length > 1));
   $: airOn = remote ? $castSession?.kind === 'airplay' : airState.active;
   let destroyed = false;
+
+  // ---- Media Session (lock screen, Control Center, media keys): bound once this page plays locally; a hand-over the player starts
+  // itself (AirPlay, cast) keeps the binding, so the lock screen never goes blank in between (the cast's own binding takes the session over) ----
+  let mediaBind: ReturnType<typeof bindPlayerMediaSession> | null = null, mediaEl: HTMLVideoElement | null = null;
+  $: mediaItem = item && item.id === itemId ? {
+    title: item.name,
+    artist: item.type === 'Episode' && item.seriesName ? [item.seriesName, episodeCode({ subtitle: '' }, item, tr)].filter(Boolean).join(' · ') : item.year ? String(item.year) : '',
+    artworkIds: item.type === 'Episode' && item.seriesId ? [item.id, item.seriesId] : [item.id],
+  } : null;
+  /** lock-screen play: never while the title is on its way to the TV (local playback would start a second stream) */
+  function mediaPlay() { if (!castBusy && video?.paused) togglePlay(); }
+  $: mediaActions = {
+    play: mediaPlay,
+    pause: () => { if (video && !video.paused) togglePlay(); },
+    seekTo: (t: number) => seekTo(t),
+    seekBy: (d: number) => seekBy(d, true),
+    next: hasNext ? () => { if (allowed()) void goNext(); } : null,
+    prev: prevEpisodeId ? () => { if (allowed() && prevEpisodeId) dispatch('episode', { id: prevEpisodeId }); } : null,
+  };
+  $: if (!mediaBind && !destroyed && video && mediaItem && started && !remote && !handedOff && !airOn) { mediaEl = video; mediaBind = bindPlayerMediaSession(video, mediaItem, mediaActions); }
+  // a fresh element (sound modes off, restorePlain): the listeners move to it
+  $: if (mediaBind && !destroyed && !handedOff && video && mediaEl && video !== mediaEl && mediaItem) { const old = mediaBind; mediaEl = video; mediaBind = bindPlayerMediaSession(video, mediaItem, mediaActions); old.release(); } // bind first: the session never goes blank in between
+  $: if (mediaBind && mediaItem) mediaBind.update(mediaItem, mediaActions);
 
   // ---- UI state ----
   let paused = true, current = 0, duration = 0, buffered = 0, volume = 1, muted = false, rate = 1, waiting = true, fullscreen = false;
@@ -345,7 +381,7 @@
     if (left) credOutT = setTimeout(() => (credOut = false), phoneUi ? 800 : 300);
   }
   // phones: an open panel (a menu, Cast & info, the party host's settings) keeps the controls up (spec 2026-11-08 §1)
-  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || ctlFocus || menu !== '' || playOnOpen || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
+  $: showUi = !locked && !pauseOn && !deskPause && !phonePause && credits !== 'corner' && (paused || aconn || ctlFocus || menu !== '' || playOnOpen || (phoneUi && (showXray || extPanel)) || scrubbing || sp.active || tick - lastActive < hideMs);
   // TV: a hidden bar keeps no focus - otherwise the next OK would press the last used button (subtitles ...) instead of play/pause
   $: if (!showUi && typeof document !== 'undefined' && tvMode() && stage?.querySelector('.ctl')?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   $: creditsAt = creditsStart(segments, duration);
@@ -361,18 +397,19 @@
   const segKey = (k: string, kind: 'segment' | 'skip' | 'skipped'): TKey | null => (isSeg(k) ? `player.${kind}.${k}` : null);
   const segText = (tf: TFn, k: string, kind: 'segment' | 'skip' | 'skipped'): string => { const key = segKey(k, kind); return key ? tf(key) : k; };
 
-  const body = () => airInfo
-    ? { itemId, playSessionId: airInfo.playSessionId, mediaSourceId: airInfo.mediaSourceId, positionTicks: secToTicks(video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: 'Transcode' }
-    : {
-      itemId, playSessionId: info!.playSessionId, mediaSourceId: info!.mediaSourceId,
-      positionTicks: secToTicks(swapping ? lastPos : video?.currentTime ?? 0), isPaused: video?.paused ?? false, audioIndex, playMethod: mode === 'direct' ? 'DirectPlay' : 'Transcode',
-    };
+  // lib/player/reportbody.ts: the armed AirPlay token's play session, `via: 'airplay'` only while the TV plays it (airOn)
+  // (a single token a joined re-mint got for another episode is reported as that episode)
+  const body = () => playerReportBody({
+    itemId: airInfo && airEp ? airEp.itemId : itemId, local: info!, air: airInfo, airOn, position: !airInfo && swapping ? lastPos : video?.currentTime ?? 0, paused: video?.paused ?? false,
+    audioIndex, direct: mode === 'direct',
+  });
   let lastSent = 0;
   /** the latest stop report (also one sent earlier, e.g. at the end of the film): leaving the player holds prefetches on it */
   let lastStop: unknown;
   const send = (kind: 'start' | 'progress' | 'stop', keepalive = false) => {
     if (kind === 'stop') reportTiming();
     if (handedOff) return undefined; // the cast engine reports for the handed-over session
+    if (airInfo?.joined) return undefined; // a joined AirPlay token: the server reports per episode (a page report would stop episode 1 at the wrong position)
     if (swapping && kind === 'progress') return undefined; // the fresh element is still on its way to the position
     lastSent = Date.now();
     const r = report && info && api(`/api/playback/${kind}`, { method: 'POST', body: body(), keepalive }).catch(() => undefined);
@@ -514,7 +551,7 @@
   let attachSeq = 0;
   /** `swap`: the same stream again on a fresh element (restorePlain): no new start, no reports, the viewer's tracks stay */
   async function attach(startSec: number, swap = false) {
-    if (!video || !info || airInfo || handedOff) return; // AirPlay plays its own token stream
+    if (!video || destroyed || !info || airInfo || handedOff) return; // AirPlay plays its own token stream
     const my = ++attachSeq, cur = info;
     sampleFrames(); // the counters restart with the new stream
     if (!swap) { sessionPlaying = false; resetStall(); } // the first buffering of each stream is a start, not a stall
@@ -532,7 +569,8 @@
       const dl = info.delivery;
       timing.stream({ reason: info.transcodeReason ?? null, ...(dl && !useDirect ? { videoCopy: dl.video === 'copy', out: { video: dl.video, videoCodec: dl.videoCodec, audio: dl.audio, audioCodec: dl.audioCodec, channels: dl.channels, why: clientWhy(dl.why, playerCapsSummary()) } } : {}) });
     }
-    const seek = () => { if (startSec > 1) video!.currentTime = startSec; };
+    const el = video;
+    const seek = () => { if (startSec > 1 && !destroyed && video === el) el.currentTime = startSec; }; // the page may be gone (Back before the first frame) or the element swapped
     // hls.js is loaded lazily, only on this path (and usually already prefetched by the play button)
     let H: typeof Hls | null = null;
     if (!useDirect) {
@@ -711,11 +749,21 @@
 
   // ---- Chromecast session lifecycle ----
   const castErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
+    : e?.body?.error === 'cast_forbidden' ? tr('ui.error.castForbidden') // the right was switched off meanwhile: said once, no retry
     : e?.body?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
   // (FriendFlix's own receiver is given a moment to state what it plays first: castCapsReady; `again` names the stream the TV just refused)
-  const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }, extra: { subtitleIndex?: number } = {}) => {
+  // `joined`: a new token for the joined AirPlay stream on the element starts with that episode (`pos` = the offset in it), §5.4 f
+  const castRequest = async (pos: number, via?: 'airplay', again?: { fellBack: 'hevc' | 'surround' | 'both'; prevPs: string }, extra: { subtitleIndex?: number } = {}, joined?: { itemId: string; left: number }) => {
     if (via !== 'airplay') await castCapsReady();
-    return api<CastInfo>('/api/cast/session', { method: 'POST', body: castBody({ itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}), ...extra }) });
+    // another episode than this page's: the track indices are this page's, the server maps them to that episode's tracks by language
+    const other = joined && joined.itemId !== itemId ? { tracksOf: itemId } : {};
+    const body = castBody({ itemId: joined?.itemId ?? itemId, startTicks: secToTicks(pos), audioIndex, maxBitrate: quality || undefined, via, ...(again ?? {}), ...extra, ...other });
+    if (via !== 'airplay') return api<CastInfo>('/api/cast/session', { method: 'POST', body });
+    // AirPlay: one joined stream for this and the next episodes while the admin switch is on (no sheet row; the profile's autoplay decides);
+    // a re-mint of a joined stream never asks for more episodes than that stream had left (one left: a plain token)
+    if (joined && joined.left < 2) return postAirPlayToken(body);
+    const pf = get(prefs), most = episodesBeforeAsk(pf);
+    return postAirPlayToken({ ...body, ...continuousFields({ episode: Boolean(seriesId), autoplay: pf.autoplayNext, sleepAfter: sleepAfterEpisode, maxEpisodes: joined ? Math.min(joined.left, most) : most }) });
   };
   const castRevoke = (ci: CastInfo | null) => { if (ci) api(`/api/cast/session/${ci.castId}`, { method: 'DELETE' }).catch(() => undefined); };
 
@@ -776,10 +824,14 @@
 
   /** the AirPlay route plays our token on the TV: element, controller and probe go to the engine */
   function handOverAirPlay() {
-    const v = video, ctl = air, ci = airInfo;
+    const v = video, ctl = air, ci = airInfo, ep = airEp;
     if (!v || !ctl || !ci || partyMode) return;
-    // `start` was reported for this token exactly when the element played it here (the phone's token stream / the TV)
-    castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), cast: ci, subIndex: ci.hlsSub ? airSubAsked : -1, started: started && !stopped, video: v, air: ctl, probe: airProbe });
+    // a re-mint of a joined stream gave a single token for a later episode (switch off meanwhile): the engine is told that episode
+    const other = !ci.joined && ep && ep.itemId !== itemId ? { itemId: ep.itemId, subtitle: episodeOf(barTitle || title, ep).sub } : {};
+    // `start` was reported for this token exactly when the element played it here (the phone's token stream / the TV); a joined
+    // token never (the server reports it per episode); its position is on the stream, the engine maps it and takes its length
+    // (the track indices are this page's item's: the engine maps them when the token is another episode's)
+    castEngine.adopt({ kind: 'airplay', ...handoff(v.currentTime, duration, v.paused), ...other, tracksOf: itemId, cast: ci, subIndex: ci.hlsSub ? airSubAsked : -1, started: started && !stopped && !ci.joined, video: v, air: ctl, probe: airProbe });
     handedOver();
     air = null; airProbe = null; airInfo = null; airState = AIR_IDLE;
   }
@@ -821,7 +873,7 @@
   function airRow() { if (tvSession?.kind === 'airplay') changeAirPlay(); else air?.pick(); }
   $: airAvail = Boolean(air && (airState.available || airOn || airState.ready || airState.busy)) || tvSession?.kind === 'airplay';
   /** something to choose from: Cast devices in reach or an AirPlay target (the remote screen has its own chip) */
-  $: playOnShown = !partyMode && !remote && (Boolean($castState.available || $castState.connected) || airAvail);
+  $: playOnShown = $perms.cast && !partyMode && !remote && (Boolean($castState.available || $castState.connected) || airAvail);
   $: playOnLabel = $t('player.castPicker.open');
   $: playOnEp = item?.type === 'Episode' || item?.seriesId ? episodeCode({ subtitle: '' }, item, $t) : '';
 
@@ -859,48 +911,71 @@
       stage.insertBefore(video, stage.firstChild);
     }
     if (!air) void initAirPlay();
-    if (was?.state === 'ended') { paused = true; dispatch('ended'); return; } // finished on the TV: the page offers what comes next
+    // finished on the TV: the page offers what comes next (another episode ended there, e.g. a joined stream's last: that one's page, at its end)
+    if (was?.state === 'ended') { if (was.itemId !== itemId) dispatch('episode', { id: was.itemId, t: was.position }); else { paused = true; dispatch('ended'); } return; }
     if (was?.kind === 'airplay' && lastRouteOn) {
       // the system route may still be the TV: the local stream (MSE) would play its sound there, the picture here
       airLog('engine', { src: video?.src, state: was.state, note: 'local playback, route was still wireless' });
       flash(tr('player.airplay.endHint'), 5000);
     }
     lastRouteOn = false;
+    // the TV had moved on to another episode (a joined stream, or the engine's next episode): that one plays on here, at its position
+    if (was && was.itemId !== itemId) { dispatch('episode', { id: was.itemId, t: was.position }); return; }
     wantAutoplay = !(was?.paused ?? true);
     await load(was?.position);
   }
   // ---- AirPlay session lifecycle (the controller tells when Safari's playback target becomes / stops being wireless) ----
+  /** the last token refusal was 403 cast_forbidden: the error box says so and offers no Retry (the next refusal would be the same) */
+  let airForbidden = false;
+  $: if (!airState.error) airForbidden = false;
   const airErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
+    : e?.body?.error === 'cast_forbidden' ? tr('ui.error.castForbidden')
     : e?.body?.error === 'transcoding_disabled' ? tr('player.airplay.needsTranscode') : tr('player.airplay.failed');
   /** the subtitle index the current AirPlay token was requested with (-1 = none): the hand-off tells the engine this, not the menu's later choice */
   let airSubAsked = -1;
+  /**
+   * the episode a re-mint of a joined stream asked for (null: this page's item): `airEp` belongs to the token on the element,
+   * `airEpAsked` to the request on its way
+   */
+  let airEp: JoinedItem | null = null, airEpAsked: JoinedItem | null = null;
   function startAirPlay(v: HTMLVideoElement) {
     air = createAirPlay(v, {
       // the chosen text track rides inside the AirPlay stream (the TV shows only what the stream carries); never in the retry after a refusal
       request: (pos, o) => {
         const body = airSubBody(subIndex, Boolean(o?.noSubs), typeof localStorage === 'undefined' ? null : localStorage, Date.now(), get(serverCaps).castHlsSubtitles);
         airSubAsked = body.subtitleIndex ?? -1; // what the token carries: a later change in this menu does not change the TV's stream
-        return castRequest(pos, 'airplay', undefined, body);
+        // a single token for another episode (a joined re-mint the server answered plainly) stays that episode's
+        const keep = !o?.joined && airInfo && !airInfo.joined && airEp ? airEp : null;
+        airEpAsked = o?.joined ? airInfo?.joined?.items.find((x) => x.itemId === o.joined!.itemId) ?? null : keep;
+        return castRequest(pos, 'airplay', undefined, body, o?.joined ?? (keep ? { itemId: keep.itemId, left: 1 } : undefined));
       },
+      // the phone plays a joined token (before a TV is picked): a new token (audio, quality, renewal) starts at the episode and offset
+      joined: (pos) => (airInfo?.joined ? joinedAsk(airInfo.joined.items, pos) : null),
       subsRefused() { rememberSubsRefused(typeof localStorage === 'undefined' ? null : localStorage, Date.now()); setSubtitle(-1, false); flash(tr('player.castRemote.subsRefused'), 4000); },
       revoke: (ci) => castRevoke(ci),
       async detach() {
         // before the token stream (tap on the button, or a new token): the TV must never get the MSE / cookie URL
-        attachSeq++; clearTimeout(retryT); reconnecting = 0; error = '';
+        const my = ++attachSeq; clearTimeout(retryT); reconnecting = 0; error = '';
         if (started && !stopped) { stopped = true; await send('stop'); } // frees the stream slot (maxStreams) for the token's session
+        // the stop report outlasted the controller's DETACH_WAIT_MS and it restored the normal stream meanwhile (no token loading any
+        // more, a newer attach): that stream is not ours to drop
+        if (my !== attachSeq && !air?.state.busy) return;
         hls?.destroy(); hls = null;
         if (video?.disableRemotePlayback) video.disableRemotePlayback = false; // hls.js sets it for ManagedMediaSource; it would block AirPlay
         started = false; stopped = false;
       },
-      started(ci) { airInfo = ci; started = false; stopped = false; mode = 'hls'; },
+      started(ci) { airInfo = ci; airEp = airEpAsked; started = false; stopped = false; mode = 'hls'; },
       async restore(pos, play, ci) {
         if (ci && started && !stopped) { stopped = true; await send('stop'); }
-        airInfo = null; started = false; stopped = false;
+        // a joined token's position is on its stream: the episode there, at its offset (another episode: that one's page plays it)
+        const j = ci?.joined ? joinedAt(ci.joined.items, pos) : null, ep = j ? ci!.joined!.items[j.index]! : ci ? airEp : null;
+        airInfo = null; airEp = null; started = false; stopped = false;
         if (destroyed) return;
+        if (ep && ep.itemId !== itemId) { dispatch('episode', { id: ep.itemId, t: j ? j.offset : pos }); return; }
         wantAutoplay = play;
-        await load(pos);
+        await load(j ? j.offset : pos);
       },
-      fail: (e) => flash(airErr(e), 4000),
+      fail: (e) => { airForbidden = (e as { body?: { error?: unknown } } | null)?.body?.error === 'cast_forbidden'; flash(airErr(e), 4000); },
       change: (st) => {
         airState = st;
         if (st.active && !st.error && !st.busy && airInfo && !handedOff) handOverAirPlay(); // the TV plays our token
@@ -909,7 +984,7 @@
   }
   /** the player's AirPlay button: same gate as Chromecast (/api/cast/config); a hidden non-MSE probe <video> reports receivers */
   async function initAirPlay() {
-    if (partyMode || !video || !airPlaySupported(video) || !(await castConfigEnabled().catch(() => false)) || destroyed || !video) return;
+    if (partyMode || !get(perms).cast || !video || !airPlaySupported(video) || !(await castConfigEnabled().catch(() => false)) || destroyed || !video) return;
     airProbe = document.createElement('video');
     airProbe.setAttribute('x-webkit-airplay', 'allow');
     airProbe.setAttribute('playsinline', '');
@@ -917,6 +992,14 @@
     airProbe.setAttribute('aria-hidden', 'true');
     stage?.appendChild(airProbe);
     startAirPlay(video);
+  }
+
+  // the cast right arrives after the player mounted (a stale boot hint denied it): start what onMount skipped
+  let castWasDenied = !$perms.cast;
+  $: if ($perms.cast && castWasDenied) {
+    castWasDenied = false;
+    if (!partyMode) void initCast();
+    if (!air && !airProbe && !remote) void initAirPlay();
   }
 
   const doPause = () => { if (remote) { if (!paused) castEngine.playPause(); } else video?.pause(); };
@@ -1371,6 +1454,7 @@
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
     if (!video || isTypingTarget(t)) return;
+    if (aconn && !(e.key === 'Escape' || isBackKey(e))) return; // the AirPlay connecting layout: only Back / Escape (and its own buttons) act
     if ((t.tagName === 'BUTTON' || t.tagName === 'A') && (e.key === ' ' || e.key === 'Enter')) return; // the focused control keeps Space/Enter
     const lg = isLgApp();
     const a = resolveKey(lg ? { key: normaliseLgKey(e), ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey } : e, { tv: tvMode(), onBody: t === document.body || t === stage, hasSkip: Boolean(skip), hasNext, overlayOpen: overlayOpen(), peekOpen: peek, lg });
@@ -1464,7 +1548,7 @@
 
   // ---- mouse: click = play/pause (deferred to tell a double click = fullscreen); touch is handled by the pointer gestures below ----
   let lastTap = 0, lastTouch = 0;
-  const NO_GESTURE = '.ui, .skipbtn, .ovl, .dlg, .help, .lockbtn, .rs, [data-nav], button, a, input, select';
+  const NO_GESTURE = '.ui, .skipbtn, .ovl, .dlg, .help, .lockbtn, .rs, .ac, [data-nav], button, a, input, select';
   function onSurfaceClick(e: MouseEvent) {
     if ((e.target as HTMLElement).closest(NO_GESTURE)) return;
     if (Date.now() - lastTouch < 800) return; // the click that follows a touch was already handled
@@ -1695,6 +1779,7 @@
     holdPrefetch(Promise.resolve(lastStop)); // no cached info survives the player; the next prefetch waits for this stop (resume position)
     if (preparedFor) releaseNext(); // the next episode's warm-up: taken by its player within the grace, else stopped
     destroyed = true;
+    mediaBind?.release(); mediaBind = null;
     clearTimeout(credOutT);
     // a handed-over cast keeps running (the engine owns token, element, controller and probe); otherwise AirPlay ends here
     if (!handedOff) { air?.destroy(); airProbe?.remove(); } // revokes a live AirPlay token
@@ -1705,7 +1790,7 @@
 </script>
 
 <svelte:window bind:innerWidth={winW} bind:innerHeight={winH} on:keydown={onKey} on:keydown|capture={onBackCapture} />
-<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} style="--inset:{inset}px{barVar}{pnlVar}{picVar}" bind:this={stage} bind:clientWidth={stW} bind:clientHeight={stH} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:focusin={onStageFocus} on:focusout={onStageFocus} on:keydown={() => {}}
+<div class="stage {subClasses($prefs.subtitleStyle)}" class:idle={!showUi && credits !== 'corner'} class:locked class:pre={posterOn} class:phone={phone && !phoneUi} class:pui={phoneUi} class:port={phoneUi && orient === 'portrait'} class:desk class:dpause={deskPause} class:dmo={deskMotion} class:ppause={phonePause} class:pmo={phoneMotion} class:cred={credits === 'corner'} class:credout={credOut} class:cmo={credMotion} class:rmt={Boolean(tvSession)} class:aconn style="--inset:{inset}px{barVar}{pnlVar}{picVar}" bind:this={stage} bind:clientWidth={stW} bind:clientHeight={stH} on:mousemove={(e) => { if (Date.now() - lastTouch > 800 && !(e.target as Element).closest?.('.dps')) wake(); }} on:click={onSurfaceClick} on:wheel|nonpassive={onWheel} on:focusin={onStageFocus} on:focusout={onStageFocus} on:keydown={() => {}}
   on:pointerdown={gDown} on:pointermove={gMove} on:pointerup={gUp} on:pointercancel={gCancel} role="presentation">
   <!-- the page heading (WCAG 1.3.1 / 2.4.6): the title, for heading navigation; the visible title block is styled text -->
   {#if !tvSession}<h1 class="sr-only">{barTitle || title}</h1>{/if} <!-- the remote screen has the page's one h1 -->
@@ -1747,14 +1832,17 @@
   {#if tvSession}
     <!-- the cast engine plays this title on the TV (also after this page): the player is its remote (lib/cast/RemoteScreen.svelte) -->
     <RemoteScreen on:close={() => dispatch('back')} on:pick={(e) => openPlayOn(e.detail)} />
+  {:else if airPh === 'connecting'}
+    <!-- the tap's token is on its way, or a TV was picked and has not played yet: the layout overlays (see AirPlayConnecting) -->
   {:else if airOn || airState.error}
     <!-- Safari does not tell which receiver was picked; ending AirPlay happens in its picker (choose this device).
          Also while `ready` (no TV yet) when a token request failed: Retry, the src stays as it is (no restore loop) -->
     <div class="center castov" role="status" data-testid="airplay-active"><div class="castbox">
       <Icon name="airplay" size={56} />
       {#if airState.error}
-        <b>{$t('player.airplay.failed')}</b><span class="airhint">{$t('player.airplay.endHint')}</span>
-        <button class="btn light ui" on:click|stopPropagation={() => air?.retry()}>{$t('player.error.retry')}</button>
+        {#if airForbidden}<b>{$t('ui.error.castForbidden')}</b><span class="airhint">{$t('player.airplay.endHint')}</span>
+        {:else}<b>{$t('player.airplay.failed')}</b><span class="airhint">{$t('player.airplay.endHint')}</span>
+        <button class="btn light ui" on:click|stopPropagation={() => air?.retry()}>{$t('player.error.retry')}</button>{/if}
       {:else}<b>{$t('player.airplay.playing')}</b>{/if}
       <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.change')}</button>
     </div></div>
@@ -1766,6 +1854,7 @@
       <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.choose')}</button>
     </div></div>
   {/if}
+  {#if aconn}<AirPlayConnecting art={airArt} onCancel={() => air?.cancel()} />{/if}
   {#if !phone && !tvUi && paused && !deskPause && credits !== 'corner' && !waiting && !error && !remote && !locked && !reconnecting}
     <button class="bigplay ui" aria-label={$t('player.controls.play')} on:click|stopPropagation={togglePlay}><Icon name="play" size={44} /></button>
   {/if}
@@ -1796,14 +1885,14 @@
   <!-- overlays from the page (back button, next episode card, party chat/reactions) -->
   <div class="ovl" class:hide={!showUi} class:withchip={phoneChip && !phoneUi} class:blur={blur && phoneUi}>
     {#if !tvUi}<slot name="top" />{/if}
-    {#if phoneUi}
+    {#if phoneUi && !aconn}
       <!-- phone player: quality chip, Cast, AirPlay and lock at the end of the top bar (they leave the pill and More) -->
       <PhoneTopBar {blur} lock={!remote}
         playon={playOnShown ? { on: casting || airOn, busy: airState.busy, open: playOnOpen, label: playOnLabel } : null}
         on:playon={(e) => openPlayOn(e.detail)} on:lock={lockNow}>
         {#if phoneChip && info}<QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} />{/if}
       </PhoneTopBar>
-    {:else if phoneChip && info}<div class="qtop"><QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} /></div>{/if}
+    {:else if phoneChip && info && !aconn}<div class="qtop"><QualityChip bind:open={chipOpen} compact direct={chipDirect} label={rungLabel(info.maxBitrate)} reason={info.transcodeReason ?? 'other'} /></div>{/if}
   </div>
   {#if phone && !phoneUi && !locked && !error && !reconnecting}
     <!-- phones: play / pause between -10 and +10 in the middle of the picture (shown and hidden with the bar) -->
@@ -2103,6 +2192,8 @@
   .castov { background: #000; pointer-events: none; z-index: 2; }
   /* while the cast screen (RemoteScreen) is up it brings its own controls: the player's go away (display, so they leave the tab order too) */
   .stage.rmt :is(.ctl, .ovl, .cc, .skipbtn, .lockbtn, .bigplay, .qtop) { display: none !important; }
+  /* the AirPlay connecting layout: only Back (the top slot) stays */
+  .stage.aconn :is(.ctl, .cc, .skipbtn, .lockbtn, .bigplay, .qtop) { display: none !important; }
   .castbox { display: grid; justify-items: center; gap: .9rem; text-align: center; color: #fff; }
   .airhint { font-size: .85rem; opacity: .8; max-width: 22rem; }
   .ic.airbusy { opacity: .55; }

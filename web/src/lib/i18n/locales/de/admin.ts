@@ -5,7 +5,7 @@ export default {
   title: 'Admin',
   tabs: {
     users: 'Nutzer', status: 'Status', previews: 'Vorschauen', playback: 'Wiedergabe-Check', digest: 'Wochenrückblick', sources: 'Datenquellen', invites: 'Einladungen',
-    requests: 'Wünsche', polls: 'Abstimmungen', lists: 'Listen', roles: 'Rollen', devices: 'Geräte', audit: 'Audit-Log', update: 'Update',
+    requests: 'Wünsche', polls: 'Abstimmungen', lists: 'Listen', roles: 'Rollen & Rechte', devices: 'Geräte', audit: 'Audit-Log', update: 'Update',
     hygiene: 'Bibliothekspflege',
     settings: 'Einstellungen',
     usage: 'Nutzung',

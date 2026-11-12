@@ -36,6 +36,8 @@ export interface MockState {
   build: { sha: string; build: 'release' | 'nightly' | 'dev' | null; channel: 'stable' | 'nightly' | null; label: string };
   /** /api/me reports an admin owner profile (admin pages, admin menu) */
   asAdmin: boolean;
+  /** GET /api/handoff (device hand-off): the start page's answer (`home`, null = no offer) and the title pages' (`byItem`, by the asked `item` id) */
+  handoff: { home: unknown | null; byItem: Record<string, unknown> };
   /** ids removed from Weiterschauen (DELETE /api/library/resume/:id), left out of GET /api/library/resume */
   resumeGone: Set<string>;
   /** the profile's player sound pref (PUT /api/prefs/audiofx), echoed by GET /api/prefs */
@@ -52,6 +54,8 @@ export interface MockState {
   reauthLapsed?: boolean;
   /** /api/me `features` (optional services); absent = the field is left out, like an older backend (everything on) */
   features?: { requests?: boolean; postplay?: boolean; surround?: boolean };
+  /** /api/me `perms` (the acting profile's effective rights); absent = the field is left out, like an older backend (everything allowed) */
+  perms?: Partial<Record<'requests' | 'cast' | 'party' | 'partySchedule' | 'comments' | 'liveTv' | 'liveRecord', boolean>>;
   /** /api/me `server.kind` (absent = the field is left out, like an older backend: the app treats it as Jellyfin) */
   serverKind?: 'jellyfin' | 'plex';
   /** /api/me `server.capabilities` (absent = left out: every capability counts as supported); e.g. `{ castHlsSubtitles: false }` */
@@ -65,7 +69,9 @@ export interface MockState {
     /** the recommendation engine answered by new-for-you (v1 = just the newest titles: the page must not show them as "for you") */
     engine: 'v1' | 'v2';
     /** GET /api/library/request-suggestions by type; `error` answers 404 requests_disabled / a 500 instead */
-    suggestions: { movie: unknown[]; series: unknown[]; error: null | 'disabled' | 'fail' };
+    suggestions: { movie: unknown[]; series: unknown[]; error: null | 'disabled' | 'fail'; /** the admin's `debug` counts per type a real build answers with (they are then kept as the cached ones); `cached` = what `debug=cached` reads */
+      debug?: { movie?: Record<string, number>; series?: Record<string, number> }; cached?: { movie?: Record<string, number>; series?: Record<string, number> };
+      /** not the admin's owner profile: no counts at all */ notOwner?: boolean; /** real builds (requests without debug=cached) */ builds?: number };
     /** the quota of GET /api/requests/quota and of the suggestions (the mock does not count POSTs) */
     quota: { limit: number | null; used: number; resetsAt: string } | null;
     /** GET /api/requests/mine; GET /api/seerr/search */
@@ -105,7 +111,7 @@ export interface MockSecurity {
   usernameChange?: boolean;
   problem?: 'service_token' | 'unreachable' | 'error' | 'not_configured' | null;
 }
-export interface MockDevice { id: string; label: string; approved: boolean; current: boolean; created_at: string; last_seen: string }
+export interface MockDevice { id: string; label: string; /** the user's own name (PATCH /api/devices/:id) */ name: string | null; kind: 'web' | 'tizen' | 'webos' | 'firetv' | 'desktop' | 'android' | null; approved: boolean; current: boolean; created_at: string; last_seen: string }
 
 const daysAgo = (n: number): string => new Date(Date.now() - n * 864e5).toISOString();
 /** GET /api/library/new-for-you: a film with a seed and a trait, a series with only a trait, a film without a reason (v1 style) */
@@ -145,10 +151,11 @@ export function freshState(): MockState {
     build: { sha: 'c0be6c5deadbeef', build: 'release', channel: 'stable', label: '1.0.0' },
     asAdmin: false,
     resumeGone: new Set(),
+    handoff: { home: null, byItem: {} },
     account: { name: 'Tester', email: 'tester@example.com', avatar: 'blue', mfa: { totp: true, webauthn: false, static: true }, manageUrl: 'https://login.example.com/if/user/#/settings', reauthUntil: null },
     devices: [
-      { id: 'dev-current-0000000001', label: 'Chrome auf Linux', approved: true, current: true, created_at: '2026-09-01T10:00:00Z', last_seen: '2026-10-14T09:00:00Z' },
-      { id: 'dev-phone-00000000002', label: 'Safari auf iOS', approved: true, current: false, created_at: '2026-09-02T10:00:00Z', last_seen: '2026-10-12T20:15:00Z' },
+      { id: 'dev-current-0000000001', label: 'Chrome auf Linux', name: null, kind: 'web', approved: true, current: true, created_at: '2026-09-01T10:00:00Z', last_seen: '2026-10-14T09:00:00Z' },
+      { id: 'dev-phone-00000000002', label: 'Safari auf iOS', name: null, kind: 'web', approved: true, current: false, created_at: '2026-09-02T10:00:00Z', last_seen: '2026-10-12T20:15:00Z' },
     ],
     revokedOthers: 2,
     loginArt: { status: 200, images: [] },
@@ -237,7 +244,8 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     if (p === '/api/me' && st.setup && !st.setup.complete) return J({ error: 'setup_required' }, 503);
     if (p === '/api/me') {
       const withServer = st.serverKind || st.serverCaps ? { ...ME, server: { ...(st.serverKind ? { kind: st.serverKind } : {}), ...(st.serverCaps ? { capabilities: st.serverCaps } : {}) } } : ME;
-      const base = st.features ? { ...withServer, features: st.features } : withServer;
+      const withFeatures = st.features ? { ...withServer, features: st.features } : withServer;
+      const base = st.perms ? { ...withFeatures, perms: st.perms } : withFeatures;
       const me = st.asAdmin ? { ...base, role: 'admin', roleLabel: 'Admin', isAdmin: true } : base;
       const s = st.accountSaved;
       return J(s ? { ...me, name: s.name, profile: { ...me.profile, name: s.name.slice(0, 20), avatar: s.avatar } } : me);
@@ -269,8 +277,18 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       if (st.reauthLapsed || !st.account.reauthUntil || st.account.reauthUntil < Date.now()) return J({ error: 'reauth_required' }, 401);
       return J({ deletionAt: '2026-10-21T12:00:00.000Z' });
     }
+    if (p === '/api/handoff' && m === 'GET') {
+      const item = sp.get('item');
+      return J({ handoff: (item ? st.handoff.byItem[item] : st.handoff.home) ?? null }, 200, { 'cache-control': 'no-store' });
+    }
     if (p === '/api/devices' && m === 'GET') return J({ devices: st.devices });
     if ((mm = p.match(/^\/api\/devices\/([^/]+)\/sign-out$/)) && m === 'POST') return J({ revoked: 1 }); // the device stays (approved)
+    if ((mm = p.match(/^\/api\/devices\/([^/]+)$/)) && m === 'PATCH') {
+      const d = st.devices.find((x) => x.id === mm![1]);
+      if (!d) return J({ error: 'not_found' }, 404);
+      d.name = (body() as { name: string | null }).name;
+      return J({ ok: true, name: d.name });
+    }
     if ((mm = p.match(/^\/api\/devices\/([^/]+)$/)) && m === 'DELETE') { st.devices = st.devices.filter((d) => d.id !== mm![1]); return J({ ok: true }); }
     if (p === '/api/sessions/revoke-others' && m === 'POST') return J({ revoked: st.revokedOthers });
     if (p === '/api/notifications') return J({ notifications: [{ id: 'n1', title: 'Anna hat dich zur Liste „Annas Klassiker“ eingeladen', link: '/lists/' + st.lists[1]!.id, read: false }] });
@@ -327,7 +345,12 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       if (np.kids) return J({ error: 'kids_profile' }, 403);
       if (np.suggestions.error === 'disabled') return J({ error: 'requests_disabled' }, 404);
       if (np.suggestions.error === 'fail') return J({ error: 'boom' }, 500);
-      return J({ items: sp.get('type') === 'series' ? np.suggestions.series : np.suggestions.movie, quota: np.quota });
+      const ty = sp.get('type') === 'series' ? 'series' : 'movie';
+      if (sp.get('debug') === 'cached') return J(np.suggestions.notOwner ? {} : { debug: np.suggestions.cached?.[ty] ?? null, builtAt: null });
+      np.suggestions.builds = (np.suggestions.builds ?? 0) + 1;
+      const debug = np.suggestions.debug?.[ty];
+      if (debug) np.suggestions.cached = { ...np.suggestions.cached, [ty]: debug };
+      return J({ items: np.suggestions[ty], quota: np.quota, ...(debug && !np.suggestions.notOwner ? { debug } : {}) });
     }
     if (p === '/api/requests' && m === 'POST') {
       const np = st.newPage;
@@ -468,7 +491,7 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
         case 'extras': return J({ items: [] });
         case 'comments': return J(m === 'POST' ? { id: 'c1', name: 'Tester', mine: true, spoiler: false, body: body().body, createdAt: new Date().toISOString(), canDelete: true } : { watched: true, comments: [] }); // episode comments (block 15)
         case 'seasons': return J({ items: [{ id: hex(200), name: 'Staffel 1', type: 'Season', indexNumber: 1, genres: [], image: true, backdrop: false, logo: false, played: false, favorite: false, positionTicks: 0 }] });
-        case 'episodes': return J({ items: episodes });
+        case 'episodes': { const sid = u.searchParams.get('seasonId'); return J({ items: sid ? episodes.filter((e) => e.seasonId === sid) : episodes }); }
         case 'tracks': return J({ audio: [{ language: 'deu', title: 'Deutsch', isDefault: true }, { language: 'eng', title: 'English', isDefault: false }], subtitles: [{ language: 'deu', title: 'Deutsch' }], type: 'Movie' });
         case 'lists': return J({ lists: [] });
       }

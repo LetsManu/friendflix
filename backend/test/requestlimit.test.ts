@@ -68,16 +68,20 @@ describe('monthly request limit', () => {
     expect((await call(admin, 'GET', '/api/admin/roles')).json().limits.find((x: any) => x.role === 'friend')).toMatchObject({ requestsPerMonth: 3, isDefault: false });
     expect((await wish(friend)).statusCode).toBe(200);
     expect((await wish(friend)).statusCode).toBe(429);
-    expect((await env.pool.query("select 1 from audit_log where action='role.request_limit'")).rowCount).toBe(1);
+    const a = (await env.pool.query("select meta from audit_log where action='role.update' and target='friend'")).rows;
+    expect(a.map((r) => r.meta)).toEqual([{ from: { requestsPerMonth: 2 }, to: { requestsPerMonth: 3 } }]);
   });
 
   it('PUT validation, unknown role and non-admin', async () => {
     expect((await call(friend, 'PUT', '/api/admin/roles/friend', { requestsPerMonth: 50 })).statusCode).toBe(403);
     expect((await call(admin, 'PUT', '/api/admin/roles/nope', { requestsPerMonth: 1 })).statusCode).toBe(404);
     expect((await call(admin, 'PUT', '/api/admin/roles/friend', { requestsPerMonth: 101 })).statusCode).toBe(400);
-    expect((await call(admin, 'PUT', '/api/admin/roles/friend', { requestsPerMonth: null })).statusCode).toBe(200);
+    expect((await call(admin, 'PUT', '/api/admin/roles/friend', { requestsPerMonth: 'unlimited' })).statusCode).toBe(200);
     expect((await wish(friend)).statusCode).toBe(200);
-    await call(admin, 'PUT', '/api/admin/roles/friend', { requestsPerMonth: 2 });
+    // null = back to the code default (2)
+    expect((await call(admin, 'PUT', '/api/admin/roles/friend', { requestsPerMonth: null })).statusCode).toBe(200);
+    expect((await call(admin, 'GET', '/api/admin/roles')).json().limits.find((x: any) => x.role === 'friend')).toMatchObject({ requestsPerMonth: 2 });
+    expect((await wish(friend)).statusCode).toBe(429);
   });
 
   it("last month's wishes and poll-sourced wishes do not count", async () => {

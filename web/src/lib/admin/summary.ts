@@ -5,8 +5,8 @@ import { writable, type Readable } from 'svelte/store';
 import { api } from '#lib/api';
 
 export interface AdminSummary {
-  users: { total: number; active: number; locked: number };
-  pending: { requests: number | null; devices: number; polls: number; invites: number; previewsFailed: number };
+  users: { total: number; active: number; locked: number; expiring: number };
+  pending: { requests: number | null; devices: number; polls: number; invites: number; approvals: number; previewsFailed: number };
   requests: { pending: number; approved: number; processing: number; available: number; declined: number; total: number } | null;
   storage: { downloadsEnabled: boolean; downloadsBytes: number; downloadsMaxBytes: number; previewBytes: number; previewClips: number };
   playbackCheck: { finishedAt: string; total: number; failed: number } | null;

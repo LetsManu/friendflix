@@ -177,9 +177,11 @@ test.describe('desktop detail page', () => {
       return [Math.round(l.left), Math.round(r.right)];
     });
     const tabBox = (name: string) => tabs.getByRole('tab', { name }).evaluate((e) => { const b = e.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.right)]; });
-    await expect.poll(pillBox).toEqual(await tabBox('Folgen'));
+    // the pill sits at whole pixels, the tab's box is fractional: allow 1 px (engines round their text widths differently)
+    const near = async (name: string) => { const want = await tabBox(name); await expect.poll(async () => Math.max(...(await pillBox()).map((v, i) => Math.abs(v - want[i]!)))).toBeLessThanOrEqual(1); };
+    await near('Folgen');
     await tabs.getByRole('tab', { name: 'Details' }).click();
-    await expect.poll(pillBox).toEqual(await tabBox('Details'));
+    await near('Details');
     await expect(page.getByRole('tabpanel', { name: 'Details' })).toBeVisible();
     await expect(page.getByRole('tabpanel', { name: 'Folgen' })).toHaveCount(0);
     // the pill moves by transform only

@@ -8,7 +8,7 @@ const tr: Translation<typeof de> = {
   title: 'Yönetici',
   tabs: {
     users: 'Kullanıcılar', status: 'Durum', previews: 'Önizlemeler', playback: 'Oynatma denetimi', digest: 'Haftalık özet', sources: 'Veri kaynakları', invites: 'Davetler',
-    requests: 'İstekler', polls: 'Oylamalar', lists: 'Listeler', roles: 'Roller', devices: 'Cihazlar', audit: 'Denetim günlüğü', update: 'Güncelleme',
+    requests: 'İstekler', polls: 'Oylamalar', lists: 'Listeler', roles: 'Roller ve haklar', devices: 'Cihazlar', audit: 'Denetim günlüğü', update: 'Güncelleme',
     hygiene: 'Kitaplık bakımı',
     settings: 'Ayarlar',
     usage: 'Kullanım',

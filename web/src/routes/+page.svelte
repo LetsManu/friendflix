@@ -2,6 +2,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
+  import { afterNavigate } from '$app/navigation';
+  import { get } from 'svelte/store';
   import { api, ApiError, getActiveProfile, type Item } from '#lib/api';
   import BrandHubs from '#lib/BrandHubs.svelte';
   import { deskUi } from '#lib/desk/bar';
@@ -14,6 +16,8 @@
   import Row from '#lib/Row.svelte';
   import ThemedListRows from '#lib/ThemedListRows.svelte';
   import UpcomingRow from '#lib/UpcomingRow.svelte';
+  import HandoffCard from '#lib/handoff/HandoffCard.svelte';
+  import { dismiss as dismissHandoff, isDismissed, loadHandoff, shouldTakeFocus, type Handoff } from '#lib/handoff/handoff';
   import { failedParts, firstNonEmptyTab, homeCache, swrLoad, type HomePart, type HomeResponse } from '#lib/home';
   import type { Hub } from '#lib/hubs';
   import { loadFeatured, loadThemed, type FeaturedList, type ThemedList } from '#lib/lists';
@@ -101,11 +105,13 @@
     for (const n of bad) loaders[n]();
   }
 
+  let homeAnswered: Promise<unknown> = Promise.resolve();
   onMount(() => {
     // 1. the whole first screen (billboard, rows, hubs, themed lists) in ONE request; stale data from the last visit shows at once.
     //    Parts the server could not build are loaded the old way, one request each.
     const firstScreen = swrLoad(homeCache, HOME_KEY(), () => retry(() => api('/api/home') as Promise<HomeResponse<Item>>, 2, 800, (e) => e instanceof ApiError && e.status >= 400 && e.status < 500), applyHome, ALWAYS, () => { for (const n of Object.keys(loaders) as HomePart[]) loaders[n](); })
       .catch(() => undefined);
+    homeAnswered = firstScreen;
     // 3. below the fold: once the browser is idle (keeps the network free for the billboard image);
     //    from the cache at once (back navigation: same page height, so the scroll position restores exactly)
     const warm = Boolean(homeCache.get(`${getActiveProfile()}|latest`));
@@ -128,8 +134,58 @@
     rowsAt = Date.now();
     loaders.resume();
     loaders.nextup();
+    void refreshHandoff();
   }
   const onPageShow = (e: PageTransitionEvent) => { if (e.persisted) refreshProgress(); };
+  // ---- "continue here": what another device played last (spec device hand-off 2.4). The card is an overlay in the hosts' `handoff` slot ----
+  let handoff: Handoff | null = null, handoffSeq = 0, dismissedId = '';
+  /** asked after mount and whenever the progress rows are re-read; never for a kids profile (their home is /kids, where no card shows); the newest answer wins */
+  async function refreshHandoff() {
+    if (get(kidsMode)) return;
+    const n = ++handoffSeq;
+    const h = await loadHandoff();
+    if (n === handoffSeq) handoff = h;
+  }
+  let gone = false;
+  // asked only after /api/home has answered (the first screen keeps its 5-call budget); the card waits for the billboard anyway
+  onMount(() => { void homeAnswered.then(() => { if (!gone) void refreshHandoff(); }); });
+  onDestroy(() => { gone = true; handoffSeq++; }); // an answer after leaving is dropped
+  /** the offer unless this device dismissed it */
+  $: offer = handoff && handoff.id !== dismissedId && !isDismissed(handoff.id) ? handoff : null;
+  /** only once the billboard title is here (and, on the phone carousel, once its cards are): a late title never meets a card that was already shown */
+  $: offerReady = heroSettled && !picksPending;
+  async function onHandoffDismiss(e: CustomEvent<string>) {
+    dismissHandoff(e.detail);
+    dismissedId = e.detail;
+    await tick();
+    // the card held focus: it goes to the page's first button (the billboard's Play)
+    if (!document.activeElement || document.activeElement === document.body) document.querySelector<HTMLElement>('[data-autofocus]')?.focus({ preventScroll: true });
+  }
+  // ---- TV remote: the card's action takes the focus only if it shows within 2 s of mount and before any key (spec 2.4) ----
+  let mountedAt = 0, keyPressed = false, focusDecided = false, backNav = false;
+  // Back / Forward to the start page: the layout puts the focus back where the viewer was (a row card, a button); the card never competes
+  afterNavigate((nav) => { if (nav.type === 'popstate') backNav = true; });
+  onMount(() => {
+    mountedAt = Date.now();
+    const onKey = () => { keyPressed = true; };
+    window.addEventListener('keydown', onKey, { capture: true, once: true });
+    return () => window.removeEventListener('keydown', onKey, true);
+  });
+  /** the tile's first button (Back on the card, Down from it, after Ausblenden) */
+  const focusTile = () => document.querySelector<HTMLElement>('section.tile [data-autofocus]')?.focus({ preventScroll: true });
+  $: tvOffer = tv && offerReady && hero ? offer : null;
+  // decided once per page load, when the first card shows (a later card, e.g. after a refresh, never takes the focus)
+  $: if (tvOffer && !focusDecided) void takeFocus();
+  async function takeFocus() {
+    focusDecided = true;
+    if (backNav || !shouldTakeFocus({ mountedAt, arrivedAt: Date.now(), keyPressed })) return;
+    await tick();
+    // only while the card shows (focus in the tile) and the focus is not placed yet, or rests on the tile's Play (the layout's
+    // first focus). Not relying on `inert`: Chromium 85 / 87 lack it, and `.focus()` would land on the faded card there.
+    const a = document.activeElement;
+    const free = !a || a === document.body || a.matches('section.tile [data-autofocus]');
+    if (!keyPressed && free && get(tvFocus) === null) document.querySelector<HTMLElement>('section.tile [data-handoff] a[href]')?.focus({ preventScroll: true });
+  }
   onMount(() => {
     rowsAt = Date.now(); // the first screen just loaded them
     document.addEventListener('visibilitychange', refreshProgress);
@@ -249,17 +305,25 @@
 
 <svelte:head><title>{$t('common.appName')}</title></svelte:head>
 {#if tv}
-  <TvFocusTile {hero} {heroRank} />
+  <TvFocusTile {hero} {heroRank}>
+    <HandoffCard slot="handoff" handoff={tvOffer} layout="tv" tvVisible={$tvFocus === null} {focusTile} on:dismiss={onHandoffDismiss} />
+  </TvFocusTile>
 {:else if desk}
-  <DeskBillboard item={hero} rank={heroRank} />
+  <DeskBillboard item={hero} rank={heroRank}>
+    <HandoffCard slot="handoff" handoff={offerReady && hero ? offer : null} layout="desk" on:dismiss={onHandoffDismiss} />
+  </DeskBillboard>
   <BrandHubs {hubs} />
 {:else if phone && (picks.length || picksPending)}
   <!-- the phone home's page heading (the carousel has no title of its own; WCAG 1.3.1 / 2.4.6) -->
   <h1 class="sr-only">{$t('common.appName')}</h1>
+  <!-- the "continue here" card follows the heading in reading order; its zero-height host is the containing block of the absolute card -->
+  <div class="hoffhost"><HandoffCard handoff={offerReady ? offer : null} layout="phone" on:dismiss={onHandoffDismiss} /></div>
   <Carousel items={picks} />
   <BrandHubs {hubs} />
 {:else}
-  <Hero item={hero} rank={heroRank} portrait />
+  <Hero item={hero} rank={heroRank} portrait>
+    <HandoffCard slot="handoff" handoff={offerReady && hero ? offer : null} layout="phone" on:dismiss={onHandoffDismiss} />
+  </Hero>
   <BrandHubs {hubs} />
 {/if}
 <div class="rows" bind:this={rowsEl} data-own-scroll={tv ? '' : undefined} on:focusin={onRowsFocus} use:navAction>
@@ -300,7 +364,8 @@
   {/each}
 </div>
 
-<style>.rows { position: relative; z-index: 2; padding-bottom: 5rem; }
+<style>.hoffhost { position: relative; height: 0; }
+  .rows { position: relative; z-index: 2; padding-bottom: 5rem; }
   @media (max-width: 720px) { .rows { padding-top: .4rem; } }
   :global(html.tv) .rows { padding-bottom: 40vh; --pad-x: var(--tv-gutter); } /* the last rows can still slide up under the tile; row titles and first cards sit on the 56 px gutter */
   :global(html.tv) .rows :global(section.up h2) { font-size: 1.625rem; font-weight: 600; line-height: 1.2; color: var(--tv-white-88); margin-bottom: 1rem; }

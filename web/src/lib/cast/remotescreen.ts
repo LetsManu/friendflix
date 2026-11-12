@@ -10,6 +10,7 @@ import type { TFn } from '#lib/i18n';
 import type { Segment } from '#lib/player/nextup';
 import { nextSecondsLeft } from './bar';
 import type { CastKind, CastSession } from './engine';
+import { episodeOf, episodeSpan } from './joined';
 import { deviceLabel } from './remoteview';
 
 /** ≥ 1100 px: now-playing and up-next side by side; 721–1099: up-next under the now-playing panel; ≤ 720: the phone layout */
@@ -123,4 +124,42 @@ export function upNextLine(s: Pick<CastSession, 'kind' | 'autoplay' | 'next'>, n
 /** an episode's code line in the app's language ("S1:F5 · Name", "S1:E5 · Name"); the name alone without numbers */
 export function episodeCodeLine(it: Pick<Item, 'name' | 'parentIndexNumber' | 'indexNumber'>, tf: TFn): string {
   return it.parentIndexNumber != null && it.indexNumber != null ? tf('player.phone.episodeLine', { s: it.parentIndexNumber, e: it.indexNumber, name: it.name }) : it.name;
+}
+
+export interface ContinuousView {
+  /** the info card's sentence */
+  info: string;
+  /** "Folge 1 von 3" */
+  line: string;
+  /** the plain rows of "Am St\u00fcck": the episode's code and name, "Jetzt" on the one the TV is in, else its length */
+  list: Array<{ label: string; note: string; now: boolean }>;
+  prevDisabled: boolean;
+  nextDisabled: boolean;
+}
+/** the remote screen's continuous mode (a joined stream, spec cast \u00a71); null for a plain session */
+export function continuousView(s: CastSession, tf: TFn): ContinuousView | null {
+  const j = s.joined;
+  if (!j || !j.items.length) return null;
+  const { a, b } = episodeSpan(j.items);
+  return {
+    info: tf('player.castRemote.continuousInfo', { a, b }),
+    line: tf('player.castRemote.episodeOf', { n: j.index + 1, m: j.items.length }),
+    list: j.items.map((it, i) => ({ label: episodeOf(s.title, it).sub, note: i === j.index ? tf('player.castRemote.now') : tf('player.castRemote.minutes', { n: Math.round(it.duration / 60) }), now: i === j.index })),
+    prevDisabled: j.index <= 0,
+    nextDisabled: j.index >= j.items.length - 1,
+  };
+}
+
+export type SlotMode = 'list' | 'card' | 'plain';
+/**
+ * What the continuous slot shows once a session has been joined (the slot keeps its height for the session; its content follows the state):
+ * a joined stream: the list; else an up-next offer (a single token's countdown, *Play now*, autoplay): the card; else the list while the
+ * playing item is one of the stream's episodes; once it is not (the next episode after the stream, another title): nothing (the plain slot).
+ * `kept`: the episodes of the stream the session was in (null: never joined).
+ */
+export function slotMode(s: Pick<CastSession, 'itemId' | 'joined'>, kept: { items: Array<{ itemId: string }> } | null, offer: boolean): SlotMode {
+  if (s.joined) return 'list';
+  if (!kept) return 'plain';
+  if (offer) return 'card';
+  return kept.items.some((x) => x.itemId === s.itemId) ? 'list' : 'plain';
 }

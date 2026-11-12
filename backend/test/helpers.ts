@@ -10,6 +10,7 @@ import { MemoryKV } from '../src/kv.js';
 import { createMediaServer } from '../src/media/index.js';
 import { SeerrClient } from '../src/seerr/client.js';
 import type { OidcClaims } from '../src/oidc.js';
+import { syncRoles } from '../src/rolecat.js';
 import { DEFAULT_ROLES } from '../src/roles.js';
 import { MemorySettingsBus } from '../src/settings/bus.js';
 import { settingDef } from '../src/settings/registry.js';
@@ -36,6 +37,7 @@ export const cfg: Config = {
   DOWNLOADS_ENABLED: 'true', DIRECT_PLAY_REQUIRES_DOWNLOAD: 'false', DOWNLOAD_DIR: '/tmp/ff-test-downloads', DOWNLOAD_CACHE_MAX_GB: 50, DOWNLOAD_MIN_FREE_GB: 0, DOWNLOAD_PREP_CONCURRENCY: 1, DOWNLOAD_PAUSE_STREAMS: 2, DOWNLOAD_FILE_TTL_HOURS: 48, DOWNLOAD_OFFLINE_GRACE_DAYS: 7, DOWNLOAD_CREATE_PER_HOUR: 10_000,
   PLAYBACK_CHECK_HOUR: 4, NTFY_BASE_URL: undefined, VAPID_PUBLIC_KEY: undefined, VAPID_PRIVATE_KEY: undefined, VAPID_SUBJECT: undefined, DIGEST_DAY: 0, DIGEST_HOUR: 18,
   CAST_RECEIVER_APP_ID: '', // the Default Media Receiver (cast.test.ts switches it on for the own receiver)
+  CAST_AIRPLAY_CONTINUOUS: 'false',
   CAST_ENABLED: 'true', GIT_SHA: 'dev', BUILD_TIME: undefined, APP_VERSION: undefined, APP_CODENAME: undefined, UPDATE_REPO: 'LetsManu/friendflix', UPDATE_CHANNEL: 'stable', UPDATE_VERSION: undefined, UPDATER_URL: undefined, AUTO_UPDATE: 'off', AUTO_UPDATE_TIME: '04:00', GITHUB_TOKEN: undefined, PORTAINER_WEBHOOK_URL: undefined, PORTAINER_URL: undefined,
   PORTAINER_API_KEY: undefined, PORTAINER_STACK_ID: undefined, PORTAINER_ENDPOINT_ID: 1, API_COMPRESSION: 'true', HOME_NETWORKS: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10'],
   GATEWAY_URL: 'http://gateway:4000', HEALTH_DISK_WARN_PCT: 85, HEALTH_DISK_CRIT_PCT: 95, HEALTH_DB_WARN_GB: 10,
@@ -80,7 +82,7 @@ export interface TestEnv {
   seerrCalls: Call[];
   claims: { current: OidcClaims };
   kv: MemoryKV;
-  login: (claims?: OidcClaims) => Promise<{ cookies: Record<string, string>; csrf: string }>;
+  login: (claims?: OidcClaims, ua?: string) => Promise<{ cookies: Record<string, string>; csrf: string }>;
   close: () => Promise<void>;
   /** makeEnv(…, { server: 'plex' }): the Plex implementation (the current ctx.jf, already synced once) and its fake server */
   plex?: { readonly ms: PlexMediaServer; fake: PlexFake };
@@ -192,18 +194,20 @@ export async function makeEnv(extraJf: Record<string, Handler> = {}, extra: Extr
     { get ms() { return ctx.jf as PlexMediaServer; }, fake: plexFake } : undefined;
   await plex?.ms.sync.run();
   extra.ctxPatch?.(ctx);
+  await syncRoles(ctx); // as server.ts after migrate: env roles (here: ctx.roles after ctxPatch) become catalogue rows
   await isSetupComplete(ctx); // warms the cache isOperational reads (server.ts does the same before the timers start)
   const app = await buildApp(ctx, extra);
   const dev: { v?: string } = {};
-  const login = async (c: OidcClaims = claims.current) => {
+  const login = async (c: OidcClaims = claims.current, ua?: string) => {
+    const headers = ua ? { 'user-agent': ua } : undefined;
     claims.current = c;
     const l = await app.inject('/auth/login?classic=1'); // the IdP redirect, also when LOGIN_UI is app
     const state = l.cookies.find((x) => x.name === 'ff_oidc')!.value; // the login cookie carries the state
-    const cb = await app.inject({ url: `/auth/callback?state=${state}&code=c`, cookies: { ...(dev.v ? { ff_dev: dev.v } : {}), ff_oidc: state } });
+    const cb = await app.inject({ url: `/auth/callback?state=${state}&code=c`, cookies: { ...(dev.v ? { ff_dev: dev.v } : {}), ff_oidc: state }, ...(headers ? { headers } : {}) });
     dev.v = cb.cookies.find((x) => x.name === 'ff_dev')?.value ?? dev.v; // same browser -> same device
     if (cb.statusCode !== 302) throw new Error(`login failed ${cb.statusCode} ${cb.body}`);
     const sid = cb.cookies.find((x) => x.name === 'ff_sid')!.value;
-    const me = await app.inject({ url: '/api/me', cookies: { ff_sid: sid } });
+    const me = await app.inject({ url: '/api/me', cookies: { ff_sid: sid }, ...(headers ? { headers } : {}) });
     return { cookies: { ff_sid: sid }, csrf: me.json().csrfToken as string };
   };
   return { ctx, app, pool, jfCalls, seerrCalls, claims, kv, login, plex, close: async () => { await live.close(); await plex?.ms.stop(); await settings.close(); await app.close(); await pool.end(); } }; // plex, plex?.ms.stop()

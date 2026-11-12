@@ -41,6 +41,7 @@
   export let overview = '';
   export let playHref = '';
   export let playLabel = '';
+  export let playAria: string | undefined = undefined;
   export let titleId = 'detail-title';
 
   $: title = ({
@@ -95,7 +96,7 @@
   {:else if sub === 'story'}
     <div class="sstory">
       <Safe name="story" key={item.id}><StoryCard seriesId={item.id} /></Safe>
-      {#if playHref}<p class="go"><a class="tv-btn" data-autofocus href={playHref} use:playPrefetch><Icon name="play" size={24} />{playLabel}</a></p>{/if}
+      {#if playHref}<p class="go"><a class="tv-btn" data-autofocus href={playHref} aria-label={playAria} use:playPrefetch><Icon name="play" size={24} />{playLabel}</a></p>{/if}
     </div>
   {/if}
 </TvSubScreen>

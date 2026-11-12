@@ -8,7 +8,7 @@ const es: Translation<typeof de> = {
   title: 'Administración',
   tabs: {
     users: 'Usuarios', status: 'Estado', previews: 'Vistas previas', playback: 'Prueba de reproducción', digest: 'Resumen semanal', sources: 'Fuentes de datos', invites: 'Invitaciones',
-    requests: 'Peticiones', polls: 'Votaciones', lists: 'Listas', roles: 'Roles', devices: 'Dispositivos', audit: 'Registro de auditoría', update: 'Actualización',
+    requests: 'Peticiones', polls: 'Votaciones', lists: 'Listas', roles: 'Roles y permisos', devices: 'Dispositivos', audit: 'Registro de auditoría', update: 'Actualización',
     hygiene: 'Cuidado de la biblioteca',
     settings: 'Ajustes',
     usage: 'Uso',

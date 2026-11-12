@@ -12,6 +12,7 @@
  */
 import { get, writable } from 'svelte/store';
 import { api } from '#lib/api';
+import { perms } from '#lib/perms';
 import { castLog, noteCastDevice } from '#lib/cast/castLog';
 import { applyAvoid, avoidedOf, castCapsBody, noteAvoid, parseReceiverCaps, usedFeatures, type CastDelivery, type CastFeature, type ReceiverCaps } from '#lib/cast/caps';
 import type { Store } from '#lib/cast/resume';
@@ -111,8 +112,22 @@ export interface CastInfo {
   hlsVideoSegmentFormat?: string;
   /** AirPlay only: the stream carries the one WebVTT rendition that was asked for (`subtitleIndex`); absent otherwise */
   hlsSub?: boolean;
+  /**
+   * AirPlay only (absent from an older server): the first episode's own audio tracks, the audio track the stream carries (absent: the
+   * source default) and, with `hlsSub`, the subtitle it carries. A re-mint from a later episode (`tracksOf`) has its choice mapped by language.
+   */
+  audioTracks?: Array<{ index: number; language?: string; title: string; isDefault: boolean }>;
+  audioIndex?: number;
+  subtitleIndex?: number;
   /** what the stream carries (fixed codes, see caps.ts); only in the answer to a cast that sent receiver caps */
   delivery?: CastDelivery;
+  /** a continuous AirPlay token: the episodes the one stream carries, on the joined timeline (stream seconds); the server reports per episode */
+  joined?: JoinedInfo;
+}
+/** the joined stream's timeline: `runtimeTicks` / `duration` of the whole stream come from here, never from a single episode's lookup */
+export interface JoinedInfo {
+  items: Array<{ itemId: string; title: string; season?: number; episode?: number; start: number; duration: number }>;
+  subtitles: boolean;
 }
 
 export interface CastState {
@@ -177,6 +192,9 @@ function queueOf(ms: MediaT | null): CastState['queue'] {
   return items.slice(cur + 1).map((q) => ({ itemId: q.itemId, contentId: q.media?.contentId ?? '', castId: castIdOf(q.media) }));
 }
 
+/** the acting profile may cast (me.perms.cast): the server answers 403 cast_forbidden otherwise, so nothing casting-related starts */
+export const castAllowed = (): boolean => get(perms).cast;
+
 /** Chromium only (Chrome, Edge, Opera, Samsung ...), never iOS (all iOS browsers are WebKit), never a paired TV. */
 export function castCapableBrowser(): boolean {
   if (typeof navigator === 'undefined' || typeof document === 'undefined') return false;
@@ -190,12 +208,34 @@ export function castCapableBrowser(): boolean {
 let cfgP: Promise<boolean> | null = null;
 /** the app ID of FriendFlix's own receiver ('' = Default Media Receiver), from the same config answer */
 let receiverId = '';
+/** continuous AirPlay is on (admin switch), from the same config answer; false until it answered */
+let airplayContinuous = false;
+export const castConfigAirplayContinuous = (): boolean => airplayContinuous;
 export function castConfigEnabled(): Promise<boolean> {
-  cfgP ??= api<{ enabled: boolean; receiverAppId?: string }>('/api/cast/config').then((c) => {
+  cfgP ??= api<{ enabled: boolean; receiverAppId?: string; airplayContinuous?: boolean }>('/api/cast/config').then((c) => {
     receiverId = typeof c?.receiverAppId === 'string' && /^[0-9A-F]{8}$/.test(c.receiverAppId) ? c.receiverAppId : '';
+    airplayContinuous = c?.airplayContinuous === true;
     return Boolean(c?.enabled);
   }).catch((e) => { cfgP = null; throw e; });
   return cfgP;
+}
+
+/** the extra fields of a continuous AirPlay token request: only with the admin switch on, for an episode, autoplay on and sleep-after off */
+export function continuousFields(o: { episode: boolean; autoplay: boolean; sleepAfter: boolean; maxEpisodes: number }): { continuous?: true; maxEpisodes?: number } {
+  return airplayContinuous && o.episode && o.autoplay && !o.sleepAfter ? { continuous: true, maxEpisodes: o.maxEpisodes } : {};
+}
+/**
+ * POST /api/cast/session for AirPlay; when the server says the switch is off (`continuous_off`, a stale config) once more as a plain
+ * token, silently. `call`: the api function (the cast engine passes its own)
+ */
+export async function postAirPlayToken(body: Record<string, unknown>, call: typeof api = api): Promise<CastInfo> {
+  try {
+    return await call<CastInfo>('/api/cast/session', { method: 'POST', body });
+  } catch (e) {
+    if (!body.continuous || (e as { body?: { error?: string } })?.body?.error !== 'continuous_off') throw e;
+    const { continuous: _c, maxEpisodes: _m, ...plain } = body;
+    return call<CastInfo>('/api/cast/session', { method: 'POST', body: plain });
+  }
 }
 
 /** the private message channel between this sender and FriendFlix's own receiver (cast-receiver/receiver.js uses the same name) */
@@ -289,7 +329,7 @@ const sendReport = (info: CastInfo) => { if (info.report) castSendMessage({ t: '
 
 /** Loads the SDK once if casting makes sense here. Safe to call repeatedly. Never throws. */
 export async function initCast(): Promise<void> {
-  if (initStarted || !castCapableBrowser()) return;
+  if (initStarted || !castAllowed() || !castCapableBrowser()) return;
   initStarted = true;
   try {
     if (!(await castConfigEnabled())) return;

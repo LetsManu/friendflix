@@ -124,6 +124,7 @@ const en: Translation<typeof de> = {
     play: 'Play on AirPlay device',
     playing: 'Playing via AirPlay',
     change: 'Change AirPlay device',
+    cancel: 'Cancel',
     failed: 'AirPlay playback failed.',
     endHint: 'To stop, pick this device in the AirPlay menu.',
     choose: 'Choose TV',
@@ -175,6 +176,7 @@ const en: Translation<typeof de> = {
     left: '{time} left',
     prev: 'Previous episode',
     prevNone: 'Previous episode (none: this is the first)',
+    episodeRange: 'S{s}:E{a}–E{b}',
   },
   castTv: {
     fromPhone: 'Cast from {name}\'s phone',
@@ -192,7 +194,7 @@ const en: Translation<typeof de> = {
   castBar: {
     region: 'Now on TV',
     failed: "Can't play “{title}” on {device}.",
-    airplayDevice: 'AirPlay device',
+    airplayDevice: 'AirPlay',
     reconnect: 'Connection lost – tap to continue on TV',
     on: 'on {device}',
     stop: 'Stop playback on {device}',
@@ -220,8 +222,6 @@ const en: Translation<typeof de> = {
     chromecast: 'Chromecast',
     airplay: 'AirPlay…',
     airplayHint: 'Apple TV and AirPlay TVs',
-    continuous: 'Play episodes back to back',
-    continuousHint: 'No taps in between',
     thisPhone: 'This phone',
     thisTablet: 'This tablet',
     thisComputer: 'This computer',

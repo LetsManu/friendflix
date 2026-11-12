@@ -9,6 +9,7 @@
   import { onMount } from 'svelte';
   import { api, type OwnDevice } from '#lib/api';
   import { fmtDateTime, fmtRelative, t, tr } from '#lib/i18n';
+  import { deviceName } from '#lib/handoff/deviceName';
   import { busyKeys, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import { confirm } from '#lib/ui/confirm';
@@ -28,14 +29,14 @@
 
   let heading: HTMLElement;
   async function signOut(d: OwnDevice) {
-    const name = d.label;
+    const name = deviceName(d, tr);
     const ok = await confirm({ title: tr('account.account.sessions.confirmSignOut', { name }), body: tr('account.account.sessions.confirmSignOutBody'), danger: true, confirmLabel: tr('account.account.sessions.signOut') });
     if (!ok) return;
     const r = await runAction({ key: key(d), run: () => api(`/api/devices/${encodeURIComponent(d.id)}/sign-out`, { method: 'POST' }), success: tr('account.account.sessions.signedOut', { name }) });
     if (r.ok) await load(); // the device stays listed (still approved)
   }
   async function remove(d: OwnDevice) {
-    const name = d.label;
+    const name = deviceName(d, tr);
     const ok = await confirm({ title: tr('account.account.sessions.confirmRemove', { name }), body: tr('account.account.sessions.confirmRemoveBody'), danger: true, confirmLabel: tr('account.account.sessions.remove') });
     if (!ok) return;
     const r = await runAction({ key: key(d), run: () => api(`/api/devices/${encodeURIComponent(d.id)}`, { method: 'DELETE' }), success: tr('account.account.sessions.removed', { name }) });
@@ -61,15 +62,15 @@
       {#each sorted as d (d.id)}
         <li>
           <div class="info">
-            <span class="name">{d.label}</span>
+            <span class="name">{deviceName(d, $t)}</span>
             {#if d.current}<StatusPill tone="info" icon="check" label={$t('account.account.sessions.thisDevice')} />
             {:else if !d.approved}<StatusPill tone="warn" label={$t('account.account.sessions.pending')} />{/if}
             <span class="muted seen"><time datetime={d.last_seen} title={fmtDateTime(d.last_seen)}>{$t('account.account.sessions.lastSeen', { when: fmtRelative(d.last_seen) })}</time></span>
           </div>
           {#if !d.current}
             <div class="row-acts">
-              <Button variant="secondary" size="sm" icon="log-out" pending={$busyKeys.has(key(d))} aria-label={$t('account.account.sessions.signOutFor', { name: d.label })} on:click={() => signOut(d)}>{$t('account.account.sessions.signOut')}</Button>
-              <Button variant="ghost" size="sm" icon="x" pending={$busyKeys.has(key(d))} aria-label={$t('account.account.sessions.removeFor', { name: d.label })} on:click={() => remove(d)}>{$t('account.account.sessions.remove')}</Button>
+              <Button variant="secondary" size="sm" icon="log-out" pending={$busyKeys.has(key(d))} aria-label={$t('account.account.sessions.signOutFor', { name: deviceName(d, $t) })} on:click={() => signOut(d)}>{$t('account.account.sessions.signOut')}</Button>
+              <Button variant="ghost" size="sm" icon="x" pending={$busyKeys.has(key(d))} aria-label={$t('account.account.sessions.removeFor', { name: deviceName(d, $t) })} on:click={() => remove(d)}>{$t('account.account.sessions.remove')}</Button>
             </div>
           {/if}
         </li>

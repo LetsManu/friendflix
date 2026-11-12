@@ -124,6 +124,7 @@ const tr: Translation<typeof de> = {
     play: 'AirPlay cihazında oynat',
     playing: 'AirPlay ile oynatılıyor',
     change: 'AirPlay cihazını değiştir',
+    cancel: 'İptal',
     failed: 'AirPlay ile oynatma başarısız oldu.',
     endHint: 'Durdurmak için AirPlay menüsünde bu cihazı seç.',
     choose: 'Televizyonu seç',
@@ -175,6 +176,7 @@ const tr: Translation<typeof de> = {
     left: '{time} kaldı',
     prev: 'Önceki bölüm',
     prevNone: 'Önceki bölüm (yok: bu ilk bölüm)',
+    episodeRange: 'S{s}:B{a}–B{b}',
   },
   castTv: {
     fromPhone: '{name} adlı kişinin telefonundan',
@@ -192,7 +194,7 @@ const tr: Translation<typeof de> = {
   castBar: {
     region: 'Şu an televizyonda',
     failed: '“{title}” {device} üzerinde oynatılamıyor.',
-    airplayDevice: 'AirPlay cihazı',
+    airplayDevice: 'AirPlay',
     reconnect: 'Bağlantı kesildi – televizyonda devam etmek için dokunun',
     on: '{device} üzerinde',
     stop: '{device} üzerindeki oynatmayı durdur',
@@ -220,8 +222,6 @@ const tr: Translation<typeof de> = {
     chromecast: 'Chromecast',
     airplay: 'AirPlay…',
     airplayHint: 'Apple TV ve AirPlay destekli televizyonlar',
-    continuous: 'Bölümleri peş peşe oynat',
-    continuousHint: 'Arada dokunmadan',
     thisPhone: 'Bu telefon',
     thisTablet: 'Bu tablet',
     thisComputer: 'Bu bilgisayar',

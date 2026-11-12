@@ -5,6 +5,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import { publicOrigin, secureCookies } from '../config.js';
+import { clientKind } from '../deviceKind.js';
 import type { Ctx } from '../ctx.js';
 import { FALLBACK_LANGUAGE, instanceLanguage, m, msg, userLanguage } from '../i18n.js';
 import { notify } from '../notify.js';
@@ -103,8 +104,8 @@ export function tvRoutes(app: FastifyInstance, ctx: Ctx) {
       ? (await ctx.db.query<{ id: string }>('select id from profiles where id=$1 and user_id=$2 and kids', [rec.kidsProfileId, user.id])).rows[0]
       : undefined;
     if (rec.kidsProfileId && !kid) return reply.code(403).send({ error: 'forbidden' });
-    await ctx.db.query('insert into devices(user_id, device_id, label, approved, kids_profile_id) values ($1,$2,$3,true,$4)',
-      [user.id, deviceId, msg(await userLanguage(ctx, user.id), 'device.tv'), kid?.id ?? null]);
+    await ctx.db.query('insert into devices(user_id, device_id, label, approved, kids_profile_id, client) values ($1,$2,$3,true,$4,$5)',
+      [user.id, deviceId, msg(await userLanguage(ctx, user.id), 'device.tv'), kid?.id ?? null, clientKind(String(req.headers['user-agent'] ?? ''))]);
     const sid = rand();
     await saveSession(ctx, sid, newSession({ userId: user.id, csrf: rand(), deviceId, deviceApproved: true, ttl: TV_SESSION_SECONDS, idle: TV_IDLE_SECONDS, ...(kid ? { profileId: kid.id } : {}) }));
     reply.setCookie(COOKIE, sid, { httpOnly: true, secure: secureCookies(ctx.cfg), sameSite: 'lax', path: '/', maxAge: TV_SESSION_SECONDS });

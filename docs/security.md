@@ -12,7 +12,7 @@ FriendFlix is maintained by one person. Everything below is what the code, the c
 - The browser never receives a media-server token. It holds a session cookie (`ff_sid`, `HttpOnly`, `SameSite=Lax`, `Secure` over HTTPS) and plays `/media/...` URLs that only the gateway can resolve.
 - Every playlist and segment request is authorised by the backend (session, profile, role limits) before the gateway fetches it from the media server. Hidden titles and kids-profile restrictions are enforced server side.
 - Secrets stored by FriendFlix (per-user media-server credentials, admin-saved API keys) are encrypted at rest with a key you control (`APP_ENC_KEY`). Profile PINs are stored as salted scrypt hashes.
-- Admins can see what a person watched (*Admin → Users →* a person → *History*, read from the media server). Every time an admin opens it, FriendFlix writes `user.activity_viewed` with the admin and the person to the audit log, which other admins can read. Other admin pages (usage, status) show only totals, never titles.
+- Admins can see what a person watched (*Admin → Users →* a person → *History*, read from the media server). Every time an admin opens it, FriendFlix writes `user.activity_viewed` with the admin and the person to the audit log, which other admins can read. Admins can also check whether a profile can see a title or a library (*Sicht prüfen*); that is audited as `user.check_viewed` with the profile and a count, never titles or search terms. Other admin pages (usage, status) show only totals, never titles.
 - Each person can download their own data and delete their own account (*My space → Account*). Deleting needs a fresh sign-in, waits 7 days so it can be undone, and then removes the account everywhere FriendFlix reaches; the audit log keeps a pseudonym instead of the name. See [Account self-service](#account-self-service).
 - State-changing API calls need a per-session CSRF token. Error reports from the browser are scrubbed and stay in your server log.
 - Published container images are scanned, signed and ship with an SBOM and provenance (see [Supply chain](#supply-chain)).
@@ -45,7 +45,7 @@ Networks and ports are defined in [compose.yaml](../compose.yaml); the diagram a
 | Boundary | Who is on each side | What crosses it and how it is checked |
 |---|---|---|
 | Browser to reverse proxy | Any client on the internet to your TLS terminator | HTTPS only; HSTS and TLS settings are configured at the proxy ([setup.md](setup.md)). Treated as untrusted input from here on. |
-| Reverse proxy to web, backend, gateway | Your proxy to three ports bound to `127.0.0.1` (`BIND_ADDR`) | Requests are routed by path (`/api`, `/auth`, `/ws` to the backend, `/media` to the gateway). The backend sets `trustProxy` and so relies on the proxy for the client address. |
+| Reverse proxy to web, backend, gateway | Your proxy to three ports bound to `127.0.0.1` (`BIND_ADDR`) | Requests are routed by path (`/api`, `/auth`, `/ws` to the backend, `/media` to the gateway). The backend sets `trustProxy` for loopback and private peers only, so it relies on the proxy for the client address and ignores `X-Forwarded-For` from any other peer. |
 | Web to backend | SvelteKit app to API | Cookie session plus CSRF header on state-changing requests. The web container holds no secrets. |
 | Gateway to backend | Media path to authorisation | Shared `INTERNAL_SECRET` header on `/internal/authz` and `/internal/gateway-config`; the authz answer (user's media token and limits) is cached for 5 s and never stored, the config answer carries only the settings revision and the media server URL. |
 | Backend and gateway to Postgres and Redis | App to data stores | Only the backend reaches them, over the `db` network which is `internal`. Redis requires a password and persistence is switched off (sessions are not written to disk). |
@@ -110,6 +110,18 @@ How the OWASP Top 10 classes are addressed. This is a design summary, not a proo
 | Software and data integrity failures | Pinned base-image digests and action SHAs, signed images with attestations, `npm ci`. |
 | Logging and monitoring failures | Admin audit log, `/metrics` (bearer token when `METRICS_TOKEN` is set; also block it at the proxy), slow-request logs, scrubbed client error reports ([monitoring.md](monitoring.md)). |
 | Server-side request forgery | The gateway forwards only allowlisted server-relative paths; `mediaFetch` refuses absolute and protocol-relative URLs. External lookups use fixed provider hosts. |
+
+## Roles and rights
+
+- **Catalogue.** Roles are rows of a catalogue (`roles`, migration 47): the built-in ones, roles from `ROLE_TEMPLATES` and roles an admin creates, duplicates, orders or deletes. A role sets the rights of everyone in it; a delete moves its people to another role first. `admin` is never a move target.
+- **Permissions.** The switches (wishes, Chromecast and AirPlay, watch party, anime comments, schedule a party) are checked by the backend on every request (most before the route runs; `partySchedule` and anime comments inside the route): 403 `requests_forbidden`, `cast_forbidden`, `party_forbidden` (anime comments: `forbidden`). The web hides what a person may not use, but that is cosmetics. Open watch-party sockets of a person whose `party` is switched off close with 4403.
+- **Overrides.** An admin can give one person their own value for any field; it wins over the role and is shown as such. Order of the layers: defaults, `.env` templates, role, person, kids overlay.
+- **Kids overlay.** A kids profile (cap 0, 6 or 12) always loses the switches listed as hard kids rights (`hardKids`, the social ones), whatever role or override says; the cap is applied on the media server and checked in FriendFlix. Admins can create kids profiles and delete kids-only profiles of other people; they cannot make an owner profile a kids profile.
+- **Admin lock.** Admin accounts keep every switch on; a stored override on an admin account decides nothing and is audited as `stored`. An admin cannot change their own role.
+- **Audit.** `role.update` (`from`, `to`, `layer`), `role.create`, `role.delete`, `role.order`, `user.rights` (`from`, `to`, `layer`, `stored`; the old `PUT /limits` writes it too), `profile.admin_update`, `profile.admin_create`, `profile.admin_delete`. Older `role.*` entries stay readable. The audit view filters by `target` (a person or a role key) and `area=people`. No entry holds a secret, a PIN or a title.
+- **The check view.** *Sicht prüfen* asks the media server what the profile's own identity can open. It may sign in as the profile's media-server user, which updates that user's last-login time there. Each use is audited as `user.check_viewed` with the profile and a count (hits or libraries), never a title or a search term. Rate limited to 30 per minute.
+- **Rolling back to 3.3.** Works, with caveats (the first two here, the third below): roles an admin created do not exist in 3.3 (move their people to a built-in role first), and a person's unlimited wishes are stored as `-1` in `user_limits.requests_per_month`, which 3.3 reads as a limit (no wishes); the legacy `GET /limits` shows the raw `-1` until the next release. `downloadDays` per person is new and ignored by 3.3.
+- **What the new model alone can hold is ignored on rollback.** Per role: streams, bitrate, age cap, libraries, switches. Per person: age cap, libraries, transcoding, maxHeight, download, maxBitrate, downloadDays, switches. FriendFlix limits revert at once; media-server policies revert at the next 3.3 re-apply, so a tightened age cap or library list loosens without notice. Note them and set the nearest 3.3 equivalent first.
 
 ## In-app sign-in
 
@@ -306,6 +318,13 @@ backend --signed request--> updater --(internal net)--> docker-proxy --ro--> /va
 
 **Disable** by adding `compose.no-updater.yaml` to the compose command (or `COMPOSE_FILE`) and removing the running `updater` and `docker-proxy` containers once ([setup.md, Turn it off](setup.md#updater)); nothing else depends on them.
 
+## Continue on another device
+
+- **The answer carries no ids.** `GET /api/handoff` returns the title, the position, the age and the device's kind and name. It has no device id, play session id, address or URL. Its `id` is an opaque hash that only tells the page whether it is the same playback as before. It is `no-store` and rate limited, and the server decides everything from its own clock.
+- **Per profile.** Rows, answers and dismissals belong to one profile. The item is loaded as that profile's media user, so a kids cap or a library change applies; a title that is gone or not allowed deletes the row. Kids profiles get no card.
+- **Hand-off rows are not trusted input.** Only the playback report writes them, from the caller's own session and approved device; the TV probe writes none. They go with the device, the profile or the account.
+- **Renaming is for your own devices.** `PATCH /api/devices/:id` is for grown-ups only, needs the CSRF token and matches the device on the caller's account: a foreign or missing id answers the same 404. The server cleans the name (NFC, at most 40 characters; control, surrogate and direction characters, including the LRM, RLM and ALM marks, are refused; a name of only invisible characters resets to the detected name, and invisible characters inside a visible name are kept). Pages show it as text. The audit entry `device.rename` carries no name.
+
 ## Casts that outlive the tab
 
 A Chromecast cast keeps running when the tab is closed or reloaded (the browser no longer revokes on `pagehide`; AirPlay still does). What changes for the threat model:
@@ -329,7 +348,14 @@ An AirPlay token can carry one text subtitle inside the stream (Jellyfin only). 
 - **Image subtitles** are never offered; the backend ignores a track that is not a text subtitle of the source.
 - **Limits unchanged:** address pin, single-title scope, idle expiry, cap and revoke apply as for any AirPlay token. The token is still never logged. See [cast.md](cast.md#airplay-untertitel).
 
-Continuous AirPlay (several episodes in one token) is not available; no such token exists.
+### Continuous AirPlay token
+
+With the admin switch `CAST_AIRPLAY_CONTINUOUS` on (off by default; off answers `400 continuous_off` and no such token is minted), an AirPlay token can cover **up to three episodes** of the same account and profile ([cast.md](cast.md#durchgehendes-airplay-experimentell-standardmäßig-aus)).
+
+- **Tuple scope.** Each listed item is allowed only with its own media source and play session; subtitle paths and the no-burn-in guard use that item's subtitle index. A path for any other item, source or index is refused. The token still counts as one stream, and the address pin, two-address window, idle expiry, cap and revoke paths are those of any AirPlay token.
+- **Short segment URIs.** The joined playlist (`joined/master.m3u8`) refers to segments as `../s/<part>/<n>.ts`. Only the gateway expands them, from the parts' Jellyfin playlists that it builds and caches per token (nothing is stored with the token for this), and the expanded URI must pass the same token-path check as every other cast URI. If any part fails that check, the whole joined stream is refused. The receiver never sees an `api_key`; the subtitle playlist `joined/subs.m3u8` does contain `../Videos/<id>/<media source>/Subtitles/…` paths, which are token-checked like any other cast URI.
+- **The internal progress call.** The gateway reports which episode is being fetched to the backend with `POST /internal/cast/progress` (token hash, item id, position). It is an internal route between gateway and backend, not reachable through the public proxy, and it cannot mint tokens or fetch media; the backend checks the item against the token's tuple before it writes a start, progress or stop for the token's own account, profile and device.
+- **Nothing logged.** Tokens stay hashed at rest and are never logged, nor are the expanded segment URIs or item ids.
 
 ## Cast receiver
 

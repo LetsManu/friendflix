@@ -8,6 +8,7 @@
   import { listIds, toggleList, prefs } from '#lib/stores';
   import { kidsMode } from '#lib/kids';
   import { fmtDate, t, tr } from '#lib/i18n';
+  import { perms } from '#lib/perms';
   import { autoplayAllowed, motionAllowed, playPreview, previewFailed, previewOwner, stopPreview, toggleSound } from '#lib/preview';
   import { trailerAllowed } from '#lib/tv/focusTile';
   import { isSpoiler } from '#lib/spoiler';
@@ -23,6 +24,7 @@
   import { autoStartAllowed, AUTOSTART_COUNTDOWN_S, countdownLabel, interactionCancels, isTextEntry, previewDone } from '#lib/detail/autostart';
   import { playPrefetch } from '#lib/player/prefetch';
   import { playOrCast } from '#lib/cast/playOrCast';
+  import { handoffDevice, handoffTime, hintFor, loadHandoff, type Handoff } from '#lib/handoff/handoff';
   import Icon from '#lib/Icon.svelte';
   import ListMenu from '#lib/ListMenu.svelte';
   import DownloadButton from '#lib/DownloadButton.svelte';
@@ -105,6 +107,8 @@
 
     const pItem = api<ItemDetail>(`/api/items/${want}`);
     // secondary requests start now; each one is optional (the view works without it)
+    handoff = null;
+    opt(loadHandoff(want), (h) => (handoff = h), my);
     opt(loadFacts(want), (f) => (facts = f), my);
     opt(api(`/api/items/${want}/people`), (r) => (people = toPeople(r?.people)), my);
     opt(api(`/api/items/${want}/extras/all`), (r) => (extras = Array.isArray(r?.items) ? (r.items as typeof extras) : []), my);
@@ -255,15 +259,28 @@
   $: inList = item ? $listIds.has(item.id) : false;
   $: qs = [lgA && `audio=${encodeURIComponent(lgA)}`, lgS && `sub=${encodeURIComponent(lgS)}`].filter(Boolean).join('&');
   $: playBase = item ? (item.type === 'Series' ? (next ? `/watch/${next.id}` : episodes?.[0] ? `/watch/${episodes[0].id}` : '') : `/watch/${item.id}`) : '';
-  $: playHref = playBase ? (qs ? `${playBase}?${qs}` : playBase) : item ? `/item/${item.id}` : '';
+  $: playHref = playBase ? (playQs ? `${playBase}?${playQs}` : playBase) : item ? `/item/${item.id}` : '';
+  /** the hand-off hint (spec 2.5): another device's position for exactly what Play would play; the link starts there */
+  let handoff: Handoff | null = null;
+  $: hint = hintFor(handoff, playTarget);
+  $: playQs = [qs, hint && `t=${Math.floor(hint.positionTicks / 1e7)}`].filter(Boolean).join('&');
+  $: handoffLine = hint ? $t('detail.view.handoffLine', { time: handoffTime(hint.positionTicks), device: handoffDevice(hint, $t) }) : '';
+  /** how far the hint's position is (0..1; 0 = unknown): the progress bar names the same position as the text */
+  $: handoffProgress = hint && (hint.runtimeTicks ?? resumeFrom?.runtimeTicks) ? Math.min(1, Math.max(0.02, hint.positionTicks / (hint.runtimeTicks ?? resumeFrom!.runtimeTicks!))) : 0;
+  const handoffName = (label: string, h: Handoff | null) => (h ? $t('detail.view.handoffAria', { play: label, time: handoffTime(h.positionTicks), device: handoffDevice(h, $t) }) : undefined);
   /** while casting, Play sends the title (the next episode for a series) to the TV; a series without an episode keeps its /item link */
-  function castPlay(e: MouseEvent) { if (playBase) playOrCast(e, { id: playTarget, positionTicks: resumeFrom?.positionTicks }, { audio: lgA || undefined, subtitle: lgS || undefined }); }
+  function castPlay(e: MouseEvent) { if (playBase) playOrCast(e, { id: playTarget, positionTicks: hint ? hint.positionTicks : resumeFrom?.positionTicks }, { audio: lgA || undefined, subtitle: lgS || undefined, explicitStart: Boolean(hint) }); }
   $: playTarget = playBase.split('/').pop() ?? '';
   $: playKnown = !item || item.type !== 'Series' || (seriesKnown && (Boolean(next) || !season || episodes !== null));
   $: resumeFrom = item ? (item.type === 'Series' ? next : item) : null;
   $: remaining = resumeFrom ? remainingLabel(resumeFrom.positionTicks, resumeFrom.runtimeTicks) : '';
   $: playLabel = $t(item ? (item.type === 'Series' ? (next ? (next.positionTicks ? 'detail.view.resume' : 'detail.view.continue') : 'detail.view.play') : item.positionTicks ? 'detail.view.resume' : 'detail.view.play') : 'detail.view.play');
-  $: resumeLine = item?.type === 'Series' && next ? [$t('detail.view.episodeCode', { s: String(next.parentIndexNumber ?? '?'), e: String(next.indexNumber ?? '?') }), remaining].filter(Boolean).join(' · ') : remaining;
+  /** the line under Play: with a hint its text takes the place of the remaining time; where the page has no line, none is added (nothing moves) */
+  $: epCode = item?.type === 'Series' && next ? $t('detail.view.episodeCode', { s: String(next.parentIndexNumber ?? '?'), e: String(next.indexNumber ?? '?') }) : '';
+  /** the hint's full line: "S1:F4 · Weiter ab 23:10 (zuletzt auf LG-Fernseher)" (a film: without the code) */
+  $: hintLine = [epCode, handoffLine].filter(Boolean).join(' · ');
+  $: shownRemaining = remaining && hint ? hintLine : remaining;
+  $: resumeLine = epCode ? (hint ? hintLine : [epCode, remaining].filter(Boolean).join(' · ')) : shownRemaining;
   $: len = item ? lengthLabel(item) : '';
   $: badge = item ? ratingBadge(item, Date.now()) : '';
   /** the star rating moves to the ratings line; the meta line keeps it only when "about" has none (older server, failed request) */
@@ -316,7 +333,7 @@
     { id: 'played', label: $t('detail.actions.played'), icon: 'check', pressed: item.played, run: togglePlayed },
     ...(item.type === 'Series' && social ? [{ id: 'follow', label: followed ? $t('detail.actions.following') : $t('detail.actions.follow'), icon: 'bell', pressed: followed, run: toggleFollow }] : []),
     ...(social ? [{ id: 'rec', label: $t('detail.actions.recommend'), icon: 'send', run: openRec }, { id: 'share', label: $t('detail.actions.share'), icon: 'share', run: share }] : []),
-    ...(item.type !== 'Series' && social ? [{ id: 'party', label: $t('detail.actions.party'), icon: 'users', run: startParty }] : []),
+    ...(item.type !== 'Series' && social && $perms.party ? [{ id: 'party', label: $t('detail.actions.party'), icon: 'users', run: startParty }] : []),
     ...($tvOnline && playTarget ? [{ id: 'tv', label: $t('detail.actions.tv'), icon: 'tv', run: castHere }] : []),
     ...(facts?.admin && (item.type === 'Movie' || item.type === 'Series' || item.type === 'BoxSet') ? [{ id: 'leaving', label: $t('fresh.admin.menu'), icon: 'calendar', run: () => { leavingDlg = true; } }] : []),
     ...(canPreview && !heroPlaying ? [{ id: 'trailer', label: $t('detail.actions.trailer'), icon: 'film', run: () => startHero(true) }] : []),
@@ -471,9 +488,9 @@
   <!-- ================= TV: one screen, a button list instead of the scrolling sections (friends, comments, download, share stay off) ================= -->
   {#if item}
     {#if sub}
-    <TvSub {sub} {item} {about} {facts} {people} {extras} {more} {seasons} bind:season {episodes} {next} {seriesKnown} {qs} {overview} {playHref} {playLabel} {titleId} />
+    <TvSub {sub} {item} {about} {facts} {people} {extras} {more} {seasons} bind:season {episodes} {next} {seriesKnown} {qs} {overview} {playHref} {playLabel} playAria={handoffName(playLabel, hint)} {titleId} />
     {:else}
-    <DetailTv {item} {about} {facts} {people} {extras} {playTarget} {playBase} {playHref} ready={playKnown} {playLabel} {qs} {resumeFrom} {resumeLine} {tagline} {overview} {inList} {titleId}
+    <DetailTv {item} {about} {facts} {people} {extras} {playTarget} {playBase} {playHref} ready={playKnown} {playLabel} playAria={handoffName(playLabel, hint)} {handoffProgress} {qs} {resumeFrom} {resumeLine} {tagline} {overview} {inList} {titleId}
       bind:thumb bind:audio={lgA} bind:sub={lgS} playing={heroPlaying} loop={!autoOn && !heroByUser} userTrailer={heroByUser} bind:video={hv} bind:loaded={heroLoaded}
       onMyList={toggleMine} onTrailer={tvTrailer} {onThumb} onEnded={onHeroEnded} />
     {/if}
@@ -486,7 +503,7 @@
   {:else if variant === 'desk'}
   <!-- ================= desktop: cinematic full page (fixed backdrop, left column, tabs with content only) ================= -->
   {#if item}
-    <DetailDesk {item} {about} {facts} {people} {extras} {more} {seasons} bind:season {episodes} {next} {qs} {playTarget} {playBase} {playHref} {playLabel}
+    <DetailDesk {item} {about} {facts} {people} {extras} {more} {seasons} bind:season {episodes} {next} {qs} {playTarget} {playBase} {playHref} {playLabel} handoffLine={hint ? hintLine : ''} {handoffProgress} playAria={handoffName(phonePlay, hint)}
       {resumeFrom} {tagline} {overview} {langs} {inList} {titleId} bind:thumb bind:audio={lgA} bind:sub={lgS} {moreActions} {social}
       canTrailer={canPreview && !heroPlaying} playing={heroPlaying} loop={!autoOn} bind:video={hv} bind:loaded={heroLoaded} bind:stage={heroEl}
       {counting} {autoLeft} bind:autoEl onCancelAuto={() => cancelAuto(true)} onMyList={toggleMine} {onThumb} onTrailer={() => startHero(true)}
@@ -524,7 +541,7 @@
           <svelte:element this={heroTitleTag()} id={titleId} class:sr-only={item.logo && !logoFailed} class="ttl">{item.name}</svelte:element>
           {#if item.logo && !logoFailed}<img class="tlogo" src={logoUrl(item.id)} alt="" on:error={() => (logoFailed = true)} />{/if}
           <div class="btns">
-            <a class="btn pill play" data-autofocus href={playHref} use:playPrefetch on:click={castPlay}><Icon name="play" size={24} />{playLabel}</a>
+            <a class="btn pill play" data-autofocus href={playHref} aria-label={handoffName(playLabel, hint)} use:playPrefetch on:click={castPlay}><Icon name="play" size={24} />{playLabel}</a>
             <button type="button" class="rb" class:on={inList} aria-pressed={inList} aria-label={inList ? $t('detail.view.removeFromList') : $t('detail.view.addToList')} title={$t('detail.view.myList')} on:click={toggleMine}><Icon name={inList ? 'check' : 'plus'} size={22} /></button>
             <RatingButton itemId={item.id} bind:value={thumb} size={44} on:change={onThumb} />
             <MoreActions actions={moreActions} variant="ring" title={item.name} up={variant === 'modal'}>
@@ -581,11 +598,11 @@
         </p>
       {/if}
       <div class="lead" use:smoothHeight><div class="lead-in"><Safe name="ratings" key={item.id}><RatingsLine {about} /></Safe>{#if tagline}<p class="tagline">{tagline}</p>{/if}</div></div>
-      <a class="play wide" data-autofocus href={playHref} use:playPrefetch on:click={castPlay}><Icon name="play" size={22} />{phonePlay}</a>
+      <a class="play wide" data-autofocus href={playHref} aria-label={handoffName(phonePlay, hint)} use:playPrefetch on:click={castPlay}><Icon name="play" size={22} />{phonePlay}</a>
       {#if canDownload}
         <div class="dlw">{#if item.type !== 'Series'}<DownloadButton itemId={item.id} block />{:else if playTarget}<DownloadButton itemId={playTarget} seriesId={item.id} block label={dlLabel} />{/if}</div>
       {/if}
-      {#if remaining}<p class="resume">{remaining}</p>{/if}
+      {#if shownRemaining}<p class="resume">{shownRemaining}</p>{/if}
       <div class="syn">
         <p class="ov" class:clamp={!synOpen} id="dv-syn" bind:this={synEl}>{overview || $t('detail.view.noOverview')}</p>
         {#if synClamped}<button type="button" class="lnk more-syn" aria-expanded={synOpen} aria-controls="dv-syn" on:click={() => (synOpen = !synOpen)}>{synOpen ? $t('detail.about.less') : $t('detail.about.more')}</button>{/if}
@@ -618,7 +635,7 @@
       </p>
       <Safe name="facts" key={item.id}><TitleFacts {facts} episode={item.type === 'Episode'} /></Safe>
       <div class="lead" use:smoothHeight><div class="lead-in"><Safe name="ratings" key={item.id}><RatingsLine {about} /></Safe>{#if tagline}<p class="tagline">{tagline}</p>{/if}</div></div>
-      <a class="btn pill play wide" data-autofocus href={playHref} use:playPrefetch on:click={castPlay}><Icon name="play" size={24} />{playLabel}</a>
+      <a class="btn pill play wide" data-autofocus href={playHref} aria-label={handoffName(playLabel, hint)} use:playPrefetch on:click={castPlay}><Icon name="play" size={24} />{playLabel}</a>
       {#if item.type !== 'Series'}<DownloadButton itemId={item.id} block />{:else if playTarget}<DownloadButton itemId={playTarget} seriesId={item.id} block />{/if}
       {#if resumeLine}<p class="resume">{resumeLine}</p>{/if}
       <div class="syn">
@@ -754,7 +771,7 @@
   .rb { width: 44px; min-height: 44px; height: 44px; padding: 0; border-radius: 50%; background: rgba(42, 42, 42, .7); border: 2px solid rgba(255, 255, 255, .55); color: #fff; }
   .rb:hover:not(:disabled) { border-color: #fff; background: rgba(42, 42, 42, .95); }
   .rb.on { color: #fff; border-color: #fff; }
-  .resume { margin: -.3rem 0 0; font-size: .95rem; font-weight: 600; color: #e8e8e8; text-shadow: 0 1px 8px #000; }
+  .resume { margin: -.3rem 0 0; font-size: .95rem; font-weight: 600; color: #e8e8e8; text-shadow: 0 1px 8px #000; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .snd { position: absolute; right: 2rem; bottom: 1.6rem; z-index: 3; width: 44px; min-height: 44px; height: 44px; padding: 0; border-radius: 50%; background: rgba(42, 42, 42, .7); border: 2px solid rgba(255, 255, 255, .55); color: #fff; }
   .vp .snd { right: var(--pad-x); bottom: 2.2rem; }
   .snd:hover:not(:disabled) { border-color: #fff; background: rgba(42, 42, 42, .95); }

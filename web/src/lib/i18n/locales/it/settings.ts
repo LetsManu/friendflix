@@ -13,6 +13,7 @@ const settings: Translation<typeof de> = {
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Le modifiche valgono subito, senza riavvio. La regolazione fine per esperti (RECO_COEFFS e i pesi dell’indice RECO_W_*) si imposta solo nel file .env.' },
   serverHelp: 'Valori dall’ambiente del container. Sola lettura; le credenziali non vengono mai mostrate.',
+  roleTemplatesNote: 'I ruoli ora si modificano in Persone → Ruoli e diritti; i valori del .env continuano ad applicarsi sotto.',
   source: { env: 'Dall’ambiente', db: 'Salvato', default: 'Predefinito', bootstrap: 'Dal file di avvio', unset: 'Non impostato' },
   locked: 'Viene dall’ambiente (.env) e qui non si può modificare.',
   restart: 'Riavvio necessario',
@@ -156,6 +157,7 @@ const settings: Translation<typeof de> = {
     DOWNLOAD_CREATE_PER_HOUR: { label: 'Download all’ora', help: 'Numero massimo di nuovi download all’ora per sessione.' },
     CAST_ENABLED: { label: 'Chromecast', help: 'Riproduzione sui dispositivi Chromecast. Richiede un indirizzo pubblico con un certificato https valido.' },
     CAST_RECEIVER_APP_ID: { label: 'ID app del ricevitore Cast', help: 'Vuoto: Chromecast usa il ricevitore predefinito di Google. Con l’ID app del ricevitore di FriendFlix (8 caratteri, dalla Google Cast SDK Developer Console, indirizzo del ricevitore https://<tuo indirizzo>/cast-receiver/) la TV mostra «Episodio successivo» con conto alla rovescia, «Ci sei ancora?» e «Salta intro», e salva i progressi anche quando il telefono è in standby. Vedi docs/cast-receiver.md.' },
+    CAST_AIRPLAY_CONTINUOUS: { label: 'AirPlay continuo (sperimentale)', help: 'Sperimentale. Attivalo solo dopo che il test con il tuo televisore AirPlay è riuscito; poi vale per tutti i profili.' },
     PREVIEW_WARM: { label: 'Prepara le anteprime', help: 'Crea a riposo le clip di anteprima mancanti, una al minuto.' },
     HOME_NETWORKS: { label: 'Reti di casa', help: 'Reti considerate casa (nessun limite di bitrate fuori casa), separate da virgole, ad es. 192.168.0.0/16.' },
     UPLOAD_MBPS: { label: 'Upload del server (Mbit/s)', help: 'La velocità di upload della tua connessione internet. Quando è quasi esaurita, i nuovi streaming fuori casa partono con qualità ridotta invece di far scattare tutti. Gli streaming in corso e la rete di casa non cambiano. Vuoto = disattivato.' },

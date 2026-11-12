@@ -22,13 +22,25 @@ describe('cast engine: adopt (Chromecast)', () => {
     expect(get(env.out)).toMatchObject({ position: 61, buffering: false, state: 'playing' });
     env.state.set(playing({ currentTime: 62 }));
     expect(env.reports()).toEqual(['start']);
-    expect(env.calls[0]!.init.body).toEqual({ itemId: 'film', playSessionId: 'ps-c1', mediaSourceId: 'ms-c1', positionTicks: secToTicks(61), isPaused: false, audioIndex: 1, playMethod: 'Transcode' });
+    expect(env.calls[0]!.init.body).toEqual({ itemId: 'film', playSessionId: 'ps-c1', mediaSourceId: 'ms-c1', positionTicks: secToTicks(61), isPaused: false, audioIndex: 1, playMethod: 'Transcode', via: 'chromecast' });
     await env.advance(PROGRESS_MS);
     expect(env.reports()).toEqual(['start', 'progress']);
     env.state.set(playing({ currentTime: 75, paused: true }));
     expect(env.reports()).toEqual(['start', 'progress', 'progress']);
     expect(env.calls[2]!.init.body).toMatchObject({ isPaused: true, positionTicks: secToTicks(75) });
     expect(get(env.out)?.paused).toBe(true);
+  });
+
+  it('report bodies carry via', async () => {
+    const env = setup();
+    env.engine.adopt(handoff());
+    env.state.set(playing({ currentTime: 61 }));
+    env.state.set(playing({ currentTime: 62 }));
+    await env.advance(PROGRESS_MS);
+    await env.engine.stop();
+    const sent = env.calls.filter((c) => c.path.startsWith('/api/playback/'));
+    expect(sent.map((c) => c.path)).toEqual(['/api/playback/start', '/api/playback/progress', '/api/playback/stop']);
+    for (const c of sent) expect(c.init.body.via).toBe('chromecast');
   });
 
   it('adopt with started=true sends no second start', async () => {
@@ -116,7 +128,7 @@ describe('cast engine: playOnTv (Chromecast)', () => {
     // the receiver still reports the old title until it is loaded: no start yet, then start for the new token
     env.state.set(playing({ currentTime: 1 }));
     expect(env.reports()).toEqual(['stop', 'start']);
-    expect(env.lastReport()!.init.body).toEqual({ itemId: 'ep2', playSessionId: 'ps-n1', mediaSourceId: 'ms-n1', positionTicks: secToTicks(1), isPaused: false, audioIndex: undefined, playMethod: 'Transcode' });
+    expect(env.lastReport()!.init.body).toEqual({ itemId: 'ep2', playSessionId: 'ps-n1', mediaSourceId: 'ms-n1', positionTicks: secToTicks(1), isPaused: false, audioIndex: undefined, playMethod: 'Transcode', via: 'chromecast' });
     expect(get(env.out)?.state).toBe('playing');
   });
 

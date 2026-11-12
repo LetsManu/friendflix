@@ -14,20 +14,21 @@
   import CastBar from '#lib/cast/CastBar.svelte';
   import { barVisible, CASTBAR_H, liveCast } from '#lib/cast/bar';
   import { castEngine, castSession } from '#lib/cast/engine';
-  import { castCapableBrowser, initCast, onCastEvent } from '#lib/cast';
+  import { castAllowed, castCapableBrowser, initCast, onCastEvent } from '#lib/cast';
   import { readHint as readCastHint } from '#lib/cast/resume';
   import { interceptWatch } from '#lib/native/watch';
   import { native, refreshNativeCast } from '#lib/native/bridge';
   import { nativeCaps } from '#lib/native/play';
   import { engineSource, nativeSource, type CastBarSource } from '#lib/cast/barSource';
-  import { bindCastMediaSession } from '#lib/cast/mediasession';
+  import { bindCastMediaSession, documentVisibility } from '#lib/cast/mediasession';
   import { avatarBg, initial } from '#lib/avatars';
   import { cachedCalm, loadList, loadPrefs, prefs } from '#lib/stores';
   import { kidsMode } from '#lib/kids';
   import type ItemModalType from '#lib/ItemModal.svelte';
   import { loadModal, prefetchModal } from '#lib/lazy';
   import { startTvLink, type ToTv } from '#lib/remote';
-  import { capsFrom, features, featuresFrom, featuresKnown, kindFrom, serverCaps, serverKind } from '#lib/capabilities';
+  import { perms, permsFrom } from '#lib/perms';
+  import { capsFrom, features, featuresOfMe, featuresFrom, featuresKnown, kindFrom, serverCaps, serverKind } from '#lib/capabilities';
   import { setMeta } from '#lib/offline/db';
   import { focusEl, focusFirst, isBackKey, isEditable, startSpatial } from '#lib/spatial';
   import Intro from '#lib/Intro.svelte';
@@ -43,7 +44,7 @@
   import { railKey } from '#lib/tv/rail';
   import { categoryHref, kindFromPath, showsChips, type Kind } from '#lib/mobile';
   import { dialogKeys } from '#lib/actions';
-  import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
+  import { canRenderEarly, clearReloadFlag, earlyProfile, gateHref, hintOf, hintPerms, kidsRedirect, needsProfileGate, needsWelcome, readActive, readHint, readPicked, readReloading, welcomeHref, writeActive, writeHint } from '#lib/gate';
   import MobilePreviewSheet from '#lib/MobilePreviewSheet.svelte';
   import TabBar from '#lib/phone/TabBar.svelte';
   import { dragClose } from '#lib/phone/dragClose';
@@ -96,6 +97,11 @@
    * Either way the page mounts once in the right language; nothing re-creates it later (see pageEpoch in lib/i18n).
    */
   if (bootHint?.noRequests) features.set(featuresFrom({ requests: false })); // until /api/me answers: no request links flash
+  { // ... nor the entries of a right switched off for the profile this tab runs with (the hint keeps a list per profile)
+    const hp = hintPerms(bootHint, bootProfile);
+    perms.set(hp);
+    if (!hp.requests) features.set(featuresFrom({ requests: false }));
+  }
   let earlyLang = !(early && bootHint?.lang);
   if (early && bootHint?.lang) void setLocale(bootHint.lang).finally(() => (earlyLang = true));
   let pageReady = false; // sticky: a later language load (ready = false for a moment) must not unmount the page
@@ -128,18 +134,22 @@
   $: barSess = barSrc.session;
   onMount(() => {
     if (!native.available) return;
-    let retry: ReturnType<typeof setTimeout> | undefined, off: (() => void) | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined, off: (() => void) | undefined, gone = false;
     const start = (again: boolean) => void nativeCaps().then((c) => {
+      if (gone) return; // the layout was torn down while the app was answering: nothing is scheduled any more
       if (c.castBar) { barSrc = nativeSource(); void refreshNativeCast(); return; } // events are not replayed to a loaded page: pull once, then follow them
       if (c.api === 0 && again) { // the app did not answer in time: ask once more, after 10 s or when the page comes back to the front
-        const go = () => { off?.(); off = undefined; start(false); };
+        const go = () => {
+          if (document.hidden) return; // a page that just went to the background does not ask; the next visibilitychange (back in front) does
+          off?.(); off = undefined; start(false);
+        };
         retry = setTimeout(go, 10_000);
-        document.addEventListener('visibilitychange', go, { once: true });
+        document.addEventListener('visibilitychange', go);
         off = () => { clearTimeout(retry); document.removeEventListener('visibilitychange', go); };
       }
     });
     start(true);
-    return () => off?.();
+    return () => { gone = true; off?.(); };
   });
   $: castBarOn = pageReady && !publicPage && barVisible({ path, tv, session: $barSess }); // the bar shows (it rises out when false)
   /**
@@ -393,6 +403,11 @@
         if (el) return put(el);
       } else if (main?.querySelector('[data-autofocus]') ? focusFirst(main, false) : i >= 4 && focusFirst(main, false)) return;
     }
+    // TV: the remembered element never came (e.g. the hand-off card's link: no card on the way back from the player). The focus
+    // must not stay on <body> with nothing on screen focused: the page's first element ([data-autofocus] first) takes it.
+    if (!want || !tv || my !== settleSeq) return;
+    const main = document.querySelector('main'), now = document.activeElement;
+    if (!(now instanceof HTMLElement && now !== document.body && now.isConnected && main?.contains(now))) focusFirst(main, false);
   }
   afterNavigate((nav) => {
     const { to, type } = nav;
@@ -649,15 +664,22 @@
 
   let stops: Array<() => void> = [];
   // lock screen / Control Center / notification drive what plays on the TV
-  onMount(() => bindCastMediaSession(castSession, castEngine));
+  onMount(() => bindCastMediaSession(castSession, castEngine, undefined, undefined, documentVisibility()));
   // a Chromecast cast may still run from an earlier page: load the Cast SDK so the bar can come back (nobody else pays for it).
   // The SDK joined a running session (also one found at its setup, emitted synchronously from it): the engine re-adopts our
   // media, so the listener is registered before initCast().
-  onMount(() => {
-    const off = onCastEvent((e) => { if (e === 'session-resume') void castEngine.resume(); });
+  /** loads the Cast SDK when a cast may still run; asked again when the cast right arrives after mount (a stale hint denied it) */
+  let castResumeReady = false;
+  function resumeCastSdk() {
     let store: Storage | null = null;
     try { store = localStorage; } catch { /* storage blocked */ }
-    if (castCapableBrowser() && readCastHint(store, Date.now())) void initCast();
+    if (castAllowed() && castCapableBrowser() && readCastHint(store, Date.now())) void initCast();
+  }
+  $: if ($perms.cast && castResumeReady) resumeCastSdk();
+  onMount(() => {
+    const off = onCastEvent((e) => { if (e === 'session-resume') void castEngine.resume(); });
+    castResumeReady = true;
+    resumeCastSdk();
     return off;
   });
   onMount(() => {
@@ -734,9 +756,10 @@
         serverCaps.set(capsFrom(m.server?.capabilities));
         serverKind.set(kindFrom(m.server?.kind));
         setMediaServer(m.server?.kind); // texts that name the media server (i18n serverText)
-        features.set(featuresFrom(m.features));
+        perms.set(permsFrom(m.perms));
+        features.set(featuresOfMe(m));
         featuresKnown.set(true);
-        writeHint(hintOf(m)); writeActive(m.profile?.id); clearReloadFlag(); // the profile-switch reload is done: a later reload may render early again
+        writeHint(hintOf(m, readHint())); writeActive(m.profile?.id); clearReloadFlag(); // the profile-switch reload is done: a later reload may render early again
         if (m.profile?.id) void setMeta('lastProfileId', m.profile.id).catch(() => undefined); // the offline hub shows the last active profile's downloads
         pending = !m.deviceApproved;
         // "Wer ist heute dabei?": when no profile is chosen, and once per browser session for accounts with several profiles

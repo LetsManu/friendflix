@@ -94,6 +94,102 @@ export interface AdminState {
   activityCalls: number;
   /** licences revoked via DELETE /api/admin/downloads/:id */
   revokedLicences: string[];
+  /** the role matrix behind GET/PUT/POST/DELETE /api/admin/roles* (spec §4.1) */
+  matrix: MatrixMock;
+}
+export interface MatrixMockRole {
+  key: string; label: string | null; builtinLabel: boolean; base: 'family' | 'friend' | 'guest' | 'admin'; origin: 'code' | 'env' | 'admin'; invitable: boolean;
+  /** false = an env-only role: not in the roles table (the order write ignores its key) */
+  stored: boolean; accounts: number; profiles: number; kidsProfiles: number;
+  /** open invites holding the role (a delete needs a target while any exist) */
+  invites: number;
+  /** an env role whose key left ROLE_TEMPLATES ("nicht mehr in .env"): deletable */
+  envGone: boolean;
+  values: Record<string, unknown>; sources: Record<string, 'default' | 'env' | 'role' | 'admin'>; missingLibraries: string[];
+}
+export interface MatrixMock {
+  /** which optional features the server reports (a field with `requires` is hidden while its feature is off) */
+  features: { requests: boolean; cast: boolean; livetv: boolean };
+  /** PUT /api/admin/roles/:role answers 502 policy_partial (settings stored) when a media-enforced field changed */
+  policyPartial: boolean;
+  /** how many identities the partial failure reports as failed */
+  failed: number;
+  libraries: Array<{ id: string; name: string }>;
+  roles: MatrixMockRole[];
+  /** the bodies of the role writes, per role key */
+  puts: Array<{ role: string; body: Record<string, unknown> }>;
+  /** the role deletes that went through (the target the people moved to) and the key lists of the order writes */
+  deletes: Array<{ role: string; moveTo: string | null }>;
+  orders: string[][];
+}
+/** field table of backend/src/perms.ts MATRIX_FIELDS */
+export const MATRIX_FIELDS_MOCK: Array<Record<string, unknown>> = [
+  { key: 'libraries', group: 'access', kind: 'libraries' },
+  { key: 'maxParentalRating', group: 'access', kind: 'rating', options: [null, 0, 6, 12, 16, 18] },
+  { key: 'maxStreams', group: 'playback', kind: 'int', min: 1, max: 50 },
+  { key: 'maxBitrate', group: 'playback', kind: 'bitrate', min: 300_000, max: 200_000_000 },
+  { key: 'remoteMaxBitrate', group: 'playback', kind: 'bitrate', min: 300_000, max: 200_000_000 },
+  { key: 'transcoding', group: 'playback', kind: 'bool' },
+  { key: 'maxHeight', group: 'playback', kind: 'height', options: [null, 720, 1080, 1440, 2160] },
+  { key: 'download', group: 'downloads', kind: 'bool' },
+  { key: 'maxDownloads', group: 'downloads', kind: 'int', min: 0, max: 200 },
+  { key: 'downloadMaxHeight', group: 'downloads', kind: 'height', options: [480, 720, 1080, 2160] },
+  { key: 'downloadDays', group: 'downloads', kind: 'int', min: 1, max: 90 },
+  { key: 'requests', group: 'requests', kind: 'bool', requires: 'requests' },
+  { key: 'requestsPerMonth', group: 'requests', kind: 'int', min: 0, max: 100, options: [null], requires: 'requests' },
+  { key: 'party', group: 'together', kind: 'bool' },
+  { key: 'partySchedule', group: 'together', kind: 'bool' },
+  { key: 'comments', group: 'together', kind: 'bool' },
+  { key: 'cast', group: 'cast', kind: 'bool', requires: 'cast' },
+  { key: 'liveTv', group: 'livetv', kind: 'bool', requires: 'livetv' },
+  { key: 'liveRecord', group: 'livetv', kind: 'bool', requires: 'livetv' },
+];
+const PERM_KEYS_MOCK = ['requests', 'cast', 'party', 'partySchedule', 'comments', 'liveTv', 'liveRecord'];
+const MEDIA_KEYS_MOCK = ['libraries', 'maxParentalRating', 'maxStreams', 'maxBitrate', 'transcoding', 'maxHeight', 'download'];
+const MATRIX_BASE_VALUES: Record<string, unknown> = {
+  libraries: 'all', maxParentalRating: null, maxStreams: 2, maxBitrate: 20_000_000, remoteMaxBitrate: 8_000_000, transcoding: true, maxHeight: null,
+  download: false, maxDownloads: 15, downloadMaxHeight: 720, downloadDays: 30, requests: true, requestsPerMonth: 3,
+  party: true, partySchedule: false, comments: true, cast: true, liveTv: false, liveRecord: false,
+};
+/** what each mocked role inherits without a role row (code defaults of the built-ins, the env role's ROLE_TEMPLATES values) */
+const MATRIX_INHERITED: Record<string, Record<string, unknown>> = {
+  admin: { maxStreams: 4, maxBitrate: 40_000_000, download: true, maxDownloads: 25, partySchedule: true },
+  family: { maxStreams: 4, maxBitrate: 40_000_000, download: true, maxDownloads: 25, downloadMaxHeight: 1080, partySchedule: true },
+  friend: {},
+  guest: { maxParentalRating: 12, maxStreams: 1, maxBitrate: 8_000_000, remoteMaxBitrate: 4_000_000, maxHeight: 1080, maxDownloads: 0, downloadMaxHeight: 0, requests: false, party: false, comments: false, cast: false },
+  crew: { maxStreams: 3, partySchedule: true },
+};
+/** the inherited value of a field (PUT null): the role's own entry, else its base's (an admin-made copy) */
+const inheritedValue = (r: Pick<MatrixMockRole, 'key' | 'base'>, k: string): unknown => ({ ...MATRIX_BASE_VALUES, ...(MATRIX_INHERITED[r.key] ?? MATRIX_INHERITED[r.base]) })[k];
+function matrixRole(key: string, label: string | null, base: MatrixMockRole['base'], origin: MatrixMockRole['origin'], accounts: number, profiles: number, kids: number, stored = true): MatrixMockRole {
+  const values = { ...MATRIX_BASE_VALUES, ...MATRIX_INHERITED[key] };
+  return {
+    key, label, builtinLabel: origin === 'code', base, origin, invitable: key !== 'admin', stored, accounts, profiles, kidsProfiles: kids, invites: 0, envGone: false,
+    values, sources: Object.fromEntries(Object.keys(values).map((k) => [k, origin === 'env' ? 'env' : 'default'])), missingLibraries: [],
+  };
+}
+/**
+ * An env role whose key the roles table cannot hold (ROLE_TEMPLATES key outside the role-key shape, here with a space and an umlaut): `stored: false`,
+ * kept behind the stored roles, no rename / invitable / order. A normal env role (Crew) has a row like any other, as the backend's syncRoles makes it.
+ */
+export const ENV_ONLY_KEY = 'Küche Crew';
+export const envOnlyRole = (): MatrixMockRole => matrixRole(ENV_ONLY_KEY, 'Kombüse', 'friend', 'env', 0, 0, 0, false);
+/** the built-ins in the backend's catalogue order (position: Admin, Familie, Freund, Gast), then the env role (Crew, base friend, stored) */
+export function matrixMock(): MatrixMock {
+  return {
+    features: { requests: true, cast: true, livetv: false },
+    policyPartial: false,
+    failed: 2,
+    libraries: [{ id: 'lib1', name: 'Filme' }, { id: 'lib2', name: 'Serien' }, { id: 'lib3', name: 'Musik' }],
+    roles: [
+      matrixRole('admin', 'Admin', 'admin', 'code', 1, 2, 0),
+      matrixRole('family', 'Familie', 'family', 'code', 3, 6, 3),
+      matrixRole('friend', 'Freund', 'friend', 'code', 7, 9, 1),
+      matrixRole('guest', 'Gast', 'guest', 'code', 3, 5, 2),
+      matrixRole('crew', 'Crew', 'friend', 'env', 2, 2, 0),
+    ],
+    puts: [], deletes: [], orders: [],
+  };
 }
 export interface DetailLimits { maxStreams: number | null; remoteBitrate: number | null; maxDownloads: number | null; downloadMaxHeight: number | null; requestsPerMonth: number | null }
 export interface DetailProfile { id: string; name: string; kids: boolean; maxRating: string | null; avatar: string; lastUsed: string | null; isOwner: boolean; hasPin: boolean }
@@ -212,6 +308,7 @@ export function adminState(): AdminState {
     loginCheck: loginCheckOk(),
     repairs: [],
     repairReply: null,
+    matrix: matrixMock(),
     streams: { streams: [], totals: { direct: 0, remux: 0, transcode: 0 }, details: true, failed: [] },
     errors: { entries: [], overflow: 0 },
     bannerIssues: [],
@@ -392,8 +489,8 @@ function invitesList(st: AdminState, sp: URLSearchParams) {
 }
 const AUDIT_ACTOR = 'Tester';
 function auditList(st: AdminState, sp: URLSearchParams) {
-  const q = norm(sp.get('q') ?? ''), action = sp.get('action'), actor = sp.get('actor'), from = sp.get('from'), to = sp.get('to');
-  let rows = st.audit.filter((e) => (!q || norm(`${e.action} ${e.actor ?? ''} ${e.target_name ?? ''}`).includes(q))
+  const target = sp.get('target'), q = norm(sp.get('q') ?? ''), action = sp.get('action'), actor = sp.get('actor'), from = sp.get('from'), to = sp.get('to');
+  let rows = st.audit.filter((e) => (!target || e.target === target) && (!q || norm(`${e.action} ${e.actor ?? ''} ${e.target_name ?? ''}`).includes(q))
     && (!action || e.action === action || e.action.startsWith(`${action}.`))
     && (!actor || (actor === 'system' ? e.actor === null : e.actor === AUDIT_ACTOR))
     && (!from || e.at >= from) && (!to || e.at <= to));
@@ -406,8 +503,8 @@ export function adminSummary(st: AdminState) {
   const pendingReq = st.requests.filter((r) => r.status === PENDING).length;
   const locked = st.users.filter((u) => u.disabled).length;
   return {
-    users: { total: st.users.length, active: st.users.length - locked, locked },
-    pending: { requests: st.seerrUp ? pendingReq : null, devices: st.devices.filter((d) => !d.approved).length, polls: st.polls.length, invites: st.invites.filter((i) => i.uses < i.max_uses && i.expires_at > new Date().toISOString()).length, previewsFailed: 10 },
+    users: { total: st.users.length, active: st.users.length - locked, locked, expiring: st.users.filter((u) => u.access_until != null && Date.parse(u.access_until) >= Date.now() && Date.parse(u.access_until) <= Date.now() + WEEK).length },
+    pending: { requests: st.seerrUp ? pendingReq : null, devices: st.devices.filter((d) => !d.approved).length, polls: st.polls.length, invites: st.invites.filter((i) => i.uses < i.max_uses && i.expires_at > new Date().toISOString()).length, approvals: st.approvals.length, previewsFailed: 10 },
     requests: st.seerrUp ? { pending: pendingReq, approved: st.requests.filter((r) => r.status === 'genehmigt').length, processing: 1, available: st.requests.filter((r) => r.status === 'verfügbar').length, declined: 2, total: st.requests.length + 3 } : null,
     storage: { downloadsEnabled: true, downloadsBytes: 12.4 * 1024 ** 3, downloadsMaxBytes: 50 * 1024 ** 3, previewBytes: 99e6, previewClips: 30 },
     playbackCheck: { finishedAt: ago(2), total: 20, failed: 1 },
@@ -557,9 +654,95 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     return J({ id });
   }
   if (p === '/api/admin/roles' && m === 'GET') {
-    return J({ roles: ROLES, invitable: ['friend', 'family', 'guest'], limits: Object.entries(ROLES).map(([role, r], i) => ({ role, label: r.label, builtinLabel: true, requestsPerMonth: i === 0 ? null : 3, isDefault: i === 2, transcoding: i !== 3, maxHeight: i === 1 ? 1080 : null, download: i < 2, maxDownloads: 5, downloadMaxHeight: 720, downloadDays: 30, maxBitrate: role === 'guest' ? 2_000_000 * 4 : 40_000_000, remoteMaxBitrate: role === 'family' ? 12_000_000 : role === 'guest' ? 4_000_000 : 8_000_000, remoteDefault: role === 'guest' ? 4_000_000 : 8_000_000, remoteIsDefault: role !== 'family' })) });
+    const mx = st.matrix;
+    // env-only roles come after the stored ones (listRoles appends them), the rest in table order
+    const rows = [...mx.roles.filter((r) => r.stored), ...mx.roles.filter((r) => !r.stored)];
+    return J({
+      roles: ROLES, invitable: ['friend', 'family', 'guest'],
+      limits: Object.entries(ROLES).map(([role, r], i) => ({ role, label: r.label, builtinLabel: true, requestsPerMonth: i === 0 ? null : 3, isDefault: i === 2, transcoding: i !== 3, maxHeight: i === 1 ? 1080 : null, download: i < 2, maxDownloads: 5, downloadMaxHeight: 720, downloadDays: 30, maxBitrate: role === 'guest' ? 2_000_000 * 4 : 40_000_000, remoteMaxBitrate: role === 'family' ? 12_000_000 : role === 'guest' ? 4_000_000 : 8_000_000, remoteDefault: role === 'guest' ? 4_000_000 : 8_000_000, remoteIsDefault: role !== 'family' })),
+      matrix: {
+        fields: MATRIX_FIELDS_MOCK, features: mx.features, libraries: mx.libraries,
+        roles: rows.map((r, position) => ({
+          key: r.key, label: r.label, builtinLabel: r.builtinLabel, base: r.base, origin: r.origin, invitable: r.invitable, position,
+          envGone: r.envGone, stored: r.stored, accounts: r.accounts, profiles: r.profiles, kidsProfiles: r.kidsProfiles, values: r.values, sources: r.sources, missingLibraries: r.missingLibraries,
+          // the value without the role's own row (the backend's roleRights(ctx, key, null))
+          defaults: Object.fromEntries(MATRIX_FIELDS_MOCK.map((f) => [f.key as string, inheritedValue(r, f.key as string)])),
+        })),
+      },
+    });
   }
-  if (/^\/api\/admin\/roles\/[^/]+$/.test(p) && m === 'PUT') return ok();
+  // the order write ignores keys that are not in the roles table (env-only roles); the rest must be a permutation of the stored roles
+  if (p === '/api/admin/roles/order' && m === 'PUT') {
+    const stored = st.matrix.roles.filter((r) => r.stored).map((r) => r.key);
+    const keys = (Array.isArray(body?.keys) ? body.keys : []).filter((k: unknown): k is string => typeof k === 'string' && stored.includes(k));
+    if (new Set(keys).size !== keys.length || keys.length !== stored.length) return J({ error: 'bad_order' }, 400);
+    const rest = st.matrix.roles.filter((r) => !r.stored);
+    st.matrix.roles = [...keys.map((k: string) => st.matrix.roles.find((r) => r.key === k)!), ...rest];
+    st.matrix.orders.push(Array.isArray(body?.keys) ? body.keys : []);
+    log('role.order', null, { keys });
+    return ok();
+  }
+  if (p === '/api/admin/roles' && m === 'POST') {
+    const src = st.matrix.roles.find((r) => r.key === body?.from);
+    if (!src) return J({ error: 'not_found' }, 404);
+    const label = typeof body?.label === 'string' ? body.label.trim() : '';
+    if (!label || label.length > 30) return J({ error: 'bad_request' }, 400);
+    let key = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'role';
+    if (!/^[a-z]/.test(key)) key = `r-${key}`;
+    const taken = new Set(st.matrix.roles.map((r) => r.key));
+    for (let n = 2; taken.has(key); n++) key = `${key.replace(/-\d+$/, '')}-${n}`;
+    const copy: MatrixMockRole = { ...src, key, label, builtinLabel: false, origin: 'admin', stored: true, envGone: false, accounts: 0, profiles: 0, kidsProfiles: 0, invites: 0, values: { ...src.values }, sources: Object.fromEntries(Object.keys(src.values).map((k) => [k, 'role' as const])), missingLibraries: [] };
+    const at = st.matrix.roles.findIndex((r) => !r.stored);
+    st.matrix.roles.splice(at < 0 ? st.matrix.roles.length : at, 0, copy);
+    log('role.create', key, { from: src.key, label });
+    return J({ key }, 201);
+  }
+  if ((mm = p.match(/^\/api\/admin\/roles\/([^/]+)$/)) && m === 'PUT') {
+    // the role API's encodings: null = back to the inherited value, 'unlimited' lifts a cap (a number otherwise)
+    const capOk = (v: unknown) => v === undefined || v === null || v === 'unlimited' || typeof v === 'number';
+    if (!capOk(body?.maxHeight) || !capOk(body?.requestsPerMonth) || !capOk(body?.maxParentalRating)) return J({ error: 'bad_request' }, 400);
+    const role = st.matrix.roles.find((r) => r.key === decodeURIComponent(mm![1]!));
+    if (!role) return J({ error: 'not_found' }, 404);
+    // a ROLE_TEMPLATES key the catalogue cannot hold has no row for the name or the invitable switch
+    if (!role.stored && (body?.label !== undefined || body?.invitable !== undefined)) return J({ error: 'not_in_catalogue' }, 400);
+    if (role.base === 'admin' && body?.perms) return J({ error: 'admin_perms_locked' }, 400);
+    st.matrix.puts.push({ role: role.key, body });
+    const media = Object.keys(body ?? {}).some((k) => MEDIA_KEYS_MOCK.includes(k));
+    const set = (k: string, v: unknown) => {
+      if (v === undefined) return;
+      if (v === null) { role.values[k] = inheritedValue(role, k); role.sources[k] = role.origin === 'env' ? 'env' : 'default'; } else { role.values[k] = v === 'unlimited' ? null : v; role.sources[k] = 'role'; }
+    };
+    const before = { ...role.values };
+    const was = { label: role.builtinLabel ? null : role.label, invitable: role.invitable };
+    for (const [k, v] of Object.entries(body ?? {})) {
+      if (k === 'label') { if (v === null) { role.label = null; role.builtinLabel = role.origin === 'code'; } else { role.label = String(v); role.builtinLabel = false; } } else if (k === 'invitable') role.invitable = Boolean(v);
+      else if (k === 'perms' && v && typeof v === 'object') for (const [pk, pv] of Object.entries(v)) { if (PERM_KEYS_MOCK.includes(pk)) set(pk, pv); } else set(k, v);
+    }
+    // as the backend audits it (roleWrite.ts): the changed effective values, then the catalogue's label / invitable, before and after
+    const moved = MATRIX_FIELDS_MOCK.map((f) => f.key as string).filter((k) => JSON.stringify(before[k]) !== JSON.stringify(role.values[k]));
+    const from: Record<string, unknown> = Object.fromEntries(moved.map((k) => [k, before[k]])), to: Record<string, unknown> = Object.fromEntries(moved.map((k) => [k, role.values[k]]));
+    const now = { label: role.builtinLabel ? null : role.label, invitable: role.invitable };
+    if (now.label !== was.label) { from.label = was.label; to.label = now.label; }
+    if (now.invitable !== was.invitable) { from.invitable = was.invitable; to.invitable = now.invitable; }
+    if (Object.keys(to).length) log('role.update', role.key, { from, to });
+    const identities = role.accounts + role.profiles;
+    if (media && st.matrix.policyPartial) return J({ error: 'policy_partial', failed: st.matrix.failed, identities }, 502);
+    return J({ ok: true, reapplied: { identities: media ? identities : 0, failed: 0 } });
+  }
+  if ((mm = p.match(/^\/api\/admin\/roles\/([^/]+)$/)) && m === 'DELETE') {
+    const role = st.matrix.roles.find((r) => r.key === decodeURIComponent(mm![1]!));
+    if (!role) return J({ error: 'not_found' }, 404);
+    if (role.origin === 'code') return J({ error: 'builtin_role' }, 400);
+    if (role.origin === 'env' && !role.envGone) return J({ error: 'env_role' }, 400);
+    const target = body?.moveTo === undefined ? undefined : st.matrix.roles.find((r) => r.key === body.moveTo);
+    if (body?.moveTo !== undefined && (!target || target === role || target.base === 'admin')) return J({ error: 'bad_target' }, 400);
+    if ((role.accounts > 0 || role.invites > 0) && !target) return J({ error: 'role_in_use', accounts: role.accounts, invites: role.invites }, 409);
+    if (target) { target.accounts += role.accounts; target.profiles += role.profiles; target.kidsProfiles += role.kidsProfiles; target.invites += role.invites; }
+    st.matrix.roles = st.matrix.roles.filter((r) => r !== role);
+    st.matrix.deletes.push({ role: role.key, moveTo: target?.key ?? null });
+    log('role.delete', role.key, { moveTo: target?.key ?? null, accounts: target ? role.accounts : 0, invites: role.invites, ...(role.label ? { label: role.label } : {}) });
+    return J({ ok: true, accounts: role.accounts, invites: role.invites });
+  }
   if (p === '/api/admin/devices') return J(devicesList(st, sp));
   if (p === '/api/admin/devices/approve' && m === 'POST') {
     const d = st.devices.find((x) => x.user_id === body.userId && x.device_id === body.deviceId);

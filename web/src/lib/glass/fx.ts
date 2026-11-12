@@ -122,14 +122,14 @@ export const SHEET_IN_MS = 380;
 export const SHEET_OUT_MS = 200;
 /**
  * Svelte transition: a phone bottom sheet slides up from below the window (translateY 100 % → 0, 380 ms spring) and back down
- * (200 ms GLASS_IN). Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
+ * (200 ms GLASS_IN); `side: 'right'` slides in from the right edge instead (translateX), for the desktop role sheet. Reduced set: a 160 ms crossfade. Calm / reduced motion: instant.
  */
-export function sheetSlide(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
+export function sheetSlide(_node: Element, p: { dir?: 'in' | 'out'; mode?: FxMode; side?: 'bottom' | 'right' } = {}): { duration: number; delay: 0; easing: (t: number) => number; css: (t: number, u: number) => string } {
   const mode = watched(p.mode ?? fxMode());
   if (mode === 'still') return { duration: 0, delay: 0, easing: linear, css: () => '' };
   if (mode === 'reduced') return { duration: REDUCED_MS, delay: 0, easing: linear, css: (t) => `opacity:${t}` };
   const out = p.dir === 'out';
-  return { duration: out ? SHEET_OUT_MS : SHEET_IN_MS, delay: 0, easing: out ? inEase : springEase, css: (_t, u) => `transform:translateY(${Math.round(u * 1000) / 10}%)` };
+  return { duration: out ? SHEET_OUT_MS : SHEET_IN_MS, delay: 0, easing: out ? inEase : springEase, css: (_t, u) => `transform:translate${p.side === 'right' ? 'X' : 'Y'}(${Math.round(u * 1000) / 10}%)` };
 }
 
 export const TOAST_IN_MS = 420;

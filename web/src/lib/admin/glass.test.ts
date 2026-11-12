@@ -11,7 +11,7 @@ import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { countable } from './glass';
-import { AA, AMB_PEAK, contrast, DARK_BASE, frostComposite, SCRIM_LIGHT, SCRIM_BAR, SCRIM_MENU, GRAIN_LIFT, SCRIM_RGB, SEL_A, textContrast, type RGB } from '#lib/glass/tone';
+import { AA, AMB_PEAK, contrast, DARK_BASE, frostComposite, SCRIM_LIGHT, SCRIM_BAR, SCRIM_MENU, SCRIM_SAFE_DIM, GRAIN_LIFT, SCRIM_RGB, SEL_A, textContrast, tintColor, type RGB } from '#lib/glass/tone';
 
 describe('countable', () => {
   it('takes finite numbers', () => {
@@ -314,5 +314,176 @@ describe('cast surfaces: motion', () => {
     expect(css.replace(/\/\*[\s\S]*?\*\//g, '')).not.toContain('backdrop-filter');
     expect(css).toMatch(/body\.still \.fx, body\.still \.fx\.on \{ transition: none;/);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.ind i \{ animation: none;/);
+  });
+});
+
+/** the start page's hand-off card: glass, text contrast, motion (transform / opacity only), calm mode */
+describe('hand-off card (device hand-off spec 2.4)', () => {
+  const card = read('../handoff/HandoffCard.svelte');
+  const css = [...card.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('is the safe glass panel, a named region, and not a live region', () => {
+    expect(card).toMatch(/class="hc frost frost-safe frost-panel /);
+    expect(card).toContain('--fr-scrim-safe:{SCRIM_SAFE_DIM}'); // the scrim that holds .9 white text over pure white
+    expect(card).toMatch(/role="region" aria-label=\{\$t\('home\.handoff\.region'\)\}/);
+    expect(card).not.toMatch(/aria-live|role="status"|role="alert"/);
+  });
+
+  it('its text keeps 4.5:1 on the safe glass over the brightest picture, the ambient peak, the base and the solid fallback', () => {
+    expect(css).toContain('color: rgba(255, 255, 255, .9)'); // the eyebrow line
+    const bright = frostComposite(WHITE, SCRIM_SAFE_DIM, tintColor(WHITE));
+    for (const bg of [bright, frostComposite(AMB_PEAK, SCRIM_SAFE_DIM), frostComposite(DARK_BASE, SCRIM_SAFE_DIM), SOLID]) {
+      expect(textContrast(bg, 0.9)).toBeGreaterThanOrEqual(AA);
+      expect(textContrast(bg, 1)).toBeGreaterThanOrEqual(AA);
+    }
+    expect(contrast(hex('#d6325a'), WHITE)).toBeGreaterThanOrEqual(AA); // the white button label on --acc-fill
+  });
+
+  it('animates transform and opacity only, and switches it off for calm mode and reduced motion', () => {
+    const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+    const parts: string[] = [];
+    for (const m of css.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) parts.push(m[1]!);
+    for (const m of css.matchAll(/@keyframes\s+[\w-]+\s*\{/g)) {
+      let depth = 1, i = m.index! + m[0].length;
+      const start = i;
+      while (depth && i < css.length) { if (css[i] === '{') depth++; else if (css[i] === '}') depth--; i++; }
+      parts.push(css.slice(start, i - 1));
+    }
+    const live = parts.filter((v) => !/^\s*none/.test(v));
+    expect(live.length).toBeGreaterThanOrEqual(2);
+    for (const v of live) {
+      expect(v).not.toMatch(LAYOUT);
+      expect(v).not.toMatch(/\ball\b|color|background|border|filter|shadow/);
+    }
+    expect(css).toContain('translateY(-8px)');
+    expect(css).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+  });
+});
+
+/** the player's AirPlay connecting layout: safe glass, motion (transform / opacity only), calm mode */
+describe('AirPlay connecting layout (device hand-off spec 4)', () => {
+  const src = read('../player/AirPlayConnecting.svelte');
+  const css = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('is a safe glass panel over the dimmed backdrop, with a named status and no video frame', () => {
+    expect(src).toMatch(/class="msg frost frost-safe frost-panel"/);
+    expect(src).toContain('--fr-scrim-safe:{SCRIM_BAR}');
+    expect(src).toMatch(/role="status"/);
+    expect(src).toContain('brightness(.5)'); // the remote screen's dim treatment
+    expect(src).not.toMatch(/<video|drawImage|canvas/);
+  });
+
+  it('animates transform and opacity only (the layout overlays, nothing reflows) and switches it off in calm mode', () => {
+    const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+    const parts: string[] = [];
+    for (const m of css.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) parts.push(m[1]!);
+    for (const m of css.matchAll(/@keyframes\s+[\w-]+\s*\{/g)) {
+      let depth = 1, i = m.index! + m[0].length;
+      const start = i;
+      while (depth && i < css.length) { if (css[i] === '{') depth++; else if (css[i] === '}') depth--; i++; }
+      parts.push(css.slice(start, i - 1));
+    }
+    const live = parts.filter((v) => !/^\s*none/.test(v));
+    expect(live.length).toBeGreaterThanOrEqual(1);
+    for (const v of live) { expect(v).not.toMatch(LAYOUT); expect(v).not.toMatch(/\ball\b|color|background|border|filter|shadow/); }
+    expect(src).toMatch(/transition:fade\|global=\{\{ duration: motionAllowed\(\) \? 120 : 0 \}\}/); // opacity, 120 ms, 0 ms when calm
+    expect(css).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+  });
+});
+
+/** Rollen & Rechte (users & permissions spec §6.1, §8): the matrix's marks on the glass panel, the save bar, and the motion rule */
+describe('role matrix and save bar (rights)', () => {
+  const dir = fileURLToPath(new URL('./rights/', import.meta.url));
+  const matrix = read('./rights/RoleMatrix.svelte'), bar = read('./rights/SaveBar.svelte');
+  const css = (src: string) => [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  /** the bar floats over anything: its scrim over pure white, the ambient peak, the base, the solid fallback (as the cast bar) */
+  const BAR = [frostComposite(WHITE, SCRIM_BAR), frostComposite(AMB_PEAK, SCRIM_BAR), frostComposite(DARK_BASE, SCRIM_BAR), SOLID];
+
+  it('a staged cell has the amber --warn outline; it keeps 4.5:1 on the panel, the solid first column and the chip fill', () => {
+    expect(css(matrix)).toMatch(/td\.staged::after \{ box-shadow: inset 0 0 0 2px var\(--warn\); \}/);
+    for (const bg of [...ON_GLASS, ...ON_GLASS.map((b) => over(b, SCRIM_RGB, 0.4))]) expect(cr(GLASS.warn, bg), `${bg}`).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('muted role values (.72 white: people line, corner, group labels, a denied switch) on the panel and the solid sticky cells', () => {
+    const c = css(matrix);
+    expect(c).toMatch(/\.rp \{[^}]*color: var\(--mut\);/);
+    expect(c).toMatch(/\.chip\.off \{ color: var\(--mut\); \}/);
+    expect(c).toMatch(/thead th \{[^}]*background: var\(--fr-solid\);/);
+    // the chips' fill is the darker scrim (.25, .4 on hover): it only adds contrast
+    expect(c).toMatch(/\.chip \{[^}]*background: rgba\(var\(--fr-scrim-rgb\), \.25\);/);
+    expect(c).toMatch(/td:hover:not\(\.lock\) \.chip \{ background: rgba\(var\(--fr-scrim-rgb\), \.4\); \}/);
+    for (const bg of [...ON_GLASS, ...ON_GLASS.flatMap((b) => [over(b, SCRIM_RGB, 0.25), over(b, SCRIM_RGB, 0.4)])]) {
+      expect(textContrast(bg, MUT), `${bg}`).toBeGreaterThanOrEqual(AA);
+      expect(cr(GLASS.ok, bg), 'allowed tick').toBeGreaterThanOrEqual(AA);
+    }
+  });
+
+  it('the changed dot (--info) stands out from the panel; its words are the tooltip and the cell name, not the colour', () => {
+    expect(css(matrix)).toMatch(/\.dot \{[^}]*background: var\(--info\);/);
+    for (const bg of ON_GLASS) expect(cr(GLASS.info, bg)).toBeGreaterThanOrEqual(AA);
+    expect(matrix).toContain("tr('adminPeople.roles.changedHere')");
+    expect(matrix).toMatch(/cellName\(roleName\(role\), f, v, staged \? 'unsaved' : src === 'role'\)/);
+    // the lock icon's class is not the locked cell's (a scoped `.lock` rule would style the <td> too)
+    expect(css(matrix)).not.toMatch(/(^|[\s,}])\.lock\b/);
+  });
+
+  it('the role sheet and the history: white text and the .9 notes on the menu scrim over any backdrop; the staged rail is --warn', () => {
+    for (const f of ['RoleSheet', 'RoleHistory']) {
+      const src = read(`./rights/${f}.svelte`);
+      expect(src, f).toContain('--fr-scrim-safe:{SCRIM_MENU}');
+      expect(css(src), f).toMatch(/color: rgba\(255, 255, 255, \.9\)/);
+    }
+    expect(css(read('./rights/RoleSheet.svelte'))).toMatch(/\.row\.staged \{ border-left-color: var\(--warn\); \}/);
+    for (const bg of [frostComposite(WHITE, SCRIM_MENU), frostComposite(AMB_PEAK, SCRIM_MENU), frostComposite(DARK_BASE, SCRIM_MENU)]) {
+      expect(textContrast(bg)).toBeGreaterThanOrEqual(AA);
+      expect(textContrast(bg, 0.9)).toBeGreaterThanOrEqual(AA);
+      // the rail is a graphic, not text: 3:1
+      expect(cr(GLASS.warn, bg)).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('the save bar: white text and the light error colour on the bar scrim over any backdrop', () => {
+    expect(bar).toMatch(/class="sb frost frost-safe frost-panel" style="--fr-scrim-safe:\{SCRIM_BAR\}"/);
+    expect(css(bar)).toContain('.tx.err { color: #ffbdbd; }');
+    for (const bg of BAR) {
+      expect(textContrast(bg)).toBeGreaterThanOrEqual(AA);
+      expect(contrast(hex('#ffbdbd'), bg)).toBeGreaterThanOrEqual(AA);
+    }
+  });
+
+  it('animates transform and opacity only, and every surface with motion switches it off in calm mode and for reduced motion', () => {
+    const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+    const files = readdirSync(dir).filter((f) => f.endsWith('.svelte'));
+    expect(files).toEqual(expect.arrayContaining(['RoleMatrix.svelte', 'FieldControl.svelte', 'CellPopover.svelte', 'SaveBar.svelte', 'ReviewSheet.svelte', 'RoleSheet.svelte', 'RoleHistory.svelte', 'DeleteRoleDialog.svelte', 'NameDialog.svelte']));
+    const bad: string[] = [];
+    for (const f of files) {
+      const c = css(readFileSync(join(dir, f), 'utf8'));
+      for (const [, v] of c.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) if (!/^\s*none/.test(v!) && (LAYOUT.test(v!) || /\ball\b|color|background|border|filter|shadow/.test(v!))) bad.push(`${f}: ${v}`);
+      expect(c, f).not.toMatch(/@keyframes/);
+    }
+    expect(bad).toEqual([]);
+    // the moving surfaces use the glass transitions (transform / opacity) and stand still in calm mode
+    expect(read('./rights/CellPopover.svelte')).toContain('transition:growBoth|global={{ trigger }}');
+    expect(bar).toMatch(/in:barRise out:barRise=\{\{ dir: 'out' \}\}/);
+    expect(read('./rights/ReviewSheet.svelte')).toMatch(/sheetSlide\(node, \{ dir \}\)/);
+    // the role sheet and the history slide in from the right edge (translateX, the same sheetSlide)
+    for (const f of ['RoleSheet', 'RoleHistory']) expect(read(`./rights/${f}.svelte`), f).toMatch(/sheetSlide\(node, \{ dir, side: 'right' \}\)/);
+    // the dragged column and its neighbours move by transform only; a glide is a transform transition
+    expect(css(matrix)).toMatch(/\.glide \{ transition: transform 180ms var\(--fr-out\); \}/);
+    expect(matrix).toMatch(/style:transform=\{shift\(drag, c\)\}/);
+    for (const f of ['CellPopover', 'SaveBar', 'ReviewSheet', 'RoleSheet', 'RoleHistory', 'RoleMatrix']) {
+      const src = read(`./rights/${f}.svelte`);
+      expect(src, f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+      expect(src, f).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+    }
+    for (const f of ['DeleteRoleDialog', 'NameDialog']) expect(read(`./rights/${f}.svelte`), f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+  });
+
+  it('the bar reserves its room before it rises: --savebar-h is set in a reactive statement (before the DOM update)', () => {
+    expect(bar).toMatch(/\$: reserve\(shown\);/);
+    expect(bar).toContain("st.setProperty('--savebar-h'");
+    expect(read('../../routes/admin/roles/+page.svelte')).toMatch(/\.roles \{ padding-bottom: var\(--savebar-h, 0px\); \}/);
   });
 });

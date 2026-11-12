@@ -15,6 +15,27 @@ const lookup = (o: Partial<CastLookup> = {}): CastLookup => ({ castId: 'a'.repea
 const base = { capable: true, enabled: true, custom: true, state: state(), session: session(), lookup: lookup(), errors: 0, now: NOW, tf: tr };
 const val = (rows: Array<{ label: string; value: string }>, label: string) => rows.find((r) => r.label === label)?.value;
 
+describe('airplayRows without the cast right', () => {
+  const air = { available: true, continuous: null, subsInStream: true, last: null, lookup: null, tf: tr };
+  it('says the account may not cast instead of "available" and lists nothing else', () => {
+    const rows = airplayRows({ ...air, allowed: false });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.value).toBe(tr('ui.error.castForbidden'));
+    expect(rows[0]!.tone).toBe('warn');
+    expect(airplayRows({ ...air, allowed: true }).length).toBeGreaterThan(1);
+    expect(airplayRows(air)[0]!.value).toBe(tr('diagnose.cast.airOk'));
+  });
+});
+
+describe('chromecastRows without the cast right', () => {
+  it('says the account may not cast instead of blaming the browser, and lists nothing else', () => {
+    const rows = chromecastRows({ ...base, allowed: false });
+    expect(rows).toHaveLength(1);
+    expect(val(rows, 'Cast-Unterstützung')).toBe(tr('ui.error.castForbidden'));
+    expect(chromecastRows({ ...base, capable: false, allowed: true })[0]!.value).toBe(tr('diagnose.cast.supportNoBrowser'));
+  });
+});
+
 describe('chromecastRows', () => {
   it('own receiver connected and playing', () => {
     const rows = chromecastRows(base);
@@ -61,6 +82,11 @@ describe('airplayRows', () => {
   it('Chrome: not available', () => {
     expect(val(airplayRows({ ...air, available: false }), 'In diesem Browser')).toBe('Hier nicht verfügbar (AirPlay braucht Safari)');
     expect(val(airplayRows(air), 'In diesem Browser')).toBe('Verfügbar');
+  });
+  it('Diagnose shows continuous on only with the switch', () => {
+    const v = (c: 'on' | null) => val(airplayRows({ ...air, continuous: c }), 'Durchgehend abspielen (experimentell)');
+    expect(v(null)).toBeUndefined();
+    expect(v('on')).toBe('An (Einstellung)');
   });
   it('no continuous row while continuous is null; no subtitles row until it is turned on', () => {
     const labels = (o: Partial<Parameters<typeof airplayRows>[0]>) => airplayRows({ ...air, ...o }).map((r) => r.label);

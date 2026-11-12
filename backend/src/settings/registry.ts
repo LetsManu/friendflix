@@ -133,6 +133,7 @@ export const SETTINGS: readonly SettingDef[] = [
   // playback
   setting('CAST_ENABLED', { kind: 'bool', group: 'playback' }),
   setting('CAST_RECEIVER_APP_ID', { kind: 'string', group: 'playback' }), // read per request (/api/cast/config, /api/cast/session)
+  setting('CAST_AIRPLAY_CONTINUOUS', { kind: 'bool', group: 'playback' }), // read per request (/api/cast/config, /api/cast/session)
   setting('PREVIEW_WARM', { kind: 'bool', group: 'playback' }),
   setting('HOME_NETWORKS', { kind: 'cidrList', group: 'playback' }),
   setting('UPLOAD_MBPS', { kind: 'number', group: 'playback' }), // read per /api/playback/info request

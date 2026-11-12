@@ -139,6 +139,7 @@ const pl: Translation<typeof de> = {
     play: 'Odtwórz na urządzeniu AirPlay',
     playing: 'Odtwarzanie przez AirPlay',
     change: 'Zmień urządzenie AirPlay',
+    cancel: 'Anuluj',
     failed: 'Odtwarzanie przez AirPlay nie powiodło się.',
     endHint: 'Aby zakończyć, wybierz to urządzenie w menu AirPlay.',
     choose: 'Wybierz telewizor',
@@ -190,6 +191,7 @@ const pl: Translation<typeof de> = {
     left: 'jeszcze {time}',
     prev: 'Poprzedni odcinek',
     prevNone: 'Poprzedni odcinek (brak: to pierwszy)',
+    episodeRange: 'S{s}:O{a}–O{b}',
   },
   castTv: {
     fromPhone: 'Z telefonu użytkownika {name}',
@@ -207,7 +209,7 @@ const pl: Translation<typeof de> = {
   castBar: {
     region: 'Teraz na telewizorze',
     failed: 'Nie można odtworzyć „{title}” na {device}.',
-    airplayDevice: 'Urządzenie AirPlay',
+    airplayDevice: 'AirPlay',
     reconnect: 'Utracono połączenie – dotknij, aby kontynuować na telewizorze',
     on: 'na {device}',
     stop: 'Zatrzymaj odtwarzanie na {device}',
@@ -235,8 +237,6 @@ const pl: Translation<typeof de> = {
     chromecast: 'Chromecast',
     airplay: 'AirPlay…',
     airplayHint: 'Apple TV i telewizory z AirPlay',
-    continuous: 'Odtwarzaj odcinki jeden po drugim',
-    continuousHint: 'Bez dotykania w międzyczasie',
     thisPhone: 'Ten telefon',
     thisTablet: 'Ten tablet',
     thisComputer: 'Ten komputer',

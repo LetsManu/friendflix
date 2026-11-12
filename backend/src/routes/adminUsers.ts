@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Admin user management: the account list, single and bulk account actions (role, lock, access, sessions), the user detail page, the approval queue, invites. */
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
+import type pg from 'pg';
 import { z } from 'zod';
-import { audit } from '../audit.js';
+import { audit, auditInTx } from '../audit.js';
 import { Where, likePattern, orderBy, pageQuery } from '../adminlist.js';
 import { akActions, akMfaState, akSendMfaSetup, akSendRecovery } from '../authentik.js';
 import type { Ctx } from '../ctx.js';
@@ -11,18 +12,36 @@ import { restoreDeletion } from '../deletion.js';
 import { forgetUserAuth, revokeSessions } from '../devices.js';
 import { userLicenses } from '../downloads.js';
 import { createInvite, deleteAuthentikInvitation } from '../invites.js';
-import { getUserLimits, invalidateLimits, setUserLimits } from '../limits.js';
-import { accountJellyfinIds, getProfile, jfUserFor, listProfiles, publicProfile } from '../profiles.js';
+import { getUserLimits } from '../limits.js';
+import { KIDS_RATINGS, ProfileError, accountJellyfinIds, createProfile, deleteProfile, getProfile, jfUserFor, listProfiles, lockProfileKids, onConnection, publicProfile } from '../profiles.js';
 import { roleLimitFor } from '../requestlimit.js';
-import { INVITABLE_ROLES, effectiveRole } from '../roles.js';
+import { ROLE_KEY_RE, invitableRoles, roleExists } from '../rolecat.js';
+import { effectiveRole } from '../roles.js';
+import { PERM_KEYS, readPerms, type PermKey } from '../perms.js';
+import { invalidateRights, roleRights } from '../rights.js';
 import { requestsEnabled } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireAdmin, type Session } from '../session.js';
 import type { ProfileRow, UserRow } from '../types.js';
+import { rightsBody, rightsView, writeRights, type RightsBody } from '../userRights.js';
 import { HttpError, accessEnded, accountSerial, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser, type LockReason } from '../users.js';
 import { pendingNoticeKey } from '../pending.js';
+import { checkItem, checkTitles, libraryCounts } from '../viewcheck.js';
+import { dropPartyDenied, dropPartyPeers } from '../partySockets.js';
+import { policyChanged } from '../hooks.js';
+import { forgetAuth } from './internal.js';
+import { dropProfileSessions, profileSids } from './profiles.js';
 
 const uuid = z.guid();
+/**
+ * POST /api/admin/users/:id/check: one profile of the account and exactly one of a title search or an item id (media item ids are 32
+ * lower-case hex). Neither is ever logged or audited; a refusal names the field paths only.
+ */
+const checkBody = z.object({
+  profileId: uuid,
+  itemId: z.string().regex(/^[0-9a-f]{32}$/).optional(),
+  query: z.string().trim().min(2).max(100).optional(),
+}).refine((b) => (b.itemId === undefined) !== (b.query === undefined), { path: ['query'], message: 'itemId or query' });
 /** ISO date-time with offset, or null (= no end) */
 const accessUntil = z.iso.datetime({ offset: true }).nullable();
 const toDate = (s: string | null) => (s === null ? null : new Date(s));
@@ -52,10 +71,14 @@ export async function approveRequest(ctx: Ctx, actor: string, id: string, role: 
 
 export const bulkBody = z.object({
   ids: z.array(uuid).min(1).max(200),
-  action: z.enum(['role', 'lock', 'unlock', 'revoke', 'access']),
+  action: z.enum(['role', 'lock', 'unlock', 'revoke', 'access', 'perm', 'repair']),
   role: z.string().max(40).optional(),
   accessUntil: accessUntil.optional(),
+  /** action 'perm': the switch and its person override (null = back to the role) */
+  perm: z.enum(PERM_KEYS).optional(),
+  value: z.boolean().nullable().optional(),
 }).refine((b) => b.action !== 'role' || b.role !== undefined, { path: ['role'] })
+  .refine((b) => b.action !== 'perm' || (b.perm !== undefined && b.value !== undefined), { path: ['perm'] })
   .refine((b) => b.action !== 'access' || b.accessUntil !== undefined, { path: ['accessUntil'] });
 export type BulkBody = z.infer<typeof bulkBody>;
 
@@ -63,7 +86,7 @@ export type BulkBody = z.infer<typeof bulkBody>;
  * Applies one action to many accounts. All or nothing on validation and guards (unknown id, unknown role,
  * the actor locking/demoting themselves, last admin, unlocking an account whose access has ended or whose deletion is under way); then per user. `done` counts the accounts that changed.
  */
-export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{ done: number }> {
+export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{ done: number; failed?: number }> {
   const ids = [...new Set(b.ids)];
   const rows = (await ctx.db.query<{ id: string; role: string; disabled: boolean; access_until: Date | null }>('select id, role, disabled, access_until from users where id = any($1::uuid[])', [ids])).rows;
   if (rows.length !== ids.length) throw new HttpError(404, 'not_found');
@@ -73,13 +96,19 @@ export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{
   if (b.action === 'unlock' && (await ctx.db.query('select 1 from account_deletions where user_id = any($1::uuid[]) limit 1', [ids])).rowCount) {
     throw new HttpError(409, 'deletion_in_progress');
   }
-  if (b.action === 'role' && !Object.hasOwn(ctx.roles, b.role!)) throw new HttpError(400, 'unknown_role');
+  // a repair or rights write on a claimed account would act on identities that are being deleted
+  if ((b.action === 'perm' || b.action === 'repair') && (await ctx.db.query('select 1 from account_deletions where user_id = any($1::uuid[]) limit 1', [ids])).rowCount) {
+    throw new HttpError(409, 'deletion_in_progress');
+  }
+  // the admin role's switches are locked: refuse the whole call before the first write (clearing stays possible)
+  if (b.action === 'perm' && b.value !== null && rows.some((u) => u.role === 'admin')) throw new HttpError(400, 'admin_perms_locked');
+  if (b.action === 'role' && !(await roleExists(ctx, b.role!))) throw new HttpError(400, 'unknown_role');
   const demote = b.action === 'role' && b.role !== 'admin';
   if ((demote || b.action === 'lock') && ids.includes(actor)) throw new HttpError(400, 'cannot_lock_yourself_out');
   if (demote) await assertNotLastAdmin(ctx, ids, 'demote');
   if (b.action === 'lock') await assertNotLastAdmin(ctx, ids, 'lock');
 
-  let done = 0;
+  let done = 0, failed = 0;
   for (const u of rows) {
     switch (b.action) {
       case 'role':
@@ -100,10 +129,21 @@ export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{
       case 'access':
         await setAccessUntil(ctx, actor, u.id, toDate(b.accessUntil!));
         break;
+      case 'perm':
+        // the same per-account write as PUT /rights (admin lock, audit in the transaction, party sockets, gateway memo)
+        if (!(await putRights(ctx, actor, u.id, { overrides: { [b.perm!]: b.value! } })).changed.length) continue;
+        break;
+      case 'repair':
+        {
+          const fresh = await getUserById(ctx, u.id);
+          if (!fresh || !(await repairAccount(ctx, actor, fresh)).ok) { failed++; continue; } // vanished mid-loop counts as failed
+        }
+        break;
     }
     done++;
   }
-  return { done };
+  // repair: the accounts whose identities or request-service mapping did not take it are not `done`
+  return failed ? { done, failed } : { done };
 }
 
 /** Per-user limit overrides: the bounds of the role settings (roles.ts / PUT /api/admin/roles); null = as role, omitted = unchanged. */
@@ -155,6 +195,126 @@ async function reapplyAccount(ctx: Ctx, user: UserRow): Promise<{ identities: nu
   return { identities: ids.length, failed };
 }
 
+/**
+ * "Repair link": the role policy again on every media server identity, and the request-service user mapped again; audited user.repair.
+ * 409 deletion_in_progress for a claimed account (its request-service user may already be deleted, a repair would create an orphan).
+ * Runs in accountSerial of the caller.
+ */
+export async function repairAccount(ctx: Ctx, actor: string, user: UserRow) {
+  if (await accountClaimed(ctx, user.id)) throw new HttpError(409, 'deletion_in_progress');
+  const jellyfin = await reapplyAccount(ctx, user);
+  const before = user.seerr_user_id;
+  // no request service: nothing to map (null), and the repair is not a partial failure because of it
+  const requestsOk = requestsEnabled(ctx) ? await ensureSeerrUser(ctx, user).then(() => true, () => false) : null;
+  await audit(ctx, actor, 'user.repair', user.id, { jellyfin, requests: { ok: requestsOk, from: before, to: user.seerr_user_id } });
+  return { ok: !jellyfin.failed && requestsOk !== false, jellyfin, requests: { ok: requestsOk, id: user.seerr_user_id } };
+}
+
+/** true once the deletion tick has claimed the account: admin changes would act on identities that are being deleted */
+const accountClaimed = async (ctx: Ctx, id: string) => Boolean((await ctx.db.query('select 1 from account_deletions where user_id=$1', [id])).rowCount);
+
+/**
+ * The override write of /rights, /limits and the bulk `perm`, run in accountSerial by the caller (it calls nothing that queues there itself): 409
+ * deletion_in_progress once the deletion tick claimed the account; a changed media-enforced value re-applies the account's identities,
+ * any changed value makes the gateway forget the memoised identity of the account's sessions (they stay signed in).
+ */
+async function putRights(ctx: Ctx, actor: string, id: string, b: RightsBody): Promise<{ identities: number; failed: number; changed: string[] }> {
+  const user = await getUserById(ctx, id);
+  if (!user) throw new HttpError(404, 'not_found');
+  if (await accountClaimed(ctx, id)) throw new HttpError(409, 'deletion_in_progress');
+  const w = await writeRights(ctx, actor, id, b);
+  if (w.changed.includes('party')) await dropPartyDenied(ctx, [id]); // `party` switched off: the open party sockets close (4403)
+  const reapplied = w.media ? await reapplyAccount(ctx, user) : { identities: 0, failed: 0 };
+  if (w.effective) await forgetUserAuth(ctx, id);
+  return { ...reapplied, changed: w.changed };
+}
+
+const profileName = z.string().trim().min(1).max(20);
+/** a kids profile's age cap (KIDS_RATINGS, the DB CHECK of profiles.kids_max_rating) */
+const kidsCap = z.literal(KIDS_RATINGS);
+/** PATCH …/profiles/:pid: rename, clear the PIN, kids switch, age cap; at least one field */
+const adminProfileBody = z.object({
+  name: profileName.optional(), resetPin: z.literal(true).optional(), kids: z.boolean().optional(), maxRating: kidsCap.optional(),
+}).strict().refine((x) => x.name !== undefined || x.resetPin || x.kids !== undefined || x.maxRating !== undefined, { path: ['name'] });
+/** POST …/profiles: admins create kids profiles only (grown-up profiles stay the account holder's choice); no PIN */
+const adminKidsProfileBody = z.object({
+  name: profileName, kids: z.literal(true), maxRating: kidsCap, avatar: z.string().regex(/^[a-z0-9-]{1,20}$/).optional(),
+}).strict();
+
+/**
+ * The admin profile write, run in accountSerial by the caller (it calls nothing that queues there). One transaction holds the profile's
+ * kids lock (`lockProfileKids`, every instance) and its row (`for no key update`: other writers of the row wait, the rows that reference
+ * it — list, progress, hand-off — do not). In it: the row is updated, a kids profile switched off loses its device locks, one
+ * profile.admin_update entry `{ profile, from, to }` holds the changed fields (name / hasPin / kids + maxRating, never a PIN), and a kids
+ * change re-applies the identity's policy through that transaction (`applyRole` reads the new, uncommitted kids fields: the cap and the
+ * unrated block live on the media server). So an owner's kids write never interleaves between this write and its policy push.
+ * After commit the caches of the old policy go and the open party sockets of the profile's sessions close when it became a kids profile.
+ * `policyFailed`: the media server did not take the policy — the stored (FriendFlix) state is committed anyway, the repair re-applies it.
+ * Errors: 404 not_found, 400 owner_not_kids / not_kids, 409 name_taken.
+ */
+async function updateProfile(ctx: Ctx, log: FastifyBaseLogger, actor: string, user: UserRow, pid: string, b: z.infer<typeof adminProfileBody>): Promise<{ profile: ProfileRow; policyFailed: boolean }> {
+  const c = await (ctx.db as pg.Pool).connect();
+  let p: ProfileRow, u: ProfileRow;
+  let policyFailed = false;
+  try {
+    await c.query('begin');
+    await lockProfileKids(c, pid);
+    const cur = (await c.query<ProfileRow>('select * from profiles where id=$1 and user_id=$2 for no key update', [pid, user.id])).rows[0];
+    if (!cur) throw new HttpError(404, 'not_found');
+    p = cur;
+    // the owner profile acts as the account itself and is never a kids profile (nor is a profile without its own identity)
+    if (b.kids !== undefined && (p.is_owner || !p.jellyfin_user_id)) throw new HttpError(400, 'owner_not_kids');
+    const kids = b.kids ?? p.kids;
+    if (b.maxRating !== undefined && !kids) throw new HttpError(400, 'not_kids');
+    const cap = b.maxRating ?? p.kids_max_rating;
+    if (b.name && (await c.query('select 1 from profiles where user_id=$1 and lower(name)=lower($2) and id<>$3', [user.id, b.name, pid])).rowCount) {
+      throw new HttpError(409, 'name_taken');
+    }
+    u = (await c.query<ProfileRow>(
+      'update profiles set name=coalesce($2, name), pin_hash=case when $3 then null else pin_hash end, kids=$4, kids_max_rating=$5 where id=$1 returning *',
+      [pid, b.name ?? null, Boolean(b.resetPin), kids, cap])).rows[0]!;
+    // kids off: no device stays locked to it (a new login there would land on it again, leaving it would need a PIN)
+    if (p.kids && !u.kids) await c.query('update devices set kids_profile_id=null where user_id=$1 and kids_profile_id=$2', [user.id, pid]);
+    const from: Record<string, unknown> = {}, to: Record<string, unknown> = {};
+    if (u.name !== p.name) { from.name = p.name; to.name = u.name; }
+    if (Boolean(u.pin_hash) !== Boolean(p.pin_hash)) { from.hasPin = Boolean(p.pin_hash); to.hasPin = Boolean(u.pin_hash); }
+    if (kidsChanged(p, u)) {
+      from.kids = p.kids; from.maxRating = p.kids ? p.kids_max_rating : null;
+      to.kids = u.kids; to.maxRating = u.kids ? u.kids_max_rating : null;
+    }
+    if (Object.keys(to).length) await auditInTx({ db: c }, actor, 'profile.admin_update', user.id, { profile: pid, from, to });
+    if (kidsChanged(p, u)) {
+      try {
+        await applyRole(onConnection(ctx, c), u.jellyfin_user_id!, user.role, user.disabled, { userId: user.id, hidden: true });
+      } catch (err) {
+        log.warn({ err, profile: pid }, 'admin kids change: the media server did not take the policy'); // ids and status only, no secret
+        policyFailed = true;
+      }
+    }
+    await c.query('commit');
+  } catch (e) {
+    await c.query('rollback').catch(() => undefined);
+    if ((e as { code?: string }).code === '23505') throw new HttpError(409, 'name_taken');
+    throw e;
+  } finally {
+    c.release();
+  }
+  if (b.resetPin) await ctx.kv.del(`pinfail:${pid}`);
+  if (!kidsChanged(p, u)) return { profile: u, policyFailed: false };
+  invalidateRights(user.id);
+  await policyChanged(ctx, u.jellyfin_user_id!); // cached rows / hubs / items of the old policy must not be served again
+  const sids = await profileSids(ctx, user.id, pid);
+  if (u.kids) dropPartyPeers(user.id, sids, 'forbidden'); // a kids profile has no watch party: its open sockets close (4403)
+  for (const sid of sids) forgetAuth(sid);
+  return { profile: u, policyFailed };
+}
+/** the kids switch or the effective age cap of a kids profile changed */
+const kidsChanged = (a: ProfileRow, b: ProfileRow) => a.kids !== b.kids || (b.kids && a.kids_max_rating !== b.kids_max_rating);
+
+/** the switch names as an SQL list (constants of the code, never input) */
+const PERM_SQL = PERM_KEYS.map((k) => `'${k}'`).join(', ');
+const permFilter = z.string().regex(/^[A-Za-z]+:(on|off)$/).refine((v) => (PERM_KEYS as readonly string[]).includes(v.split(':')[0]!));
+
 export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
   const admin = { preHandler: requireAdmin(ctx) };
   const serial = accountSerial;
@@ -167,7 +327,12 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       role: z.string().max(40).optional(),
       status: z.enum(['active', 'locked', 'pending', 'expiring', 'deleting']).optional(),
       lastActive: z.enum(['7', '30', '90', '90+']).optional(),
+      overrides: z.literal('1').optional(),
+      kids: z.literal('1').optional(),
+      perm: permFilter.optional(),
+      mfa: z.literal('off').optional(),
     }).parse(req.query);
+    if (p.status === 'pending' && (p.perm || p.mfa)) throw new HttpError(400, 'bad_request'); // open requests have no rights or MFA
     const w = new Where();
     if (p.q) { const m = w.param(likePattern(p.q)); w.add(`(u.name ilike ${m} or coalesce(u.email,'') ilike ${m} or coalesce(u.jellyfin_username,'') ilike ${m})`); }
     if (p.role) w.add('u.role = ?', p.role);
@@ -177,25 +342,70 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     if (p.status === 'deleting') w.add('(u.deletion_at is not null or u.cleanup is not null)');
     if (p.lastActive === '90+') w.add("(u.last_seen is null or u.last_seen < now() - interval '90 days')");
     else if (p.lastActive) w.add("u.last_seen >= now() - make_interval(days => ?)", Number(p.lastActive));
+    if (p.overrides) w.add('u.overrides > 0');
+    if (p.kids) w.add('u."kidsProfiles" > 0');
     const base = p.status === 'pending'
       ? `select a.id, a.name, a.email, null::text role, false disabled, null::text jellyfin_username, null::int seerr_user_id, a.requested_at created_at,
-                null::timestamptz last_seen, null::timestamptz access_until, null::text locked_reason, null::timestamptz deletion_at, 0 profiles, 0 devices, true pending
+                null::timestamptz last_seen, null::timestamptz access_until, null::text locked_reason, null::timestamptz deletion_at, 0 profiles, 0 devices, true pending, 0 overrides, 0 "kidsProfiles", null::text note
            from approval_requests a where a.rejected_at is null`
       : `select u.id, u.name, u.email, u.role, u.disabled, u.jellyfin_username, u.seerr_user_id, u.created_at,
                 (select max(last_seen) from devices d where d.user_id = u.id) last_seen, u.access_until, u.locked_reason, u.deletion_at,
                 (select count(*) from profiles x where x.user_id = u.id)::int profiles,
-                (select count(*) from devices d where d.user_id = u.id)::int devices, false pending${p.status === 'deleting' ? `,
+                (select count(*) from devices d where d.user_id = u.id)::int devices, false pending,
+                coalesce((select (l.max_streams is not null)::int + (l.remote_bitrate is not null)::int + (l.max_downloads is not null)::int + (l.download_max_height is not null)::int
+                  + (l.requests_per_month is not null)::int + (l.transcoding is not null)::int + (l.max_height is not null)::int + (l.download is not null)::int
+                  + (l.max_bitrate is not null)::int + (l.max_parental_rating is not null)::int + (l.libraries is not null)::int + (l.download_days is not null)::int
+                  + (case when u.role = 'admin' or jsonb_typeof(l.perms) <> 'object' then 0
+                         else (select count(*) from jsonb_object_keys(l.perms) k where k in (${PERM_SQL}))::int end)
+                  from user_limits l where l.user_id = u.id), 0) overrides,
+                (select count(*) from profiles x where x.user_id = u.id and x.kids)::int "kidsProfiles",
+                (select l.note from user_limits l where l.user_id = u.id) note${p.status === 'deleting' ? `,
                 case when ad.user_id is not null and ad.finished_at is null then jsonb_build_object('step', ad.step + 1, 'error', ad.last_error, 'gone', false) end cleanup` : ''}
            from users u${p.status === 'deleting' ? ` left join account_deletions ad on ad.user_id = u.id
          union all
          -- claimed deletions carry the step being worked on and its error; once the users row is gone (steps 5-6) only the pseudonym is
          -- left (gone: no detail page to link to)
-         select ad.user_id, ad.pseudonym, null, null, true, null, null, ad.started_at, null, null, 'deletion', null, 0, 0, false,
+         select ad.user_id, ad.pseudonym, null, null, true, null, null, ad.started_at, null, null, 'deletion', null, 0, 0, false, 0, 0, null,
                 jsonb_build_object('step', ad.step + 1, 'error', ad.last_error, 'gone', true)
            from account_deletions ad where ad.finished_at is null and not exists (select 1 from users x where x.id = ad.user_id)` : ''}`;
     const order = orderBy({ name: 'lower(u.name)', email: "lower(coalesce(u.email,''))", role: 'u.role', status: 'u.disabled', lastSeen: 'u.last_seen', createdAt: 'u.created_at', accessUntil: 'u.access_until', profiles: 'u.profiles', devices: 'u.devices' }, p.sort, p.dir, 'u.created_at, u.id');
+    const lim = p.limit ?? 1000, skip = p.offset ?? 0;
+    // switch and MFA state are resolved in the backend, on the rows the SQL filter left (≤ 1000)
+    const mfaOn = p.mfa === 'off' && akActions(ctx).recovery;
+    if (p.perm || mfaOn) {
+      type Row = { id: string; role: string | null; pending: boolean; authentik_sub?: string; [k: string]: unknown };
+      let rows = (await ctx.db.query<Row>(`select u.*, (select authentik_sub from users x where x.id = u.id) authentik_sub from (${base}) u ${w.sql} ${order} limit 1000`, w.params)).rows;
+      if (p.perm) {
+        const [key, want] = p.perm.split(':') as [PermKey, 'on' | 'off'];
+        // one read of the stored switches, one role resolution per distinct role (as accountsWithout); an unknown role counts as off
+        const stored = new Map((await ctx.db.query<{ user_id: string; perms: unknown }>('select user_id, perms from user_limits where user_id = any($1::uuid[])', [rows.map((u) => u.id)])).rows.map((x) => [x.user_id, x.perms]));
+        const roles = new Map<string, boolean | undefined>();
+        for (const role of new Set(rows.map((u) => u.role))) if (role) roles.set(role, (await roleRights(ctx, role))?.perms[key]);
+        const keep = new Set<string>();
+        for (const u of rows) {
+          if (!u.role) continue; // a claimed deletion without an account
+          const base = roles.get(u.role);
+          const eff = base === undefined ? false : u.role === 'admin' ? true : (readPerms(stored.get(u.id))[key] ?? base);
+          if (eff === (want === 'on')) keep.add(u.id);
+        }
+        rows = rows.filter((u) => keep.has(u.id));
+      }
+      if (mfaOn) {
+        const noMfa = new Set<string>();
+        let next = 0;
+        await Promise.all(Array.from({ length: 8 }, async () => {
+          for (let i = next++; i < rows.length; i = next++) {
+            const u = rows[i]!;
+            const st = u.authentik_sub ? await akMfaState(ctx, u.authentik_sub).catch(() => null) : null;
+            if (st && !st.totp && !st.webauthn && !st.static) noMfa.add(u.id);
+          }
+        }));
+        rows = rows.filter((u) => noMfa.has(u.id));
+      }
+      return { users: rows.slice(skip, skip + lim).map(({ authentik_sub: _s, ...u }) => u), total: rows.length };
+    }
     const total = Number((await ctx.db.query<{ c: string }>(`select count(*) c from (${base}) u ${w.sql}`, w.params)).rows[0]!.c);
-    const r = await ctx.db.query(`select * from (${base}) u ${w.sql} ${order} limit ${p.limit ?? 1000} offset ${p.offset ?? 0}`, w.params);
+    const r = await ctx.db.query(`select * from (${base}) u ${w.sql} ${order} limit ${lim} offset ${skip}`, w.params);
     return { users: r.rows, total };
   });
 
@@ -209,7 +419,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
       const demote = b.role !== undefined && b.role !== 'admin';
       if (id === actor && (b.disabled || demote)) return reply.code(400).send({ error: 'cannot_lock_yourself_out' });
-      if (b.role !== undefined && !Object.hasOwn(ctx.roles, b.role)) return reply.code(400).send({ error: 'unknown_role' });
+      if (b.role !== undefined && !(await roleExists(ctx, b.role))) return reply.code(400).send({ error: 'unknown_role' });
       if (demote) await assertNotLastAdmin(ctx, [id], 'demote');
       if (b.disabled) await assertNotLastAdmin(ctx, [id], 'lock');
       const cur = (await ctx.db.query<{ access_until: Date | null; locked_reason: LockReason | null }>('select access_until, locked_reason from users where id=$1', [id])).rows[0]!;
@@ -238,7 +448,9 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.post('/api/admin/approvals/:id/approve', admin, async (req) => {
     const id = uuid.parse((req.params as { id: string }).id);
-    const b = z.object({ role: z.enum([...INVITABLE_ROLES, 'admin']), accessUntil: accessUntil.optional() }).parse(req.body);
+    const b = z.object({ role: z.string().regex(ROLE_KEY_RE), accessUntil: accessUntil.optional() }).parse(req.body);
+    // any invitable role of the catalogue, or admin (never invitable, but an approval may grant it)
+    if (b.role !== 'admin' && !(await invitableRoles(ctx)).includes(b.role)) throw new HttpError(400, 'role_not_invitable');
     // serialized: a double click must not provision the same person twice
     return serial(async () => ({ id: await approveRequest(ctx, req.user!.id, id, b.role, toDate(b.accessUntil ?? null)) }));
   });
@@ -262,7 +474,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // ---- user detail page ----
   /** true once the deletion tick has claimed the account: admin changes would act on identities that are being deleted */
-  const claimed = async (id: string) => Boolean((await ctx.db.query('select 1 from account_deletions where user_id=$1', [id])).rowCount);
+  const claimed = (id: string) => accountClaimed(ctx, id);
   /** The account or a 404 HttpError. */
   const userOr404 = async (id: string) => {
     const user = await getUserById(ctx, id);
@@ -287,7 +499,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       ctx.db.query<{ downloads: string; requests: string }>(
         "select (select count(*) from downloads where user_id=$1) downloads, (select count(*) from seerr_requests where user_id=$1 and source='user') requests", [id]),
       listProfiles(ctx, id),
-      ctx.db.query<{ id: string; name: string; last_seen: Date; approved: boolean }>('select device_id id, label name, last_seen, approved from devices where user_id=$1 order by last_seen desc, device_id', [id]),
+      ctx.db.query<{ id: string; name: string; last_seen: Date; approved: boolean }>('select device_id id, coalesce(name, label) name, last_seen, approved from devices where user_id=$1 order by last_seen desc, device_id', [id]),
       userLicenses(ctx, id),
       liveSessions(ctx, id),
       akMfaState(ctx, user.authentik_sub).catch(() => null), // Authentik down: shown like "no Authentik API"
@@ -386,41 +598,72 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     };
   });
 
-  // partial update: omitted fields stay, null goes back to the role. The media server policies follow (MaxActiveSessions),
-  // the gateway forgets the memoised identity of the user's sessions (they stay signed in). 502 `jellyfin` when a policy failed.
+  // every matrix row of the account: effective value (with the kids overlay of ?profile=), the role's value, the override, its layer
+  app.get('/api/admin/users/:id/rights', admin, async (req) => {
+    const user = await userOr404(idParam(req));
+    const { profile: pid } = z.object({ profile: uuid.optional() }).parse(req.query);
+    const profile = pid ? await getProfile(ctx, user.id, pid) : null;
+    if (pid && !profile) throw new HttpError(404, 'not_found');
+    return rightsView(ctx, user, profile);
+  });
+
+  // partial: an omitted field stays, null goes back to the role, an override equal to the role is not stored. 502 policy_partial when
+  // some identities did not take the new policy (the rights are stored either way)
+  app.put('/api/admin/users/:id/rights', admin, async (req, reply) => {
+    const id = idParam(req);
+    const b = rightsBody.parse(req.body);
+    return serial(async () => {
+      const { changed: _c, ...reapplied } = await putRights(ctx, req.user!.id, id, b);
+      if (reapplied.failed) return reply.code(502).send({ error: 'policy_partial', failed: reapplied.failed, identities: reapplied.identities });
+      return { ok: true, reapplied };
+    });
+  });
+
+  // "Can this profile see it?" (spec §6.4, plan ruling 1), read-only. The title search / item lookup uses the media server's admin key but
+  // answers as the profile's own identity (visible + why only; an unknown item id is `hits: []`); the library counts are cached 10 min per
+  // profile. Both views are audited `user.check_viewed` with counts only and before answering (no entry, no answer): the query, the item
+  // id and the titles never reach the audit, a log line or an error. A profile of another account is 404 like an unknown one.
+  const checkOpts = { ...admin, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } };
+  const checkProfile = async (id: string, pid: string) => {
+    const user = await userOr404(id);
+    const profile = await getProfile(ctx, id, pid);
+    if (!profile) throw new HttpError(404, 'not_found');
+    return { user, profile };
+  };
+  app.post('/api/admin/users/:id/check', checkOpts, async (req) => {
+    const id = idParam(req);
+    const b = checkBody.parse(req.body);
+    const { user, profile } = await checkProfile(id, b.profileId);
+    const hits = b.itemId !== undefined ? await checkItem(ctx, user, profile, b.itemId) : await checkTitles(ctx, user, profile, b.query!);
+    await auditInTx(ctx, req.user!.id, 'user.check_viewed', id, { profile: profile.id, hits: hits.length });
+    return { hits };
+  });
+  app.get('/api/admin/users/:id/check', checkOpts, async (req) => {
+    const id = idParam(req);
+    const { profile: pid } = z.object({ profile: uuid }).parse(req.query);
+    const { user, profile } = await checkProfile(id, pid);
+    const libraries = await libraryCounts(ctx, user, profile);
+    await auditInTx(ctx, req.user!.id, 'user.check_viewed', id, { profile: profile.id, libraries: libraries.length });
+    return { libraries };
+  });
+
+  // legacy (one release): the old editor's five fields on the /rights write (audited user.rights); answer and 502 `jellyfin` unchanged
   app.put('/api/admin/users/:id/limits', admin, async (req, reply) => {
     const id = idParam(req);
     const b = limitsBody.parse(req.body);
+    const overrides = { maxStreams: b.maxStreams, remoteMaxBitrate: b.remoteBitrate, maxDownloads: b.maxDownloads, downloadMaxHeight: b.downloadMaxHeight, requestsPerMonth: b.requestsPerMonth };
     return serial(async () => {
-      const user = await userOr404(id);
-      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
-      const from = await getUserLimits(ctx, id);
-      const to = { ...from, ...b };
-      if (JSON.stringify(from) !== JSON.stringify(to)) {
-        await setUserLimits(ctx, id, to);
-        await audit(ctx, req.user!.id, 'user.limits', id, { from, to });
-      }
-      invalidateLimits(id);
-      const { failed } = await reapplyAccount(ctx, user);
-      await forgetUserAuth(ctx, id);
+      const { failed } = await putRights(ctx, req.user!.id, id, { overrides });
       if (failed) return reply.code(502).send({ error: 'jellyfin' });
-      return { limits: to };
+      return { limits: await getUserLimits(ctx, id) };
     });
   });
 
   // "Repair link": the role policy again on every media server identity, and the request-service user mapped again
-  app.post('/api/admin/users/:id/repair', admin, async (req, reply) => {
+  app.post('/api/admin/users/:id/repair', admin, async (req) => {
     const id = idParam(req);
     return serial(async () => {
-      const user = await userOr404(id);
-      // a claimed account: the request-service user may already be deleted, a repair would create an orphan
-      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
-      const jellyfin = await reapplyAccount(ctx, user);
-      const before = user.seerr_user_id;
-      // no request service: nothing to map (null), and the repair is not a partial failure because of it
-      const requestsOk = requestsEnabled(ctx) ? await ensureSeerrUser(ctx, user).then(() => true, () => false) : null;
-      await audit(ctx, req.user!.id, 'user.repair', id, { jellyfin, requests: { ok: requestsOk, from: before, to: user.seerr_user_id } });
-      return { ok: !jellyfin.failed && requestsOk !== false, jellyfin, requests: { ok: requestsOk, id: user.seerr_user_id } };
+      return repairAccount(ctx, req.user!.id, await userOr404(id));
     });
   });
 
@@ -454,35 +697,68 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true };
   });
 
-  // rename a profile (the owner profile too, as its user can) and/or clear its PIN
+  // rename a profile (the owner profile too, as its user can), clear its PIN, switch it to / from kids, set its age cap (kids only).
+  // 502 jellyfin: the media server did not take the policy of a kids change (stored and audited either way; "Repair" re-applies it)
   app.patch('/api/admin/users/:id/profiles/:pid', admin, async (req, reply) => {
     const { id, pid } = z.object({ id: uuid, pid: uuid }).parse(req.params);
-    const b = z.object({ name: z.string().trim().min(1).max(20).optional(), resetPin: z.literal(true).optional() }).strict()
-      .refine((x) => x.name !== undefined || x.resetPin, { path: ['name'] }).parse(req.body);
-    const p = await getProfile(ctx, id, pid);
-    if (!p) return reply.code(404).send({ error: 'not_found' });
-    if (b.name && (await ctx.db.query('select 1 from profiles where user_id=$1 and lower(name)=lower($2) and id<>$3', [id, b.name, pid])).rowCount) {
-      return reply.code(409).send({ error: 'name_taken' });
-    }
-    let u: ProfileRow;
-    try {
-      u = (await ctx.db.query<ProfileRow>('update profiles set name=coalesce($2, name), pin_hash=case when $3 then null else pin_hash end where id=$1 returning *',
-        [pid, b.name ?? null, Boolean(b.resetPin)])).rows[0]!;
-    } catch (e) {
-      if ((e as { code?: string }).code === '23505') return reply.code(409).send({ error: 'name_taken' });
-      throw e;
-    }
-    if (b.resetPin) await ctx.kv.del(`pinfail:${pid}`);
-    await audit(ctx, req.user!.id, 'profile.admin_update', id, {
-      profile: pid, from: { name: p.name, hasPin: Boolean(p.pin_hash) }, to: { name: u.name, hasPin: Boolean(u.pin_hash) },
+    const b = adminProfileBody.parse(req.body);
+    return serial(async () => {
+      const user = await userOr404(id);
+      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
+      const { profile: u, policyFailed } = await updateProfile(ctx, req.log, req.user!.id, user, pid, b);
+      if (policyFailed) return reply.code(502).send({ error: 'jellyfin' });
+      return { profile: { ...publicProfile(u), hasPin: Boolean(u.pin_hash) } };
     });
-    return { profile: { ...publicProfile(u), hasPin: Boolean(u.pin_hash) } };
+  });
+
+  // a kids profile for the account, through the same path as the owner's own (max 5 profiles, unique name, hidden identity with the kids
+  // policy): 409 max_profiles / name_taken, 502 jellyfin
+  app.post('/api/admin/users/:id/profiles', admin, async (req, reply) => {
+    const id = idParam(req);
+    const b = adminKidsProfileBody.parse(req.body);
+    return serial(async () => {
+      const user = await userOr404(id);
+      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
+      let p: ProfileRow;
+      try {
+        p = await createProfile(ctx, user, { name: b.name, avatar: b.avatar, kids: true, maxRating: b.maxRating });
+      } catch (e) {
+        if (e instanceof ProfileError) return reply.code(e.status).send({ error: e.code });
+        throw e;
+      }
+      await audit(ctx, req.user!.id, 'profile.admin_create', id, { profile: p.id, maxRating: p.kids_max_rating });
+      return reply.code(201).send({ profile: { ...publicProfile(p), hasPin: Boolean(p.pin_hash) } });
+    });
+  });
+
+  // deletes a kids profile of the account like its owner can (400 owner_profile / not_kids_profile otherwise): media server identity first (502 jellyfin), then the row (list,
+  // history, favourites, progress, hand-off and download rows cascade, device kids locks go); its sessions re-resolve their profile
+  app.delete('/api/admin/users/:id/profiles/:pid', admin, async (req, reply) => {
+    const { id, pid } = z.object({ id: uuid, pid: uuid }).parse(req.params);
+    return serial(async () => {
+      await userOr404(id);
+      if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
+      const p = await getProfile(ctx, id, pid);
+      if (!p) return reply.code(404).send({ error: 'not_found' });
+      if (p.is_owner) return reply.code(400).send({ error: 'owner_profile' });
+      // grown-up profiles stay the account holder's business (spec §11 decision 7)
+      if (!p.kids) return reply.code(400).send({ error: 'not_kids_profile' });
+      try {
+        await deleteProfile(ctx, p);
+      } catch (e) {
+        if (e instanceof ProfileError) return reply.code(e.status).send({ error: e.code });
+        throw e;
+      }
+      await dropProfileSessions(ctx, id, pid);
+      await audit(ctx, req.user!.id, 'profile.admin_delete', id, { profile: pid });
+      return { ok: true };
+    });
   });
 
   // ---- invites: multi-use (maxUses), optional access days for the accounts they create ----
   app.post('/api/admin/invites', admin, async (req) => {
     const b = z.object({
-      role: z.enum(INVITABLE_ROLES),
+      role: z.string().regex(ROLE_KEY_RE),
       ttlHours: z.number().int().min(1).max(24 * 14).default(48),
       note: z.string().max(100).optional(),
       /** false: the person already has an Authentik account, skip enrollment */
@@ -492,6 +768,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       /** access_until of each new account = now + accessDays; null = no end */
       accessDays: z.number().int().min(1).max(3650).nullable().default(null),
     }).parse(req.body);
+    if (!(await invitableRoles(ctx)).includes(b.role)) throw new HttpError(400, 'role_not_invitable');
     const inv = await createInvite(ctx, req.user!.id, b, req.log);
     await audit(ctx, req.user!.id, 'invite.create', inv.id, { role: b.role, authentik: inv.authentik, maxUses: b.maxUses, accessDays: b.accessDays });
     // token is shown exactly once

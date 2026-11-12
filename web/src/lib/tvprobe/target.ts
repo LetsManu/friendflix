@@ -52,6 +52,7 @@ export async function fetchProbeTarget(win: { location: { origin: string } }, fe
     hlsUrl: abs(info.hlsUrl),
     direct: Boolean(info.directUrl),
     // the stop report stores a position for the owner's title: send the resume point back, never a made-up 0 (that would reset it)
-    report: () => call('/api/playback/stop', 'POST', { itemId, playSessionId: info.playSessionId, mediaSourceId: info.mediaSourceId, positionTicks: info.resumeTicks ?? 0, isPaused: false, playMethod }),
+    // (`probe`: a test play, the server keeps it out of the device hand-off)
+    report: () => call('/api/playback/stop', 'POST', { itemId, playSessionId: info.playSessionId, mediaSourceId: info.mediaSourceId, positionTicks: info.resumeTicks ?? 0, isPaused: false, playMethod, probe: true }),
   };
 }

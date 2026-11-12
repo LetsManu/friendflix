@@ -340,6 +340,30 @@ describe('GET /api/library/request-suggestions (route)', () => {
     expect((await get()).json().debug).toBeUndefined();
   });
 
+  it('?debug=cached reads the counts of the last build without building; only the admin on the owner profile gets them', async () => {
+    const uid = (await env.pool.query<{ id: string }>('select id from users limit 1')).rows[0]!.id;
+    await env.pool.query("update users set role='admin' where id=$1", [uid]);
+    for (const k of await env.kv.keys('reqsug:')) await env.kv.del(k);
+    const cached = (u = '/api/library/request-suggestions?type=movie&debug=cached') => get(u);
+    // nothing built yet: null, and the call built nothing
+    const none = await cached();
+    expect([none.statusCode, none.json().debug, none.json().items]).toEqual([200, null, undefined]);
+    expect(await env.kv.keys('reqsug:')).toEqual([]);
+    // a real build stores its counts with the list; the cached read returns exactly those
+    const built = (await get()).json();
+    expect(built.debug).toBeTruthy();
+    const again = (await cached()).json();
+    expect(again.debug).toEqual(built.debug);
+    expect(typeof again.builtAt).toBe('string');
+    expect(again.items).toBeUndefined();
+    // another type was never built
+    expect((await cached('/api/library/request-suggestions?type=series&debug=cached')).json().debug).toBeNull();
+    // a normal reader gets no counts, not even from the cache
+    await env.pool.query("update users set role='friend' where id=$1", [uid]);
+    const r = await cached();
+    expect([r.statusCode, r.json().debug]).toEqual([200, undefined]);
+  });
+
   it('kids profile: 403 kids_profile, no request-service call', async () => {
     const k = await env.app.inject({ method: 'POST', url: '/api/profiles', cookies: sess.cookies, headers: { 'x-csrf-token': sess.csrf }, payload: { name: 'Mia', kids: true } });
     const sw = await env.app.inject({ method: 'POST', url: `/api/profiles/${k.json().profile.id}/select`, cookies: sess.cookies, headers: { 'x-csrf-token': sess.csrf }, payload: {} });

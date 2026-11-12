@@ -10,6 +10,7 @@ import { localizeStored, notify } from '../notify.js';
 import { portalStatus, RequestsDisabledError, requestsClient, requestsEnabled, requestStateKey, SeerrError, viewerLanguage } from '../seerr/client.js';
 import { ensureSeerrUser } from '../seerr/service.js';
 import { requireGrownUp } from '../kids.js';
+import { requirePerm } from '../permGuard.js';
 import { requireAdmin } from '../session.js';
 import { limitFor, quota, release, reserve, resetsAt, usage } from '../requestlimit.js';
 import { checkSecret } from './internal.js';
@@ -40,7 +41,9 @@ const requestsOn = (ctx: Ctx) => async () => {
 
 export function seerrRoutes(app: FastifyInstance, ctx: Ctx) {
   const on = requestsOn(ctx);
-  const pre = { preHandler: [requireGrownUp(ctx), on] }; // Seerr requests are for grown-ups: kids profiles get 403 kids_profile
+  // Seerr requests are for grown-ups: kids profiles get 403 kids_profile; then 404 requests_disabled without the service, then 403
+  // requests_forbidden without the `requests` switch (admins always have it: the admin routes below need only `on`)
+  const pre = { preHandler: [requireGrownUp(ctx), on, requirePerm(ctx, 'requests', 'requests_forbidden')] };
   // the poster proxy fetches TMDB itself: it also serves stored posters (polls, reminders) while the request service is off
   const img = { preHandler: requireGrownUp(ctx) };
   // the account's notifications (party invites, recommendations, requests ...) are not shown on kids profiles either

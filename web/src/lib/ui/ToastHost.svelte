@@ -89,8 +89,11 @@
 </section>
 
 <style>
-  /* centred at the bottom on every layout (glass spec §5): 36 px up on desktop, above the tab bar on phones */
-  .toasts { position: fixed; z-index: 120; left: 50%; transform: translateX(-50%); bottom: calc(36px + var(--castbar-h, 0px)); width: max-content; max-width: min(560px, calc(100vw - 2rem)); pointer-events: none; }
+  /* centred at the bottom on every layout (glass spec §5): 36 px up on desktop, above the tab bar on phones. Above the cast bar
+     and the save bar of staged rights while they show: lifted by their rooms (--castbar-h, --savebar-h) with a transform that
+     glides like the bars (240 ms, GLASS_OUT), so a room that comes or goes never makes a toast jump; `bottom` stays fixed */
+  .toasts { position: fixed; z-index: 120; left: 50%; bottom: 36px; transform: translate(-50%, calc(-1 * (var(--castbar-h, 0px) + var(--savebar-h, 0px))));
+    transition: transform 240ms var(--fr-out); width: max-content; max-width: min(560px, calc(100vw - 2rem)); pointer-events: none; }
   ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; gap: .5rem; }
   .toast { pointer-events: auto; display: flex; align-items: center; gap: 10px; max-width: 100%; box-sizing: border-box; padding: 4px 4px 4px 18px; min-height: 52px; font-weight: 700; }
   .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--mut); }
@@ -112,7 +115,10 @@
   .x:hover:not(:disabled) { background: var(--fr-sel); color: #fff; }
   @media (max-width: 720px) {
     /* above the phone tab bar (and the cast bar on it) */
-    .toasts { bottom: calc(var(--tabbar-h) + var(--safe-bottom) + .6rem + var(--castbar-h, 0px)); }
+    .toasts { bottom: calc(var(--tabbar-h) + var(--safe-bottom) + .6rem); }
   }
   :global(html.tv) .toasts { bottom: 2rem; }
+  /* calm mode and reduced motion: the lift switches at once */
+  :global(html.m-still) .toasts { transition: none; }
+  @media (prefers-reduced-motion: reduce) { .toasts { transition: none; } }
 </style>

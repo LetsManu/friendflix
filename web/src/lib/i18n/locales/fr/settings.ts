@@ -13,6 +13,7 @@ const settings: Translation<typeof de> = {
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Les modifications s’appliquent immédiatement, sans redémarrage. Le réglage fin pour experts (RECO_COEFFS et les poids d’index RECO_W_*) se fait uniquement dans .env.' },
   serverHelp: 'Valeurs de l’environnement du conteneur. Lecture seule ; les identifiants ne sont jamais affichés.',
+  roleTemplatesNote: 'Les rôles se modifient désormais sous Personnes → Rôles et droits ; les valeurs du .env continuent de s’appliquer en dessous.',
   source: { env: 'De l’environnement', db: 'Enregistré', default: 'Par défaut', bootstrap: 'Du fichier de démarrage', unset: 'Non défini' },
   locked: 'Vient de l’environnement (.env) et ne peut pas être modifié ici.',
   restart: 'Redémarrage requis',
@@ -156,6 +157,7 @@ const settings: Translation<typeof de> = {
     DOWNLOAD_CREATE_PER_HOUR: { label: 'Téléchargements par heure', help: 'Nombre maximal de nouveaux téléchargements par heure et par session.' },
     CAST_ENABLED: { label: 'Chromecast', help: 'Lecture sur les appareils Chromecast. Nécessite une adresse publique avec un certificat https valide.' },
     CAST_RECEIVER_APP_ID: { label: 'ID d’application du récepteur Cast', help: 'Vide : Chromecast utilise le récepteur par défaut de Google. Avec l’ID d’application du récepteur FriendFlix (8 caractères, depuis la Google Cast SDK Developer Console, adresse du récepteur https://<votre adresse>/cast-receiver/), la TV affiche « Épisode suivant » avec un compte à rebours, « Toujours là ? » et « Passer l’intro », et enregistre la progression même quand le téléphone est en veille. Voir docs/cast-receiver.md.' },
+    CAST_AIRPLAY_CONTINUOUS: { label: 'AirPlay continu (expérimental)', help: 'Expérimental. À activer seulement une fois le test réussi avec ton téléviseur AirPlay ; il s’applique ensuite à tous les profils.' },
     PREVIEW_WARM: { label: 'Préparer les aperçus', help: 'Crée au repos les clips d’aperçu manquants, un par minute.' },
     HOME_NETWORKS: { label: 'Réseaux domestiques', help: 'Réseaux considérés comme la maison (pas de limite de débit à distance), séparés par des virgules, p. ex. 192.168.0.0/16.' },
     UPLOAD_MBPS: { label: 'Débit montant du serveur (Mbit/s)', help: 'Le débit montant de votre connexion internet. Lorsqu’il est presque saturé, les nouvelles lectures hors domicile démarrent en qualité réduite au lieu de faire saccader tout le monde. Les lectures en cours et le réseau domestique ne changent pas. Vide = désactivé.' },

@@ -64,25 +64,56 @@ export function isHomeAddress(ip: string, cidrs: string[]): boolean {
   return b !== null && cidrs.some((c) => inCidr(b, c));
 }
 
+/**
+ * Peers whose X-Forwarded-For Fastify believes (`trustProxy`): loopback, link-local and private (RFC 1918 / unique-local) addresses, i.e. the
+ * documented setups (the reverse proxy on the host, or in a bridge container, reaches the backend on BIND_ADDR). Anything else that connects
+ * directly is taken at its socket address, so a spoofed X-Forwarded-For cannot pick another rate-limit bucket. A proxy that reaches the
+ * backend from a public address is not supported (docs/setup.md). `req.ip` is then the first address, walking back from the peer, that is not
+ * one of these: the client the proxy appended.
+ */
+export const TRUSTED_PROXY_RANGES: readonly string[] = ['loopback', 'linklocal', 'uniquelocal'];
+
 interface AddrReq { headers: Record<string, string | string[] | undefined>; socket?: { remoteAddress?: string } }
 const hdr = (req: AddrReq, k: string) => {
   const v = req.headers[k];
   return typeof v === 'string' ? v : Array.isArray(v) ? v.join(',') : '';
 };
 
+/** true when the direct peer is a proxy we trust: loopback, link-local or private (the same rule as [TRUSTED_PROXY_RANGES]) */
+export function isTrustedPeer(ip: string | undefined): boolean {
+  return !!ip && isHomeAddress(ip, TRUSTED_PEER_CIDRS);
+}
+const TRUSTED_PEER_CIDRS = ['127.0.0.0/8', '::1/128', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', 'fc00::/7', 'fe80::/10'];
+
 /**
- * The caller's address, derived like the gateway's clientKey: X-Real-IP, else the LAST X-Forwarded-For entry (the one our proxy appended),
- * else the socket peer. Never req.ip: Fastify's trustProxy takes the leftmost (client-controlled) entry.
+ * The caller's address: from a trusted proxy peer (see [isTrustedPeer]) X-Real-IP, else the LAST X-Forwarded-For entry (the one our proxy
+ * appended); from any other peer, or without a usable header, the socket address. Headers a direct (non-proxy) client sends are never
+ * believed. Same address as Fastify's `req.ip` in the documented setup, where the proxy sends exactly one entry.
  */
 export function clientAddress(req: AddrReq): string {
   return (forwardedAddress(req) || req.socket?.remoteAddress || 'unknown').slice(0, 64);
 }
 
-/** The address a proxy header names (X-Real-IP, else the last X-Forwarded-For entry); '' when neither carries a usable value (e.g. "X-Forwarded-For: ,"). */
+/** The address a trusted proxy's header names (X-Real-IP, else the last X-Forwarded-For entry); '' when the peer is not trusted or neither carries a usable value (e.g. "X-Forwarded-For: ,"). */
 function forwardedAddress(req: AddrReq): string {
+  if (!isTrustedPeer(req.socket?.remoteAddress)) return '';
   const real = hdr(req, 'x-real-ip').trim();
   if (real) return real;
   return hdr(req, 'x-forwarded-for').split(',').pop()?.trim() ?? '';
+}
+
+let noted = false;
+/** test hook: allows the one-time warning of [noteUntrustedForwarding] again */
+export function resetUntrustedForwardingNote(): void { noted = false; }
+/**
+ * Once per process: a request carried X-Forwarded-For but its peer is not loopback/private, so the header is ignored. Usually a proxy
+ * reaching the backend over a public address, Tailscale (100.64.0.0/10) or public IPv6, which is not supported (all users would then share
+ * one client address). Names no address.
+ */
+export function noteUntrustedForwarding(req: AddrReq, log: { warn: (msg: string) => void }): void {
+  if (noted || !hdr(req, 'x-forwarded-for') || isTrustedPeer(req.socket?.remoteAddress)) return;
+  noted = true;
+  log.warn('X-Forwarded-For from a peer that is not loopback or private was ignored; a reverse proxy must reach the backend from a private address (docs/setup.md). Logged once.');
 }
 
 /** Home network check for a request: without a usable forwarding header only a loopback peer is home (a docker bridge peer is not). */

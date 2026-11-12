@@ -7,6 +7,7 @@
   import { badges, wantBadge } from '#lib/fresh';
   import Icon from '#lib/Icon.svelte';
   import { autoplayAllowed, playPreview, previewOwner, previewSound, stopPreview, toggleSound } from '#lib/preview';
+  import { focusFirst } from '#lib/spatial';
   import { prefs } from '#lib/stores';
   import { tvFocus, tvRank } from './focus';
   import { createSettle, tileInfo, TILE_DELAY_MS, TILE_TRAILER_MS, trailerAllowed } from './focusTile';
@@ -38,7 +39,7 @@
   let logoFailed: Record<string, boolean> = {};
 
   // ---- text change (spec 5.2): the old text fades out in 120 ms (no slide), the new one re-enters in a stagger ----
-  let bodyEl: HTMLElement | undefined, textId = '';
+  let bodyEl: HTMLElement | undefined, slotEl: HTMLElement | undefined, textId = '';
   // `$:` runs before the DOM update: the snapshot still shows the old title
   $: if (item) onText(item.id);
   function onText(id: string) {
@@ -58,6 +59,7 @@
     g.classList.add('ghost');
     g.setAttribute('aria-hidden', 'true');
     g.inert = true;
+    g.querySelector('[data-tile-slot]')?.remove(); // the overlay in the slot (hand-off card) keeps its own state, it is not text
     g.querySelectorAll('[data-autofocus], [data-st], [id]').forEach((n) => { n.removeAttribute('data-autofocus'); n.removeAttribute('data-st'); n.removeAttribute('id'); });
     g.querySelectorAll('a, button').forEach((n) => n.setAttribute('tabindex', '-1'));
     el.after(g);
@@ -106,6 +108,13 @@
   }
   $: if (playing && owner && $previewOwner !== owner) { playing = false; owner = ''; clearVideo(); } // something else took over or it failed
   onDestroy(() => { settle.cancel(); stop(); });
+
+  /** Up from the tile's buttons reaches the overlay in the `handoff` slot (top right, too far off the geometric search's axis) */
+  function upToSlot(node: HTMLElement) {
+    const on = (e: Event) => { if ((e as CustomEvent<{ dir: string }>).detail?.dir === 'up' && slotEl && focusFirst(slotEl, false)) e.preventDefault(); };
+    node.addEventListener('ff-nav', on);
+    return { destroy: () => node.removeEventListener('ff-nav', on) };
+  }
 </script>
 
 <section class="tile" class:still={still || (playing && framed)} aria-label={info?.title ?? ''}>
@@ -129,12 +138,14 @@
           <h1 class="tv-display" data-st>{info.title}</h1>
         {/if}
       {/key}
+      <!-- an overlay (absolute, top right of the tile: the body is not positioned): after the title in reading order, before the buttons -->
+      <div class="slot" data-tile-slot bind:this={slotEl}><slot name="handoff" /></div>
       {#if info.meta.length}<p class="tv-meta meta" data-st>{#each info.meta as m, i}{#if i}<span class="sep" aria-hidden="true">·</span>{/if}<span class:age={!!item.rating && m === item.rating}>{m}</span>{/each}</p>{/if}
       {#if info.resume}<p class="tv-meta resume" data-st>{info.resume}</p>{/if}
       {#if info.synopsis}<p class="tv-body ov" data-st>{info.synopsis}</p>{/if}
       {#if info.reason}<p class="tv-meta why" data-st>{info.reason}</p>{/if}
       {#if showButtons}
-        <div class="btns" data-st>
+        <div class="btns" data-st use:upToSlot>
           <a class="tv-btn" data-autofocus href="/watch/{item.id}"><Icon name="play" size={28} />{$t('home.card.play')}</a>
           <a class="tv-btn2" href="/item/{item.id}"><Icon name="info" size={28} />{$t('home.hero.moreInfo')}</a>
         </div>
@@ -148,9 +159,9 @@
 
 <style>
   /* sticky + above the rows (z-index 3): the rows slide up underneath it; it is opaque, so nothing shows through. Clipping lives on the art box so the focused button is not cut. */
-  .tile { position: sticky; top: 0; z-index: 3; height: 50vh; background: var(--bg); }
+  .tile { position: sticky; top: 0; z-index: 3; height: 50vh; background: var(--bg); display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
   /* backdrop: 72 vw, anchored right/top; the fades live on the same box, so they start exactly at the image edge (no seam) */
-  .art { position: absolute; top: 0; right: 0; width: 72vw; height: 100%; overflow: hidden; pointer-events: none; }
+  .art { position: absolute; top: 0; right: 0; z-index: -1; width: 72vw; height: 100%; overflow: hidden; pointer-events: none; }
   /* backdrop change (spec 5.2): 280 ms crossfade; the incoming image settles from 102 % to 100 % */
   .layer, .vid { position: absolute; inset: 0; opacity: 0; transition: opacity calc(var(--tv-fade) * .7) ease-in; }
   .layer.on { opacity: 1; transition: opacity var(--tv-fade) ease-out; }
@@ -171,7 +182,10 @@
     linear-gradient(180deg, rgba(0, 0, 0, .35) 0%, rgba(0, 0, 0, 0) 20%),
     linear-gradient(0deg, #000 0%, rgba(0, 0, 0, .6) 22%, rgba(0, 0, 0, 0) 48%),
     linear-gradient(90deg, #000 0%, #000 18%, rgba(0, 0, 0, .82) 34%, rgba(0, 0, 0, .35) 58%, rgba(0, 0, 0, 0) 78%); }
-  .body { position: absolute; left: var(--tv-gutter); bottom: 6vh; width: min(52%, 60rem); display: flex; flex-direction: column; align-items: flex-start; }
+  /* the text column: bottom left of the tile (a grid cell, not positioned, so the `handoff` overlay inside it is placed against the
+     tile); the outgoing copy (.ghost) shares the cell. z-index -1 on .art keeps the artwork under it. */
+  .body { grid-area: 1 / 1; align-self: end; margin: 0 0 6vh var(--tv-gutter); width: min(52%, 60rem); display: flex; flex-direction: column; align-items: flex-start; }
+  .slot { display: contents; }
   .tv-eyebrow { margin: 0 0 .75rem; }
   .logo { display: block; max-width: 32.5rem; max-height: 10rem; object-fit: contain; object-position: left bottom; }
   .meta { margin: 1rem 0 0; display: flex; flex-wrap: wrap; align-items: center; }

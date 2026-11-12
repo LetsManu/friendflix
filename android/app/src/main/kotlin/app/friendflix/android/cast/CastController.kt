@@ -399,7 +399,7 @@ class CastController(
     private fun closeEnded(p: CastLookup) {
         if (!closed.add(p.castId)) return
         val pos = Position(((p.runtimeTicks ?: 0) / TICKS_PER_MS).coerceAtLeast(0), paused = false)
-        val body = PlaybackReporter.body(ReportSession(p.itemId, p.playSessionId, p.mediaSourceId, null, direct = false), pos)
+        val body = castBody(PlaybackReporter.body(ReportSession(p.itemId, p.playSessionId, p.mediaSourceId, null, direct = false), pos))
         io.execute { server.report(PlaybackReporter.Kind.STOP, body); server.revoke(p.castId) }
     }
 
@@ -742,9 +742,12 @@ class CastController(
     }
 
     private fun report(s: Live, kind: PlaybackReporter.Kind, ci: CastInfo) {
-        val body = PlaybackReporter.body(ReportSession(s.itemId, ci.playSessionId, ci.mediaSourceId, s.audioIndex, direct = false), Position(s.positionMs, s.paused))
+        val body = castBody(PlaybackReporter.body(ReportSession(s.itemId, ci.playSessionId, ci.mediaSourceId, s.audioIndex, direct = false), Position(s.positionMs, s.paused)))
         io.execute { server.report(kind, body) }
     }
+
+    /** a report for the cast token: the TV plays it through Chromecast (device hand-off, like the web engine's `via`) */
+    private fun castBody(body: JSONObject): JSONObject = body.put("via", VIA)
 
     /** the owed `stop` for the live token */
     private fun stopReport(s: Live) {
@@ -801,6 +804,8 @@ class CastController(
     companion object {
         /** engine.ts PROGRESS_MS */
         const val PROGRESS_MS = 10_000L
+        /** `via` of every cast report (backend reportBody: 'airplay' | 'chromecast'; Android casts only to Chromecast) */
+        const val VIA = "chromecast"
         /** engine.ts RENEW_BEFORE_MS */
         const val RENEW_BEFORE_MS = 10 * 60_000L
         /** engine.ts UNPINNED_RETRY_MS: the one retry after `409 cast_unpinned` */

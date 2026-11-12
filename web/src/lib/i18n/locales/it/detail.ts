@@ -10,6 +10,8 @@ const it: Translation<typeof de> = {
     resume: 'Riprendi',
     continue: 'Continua',
     episodeCode: 'S{s}:E{e}',
+    handoffLine: 'Continua da {time} (ultima volta su {device})',
+    handoffAria: '{play}, continua da {time}, ultima volta su {device}',
     myList: 'Watchlist',
     addToList: 'Aggiungi alla watchlist',
     removeFromList: 'Rimuovi dalla watchlist',

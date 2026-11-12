@@ -88,7 +88,11 @@ Klicke irgendwo in der Web-App auf Abspielen. Der Player öffnet in einem eigene
 
 Die Medientasten deiner Tastatur und die Windows-Medienanzeige (Lautstärke-Flyout, Sperrbildschirm) steuern die Wiedergabe; die Anzeige zeigt den Titel, ohne Plakat.
 
+Das ist die eigene Medientasten-Unterstützung von mpv und bleibt, wie sie ist. Nur der Ausweg *Play in the web player* (ein WebView2-Fenster) nutzt für Medientasten und Anzeige die Media Session des Browsers. Ob WebView2 sie an die Windows-Medienanzeige weitergibt, ist nicht zugesagt; der Betreiber hält es in der manuellen Checkliste fest (Punkt 17).
+
 Der Fortschritt geht an den Server (Start, alle 10 Sekunden, Pause, Fortsetzen, Spulen, Ende), sodass Web und die anderen Apps dieselbe Position zeigen. Hängt die Wiedergabe länger als 15 Sekunden, erscheint *Reconnecting…* und der Player lädt bis zu dreimal neu. Endet die Sitzung (Anmeldung abgelaufen), schließt der Player und die App zeigt die Anmeldeseite.
+
+**Von einem anderen Gerät weiterschauen.** Hast du in den letzten 6 Stunden auf einem anderen Gerät einen Titel angehalten, zeigt die Startseite eine Karte, zum Beispiel „Zuletzt auf Wohnzimmer · vor 12 Min.“, mit *Hier weiterschauen ab 23:10*. Der Knopf öffnet mpv genau an dieser Position (die Karte verspricht eine Zeit, darum startet sie nie am gespeicherten Wiedergabestand). Das andere Gerät bleibt unberührt. *Ausblenden* blendet die Karte an diesem PC aus.
 
 ## Tray, Links und eine Instanz
 
@@ -180,7 +184,7 @@ Unit-Tests und CI decken die Logik ab und dass die App baut; diese Punkte brauch
 **Kapitel, Vorschau, Tasten**
 15. Die Kapitelliste springt beim Anklicken; die Kapitelmarken sind auf der Zeitleiste zu sehen. Beim Ziehen der Zeitleiste erscheint das Vorschaubild; ein Server ohne Vorschauen zeigt keines und das Spulen geht.
 16. Alle Tasten der Tabelle unter [Player](#player) tun, was dort steht; die Leisten blenden nach 3 Sekunden aus und bleiben bei Pause sichtbar.
-17. Die Medientasten der Tastatur (Abspielen/Pause, Weiter) und die Windows-Medienanzeige steuern den Player und zeigen den Titel.
+17. Die Medientasten der Tastatur (Abspielen/Pause, Weiter) und die Windows-Medienanzeige steuern den Player und zeigen den Titel. Danach einen Titel im Ausweg *Play in the web player* abspielen: festhalten, ob Medientasten und Anzeige folgen (nur Beobachtung, nicht gefordert).
 
 **Fehler**
 18. Trenne das Netzwerk beim Abspielen 20 Sekunden: *Reconnecting…* erscheint und die Wiedergabe setzt danach an ihrer Position fort.

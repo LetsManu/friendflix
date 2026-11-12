@@ -9,6 +9,7 @@
    * Mounted for as long as the Player lives, so the TV a session started on is remembered whichever way it was picked.
    */
   import { afterUpdate, createEventDispatcher, onDestroy, tick } from 'svelte';
+  import { perms } from '#lib/perms';
   import { castCapableBrowser, castState, onCastEvent, requestCastSession } from '#lib/cast';
   import { growBoth, scrimFade, sheetSlide, twoWay } from '#lib/glass/fx';
   import { SCRIM_MENU } from '#lib/glass/tone';
@@ -48,9 +49,8 @@
   const form = typeof navigator === 'undefined' ? 'computer' : formFactor(navigator, typeof innerWidth === 'number' ? innerWidth : 1024);
   $: casting = $castSession && $castSession.state !== 'detached' ? $castSession.kind : airplayActive ? 'airplay' as const : null;
   $: rows = playOnRows({
-    chromecast: typeof navigator !== 'undefined' && castCapableBrowser(), devices: $castState.available || $castState.connected,
-    airplay, apple: typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent), continuousAvailable: false,
-    episode: episode !== '', last, casting, form, tf: $t,
+    chromecast: typeof navigator !== 'undefined' && $perms.cast && castCapableBrowser(), devices: $castState.available || $castState.connected,
+    airplay, last, casting, form, tf: $t,
   });
   /** the row set is frozen while the sheet is open (a target going away must not move the rows under the finger); titles and ticks stay live */
   let held: PlayOnRow[] = [];
@@ -62,7 +62,7 @@
   onDestroy(off);
   last = lastDevice(store);
 
-  const ICON: Record<PlayOnRow['id'], 'tv' | 'plus' | 'airplay' | 'play' | 'monitor'> = { last: 'tv', another: 'plus', airplay: 'airplay', continuous: 'play', here: 'monitor' };
+  const ICON: Record<PlayOnRow['id'], 'tv' | 'plus' | 'airplay' | 'monitor'> = { last: 'tv', another: 'plus', airplay: 'airplay', here: 'monitor' };
 
   /** popover: below the trigger when it sits in the upper half, above it otherwise; clamped into the window */
   function place() {
@@ -130,9 +130,9 @@
         {#each shown as r (r.id)}
           {#if r.id === 'here'}<li class="div" role="presentation"></li>{/if}
           <li>
-            <button type="button" class="row" class:on={r.checked} class:sub={r.id === 'continuous'} aria-current={r.checked ? 'true' : undefined} data-row={r.id} on:click={() => choose(r.id)}>
+            <button type="button" class="row" class:on={r.checked} aria-current={r.checked ? 'true' : undefined} data-row={r.id} on:click={() => choose(r.id)}>
               <span class="ic" aria-hidden="true"><Icon name={ICON[r.id]} size={22} /></span>
-              <span class="tx"><span class="t">{r.title}{#if r.id === 'continuous'} <span class="badge">{$t('common.experimental')}</span>{/if}</span><span class="h">{r.hint}</span></span>
+              <span class="tx"><span class="t">{r.title}</span><span class="h">{r.hint}</span></span>
               {#if r.checked}<span class="tick" aria-hidden="true"><Icon name="check" size={20} /></span>{/if}
             </button>
           </li>
@@ -158,7 +158,6 @@
   .row { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 64px; padding: 0 14px; border-radius: 12px; border: 0; background: transparent; color: #fff; text-align: left; font: inherit; cursor: pointer; box-shadow: none; }
   .row:hover:not(:disabled) { background: rgba(255, 255, 255, .09); box-shadow: none; }
   .row.on { background: var(--fr-sel); }
-  .row.sub { margin-left: 28px; width: calc(100% - 28px); }
   .row:focus-visible, .x:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   .ic { flex: none; display: grid; place-items: center; width: 28px; }
   .tx { flex: 1; min-width: 0; display: grid; gap: 2px; }
@@ -166,7 +165,6 @@
   .h { font-size: .84rem; font-weight: 500; color: rgba(255, 255, 255, .9); }
   .row.on .h, .row:hover .h { color: #fff; }
   .tick { flex: none; color: var(--acc-light, #ff8aa0); display: grid; place-items: center; }
-  .badge { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: .72rem; font-weight: 800; background: rgba(255, 255, 255, .16); }
   /* calm mode and reduced motion: nothing moves */
   :global(html.m-still) .po-wrap :global(*) { transition: none !important; animation: none !important; }
   @media (prefers-reduced-motion: reduce) { .po-wrap :global(*) { transition: none !important; animation: none !important; } }

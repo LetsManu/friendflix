@@ -10,8 +10,8 @@ import { qrPath } from './qr';
 describe('admin summary store', () => {
   let answer: { status: number; body?: unknown };
   const base: AdminSummary = {
-    users: { total: 3, active: 2, locked: 1 },
-    pending: { requests: 2, devices: 1, polls: 0, invites: 0, previewsFailed: 0 },
+    users: { total: 3, active: 2, locked: 1, expiring: 0 },
+    pending: { requests: 2, devices: 1, polls: 0, invites: 0, approvals: 0, previewsFailed: 0 },
     requests: null,
     storage: { downloadsEnabled: true, downloadsBytes: 0, downloadsMaxBytes: 0, previewBytes: 0, previewClips: 0 },
     playbackCheck: null,

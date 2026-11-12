@@ -19,9 +19,11 @@
   {:else if name === 'chevron-left'}<path d="M15 5l-7 7 7 7" />
   {:else if name === 'chevron-right'}<path d="M9 5l7 7-7 7" />
   {:else if name === 'chevron-down'}<path d="M5 9l7 7 7-7" />
+  {:else if name === 'chevron-up'}<path d="M5 15l7-7 7 7" />
   {:else if name === 'arrow-left'}<path d="M19 12H5M12 19l-7-7 7-7" />
   {:else if name === 'shuffle'}<path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
   {:else if name === 'heart'}<path d="M12 21s-8-5.2-8-11a4.5 4.5 0 018-2.8A4.5 4.5 0 0120 10c0 5.8-8 11-8 11z" />
+  {:else if name === 'pencil'}<path d="M4 20h4L19 9l-4-4L4 16zM13.500 6.500l4 4" />
   {:else if name === 'x'}<path d="M6 6l12 12M18 6L6 18" />
   {:else if name === 'users'}<circle cx="9" cy="8" r="3" /><path d="M3 20c0-3 3-5 6-5s6 2 6 5M16 5a3 3 0 010 6M18 15c2 .5 3 2 3 5" />
   {:else if name === 'user'}<circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 4-6 8-6s8 2 8 6" />
@@ -55,6 +57,7 @@
   {:else if name === 'smile'}<circle cx="12" cy="12" r="9" /><path d="M8 14c1 1.500 2.300 2 4 2s3-.5 4-2M9 9.500h.01M15 9.500h.01" />
   {:else if name === 'link'}<path d="M10 14a4 4 0 005.600 0l3-3a4 4 0 00-5.600-5.600l-1 1M14 10a4 4 0 00-5.600 0l-3 3a4 4 0 005.600 5.600l1-1" />
   {:else if name === 'lock'}<path d="M5 11h14v10H5zM8 11V7a4 4 0 018 0v4" />
+  {:else if name === 'skip-prev'}<path d="M18 5l-10 7 10 7zM5 5v14" />
   {:else if name === 'skip-next'}<path d="M6 5l10 7-10 7zM19 5v14" />
   {:else if name === 'crown'}<path d="M3 8l4.500 4L12 5l4.500 7L21 8l-2 11H5z" />
   {:else if name === 'settings'}<circle cx="12" cy="12" r="3" /><path d="M19.400 15a1.700 1.700 0 00.340 1.870l.06.06a2 2 0 11-2.830 2.830l-.06-.06a1.700 1.700 0 00-1.870-.340 1.700 1.700 0 00-1 1.550V21a2 2 0 11-4 0v-.090A1.700 1.700 0 008.900 19.400a1.700 1.700 0 00-1.870.340l-.06.06a2 2 0 11-2.830-2.830l.06-.06a1.700 1.700 0 00.340-1.870 1.700 1.700 0 00-1.550-1H3a2 2 0 110-4h.090A1.700 1.700 0 004.600 8.900a1.700 1.700 0 00-.340-1.870l-.06-.06a2 2 0 112.830-2.830l.06.06a1.700 1.700 0 001.870.340H9a1.700 1.700 0 001-1.550V3a2 2 0 114 0v.090a1.700 1.700 0 001 1.550 1.700 1.700 0 001.870-.340l.06-.06a2 2 0 112.830 2.830l-.06.06a1.700 1.700 0 00-.340 1.870V9a1.700 1.700 0 001.550 1H21a2 2 0 110 4h-.090a1.700 1.700 0 00-1.550 1z" />

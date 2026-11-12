@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { clearHint } from '#lib/gate';
+import type { PermKey } from '#lib/perms';
 import { tellAppSession } from '#lib/native/sessionSync';
 
 export class ApiError extends Error {
@@ -10,7 +11,9 @@ export class ApiError extends Error {
 }
 
 let csrf = '';
-export const setCsrf = (t: string) => (csrf = t);
+/** a burst of parallel requests all hit the same 401: the app hears the sign-out once; a successful sign-in (setCsrf) arms it again */
+let signOutTold = false;
+export const setCsrf = (t: string) => { signOutTold = false; return (csrf = t); };
 /** for requests outside api() (the player's start-time report: a keepalive fetch that must never redirect on 401) */
 export const getCsrf = () => csrf;
 /** id of the profile the page loaded with; sent as x-ff-profile so the backend can detect a profile switch in another tab */
@@ -46,7 +49,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   // public pages (invite, TV pairing, waiting room, restore, setup, the in-app sign-in and reset) handle a 401 themselves: no redirect loop
   // 401 reauth_required: the session is fine, only a sensitive action wants a fresh sign-in; the caller starts it (lib/account/reauth.ts)
   if (res.status === 401 && json?.error !== 'reauth_required' && !location.pathname.startsWith('/invite/') && location.pathname !== '/tv' && location.pathname !== '/pending' && location.pathname !== '/restore' && location.pathname !== '/setup' && location.pathname !== '/login' && location.pathname !== '/reset' && location.pathname !== '/confirm-email') {
-    void tellAppSession(null); // the Android app's own cast must not stay controllable for whoever signs in next (fire and forget; no-op outside the app / with API 1)
+    if (!signOutTold) { signOutTold = true; void tellAppSession(null); } // the Android app's own cast must not stay controllable for whoever signs in next (fire and forget; no-op outside the app / with API 1)
     clearHint(); // the session is gone: the next start must not render early with this account's hint/profile
     location.href = localStorage.getItem('ff_tv_device') ? '/tv' : '/auth/login'; // a TV re-pairs instead of typing a login
     await new Promise(() => undefined);
@@ -115,7 +118,7 @@ export interface Me { id: string; name: string; role: string; roleLabel: string;
   /** the active profile is a kids profile (kids home, no social features); absent on older servers */ kids?: boolean;
   /** false = the active profile never finished /welcome (absent = onboarded) */ onboarded?: boolean;
   /** media server kind + capabilities (see lib/capabilities.ts); absent on older servers = everything supported */ server?: { kind: string; capabilities?: unknown };
-  /** optional services of this instance (lib/capabilities.ts featuresFrom); absent on older servers = everything on */ features?: { requests?: boolean; postplay?: boolean } }
+  /** optional services of this instance (lib/capabilities.ts featuresFrom); absent on older servers = everything on */ features?: { requests?: boolean; postplay?: boolean }, /** the acting profile's effective rights (lib/perms.ts permsFrom); absent = everything allowed */ perms?: Partial<Record<PermKey, boolean>> }
 /** GET /api/account (owner profile only): the person's own account for /me/account */
 export interface Account {
   name: string;
@@ -147,7 +150,10 @@ export interface AccountSecurity {
   problem?: 'service_token' | 'unreachable' | 'error' | 'not_configured' | null;
 }
 /** GET /api/devices: the account's own devices */
-export interface OwnDevice { id: string; label: string; approved: boolean; current: boolean; created_at: string; last_seen: string }
+/** what kind of client a device is (from its user agent; null until known) */
+export type ClientKind = 'web' | 'tizen' | 'webos' | 'firetv' | 'desktop' | 'android';
+/** `label` is the auto-detected label and `name` the user's own name; show `deviceName(d, tf)` (#lib/handoff/deviceName), never `label` alone */
+export interface OwnDevice { id: string; label: string; name: string | null; kind: ClientKind | null; approved: boolean; current: boolean; created_at: string; last_seen: string }
 export interface MeProfile { id: string; name: string; avatar: string; isOwner: boolean; kids?: boolean; /** parental cap of a kids profile (0/6/12) */ maxRating?: number }
 
 // ---- shared item cache: the modal / item page render instantly from what a card already had, then revalidate ----

@@ -1,6 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sha256 } from '../src/crypto.js';
+import { DEFAULT_ROLES, invalidateRoles } from '../src/roles.js';
+import { claimInvite, releaseInvite } from '../src/invites.js';
+import { deleteRole, syncRoles } from '../src/rolecat.js';
+import { provisionUser } from '../src/users.js';
+
+// the sign-in path calls the real provisionUser; a test can run a step (a role delete) just before it, after the invite was claimed
+const hook: { before?: () => Promise<void> } = {};
+vi.mock('../src/users.js', async (orig) => {
+  const real = await orig<typeof import('../src/users.js')>();
+  return { ...real, provisionUser: vi.fn(async (...a: Parameters<typeof real.provisionUser>) => { await hook.before?.(); return real.provisionUser(...a); }) };
+});
 import { cfg, makeEnv, type TestEnv } from './helpers.js';
 
 const AK = { AUTHENTIK_URL: 'https://auth.example.com', AUTHENTIK_API_TOKEN: 't', AUTHENTIK_ENROLL_FLOW: 'enroll' };
@@ -411,5 +423,252 @@ describe('admin user management', () => {
     ak.calls.length = 0;
     expect((await adm('DELETE', `/api/admin/invites/${inv.id}`)).statusCode).toBe(200);
     expect(ak.calls.filter((c) => c.method === 'DELETE')).toHaveLength(1);
+  });
+  it('a claim taken before the delete ends on the target role, and a released invite carries it', async () => {
+    const key = (await adm('POST', '/api/admin/roles', { label: 'Mitte', from: 'friend' })).json().key as string;
+    const token = 'claimed-before-delete-token-0123456789abcdef';
+    await env.pool.query("insert into invites(id, token_hash, role, expires_at, max_uses) values (gen_random_uuid(), $1, $2, now() + interval '1 hour', 1)", [sha256(token), key]);
+    const claimed = (await claimInvite(env.ctx, token))!;
+    expect(claimed.role).toBe(key);
+    expect((await adm('DELETE', `/api/admin/roles/${key}`, { moveTo: 'guest' })).statusCode).toBe(200);
+    expect((await env.pool.query('select role from invites where id=$1', [claimed.id])).rows).toEqual([{ role: 'guest' }]);
+    // provisioning with the stale role of the claim: the invite's current role wins
+    const user = await provisionUser(env.ctx, { sub: 'claimed1', email: 'c1@x.de', name: 'Freund c1', groups: [] }, claimed.role, null, undefined, claimed.id);
+    expect(user.role).toBe('guest');
+    await releaseInvite(env.ctx, claimed.id);
+    expect((await env.pool.query('select role, uses from invites where id=$1', [claimed.id])).rows).toEqual([{ role: 'guest', uses: 0 }]);
+  });
+
+  it('a delete between provisioning steps cannot leave the account on the deleted role', async () => {
+    const key = (await adm('POST', '/api/admin/roles', { label: 'Mitte2', from: 'friend' })).json().key as string;
+    const token = 'claimed-during-provision-token-0123456789ab';
+    await env.pool.query("insert into invites(id, token_hash, role, expires_at, max_uses) values (gen_random_uuid(), $1, $2, now() + interval '1 hour', 1)", [sha256(token), key]);
+    const claimed = (await claimInvite(env.ctx, token))!;
+    // the delete holds the role lock exclusively and has moved the invite when the redemption reaches its insert
+    const c = await env.pool.connect();
+    try {
+      await c.query('begin');
+      await c.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${key}`]);
+      const p = provisionUser(env.ctx, { sub: 'claimed2', email: 'c2@x.de', name: 'Freund c2', groups: [] }, claimed.role, null, undefined, claimed.id);
+      await new Promise((r) => setTimeout(r, 400));
+      await c.query('update invites set role=$2 where id=$1', [claimed.id, 'guest']);
+      await c.query('commit');
+      expect((await p).role).toBe('guest');
+    } finally {
+      c.release();
+    }
+  });
+
+  const mkInvite = async (label: string, from: string, token: string) => {
+    const key = (await adm('POST', '/api/admin/roles', { label, from })).json().key as string;
+    await env.pool.query("insert into invites(id, token_hash, role, expires_at, max_uses) values (gen_random_uuid(), $1, $2, now() + interval '1 hour', 1)", [sha256(token), key]);
+    return key;
+  };
+
+  it('a delete without a target moves the claimed and the used-up invites to the base role', async () => {
+    const key = await mkInvite('Ohne Ziel', 'family', 'no-target-claimed-token-0123456789abcdef');
+    const claimed = (await claimInvite(env.ctx, 'no-target-claimed-token-0123456789abcdef'))!;
+    await env.pool.query("insert into invites(id, token_hash, role, expires_at, max_uses, uses) values (gen_random_uuid(), 'x-used', $1, now() + interval '1 hour', 1, 1)", [key]);
+    const r = await adm('DELETE', `/api/admin/roles/${key}`);
+    expect([r.statusCode, r.json()]).toEqual([200, { ok: true, accounts: 0, invites: 0 }]);
+    expect((await env.pool.query("select role from invites where token_hash in ($1, 'x-used')", [sha256('no-target-claimed-token-0123456789abcdef')])).rows.map((x) => x.role)).toEqual(['family', 'family']);
+    const user = await provisionUser(env.ctx, { sub: 'notarget1', email: 'n1@x.de', name: 'Freund n1', groups: [] }, claimed.role, null, undefined, claimed.id);
+    expect(user.role).toBe('family');
+    await releaseInvite(env.ctx, claimed.id);
+    expect((await env.pool.query('select role, uses from invites where id=$1', [claimed.id])).rows).toEqual([{ role: 'family', uses: 0 }]);
+    await env.pool.query("delete from invites where token_hash='x-used'");
+  });
+
+  it('a second delete during one redemption (T to U) still ends on an existing role', async () => {
+    const t = await mkInvite('Erste', 'friend', 'double-delete-token-0123456789abcdefghij');
+    const u = (await adm('POST', '/api/admin/roles', { label: 'Zweite', from: 'friend' })).json().key as string;
+    const claimed = (await claimInvite(env.ctx, 'double-delete-token-0123456789abcdefghij'))!;
+    const [c1, c2] = [await env.pool.connect(), await env.pool.connect()];
+    try {
+      for (const [c, k] of [[c1, t], [c2, u]] as const) {
+        await c.query('begin');
+        await c.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${k}`]);
+      }
+      const p = provisionUser(env.ctx, { sub: 'double1', email: 'd1@x.de', name: 'Freund d1', groups: [] }, claimed.role, null, undefined, claimed.id);
+      await new Promise((r) => setTimeout(r, 300));
+      await c1.query('update invites set role=$2 where id=$1', [claimed.id, u]);
+      await c1.query('delete from role_settings where role=$1', [t]);
+      await c1.query('delete from roles where key=$1', [t]);
+      await c1.query('commit');
+      await new Promise((r) => setTimeout(r, 300)); // now waiting for U
+      await c2.query('update invites set role=$2 where id=$1', [claimed.id, 'guest']);
+      await c2.query('delete from role_settings where role=$1', [u]);
+      await c2.query('delete from roles where key=$1', [u]);
+      await c2.query('commit');
+      expect((await p).role).toBe('guest');
+    } finally {
+      c1.release();
+      c2.release();
+    }
+  });
+
+  it('provisioning refuses a role that no longer exists instead of inserting on it', async () => {
+    const t = await mkInvite('Weg', 'friend', 'missing-role-token-0123456789abcdefghijk');
+    const claimed = (await claimInvite(env.ctx, 'missing-role-token-0123456789abcdefghijk'))!;
+    await env.pool.query('delete from roles where key=$1', [t]);
+    invalidateRoles(env.ctx);
+    await expect(provisionUser(env.ctx, { sub: 'missing1', email: 'm1@x.de', name: 'Freund m1', groups: [] }, claimed.role, null, undefined, claimed.id)).rejects.toMatchObject({ statusCode: 503 });
+    expect((await env.pool.query("select 1 from users where authentik_sub='missing1'")).rowCount).toBe(0);
+  });
+
+  it('the sign-in passes the claimed invite on to provisioning: a role deleted meanwhile leaves the account on the target', async () => {
+    const key = await mkInvite('Login', 'friend', 'login-level-token-0123456789abcdefghijklm');
+    hook.before = async () => { await deleteRole(env.ctx, null, key, 'guest'); };
+    try {
+      expect((await inviteLogin('login-level-token-0123456789abcdefghijklm', 'loginlvl')).statusCode).toBe(302);
+    } finally {
+      hook.before = undefined;
+    }
+    const calls = vi.mocked(provisionUser).mock.calls;
+    const inviteId = (await env.pool.query('select id from invites where token_hash=$1', [sha256('login-level-token-0123456789abcdefghijklm')])).rows[0].id;
+    expect(calls.at(-1)![5]).toBe(inviteId);
+    expect((await env.pool.query("select role from users where authentik_sub='loginlvl'")).rows).toEqual([{ role: 'guest' }]);
+  });
+
+  it('a delete between the first policy apply and the role lock leaves the account on the target with its policy', async () => {
+    const key = await mkInvite('Schmal', 'guest', 'narrow-window-token-0123456789abcdefabcdef');
+    expect((await adm('PUT', `/api/admin/roles/${key}`, { maxStreams: 7 })).statusCode).toBe(200);
+    const claimed = (await claimInvite(env.ctx, 'narrow-window-token-0123456789abcdefabcdef'))!;
+    const jfAdmin = env.ctx.jf.admin as unknown as { applyPolicy: (id: string, pol: { template?: { maxStreams?: number } }) => Promise<unknown> };
+    const orig = jfAdmin.applyPolicy;
+    const seen: Array<{ id: string; maxStreams?: number }> = [];
+    let fired = false;
+    jfAdmin.applyPolicy = async (id, pol) => {
+      seen.push({ id, maxStreams: pol.template?.maxStreams });
+      if (!fired) { fired = true; await deleteRole(env.ctx, null, key); } // commits after this first apply, before the insert transaction
+      return orig.call(jfAdmin, id, pol);
+    };
+    let user;
+    try {
+      user = await provisionUser(env.ctx, { sub: 'narrow1', email: 'nw1@x.de', name: 'Freund nw1', groups: [] }, claimed.role, null, undefined, claimed.id);
+    } finally {
+      jfAdmin.applyPolicy = orig;
+    }
+    expect(user.role).toBe('guest');
+    const guest = (await adm('GET', '/api/admin/roles')).json().matrix.roles.find((r: { key: string }) => r.key === 'guest').values.maxStreams;
+    expect(guest).not.toBe(7);
+    expect(seen.filter((x) => x.id === user.jellyfin_user_id).at(-1)!.maxStreams).toBe(guest);
+  });
+
+  it('an invite redeemed after its role was deleted gets the new role', async () => {
+    const key = (await adm('POST', '/api/admin/roles', { label: 'Kino-Gast', from: 'friend' })).json().key as string;
+    // an open invite for the custom role, stored directly
+    const token = 'custom-role-invite-token-0123456789abcdef';
+    await env.pool.query("insert into invites(id, token_hash, role, expires_at, max_uses) values (gen_random_uuid(), $1, $2, now() + interval '1 hour', 1)", [sha256(token), key]);
+    expect((await adm('DELETE', `/api/admin/roles/${key}`, { moveTo: 'guest' })).statusCode).toBe(200);
+    expect((await inviteLogin(token, 'moved1')).statusCode).toBe(302);
+    expect((await env.pool.query("select role from users where authentik_sub='moved1'")).rows).toEqual([{ role: 'guest' }]);
+  });
+});
+
+describe('invites and approvals for any invitable role', () => {
+  const addOma = async () => {
+    env.ctx.roles.oma = { ...DEFAULT_ROLES.friend!, label: 'Oma' };
+    await syncRoles(env.ctx);
+    await env.pool.query("update roles set invitable=true where key='oma'");
+    invalidateRoles(env.ctx);
+  };
+  const setInvitable = async (v: boolean) => { await env.pool.query('update roles set invitable=$1 where key=$2', [v, 'oma']); invalidateRoles(env.ctx); };
+  beforeEach(addOma);
+  afterEach(async () => { await setInvitable(true); });
+
+  it('invite for an env role: the redeemed account holds it', async () => {
+    const r = await adm('POST', '/api/admin/invites', { role: 'oma', ttlHours: 1 });
+    expect(r.statusCode).toBe(200);
+    const token = r.json().link.split('/').pop();
+    expect((await inviteLogin(token, 'omauser')).statusCode).toBe(302);
+    expect((await env.pool.query("select role from users where authentik_sub='omauser'")).rows).toEqual([{ role: 'oma' }]);
+  });
+
+  it('a role switched to not invitable is refused', async () => {
+    await setInvitable(false);
+    const r = await adm('POST', '/api/admin/invites', { role: 'oma', ttlHours: 1 });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toBe('role_not_invitable');
+  });
+
+  it('an invite created before its role was made not invitable still redeems', async () => {
+    const token = (await adm('POST', '/api/admin/invites', { role: 'oma', ttlHours: 1 })).json().link.split('/').pop();
+    await setInvitable(false);
+    expect((await inviteLogin(token, 'omalate')).statusCode).toBe(302);
+    expect((await env.pool.query("select role from users where authentik_sub='omalate'")).rows).toEqual([{ role: 'oma' }]);
+  });
+
+  it('admin is never invitable, approval may grant admin', async () => {
+    const r = await adm('POST', '/api/admin/invites', { role: 'admin', ttlHours: 1 });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toBe('role_not_invitable');
+    const ids: string[] = [];
+    for (const sub of ['ap1', 'ap2', 'ap3']) {
+      ids.push((await env.pool.query("insert into approval_requests(id, authentik_sub, email, name) values (gen_random_uuid(), $1, $2, $1) returning id", [sub, `${sub}@x.de`])).rows[0].id);
+    }
+    expect((await adm('POST', `/api/admin/approvals/${ids[0]}/approve`, { role: 'admin' })).statusCode).toBe(200);
+    expect((await adm('POST', `/api/admin/approvals/${ids[1]}/approve`, { role: 'oma' })).statusCode).toBe(200);
+    await setInvitable(false);
+    const bad = await adm('POST', `/api/admin/approvals/${ids[2]}/approve`, { role: 'oma' });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toBe('role_not_invitable');
+    expect((await env.pool.query("select authentik_sub, role from users where authentik_sub in ('ap1','ap2') order by 1")).rows).toEqual([{ authentik_sub: 'ap1', role: 'admin' }, { authentik_sub: 'ap2', role: 'oma' }]);
+  });
+
+  it('a role deleted while the invite is being created leaves no invite behind', async () => {
+    const key = (await adm('POST', '/api/admin/roles', { label: 'Flucht', from: 'friend' })).json().key as string;
+    const before = (await env.pool.query('select count(*) n from invites')).rows[0].n;
+    // the delete lands inside the (fake) Authentik call, between the invitable check and the insert
+    const realFetch = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/invitations/') && init?.method === 'POST') await deleteRole(env.ctx, null, key, 'guest');
+      return (realFetch as typeof fetch)(input, init);
+    }) as typeof fetch;
+    let r;
+    try { r = await adm('POST', '/api/admin/invites', { role: key, ttlHours: 1 }); } finally { env.ctx.fetchImpl = realFetch; }
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toBe('role_not_invitable');
+    expect((await env.pool.query('select count(*) n from invites')).rows[0].n).toBe(before);
+    expect(ak.calls.some((c) => c.method === 'DELETE')).toBe(true); // the Authentik invitation made meanwhile is removed again
+  });
+
+  it('the invite insert waits for a role delete in flight (the shared role lock)', async () => {
+    const key = (await adm('POST', '/api/admin/roles', { label: 'Sperre', from: 'friend' })).json().key as string;
+    const before = (await env.pool.query('select count(*) n from invites')).rows[0].n;
+    const holder = await env.pool.connect();
+    try {
+      await holder.query('begin');
+      await holder.query('select pg_advisory_xact_lock(hashtext($1))', [`role:${key}`]); // what deleteRole holds
+      const post = adm('POST', '/api/admin/invites', { role: key, ttlHours: 1 });
+      // the insert is parked on the lock: the role still exists and is invitable, so without the lock it would go through
+      for (let i = 0; i < 100; i++) {
+        if ((await env.pool.query("select 1 from pg_locks where locktype='advisory' and not granted")).rowCount) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect((await env.pool.query("select 1 from pg_locks where locktype='advisory' and not granted")).rowCount).toBe(1);
+      await holder.query('delete from roles where key=$1', [key]);
+      await holder.query('commit');
+      const r = await post;
+      expect(r.statusCode).toBe(400);
+      expect(r.json().error).toBe('role_not_invitable');
+    } finally {
+      await holder.query('rollback').catch(() => undefined);
+      holder.release();
+      invalidateRoles(env.ctx);
+    }
+    expect((await env.pool.query('select count(*) n from invites')).rows[0].n).toBe(before);
+  });
+
+  it('an approval whose role is deleted during provisioning is refused cleanly', async () => {
+    const key = (await adm('POST', '/api/admin/roles', { label: 'Flucht2', from: 'friend' })).json().key as string;
+    const id = (await env.pool.query("insert into approval_requests(id, authentik_sub, name) values (gen_random_uuid(), 'apgone', 'Gone') returning id")).rows[0].id;
+    const admin_ = env.ctx.jf.admin;
+    const realApply = admin_.applyPolicy.bind(admin_);
+    admin_.applyPolicy = (async (...a: Parameters<typeof realApply>) => { await realApply(...a); await deleteRole(env.ctx, null, key, 'guest'); }) as typeof realApply;
+    let r;
+    try { r = await adm('POST', `/api/admin/approvals/${id}/approve`, { role: key }); } finally { admin_.applyPolicy = realApply; }
+    expect(r.statusCode).toBe(400);
+    expect((await env.pool.query("select 1 from users where authentik_sub='apgone'")).rowCount).toBe(0);
   });
 });

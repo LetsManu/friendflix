@@ -328,104 +328,7 @@ test.describe('admin people (desktop)', () => {
     });
   });
 
-  test.describe('roles', () => {
-    test('one card per role; only changed fields are saved; validation; discard', async ({ page, api }) => {
-      await page.goto('/admin/roles');
-      await expect(page.getByRole('heading', { level: 1, name: 'Rollen' })).toBeVisible();
-      const card = page.getByRole('form', { name: 'Freund' });
-      await expect(card).toBeVisible();
-      await expect(card.getByText('Nicht gespeichert')).toHaveCount(0);
-      const save = card.getByRole('button', { name: 'Speichern' });
-      await expect(save).toBeDisabled();
-      const perMonth = card.getByRole('spinbutton', { name: 'Wünsche pro Monat' });
-      await perMonth.fill('7');
-      await expect(card.getByText('Nicht gespeichert')).toBeVisible();
-      await perMonth.fill('150');
-      await expect(card.getByText('Bitte eine Zahl von 0 bis 100 eingeben.')).toBeVisible();
-      await save.click();
-      expect(logged(api, /PUT \/api\/admin\/roles\/friend/)).toBe(false);
-      await card.getByRole('button', { name: 'Zurücksetzen' }).click();
-      await expect(perMonth).toHaveValue('3');
-      await perMonth.fill('7');
-      await card.getByRole('switch', { name: 'Umwandeln erlaubt' }).click();
-      await save.click();
-      await expect(toasts(page).getByText('Rolle „Freund“ gespeichert.')).toBeVisible();
-      const put = api.log.find((l) => l.startsWith('PUT /api/admin/roles/friend'))!;
-      expect(put).toContain('"requestsPerMonth":7');
-      expect(put).toContain('"transcoding":false');
-      expect(put).not.toContain('maxHeight');
-      expect(put).not.toContain('download');
-      await expect(card.getByText('Nicht gespeichert')).toHaveCount(0);
-    });
-
-    test('remote bitrate limit: default option, values up to the role limit, reset to default, saves only that field', async ({ page, api }) => {
-      await page.goto('/admin/roles');
-      const card = page.getByRole('form', { name: 'Freund' });
-      const cap = card.getByRole('combobox', { name: 'Limit unterwegs' });
-      await expect(cap).toHaveValue(''); // role default (no override)
-      await expect(cap.getByRole('option', { name: 'Standard (8 Mbit/s)' })).toHaveCount(1);
-      await expect(cap.getByRole('option', { name: '40 Mbit/s' })).toHaveCount(1);
-      const fam = page.getByRole('form', { name: 'Familie' }).getByRole('combobox', { name: 'Limit unterwegs' });
-      await expect(fam).toHaveValue('12000000');
-      // the guest role tops out at 8 Mbit/s: higher caps would have no effect and are not offered
-      const guest = page.getByRole('form', { name: 'Gast' }).getByRole('combobox', { name: 'Limit unterwegs' });
-      await expect(guest.getByRole('option', { name: '8 Mbit/s' })).toHaveCount(1);
-      await expect(guest.getByRole('option', { name: '12 Mbit/s' })).toHaveCount(0);
-      await cap.selectOption('12000000');
-      await card.getByRole('button', { name: 'Speichern' }).click();
-      await expect(toasts(page).getByText('Rolle „Freund“ gespeichert.')).toBeVisible();
-      const put = api.log.find((l) => l.startsWith('PUT /api/admin/roles/friend'))!;
-      expect(put).toContain('"remoteMaxBitrate":12000000');
-      expect(put).not.toContain('requestsPerMonth');
-      // back to the default sends null
-      await cap.selectOption('');
-      await card.getByRole('button', { name: 'Speichern' }).click();
-      await expect.poll(() => api.log.filter((l) => l.startsWith('PUT /api/admin/roles/friend')).length).toBe(2);
-      expect(api.log.filter((l) => l.startsWith('PUT /api/admin/roles/friend'))[1]).toContain('"remoteMaxBitrate":null');
-    });
-
-    test('download fields appear with the switch; save failure keeps the edit', async ({ page }) => {
-      await page.route('**/api/admin/roles/guest', (r) => r.request().method() === 'PUT' ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"x"}' }) : r.fallback());
-      const sent: string[] = [];
-      page.on('request', (r) => { if (r.method() === 'PUT' && r.url().endsWith('/api/admin/roles/guest')) sent.push(r.postData() ?? ''); });
-      await page.goto('/admin/roles');
-      const card = page.getByRole('form', { name: 'Gast' });
-      await expect(card.getByRole('spinbutton', { name: 'Gleichzeitige Downloads' })).toHaveCount(0);
-      await card.getByRole('switch', { name: 'Downloads erlauben' }).click();
-      await expect(card.getByRole('spinbutton', { name: 'Gleichzeitige Downloads' })).toBeVisible();
-      await card.getByRole('spinbutton', { name: 'Gültigkeit (Tage)' }).fill('120');
-      await expect(card.getByText('Bitte 1 bis 90 Tage eingeben.')).toBeVisible();
-      await card.getByRole('spinbutton', { name: 'Gültigkeit (Tage)' }).fill('14');
-      await card.getByRole('button', { name: 'Speichern' }).click();
-      await expect(toasts(page).getByText('Serverfehler. Bitte später noch einmal versuchen.')).toBeVisible();
-      await expect(card.getByText('Nicht gespeichert')).toBeVisible();
-      expect(sent).toHaveLength(1);
-      expect(JSON.parse(sent[0]!)).toMatchObject({ download: true, downloadDays: 14 });
-    });
-
-    test('leaving with unsaved changes asks first', async ({ page }) => {
-      await page.goto('/admin/roles');
-      const card = page.getByRole('form', { name: 'Familie' });
-      await card.getByRole('spinbutton', { name: 'Wünsche pro Monat' }).fill('9');
-      const nav = page.getByRole('navigation', { name: 'Admin-Bereiche' });
-      await nav.getByRole('link', { name: 'Nutzer' }).click();
-      const dlg = page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' });
-      await expect(dlg).toBeVisible();
-      await expect(dlg).toContainText('1 Rolle hat ungespeicherte Änderungen');
-      await dlg.getByRole('button', { name: 'Abbrechen' }).click();
-      await expect(page).toHaveURL(/\/admin\/roles$/);
-      await nav.getByRole('link', { name: 'Nutzer' }).click();
-      await dlg.getByRole('button', { name: 'Verwerfen' }).click();
-      await expect(page).toHaveURL(/\/admin\/users$/);
-    });
-
-    test('no changes: leaving needs no question', async ({ page }) => {
-      await page.goto('/admin/roles');
-      await expect(page.getByRole('form', { name: 'Freund' })).toBeVisible();
-      await page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: 'Nutzer' }).click();
-      await expect(page).toHaveURL(/\/admin\/users$/);
-    });
-  });
+  // Rollen & Rechte: admin-roles.spec.ts (matrix) and admin-roles.mobile.spec.ts (phone cards, Vergleich)
 
   test.describe('devices', () => {
     test('waiting devices first with a count; approve has Undo and updates the badge', async ({ page, api }) => {
@@ -621,7 +524,7 @@ test.describe('admin people (desktop)', () => {
   });
 
   test.describe('every page', () => {
-    for (const [path, h1] of [['users', 'Nutzer'], ['roles', 'Rollen'], ['devices', 'Geräte'], ['audit', 'Audit-Log']] as const) {
+    for (const [path, h1] of [['users', 'Nutzer'], ['roles', 'Rollen & Rechte'], ['devices', 'Geräte'], ['audit', 'Audit-Log']] as const) {
       test(`${path}: one h1 from the shell, no horizontal overflow, keyboard reachable`, async ({ page }) => {
         await page.goto(`/admin/${path}`);
         await expect(page.getByRole('heading', { level: 1, name: h1 })).toBeVisible();

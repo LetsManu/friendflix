@@ -59,6 +59,10 @@
   export let playBase = '';
   export let playHref = '';
   export let playLabel = '';
+  /** the hand-off hint (spec 2.5): its text replaces the remaining time, its accessible name the button's */
+  export let handoffLine = '';
+  export let handoffProgress = 0;
+  export let playAria: string | undefined = undefined;
   /** the title Play resumes (a series: its next episode) */
   export let resumeFrom: Item | null = null;
   export let tagline = '';
@@ -122,9 +126,11 @@
   $: deskPlay = item.type === 'Series' && next
     ? $t('desk.detail.continueEp', { s: String(next.parentIndexNumber ?? '?'), e: String(next.indexNumber ?? '?') })
     : playLabel;
-  $: progress = resumeFrom?.positionTicks && resumeFrom.runtimeTicks ? Math.min(1, Math.max(0.02, resumeFrom.positionTicks / resumeFrom.runtimeTicks)) : 0;
+  $: localProgress = resumeFrom?.positionTicks && resumeFrom.runtimeTicks ? Math.min(1, Math.max(0.02, resumeFrom.positionTicks / resumeFrom.runtimeTicks)) : 0;
+  /** while the hint shows, the bar names the hint's position like the text */
+  $: progress = localProgress ? handoffProgress || localProgress : 0;
   $: remaining = resumeFrom ? remainingLabel(resumeFrom.positionTicks, resumeFrom.runtimeTicks) : '';
-  $: restartHref = progress && playBase ? `${playBase}?${['t=0', qs].filter(Boolean).join('&')}` : '';
+  $: restartHref = localProgress && playBase ? `${playBase}?${['t=0', qs].filter(Boolean).join('&')}` : '';
   $: localTrailer = extras.find((x) => x.kind === 'trailer') ?? null;
   // the backdrop has nothing to wait for when there is none (the trailer may still start)
   function bgGone() { bgFailed = true; loaded = true; }
@@ -343,7 +349,7 @@
         {/if}
       </div>
       <div class="acts" data-st>
-        <a class="play" data-autofocus href={playHref} use:playPrefetch on:click={onPlay}><Icon name="play" size={24} /><span>{deskPlay}</span></a>
+        <a class="play" data-autofocus href={playHref} aria-label={playAria} use:playPrefetch on:click={onPlay}><Icon name="play" size={24} /><span>{deskPlay}</span></a>
         {#if restartHref}
           <a class="rb frost-btn round" use:sheen href={restartHref} use:playPrefetch aria-label={$t('tv.detail.restart')} title={$t('tv.detail.restart')}><Icon name="refresh" size={20} /></a>
         {/if}
@@ -366,7 +372,7 @@
         </MoreActions>
       </div>
       {#if progress && remaining}
-        <p class="resume"><span class="bar" aria-hidden="true"><span style="transform:scaleX({progress})"></span></span><span>{remaining}</span></p>
+        <p class="resume"><span class="bar" aria-hidden="true"><span style="transform:scaleX({progress})"></span></span><span>{handoffLine || remaining}</span></p>
       {/if}
       <slot />
     </div>
@@ -497,6 +503,7 @@
   .mslot :global(.status), .mslot :global(.lang) { margin: 0; }
   .mslot :global(.lm .rowbtn) { margin-inline: -.4rem; width: calc(100% + .8rem); } /* the menu row lines up with the other rows */
   .resume { display: flex; align-items: center; gap: 12px; margin: 16px 0 0; font-size: 14px; font-weight: 600; color: rgba(255, 255, 255, .9); font-variant-numeric: tabular-nums; }
+  .resume > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .bar { position: relative; flex: none; width: 120px; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .25); overflow: hidden; }
   .bar span { position: absolute; inset: 0; background: var(--acc); transform-origin: left center; }
 

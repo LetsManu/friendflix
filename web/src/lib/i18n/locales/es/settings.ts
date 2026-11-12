@@ -13,6 +13,7 @@ const settings: Translation<typeof de> = {
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Los cambios se aplican al instante, sin reiniciar. El ajuste fino para expertos (RECO_COEFFS y los pesos del índice RECO_W_*) solo se define en .env.' },
   serverHelp: 'Valores del entorno del contenedor. Solo lectura; las credenciales nunca se muestran.',
+  roleTemplatesNote: 'Los roles ahora se cambian en Personas → Roles y permisos; los valores del .env siguen aplicándose por debajo.',
   source: { env: 'Del entorno', db: 'Guardado', default: 'Predeterminado', bootstrap: 'Del archivo de arranque', unset: 'Sin definir' },
   locked: 'Viene del entorno (.env) y no se puede cambiar aquí.',
   restart: 'Requiere reinicio',
@@ -156,6 +157,7 @@ const settings: Translation<typeof de> = {
     DOWNLOAD_CREATE_PER_HOUR: { label: 'Descargas por hora', help: 'Número máximo de descargas nuevas por hora y sesión.' },
     CAST_ENABLED: { label: 'Chromecast', help: 'Reproducción en dispositivos Chromecast. Requiere una dirección pública con un certificado https válido.' },
     CAST_RECEIVER_APP_ID: { label: 'ID de la app receptora de Cast', help: 'Vacío: Chromecast usa el receptor predeterminado de Google. Con el ID de la app del receptor propio de FriendFlix (8 caracteres, de la Google Cast SDK Developer Console, dirección del receptor https://<tu dirección>/cast-receiver/) la TV muestra «Siguiente episodio» con cuenta atrás, «¿Sigues ahí?» y «Saltar intro», y guarda el progreso aunque el móvil esté en reposo. Ver docs/cast-receiver.md.' },
+    CAST_AIRPLAY_CONTINUOUS: { label: 'AirPlay continuo (experimental)', help: 'Experimental. Actívalo solo cuando la prueba con tu televisor AirPlay haya salido bien; después se aplica a todos los perfiles.' },
     PREVIEW_WARM: { label: 'Preparar vistas previas', help: 'Crea en reposo los clips de vista previa que faltan, uno por minuto.' },
     HOME_NETWORKS: { label: 'Redes de casa', help: 'Redes que cuentan como casa (sin límite de bitrate para fuera), separadas por comas, p. ej. 192.168.0.0/16.' },
     UPLOAD_MBPS: { label: 'Subida del servidor (Mbit/s)', help: 'La velocidad de subida de tu conexión a internet. Cuando está casi agotada, las nuevas emisiones desde fuera empiezan con menos calidad en lugar de que todas se corten. Las emisiones en curso y la red de casa no cambian. Vacío = desactivado.' },

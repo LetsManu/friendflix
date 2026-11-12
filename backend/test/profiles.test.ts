@@ -238,7 +238,8 @@ describe('profiles', () => {
     expect(r.json()).toEqual({ error: 'profile_changed' });
     expect(await env.kv.keys('cast:')).toEqual([]);
     expect(await env.kv.keys('castidx:')).toEqual([]);
-    expect(env.jfCalls.some((c) => c.method === 'DELETE' && c.path === '/Videos/ActiveEncodings')).toBe(true);
+    // a single token's encoding is stopped by the race path itself, once
+    expect(env.jfCalls.filter((c) => c.method === 'DELETE' && c.path === '/Videos/ActiveEncodings').map((c) => new URLSearchParams(c.search).get('playSessionId'))).toEqual(['ps-race-1']);
   });
 
   it('after select, Jellyfin calls and /internal/authz use the profile identity', async () => {
@@ -318,7 +319,7 @@ describe('profiles', () => {
     const p = await mkProfile(s, 'Kind');
     const kidJf = (await env.pool.query<{ jellyfin_user_id: string }>('select jellyfin_user_id from profiles where id=$1', [p.id])).rows[0]!.jellyfin_user_id;
     env.jfCalls.length = 0;
-    expect(await reapplyRole(env.ctx, 'admin')).toBe(0);
+    expect(await reapplyRole(env.ctx, 'admin')).toEqual({ identities: 2, failed: 0 });
     const hit = policies().find((c) => c.path === `/Users/${kidJf}/Policy`);
     expect(hit!.body).toMatchObject({ IsHidden: true, IsDisabled: false });
     expect(policies()).toHaveLength(2);
