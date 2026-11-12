@@ -17,7 +17,7 @@ export const PREVIEW_TIMEOUT_MS = 15_000;
 
 /** ffmpeg reads only the local segment file */
 export function previewArgs(segment: string): string[] {
-  return ['-hide_banner', '-loglevel', 'error', '-protocol_whitelist', 'file', '-i', segment, '-frames:v', '1', '-vf', 'scale=320:-2', '-f', 'image2', '-c:v', 'mjpeg', 'pipe:1'];
+  return ['-hide_banner', '-loglevel', 'error', '-protocol_whitelist', 'file', '-f', 'mpegts', '-i', segment, '-frames:v', '1', '-vf', 'scale=320:-2', '-f', 'image2', '-c:v', 'mjpeg', 'pipe:1'];
 }
 
 const isJpeg = (b: Buffer) => b.length >= 4 && b[0] === 0xff && b[1] === 0xd8;

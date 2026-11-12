@@ -58,7 +58,8 @@ COPY --from=jellyfin-key /jellyfin.gpg /etc/apt/keyrings/jellyfin.gpg
 # version-pinned: old versions vanish from the repository, same ruling as the Alpine packages of the other images.
 # libstdc++6 and libatomic1: the node binary links them; libsrt1.5-openssl: srtgate links it. Package lists and caches are dropped.
 RUN apt-get update \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libstdc++6 libatomic1 libsrt1.5-openssl \n  && echo 'deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/jellyfin.gpg] https://repo.jellyfin.org/debian bookworm main' > /etc/apt/sources.list.d/jellyfin.list \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libstdc++6 libatomic1 libsrt1.5-openssl \
+  && echo 'deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/jellyfin.gpg] https://repo.jellyfin.org/debian bookworm main' > /etc/apt/sources.list.d/jellyfin.list \
   && apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jellyfin-ffmpeg7 \
   && test -x /usr/lib/jellyfin-ffmpeg/ffmpeg && test -x /usr/lib/jellyfin-ffmpeg/ffprobe \

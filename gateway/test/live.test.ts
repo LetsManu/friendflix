@@ -158,6 +158,9 @@ describe('/media/l/<token>/<file>', () => {
       L(T_OK, 'index.m3u'),
       L(T_OK, '5.mp4'),
       L(T_OK, 'init-.mp4'),
+      L(T_OK, 'init.mp4'), // R16: only init-<n>.mp4
+      L(T_OK, '007.ts'), // R16: no leading zeros
+      L(T_OK, '00.m4s'),
       L(T_OK, '%35.ts'),
       L(T_OK, 'sub/5.ts'),
       `/media/l/${T_OK}x/index.m3u8`, // 44 chars
