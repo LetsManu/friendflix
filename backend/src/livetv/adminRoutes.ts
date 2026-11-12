@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
@@ -392,21 +392,22 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // accepted for Phase 1: the single flight is per admin, not per provider; a per-provider limit comes with Task 42
   /** one stream test per admin at a time (a probe may hold a provider connection for up to 10 s; a bulk test runs 20 of them) */
-  async function testLocked<T>(actor: string, req: { raw: { once(e: 'close', f: () => void): unknown; off(e: 'close', f: () => void): unknown } }, reply: Reply, fn: (signal: AbortSignal) => Promise<T>): Promise<T | Reply> {
+  async function testLocked<T>(actor: string, reply: FastifyReply, fn: (signal: AbortSignal) => Promise<T>): Promise<T | Reply> {
     const lock = `ltv:chtest:${actor}`;
     const token = randomUUID();
     if (!(await ctx.kv.setnx(lock, token, CHANNEL_TEST_LOCK_TTL_S))) {
       reply.code(409).send({ error: 'test_running' });
       return reply;
     }
-    // a client that went away stops the tests still to run
+    // a client that went away stops the tests still to run. The response's close (not the request's, which fires once the body is
+    // read) marks a disconnect; after a sent answer writableFinished is true and nothing is aborted.
     const ac = new AbortController();
-    const gone = () => ac.abort();
-    req.raw.once('close', gone);
+    const gone = () => { if (!reply.raw.writableFinished) ac.abort(); };
+    reply.raw.once('close', gone);
     try {
       return await fn(ac.signal);
     } finally {
-      req.raw.off('close', gone);
+      reply.raw.off('close', gone);
       await ctx.kv.delIfEquals(lock, token).catch(() => undefined);
     }
   }
@@ -434,7 +435,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       if (b.action === 'test') {
         if (new Set(b.ids).size > MAX_BULK_TEST) return reply.code(400).send({ error: 'invalid', field: 'ids' });
-        return await testLocked(req.user!.id, req, reply, (signal) => bulkTest(ctx, req.user!.id, b.ids, signal));
+        return await testLocked(req.user!.id, reply, (signal) => bulkTest(ctx, req.user!.id, b.ids, signal));
       }
       return await bulkChannels(ctx, req.user!.id, b, req.log);
     } catch (e) { return channelRefused(e, reply); }
@@ -466,7 +467,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!cid) return reply.code(404).send({ error: 'not_found' });
     reply.header('cache-control', 'no-store');
     try {
-      return await testLocked(req.user!.id, req, reply, (signal) => testChannel(ctx, req.user!.id, cid, signal));
+      return await testLocked(req.user!.id, reply, (signal) => testChannel(ctx, req.user!.id, cid, signal));
     } catch (e) { return channelRefused(e, reply); }
   });
 
