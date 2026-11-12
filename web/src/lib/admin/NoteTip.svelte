@@ -46,9 +46,12 @@
 
 <style>
   .nt { display: inline-flex; }
-  .b { min-height: 28px; min-width: 28px; padding: 0; background: transparent; color: var(--mut); border-radius: 50%; }
-  .b:hover:not(:disabled) { background: rgba(255, 255, 255, .08); color: var(--fg); }
-  @media (pointer: coarse) { .b { min-height: 44px; min-width: 44px; } }
+  /* the hit area is 44 px on every pointer; the visible disc stays 28 px (the ::before) */
+  .b { position: relative; margin: -8px; min-height: 44px; min-width: 44px; padding: 0; background: transparent; color: var(--mut); border-radius: 50%; display: inline-grid; place-items: center; }
+  .b::before { content: ''; position: absolute; inset: 50% auto auto 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; }
+  .b > :global(*) { position: relative; }
+  .b:hover:not(:disabled) { background: transparent; color: var(--fg); }
+  .b:hover:not(:disabled)::before { background: rgba(255, 255, 255, .08); }
   .pop { position: fixed; z-index: 40; box-sizing: border-box; padding: .6rem .8rem; border-radius: 8px; background: var(--fr-solid); color: var(--fg); border: 1px solid var(--line); font-size: .9rem; font-weight: 400; overflow-wrap: anywhere; white-space: pre-wrap; overflow: auto; overscroll-behavior: contain; }
   :global(html.m-still) .pop { transition: none; animation: none; }
 </style>

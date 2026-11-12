@@ -3,6 +3,7 @@
 /** Area "adminPeople": admin pages Users, Roles, Devices, Invites, Audit (worker B fills it). German is the typed source. */
 export default {
   loadFailed: 'Das ließ sich nicht laden. Prüfe die Verbindung und versuche es erneut.',
+  rolesLoading: 'Rollen werden geladen …',
   never: 'noch nie',
   /** Block 23: tabs of /admin/users */
   tabs: { label: 'Nutzerverwaltung', users: 'Nutzer', approvals: 'Warten auf Freigabe', approvalsN: 'Warten auf Freigabe ({n})', invites: 'Einladungen' },

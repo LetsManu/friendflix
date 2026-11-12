@@ -6,6 +6,7 @@ import type { Translation } from '../../types';
 /** area "adminPeople" (pl) */
 const dict: Translation<typeof de> = {
   loadFailed: 'Nie udało się wczytać danych. Sprawdź połączenie i spróbuj ponownie.',
+  rolesLoading: 'Wczytywanie ról …',
   never: 'nigdy',
   tabs: { label: 'Zarządzanie użytkownikami', users: 'Użytkownicy', approvals: 'Czekają na zatwierdzenie', approvalsN: 'Czekają na zatwierdzenie ({n})', invites: 'Zaproszenia' },
   access: { label: 'Dostęp do', choose: 'Dostęp do …', p30: '+30 dni od dziś', p90: '+90 dni od dziś', unlimited: 'Bez limitu', date: 'Wybierz datę …', day: 'Dostęp do (data)' },

@@ -6,6 +6,7 @@ import type { Translation } from '../../types';
 /** area "adminPeople" (en) */
 const dict: Translation<typeof de> = {
   loadFailed: 'This could not be loaded. Check your connection and try again.',
+  rolesLoading: 'Loading roles …',
   never: 'never',
   tabs: { label: 'User management', users: 'Users', approvals: 'Waiting for approval', approvalsN: 'Waiting for approval ({n})', invites: 'Invites' },
   access: { label: 'Access until', choose: 'Access until …', p30: '+30 days from today', p90: '+90 days from today', unlimited: 'Unlimited', date: 'Pick a date …', day: 'Access until (date)' },

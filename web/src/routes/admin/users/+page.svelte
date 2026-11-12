@@ -123,15 +123,22 @@
   $: rightsOn = f.perm !== null || f.noMfa;
   const rightName = (k: PermKey): string => tr(`adminPeople.roles.f.${k}`);
 
+  let rolesState: 'loading' | 'ready' | 'error' = 'loading';
+  function loadRoles() {
+    rolesState = 'loading';
+    return api<{ roles: Record<string, RoleInfo>; invitable?: string[]; matrix?: { roles: MatrixRole[] } }>('/api/admin/roles').then((r) => {
+      roles = r.roles;
+      matrixRoles = r.matrix?.roles ?? [];
+      if (r.invitable?.length) invitable = r.invitable;
+      rolesState = matrixRoles.length ? 'ready' : 'error';
+    }, () => { rolesState = 'error'; });
+  }
+
   onMount(() => {
     f = { ...fromQuery(new URLSearchParams($page$.url.search)), q: '' };
     void load();
     void refreshSummary();
-    api<{ roles: Record<string, RoleInfo>; invitable?: string[]; matrix?: { roles: MatrixRole[] } }>('/api/admin/roles').then((r) => {
-      roles = r.roles;
-      matrixRoles = r.matrix?.roles ?? [];
-      if (r.invitable?.length) invitable = r.invitable;
-    }, () => undefined);
+    void loadRoles();
     api<{ id: string }>('/api/me').then((m) => (meId = m.id), () => undefined);
     api<{ requests: unknown[] }>('/api/admin/approvals').then((r) => (approvals ??= r.requests.length), () => undefined);
   });
@@ -355,9 +362,9 @@
 
 <div id="ut-panel" role="tabpanel" aria-labelledby="ut-{tab}">
   {#if tab === 'approvals'}
-    <ApprovalsPanel {invitable} {matrixRoles} on:count={(e) => (approvals = e.detail)} on:decided={() => void refreshSummary()} />
+    <ApprovalsPanel {invitable} {matrixRoles} {rolesState} on:retryRoles={() => void loadRoles()} on:count={(e) => (approvals = e.detail)} on:decided={() => void refreshSummary()} />
   {:else if tab === 'invites'}
-    <InvitesPanel {roles} {invitable} {matrixRoles} />
+    <InvitesPanel {roles} {invitable} {matrixRoles} {rolesState} on:retryRoles={() => void loadRoles()} />
   {:else}
     {#if selected.size}
       <section class="bulk" aria-label={$t('adminPeople.bulk.label')} aria-busy={busyBulk ? 'true' : undefined}>

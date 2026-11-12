@@ -6,6 +6,7 @@ import type { Translation } from '../../types';
 /** area "adminPeople" (it) */
 const dict: Translation<typeof de> = {
   loadFailed: 'Impossibile caricare i dati. Controlla la connessione e riprova.',
+  rolesLoading: 'Caricamento dei ruoli …',
   never: 'mai',
   tabs: { label: 'Gestione utenti', users: 'Utenti', approvals: 'In attesa di approvazione', approvalsN: 'In attesa di approvazione ({n})', invites: 'Inviti' },
   access: { label: 'Accesso fino al', choose: 'Accesso fino al …', p30: '+30 giorni da oggi', p90: '+90 giorni da oggi', unlimited: 'Illimitato', date: 'Scegli una data …', day: 'Accesso fino al (data)' },

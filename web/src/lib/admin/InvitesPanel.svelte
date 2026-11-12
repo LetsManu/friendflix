@@ -5,7 +5,7 @@
    * Admin: invitations (tab of /admin/users) – create form (role, expiry, max uses, access days, note), link with copy + QR
    * (shown once), list with uses ("1/3", accounts unfold), status, revoke (confirm).
    */
-  import { onMount } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { fmtDateTime, fmtRelative, t, tr, trDynamic, type TKey } from '#lib/i18n';
@@ -32,6 +32,8 @@
   export let invitable: string[] = ['friend', 'family', 'guest'];
   /** the role catalogue (matrix) for the picker; empty until loaded */
   export let matrixRoles: MatrixRole[] = [];
+  export let rolesState: 'ready' | 'loading' | 'error' = 'ready';
+  const dispatch = createEventDispatcher<{ retryRoles: void }>();
 
   interface I {
     id: string; role: string; note: string | null; created_at?: string; expires_at: string; used_at: string | null; used_by_name: string | null
@@ -102,7 +104,7 @@
   $: accessDaysErr = accessDaysN !== null && (!Number.isInteger(accessDaysN) || accessDaysN < 1 || accessDaysN > 3650) ? $t('adminPeople.invites.errAccessDays') : '';
 
   async function create() {
-    if (creating || maxUsesErr || accessDaysErr) return;
+    if (creating || rolesState !== 'ready' || maxUsesErr || accessDaysErr) return;
     creating = true;
     try {
       const hours = EXPIRY_PRESETS.find((p) => p.id === expiry)?.hours ?? 48;
@@ -161,13 +163,13 @@
   <h2 id="inv-new">{$t('adminPeople.invites.newTitle')}</h2>
   <p class="hint">{$t('adminPeople.invites.intro')}</p>
   <form class="form" on:submit|preventDefault={create} novalidate>
-    <RolePicker label={$t('adminPeople.invites.role')} roles={matrixRoles} bind:value={role} />
+    <RolePicker label={$t('adminPeople.invites.role')} roles={matrixRoles} state={rolesState} bind:value={role} on:retry={() => dispatch('retryRoles')} />
     <Select label={$t('adminPeople.invites.expiry')} options={expiryOptions} bind:value={expiry} />
     <Field type="number" label={$t('adminPeople.invites.maxUses')} bind:value={maxUses} min={1} max={50} step={1} hint={$t('adminPeople.invites.maxUsesHint')} error={maxUsesErr} />
     <Field type="number" label={$t('adminPeople.invites.accessDays')} bind:value={accessDays} min={1} max={3650} step={1} placeholder={$t('adminPeople.invites.accessUnlimited')} hint={$t('adminPeople.invites.accessDaysHint')} error={accessDaysErr} />
     <div class="wide"><Field label={$t('adminPeople.invites.note')} bind:value={note} placeholder={$t('adminPeople.invites.notePlaceholder')} hint={$t('adminPeople.invites.noteHint')} maxlength={100} /></div>
     <div class="wide"><Toggle label={$t('adminPeople.invites.hasAccount')} hint={$t('adminPeople.invites.hasAccountHint')} bind:checked={hasAccount} /></div>
-    <div class="wide"><Button type="submit" icon="plus" pending={creating}>{$t('adminPeople.invites.create')}</Button></div>
+    <div class="wide"><Button type="submit" icon="plus" pending={creating} disabled={rolesState !== 'ready'}>{$t('adminPeople.invites.create')}</Button></div>
   </form>
 </section>
 

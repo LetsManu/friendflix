@@ -6,6 +6,7 @@ import type { Translation } from '../../types';
 /** area "adminPeople" (tr) */
 const dict: Translation<typeof de> = {
   loadFailed: 'Yüklenemedi. Bağlantını kontrol edip tekrar dene.',
+  rolesLoading: 'Roller yükleniyor …',
   never: 'hiç',
   tabs: { label: 'Kullanıcı yönetimi', users: 'Kullanıcılar', approvals: 'Onay bekleyenler', approvalsN: 'Onay bekleyenler ({n})', invites: 'Davetler' },
   access: { label: 'Erişim bitişi', choose: 'Erişim bitişi …', p30: 'Bugünden itibaren +30 gün', p90: 'Bugünden itibaren +90 gün', unlimited: 'Sınırsız', date: 'Tarih seç …', day: 'Erişim bitişi (tarih)' },

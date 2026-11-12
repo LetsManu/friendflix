@@ -292,6 +292,39 @@ test.describe('admin people (desktop)', () => {
       await expect(form.getByRole('combobox', { name: 'Rolle' }).getByRole('option', { name: /^Admin/ })).toHaveCount(0);
     });
 
+    test('roles that fail to load: nothing can be granted, the error offers a retry, then it works', async ({ page, api }) => {
+      let fail = true;
+      await page.route('**/api/admin/roles', (r) => (fail ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"boom"}' }) : r.fallback()));
+      await page.goto('/admin/users?tab=approvals');
+      const card = page.getByRole('region', { name: 'Mia Neu' });
+      await expect(card.getByText('Das ließ sich nicht laden.')).toBeVisible();
+      await expect(card.getByRole('combobox', { name: 'Rolle' })).toBeDisabled();
+      await expect(card.getByRole('button', { name: 'Freigeben' })).toBeDisabled();
+      const retry = card.getByRole('button', { name: 'Erneut versuchen' });
+      await expect.poll(async () => (await retry.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+      await page.getByRole('tab', { name: 'Einladungen' }).click();
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      await expect(form.getByRole('button', { name: 'Einladung erstellen' })).toBeDisabled();
+      await page.getByRole('tab', { name: /Warten auf Freigabe/ }).click();
+      fail = false;
+      await card.getByRole('button', { name: 'Erneut versuchen' }).click();
+      await expect(card.getByRole('combobox', { name: 'Rolle' })).toBeEnabled();
+      await expect(card.getByRole('button', { name: 'Freigeben' })).toBeEnabled();
+      await card.getByRole('button', { name: 'Freigeben' }).click();
+      await expect.poll(() => logged(api, new RegExp(`POST /api/admin/approvals/${auid(401)}/approve .*"role":"friend"`))).toBe(true);
+    });
+
+    test('approvals: when friend is not invitable the shown role is the sent role', async ({ page, api }) => {
+      api.admin.matrix.roles.find((r) => r.key === 'friend')!.invitable = false;
+      await page.goto('/admin/users?tab=approvals');
+      const card = page.getByRole('region', { name: 'Mia Neu' });
+      const pick = card.getByRole('combobox', { name: 'Rolle' });
+      await expect(pick).toBeEnabled();
+      await expect(pick).toHaveValue('family');
+      await card.getByRole('button', { name: 'Freigeben' }).click();
+      await expect.poll(() => logged(api, new RegExp(`POST /api/admin/approvals/${auid(401)}/approve .*"role":"family"`))).toBe(true);
+    });
+
     test('approvals: the old ?tab=pending link opens the tab; an already handled request drops its card', async ({ page, api }) => {
       await page.goto('/admin/users?tab=pending');
       await expect(page.getByRole('tab', { name: 'Warten auf Freigabe (2)' })).toHaveAttribute('aria-selected', 'true');

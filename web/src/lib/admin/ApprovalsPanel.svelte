@@ -21,11 +21,12 @@
   export let invitable: string[] = ['friend', 'family', 'guest'];
   /** the role catalogue (matrix) for the picker; empty until loaded */
   export let matrixRoles: MatrixRole[] = [];
+  export let rolesState: 'ready' | 'loading' | 'error' = 'ready';
 
   interface R { id: string; name: string; email: string | null; requested_at: string }
   /** per request: chosen role, access choice ('' = unlimited, p30, p90, date), its day, reject form */
   interface Draft { role: string; access: string; day: string; rejecting: boolean; message: string }
-  const dispatch = createEventDispatcher<{ count: number; decided: void }>();
+  const dispatch = createEventDispatcher<{ count: number; decided: void; retryRoles: void }>();
   let rows: R[] | null = null, error: string | null = null;
   let drafts: Record<string, Draft> = {};
 
@@ -39,6 +40,14 @@
     } catch { error = tr('adminPeople.loadFailed'); }
   }
   onMount(() => { void load(); });
+  /** the roles an approval may grant, as the picker lists them (invitable ones and admin) */
+  $: grantable = matrixRoles.filter((r) => r.key === 'admin' || r.invitable).sort((a, b) => a.position - b.position).map((r) => r.key);
+  // shown role = sent role: a draft whose role is not offered takes the default of the loaded catalogue
+  $: if (rolesState === 'ready' && grantable.length) {
+    const fallback = grantable.includes('friend') ? 'friend' : grantable.find((k) => k !== 'admin') ?? grantable[0]!;
+    const bad = Object.keys(drafts).filter((id) => !grantable.includes(drafts[id]!.role));
+    if (bad.length) drafts = { ...drafts, ...Object.fromEntries(bad.map((id) => [id, { ...drafts[id]!, role: fallback }])) };
+  }
   const set = (id: string, patch: Partial<Draft>) => { drafts = { ...drafts, [id]: { ...drafts[id]!, ...patch } }; };
   const val = (e: Event): string => (e.target as HTMLInputElement | HTMLSelectElement).value;
 
@@ -76,6 +85,7 @@
   }
   function approve(r: R) {
     const d = drafts[r.id]!;
+    if (rolesState !== 'ready' || !grantable.includes(d.role)) return;
     const until = accessUntil(d);
     if (until === null) return;
     void decide(r, () => api(`/api/admin/approvals/${r.id}/approve`, { method: 'POST', body: { role: d.role, ...(until ? { accessUntil: until } : {}) } }),
@@ -106,12 +116,12 @@
             <p class="sub">{r.email ?? $t('adminPeople.approvals.noEmail')} · <time datetime={r.requested_at} title={fmtDateTime(r.requested_at)}>{$t('adminPeople.approvals.requested', { time: fmtRelative(r.requested_at) })}</time></p>
           </div>
           <div class="choose">
-            <RolePicker label={$t('adminPeople.approvals.role')} roles={matrixRoles} includeAdmin value={d.role} on:change={(e) => set(r.id, { role: val(e) })} />
+            <RolePicker label={$t('adminPeople.approvals.role')} roles={matrixRoles} state={rolesState} includeAdmin value={d.role} on:change={(e) => set(r.id, { role: val(e) })} on:retry={() => dispatch('retryRoles')} />
             <Select label={$t('adminPeople.access.label')} options={accessOptions} value={d.access} on:change={(e) => set(r.id, { access: val(e) })} />
             {#if d.access === 'date'}<Field type="date" label={$t('adminPeople.access.day')} value={d.day} min={today()} required on:input={(e) => set(r.id, { day: val(e) })} on:change={(e) => set(r.id, { day: val(e) })} />{/if}
           </div>
           <div class="acts">
-            <Button icon="check" disabled={d.access === 'date' && !futureDayEnd(d.day)} on:click={() => approve(r)}>{$t('adminPeople.approvals.approve')}</Button>
+            <Button icon="check" disabled={rolesState !== 'ready' || (d.access === 'date' && !futureDayEnd(d.day))} on:click={() => approve(r)}>{$t('adminPeople.approvals.approve')}</Button>
             {#if !d.rejecting}<Button variant="ghost" icon="x" on:click={() => set(r.id, { rejecting: true })}>{$t('adminPeople.approvals.reject')}</Button>{/if}
           </div>
           {#if d.rejecting}

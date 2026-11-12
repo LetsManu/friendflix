@@ -480,7 +480,8 @@ describe('role matrix and save bar (rights)', () => {
       expect(src, f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
       expect(src, f).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
     }
-    for (const f of ['DeleteRoleDialog', 'NameDialog']) expect(read(`./rights/${f}.svelte`), f).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+    for (const f of ['DeleteRoleDialog', 'NameDialog']) expect(read(`./rights/${f}.svelte`), f).toContain('ModalShell');
+    expect(read('../ui/ModalShell.svelte')).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
   });
 
   it('the bar reserves its room before it rises: --savebar-h is set in a reactive statement (before the DOM update)', () => {
