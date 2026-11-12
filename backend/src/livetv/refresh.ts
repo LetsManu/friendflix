@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomBytes } from 'node:crypto';
 import type { Ctx } from '../ctx.js';
+import { recordError } from '../errorlog.js';
 import { m } from '../i18n.js';
 import { notifyAdmins } from '../notify.js';
 import { isOwnFeeds } from './channels.js';
@@ -29,8 +30,8 @@ const FAILS_TTL_S = 30 * 24 * 3600;
 const NOTIFY_AFTER = 3;
 /** a source whose last refresh failed is tried again after this, or after its interval when that is shorter */
 const RETRY_MS = 3600_000;
-/** livetv itself was not reached: not the provider's fault, so not counted towards the admin notice */
-const NOT_COUNTED: readonly string[] = ['livetv_unreachable'];
+/** livetv itself was not reached: counted towards the admin notice only while detection still sees livetv (see failed) */
+const LIVETV_DOWN = 'livetv_unreachable';
 /** livetv's own M3U timeout is 60 s; the backend waits a little longer so livetv answers the code */
 const M3U_TIMEOUT_MS = 75_000;
 /** the logo step of one refresh stops after 5 minutes; the rest is fetched by the next refresh */
@@ -82,21 +83,24 @@ class RefreshFailed extends Error {
 /** the import_logo_hash of every entry: the hash found, null for an entry without a logo, unchanged where none was found this time */
 async function storeLogos(ctx: Ctx, source: SourceRow, entries: readonly M3uEntry[]): Promise<void> {
   const urls = entries.flatMap((e) => (e.logo ? [e.logo] : []));
-  const found = urls.length ? await importLogos(ctx, urls, source.allow_lan, Date.now() + LOGO_BUDGET_MS) : new Map<string, string>();
-  const keys: string[] = [];
-  const hashes: Array<string | null> = [];
-  for (const e of entries) {
-    if (!e.logo) { keys.push(e.key); hashes.push(null); continue; }
-    const h = found.get(e.logo);
-    if (h) { keys.push(e.key); hashes.push(h); }
+  try {
+    const found = urls.length ? await importLogos(ctx, urls, source.allow_lan, Date.now() + LOGO_BUDGET_MS) : new Map<string, string>();
+    const keys: string[] = [];
+    const hashes: Array<string | null> = [];
+    for (const e of entries) {
+      if (!e.logo) { keys.push(e.key); hashes.push(null); continue; }
+      const h = found.get(e.logo);
+      if (h) { keys.push(e.key); hashes.push(h); }
+    }
+    for (let i = 0; i < keys.length; i += 2000) {
+      await ctx.db.query(
+        `update livetv_channels c set import_logo_hash = u.hash from unnest($2::text[], $3::text[]) as u(key, hash)
+          where c.source_id = $1 and c.source_key = u.key and c.import_logo_hash is distinct from u.hash`,
+        [source.id, keys.slice(i, i + 2000), hashes.slice(i, i + 2000)]);
+    }
+  } finally {
+    invalidateLivetvRights(); // also after a partial write
   }
-  for (let i = 0; i < keys.length; i += 2000) {
-    await ctx.db.query(
-      `update livetv_channels c set import_logo_hash = u.hash from unnest($2::text[], $3::text[]) as u(key, hash)
-        where c.source_id = $1 and c.source_key = u.key and c.import_logo_hash is distinct from u.hash`,
-      [source.id, keys.slice(i, i + 2000), hashes.slice(i, i + 2000)]);
-  }
-  invalidateLivetvRights();
 }
 
 /** the list step: fetch, merge, logos. Throws RefreshFailed with the fixed code. */
@@ -115,20 +119,22 @@ async function importList(ctx: Ctx, source: SourceRow, url: string): Promise<Imp
   const r = await mergeImport(ctx, source, fetched);
   if ('error' in r) throw new RefreshFailed(r.error);
   // the logos of the entries the merge kept (mergeImport drops skipped groups again); the merge has committed, so a failing logo step
-  // does not turn the refresh into a failure: the logos it missed are fetched by the next refresh
+  // does not turn the refresh into a failure: it is recorded as a job error (code only) and the next refresh fetches the logos it missed
   const skip = new Set(source.skip_groups);
-  await storeLogos(ctx, source, fetched.entries.filter((e) => !e.group || !skip.has(e.group))).catch(() => undefined);
+  await storeLogos(ctx, source, fetched.entries.filter((e) => !e.group || !skip.has(e.group)))
+    .catch(() => recordError(ctx, { source: 'job', code: 'livetv-logos' }));
   return r;
 }
 
 /**
  * records a failure: `last_error`, the event, the failure count and, from the third in a row, the admin notification. livetv not being
- * reached (`livetv_unreachable`) is recorded and pushed but not counted: it is not the provider list that fails.
+ * reached (`livetv_unreachable`) is always recorded and pushed, but counted only while detection still sees livetv installed: then
+ * livetv is up but this source makes it hang or crash, which the admin must hear about; while livetv is off it is not the list's fault.
  */
 async function failed(ctx: Ctx, source: SourceRow, code: string, now: Date): Promise<void> {
   await ctx.db.query('update livetv_sources set last_refresh_at = $2, last_error = $3 where id = $1', [source.id, now, code]);
   await pushEvent(ctx, { level: 'warn', code: 'source_refresh_failed', sourceId: source.id, reason: code });
-  if (NOT_COUNTED.includes(code)) return;
+  if (code === LIVETV_DOWN && !livetvInstalled(ctx)) return;
   const n = await ctx.kv.incr(failsKey(source.id), FAILS_TTL_S);
   if (n >= NOTIFY_AFTER) {
     // the source's name only (an admin's label), never its URL; at most once a day per source while it keeps failing

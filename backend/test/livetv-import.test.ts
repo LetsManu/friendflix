@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decrypt, encrypt, keyFromBase64 } from '../src/crypto.js';
+import { listErrors } from '../src/errorlog.js';
 import { detectLivetv } from '../src/livetv/detect.js';
 import { listEvents } from '../src/livetv/events.js';
 import { importNumber, mergeImport } from '../src/livetv/import.js';
@@ -388,14 +389,26 @@ describe('refresh failures (spec §19)', () => {
     expect(m3uCalls()).toHaveLength(0);
   });
 
-  it('livetv not reached is recorded but not counted towards the notice', async () => {
+  it('livetv not reached is recorded but not counted while livetv is off', async () => {
     m3u = () => { throw new TypeError('fetch failed'); };
     const id = await addSource();
+    await setUp(false); // detection no longer sees livetv (the admin route would refuse; refreshSource itself is not gated)
     for (let i = 0; i < 3; i++) await refresh(id);
     expect((await src(id)).last_error).toBe('livetv_unreachable');
     expect(await listEvents(env.ctx)).toHaveLength(3);
     expect(await env.kv.get(`ltv:fails:${id}`)).toBeNull();
     expect((await env.pool.query("select 1 from notifications where kind = 'livetv.source.failed'")).rowCount).toBe(0);
+  });
+
+  it('livetv not reached counts while livetv is installed (a source that makes it hang or crash)', async () => {
+    m3u = () => { throw new TypeError('fetch failed'); };
+    const id = await addSource({ name: 'Hafenkanal Anbieter' });
+    for (let i = 0; i < 3; i++) await refresh(id);
+    expect((await src(id)).last_error).toBe('livetv_unreachable');
+    expect(await env.kv.get(`ltv:fails:${id}`)).toBe('3');
+    const n = (await env.pool.query("select title, body from notifications where kind = 'livetv.source.failed'")).rows;
+    expect(n).toHaveLength(1);
+    expect(n[0].body).toContain('Hafenkanal Anbieter');
   });
 
   it('a stored URL that cannot be read is recorded as internal', async () => {
@@ -467,12 +480,17 @@ describe('logos (ruling 28)', () => {
 
   it('a failing logo step does not fail the refresh', async () => {
     list = [entry('Nordlicht TV', 'Nachrichten', 0, { logo: 'https://iptv.example.com/logos/nordlicht.png' })];
+    const started = new Date();
     vi.spyOn(env.kv, 'mget').mockRejectedValue(new Error('kv down'));
     const id = await addSource();
     await refresh(id);
     const s = await src(id);
     expect(s.last_error).toBeNull();
     expect(s.last_counts).toMatchObject({ channels: 1, added: 1 });
+    // recorded as a job error, by its code only
+    vi.restoreAllMocks();
+    const { entries } = await listErrors(env.ctx, { source: 'job', since: started });
+    expect(entries.filter((e) => e.code === 'livetv-logos')).toHaveLength(1);
   });
 
   it('logos fetched once per URL', async () => {
