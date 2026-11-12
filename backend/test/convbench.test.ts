@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildApp } from '../src/app.js';
 import { BENCH_ATTEMPT_GAP_S, BENCH_LAST_TTL_S, BENCH_TTL_S, conversionsView, convBenchTick, runBenchmark } from '../src/convbench.js';
 import { listErrors } from '../src/errorlog.js';
 import { __resetConvMemo, admitConversion, markConvExempt, type BenchRecord } from '../src/convbudget.js';
-import { claimHevcProbe, fingerprint, probeHevcEncoder } from '../src/hevcenc.js';
+import { busyFrom, claimHevcProbe, fingerprint, probeHevcEncoder } from '../src/hevcenc.js';
 import { setLive } from '../src/live.js';
 import type { EncoderSettings, MediaTraits } from '../src/media/types.js';
 import { previews } from '../src/previews.js';
@@ -413,16 +414,37 @@ describe('admin API', () => {
 });
 
 describe('admin API: rate limit', () => {
+  // the limiter's key is portal-wide and its store lives in the app: the tests above already spent part of env.app's budget, so this
+  // one builds a fresh app on the same ctx (same database, KV and sessions) and sees the whole "6 allowed, then 429" path
   it('at most 6 per 10 minutes for the whole portal', async () => {
     const s = await env.login(ADMIN);
-    const post = () => env.app.inject({ method: 'POST', url: '/api/admin/conversions/benchmark', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf } });
-    await watch(); // each answer is a quick 409 busy
-    const first = await post();
-    expect(first.headers['x-ratelimit-limit']).toBe('6');
-    const left = Number(first.headers['x-ratelimit-remaining']);
-    for (let i = 0; i < left; i++) expect((await post()).statusCode).toBe(409);
-    expect((await post()).statusCode).toBe(429);
-    expect(env.ctx.jf.clipTranscode).not.toHaveBeenCalled();
+    const app = await buildApp(env.ctx);
+    try {
+      const post = () => app.inject({ method: 'POST', url: '/api/admin/conversions/benchmark', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf } });
+      await watch(); // each allowed answer is a quick 409 busy
+      for (let i = 0; i < 6; i++) {
+        const r = await post();
+        expect([r.statusCode, r.headers['x-ratelimit-limit'], r.headers['x-ratelimit-remaining']]).toEqual([409, '6', String(5 - i)]);
+      }
+      expect((await post()).statusCode).toBe(429);
+      expect(env.ctx.jf.clipTranscode).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe('busyFrom', () => {
+  it('the one rule behind hevcBusyReason and the benchmark', () => {
+    const tr = { playMethod: 'Transcode', playSessionId: 'ps-x' } as never;
+    const dp = { playMethod: 'DirectPlay', playSessionId: 'ps-y' } as never;
+    expect(busyFrom(null, [])).toBe('watching'); // unreadable live list
+    expect(busyFrom([{}], [])).toBe('watching');
+    expect(busyFrom([], null)).toBe('unknown');
+    expect(busyFrom([], [])).toBeNull();
+    expect(busyFrom([], [dp])).toBeNull();
+    expect(busyFrom([], [tr])).toBe('watching');
+    expect(busyFrom([], [tr], new Set(['ps-x']))).toBeNull(); // an exempt clip of FriendFlix's own
   });
 });
 

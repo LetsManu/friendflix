@@ -5,7 +5,7 @@ import { conversionLimit, countConversions, readBench, type BenchRecord, type Co
 import { CONV_EXEMPT_PREFIX, within } from './convexempt.js';
 import type { Ctx } from './ctx.js';
 import { recordError } from './errorlog.js';
-import { HEVC_SESSIONS_TIMEOUT_MS, claimHevcProbe, fingerprint, hevcProbeRunning, readSettings, releaseHevcProbe } from './hevcenc.js';
+import { HEVC_SESSIONS_TIMEOUT_MS, busyFrom, claimHevcProbe, fingerprint, hevcProbeRunning, readSettings, releaseHevcProbe } from './hevcenc.js';
 import { listLive, type Live } from './live.js';
 import type { ServerSession } from './media/types.js';
 import { previews, serviceUser } from './previews.js';
@@ -70,14 +70,12 @@ async function exemptOf(ctx: Ctx, sessions: ServerSession[] | null): Promise<Set
 }
 
 /**
- * Why the media server may not be measured now, from lists already read: the semantics of hevcBusyReason (a portal stream, or any
- * transcode on the media server; an unreadable list is `unknown`) without FriendFlix's own exempt sessions, plus any conversion the
- * budget counts (a grant whose session the server does not list yet, a download preparation).
+ * Why the media server may not be measured now, from lists already read: hevcBusyReason's rule (busyFrom) without FriendFlix's own
+ * exempt sessions, plus any conversion the budget counts (a grant whose session the server does not list yet, a download preparation).
  */
 function busyOf(live: Live[] | null, sessions: ServerSession[] | null, exempt: Set<string>, running: ConvEntry[] | null): BenchBusy | null {
-  if (live === null || live.length > 0) return 'watching'; // as hevcBusyReason: an unreadable live list is not idle
-  if (sessions === null) return 'unknown';
-  if (sessions.some((s) => s.playMethod === 'Transcode' && !(s.playSessionId && exempt.has(s.playSessionId)))) return 'watching';
+  const reason = busyFrom(live, sessions, exempt);
+  if (reason) return reason;
   if (running === null) return 'unknown';
   return running.length ? 'watching' : null;
 }

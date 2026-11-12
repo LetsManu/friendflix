@@ -5,7 +5,7 @@ import { timedClip } from './cliptime.js';
 import type { Ctx } from './ctx.js';
 import { within } from './convexempt.js';
 import { listLive } from './live.js';
-import type { EncoderSettings, HevcGate } from './media/types.js';
+import type { EncoderSettings, HevcGate, ServerSession } from './media/types.js';
 import { previews, serviceUser } from './previews.js';
 import type { UserRow } from './types.js';
 
@@ -227,12 +227,23 @@ export async function probeHevcEncoder(ctx: Ctx, user: UserRow, deps: { now?: ()
  * own); `unknown` = its session list could not be read in time (the probe would measure nothing useful anyway). null = free.
  */
 export async function hevcBusyReason(ctx: Ctx): Promise<'watching' | 'unknown' | null> {
-  if ((await listLive(ctx).catch(() => [{}])).length > 0) return 'watching';
+  const live = await listLive(ctx).catch(() => null);
+  const early = busyFrom(live, []); // the live list alone decides first: the session list is not read while someone watches
+  if (early) return early;
   const list = ctx.jf.admin.transcodeSessions?.bind(ctx.jf.admin);
   if (!list) return null;
-  const sessions = await within(list, HEVC_SESSIONS_TIMEOUT_MS);
-  if (!sessions) return 'unknown';
-  return sessions.some((s) => s.playMethod === 'Transcode') ? 'watching' : null;
+  return busyFrom(live, (await within(list, HEVC_SESSIONS_TIMEOUT_MS)) ?? null);
+}
+
+/**
+ * Pure rule behind hevcBusyReason (and the conversion benchmark's busy check): `watching` when the live list is unreadable (null) or
+ * holds a portal stream, `unknown` when the session list is unreadable (null; [] = a server without one), `watching` when any session
+ * transcodes, unless its play session is in `skip` (FriendFlix's own exempt clips, for the benchmark). null = free.
+ */
+export function busyFrom(live: readonly unknown[] | null, sessions: readonly ServerSession[] | null, skip: ReadonlySet<string> = new Set()): 'watching' | 'unknown' | null {
+  if (live === null || live.length > 0) return 'watching';
+  if (sessions === null) return 'unknown';
+  return sessions.some((s) => s.playMethod === 'Transcode' && !(s.playSessionId && skip.has(s.playSessionId))) ? 'watching' : null;
 }
 export const hevcBusy = async (ctx: Ctx): Promise<boolean> => (await hevcBusyReason(ctx)) !== null;
 
