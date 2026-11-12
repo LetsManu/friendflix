@@ -87,5 +87,11 @@ const dict: Translation<typeof de> = {
     manualBodyPortainer: 'Bu yığın güncelleyici tarafından yönetilmiyor. Komutu sunucuda çalıştırın veya yönetim aracınızın (ör. Portainer) yığınında livetv hizmetini durdurun, ardından COMPOSE_PROFILES=livetv satırını yığının ortam değişkenlerinden kaldırın:',
     manualCommand: 'Komut',
   },
+  ch: {
+    orderPicked: '{name} alındı, konum {n}/{m}',
+    orderMoved: 'Konum {n}/{m}',
+    orderDropped: '{name} {n}. konuma bırakıldı',
+    orderCancelled: 'Taşıma iptal edildi',
+  },
 };
 export default dict;

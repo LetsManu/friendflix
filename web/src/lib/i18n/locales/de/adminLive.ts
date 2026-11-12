@@ -85,4 +85,11 @@ export default {
     manualBodyPortainer: 'Dieser Stack wird nicht vom Updater verwaltet. Führe den Befehl auf dem Server aus oder stoppe den Dienst livetv im Stack deiner Verwaltung (z. B. Portainer) und entferne danach COMPOSE_PROFILES=livetv aus den Umgebungsvariablen des Stacks:',
     manualCommand: 'Befehl',
   },
+  ch: {
+    /** Kanäle → Reihenfolge: the polite announcements of the keyboard and drag order (spec §9.2) */
+    orderPicked: '{name} aufgenommen, Position {n} von {m}',
+    orderMoved: 'Position {n} von {m}',
+    orderDropped: '{name} abgelegt auf Position {n}',
+    orderCancelled: 'Verschieben abgebrochen',
+  },
 } as const;
