@@ -100,7 +100,7 @@
   const nameOf = (k: string): string => byId.get(k)?.name ?? '';
   const posOf = (st: DragState, k: string): number => st.ids.indexOf(k) + 1;
   /** a repeated text differs by a no-break space, so the live region announces it again */
-  function say(text: string) { status = status === text ? `${text} ` : text; }
+  function say(text: string) { status = status === text ? `${text} ` : text; }
 
   /**
    * Apply a new order. FLIP: each row's place on screen before (with any glide still running), its new layout place after the update
@@ -367,7 +367,7 @@
 
 <div class="fo-wrap" class:tv use:portal={!tv}>
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="frost-dim" aria-hidden="true" on:click={close} transition:scrimFade|global></div>
+  <div class="frost-dim" aria-hidden="true" on:click={() => { if (!dirty) close(); }} transition:scrimFade|global></div>
   <div class="fo frost frost-safe frost-sheet" class:tv bind:this={panel} role="dialog" aria-modal="true" aria-labelledby="{id}-t" tabindex="-1"
     style="--fr-scrim-safe:{SCRIM_MENU}" use:dialogKeys={{ close }} use:sheetRoom={tv ? 'right' : 'bottom'} transition:slide|global>
     <header>

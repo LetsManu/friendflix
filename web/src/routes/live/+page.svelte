@@ -11,6 +11,7 @@
   import { channels as fetchChannels, favourite, setFavouriteOrder, type LiveChannel, type LiveList } from '#lib/live/api';
   import { minute } from '#lib/live/fade';
   import FavOrderSheet from '#lib/live/FavOrderSheet.svelte';
+  import { starSync } from '#lib/live/favStar';
   import FavTiles from '#lib/live/FavTiles.svelte';
   import GroupChips from '#lib/live/GroupChips.svelte';
   import KidsLive from '#lib/live/KidsLive.svelte';
@@ -112,14 +113,12 @@
     await setFavouriteOrder(ids);
     if (list) list = { ...list, favourites: [...ids, ...list.favourites.filter((f) => !ids.includes(f))] }; // favourites the person cannot see keep their place behind
   }
-  function toggleStar(c: LiveChannel) {
-    const on = !c.favourite;
-    void runAction({
-      key: `live-fav:${c.id}`,
-      apply: () => { setFavourite(c.id, on); return () => setFavourite(c.id, !on); },
-      run: () => favourite(c.id, on),
-    });
-  }
+  // the star (R27): the latest press per channel always wins; a press during a running save is sent right after it, never dropped
+  const stars = starSync({
+    show: setFavourite,
+    send: async (id, on) => (await runAction({ key: `live-fav:${id}`, run: () => favourite(id, on) })).ok,
+  });
+  const toggleStar = (c: LiveChannel) => void stars.toggle(c.id, list?.channels.find((x) => x.id === c.id)?.favourite ?? c.favourite);
 </script>
 
 <svelte:head><title>{$t('common.pageTitle', { page: $t('live.title') })}</title></svelte:head>
