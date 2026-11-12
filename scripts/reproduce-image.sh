@@ -47,7 +47,13 @@ if [ "${1:-}" = --diff ]; then
   exit 0
 fi
 SERVICE="${1:-}"; [ -n "$SERVICE" ] || usage; shift
-case "$SERVICE" in backend|gateway|web|updater) ;; *) usage ;; esac
+case "$SERVICE" in
+  backend|gateway|web|updater) ;;
+  # exempt on purpose: its runtime stage installs jellyfin-ffmpeg7 with apt from the live Jellyfin repository (no snapshot
+  # archive, only current versions), so a rebuild is not promised to be bit for bit. docs/livetv.md, docs/reproducible-builds.md
+  livetv) log "livetv is exempt from the reproducible-build check (apt packages from the Jellyfin repository), see docs/livetv.md"; exit 2 ;;
+  *) usage ;;
+esac
 REF=HEAD COMPARE='' OUT=''
 while [ $# -gt 0 ]; do
   case "$1" in

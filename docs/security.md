@@ -37,6 +37,7 @@ Internet --TLS--> reverse proxy (yours, :443)
 backend --> postgres, redis    (db network, internal: no egress, no host access)
 backend, gateway --> media server (media network, internal)
 backend --> OIDC provider, notification services (egress)
+backend, gateway --> livetv (livetv network, internal; only with the optional profile `livetv`) --> providers (livetv-egress)
 backend --> updater (updater network, internal; default, off with compose.no-updater.yaml)  --> docker-proxy (internal) --> Docker socket (read-only)
 ```
 
@@ -54,6 +55,7 @@ Networks and ports are defined in [compose.yaml](../compose.yaml); the diagram a
 | Cast and AirPlay receivers | TV or speaker on the viewer's network to the gateway | The receiver cannot send cookies, so it gets a short-lived, revocable cast token in the URL path. See [cast.md](cast.md). A receiver is untrusted: it only ever holds that token. |
 | Web Push and notification services | Backend to push services, ntfy, Discord | Outbound only; keys and webhook URLs are admin-configured secrets. |
 | Backend to updater (default since 2.0; off with `compose.no-updater.yaml`) | App to the only component that can change containers | Five fixed actions, HMAC-signed (timestamp + nonce, replays refused); only the updater reaches the socket proxy ([Updater](#updater)). |
+| Backend and gateway to livetv (optional profile `livetv`) | App to the container that fetches provider lists, EPG and streams | Over the `livetv` network (internal); every `/v1/*` request is HMAC-signed like the updater's (key label `friendflix-livetv/v1`). Only livetv is on `livetv-egress`. See [The `livetv` container](#the-livetv-container). |
 
 ## Threat model
 
@@ -317,6 +319,16 @@ backend --signed request--> updater --(internal net)--> docker-proxy --ro--> /va
 **What the proxy blocks.** Requests to `/exec` (so an exec created under `/containers/<id>/exec` can never be started), `/build`, `/commit`, `/swarm`, `/services`, `/tasks`, `/nodes`, `/secrets`, `/configs`, `/plugins`, `/system` (`df`, prune of everything), `/session`, `/distribution`, `/auth` and `/grpc`, and `/containers/<id>/archive`, `/export`, `/logs`, `/top` and `/changes` answer 403; every path outside the allowlist does too. The socket is mounted read-only into the proxy and the proxy has no published port. What it does **not** block: inside the allowed sections it filters by path and method only, never by body, so `POST /containers/create` with a dangerous body (privileged, host binds), kill / restart / pause of any container, image removal and volume or network changes all pass. That is why the proxy is reachable from the updater alone.
 
 **Disable** by adding `compose.no-updater.yaml` to the compose command (or `COMPOSE_FILE`) and removing the running `updater` and `docker-proxy` containers once ([setup.md, Turn it off](setup.md#updater)); nothing else depends on them.
+
+## The `livetv` container
+
+Live TV is optional: the service exists only in the compose profile `livetv`, so nothing is pulled or run until an admin turns it on (*Admin → Live-TV* through the updater, or `COMPOSE_PROFILES=livetv`). It fetches provider lists, EPG and streams from addresses the backend hands it, so it is built as a container an attacker could take over without getting further.
+
+- **No Docker socket:** neither livetv nor backend, web or gateway mounts it; only `docker-proxy` does ([Updater](#updater)). The updater enables, disables and removes the profile with fixed actions.
+- **Hardened container:** uid 10001, read-only root file system (writable: `/tmp` as tmpfs, the `livetv-cache` volume, the `recordings` volume), `cap_drop: ALL`, `no-new-privileges`. It reads only `internal_secret` from the `bootstrap-gateway` volume, never the database password or the encryption key.
+- **Networks:** `livetv` is `internal: true` and joined by backend, gateway and livetv only (web is not on it); the API on port 8090 is reachable there and nowhere else. `livetv-egress` is a normal bridge that only livetv joins, for the providers. livetv has no route to the database, Redis, the media server or the updater.
+- **Published ports: UDP only.** The only ports livetv publishes are the UDP range `LIVETV_SRT_PORTS` (default 9000-9009) for pushed SRT feeds, on `LIVETV_SRT_BIND` (default `0.0.0.0`; `127.0.0.1` turns push off from outside). Open them on the firewall only if you push feeds. There is no TCP port and no host-side API.
+- **Signed API:** every `/v1/*` call carries timestamp, nonce and an HMAC from a key derived from `INTERNAL_SECRET`; replays and stale requests are refused. Details of what it fetches and how addresses are guarded follow with the Live-TV tasks.
 
 ## Continue on another device
 

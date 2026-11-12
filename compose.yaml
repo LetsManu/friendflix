@@ -20,6 +20,12 @@ networks:
   media:
     internal: true
   egress: {} # outbound internet for Jellyfin/request service metadata only; nothing is published
+  # Live TV (optional, profile `livetv`): backend <-> gateway <-> livetv (signed API), no way out. Defined always (backend and
+  # gateway join `livetv`); while the service is off the name `livetv` does not resolve. livetv-egress: only livetv, for
+  # provider lists, EPG and streams.
+  livetv:
+    internal: true
+  livetv-egress: {}
 
 services:
   # Init container (runs once per `up`, then exits): writes every secret needed before the database can be read into the
@@ -218,7 +224,7 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     ports: ["${BIND_ADDR:-127.0.0.1}:${BACKEND_PORT:-3081}:3000"]
-    networks: [front, db, media, egress] # egress: OIDC discovery + ntfy/Discord
+    networks: [front, db, media, egress, livetv] # egress: OIDC discovery + ntfy/Discord; livetv: the optional Live TV service only
 
   gateway:
     build: { context: ., dockerfile: gateway/Dockerfile }
@@ -235,6 +241,7 @@ services:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-} # unset: the copy in the bootstrap-gateway volume
       METRICS_TOKEN: ${METRICS_TOKEN:-}
       DOWNLOAD_DIR: /data/downloads
+      LIVETV_URL: ${LIVETV_URL:-http://livetv:8090} # the optional livetv service (profile livetv); serves /media/l/<token>/...
     group_add: ["10001"] # reads bootstrap-gateway (internal_secret only: never the database password or the encryption key)
     volumes:
       - ${DOWNLOADS_PATH:-downloads}:/data/downloads:ro # same folder as the backend, read-only
@@ -243,7 +250,7 @@ services:
       bootstrap: { condition: service_completed_successfully }
       backend: { condition: service_started }
     ports: ["${BIND_ADDR:-127.0.0.1}:${GATEWAY_PORT:-3082}:4000"]
-    networks: [front, media]
+    networks: [front, media, livetv]
 
   web:
     build: { context: ., dockerfile: web/Dockerfile }
@@ -260,6 +267,35 @@ services:
       bootstrap: { condition: service_completed_successfully }
     ports: ["${BIND_ADDR:-127.0.0.1}:${WEB_PORT:-3080}:3000"]
     networks: [front]
+
+  # Live TV (optional): only with the profile `livetv` (Admin -> Live-TV aktivieren through the updater, or COMPOSE_PROFILES=livetv
+  # in .env). Fetches provider lists, EPG and streams; the backend tells it what to run. No Docker socket. Its only published
+  # ports are the UDP range for pushed SRT feeds (LIVETV_SRT_PORTS; open them on the firewall only if you push feeds).
+  livetv:
+    profiles: [livetv]
+    build: { context: ., dockerfile: livetv/Dockerfile }
+    image: friendflix-livetv:dev
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    group_add: ["10001"] # reads bootstrap-gateway (internal_secret only)
+    environment:
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-} # unset: the copy in the bootstrap-gateway volume
+      LIVETV_CACHE_MAX_GB: ${LIVETV_CACHE_MAX_GB:-6}
+      LIVETV_SRT_PORTS: ${LIVETV_SRT_PORTS:-9000-9009}
+      TZ: ${TZ:-Europe/Vienna}
+    ports:
+      # SRT push (§3.5): UDP only, same numbers outside and inside so the setup hint shows the real port.
+      - "${LIVETV_SRT_BIND:-0.0.0.0}:${LIVETV_SRT_PORTS:-9000-9009}:${LIVETV_SRT_PORTS:-9000-9009}/udp"
+    volumes:
+      - livetv-cache:/cache                                   # DVR segments, previews (disposable)
+      - ${RECORDINGS_PATH:-recordings}:/recordings             # Phase 3
+      - bootstrap-gateway:/run/friendflix-gateway:ro
+    depends_on:
+      bootstrap: { condition: service_completed_successfully }
+    networks: [livetv, livetv-egress]
 
   # Nightly pg_dump sidecar (opt-in): `docker compose --profile backup up -d backup`  (docs/operations.md "Backups & Wiederherstellung")
   # Host dir must be writable by uid 70:  mkdir -p backups && chown 70 backups
@@ -360,6 +396,8 @@ volumes:
   pgdata:
   previews:
   downloads:
+  livetv-cache: # DVR segments and previews of the livetv service (disposable)
+  recordings: # livetv recordings (Phase 3); RECORDINGS_PATH can point to a host folder
   jellyfin-config:
   jellyfin-cache:
   requests-config:

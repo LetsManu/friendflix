@@ -288,6 +288,14 @@ jobs:
           # the Plex override sets MEDIA_SERVER=plex for backend + gateway; the updater takes the stack's own files (no fixed list)
           docker compose -f compose.prod.yaml -f compose.plex.yaml config | grep -q 'UPDATER_COMPOSE_FILES: ""'
           test "$(docker compose -f compose.prod.yaml -f compose.plex.yaml config | grep -c 'MEDIA_SERVER: plex')" = 2
+          # Live TV (optional profile): the service does not exist without it, renders with it, and the GPU overlays render too
+          docker compose -f compose.prod.yaml --profile livetv config -q
+          docker compose -f compose.yaml --profile livetv config -q
+          RENDER_GID=109 docker compose -f compose.prod.yaml -f compose.livetv-gpu.yaml --profile livetv config -q
+          docker compose -f compose.prod.yaml -f compose.livetv-nvidia.yaml --profile livetv config -q
+          test -z "$(docker compose -f compose.prod.yaml config --services | grep -x livetv || true)"
+          test -z "$(docker compose -f compose.yaml config --services | grep -x livetv || true)"
+          docker compose -f compose.prod.yaml --profile livetv config --services | grep -qx livetv
       - name: Compose config with .env.example
         run: |
           cp .env.example .env
@@ -310,6 +318,14 @@ jobs:
           # the Plex override sets MEDIA_SERVER=plex for backend + gateway; the updater takes the stack's own files (no fixed list)
           docker compose -f compose.prod.yaml -f compose.plex.yaml config | grep -q 'UPDATER_COMPOSE_FILES: ""'
           test "$(docker compose -f compose.prod.yaml -f compose.plex.yaml config | grep -c 'MEDIA_SERVER: plex')" = 2
+          # Live TV (optional profile): the service does not exist without it, renders with it, and the GPU overlays render too
+          docker compose -f compose.prod.yaml --profile livetv config -q
+          docker compose -f compose.yaml --profile livetv config -q
+          RENDER_GID=109 docker compose -f compose.prod.yaml -f compose.livetv-gpu.yaml --profile livetv config -q
+          docker compose -f compose.prod.yaml -f compose.livetv-nvidia.yaml --profile livetv config -q
+          test -z "$(docker compose -f compose.prod.yaml config --services | grep -x livetv || true)"
+          test -z "$(docker compose -f compose.yaml config --services | grep -x livetv || true)"
+          docker compose -f compose.prod.yaml --profile livetv config --services | grep -qx livetv
           rm .env
   docker:
     runs-on: ubuntu-latest
@@ -452,6 +468,10 @@ jobs:
   #   pull_request / other         a second rebuild in another fresh builder (two clean builds, compared)
   # Runs on PRs too (per service in parallel, only after `docker` passed) so a change that breaks reproducibility is caught
   # before merge, and publish waits for it. Attestations are not compared: they are separate manifests carrying build times.
+  # livetv is NOT in this matrix (documented exemption): its runtime stage installs jellyfin-ffmpeg7 with apt from the live
+  # Jellyfin repository (Debian + third-party packages, dpkg state, no snapshot archive; the repository keeps only current
+  # versions), which this job cannot show to reproduce bit for bit. It is still built, scanned, SBOM'd and signed by the
+  # `docker` matrix and publish; base images are digest-pinned. See scripts/reproduce-image.sh and docs/livetv.md.
   # Not scheduled: a later rebuild differs as soon as Alpine ships a newer apk package (see the Dockerfiles).
   reproducible:
     needs: docker

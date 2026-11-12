@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Manuel Weißböck
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Optional override (Intel / AMD, VA-API and QSV): gives the livetv container /dev/dri; set RENDER_GID=$(getent group render | cut -d: -f3) first (docs/livetv.md).
+services:
+  livetv:
+    devices: ["/dev/dri:/dev/dri"]
+    group_add: ["${RENDER_GID:?set RENDER_GID}"]
