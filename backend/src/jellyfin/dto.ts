@@ -222,6 +222,7 @@ export function toPlaybackDto(args: {
     runtimeTicks: src.RunTimeTicks,
     resumeTicks,
     maxBitrate,
+    ...(Number(src.Bitrate) > 0 ? { sourceBitrate: Number(src.Bitrate) } : {}),
     ...(transcodeReason ? { transcodeReason } : {}),
     delivery: plan.delivery,
     ...(audioIndex !== undefined ? { audioIndex } : {}),

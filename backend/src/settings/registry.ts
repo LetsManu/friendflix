@@ -138,6 +138,8 @@ export const SETTINGS: readonly SettingDef[] = [
   setting('HOME_NETWORKS', { kind: 'cidrList', group: 'playback' }),
   setting('UPLOAD_MBPS', { kind: 'number', group: 'playback' }), // read per /api/playback/info request
   setting('HEVC_STREAMS', { kind: 'int', group: 'playback' }), // read per /api/playback/info request
+  setting('CONVERSION_SLOTS', { kind: 'int', group: 'playback' }), // read per admission (convbudget.ts)
+  setting('CONVERSION_PRIORITY', { kind: 'enum', group: 'playback' }), // read per admission (convbudget.ts)
   setting('SURROUND_AUDIO', { kind: 'bool', group: 'playback' }), // read per /api/playback/info request and /api/me
   // recommendations: read per request from ctx.cfg (reco/engine.ts, recommend.ts, postplay.ts, routes/discover.ts, home.ts), so a save
   // applies at once; RECO_COEFFS and the RECO_W_* item index weights stay env-only (expert tuning)

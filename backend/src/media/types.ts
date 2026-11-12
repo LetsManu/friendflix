@@ -149,9 +149,12 @@ export interface ImageTags {
   seriesPrimary?: string;
 }
 
-export type TranscodeReason = 'network' | 'remoteCap' | 'uploadCap' | 'roleCap' | 'container' | 'videoCodec' | 'audioCodec' | 'audioTrack' | 'subtitles' | 'height' | 'manual' | 'other';
-/** the bitrate cap that applied (routes/media.ts): `uploadCap` = the server's upload was busy (uploadcap.ts) */
-export type CapReason = 'remoteCap' | 'uploadCap' | 'roleCap' | 'manual' | 'network';
+export type TranscodeReason = 'network' | 'remoteCap' | 'uploadCap' | 'roleCap' | 'container' | 'videoCodec' | 'audioCodec' | 'audioTrack' | 'subtitles' | 'height' | 'manual' | 'serverBusy' | 'other';
+/**
+ * the bitrate cap that applied (routes/media.ts): `uploadCap` = the server's upload was busy (uploadcap.ts); `serverBusy` = the conversion
+ * budget was full, so the answer is the copy fallback (convbudget.ts, spec §5.5)
+ */
+export type CapReason = 'remoteCap' | 'uploadCap' | 'roleCap' | 'manual' | 'network' | 'serverBusy';
 
 export interface PlaybackDto {
   itemId: string;
@@ -166,8 +169,15 @@ export interface PlaybackDto {
   /** effective ceiling for this request (role limit, lowered to the remote cap outside the home networks): upper bound for the quality menu */
   roleMaxBitrate?: number;
   /**
-   * Why this session is transcoded; undefined for direct play. Codec/container/height/subtitle/audio-track reasons come from the server,
-   * 'remoteCap' / 'uploadCap' / 'roleCap' / 'manual' / 'network' from the bitrate cap that applied (the client's choice is 'manual' or 'network' via reasonHint).
+   * the source's total bitrate as the server states it (Jellyfin MediaSource.Bitrate; absent when unknown or on Plex). Server-side only: the
+   * budget's copy fallback is the source's own bitrate, so it is offered only to a request that asked for at least that much (routes strip it)
+   */
+  sourceBitrate?: number;
+  /**
+   * Why this session is transcoded; undefined for direct play, except the `serverBusy` fallback. Codec/container/height/subtitle/audio-track
+   * reasons come from the server, 'remoteCap' / 'uploadCap' / 'roleCap' / 'manual' / 'network' from the bitrate cap that applied (the client's
+   * choice is 'manual' or 'network' via reasonHint). 'serverBusy': the conversion budget was full, so this is the copy (or direct-play)
+   * fallback at the ceiling, whichever of the two it is (spec §5.5).
    */
   transcodeReason?: TranscodeReason;
   /** audio track baked into hlsUrl (explicit audioIndex or the matched audioLang); undefined = source default (Jellyfin: a matched default track is still named in hlsUrl, see dto.ts) */
@@ -378,7 +388,12 @@ export interface PlaybackOptions { maxBitrate: number; /** validated device capa
    */
   hlsSubtitleIndex?: number;
   /** asked only when the plan wants an HEVC conversion; absent = refused (h264_unproven) */
-  hevcGate?: () => Promise<HevcGate> }
+  hevcGate?: () => Promise<HevcGate>;
+  /**
+   * the conversion budget is full (spec §5.5 fallback): the stream plan asks for no conversion of its own (no HEVC encode); whether the
+   * answer copies the picture is then the plan's own decision. Plex ignores it (its answers carry no `delivery`, so it is never gated).
+   */
+  noConvert?: boolean }
 /** Server-side transcode of a short clip / probe (preview clips, playback health check): forced re-encode at these limits. */
 export interface ClipTranscode { audioIndex?: number; fmp4?: boolean; videoBitrate: number; audioBitrate: number; maxWidth: number; stereo?: boolean; maxBitrate?: number; /** video codec of the conversion (default h264); the HEVC probe uses 'hevc' */ videoCodec?: 'h264' | 'hevc'; /** HLS segment length in seconds (SegmentLength) */ segmentLength?: number; /** height box of the conversion (MaxHeight); default: the one of the PlaybackInfo answer */ maxHeight?: number }
 
@@ -609,8 +624,11 @@ export interface MediaServer {
 
   // ---- playback
   playbackInfo(user: MediaUser, itemId: string, opts: PlaybackOptions): Promise<PlaybackDto>;
-  /** resume position + trickplay for the media source playbackInfo picks (runs in parallel with it); null when the lookup fails */
-  playMeta(user: MediaUser, itemId: string): Promise<{ positionTicks: number; trickplay: (mediaSourceId: string) => TrickplayDto | undefined } | null>;
+  /**
+   * resume position + trickplay for the media source playbackInfo picks (runs in parallel with it); null when the lookup fails. `name` /
+   * `seriesName` when the same lookup has them (the conversion budget's label); optional, an implementation may leave them out.
+   */
+  playMeta(user: MediaUser, itemId: string): Promise<{ positionTicks: number; trickplay: (mediaSourceId: string) => TrickplayDto | undefined; name?: string; seriesName?: string } | null>;
   downloadSource(user: MediaUser, itemId: string, opts: { quality: DownloadQuality; audioIndex?: number; maxHeight?: number | null; maxBitrate?: number | null }): Promise<DownloadSourceDto>;
   /**
    * Optional step after playbackInfo() and before the client fetches the master playlist (player and Chromecast): e.g. a transcode

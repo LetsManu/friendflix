@@ -25,6 +25,15 @@ export interface AdminInvite { id: string; role: string; note: string | null; ex
 /** open approval request (GET /api/admin/approvals) */
 export interface AdminApproval { id: string; name: string; email: string | null; requested_at: string }
 export interface PreviewRow { itemId: string; name: string; type: string; status: 'ok' | 'failed' | 'missing' | 'preparing'; bytes: number | null; audioLang: string | null; error: string | null; createdAt: string | null }
+export interface ConvMock {
+  limit: number; auto: number; custom: number | null; priority: 'films' | 'live' | 'equal';
+  running: Array<{ kind: 'film' | 'live' | 'record' | 'download' | 'reencode'; hevc: boolean; label: string | null; since: string | null; device: string | null }>;
+  bench: { jellyfin: { speed: number; hwAccel: string; at: string } | null; livetv: { speed: number; encoder: string; at: string } | null; recommended: number | null; stale: boolean; noRealtime: boolean };
+  measure: { running: boolean; busy: 'watching' | 'unknown' | null; last: { outcome: 'ok' | 'failed' | 'no_title' | 'busy' | 'no_user' | 'unsupported'; at: string | null } | null };
+  /** POST /api/admin/conversions/benchmark calls so far; the next answer (default 202 started, the measurement then runs) */
+  posts: number;
+  benchAnswer: { status: number; body: Record<string, unknown> } | null;
+}
 export interface AuditRow { id: number; at: string; action: string; target: string | null; meta: Record<string, unknown>; actor: string | null; target_name: string | null }
 
 export const ROLES = {
@@ -47,6 +56,8 @@ export interface AdminState {
   hubs: Array<{ id: string; name: string; source: string; sourceValue: string; accent?: string | null; imageItemId?: string | null; enabled: boolean }>;
   /** hover-preview clips of the library (content pages) */
   previews: PreviewRow[];
+  /** Admin → Wiedergabe-Check, card Umwandlungen (GET/POST /api/admin/conversions; backend ConversionsView): limit / custom / priority follow the CONVERSION_* settings (mocks/api.ts) */
+  conv: ConvMock;
   /** streams running right now (/api/admin/live) */
   live: Array<{ userId: string; userName: string; profileName: string | null; playSessionId: string; itemId: string; title: string; seriesName: string | null; type: string | null; positionTicks: number; runtimeTicks: number | null; isPaused: boolean; updatedAt: string; source: string }>;
   /** Seerr reachable (summary.services.seerr, request counts) */
@@ -315,6 +326,16 @@ export function adminState(): AdminState {
       { id: 'h2', name: 'Pinecone', source: 'studio', sourceValue: 'Pinecone', accent: '#3a7bd5', enabled: false },
     ],
     previews: previewItems.map((p) => ({ ...p })),
+    conv: {
+      limit: 3, auto: 3, custom: null, priority: 'films',
+      running: [
+        { kind: 'film', hevc: false, label: 'Dunmoor', since: null, device: 'Wohnzimmer-TV' },
+        { kind: 'download', hevc: false, label: 'Dunmoor', since: null, device: null },
+      ],
+      bench: { jellyfin: { speed: 4.6, hwAccel: 'qsv', at: ago(6) }, livetv: { speed: 4.4, encoder: 'h264_qsv', at: ago(6) }, recommended: 3, stale: false, noRealtime: false },
+      measure: { running: false, busy: null, last: null },
+      posts: 0, benchAnswer: null,
+    },
     live: [
       { userId: auid(2), userName: 'Anna Beispiel', profileName: 'Anna', playSessionId: 'ps-anna', itemId: 'it1', title: 'Hearth', seriesName: null, type: 'Movie', positionTicks: 30 * 6e8, runtimeTicks: 170 * 6e8, isPaused: false, updatedAt: ago(0), source: 'portal' },
       { userId: auid(3), userName: 'Ben Test', profileName: null, playSessionId: 'ps-ben', itemId: 'it2', title: 'Pilot', seriesName: 'Sundial', type: 'Episode', positionTicks: 10 * 6e8, runtimeTicks: 55 * 6e8, isPaused: true, updatedAt: ago(0), source: 'portal' },
@@ -1094,6 +1115,16 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       ...(i === 2 ? { delivery: 'transcode', videoCopy: false, soundMode: 'off', audioRouted: false, droppedFrames: 0, totalFrames: 9000, trackSwitch: false, reconnects: 0, avEvents: 2 } : {}),
     });
     return J({ day, week: day, recent: [row(1, false, 'phone', 5600), row(2, false, 'phone', 3100), row(3, true, 'pc', 1500)] });
+  }
+  if (p === '/api/admin/conversions' && m === 'GET') {
+    const { posts: _p, benchAnswer: _b, ...v } = st.conv;
+    return J({ ...v, used: v.running.length });
+  }
+  if (p === '/api/admin/conversions/benchmark' && m === 'POST') {
+    st.conv.posts++;
+    if (st.conv.benchAnswer) return J(st.conv.benchAnswer.body, st.conv.benchAnswer.status);
+    st.conv.measure = { ...st.conv.measure, running: true };
+    return J({ started: true }, 202);
   }
   if (p === '/api/admin/playback-check') {
     if (m === 'POST') return ok();

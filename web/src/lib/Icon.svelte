@@ -77,6 +77,7 @@
   {:else if name === 'keyboard'}<path d="M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10" />
   {:else if name === 'grid'}<rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
   {:else if name === 'inbox'}<path d="M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6z" />
+  {:else if name === 'record'}<circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none" />
   {:else if name === 'activity'}<path d="M3 12h4l3-8 4 16 3-8h4" />
   {:else if name === 'refresh'}<path d="M20 11a8 8 0 00-14.6-4.5L3 9M3 4v5h5M4 13a8 8 0 0014.6 4.5L21 15M21 20v-5h-5" />
   {:else if name === 'mail'}<rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" />

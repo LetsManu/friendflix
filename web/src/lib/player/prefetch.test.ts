@@ -18,7 +18,7 @@ const markPlayArt = vi.fn();
 vi.mock('./transition', async (orig) => ({ ...(await orig<typeof import('./transition')>()), markPlayArt: (...a: unknown[]) => markPlayArt(...a) }));
 const { prepareNext, releaseNext, takeNext, WARM_GRACE_MS, WARM_MAX_RESUME_TICKS } = await import('./prefetch');
 const { HOLD_TIMEOUT_MS, holdPrefetch, playPrefetch, prefetchPlayback, takePrefetched, watchTarget, startSecond, _resetPrefetch, PREFETCH_TTL_MS } = await import('./prefetch');
-const { firstPlaybackRequest, playbackInfoBody, bodyKey } = await import('./infobody');
+const { firstPlaybackRequest, playbackInfoBody, bodyKey, noEstimateStart } = await import('./infobody');
 const { entryFadeMs, playTransition } = await import('./transition');
 const { prefs, DEFAULT_PREFS } = await import('#lib/stores');
 const { serverCaps, capsFrom } = await import('#lib/capabilities');
@@ -38,7 +38,8 @@ describe('prefetchPlayback / takePrefetched', () => {
     api.mockResolvedValue({ playSessionId: 'x' });
     prefetchPlayback('m1');
     expect(api).toHaveBeenCalledTimes(1);
-    expect(api).toHaveBeenCalledWith('/api/playback/info', { method: 'POST', body: { itemId: 'm1', maxBitrate: 4_000_000, reasonHint: 'network' } });
+    // no stored estimate: the 720p start is flagged; `prefetch` marks who asks (both stay out of bodyKey)
+    expect(api).toHaveBeenCalledWith('/api/playback/info', { method: 'POST', body: { itemId: 'm1', maxBitrate: 4_000_000, reasonHint: 'network', startRung: true, prefetch: true } });
   });
 
   it('never prefetches when the server starts its transcode in playback info (playbackPrefetch=false, Plex)', () => {
@@ -91,6 +92,13 @@ describe('prefetchPlayback / takePrefetched', () => {
     expect(api).toHaveBeenCalledTimes(2);
   });
 
+  it('503 server_busy drops the entry quietly; the player then asks itself and shows its busy state', async () => {
+    api.mockRejectedValue(Object.assign(new Error('API 503'), { status: 503, body: { error: 'server_busy' } }));
+    prefetchPlayback('m1');
+    await flush();
+    expect(takePrefetched('m1', playerBody('m1'))).toBeNull();
+  });
+
   it('a new item replaces the old entry (one in flight)', () => {
     api.mockReturnValue(new Promise(() => undefined));
     prefetchPlayback('m1'); prefetchPlayback('m2');
@@ -102,8 +110,66 @@ describe('prefetchPlayback / takePrefetched', () => {
     api.mockResolvedValue({});
     prefs.set({ ...DEFAULT_PREFS, quality: 8_000_000, audioLang: 'ger' });
     prefetchPlayback('m1', { audio: 'eng', startSec: 90 });
-    expect(api.mock.calls[0]![1].body).toEqual({ itemId: 'm1', startTicks: 900_000_000, maxBitrate: 8_000_000, reasonHint: 'manual', audioLang: 'eng' });
+    expect(api.mock.calls[0]![1].body).toEqual({ itemId: 'm1', startTicks: 900_000_000, maxBitrate: 8_000_000, reasonHint: 'manual', audioLang: 'eng', prefetch: true }); // a pick: no start flag
     expect(takePrefetched('m1', firstPlaybackRequest('m1', { quality: 8_000_000, audioLang: 'ger' }, 'eng', 90).body)).not.toBeNull();
+  });
+});
+
+describe('unused prefetches give their conversion slot back', () => {
+  const conv = (ps: string, video: 'h264' | 'copy' = 'h264', over: object = {}) =>
+    ({ playSessionId: ps, hlsUrl: `/media/Videos/x/master.m3u8?PlaySessionId=${ps}`, resumeTicks: 0, delivery: { video, videoCodec: 'h264', audio: 'copy', audioCodec: 'aac', channels: 2, why: [] }, ...over });
+  const stops = () => api.mock.calls.filter((c) => c[0] === '/api/playback/warm/stop').map((c) => c[1].body.playSessionId);
+  const answer = (byItem: Record<string, unknown>) => api.mockImplementation(async (path: string, o: { body: { itemId: string } }) => (path === '/api/playback/info' ? byItem[o.body.itemId] : { ok: true }));
+
+  it('a replaced prefetch that converts is released; a copy or direct play holds nothing', async () => {
+    answer({ m1: conv('ps-m1'), m2: conv('ps-m2', 'copy'), m3: conv('ps-m3', 'h264', { directUrl: '/media/Videos/m3/stream' }), m4: conv('ps-m4') });
+    prefetchPlayback('m1'); prefetchPlayback('m2'); prefetchPlayback('m3'); prefetchPlayback('m4');
+    await flush();
+    expect(stops()).toEqual(['ps-m1']);
+  });
+
+  it('the answer the player takes is never released; a body mismatch or an expired one is', async () => {
+    vi.useFakeTimers();
+    answer({ m1: conv('ps-m1'), m2: conv('ps-m2'), m3: conv('ps-m3') });
+    prefetchPlayback('m1');
+    expect(takePrefetched('m1', playerBody('m1'))).not.toBeNull();
+    prefetchPlayback('m2'); // replaces nothing (m1 was taken)
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stops()).toEqual([]);
+    expect(takePrefetched('m2', { ...playerBody('m2'), audioLang: 'jpn' })).toBeNull(); // the player asks itself: this one is unused
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stops()).toEqual(['ps-m2']);
+    prefetchPlayback('m3');
+    await vi.advanceTimersByTimeAsync(PREFETCH_TTL_MS);
+    expect(stops()).toEqual(['ps-m2', 'ps-m3']); // expired unused
+    expect(takePrefetched('m3', playerBody('m3'))).toBeNull();
+    await vi.advanceTimersByTimeAsync(PREFETCH_TTL_MS);
+    expect(stops()).toEqual(['ps-m2', 'ps-m3']); // once
+  });
+
+  it('a prefetch replaced while still on its way is released when its answer arrives; a failed one needs nothing', async () => {
+    let arrive!: (v: unknown) => void;
+    api.mockImplementation((path: string, o: { body: { itemId: string } }) => (path !== '/api/playback/info' ? Promise.resolve({ ok: true })
+      : o.body.itemId === 'm1' ? new Promise((r) => { arrive = r; }) : Promise.reject(Object.assign(new Error('API 503'), { status: 503, body: { error: 'server_busy' } }))));
+    prefetchPlayback('m1'); prefetchPlayback('m2'); prefetchPlayback('m3');
+    await flush();
+    expect(stops()).toEqual([]);
+    arrive(conv('ps-m1'));
+    await flush();
+    expect(stops()).toEqual(['ps-m1']);
+  });
+
+  it('the leaving player (holdPrefetch) and pagehide release unused ones', async () => {
+    answer({ m1: conv('ps-m1'), m2: conv('ps-m2') });
+    prefetchPlayback('m1');
+    holdPrefetch(Promise.resolve());
+    await flush(); await flush();
+    expect(stops()).toEqual(['ps-m1']);
+    prefetchPlayback('m2');
+    const { stopNextOnHide } = await import('./prefetch');
+    stopNextOnHide();
+    await flush();
+    expect(api.mock.calls.filter((c) => c[0] === '/api/playback/warm/stop').slice(-1)[0]).toEqual(['/api/playback/warm/stop', { method: 'POST', body: { playSessionId: 'ps-m2' }, keepalive: true }]);
   });
 });
 
@@ -208,8 +274,23 @@ describe('infobody', () => {
     expect(fr.bps).toBe(70_000_000);
     api.mockResolvedValue({});
     prefetchPlayback('a');
-    expect(api).toHaveBeenCalledWith('/api/playback/info', { method: 'POST', body: fr.body });
+    expect(api).toHaveBeenCalledWith('/api/playback/info', { method: 'POST', body: { ...fr.body, prefetch: true } });
     expect(takePrefetched('a', fr.body)).not.toBeNull();
+  });
+  it('the start flag goes only with the no-estimate 720p start: not with a stored estimate, a saved quality or the original', () => {
+    expect(firstPlaybackRequest('a', DEFAULT_PREFS).body).toEqual({ itemId: 'a', maxBitrate: 4_000_000, reasonHint: 'network', startRung: true });
+    localStorage.setItem('ff_bw', JSON.stringify({ bps: 6_000_000, at: Date.now() })); // a measured line: the same kind of rung, no flag
+    expect(firstPlaybackRequest('a', DEFAULT_PREFS).body).not.toHaveProperty('startRung');
+    localStorage.setItem('ff_bw', JSON.stringify({ bps: 6_000_000, at: Date.now() - 8 * 86_400_000 })); // older than a week: none again
+    expect(firstPlaybackRequest('a', DEFAULT_PREFS).body).toHaveProperty('startRung', true);
+    localStorage.removeItem('ff_bw');
+    expect(firstPlaybackRequest('a', { ...DEFAULT_PREFS, quality: 8_000_000 }).body).not.toHaveProperty('startRung'); // a saved pick
+    expect(playbackInfoBody({ itemId: 'a', bps: Infinity, hint: 'network', startRung: true })).not.toHaveProperty('startRung'); // original: no rung
+    expect(noEstimateStart(0, null)).toBe(true);
+    expect(noEstimateStart(0, 5_000_000)).toBe(false);
+    expect(noEstimateStart(4_000_000, null)).toBe(false);
+    // neither flag changes the comparison key, so a prefetch body still matches the player's
+    expect(bodyKey({ itemId: 'a', reasonHint: 'network', startRung: true, prefetch: true })).toBe(bodyKey({ itemId: 'a', reasonHint: 'network' }));
   });
   it('a slow link stays on the ladder', () => {
     localStorage.setItem('ff_bw', JSON.stringify({ bps: 10_000_000, at: Date.now() }));
@@ -353,12 +434,41 @@ describe('next episode: prepareNext / releaseNext / takeNext', () => {
     expect(api).not.toHaveBeenCalled();
   });
 
+  it('an answer that converts but was not warmed is given back when it is stopped unused', async () => {
+    vi.useFakeTimers();
+    const delivery = { video: 'h264', videoCodec: 'h264', audio: 'copy', audioCodec: 'aac', channels: 2, why: [] };
+    api.mockImplementation(async (path: string) => (path === '/api/playback/info' ? hlsInfo({ delivery, resumeTicks: WARM_MAX_RESUME_TICKS + 1 }) : { ok: true }));
+    prepareNext('n1', body(), { warm: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetched).toEqual([]); // far in: not warmed
+    releaseNext();
+    await vi.advanceTimersByTimeAsync(WARM_GRACE_MS);
+    expect(stops()).toEqual([['/api/playback/warm/stop', { method: 'POST', body: { playSessionId: 'ps-next-0001' } }]]);
+    // replaced while its answer is still on its way: given back once it arrives
+    const arrive: Array<(v: unknown) => void> = [];
+    api.mockImplementation((path: string) => (path === '/api/playback/info' ? new Promise((r) => { arrive.push(r); }) : Promise.resolve({ ok: true })));
+    prepareNext('n2', body('n2'), { warm: false });
+    prepareNext('n3', body('n3'), { warm: false });
+    arrive[0]!(hlsInfo({ playSessionId: 'ps-next-0002', delivery }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stops().map((c) => (c[1] as { body: { playSessionId: string } }).body.playSessionId)).toEqual(['ps-next-0001', 'ps-next-0002']);
+  });
+
   it('a 429 at the stream limit drops it; the player asks itself', async () => {
     api.mockRejectedValue(new Error('429'));
     prepareNext('n1', body(), { warm: true });
     await flush(); await flush();
     expect(takeNext('n1', body())).toBeNull();
     expect(fetched).toEqual([]);
+  });
+
+  it('a 503 server_busy for the next episode drops it without a warm-up or a stop; the current playback is untouched', async () => {
+    api.mockRejectedValue(Object.assign(new Error('API 503'), { status: 503, body: { error: 'server_busy' } }));
+    prepareNext('n1', body(), { warm: true });
+    await flush(); await flush();
+    expect(takeNext('n1', body())).toBeNull();
+    expect(fetched).toEqual([]);
+    expect(stops()).toHaveLength(0);
   });
 
   it('survives holdPrefetch of the episode that ends (the hold only concerns that title)', async () => {

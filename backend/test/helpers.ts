@@ -44,6 +44,7 @@ export const cfg: Config = {
   LOGIN_UI: undefined, AUTHENTIK_LOGIN_FLOW: 'default-authentication-flow', AUTHENTIK_STATIC_SETUP_FLOW: 'default-authenticator-static-setup',
   AUTHENTIK_WEBAUTHN_SETUP_FLOW: 'default-authenticator-webauthn-setup', AUTHENTIK_PASSWORD_CHANGE_FLOW: 'default-password-change',
   AUTHENTIK_INVALIDATION_FLOW: 'default-invalidation-flow', AUTHENTIK_EMAIL_CHANGE_FLOW: 'friendflix-email-change', PASSKEYS_IN_APP: 'auto', LOGIN_COVER_WALL: 'true', POSTPLAY_ENABLED: 'true', HEVC_STREAMS: 2, SURROUND_AUDIO: 'true',
+  CONVERSION_PRIORITY: 'films',
 };
 
 export type Handler = (url: URL, init: RequestInit, body: any) => { status?: number; json?: unknown; raw?: string | Uint8Array; type?: string } | undefined;
@@ -99,6 +100,8 @@ export function defaultJellyfin(): Record<string, Handler> {
     'POST /Users/AuthenticateByName': (_u, _i, b) => ({ json: { AccessToken: `tok-${b.Username}`, User: { Id: 'x', Name: b.Username } } }),
     'GET /Library/MediaFolders': () => ({ json: { Items: [{ Id: 'f1', Name: 'Filme' }, { Id: 'f2', Name: 'Serien' }] } }),
     'GET /System/Ping': () => ({ json: 'Jellyfin Server' }),
+    // an idle server's session list (a real Jellyfin always has one): the conversion budget treats an unreadable list as busy (spec §5.5)
+    'GET /Sessions': () => ({ json: [] }),
   };
 }
 

@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   /**
-   * Admin → Wiedergabe-Check: (1) playback health check, (2) streams running right now (stop with confirm),
+   * Admin → Wiedergabe-Check: (0) the conversion budget (card Umwandlungen), (1) playback health check, (2) streams running right now (stop with confirm),
    * (3) start time: player measurements per step (median / p90, home vs. remote, device class) and the last starts,
    * (4) offline downloads: prepared files and active licenses. Everything is titled by name, never by id.
    */
@@ -13,6 +13,7 @@
   import Rich from '#lib/i18n/Rich.svelte';
   import { poll } from '#lib/adminContent/poll';
   import AdminCard from '#lib/adminContent/AdminCard.svelte';
+  import ConversionsCard from '#lib/admin/ConversionsCard.svelte';
   import { emptyHintOnTop, isEmptyMediaError } from '#lib/admin/health';
   import { refreshSummary } from '#lib/admin/summary';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
@@ -147,6 +148,8 @@
     { key: 'until', label: $t('adminContent.playback.untilLabel'), value: (l) => l.expires_at, sortable: false },
   ] as Column<DlLic>[];
 </script>
+
+<ConversionsCard />
 
 <AdminCard title={$t('adminContent.playback.checkTitle')} description={$t('admin.playback.intro')}>
   <svelte:fragment slot="actions">

@@ -34,5 +34,7 @@
   h2 { font-size: 1.05rem; font-weight: 700; margin: 0; }
   .desc { margin: .25rem 0 0; color: var(--mut); font-size: .9rem; }
   .acts { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+  /* an actions slot that renders nothing (a button only some servers have) takes no row: the wrapped head would keep its gap */
+  .acts:empty { display: none; }
   @media (max-width: 560px) { .acts { width: 100%; } }
 </style>

@@ -23,6 +23,11 @@ describe('sync facts (A/V)', () => {
     expect(deliveryOf('hls', 'audioCodec', false)).toBe('transcode');
   });
 
+  it('serverBusy is a copy fallback', () => {
+    expect(deliveryOf('hls', 'serverBusy', null)).toBe('remux');
+    expect(deliveryOf('hls', 'serverBusy', false)).toBe('transcode'); // the server's own answer still wins
+  });
+
   it('records delivery, sound, frames across element restarts and the A/V events', () => {
     const c = clock(), t = createTiming(c.now);
     t.stream({ reason: 'audioCodec' }); t.sound('night', true); t.frames(1, 1); t.reconnect(); // outside a session: ignored

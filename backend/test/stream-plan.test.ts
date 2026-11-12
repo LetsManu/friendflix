@@ -72,6 +72,14 @@ describe('planStream: HEVC', () => {
     expect([busy.videoCodecs, busy.delivery.video, busy.delivery.why[0]]).toEqual([['h264', 'hevc'], 'h264', 'h264_busy']);
     expect(applyGate(planStream(input()), { ok: true })).toEqual(planStream(input())); // no encode wanted: nothing changes
   });
+  it('noConvert (the budget is full): the same remote plan wants no HEVC conversion, so no gate is asked', () => {
+    const o = { remote: true, maxBitrate: 4_000_000, boxHeight: 720 };
+    expect(planStream(input(o)).wantsHevcEncode).toBe(true);
+    const p = planStream(input({ ...o, noConvert: true }));
+    expect([p.wantsHevcEncode, p.delivery.video, p.delivery.videoCodec]).toEqual([false, 'h264', 'h264']);
+    expect(p.delivery.why).not.toContain('h264_unproven');
+    expect(applyGate(p, { ok: true })).toEqual(p); // a gate's yes changes nothing: no HEVC encode is planned
+  });
   it('a refused conversion of an H.264 source falls back to ts (nothing else needs fMP4)', () => {
     const h264 = { ...wrenfield, videoCodec: 'h264', profile: 'High', videoBitrate: 20_000_000 };
     const p = planStream(input({ remote: true, maxBitrate: 8_000_000, src: h264 }));
