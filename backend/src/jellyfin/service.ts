@@ -51,6 +51,14 @@ const FIND_LIBRARY_LOOKUPS = 8;
 const FIELDS = 'Overview,Genres,OfficialRating,CommunityRating,PremiereDate,DateCreated,ProductionYear,ChildCount,RunTimeTicks,DateLastMediaAdded';
 
 export type { ItemQuery };
+/** a Movie / Series of an admin-key answer as MediaAdmin.findItems answers it (no `age`: Jellyfin's ratings are read by the app's table) */
+const foundItem = (i: Record<string, any>, library: string): FoundItem => ({
+  id: nid(i.Id), name: i.Name as string,
+  ...(Number.isInteger(i.ProductionYear) ? { year: i.ProductionYear as number } : {}),
+  type: i.Type as 'Movie' | 'Series',
+  rating: typeof i.OfficialRating === 'string' && i.OfficialRating.trim() ? i.OfficialRating : null,
+  library,
+});
 const nid = (s: unknown) => String(s).replace(/-/g, '').toLowerCase();
 const traitsOf = (i: Record<string, any>): ItemTraits => ({
   genres: Array.isArray(i.Genres) ? i.Genres : [], tags: Array.isArray(i.Tags) ? i.Tags : [], countries: Array.isArray(i.ProductionLocations) ? i.ProductionLocations : [],
@@ -1144,13 +1152,15 @@ export class JellyfinService implements MediaServer {
           .filter((i) => typeof i?.Id === 'string' && /^[0-9a-f]{32}$/.test(nid(i.Id)) && (i.Type === 'Movie' || i.Type === 'Series') && typeof i.Name === 'string')
           .slice(0, n);
         const libs = await Promise.all(found.map((i, k) => (k < FIND_LIBRARY_LOOKUPS ? client.libraryOf(nid(i.Id)).catch(() => null) : Promise.resolve(null))));
-        return found.map((i, k): FoundItem => ({
-          id: nid(i.Id), name: i.Name as string,
-          ...(Number.isInteger(i.ProductionYear) ? { year: i.ProductionYear as number } : {}),
-          type: i.Type as 'Movie' | 'Series',
-          rating: typeof i.OfficialRating === 'string' && i.OfficialRating.trim() ? i.OfficialRating : null,
-          library: libs[k] ?? '',
-        }));
+        return found.map((i, k) => foundItem(i, libs[k] ?? ''));
+      },
+      // the title check by id: the same facts for one item (admin key); another kind of item (episode, folder …) is no hit
+      findItem: async (id) => {
+        const want = nid(id);
+        if (!/^[0-9a-f]{32}$/.test(want)) return null;
+        const i = await client.itemById(want);
+        if (!i || typeof i.Id !== 'string' || nid(i.Id) !== want || (i.Type !== 'Movie' && i.Type !== 'Series') || typeof i.Name !== 'string') return null;
+        return foundItem(i, (await client.libraryOf(want).catch(() => null)) ?? '');
       },
       ping: () => client.ping(),
       encoderSettings: async () => encoderSettingsOf(await client.adminJson<Record<string, unknown>>('/System/Configuration/encoding')),

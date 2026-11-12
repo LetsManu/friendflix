@@ -25,7 +25,7 @@ import type { ItemFeatures, SeriesStatus } from '../media/types.js'; // 1.1 engi
 import type { FoundItem } from '../media/types.js'; // users & permissions: title check
 import { tmdbGuids, tmdbIdOf, tvdbGuids, toPlexAbout, type AboutRow } from './about.js';
 import { plexHygienePage, plexServerSessions, toPlexHygieneFacts } from './care.js'; // Block 22
-import { loadPolicy, paramList, refreshAges, resolveAccess, visibleSql, type Access, type Param } from './access.js';
+import { loadPolicy, paramList, ratingAge, refreshAges, resolveAccess, visibleSql, type Access, type Param } from './access.js';
 import { PlexError, type PlexClient } from './client.js';
 import { chapterDtos, plexTraits, type MirrorChapter } from './depth.js';
 import { plexTypes, sectionDto, toItemDto, type ItemRow } from './dto.js';
@@ -77,6 +77,22 @@ const CONTINUING_DAYS = 60;
 const SNAPSHOT_MS = 120_000;
 /** the admin's title check (MediaAdmin.findItems): hits per search */
 const FIND_MAX = 50;
+/**
+ * A film / show of a Plex answer as MediaAdmin.findItems answers it (null for anything else). `age` is what this adapter enforces for the
+ * rating (access.ts ratingAge): unrated and not understood (UNKNOWN_AGE) are null, both hidden from a capped identity.
+ */
+function foundPlexItem(m: Record<string, any>, library: unknown): FoundItem | null {
+  if ((m.type !== 'movie' && m.type !== 'show') || !/^\d{1,15}$/.test(String(m.ratingKey ?? '')) || typeof m.title !== 'string') return null;
+  const rating = typeof m.contentRating === 'string' && m.contentRating.trim() ? m.contentRating : null;
+  const age = ratingAge(rating);
+  return {
+    id: encodePlexId('item', String(m.ratingKey)), name: m.title,
+    ...(Number.isInteger(m.year) ? { year: m.year as number } : {}),
+    type: m.type === 'movie' ? 'Movie' : 'Series',
+    rating, age: age === null || age < 0 ? null : age,
+    library: typeof library === 'string' ? library : '',
+  };
+}
 const like = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 const cloneItem = (i: ItemDto): ItemDto => ({ ...i, genres: [...i.genres], ...(i.imageTags ? { imageTags: { ...i.imageTags } } : {}) });
 
@@ -1162,28 +1178,39 @@ export class PlexMediaServer implements MediaServer {
         return plexPosterThumb(this.db, this.client, id, maxWidth);
       },
       // Users & permissions: the admin's title check. Plex's own search of every film and series section (admin token, no viewer);
-      // the library is the hit's librarySectionTitle. PlexClient errors name the path without its query, so `q` never reaches one.
+      // the library is the hit's librarySectionTitle. Exact title matches come first across all sections, then titles starting with the
+      // term, then the rest (each in section order), and only then the list is cut. PlexClient errors name the path without its query,
+      // so `q` never reaches one. A hit not mirrored yet is not visible to anyone (item() reads the mirror) until the next sync.
       findItems: async (q, limit) => {
         const n = Math.max(1, Math.min(Math.trunc(limit) || 1, FIND_MAX));
         const secs = (await this.client.sections()).filter((s) => (s.type === 'movie' || s.type === 'show') && /^\d{1,9}$/.test(String(s.key)));
         const pages = await Promise.all(secs.map(async (s) => {
           const query = new URLSearchParams({ type: s.type === 'movie' ? '1' : '2', query: q, 'X-Plex-Container-Start': '0', 'X-Plex-Container-Size': String(n) });
           const c = await this.client.container(`/library/sections/${String(s.key)}/search?${query}`);
-          return (c.Metadata ?? []).map((m) => ({ m, library: m.librarySectionTitle ?? c.librarySectionTitle ?? s.title }));
+          return (c.Metadata ?? []).map((m) => foundPlexItem(m, m.librarySectionTitle ?? c.librarySectionTitle ?? s.title));
         }));
-        const out: FoundItem[] = [];
-        for (const { m, library } of pages.flat()) {
-          if (out.length >= n) break;
-          if ((m.type !== 'movie' && m.type !== 'show') || !/^\d{1,15}$/.test(String(m.ratingKey ?? '')) || typeof m.title !== 'string') continue;
-          out.push({
-            id: encodePlexId('item', String(m.ratingKey)), name: m.title,
-            ...(Number.isInteger(m.year) ? { year: m.year as number } : {}),
-            type: m.type === 'movie' ? 'Movie' : 'Series',
-            rating: typeof m.contentRating === 'string' && m.contentRating.trim() ? m.contentRating : null,
-            library: typeof library === 'string' ? library : '',
-          });
+        const want = q.trim().toLowerCase();
+        const rank = (h: FoundItem) => (h.name.trim().toLowerCase() === want ? 0 : h.name.trim().toLowerCase().startsWith(want) ? 1 : 2);
+        return pages.flat().filter((h): h is FoundItem => h !== null)
+          .map((h, i) => ({ h, i, r: rank(h) })).sort((a, b) => a.r - b.r || a.i - b.i).slice(0, n).map((x) => x.h);
+      },
+      // the title check by id: `/library/metadata/<rk>` with the admin token; unknown key, another id kind or another item type -> null.
+      // The library is looked up by the item's section id (the live section list), its librarySectionTitle as a fallback.
+      findItem: async (id) => {
+        const rk = plexKey(id, 'item');
+        if (!rk) return null;
+        let c: Awaited<ReturnType<PlexClient['container']>>;
+        try {
+          c = await this.client.container(`/library/metadata/${rk}`);
+        } catch (e) {
+          if (e instanceof PlexError && (e.status === 404 || e.status === 400)) return null;
+          throw e;
         }
-        return out;
+        const m = c.Metadata?.[0];
+        if (!m || String(m.ratingKey) !== rk) return null;
+        const sid = String(m.librarySectionID ?? c.librarySectionID ?? '');
+        const sec = sid ? (await this.client.sections()).find((s) => String(s.key) === sid) : undefined;
+        return foundPlexItem(m, sec?.title ?? m.librarySectionTitle ?? c.librarySectionTitle);
       },
     };
   }

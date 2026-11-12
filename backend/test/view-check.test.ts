@@ -4,12 +4,12 @@
  * "Can this profile see it?" (spec §6.4, plan ruling 1): POST /api/admin/users/:id/check (title search with the admin key, answered as
  * the profile's own identity) and GET …/check?profile= (library counts). A fake Jellyfin decides visibility per media server user.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import type { MediaAdmin } from '../src/media/types.js';
 import { DEFAULT_ROLES } from '../src/roles.js';
-import { ageOf } from '../src/viewcheck.js';
-import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+import { ageOf, mapLimit } from '../src/viewcheck.js';
+import { ADMIN, ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
 
 let env: TestEnv;
 let admin: { cookies: Record<string, string>; csrf: string };
@@ -31,24 +31,38 @@ const dto = ({ lib: _lib, ...i }: (typeof ITEMS)[number]) => ({ ...i, UserData: 
 
 // media server users and what the fake lets each of them see (anyone else, e.g. the admin, sees everything)
 const GUEST_JF = hex('4'), KINO_JF = hex('5'), ANNA_JF = hex('6'), KID_JF = hex('7'), FA_JF = hex('8'), OTHER_JF = hex('9');
+const jfId = (s: string) => s.padEnd(32, '0');
+/** a second guest (FSK 12) whose server hides the unrated film; a friend (no cap) likewise; a drifted identity whose library counts
+ * answer 404; an identity whose item probe fails with 500 */
+const GUEST2_JF = jfId('guest2'), FRIEND2_JF = jfId('friend2'), DRIFT_JF = jfId('drift'), PROBE500_JF = jfId('probe500');
 const SEES = new Map<string, Set<string>>([
   [GUEST_JF, new Set([SALT, WREN])], // guest: FSK 12, all libraries
   [KINO_JF, new Set([DUN, SALT])], // role kino: Kinder + Serien
   [KID_JF, new Set([SALT])], // kids profile, FSK 12: no unrated titles
   [FA_JF, new Set([WREN, SALT])], // role filmabend: Filme + Kinder
   [OTHER_JF, new Set([])],
+  [GUEST2_JF, new Set([SALT])],
+  [FRIEND2_JF, new Set([DUN, SALT])],
 ]);
 const sees = (uid: string | null, id: string) => !uid || !SEES.has(uid.toLowerCase()) || SEES.get(uid.toLowerCase())!.has(id);
 const BROKEN_TERM = 'Kaputtfilm';
 /** the fake's search matches every title for this term */
 const ALL_TERM = 'alle';
+/** the fake answers 200 with a non-JSON body for this term */
+const HTML_TERM = 'Htmlfilm';
+/** an item id the fake does not know, and one whose admin lookup fails */
+const UNKNOWN_ID = hex('d'), BROKEN_ID = hex('e').slice(0, 31) + '1';
 
-let guest = '', kino = '', anna = '', fa = '', other = '';
+let guest = '', kino = '', anna = '', fa = '', other = '', guest2 = '', friend2 = '', drift = '', probe500 = '';
 const KIDS = '11111111-2222-4333-8444-555555555555';
 const OTHER_KIDS = '11111111-2222-4333-8444-666666666666';
 
+/** each test calls from its own address: the 30/min limit is per address and must only trip in its own test */
+let addr = 0;
+beforeEach(() => { addr++; });
 const as = (method: 'GET' | 'POST', url: string, payload?: unknown) =>
-  env.app.inject({ method, url, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, ...(payload === undefined ? {} : { payload: payload as object }) });
+  env.app.inject({ method, url, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, remoteAddress: `192.0.2.${addr}`, ...(payload === undefined ? {} : { payload: payload as object }) });
+const checkItem = (user: string, profileId: string, itemId: string) => as('POST', `/api/admin/users/${user}/check`, { profileId, itemId });
 const check = (user: string, profileId: string, query: string) => as('POST', `/api/admin/users/${user}/check`, { profileId, query });
 const libs = (user: string, profile: string) => as('GET', `/api/admin/users/${user}/check?profile=${profile}`);
 const audits = async (target: string) => (await env.pool.query("select actor, meta from audit_log where action='user.check_viewed' and target=$1 order by id", [target])).rows;
@@ -71,9 +85,12 @@ beforeAll(async () => {
     'GET /Items': (u) => {
       const sp = u.searchParams;
       const get = (k: string) => [...sp.entries()].find(([n]) => n.toLowerCase() === k.toLowerCase())?.[1] ?? null;
-      const uid = get('userId'), term = get('searchTerm'), parent = get('parentId');
-      if (term === BROKEN_TERM) return { status: 500 };
+      const uid = get('userId'), term = get('searchTerm'), parent = get('parentId'), ids = get('ids');
+      if (term === BROKEN_TERM || ids === BROKEN_ID) return { status: 500 };
+      if (term === HTML_TERM) return { raw: '<html>maintenance</html>', type: 'text/html' };
+      if (parent && uid === DRIFT_JF) return { status: 404 };
       let list = ITEMS.filter((i) => sees(uid, i.Id));
+      if (ids) list = list.filter((i) => ids.split(',').includes(i.Id));
       if (term && term !== ALL_TERM) list = list.filter((i) => i.Name.toLowerCase().includes(term.toLowerCase()));
       if (parent) list = list.filter((i) => i.lib === parent);
       const limit = Number(get('limit') ?? 100);
@@ -82,6 +99,7 @@ beforeAll(async () => {
     'GET /Items/[0-9a-f]{32}': (u) => {
       const id = u.pathname.split('/')[2]!;
       const it = ITEMS.find((i) => i.Id === id);
+      if (u.searchParams.get('userId') === PROBE500_JF) return { status: 500 };
       if (!it || !sees(u.searchParams.get('userId'), id)) return { status: 404 };
       return { json: dto(it) };
     },
@@ -106,6 +124,10 @@ beforeAll(async () => {
   anna = await account('friend', ANNA_JF, 'Anna Beispiel');
   fa = await account('filmabend', FA_JF, 'Anna Zwei');
   other = await account('friend', OTHER_JF, 'Ben Zwei');
+  guest2 = await account('guest', GUEST2_JF, 'Carla Zwei');
+  friend2 = await account('friend', FRIEND2_JF, 'Carla Drei');
+  drift = await account('friend', DRIFT_JF, 'Ben Drei');
+  probe500 = await account('friend', PROBE500_JF, 'Anna Drei');
   await env.pool.query(
     `insert into profiles(id, user_id, name, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, kids, kids_max_rating)
      values ($1, $2, 'Kiddo', $3, 'anna-kiddo', $4, true, 12), ($5, $6, 'Kleiner', $7, 'ben-kleiner', $4, true, 6)`,
@@ -213,9 +235,99 @@ describe('POST /api/admin/users/:id/check (title search as the profile)', () => 
     expect(await audits(guest)).toEqual([]);
   });
 
-  it('non-admins get 403', async () => {
+  it('without a session: 401', async () => {
     const r = await env.app.inject({ method: 'POST', url: `/api/admin/users/${guest}/check`, payload: { profileId: guest, query: 'Dunmoor' } });
-    expect([401, 403]).toContain(r.statusCode);
+    expect(r.statusCode).toBe(401);
+  });
+
+  it('a signed-in non-admin gets 403 on POST and GET (only admins may look)', async () => {
+    const ben = await env.login({ sub: 'benmuster-sub', email: 'ben@friend.example.com', name: 'Ben Muster', groups: [] });
+    try {
+      const h = { cookies: ben.cookies, headers: { 'x-csrf-token': ben.csrf }, remoteAddress: `192.0.2.${addr}` };
+      expect((await env.app.inject({ method: 'GET', url: '/api/me', ...h })).statusCode).toBe(200); // a working session
+      const post = await env.app.inject({ method: 'POST', url: `/api/admin/users/${anna}/check`, payload: { profileId: KIDS, query: 'Dunmoor' }, ...h });
+      expect(post.statusCode).toBe(403);
+      const get = await env.app.inject({ method: 'GET', url: `/api/admin/users/${anna}/check?profile=${KIDS}`, ...h });
+      expect(get.statusCode).toBe(403);
+    } finally {
+      env.claims.current = ADMIN;
+    }
+  });
+
+  it('a grown-up with a cap: a hidden unrated title is unrated (not unrated_kids); without a cap no reason', async () => {
+    expect(hit((await check(guest2, guest2, 'Wrenfield')).json().hits, WREN)).toMatchObject({ visible: false, why: 'unrated' });
+    expect(hit((await check(friend2, friend2, 'Wrenfield')).json().hits, WREN)).toMatchObject({ visible: false, why: null });
+  });
+
+  it('a probe failure other than 403/404 is 502, never "hidden"', async () => {
+    const r = await check(probe500, probe500, 'Dunmoor');
+    expect(r.statusCode).toBe(502);
+    expect(r.json()).toEqual({ error: 'media_unavailable' });
+  });
+
+  it('a search answer that is not JSON is 502', async () => {
+    const r = await check(guest, guest, HTML_TERM);
+    expect(r.statusCode).toBe(502);
+    expect(r.json()).toEqual({ error: 'media_unavailable' });
+  });
+});
+
+describe('POST /api/admin/users/:id/check with itemId', () => {
+  it('looks the title up with the admin key and answers it as the profile', async () => {
+    const before = env.jfCalls.length;
+    const r = await checkItem(guest, guest, DUN);
+    expect(r.statusCode).toBe(200);
+    expect(r.json().hits).toEqual([{ id: DUN, name: 'Dunmoor', year: 2024, type: 'Series', visible: false, why: 'rating', rating: 'FSK-16', library: 'Serien' }]);
+    const lookup = env.jfCalls.slice(before).filter((c) => c.path === '/Items' && /ids=/i.test(c.search));
+    expect(lookup).toHaveLength(1);
+    expect(lookup[0]!.search).not.toMatch(/userid=/i);
+    expect(lookup[0]!.auth).not.toMatch(/tok-/);
+    expect((await checkItem(anna, KIDS, SALT)).json().hits).toEqual([
+      { id: SALT, name: 'Saltwater Almanac', year: 2021, type: 'Movie', visible: true, why: null, rating: 'FSK-6', library: 'Kinder' },
+    ]);
+  });
+
+  it('an unknown id answers no hits (404 stays "not this account\'s profile")', async () => {
+    const r = await checkItem(guest, guest, UNKNOWN_ID);
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ hits: [] });
+  });
+
+  it('exactly one of itemId and query: both, neither or a malformed id are 400 with field paths only', async () => {
+    const both = await as('POST', `/api/admin/users/${guest}/check`, { profileId: guest, itemId: DUN, query: 'Dunmoor' });
+    expect(both.statusCode).toBe(400);
+    expect(both.body).not.toContain(DUN);
+    expect(both.body).not.toContain('Dunmoor');
+    expect((await as('POST', `/api/admin/users/${guest}/check`, { profileId: guest })).statusCode).toBe(400);
+    const bad = await checkItem(guest, guest, 'Dunmoor-not-an-id');
+    expect(bad.statusCode).toBe(400);
+    expect(bad.body).not.toContain('Dunmoor');
+  });
+
+  it('the item id reaches no audit entry and no log line, also when the lookup fails', async () => {
+    await env.pool.query('delete from audit_log');
+    expect((await checkItem(guest, guest, DUN)).statusCode).toBe(200);
+    expect((await audits(guest)).map((a) => a.meta)).toEqual([{ profile: guest, hits: 1 }]);
+    const failed = await checkItem(guest, guest, BROKEN_ID);
+    expect(failed.statusCode).toBe(502);
+    expect(failed.body).not.toContain(BROKEN_ID);
+    const all = JSON.stringify((await env.pool.query('select action, target, meta from audit_log')).rows);
+    expect(all).not.toContain(DUN);
+    expect(all).not.toContain(BROKEN_ID);
+    expect(logs.join('\n')).not.toContain(DUN);
+    expect(logs.join('\n')).not.toContain(BROKEN_ID);
+  });
+
+  it('without findItem the service user opens the id and why is null', async () => {
+    const adm = env.ctx.jf.admin as MediaAdmin;
+    const find = adm.findItem;
+    delete (adm as { findItem?: unknown }).findItem;
+    try {
+      expect((await checkItem(guest, guest, DUN)).json().hits).toEqual([{ id: DUN, name: 'Dunmoor', year: 2024, type: 'Series', visible: false, why: null, rating: 'FSK-16', library: '' }]);
+      expect((await checkItem(guest, guest, UNKNOWN_ID)).json()).toEqual({ hits: [] });
+    } finally {
+      (adm as { findItem?: unknown }).findItem = find;
+    }
   });
 });
 
@@ -230,6 +342,25 @@ describe('GET /api/admin/users/:id/check?profile= (library counts)', () => {
       { id: KINDER, name: 'Kinder', visible: true, seen: 1, total: 1 },
     ]);
     expect((await audits(fa)).map((a) => a.meta)).toEqual([{ profile: fa, libraries: 3 }]);
+  });
+
+  it('counts ask for one row (limit 1) and read the total', async () => {
+    await env.kv.del(`viewcnt:${guest}`);
+    const before = env.jfCalls.length;
+    expect((await libs(guest, guest)).statusCode).toBe(200);
+    const counts = env.jfCalls.slice(before).filter((c) => c.path === '/Items' && /parentid=/i.test(c.search));
+    expect(counts.length).toBe(6); // 3 libraries, profile + service user
+    expect(counts.every((c) => /[?&]limit=1(&|$)/.test(c.search))).toBe(true);
+  });
+
+  it('a 404 on the profile\'s count of one library is seen 0, not a 502 for the whole panel', async () => {
+    const r = await libs(drift, drift);
+    expect(r.statusCode).toBe(200);
+    expect(r.json().libraries).toEqual([
+      { id: FILME, name: 'Filme', visible: true, seen: 0, total: 1 },
+      { id: SERIEN, name: 'Serien', visible: true, seen: 0, total: 1 },
+      { id: KINDER, name: 'Kinder', visible: true, seen: 0, total: 1 },
+    ]);
   });
 
   it('a kids profile counts with its own identity', async () => {
@@ -260,7 +391,7 @@ describe('GET /api/admin/users/:id/check?profile= (library counts)', () => {
   });
 
   it('rate limited to 30 per minute', async () => {
-    const one = () => env.app.inject({ method: 'GET', url: `/api/admin/users/${fa}/check?profile=${fa}`, cookies: admin.cookies, remoteAddress: '192.0.2.50' });
+    const one = () => env.app.inject({ method: 'GET', url: `/api/admin/users/${fa}/check?profile=${fa}`, cookies: admin.cookies, remoteAddress: '192.0.2.250' });
     const codes: number[] = [];
     for (let i = 0; i < 31; i++) codes.push((await one()).statusCode);
     expect(codes.slice(0, 30).every((c) => c === 200)).toBe(true);
@@ -269,6 +400,20 @@ describe('GET /api/admin/users/:id/check?profile= (library counts)', () => {
 
   it('a missing ?profile= is 400', async () => {
     expect((await as('GET', `/api/admin/users/${fa}/check`)).statusCode).toBe(400);
+  });
+});
+
+describe('mapLimit (counts run at most n at a time)', () => {
+  it('keeps the order and never runs more than the limit at once', async () => {
+    let running = 0, peak = 0;
+    const out = await mapLimit([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 4, async (x) => {
+      running++; peak = Math.max(peak, running);
+      await new Promise((r) => setTimeout(r, 5 + (x % 3)));
+      running--;
+      return x * 2;
+    });
+    expect(out).toEqual([2, 4, 6, 8, 10, 12, 14, 16, 18, 20]);
+    expect(peak).toBe(4);
   });
 });
 

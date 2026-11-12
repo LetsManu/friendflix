@@ -156,8 +156,27 @@ export class JellyfinClient {
       await res.body?.cancel().catch(() => undefined);
       throw new JellyfinError(res.status, `Jellyfin admin search -> ${res.status}`);
     }
-    const r = (await res.json().catch(() => null)) as { Items?: unknown } | null;
-    return Array.isArray(r?.Items) ? (r.Items as Array<Record<string, any>>) : [];
+    return this.itemList(res, 'search');
+  }
+
+  /** One item by id in any library (admin key, no user), for the admin's title check; null when the server does not know it. */
+  async itemById(id: string): Promise<Record<string, any> | null> {
+    const p = new URLSearchParams({
+      ids: id, Recursive: 'true', Fields: 'OfficialRating,ProductionYear', EnableImages: 'false', EnableUserData: 'false', EnableTotalRecordCount: 'false', Limit: '1',
+    });
+    const res = await this.adminFetch(`/Items?${p}`);
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new JellyfinError(res.status, `Jellyfin admin item lookup -> ${res.status}`);
+    }
+    return (await this.itemList(res, 'item lookup'))[0] ?? null;
+  }
+
+  /** `Items` of an answer; a body that is not the expected JSON is a 502 (never "no hits"). The message names no path. */
+  private async itemList(res: Response, what: string): Promise<Array<Record<string, any>>> {
+    const r = (await res.json().catch(() => undefined)) as { Items?: unknown } | null | undefined;
+    if (!r || typeof r !== 'object' || !Array.isArray(r.Items)) throw new JellyfinError(502, `Jellyfin admin ${what}: no item list`);
+    return r.Items as Array<Record<string, any>>;
   }
 
   /** The library (CollectionFolder) an item lives in, from its ancestors (admin key); null when there is none or it cannot be read. */
