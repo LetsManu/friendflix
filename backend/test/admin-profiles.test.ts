@@ -3,9 +3,14 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encrypt, hashPin, keyFromBase64 } from '../src/crypto.js';
 import { JellyfinClient, JellyfinError } from '../src/jellyfin/client.js';
+import { onConnection } from '../src/profiles.js';
 import { sockets } from '../src/partySockets.js';
 import type { ProfileRow } from '../src/types.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+
+/** pg's "client is already executing a query" warning, from the start of this file */
+const pgWarnings: string[] = [];
+process.on('warning', (w) => { if (w.message.includes('already executing a query')) pgWarnings.push(w.message); });
 
 // the side effects of a kids change are counted, their behaviour kept
 vi.mock('../src/rights.js', async (orig) => {
@@ -448,5 +453,67 @@ describe('owner-side and admin kids writes', () => {
     expect((await r).statusCode).toBe(200);
     expect(await row(OWN_KID)).toMatchObject({ kids_max_rating: 0 });
     expect(policyOf(JF.ownKid)).toMatchObject({ MaxParentalRating: 0 });
+  });
+});
+
+describe('the kids transaction', () => {
+  it('runs the queries of the policy push on its connection one after another', async () => {
+    const c = await env.pool.connect();
+    let inFlight = 0, most = 0;
+    const real = c.query.bind(c) as (...a: unknown[]) => Promise<unknown>;
+    (c as unknown as { query: unknown }).query = async (...a: unknown[]) => {
+      most = Math.max(most, ++inFlight);
+      try { return await real(...a); } finally { inFlight--; }
+    };
+    try {
+      const tx = onConnection(env.ctx, c);
+      const r = await Promise.all([tx.db.query('select pg_sleep(0.05), 1 n'), tx.db.query('select 2 n'), tx.db.query('select 3 n')]);
+      expect(r.map((x) => x.rows[0].n)).toEqual([1, 2, 3]);
+      expect(most).toBe(1);
+      // a failing query does not stop the ones queued behind it
+      const bad = tx.db.query('select nope');
+      const next = tx.db.query('select 4 n');
+      await expect(bad).rejects.toThrow();
+      expect((await next).rows[0].n).toBe(4);
+    } finally {
+      c.release();
+    }
+  });
+
+  it("the profile's own rows (list, progress, hand-off) can be written while its policy push is held", async () => {
+    const g = gateNextPolicy();
+    try {
+      const r = patch(KID, { maxRating: 0 });
+      await g.reached;
+      const ins = env.pool.query("insert into watchlist(user_id, profile_id, item_id) values ($1, $2, 'i-held')", [ANNA, KID]);
+      expect(await pendingFor(ins)).toBe(false);
+      await ins;
+      g.open();
+      expect((await r).statusCode).toBe(200);
+    } finally {
+      g.open();
+      g.restore();
+    }
+  });
+
+  it('the admin policy push happens while the profile row stays locked', async () => {
+    const g = gateNextPolicy();
+    try {
+      const r = patch(KID, { maxRating: 0 });
+      await g.reached;
+      const upd = env.pool.query('update profiles set kids=false where id=$1', [KID]);
+      expect(await pendingFor(upd)).toBe(true); // another writer of the row waits for the push and the commit
+      g.open();
+      expect((await r).statusCode).toBe(200);
+      await upd;
+    } finally {
+      g.open();
+      g.restore();
+    }
+  });
+
+  // pg warns once per process: everything this file ran (every kids write above) must have used its connection one query at a time
+  it('no kids write in this file ran two queries at once on one connection', () => {
+    expect(pgWarnings).toEqual([]);
   });
 });

@@ -130,9 +130,18 @@ export async function lockProfileKids(c: Pick<pg.PoolClient, 'query'>, profileId
 
 /**
  * The ctx with its queries on this transaction's connection (a fresh object, so nothing cached per ctx from before the lock is used):
- * `applyRole` on it reads the not yet committed kids fields of the row.
+ * `applyRole` on it reads the not yet committed kids fields of the row. One connection runs one query at a time, so the queries are
+ * chained (the resolver starts some in parallel; pg 9 no longer queues them on a client); a failed query does not stop the next.
  */
-export const onConnection = (ctx: Ctx, c: pg.PoolClient): Ctx => Object.create(ctx, { db: { value: c, enumerable: true } }) as Ctx;
+export function onConnection(ctx: Ctx, c: pg.PoolClient): Ctx {
+  let tail: Promise<unknown> = Promise.resolve();
+  const query = (...a: unknown[]) => {
+    const run = tail.then(() => (c.query as (...x: unknown[]) => Promise<unknown>)(...a));
+    tail = run.catch(() => undefined);
+    return run;
+  };
+  return Object.create(ctx, { db: { value: { query } as unknown as Ctx['db'], enumerable: true } }) as Ctx;
+}
 
 export async function createProfile(ctx: Ctx, user: UserRow, b: { name: string; avatar?: string; pin?: string | null; kids?: boolean; maxRating?: KidsRating }): Promise<ProfileRow> {
   const name = b.name.trim();

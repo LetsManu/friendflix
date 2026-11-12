@@ -144,9 +144,10 @@ export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
 
   /**
    * The owner's kids switch / cap change (with an optional rename), in accountSerial (ordered with the admin's writes of the account on
-   * this instance) and in one transaction holding the profile's kids lock (every instance) and its row: update, policy re-apply through
-   * that transaction (`applyRole` reads the new kids fields), audit, commit. The media server refusing the policy rolls the transaction
-   * back — only this request's own write, as nobody else can write the row meanwhile — and answers 502 jellyfin.
+   * this instance) and in one transaction holding the profile's kids lock (every instance) and its row (`for no key update`, rows
+   * referencing it stay writable): update, policy re-apply through that transaction (`applyRole` reads the new kids fields), audit,
+   * commit. The media server refusing the policy rolls the transaction back — only this request's own write, as nobody else can write
+   * the row meanwhile — and answers 502 jellyfin.
    */
   type KidsWrite = { status: 404 | 409 | 502; error: string } | { profile: ReturnType<typeof publicProfile> & { hasPin: boolean; active: boolean } };
   const kidsWrite = async (req: FastifyRequest, p0: ProfileRow, b: { name?: string; avatar?: string; kids?: boolean; maxRating?: KidsRating }): Promise<KidsWrite> => {
@@ -156,7 +157,7 @@ export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       await c.query('begin');
       await lockProfileKids(c, p0.id);
-      const cur = (await c.query<ProfileRow>('select * from profiles where id=$1 and user_id=$2 for update', [p0.id, user.id])).rows[0];
+      const cur = (await c.query<ProfileRow>('select * from profiles where id=$1 and user_id=$2 for no key update', [p0.id, user.id])).rows[0];
       if (!cur) { await c.query('rollback'); return { status: 404, error: 'not_found' }; }
       if (b.name && (await c.query('select 1 from profiles where user_id=$1 and lower(name)=lower($2) and id<>$3', [user.id, b.name, cur.id])).rowCount) {
         await c.query('rollback');

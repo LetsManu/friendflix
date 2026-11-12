@@ -230,10 +230,11 @@ const adminKidsProfileBody = z.object({
 
 /**
  * The admin profile write, run in accountSerial by the caller (it calls nothing that queues there). One transaction holds the profile's
- * kids lock (`lockProfileKids`, every instance) and its row: the row is updated, a kids profile switched off loses its device locks, a
- * kids change re-applies the identity's policy through that transaction (`applyRole` reads the new, uncommitted kids fields: the cap and
- * the unrated block live on the media server), and one profile.admin_update entry `{ profile, from, to }` holds the changed fields
- * (name / hasPin / kids + maxRating, never a PIN). So an owner's kids write never interleaves between this write and its policy push.
+ * kids lock (`lockProfileKids`, every instance) and its row (`for no key update`: other writers of the row wait, the rows that reference
+ * it — list, progress, hand-off — do not). In it: the row is updated, a kids profile switched off loses its device locks, one
+ * profile.admin_update entry `{ profile, from, to }` holds the changed fields (name / hasPin / kids + maxRating, never a PIN), and a kids
+ * change re-applies the identity's policy through that transaction (`applyRole` reads the new, uncommitted kids fields: the cap and the
+ * unrated block live on the media server). So an owner's kids write never interleaves between this write and its policy push.
  * After commit the caches of the old policy go and the open party sockets of the profile's sessions close when it became a kids profile.
  * `policyFailed`: the media server did not take the policy — the stored (FriendFlix) state is committed anyway, the repair re-applies it.
  * Errors: 404 not_found, 400 owner_not_kids / not_kids, 409 name_taken.
@@ -245,7 +246,7 @@ async function updateProfile(ctx: Ctx, log: FastifyBaseLogger, actor: string, us
   try {
     await c.query('begin');
     await lockProfileKids(c, pid);
-    const cur = (await c.query<ProfileRow>('select * from profiles where id=$1 and user_id=$2 for update', [pid, user.id])).rows[0];
+    const cur = (await c.query<ProfileRow>('select * from profiles where id=$1 and user_id=$2 for no key update', [pid, user.id])).rows[0];
     if (!cur) throw new HttpError(404, 'not_found');
     p = cur;
     // the owner profile acts as the account itself and is never a kids profile (nor is a profile without its own identity)
