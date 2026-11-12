@@ -509,6 +509,90 @@ describe('livetv is measured too (Live TV Task 31)', () => {
   });
 });
 
+describe('a new encoder triggers a new livetv benchmark', () => {
+  const lcalls: Call[] = [];
+  let up = true;
+  beforeEach(async () => {
+    lcalls.length = 0;
+    up = true;
+    env.ctx.fetchImpl = fakeHttp({
+      'GET /healthz': () => (up ? { json: { ok: true, api: 1, version: '3.3.0', bootId: '0123456789abcdef' } } : { status: 404 }),
+      'GET /v1/system': () => ({ json: {
+        cpu: { model: 'Testprozessor', cores: 4, loadPct: 5 }, gpu: { devices: ['/dev/dri/renderD128'], driver: 'iHD', readable: true, busyPct: null },
+        encoders: ['h264_qsv', 'h264_vaapi', 'libx264'], cache: { usedBytes: 0, maxBytes: 1 }, recordings: null, srt: { ports: [] },
+      } }),
+      'POST /v1/benchmark': (_u, _i, b: { encoder: string }) => ({ json: { speed: 3.2, encoder: b.encoder, seconds: 6 } }),
+    }, lcalls);
+    await detectLivetv(env.ctx, 0);
+    await env.kv.set('conv:bench', JSON.stringify(bench()), 3600);
+    await env.kv.set('conv:bench:livetv', JSON.stringify(bench({ speed: 4.4, hwAccel: 'h264_qsv', fingerprint: 'h264_qsv' })), 3600);
+  });
+  afterEach(async () => {
+    up = false;
+    await detectLivetv(env.ctx, 0);
+    env.ctx.fetchImpl = fetch;
+  });
+  const benchCalls = () => lcalls.filter((c) => c.path === '/v1/benchmark').map((c) => c.body);
+
+  it('the same encoder stays current', async () => {
+    expect(await convBenchTick(env.ctx)).toBe(false);
+    expect((await conversionsView(env.ctx)).bench).toMatchObject({ stale: false, recommended: 3 });
+  });
+
+  it('another LIVETV_ENCODER: stale record shown, the films limit unchanged (R35), the tick measures only livetv again', async () => {
+    env.ctx.cfg = { ...cfg, LIVETV_ENCODER: 'software' };
+    const v = await conversionsView(env.ctx);
+    expect(v.bench).toMatchObject({ stale: true, recommended: 3 });
+    expect(v).toMatchObject({ limit: 3, auto: 3 });
+    const before = await env.kv.get('conv:bench');
+    expect(await convBenchTick(env.ctx)).toBe(true);
+    expect(benchCalls()).toEqual([{ encoder: 'libx264' }]);
+    expect(await env.kv.get('conv:bench')).toBe(before); // the media server's current record stays
+    expect(JSON.parse((await env.kv.get('conv:bench:livetv'))!)).toMatchObject({ speed: 3.2, hwAccel: 'libx264' });
+    expect((await conversionsView(env.ctx)).bench).toMatchObject({ stale: false, recommended: 2 });
+    await env.kv.del('conv:bench:attempt');
+    expect(await convBenchTick(env.ctx)).toBe(false); // current again
+  });
+
+  it('the livetv re-measure keeps failing: the stale record stays, the films limit stays at the recommendation', async () => {
+    env.ctx.cfg = { ...cfg, LIVETV_ENCODER: 'software' };
+    env.ctx.fetchImpl = fakeHttp({
+      'GET /healthz': () => ({ json: { ok: true, api: 1, version: '3.3.0', bootId: '0123456789abcdef' } }),
+      'GET /v1/system': () => ({ json: {
+        cpu: { model: 'Testprozessor', cores: 4, loadPct: 5 }, gpu: { devices: ['/dev/dri/renderD128'], driver: 'iHD', readable: true, busyPct: null },
+        encoders: ['h264_qsv', 'h264_vaapi', 'libx264'], cache: { usedBytes: 0, maxBytes: 1 }, recordings: null, srt: { ports: [] },
+      } }),
+      'POST /v1/benchmark': () => ({ status: 502, json: { error: 'encoder_failed' } }),
+    }, lcalls);
+    await detectLivetv(env.ctx, 0);
+    for (let i = 0; i < 3; i++) {
+      await env.kv.del('conv:bench:attempt');
+      expect(await convBenchTick(env.ctx)).toBe(true);
+      expect(JSON.parse((await env.kv.get('conv:bench:livetv'))!)).toMatchObject({ hwAccel: 'h264_qsv' });
+      expect(await conversionsView(env.ctx)).toMatchObject({ limit: 3, auto: 3, bench: { stale: true, recommended: 3 } });
+    }
+  });
+
+  it('admission never asks livetv: it reads the last livetvStale', async () => {
+    env.ctx.cfg = { ...cfg, LIVETV_ENCODER: 'software' };
+    await conversionsView(env.ctx); // works it out (and asks livetv)
+    lcalls.length = 0;
+    vi.useFakeTimers({ toFake: ['Date'] }); // past the 10-s memo of livetv's system view: a call would show
+    vi.setSystemTime(Date.now() + 11_000);
+    expect(await admitConversion(env.ctx, { kind: 'film', userId: admin.id, hint: 'h-1' })).toEqual({ ok: true });
+    expect(lcalls.filter((c) => c.path === '/v1/system')).toHaveLength(0);
+  });
+
+  it('a livetv that does not answer its system view is not stale', async () => {
+    env.ctx.cfg = { ...cfg, LIVETV_ENCODER: 'software' };
+    env.ctx.fetchImpl = fakeHttp({ 'GET /healthz': () => ({ json: { ok: true, api: 1, version: '3.3.0', bootId: '0123456789abcdef' } }), 'GET /v1/system': () => ({ status: 502 }) }, lcalls);
+    await detectLivetv(env.ctx, 0);
+    vi.useFakeTimers({ toFake: ['Date'] }); // past the 10-s memo of livetv's system view
+    vi.setSystemTime(Date.now() + 11_000);
+    expect((await conversionsView(env.ctx)).bench.stale).toBe(false);
+  });
+});
+
 describe('module graph', () => {
   it('cliptime.ts stays a leaf', () => {
     const src = readFileSync(new URL('../src/cliptime.ts', import.meta.url), 'utf8');

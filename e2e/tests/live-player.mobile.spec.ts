@@ -20,6 +20,7 @@ async function arm(page: Page, api: MockState) {
   api.livetv.dvrPlaylist = true;
   api.livetv.liveStart = Date.now() - 10 * MIN;
   await page.route('**/api/playback/timing', (r) => r.fulfill({ status: 204 }));
+  await page.route('**/api/cast/config', (r) => r.fulfill({ json: { enabled: false } })); // the player asks for the cast switch once (Task 41)
   api.livetv.timeShift = NOW.getTime() - Date.now();
   await page.clock.install({ time: NOW });
 }

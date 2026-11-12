@@ -18,7 +18,7 @@
   import { confirm } from '#lib/ui/confirm';
   import { focusMain } from '#lib/ui/focusMain';
   import { SCRIM_BAR } from '#lib/glass/tone';
-  import { barLine2Full, barTitleFull, splitLine } from './bar';
+  import { barLine2Full, barTitleFull, castParts, liveLines, splitLine } from './bar';
   import { castEngine, castSession, type CastSession } from './engine';
   import CastScrubber from './CastScrubber.svelte';
   import { castThumbs } from './remoteview';
@@ -46,10 +46,13 @@
   $: line1 = barTitleFull(s, it, $t);
   $: l2 = barLine2Full(s, now, $t);
   $: parts = splitLine(l2);
+  /** a live channel: the LIVE pill and the now / next lines instead of the scrubber, channel ▲/▼ instead of ±10 s */
+  $: cp = castParts(s, true);
+  $: ll = s.live ? liveLines(s.live, $t) : null;
 
   // ---- artwork ----
   let thI = 0, artFor = '';
-  $: thumbs = castThumbs(s, 320);
+  $: thumbs = s.live ? [] : castThumbs(s, 320);
   $: if (s.itemId !== artFor) { artFor = s.itemId; thI = 0; }
 
   // ---- transport ----
@@ -74,7 +77,7 @@
   $: hasChips = chipSession.audioTracks.length > 0 || (!air && chipSession.subtitles.length > 0);
 
   // ---- actions ----
-  function openRemote() { const c = get(castSession); if (c) void goto('/watch/' + c.itemId); }
+  function openRemote() { const c = get(castSession); if (c) void goto(c.live ? '/live/watch/' + encodeURIComponent(c.live.channelId) : '/watch/' + c.itemId); }
   async function stop() {
     const c = get(castSession);
     if (!c) return;
@@ -108,9 +111,9 @@
 
 <div class="exp frost frost-safe frost-panel" style="--fr-scrim-safe:{SCRIM_BAR}" bind:this={root} role="region" aria-label={$t('player.castBar.regionExpanded')} transition:growBoth|global={{ trigger }}>
   <div class="head">
-    <div class="thumb">{#if thumbs[thI]}<img src={thumbs[thI]} alt="" on:error={() => thI++} />{:else}<span class="ph"><Icon name="film" size={28} /></span>{/if}</div>
+    <div class="thumb">{#if thumbs[thI]}<img src={thumbs[thI]} alt="" on:error={() => thI++} />{:else}<span class="ph"><Icon name={s.live ? 'tv' : 'film'} size={28} /></span>{/if}</div>
     <div class="txt">
-      <p class="t1">{line1}</p>
+      <p class="t1">{#if cp.livePill}<span class="lpill">{$t('live.player.live')}</span><span class="sr">{' · '}</span>{/if}{line1}</p>
       <p class="t2" class:split={Boolean(parts)} class:warn={l2.tone === 'warn'} class:error={l2.tone === 'error'}>{#if parts}<span class="pre">{parts.pre}</span><span class="dev">{parts.dev}</span><span class="post" class:fit={parts.post.length > 24}>{parts.post}</span>{#if parts.tail}<span class="tail">{parts.tail}</span>{/if}{:else}{l2.text}{/if}</p>
     </div>
     <button type="button" class="frost-btn round" bind:this={collapseBtn} aria-label={$t('player.castBar.collapse')} title={$t('player.castBar.collapse')} on:click={() => dispatch('collapse', { via: 'button' })}>
@@ -118,7 +121,12 @@
     </button>
   </div>
 
-  <CastScrubber {session} label={$t('player.castRemote.position')} />
+  {#if cp.scrubber}
+    <CastScrubber {session} label={$t('player.castRemote.position')} />
+  {:else if ll}
+    <!-- a live channel has no position: what runs now and next, both lines always reserved -->
+    <div class="lnow"><p>{ll.now}</p><p class="nx">{ll.next}</p></div>
+  {/if}
 
   <div class="trow">
     <div class="vol">
@@ -133,6 +141,14 @@
       {/if}
     </div>
     <div class="tp">
+      {#if cp.channelKeys}
+      <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('live.player.chDown')} title={$t('live.player.chDown')} on:click={() => { if (live) void castEngine.zapLive(-1); }}><Icon name="chevron-down" size={28} /></button>
+      <button type="button" class="tb pp" aria-disabled={live ? undefined : 'true'} aria-busy={s.state === 'connecting' ? 'true' : undefined}
+        aria-label={$t(s.paused ? 'player.controls.play' : 'player.controls.pause')} on:click={playPause}>
+        {#if s.state === 'connecting'}<span class="spin" aria-hidden="true"></span>{:else}<Icon name={s.paused ? 'play' : 'pause'} size={26} />{/if}
+      </button>
+      <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('live.player.chUp')} title={$t('live.player.chUp')} on:click={() => { if (live) void castEngine.zapLive(1); }}><Icon name="chevron-up" size={28} /></button>
+      {:else}
       <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('player.controls.back10')} title={$t('player.controls.back10')} on:click={() => seekBy(-10)}><Icon name="rewind10" size={28} /></button>
       <button type="button" class="tb pp" aria-disabled={live ? undefined : 'true'} aria-busy={s.state === 'connecting' ? 'true' : undefined}
         aria-label={$t(s.paused ? 'player.controls.play' : 'player.controls.pause')} on:click={playPause}>
@@ -141,6 +157,7 @@
       <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('player.controls.forward10')} title={$t('player.controls.forward10')} on:click={() => seekBy(10)}><Icon name="forward10" size={28} /></button>
       {#if s.isEpisode}
         <button type="button" class="tb" aria-disabled={live || s.state === 'ended' ? undefined : 'true'} aria-label={$t('player.controls.next')} title={$t('player.controls.next')} on:click={goNext}><Icon name="skip-next" size={26} /></button>
+      {/if}
       {/if}
     </div>
     <div class="sk">
@@ -177,6 +194,13 @@
   .t1 { font-weight: 700; font-size: 1.02rem; }
   .t2 { font-size: .88rem; color: rgba(255, 255, 255, .72); }
   .t2.split { display: flex; min-width: 0; }
+  /* the LIVE pill (shape and text, not colour alone) and the reserved now / next lines of a live channel */
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .lpill { display: inline-block; margin-right: 8px; padding: 1px 8px 1px 18px; border-radius: 999px; background: var(--acc-fill); color: #fff; font-size: .75rem; font-weight: 800; letter-spacing: .02em; vertical-align: 1px; position: relative; }
+  .lpill::before { content: ''; position: absolute; left: 7px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: #fff; }
+  .lnow { display: grid; gap: 2px; padding: 6px 0 8px; }
+  .lnow p { margin: 0; min-height: 1.35em; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; }
+  .lnow .nx { color: rgba(255, 255, 255, .72); }
   .pre, .tail { flex: none; white-space: pre; }
   .dev { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .post { flex: none; white-space: pre; } /* the minutes never shrink; a long "Up next" label may */

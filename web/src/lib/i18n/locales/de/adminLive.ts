@@ -409,6 +409,7 @@ export default {
     epgOk: 'Programm',
     epgNone: 'Kein Programm',
     missingPill: 'Fehlt',
+    syncing: 'wird übertragen …',
     dup: 'Nummer doppelt vergeben',
     renameHint: 'Doppelklick oder Eingabetaste zum Umbenennen',
     renameLabel: 'Name von „{name}“',

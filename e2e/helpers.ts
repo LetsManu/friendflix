@@ -167,7 +167,11 @@ export function expectAlongCurve(ys: number[], at: number[], from: number, to: n
 }
 
 /** The one call of the live player (Task 39) that the shared API mock does not answer: it reports playback timing. */
-export const mockLivePlayer = (page: Page) => page.route('**/api/playback/timing', (r) => r.fulfill({ status: 204 }));
+/** the live player's own calls besides livetv: the playback timing, and the cast switch it asks once (off; `castOn()` after this turns it on) */
+export const mockLivePlayer = async (page: Page) => {
+  await page.route('**/api/playback/timing', (r) => r.fulfill({ status: 204 }));
+  await page.route('**/api/cast/config', (r) => r.fulfill({ json: { enabled: false } }));
+};
 
 /**
  * Clicks and expects the player route `/live/watch/<id>`: returns as soon as the URL is that path, so a wrong channel (or none)
