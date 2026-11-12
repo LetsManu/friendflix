@@ -13,8 +13,34 @@ export const FF_SERVICES = ['bootstrap', 'backend', 'gateway', 'web'] as const;
 export const HEALTH_SERVICES = ['backend', 'gateway', 'web'] as const;
 /** the updater's own service (explicit self-update only) */
 export const SELF_SERVICE = 'updater';
+/**
+ * The optional Live TV service (compose profile `livetv`, spec §4.2): started, stopped and removed only through POST /v1/livetv;
+ * while enabled it is part of every update (ffServices / healthServices) and every compose command adds its profile.
+ */
+export const LIVETV_SERVICE = 'livetv';
 /** service -> the image it runs (friendflix-<image>) */
-export const IMAGE_OF: Readonly<Record<string, string>> = { bootstrap: 'backend', backend: 'backend', gateway: 'gateway', web: 'web', updater: 'updater' };
+export const IMAGE_OF: Readonly<Record<string, string>> = { bootstrap: 'backend', backend: 'backend', gateway: 'gateway', web: 'web', updater: 'updater', livetv: 'livetv' };
+
+/** the services an update pulls and recreates: livetv only while it is enabled */
+export function ffServices(livetv: boolean): readonly string[] {
+  return livetv ? [...FF_SERVICES, LIVETV_SERVICE] : FF_SERVICES;
+}
+/** the services whose health decides an update: livetv only while it is enabled */
+export function healthServices(livetv: boolean): readonly string[] {
+  return livetv ? [...HEALTH_SERVICES, LIVETV_SERVICE] : HEALTH_SERVICES;
+}
+
+export type LivetvOp = { op: 'enable' } | { op: 'disable' } | { op: 'remove'; data: boolean };
+
+/** Parses a livetv request body: exactly {op: 'enable'}, {op: 'disable'} or {op: 'remove', data: boolean}; anything else is refused. */
+export function parseLivetvBody(raw: unknown): LivetvOp | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const keys = Object.keys(o);
+  if (o.op === 'enable' || o.op === 'disable') return keys.length === 1 ? { op: o.op } : null;
+  if (o.op === 'remove') return keys.length === 2 && typeof o.data === 'boolean' ? { op: 'remove', data: o.data } : null;
+  return null;
+}
 
 export type Channel = 'stable' | 'nightly' | 'pinned';
 export const CHANNELS: readonly Channel[] = ['stable', 'nightly', 'pinned'];

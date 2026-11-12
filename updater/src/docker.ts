@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { execFile } from 'node:child_process';
 import { FILE_RE } from './config.js';
-import { FF_SERVICES, SELF_SERVICE, cosignIdentity, expectedImage, isTag, pinnedRef } from './policy.js';
+import { FF_SERVICES, LIVETV_SERVICE, SELF_SERVICE, cosignIdentity, expectedImage, imageRepo, isTag, pinnedRef } from './policy.js';
 import { classifyStack, configDrift, type StackInfo, type StackOrigin } from './stack.js';
 
 /** The only two programs the updater starts, never through a shell. */
@@ -30,12 +30,27 @@ export interface ComposeSettings {
   /** owner/repo whose CI signs the images */
   repo: string;
   dockerHost: string;
+  /** whether the optional livetv service is enabled (the updater's state): every compose command then adds `--profile livetv` */
+  livetv?: () => boolean;
 }
 
 export type ServiceState = { service: string; name: string; state: string; health: string };
 export type ImageInfo = { repoDigests: string[]; gitSha: string | null; version: string | null };
+export type LivetvContainer = ServiceState & { image: string | null };
 
 const MIN = 60_000;
+/** the services `compose ps` reports (anything else in the project, e.g. the database, is left out) */
+const PS_SERVICES: readonly string[] = [...FF_SERVICES, SELF_SERVICE, LIVETV_SERVICE];
+const PROJECT_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+/** the livetv cache volume as compose names it (<project>_livetv-cache); the only volume the updater ever removes */
+const CACHE_VOLUME_RE = /^[a-z0-9][a-z0-9_-]{0,62}_livetv-cache$/;
+const IMAGE_ID_RE = /^sha256:[0-9a-f]{64}$/;
+const TAG_REF_RE = /^[a-z0-9][a-z0-9./_-]{0,200}:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+
+/** stop / rm take only the livetv service: the FriendFlix services are recreated, never stopped */
+function onlyLivetv(services: readonly string[]): void {
+  if (!services.length || !services.every((s) => s === LIVETV_SERVICE)) throw new Error('invalid service');
+}
 
 /** The fixed command lines. Every argument is a constant, a validated tag or a value read back from Docker itself. */
 export class Docker {
@@ -116,16 +131,26 @@ export class Docker {
     };
   }
 
-  private compose(tag: string | undefined, args: readonly string[], timeoutMs: number, files: readonly string[] = this.active): Promise<RunResult> {
+  /**
+   * `livetv`: add the livetv profile. Unset: while livetv is enabled (s.livetv). A command that names the livetv service sets it
+   * (an enable runs before the state says enabled; compose renders and starts a profile's service only with its profile).
+   */
+  private compose(tag: string | undefined, args: readonly string[], timeoutMs: number, o: { files?: readonly string[]; livetv?: boolean } = {}): Promise<RunResult> {
+    const files = o.files ?? this.active;
+    const livetv = o.livetv || this.s.livetv?.() === true;
     const base = ['compose', '--project-directory', this.s.projectDir, ...files.flatMap((f) => ['-f', `${this.s.projectDir}/${f}`]),
-      ...(this.s.projectName ? ['-p', this.s.projectName] : []), '--profile', 'updater', '--ansi', 'never'];
+      ...(this.s.projectName ? ['-p', this.s.projectName] : []), '--profile', 'updater', ...(livetv ? ['--profile', LIVETV_SERVICE] : []), '--ansi', 'never'];
     return this.run('docker', [...base, ...args], { env: this.env(tag), timeoutMs });
+  }
+
+  private static names(services: readonly string[]): { livetv: boolean } {
+    return { livetv: services.includes(LIVETV_SERVICE) };
   }
 
   /** the image each service would run with `tag`; throws unless every one is exactly ghcr.io/<owner>/<repo>-<image>:<tag> */
   async images(tag: string, services: readonly string[]): Promise<Record<string, string>> {
     await this.refreshFiles();
-    const r = await this.compose(tag, ['config', '--format', 'json'], MIN);
+    const r = await this.compose(tag, ['config', '--format', 'json'], MIN, Docker.names(services));
     if (r.code !== 0) throw new StepError('compose_config');
     let cfg: { services?: Record<string, { image?: unknown; environment?: unknown }> };
     try { cfg = JSON.parse(r.stdout); } catch { throw new StepError('compose_config'); }
@@ -183,13 +208,13 @@ export class Docker {
   }
 
   async pull(tag: string, services: readonly string[]): Promise<void> {
-    const r = await this.compose(tag, ['pull', '--quiet', ...services], 10 * MIN);
+    const r = await this.compose(tag, ['pull', '--quiet', ...services], 10 * MIN, Docker.names(services));
     if (r.code !== 0) throw new StepError('pull_failed');
   }
 
   /** recreates exactly these services from the images already pulled and verified (`--pull never`: no second, unverified pull) */
   async up(tag: string, services: readonly string[]): Promise<void> {
-    const r = await this.compose(tag, ['up', '-d', '--no-deps', '--pull', 'never', ...services], 10 * MIN);
+    const r = await this.compose(tag, ['up', '-d', '--no-deps', '--pull', 'never', ...services], 10 * MIN, Docker.names(services));
     if (r.code !== 0) throw new StepError('restart_failed');
   }
 
@@ -207,16 +232,90 @@ export class Docker {
     return (await this.psRows(this.active)) ?? [];
   }
 
-  /** null when compose fails */
+  /**
+   * null when compose fails. No service names on the command line: compose refuses a name the files do not define, and compose
+   * files from before livetv have none. With the livetv profile, so its container is listed whether or not it is enabled (a
+   * read-only listing); everything but the FriendFlix services, the updater and livetv is dropped here.
+   */
   private async psRows(files: readonly string[]): Promise<ServiceState[] | null> {
-    const r = await this.compose(undefined, ['ps', '--all', '--format', 'json', ...FF_SERVICES, SELF_SERVICE], MIN, files);
+    const r = await this.compose(undefined, ['ps', '--all', '--format', 'json'], MIN, { files, livetv: true });
     if (r.code !== 0) return null;
     // compose prints one JSON object per line (older versions: one array)
     const rows: Array<Record<string, unknown>> = [];
     for (const line of r.stdout.split('\n').map((l) => l.trim()).filter(Boolean)) {
       try { const v = JSON.parse(line); rows.push(...(Array.isArray(v) ? v : [v])); } catch { /* ignore */ }
     }
-    return rows.map((x) => ({ service: String(x.Service ?? ''), name: String(x.Name ?? ''), state: String(x.State ?? ''), health: String(x.Health ?? '') }));
+    return rows.map((x) => ({ service: String(x.Service ?? ''), name: String(x.Name ?? ''), state: String(x.State ?? ''), health: String(x.Health ?? '') }))
+      .filter((x) => PS_SERVICES.includes(x.service));
+  }
+
+  /** the livetv container (any state) and the image id it runs; null when there is none */
+  async livetvContainer(): Promise<LivetvContainer | null> {
+    const st = (await this.ps()).find((p) => p.service === LIVETV_SERVICE);
+    return st ? { ...st, image: await this.containerImage(st.name) } : null;
+  }
+
+  /** `compose stop livetv` (only livetv; refuses a foreign stack first, like every job) */
+  async stop(services: readonly string[]): Promise<void> {
+    onlyLivetv(services);
+    await this.refreshFiles();
+    const r = await this.compose(undefined, ['stop', ...services], 2 * MIN, { livetv: true });
+    if (r.code !== 0) throw new StepError('stop_failed');
+  }
+
+  /** `compose rm -f livetv` (a stopped container; only livetv) */
+  async rm(services: readonly string[]): Promise<void> {
+    onlyLivetv(services);
+    const r = await this.compose(undefined, ['rm', '-f', ...services], MIN, { livetv: true });
+    if (r.code !== 0) throw new StepError('stop_failed');
+  }
+
+  /** this repository's livetv image with `tag` */
+  livetvImage(tag: string): string {
+    return expectedImage(this.s.repo, LIVETV_SERVICE, tag);
+  }
+
+  /**
+   * `docker image rm` of a livetv image, never another one: `ref` is this repository's livetv image with a valid tag, or an image
+   * id (what the livetv container ran), removed through its tags only when every tag is a livetv one (an image that also carries
+   * another repository's tag is left alone). An image that is not there is fine. Never forced: an image a container still uses stays.
+   */
+  async imageRm(ref: string): Promise<void> {
+    const repo = imageRepo(this.livetvImage('latest'));
+    let refs: string[];
+    if (IMAGE_ID_RE.test(ref)) {
+      const tags = await this.repoTags(ref);
+      if (tags === null || !tags.every((t) => TAG_REF_RE.test(t) && imageRepo(t) === repo)) return;
+      refs = tags.length ? tags : [ref];
+    } else {
+      if (imageRepo(ref) !== repo || !isTag(ref.slice(ref.lastIndexOf(':') + 1))) throw new Error('invalid image');
+      refs = [ref];
+    }
+    const r = await this.run('docker', ['image', 'rm', ...refs], { env: this.env(), timeoutMs: 2 * MIN });
+    if (r.code !== 0 && !/no such image/i.test(r.stderr)) throw new StepError('remove_failed');
+  }
+
+  /** the tags of a local image; null when it is not there or cannot be read */
+  private async repoTags(id: string): Promise<string[] | null> {
+    const r = await this.run('docker', ['image', 'inspect', '--format', '{{json .RepoTags}}', id], { env: this.env(), timeoutMs: MIN });
+    if (r.code !== 0) return null;
+    try {
+      const v = JSON.parse(r.stdout.trim()) as unknown;
+      return Array.isArray(v) ? v.map(String) : [];
+    } catch { return null; }
+  }
+
+  /** the livetv cache volume of this stack: <project>_livetv-cache, the project from the backend container's compose label */
+  async cacheVolume(): Promise<string | null> {
+    const p = (await this.origin()).labels?.['com.docker.compose.project'];
+    return typeof p === 'string' && PROJECT_RE.test(p) ? `${p}_livetv-cache` : null;
+  }
+
+  /** `docker volume rm` of the livetv cache volume only (never the recordings or any other volume); a missing volume is fine */
+  async volumeRm(name: string): Promise<void> {
+    if (!CACHE_VOLUME_RE.test(name)) throw new Error('invalid volume');
+    const r = await this.run('docker', ['volume', 'rm', name], { env: this.env(), timeoutMs: MIN });
+    if (r.code !== 0 && !/no such volume/i.test(r.stderr)) throw new StepError('remove_failed');
   }
 
   /** what an image (a tag or the id a container runs) is: its registry digests and the commit baked in (GIT_SHA, APP_VERSION) */

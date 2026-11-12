@@ -6,7 +6,11 @@ import { CHANNELS, SHA_TAG_RE, VERSION_RE, isTag, type Channel } from './policy.
 
 export type StepName = 'pull' | 'verify' | 'restart' | 'health' | 'rollback';
 export type StepState = 'pending' | 'running' | 'ok' | 'failed' | 'skipped';
-export type JobAction = 'update' | 'rollback' | 'self-update';
+export type JobAction = 'update' | 'rollback' | 'self-update' | 'livetv-enable' | 'livetv-disable' | 'livetv-remove';
+const JOB_ACTIONS: readonly JobAction[] = ['update', 'rollback', 'self-update', 'livetv-enable', 'livetv-disable', 'livetv-remove'];
+/** the optional livetv service: enabled (the updater started it; it follows every update), disabled (container removed), absent (never enabled or removed with its image) */
+export type LivetvState = 'enabled' | 'disabled' | 'absent';
+const LIVETV_STATES: readonly LivetvState[] = ['enabled', 'disabled', 'absent'];
 export type JobState = 'running' | 'succeeded' | 'failed' | 'rolled_back';
 
 export interface Job {
@@ -33,10 +37,12 @@ export interface State {
   current: string | null;
   /** sha-<7> of the build that ran before the last successful update (the rollback target) */
   previous: string | null;
+  /** the optional livetv service (spec §4.2) */
+  livetv: LivetvState;
   lastJob: Job | null;
 }
 
-export const DEFAULT_STATE: State = { channel: 'stable', version: null, current: null, previous: null, lastJob: null };
+export const DEFAULT_STATE: State = { channel: 'stable', version: null, current: null, previous: null, livetv: 'absent', lastJob: null };
 
 /** A malformed or tampered file falls back field by field to the defaults: nothing from it reaches compose unchecked. */
 export function sanitize(raw: unknown): State {
@@ -48,6 +54,7 @@ export function sanitize(raw: unknown): State {
     version,
     current: isTag(o.current) ? o.current : null,
     previous: typeof o.previous === 'string' && SHA_TAG_RE.test(o.previous) ? o.previous : null,
+    livetv: LIVETV_STATES.find((v) => v === o.livetv) ?? 'absent',
     lastJob: sanitizeJob(o.lastJob),
   };
 }
@@ -56,7 +63,7 @@ function sanitizeJob(raw: unknown): Job | null {
   if (!raw || typeof raw !== 'object') return null;
   const j = raw as Record<string, unknown>;
   if (typeof j.id !== 'string' || !/^[0-9a-f]{16}$/.test(j.id) || !isTag(j.to)) return null;
-  if (!['update', 'rollback', 'self-update'].includes(String(j.action)) || !['running', 'succeeded', 'failed', 'rolled_back'].includes(String(j.state))) return null;
+  if (!(JOB_ACTIONS as readonly string[]).includes(String(j.action)) || !['running', 'succeeded', 'failed', 'rolled_back'].includes(String(j.state))) return null;
   const steps = {} as Record<StepName, StepState>;
   for (const s of ['pull', 'verify', 'restart', 'health', 'rollback'] as const) {
     const v = (j.steps as Record<string, unknown> | undefined)?.[s];

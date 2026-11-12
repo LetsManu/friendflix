@@ -12,8 +12,16 @@ import { portainerMode, redeployViaPortainer, updateInfo, type UpdateInfo } from
  * updater/src/protocol.ts byte for byte (test-vectors/updater-hmac.json).
  */
 const KEY_LABEL = 'friendflix-updater/v1';
-export type UpdaterAction = 'update' | 'rollback' | 'self-update';
-export const UPDATER_ACTIONS: readonly UpdaterAction[] = ['update', 'rollback', 'self-update'];
+/** what an audit entry names: the three jobs of Admin -> Update, and livetv (enable / disable / remove, spec §4.2) */
+export type UpdaterAction = 'update' | 'rollback' | 'self-update' | 'livetv';
+/** the jobs POST /api/admin/updater/:action starts (livetv has its own routes and body) */
+export type UpdateJobAction = Exclude<UpdaterAction, 'livetv'>;
+export const UPDATER_ACTIONS: readonly UpdateJobAction[] = ['update', 'rollback', 'self-update'];
+/** the action of a job as the updater reports it */
+export type UpdaterJobAction = UpdateJobAction | 'livetv-enable' | 'livetv-disable' | 'livetv-remove';
+const JOB_ACTIONS: readonly UpdaterJobAction[] = [...UPDATER_ACTIONS, 'livetv-enable', 'livetv-disable', 'livetv-remove'];
+/** the optional livetv service: the body of POST /v1/livetv (the updater refuses anything else, updater/src/policy.ts parseLivetvBody) */
+export type LivetvOp = { op: 'enable' } | { op: 'disable' } | { op: 'remove'; data: boolean };
 const STEP_NAMES = ['pull', 'verify', 'restart', 'health', 'rollback'] as const;
 const STEP_STATES = ['pending', 'running', 'ok', 'failed', 'skipped'] as const;
 const JOB_STATES = ['running', 'succeeded', 'failed', 'rolled_back'] as const;
@@ -29,7 +37,7 @@ export function signUpdater(key: Buffer, method: string, path: string, body = ''
 }
 
 export interface UpdaterJob {
-  id: string; action: UpdaterAction; state: (typeof JOB_STATES)[number]; step: (typeof STEP_NAMES)[number] | null;
+  id: string; action: UpdaterJobAction; state: (typeof JOB_STATES)[number]; step: (typeof STEP_NAMES)[number] | null;
   steps: Record<(typeof STEP_NAMES)[number], (typeof STEP_STATES)[number]>; from: string | null; to: string;
   startedAt: string; finishedAt: string | null; error: string | null;
 }
@@ -48,6 +56,11 @@ export interface UpdaterStatus {
   /** the directory compose recorded on the backend container, and the one the updater looks at (host paths, admin only) */
   stackDir: string | null;
   projectDir: string | null;
+  /**
+   * the optional livetv service as the updater sees it: enabled (it started it), disabled (container removed), absent (never
+   * enabled, or removed with its image); container running / exited / none. null = an updater from before livetv.
+   */
+  livetv: { state: 'enabled' | 'disabled' | 'absent'; container: 'running' | 'exited' | null } | null;
 }
 export type UpdaterView = { present: false } | { present: true; error: 'unauthorized' | 'invalid_answer' } | { present: true; status: UpdaterStatus };
 
@@ -60,7 +73,7 @@ const PATH_RE = /^\/[A-Za-z0-9._/ -]{0,250}$/;
 function parseJob(raw: unknown): UpdaterJob | null {
   if (!raw || typeof raw !== 'object') return null;
   const j = raw as Record<string, unknown>;
-  const action = pick(j.action, UPDATER_ACTIONS), state = pick(j.state, JOB_STATES), to = tagOrNull(j.to);
+  const action = pick(j.action, JOB_ACTIONS), state = pick(j.state, JOB_STATES), to = tagOrNull(j.to);
   if (typeof j.id !== 'string' || !/^[0-9a-f]{16}$/.test(j.id) || !action || !state || !to) return null;
   const steps = Object.fromEntries(STEP_NAMES.map((s) => [s, pick((j.steps as Record<string, unknown> | undefined)?.[s], STEP_STATES) ?? 'pending'])) as UpdaterJob['steps'];
   return {
@@ -89,7 +102,14 @@ export function parseStatus(raw: unknown): UpdaterStatus | null {
     stack: pick(o.stack, ['own', 'foreign'] as const),
     stackReason: pick(o.stackReason, ['own', 'working_dir', 'portainer', 'no_labels'] as const),
     stackDir: short(o.stackDir, PATH_RE), projectDir: short(o.projectDir, PATH_RE),
+    livetv: parseLivetv(o.livetv),
   };
+}
+
+function parseLivetv(raw: unknown): UpdaterStatus['livetv'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const l = raw as Record<string, unknown>;
+  return { state: pick(l.state, ['enabled', 'disabled', 'absent'] as const) ?? 'absent', container: pick(l.container, ['running', 'exited'] as const) };
 }
 
 type Answer = { status: number; json: unknown } | null;
@@ -152,7 +172,7 @@ function portainerStack(ctx: Ctx, s: UpdaterStatus): boolean {
   return s.stack === 'foreign' || (portainerMode(ctx) !== null && s.stack !== 'own');
 }
 
-export async function startJob(ctx: Ctx, action: UpdaterAction, actor: string | null): Promise<StartResult> {
+export async function startJob(ctx: Ctx, action: UpdateJobAction, actor: string | null): Promise<StartResult> {
   // A stack another tool started (Portainer) is never recreated by the updater (it would lose that tool's variables, e.g.
   // BIND_ADDR): an update goes through Portainer when it is set up, anything else is refused up front.
   const pre = await updaterView(ctx);
@@ -172,16 +192,48 @@ export async function startJob(ctx: Ctx, action: UpdaterAction, actor: string | 
     return { ok: false, status: 502, error: 'channel_sync_failed' };
   }
   const r = await call(ctx, 'POST', `/v1/${action}`);
+  const job = startedJob(r, action);
+  if (!job.ok) return job;
+  const meta = { action, from: job.job.from, to: job.job.to, ...(actor ? {} : { auto: true }) };
+  await ctx.kv.set(`${PENDING}${job.job.id}`, JSON.stringify({ actor, ...meta }), 7 * 86_400).catch(() => undefined);
+  await audit(ctx, actor, 'system.updater_start', undefined, meta);
+  return job;
+}
+
+/** the job of a 202 answer for `action`; the updater's refusal otherwise (409 for busy / no target, 502 for anything else) */
+function startedJob(r: Answer, action: UpdaterJobAction): { ok: true; job: UpdaterJob } | { ok: false; status: number; error: string } {
   if (!r) return { ok: false, status: 409, error: 'not_available' };
   const job = r.status === 202 ? parseJob((r.json as { job?: unknown } | null)?.job) : null;
-  if (!job) {
-    const err = short((r.json as { error?: unknown } | null)?.error, /^[a-z_]{1,40}$/) ?? 'updater_error';
-    return { ok: false, status: r.status === 409 || r.status === 400 ? 409 : 502, error: err };
-  }
-  const meta = { action, from: job.from, to: job.to, ...(actor ? {} : { auto: true }) };
-  await ctx.kv.set(`${PENDING}${job.id}`, JSON.stringify({ actor, ...meta }), 7 * 86_400).catch(() => undefined);
+  if (job && job.action === action) return { ok: true, job };
+  const err = (!job && short((r.json as { error?: unknown } | null)?.error, /^[a-z_]{1,40}$/)) || 'updater_error';
+  return { ok: false, status: r.status === 409 || r.status === 400 ? 409 : 502, error: err };
+}
+
+/** the signed body: exactly the op, keys in a fixed order (nothing else a caller passes rides along); null when it is not one */
+function livetvBody(op: LivetvOp | null | undefined): string | null {
+  if (!op || typeof op !== 'object') return null;
+  if (op.op === 'enable' || op.op === 'disable') return JSON.stringify({ op: op.op });
+  if (op.op === 'remove' && typeof op.data === 'boolean') return JSON.stringify({ op: 'remove', data: op.data });
+  return null;
+}
+
+/**
+ * Enables, disables or removes the optional livetv service through the updater (POST /v1/livetv, spec §4.2) and audits it like
+ * startJob (start now, result from the next status read). A foreign (Portainer) stack is refused up front: the updater would
+ * refuse it too, and Portainer cannot start a single profile service, so the page shows the manual steps instead.
+ */
+export async function startLivetvJob(ctx: Ctx, op: LivetvOp, actor: string): Promise<StartResult> {
+  const body = livetvBody(op);
+  if (!body) return { ok: false, status: 400, error: 'invalid' };
+  const pre = await updaterView(ctx);
+  if ('status' in pre && portainerStack(ctx, pre.status)) return { ok: false, status: 409, error: 'foreign_stack' };
+  const action = `livetv-${op.op}` as const;
+  const job = startedJob(await call(ctx, 'POST', '/v1/livetv', body), action);
+  if (!job.ok) return job;
+  const meta = { action, ...(op.op === 'remove' ? { data: op.data } : {}), from: job.job.from, to: job.job.to };
+  await ctx.kv.set(`${PENDING}${job.job.id}`, JSON.stringify({ actor, action: 'livetv' satisfies UpdaterAction, op: op.op }), 7 * 86_400).catch(() => undefined);
   await audit(ctx, actor, 'system.updater_start', undefined, meta);
-  return { ok: true, job };
+  return job;
 }
 
 /** the result audit of a finished job, exactly once (the pending entry is taken atomically) */
