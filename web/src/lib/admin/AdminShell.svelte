@@ -13,6 +13,7 @@
   import { GROUPS, OVERVIEW, activeItem, badgeCount, badgeTone, groupOf } from './nav';
   import { refreshSummary, summary } from './summary';
   import { features, linkShown, serverCaps } from '#lib/capabilities';
+  import { perms } from '#lib/perms';
   import SlidePill from '#lib/glass/SlidePill.svelte';
 
   const page = pageStore();
@@ -21,7 +22,7 @@
   $: overview = item === OVERVIEW;
   $: title = item && !overview ? $t(item.label) : $t('admin.title');
   // entries of a service this instance has not set up (e.g. requests) are left out
-  $: groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => linkShown($serverCaps, i.href, $features)) }));
+  $: groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => linkShown($serverCaps, i.href, $features, $perms)) }));
 
   let sideEl: HTMLElement | undefined;
 

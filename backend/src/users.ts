@@ -7,7 +7,10 @@ import type { Ctx } from './ctx.js';
 import { encrypt, randomPassword } from './crypto.js';
 import type { IdentityPolicy } from './media/types.js';
 import { effectiveLimits } from './limits.js';
+import { listRoles, roleExists } from './rolecat.js';
 import { effectiveRole } from './roles.js';
+import { invalidateRights } from './rights.js';
+import { dropPartyDenied } from './partySockets.js';
 import { accountJellyfinIds, kidsPolicyFor } from './profiles.js';
 import { revokeSessions } from './devices.js';
 import type { OidcClaims } from './oidc.js';
@@ -43,7 +46,10 @@ export async function applyRole(ctx: Ctx, jellyfinUserId: string, role: string, 
  * `tx`: a connection inside an open transaction (setup/state.ts claimSetup): the account rows and their audit are written there and
  * commit or roll back with it; the caller then owns the Jellyfin account if that transaction does not commit.
  */
-export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, accessUntil: Date | null = null, tx?: pg.PoolClient): Promise<UserRow> {
+export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, accessUntil: Date | null = null, tx?: pg.PoolClient, inviteId?: string): Promise<UserRow> {
+  // an invite's role may have been deleted (its invites moved to the target) since the use was claimed: the invite's current role wins
+  const inviteRole = async (db: Pick<pg.Pool, 'query'>) => (await db.query<{ role: string }>('select role from invites where id=$1', [inviteId])).rows[0]?.role;
+  if (inviteId) role = (await inviteRole(ctx.db)) ?? role;
   const base = safeName(claims.name ?? claims.email?.split('@')[0] ?? 'freund');
   const password = randomPassword();
   let jf: { id: string } | undefined;
@@ -58,11 +64,34 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, 
   }
   try {
     const id = randomUUID();
-    await applyRole(ctx, jf!.id, role, false, { userId: id });
+    // an invite's role may be deleted right now: that is settled under the role lock below, so a failure here waits for it
+    let applied = true;
+    await applyRole(ctx, jf!.id, role, false, { userId: id }).catch((e) => { if (!inviteId) throw e; applied = false; });
     const c = tx ?? (await (ctx.db as pg.Pool).connect());
     let row: UserRow;
     try {
       if (!tx) await c.query('begin');
+      if (!inviteId) {
+        // shared role lock as well: a role delete in flight finishes first, and a role that is gone is refused instead of inserted on
+        await c.query('select pg_advisory_xact_lock_shared(hashtext($1))', [`role:${role}`]);
+        if (!Object.hasOwn(ctx.roles, role) && !(await c.query('select 1 from roles where key=$1', [role])).rowCount) throw new HttpError(400, 'unknown_role');
+      } else {
+        // shared role lock (deleteRole holds it exclusively): a delete in flight either finishes first, so the invite shows the new
+        // role, or waits for this account and then moves it. Re-read under each lock until the role is stable and still exists.
+        let settled = false;
+        for (let tries = 0; tries < 3 && !settled; tries++) {
+          await c.query('select pg_advisory_xact_lock_shared(hashtext($1))', [`role:${role}`]);
+          const now = (await inviteRole(c)) ?? role;
+          if (now === role) {
+            settled = Object.hasOwn(ctx.roles, role) || (await c.query('select 1 from roles where key=$1', [role])).rowCount! > 0;
+            break;
+          }
+          role = now;
+          applied = false;
+        }
+        if (!settled) throw new HttpError(503, 'role_changing'); // never insert on a missing role; the invite is released and the person retries
+        if (!applied) await applyRole(ctx, jf!.id, role, false, { userId: id });
+      }
       const r = await c.query<UserRow>(
         `insert into users(id, authentik_sub, email, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, access_until)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
@@ -85,8 +114,8 @@ export async function provisionUser(ctx: Ctx, claims: OidcClaims, role: string, 
   }
 }
 
-/** Re-applies the effective role policy to all non-disabled users of a role. Returns the number of failures. */
-export async function reapplyRole(ctx: Ctx, role: string): Promise<number> {
+/** Re-applies the effective role policy to all non-disabled users of a role (account and profile identities): how many, how many failed. */
+export async function reapplyRole(ctx: Ctx, role: string): Promise<{ identities: number; failed: number }> {
   const r = await ctx.db.query<{ id: string; jellyfin_user_id: string; hidden: boolean }>(
     `select id, jellyfin_user_id, false hidden from users where role=$1 and not disabled
      union all select u.id, p.jellyfin_user_id, true from profiles p join users u on u.id=p.user_id
@@ -95,7 +124,7 @@ export async function reapplyRole(ctx: Ctx, role: string): Promise<number> {
   );
   let failed = 0;
   for (const u of r.rows) await applyRole(ctx, u.jellyfin_user_id, role, false, { hidden: u.hidden, userId: u.id }).catch(() => { failed++; });
-  return failed;
+  return { identities: r.rows.length, failed };
 }
 
 /** One-time startup job (flag in app_flags): old accounts still carry the pre-maxHeight policies (e.g. guests without transcoding). Call after migrate. */
@@ -103,7 +132,7 @@ export async function reapplyPoliciesOnce(ctx: Ctx, flag = 'reapply_roles_v1'): 
   const got = await ctx.db.query('insert into app_flags(key) values ($1) on conflict do nothing returning key', [flag]);
   if (!got.rowCount) return;
   let failed = 0;
-  for (const role of Object.keys(ctx.roles)) failed += await reapplyRole(ctx, role);
+  for (const { key } of await listRoles(ctx)) failed += (await reapplyRole(ctx, key)).failed;
   if (failed) await ctx.db.query('delete from app_flags where key=$1', [flag]); // retry on next start
 }
 
@@ -159,7 +188,7 @@ export async function unlockUser(ctx: Ctx, actor: string | null, userId: string)
 
 /** Changes the role: the role policy goes to the account's media server identity and all its profile identities. No-op when unchanged. */
 export async function setRole(ctx: Ctx, actor: string | null, userId: string, role: string): Promise<void> {
-  if (!Object.hasOwn(ctx.roles, role)) throw new HttpError(400, 'unknown_role');
+  if (!(await roleExists(ctx, role))) throw new HttpError(400, 'unknown_role');
   const user = await getUserById(ctx, userId);
   if (!user) throw new HttpError(404, 'not_found');
   if (user.role === role) return;
@@ -167,6 +196,10 @@ export async function setRole(ctx: Ctx, actor: string | null, userId: string, ro
   for (const jid of ids) await applyRole(ctx, jid, role, user.disabled, { userId, hidden: jid !== user.jellyfin_user_id });
   await ctx.db.query('update users set role=$1 where id=$2', [role, userId]);
   await audit(ctx, actor, 'user.role', userId, { from: user.role, to: role });
+  // the new role may not have `party`: the account's open party sockets close (4403). Also the path of the bulk role change and of a
+  // role deleted with a move target. rights.ts caches which accounts lack a switch: drop that first.
+  invalidateRights(userId);
+  await dropPartyDenied(ctx, [userId]);
 }
 
 /**

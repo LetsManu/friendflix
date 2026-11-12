@@ -12,6 +12,7 @@
   import { serverCaps } from '#lib/capabilities';
   import { castCapableBrowser, castConfigEnabled, castCustomReceiver, castState, castTestClip, initCast, requestCastSession, whenCastReady } from '#lib/cast';
   import Icon from '#lib/Icon.svelte';
+  import { perms } from '#lib/perms';
   import { fmtTime, t } from '#lib/i18n';
   import { airLogStart, formatAirLog, readAirLog } from '#lib/player/airplayLog';
   import { castLogDevices, castReport, clearCastLog, eventsText, readCastLog, type CastLogEntry } from './castLog';
@@ -63,21 +64,26 @@
     airAvailable = typeof HTMLMediaElement !== 'undefined' && typeof (HTMLMediaElement.prototype as { webkitShowPlaybackTargetPicker?: unknown }).webkitShowPlaybackTargetPicker === 'function';
     read();
     void checkLock();
-    if (capable) {
-      void castConfigEnabled().then((on) => { enabled = on; custom = castCustomReceiver(); if (on) { void initCast(); whenCastReady(() => { ready = true; }); } }).catch(() => undefined);
-    }
+    mounted = true;
     const id = setInterval(() => { read(); void checkLock(); }, 2000);
     return () => clearInterval(id);
   });
+
+  // the Chromecast check starts once the cast right is there (it may arrive after mount: a stale boot hint denied it)
+  let mounted = false, checked = false;
+  $: if (mounted && capable && $perms.cast && !checked) {
+    checked = true;
+    void castConfigEnabled().then((on) => { enabled = on; custom = castCustomReceiver(); if (on) { void initCast(); whenCastReady(() => { ready = true; }); } }).catch(() => undefined);
+  }
 
   $: air = lastAirSession(entries);
   // receiver errors of this session: after the last entry that started, resumed or adopted one
   $: errors = entries.slice(entries.findLastIndex((e) => e.tag === 'session' && /^session (started|resumed|adopted|found)/.test(e.text)) + 1).filter((e) => e.tag === 'receiver' && e.level === 'error').length;
   $: cc = chromecastRows({
-    capable, enabled, custom, state: $castState, session: $castSession,
+    capable, allowed: $perms.cast, enabled, custom, state: $castState, session: $castSession,
     lookup: $castSession?.kind === 'chromecast' ? lookup : null, errors, now, tf: $t, otherTab: otherTab && !$castSession, item: $castSession ? cachedItem($castSession.itemId) : null,
   });
-  $: ap = airplayRows({ available: airAvailable, continuous: null, subsInStream: $serverCaps.castHlsSubtitles, last: air, lookup: $castSession?.kind === 'airplay' ? lookup : null, pinned: lookup?.pinFamily, tf: $t });
+  $: ap = airplayRows({ available: airAvailable, continuous: null, allowed: $perms.cast, subsInStream: $serverCaps.castHlsSubtitles, last: air, lookup: $castSession?.kind === 'airplay' ? lookup : null, pinned: lookup?.pinFamily, tf: $t });
 
   $: castBusy = $castSession !== null || otherTab;
   $: canTest = capable && enabled && ready && !busy && !castBusy;

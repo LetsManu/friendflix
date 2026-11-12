@@ -9,6 +9,7 @@
    * Mounted for as long as the Player lives, so the TV a session started on is remembered whichever way it was picked.
    */
   import { afterUpdate, createEventDispatcher, onDestroy, tick } from 'svelte';
+  import { perms } from '#lib/perms';
   import { castCapableBrowser, castState, onCastEvent, requestCastSession } from '#lib/cast';
   import { growBoth, scrimFade, sheetSlide, twoWay } from '#lib/glass/fx';
   import { SCRIM_MENU } from '#lib/glass/tone';
@@ -48,7 +49,7 @@
   const form = typeof navigator === 'undefined' ? 'computer' : formFactor(navigator, typeof innerWidth === 'number' ? innerWidth : 1024);
   $: casting = $castSession && $castSession.state !== 'detached' ? $castSession.kind : airplayActive ? 'airplay' as const : null;
   $: rows = playOnRows({
-    chromecast: typeof navigator !== 'undefined' && castCapableBrowser(), devices: $castState.available || $castState.connected,
+    chromecast: typeof navigator !== 'undefined' && $perms.cast && castCapableBrowser(), devices: $castState.available || $castState.connected,
     airplay, apple: typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent), continuousAvailable: false,
     episode: episode !== '', last, casting, form, tf: $t,
   });

@@ -12,6 +12,7 @@
  */
 import { get, writable } from 'svelte/store';
 import { api } from '#lib/api';
+import { perms } from '#lib/perms';
 import { castLog, noteCastDevice } from '#lib/cast/castLog';
 import { applyAvoid, avoidedOf, castCapsBody, noteAvoid, parseReceiverCaps, usedFeatures, type CastDelivery, type CastFeature, type ReceiverCaps } from '#lib/cast/caps';
 import type { Store } from '#lib/cast/resume';
@@ -177,6 +178,9 @@ function queueOf(ms: MediaT | null): CastState['queue'] {
   return items.slice(cur + 1).map((q) => ({ itemId: q.itemId, contentId: q.media?.contentId ?? '', castId: castIdOf(q.media) }));
 }
 
+/** the acting profile may cast (me.perms.cast): the server answers 403 cast_forbidden otherwise, so nothing casting-related starts */
+export const castAllowed = (): boolean => get(perms).cast;
+
 /** Chromium only (Chrome, Edge, Opera, Samsung ...), never iOS (all iOS browsers are WebKit), never a paired TV. */
 export function castCapableBrowser(): boolean {
   if (typeof navigator === 'undefined' || typeof document === 'undefined') return false;
@@ -289,7 +293,7 @@ const sendReport = (info: CastInfo) => { if (info.report) castSendMessage({ t: '
 
 /** Loads the SDK once if casting makes sense here. Safe to call repeatedly. Never throws. */
 export async function initCast(): Promise<void> {
-  if (initStarted || !castCapableBrowser()) return;
+  if (initStarted || !castAllowed() || !castCapableBrowser()) return;
   initStarted = true;
   try {
     if (!(await castConfigEnabled())) return;

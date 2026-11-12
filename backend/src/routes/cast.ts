@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { CAST_MAX_BITRATE, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, castLookup, castNextTtlSeconds, castPinned, CastUnpinnedError, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
 import type { Ctx } from '../ctx.js';
@@ -14,6 +14,7 @@ import { playbackReport } from './media.js';
 import { effectiveLimits } from '../limits.js';
 import { remoteBitrateCap } from '../roles.js';
 import { loadSession, requireUser } from '../session.js';
+import { requirePerm } from '../permGuard.js';
 import { id32 as itemId } from './_shared.js';
 
 const psId = z.string().regex(/^[\w-]{8,64}$/);
@@ -27,8 +28,12 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
     return { enabled: castEnabled(ctx), ...(receiverAppId ? { receiverAppId } : {}) };
   });
 
-  app.post('/api/cast/session', { ...pre, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+  /** cast off on this instance: 404 cast_disabled (before the switch, as the request routes: "not set up" first, then "not for you") */
+  const castOn = async (_req: FastifyRequest, reply: FastifyReply) => {
     if (!castEnabled(ctx)) return reply.code(404).send({ error: 'cast_disabled' });
+  };
+  // the `cast` switch decides who may start a cast (a running one can still be followed and stopped)
+  app.post('/api/cast/session', { preHandler: [requireUser(ctx), castOn, requirePerm(ctx, 'cast', 'cast_forbidden')], config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     const b = z.object({
       itemId,
       startTicks: z.number().int().min(0).optional(),

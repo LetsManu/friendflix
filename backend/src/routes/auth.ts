@@ -10,7 +10,9 @@ import { authenticate, COOKIE, loadSession, requireUser } from '../session.js';
 import { revokeCasts } from '../cast.js';
 import { roleAllowsDownloads } from '../downloads.js';
 import { effectiveLimits } from '../limits.js';
-import { DEFAULT_ROLES } from '../roles.js';
+import { permsOf } from '../permGuard.js';
+import { roleLabelArgs } from '../rolecat.js';
+import { own } from '../roles.js';
 import { deviceHasSession } from '../devices.js';
 import { noteClientKind } from '../deviceKind.js';
 import { deletePushSubscriptions } from '../push.js';
@@ -294,22 +296,24 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx) {
     if (req.session!.deviceId) await noteClientKind(ctx, u.id, req.session!.deviceId, String(req.headers['user-agent'] ?? ''), true);
     const profileCount = (await listProfiles(ctx, u.id)).length;
     const dlRole = await effectiveLimits(ctx, u); // role + the user's own overrides
-    const [instLang, profLang, onboarded] = await Promise.all([instanceLanguage(ctx), profileLanguage(ctx, req.profile?.id), profileOnboarded(ctx, req.profile?.id)]);
+    const [instLang, profLang, onboarded, perms] = await Promise.all([instanceLanguage(ctx), profileLanguage(ctx, req.profile?.id), profileOnboarded(ctx, req.profile?.id), permsOf(ctx, req)]);
     return {
       id: u.id,
       name: u.name,
       email: u.email,
       role: u.role,
       /** role name in the UI language (a label customised via ROLES_JSON is shown as configured) */
-      roleLabel: roleLabel(profLang ?? instLang ?? FALLBACK_LANGUAGE, u.role, ctx.roles[u.role]?.label, DEFAULT_ROLES[u.role]?.label),
+      roleLabel: roleLabel(profLang ?? instLang ?? FALLBACK_LANGUAGE, ...(await roleLabelArgs(ctx, u.role))),
       isAdmin: u.role === 'admin',
       csrfToken: req.session!.csrf,
       deviceApproved: req.session!.deviceApproved,
       /** this session belongs to a paired television (device ids of paired TVs start with "tv-") */
       tv: Boolean(req.session!.deviceId?.startsWith('tv-')),
-      limits: dlRole ?? ctx.roles[u.role],
+      limits: dlRole ?? own(ctx.roles, u.role),
       /** offline downloads: allowed for this role (and not on TVs) + max active licenses */
       downloads: { allowed: roleAllowsDownloads(ctx, dlRole) && !req.session!.deviceId?.startsWith('tv-'), max: dlRole?.maxDownloads ?? 0 },
+      /** the role switches of this account and active profile (kids overlay applied): the client hides what the server refuses */
+      perms,
       profile: req.profile ? publicProfile(req.profile) : null,
       /** true: the client must send the user to the profile picker first (owner profile has a PIN and none was chosen) */
       profileRequired: !req.profile,

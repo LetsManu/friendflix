@@ -869,6 +869,48 @@ export const MIGRATIONS: string[] = [
   );
   create index if not exists handoff_recent on handoff (profile_id, updated_at desc);
   `,
+  // 47: users & permissions remodel. Roles become rows (built-ins seeded; env roles are synced at startup), role_settings and
+  // user_limits get the full template + permission overrides as JSON, audit gets indexes. The old role_settings columns stay
+  // (dual-written for one release so a rollback to 3.3 reads current values); a later migration drops them. Rerunnable.
+  `
+  create table if not exists roles (
+    key text primary key check (key ~ '^[a-z][a-z0-9_-]{1,23}$'),
+    label text check (label is null or char_length(label) between 1 and 30),
+    base text not null,
+    origin text not null check (origin in ('code','env','admin')),
+    invitable boolean not null default true,
+    position int not null default 0,
+    created_at timestamptz not null default now(),
+    created_by uuid references users(id) on delete set null
+  );
+  insert into roles(key, base, origin, invitable, position) values
+    ('admin','admin','code',false,0), ('family','family','code',true,1), ('friend','friend','code',true,2), ('guest','guest','code',true,3)
+    on conflict (key) do nothing;
+  alter table role_settings
+    add column if not exists template jsonb not null default '{}',
+    add column if not exists perms jsonb not null default '{}';
+  update role_settings set template =
+       (case when transcoding is null then '{}'::jsonb else jsonb_build_object('transcoding', transcoding) end)
+    || (case when max_height is null then '{}'::jsonb when max_height = 0 then '{"maxHeight": null}'::jsonb else jsonb_build_object('maxHeight', max_height) end)
+    || (case when download is null then '{}'::jsonb else jsonb_build_object('download', download) end)
+    || (case when max_downloads is null then '{}'::jsonb else jsonb_build_object('maxDownloads', max_downloads) end)
+    || (case when download_max_height is null then '{}'::jsonb else jsonb_build_object('downloadMaxHeight', download_max_height) end)
+    || (case when download_days is null then '{}'::jsonb else jsonb_build_object('downloadDays', download_days) end)
+    || (case when remote_max_bitrate is null then '{}'::jsonb else jsonb_build_object('remoteMaxBitrate', remote_max_bitrate) end)
+    where template = '{}'::jsonb;
+  alter table user_limits
+    add column if not exists transcoding boolean,
+    add column if not exists max_height int check (max_height between 0 and 4320),
+    add column if not exists download boolean,
+    add column if not exists max_bitrate int check (max_bitrate between 300000 and 200000000),
+    add column if not exists max_parental_rating int check (max_parental_rating between -1 and 21),
+    add column if not exists download_days int check (download_days between 1 and 90),
+    add column if not exists libraries jsonb,
+    add column if not exists perms jsonb not null default '{}',
+    add column if not exists note text check (char_length(note) <= 200);
+  create index if not exists audit_log_target on audit_log(target, id desc) where target is not null;
+  create index if not exists audit_log_action on audit_log(action, id desc);
+  `,
 ];
 
 export async function migrate(pool: pg.Pool): Promise<void> {

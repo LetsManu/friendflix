@@ -318,7 +318,7 @@ describe('profiles', () => {
     const p = await mkProfile(s, 'Kind');
     const kidJf = (await env.pool.query<{ jellyfin_user_id: string }>('select jellyfin_user_id from profiles where id=$1', [p.id])).rows[0]!.jellyfin_user_id;
     env.jfCalls.length = 0;
-    expect(await reapplyRole(env.ctx, 'admin')).toBe(0);
+    expect(await reapplyRole(env.ctx, 'admin')).toEqual({ identities: 2, failed: 0 });
     const hit = policies().find((c) => c.path === `/Users/${kidJf}/Policy`);
     expect(hit!.body).toMatchObject({ IsHidden: true, IsDisabled: false });
     expect(policies()).toHaveLength(2);

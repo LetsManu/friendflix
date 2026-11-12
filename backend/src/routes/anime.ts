@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { MediaError, type ItemDto, type ItemTraits } from '../media/types.js';
 import { requireGrownUp } from '../kids.js';
+import { permsOf } from '../permGuard.js';
+import { accountsWithout } from '../rights.js';
 import { requireUser } from '../session.js';
 import type { JfUser } from '../types.js';
 import { id32, wrap as sharedWrap } from './_shared.js';
@@ -202,13 +204,13 @@ export function animeRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     return item;
   };
-  /** guests are not part of the friend circle: they neither see nor write comments */
-  const isGuest = (req: any) => req.user!.role === 'guest';
+  /** without the `comments` switch (the guest role's default, a person's override, a kids profile) nobody sees nor writes comments */
+  const noComments = async (req: FastifyRequest) => !(await permsOf(ctx, req)).comments;
 
   interface CommentRow { id: string; profile_id: string; name: string; body: string; spoiler: boolean; created_at: Date }
   const commentSelect = `select c.id, c.profile_id, case when p.is_owner then u.name else p.name end as name, c.body, c.spoiler, c.created_at
       from episode_comments c join users u on u.id = c.user_id join profiles p on p.id = c.profile_id
-     where c.item_id = $1 and c.deleted_at is null and not u.disabled and u.role <> 'guest'`;
+     where c.item_id = $1 and c.deleted_at is null and not u.disabled and not (c.user_id = any($2::uuid[]))`;
 
   /** moderation: an admin account acting as its owner profile (another profile of an admin's account is a normal reader) */
   const moderator = (req: any) => req.user!.role === 'admin' && Boolean(req.profile?.is_owner);
@@ -230,10 +232,11 @@ export function animeRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/items/:id/comments', { ...social, config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (req, reply) => {
     const item = await loadItem(req, reply);
     if (!item) return;
-    if (isGuest(req)) return { watched: isWatched(item), comments: [] };
+    if (await noComments(req)) return { watched: isWatched(item), comments: [] };
     const reveal = z.object({ reveal: z.enum(['0', '1']).optional() }).safeParse(req.query).data?.reveal === '1';
     const watched = isWatched(item);
-    const rows = (await ctx.db.query<CommentRow>(`${commentSelect} order by c.created_at desc limit ${COMMENT_LIST_MAX}`, [item.id])).rows;
+    // comments of accounts whose switch is off are hidden from everybody (as the guests' always were)
+    const rows = (await ctx.db.query<CommentRow>(`${commentSelect} order by c.created_at desc limit ${COMMENT_LIST_MAX}`, [item.id, await accountsWithout(ctx, 'comments')])).rows;
     return { watched, comments: rows.map((r) => view(r, req, watched, reveal)) };
   });
 
@@ -242,7 +245,7 @@ export function animeRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request' });
     const body = cleanComment(parsed.data.body);
     if (!body || body.length > COMMENT_MAX) return reply.code(400).send({ error: 'bad_request' });
-    if (isGuest(req)) return reply.code(403).send({ error: 'forbidden' });
+    if (await noComments(req)) return reply.code(403).send({ error: 'forbidden' });
     const item = await loadItem(req, reply);
     if (!item) return;
     const day = Number((await ctx.db.query<{ n: string }>("select count(*) n from episode_comments where profile_id=$1 and created_at > now() - interval '24 hours'", [req.profile!.id])).rows[0]!.n);

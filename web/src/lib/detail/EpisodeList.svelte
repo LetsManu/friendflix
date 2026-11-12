@@ -10,6 +10,7 @@
   import { seasonLabel } from '#lib/detail/format';
   import EpisodeComments from '#lib/detail/EpisodeComments.svelte';
   import { kidsMode } from '#lib/kids';
+  import { perms } from '#lib/perms';
   import { playPrefetch } from '#lib/player/prefetch';
   import { playOrCast } from '#lib/cast/playOrCast';
   import { SCRIM_SAFE_DIM } from '#lib/glass/tone';
@@ -75,7 +76,7 @@
             {#if e.played}<span class="seen"><Icon name="check" size={18} label={$t('detail.episodes.watched')} /></span>{/if}
           </a>
           <span class="epdl">
-            {#if !$kidsMode}
+            {#if !$kidsMode && $perms.comments}
               <button type="button" class="cmbtn" class:on={openComments.has(e.id)} aria-expanded={openComments.has(e.id)} aria-controls="cm-panel-{e.id}"
                 aria-label={openComments.has(e.id) ? $t('anime.comments.hide') : $t('anime.comments.show')} title={openComments.has(e.id) ? $t('anime.comments.hide') : $t('anime.comments.show')}
                 on:click={() => toggleComments(e.id)}><Icon name="message" size={18} />{#if counts[e.id]}<span class="n2">{counts[e.id]}</span>{/if}</button>
@@ -83,7 +84,7 @@
             <DownloadButton itemId={e.id} {seriesId} compact />
           </span>
           </div>
-          {#if openComments.has(e.id) && !$kidsMode}
+          {#if openComments.has(e.id) && !$kidsMode && $perms.comments}
             <div id="cm-panel-{e.id}"><EpisodeComments itemId={e.id} onCount={(n) => (counts = { ...counts, [e.id]: n })} /></div>
           {/if}
         </li>

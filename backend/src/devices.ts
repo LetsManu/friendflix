@@ -10,7 +10,7 @@ import { m, msg, userLanguage, type Language } from './i18n.js';
 import { notify } from './notify.js';
 import { deletePushSubscriptions } from './push.js';
 import { forgetAuth } from './routes/internal.js';
-import { dropPartyPeers } from './routes/party.js';
+import { dropPartyPeers } from './partySockets.js';
 import { dropRemotePeers } from './routes/tv.js';
 
 export const DEVICE_COOKIE = 'ff_dev';

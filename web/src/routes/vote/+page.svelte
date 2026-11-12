@@ -5,6 +5,10 @@
   import { api, type Item } from '#lib/api';
   import { pollDelay, voteError } from '#lib/polls';
   import { t, tr, type TKey } from '#lib/i18n';
+  import { features } from '#lib/capabilities';
+  import { perms } from '#lib/perms';
+  /** wish options need the right to request (and a request service) */
+  $: canWish = $perms.requests && $features.requests;
 
   let polls: any[] = [], loaded = false, now = Date.now(), timer: ReturnType<typeof setInterval>, pollT: ReturnType<typeof setTimeout>, msg = '', loadErr = '', failures = 0, gone = false;
   let creating = false, creatingBusy = false, searching = false, searchMsg = '', title = tr('social.vote.defaultTitle'), closes = 60, after = 10, options: Array<{ key: string; label: string; body: object }> = [];
@@ -40,7 +44,7 @@
     searching = true; searchMsg = '';
     try {
       libResults = (await api(`/api/library/items?q=${encodeURIComponent(q.trim())}&types=Movie&limit=12`)).items;
-      wishResults = (await api(`/api/seerr/search?q=${encodeURIComponent(q.trim())}`).catch(() => ({ results: [] }))).results.filter((r: any) => r.status === 'nicht_angefragt');
+      wishResults = !canWish ? [] : (await api(`/api/seerr/search?q=${encodeURIComponent(q.trim())}`).catch(() => ({ results: [] }))).results.filter((r: any) => r.status === 'nicht_angefragt');
       if (!libResults.length && !wishResults.length) searchMsg = tr('social.vote.nothingFound');
     } catch { searchMsg = tr('social.searchUnavailable'); }
     searching = false;
@@ -62,17 +66,17 @@
 <h1>{$t('social.vote.title')}</h1>
 <div role="status">{#if msg}<p class="warn">{msg}</p>{/if}</div>
 {#if loadErr}<p class="err" role="alert">{loadErr}{#if pollDelay(failures) === null} {$t('social.vote.paused')}{/if} <button type="button" class="sec" on:click={reload}>{$t('common.retry')}</button></p>{/if}
-<button on:click={() => (creating = !creating)}>{creating ? $t('common.cancel') : $t('social.vote.newPoll')}</button>
-{#if creating}
+{#if $perms.party}<button on:click={() => (creating = !creating)}>{creating ? $t('common.cancel') : $t('social.vote.newPoll')}</button>{/if}
+{#if creating && $perms.party}
   <div class="panel" style="margin-top:1rem">
     <div class="flex"><input bind:value={title} maxlength="80" aria-label={$t('social.vote.pollTitle')} /><label>{$t('social.vote.duration')} <input type="number" min="5" bind:value={closes} style="width:5rem" /> {$t('social.vote.minutes')}</label><label>{$t('social.vote.startAfter')} <input type="number" min="0" bind:value={after} style="width:5rem" /> {$t('social.vote.minutes')}</label></div>
     <form class="flex" style="margin:.8rem 0" on:submit|preventDefault={search}><input placeholder={$t('social.vote.searchPlaceholder')} aria-label={$t('social.vote.searchAria')} bind:value={q} /><button disabled={searching}>{$t('social.search')}</button></form>
     <div role="status">{#if searchMsg}<p class="muted">{searchMsg}</p>{/if}</div>
     <div class="flex">
       {#each libResults as i}<button class="sec" on:click={() => add(i.id, i.name, { jfItemId: i.id })}>+ {i.name}</button>{/each}
-      {#each wishResults as r}<button class="sec" on:click={() => add(`t${r.tmdbId}`, tr('social.vote.notThereYet', { title: r.title }), { tmdbId: r.tmdbId, mediaType: r.mediaType })}>{$t('social.vote.addWish', { title: r.title })}</button>{/each}
+      {#if canWish}{#each wishResults as r}<button class="sec" on:click={() => add(`t${r.tmdbId}`, tr('social.vote.notThereYet', { title: r.title }), { tmdbId: r.tmdbId, mediaType: r.mediaType })}>{$t('social.vote.addWish', { title: r.title })}</button>{/each}{/if}
     </div>
-    <p class="muted">{$t('social.vote.wishHint')}</p>
+    {#if canWish}<p class="muted">{$t('social.vote.wishHint')}</p>{/if}
     <b>{$t('social.vote.selection', { n: options.length })}</b> {#each options as o}<span class="badge">{o.label} <button type="button" class="x" aria-label={$t('social.vote.removeOption', { label: o.label })} on:click={() => (options = options.filter((x) => x !== o))}>×</button></span> {/each}
     <p><button disabled={options.length < 2 || creatingBusy} on:click={create}>{$t('social.vote.start')}</button></p>
   </div>
@@ -91,7 +95,7 @@
         <div class="bar" style="flex:1;min-width:80px"><i style="width:{(o.votes / total) * 100}%"></i></div><span>{o.votes}</span>
       </div>
     {/each}
-    {#if p.roomId && (p.status === 'scheduled' || p.status === 'started')}<a class="btn" href="/party/{p.roomId}">{$t('social.vote.toRoom')}</a>{/if}
+    {#if $perms.party && p.roomId && (p.status === 'scheduled' || p.status === 'started')}<a class="btn" href="/party/{p.roomId}">{$t('social.vote.toRoom')}</a>{/if}
   </div>
 {/each}
 {#if loaded && !polls.length && !loadErr}<p class="muted">{$t('social.vote.none')}</p>{/if}

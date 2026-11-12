@@ -149,3 +149,38 @@ describe('admin audit filters', () => {
     expect(j.categories).toEqual(expect.arrayContaining(['user', 'invite', 'device']));
   });
 });
+
+describe('admin audit: target and people area', () => {
+  beforeAll(async () => {
+    await audit(env.ctx, adminId, 'role.update', 'guest', { from: { requestsPerMonth: 0 }, to: { requestsPerMonth: 5 }, layer: { requestsPerMonth: { from: 'default', to: 'role' } } });
+    await audit(env.ctx, adminId, 'role.update', 'guest', { from: { downloadDays: 0 }, to: { downloadDays: 7 }, layer: { downloadDays: { from: 'default', to: 'role' } } });
+    await audit(env.ctx, adminId, 'role.update', 'family', { from: { maxStreams: 4 }, to: { maxStreams: 8 }, layer: { maxStreams: { from: 'default', to: 'role' } } });
+    await audit(env.ctx, adminId, 'role.request_limit', 'friend', { from: 1, to: 2 }); // pre-remodel action name
+    await audit(env.ctx, adminId, 'settings.update', undefined, { keys: ['X'] });
+    await audit(env.ctx, adminId, 'list.feature', ids.anna);
+  });
+  it('target filters one role\'s history', async () => {
+    const j = (await get('/api/admin/audit?target=guest')).json();
+    expect(j.total).toBe(2);
+    expect(j.entries.every((e: any) => e.action === 'role.update' && e.target === 'guest')).toBe(true);
+    expect((await get('/api/admin/audit?target=gue')).json().total).toBe(0); // exact match only
+    expect((await get(`/api/admin/audit?target=${ids.anna}`)).json().entries.map((e: any) => e.action).sort()).toEqual(['list.feature', 'user.role']);
+    expect((await get('/api/admin/audit?target=guest&action=role.update&actor=' + adminId)).json().total).toBe(2);
+    expect((await get('/api/admin/audit?target=guest&action=user')).json().total).toBe(0);
+    expect((await get("/api/admin/audit?target=Guest';drop")).statusCode).toBe(400);
+  });
+  it('area=people excludes list and settings entries', async () => {
+    const j = (await get('/api/admin/audit?area=people&limit=500')).json();
+    const actions = j.entries.map((e: any) => e.action);
+    expect(actions).toEqual(expect.arrayContaining(['user.role', 'role.update', 'invite.create']));
+    expect(actions.every((a: string) => ['user', 'role', 'invite', 'profile', 'device'].includes(a.split('.')[0]!))).toBe(true);
+    expect(actions).not.toContain('settings.update');
+    expect(actions).not.toContain('list.feature');
+    expect((await get('/api/admin/audit?area=people&target=guest')).json().total).toBe(2);
+    expect((await get('/api/admin/audit?area=other')).statusCode).toBe(400);
+  });
+  it('old role.* actions stay readable', async () => {
+    const j = (await get('/api/admin/audit?area=people&target=friend')).json();
+    expect(j.entries.map((e: any) => e.action)).toEqual(['role.request_limit']);
+  });
+});

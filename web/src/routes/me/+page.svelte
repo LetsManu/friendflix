@@ -8,6 +8,7 @@
   import { avatarBg, initial } from '#lib/avatars';
   import { groupLinks, linksFor } from '#lib/menu';
   import { features, linkShown, serverCaps } from '#lib/capabilities';
+  import { perms } from '#lib/perms';
   import { logout } from '#lib/session';
   import { goto } from '$app/navigation';
   import { locale, localeName, t, type TKey } from '#lib/i18n';
@@ -45,7 +46,7 @@
     try { await goto(`/item/${(await api('/api/library/random?type=Movie')).item.id}`); } catch { await goto('/browse/movies'); }
   }
   $: canDownload = Boolean(me?.downloads?.allowed);
-  $: groups = groupLinks(linksFor(canDownload).filter(([href]) => linkShown($serverCaps, href, $features)));
+  $: groups = groupLinks(linksFor(canDownload).filter(([href]) => linkShown($serverCaps, href, $features, $perms)));
   $: admin = Boolean(me?.isAdmin && me?.profile?.isOwner);
   $: owner = Boolean(me?.profile?.isOwner && !me.kids); // the account page is the owner profile's
   $: shown = notes ? (allNotes ? notes : notes.slice(0, 5)) : [];

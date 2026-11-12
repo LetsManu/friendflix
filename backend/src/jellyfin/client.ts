@@ -142,6 +142,57 @@ export class JellyfinClient {
     return r.Items;
   }
 
+  /**
+   * Films and series matching `term` in every library (admin key, no user: no parental cap or library limit applies). Only for the admin's
+   * title check. The term is in the URL only: the error message carries the status, never the request path.
+   */
+  async searchItems(term: string, limit: number): Promise<Array<Record<string, any>>> {
+    const p = new URLSearchParams({
+      searchTerm: term, Recursive: 'true', IncludeItemTypes: 'Movie,Series', Limit: String(limit), Fields: 'OfficialRating,ProductionYear',
+      EnableImages: 'false', EnableUserData: 'false', EnableTotalRecordCount: 'false',
+    });
+    const res = await this.adminFetch(`/Items?${p}`);
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new JellyfinError(res.status, `Jellyfin admin search -> ${res.status}`);
+    }
+    return this.itemList(res, 'search');
+  }
+
+  /** One item by id in any library (admin key, no user), for the admin's title check; null when the server does not know it. */
+  async itemById(id: string): Promise<Record<string, any> | null> {
+    const p = new URLSearchParams({
+      ids: id, Recursive: 'true', Fields: 'OfficialRating,ProductionYear', EnableImages: 'false', EnableUserData: 'false', EnableTotalRecordCount: 'false', Limit: '1',
+    });
+    const res = await this.adminFetch(`/Items?${p}`);
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new JellyfinError(res.status, `Jellyfin admin item lookup -> ${res.status}`);
+    }
+    return (await this.itemList(res, 'item lookup'))[0] ?? null;
+  }
+
+  /** `Items` of an answer; a body that is not the expected JSON is a 502 (never "no hits"). The message names no path. */
+  private async itemList(res: Response, what: string): Promise<Array<Record<string, any>>> {
+    const r = (await res.json().catch(() => undefined)) as { Items?: unknown } | null | undefined;
+    if (!r || typeof r !== 'object' || !Array.isArray(r.Items)) throw new JellyfinError(502, `Jellyfin admin ${what}: no item list`);
+    return r.Items as Array<Record<string, any>>;
+  }
+
+  /** The library (CollectionFolder) an item lives in, from its ancestors (admin key); null when there is none or it cannot be read. */
+  async libraryOf(id: string): Promise<string | null> {
+    if (!/^[0-9a-f]{32}$/.test(id)) return null;
+    const res = await this.adminFetch(`/Items/${id}/Ancestors`);
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      return null;
+    }
+    const list = (await res.json().catch(() => null)) as unknown;
+    if (!Array.isArray(list)) return null;
+    const lib = list.find((a) => a && typeof a === 'object' && (a as { Type?: unknown }).Type === 'CollectionFolder') as { Name?: unknown } | undefined;
+    return typeof lib?.Name === 'string' ? lib.Name : null;
+  }
+
   sessions() {
     return this.adminJson<Array<Record<string, any>>>('/Sessions?activeWithinSeconds=15');
   }

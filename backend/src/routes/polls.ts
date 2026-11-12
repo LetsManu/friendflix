@@ -11,7 +11,8 @@ import { m } from '../i18n.js';
 import { notify } from '../notify.js';
 import { bumpHome } from '../homegen.js';
 import { MediaError } from '../media/types.js';
-import { SeerrError } from '../seerr/client.js';
+import { requestsEnabled, SeerrError } from '../seerr/client.js';
+import { permsOf, requirePerm } from '../permGuard.js';
 import { requireGrownUp } from '../kids.js';
 import { requireAdmin, requireUser } from '../session.js';
 import type { JfUser } from '../types.js';
@@ -42,13 +43,16 @@ export function pollRoutes(app: FastifyInstance, ctx: Ctx) {
     if (e.type === 'available') await resolveRequestedPolls(c);
   });
 
-  app.post('/api/polls', grown, async (req, reply) => {
+  // a poll ends in a watch party hosted by its creator: the `party` switch; wish options (titles not in the library) need `requests`
+  app.post('/api/polls', { preHandler: [requireGrownUp(ctx), requirePerm(ctx, 'party', 'party_forbidden')] }, async (req, reply) => {
     const b = z.object({
       title: z.string().trim().min(3).max(80),
       options: z.array(optionSchema).min(2).max(10),
       closesInMinutes: z.number().int().min(5).max(7 * 24 * 60).default(60),
       startsAfterMinutes: z.number().int().min(0).max(7 * 24 * 60).default(10),
     }).parse(req.body);
+    // without a request service a wish option stays 400 invalid_options (createPoll), as before
+    if (b.options.some((o) => o.tmdbId) && requestsEnabled(ctx) && !(await permsOf(ctx, req)).requests) return reply.code(403).send({ error: 'requests_forbidden' });
     const open = await ctx.db.query("select 1 from polls where created_by=$1 and status='open'", [req.user!.id]);
     if (open.rowCount) return reply.code(409).send({ error: 'poll_already_open' });
     try {

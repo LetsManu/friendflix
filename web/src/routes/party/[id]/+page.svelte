@@ -58,7 +58,7 @@
   function connect() {
     if (closing) return;
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/party/${$page.params.id}`);
-    ws.onclose = (e) => { if (closing) return; if (e.code === 4404) error = tr('social.party.notFound'); else if (e.code === 4409) error = tr('social.party.full'); else if (e.code === 4401) error = tr('social.party.relogin'); else reconnect = setTimeout(connect, 2000); };
+    ws.onclose = (e) => { if (closing) return; if (e.code === 4404) error = tr('social.party.notFound'); else if (e.code === 4409) error = tr('social.party.full'); else if (e.code === 4403) error = tr('ui.error.partyForbidden'); else if (e.code === 4401) error = tr('social.party.relogin'); else reconnect = setTimeout(connect, 2000); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       if (m.t === 'welcome') { ({ you, hostId, itemId, title, startAt } = m); mode = m.mode; members = m.members; state = m.state; clock = onServerStamp(clock, m.serverNow, Date.now()); }
