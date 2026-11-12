@@ -36,8 +36,37 @@ test.describe('admin user detail (phone)', () => {
     await expect(page.getByRole('spinbutton', { name: 'Gleichzeitige Streams' })).toBeVisible();
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
     await list.getByRole('tab', { name: 'Profile' }).click();
-    await expect(page.getByRole('tabpanel', { name: 'Profile' }).getByRole('row', { name: /Kinder/ })).toBeVisible();
+    await expect(page.getByRole('tabpanel', { name: 'Profile' }).getByRole('row', { name: /„Kinder“/ })).toBeVisible();
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+  });
+
+  test('Profile: switches and buttons are 44 px, the cards keep their height, the sheet fits the phone', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    const card = panel.getByRole('row', { name: /„Kinder“/ });
+    const sw = card.getByRole('switch', { name: 'Kinderprofil: „Kinder“' });
+    for (const el of [sw, card.getByRole('combobox', { name: 'Altersgrenze von „Kinder“' }), card.getByRole('button', { name: 'Aktionen für Kinder' }), panel.getByRole('button', { name: 'Kinderprofil anlegen' })]) {
+      const box = await el.boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+      expect(box!.width).toBeGreaterThanOrEqual(44);
+    }
+    const before = (await card.boundingBox())!.height;
+    await sw.click();
+    await expect(sw).toHaveAttribute('aria-checked', 'false');
+    await expect(card.getByRole('combobox')).toHaveCount(0);
+    expect((await card.boundingBox())!.height).toBe(before);
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+    await panel.getByRole('button', { name: 'Kinderprofil anlegen' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Kinderprofil anlegen' });
+    await expect(sheet).toBeVisible();
+    await expect.poll(async () => {
+      const b = await sheet.boundingBox();
+      const w = page.viewportSize()!.width;
+      return Boolean(b && b.x >= 0 && b.x + b.width <= w + 1);
+    }).toBe(true);
+    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(sheet).toHaveCount(0);
   });
 
   test('Rechte: rows stack, segments are 44 px, nothing scrolls sideways', async ({ page }) => {

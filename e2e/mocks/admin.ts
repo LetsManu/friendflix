@@ -196,7 +196,7 @@ export function matrixMock(): MatrixMock {
   };
 }
 export interface DetailLimits { maxStreams: number | null; remoteBitrate: number | null; maxDownloads: number | null; downloadMaxHeight: number | null; requestsPerMonth: number | null }
-export interface DetailProfile { id: string; name: string; kids: boolean; maxRating: string | null; avatar: string; lastUsed: string | null; isOwner: boolean; hasPin: boolean }
+export interface DetailProfile { id: string; name: string; kids: boolean; /** the age cap of a kids profile (0/6/12), null on a grown-up one */ maxRating: number | null; avatar: string; lastUsed: string | null; isOwner: boolean; hasPin: boolean }
 /** role values the limits page shows as placeholders */
 export const DETAIL_ROLE_LIMITS: DetailLimits = { maxStreams: 2, remoteBitrate: 8_000_000, maxDownloads: 5, downloadMaxHeight: 720, requestsPerMonth: 3 };
 export type HygieneCode = 'no_overview' | 'no_poster' | 'no_backdrop' | 'no_year' | 'no_ids' | 'no_audio' | 'audio_unknown' | 'foreign_no_subs' | 'forced_only' | 'image_subs_only' | 'dup_ids' | 'dup_title' | 'dup_episode' | 'no_source' | 'zero_runtime' | 'heavy_bitrate' | 'hevc_10bit' | 'video_codec' | 'audio_codec';
@@ -343,9 +343,12 @@ export function adminState(): AdminState {
   };
 }
 
+/** the cap a profile had before it stopped being a kids profile (the DB column keeps it) */
+const keptCap = new Map<string, number>();
+let profileSeq = 0;
 const profilesOf = (st: AdminState, u: AdminUser): DetailProfile[] => (st.userProfiles[u.id] ??= [
   { id: `${u.id.slice(0, -4)}p001`, name: u.name.split(' ')[0]!, kids: false, maxRating: null, avatar: 'a2', lastUsed: u.last_seen, isOwner: true, hasPin: false },
-  { id: `${u.id.slice(0, -4)}p002`, name: 'Kinder', kids: true, maxRating: 'FSK-6', avatar: 'a4', lastUsed: null, isOwner: false, hasPin: true },
+  { id: `${u.id.slice(0, -4)}p002`, name: 'Kinder', kids: true, maxRating: 6, avatar: 'a4', lastUsed: null, isOwner: false, hasPin: true },
 ]);
 /** GET /api/admin/users/:id (shape of backend/src/routes/adminUsers.ts; never credentials or the Authentik sub) */
 function userDetail(st: AdminState, u: AdminUser) {
@@ -681,15 +684,64 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       return ok();
     }
     if ((sub = rest.match(/^\/sessions\/([^/]+)\/revoke$/)) && m === 'POST') { log('user.revoke_device', u.id, { deviceId: sub[1] }, u.name); return J({ revoked: 1 }); }
+    // profiles (backend/src/routes/adminUsers.ts): PATCH rename / resetPin / kids / maxRating, POST a kids profile, DELETE a kids profile.
+    // Order as there: body check (400 bad_request), account (404), deletion claim (409 deletion_in_progress), then the profile's own errors.
+    const own = (n: Record<string, unknown>, allowed: string[]) => typeof n === 'object' && n !== null && Object.keys(n).every((k) => allowed.includes(k));
+    const nameOk = (v: unknown) => typeof v === 'string' && v.trim().length >= 1 && v.trim().length <= 20;
+    const capOk = (v: unknown) => v === 0 || v === 6 || v === 12;
+    const pub = (x: DetailProfile) => ({ id: x.id, name: x.name, avatar: x.avatar, isOwner: x.isOwner, kids: x.kids, ...(x.kids ? { maxRating: x.maxRating } : {}), hasPin: x.hasPin });
+    const recount = () => { const l = profilesOf(st, u); u.profiles = l.length; u.kidsProfiles = l.filter((x) => x.kids).length; };
+    const taken = (name: string, except?: DetailProfile) => profilesOf(st, u).some((x) => x !== except && x.name.toLowerCase() === name.trim().toLowerCase());
+    if (rest === '/profiles' && m === 'POST') {
+      if (!own(body, ['name', 'kids', 'maxRating', 'avatar']) || !nameOk(body.name) || body.kids !== true || !capOk(body.maxRating)
+        || (body.avatar !== undefined && !/^[a-z0-9-]{1,20}$/.test(String(body.avatar)))) return J({ error: 'bad_request' }, 400);
+      if (st.claimed.has(u.id)) return J({ error: 'deletion_in_progress' }, 409);
+      const list = profilesOf(st, u);
+      if (list.length >= 5) return J({ error: 'max_profiles' }, 409);
+      if (taken(body.name)) return J({ error: 'name_taken' }, 409);
+      const pr: DetailProfile = { id: `${u.id.slice(0, -4)}p${String(100 + ++profileSeq)}`, name: body.name.trim(), kids: true, maxRating: body.maxRating, avatar: body.avatar ?? 'red', lastUsed: null, isOwner: false, hasPin: false };
+      list.push(pr);
+      recount();
+      log('profile.admin_create', u.id, { profile: pr.id, maxRating: pr.maxRating }, u.name);
+      return J({ profile: pub(pr) }, 201);
+    }
     if ((sub = rest.match(/^\/profiles\/([^/]+)$/)) && m === 'PATCH') {
+      const keys = ['name', 'resetPin', 'kids', 'maxRating'];
+      if (!own(body, keys) || !keys.some((k) => body[k] !== undefined) || (body.name !== undefined && !nameOk(body.name)) || (body.resetPin !== undefined && body.resetPin !== true)
+        || (body.kids !== undefined && typeof body.kids !== 'boolean') || (body.maxRating !== undefined && !capOk(body.maxRating))) return J({ error: 'bad_request' }, 400);
+      if (st.claimed.has(u.id)) return J({ error: 'deletion_in_progress' }, 409);
       const pr = profilesOf(st, u).find((x) => x.id === sub![1]);
       if (!pr) return J({ error: 'not_found' }, 404);
-      if (body.name && profilesOf(st, u).some((x) => x !== pr && x.name.toLowerCase() === String(body.name).toLowerCase())) return J({ error: 'name_taken' }, 409);
-      const from = { name: pr.name, hasPin: pr.hasPin };
-      if (body.name) pr.name = body.name;
+      if (body.kids !== undefined && pr.isOwner) return J({ error: 'owner_not_kids' }, 400);
+      const kids = body.kids ?? pr.kids;
+      if (body.maxRating !== undefined && !kids) return J({ error: 'not_kids' }, 400);
+      if (body.name && taken(body.name, pr)) return J({ error: 'name_taken' }, 409);
+      const from: Record<string, unknown> = { name: pr.name, hasPin: pr.hasPin };
+      const kidsFrom = { kids: pr.kids, maxRating: pr.maxRating };
+      if (body.name) pr.name = body.name.trim();
       if (body.resetPin) pr.hasPin = false;
-      log('profile.admin_update', u.id, { from, to: { name: pr.name, hasPin: pr.hasPin } }, u.name);
-      return J({ profile: pr });
+      // the DB keeps the cap of a profile that stops being a kids one (shown as null), a new kids profile starts at 12
+      if (!pr.kids && kids) pr.maxRating = body.maxRating ?? keptCap.get(pr.id) ?? 12;
+      else if (pr.kids && !kids) { keptCap.set(pr.id, pr.maxRating ?? 12); pr.maxRating = null; }
+      else if (kids && body.maxRating !== undefined) pr.maxRating = body.maxRating;
+      pr.kids = kids;
+      const to: Record<string, unknown> = { name: pr.name, hasPin: pr.hasPin };
+      if (kidsFrom.kids !== pr.kids || kidsFrom.maxRating !== pr.maxRating) { Object.assign(from, kidsFrom); Object.assign(to, { kids: pr.kids, maxRating: pr.maxRating }); }
+      recount();
+      log('profile.admin_update', u.id, { profile: pr.id, from, to }, u.name);
+      return J({ profile: pub(pr) });
+    }
+    if ((sub = rest.match(/^\/profiles\/([^/]+)$/)) && m === 'DELETE') {
+      if (st.claimed.has(u.id)) return J({ error: 'deletion_in_progress' }, 409);
+      const list = profilesOf(st, u);
+      const pr = list.find((x) => x.id === sub![1]);
+      if (!pr) return J({ error: 'not_found' }, 404);
+      if (pr.isOwner) return J({ error: 'owner_profile' }, 400);
+      if (!pr.kids) return J({ error: 'not_kids_profile' }, 400);
+      st.userProfiles[u.id] = list.filter((x) => x !== pr);
+      recount();
+      log('profile.admin_delete', u.id, { profile: pr.id }, u.name);
+      return ok();
     }
     return null;
   }

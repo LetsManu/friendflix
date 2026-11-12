@@ -525,3 +525,33 @@ describe('person rights tab', () => {
     expect(css).toMatch(/\.lib-err \{[^}]*color: var\(--err\);/);
   });
 });
+
+/** The person's Profile tab (users & permissions spec §6.3): the create sheet's motion and the reserved age-limit room */
+describe('person profiles tab', () => {
+  const sheet = read('./user/KidsSheet.svelte');
+  const page = read('./user/Profiles.svelte');
+  const css = (src: string) => [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('the create sheet slides up both ways, sits on the menu scrim, animates nothing itself and stands still in calm mode', () => {
+    expect(sheet).toMatch(/sheetSlide\(node, \{ dir \}\)/);
+    expect(sheet).toMatch(/transition:slide\|global/);
+    expect(sheet).toMatch(/transition:scrimFade\|global/);
+    expect(sheet).toContain('--fr-scrim-safe:{SCRIM_MENU}');
+    expect(css(sheet).replace(/transition: none !important/g, '')).not.toMatch(/transition\s*:|@keyframes/);
+    expect(css(sheet)).toMatch(/:global\(html\.m-still\)[^{]*\{[^}]*transition: none !important; animation: none !important;/);
+    expect(css(sheet)).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+    for (const bg of [frostComposite(WHITE, SCRIM_MENU), frostComposite(AMB_PEAK, SCRIM_MENU), frostComposite(DARK_BASE, SCRIM_MENU)]) expect(textContrast(bg, 0.9)).toBeGreaterThanOrEqual(AA);
+    // its error line is bold .9 white text; the light error colour is only the icon (a graphic: 3:1)
+    expect(css(sheet)).toContain('.err { display: flex; gap: .55rem; align-items: flex-start; margin: 0; color: rgba(255, 255, 255, .9); font-weight: 700; }');
+    for (const bg of [frostComposite(WHITE, SCRIM_MENU), frostComposite(AMB_PEAK, SCRIM_MENU), frostComposite(DARK_BASE, SCRIM_MENU)]) expect(contrast(hex('#ffbdbd'), bg)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('every profile row keeps the room of its age limit, with or without a live select', () => {
+    expect(css(page)).toMatch(/\.cap, \.pin \{[^}]*min-height: 44px;/);
+    // a grown-up profile holds it with the same select, unseen and out of reach
+    expect(page).toMatch(/class:ghost=\{!row\.kids\} aria-hidden=\{row\.kids \? undefined : 'true'\} inert=\{!row\.kids\}/);
+    expect(css(page)).toMatch(/\.ghost \{ visibility: hidden; \}/);
+    // the page itself animates nothing
+    expect(css(page)).not.toMatch(/transition\s*:|@keyframes/);
+  });
+});

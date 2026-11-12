@@ -5,6 +5,7 @@ import { noHorizontalOverflow } from '../helpers.js';
 import { auid } from '../mocks/admin.js';
 
 const ANNA = auid(2);
+const CARLA = auid(4);
 const toasts = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Hinweise' });
 const logged = (api: { log: string[] }, re: RegExp) => api.log.some((l) => re.test(l));
 const menu = async (page: import('@playwright/test').Page) => {
@@ -370,9 +371,10 @@ test.describe('admin user detail (desktop)', () => {
   test('profiles: rename inline and reset PIN with confirm', async ({ page, api }) => {
     await page.goto(`/admin/users/${ANNA}?tab=profiles`);
     const panel = page.getByRole('tabpanel', { name: 'Profile' });
-    const kids = panel.getByRole('row', { name: /Kinder/ });
+    const kids = panel.getByRole('row', { name: /„Kinder“/ });
     await expect(kids).toContainText('PIN gesetzt');
-    await kids.getByRole('button', { name: '„Kinder“ umbenennen' }).click();
+    await kids.getByRole('button', { name: 'Aktionen für Kinder' }).click();
+    await page.getByRole('dialog', { name: 'Kinder' }).getByRole('button', { name: 'Umbenennen' }).click();
     const name = kids.getByRole('textbox', { name: 'Neuer Name' });
     await expect(name).toHaveAttribute('maxlength', '20');
     await name.fill('Anna');
@@ -388,7 +390,129 @@ test.describe('admin user detail (desktop)', () => {
     await expect(row).toContainText('Keine PIN');
     expect(logged(api, /PATCH \/api\/admin\/users\/.*\/profiles\/.*"resetPin":true/)).toBe(true);
     // the owner profile can be renamed too
-    await expect(panel.getByRole('row', { name: /Hauptprofil/ }).getByRole('button', { name: '„Anna“ umbenennen' })).toBeVisible();
+    await panel.getByRole('row', { name: /Hauptprofil/ }).getByRole('button', { name: 'Aktionen für Anna' }).click();
+    await expect(page.getByRole('dialog', { name: 'Anna' }).getByRole('button', { name: 'Umbenennen' })).toBeVisible();
+    await page.keyboard.press('Escape');
+  });
+
+  const plain = (id: string, n: number, name: string, kids = false) => ({ id: `${id.slice(0, -4)}p00${n}`, name, kids, maxRating: kids ? 12 : null, avatar: 'a1', lastUsed: null, isOwner: n === 1, hasPin: false });
+
+  test('profiles: switch Carla\'s second profile to kids, cap 6', async ({ page, api }) => {
+    api.admin.userProfiles[CARLA] = [plain(CARLA, 1, 'Clara'), plain(CARLA, 2, 'Zweitprofil')];
+    await page.goto(`/admin/users/${CARLA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    const row = panel.getByRole('row', { name: /Zweitprofil/ });
+    const sw = row.getByRole('switch', { name: 'Kinderprofil: „Zweitprofil“' });
+    await expect(sw).toHaveAttribute('aria-checked', 'false');
+    // the age limit has its room before it exists: switching never moves the list
+    await expect(row.getByRole('combobox')).toHaveCount(0);
+    const table = panel.getByRole('table');
+    const before = await Promise.all([row.boundingBox(), table.boundingBox()]);
+    await sw.click();
+    await expect(sw).toHaveAttribute('aria-checked', 'true');
+    const cap = row.getByRole('combobox', { name: 'Altersgrenze von „Zweitprofil“' });
+    await expect(cap).toHaveValue('12');
+    const after = await Promise.all([row.boundingBox(), table.boundingBox()]);
+    expect(after[0]!.height).toBe(before[0]!.height);
+    expect(after[1]!.height).toBe(before[1]!.height);
+    expect(logged(api, /PATCH \/api\/admin\/users\/.*\/profiles\/.*p002 \{"kids":true\} -> 200/)).toBe(true);
+    await expect(toasts(page).getByText('„Zweitprofil“ ist jetzt ein Kinderprofil.')).toBeVisible();
+    await cap.selectOption('6');
+    await expect(toasts(page).getByText('Altersgrenze von „Zweitprofil“ gespeichert.')).toBeVisible();
+    expect(logged(api, /PATCH .*p002 \{"maxRating":6\} -> 200/)).toBe(true);
+    await expect(cap).toHaveValue('6');
+    await expect(row).toContainText('Kinderprofil');
+    // and back: the cap goes, the row keeps its height
+    await sw.click();
+    await expect(sw).toHaveAttribute('aria-checked', 'false');
+    await expect(row.getByRole('combobox')).toHaveCount(0);
+    expect(logged(api, /PATCH .*p002 \{"kids":false\} -> 200/)).toBe(true);
+    expect((await row.boundingBox())!.height).toBe(before[0]!.height);
+  });
+
+  test('profiles: a refused switch goes back and says why', async ({ page, api }) => {
+    api.admin.claimed.add(ANNA);
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const sw = page.getByRole('tabpanel', { name: 'Profile' }).getByRole('switch', { name: 'Kinderprofil: „Kinder“' });
+    await expect(sw).toHaveAttribute('aria-checked', 'true');
+    await sw.click();
+    await expect(toasts(page).getByText('Dieses Konto wird gerade gelöscht. Seine Profile lassen sich nicht mehr ändern.')).toBeVisible();
+    await expect(sw).toHaveAttribute('aria-checked', 'true');
+  });
+
+  test('profiles: create a kids profile', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    await panel.getByRole('button', { name: 'Kinderprofil anlegen' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Kinderprofil anlegen' });
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByRole('textbox', { name: 'Name' })).toBeFocused();
+    await expect(sheet.getByRole('textbox', { name: 'Name' })).toHaveAttribute('maxlength', '20');
+    await sheet.getByRole('textbox', { name: 'Name' }).fill('Kinder');
+    await sheet.getByRole('button', { name: 'Anlegen' }).click();
+    // a refusal is said inside the sheet, next to the button (a toast would cover it); typing clears it
+    await expect(sheet.getByRole('alert')).toHaveText('Diesen Namen hat schon ein anderes Profil.');
+    await expect(sheet).toBeVisible();
+    await sheet.getByRole('textbox', { name: 'Name' }).fill('Lena');
+    await expect(sheet.getByRole('alert')).toHaveCount(0);
+    await sheet.getByRole('combobox', { name: 'Altersgrenze' }).selectOption('6');
+    await sheet.getByRole('button', { name: 'Anlegen' }).click();
+    await expect(toasts(page).getByText('„Lena“ angelegt.')).toBeVisible();
+    expect(logged(api, /POST \/api\/admin\/users\/.*\/profiles \{"name":"Lena","kids":true,"maxRating":6\} -> 201/)).toBe(true);
+    await expect(sheet).toHaveCount(0);
+    const row = panel.getByRole('row', { name: /Lena/ });
+    await expect(row.getByRole('switch', { name: 'Kinderprofil: „Lena“' })).toHaveAttribute('aria-checked', 'true');
+    await expect(row.getByRole('combobox', { name: 'Altersgrenze von „Lena“' })).toHaveValue('6');
+    await expect(panel.getByRole('button', { name: 'Kinderprofil anlegen' })).toBeFocused();
+  });
+
+  test('profiles: delete asks first, then removes', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    const row = panel.getByRole('row', { name: /„Kinder“/ });
+    await row.getByRole('button', { name: 'Aktionen für Kinder' }).click();
+    await page.getByRole('dialog', { name: 'Kinder' }).getByRole('button', { name: 'Löschen' }).click();
+    const ask = page.getByRole('alertdialog', { name: '„Kinder“ löschen?' });
+    await expect(ask).toContainText('Merkliste, Verlauf und Favoriten des Profils werden gelöscht.');
+    await ask.getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(ask).toHaveCount(0);
+    await expect(row).toBeVisible();
+    expect(logged(api, /DELETE /)).toBe(false);
+    await row.getByRole('button', { name: 'Aktionen für Kinder' }).click();
+    await page.getByRole('dialog', { name: 'Kinder' }).getByRole('button', { name: 'Löschen' }).click();
+    await page.getByRole('alertdialog', { name: '„Kinder“ löschen?' }).getByRole('button', { name: 'Profil löschen' }).click();
+    await expect(toasts(page).getByText('„Kinder“ gelöscht.')).toBeVisible();
+    await expect(panel.getByRole('row', { name: /„Kinder“/ })).toHaveCount(0);
+    expect(logged(api, /DELETE \/api\/admin\/users\/.*\/profiles\/.*p002\s+-> 200/)).toBe(true);
+  });
+
+  test('profiles: the owner row has no kids switch, age limit or delete', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    const owner = panel.getByRole('row', { name: /Hauptprofil/ });
+    await expect(owner).toBeVisible();
+    await expect(owner.getByRole('switch')).toHaveCount(0);
+    await expect(owner.getByRole('combobox')).toHaveCount(0);
+    await owner.getByRole('button', { name: 'Aktionen für Anna' }).click();
+    const m = page.getByRole('dialog', { name: 'Anna' });
+    await expect(m.getByRole('button', { name: 'Umbenennen' })).toBeVisible();
+    await expect(m.getByRole('button', { name: 'Löschen' })).toHaveCount(0);
+  });
+
+  test('profiles: at 5 profiles the create button is disabled and says why', async ({ page, api }) => {
+    api.admin.userProfiles[ANNA] = [plain(ANNA, 1, 'Anna'), plain(ANNA, 2, 'Eins', true), plain(ANNA, 3, 'Zwei', true), plain(ANNA, 4, 'Drei', true), plain(ANNA, 5, 'Vier', true)];
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    const btn = panel.getByRole('button', { name: 'Kinderprofil anlegen' });
+    await expect(btn).toBeDisabled();
+    await expect(panel.getByText('Höchstens 5 Profile pro Konto.')).toBeVisible();
+    await expect(btn).toHaveAccessibleDescription('Höchstens 5 Profile pro Konto.');
+    // one fewer and it is open again
+    await panel.getByRole('row', { name: /Vier/ }).getByRole('button', { name: 'Aktionen für Vier' }).click();
+    await page.getByRole('dialog', { name: 'Vier' }).getByRole('button', { name: 'Löschen' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Profil löschen' }).click();
+    await expect(btn).toBeEnabled();
+    await expect(panel.getByText('Höchstens 5 Profile pro Konto.')).toHaveCount(0);
   });
 
   test('devices: approve, withdraw approval, sign out one device, remove', async ({ page, api }) => {
