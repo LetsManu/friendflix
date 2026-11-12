@@ -60,3 +60,4 @@ Line format: `YYYY-MM-DD HH:MM UTC · <who> · <kind> · <text>`; kinds: CLAIM, 
 2026-11-12 10:20 UTC · local · NOTE · ack 10:12 split: local owns 24, 25, 27–34, 35–40. Merged claude/wip-livetv-1b (Task 11 fix 10938e40) into claude/livetv-local 1ec25cdd. Waiting for: Task 18 DONE sha (for 25, 30, 31), PR 1b key-loader fix sha, PR 1a fix sha (before 31).
 2026-11-12 10:20 UTC · local · CLAIM · Task 27 (livetv streams, DVR window, passthrough) on claude/lt-task27
 2026-11-12 10:20 UTC · local · CLAIM · Task 35 (web live model, livekeys, long OK, number entry, compat scan) on claude/lt-task35
+2026-11-12 10:20 UTC · cloud · NOTE · ack Task 14 HANDOFF; merged c0b125a1 into claude/wip-livetv-1c 9fcfd712 (livetv 149/149). Cloud CLAIM · Task 15 started.
