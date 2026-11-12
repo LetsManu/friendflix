@@ -5,7 +5,7 @@ import { noHorizontalOverflow } from '../helpers.js';
 import { adminState, auid } from '../mocks/admin.js';
 
 const ANNA = auid(2);
-const CARLA = auid(4);
+const CLARA = auid(4);
 const toasts = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Hinweise' });
 const logged = (api: { log: string[] }, re: RegExp) => api.log.some((l) => re.test(l));
 const menu = async (page: import('@playwright/test').Page) => {
@@ -503,9 +503,9 @@ test.describe('admin user detail (desktop)', () => {
 
   const plain = (id: string, n: number, name: string, kids = false) => ({ id: `${id.slice(0, -4)}p00${n}`, name, kids, maxRating: kids ? 12 : null, avatar: 'a1', lastUsed: null, isOwner: n === 1, hasPin: false });
 
-  test('profiles: switch Carla\'s second profile to kids, cap 6', async ({ page, api }) => {
-    api.admin.userProfiles[CARLA] = [plain(CARLA, 1, 'Clara'), plain(CARLA, 2, 'Zweitprofil')];
-    await page.goto(`/admin/users/${CARLA}?tab=profiles`);
+  test('profiles: switch Clara\'s second profile to kids, cap 6', async ({ page, api }) => {
+    api.admin.userProfiles[CLARA] = [plain(CLARA, 1, 'Clara'), plain(CLARA, 2, 'Zweitprofil')];
+    await page.goto(`/admin/users/${CLARA}?tab=profiles`);
     const panel = page.getByRole('tabpanel', { name: 'Profile' });
     const row = panel.getByRole('row', { name: /Zweitprofil/ });
     const sw = row.getByRole('switch', { name: 'Kinderprofil: „Zweitprofil“' });
@@ -534,6 +534,39 @@ test.describe('admin user detail (desktop)', () => {
     await expect(row.getByRole('combobox')).toHaveCount(0);
     expect(logged(api, /PATCH .*p002 \{"kids":false\} -> 200/)).toBe(true);
     expect((await row.boundingBox())!.height).toBe(before[0]!.height);
+  });
+
+  test('profiles: the media server does not take a kids change (502): stored, the toast names the repair button', async ({ page, api }) => {
+    api.admin.profileMediaFails = true;
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    const cap = panel.getByRole('combobox', { name: 'Altersgrenze von „Kinder“' });
+    await expect(cap).toHaveValue('6');
+    await cap.selectOption('12');
+    await expect(toasts(page).getByText('Die Änderung ist gespeichert, aber der Medienserver hat die Freigaben nicht übernommen. „Verknüpfungen reparieren“ auf der Übersicht wendet sie erneut an.')).toBeVisible();
+    await expect.poll(() => logged(api, /PATCH .*p002 \{"maxRating":12\} -> 502/)).toBe(true);
+    // stored anyway: the list is read again and keeps the new cap
+    await expect(cap).toHaveValue('12');
+    await page.reload();
+    await expect(panel.getByRole('combobox', { name: 'Altersgrenze von „Kinder“' })).toHaveValue('12');
+  });
+
+  test('44 px targets with a fine pointer: PIN zurücksetzen, Wie Rolle, the Kinderprofil sheet\'s buttons', async ({ page }) => {
+    const tall = async (l: import('@playwright/test').Locator) => {
+      await expect(l).toBeVisible();
+      expect((await l.boundingBox())!.height, await l.textContent() ?? '').toBeGreaterThanOrEqual(44);
+    };
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    await tall(panel.getByRole('button', { name: 'PIN von „Kinder“ zurücksetzen' }));
+    await tall(panel.getByRole('button', { name: 'Kinderprofil anlegen' }));
+    await panel.getByRole('button', { name: 'Kinderprofil anlegen' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Kinderprofil anlegen' });
+    for (const name of ['Abbrechen', 'Anlegen', 'Schließen']) await tall(sheet.getByRole('button', { name, exact: true }));
+    await page.keyboard.press('Escape');
+    await expect(sheet).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Rechte' }).click();
+    await tall(rightsPanel(page).getByRole('listitem').filter({ has: page.getByRole('spinbutton', { name: 'Gleichzeitige Streams' }) }).getByRole('button', { name: 'Wie Rolle' }));
   });
 
   test('profiles: a refused switch goes back and says why', async ({ page, api }) => {
@@ -875,7 +908,6 @@ test.describe('admin user deletion', () => {
 test.describe('admin user detail: Sicht prüfen (desktop)', () => {
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
-  const CLARA = auid(4);
   const checkPanel = (page: import('@playwright/test').Page) => page.getByRole('tabpanel', { name: 'Sicht prüfen' });
   const checkPosts = (api: { log: string[] }) => api.log.filter((l) => l.startsWith('POST ') && l.includes('/check '));
 

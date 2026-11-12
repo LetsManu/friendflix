@@ -192,7 +192,7 @@
                   </div>
                 {:else}
                   <FieldControl field={f} value={stagedValue(row, staged)} placeholder={row.roleValue} libraries={matrix.libraries} disabled={saving} on:change={(e) => fromControl(f.key, e.detail)} />
-                  <Button variant="ghost" size="sm" disabled={saving || !hasException(row, staged)} on:click={() => stage(f.key, null)}>{$t('adminPeople.rights.asRole')}</Button>
+                  <Button variant="ghost" disabled={saving || !hasException(row, staged)} on:click={() => stage(f.key, null)}>{$t('adminPeople.rights.asRole')}</Button>
                 {/if}
               </div>
               <span class="src"><StatusPill tone={chip(row) === 'user' ? 'info' : 'muted'} label={sourceLabel(chip(row))} icon="" /></span>

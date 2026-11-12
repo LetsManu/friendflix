@@ -264,7 +264,7 @@ const dict: Translation<typeof de> = {
     errOwnerDelete: 'Profilu głównego nie można usunąć.',
     errNotKidsDelete: 'Tutaj można usuwać tylko profile dziecięce. Profilami dorosłych zarządza sama osoba.',
     errGone: 'Ten profil już nie istnieje.',
-    errMediaUpdate: 'Zmiana została zapisana, ale serwer multimediów nie przyjął uprawnień. „Napraw połączenia” w przeglądzie zastosuje je ponownie.',
+    errMediaUpdate: 'Zmiana została zapisana, ale serwer multimediów nie przyjął uprawnień. „{button}” w przeglądzie zastosuje je ponownie.',
     errMediaCreate: 'Profil nie został utworzony: serwer multimediów go odrzucił. Spróbuj ponownie później.',
     errMediaDelete: 'Profil nie został usunięty: serwer multimediów go odrzucił. Spróbuj ponownie później.',
   },

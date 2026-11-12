@@ -168,7 +168,7 @@
       <span class="pin">
         {#if row.hasPin}
           <StatusPill tone="info" icon="lock" label={$t('adminPeople.detail.profiles.hasPin')} />
-          <Button variant="ghost" size="sm" icon="key" aria-label={$t('adminPeople.detail.profiles.resetPinFor', { name: row.name })} on:click={() => resetPin(row)}>{$t('adminPeople.detail.profiles.resetPin')}</Button>
+          <Button variant="ghost" icon="key" aria-label={$t('adminPeople.detail.profiles.resetPinFor', { name: row.name })} on:click={() => resetPin(row)}>{$t('adminPeople.detail.profiles.resetPin')}</Button>
         {:else}<span class="sub">{$t('adminPeople.detail.profiles.noPin')}</span>{/if}
       </span>
     {/if}

@@ -28,7 +28,10 @@ export function profileError(e: unknown, op: ProfileOp): string {
     case 'owner_profile': case 'owner_not_deletable': return tr('adminPeople.profiles.errOwnerDelete');
     case 'not_kids_profile': return tr('adminPeople.profiles.errNotKidsDelete');
     case 'not_found': return tr('adminPeople.profiles.errGone');
-    case 'jellyfin': return tr(op === 'update' ? 'adminPeople.profiles.errMediaUpdate' : op === 'create' ? 'adminPeople.profiles.errMediaCreate' : 'adminPeople.profiles.errMediaDelete');
+    case 'jellyfin': return op === 'update'
+      // the button's own label, so the sentence never drifts from it
+      ? tr('adminPeople.profiles.errMediaUpdate', { button: tr('adminPeople.detail.overview.repair') })
+      : tr(op === 'create' ? 'adminPeople.profiles.errMediaCreate' : 'adminPeople.profiles.errMediaDelete');
     default: return errorText(e);
   }
 }

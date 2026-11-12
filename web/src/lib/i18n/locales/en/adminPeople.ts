@@ -264,7 +264,7 @@ const dict: Translation<typeof de> = {
     errOwnerDelete: 'The main profile cannot be deleted.',
     errNotKidsDelete: 'Only kids profiles can be deleted here. Grown-up profiles are managed by the person themselves.',
     errGone: 'This profile no longer exists.',
-    errMediaUpdate: 'The change is saved, but the media server did not take the access rules. “Repair links” on the overview applies them again.',
+    errMediaUpdate: 'The change is saved, but the media server did not take the access rules. “{button}” on the overview applies them again.',
     errMediaCreate: 'The profile was not created: the media server refused it. Please try again later.',
     errMediaDelete: 'The profile was not deleted: the media server refused it. Please try again later.',
   },

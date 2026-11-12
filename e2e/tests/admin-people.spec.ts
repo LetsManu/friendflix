@@ -823,6 +823,11 @@ test.describe('admin people (desktop)', () => {
       await page.goto('/admin/users');
       await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
       const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
+      // the bulk rights buttons are 44 px with a fine pointer too
+      for (const name of ['Erlauben', 'Verbieten', 'Wie Rolle', 'Richtlinien neu anwenden']) {
+        await expect(bar.getByRole('button', { name })).toBeVisible();
+        expect((await bar.getByRole('button', { name }).boundingBox())!.height, name).toBeGreaterThanOrEqual(44);
+      }
       await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('party');
       await bar.getByRole('button', { name: 'Wie Rolle' }).click();
       await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();

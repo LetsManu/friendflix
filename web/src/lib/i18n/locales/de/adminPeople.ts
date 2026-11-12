@@ -266,7 +266,7 @@ export default {
     errOwnerDelete: 'Das Hauptprofil lässt sich nicht löschen.',
     errNotKidsDelete: 'Nur Kinderprofile lassen sich hier löschen. Die Profile von Erwachsenen verwaltet die Person selbst.',
     errGone: 'Dieses Profil gibt es nicht mehr.',
-    errMediaUpdate: 'Die Änderung ist gespeichert, aber der Medienserver hat die Freigaben nicht übernommen. „Verknüpfungen reparieren“ auf der Übersicht wendet sie erneut an.',
+    errMediaUpdate: 'Die Änderung ist gespeichert, aber der Medienserver hat die Freigaben nicht übernommen. „{button}“ auf der Übersicht wendet sie erneut an.',
     errMediaCreate: 'Das Profil wurde nicht angelegt: Der Medienserver hat es abgelehnt. Bitte später erneut versuchen.',
     errMediaDelete: 'Das Profil wurde nicht gelöscht: Der Medienserver hat es abgelehnt. Bitte später erneut versuchen.',
   },

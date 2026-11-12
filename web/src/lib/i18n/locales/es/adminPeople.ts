@@ -264,7 +264,7 @@ const dict: Translation<typeof de> = {
     errOwnerDelete: 'El perfil principal no se puede eliminar.',
     errNotKidsDelete: 'Aquí solo se pueden eliminar perfiles infantiles. Los perfiles de adultos los gestiona la propia persona.',
     errGone: 'Este perfil ya no existe.',
-    errMediaUpdate: 'El cambio está guardado, pero el servidor multimedia no aplicó los permisos. «Reparar vínculos» en el resumen los aplica de nuevo.',
+    errMediaUpdate: 'El cambio está guardado, pero el servidor multimedia no aplicó los permisos. «{button}» en el resumen los aplica de nuevo.',
     errMediaCreate: 'El perfil no se creó: el servidor multimedia lo rechazó. Inténtalo de nuevo más tarde.',
     errMediaDelete: 'El perfil no se eliminó: el servidor multimedia lo rechazó. Inténtalo de nuevo más tarde.',
   },

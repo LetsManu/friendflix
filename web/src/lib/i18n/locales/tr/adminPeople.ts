@@ -264,7 +264,7 @@ const dict: Translation<typeof de> = {
     errOwnerDelete: 'Ana profil silinemez.',
     errNotKidsDelete: 'Burada yalnızca çocuk profilleri silinebilir. Yetişkin profillerini kişi kendisi yönetir.',
     errGone: 'Bu profil artık yok.',
-    errMediaUpdate: 'Değişiklik kaydedildi, ancak medya sunucusu izinleri almadı. Genel bakıştaki “Bağlantıları onar” bunları yeniden uygular.',
+    errMediaUpdate: 'Değişiklik kaydedildi, ancak medya sunucusu izinleri almadı. Genel bakıştaki “{button}” bunları yeniden uygular.',
     errMediaCreate: 'Profil oluşturulmadı: medya sunucusu reddetti. Lütfen daha sonra tekrar dene.',
     errMediaDelete: 'Profil silinmedi: medya sunucusu reddetti. Lütfen daha sonra tekrar dene.',
   },

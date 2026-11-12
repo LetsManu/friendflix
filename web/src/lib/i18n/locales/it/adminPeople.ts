@@ -264,7 +264,7 @@ const dict: Translation<typeof de> = {
     errOwnerDelete: 'Il profilo principale non può essere eliminato.',
     errNotKidsDelete: 'Qui si possono eliminare solo profili bambini. I profili degli adulti li gestisce la persona stessa.',
     errGone: 'Questo profilo non esiste più.',
-    errMediaUpdate: 'La modifica è salvata, ma il media server non ha applicato le autorizzazioni. «Ripara i collegamenti» nella panoramica le applica di nuovo.',
+    errMediaUpdate: 'La modifica è salvata, ma il media server non ha applicato le autorizzazioni. «{button}» nella panoramica le applica di nuovo.',
     errMediaCreate: 'Il profilo non è stato creato: il media server lo ha rifiutato. Riprova più tardi.',
     errMediaDelete: 'Il profilo non è stato eliminato: il media server lo ha rifiutato. Riprova più tardi.',
   },

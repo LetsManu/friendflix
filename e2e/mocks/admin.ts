@@ -95,6 +95,12 @@ export interface AdminState {
   linkedOk: { jellyfin: boolean | null; requests: boolean };
   limits: Record<string, DetailLimits>;
   userProfiles: Record<string, DetailProfile[]>;
+  /** the cap a profile had before it stopped being a kids profile (the DB column keeps it) */
+  keptCap: Map<string, number>;
+  /** the last profile number handed out (new kids profiles) */
+  profileSeq: number;
+  /** the media server refuses the policy of the next kids changes (PATCH …/profiles/:pid → 502 jellyfin, stored and audited anyway) */
+  profileMediaFails: boolean;
   activityCalls: number;
   /** licences revoked via DELETE /api/admin/downloads/:id */
   revokedLicences: string[];
@@ -339,14 +345,14 @@ export function adminState(): AdminState {
     linkedOk: { jellyfin: true, requests: true },
     limits: {},
     userProfiles: {},
+    keptCap: new Map(),
+    profileSeq: 0,
+    profileMediaFails: false,
     activityCalls: 0,
     revokedLicences: [],
   };
 }
 
-/** the cap a profile had before it stopped being a kids profile (the DB column keeps it) */
-const keptCap = new Map<string, number>();
-let profileSeq = 0;
 const profilesOf = (st: AdminState, u: AdminUser): DetailProfile[] => (st.userProfiles[u.id] ??= [
   { id: `${u.id.slice(0, -4)}p001`, name: u.name.split(' ')[0]!, kids: false, maxRating: null, avatar: 'a2', lastUsed: u.last_seen, isOwner: true, hasPin: false },
   { id: `${u.id.slice(0, -4)}p002`, name: 'Kinder', kids: true, maxRating: 6, avatar: 'a4', lastUsed: null, isOwner: false, hasPin: true },
@@ -699,7 +705,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       const list = profilesOf(st, u);
       if (list.length >= 5) return J({ error: 'max_profiles' }, 409);
       if (taken(body.name)) return J({ error: 'name_taken' }, 409);
-      const pr: DetailProfile = { id: `${u.id.slice(0, -4)}p${String(100 + ++profileSeq)}`, name: body.name.trim(), kids: true, maxRating: body.maxRating, avatar: body.avatar ?? 'red', lastUsed: null, isOwner: false, hasPin: false };
+      const pr: DetailProfile = { id: `${u.id.slice(0, -4)}p${String(100 + ++st.profileSeq)}`, name: body.name.trim(), kids: true, maxRating: body.maxRating, avatar: body.avatar ?? 'red', lastUsed: null, isOwner: false, hasPin: false };
       list.push(pr);
       recount();
       log('profile.admin_create', u.id, { profile: pr.id, maxRating: pr.maxRating }, u.name);
@@ -721,14 +727,16 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       if (body.name) pr.name = body.name.trim();
       if (body.resetPin) pr.hasPin = false;
       // the DB keeps the cap of a profile that stops being a kids one (shown as null), a new kids profile starts at 12
-      if (!pr.kids && kids) pr.maxRating = body.maxRating ?? keptCap.get(pr.id) ?? 12;
-      else if (pr.kids && !kids) { keptCap.set(pr.id, pr.maxRating ?? 12); pr.maxRating = null; }
+      if (!pr.kids && kids) pr.maxRating = body.maxRating ?? st.keptCap.get(pr.id) ?? 12;
+      else if (pr.kids && !kids) { st.keptCap.set(pr.id, pr.maxRating ?? 12); pr.maxRating = null; }
       else if (kids && body.maxRating !== undefined) pr.maxRating = body.maxRating;
       pr.kids = kids;
       const to: Record<string, unknown> = { name: pr.name, hasPin: pr.hasPin };
       if (kidsFrom.kids !== pr.kids || kidsFrom.maxRating !== pr.maxRating) { Object.assign(from, kidsFrom); Object.assign(to, { kids: pr.kids, maxRating: pr.maxRating }); }
       recount();
       log('profile.admin_update', u.id, { profile: pr.id, from, to }, u.name);
+      // a kids change the media server did not take: stored and audited, the answer says so (Repair re-applies it)
+      if (st.profileMediaFails && (body.kids !== undefined || body.maxRating !== undefined)) return J({ error: 'jellyfin' }, 502);
       return J({ profile: pub(pr) });
     }
     if ((sub = rest.match(/^\/profiles\/([^/]+)$/)) && m === 'DELETE') {

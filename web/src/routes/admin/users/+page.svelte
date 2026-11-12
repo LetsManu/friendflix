@@ -383,11 +383,11 @@
         <Button variant="secondary" size="sm" icon="log-out" disabled={busyBulk} on:click={() => bulk({ action: 'revoke' })}>{$t('adminPeople.users.signOut')}</Button>
         <div class="pickapply" role="group" aria-label={$t('adminPeople.bulk.perm')}>
           <Select label={$t('adminPeople.bulk.perm')} options={bulkPermOptions} bind:value={bulkPerm} hideLabel disabled={busyBulk} />
-          <Button variant="secondary" size="sm" disabled={busyBulk || !bulkPerm} on:click={() => applyPerm(true)}>{$t('adminPeople.rights.allow')}</Button>
-          <Button variant="secondary" size="sm" disabled={busyBulk || !bulkPerm} on:click={() => applyPerm(false)}>{$t('adminPeople.rights.deny')}</Button>
-          <Button variant="secondary" size="sm" disabled={busyBulk || !bulkPerm} on:click={() => applyPerm(null)}>{$t('adminPeople.rights.asRole')}</Button>
+          <Button variant="secondary" disabled={busyBulk || !bulkPerm} on:click={() => applyPerm(true)}>{$t('adminPeople.rights.allow')}</Button>
+          <Button variant="secondary" disabled={busyBulk || !bulkPerm} on:click={() => applyPerm(false)}>{$t('adminPeople.rights.deny')}</Button>
+          <Button variant="secondary" disabled={busyBulk || !bulkPerm} on:click={() => applyPerm(null)}>{$t('adminPeople.rights.asRole')}</Button>
         </div>
-        <Button variant="secondary" size="sm" icon="refresh" disabled={busyBulk} on:click={() => bulk({ action: 'repair' })}>{$t('adminPeople.bulk.repair')}</Button>
+        <Button variant="secondary" icon="refresh" disabled={busyBulk} on:click={() => bulk({ action: 'repair' })}>{$t('adminPeople.bulk.repair')}</Button>
         <Button variant="ghost" size="sm" icon="x" on:click={() => (selected = new Map())}>{$t('adminPeople.bulk.clear')}</Button>
       </section>
     {/if}

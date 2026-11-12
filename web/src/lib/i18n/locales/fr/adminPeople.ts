@@ -264,7 +264,7 @@ const dict: Translation<typeof de> = {
     errOwnerDelete: 'Le profil principal ne peut pas être supprimé.',
     errNotKidsDelete: 'Seuls les profils enfants peuvent être supprimés ici. Les profils d’adultes sont gérés par la personne elle-même.',
     errGone: 'Ce profil n’existe plus.',
-    errMediaUpdate: 'La modification est enregistrée, mais le serveur multimédia n’a pas pris en compte les autorisations. « Réparer les liaisons » dans l’aperçu les applique de nouveau.',
+    errMediaUpdate: 'La modification est enregistrée, mais le serveur multimédia n’a pas pris en compte les autorisations. « {button} » dans l’aperçu les applique de nouveau.',
     errMediaCreate: 'Le profil n’a pas été créé : le serveur multimédia l’a refusé. Réessaie plus tard.',
     errMediaDelete: 'Le profil n’a pas été supprimé : le serveur multimédia l’a refusé. Réessaie plus tard.',
   },

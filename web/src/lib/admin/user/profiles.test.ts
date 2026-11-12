@@ -28,6 +28,8 @@ describe('kids profile admin', () => {
 
   it('a media server refusal reads differently per action (an update is stored anyway)', () => {
     expect(profileError(err(502, 'jellyfin'), 'update')).toMatch(/gespeichert/i);
+    // the repair button's own label, never a quoted copy that can drift from it
+    expect(profileError(err(502, 'jellyfin'), 'update')).toContain('„Verknüpfungen reparieren“');
     expect(profileError(err(502, 'jellyfin'), 'create')).toMatch(/nicht angelegt/);
     expect(profileError(err(502, 'jellyfin'), 'delete')).toMatch(/nicht gelöscht/);
   });
