@@ -76,11 +76,11 @@ jobs:
             echo "## Test coverage"
             echo "| Package | Statements | Branches | Functions | Lines |"
             echo "|---|---|---|---|---|"
-            for pkg in backend gateway web updater; do
+            for pkg in backend gateway web updater livetv; do
               jq -r --arg p "$pkg" '.total | "| \($p) | \(.statements.pct)% | \(.branches.pct)% | \(.functions.pct)% | \(.lines.pct)% |"' "$pkg/coverage/coverage-summary.json"
             done
-            # overall: covered / total summed over the four packages
-            jq -s -r 'def pct(k): (([.[].total[k].covered] | add) * 10000 / ([.[].total[k].total] | add) | floor) / 100; "| **overall** | \(pct("statements"))% | \(pct("branches"))% | \(pct("functions"))% | \(pct("lines"))% |"' backend/coverage/coverage-summary.json gateway/coverage/coverage-summary.json web/coverage/coverage-summary.json updater/coverage/coverage-summary.json
+            # overall: covered / total summed over the five packages
+            jq -s -r 'def pct(k): (([.[].total[k].covered] | add) * 10000 / ([.[].total[k].total] | add) | floor) / 100; "| **overall** | \(pct("statements"))% | \(pct("branches"))% | \(pct("functions"))% | \(pct("lines"))% |"' backend/coverage/coverage-summary.json gateway/coverage/coverage-summary.json web/coverage/coverage-summary.json updater/coverage/coverage-summary.json livetv/coverage/coverage-summary.json
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: matrix.node == 26
@@ -91,6 +91,7 @@ jobs:
             gateway/coverage/
             web/coverage/
             updater/coverage/
+            livetv/coverage/
           retention-days: 14
       - name: Dependency audit (prod, high+)
         if: matrix.node == 22
@@ -318,7 +319,7 @@ jobs:
       packages: write # literal on purpose: permissions don't accept expressions; PRs never push and fork PRs get a read-only token anyway
       security-events: write # Trivy SARIF upload (push only, same reasoning)
     strategy:
-      matrix: { service: [backend, gateway, web, updater] }
+      matrix: { service: [backend, gateway, web, updater, livetv] }
     env:
       SERVICE: ${{ matrix.service }}
       # push (main / v* tags) or a dispatch on main / a v* tag: push the candidate to GHCR; everything else builds locally

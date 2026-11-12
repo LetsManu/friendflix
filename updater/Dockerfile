@@ -10,6 +10,7 @@ COPY backend/package.json backend/
 COPY gateway/package.json gateway/
 COPY web/package.json web/
 COPY updater/package.json updater/
+COPY livetv/package.json livetv/
 RUN npm ci
 COPY updater updater
 RUN npm run build -w updater

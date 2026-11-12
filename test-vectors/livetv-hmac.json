@@ -1,0 +1,31 @@
+{
+  "_comment": "Shared by the livetv and backend tests so both ends of the backend -> livetv signing (livetv/src/protocol.ts, backend/src/livetv/client.ts) can never drift apart. key = HMAC-SHA256(secret, 'friendflix-livetv/v1'); signature = 'v1=' + hex HMAC-SHA256(key, METHOD\\nPATH\\nTS\\nNONCE\\nhex(SHA256(body))). Headers x-ff-livetv-ts, x-ff-livetv-nonce, x-ff-livetv-signature. Bodies are fictional.",
+  "secret": "test-internal-secret-livetv-0123456789",
+  "key": "1cd764ece826b4219f388117b274348bba1341bfcc0a141706b021173a08e5c9",
+  "cases": [
+    {
+      "method": "GET",
+      "path": "/v1/system",
+      "body": "",
+      "ts": "1762900000000",
+      "nonce": "00112233445566778899aabbccddeeff",
+      "signature": "v1=36319962cc30080556ad7edff730c4bbc003891876f697bb3e40adb7554affaf"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/streams",
+      "body": "{\"channelId\":\"ch-nordlicht-tv\",\"input\":{\"url\":\"http://iptv.example.com/live/101.ts\",\"kind\":\"ts\",\"allowLan\":false},\"mode\":\"remux\",\"encoder\":\"libx264\",\"dvrSeconds\":1800,\"maxBitrate\":8000000}",
+      "ts": "1762900001234",
+      "nonce": "ffeeddccbbaa99887766554433221100",
+      "signature": "v1=6a5c836aa8e40c4d19856c5eeca0dea3cb09783b0e0d7a47da76b13776a8d096"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/ingest",
+      "body": "{\"feeds\":[{\"channelId\":\"ch-hafenkanal\",\"port\":9000,\"streamId\":\"ff-AB12CD34EF56GH78\",\"passphrase\":\"fictional-passphrase-hafen-01\"}]}",
+      "ts": "1762900005000",
+      "nonce": "0123456789abcdef0123456789abcdef",
+      "signature": "v1=9fb2bde4ae379f0642ebe4c52ec5586416d73d51d85df559bd5c52e2ec00775c"
+    }
+  ]
+}

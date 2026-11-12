@@ -115,6 +115,8 @@ services:
       BACKGROUND_JOBS: ${BACKGROUND_JOBS:-true}
       # admin health page: gateway address (only /health is called)
       GATEWAY_URL: ${GATEWAY_URL:-http://gateway:4000}
+      # the optional livetv service (profile livetv); while it is off the name does not resolve and Live TV counts as not installed
+      LIVETV_URL: ${LIVETV_URL:-http://livetv:8090}
       DOWNLOAD_DIR: /data/downloads
       # recommendation index weights (0-10; 0 = off) and scoring coefficient overrides: expert tuning, docs/discovery.md
       RECO_W_GENRES: ${RECO_W_GENRES:-}

@@ -5,7 +5,7 @@
   "version": "3.3.0",
   "license": "AGPL-3.0-or-later",
   "engines": { "node": ">=22" },
-  "workspaces": ["backend", "gateway", "web", "updater"],
+  "workspaces": ["backend", "gateway", "web", "updater", "livetv"],
   "scripts": {
     "build": "npm run build --workspaces",
     "lint": "eslint .",
