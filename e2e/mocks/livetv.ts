@@ -50,11 +50,18 @@ export interface LivetvMock {
   /** live playlists served with 200 */
   playlistLoads: number;
   /**
-   * POST .../watch for channel `only` answers only after `ms` (real time): a switch whose watch is still out. With `release`, the
+   * POST .../watch for channel `only` answers only after the test opens the gate (`gate`: `release()`) or after `ms` (real time): a
+   * switch whose watch is still out. With `release`, the
    * watch lets that token go as it arrives, the way the backend releases the old channel before it starts the new one (spec §12.2):
    * its media answers `media` (0: untouched; 200: a broken playlist) and, with `beat`, its beat answers 410.
    */
-  watchHold: { only: string; ms: number; release?: { token: string; media: number; beat?: boolean } } | null;
+  watchHold: { only: string; ms?: number; gate?: boolean; release?: { token: string; media: number; beat?: boolean } } | null;
+  /** opens the gate of a held watch (`watchHold.gate`): the held watch answers, and so does every later one */
+  release: () => void;
+  /** `release()` was called: a watch held after it does not wait */
+  watchOpen: boolean;
+  /** the held watches waiting for `release()` */
+  watchWaiters: Array<() => void>;
   /** tokens the backend has let go (a switch releases the old channel before it starts the new one, spec §12.2): their media answers this status */
   mediaGone: Record<string, number>;
   /** tokens whose beat answers 410 `gone` */
@@ -79,7 +86,7 @@ const preview = (id: string) => `/api/livetv/channels/${id}/preview.jpg`;
 
 export function livetvState(): LivetvMock {
   const ch = (c: Omit<MockChannel, 'favourite' | 'groupPos' | 'logo'> & { groupId: string }): MockChannel => ({ ...c, logo: logo(c.id), favourite: false, groupPos: gpos(c.groupId) });
-  return {
+  const st: LivetvMock = {
     groups: GROUPS,
     channels: [
       ch({ id: 'ch-nord', number: 1, name: 'Nordlicht TV', groupId: 'g-allg', running: true, epg: 'ok', preview: preview('ch-nord'), now: prog('Die Leuchtturmwärter', [20, 15], [21, 0]), next: prog('Wetter am Hafen', [21, 0], [21, 15]) }),
@@ -108,6 +115,9 @@ export function livetvState(): LivetvMock {
     mediaStatus: 200,
     playlistLoads: 0,
     watchHold: null,
+    release: () => { const w = st.watchWaiters.splice(0); st.watchOpen = true; for (const f of w) f(); },
+    watchWaiters: [],
+    watchOpen: false,
     mediaGone: {},
     beatGone: [],
     goneLoads: 0,
@@ -115,6 +125,7 @@ export function livetvState(): LivetvMock {
     timeShift: 0,
     liveStart: null,
   };
+  return st;
 }
 
 /** change one channel the way new programme data would (the list's ETag moves) */
@@ -197,7 +208,10 @@ export function livetvRoute(st: LivetvMock, m: string, p: string, body: any, hea
       if (h.release.media) st.mediaGone[h.release.token] = h.release.media;
       if (h.release.beat) st.beatGone.push(h.release.token);
     }
-    return new Promise<void>((r) => setTimeout(r, h.ms)).then(answer);
+    const held = h.gate
+      ? new Promise<void>((r) => { if (st.watchOpen) r(); else st.watchWaiters.push(r); })
+      : new Promise<void>((r) => setTimeout(r, h.ms ?? 0));
+    return held.then(answer);
   }
   if (p === '/api/livetv/beat' && m === 'POST') {
     st.beats.push(String(body?.token));

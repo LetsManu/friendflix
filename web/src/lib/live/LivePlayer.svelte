@@ -22,6 +22,7 @@
   import { BANNER_HOLD_MS, bannerVisible } from './banner';
   import { atEdge, behind, oldestPoint, restartTarget, resumePoint } from './dvr';
   import { minute } from './fade';
+  import { pickHeld, type Held } from './held';
   import FullSheet from './FullSheet.svelte';
   import InfoBanner from './InfoBanner.svelte';
   import InfoPanel from './InfoPanel.svelte';
@@ -104,7 +105,7 @@
    * spec §12.2, so its media is refused or breaks meanwhile): nothing acts on it then. A switch that is refused keeps that stream,
    * and this runs once it does (a fatal error before a refusal); a switch that goes through drops it with the stream.
    */
-  let held: { run: () => void; fatal: boolean } | null = null;
+  let held: Held | null = null;
   /** a refused media request: none, a beat is checking it, or loading carried on after an answered beat */
   let refused: 'none' | 'checking' | 'resumed' = 'none';
   let beatP: Promise<BeatResult> | null = null;
@@ -241,6 +242,8 @@
         const h = held;
         held = null;
         h?.run(); // what the stream met while the watch was out
+        // the waiting event was dropped while the watch was out: an old stream that is stuck shows buffering and arms the stall watch
+        if (video && !video.paused && video.readyState < 3 && ui.k === 'playing') onWaiting();
         return 'stay';
       }
       dropStream(); onFail(u);
@@ -307,9 +310,9 @@
     }
     pausedWall = null; behindSec = 0; restartAt = null; attachedGen = -1; refused = 'none'; held = null;
   }
-  /** keeps what the stream met while a watch is out: the first fatal error wins over refusals, else the latest refusal */
-  function hold(run: () => void, fatal: boolean): void {
-    if (!held?.fatal) held = { run, fatal };
+  /** keeps what the stream met while a watch is out (pickHeld): the first fatal error wins over refusals, else the latest refusal; a fatal error that is not a media error wins over a media one */
+  function hold(run: () => void, fatal: boolean, media = false): void {
+    held = pickHeld(held, { run, fatal, media });
   }
 
   async function attach(url: string, g: number): Promise<void> {
@@ -359,7 +362,7 @@
     const code = (d.response as { code?: number } | undefined)?.code;
     const refusal = d.type === HlsCtor.ErrorTypes.NETWORK_ERROR && (code === 403 || code === 410);
     if (startPending) {
-      if (refusal || d.fatal) hold(() => onHlsError(d, g), Boolean(d.fatal) && !refusal);
+      if (refusal || d.fatal) hold(() => onHlsError(d, g), Boolean(d.fatal) && !refusal, d.type === HlsCtor.ErrorTypes.MEDIA_ERROR);
       return;
     }
     if (refusal) { onMediaRefused(d, g); return; }
@@ -391,7 +394,11 @@
         refused = 'resumed';
         const v = video;
         hls?.startLoad(v ? v.currentTime : -1);
-      } else refused = 'none'; // gone: a new watch is on its way; failed / stale: the stall watch and the next beat take over
+      } else {
+        refused = 'none'; // gone: a new watch is on its way; failed / stale: the stall watch and the next beat take over
+        // a refusal replayed after a refused switch met this beat, which a switch had made stale: A is checked for real now
+        if (r === 'stale' && g === attachedGen && !startPending && token) void beatNow();
+      }
     });
   }
 
@@ -718,10 +725,15 @@
     try { replaceState(watchPath(id) + location.search, {}); } catch { /* the router is not ready yet: the address keeps the channel it opened with */ }
   }
   function onPageHide(): void {
+    if (startPending) { gen++; clearInterval(beatT); beatT = undefined; } // a late answer of the watch out goes through start()'s stop branch
     const tk = token;
     if (!tk) return;
     token = null;
     void stopWatching(tk, true).catch(() => undefined);
+  }
+  /** back from the back/forward cache: the stream was let go at pagehide, so the channel starts again */
+  function onPageShow(e: PageTransitionEvent): void {
+    if (e.persisted && !destroyed) void start(curId);
   }
   const onFs = () => { fullscreen = Boolean(document.fullscreenElement); };
 
@@ -736,6 +748,7 @@
     try { const v = parseVolume(localStorage.getItem('ff_vol')); if (v !== null && video) { volume = v; video.volume = v; } } catch { /* storage blocked */ }
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('pageshow', onPageShow);
     document.addEventListener('fullscreenchange', onFs);
     tickT = setInterval(onTick, 250);
     listT = setInterval(() => { if (!document.hidden) void loadList(); }, LIST_REFRESH_MS);
@@ -748,6 +761,7 @@
       mo.disconnect();
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('pageshow', onPageShow);
       document.removeEventListener('fullscreenchange', onFs);
     };
   });
