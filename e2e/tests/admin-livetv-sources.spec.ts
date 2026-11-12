@@ -39,7 +39,7 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     await expect(wolkenlos.locator('[data-state="receiving"]')).toHaveText('Sendet');
     await expect(wolkenlos).toContainText('2 abgelehnte Versuche (1 Std.)');
     await expect(own.locator('li', { hasText: 'Hafenkanal' })).toContainText('Abgeholt · HLS');
-    // the status tab keeps the installed view (version, off button) until Task 26
+    // the status tab shows the installed Live TV (Task 26: its card keeps the version and the off button)
     await tabs.getByRole('tab', { name: 'Live-Status' }).click();
     await expect(page).toHaveURL(/\?tab=status$/);
     await expect(page.getByText('Live-TV läuft.')).toBeVisible();
