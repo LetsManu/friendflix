@@ -124,16 +124,30 @@ async function encoderSettings(ctx: Ctx, waitMs: number): Promise<EncoderSetting
 }
 
 /**
- * Both benchmark records; `stale` when the media server's encoder settings changed since its record. Unreadable or late settings are
- * not stale. `settingsMs`: how long to wait for the settings (admin views 3 s; the admission path 800 ms, never a slow start).
+ * Whether livetv's stored record measured another encoder than the one it would use now (LIVETV_ENCODER against what livetv can use),
+ * registered by convbench.ts when it loads (no import back, as for the live source). Without a registration a record is never stale.
+ * `jfHwAccel`: the media server's hardware acceleration the `auto` choice follows.
  */
-export async function readBench(ctx: Ctx, settingsMs = SETTINGS_TIMEOUT_MS): Promise<{ jellyfin: BenchRecord | null; livetv: BenchRecord | null; stale: boolean }> {
+export type LivetvEncoderCheck = (ctx: Ctx, rec: BenchRecord, jfHwAccel: string | null) => Promise<boolean>;
+let livetvEncoderChanged: LivetvEncoderCheck = async () => false;
+export function setLivetvEncoderCheck(fn: LivetvEncoderCheck): void {
+  livetvEncoderChanged = fn;
+}
+
+/**
+ * Both benchmark records; `stale` when the media server's encoder settings changed since its record, `livetvStale` when livetv's
+ * record measured another encoder than the configured one (then automatic falls back to 2 until it is measured again). Unreadable or
+ * late settings are not stale. `settingsMs`: how long to wait for the settings (admin views 3 s; the admission path 800 ms, never a
+ * slow start).
+ */
+export async function readBench(ctx: Ctx, settingsMs = SETTINGS_TIMEOUT_MS): Promise<{ jellyfin: BenchRecord | null; livetv: BenchRecord | null; stale: boolean; livetvStale: boolean }> {
   const [jf, lt] = await ctx.kv.mget([BENCH_KEY, BENCH_LIVETV_KEY]).catch(() => [null, null]);
   const jellyfin = benchOf(jf ?? null);
   const livetv = benchOf(lt ?? null);
-  if (!jellyfin) return { jellyfin, livetv, stale: false };
+  if (!jellyfin && !livetv) return { jellyfin, livetv, stale: false, livetvStale: false };
   const settings = await encoderSettings(ctx, settingsMs);
-  return { jellyfin, livetv, stale: settings !== null && jellyfin.fingerprint !== fingerprint(settings) };
+  const changed = livetv && settings !== null ? await within(() => livetvEncoderChanged(ctx, livetv, settings.hwAccel ?? null).catch(() => false), settingsMs) : false;
+  return { jellyfin, livetv, stale: jellyfin !== null && settings !== null && jellyfin.fingerprint !== fingerprint(settings), livetvStale: changed === true };
 }
 
 /**
@@ -143,7 +157,7 @@ export async function readBench(ctx: Ctx, settingsMs = SETTINGS_TIMEOUT_MS): Pro
 export async function conversionLimit(ctx: Ctx, o: { settingsMs?: number } = {}): Promise<{ limit: number; auto: number; custom: number | null; recommended: number | null; priority: ConvPriority }> {
   const { CONVERSION_SLOTS, CONVERSION_PRIORITY } = ctx.cfg;
   const b = await readBench(ctx, o.settingsMs);
-  const recommended = b.jellyfin && !b.stale ? recommend({ jellyfin: b.jellyfin.speed, ...(b.livetv ? { livetv: b.livetv.speed } : {}) }) : null;
+  const recommended = b.jellyfin && !b.stale && !b.livetvStale ? recommend({ jellyfin: b.jellyfin.speed, ...(b.livetv ? { livetv: b.livetv.speed } : {}) }) : null;
   const auto = recommended ?? CONV_DEFAULT_SLOTS;
   const custom = CONVERSION_SLOTS ?? null;
   return { limit: custom ?? auto, auto, custom, recommended, priority: CONVERSION_PRIORITY };

@@ -116,7 +116,7 @@ const ask = (o: { userId?: string; deviceId?: string; hint?: string; kind?: Conv
 
 describe('readBench and conversionLimit', () => {
   it('nothing measured: automatic 2', async () => {
-    expect(await readBench(env.ctx)).toEqual({ jellyfin: null, livetv: null, stale: false });
+    expect(await readBench(env.ctx)).toEqual({ jellyfin: null, livetv: null, stale: false, livetvStale: false });
     expect(await conversionLimit(env.ctx)).toEqual({ limit: 2, auto: 2, custom: null, recommended: null, priority: 'films' });
   });
   it('a bench of 4.6x recommends 3; an admin value wins; a livetv bench lowers the recommendation', async () => {
@@ -136,7 +136,7 @@ describe('readBench and conversionLimit', () => {
   });
   it('a broken record counts as not measured', async () => {
     await env.kv.set('conv:bench', '{"speed":"fast"}', 3600);
-    expect(await readBench(env.ctx)).toEqual({ jellyfin: null, livetv: null, stale: false });
+    expect(await readBench(env.ctx)).toEqual({ jellyfin: null, livetv: null, stale: false, livetvStale: false });
   });
 });
 
