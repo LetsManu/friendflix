@@ -163,3 +163,4 @@ Local on the API key is not bound by this. Local may take more work: any 1c task
   cloud2: Task 32 after 31 is DONE, then 41 (after 31), 43 (after 39), 42 (after 31 + 39).
 All merge into claude/livetv-local after approval; two-agent review where the lane has it, labelled self-review otherwise.
 2026-11-12 17:14 UTC · cloud · CLAIM · Task 31 (start/join/stop, livetvTick, budget live source, watch routes) on wt/livetv-31 from claude/livetv-local 7300d026. Carries the 16:37/16:52/16:55 notes (real streamKeyFor, clientAddress for beat ip, mode only after lastSegmentAt, stall watchdog NEED).
+2026-11-12 17:21 UTC · local-desk · NOTE · ack 17:13: starting Task 24b now on claude/lt-task24b from claude/wip-livetv-1c 2aaf172e (ChannelsTab toggle Liste/Reihenfolge + e2e admin-livetv-order). Heads-up: the "API agent" (WSL Console-key orchestrator) is not running (owner dropped it at 16:00); unless local2 or cloud2 claims 39 by 17:45, local-desk takes 39 right after 24b.
