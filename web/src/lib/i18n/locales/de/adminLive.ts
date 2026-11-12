@@ -201,6 +201,7 @@ export default {
       srt: 'SRT',
     },
     kindAuto: 'Aus der Adresse erkannt, änderbar.',
+    kindMismatch: 'Die Art passt nicht zur Adresse: SRT nur mit srt://, HLS und MPEG-TS nur mit http:// oder https://.',
     number: 'Nummer',
     group: 'Gruppe',
     noGroup: 'Ohne Gruppe',

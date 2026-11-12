@@ -357,6 +357,30 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     await expect(toasts(page).getByText('Stream gelöscht. Wird an Live-TV übertragen …')).toBeVisible();
   });
 
+  test('a push row keeps its height when the ingest state arrives (600 and 1280 px)', async ({ page }) => {
+    // the ingest answer waits for a gate, so the row is measured with the skeleton chip and again with the real one
+    let release: () => void = () => undefined;
+    await page.context().route('**/api/admin/livetv/ingest', async (route) => {
+      await new Promise<void>((r) => { release = r; });
+      await route.fallback();
+    });
+    for (const width of [600, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/admin/livetv');
+      const own = card(page, 'Eigene Streams');
+      for (const name of ['Kanal Wolkenlos', 'Hafenkanal']) await expect(own.locator('li', { hasText: name })).toBeVisible();
+      const rows = own.locator('li');
+      await expect(own.locator('[data-state]')).toHaveCount(0);
+      const before = await rows.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+      release();
+      await expect(own.locator('li', { hasText: 'Kanal Wolkenlos' }).locator('[data-state="receiving"]')).toBeVisible();
+      await expect(own.locator('[data-ports]')).not.toHaveText('');
+      const after = await rows.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+      expect(after, `row heights at ${width} px`).toEqual(before);
+    }
+  });
+
+
   test.describe('refusals', () => {
     // mocked refusals: the browser logs the 4xx answers
     test.use({ allowedConsole: /Failed to load resource: the server responded with a status of (400|409|422|503)/ });
@@ -410,6 +434,18 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
       await check.click();
       await expect(dlg.locator('[data-test-result]')).toHaveText('412 Sender in 18 Gruppen · EPG: 398 Kanäle');
       await expect(dlg.getByRole('button', { name: 'Speichern' })).toBeEnabled();
+    });
+
+    test('a kind that does not fit the address says why', async ({ page, api }) => {
+      api.admin.livetv.area.calls.length = 0;
+      await page.goto('/admin/livetv');
+      await card(page, 'Eigene Streams').getByRole('button', { name: 'Stream hinzufügen' }).click();
+      const dlg = page.getByRole('dialog', { name: 'Stream hinzufügen' });
+      await dlg.getByRole('textbox', { name: 'Name', exact: true }).fill('Bergblick Sport');
+      await dlg.getByLabel('Stream-Adresse').fill('https://iptv.example.com/live/bergblick.m3u8');
+      await dlg.getByLabel('Art', { exact: true }).selectOption('srt');
+      await dlg.getByRole('button', { name: 'Anlegen' }).click();
+      await expect(dlg.getByRole('alert')).toHaveText('Die Art passt nicht zur Adresse: SRT nur mit srt://, HLS und MPEG-TS nur mit http:// oder https://.');
     });
 
     test('ports full shows the message', async ({ page, api }) => {

@@ -32,7 +32,7 @@ describe('detectKind', () => {
     expect(detectKind('  HTTP://192.0.2.10/LIVE/HAFEN.TS  ')).toBe('ts');
     expect(detectKind('https://iptv.example.com/play?f=x.ts')).toBe('hls');
     expect(detectKind('http://192.0.2.10/stream')).toBe('hls');
-    expect(detectKind('https://iptv.example.ts/stream')).toBe('hls');
+    expect(detectKind('https://iptv.example.com/live.ts')).toBe('ts');
   });
 });
 

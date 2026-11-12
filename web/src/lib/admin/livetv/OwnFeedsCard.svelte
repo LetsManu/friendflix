@@ -21,7 +21,7 @@
   import { confirm } from '#lib/ui/confirm';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import StatusPill from '#lib/ui/StatusPill.svelte';
-  import { deleteChannel, ingestView, listFeeds, newCredentials, newPort, type FeedChannel, type FeedState, type IngestView, type PushResult, type SourceView } from './api';
+  import { deleteChannel, ingestView, listFeeds, newCredentials, newPort, FEED_STATES, type FeedChannel, type FeedState, type IngestView, type PushResult, type SourceView } from './api';
   import { portsLine } from './sources';
 
   export let source: SourceView;
@@ -121,10 +121,12 @@
           </div>
           <div class="side">
             {#if f.push}
-              <!-- the chip's box is there before the ingest state arrives -->
+              <!-- one grid cell holds every state's chip, hidden, so the box is as wide as the longest label of the language from the
+                   start; the skeleton or the real chip sits in the same cell: the row never re-wraps when the ingest state arrives -->
               <span class="chipbox">
-                {#if ingest === null}<Skeleton w="7.5rem" h="1.5rem" />
-                {:else}{@const k = st?.state ?? 'error'}<span data-state={k}><StatusPill tone={PILL[k].tone} icon={PILL[k].icon} label={$t(`adminLive.push.state.${k}`)} /></span>{/if}
+                {#each FEED_STATES as g (g)}<span class="ghost" aria-hidden="true"><StatusPill tone={PILL[g].tone} icon={PILL[g].icon} label={$t(`adminLive.push.state.${g}`)} /></span>{/each}
+                {#if ingest === null}<span class="cell"><Skeleton w="100%" h="1.5rem" /></span>
+                {:else}{@const k = st?.state ?? 'error'}<span class="cell" data-state={k}><StatusPill tone={PILL[k].tone} icon={PILL[k].icon} label={$t(`adminLive.push.state.${k}`)} /></span>{/if}
               </span>
             {/if}
             <ActionMenu label={$t('adminLive.push.actions', { name: f.name })} title={f.name} busy={$busyKeys.has(`ltv-feed:${f.id}`)} items={items(f)} />
@@ -150,7 +152,10 @@
   .gone :global(svg) { color: var(--err); flex: none; }
   .rej { display: block; min-height: 1.3em; line-height: 1.3; font-size: .85rem; color: rgba(255, 255, 255, .85); }
   .side { flex: none; display: flex; align-items: center; gap: .4rem; }
-  .chipbox { display: inline-flex; min-width: 7.5rem; justify-content: flex-end; }
+  .chipbox { display: inline-grid; justify-items: end; align-items: center; }
+  .chipbox > * { grid-area: 1 / 1; }
+  .ghost { visibility: hidden; }
+  .cell { display: inline-flex; justify-content: flex-end; width: 100%; }
   .msg { display: flex; gap: .45rem; align-items: flex-start; margin: 0; }
   .msg :global(svg) { color: var(--err); flex: none; }
   .muted { margin: 0; }
@@ -159,6 +164,7 @@
   @media (max-width: 560px) {
     .row { flex-wrap: wrap; }
     .side { width: 100%; justify-content: space-between; }
-    .chipbox { justify-content: flex-start; }
+    .chipbox { justify-items: start; }
+    .cell { justify-content: flex-start; }
   }
 </style>

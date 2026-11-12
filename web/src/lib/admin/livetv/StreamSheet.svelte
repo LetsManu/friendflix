@@ -82,7 +82,7 @@
       if (b?.error === 'srt_ports_full') formErr = tr('adminLive.push.portsFull', { n: typeof b.n === 'number' ? b.n : 0 });
       else if (b?.field === 'url' || b?.error === 'lan_required' || b?.error === 'refused') urlErr = b.error === 'invalid' ? tr('adminLive.push.urlBad') : sourceError(String(b.error));
       else if (b?.field === 'name') nameErr = tr('adminLive.push.nameMissing');
-      else if (b?.field === 'kind') kindErr = tr('adminLive.push.urlBad'); // srt only with an srt:// address (backend createFeed)
+      else if (b?.field === 'kind') kindErr = tr('adminLive.push.kindMismatch'); // srt only with an srt:// address and back (backend createFeed)
       else if (b?.field === 'number') numErr = tr('adminLive.push.numberBad', { max: 99_999 });
       else formErr = typeof b?.error === 'string' ? sourceError(b.error) : sourceError('unreachable');
     } finally { saving = false; }

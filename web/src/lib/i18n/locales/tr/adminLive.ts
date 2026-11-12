@@ -203,6 +203,7 @@ const dict: Translation<typeof de> = {
       srt: 'SRT',
     },
     kindAuto: 'Adresten algılandı, değiştirilebilir.',
+    kindMismatch: 'Tür adresle uyuşmuyor: SRT yalnızca srt:// ile, HLS ve MPEG-TS yalnızca http:// ya da https:// ile.',
     number: 'Numara',
     group: 'Grup',
     noGroup: 'Grupsuz',
