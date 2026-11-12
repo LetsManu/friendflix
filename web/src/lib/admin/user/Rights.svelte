@@ -12,6 +12,7 @@
   import { api, ApiError } from '#lib/api';
   import { cellText, fieldLabel, partialText, visibleFields, type FieldGroup, type MatrixField, type RoleMatrix } from '#lib/admin/rights/model';
   import { leaveGuard } from '#lib/admin/leaveGuard';
+  import { fetchRoles, type RolesLoader } from '#lib/admin/rights/rolesAnswer';
   import FieldControl from '#lib/admin/rights/FieldControl.svelte';
   import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
   import SaveBar from '#lib/admin/rights/SaveBar.svelte';
@@ -31,6 +32,8 @@
   export let name: string;
   /** read-only for the page (bind:dirty): something is staged; the header's role change asks first then (its key remounts this tab) */
   export let dirty = false;
+  /** GET /api/admin/roles for the matrix (the person page shares one answer) */
+  export let loadRoles: RolesLoader = fetchRoles;
 
   const id = uid('rt');
   const TRIS: Tri[] = ['role', 'allow', 'deny'];
@@ -48,7 +51,7 @@
 
   async function load(keepStage = false): Promise<boolean> {
     try {
-      const [v, r] = await Promise.all([api<RightsView>(`/api/admin/users/${userId}/rights`), matrix ? Promise.resolve({ matrix }) : api<{ matrix?: RoleMatrix }>('/api/admin/roles')]);
+      const [v, r] = await Promise.all([api<RightsView>(`/api/admin/users/${userId}/rights`), matrix ? Promise.resolve({ matrix }) : loadRoles()]);
       if (!r.matrix) throw new Error('no matrix');
       view = v; matrix = r.matrix; error = null;
       if (!keepStage) { staged = {}; note = v.note ?? ''; }

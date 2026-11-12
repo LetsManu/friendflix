@@ -102,9 +102,9 @@ export const hasPersonSentence = (action: string): boolean => PERSON_SENTENCES.h
 
 export type RoleNames = (key: string) => string | null;
 /** the roles' names by key (GET /api/admin/roles); null when they cannot be loaded (role entries then keep their older wording) */
-export async function fetchRoleNames(): Promise<RoleNames | null> {
+export async function fetchRoleNames(load: () => Promise<{ matrix?: Pick<RoleMatrix, 'roles'> }> = () => api('/api/admin/roles')): Promise<RoleNames | null> {
   try {
-    const r = await api<{ matrix?: Pick<RoleMatrix, 'roles'> }>('/api/admin/roles');
+    const r = await load();
     const roles = r.matrix?.roles;
     if (!roles) return null;
     return (key) => { const x = roles.find((y) => y.key === key); return x ? roleName(x) : null; };

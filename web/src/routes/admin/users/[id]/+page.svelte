@@ -27,6 +27,7 @@
   import Profiles from '#lib/admin/user/Profiles.svelte';
   import Rights from '#lib/admin/user/Rights.svelte';
   import { leaveQuestion } from '#lib/admin/user/rights';
+  import { sharedRoles } from '#lib/admin/rights/rolesAnswer';
   import { roleName, type RoleInfo } from '#lib/roles';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
@@ -51,6 +52,8 @@
 
   let d: UserDetail | null = null, error: string | null = null, notFound = false;
   let roles: Record<string, RoleInfo> = {}, meId = '';
+  /** one GET /api/admin/roles for the header, Rechte and Audit-Log */
+  const loadRoles = sharedRoles();
   let seq = 0, loadedId = '';
   /** reload keeps the shown data until the answer is there (open tabs stay mounted) */
   async function load() {
@@ -68,7 +71,7 @@
   }
   $: if (id && id !== loadedId) { loadedId = id; d = null; error = null; panel = null; void load(); }
   onMount(() => {
-    api<{ roles: Record<string, RoleInfo> }>('/api/admin/roles').then((r) => (roles = r.roles), () => undefined);
+    loadRoles().then((r) => (roles = r.roles), () => undefined);
     api<{ id: string }>('/api/me').then((m) => (meId = m.id), () => undefined);
   });
 
@@ -269,9 +272,9 @@
     {:else if tab === 'devices'}<Devices userId={u.id} devices={d.devices} on:changed={load} />
     {:else if tab === 'downloads'}<Downloads licenses={d.licenses} profiles={d.profiles} on:changed={load} />
     {:else if tab === 'activity'}{#key u.id}<Activity userId={u.id} />{/key}
-    {:else if tab === 'rights'}{#key `${u.id}:${u.role}`}<Rights userId={u.id} name={u.name} bind:dirty={rightsDirty} />{/key}
+    {:else if tab === 'rights'}{#key `${u.id}:${u.role}`}<Rights userId={u.id} name={u.name} bind:dirty={rightsDirty} {loadRoles} />{/key}
     {:else if tab === 'check'}{#key u.id}<CheckView userId={u.id} profiles={d.profiles} />{/key}
-    {:else if tab === 'audit'}{#key u.id}<Audit userId={u.id} />{/key}
+    {:else if tab === 'audit'}{#key u.id}<Audit userId={u.id} {loadRoles} />{/key}
     {:else}<Overview userId={u.id} detail={d} on:changed={load} />{/if}
   </div>
 {/if}

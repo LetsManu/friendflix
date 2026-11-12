@@ -9,11 +9,14 @@
   import { describeActivity, type AuditEntry } from '#lib/admin/activity';
   import { auditDetails } from '#lib/admin/people';
   import { entrySentence, fetchRoleNames, type RoleNames } from '#lib/admin/rights/auditText';
+  import { fetchRoles, type RolesLoader } from '#lib/admin/rights/rolesAnswer';
   import Button from '#lib/ui/Button.svelte';
   import DataTable from '#lib/ui/DataTable.svelte';
   import type { Column, Query } from '#lib/ui/table';
 
   export let userId: string;
+  /** GET /api/admin/roles for the role names (the person page shares one answer) */
+  export let loadRoles: RolesLoader = fetchRoles;
   const PAGE = 25;
   let rows: AuditEntry[] | null = null, total = 0, error: string | null = null, page = 0;
   let cur: Query = { q: '', sort: null, offset: 0, limit: PAGE };
@@ -29,7 +32,7 @@
       if (my === seq) error = tr('adminPeople.loadFailed');
     }
   }
-  onMount(() => { void load(); void fetchRoleNames().then((n) => { names = n; }); });
+  onMount(() => { void load(); void fetchRoleNames(loadRoles).then((n) => { names = n; }); });
   function onQuery(e: CustomEvent<Query>) { cur = e.detail; void load(); }
   function retry() { error = null; rows = null; void load(); }
 

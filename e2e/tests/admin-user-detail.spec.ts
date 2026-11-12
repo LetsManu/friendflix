@@ -403,6 +403,21 @@ test.describe('admin user detail (desktop)', () => {
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
   });
 
+  test('the person page reads the roles once for the header, Rechte and Audit-Log', async ({ page }) => {
+    const asked: string[] = [];
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/admin/roles') asked.push(r.method()); });
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    await expect(rowOf(page, 'Auf Fernseher übertragen')).toBeVisible();
+    await page.getByRole('tab', { name: 'Audit-Log' }).click();
+    await expect(page.getByRole('tabpanel', { name: 'Audit-Log' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Rechte' }).click();
+    await expect(rowOf(page, 'Auf Fernseher übertragen')).toBeVisible();
+    // the header's role names came from the same answer
+    await (await menu(page)).getByRole('button', { name: 'Rolle ändern' }).click();
+    await expect(page.getByRole('form', { name: 'Rolle ändern' }).getByRole('combobox', { name: 'Neue Rolle' }).getByRole('option', { name: 'Familie' })).toHaveCount(1);
+    expect(asked).toEqual(['GET']);
+  });
+
   test('an admin account: switches are locked, numbers stay editable', async ({ page }) => {
     await page.goto('/admin/users/u1?tab=rights');
     const panel = rightsPanel(page);
