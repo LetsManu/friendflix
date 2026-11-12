@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
-import { opensPlayer } from '../helpers.js';
+import { mockLivePlayer, opensPlayer } from '../helpers.js';
 import { livePlaylist, patchChannel, progAt } from '../mocks/livetv.js';
 
 // The Live-TV tab on a desktop (Task 36): navigation entry, favourites tiles, group chips, the two-column channel grid with its
@@ -20,6 +20,7 @@ const names = (loc: Locator) => loc.locator('.name').allTextContents();
 test.describe('Live-TV tab (desktop)', () => {
   test.beforeEach(async ({ page, api }) => {
     api.features = { livetv: true };
+    await mockLivePlayer(page);
     await page.clock.install({ time: NOW });
   });
 
@@ -228,6 +229,7 @@ test.describe('Live-TV tab: a failing list (desktop)', () => {
   test.use({ allowedConsole: /Failed to load resource: the server responded with a status of 500/ });
   test('a failed first load says so and can be retried', async ({ page, api }) => {
     api.features = { livetv: true };
+    await mockLivePlayer(page);
     await page.clock.install({ time: NOW });
     api.livetv.status = 500;
     await page.goto('/live');

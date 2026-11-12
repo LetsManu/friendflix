@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
-import { noHorizontalOverflow, opensPlayer } from '../helpers.js';
+import { mockLivePlayer, noHorizontalOverflow, opensPlayer } from '../helpers.js';
 import { expect, test } from '../fixtures.js';
 
 // The Live-TV tab on a phone (Task 36): the compact 64 px list without Danach and time left, the favourites carousel, the chips
@@ -15,6 +15,7 @@ const tabbar = (page: Page) => page.getByRole('navigation', { name: 'Mobile Navi
 test.describe('Live-TV tab (phone)', () => {
   test.beforeEach(async ({ page, api }) => {
     api.features = { livetv: true };
+    await mockLivePlayer(page);
     await page.clock.install({ time: NOW });
   });
 
