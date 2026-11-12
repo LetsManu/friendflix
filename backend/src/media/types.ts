@@ -169,9 +169,10 @@ export interface PlaybackDto {
   /** effective ceiling for this request (role limit, lowered to the remote cap outside the home networks): upper bound for the quality menu */
   roleMaxBitrate?: number;
   /**
-   * Why this session is transcoded; undefined for direct play. Codec/container/height/subtitle/audio-track reasons come from the server,
-   * 'remoteCap' / 'uploadCap' / 'roleCap' / 'manual' / 'network' from the bitrate cap that applied (the client's choice is 'manual' or 'network' via reasonHint),
-   * 'serverBusy' for the copy fallback of a full conversion budget (spec §5.5).
+   * Why this session is transcoded; undefined for direct play, except the `serverBusy` fallback. Codec/container/height/subtitle/audio-track
+   * reasons come from the server, 'remoteCap' / 'uploadCap' / 'roleCap' / 'manual' / 'network' from the bitrate cap that applied (the client's
+   * choice is 'manual' or 'network' via reasonHint). 'serverBusy': the conversion budget was full, so this is the copy (or direct-play)
+   * fallback at the ceiling, whichever of the two it is (spec §5.5).
    */
   transcodeReason?: TranscodeReason;
   /** audio track baked into hlsUrl (explicit audioIndex or the matched audioLang); undefined = source default (Jellyfin: a matched default track is still named in hlsUrl, see dto.ts) */
@@ -618,8 +619,11 @@ export interface MediaServer {
 
   // ---- playback
   playbackInfo(user: MediaUser, itemId: string, opts: PlaybackOptions): Promise<PlaybackDto>;
-  /** resume position + trickplay for the media source playbackInfo picks (runs in parallel with it); null when the lookup fails */
-  playMeta(user: MediaUser, itemId: string): Promise<{ positionTicks: number; trickplay: (mediaSourceId: string) => TrickplayDto | undefined } | null>;
+  /**
+   * resume position + trickplay for the media source playbackInfo picks (runs in parallel with it); null when the lookup fails. `name` /
+   * `seriesName` when the same lookup has them (the conversion budget's label); optional, an implementation may leave them out.
+   */
+  playMeta(user: MediaUser, itemId: string): Promise<{ positionTicks: number; trickplay: (mediaSourceId: string) => TrickplayDto | undefined; name?: string; seriesName?: string } | null>;
   downloadSource(user: MediaUser, itemId: string, opts: { quality: DownloadQuality; audioIndex?: number; maxHeight?: number | null; maxBitrate?: number | null }): Promise<DownloadSourceDto>;
   /**
    * Optional step after playbackInfo() and before the client fetches the master playlist (player and Chromecast): e.g. a transcode

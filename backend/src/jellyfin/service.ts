@@ -417,13 +417,17 @@ export class JellyfinService implements MediaServer {
   }
 
   /** Resume position + raw trickplay info in ONE lookup (runs in parallel with PlaybackInfo); null when the lookup fails. */
-  async playMeta(user: JfUser, itemId: string): Promise<{ positionTicks: number; trickplay: (mediaSourceId: string) => ReturnType<typeof toTrickplayDto> } | null> {
+  async playMeta(user: JfUser, itemId: string): Promise<{ positionTicks: number; trickplay: (mediaSourceId: string) => ReturnType<typeof toTrickplayDto>; name?: string; seriesName?: string } | null> {
     try {
-      const r = await this.json<{ Items: Array<{ Trickplay?: Record<string, any>; UserData?: { PlaybackPositionTicks?: number } }> }>(
+      const r = await this.json<{ Items: Array<{ Name?: unknown; SeriesName?: unknown; Trickplay?: Record<string, any>; UserData?: { PlaybackPositionTicks?: number } }> }>(
         user, `/Items?userId=${user.jellyfin_user_id}&ids=${itemId}&fields=Trickplay&enableUserData=true`);
       const it = r.Items[0];
       if (!it) return null;
-      return { positionTicks: Number(it.UserData?.PlaybackPositionTicks ?? 0), trickplay: (ms) => toTrickplayDto(itemId, ms, it.Trickplay) };
+      // the title for the conversion budget's label comes with the same answer (no extra request)
+      return {
+        positionTicks: Number(it.UserData?.PlaybackPositionTicks ?? 0), trickplay: (ms) => toTrickplayDto(itemId, ms, it.Trickplay),
+        ...(typeof it.Name === 'string' && it.Name ? { name: it.Name } : {}), ...(typeof it.SeriesName === 'string' && it.SeriesName ? { seriesName: it.SeriesName } : {}),
+      };
     } catch {
       return null;
     }

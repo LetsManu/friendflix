@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { hashToken } from '../src/cast.js';
 import { __resetConvMemo } from '../src/convbudget.js';
 import { fingerprint } from '../src/hevcenc.js';
 import { setLive } from '../src/live.js';
 import type { EncoderSettings, ServerSession } from '../src/media/types.js';
 import { writeRole } from '../src/roleWrite.js';
-import { cfg, makeEnv, type TestEnv } from './helpers.js';
+import { ADMIN, cfg, makeEnv, type TestEnv } from './helpers.js';
 
 // Live TV Phase 1, Task 2: film playback and casting are admitted by the shared conversion budget (spec §5.5, rulings 6 and 7).
 // A copy needs no slot; a conversion takes one; a full (or unreadable) budget falls back to a copy, and only a title that truly needs a
@@ -32,19 +33,24 @@ let friendId = '', friendDevice = '';
 let src: Source = H264_8M;
 let n = 0;
 let pb: Array<{ max: number }> = [];
+let lastPs = '';
+/** the series name the fake's /Items lookup reports (episodes) */
+let seriesName: string | undefined;
 let sessions: () => Promise<ServerSession[]> = async () => [];
 let sessionReads = 0;
 
 beforeAll(async () => {
   env = await makeEnv({
-    'GET /Items': () => ({ json: { Items: [{ Id: ID, Name: 'Dunmoor', Type: 'Movie', UserData: { PlaybackPositionTicks: 0 } }], TotalRecordCount: 1 } }),
+    'GET /Items': () => ({ json: { Items: [{ Id: ID, Name: seriesName ? 'Episode 1' : 'Dunmoor', Type: seriesName ? 'Episode' : 'Movie', ...(seriesName ? { SeriesName: seriesName } : {}), UserData: { PlaybackPositionTicks: 0 } }], TotalRecordCount: 1 } }),
+    'POST /Sessions/Playing': () => ({ status: 204 }),
+    'POST /Sessions/Playing/Stopped': () => ({ status: 204 }),
     'GET /Users/[^/]+/Items/[^/]+': () => ({ json: { Id: ID, Name: 'Dunmoor', Type: 'Movie', ImageTags: { Primary: 'x' }, UserData: { PlaybackPositionTicks: 0 } } }),
     'DELETE /Videos/ActiveEncodings': () => ({ status: 204 }),
     'POST /Items/[^/]+/PlaybackInfo': (u) => {
       pb.push({ max: Number(u.searchParams.get('MaxStreamingBitrate')) });
       return {
         json: {
-          PlaySessionId: `ps-budget-${String(++n).padStart(4, '0')}`,
+          PlaySessionId: (lastPs = `ps-budget-${String(++n).padStart(4, '0')}`),
           MediaSources: [{
             Id: 'ms1', Container: src.container, SupportsDirectPlay: true, Bitrate: src.bitrate, RunTimeTicks: 36_000_000_000,
             MediaStreams: [{ Index: 0, Type: 'Video', ...src.video }, { Index: 1, Type: 'Audio', Codec: 'aac', Channels: 2, BitRate: 128_000, IsDefault: true }],
@@ -70,6 +76,7 @@ beforeEach(async () => {
   env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 2 };
   __resetConvMemo();
   src = H264_8M;
+  seriesName = undefined;
   pb = [];
   sessions = async () => [];
   sessionReads = 0;
@@ -116,13 +123,48 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
     const ps = r.json().playSessionId as string;
     expect(r.json().delivery.video).toBe('h264');
     expect(await grants()).toEqual([`conv:grant:${ps}`]); // the hint key is gone, the grant lives on the play session
-    expect(JSON.parse((await env.kv.get(`conv:grant:${ps}`))!)).toMatchObject({ kind: 'film', user: friendId, device: friendDevice, ps });
+    expect(JSON.parse((await env.kv.get(`conv:grant:${ps}`))!)).toMatchObject({ kind: 'film', user: friendId, device: friendDevice, ps, label: 'Dunmoor' });
     expect(await pbinfo(friendId, ps)).toMatchObject({ video: 'h264', conv: true }); // ruling 6: the record says it really converts
+    // an episode is labelled by its series (the title comes with the resume lookup, no extra request)
+    seriesName = 'Saltwater Almanac';
+    const ep = await info(friend);
+    expect(JSON.parse((await env.kv.get(`conv:grant:${ep.json().playSessionId}`))!)).toMatchObject({ label: 'Saltwater Almanac' });
+  });
+
+  it('a 502 resume_unknown after admission leaves no grant', async () => {
+    src = H264_25M;
+    vi.spyOn(env.ctx.jf, 'playMeta').mockResolvedValue(null);
+    vi.spyOn(env.ctx.jf, 'item').mockRejectedValue(new Error('down'));
+    const r = await info(friend);
+    expect(r.statusCode).toBe(502);
+    expect(r.json()).toEqual({ error: 'jellyfin', reason: 'resume_unknown' });
+    expect(sessionReads).toBe(1); // it was admitted (the budget read the list) before the lookup failed
+    expect(await grants()).toEqual([]);
+  });
+
+  it('a stream stopped within its grant gives the slot back (warm-up stop and the stop report)', async () => {
+    src = H264_25M;
+    const report = (s: Sess, ps: string) => env.app.inject({ method: 'POST', url: '/api/playback/stop', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, payload: { itemId: ID, playSessionId: ps, mediaSourceId: 'ms1', positionTicks: 0 } });
+    const warm = (await info(friend)).json().playSessionId as string;
+    expect(await grants()).toEqual([`conv:grant:${warm}`]);
+    const st = await env.app.inject({ method: 'POST', url: '/api/playback/warm/stop', cookies: friend.cookies, headers: { 'x-csrf-token': friend.csrf }, payload: { playSessionId: warm } });
+    expect(st.json()).toEqual({ ok: true, stopped: true });
+    expect(await grants()).toEqual([]);
+    expect(await env.kv.keys('hevcgrant:')).toEqual([]);
+
+    const played = (await info(friend)).json().playSessionId as string;
+    expect(await grants()).toEqual([`conv:grant:${played}`]);
+    // another account's stop report for this play session does not touch the grant
+    expect((await report(admin, played)).statusCode).toBe(200);
+    expect(await grants()).toEqual([`conv:grant:${played}`]);
+    expect((await report(friend, played)).statusCode).toBe(200);
+    expect(await grants()).toEqual([]);
   });
 
   it('full budget falls back to copy', async () => {
     env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
     sessions = async () => [foreign('ps-foreign-1')];
+    const before = stops();
     const r = await info(friend, { maxBitrate: 4_000_000, reasonHint: 'manual' });
     expect(r.statusCode).toBe(200);
     expect(pb.map((p) => p.max)).toEqual([4_000_000, 20_000_000]); // the viewer's own pick is dropped, the role ceiling stays
@@ -130,7 +172,7 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
     expect(await grants()).toEqual([]);
     expect(await pbinfo(friendId, r.json().playSessionId)).toMatchObject({ reason: 'serverBusy', video: 'copy' });
     expect(await pbinfo(friendId, r.json().playSessionId)).not.toHaveProperty('conv');
-    expect(stops()).toBe(0); // the foreign conversion is never stopped
+    expect(stops()).toBe(before); // the foreign conversion is never stopped
   });
 
   it('no copy possible -> 503 server_busy', async () => {
@@ -141,6 +183,7 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
     const r = await info(friend);
     expect(r.statusCode).toBe(503);
     expect(r.json()).toEqual({ error: 'server_busy' });
+    expect(pb).toHaveLength(1); // already at the ceiling: the copy request would plan the same answer, so none is made
     expect(await grants()).toEqual([]);
     expect(await env.kv.keys('hevcgrant:')).toEqual([]);
     expect(stops()).toBe(before); // no stream was fetched, nothing is stopped
@@ -154,7 +197,7 @@ describe('POST /api/playback/info admits conversions against the budget', () => 
       const r = await info(friend);
       expect(r.statusCode).toBe(503);
       expect(r.json()).toEqual({ error: 'server_busy' });
-      expect(pb.map((p) => p.max)).toEqual([4_000_000, 4_000_000]); // the fallback never goes above the role's own cap
+      expect(pb.map((p) => p.max)).toEqual([4_000_000]); // at the role's own cap already: no copy request above it, none at all
     } finally { await writeRole(env.ctx, null, 'friend', { maxBitrate: null }); }
   });
 
@@ -286,5 +329,56 @@ describe('POST /api/cast/session admits conversions against the budget', () => {
     expect(JSON.parse((await env.kv.get(`conv:grant:${ps}`))!)).toMatchObject({ kind: 'film', label: 'Dunmoor', ps });
     const uid = (await env.app.inject({ url: '/api/me', cookies: admin.cookies })).json().id as string;
     expect(await pbinfo(uid, ps)).toMatchObject({ video: 'h264', conv: true });
+  });
+
+  it('a queued cast whose predecessor lost its pin (409 cast_unpinned) leaves no grant', async () => {
+    src = HEVC_SRC;
+    const cur = await cast(admin);
+    expect(cur.statusCode).toBe(200);
+    const curPs = cur.json().playSessionId as string;
+    const ct = /\/media\/c\/([\w-]{43})\//.exec(cur.json().contentUrl)![1]!;
+    const pin = await env.app.inject({ method: 'POST', url: '/internal/authz', headers: { 'x-internal-secret': cfg.INTERNAL_SECRET }, payload: { ct, client: '192.168.1.50' } });
+    expect(pin.statusCode).toBe(200);
+    // the pin vanishes while the queued episode's PlaybackInfo is in flight (after the route's own pin check, before the mint)
+    const orig = env.ctx.jf.playbackInfo.bind(env.ctx.jf);
+    vi.spyOn(env.ctx.jf, 'playbackInfo').mockImplementation(async (...a) => { const r = await orig(...a); await env.kv.del(`castpin:${hashToken(ct)}`); return r; });
+    const r = await cast(admin, { next: true, after: cur.json().castId });
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'cast_unpinned' });
+    expect(lastPs).not.toBe(curPs);
+    expect(await grants()).toEqual([`conv:grant:${curPs}`]); // the running cast keeps its own; the refused one left none
+    expect(await env.kv.keys('hevcgrant:')).toEqual([]);
+  });
+
+  it('a mint that fails after admission leaves no grant', async () => {
+    src = HEVC_SRC;
+    const real = env.kv.set.bind(env.kv);
+    vi.spyOn(env.kv, 'set').mockImplementation((k: string, v: string, ttl?: number) => (k.startsWith('cast:') ? Promise.reject(new Error('down')) : real(k, v, ttl)));
+    const r = await cast(admin);
+    expect(r.statusCode).toBe(500);
+    expect(lastPs).toMatch(/^ps-budget-/);
+    expect(await grants()).toEqual([]);
+  });
+
+  // last: it switches a session's profile
+  it('a profile switch during the mint (409 profile_changed) leaves no grant', async () => {
+    src = HEVC_SRC;
+    const s2 = await env.login(ADMIN);
+    const p = await env.app.inject({ method: 'POST', url: '/api/profiles', cookies: s2.cookies, headers: { 'x-csrf-token': s2.csrf }, payload: { name: 'Kinderinsel' } });
+    expect(p.statusCode, p.body).toBe(201);
+    const pid = p.json().profile.id as string;
+    const orig = env.ctx.jf.playbackInfo.bind(env.ctx.jf);
+    vi.spyOn(env.ctx.jf, 'playbackInfo').mockImplementation(async (...a) => {
+      const r = await orig(...a);
+      await env.app.inject({ method: 'POST', url: `/api/profiles/${pid}/select`, cookies: s2.cookies, headers: { 'x-csrf-token': s2.csrf }, payload: {} });
+      return r;
+    });
+    const before = stops();
+    const r = await cast(s2);
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'profile_changed' });
+    expect(stops()).toBe(before + 1); // the route stops the stream it started, as before
+    expect(await grants()).toEqual([]);
+    expect(await env.kv.keys('hevcgrant:')).toEqual([]);
   });
 });

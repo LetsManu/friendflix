@@ -2,11 +2,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
 import type { Ctx } from './ctx.js';
-import { admitConversion, bindConvGrant, sharedSessionRead } from './convbudget.js';
+import { admitConversion, bindConvGrant, dropConvGrant, sharedSessionRead } from './convbudget.js';
 import { HEVC_SESSIONS_TIMEOUT_MS, bindHevcGrant, hevcGate } from './hevcenc.js';
 import type { HevcGate, PlaybackDto } from './media/types.js';
 
 type Admission = { ok: true } | { ok: false; why: 'full' | 'unknown' };
+
+/**
+ * A stream of this play session is gone (stopped, or its cast token taken back): its HEVC and budget grants go with it, so a stopped
+ * stream does not hold a slot for the rest of its 30-s grant (the server no longer lists it, so the grant alone would count it).
+ */
+export const releaseGrants = async (ctx: Ctx, playSessionId: string): Promise<void> => {
+  await Promise.all([dropConvGrant(ctx, playSessionId), bindHevcGrant(ctx, playSessionId, null)]);
+};
 
 /** Ruling 6: only an answer that converts the picture on the server is admitted (direct play and a copy are never gated). */
 export const convertsOf = (info: PlaybackDto): boolean => !info.directUrl && Boolean(info.delivery) && info.delivery!.video !== 'copy';
@@ -20,19 +28,22 @@ export const convertsOf = (info: PlaybackDto): boolean => !info.directUrl && Boo
  *  - `admit`: after playbackInfo: may this answer be given? A copy or direct play always; a conversion when the budget admits it (the
  *    closure's answer when it asked already). false: the caller asks again with `noConvert` (copy fallback) or answers 503.
  *  - `bind`: the grants follow the answer given (null: nothing is given, both are dropped). Never stops a running conversion.
+ *  - `release`: an error after `bind` (the cast token was taken back, its mint failed): the bound grants of that play session go.
+ * `label` (title; a series by its series name): given at construction, or to `admit` / `bind` when it is known only later.
  */
 export interface FilmGate {
   hevc: () => Promise<HevcGate>;
-  admit: (info: PlaybackDto) => Promise<boolean>;
-  bind: (info: PlaybackDto | null) => Promise<void>;
+  admit: (info: PlaybackDto, label?: string) => Promise<boolean>;
+  bind: (info: PlaybackDto | null, label?: string) => Promise<void>;
+  release: (playSessionId: string) => Promise<void>;
 }
 
 export function filmGate(ctx: Ctx, o: { userId: string; deviceId?: string; label?: string }): FilmGate {
   const grantId = randomUUID();
   const sessions = sharedSessionRead(ctx, HEVC_SESSIONS_TIMEOUT_MS);
   let budget: Promise<Admission> | undefined;
-  const ask = (hevc: boolean): Promise<Admission> => (budget ??= admitConversion(ctx, {
-    kind: 'film', userId: o.userId, ...(o.deviceId ? { deviceId: o.deviceId } : {}), hint: grantId, ...(hevc ? { hevc: true } : {}), ...(o.label ? { label: o.label } : {}), sessions,
+  const ask = (hevc: boolean, label = o.label): Promise<Admission> => (budget ??= admitConversion(ctx, {
+    kind: 'film', userId: o.userId, ...(o.deviceId ? { deviceId: o.deviceId } : {}), hint: grantId, ...(hevc ? { hevc: true } : {}), ...(label ? { label } : {}), sessions,
   }).catch((): Admission => ({ ok: false, why: 'unknown' })));
   return {
     hevc: async () => {
@@ -46,13 +57,14 @@ export function filmGate(ctx: Ctx, o: { userId: string; deviceId?: string; label
       }
       return h;
     },
-    admit: async (info) => (convertsOf(info) ? (await ask(info.delivery!.video === 'hevc')).ok : true),
-    bind: async (info) => {
+    admit: async (info, label = o.label) => (convertsOf(info) ? (await ask(info.delivery!.video === 'hevc', label)).ok : true),
+    bind: async (info, label = o.label) => {
       const hevc = info?.delivery?.video === 'hevc';
       await Promise.all([
         bindHevcGrant(ctx, grantId, info && hevc ? info.playSessionId : null), // a grant only lives on for a stream that converts
-        bindConvGrant(ctx, grantId, info && convertsOf(info) ? info.playSessionId : null, { hevc, ...(o.label ? { label: o.label } : {}) }),
+        bindConvGrant(ctx, grantId, info && convertsOf(info) ? info.playSessionId : null, { hevc, ...(label ? { label } : {}) }),
       ]);
     },
+    release: (playSessionId) => releaseGrants(ctx, playSessionId),
   };
 }
