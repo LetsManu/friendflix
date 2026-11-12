@@ -382,16 +382,16 @@
         <p class="cnt" aria-live="polite">{$t('adminPeople.bulk.selected', { n: selected.size })}</p>
         <form class="pickapply" aria-label={$t('adminPeople.bulk.role')} on:submit|preventDefault={applyRole}>
           <Select label={$t('adminPeople.bulk.role')} options={bulkRoleOptions} bind:value={bulkRole} hideLabel disabled={busyBulk} />
-          <Button type="submit" size="sm" variant="secondary" disabled={busyBulk || !bulkRole}>{$t('adminPeople.bulk.apply')}</Button>
+          <Button type="submit" variant="secondary" disabled={busyBulk || !bulkRole}>{$t('adminPeople.bulk.apply')}</Button>
         </form>
-        <Button variant="secondary" size="sm" icon="lock" disabled={busyBulk} on:click={() => bulk({ action: 'lock' })}>{$t('adminPeople.users.lock')}</Button>
-        <Button variant="secondary" size="sm" icon="unlock" disabled={busyBulk} on:click={() => bulk({ action: 'unlock' })}>{$t('adminPeople.users.unlock')}</Button>
+        <Button variant="secondary" icon="lock" disabled={busyBulk} on:click={() => bulk({ action: 'lock' })}>{$t('adminPeople.users.lock')}</Button>
+        <Button variant="secondary" icon="unlock" disabled={busyBulk} on:click={() => bulk({ action: 'unlock' })}>{$t('adminPeople.users.unlock')}</Button>
         <form class="pickapply" aria-label={$t('adminPeople.access.label')} on:submit|preventDefault={applyAccess}>
           <Select label={$t('adminPeople.access.label')} options={bulkAccessOptions} bind:value={bulkAccess} hideLabel disabled={busyBulk} />
           {#if bulkAccess === 'date'}<Field type="date" label={$t('adminPeople.access.day')} bind:value={bulkDay} hideLabel min={today()} required />{/if}
-          <Button type="submit" size="sm" variant="secondary" disabled={busyBulk || !bulkAccessReady}>{$t('adminPeople.bulk.apply')}</Button>
+          <Button type="submit" variant="secondary" disabled={busyBulk || !bulkAccessReady}>{$t('adminPeople.bulk.apply')}</Button>
         </form>
-        <Button variant="secondary" size="sm" icon="log-out" disabled={busyBulk} on:click={() => bulk({ action: 'revoke' })}>{$t('adminPeople.users.signOut')}</Button>
+        <Button variant="secondary" icon="log-out" disabled={busyBulk} on:click={() => bulk({ action: 'revoke' })}>{$t('adminPeople.users.signOut')}</Button>
         <div class="pickapply" role="group" aria-label={$t('adminPeople.bulk.perm')}>
           <Select label={$t('adminPeople.bulk.perm')} options={bulkPermOptions} bind:value={bulkPerm} hideLabel disabled={busyBulk} />
           <Button variant="secondary" disabled={busyBulk || !bulkPerm} on:click={() => applyPerm(true)}>{$t('adminPeople.rights.allow')}</Button>
@@ -399,7 +399,7 @@
           <Button variant="secondary" disabled={busyBulk || !bulkPerm} on:click={() => applyPerm(null)}>{$t('adminPeople.rights.asRole')}</Button>
         </div>
         <Button variant="secondary" icon="refresh" disabled={busyBulk} on:click={() => bulk({ action: 'repair' })}>{$t('adminPeople.bulk.repair')}</Button>
-        <Button variant="ghost" size="sm" icon="x" on:click={() => (selected = new Map())}>{$t('adminPeople.bulk.clear')}</Button>
+        <Button variant="ghost" icon="x" on:click={() => (selected = new Map())}>{$t('adminPeople.bulk.clear')}</Button>
       </section>
     {/if}
 

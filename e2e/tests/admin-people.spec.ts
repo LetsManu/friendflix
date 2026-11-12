@@ -846,11 +846,11 @@ test.describe('admin people (desktop)', () => {
       await page.goto('/admin/users');
       await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
       const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
-      // the bulk rights buttons are 44 px with a fine pointer too
-      for (const name of ['Erlauben', 'Verbieten', 'Wie Rolle', 'Richtlinien neu anwenden']) {
-        await expect(bar.getByRole('button', { name })).toBeVisible();
-        expect((await bar.getByRole('button', { name }).boundingBox())!.height, name).toBeGreaterThanOrEqual(44);
-      }
+      // every button of the bulk bar is 44 px with a fine pointer too: one height for the whole row
+      await expect(bar.getByRole('button', { name: 'Richtlinien neu anwenden' })).toBeVisible();
+      const heights = await bar.getByRole('button').evaluateAll((bs) => bs.map((b) => [b.textContent?.trim(), Math.round(b.getBoundingClientRect().height)] as const));
+      expect(heights.length).toBeGreaterThanOrEqual(10);
+      for (const [name, h] of heights) expect(h, name ?? '').toBe(44);
       await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('party');
       await bar.getByRole('button', { name: 'Wie Rolle' }).click();
       await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();
