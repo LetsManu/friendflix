@@ -492,6 +492,17 @@ describe('livetv is measured too (Live TV Task 31)', () => {
     expect(r).toMatchObject({ ok: true, jellyfin: { speed: 4.67 }, livetv: { speed: 2.5 } });
   });
 
+  it('a livetv-only run whose livetv measurement fails is noted failed (job error), never ok', async () => {
+    await env.kv.set('conv:bench', JSON.stringify(bench()), 3600);
+    benchAnswer = { status: 502, json: { error: 'encoder_failed' } };
+    expect(await runBenchmark(env.ctx, 'auto', { now, livetvOnly: true })).toEqual({ ok: false, why: 'failed' });
+    expect(JSON.parse((await env.kv.get('conv:bench:last'))!)).toMatchObject({ outcome: 'failed' });
+    await env.kv.del('conv:bench:attempt');
+    benchAnswer = {};
+    expect(await runBenchmark(env.ctx, 'auto', { now, livetvOnly: true })).toMatchObject({ ok: true, livetv: { speed: 4.4 } });
+    expect(JSON.parse((await env.kv.get('conv:bench:last'))!)).toMatchObject({ outcome: 'ok' });
+  });
+
   it('the tick measures again while livetv has no record (one attempt per 30 min)', async () => {
     await env.kv.set('conv:bench', JSON.stringify(bench()), 3600);
     const before = await env.kv.get('conv:bench');

@@ -99,7 +99,7 @@ Live-TV ist der Menüpunkt *Live-TV* (Handy: *Live* in der Tab-Leiste), nur sich
 
 ### Freigabe beim Umschalten
 
-Manche Anbieter erlauben nur eine Verbindung pro Konto. Schaltest du von Sender A auf B und der Start von B würde abgelehnt, beendet FriendFlix A **sofort** (statt nach den üblichen 60 Sekunden), wenn alles Folgende zutrifft: Du warst der einzige Zuschauer von A (Casts und Admin-Testvorschauen zählen als Zuschauer) und keine Aufnahme nutzt A; B läuft noch nicht; und B würde nur deshalb abgelehnt, weil die Quelle von B bei *Max. gleichzeitige Sender* steht und A zur selben Quelle gehört, oder weil A einen Umwandlungsplatz hält, den B braucht. Sonst läuft A noch 60 Sekunden weiter. Jede Freigabe ist ein Ereignis in *Live-Status*.
+Manche Anbieter erlauben nur eine Verbindung pro Konto. Schaltest du von Sender A auf B und der Start von B würde abgelehnt, beendet FriendFlix A **sofort** (statt nach den üblichen 60 Sekunden), wenn alles Folgende zutrifft: Du warst der einzige Zuschauer von A (Casts und Admin-Testvorschauen zählen als Zuschauer) und keine Aufnahme nutzt A; B läuft noch nicht; und B würde nur deshalb abgelehnt, weil die Quelle von B bei *Max. gleichzeitige Sender* steht und A zur selben Quelle gehört, oder weil A einen Umwandlungsplatz hält, den B braucht. Sonst läuft A noch 60 Sekunden weiter. Jede Freigabe ist ein Ereignis in *Live-Status*. Ein Senderwechsel auf einem Chromecast gibt den alten Sender nicht vorzeitig frei: Ein Cast zählt als eigene Ansicht, bei einem Anbieter mit einer Verbindung wird der Wechsel also abgelehnt und A läuft noch 60 Sekunden weiter.
 
 ## Casting
 
@@ -118,7 +118,7 @@ Chromecast und AirPlay spielen einen Live-Sender wie einen Film. Leiste und Fern
 
 ## Fehlersuche
 
-*Admin → Live-TV → Live-Status* zeigt die laufenden Sender (Modus, Zuschauer, seit, Bitrate, Eingangszustand, *Stoppen* und *Neu starten*), das Budget, den Cache-Verbrauch und die letzten 200 Ereignisse; gesendete Feeds haben eine eigene Tabelle (Zustand, Bitrate, Ablehnungen in der letzten Stunde).
+*Admin → Live-TV → Live-Status* zeigt die laufenden Sender (Modus, Zuschauer, seit, Bitrate, Eingangszustand, *Stoppen* und *Neu starten*; *Stoppen* beendet den Sender für seine Zuschauer, die den Fehlerzustand sehen, ein neues Zuschauen wird 60 Sekunden lang abgelehnt), das Budget, den Cache-Verbrauch und die letzten 200 Ereignisse; gesendete Feeds haben eine eigene Tabelle (Zustand, Bitrate, Ablehnungen in der letzten Stunde).
 
 | Was du siehst | Ursache und Abhilfe |
 |---|---|

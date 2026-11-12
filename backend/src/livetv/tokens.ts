@@ -168,6 +168,24 @@ export async function deviceLiveView(ctx: Ctx, userId: string, deviceId: string)
   return t ? { hash: t.hash, channelId: t.rec.channelId } : null;
 }
 
+/** how long an admin's *Stoppen* keeps the channel from starting again (the viewers' players meet the error state meanwhile, spec §7.4) */
+export const ADMIN_STOP_TTL_S = 60;
+/** the marker of an admin stop (`ltv:adminstop:<channelId>`): startOrJoin refuses the channel while it lives; *Neu starten* clears it */
+export const adminStopKey = (channelId: string) => `ltv:adminstop:${channelId}`;
+
+/** Revokes every live token on one channel (all accounts, admin test previews included): an admin stopped it. Returns the count. */
+export async function revokeChannelTokens(ctx: Ctx, channelId: string): Promise<number> {
+  let n = 0;
+  for (const idx of await ctx.kv.keys(idxKey(''))) {
+    for (const t of await listTokens(ctx, idx.slice(idxKey('').length))) {
+      if (t.rec.channelId !== channelId) continue;
+      await revokeLiveToken(ctx, t.hash);
+      n++;
+    }
+  }
+  return n;
+}
+
 /**
  * Revokes the account's tokens, or only those minted on one device; `exceptDevice` spares one device. Called next to revokeCasts
  * (sign-out / revokeSessions, device removal, account lock, profile switch, logout). Returns the count.
