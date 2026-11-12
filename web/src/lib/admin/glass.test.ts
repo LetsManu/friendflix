@@ -621,3 +621,33 @@ describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
     expect(css).toMatch(/\.row\.lifted \{[^}]*background: var\(--fr-solid\); box-shadow: 0 0 0 2px #fff/);
   });
 });
+
+/** Live-TV → Live-Status and Programmführer (Task 26): the stylesheet scan reaches the new files too (glass spec constraints) */
+describe('Live-TV status and guide tabs (Task 26)', () => {
+  const LAYOUT = /(?<![\w-])(width|height|left|top|right|bottom|max-height|min-height|max-width|min-width|margin[\w-]*|padding[\w-]*)(?![\w-])/;
+  const files = ['./livetv/StatusTab.svelte', './livetv/GuideTab.svelte'];
+  const cssOf = (f: string) => [...read(f).matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('they animate nothing but transform and opacity (no keyframes, no colour, background or layout transition)', () => {
+    for (const f of files) {
+      expect(cssOf(f), f).not.toMatch(/@keyframes|animation\s*:/);
+      for (const m of cssOf(f).matchAll(/transition(?:-property)?\s*:([^;}]*)/g)) {
+        if (/^\s*none/.test(m[1]!)) continue;
+        expect(m[1], f).not.toMatch(LAYOUT);
+        expect(m[1], f).not.toMatch(/all|color|background|border|filter|shadow/);
+      }
+    }
+  });
+
+  it('the pieces that load keep their space: the tiles\' figure line, the tables and the guide line reserve a height', () => {
+    const tab = cssOf(files[0]!), guide = cssOf(files[1]!);
+    expect(tab).toMatch(/\.tiles :global\(\.val\) \{ min-height: calc\(1\.6rem \* 1\.15\); \}/);
+    expect(tab).toMatch(/\.table-a \{ min-height: [\d.]+rem; \}/);
+    expect(tab).toMatch(/\.table-b \{ min-height: [\d.]+rem; \}/);
+    expect(guide).toMatch(/\.line \{ min-height: [\d.]+rem;/);
+  });
+
+  it('the grey lines use the glass text levels, never a colour of their own', () => {
+    for (const f of files) expect(cssOf(f), f).not.toMatch(/(?<![-\w])color\s*:\s*(#|rgb)/);
+  });
+});

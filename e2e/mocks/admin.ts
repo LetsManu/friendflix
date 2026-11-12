@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { ltvStatusMock, ltvStatusRoute, type LtvStatusMock } from './livetvStatus.js';
 import { advanceLivetvJob, livetvJob, type LivetvJobOutcome } from './updater.js';
 /**
  * Admin API fixtures for the mocked FriendFlix backend (shapes follow backend/src/routes/admin.ts, seerr.ts, polls.ts,
@@ -170,6 +171,8 @@ export interface LivetvMock {
   posts: Array<{ path: 'enable' | 'disable'; body: any }>;
   /** the installed area's *Quellen* tab (Task 21, built on the contracts of Tasks 15, 16, 20) */
   area: LivetvAreaMock;
+  /** the *Live-Status* tab and the guide counts (Task 26, mocks/livetvStatus.ts) */
+  status: LtvStatusMock;
 }
 /** a source as `GET /api/admin/livetv/sources` answers it (backend SourceView, Task 15): never a URL, only `urlHint` / `epgHint` */
 export interface LtvSourceMock {
@@ -458,7 +461,7 @@ const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemI
 export function livetvMock(): LivetvMock {
   return {
     installed: false, wanted: false, offerHidden: false, updater: true, stack: 'own', ltState: 'absent', ltError: null, ltOld: false, updaterError: null, job: null, tick: 0, jobPolls: 2, outcome: 'succeeded', failCode: null,
-    benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, offLag: 2, lagLeft: 0, lagTo: true, gets: 0, posts: [], area: livetvAreaMock(),
+    benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, offLag: 2, lagLeft: 0, lagTo: true, gets: 0, posts: [], area: livetvAreaMock(), status: ltvStatusMock(),
   };
 }
 
@@ -809,7 +812,7 @@ function livetvRoute(lt: LivetvMock, m: string, p: string, sp: URLSearchParams, 
     if (path === 'enable') lt.wanted = true; else lt.wanted = false;
     return J({ job: lt.job, wanted: path === 'enable' }, 202);
   }
-  return livetvAreaRoute(lt.area, lt.installed, m, p, sp, body, J);
+  return ltvStatusRoute(lt.status, m, p, J) ?? livetvAreaRoute(lt.area, lt.installed, m, p, sp, body, J);
 }
 
 /**

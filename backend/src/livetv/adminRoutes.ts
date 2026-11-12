@@ -10,11 +10,13 @@ import { requireAdmin } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
 import { dropLivetvProof } from './client.js';
 import { detectLivetv, enableBenchmark, livetvInstalled, livetvSystem } from './detect.js';
+import { LivetvError } from './client.js';
 import { gpuAdvice } from './gpu.js';
 import {
   ChannelRefusal, LOGO_MAX_BYTES, LOGO_MIMES, MAX_BULK_TEST, adminChannel, bulkBody, bulkChannels, bulkTest, channelPatch, channelQuery, dropLogo, listChannels,
   orderBody as channelOrderBody, orderChannels, patchChannel, setLogo, testChannel,
 } from './adminChannels.js';
+import { liveStatus, stopStream } from './status.js';
 import { isOwnFeeds } from './channels.js';
 import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource } from './refresh.js';
@@ -520,5 +522,26 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
         return (await setLogo(ctx, req.user!.id, cid, type, req.body)) ?? reply.code(404).send({ error: 'not_found' });
       } catch (e) { return channelRefused(e, reply); }
     });
+  });
+
+  // ---- Live-Status (spec §9.5): one answer for the tab; never a URL, a stream key or a stream id ----
+
+  app.get('/api/admin/livetv/status', admin, async (_req, reply) => {
+    reply.header('cache-control', 'no-store');
+    return liveStatus(ctx);
+  });
+
+  // *Stoppen* (and *Neu starten*: the next watcher starts the channel again); audited with the channel id only
+  app.post('/api/admin/livetv/streams/:channelId/stop', admin, async (req, reply) => {
+    const cid = id.safeParse((req.params as { channelId?: string }).channelId).data;
+    if (!cid) return reply.code(404).send({ error: 'not_found' });
+    try {
+      await stopStream(ctx, cid);
+    } catch (e) {
+      if (e instanceof LivetvError) return reply.code(503).send({ error: 'livetv_unreachable' });
+      throw e;
+    }
+    await audit(ctx, req.user!.id, 'livetv.stream.stop', cid, { fields: [] });
+    return { ok: true };
   });
 }

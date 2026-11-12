@@ -6,8 +6,8 @@
    * "Nicht mehr anzeigen"). While a job runs the page shows its steps and asks GET /api/admin/livetv/state every 3 s; when the
    * container is detected the area appears without a reload. Installed: the area's tabs in the URL (`?tab=`, spec §9; *Quellen* is
    * the default and has no parameter; on a phone the tabs are a scrolling chip row): *Quellen* (SourcesTab), *Kanäle*, *Gruppen &
-   * Rechte*, *Programmführer* (Tasks 23–26 fill them) and *Live-Status* (MiniStatus until Task 26: version, GPU advice, the speed
-   * measurement's outcome, "Live-TV ausschalten …"). The shell and the page's cards own the <h1> / <title>.
+   * Rechte*, *Programmführer* (GuideTab: the match counts; Tasks 23–25 fill the others) and *Live-Status* (StatusTab: budget, tiles, running
+   * channels, events, pushed streams, version, GPU advice, the speed measurement's outcome, "Live-TV ausschalten …"). The shell and the page's cards own the <h1> / <title>.
    */
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -19,9 +19,10 @@
   import { refreshSummary } from '#lib/admin/summary';
   import ChannelsTab from '#lib/admin/livetv/ChannelsTab.svelte';
   import EnableCard from '#lib/admin/livetv/EnableCard.svelte';
-  import MiniStatus from '#lib/admin/livetv/MiniStatus.svelte';
+  import GuideTab from '#lib/admin/livetv/GuideTab.svelte';
   import OffDialog from '#lib/admin/livetv/OffDialog.svelte';
   import SourcesTab from '#lib/admin/livetv/SourcesTab.svelte';
+  import StatusTab from '#lib/admin/livetv/StatusTab.svelte';
   import { TABS, tabOf, type Tab } from '#lib/admin/livetv/sources';
   import { pageStore } from '#lib/page';
   import { POLL_MS, SETTLE_MS, enableMode, errorKey, jobRunning, livetvJob, phase, settleAfter, settled, type LivetvAdminState, type LivetvJob, type Settle } from '#lib/admin/livetv/state';
@@ -129,7 +130,8 @@
   <div id="ltv-panel" role="tabpanel" aria-labelledby="ltv-tab-{tab}" tabindex="-1">
     {#if tab === 'sources'}<SourcesTab />
     {:else if tab === 'channels'}<ChannelsTab />
-    {:else if tab === 'status'}<MiniStatus {s} stopping={ph === 'stopping'} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />
+    {:else if tab === 'guide'}<GuideTab />
+    {:else if tab === 'status'}<StatusTab {s} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />
     {:else}<AdminCard><p class="soon">{$t('adminLive.tabs.soon')}</p></AdminCard>{/if}
   </div>
 {:else}
