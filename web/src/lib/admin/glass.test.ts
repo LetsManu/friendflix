@@ -601,7 +601,7 @@ describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
   });
 
   it('a mouse move with no button down is a pointer up: a swallowed release never leaves a row stuck lifted', () => {
-    const fn = src.match(/function onMove\(e: PointerEvent\) \{[\s\S]*?\n  \}/)![0];
+    const fn = src.match(/function onMove\(e: PointerEvent\) \{[\s\S]*?\n {2}\}/)![0];
     expect(fn).toMatch(/e\.pointerType === 'mouse' && e\.buttons === 0/);
     expect(fn).toMatch(/void onUp\(e\)/);
     // the check comes before the move is used
