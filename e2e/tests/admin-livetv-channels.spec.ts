@@ -412,7 +412,7 @@ test.describe('admin: Live-TV, Kanäle (refusals)', () => {
   test('a failed load says so and retries', async ({ page, api }) => {
     let fail = true;
     await page.route('**/api/admin/livetv/channels?**', async (r) => {
-      if (fail && !r.request().url().includes('limit=200')) { fail = false; return r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"boom"}' }); }
+      if (fail && new URL(r.request().url()).searchParams.get('limit') !== '200') { fail = false; return r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"boom"}' }); }
       return r.fallback();
     });
     await page.goto('/admin/livetv?tab=channels');

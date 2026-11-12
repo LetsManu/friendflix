@@ -576,7 +576,9 @@ describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
     expect([...src.matchAll(/export let (\w+)/g)].map((m) => m[1])).toEqual(['rows', 'save', 'locked', 'dirty']); // dirty is the one output (bind:dirty): the shown order is not stored yet
     expect(src).toMatch(/export let save: \(ids: string\[\]\) => Promise<void>;/);
     expect(src).toMatch(/runAction\(\{ key: busyKey, run: \(\) => save\(ids\)/);
-    expect(src.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, '')).not.toMatch(/api\(|fetch\(|\/order/);
+    let code = src, prev: string;
+    do { prev = code; code = code.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, ''); } while (code !== prev); // until stable: no comment survives
+    expect(code).not.toMatch(/api\(|fetch\(|\/order/);
   });
 
   it('animates transform only (the lifted row follows by transform, the others slide by FLIP) and has no keyframes', () => {
@@ -638,7 +640,9 @@ describe('Favoriten ordnen sheet (Task 38)', () => {
     expect([...src.matchAll(/export let (\w+)/g)].map((m) => m[1])).toEqual(['rows', 'save', 'trigger', 'tv']);
     expect(src).toMatch(/export let save: \(ids: string\[\]\) => Promise<void>;/);
     expect(src).toMatch(/runAction\(\{ key: busyKey, run: \(\) => save\(ids\), success: tr\('common\.saved'\), undo: \{ run: \(\) => save\(prev\) \} \}\)/);
-    expect(src.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, '')).not.toMatch(/api\(|fetch\(|\/api\//);
+    let code = src, prev: string;
+    do { prev = code; code = code.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, ''); } while (code !== prev); // until stable: no comment survives
+    expect(code).not.toMatch(/api\(|fetch\(|\/api\//);
   });
 
   it('animates transform only, has no keyframes, and the lifted row and the FLIP rows move by transform', () => {
