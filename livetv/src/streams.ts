@@ -10,11 +10,12 @@ import { SegmentWindow, type SegmentExt } from './window.js';
 
 /**
  * The shared streams of spec §3.3 (plan rulings 23, 47): one stream per channel for every viewer, started idempotently by the
- * backend (`POST /v1/streams`). A stream is a *driver* (one per mode: passthrough here, remux and transcode in Task 28) feeding
- * one `SegmentWindow` under `<root>/<streamKey>/`. What every mode shares lives here, not in the drivers: the window and its
- * playlist file, the cache cap, the reconnect backoff (2, 4, 8, 15, 30 s, then every 30 s) with its `input_lost` / `input_back`
- * events, the failed state and the safety net (no `/s/` fetch for 180 s → stop). Logs name the channel id only: never the
- * stream key (it is the credential of `/s/`), an input URL or a path.
+ * backend (`POST /v1/streams`). A stream is a *driver* (one per mode: passthrough from Task 27, remux and transcode from Task 28,
+ * registered by `start()` in server.ts) feeding one `SegmentWindow` under `<root>/<streamKey>/`. What every mode shares lives
+ * here, not in the drivers: the window and its playlist file, the cache cap, the reconnect backoff (2, 4, 8, 15, 30 s, then every
+ * 30 s) with its `input_lost` / `input_back` events, the failed state and the safety net (no `/s/` fetch for 180 s → stop). The
+ * `onSegment` / `onStop` hooks feed the previews (Task 28). Logs name the channel id only: never the stream key (it is the
+ * credential of `/s/`), an input URL or a path.
  */
 export type Mode = 'passthrough' | 'remux' | 'transcode';
 export interface StartBody { channelId: string; input: StreamInput; mode: Mode; encoder: Encoder; dvrSeconds: number /* 0–7200, ruling 47 */; maxBitrate: number }
@@ -73,6 +74,7 @@ export interface DriverContext {
   /** `<root>/<streamKey>`: the driver stores its segment files (and `init.mp4`) here, under names it chooses */
   readonly dir: string;
   readonly input: StreamInput;
+  /** the requested mode */
   readonly mode: Mode;
   readonly encoder: Encoder;
   readonly maxBitrate: number;
@@ -89,6 +91,8 @@ export interface DriverContext {
   segment(s: { file: string; duration: number; bytes: number; discontinuity?: boolean; pdt?: number; init?: number }): Promise<number>;
   /** the stream's bitrate in bit/s (a variant's BANDWIDTH, an encoder's rate) */
   bitrate(bps: number | null): void;
+  /** the mode the stream really runs in, when it differs from the requested one (a transcode that probed copyable: spec §7.4) */
+  runsAs(mode: Mode): void;
   /** the input failed: the first failure of an outage records `input_lost`; answers the delay before the next attempt */
   lost(): number;
   /** the input works (again): ends an outage with `input_back` and its seconds, resets the backoff */
@@ -99,7 +103,7 @@ export interface DriverContext {
   sleep(ms: number): Promise<boolean>;
   /**
    * a log line about this stream, prefixed with the channel id. Fixed strings and numbers only: never provider text (a URL, a
-   * playlist line, an HTTP message) or ffmpeg output or arguments (Task 28 logs stderr only after `scrubLine`, and not through here).
+   * playlist line, an HTTP message) or ffmpeg output or arguments (ffmpeg stderr goes through run.ts `stderrLog`, not through here).
    */
   log(msg: string): void;
 }
@@ -115,6 +119,10 @@ export interface StreamsOptions {
   store?: Store;
   log?: Log;
   now?: () => number;
+  /** a segment reached a running stream's window (its file path): the previews */
+  onSegment?(channelId: string, path: string): void;
+  /** a stream stopped (any reason) */
+  onStop?(channelId: string): void;
 }
 
 interface Entry {
@@ -181,6 +189,12 @@ export class Streams {
     return [...this.byChannel.values()].map((e) => ({ ...e.view, errors: e.view.errors.map((x) => ({ ...x })) }));
   }
 
+  /** whether this channel's stream runs: listed and not failed (starting, running or reconnecting) */
+  running(channelId: string): boolean {
+    const e = this.byChannel.get(channelId);
+    return e !== undefined && e.view.state !== 'failed';
+  }
+
   /** stops the stream (its driver ends) and removes its files; a channel that is not running is fine */
   async stop(channelId: string, reason = 'stopped'): Promise<void> {
     const e = this.byChannel.get(channelId);
@@ -189,6 +203,7 @@ export class Streams {
     this.byKey.delete(e.view.streamKey);
     if (e.timer) clearTimeout(e.timer);
     e.ac.abort();
+    try { this.o.onStop?.(channelId); } catch { /* a hook's bug never breaks the stop */ }
     await e.done;
     await e.writing;
     await this.store.removeDir(e.dir).catch(() => {});
@@ -249,9 +264,17 @@ export class Streams {
         await Promise.all(gone.map((f) => this.store.remove(join(e.dir, f)).catch(() => {})));
         await this.writePlaylist(e);
         await this.cap();
+        if (live()) {
+          try { this.o.onSegment?.(id, join(e.dir, s.file)); } catch { /* a hook's bug never breaks the stream */ }
+        }
         return seq;
       },
       bitrate: (bps) => { e.view.bitrate = bps; },
+      runsAs: (mode) => {
+        if (!live() || e.view.mode === mode) return;
+        e.view.mode = mode;
+        this.log(`stream ${id} runs as ${mode}`);
+      },
       lost: () => {
         if (e.outageAt === null && live()) {
           e.outageAt = this.now();

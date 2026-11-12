@@ -10,12 +10,15 @@ import { dnsLookup, ownSubnets } from './netguard.js';
 import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
 import { clearStale } from './cache.js';
 import { passthroughDriver } from './passthrough.js';
+import { Previews } from './preview.js';
+import { remuxDriver } from './remux.js';
+import { benchmarkRoutes } from './routes/benchmark.js';
 import { fetchRoutes } from './routes/fetch.js';
 import { fileRoutes } from './routes/files.js';
 import { streamRoutes } from './routes/streams.js';
 import { createRun } from './run.js';
 import { Streams } from './streams.js';
-import { systemView, type SystemView } from './system.js';
+import { encoders, systemView, type Encoder, type SystemView } from './system.js';
 
 /**
  * livetv's internal API (spec §3.2; only on the internal `livetv` network, port 8090). `/healthz` is open; every `/v1/*` request
@@ -163,12 +166,29 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
   const run = createRun();
   const system = systemView({ fs, run, cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts });
+  // the encoders /v1/system lists, asked once (a failed or empty answer is asked again next time)
+  let encoderList: Encoder[] | null = null;
+  const listEncoders = async (): Promise<Encoder[]> => {
+    if (!encoderList) {
+      const l = await encoders(run);
+      if (l.length) encoderList = l;
+    }
+    return encoderList ?? [];
+  };
   // the production guard: the system resolver and this container's own subnets, read once here (never a test `dial`)
   const guard = { lookup: dnsLookup, own: ownSubnets() };
   // the DVR cache: directories of a previous process are left over (its streams are gone)
   void clearStale(cfg.cacheDir);
-  const streams = new Streams({ root: cfg.cacheDir, maxBytes: cfg.cacheMaxBytes, drivers: { passthrough: passthroughDriver({ guard }) }, log });
-  const routes = [...fetchRoutes({ guard, run }), ...streamRoutes(streams), ...fileRoutes(streams)];
+  const previews = new Previews({ run, log });
+  const media = remuxDriver({ run, guard, log });
+  const streams = new Streams({
+    root: cfg.cacheDir, maxBytes: cfg.cacheMaxBytes, drivers: { passthrough: passthroughDriver({ guard }), remux: media, transcode: media }, log,
+    onSegment: (id, path) => previews.segment(id, path), onStop: (id) => previews.drop(id),
+  });
+  const routes = [
+    ...fetchRoutes({ guard, run }), ...streamRoutes(streams, { encoders: listEncoders, previews }),
+    ...benchmarkRoutes({ run, encoders: listEncoders, log }), ...fileRoutes(streams),
+  ];
   const app = createApp({ verifier, version: cfg.version, bootId: randomBytes(8).toString('hex'), system, routes, warn: log });
   const server = createServer((req, res) => { void app(req, res); });
   server.requestTimeout = 10_000;

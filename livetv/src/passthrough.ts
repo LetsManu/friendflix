@@ -49,7 +49,7 @@ const int = (s: string): number | null => (/^\d{1,15}$/.test(s) ? Number(s) : nu
  * with BYTERANGE): segments are whole files here.
  */
 export function parseMedia(text: string): MediaPlaylist | null {
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/).map((l) => l.trim());
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).map((l) => l.trim());
   if (lines[0] !== '#EXTM3U') return null;
   let target: number | null = null;
   let seq = 0;
