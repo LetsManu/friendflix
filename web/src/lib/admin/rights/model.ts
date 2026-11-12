@@ -92,6 +92,8 @@ export const FIELD_KINDS: Readonly<Record<string, FieldKind>> = {
 };
 
 export const fieldLabel = (key: string): string => trDynamic(`adminPeople.roles.f.${key}`);
+/** the Vergleich question of a right: a natural sentence per switch (`roles.q.<key>`), else "<label> je Rolle" (`compareQValue`) */
+export const compareQuestion = (key: string): string => (hasKey(`adminPeople.roles.q.${key}`) ? trDynamic(`adminPeople.roles.q.${key}`) : trDynamic('adminPeople.roles.compareQValue', { right: fieldLabel(key) }));
 
 /**
  * the accessible name of a cell: "Gast, Altersfreigabe: ab 12, geändert" (set in the role) or "…, nicht gespeichert" (staged);

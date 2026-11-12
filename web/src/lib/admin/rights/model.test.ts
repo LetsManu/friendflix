@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import {
-  cellName, cellText, changedFromText, partialText, peopleLine, policyLine, reviewLines, saveBarText, stageBodies, stageCounts, stageSet, summaryLine, visibleFields,
+  cellName, cellText, changedFromText, compareQuestion, fieldLabel, partialText, peopleLine, policyLine, reviewLines, saveBarText, stageBodies, stageCounts, stageSet, summaryLine, visibleFields,
   type MatrixField, type MatrixRole, type RoleMatrix, type Stage,
 } from './model';
 
@@ -178,5 +178,25 @@ describe('staging the name and the invitable switch', () => {
       { role: 'Gast', field: 'Name', from: 'Gast', to: 'Besucher' },
     ]);
     expect(reviewLines(stageSet({}, m, 'guest', 'invitable', false), m)).toEqual([{ role: 'Gast', field: 'Für Einladungen wählbar', from: 'erlaubt', to: 'nicht erlaubt' }]);
+  });
+});
+
+describe('compareQuestion', () => {
+  const SWITCHES = ['transcoding', 'download', 'requests', 'party', 'partySchedule', 'comments', 'cast', 'liveTv', 'liveRecord'];
+  it('every switch has its own question in every language, never the label dropped into a "who may"', async () => {
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
+      await setLocale(l);
+      for (const k of SWITCHES) {
+        const q = compareQuestion(k);
+        expect(q, `${l}.${k}`).not.toMatch(/^adminPeople|\{/);
+        expect(q, `${l}.${k}`).not.toMatch(/Wer darf Darf|Who may May|Wer darf (Auf|Mehr)/);
+        expect(q.endsWith('?'), `${l}.${k}`).toBe(true);
+      }
+    }
+  });
+  it('a right without a question falls back to "<label> je Rolle"', async () => {
+    await setLocale('de');
+    expect(compareQuestion('maxStreams')).toBe(`${fieldLabel('maxStreams')} je Rolle`);
+    expect(compareQuestion('download')).toBe('Wer darf herunterladen?');
   });
 });
