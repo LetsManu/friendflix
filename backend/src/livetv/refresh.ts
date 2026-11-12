@@ -6,6 +6,7 @@ import { m } from '../i18n.js';
 import { notifyAdmins } from '../notify.js';
 import { isOwnFeeds } from './channels.js';
 import { LivetvError, livetvCall } from './client.js';
+import { livetvInstalled } from './detect.js';
 import { pushEvent } from './events.js';
 import { mergeImport, type ImportResult } from './import.js';
 import { importLogos } from './logos.js';
@@ -26,6 +27,10 @@ const TICK_LOCK_TTL_S = 30 * 60;
 /** consecutive failures; kept long enough for three weekly refreshes in a row */
 const FAILS_TTL_S = 30 * 24 * 3600;
 const NOTIFY_AFTER = 3;
+/** a source whose last refresh failed is tried again after this, or after its interval when that is shorter */
+const RETRY_MS = 3600_000;
+/** livetv itself was not reached: not the provider's fault, so not counted towards the admin notice */
+const NOT_COUNTED: readonly string[] = ['livetv_unreachable'];
 /** livetv's own M3U timeout is 60 s; the backend waits a little longer so livetv answers the code */
 const M3U_TIMEOUT_MS = 75_000;
 /** the logo step of one refresh stops after 5 minutes; the rest is fetched by the next refresh */
@@ -109,14 +114,21 @@ async function importList(ctx: Ctx, source: SourceRow, url: string): Promise<Imp
   }
   const r = await mergeImport(ctx, source, fetched);
   if ('error' in r) throw new RefreshFailed(r.error);
-  await storeLogos(ctx, source, fetched.entries);
+  // the logos of the entries the merge kept (mergeImport drops skipped groups again); the merge has committed, so a failing logo step
+  // does not turn the refresh into a failure: the logos it missed are fetched by the next refresh
+  const skip = new Set(source.skip_groups);
+  await storeLogos(ctx, source, fetched.entries.filter((e) => !e.group || !skip.has(e.group))).catch(() => undefined);
   return r;
 }
 
-/** records a failure: `last_error`, the event, the failure count and, from the third in a row, the admin notification */
+/**
+ * records a failure: `last_error`, the event, the failure count and, from the third in a row, the admin notification. livetv not being
+ * reached (`livetv_unreachable`) is recorded and pushed but not counted: it is not the provider list that fails.
+ */
 async function failed(ctx: Ctx, source: SourceRow, code: string, now: Date): Promise<void> {
   await ctx.db.query('update livetv_sources set last_refresh_at = $2, last_error = $3 where id = $1', [source.id, now, code]);
   await pushEvent(ctx, { level: 'warn', code: 'source_refresh_failed', sourceId: source.id, reason: code });
+  if (NOT_COUNTED.includes(code)) return;
   const n = await ctx.kv.incr(failsKey(source.id), FAILS_TTL_S);
   if (n >= NOTIFY_AFTER) {
     // the source's name only (an admin's label), never its URL; at most once a day per source while it keeps failing
@@ -142,11 +154,12 @@ export async function refreshSource(ctx: Ctx, id: string, trigger: 'tick' | 'adm
   try {
     const source = (await ctx.db.query<SourceRow>('select * from livetv_sources where id = $1', [id])).rows[0];
     if (!source || isOwnFeeds(source.kind) || !source.url_enc) return;
-    const { url } = await sourceSecrets(ctx, id);
-    if (!url) return;
     const now = new Date();
     let r: ImportResult;
     try {
+      // inside the try: a URL that cannot be decrypted (a changed key) is recorded on the source as `internal`, not rethrown unseen
+      const { url } = await sourceSecrets(ctx, id);
+      if (!url) return;
       r = await importList(ctx, source, url);
     } catch (e) {
       if (e instanceof RefreshFailed) return await failed(ctx, source, e.code, now);
@@ -168,30 +181,44 @@ export async function refreshSource(ctx: Ctx, id: string, trigger: 'tick' | 'adm
   }
 }
 
-/** due: never refreshed (or marked due by an edit, Task 15) or the last attempt is older than the source's interval */
-function due(s: { refresh: Refresh; last_refresh_at: Date | null }, now: number): boolean {
+/**
+ * due: never refreshed (or marked due by an edit, Task 15), or the last attempt is older than the source's interval; after a failed
+ * attempt (`last_error` set) older than min(interval, 1 h), so three failures in a row reach the admins within hours, not days
+ */
+function due(s: { refresh: Refresh; last_refresh_at: Date | null; last_error: string | null }, now: number): boolean {
   if (s.refresh === 'manual') return false;
-  return s.last_refresh_at === null || now - s.last_refresh_at.getTime() >= REFRESH_INTERVAL_MS[s.refresh];
+  if (s.last_refresh_at === null) return true;
+  const interval = REFRESH_INTERVAL_MS[s.refresh];
+  return now - s.last_refresh_at.getTime() >= (s.last_error === null ? interval : Math.min(interval, RETRY_MS));
+}
+
+/** whether a refresh of the source is running now (its single-flight lock is held) */
+export async function refreshRunning(ctx: Pick<Ctx, 'kv'>, id: string): Promise<boolean> {
+  return (await ctx.kv.get(lockKey(id))) !== null;
 }
 
 /**
- * Every 5 minutes (server.ts, behind op()): refreshes the enabled provider sources that are due, one after the other. Sources with
- * refresh 'manual' are refreshed only by the admin. The own-feeds source is skipped first, before the due check (F16): it has no list,
- * so it is never fetched and never fails. One tick at a time across processes (`ltv:refresh-tick`).
+ * Every 5 minutes (server.ts, behind op()): refreshes the enabled provider sources that are due, one after the other. Nothing runs
+ * while livetv is not installed (detection), else every source would fail. Sources with refresh 'manual' are refreshed only by the
+ * admin. The own-feeds source is skipped first, before the due check (F16): it has no list, so it is never fetched and never fails.
+ * One tick at a time across processes (`ltv:refresh-tick`, renewed after each source).
  */
 export async function livetvRefreshTick(ctx: Ctx): Promise<void> {
+  if (!livetvInstalled(ctx)) return;
   const token = randomBytes(12).toString('hex');
   if (!(await ctx.kv.setnx(TICK_LOCK, token, TICK_LOCK_TTL_S))) return;
   let first: unknown;
   try {
-    const rows = (await ctx.db.query<Pick<SourceRow, 'id' | 'kind' | 'refresh' | 'enabled' | 'last_refresh_at'> & { has_url: boolean }>(
-      `select id, kind, refresh, enabled, last_refresh_at, url_enc is not null as has_url
+    const rows = (await ctx.db.query<Pick<SourceRow, 'id' | 'kind' | 'refresh' | 'enabled' | 'last_refresh_at' | 'last_error'> & { has_url: boolean }>(
+      `select id, kind, refresh, enabled, last_refresh_at, last_error, url_enc is not null as has_url
          from livetv_sources order by position, created_at, id`)).rows;
     for (const s of rows) {
       if (isOwnFeeds(s.kind) || !s.has_url) continue; // F16: no list to fetch, never an error
       if (!s.enabled || !due(s, Date.now())) continue;
       // one failing source must not stop the others; the first unexpected error is rethrown at the end (jobFailed logs it)
       try { await refreshSource(ctx, s.id, 'tick'); } catch (e) { first ??= e; }
+      // one refresh can take minutes: keep the tick lock while this process still owns it
+      await ctx.kv.refreshIfEquals(TICK_LOCK, token, TICK_LOCK_TTL_S);
     }
 
     // ---- Task 17: EPG due (never rarer than every 24 h, also for 'manual' sources) goes here ----

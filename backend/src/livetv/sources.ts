@@ -281,7 +281,7 @@ const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.
  * Changes the fields `patch` names: an absent `url`/`epgUrl` stays as stored, `epgUrl: null` removes it. The stored URLs are checked
  * again against the resulting `allowLan` (turning *LAN erlauben* off under a LAN address is refused). The own-feeds source has no list
  * and no EPG URL (`invalid`). A changed `skipGroups`, `numbering` or `numberBase` marks the source due (`last_refresh_at` cleared), so
- * the next refresh tick re-imports it. null = no such source.
+ * the next refresh tick re-imports it. A new `url` drops `last_counts.listed`, the shrink guard's reference. null = no such source.
  */
 export async function updateSource(ctx: WriteCtx, actor: string, id: string, patch: Partial<SourceBody>): Promise<SourceView | null> {
   const found = await write(ctx, async (c) => {
@@ -320,6 +320,8 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
       || (patch.numbering !== undefined && patch.numbering !== s.numbering)
       || (patch.numberBase !== undefined && patch.numberBase !== s.number_base);
     if (due) set.push('last_refresh_at = null');
+    // another list: the 20 % shrink guard must not compare it with the old one (it would refuse a smaller list for ever)
+    if (patch.url !== undefined) set.push("last_counts = last_counts - 'listed'");
     set.push('updated_at = now()');
     vals.push(id);
     await c.query(`update livetv_sources set ${set.join(', ')} where id = $${vals.length}`, vals);

@@ -21,34 +21,46 @@ const HASH_RE = /^[0-9a-f]{64}$/;
 const sha256 = (b: string | Uint8Array) => createHash('sha256').update(b).digest('hex');
 const memoKey = (url: string) => `ltvlogo:${sha256(url)}`;
 
+/** the answer's bytes, null when they exceed MAX_BYTES (read no further than that; livetv caps logos too, this keeps the bound local) */
+async function readCapped(r: Response): Promise<Buffer | null> {
+  const len = Number(r.headers.get('content-length'));
+  if (Number.isFinite(len) && len > MAX_BYTES) { await r.body?.cancel().catch(() => undefined); return null; }
+  if (!r.body) return Buffer.alloc(0);
+  const parts: Uint8Array[] = [];
+  let n = 0;
+  const reader = r.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    n += value.length;
+    if (n > MAX_BYTES) { await reader.cancel().catch(() => undefined); return null; }
+  }
+  return Buffer.concat(parts);
+}
+
 /** the bytes livetv answered, or null when they are not a logo (type, size) */
 async function fetchBytes(ctx: Ctx, url: string, allowLan: boolean): Promise<{ mime: string; bytes: Buffer } | null> {
   const r = await livetvStream(ctx, '/v1/fetch/logo', { url, allowLan }, { timeoutMs: TIMEOUT_MS });
   const mime = (r.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
-  let bytes: Buffer;
-  try { bytes = Buffer.from(await r.arrayBuffer()); } catch { throw new LivetvError(null, 'unreachable'); }
-  if (!MIMES.includes(mime) || bytes.length === 0 || bytes.length > MAX_BYTES) return null;
+  let bytes: Buffer | null;
+  try { bytes = await readCapped(r); } catch { throw new LivetvError(null, 'unreachable'); }
+  if (!MIMES.includes(mime) || !bytes || bytes.length === 0) return null;
   return { mime, bytes };
 }
 
 /**
- * The stored logo hash for `url`, fetching it through livetv unless a fetch in the last 7 days found it (ruling 28). null = no logo:
- * the provider refused it (remembered a day) or livetv was not reached (not remembered, the next refresh tries again).
+ * Fetches the logo through livetv and stores it; the memo records the hash (7 days) or a refusal (a day). A refusal is a 4xx answer
+ * (the provider's logo: not found, not an image, too big) or bytes that are no logo; livetv not reached or failing itself (5xx) is not
+ * remembered, the next refresh tries again.
  */
-export async function importLogo(ctx: Ctx, url: string, allowLan: boolean): Promise<string | null> {
+async function fetchAndStore(ctx: Ctx, url: string, allowLan: boolean): Promise<string | null> {
   const key = memoKey(url);
-  const memo = await ctx.kv.get(key);
-  if (memo === MISS) return null;
-  if (memo && HASH_RE.test(memo)) {
-    // the daily prune drops logos no channel uses: a remembered hash counts only while its bytes are still there
-    const has = await ctx.db.query('select 1 from livetv_logos where hash = $1', [memo]);
-    if (has.rowCount) return memo;
-  }
   let got: { mime: string; bytes: Buffer } | null;
   try {
     got = await fetchBytes(ctx, url, allowLan);
   } catch (e) {
-    if (e instanceof LivetvError && e.status !== null) { await ctx.kv.set(key, MISS, MISS_TTL_S); return null; }
+    if (e instanceof LivetvError && e.status !== null && e.status >= 400 && e.status < 500) { await ctx.kv.set(key, MISS, MISS_TTL_S); return null; }
     if (e instanceof LivetvError) return null;
     throw e;
   }
@@ -57,6 +69,21 @@ export async function importLogo(ctx: Ctx, url: string, allowLan: boolean): Prom
   await ctx.db.query('insert into livetv_logos(hash, mime, bytes) values ($1, $2, $3) on conflict do nothing', [hash, got.mime, got.bytes]);
   await ctx.kv.set(key, hash, MEMO_TTL_S);
   return hash;
+}
+
+/**
+ * The stored logo hash for `url`, fetching it through livetv unless a fetch in the last 7 days found it (ruling 28). null = no logo:
+ * the provider refused it (remembered a day) or livetv was not reached or failed (not remembered, the next refresh tries again).
+ */
+export async function importLogo(ctx: Ctx, url: string, allowLan: boolean): Promise<string | null> {
+  const memo = await ctx.kv.get(memoKey(url));
+  if (memo === MISS) return null;
+  if (memo && HASH_RE.test(memo)) {
+    // the daily prune drops logos no channel uses: a remembered hash counts only while its bytes are still there
+    const has = await ctx.db.query('select 1 from livetv_logos where hash = $1', [memo]);
+    if (has.rowCount) return memo;
+  }
+  return fetchAndStore(ctx, url, allowLan);
 }
 
 /**
@@ -85,7 +112,7 @@ export async function importLogos(ctx: Ctx, urls: readonly string[], allowLan: b
   const worker = async () => {
     while (next < todo.length && Date.now() < deadline) {
       const u = todo[next++]!;
-      const h = await importLogo(ctx, u, allowLan);
+      const h = await fetchAndStore(ctx, u, allowLan); // the memo was read above
       if (h) out.set(u, h);
     }
   };

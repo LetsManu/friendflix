@@ -5,8 +5,9 @@
  * handling and the refresh tick (F16), and logos (ruling 28). Provider URLs never leave the backend (F13).
  */
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decrypt, encrypt, keyFromBase64 } from '../src/crypto.js';
+import { detectLivetv } from '../src/livetv/detect.js';
 import { listEvents } from '../src/livetv/events.js';
 import { importNumber, mergeImport } from '../src/livetv/import.js';
 import { livetvRefreshTick, refreshSource } from '../src/livetv/refresh.js';
@@ -29,6 +30,16 @@ const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000
 const calls: Call[] = [];
 let list: M3uEntry[] = [];
 let m3u: Handler;
+let logo: Handler;
+/** livetv is installed (detection: healthz api 1) unless a test turns it off */
+let up = true;
+const HEALTH = { ok: true, api: 1, version: '1.0.0', bootId: '0123456789abcdef' };
+const livetvFake = () => fakeHttp({
+  'GET /healthz': () => (up ? { json: HEALTH } : { status: 503 }),
+  'POST /v1/fetch/m3u': (...a) => m3u(...a),
+  'POST /v1/fetch/logo': (...a) => logo(...a),
+}, calls);
+const setUp = async (v: boolean) => { up = v; await detectLivetv(env.ctx, 0); };
 const m3uAnswer = (all: M3uEntry[], skip: readonly string[]): FetchM3uAnswer => {
   const groups: Array<{ name: string; channels: number }> = [];
   for (const e of all) {
@@ -88,10 +99,11 @@ beforeEach(async () => {
   logs.length = 0;
   list = six();
   m3u = (_u, _i, body: { skipGroups?: string[] }) => ({ json: m3uAnswer(list, body?.skipGroups ?? []) });
-  env.ctx.fetchImpl = fakeHttp({
-    'POST /v1/fetch/m3u': (...a) => m3u(...a),
-    'POST /v1/fetch/logo': () => ({ raw: PNG, type: 'image/png' }),
-  }, calls);
+  logo = () => ({ raw: PNG, type: 'image/png' });
+  env.ctx.fetchImpl = livetvFake();
+  await setUp(true);
+  calls.length = 0;
+  vi.restoreAllMocks();
 });
 
 describe('import merge (spec §10)', () => {
@@ -347,6 +359,7 @@ describe('refresh failures (spec §19)', () => {
       const r = await call('POST', `/api/admin/livetv/sources/${id}/refresh`);
       expect(r.statusCode).toBe(202);
       await expect.poll(async () => (await src(id)).last_refresh_at?.getTime() ?? 0).toBeGreaterThan(before);
+      await expect.poll(() => env.kv.get(`ltv:refresh:${id}`)).toBeNull(); // finished: the lock is released last
       await new Promise((res) => setTimeout(res, 5)); // the next refresh gets a later time stamp
     }
     expect((await src(id)).last_error).toBe('livetv_error');
@@ -375,6 +388,53 @@ describe('refresh failures (spec §19)', () => {
     expect(m3uCalls()).toHaveLength(0);
   });
 
+  it('livetv not reached is recorded but not counted towards the notice', async () => {
+    m3u = () => { throw new TypeError('fetch failed'); };
+    const id = await addSource();
+    for (let i = 0; i < 3; i++) await refresh(id);
+    expect((await src(id)).last_error).toBe('livetv_unreachable');
+    expect(await listEvents(env.ctx)).toHaveLength(3);
+    expect(await env.kv.get(`ltv:fails:${id}`)).toBeNull();
+    expect((await env.pool.query("select 1 from notifications where kind = 'livetv.source.failed'")).rowCount).toBe(0);
+  });
+
+  it('a stored URL that cannot be read is recorded as internal', async () => {
+    const id = await addSource();
+    await setSource(id, 'url_enc = $2', [encrypt(Buffer.alloc(32, 9), SECRET_URL)]); // another key
+    await expect(refresh(id)).rejects.toThrow();
+    expect((await src(id)).last_error).toBe('internal');
+    expect(m3uCalls()).toHaveLength(0);
+  });
+
+  it('a new URL resets the shrink guard', async () => {
+    list = many(100);
+    const id = await addSource();
+    await refresh(id);
+    expect((await src(id)).last_counts).toMatchObject({ listed: 100 });
+    const r = await env.app.inject({ method: 'PATCH', url: `/api/admin/livetv/sources/${id}`, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf },
+      payload: { url: 'https://anna:neu@iptv.example.com/get.php?username=anna&password=neu' } });
+    expect(r.statusCode).toBe(200);
+    const s = await src(id);
+    expect(s.last_counts).not.toHaveProperty('listed');
+    expect(s.last_counts).toMatchObject({ channels: 100 });
+    list = many(10); // a smaller list from the new provider is no shrunk list
+    await refresh(id);
+    expect((await src(id)).last_error).toBeNull();
+    expect((await src(id)).last_counts).toMatchObject({ channels: 10, listed: 10, removed: 90 });
+    // other edits keep the reference
+    await env.app.inject({ method: 'PATCH', url: `/api/admin/livetv/sources/${id}`, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: { name: 'Hafenkanal' } });
+    expect((await src(id)).last_counts).toMatchObject({ listed: 10 });
+  });
+
+  it('the refresh route says when a refresh is already running', async () => {
+    const id = await addSource();
+    await env.kv.set(`ltv:refresh:${id}`, 'other', 60);
+    const r = await call('POST', `/api/admin/livetv/sources/${id}/refresh`);
+    expect(r.statusCode).toBe(202);
+    expect(r.json()).toEqual({ started: false });
+    expect(m3uCalls()).toHaveLength(0);
+  });
+
   it('a refresh that is already running is not started again', async () => {
     const id = await addSource();
     await env.kv.set(`ltv:refresh:${id}`, 'other', 60);
@@ -387,6 +447,34 @@ describe('refresh failures (spec §19)', () => {
 });
 
 describe('logos (ruling 28)', () => {
+  it('livetv failing itself is not remembered as a refused logo', async () => {
+    logo = () => ({ status: 503, json: { error: 'busy' } });
+    list = [entry('Nordlicht TV', 'Nachrichten', 0, { logo: 'https://iptv.example.com/logos/nordlicht.png' })];
+    const id = await addSource();
+    await refresh(id);
+    await refresh(id);
+    expect(logoCalls()).toHaveLength(2);
+  });
+
+  it('a logo over 512 KB is not stored', async () => {
+    logo = () => ({ raw: Buffer.concat([PNG, Buffer.alloc(512 * 1024)]), type: 'image/png' });
+    list = [entry('Nordlicht TV', 'Nachrichten', 0, { logo: 'https://iptv.example.com/logos/riesig.png' })];
+    const id = await addSource();
+    await refresh(id);
+    expect((await env.pool.query('select 1 from livetv_logos')).rowCount).toBe(0);
+    expect((await channels(id))[0].import_logo_hash).toBeNull();
+  });
+
+  it('a failing logo step does not fail the refresh', async () => {
+    list = [entry('Nordlicht TV', 'Nachrichten', 0, { logo: 'https://iptv.example.com/logos/nordlicht.png' })];
+    vi.spyOn(env.kv, 'mget').mockRejectedValue(new Error('kv down'));
+    const id = await addSource();
+    await refresh(id);
+    const s = await src(id);
+    expect(s.last_error).toBeNull();
+    expect(s.last_counts).toMatchObject({ channels: 1, added: 1 });
+  });
+
   it('logos fetched once per URL', async () => {
     const logo = 'https://iptv.example.com/logos/nordlicht.png?token=geheim';
     list = [entry('Nordlicht TV', 'Nachrichten', 0, { logo }), entry('Nordlicht TV 2', 'Nachrichten', 1, { logo }), entry('Hafenkanal', 'Nachrichten', 2)];
@@ -409,10 +497,7 @@ describe('logos (ruling 28)', () => {
   });
 
   it('a logo the provider refuses is not asked for again on the next refresh', async () => {
-    env.ctx.fetchImpl = fakeHttp({
-      'POST /v1/fetch/m3u': (...a) => m3u(...a),
-      'POST /v1/fetch/logo': () => ({ status: 422, json: { error: 'not_image' } }),
-    }, calls);
+    logo = () => ({ status: 422, json: { error: 'not_image' } });
     list = [entry('Nordlicht TV', 'Nachrichten', 0, { logo: 'https://iptv.example.com/logos/kaputt.png' })];
     const id = await addSource();
     await refresh(id);
@@ -439,8 +524,12 @@ describe('summary and tick', () => {
     const own = randomUUID();
     await env.pool.query("insert into livetv_sources(id, kind, name, position) values ($1, 'manual', 'Eigene Streams', 0)", [own]);
     const due = await addSource();
+    const setnx = vi.spyOn(env.kv, 'setnx');
     await livetvRefreshTick(env.ctx);
     expect(m3uCalls()).toHaveLength(1);
+    // skipped by the tick itself, before the due check: not even the source's refresh lock is tried
+    const locks = setnx.mock.calls.map((c) => c[0]).filter((k) => k.startsWith('ltv:refresh:'));
+    expect(locks).toEqual([`ltv:refresh:${due}`]);
     const o = await src(own);
     expect(o).toMatchObject({ last_error: null, last_refresh_at: null, last_counts: null });
     expect((await listEvents(env.ctx)).filter((e) => e.sourceId === own)).toHaveLength(0);
@@ -465,5 +554,36 @@ describe('summary and tick', () => {
     await setSource(fresh, 'last_refresh_at = null');
     await livetvRefreshTick(env.ctx);
     expect(m3uCalls()).toHaveLength(2);
+  });
+
+  it('a failed source is due again after an hour', async () => {
+    const min = 60_000;
+    const late = await addSource({ refresh: '24h', last_refresh_at: new Date(Date.now() - 61 * min) });
+    const early = await addSource({ refresh: '24h', last_refresh_at: new Date(Date.now() - 59 * min) });
+    const fine = await addSource({ refresh: '24h', last_refresh_at: new Date(Date.now() - 61 * min) });
+    await setSource(late, "last_error = 'livetv_error'");
+    await setSource(early, "last_error = 'livetv_error'");
+    await livetvRefreshTick(env.ctx);
+    expect(m3uCalls()).toHaveLength(1);
+    expect((await src(late)).last_error).toBeNull();
+    expect((await src(late)).last_ok_at).not.toBeNull();
+    expect((await src(early)).last_error).toBe('livetv_error');
+    expect((await src(fine)).last_ok_at).toBeNull(); // no error: its 24 h interval
+  });
+
+  it('nothing is refreshed while livetv is not installed', async () => {
+    await setUp(false);
+    const id = await addSource();
+    await livetvRefreshTick(env.ctx);
+    expect(m3uCalls()).toHaveLength(0);
+    const r = await call('POST', `/api/admin/livetv/sources/${id}/refresh`);
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'livetv_off' });
+    expect(m3uCalls()).toHaveLength(0);
+    expect(await src(id)).toMatchObject({ last_error: null, last_refresh_at: null });
+    expect((await env.pool.query('select 1 from audit_log')).rowCount).toBe(0);
+    await setUp(true);
+    await livetvRefreshTick(env.ctx);
+    expect(m3uCalls()).toHaveLength(1);
   });
 });
