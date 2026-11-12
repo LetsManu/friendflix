@@ -73,6 +73,8 @@ services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    # the entrypoint drops to uid 70 with setuid(), which no-new-privileges allows (cap_drop ALL would break it: chown, setuid)
+    security_opt: ["no-new-privileges:true"]
     environment:
       POSTGRES_DB: friendflix
       POSTGRES_USER: friendflix
@@ -97,6 +99,8 @@ services:
     user: "999:999"
     group_add: ["10001"]
     read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     volumes: [bootstrap:/run/friendflix:ro]
     depends_on:
       bootstrap: { condition: service_completed_successfully }
