@@ -19,6 +19,6 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/livetv/logos/:hash', user, async (req, reply) => {
     const logo = await readLogo(ctx, String((req.params as { hash?: string }).hash ?? ''));
     if (!logo) return reply.code(404).send({ error: 'not_found' });
-    return reply.header('content-type', logo.mime).header('cache-control', LOGO_CACHE).send(logo.bytes);
+    return reply.header('content-type', logo.mime).header('cache-control', LOGO_CACHE).header('content-security-policy', "default-src 'none'").send(logo.bytes);
   });
 }

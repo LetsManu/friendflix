@@ -168,7 +168,8 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     return keys;
   }
-  const groupId = (req: { params: unknown }) => id.safeParse((req.params as { id?: string }).id).data;
+  /** the `:id` path parameter as a uuid (groups, sources, channels); undefined when it is none */
+  const paramId = (req: { params: unknown }) => id.safeParse((req.params as { id?: string }).id).data;
 
   app.get('/api/admin/livetv/groups', admin, async (_req, reply) => {
     reply.header('cache-control', 'no-store');
@@ -213,7 +214,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // partial; { released: false } = Freigabe zurücknehmen (roles kept)
   app.patch('/api/admin/livetv/groups/:id', admin, async (req, reply) => {
-    const gid = groupId(req);
+    const gid = paramId(req);
     if (!gid) return reply.code(404).send({ error: 'not_found' });
     const b = parse(groupPatch, req.body, reply);
     if (!b) return reply;
@@ -224,13 +225,13 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.get('/api/admin/livetv/groups/:id', admin, async (req, reply) => {
-    const gid = groupId(req);
+    const gid = paramId(req);
     const g = gid ? await groupView(ctx, gid) : null;
     return g ?? reply.code(404).send({ error: 'not_found' });
   });
 
   app.delete('/api/admin/livetv/groups/:id', admin, async (req, reply) => {
-    const gid = groupId(req);
+    const gid = paramId(req);
     if (!gid || !(await deleteGroup(ctx, req.user!.id, gid))) return reply.code(404).send({ error: 'not_found' });
     return { ok: true };
   });
@@ -282,7 +283,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.patch('/api/admin/livetv/sources/:id', admin, async (req, reply) => {
-    const sid = groupId(req);
+    const sid = paramId(req);
     if (!sid) return reply.code(404).send({ error: 'not_found' });
     const b = parse(sourcePatch, req.body, reply);
     if (!b) return reply;
@@ -303,7 +304,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
    * could be fetched (409 `livetv_off`, nothing recorded on the source).
    */
   app.post('/api/admin/livetv/sources/:id/refresh', admin, async (req, reply) => {
-    const sid = groupId(req);
+    const sid = paramId(req);
     const s = sid ? (await ctx.db.query<{ kind: string }>('select kind from livetv_sources where id = $1', [sid])).rows[0] : undefined;
     if (!sid || !s) return reply.code(404).send({ error: 'not_found' });
     if (isOwnFeeds(s.kind)) return reply.code(409).send({ error: 'no_list' });
@@ -323,7 +324,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.delete('/api/admin/livetv/sources/:id', admin, async (req, reply) => {
-    const sid = groupId(req);
+    const sid = paramId(req);
     const r = sid ? await deleteSource(ctx, req.user!.id, sid) : null;
     if (!r) return reply.code(404).send({ error: 'not_found' });
     // push feeds went with it (counted in the delete's transaction): livetv must stop accepting their credentials (Task 20)
@@ -357,7 +358,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // Zugangsdaten neu erzeugen: the same one-time answer with new values
   app.post('/api/admin/livetv/channels/:id/push-credentials', admin, async (req, reply) => {
-    const cid = groupId(req);
+    const cid = paramId(req);
     if (!cid) return reply.code(404).send({ error: 'not_found' });
     reply.header('cache-control', 'no-store');
     try {
@@ -367,7 +368,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // Neuen Port zuweisen (spec §19): a port that left LIVETV_SRT_PORTS; the credentials stay
   app.post('/api/admin/livetv/channels/:id/push-port', admin, async (req, reply) => {
-    const cid = groupId(req);
+    const cid = paramId(req);
     if (!cid) return reply.code(404).send({ error: 'not_found' });
     try {
       return await reassignPort(ctx, req.user!.id, cid, req.log);
@@ -376,7 +377,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // own feeds only (a provider channel comes back with the next import; it is hidden instead)
   app.delete('/api/admin/livetv/channels/:id', admin, async (req, reply) => {
-    const cid = groupId(req);
+    const cid = paramId(req);
     if (!cid) return reply.code(404).send({ error: 'not_found' });
     try {
       return { ok: true, ...(await deleteFeed(ctx, req.user!.id, cid, req.log)) };
@@ -389,14 +390,23 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     throw e;
   };
 
+  // accepted for Phase 1: the single flight is per admin, not per provider; a per-provider limit comes with Task 42
   /** one stream test per admin at a time (a probe may hold a provider connection for up to 10 s; a bulk test runs 20 of them) */
-  async function testLocked<T>(actor: string, reply: Reply, fn: () => Promise<T>): Promise<T | unknown> {
+  async function testLocked<T>(actor: string, req: { raw: { once(e: 'close', f: () => void): unknown; off(e: 'close', f: () => void): unknown } }, reply: Reply, fn: (signal: AbortSignal) => Promise<T>): Promise<T | Reply> {
     const lock = `ltv:chtest:${actor}`;
     const token = randomUUID();
-    if (!(await ctx.kv.setnx(lock, token, CHANNEL_TEST_LOCK_TTL_S))) return reply.code(409).send({ error: 'test_running' });
+    if (!(await ctx.kv.setnx(lock, token, CHANNEL_TEST_LOCK_TTL_S))) {
+      reply.code(409).send({ error: 'test_running' });
+      return reply;
+    }
+    // a client that went away stops the tests still to run
+    const ac = new AbortController();
+    const gone = () => ac.abort();
+    req.raw.once('close', gone);
     try {
-      return await fn();
+      return await fn(ac.signal);
     } finally {
+      req.raw.off('close', gone);
       await ctx.kv.delIfEquals(lock, token).catch(() => undefined);
     }
   }
@@ -410,7 +420,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // one row of the list (the own-feeds card reads it after a push change); never more than a list row carries
   app.get('/api/admin/livetv/channels/:id', admin, async (req, reply) => {
-    const cid = groupId(req);
+    const cid = paramId(req);
     const c = cid ? await adminChannel(ctx, cid) : null;
     reply.header('cache-control', 'no-store');
     return c ?? reply.code(404).send({ error: 'not_found' });
@@ -424,7 +434,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     try {
       if (b.action === 'test') {
         if (new Set(b.ids).size > MAX_BULK_TEST) return reply.code(400).send({ error: 'invalid', field: 'ids' });
-        return await testLocked(req.user!.id, reply, () => bulkTest(ctx, req.user!.id, b.ids));
+        return await testLocked(req.user!.id, req, reply, (signal) => bulkTest(ctx, req.user!.id, b.ids, signal));
       }
       return await bulkChannels(ctx, req.user!.id, b, req.log);
     } catch (e) { return channelRefused(e, reply); }
@@ -433,13 +443,14 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   app.put('/api/admin/livetv/channels/order', admin, async (req, reply) => {
     const b = parse(channelOrderBody, req.body, reply);
     if (!b) return reply;
+    reply.header('cache-control', 'no-store');
     try {
       return await orderChannels(ctx, req.user!.id, b.ids);
     } catch (e) { return channelRefused(e, reply); }
   });
 
   app.patch('/api/admin/livetv/channels/:id', admin, async (req, reply) => {
-    const cid = groupId(req);
+    const cid = paramId(req);
     if (!cid) return reply.code(404).send({ error: 'not_found' });
     const b = parse(channelPatch, req.body, reply);
     if (!b) return reply;
@@ -451,17 +462,18 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   // admin only; checks the channel and its source, never the viewing rights or the group's release (F10)
   app.post('/api/admin/livetv/channels/:id/test', admin, async (req, reply) => {
-    const cid = groupId(req);
+    const cid = paramId(req);
     if (!cid) return reply.code(404).send({ error: 'not_found' });
     reply.header('cache-control', 'no-store');
     try {
-      return await testLocked(req.user!.id, reply, () => testChannel(ctx, req.user!.id, cid));
+      return await testLocked(req.user!.id, req, reply, (signal) => testChannel(ctx, req.user!.id, cid, signal));
     } catch (e) { return channelRefused(e, reply); }
   });
 
   app.delete('/api/admin/livetv/channels/:id/logo', admin, async (req, reply) => {
-    const cid = groupId(req);
+    const cid = paramId(req);
     const c = cid ? await dropLogo(ctx, req.user!.id, cid) : null;
+    reply.header('cache-control', 'no-store');
     return c ?? reply.code(404).send({ error: 'not_found' });
   });
 
@@ -477,9 +489,10 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     });
     // the admin check runs before the body is read (onRequest): nobody else gets 512 KB parsed; the CSRF hook still runs (preHandler)
     sub.put('/api/admin/livetv/channels/:id/logo', { onRequest: requireAdmin(ctx), bodyLimit: LOGO_MAX_BYTES }, async (req, reply) => {
-      const cid = groupId(req);
+      const cid = paramId(req);
       if (!cid) return reply.code(404).send({ error: 'not_found' });
       const type = String(req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+      reply.header('cache-control', 'no-store');
       if (!Buffer.isBuffer(req.body) || !(LOGO_MIMES as readonly string[]).includes(type)) return reply.code(415).send({ error: 'unsupported_type' });
       try {
         return (await setLogo(ctx, req.user!.id, cid, type, req.body)) ?? reply.code(404).send({ error: 'not_found' });

@@ -187,6 +187,10 @@ describe('the list (spec §9.2)', () => {
     expect(Object.fromEntries([a, b, c, gone, d, e].map((id) => [id, dup.get(id)]))).toEqual({ [a]: true, [b]: true, [c]: false, [gone]: false, [d]: false, [e]: false });
     // a duplicate on another page counts too
     expect((await list('limit=1')).channels[0]).toMatchObject({ id: b, dupNumber: true }); // 5 Hafenkanal before 5 Nordlicht TV
+    // the same on the single-channel path and in a page sorted by name (Nordlicht TV is the fifth by name, its twin on the first page)
+    expect((await one(a)).dupNumber).toBe(true);
+    expect((await one(gone)).dupNumber).toBe(false);
+    expect((await list('sort=name&limit=2&offset=4')).channels.map((x) => [x.id, x.dupNumber])).toEqual([[a, true], [gone, false]]);
     // an override resolves it
     await call('PATCH', `/api/admin/livetv/channels/${b}`, { number: 7 });
     expect((await one(a)).dupNumber).toBe(false);
@@ -522,6 +526,7 @@ describe('logos (ruling 32)', () => {
     expect(r.headers['cache-control']).toBe('private, max-age=604800, immutable');
     expect(r.headers['content-type']).toBe('image/png');
     expect(r.headers['x-content-type-options']).toBe('nosniff');
+    expect(r.headers['content-security-policy']).toBe("default-src 'none'");
     expect(r.rawPayload.equals(PNG)).toBe(true);
     for (const h of ['0'.repeat(64), 'nope', hash.toUpperCase()]) {
       const miss = await env.app.inject({ method: 'GET', url: `/api/livetv/logos/${h}`, cookies: admin.cookies });

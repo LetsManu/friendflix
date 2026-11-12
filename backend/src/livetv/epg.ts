@@ -3,6 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import type { Ctx } from '../ctx.js';
+import type { Db } from '../db.js';
 import { EFFECTIVE_SHIFT_SQL, isOwnFeeds } from './channels.js';
 import { LivetvError, livetvStream } from './client.js';
 import { importLogos } from './logos.js';
@@ -165,7 +166,7 @@ function candidates(ch: MatchInput, s: EpgSourceIndex, out: Set<string>): void {
 }
 
 /** the stored XMLTV channels of the sources that still have an EPG URL (one of them: `sourceId`) */
-async function indexRows(ctx: Pick<Ctx, 'db'>, sourceId?: string): Promise<Array<{ sourceId: string; xmlId: string; names: string[] }>> {
+export async function indexRows(ctx: Pick<Ctx, 'db'>, sourceId?: string): Promise<Array<{ sourceId: string; xmlId: string; names: string[] }>> {
   const rows = (await ctx.db.query<{ source_id: string; xml_id: string; names: string[] }>(
     `select e.source_id, e.xml_id, e.names from livetv_epg_channels e join livetv_sources s on s.id = e.source_id
       where s.epg_url_enc is not null and ($1::uuid is null or e.source_id = $1)`, [sourceId ?? null])).rows;
@@ -175,16 +176,17 @@ async function indexRows(ctx: Pick<Ctx, 'db'>, sourceId?: string): Promise<Array
 // ---- matching and logos ----
 
 /**
- * Matches every channel with `epg_match = 'auto'` that is in the latest import (missing ones keep their mapping until they return or
- * are pruned); a channel without a match loses its mapping. With `icons` (the in-memory `<icon>` map of the refresh that just ran,
- * F17) the EPG logos follow (epgLogos; `sources` = the sources that icon map is complete for); without, no logo is fetched and the
- * stored `epg_logo_hash` values stay.
+ * The shared matching pass: every `epg_match = 'auto'` channel of the latest import (missing ones keep their mapping), or, with `ids`,
+ * those channels only. `includeMissing` (the admin's re-match of explicitly given ids) also handles missing ones, and `dropLogo` clears
+ * `epg_logo_hash` of a changed mapping (the next refresh fetches the new XMLTV channel's icon). `db` may be a transaction client.
  */
-export async function autoMatch(ctx: Ctx, o: { icons?: Map<string /* sourceId|xmlId */, string>; sources?: string[] } = {}): Promise<{ matched: number; total: number }> {
-  const idx = buildEpgIndex(await indexRows(ctx));
-  const rows = (await ctx.db.query<{ id: string; source_id: string; tvg_id: string | null; tvg_name: string | null; import_name: string; epg_source_id: string | null; epg_channel_id: string | null }>(
+export async function matchIds(db: Db, o: { ids?: readonly string[]; includeMissing?: boolean; dropLogo?: boolean } = {}): Promise<{ matched: number; total: number }> {
+  if (o.ids && o.ids.length === 0) return { matched: 0, total: 0 };
+  const idx = buildEpgIndex(await indexRows({ db }));
+  const rows = (await db.query<{ id: string; source_id: string; tvg_id: string | null; tvg_name: string | null; import_name: string; epg_source_id: string | null; epg_channel_id: string | null }>(
     `select id, source_id, tvg_id, tvg_name, import_name, epg_source_id, epg_channel_id from livetv_channels
-      where epg_match = 'auto' and missing_since is null`)).rows;
+      where epg_match = 'auto' and ($2::boolean or missing_since is null) and ($1::uuid[] is null or id = any($1::uuid[]))`,
+    [o.ids ? [...o.ids] : null, o.includeMissing ?? false])).rows;
   let matched = 0;
   const ids: string[] = [];
   const srcs: Array<string | null> = [];
@@ -201,13 +203,24 @@ export async function autoMatch(ctx: Ctx, o: { icons?: Map<string /* sourceId|xm
   }
   for (let i = 0; i < ids.length; i += BATCH) {
     // `epg_match = 'auto'` again: an admin's manual choice made meanwhile is never overwritten
-    await ctx.db.query(
-      `update livetv_channels c set epg_source_id = u.src, epg_channel_id = u.xml
+    await db.query(
+      `update livetv_channels c set epg_source_id = u.src, epg_channel_id = u.xml${o.dropLogo ? ', epg_logo_hash = null' : ''}
          from unnest($1::uuid[], $2::uuid[], $3::text[]) as u(id, src, xml) where c.id = u.id and c.epg_match = 'auto'`,
       [ids.slice(i, i + BATCH), srcs.slice(i, i + BATCH), xmls.slice(i, i + BATCH)]);
   }
-  if (o.icons) await epgLogos(ctx, o.icons, { sources: o.sources });
   return { matched, total: rows.length };
+}
+
+/**
+ * Matches every channel with `epg_match = 'auto'` that is in the latest import (missing ones keep their mapping until they return or
+ * are pruned); a channel without a match loses its mapping. With `icons` (the in-memory `<icon>` map of the refresh that just ran,
+ * F17) the EPG logos follow (epgLogos; `sources` = the sources that icon map is complete for); without, no logo is fetched and the
+ * stored `epg_logo_hash` values stay.
+ */
+export async function autoMatch(ctx: Ctx, o: { icons?: Map<string /* sourceId|xmlId */, string>; sources?: string[] } = {}): Promise<{ matched: number; total: number }> {
+  const r = await matchIds(ctx.db, {});
+  if (o.icons) await epgLogos(ctx, o.icons, { sources: o.sources });
+  return r;
 }
 
 /**

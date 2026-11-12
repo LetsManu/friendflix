@@ -7,7 +7,7 @@ import type { Ctx } from '../ctx.js';
 import type { Db } from '../db.js';
 import { CHANNEL_COLUMNS, CHANNEL_FROM, type EffectiveRow, type EpgShiftFrom, type Ingest, type ProbeRec, type StreamKind } from './channels.js';
 import { LivetvError, livetvCall } from './client.js';
-import { buildEpgIndex, matchChannel, nowNext, type Prog } from './epg.js';
+import { matchIds, nowNext, type Prog } from './epg.js';
 import { sniffImage, storeLogo } from './logos.js';
 // ownfeeds.ts imports adminChannel from here and this module calls srtPorts / syncIngest from there: neither is used at module load
 import { srtPorts, syncIngest } from './ownfeeds.js';
@@ -117,11 +117,14 @@ const ADMIN_COLUMNS = `${CHANNEL_COLUMNS}, c.import_name, c.import_number, c.nam
 /** the effective rows as a relation `a`, so filters and sorting can use the aliases (CHANNEL_SELECT's note) */
 const ADMIN_ROWS = `(select ${ADMIN_COLUMNS} from ${CHANNEL_FROM}) a`;
 /**
- * the same with the duplicate-number flag: a window over every channel (before any filter, so a duplicate on another page counts too);
- * missing channels neither count nor are flagged
+ * the same with the duplicate-number flag: the effective numbers that more than one channel (not missing) has, from a narrow aggregate
+ * over every channel (so a duplicate on another page counts too) that the planner joins instead of projecting every row first, which
+ * keeps `where a.id = $1` and the limit of a non-number sort cheap; missing channels neither count nor are flagged
  */
-const ADMIN_PAGE = `(select a.*, (a.number is not null and a.missing_since is null
-    and count(*) filter (where a.missing_since is null) over (partition by a.number) > 1) as dup_number from ${ADMIN_ROWS}) a`;
+const ADMIN_PAGE = `(with d as (
+    select coalesce(number_override, import_number) as n from livetv_channels where missing_since is null
+     group by 1 having count(*) > 1 and coalesce(number_override, import_number) is not null)
+  select a.*, (a.number is not null and a.missing_since is null and a.number in (select n from d)) as dup_number from ${ADMIN_ROWS}) a`;
 
 type AdminRow = EffectiveRow & {
   import_name: string; import_number: number | null; name_override: string | null; number_override: number | null;
@@ -214,35 +217,9 @@ export async function listChannels(ctx: Ctx, q: ChannelQuery): Promise<{ channel
 
 // ---- EPG matching of single channels ----
 
-/**
- * The automatic match (epg.ts matchChannel, the four passes) for `ids` that are `epg_match = 'auto'`, inside the caller's transaction.
- * The index is the one autoMatch builds (the stored XMLTV channels of the sources that still have an EPG URL). A changed mapping drops
- * the EPG logo: the next EPG refresh fetches the one of the new XMLTV channel.
- */
+/** the automatic match (epg.ts matchIds) of explicitly given `ids`, missing ones included, inside the caller's transaction; a changed mapping drops the EPG logo */
 async function rematch(c: Db, ids: readonly string[]): Promise<void> {
-  if (ids.length === 0) return;
-  const idx = buildEpgIndex((await c.query<{ source_id: string; xml_id: string; names: string[] }>(
-    `select e.source_id, e.xml_id, e.names from livetv_epg_channels e join livetv_sources s on s.id = e.source_id
-      where s.epg_url_enc is not null`)).rows.map((r) => ({ sourceId: r.source_id, xmlId: r.xml_id, names: r.names })));
-  const rows = (await c.query<{ id: string; source_id: string; tvg_id: string | null; tvg_name: string | null; import_name: string; epg_source_id: string | null; epg_channel_id: string | null }>(
-    `select id, source_id, tvg_id, tvg_name, import_name, epg_source_id, epg_channel_id from livetv_channels
-      where id = any($1::uuid[]) and epg_match = 'auto'`, [[...ids]])).rows;
-  const changed: string[] = [];
-  const srcs: Array<string | null> = [];
-  const xmls: Array<string | null> = [];
-  for (const r of rows) {
-    const m = matchChannel({ sourceId: r.source_id, tvgId: r.tvg_id, tvgName: r.tvg_name, importName: r.import_name }, idx);
-    const src = m?.sourceId ?? null;
-    const xml = m?.xmlId ?? null;
-    if (src === r.epg_source_id && xml === r.epg_channel_id) continue;
-    changed.push(r.id);
-    srcs.push(src);
-    xmls.push(xml);
-  }
-  if (changed.length === 0) return;
-  await c.query(
-    `update livetv_channels c set epg_source_id = u.src, epg_channel_id = u.xml, epg_logo_hash = null
-       from unnest($1::uuid[], $2::uuid[], $3::text[]) as u(id, src, xml) where c.id = u.id`, [changed, srcs, xmls]);
+  await matchIds(c, { ids, includeMissing: true, dropLogo: true });
 }
 
 // ---- writing ----
@@ -368,9 +345,9 @@ export const LOGO_MAX_BYTES = 512 * 1024;
  * channel's `logo_override_hash`. null = no such channel.
  */
 export async function setLogo(ctx: Ctx, actor: string, id: string, declared: string, bytes: Buffer): Promise<AdminChannel | null> {
+  if (bytes.length > LOGO_MAX_BYTES) throw new ChannelRefusal(413, { error: 'too_large' });
   const mime = sniffImage(bytes);
   if (mime === null || mime !== declared) throw new ChannelRefusal(415, { error: 'unsupported_type' });
-  if (bytes.length > LOGO_MAX_BYTES) throw new ChannelRefusal(413, { error: 'too_large' });
   const found = await livetvWrite(ctx, async (c) => {
     if (!(await c.query('select 1 from livetv_channels where id = $1 for update', [id])).rowCount) return false;
     const hash = await storeLogo(c, mime, bytes);
@@ -439,21 +416,22 @@ function parseProbe(raw: unknown): ProbeResult | null {
  * that the channel exists and that its source is enabled, never the viewing rights or the group's release (F10), so the channels of a
  * new, unreleased group can be tested. ChannelRefusal 404 / 409 `source_disabled` / 503 `livetv_unreachable` / 502 `livetv_error`.
  */
-export async function testChannel(ctx: Ctx, actor: string, id: string): Promise<TestAnswer> {
+export async function testChannel(ctx: Ctx, actor: string, id: string, signal?: AbortSignal): Promise<TestAnswer> {
   const r = (await ctx.db.query<{ ingest: Ingest; stream_kind: StreamKind; stream_url_enc: string | null; allow_lan: boolean | null; enabled: boolean; source_lan: boolean; user_agent: string | null }>(
     `select c.ingest, c.stream_kind, c.stream_url_enc, c.allow_lan, s.enabled, s.allow_lan as source_lan, s.user_agent
        from livetv_channels c join livetv_sources s on s.id = c.source_id where c.id = $1`, [id])).rows[0];
   if (!r) throw notFound();
   if (!r.enabled) throw new ChannelRefusal(409, { error: 'source_disabled' });
   let input: StreamInput;
-  if (r.ingest === 'push' || r.stream_url_enc === null) input = { push: id };
+  if (r.ingest === 'push') input = { push: id };
+  else if (r.stream_url_enc === null) throw new ChannelRefusal(409, { error: 'no_stream_url' });
   else {
     input = { url: decrypt(ctx.encKey, r.stream_url_enc), kind: r.stream_kind, allowLan: r.allow_lan ?? r.source_lan };
     if (r.user_agent) input.userAgent = r.user_agent;
   }
   let raw: unknown;
   try {
-    raw = await livetvCall<unknown>(ctx, 'POST', '/v1/probe', { input }, { timeoutMs: PROBE_TIMEOUT_MS });
+    raw = await livetvCall<unknown>(ctx, 'POST', '/v1/probe', { input }, { timeoutMs: PROBE_TIMEOUT_MS, signal });
   } catch (e) {
     if (e instanceof LivetvError) throw new ChannelRefusal(e.status === null ? 503 : 502, { error: e.status === null ? 'livetv_unreachable' : 'livetv_error' });
     throw e;
@@ -477,15 +455,16 @@ export async function testChannel(ctx: Ctx, actor: string, id: string): Promise<
  * *Testen* in the bulk bar: at most 20 channels, one after another. A channel that cannot be tested gets its fixed code; once livetv
  * was not reached, the rest are not tried (each would wait for the same timeout).
  */
-export async function bulkTest(ctx: Ctx, actor: string, ids: readonly string[]): Promise<{ results: Array<{ id: string; ok: boolean; needs?: string; error?: string }> }> {
+export async function bulkTest(ctx: Ctx, actor: string, ids: readonly string[], signal?: AbortSignal): Promise<{ results: Array<{ id: string; ok: boolean; needs?: string; error?: string }> }> {
   const unique = [...new Set(ids)];
   if (unique.length > MAX_BULK_TEST) throw invalid('ids');
   const results: Array<{ id: string; ok: boolean; needs?: string; error?: string }> = [];
   let down = false;
   for (const id of unique) {
+    if (signal?.aborted) break; // the admin's request is gone
     if (down) { results.push({ id, ok: false, error: 'livetv_unreachable' }); continue; }
     try {
-      const t = await testChannel(ctx, actor, id);
+      const t = await testChannel(ctx, actor, id, signal);
       results.push(t.ok ? { id, ok: true, needs: t.needs! } : { id, ok: false, error: t.error ?? 'failed' });
     } catch (e) {
       if (!(e instanceof ChannelRefusal)) throw e;
