@@ -19,12 +19,12 @@
   import Field from '#lib/ui/Field.svelte';
   import Progress from '#lib/ui/Progress.svelte';
   import Select from '#lib/ui/Select.svelte';
-  import StatusPill from '#lib/ui/StatusPill.svelte';
+  import JobSteps from './JobSteps.svelte';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import { toast } from '#lib/ui/toast';
   import {
-    TIME_RE, WATCH_MAX_MS, canRollback, failReason, foreignMode, foreignText, isRunning, nextPoll, startError, statusOf, visibleSteps,
-    type StepState, type UpdaterAction, type UpdaterJob, type UpdaterView,
+    TIME_RE, WATCH_MAX_MS, canRollback, failReason, foreignMode, foreignText, isRunning, nextPoll, startError, statusOf,
+    type UpdaterAction, type UpdaterJob, type UpdaterView,
   } from './updater';
 
   export let view: UpdaterView;
@@ -91,7 +91,6 @@
   const confirmKey = (a: UpdaterAction, f: typeof foreign) =>
     (a === 'update' && f === 'portainer' ? 'admin.update.updater.confirm.updatePortainer' : `admin.update.updater.confirm.${a}`) as 'admin.update.updater.confirm.update';
   const confirmTag = (a: UpdaterAction) => (a === 'rollback' ? s?.previous : s?.targetTag) ?? '';
-  const stepTone = (st: StepState) => (st === 'ok' ? 'ok' : st === 'failed' ? 'err' : st === 'running' ? 'warn' : 'muted');
   $: elapsed = t0 ? Math.max(0, Math.round((now - t0) / 1000)) : 0;
   $: resultText = job && !running
     ? job.state === 'succeeded' ? tr('admin.update.updater.result.succeeded', { to: job.to })
@@ -155,14 +154,7 @@
           </p>
         {/if}
         {#if watchTimeout}<p class="err small" role="alert">{$t('admin.update.updater.watchTimeout')}</p>{/if}
-        <ol class="steps">
-          {#each visibleSteps(job) as st (st)}
-            <li data-step={st} data-state={job.steps[st]} aria-current={job.step === st && running ? 'step' : undefined}>
-              <span class="name">{$t(`admin.update.updater.step.${st}` as 'admin.update.updater.step.pull')}</span>
-              <StatusPill tone={stepTone(job.steps[st])} label={$t(`admin.update.updater.state.${job.steps[st]}` as 'admin.update.updater.state.ok')} />
-            </li>
-          {/each}
-        </ol>
+        <JobSteps {job} />
       </div>
     {/if}
 
@@ -199,9 +191,6 @@
   .confirm { border: 1px solid var(--warn); border-radius: 8px; padding: .8rem 1rem; display: grid; gap: .6rem; max-width: 40rem; }
   .confirm p { margin: 0; overflow-wrap: anywhere; }
   .prog { margin-top: 1.2rem; display: grid; gap: .8rem; max-width: 36rem; min-width: 0; }
-  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
-  .steps li { display: flex; align-items: center; justify-content: space-between; gap: .7rem; flex-wrap: wrap; min-width: 0; }
-  .steps li[aria-current='step'] .name { font-weight: 600; }
   .result { display: flex; gap: .5rem; align-items: flex-start; margin: 0; overflow-wrap: anywhere; }
   .result.ok :global(svg) { color: var(--ok); } .result.bad :global(svg) { color: var(--err); }
   .small { font-size: .88rem; margin: 0; }

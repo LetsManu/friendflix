@@ -539,7 +539,10 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
     }
     if (p.startsWith('/api/admin/updater') && st.asAdmin) { const r = updaterRoute(st.updater, st.settings, m, p, J); if (r) return r; }
     if (p.startsWith('/api/admin/settings')) { const r = settingsRoute(st.settings, m, p, body(), J); if (r) return r; }
-    if (p.startsWith('/api/admin/')) { const r = adminRoute(st.admin, m, p, sp, body(), J); if (r) return r; }
+    if (p.startsWith('/api/admin/')) {
+      // Live TV: the offer is hidden by the LIVETV_OFFER_HIDDEN setting (the "Nicht mehr anzeigen" save and the Settings switch)
+      st.admin.livetv.offerHidden = st.settings.groups.flatMap((g) => g.items).find((i) => i.key === 'LIVETV_OFFER_HIDDEN')?.value === true;
+      const r = adminRoute(st.admin, m, p, sp, body(), J); if (r) return r; }
 
     st.unmocked.add(`${m} ${p}${u.search ? '?…' : ''}`);
     return J({ items: [] });
