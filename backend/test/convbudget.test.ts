@@ -215,6 +215,42 @@ describe('countConversions', () => {
     await vi.advanceTimersByTimeAsync(805);
     expect(await p).toBeNull();
   });
+  it('two devices of one profile share one server session: the unlisted one counts from its pbinfo record', async () => {
+    // the server lists one session per profile, so only the newer play session shows; the portal's own record says both convert
+    raw = [converting('ps-b')];
+    await live(ANNA, 'ps-a', 'd1');
+    await live(ANNA, 'ps-b', 'd2');
+    const rec = (o: Record<string, unknown>) => JSON.stringify({ reason: 'network', bitrate: 4_000_000, remote: false, video: 'h264', audio: 'stereo', ...o });
+    await env.kv.set(`pbinfo:${ANNA}:ps-a`, rec({ conv: true }), 600);
+    await env.kv.set(`pbinfo:${ANNA}:ps-b`, rec({ conv: true }), 600);
+    const got = await countConversions(env.ctx);
+    expect(got!.map((e) => [e.key, e.kind, e.device, e.userId]).sort()).toEqual([['ps-a', 'film', 'd1', ANNA], ['ps-b', 'film', 'd2', ANNA]]);
+    expect(got!.find((e) => e.key === 'ps-a')).toMatchObject({ label: 'Dunmoor' });
+    // the same device is still replaced by its own new stream
+    expect((await countConversions(env.ctx, { exceptUser: ANNA, exceptDevice: 'd1' }))!.map((e) => e.key)).toEqual(['ps-b']);
+    // pbinfo.video also describes direct-play answers: without `conv` the record is not a conversion
+    await env.kv.set(`pbinfo:${ANNA}:ps-a`, rec({ reason: null }), 600);
+    expect((await countConversions(env.ctx))!.map((e) => e.key)).toEqual(['ps-b']);
+    // a HEVC conversion keeps its flag; a play session the server lists as direct is decided by the server
+    await env.kv.set(`pbinfo:${ANNA}:ps-a`, rec({ video: 'hevc', conv: true }), 600);
+    expect((await countConversions(env.ctx))!.find((e) => e.key === 'ps-a')).toMatchObject({ hevc: true });
+    raw = [converting('ps-b'), jfSession('ps-a', { method: 'DirectStream', videoDirect: true })];
+    expect((await countConversions(env.ctx))!.map((e) => e.key)).toEqual(['ps-b']);
+  });
+  it('a grant whose new key cannot be written keeps its hint key (never lost)', async () => {
+    expect(await ask({ deviceId: 'd1', hint: 'h6' })).toEqual({ ok: true });
+    const real = env.kv.set.bind(env.kv);
+    vi.spyOn(env.kv, 'set').mockImplementation((k: string, v: string, ttl?: number) => (k === 'conv:grant:ps6' ? Promise.reject(new Error('down')) : real(k, v, ttl)));
+    await bindConvGrant(env.ctx, 'h6', 'ps6');
+    expect(await env.kv.keys('conv:grant:')).toEqual(['conv:grant:h6']);
+    expect(await countConversions(env.ctx)).toHaveLength(1);
+    vi.restoreAllMocks();
+    await bindConvGrant(env.ctx, 'h6', 'ps6', { hevc: true, label: 'Saltwater Almanac' });
+    expect(await env.kv.keys('conv:grant:')).toEqual(['conv:grant:ps6']);
+    expect(JSON.parse((await env.kv.get('conv:grant:ps6'))!)).toMatchObject({ kind: 'film', ps: 'ps6', hevc: true, label: 'Saltwater Almanac' });
+    await bindConvGrant(env.ctx, 'ps6', 'ps6', { hevc: false });
+    expect(JSON.parse((await env.kv.get('conv:grant:ps6'))!)).not.toHaveProperty('hevc');
+  });
   it('the requester\'s own live stream and own earlier grant are left out', async () => {
     raw = [converting('ps1')];
     await live(ANNA, 'ps1', 'd1');
@@ -277,7 +313,7 @@ describe('admitConversion', () => {
     expect(performance.now() - t0).toBeLessThan(1200);
     expect((await conversionLimit(env.ctx, { settingsMs: 50 })).limit).toBe(3); // late settings: not stale, the bench's 3 applies
   });
-  it('a lock held by another asker is retried once; a stale holder keeps its lock', async () => {
+  it('a lock held by another asker is waited for (up to about 1 s); a stale holder keeps its lock', async () => {
     await env.kv.set('conv:gate', 'someone', 3);
     setTimeout(() => void env.kv.del('conv:gate'), 50);
     expect(await ask({ deviceId: 'd1' })).toEqual({ ok: true });

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, randomUUID } from 'node:crypto';
 import type { Ctx } from './ctx.js';
-import { markConvExempt, within } from './convexempt.js';
+import { markConvExempt, within, type SessionRead } from './convexempt.js';
 import { listLive } from './live.js';
 import type { EncoderSettings, HevcGate } from './media/types.js';
 import { previews, serviceUser } from './previews.js';
@@ -112,8 +112,9 @@ interface Grant { device?: string; ps?: string }
  * May one more HEVC conversion start? Count = the server's non-direct HEVC sessions (minus this device's own, which this request
  * replaces) + grants of the last 30 s whose session the server does not list yet. A grant is written on success; the route binds it
  * to the real play session once Jellyfin has made it (bindHevcGrant). Unreadable or slow session list: no (h264_busy).
+ * `sessions`: the request's shared session-list read (sharedSessionRead), so the conversion budget asked alongside reads it only once.
  */
-export async function hevcGate(ctx: Ctx, o: { userId: string; deviceId?: string; playSessionIdHint?: string }): Promise<HevcGate> {
+export async function hevcGate(ctx: Ctx, o: { userId: string; deviceId?: string; playSessionIdHint?: string; sessions?: SessionRead | null }): Promise<HevcGate> {
   const st = await hevcStatus(ctx, undefined, HEVC_SESSIONS_TIMEOUT_MS); // a slow settings read means unproven, never a slow start
   if (st.state !== 'ready') return { ok: false, why: REFUSAL[st.state] };
   const list = ctx.jf.admin.transcodeSessions?.bind(ctx.jf.admin);
@@ -127,7 +128,7 @@ export async function hevcGate(ctx: Ctx, o: { userId: string; deviceId?: string;
   }
   if (!locked) return { ok: false, why: 'h264_busy' };
   try {
-    const sessions = await within(list, HEVC_SESSIONS_TIMEOUT_MS);
+    const sessions = await (o.sessions ?? (() => within(list, HEVC_SESSIONS_TIMEOUT_MS)))();
     if (!sessions) return { ok: false, why: 'h264_busy' };
     const live = await listLive(ctx).catch(() => []);
     const mine = new Set<string>();

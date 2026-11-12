@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { CAST_MAX_BITRATE, airplayContinuousOn, type JoinedItem, CAST_MAX_HEIGHT, CAST_REPORT_RE, castEnabled, castReceiverAppId, castReportToken, castSubtitlePath, castTtlSeconds, castPredecessor, castLookup, castNextTtlSeconds, castPinned, CastUnpinnedError, createCast, resolveCastSubtitle, revokeCast, verifyCastReport } from '../cast.js';
 import type { Ctx } from '../ctx.js';
 import { receiverCaps } from '../media/clientCaps.js';
 import { MediaError, type HevcGate, type ItemDto, type PlaybackDto, type TrackList } from '../media/types.js';
-import { bindHevcGrant, hevcGate as gateHevc, noteHevcFailure } from '../hevcenc.js';
+import { noteHevcFailure } from '../hevcenc.js';
+import { convertsOf, filmGate } from '../filmgate.js';
 import { countLive } from '../live.js';
 import { clientAddress, isHomeRequest } from '../netaddr.js';
 import { playbackReport } from './media.js';
@@ -217,18 +217,19 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       // the cast device streams over the same uplink as the sender: outside the home networks the remote cap applies
       const remote = !isHomeRequest(req, ctx.cfg.HOME_NETWORKS);
       const ceiling = remote ? remoteBitrateCap(role) : role.maxBitrate;
-      const maxBitrate = Math.min(ceiling, CAST_MAX_BITRATE, b.maxBitrate ?? CAST_MAX_BITRATE);
+      let maxBitrate = Math.min(ceiling, CAST_MAX_BITRATE, b.maxBitrate ?? CAST_MAX_BITRATE);
       const maxHeight = Math.min(role.maxHeight ?? CAST_MAX_HEIGHT, CAST_MAX_HEIGHT);
       // `after` = the predecessor's play session (server-resolved), so the Plex stream limit lets the queued episode overlap only that one
       // HEVC / Dolby surround only for FriendFlix's own receiver (the Default Media Receiver and AirPlay never state them), on Jellyfin, and only
       // when the receiver confirmed something: otherwise the URL and the answer are exactly today's
       const own = Boolean(b.receiver) && (b.via ?? 'chromecast') === 'chromecast' && castReceiverAppId(ctx) !== '' && ctx.jf.kind === 'jellyfin';
       const clientCaps = own ? receiverCaps(b.caps) : null;
-      const grantId = randomUUID();
-      // a conversion for the receiver follows the player's rules: remote only, the server's HEVC gate (probe, limit, failure pause)
+      // a conversion for the receiver follows the player's rules: remote only, the server's HEVC gate (probe, limit, failure pause), and
+      // every conversion needs a slot of the shared budget (convbudget.ts, spec §5.5), counted for the sender's device.
       // A queued token's stream starts only when the receiver moves on (up to an episode later): no 30 s grant can cover it, so it is never an
-      // HEVC conversion (copy / remux and surround stay as planned).
-      const gate = (): Promise<HevcGate> => (pred ? Promise.resolve({ ok: false, why: 'h264_busy' }) : gateHevc(ctx, { userId: req.user!.id, deviceId, playSessionIdHint: grantId }));
+      // HEVC conversion (copy / remux and surround stay as planned); a conversion of it is admitted like any other.
+      const conv = filmGate(ctx, { userId: req.user!.id, deviceId, label: item.seriesName || item.name });
+      const gate = (): Promise<HevcGate> => (pred ? Promise.resolve({ ok: false, why: 'h264_busy' }) : conv.hevc());
       // the receiver failed a stream that was a HEVC conversion: it counts against the server's HEVC state (as a player fallback does)
       if ((b.fellBack === 'hevc' || b.fellBack === 'both') && b.prevPs) {
         let prev: { video?: unknown } | null;
@@ -249,12 +250,24 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
       };
       let info = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts);
       if (ctx.jf.preparePlayback) info = await ctx.jf.preparePlayback(req.jfUser!, info, opts);
-      if (clientCaps) {
-        await bindHevcGrant(ctx, grantId, info.delivery?.video === 'hevc' ? info.playSessionId : null); // a grant only lives on for a conversion
-        // the server's HEVC count and the next fallback look at the fixed codes of this play session (as /api/playback/info writes them).
-        // Side effect: these sessions also pass the ownership check of /api/playback/warm/stop (the user's own sessions only).
-        if (info.delivery) await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ video: info.delivery.video, audio: info.delivery.audio }), 6 * 3600).catch(() => undefined);
+      // the budget's copy fallback (as /api/playback/info): the cast ceiling without the sender's own lower pick; a title that still needs
+      // a conversion gets 503 before anything is minted (no stream was fetched, nothing to stop)
+      if (!(await conv.admit(info))) {
+        const fallback = { ...opts, noConvert: true, maxBitrate: Math.min(ceiling, CAST_MAX_BITRATE) };
+        let fb = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, fallback);
+        if (ctx.jf.preparePlayback) fb = await ctx.jf.preparePlayback(req.jfUser!, fb, fallback);
+        if (convertsOf(fb)) {
+          await conv.bind(null);
+          return reply.code(503).send({ error: 'server_busy' });
+        }
+        info = fb;
+        maxBitrate = fallback.maxBitrate;
       }
+      await conv.bind(info); // the grants live on only for a conversion
+      // the server's HEVC count, the budget's count (`conv`: this answer really converts, ruling 6; the profile's devices share one server
+      // session) and the next fallback look at the fixed codes of this play session (as /api/playback/info writes them).
+      // Side effect: these sessions also pass the ownership check of /api/playback/warm/stop (the user's own sessions only).
+      if (info.delivery) await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ video: info.delivery.video, audio: info.delivery.audio, ...(convertsOf(info) ? { conv: true } : {}) }), 6 * 3600).catch(() => undefined);
       started = info.playSessionId;
       // the rendition exists only when the HLS URL the server plan built asks for it (a track that is not a text subtitle is not carried)
       const hlsSub = hlsSubtitleIndex !== undefined && hlsSubOf(info.hlsUrl);

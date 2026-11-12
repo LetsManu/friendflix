@@ -23,7 +23,7 @@ export interface UsageDetail {
   reasons: Partial<Record<TranscodeReason, number>>; since: string | null;
 }
 
-const REASONS: readonly TranscodeReason[] = ['network', 'remoteCap', 'uploadCap', 'roleCap', 'container', 'videoCodec', 'audioCodec', 'audioTrack', 'subtitles', 'height', 'manual', 'other'];
+const REASONS: readonly TranscodeReason[] = ['network', 'remoteCap', 'uploadCap', 'roleCap', 'container', 'videoCodec', 'audioCodec', 'audioTrack', 'subtitles', 'height', 'manual', 'serverBusy', 'other'];
 const isReason = (k: string): k is TranscodeReason => (REASONS as readonly string[]).includes(k);
 const CACHE_TTL = 60;
 const daysParam = z.enum(['7', '30', '90']).default('30').transform(Number);

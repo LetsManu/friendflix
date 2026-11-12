@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Ctx } from '../ctx.js';
 import { parseClientCaps } from '../media/clientCaps.js';
-import { MediaError, type CapReason, type HevcGate, type ItemDto, type TranscodeReason } from '../media/types.js';
+import { MediaError, type CapReason, type ItemDto, type TranscodeReason } from '../media/types.js';
 import type { JfUser, ProfileRow, UserRow } from '../types.js';
 import { methodOf } from '../playstats.js';
 import { clearLive, clearStopped, countLive, getLive, listLive, markStopped, setLive } from '../live.js';
@@ -18,8 +18,9 @@ import { requireUser } from '../session.js';
 import { playbackHooks } from '../hooks.js';
 import { bumpHome } from '../homegen.js';
 import { nextUpItems, resumeItems } from '../resumeRows.js';
-import { createHash, randomUUID } from 'node:crypto';
-import { bindHevcGrant, hevcGate as gateHevc, hevcStatus, noteHevcFailure, type HevcState } from '../hevcenc.js';
+import { createHash } from 'node:crypto';
+import { hevcStatus, noteHevcFailure, type HevcState } from '../hevcenc.js';
+import { convertsOf, filmGate } from '../filmgate.js';
 import { itemsByIds, libraryBecause } from './discover.js';
 import { id32 as itemId, wrap as sharedWrap } from './_shared.js';
 
@@ -387,35 +388,52 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     const cap = Math.min(upload.cap, b.maxBitrate ?? role.maxBitrate);
     const capReason: CapReason = b.maxBitrate !== undefined && b.maxBitrate < upload.cap ? (b.reasonHint ?? 'network') : upload.limited ? 'uploadCap' : remote && ceiling < role.maxBitrate ? 'remoteCap' : 'roleCap';
     // PlaybackInfo and the resume-position/trickplay lookup run in parallel (one Jellyfin /Items call instead of two sequential ones)
-    // HEVC conversions: a gate only while HEVC_STREAMS > 0 (probe, limit from the server's session list, failure pause: hevcenc.ts)
-    const grantId = randomUUID();
-    const hevcGate = (): Promise<HevcGate> => gateHevc(ctx, { userId: req.user!.id, deviceId: req.session?.deviceId, playSessionIdHint: grantId });
+    // HEVC conversions: a gate only while HEVC_STREAMS > 0 (probe, limit from the server's session list, failure pause: hevcenc.ts);
+    // every conversion also needs a slot of the shared budget (convbudget.ts, spec §5.5): one gate for both, one session-list read
+    const gate = filmGate(ctx, { userId: req.user!.id, deviceId: req.session?.deviceId });
     // the player left a HEVC conversion for H.264: counts against the server's HEVC state when that stream really was one
     if ((b.fellBack === 'hevc' || b.fellBack === 'both') && b.prevPs && req.session?.deviceId) {
       let prev: { video?: unknown } | null;
       try { prev = JSON.parse((await ctx.kv.get(`pbinfo:${req.user!.id}:${b.prevPs}`).catch(() => null)) ?? 'null'); } catch { prev = null; }
       if (prev?.video === 'hevc') await noteHevcFailure(ctx, req.session.deviceId);
     }
-    const opts = { ...(clientCaps ? { clientCaps } : {}), remote, surround: ctx.cfg.SURROUND_AUDIO !== 'false', ...(ctx.cfg.HEVC_STREAMS > 0 ? { hevcGate } : {}), maxBitrate: cap, capReason, maxHeight: role.maxHeight, startTicks: b.startTicks, audioIndex: b.audioIndex, audioLang: b.audioLang, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') };
+    const opts = { ...(clientCaps ? { clientCaps } : {}), remote, surround: ctx.cfg.SURROUND_AUDIO !== 'false', ...(ctx.cfg.HEVC_STREAMS > 0 ? { hevcGate: gate.hevc } : {}), maxBitrate: cap, capReason, maxHeight: role.maxHeight, startTicks: b.startTicks, audioIndex: b.audioIndex, audioLang: b.audioLang, noDirect: Boolean(role.maxHeight) || (!role.download && ctx.cfg.DIRECT_PLAY_REQUIRES_DOWNLOAD === 'true') };
     const [first, meta] = await Promise.all([ctx.jf.playbackInfo(req.jfUser!, b.itemId, opts), ctx.jf.playMeta(req.jfUser!, b.itemId)]);
     let info = first;
     // optional server step before the player loads the master playlist (decision call, audio/subtitle selection); Jellyfin has none
     if (ctx.jf.preparePlayback) info = await ctx.jf.preparePlayback(req.jfUser!, info, opts);
+    // spec §5.5: a conversion the budget does not admit (full, or the session list did not answer in time) is asked for again as a copy at
+    // the ceiling (the viewer's own lower pick is dropped, the role / remote / upload cap stays). A copy (or direct play) is answered with
+    // the reason `serverBusy`; a title that still needs a conversion gets 503. No stream was fetched yet, so nothing has to be stopped.
+    if (!(await gate.admit(info))) {
+      const fallback = { ...opts, noConvert: true, maxBitrate: upload.cap, capReason: 'serverBusy' as const };
+      let fb = await ctx.jf.playbackInfo(req.jfUser!, b.itemId, fallback);
+      if (ctx.jf.preparePlayback) fb = await ctx.jf.preparePlayback(req.jfUser!, fb, fallback);
+      if (convertsOf(fb)) {
+        await gate.bind(null);
+        return reply.code(503).send({ error: 'server_busy' });
+      }
+      info = { ...fb, transcodeReason: 'serverBusy' };
+    }
     info.roleMaxBitrate = ceiling;
     let resume = b.startTicks ?? meta?.positionTicks;
     if (resume === undefined) {
       // The /Items lookup failed or came back empty: a silent 0 would let the first progress report overwrite the saved
       // Jellyfin position, so ask the single-item endpoint instead and make the player retry (502) when that fails too.
       resume = await ctx.jf.item(req.jfUser!, b.itemId).then((i) => i.positionTicks, () => undefined);
-      if (resume === undefined) return reply.code(502).send({ error: 'jellyfin', reason: 'resume_unknown' });
+      if (resume === undefined) {
+        await gate.bind(null);
+        return reply.code(502).send({ error: 'jellyfin', reason: 'resume_unknown' });
+      }
     }
     info.resumeTicks = resume;
-    await bindHevcGrant(ctx, grantId, info.delivery?.video === 'hevc' ? info.playSessionId : null); // a grant only lives on for a stream that converts
+    await gate.bind(info); // the grants live on only for a stream that converts
     info.trickplay = meta?.trickplay(info.mediaSourceId);
     // Block 22: remember the server's transcode reason for this play session; the stream is counted on "Playing" only
     // (the web prefetches info, Block 20), so a prefetch alone never counts
-    // (plus the granted cap and remote flag: the upload-aware cap counts live remote streams with them)
-    await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ reason: info.transcodeReason ?? null, bitrate: info.maxBitrate, remote, ...(info.delivery ? { video: info.delivery.video, audio: info.delivery.audio } : {}) }), 6 * 3600).catch(() => undefined);
+    // (plus the granted cap and remote flag: the upload-aware cap counts live remote streams with them; `conv`: this answer really
+    // converts (ruling 6), so the budget counts it while the server lists only another device's play session of the same profile)
+    await ctx.kv.set(`pbinfo:${req.user!.id}:${info.playSessionId}`, JSON.stringify({ reason: info.transcodeReason ?? null, bitrate: info.maxBitrate, remote, ...(info.delivery ? { video: info.delivery.video, audio: info.delivery.audio } : {}), ...(convertsOf(info) ? { conv: true } : {}) }), 6 * 3600).catch(() => undefined);
     return info;
   }));
 

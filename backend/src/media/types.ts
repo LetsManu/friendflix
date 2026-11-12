@@ -149,9 +149,12 @@ export interface ImageTags {
   seriesPrimary?: string;
 }
 
-export type TranscodeReason = 'network' | 'remoteCap' | 'uploadCap' | 'roleCap' | 'container' | 'videoCodec' | 'audioCodec' | 'audioTrack' | 'subtitles' | 'height' | 'manual' | 'other';
-/** the bitrate cap that applied (routes/media.ts): `uploadCap` = the server's upload was busy (uploadcap.ts) */
-export type CapReason = 'remoteCap' | 'uploadCap' | 'roleCap' | 'manual' | 'network';
+export type TranscodeReason = 'network' | 'remoteCap' | 'uploadCap' | 'roleCap' | 'container' | 'videoCodec' | 'audioCodec' | 'audioTrack' | 'subtitles' | 'height' | 'manual' | 'serverBusy' | 'other';
+/**
+ * the bitrate cap that applied (routes/media.ts): `uploadCap` = the server's upload was busy (uploadcap.ts); `serverBusy` = the conversion
+ * budget was full, so the answer is the copy fallback (convbudget.ts, spec §5.5)
+ */
+export type CapReason = 'remoteCap' | 'uploadCap' | 'roleCap' | 'manual' | 'network' | 'serverBusy';
 
 export interface PlaybackDto {
   itemId: string;
@@ -167,7 +170,8 @@ export interface PlaybackDto {
   roleMaxBitrate?: number;
   /**
    * Why this session is transcoded; undefined for direct play. Codec/container/height/subtitle/audio-track reasons come from the server,
-   * 'remoteCap' / 'uploadCap' / 'roleCap' / 'manual' / 'network' from the bitrate cap that applied (the client's choice is 'manual' or 'network' via reasonHint).
+   * 'remoteCap' / 'uploadCap' / 'roleCap' / 'manual' / 'network' from the bitrate cap that applied (the client's choice is 'manual' or 'network' via reasonHint),
+   * 'serverBusy' for the copy fallback of a full conversion budget (spec §5.5).
    */
   transcodeReason?: TranscodeReason;
   /** audio track baked into hlsUrl (explicit audioIndex or the matched audioLang); undefined = source default (Jellyfin: a matched default track is still named in hlsUrl, see dto.ts) */
@@ -378,7 +382,12 @@ export interface PlaybackOptions { maxBitrate: number; /** validated device capa
    */
   hlsSubtitleIndex?: number;
   /** asked only when the plan wants an HEVC conversion; absent = refused (h264_unproven) */
-  hevcGate?: () => Promise<HevcGate> }
+  hevcGate?: () => Promise<HevcGate>;
+  /**
+   * the conversion budget is full (spec §5.5 fallback): the stream plan asks for no conversion of its own (no HEVC encode); whether the
+   * answer copies the picture is then the plan's own decision. Plex ignores it (its answers carry no `delivery`, so it is never gated).
+   */
+  noConvert?: boolean }
 /** Server-side transcode of a short clip / probe (preview clips, playback health check): forced re-encode at these limits. */
 export interface ClipTranscode { audioIndex?: number; fmp4?: boolean; videoBitrate: number; audioBitrate: number; maxWidth: number; stereo?: boolean; maxBitrate?: number; /** video codec of the conversion (default h264); the HEVC probe uses 'hevc' */ videoCodec?: 'h264' | 'hevc'; /** HLS segment length in seconds (SegmentLength) */ segmentLength?: number; /** height box of the conversion (MaxHeight); default: the one of the PlaybackInfo answer */ maxHeight?: number }
 
