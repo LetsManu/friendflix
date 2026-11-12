@@ -3,7 +3,7 @@
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FetchError, type GuardDeps } from './fetch.js';
-import { AUDIO_BITRATE, audioFor, ffmpegArgs, videoBitrate } from './ffmpeg.js';
+import { AUDIO_BITRATE, SEGMENT_SECONDS, audioFor, ffmpegArgs, videoBitrate } from './ffmpeg.js';
 import { openInput, type OpenedInput } from './inputs.js';
 import type { Log } from './log.js';
 import { PlaylistRefused, type FetchFn } from './passthrough.js';
@@ -18,8 +18,9 @@ import type { Driver, Mode } from './streams.js';
  * each finished segment as a CSV line on stdout; each line becomes a window entry with `pdt` = its arrival − the segment's
  * duration (ruling 47). When ffmpeg ends while the stream lives (input gone, provider restart) it is started again after the
  * shared backoff (2, 4, 8, 15, 30 s, then 30 s; a run that delivered a segment resets it); the first segment of the new run is a
- * discontinuity and local numbering continues. Logs: channel id and fixed texts only; ffmpeg's stderr goes through run.ts
- * (`scrubLine`), never through here.
+ * discontinuity and local numbering continues. A run that delivers no segment line for STALL_MS (a hung ffmpeg, or one that keeps
+ * reading input without writing segments) is aborted by the stall watchdog and restarted the same way; the stream itself lives
+ * on. Logs: channel id and fixed texts only; ffmpeg's stderr goes through run.ts (`scrubLine`), never through here.
  */
 export interface RemuxDeps {
   run: Run;
@@ -35,6 +36,8 @@ export interface RemuxDeps {
   now?: () => number;
 }
 
+/** the stall watchdog: about 3 segment durations + 20 s without a segment line ends the run */
+export const STALL_MS = 3 * SEGMENT_SECONDS * 1000 + 20_000;
 const FOREVER_MS = 2 ** 31 - 1;
 const FATAL = new Set(['address_refused', 'scheme']);
 const MAX_SEGMENT_S = 120;
@@ -99,7 +102,9 @@ export function remuxDriver(d: RemuxDeps): Driver {
     while (!ctx.signal.aborted) {
       let opened: OpenedInput;
       try {
-        opened = await openInput(input, { guard: d.guard, ...(d.fetch ? { fetch: d.fetch } : {}), signal: ctx.signal, maxBitrate: ctx.maxBitrate });
+        opened = await openInput(input, {
+          guard: d.guard, ...(d.fetch ? { fetch: d.fetch } : {}), signal: ctx.signal, maxBitrate: ctx.maxBitrate,
+        });
       } catch (e) {
         if (ctx.signal.aborted) break;
         if (e instanceof FetchError && FATAL.has(e.code)) { ctx.fail(e.code); return; }
@@ -112,6 +117,19 @@ export function remuxDriver(d: RemuxDeps): Driver {
       const args = ffmpegArgs({
         mode, input: ff.kind === 'pipe' ? { kind: 'pipe' } : { kind: 'srt', url: ff.url }, encoder: ctx.encoder, audio, srcHeight, dir: ctx.dir, startNumber: next,
       });
+      // this run alone: a stop aborts it, and so does the stall watchdog (the stream then lives on and the loop restarts ffmpeg)
+      const runAc = new AbortController();
+      const endRun = () => runAc.abort();
+      if (ctx.signal.aborted) runAc.abort();
+      else ctx.signal.addEventListener('abort', endRun, { once: true });
+      let stall: NodeJS.Timeout | undefined;
+      const watch = () => {
+        clearTimeout(stall);
+        stall = setTimeout(() => {
+          ctx.log(`stalled: no segment for ${STALL_MS / 1000} s, restarting ffmpeg`);
+          runAc.abort();
+        }, STALL_MS);
+      };
       let chain: Promise<void> = Promise.resolve();
       let pending = '';
       let first = true;
@@ -119,6 +137,7 @@ export function remuxDriver(d: RemuxDeps): Driver {
         const c = csvLine(l);
         if (!c || c.n < next) return;
         next = c.n + 1;
+        watch();
         const pdt = Math.round(now() - c.duration * 1000);
         const discontinuity = disc;
         disc = false;
@@ -133,9 +152,10 @@ export function remuxDriver(d: RemuxDeps): Driver {
         }).catch(() => {});
       };
       try {
+        watch();
         await d.run('ffmpeg', args, {
           timeoutMs: FOREVER_MS,
-          signal: ctx.signal,
+          signal: runAc.signal,
           ...(ff.kind === 'pipe' ? { stdin: ff.stdin } : {}),
           onStdout: (chunk) => {
             pending += chunk.toString('utf8');
@@ -149,10 +169,12 @@ export function remuxDriver(d: RemuxDeps): Driver {
         if (pending) take(pending);
         await chain;
       } finally {
+        clearTimeout(stall);
+        ctx.signal.removeEventListener('abort', endRun);
         opened.close();
       }
       if (ctx.signal.aborted) break;
-      // ffmpeg ended while the stream lives: the input is lost until a new run delivers a segment
+      // ffmpeg ended (or was cut) while the stream lives: the input is lost until a new run delivers a segment
       disc = true;
       if (!(await ctx.sleep(ctx.lost()))) break;
     }
