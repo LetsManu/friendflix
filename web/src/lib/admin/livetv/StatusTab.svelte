@@ -176,7 +176,9 @@
   </AdminCard>
 
   <AdminCard title={$t('adminLive.status.events')} description={$t('adminLive.status.eventsHint')}>
-    <div class="reserve table-b" data-events>
+    <!-- on a phone this box has a fixed height and the list scrolls inside it (a keyboard stop with the card's name); on desktop it only reserves height -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div class="reserve table-b" data-events role="group" tabindex="0" aria-label={$t('adminLive.status.events')}>
       <DataTable {rows} columns={eventCols} key={(r) => r.id} caption={$t('adminLive.status.events')} pageSize={10} skeletonRows={10} emptyText={$t('adminLive.status.emptyEvents')}>
         <svelte:fragment slot="cell" let:row let:col>
           {#if col.key === 'at'}
@@ -285,8 +287,14 @@
   .table-a > .state { min-height: inherit; }
   .reserve :global(tr.sk) { height: var(--sk); }
   @media (max-width: 720px) {
-    .table-a { min-height: 45.6rem; --sk: 14.8rem; }
-    .table-b { min-height: 124rem; --sk: 11.5rem; }
+    /* R24: phone only. *Laufende Sender* reserves 2 cards (a running card is 235.4 px; more channels grow the box). *Ereignisse* is a
+       FIXED card (title + hint + this 22rem box = about 28rem): the list scrolls inside, the pager is stuck to its bottom edge, so no content, skeleton, error or empty state
+       changes the card's height. */
+    .table-a { min-height: 30.2rem; --sk: 14.8rem; }
+    .table-a :global(tr.sk:nth-child(n+3)) { display: none; }
+    .table-b { min-height: 0; height: 22rem; overflow-y: auto; overscroll-behavior: contain; --sk: 11.5rem; }
+    .table-b :global(.dt) { min-height: 100%; }
+    .table-b :global(.dt > .pager) { position: sticky; bottom: 0; z-index: 3; background: var(--fr-solid); border-radius: 12px; padding-bottom: .3rem; }
     .reserve :global(tr.sk) { height: auto; min-height: var(--sk); }
   }
   .who { display: inline-flex; align-items: center; gap: .6rem; min-width: 0; }
