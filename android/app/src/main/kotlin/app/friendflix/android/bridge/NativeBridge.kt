@@ -20,6 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Reply    `{"id": "<same>", "ok": true, "result": ...}` or `{"id": "<same>"|null, "ok": false, "error": "<code>"}`
  * Event    `{"event": "<name>", "detail": {...}|null}` (no id), sent to the latest accepted main frame via [emit]
  *
+ * `castLive {channelId}` (like `sessionChanged`) answers later: once the app's watch request and the load on the TV are done.
+ *
  * Only the main frame of the configured origin is served; everything else gets `forbidden` and is never remembered as reply target.
  */
 class NativeBridge(
@@ -174,6 +176,16 @@ class NativeBridge(
                 }
                 Later
             }
+            "castLive" -> {
+                // a live channel on the TV: the app mints the stream itself (POST /api/livetv/channels/:id/watch), the answer waits for it
+                only(args, "channelId")
+                val channelId = id(args, "channelId")
+                val answered = AtomicBoolean(false)
+                cast.castLive(channelId) { playing ->
+                    if (answered.compareAndSet(false, true)) reply.post(ok(requestId, playing))
+                }
+                Later
+            }
             "play" -> launcher.launch(playRequest(args))
             "download" -> downloads.enqueue(downloadRequest(args))
             "downloads" -> {
@@ -217,6 +229,7 @@ class NativeBridge(
         .also { o ->
             c.subtitle?.let { o.put("subtitle", it) }
             c.next?.let { o.put("next", JSONObject().put("itemId", it.itemId).put("label", it.label)) }
+            if (c.live) o.put("live", true)
         }
 
     private fun entry(e: DownloadEntry) = JSONObject()

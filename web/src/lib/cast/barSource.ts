@@ -40,6 +40,7 @@ function toSession(n: NativeCastSnapshot): CastSession {
     position: n.positionMs / 1000, duration: n.durationMs / 1000, paused: n.paused, buffering: false, state: n.state,
     audioTracks: [], subtitles: [], subIndex: -1, autoplay: true,
     ...(n.next ? { upcoming: { itemId: n.next.itemId, label: n.next.label } } : {}),
+    ...(n.live ? { isLive: true } : {}),
   };
 }
 
@@ -50,7 +51,8 @@ export function nativeSource(): CastBarSource {
     playPause: () => void native.castControl('playPause'),
     next: () => void native.castControl('next'),
     stop: async () => { await native.castControl('stop'); },
-    open: () => void native.castControl('open'),
+    // a live channel has no remote screen in the app (its `open` would answer false): nothing is asked
+    open: () => { if (!get(nativeCast)?.live) void native.castControl('open'); },
     canExpand: false,
     fromApp: true,
   };

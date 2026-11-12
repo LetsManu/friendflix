@@ -98,6 +98,12 @@ interface CastRemote {
      * its session only after the bridge's reply, so the reply waits for [done].
      */
     fun sessionChanged(profileId: String?, done: () -> Unit)
+    /**
+     * A live channel on the TV (bridge `castLive`, spec §13): the app asks the server for the channel's Chromecast stream with its own
+     * session (no token crosses the bridge) and loads it; without a connected TV the device chooser opens first. [done] once (main
+     * thread): true = the channel plays on the TV; false = refused by the server (any watch refusal), no TV picked, or no cast here.
+     */
+    fun castLive(channelId: String, done: (Boolean) -> Unit)
 }
 
 /** Placeholder without a cast hub: there is never a cast to show or drive. */
@@ -108,6 +114,7 @@ object NoCastRemote : CastRemote {
     override fun stop() {}
     override fun open(): Boolean = false
     override fun sessionChanged(profileId: String?, done: () -> Unit) { done() }
+    override fun castLive(channelId: String, done: (Boolean) -> Unit) { done(false) }
 }
 
 /** Where native code can send a JSON string back to the page (the main frame's reply channel). */

@@ -92,7 +92,19 @@ Arrow keys and Select move and open, like in any browser. These keys are handled
 | Rewind | 30 seconds back. |
 | Next (where the remote has it) | Next episode, where there is one. |
 
-Holding Fast-forward skips once, not minutes. Left at the edge opens the side menu, Right closes it. The full TV-mode controls (player bar, scene preview, panels) are in [tv-mode.md](tv-mode.md). Your **phone as the remote** works as on every TV: Menu → Remote on the phone.
+In the [Live TV](livetv.md) player the app also passes on these keys, on the remotes that have them:
+
+| Fire TV remote key | What it does in the live player |
+|---|---|
+| CH+ · CH− | Next · previous channel. |
+| 0–9 | Type a channel number. A lone 0 goes back to the last channel. |
+| Last channel | Back to the last channel. |
+| Info | Programme information. |
+| Guide | Opens the channel list. |
+
+**Most Fire TV remotes have no channel, digit, Info or Guide keys, and none are needed:** ▲/▼ switch channels while the controls are hidden, OK shows the controls, holding OK opens the channel list, and Back closes the open panel, then the controls, then the player. Everything else is reachable with the arrows and OK.
+
+Holding Fast-forward skips once, not minutes. Holding CH+ or CH− moves one channel, not through the whole list. Left at the edge opens the side menu, Right closes it. The full TV-mode controls (player bar, scene preview, panels) are in [tv-mode.md](tv-mode.md). Your **phone as the remote** works as on every TV: Menu → Remote on the phone.
 
 *(Whether every Fire TV remote model sends the media keys to the app could not be checked offline; the checklist below covers it.)*
 
@@ -163,6 +175,7 @@ Run this on a Fire TV Stick 4K or Lite and on a Fire TV Cube before telling frie
 2. First start: enter the address, see *Opening …*, land on the pairing screen.
 3. Pair with the QR code and with the typed code.
 4. Remote keys: arrows, Select, Back (side menu first, a second Back on Home leaves the app), Play/Pause, Fast-forward and Rewind in the player.
+   With Live TV on: ▲/▼ switch channels, OK shows the controls, holding OK opens the channel list; on a remote that has them, CH+/CH−, digits, Info and Guide.
 5. Play a title that plays directly and one that is converted. Seek, switch audio and subtitles.
 6. Read the first-run check line; `screen=` should be `1920x1080`.
 7. **Account → Change server**, back to the same server.

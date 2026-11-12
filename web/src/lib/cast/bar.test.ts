@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { tr } from '#lib/i18n';
-import { barLine, barLine1, barLine2, barLine2Full, barTitleFull, splitLine, barProgress, barThumb, barVisible, CASTBAR_H, liveCast, minutesLeft, nextSecondsLeft } from './bar';
+import { barHasProgress, barLine, barLine1, barLine2, barLine2Full, barOpens, barTitleFull, splitLine, barProgress, barThumb, barVisible, CASTBAR_H, liveCast, minutesLeft, nextSecondsLeft } from './bar';
 import { img } from '#lib/api';
 import type { CastSession } from './engine';
 
@@ -38,7 +38,16 @@ describe('cast bar', () => {
 
   it('barThumb', () => {
     expect(barThumb({ ...base, isEpisode: true })).toEqual({ src: img('p1', 160), ratio: '16/9' });
-    expect(barThumb(base).ratio).toBe('2/3');
+    expect(barThumb(base)!.ratio).toBe('2/3');
+  });
+
+  it('a live channel from the app: no poster thumbnail, no progress line, nothing to open', () => {
+    const live = { ...base, duration: 0, position: 0, isLive: true };
+    expect(barThumb(live)).toBeNull();
+    expect(barHasProgress(live)).toBe(false);
+    expect(barOpens(live)).toBe(false);
+    expect(barHasProgress(base)).toBe(true);
+    expect(barOpens(base)).toBe(true);
   });
 
   it('nextSecondsLeft', () => {
