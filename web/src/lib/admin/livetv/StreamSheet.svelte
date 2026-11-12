@@ -3,14 +3,15 @@
 <script lang="ts">
   /**
    * *Stream hinzufügen* (spec §9.1, §3.5): a right-hand glass sheet with the segmented choice *FriendFlix holt den Stream* (pull) /
-   * *Encoder sendet an FriendFlix* (push, SRT). Pull: name, URL (kind detected from it until the admin picks one), *Heimnetz
+   * *Encoder sendet an FriendFlix* (push, SRT). Pull: name, URL (password-type with *anzeigen*;
+   * kind detected from it as the backend does, until the admin picks one), *Heimnetz
    * erlauben*, number, group. Push: name, number, group; *Anlegen* reserves a port and the sheet turns into the **one-time result**:
    * *Server*, *Port*, *Stream-ID*, *Passphrase*, *SRT-Adresse*, each read-only with a copy button, "Die Passphrase wird nur jetzt
    * angezeigt.", the expandable *OBS/Encoder einrichten* hint and the firewall line. *Fertig* closes it; the values live only in this
-   * component and are gone with it. Opened with `result` it shows only that part (*Zugangsdaten neu erzeugen*). A full UDP range
+   * component and are gone with it. Opened with `result` it shows only that part (*Zugangsdaten neu erzeugen*). Without a known host (neither
+   * LIVETV_SRT_HOST nor PUBLIC_URL) *Server* and *SRT-Adresse* are left out and a line says what to set. A full UDP range
    * answers 409 `srt_ports_full` and the sheet says so. Closing with unsaved input asks first; the focus goes back to `trigger`.
    */
-  import { beforeNavigate, goto } from '$app/navigation';
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import { ApiError } from '#lib/api';
   import { dialogKeys } from '#lib/actions';
@@ -20,13 +21,14 @@
   import { t, tr } from '#lib/i18n';
   import Rich from '#lib/i18n/Rich.svelte';
   import Button from '#lib/ui/Button.svelte';
-  import { confirm } from '#lib/ui/confirm';
   import CopyField from '#lib/ui/CopyField.svelte';
   import Field from '#lib/ui/Field.svelte';
   import { uid } from '#lib/ui/ids';
   import Select from '#lib/ui/Select.svelte';
   import Toggle from '#lib/ui/Toggle.svelte';
   import { addStream, listGroups, type FeedChannel, type GroupOption, type NewStream, type PushResult, type StreamKind } from './api';
+  import { confirmDiscard, guardLeave } from './discard';
+  import SecretInput from './SecretInput.svelte';
   import { detectKind, sourceError, urlShapeOk } from './sources';
 
   /** show only the one-time result (new credentials of an existing feed) */
@@ -55,12 +57,12 @@
   $: groupOptions = [{ value: '', label: $t('adminLive.push.noGroup') }, ...groups.map((g) => ({ value: g.id, label: g.name }))];
   $: kindOptions = KINDS.map((k) => ({ value: k, label: $t(`adminLive.push.kinds.${k}`) }));
 
-  let nameErr = '', urlErr = '', numErr = '', formErr = '', saving = false;
+  let nameErr = '', urlErr = '', kindErr = '', numErr = '', formErr = '', saving = false;
   function validate(): boolean {
     nameErr = name.trim() ? '' : tr('adminLive.push.nameMissing');
     urlErr = mode === 'pull' && !urlShapeOk(url, ['http:', 'https:', 'srt:']) ? tr('adminLive.push.urlBad') : '';
     const n = number.trim();
-    numErr = n && !(/^\d+$/.test(n) && Number(n) >= 1 && Number(n) <= 99_999) ? tr('adminLive.push.numberBad') : '';
+    numErr = n && !(/^\d+$/.test(n) && Number(n) >= 1 && Number(n) <= 99_999) ? tr('adminLive.push.numberBad', { max: 99_999 }) : '';
     return !nameErr && !urlErr && !numErr;
   }
 
@@ -80,30 +82,21 @@
       if (b?.error === 'srt_ports_full') formErr = tr('adminLive.push.portsFull', { n: typeof b.n === 'number' ? b.n : 0 });
       else if (b?.field === 'url' || b?.error === 'lan_required' || b?.error === 'refused') urlErr = b.error === 'invalid' ? tr('adminLive.push.urlBad') : sourceError(String(b.error));
       else if (b?.field === 'name') nameErr = tr('adminLive.push.nameMissing');
-      else if (b?.field === 'number') numErr = tr('adminLive.push.numberBad');
+      else if (b?.field === 'kind') kindErr = tr('adminLive.push.urlBad'); // srt only with an srt:// address (backend createFeed)
+      else if (b?.field === 'number') numErr = tr('adminLive.push.numberBad', { max: 99_999 });
       else formErr = typeof b?.error === 'string' ? sourceError(b.error) : sourceError('unreachable');
     } finally { saving = false; }
   }
 
   let done = false;
   async function close(force = false) {
-    if (!force && dirty && !done) {
-      const ok = await confirm({ title: tr('adminLive.src.discardTitle'), body: tr('adminLive.src.discardBody'), danger: true, confirmLabel: tr('adminLive.src.discard') });
-      if (!ok) return;
-    }
+    if (!force && dirty && !done && !(await confirmDiscard())) return;
     done = true;
     result = null; // the one-time values leave with the sheet
     dispatch('close');
     void tick().then(() => { if (trigger?.isConnected) trigger.focus({ preventScroll: true }); });
   }
-  beforeNavigate((nav) => {
-    if (done || !dirty) return;
-    nav.cancel();
-    if (nav.willUnload || !nav.to) return;
-    const to = nav.to.url;
-    void confirm({ title: tr('adminLive.src.discardTitle'), body: tr('adminLive.src.discardBody'), danger: true, confirmLabel: tr('adminLive.src.discard') })
-      .then((ok) => { if (ok) { done = true; void goto(to); } });
-  });
+  guardLeave(() => !done && dirty, () => { done = true; });
 
   // the result replaces the form: the focus moves to its heading
   let panelEl: HTMLDivElement | undefined, resultHead: HTMLHeadingElement | undefined;
@@ -136,11 +129,12 @@
       </header>
       <div class="body" data-push-result>
         <p class="warn" role="note"><Icon name="alert" size={18} /><span>{$t('adminLive.push.onceWarning')}</span></p>
-        <CopyField label={$t('adminLive.push.host')} value={result.push.host} />
+        {#if result.push.host}<CopyField label={$t('adminLive.push.host')} value={result.push.host} />
+        {:else}<p class="fw" data-no-host><Icon name="info" size={18} /><span>{$t('adminLive.push.noHost')}</span></p>{/if}
         <CopyField label={$t('adminLive.push.port')} value={String(result.push.port)} />
         <CopyField label={$t('adminLive.push.streamId')} value={result.push.streamId} />
         <CopyField label={$t('adminLive.push.passphrase')} value={result.push.passphrase} />
-        <CopyField label={$t('adminLive.push.url')} value={result.push.url} />
+        {#if result.push.url}<CopyField label={$t('adminLive.push.url')} value={result.push.url} />{/if}
         <details class="adv">
           <summary><Icon name="chevron-down" size={18} /><span>{$t('adminLive.push.obsTitle')}</span></summary>
           <p class="obs"><Rich key="adminLive.push.obsBody" /></p>
@@ -168,10 +162,10 @@
 
         {#if mode === 'pull'}
           <Field label={$t('adminLive.push.pullUrl')} required error={urlErr} hint={$t('adminLive.push.pullUrlHint')} let:id={fid} let:describedby let:invalid>
-            <input id={fid} type="url" bind:value={url} maxlength={2048} autocomplete="off" spellcheck="false" aria-describedby={describedby} aria-invalid={invalid} />
+            <SecretInput id={fid} bind:value={url} {describedby} {invalid} />
           </Field>
-          <Select label={$t('adminLive.push.kind')} value={kind} options={kindOptions} hint={pickedKind ? '' : $t('adminLive.push.kindAuto')}
-            on:change={(e) => { const v = (e.target as HTMLSelectElement | null)?.value; if (v === 'hls' || v === 'ts' || v === 'srt') pickedKind = v; }} />
+          <Select label={$t('adminLive.push.kind')} value={kind} options={kindOptions} hint={pickedKind ? '' : $t('adminLive.push.kindAuto')} error={kindErr}
+            on:change={(e) => { const v = (e.target as HTMLSelectElement | null)?.value; if (v === 'hls' || v === 'ts' || v === 'srt') { pickedKind = v; kindErr = ''; } }} />
           <Toggle label={$t('adminLive.src.lan')} hint={$t('adminLive.src.lanHint')} bind:checked={allowLan} />
         {:else}
           <p class="note"><Icon name="key" size={18} /><span>{$t('adminLive.push.pushNote')}</span></p>

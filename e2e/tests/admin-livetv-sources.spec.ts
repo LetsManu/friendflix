@@ -28,7 +28,7 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     const c = card(page, 'Nordlicht Paket');
     await expect(c).toContainText('Anbieterliste');
     await expect(c).toContainText('https://iptv.example.com/…');
-    await expect(c.locator('[data-state]')).toHaveText('Zuletzt aktualisiert heute 06:12 · 412 Sender (+3 / −1) · Programm: 6 812 Sendungen');
+    await expect(c.locator('[data-state]')).toHaveText('Zuletzt aktualisiert heute 06:12 · 412 Sender (+3 / −1) · Programm: 6.812 Sendungen');
     await expect(c).toContainText('2 neue Gruppen warten auf Freigabe');
     await expect(c.getByLabel('Aktualisieren', { exact: true })).toHaveValue('24h');
     const own = card(page, 'Eigene Streams');
@@ -36,7 +36,7 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     const wolkenlos = own.locator('li', { hasText: 'Kanal Wolkenlos' });
     await expect(wolkenlos).toContainText('Port 9001');
     await expect(wolkenlos).toContainText('ff-QW7RT5…');
-    await expect(wolkenlos).toContainText('Sendet');
+    await expect(wolkenlos.locator('[data-state="receiving"]')).toHaveText('Sendet');
     await expect(wolkenlos).toContainText('2 abgelehnte Versuche (1 Std.)');
     await expect(own.locator('li', { hasText: 'Hafenkanal' })).toContainText('Abgeholt · HLS');
     // the status tab keeps the installed view (version, off button) until Task 26
@@ -54,7 +54,9 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     const url = dlg.getByLabel('Senderliste (M3U-Adresse)');
     await expect(url).toHaveAttribute('type', 'password');
     await url.fill(LIST_URL);
-    await dlg.getByRole('button', { name: 'anzeigen' }).click();
+    // the M3U and the XMLTV address are both password-type with their own "anzeigen"
+    await expect(dlg.getByLabel('Programmführer (XMLTV-Adresse)')).toHaveAttribute('type', 'password');
+    await dlg.getByRole('button', { name: 'anzeigen' }).first().click();
     await expect(url).toHaveAttribute('type', 'text');
     const save = dlg.getByRole('button', { name: 'Speichern' });
     await expect(save).toBeDisabled();
@@ -71,13 +73,14 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     await save.click();
     await expect(dlg).toHaveCount(0);
     await expect(toasts(page).getByText('Quelle hinzugefügt.')).toBeVisible();
-    expect(writes(api, 'POST', /\/sources\/test$/)[0]!.body).toEqual({ url: LIST_URL, allowLan: false });
+    expect(writes(api, 'POST', /\/sources\/test$/)[0]!.body).toEqual({ url: LIST_URL, epgUrl: null, allowLan: false });
     const post = writes(api, 'POST', /\/sources$/);
     expect(post).toHaveLength(1);
     expect(post[0]!.body).toMatchObject({ name: 'Hafen Paket', url: LIST_URL, allowLan: false, refresh: '24h', skipGroups: [], enabled: true });
     const c = card(page, 'Hafen Paket');
     await expect(c).toContainText('https://iptv.example.com/…');
     await expect(c).toContainText('Noch nicht aktualisiert');
+    expect(post[0]!.body.epgUrl).toBeNull();
     await expect(page.getByText('geheim123')).toHaveCount(0);
   });
 
@@ -180,7 +183,9 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     const row = own.locator('li', { hasText: 'Sternwarte 24' });
     await expect(row).toContainText('ff-AB12CD…');
     await expect(row).toContainText('Port 9000');
-    await expect(row).toContainText('Keine Übertragung');
+    await expect(row.locator('[data-state="idle"]')).toHaveText('Keine Übertragung');
+    // the rejected line had its row before the ingest state came, and stays empty at 0
+    await expect(row.locator('[data-rejected]')).toHaveText('');
     // the values never come back
     await expect(page.getByText('Zq3xV9mB2nK7pL4wR8tY6uH1jG5fD0sA')).toHaveCount(0);
     expect(await page.locator('input').evaluateAll((els) => els.some((e) => (e as HTMLInputElement).value.includes('Zq3x')))).toBe(false);
@@ -204,9 +209,13 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     await card(page, 'Eigene Streams').getByRole('button', { name: 'Stream hinzufügen' }).click();
     const dlg = page.getByRole('dialog', { name: 'Stream hinzufügen' });
     await dlg.getByRole('textbox', { name: 'Name', exact: true }).fill('Bergblick Sport');
-    await dlg.getByLabel('Stream-Adresse').fill('srt://192.0.2.10:9000?streamid=bergblick');
+    const url = dlg.getByLabel('Stream-Adresse');
+    await expect(url).toHaveAttribute('type', 'password');
+    await url.fill('srt://192.0.2.10:9000?streamid=bergblick');
     await expect(dlg.getByLabel('Art', { exact: true })).toHaveValue('srt');
-    await dlg.getByLabel('Stream-Adresse').fill('https://iptv.example.com/live/bergblick.m3u8');
+    await url.fill('http://192.0.2.10:8080/bergblick.ts');
+    await expect(dlg.getByLabel('Art', { exact: true })).toHaveValue('ts');
+    await url.fill('https://iptv.example.com/live/bergblick.m3u8');
     await expect(dlg.getByLabel('Art', { exact: true })).toHaveValue('hls');
     await dlg.getByRole('button', { name: 'Anlegen' }).click();
     await expect(dlg).toHaveCount(0);
@@ -228,6 +237,84 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     await ask.getByRole('button', { name: 'Verwerfen' }).click();
     await expect(dlg).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Quelle hinzufügen' })).toBeFocused();
+  });
+
+  test('push feed states, the range and a port that left it', async ({ page, api }) => {
+    const a = api.admin.livetv.area;
+    a.ports = Array.from({ length: 8 }, (_, i) => 9002 + i); // LIVETV_SRT_PORTS moved: 9001 is out
+    a.feeds.push({ id: 'ch-stern', sourceId: 'src-feeds', name: 'Sternwarte 24', number: 803, streamKind: 'srt', push: { port: 9003, hint: 'ff-ST3RN2' }, ingest: null });
+    await page.goto('/admin/livetv');
+    const own = card(page, 'Eigene Streams');
+    await expect(own.locator('[data-ports]')).toHaveText('Gesendete Streams kommen über UDP 9002–9009 an. Nur diese Ports in der Firewall öffnen.');
+    const stern = own.locator('li', { hasText: 'Sternwarte 24' });
+    await expect(stern.locator('[data-state="pending"]')).toHaveText('Noch nicht bereit');
+    const wolkenlos = own.locator('li', { hasText: 'Kanal Wolkenlos' });
+    await expect(wolkenlos.locator('[data-state="out_of_range"]')).toHaveText('Port außerhalb des Bereichs');
+    await expect(wolkenlos).toContainText('Port 9001 liegt nicht mehr im Bereich');
+    await menu(page, 'Kanal Wolkenlos', 'Neuen Port zuweisen');
+    await expect(toasts(page).getByText('Neuer Port: 9002')).toBeVisible();
+    await expect(wolkenlos.locator('[data-state="receiving"]')).toHaveText('Sendet');
+    await expect(wolkenlos).toContainText('Port 9002');
+    await expect(wolkenlos).not.toContainText('liegt nicht mehr im Bereich');
+    expect(writes(api, 'POST', /\/channels\/ch-wolkenlos\/push-port$/)).toHaveLength(1);
+  });
+
+  test('an unknown range shows no ports line and every push feed as unknown', async ({ page, api }) => {
+    api.admin.livetv.area.portsKnown = false;
+    await page.goto('/admin/livetv');
+    const own = card(page, 'Eigene Streams');
+    const wolkenlos = own.locator('li', { hasText: 'Kanal Wolkenlos' });
+    await expect(wolkenlos.locator('[data-state="error"]')).toHaveText('Zustand unbekannt');
+    await expect(wolkenlos).not.toContainText('liegt nicht mehr im Bereich');
+    await expect(own.locator('[data-ports]')).toHaveText('');
+  });
+
+  test('without a known host the result leaves out Server and SRT-Adresse and says what to set', async ({ page, api }) => {
+    api.admin.livetv.area.host = null;
+    await page.goto('/admin/livetv');
+    await card(page, 'Eigene Streams').getByRole('button', { name: 'Stream hinzufügen' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Stream hinzufügen' });
+    await dlg.getByRole('radio', { name: 'Encoder sendet an FriendFlix' }).click();
+    await dlg.getByRole('textbox', { name: 'Name', exact: true }).fill('Sternwarte 24');
+    await dlg.getByRole('button', { name: 'Anlegen' }).click();
+    const res = page.getByRole('dialog', { name: 'Zugangsdaten für Sternwarte 24' });
+    await expect(res.getByRole('button', { name: 'Kopieren' })).toHaveCount(3);
+    await expect(res.getByLabel('Server', { exact: true })).toHaveCount(0);
+    await expect(res.getByLabel('SRT-Adresse', { exact: true })).toHaveCount(0);
+    await expect(res).toContainText('Der Servername ist noch unbekannt. Setze LIVETV_SRT_HOST oder PUBLIC_URL und erzeuge danach neue Zugangsdaten.');
+  });
+
+  test('choosing Eigene Streams with typed input asks first', async ({ page }) => {
+    await page.goto('/admin/livetv');
+    await page.getByRole('button', { name: 'Quelle hinzufügen' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Quelle hinzufügen' });
+    await dlg.getByRole('textbox', { name: 'Name', exact: true }).fill('Hafen Paket');
+    await dlg.getByRole('radio', { name: 'Eigene Streams' }).click();
+    const ask = page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' });
+    await ask.getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(dlg.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Hafen Paket');
+    await expect(page.getByRole('dialog', { name: 'Stream hinzufügen' })).toHaveCount(0);
+    await dlg.getByRole('radio', { name: 'Eigene Streams' }).click();
+    await ask.getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page.getByRole('dialog', { name: 'Stream hinzufügen' })).toBeVisible();
+    await expect(dlg).toHaveCount(0);
+  });
+
+  test('removing the guide on edit checks without it and saves epgUrl null', async ({ page, api }) => {
+    await page.goto('/admin/livetv');
+    await menu(page, 'Nordlicht Paket', 'Bearbeiten');
+    const dlg = page.getByRole('dialog', { name: 'Quelle bearbeiten' });
+    const remove = dlg.getByRole('button', { name: 'Programmführer entfernen' });
+    expect((await remove.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await remove.click();
+    await expect(dlg).toContainText('Wird beim Speichern entfernt.');
+    await dlg.getByRole('button', { name: 'Prüfen' }).click();
+    await expect(dlg.locator('[data-test-result]')).toBeVisible();
+    expect(writes(api, 'POST', /\/sources\/test$/)[0]!.body).toEqual({ epgUrl: null, allowLan: false, sourceId: 'src-nordlicht' });
+    await dlg.getByRole('button', { name: 'Speichern' }).click();
+    await expect(dlg).toHaveCount(0);
+    expect(writes(api, 'PATCH', /\/sources\/src-nordlicht$/)[0]!.body).toEqual({ epgUrl: null });
+    await expect(card(page, 'Nordlicht Paket')).toContainText('Kein Programmführer');
   });
 
   test.describe('refusals', () => {
@@ -269,9 +356,25 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
       await expect(dlg.getByRole('button', { name: 'Speichern' })).toBeDisabled();
     });
 
+    test('a check that still runs says so and Prüfen stays usable', async ({ page, api }) => {
+      api.admin.livetv.area.testBusy = true;
+      await page.goto('/admin/livetv');
+      await page.getByRole('button', { name: 'Quelle hinzufügen' }).click();
+      const dlg = page.getByRole('dialog', { name: 'Quelle hinzufügen' });
+      await dlg.getByRole('textbox', { name: 'Name', exact: true }).fill('Hafen Paket');
+      await dlg.getByLabel('Senderliste (M3U-Adresse)').fill(LIST_URL);
+      const check = dlg.getByRole('button', { name: 'Prüfen' });
+      await check.click();
+      await expect(dlg.getByRole('alert')).toHaveText('Eine Prüfung läuft gerade schon. Versuch es gleich noch einmal.');
+      await expect(check).toBeEnabled();
+      await check.click();
+      await expect(dlg.locator('[data-test-result]')).toHaveText('412 Sender in 18 Gruppen · EPG: 398 Kanäle');
+      await expect(dlg.getByRole('button', { name: 'Speichern' })).toBeEnabled();
+    });
+
     test('ports full shows the message', async ({ page, api }) => {
       const a = api.admin.livetv.area;
-      for (const port of a.ports.filter((p) => p !== 9001)) a.feeds.push({ id: `ch-p${port}`, sourceId: 'src-feeds', name: `Kinderinsel ${port}`, number: null, kind: 'ts', push: { port, idHint: 'ff-ZZ22ZZ', inRange: true }, ingest: { state: 'idle', rejected1h: 0 } });
+      for (const port of a.ports.filter((p) => p !== 9001)) a.feeds.push({ id: `ch-p${port}`, sourceId: 'src-feeds', name: `Kinderinsel ${port}`, number: null, streamKind: 'srt', push: { port, hint: 'ff-ZZ22ZZ' }, ingest: { state: 'idle', rejected1h: 0 } });
       await page.goto('/admin/livetv');
       await card(page, 'Eigene Streams').getByRole('button', { name: 'Stream hinzufügen' }).click();
       const dlg = page.getByRole('dialog', { name: 'Stream hinzufügen' });

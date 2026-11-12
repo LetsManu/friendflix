@@ -62,7 +62,8 @@ test.describe('admin: Live-TV, Quellen (phone, 375 px)', () => {
     await page.getByRole('button', { name: 'Quelle hinzufügen' }).click();
     const add = page.getByRole('dialog', { name: 'Quelle hinzufügen' });
     await fits(add, 'source sheet');
-    for (const name of ['anzeigen', 'Prüfen', 'Speichern', 'Schließen']) await fits(add.getByRole('button', { name }), name, 44);
+    for (const name of ['Prüfen', 'Speichern', 'Schließen']) await fits(add.getByRole('button', { name }), name, 44);
+    for (const b of await add.getByRole('button', { name: 'anzeigen' }).all()) await fits(b, 'anzeigen', 44);
     await add.getByRole('radio', { name: 'Eigene Streams' }).click();
     const st = page.getByRole('dialog', { name: 'Stream hinzufügen' });
     await fits(st, 'stream sheet');

@@ -4,7 +4,7 @@
  * Admin → Live-TV → *Quellen* (spec §9.1): the pure text and decision helpers the cards and sheets render from. The tab names live
  * here too, so the page and its tests agree on them.
  */
-import { fmtDateTime, fmtNumber, fmtTime, getLocale, tr, type TKey } from '#lib/i18n';
+import { fmtDateTime, fmtTime, tr, type TKey } from '#lib/i18n';
 import type { SourceView, StreamKind } from './api';
 
 export const TABS = ['sources', 'channels', 'groups', 'guide', 'status'] as const;
@@ -12,18 +12,15 @@ export type Tab = (typeof TABS)[number];
 /** `?tab=` → the tab; anything else is *Quellen* */
 export const tabOf = (v: string | null | undefined): Tab => ((TABS as readonly string[]).includes(v ?? '') ? (v as Tab) : 'sources');
 
-/** the kind of a pulled own feed, from its URL: `srt://` → srt, a `.m3u8` path → hls, anything else → MPEG-TS (the admin can change it) */
+/**
+ * The kind of a pulled own feed, from its URL, as the backend detects it (backend/src/livetv/ownfeeds.ts `detectKind`): `srt://` → srt,
+ * a path ending in `.ts` → MPEG-TS, anything else → HLS. The admin can change it (srt only with an srt URL).
+ */
 export function detectKind(url: string): StreamKind {
   const u = url.trim().toLowerCase();
   if (u.startsWith('srt://')) return 'srt';
-  const path = u.split(/[?#]/, 1)[0] ?? '';
-  return path.endsWith('.m3u8') ? 'hls' : 'ts';
-}
-
-/** grouped digits; German groups with a narrow no-break space, as the spec writes it ("6 812"), so the dots never read as decimals */
-export function count(n: number): string {
-  const s = fmtNumber(n);
-  return getLocale() === 'de' ? s.replace(/\./g, ' ') : s;
+  const path = u.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/, '').split(/[?#]/, 1)[0] ?? '';
+  return path.endsWith('.ts') ? 'ts' : 'hls';
 }
 
 const validDate = (iso: string | null | undefined): Date | null => {
@@ -46,34 +43,39 @@ export function whenText(d: Date, now: Date): string {
  * list over 2 000 groups or 200 000 entries; `incomplete` = a stream that ended without its end line; `livetv_unreachable` = the
  * backend did not reach the livetv service (503), not the provider.
  */
-const ERR: Record<string, 'unreachable' | 'denied' | 'timeout' | 'too_big' | 'invalid' | 'empty' | 'refused' | 'incomplete' | 'livetv_unreachable'> = {
+type ErrKey = 'unreachable' | 'denied' | 'timeout' | 'too_big' | 'invalid' | 'empty' | 'refused' | 'lan_required' | 'incomplete' | 'livetv_unreachable';
+const ERR: Record<string, ErrKey> = {
   unreachable: 'unreachable', not_found: 'unreachable', http_error: 'unreachable', redirects: 'unreachable', scheme: 'unreachable',
   livetv_unreachable: 'livetv_unreachable', incomplete: 'incomplete',
   denied: 'denied',
   timeout: 'timeout',
   too_big: 'too_big',
-  invalid: 'invalid', not_m3u: 'invalid', doctype: 'invalid',
+  invalid: 'invalid', not_m3u: 'invalid', doctype: 'invalid', invalid_answer: 'invalid',
   empty: 'empty',
-  refused: 'refused', address_refused: 'refused', lan_required: 'refused',
+  refused: 'refused', address_refused: 'refused',
+  lan_required: 'lan_required',
 };
+/** the list limits livetv refuses as `too_big` besides the 50 MB (formatted for the language by `tr`) */
+const LIMITS = { groups: 2_000, entries: 200_000 };
 export function sourceError(code: string): string {
   const k = ERR[code];
-  return k ? tr(`adminLive.src.err.${k}` as TKey) : tr('adminLive.err.generic');
+  return k ? tr(`adminLive.src.err.${k}` as TKey, LIMITS) : tr('adminLive.err.generic');
 }
 
 /**
- * The card's state line: "Zuletzt aktualisiert heute 06:12 · 412 Sender (+3 / −1) · Programm: 6 812 Sendungen". A failed refresh
- * leads with the error in words (the counts of the last good one follow); an EPG error replaces the programme part.
+ * The card's state line: "Zuletzt aktualisiert heute 06:12 · 412 Sender (+3 / −1) · Programm: 6.812 Sendungen". A failed refresh
+ * leads with the error in words (the counts of the last good one follow); an EPG error replaces the programme part. Numbers go
+ * through `tr`, so they are grouped as everywhere in the app (de "6.812").
  */
 export function stateLine(s: SourceView, now: Date): string {
   const st = s.state;
   const parts: string[] = [];
   if (st.lastError) parts.push(sourceError(st.lastError));
   const ok = validDate(st.lastOkAt);
-  if (ok && st.counts) parts.push(tr('adminLive.src.state', { when: whenText(ok, now), n: count(st.counts.channels), a: count(st.counts.added), r: count(st.counts.removed) }));
+  if (ok && st.counts) parts.push(tr('adminLive.src.state', { when: whenText(ok, now), n: st.counts.channels, a: st.counts.added, r: st.counts.removed }));
   else if (!st.lastError) parts.push(tr('adminLive.src.never'));
   if (st.epg.lastError) parts.push(tr('adminLive.src.stateEpgErr', { err: sourceError(st.epg.lastError) }));
-  else if (st.epg.programmes !== null) parts.push(tr('adminLive.src.stateEpg', { n: count(st.epg.programmes) }));
+  else if (st.epg.programmes !== null) parts.push(tr('adminLive.src.stateEpg', { n: st.epg.programmes }));
   return parts.join(' · ');
 }
 
@@ -89,9 +91,13 @@ export function portRange(ports: number[]): string {
   }
   return runs.join(', ');
 }
-/** "Gesendete Streams kommen über UDP 9000–9009 an. Nur diese Ports in der Firewall öffnen."; empty without ports */
-export function portsLine(ports: number[]): string {
-  const range = portRange(ports);
+/**
+ * "Gesendete Streams kommen über UDP 9000–9009 an. Nur diese Ports in der Firewall öffnen."; a list of ports or the range `GET /ingest`
+ * answers (`{ from, to }`); empty without ports (`null`: livetv cannot tell).
+ */
+export function portsLine(ports: number[] | { from: number; to: number } | null): string {
+  if (!ports) return '';
+  const range = Array.isArray(ports) ? portRange(ports) : ports.from === ports.to ? String(ports.from) : `${ports.from}–${ports.to}`;
   return range ? tr('adminLive.push.portsLine', { range }) : '';
 }
 
@@ -99,7 +105,7 @@ export function portsLine(ports: number[]): string {
 export function refreshResult(s: SourceView): { ok: boolean; text: string } {
   if (s.state.lastError) return { ok: false, text: tr('adminLive.src.refreshFailed', { err: sourceError(s.state.lastError) }) };
   const c = s.state.counts;
-  return { ok: true, text: c ? tr('adminLive.src.refreshed', { n: count(c.channels), a: count(c.added), r: count(c.removed) }) : tr('adminLive.src.refreshedPlain') };
+  return { ok: true, text: c ? tr('adminLive.src.refreshed', { n: c.channels, a: c.added, r: c.removed }) : tr('adminLive.src.refreshedPlain') };
 }
 
 /** *Jetzt aktualisieren*: how often the page asks `GET /sources` after the 202, and for how long (a refresh may take minutes) */

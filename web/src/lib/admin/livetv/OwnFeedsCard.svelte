@@ -3,10 +3,11 @@
 <script lang="ts">
   /**
    * The *Eigene Streams* card (spec §9.1, §3.5): one row per own feed. A pulled feed shows its kind; a push feed its port, the
-   * stream-id hint ("ff-AB12CD…"), the state chip *Sendet* / *Keine Übertragung* (from livetv's ingest state), the rejected
-   * handshakes of the last hour, and "Port {p} liegt nicht mehr im Bereich" when `LIVETV_SRT_PORTS` moved away from it. Menu:
-   * *Zugangsdaten neu erzeugen* (confirm, then the one-time result), *Neuen Port zuweisen*, *Löschen* (confirm; frees the port).
-   * Under the rows the line naming the UDP ports. The chips and the ports line keep their place while the ingest state loads.
+   * stream-id hint ("ff-AB12CD…"), the state chip of `GET /ingest` (*Sendet*, *Keine Übertragung*, *Noch nicht bereit*, *Port
+   * außerhalb des Bereichs*, *Zustand unbekannt*), the rejected handshakes of the last hour, and "Port {p} liegt nicht mehr im
+   * Bereich" when `LIVETV_SRT_PORTS` moved away from it. Menu: *Zugangsdaten neu erzeugen* (confirm, then the one-time result),
+   * *Neuen Port zuweisen*, *Löschen* (confirm; frees the port). Under the rows the line naming the UDP range (none while livetv cannot
+   * tell). The chip, the rejected line and the ports line keep their place while the ingest state loads.
    */
   import { createEventDispatcher, onMount } from 'svelte';
   import Icon from '#lib/Icon.svelte';
@@ -18,8 +19,7 @@
   import { confirm } from '#lib/ui/confirm';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import StatusPill from '#lib/ui/StatusPill.svelte';
-  import { toast } from '#lib/ui/toast';
-  import { deleteChannel, ingestView, listFeeds, newCredentials, newPort, type FeedChannel, type IngestView, type PushResult, type SourceView } from './api';
+  import { deleteChannel, ingestView, listFeeds, newCredentials, newPort, type FeedChannel, type FeedState, type IngestView, type PushResult, type SourceView } from './api';
   import { portsLine } from './sources';
 
   export let source: SourceView;
@@ -27,7 +27,7 @@
   const dispatch = createEventDispatcher<{ add: HTMLElement | null; result: { name: string; push: PushResult; trigger: HTMLElement | null } }>();
 
   let feeds: FeedChannel[] | null = null, failed = false;
-  /** null while loading; false = livetv did not answer (the chips say "unknown") */
+  /** null while loading; false = the route did not answer (the chips say "Zustand unbekannt") */
   let ingest: IngestView | null | false = null;
 
   export async function reload() {
@@ -37,6 +37,10 @@
   onMount(reload);
 
   $: stateOf = (id: string) => (ingest ? ingest.feeds.find((f) => f.channelId === id) ?? null : null);
+  const PILL: Record<FeedState, { tone: 'ok' | 'muted' | 'info' | 'err' | 'warn'; icon: string }> = {
+    receiving: { tone: 'ok', icon: 'cast' }, idle: { tone: 'muted', icon: 'x' }, pending: { tone: 'info', icon: 'clock' },
+    out_of_range: { tone: 'err', icon: 'alert' }, error: { tone: 'warn', icon: 'alert' },
+  };
   $: ports = ingest ? portsLine(ingest.ports) : '';
 
   /** the row's menu button: the result sheet gives the focus back to it */
@@ -49,7 +53,7 @@
     const trigger = menuOf(f);
     if (!(await confirm({ title: tr('adminLive.push.regenerate'), body: tr('adminLive.push.regenerateBody'), confirmLabel: tr('adminLive.push.regenerate') }))) return;
     const r = await runAction({ key: `ltv-feed:${f.id}`, run: () => newCredentials(f.id) });
-    if (r.ok && r.value) dispatch('result', { name: f.name, push: r.value, trigger });
+    if (r.ok && r.value) dispatch('result', { name: r.value.channel.name, push: r.value.push, trigger });
   }
   async function movePort(f: FeedChannel) {
     const r = await runAction({ key: `ltv-feed:${f.id}`, run: () => newPort(f.id), success: (v) => tr('adminLive.push.portMoved', { port: String(v?.port ?? '') }) });
@@ -97,12 +101,13 @@
             {#if f.push}
               <span class="facts">
                 <span>{$t('adminLive.push.portLine', { port: String(f.push.port) })}</span>
-                <code>{f.push.idHint}…</code>
+                <code>{f.push.hint}…</code>
               </span>
-              {#if !f.push.inRange}<span class="gone"><Icon name="alert" size={16} />{$t('adminLive.push.portGone', { port: String(f.push.port) })}</span>{/if}
-              {#if st && st.rejected1h > 0}<span class="rej">{$t('adminLive.push.rejected', { n: st.rejected1h })}</span>{/if}
+              {#if !f.push.portInRange || st?.state === 'out_of_range'}<span class="gone"><Icon name="alert" size={16} />{$t('adminLive.push.portGone', { port: String(f.push.port) })}</span>{/if}
+              <!-- reserved from the start: the count arrives with the ingest state, the row does not grow -->
+              <span class="rej" data-rejected>{st && st.rejected1h > 0 ? $t('adminLive.push.rejected', { n: st.rejected1h }) : ''}</span>
             {:else}
-              <span class="facts">{$t('adminLive.push.pulled', { kind: $t(`adminLive.push.kinds.${f.kind}`) })}</span>
+              <span class="facts">{$t('adminLive.push.pulled', { kind: $t(`adminLive.push.kinds.${f.streamKind}`) })}</span>
             {/if}
           </div>
           <div class="side">
@@ -110,8 +115,7 @@
               <!-- the chip's box is there before the ingest state arrives -->
               <span class="chipbox">
                 {#if ingest === null}<Skeleton w="7.5rem" h="1.5rem" />
-                {:else if st}<StatusPill tone={st.state === 'receiving' ? 'ok' : 'muted'} icon={st.state === 'receiving' ? 'cast' : 'x'} label={st.state === 'receiving' ? $t('adminLive.push.receiving') : $t('adminLive.push.idle')} />
-                {:else}<StatusPill tone="muted" icon="info" label={$t('adminLive.push.unknown')} />{/if}
+                {:else}{@const k = st?.state ?? 'error'}<span data-state={k}><StatusPill tone={PILL[k].tone} icon={PILL[k].icon} label={$t(`adminLive.push.state.${k}`)} /></span>{/if}
               </span>
             {/if}
             <ActionMenu label={$t('adminLive.push.actions', { name: f.name })} title={f.name} busy={$busyKeys.has(`ltv-feed:${f.id}`)} items={items(f)} />
@@ -135,7 +139,7 @@
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
   .gone { display: inline-flex; gap: .3rem; align-items: center; font-size: .85rem; font-weight: 600; }
   .gone :global(svg) { color: var(--err); flex: none; }
-  .rej { font-size: .85rem; color: rgba(255, 255, 255, .85); }
+  .rej { display: block; min-height: 1.3em; line-height: 1.3; font-size: .85rem; color: rgba(255, 255, 255, .85); }
   .side { flex: none; display: flex; align-items: center; gap: .4rem; }
   .chipbox { display: inline-flex; min-width: 7.5rem; justify-content: flex-end; }
   .msg { display: flex; gap: .45rem; align-items: flex-start; margin: 0; }

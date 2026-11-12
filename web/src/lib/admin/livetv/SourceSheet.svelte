@@ -12,7 +12,6 @@
    * whenever the address, the LAN switch or the user agent changed (a new source always). A modal dialog: Tab stays inside, Escape
    * or a press on the dimmed page closes it (unsaved input asks first) and the focus goes back to `trigger`.
    */
-  import { beforeNavigate, goto } from '$app/navigation';
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import { ApiError } from '#lib/api';
   import { dialogKeys } from '#lib/actions';
@@ -21,13 +20,14 @@
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
   import Button from '#lib/ui/Button.svelte';
-  import { confirm } from '#lib/ui/confirm';
   import Field from '#lib/ui/Field.svelte';
   import { uid } from '#lib/ui/ids';
   import Select from '#lib/ui/Select.svelte';
   import Toggle from '#lib/ui/Toggle.svelte';
   import { createSource, REFRESHES, testSource, updateSource, type Refresh, type SourceBody, type SourcePatch, type SourceTest, type SourceView } from './api';
-  import { count, sourceError, urlShapeOk } from './sources';
+  import { confirmDiscard, guardLeave } from './discard';
+  import SecretInput from './SecretInput.svelte';
+  import { sourceError, urlShapeOk } from './sources';
 
   /** null = a new source */
   export let source: SourceView | null = null;
@@ -41,7 +41,7 @@
 
   // ---- the form (an edit starts from the stored values; the URLs always start empty)
   let name = source?.name ?? '';
-  let url = '', epgUrl = '', showUrl = false, epgRemove = false;
+  let url = '', epgUrl = '', epgRemove = false;
   let allowLan = source?.allowLan ?? false;
   let refresh: Refresh = source?.refresh ?? '24h';
   let userAgent = source?.userAgent ?? '';
@@ -51,7 +51,7 @@
 
   // ---- Prüfen: a result counts only for the inputs it was made with
   let test: SourceTest | null = null, testErr = '', testing = false, testedSig = '';
-  $: sig = JSON.stringify([url.trim(), epgUrl.trim(), allowLan, userAgent.trim()]);
+  $: sig = JSON.stringify([url.trim(), epgUrl.trim(), epgRemove, allowLan, userAgent.trim()]);
   $: fetchChanged = !source || Boolean(url.trim() || epgUrl.trim()) || allowLan !== source.allowLan || userAgent.trim() !== (source.userAgent ?? '');
   $: tested = Boolean(test) && testedSig === sig;
   $: needsTest = fetchChanged && !tested;
@@ -74,9 +74,11 @@
     testing = true; testErr = '';
     const mySig = sig;
     try {
+      // the guide: the typed URL; none (`null`) when removed or when a new source has none; absent = the stored one
+      const epg = epgUrl.trim() ? epgUrl.trim() : epgRemove || !source ? null : undefined;
       test = await testSource({
         ...(url.trim() ? { url: url.trim() } : {}),
-        ...(epgUrl.trim() ? { epgUrl: epgUrl.trim() } : {}),
+        ...(epg !== undefined ? { epgUrl: epg } : {}),
         ...(userAgent.trim() ? { userAgent: userAgent.trim() } : {}),
         allowLan,
         ...(source ? { sourceId: source.id } : {}),
@@ -84,9 +86,10 @@
       testedSig = mySig;
     } catch (e) {
       test = null; testedSig = '';
-      // 400 names the field (`invalid`: not a URL / wrong scheme; `refused`: a single-label host or an internal address)
+      // 400 names the field (`invalid`: not a URL / wrong scheme; `refused`: a single-label host or an internal address; `lan_required`:
+      // *Heimnetz erlauben* would allow it); 409 `test_running`: another check of this admin still runs (Prüfen stays usable)
       const c = code(e), field = e instanceof ApiError && e.status === 400 ? e.body?.field : null;
-      const text = c === 'invalid' ? tr('adminLive.src.urlBad') : sourceError(c ?? 'unreachable');
+      const text = c === 'invalid' ? tr('adminLive.src.urlBad') : c === 'test_running' ? tr('adminLive.src.testRunning') : sourceError(c ?? 'unreachable');
       if (field === 'url') urlErr = text; else if (field === 'epgUrl') epgErr = text; else testErr = text;
     } finally { testing = false; }
   }
@@ -105,7 +108,7 @@
   }
   function bodyOf(): SourceBody {
     return {
-      name: name.trim(), url: url.trim(), ...(epgUrl.trim() ? { epgUrl: epgUrl.trim() } : {}), userAgent: userAgent.trim() || null,
+      name: name.trim(), url: url.trim(), epgUrl: epgUrl.trim() || null, userAgent: userAgent.trim() || null,
       allowLan, refresh, skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0,
       maxStreams: maxStreams.trim() ? Number(maxStreams) : null, enabled: true,
     };
@@ -128,39 +131,39 @@
 
   // ---- closing: unsaved input asks first
   let done = false;
+  /** false = the person kept their input */
+  async function mayLeave(): Promise<boolean> {
+    if (done || !dirty) return true;
+    return confirmDiscard();
+  }
   async function close(force = false) {
-    if (!force && dirty && !done) {
-      const ok = await confirm({ title: tr('adminLive.src.discardTitle'), body: tr('adminLive.src.discardBody'), danger: true, confirmLabel: tr('adminLive.src.discard') });
-      if (!ok) return;
-    }
+    if (!force && !(await mayLeave())) return;
     done = true;
     dispatch('close');
     void tick().then(() => { if (trigger?.isConnected) trigger.focus({ preventScroll: true }); });
   }
-  beforeNavigate((nav) => {
-    if (done || !dirty) return;
-    nav.cancel();
-    if (nav.willUnload || !nav.to) return;
-    const to = nav.to.url;
-    void confirm({ title: tr('adminLive.src.discardTitle'), body: tr('adminLive.src.discardBody'), danger: true, confirmLabel: tr('adminLive.src.discard') })
-      .then((ok) => { if (ok) { done = true; void goto(to); } });
-  });
+  guardLeave(() => !done && dirty, () => { done = true; });
 
   function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
   const slide = (node: Element) => twoWay((dir) => sheetSlide(node, { dir, side: 'right' }));
   onMount(() => { document.getElementById(`${id}-name`)?.focus({ preventScroll: true }); });
 
-  // ---- the kind (a new source only): own streams have their own sheet
+  // ---- the kind (a new source only): own streams have their own sheet; typed input asks first
   let kindBtns: HTMLButtonElement[] = [];
+  async function toOwn() {
+    if (!(await mayLeave())) { kindBtns[0]?.focus(); return; }
+    done = true;
+    dispatch('own');
+  }
   function kindKey(e: KeyboardEvent) {
     if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(e.key)) return;
     e.preventDefault();
     kindBtns[1]?.focus();
-    dispatch('own');
+    void toOwn();
   }
 
   $: intervals = REFRESHES.map((r) => ({ value: r, label: $t(`adminLive.src.interval.${r}`) }));
-  $: testLine = test ? $t('adminLive.src.testResult', { n: count(test.channels), g: count(test.groups.length) }) + (test.epgChannels !== null ? ` · ${$t('adminLive.src.testEpg', { n: count(test.epgChannels) })}` : '') : '';
+  $: testLine = test ? $t('adminLive.src.testResult', { n: test.channels, g: test.groups.length }) + (test.epgChannels !== null ? ` · ${$t('adminLive.src.testEpg', { n: test.epgChannels })}` : '') : '';
   /** the list came back but its guide failed: said under the result, the list can still be saved */
   $: epgFail = test?.epgError ? $t('adminLive.src.stateEpgErr', { err: sourceError(test.epgError) }) : '';
 </script>
@@ -180,7 +183,7 @@
           <span class="lbl" id="{id}-k">{$t('adminLive.src.kind')}</span>
           <div class="seg" role="radiogroup" aria-labelledby="{id}-k">
             <button type="button" role="radio" aria-checked="true" tabindex="0" class="on" bind:this={kindBtns[0]} on:keydown={kindKey}>{$t('adminLive.src.kindList')}</button>
-            <button type="button" role="radio" aria-checked="false" tabindex="-1" bind:this={kindBtns[1]} on:click={() => dispatch('own')}>{$t('adminLive.src.kindOwn')}</button>
+            <button type="button" role="radio" aria-checked="false" tabindex="-1" bind:this={kindBtns[1]} on:click={toOwn}>{$t('adminLive.src.kindOwn')}</button>
           </div>
         </div>
       {/if}
@@ -188,23 +191,16 @@
       <Field label={$t('adminLive.src.name')} id="{id}-name" bind:value={name} maxlength={60} required error={nameErr} />
 
       <Field label={$t('adminLive.src.m3u')} id="{id}-url" required={!source} error={urlErr} hint={source?.urlHint ? $t('adminLive.src.current', { hint: source.urlHint }) : ''} let:describedby let:invalid>
-        <div class="secret">
-          <input id="{id}-url" type={showUrl ? 'text' : 'password'} bind:value={url} maxlength={2048} autocomplete="off" spellcheck="false"
-            placeholder={source ? $t('adminLive.src.unchanged') : 'https://iptv.example.com/…'} aria-describedby={describedby} aria-invalid={invalid} />
-          <button type="button" class="eye" aria-pressed={showUrl} on:click={() => (showUrl = !showUrl)}>
-            <Icon name={showUrl ? 'eye-off' : 'eye'} size={18} /><span>{showUrl ? $t('adminLive.src.hide') : $t('adminLive.src.show')}</span>
-          </button>
-        </div>
+        <SecretInput id="{id}-url" bind:value={url} placeholder={source ? $t('adminLive.src.unchanged') : 'https://iptv.example.com/…'} {describedby} {invalid} />
       </Field>
 
       <div class="epg">
         <Field label={$t('adminLive.src.epg')} id="{id}-epg" error={epgErr}
           hint={epgRemove ? $t('adminLive.src.epgRemoved') : source?.epgHint ? $t('adminLive.src.current', { hint: source.epgHint }) : $t('adminLive.src.optional')} let:describedby let:invalid>
-          <input id="{id}-epg" type="url" bind:value={epgUrl} maxlength={2048} autocomplete="off" spellcheck="false" disabled={epgRemove}
-            placeholder={source?.epgHint ? $t('adminLive.src.unchanged') : ''} aria-describedby={describedby} aria-invalid={invalid} />
+          <SecretInput id="{id}-epg" bind:value={epgUrl} disabled={epgRemove} placeholder={source?.epgHint ? $t('adminLive.src.unchanged') : ''} {describedby} {invalid} />
         </Field>
         {#if source?.epgHint}
-          <Button variant="ghost" size="sm" icon={epgRemove ? 'refresh' : 'x'} on:click={() => { epgRemove = !epgRemove; if (epgRemove) epgUrl = ''; }}>{epgRemove ? $t('adminLive.src.epgKeep') : $t('adminLive.src.epgRemove')}</Button>
+          <Button variant="ghost" icon={epgRemove ? 'refresh' : 'x'} on:click={() => { epgRemove = !epgRemove; if (epgRemove) epgUrl = ''; }}>{epgRemove ? $t('adminLive.src.epgKeep') : $t('adminLive.src.epgRemove')}</Button>
         {/if}
       </div>
 
@@ -259,9 +255,6 @@
   .seg button { min-height: 44px; padding: .3rem 1rem; border-radius: 999px; background: transparent; border: 0; color: rgba(255, 255, 255, .8); font-weight: 600; }
   .seg button.on { background: #fff; color: #101418; }
   .seg button:not(.on):hover { color: #fff; }
-  .secret { display: flex; gap: .5rem; min-width: 0; }
-  .secret input { flex: 1; min-width: 0; }
-  .eye { flex: none; min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; gap: .35rem; padding: 0 .8rem; border-radius: 12px; background: rgba(255, 255, 255, .08); color: #fff; border: 1px solid rgba(255, 255, 255, .2); font-weight: 600; }
   .epg { display: flex; flex-direction: column; gap: .3rem; align-items: flex-start; }
   .epg > :global(.field) { width: 100%; }
   .adv { border-top: 1px solid rgba(255, 255, 255, .12); padding-top: .4rem; }

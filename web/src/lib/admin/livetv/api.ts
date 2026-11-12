@@ -48,7 +48,10 @@ export interface SourceView {
   pendingGroups: number;
   state: SourceState;
 }
-/** `SourceBody` (Task 15, `.strict()`): POST sends all of it; PATCH sends only what changed (absent `url`/`epgUrl` = unchanged, `epgUrl: null` removes) */
+/**
+ * `SourceBody` (backend/src/livetv/sources.ts `sourceCreate` / `sourcePatch`, both `.strict()`): POST sends all of it, `epgUrl: null` for
+ * no guide; PATCH sends only what changed (absent `url`/`epgUrl` = unchanged, `epgUrl: null` removes, `userAgent: null` clears).
+ */
 export interface SourceBody {
   name: string;
   url: string;
@@ -66,10 +69,11 @@ export interface SourceBody {
 }
 export type SourcePatch = Partial<SourceBody>;
 /**
- * POST /sources/test: a missing `url` with `sourceId` uses the stored one. Refusals: 400 `{ error: 'invalid' | 'refused', field }`
- * (not a URL / wrong scheme; a single-label host or an internal address), 422 `{ error: code }` from livetv, 503 `livetv_unreachable`.
+ * POST /sources/test: a missing `url` / `epgUrl` / `userAgent` with `sourceId` uses the stored one; `epgUrl: null` = no guide. Refusals:
+ * 400 `{ error: 'invalid' | 'refused' | 'lan_required', field }`, 404 `not_found`, 409 `test_running` (one test per admin at a time),
+ * 422 `{ error: code }` from livetv, 503 `livetv_unreachable`.
  */
-export interface SourceTestBody { url?: string; epgUrl?: string; userAgent?: string; allowLan: boolean; sourceId?: string }
+export interface SourceTestBody { url?: string; epgUrl?: string | null; userAgent?: string; allowLan: boolean; sourceId?: string }
 export interface SourceTest {
   /** listed channels (every group counted) */
   channels: number;
@@ -84,25 +88,35 @@ export interface SourceTest {
 }
 
 /**
- * The part of the admin channel (Task 19's `AdminChannel`) the own-feeds card reads: `GET /api/admin/livetv/channels?source=<id>`.
- * `push` is set for SRT push feeds only: the assigned port, "ff-" + the first 6 random characters of the stream id (ruling 35), and
- * whether the port still lies in `LIVETV_SRT_PORTS`.
+ * The part of the admin channel (plan Task 19's `AdminChannel`, backend/src/livetv/ownfeeds.ts) the own-feeds card reads; the rows come
+ * from `GET /api/admin/livetv/channels?source=<id>` (Task 19's list, spec §10 `{ channels, total }`). `push` is there for SRT push feeds
+ * only: the port, `hint` = "ff-" + 6 characters (ruling 35; no ellipsis, the card adds "…") and whether the port is still in the range.
  */
 export interface FeedChannel {
   id: string;
   name: string;
   number: number | null;
-  kind: StreamKind;
-  push: { port: number; idHint: string; inRange: boolean } | null;
+  streamKind: StreamKind;
+  push?: { port: number; hint: string; portInRange: boolean };
 }
-/** `GET /api/admin/livetv/ingest` (from livetv's `GET /v1/ingest` and `/v1/system`): the host shown to encoders, the UDP ports, per feed its state */
+/**
+ * The state of a push feed (Task 20): `receiving` / `idle` from livetv, `pending` = livetv does not know the feed yet, `out_of_range` =
+ * its port left LIVETV_SRT_PORTS, `error` = livetv not reached.
+ */
+export type FeedState = 'receiving' | 'idle' | 'pending' | 'out_of_range' | 'error';
+export const FEED_STATES: readonly FeedState[] = ['receiving', 'idle', 'pending', 'out_of_range', 'error'];
+/** `GET /api/admin/livetv/ingest` (Task 20): `ports` null while livetv cannot tell or the range is empty (then no ports line) */
 export interface IngestView {
-  host: string;
-  ports: number[];
-  feeds: Array<{ channelId: string; state: 'receiving' | 'idle'; rejected1h: number }>;
+  /** LIVETV_SRT_HOST / the PUBLIC_URL host; null while unknown (not shown on the card) */
+  host: string | null;
+  ports: { from: number; to: number } | null;
+  feeds: Array<{ channelId: string; state: FeedState; rejected1h: number }>;
 }
-/** the one-time answer of a new push feed or new credentials (`cache-control: no-store`); never stored by the page */
-export interface PushResult { host: string; port: number; streamId: string; passphrase: string; url: string }
+/**
+ * The one-time answer of a new push feed or new credentials (`cache-control: no-store`); never stored by the page. `host` (and with
+ * it `url`) is null while neither LIVETV_SRT_HOST nor PUBLIC_URL is known.
+ */
+export interface PushResult { host: string | null; port: number; streamId: string; passphrase: string; url: string | null }
 export type NewStream =
   | { ingest: 'pull'; name: string; url: string; kind?: StreamKind; number?: number; groupId?: string; allowLan?: boolean }
   | { ingest: 'push'; name: string; number?: number; groupId?: string };
@@ -111,18 +125,20 @@ export interface GroupOption { id: string; name: string }
 const B = '/api/admin/livetv';
 const enc = encodeURIComponent;
 
-export const listSources = () => api<{ sources: SourceView[] }>(`${B}/sources`).then((r) => r.sources);
+/** a bare array (backend adminRoutes.ts `GET /sources` → `listSources(ctx)`) */
+export const listSources = () => api<SourceView[]>(`${B}/sources`);
 export const createSource = (b: SourceBody) => api<SourceView>(`${B}/sources`, { method: 'POST', body: b });
 export const updateSource = (id: string, patch: SourcePatch) => api<SourceView>(`${B}/sources/${enc(id)}`, { method: 'PATCH', body: patch });
 export const deleteSource = (id: string) => api<{ channels: number }>(`${B}/sources/${enc(id)}`, { method: 'DELETE' });
-/** 202: the refresh runs in the background; its result arrives through polling `GET /sources` (spec §10) */
+/** Task 16 (not built yet; spec §10): 202, the refresh runs in the background; its result arrives through polling `GET /sources` (spec §10) */
 export const refreshSource = (id: string) => api<unknown>(`${B}/sources/${enc(id)}/refresh`, { method: 'POST' });
 export const testSource = (b: SourceTestBody) => api<SourceTest>(`${B}/sources/test`, { method: 'POST', body: b });
 
 export const listFeeds = (sourceId: string) => api<{ channels: FeedChannel[]; total: number }>(`${B}/channels?source=${enc(sourceId)}&limit=200`);
 export const ingestView = () => api<IngestView>(`${B}/ingest`);
+/** `{ groups, pending }` (Task 18); only the groups are read */
 export const listGroups = () => api<{ groups: GroupOption[] }>(`${B}/groups`).then((r) => r.groups);
 export const addStream = (b: NewStream) => api<{ channel: FeedChannel; push?: PushResult }>(`${B}/channels`, { method: 'POST', body: b });
-export const newCredentials = (id: string) => api<PushResult>(`${B}/channels/${enc(id)}/push-credentials`, { method: 'POST' });
+export const newCredentials = (id: string) => api<{ channel: FeedChannel; push: PushResult }>(`${B}/channels/${enc(id)}/push-credentials`, { method: 'POST' });
 export const newPort = (id: string) => api<{ port: number }>(`${B}/channels/${enc(id)}/push-port`, { method: 'POST' });
 export const deleteChannel = (id: string) => api<unknown>(`${B}/channels/${enc(id)}`, { method: 'DELETE' });

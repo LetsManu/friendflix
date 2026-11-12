@@ -15,7 +15,8 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   test('enable via the updater shows the job steps, then the area, without a reload', async ({ page, api }) => {
-    await page.goto('/admin/livetv?tab=status');
+    // the bare URL the nav link opens
+    await page.goto('/admin/livetv');
     // the entry carries the "optional" chip while Live TV is not installed
     await expect(nav(page).getByRole('link', { name: /Live-TV/ })).toContainText('optional');
     const c = card(page);
@@ -27,8 +28,13 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
     // the job's steps (the update card's component), then the installed view
     await expect(c.locator('ol.steps li')).toHaveCount(4, { timeout: 15_000 });
     await expect(c.locator('li[data-step="pull"]')).toBeVisible();
-    await expect(page.getByText('Live-TV läuft.')).toBeVisible({ timeout: 20_000 });
+    // installed: the area lands on Quellen; the running state sits under Live-Status
+    const tabs = page.getByRole('tablist', { name: 'Live-TV-Bereiche' });
+    await expect(tabs.getByRole('tab', { name: 'Quellen' })).toHaveAttribute('aria-selected', 'true', { timeout: 20_000 });
+    await expect(page.getByRole('region', { name: 'Nordlicht Paket', exact: true })).toBeVisible();
     await expect(c).toHaveCount(0);
+    await tabs.getByRole('tab', { name: 'Live-Status' }).click();
+    await expect(page.getByText('Live-TV läuft.')).toBeVisible();
     expect(await page.evaluate(() => (window as unknown as { __kept?: number }).__kept)).toBe(1);
     expect(api.admin.livetv.posts).toEqual([{ path: 'enable', body: {} }]);
     // installed: no chip any more, the entry stays
