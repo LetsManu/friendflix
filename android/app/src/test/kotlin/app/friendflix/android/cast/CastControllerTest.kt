@@ -245,7 +245,7 @@ class CastControllerTest {
         assertTrue(r.liveLoads.isEmpty())
         assertFalse(c.liveCasting)
         assertNull(c.snapshot("Wohnzimmer"))
-        assertEquals(0, r.ended)
+        assertEquals("nothing else runs on the TV: its session is not left idle", 1, r.ended)
     }
 
     @Test fun aTitleCastEndsBeforeTheLiveWatch() {
@@ -258,6 +258,9 @@ class CastControllerTest {
         assertFalse(c.casting)
         assertTrue(c.liveCasting)
         assertEquals("the TV session stays for the channel", 0, r.ended)
+        // the player screen that was the title's remote gets the title back (like another sender taking over)
+        assertEquals(Triple("film", 61_000L, false), host.returned)
+        assertFalse(host.returnedEnded)
     }
 
     @Test fun aChannelSwitchLoadsTheNewChannelThenRevokesTheOld() {
@@ -268,6 +271,7 @@ class CastControllerTest {
         c.startLive("hafenkanal") { refused = it }
         assertEquals(false, refused)
         assertEquals("a refused switch leaves the channel playing", "Nordlicht TV", c.snapshot("Wohnzimmer")!!.title)
+        assertEquals(0, r.ended)
         refuseLive = false
         calls.clear()
         c.startLive("hafenkanal") {}
@@ -310,6 +314,36 @@ class CastControllerTest {
         assertEquals(false, answer)
         assertTrue(r.liveLoads.isEmpty())
         assertEquals(listOf("POST /api/livetv/channels/nordlicht-tv/watch", "DELETE /api/livetv/watch"), paths())
+    }
+
+    @Test fun aWatchWithoutAnAnswerInTimeAnswersFalseAndItsLateTokenIsRevoked() {
+        val r = FakeReceiver(false)
+        val c = CastController(server, r, host, still, io = manualIo, main = direct, now = { clock }, schedule = schedule)
+        var answers = 0
+        var answer: Boolean? = null
+        c.startLive("nordlicht-tv") { answer = it; answers++ }
+        advance(CastController.LIVE_WATCH_WAIT_MS - 1)
+        assertNull(answer)
+        advance(1)
+        assertEquals(false, answer)
+        assertEquals("nothing on the TV: its session ends", 1, r.ended)
+        runIo() // the watch answers late
+        assertEquals(1, answers)
+        assertTrue(r.liveLoads.isEmpty())
+        assertFalse(c.liveCasting)
+        assertEquals(listOf("POST /api/livetv/channels/nordlicht-tv/watch", "DELETE /api/livetv/watch"), paths())
+    }
+
+    @Test fun aRefusedWatchLeavesTheFinishedTitlesDelayedEndRunning() {
+        val (r, c) = controller()
+        c.start(film())
+        c.onReceiver(playing("c1", 29 * 60_000))
+        c.onMediaEnd(IdleReason.FINISHED, "c1") // the title ended: the TV session ends after ENDED_HIDE_MS
+        refuseLive = true
+        c.startLive("hafenkanal") {}
+        assertEquals("the delayed end ends it, not the refusal", 0, r.ended)
+        advance(CastController.ENDED_HIDE_MS)
+        assertEquals(1, r.ended)
     }
 
     @Test fun theWatchRouteIsAskedWithTheShellSessionAndItsUrlMadeAbsolute() {
@@ -363,7 +397,7 @@ class CastControllerTest {
                 assertNull("$code $body", cs.watchLive("nordlicht-tv"))
             }
             // an answer that is no live stream of this server is not loaded
-            watch.set(200 to """{"token":"$tok","url":"https://elsewhere.example.com/media/l/$tok/index.m3u8","channel":{"id":"nordlicht-tv","name":"Nordlicht TV"}}""")
+            watch.set(200 to """{"token":"$tok","url":"https://iptv.example.com/media/l/$tok/index.m3u8","channel":{"id":"nordlicht-tv","name":"Nordlicht TV"}}""")
             assertNull(cs.watchLive("nordlicht-tv"))
             val before = seen.size
             assertNull(cs.watchLive("../x"))

@@ -647,15 +647,22 @@ class CastController(
      * 'chromecast' }`, then the stream is loaded as LIVE with the channel's metadata ([CastReceiver.loadLive]). A title cast that runs
      * ends first (its stop report and revoke leave before the watch request, same ordered thread); the TV session stays. A live channel
      * that plays stays until the new one is loaded (a refused switch leaves it playing), then its token is revoked. [done] (main
-     * thread, once): true = loaded on the TV; false = refused (any watch refusal), failed, or overtaken by a stop or another cast.
+     * thread, once): true = loaded on the TV; false = refused (any watch refusal), failed, overtaken by a stop or another cast, or no
+     * answer within [LIVE_WATCH_WAIT_MS] (a later answer's token is then revoked). A refusal with nothing else on the TV ends its session.
      */
     fun startLive(channelId: String, done: (Boolean) -> Unit) {
         val my = ++liveSeq
         cur?.let(::endTitle)
-        pendingEnd?.invoke(); pendingEnd = null; ended = null
+        var answered = false
+        var cancelWait: () -> Unit = {}
+        val answer: (Boolean) -> Unit = { ok -> if (!answered) { answered = true; cancelWait(); done(ok) } }
+        cancelWait = schedule(LIVE_WATCH_WAIT_MS) {
+            if (!answered && my == liveSeq) { liveSeq++; endIfIdle() }
+            answer(false)
+        }
         io.execute {
             val info = server.watchLive(channelId)
-            main.execute { liveAnswered(my, info, done) }
+            main.execute { liveAnswered(my, info, answer) }
         }
     }
 
@@ -665,7 +672,9 @@ class CastController(
             done(false)
             return
         }
-        if (info == null) { done(false); return }
+        if (info == null) { endIfIdle(); done(false); return }
+        // the TV's delayed session end after a finished title is cancelled only now: a refused watch still lets it run
+        pendingEnd?.invoke(); pendingEnd = null; ended = null
         val old = live
         live = LiveCast(info)
         receiver.loadLive(info)
@@ -676,6 +685,11 @@ class CastController(
     }
 
     // ---- internals ----
+
+    /** a refused live channel with nothing of ours on the TV (and no delayed end pending): the TV session ends, not left idle */
+    private fun endIfIdle() {
+        if (cur == null && live == null && pendingEnd == null) receiver.end()
+    }
 
     /** the live channel ends: its token revoked; [endSession]: the receiver's session too (stop, the stream failed on the TV) */
     private fun endLive(l: LiveCast, endSession: Boolean) {
@@ -713,6 +727,7 @@ class CastController(
         s.ci?.let(::revoke)
         s.ci = null
         close(s)
+        host.onReturn(s.itemId, s.returnAt, play = false, ended = false) // an attached player screen is no remote of the TV any more
     }
 
     /** own receiver: its TV texts (the live card is the item's `customData.ui.live`) */
@@ -943,6 +958,11 @@ class CastController(
         const val UNPINNED_RETRY_MS = 60_000L
         /** engine.ts ADVANCE_WAIT_MS */
         const val ADVANCE_WAIT_MS = 20_000L
+        /**
+         * the longest a live channel waits for its watch answer (the server waits up to 15 s for the first segment, plus the CSRF
+         * request and the network); then [startLive] answers false
+         */
+        const val LIVE_WATCH_WAIT_MS = 25_000L
         /** engine.ts ENDED_HIDE_MS */
         const val ENDED_HIDE_MS = 5_000L
         /** engine.ts: idle within the last 20 s counts as the end */

@@ -219,7 +219,10 @@ class ShellActivity : ComponentActivity() {
         val selector = CastHub.routeSelector ?: return false
         if (isFinishing) return false
         return try {
-            MediaRouteChooserDialog(ContextThemeWrapper(this, R.style.Theme_FriendFlix_Player)).apply { routeSelector = selector }.show()
+            MediaRouteChooserDialog(ContextThemeWrapper(this, R.style.Theme_FriendFlix_Player)).apply {
+                routeSelector = selector
+                setOnDismissListener { CastHub.chooserClosed() } // closed without a pick: the web UI hears "no" at once
+            }.show()
             true
         } catch (_: RuntimeException) {
             false

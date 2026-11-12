@@ -21,8 +21,12 @@
 import { writable } from 'svelte/store';
 
 export const REQUEST_TIMEOUT_MS = 5000;
-/** `castLive` waits for the app's device chooser (up to 40 s) and the channel's first segment (up to 15 s) before it gives up */
-export const CAST_LIVE_TIMEOUT_MS = 60_000;
+/**
+ * `castLive` outlasts the app's own bounds: device chooser 40 s (PICK_WAIT_MS), once 15 s more while a picked TV is still connecting
+ * (CONNECT_WAIT_MS), then the watch request at most 25 s (LIVE_WATCH_WAIT_MS; the server waits up to 15 s for the first segment) =
+ * 80 s at worst; 90 s leaves 10 s of margin. The app answers false itself when one of its bounds runs out.
+ */
+export const CAST_LIVE_TIMEOUT_MS = 90_000;
 export const UA_MARKER = ' FriendFlixAndroid/';
 /** every user agent marker that opts a shell into the bridge (the Android app first, then the Windows app) */
 export const UA_MARKERS = [UA_MARKER, ' FriendFlixDesktop/'] as const;

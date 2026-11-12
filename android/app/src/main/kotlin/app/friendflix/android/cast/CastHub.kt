@@ -29,6 +29,8 @@ import java.util.concurrent.Executor
 /** The receiver side the hub drives: a [CastReceiver] plus the TV's name, the status mirror and its release ([MediaThreeReceiver]). */
 interface CastLink : CastReceiver {
     val connected: Boolean
+    /** a Cast session is being connected (a TV was picked, not connected yet) */
+    val connecting: Boolean get() = false
     /** the TV's name for the "playing on" line (shown, never logged) */
     val deviceName: String?
     /** mirrors the receiver into the controller (about once a second while casting) */
@@ -147,8 +149,25 @@ class CastHubCore(
         takeLive()?.second?.invoke(false)
         if (link.connected) { startLive(channelId, done); return }
         if (!pickDevice()) { done(false); return }
-        pendingLive = channelId to done
-        cancelPick = schedule(PICK_WAIT_MS) { takeLive()?.second?.invoke(false) }
+        val p = channelId to done
+        pendingLive = p
+        cancelPick = schedule(PICK_WAIT_MS) { pickTimedOut(p, extended = false) }
+    }
+
+    /** the wait ran out: a TV still connecting gets [CONNECT_WAIT_MS] more, once; else false */
+    private fun pickTimedOut(p: Pair<String, (Boolean) -> Unit>, extended: Boolean) {
+        if (pendingLive !== p) return
+        if (!extended && link.connecting) { cancelPick = schedule(CONNECT_WAIT_MS) { pickTimedOut(p, extended = true) }; return }
+        takeLive()?.second?.invoke(false)
+    }
+
+    /**
+     * The device chooser closed. Without a TV being connected (checked after [DISMISS_GRACE_MS], the framework's state follows the
+     * pick a moment later) nobody picked one: the waiting live channel answers false at once.
+     */
+    fun chooserClosed() {
+        val p = pendingLive ?: return
+        schedule(DISMISS_GRACE_MS) { if (pendingLive === p && !link.connected && !link.connecting) takeLive()?.second?.invoke(false) }
     }
 
     private fun takeLive(): Pair<String, (Boolean) -> Unit>? {
@@ -249,8 +268,12 @@ class CastHubCore(
         const val RESUME_RETRY_MS = 30_000L
         /** how long an answer waits for the stop report and the revoke of an ended cast to leave */
         const val REPORT_WAIT_MS = 3_000L
-        /** how long a live channel waits for the viewer to pick a TV in the chooser (the web's castLive answer waits as long) */
+        /** how long a live channel waits for the viewer to pick a TV in the chooser (web CAST_LIVE_TIMEOUT_MS covers this plus the bounds after it) */
         const val PICK_WAIT_MS = 40_000L
+        /** the extra wait once, at [PICK_WAIT_MS], for a TV that is still connecting */
+        const val CONNECT_WAIT_MS = 15_000L
+        /** how long after the chooser closed the framework may take to report the picked TV as connecting */
+        const val DISMISS_GRACE_MS = 1_000L
     }
 }
 
@@ -352,6 +375,9 @@ object CastHub {
         val c = core ?: return done(false)
         c.castLive(channelId, pickDevice, done)
     }
+
+    /** The device chooser of [castLive] closed ([CastHubCore.chooserClosed]). */
+    fun chooserClosed() { core?.chooserClosed() }
 
     /** The bar's next episode ([CastHubCore.next]); false when none runs or none is queued. */
     fun next(): Boolean = core?.next() ?: false

@@ -22,6 +22,7 @@ import com.google.android.gms.cast.MediaStatus
 import com.google.android.gms.cast.MediaTrack
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
+import com.google.android.gms.cast.framework.CastState
 import com.google.android.gms.cast.framework.SessionManagerListener
 import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.common.images.WebImage
@@ -212,6 +213,9 @@ class MediaThreeReceiver(
 
     /** a Cast session is connected */
     override val connected: Boolean get() = castContext.sessionManager.currentCastSession?.isConnected == true
+
+    /** a picked TV is being connected */
+    override val connecting: Boolean get() = castContext.castState == CastState.CONNECTING
 
     /** the TV's name for the "playing on" line (shown, never logged) */
     override val deviceName: String? get() = castContext.sessionManager.currentCastSession?.castDevice?.friendlyName

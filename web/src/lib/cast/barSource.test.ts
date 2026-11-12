@@ -47,6 +47,17 @@ describe('nativeSource', () => {
     (nativeCast as ReturnType<typeof writable>).set(null);
     expect(get(src.session)).toBeNull();
   });
+  it('a live snapshot maps to a live session, and open asks the app for nothing', () => {
+    const src = nativeSource();
+    (nativeCast as ReturnType<typeof writable>).set({ ...SNAP, itemId: 'nordlicht-tv', posterId: 'nordlicht-tv', title: 'Nordlicht TV', subtitle: 'Die Leuchtturmwärter', isEpisode: false, durationMs: 0, next: undefined, live: true });
+    expect(get(src.session)).toMatchObject({ itemId: 'nordlicht-tv', title: 'Nordlicht TV', subtitle: 'Die Leuchtturmwärter', duration: 0, isLive: true });
+    src.open();
+    expect(h.castControl).not.toHaveBeenCalled();
+    (nativeCast as ReturnType<typeof writable>).set(SNAP);
+    expect(get(src.session)?.isLive).toBeUndefined();
+    src.open();
+    expect(h.castControl.mock.calls.map((c) => c[0])).toEqual(['open']);
+  });
   it('stop and open call castControl', async () => {
     const src = nativeSource();
     await src.stop();

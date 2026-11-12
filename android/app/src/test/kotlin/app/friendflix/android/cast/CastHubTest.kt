@@ -67,6 +67,7 @@ class CastHubTest {
         var playing: ReceiverMedia? = null
         val messages = mutableListOf<JSONObject>()
         override var connected = true
+        override var connecting = false
         val liveLoads = mutableListOf<String>()
         override fun loadLive(info: LiveCastInfo) { liveLoads += info.channelId }
         override val deviceName: String? = "Wohnzimmer-TV"
@@ -192,6 +193,53 @@ class CastHubTest {
         events.onSessionStarted()
         assertEquals(1, host.picked)
         assertEquals(listOf("nordlicht-tv"), link.liveLoads)
+    }
+
+    @Test fun aChooserClosedWithoutAPickAnswersFalseAtOnce() {
+        val h = hub()
+        h.attach(Host())
+        link.connected = false
+        val answers = mutableListOf<Boolean>()
+        h.castLive("nordlicht-tv", { true }) { answers += it }
+        h.chooserClosed()
+        advance(CastHubCore.DISMISS_GRACE_MS)
+        assertEquals("closed without a pick: no 40-s wait", listOf(false), answers)
+        // closed because a TV was picked: it is connecting, the channel waits for it
+        h.castLive("nordlicht-tv", { true }) { answers += it }
+        link.connecting = true
+        h.chooserClosed()
+        advance(CastHubCore.DISMISS_GRACE_MS)
+        assertEquals(listOf(false), answers)
+        link.connecting = false
+        link.connected = true
+        events.onSessionStarted()
+        assertEquals(listOf(false, true), answers)
+        assertEquals(listOf("nordlicht-tv"), link.liveLoads)
+    }
+
+    @Test fun aTvStillConnectingAtTheTimeoutGetsOneBoundedExtension() {
+        val h = hub()
+        val host = Host()
+        h.attach(host)
+        link.connected = false
+        val answers = mutableListOf<Boolean>()
+        h.castLive("nordlicht-tv", { true }) { answers += it }
+        link.connecting = true
+        advance(CastHubCore.PICK_WAIT_MS)
+        assertTrue("still connecting: it waits on", answers.isEmpty())
+        advance(CastHubCore.CONNECT_WAIT_MS - 1)
+        assertTrue(answers.isEmpty())
+        advance(1)
+        assertEquals("never longer than PICK_WAIT_MS + CONNECT_WAIT_MS", listOf(false), answers)
+        // connected within the extension: the channel goes there
+        link.connecting = true
+        h.castLive("hafenkanal", { true }) { answers += it }
+        advance(CastHubCore.PICK_WAIT_MS + 5_000)
+        link.connecting = false
+        link.connected = true
+        events.onSessionStarted()
+        assertEquals(listOf(false, true), answers)
+        assertEquals(0, host.picked)
     }
 
     @Test fun nextWithoutAQueuedEpisodeIsRefused() {
