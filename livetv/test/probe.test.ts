@@ -17,7 +17,7 @@ async function serve(routes: Record<string, (res: http.ServerResponse) => void>)
   const paths: string[] = [];
   const srv = http.createServer((req, res) => {
     paths.push(req.url ?? '');
-    const h = routes[(req.url ?? '').split('?')[0]!];
+    const h = new Map(Object.entries(routes)).get((req.url ?? '').split('?')[0]!);
     if (h) h(res);
     else { res.statusCode = 404; res.end(); }
   });
@@ -211,7 +211,7 @@ describe('probe', () => {
     const args = run.calls[0]!.args;
     expect(args).toContain('srt://192.0.2.30:9000?streamid=bergblick&passphrase=geheim123456');
     expect(args.join(' ')).toContain('-protocol_whitelist srt,udp');
-    expect(args.some((a) => a.includes('iptv.example.com'))).toBe(false);
+    expect(args.join(' ')).not.toContain('iptv.example.com');
     expect((await probe({ url: 'srt://iptv.example.com:9000', kind: 'srt', allowLan: false }, { run, guard: guard(['192.168.1.5']) })).error).toBe('address_refused');
     expect((await probe({ url: 'srt://iptv.example.com:9000', kind: 'srt', allowLan: true }, { run, guard: guard(['192.168.1.5']) })).ok).toBe(true);
     expect((await probe({ url: 'srt://[2001:db8::30]:9000', kind: 'srt', allowLan: false }, { run, guard: guard() })).ok).toBe(true);
