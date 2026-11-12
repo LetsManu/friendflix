@@ -168,6 +168,8 @@ export interface MatrixRole {
   /** effective template + switches + requestsPerMonth, keyed by MatrixField.key */
   values: Record<string, unknown>;
   sources: Record<string, RoleSourceName>;
+  /** the same fields without the role's own stored row: ROLE_TEMPLATES for a built-in / env role, else the base's code default */
+  defaults: Record<string, unknown>;
   /** library names of the role's template the media server no longer has (shown as "nicht mehr vorhanden") */
   missingLibraries: string[];
 }
@@ -208,6 +210,7 @@ export async function rolesOverview(ctx: Ctx): Promise<RolesOverview> {
       downloadMaxHeight: template.downloadMaxHeight, downloadDays: template.downloadDays, maxBitrate: template.maxBitrate,
       remoteMaxBitrate: template.remoteMaxBitrate, remoteDefault, remoteIsDefault: r.sources.remoteMaxBitrate !== 'role',
     });
+    const without = (await roleRights(ctx, row.key, null)) ?? r;
     const [, configured, builtinGerman] = await roleLabelArgs(ctx, row.key);
     const n = count.get(row.key);
     matrixRoles.push({
@@ -216,6 +219,7 @@ export async function rolesOverview(ctx: Ctx): Promise<RolesOverview> {
       accounts: n?.accounts ?? 0, profiles: n?.profiles ?? 0, kidsProfiles: n?.kids ?? 0,
       values: Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, valueOf(r, f.key)])),
       sources: Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, r.sources[f.key as RightKey]])),
+      defaults: Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, valueOf(without, f.key)])),
       missingLibraries: missingLibraries(template.libraries, libs),
     });
   }

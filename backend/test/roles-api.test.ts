@@ -86,6 +86,22 @@ describe('GET /api/admin/roles', () => {
     expect(after.sources.maxBitrate).toBe('default');
   });
 
+  it('defaults are the values without the role\'s own row', async () => {
+    const before = await roleOf('family');
+    expect(before.defaults).toEqual(before.values);
+    expect(Object.keys(before.defaults).sort()).toEqual(MATRIX_FIELDS.map((f) => f.key).sort());
+    expect((await put('family', { maxStreams: 3, perms: { comments: false }, requestsPerMonth: 7 })).statusCode).toBe(200);
+    const after = await roleOf('family');
+    expect(after.values).toMatchObject({ maxStreams: 3, comments: false, requestsPerMonth: 7 });
+    expect(after.defaults).toEqual(before.values);
+    // a copy starts from its base's code default; the admin's switches stay on
+    const key = (await call(admin, 'POST', '/api/admin/roles', { label: 'Oma und Opa', from: 'family' })).json().key as string;
+    expect(key).toBeTruthy();
+    await put(key, { maxStreams: 9 });
+    expect((await roleOf(key)).defaults.maxStreams).toBe(4);
+    expect((await roleOf('admin')).defaults.party).toBe(true);
+  });
+
   it('libraries answer [] while the media server cannot list them', async () => {
     folders = null as never; // the fake answers garbage: the list fails
     forgetLibraries(env.ctx);
