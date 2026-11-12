@@ -421,16 +421,14 @@ const dict: Translation<typeof de> = {
   },
   /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
   sentenceRights: {
-    setBool: '{actor}: {field} dla {target} – {value} (wcześniej: {was})',
-    setValue: '{actor}: {field} dla {target} ustawiono na {value} (wcześniej: {was})',
-    pinned: '{actor}: {field} dla {target} ustawiono indywidualnie – {value} (wcześniej: {was})',
-    unpinned: '{actor}: {field} dla {target} przywrócono do roli – {value} (wcześniej: {was})',
-    moved: '{actor}: zmieniono, co rozstrzyga o {field} dla {target} (wcześniej: {was}, teraz: {now})',
+    setBool: '{actor}: „{field}” dla {target} ustawiono na {value} (wcześniej: {was})',
+    setValue: '{actor}: „{field}” dla {target} ustawiono na {value} (wcześniej: {was})',
+    pinned: '{actor}: „{field}” dla {target} ustawiono indywidualnie – {value} (wcześniej: {was})',
+    unpinned: '{actor}: „{field}” dla {target} przywrócono do roli – {value} (wcześniej: {was})',
+    moved: '{actor}: zmieniono, co rozstrzyga o „{field}” dla {target} (wcześniej: {was}, teraz: {now})',
     noteChanged: '{actor}: zmieniono notatkę o uprawnieniach {target}',
     storedOnly: '{actor}: zmieniono zapisane wyjątki {target}, które teraz niczego nie zmieniają',
     storedChip: '{field} (zapisane)',
-    on: 'dozwolone',
-    off: 'zabronione',
     layer: { role: 'jak rola', user: 'ustawione indywidualnie', kids: 'profil dziecięcy', admin: 'admin', env: 'z .env' },
   },
   devices: {

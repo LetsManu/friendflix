@@ -421,16 +421,14 @@ const dict: Translation<typeof de> = {
   },
   /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
   sentenceRights: {
-    setBool: '{actor} ha {value} {field} per {target} (prima: {was})',
-    setValue: '{actor} ha impostato {field} di {target} su {value} (prima: {was})',
-    pinned: '{actor} ha fissato {field} solo per {target}: {value} (prima: {was})',
-    unpinned: '{actor} ha riportato {field} di {target} al ruolo: {value} (prima: {was})',
-    moved: '{actor} ha cambiato ciò che decide {field} per {target} (prima: {was}, ora: {now})',
+    setBool: '{actor} ha impostato «{field}» di {target} su {value} (prima: {was})',
+    setValue: '{actor} ha impostato «{field}» di {target} su {value} (prima: {was})',
+    pinned: '{actor} ha fissato «{field}» solo per {target}: {value} (prima: {was})',
+    unpinned: '{actor} ha riportato «{field}» di {target} al ruolo: {value} (prima: {was})',
+    moved: '{actor} ha cambiato ciò che decide «{field}» per {target} (prima: {was}, ora: {now})',
     noteChanged: '{actor} ha modificato la nota sui diritti di {target}',
     storedOnly: '{actor} ha modificato eccezioni salvate di {target} che al momento non hanno effetto',
     storedChip: '{field} (salvato)',
-    on: 'consentito',
-    off: 'vietato',
     layer: { role: 'come il ruolo', user: 'fissato singolarmente', kids: 'profilo bambini', admin: 'admin', env: 'da .env' },
   },
   devices: {

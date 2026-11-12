@@ -74,9 +74,12 @@
   ] satisfies Column<E>[];
   $: filtered = Boolean(actor || area || target || from || to || q.trim());
   /** who the target filter is about: a person from the entries, else a role from the matrix */
-  $: targetName = rows?.find((r) => r.target === target && r.target_name)?.target_name ?? names?.(target) ?? $t('adminPeople.audit.targetUnknown');
+  $: targetName = rows?.find((r) => r.target === target && r.target_name)?.target_name ?? names?.(target)
+    // a deleted role: the label its role.delete / role.create entry carries
+    ?? ((l) => (typeof l === 'string' && l ? l : null))(rows?.find((r) => r.target === target && typeof r.meta?.label === 'string')?.meta?.label)
+    ?? $t('adminPeople.audit.targetUnknown');
   // a reactive statement: the sentences follow the role names when they arrive
-  $: sentence = (e: E) => { const s = entrySentence(e, names); return { text: s?.text ?? describeActivity(e).text, icon: describeActivity(e).icon, chips: s?.chips ?? [] }; };
+  $: sentence = (e: E) => { const s = entrySentence(e, names), a = describeActivity(e); return { text: s?.text ?? a.text, icon: a.icon, chips: s?.chips ?? [] }; };
 </script>
 
 <DataTable

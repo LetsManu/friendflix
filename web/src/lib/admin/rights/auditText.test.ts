@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
+import { fieldLabel } from './model';
 import { auditSentence, entrySentence, sinceLatestCreate } from './auditText';
 
 afterEach(async () => { await setLocale('de'); });
@@ -99,22 +100,43 @@ describe('auditSentence', () => {
 describe('user.rights sentences (spec 6.6)', () => {
   const anna = { targetName: 'Anna Beispiel', actorName: 'Ben Muster' };
   const r = (meta: Record<string, unknown>) => e('user.rights', meta, anna);
-  it('one switch changed: a sentence naming the person, the right, the new state and what decided before', () => {
-    expect(r({ from: { cast: true }, to: { cast: false }, layer: { cast: { from: 'role', to: 'user' } } }))
-      .toEqual({ text: 'Ben Muster hat für Anna Beispiel Auf Fernseher übertragen verboten (vorher: wie Rolle)', chips: [] });
-    expect(r({ from: { cast: false }, to: { cast: true } }).text).toBe('Ben Muster hat für Anna Beispiel Auf Fernseher übertragen erlaubt (vorher: nicht erlaubt)');
+  it('one switch changed: the quoted right, the new state and what it was before', () => {
+    expect(r({ from: { cast: true }, to: { cast: false } }))
+      .toEqual({ text: 'Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ auf nicht erlaubt gestellt (vorher: erlaubt)', chips: [] });
+    expect(r({ from: { cast: false }, to: { cast: true } }).text).toBe('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ auf erlaubt gestellt (vorher: nicht erlaubt)');
+    // with the layer that decided before (the layer on a changed value is written by no backend today, the sentence still reads it)
+    expect(r({ from: { cast: true }, to: { cast: false }, layer: { cast: { from: 'role', to: 'user' } } }).text)
+      .toBe('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ auf nicht erlaubt gestellt (vorher: wie Rolle)');
+  });
+  it('a label that is a predicate never follows a verb: it is quoted in every language, for every switch', async () => {
+    const quotes = { de: ['„', '“'], en: ['“', '”'], es: ['«', '»'], fr: ['«\u00a0', '\u00a0»'], it: ['«', '»'], pl: ['„', '”'], tr: ['“', '”'] } as const;
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
+      await setLocale(l);
+      const [o, c] = quotes[l];
+      for (const k of ['transcoding', 'requests', 'cast', 'download', 'liveRecord']) {
+        for (const m of [{ from: { [k]: true }, to: { [k]: false } }, { from: { [k]: true }, to: { [k]: true }, layer: { [k]: { from: 'role', to: 'user' } } },
+          { from: { [k]: true }, to: { [k]: true }, layer: { [k]: { from: 'user', to: 'default' } } }, { from: { [k]: true }, to: { [k]: true }, layer: { [k]: { from: 'role', to: 'admin' } } }]) {
+          expect(r(m).text).toContain(`${o}${fieldLabel(k)}${c}`);
+        }
+      }
+    }
   });
   it('a number reads with its unit; a lifted cap as unlimited', () => {
-    expect(r({ from: { maxStreams: 2 }, to: { maxStreams: null } }).text).toBe('Ben Muster hat für Anna Beispiel Gleichzeitige Streams auf Unbegrenzt gestellt (vorher: 2)');
-    expect(r({ from: { requestsPerMonth: 5 }, to: { requestsPerMonth: null } }).text).toContain('Wünsche pro Monat auf');
+    expect(r({ from: { maxStreams: 2 }, to: { maxStreams: null } }).text).toBe('Ben Muster hat für Anna Beispiel „Gleichzeitige Streams“ auf Unbegrenzt gestellt (vorher: 2)');
+    expect(r({ from: { requestsPerMonth: 5 }, to: { requestsPerMonth: null } }).text).toContain('„Wünsche pro Monat“ auf');
   });
   it('a value that stayed while its layer moved: pinned, back to the role, or another layer', () => {
     expect(r({ from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'user' } } }).text)
-      .toBe('Ben Muster hat für Anna Beispiel Auf Fernseher übertragen einzeln festgelegt: erlaubt (vorher: wie Rolle)');
+      .toBe('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ einzeln festgelegt: erlaubt (vorher: wie Rolle)');
     expect(r({ from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'user', to: 'default' } } }).text)
-      .toBe('Ben Muster hat für Anna Beispiel Auf Fernseher übertragen wieder auf die Rolle zurückgestellt: erlaubt (vorher: einzeln festgelegt)');
+      .toBe('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ wieder auf die Rolle zurückgestellt: erlaubt (vorher: einzeln festgelegt)');
     expect(r({ from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'admin' } } }).text)
-      .toBe('Ben Muster hat bei Anna Beispiel geändert, was Auf Fernseher übertragen bestimmt (vorher: wie Rolle, jetzt: Admin)');
+      .toBe('Ben Muster hat bei Anna Beispiel geändert, was „Auf Fernseher übertragen“ bestimmt (vorher: wie Rolle, jetzt: Admin)');
+  });
+  it('the same value before and after without a layer is no "erlaubt (vorher: erlaubt)": the general sentence with its chip', () => {
+    const x = r({ from: { cast: true }, to: { cast: true } });
+    expect(x.text).toBe('Ben Muster hat die Rechte von Anna Beispiel geändert');
+    expect(x.chips).toHaveLength(1);
   });
   it('stored overrides that decide nothing are named, with their stored values as chips', () => {
     const s = r({ from: {}, to: {}, stored: { cast: { from: false, to: null }, maxStreams: { from: 'unlimited', to: 3 } } });
@@ -134,7 +156,7 @@ describe('user.rights sentences (spec 6.6)', () => {
     for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr'] as const) {
       await setLocale(l);
       for (const m of [
-        { from: { cast: true }, to: { cast: false }, layer: { cast: { from: 'role', to: 'user' } } }, { from: { maxStreams: 2 }, to: { maxStreams: null } },
+        { from: { cast: true }, to: { cast: false } }, { from: { maxStreams: 2 }, to: { maxStreams: null } },
         { from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'user' } } }, { from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'user', to: 'role' } } },
         { from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'kids' } } },
         { from: {}, to: {}, stored: { cast: { from: false, to: null } } }, { from: {}, to: {}, note: 'changed' },
@@ -144,8 +166,6 @@ describe('user.rights sentences (spec 6.6)', () => {
         expect(JSON.stringify(x)).not.toMatch(/adminPeople|sentence|\{[a-z]+\}|undefined/);
       }
     }
-    await setLocale('en');
-    expect(r({ from: { cast: true }, to: { cast: false }, layer: { cast: { from: 'role', to: 'user' } } }).text).toMatch(/^Ben Muster denied .* for Anna Beispiel \(before: as role\)$/);
   });
 });
 

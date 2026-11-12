@@ -583,29 +583,31 @@ test.describe('admin people (desktop)', () => {
       api.admin.audit.unshift(...rightsAuditSamples({ id: auid(2), name: 'Anna Beispiel' }));
       await page.goto(`/admin/audit?target=${auid(2)}`);
       const table = page.getByRole('table', { name: 'Audit-Log' });
-      await expect(table.getByRole('row')).toHaveCount(5);
+      await expect(table.getByRole('row')).toHaveCount(6);
       const chip = page.getByRole('group', { name: 'Betrifft: Anna Beispiel' });
       await expect(chip).toBeVisible();
-      await expect(table.getByText('Ben Muster hat für Anna Beispiel Auf Fernseher übertragen verboten (vorher: wie Rolle)')).toBeVisible();
+      await expect(table.getByText('Ben Muster hat für Anna Beispiel „Umwandeln erlaubt“ auf nicht erlaubt gestellt (vorher: erlaubt)')).toBeVisible();
       await chip.getByRole('button', { name: 'Filter „Betrifft“ entfernen' }).click();
       await expect(page).toHaveURL(/\/admin\/audit$/);
       await expect(chip).toHaveCount(0);
-      await expect(table.getByRole('row')).toHaveCount(14);
+      await expect(table.getByRole('row')).toHaveCount(15);
     });
 
     test('person Verlauf reads as sentences, with stored exceptions and a link to the log', async ({ page, api }) => {
-        api.admin.audit.unshift(...rightsAuditSamples({ id: auid(2), name: 'Anna Beispiel' }));
-        await page.goto(`/admin/users/${auid(2)}?tab=audit`);
-        const panel = page.getByRole('tabpanel', { name: 'Audit-Log' });
-        await expect(panel.getByText('Ben Muster hat für Anna Beispiel Auf Fernseher übertragen verboten (vorher: wie Rolle)')).toBeVisible();
-        await expect(panel.getByText('Ben Muster hat für Anna Beispiel Auf Fernseher übertragen einzeln festgelegt: erlaubt (vorher: wie Rolle)')).toBeVisible();
-        await expect(panel.getByText('Ben Muster hat für Anna Beispiel Wünsche pro Monat auf Unbegrenzt gestellt (vorher: 5)')).toBeVisible();
-        const stored = panel.getByRole('row').filter({ hasText: 'gespeicherte Ausnahmen geändert, die gerade nichts bewirken' });
-        await expect(stored.getByText('Auf Fernseher übertragen (gespeichert): erlaubt → wie Rolle')).toBeVisible();
-        await expect(panel).not.toContainText(/adminPeople|\{|undefined/);
-        await panel.getByRole('link', { name: 'Im Audit-Log öffnen' }).click();
-        await expect(page).toHaveURL(new RegExp(`/admin/audit\\?target=${auid(2)}`));
-      });
+      api.admin.audit.unshift(...rightsAuditSamples({ id: auid(2), name: 'Anna Beispiel' }));
+      await page.goto(`/admin/users/${auid(2)}?tab=audit`);
+      const panel = page.getByRole('tabpanel', { name: 'Audit-Log' });
+      await expect(panel.getByText('Ben Muster hat für Anna Beispiel „Umwandeln erlaubt“ auf nicht erlaubt gestellt (vorher: erlaubt)')).toBeVisible();
+      // the brief's example: a layer on a changed value (no backend writes that today)
+      await expect(panel.getByText('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ auf nicht erlaubt gestellt (vorher: wie Rolle)')).toBeVisible();
+      await expect(panel.getByText('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ einzeln festgelegt: erlaubt (vorher: wie Rolle)')).toBeVisible();
+      await expect(panel.getByText('Ben Muster hat für Anna Beispiel „Wünsche pro Monat“ auf Unbegrenzt gestellt (vorher: 5)')).toBeVisible();
+      const stored = panel.getByRole('row').filter({ hasText: 'gespeicherte Ausnahmen geändert, die gerade nichts bewirken' });
+      await expect(stored.getByText('Auf Fernseher übertragen (gespeichert): erlaubt → wie Rolle')).toBeVisible();
+      await expect(panel).not.toContainText(/adminPeople|\{|undefined/);
+      await panel.getByRole('link', { name: 'Im Audit-Log öffnen' }).click();
+      await expect(page).toHaveURL(new RegExp(`/admin/audit\\?target=${auid(2)}`));
+    });
 
     test('paging, sort by time, error with retry', async ({ page, api }) => {
       for (let i = 0; i < 40; i++) api.admin.audit.push({ id: i + 1, at: new Date(Date.now() - (100 + i) * 3600e3).toISOString(), action: 'user.enable', target: null, meta: {}, actor: 'Tester', target_name: `Person ${i}` });

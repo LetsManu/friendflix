@@ -530,10 +530,15 @@ function auditList(st: AdminState, sp: URLSearchParams) {
 }
 
 // ---- Task 22: audit samples of `user.rights` (backend userRights.ts: `{ from, to, layer?, stored?, note? }`) and a role.delete with its label ----
-/** newest first; `user` is the person the entries are about, `actor` the admin; layers as the backend writes them (a layer move keeps the value) */
+/**
+ * newest first; `user` is the person the entries are about, `actor` the admin. As the backend writes them (rights.ts diffRights): a changed value
+ * has no `layer`; `layer` appears only when the value stayed and the deciding layer moved. Sample 9001 carries a layer on a changed value, a
+ * shape no backend writes today: it is the brief's "(vorher: wie Rolle)" example, kept to cover the sentence.
+ */
 export function rightsAuditSamples(user: { id: string; name: string }, actor = 'Ben Muster'): AuditRow[] {
   const row = (id: number, minutes: number, action: string, meta: Record<string, unknown>): AuditRow => ({ id, at: new Date(Date.now() - minutes * 60000).toISOString(), action, target: user.id, meta, actor, target_name: user.name });
   return [
+    row(9005, 0.5, 'user.rights', { from: { transcoding: true }, to: { transcoding: false } }),
     row(9004, 1, 'user.rights', { from: {}, to: {}, stored: { cast: { from: true, to: null } } }),
     row(9003, 2, 'user.rights', { from: { requestsPerMonth: 5 }, to: { requestsPerMonth: null } }),
     row(9002, 3, 'user.rights', { from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'user' } } }),
@@ -890,7 +895,12 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
     log('invite.revoke', mm[1]!);
     return ok();
   }
-  if (p === '/api/admin/audit') return J(auditList(st, sp));
+  if (p === '/api/admin/audit') {
+    // backend admin.ts: area is the literal 'people'; target 1..64 characters
+    const t = sp.get('target');
+    if ((sp.has('area') && sp.get('area') !== 'people') || (t !== null && (t.length < 1 || t.length > 64))) return J({ error: 'bad_request' }, 400);
+    return J(auditList(st, sp));
+  }
   if (p === '/api/admin/audit/filters') return J({ actors: [{ id: 'u1', name: AUDIT_ACTOR }], system: st.audit.some((e) => e.actor === null), categories: [...new Set(st.audit.map((e) => e.action.split('.')[0]!))].sort() });
 
   // ---- content ----

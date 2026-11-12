@@ -421,16 +421,14 @@ const dict: Translation<typeof de> = {
   },
   /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
   sentenceRights: {
-    setBool: '{actor}, {target} için {field} ayarını {value} yaptı (önce: {was})',
-    setValue: '{actor}, {target} için {field} değerini {value} olarak ayarladı (önce: {was})',
-    pinned: '{actor}, {target} için {field} değerini tek tek belirledi: {value} (önce: {was})',
-    unpinned: '{actor}, {target} için {field} değerini role geri aldı: {value} (önce: {was})',
-    moved: '{actor}, {target} için {field} değerini neyin belirlediğini değiştirdi (önce: {was}, şimdi: {now})',
+    setBool: '{actor}, {target} için “{field}” değerini {value} olarak ayarladı (önce: {was})',
+    setValue: '{actor}, {target} için “{field}” değerini {value} olarak ayarladı (önce: {was})',
+    pinned: '{actor}, {target} için “{field}” değerini tek tek belirledi: {value} (önce: {was})',
+    unpinned: '{actor}, {target} için “{field}” değerini role geri aldı: {value} (önce: {was})',
+    moved: '{actor}, {target} için “{field}” değerini neyin belirlediğini değiştirdi (önce: {was}, şimdi: {now})',
     noteChanged: '{actor}, {target} kişisinin haklarına ait notu değiştirdi',
     storedOnly: '{actor}, {target} için şu an etkisi olmayan kayıtlı istisnaları değiştirdi',
     storedChip: '{field} (kayıtlı)',
-    on: 'izinli',
-    off: 'yasak',
     layer: { role: 'role gibi', user: 'tek tek belirlenmiş', kids: 'çocuk profili', admin: 'yönetici', env: '.env\'den' },
   },
   devices: {

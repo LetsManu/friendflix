@@ -74,7 +74,10 @@ function rightsSentence(e: AuditInput, actor: string, person: string): { text: s
   const noteOnly = m.note === 'changed';
   if (!chips.length && !storedChips.length) return { text: noteOnly ? t('noteChanged', {}) : general, chips: [] };
   if (!chips.length) return { text: t('storedOnly', {}), chips: storedChips };
-  const k = chips.length === 1 && !storedChips.length && !noteOnly ? Object.keys(FIELD_KINDS).find((x) => hasKey(`adminPeople.roles.f.${x}`) && isObject(m.from) && isObject(m.to) && Object.hasOwn(m.from, x) && Object.hasOwn(m.to, x)) : undefined;
+  const lone = chips.length === 1 && !storedChips.length && !noteOnly
+    // the same value before and after without a moved layer says nothing as a sentence: the general one with its chip
+    && (chips[0]!.from !== chips[0]!.to || (isObject(m.layer) && Object.keys(m.layer).length > 0));
+  const k = lone ? Object.keys(FIELD_KINDS).find((x) => hasKey(`adminPeople.roles.f.${x}`) && isObject(m.from) && isObject(m.to) && Object.hasOwn(m.from, x) && Object.hasOwn(m.to, x)) : undefined;
   if (k) {
     const from = (m.from as Record<string, unknown>)[k], to = (m.to as Record<string, unknown>)[k];
     const layer = isObject(m.layer) && isObject(m.layer[k]) ? (m.layer[k] as Record<string, unknown>) : null;
@@ -87,7 +90,8 @@ function rightsSentence(e: AuditInput, actor: string, person: string): { text: s
       if (now === 'role') return { text: t('unpinned', { ...p, was }), chips: [] };
       return { text: t('moved', { ...p, was, now: layerWord(layer.to) }), chips: [] };
     }
-    if (FIELD_KINDS[k] === 'bool') return { text: t('setBool', { ...p, value: tr(to ? 'adminPeople.sentenceRights.on' : 'adminPeople.sentenceRights.off'), was }), chips: [] };
+    // a switch says "erlaubt" / "nicht erlaubt" like any value, the label stays quoted: a label can be a predicate ("Darf aufnehmen")
+    if (FIELD_KINDS[k] === 'bool') return { text: t('setBool', { ...p, was }), chips: [] };
     return { text: t('setValue', { ...p, was }), chips: [] };
   }
   return { text: general, chips: [...chips, ...storedChips] };

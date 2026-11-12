@@ -783,6 +783,7 @@ test.describe('Rollen & Rechte: final-review fixes', () => {
     await expect(table.getByText('Kino')).toHaveCount(0);
     // the deleted role's own entry: the history sheet cannot be opened any more, the log names it through its label
     await page.goto('/admin/audit?target=kino');
+    await expect(page.getByRole('group', { name: 'Betrifft: Kino' })).toBeVisible();
     await expect(page.getByRole('table', { name: 'Audit-Log' }).getByText('Ben Muster hat die Rolle Kino gelöscht')).toBeVisible();
   });
 

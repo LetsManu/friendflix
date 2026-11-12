@@ -423,16 +423,14 @@ export default {
   },
   /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
   sentenceRights: {
-    setBool: '{actor} hat für {target} {field} {value} (vorher: {was})',
-    setValue: '{actor} hat für {target} {field} auf {value} gestellt (vorher: {was})',
-    pinned: '{actor} hat für {target} {field} einzeln festgelegt: {value} (vorher: {was})',
-    unpinned: '{actor} hat für {target} {field} wieder auf die Rolle zurückgestellt: {value} (vorher: {was})',
-    moved: '{actor} hat bei {target} geändert, was {field} bestimmt (vorher: {was}, jetzt: {now})',
+    setBool: '{actor} hat für {target} „{field}“ auf {value} gestellt (vorher: {was})',
+    setValue: '{actor} hat für {target} „{field}“ auf {value} gestellt (vorher: {was})',
+    pinned: '{actor} hat für {target} „{field}“ einzeln festgelegt: {value} (vorher: {was})',
+    unpinned: '{actor} hat für {target} „{field}“ wieder auf die Rolle zurückgestellt: {value} (vorher: {was})',
+    moved: '{actor} hat bei {target} geändert, was „{field}“ bestimmt (vorher: {was}, jetzt: {now})',
     noteChanged: '{actor} hat die Notiz zu den Rechten von {target} geändert',
     storedOnly: '{actor} hat bei {target} gespeicherte Ausnahmen geändert, die gerade nichts bewirken',
     storedChip: '{field} (gespeichert)',
-    on: 'erlaubt',
-    off: 'verboten',
     layer: { role: 'wie Rolle', user: 'einzeln festgelegt', kids: 'Kinderprofil', admin: 'Admin', env: 'aus .env' },
   },
   devices: {
