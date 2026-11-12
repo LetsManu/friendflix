@@ -66,6 +66,18 @@ describe('Plex MediaAdmin.findItems', () => {
     expect(await e.ms.admin.findItem!('a'.repeat(32))).toBeNull();
   });
 
+  it('findItem: a failing lookup names neither the rating key nor the token', async () => {
+    e.fake.fail = { re: /^\/library\/metadata\//, status: 500 };
+    try {
+      const err = await e.ms.admin.findItem!(item(rk.dun!)).then(() => null, (x: Error) => x);
+      expect(err).toBeInstanceOf(Error);
+      expect(err!.message).not.toContain(rk.dun!);
+      expect(err!.message).not.toContain(PLEX_TOKEN);
+    } finally {
+      e.fake.fail = null;
+    }
+  });
+
   it('searches every film and series section with the admin token in the header; limit holds; no token in the answer', async () => {
     e.fake.calls = [];
     const hits = await e.ms.admin.findItems!('a', 2); // Saltwater Almanac, Dunmoor, the fixtures' titles with an "a" …

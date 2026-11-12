@@ -20,14 +20,16 @@ const hex = (c: string) => c.repeat(32);
 // libraries (CollectionFolder ids) and titles (fictional)
 const FILME = hex('1'), SERIEN = hex('2'), KINDER = hex('3');
 const LIBS = [{ Id: FILME, Name: 'Filme' }, { Id: SERIEN, Name: 'Serien' }, { Id: KINDER, Name: 'Kinder' }];
-const DUN = hex('a'), SALT = hex('b'), WREN = hex('c');
+const DUN = hex('a'), SALT = hex('b'), WREN = hex('c'), SALT2 = '0123456789abcdef'.repeat(2);
 const ITEMS = [
   { Id: DUN, Name: 'Dunmoor', Type: 'Series', ProductionYear: 2024, OfficialRating: 'FSK-16', lib: SERIEN },
   { Id: SALT, Name: 'Saltwater Almanac', Type: 'Movie', ProductionYear: 2021, OfficialRating: 'FSK-6', lib: KINDER },
   { Id: WREN, Name: 'Wrenfield Pier', Type: 'Movie', ProductionYear: 2019, lib: FILME },
-];
+  // a rating the app's generic table cannot read (Jellyfin knows it); left out of the library counts and of ALL_TERM
+  { Id: SALT2, Name: 'Saltwater Almanac 2', Type: 'Movie', ProductionYear: 2023, OfficialRating: 'MA15+', lib: KINDER, extra: true },
+] as Array<{ Id: string; Name: string; Type: string; ProductionYear: number; OfficialRating?: string; lib: string; extra?: boolean }>;
 const libName = (id: string) => LIBS.find((l) => l.Id === id)!.Name;
-const dto = ({ lib: _lib, ...i }: (typeof ITEMS)[number]) => ({ ...i, UserData: { Played: false } });
+const dto = ({ lib: _lib, extra: _extra, ...i }: (typeof ITEMS)[number]) => ({ ...i, UserData: { Played: false } });
 
 // media server users and what the fake lets each of them see (anyone else, e.g. the admin, sees everything)
 const GUEST_JF = hex('4'), KINO_JF = hex('5'), ANNA_JF = hex('6'), KID_JF = hex('7'), FA_JF = hex('8'), OTHER_JF = hex('9');
@@ -41,7 +43,7 @@ const SEES = new Map<string, Set<string>>([
   [KID_JF, new Set([SALT])], // kids profile, FSK 12: no unrated titles
   [FA_JF, new Set([WREN, SALT])], // role filmabend: Filme + Kinder
   [OTHER_JF, new Set([])],
-  [GUEST2_JF, new Set([SALT])],
+  [GUEST2_JF, new Set([SALT, WREN])], // like real Jellyfin: a grown-up's cap never hides unrated titles
   [FRIEND2_JF, new Set([DUN, SALT])],
 ]);
 const sees = (uid: string | null, id: string) => !uid || !SEES.has(uid.toLowerCase()) || SEES.get(uid.toLowerCase())!.has(id);
@@ -92,6 +94,7 @@ beforeAll(async () => {
       let list = ITEMS.filter((i) => sees(uid, i.Id));
       if (ids) list = list.filter((i) => ids.split(',').includes(i.Id));
       if (term && term !== ALL_TERM) list = list.filter((i) => i.Name.toLowerCase().includes(term.toLowerCase()));
+      if (term === ALL_TERM || parent) list = list.filter((i) => !i.extra);
       if (parent) list = list.filter((i) => i.lib === parent);
       const limit = Number(get('limit') ?? 100);
       return { json: { Items: list.slice(0, limit).map(dto), TotalRecordCount: list.length } };
@@ -254,8 +257,11 @@ describe('POST /api/admin/users/:id/check (title search as the profile)', () => 
     }
   });
 
-  it('a grown-up with a cap: a hidden unrated title is unrated (not unrated_kids); without a cap no reason', async () => {
-    expect(hit((await check(guest2, guest2, 'Wrenfield')).json().hits, WREN)).toMatchObject({ visible: false, why: 'unrated' });
+  it('Jellyfin never says unrated for a grown-up (its caps do not hide unrated titles); without a cap no reason', async () => {
+    // Jellyfin: a grown-up's unrated title is visible; a hidden title whose rating the app cannot read has no reason (never `unrated`,
+    // which only an adapter that hides unrated titles under a cap reports, through FoundItem.age === null)
+    expect(hit((await check(guest2, guest2, 'Wrenfield')).json().hits, WREN)).toMatchObject({ visible: true, why: null });
+    expect(hit((await check(guest2, guest2, 'Saltwater Almanac 2')).json().hits, SALT2)).toMatchObject({ visible: false, why: null, rating: 'MA15+', library: 'Kinder' });
     expect(hit((await check(friend2, friend2, 'Wrenfield')).json().hits, WREN)).toMatchObject({ visible: false, why: null });
   });
 
@@ -351,6 +357,27 @@ describe('GET /api/admin/users/:id/check?profile= (library counts)', () => {
     const counts = env.jfCalls.slice(before).filter((c) => c.path === '/Items' && /parentid=/i.test(c.search));
     expect(counts.length).toBe(6); // 3 libraries, profile + service user
     expect(counts.every((c) => /[?&]limit=1(&|$)/.test(c.search))).toBe(true);
+  });
+
+  it('counts run at most 4 at a time', async () => {
+    await env.kv.del(`viewcnt:${anna}`);
+    const jf = env.ctx.jf;
+    const items = jf.items;
+    let running = 0, peak = 0;
+    (jf as { items: typeof items }).items = async (...a: Parameters<typeof items>) => {
+      running++; peak = Math.max(peak, running);
+      try {
+        await new Promise((r) => setTimeout(r, 5));
+        return await items.apply(jf, a);
+      } finally { running--; }
+    };
+    try {
+      expect((await libs(anna, anna)).statusCode).toBe(200); // 3 libraries x (profile + service user) = 6 counts
+    } finally {
+      delete (jf as { items?: unknown }).items;
+    }
+    expect(jf.items).toBe(items);
+    expect(peak).toBe(4);
   });
 
   it('a 404 on the profile\'s count of one library is seen 0, not a 502 for the whole panel', async () => {

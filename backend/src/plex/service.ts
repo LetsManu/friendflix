@@ -1204,7 +1204,8 @@ export class PlexMediaServer implements MediaServer {
           c = await this.client.container(`/library/metadata/${rk}`);
         } catch (e) {
           if (e instanceof PlexError && (e.status === 404 || e.status === 400)) return null;
-          throw e;
+          // the client's message names the path, i.e. the rating key: the seam promises errors without the id
+          throw new PlexError(e instanceof PlexError ? e.status : 502, `Plex item lookup -> ${e instanceof PlexError ? e.status : 'failed'}`);
         }
         const m = c.Metadata?.[0];
         if (!m || String(m.ratingKey) !== rk) return null;

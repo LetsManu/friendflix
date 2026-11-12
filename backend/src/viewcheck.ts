@@ -31,7 +31,8 @@ import { HttpError } from './users.js';
 type CheckCtx = Pick<Ctx, 'db' | 'roles' | 'jf' | 'kv'>;
 /**
  * why a title is hidden: its library is not shared, its rating is above the cap, it has no (understood) age rating and the profile is a
- * kids profile (`unrated_kids`) or a grown-up's profile with an age cap (`unrated`: Plex hides those under any cap)
+ * kids profile (`unrated_kids`) or a grown-up's profile with an age cap on an adapter that hides such titles under any cap (`unrated`:
+ * Plex, which says so with FoundItem.age === null)
  */
 export type CheckWhy = 'library' | 'rating' | 'unrated' | 'unrated_kids';
 export interface CheckHit { id: string; name: string; year?: number; type: 'Movie' | 'Series'; visible: boolean; why: CheckWhy | null; rating: string | null; library: string }
@@ -92,7 +93,9 @@ function whyHidden(hit: Pick<FoundItem, 'library' | 'rating' | 'age'>, rights: R
   const cap = rights.template.maxParentalRating;
   if (age !== null && cap !== null && age > cap) return 'rating';
   if (age === null && profile.kids) return 'unrated_kids';
-  if (age === null && cap !== null) return 'unrated';
+  // only an adapter that says it hides unrated titles under any cap (an explicit FoundItem.age null: Plex) can blame the missing rating
+  // for a grown-up; on Jellyfin a grown-up's cap never hides unrated titles, and an unreadable rating is "cannot tell"
+  if (hit.age === null && cap !== null) return 'unrated';
   return null;
 }
 
