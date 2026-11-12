@@ -7,7 +7,8 @@ import { png } from './png.js';
 /**
  * The user side of Live TV (backend: livetv/routes.ts, Tasks 31 and 33, not built yet; the shapes are web/src/lib/live/api.ts):
  * the channel list with its ETag, watch / beat / stop, favourites, the last channel, preview and logo images, and a sliding live
- * playlist without ENDLIST built from HLS_SEGMENTS (the player specs of Task 39 use it).
+ * playlist without ENDLIST built from HLS_SEGMENTS (the player specs of Task 39 use it; with `dvrPlaylist` it is a rewind buffer of
+ * `dvrSeconds` with a date-time on every segment, ruling 47).
  *
  * Fixed fictional data around Thursday 2026-11-12 20:37 local time (the specs install a fake clock there): programmes are built from
  * local clock times, so they fit in any time zone. Every channel carries `groupPos` (the position of its group).
@@ -32,9 +33,27 @@ export interface LivetvMock {
   calls: string[];
   /** the list answers this status instead (401 = the session is gone) */
   status: number;
-  /** POST .../watch answers this error instead of a watch answer */
-  watchError: { status: number; body: Record<string, unknown> } | null;
-  /** when the sliding playlist's first segment started (ms since epoch), set on the first request */
+  /** POST .../watch answers this error instead of a watch answer; with `only`, just for that channel id */
+  watchError: { status: number; body: Record<string, unknown>; only?: string } | null;
+  /** every POST .../watch, refused ones included: the channel ids in order */
+  watches: string[];
+  /** POST /api/livetv/beat: the tokens beaten, in order */
+  beats: string[];
+  /** the next beats answer these, one each (first first); after them a beat answers 200 */
+  beatAnswers: Array<{ status: number; body: Record<string, unknown> }>;
+  /** a beat that answers 200 re-pins the token to the caller's new address (backend beatLiveToken): /media/l/** answers 200 again */
+  beatRepins: boolean;
+  /** DELETE /api/livetv/watch: the tokens stopped, in order */
+  stops: string[];
+  /** /media/l/** answers this status instead (403 = the gateway refuses the token: rights gone, or another address than the pinned one) */
+  mediaStatus: number;
+  /** live playlists served with 200 */
+  playlistLoads: number;
+  /** the playlist keeps up to `dvrSeconds` of segments, each with its #EXT-X-PROGRAM-DATE-TIME; its newest segment ends now */
+  dvrPlaylist: boolean;
+  /** ms added to the real clock for the playlist's date-times (a spec with a fake page clock sets it so both clocks agree) */
+  timeShift: number;
+  /** when the sliding playlist's first segment started (ms since epoch, real clock), set on the first request unless a spec sets it */
   liveStart: number | null;
 }
 
@@ -69,6 +88,15 @@ export function livetvState(): LivetvMock {
     calls: [],
     status: 200,
     watchError: null,
+    watches: [],
+    beats: [],
+    beatAnswers: [],
+    beatRepins: false,
+    stops: [],
+    mediaStatus: 200,
+    playlistLoads: 0,
+    dvrPlaylist: false,
+    timeShift: 0,
     liveStart: null,
   };
 }
@@ -92,11 +120,33 @@ const list = (st: LivetvMock) => ({
 /** 2 s per segment, six segments in the window; the sequence number rises with time and the payload cycles through HLS_SEGMENTS */
 const SEG_S = 2, WINDOW = 6;
 export function livePlaylist(st: LivetvMock, nowMs: number): string {
+  if (st.dvrPlaylist) return dvrPlaylist(st, nowMs);
   st.liveStart ??= nowMs;
   const seq = Math.floor((nowMs - st.liveStart) / (SEG_S * 1000));
   const first = new Date(st.liveStart + seq * SEG_S * 1000).toISOString();
   return ['#EXTM3U', '#EXT-X-VERSION:7', `#EXT-X-TARGETDURATION:${SEG_S}`, `#EXT-X-MEDIA-SEQUENCE:${seq}`, '#EXT-X-MAP:URI="init.mp4"', `#EXT-X-PROGRAM-DATE-TIME:${first}`,
     ...Array.from({ length: WINDOW }, (_, i) => [`#EXTINF:${SEG_S}.000000,`, `s${seq + i}.m4s`]).flat(), ''].join('\n');
+}
+
+/**
+ * The rewind buffer as livetv serves it: segment k covers [liveStart + 2k s, +2 s); every finished segment of the last `dvrSeconds`
+ * (at least six) is listed, each with its date-time (real clock + `timeShift`). The payload restarts its timestamps every
+ * HLS_SEGMENTS.length segments, so each restart is an #EXT-X-DISCONTINUITY (and counted in the discontinuity sequence).
+ */
+function dvrPlaylist(st: LivetvMock, nowMs: number): string {
+  st.liveStart ??= nowMs - WINDOW * SEG_S * 1000;
+  const cycle = HLS_SEGMENTS.length;
+  const last = Math.floor((nowMs - st.liveStart) / (SEG_S * 1000)) - 1;
+  const keep = Math.max(WINDOW, Math.floor(st.dvrSeconds / SEG_S));
+  const first = Math.max(0, last - keep + 1);
+  const pdt = (k: number) => new Date(st.liveStart! + st.timeShift + k * SEG_S * 1000).toISOString();
+  const lines = ['#EXTM3U', '#EXT-X-VERSION:7', `#EXT-X-TARGETDURATION:${SEG_S}`, `#EXT-X-MEDIA-SEQUENCE:${first}`, `#EXT-X-DISCONTINUITY-SEQUENCE:${Math.floor(first / cycle)}`, '#EXT-X-MAP:URI="init.mp4"'];
+  for (let k = first; k <= last; k++) {
+    if (k % cycle === 0 && k !== first) lines.push('#EXT-X-DISCONTINUITY');
+    lines.push(`#EXT-X-PROGRAM-DATE-TIME:${pdt(k)}`, `#EXTINF:${SEG_S}.000000,`, `s${k}.m4s`);
+  }
+  lines.push('');
+  return lines.join('\n');
 }
 
 type Reply = (b: unknown, status?: number) => Promise<void>;
@@ -115,15 +165,23 @@ export function livetvRoute(st: LivetvMock, m: string, p: string, body: any, hea
   if ((mm = p.match(/^\/api\/livetv\/channels\/([^/]+)\/watch$/)) && m === 'POST') {
     const c = st.channels.find((x) => x.id === mm![1]);
     if (!c) return J({ error: 'not_found' }, 404);
-    if (st.watchError) return J(st.watchError.body, st.watchError.status);
+    st.watches.push(c.id);
+    const err = st.watchError;
+    if (err && (!err.only || err.only === c.id)) return J(err.body, err.status);
     st.calls.push(`POST ${p}`);
     return J({
       token: `tok-${c.id}`, url: `/media/l/tok-${c.id}/index.m3u8`, expiresAt: Date.now() + 60_000, dvrSeconds: st.dvrSeconds, mode: 'remux',
       channel: { id: c.id, number: c.number, name: c.name, logo: c.logo }, now: c.now, next: c.next,
     });
   }
-  if (p === '/api/livetv/beat' && m === 'POST') return J({ ok: true, expiresAt: Date.now() + 60_000 });
-  if (p === '/api/livetv/watch' && m === 'DELETE') { st.calls.push(`DELETE ${p}`); return J({ ok: true }); }
+  if (p === '/api/livetv/beat' && m === 'POST') {
+    st.beats.push(String(body?.token));
+    const a = st.beatAnswers.shift();
+    if (a) return J(a.body, a.status);
+    if (st.beatRepins) st.mediaStatus = 200; // the beat came from the same session: the token now follows the new address
+    return J({ ok: true, expiresAt: Date.now() + 60_000 });
+  }
+  if (p === '/api/livetv/watch' && m === 'DELETE') { st.calls.push(`DELETE ${p}`); st.stops.push(String(body?.token)); return J({ ok: true }); }
   if (p === '/api/livetv/last' && m === 'PUT') {
     st.recent = [body.id, ...st.recent.filter((x) => x !== body.id)].slice(0, 10);
     bump();
@@ -151,8 +209,12 @@ export function livetvRoute(st: LivetvMock, m: string, p: string, body: any, hea
 export function livetvMedia(st: LivetvMock, p: string, route: Route): Promise<void> | null {
   const mm = p.match(/\/media\/l\/[^/]+\/([^/]+)$/);
   if (!mm) return null;
+  if (st.mediaStatus !== 200) return route.fulfill({ status: st.mediaStatus, body: '' });
   const f = mm[1]!;
-  if (f === 'index.m3u8') return route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', headers: { 'cache-control': 'no-store' }, body: livePlaylist(st, Date.now()) });
+  if (f === 'index.m3u8') {
+    st.playlistLoads++;
+    return route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', headers: { 'cache-control': 'no-store' }, body: livePlaylist(st, Date.now()) });
+  }
   if (f === 'init.mp4') return route.fulfill({ status: 200, contentType: 'video/mp4', body: HLS_INIT });
   const seg = f.match(/^s(\d+)\.m4s$/);
   if (seg) return route.fulfill({ status: 200, contentType: 'video/iso.segment', body: HLS_SEGMENTS[Number(seg[1]) % HLS_SEGMENTS.length]! });

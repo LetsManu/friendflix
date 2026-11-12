@@ -76,10 +76,8 @@
   $: if (list && ((filter === 'recent' && !recent.length) || (filter !== 'all' && filter !== 'fav' && filter !== 'recent' && !groups.some((g) => g.id === filter)))) filter = 'all';
   $: shown = list ? channelOrder(list.channels, filter, list.favourites, list.recent) : [];
 
-  /** the player; a route the client does not know (a build without it) is a plain page load, so a tap never does nothing */
-  const open = (c: LiveChannel) => { const to = watchPath(c.id);
-    // Task 39: remove this fallback once /live/watch/[id] exists
-    void goto(to).catch(() => { location.href = to; }); };
+  /** the player, with the filter the list is on: it decides the zapping order there (`?f=`, spec §12.2) */
+  const open = (c: LiveChannel) => void goto(`${watchPath(c.id)}?f=${encodeURIComponent(filter)}`);
 
   // `?play=last`: the profile's last channel plays at once. The parameter goes first (a replaced history entry), so Back from the
   // player lands on the plain list, and from there Home. Without a last channel (or one the person no longer sees) the list stays.
