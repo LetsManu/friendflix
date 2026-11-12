@@ -48,7 +48,7 @@ test.describe('Live-TV tab (desktop)', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Live-TV' })).toBeVisible();
 
     // favourites row: the person's order, preview only for running channels, else the logo on the glass
-    const tiles = favs(page).getByRole('button');
+    const tiles = favs(page).locator('button.tile');
     await expect(tiles).toHaveCount(3);
     await expect(tiles.nth(0)).toHaveAccessibleName('1 Nordlicht TV, jetzt: Die Leuchtturmwärter, bis 21:00');
     await expect(tiles.nth(1)).toHaveAccessibleName('4 Hafenkanal, jetzt: Wetter am Hafen, bis 21:30');
@@ -112,10 +112,10 @@ test.describe('Live-TV tab (desktop)', () => {
     expect(box.height).toBeGreaterThanOrEqual(44);
     await star(false).click();
     await expect(star(true)).toHaveAttribute('aria-pressed', 'true');
-    await expect(favs(page).getByRole('button')).toHaveCount(4);
+    await expect(favs(page).locator('button.tile')).toHaveCount(4);
     await star(true).click();
     await expect(star(false)).toHaveAttribute('aria-pressed', 'false');
-    await expect(favs(page).getByRole('button')).toHaveCount(3);
+    await expect(favs(page).locator('button.tile')).toHaveCount(3);
     expect(api.livetv.calls).toEqual(['POST /api/livetv/favourites/ch-berg', 'DELETE /api/livetv/favourites/ch-berg']);
   });
 
@@ -153,7 +153,7 @@ test.describe('Live-TV tab (desktop)', () => {
     api.livetv.channels = [...api.livetv.channels, ...Array.from({ length: 6 }, (_, i) => ({ ...first, id: `ch-x${i}`, number: 40 + i, name: `Zusatz ${i + 1}` }))];
     api.livetv.favourites = api.livetv.channels.map((c) => c.id);
     await page.goto('/live');
-    const tiles = favs(page).getByRole('button');
+    const tiles = favs(page).locator('button.tile');
     await expect(tiles).toHaveCount(12);
     const vw = page.viewportSize()!.width;
     const boxes = await tiles.evaluateAll((l) => l.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, r: r.right, y: Math.round(r.y) }; }));

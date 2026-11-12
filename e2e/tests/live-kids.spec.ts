@@ -32,8 +32,8 @@ test.describe('Live TV for kids', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Live-TV' })).toBeVisible();
     // favourites above, then every channel as a big tile with logo, name and the Jetzt title
     const fav = page.getByRole('region', { name: 'Läuft gerade bei dir' });
-    await expect(fav.getByRole('button')).toHaveCount(1);
-    await expect(fav.getByRole('button')).toHaveAccessibleName(/^12 Kinderinsel/);
+    await expect(fav.locator('button.tile')).toHaveCount(1);
+    await expect(fav.locator('button.tile')).toHaveAccessibleName(/^12 Kinderinsel/);
     await expect(tiles(page)).toHaveCount(2);
     await expect(tiles(page).nth(0)).toContainText('Kinderinsel');
     await expect(tiles(page).nth(0)).toContainText('Abenteuer Wattenmeer');
@@ -55,7 +55,7 @@ test.describe('Live TV for kids', () => {
     await page.mouse.down();
     await page.clock.runFor(650);
     await page.mouse.up();
-    await expect(fav.getByRole('button')).toHaveCount(2);
+    await expect(fav.locator('button.tile')).toHaveCount(2);
     expect(api.livetv.calls).toEqual(['POST /api/livetv/favourites/ch-pixel']);
     expect(new URL(page.url()).pathname).toBe('/live');
 
@@ -64,7 +64,7 @@ test.describe('Live TV for kids', () => {
     await page.keyboard.down('Enter');
     await page.clock.runFor(650);
     await page.keyboard.up('Enter');
-    await expect(fav.getByRole('button')).toHaveCount(1);
+    await expect(fav.locator('button.tile')).toHaveCount(1);
     expect(api.livetv.calls).toEqual(['POST /api/livetv/favourites/ch-pixel', 'DELETE /api/livetv/favourites/ch-pixel']);
     expect(new URL(page.url()).pathname).toBe('/live');
   });

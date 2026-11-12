@@ -12,7 +12,8 @@
   /**
    * Live TV for a kids profile (spec §11.4): the favourites above, then a grid of big channel tiles (logo, name, the *Jetzt*
    * title). The server sends only the channels of kid-friendly groups; there are no chips, no guide, no star buttons. A favourite
-   * is a long press (touch or mouse) or a long OK (remote), the same 600 ms as everywhere. Solid panels (a kids profile is
+   * is a long press (touch or mouse) or a long OK (remote), the same 600 ms as everywhere.
+   * The favourites head carries *Ordnen* (two or more favourites; the page owns the sheet, Task 38). Solid panels (a kids profile is
    * calm and still): nothing here blurs or animates.
    */
   export let channels: LiveChannel[];
@@ -22,7 +23,7 @@
   /** the person has no channel at all */
   export let none = false;
 
-  const dispatch = createEventDispatcher<{ open: LiveChannel; star: LiveChannel }>();
+  const dispatch = createEventDispatcher<{ open: LiveChannel; star: LiveChannel; order: HTMLElement }>();
 
   // ---- long press with a pointer: the tile that fired swallows the click that follows the release ----
   let pt: ReturnType<typeof setTimeout> | undefined;
@@ -82,7 +83,10 @@
     {#each sections as s (s.key)}
       {#if s.list.length}
         <section class="sec" aria-labelledby="kl-{s.key}">
-          <h2 id="kl-{s.key}">{s.head}</h2>
+          <div class="hd">
+            <h2 id="kl-{s.key}">{s.head}</h2>
+            {#if s.key === 'fav' && favs.length >= 2}<button type="button" class="ord" on:click={(e) => dispatch('order', e.currentTarget)}>{$t('live.fav.order')}</button>{/if}
+          </div>
           <ul class="grid" class:strip={!s.grid} aria-label={s.grid ? $t('live.player.channelList') : undefined}>
             {#each s.list as c (c.id)}
               <li class="cell">
@@ -108,7 +112,11 @@
   /* the kids home's sky, full-bleed behind the page (the layout's page frame is narrower than the screen) */
   .kbg { position: fixed; z-index: -1; left: 0; right: 0; top: 0; bottom: 0; background: radial-gradient(circle at 12% 8%, #fff6c9 0, transparent 38%), radial-gradient(circle at 92% 18%, #ffd6e8 0, transparent 34%), linear-gradient(180deg, #bfe9ff 0%, #e8f7ff 55%, #fffaf0 100%); }
   .sec { margin: 0 0 1.8rem; }
-  h2 { margin: 0 0 .8rem; font-size: clamp(1.3rem, 3vw, 1.75rem); font-weight: 900; color: var(--k-ink); }
+  /* the head keeps the height of a 44 px button, so *Ordnen* arriving moves nothing */
+  .hd { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 48px; margin: 0 0 .8rem; }
+  h2 { margin: 0; font-size: clamp(1.3rem, 3vw, 1.75rem); font-weight: 900; color: var(--k-ink); }
+  .ord, .ord:hover:not(:disabled), .ord:active:not(:disabled) { min-height: 48px; padding: 0 1.3rem; border: 0; border-radius: 24px; background: #fff; color: var(--k-ink); font: inherit; font-weight: 800; box-shadow: 0 4px 12px rgba(32, 35, 58, .15); transform: none; transition: none; }
+  .ord:focus-visible { outline: 5px solid var(--k-focus); outline-offset: 2px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: 1.1rem; margin: 0; padding: 6px; list-style: none; }
   .strip { display: flex; overflow-x: auto; scrollbar-width: none; padding-bottom: 12px; }
   .strip::-webkit-scrollbar { display: none; }

@@ -8,8 +8,9 @@
   import { kidsMode } from '#lib/kids';
   import { pageStore } from '#lib/page';
   import { runAction } from '#lib/ui/action';
-  import { channels as fetchChannels, favourite, type LiveChannel, type LiveList } from '#lib/live/api';
+  import { channels as fetchChannels, favourite, setFavouriteOrder, type LiveChannel, type LiveList } from '#lib/live/api';
   import { minute } from '#lib/live/fade';
+  import FavOrderSheet from '#lib/live/FavOrderSheet.svelte';
   import FavTiles from '#lib/live/FavTiles.svelte';
   import GroupChips from '#lib/live/GroupChips.svelte';
   import KidsLive from '#lib/live/KidsLive.svelte';
@@ -103,6 +104,14 @@
       favourites: on ? [...list.favourites.filter((f) => f !== id), id] : list.favourites.filter((f) => f !== id),
     };
   }
+  // *Ordnen*: the sheet stores the complete order; the list follows at once, so the row, the chip and the player's zapping use it
+  let orderOpen = false;
+  let orderTrigger: HTMLElement | null = null;
+  const openOrder = (el: HTMLElement) => { orderTrigger = el; orderOpen = true; };
+  async function saveOrder(ids: string[]): Promise<void> {
+    await setFavouriteOrder(ids);
+    if (list) list = { ...list, favourites: [...ids, ...list.favourites.filter((f) => !ids.includes(f))] }; // favourites the person cannot see keep their place behind
+  }
   function toggleStar(c: LiveChannel) {
     const on = !c.favourite;
     void runAction({
@@ -124,16 +133,20 @@
       <button type="button" class="sec" on:click={retry}>{$t('live.player.retry')}</button>
     </div>
   {:else if $kidsMode}
-    <KidsLive channels={shown} {favs} now={$minute} loading={loading || playing} none={!!list && !list.channels.length} on:open={(e) => open(e.detail)} on:star={(e) => toggleStar(e.detail)} />
+    <KidsLive channels={shown} {favs} now={$minute} loading={loading || playing} none={!!list && !list.channels.length} on:open={(e) => open(e.detail)} on:star={(e) => toggleStar(e.detail)} on:order={(e) => openOrder(e.detail)} />
   {:else if tvMode}
     <TvLiveList channels={shown} all={list?.channels ?? []} {favs} {groups} {filter} recent={recent.length > 0} last={list?.last?.id ?? null} now={$minute} loading={loading || playing} none={!!list && !list.channels.length}
-      on:open={(e) => open(e.detail)} on:star={(e) => toggleStar(e.detail)} on:select={(e) => (filter = e.detail)} />
+      on:open={(e) => open(e.detail)} on:star={(e) => toggleStar(e.detail)} on:select={(e) => (filter = e.detail)} on:order={(e) => openOrder(e.detail)} />
   {:else}
-    <FavTiles channels={favs} now={$minute} {loading} on:open={(e) => open(e.detail)} />
+    <FavTiles channels={favs} now={$minute} {loading} on:open={(e) => open(e.detail)} on:order={(e) => openOrder(e.detail)} />
     <GroupChips {groups} value={filter} recent={recent.length > 0} {loading} on:select={(e) => (filter = e.detail)} />
     <LiveList_ channels={shown} now={$minute} {loading} {filter} none={!!list && !list.channels.length} on:open={(e) => open(e.detail)} on:star={(e) => toggleStar(e.detail)} />
   {/if}
 </div>
+
+{#if orderOpen}
+  <FavOrderSheet rows={favs} save={saveOrder} tv={tvMode} trigger={orderTrigger} on:close={() => (orderOpen = false)} />
+{/if}
 
 <style>
   .live { max-width: 1400px; margin: 0 auto; }
