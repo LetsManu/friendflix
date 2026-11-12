@@ -166,6 +166,8 @@ export interface MatrixRole {
   origin: RoleRow['origin']; invitable: boolean; position: number;
   /** an env role whose key left ROLE_TEMPLATES ("nicht mehr in .env"): it can be deleted now */
   envGone: boolean;
+  /** has a row in the roles table: only these can be ordered (an env-only key is listed after them, fixed) */
+  stored: boolean;
   accounts: number; profiles: number; kidsProfiles: number;
   /** effective template + switches + requestsPerMonth, keyed by MatrixField.key */
   values: Record<string, unknown>;
@@ -217,7 +219,7 @@ export async function rolesOverview(ctx: Ctx): Promise<RolesOverview> {
     const n = count.get(row.key);
     matrixRoles.push({
       key: row.key, label: configured ?? null, builtinLabel: configured !== undefined && configured === builtinGerman, base: row.base,
-      origin: row.origin, invitable: row.invitable && row.key !== 'admin', position: row.position, envGone: row.origin === 'env' && !Object.hasOwn(ctx.roles, row.key),
+      origin: row.origin, invitable: row.invitable && row.key !== 'admin', position: row.position, envGone: row.origin === 'env' && !Object.hasOwn(ctx.roles, row.key), stored: row.stored,
       accounts: n?.accounts ?? 0, profiles: n?.profiles ?? 0, kidsProfiles: n?.kids ?? 0,
       values: Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, valueOf(r, f.key)])),
       sources: Object.fromEntries(MATRIX_FIELDS.map((f) => [f.key, r.sources[f.key as RightKey]])),

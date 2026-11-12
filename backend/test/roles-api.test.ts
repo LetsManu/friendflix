@@ -120,6 +120,21 @@ describe('GET /api/admin/roles', () => {
     }
   });
 
+  it('stored tells the roles with a table row from an env-only key, which stays last; its history can be asked for', async () => {
+    const saved = env.ctx.roles;
+    env.ctx.roles = { ...saved, 'Crew.X': { ...saved.friend!, label: 'Crew' } }; // not a valid key: it cannot be stored
+    invalidateRoles(env.ctx);
+    try {
+      const m = (await get()).matrix;
+      expect(m.roles.map((r: { key: string; stored: boolean }) => [r.key, r.stored])).toEqual([['admin', true], ['family', true], ['friend', true], ['guest', true], ['Crew.X', false]]);
+      expect((await call(admin, 'GET', '/api/admin/audit?target=Crew.X')).statusCode).toBe(200);
+      expect((await call(admin, 'GET', "/api/admin/audit?target=Crew';x")).statusCode).toBe(400);
+    } finally {
+      env.ctx.roles = saved;
+      invalidateRoles(env.ctx);
+    }
+  });
+
   it('libraries answer [] while the media server cannot list them', async () => {
     folders = null as never; // the fake answers garbage: the list fails
     forgetLibraries(env.ctx);
@@ -502,7 +517,7 @@ describe('catalogue writes', () => {
     expect(await row(key)).toBeUndefined();
     const log = async (a: string) => (await env.pool.query('select target, meta from audit_log where action=$1', [a])).rows;
     expect((await log('user.role')).map((x) => x.meta)).toEqual([{ from: key, to: 'friend' }, { from: key, to: 'friend' }]);
-    expect(await log('role.delete')).toEqual([{ target: key, meta: { moveTo: 'friend', accounts: 2, invites: 1 } }]);
+    expect(await log('role.delete')).toEqual([{ target: key, meta: { moveTo: 'friend', accounts: 2, invites: 1, label: expect.any(String) } }]);
     expect((await get()).matrix.roles.some((x: { key: string }) => x.key === key)).toBe(false);
     expect(await invitableRoles(env.ctx)).not.toContain(key);
   });

@@ -28,7 +28,6 @@ import { portainerMode, redeployViaPortainer, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
 import { accountSerial, getUserById } from '../users.js';
 import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, isLanguage, roleLabel, setInstanceLanguage } from '../i18n.js';
-import { ROLE_KEY_RE } from '../rolecat.js';
 
 const uuid = z.guid();
 
@@ -351,7 +350,8 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const p = pageQuery.extend({
       actor: z.union([uuid, z.literal('system')]).optional(),
       action: z.string().regex(/^[a-z_]+(\.[a-z_]+)?$/).optional(),
-      target: z.union([uuid, z.string().regex(ROLE_KEY_RE)]).optional(),
+      // a role key as the backend knows it (a ROLE_TEMPLATES key need not match ROLE_KEY_RE) or a user id
+      target: z.union([uuid, z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/)]).optional(),
       area: z.literal('people').optional(),
       from: z.coerce.date().optional(),
       to: z.coerce.date().optional(),
