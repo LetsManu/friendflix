@@ -6,11 +6,14 @@
    * first asks the kind (*Anbieterliste* / *Eigene Streams*; own streams hand over to the stream sheet). A list has a name, the M3U
    * URL in a password-type field with *anzeigen* (on edit it starts empty, "unverändert lassen", with the stored `urlHint`), an
    * optional XMLTV URL (likewise; *Programmführer entfernen* sends `epgUrl: null`), *Heimnetz erlauben*, the interval, and under
-   * *Erweitert* the user agent and the provider's channel limit. The *Import* section and the group picker are Task 22's: the
-   * `import` slot below the form is kept empty for them. *Prüfen* runs `POST /sources/test` and shows "412 Sender in 18 Gruppen ·
-   * EPG: 398 Kanäle" plus five sample names, or the error, in a box that keeps its height; *Speichern* waits for a good *Prüfen*
-   * whenever the address, the LAN switch or the user agent changed (a new source always). A modal dialog: Tab stays inside, Escape
-   * or a press on the dimmed page closes it (unsaved input asks first) and the focus goes back to `trigger`.
+   * *Erweitert* the user agent and the provider's channel limit, then the *Import* section (ImportOptions: numbering, logo preference,
+   * programme-time offset). *Prüfen* runs `POST /sources/test` and shows "412 Sender in 18 Gruppen · EPG: 398 Kanäle" plus five sample
+   * names, or the error, in a box that keeps its height; with a result the group picker (GroupPicker) lists the provider's groups, all
+   * ticked on first use (on edit: ticked = not in `skipGroups`) and *Speichern* sends the unticked ones as `skipGroups`. `autoTest`
+   * (the card's *Auswahl ändern*) runs *Prüfen* at once and brings the picker into view. *Speichern* waits for a good *Prüfen* whenever
+   * the address, the LAN switch or the user agent changed (a new source always). The buttons sit below the scrolling form, so nothing
+   * a result brings in ever moves them. A modal dialog: Tab stays inside, Escape or a press on the dimmed page closes it (unsaved
+   * input asks first) and the focus goes back to `trigger`.
    */
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import { ApiError } from '#lib/api';
@@ -18,14 +21,17 @@
   import { scrimFade, sheetSlide, twoWay } from '#lib/glass/fx';
   import { SCRIM_MENU } from '#lib/glass/tone';
   import Icon from '#lib/Icon.svelte';
-  import { t, tr } from '#lib/i18n';
+  import { fmtNumber, t, tr } from '#lib/i18n';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
   import { uid } from '#lib/ui/ids';
   import Select from '#lib/ui/Select.svelte';
   import Toggle from '#lib/ui/Toggle.svelte';
-  import { createSource, REFRESHES, testSource, updateSource, type Refresh, type SourceBody, type SourcePatch, type SourceTest, type SourceView } from './api';
+  import { createSource, REFRESHES, testSource, updateSource, type LogoPref, type Numbering, type Refresh, type SourceBody, type SourcePatch, type SourceTest, type SourceView } from './api';
   import { confirmDiscard, guardLeave } from './discard';
+  import GroupPicker from './GroupPicker.svelte';
+  import ImportOptions from './ImportOptions.svelte';
+  import { initPicker, pickChanged as pickDiffers, saveList, type PickerState } from './picker';
   import SecretInput from './SecretInput.svelte';
   import { sourceError, urlShapeOk } from './sources';
 
@@ -33,6 +39,8 @@
   export let source: SourceView | null = null;
   /** the element the focus returns to on close */
   export let trigger: HTMLElement | null = null;
+  /** run *Prüfen* as the sheet opens and show the group picker (the card's *Auswahl ändern*) */
+  export let autoTest = false;
 
   const dispatch = createEventDispatcher<{ close: void; saved: SourceView; own: void }>();
   const id = uid('ss');
@@ -46,8 +54,23 @@
   let refresh: Refresh = source?.refresh ?? '24h';
   let userAgent = source?.userAgent ?? '';
   let maxStreams: string = source?.maxStreams != null ? String(source.maxStreams) : '';
-  const start = JSON.stringify({ name, allowLan, refresh, userAgent, maxStreams });
-  $: dirty = Boolean(url || epgUrl || epgRemove) || JSON.stringify({ name, allowLan, refresh, userAgent, maxStreams }) !== start;
+  // the import options
+  let numbering: Numbering = source?.numbering ?? 'chno';
+  let numberBase: string = String(source?.numberBase ?? 1);
+  let logoPref: LogoPref = source?.logoPref ?? 'm3u';
+  let epgShiftMin = source?.epgShiftMin ?? 0;
+  const BASE_MIN = 1, BASE_MAX = 99_999;
+  /** the first number as a number; null while the field holds something else than a whole number in range */
+  $: baseValue = /^\d+$/.test(String(numberBase).trim()) && Number(numberBase) >= BASE_MIN && Number(numberBase) <= BASE_MAX ? Number(numberBase) : null;
+  const start = JSON.stringify({ name, allowLan, refresh, userAgent, maxStreams, numbering, numberBase: String(numberBase), logoPref, epgShiftMin });
+  // the picker: made from each good *Prüfen*; its selection counts only while the result is current
+  let picker: PickerState | null = null;
+  $: pickerOn = Boolean(picker) && tested;
+  // what a save sends: the visible unticked groups plus the stored names this list does not have (kept, never a change by themselves)
+  $: skipNow = pickerOn && picker ? saveList(picker) : null;
+  $: pickChanged = pickerOn && picker ? pickDiffers(picker, source?.skipGroups ?? []) : false;
+  $: dirty = Boolean(url || epgUrl || epgRemove) || pickChanged
+    || JSON.stringify({ name, allowLan, refresh, userAgent, maxStreams, numbering, numberBase: String(numberBase), logoPref, epgShiftMin }) !== start;
 
   // ---- Prüfen: a result counts only for the inputs it was made with
   let test: SourceTest | null = null, testErr = '', testing = false, testedSig = '';
@@ -56,7 +79,7 @@
   $: tested = Boolean(test) && testedSig === sig;
   $: needsTest = fetchChanged && !tested;
 
-  let nameErr = '', urlErr = '', epgErr = '', maxErr = '', saveErr = '', saving = false;
+  let nameErr = '', urlErr = '', epgErr = '', maxErr = '', baseErr = '', saveErr = '', saving = false;
 
   function validate(forTest: boolean): boolean {
     nameErr = !forTest && !name.trim() ? tr('adminLive.src.nameMissing') : '';
@@ -64,7 +87,8 @@
     epgErr = epgUrl.trim() && !urlShapeOk(epgUrl, HTTP) ? tr('adminLive.src.urlBad') : '';
     const m = maxStreams.trim();
     maxErr = !forTest && m && !(/^\d+$/.test(m) && Number(m) >= 1 && Number(m) <= 50) ? '1–50' : '';
-    return !nameErr && !urlErr && !epgErr && !maxErr;
+    baseErr = !forTest && numbering === 'order' && baseValue === null ? `${fmtNumber(BASE_MIN)}–${fmtNumber(BASE_MAX)}` : '';
+    return !nameErr && !urlErr && !epgErr && !maxErr && !baseErr;
   }
 
   const code = (e: unknown): string | null => (e instanceof ApiError && typeof e.body?.error === 'string' ? e.body.error : null);
@@ -84,8 +108,11 @@
         ...(source ? { sourceId: source.id } : {}),
       });
       testedSig = mySig;
+      // a new result keeps the selection made so far (names the list does not have stay in `kept`)
+      picker = initPicker(test.groups, picker ? saveList(picker) : source?.skipGroups ?? []);
+      if (autoTest && !shownOnce) { shownOnce = true; void tick().then(() => pickerBox?.scrollIntoView({ block: 'start' })); }
     } catch (e) {
-      test = null; testedSig = '';
+      // the previous result and the picker stay (the selection too); only the error line is new
       // 400 names the field (`invalid`: not a URL / wrong scheme; `refused`: a single-label host or an internal address; `lan_required`:
       // *Heimnetz erlauben* would allow it); 409 `test_running`: another check of this admin still runs (Prüfen stays usable)
       const c = code(e), field = e instanceof ApiError && e.status === 400 ? e.body?.field : null;
@@ -104,12 +131,17 @@
     if (userAgent.trim() !== (s.userAgent ?? '')) p.userAgent = userAgent.trim() || null;
     const max = maxStreams.trim() ? Number(maxStreams) : null;
     if (max !== s.maxStreams) p.maxStreams = max;
+    if (numbering !== s.numbering) p.numbering = numbering;
+    if (baseValue !== null && baseValue !== s.numberBase) p.numberBase = baseValue;
+    if (logoPref !== s.logoPref) p.logoPref = logoPref;
+    if (epgShiftMin !== s.epgShiftMin) p.epgShiftMin = epgShiftMin;
+    if (pickChanged && skipNow) p.skipGroups = skipNow;
     return p;
   }
   function bodyOf(): SourceBody {
     return {
       name: name.trim(), url: url.trim(), epgUrl: epgUrl.trim() || null, userAgent: userAgent.trim() || null,
-      allowLan, refresh, skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0,
+      allowLan, refresh, skipGroups: skipNow ?? [], numbering, numberBase: baseValue ?? 1, logoPref, epgShiftMin,
       maxStreams: maxStreams.trim() ? Number(maxStreams) : null, enabled: true,
     };
   }
@@ -146,7 +178,11 @@
 
   function portal(node: HTMLElement) { document.body.appendChild(node); return { destroy() { node.remove(); } }; }
   const slide = (node: Element) => twoWay((dir) => sheetSlide(node, { dir, side: 'right' }));
-  onMount(() => { document.getElementById(`${id}-name`)?.focus({ preventScroll: true }); });
+  let pickerBox: HTMLElement | undefined, shownOnce = false;
+  onMount(() => {
+    document.getElementById(`${id}-name`)?.focus({ preventScroll: true });
+    if (autoTest) void runTest();
+  });
 
   // ---- the kind (a new source only): own streams have their own sheet; typed input asks first
   let kindBtns: HTMLButtonElement[] = [];
@@ -177,7 +213,8 @@
       <h2 id="{id}-t">{source ? $t('adminLive.src.edit') : $t('adminLive.src.add')}</h2>
       <button type="button" class="x" aria-label={$t('common.close')} title={$t('common.close')} on:click={() => close()}><Icon name="x" size={20} /></button>
     </header>
-    <form class="body" novalidate on:submit|preventDefault={save}>
+    <form class="frm" novalidate on:submit|preventDefault={save}>
+     <div class="body">
       {#if !source}
         <div class="ctl" role="group" aria-labelledby="{id}-k">
           <span class="lbl" id="{id}-k">{$t('adminLive.src.kind')}</span>
@@ -215,8 +252,7 @@
         </div>
       </details>
 
-      <!-- Task 22: the Import section (numbers, logos, EPG shift) and the group picker after Prüfen go here -->
-      <slot name="import" {test} />
+      <ImportOptions bind:numbering bind:numberBase bind:logoPref bind:epgShiftMin {baseErr} />
 
       <!-- the Prüfen outcome keeps its box, so the buttons below never move -->
       <div class="result" aria-live="polite">
@@ -231,6 +267,10 @@
         {/if}
         {#if saveErr}<p class="msg err" role="alert"><Icon name="alert" size={18} /><span>{saveErr}</span></p>{/if}
       </div>
+
+      <!-- the picker: after a good Prüfen; its list has a fixed height -->
+      <div class="pick" bind:this={pickerBox}>{#if pickerOn && picker}<GroupPicker bind:state={picker} />{/if}</div>
+     </div>
 
       <div class="foot">
         <Button variant="secondary" icon="search" pending={testing} on:click={runTest}>{$t('adminLive.src.test')}</Button>
@@ -249,7 +289,9 @@
   h2 { flex: 1; margin: 0; font-size: 1.15rem; font-weight: 800; overflow-wrap: anywhere; }
   .x { flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; display: grid; place-items: center; border-radius: 50%; background: transparent; color: #fff; }
   .x:hover:not(:disabled) { background: rgba(255, 255, 255, .1); }
-  .body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: .4rem 18px calc(18px + var(--safe-bottom, 0px)); display: flex; flex-direction: column; gap: 1rem; }
+  .frm { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: .4rem 18px 1rem; display: flex; flex-direction: column; gap: 1rem; }
+  .pick:empty { display: none; }
   .lbl { display: block; font-size: .9rem; font-weight: 600; margin-bottom: .35rem; }
   .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid rgba(255, 255, 255, .2); border-radius: 22px; padding: 3px; gap: 3px; max-width: 100%; }
   .seg button { min-height: 44px; padding: .3rem 1rem; border-radius: 999px; background: transparent; border: 0; color: rgba(255, 255, 255, .8); font-weight: 600; }
@@ -271,7 +313,8 @@
   .msg.err :global(svg), .msg.epgerr :global(svg) { color: var(--err); }
   .msg.muted { color: rgba(255, 255, 255, .85); font-size: .9rem; }
   .samples { margin: 0; font-size: .88rem; color: rgba(255, 255, 255, .85); overflow-wrap: anywhere; }
-  .foot { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+  /* the buttons stay at the sheet's foot whatever the form above holds (the Prüfen result, the picker) */
+  .foot { flex: none; display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; padding: .7rem 18px calc(14px + var(--safe-bottom, 0px)); border-top: 1px solid rgba(255, 255, 255, .12); }
   /* a pending button's spinner takes its icon's 18 px: the buttons keep their width */
   .foot :global(.spinner) { width: 18px; height: 18px; }
   :global(html.m-still) .ss-wrap :global(*) { transition: none !important; animation: none !important; }
