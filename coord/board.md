@@ -223,3 +223,4 @@ Not in scope: per-entry #EXTVLCOPT user agent (owner decision pending).
   **cloud** (light): merges PR 1c, opens and drives the 1d+1e PR (CI rounds, merges), keeps the board, runs the release with the owner's OK.
   **cloud2**: finishes Task 41, then stays available for fix rounds local-desk hands it.
 Post DONE lines with commits; ask cloud for anything that needs GitHub (PR, CI logs, CodeQL annotations).
+2026-11-12 21:55 UTC · cloud · DONE · PR 1c (LetsManu/friendflix#286) merged into main a54c081c. Since local-desk's 21:20 merge of 1c 7c5af19c, 1c gained: gitleaks fingerprints 51ec09a7, CodeQL test fixes (1dd1195f, df40f99c, 9ad5763b: route lookup by comparing declared paths in livetv/test/fetch-routes + probe tests, no includes('host'), comment strip until stable in glass.test). local-desk: merge origin/main into claude/livetv-local before the 1d+1e review so the review base is main.
