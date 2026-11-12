@@ -99,7 +99,7 @@ Live TV is the *Live-TV* entry in the menu (phone: *Live* in the tab bar), shown
 
 ### Release on switch
 
-Some providers allow only one connection per account. When you switch from channel A to channel B and B's start would be refused, FriendFlix stops A **at once** (instead of after the usual 60 seconds) if all of this holds: you were A's only viewer (casts and admin test previews count as viewers) and no recording uses A; B is not running yet; and B would be refused only because B's source is at its *Max. gleichzeitige Sender* with A on the same source, or because A holds a conversion slot that B needs. Otherwise A lingers for 60 seconds as usual. Each release is an event in *Live-Status*.
+Some providers allow only one connection per account. When you switch from channel A to channel B and B's start would be refused, FriendFlix stops A **at once** (instead of after the usual 60 seconds) if all of this holds: you were A's only viewer (casts and admin test previews count as viewers) and no recording uses A; B is not running yet; and B would be refused only because B's source is at its *Max. gleichzeitige Sender* with A on the same source, or because A holds a conversion slot that B needs. Otherwise A lingers for 60 seconds as usual. Each release is an event in *Live-Status*. A channel switch on a Chromecast never releases the old channel early: a cast counts as its own view, so on a one-connection provider the switch is refused and A stays for 60 seconds.
 
 ## Casting
 
@@ -118,7 +118,7 @@ Chromecast and AirPlay play a live channel like a film. The Chromecast bar and r
 
 ## Troubleshooting
 
-*Admin → Live-TV → Live-Status* shows the running channels (mode, viewers, since, bitrate, input state, *Stoppen* and *Neu starten*), the budget, the cache use and the last 200 events; pushed feeds have their own table (state, bitrate, refusals in the last hour).
+*Admin → Live-TV → Live-Status* shows the running channels (mode, viewers, since, bitrate, input state, *Stoppen* and *Neu starten*; *Stoppen* ends the channel for its viewers, who see the error state, and a new watch is refused for 60 seconds), the budget, the cache use and the last 200 events; pushed feeds have their own table (state, bitrate, refusals in the last hour).
 
 | What you see | Cause and fix |
 |---|---|

@@ -133,7 +133,7 @@ export async function runBenchmark(ctx: Ctx, _trigger: BenchTrigger, deps: { now
       // the media server's record is current: only livetv's is missing, so the 21-s clip on the media server is not converted again
       const cur = (await readBench(ctx)).jellyfin;
       if (cur) {
-        await measureLivetv(ctx, settings?.hwAccel ?? null, now);
+        if (!(await measureLivetv(ctx, settings?.hwAccel ?? null, now))) return out; // livetv's measurement failed: noted as failed, not ok
         return (out = { ok: true, jellyfin: cur, livetv: (await readBench(ctx)).livetv });
       }
     }
@@ -160,16 +160,18 @@ export async function runBenchmark(ctx: Ctx, _trigger: BenchTrigger, deps: { now
  * conv:bench:livetv (`hwAccel` = the encoder name, which is also its fingerprint). Runs inside runBenchmark's claim with previews
  * paused (the same hardware). A failure keeps the previous record; it never fails the media server's measurement.
  */
-async function measureLivetv(ctx: Ctx, jfHwAccel: string | null, now: () => number): Promise<void> {
-  if (!livetvInstalled(ctx)) return;
+async function measureLivetv(ctx: Ctx, jfHwAccel: string | null, now: () => number): Promise<boolean> {
+  if (!livetvInstalled(ctx)) return true;
   try {
     const encoder = await liveEncoder(ctx, jfHwAccel);
     const a = await livetvCall<Partial<BenchAnswer> | null>(ctx, 'POST', '/v1/benchmark', { encoder }, { timeoutMs: LIVETV_BENCH_TIMEOUT_MS });
-    if (!a || typeof a.speed !== 'number' || !Number.isFinite(a.speed) || a.speed <= 0) return;
+    if (!a || typeof a.speed !== 'number' || !Number.isFinite(a.speed) || a.speed <= 0) return false;
     const rec: BenchRecord = { speed: a.speed, hwAccel: encoder, fingerprint: encoder, at: now() };
     await ctx.kv.set(BENCH_LIVETV_KEY, JSON.stringify(rec), BENCH_TTL_S);
+    return true;
   } catch {
     // livetv busy, not answering or the encoder failed: the old record (if any) stays
+    return false;
   }
 }
 

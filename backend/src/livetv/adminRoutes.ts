@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { roleExists } from '../rolecat.js';
-import { requireAdmin } from '../session.js';
+import { loadSession, requireAdmin } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
 import { dropLivetvProof } from './client.js';
 import { detectLivetv, enableBenchmark, livetvInstalled, livetvSystem } from './detect.js';
@@ -20,7 +20,7 @@ import { liveStatus, readHwAccel, stopStream } from './status.js';
 import { CHANNEL_SELECT, isOwnFeeds, toEffective, type EffectiveRow } from './channels.js';
 import { isHomeRequest } from '../netaddr.js';
 import { clearJoinMark, startOrJoin } from './streams.js';
-import { adminStopKey, liveSidHash, mintLiveToken } from './tokens.js';
+import { adminStopKey, liveSidHash, mintLiveToken, revokeLiveToken } from './tokens.js';
 import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource } from './refresh.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
@@ -501,6 +501,12 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
         kind: 'live', via: 'local', remote: !isHomeRequest(req, ctx.cfg.HOME_NETWORKS), test: true,
       });
       await clearJoinMark(ctx, ch.id, { userId: who.userId, deviceId });
+      // the watch route's check: a profile switch that raced the mint revoked the device's tokens before this one existed (no rights check, F10)
+      const after = await loadSession(ctx, req.sid);
+      if (!after || (after.profileId && after.profileId !== req.profile.id)) {
+        await revokeLiveToken(ctx, minted.hash);
+        return null;
+      }
       return { url: `/media/l/${minted.token}/index.m3u8`, token: minted.token };
     } catch (e) {
       req.log.warn({ err: e instanceof Error ? e.name : 'error' }, 'livetv test preview not started'); // never the token, never a URL
@@ -559,7 +565,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     return liveStatus(ctx, jellyfinHwAccel);
   });
 
-  // *Stoppen* (and *Neu starten*: the next watcher starts the channel again); audited with the channel id only
+  // *Stoppen* (the web then stops the viewers and refuses a restart for 60 s; *Neu starten* is this stop plus the channel test start); audited with the channel id only
   app.post('/api/admin/livetv/streams/:channelId/stop', admin, async (req, reply) => {
     const cid = id.safeParse((req.params as { channelId?: string }).channelId).data;
     if (!cid) return reply.code(404).send({ error: 'not_found' });

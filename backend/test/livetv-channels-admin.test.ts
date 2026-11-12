@@ -516,6 +516,7 @@ describe('the stream test preview (Task 42, F10)', () => {
   const streams = new Map<string, Record<string, unknown>>();
   let posts: Array<Record<string, unknown>> = [];
   let postStatus = 200;
+  let onStart: (() => Promise<void>) | undefined;
   let deletes = false; // only the stop tests let livetv really end a stream
   const preview = (r: { json(): any }) => (r.json() as { preview?: { url: string; token: string } }).preview;
   const authz = (token: string) => env.app.inject({ method: 'POST', url: '/internal/authz/live', headers: H, payload: { token, ip: '192.0.2.250' } });
@@ -532,8 +533,16 @@ describe('the stream test preview (Task 42, F10)', () => {
       return { json: { streamKey: sv.streamKey, state: 'running' } };
     },
   }, calls);
+  /** livetv, but a start first runs `onStart` (a request of the test lands while the start is in flight) */
+  const livetvWithHook = () => {
+    const inner = livetv();
+    return (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (onStart && (init?.method ?? 'GET') === 'POST' && new URL(String(input)).pathname === '/v1/streams') await onStart();
+      return inner(input, init);
+    }) as typeof fetch;
+  };
   beforeEach(async () => {
-    streams.clear(); posts = []; postStatus = 200; deletes = false;
+    streams.clear(); posts = []; postStatus = 200; onStart = undefined; deletes = false;
     for (const k of await env.kv.keys('ltv')) { if (!k.startsWith('ltv:chtest:')) await env.kv.del(k); }
     env.ctx.fetchImpl = livetv();
     await detectLivetv(env.ctx, 0);
@@ -609,6 +618,24 @@ describe('the stream test preview (Task 42, F10)', () => {
     expect(await env.kv.get(`ltv:adminstop:${a}`)).toBeNull();
     expect(posts.map((b) => b.channelId)).toEqual([a, a]);
     expect((await authz(again.token)).statusCode).toBe(200);
+  });
+
+  it('a profile switch that lands during the test start takes the test token back (final review M6)', async () => {
+    const src = await addSource();
+    const a = await addChannel(src, 'Nordlicht TV', { number: 1 });
+    const s2 = await env.login(); // a session of its own: the switch must not change the shared admin session
+    const h = { 'x-csrf-token': s2.csrf };
+    const made = await env.app.inject({ method: 'POST', url: '/api/profiles', cookies: s2.cookies, headers: h, payload: { name: 'Kinderinsel' } });
+    expect(made.statusCode, made.body).toBe(201);
+    const pid = made.json().profile.id as string;
+    env.ctx.fetchImpl = livetvWithHook();
+    onStart = async () => { await env.app.inject({ method: 'POST', url: `/api/profiles/${pid}/select`, cookies: s2.cookies, headers: h, payload: {} }); };
+    const r = await env.app.inject({ method: 'POST', url: `/api/admin/livetv/channels/${a}/test`, cookies: s2.cookies, headers: h, payload: {} });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ ok: true });
+    expect(preview(r)).toBeUndefined();
+    expect(posts).toHaveLength(1);
+    expect(await env.kv.keys('ltv:view:')).toEqual([]); // no token of the old profile stays alive
   });
 
   it('a full conversion budget gives the facts only: no preview, no token', async () => {
