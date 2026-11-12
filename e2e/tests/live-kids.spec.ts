@@ -15,6 +15,7 @@ const tiles = (page: Page) => page.getByRole('list', { name: 'Senderliste' }).ge
 test.describe('Live TV for kids', () => {
   test.beforeEach(async ({ page, api }) => {
     api.features = { livetv: true };
+    await page.route('**/api/cast/config', (r) => r.fulfill({ json: { enabled: false } })); // the player asks for the cast switch once (Task 41)
     // the server already filtered: only the kid-friendly group comes back
     const kinder = api.livetv.channels.find((c) => c.id === 'ch-kinder')!;
     api.livetv.groups = [{ id: 'g-kinder', name: 'Kinder' }];

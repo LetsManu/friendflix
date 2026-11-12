@@ -19,7 +19,7 @@
   import { confirm } from '#lib/ui/confirm';
   import { focusMain } from '#lib/ui/focusMain';
   import { SCRIM_BAR } from '#lib/glass/tone';
-  import { barHasProgress, barLine1, barLine2, barOpens, barProgress, barThumb, nextSecondsLeft, splitLine } from './bar';
+  import { barHasProgress, barLine1, barLine2, barOpens, barProgress, barThumb, castParts, nextSecondsLeft, splitLine } from './bar';
   import CastBarExpanded from './CastBarExpanded.svelte';
   import { castEngine, type CastSession } from './engine';
   import { engineSource, itemFetchWanted, type CastBarSource } from './barSource';
@@ -50,6 +50,9 @@
   /** AirPlay waits for the TV to be chosen in the system picker (it may not have opened without a fresh tap) */
   $: choose = s?.kind === 'airplay' && state === 'reconnect' && Boolean($airState?.ready);
   $: thumb = s ? barThumb(s) : null;
+  /** a live channel: the LIVE pill, no progress line, channel ▲/▼ (the web engine's cast); its remote is the live player */
+  $: cp = s ? castParts(s, Boolean(source.zap)) : { scrubber: true, livePill: false, channelKeys: false };
+  $: opens = s ? barOpens(s) || (Boolean(s.live) && !source.fromApp) : false;
   // the app's session carries no episode numbers: the item gives the code ("S1:F4"; app source only); one request per title, also when it fails
   let fetched: Item | undefined, askedFor = '';
   $: it = s ? cachedItem(s.itemId) ?? (source.fromApp && fetched?.id === s.itemId ? fetched : undefined) : undefined;
@@ -160,11 +163,11 @@
           <img class="thumb" src={thumb.src} alt="" style="aspect-ratio:{thumb.ratio}" />
         {/if}
         <span class="txt" id="castbar-txt">
-          <span class="t1" class:sr={phone && (still || state === 'connecting')}>{title}</span>
+          <span class="t1" class:sr={phone && (still || state === 'connecting')}>{#if cp.livePill}<span class="lpill">{$t('live.player.live')}</span>{/if}{title}</span>
           {#key kind}<span class="t2" class:split={Boolean(parts)} class:warn={l2.tone === 'warn'} class:error={l2.tone === 'error'} in:fade={{ duration: fadeMs() }}>{#if parts}<span class="pre">{parts.pre}</span><span class="dev">{parts.dev}</span><span class="post" class:fit={parts.post.length > 24}>{parts.post}</span>{#if parts.tail}<span class="tail">{parts.tail}</span>{/if}{:else}{l2.text}{/if}</span>{/key}
         </span>
       {/snippet}
-      {#if still || !barOpens(s)}
+      {#if still || !opens}
         <div class="open static">{@render info()}</div>
       {:else}
         <!-- named by its action; the title and the second line are its description -->
@@ -192,6 +195,10 @@
         <button type="button" class="tb pp" aria-label={$t(s.paused ? 'player.controls.play' : 'player.controls.pause')} on:click={playPause}>
           <Icon name={s.paused ? 'play' : 'pause'} size={24} />
         </button>
+        {#if cp.channelKeys && !phone}
+          <button type="button" class="tb" aria-label={$t('live.player.chUp')} title={$t('live.player.chUp')} on:click={() => source.zap?.(1)}><Icon name="chevron-up" size={24} /></button>
+          <button type="button" class="tb" aria-label={$t('live.player.chDown')} title={$t('live.player.chDown')} on:click={() => source.zap?.(-1)}><Icon name="chevron-down" size={24} /></button>
+        {/if}
         <!-- the web engine: episodes (not on the phone); the app: only while it has a next episode queued (its Next answers false otherwise) -->
         {#if source.fromApp ? s.upcoming : s.isEpisode && !phone}<button type="button" class="tb" aria-label={$t('player.controls.next')} title={$t('player.controls.next')} on:click={() => source.next()}><Icon name="skip-next" size={24} /></button>{/if}
       {/if}
@@ -228,6 +235,9 @@
   .t1, .t2 { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .t1 { font-weight: 700; font-size: .95rem; }
   .t2 { font-size: .85rem; color: rgba(255, 255, 255, .72); }
+  /* the LIVE pill of a live channel: filled with a dot, like the live player's (shape and text, not colour alone) */
+  .lpill { display: inline-block; margin-right: 8px; padding: 1px 8px 1px 18px; border-radius: 999px; background: var(--acc-fill); color: #fff; font-size: .72rem; font-weight: 800; letter-spacing: .02em; vertical-align: 1px; position: relative; }
+  .lpill::before { content: ''; position: absolute; left: 7px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: #fff; }
   /* the device name gives way first, then the rest of the line; the minutes and the countdown tail stay */
   .t2.split { display: flex; min-width: 0; }
   .pre, .tail { flex: none; white-space: pre; }

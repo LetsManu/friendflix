@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { creditsStart as playerCredits } from '#lib/player/nextup';
 import { CAST_NS } from '#lib/cast';
 import {
-  CAPS_PROBES, COUNTDOWN_SECONDS, DEFAULT_STRINGS, NS, PAUSE_SHOW_MS, PROGRESS_MS, STALL_SHOW_MS, WHO_MS, activeSkip, buildCaps, createReporter, creditsStart, formatTime, initialState, parseMessage, probeCaps, seekTarget, step, textTrackStyle, view,
+  CAPS_PROBES, COUNTDOWN_SECONDS, DEFAULT_STRINGS, LIVE_CARD_MS, NS, PAUSE_SHOW_MS, PROGRESS_MS, STALL_SHOW_MS, WHO_MS, activeSkip, buildCaps, createReporter, creditsStart, formatTime, initialState, liveOf, parseMessage, probeCaps, seekTarget, step, textTrackStyle, view,
 } from '../../../static/cast-receiver/logic.js';
 import { CAF_URL, RECEIVER_CSP, receiverHtml } from './receiverPage';
 import { GET, trailingSlash } from '../../routes/cast-receiver/+server';
@@ -347,6 +347,59 @@ describe('receiver: pause, loading, sender pill, key hints', () => {
     expect(DEFAULT_STRINGS.upNextIn).toHaveLength(COUNTDOWN_SECONDS);
     expect(DEFAULT_STRINGS.upNextIn[9]).toBe('Up next in 10 s');
     expect(DEFAULT_STRINGS.upNextTitle).toBe('Up next');
+  });
+});
+
+describe('receiver: a live channel (customData.ui.live)', () => {
+  type Ev = Parameters<typeof step>[1];
+  const run = (evs: Ev[], st = initialState()) => { for (const e of evs) st = step(st, e).st; return st; };
+  const T = 200_000;
+  /** the sender's LOAD, as the web engine and the Android app send it */
+  const media = { contentId: 'https://friend.example.com/media/l/tok/index.m3u8', contentType: 'application/x-mpegURL', streamType: 'LIVE',
+    metadata: { title: 'Nordlicht TV', subtitle: 'Die Leuchtturmwärter', images: [{ url: 'https://friend.example.com/api/livetv/logos/ab?exp=1&sig=x' }] }, customData: { ui: { live: true } } };
+  const t = { ...DEFAULT_STRINGS, now: 'Jetzt', live: 'LIVE' };
+
+  it('liveOf reads only a live load, with bounded texts', () => {
+    expect(liveOf(media)).toEqual({ name: 'Nordlicht TV', now: 'Die Leuchtturmwärter' });
+    expect(liveOf({ ...media, metadata: { title: 'Hafenkanal' } })).toEqual({ name: 'Hafenkanal', now: '' });
+    expect(liveOf({ ...media, metadata: { title: 'x'.repeat(201), subtitle: 5 } })).toEqual({ name: '', now: '' });
+    for (const no of [null, 'x', { customData: { ff: { castId: 'a'.repeat(32) } } }, { customData: { ui: { live: 'yes' } } }, { metadata: { title: 'Film' } }]) expect(liveOf(no)).toBeNull();
+    expect(parseMessage({ t: 'ui', strings: { now: 'Jetzt', live: 'LIVE' } })).toMatchObject({ strings: { now: 'Jetzt', live: 'LIVE' } });
+    expect(DEFAULT_STRINGS).toMatchObject({ now: 'Now', live: 'LIVE' });
+  });
+
+  it('ui.live shows the channel card and the Jetzt line, no progress bar', () => {
+    let st = run([{ type: 'clock', now: T }, { type: 'load', at: T, live: liveOf(media) }]);
+    // the channel card on load: the loading screen names the channel and its Jetzt line; the LIVE badge from the start
+    expect(view(st, t)).toMatchObject({ load: { title: 'Nordlicht TV', line: 'Jetzt: Die Leuchtturmwärter', label: t.loading, live: true }, live: { badge: 'LIVE', card: null }, card: null });
+    // first frame: the card (logo, name, Jetzt) for LIVE_CARD_MS, the badge stays
+    st = run([{ type: 'firstFrame' }, { type: 'time', pos: 3, dur: Infinity, playing: true, dt: 250 }], st);
+    expect(view(st, t)).toMatchObject({ load: null, live: { badge: 'LIVE', card: { name: 'Nordlicht TV', now: 'Jetzt: Die Leuchtturmwärter' } } });
+    expect(view(run([{ type: 'clock', now: T + LIVE_CARD_MS - 1 }], st), t).live?.card).not.toBeNull();
+    st = run([{ type: 'clock', now: T + LIVE_CARD_MS }], st);
+    expect(view(st, t)).toMatchObject({ live: { badge: 'LIVE', card: null }, card: null, skip: null });
+    // paused: the pause screen names the channel, without a progress bar or times
+    st = run([{ type: 'pause', paused: true, at: T + 10_000 }, { type: 'clock', now: T + 10_000 + PAUSE_SHOW_MS }], st);
+    expect(view(st, t).pause).toEqual({ label: 'Paused', title: 'Nordlicht TV', line: 'Jetzt: Die Leuchtturmwärter', pos: 0, dur: 0, live: true });
+    // no programme: no Jetzt line
+    const bare = run([{ type: 'load', at: T, live: { name: 'Sternwarte 24', now: '' } }]);
+    expect(view(bare, t).load).toMatchObject({ title: 'Sternwarte 24', line: '' });
+    // a title loaded after the channel: no badge, the title's own pause screen with its progress
+    const film = run([{ type: 'load', at: T }, { type: 'media', castId: A }, { type: 'firstFrame' }, { type: 'time', pos: 754, dur: 2640, playing: true, dt: 250 }, { type: 'pause', paused: true, at: T }, { type: 'clock', now: T + PAUSE_SHOW_MS }], st);
+    expect(view(film, t).live).toBeNull();
+    expect(view(film, t).pause).toMatchObject({ pos: 754, dur: 2640 });
+    expect(view(film, t).pause).not.toHaveProperty('live');
+  });
+
+  it('the page has the badge and the channel card; the script draws them and drops the progress bar for a channel', async () => {
+    const html = receiverHtml();
+    for (const id of ['badge', 'badge-text', 'lcard', 'lcard-img', 'lcard-name', 'lcard-now']) expect(html, id).toContain(`id="${id}"`);
+    const { readFileSync } = await import('node:fs');
+    const js = readFileSync(new URL('../../../static/cast-receiver/receiver.js', import.meta.url), 'utf8');
+    expect(js).toContain("run({ type: 'load', at: nowMs(), live });");
+    expect(js).toContain("$('pause').classList.toggle('live', Boolean(v.pause.live))");
+    const css = readFileSync(new URL('../../../static/cast-receiver/receiver.css', import.meta.url), 'utf8');
+    expect(css).toContain('.pause.live .pbar, .pause.live .times { display: none; }');
   });
 });
 

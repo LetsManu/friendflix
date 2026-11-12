@@ -76,13 +76,15 @@ interface ChromeCast {
     MediaInfo: new (url: string, type: string) => Record<string, unknown>;
     LoadRequest: new (m: unknown) => Record<string, unknown>;
     MovieMediaMetadata: new () => Record<string, unknown>;
+    /** chrome.cast.media.GenericMediaMetadata (title, subtitle, images): a live channel's metadata */
+    GenericMediaMetadata?: new () => Record<string, unknown>;
     TvShowMediaMetadata: new () => Record<string, unknown>;
     Track: new (id: number, type: string) => Record<string, unknown>;
     EditTracksInfoRequest: new (ids: number[]) => unknown;
     QueueItem: new (m: unknown) => Record<string, unknown>;
     QueueInsertItemsRequest: new (items: unknown[]) => Record<string, unknown>;
     QueueRemoveItemsRequest: new (ids: number[]) => unknown;
-    StreamType: { BUFFERED: string };
+    StreamType: { BUFFERED: string; LIVE?: string };
     HlsSegmentFormat: { TS: string; FMP4?: string };
     HlsVideoSegmentFormat?: { FMP4?: string };
     MetadataType: { MOVIE: number; TV_SHOW: number };
@@ -498,6 +500,41 @@ export async function loadOnCast(info: CastInfo, activeSubtitle = -1, autoplay =
   } catch {
     return false;
   }
+}
+
+/**
+ * A live channel on the receiver (live TV spec §13): the same shape the Android app sends (MediaThreeReceiver.liveQueueItem): a LIVE
+ * HLS stream, the channel name as title, the programme as subtitle, the signed logo URL as the one image (as the watch answer gives
+ * it), and `customData.ui.live` (FriendFlix's own receiver shows its channel card; the Default Media Receiver ignores it). The token
+ * is in nothing but the content URL.
+ */
+export interface LiveCastMedia {
+  contentId: string;
+  contentType: 'application/x-mpegURL';
+  streamType: 'LIVE';
+  metadata: { title: string; subtitle: string; images: string[] };
+  customData: { ui: { live: true } };
+}
+/** loads a live channel on the receiver (autoplay); false on failure (no session, refused) */
+export async function loadLiveOnCast(l: LiveCastMedia): Promise<boolean> {
+  const sess = ctxT?.getCurrentSession(), ch = window.chrome?.cast;
+  if (!sess || !ch) return false;
+  const m = ch.media;
+  const media = new m.MediaInfo(l.contentId, l.contentType);
+  media.streamType = m.StreamType.LIVE ?? 'LIVE';
+  media.hlsSegmentFormat = m.HlsSegmentFormat.TS;
+  const meta = new (m.GenericMediaMetadata ?? m.MovieMediaMetadata)();
+  meta.metadataType = 0; // GENERIC
+  meta.title = l.metadata.title;
+  if (l.metadata.subtitle) meta.subtitle = l.metadata.subtitle;
+  meta.images = l.metadata.images.map((u) => new ch.Image(u));
+  media.metadata = meta;
+  media.customData = { ui: { live: true } };
+  media.tracks = [];
+  lastMedia = null;
+  const req = new m.LoadRequest(media);
+  req.autoplay = true;
+  try { return (await sess.loadMedia(req)) === undefined; } catch { return false; }
 }
 
 /** a queued title starts loading this many seconds before the playing one ends (seamless move on, also without the sender) */

@@ -39,6 +39,8 @@
   export let onAirPlay: () => void = () => undefined;
   /** the browser already holds a cast session: play on it without asking again */
   export let onConnected: (() => void) | null = null;
+  /** the header's second line as given (a live channel: "4 Hafenkanal · Wetter am Hafen"; it has no position); '' = from title / episode / at */
+  export let whatText = '';
 
   const dispatch = createEventDispatcher<{ close: void; continued: void }>();
   const store = typeof localStorage === 'undefined' ? null : localStorage;
@@ -55,7 +57,7 @@
   /** the row set is frozen while the sheet is open (a target going away must not move the rows under the finger); titles and ticks stay live */
   let held: PlayOnRow[] = [];
   $: shown = open && held.length ? held.map((h) => rows.find((r) => r.id === h.id) ?? h) : rows;
-  $: what = whatLine({ title, episode: episode || undefined, at, tf: $t });
+  $: what = whatText || whatLine({ title, episode: episode || undefined, at, tf: $t });
 
   // the TV picked in the browser's dialog is the usual one next time (name only)
   const off = onCastEvent((e) => { if (e === 'session-start') { const n = $castState.deviceName; if (n) { rememberDevice(store, n); last = lastDevice(store); } } });

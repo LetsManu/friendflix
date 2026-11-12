@@ -37,6 +37,8 @@ export interface LivetvMock {
   watchError: { status: number; body: Record<string, unknown>; only?: string } | null;
   /** every POST .../watch, refused ones included: the channel ids in order */
   watches: string[];
+  /** the `via` of each POST .../watch, in the same order ('' = none sent) */
+  vias: string[];
   /** POST /api/livetv/beat: the tokens beaten, in order */
   beats: string[];
   /** the next beats answer these, one each (first first); after them a beat answers 200 */
@@ -108,6 +110,7 @@ export function livetvState(): LivetvMock {
     status: 200,
     watchError: null,
     watches: [],
+    vias: [],
     beats: [],
     beatAnswers: [],
     beatRepins: false,
@@ -193,13 +196,18 @@ export function livetvRoute(st: LivetvMock, m: string, p: string, body: any, hea
     const c = st.channels.find((x) => x.id === mm![1]);
     if (!c) return J({ error: 'not_found' }, 404);
     st.watches.push(c.id);
+    const via = typeof body?.via === 'string' ? body.via : '';
+    st.vias.push(via);
     const answer = (): Promise<void> => {
       const err = st.watchError;
       if (err && (!err.only || err.only === c.id)) return J(err.body, err.status);
       st.calls.push(`POST ${p}`);
+      // a cast token is its own (the backend mints one per watch); for a Chromecast the logo is the signed absolute URL (Task 31, F11)
+      const tok = via === 'chromecast' ? `tok-${c.id}-cc` : via === 'airplay' ? `tok-${c.id}-ap` : `tok-${c.id}`;
+      const logo = via === 'chromecast' && c.logo ? `https://friend.example.com/api/livetv/logos/${c.id}?exp=1794560000000&sig=c2lnbmVkLWxvZ28tdXJsLWZvci10ZXN0cw` : c.logo;
       return J({
-        token: `tok-${c.id}`, url: `/media/l/tok-${c.id}/index.m3u8`, expiresAt: Date.now() + 60_000, dvrSeconds: st.dvrSeconds, mode: 'remux',
-        channel: { id: c.id, number: c.number, name: c.name, logo: c.logo }, now: c.now, next: c.next,
+        token: tok, url: `/media/l/${tok}/index.m3u8`, expiresAt: Date.now() + 60_000, dvrSeconds: st.dvrSeconds, mode: 'remux',
+        channel: { id: c.id, number: c.number, name: c.name, logo }, now: c.now, next: c.next,
       });
     };
     const h = st.watchHold && st.watchHold.only === c.id ? st.watchHold : null;
