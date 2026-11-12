@@ -51,6 +51,8 @@ export interface AdminChannel {
 }
 
 export const PAGE_SIZE = 100;
+/** *Reihenfolge* shows at most this many channels (the backend's page maximum): one group or one source */
+export const ORDER_MAX = 500;
 /** a bulk test takes at most this many channels (backend MAX_BULK_TEST) */
 export const TEST_MAX = 20;
 /** a logo is a raw PNG / JPEG / WebP of at most 512 KB (backend LOGO_MIMES / LOGO_MAX_BYTES) */
@@ -72,8 +74,18 @@ export interface ChannelFilter {
 }
 export const emptyFilter = (): ChannelFilter => ({ q: '', source: null, group: null, state: null, epg: null, error: false, sort: 'number', dir: 'asc', offset: 0 });
 
+/**
+ * The filter of the *Reihenfolge* view: exactly the chosen group and/or source (a real group, not *Ohne Gruppe*), by number from the
+ * start. null = neither is chosen. The list's search, state, EPG and error filters do not narrow it: the order is of the whole set.
+ */
+export function orderFilter(f: ChannelFilter): ChannelFilter | null {
+  const group = f.group && f.group !== 'none' ? f.group : null;
+  if (!group && !f.source) return null;
+  return { ...emptyFilter(), source: f.source, group };
+}
+
 /** the query of `GET /channels`: set filters in a fixed order, then sort, direction, the page size and the offset */
-export function queryString(f: ChannelFilter): string {
+export function queryString(f: ChannelFilter, limit: number = PAGE_SIZE): string {
   const p: string[] = [];
   const add = (k: string, v: string | number) => p.push(`${k}=${encodeURIComponent(String(v))}`);
   const q = f.q.trim();
@@ -85,7 +97,7 @@ export function queryString(f: ChannelFilter): string {
   if (f.error) add('error', 1);
   add('sort', f.sort);
   add('dir', f.dir);
-  add('limit', PAGE_SIZE);
+  add('limit', limit);
   add('offset', f.offset);
   return p.join('&');
 }
@@ -169,7 +181,9 @@ export function checkLogoFile(f: { name: string; type: string; size: number }): 
 const B = '/api/admin/livetv/channels';
 const enc = encodeURIComponent;
 
-export const listChannels = (f: ChannelFilter, signal?: AbortSignal) => api<{ channels: AdminChannel[]; total: number }>(`${B}?${queryString(f)}`, { signal });
+export const listChannels = (f: ChannelFilter, signal?: AbortSignal, limit?: number) => api<{ channels: AdminChannel[]; total: number }>(`${B}?${queryString(f, limit)}`, { signal });
+/** *Reihenfolge* → Speichern: the channels get consecutive numbers in this order, from the smallest of them */
+export const orderChannels = (ids: string[]) => api<{ from: number }>(`${B}/order`, { method: 'PUT', body: { ids } });
 export const getChannel = (id: string) => api<AdminChannel>(`${B}/${enc(id)}`);
 /** `channelPatch`: a key that is sent changes it, `null` = back to the import (`epgShiftMin: null` = inherited again) */
 export interface ChannelPatch { name?: string | null; number?: number | null; groupId?: string | null; hidden?: boolean; epg?: boolean | null; epgShiftMin?: number | null }

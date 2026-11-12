@@ -8,8 +8,9 @@
    * the import's name), group (inline select), source, kind chip, mode chip (from the last test), EPG state, visibility switch and the
    * menu (*Testen*, *Logo ändern*, *Programm-Zeit verschieben…*, *Umbenennen* for touch, *Zurücksetzen*). A small dot says what the
    * import had ("geändert (Import: …)", never for own feeds). The selection is kept by id across pages and filters; the bulk bar acts on
-   * it. Every write answers the updated channel, which replaces its row; the list is read again after a bulk action. *Reihenfolge* is
-   * Task 24's. Loading keeps the old rows (no skeleton flash on paging); a late answer of an older request is dropped.
+   * it. Every write answers the updated channel, which replaces its row; the list is read again after a bulk action. The view toggle *Liste / Reihenfolge*:
+   * *Reihenfolge* (OrderView, `PUT /channels/order`) works on one group or one source of at most 500 channels, loaded on their own (by
+   * number, never narrowed by the list's other filters); otherwise it says why. Loading keeps the old rows (no skeleton flash on paging); a late answer of an older request is dropped.
    */
   import { onDestroy, onMount, tick } from 'svelte';
   import Icon from '#lib/Icon.svelte';
@@ -18,6 +19,7 @@
   import Button from '#lib/ui/Button.svelte';
   import { confirm } from '#lib/ui/confirm';
   import DataTable from '#lib/ui/DataTable.svelte';
+  import { uid } from '#lib/ui/ids';
   import Select from '#lib/ui/Select.svelte';
   import StatusPill from '#lib/ui/StatusPill.svelte';
   import Toggle from '#lib/ui/Toggle.svelte';
@@ -27,11 +29,12 @@
   import { listGroups, listSources, type GroupOption, type SourceView } from './api';
   import BulkBar from './BulkBar.svelte';
   import {
-    bulkChannels, channelError, emptyFilter, failText, getChannel, kindChip, listChannels, logoSrc, overrideHint, patchChannel, PAGE_SIZE,
+    bulkChannels, channelError, emptyFilter, failText, getChannel, kindChip, listChannels, logoSrc, ORDER_MAX, orderChannels, orderFilter, overrideHint, patchChannel, PAGE_SIZE,
     type AdminChannel, type BulkBody, type ChannelFilter, type ChannelPatch, type ChannelSort,
   } from './channels';
   import EpgShiftSheet from './EpgShiftSheet.svelte';
   import LogoSheet from './LogoSheet.svelte';
+  import OrderView from './OrderView.svelte';
   import TestSheet from './TestSheet.svelte';
 
   let filter: ChannelFilter = emptyFilter();
@@ -65,12 +68,63 @@
       if (rows) toast.error(failText(e)); else loadError = tr('adminLive.ch.loadFailed');
     } finally { if (mine === seq) loading = false; }
   }
+
+  // ---- the view toggle: Liste / Reihenfolge
+  type View = 'list' | 'order';
+  const VIEWS: View[] = ['list', 'order'];
+  const vid = uid('chview');
+  let view: View = 'list';
+  /** the filter or the stored numbers changed while the list was not shown: it reads again when it comes back */
+  let listStale = false;
+  $: if (view === 'list' && listStale) { listStale = false; void load(); }
+  /** the rows of the one group / source (by number); null until they arrive */
+  let orderRows: AdminChannel[] | null = null;
+  let orderTotal = 0;
+  let orderLoading = false;
+  let orderFailed = false;
+  let oseq = 0;
+  let octl: AbortController | undefined;
+  async function loadOrder() {
+    const f = orderFilter(filter);
+    const mine = ++oseq;
+    octl?.abort();
+    if (!f) { orderRows = null; orderTotal = 0; orderFailed = false; orderLoading = false; return; }
+    octl = new AbortController();
+    orderLoading = true; orderFailed = false;
+    try {
+      const r = await listChannels(f, octl.signal, ORDER_MAX);
+      if (mine !== oseq || gone) return;
+      orderRows = r.channels; orderTotal = r.total;
+    } catch (e) {
+      if (mine !== oseq || gone || (e instanceof DOMException && e.name === 'AbortError')) return;
+      orderRows = null; orderFailed = true;
+    } finally { if (mine === oseq) orderLoading = false; }
+  }
+  /** the order rows load again when the view opens or the group / source changes (and only then) */
+  $: orderKey = view === 'order' ? JSON.stringify([filter.source, filter.group]) : '';
+  $: { void orderKey; if (view === 'order') void loadOrder(); }
+  $: orderSet = view === 'order' && orderFilter(filter) !== null;
+  $: tooMany = orderRows !== null && orderTotal > ORDER_MAX;
+  const viewKey = (v: View) => (v === 'list' ? 'adminLive.grp.viewList' : 'adminLive.grp.viewOrder') as 'adminLive.grp.viewList';
+  function viewKeys(e: KeyboardEvent) {
+    const i = VIEWS.indexOf(view);
+    const n = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? (i + 1) % VIEWS.length : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? (i + VIEWS.length - 1) % VIEWS.length : -1;
+    if (n < 0) return;
+    e.preventDefault();
+    view = VIEWS[n]!;
+    queueMicrotask(() => document.getElementById(`${vid}-v-${view}`)?.focus());
+  }
+  /** the stored order is the new numbering: the list reads it again */
+  async function saveOrder(ids: string[]) {
+    await orderChannels(ids);
+    listStale = true;
+  }
   onMount(() => {
     void load();
     listSources().then((s) => { sources = s; }).catch(() => undefined);
     listGroups().then((g) => { groups = g; }).catch(() => undefined);
   });
-  onDestroy(() => { gone = true; ctl?.abort(); });
+  onDestroy(() => { gone = true; ctl?.abort(); octl?.abort(); });
 
   function onQuery(e: CustomEvent<Query>) {
     const { q: text, sort: s, offset } = e.detail;
@@ -81,7 +135,7 @@
   function setFilter(patch: Partial<ChannelFilter>) {
     page = 0;
     filter = { ...filter, ...patch, offset: 0 };
-    void load();
+    if (view === 'list') void load(); else listStale = true;
   }
   function clearFilters() {
     q = ''; page = 0; sort = { key: 'number', dir: 'asc' };
@@ -248,7 +302,33 @@
   const logoFailed = (hash: string) => { brokenLogos.add(hash); logoRev++; };
 </script>
 
-<div class="ch" aria-busy={loading ? 'true' : undefined}>
+<div class="ch" aria-busy={loading || orderLoading ? 'true' : undefined}>
+  <div class="viewbar">
+    <div class="views" role="radiogroup" aria-label={$t('adminLive.grp.view')}>
+      {#each VIEWS as v (v)}
+        <button type="button" role="radio" id="{vid}-v-{v}" class="vw" class:on={view === v} aria-checked={view === v} tabindex={view === v ? 0 : -1} on:click={() => (view = v)} on:keydown={viewKeys}>{$t(viewKey(v))}</button>
+      {/each}
+    </div>
+    {#if view === 'order'}
+      <div class="chips">
+        <Select hideLabel label={$t('adminLive.ch.filters.source')} value={filter.source ?? ''} options={sourceOptions} on:change={(e) => setFilter({ source: (e.target as HTMLSelectElement).value || null })} />
+        <Select hideLabel label={$t('adminLive.ch.filters.group')} value={filter.group ?? ''} options={groupFilterOptions} on:change={(e) => setFilter({ group: (e.target as HTMLSelectElement).value || null })} />
+      </div>
+    {/if}
+  </div>
+  {#if view === 'order'}
+    {#if !orderSet}
+      <p class="why">{$t('adminLive.ch.orderNeedsFilter')}</p>
+    {:else if orderFailed}
+      <div class="why"><p>{$t('adminLive.ch.loadFailed')}</p><Button variant="secondary" icon="refresh" on:click={loadOrder}>{$t('ui.retry')}</Button></div>
+    {:else if tooMany}
+      <p class="why">{$t('adminLive.ch.orderTooMany', { n: orderTotal, max: ORDER_MAX })}</p>
+    {:else if orderRows && !orderRows.length}
+      <p class="why">{$t('adminLive.ch.filters.empty')}</p>
+    {:else if orderRows}
+      <OrderView rows={orderRows.map((c) => ({ id: c.id, name: c.name, number: c.number, logoHash: c.logoHash }))} locked={$busyKeys.has('ltv-ch-bulk')} save={saveOrder} />
+    {/if}
+  {:else}
   <DataTable
     {rows} {columns} key={(c) => c.id} caption={$t('adminLive.ch.caption')} filterable filterPlaceholder={$t('adminLive.ch.search')}
     bind:q bind:sort bind:page pageSize={PAGE_SIZE} {total} error={loadError} on:retry={load} on:query={onQuery}
@@ -319,9 +399,10 @@
       {#if filtered}<Button variant="ghost" size="sm" on:click={clearFilters}>{$t('adminLive.ch.filters.clear')}</Button>{/if}
     </svelte:fragment>
   </DataTable>
+  {/if}
 </div>
 
-<BulkBar count={selected.size} {groups} busy={$busyKeys.has('ltv-ch-bulk')}
+<BulkBar count={view === 'list' ? selected.size : 0} {groups} busy={$busyKeys.has('ltv-ch-bulk')}
   on:clear={() => (selected = new Map())}
   on:hide={() => bulk({ ids, action: 'hide' })} on:show={() => bulk({ ids, action: 'show' })}
   on:group={(e) => bulk({ ids, action: 'group', groupId: e.detail.groupId })} on:renumber={(e) => bulk({ ids, action: 'renumber', from: e.detail.from })}
@@ -343,6 +424,13 @@
   .ch { padding-bottom: 7rem; }
   .chips { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; flex: 1 1 100%; }
   .chips :global(.field) { flex: 0 1 12rem; min-width: 9rem; }
+  .viewbar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; margin-bottom: .75rem; }
+  .viewbar .chips { flex: 1 1 20rem; }
+  .views { display: inline-flex; padding: 3px; border-radius: 12px; background: rgba(var(--fr-scrim-rgb), .25); box-shadow: inset 0 0 0 1px var(--fr-line, var(--line)); }
+  .vw { min-height: 44px; min-width: 44px; padding: 0 1rem; border-radius: 9px; background: transparent; color: var(--mut); font-weight: 600; }
+  .vw.on { background: var(--acc); color: #1a1a1a; }
+  .vw:focus-visible { outline: 2px solid #fff; outline-offset: 1px; box-shadow: 0 0 0 4px var(--ring-dark, #000); }
+  .why { margin: .5rem 0; color: var(--mut); }
   .chip { min-height: 44px; padding: 0 1rem; border-radius: 999px; background: rgba(255, 255, 255, .06); border: 1px solid var(--fr-line, rgba(255, 255, 255, .2)); color: rgba(255, 255, 255, .85); font-weight: 600; }
   .chip:hover:not(:disabled) { background: rgba(255, 255, 255, .12); color: #fff; }
   .chip[aria-pressed='true'] { background: #fff; color: #101418; border-color: #fff; }

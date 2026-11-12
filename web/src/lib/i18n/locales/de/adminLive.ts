@@ -351,6 +351,8 @@ export default {
     orderMoved: 'Position {n} von {m}',
     orderDropped: '{name} abgelegt auf Position {n}',
     orderCancelled: 'Verschieben abgebrochen',
+    orderNeedsFilter: 'Wähle eine Gruppe oder eine Quelle, um die Reihenfolge zu ändern.',
+    orderTooMany: 'Diese Auswahl hat {n} Sender. Die Reihenfolge lässt sich bei höchstens {max} Sendern ändern: Wähle eine kleinere Gruppe oder Quelle.',
     caption: 'Kanäle',
     search: 'Name, Nummer oder tvg-id suchen',
     loadFailed: 'Die Kanäle ließen sich nicht laden.',

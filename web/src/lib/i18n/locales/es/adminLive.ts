@@ -352,6 +352,8 @@ const dict: Translation<typeof de> = {
     orderMoved: 'Posición {n} de {m}',
     orderDropped: '{name} soltado en la posición {n}',
     orderCancelled: 'Movimiento cancelado',
+    orderNeedsFilter: 'Elige un grupo o una fuente para cambiar el orden.',
+    orderTooMany: 'Esta selección tiene {n} canales. El orden solo se puede cambiar con {max} canales como máximo: elige un grupo o una fuente más pequeños.',
     caption: 'Canales',
     search: 'Buscar nombre, número o tvg-id',
     loadFailed: 'No se pudieron cargar los canales.',

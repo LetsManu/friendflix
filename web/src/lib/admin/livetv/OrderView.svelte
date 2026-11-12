@@ -196,6 +196,8 @@
   }
   function onMove(e: PointerEvent) {
     if (!drag || e.pointerId !== drag.pointerId) return;
+    // a mouse that moves with no button down lost its release (swallowed by a dialog, a context menu, another window): that is the drop
+    if (e.pointerType === 'mouse' && e.buttons === 0) { void onUp(e); return; }
     drag.y = e.clientY;
     schedule();
   }

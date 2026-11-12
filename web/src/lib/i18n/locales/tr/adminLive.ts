@@ -352,6 +352,8 @@ const dict: Translation<typeof de> = {
     orderMoved: 'Konum {n}/{m}',
     orderDropped: '{name} {n}. konuma bırakıldı',
     orderCancelled: 'Taşıma iptal edildi',
+    orderNeedsFilter: 'Sıralamayı değiştirmek için bir grup veya kaynak seç.',
+    orderTooMany: 'Bu seçimde {n} kanal var. Sıralama en fazla {max} kanal için değiştirilebilir: daha küçük bir grup veya kaynak seç.',
     caption: 'Kanallar',
     search: 'Ad, numara veya tvg-id ara',
     loadFailed: 'Kanallar yüklenemedi.',

@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import {
-  channelError, checkLogoFile, factsLine, kindChip, nowLine, overrideHint, queryString, shiftFromLine, TEST_MAX,
+  channelError, checkLogoFile, factsLine, kindChip, nowLine, ORDER_MAX, orderFilter, overrideHint, queryString, shiftFromLine, TEST_MAX,
   type AdminChannel, type ChannelFilter,
 } from './channels';
 
@@ -13,6 +13,24 @@ const F: ChannelFilter = { q: '', source: null, group: null, state: null, epg: n
 const ch = (over: Partial<AdminChannel> = {}): AdminChannel => ({
   id: 'c1', number: 1, name: 'Nordlicht TV', groupId: 'g1', sourceId: 's1', streamKind: 'hls', ingest: 'pull', logoHash: null, hidden: false, missing: false,
   epg: true, now: null, mode: null, probeError: null, overridden: {}, dupNumber: false, epgShift: { min: 0, from: 'none' }, ...over,
+});
+
+describe('orderFilter (Kanäle → Reihenfolge)', () => {
+  it('needs one group or one source', () => {
+    expect(orderFilter(F)).toBeNull();
+    expect(orderFilter({ ...F, group: 'none' })).toBeNull(); // "Ohne Gruppe" is no group
+    expect(orderFilter({ ...F, state: 'hidden', q: 'x', epg: 'no', error: true })).toBeNull();
+  });
+  it('keeps only the group and the source: sorted by number, from the start, never narrowed by the other filters of the list', () => {
+    expect(orderFilter({ ...F, group: 'g-1', q: 'x', state: 'hidden', epg: 'no', error: true, sort: 'name', dir: 'desc', offset: 200 }))
+      .toEqual({ ...F, group: 'g-1' });
+    expect(orderFilter({ ...F, source: 's-1', q: 'x' })).toEqual({ ...F, source: 's-1' });
+    expect(orderFilter({ ...F, source: 's-1', group: 'g-1' })).toEqual({ ...F, source: 's-1', group: 'g-1' });
+  });
+  it('asks for up to 500 rows', () => {
+    expect(ORDER_MAX).toBe(500);
+    expect(queryString({ ...F, group: 'g-1' }, ORDER_MAX)).toBe('group=g-1&sort=number&dir=asc&limit=500&offset=0');
+  });
 });
 
 describe('queryString', () => {

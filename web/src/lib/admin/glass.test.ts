@@ -600,6 +600,14 @@ describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
     expect(src).toContain('if (e.repeat) return;');
   });
 
+  it('a mouse move with no button down is a pointer up: a swallowed release never leaves a row stuck lifted', () => {
+    const fn = src.match(/function onMove\(e: PointerEvent\) \{[\s\S]*?\n  \}/)![0];
+    expect(fn).toMatch(/e\.pointerType === 'mouse' && e\.buttons === 0/);
+    expect(fn).toMatch(/void onUp\(e\)/);
+    // the check comes before the move is used
+    expect(fn.indexOf('e.buttons === 0')).toBeLessThan(fn.indexOf('drag.y = e.clientY'));
+  });
+
   it('calm mode, TV and reduced motion: no transitions at all', () => {
     expect(css).toMatch(/:global\(html\.m-still\) \.order :global\(\*\), :global\(html\.tv\) \.order :global\(\*\) \{ transition: none !important; animation: none !important; \}/);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.order :global\(\*\) \{ transition: none !important; animation: none !important; \} \}/);

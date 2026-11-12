@@ -1048,6 +1048,17 @@ function channelsRoute(a: LivetvAreaMock, m: string, p: string, sp: URLSearchPar
     }
     return J({ changed: rows.length });
   }
+  // *Reihenfolge* → Speichern (Task 19 orderChannels): consecutive numbers in the given order, from the smallest number of the set
+  if (p === '/api/admin/livetv/channels/order' && m === 'PUT') {
+    const ids: unknown = body?.ids;
+    if (!Array.isArray(ids) || !ids.length || ids.some((i) => typeof i !== 'string') || new Set(ids).size !== ids.length) return J({ error: 'invalid', field: 'ids' }, 400);
+    const rows = (ids as string[]).map(byId);
+    if (rows.some((c) => !c)) return J({ error: 'invalid', field: 'ids' }, 400);
+    const have = (rows as LtvChanMock[]).map((c) => c.numberOv ?? c.importNumber).filter((n): n is number => n !== null);
+    const from = have.length ? Math.min(...have) : 1;
+    (rows as LtvChanMock[]).forEach((c, i) => { c.numberOv = from + i; });
+    return J({ from });
+  }
   const mm = p.match(/^\/api\/admin\/livetv\/channels\/([^/]+?)(\/test|\/logo)?$/);
   const c = mm ? byId(mm[1]) : undefined;
   if (!mm || !c || mm[1] === 'bulk' || mm[1] === 'order') return null;
