@@ -18,6 +18,7 @@
   import { saveSettings } from '#lib/admin/settings/api';
   import { refreshSummary } from '#lib/admin/summary';
   import EnableCard from '#lib/admin/livetv/EnableCard.svelte';
+  import GroupsTab from '#lib/admin/livetv/GroupsTab.svelte';
   import MiniStatus from '#lib/admin/livetv/MiniStatus.svelte';
   import OffDialog from '#lib/admin/livetv/OffDialog.svelte';
   import SourcesTab from '#lib/admin/livetv/SourcesTab.svelte';
@@ -125,6 +126,7 @@
   </div>
   <div id="ltv-panel" role="tabpanel" aria-labelledby="ltv-tab-{tab}" tabindex="-1">
     {#if tab === 'sources'}<SourcesTab />
+    {:else if tab === 'groups'}<GroupsTab />
     {:else if tab === 'status'}<MiniStatus {s} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />
     {:else}<AdminCard><p class="soon">{$t('adminLive.tabs.soon')}</p></AdminCard>{/if}
   </div>

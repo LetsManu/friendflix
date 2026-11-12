@@ -18,9 +18,11 @@
   import SaveBar from '#lib/admin/rights/SaveBar.svelte';
   import { locale, t, tr, trDynamic } from '#lib/i18n';
   import { PERM_KEYS } from '#lib/perms';
-  import { errorText } from '#lib/ui/action';
+  import { fetchGroups, groupErrorOf, putUserGroups, type GroupView, type UserGroups } from '#lib/admin/livetv/groups';
+  import { errorText, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
+  import Select from '#lib/ui/Select.svelte';
   import { uid } from '#lib/ui/ids';
   import Skeleton from '#lib/ui/Skeleton.svelte';
   import StatusPill from '#lib/ui/StatusPill.svelte';
@@ -62,6 +64,36 @@
     }
   }
   onMount(() => { void load(); });
+
+  // ---- Kanalgruppen-Ausnahmen (Live TV spec §8): saved at once through their own route, not through the save bar. An admin sees every
+  // released group and takes none (the backend answers 400 admin_groups_locked: the section says so instead of offering them).
+  let exc: UserGroups = { allow: [], deny: [] }, released: GroupView[] | null = null, groupsFailed = false;
+  let addPlus = '', addMinus = '', excBusy = false;
+  $: if (view) exc = view.livetvGroups ?? { allow: [], deny: [] };
+  $: if (matrix?.features.livetv && !released && !groupsFailed) void loadGroups();
+  let groupsAsked = false;
+  async function loadGroups() {
+    if (groupsAsked) return;
+    groupsAsked = true;
+    try { released = (await fetchGroups()).groups.filter((g) => g.released); } catch { groupsFailed = true; }
+  }
+  $: taken = new Set([...exc.allow, ...exc.deny].map((g) => g.id));
+  // a plus adds a group the role does not see, a minus takes away one it does
+  $: plusOptions = (released ?? []).filter((g) => !taken.has(g.id) && !g.roles.includes(view?.role ?? ''));
+  $: minusOptions = (released ?? []).filter((g) => !taken.has(g.id) && g.roles.includes(view?.role ?? ''));
+  async function saveExceptions(allow: string[], deny: string[]) {
+    if (excBusy) return;
+    excBusy = true;
+    const r = await runAction({ run: () => putUserGroups(userId, allow, deny), success: tr('adminPeople.rights.livetvSaved', { name }), error: groupErrorOf });
+    excBusy = false;
+    if (r.ok && r.value) exc = r.value;
+  }
+  const ids = (l: Array<{ id: string }>) => l.map((g) => g.id);
+  function addTo(kind: 'allow' | 'deny', gid: string) {
+    if (!gid) return;
+    void saveExceptions(kind === 'allow' ? [...ids(exc.allow), gid] : ids(exc.allow), kind === 'deny' ? [...ids(exc.deny), gid] : ids(exc.deny));
+  }
+  const dropFrom = (gid: string) => saveExceptions(ids(exc.allow).filter((x) => x !== gid), ids(exc.deny).filter((x) => x !== gid));
 
   $: isAdmin = view?.role === 'admin';
   $: rowOf = new Map((view?.rows ?? []).map((r) => [r.key, r]));
@@ -214,6 +246,47 @@
       </section>
     {/each}
 
+    {#if matrix.features.livetv}
+      <section class="grp" aria-labelledby="{id}-lg">
+        <h3 id="{id}-lg">{$t('adminPeople.rights.livetvGroups')}</h3>
+        <div class="card lg" aria-busy={excBusy ? 'true' : undefined}>
+          {#if isAdmin}
+            <p class="mut">{$t('adminLive.grp.adminAll')}</p>
+          {:else if groupsFailed}
+            <p class="mut" role="alert">{$t('adminLive.loadFailed')}</p>
+          {:else if !released}
+            <div class="lsk" aria-busy="true"><Skeleton w="60%" h="1.2rem" /><Skeleton w="100%" h="2.6rem" /></div>
+          {:else}
+            <p class="mut">{$t('adminPeople.rights.livetvHint')}</p>
+            <div class="lrow" role="group" aria-label={$t('adminPeople.rights.livetvPlus')}>
+              <span class="ll">{$t('adminPeople.rights.livetvPlus')}</span>
+              <ul class="lchips">
+                {#each exc.allow as g (g.id)}
+                  <li><button type="button" class="lc allow" disabled={excBusy} aria-label={$t('adminPeople.rights.livetvRemove', { name: g.name })} on:click={() => dropFrom(g.id)}><span aria-hidden="true">+ {g.name} ×</span></button></li>
+                {:else}<li class="mut">{$t('adminPeople.rights.livetvNone')}</li>{/each}
+              </ul>
+              <div class="lsel">
+                <Select label={$t('adminPeople.rights.livetvAddPlus')} bind:value={addPlus} disabled={excBusy || plusOptions.length === 0}
+                  options={[{ value: '', label: $t('adminPeople.rights.livetvPick') }, ...plusOptions.map((g) => ({ value: g.id, label: g.name }))]} on:change={() => { const v = addPlus; addPlus = ''; addTo('allow', v); }} />
+              </div>
+            </div>
+            <div class="lrow" role="group" aria-label={$t('adminPeople.rights.livetvMinus')}>
+              <span class="ll">{$t('adminPeople.rights.livetvMinus')}</span>
+              <ul class="lchips">
+                {#each exc.deny as g (g.id)}
+                  <li><button type="button" class="lc deny" disabled={excBusy} aria-label={$t('adminPeople.rights.livetvRemove', { name: g.name })} on:click={() => dropFrom(g.id)}><span aria-hidden="true">− {g.name} ×</span></button></li>
+                {:else}<li class="mut">{$t('adminPeople.rights.livetvNone')}</li>{/each}
+              </ul>
+              <div class="lsel">
+                <Select label={$t('adminPeople.rights.livetvAddMinus')} bind:value={addMinus} disabled={excBusy || minusOptions.length === 0}
+                  options={[{ value: '', label: $t('adminPeople.rights.livetvPick') }, ...minusOptions.map((g) => ({ value: g.id, label: g.name }))]} on:change={() => { const v = addMinus; addMinus = ''; addTo('deny', v); }} />
+              </div>
+            </div>
+          {/if}
+        </div>
+      </section>
+    {/if}
+
     <section class="grp note">
       <Field label={$t('adminPeople.rights.note')} bind:value={note} maxlength={NOTE_MAX} hint={$t('adminPeople.rights.noteHint')} disabled={saving} />
       <span class="count">{$t('adminPeople.rights.noteCount', { n: note.length, max: NOTE_MAX })}</span>
@@ -261,6 +334,16 @@
   :global(html.m-still) .thumb { transition: none; }
   @media (prefers-reduced-motion: reduce) { .thumb { transition: none; } }
 
+  .lg { padding: 1rem; display: flex; flex-direction: column; gap: .8rem; }
+  .lg .mut, .lg p { margin: 0; color: var(--mut); overflow-wrap: anywhere; }
+  .lsk { display: flex; flex-direction: column; gap: .6rem; min-height: 5rem; }
+  .lrow { display: grid; grid-template-columns: 9rem minmax(0, 1fr) minmax(0, 15rem); align-items: center; gap: .4rem 1rem; }
+  .ll { font-weight: 600; }
+  .lchips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; min-height: 44px; align-items: center; }
+  .lc { min-height: 44px; min-width: 44px; padding: 0 .9rem; border-radius: 99px; font-weight: 600; font-size: .88rem; background: rgba(var(--fr-scrim-rgb), .25); box-shadow: inset 0 0 0 1px var(--fr-line, var(--line)); overflow-wrap: anywhere; }
+  .lc.allow { color: var(--ok); }
+  .lc.deny { color: var(--warn); }
+  .lc:focus-visible { outline: 2px solid #fff; outline-offset: 2px; box-shadow: 0 0 0 4px var(--ring-dark, #000); }
   .note { max-width: 40rem; }
   .count { display: block; margin-top: .25rem; font-size: .82rem; color: var(--hint, var(--mut)); text-align: right; }
 
@@ -270,5 +353,6 @@
     .src { justify-self: start; }
     .tri { max-width: none; }
     .ctl { flex-wrap: wrap; }
+    .lrow { grid-template-columns: minmax(0, 1fr); }
   }
 </style>

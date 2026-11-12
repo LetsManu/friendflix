@@ -18,6 +18,7 @@
   import { PERM_KEYS } from '#lib/perms';
   import ActionMenu from '#lib/ui/ActionMenu.svelte';
   import CellPopover from './CellPopover.svelte';
+  import { chipsText } from '#lib/admin/livetv/groups';
   import { gridKey, moveCell, type CellPos } from './gridKeys';
   import {
     cellName, cellText, changedFromText, fieldLabel, peopleLine, roleName, stageSet, visibleFields, type FieldGroup, type MatrixField, type MatrixRole, type RoleMatrix, type Stage,
@@ -236,6 +237,17 @@
               {/each}
             </tr>
           {/each}
+          <!-- Live TV spec §8: the role's channel groups, read-only ("Sport, Nachrichten +2"), a link to Gruppen & Rechte -->
+          {#if g.id === 'livetv'}
+            <tr class="gr">
+              <th scope="row" class="fh">{$locale && $t('adminLive.grp.rowLabel')}</th>
+              {#each roles as role, c (role.key)}
+                <td class="gc" class:dragging={drag?.from === c} class:glide={drag !== null && drag.from !== c || drag?.settling === true} style:transform={shift(drag, c)}>
+                  <a class="glink" href="/admin/livetv?tab=groups" title={$t('adminLive.grp.rowLink')}>{chipsText(role.livetvGroups ?? []) || $t('adminLive.grp.rowNone')}</a>
+                </td>
+              {/each}
+            </tr>
+          {/if}
         </tbody>
       {/each}
     </table>
@@ -298,6 +310,10 @@
   .fh { position: sticky; left: 0; z-index: 1; width: var(--first-w); min-width: var(--first-w); padding: .5rem .8rem; background: var(--fr-solid); text-align: left; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, .06); }
   td { position: relative; height: 48px; padding: 4px 8px; border-bottom: 1px solid rgba(255, 255, 255, .06); cursor: pointer; outline: none; white-space: nowrap; }
   td.lock { cursor: default; }
+  /* the read-only Kanalgruppen row: a link that may wrap, a 44 px target */
+  td.gc { cursor: default; white-space: normal; height: auto; min-height: 48px; }
+  .glink { display: inline-flex; align-items: center; min-height: 44px; font-size: .85rem; font-weight: 600; color: var(--fg); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+  .glink:focus-visible { outline: 2px solid #fff; outline-offset: 2px; box-shadow: 0 0 0 4px var(--ring-dark, #000); border-radius: 4px; }
   td:focus-visible { box-shadow: none; } /* the ring is drawn inside the cell (::after), not over its neighbours */
   td:hover:not(.lock) .chip { background: rgba(var(--fr-scrim-rgb), .4); }
   /* chips: a darker scrim fill (it only adds contrast; lib/admin/glass.test.ts) */
