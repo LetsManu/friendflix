@@ -10,6 +10,8 @@ export default {
     generic: 'Wiedergabe nicht möglich.',
     maxStreams: { one: 'Maximal {n} gleichzeitiger Stream erlaubt.', other: 'Maximal {n} gleichzeitige Streams erlaubt.' },
     serverBusy: 'Server gerade ausgelastet. Versuch es gleich noch einmal.',
+    serverBusyQuality: 'Server ausgelastet – Qualität bleibt bei {q}',
+    serverBusyTrack: 'Server ausgelastet – Tonspur bleibt wie sie war',
     connection: 'Die Verbindung zum Server wurde unterbrochen oder das Video ist beschädigt.',
     retry: 'Erneut versuchen',
     back: 'Zurück',
@@ -43,6 +45,7 @@ export default {
     /* chip in the control bar: how the picture reaches this device, and why it is converted */
     chipOriginal: 'Original',
     chipConverted: 'Umgewandelt · {q}',
+    chipCopied: 'Kopiert · {q}',
     chipLabel: 'Wiedergabeart',
     directInfo: 'Direkte Wiedergabe ohne Umwandlung',
     reasonNetwork: 'Leitung langsam – die Qualität passt sich automatisch an',

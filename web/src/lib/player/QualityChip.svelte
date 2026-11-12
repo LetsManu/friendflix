@@ -21,7 +21,7 @@
 <svelte:window on:pointerdown={() => (open = false)} />
 <span class="chipwrap" class:compact>
   <button type="button" class="chip" title={$t('player.quality.chipLabel')} aria-expanded={open} on:pointerdown|stopPropagation on:click={() => (open = !open)}>
-    {#if compact}<span class="pill">{direct ? $t('player.quality.chipOriginal') : $t('player.quality.chipConverted', { q: label })}</span>{:else}{direct ? $t('player.quality.chipOriginal') : $t('player.quality.chipConverted', { q: label })}{/if}
+    {#if compact}<span class="pill">{direct ? $t('player.quality.chipOriginal') : $t(reason === 'serverBusy' ? 'player.quality.chipCopied' : 'player.quality.chipConverted', { q: label })}</span>{:else}{direct ? $t('player.quality.chipOriginal') : $t(reason === 'serverBusy' ? 'player.quality.chipCopied' : 'player.quality.chipConverted', { q: label })}{/if}
   </button>
   {#if open}
     <span class="why" role="status">{direct ? $t('player.quality.directInfo') : $t(reasonKey(reason))}</span>

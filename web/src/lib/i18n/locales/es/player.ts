@@ -12,6 +12,8 @@ const es: Translation<typeof de> = {
     generic: 'No se puede reproducir.',
     maxStreams: { one: 'Se permite como máximo {n} reproducción simultánea.', many: 'Se permiten como máximo {n} reproducciones simultáneas.', other: 'Se permiten como máximo {n} reproducciones simultáneas.' },
     serverBusy: 'El servidor está ocupado ahora mismo. Inténtalo de nuevo en un momento.',
+    serverBusyQuality: 'Servidor ocupado: la calidad se queda en {q}',
+    serverBusyTrack: 'Servidor ocupado: la pista de audio no cambia',
     connection: 'Se ha perdido la conexión con el servidor o el vídeo está dañado.',
     retry: 'Reintentar',
     back: 'Volver',
@@ -43,6 +45,7 @@ const es: Translation<typeof de> = {
     /* chip in the control bar: how the picture reaches this device, and why it is converted */
     chipOriginal: 'Original',
     chipConverted: 'Convertido · {q}',
+    chipCopied: 'Copiado · {q}',
     chipLabel: 'Tipo de reproducción',
     directInfo: 'Reproducción directa, sin conversión',
     reasonNetwork: 'Conexión lenta: la calidad se ajusta automáticamente',

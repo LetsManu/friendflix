@@ -494,7 +494,12 @@
   let pendingFallback: { what: AvoidWhat; prevPs: string } | null = null;
   /** the fallback's reload re-starts the timing session like a quality switch (flagged, never a second start: "avoided < 2 % of starts" stays honest) */
   let fallbackRestart = false;
-  async function load(startSec?: number) {
+  const isBusy = (e: unknown) => e instanceof ApiError && e.status === 503 && (e.body as { error?: unknown } | null)?.error === 'server_busy';
+  /**
+   * `restore`: a switch (quality, track) stopped the old session before asking; when the server is busy the previous choice is put back,
+   * said once in a toast, and that stream is asked for again at the same position (its slot was just freed). Only a second refusal shows the busy state.
+   */
+  async function load(startSec?: number, restore?: { undo: () => void; toast: string }): Promise<'busy' | undefined> {
     cancelFirstFrame();
     error = ''; errNote = '';
     // a retry / track reload continues the running session (its clock keeps going); a quality switch starts a new one, flagged
@@ -523,18 +528,21 @@
     if (fromNext) timing.next();
     const pre = fromNext ?? (first ? takePrefetched(itemId, body) : null);
     try {
-      const got = await (pre ? pre.catch(ask) : ask());
+      const got = await (pre ? pre.catch((e) => (isBusy(e) ? Promise.reject(e) : ask())) : ask()); // a busy prefetch is not asked again at once
       // an empty/foreign answer (204, proxy page ...) has no playback session: show the error instead of crashing on it
       if (!validInfo(got)) throw new ApiError(502, null);
       info = got;
       timing.info(sentBps);
     } catch (e: any) {
-      // the conversion budget is full and this title needs a conversion (spec §5.5): an honest state, no backoff (a spinner or a retry loop
-      // would only add load); the viewer retries when they like
-      if (e instanceof ApiError && e.status === 503 && e.body?.error === 'server_busy') {
-        clearTimeout(retryT); reconnecting = 0; waiting = false; errNote = '';
+      // the conversion budget is full and this title needs a conversion (spec §5.5): no backoff (a spinner or a retry loop would only add
+      // load); the viewer retries when they like. The old stream (a switch stopped its session) is quiet: it can never start a silent retry.
+      if (isBusy(e)) {
+        clearTimeout(retryT); reconnecting = 0; hls?.stopLoad();
+        pendingFallback = fell; // a retry after a codec fallback still names what failed
+        if (restore) { restore.undo(); flash(restore.toast, 3000); return load(startSec); }
+        waiting = false; video?.pause(); errNote = '';
         errTitle = tr('player.error.title'); error = tr('player.error.serverBusy');
-        return;
+        return 'busy';
       }
       if (!(e instanceof ApiError) || e.status >= 500) { recover('network', true); return; } // server/network hiccup: retry with backoff
       reconnecting = 0;
@@ -1018,12 +1026,12 @@
     if (lang && lang !== 'und') rememberLang({ audio: lang });
     if (remote) { audioIndex = i; await castEngine.refresh({ audioIndex: i }); return; } // a new token with that track on the TV
     if (airInfo) { audioIndex = i; await air?.refresh(); return; } // AirPlay: a new token stream with that track
-    const pos = video?.currentTime ?? 0;
+    const pos = video?.currentTime ?? 0, prevAudio = audioIndex;
     await send('stop');
     audioIndex = i;
     trackSwitching = true; // the next timing session exists because of this switch
-    try { await load(pos); } finally { trackSwitching = false; }
-    video?.play().catch(() => undefined);
+    let r; try { r = await load(pos, { undo: () => { audioIndex = prevAudio; }, toast: tr('player.error.serverBusyTrack') }); } finally { trackSwitching = false; }
+    if (r !== 'busy') video?.play().catch(() => undefined);
   }
   /** the last subtitle track that was on (-1 = none yet): the LG red key turns this one back on */
   let lastSubIndex = -1;
@@ -1141,6 +1149,7 @@
     if (airInfo) { quality = bps; shownQ = bps; await air?.refresh(); flash(qualityToast(bps)); return; }
     if (switching) { if (how === 'manual') queuedPick = bps; return; } // a pick during a running switch is applied right after it
     switching = true;
+    const prev = { quality, reqHint, abr, shownQ, bps: info?.maxBitrate ?? 0 };
     if (how === 'manual') {
       quality = bps; reqHint = bps ? 'manual' : 'network';
       abr = makeAbr(bps || autoBps(est.estimate ?? loadStoredEstimate()), bps || undefined);
@@ -1153,9 +1162,12 @@
     const pos = video?.currentTime ?? 0, wasPlaying = !(video?.paused ?? true);
     try {
       await send('stop');
-      await load(pos);
-      if (wasPlaying) video?.play().catch(() => undefined);
-      flash(msg || qualityToast(bps), ms);
+      let kept = false;
+      const r = await load(pos, { undo: () => { kept = true; quality = prev.quality; reqHint = prev.reqHint; abr = prev.abr; shownQ = prev.shownQ; }, toast: tr('player.error.serverBusyQuality', { q: rungLabel(prev.bps) }) });
+      if (r !== 'busy') {
+        if (wasPlaying) video?.play().catch(() => undefined);
+        if (!kept) flash(msg || qualityToast(bps), ms); // a refused switch already said that the quality stays
+      }
     } finally { switching = false; }
     const next = queuedPick; queuedPick = null;
     if (next !== null) void changeQuality(next);
@@ -1275,8 +1287,8 @@
     const pos = video?.currentTime ?? 0;
     await send('stop');
     trackSwitching = true;
-    try { await load(pos); } finally { trackSwitching = false; }
-    video?.play().catch(() => undefined);
+    let r; try { r = await load(pos, { undo: () => { stereo = !stereo; setStereoOnly(stereo); }, toast: tr('player.error.serverBusyTrack') }); } finally { trackSwitching = false; }
+    if (r !== 'busy') video?.play().catch(() => undefined);
   }
   /** a remembered mode needs a running AudioContext: the first key / tap after an autoplayed start switches it on */
   function fxGesture() { if (fxNote === 'suspended' && fxActive(fx)) void applyFx(true); }

@@ -12,6 +12,8 @@ const en: Translation<typeof de> = {
     generic: 'Can’t play this.',
     maxStreams: { one: 'At most {n} stream at a time is allowed.', other: 'At most {n} streams at a time are allowed.' },
     serverBusy: 'The server is busy right now. Try again in a moment.',
+    serverBusyQuality: 'Server busy – quality stays at {q}',
+    serverBusyTrack: 'Server busy – the audio track stays as it was',
     connection: 'The connection to the server was lost or the video is damaged.',
     retry: 'Try again',
     back: 'Back',
@@ -43,6 +45,7 @@ const en: Translation<typeof de> = {
     /* chip in the control bar: how the picture reaches this device, and why it is converted */
     chipOriginal: 'Original',
     chipConverted: 'Converted · {q}',
+    chipCopied: 'Copied · {q}',
     chipLabel: 'Playback type',
     directInfo: 'Direct playback, no conversion',
     reasonNetwork: 'Slow connection – quality adjusts automatically',

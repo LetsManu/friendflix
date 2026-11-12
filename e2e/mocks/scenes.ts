@@ -50,20 +50,8 @@ export async function mockPlayer(page: Page, o: { chapters?: unknown[] } = {}) {
   await page.route('**/api/items/*/chapters', (r) => r.fulfill({ json: { supported: true, chapters: o.chapters ?? CHAPTERS } }));
 }
 
-/**
- * /api/playback/info as the server answers when the conversion budget is full (Task 2): `copy` = the stream plan that copies the picture,
- * with `transcodeReason: 'serverBusy'` (a real 30 s HLS stream); `busy` = `503 { error: 'server_busy' }`. `mode` is switchable while the page runs;
- * `calls` counts the info requests.
- */
-export async function mockServerBusy(page: Page, first: 'copy' | 'busy') {
-  await mockPlayer(page);
-  const st = { mode: first, calls: 0 };
-  await page.route('**/api/playback/info', (r) => {
-    st.calls++;
-    if (st.mode === 'busy') return r.fulfill({ status: 503, json: { error: 'server_busy' } });
-    return r.fulfill({ json: { resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: `ps${st.calls}`, roleMaxBitrate: 20_000_000, subtitles: [], audioTracks: [],
-      hlsUrl: '/media/hls/busy/out.m3u8', maxBitrate: 8_000_000, transcodeReason: 'serverBusy', delivery: { video: 'copy', videoCodec: 'h264', audio: 'copy', audioCodec: 'aac', channels: 2, why: [] } } });
-  });
+/** the shared 30 s HLS test stream (any `/media/hls/**` path) */
+export async function mockHlsStream(page: Page) {
   await page.route('**/media/hls/**', (r) => {
     const file = new URL(r.request().url()).pathname.split('/').pop()!;
     const seg = /^s(\d+)\.m4s$/.exec(file);
@@ -72,6 +60,27 @@ export async function mockServerBusy(page: Page, first: 'copy' | 'busy') {
     if (seg) return r.fulfill({ contentType: 'video/mp4', body: HLS_SEGMENTS[Number(seg[1])]! }).catch(() => undefined);
     return r.fulfill({ status: 404 });
   });
+}
+
+/**
+ * /api/playback/info as the server answers around a full conversion budget (spec §5.5): `ok` = a normal conversion at the asked rung,
+ * `copy` = the stream plan that copies the picture, `transcodeReason: 'serverBusy'`; `busy` = `503 { error: 'server_busy' }`.
+ * `mode` is switchable while the page runs; `refuse` = how many of the next requests are answered 503 whatever the mode;
+ * `bodies` are the request bodies, `calls` their count.
+ */
+export async function mockServerBusy(page: Page, first: 'ok' | 'copy' | 'busy') {
+  await mockPlayer(page);
+  const st = { mode: first, refuse: 0, calls: 0, bodies: [] as { maxBitrate?: number; startTicks?: number }[] };
+  await page.route('**/api/playback/info', (r) => {
+    st.calls++;
+    st.bodies.push(r.request().postDataJSON() as { maxBitrate?: number; startTicks?: number });
+    if (st.mode === 'busy' || st.refuse > 0) { if (st.refuse > 0) st.refuse--; return r.fulfill({ status: 503, json: { error: 'server_busy' } }); }
+    const bps = st.bodies[st.bodies.length - 1]!.maxBitrate ?? 8_000_000;
+    return r.fulfill({ json: { resumeTicks: 0, mediaSourceId: 'ms1', playSessionId: `ps${st.calls}`, roleMaxBitrate: 20_000_000, subtitles: [], audioTracks: [],
+      hlsUrl: '/media/hls/busy/out.m3u8', maxBitrate: bps, transcodeReason: st.mode === 'copy' ? 'serverBusy' : 'network',
+      delivery: { video: st.mode === 'copy' ? 'copy' : 'h264', videoCodec: 'h264', audio: 'copy', audioCodec: 'aac', channels: 2, why: [] } } });
+  });
+  await mockHlsStream(page);
   return st;
 }
 

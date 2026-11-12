@@ -12,6 +12,8 @@ const tr: Translation<typeof de> = {
     generic: 'Oynatılamıyor.',
     maxStreams: { one: 'Aynı anda en fazla {n} yayın izlenebilir.', other: 'Aynı anda en fazla {n} yayın izlenebilir.' },
     serverBusy: 'Sunucu şu anda meşgul. Birazdan yeniden dene.',
+    serverBusyQuality: 'Sunucu meşgul – kalite {q} olarak kalıyor',
+    serverBusyTrack: 'Sunucu meşgul – ses parçası değişmedi',
     connection: 'Sunucuyla bağlantı kesildi ya da video bozuk.',
     retry: 'Yeniden dene',
     back: 'Geri',
@@ -43,6 +45,7 @@ const tr: Translation<typeof de> = {
     /* chip in the control bar: how the picture reaches this device, and why it is converted */
     chipOriginal: 'Orijinal',
     chipConverted: 'Dönüştürüldü · {q}',
+    chipCopied: 'Kopyalandı · {q}',
     chipLabel: 'Oynatma türü',
     directInfo: 'Doğrudan oynatma, dönüştürme yok',
     reasonNetwork: 'Bağlantı yavaş – kalite otomatik ayarlanır',
