@@ -209,7 +209,7 @@ export async function parseM3u(lines: AsyncIterable<string>, o: { max: number; s
 
   let first = true;
   for await (let line of lines) {
-    if (first) { line = line.replace(/^﻿/, ''); first = false; }
+    if (first) { line = line.replace(/^\uFEFF/, ''); first = false; }
     const tooLong = Buffer.byteLength(line, 'utf8') > MAX_LINE;
     line = line.trim();
     if (!header) {
