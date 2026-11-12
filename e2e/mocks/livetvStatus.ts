@@ -60,7 +60,7 @@ export function ltvStatusMock(): LtvStatusMock {
 
 export function ltvStatusRoute(s: LtvStatusMock, m: string, p: string, J: Reply): Promise<void> | null {
   if (p === '/api/admin/livetv/status' && m === 'GET') {
-    if (s.gets++ === 0 && s.failFirst) return J({ error: 'livetv_unreachable' }, 503);
+    if (s.gets++ === 0 && s.failFirst) return J({ error: 'server_error' }, 500);
     const named = { ...s.names, ...Object.fromEntries([...s.streams, ...s.ingest].map((x) => [x.channelId, x.name])) };
     return J({
       version: s.version,
@@ -69,7 +69,7 @@ export function ltvStatusRoute(s: LtvStatusMock, m: string, p: string, J: Reply)
       streams: s.streams, ingest: s.ingest, events: s.events, channels: Object.fromEntries(s.events.flatMap((e) => (e.channelId && named[e.channelId] ? [[e.channelId, named[e.channelId]!]] : []))), gpu: { advice: null },
     });
   }
-  if (p === '/api/admin/livetv/epg/summary' && m === 'GET') return s.summary ? J(s.summary) : J({ error: 'livetv_unreachable' }, 503);
+  if (p === '/api/admin/livetv/epg/summary' && m === 'GET') return s.summary ? J(s.summary) : J({ error: 'server_error' }, 500);
   const stop = p.match(/^\/api\/admin\/livetv\/streams\/([^/]+)\/stop$/);
   if (stop && m === 'POST') {
     const id = decodeURIComponent(stop[1]!);

@@ -3,7 +3,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { hasKey, setLocale } from '#lib/i18n';
 import type { SourceView } from './api';
-import { detectKind, portRange, portsLine, refreshDone, refreshResult, sourceError, stateLine, tabOf, urlShapeOk } from './sources';
+import { ApiError } from '#lib/api';
+import { detectKind, portRange, portsLine, refreshDone, refreshResult, sourceError, sourceFailText, stateLine, tabOf, urlShapeOk } from './sources';
 
 const at = (h: number, min: number, dayShift = 0) => new Date(2026, 10, 12 + dayShift, h, min).toISOString();
 const NOW = new Date(2026, 10, 12, 9, 30);
@@ -133,12 +134,36 @@ describe('small helpers', () => {
     expect(tabOf('status')).toBe('status');
     expect(tabOf('channels')).toBe('channels');
     expect(tabOf(null)).toBe('sources');
-    expect(tabOf('recordings')).toBe('sources');
+    expect(tabOf('recordings')).toBe('sources'); // no such tab
   });
   it('urlShapeOk: scheme and host only', () => {
     expect(urlShapeOk('https://iptv.example.com/get.php?u=a', ['http:', 'https:'])).toBe(true);
     expect(urlShapeOk('srt://192.0.2.10:9000', ['http:', 'https:'])).toBe(false);
     expect(urlShapeOk('srt://192.0.2.10:9000', ['srt:'])).toBe(true);
     expect(urlShapeOk('iptv.example.com', ['https:'])).toBe(false);
+  });
+});
+
+describe('sourceFailText: FriendFlix\'s own failures are not the provider\'s', () => {
+  it('no code (network, 5xx, 429) is worded by the generic error text', () => {
+    expect(sourceFailText(new TypeError('Failed to fetch'))).toBe('Keine Verbindung zum Server.');
+    expect(sourceFailText(new ApiError(500, null))).not.toBe('Nicht erreichbar');
+    expect(sourceFailText(new ApiError(429, {}))).not.toBe('Nicht erreichbar');
+  });
+  it('a 404 is a source deleted elsewhere', () => {
+    expect(sourceFailText(new ApiError(404, { error: 'not_found' }))).toBe('Diese Quelle gibt es nicht mehr.');
+    expect(sourceFailText(new ApiError(422, { error: 'not_found' }))).toBe('Nicht erreichbar'); // the provider's 404
+  });
+  it('a 400 invalid names its field', () => {
+    expect(sourceFailText(new ApiError(400, { error: 'invalid', field: 'url' }))).toContain('keine gültige Adresse');
+    expect(sourceFailText(new ApiError(400, { error: 'invalid', field: 'epgUrl' }))).toContain('keine gültige Adresse');
+    expect(sourceFailText(new ApiError(400, { error: 'invalid', field: 'skipGroups' }))).not.toContain('Adresse');
+    expect(sourceFailText(new ApiError(400, { error: 'invalid', field: 'userAgent' }))).toContain('User-Agent');
+    expect(sourceFailText(new ApiError(400, { error: 'invalid', field: 'maxStreams' }))).toBe('Das hat nicht geklappt.');
+  });
+  it('too_large has its own text; provider codes keep theirs', () => {
+    expect(sourceError('too_large')).toBe('Die Liste der ausgeschlossenen Gruppen ist zu groß.');
+    expect(sourceFailText(new ApiError(422, { error: 'invalid' }))).toBe('Keine gültige Senderliste');
+    expect(sourceFailText(new ApiError(400, { error: 'lan_required' }))).toContain('Heimnetz');
   });
 });

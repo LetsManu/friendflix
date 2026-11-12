@@ -64,6 +64,23 @@ test.describe('admin: Live-TV, Kanäle (phone, 375 px)', () => {
     await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 
+  test('with a selection the bulk bar never covers the pager: Nächste Seite is the tap target and pages on', async ({ page }) => {
+    await page.goto('/admin/livetv?tab=channels');
+    await page.getByRole('checkbox', { name: 'Sender „Nordlicht TV“ auswählen' }).check();
+    const bar = page.getByRole('group', { name: 'Aktionen für die Auswahl' });
+    await expect(bar).toBeVisible();
+    const next = page.getByRole('button', { name: 'Nächste Seite' });
+    await next.scrollIntoViewIfNeeded();
+    await page.evaluate(() => { window.scrollTo(0, document.documentElement.scrollHeight); });
+    const gap = async () => { const n = (await next.boundingBox())!, b = (await bar.boundingBox())!; return b.y - (n.y + n.height); };
+    await expect.poll(gap).toBeGreaterThanOrEqual(0); // the pager ends above the bar
+    const hit = await next.evaluate((el) => { const r = el.getBoundingClientRect(); const t = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return t === el || el.contains(t); });
+    expect(hit).toBe(true);
+    await next.click();
+    await expect(page.getByRole('button', { name: 'Vorherige Seite' })).toBeEnabled();
+    await expect(page.locator('[data-selected]')).toContainText('1');
+  });
+
   test('the sheets fit the phone', async ({ page }) => {
     await page.goto('/admin/livetv?tab=channels');
     const open = async (item: string, title: string) => {

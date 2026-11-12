@@ -28,6 +28,7 @@
   import Toggle from '#lib/ui/Toggle.svelte';
   import { uid } from '#lib/ui/ids';
   import { toast } from '#lib/ui/toast';
+  import { confirmOrderDiscard, guardLeave } from './discard';
   import GroupMatrix from './GroupMatrix.svelte';
   import GroupNameDialog from './GroupNameDialog.svelte';
   import MergeDialog from './MergeDialog.svelte';
@@ -224,13 +225,29 @@
     { id: 'delete', label: tr('adminLive.grp.delete'), icon: 'x', danger: true, disabled: w, run: () => { void remove(g); } },
   ];
   const viewKey = (v: View) => `adminLive.grp.view${v === 'list' ? 'List' : v === 'roles' ? 'Roles' : 'Order'}` as 'adminLive.grp.viewList';
-  function viewKeys(e: KeyboardEvent) {
+  /** OrderView's `bind:dirty`: the shown group order is not stored yet */
+  let orderDirty = false;
+  /** the one gate before the order view is left (the radios, an area tab, a link): false = the person kept ordering */
+  async function leaveOk(): Promise<boolean> {
+    if (view !== 'order' || !orderDirty) return true;
+    const ok = await confirmOrderDiscard();
+    if (ok) orderDirty = false;
+    return ok;
+  }
+  guardLeave(() => view === 'order' && orderDirty, () => { orderDirty = false; }, confirmOrderDiscard);
+  async function setView(v: View): Promise<boolean> {
+    if (v === view) return true;
+    if (!(await leaveOk())) return false;
+    view = v;
+    return true;
+  }
+  async function viewKeys(e: KeyboardEvent) {
     const i = VIEWS.indexOf(view);
     const n = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? (i + 1) % VIEWS.length : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? (i + VIEWS.length - 1) % VIEWS.length : -1;
     if (n < 0) return;
     e.preventDefault();
-    view = VIEWS[n]!;
-    queueMicrotask(() => document.getElementById(`${id}-v-${view}`)?.focus());
+    const v = VIEWS[n]!;
+    if (await setView(v)) queueMicrotask(() => document.getElementById(`${id}-v-${v}`)?.focus());
   }
 </script>
 
@@ -245,7 +262,7 @@
     <div class="bar">
       <div class="views" role="radiogroup" aria-label={$t('adminLive.grp.view')}>
         {#each VIEWS as v (v)}
-          <button type="button" role="radio" id="{id}-v-{v}" class="vw" class:on={view === v} aria-checked={view === v} tabindex={view === v ? 0 : -1} on:click={() => (view = v)} on:keydown={viewKeys}>{$t(viewKey(v))}</button>
+          <button type="button" role="radio" id="{id}-v-{v}" class="vw" class:on={view === v} aria-checked={view === v} tabindex={view === v ? 0 : -1} on:click={() => void setView(v)} on:keydown={viewKeys}>{$t(viewKey(v))}</button>
         {/each}
       </div>
       <Button icon="plus" disabled={wbusy} on:click={(e) => open({ kind: 'create' }, here(e))}>{$t('adminLive.grp.create')}</Button>
@@ -350,7 +367,7 @@
       </section>
     {:else}
       <p class="hint">{$t('adminLive.grp.orderHint')}</p>
-      <OrderView rows={orderRows} locked={wbusy} save={(ids) => tracked(() => orderGroups(ids)).then(() => undefined)} />
+      <OrderView rows={orderRows} locked={wbusy} save={(ids) => tracked(() => orderGroups(ids)).then(() => undefined)} bind:dirty={orderDirty} />
     {/if}
   </div>
 {/if}

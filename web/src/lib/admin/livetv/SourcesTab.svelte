@@ -10,6 +10,7 @@
    * many channels go. Loading keeps the cards' place with skeletons of their height.
    */
   import { onDestroy, onMount } from 'svelte';
+  import { refreshSummary } from '#lib/admin/summary';
   import { ApiError } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
@@ -91,6 +92,7 @@
       error: false,
     });
     if (r.skipped || gone) return;
+    void refreshSummary(); // the nav badge counts failed sources
     if (!r.ok) {
       const c = r.error instanceof ApiError && r.error.status === 409 ? r.error.body?.error : null;
       toast.error(c === 'livetv_off' ? tr('adminLive.src.refreshOff') : c === 'no_list' ? tr('adminLive.src.refreshNoList') : errorText(r.error));
@@ -118,7 +120,7 @@
       apply: () => { const prev = s; replace({ ...s, enabled }); return () => replace(prev); },
       run: () => updateSource(s.id, { enabled }),
       success: enabled ? tr('adminLive.src.enabled') : tr('adminLive.src.disabled'),
-    }).then((r) => { if (r.ok && r.value) replace(r.value); });
+    }).then((r) => { if (r.ok && r.value) replace(r.value); void refreshSummary(); });
   }
   async function remove(s: SourceView) {
     const ok = await confirm({ title: tr('adminLive.src.deleteTitle', { name: s.name }), body: tr('adminLive.src.deleteBody', { n: s.channelCount }), danger: true, confirmLabel: tr('adminLive.src.delete') });
@@ -129,6 +131,7 @@
       run: () => deleteSource(s.id),
       success: tr('adminLive.src.deleted'),
     });
+    void refreshSummary();
   }
 </script>
 

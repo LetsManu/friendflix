@@ -99,7 +99,7 @@ export function afterOrderSave(rows: AdminChannel[], ids: string[], from: number
 export function queryString(f: ChannelFilter, limit: number = PAGE_SIZE): string {
   const p: string[] = [];
   const add = (k: string, v: string | number) => p.push(`${k}=${encodeURIComponent(String(v))}`);
-  const q = f.q.trim();
+  const q = f.q.trim().slice(0, 100); // the backend caps `q` at 100 (a longer one is a 400)
   if (q) add('q', q);
   if (f.source) add('source', f.source);
   if (f.group) add('group', f.group);

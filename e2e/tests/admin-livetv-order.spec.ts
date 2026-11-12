@@ -496,4 +496,40 @@ test.describe('admin: Live-TV, Kanäle → Reihenfolge (desktop)', () => {
     await expect(page.getByRole('button', { name: 'Ausgeblendet', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByPlaceholder('Name, Nummer oder tvg-id suchen')).toHaveValue('Nord');
   });
+
+  test('a dirty order and an area tab, a ?tab= link or Back: the question appears; Weiter ordnen keeps tab and order, Verwerfen leaves', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await open(page);
+    await dirty(page);
+    const before = page.url();
+    await page.getByRole('tab', { name: 'Quellen' }).click();
+    await expect(dialog(page)).toBeVisible();
+    await dialog(page).getByRole('button', { name: 'Weiter ordnen' }).click();
+    await expect(dialog(page)).toHaveCount(0);
+    expect(page.url()).toBe(before);
+    expect(await names(page)).toEqual(KEPT);
+    await expect(saveBtn(page)).toBeEnabled();
+    // a sidebar link asks as well
+    await page.getByRole('link', { name: 'Übersicht' }).first().click();
+    await expect(dialog(page)).toBeVisible();
+    await dialog(page).getByRole('button', { name: 'Weiter ordnen' }).click();
+    await expect(dialog(page)).toHaveCount(0);
+    expect(await names(page)).toEqual(KEPT);
+    // Verwerfen: the tab switch goes on (and replaces its history entry, like an unguarded one)
+    const len = await page.evaluate(() => history.length);
+    await page.getByRole('tab', { name: 'Gruppen & Rechte' }).click();
+    await dialog(page).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page.getByRole('tab', { name: 'Gruppen & Rechte' })).toHaveAttribute('aria-selected', 'true');
+    await expect(order(page)).toHaveCount(0);
+    expect(await page.evaluate(() => history.length)).toBe(len);
+    expect(puts(api)).toHaveLength(0);
+  });
+
+  test('a clean order leaves by tab without a question', async ({ page, api }) => {
+    seed(api, [4, 7, 9]);
+    await open(page);
+    await page.getByRole('tab', { name: 'Quellen' }).click();
+    await expect(page.getByRole('tab', { name: 'Quellen' })).toHaveAttribute('aria-selected', 'true');
+    await expect(dialog(page)).toHaveCount(0);
+  });
 });
