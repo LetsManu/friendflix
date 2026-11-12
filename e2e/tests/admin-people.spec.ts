@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
-import { auid, rightsAuditSamples, roleDeleteSample, type AdminState } from '../mocks/admin.js';
+import { auid, rightsAuditSamples, type AdminState } from '../mocks/admin.js';
 
 const SHOTS = process.env.B18_SHOTS;
 const toasts = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Hinweise' });

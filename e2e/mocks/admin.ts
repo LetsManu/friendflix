@@ -1171,7 +1171,7 @@ const VIEW_TITLES = [
   { id: '0000000000000000000000000000d003', name: 'Saltwater Almanac', year: 2019, type: 'Series', rating: 'FSK-6', age: 6, library: 'Serien' },
 ];
 const profileOf = (st: AdminState, u: AdminUser, pid: string | null | undefined) => (pid ? profilesOf(st, u).find((p) => p.id === pid) : undefined);
-const kidsCap = (p: DetailProfile): number | null => (p.kids ? Number(/\d+/.exec(p.maxRating ?? '')?.[0] ?? 0) : null);
+const kidsCap = (p: DetailProfile): number | null => (p.kids ? (p.maxRating ?? 12) : null);
 /** the effective rows of the account with the kids overlay of the profile (kids cap, KIDS_OFF switched off) */
 function viewRows(st: AdminState, u: AdminUser, p: DetailProfile) {
   const role = st.matrix.roles.find((r) => r.key === u.role)!;
