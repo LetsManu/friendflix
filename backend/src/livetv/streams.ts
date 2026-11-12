@@ -14,7 +14,7 @@ import { nowNext, type Prog } from './epg.js';
 import { pushEvent } from './events.js';
 import { syncIngest } from './ownfeeds.js';
 import { channelSet, type LivetvProfile, type LivetvUser } from './rights.js';
-import { deviceLiveView, liveViewKey } from './tokens.js';
+import { adminStopKey, deviceLiveView, liveViewKey } from './tokens.js';
 import type { Mode, StartBody, StreamInput, StreamView } from './wire.js';
 
 /**
@@ -354,6 +354,8 @@ function inputOf(ctx: Ctx, channelId: string, r: InputRow): StreamInput | null {
  */
 export async function startOrJoin(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: LivetvProfile): Promise<{ streamKey: string; mode: Mode } | WatchError> {
   const unreachable = { status: 502, error: 'channel_unreachable' } as const;
+  // an admin stopped this channel a moment ago (*Stoppen*): a viewer's player re-watching after its token was revoked must not start it again
+  if (await ctx.kv.get(adminStopKey(ch.id)).catch(() => null)) return unreachable;
   const until = Date.now() + JOIN_WAIT_MS;
   /** the release marker outlived its 5-s wait once: from then on the channel counts as not running (normal start path) */
   let gaveUp = false;

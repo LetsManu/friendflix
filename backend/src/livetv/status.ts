@@ -9,6 +9,7 @@ import { detectLivetv, livetvSystem } from './detect.js';
 import { listEvents, pushEvent, type LiveEvent } from './events.js';
 import { gpuAdvice, type GpuAdvice } from './gpu.js';
 import { invalidateLiveConversions, viewerCounts } from './streams.js';
+import { ADMIN_STOP_TTL_S, adminStopKey, revokeChannelTokens } from './tokens.js';
 import type { IngestState, Mode, StreamView } from './wire.js';
 
 /**
@@ -147,14 +148,22 @@ export async function liveStatus(ctx: Ctx, hwAccel: () => Promise<string | null>
 
 /**
  * *Stoppen* / *Neu starten*: `DELETE /v1/streams/:channelId` (a stream that is not running answers 204 too; a 404 from an older livetv is
- * tolerated). Throws the LivetvError when livetv is not reached; only then nothing is recorded (a failing event push is logged, not thrown). The event says *stopped_by_admin*.
+ * tolerated), then the channel's live tokens are revoked and `ltv:adminstop:<id>` (60 s) keeps a viewer's re-watch from starting it again
+ * (502 `channel_unreachable`); the admin's test start clears it (*Neu starten*). Throws the LivetvError when livetv is not reached; only then nothing is recorded (a failing event push is logged, not thrown). The event says *stopped_by_admin*.
  */
 export async function stopStream(ctx: Ctx, channelId: string, log?: { warn(o: object, m: string): void }): Promise<void> {
+  // the marker first: a viewer's player re-watching meanwhile must not start the channel again (spec §7.4); gone again when livetv was not reached
+  await ctx.kv.set(adminStopKey(channelId), '1', ADMIN_STOP_TTL_S);
   try {
     await livetvCall<undefined>(ctx, 'DELETE', `/v1/streams/${channelId}`, undefined, { timeoutMs: 10_000 });
   } catch (e) {
-    if (!(e instanceof LivetvError && e.status === 404)) throw e;
+    if (!(e instanceof LivetvError && e.status === 404)) {
+      await ctx.kv.del(adminStopKey(channelId)).catch(() => undefined);
+      throw e;
+    }
   }
+  // the viewers' tokens (test previews too) go: their next fetch answers 410, the player's one re-watch meets the marker (error state)
+  await revokeChannelTokens(ctx, channelId).catch((err: unknown) => log?.warn({ err }, 'livetv stop: tokens not revoked'));
   await dropConvGrant(ctx, `live:${channelId}`); // a start's slot still held by its grant goes with the stream
   invalidateLiveConversions(); // the budget and the gateway's authz stop seeing it at once
   // the stop happened; a failing event ring must not turn it into a 500 without an audit entry

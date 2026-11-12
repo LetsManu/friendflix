@@ -20,7 +20,7 @@ import { liveStatus, readHwAccel, stopStream } from './status.js';
 import { CHANNEL_SELECT, isOwnFeeds, toEffective, type EffectiveRow } from './channels.js';
 import { isHomeRequest } from '../netaddr.js';
 import { clearJoinMark, startOrJoin } from './streams.js';
-import { liveSidHash, mintLiveToken } from './tokens.js';
+import { adminStopKey, liveSidHash, mintLiveToken } from './tokens.js';
 import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource } from './refresh.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
@@ -493,6 +493,7 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       if (!row) return null;
       const ch = toEffective(row); // after the test: it carries the fresh probe, so the expected mode is the tested one
       const who = { userId: req.user!.id, deviceId, role: req.user!.role };
+      await ctx.kv.del(adminStopKey(ch.id)); // *Neu starten* (stop, then this test start): the admin's own start lifts the stop marker
       const r = await startOrJoin(ctx, who, ch, { id: req.profile.id, kids: Boolean(req.profile.kids) });
       if ('status' in r) return null;
       const minted = await mintLiveToken(ctx, {

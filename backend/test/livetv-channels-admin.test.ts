@@ -516,12 +516,14 @@ describe('the stream test preview (Task 42, F10)', () => {
   const streams = new Map<string, Record<string, unknown>>();
   let posts: Array<Record<string, unknown>> = [];
   let postStatus = 200;
+  let deletes = false; // only the stop tests let livetv really end a stream
   const preview = (r: { json(): any }) => (r.json() as { preview?: { url: string; token: string } }).preview;
   const authz = (token: string) => env.app.inject({ method: 'POST', url: '/internal/authz/live', headers: H, payload: { token, ip: '192.0.2.250' } });
   const livetv = () => fakeHttp({
     'GET /healthz': () => ({ json: { ok: true, api: 1, version: '3.3.0', bootId: '0123456789abcdef' } }),
     'GET /v1/system': () => ({ json: system() }), 'PUT /v1/ingest': () => ({ json: { ok: true } }), 'POST /v1/probe': (...a) => probe(...a),
     'GET /v1/streams': () => ({ json: [...streams.values()] }),
+    ...(deletes ? { 'DELETE /v1/streams/[\\w-]+': (u: URL) => (streams.delete(u.pathname.split('/').pop()!) ? { status: 204 } : { status: 404, json: { error: 'not_found' } }) } : {}),
     'POST /v1/streams': (_u, _i, b: Record<string, unknown>) => {
       posts.push(b);
       if (postStatus !== 200) return { status: postStatus, json: { error: 'start_failed' } };
@@ -531,7 +533,7 @@ describe('the stream test preview (Task 42, F10)', () => {
     },
   }, calls);
   beforeEach(async () => {
-    streams.clear(); posts = []; postStatus = 200;
+    streams.clear(); posts = []; postStatus = 200; deletes = false;
     for (const k of await env.kv.keys('ltv')) { if (!k.startsWith('ltv:chtest:')) await env.kv.del(k); }
     env.ctx.fetchImpl = livetv();
     await detectLivetv(env.ctx, 0);
@@ -587,6 +589,26 @@ describe('the stream test preview (Task 42, F10)', () => {
     // a disabled source is still refused, preview or not
     await env.pool.query('update livetv_sources set enabled = false where id = $1', [src]);
     expect((await call('POST', `/api/admin/livetv/channels/${a}/test`)).statusCode).toBe(409);
+  });
+
+  it('Neu starten: a stop leaves the marker, the admin test start clears it and starts again (final review I1)', async () => {
+    deletes = true;
+    env.ctx.fetchImpl = livetv(); // with a DELETE that really ends a stream
+    env.ctx.fetchImpl = livetv(); // with a DELETE that really ends a stream
+    const src = await addSource();
+    const a = await addChannel(src, 'Nordlicht TV', { number: 1 });
+    const first = preview(await call('POST', `/api/admin/livetv/channels/${a}/test`))!;
+    expect((await authz(first.token)).statusCode).toBe(200);
+    const stop = await call('POST', `/api/admin/livetv/streams/${a}/stop`);
+    expect(stop.statusCode).toBe(200);
+    expect(await env.kv.get(`ltv:adminstop:${a}`)).toBe('1');
+    expect((await authz(first.token)).statusCode).toBe(410); // the stop revoked it, test tokens too
+    await env.kv.del(`ltv:chtest:${adminId}`);
+    const again = preview(await call('POST', `/api/admin/livetv/channels/${a}/test`))!;
+    expect(again).toBeDefined();
+    expect(await env.kv.get(`ltv:adminstop:${a}`)).toBeNull();
+    expect(posts.map((b) => b.channelId)).toEqual([a, a]);
+    expect((await authz(again.token)).statusCode).toBe(200);
   });
 
   it('a full conversion budget gives the facts only: no preview, no token', async () => {

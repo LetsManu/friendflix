@@ -25,6 +25,7 @@ const key = keyFromBase64(ENC_KEY);
 const H = { 'x-internal-secret': cfg.INTERNAL_SECRET };
 
 let env: TestEnv;
+let admin: Sess;
 let anna: Sess;
 let ben: Sess;
 let carla: Sess;
@@ -131,7 +132,7 @@ async function person(id: string, sub: string, name: string, role: string): Prom
 
 beforeAll(async () => {
   env = await makeEnv();
-  await env.login(); // the first sign-in is the admin
+  admin = await env.login(); // the first sign-in is the admin
   adminId = (await env.pool.query<{ id: string }>("select id from users where role = 'admin' limit 1")).rows[0]!.id;
   anna = await person(annaId, 'anna', 'Anna Beispiel', 'family');
   ben = await person(benId, 'ben', 'Ben Muster', 'friend');
@@ -539,5 +540,52 @@ describe('release on switch', () => {
     expect(dels()).toEqual([`DELETE:${a}`]);
     expect((await authz(wa.token)).statusCode).toBe(410);
     expect((await authz(wb.token)).statusCode).toBe(200);
+  });
+});
+
+describe('admin Stoppen stops a watched channel (final review I1)', () => {
+  const stop = (id: string) => call(admin, 'POST', `/api/admin/livetv/streams/${id}/stop`, {});
+
+  it('the viewers\' tokens go, their re-watch is refused while the marker lives, and a watch starts it again after it', async () => {
+    const src = await addSource();
+    const a = await addChannel(src, 'Hafenkanal', 4);
+    const wa = await watch(anna, a);
+    expect(wa.statusCode, wa.body).toBe(200);
+    const tokenA = wa.json().token as string;
+    const cast = await watch(anna, a, { via: 'chromecast' });
+    expect((await authz(tokenA)).statusCode).toBe(200);
+
+    expect((await stop(a)).statusCode).toBe(200);
+    expect(dels()).toEqual([`DELETE:${a}`]);
+    expect(await env.kv.get(`ltv:adminstop:${a}`)).toBe('1');
+    // every token of the channel is revoked (the gateway answers 410, the player re-watches once)
+    expect((await authz(tokenA)).statusCode).toBe(410);
+    expect((await authz(cast.json().token)).statusCode).toBe(410);
+    // the re-watch meets the marker: the error state, no new start
+    const again = await watch(anna, a);
+    expect([again.statusCode, again.json()]).toEqual([502, { error: 'channel_unreachable' }]);
+    expect(order).toEqual([`POST:${a}`, `DELETE:${a}`]);
+    expect(await grants()).toEqual([]);
+    // after the marker's TTL a normal watch starts the channel again
+    expect(await env.kv.keys('ltv:adminstop:')).toEqual([`ltv:adminstop:${a}`]);
+    await env.kv.del(`ltv:adminstop:${a}`);
+    const back = await watch(anna, a);
+    expect(back.statusCode, back.body).toBe(200);
+    expect(order).toEqual([`POST:${a}`, `DELETE:${a}`, `POST:${a}`]);
+  });
+
+  it('the marker is short-lived and set only once livetv answered', async () => {
+    const src = await addSource();
+    const a = await addChannel(src, 'Hafenkanal', 4);
+    const set = vi.spyOn(env.kv, 'set');
+    expect((await stop(a)).statusCode).toBe(200);
+    expect(set.mock.calls.find(([k]) => k === `ltv:adminstop:${a}`)?.[2]).toBe(60);
+    set.mockRestore();
+    await env.kv.del(`ltv:adminstop:${a}`);
+    const inner = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async () => { throw new TypeError('fetch failed'); }) as typeof fetch;
+    expect((await stop(a)).statusCode).toBe(503);
+    env.ctx.fetchImpl = inner;
+    expect(await env.kv.get(`ltv:adminstop:${a}`)).toBeNull(); // livetv was not reached: nothing stopped, nothing blocked
   });
 });
