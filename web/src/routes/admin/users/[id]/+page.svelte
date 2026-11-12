@@ -40,14 +40,13 @@
   const page$ = pageStore();
   $: id = $page$.params.id ?? '';
   $: tab = detailTab($page$.url.searchParams.get('tab'));
-  const TABS = DETAIL_TABS;
   const select = (to: DetailTab) => goto(to === 'overview' ? $page$.url.pathname : `?tab=${to}`, { replaceState: true, reset: false });
   function tabKey(e: KeyboardEvent) {
-    const i = Math.max(0, TABS.indexOf(tab)), last = TABS.length - 1;
-    const n = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i + last) % TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? last : -1;
+    const i = Math.max(0, DETAIL_TABS.indexOf(tab)), last = DETAIL_TABS.length - 1;
+    const n = e.key === 'ArrowRight' ? (i + 1) % DETAIL_TABS.length : e.key === 'ArrowLeft' ? (i + last) % DETAIL_TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? last : -1;
     if (n < 0) return;
-    e.preventDefault(); void select(TABS[n]!);
-    queueMicrotask(() => { const el = document.getElementById(`udt-${TABS[n]!}`); el?.focus(); el?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); });
+    e.preventDefault(); void select(DETAIL_TABS[n]!);
+    queueMicrotask(() => { const el = document.getElementById(`udt-${DETAIL_TABS[n]!}`); el?.focus(); el?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); });
   }
 
   let d: UserDetail | null = null, error: string | null = null, notFound = false;
@@ -260,7 +259,7 @@
   {/if}
 
   <div class="tabs" role="tablist" aria-label={$t('adminPeople.detail.tabs.label', { name: u.name })}>
-    {#each TABS as k (k)}
+    {#each DETAIL_TABS as k (k)}
       <button type="button" role="tab" id="udt-{k}" class="tab" class:on={tab === k} aria-selected={tab === k} aria-controls="udt-panel" tabindex={tab === k ? 0 : -1} on:click={() => select(k)} on:keydown={tabKey}>{tabLabel(k)}</button>
     {/each}
   </div>

@@ -14,7 +14,7 @@
    * as the role) and re-apply the policies (a partial failure shows done and failed).
    */
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { afterNavigate, goto } from '$app/navigation';
   import { api, ApiError } from '#lib/api';
   import { avatarBg, initial } from '#lib/avatars';
   import { fmtDate, fmtDateTime, fmtNumber, fmtRelative, locale, t, tr } from '#lib/i18n';
@@ -57,9 +57,9 @@
 
   const page$ = pageStore();
   // `pending` is the tab name older approval notices link to
-  $: tab = ((v) => (v === 'pending' ? 'approvals' : TABS.includes(v as Tab) ? (v as Tab) : 'users'))($page$.url.searchParams.get('tab'));
+  const tabOf = (v: string | null): Tab => (v === 'pending' ? 'approvals' : TABS.includes(v as Tab) ? (v as Tab) : 'users');
+  $: tab = tabOf($page$.url.searchParams.get('tab'));
   /** the filters ride in the URL of the users tab (the search text is the table's own) */
-  const FILTER_PARAMS = ['role', 'status', 'lastActive', 'overrides', 'kids', 'mfa', 'perm'];
   const usersUrl = (): string => { const qs = toQuery({ ...f, q: '' }).toString(); return $page$.url.pathname + (qs ? `?${qs}` : ''); };
   const select = (to: Tab) => goto(to === 'users' ? usersUrl() : `?tab=${to}`, { replaceState: true, reset: false });
   function tabKey(e: KeyboardEvent) {
@@ -141,6 +141,17 @@
     void loadRoles();
     api<{ id: string }>('/api/me').then((m) => (meId = m.id), () => undefined);
     api<{ requests: unknown[] }>('/api/admin/approvals').then((r) => (approvals ??= r.requests.length), () => undefined);
+  });
+
+  // the URL is the truth for the filters on every navigation to this page (the sidebar link to plain /admin/users, Back, a link with
+  // filters): what it says is shown and loaded; the page's own replaceState of the same filters changes nothing
+  const filterKey = (x: UserFilters): string => toQuery({ ...x, q: '' }).toString();
+  afterNavigate(({ to }) => {
+    if (!to || tabOf(to.url.searchParams.get('tab')) !== 'users') return;
+    const next = { ...fromQuery(new URLSearchParams(to.url.search)), q: '' };
+    if (filterKey(next) === filterKey(f)) return;
+    f = next; page = 0; cur = { ...cur, offset: 0 };
+    void load();
   });
 
   // back on the users tab: approvals may have added accounts meanwhile

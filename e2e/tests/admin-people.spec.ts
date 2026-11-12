@@ -746,6 +746,28 @@ test.describe('admin people (desktop)', () => {
       await expect(page.getByRole('combobox', { name: 'Recht' })).toBeDisabled();
     });
 
+    test('the URL is the truth for the filters: the sidebar link clears them, Back brings them again', async ({ page }) => {
+      await page.goto('/admin/users?overrides=1');
+      const chip = page.getByRole('group', { name: 'Filter' }).getByRole('button', { name: 'Mit Ausnahmen' });
+      await expect(chip).toHaveAttribute('aria-pressed', 'true');
+      await expect(table(page).getByRole('row', { name: /Anna Beispiel/ })).toBeVisible();
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toHaveCount(0);
+      // the sidebar's plain /admin/users: no filter in the URL, none shown, the whole list
+      await page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: /^Nutzer/ }).click();
+      await expect(page).toHaveURL(/\/admin\/users$/);
+      await expect(chip).toHaveAttribute('aria-pressed', 'false');
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Alle Filter löschen' })).toHaveCount(0);
+      // a reload shows what the URL says, as before it
+      await page.reload();
+      await expect(chip).toHaveAttribute('aria-pressed', 'false');
+      // Back: the filtered entry, filtered again
+      await page.goBack();
+      await expect(page).toHaveURL(/overrides=1/);
+      await expect(chip).toHaveAttribute('aria-pressed', 'true');
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toHaveCount(0);
+    });
+
     test('mfa=off in the URL without the provider API is dropped: no pressed chip, no chip at all', async ({ page, api }) => {
       api.admin.authentik.recovery = false;
       await page.goto('/admin/users?mfa=off');
