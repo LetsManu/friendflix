@@ -19,7 +19,7 @@
   import { confirm } from '#lib/ui/confirm';
   import { focusMain } from '#lib/ui/focusMain';
   import { SCRIM_BAR } from '#lib/glass/tone';
-  import { barLine1, barLine2, barProgress, barThumb, nextSecondsLeft, splitLine } from './bar';
+  import { barHasProgress, barLine1, barLine2, barOpens, barProgress, barThumb, nextSecondsLeft, splitLine } from './bar';
   import CastBarExpanded from './CastBarExpanded.svelte';
   import { castEngine, type CastSession } from './engine';
   import { engineSource, itemFetchWanted, type CastBarSource } from './barSource';
@@ -150,7 +150,7 @@
       <CastBarExpanded session={s} {now} trigger={origin} on:collapse={(e) => void collapse(e.detail.via)} />
     {:else}
     <div class="box frost frost-safe frost-panel" style="--fr-scrim-safe:{SCRIM_BAR}" role="region" aria-label={$t('player.castBar.region')} aria-busy={state === 'connecting' ? 'true' : undefined}>
-      <div class="line" role="progressbar" aria-label={$t('player.castBar.progress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><i style="transform:scaleX({progress / 100})"></i></div>
+      {#if barHasProgress(s)}<div class="line" role="progressbar" aria-label={$t('player.castBar.progress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><i style="transform:scaleX({progress / 100})"></i></div>{/if}
       {#snippet info()}
         {#if (still && !choose) || state === 'connecting'}
           <span class="slot" aria-hidden="true">
@@ -164,7 +164,7 @@
           {#key kind}<span class="t2" class:split={Boolean(parts)} class:warn={l2.tone === 'warn'} class:error={l2.tone === 'error'} in:fade={{ duration: fadeMs() }}>{#if parts}<span class="pre">{parts.pre}</span><span class="dev">{parts.dev}</span><span class="post" class:fit={parts.post.length > 24}>{parts.post}</span>{#if parts.tail}<span class="tail">{parts.tail}</span>{/if}{:else}{l2.text}{/if}</span>{/key}
         </span>
       {/snippet}
-      {#if still}
+      {#if still || !barOpens(s)}
         <div class="open static">{@render info()}</div>
       {:else}
         <!-- named by its action; the title and the second line are its description -->

@@ -123,6 +123,10 @@ On phones the player has the same look: the title bottom left, the timeline with
 
 <p align="center"><img src="docs/images/en/player-scenes.jpg" alt="Player with the Scenes panel showing a thumbnail for every chapter" width="900"></p>
 
+#### Live TV (optional)
+
+An admin can turn on **Live TV**: its own container that stays off, and invisible, until then. Channels come from an IPTV provider's M3U list (with XMLTV programme data) or from your own feeds, pulled or pushed over SRT (for example from OBS); the admin picks the groups, releases them and decides which profiles see which channels. The *Live TV* tab shows what runs now and next, your ordered favourites and *Recently watched*. The live player rewinds up to 30 minutes (the admin can allow up to 120), has *From the start*, an info banner and a channel list, and casts to Chromecast and AirPlay, also from the Android app. On TVs ▲/▼ switch channels; channel, number and Info keys work where the remote sends them. Everyone watching a channel shares one stream, and a server-wide limit on conversions keeps films playable. Setup: [docs/livetv.md](docs/livetv.md).
+
 ### Discovering
 
 - **Brand hubs** – wide tiles the admin builds from your own Jellyfin studios, collections, tags or genres (say "Anime" or "Documentaries") – open a page of their own with *New*, *Popular*, *Movies*, *Series* and A–Z.
@@ -172,7 +176,7 @@ An app-like layout with a frosted top bar and a floating glass tab bar (Home, Ne
 
 **Downloads for the train and the plane:** download movies and episodes (or the next few episodes of a show in one go) and watch them offline in the browser. Progress syncs back the next time you are online. Per-device licences with expiry; works in Chrome, Edge, Firefox, Safari 17+ and as a home-screen app on iOS 17+. On Android (Chrome, Edge) downloads keep going in the background, even with the app closed; on iPhone they pause while the app is in the background and continue as soon as it is open again.
 
-**Android app:** FriendFlix as an app for Android 8.0 and newer, shared through a Google Play closed test (or as an APK on each release). It shows the same web UI and adds a native player (direct play, picture-in-picture, background audio), downloads in the background to the phone or an SD card, stored encrypted and playable offline, Chromecast, and notifications that the app fetches from your server itself – no Google push service, no analytics. Install, settings, security and the owner's signing steps: [docs/android.md](docs/android.md).
+**Android app:** FriendFlix as an app for Android 8.0 and newer, shared through a Google Play closed test (or as an APK on each release). It shows the same web UI and adds a native player (direct play, picture-in-picture, background audio), downloads in the background to the phone or an SD card, stored encrypted and playable offline, Chromecast (also of live channels), and notifications that the app fetches from your server itself – no Google push service, no analytics. Install, settings, security and the owner's signing steps: [docs/android.md](docs/android.md).
 
 **Windows app:** FriendFlix as a program for Windows 10 and 11, installed from the GitHub Release. It shows the same web UI and adds a native mpv player that plays almost every file directly (AC3, DTS, TrueHD, HEVC, image subtitles), with FriendFlix's own controls, resume and progress in sync with web, Android and TV, tray icon and automatic updates. No downloads, no Chromecast. Install, player keys, troubleshooting and the owner's update-signing steps: [docs/windows.md](docs/windows.md).
 

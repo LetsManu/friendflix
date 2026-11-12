@@ -6,7 +6,7 @@ The Android app is FriendFlix in your pocket: the same web UI you know from the 
 
 - **Player:** a native player (Media3) with direct play when the phone can decode the file, picture-in-picture, the lock screen and Bluetooth buttons, and optional background audio.
 - **Downloads:** movies and episodes download in the background, also with the screen off, to the phone or an SD card, and are stored encrypted. When the server cannot be reached, the app opens a list of your downloads to watch offline.
-- **Chromecast** from the native player.
+- **Chromecast** from the native player, and of live channels from the web UI's live player (when your server has Live TV).
 - **Notifications** about new episodes, requests and your account, fetched by the app itself about every 10–20 minutes (Android may delay it further; no Google push service).
 
 Everything else (browsing, profiles, watch parties, requests, settings of your account) is the web UI, so it always matches your server's version.
@@ -182,6 +182,17 @@ The cast belongs to the app, not to the player screen.
 - **After the app was closed.** Swipe the app away and open it again: it finds the cast that still runs on the TV and shows the bar again with the right title and position. If the TV shows something that FriendFlix did not start (another app cast to it), FriendFlix lets go after about 20 seconds without touching that video, and the bar disappears.
 - **Profile switch and sign-out end the cast.** The web UI tells the app (bridge method `sessionChanged`), and the app stops the TV. Sign-out waits at most 4 seconds for this. If the server answers 401 (session over), the app ends the cast as well.
 - **An older app version** (bridge API 1) keeps the old behaviour of the web UI: no cast bar while browsing in the app, and nothing is sent about profile or sign-out. Update the app to get the bar.
+
+### Live channels on the TV
+
+When your server has Live TV ([livetv.md](livetv.md)), a live channel can go to a Chromecast from the app's web UI (bridge method `castLive`):
+
+- The app asks your server for the channel's stream itself, with your signed-in session; no stream address or token passes through the web page. The TV gets the channel's name, the programme running now and the channel's logo. FriendFlix's own receiver shows its channel card; the Default Media Receiver shows its own screen.
+- With no TV connected yet, the app opens the Cast device list; the channel goes to the TV you pick within about 40 seconds (a TV still connecting then gets 15 seconds more). Closing the list without a pick cancels at once.
+- The cast bar shows the channel instead of a title: its name, the programme now, *Pause* / *Play* and *Stop casting*. A channel has no position, no *Next* and no remote screen in the native player.
+- If the server says no (no free conversion slot, the provider's connection limit, your stream limit, the channel does not answer, no right to the channel), nothing changes on the TV; the app only learns "no", never the reason. A refused switch to another channel leaves the current one playing.
+- Casting a title replaces the channel on the TV, and casting a channel replaces a title. *Stop casting*, a profile switch and sign-out end a live cast like a title cast. A live cast ends after 12 hours at the latest; start it again.
+- After the app was closed, the channel keeps playing on the TV, but the bar does not come back for it. An app version without `castLive` answers "no", so the web UI keeps the channel on the phone.
 
 ## Troubleshooting
 
@@ -378,6 +389,11 @@ Unit tests and the emulator in CI cover the logic; these points need a real phon
 68. Phone on wired headphones or the speaker: same result, stereo and no switch.
 69. Phone or Android TV box on an HDMI receiver or soundbar that takes Dolby: the switch *Surround sound* shows, the receiver shows 5.1 (Dolby Digital Plus, Dolby Digital or multichannel PCM); turn the switch off, the stream reloads at the same position with stereo; turn it on again, 5.1 returns.
 70. A HEVC title in a converted stream on a phone with HEVC hardware: it plays; the admin's now-playing shows the stream. Force a failure on a test server (for example block the HEVC stream): one automatic fallback, no loop, and the choice is remembered.
+
+**Live TV** (a server with Live TV enabled)
+71. A channel in the live player, no TV connected, cast: the Cast device list opens; pick the TV: the channel plays there with its name, the programme now and its logo (own receiver: the channel card). The cast bar shows the channel; *Pause* / *Play* and *Stop casting* work.
+72. A refused start (for example every conversion slot in use, or a 1-connection provider already busy): nothing on the TV, no crash, the web UI stays usable. A switch to another channel while one plays: the new one plays; a refused switch keeps the old one on the TV.
+73. A film cast running, cast a channel: the film's stream ends (admin's now playing), the channel plays. Profile switch or sign-out: the TV stops.
 
 ## Testing a pull request on your phone
 

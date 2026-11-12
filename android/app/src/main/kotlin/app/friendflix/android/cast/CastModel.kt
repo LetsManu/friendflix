@@ -63,6 +63,57 @@ class CastInfo(
     }
 }
 
+/**
+ * The answer of `POST /api/livetv/channels/:id/watch { via: 'chromecast' }` as the receiver needs it (spec §13): the stream's URL made
+ * absolute against the shell's server origin, the channel's name, number and signed logo URL (absolute, or null), the programme
+ * running now. [token] only leaves the device again in `DELETE /api/livetv/watch`; [handle] is the receiver item's id (a hash of the
+ * token, never the token itself). [toString] shows neither the token nor the URL (logs never carry them).
+ */
+class LiveCastInfo(
+    val channelId: String,
+    val token: String,
+    val contentUrl: String,
+    val expiresAt: Long,
+    val name: String,
+    val number: Int?,
+    val logo: String?,
+    /** the title of the programme running now (null: no EPG data) */
+    val now: String?,
+) {
+    /** the receiver item's media id: `live-` + 24 hex of `sha256(token)` (never a valid castId, so no film lookup is made for it) */
+    val handle: String = "live-" + java.security.MessageDigest.getInstance("SHA-256").digest(token.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }.take(24)
+
+    override fun toString() = "LiveCastInfo($channelId)"
+
+    companion object {
+        /** the HLS content type of a live channel (web Task 41 `loadLive`) */
+        const val CONTENT_TYPE = "application/x-mpegURL"
+        private val TOKEN = Regex("^[A-Za-z0-9_-]{16,128}$")
+        private val CHANNEL = Regex("^[A-Za-z0-9_-]{1,64}$")
+        private const val PATH = "/media/l/"
+
+        /**
+         * [absolute] turns the answer's relative `url` (`/media/l/<token>/index.m3u8`) into a URL of the shell's server origin
+         * ([app.friendflix.android.downloads.ServerApi.resolve]); null when the answer is not a live stream of that server.
+         */
+        fun parse(j: JSONObject, absolute: (String) -> String?): LiveCastInfo? {
+            fun str(o: JSONObject, k: String) = if (o.isNull(k)) null else (o.opt(k) as? String)?.takeIf { it.isNotEmpty() }
+            val token = str(j, "token")?.takeIf(TOKEN::matches) ?: return null
+            val path = str(j, "url")?.takeIf { it.startsWith(PATH) } ?: return null
+            val url = absolute(path) ?: return null
+            val ch = j.optJSONObject("channel") ?: return null
+            val id = str(ch, "id")?.takeIf(CHANNEL::matches) ?: return null
+            val name = str(ch, "name") ?: return null
+            val number = (ch.opt("number") as? Number)?.toInt()
+            // the signed logo URL of the answer, used as it is (the receiver sends no cookie); anything but http(s) is dropped
+            val logo = str(ch, "logo")?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+            val now = j.optJSONObject("now")?.let { str(it, "title") }
+            return LiveCastInfo(id, token, url, j.optLong("expiresAt"), name, number, logo, now)
+        }
+    }
+}
+
 /** What a cast token request came back with (the server's rules: stream limit, transcoding role cap, kids rules). */
 sealed interface TokenAnswer {
     class Ok(val info: CastInfo) : TokenAnswer
@@ -211,7 +262,7 @@ data class NextSnapshot(val itemId: String, val label: String)
 /**
  * What a cast looks like from outside (the native bridge, Task 30): web `CastSession` in the shape the Android shell needs.
  * [title] is the series name for an episode and [subtitle] the episode's own title (the web bar's two lines); [posterId] is the item
- * whose poster the bar shows. No token, URL or castId in it.
+ * whose poster the bar shows (a live cast: [live], the channel). No token, URL or castId in it.
  */
 data class CastSnapshot(
     val kind: CastKind,
@@ -226,4 +277,6 @@ data class CastSnapshot(
     val paused: Boolean,
     val state: CastPhase,
     val next: NextSnapshot?,
+    /** a live channel ([itemId] / [posterId] = the channel id, [title] its name, [subtitle] the programme now): no duration, no next */
+    val live: Boolean = false,
 )

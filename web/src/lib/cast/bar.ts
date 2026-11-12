@@ -25,8 +25,15 @@ export function barProgress(s: CastSession): number {
   return s.duration > 0 ? Math.min(100, Math.max(0, (s.position / s.duration) * 100)) : 0;
 }
 
-/** Poster for the bar: landscape still for episodes, portrait poster for films. */
-export function barThumb(s: CastSession): { src: string; ratio: '16/9' | '2/3' } {
+/** the bar's progress line: not for a live channel (no position in a programme, never an empty 0 % line) */
+export const barHasProgress = (s: Pick<CastSession, 'isLive'>): boolean => !s.isLive;
+
+/** a live channel has no remote screen to open: the bar's text is not a button */
+export const barOpens = (s: Pick<CastSession, 'isLive'>): boolean => !s.isLive;
+
+/** Poster for the bar: landscape still for episodes, portrait poster for films; none for a live channel (its id is no media-server item). */
+export function barThumb(s: CastSession): { src: string; ratio: '16/9' | '2/3' } | null {
+  if (s.isLive) return null;
   return { src: img(s.posterId, 160), ratio: s.isEpisode ? '16/9' : '2/3' };
 }
 

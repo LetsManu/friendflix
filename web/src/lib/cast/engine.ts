@@ -96,6 +96,11 @@ export interface CastSession {
    * switch of episode until the session ends, so the remote keeps its continuous room (and survives the watch page re-creating it)
    */
   stream?: { items: JoinedInfo['items']; title: string };
+  /**
+   * a live channel the Android app casts (`castLive`): itemId / posterId = the channel id, title = its name, subtitle = the programme;
+   * the bar shows no poster, no progress and opens no remote (the full live variant of the bar follows with the web's live casting)
+   */
+  isLive?: boolean;
 }
 export interface PlayerHandoff {
   kind: CastKind; itemId: string; seriesId?: string; title: string; subtitle: string; isEpisode: boolean;

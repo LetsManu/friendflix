@@ -4,7 +4,7 @@ What the maintainer plans for FriendFlix over roughly the next 12 months. This i
 
 ## Done recently
 
-Shipped since the last roadmap (details in the [CHANGELOG](CHANGELOG.md)): admin care (health, disk, errors, hygiene), **Plex support built in** since 2.0 (`MEDIA_SERVER=plex`, [docs/plex.md](docs/plex.md); the separate friendflix-plex project is archived), coverage reporting with high thresholds, tagged releases with codenames and signed images, SPDX license headers, the 3.0 redesign (desktop, phone, TV, glass look), apps for Android, Fire TV, LG webOS, Samsung Tizen and Windows, and the 3.1 reliability and accessibility pass; plus **HEVC and surround sound** (HEVC files without a conversion, a proven and limited HEVC conversion for viewers away from home, 5.1 for devices that output it, a *Picture and sound* section in Diagnose, and HEVC and Dolby surround on FriendFlix's own Chromecast receiver when the TV confirms them; see [docs/operations.md](docs/operations.md#hevc-umwandlung-und-surround-ton)).
+Shipped since the last roadmap (details in the [CHANGELOG](CHANGELOG.md)): admin care (health, disk, errors, hygiene), **Plex support built in** since 2.0 (`MEDIA_SERVER=plex`, [docs/plex.md](docs/plex.md); the separate friendflix-plex project is archived), coverage reporting with high thresholds, tagged releases with codenames and signed images, SPDX license headers, the 3.0 redesign (desktop, phone, TV, glass look), apps for Android, Fire TV, LG webOS, Samsung Tizen and Windows, and the 3.1 reliability and accessibility pass; plus **HEVC and surround sound** (HEVC files without a conversion, a proven and limited HEVC conversion for viewers away from home, 5.1 for devices that output it, a *Picture and sound* section in Diagnose, and HEVC and Dolby surround on FriendFlix's own Chromecast receiver when the TV confirms them; see [docs/operations.md](docs/operations.md#hevc-umwandlung-und-surround-ton)); and **Live TV, Phase 1** (an optional `livetv` container, a server-wide conversion limit that keeps films playable, channels from provider lists and own feeds with groups and rights, the *Live-TV* tab and live player with a rewind buffer, casting, TV remote keys and casting from the Android app; see [docs/livetv.md](docs/livetv.md)).
 
 ## Planned
 
@@ -14,7 +14,8 @@ Shipped since the last roadmap (details in the [CHANGELOG](CHANGELOG.md)): admin
 4. **Watch party 2.0.** Reactions on the timeline, a shared queue, smoother sync.
 5. **Smarter home.** "Because you watched …" rows that say why, an optional weekly "new for you" notice, and "resume on TV" from the phone.
 6. **Admin media insights.** Which titles force a conversion and why, with suggestions that make them play directly. The first part has shipped: the Diagnose page now shows, per device, what it plays and was given last time and why, and Admin → Status shows the HEVC conversion state.
-7. **Security hygiene.** A CI check of the Gradle wrapper, fuzz tests for the security-relevant parsers (invite codes, cast tokens), and the desktop app's move to a GTK 4 based toolkit once it is stable.
+7. **Live TV, Phases 2 and 3.** Phase 2 is the programme guide (a grid of channels over time on desktop, phone and TV, with search and reminders); Phase 3 is recordings (record a programme or a series, watch and cast it like a title). Phase 1 has shipped (see *Done recently*).
+8. **Security hygiene.** A CI check of the Gradle wrapper, fuzz tests for the security-relevant parsers (invite codes, cast tokens), and the desktop app's move to a GTK 4 based toolkit once it is stable.
 
 ## Out of scope
 
