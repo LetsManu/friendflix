@@ -109,7 +109,7 @@ const noteLast = (ctx: Ctx, outcome: BenchOutcome, at: number) =>
  * `running` is kept for 24 h for the card (measure.last). `claimed`: a claim the caller took (startBenchmark), released here.
  * Unreadable encoder settings store the speed with an empty fingerprint (stale once they read again). Every trigger runs the same way.
  */
-export async function runBenchmark(ctx: Ctx, _trigger: BenchTrigger, deps: { now?: () => number; claimed?: string } = {}): Promise<BenchResult> {
+export async function runBenchmark(ctx: Ctx, _trigger: BenchTrigger, deps: { now?: () => number; claimed?: string; livetvOnly?: boolean } = {}): Promise<BenchResult> {
   const now = deps.now ?? Date.now;
   if (!measurable(ctx)) {
     if (deps.claimed) await releaseHevcProbe(ctx, deps.claimed);
@@ -129,6 +129,14 @@ export async function runBenchmark(ctx: Ctx, _trigger: BenchTrigger, deps: { now
     if (!user) return (out = { ok: false, why: 'no_user' });
     await ctx.kv.set(ATTEMPT_KEY, String(now()), BENCH_ATTEMPT_GAP_S).catch(() => undefined);
     const settings = await readSettings(ctx);
+    if (deps.livetvOnly) {
+      // the media server's record is current: only livetv's is missing, so the 21-s clip on the media server is not converted again
+      const cur = (await readBench(ctx)).jellyfin;
+      if (cur) {
+        await measureLivetv(ctx, settings?.hwAccel ?? null, now);
+        return (out = { ok: true, jellyfin: cur, livetv: (await readBench(ctx)).livetv });
+      }
+    }
     const r = await timedClip(ctx, user, { videoCodec: 'h264', segments: BENCH_SEGMENTS, segmentSeconds: BENCH_SEGMENT_SECONDS, now });
     if (!r.ok) return (out = { ok: false, why: r.reason === 'no_title' ? 'no_title' : 'failed' });
     const rec: BenchRecord = { speed: r.speed, hwAccel: settings?.hwAccel ?? 'unknown', fingerprint: settings ? fingerprint(settings) : '', at: now() };
@@ -198,7 +206,7 @@ export async function convBenchTick(ctx: Ctx): Promise<boolean> {
   if (await benchBusy(ctx)) return false;
   if (!(await serviceUser(ctx).catch(() => undefined))) return false;
   if (!(await ctx.kv.setnx(ATTEMPT_KEY, String(Date.now()), BENCH_ATTEMPT_GAP_S).catch(() => false))) return false;
-  const r = await runBenchmark(ctx, 'auto');
+  const r = await runBenchmark(ctx, 'auto', b.jellyfin && !b.stale ? { livetvOnly: true } : {});
   return r.ok || (r.why !== 'busy' && r.why !== 'running' && r.why !== 'no_user');
 }
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
-import { admitConversion, bindConvGrant, dropConvGrant, type ConvEntry } from '../convbudget.js';
+import { admitConversion, bindConvGrant, dropConvGrant, setLiveSource, type ConvEntry } from '../convbudget.js';
 import { within } from '../convexempt.js';
 import { decrypt } from '../crypto.js';
 import type { Ctx } from '../ctx.js';
@@ -43,6 +43,7 @@ const START_TIMEOUT_MS = 10_000;
 const STOP_TIMEOUT_MS = 10_000;
 /** a second watcher waits for a start in progress at most this long (the starter's lock, plus its first-segment wait) */
 const JOIN_WAIT_MS = (START_LOCK_TTL_S + 5) * 1000;
+/** renewed before every step of the tick (each step is bounded by a 10-s call), so it never lapses under a running tick */
 const TICK_LOCK_TTL_S = 14;
 const ZERO_TTL_S = 3600;
 const REJECT_NOTE_TTL_S = 600;
@@ -57,7 +58,10 @@ const errSeenKey = (channelId: string) => `ltv:errseen:${channelId}`;
 const rejectKey = (channelId: string) => `ltv:rejected:${channelId}`;
 const BOOT_KEY = 'ltv:boot';
 const TICK_KEY = 'ltv:tick';
-const VIEW_PREFIX = liveViewKey('');
+const joinKey = (channelId: string) => `ltv:join:${channelId}`;
+/** a join that has answered but not yet minted its token (the mint seeds the viewer key): the idle stop leaves the channel alone this long */
+const JOIN_MARK_TTL_S = 15;
+const NEG_MS = 2_000;
 /** the budget key of a live channel's conversion: the grant is bound to it and liveConversions lists it (F8) */
 const convKey = (channelId: string) => `live:${channelId}`;
 
@@ -136,7 +140,11 @@ const good = new WeakMap<object, { at: number; list: StreamView[] }>();
 /** Drops the cached `GET /v1/streams` (after a start, a stop or a release): the next budget count and streamKeyFor ask livetv again. */
 export function invalidateLiveConversions(): void {
   lists = new WeakMap();
+  misses = new WeakMap();
 }
+
+/** per ctx: channels the stream list did not have, until when (a token of a stopped channel polls the gateway's authz; each miss would ask livetv) */
+let misses = new WeakMap<object, Map<string, number>>();
 
 /** the stream list, from the cache when it is younger than `maxAgeMs` (0 = always a fresh read, which then fills the cache) */
 async function readStreams(ctx: Ctx, maxAgeMs = 0): Promise<StreamView[] | null> {
@@ -158,8 +166,16 @@ const activeOf = (list: readonly StreamView[] | null, channelId: string) => list
  */
 export async function streamKeyFor(ctx: Ctx, channelId: string): Promise<string | null> {
   if (!livetvInstalled(ctx)) return null;
+  const miss = misses.get(ctx);
+  if ((miss?.get(channelId) ?? 0) > Date.now()) return null;
   const cached = await readStreams(ctx, LIST_CACHE_MS);
   const v = cached?.some((s) => s.channelId === channelId) ? activeOf(cached, channelId) : activeOf(await readStreams(ctx), channelId);
+  if (!v) {
+    const m = misses.get(ctx) ?? new Map<string, number>();
+    if (m.size >= 1000) m.clear();
+    m.set(channelId, Date.now() + NEG_MS);
+    misses.set(ctx, m);
+  }
   return v?.streamKey ?? null;
 }
 
@@ -189,7 +205,7 @@ export async function liveConversions(ctx: Ctx): Promise<ConvEntry[]> {
  */
 export async function viewerCounts(ctx: Ctx, o: { exceptHash?: string } = {}): Promise<Map<string, number>> {
   const skip = o.exceptHash ? liveViewKey(o.exceptHash) : null;
-  const keys = (await ctx.kv.keys(VIEW_PREFIX)).filter((k) => k !== skip);
+  const keys = (await ctx.kv.keys(liveViewKey(''))).filter((k) => k !== skip);
   const out = new Map<string, number>();
   if (!keys.length) return out;
   for (const id of await ctx.kv.mget(keys)) if (id) out.set(id, (out.get(id) ?? 0) + 1);
@@ -211,6 +227,9 @@ export async function runningList(ctx: Ctx, user: LivetvUser, profile: LivetvPro
       return { id: c.id, number: c.number, name: c.name, logo: c.logoHash ? `/api/livetv/logos/${c.logoHash}` : null, ...(now ? { now } : {}) };
     });
 }
+
+/** the budget (convbudget.ts) lists the live transcodes through this; registered here so convbudget imports nothing of livetv */
+setLiveSource(liveConversions);
 
 // ---- start and join ----
 
@@ -274,7 +293,10 @@ export async function startOrJoin(ctx: Ctx, who: Watcher, ch: EffectiveChannel, 
     const list = await readStreams(ctx);
     if (list === null) return unreachable;
     const cur = activeOf(list, ch.id);
-    if (cur) return join(ctx, cur);
+    if (cur) {
+      await ctx.kv.set(joinKey(ch.id), '1', JOIN_MARK_TTL_S).catch(() => undefined);
+      return join(ctx, cur);
+    }
     const token = randomUUID();
     if (await ctx.kv.setnx(startKey(ch.id), token, START_LOCK_TTL_S)) {
       try {
@@ -329,6 +351,8 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
   let granted = false;
   if (mode === 'transcode') {
     const a = await admitConversion(ctx, { kind: 'live', userId: who.userId, hint: key, label: ch.name });
+    // 'unknown' = the budget lock or the media server's session list did not answer: not a full budget, so no full-event and a retry
+    if (!a.ok && a.why === 'unknown') return unreachable;
     if (!a.ok) {
       await event(ctx, { level: 'warn', code: 'start_refused_full', channelId: ch.id });
       return { status: 503, error: 'live_full', running: await runningList(ctx, user, profile, list) };
@@ -347,6 +371,11 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
     const body: StartBody = {
       channelId: ch.id, input, mode, encoder: await liveEncoder(ctx), dvrSeconds: ctx.cfg.LIVETV_DVR_MINUTES * 60, maxBitrate: ctx.cfg.LIVETV_MAX_BITRATE,
     };
+    // a slow admission (budget lock, encoder probe) must not let the lock lapse: a second starter would admit too. Lost = somebody else starts it
+    if (!(await ctx.kv.refreshIfEquals(startKey(ch.id), lock, START_LOCK_TTL_S).catch(() => false))) {
+      await giveBack();
+      return unreachable;
+    }
     try {
       await livetvCall(ctx, 'POST', '/v1/streams', body, { timeoutMs: START_TIMEOUT_MS });
     } catch (e) {
@@ -424,13 +453,17 @@ export async function livetvTick(ctx: Ctx): Promise<void> {
   const token = randomUUID();
   if (!(await ctx.kv.setnx(TICK_KEY, token, TICK_LOCK_TTL_S))) return;
   try {
+    const renew = () => ctx.kv.refreshIfEquals(TICK_KEY, token, TICK_LOCK_TTL_S).catch(() => false);
     await bootCheck(ctx);
+    if (!(await renew())) return;
     await rejectedNotes(ctx);
+    if (!(await renew())) return;
     const list = await readStreams(ctx);
     if (!list) return;
     const viewers = await viewerCounts(ctx);
     const now = Date.now();
     for (const s of list) {
+      if (!(await renew())) return;
       const id = s.channelId;
       await streamEvents(ctx, s);
       if (await ctx.kv.get(startKey(id))) continue;
@@ -444,9 +477,21 @@ export async function livetvTick(ctx: Ctx): Promise<void> {
         continue;
       }
       if (now - since < STOP_AFTER_MS) continue;
-      await stopQuietly(ctx, id);
-      await dropConvGrant(ctx, convKey(id));
-      await ctx.kv.del(zeroKey(id));
+      // a watch that joined after the snapshot above must keep its stream: under the channel's start lock (no start runs meanwhile) look
+      // at the viewers and the join marker again right before the stop
+      const lock = randomUUID();
+      if (!(await ctx.kv.setnx(startKey(id), lock, START_LOCK_TTL_S))) continue;
+      try {
+        if ((await viewerCounts(ctx)).get(id) || (await ctx.kv.get(joinKey(id)))) {
+          await ctx.kv.del(zeroKey(id));
+          continue;
+        }
+        await stopQuietly(ctx, id);
+        await dropConvGrant(ctx, convKey(id));
+        await ctx.kv.del(zeroKey(id));
+      } finally {
+        await ctx.kv.delIfEquals(startKey(id), lock).catch(() => false);
+      }
     }
   } finally {
     await ctx.kv.delIfEquals(TICK_KEY, token).catch(() => false);

@@ -94,13 +94,11 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
     const deviceId = req.session!.deviceId;
     if (!deviceId) return reply.code(403).send({ error: 'device_pending' });
 
-    const limits = await effectiveLimits(ctx, u);
-    if (limits) {
-      const prefix = `play:${u.id}:`;
-      const own = new Set(await deviceLiveSessions(ctx, u.id, deviceId));
-      const counted = (await ctx.kv.keys(prefix)).filter((k) => !own.has(k.slice(prefix.length))).length;
-      if (counted >= limits.maxStreams) return reply.code(429).send({ error: 'max_streams', max: limits.maxStreams });
-    }
+    const limits = (await effectiveLimits(ctx, u))!;
+    const prefix = `play:${u.id}:`;
+    const own = new Set(await deviceLiveSessions(ctx, u.id, deviceId));
+    const counted = (await ctx.kv.keys(prefix)).filter((k) => !own.has(k.slice(prefix.length))).length;
+    if (counted >= limits.maxStreams) return reply.code(429).send({ error: 'max_streams', max: limits.maxStreams });
 
     const r = await startOrJoin(ctx, { userId: u.id, deviceId, role: u.role }, ch, profile);
     if ('status' in r) {

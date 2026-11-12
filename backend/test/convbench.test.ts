@@ -494,8 +494,10 @@ describe('livetv is measured too (Live TV Task 31)', () => {
 
   it('the tick measures again while livetv has no record (one attempt per 30 min)', async () => {
     await env.kv.set('conv:bench', JSON.stringify(bench()), 3600);
+    const before = await env.kv.get('conv:bench');
     expect(await convBenchTick(env.ctx)).toBe(true);
     expect(benchCalls()).toHaveLength(1);
+    expect(await env.kv.get('conv:bench')).toBe(before); // only livetv measured: the media server's current record stays untouched
     expect(await env.kv.get('conv:bench:livetv')).not.toBeNull();
     await env.kv.del('conv:bench:attempt');
     expect(await convBenchTick(env.ctx)).toBe(false); // both measured

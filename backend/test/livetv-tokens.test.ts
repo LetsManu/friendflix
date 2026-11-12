@@ -116,7 +116,7 @@ beforeEach(async () => {
   nord = await channel('Nordlicht TV', news);
   hafen = await channel('Hafenkanal', fresh); // an unreleased group: nobody sees it on the user side (admins included)
   env.ctx.fetchImpl = fakeLivetv();
-  // the real detection too: streams.ts reaches detect.js through convbudget, past this file's mock of it
+  // the real detection too: the route's livetvCall reads livetv's detected state, which the mocked livetvInstalled does not fill
   await detectLivetv(env.ctx, 0);
   invalidateLiveConversions();
   running.clear();

@@ -5,7 +5,6 @@ import type { Ctx } from './ctx.js';
 import { CONV_DL_PREFIX, CONV_EXEMPT_PREFIX, within, type DownloadMark, type SessionRead } from './convexempt.js';
 import { HEVC_SESSIONS_TIMEOUT_MS, fingerprint } from './hevcenc.js';
 import { listLive } from './live.js';
-import { liveConversions } from './livetv/streams.js';
 import type { EncoderSettings, ServerSession } from './media/types.js';
 
 /**
@@ -14,6 +13,16 @@ import type { EncoderSettings, ServerSession } from './media/types.js';
  * priority (admits); running conversions are never stopped here, whoever started them. Grants, exempt marks and the lock live in KV
  * and carry only kinds, ids and a display label; no URL, token or path.
  */
+/**
+ * The live TV transcodes livetv runs, registered by livetv/streams.ts when it loads (no import back: convbudget is a leaf of that
+ * graph, so no load order can reach a half-initialised module). Without a registration there are none.
+ */
+export type LiveSource = (ctx: Ctx) => Promise<ConvEntry[]>;
+let liveSource: LiveSource = async () => [];
+export function setLiveSource(fn: LiveSource): void {
+  liveSource = fn;
+}
+
 export type ConvKind = 'film' | 'live' | 'record' | 'download' | 'reencode';
 export type ConvPriority = 'films' | 'live' | 'equal';
 export interface ConvEntry {
@@ -167,7 +176,7 @@ async function count(ctx: Ctx, o: { exceptUser?: string; exceptDevice?: string; 
   const list = ctx.jf.admin.transcodeSessions?.bind(ctx.jf.admin);
   const sessions = list ? await (o.sessions ?? (() => within(list, HEVC_SESSIONS_TIMEOUT_MS)))() : [];
   if (!sessions) return null;
-  const [live, liveTv] = await Promise.all([listLive(ctx).catch(() => []), liveConversions(ctx).catch(() => [] as ConvEntry[])]);
+  const [live, liveTv] = await Promise.all([listLive(ctx).catch(() => []), liveSource(ctx).catch(() => [] as ConvEntry[])]);
   const liveBy = new Map(live.map((l) => [l.playSessionId, l] as const));
   const bySession = new Map(sessions.flatMap((s) => (s.playSessionId ? [[s.playSessionId, s] as const] : [])));
 

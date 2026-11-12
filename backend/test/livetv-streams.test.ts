@@ -252,6 +252,34 @@ describe('start and join', () => {
     expect(a.json().running.map((x: { id: string }) => x.id).sort()).toEqual([nord, admins].sort());
   });
 
+  it('a budget that did not answer is not a full budget: 502, no start_refused_full, no grant (review M2)', async () => {
+    const ch = await addChannel('Hafenkanal', { kind: 'srt' });
+    await env.kv.set('conv:gate', 'someone-else', 30); // the budget lock stays taken: admitConversion answers why 'unknown' after its wait
+    const r = await watch(anna, ch);
+    expect(r.statusCode).toBe(502);
+    expect(r.json()).toEqual({ error: 'channel_unreachable' });
+    expect(streamCalls('POST')).toHaveLength(0);
+    expect(await env.kv.get(`conv:grant:live:${ch}`)).toBeNull();
+    expect(await listEvents(env.ctx)).toEqual([]);
+    await env.kv.del('conv:gate');
+  });
+
+  it('a start that lost its lock during a slow admission does not POST (review M3)', async () => {
+    const id = await addChannel('Hafenkanal', { kind: 'srt' });
+    const ch = await effective(id);
+    const set = env.kv.set.bind(env.kv);
+    const spy = vi.spyOn(env.kv, 'set').mockImplementation(async (k: string, v: string, ttl?: number) => {
+      await set(k, v, ttl as number);
+      if (k === `conv:grant:live:${id}`) await set(`ltv:start:${id}`, 'another-starter', 20); // the admission was slow: the lock lapsed and another starter has it
+    });
+    const r = await startOrJoin(env.ctx, { userId: annaId, deviceId: 'dev-anna-1', role: 'family' }, ch, { id: annaId, kids: false });
+    expect(r).toEqual({ status: 502, error: 'channel_unreachable' });
+    expect(streamCalls('POST')).toHaveLength(0);
+    expect(await env.kv.get(`conv:grant:live:${id}`)).toBeNull();
+    spy.mockRestore();
+    expect(await env.kv.get(`ltv:start:${id}`)).toBe('another-starter'); // never deleted by the one that lost it
+  });
+
   it('remux after all releases the slot', async () => {
     const ch = await addChannel('Hafenkanal', { kind: 'srt' });
     reportMode = 'remux'; // livetv's probe at start: H.264 + AAC
@@ -398,6 +426,38 @@ describe('livetvTick', () => {
     expect(await env.kv.get(`ltv:zero:${ch}`)).toBeNull();
   });
 
+  it('a join after the tick looked is not stopped under its viewer (review M1)', async () => {
+    const ch = await effective(await addChannel('Nordlicht TV'));
+    streams.set(ch.id, view(ch.id));
+    await env.kv.set(`ltv:zero:${ch.id}`, String(Date.now() - 120_000), 3600); // idle for two minutes: due
+    const r = await startOrJoin(env.ctx, { userId: annaId, deviceId: 'dev-anna-1', role: 'family' }, ch, { id: annaId, kids: false });
+    expect('streamKey' in r).toBe(true); // joined; its token is not minted yet, so no viewer key
+    await livetvTick(env.ctx);
+    expect(dels).toEqual([]);
+    expect(await env.kv.get(`ltv:zero:${ch.id}`)).toBeNull();
+  });
+
+  it('the tick lock lasts through a slow tick (review M5)', async () => {
+    const ids = [await addChannel('A'), await addChannel('B'), await addChannel('C')];
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const alive: boolean[] = [];
+    const base = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'DELETE') {
+        alive.push((await env.kv.get('ltv:tick')) !== null);
+        vi.setSystemTime(Date.now() + 10_000); // each stop takes 10 s
+      }
+      return base(input, init);
+    }) as typeof fetch;
+    for (const id of ids) {
+      streams.set(id, view(id));
+      await env.kv.set(`ltv:zero:${id}`, String(Date.now() - 120_000), 3600);
+    }
+    await livetvTick(env.ctx);
+    expect(dels).toHaveLength(3);
+    expect(alive).toEqual([true, true, true]);
+  });
+
   it('a viewer coming back clears the countdown; a stream nobody ever watched stops after 60 s too', async () => {
     const a = await addChannel('Nordlicht TV');
     const b = await addChannel('Hafenkanal');
@@ -485,10 +545,20 @@ describe('the live budget source', () => {
     expect(await admitConversion(env.ctx, { kind: 'film', userId: benId, hint: 'film-dunmoor' })).toEqual({ ok: true });
   });
 
+  it('a miss in streamKeyFor is remembered for 2 s (review M6)', async () => {
+    const ch = await addChannel('Hafenkanal');
+    expect(await streamKeyFor(env.ctx, ch)).toBeNull();
+    const n = streamCalls('GET').length;
+    expect(await streamKeyFor(env.ctx, ch)).toBeNull();
+    expect(streamCalls('GET')).toHaveLength(n);
+  });
+
   it('streamKeyFor answers only a running stream', async () => {
     const a = await addChannel('Nordlicht TV');
     expect(await streamKeyFor(env.ctx, a)).toBeNull();
     streams.set(a, view(a));
+    expect(await streamKeyFor(env.ctx, a)).toBeNull(); // the miss is remembered for 2 s
+    invalidateLiveConversions(); // what a start does
     expect(await streamKeyFor(env.ctx, a)).toBe(streams.get(a)!.streamKey); // not listed in the cache: asked again
     streams.get(a)!.state = 'failed';
     invalidateLiveConversions();
@@ -538,6 +608,16 @@ describe('logos and settings', () => {
     } finally {
       await put(30);
     }
+  });
+});
+
+describe('module graph (review I1)', () => {
+  it('convbudget imports nothing of livetv; livetv/tokens.ts loads first in a fresh graph', async () => {
+    expect(readFileSync(new URL('../src/convbudget.ts', import.meta.url), 'utf8')).not.toMatch(/from '\.\/livetv\//);
+    vi.resetModules();
+    await expect(import('../src/livetv/tokens.js')).resolves.toHaveProperty('liveViewKey');
+    vi.resetModules();
+    await expect(import('../src/livetv/streams.js')).resolves.toHaveProperty('livetvTick');
   });
 });
 
