@@ -246,7 +246,8 @@ const leavingRow = (itemId: string, days: number, note: string | null): LeavingR
 
 const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemId: 'it' + i, name: 'Titel Nummer ' + i, type: i % 3 ? 'Movie' : 'Series', status: (['ok', 'ok', 'ok', 'failed', 'missing', 'preparing'] as const)[i % 6]!, bytes: i % 6 < 3 ? 3_400_000 + i * 1000 : null, audioLang: i % 6 < 3 ? 'deu' : null, error: i % 6 === 3 ? 'ffmpeg exited with code 1' : null, createdAt: ago(i) }));
 
-/** rights facts of the first accounts (Anna: a switch exception, a limit and a kids profile with a note; Ben and Clara have no 2FA) */
+/** rights facts of the first accounts (Anna: a switch exception, a limit and a kids profile with a note; Ben and Clara have no 2FA).
+ *  Cloned per state: the mock writes into `perms`/`ov`, and a shared object would carry one test's save into the next test of the worker */
 const SEED: Array<Partial<AdminUser>> = [
   { perms: { party: false }, otherOverrides: 1, ov: { maxStreams: 3 }, kidsProfiles: 1, note: 'Teilt das Konto mit ihrer Familie' },
   { mfaOff: true },
@@ -256,7 +257,7 @@ const SEED: Array<Partial<AdminUser>> = [
 export function adminState(): AdminState {
   const users: AdminUser[] = [
     { id: 'u1', name: 'Tester', email: 'tester@example.org', role: 'admin', disabled: false, jellyfin_username: 'tester', seerr_user_id: 1, created_at: ago(24 * 400), last_seen: ago(0.1) },
-    ...NAMES.map((n, i) => ({ id: auid(i + 2), name: n, email: i % 3 === 2 ? null : `${n.split(' ')[0]!.toLowerCase()}@example.org`, role: ['friend', 'family', 'guest', 'friend'][i % 4]!, disabled: i === 4, jellyfin_username: n.split(' ')[0]!.toLowerCase(), seerr_user_id: null, created_at: ago(24 * (i + 3)), last_seen: ago(i * 7), ...SEED[i] })),
+    ...NAMES.map((n, i) => ({ id: auid(i + 2), name: n, email: i % 3 === 2 ? null : `${n.split(' ')[0]!.toLowerCase()}@example.org`, role: ['friend', 'family', 'guest', 'friend'][i % 4]!, disabled: i === 4, jellyfin_username: n.split(' ')[0]!.toLowerCase(), seerr_user_id: null, created_at: ago(24 * (i + 3)), last_seen: ago(i * 7), ...structuredClone(SEED[i]) })),
   ];
   return {
     users,

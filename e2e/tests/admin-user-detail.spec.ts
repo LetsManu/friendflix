@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
-import { auid } from '../mocks/admin.js';
+import { adminState, auid } from '../mocks/admin.js';
 
 const ANNA = auid(2);
 const CARLA = auid(4);
@@ -229,6 +229,57 @@ test.describe('admin user detail (desktop)', () => {
     await expect(saveBar(page)).toContainText('2 Konten konnten nicht aktualisiert werden.');
     await expect(toasts(page).getByText('erneut angewendet')).toHaveCount(0);
     await expect(saveBar(page).getByRole('button', { name: 'Erneut anwenden' })).toBeVisible();
+  });
+
+  test('mock: every test starts from its own seed (a save in one test never reaches the next one in the worker)', () => {
+    const a = adminState(), b = adminState();
+    const anna = (st: typeof a) => st.users.find((u) => u.id === ANNA)!;
+    anna(a).ov!.maxStreams = 5;
+    anna(a).perms!.party = true;
+    expect(anna(b).ov).toEqual({ maxStreams: 3 });
+    expect(anna(b).perms).toEqual({ party: false });
+  });
+
+  test('policy_partial: the error shows once with its final buttons, Erneut anwenden stays put through the reload', async ({ page, api }) => {
+    api.admin.matrix.policyPartial = true;
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    await rightsPanel(page).getByRole('spinbutton', { name: 'Gleichzeitige Streams' }).fill('5');
+    // hold the reload after the 502 until the test lets it go
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let held = false;
+    await page.route(`**/api/admin/users/${ANNA}/rights`, async (r) => {
+      if (r.request().method() === 'GET') { held = true; await gate; }
+      await r.fallback();
+    });
+    // every set of bar buttons the page shows, in order, with where *Erneut anwenden* stands
+    await page.evaluate(() => {
+      const w = window as unknown as { __sets: string[] };
+      w.__sets = [];
+      const read = () => {
+        const bs = [...document.querySelectorAll('.sb .acts button')];
+        const again = bs.find((b) => b.textContent?.trim() === 'Erneut anwenden')?.getBoundingClientRect();
+        const s = bs.map((b) => b.textContent?.trim()).join(' | ') + (again ? ` @${Math.round(again.left)},${Math.round(again.top)}` : '');
+        if (w.__sets.at(-1) !== s) w.__sets.push(s);
+      };
+      new MutationObserver(read).observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
+    await saveViaReview(page);
+    await expect.poll(() => held).toBe(true);
+    // the reload runs: the bar shows the save running, no buttons to mis-hit
+    await expect(saveBar(page).getByRole('button')).toHaveCount(0);
+    const reloaded = page.waitForResponse((r) => r.url().endsWith(`/api/admin/users/${ANNA}/rights`) && r.request().method() === 'GET');
+    release();
+    await reloaded;
+    const again = saveBar(page).getByRole('button', { name: 'Erneut anwenden' });
+    await expect(again).toBeVisible();
+    await expect(rightsPanel(page).getByRole('spinbutton', { name: 'Gleichzeitige Streams' })).toHaveValue('5');
+    // from its first frame on, the error state is one set of buttons in one place
+    const sets = await page.evaluate(() => (window as unknown as { __sets: string[] }).__sets);
+    const from = sets.findIndex((s) => s.includes('Erneut anwenden'));
+    expect(from).toBeGreaterThanOrEqual(0);
+    expect(sets.slice(from)).toHaveLength(1);
+    expect(sets[from]).toMatch(/^Schließen \| Erneut anwenden @/);
   });
 
   test('a library the server no longer has: the save says what to do and offers no retry', async ({ page, api }) => {
