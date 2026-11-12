@@ -10,7 +10,7 @@
 
   /**
    * The info panel (spec §12.1): a glass sheet on phones, a side panel on desktop and TV. *Jetzt* (title, time, progress, time left,
-   * subtitle, *Von Anfang an*), *Danach*, and *Letzter Sender* ("Zurück zu 4 Hafenkanal"). Opening and closing both slide; calm mode,
+   * subtitle, *Von Anfang an*), *Danach*, *Letzter Sender* ("Zurück zu 4 Hafenkanal") and, on phones, the *Senderliste* button. Opening and closing both slide; calm mode,
    * reduced motion, TV and kids: at once, on a solid panel, and no transition inside it either (the CastBar pattern, both triggers).
    * A modal dialog (role="dialog" on a plain container) whose buttons are a D-pad scope (`data-nav data-scope`); the first button
    * takes the focus. Back / Escape (the player's keys), the close button or a tap outside close it. The *Von Anfang an* slot is
@@ -22,8 +22,10 @@
   export let last: LiveChannel | null = null;
   export let phone = false;
   export let still = false;
+  /** phones: the *Senderliste* button lives here instead of the control bar (spec §12.1) */
+  export let listButton = false;
 
-  const dispatch = createEventDispatcher<{ close: void; restart: void; last: void }>();
+  const dispatch = createEventDispatcher<{ close: void; restart: void; last: void; list: void }>();
   let panel: HTMLElement | undefined;
   $: mode = (still ? 'still' : undefined) as FxMode | undefined;
   $: side = (phone ? 'bottom' : 'right') as 'bottom' | 'right';
@@ -68,6 +70,9 @@
   {#if last}
     <button type="button" class="frost-btn act" on:click={() => dispatch('last')}>{$t('live.player.lastChannelTo', { number: last.number, name: last.name })}</button>
   {/if}
+  {#if listButton}
+    <button type="button" class="frost-btn act" on:click={() => dispatch('list')}>{$t('live.player.channelList')}</button>
+  {/if}
 </div>
 
 <style>
@@ -92,6 +97,7 @@
   .rslot { min-height: 44px; margin-top: 12px; }
   .act { width: 100%; }
   .ipanel > .act { margin-top: 4px; }
+  .ipanel > .act + .act { margin-top: 10px; }
   /* calm mode and reduced motion (both triggers, the CastBar pattern): the panel, its dim and its buttons do not move */
   :global(html.m-still) .ipdim, :global(html.m-still) .ipanel, :global(html.m-still) .ipanel :global(*), :global(html.m-still) .ipanel :global(*::before) { transition: none !important; animation: none !important; }
   @media (prefers-reduced-motion: reduce) {
