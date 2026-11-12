@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, randomUUID } from 'node:crypto';
 import type { Ctx } from './ctx.js';
-import { markConvExempt } from './convbudget.js';
+import { markConvExempt, within } from './convexempt.js';
 import { listLive } from './live.js';
 import type { EncoderSettings, HevcGate } from './media/types.js';
 import { previews, serviceUser } from './previews.js';
@@ -71,18 +71,6 @@ const readFailures = async (ctx: Ctx): Promise<Array<{ at: number; device: strin
   const l = parse<unknown>(await ctx.kv.get(FAIL_KEY).catch(() => null), []);
   return Array.isArray(l) ? l.filter((f): f is { at: number; device: string } => typeof f?.at === 'number' && typeof f?.device === 'string') : [];
 };
-
-/** Resolves with the promise's value, or undefined after `ms` / on a throw (shared with convbudget.ts). */
-export async function within<T>(fn: () => Promise<T>, ms: number): Promise<T | undefined> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([fn(), new Promise<undefined>((res) => { timer = setTimeout(() => res(undefined), ms); })]);
-  } catch {
-    return undefined;
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 const readSettings = async (ctx: Ctx, ms = 3000): Promise<EncoderSettings | null> => {
   const read = ctx.jf.admin.encoderSettings?.bind(ctx.jf.admin);

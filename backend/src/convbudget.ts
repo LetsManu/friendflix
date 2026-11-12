@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
 import type { Ctx } from './ctx.js';
-import { HEVC_SESSIONS_TIMEOUT_MS, fingerprint, within } from './hevcenc.js';
+import { CONV_EXEMPT_PREFIX, within } from './convexempt.js';
+import { HEVC_SESSIONS_TIMEOUT_MS, fingerprint } from './hevcenc.js';
 import { listLive } from './live.js';
 import type { EncoderSettings, ServerSession } from './media/types.js';
 
@@ -33,13 +34,14 @@ export interface BenchRecord { speed: number; hwAccel: string; fingerprint: stri
 
 export const CONV_DEFAULT_SLOTS = 2;
 export const CONV_GRANT_TTL_S = 30;
-export const CONV_EXEMPT_TTL_S = 900;
+export { CONV_EXEMPT_TTL_S, markConvExempt } from './convexempt.js';
 
 const LOCK_KEY = 'conv:gate';
 const LOCK_TTL_S = 3;
-const LOCK_RETRY_MS = 150;
+/** a second asker waits for the lock in short steps up to about 1 s (a holder's critical section is bounded by the 800-ms session read) */
+const LOCK_STEP_MS = 100;
+const LOCK_WAIT_MS = 1000;
 const GRANT = 'conv:grant:';
-const EXEMPT = 'conv:exempt:';
 const BENCH_KEY = 'conv:bench';
 const BENCH_LIVETV_KEY = 'conv:bench:livetv';
 const SETTINGS_MEMO_MS = 60_000;
@@ -70,7 +72,7 @@ export function admits(kind: ConvKind, used: number, limit: number, p: ConvPrior
 export function recommend(s: { jellyfin: number; livetv?: number }): number {
   const speeds = [s.jellyfin, s.livetv].filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
   const min = speeds.length ? Math.min(...speeds) : 0;
-  return Math.min(MAX_SLOTS, Math.max(1, Math.floor(min * SAFETY + 1e-9))); // the epsilon keeps 10 x 0.7 at 7
+  return Math.min(MAX_SLOTS, Math.max(1, Math.floor(min * SAFETY))); // exact for every speed with up to 3 decimals (no epsilon needed)
 }
 
 const parse = <T>(raw: string | null | undefined): T | null => {
@@ -83,25 +85,35 @@ const benchOf = (raw: string | null): BenchRecord | null => {
     ? { speed: b.speed, hwAccel: b.hwAccel, fingerprint: b.fingerprint, at: b.at } : null;
 };
 
-/** the media server's encoder settings, read at most once a minute per media server instance (a failed read is remembered too) */
-const settingsMemo = new WeakMap<object, { at: number; p: Promise<EncoderSettings | null> }>();
-function encoderSettings(ctx: Ctx): Promise<EncoderSettings | null> {
+/**
+ * The media server's encoder settings, read at most once a minute per media server instance (a failed read is remembered too). One
+ * read runs at a time for up to 3 s; each caller waits at most `waitMs` for it (late = null) while the read goes on and fills the memo.
+ */
+let settingsMemo = new WeakMap<object, { at: number; p: Promise<EncoderSettings | null> }>();
+/** tests only: forget every memoised settings read */
+export const __resetConvMemo = (): void => { settingsMemo = new WeakMap(); };
+async function encoderSettings(ctx: Ctx, waitMs: number): Promise<EncoderSettings | null> {
   const jf = ctx.jf;
-  const hit = settingsMemo.get(jf);
-  if (hit && Date.now() - hit.at < SETTINGS_MEMO_MS) return hit.p;
-  const read = jf.admin.encoderSettings?.bind(jf.admin);
-  const p = read ? within(read, SETTINGS_TIMEOUT_MS).then((v) => v ?? null) : Promise.resolve(null);
-  settingsMemo.set(jf, { at: Date.now(), p });
-  return p;
+  let hit = settingsMemo.get(jf);
+  if (!hit || Date.now() - hit.at >= SETTINGS_MEMO_MS) {
+    const read = jf.admin.encoderSettings?.bind(jf.admin);
+    hit = { at: Date.now(), p: read ? within(read, SETTINGS_TIMEOUT_MS).then((v) => v ?? null) : Promise.resolve(null) };
+    settingsMemo.set(jf, hit);
+  }
+  const p = hit.p;
+  return waitMs >= SETTINGS_TIMEOUT_MS ? p : ((await within(() => p, waitMs)) ?? null);
 }
 
-/** Both benchmark records; `stale` when the media server's encoder settings changed since its record (unreadable settings: not stale). */
-export async function readBench(ctx: Ctx): Promise<{ jellyfin: BenchRecord | null; livetv: BenchRecord | null; stale: boolean }> {
+/**
+ * Both benchmark records; `stale` when the media server's encoder settings changed since its record. Unreadable or late settings are
+ * not stale. `settingsMs`: how long to wait for the settings (admin views 3 s; the admission path 800 ms, never a slow start).
+ */
+export async function readBench(ctx: Ctx, settingsMs = SETTINGS_TIMEOUT_MS): Promise<{ jellyfin: BenchRecord | null; livetv: BenchRecord | null; stale: boolean }> {
   const [jf, lt] = await ctx.kv.mget([BENCH_KEY, BENCH_LIVETV_KEY]).catch(() => [null, null]);
   const jellyfin = benchOf(jf ?? null);
   const livetv = benchOf(lt ?? null);
   if (!jellyfin) return { jellyfin, livetv, stale: false };
-  const settings = await encoderSettings(ctx);
+  const settings = await encoderSettings(ctx, settingsMs);
   return { jellyfin, livetv, stale: settings !== null && jellyfin.fingerprint !== fingerprint(settings) };
 }
 
@@ -109,9 +121,9 @@ export async function readBench(ctx: Ctx): Promise<{ jellyfin: BenchRecord | nul
  * The limit in force: the admin's CONVERSION_SLOTS, else automatic = the recommendation of a current benchmark, else 2.
  * `recommended` is null while nothing (current) is measured.
  */
-export async function conversionLimit(ctx: Ctx): Promise<{ limit: number; auto: number; custom: number | null; recommended: number | null; priority: ConvPriority }> {
+export async function conversionLimit(ctx: Ctx, o: { settingsMs?: number } = {}): Promise<{ limit: number; auto: number; custom: number | null; recommended: number | null; priority: ConvPriority }> {
   const { CONVERSION_SLOTS, CONVERSION_PRIORITY } = ctx.cfg;
-  const b = await readBench(ctx);
+  const b = await readBench(ctx, o.settingsMs);
   const recommended = b.jellyfin && !b.stale ? recommend({ jellyfin: b.jellyfin.speed, ...(b.livetv ? { livetv: b.livetv.speed } : {}) }) : null;
   const auto = recommended ?? CONV_DEFAULT_SLOTS;
   const custom = CONVERSION_SLOTS ?? null;
@@ -140,7 +152,7 @@ export async function countConversions(ctx: Ctx, o: { exceptUser?: string; excep
   const exempt = new Set<string>();
   const downloads = new Set<string>();
   if (withPs.length) {
-    const marks = await ctx.kv.mget(withPs.map((ps) => `${EXEMPT}${ps}`)).catch(() => [] as Array<string | null>);
+    const marks = await ctx.kv.mget(withPs.map((ps) => `${CONV_EXEMPT_PREFIX}${ps}`)).catch(() => [] as Array<string | null>);
     withPs.forEach((ps, i) => { if (marks[i] != null) exempt.add(ps); });
     const rows = await ctx.db.query<{ play_session_id: string }>(
       "select play_session_id from download_jobs where status = 'preparing' and play_session_id = any($1::text[])", [withPs],
@@ -180,21 +192,25 @@ export async function countConversions(ctx: Ctx, o: { exceptUser?: string; excep
 }
 
 /**
- * May this conversion start? One asker at a time (KV lock, one retry after 150 ms), count without the asker's own device, apply the
- * priority rule, then write a 30-s grant under `hint` (bindConvGrant moves it to the real play session). `unknown`: the lock or the
- * session list could not be had in time; the caller treats it like `full` (a download waits for its next tick).
+ * May this conversion start? One asker at a time (KV lock, waited for in 100-ms steps up to about 1 s), count without the asker's own
+ * device, apply the priority rule, then write a 30-s grant under `hint` (bindConvGrant moves it to the real play session). Every media
+ * server read on this path is bounded by 800 ms (settings and sessions run in parallel), so the answer comes within about 2 s at worst.
+ * `unknown`: the lock or the session list could not be had in time; the caller treats it like `full` (a download waits for its next tick).
  */
 export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: string; deviceId?: string; hint: string; hevc?: boolean; label?: string }): Promise<{ ok: true } | { ok: false; why: 'full' | 'unknown' }> {
-  const lim = await conversionLimit(ctx); // outside the lock: a slow settings read must not hold it
+  // the limit does not depend on the lock: its settings read (800 ms at most here) starts now and overlaps the wait and the count
+  const limP = conversionLimit(ctx, { settingsMs: HEVC_SESSIONS_TIMEOUT_MS });
+  limP.catch(() => undefined); // awaited below; never an unhandled rejection when the lock is not had
   const token = randomUUID();
+  const until = Date.now() + LOCK_WAIT_MS;
   let locked = await ctx.kv.setnx(LOCK_KEY, token, LOCK_TTL_S).catch(() => false);
-  if (!locked) {
-    await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
+  while (!locked && Date.now() < until) {
+    await new Promise((r) => setTimeout(r, LOCK_STEP_MS));
     locked = await ctx.kv.setnx(LOCK_KEY, token, LOCK_TTL_S).catch(() => false);
   }
   if (!locked) return { ok: false, why: 'unknown' };
   try {
-    const running = await countConversions(ctx, o.deviceId ? { exceptUser: o.userId, exceptDevice: o.deviceId } : {});
+    const [lim, running] = await Promise.all([limP, countConversions(ctx, o.deviceId ? { exceptUser: o.userId, exceptDevice: o.deviceId } : {})]);
     if (!running) return { ok: false, why: 'unknown' };
     if (!admits(o.kind, running.length, lim.limit, lim.priority)) return { ok: false, why: 'full' };
     const g: Grant = { kind: o.kind, user: o.userId, ...(o.deviceId ? { device: o.deviceId } : {}), ...(o.hevc ? { hevc: true as const } : {}), ...(o.label ? { label: o.label } : {}) };
@@ -209,13 +225,9 @@ export async function admitConversion(ctx: Ctx, o: { kind: ConvKind; userId: str
 export async function bindConvGrant(ctx: Ctx, hint: string, playSessionId: string | null): Promise<void> {
   const raw = await ctx.kv.get(`${GRANT}${hint}`).catch(() => null);
   if (raw === null) return;
-  await ctx.kv.del(`${GRANT}${hint}`).catch(() => undefined);
   const g = parse<Grant>(raw);
+  // the new key first: a count in between sees the grant twice (safe), never not at all
   if (playSessionId && g) await ctx.kv.set(`${GRANT}${playSessionId}`, JSON.stringify({ ...g, ps: playSessionId } satisfies Grant), CONV_GRANT_TTL_S).catch(() => undefined);
+  if (hint !== playSessionId) await ctx.kv.del(`${GRANT}${hint}`).catch(() => undefined);
 }
 export const dropConvGrant = (ctx: Ctx, hint: string) => bindConvGrant(ctx, hint, null);
-
-/** A conversion of FriendFlix's own housekeeping (preview clip, HEVC probe, benchmark): not counted for 15 min. Never throws. */
-export async function markConvExempt(ctx: Pick<Ctx, 'kv'>, playSessionId: string): Promise<void> {
-  await ctx.kv.set(`${EXEMPT}${playSessionId}`, '1', CONV_EXEMPT_TTL_S).catch(() => undefined);
-}

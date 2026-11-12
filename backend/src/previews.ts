@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { markConvExempt } from './convbudget.js';
+import { markConvExempt } from './convexempt.js';
 import type { Ctx } from './ctx.js';
 import { normaliseFmp4 } from './fmp4.js';
 import type { UserRow } from './types.js';
