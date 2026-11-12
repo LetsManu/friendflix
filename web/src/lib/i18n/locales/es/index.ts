@@ -32,6 +32,7 @@ import serverText from './serverText';
 import tv from './tv';
 import desk from './desk';
 import adminConv from './adminConv';
+import adminLive from './adminLive';
 
-const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, reco, ui, adminPeople, adminContent, serverText, tv, desk, adminConv };
+const dict: Translation<typeof de> = { common, shell, home, detail, player, account, social, admin, hubs, anime, together, kids, scenes, fresh, mine, diagnose, version, settings, setup, login, postplay, reco, ui, adminPeople, adminContent, serverText, tv, desk, adminConv, adminLive };
 export default dict;
