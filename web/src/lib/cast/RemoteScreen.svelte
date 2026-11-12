@@ -33,7 +33,7 @@
   import { HINT_SEEN_KEY } from './resume';
   import { castBackdrops, castThumbs, deviceLabel, playingLine } from './remoteview';
   import CastScrubber from './CastScrubber.svelte';
-  import { applePlatform, continuousView, nowLine, remoteLayout, statusOf, upNextLine, upNextOf, volumeLine } from './remotescreen';
+  import { applePlatform, continuousView, nowLine, remoteLayout, slotMode, statusOf, upNextLine, upNextOf, volumeLine } from './remotescreen';
   import TrackChips from './TrackChips.svelte';
   import UpNextCard from './UpNextCard.svelte';
 
@@ -54,7 +54,10 @@
   $: if (s?.joined) keptJoin = { items: s.joined.items, title: s.title, index: s.joined.index }; else if (!s) keptJoin = null;
   /** the kept list's "now" row: the episode the single token plays (else the last one the stream was in) */
   const nowIn = (k: NonNullable<typeof keptJoin>, id: string) => { const i = k.items.findIndex((x) => x.itemId === id); return i >= 0 ? i : k.index; };
-  $: panel = cv ?? (s && keptJoin ? continuousView({ ...s, title: keptJoin.title, joined: { items: keptJoin.items, index: nowIn(keptJoin, s.itemId), streamPosition: 0, streamDuration: 0 } }, $t) : null);
+  const inKept = (k: NonNullable<typeof keptJoin>, id: string) => k.items.some((x) => x.itemId === id);
+  /** the list's content (also the scrubber's "Folge n von m"): a joined stream, or a single token of one of its episodes; never for another item */
+  $: panel = cv ?? (s && keptJoin && inKept(keptJoin, s.itemId) ? continuousView({ ...s, title: keptJoin.title, joined: { items: keptJoin.items, index: nowIn(keptJoin, s.itemId), streamPosition: 0, streamDuration: 0 } }, $t) : null);
+  $: mode = s ? slotMode(s, keptJoin, Boolean(s.next || upNextOf(s))) : 'plain';
 
   // ---- artwork: the fallback chain advances when an image fails ----
   let bgI = 0, thI = 0, artFor = '';
@@ -103,7 +106,7 @@
   $: if (skip) lastSkip = skip.type;
 
   // ---- next episode: the card (UpNextCard) tells; here it is announced once, with its start time, not every second ----
-  $: next = s && !panel ? upNextOf(s) : null;
+  $: next = s && !cv ? upNextOf(s) : null;
   let said = '', saidFor = '';
   // AirPlay: nothing says "plays" before the TV does. The eyebrow keeps its room, empty, and fades in on the first `playing`, which is announced politely
   $: airWait = air && s?.state === 'connecting';
@@ -177,7 +180,7 @@
           {/if}
           <div class="txt">
             <p class="eyebrow" class:wait={airWait} aria-hidden={airWait ? 'true' : undefined}>{playingLine(s, $t)}</p>
-            <h1 class="title" id="rs-title">{s.title}</h1>
+            <h1 class="title" class:one={phone && Boolean(keptJoin || cv)} id="rs-title" title={s.title}>{s.title}</h1>
             {#if line}<p class="sub">{line}</p>{/if}
             {#if !air && !seenAtOpen}
               <div class="hint" class:off={hintOff} inert={hintOff}>
@@ -188,15 +191,21 @@
           </div>
         </section>
 
-        {#if panel}
-          <section class="unslot cont frost frost-safe frost-panel" aria-labelledby="rs-cont">
-            <div class="conthead"><h2 id="rs-cont">{$t('player.castRemote.continuous')}</h2><StatusPill tone="warn" label={$t('common.experimental')} /></div>
-            <p class="continfo">{panel.info}</p>
-            <h3 class="rowshead">{$t('player.castRemote.inARow')}</h3>
-            <ul class="rows">
-              {#each panel.list as r}<li class:now={r.now} aria-current={r.now ? 'true' : undefined}><span class="rl">{r.label}</span><span class="rn">{r.note}</span></li>{/each}
-            </ul>
-          </section>
+        {#if keptJoin || cv}
+          <div class="unslot keep">
+            {#if mode === 'list' && panel}
+              <section class="cont frost frost-safe frost-panel" aria-labelledby="rs-cont">
+                <div class="conthead"><h2 id="rs-cont">{$t('player.castRemote.continuous')}</h2><StatusPill tone="warn" label={$t('common.experimental')} /></div>
+                <p class="continfo">{panel.info}</p>
+                <h3 class="rowshead">{$t('player.castRemote.inARow')}</h3>
+                <ul class="rows">
+                  {#each panel.list as r}<li class:now={r.now} aria-current={r.now ? 'true' : undefined}><span class="rl">{r.label}</span><span class="rn">{r.note}</span></li>{/each}
+                </ul>
+              </section>
+            {:else if mode === 'card' && next}
+              <div class="unfx" transition:fade={{ duration: motionAllowed() ? 200 : 0 }}><UpNextCard session={s} compact={phone} /></div>
+            {/if}
+          </div>
         {:else if s.isEpisode || everEpisode}
           <div class="unslot">
             {#if next}<div class="unfx" transition:fade={{ duration: motionAllowed() ? 200 : 0 }}><UpNextCard session={s} compact={phone} /></div>{/if}
@@ -230,11 +239,10 @@
               <button type="button" class="tb mute" aria-label={$t(muted ? 'player.castRemote.unmute' : 'player.castRemote.mute')} on:click={castToggleMute}>
                 <Icon name={muted ? 'volume-off' : 'volume'} size={24} />
               </button>
-            {:else if phone && !panel}<span class="gap" aria-hidden="true"></span>{/if}
-            {#if panel}
-              {@const off = !cv || cv.prevDisabled}
-              {@const pl = off ? $t('player.castRemote.prevNone') : $t('player.castRemote.prev')}
-              <button type="button" class="tb" aria-disabled={live && !off ? undefined : 'true'} aria-label={pl} title={pl} on:click={goPrev}><Icon name="skip-prev" size={28} /></button>
+            {:else if phone && !(keptJoin || cv)}<span class="gap" aria-hidden="true"></span>{/if}
+            {#if keptJoin || cv}
+              {@const pl = panel?.prevDisabled ? $t('player.castRemote.prevNone') : $t('player.castRemote.prev')}
+              <button type="button" class="tb" aria-disabled={live && cv && !cv.prevDisabled ? undefined : 'true'} aria-label={pl} title={pl} on:click={goPrev}><Icon name="skip-prev" size={28} /></button>
             {/if}
             <button type="button" class="tb" aria-disabled={live ? undefined : 'true'} aria-label={$t('player.controls.back10')} title={$t('player.controls.back10')} on:click={() => seekBy(-10)}><Icon name="rewind10" size={30} /></button>
             <button type="button" class="tb disc" aria-disabled={live ? undefined : 'true'} aria-busy={s.state === 'connecting' ? 'true' : undefined}
@@ -302,13 +310,19 @@
   .sub { margin: 0; color: rgba(255, 255, 255, .72); font-size: 1rem; overflow-wrap: anywhere; }
   .phone .now { padding: 14px 16px; display: block; }
   .phone .title { font-size: 34px; }
+  /* continuous mode on the phone: one line, so the list stays above the fold (the full title is the tooltip) */
+  .title.one { -webkit-line-clamp: 1; line-clamp: 1; }
 
   /* the up-next slot keeps its room (episodes), the card fades in (opacity only) */
   .unslot { min-height: 204px; }
   .unfx { display: block; }
   .wide .unslot { min-height: 0; }
+  /* a session that was joined keeps this height for the rest of the session, whether the list, the card or nothing is in it */
+  .unslot.keep { min-height: 224px; } /* the up-next card's own height (stacked) */
+  .phone .unslot.keep { min-height: 263px; }
+  .wide .unslot.keep { min-height: 267px; }
   /* continuous mode: the card is as tall as its content (the stream's list never changes length, and it stays after a re-mint to a single token) */
-  .cont { min-height: 0; padding: 10px 16px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .cont { padding: 10px 16px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .conthead { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .conthead h2 { margin: 0; font-size: 1rem; font-weight: 800; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .conthead :global(.pill) { flex: none; }

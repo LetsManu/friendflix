@@ -213,9 +213,11 @@ const TRACKS = {
   audioTracks: [{ index: 1, title: 'Deutsch', language: 'deu', isDefault: true }, { index: 2, title: 'English', language: 'eng', isDefault: false }],
 };
 /** the continuous remote: the TV picked while the token is still paused, so the screen starts in its connecting state; the first token is joined, later ones are single */
-async function joinedRemote(page: Page) {
+async function joinedRemote(page: Page, o: { next?: boolean; renew?: boolean } = {}) {
   await stubAirPlay(page);
   await mockPlayer(page);
+  // after mockPlayer (its routes would win otherwise): the offer a single token shows is episode 2
+  if (o.next) await page.route('**/api/items/*/next', (r) => r.fulfill({ json: { item: r.request().url().includes(episodes[0]!.id) ? episodes[1] : null } }));
   await castOn(page, true, undefined, { airplayContinuous: true });
   await mockHls(page);
   await page.route('**/api/playback/info', (r) => r.fulfill({ json: {
@@ -225,7 +227,8 @@ async function joinedRemote(page: Page) {
   let n = 0;
   const { sessions } = await castSessions(page, { deliver: (b) => {
     const sub = b.subtitleIndex === undefined ? {} : { hlsSub: true };
-    return ++n === 1 ? { joined: joinedOf(), runtimeTicks: 81_600_000_000, ...sub } : { ...sub, runtimeTicks: 27_000_000_000 };
+    // `renew`: the first token expires soon, so the Player's own renewal (no track change) brings the single token
+    return ++n === 1 ? { joined: joinedOf(), runtimeTicks: 81_600_000_000, ...(o.renew ? { expiresAt: Date.now() + 10 * 60_000 + 5000 } : {}), ...sub } : { ...sub, runtimeTicks: 27_000_000_000 };
   } });
   await page.goto('/watch/' + episodes[0]!.id);
   await page.waitForFunction(() => (document.querySelector('video')?.duration ?? 0) > 20);
@@ -240,7 +243,7 @@ async function joinedRemote(page: Page) {
   return { screen, sessions };
 }
 /** the boxes that must not move (x, y, width, height, rounded) */
-const boxes = (screen: Locator) => screen.evaluate((root) => Object.fromEntries(['.now', '.cont', '.mid', '.cp', '.times', '.tp', '.disc', '.rows'].map((q) => {
+const boxes = (screen: Locator) => screen.evaluate((root) => Object.fromEntries(['.now', '.unslot', '.cont', '.mid', '.cp', '.times', '.tp', '.disc', '.rows'].map((q) => {
   const r = root.querySelector(q)?.getBoundingClientRect();
   return [q, r ? [r.x, r.y, r.width, r.height].map(Math.round) : null];
 })));
@@ -290,3 +293,29 @@ test('continuous remote shows Folge 1 von 3 and the list', async ({ page, api: _
   await expect(screen.getByRole('button', { name: 'Vorherige Folge (keine: das ist die erste)' })).toHaveAttribute('aria-disabled', 'true');
   await expect(screen.getByRole('button', { name: 'Nächste Folge' })).not.toHaveAttribute('aria-disabled', 'true');
 });
+
+for (const vp of [{ w: 390, h: 844 }, { w: 900, h: 800 }, { w: 1280, h: 800 }]) {
+  test(`continuous remote ${vp.w}: a single token's up-next offer takes the slot with the card, in the same room`, async ({ page, api: _api }) => {
+    await page.setViewportSize({ width: vp.w, height: vp.h });
+    const { screen, sessions } = await joinedRemote(page, { next: true, renew: true });
+    await page.evaluate(() => document.querySelector('video')!.dispatchEvent(new Event('playing')));
+    await expect(screen.locator('.eyebrow')).toHaveText('Läuft über AirPlay');
+    await expect(screen.locator('.rows li')).toHaveCount(3);
+    const before = await boxes(screen);
+    await expect.poll(() => sessions.length, { timeout: 20_000 }).toBe(2); // the renewal: a single token of the same episode
+    const card = screen.getByRole('region', { name: 'Als Nächstes' });
+    // the new token plays; its position updates look the next episode up (the offer the engine shows before the credits)
+    await expect(async () => {
+      await page.evaluate(() => { const v = document.querySelector('video')!; v.dispatchEvent(new Event('playing')); v.dispatchEvent(new Event('timeupdate')); });
+      await expect(card).toBeVisible({ timeout: 500 });
+    }).toPass({ timeout: 10_000 });
+    await expect(screen.locator('.rows')).toHaveCount(0);
+    await page.waitForTimeout(400);
+    const after = await boxes(screen);
+    for (const q of ['.now', '.unslot', '.mid', '.cp', '.times', '.tp', '.disc']) expect(after[q], q).toEqual(before[q]);
+    const [c, u] = await Promise.all([card.boundingBox(), screen.locator('.unslot').boundingBox()]);
+    expect(c!.y + c!.height).toBeLessThanOrEqual(u!.y + u!.height + 1); // the card fits the reserved room
+    // the disabled Previous names the truth: this is episode 1, the first
+    await expect(screen.getByRole('button', { name: 'Vorherige Folge (keine: das ist die erste)' })).toHaveAttribute('aria-disabled', 'true');
+  });
+}

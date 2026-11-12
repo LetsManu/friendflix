@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { tr } from '#lib/i18n';
 import type { CastSession } from './engine';
-import { applePlatform, continuousView, episodeCodeLine, nowLine, upNextLine, upNextOf, remoteLayout, scrubberTarget, segmentMarks, statusOf, timeLine, volumeLine } from './remotescreen';
+import { applePlatform, continuousView, episodeCodeLine, slotMode, nowLine, upNextLine, upNextOf, remoteLayout, scrubberTarget, segmentMarks, statusOf, timeLine, volumeLine } from './remotescreen';
 
 const tf = tr;
 const base = { kind: 'chromecast' as const, device: 'Wohnzimmer-TV' };
@@ -162,5 +162,25 @@ describe('remote screen: continuous mode', () => {
     expect(v.prevDisabled).toBe(false);
     expect(v.nextDisabled).toBe(true);
     expect(v.list.map((x) => x.now)).toEqual([false, false, true]);
+  });
+});
+
+describe('remote screen: the continuous slot after a joined stream', () => {
+  const kept = { items: [{ itemId: 'a' }, { itemId: 'b' }, { itemId: 'c' }] };
+  const j = { items: [], index: 0, streamPosition: 0, streamDuration: 0 };
+  it('a joined session: the list, offer or not', () => {
+    expect(slotMode({ itemId: 'a', joined: j }, kept, false)).toBe('list');
+    expect(slotMode({ itemId: 'a', joined: j }, kept, true)).toBe('list');
+  });
+  it('never joined: the plain slot', () => {
+    expect(slotMode({ itemId: 'a' }, null, true)).toBe('plain');
+  });
+  it('single token inside the stream: the list, the card while there is an offer', () => {
+    expect(slotMode({ itemId: 'c' }, kept, false)).toBe('list');
+    expect(slotMode({ itemId: 'c' }, kept, true)).toBe('card');
+  });
+  it('past the stream (episode 4, another title): never the stale list', () => {
+    expect(slotMode({ itemId: 'd' }, kept, false)).toBe('plain');
+    expect(slotMode({ itemId: 'd' }, kept, true)).toBe('card');
   });
 });

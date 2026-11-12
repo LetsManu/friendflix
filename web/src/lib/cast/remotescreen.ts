@@ -149,3 +149,17 @@ export function continuousView(s: CastSession, tf: TFn): ContinuousView | null {
     nextDisabled: j.index >= j.items.length - 1,
   };
 }
+
+export type SlotMode = 'list' | 'card' | 'plain';
+/**
+ * What the continuous slot shows once a session has been joined (the slot keeps its height for the session; its content follows the state):
+ * a joined stream: the list; else an up-next offer (a single token's countdown, *Play now*, autoplay): the card; else the list while the
+ * playing item is one of the stream's episodes; once it is not (the next episode after the stream, another title): nothing (the plain slot).
+ * `kept`: the episodes of the stream the session was in (null: never joined).
+ */
+export function slotMode(s: Pick<CastSession, 'itemId' | 'joined'>, kept: { items: Array<{ itemId: string }> } | null, offer: boolean): SlotMode {
+  if (s.joined) return 'list';
+  if (!kept) return 'plain';
+  if (offer) return 'card';
+  return kept.items.some((x) => x.itemId === s.itemId) ? 'list' : 'plain';
+}
