@@ -64,12 +64,12 @@ describe('Plex behind the FriendFlix routes', () => {
     const uid = (await env.pool.query('select id from users limit 1')).rows[0].id as string;
     await env.pool.query("update users set role='guest' where id=$1", [uid]);
     const { reapplyRole } = await import('../../src/users.js');
-    expect(await reapplyRole(env.ctx, 'guest')).toBe(0);
+    expect((await reapplyRole(env.ctx, 'guest')).failed).toBe(0);
     const names = (await call(s, 'GET', '/api/library/items?types=Movie,Series')).json().items.map((i: { name: string }) => i.name);
     expect(names).toEqual(['Kinderfilm', 'MAD TEST']);
     expect((await authz(s.cookies.ff_sid!, item(1))).json()).toEqual({ allow: false }); // PG-13 > 12
     await env.pool.query("update users set role='admin' where id=$1", [uid]);
-    expect(await reapplyRole(env.ctx, 'admin')).toBe(0);
+    expect((await reapplyRole(env.ctx, 'admin')).failed).toBe(0);
   });
 
   it('Block 20: GET /api/home answers every part from the Plex implementation, without the token or Plex paths', async () => {

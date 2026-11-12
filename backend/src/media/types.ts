@@ -170,7 +170,7 @@ export interface PlaybackDto {
    * 'remoteCap' / 'uploadCap' / 'roleCap' / 'manual' / 'network' from the bitrate cap that applied (the client's choice is 'manual' or 'network' via reasonHint).
    */
   transcodeReason?: TranscodeReason;
-  /** audio track baked into hlsUrl (explicit audioIndex or the matched audioLang); undefined = source default */
+  /** audio track baked into hlsUrl (explicit audioIndex or the matched audioLang); undefined = source default (Jellyfin: a matched default track is still named in hlsUrl, see dto.ts) */
   audioIndex?: number;
   /** the server's plan for the HLS stream (Jellyfin only): what the picture and sound are given and why; fixed reason codes, nothing else */
   delivery?: StreamDelivery;
@@ -470,7 +470,23 @@ export interface MediaAdmin {
   loginArtIds?(q: { ratings: readonly string[]; limit: number }): Promise<string[]>;
   /** Block 23 phase 3 (optional): a downscaled poster of one item (admin key); null when it has none or cannot be read. */
   posterThumb?(id: string, maxWidth: number): Promise<{ bytes: Uint8Array; type: 'image/jpeg' | 'image/webp' } | null>;
+  /**
+   * Users & permissions (optional): films and series whose title matches `q`, searched with the admin key over every library (no viewer),
+   * at most `limit` hits (exact title matches first), each with its own rating and the name of its library ('' when it cannot be told).
+   * Only the admin's title check uses it, and it answers the profile's view itself (viewcheck.ts). Errors never carry `q`. Absent: the
+   * check searches as the service user and cannot say why a title is hidden.
+   */
+  findItems?(q: string, limit: number): Promise<FoundItem[]>;
+  /** Users & permissions (optional): the film or series with this id (admin key), null when unknown or another kind; errors never carry the id. */
+  findItem?(id: string): Promise<FoundItem | null>;
 }
+
+/**
+ * One hit of MediaAdmin.findItems / findItem. `rating` is the raw rating as the server spells it (shown to the admin; null = unrated).
+ * `age` is the age the adapter itself enforces for that rating when it has its own table (Plex: plex/access.ts; null = unrated or not
+ * understood, which a capped identity does not see); absent = the check reads `rating` with the app's generic table.
+ */
+export interface FoundItem { id: string; name: string; year?: number; type: 'Movie' | 'Series'; rating: string | null; age?: number | null; library: string }
 
 /** Everything routes and jobs use. Per-user calls act as that user on the server, so its access rules apply. */
 export interface MediaServer {

@@ -216,7 +216,7 @@ export async function resolveLogin(ctx: Ctx, req: FastifyRequest, reply: Fastify
       }
     }
     try {
-      user = await provisionUser(ctx, claims, isAdmin ? 'admin' : claimed!.role, claimed ? inviteAccessUntil(claimed) : null);
+      user = await provisionUser(ctx, claims, isAdmin ? 'admin' : claimed!.role, claimed ? inviteAccessUntil(claimed) : null, undefined, claimed?.id);
     } catch (e) {
       if (claimed) await releaseInvite(ctx, claimed.id); // let the person retry
       throw e;

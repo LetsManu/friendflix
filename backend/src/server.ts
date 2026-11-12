@@ -12,6 +12,7 @@ import { RedisKV } from './kv.js';
 import { authentikConfigProblem } from './invites.js';
 import { createLazyOidc } from './oidc.js';
 import { SeerrClient } from './seerr/client.js';
+import { syncRoles } from './rolecat.js';
 import { loadRoles } from './roles.js';
 import { nightlyTick } from './healthcheck.js';
 import { hevcTick } from './hevcenc.js';
@@ -73,6 +74,8 @@ const live = createLiveCtx({
   log,
 });
 const { ctx } = live;
+// the role catalogue: ROLE_TEMPLATES keys without a row become env roles (idempotent; migrate created the table)
+await syncRoles(ctx);
 
 const app = await buildApp(ctx);
 logTo.app = app.log;

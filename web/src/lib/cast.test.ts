@@ -200,6 +200,26 @@ describe('postAirPlayToken', () => {
   });
 });
 
+describe('the cast right (me.perms.cast)', () => {
+  it('castAllowed follows the right; castCapableBrowser stays a pure browser check', async () => {
+    const P = await import('./perms');
+    expect(C.castAllowed()).toBe(true);
+    P.perms.set(P.permsFrom({ cast: false }));
+    expect(C.castAllowed()).toBe(false);
+    expect(C.castCapableBrowser()).toBe(true);
+  });
+  it('initCast loads nothing without the right, and starts once it is given (not locked out)', async () => {
+    const P = await import('./perms');
+    P.perms.set(P.permsFrom({ cast: false }));
+    await C.initCast();
+    expect(scripts).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    P.perms.set(P.ALL_PERMS);
+    await C.initCast();
+    expect(scripts).toHaveLength(1);
+  });
+});
+
 describe('initCast', () => {
   it('loads the SDK script once when the server offers casting', async () => {
     await C.initCast();

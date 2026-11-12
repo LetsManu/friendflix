@@ -98,13 +98,17 @@ describe('guest playback', () => {
     expect(list.limits.find((x: any) => x.role === 'guest')).toMatchObject({ transcoding: false, maxHeight: 720, requestsPerMonth: 2 });
   });
 
-  it('null maxHeight means unlimited; unchanged values do not re-apply', async () => {
-    expect((await call(admin, 'PUT', '/api/admin/roles/guest', { transcoding: true, maxHeight: null })).statusCode).toBe(200);
+  it("'unlimited' lifts the height cap; unchanged values do not re-apply", async () => {
+    expect((await call(admin, 'PUT', '/api/admin/roles/guest', { transcoding: true, maxHeight: 'unlimited' })).statusCode).toBe(200);
     const p = (await call(guest, 'POST', '/api/playback/info', { itemId: ID })).json();
     expect(new URL(p.hlsUrl, 'http://x').searchParams.get('MaxHeight')).toBe('1080'); // only the bitrate rung (guest 8 Mbit/s), no role height cap
     const n = policies().length;
     await call(admin, 'PUT', '/api/admin/roles/guest', { requestsPerMonth: 3 });
     expect(policies()).toHaveLength(n);
+    // null = back to the role's inherited value (the guest default 1080), no longer "unlimited"
+    expect((await call(admin, 'PUT', '/api/admin/roles/guest', { maxHeight: null })).statusCode).toBe(200);
+    expect((await call(admin, 'GET', '/api/admin/roles')).json().limits.find((x: any) => x.role === 'guest').maxHeight).toBe(1080);
+    expect(policies()).toHaveLength(n + 1);
   });
 
   it('non-admins get 403', async () => {

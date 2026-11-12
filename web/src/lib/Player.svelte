@@ -76,6 +76,7 @@
   import { motionAllowed } from '#lib/preview';
   import { motionLevel, motionTripped } from '#lib/tv/motion';
   import { kidsMode } from '#lib/kids';
+  import { perms } from '#lib/perms';
   import { growOrigin, moreExtras, panelAnchor, panelBox, phoneOrient, phonePlayer, phoneSub, phoneTools, type PhoneOrient } from '#lib/player/phone/logic';
   import BackLayer from '#lib/player/phone/BackLayer.svelte';
   import PhoneTitle from '#lib/player/phone/PhoneTitle.svelte';
@@ -748,6 +749,7 @@
 
   // ---- Chromecast session lifecycle ----
   const castErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
+    : e?.body?.error === 'cast_forbidden' ? tr('ui.error.castForbidden') // the right was switched off meanwhile: said once, no retry
     : e?.body?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
   // (FriendFlix's own receiver is given a moment to state what it plays first: castCapsReady; `again` names the stream the TV just refused)
   // `joined`: a new token for the joined AirPlay stream on the element starts with that episode (`pos` = the offset in it), §5.4 f
@@ -871,7 +873,7 @@
   function airRow() { if (tvSession?.kind === 'airplay') changeAirPlay(); else air?.pick(); }
   $: airAvail = Boolean(air && (airState.available || airOn || airState.ready || airState.busy)) || tvSession?.kind === 'airplay';
   /** something to choose from: Cast devices in reach or an AirPlay target (the remote screen has its own chip) */
-  $: playOnShown = !partyMode && !remote && (Boolean($castState.available || $castState.connected) || airAvail);
+  $: playOnShown = $perms.cast && !partyMode && !remote && (Boolean($castState.available || $castState.connected) || airAvail);
   $: playOnLabel = $t('player.castPicker.open');
   $: playOnEp = item?.type === 'Episode' || item?.seriesId ? episodeCode({ subtitle: '' }, item, $t) : '';
 
@@ -923,7 +925,11 @@
     await load(was?.position);
   }
   // ---- AirPlay session lifecycle (the controller tells when Safari's playback target becomes / stops being wireless) ----
+  /** the last token refusal was 403 cast_forbidden: the error box says so and offers no Retry (the next refusal would be the same) */
+  let airForbidden = false;
+  $: if (!airState.error) airForbidden = false;
   const airErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
+    : e?.body?.error === 'cast_forbidden' ? tr('ui.error.castForbidden')
     : e?.body?.error === 'transcoding_disabled' ? tr('player.airplay.needsTranscode') : tr('player.airplay.failed');
   /** the subtitle index the current AirPlay token was requested with (-1 = none): the hand-off tells the engine this, not the menu's later choice */
   let airSubAsked = -1;
@@ -969,7 +975,7 @@
         wantAutoplay = play;
         await load(j ? j.offset : pos);
       },
-      fail: (e) => flash(airErr(e), 4000),
+      fail: (e) => { airForbidden = (e as { body?: { error?: unknown } } | null)?.body?.error === 'cast_forbidden'; flash(airErr(e), 4000); },
       change: (st) => {
         airState = st;
         if (st.active && !st.error && !st.busy && airInfo && !handedOff) handOverAirPlay(); // the TV plays our token
@@ -978,7 +984,7 @@
   }
   /** the player's AirPlay button: same gate as Chromecast (/api/cast/config); a hidden non-MSE probe <video> reports receivers */
   async function initAirPlay() {
-    if (partyMode || !video || !airPlaySupported(video) || !(await castConfigEnabled().catch(() => false)) || destroyed || !video) return;
+    if (partyMode || !get(perms).cast || !video || !airPlaySupported(video) || !(await castConfigEnabled().catch(() => false)) || destroyed || !video) return;
     airProbe = document.createElement('video');
     airProbe.setAttribute('x-webkit-airplay', 'allow');
     airProbe.setAttribute('playsinline', '');
@@ -986,6 +992,14 @@
     airProbe.setAttribute('aria-hidden', 'true');
     stage?.appendChild(airProbe);
     startAirPlay(video);
+  }
+
+  // the cast right arrives after the player mounted (a stale boot hint denied it): start what onMount skipped
+  let castWasDenied = !$perms.cast;
+  $: if ($perms.cast && castWasDenied) {
+    castWasDenied = false;
+    if (!partyMode) void initCast();
+    if (!air && !airProbe && !remote) void initAirPlay();
   }
 
   const doPause = () => { if (remote) { if (!paused) castEngine.playPause(); } else video?.pause(); };
@@ -1826,8 +1840,9 @@
     <div class="center castov" role="status" data-testid="airplay-active"><div class="castbox">
       <Icon name="airplay" size={56} />
       {#if airState.error}
-        <b>{$t('player.airplay.failed')}</b><span class="airhint">{$t('player.airplay.endHint')}</span>
-        <button class="btn light ui" on:click|stopPropagation={() => air?.retry()}>{$t('player.error.retry')}</button>
+        {#if airForbidden}<b>{$t('ui.error.castForbidden')}</b><span class="airhint">{$t('player.airplay.endHint')}</span>
+        {:else}<b>{$t('player.airplay.failed')}</b><span class="airhint">{$t('player.airplay.endHint')}</span>
+        <button class="btn light ui" on:click|stopPropagation={() => air?.retry()}>{$t('player.error.retry')}</button>{/if}
       {:else}<b>{$t('player.airplay.playing')}</b>{/if}
       <button class="btn light ui" on:click|stopPropagation={() => air?.pick()}>{$t('player.airplay.change')}</button>
     </div></div>

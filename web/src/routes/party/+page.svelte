@@ -2,11 +2,11 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { t, fmtDuration, fmtTime } from '#lib/i18n';
-  import { onMount } from 'svelte';
   import { pageStore } from '#lib/page';
   const page = pageStore();
   import { api, type Item } from '#lib/api';
   import Card from '#lib/Card.svelte';
+  import { perms } from '#lib/perms';
 
   let rooms: any[] = [], pick: Item | null = null, results: Item[] = [], q = '', delay = 0, busy = false;
   const preItem = $page.url.searchParams.get('item');
@@ -21,13 +21,19 @@
     const r = await api('/api/party', { method: 'POST', body: { itemId: pick.id, startInMinutes: delay || undefined } });
     location.href = `/party/${r.id}`;
   }
-  onMount(async () => {
-    load();
-    if (preItem) pick = (await api(`/api/items/${preItem}`)).item;
-  });
+  // the right may arrive after mount (a stale hint denied it): rooms and the ?item= pick load when it does, once
+  let started = false;
+  $: if ($perms.party && !started) {
+    started = true;
+    load().catch(() => undefined);
+    if (preItem) api(`/api/items/${preItem}`).then((r) => { pick = r.item; }).catch(() => undefined);
+  }
 </script>
 
 <h1>{$t('social.party.title')}</h1>
+{#if !$perms.party}
+  <p class="muted">{$t('ui.error.partyForbidden')}</p>
+{:else}
 <div class="panel">
   <h3>{$t('social.party.newParty')}</h3>
   {#if pick}
@@ -42,3 +48,4 @@
 <h3>{$t('social.party.openRooms')}</h3>
 {#if !rooms.length}<p class="muted">{$t('social.party.noRooms')}</p>{/if}
 <table><tbody>{#each rooms as r}<tr><td>{r.title}</td><td class="muted">{r.hostName ?? ''} · {$t('social.party.members', { n: r.members })}</td><td>{#if r.startAt}<span class="badge">{$t('social.party.startAt', { time: fmtTime(r.startAt) })}</span>{/if}</td><td><a class="btn" href="/party/{r.id}">{$t('social.party.join')}</a></td></tr>{/each}</tbody></table>
+{/if}

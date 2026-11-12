@@ -8,6 +8,7 @@
   import { listIds, toggleList, prefs } from '#lib/stores';
   import { kidsMode } from '#lib/kids';
   import { fmtDate, t, tr } from '#lib/i18n';
+  import { perms } from '#lib/perms';
   import { autoplayAllowed, motionAllowed, playPreview, previewFailed, previewOwner, stopPreview, toggleSound } from '#lib/preview';
   import { trailerAllowed } from '#lib/tv/focusTile';
   import { isSpoiler } from '#lib/spoiler';
@@ -332,7 +333,7 @@
     { id: 'played', label: $t('detail.actions.played'), icon: 'check', pressed: item.played, run: togglePlayed },
     ...(item.type === 'Series' && social ? [{ id: 'follow', label: followed ? $t('detail.actions.following') : $t('detail.actions.follow'), icon: 'bell', pressed: followed, run: toggleFollow }] : []),
     ...(social ? [{ id: 'rec', label: $t('detail.actions.recommend'), icon: 'send', run: openRec }, { id: 'share', label: $t('detail.actions.share'), icon: 'share', run: share }] : []),
-    ...(item.type !== 'Series' && social ? [{ id: 'party', label: $t('detail.actions.party'), icon: 'users', run: startParty }] : []),
+    ...(item.type !== 'Series' && social && $perms.party ? [{ id: 'party', label: $t('detail.actions.party'), icon: 'users', run: startParty }] : []),
     ...($tvOnline && playTarget ? [{ id: 'tv', label: $t('detail.actions.tv'), icon: 'tv', run: castHere }] : []),
     ...(facts?.admin && (item.type === 'Movie' || item.type === 'Series' || item.type === 'BoxSet') ? [{ id: 'leaving', label: $t('fresh.admin.menu'), icon: 'calendar', run: () => { leavingDlg = true; } }] : []),
     ...(canPreview && !heroPlaying ? [{ id: 'trailer', label: $t('detail.actions.trailer'), icon: 'film', run: () => startHero(true) }] : []),

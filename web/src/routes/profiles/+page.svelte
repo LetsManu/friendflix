@@ -3,7 +3,7 @@
 <svelte:head><title>{$t('common.pageTitle', { page: $t('account.profiles.pageTitle') })}</title></svelte:head>
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { api, ApiError } from '#lib/api';
+  import { api, ApiError, setActiveProfile, type Me } from '#lib/api';
   import { AVATARS, avatarBg, initial } from '#lib/avatars';
   import Icon from '#lib/Icon.svelte';
   import PinPad from '#lib/PinPad.svelte';
@@ -12,7 +12,7 @@
   import { stopSonicLogo } from '#lib/sonic';
   import Logo from '#lib/Logo.svelte';
   import Button from '#lib/ui/Button.svelte';
-  import { markPicked } from '#lib/gate';
+  import { hintOf, markPicked, readHint, writeHint } from '#lib/gate';
   import { loadIntroSettings, markSessionSeen, shouldPlayIntro, shouldPlayIntroSound } from '#lib/intro';
   import { cachedCalm } from '#lib/stores';
   import { t, tr, type TKey } from '#lib/i18n';
@@ -102,6 +102,8 @@
       selected = true;
       if (!told && p.id !== activeId) await tellAppSession(p.id); // unknown active profile before: the app just records the new one (no-op outside the app / with API 1)
       await setMeta('lastProfileId', p.id).catch(() => undefined); // offline hub: downloads of the last active profile
+      // the next page paints its first frame from the hint: it must hold this profile's rights, not the last tab's
+      try { setActiveProfile(p.id); writeHint(hintOf(await api<Me>('/api/me'), readHint())); } catch { /* the page boots without a hint for this profile */ }
       markPicked(p.id); // the profile question ("Wer ist heute dabei?") was answered for this browser session
       await playIntro(p.id).catch(() => undefined);
       done();

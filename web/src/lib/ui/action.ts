@@ -66,7 +66,13 @@ export const isBusy = (k: string): boolean => cur.has(k);
 /** Localised text for a failed request (status-aware). */
 export function errorText(e: unknown): string {
   if (e instanceof ApiError) {
-    if (e.status === 403) return tr('ui.error.forbidden');
+    if (e.status === 403) {
+      const code = e.body?.error;
+      if (code === 'cast_forbidden') return tr('ui.error.castForbidden');
+      if (code === 'party_forbidden') return tr('ui.error.partyForbidden');
+      if (code === 'requests_forbidden') return tr('ui.error.requestsForbidden');
+      return tr('ui.error.forbidden');
+    }
     if (e.status === 404) return tr('ui.error.notFound');
     if (e.status === 409) return tr('ui.error.conflict');
     if (e.status === 429) return tr('ui.error.tooMany');

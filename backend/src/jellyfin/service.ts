@@ -20,7 +20,7 @@ import type { ChapterDto, ItemAboutDto, ItemCreditsDto, MediaCollection } from '
 import type { HygieneFacts, ServerSession } from '../media/types.js'; // Block 22
 import type { ItemFeatures } from '../media/types.js'; // R1
 import type { SeriesStatus } from '../media/types.js'; // 1.1 post-play
-import type { CapReason, EncoderSettings } from '../media/types.js';
+import type { CapReason, EncoderSettings, FoundItem } from '../media/types.js';
 
 const TOKEN_TTL = 6 * 3600;
 const BOXSET_INDEX_KEY = 'jf:boxsets:v1';
@@ -45,9 +45,20 @@ export const ITEM_MEMO_TTL_MS = 10_000;
 export const ITEM_MEMO_MAX = 2000;
 const normId = (s: string) => s.replace(/-/g, '').toLowerCase();
 const cloneItem = (i: ItemDto): ItemDto => ({ ...i, genres: [...i.genres], ...(i.imageTags ? { imageTags: { ...i.imageTags } } : {}) });
+/** the admin's title check (MediaAdmin.findItems): hits per search and ancestor lookups for their library */
+const FIND_MAX = 50;
+const FIND_LIBRARY_LOOKUPS = 8;
 const FIELDS = 'Overview,Genres,OfficialRating,CommunityRating,PremiereDate,DateCreated,ProductionYear,ChildCount,RunTimeTicks,DateLastMediaAdded';
 
 export type { ItemQuery };
+/** a Movie / Series of an admin-key answer as MediaAdmin.findItems answers it (no `age`: Jellyfin's ratings are read by the app's table) */
+const foundItem = (i: Record<string, any>, library: string): FoundItem => ({
+  id: nid(i.Id), name: i.Name as string,
+  ...(Number.isInteger(i.ProductionYear) ? { year: i.ProductionYear as number } : {}),
+  type: i.Type as 'Movie' | 'Series',
+  rating: typeof i.OfficialRating === 'string' && i.OfficialRating.trim() ? i.OfficialRating : null,
+  library,
+});
 const nid = (s: unknown) => String(s).replace(/-/g, '').toLowerCase();
 const traitsOf = (i: Record<string, any>): ItemTraits => ({
   genres: Array.isArray(i.Genres) ? i.Genres : [], tags: Array.isArray(i.Tags) ? i.Tags : [], countries: Array.isArray(i.ProductionLocations) ? i.ProductionLocations : [],
@@ -656,13 +667,17 @@ export class JellyfinService implements MediaServer {
     });
     if (info.ErrorCode) throw new JellyfinError(403, `playback blocked: ${info.ErrorCode}`);
     // preferred audio language: our HLS URL carries AudioStreamIndex itself, so a non-default track needs no second PlaybackInfo. The local
-    // player leaves the default track unnamed (that keeps direct play, which plays the container's default track). A cast is always HLS,
-    // where Jellyfin streams the first track with channels when no index is named, not the IsDefault one (dto.ts sourceFacts): it names it.
+    // player leaves the default track unnamed (that keeps direct play, which plays the container's default track); a cast or the HLS URL
+    // names it, because without an AudioStreamIndex Jellyfin's HLS streams the first track with channels, not the IsDefault one (dto.ts sourceFacts).
     let audioIndex = opts.audioIndex;
+    let hlsAudioIndex: number | undefined;
     if (audioIndex === undefined && opts.audioLang) {
       const streams: Array<Record<string, any>> = info.MediaSources?.[0]?.MediaStreams ?? [];
       const want = streams.find((s) => s.Type === 'Audio' && s.Language === opts.audioLang);
-      if (want && (opts.cast || !want.IsDefault) && typeof want.Index === 'number') audioIndex = want.Index;
+      if (want && typeof want.Index === 'number') {
+        if (want.IsDefault && !opts.cast) hlsAudioIndex = want.Index;
+        else audioIndex = want.Index;
+      }
     }
     // the stream plan: HEVC copy / conversion, surround, reasons. A gate is passed only while HEVC_STREAMS > 0 (no gate = conversions off) and is
     // asked only when the plan wants an HEVC conversion; an error from it counts as busy.
@@ -671,11 +686,11 @@ export class JellyfinService implements MediaServer {
     if (src0) {
       plan = planStream({
         caps: opts.clientCaps ?? null, cast: Boolean(opts.cast), remote: Boolean(opts.remote), maxBitrate: opts.maxBitrate, boxHeight: boxHeightFor(opts.maxBitrate, opts.maxHeight),
-        src: sourceFacts(src0, audioIndex), surroundOn: Boolean(opts.surround), hevcStreams: opts.hevcGate ? 1 : 0, // the count itself is the gate's business (hevcenc.ts)
+        src: sourceFacts(src0, audioIndex ?? hlsAudioIndex), surroundOn: Boolean(opts.surround), hevcStreams: opts.hevcGate ? 1 : 0, // the count itself is the gate's business (hevcenc.ts)
       });
       if (plan.wantsHevcEncode) plan = applyGate(plan, await Promise.resolve().then(() => opts.hevcGate!()).catch((): HevcGate => ({ ok: false, why: 'h264_busy' })));
     }
-    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect, capReason: opts.capReason, directContainers: caps?.containers, plan, hlsSubtitleIndex: opts.hlsSubtitleIndex });
+    return toPlaybackDto({ itemId, info, deviceId: this.deviceId(user), maxBitrate: opts.maxBitrate, resumeTicks: opts.startTicks ?? 0, audioIndex, hlsAudioIndex, maxHeight: opts.maxHeight, cast: opts.cast, noDirect: opts.noDirect, capReason: opts.capReason, directContainers: caps?.containers, plan, hlsSubtitleIndex: opts.hlsSubtitleIndex });
   }
 
   /** PlaybackInfo with the "FriendFlix Download" profile: source details + (unless 'original') the fMP4 HLS master the preparer pulls. */
@@ -1149,6 +1164,24 @@ export class JellyfinService implements MediaServer {
         return bytes.length > MAX ? null : { bytes, type };
       },
       libraries: async () => (await client.mediaFolders()).map((f) => ({ id: f.Id, name: f.Name })),
+      // Users & permissions: the admin's title check. Admin key and no userId: every library, no parental cap. The library of each hit
+      // comes from its ancestors (at most FIND_LIBRARY_LOOKUPS calls; a failed one leaves the library unknown, '').
+      findItems: async (q, limit) => {
+        const n = Math.max(1, Math.min(Math.trunc(limit) || 1, FIND_MAX));
+        const found = (await client.searchItems(q, n))
+          .filter((i) => typeof i?.Id === 'string' && /^[0-9a-f]{32}$/.test(nid(i.Id)) && (i.Type === 'Movie' || i.Type === 'Series') && typeof i.Name === 'string')
+          .slice(0, n);
+        const libs = await Promise.all(found.map((i, k) => (k < FIND_LIBRARY_LOOKUPS ? client.libraryOf(nid(i.Id)).catch(() => null) : Promise.resolve(null))));
+        return found.map((i, k) => foundItem(i, libs[k] ?? ''));
+      },
+      // the title check by id: the same facts for one item (admin key); another kind of item (episode, folder …) is no hit
+      findItem: async (id) => {
+        const want = nid(id);
+        if (!/^[0-9a-f]{32}$/.test(want)) return null;
+        const i = await client.itemById(want);
+        if (!i || typeof i.Id !== 'string' || nid(i.Id) !== want || (i.Type !== 'Movie' && i.Type !== 'Series') || typeof i.Name !== 'string') return null;
+        return foundItem(i, (await client.libraryOf(want).catch(() => null)) ?? '');
+      },
       ping: () => client.ping(),
       encoderSettings: async () => encoderSettingsOf(await client.adminJson<Record<string, unknown>>('/System/Configuration/encoding')),
       /** sessions of other apps: FriendFlix' own devices ("ff-<id>") are tracked by the portal itself */

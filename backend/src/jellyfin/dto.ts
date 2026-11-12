@@ -131,6 +131,11 @@ export function toPlaybackDto(args: {
   maxBitrate: number;
   resumeTicks: number;
   audioIndex?: number;
+  /**
+   * the language-matched track when it is the source's default: named in the HLS URL only (Jellyfin's HLS takes the first track with
+   * channels without an index, not the IsDefault one), never in the direct decision or the DTO's audioIndex (an unnamed default keeps direct play)
+   */
+  hlsAudioIndex?: number;
   /** role resolution cap (px); null/undefined = none */
   maxHeight?: number | null;
   /** Chromecast: AAC-only stereo, H.264 <= level 4.1 / 8 bit, never direct play */
@@ -151,9 +156,10 @@ export function toPlaybackDto(args: {
   if (!src) throw new Error('no media source');
   const streams: Array<Record<string, any>> = src.MediaStreams ?? [];
   const common = new URLSearchParams({ MediaSourceId: src.Id, PlaySessionId: info.PlaySessionId, DeviceId: deviceId });
+  const hlsAudio = audioIndex ?? args.hlsAudioIndex;
 
   const plan = args.plan ?? planStream({
-    caps: null, cast: Boolean(cast), remote: false, maxBitrate, boxHeight: boxHeightFor(maxBitrate, maxHeight), src: sourceFacts(src, audioIndex), surroundOn: false, hevcStreams: 0,
+    caps: null, cast: Boolean(cast), remote: false, maxBitrate, boxHeight: boxHeightFor(maxBitrate, maxHeight), src: sourceFacts(src, hlsAudio), surroundOn: false, hevcStreams: 0,
   });
   const hls = new URLSearchParams(common);
   hls.set('VideoCodec', plan.videoCodecs.join(','));
@@ -165,7 +171,7 @@ export function toPlaybackDto(args: {
   hls.set('BreakOnNonKeyFrames', 'false');
   hls.set('TranscodingMaxAudioChannels', String(plan.audioChannels));
   hls.set('MaxStreamingBitrate', String(maxBitrate));
-  if (audioIndex !== undefined) hls.set('AudioStreamIndex', String(audioIndex));
+  if (hlsAudio !== undefined) hls.set('AudioStreamIndex', String(hlsAudio));
   // Explicit budgets: otherwise Jellyfin subtracts the SOURCE audio bitrate (TrueHD / DTS-HD MA: several Mbit/s) and starves the video
   hls.set('AudioBitrate', String(plan.audioBitrate));
   hls.set('AudioChannels', String(plan.audioChannels));

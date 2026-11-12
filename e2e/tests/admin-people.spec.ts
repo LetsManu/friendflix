@@ -358,6 +358,18 @@ test.describe('admin people (desktop)', () => {
       await expect(card.getByText('Nicht gespeichert')).toHaveCount(0);
     });
 
+    test("'unlimited' is sent as the literal (null would mean back to the default)", async ({ page, api }) => {
+      await page.goto('/admin/roles');
+      const card = page.getByRole('form', { name: 'Freund' });
+      await card.getByRole('switch', { name: 'Unbegrenzt' }).click();
+      await card.getByRole('combobox', { name: 'Max. Auflösung' }).selectOption('');
+      await card.getByRole('button', { name: 'Speichern' }).click();
+      await expect(toasts(page).getByText('Rolle „Freund“ gespeichert.')).toBeVisible();
+      const put = api.log.find((l) => l.startsWith('PUT /api/admin/roles/friend'))!;
+      expect(put).toContain('"requestsPerMonth":"unlimited"');
+      expect(put).toContain('"maxHeight":"unlimited"');
+    });
+
     test('remote bitrate limit: default option, values up to the role limit, reset to default, saves only that field', async ({ page, api }) => {
       await page.goto('/admin/roles');
       const card = page.getByRole('form', { name: 'Freund' });
