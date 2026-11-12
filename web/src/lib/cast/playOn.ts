@@ -5,7 +5,7 @@ import { fmtClock } from '#lib/api';
 import type { TFn } from '#lib/i18n';
 import type { CastKind } from './engine';
 
-export type PlayOnRow = { id: 'last' | 'another' | 'airplay' | 'continuous' | 'here'; title: string; hint: string; checked: boolean };
+export type PlayOnRow = { id: 'last' | 'another' | 'airplay' | 'here'; title: string; hint: string; checked: boolean };
 
 export type PlayOnInput = {
   /** a Chromium browser with the Cast SDK and the server's casting switch on */
@@ -14,10 +14,6 @@ export type PlayOnInput = {
   devices: boolean;
   /** an AirPlay target is available (or the AirPlay route is already in use) */
   airplay: boolean;
-  /** an Apple device (continuous AirPlay is Apple only) */
-  apple: boolean;
-  continuousAvailable: boolean;
-  episode: boolean;
   /** the TV used last time in this browser (name only) */
   last: string | null;
   casting: CastKind | null;
@@ -32,7 +28,6 @@ export function playOnRows(o: PlayOnInput): PlayOnRow[] {
   if (cc && o.last) rows.push({ id: 'last', title: o.last, hint: o.tf('player.castPicker.lastUsed'), checked: o.casting === 'chromecast' });
   if (cc) rows.push({ id: 'another', title: o.tf('player.castPicker.another'), hint: o.tf('player.castPicker.chromecast'), checked: false });
   if (o.airplay) rows.push({ id: 'airplay', title: o.tf('player.castPicker.airplay'), hint: o.tf('player.castPicker.airplayHint'), checked: o.casting === 'airplay' });
-  if (o.apple && o.airplay && o.continuousAvailable && o.episode) rows.push({ id: 'continuous', title: o.tf('player.castPicker.continuous'), hint: o.tf('player.castPicker.continuousHint'), checked: false });
   const device = o.tf(o.form === 'phone' ? 'player.castPicker.thisPhone' : o.form === 'tablet' ? 'player.castPicker.thisTablet' : 'player.castPicker.thisComputer');
   rows.push(o.casting
     ? { id: 'here', title: o.tf('player.castPicker.continueHere'), hint: device, checked: false }

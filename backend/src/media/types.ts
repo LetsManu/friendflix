@@ -281,7 +281,22 @@ export interface MediaCollection { id: string; name: string; parts: Array<{ item
 /** Metadata FriendFlix classifies on (e.g. "is this an anime"): genres, tags, production countries. */
 export interface ItemTraits { genres: string[]; tags: string[]; countries: string[] }
 export interface PersonDto { id: string; name: string; overview?: string; birthYear?: number; image: boolean }
-export interface TrackList { audio: Array<{ language: string; title: string; isDefault: boolean }>; subtitles: Array<{ language: string; title: string }>; runtimeTicks?: number; type: string }
+export interface TrackList {
+  audio: Array<{ language: string; title: string; isDefault: boolean }>;
+  /**
+   * one entry per language (its first track names it); `index` (Jellyfin) = the source's stream index of that language's first text,
+   * non-forced track, else its first text track, absent for image-only languages; `forcedIndex` = its first forced text track
+   * (continuous AirPlay picks a later episode's subtitle by them, following episode 1's forced choice)
+   */
+  subtitles: Array<{ language: string; title: string; index?: number; forcedIndex?: number }>;
+  /**
+   * every audio and subtitle stream of the first source by its stream index (Jellyfin; absent elsewhere): continuous AirPlay maps a
+   * track choice of one episode (its indices) to another episode's own tracks by language. Backend only (the tracks route drops it).
+   */
+  indexed?: Array<{ index: number; kind: 'audio' | 'subtitle'; language: string }>;
+  runtimeTicks?: number;
+  type: string;
+}
 export interface Segment { type: string; start: number; end: number }
 export interface SubtitleHit { id: string; name: string; provider: string; format?: string; downloads?: number; rating?: number }
 /** Audio / subtitle languages of one library item (raw codes, normalised by the caller); `seriesId` for episodes. */

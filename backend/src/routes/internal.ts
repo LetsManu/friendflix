@@ -3,7 +3,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { CAST_TOKEN_RE, resolveCast } from '../cast.js';
+import { CAST_TOKEN_RE, castEnabled, joinedCastRecord, noteJoinedProgress, resolveCast } from '../cast.js';
 import type { Ctx } from '../ctx.js';
 import { authorizeDownload } from '../downloads.js';
 import { setLive } from '../live.js';
@@ -143,6 +143,30 @@ export function internalRoutes(app: FastifyInstance, ctx: Ctx) {
     // no ip (an older gateway, or one that cannot tell) is ambiguous = remote
     const remote = body.data.ip === undefined || !isHomeAddress(body.data.ip, ctx.cfg.HOME_NETWORKS);
     return withoutRemoteCap(m, remote);
+  });
+
+  /**
+   * Continuous AirPlay: the gateway's throttled, fire-and-forget report of the segment a joined token's TV fetched (gateway
+   * joinedProgressSender). The body names the token by its sha256 (never the token itself) and carries no address; the server turns it
+   * into per-episode progress (cast.ts noteJoinedProgress). 404 for an unknown or expired hash, a token that is no joined stream, or an
+   * item it does not list (one answer for all, nothing logged). Success logs nothing; a failed report logs its error class only.
+   */
+  app.post('/internal/cast/progress', { config: { rateLimit: false } }, async (req, reply) => {
+    if (!checkSecret(req, 'x-internal-secret', ctx.cfg.INTERNAL_SECRET)) return reply.code(403).send({ error: 'forbidden' });
+    const b = z.object({
+      tokenHash: z.string().regex(/^[0-9a-f]{64}$/),
+      itemId: z.string().regex(/^[0-9a-f]{32}$/),
+      positionTicks: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    }).strict().safeParse(req.body);
+    if (!b.success) return reply.code(400).send({ error: 'bad_request' });
+    const rec = castEnabled(ctx) ? await joinedCastRecord(ctx, b.data.tokenHash) : null;
+    if (!rec || !rec.items!.some((i) => i.itemId === b.data.itemId)) return reply.code(404).send({ error: 'not_found' });
+    try {
+      await noteJoinedProgress(ctx, b.data.tokenHash, rec, { itemId: b.data.itemId, positionTicks: b.data.positionTicks });
+    } catch (e) {
+      req.log.error({ error: e instanceof MediaError ? `media_${e.status}` : e instanceof Error ? e.name : 'unknown' }, 'cast: continuous AirPlay progress report failed');
+    }
+    return { ok: true };
   });
 
   /**

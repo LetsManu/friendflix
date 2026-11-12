@@ -34,7 +34,7 @@ const castView = (over: Partial<CastSession> = {}): CastSession => ({
   kind: 'chromecast', device: 'Stube-TV', itemId: 'c1', seriesId: 's1', title: 'Bright Valley', subtitle: 'S1:E1 First', posterId: 'c1', isEpisode: true,
   position: 60, duration: 1800, paused: false, buffering: false, state: 'playing', audioTracks: [], subtitles: [], subIndex: -1, autoplay: true, ...over,
 });
-const castEng = { playPause: vi.fn(), seek: vi.fn(), skip: vi.fn(), next: vi.fn(async () => undefined) };
+const castEng = { playPause: vi.fn(), seek: vi.fn(), skip: vi.fn(), next: vi.fn(async () => undefined), prev: vi.fn() };
 
 describe('player media session', () => {
   it('binds metadata, handlers and position', () => {
@@ -215,7 +215,7 @@ describe('player media session', () => {
   it('after the takeover every cast handler drives the cast engine and the player gets no calls', () => {
     const { ms, handlers } = fake();
     const a = acts();
-    const eng = { playPause: vi.fn(), seek: vi.fn(), skip: vi.fn(), next: vi.fn(async () => undefined) };
+    const eng = { playPause: vi.fn(), seek: vi.fn(), skip: vi.fn(), next: vi.fn(async () => undefined), prev: vi.fn() };
     bindPlayerMediaSession(el(), item, a, ms, (m) => m);
     const s = writable<CastSession | null>(null);
     const off = bindCastMediaSession(s, eng, ms, (m) => m);

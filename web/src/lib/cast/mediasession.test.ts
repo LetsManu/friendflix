@@ -16,11 +16,108 @@ function fake() {
     setActionHandler: (a, fn) => { handlers.set(a, fn); },
     setPositionState(s) { this.pos.push(s); },
   };
-  const eng = { playPause: vi.fn(), seek: vi.fn(), skip: vi.fn(), next: vi.fn(async () => undefined) };
+  const eng = { playPause: vi.fn(), seek: vi.fn(), skip: vi.fn(), next: vi.fn(async () => undefined), prev: vi.fn() };
   return { ms, handlers, eng };
 }
 
+const JI = [
+  { itemId: 'ep1', title: 'First', season: 2, episode: 1, start: 0, duration: 600 },
+  { itemId: 'ep2', title: 'Second', season: 2, episode: 2, start: 600, duration: 600 },
+  { itemId: 'ep3', title: 'Third', season: 2, episode: 3, start: 1200, duration: 600 },
+];
+const jview = (index: number, over: Partial<CastSession> = {}): CastSession => view({
+  title: 'Dunmoor', subtitle: `S2:E${index + 1} ${['First', 'Second', 'Third'][index]}`, itemId: `ep${index + 1}`, posterId: `ep${index + 1}`, position: 50, duration: 600,
+  joined: { items: JI, index, streamPosition: index * 600 + 50, streamDuration: 1800 }, ...over,
+});
+function page(visible = true) {
+  const fns = new Set<() => void>();
+  return { p: { visible: () => visible, onChange: (fn: () => void) => { fns.add(fn); return () => { fns.delete(fn); }; } }, set(v: boolean) { visible = v; for (const f of [...fns]) f(); } };
+}
+
 describe('cast media session (lock screen / Control Center drive the TV)', () => {
+  it('joined: series metadata and stream position while hidden, episode while visible', () => {
+    const { ms, eng } = fake();
+    const s = writable<CastSession | null>(null);
+    const pg = page(false);
+    bindCastMediaSession(s, eng, ms, (m) => m, pg.p);
+    s.set(jview(1));
+    expect(ms.metadata).toMatchObject({ title: 'Dunmoor', artist: 'S2:F1\u2013F3' });
+    expect(ms.pos.at(-1)).toEqual({ duration: 1800, position: 650, playbackRate: 1 });
+    // the TV moves on while the page sleeps: the series lines stay
+    s.set(jview(2));
+    expect(ms.metadata).toMatchObject({ title: 'Dunmoor', artist: 'S2:F1\u2013F3' });
+    expect(ms.pos.at(-1)).toEqual({ duration: 1800, position: 1250, playbackRate: 1 });
+    pg.set(true);
+    expect(ms.metadata).toMatchObject({ title: 'S2:E3 Third', artist: 'Dunmoor' });
+    expect(ms.pos.at(-1)).toEqual({ duration: 600, position: 50, playbackRate: 1 });
+    pg.set(false);
+    expect(ms.metadata).toMatchObject({ title: 'Dunmoor', artist: 'S2:F1\u2013F3' });
+    expect(ms.pos.at(-1)).toEqual({ duration: 1800, position: 1250, playbackRate: 1 });
+  });
+
+  it('joined, hidden: seekto lands on the stream timeline the position state shows', () => {
+    const { ms, handlers, eng } = fake();
+    const s = writable<CastSession | null>(null);
+    const pg = page(false);
+    bindCastMediaSession(s, eng, ms, (m) => m, pg.p);
+    s.set(jview(1)); // stream position 650
+    handlers.get('seekto')!({ seekTime: 100 });
+    expect(eng.seek).not.toHaveBeenCalled();
+    expect(eng.skip).toHaveBeenCalledWith(100 - 650); // stream second 100, whichever episode that is
+    pg.set(true); // visible: the episode's own seconds
+    handlers.get('seekto')!({ seekTime: 100 });
+    expect(eng.seek).toHaveBeenCalledWith(100);
+  });
+
+  it('seekto follows the timeline last published, not the page state at the moment of the action', () => {
+    const { ms, handlers, eng } = fake();
+    const s = writable<CastSession | null>(null);
+    let visible = false;
+    bindCastMediaSession(s, eng, ms, (m) => m, { visible: () => visible, onChange: () => () => undefined }); // no change event reaches the binding
+    s.set(jview(1)); // published: the stream's timeline (position 650)
+    visible = true; // the page woke, the lock screen still shows the stream
+    handlers.get('seekto')!({ seekTime: 100 });
+    expect(eng.skip).toHaveBeenCalledWith(100 - 650);
+    expect(eng.seek).not.toHaveBeenCalled();
+  });
+
+  it('nexttrack is not armed on the last joined episode', () => {
+    const { ms, handlers, eng } = fake();
+    const s = writable<CastSession | null>(null);
+    bindCastMediaSession(s, eng, ms, (m) => m, page(true).p);
+    s.set(jview(1));
+    expect(handlers.get('nexttrack')).toBeTypeOf('function');
+    s.set(jview(2));
+    expect(handlers.get('nexttrack')).toBeNull();
+    s.set(jview(1, { joined: { items: JI, index: 1, streamPosition: 700, streamDuration: 1800 } }));
+    expect(handlers.get('nexttrack')).toBeTypeOf('function');
+  });
+
+  it('joined across seasons: two episode codes in the artist line', () => {
+    const { ms, eng } = fake();
+    const items = [{ ...JI[0]!, season: 1, episode: 9 }, { ...JI[1]!, season: 2, episode: 1 }];
+    bindCastMediaSession(writable<CastSession | null>(jview(0, { joined: { items, index: 0, streamPosition: 5, streamDuration: 1200 } })), eng, ms, (m) => m, page(false).p);
+    expect(ms.metadata).toMatchObject({ artist: 'S1:F9\u2013S2:F1' });
+  });
+
+  it('previoustrack only after the first episode', () => {
+    const { ms, handlers, eng } = fake();
+    const s = writable<CastSession | null>(null);
+    bindCastMediaSession(s, eng, ms, (m) => m, page(true).p);
+    s.set(jview(0));
+    expect(handlers.get('previoustrack')).toBeNull();
+    s.set(jview(1));
+    handlers.get('previoustrack')!({});
+    expect(eng.prev).toHaveBeenCalledTimes(1);
+    s.set(jview(0));
+    expect(handlers.get('previoustrack')).toBeNull();
+    // not joined: never
+    s.set(view());
+    expect(handlers.get('previoustrack') ?? null).toBeNull();
+    s.set(null);
+    expect([...handlers.values()].every((h) => h === null)).toBe(true);
+  });
+
   it('metadata, state, position and actions follow the cast session; they are cleared without one', () => {
     const { ms, handlers, eng } = fake();
     const s = writable<CastSession | null>(null);

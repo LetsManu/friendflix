@@ -55,7 +55,7 @@ const create = async (s: Sess = admin, body: Record<string, unknown> = {}) => {
 
 describe('cast session', () => {
   it('reports config (https PUBLIC_URL + CAST_ENABLED)', async () => {
-    expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: true });
+    expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: true, airplayContinuous: false });
   });
 
   it('creates an absolute, token-in-path HLS URL with the cast profile and cast-only query params', async () => {
@@ -625,7 +625,7 @@ describe('cast disabled', () => {
     const { ct } = await create();
     env.ctx.cfg = { ...env.ctx.cfg, CAST_ENABLED: 'false' };
     try {
-      expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: false });
+      expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: false, airplayContinuous: false });
       expect((await call(admin, 'POST', '/api/cast/session', { itemId: ID })).statusCode).toBe(404);
       expect((await authz({ ct })).statusCode).toBe(401);
     } finally {
@@ -744,7 +744,7 @@ describe('cast: own receiver and its report token', () => {
   const clean = async (uid: string) => { for (const k of [...await env.kv.keys(`play:${uid}:`), ...await env.kv.keys(`pstop:${uid}:`)]) await env.kv.del(k); };
 
   it('config names the app ID only when it is set and casting is on; the token only goes to a receiver sender', async () => {
-    expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: true, receiverAppId: APP });
+    expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: true, receiverAppId: APP, airplayContinuous: false });
     expect((await create()).j.report).toBeUndefined(); // the Default Media Receiver flow is unchanged
     expect((await create(admin, { receiver: true, via: 'airplay' })).j.report).toBeUndefined();
     const { j, ct } = await create(admin, { receiver: true });
@@ -755,12 +755,12 @@ describe('cast: own receiver and its report token', () => {
     expect(JSON.stringify(claims)).not.toContain(ct);
     env.ctx.cfg = { ...env.ctx.cfg, CAST_RECEIVER_APP_ID: '' };
     try {
-      expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: true });
+      expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: true, airplayContinuous: false });
       expect((await create(admin, { receiver: true })).j.report).toBeUndefined();
       expect((await rep(j.report, 'progress')).statusCode).toBe(404);
     } finally { env.ctx.cfg = { ...env.ctx.cfg, CAST_RECEIVER_APP_ID: APP }; }
     env.ctx.cfg = { ...env.ctx.cfg, CAST_ENABLED: 'false' };
-    try { expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: false }); } finally { env.ctx.cfg = { ...env.ctx.cfg, CAST_ENABLED: 'true' }; }
+    try { expect((await call(admin, 'GET', '/api/cast/config')).json()).toEqual({ enabled: false, airplayContinuous: false }); } finally { env.ctx.cfg = { ...env.ctx.cfg, CAST_ENABLED: 'true' }; }
   });
 
   it('reports start / progress / stop for its play session without a cookie (same rules as /api/playback/*)', async () => {
@@ -1172,7 +1172,9 @@ describe('cast: HEVC and surround with FriendFlix\'s own receiver', () => {
     expect(params(base).get('TranscodingMaxAudioChannels')).toBe('2');
     expect(params(base).get('Level')).toBe('41');
     expect(params(base).get('RequireAvc')).toBe('true');
-    const keys = (j: Record<string, unknown>) => Object.keys(j).filter((k) => k !== 'report').sort();
+    // (an AirPlay answer also names the episode's own audio tracks and the chosen indices: that is the via, not the caps)
+    const AIR_KEYS = ['audioTracks', 'audioIndex', 'subtitleIndex'];
+    const keys = (j: Record<string, unknown>, air = false) => Object.keys(j).filter((k) => k !== 'report' && !(air && AIR_KEYS.includes(k))).sort();
     for (const body of [
       { receiver: true, caps: { hevc: false, surround: [] } }, // the receiver confirmed nothing
       { receiver: true, caps: { hevc: 'yes', surround: ['dts'] } }, // malformed: ignored, never an error
@@ -1183,7 +1185,7 @@ describe('cast: HEVC and surround with FriendFlix\'s own receiver', () => {
       const { r, j } = await create(admin, body);
       expect(r.statusCode, JSON.stringify(body)).toBe(200);
       expect(shape(j), JSON.stringify(body)).toBe(shape(base));
-      expect(keys(j), JSON.stringify(body)).toEqual(keys(base));
+      expect(keys(j, body.via === 'airplay'), JSON.stringify(body)).toEqual(keys(base));
       expect(j.hlsSegmentFormat).toBe('ts');
     }
   });

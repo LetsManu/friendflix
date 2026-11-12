@@ -8,7 +8,10 @@ import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
 const [A, B, C, D, E] = ['a', 'b', 'c', 'd', 'e'].map((c) => c.repeat(32));
 const LEA_JF = '1'.repeat(32);
 const movie = (id: string, name: string, rating: number, mins: number, genres = ['Drama']) => ({ Id: id, Name: name, Type: 'Movie', CommunityRating: rating, RunTimeTicks: mins * 600_000_000, Genres: genres, LocalTrailerCount: id === A ? 1 : 0, UserData: {},
-  MediaSources: [{ MediaStreams: [{ Type: 'Audio', Language: 'ger', DisplayTitle: 'Deutsch (AC3)', IsDefault: true }, { Type: 'Audio', Language: 'eng', DisplayTitle: 'English (AAC)' }, { Type: 'Audio', Language: 'eng', DisplayTitle: 'English commentary' }, { Type: 'Subtitle', Language: 'ger', DisplayTitle: 'Deutsch' }] }] });
+  MediaSources: [{ MediaStreams: [{ Type: 'Audio', Language: 'ger', DisplayTitle: 'Deutsch (AC3)', IsDefault: true }, { Type: 'Audio', Language: 'eng', DisplayTitle: 'English (AAC)' }, { Type: 'Audio', Language: 'eng', DisplayTitle: 'English commentary' }, { Index: 3, Type: 'Subtitle', Codec: 'srt', Language: 'ger', DisplayTitle: 'Deutsch' }, { Index: 4, Type: 'Subtitle', Codec: 'srt', Language: 'ger', DisplayTitle: 'Deutsch (forced)', IsForced: true },
+    { Index: 5, Type: 'Subtitle', Codec: 'subrip', Language: 'eng', DisplayTitle: 'English (forced)', IsForced: true }, { Index: 6, Type: 'Subtitle', Codec: 'subrip', Language: 'eng', DisplayTitle: 'English' },
+    { Index: 7, Type: 'Subtitle', Codec: 'PGSSUB', Language: 'fre', DisplayTitle: 'Français (PGS)' },
+    { Index: 8, Type: 'Subtitle', Codec: 'PGSSUB', Language: 'spa', DisplayTitle: 'Español (PGS)' }, { Index: 9, Type: 'Subtitle', Codec: 'ass', Language: 'spa', DisplayTitle: 'Español', IsForced: true }] }] });
 const CATALOG: Record<string, any> = { [A!]: movie(A!, 'Alpha', 7.1, 95), [B!]: movie(B!, 'Beta', 8.4, 150, ['Action']), [C!]: movie(C!, 'Gamma', 6.2, 100), [D!]: movie(D!, 'Delta', 9.0, 90), [E!]: movie(E!, 'Epsilon', 7.7, 100) };
 const ep = (n: number) => ({ Id: String(n).repeat(32), Name: `E${n}`, Type: 'Episode', SeriesId: 'e'.repeat(32), IndexNumber: n, UserData: {} });
 const UNPLAYED: Record<string, string[]> = { admin: [A!, B!, C!], lea: [B!, C!, D!] };
@@ -171,7 +174,15 @@ describe('language picker and clip preview', () => {
   it('tracks: one entry per audio language and subtitle language', async () => {
     const r = (await call('GET', `/api/items/${B}/tracks`)).json();
     expect(r.audio).toEqual([{ language: 'ger', title: 'Deutsch (AC3)', isDefault: true }, { language: 'eng', title: 'English (AAC)', isDefault: false }]);
-    expect(r.subtitles).toEqual([{ language: 'ger', title: 'Deutsch' }]);
+    expect(r).not.toHaveProperty('indexed'); // the per-stream index list stays on the server (the cast route's)
+    // one entry per language (the first track names it); `index` = that language's first text, non-forced track, else its first text
+    // track, none for image-only; `forcedIndex` = its first forced text track (continuous AirPlay picks a later episode's subtitle by them)
+    expect(r.subtitles).toEqual([
+      { language: 'ger', title: 'Deutsch', index: 3, forcedIndex: 4 },
+      { language: 'eng', title: 'English (forced)', index: 6, forcedIndex: 5 },
+      { language: 'fre', title: 'Français (PGS)' },
+      { language: 'spa', title: 'Español (PGS)', index: 9, forcedIndex: 9 },
+    ]);
   });
   it('clip preview defaults to on', async () => {
     await call('PUT', '/api/prefs', { hoverTrailers: true });

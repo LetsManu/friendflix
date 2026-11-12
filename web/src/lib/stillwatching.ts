@@ -38,3 +38,8 @@ export function shouldAsk(now: number, p: Pick<Prefs, 'stillWatching' | 'stillWa
   const s = load();
   return s.chain >= (p.stillWatchingEpisodes || 3) || now - s.lastInteraction >= IDLE_MS;
 }
+/** how many episodes a continuous stream may carry before "Are you still watching?" would ask: 3 with the question off, else what is left of the chain (1..3) */
+export function episodesBeforeAsk(p: Pick<Prefs, 'stillWatching' | 'stillWatchingEpisodes'>): number {
+  if (!p.stillWatching) return 3;
+  return Math.min(3, Math.max(1, 1 + (p.stillWatchingEpisodes || 3) - load().chain));
+}

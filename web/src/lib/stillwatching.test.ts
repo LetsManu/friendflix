@@ -78,3 +78,14 @@ describe('"Are you still watching?"', () => {
     expect(S.consumeAutoplay()).toBe(false);
   });
 });
+
+describe('episodesBeforeAsk', () => {
+  it('is 3 with the question off, else what is left of the chain (1..3)', () => {
+    expect(S.episodesBeforeAsk({ stillWatching: false, stillWatchingEpisodes: 2 })).toBe(3);
+    expect(S.episodesBeforeAsk(on)).toBe(3);
+    S.noteAutoplay(); S.noteAutoplay();
+    expect(S.episodesBeforeAsk(on)).toBe(2);
+    for (let i = 0; i < 3; i++) S.noteAutoplay();
+    expect(S.episodesBeforeAsk(on)).toBe(1);
+  });
+});

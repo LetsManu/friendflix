@@ -156,6 +156,7 @@ const settings: Translation<typeof de> = {
     DOWNLOAD_CREATE_PER_HOUR: { label: 'Saat başına indirme', help: 'Saat ve oturum başına en fazla yeni indirme sayısı.' },
     CAST_ENABLED: { label: 'Chromecast', help: 'Chromecast cihazlarında oynatma. Geçerli bir https sertifikalı genel adres gerektirir.' },
     CAST_RECEIVER_APP_ID: { label: 'Cast alıcı uygulama kimliği', help: 'Boş: Chromecast, Google’ın varsayılan alıcısını kullanır. FriendFlix’in kendi alıcısının uygulama kimliğiyle (8 karakter, Google Cast SDK Developer Console’dan, alıcı adresi https://<adresiniz>/cast-receiver/) TV geri sayımlı “Sonraki bölüm”, “Hâlâ orada mısın?” ve “Girişi atla” gösterir ve telefon uykudayken bile ilerlemeyi kaydeder. Bkz. docs/cast-receiver.md.' },
+    CAST_AIRPLAY_CONTINUOUS: { label: 'Kesintisiz AirPlay (deneysel)', help: 'Deneysel. Yalnızca AirPlay televizyonunla yapılan test başarılı olduktan sonra aç; ardından tüm profiller için geçerli olur.' },
     PREVIEW_WARM: { label: 'Önizlemeleri hazırla', help: 'Boştayken eksik önizleme kliplerini dakikada bir oluşturur.' },
     HOME_NETWORKS: { label: 'Ev ağları', help: 'Ev sayılan ağlar (dışarıdaki bit hızı sınırı yok), virgülle ayrılmış, ör. 192.168.0.0/16.' },
     UPLOAD_MBPS: { label: 'Sunucu yükleme hızı (Mbit/s)', help: 'İnternet bağlantınızın yükleme hızı. Neredeyse dolduğunda, dışarıdan yeni yayınlar herkesin takılması yerine daha düşük kalitede başlar. Süren yayınlar ve ev ağı etkilenmez. Boş = kapalı.' },

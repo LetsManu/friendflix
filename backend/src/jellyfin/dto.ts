@@ -60,6 +60,8 @@ export function toItemDto(i: Record<string, any>): ItemDto {
 }
 
 const TEXT_SUBS = new Set(['srt', 'subrip', 'ass', 'ssa', 'vtt', 'webvtt', 'mov_text', 'subviewer']);
+/** a subtitle stream FriendFlix can serve as text (WebVTT); an image track (PGS, VobSub) would have to be burned in */
+export const isTextSubtitle = (s: Record<string, any>): boolean => Boolean(s.IsTextSubtitleStream) || TEXT_SUBS.has(String(s.Codec ?? '').toLowerCase());
 
 /** HLS segment length asked for where Jellyfin's playlist follows keyframes (see toPlaybackDto) */
 export const SEGMENT_SECONDS = 3;
@@ -181,7 +183,7 @@ export function toPlaybackDto(args: {
   for (const [k, v] of Object.entries(plan.codecParams)) hls.set(k, v);
   if (plan.segment === 'mp4') hls.set('EnableAdaptiveBitrateStreaming', 'false');
   // the one subtitle rendition of an AirPlay stream: only a text track of the source (an image track would have to be burned in, which FriendFlix never does)
-  if (cast && args.hlsSubtitleIndex !== undefined && streams.some((s) => s.Type === 'Subtitle' && s.Index === args.hlsSubtitleIndex && (s.IsTextSubtitleStream || TEXT_SUBS.has(String(s.Codec ?? '').toLowerCase())))) {
+  if (cast && args.hlsSubtitleIndex !== undefined && streams.some((s) => s.Type === 'Subtitle' && s.Index === args.hlsSubtitleIndex && isTextSubtitle(s))) {
     hls.set('SubtitleStreamIndex', String(args.hlsSubtitleIndex));
     hls.set('SubtitleMethod', 'Hls');
   }
@@ -227,7 +229,7 @@ export function toPlaybackDto(args: {
       .filter((s) => s.Type === 'Audio')
       .map((s) => ({ index: s.Index, language: s.Language, title: s.DisplayTitle ?? s.Title ?? s.Language ?? `Spur ${s.Index}`, isDefault: Boolean(s.IsDefault) })),
     subtitles: streams
-      .filter((s) => s.Type === 'Subtitle' && (s.IsTextSubtitleStream || TEXT_SUBS.has(String(s.Codec ?? '').toLowerCase())))
+      .filter((s) => s.Type === 'Subtitle' && isTextSubtitle(s))
       .map((s) => ({
         index: s.Index,
         language: s.Language,
@@ -309,7 +311,7 @@ export function toDownloadSource(args: {
     playSessionId: info.PlaySessionId,
     audio: audioStreams.map((s) => ({ index: s.Index, lang: String(s.Language ?? 'und'), title: s.DisplayTitle ?? s.Title ?? s.Language ?? `Spur ${s.Index}`, isDefault: Boolean(s.IsDefault) })),
     subtitles: streams
-      .filter((s) => s.Type === 'Subtitle' && (s.IsTextSubtitleStream || TEXT_SUBS.has(String(s.Codec ?? '').toLowerCase())))
+      .filter((s) => s.Type === 'Subtitle' && isTextSubtitle(s))
       .map((s) => ({
         index: s.Index, lang: String(s.Language ?? 'und'), title: s.DisplayTitle ?? s.Title ?? s.Language ?? `Untertitel ${s.Index}`,
         url: `/media/Videos/${itemId}/${src.Id}/Subtitles/${s.Index}/0/Stream.vtt`,

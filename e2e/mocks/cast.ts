@@ -26,9 +26,10 @@ export async function stubAirPlay(page: Page, o: { pickTv?: boolean } = {}) {
  * /api/cast/config enabled (the AirPlay button's gate); the Chromecast SDK Chromium then asks for is answered empty.
  * `fakeCastSdk()` must be called after this (Playwright tries the most recently added route first).
  */
-export async function castOn(page: Page, enabled = true, receiverAppId?: string) {
+export async function castOn(page: Page, enabled = true, receiverAppId?: string, o: { airplayContinuous?: boolean } = {}) {
   // receiverAppId: FriendFlix's own receiver is configured (CAST_RECEIVER_APP_ID); absent = the Default Media Receiver
-  await page.route('**/api/cast/config', (r) => r.fulfill({ json: { enabled, ...(receiverAppId ? { receiverAppId } : {}) } }));
+  // airplayContinuous: the admin switch for a joined AirPlay stream is on
+  await page.route('**/api/cast/config', (r) => r.fulfill({ json: { enabled, ...(receiverAppId ? { receiverAppId } : {}), ...(o.airplayContinuous ? { airplayContinuous: true } : {}) } }));
   await page.route('https://www.gstatic.com/**', (r) => r.fulfill({ contentType: 'text/javascript', body: '' }));
 }
 /** the player plays a real HLS stream through hls.js (like Safari normally does) */

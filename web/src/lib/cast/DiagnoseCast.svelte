@@ -10,7 +10,7 @@
   import { onMount } from 'svelte';
   import { api, cachedItem } from '#lib/api';
   import { serverCaps } from '#lib/capabilities';
-  import { castCapableBrowser, castConfigEnabled, castCustomReceiver, castState, castTestClip, initCast, requestCastSession, whenCastReady } from '#lib/cast';
+  import { castCapableBrowser, castConfigAirplayContinuous, castConfigEnabled, castCustomReceiver, castState, castTestClip, initCast, requestCastSession, whenCastReady } from '#lib/cast';
   import Icon from '#lib/Icon.svelte';
   import { perms } from '#lib/perms';
   import { fmtTime, t } from '#lib/i18n';
@@ -22,7 +22,7 @@
 
   const CLIP = '/cast-test/clip.mp4';
 
-  let capable = false, enabled = false, custom = false, ready = false, airAvailable = false;
+  let capable = false, enabled = false, custom = false, ready = false, airAvailable = false, airCont = false;
   let otherTab = false;
   let now = Date.now();
   let entries: CastLogEntry[] = [];
@@ -65,6 +65,8 @@
     read();
     void checkLock();
     mounted = true;
+    // Safari (the AirPlay browser) is no Cast browser: the switch for continuous AirPlay is read from the config regardless
+    void castConfigEnabled().then((on) => { airCont = on && castConfigAirplayContinuous(); }).catch(() => undefined);
     const id = setInterval(() => { read(); void checkLock(); }, 2000);
     return () => clearInterval(id);
   });
@@ -83,7 +85,7 @@
     capable, allowed: $perms.cast, enabled, custom, state: $castState, session: $castSession,
     lookup: $castSession?.kind === 'chromecast' ? lookup : null, errors, now, tf: $t, otherTab: otherTab && !$castSession, item: $castSession ? cachedItem($castSession.itemId) : null,
   });
-  $: ap = airplayRows({ available: airAvailable, continuous: null, allowed: $perms.cast, subsInStream: $serverCaps.castHlsSubtitles, last: air, lookup: $castSession?.kind === 'airplay' ? lookup : null, pinned: lookup?.pinFamily, tf: $t });
+  $: ap = airplayRows({ available: airAvailable, continuous: airCont ? 'on' : null, allowed: $perms.cast, subsInStream: $serverCaps.castHlsSubtitles, last: air, lookup: $castSession?.kind === 'airplay' ? lookup : null, pinned: lookup?.pinFamily, tf: $t });
 
   $: castBusy = $castSession !== null || otherTab;
   $: canTest = capable && enabled && ready && !busy && !castBusy;
