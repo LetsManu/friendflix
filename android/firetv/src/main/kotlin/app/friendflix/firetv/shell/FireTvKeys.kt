@@ -6,8 +6,11 @@ import android.view.KeyEvent
 
 /**
  * The remote keys the shell hands to the page as `keydown` events with the standard key names the web UI understands
- * (`isBackKey` in lib/spatial.ts, `resolveKey` in lib/player/keymap.ts). D-pad, OK, Menu, volume and Home reach the page (or the
- * system) natively and are not listed here.
+ * (`isBackKey` in lib/spatial.ts, `resolveKey` in lib/player/keymap.ts, `resolveLiveKey` in lib/live/livekeys.ts). D-pad, OK,
+ * Menu, volume and Home reach the page (or the system) natively and are not listed here: OK (`KEYCODE_DPAD_CENTER`) in
+ * particular must keep its own keydown, repeats and keyup, since the live player measures a long OK (Senderliste) from them.
+ * Most Fire TV remotes send none of the channel, digit, Info or Guide keys: they are shortcuts; ▲/▼, OK and Back cover
+ * everything.
  */
 object FireTvKeys {
     const val BACK = "GoBack"
@@ -20,6 +23,22 @@ object FireTvKeys {
         KeyEvent.KEYCODE_MEDIA_FAST_FORWARD to "MediaFastForward",
         KeyEvent.KEYCODE_MEDIA_REWIND to "MediaRewind",
         KeyEvent.KEYCODE_MEDIA_NEXT to "MediaTrackNext",
+        KeyEvent.KEYCODE_CHANNEL_UP to "ChannelUp",
+        KeyEvent.KEYCODE_CHANNEL_DOWN to "ChannelDown",
+        KeyEvent.KEYCODE_0 to "0",
+        KeyEvent.KEYCODE_1 to "1",
+        KeyEvent.KEYCODE_2 to "2",
+        KeyEvent.KEYCODE_3 to "3",
+        KeyEvent.KEYCODE_4 to "4",
+        KeyEvent.KEYCODE_5 to "5",
+        KeyEvent.KEYCODE_6 to "6",
+        KeyEvent.KEYCODE_7 to "7",
+        KeyEvent.KEYCODE_8 to "8",
+        KeyEvent.KEYCODE_9 to "9",
+        KeyEvent.KEYCODE_LAST_CHANNEL to "PreviousChannel",
+        KeyEvent.KEYCODE_INFO to "Info",
+        // Phase 1: the Senderliste panel in the live player; Phase 2 opens the guide grid
+        KeyEvent.KEYCODE_GUIDE to "Guide",
     )
 
     fun webKey(keyCode: Int): String? = KEYS[keyCode]
@@ -27,7 +46,10 @@ object FireTvKeys {
     sealed interface Route {
         /** not a key of ours: normal dispatch */
         data object Pass : Route
-        /** a repeat or key-up of one of our keys: consumed, nothing happens (holding Fast-forward does not skip minutes) */
+        /**
+         * a repeat or key-up of one of our keys: consumed, nothing happens (holding Fast-forward does not skip minutes, holding
+         * CH+ does not race through the channels)
+         */
         data object Swallow : Route
         /** the first key-down: the page gets [key] */
         data class Dispatch(val key: String) : Route
