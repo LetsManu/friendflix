@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
@@ -19,6 +20,8 @@ const ENV_LINE = 'COMPOSE_PROFILES=livetv';
 const JF_TIMEOUT_MS = 3_000;
 /** spec §4.1: the state is cached 10 s */
 const MEMO_MS = 10_000;
+/** the source test's single flight per admin; longer than its slowest call (the EPG count, 120 s) */
+const TEST_LOCK_TTL_S = 150;
 
 const disableBody = z.object({ removeImage: z.boolean(), removeCache: z.boolean() });
 
@@ -244,11 +247,15 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     } catch (e) { return refused(e, reply); }
   });
 
-  // Prüfen: asks livetv, never the provider (spec §3.4); a static route, so it wins over /:id
+  // Prüfen: asks livetv, never the provider (spec §3.4); a static route, so it wins over /:id. One test per admin at a time (each can
+  // hold a provider download in livetv for up to two minutes): a second one while it runs answers 409 test_running.
   app.post('/api/admin/livetv/sources/test', admin, async (req, reply) => {
     const b = parse(sourceTestBody, req.body, reply);
     if (!b) return reply;
     reply.header('cache-control', 'no-store');
+    const lock = `ltv:srctest:${req.user!.id}`;
+    const token = randomUUID();
+    if (!(await ctx.kv.setnx(lock, token, TEST_LOCK_TTL_S))) return reply.code(409).send({ error: 'test_running' });
     try {
       return await testSource(ctx, b);
     } catch (e) {
@@ -259,6 +266,8 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
         return reply.code(422).send({ error: e.code });
       }
       return refused(e, reply);
+    } finally {
+      await ctx.kv.delIfEquals(lock, token).catch(() => undefined); // a lost delete only blocks this admin until the ttl ends
     }
   });
 

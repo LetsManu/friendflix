@@ -101,12 +101,14 @@ const httpUrl = z.string().trim().min(1).max(2048).refine((v) => {
     return false;
   }
 });
+/** an EPG URL; an empty (or blank) field means none, as the web form may send it */
+const epgUrl = z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? null : v), httpUrl.nullable());
 /** printable ASCII only: livetv sends it as an HTTP header (livetv/src/m3u.ts USER_AGENT_RE); empty = none */
 const userAgent = z.string().max(200).regex(/^[ -~]*$/).nullable();
 const fields = {
   name: z.string().trim().min(1).max(60),
   url: httpUrl,
-  epgUrl: httpUrl.nullable(),
+  epgUrl,
   userAgent,
   allowLan: z.boolean(),
   refresh: z.enum(['6h', '12h', '24h', 'weekly', 'manual']),
@@ -138,7 +140,7 @@ export type SourceBody = z.output<typeof sourceCreate>;
 /** `POST /sources/test`: a missing `url` (`epgUrl`, `userAgent`) with `sourceId` uses the stored one; `epgUrl: null` = no EPG */
 export const sourceTestBody = z.object({
   url: httpUrl.optional(),
-  epgUrl: httpUrl.nullable().optional(),
+  epgUrl: epgUrl.optional(),
   userAgent: userAgent.optional(),
   allowLan: z.boolean(),
   sourceId: z.guid().optional(),
@@ -275,7 +277,11 @@ export async function createSource(ctx: WriteCtx, actor: string, b: SourceBody):
   return (await sourceView(ctx, id))!;
 }
 
-const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+/** the same set of group names (both are free of duplicates: the schema removes them, and so did every earlier save) */
+const sameSet = (a: readonly string[], b: readonly string[]) => {
+  const have = new Set(b);
+  return a.length === b.length && a.every((x) => have.has(x));
+};
 
 /**
  * Changes the fields `patch` names: an absent `url`/`epgUrl` stays as stored, `epgUrl: null` removes it. The stored URLs are checked
@@ -316,7 +322,7 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
     if (patch.epgShiftMin !== undefined) put('epg_shift_min', patch.epgShiftMin);
     if (patch.maxStreams !== undefined) put('max_streams', patch.maxStreams);
     if (patch.enabled !== undefined) put('enabled', patch.enabled);
-    const due = (patch.skipGroups !== undefined && !sameList(patch.skipGroups, s.skip_groups))
+    const due = (patch.skipGroups !== undefined && !sameSet(patch.skipGroups, s.skip_groups))
       || (patch.numbering !== undefined && patch.numbering !== s.numbering)
       || (patch.numberBase !== undefined && patch.numberBase !== s.number_base);
     if (due) set.push('last_refresh_at = null');
@@ -365,7 +371,10 @@ export class SourceTestError extends Error {
 
 /** the M3U answer, read defensively (it is livetv's, but its names come from a provider) */
 function readM3u(a: FetchM3uAnswer | undefined): Omit<SourceTestAnswer, 'epgChannels' | 'epgError'> {
-  if (!a || !Array.isArray(a.groups) || !Array.isArray(a.entries) || typeof a.listed !== 'number') throw new LivetvError(200, 'invalid_answer');
+  const objects = (xs: unknown[]) => xs.every((x) => typeof x === 'object' && x !== null);
+  if (!a || typeof a !== 'object' || !Array.isArray(a.groups) || !Array.isArray(a.entries) || typeof a.listed !== 'number' || !objects(a.groups) || !objects(a.entries)) {
+    throw new LivetvError(200, 'invalid_answer');
+  }
   return {
     channels: a.listed,
     groups: a.groups.map((g) => ({ name: String(g.name), channels: Number(g.channels) || 0 })),
@@ -374,9 +383,9 @@ function readM3u(a: FetchM3uAnswer | undefined): Omit<SourceTestAnswer, 'epgChan
 }
 
 /** counts the channels of an XMLTV file: livetv streams NDJSON; programmes are left out by an empty time window */
-async function epgChannels(ctx: Ctx, url: string, allowLan: boolean, userAgent: string | null): Promise<{ n: number } | { error: string }> {
+async function epgChannels(ctx: Ctx, url: string, allowLan: boolean, userAgent: string | null, signal: AbortSignal): Promise<{ n: number } | { error: string }> {
   try {
-    const r = await livetvStream(ctx, '/v1/fetch/xmltv', { url, allowLan, ...(userAgent ? { userAgent } : {}), from: 0, to: 1 }, { timeoutMs: TEST_EPG_TIMEOUT_MS });
+    const r = await livetvStream(ctx, '/v1/fetch/xmltv', { url, allowLan, ...(userAgent ? { userAgent } : {}), from: 0, to: 1 }, { timeoutMs: TEST_EPG_TIMEOUT_MS, signal });
     let text: string;
     try { text = await r.text(); } catch { return { error: 'timeout' }; }
     let n = 0;
@@ -414,13 +423,16 @@ export async function testSource(ctx: Ctx, b: SourceTestBody): Promise<SourceTes
   checkUrl(url, b.allowLan, 'url');
   if (epgUrl !== null) checkUrl(epgUrl, b.allowLan, 'epgUrl');
 
-  const [list, epg] = await Promise.all([
-    livetvCall<FetchM3uAnswer>(ctx, 'POST', '/v1/fetch/m3u', { url, allowLan: b.allowLan, ...(ua ? { userAgent: ua } : {}) }, { timeoutMs: TEST_M3U_TIMEOUT_MS })
-      .then(readM3u, (e: unknown) => {
-        if (e instanceof LivetvError) throw new SourceTestError(e.status === null ? null : e.status, e.code);
-        throw e;
-      }),
-    epgUrl === null ? Promise.resolve(null) : epgChannels(ctx, epgUrl, b.allowLan, ua),
-  ]);
+  // a failed list ends the EPG count at once (livetv stops the provider download when the backend goes away)
+  const cancel = new AbortController();
+  const listed = livetvCall<FetchM3uAnswer>(ctx, 'POST', '/v1/fetch/m3u', { url, allowLan: b.allowLan, ...(ua ? { userAgent: ua } : {}) }, { timeoutMs: TEST_M3U_TIMEOUT_MS })
+    // readM3u inside the chain: a malformed or empty 200 answer is a refusal (422 invalid_answer) like any other livetv error
+    .then((a) => readM3u(a))
+    .catch((e: unknown) => {
+      cancel.abort();
+      if (e instanceof LivetvError) throw new SourceTestError(e.status, e.code);
+      throw e;
+    });
+  const [list, epg] = await Promise.all([listed, epgUrl === null ? Promise.resolve(null) : epgChannels(ctx, epgUrl, b.allowLan, ua, cancel.signal)]);
   return { ...list, epgChannels: epg && 'n' in epg ? epg.n : null, epgError: epg && 'error' in epg ? epg.error : null };
 }
