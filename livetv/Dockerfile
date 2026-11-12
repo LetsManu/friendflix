@@ -2,8 +2,9 @@
 # SPDX-FileCopyrightText: 2026 Manuel Weißböck
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # The optional Live TV service (compose profile `livetv`, docs/superpowers/specs/2026-11-11-live-tv-design.md §3.1): a small Node
-# service with jellyfin-ffmpeg 7 (the same QSV / VA-API / NVENC support as Jellyfin). Debian, not Alpine: jellyfin-ffmpeg ships
-# for Debian only. Node is the binary of the pinned node:26 Debian image (plan ruling 1). No Docker socket, no npm at runtime.
+# service with jellyfin-ffmpeg 7 (the same QSV / VA-API / NVENC support as Jellyfin) and `srtgate`, the SRT push listener on the
+# system libsrt (plan ruling 2). Debian, not Alpine: jellyfin-ffmpeg ships for Debian only. Node is the binary of the pinned
+# node:26 Debian image (plan ruling 1). No Docker socket, no npm at runtime.
 FROM node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
@@ -15,6 +16,17 @@ COPY livetv/package.json livetv/
 RUN npm ci
 COPY livetv livetv
 RUN npm run build -w livetv
+
+# srtgate: built against Debian's libsrt (OpenSSL flavour); its selftest runs in-process callers on loopback (right pair accepted,
+# wrong passphrase refused, another port's stream id refused, a second sender refused) and fails the build otherwise.
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS srtgate
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc make libc6-dev libsrt-openssl-dev \
+  && rm -rf /var/lib/apt/lists/*
+COPY livetv/native /src
+RUN make -C /src clean all \
+  && install -m 0755 /src/srtgate /usr/local/bin/srtgate \
+  && srtgate --selftest
 
 # The Jellyfin repository key, checked before apt may trust it: the file must hold exactly one primary key, with the pinned
 # fingerprint (a swapped key or an extra appended one fails the build), and only that key is exported for apt's signed-by.
@@ -43,9 +55,9 @@ WORKDIR /app
 COPY --from=jellyfin-key /jellyfin.gpg /etc/apt/keyrings/jellyfin.gpg
 # jellyfin-ffmpeg7 from the Jellyfin repository (signed-by the checked key only; installs to /usr/lib/jellyfin-ffmpeg). Not
 # version-pinned: old versions vanish from the repository, same ruling as the Alpine packages of the other images.
-# libstdc++6: the node binary links it. Package lists and caches are dropped.
+# libstdc++6: the node binary links it; libsrt1.5-openssl: srtgate links it. Package lists and caches are dropped.
 RUN apt-get update \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libstdc++6 libsrt1.5-openssl \
   && echo 'deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/jellyfin.gpg] https://repo.jellyfin.org/debian bookworm main' > /etc/apt/sources.list.d/jellyfin.list \
   && apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jellyfin-ffmpeg7 \
@@ -53,6 +65,9 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/apt /var/log/dpkg.log \
   && groupadd -g 10001 livetv && useradd -u 10001 -g 10001 -M -d /tmp -s /usr/sbin/nologin livetv \
   && mkdir -p /cache /recordings && chown 10001:10001 /cache /recordings
+COPY --from=srtgate /usr/local/bin/srtgate /usr/local/bin/srtgate
+# again against the runtime library: a missing or mismatched libsrt fails the build here, not at the first push
+RUN srtgate --selftest
 COPY --from=build /usr/local/bin/node /usr/local/bin/node
 COPY --from=build --chown=10001:10001 /app/livetv/dist livetv/dist
 COPY --chown=10001:10001 livetv/package.json livetv/

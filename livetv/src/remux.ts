@@ -9,6 +9,7 @@ import type { Log } from './log.js';
 import { PlaylistRefused, type FetchFn } from './passthrough.js';
 import { probe, type ProbeResult, type StreamInput } from './probe.js';
 import type { Run } from './run.js';
+import type { IngestReader } from './srtingest.js';
 import type { Driver, Mode } from './streams.js';
 
 /**
@@ -20,7 +21,8 @@ import type { Driver, Mode } from './streams.js';
  * shared backoff (2, 4, 8, 15, 30 s, then 30 s; a run that delivered a segment resets it); the first segment of the new run is a
  * discontinuity and local numbering continues. A run that delivers no segment line for STALL_MS (a hung ffmpeg, or one that keeps
  * reading input without writing segments) is aborted by the stall watchdog and restarted the same way; the stream itself lives
- * on. Logs: channel id and fixed texts only; ffmpeg's stderr goes through run.ts (`scrubLine`), never through here.
+ * on. A `{ push }` input (Task 29) is its feed's ring on ffmpeg's stdin. Logs: channel id and fixed texts only; ffmpeg's stderr
+ * goes through run.ts (`scrubLine`), never through here.
  */
 export interface RemuxDeps {
   run: Run;
@@ -34,6 +36,8 @@ export interface RemuxDeps {
   /** the size of a written segment (default: the file's size, 0 when it is missing) */
   size?: (path: string) => Promise<number>;
   now?: () => number;
+  /** the SRT push ingest (Task 29): `{ push }` inputs read their feed's ring */
+  ingest?: IngestReader;
 }
 
 /** the stall watchdog: about 3 segment durations + 20 s without a segment line ends the run */
@@ -75,13 +79,12 @@ function untilAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T | null> {
 const fileSize = (p: string): Promise<number> => stat(p).then((s) => s.size, () => 0);
 
 export function remuxDriver(d: RemuxDeps): Driver {
-  const probeFn = d.probe ?? ((input: StreamInput, signal: AbortSignal) => probe(input, { run: d.run, guard: d.guard, signal }));
+  const probeFn = d.probe ?? ((input: StreamInput, signal: AbortSignal) => probe(input, { run: d.run, guard: d.guard, signal, ingest: d.ingest }));
   const size = d.size ?? fileSize;
   const log: Log = d.log ?? (() => {});
   const now = d.now ?? Date.now;
   return async (ctx) => {
     const input = ctx.input;
-    if ('push' in input) { ctx.fail('invalid'); return; }
     const facts = await untilAbort(probeFn(input, ctx.signal).catch(() => PROBE_FAILED), ctx.signal);
     if (facts === null || ctx.signal.aborted) return;
     const mode = chooseMode(ctx.mode, facts);
@@ -103,7 +106,7 @@ export function remuxDriver(d: RemuxDeps): Driver {
       let opened: OpenedInput;
       try {
         opened = await openInput(input, {
-          guard: d.guard, ...(d.fetch ? { fetch: d.fetch } : {}), signal: ctx.signal, maxBitrate: ctx.maxBitrate,
+          guard: d.guard, ...(d.fetch ? { fetch: d.fetch } : {}), ...(d.ingest ? { ingest: d.ingest } : {}), signal: ctx.signal, maxBitrate: ctx.maxBitrate,
         });
       } catch (e) {
         if (ctx.signal.aborted) break;
