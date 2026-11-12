@@ -4,9 +4,10 @@ import { createServer as netServer, type AddressInfo } from 'node:net';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GuardDeps } from '../src/fetch.js';
+import { SEGMENT_SECONDS } from '../src/ffmpeg.js';
 import type { ProbeResult, StreamInput } from '../src/probe.js';
 import { deriveKey, sign } from '../src/protocol.js';
-import { remuxDriver } from '../src/remux.js';
+import { STALL_MS, remuxDriver } from '../src/remux.js';
 import { streamRoutes } from '../src/routes/streams.js';
 import type { Run, RunOptions, RunResult } from '../src/run.js';
 import { start, type RouteCall } from '../src/server.js';
@@ -313,6 +314,72 @@ describe('the remux / transcode driver', () => {
       expect(text).not.toContain(c.args.join(' '));
       for (const x of carrying(c.args)) expect([x, text.includes(x)]).toEqual([x, false]);
     }
+  });
+
+  // The stall watchdog (Task 28 review finding, ruled into Task 29's branch): a run is aborted when no segment line arrived for
+  // STALL_MS while ffmpeg runs; the reconnect loop restarts it. A player polling the playlist (touch) keeps the 180-s safety net
+  // away, so only the watchdog can end a frozen run.
+  it('watchdog: a slow but alive ffmpeg is never cut', async () => {
+    // about 3 segment durations + 20 s
+    expect(STALL_MS).toBe(3 * SEGMENT_SECONDS * 1000 + 20_000);
+    // a segment line every STALL_MS − 2 s, the first one too: slower than real time, but alive
+    const every = STALL_MS - 2_000;
+    const out: Array<[number, string]> = Array.from({ length: 10 }, (_, i) => [(i + 1) * every, `${i}.ts,${i * 4}.000000,${i * 4 + 4}.000000\n`]);
+    const { run, streams } = setup([{ out }]);
+    const { streamKey } = streams.start(body());
+    await flush();
+    for (let t = 0; t < 10 * every + 1_000; t += 10_000) {
+      await vi.advanceTimersByTimeAsync(10_000);
+      streams.touch(streamKey);
+    }
+    await flush();
+    expect(run.calls).toHaveLength(1);
+    expect(run.calls[0]!.o.signal?.aborted).toBe(false);
+    expect(run.calls[0]!.endedAt).toBeNull();
+    expect(uris(playlist(streamKey))).toEqual(Array.from({ length: 10 }, (_, i) => `${i}.ts`));
+    expect(viewOf(streams, 'ch-hafenkanal')).toMatchObject({ state: 'running', errors: [] });
+  });
+
+  it('watchdog: a frozen ffmpeg is cut and restarted with a discontinuity', async () => {
+    const { run, streams } = setup([
+      // two segments, then it hangs: still running (maybe still reading input), but no line any more
+      { out: [[4_000, '0.ts,0.000000,4.000000\n'], [8_000, '1.ts,4.000000,8.000000\n']] },
+      // hangs from its start: not even a first segment
+      {},
+      { out: [[4_000, '2.ts,0.000000,4.000000\n']] },
+    ]);
+    const { streamKey } = streams.start(body());
+    await flush();
+    for (let i = 0; i < 11; i++) {
+      await vi.advanceTimersByTimeAsync(10_000);
+      streams.touch(streamKey);
+    }
+    await flush();
+    expect(run.calls).toHaveLength(3);
+    const [a, b, c] = run.calls as [Call, Call, Call];
+    // the first run is cut STALL_MS (allowing a coarse check: up to 5 s more) after its last line; only the run is aborted
+    expect(a.o.signal?.aborted).toBe(true);
+    expect(a.endedAt! - (NOW + 8_000)).toBeGreaterThanOrEqual(STALL_MS);
+    expect(a.endedAt! - (NOW + 8_000)).toBeLessThanOrEqual(STALL_MS + 5_000);
+    // the second one STALL_MS after its start
+    expect(b.o.signal?.aborted).toBe(true);
+    expect(b.endedAt! - b.at).toBeGreaterThanOrEqual(STALL_MS);
+    expect(b.endedAt! - b.at).toBeLessThanOrEqual(STALL_MS + 5_000);
+    // the third delivers and runs on
+    expect(c.endedAt).toBeNull();
+    expect(c.o.signal?.aborted).toBe(false);
+    // the reconnect loop's backoff: 2 s, then 4 s (the second run delivered nothing); numbering continues
+    expect(gaps(run.calls)).toEqual([2_000, 4_000]);
+    expect(run.calls.map((x) => after(x.args, '-segment_start_number'))).toEqual(['0', '2', '2']);
+    const text = playlist(streamKey);
+    expect(uris(text)).toEqual(['0.ts', '1.ts', '2.ts']);
+    const l = text.split('\n');
+    expect(l.filter((x) => x === '#EXT-X-DISCONTINUITY')).toHaveLength(1);
+    expect(l[l.indexOf('#EXT-X-DISCONTINUITY') + 3]).toBe('2.ts');
+    const v = viewOf(streams, 'ch-hafenkanal');
+    expect(v.errors.map((e) => e.code)).toEqual(['input_lost', 'input_back']);
+    expect(v.errors[0]!.at).toBe(a.endedAt);
+    expect(v.state).toBe('running');
   });
 });
 

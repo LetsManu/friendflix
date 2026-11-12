@@ -4,12 +4,14 @@ import { FetchError, guardedFetch, type GuardDeps, type GuardedResponse } from '
 import { checkUrl, ipLiteralUrl, resolveChecked } from './netguard.js';
 import { PLAYLIST_TIMEOUT_MS, SEGMENT_TIMEOUT_MS, START_SEGMENTS, parseMedia, type FetchFn } from './passthrough.js';
 import { DEFAULT_MAX_BITRATE, PLAYLIST_MAX_BYTES, SEGMENT_MAX_BYTES, pickVariant, type StreamInput } from './probe.js';
+import type { IngestReader } from './srtingest.js';
 
 /**
  * What ffmpeg reads for a remux or transcode (plan ruling 3): never a provider URL. HTTP(S) inputs are fetched by livetv
  * (`guardedFetch`) and handed over as a byte stream for ffmpeg's stdin: an MPEG-TS stream as it arrives, an HLS playlist as its
  * segments one after the other (polled like passthrough). An SRT caller input keeps its URL with the host replaced by the
- * checked IP literal. `{ push }` inputs arrive with Task 29.
+ * checked IP literal. A `{ push }` input (Task 29) is its feed's ring in the ingest hub on stdin, from the oldest of the last 4 s
+ * on; a feed that is not receiving fails like an unreachable input (the driver's reconnect waits for it).
  */
 export type FfmpegInput = { kind: 'pipe'; stdin: AsyncIterable<Uint8Array> } | { kind: 'srt'; url: string };
 export interface OpenedInput {
@@ -17,7 +19,7 @@ export interface OpenedInput {
   /** ends every fetch of this input (an unread body included) */
   close(): void;
 }
-export interface InputDeps { guard: GuardDeps; fetch?: FetchFn; signal?: AbortSignal; maxBitrate?: number }
+export interface InputDeps { guard: GuardDeps; fetch?: FetchFn; signal?: AbortSignal; maxBitrate?: number; ingest?: IngestReader }
 
 /** an MPEG-TS stream that delivers nothing for this long ends (ffmpeg sees EOF, the driver reconnects) */
 export const STREAM_IDLE_MS = 20_000;
@@ -115,9 +117,26 @@ async function* hlsBytes(first: { text: string; base: string; url: string }, get
   }
 }
 
+/** a push feed's ring as ffmpeg's stdin: no address, no URL; closed by the stop, by `close()` or by 20 s without data */
+function openPush(channelId: string, deps: InputDeps): OpenedInput {
+  // without an ingest hub a push input cannot be read at all: the driver fails the stream
+  if (!deps.ingest) throw new FetchError('scheme');
+  if (!deps.ingest.receiving(channelId)) throw new FetchError('unreachable');
+  const it = deps.ingest.reader(channelId)[Symbol.asyncIterator]();
+  let done = false;
+  const close = () => {
+    if (done) return;
+    done = true;
+    deps.signal?.removeEventListener('abort', close);
+    void Promise.resolve(it.return?.()).catch(() => {});
+  };
+  if (deps.signal?.aborted) close();
+  else deps.signal?.addEventListener('abort', close, { once: true });
+  return { ffInput: { kind: 'pipe', stdin: watched({ [Symbol.asyncIterator]: () => it }, STREAM_IDLE_MS, close) }, close };
+}
+
 export async function openInput(input: StreamInput, deps: InputDeps): Promise<OpenedInput> {
-  // `{ push }` reads livetv's own ingest (Task 29)
-  if ('push' in input) throw new FetchError('scheme');
+  if ('push' in input) return openPush(input.push, deps);
   if (input.kind === 'srt') {
     const c = checkUrl(input.url, ['srt:']);
     if ('error' in c) throw new FetchError(c.error === 'host' ? 'address_refused' : c.error === 'scheme' ? 'scheme' : 'unreachable');
