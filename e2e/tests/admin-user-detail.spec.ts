@@ -1019,6 +1019,19 @@ test.describe('admin user detail: Sicht prüfen (desktop)', () => {
     await expect.poll(() => logged(api, /POST .*\/check .* -> 429/)).toBe(true);
   });
 
+  test('the library counts hit the 30-a-minute limit: the tab says so, not the generic load error', async ({ page, api }) => {
+    // the limiter has seen 30 checks this minute before the tab asks for the counts
+    api.admin.checkTimes = Array.from({ length: 30 }, () => Date.now());
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const alert = checkPanel(page).getByRole('alert');
+    await expect(alert).toContainText('Zu viele Prüfungen in kurzer Zeit. Bitte eine Minute warten.');
+    await expect(alert).not.toContainText('nicht laden');
+    // the minute is over: Erneut versuchen loads the tab
+    api.admin.checkTimes = [];
+    await alert.getByRole('button').click();
+    await expect(checkPanel(page).getByRole('region', { name: 'Kurzfassung' })).toContainText('Clara sieht');
+  });
+
   test('title check: an unrated title a grown-up\'s cap hides (adapters that say so) names that reason', async ({ page, api }) => {
     api.admin.checkHidesUnrated = true;
     await page.goto(`/admin/users/${CLARA}?tab=check`);

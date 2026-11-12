@@ -50,8 +50,9 @@
       if (my !== seq) return;
       view = v; libs = c.libraries;
       void search();
-    } catch {
-      if (my === seq) error = tr('adminPeople.loadFailed');
+    } catch (e) {
+      // the library counts share the check's 30-a-minute limit: that says so, not "could not load"
+      if (my === seq) error = tr(e instanceof ApiError && e.status === 429 ? 'adminPeople.check.tooMany' : 'adminPeople.loadFailed');
     }
   }
   // a profile (re)selected: its view is read again, the open search is asked again for it
