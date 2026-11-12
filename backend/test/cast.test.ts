@@ -1277,9 +1277,9 @@ describe('cast: HEVC and surround with FriendFlix\'s own receiver', () => {
       expect(r.json().delivery.why).toContain('hevc_upload');
       expect(params(r.json()).get('VideoCodec')).toBe('hevc,h264');
       expect(r.json().hlsSegmentFormat).toBe('fmp4');
-      // a conversion is remembered for the server's count (fixed codes only)
+      // a conversion is remembered for the server's count and the budget's (fixed codes only; `conv`: it really converts, ruling 6)
       const uid = (await call(admin, 'GET', '/api/me')).json().id as string;
-      expect(JSON.parse((await env.kv.get(`pbinfo:${uid}:${r.json().playSessionId}`))!)).toEqual({ video: 'hevc', audio: 'copy' });
+      expect(JSON.parse((await env.kv.get(`pbinfo:${uid}:${r.json().playSessionId}`))!)).toEqual({ video: 'hevc', audio: 'copy', conv: true });
       gate.mockResolvedValueOnce({ ok: false, why: 'h264_busy' });
       const refused = await remote({ caps });
       expect(refused.json().delivery).toMatchObject({ video: 'h264' });

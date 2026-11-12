@@ -417,13 +417,17 @@ export class JellyfinService implements MediaServer {
   }
 
   /** Resume position + raw trickplay info in ONE lookup (runs in parallel with PlaybackInfo); null when the lookup fails. */
-  async playMeta(user: JfUser, itemId: string): Promise<{ positionTicks: number; trickplay: (mediaSourceId: string) => ReturnType<typeof toTrickplayDto> } | null> {
+  async playMeta(user: JfUser, itemId: string): Promise<{ positionTicks: number; trickplay: (mediaSourceId: string) => ReturnType<typeof toTrickplayDto>; name?: string; seriesName?: string } | null> {
     try {
-      const r = await this.json<{ Items: Array<{ Trickplay?: Record<string, any>; UserData?: { PlaybackPositionTicks?: number } }> }>(
+      const r = await this.json<{ Items: Array<{ Name?: unknown; SeriesName?: unknown; Trickplay?: Record<string, any>; UserData?: { PlaybackPositionTicks?: number } }> }>(
         user, `/Items?userId=${user.jellyfin_user_id}&ids=${itemId}&fields=Trickplay&enableUserData=true`);
       const it = r.Items[0];
       if (!it) return null;
-      return { positionTicks: Number(it.UserData?.PlaybackPositionTicks ?? 0), trickplay: (ms) => toTrickplayDto(itemId, ms, it.Trickplay) };
+      // the title for the conversion budget's label comes with the same answer (no extra request)
+      return {
+        positionTicks: Number(it.UserData?.PlaybackPositionTicks ?? 0), trickplay: (ms) => toTrickplayDto(itemId, ms, it.Trickplay),
+        ...(typeof it.Name === 'string' && it.Name ? { name: it.Name } : {}), ...(typeof it.SeriesName === 'string' && it.SeriesName ? { seriesName: it.SeriesName } : {}),
+      };
     } catch {
       return null;
     }
@@ -608,7 +612,7 @@ export class JellyfinService implements MediaServer {
     await this.mutate(user, () => this.compat(user, 'played' + on, [`/UserPlayedItems/${id}?userId=${uid}`, `/Users/${uid}/PlayedItems/${id}`], { method: on ? 'POST' : 'DELETE' }));
   }
 
-  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; capReason?: CapReason; clientCaps?: ClientCaps | null; remote?: boolean; surround?: boolean; hlsSubtitleIndex?: number; hevcGate?: () => Promise<HevcGate> }): Promise<PlaybackDto> {
+  async playbackInfo(user: JfUser, itemId: string, opts: { maxBitrate: number; maxHeight?: number | null; startTicks?: number; audioIndex?: number; audioLang?: string; cast?: boolean; noDirect?: boolean; capReason?: CapReason; clientCaps?: ClientCaps | null; remote?: boolean; surround?: boolean; hlsSubtitleIndex?: number; hevcGate?: () => Promise<HevcGate>; noConvert?: boolean }): Promise<PlaybackDto> {
     const p = new URLSearchParams({ UserId: user.jellyfin_user_id, MaxStreamingBitrate: String(opts.maxBitrate), AutoOpenLiveStream: 'false' });
     if (opts.startTicks) p.set('StartTimeTicks', String(opts.startTicks));
     if (opts.audioIndex !== undefined) p.set('AudioStreamIndex', String(opts.audioIndex));
@@ -687,6 +691,7 @@ export class JellyfinService implements MediaServer {
       plan = planStream({
         caps: opts.clientCaps ?? null, cast: Boolean(opts.cast), remote: Boolean(opts.remote), maxBitrate: opts.maxBitrate, boxHeight: boxHeightFor(opts.maxBitrate, opts.maxHeight),
         src: sourceFacts(src0, audioIndex ?? hlsAudioIndex), surroundOn: Boolean(opts.surround), hevcStreams: opts.hevcGate ? 1 : 0, // the count itself is the gate's business (hevcenc.ts)
+        ...(opts.noConvert ? { noConvert: true } : {}),
       });
       if (plan.wantsHevcEncode) plan = applyGate(plan, await Promise.resolve().then(() => opts.hevcGate!()).catch((): HevcGate => ({ ok: false, why: 'h264_busy' })));
     }

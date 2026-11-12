@@ -529,6 +529,14 @@ export async function installApi(ctx: BrowserContext, st: MockState): Promise<vo
       const r = adminRoute(st.admin, m, p, sp, body(), (b: any, status?: number) => J({ ...b, engine: item?.value ?? 'v1', locked: item?.source === 'env' }, status));
       if (r) return r;
     }
+    // the budget card: the limit, the custom value and the priority follow the CONVERSION_* settings (so a save shows up there)
+    if (p === '/api/admin/conversions' && m === 'GET') {
+      const items = st.settings.groups.flatMap((g) => g.items);
+      const slots = items.find((i) => i.key === 'CONVERSION_SLOTS')?.value, prio = items.find((i) => i.key === 'CONVERSION_PRIORITY')?.value;
+      st.admin.conv.custom = typeof slots === 'number' ? slots : null;
+      st.admin.conv.limit = st.admin.conv.custom ?? st.admin.conv.auto;
+      if (prio === 'films' || prio === 'live' || prio === 'equal') st.admin.conv.priority = prio;
+    }
     if (p.startsWith('/api/admin/updater') && st.asAdmin) { const r = updaterRoute(st.updater, st.settings, m, p, J); if (r) return r; }
     if (p.startsWith('/api/admin/settings')) { const r = settingsRoute(st.settings, m, p, body(), J); if (r) return r; }
     if (p.startsWith('/api/admin/')) { const r = adminRoute(st.admin, m, p, sp, body(), J); if (r) return r; }

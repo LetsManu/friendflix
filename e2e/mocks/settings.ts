@@ -102,6 +102,8 @@ const GROUPS: Array<[string, Array<[string, Spec]>]> = [
     ['HOME_NETWORKS', { kind: 'cidrList', source: 'default', value: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'] }],
     ['UPLOAD_MBPS', { kind: 'number', source: 'unset', min: 1, max: 100000 }],
     ['HEVC_STREAMS', { kind: 'int', source: 'default', value: 2, min: 0, max: 4 }],
+    ['CONVERSION_SLOTS', { kind: 'int', source: 'unset', min: 1, max: 16 }],
+    ['CONVERSION_PRIORITY', { kind: 'enum', source: 'default', value: 'films', options: ['films', 'live', 'equal'] }],
     ['SURROUND_AUDIO', { kind: 'bool', source: 'default', value: true }],
   ]],
   // the engine is saved (shadow, so the admin card shows the comparison); the reco card reads it (api.ts /api/admin/reco)
