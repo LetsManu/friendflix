@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
 import { detectLivetv } from '../src/livetv/detect.js';
-import { forgetSrtPorts } from '../src/livetv/ownfeeds.js';
+import { INGEST_DIRTY_KEY, forgetSrtPorts, syncIngest } from '../src/livetv/ownfeeds.js';
 import { channelSet, invalidateLivetvRights } from '../src/livetv/rights.js';
 import { invalidateLiveConversions } from '../src/livetv/streams.js';
 import { ADMIN, cfg, ENC_KEY, fakeHttp, makeEnv, type Call, type Handler, type TestEnv } from './helpers.js';
@@ -395,6 +395,38 @@ describe('bulk and order', () => {
     // the list row carries the push facts, never the credentials
     const row = (await list()).channels[0]!;
     expect(row.push).toEqual({ port: 9000, hint: expect.stringMatching(/^ff-[A-Z2-7]{6}$/), portInRange: true });
+  });
+});
+
+describe('synced: an own feed change is applied in livetv', () => {
+  const failing = () => fakeHttp({ 'GET /v1/system': () => ({ json: system() }), 'PUT /v1/ingest': () => ({ status: 502, json: { error: 'down' } }) }, calls);
+  afterEach(async () => { await env.kv.del(INGEST_DIRTY_KEY); });
+
+  it('PATCH answers synced for a push feed: true once livetv took the set, false while it is not applied', async () => {
+    const feed = (await call('POST', '/api/admin/livetv/channels', { ingest: 'push', name: 'Hafenkanal Live' })).json().channel;
+    const ok = await call('PATCH', `/api/admin/livetv/channels/${feed.id}`, { hidden: true });
+    expect(ok.json()).toMatchObject({ hidden: true, synced: true });
+    env.ctx.fetchImpl = failing();
+    const bad = await call('PATCH', `/api/admin/livetv/channels/${feed.id}`, { hidden: false });
+    expect(bad.json()).toMatchObject({ hidden: false, synced: false });
+    // a change that needs no sync still reports that the last one is not applied yet; the list says so too
+    expect((await call('PATCH', `/api/admin/livetv/channels/${feed.id}`, { name: 'Hafenkanal Kamera' })).json().synced).toBe(false);
+    expect((await list()).channels[0]!.synced).toBe(false);
+    // livetv is back: the minute tick sends the set, the next list is synced
+    env.ctx.fetchImpl = fakeHttp({ 'GET /v1/system': () => ({ json: system() }), 'PUT /v1/ingest': () => ({ json: { ok: true } }) }, calls);
+    await syncIngest(env.ctx);
+    expect((await list()).channels[0]!.synced).toBe(true);
+  });
+
+  it('bulk hide / show answers synced when it touches a push feed; no key for a pulled channel', async () => {
+    const src = await addSource();
+    const pulled = await addChannel(src, 'Nordlicht TV', { number: 1 });
+    expect((await call('PATCH', `/api/admin/livetv/channels/${pulled}`, { hidden: true })).json()).not.toHaveProperty('synced');
+    expect((await call('POST', '/api/admin/livetv/channels/bulk', { ids: [pulled], action: 'show' })).json()).toEqual({ changed: 1 });
+    const feed = (await call('POST', '/api/admin/livetv/channels', { ingest: 'push', name: 'Hafenkanal Live' })).json().channel;
+    expect((await call('POST', '/api/admin/livetv/channels/bulk', { ids: [feed.id, pulled], action: 'hide' })).json()).toEqual({ changed: 2, synced: true });
+    env.ctx.fetchImpl = failing();
+    expect((await call('POST', '/api/admin/livetv/channels/bulk', { ids: [feed.id, pulled], action: 'show' })).json()).toEqual({ changed: 2, synced: false });
   });
 });
 

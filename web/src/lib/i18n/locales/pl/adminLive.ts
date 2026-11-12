@@ -410,6 +410,7 @@ const dict: Translation<typeof de> = {
     epgOk: 'Program',
     epgNone: 'Brak programu',
     missingPill: 'Brak',
+    syncing: 'przesyłanie …',
     dup: 'Numer użyty dwa razy',
     renameHint: 'Kliknij dwukrotnie lub naciśnij Enter, aby zmienić nazwę',
     renameLabel: 'Nazwa „{name}”',

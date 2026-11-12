@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '#lib/i18n';
 import {
-  afterOrderSave, channelError, checkLogoFile, factsLine, forOrder, kindChip, nowLine, ORDER_MAX, orderFilter, overrideHint, queryString, shiftFromLine, TEST_MAX,
+  afterOrderSave, channelError, checkLogoFile, factsLine, forOrder, kindChip, mergeSynced, nowLine, ORDER_MAX, orderFilter, overrideHint, queryString, shiftFromLine, syncing, TEST_MAX,
   type AdminChannel, type ChannelFilter,
 } from './channels';
 
@@ -174,4 +174,21 @@ describe('checkLogoFile', () => {
 
 describe('TEST_MAX', () => {
   it('is the backend limit of a bulk test', () => { expect(TEST_MAX).toBe(20); });
+});
+
+describe('synced (own feeds, "wird übertragen …")', () => {
+  it('a row syncs only while the backend says synced: false', () => {
+    expect(syncing(ch())).toBe(false);
+    expect(syncing(ch({ ingest: 'push', synced: true }))).toBe(false);
+    expect(syncing(ch({ ingest: 'push', synced: false }))).toBe(true);
+  });
+  it('a re-read takes only the synced flag of the rows it has, and leaves everything else (an edit in progress) as it is', () => {
+    const rows = [ch({ id: 'a', ingest: 'push', synced: false, name: 'Hafenkanal Live' }), ch({ id: 'b' }), ch({ id: 'c', ingest: 'push', synced: false })];
+    const fresh = [ch({ id: 'a', ingest: 'push', synced: true, name: 'anders' }), ch({ id: 'b' })];
+    const out = mergeSynced(rows, fresh);
+    expect(out.map((r) => r.synced)).toEqual([true, undefined, false]); // c is not on the fresh page: unchanged
+    expect(out[0]!.name).toBe('Hafenkanal Live');
+    expect(out[1]).toBe(rows[1]); // untouched rows keep their identity
+    expect(mergeSynced(rows, [])).toEqual(rows);
+  });
 });

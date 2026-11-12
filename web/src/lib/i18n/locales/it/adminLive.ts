@@ -410,6 +410,7 @@ const dict: Translation<typeof de> = {
     epgOk: 'Guida',
     epgNone: 'Nessuna guida',
     missingPill: 'Mancante',
+    syncing: 'trasferimento in corso …',
     dup: 'Numero duplicato',
     renameHint: 'Doppio clic o Invio per rinominare',
     renameLabel: 'Nome di «{name}»',

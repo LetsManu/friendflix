@@ -30,7 +30,7 @@
   import BulkBar from './BulkBar.svelte';
   import { confirmOrderDiscard, guardLeave } from './discard';
   import {
-    afterOrderSave, bulkChannels, channelError, emptyFilter, forOrder, failText, getChannel, kindChip, listChannels, logoSrc, ORDER_MAX, orderChannels, orderFilter, overrideHint, patchChannel, PAGE_SIZE,
+    afterOrderSave, bulkChannels, channelError, emptyFilter, forOrder, failText, getChannel, kindChip, listChannels, logoSrc, ORDER_MAX, orderChannels, orderFilter, overrideHint, patchChannel, PAGE_SIZE, mergeSynced, SYNC_POLL_MS, syncing,
     type AdminChannel, type BulkBody, type ChannelFilter, type ChannelPatch, type ChannelSort,
   } from './channels';
   import EpgShiftSheet from './EpgShiftSheet.svelte';
@@ -163,7 +163,21 @@
     listSources().then((s) => { sources = s; }).catch(() => undefined);
     listGroups().then((g) => { groups = g; }).catch(() => undefined);
   });
-  onDestroy(() => { gone = true; ctl?.abort(); octl?.abort(); });
+  onDestroy(() => { gone = true; ctl?.abort(); octl?.abort(); if (syncTimer) clearTimeout(syncTimer); });
+
+  // ---- own feeds: "wird übertragen …" while livetv has not taken the change; the page is read again until the flag clears
+  let syncTimer: ReturnType<typeof setTimeout> | undefined;
+  $: if (!gone && !syncTimer && (rows ?? []).some(syncing)) syncTimer = setTimeout(pollSynced, SYNC_POLL_MS);
+  async function pollSynced() {
+    syncTimer = undefined;
+    if (gone || !rows?.some(syncing)) return;
+    try {
+      const mine = seq; // a load that started meanwhile owns the rows
+      const r = await listChannels(filter);
+      if (!gone && mine === seq && rows) rows = mergeSynced(rows, r.channels);
+    } catch { /* the next poll tries again */ }
+    if (!gone && !syncTimer && rows?.some(syncing)) syncTimer = setTimeout(pollSynced, SYNC_POLL_MS);
+  }
 
   function onQuery(e: CustomEvent<Query>) {
     const { q: text, sort: s, offset } = e.detail;
@@ -431,6 +445,8 @@
             <button type="button" class="nm" data-name-of={row.id} title={$t('adminLive.ch.renameHint')} on:dblclick={() => startEdit(row)} on:click={(e) => { if (e.detail === 0) startEdit(row); }}>{row.name}</button>
             {#if hintOf(row)}<span class="dot" data-changed title={hintOf(row)}><span class="pt" aria-hidden="true"></span><span class="tx">{hintOf(row)}</span></span>{/if}
             {#if row.missing}<StatusPill tone="warn" label={$t('adminLive.ch.missingPill')} />{/if}
+            <!-- an own feed always has this line's room; only its opacity changes, so the row never moves -->
+            {#if row.push}<span class="sync" class:on={syncing(row)} data-syncing={syncing(row) ? '' : undefined} aria-hidden={syncing(row) ? undefined : 'true'}>{$t('adminLive.ch.syncing')}</span>{/if}
           {/if}
         </div>
       {:else if col.key === 'group'}
@@ -519,6 +535,9 @@
   .dot { display: inline-flex; align-items: center; }
   .dot .pt { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
   .dot .tx { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .sync { font-size: .85rem; color: var(--mut); opacity: 0; transition: opacity .2s; }
+  .sync.on { opacity: 1; }
+  :global(html.m-still) .sync { transition: none; }
   .gsel { min-width: 9rem; }
   /* phone: a card per row. The name leads (it is the card's title), the checkbox and the rest follow; the changed hint is text there,
      where there is no hover */

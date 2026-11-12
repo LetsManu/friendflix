@@ -410,6 +410,7 @@ const dict: Translation<typeof de> = {
     epgOk: 'Rehber',
     epgNone: 'Rehber yok',
     missingPill: 'Eksik',
+    syncing: 'aktarılıyor …',
     dup: 'Numara iki kez kullanılmış',
     renameHint: 'Yeniden adlandırmak için çift tıkla veya Enter’a bas',
     renameLabel: '“{name}” adı',
