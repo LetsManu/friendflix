@@ -5,7 +5,9 @@
    * User detail, Sicht prüfen tab (spec §6.4): what one profile can see, read-only. Profile chips on top (the owner first, kids profiles marked),
    * then *Kurzfassung* (sentences from the profile's effective rights, `GET …/rights?profile=`), *Bibliotheken* (shared or not, how many titles
    * the profile sees of the library, `GET …/check?profile=`) and *Titel prüfen* (a search, debounced 300 ms, at least 2 characters, `POST …/check`:
-   * each hit is visible or hidden with the reason). Nothing here signs in as the person; the backend audits every view (`user.check_viewed`).
+   * each hit is visible or hidden with the reason). It only reads: no right, profile or setting changes. It never signs in to
+   * FriendFlix as the person; the backend may sign in to the media server as the profile's media-server user for the probe (which updates that
+   * user's last-login time there; docs/security.md, "The check view"). The backend audits every view (`user.check_viewed`).
    * There is no Live-TV part: Live TV is not installed in this phase.
    */
   import { onDestroy } from 'svelte';
