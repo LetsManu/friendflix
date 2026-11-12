@@ -20,7 +20,7 @@ const SYSTEM = {
   encoders: ['h264_qsv', 'libx264'], cache: { usedBytes: 0, maxBytes: 1000 }, recordings: null, srt: { ports: [9000] },
 };
 const fake = {
-  livetv: 'down' as 'down' | 'api1' | 'api2', stack: undefined as 'own' | 'foreign' | undefined, hasUpdater: true, livetvState: undefined as unknown, status: 200,
+  livetv: 'down' as 'down' | 'api1' | 'api2' | 'impostor' | 'wrongProof', stack: undefined as 'own' | 'foreign' | undefined, hasUpdater: true, livetvState: undefined as unknown, status: 200,
   calls: [] as Array<{ method: string; path: string; body: string; sigOk: boolean }>, systemCalls: 0,
   reset() { Object.assign(this, { livetv: 'down', stack: 'own', hasUpdater: true, livetvState: { state: 'disabled', container: null, error: null }, status: 200, calls: [], systemCalls: 0 }); },
 };
@@ -37,7 +37,13 @@ const fakeFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<
   const h = (init?.headers ?? {}) as Record<string, string>;
   if (u.host === 'livetv:8090') {
     if (fake.livetv === 'down') throw new TypeError('fetch failed');
-    if (u.pathname === '/healthz') return json({ ok: true, api: fake.livetv === 'api1' ? 1 : 2, version: '1.0.0', bootId: '0123456789abcdef' });
+    if (u.pathname === '/healthz') {
+      // the real livetv proves its key for the nonce; an impostor (a LAN host named livetv) cannot, a wrong one keys with something else
+      const n = u.searchParams.get('n') ?? '';
+      const key = fake.livetv === 'wrongProof' ? Buffer.from(SECRET) : createHmac('sha256', SECRET).update('friendflix-livetv/v1').digest();
+      const proof = fake.livetv === 'impostor' ? {} : { proof: createHmac('sha256', key).update(`healthz:${n}`).digest('hex') };
+      return json({ ok: true, api: fake.livetv === 'api2' ? 2 : 1, version: '1.0.0', bootId: '0123456789abcdef', ...proof });
+    }
     if (u.pathname === '/v1/system') { fake.systemCalls++; return sigOk('x', 'friendflix-livetv/v1', method, u.pathname, body, h, 'livetv') ? json(SYSTEM) : json({ error: 'bad_signature' }, 401); }
     return json({ error: 'not_found' }, 404);
   }
@@ -94,10 +100,34 @@ describe('detection', () => {
     expect(await detectLivetv(env.ctx, 0)).toMatchObject({ reachable: false, installed: false, version: null, bootId: null });
   });
 
+  it('a host that answers like livetv but proves no key is reachable, never installed, and gets no signed call (1b review I2)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      for (const mode of ['impostor', 'wrongProof'] as const) {
+        fake.livetv = mode;
+        expect(await detectLivetv(env.ctx, 0), mode).toMatchObject({ reachable: true, installed: false, version: null, bootId: null });
+        expect(livetvInstalled(env.ctx)).toBe(false);
+        expect(featureFlags(env.ctx).livetv).toBe(false);
+        await withApp(async (call) => {
+          const j = (await call('GET', '/api/admin/livetv/state')).json();
+          expect(j).toMatchObject({ installed: false, reachable: true, version: null, gpu: { livetv: null, advice: null } });
+        });
+      }
+      expect(fake.systemCalls).toBe(0);
+      // the real one, a minute later: installed
+      fake.livetv = 'api1';
+      expect(await detectLivetv(env.ctx, 0)).toMatchObject({ reachable: true, installed: true, version: '1.0.0', bootId: '0123456789abcdef' });
+      // a success is not cached past the next check: the impostor takes the name again -> not installed at once
+      fake.livetv = 'impostor';
+      await livetvDetectTick(env.ctx);
+      expect(livetvInstalled(env.ctx)).toBe(false);
+    } finally { warn.mockRestore(); }
+  });
+
   it('answers from the last check within maxAge and runs one check at a time', async () => {
     let n = 0;
     const inner = env.ctx.fetchImpl;
-    env.ctx.fetchImpl = (async (...a: Parameters<typeof fetch>) => { if (String(a[0]).endsWith('/healthz')) n++; await new Promise((r) => setTimeout(r, 20)); return inner(...a); }) as typeof fetch;
+    env.ctx.fetchImpl = (async (...a: Parameters<typeof fetch>) => { if (new URL(String(a[0])).pathname === '/healthz') n++; await new Promise((r) => setTimeout(r, 20)); return inner(...a); }) as typeof fetch;
     try {
       fake.livetv = 'api1';
       await Promise.all([detectLivetv(env.ctx, 0), detectLivetv(env.ctx, 0), detectLivetv(env.ctx, 0)]);
@@ -333,7 +363,7 @@ describe('GET /api/admin/livetv/state', () => {
     const spy = vi.spyOn(env.ctx.jf.admin, 'encoderSettings').mockResolvedValue({ hwAccel: 'qsv' } as never);
     const healthz = vi.fn();
     const inner = env.ctx.fetchImpl;
-    env.ctx.fetchImpl = (async (...a: Parameters<typeof fetch>) => { if (String(a[0]).endsWith('/healthz')) healthz(); return inner(...a); }) as typeof fetch;
+    env.ctx.fetchImpl = (async (...a: Parameters<typeof fetch>) => { if (new URL(String(a[0])).pathname === '/healthz') healthz(); return inner(...a); }) as typeof fetch;
     try {
       await withApp(async (call) => {
         for (let i = 0; i < 3; i++) await call('GET', '/api/admin/livetv/state');

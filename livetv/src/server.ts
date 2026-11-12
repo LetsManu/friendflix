@@ -6,12 +6,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { log as defaultLog, type Log } from './log.js';
-import { ReplayCache, verify, type Verifier } from './protocol.js';
+import { ReplayCache, healthProof, isNonce, verify, type Verifier } from './protocol.js';
 import { createRun } from './run.js';
 import { systemView, type SystemView } from './system.js';
 
 /**
- * livetv's internal API (spec §3.2; only on the internal `livetv` network, port 8090). `/healthz` is open; every `/v1/*` request
+ * livetv's internal API (spec §3.2; only on the internal `livetv` network, port 8090). `/healthz` is open (with `?n=<nonce>` it
+ * adds the proof of key, protocol.ts); every `/v1/*` request
  * is signed (protocol.ts), JSON only, at most 64 KB; `/s/*` (stream files for the gateway, Task 27) is unsigned and addressed by
  * a random stream key. Later tasks add their routes to the table (`AppDeps.routes`).
  */
@@ -109,7 +110,13 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
     try {
       if (path === '/healthz') {
         if (method !== 'GET') return send(res, 405, { error: 'method_not_allowed' });
-        return send(res, 200, { ok: true, api: API_VERSION, version: deps.version, bootId: deps.bootId });
+        const health = { ok: true, api: API_VERSION, version: deps.version, bootId: deps.bootId };
+        // the Docker health check asks without a nonce; the backend's detection asks with one and checks the proof (1b review I2)
+        const q = new URLSearchParams(target.slice(path.length + 1));
+        if (!q.has('n')) return send(res, 200, health);
+        const n = q.getAll('n');
+        if (n.length !== 1 || !isNonce(n[0]!)) return send(res, 400, { error: 'invalid_nonce' });
+        return send(res, 200, { ...health, proof: healthProof(deps.verifier.key, n[0]!) });
       }
       const signed = path.startsWith('/v1/');
       if (!signed && !path.startsWith('/s/')) return send(res, 404, { error: 'not_found' });

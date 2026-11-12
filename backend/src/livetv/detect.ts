@@ -6,8 +6,9 @@ import { livetvCall, livetvHealth } from './client.js';
 import type { Encoder, LivetvSystem } from './wire.js';
 
 /**
- * Is the optional livetv container there (spec §4.1)? `GET /healthz` unsigned; installed = reachable and `api === 1` (a livetv
- * with another API number is reachable but not usable by this backend). The last answer is kept per process: `livetvInstalled` is
+ * Is the optional livetv container there (spec §4.1)? `GET /healthz?n=<nonce>` unsigned; installed = reachable, `api === 1` (a
+ * livetv with another API number is reachable but not usable by this backend) and a valid proof of key for this check's nonce
+ * (client.ts; 1b review I2: a LAN host that answers to the name `livetv` is reachable, never installed). The last answer is kept per process: `livetvInstalled` is
  * the sync read for `featureFlags` and the summary, `detectLivetv` refreshes it (one check at a time), `livetvDetectTick` runs it
  * every minute.
  */
@@ -29,7 +30,9 @@ export function livetvInstalled(ctx: Ctx): boolean {
 
 async function check(ctx: Ctx, slot: Slot): Promise<LivetvState> {
   const h = await livetvHealth(ctx);
-  const next: LivetvState = { reachable: h !== null, installed: h !== null && h.api === 1, version: h?.version ?? null, bootId: h?.bootId ?? null, checkedAt: Date.now() };
+  // version and boot id only from an answer that proved the key: nothing an impostor says is kept
+  const ok = h !== null && h.proof === 'ok';
+  const next: LivetvState = { reachable: h !== null, installed: ok && h.api === 1, version: ok ? h.version : null, bootId: ok ? h.bootId : null, checkedAt: Date.now() };
   const was = slot.state?.installed; // undefined until the first look: a backend that starts next to a running livetv is not "just enabled"
   slot.state = next;
   if (!next.installed) slot.bench = null; // it belongs to this appearance

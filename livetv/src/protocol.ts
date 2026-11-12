@@ -10,6 +10,9 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
  *   key       = HMAC-SHA256(INTERNAL_SECRET, "friendflix-livetv/v1")    (domain separation: never the raw shared secret, never the updater key)
  *   canonical = METHOD "\n" PATH "\n" TS "\n" NONCE "\n" hex(SHA256(body))     (PATH = the request target incl. any query string)
  *   headers   x-ff-livetv-ts (unix ms), x-ff-livetv-nonce (32 hex), x-ff-livetv-signature ("v1=" + hex HMAC(key, canonical))
+ *   proof     GET /healthz?n=<32 hex> answers proof = hex HMAC(key, "healthz:" + n): the backend's check that it talks to the real
+ *             livetv (a host that merely answers to the name cannot make it). It can never stand in for a signature: a canonical
+ *             string starts with an upper-case method, never with "healthz:".
  *
  * livetv only ever holds `key` (the bootstrap service derives it, config.ts); it never sees INTERNAL_SECRET and derives nothing.
  * It accepts a request only inside a 60 s window around its own clock, never one signed before it started (a replay cache
@@ -24,6 +27,13 @@ const NONCE_RE = /^[0-9a-f]{32}$/;
 const SIG_RE = /^v1=[0-9a-f]{64}$/;
 const TS_RE = /^[0-9]{13}$/;
 
+
+/** what `/healthz?n=<nonce>` answers (the backend's copy: backend/src/livetv/client.ts, pinned by test-vectors/livetv-hmac.json) */
+export function healthProof(key: Buffer, nonce: string): string {
+  return createHmac('sha256', key).update(`healthz:${nonce}`).digest('hex');
+}
+
+export const isNonce = (v: string): boolean => NONCE_RE.test(v);
 
 export function canonical(method: string, path: string, ts: string, nonce: string, body: string): string {
   return [method.toUpperCase(), path, ts, nonce, createHash('sha256').update(body).digest('hex')].join('\n');

@@ -5,27 +5,38 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { livetvKeyHex } from '../src/bootstrap.js';
 import type { Ctx } from '../src/ctx.js';
-import { LivetvError, livetvCall, livetvHealth, livetvKey, livetvStream, signLivetv } from '../src/livetv/client.js';
+import { LivetvError, PROOF_TTL_MS, healthProof, livetvCall, livetvHealth, livetvKey, livetvStream, signLivetv } from '../src/livetv/client.js';
 
 // The backend side of the signed livetv API (livetv/src/protocol.ts): shared vectors, error codes, timeouts. No database: the
 // client only needs the config and the fetch of the context.
 const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/livetv-hmac.json', import.meta.url), 'utf8')) as {
   secret: string; key: string; cases: Array<{ method: string; path: string; body: string; ts: string; nonce: string; signature: string }>;
+  health: Array<{ nonce: string; proof: string }>;
 };
 const SECRET = 'livetv-client-secret-0123456789';
 const BASE = 'http://livetv:8090';
 
 type Seen = { url: string; method: string; headers: Record<string, string>; body: string; redirect?: string };
-function ctxWith(answer: (s: Seen, init: RequestInit) => Response | Promise<Response>): Ctx & { seen: Seen[] } {
-  const seen: Seen[] = [];
+const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
+const nonceOf = (s: Seen) => new URL(s.url).searchParams.get('n') ?? '';
+/** the real livetv's /healthz: its fields and the proof of key for the nonce asked (the key derived from SECRET) */
+const realHealth = (s: Seen) => json({ ok: true, api: 1, version: '3.4.0', bootId: '0123456789abcdef', proof: healthProof(livetvKey(SECRET), nonceOf(s)) });
+/**
+ * A context whose fetch answers /healthz with `health` (default: the real livetv, with a valid proof) and everything else with
+ * `answer`; `seen` holds only the other requests, `health` the health checks.
+ */
+function ctxWith(answer: (s: Seen, init: RequestInit) => Response | Promise<Response>, health: (s: Seen) => Response | Promise<Response> = realHealth): Ctx & { seen: Seen[]; health: Seen[] } {
+  const seen: Seen[] = [], checks: Seen[] = [];
   const fetchImpl = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const s: Seen = { url: String(input), method: init.method ?? 'GET', headers: { ...(init.headers as Record<string, string>) }, body: typeof init.body === 'string' ? init.body : '', redirect: init.redirect };
+    if (new URL(s.url).pathname === '/healthz') { checks.push(s); return health(s); }
     seen.push(s);
     return answer(s, init);
   }) as typeof fetch;
-  return { cfg: { LIVETV_URL: BASE, INTERNAL_SECRET: SECRET }, fetchImpl, seen } as unknown as Ctx & { seen: Seen[] };
+  return { cfg: { LIVETV_URL: BASE, INTERNAL_SECRET: SECRET }, fetchImpl, seen, health: checks } as unknown as Ctx & { seen: Seen[]; health: Seen[] };
 }
-const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
+/** a context for livetvHealth alone: every request is a health check */
+const healthCtx = (health: (s: Seen) => Response | Promise<Response>) => ctxWith(() => { throw new Error('no signed call expected'); }, health);
 /** what livetv/src/protocol.ts verify() recomputes */
 function sigOk(s: Seen): boolean {
   const key = createHmac('sha256', SECRET).update('friendflix-livetv/v1').digest();
@@ -194,20 +205,121 @@ describe('livetvStream', () => {
 });
 
 describe('livetvHealth', () => {
-  it('unsigned GET /healthz: api, version, bootId', async () => {
-    const ctx = ctxWith(() => json({ ok: true, api: 1, version: '3.4.0', bootId: '0123456789abcdef' }));
-    expect(await livetvHealth(ctx)).toEqual({ api: 1, version: '3.4.0', bootId: '0123456789abcdef' });
-    expect(ctx.seen[0]!.url).toBe(`${BASE}/healthz`);
-    expect(ctx.seen[0]!.headers['x-ff-livetv-signature']).toBeUndefined();
+  it('unsigned GET /healthz with a fresh 32-hex nonce: api, version, bootId and a proof that checks out', async () => {
+    const ctx = healthCtx(realHealth);
+    expect(await livetvHealth(ctx)).toEqual({ api: 1, version: '3.4.0', bootId: '0123456789abcdef', proof: 'ok' });
+    expect(await livetvHealth(ctx)).toMatchObject({ proof: 'ok' });
+    const [a, b] = ctx.health.map(nonceOf);
+    expect(ctx.health[0]!.url).toBe(`${BASE}/healthz?n=${a}`);
+    expect(a).toMatch(/^[0-9a-f]{32}$/);
+    expect(b).not.toBe(a); // never the same challenge twice
+    expect(ctx.health[0]!.headers['x-ff-livetv-signature']).toBeUndefined();
+  });
+
+  it('the proof matches the shared vectors (livetv/test/server.test.ts answers the same)', () => {
+    expect(vectors.health.length).toBeGreaterThan(0);
+    for (const h of vectors.health) expect(healthProof(livetvKey(vectors.secret), h.nonce)).toBe(h.proof);
+  });
+
+  it('a host that only looks like livetv: no proof is missing, any other proof wrong', async () => {
+    const shape = { ok: true, api: 1, version: '3.4.0', bootId: '0123456789abcdef' };
+    expect(await livetvHealth(healthCtx(() => json(shape)))).toMatchObject({ api: 1, proof: 'missing' });
+    const wrong = [
+      () => 'f'.repeat(64), // made up
+      () => healthProof(livetvKey(SECRET), 'a'.repeat(32)), // a valid proof for another nonce (a replayed answer)
+      (s: Seen) => healthProof(Buffer.from(SECRET), nonceOf(s)), // keyed with the raw secret
+      (s: Seen) => healthProof(livetvKey('another-secret-0123456789'), nonceOf(s)), // another install's key
+      (s: Seen) => healthProof(livetvKey(SECRET), nonceOf(s)).toUpperCase(),
+      (s: Seen) => healthProof(livetvKey(SECRET), nonceOf(s)).slice(2),
+      () => 42,
+      () => null,
+    ];
+    for (const proof of wrong) expect(await livetvHealth(healthCtx((s) => json({ ...shape, proof: proof(s) }))), String(proof)).toMatchObject({ proof: 'wrong' });
+  });
+
+  it('a missing or wrong proof is warned about at most every 10 minutes, without the nonce or the answer', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const ctx = healthCtx(() => json({ ok: true, api: 1, version: null, bootId: '0123456789abcdef', proof: 'f'.repeat(64) }));
+      await livetvHealth(ctx);
+      await livetvHealth(ctx);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = String(warn.mock.calls[0]![0]);
+      expect(line).toMatch(/^livetv: health answer with a wrong proof of key/);
+      expect(line).not.toContain(nonceOf(ctx.health[0]!));
+      expect(line).not.toContain('f'.repeat(64));
+      vi.advanceTimersByTime(10 * 60_000);
+      await livetvHealth(ctx);
+      expect(warn).toHaveBeenCalledTimes(2);
+      await livetvHealth(healthCtx(realHealth)); // a proven answer warns nothing
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); warn.mockRestore(); }
   });
 
   it('a version that is not X.Y.Z is null; anything malformed or unreachable is null', async () => {
-    expect(await livetvHealth(ctxWith(() => json({ ok: true, api: 2, version: '<b>', bootId: 'fedcba9876543210' })))).toEqual({ api: 2, version: null, bootId: 'fedcba9876543210' });
+    const proof = (s: Seen) => healthProof(livetvKey(SECRET), nonceOf(s));
+    expect(await livetvHealth(healthCtx((s) => json({ ok: true, api: 2, version: '<b>', bootId: 'fedcba9876543210', proof: proof(s) })))).toEqual({ api: 2, version: null, bootId: 'fedcba9876543210', proof: 'ok' });
     for (const bad of [{ ok: false, api: 1, version: null, bootId: '0123456789abcdef' }, { ok: true, api: '1', bootId: '0123456789abcdef' }, { ok: true, api: 1, bootId: 'nope' }, { ok: true, api: 1.5, bootId: '0123456789abcdef' }, null]) {
-      expect(await livetvHealth(ctxWith(() => json(bad))), JSON.stringify(bad)).toBeNull();
+      expect(await livetvHealth(healthCtx((s) => json(bad && { ...bad, proof: proof(s) }))), JSON.stringify(bad)).toBeNull();
     }
-    expect(await livetvHealth(ctxWith(() => json({ error: 'x' }, 503)))).toBeNull();
-    expect(await livetvHealth(ctxWith(() => new Response('nope')))).toBeNull();
-    expect(await livetvHealth(ctxWith(() => { throw new TypeError('fetch failed'); }))).toBeNull();
+    expect(await livetvHealth(healthCtx(() => json({ error: 'x' }, 503)))).toBeNull();
+    expect(await livetvHealth(healthCtx(() => new Response('nope')))).toBeNull();
+    expect(await livetvHealth(healthCtx(() => { throw new TypeError('fetch failed'); }))).toBeNull();
+  });
+});
+
+describe('nothing signed leaves before livetv proved its key', () => {
+  const PROVIDER = { url: 'http://iptv.example.com/live/user/pass/101.ts', kind: 'ts', allowLan: false };
+  /** a LAN host that answers to the name livetv with livetv's shape, but cannot know its key */
+  const impostor = (_s: Seen) => json({ ok: true, api: 1, version: '3.4.0', bootId: '0123456789abcdef' });
+
+  it('a host answering api 1 without a proof gets no request at all (no body, no signature): unproven', async () => {
+    for (const health of [impostor, (s: Seen) => json({ ok: true, api: 1, version: null, bootId: '0123456789abcdef', proof: healthProof(Buffer.from(SECRET), nonceOf(s)) })]) {
+      const ctx = ctxWith(() => json({ streamKey: 'k' }), health);
+      const e = await caught(livetvCall(ctx, 'POST', '/v1/probe', { input: PROVIDER }));
+      expect([e.status, e.code]).toEqual([null, 'unproven']);
+      const st = await caught(livetvStream(ctx, '/v1/fetch/m3u', { url: PROVIDER.url, allowLan: false }, { timeoutMs: 1_000 }));
+      expect(st.code).toBe('unproven');
+      expect(ctx.seen).toEqual([]);
+      expect(ctx.health.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('down or garbled: unproven, nothing sent', async () => {
+    for (const health of [() => { throw new TypeError('fetch failed'); }, () => new Response('nope'), () => json({}, 503)]) {
+      const ctx = ctxWith(() => json({}), health);
+      expect((await caught(livetvCall(ctx, 'GET', '/v1/system'))).code).toBe('unproven');
+      expect(ctx.seen).toEqual([]);
+    }
+  });
+
+  it('a proof stands for PROOF_TTL_MS (one check for many calls), then the next call proves again first', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const ctx = ctxWith(() => json({}));
+      await Promise.all([livetvCall(ctx, 'GET', '/v1/system'), livetvCall(ctx, 'GET', '/v1/system'), livetvCall(ctx, 'GET', '/v1/streams')]);
+      expect(ctx.health).toHaveLength(1); // concurrent callers share one check
+      vi.advanceTimersByTime(PROOF_TTL_MS - 1);
+      await livetvCall(ctx, 'GET', '/v1/system');
+      expect(ctx.health).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      await livetvCall(ctx, 'GET', '/v1/system');
+      expect(ctx.health).toHaveLength(2);
+      expect(ctx.seen).toHaveLength(5);
+      expect(PROOF_TTL_MS).toBe(60_000);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('a later check without a valid proof withdraws the standing one at once (not after the TTL)', async () => {
+    let real = true;
+    const ctx = ctxWith(() => json({}), (s) => (real ? realHealth(s) : impostor(s)));
+    await livetvCall(ctx, 'GET', '/v1/system');
+    expect(ctx.seen).toHaveLength(1);
+    real = false;
+    expect(await livetvHealth(ctx)).toMatchObject({ proof: 'missing' }); // the detection tick sees another host
+    const e = await caught(livetvCall(ctx, 'POST', '/v1/probe', { input: PROVIDER }));
+    expect(e.code).toBe('unproven');
+    expect(ctx.seen).toHaveLength(1);
   });
 });

@@ -27,5 +27,10 @@
       "nonce": "0123456789abcdef0123456789abcdef",
       "signature": "v1=9fb2bde4ae379f0642ebe4c52ec5586416d73d51d85df559bd5c52e2ec00775c"
     }
+  ],
+  "_health": "GET /healthz?n=<nonce> answers proof = hex HMAC-SHA256(key, 'healthz:' + nonce): the backend accepts livetv as installed only with it.",
+  "health": [
+    { "nonce": "00112233445566778899aabbccddeeff", "proof": "b3a531913ec41043d3de7b8ce05ea3fa175be53b2f1c56fa1d16880aae5061a7" },
+    { "nonce": "9f8e7d6c5b4a39281706f5e4d3c2b1a0", "proof": "2e8c2291168d74d38579cee127f0b406cb74f20bb2b5df1b85e09ebe782e4682" }
   ]
 }

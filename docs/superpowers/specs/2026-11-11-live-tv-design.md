@@ -313,7 +313,7 @@ Every `/v1/*` request is HMAC-signed like the updater (`signUpdater` scheme, key
 
 | Method & path | Body → answer |
 |---|---|
-| `GET /healthz` | `{ ok, version, bootId }` (unsigned) |
+| `GET /healthz` | `{ ok, version, bootId }` (unsigned); with `?n=<32 hex>` also `proof` = hex `HMAC(key, 'healthz:' + n)` (ruling 1b review I2, §4.1) |
 | `GET /v1/system` | `{ cpu: { model, cores, loadPct }, gpu: { devices: string[], driver: string \| null, readable: boolean, busyPct: number \| null }, encoders: Array<'h264_qsv'\|'h264_vaapi'\|'h264_nvenc'\|'libx264'>, cache: { usedBytes, maxBytes }, recordings: { usedBytes, freeBytes } \| null }` |
 | `POST /v1/fetch/m3u` | `{ url, userAgent?, allowLan, skipGroups?: string[] }` → `{ entries: [{ key, name, tvgId?, tvgName?, chno?, group?, logo?, shiftMin?, url, kind }], groups: [{ name, channels }], listed, skipped: { vod, invalid, overLimit, groups } }`; entries of `skipGroups` are dropped **before** the 20 000 cap, so a big list keeps the picked groups; `groups` and `listed` count every live entry (for the picker and the shrink guard); `shiftMin` = the entry's `tvg-shift`, else the `#EXTM3U` header's, in minutes |
 | `POST /v1/fetch/xmltv` | `{ url, userAgent?, allowLan, channels?: string[], from, to }` → NDJSON stream: `{ t:'channel', id, names[], icon? }` / `{ t:'prog', ch, start, end, title, subtitle?, desc?, cats?, episode?, seriesId?, isNew?, prevShown?, rating? }` |
@@ -434,7 +434,11 @@ MPEG-TS) stays exactly as it is; push is a second way to add an own feed.
 ### 4.1 Detection
 
 - The backend polls `GET ${LIVETV_URL}/healthz` every 60 s (and on every admin page load of the area, cached 10 s).
-  `installed = reachable && version compatible`. A setting `LIVETV_WANTED` (internal, not shown) remembers that an admin turned
+  `installed = reachable && version compatible && proof of key`. **Ruling (1b review I2):** the signature authenticates the
+  backend to livetv, never livetv to the backend, and while the profile is off the name `livetv` can resolve to a LAN host. So
+  every check sends a fresh random nonce (`/healthz?n=<32 hex>`) and livetv answers `proof = HMAC(key, 'healthz:' + nonce)`; the
+  backend compares it in constant time. A wrong or missing proof is "reachable, not installed" (a rate-limited warning, no
+  secrets). No signed call (so no decrypted URL or other secret) is sent without a proof younger than 60 s. A setting `LIVETV_WANTED` (internal, not shown) remembers that an admin turned
   it on, so "wanted but not reachable" can be told apart from "never enabled".
 - `/api/me` gains `features.livetv: boolean` = installed ∧ `perms.liveTv` ∧ the active profile sees ≥ 1 channel (cached
   60 s per profile, invalidated on rights/group changes). It drives the tab.

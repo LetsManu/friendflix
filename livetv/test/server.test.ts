@@ -8,12 +8,13 @@ import { createServer, request, type IncomingMessage, type Server, type ServerRe
 import { PassThrough } from 'node:stream';
 import { createServer as netServer, type AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { ReplayCache, sign, type Verifier } from '../src/protocol.js';
+import { ReplayCache, healthProof, sign, type Verifier } from '../src/protocol.js';
 import { createApp, logPath, start, type AppDeps, type Route } from '../src/server.js';
 import type { SystemView } from '../src/system.js';
 
 const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/livetv-hmac.json', import.meta.url), 'utf8')) as {
   secret: string; key: string; cases: Array<{ method: string; path: string; body: string; ts: string; nonce: string; signature: string }>;
+  health: Array<{ nonce: string; proof: string }>;
 };
 /** what the bootstrap service writes into livetv's key file; livetv itself derives nothing */
 const deriveKey = (secret: string) => createHmac('sha256', secret).update('friendflix-livetv/v1').digest();
@@ -67,6 +68,39 @@ describe('livetv HTTP API', () => {
     expect(b).toEqual({ ok: true, api: 1, version: '3.4.0', bootId: '0123456789abcdef' });
     expect(b.bootId).toMatch(/^[0-9a-f]{16}$/);
     expect((await fetch(`${base}/healthz`, { method: 'POST' })).status).toBe(405);
+  });
+
+  it('/healthz?n=<nonce> adds the proof of key: HMAC(key, "healthz:" + nonce), the shared vectors (1b review I2)', async () => {
+    verifier = { key: Buffer.from(vectors.key, 'hex'), cache: new ReplayCache(), notBefore: 0 };
+    for (const h of vectors.health) {
+      const r = await fetch(`${base}/healthz?n=${h.nonce}`);
+      expect(r.status).toBe(200);
+      expect(await r.json()).toEqual({ ok: true, api: 1, version: '3.4.0', bootId: '0123456789abcdef', proof: h.proof });
+    }
+    // another key, another proof: a host without the key cannot answer it
+    verifier = { key, cache: new ReplayCache(), notBefore: 0 };
+    const other = await (await fetch(`${base}/healthz?n=${vectors.health[0]!.nonce}`)).json() as { proof: string };
+    expect(other.proof).toMatch(/^[0-9a-f]{64}$/);
+    expect(other.proof).not.toBe(vectors.health[0]!.proof);
+    expect(healthProof(key, vectors.health[0]!.nonce)).toBe(other.proof);
+  });
+
+  it('/healthz refuses a nonce that is not exactly one 32-hex value (and still answers the plain check)', async () => {
+    for (const q of ['n=', 'n=xyz', `n=${'A'.repeat(32)}`, `n=${'a'.repeat(31)}`, `n=${'a'.repeat(33)}`, `n=${'a'.repeat(32)}&n=${'b'.repeat(32)}`]) {
+      const r = await fetch(`${base}/healthz?${q}`);
+      expect(r.status, q).toBe(400);
+      expect(await r.json()).toEqual({ error: 'invalid_nonce' });
+    }
+    expect(await (await fetch(`${base}/healthz?x=1`)).json()).not.toHaveProperty('proof');
+    expect(warnings).toEqual([]);
+  });
+
+  it('a proof is no signature: replaying it as one is refused', async () => {
+    const nonce = '0123456789abcdef0123456789abcdef';
+    const proof = await (await fetch(`${base}/healthz?n=${nonce}`)).json() as { proof: string };
+    const r = await fetch(`${base}/v1/system`, { headers: { 'x-ff-livetv-ts': String(Date.now()), 'x-ff-livetv-nonce': nonce, 'x-ff-livetv-signature': `v1=${proof.proof}` } });
+    expect(r.status).toBe(401);
+    expect(await r.json()).toEqual({ error: 'bad_signature' });
   });
 
   it('unsigned /v1/system is refused (401, code only, logged without detail)', async () => {
