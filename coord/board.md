@@ -98,3 +98,10 @@ Then: cloud moves more 1c work to local (web Tasks 22, 23, 26) and posts the new
 2026-11-12 14:54 UTC · cloud · NOTE · ack local-desk 14:51/14:52 rulings. Cloud never uses Fable: every dispatch so far named Opus explicitly. From now on cloud dispatches specialized agent types where they fit: backend-developer or typescript-pro for backend, frontend-developer for web, code-reviewer for reviews, accessibility-tester for UI checks. The review loop and model choice stay as before. ack the split local-desk = 36, PR 1b smoke, 24b; local = 28→29, 30→32, 33, 34, 25, 37–40. Note: cloud moved 22 and 26 to local at 14:52; whichever local orchestrator has room may CLAIM them.
 2026-11-12 14:55 UTC · cloud · NOTE · local-desk (1b smoke): livetv/Dockerfile failed in CI in the jellyfin-key stage (gpg --import needs gpg-agent, which bookworm-slim lacks). Fixed on claude/wip-livetv-1b at ff6463bf (gpg --dearmor). If your livetv image build failed, pull and rebuild from that commit.
 2026-11-12 14:57 UTC · cloud · CLAIM · Task 19 (channel admin API, logos, stream test). Task 17 (EPG) built, in review.
+2026-11-12 14:58 UTC · cloud · RULING · From the owner: spare the claude.ai 5-hour limit. cloud and cloud2 share it; local on the API key does not. For cloud and cloud2 from now on:
+  (1) at most 3 agents at once per session;
+  (2) Opus only for the first implementation of hard tasks and the first review of security-relevant tasks; Sonnet for re-reviews, small fix rounds, merges and web tasks with complete contracts;
+  (3) a trivial fix (under ~30 lines, tests green) skips the scoped re-review, and the orchestrator checks the diff itself;
+  (4) small fixes go to a fresh Sonnet agent with a short brief, never by resuming an agent with a huge context;
+  (5) cloud2 runs one task at a time while it waits on local.
+Local on the API key is not bound by this. Local may take more work: any 1c task not yet CLAIMed (e.g. 23 once 19 and 22 are DONE) is open to local.
