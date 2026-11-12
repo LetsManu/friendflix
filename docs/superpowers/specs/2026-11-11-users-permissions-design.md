@@ -289,8 +289,9 @@ All admin routes: `requireAdmin` (admin account acting as its owner profile), CS
     hardKids: string[] }   // perms the kids overlay switches off
   ```
 - `PUT /api/admin/users/:id/rights` — partial `{ overrides: { [field]: value | null }, note?: string | null }`; replaces
-  `PUT /:id/limits` (kept as an alias mapping its five fields for one release). Audited `user.rights` with `{ from, to }` of the
-  changed fields only. 409 `deletion_in_progress` as today; the admin cannot lower their own `perms`/rights in a way that locks
+  `PUT /:id/limits` (kept as an alias mapping its five fields for one release). Audited `user.rights` with `{ from, to, layer?, stored?, note? }`: `from`/`to` hold the changed effective values only, `layer`
+  says which layer (role, user, kids, admin) decides each of them, `stored` lists the overrides that moved neither value nor
+  layer (for example clearing a switch on an admin account) by their stored values. 409 `deletion_in_progress` as today; the admin cannot lower their own `perms`/rights in a way that locks
   them out (admin perms are locked anyway; own role change is already refused).
 - `POST /api/admin/users/:id/check` `{ profileId, itemId? , query? }` — "Can this profile see this title?" (§6.4). With
   `query` (2–100 chars) the backend searches with the media server's **admin** key through a new optional seam method
@@ -327,10 +328,10 @@ All admin routes: `requireAdmin` (admin account acting as its owner profile), CS
 
 ### 4.5 Audit (G6)
 
-- Every role write audits **one** entry `role.update` with `meta { from: {changed fields}, to: {changed fields} }` (replaces
+- Every role write audits **one** entry `role.update` with `meta { from: {changed fields}, to: {changed fields}, layer?: {field: layer} }` (replaces
   the four partial actions `role.request_limit` / `role.remote_cap` / `role.downloads` / `role.playback`; old entries stay
-  readable). New: `role.create`, `role.delete` (`{ moveTo, accounts }`), `role.order`, `user.rights`, `user.check_viewed`,
-  `profile.admin_create`, `profile.admin_delete`.
+  readable). New: `role.create`, `role.delete` (`{ moveTo, accounts }`), `role.order`, `user.rights` (`{ from, to, layer?, stored? }`, also written by the legacy `PUT /limits`), `user.check_viewed`
+  (`{ profile, hits }` or `{ profile, libraries }`, counts only), `profile.admin_create`, `profile.admin_delete`.
 - `GET /api/admin/audit` gains `target=<id|role key>` and `area=people` (actions `user.*`, `role.*`, `invite.*`, `profile.*`,
   `device.*`). The role editor's *Verlauf* and the detail page's *Verlauf* use it.
 - Audit metadata never holds secrets, PINs, tokens or titles (activity and check views store counts only).

@@ -43,7 +43,7 @@ Nichts davon landet in Android-Cloud-Backups oder in der Übertragung auf ein ne
 
 ## Kinder
 
-Die App hat kein eigenes Konto und sammelt nichts für ihren Herausgeber. Kinderprofile richtet ein, wer den Server betreibt.
+Die App hat kein eigenes Konto und sammelt nichts für ihren Herausgeber. Kinderprofile richtet ein, wer den Server betreibt. Die Betreiberin oder der Betreiber kann auch prüfen, welche Titel und Bibliotheken ein Profil sehen kann (*Sicht prüfen*); protokolliert werden nur Anzahlen, nie Titel oder Suchbegriffe, und die Prüfung kann die letzte Anmeldezeit des Profils auf dem Medienserver aktualisieren.
 
 ## Änderungen und Kontakt
 

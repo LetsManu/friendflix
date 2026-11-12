@@ -131,7 +131,7 @@ ssh -L 8096:127.0.0.1:8096 -L 5055:127.0.0.1:5055 you@server     # from your PC;
 
 **In Jellyfin:**
 
-1. **Finish Jellyfin's own setup wizard first**: admin user, metadata language, libraries (Movies, Shows …). Library names matter only if you restrict roles to certain libraries (`ROLE_TEMPLATES`). The FriendFlix wizard refuses the automatic API key until this is done (*The media server itself is not set up yet*).
+1. **Finish Jellyfin's own setup wizard first**: admin user, metadata language, libraries (Movies, Shows …). Library names matter only if you restrict roles to certain libraries (`ROLE_TEMPLATES`; it keeps working, roles are now also editable under *Personen → Rollen & Rechte*, and `.env` values apply below the admin's). The FriendFlix wizard refuses the automatic API key until this is done (*The media server itself is not set up yet*).
 2. The API key: the FriendFlix wizard creates it for you (*Create API key automatically*, [section 8](#8-the-setup-wizard)). By hand instead: *Dashboard → API Keys* (in newer versions under *Dashboard → Advanced → API Keys*) → **+** → app name `FriendFlix` → copy the key and choose *By hand* in the wizard. The key acts as admin: FriendFlix uses it to create one Jellyfin user per portal user (random password, stored encrypted with `APP_ENC_KEY`) and to apply the role policies.
 3. Optional: the webhook plugin for instant "now playing" and "new in library" events, see [integrations.md](integrations.md#jellyfin-webhook-plugin-optional-polling-sessions-every-10-s-is-the-fallback).
 4. Hardware transcoding as usual for your hardware (Intel QSV/VAAPI: see the note on "VPP Tone mapping" in the README).

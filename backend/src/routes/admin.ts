@@ -28,6 +28,7 @@ import { portainerMode, redeployViaPortainer, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
 import { accountSerial, getUserById } from '../users.js';
 import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, isLanguage, roleLabel, setInstanceLanguage } from '../i18n.js';
+import { ROLE_KEY_RE } from '../rolecat.js';
 
 const uuid = z.guid();
 
@@ -345,15 +346,19 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     return { ok: true, featured: b.featured };
   });
 
-  // ?actor=<user id>|system &action=<category ("user") or full action ("user.role")> &from=&to= (ISO times) &q= (actor/target/action) &dir=asc|desc &limit= (default 100) &offset=
+  // ?actor=<user id>|system &target=<user id | role key> (exact) &area=people (user, role, invite, profile, device actions) &action=<category ("user") or full action ("user.role")> &from=&to= (ISO times) &q= (actor/target/action) &dir=asc|desc &limit= (default 100) &offset=
   app.get('/api/admin/audit', admin, async (req) => {
     const p = pageQuery.extend({
       actor: z.union([uuid, z.literal('system')]).optional(),
       action: z.string().regex(/^[a-z_]+(\.[a-z_]+)?$/).optional(),
+      target: z.union([uuid, z.string().regex(ROLE_KEY_RE)]).optional(),
+      area: z.literal('people').optional(),
       from: z.coerce.date().optional(),
       to: z.coerce.date().optional(),
     }).parse(req.query);
     const w = new Where();
+    if (p.target) w.add('a.target = ?', p.target);
+    if (p.area) w.add(`split_part(a.action, '.', 1) in ('user','role','invite','profile','device')`);
     if (p.actor === 'system') w.add('a.actor is null');
     else if (p.actor) w.add('a.actor = ?', p.actor);
     if (p.action?.includes('.')) w.add('a.action = ?', p.action);
