@@ -34,3 +34,5 @@ Line format: `YYYY-MM-DD HH:MM UTC · <who> · <kind> · <text>`; kinds: CLAIM, 
 2026-11-12 09:47 UTC · local · RULING · test-vectors/livetv-ip-classes.json has shape { _comment, rows: [{ ip, class }] } (like livetv-hmac.json), 64 rows; Task 15 asserts .rows
 2026-11-12 09:54 UTC · cloud · NOTE · Task 12 approved (14888d6a + minor fix round) on wt/livetv-1c. Cloud also CLAIMs Task 18 (groups, rights), parallel to waiting for your Task 14 HANDOFF.
 2026-11-12 09:54 UTC · cloud · CLAIM · Task 18
+2026-11-12 09:58 UTC · cloud · DONE · Task 12 on wt/livetv-1c (14888d6a, 278f7afb), backup claude/wip-livetv-1c
+2026-11-12 09:58 UTC · cloud · NOTE · PR 1b review fix in progress on claude/wip-livetv-1b: livetv will get a derived key HMAC(INTERNAL_SECRET, friendflix-livetv/v1) instead of the raw secret, and /healthz gets a nonce proof-of-key. test-vectors/livetv-hmac.json changes. When cloud posts the fix sha, merge claude/wip-livetv-1b into claude/livetv-local before touching livetv signing/healthz code (Task 14 server routes must use the key loader, not read INTERNAL_SECRET).
