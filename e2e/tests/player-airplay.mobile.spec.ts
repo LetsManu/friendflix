@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { MOVIE } from '../mocks/fixtures.js';
+import { episodes, MOVIE } from '../mocks/fixtures.js';
 import { available, castOn, castSessions, mockHls, playOnAirPlay, stubAirPlay, wireless } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
@@ -201,4 +201,44 @@ test('the connecting layout does not jump after it mounts, and Back stays reacha
   await page.waitForTimeout(4000); // past the 3 s auto-hide
   await expect(page.getByRole('button', { name: 'Zurück', exact: true }).first()).toBeVisible();
   await expect(page.getByRole('button', { name: 'Zurück', exact: true }).first()).toHaveCSS('opacity', '1');
+});
+
+test('continuous remote shows Folge 1 von 3 and the list', async ({ page, api: _api }) => {
+  await stubAirPlay(page);
+  await mockPlayer(page);
+  await castOn(page, true, undefined, { airplayContinuous: true });
+  await mockHls(page);
+  const joined = {
+    items: [1, 2, 3].map((n) => ({ itemId: episodes[n - 1]!.id, title: `Folge ${n}`, season: 1, episode: n, start: 0, duration: n === 1 ? 2700 : n === 2 ? 2640 : 2820 })),
+    subtitles: false,
+  };
+  joined.items[1]!.start = 2700;
+  joined.items[2]!.start = 5340;
+  await castSessions(page, { deliver: () => ({ joined, runtimeTicks: 81_600_000_000 }) });
+  await page.goto('/watch/' + episodes[0]!.id);
+  await page.waitForFunction(() => (document.querySelector('video')?.duration ?? 0) > 20);
+  await page.evaluate(() => document.querySelector('video')!.play().catch(() => undefined));
+  await available(page);
+  if (await page.locator('.ctl.hide').count()) await page.locator('.stage').tap({ position: { x: 30, y: page.viewportSize()!.height * 0.3 } });
+  await playOnAirPlay(page, 'tap');
+  await wireless(page, true);
+  const screen = page.getByTestId('airplay-active');
+  await expect(screen).toBeVisible();
+  const times = screen.locator('.times.ep');
+  await expect(times).toContainText('Folge 1 von 3');
+  const before = await times.boundingBox();
+  await page.evaluate(() => document.querySelector('video')!.dispatchEvent(new Event('playing')));
+  await expect(screen.locator('.eyebrow')).toHaveText('Läuft über AirPlay');
+  await expect(screen.getByRole('heading', { name: 'Durchgehende Wiedergabe' })).toBeVisible();
+  await expect(screen.getByText('Experimentell')).toBeVisible();
+  await expect(screen.getByText('Folgen 1\u20133 laufen am Stück')).toBeVisible();
+  const rows = screen.locator('.rows li');
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText('Jetzt');
+  await expect(rows.nth(1)).toContainText('44 Min.');
+  await expect(rows.nth(2)).toContainText('47 Min.');
+  await expect(screen.getByRole('button', { name: 'Vorherige Folge (keine: das ist die erste)' })).toHaveAttribute('aria-disabled', 'true');
+  await expect(screen.getByRole('button', { name: 'Nächste Folge' })).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(screen.getByText('Als Nächstes')).toHaveCount(0); // the list replaces the up-next card
+  expect(await times.boundingBox()).toEqual(before); // nothing jumped
 });

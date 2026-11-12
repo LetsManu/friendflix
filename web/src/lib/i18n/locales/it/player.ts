@@ -176,6 +176,7 @@ const it: Translation<typeof de> = {
     left: 'ancora {time}',
     prev: 'Episodio precedente',
     prevNone: 'Episodio precedente (nessuno: è il primo)',
+    episodeRange: 'S{s}:E{a}–E{b}',
   },
   castTv: {
     fromPhone: 'Dal telefono di {name}',

@@ -20,7 +20,7 @@
   import { native, refreshNativeCast } from '#lib/native/bridge';
   import { nativeCaps } from '#lib/native/play';
   import { engineSource, nativeSource, type CastBarSource } from '#lib/cast/barSource';
-  import { bindCastMediaSession } from '#lib/cast/mediasession';
+  import { bindCastMediaSession, documentVisibility } from '#lib/cast/mediasession';
   import { avatarBg, initial } from '#lib/avatars';
   import { cachedCalm, loadList, loadPrefs, prefs } from '#lib/stores';
   import { kidsMode } from '#lib/kids';
@@ -658,7 +658,7 @@
 
   let stops: Array<() => void> = [];
   // lock screen / Control Center / notification drive what plays on the TV
-  onMount(() => bindCastMediaSession(castSession, castEngine));
+  onMount(() => bindCastMediaSession(castSession, castEngine, undefined, undefined, documentVisibility()));
   // a Chromecast cast may still run from an earlier page: load the Cast SDK so the bar can come back (nobody else pays for it).
   // The SDK joined a running session (also one found at its setup, emitted synchronously from it): the engine re-adopts our
   // media, so the listener is registered before initCast().

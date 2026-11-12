@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import { tr } from '#lib/i18n';
-import { applePlatform, episodeCodeLine, nowLine, upNextLine, upNextOf, remoteLayout, scrubberTarget, segmentMarks, statusOf, timeLine, volumeLine } from './remotescreen';
+import type { CastSession } from './engine';
+import { applePlatform, continuousView, episodeCodeLine, nowLine, upNextLine, upNextOf, remoteLayout, scrubberTarget, segmentMarks, statusOf, timeLine, volumeLine } from './remotescreen';
 
 const tf = tr;
 const base = { kind: 'chromecast' as const, device: 'Wohnzimmer-TV' };
@@ -130,5 +131,36 @@ describe('remote screen: episode code', () => {
   it('one format through i18n; the name alone without numbers', () => {
     expect(episodeCodeLine({ name: 'Wrenfield Pier', parentIndexNumber: 1, indexNumber: 5 }, tr)).toBe('S1:F5 \u00b7 Wrenfield Pier');
     expect(episodeCodeLine({ name: 'Wrenfield Pier' }, tr)).toBe('Wrenfield Pier');
+  });
+});
+
+describe('remote screen: continuous mode', () => {
+  const items = [
+    { itemId: 'ep1', title: 'Der Anfang', season: 1, episode: 1, start: 0, duration: 2700 },
+    { itemId: 'ep2', title: 'Die Furt', season: 1, episode: 2, start: 2700, duration: 2640 },
+    { itemId: 'ep3', title: 'Der Nebel', season: 1, episode: 3, start: 5340, duration: 2820 },
+  ];
+  const sess = (index: number) => ({ ...base, title: 'Dunmoor', joined: { items, index, streamPosition: items[index]!.start + 5, streamDuration: 8160 } }) as unknown as CastSession;
+  it('not joined: nothing', () => {
+    expect(continuousView({ ...base } as unknown as CastSession, tf)).toBeNull();
+  });
+  it('the first of three: Folge 1 von 3, the list, Previous disabled', () => {
+    const v = continuousView(sess(0), tf)!;
+    expect(v.line).toBe('Folge 1 von 3');
+    expect(v.info).toBe('Folgen 1\u20133 laufen am St\u00fcck und spielen weiter, wenn du das iPhone sperrst. Danach endet die Wiedergabe.');
+    expect(v.list).toEqual([
+      { label: 'S1:F1 Der Anfang', note: 'Jetzt', now: true },
+      { label: 'S1:F2 Die Furt', note: '44 Min.', now: false },
+      { label: 'S1:F3 Der Nebel', note: '47 Min.', now: false },
+    ]);
+    expect(v.prevDisabled).toBe(true);
+    expect(v.nextDisabled).toBe(false);
+  });
+  it('the last of three: Next disabled, Previous enabled', () => {
+    const v = continuousView(sess(2), tf)!;
+    expect(v.line).toBe('Folge 3 von 3');
+    expect(v.prevDisabled).toBe(false);
+    expect(v.nextDisabled).toBe(true);
+    expect(v.list.map((x) => x.now)).toEqual([false, false, true]);
   });
 });

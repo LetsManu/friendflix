@@ -178,6 +178,7 @@ export default {
     left: 'noch {time}',
     prev: 'Vorherige Folge',
     prevNone: 'Vorherige Folge (keine: das ist die erste)',
+    episodeRange: 'S{s}:F{a}–F{b}',
   },
   castTv: {
     fromPhone: 'Vom Handy von {name}',

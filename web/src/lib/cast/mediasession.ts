@@ -8,9 +8,11 @@
 import type { Readable } from 'svelte/store';
 import { img } from '#lib/api';
 import type { CastEngine, CastSession } from './engine';
+import { tr } from '#lib/i18n';
 import { liveCast } from './bar';
+import { episodeRange } from './joined';
 
-type Eng = Pick<CastEngine, 'playPause' | 'seek' | 'skip' | 'next'>;
+type Eng = Pick<CastEngine, 'playPause' | 'seek' | 'skip' | 'next' | 'prev'>;
 /** the part of `navigator.mediaSession` used here (tests pass a fake) */
 export interface MediaSessionLike {
   metadata: unknown;
@@ -18,7 +20,7 @@ export interface MediaSessionLike {
   setActionHandler(action: string, fn: ((d: { seekTime?: number; seekOffset?: number }) => void) | null): void;
   setPositionState?(s: { duration: number; position: number; playbackRate: number }): void;
 }
-export const CAST_ACTIONS = ['play', 'pause', 'seekto', 'seekbackward', 'seekforward', 'nexttrack'] as const;
+export const CAST_ACTIONS = ['play', 'pause', 'seekto', 'seekbackward', 'seekforward', 'nexttrack', 'previoustrack'] as const;
 export type MediaSessionHandler = (d: { seekTime?: number; seekOffset?: number }) => void;
 
 /** setActionHandler that tolerates actions the browser does not support */
@@ -49,22 +51,30 @@ export function mediaSessionOwner(): symbol | null { return owner; }
 export function onMediaSessionOwner(fn: (o: symbol | null) => void): () => void { ownerListeners.add(fn); return () => { ownerListeners.delete(fn); }; }
 const CAST_OWNER = Symbol('cast');
 
+/** whether the page is in front (a locked or backgrounded page cannot keep a joined stream's per-episode lock screen current) */
+export interface PageVisibility { visible(): boolean; onChange(fn: () => void): () => void }
+export const documentVisibility = (): PageVisibility | undefined => typeof document === 'undefined' ? undefined : {
+  visible: () => !document.hidden,
+  onChange: (fn) => { document.addEventListener('visibilitychange', fn); return () => document.removeEventListener('visibilitychange', fn); },
+};
+
 export function bindCastMediaSession(
   session: Readable<CastSession | null>, eng: Eng,
   ms: MediaSessionLike | undefined = typeof navigator !== 'undefined' ? (navigator.mediaSession as unknown as MediaSessionLike | undefined) : undefined,
   meta: (m: { title: string; artist: string; artwork: Array<{ src: string; sizes: string }> }) => unknown = (m) => new MediaMetadata(m),
+  page?: PageVisibility,
 ): () => void {
   if (!ms) return () => undefined;
-  let bound = false, lastKey = '';
+  let bound = false, lastKey = '', lastPrev: boolean | null = null;
   const set = (a: string, fn: MediaSessionHandler | null) => setActionHandlerSafe(ms, a, fn);
   const clear = () => {
     if (!bound) return;
-    bound = false; lastKey = '';
+    bound = false; lastKey = ''; lastPrev = null;
     // give up ownership first; blank only if nobody (the player) took over in the meantime
     if (releaseMediaSession(CAST_OWNER) && mediaSessionOwner() === null) clearMediaSession(ms, CAST_ACTIONS);
   };
   let cur: CastSession | null = null;
-  const off = session.subscribe((s) => {
+  const apply = (s: CastSession | null) => {
     cur = s;
     if (!liveCast(s)) { clear(); return; } // a detached cast has nothing to drive
     if (!bound) {
@@ -77,15 +87,28 @@ export function bindCastMediaSession(
       set('seekbackward', (d) => eng.skip(-(d.seekOffset || 10)));
       set('seekforward', (d) => eng.skip(d.seekOffset || 10));
     }
+    const j = s.joined;
+    // a joined stream while the page is hidden: the series and the episode range, the position on the whole stream (the page cannot follow the episodes)
+    const series = Boolean(j) && page !== undefined && !page.visible();
+    // previous episode only inside a joined stream, after the first episode
+    const prev = Boolean(j && j.index > 0);
+    if (prev !== lastPrev) { lastPrev = prev; set('previoustrack', prev ? () => eng.prev() : null); }
     // the next-episode button only for episodes (the engine's next(): the offered one, else the one after)
-    const key = `${s.itemId}|${s.title}|${s.subtitle}|${s.isEpisode}`;
+    const key = series && j ? `series|${s.title}|${j.items.length}|${j.items[0]?.itemId}` : `${s.itemId}|${s.title}|${s.subtitle}|${s.isEpisode}`;
     if (key !== lastKey) {
       lastKey = key;
       set('nexttrack', s.isEpisode ? () => void eng.next() : null);
-      try { ms.metadata = meta({ title: s.subtitle || s.title, artist: s.subtitle ? s.title : s.device, artwork: [{ src: img(s.posterId, 512), sizes: '512x512' }] }); } catch { /* no MediaMetadata */ }
+      try {
+        ms.metadata = series && j
+          ? meta({ title: s.title, artist: episodeRange(j.items, tr), artwork: [{ src: img(s.seriesId ?? s.posterId, 512), sizes: '512x512' }] })
+          : meta({ title: s.subtitle || s.title, artist: s.subtitle ? s.title : s.device, artwork: [{ src: img(s.posterId, 512), sizes: '512x512' }] });
+      } catch { /* no MediaMetadata */ }
     }
     ms.playbackState = s.state === 'playing' && !s.paused ? 'playing' : 'paused';
-    setPositionClamped(ms, s.duration, s.position, 1);
-  });
-  return () => { off(); clear(); };
+    if (series && j) setPositionClamped(ms, j.streamDuration, j.streamPosition, 1);
+    else setPositionClamped(ms, s.duration, s.position, 1);
+  };
+  const off = session.subscribe(apply);
+  const offPage = page?.onChange(() => { if (bound) apply(cur); });
+  return () => { off(); offPage?.(); clear(); };
 }

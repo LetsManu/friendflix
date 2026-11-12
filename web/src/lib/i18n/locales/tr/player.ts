@@ -176,6 +176,7 @@ const tr: Translation<typeof de> = {
     left: '{time} kaldı',
     prev: 'Önceki bölüm',
     prevNone: 'Önceki bölüm (yok: bu ilk bölüm)',
+    episodeRange: 'S{s}:B{a}–B{b}',
   },
   castTv: {
     fromPhone: '{name} adlı kişinin telefonundan',
