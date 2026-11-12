@@ -9,7 +9,7 @@
   import { t } from '#lib/i18n';
   import Button from '#lib/ui/Button.svelte';
   import Select from '#lib/ui/Select.svelte';
-  import { roleName, summaryLine, type MatrixRole } from './rights/model';
+  import { grantableRoles, roleName, summaryLine, type MatrixRole } from './rights/model';
 
   export let roles: MatrixRole[] = [];
   export let value = '';
@@ -20,10 +20,7 @@
   export let state: 'ready' | 'loading' | 'error' = 'ready';
   const dispatch = createEventDispatcher<{ retry: void }>();
 
-  $: options = [...roles]
-    .filter((r) => (r.key === 'admin' ? includeAdmin : r.invitable))
-    .sort((a, b) => a.position - b.position)
-    .map((r) => ({ value: r.key, label: `${roleName(r)} · ${summaryLine(r)}` }));
+  $: options = grantableRoles(roles, includeAdmin).map((r) => ({ value: r.key, label: `${roleName(r)} · ${summaryLine(r)}` }));
 </script>
 
 <div class="rp">

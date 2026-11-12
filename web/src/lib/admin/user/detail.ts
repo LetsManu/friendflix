@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Admin user detail page (/admin/users/<id>): API shapes (backend/src/routes/adminUsers.ts), tabs, header pills, Authentik errors. */
-import { ApiError } from '#lib/api';
+import { apiCode, ApiError } from '#lib/api';
 import { fmtDate, tr } from '#lib/i18n';
 import { errorText } from '#lib/ui/action';
 import type { Tone } from '#lib/ui/StatusPill.svelte';
@@ -83,7 +83,7 @@ export function mfaChips(mfa: MfaState | null): Pill[] {
 /** clear texts for the Authentik actions (recovery e-mail, 2FA setup) */
 export function akError(e: unknown): string {
   if (e instanceof ApiError) {
-    const code = (e.body as { error?: string } | null)?.error;
+    const code = apiCode(e);
     if (code === 'recovery_not_configured') return tr('adminPeople.detail.ak.notConfigured');
     if (code === 'authentik_user_not_found') return tr('adminPeople.detail.ak.noUser');
     if (e.status === 501) return tr('adminPeople.detail.ak.notSupported');

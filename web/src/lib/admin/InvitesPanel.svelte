@@ -20,7 +20,7 @@
   import DataTable from '#lib/ui/DataTable.svelte';
   import Field from '#lib/ui/Field.svelte';
   import RolePicker from '#lib/admin/RolePicker.svelte';
-  import type { MatrixRole } from '#lib/admin/rights/model';
+  import { grantableRoles, type MatrixRole } from '#lib/admin/rights/model';
   import Select from '#lib/ui/Select.svelte';
   import StatusPill, { type Tone } from '#lib/ui/StatusPill.svelte';
   import Toggle from '#lib/ui/Toggle.svelte';
@@ -54,7 +54,7 @@
   let uses: Record<string, Use[] | null | undefined> = {};
 
   /** the roles an invite may grant: the catalogue's invitable ones once loaded, else the page's list */
-  $: grantable = matrixRoles.length ? matrixRoles.filter((r) => r.invitable).sort((a, b) => a.position - b.position).map((r) => r.key) : invitable;
+  $: grantable = matrixRoles.length ? grantableRoles(matrixRoles).map((r) => r.key) : invitable;
   $: if (grantable.length && !grantable.includes(role)) role = grantable[0]!;
 
   async function load() {

@@ -13,7 +13,7 @@
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
   import RolePicker from '#lib/admin/RolePicker.svelte';
-  import type { MatrixRole } from '#lib/admin/rights/model';
+  import { grantableRoles, type MatrixRole } from '#lib/admin/rights/model';
   import Select from '#lib/ui/Select.svelte';
   import Skeleton from '#lib/ui/Skeleton.svelte';
 
@@ -30,23 +30,24 @@
   let rows: R[] | null = null, error: string | null = null;
   let drafts: Record<string, Draft> = {};
 
-  const defaultRole = () => (invitable.includes('friend') ? 'friend' : invitable[0] ?? 'friend');
+  /** the roles an approval may grant, as the picker lists them (invitable ones and admin) */
+  $: grantable = grantableRoles(matrixRoles, true).map((r) => r.key);
+  $: ready = rolesState === 'ready' && grantable.length > 0;
+  /** the role a draft starts with, and takes when its role is not offered: friend if offered, else the first one that is not admin */
+  $: fallback = ready ? (grantable.includes('friend') ? 'friend' : grantable.find((k) => k !== 'admin') ?? grantable[0]!) : invitable.includes('friend') ? 'friend' : invitable[0] ?? 'friend';
   async function load() {
     try {
       rows = (await api<{ requests: R[] }>('/api/admin/approvals')).requests;
-      drafts = Object.fromEntries(rows.map((r) => [r.id, drafts[r.id] ?? { role: defaultRole(), access: '', day: '', rejecting: false, message: '' }]));
+      // a new draft starts with the catalogue's default when it is there: nothing to reconcile afterwards
+      drafts = Object.fromEntries(rows.map((r) => [r.id, drafts[r.id] ?? { role: fallback, access: '', day: '', rejecting: false, message: '' }]));
       error = null;
       dispatch('count', rows.length);
     } catch { error = tr('adminPeople.loadFailed'); }
   }
   onMount(() => { void load(); });
-  /** the roles an approval may grant, as the picker lists them (invitable ones and admin) */
-  $: grantable = matrixRoles.filter((r) => r.key === 'admin' || r.invitable).sort((a, b) => a.position - b.position).map((r) => r.key);
-  // shown role = sent role: a draft whose role is not offered takes the default of the loaded catalogue
-  $: if (rolesState === 'ready' && grantable.length) {
-    const fallback = grantable.includes('friend') ? 'friend' : grantable.find((k) => k !== 'admin') ?? grantable[0]!;
-    const bad = Object.keys(drafts).filter((id) => !grantable.includes(drafts[id]!.role));
-    if (bad.length) drafts = { ...drafts, ...Object.fromEntries(bad.map((id) => [id, { ...drafts[id]!, role: fallback }])) };
+  // shown role = sent role: drafts made before the catalogue came, whose role it does not offer, take its default (once)
+  $: if (ready && Object.values(drafts).some((d) => !grantable.includes(d.role))) {
+    drafts = Object.fromEntries(Object.entries(drafts).map(([id, d]) => [id, grantable.includes(d.role) ? d : { ...d, role: fallback }]));
   }
   const set = (id: string, patch: Partial<Draft>) => { drafts = { ...drafts, [id]: { ...drafts[id]!, ...patch } }; };
   const val = (e: Event): string => (e.target as HTMLInputElement | HTMLSelectElement).value;

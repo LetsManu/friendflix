@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Kids profile admin (person page, Profile tab): the backend's limits and its error codes as honest texts. Unit-tested in profiles.test.ts. */
-import { ApiError } from '#lib/api';
+import { apiCode } from '#lib/api';
 import { tr } from '#lib/i18n';
 import type { TKey } from '#lib/i18n';
 import { errorText } from '#lib/ui/action';
@@ -15,7 +15,7 @@ export type Cap = (typeof CAPS)[number];
 export const capLabel = (n: number): string => tr(`kids.profiles.rating${n}` as TKey);
 
 export type ProfileOp = 'update' | 'create' | 'delete';
-const code = (e: unknown): string | undefined => (e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined);
+const code = apiCode;
 
 /** what the person reads when a profile write fails: one text per backend code, the generic one otherwise */
 export function profileError(e: unknown, op: ProfileOp): string {

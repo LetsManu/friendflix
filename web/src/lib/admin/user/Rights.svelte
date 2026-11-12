@@ -9,7 +9,7 @@
    * bar offers *Erneut anwenden* (the repair, which applies the policy again). An admin account's switches are locked.
    */
   import { onMount } from 'svelte';
-  import { api, ApiError } from '#lib/api';
+  import { api, apiCode, ApiError } from '#lib/api';
   import { cellText, fieldLabel, partialText, visibleFields, type FieldGroup, type MatrixField, type RoleMatrix } from '#lib/admin/rights/model';
   import { leaveGuard } from '#lib/admin/leaveGuard';
   import { fetchRoles, type RolesLoader } from '#lib/admin/rights/rolesAnswer';
@@ -131,7 +131,7 @@
       toast.success(tr('adminPeople.rights.saved', { name }));
       if (!(await load())) settle(sent);
     } catch (e) {
-      const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
+      const code = apiCode(e);
       if (e instanceof ApiError && e.status === 502 && code === 'policy_partial') {
         // stored either way: reload the stored values while the bar still shows the save running, then show the error once with
         // its final buttons (*Schließen* · *Erneut anwenden*): no staged edits left, so nothing swaps under the pointer

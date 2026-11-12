@@ -10,6 +10,7 @@
   import { api } from '#lib/api';
   import { pageStore } from '#lib/page';
   import { entrySentence, fetchRoleNames, type RoleNames } from '#lib/admin/rights/auditText';
+  import AuditChips from '#lib/admin/rights/AuditChips.svelte';
   import Icon from '#lib/Icon.svelte';
   import { fmtDateTime, fmtRelative, t, tr, trDynamic } from '#lib/i18n';
   import { describeActivity, type AuditEntry } from '#lib/admin/activity';
@@ -111,7 +112,7 @@
         <div class="tx">
           <span class="line">{s.text}</span>
           {#if s.chips.length}
-            <ul class="chips">{#each s.chips as c (c.label)}<li class="chip">{$t('adminPeople.roles.auditChip', { field: c.label, from: c.from, to: c.to })}</li>{/each}</ul>
+            <AuditChips chips={s.chips} />
           {/if}
           <details>
             <summary>{$t('adminPeople.audit.details')}</summary>
@@ -136,8 +137,6 @@
   .ic { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; background: rgba(255,255,255,.08); color: var(--mut); }
   .tx { min-width: 0; flex: 1; }
   .line { display: block; font-weight: 500; padding-top: .15rem; overflow-wrap: anywhere; }
-  .chips { list-style: none; margin: .3rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }
-  .chip { padding: .2rem .7rem; border-radius: 99px; background: rgba(255,255,255,.08); font-size: .85rem; font-weight: 600; overflow-wrap: anywhere; }
   .tchip { display: inline-flex; align-items: center; gap: .2rem; min-height: 44px; max-width: 100%; padding: 0 .2rem 0 .9rem; border-radius: 99px; background: rgba(255,255,255,.08); font-weight: 600; }
   .tchip span { min-width: 0; overflow-wrap: anywhere; }
   .tchip button { flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; display: grid; place-items: center; border-radius: 50%; background: transparent; color: inherit; }

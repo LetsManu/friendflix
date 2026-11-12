@@ -192,6 +192,11 @@ export function reviewLines(s: Stage, m: RoleMatrix): Array<{ role: string; fiel
   return lines;
 }
 
+/** the roles an invite may grant in catalogue order (the invitable ones); `admin`: Admin as well (an approval) */
+export function grantableRoles<R extends Pick<MatrixRole, 'key' | 'invitable' | 'position'>>(roles: readonly R[], admin = false): R[] {
+  return roles.filter((r) => (r.key === 'admin' ? admin : r.invitable)).sort((a, b) => a.position - b.position);
+}
+
 /** the name to show: a built-in default label (or none, falling back to the base's) in the UI language, else the configured label, else the key */
 export function roleName(r: Pick<MatrixRole, 'key' | 'label' | 'base' | 'builtinLabel'>): string {
   if (r.label && !r.builtinLabel) return r.label;

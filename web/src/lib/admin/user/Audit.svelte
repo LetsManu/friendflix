@@ -9,6 +9,7 @@
   import { describeActivity, type AuditEntry } from '#lib/admin/activity';
   import { auditDetails } from '#lib/admin/people';
   import { entrySentence, fetchRoleNames, type RoleNames } from '#lib/admin/rights/auditText';
+  import AuditChips from '#lib/admin/rights/AuditChips.svelte';
   import { fetchRoles, type RolesLoader } from '#lib/admin/rights/rolesAnswer';
   import Button from '#lib/ui/Button.svelte';
   import DataTable from '#lib/ui/DataTable.svelte';
@@ -54,7 +55,7 @@
         <div class="tx">
           <span class="line">{rs?.text ?? a.text}</span>
           {#if rs?.chips.length}
-            <ul class="chips">{#each rs.chips as c (c.label)}<li class="chip">{$t('adminPeople.roles.auditChip', { field: c.label, from: c.from, to: c.to })}</li>{/each}</ul>
+            <AuditChips chips={rs.chips} />
           {/if}
           {#if details.length}
             <details>
@@ -76,8 +77,6 @@
   .ic { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; background: rgba(255,255,255,.08); color: var(--mut); }
   .tx { min-width: 0; flex: 1; }
   .line { display: block; font-weight: 500; padding-top: .15rem; overflow-wrap: anywhere; }
-  .chips { list-style: none; margin: .3rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }
-  .chip { padding: .2rem .7rem; border-radius: 99px; background: rgba(255,255,255,.08); font-size: .85rem; font-weight: 600; overflow-wrap: anywhere; }
   .more { margin: .6rem 0 0; }
   summary { cursor: pointer; color: var(--info); font-size: .85rem; font-weight: 600; min-height: 32px; display: inline-flex; align-items: center; }
   dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .25rem 1rem; margin: .3rem 0 .4rem; font-size: .88rem; }

@@ -15,7 +15,7 @@
    */
   import { onMount } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
-  import { api, ApiError } from '#lib/api';
+  import { api, apiCode } from '#lib/api';
   import { avatarBg, initial } from '#lib/avatars';
   import { fmtDate, fmtDateTime, fmtNumber, fmtRelative, locale, t, tr } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
@@ -292,7 +292,7 @@
   }
   // validation and guards are all or nothing; anything else may have stopped halfway through the accounts
   const bulkError = (e: unknown): string => {
-    const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
+    const code = apiCode(e);
     if (code === 'admin_perms_locked') return tr('adminPeople.bulk.adminLocked');
     if (code === 'deletion_in_progress') return deletionErrorText(e);
     return accountGuardText(e) ?? `${errorText(e)} ${tr('adminPeople.bulk.partial')}`;
