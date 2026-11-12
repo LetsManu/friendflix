@@ -69,6 +69,21 @@ function fakeLivetv() {
   });
 }
 const dels = () => order.filter((o) => o.startsWith('DELETE:'));
+/** livetv's DELETE answers only after `ms` (the abort of a caller's deadline ends it early); `remove`: it takes the stream off its list at once */
+function slowDelete(ms: number, remove: boolean) {
+  const inner = env.ctx.fetchImpl;
+  env.ctx.fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if ((init?.method ?? 'GET') !== 'DELETE') return inner(input, init);
+    const id = new URL(String(input)).pathname.split('/').pop()!;
+    order.push(`DELETE:${id}`);
+    if (remove) streams.delete(id);
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(resolve, ms);
+      init?.signal?.addEventListener('abort', () => { clearTimeout(t); reject(new DOMException('aborted', 'AbortError')); }, { once: true });
+    });
+    return new Response(null, { status: 204 });
+  }) as typeof fetch;
+}
 
 // ---- data ----
 let news = '';
@@ -100,7 +115,7 @@ async function drive<T>(p: Promise<T>, stepMs = 100, max = 400): Promise<T> {
   void p.then(() => { done = true; }, () => { done = true; });
   for (let i = 0; i < max && !done; i++) {
     await vi.advanceTimersByTimeAsync(stepMs);
-    for (let j = 0; j < 5 && !done; j++) await new Promise((r) => setImmediate(r));
+    for (let j = 0; j < 25 && !done; j++) await new Promise((r) => setImmediate(r));
   }
   return p;
 }
@@ -306,6 +321,122 @@ describe('release on switch', () => {
       expect(await env.kv.keys('ltv:stopping:')).toEqual([]);
     });
   }
+
+  it('a joiner who marked before the release marker appeared waits, then takes the normal start path (marker handshake)', async () => {
+    const one = await addSource(1);
+    const a = await addChannel(one, 'Hafenkanal', 4);
+    const b = await addChannel(one, 'Nordlicht TV', 1);
+    expect((await watch(anna, a)).statusCode).toBe(200);
+    let annaP: ReturnType<typeof watch> | null = null;
+    let markerSet!: () => void;
+    const past = new Promise<void>((r) => { markerSet = r; });
+    let waiting!: () => void;
+    const benWaits = new Promise<void>((r) => { waiting = r; });
+    __switchHooks.stoppingWait = (id) => { if (id === a) waiting(); };
+    // Anna's release parks right after its marker; Ben's join marker is already set by then (read-only hooks, real requests)
+    __switchHooks.afterMarker = async (id) => {
+      if (id !== a) return;
+      markerSet();
+      await benWaits;
+    };
+    __switchHooks.joinMarked = async (id) => {
+      if (id !== a || annaP) return;
+      annaP = watch(anna, b);
+      await past;
+    };
+    const bw = await watch(ben, a);
+    const r = await annaP!;
+    expect(r.statusCode, r.body).toBe(200);
+    expect(bw.statusCode, bw.body).toBe(503);
+    expect(bw.json()).toEqual({ error: 'provider_limit', max: 1, running: [{ id: b, number: 1, name: 'Nordlicht TV', logo: null }] });
+    expect(order).toEqual([`POST:${a}`, `DELETE:${a}`, `POST:${b}`]);
+    expect(streams.get(b)!.state).toBe('running');
+    expect(await env.kv.keys('ltv:stopping:')).toEqual([]);
+    expect(await env.kv.keys('ltv:join:')).toEqual([]);
+  });
+
+  it('a DELETE that answers after 6 s is decided at 3 s: A is gone, Ben waits and gets the normal refusal (fake clock)', async () => {
+    const one = await addSource(1);
+    const a = await addChannel(one, 'Hafenkanal', 4);
+    const b = await addChannel(one, 'Nordlicht TV', 1);
+    expect((await watch(anna, a)).statusCode).toBe(200);
+    slowDelete(6_000, true); // livetv takes A off its list at once, the answer is slow
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    let benP: ReturnType<typeof watch> | null = null;
+    let waiting!: () => void;
+    const benWaits = new Promise<void>((r) => { waiting = r; });
+    __switchHooks.stoppingWait = (id) => { if (id === a) waiting(); };
+    __switchHooks.afterMarker = async (id) => {
+      if (id !== a || benP) return;
+      benP = watch(ben, a);
+      await benWaits;
+    };
+    const r = await drive(watch(anna, b), 100, 800);
+    const bw = await drive(benP!, 100, 800);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(bw.statusCode, bw.body).toBe(503);
+    expect(bw.json()).toEqual({ error: 'provider_limit', max: 1, running: [{ id: b, number: 1, name: 'Nordlicht TV', logo: null }] });
+    expect(order).toEqual([`POST:${a}`, `DELETE:${a}`, `POST:${b}`]); // never a second stream of A
+    expect(await grants()).toEqual([]);
+    expect(await released()).toEqual([a]);
+    expect(await env.kv.keys('ltv:stopping:')).toEqual([]);
+  });
+
+  it('a DELETE that times out while A is still listed refuses the switch and leaves no marker or grant', async () => {
+    env.ctx.cfg = { ...cfg, CONVERSION_SLOTS: 1 };
+    const src = await addSource();
+    const a = await addChannel(src, 'Hafenkanal', 4, 'srt');
+    const b = await addChannel(src, 'Nordlicht TV', 1, 'srt');
+    expect((await watch(anna, a)).statusCode).toBe(200);
+    expect(await grants()).toEqual([`conv:grant:live:${a}`]);
+    slowDelete(6_000, false); // livetv does not stop A
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const r = await drive(watch(anna, b), 100, 800);
+    expect(r.statusCode, r.body).toBe(503);
+    expect(r.json().error).toBe('live_full');
+    expect(order).toEqual([`POST:${a}`, `DELETE:${a}`]);
+    expect(streams.has(a)).toBe(true);
+    expect(await grants()).toEqual([`conv:grant:live:${a}`]); // B's grant dropped, A's kept
+    expect(await released()).toEqual([]);
+    expect(await env.kv.keys('ltv:stopping:')).toEqual([]);
+    expect(await env.kv.keys('ltv:join:')).toEqual([]);
+  });
+
+  it('the marker is gone once B is posted: a watch of A during B\'s slow first segment does not wait (fake clock)', async () => {
+    const one = await addSource(1);
+    const a = await addChannel(one, 'Hafenkanal', 4);
+    const b = await addChannel(one, 'Nordlicht TV', 1);
+    expect((await watch(anna, a)).statusCode).toBe(200);
+    const inner = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const res = await inner(input, init);
+      if ((init?.method ?? 'GET') === 'POST' && String(init?.body).includes(b)) {
+        const v = streams.get(b)!;
+        v.lastSegmentAt = null; // B's first segment takes 8 s
+        setTimeout(() => { v.lastSegmentAt = Date.now(); }, 8_000);
+      }
+      return res;
+    }) as typeof fetch;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const annaP = watch(anna, b);
+    let done = false;
+    void annaP.then(() => { done = true; }, () => { done = true; });
+    const step = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); for (let j = 0; j < 25; j++) await new Promise((r) => setImmediate(r)); };
+    for (let i = 0; i < 100 && !order.includes(`POST:${b}`); i++) await step(50);
+    expect(order).toContain(`POST:${b}`);
+    await step(1_000);
+    expect(done).toBe(false); // B's first segment is still pending
+    expect(await env.kv.keys('ltv:stopping:')).toEqual([]);
+    let waited = false;
+    __switchHooks.stoppingWait = () => { waited = true; };
+    const bw = await drive(watch(ben, a), 100, 100);
+    expect(waited).toBe(false); // no stopping marker: no 5-s wait
+    expect(bw.statusCode, bw.body).toBe(503);
+    expect(bw.json().error).toBe('provider_limit');
+    const r = await drive(annaP, 100, 400);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(await env.kv.keys('ltv:stopping:')).toEqual([]);
+  });
 
   it('a stopping marker that does not go away is waited for at most 5 s (fake clock)', async () => {
     const src = await addSource(1);

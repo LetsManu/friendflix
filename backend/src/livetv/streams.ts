@@ -46,6 +46,8 @@ const BUDGET_READ_MS = 800;
 const STALE_MAX_MS = 60_000;
 const START_TIMEOUT_MS = 10_000;
 const STOP_TIMEOUT_MS = 10_000;
+/** a release's DELETE: decided well before a waiting watch of the old channel gives up (STOPPING_WAIT_MS) */
+const RELEASE_DELETE_TIMEOUT_MS = 3_000;
 /** a second watcher waits for a start in progress at most this long (the starter's lock, plus its first-segment wait) */
 const JOIN_WAIT_MS = (START_LOCK_TTL_S + 5) * 1000;
 /** renewed before every step of the tick (each step is bounded by a 10-s call), so it never lapses under a running tick */
@@ -319,9 +321,12 @@ export async function startOrJoin(ctx: Ctx, who: Watcher, ch: EffectiveChannel, 
     if (cur) {
       const mark = joinKey(ch.id, who);
       await ctx.kv.set(mark, '1', JOIN_MARK_TTL_S).catch(() => undefined);
+      await __switchHooks.joinMarked?.(ch.id);
       // the join marker first, then a look at the release marker (a release sets its marker, then looks at the join markers): a release
       // that began meanwhile either sees this join and keeps the stream, or is seen here and waited for. Never a stream being deleted.
       if (await ctx.kv.get(stoppingKey(ch.id)).catch(() => null)) {
+        // not joining after all: the marker must not make the release that is waited for fail
+        await ctx.kv.del(mark).catch(() => undefined);
         if (Date.now() >= until) return unreachable;
         continue;
       }
@@ -475,6 +480,9 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
       return unreachable;
     }
     invalidateLiveConversions();
+    // B is listed: the stopping marker has done its job, a watch of A no longer waits through B's first-segment wait
+    await release?.done();
+    release = null;
     // the lock covers the wait for the first segment too (a second watcher joins, never starts again)
     const ready = await firstSegment(ctx, ch.id, FIRST_SEGMENT_MS, () => ctx.kv.refreshIfEquals(startKey(ch.id), lock, START_LOCK_TTL_S).catch(() => false));
     if (!ready) {
@@ -512,6 +520,8 @@ export const __switchHooks: {
   afterMarker?: (channelId: string) => Promise<void>;
   /** a watch found A's marker and starts waiting */
   stoppingWait?: (channelId: string) => void;
+  /** a watch has set its join marker and looks at the release marker next (read-only hook) */
+  joinMarked?: (channelId: string) => Promise<void>;
 } = {};
 
 /**
@@ -552,10 +562,15 @@ async function beginRelease(ctx: Ctx, old: { channelId: string; hash: string; wh
     const own = old.who ? joinKey(id, old.who) : null;
     if ((await ctx.kv.keys(joinPrefix(id))).some((k) => k !== own)) return null;
     try {
-      await livetvCall(ctx, 'DELETE', `/v1/streams/${encodeURIComponent(id)}`, undefined, { timeoutMs: STOP_TIMEOUT_MS });
+      await livetvCall(ctx, 'DELETE', `/v1/streams/${encodeURIComponent(id)}`, undefined, { timeoutMs: RELEASE_DELETE_TIMEOUT_MS });
     } catch (e) {
       if (!(e instanceof LivetvError)) throw e;
-      if (e.status !== 404) return null; // livetv did not confirm the stop: A may still hold the slot
+      if (e.status !== 404) {
+        // livetv did not confirm the stop (slow or unreachable): a fresh list decides. A gone = released; A still listed (or the list
+        // unreadable) = it may still hold the slot, so the release fails.
+        const fresh = await readStreams(ctx);
+        if (fresh === null || fresh.some((s) => s.channelId === id)) return null;
+      }
     } finally {
       invalidateLiveConversions();
     }
