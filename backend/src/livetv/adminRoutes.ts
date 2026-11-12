@@ -10,11 +10,13 @@ import { requireAdmin } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
 import { dropLivetvProof } from './client.js';
 import { detectLivetv, enableBenchmark, livetvInstalled, livetvSystem } from './detect.js';
+import { LivetvError } from './client.js';
 import { gpuAdvice } from './gpu.js';
 import {
   ChannelRefusal, LOGO_MAX_BYTES, LOGO_MIMES, MAX_BULK_TEST, adminChannel, bulkBody, bulkChannels, bulkTest, channelPatch, channelQuery, dropLogo, listChannels,
   orderBody as channelOrderBody, orderChannels, patchChannel, setLogo, testChannel,
 } from './adminChannels.js';
+import { liveStatus, readHwAccel, stopStream } from './status.js';
 import { isOwnFeeds } from './channels.js';
 import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource } from './refresh.js';
@@ -24,7 +26,6 @@ import { SourceRefusal, SourceTestError, createSource, deleteSource, listSources
 
 /** the line for an install without the updater (spec §4.3); the page shows it with the compose commands */
 const ENV_LINE = 'COMPOSE_PROFILES=livetv';
-const JF_TIMEOUT_MS = 3_000;
 /** spec §4.1: the state is cached 10 s */
 const MEMO_MS = 10_000;
 /** the source test's single flight per admin; longer than its slowest call (the EPG count, 120 s) */
@@ -75,23 +76,13 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   // hook preHandler: the limiter runs after requireAdmin, so nobody but an admin can use up the portal-wide budget
   const limited = { ...admin, config: { rateLimit: { max: 3, timeWindow: '2 minutes', keyGenerator: () => 'livetv', hook: 'preHandler' as const } } };
 
-  /** Jellyfin's hardware acceleration, read at most every 10 s (the page polls every 3 s while a job runs) */
+  /** Jellyfin's hardware acceleration, read at most every 10 s (the page polls every 3 s while a job runs, the status tab every 5 s) */
   let hwMemo: { at: number; v: string | null } | undefined;
   async function jellyfinHwAccel(): Promise<string | null> {
     if (hwMemo && Date.now() - hwMemo.at < MEMO_MS) return hwMemo.v;
-    const v = await readHwAccel();
+    const v = await readHwAccel(ctx);
     hwMemo = { at: Date.now(), v };
     return v;
-  }
-  /** ('none' when off); null = unknown (Plex, unreachable, slow) */
-  async function readHwAccel(): Promise<string | null> {
-    const read = ctx.jf.admin.encoderSettings?.bind(ctx.jf.admin);
-    if (!read) return null;
-    let timer: NodeJS.Timeout | undefined;
-    try {
-      const e = await Promise.race([read(), new Promise<null>((res) => { timer = setTimeout(() => res(null), JF_TIMEOUT_MS); timer.unref?.(); })]);
-      return e?.hwAccel ?? null;
-    } catch { return null; } finally { clearTimeout(timer); }
   }
 
   /** remembers what the admin asked for (LIVETV_WANTED); an env-locked or failing store must not stop the action itself */
@@ -520,5 +511,26 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
         return (await setLogo(ctx, req.user!.id, cid, type, req.body)) ?? reply.code(404).send({ error: 'not_found' });
       } catch (e) { return channelRefused(e, reply); }
     });
+  });
+
+  // ---- Live-Status (spec §9.5): one answer for the tab; never a URL, a stream key or a stream id ----
+
+  app.get('/api/admin/livetv/status', admin, async (_req, reply) => {
+    reply.header('cache-control', 'no-store');
+    return liveStatus(ctx, jellyfinHwAccel);
+  });
+
+  // *Stoppen* (and *Neu starten*: the next watcher starts the channel again); audited with the channel id only
+  app.post('/api/admin/livetv/streams/:channelId/stop', admin, async (req, reply) => {
+    const cid = id.safeParse((req.params as { channelId?: string }).channelId).data;
+    if (!cid) return reply.code(404).send({ error: 'not_found' });
+    try {
+      await stopStream(ctx, cid, req.log);
+    } catch (e) {
+      if (e instanceof LivetvError) return reply.code(503).send({ error: 'livetv_unreachable' });
+      throw e;
+    }
+    await audit(ctx, req.user!.id, 'livetv.stream.stop', cid, { fields: [] });
+    return { ok: true };
   });
 }

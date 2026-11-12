@@ -80,3 +80,28 @@ export interface ProbeResult {
   needs: 'passthrough' | 'remux' | 'transcode';
   error?: ProbeError;
 }
+
+/** how a stream is produced (livetv/src/streams.ts `Mode`) */
+export type Mode = 'passthrough' | 'remux' | 'transcode';
+
+/** an item of `GET /v1/streams` (spec §3.3; livetv/src/streams.ts `StreamView`). `streamKey` is the credential of `/s/`: it never leaves the backend. */
+export interface StreamView {
+  channelId: string;
+  streamKey: string /* 32 hex */;
+  mode: Mode;
+  since: number;
+  state: 'starting' | 'running' | 'reconnecting' | 'failed';
+  bitrate: number | null;
+  errors: Array<{ at: number; code: 'input_lost' | 'input_back'; seconds?: number }>;
+  lastSegmentAt: number | null;
+}
+
+/** an item of `GET /v1/ingest` (spec §3.2, plan Task 29): one push feed as livetv sees it */
+export interface IngestState {
+  channelId: string;
+  port: number;
+  state: 'idle' | 'receiving';
+  since: number | null;
+  bitrate: number | null;
+  rejected1h: number;
+}
