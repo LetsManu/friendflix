@@ -103,12 +103,15 @@ test.describe('admin: Live-TV, Live-Status (desktop)', () => {
     await page.getByRole('alertdialog', { name: '„Hafenkanal“ stoppen?' }).getByRole('button', { name: 'Stoppen' }).click();
     await expect(toasts(page).getByText('„Hafenkanal“ gestoppt.')).toBeVisible();
     await expect(run.getByRole('row', { name: /Hafenkanal/ })).toHaveCount(0);
-    await expect(card(page, 'Ereignisse').locator('[data-code="stopped_by_admin"]')).toHaveText('Von einem Admin gestoppt');
+    const stoppedEv = card(page, 'Ereignisse').getByRole('row', { name: /Von einem Admin gestoppt/ });
+    await expect(stoppedEv.locator('[data-code="stopped_by_admin"]')).toHaveText('Von einem Admin gestoppt');
+    // the channel is no longer running, and its event still names it
+    await expect(stoppedEv).toContainText('Hafenkanal');
     expect(api.admin.livetv.status.stops).toEqual(['ch-hafenkanal']);
 
     // Neu starten: no question
     await menu(page, 'Nordlicht TV', 'Neu starten');
-    await expect(toasts(page).getByText('„Nordlicht TV“ wird neu gestartet.')).toBeVisible();
+    await expect(toasts(page).getByText('„Nordlicht TV“ gestoppt – startet beim nächsten Zuschauen neu.')).toBeVisible();
     expect(api.admin.livetv.status.stops).toEqual(['ch-hafenkanal', 'ch-nordlicht']);
     await expect(run.getByText('Gerade läuft kein Sender.')).toBeVisible();
   });
@@ -161,5 +164,28 @@ test.describe('admin: Live-TV, Live-Status (desktop)', () => {
     expect(after?.height).toBe(before?.height);
     // the table card keeps at least the height it reserved
     expect((await card(page, 'Laufende Sender').boundingBox())!.y).toBe(run!.y);
+  });
+
+  test('nothing moves when the first answer fails and then arrives', async ({ page, api }) => {
+    api.admin.livetv.status.failFirst = true;
+    await page.goto('/admin/livetv?tab=status');
+    const tiles = page.getByRole('group', { name: 'Übersicht' });
+    const run = card(page, 'Laufende Sender');
+    // the error sits in the table's own slot: it is there, and the tiles and the cards are where the skeleton had them
+    const alert = run.getByRole('alert');
+    await expect(alert).toContainText('Der Live-Status ließ sich nicht laden.');
+    // the budget card above has loaded too, and the page is measured from its top (the retry button may scroll)
+    await expect(card(page, 'Umwandlungen').getByRole('link', { name: 'Zum Wiedergabe-Check' })).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const tilesFailed = await tiles.boundingBox();
+    const runFailed = await run.boundingBox();
+    await page.getByRole('button', { name: 'Erneut versuchen' }).click();
+    await expect(run.getByRole('row', { name: /Nordlicht TV/ })).toBeVisible();
+    await expect(alert).toHaveCount(0);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const tilesOk = await tiles.boundingBox();
+    expect(tilesOk?.y).toBe(tilesFailed?.y);
+    expect(tilesOk?.height).toBe(tilesFailed?.height);
+    expect((await run.boundingBox())!.y).toBe(runFailed!.y);
   });
 });

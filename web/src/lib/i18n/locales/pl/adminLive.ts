@@ -123,7 +123,7 @@ const dict: Translation<typeof de> = {
     stopBody: 'Osoby, które oglądają, tracą obraz. Kanał uruchomi się znowu, gdy ktoś go włączy.',
     stopConfirm: 'Zatrzymaj',
     stopped: 'Zatrzymano „{name}”.',
-    restarted: '„{name}” uruchamia się ponownie.',
+    restarted: '„{name}” zatrzymano – uruchomi się ponownie, gdy ktoś zacznie oglądać.',
     stopFailed: 'Nie udało się zatrzymać kanału: telewizja na żywo nie odpowiada.',
     loadFailed: 'Nie udało się wczytać stanu telewizji na żywo.',
     unknownSource: 'nieznane',

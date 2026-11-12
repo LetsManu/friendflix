@@ -25,6 +25,10 @@ export interface LtvStatusMock {
   summary: { matched: number; total: number; unmatched: number } | null;
   /** the next stop answers 503 livetv_unreachable */
   stopFails: boolean;
+  /** the first GET /status answers 503 (a failed first load), the later ones answer */
+  failFirst: boolean;
+  /** channel id -> name of every channel that was ever listed (an event names a channel that is no longer running) */
+  names: Record<string, string>;
   /** GET /status calls so far */
   gets: number;
   /** POST stop calls: the channel ids, in order */
@@ -35,7 +39,7 @@ const GB = 1024 ** 3;
 const minutesAgo = (m: number) => Date.now() - m * 60_000;
 
 export function ltvStatusMock(): LtvStatusMock {
-  return {
+  const s: LtvStatusMock = {
     version: '3.3.0', cpuPct: 17, gpuPct: null, cache: { usedBytes: Math.round(3.1 * GB), maxBytes: 6 * GB },
     streams: [
       { channelId: 'ch-nordlicht', name: 'Nordlicht TV', logoHash: null, mode: 'remux', viewers: 3, since: minutesAgo(95), bitrate: 4_200_000, input: 'ok', reconnects: 0 },
@@ -48,18 +52,21 @@ export function ltvStatusMock(): LtvStatusMock {
       { at: minutesAgo(60), level: 'error', code: 'source_refresh_failed', sourceId: 'src-nordlicht', reason: 'timeout' },
     ],
     summary: { matched: 398, total: 412, unmatched: 14 },
-    stopFails: false, gets: 0, stops: [],
+    stopFails: false, failFirst: false, names: {}, gets: 0, stops: [],
   };
+  for (const x of s.streams) s.names[x.channelId] = x.name;
+  return s;
 }
 
 export function ltvStatusRoute(s: LtvStatusMock, m: string, p: string, J: Reply): Promise<void> | null {
   if (p === '/api/admin/livetv/status' && m === 'GET') {
-    s.gets++;
+    if (s.gets++ === 0 && s.failFirst) return J({ error: 'livetv_unreachable' }, 503);
+    const named = { ...s.names, ...Object.fromEntries([...s.streams, ...s.ingest].map((x) => [x.channelId, x.name])) };
     return J({
       version: s.version,
       budget: { limit: 3, auto: 3, custom: null, priority: 'films', used: 0, running: [], bench: { jellyfin: null, livetv: null, recommended: null, stale: false, noRealtime: false }, measure: { running: false, busy: null, last: null } },
       system: { cpuPct: s.cpuPct, gpuPct: s.gpuPct, cache: s.cache },
-      streams: s.streams, ingest: s.ingest, events: s.events, gpu: { advice: null },
+      streams: s.streams, ingest: s.ingest, events: s.events, channels: Object.fromEntries(s.events.flatMap((e) => (e.channelId && named[e.channelId] ? [[e.channelId, named[e.channelId]!]] : []))), gpu: { advice: null },
     });
   }
   if (p === '/api/admin/livetv/epg/summary' && m === 'GET') return s.summary ? J(s.summary) : J({ error: 'livetv_unreachable' }, 503);
