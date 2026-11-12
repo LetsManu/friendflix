@@ -32,6 +32,8 @@ export interface Ops {
   volumeRm(): Promise<void>;
   /** the livetv service container (any state, never a one-off) with its image id; null when there is none; throws when Docker does not answer */
   livetvContainer(): Promise<LivetvContainer | null>;
+  /** enable only: backend and gateway sit on the livetv network (StepError compose_outdated / network_missing otherwise) */
+  livetvNetwork(tag: string): Promise<void>;
 }
 
 /** In-memory job log: our own fixed messages, tags and error codes only (never command output, never a secret). */
@@ -182,12 +184,14 @@ export class Updater {
     this.log.add(`${job.action} ${state}${error ? ` (${error})` : ''}`);
   }
 
-  /** pull + verify (+ the commit the new backend image carries); nothing is restarted here */
-  private async prepare(job: Job | null, tag: string, services: readonly string[], step = <T>(n: StepName, f: () => Promise<T>) => (job ? this.step(job, n, f) : f())) {
+  /** pull + verify (+ the commit the new backend image carries); nothing is restarted here. `check` runs before the pull. */
+  private async prepare(job: Job | null, tag: string, services: readonly string[], check?: () => Promise<void>) {
+    const step = <T>(n: StepName, f: () => Promise<T>) => (job ? this.step(job, n, f) : f());
     const images = await step('pull', async () => {
       const imgs = await this.ops.images(tag, services);
       const files = this.ops.composeFiles?.();
       if (files?.length) this.log.add(`compose files: ${files.join(', ')}`);
+      await check?.();
       await this.ops.pull(tag, services);
       return imgs;
     });
@@ -261,7 +265,11 @@ export class Updater {
    * one fixed log line, and completes for the core services. An unverified livetv image is never started.
    */
   private async dropLivetv(code: LivetvError, tag: string): Promise<void> {
+    // persisted before the stop (1b review M13): an updater that dies during it restarts with livetv disabled and the reason kept,
+    // and `stop_failed` makes the next job stop the container again instead of adopting it as enabled
     this.state.livetvError = code;
+    this.state.livetv = 'stop_failed';
+    this.persist();
     this.state.livetv = (await this.stopLivetv()) ? 'disabled' : 'stop_failed';
     this.persist();
     this.log.add(`livetv disabled: ${code} at ${tag}`);
@@ -370,7 +378,8 @@ export class Updater {
     if (running && running !== job.to) { job.to = running; this.persist(); this.log.add(`livetv follows the running build ${running}`); }
     const wasEnabled = this.state.livetv === 'enabled';
     try {
-      await this.prepare(job, job.to, LIVETV);
+      // compose files from before Live TV fail in images() (compose_outdated); files refreshed without `up -d` here (network_missing)
+      await this.prepare(job, job.to, LIVETV, () => this.ops.livetvNetwork(job.to));
     } catch (e) {
       return this.finish(job, 'failed', (e as StepError).code);
     }

@@ -9,14 +9,14 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GuardDeps } from '../src/fetch.js';
 import { probe } from '../src/probe.js';
-import { deriveKey, sign } from '../src/protocol.js';
+import { sign } from '../src/protocol.js';
 import { remuxDriver } from '../src/remux.js';
 import { ingestRoutes } from '../src/routes/ingest.js';
 import type { Run, RunOptions, RunResult } from '../src/run.js';
 import { start, type Route, type RouteCall } from '../src/server.js';
 import { IngestHub, type Feed, type IngestState } from '../src/srtingest.js';
 import { Streams } from '../src/streams.js';
-import { flush, memoryStore } from './streams-helpers.js';
+import { deriveKey, flush, keyFile, memoryStore } from './streams-helpers.js';
 
 /**
  * Task 29: the SRT push ingest. `IngestHub` runs against `fake-srtgate.mjs` (a real child process speaking srtgate's frame
@@ -348,7 +348,7 @@ describe('PUT /v1/ingest, GET /v1/ingest', () => {
     const free = await new Promise<number>((r) => { const s = netServer().listen(0, '127.0.0.1', () => { const n = (s.address() as AddressInfo).port; s.close(() => r(n)); }); });
     const secret = 'start-ingest-secret-0123456789ab';
     const logs: string[] = [];
-    const s = await start({ PORT: String(free), INTERNAL_SECRET: secret, LIVETV_SRT_PORTS: '9000-9001' }, { log: (m) => { logs.push(m); }, host: '127.0.0.1' });
+    const s = await start({ PORT: String(free), LIVETV_KEY_FILE: keyFile(secret), LIVETV_SRT_PORTS: '9000-9001' }, { log: (m) => { logs.push(m); }, host: '127.0.0.1' });
     const k = deriveKey(secret);
     const req = (method: string, path: string, b?: unknown) => {
       const text = b === undefined ? '' : JSON.stringify(b);

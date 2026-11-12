@@ -33,7 +33,7 @@
   import ImportOptions from './ImportOptions.svelte';
   import { initPicker, pickChanged as pickDiffers, saveList, type PickerState } from './picker';
   import SecretInput from './SecretInput.svelte';
-  import { sourceError, urlShapeOk } from './sources';
+  import { sourceError, sourceFailText, urlShapeOk } from './sources';
 
   /** null = a new source */
   export let source: SourceView | null = null;
@@ -116,7 +116,7 @@
       // 400 names the field (`invalid`: not a URL / wrong scheme; `refused`: a single-label host or an internal address; `lan_required`:
       // *Heimnetz erlauben* would allow it); 409 `test_running`: another check of this admin still runs (Prüfen stays usable)
       const c = code(e), field = e instanceof ApiError && e.status === 400 ? e.body?.field : null;
-      const text = c === 'invalid' ? tr('adminLive.src.urlBad') : c === 'test_running' ? tr('adminLive.src.testRunning') : sourceError(c ?? 'unreachable');
+      const text = c === 'test_running' ? tr('adminLive.src.testRunning') : sourceFailText(e);
       if (field === 'url') urlErr = text; else if (field === 'epgUrl') epgErr = text; else testErr = text;
     } finally { testing = false; }
   }
@@ -155,8 +155,8 @@
       dispatch('saved', v);
       close(true);
     } catch (e) {
-      const c = code(e), field = e instanceof ApiError ? e.body?.field : null;
-      const text = c === 'invalid' ? tr('adminLive.src.urlBad') : c ? sourceError(c) : sourceError('unreachable');
+      const field = e instanceof ApiError ? e.body?.field : null;
+      const text = sourceFailText(e);
       if (field === 'url') urlErr = text; else if (field === 'epgUrl') epgErr = text; else if (field === 'name') nameErr = tr('adminLive.src.nameMissing'); else saveErr = text;
     } finally { saving = false; }
   }

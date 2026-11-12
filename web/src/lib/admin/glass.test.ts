@@ -573,7 +573,7 @@ describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
   const css = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
 
   it('takes the rows and a required save, and knows no endpoint', () => {
-    expect([...src.matchAll(/export let (\w+)/g)].map((m) => m[1])).toEqual(['rows', 'save', 'locked']);
+    expect([...src.matchAll(/export let (\w+)/g)].map((m) => m[1])).toEqual(['rows', 'save', 'locked', 'dirty']); // dirty is the one output (bind:dirty): the shown order is not stored yet
     expect(src).toMatch(/export let save: \(ids: string\[\]\) => Promise<void>;/);
     expect(src).toMatch(/runAction\(\{ key: busyKey, run: \(\) => save\(ids\)/);
     expect(src.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, '')).not.toMatch(/api\(|fetch\(|\/order/);
@@ -598,6 +598,14 @@ describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
     expect(src).toMatch(/<svelte:window[^>]*on:pointermove=\{onMove\} on:pointerup=\{onUp\} on:pointercancel=\{onPointerCancel\}/);
     expect(src).toMatch(/e\.pointerId !== drag\.pointerId/);
     expect(src).toContain('if (e.repeat) return;');
+  });
+
+  it('a mouse move with no button down is a pointer up: a swallowed release never leaves a row stuck lifted', () => {
+    const fn = src.match(/function onMove\(e: PointerEvent\) \{[\s\S]*?\n {2}\}/)![0];
+    expect(fn).toMatch(/e\.pointerType === 'mouse' && e\.buttons === 0/);
+    expect(fn).toMatch(/void onUp\(e\)/);
+    // the check comes before the move is used
+    expect(fn.indexOf('e.buttons === 0')).toBeLessThan(fn.indexOf('drag.y = e.clientY'));
   });
 
   it('calm mode, TV and reduced motion: no transitions at all', () => {

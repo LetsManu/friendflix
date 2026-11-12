@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
+import { mockLivePlayer } from '../helpers.js';
 import { ME } from '../mocks/fixtures.js';
 
 // Live TV for kids profiles (Task 37, spec §11.4): the server sends only the channels of kid-friendly groups, the page shows
@@ -14,6 +15,7 @@ const tiles = (page: Page) => page.getByRole('list', { name: 'Senderliste' }).ge
 
 test.describe('Live TV for kids', () => {
   test.beforeEach(async ({ page, api }) => {
+    await mockLivePlayer(page);
     api.features = { livetv: true };
     // the server already filtered: only the kid-friendly group comes back
     const kinder = api.livetv.channels.find((c) => c.id === 'ch-kinder')!;

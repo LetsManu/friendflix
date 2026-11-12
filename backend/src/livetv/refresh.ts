@@ -74,6 +74,9 @@ function readAnswer(a: FetchM3uAnswer | undefined): { entries: M3uEntry[]; liste
   return { entries: a.entries.map(readEntry).filter((e): e is M3uEntry => e !== null), listed: a.listed };
 }
 
+/** the source was edited while its list was fetched (importList): not a failure, nothing is recorded */
+class SourceChanged extends Error {}
+
 /** a failure as the fixed code stored in `last_error` and sent as the event reason */
 class RefreshFailed extends Error {
   constructor(readonly code: string) {
@@ -106,7 +109,7 @@ async function storeLogos(ctx: Ctx, source: SourceRow, entries: readonly M3uEntr
 }
 
 /** the list step: fetch, merge, logos. Throws RefreshFailed with the fixed code. */
-async function importList(ctx: Ctx, source: SourceRow, url: string): Promise<ImportResult> {
+async function importList(ctx: Ctx, source: SourceRow, url: string, rev: string): Promise<ImportResult> {
   let fetched: { entries: M3uEntry[]; listed: number };
   try {
     const a = await livetvCall<FetchM3uAnswer>(ctx, 'POST', '/v1/fetch/m3u', {
@@ -118,8 +121,8 @@ async function importList(ctx: Ctx, source: SourceRow, url: string): Promise<Imp
     if (e instanceof LivetvError) throw new RefreshFailed(e.status === null ? 'livetv_unreachable' : e.code);
     throw e;
   }
-  const r = await mergeImport(ctx, source, fetched);
-  if ('error' in r) throw new RefreshFailed(r.error);
+  const r = await mergeImport(ctx, source, fetched, new Date(), rev);
+  if ('error' in r) throw r.error === 'changed' ? new SourceChanged() : new RefreshFailed(r.error);
   // the logos of the entries the merge kept (mergeImport drops skipped groups again); the merge has committed, so a failing logo step
   // does not turn the refresh into a failure: it is recorded as a job error (code only) and the next refresh fetches the logos it missed
   const skip = new Set(source.skip_groups);
@@ -133,8 +136,11 @@ async function importList(ctx: Ctx, source: SourceRow, url: string): Promise<Imp
  * reached (`livetv_unreachable`) is always recorded and pushed, but counted only while detection still sees livetv installed: then
  * livetv is up but this source makes it hang or crash, which the admin must hear about; while livetv is off it is not the list's fault.
  */
-async function failed(ctx: Ctx, source: SourceRow, code: string, now: Date): Promise<void> {
-  await ctx.db.query('update livetv_sources set last_refresh_at = $2, last_error = $3 where id = $1', [source.id, now, code]);
+async function failed(ctx: Ctx, source: SourceRow, code: string, now: Date, rev?: string): Promise<void> {
+  // an edit made while the refresh ran keeps its "import again" mark (last_refresh_at null): the row's version must still be the one read
+  await ctx.db.query(
+    'update livetv_sources set last_refresh_at = case when $4::text is null or updated_at::text = $4 then $2 else last_refresh_at end, last_error = $3 where id = $1',
+    [source.id, now, code, rev ?? null]);
   await pushEvent(ctx, { level: 'warn', code: 'source_refresh_failed', sourceId: source.id, reason: code });
   if (code === LIVETV_DOWN && !livetvInstalled(ctx)) return;
   const n = await ctx.kv.incr(failsKey(source.id), FAILS_TTL_S);
@@ -160,26 +166,36 @@ export async function refreshSource(ctx: Ctx, id: string, trigger: 'tick' | 'adm
   const token = randomBytes(12).toString('hex');
   if (!(await ctx.kv.setnx(lockKey(id), token, LOCK_TTL_S))) return;
   try {
-    const source = (await ctx.db.query<SourceRow>('select * from livetv_sources where id = $1', [id])).rows[0];
+    // `rev` = the row's version (updated_at as text, microseconds kept) the whole refresh is based on (an edit moves it)
+    const source = (await ctx.db.query<SourceRow & { rev: string }>('select *, updated_at::text as rev from livetv_sources where id = $1', [id])).rows[0];
     if (!source || isOwnFeeds(source.kind) || !source.url_enc) return;
+    const rev = source.rev;
     const now = new Date();
     let r: ImportResult;
     try {
       // inside the try: a URL that cannot be decrypted (a changed key) is recorded on the source as `internal`, not rethrown unseen
       const { url } = await sourceSecrets(ctx, id);
       if (!url) return;
-      r = await importList(ctx, source, url);
+      r = await importList(ctx, source, url, rev);
     } catch (e) {
-      if (e instanceof RefreshFailed) return await failed(ctx, source, e.code, now);
-      await failed(ctx, source, 'internal', now).catch(() => undefined);
+      if (e instanceof SourceChanged) {
+        // the admin edited the source while the list was fetched: nothing was written; the source stays due so the next tick imports
+        // the edited settings (also for an edit that did not set the mark itself)
+        await ctx.db.query('update livetv_sources set last_refresh_at = null where id = $1', [id]);
+        return;
+      }
+      if (e instanceof RefreshFailed) return await failed(ctx, source, e.code, now, rev);
+      await failed(ctx, source, 'internal', now, rev).catch(() => undefined);
       throw e;
     }
 
     const counts = { channels: r.total, added: r.added, updated: r.updated, removed: r.missing, returned: r.returned, listed: r.listed, newGroups: r.newGroups };
-    await ctx.db.query(
-      'update livetv_sources set last_refresh_at = $2, last_ok_at = $2, last_error = null, last_counts = $3 where id = $1',
-      [id, now, JSON.stringify(counts)]);
-    await ctx.kv.del(failsKey(id));
+    // only while the row is still the one this refresh read: an edit that landed after the merge keeps its mark and its `listed` reset
+    const wrote = await ctx.db.query(
+      'update livetv_sources set last_refresh_at = $2, last_ok_at = $2, last_error = null, last_counts = $3 where id = $1 and updated_at::text = $4',
+      [id, now, JSON.stringify(counts), rev]);
+    if (wrote.rowCount === 0) await ctx.db.query('update livetv_sources set last_refresh_at = null where id = $1', [id]);
+    else await ctx.kv.del(failsKey(id));
 
     // the EPG step, after the list (its result is stored first, so the admin sees it while the EPG runs). The list step may have taken
     // minutes: renew the single-flight lock before the long step, never taking over another owner's; the EPG step renews it again.

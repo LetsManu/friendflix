@@ -51,7 +51,7 @@ describe('calls', () => {
     expect(await channels('"old"')).toEqual({ notModified: false, list, etag: '"x1"' });
     expect(call(f).url).toBe('/api/livetv/channels');
     expect(call(f).init.headers['if-none-match']).toBe('"old"');
-    f = stub(304, undefined);
+    stub(304, undefined);
     expect(await channels('"x1"')).toEqual({ notModified: true });
     f = stub(200, list);
     expect(await channels()).toEqual({ notModified: false, list, etag: null });

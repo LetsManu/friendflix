@@ -1,21 +1,27 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { readFileSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { PassThrough } from 'node:stream';
 import { createServer as netServer, type AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { ReplayCache, deriveKey, sign, type Verifier } from '../src/protocol.js';
+import { ReplayCache, healthProof, sign, type Verifier } from '../src/protocol.js';
 import { createApp, logPath, start, type AppDeps, type Route } from '../src/server.js';
 import type { SystemView } from '../src/system.js';
 
 const vectors = JSON.parse(readFileSync(new URL('../../test-vectors/livetv-hmac.json', import.meta.url), 'utf8')) as {
-  secret: string; cases: Array<{ method: string; path: string; body: string; ts: string; nonce: string; signature: string }>;
+  secret: string; key: string; cases: Array<{ method: string; path: string; body: string; ts: string; nonce: string; signature: string }>;
+  health: Array<{ nonce: string; proof: string }>;
 };
+/** what the bootstrap service writes into livetv's key file; livetv itself derives nothing */
+const deriveKey = (secret: string) => createHmac('sha256', secret).update('friendflix-livetv/v1').digest();
 const key = deriveKey('server-test-secret-0123456789');
 const SYSTEM: SystemView = {
   cpu: { model: 'Fictional CPU 9000', cores: 4, loadPct: 12 },
-  gpu: { devices: ['/dev/dri/renderD128'], driver: 'i915', readable: true, busyPct: null },
+  gpu: { devices: ['/dev/dri/renderD128'], driver: 'i915', readable: true, busyPct: null, nvidia: false },
   encoders: ['h264_qsv', 'h264_vaapi', 'libx264'],
   cache: { usedBytes: 1024, maxBytes: 6 * 1024 ** 3 },
   recordings: null,
@@ -64,6 +70,39 @@ describe('livetv HTTP API', () => {
     expect((await fetch(`${base}/healthz`, { method: 'POST' })).status).toBe(405);
   });
 
+  it('/healthz?n=<nonce> adds the proof of key: HMAC(key, "healthz:" + nonce), the shared vectors (1b review I2)', async () => {
+    verifier = { key: Buffer.from(vectors.key, 'hex'), cache: new ReplayCache(), notBefore: 0 };
+    for (const h of vectors.health) {
+      const r = await fetch(`${base}/healthz?n=${h.nonce}`);
+      expect(r.status).toBe(200);
+      expect(await r.json()).toEqual({ ok: true, api: 1, version: '3.4.0', bootId: '0123456789abcdef', proof: h.proof });
+    }
+    // another key, another proof: a host without the key cannot answer it
+    verifier = { key, cache: new ReplayCache(), notBefore: 0 };
+    const other = await (await fetch(`${base}/healthz?n=${vectors.health[0]!.nonce}`)).json() as { proof: string };
+    expect(other.proof).toMatch(/^[0-9a-f]{64}$/);
+    expect(other.proof).not.toBe(vectors.health[0]!.proof);
+    expect(healthProof(key, vectors.health[0]!.nonce)).toBe(other.proof);
+  });
+
+  it('/healthz refuses a nonce that is not exactly one 32-hex value (and still answers the plain check)', async () => {
+    for (const q of ['n=', 'n=xyz', `n=${'A'.repeat(32)}`, `n=${'a'.repeat(31)}`, `n=${'a'.repeat(33)}`, `n=${'a'.repeat(32)}&n=${'b'.repeat(32)}`]) {
+      const r = await fetch(`${base}/healthz?${q}`);
+      expect(r.status, q).toBe(400);
+      expect(await r.json()).toEqual({ error: 'invalid_nonce' });
+    }
+    expect(await (await fetch(`${base}/healthz?x=1`)).json()).not.toHaveProperty('proof');
+    expect(warnings).toEqual([]);
+  });
+
+  it('a proof is no signature: replaying it as one is refused', async () => {
+    const nonce = '0123456789abcdef0123456789abcdef';
+    const proof = await (await fetch(`${base}/healthz?n=${nonce}`)).json() as { proof: string };
+    const r = await fetch(`${base}/v1/system`, { headers: { 'x-ff-livetv-ts': String(Date.now()), 'x-ff-livetv-nonce': nonce, 'x-ff-livetv-signature': `v1=${proof.proof}` } });
+    expect(r.status).toBe(401);
+    expect(await r.json()).toEqual({ error: 'bad_signature' });
+  });
+
   it('unsigned /v1/system is refused (401, code only, logged without detail)', async () => {
     const r = await call('GET', '/v1/system', '', { unsigned: true });
     expect(r.status).toBe(401);
@@ -81,7 +120,7 @@ describe('livetv HTTP API', () => {
 
   it('a request signed with the shared vector passes inside its window (same file as the backend client test)', async () => {
     const c = vectors.cases[0]!;
-    verifier = { key: deriveKey(vectors.secret), cache: new ReplayCache(), notBefore: 0, now: () => Number(c.ts) };
+    verifier = { key: Buffer.from(vectors.key, 'hex'), cache: new ReplayCache(), notBefore: 0, now: () => Number(c.ts) };
     const headers = { 'x-ff-livetv-ts': c.ts, 'x-ff-livetv-nonce': c.nonce, 'x-ff-livetv-signature': c.signature };
     expect((await fetch(base + c.path, { headers })).status).toBe(200);
     expect((await fetch(base + c.path, { headers })).status).toBe(401); // replay
@@ -187,10 +226,12 @@ describe('request stream errors', () => {
 });
 
 describe('start', () => {
-  it('listens on PORT with the secret from the environment and answers /healthz with a random boot id', async () => {
+  it('listens on PORT with the key from its key file and answers /healthz with a random boot id', async () => {
     const port = await new Promise<number>((r) => { const s = netServer().listen(0, '127.0.0.1', () => { const p = (s.address() as AddressInfo).port; s.close(() => r(p)); }); });
     const logs: string[] = [];
-    const s = await start({ PORT: String(port), INTERNAL_SECRET: 'start-test-secret-0123456789', APP_VERSION: '3.4.0', LIVETV_SRT_PORTS: '9000' }, { log: (m) => logs.push(m), host: '127.0.0.1' });
+    const dir = mkdtempSync(join(tmpdir(), 'ff-livetv-start-'));
+    writeFileSync(join(dir, 'livetv_key'), deriveKey('start-test-secret-0123456789').toString('hex'));
+    const s = await start({ PORT: String(port), LIVETV_KEY_FILE: join(dir, 'livetv_key'), APP_VERSION: '3.4.0', LIVETV_SRT_PORTS: '9000' }, { log: (m) => logs.push(m), host: '127.0.0.1' });
     try {
       const h = await (await fetch(`http://127.0.0.1:${port}/healthz`)).json() as { bootId: string; version: string };
       expect(h.bootId).toMatch(/^[0-9a-f]{16}$/);
@@ -201,8 +242,31 @@ describe('start', () => {
       expect(await r.json()).toMatchObject({ srt: { ports: [9000] }, recordings: null, cache: { maxBytes: 6 * 1024 ** 3 } });
       expect(logs.join('\n')).toContain(`listening on :${port}`);
       expect(logs.join('\n')).not.toContain('start-test-secret');
+      expect(logs.join('\n')).not.toContain(k.toString('hex'));
+      expect(logs.join('\n')).not.toContain('INTERNAL_SECRET');
+      // a signature made with the raw secret (no derivation) is refused
+      const raw = await fetch(`http://127.0.0.1:${port}/v1/system`, { headers: sign(Buffer.from('start-test-secret-0123456789'), 'GET', '/v1/system', '') });
+      expect(raw.status).toBe(401);
     } finally {
       await new Promise<void>((r) => s.close(() => r()));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to start without its key file (the message names the file, never a value); a stray INTERNAL_SECRET is only warned about', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ff-livetv-start-'));
+    try {
+      await expect(start({ PORT: '18091', LIVETV_KEY_FILE: join(dir, 'livetv_key'), INTERNAL_SECRET: 'start-test-secret-0123456789' }, { log: () => {}, host: '127.0.0.1' }))
+        .rejects.toThrow(`missing key file ${join(dir, 'livetv_key')}: run docker compose up -d once (the bootstrap service writes it)`);
+      writeFileSync(join(dir, 'livetv_key'), deriveKey('start-test-secret-0123456789').toString('hex'));
+      const port = await new Promise<number>((r) => { const x = netServer().listen(0, '127.0.0.1', () => { const p = (x.address() as AddressInfo).port; x.close(() => r(p)); }); });
+      const logs: string[] = [];
+      const s = await start({ PORT: String(port), LIVETV_KEY_FILE: join(dir, 'livetv_key'), INTERNAL_SECRET: 'start-test-secret-0123456789' }, { log: (m) => logs.push(m), host: '127.0.0.1' });
+      await new Promise<void>((r) => s.close(() => r()));
+      expect(logs[0]).toBe('INTERNAL_SECRET is set in the environment of livetv but never used: remove it there');
+      expect(logs.join('\n')).not.toContain('start-test-secret');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

@@ -110,9 +110,12 @@ async function mapGroups(c: pg.PoolClient, sourceId: string, groups: readonly st
 /**
  * Merges a fetched list into the source's channels (spec §10, see the module comment). `fetched.entries` are the live entries livetv
  * kept (skipped groups and entries over the limit dropped), `fetched.listed` every live entry of the list. `{ error: 'empty' }` = the
- * shrink guard tripped and nothing changed.
+ * shrink guard tripped and nothing changed. `rev` is the source's `updated_at::text` when `source` was read: when the row has moved by the
+ * time the lock is held (an admin edit while the list was fetched), nothing is written and `{ error: 'changed' }` is answered.
  */
-export async function mergeImport(ctx: Ctx, source: SourceRow, fetched: { entries: M3uEntry[]; listed: number }, now: Date = new Date()): Promise<ImportResult | { error: 'empty' }> {
+export async function mergeImport(
+  ctx: Ctx, source: SourceRow, fetched: { entries: M3uEntry[]; listed: number }, now: Date = new Date(), rev?: string,
+): Promise<ImportResult | { error: 'empty' | 'changed' }> {
   if (shrunk(fetched.listed, previousListed(source))) return { error: 'empty' };
 
   // livetv has dropped the skipped groups already; dropped here too, so an entry of an unticked group can never be imported. One entry
@@ -128,8 +131,14 @@ export async function mergeImport(ctx: Ctx, source: SourceRow, fetched: { entrie
 
   return inTx(ctx, async (c) => {
     // one import of a source at a time (the refresh lock is in KV; this also covers a lock that ran out)
-    await c.query('select id from livetv_sources where id = $1 for update', [source.id]);
+    const cur = (await c.query<{ same: boolean }>(
+      'select ($2::text is null or updated_at::text = $2) as same from livetv_sources where id = $1 for update', [source.id, rev ?? null])).rows[0];
+    if (!cur) return { error: 'changed' }; // deleted meanwhile
+    if (!cur.same) return { error: 'changed' };
+    // provider-list order (new groups get their positions in that order). Two imports that create the same new groups are serialised
+    // here instead of sorting, so they never take the unique-index entries in opposite orders (no deadlock, 40P01)
     const groups = [...new Set(entries.map((e) => e.group).filter((g): g is string => !!g))];
+    await c.query("select pg_advisory_xact_lock(hashtext('livetv:groups'))");
     const { created } = await mapGroups(c, source.id, groups);
 
     const existing = new Map<string, Existing>();

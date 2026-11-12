@@ -14,6 +14,16 @@ sections follow with the features.
 - **By hand:** put `COMPOSE_PROFILES=livetv` into `.env` and run `docker compose -f compose.prod.yaml up -d` (or
   `docker compose -f compose.prod.yaml --profile livetv up -d`). Check first: `docker compose -f compose.prod.yaml --profile livetv config -q`.
 
+**On an install from before Live TV** do these once, in this order (the page names the step that is missing):
+
+1. *Admin → Update → Update the updater* (an older updater does not know Live TV: "update the updater first").
+2. Replace `compose.prod.yaml` in the stack folder with the one from the current release and run
+   `docker compose -f compose.prod.yaml up -d` once. This puts backend and gateway on the internal `livetv` network and lets the
+   `bootstrap` service write livetv's key (missing: "your compose.prod.yaml is from before Live TV" or "backend and gateway are
+   not on the livetv network yet"). An update through the updater in between is fine: it recreates backend and gateway on the
+   new network.
+3. *Admin → Live-TV* → enable.
+
 The service has no Docker socket, a read-only root file system and no capabilities; backend and gateway reach it on the
 internal `livetv` network at `LIVETV_URL` (default `http://livetv:8090`, needs no setting). Details: [security.md](security.md#the-livetv-container).
 The updater keeps the overlay files you started the stack with, so an overlay in `COMPOSE_FILE` stays on updates.
@@ -36,8 +46,9 @@ then add `-f compose.livetv-nvidia.yaml` (it reserves one GPU with the `gpu` and
 ## Ports
 
 livetv publishes **UDP only**: the range `LIVETV_SRT_PORTS` (default `9000-9009`, 1–100 ports) for SRT feeds that you push in,
-on the host address `LIVETV_SRT_BIND` (default `0.0.0.0`; `127.0.0.1` switches push off from outside without removing the
-service). Open the range on the firewall **only if you push feeds**; pulling lists and streams needs no inbound port. Its API
+on the host address `LIVETV_SRT_BIND`. The default `127.0.0.1` keeps push off from outside. Set `LIVETV_SRT_BIND=0.0.0.0` (or
+the server's LAN address) in `.env` **only when you push feeds**. Docker publishes ports past ufw and firewalld on most hosts,
+so a host firewall rule alone does not close the range; `LIVETV_SRT_BIND` does. Pulling lists and streams needs no inbound port. Its API
 (port 8090) is never published. A different range: `LIVETV_SRT_PORTS=9100-9104` in `.env`.
 
 Other settings: `LIVETV_CACHE_MAX_GB` (default 6, the disposable segment cache), `LIVETV_URL` (only if you move the service), `RECORDINGS_PATH` (host folder for recordings, Phase 3; default the named volume `recordings`; absolute path, writable by uid 10001).

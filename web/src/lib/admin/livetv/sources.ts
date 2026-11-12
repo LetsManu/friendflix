@@ -4,7 +4,9 @@
  * Admin → Live-TV → *Quellen* (spec §9.1): the pure text and decision helpers the cards and sheets render from. The tab names live
  * here too, so the page and its tests agree on them.
  */
+import { ApiError } from '#lib/api';
 import { fmtDateTime, fmtTime, tr, type TKey } from '#lib/i18n';
+import { errorText } from '#lib/ui/action';
 import type { SourceView, StreamKind } from './api';
 
 export const TABS = ['sources', 'channels', 'groups', 'guide', 'status'] as const;
@@ -43,13 +45,13 @@ export function whenText(d: Date, now: Date): string {
  * list over 2 000 groups or 200 000 entries; `incomplete` = a stream that ended without its end line; `livetv_unreachable` = the
  * backend did not reach the livetv service (503), not the provider.
  */
-type ErrKey = 'unreachable' | 'denied' | 'timeout' | 'too_big' | 'invalid' | 'empty' | 'refused' | 'lan_required' | 'incomplete' | 'livetv_unreachable';
+type ErrKey = 'unreachable' | 'denied' | 'timeout' | 'too_big' | 'too_large' | 'invalid' | 'empty' | 'refused' | 'lan_required' | 'incomplete' | 'livetv_unreachable';
 const ERR: Record<string, ErrKey> = {
   unreachable: 'unreachable', not_found: 'unreachable', http_error: 'unreachable', redirects: 'unreachable', scheme: 'unreachable',
   livetv_unreachable: 'livetv_unreachable', incomplete: 'incomplete',
   denied: 'denied',
   timeout: 'timeout',
-  too_big: 'too_big',
+  too_big: 'too_big', too_large: 'too_large',
   invalid: 'invalid', not_m3u: 'invalid', doctype: 'invalid', invalid_answer: 'invalid',
   empty: 'empty',
   refused: 'refused', address_refused: 'refused',
@@ -60,6 +62,26 @@ const LIMITS = { groups: 2_000, entries: 200_000 };
 export function sourceError(code: string): string {
   const k = ERR[code];
   return k ? tr(`adminLive.src.err.${k}` as TKey, LIMITS) : tr('adminLive.err.generic');
+}
+
+/**
+ * The text of a failed Prüfen / save / create of a source: FriendFlix's own failures (network, 5xx, 429, no code) are worded by
+ * `errorText`, never as the provider being unreachable; a 404 is a source deleted elsewhere; a 400 `invalid` names its field (only the
+ * URL fields say "keine gültige Adresse"); other codes (the provider fetch's 422, `refused`, `lan_required`, …) go through `sourceError`.
+ */
+export function sourceFailText(e: unknown): string {
+  const body = e instanceof ApiError ? e.body : null;
+  const code = typeof body?.error === 'string' ? body.error : null;
+  if (!(e instanceof ApiError) || !code) return errorText(e);
+  if (e.status === 404) return tr('adminLive.src.gone');
+  if (code === 'invalid' && e.status === 400) {
+    const f = body?.field;
+    if (f === 'url' || f === 'epgUrl') return tr('adminLive.src.urlBad');
+    if (f === 'skipGroups') return tr('adminLive.src.skipBad');
+    if (f === 'userAgent') return tr('adminLive.src.uaBad');
+    return tr('adminLive.err.generic');
+  }
+  return sourceError(code);
 }
 
 /**
