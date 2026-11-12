@@ -17,6 +17,7 @@ import { loadRoles } from './roles.js';
 import { nightlyTick } from './healthcheck.js';
 import { convBenchTick } from './convbench.js';
 import { detectLivetv, livetvDetectTick, livetvInstalled } from './livetv/detect.js';
+import { livetvEpgPruneTick } from './livetv/epg.js';
 import { livetvIngestTick } from './livetv/ownfeeds.js';
 import { livetvRefreshTick } from './livetv/refresh.js';
 import { hevcTick } from './hevcenc.js';
@@ -134,6 +135,8 @@ timers.push(setInterval(() => {
   livetvRefreshBusy = true;
   void livetvRefreshTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-refresh', 'livetv refresh tick failed')).finally(() => { livetvRefreshBusy = false; });
 }, 300_000));
+// livetvEpgPrune (spec §10 jobs): once a day from 04:10 server time (a KV day key keeps it to one run across processes); database only
+timers.push(setInterval(() => { if (op()) void livetvEpgPruneTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-epg-prune', 'livetv EPG prune failed')); }, 600_000));
 timers.push(setInterval(() => { if (op()) void digestTick(ctx).catch(jobFailed(ctx, app.log, 'digest', 'digest tick failed')); }, 600_000));
 let expiryBusy = false; // a slow tick (media server) must not overlap the next one
 timers.push(setInterval(() => {

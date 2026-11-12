@@ -11,6 +11,7 @@ import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
 import { detectLivetv, enableBenchmark, livetvInstalled, livetvSystem } from './detect.js';
 import { gpuAdvice } from './gpu.js';
 import { isOwnFeeds } from './channels.js';
+import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource } from './refresh.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
 import { FeedError, adminChannel, createFeed, deleteFeed, feedCreate, ingestView, reassignPort, regenerateCredentials, syncIngest } from './ownfeeds.js';
@@ -305,6 +306,12 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     // failures are recorded on the source (fixed code, event, notice); only an unexpected error is logged, by its name only
     void refreshSource(ctx, sid, 'admin').catch((e: unknown) => { log.warn({ sourceId: sid, error: e instanceof Error ? e.name : 'unknown' }, 'livetv source refresh failed'); });
     return reply.code(202).send({ started: true });
+  });
+
+  // the Phase 1 guide counts (spec §9.4): "398 von 412 Sendern mit Programm · 14 ohne"
+  app.get('/api/admin/livetv/epg/summary', admin, async (_req, reply) => {
+    reply.header('cache-control', 'no-store');
+    return epgSummary(ctx);
   });
 
   app.delete('/api/admin/livetv/sources/:id', admin, async (req, reply) => {
