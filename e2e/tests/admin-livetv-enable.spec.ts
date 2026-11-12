@@ -214,6 +214,14 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
       await expect(page.getByText('Ein Update hat Live-TV ausgeschaltet. Der Container startete, wurde aber nicht gesund.')).toBeVisible();
     });
 
+    test('stop_failed stored by an update that is still running is not shown until the job ends (re-review concern 4)', async ({ page, api }) => {
+      api.admin.livetv.ltState = 'stop_failed';
+      api.admin.livetv.job = { id: 'a1', action: 'update', state: 'running', step: 'restart', from: null, to: 'sha-abc1234', startedAt: new Date().toISOString(), finishedAt: null, error: null, steps: { pull: 'ok', verify: 'ok', restart: 'running', health: 'pending', rollback: 'skipped' } };
+      await page.goto('/admin/livetv');
+      await expect(page.getByText('Ein Update läuft gerade. Danach geht es wieder.')).toBeVisible();
+      await expect(page.locator('[data-note="stop_failed"]')).toHaveCount(0);
+    });
+
     test('an app update running names itself next to the disabled off button', async ({ page, api }) => {
       api.admin.livetv.job = { id: 'a1', action: 'update', state: 'running', step: 'pull', from: null, to: 'sha-abc1234', startedAt: new Date().toISOString(), finishedAt: null, error: null, steps: { pull: 'running', verify: 'pending', restart: 'pending', health: 'pending', rollback: 'skipped' } };
       await page.goto('/admin/livetv');

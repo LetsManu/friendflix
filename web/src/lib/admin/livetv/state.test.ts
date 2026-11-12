@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AdminSummary } from '../summary';
-import { enableMode, errorKey, gpuKey, jobRunning, livetvJob, navGuess, navShown, otherJobRunning, phase, rememberNav, settleAfter, settled, type LivetvAdminState } from './state';
+import { enableMode, errorKey, gpuKey, jobRunning, livetvJob, navGuess, navShown, otherJobRunning, phase, rememberNav, settleAfter, settled, stopFailedShown, type LivetvAdminState } from './state';
 
 const base = (): LivetvAdminState => ({
   installed: false, reachable: false, version: null, wanted: false, offerHidden: false,
@@ -85,6 +85,20 @@ describe('phase', () => {
     expect(phase(on, null)).toBe('area');
     // while a job runs it is that job's view
     expect(phase(withUpdater(on, { job: job({ action: 'livetv-disable' }) }), 'off')).toBe('area');
+  });
+});
+
+describe('stopFailedShown (re-review concern 4)', () => {
+  const sf = (o: Partial<LivetvAdminState['updater']> = {}) => withUpdater(base(), { livetv: { state: 'stop_failed', container: 'running', error: 'unhealthy' }, ...o });
+  it('shown while no job runs', () => { expect(stopFailedShown(sf())).toBe(true); });
+  it('hidden while any job runs: an update stores stop_failed before its stop, for those seconds it is not true', () => {
+    expect(stopFailedShown(sf({ job: job({ action: 'update' }) }))).toBe(false);
+    expect(stopFailedShown(sf({ job: job({ action: 'livetv-disable' }) }))).toBe(false);
+    expect(stopFailedShown(sf({ job: job({ action: 'update', state: 'succeeded' }) }))).toBe(true);
+  });
+  it('other states never show it', () => {
+    expect(stopFailedShown(base())).toBe(false);
+    expect(stopFailedShown(withUpdater(base(), { livetv: null }))).toBe(false);
   });
 });
 

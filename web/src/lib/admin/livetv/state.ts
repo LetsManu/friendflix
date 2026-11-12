@@ -58,6 +58,11 @@ export const livetvJob = (s: LivetvAdminState): LivetvJob | null => (s.updater.j
 
 /** a livetv job of the updater is running */
 export const livetvRunning = (s: LivetvAdminState): boolean => livetvJob(s)?.state === 'running';
+/**
+ * the "could not be stopped" note: only while no job runs. A job that drops livetv stores stop_failed before it stops the
+ * container (so a crash in between is recovered), and for those seconds the note would be untrue (1b re-review concern 4).
+ */
+export const stopFailedShown = (s: LivetvAdminState): boolean => s.updater.livetv?.state === 'stop_failed' && !jobRunning(s);
 /** another updater job (an app update, a rollback) is running: livetv cannot be started or stopped meanwhile */
 export const otherJobRunning = (s: LivetvAdminState): boolean => jobRunning(s) && !livetvRunning(s);
 
