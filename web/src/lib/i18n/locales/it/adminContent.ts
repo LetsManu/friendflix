@@ -301,7 +301,7 @@ const dict: Translation<typeof de> = {
       unknownTitle: 'Titolo sconosciuto',
       last: 'ultima volta {time}',
     },
-    tc: { network: 'Connessione', remoteCap: 'Limite da remoto', uploadCap: 'Limite di upload', roleCap: 'Limite del ruolo', container: 'Formato file', videoCodec: 'Formato video', audioCodec: 'Formato audio', audioTrack: 'Traccia audio', subtitles: 'Sottotitoli', height: 'Risoluzione', manual: 'Manuale', misc: 'Altro' },
+    tc: { network: 'Connessione', remoteCap: 'Limite da remoto', uploadCap: 'Limite di upload', roleCap: 'Limite del ruolo', container: 'Formato file', videoCodec: 'Formato video', audioCodec: 'Formato audio', audioTrack: 'Traccia audio', subtitles: 'Sottotitoli', height: 'Risoluzione', manual: 'Manuale', serverBusy: 'Server occupato', misc: 'Altro' },
     errors: {
       title: 'Errori (24 h)',
       none: 'Nessun errore nelle ultime 24 ore.',

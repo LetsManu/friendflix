@@ -3,7 +3,7 @@
 /** Admin → Betrieb → Wiedergabe-Check, card Umwandlungen (live TV spec §5.6, §20). */
 export default {
   title: 'Umwandlungen',
-  intro: 'Wie viele Videos der Server gleichzeitig umwandeln darf: für Filme & Serien, Live-TV und Aufnahmen zusammen.',
+  intro: 'Wie viele Videos der Server gleichzeitig umwandeln darf: für Filme & Serien, Live-TV, Aufnahmen und Downloads zusammen.',
   used: '{u} von {l} belegt',
   measured: 'Gemessen {s}× Echtzeit ({engine})',
   liveSpeed: 'Live-TV {s}×',

@@ -10,6 +10,7 @@
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import { dialogKeys } from '#lib/actions';
   import { scrimFade, sheetSlide, twoWay } from '#lib/glass/fx';
+  import { sheetRoom } from '#lib/glass/sheetRoom';
   import { SCRIM_MENU } from '#lib/glass/tone';
   import Icon from '#lib/Icon.svelte';
   import { t } from '#lib/i18n';
@@ -39,7 +40,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="frost-dim" aria-hidden="true" on:click={close} transition:scrimFade|global></div>
   <div class="rv frost frost-safe frost-sheet" bind:this={panel} role="dialog" aria-modal="true" aria-labelledby="{id}-t" tabindex="-1"
-    style="--fr-scrim-safe:{SCRIM_MENU}" use:dialogKeys={{ close }} transition:slide|global>
+    style="--fr-scrim-safe:{SCRIM_MENU}" use:dialogKeys={{ close }} use:sheetRoom transition:slide|global>
     <header>
       <h2 id="{id}-t">{$t('adminPeople.roles.review')}</h2>
       <button type="button" class="x" aria-label={$t('common.close')} title={$t('common.close')} on:click={close}><Icon name="x" size={20} /></button>

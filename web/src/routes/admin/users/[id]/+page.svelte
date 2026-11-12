@@ -4,7 +4,7 @@
   /**
    * Admin: one user. Header (avatar, name, e-mail, role, status and 2FA pills) with the quick actions (lock/unlock, sign out
    * everywhere, change role, extend access, Authentik e-mails; a scheduled deletion: restore or delete now), then tabs in the URL (`?tab=`): overview (totals, linked
-   * accounts), profiles, devices, downloads, activity (loads only when opened: viewing is audited), limits, audit.
+   * accounts), profiles, devices, downloads, activity (loads only when opened: viewing is audited), rights (the person's exceptions to the role), check (Sicht prüfen: what a profile can see), audit.
    * Never shows credentials, tokens or the Authentik id (the API does not send them).
    */
   import { onMount } from 'svelte';
@@ -20,11 +20,14 @@
   import { DETAIL_TABS, akError, detailTab, lockAction, mfaChips, statusPills, type DetailTab, type UserDetail } from '#lib/admin/user/detail';
   import Activity from '#lib/admin/user/Activity.svelte';
   import Audit from '#lib/admin/user/Audit.svelte';
+  import CheckView from '#lib/admin/user/CheckView.svelte';
   import Devices from '#lib/admin/user/Devices.svelte';
   import Downloads from '#lib/admin/user/Downloads.svelte';
-  import Limits from '#lib/admin/user/Limits.svelte';
   import Overview from '#lib/admin/user/Overview.svelte';
   import Profiles from '#lib/admin/user/Profiles.svelte';
+  import Rights from '#lib/admin/user/Rights.svelte';
+  import { leaveQuestion } from '#lib/admin/user/rights';
+  import { sharedRoles } from '#lib/admin/rights/rolesAnswer';
   import { roleName, type RoleInfo } from '#lib/roles';
   import { busyKeys, errorText, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
@@ -40,7 +43,7 @@
   $: tab = detailTab($page$.url.searchParams.get('tab'));
   const select = (to: DetailTab) => goto(to === 'overview' ? $page$.url.pathname : `?tab=${to}`, { replaceState: true, reset: false });
   function tabKey(e: KeyboardEvent) {
-    const i = DETAIL_TABS.indexOf(tab), last = DETAIL_TABS.length - 1;
+    const i = Math.max(0, DETAIL_TABS.indexOf(tab)), last = DETAIL_TABS.length - 1;
     const n = e.key === 'ArrowRight' ? (i + 1) % DETAIL_TABS.length : e.key === 'ArrowLeft' ? (i + last) % DETAIL_TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? last : -1;
     if (n < 0) return;
     e.preventDefault(); void select(DETAIL_TABS[n]!);
@@ -49,6 +52,8 @@
 
   let d: UserDetail | null = null, error: string | null = null, notFound = false;
   let roles: Record<string, RoleInfo> = {}, meId = '';
+  /** one GET /api/admin/roles for the header, Rechte and Audit-Log */
+  const loadRoles = sharedRoles();
   let seq = 0, loadedId = '';
   /** reload keeps the shown data until the answer is there (open tabs stay mounted) */
   async function load() {
@@ -66,7 +71,7 @@
   }
   $: if (id && id !== loadedId) { loadedId = id; d = null; error = null; panel = null; void load(); }
   onMount(() => {
-    api<{ roles: Record<string, RoleInfo> }>('/api/admin/roles').then((r) => (roles = r.roles), () => undefined);
+    loadRoles().then((r) => (roles = r.roles), () => undefined);
     api<{ id: string }>('/api/me').then((m) => (meId = m.id), () => undefined);
   });
 
@@ -152,9 +157,12 @@
     { value: '', label: $t('adminPeople.access.choose') }, { value: 'p30', label: $t('adminPeople.access.p30') }, { value: 'p90', label: $t('adminPeople.access.p90') },
     { value: 'unlimited', label: $t('adminPeople.access.unlimited') }, { value: 'date', label: $t('adminPeople.access.date') },
   ];
+  /** the Rechte tab has staged edits (bound from it); a role change remounts the tab, so it asks first like a navigation away */
+  let rightsDirty = false;
   async function applyRole() {
     if (!u || !newRole) return;
     const name = u.name, role = newRole;
+    if (tab === 'rights' && rightsDirty && !(await confirm(leaveQuestion(name)))) return;
     if (u.role === 'admin' && role !== 'admin') {
       const ok = await confirm({
         title: tr('adminPeople.detail.actions.demoteTitle', { name }), body: tr('adminPeople.detail.actions.demoteBody', { name, role: rname(role) }),
@@ -264,8 +272,9 @@
     {:else if tab === 'devices'}<Devices userId={u.id} devices={d.devices} on:changed={load} />
     {:else if tab === 'downloads'}<Downloads licenses={d.licenses} profiles={d.profiles} on:changed={load} />
     {:else if tab === 'activity'}{#key u.id}<Activity userId={u.id} />{/key}
-    {:else if tab === 'limits'}{#key u.id}<Limits userId={u.id} />{/key}
-    {:else if tab === 'audit'}{#key u.id}<Audit userId={u.id} />{/key}
+    {:else if tab === 'rights'}{#key `${u.id}:${u.role}`}<Rights userId={u.id} name={u.name} bind:dirty={rightsDirty} {loadRoles} />{/key}
+    {:else if tab === 'check'}{#key u.id}<CheckView userId={u.id} profiles={d.profiles} />{/key}
+    {:else if tab === 'audit'}{#key u.id}<Audit userId={u.id} {loadRoles} />{/key}
     {:else}<Overview userId={u.id} detail={d} on:changed={load} />{/if}
   </div>
 {/if}

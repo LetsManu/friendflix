@@ -41,7 +41,9 @@ export default defineConfig({
     cwd: ROOT,
     env: { PORT: String(PORT), HOST: '127.0.0.1' },
     url: `http://127.0.0.1:${PORT}/offline`,
-    reuseExistingServer: !CI,
+    // Never answer tests from a server this run did not start (another worktree on the same port, a bundle rebuilt underneath):
+    // a busy port fails the run. E2E_REUSE=1 opts in locally, e.g. to keep one server across quick reruns.
+    reuseExistingServer: process.env.E2E_REUSE === '1',
     timeout: 180_000,
     stdout: 'ignore',
     stderr: 'pipe',

@@ -41,7 +41,7 @@
   import { appCaps, playerCapsSummary } from '#lib/webos/caps';
   import { avoidedUntil, capsPending, clientWhy, isFormatFailure, isProbedBlock, noteDirectFailure, noteHlsFailure, remeasureOutput, setStereoOnly, stereoOnly } from '#lib/player/devicecaps';
   import { firstFrameMs, watchFirstFrame } from '#lib/player/firstframe';
-  import { firstPlaybackRequest, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
+  import { firstPlaybackRequest, noEstimateStart, playbackInfoBody, type InfoBody, type PlaybackDto } from '#lib/player/infobody';
   import { playerReportBody } from '#lib/player/reportbody';
   import { holdPrefetch, prepareNext, releaseNext, takeNext, takePrefetched } from '#lib/player/prefetch';
   import { createTiming, deviceClass, effectiveType, sendTiming } from '#lib/player/timing';
@@ -494,7 +494,13 @@
   let pendingFallback: { what: AvoidWhat; prevPs: string } | null = null;
   /** the fallback's reload re-starts the timing session like a quality switch (flagged, never a second start: "avoided < 2 % of starts" stays honest) */
   let fallbackRestart = false;
-  async function load(startSec?: number) {
+  const isBusy = (e: unknown) => e instanceof ApiError && e.status === 503 && (e.body as { error?: unknown } | null)?.error === 'server_busy';
+  /**
+   * `restore`: a switch (a quality pick, a track, surround) stopped the old session before asking; when the server is busy the previous
+   * choice is put back and that stream is asked for again at the same position (its slot was just freed); the toast says so once that
+   * stream is given. A second refusal shows the busy state alone. An ABR step-down passes none (its old rung stalled).
+   */
+  async function load(startSec?: number, restore?: { undo: () => void; toast: string }): Promise<'busy' | undefined> {
     cancelFirstFrame();
     error = ''; errNote = '';
     // a retry / track reload continues the running session (its clock keeps going); a quality switch starts a new one, flagged
@@ -514,7 +520,9 @@
     // first start: the device's decode probe (bounded) answers first, so this body equals the play button's prefetch body
     if (first) { const w = capsPending(); if (w) await w; }
     const fell = pendingFallback; pendingFallback = null;
-    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: appCaps(), fellBack: fell?.what, prevPs: fell?.prevPs });
+    // no ABR yet, no saved quality and nothing measured: the 720p start is a guess (the server keeps the copy fallback for it)
+    const startRung = !abr && reqHint === 'network' && noEstimateStart(quality, loadStoredEstimate());
+    const body: InfoBody = playbackInfoBody({ itemId, startSec, audioIndex, bps: sentBps, hint: reqHint, audioLang, caps: appCaps(), fellBack: fell?.what, prevPs: fell?.prevPs, startRung });
     probedCaps = isProbedBlock(body.caps);
     const ask = () => api<Info | null>('/api/playback/info', { method: 'POST', body });
     // the next episode prepared during the countdown, else a hovered/focused play button: its request is (usually) already answered;
@@ -523,12 +531,28 @@
     if (fromNext) timing.next();
     const pre = fromNext ?? (first ? takePrefetched(itemId, body) : null);
     try {
-      const got = await (pre ? pre.catch(ask) : ask());
+      const got = await (pre ? pre.catch((e) => (isBusy(e) ? Promise.reject(e) : ask())) : ask()); // a busy prefetch is not asked again at once
       // an empty/foreign answer (204, proxy page ...) has no playback session: show the error instead of crashing on it
       if (!validInfo(got)) throw new ApiError(502, null);
       info = got;
       timing.info(sentBps);
     } catch (e: any) {
+      // the conversion budget is full and this title needs a conversion (spec §5.5): no backoff (a spinner or a retry loop would only add
+      // load); the viewer retries when they like. The old stream (a switch stopped its session) is quiet: it can never start a silent retry.
+      if (isBusy(e)) {
+        clearTimeout(retryT); reconnecting = 0; hls?.stopLoad();
+        pendingFallback = fell; // a retry after a codec fallback still names what failed
+        if (restore) {
+          restore.undo();
+          // the toast only when the old choice really plays again: a second refusal shows the busy state alone (no toast, then a dialog)
+          const again = await load(startSec);
+          if (again !== 'busy') flash(restore.toast, 3000);
+          return again;
+        }
+        waiting = false; video?.pause(); errNote = '';
+        errTitle = tr('player.error.title'); error = tr('player.error.serverBusy');
+        return 'busy';
+      }
       if (!(e instanceof ApiError) || e.status >= 500) { recover('network', true); return; } // server/network hiccup: retry with backoff
       reconnecting = 0;
       errNote = e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) }) : '';
@@ -749,6 +773,7 @@
 
   // ---- Chromecast session lifecycle ----
   const castErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
+    : e?.body?.error === 'server_busy' ? tr('player.error.serverBusy')
     : e?.body?.error === 'cast_forbidden' ? tr('ui.error.castForbidden') // the right was switched off meanwhile: said once, no retry
     : e?.body?.error === 'transcoding_disabled' ? tr('player.cast.needsTranscode') : tr('player.cast.failed');
   // (FriendFlix's own receiver is given a moment to state what it plays first: castCapsReady; `again` names the stream the TV just refused)
@@ -929,6 +954,7 @@
   let airForbidden = false;
   $: if (!airState.error) airForbidden = false;
   const airErr = (e: any) => e?.body?.error === 'max_streams' ? tr('player.error.maxStreams', { n: Number(e.body.max) })
+    : e?.body?.error === 'server_busy' ? tr('player.error.serverBusy')
     : e?.body?.error === 'cast_forbidden' ? tr('ui.error.castForbidden')
     : e?.body?.error === 'transcoding_disabled' ? tr('player.airplay.needsTranscode') : tr('player.airplay.failed');
   /** the subtitle index the current AirPlay token was requested with (-1 = none): the hand-off tells the engine this, not the menu's later choice */
@@ -1009,12 +1035,12 @@
     if (lang && lang !== 'und') rememberLang({ audio: lang });
     if (remote) { audioIndex = i; await castEngine.refresh({ audioIndex: i }); return; } // a new token with that track on the TV
     if (airInfo) { audioIndex = i; await air?.refresh(); return; } // AirPlay: a new token stream with that track
-    const pos = video?.currentTime ?? 0;
+    const pos = video?.currentTime ?? 0, prevAudio = audioIndex;
     await send('stop');
     audioIndex = i;
     trackSwitching = true; // the next timing session exists because of this switch
-    try { await load(pos); } finally { trackSwitching = false; }
-    video?.play().catch(() => undefined);
+    let r; try { r = await load(pos, { undo: () => { audioIndex = prevAudio; }, toast: tr('player.error.serverBusyTrack') }); } finally { trackSwitching = false; }
+    if (r !== 'busy') video?.play().catch(() => undefined);
   }
   /** the last subtitle track that was on (-1 = none yet): the LG red key turns this one back on */
   let lastSubIndex = -1;
@@ -1132,6 +1158,7 @@
     if (airInfo) { quality = bps; shownQ = bps; await air?.refresh(); flash(qualityToast(bps)); return; }
     if (switching) { if (how === 'manual') queuedPick = bps; return; } // a pick during a running switch is applied right after it
     switching = true;
+    const prev = { quality, reqHint, abr, shownQ, bps: info?.maxBitrate ?? 0 };
     if (how === 'manual') {
       quality = bps; reqHint = bps ? 'manual' : 'network';
       abr = makeAbr(bps || autoBps(est.estimate ?? loadStoredEstimate()), bps || undefined);
@@ -1144,9 +1171,14 @@
     const pos = video?.currentTime ?? 0, wasPlaying = !(video?.paused ?? true);
     try {
       await send('stop');
-      await load(pos);
-      if (wasPlaying) video?.play().catch(() => undefined);
-      flash(msg || qualityToast(bps), ms);
+      let kept = false;
+      // only the viewer's own pick puts the old rung back on a refusal: an ABR step-down left a rung that stalled, so a refusal there
+      // shows the honest busy state instead of reloading the stalling stream
+      const r = await load(pos, how === 'manual' ? { undo: () => { kept = true; quality = prev.quality; reqHint = prev.reqHint; abr = prev.abr; shownQ = prev.shownQ; }, toast: tr('player.error.serverBusyQuality', { q: rungLabel(prev.bps) }) } : undefined);
+      if (r !== 'busy') {
+        if (wasPlaying) video?.play().catch(() => undefined);
+        if (!kept) flash(msg || qualityToast(bps), ms); // a refused switch already said that the quality stays
+      }
     } finally { switching = false; }
     const next = queuedPick; queuedPick = null;
     if (next !== null) void changeQuality(next);
@@ -1266,8 +1298,10 @@
     const pos = video?.currentTime ?? 0;
     await send('stop');
     trackSwitching = true;
-    try { await load(pos); } finally { trackSwitching = false; }
-    video?.play().catch(() => undefined);
+    // refused: the switch goes back (turning surround on keeps it off, turning it off keeps it on) and says so in its own words
+    const kept = tr(stereo ? 'player.error.serverBusySurroundOn' : 'player.error.serverBusySurroundOff');
+    let r; try { r = await load(pos, { undo: () => { stereo = !stereo; setStereoOnly(stereo); }, toast: kept }); } finally { trackSwitching = false; }
+    if (r !== 'busy') video?.play().catch(() => undefined);
   }
   /** a remembered mode needs a running AudioContext: the first key / tap after an autoplayed start switches it on */
   function fxGesture() { if (fxNote === 'suspended' && fxActive(fx)) void applyFx(true); }

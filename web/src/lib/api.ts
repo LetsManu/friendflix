@@ -9,6 +9,12 @@ export class ApiError extends Error {
     super(`API ${status}`);
   }
 }
+/** the backend's error code of a failed call (`{ "error": "name_taken" }`), undefined for anything else */
+export function apiCode(e: unknown): string | undefined {
+  if (!(e instanceof ApiError)) return undefined;
+  const c = (e.body as { error?: unknown } | null)?.error;
+  return typeof c === 'string' ? c : undefined;
+}
 
 let csrf = '';
 /** a burst of parallel requests all hit the same 401: the app hears the sign-out once; a successful sign-in (setCsrf) arms it again */

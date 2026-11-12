@@ -31,13 +31,21 @@ export interface StreamDelivery {
 export type ReasonHint = 'network' | 'manual';
 export interface InfoBody { itemId: string; startTicks?: number; audioIndex?: number; maxBitrate?: number; reasonHint: ReasonHint; audioLang?: string; caps?: ClientCapsBody;
   /** the one automatic fallback: which feature the device gave up, and the play session that failed (the server counts HEVC failures) */
-  fellBack?: 'hevc' | 'surround' | 'both'; prevPs?: string }
+  fellBack?: 'hevc' | 'surround' | 'both'; prevPs?: string;
+  /**
+   * `maxBitrate` is the 720p start of a device without a stored bandwidth estimate (new device, private mode, a week idle): a guess,
+   * not the viewer's pick or a measured line. At a full conversion budget the server then still offers the copy up to the ceiling.
+   * Not part of bodyKey.
+   */
+  startRung?: true;
+  /** asked by a hover / focus prefetch (prefetch.ts), not by a player: only such a grant replaces the device's earlier one. Not part of bodyKey. */
+  prefetch?: true }
 
 /** seconds -> Jellyfin ticks (same rounding as secToTicks in lib/api) */
 const ticks = (sec: number) => Math.floor(sec * 10_000_000);
 
 /** bps = Infinity asks for the original (no maxBitrate); undefined fields are left out, like JSON.stringify does */
-export function playbackInfoBody(o: { itemId: string; startSec?: number; audioIndex?: number; bps: number; hint: ReasonHint; audioLang?: string; caps?: ClientCapsBody | null; fellBack?: InfoBody['fellBack']; prevPs?: string }): InfoBody {
+export function playbackInfoBody(o: { itemId: string; startSec?: number; audioIndex?: number; bps: number; hint: ReasonHint; audioLang?: string; caps?: ClientCapsBody | null; fellBack?: InfoBody['fellBack']; prevPs?: string; startRung?: boolean }): InfoBody {
   const b: InfoBody = { itemId: o.itemId, reasonHint: o.hint };
   if (o.startSec !== undefined) b.startTicks = ticks(o.startSec);
   if (o.audioIndex !== undefined) b.audioIndex = o.audioIndex;
@@ -45,8 +53,12 @@ export function playbackInfoBody(o: { itemId: string; startSec?: number; audioIn
   if (o.audioLang) b.audioLang = o.audioLang;
   if (o.caps) b.caps = o.caps;
   if (o.fellBack) { b.fellBack = o.fellBack; if (o.prevPs) b.prevPs = o.prevPs; }
+  if (o.startRung && Number.isFinite(o.bps)) b.startRung = true;
   return b;
 }
+
+/** the start rung without a stored estimate: no saved quality (Auto), no ABR yet, nothing measured on this device within a week */
+export const noEstimateStart = (quality: number, estimate: number | null): boolean => !quality && estimate === null;
 
 /**
  * The first request of a player session: the saved quality (a pick = 'manual') or the rung for the remembered bandwidth
@@ -56,12 +68,15 @@ export function firstPlaybackRequest(itemId: string, pf: { quality?: number; aud
   const fb = firstInfoBody(pf, audioPick);
   const quality = fb.maxBitrate ?? 0;
   const hint: ReasonHint = quality ? 'manual' : 'network';
-  const bps = quality || autoBps(loadStoredEstimate());
-  return { body: playbackInfoBody({ itemId, startSec, bps, hint, audioLang: fb.audioLang, caps: appCaps() }), quality, hint, bps };
+  const estimate = loadStoredEstimate();
+  const bps = quality || autoBps(estimate);
+  return { body: playbackInfoBody({ itemId, startSec, bps, hint, audioLang: fb.audioLang, caps: appCaps(), startRung: noEstimateStart(quality, estimate) }), quality, hint, bps };
 }
 
-/** order-independent comparison key of a body (undefined fields do not count) */
+/** flags about who asks and why, not about what is asked: a prefetched answer is reused whatever they say */
+const KEYLESS = new Set(['startRung', 'prefetch']);
+/** order-independent comparison key of a body (undefined fields do not count, nor do `startRung` and `prefetch`) */
 export function bodyKey(b: object): string {
   const o = b as Record<string, unknown>;
-  return JSON.stringify(Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => [k, o[k]]));
+  return JSON.stringify(Object.keys(o).filter((k) => o[k] !== undefined && !KEYLESS.has(k)).sort().map((k) => [k, o[k]]));
 }

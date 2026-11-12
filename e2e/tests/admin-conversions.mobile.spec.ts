@@ -36,4 +36,17 @@ test.describe('admin: Umwandlungen card (phone)', () => {
     const bb = (await bar.boundingBox())!;
     expect(bb.x + bb.width).toBeLessThanOrEqual(box.x + box.width + 0.5);
   });
+
+  test('on Plex the header has no empty row for the measure button', async ({ page, api }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    api.serverKind = 'plex';
+    api.admin.conv.measure = { running: false, busy: null, last: { outcome: 'unsupported', at: null } };
+    await page.goto('/admin/playback');
+    const c = page.getByRole('region', { name: 'Umwandlungen' });
+    await expect(c.getByText('Messung nur mit Jellyfin')).toBeVisible();
+    await expect(c.getByTestId('conv-measure')).toHaveCount(0);
+    const head = (await c.locator('.head').boundingBox())!;
+    const ttl = (await c.locator('.head .ttl').boundingBox())!;
+    expect(head.height).toBeCloseTo(ttl.height, 0); // no 44-px (or gap-only) row under the title
+  });
 });

@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
-import { auid } from '../mocks/admin.js';
+import { adminState, auid } from '../mocks/admin.js';
 
 const ANNA = auid(2);
+const CLARA = auid(4);
 const toasts = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Hinweise' });
 const logged = (api: { log: string[] }, re: RegExp) => api.log.some((l) => re.test(l));
 const menu = async (page: import('@playwright/test').Page) => {
@@ -13,7 +14,7 @@ const menu = async (page: import('@playwright/test').Page) => {
 };
 
 test.describe('admin user detail (desktop)', () => {
-  test.use({ allowedConsole: /status of (404|409|500|501)/ });
+  test.use({ allowedConsole: /status of (400|404|409|500|501|502)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   test('detail shows header and totals', async ({ page }) => {
@@ -80,28 +81,349 @@ test.describe('admin user detail (desktop)', () => {
     expect(api.admin.activityCalls).toBe(2);
   });
 
-  test('limits save sends only changed fields', async ({ page, api }) => {
-    api.admin.limits[ANNA] = { maxStreams: 2, remoteBitrate: null, maxDownloads: null, downloadMaxHeight: null, requestsPerMonth: null };
-    await page.goto(`/admin/users/${ANNA}?tab=limits`);
-    const streams = page.getByRole('spinbutton', { name: 'Gleichzeitige Streams' });
-    await expect(streams).toHaveValue('2');
-    const req = page.getByRole('spinbutton', { name: 'Wünsche pro Monat' });
-    await expect(req).toHaveValue('');
-    await expect(req).toHaveAttribute('placeholder', 'wie Rolle: 3');
-    await expect(page.getByRole('spinbutton', { name: /Limit unterwegs/ })).toHaveAttribute('placeholder', 'wie Rolle: 8');
-    await req.fill('5');
-    await streams.fill('');
-    await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(toasts(page).getByText('Limits gespeichert.')).toBeVisible();
-    const put = api.log.filter((l) => l.startsWith(`PUT /api/admin/users/${ANNA}/limits`));
-    expect(put).toHaveLength(1);
-    expect(JSON.parse(put[0]!.split(' ')[2]!)).toEqual({ maxStreams: null, requestsPerMonth: 5 });
-    await expect(streams).toHaveAttribute('placeholder', 'wie Rolle: 2');
+  // ---- Rechte ----
+  const BEN = auid(3);
+  const rightsPuts = (api: { log: string[] }, id: string) => api.log.filter((l) => l.startsWith(`PUT /api/admin/users/${id}/rights`))
+    .map((l) => JSON.parse(l.slice(l.indexOf('{'), l.lastIndexOf(' -> '))) as Record<string, unknown>);
+  const rightsPanel = (page: import('@playwright/test').Page) => page.getByRole('tabpanel', { name: 'Rechte' });
+  const rowOf = (page: import('@playwright/test').Page, name: string) => rightsPanel(page).getByRole('listitem').filter({ has: page.getByRole('radiogroup', { name, exact: true }) });
+  const saveBar = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Ungespeicherte Änderungen' });
+  const saveViaReview = async (page: import('@playwright/test').Page) => {
+    await saveBar(page).getByRole('button', { name: 'Änderungen prüfen' }).click();
+    await page.getByRole('dialog', { name: 'Änderungen prüfen' }).getByRole('button', { name: 'Speichern' }).click();
+  };
 
-    await req.fill('101');
-    await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(page.getByText('Bitte 0 bis 100 eingeben oder leer lassen.')).toBeVisible();
-    expect(api.log.filter((l) => l.startsWith(`PUT /api/admin/users/${ANNA}/limits`))).toHaveLength(1);
+  test('3-way switch: Übertragen -> Verbieten stages, saves only that key, chip says Ausnahme', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    await expect(page.getByRole('tab', { name: 'Rechte' })).toHaveAttribute('aria-selected', 'true');
+    const panel = rightsPanel(page);
+    await expect(panel.getByRole('heading', { level: 3, name: 'Übertragen' })).toBeVisible();
+    const row = rowOf(page, 'Auf Fernseher übertragen');
+    await expect(row.getByRole('radio', { name: 'Wie Rolle' })).toBeChecked();
+    await expect(row).toContainText('Rolle: erlaubt');
+    await expect(row.getByText('Rolle', { exact: true })).toBeVisible();
+    // an existing exception shows as such
+    const party = rowOf(page, 'Watch-Partys');
+    await expect(party.getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+    await expect(party).toContainText('Ausnahme');
+    await expect(saveBar(page)).toHaveCount(0);
+
+    await row.getByText('Verbieten', { exact: true }).click();
+    await expect(row.getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+    await expect(saveBar(page)).toContainText('1 Änderung an den Rechten von Anna Beispiel');
+    await saveViaReview(page);
+    await expect(toasts(page).getByText('Rechte von Anna Beispiel gespeichert.')).toBeVisible();
+    await expect(saveBar(page)).toHaveCount(0);
+    expect(rightsPuts(api, ANNA)).toEqual([{ overrides: { cast: false } }]);
+    await expect(row).toContainText('Ausnahme');
+    await expect(row.getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+
+    // back to the role: null, the exception goes
+    await row.getByText('Wie Rolle', { exact: true }).click();
+    await saveViaReview(page);
+    await expect.poll(() => rightsPuts(api, ANNA).length).toBe(2);
+    await expect(toasts(page).getByText('Rechte von Anna Beispiel gespeichert.').last()).toBeVisible();
+    expect(rightsPuts(api, ANNA)[1]).toEqual({ overrides: { cast: null } });
+    await expect(row).not.toContainText('Ausnahme');
+  });
+
+  test('3-way switch is a radiogroup: arrow keys move the selection; discard drops the staging', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const row = rowOf(page, 'Auf Fernseher übertragen');
+    await row.getByRole('radio', { name: 'Wie Rolle' }).focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(row.getByRole('radio', { name: 'Erlauben' })).toBeChecked();
+    await expect(row.getByRole('radio', { name: 'Erlauben' })).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(row.getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+    await expect(saveBar(page)).toBeVisible();
+    await saveBar(page).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(row.getByRole('radio', { name: 'Wie Rolle' })).toBeChecked();
+    await expect(saveBar(page)).toHaveCount(0);
+  });
+
+  test('numbers: role value shown, a changed number and the reset save as one body', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const panel = rightsPanel(page);
+    const streams = panel.getByRole('spinbutton', { name: 'Gleichzeitige Streams' });
+    const row = panel.getByRole('listitem').filter({ has: page.getByRole('spinbutton', { name: 'Gleichzeitige Streams' }) });
+    await expect(streams).toHaveValue('3');
+    await expect(row).toContainText('Rolle: 2');
+    await streams.fill('4');
+    await expect(saveBar(page)).toBeVisible();
+    await row.getByRole('button', { name: 'Wie Rolle' }).click();
+    await expect(streams).toHaveValue('2');
+    await saveViaReview(page);
+    await expect(toasts(page).getByText('Rechte von Anna Beispiel gespeichert.')).toBeVisible();
+    expect(rightsPuts(api, ANNA)).toEqual([{ overrides: { maxStreams: null } }]);
+    await expect(row).not.toContainText('Ausnahme');
+  });
+
+  test('note: typed, counted, saved; the list shows it as a tooltip after a reload', async ({ page, api }) => {
+    await page.goto(`/admin/users/${BEN}?tab=rights`);
+    const note = rightsPanel(page).getByRole('textbox', { name: 'Notiz' });
+    await expect(rightsPanel(page)).toContainText('0 / 200');
+    await note.fill('Gast von Oma Inge');
+    await expect(rightsPanel(page)).toContainText('17 / 200');
+    await saveViaReview(page);
+    await expect(toasts(page).getByText('Rechte von Ben Test gespeichert.')).toBeVisible();
+    expect(rightsPuts(api, BEN)).toEqual([{ overrides: {}, note: 'Gast von Oma Inge' }]);
+    await page.goto('/admin/users');
+    const ben = page.getByRole('row', { name: /Ben Test/ });
+    const btn = ben.getByRole('button', { name: 'Notiz' });
+    await expect(btn).toBeVisible();
+    // Ben's row sits at the bottom edge: a click would scroll it into view and the tip closes on that scroll. Scroll first, let it settle, click once.
+    await btn.scrollIntoViewIfNeeded();
+    await expect.poll(async () => { const y = (await btn.boundingBox())?.y; await page.waitForTimeout(100); return y === (await btn.boundingBox())?.y; }).toBe(true);
+    await btn.click();
+    await expect(page.getByRole('note')).toHaveText('Gast von Oma Inge');
+  });
+
+  test('old ?tab=limits opens Rechte', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=limits`);
+    await expect(page.getByRole('tab', { name: 'Rechte' })).toHaveAttribute('aria-selected', 'true');
+    await expect(rightsPanel(page).getByRole('radiogroup', { name: 'Auf Fernseher übertragen' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Limits' })).toHaveCount(0);
+  });
+
+  test('a missing library shows as not available and can be removed', async ({ page, api }) => {
+    api.admin.users.find((u) => u.id === BEN)!.ov = { libraries: ['Filme', 'Altes Archiv'] };
+    await page.goto(`/admin/users/${BEN}?tab=rights`);
+    const libs = rightsPanel(page).getByRole('listitem').filter({ has: page.getByRole('group', { name: 'Bibliotheken' }) });
+    await expect(libs.getByRole('checkbox', { name: 'Altes Archiv' })).toBeChecked();
+    await expect(libs.getByText('nicht mehr vorhanden')).toBeVisible();
+    await expect(libs.getByText('Altes Archiv', { exact: true }).first()).toBeVisible();
+    // taken out of the list, it leaves the checklist and the flag with it
+    await libs.getByRole('checkbox', { name: 'Altes Archiv' }).click();
+    await expect(libs.getByRole('checkbox', { name: 'Altes Archiv' })).toHaveCount(0);
+    await expect(libs.getByText('nicht mehr vorhanden')).toHaveCount(0);
+    await saveViaReview(page);
+    await expect(toasts(page).getByText('Rechte von Ben Test gespeichert.')).toBeVisible();
+    expect(rightsPuts(api, BEN)).toEqual([{ overrides: { libraries: ['Filme'] } }]);
+    await expect(libs.getByText('nicht mehr vorhanden')).toHaveCount(0);
+  });
+
+  test('policy_partial: the rights are stored, the bar offers Erneut anwenden (repair)', async ({ page, api }) => {
+    api.admin.matrix.policyPartial = true;
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const streams = rightsPanel(page).getByRole('spinbutton', { name: 'Gleichzeitige Streams' });
+    await streams.fill('5');
+    await saveViaReview(page);
+    await expect(saveBar(page)).toContainText('2 Konten konnten nicht aktualisiert werden.');
+    await expect(rightsPanel(page).getByRole('spinbutton', { name: 'Gleichzeitige Streams' })).toHaveValue('5');
+    api.admin.matrix.policyPartial = false;
+    await saveBar(page).getByRole('button', { name: 'Erneut anwenden' }).click();
+    await expect(toasts(page).getByText('Rechte von Anna Beispiel erneut angewendet.')).toBeVisible();
+    await expect(saveBar(page)).toHaveCount(0);
+    expect(logged(api, new RegExp(`POST /api/admin/users/${ANNA}/repair`))).toBe(true);
+  });
+
+  test('policy_partial: Erneut anwenden that fails again keeps the bar and says how many accounts', async ({ page, api }) => {
+    api.admin.matrix.policyPartial = true;
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    await rightsPanel(page).getByRole('spinbutton', { name: 'Gleichzeitige Streams' }).fill('5');
+    await saveViaReview(page);
+    await expect(saveBar(page)).toContainText('2 Konten konnten nicht aktualisiert werden.');
+    await saveBar(page).getByRole('button', { name: 'Erneut anwenden' }).click();
+    await expect.poll(() => logged(api, new RegExp(`POST /api/admin/users/${ANNA}/repair .*-> 200`))).toBe(true);
+    await expect(saveBar(page)).toContainText('2 Konten konnten nicht aktualisiert werden.');
+    await expect(toasts(page).getByText('erneut angewendet')).toHaveCount(0);
+    await expect(saveBar(page).getByRole('button', { name: 'Erneut anwenden' })).toBeVisible();
+  });
+
+  test('mock: every test starts from its own seed (a save in one test never reaches the next one in the worker)', () => {
+    const a = adminState(), b = adminState();
+    const anna = (st: typeof a) => st.users.find((u) => u.id === ANNA)!;
+    anna(a).ov!.maxStreams = 5;
+    anna(a).perms!.party = true;
+    expect(anna(b).ov).toEqual({ maxStreams: 3 });
+    expect(anna(b).perms).toEqual({ party: false });
+  });
+
+  test('policy_partial: the error shows once with its final buttons, Erneut anwenden stays put through the reload', async ({ page, api }) => {
+    api.admin.matrix.policyPartial = true;
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    await rightsPanel(page).getByRole('spinbutton', { name: 'Gleichzeitige Streams' }).fill('5');
+    // hold the reload after the 502 until the test lets it go
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let held = false;
+    await page.route(`**/api/admin/users/${ANNA}/rights`, async (r) => {
+      if (r.request().method() === 'GET') { held = true; await gate; }
+      await r.fallback();
+    });
+    // every set of bar buttons the page shows, in order, with where *Erneut anwenden* stands
+    await page.evaluate(() => {
+      const w = window as unknown as { __sets: string[] };
+      w.__sets = [];
+      const read = () => {
+        const bs = [...document.querySelectorAll('.sb .acts button')];
+        const again = bs.find((b) => b.textContent?.trim() === 'Erneut anwenden')?.getBoundingClientRect();
+        const s = bs.map((b) => b.textContent?.trim()).join(' | ') + (again ? ` @${Math.round(again.left)},${Math.round(again.top)}` : '');
+        if (w.__sets.at(-1) !== s) w.__sets.push(s);
+      };
+      new MutationObserver(read).observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
+    await saveViaReview(page);
+    await expect.poll(() => held).toBe(true);
+    // the reload runs: the bar shows the save running, no buttons to mis-hit
+    await expect(saveBar(page).getByRole('button')).toHaveCount(0);
+    const reloaded = page.waitForResponse((r) => r.url().endsWith(`/api/admin/users/${ANNA}/rights`) && r.request().method() === 'GET');
+    release();
+    await reloaded;
+    const again = saveBar(page).getByRole('button', { name: 'Erneut anwenden' });
+    await expect(again).toBeVisible();
+    await expect(rightsPanel(page).getByRole('spinbutton', { name: 'Gleichzeitige Streams' })).toHaveValue('5');
+    // from its first frame on, the error state is one set of buttons in one place
+    const sets = await page.evaluate(() => (window as unknown as { __sets: string[] }).__sets);
+    const from = sets.findIndex((s) => s.includes('Erneut anwenden'));
+    expect(from).toBeGreaterThanOrEqual(0);
+    expect(sets.slice(from)).toHaveLength(1);
+    expect(sets[from]).toMatch(/^Schließen \| Erneut anwenden @/);
+  });
+
+  test('a library the server no longer has: the save says what to do and offers no retry', async ({ page, api }) => {
+    api.admin.users.find((u) => u.id === BEN)!.ov = { libraries: ['Filme', 'Altes Archiv'] };
+    await page.goto(`/admin/users/${BEN}?tab=rights`);
+    const libs = rightsPanel(page).getByRole('listitem').filter({ has: page.getByRole('group', { name: 'Bibliotheken' }) });
+    await libs.getByRole('checkbox', { name: 'Serien' }).check();
+    await saveViaReview(page);
+    await expect(libs.getByRole('alert')).toContainText('Nimm den markierten Eintrag');
+    await expect(saveBar(page).getByRole('button', { name: 'Erneut anwenden' })).toHaveCount(0);
+    // the edit stays staged; taking the library out lets it through and clears the message
+    await libs.getByRole('checkbox', { name: 'Altes Archiv' }).click();
+    await expect(libs.getByRole('alert')).toHaveCount(0);
+    await saveViaReview(page);
+    await expect(toasts(page).getByText('Rechte von Ben Test gespeichert.')).toBeVisible();
+    expect(rightsPuts(api, BEN).at(-1)).toEqual({ overrides: { libraries: ['Filme', 'Serien'] } });
+  });
+
+  test('staged edits: leaving the tab or the page asks first', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const row = rowOf(page, 'Auf Fernseher übertragen');
+    await row.getByText('Verbieten', { exact: true }).click();
+    await page.getByRole('tab', { name: 'Profile' }).click();
+    const ask = page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' });
+    await expect(ask).toContainText('ungespeicherte Änderungen an den Rechten von Anna Beispiel');
+    await ask.getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(page).toHaveURL(/\?tab=rights$/);
+    await expect(row.getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+    await page.getByRole('link', { name: /Zurück zur Nutzerliste/ }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+  });
+
+  /** /admin → Nutzer → Anna → Rechte (the tab replaces its entry), one switch staged; the history length there */
+  async function stagedViaLinks(page: import('@playwright/test').Page): Promise<number> {
+    await page.goto('/admin');
+    await page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: 'Nutzer' }).click();
+    await page.getByRole('link', { name: 'Anna Beispiel' }).click();
+    await expect(page).toHaveURL(new RegExp(`/admin/users/${ANNA}$`));
+    await page.getByRole('tab', { name: 'Rechte' }).click();
+    await expect(page).toHaveURL(/\?tab=rights$/);
+    await rowOf(page, 'Auf Fernseher übertragen').getByText('Verbieten', { exact: true }).click();
+    await expect(saveBar(page)).toBeVisible();
+    return page.evaluate(() => history.length);
+  }
+  const historyLength = (page: import('@playwright/test').Page) => page.evaluate(() => history.length);
+  const back = (page: import('@playwright/test').Page) => page.evaluate(() => history.back());
+
+  test('leave guard: a tab switch after Verwerfen replaces its entry like any tab switch (Back leaves the person)', async ({ page }) => {
+    const n = await stagedViaLinks(page);
+    await page.getByRole('tab', { name: 'Profile' }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\?tab=profiles$/);
+    await expect(page.getByRole('tab', { name: 'Profile' })).toHaveAttribute('aria-selected', 'true');
+    await expect.poll(() => historyLength(page)).toBe(n);
+    await back(page);
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await back(page);
+    await expect(page).toHaveURL(/\/admin$/);
+  });
+
+  test('leave guard: a confirmed Back goes back once, the next Back goes back again', async ({ page }) => {
+    const n = await stagedViaLinks(page);
+    await back(page);
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect(page.getByRole('link', { name: 'Anna Beispiel' })).toBeVisible();
+    await expect.poll(() => historyLength(page)).toBe(n);
+    await back(page);
+    await expect(page).toHaveURL(/\/admin$/);
+    // forward again lands on the person, without the discarded edit and without a question
+    await page.evaluate(() => history.forward());
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await page.evaluate(() => history.forward());
+    await expect(page).toHaveURL(/\?tab=rights$/);
+    await expect(rowOf(page, 'Auf Fernseher übertragen').getByRole('radio', { name: 'Verbieten' })).not.toBeChecked();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  });
+
+  test('leave guard: Abbrechen on Back stays on the person with the edit staged', async ({ page }) => {
+    const n = await stagedViaLinks(page);
+    await back(page);
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(page).toHaveURL(/\?tab=rights$/);
+    await expect(rowOf(page, 'Auf Fernseher übertragen').getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+    await expect.poll(() => historyLength(page)).toBe(n);
+  });
+
+  test('staged edits: a role change in the header asks first instead of dropping them', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const tv = rowOf(page, 'Auf Fernseher übertragen');
+    await tv.getByText('Verbieten', { exact: true }).click();
+    await expect(saveBar(page)).toBeVisible();
+    await (await menu(page)).getByRole('button', { name: 'Rolle ändern' }).click();
+    const form = page.getByRole('form', { name: 'Rolle ändern' });
+    await form.getByRole('combobox', { name: 'Neue Rolle' }).selectOption('family');
+    await form.getByRole('button', { name: 'Übernehmen' }).click();
+    const ask = page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' });
+    await expect(ask).toContainText('ungespeicherte Änderungen an den Rechten von Anna Beispiel');
+    await ask.getByRole('button', { name: 'Abbrechen' }).click();
+    // nothing sent, the edit still staged, the role as it was
+    expect(logged(api, new RegExp(`PATCH /api/admin/users/${ANNA} `))).toBe(false);
+    await expect(tv.getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+    await expect(saveBar(page)).toBeVisible();
+    await form.getByRole('button', { name: 'Übernehmen' }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(toasts(page).getByText(/Anna Beispiel ist jetzt/)).toBeVisible();
+    await expect.poll(() => logged(api, new RegExp(`PATCH /api/admin/users/${ANNA} .*"role":"family"`))).toBe(true);
+    await expect(saveBar(page)).toHaveCount(0);
+    await expect(tv.getByRole('radio', { name: 'Verbieten' })).not.toBeChecked();
+  });
+
+  test('no staged edits: the header role change does not ask', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    await expect(rowOf(page, 'Auf Fernseher übertragen')).toBeVisible();
+    await (await menu(page)).getByRole('button', { name: 'Rolle ändern' }).click();
+    const form = page.getByRole('form', { name: 'Rolle ändern' });
+    await form.getByRole('combobox', { name: 'Neue Rolle' }).selectOption('family');
+    await form.getByRole('button', { name: 'Übernehmen' }).click();
+    await expect.poll(() => logged(api, new RegExp(`PATCH /api/admin/users/${ANNA} .*"role":"family"`))).toBe(true);
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  });
+
+  test('the person page reads the roles once for the header, Rechte and Audit-Log', async ({ page }) => {
+    const asked: string[] = [];
+    page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/admin/roles') asked.push(r.method()); });
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    await expect(rowOf(page, 'Auf Fernseher übertragen')).toBeVisible();
+    await page.getByRole('tab', { name: 'Audit-Log' }).click();
+    await expect(page.getByRole('tabpanel', { name: 'Audit-Log' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Rechte' }).click();
+    await expect(rowOf(page, 'Auf Fernseher übertragen')).toBeVisible();
+    // the header's role names came from the same answer
+    await (await menu(page)).getByRole('button', { name: 'Rolle ändern' }).click();
+    await expect(page.getByRole('form', { name: 'Rolle ändern' }).getByRole('combobox', { name: 'Neue Rolle' }).getByRole('option', { name: 'Familie' })).toHaveCount(1);
+    expect(asked).toEqual(['GET']);
+  });
+
+  test('an admin account: switches are locked, numbers stay editable', async ({ page }) => {
+    await page.goto('/admin/users/u1?tab=rights');
+    const panel = rightsPanel(page);
+    await expect(panel.getByRole('radiogroup')).toHaveCount(0);
+    await expect(panel.getByText('Admins dürfen immer alles').first()).toBeVisible();
+    await expect(panel.getByRole('spinbutton', { name: 'Gleichzeitige Streams' })).toBeEnabled();
   });
 
   test('extend access +30 days', async ({ page, api }) => {
@@ -205,9 +527,10 @@ test.describe('admin user detail (desktop)', () => {
   test('profiles: rename inline and reset PIN with confirm', async ({ page, api }) => {
     await page.goto(`/admin/users/${ANNA}?tab=profiles`);
     const panel = page.getByRole('tabpanel', { name: 'Profile' });
-    const kids = panel.getByRole('row', { name: /Kinder/ });
+    const kids = panel.getByRole('row', { name: /„Kinder“/ });
     await expect(kids).toContainText('PIN gesetzt');
-    await kids.getByRole('button', { name: '„Kinder“ umbenennen' }).click();
+    await kids.getByRole('button', { name: 'Aktionen für Kinder' }).click();
+    await page.getByRole('dialog', { name: 'Kinder' }).getByRole('button', { name: 'Umbenennen' }).click();
     const name = kids.getByRole('textbox', { name: 'Neuer Name' });
     await expect(name).toHaveAttribute('maxlength', '20');
     await name.fill('Anna');
@@ -223,7 +546,208 @@ test.describe('admin user detail (desktop)', () => {
     await expect(row).toContainText('Keine PIN');
     expect(logged(api, /PATCH \/api\/admin\/users\/.*\/profiles\/.*"resetPin":true/)).toBe(true);
     // the owner profile can be renamed too
-    await expect(panel.getByRole('row', { name: /Hauptprofil/ }).getByRole('button', { name: '„Anna“ umbenennen' })).toBeVisible();
+    await panel.getByRole('row', { name: /Hauptprofil/ }).getByRole('button', { name: 'Aktionen für Anna' }).click();
+    await expect(page.getByRole('dialog', { name: 'Anna' }).getByRole('button', { name: 'Umbenennen' })).toBeVisible();
+    await page.keyboard.press('Escape');
+  });
+
+  const plain = (id: string, n: number, name: string, kids = false) => ({ id: `${id.slice(0, -4)}p00${n}`, name, kids, maxRating: kids ? 12 : null, avatar: 'a1', lastUsed: null, isOwner: n === 1, hasPin: false });
+
+  test('profiles: switch Clara\'s second profile to kids, cap 6', async ({ page, api }) => {
+    api.admin.userProfiles[CLARA] = [plain(CLARA, 1, 'Clara'), plain(CLARA, 2, 'Zweitprofil')];
+    await page.goto(`/admin/users/${CLARA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    const row = panel.getByRole('row', { name: /Zweitprofil/ });
+    const sw = row.getByRole('switch', { name: 'Kinderprofil: „Zweitprofil“' });
+    await expect(sw).toHaveAttribute('aria-checked', 'false');
+    // the age limit has its room before it exists: switching never moves the list
+    await expect(row.getByRole('combobox')).toHaveCount(0);
+    const table = panel.getByRole('table');
+    const before = await Promise.all([row.boundingBox(), table.boundingBox()]);
+    await sw.click();
+    await expect(sw).toHaveAttribute('aria-checked', 'true');
+    const cap = row.getByRole('combobox', { name: 'Altersgrenze von „Zweitprofil“' });
+    await expect(cap).toHaveValue('12');
+    const after = await Promise.all([row.boundingBox(), table.boundingBox()]);
+    expect(after[0]!.height).toBe(before[0]!.height);
+    expect(after[1]!.height).toBe(before[1]!.height);
+    expect(logged(api, /PATCH \/api\/admin\/users\/.*\/profiles\/.*p002 \{"kids":true\} -> 200/)).toBe(true);
+    await expect(toasts(page).getByText('„Zweitprofil“ ist jetzt ein Kinderprofil.')).toBeVisible();
+    await cap.selectOption('6');
+    await expect(toasts(page).getByText('Altersgrenze von „Zweitprofil“ gespeichert.')).toBeVisible();
+    expect(logged(api, /PATCH .*p002 \{"maxRating":6\} -> 200/)).toBe(true);
+    await expect(cap).toHaveValue('6');
+    await expect(row).toContainText('Kinderprofil');
+    // and back: the cap goes, the row keeps its height
+    await sw.click();
+    await expect(sw).toHaveAttribute('aria-checked', 'false');
+    await expect(row.getByRole('combobox')).toHaveCount(0);
+    expect(logged(api, /PATCH .*p002 \{"kids":false\} -> 200/)).toBe(true);
+    expect((await row.boundingBox())!.height).toBe(before[0]!.height);
+  });
+
+  test('profiles: the media server does not take a kids change (502): stored, the toast names the repair button', async ({ page, api }) => {
+    api.admin.profileMediaFails = true;
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    const cap = panel.getByRole('combobox', { name: 'Altersgrenze von „Kinder“' });
+    await expect(cap).toHaveValue('6');
+    await cap.selectOption('12');
+    await expect(toasts(page).getByText('Die Änderung ist gespeichert, aber der Medienserver hat die Freigaben nicht übernommen. „Verknüpfungen reparieren“ auf der Übersicht wendet sie erneut an.')).toBeVisible();
+    await expect.poll(() => logged(api, /PATCH .*p002 \{"maxRating":12\} -> 502/)).toBe(true);
+    // stored anyway: the list is read again and keeps the new cap
+    await expect(cap).toHaveValue('12');
+    await page.reload();
+    await expect(panel.getByRole('combobox', { name: 'Altersgrenze von „Kinder“' })).toHaveValue('12');
+  });
+
+  test('44 px targets with a fine pointer: PIN zurücksetzen, Wie Rolle, the Kinderprofil sheet\'s buttons', async ({ page }) => {
+    const tall = async (l: import('@playwright/test').Locator) => {
+      await expect(l).toBeVisible();
+      expect((await l.boundingBox())!.height, await l.textContent() ?? '').toBeGreaterThanOrEqual(44);
+    };
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    await tall(panel.getByRole('button', { name: 'PIN von „Kinder“ zurücksetzen' }));
+    await tall(panel.getByRole('button', { name: 'Kinderprofil anlegen' }));
+    await panel.getByRole('button', { name: 'Kinderprofil anlegen' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Kinderprofil anlegen' });
+    for (const name of ['Abbrechen', 'Anlegen', 'Schließen']) await tall(sheet.getByRole('button', { name, exact: true }));
+    await page.keyboard.press('Escape');
+    await expect(sheet).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Rechte' }).click();
+    await tall(rightsPanel(page).getByRole('listitem').filter({ has: page.getByRole('spinbutton', { name: 'Gleichzeitige Streams' }) }).getByRole('button', { name: 'Wie Rolle' }));
+  });
+
+  test('profiles: a refused switch goes back and says why', async ({ page, api }) => {
+    api.admin.claimed.add(ANNA);
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const sw = page.getByRole('tabpanel', { name: 'Profile' }).getByRole('switch', { name: 'Kinderprofil: „Kinder“' });
+    await expect(sw).toHaveAttribute('aria-checked', 'true');
+    await sw.click();
+    await expect(toasts(page).getByText('Dieses Konto wird gerade gelöscht. Seine Profile lassen sich nicht mehr ändern.')).toBeVisible();
+    await expect(sw).toHaveAttribute('aria-checked', 'true');
+  });
+
+  test('profiles: create a kids profile', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    await panel.getByRole('button', { name: 'Kinderprofil anlegen' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Kinderprofil anlegen' });
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByRole('textbox', { name: 'Name' })).toBeFocused();
+    await expect(sheet.getByRole('textbox', { name: 'Name' })).toHaveAttribute('maxlength', '20');
+    await sheet.getByRole('textbox', { name: 'Name' }).fill('Kinder');
+    await sheet.getByRole('button', { name: 'Anlegen' }).click();
+    // a refusal is said inside the sheet, next to the button (a toast would cover it); typing clears it
+    await expect(sheet.getByRole('alert')).toHaveText('Diesen Namen hat schon ein anderes Profil.');
+    await expect(sheet).toBeVisible();
+    await sheet.getByRole('textbox', { name: 'Name' }).fill('Lena');
+    await expect(sheet.getByRole('alert')).toHaveCount(0);
+    await sheet.getByRole('combobox', { name: 'Altersgrenze' }).selectOption('6');
+    await sheet.getByRole('button', { name: 'Anlegen' }).click();
+    await expect(toasts(page).getByText('„Lena“ angelegt.')).toBeVisible();
+    expect(logged(api, /POST \/api\/admin\/users\/.*\/profiles \{"name":"Lena","kids":true,"maxRating":6\} -> 201/)).toBe(true);
+    await expect(sheet).toHaveCount(0);
+    const row = panel.getByRole('row', { name: /Lena/ });
+    await expect(row.getByRole('switch', { name: 'Kinderprofil: „Lena“' })).toHaveAttribute('aria-checked', 'true');
+    await expect(row.getByRole('combobox', { name: 'Altersgrenze von „Lena“' })).toHaveValue('6');
+    await expect(panel.getByRole('button', { name: 'Kinderprofil anlegen' })).toBeFocused();
+  });
+
+  /** the toast's lower edge is above the top edge of `target` (a sheet's footer button), so the button takes the click */
+  const toastAbove = async (page: import('@playwright/test').Page, toast: import('@playwright/test').Locator, target: import('@playwright/test').Locator) => {
+    await expect.poll(async () => {
+      const [a, b] = await Promise.all([toast.boundingBox(), target.boundingBox()]);
+      return a && b ? Math.round(b.y - (a.y + a.height)) : -1;
+    }).toBeGreaterThanOrEqual(0);
+  };
+
+  test('sheets keep their footer free: a toast glides above the Kinderprofil sheet, Anlegen takes the click', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    await panel.getByRole('combobox', { name: 'Altersgrenze von „Kinder“' }).selectOption('12');
+    const toast = toasts(page).getByRole('listitem').filter({ hasText: 'Altersgrenze von „Kinder“ gespeichert.' });
+    await expect(toast).toBeVisible();
+    await panel.getByRole('button', { name: 'Kinderprofil anlegen' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Kinderprofil anlegen' });
+    await sheet.getByRole('textbox', { name: 'Name' }).fill('Lena');
+    const create = sheet.getByRole('button', { name: 'Anlegen' });
+    await expect(toast).toBeVisible();
+    await toastAbove(page, toast, sheet.getByRole('button', { name: 'Abbrechen' }));
+    await toastAbove(page, toast, create);
+    await create.click();
+    await expect(toasts(page).getByText('„Lena“ angelegt.')).toBeVisible();
+    expect(logged(api, /POST \/api\/admin\/users\/.*\/profiles \{"name":"Lena"/)).toBe(true);
+    // the sheet has gone: its room with it, the toasts are back at their place
+    await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--sheet-h'))).toBe('');
+  });
+
+  test('sheets keep their footer free: a toast glides above Änderungen prüfen, Speichern takes the click', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const streams = rightsPanel(page).getByRole('spinbutton', { name: 'Gleichzeitige Streams' });
+    await streams.fill('4');
+    await saveViaReview(page);
+    const toast = toasts(page).getByRole('listitem').filter({ hasText: 'Rechte von Anna Beispiel gespeichert.' });
+    await expect(toast).toBeVisible();
+    await streams.fill('5');
+    await saveBar(page).getByRole('button', { name: 'Änderungen prüfen' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Änderungen prüfen' });
+    const save = sheet.getByRole('button', { name: 'Speichern' });
+    await expect(toast).toBeVisible();
+    await toastAbove(page, toast, save);
+    await save.click();
+    await expect(sheet).toHaveCount(0);
+    await expect(streams).toHaveValue('5');
+  });
+
+  test('profiles: delete asks first, then removes', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    const row = panel.getByRole('row', { name: /„Kinder“/ });
+    await row.getByRole('button', { name: 'Aktionen für Kinder' }).click();
+    await page.getByRole('dialog', { name: 'Kinder' }).getByRole('button', { name: 'Löschen' }).click();
+    const ask = page.getByRole('alertdialog', { name: '„Kinder“ löschen?' });
+    await expect(ask).toContainText('Merkliste, Verlauf und Favoriten des Profils werden gelöscht.');
+    await ask.getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(ask).toHaveCount(0);
+    await expect(row).toBeVisible();
+    expect(logged(api, /DELETE /)).toBe(false);
+    await row.getByRole('button', { name: 'Aktionen für Kinder' }).click();
+    await page.getByRole('dialog', { name: 'Kinder' }).getByRole('button', { name: 'Löschen' }).click();
+    await page.getByRole('alertdialog', { name: '„Kinder“ löschen?' }).getByRole('button', { name: 'Profil löschen' }).click();
+    await expect(toasts(page).getByText('„Kinder“ gelöscht.')).toBeVisible();
+    await expect(panel.getByRole('row', { name: /„Kinder“/ })).toHaveCount(0);
+    expect(logged(api, /DELETE \/api\/admin\/users\/.*\/profiles\/.*p002\s+-> 200/)).toBe(true);
+  });
+
+  test('profiles: the owner row has no kids switch, age limit or delete', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    const owner = panel.getByRole('row', { name: /Hauptprofil/ });
+    await expect(owner).toBeVisible();
+    await expect(owner.getByRole('switch')).toHaveCount(0);
+    await expect(owner.getByRole('combobox')).toHaveCount(0);
+    await owner.getByRole('button', { name: 'Aktionen für Anna' }).click();
+    const m = page.getByRole('dialog', { name: 'Anna' });
+    await expect(m.getByRole('button', { name: 'Umbenennen' })).toBeVisible();
+    await expect(m.getByRole('button', { name: 'Löschen' })).toHaveCount(0);
+  });
+
+  test('profiles: at 5 profiles the create button is disabled and says why', async ({ page, api }) => {
+    api.admin.userProfiles[ANNA] = [plain(ANNA, 1, 'Anna'), plain(ANNA, 2, 'Eins', true), plain(ANNA, 3, 'Zwei', true), plain(ANNA, 4, 'Drei', true), plain(ANNA, 5, 'Vier', true)];
+    await page.goto(`/admin/users/${ANNA}?tab=profiles`);
+    const panel = page.getByRole('tabpanel', { name: 'Profile' });
+    const btn = panel.getByRole('button', { name: 'Kinderprofil anlegen' });
+    await expect(btn).toBeDisabled();
+    await expect(panel.getByText('Höchstens 5 Profile pro Konto.')).toBeVisible();
+    await expect(btn).toHaveAccessibleDescription('Höchstens 5 Profile pro Konto.');
+    // one fewer and it is open again
+    await panel.getByRole('row', { name: /Vier/ }).getByRole('button', { name: 'Aktionen für Vier' }).click();
+    await page.getByRole('dialog', { name: 'Vier' }).getByRole('button', { name: 'Löschen' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Profil löschen' }).click();
+    await expect(btn).toBeEnabled();
+    await expect(panel.getByText('Höchstens 5 Profile pro Konto.')).toHaveCount(0);
   });
 
   test('devices: approve, withdraw approval, sign out one device, remove', async ({ page, api }) => {
@@ -317,15 +841,15 @@ test.describe('admin user detail (desktop)', () => {
     await page.goto(`/admin/users/${ANNA}`);
     const list = page.getByRole('tablist', { name: 'Bereiche von Anna Beispiel' });
     await expect(list).toBeVisible();
-    const names = ['Übersicht', 'Profile', 'Geräte', 'Downloads', 'Verlauf', 'Limits', 'Audit-Log'];
+    const names = ['Übersicht', 'Rechte', 'Profile', 'Geräte', 'Downloads', 'Verlauf', 'Audit-Log'];
     for (const n of names) await expect(list.getByRole('tab', { name: n, exact: true })).toBeVisible();
     await expect(list.getByRole('tab', { name: 'Übersicht' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('tabpanel', { name: 'Übersicht' })).toBeVisible();
     await list.getByRole('tab', { name: 'Übersicht' }).focus();
     await page.keyboard.press('ArrowRight');
-    await expect(list.getByRole('tab', { name: 'Profile' })).toBeFocused();
-    await expect(list.getByRole('tab', { name: 'Profile' })).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByRole('tabpanel', { name: 'Profile' })).toBeVisible();
+    await expect(list.getByRole('tab', { name: 'Rechte' })).toBeFocused();
+    await expect(list.getByRole('tab', { name: 'Rechte' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tabpanel', { name: 'Rechte' })).toBeVisible();
   });
 });
 
@@ -428,5 +952,168 @@ test.describe('admin user deletion', () => {
     expect(logged(api, new RegExp(`^POST /api/admin/users/${ANNA}/deletion/restore `))).toBe(true);
     expect(logged(api, /^PATCH /)).toBe(false);
     expect(anna).toMatchObject({ disabled: false, deletion_at: null });
+  });
+});
+
+test.describe('admin user detail: Sicht prüfen (desktop)', () => {
+  test.use({ allowedConsole: /status of (400|404|429)/ });
+  test.beforeEach(({ api }) => { api.asAdmin = true; });
+
+  const checkPanel = (page: import('@playwright/test').Page) => page.getByRole('tabpanel', { name: 'Sicht prüfen' });
+  const checkPosts = (api: { log: string[] }) => api.log.filter((l) => l.startsWith('POST ') && l.includes('/check '));
+
+  test('kids profile view: the chips switch the profile, the summary and the library counts follow', async ({ page, api }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=check`);
+    await expect(page.getByRole('tab', { name: 'Sicht prüfen' })).toHaveAttribute('aria-selected', 'true');
+    const panel = checkPanel(page);
+    const chips = panel.getByRole('group', { name: 'Profil wählen' }).getByRole('button');
+    // the owner first, the kids profile marked
+    await expect(chips).toHaveText([/^Anna/, /^Kinder.*Kinderprofil/]);
+    await expect(chips.first()).toHaveAttribute('aria-pressed', 'true');
+    const summary = panel.getByRole('region', { name: 'Kurzfassung' });
+    await expect(summary).toContainText('Anna sieht alle Bibliotheken.');
+    await expect(summary).toContainText('Keine Altersgrenze.');
+    await expect(summary).toContainText('Darf nicht herunterladen.');
+    const libs = panel.getByRole('region', { name: 'Bibliotheken' });
+    await expect(libs.getByRole('listitem').filter({ hasText: 'Filme' })).toHaveText(/Filme · 1\.204 von 1\.204/);
+    await chips.nth(1).click();
+    await expect(chips.nth(1)).toHaveAttribute('aria-pressed', 'true');
+    await expect(summary).toContainText('Kinderprofil: ab 6, Titel ohne Freigabe sind ausgeblendet, keine Kommentare, keine Partys.');
+    await expect(summary).not.toContainText('Keine Altersgrenze.');
+    await expect(libs.getByRole('listitem').filter({ hasText: 'Filme' })).toHaveText(/Filme · 212 von 1\.204/);
+    await expect(libs.getByRole('listitem').filter({ hasText: 'Serien' })).toHaveText(/Serien · 61 von 340/);
+    await expect(page.locator('main')).not.toContainText('undefined');
+    expect(checkPosts(api)).toEqual([]);
+  });
+
+  test('title check: a hidden title names its reason, a visible one says so', async ({ page, api }) => {
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const panel = checkPanel(page);
+    // a guest: age limit 12
+    await expect(panel.getByRole('region', { name: 'Kurzfassung' })).toContainText('Titel bis FSK 12.');
+    await panel.getByRole('searchbox', { name: 'Film oder Serie suchen' }).fill('Dunmoor');
+    const rows = panel.getByRole('region', { name: 'Titel prüfen' }).getByRole('listitem');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.filter({ hasText: 'Dunmoor Origins' })).toContainText('sichtbar');
+    const hidden = rows.filter({ hasNotText: 'Origins' });
+    await expect(hidden).toContainText('ausgeblendet · Freigabe FSK-16 über FSK 12');
+    await expect(hidden).toContainText('2021');
+    expect(checkPosts(api)).toHaveLength(1);
+    expect(JSON.parse(checkPosts(api)[0]!.slice(checkPosts(api)[0]!.indexOf('{'), checkPosts(api)[0]!.lastIndexOf(' -> ')))).toEqual({ profileId: `${CLARA.slice(0, -4)}p001`, query: 'Dunmoor' });
+    // the kids profile: an unrated title is hidden with its own reason
+    await panel.getByRole('group', { name: 'Profil wählen' }).getByRole('button', { name: /^Kinder/ }).click();
+    await expect(rows.filter({ hasText: 'Dunmoor Origins' })).toContainText('ausgeblendet · ohne Freigabe (Kinderprofil)');
+    expect(api.admin.audit.some((e) => e.action === 'user.check_viewed' && e.target === CLARA)).toBe(true);
+  });
+
+  test('title check: the 30-a-minute limit has its own message, not the generic failure', async ({ page, api }) => {
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const panel = checkPanel(page);
+    await expect(panel.getByRole('region', { name: 'Kurzfassung' })).toContainText('Clara sieht');
+    // the limiter has seen 30 checks this minute
+    api.admin.checkTimes = Array.from({ length: 30 }, () => Date.now());
+    await panel.getByRole('searchbox', { name: 'Film oder Serie suchen' }).fill('Dunmoor');
+    const status = panel.getByRole('region', { name: 'Titel prüfen' }).getByRole('status');
+    await expect(status).toHaveText('Zu viele Prüfungen in kurzer Zeit. Bitte eine Minute warten.');
+    await expect(status).not.toContainText('fehlgeschlagen');
+    await expect.poll(() => logged(api, /POST .*\/check .* -> 429/)).toBe(true);
+  });
+
+  test('the library counts hit the 30-a-minute limit: the tab says so, not the generic load error', async ({ page, api }) => {
+    // the limiter has seen 30 checks this minute before the tab asks for the counts
+    api.admin.checkTimes = Array.from({ length: 30 }, () => Date.now());
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const alert = checkPanel(page).getByRole('alert');
+    await expect(alert).toContainText('Zu viele Prüfungen in kurzer Zeit. Bitte eine Minute warten.');
+    await expect(alert).not.toContainText('nicht laden');
+    // the minute is over: Erneut versuchen loads the tab
+    api.admin.checkTimes = [];
+    await alert.getByRole('button').click();
+    await expect(checkPanel(page).getByRole('region', { name: 'Kurzfassung' })).toContainText('Clara sieht');
+  });
+
+  test('title check: an unrated title a grown-up\'s cap hides (adapters that say so) names that reason', async ({ page, api }) => {
+    api.admin.checkHidesUnrated = true;
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const panel = checkPanel(page);
+    await panel.getByRole('searchbox', { name: 'Film oder Serie suchen' }).fill('Dunmoor');
+    const rows = panel.getByRole('region', { name: 'Titel prüfen' }).getByRole('listitem');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.filter({ hasText: 'Dunmoor Origins' })).toContainText('ausgeblendet · ohne Altersfreigabe');
+    await expect(rows.filter({ hasText: 'Dunmoor Origins' })).not.toContainText('Kinderprofil');
+  });
+
+  test('title check: at most 8 hits, and the list says it may be cut', async ({ page }) => {
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const panel = checkPanel(page);
+    await panel.getByRole('searchbox', { name: 'Film oder Serie suchen' }).fill('Harbour');
+    const sec = panel.getByRole('region', { name: 'Titel prüfen' });
+    await expect(sec.getByRole('listitem')).toHaveCount(8);
+    await expect(sec.getByText('Höchstens 8 Treffer. Für weitere den Titel genauer eingeben.')).toBeVisible();
+    await panel.getByRole('searchbox', { name: 'Film oder Serie suchen' }).fill('Dunmoor');
+    await expect(sec.getByRole('listitem')).toHaveCount(2);
+    await expect(sec.getByText(/Höchstens 8 Treffer/)).toHaveCount(0);
+  });
+
+  test('kids summary: the effective limit from the rows (a lower account cap wins), none said honestly, never a guessed one', async ({ page, api }) => {
+    const clara = api.admin.users.find((u) => u.id === CLARA)!;
+    clara.ov = { ...clara.ov, maxParentalRating: 0 };
+    api.admin.userProfiles[CLARA] = [
+      { id: `${CLARA.slice(0, -4)}p001`, name: 'Clara', kids: false, maxRating: null, avatar: 'a1', lastUsed: null, isOwner: true, hasPin: false },
+      { id: `${CLARA.slice(0, -4)}p002`, name: 'Kinder', kids: true, maxRating: 12, avatar: 'a4', lastUsed: null, isOwner: false, hasPin: false },
+    ];
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const panel = checkPanel(page);
+    const summary = panel.getByRole('region', { name: 'Kurzfassung' });
+    await panel.getByRole('group', { name: 'Profil wählen' }).getByRole('button', { name: /^Kinder/ }).click();
+    await expect(summary).toContainText('Kinderprofil: ab 0, Titel ohne Freigabe sind ausgeblendet');
+    await expect(summary).not.toContainText('ab 12');
+    // a kids profile whose rows carry no limit at all: said as such (the answer is changed in the page, after the mock's route)
+    await page.addInitScript((part) => {
+      const orig = window.fetch.bind(window);
+      window.fetch = async (input, init) => {
+        const res = await orig(input, init);
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (!url.includes(part)) return res;
+        const v = await res.clone().json() as { rows: Array<{ key: string; value: unknown }>; profile: { maxRating: unknown } };
+        v.rows = v.rows.map((row) => (row.key === 'maxParentalRating' ? { ...row, value: null } : row));
+        v.profile.maxRating = null;
+        return new Response(JSON.stringify(v), { status: res.status, headers: res.headers });
+      };
+    }, `/api/admin/users/${CLARA}/rights?profile=`);
+    await page.reload();
+    await panel.getByRole('group', { name: 'Profil wählen' }).getByRole('button', { name: /^Kinder/ }).click();
+    await expect(summary).toContainText('Kinderprofil ohne Altersgrenze: Titel ohne Freigabe sind ausgeblendet, keine Kommentare, keine Partys.');
+    await expect(summary).not.toContainText(/ab \d/);
+  });
+
+  test('a malformed profile id is 400 (the route\'s schema), an unknown one 404', async ({ page }) => {
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    await expect(checkPanel(page).getByRole('region', { name: 'Kurzfassung' })).toContainText('Clara sieht');
+    /** the status of a request the page sends (the mock answers the page's requests); `post` is a JSON body */
+    const status = (url: string, post?: unknown) => page.evaluate(async ([u, b]) => (await fetch(u, b === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) })).status, [url, post] as const);
+    const base = `/api/admin/users/${CLARA}`;
+    expect(await status(`${base}/check?profile=not-a-profile`)).toBe(400);
+    expect(await status(`${base}/rights?profile=not-a-profile`)).toBe(400);
+    expect(await status(`${base}/check`, { profileId: 'x', query: 'Dunmoor' })).toBe(400);
+    expect(await status(`${base}/check?profile=${CLARA.slice(0, -4)}p099`)).toBe(404);
+  });
+
+  test('title check: nothing is sent under 2 characters', async ({ page, api }) => {
+    await page.goto(`/admin/users/${CLARA}?tab=check`);
+    const panel = checkPanel(page);
+    const box = panel.getByRole('searchbox', { name: 'Film oder Serie suchen' });
+    await expect(panel.getByRole('region', { name: 'Kurzfassung' })).toContainText('Clara sieht');
+    await box.fill('D');
+    await expect(panel.getByText('Mindestens 2 Zeichen eingeben.')).toBeVisible();
+    // a negative: give the 300 ms debounce more than its time before looking
+    await page.waitForTimeout(700);
+    expect(checkPosts(api)).toEqual([]);
+    await box.fill('Salt');
+    await expect(panel.getByRole('region', { name: 'Titel prüfen' }).getByRole('listitem')).toHaveCount(1);
+    await box.fill('S');
+    await expect(panel.getByText('Mindestens 2 Zeichen eingeben.')).toBeVisible();
+    await expect(panel.getByRole('region', { name: 'Titel prüfen' }).getByRole('listitem')).toHaveCount(0);
+    expect(checkPosts(api)).toHaveLength(1);
   });
 });

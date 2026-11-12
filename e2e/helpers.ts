@@ -98,6 +98,74 @@ export async function seamColumns(page: Page, box: { x: number; y: number; width
   return out;
 }
 
+/** a CSS `cubic-bezier(x1, y1, x2, y2)` as a function of the time fraction (0..1): the eased progress */
+export function cubicBezier(x1: number, y1: number, x2: number, y2: number): (x: number) => number {
+  const at = (a: number, b: number, t: number) => 3 * a * t * (1 - t) ** 2 + 3 * b * t * t * (1 - t) + t ** 3;
+  return (x) => {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (at(x1, x2, m) < x) lo = m; else hi = m; }
+    return at(y1, y2, (lo + hi) / 2);
+  };
+}
+/** the glass "out" curve (CSS --fr-out) */
+export const frOut = cubicBezier(0.22, 1, 0.36, 1);
+
+/**
+ * Arms a catch for the next `transform` CSS transition of `selector`: once a style change on <html> (a room variable such as
+ * --castbar-h or --savebar-h) starts one, it is paused at once, so the test can seek it (seekTransition). With `unset`, only a
+ * change after which that variable is no longer set counts; the glides of rooms that come or go before it land at once. Waits for transitions still
+ * running on the element first and returns where its `edge` stands before the change.
+ */
+export async function armTransition(page: Page, selector: string, edge: 'top' | 'bottom' = 'bottom', unset?: string): Promise<number> {
+  return page.evaluate(async ({ selector, edge, unset }) => {
+    const el = document.querySelector(selector)!;
+    await Promise.all(el.getAnimations().map((a) => a.finished.catch(() => undefined)));
+    const w = window as unknown as { __caught?: CSSTransition | null };
+    w.__caught = null;
+    const mo = new MutationObserver(() => {
+      const isLift = (x: Animation): x is CSSTransition => x instanceof CSSTransition && x.transitionProperty === 'transform';
+      // another room came or went first: that glide lands at once, so the one under test starts from a settled place
+      if (unset && document.documentElement.style.getPropertyValue(unset) !== '') { el.getAnimations().filter(isLift).forEach((x) => x.finish()); return; }
+      // getAnimations() flushes style, so a transition the change starts exists here, before any frame ran
+      const a = el.getAnimations().find(isLift);
+      if (a) { a.pause(); w.__caught = a; mo.disconnect(); }
+    });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+    return el.getBoundingClientRect()[edge];
+  }, { selector, edge, unset });
+}
+
+/**
+ * Seeks the caught transition (armTransition) to the given fractions of its duration and reads `edge` of `selector` at each
+ * point: deterministic, no frame sampling. Finishes the transition afterwards.
+ */
+export async function seekTransition(page: Page, selector: string, at: number[], edge: 'top' | 'bottom' = 'bottom'): Promise<{ duration: number; ys: number[] }> {
+  await expect.poll(() => page.evaluate(() => Boolean((window as unknown as { __caught?: CSSTransition | null }).__caught))).toBe(true);
+  return page.evaluate(({ selector, at, edge }) => {
+    const el = document.querySelector(selector)!;
+    const a = (window as unknown as { __caught: CSSTransition }).__caught;
+    const duration = Number(a.effect!.getComputedTiming().duration);
+    const ys = at.map((f) => { a.currentTime = f * duration; return el.getBoundingClientRect()[edge]; });
+    a.finish();
+    return { duration, ys };
+  }, { selector, at, edge });
+}
+
+/**
+ * Asserts a seeked transition (seekTransition at fractions `at`) runs from `from` to `to` along `ease`: no jump at its start,
+ * monotonic, at least two points strictly in between, each point within `tol` px of the curve, ending at the target.
+ */
+export function expectAlongCurve(ys: number[], at: number[], from: number, to: number, ease: (x: number) => number = frOut, tol = 2): void {
+  expect(Math.abs(ys[0]! - from)).toBeLessThan(tol);
+  expect(Math.abs(ys.at(-1)! - to)).toBeLessThan(tol);
+  const dir = Math.sign(to - from);
+  for (let i = 1; i < ys.length; i++) expect((ys[i]! - ys[i - 1]!) * dir).toBeGreaterThanOrEqual(-0.5);
+  expect(ys.filter((y) => Math.min(from, to) + 1 < y && y < Math.max(from, to) - 1).length).toBeGreaterThanOrEqual(2);
+  at.forEach((f, i) => expect(Math.abs(ys[i]! - (from + (to - from) * ease(f))), `at ${f}`).toBeLessThan(tol));
+}
+
 /**
  * Clicks and expects the player route `/live/watch/<id>`: returns as soon as the URL is that path, so a wrong channel (or none)
  * fails. The player page itself is Task 39's: a full page load of it is answered with a stub document (a client-side navigation

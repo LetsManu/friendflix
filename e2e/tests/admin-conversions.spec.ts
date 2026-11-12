@@ -15,8 +15,12 @@ test.describe('admin: Umwandlungen card on the Wiedergabe-Check page', () => {
     await page.goto('/admin/playback');
     const c = card(page);
     await expect(c.getByText('2 von 3 belegt')).toBeVisible();
-    const rows = c.getByRole('list', { name: 'Läuft gerade' }).getByRole('listitem');
+    const list = c.getByRole('list', { name: 'Läuft gerade' });
+    const rows = list.getByRole('listitem');
     await expect(rows).toHaveCount(2);
+    // the list is named by its heading (one name, not the same words twice)
+    await expect(list).not.toHaveAttribute('aria-label', /./);
+    await expect(list).toHaveAttribute('aria-labelledby', (await c.getByRole('heading', { name: 'Läuft gerade' }).getAttribute('id'))!);
     await expect(rows.nth(0)).toContainText('Dunmoor');
     await expect(rows.nth(0)).toContainText('Film/Serie');
     await expect(rows.nth(0)).toContainText('Wohnzimmer-TV');
@@ -145,12 +149,49 @@ test.describe('admin: Umwandlungen card on the Wiedergabe-Check page', () => {
   });
 
   test('on Plex there is nothing to measure: a plain note, no button', async ({ page, api }) => {
+    api.serverKind = 'plex';
     api.admin.conv.measure = { running: false, busy: null, last: { outcome: 'unsupported', at: null } };
     await page.goto('/admin/playback');
     const c = card(page);
     await expect(c.getByText('Messung nur mit Jellyfin')).toBeVisible();
     await expect(c.getByRole('button', { name: 'Neu messen' })).toHaveCount(0);
     await expect(c.getByText(/Noch nicht gemessen/)).toHaveCount(0);
+  });
+
+  test('Neu messen keeps its place from the first paint on Jellyfin; Plex has no slot at all; the header does not move', async ({ page, api }) => {
+    for (const plex of [true, false]) {
+      api.serverKind = plex ? 'plex' : 'jellyfin';
+      api.admin.conv.measure = plex ? { running: false, busy: null, last: { outcome: 'unsupported', at: null } } : { running: false, busy: null, last: null };
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      await page.route('**/api/admin/conversions', async (r) => { await gate; await r.fallback(); });
+      await page.goto('/admin/playback');
+      const c = card(page);
+      await expect(c.getByRole('heading', { name: 'Umwandlungen' })).toBeVisible();
+      const slot = c.getByTestId('conv-measure');
+      if (plex) await expect(slot).toHaveCount(0); // known from /api/me before the card renders: nothing reserved, nothing to flash
+      else {
+        await expect(slot).toBeAttached();
+        await expect(slot.locator('button')).not.toHaveAttribute('aria-describedby', /./); // its note does not exist yet
+      }
+      await expect(c.getByRole('button', { name: 'Neu messen' })).toHaveCount(0); // reserved (Jellyfin), not shown and not focusable
+      const head = c.locator('.head');
+      const before = (await head.boundingBox())!;
+      release();
+      await expect(c.getByTestId('conv-used')).toBeVisible();
+      if (plex) {
+        await expect(c.getByText('Messung nur mit Jellyfin')).toBeVisible();
+        await expect(slot).toHaveCount(0);
+        // no empty row: the header is as tall as its title block
+        expect((await head.boundingBox())!.height).toBeCloseTo((await c.locator('.head .ttl').boundingBox())!.height, 0);
+      } else {
+        await expect(c.getByRole('button', { name: 'Neu messen' })).toBeEnabled();
+        await expect(slot.locator('button')).toHaveAttribute('aria-describedby', (await c.locator('.note').getAttribute('id'))!);
+      }
+      const after = (await head.boundingBox())!;
+      expect([after.y, after.height]).toEqual([before.y, before.height]);
+      await page.unroute('**/api/admin/conversions');
+    }
   });
 
   test('a measurement that failed is told in the reserved line', async ({ page, api }) => {

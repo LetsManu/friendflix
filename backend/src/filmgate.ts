@@ -20,6 +20,14 @@ export const releaseGrants = async (ctx: Ctx, playSessionId: string): Promise<vo
 export const convertsOf = (info: PlaybackDto): boolean => !info.directUrl && Boolean(info.delivery) && info.delivery!.video !== 'copy';
 
 /**
+ * Owner ruling of 2026-11-12: the budget's copy fallback carries the source at its own bitrate. It is offered only to a request that asked
+ * for at least that much; a request whose own cap (`cap`, the viewer's pick or line: data saver, a lower quality, ABR on a slow line) lies
+ * below the source gets `503 server_busy` instead of a copy above what it asked for. An unknown source bitrate counts as above (never a copy
+ * of unknown size for a viewer who asked for less).
+ */
+export const copyFitsCap = (info: Pick<PlaybackDto, 'sourceBitrate'>, cap: number): boolean => info.sourceBitrate !== undefined && info.sourceBitrate <= cap;
+
+/**
  * The conversion gate of one film playback or cast request (spec §5.5, rulings 6 and 7). One grant id serves the HEVC gate
  * (`hevcgrant:`) and the budget (`conv:grant:`); both gates share one session-list read (sharedSessionRead), and the budget is asked at
  * most once per request, so their worst cases do not add up:
@@ -30,6 +38,8 @@ export const convertsOf = (info: PlaybackDto): boolean => !info.directUrl && Boo
  *  - `bind`: the grants follow the answer given (null: nothing is given, both are dropped). Never stops a running conversion.
  *  - `release`: an error after `bind` (the cast token was taken back, its mint failed): the bound grants of that play session go.
  * `label` (title; a series by its series name): given at construction, or to `admit` / `bind` when it is known only later.
+ * `swap`: a hover / focus prefetch of /api/playback/info (body `prefetch`): this grant replaces the device's own unused prefetch grants
+ * (admitConversion). A player's grant never has it, so no prefetch can drop it.
  */
 export interface FilmGate {
   hevc: () => Promise<HevcGate>;
@@ -38,12 +48,17 @@ export interface FilmGate {
   release: (playSessionId: string) => Promise<void>;
 }
 
-export function filmGate(ctx: Ctx, o: { userId: string; deviceId?: string; label?: string }): FilmGate {
+export function filmGate(ctx: Ctx, o: { userId: string; deviceId?: string; label?: string; swap?: boolean }): FilmGate {
   const grantId = randomUUID();
   const sessions = sharedSessionRead(ctx, HEVC_SESSIONS_TIMEOUT_MS);
+  // A request without a device id (no session device) is its own "device": user + this request's id. Its own grants never count against
+  // it, and it never hides or replaces a grant of another request of the same account. (Leaving the own-device rule out by user alone
+  // would hide another app's or tab's real grants of that account: an undercount. This way an earlier deviceless request's grant still
+  // counts until it is bound, released or its 30 s end: the safe direction.)
+  const device = o.deviceId ?? `req:${grantId}`;
   let budget: Promise<Admission> | undefined;
   const ask = (hevc: boolean, label = o.label): Promise<Admission> => (budget ??= admitConversion(ctx, {
-    kind: 'film', userId: o.userId, ...(o.deviceId ? { deviceId: o.deviceId } : {}), hint: grantId, ...(hevc ? { hevc: true } : {}), ...(label ? { label } : {}), sessions,
+    kind: 'film', userId: o.userId, deviceId: device, hint: grantId, ...(hevc ? { hevc: true } : {}), ...(label ? { label } : {}), ...(o.swap ? { swap: true } : {}), sessions,
   }).catch((): Admission => ({ ok: false, why: 'unknown' })));
   return {
     hevc: async () => {

@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
 import { noHorizontalOverflow } from '../helpers.js';
-import { auid, type AdminState } from '../mocks/admin.js';
+import { auid, rightsAuditSamples, type AdminState } from '../mocks/admin.js';
 
 const SHOTS = process.env.B18_SHOTS;
 const toasts = (page: import('@playwright/test').Page) => page.getByRole('region', { name: 'Hinweise' });
 const logged = (api: { log: string[] }, re: RegExp) => api.log.some((l) => re.test(l));
 
 test.describe('admin people (desktop)', () => {
-  test.use({ allowedConsole: /status of (409|500|502)/ });
+  test.use({ allowedConsole: /status of (400|409|500|502)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   test.describe('users', () => {
@@ -282,6 +282,49 @@ test.describe('admin people (desktop)', () => {
       await expect(page.getByText('Niemand wartet auf Freigabe.')).toBeVisible();
     });
 
+    test('approval offers Admin, invite does not', async ({ page }) => {
+      await page.goto('/admin/users?tab=approvals');
+      const card = page.getByRole('region', { name: 'Mia Neu' });
+      await expect(card.getByRole('combobox', { name: 'Rolle' }).getByRole('option', { name: /^Admin · / })).toHaveCount(1);
+      await page.goto('/admin/users?tab=invites');
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      await expect(form.getByRole('combobox', { name: 'Rolle' }).locator('option').first()).toHaveText(/^Familie/);
+      await expect(form.getByRole('combobox', { name: 'Rolle' }).getByRole('option', { name: /^Admin/ })).toHaveCount(0);
+    });
+
+    test('roles that fail to load: nothing can be granted, the error offers a retry, then it works', async ({ page, api }) => {
+      let fail = true;
+      await page.route('**/api/admin/roles', (r) => (fail ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"boom"}' }) : r.fallback()));
+      await page.goto('/admin/users?tab=approvals');
+      const card = page.getByRole('region', { name: 'Mia Neu' });
+      await expect(card.getByText('Das ließ sich nicht laden.')).toBeVisible();
+      await expect(card.getByRole('combobox', { name: 'Rolle' })).toBeDisabled();
+      await expect(card.getByRole('button', { name: 'Freigeben' })).toBeDisabled();
+      const retry = card.getByRole('button', { name: 'Erneut versuchen' });
+      await expect.poll(async () => (await retry.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+      await page.getByRole('tab', { name: 'Einladungen' }).click();
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      await expect(form.getByRole('button', { name: 'Einladung erstellen' })).toBeDisabled();
+      await page.getByRole('tab', { name: /Warten auf Freigabe/ }).click();
+      fail = false;
+      await card.getByRole('button', { name: 'Erneut versuchen' }).click();
+      await expect(card.getByRole('combobox', { name: 'Rolle' })).toBeEnabled();
+      await expect(card.getByRole('button', { name: 'Freigeben' })).toBeEnabled();
+      await card.getByRole('button', { name: 'Freigeben' }).click();
+      await expect.poll(() => logged(api, new RegExp(`POST /api/admin/approvals/${auid(401)}/approve .*"role":"friend"`))).toBe(true);
+    });
+
+    test('approvals: when friend is not invitable the shown role is the sent role', async ({ page, api }) => {
+      api.admin.matrix.roles.find((r) => r.key === 'friend')!.invitable = false;
+      await page.goto('/admin/users?tab=approvals');
+      const card = page.getByRole('region', { name: 'Mia Neu' });
+      const pick = card.getByRole('combobox', { name: 'Rolle' });
+      await expect(pick).toBeEnabled();
+      await expect(pick).toHaveValue('family');
+      await card.getByRole('button', { name: 'Freigeben' }).click();
+      await expect.poll(() => logged(api, new RegExp(`POST /api/admin/approvals/${auid(401)}/approve .*"role":"family"`))).toBe(true);
+    });
+
     test('approvals: the old ?tab=pending link opens the tab; an already handled request drops its card', async ({ page, api }) => {
       await page.goto('/admin/users?tab=pending');
       await expect(page.getByRole('tab', { name: 'Warten auf Freigabe (2)' })).toHaveAttribute('aria-selected', 'true');
@@ -396,6 +439,21 @@ test.describe('admin people (desktop)', () => {
   });
 
   test.describe('invites', () => {
+    test('invite offers the env role with its summary', async ({ page, api }) => {
+      const crew = api.admin.matrix.roles.find((r) => r.key === 'crew')!;
+      crew.label = 'Oma';
+      crew.values = { ...crew.values, maxStreams: 2, maxBitrate: 8_000_000, maxParentalRating: 12, download: false };
+      await page.goto('/admin/users?tab=invites');
+      const form = page.getByRole('region', { name: 'Neue Einladung' });
+      const pick = form.getByRole('combobox', { name: 'Rolle' });
+      await expect(pick.getByRole('option', { name: /^Oma · 2 Streams · .*ab 12 · Downloads aus$/ })).toHaveCount(1);
+      await expect(pick.getByRole('option', { name: /^Admin/ })).toHaveCount(0);
+      await expect(pick.locator('option')).toHaveText([/^Familie/, /^Freund/, /^Gast/, /^Oma/]);
+      await pick.selectOption('crew');
+      await form.getByRole('button', { name: 'Einladung erstellen' }).click();
+      await expect.poll(() => logged(api, /POST \/api\/admin\/invites .*"role":"crew"/)).toBe(true);
+    });
+
     test('create → one-time link with Copy and QR; list with status pills', async ({ page, api, context }) => {
       await context.grantPermissions(['clipboard-read', 'clipboard-write']);
       await page.goto('/admin/users?tab=invites');
@@ -506,6 +564,50 @@ test.describe('admin people (desktop)', () => {
       await expect(table.getByRole('row')).toHaveCount(10);
     });
 
+    test('Bereich Personen filters: the request carries area=people', async ({ page }) => {
+      await page.goto('/admin/audit');
+      const table = page.getByRole('table', { name: 'Audit-Log' });
+      await expect(table.getByRole('row')).toHaveCount(10);
+      const asked = page.waitForRequest((r) => /\/api\/admin\/audit\?/.test(r.url()) && new URL(r.url()).searchParams.get('area') === 'people');
+      await page.getByRole('combobox', { name: 'Bereich' }).selectOption({ label: 'Personen' });
+      await asked;
+      // user, role, invite, profile and device entries stay (6 of the 9); wishes, lists, system entries go
+      await expect(table.getByRole('row')).toHaveCount(7);
+      await expect(table.getByText('Konto für Leon Richter angelegt')).toBeVisible();
+      await expect(table.getByText('Filmabend')).toHaveCount(0);
+      await page.getByRole('button', { name: 'Filter zurücksetzen' }).click();
+      await expect(table.getByRole('row')).toHaveCount(10);
+    });
+
+    test('the target filter comes from the link, shows who it is about and clears', async ({ page, api }) => {
+      api.admin.audit.unshift(...rightsAuditSamples({ id: auid(2), name: 'Anna Beispiel' }));
+      await page.goto(`/admin/audit?target=${auid(2)}`);
+      const table = page.getByRole('table', { name: 'Audit-Log' });
+      await expect(table.getByRole('row')).toHaveCount(5);
+      const chip = page.getByRole('group', { name: 'Betrifft: Anna Beispiel' });
+      await expect(chip).toBeVisible();
+      await expect(table.getByText('Ben Muster hat für Anna Beispiel „Umwandeln erlaubt“ auf nicht erlaubt gestellt (vorher: erlaubt)')).toBeVisible();
+      await chip.getByRole('button', { name: 'Filter „Betrifft“ entfernen' }).click();
+      await expect(page).toHaveURL(/\/admin\/audit$/);
+      await expect(chip).toHaveCount(0);
+      await expect(table.getByRole('row')).toHaveCount(14);
+    });
+
+    test('person Verlauf reads as sentences, with stored exceptions and a link to the log', async ({ page, api }) => {
+      api.admin.audit.unshift(...rightsAuditSamples({ id: auid(2), name: 'Anna Beispiel' }));
+      await page.goto(`/admin/users/${auid(2)}?tab=audit`);
+      const panel = page.getByRole('tabpanel', { name: 'Audit-Log' });
+      await expect(panel.getByText('Ben Muster hat für Anna Beispiel „Umwandeln erlaubt“ auf nicht erlaubt gestellt (vorher: erlaubt)')).toBeVisible();
+      await expect(panel.getByText('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ einzeln festgelegt: erlaubt (vorher: wie Rolle)')).toBeVisible();
+      await expect(panel.getByText('Ben Muster hat für Anna Beispiel „Wünsche pro Monat“ auf Unbegrenzt gestellt (vorher: 5)')).toBeVisible();
+      const stored = panel.getByRole('row').filter({ hasText: 'gespeicherte Ausnahmen geändert, die gerade nichts bewirken' });
+      await expect(stored.getByText('Auf Fernseher übertragen (gespeichert): erlaubt → wie Rolle')).toBeVisible();
+      await expect(panel).not.toContainText(/adminPeople|\{|undefined/);
+      // the log filters by target only: the link says it opens the entries about Anna (the tab also lists what she did)
+      await panel.getByRole('link', { name: 'Einträge zu dieser Person im Audit-Log' }).click();
+      await expect(page).toHaveURL(new RegExp(`/admin/audit\\?target=${auid(2)}`));
+    });
+
     test('paging, sort by time, error with retry', async ({ page, api }) => {
       for (let i = 0; i < 40; i++) api.admin.audit.push({ id: i + 1, at: new Date(Date.now() - (100 + i) * 3600e3).toISOString(), action: 'user.enable', target: null, meta: {}, actor: 'Tester', target_name: `Person ${i}` });
       await page.goto('/admin/audit');
@@ -520,6 +622,300 @@ test.describe('admin people (desktop)', () => {
       fail = false;
       await alert.getByRole('button', { name: 'Erneut versuchen' }).click();
       await expect(page.getByText('1–25 von 49')).toBeVisible();
+    });
+  });
+
+  test.describe('summary, rights filters and bulk rights', () => {
+    const table = (page: import('@playwright/test').Page) => page.getByRole('table', { name: 'Nutzer' });
+    /** the list requests of the page (the mock's log only holds writes): start before the first goto */
+    const watchList = (page: import('@playwright/test').Page): string[] => {
+      const urls: string[] = [];
+      page.on('request', (r) => { const u = new URL(r.url()); if (u.pathname === '/api/admin/users') urls.push(u.search); });
+      return urls;
+    };
+
+    test('summary tiles and approvals badge', async ({ page }) => {
+      await page.goto('/admin/users');
+      const strip = page.getByRole('region', { name: 'Überblick' });
+      await expect(strip.getByText('Personen', { exact: true })).toBeVisible();
+      const waiting = strip.getByRole('link', { name: /2\s*Warten auf Freigabe/ });
+      await expect(waiting).toHaveAttribute('href', /\?tab=approvals$/);
+      await expect(waiting).toHaveClass(/\bwarn\b/); // amber while someone waits
+      await expect(strip.getByRole('link', { name: /Offene Einladungen/ })).toBeVisible();
+      await expect(strip.getByText('Läuft bald ab', { exact: true })).toBeVisible();
+      // the sidebar item of the people page carries the number of waiting sign-ups
+      await expect(page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: /Nutzer.*2 offen/ })).toBeVisible();
+      await strip.getByRole('link', { name: /Warten auf Freigabe/ }).click();
+      await expect(page.getByRole('tab', { name: /Warten auf Freigabe/ })).toHaveAttribute('aria-selected', 'true');
+      // approving one updates the badge, the tile and the people total at once (no 60 s wait)
+      await page.getByRole('region', { name: 'Mia Neu' }).getByRole('button', { name: 'Freigeben' }).click();
+      await expect(toasts(page).getByText('Mia Neu freigegeben.')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: /Nutzer.*1 offen/ })).toBeVisible();
+      await expect(strip.getByRole('link', { name: /1\s*Warten auf Freigabe/ })).toBeVisible();
+      await expect(strip.getByText('14', { exact: true })).toBeVisible();
+    });
+
+    test('no tile is amber and no badge shows without waiting sign-ups', async ({ page, api }) => {
+      api.admin.approvals = [];
+      await page.goto('/admin/users');
+      const strip = page.getByRole('region', { name: 'Überblick' });
+      const waiting = strip.getByRole('link', { name: /0\s*Warten auf Freigabe/ });
+      await expect(waiting).toBeVisible();
+      await expect(waiting).not.toHaveClass(/\bwarn\b/);
+      await expect(page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: /Nutzer.*offen/ })).toHaveCount(0);
+    });
+
+    test('filter chips: Mit Ausnahmen asks the backend, fills the chip and clears with ×', async ({ page }) => {
+      const calls = watchList(page);
+      await page.goto('/admin/users');
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
+      const chips = page.getByRole('group', { name: 'Filter' });
+      const chip = chips.getByRole('button', { name: 'Mit Ausnahmen' });
+      await expect(chip).toHaveAttribute('aria-pressed', 'false');
+      await chip.click();
+      await expect(chip).toHaveAttribute('aria-pressed', 'true');
+      await expect.poll(() => calls.some((l) => /[?&]overrides=1(&|\s|$)/.test(l))).toBe(true);
+      await expect(table(page).getByRole('row', { name: /Anna Beispiel/ })).toBeVisible();
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toHaveCount(0);
+      // the badge of the person opens the rights tab of that person
+      await expect(table(page).getByRole('row', { name: /Anna Beispiel/ }).getByRole('link', { name: /2 Ausnahmen/ })).toHaveAttribute('href', `/admin/users/${auid(2)}?tab=rights`);
+      await expect(page).toHaveURL(/overrides=1/);
+      // ... and clicking it really opens the Rechte tab
+      await table(page).getByRole('row', { name: /Anna Beispiel/ }).getByRole('link', { name: /2 Ausnahmen/ }).click();
+      await expect(page).toHaveURL(new RegExp(`/admin/users/${auid(2)}\\?tab=rights$`));
+      await expect(page.getByRole('tab', { name: 'Rechte' })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByRole('tabpanel', { name: 'Rechte' }).getByRole('radiogroup', { name: 'Watch-Partys' })).toBeVisible();
+      await page.goBack();
+      await expect(page).toHaveURL(/overrides=1/);
+      await expect(chip).toHaveAttribute('aria-pressed', 'true');
+      await chip.click(); // pressed: the chip shows × and clears the filter
+      await expect(chip).toHaveAttribute('aria-pressed', 'false');
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
+      await expect(page).not.toHaveURL(/overrides/);
+    });
+
+    test('right filter, kids filter and clear all', async ({ page }) => {
+      const calls = watchList(page);
+      await page.goto('/admin/users');
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
+      await page.getByRole('combobox', { name: 'Recht' }).selectOption('cast:off');
+      await expect.poll(() => calls.some((l) => /perm=cast%3Aoff/.test(l))).toBe(true);
+      await page.getByRole('group', { name: 'Filter' }).getByRole('button', { name: 'Mit Kinderprofil' }).click();
+      await expect.poll(() => calls.some((l) => /kids=1/.test(l) && /perm=cast%3Aoff/.test(l))).toBe(true);
+      await expect(page.getByRole('group', { name: 'Filter' }).getByRole('button', { name: /Auf Fernseher übertragen: nein/ })).toBeVisible();
+      await page.getByRole('button', { name: 'Alle Filter löschen' }).click();
+      await expect(page.getByRole('button', { name: 'Alle Filter löschen' })).toHaveCount(0);
+      await expect(page.getByRole('combobox', { name: 'Recht' })).toHaveValue('');
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
+    });
+
+    test('Ohne 2FA only with the sign-in provider API', async ({ page }) => {
+      const calls = watchList(page);
+      await page.goto('/admin/users');
+      const chips = page.getByRole('group', { name: 'Filter' });
+      await chips.getByRole('button', { name: 'Ohne 2FA' }).click();
+      await expect.poll(() => calls.some((l) => /mfa=off/.test(l))).toBe(true);
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
+      await expect(table(page).getByRole('row', { name: /Anna Beispiel/ })).toHaveCount(0);
+    });
+
+    test('Warten auf Freigabe and the right / 2FA filters exclude each other (the backend answers 400 for the pair)', async ({ page }) => {
+      const calls = watchList(page);
+      await page.goto('/admin/users');
+      const chips = page.getByRole('group', { name: 'Filter' });
+      await page.getByRole('combobox', { name: 'Recht' }).selectOption('cast:off');
+      await expect(page.getByRole('combobox', { name: 'Status' }).locator('option[value="pending"]')).toBeDisabled();
+      await page.getByRole('combobox', { name: 'Recht' }).selectOption('');
+      await chips.getByRole('button', { name: 'Ohne 2FA' }).click();
+      await expect(page.getByRole('combobox', { name: 'Status' }).locator('option[value="pending"]')).toBeDisabled();
+      await chips.getByRole('button', { name: 'Ohne 2FA' }).click();
+      // the other way round: with pending chosen, both are off and disabled; choosing it clears a set one
+      await page.getByRole('combobox', { name: 'Recht' }).selectOption('cast:off');
+      await page.getByRole('combobox', { name: 'Status' }).selectOption('active');
+      await page.getByRole('combobox', { name: 'Recht' }).selectOption('');
+      await page.getByRole('combobox', { name: 'Status' }).selectOption('pending');
+      await expect(page.getByRole('combobox', { name: 'Recht' })).toBeDisabled();
+      await expect(chips.getByRole('button', { name: 'Ohne 2FA' })).toBeDisabled();
+      await expect(table(page).getByRole('row', { name: /Mia Neu/ })).toBeVisible();
+      expect(calls.some((l) => /status=pending/.test(l) && /(perm|mfa)=/.test(l))).toBe(false);
+    });
+
+    test('a pending status in the URL drops perm and mfa instead of failing the list', async ({ page }) => {
+      await page.goto('/admin/users?status=pending&mfa=off&perm=cast%3Aoff');
+      await expect(table(page).getByRole('row', { name: /Mia Neu/ })).toBeVisible();
+      await expect(page.getByText('Das ließ sich nicht laden')).toHaveCount(0);
+      await expect(page.getByRole('combobox', { name: 'Recht' })).toBeDisabled();
+    });
+
+    test('the URL is the truth for the filters: the sidebar link clears them, Back brings them again', async ({ page }) => {
+      await page.goto('/admin/users?overrides=1');
+      const chip = page.getByRole('group', { name: 'Filter' }).getByRole('button', { name: 'Mit Ausnahmen' });
+      await expect(chip).toHaveAttribute('aria-pressed', 'true');
+      await expect(table(page).getByRole('row', { name: /Anna Beispiel/ })).toBeVisible();
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toHaveCount(0);
+      // the sidebar's plain /admin/users: no filter in the URL, none shown, the whole list
+      await page.getByRole('navigation', { name: 'Admin-Bereiche' }).getByRole('link', { name: /^Nutzer/ }).click();
+      await expect(page).toHaveURL(/\/admin\/users$/);
+      await expect(chip).toHaveAttribute('aria-pressed', 'false');
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Alle Filter löschen' })).toHaveCount(0);
+      // a reload shows what the URL says, as before it
+      await page.reload();
+      await expect(chip).toHaveAttribute('aria-pressed', 'false');
+      // Back: the filtered entry, filtered again
+      await page.goBack();
+      await expect(page).toHaveURL(/overrides=1/);
+      await expect(chip).toHaveAttribute('aria-pressed', 'true');
+      await expect(table(page).getByRole('row', { name: /Ben Test/ })).toHaveCount(0);
+    });
+
+    test('mfa=off in the URL without the provider API is dropped: no pressed chip, no chip at all', async ({ page, api }) => {
+      api.admin.authentik.recovery = false;
+      await page.goto('/admin/users?mfa=off');
+      await expect(page.getByRole('group', { name: 'Filter' }).getByRole('button', { name: 'Mit Ausnahmen' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Ohne 2FA' })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Alle Filter löschen' })).toHaveCount(0);
+      await expect(page).not.toHaveURL(/mfa=/);
+    });
+
+    test('no Ohne 2FA chip without the provider API', async ({ page, api }) => {
+      api.admin.authentik.recovery = false;
+      await page.goto('/admin/users');
+      await expect(page.getByRole('group', { name: 'Filter' }).getByRole('button', { name: 'Mit Ausnahmen' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Ohne 2FA' })).toHaveCount(0);
+    });
+
+    test('columns: kids profiles count and the note as a tooltip', async ({ page }) => {
+      await page.goto('/admin/users');
+      const anna = table(page).getByRole('row', { name: /Anna Beispiel/ });
+      await expect(anna.getByTitle('1 Kinderprofil')).toBeVisible();
+      await expect(anna.getByRole('link', { name: 'Anna Beispiel' })).toBeVisible();
+      // the note opens from a button (keyboard, tap) and closes with Escape
+      const note = anna.getByRole('button', { name: 'Notiz' });
+      await note.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('note')).toHaveText('Teilt das Konto mit ihrer Familie');
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('note')).toHaveCount(0);
+      await note.click();
+      await expect(page.getByRole('note')).toBeVisible();
+      await page.getByRole('heading', { level: 1 }).click();
+      await expect(page.getByRole('note')).toHaveCount(0);
+      await expect(table(page).getByRole('row', { name: /Clara Fischer/ }).getByTitle('2 Kinderprofile')).toBeVisible();
+    });
+
+    test('a note near the bottom of the screen opens above its button and stays inside', async ({ page }) => {
+      await page.setViewportSize({ width: 1280, height: 420 });
+      await page.goto('/admin/users');
+      const note = table(page).getByRole('row', { name: /Anna Beispiel/ }).getByRole('button', { name: 'Notiz' });
+      await note.evaluate((el) => el.scrollIntoView({ block: 'end' }));
+      await note.click();
+      const pop = page.getByRole('note');
+      await expect(pop).toBeVisible();
+      await expect.poll(async () => {
+        const [b, p] = [await note.boundingBox(), await pop.boundingBox()];
+        return !!b && !!p && p.y + p.height <= b.y && p.y >= 0;
+      }).toBe(true);
+      // closing is animated and ends with the popover gone
+      await page.keyboard.press('Escape');
+      await expect(pop).toHaveCount(0);
+    });
+
+    test('bulk Recht setzen: Übertragen verbieten after a confirm that names both', async ({ page, api }) => {
+      await page.goto('/admin/users');
+      await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
+      await table(page).getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
+      const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
+      await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('cast');
+      await bar.getByRole('button', { name: 'Verbieten' }).click();
+      const dlg = page.getByRole('alertdialog');
+      await expect(dlg).toContainText('Anna Beispiel, Ben Test');
+      await expect(dlg).toContainText('„Auf Fernseher übertragen“ für 2 Personen auf „nicht erlaubt“ setzen?');
+      await dlg.getByRole('button', { name: 'Abbrechen' }).click();
+      expect(logged(api, /\/api\/admin\/users\/bulk/)).toBe(false);
+      await bar.getByRole('button', { name: 'Verbieten' }).click();
+      await dlg.getByRole('button', { name: 'Übernehmen' }).click();
+      await expect(toasts(page).getByText('2 Konten geändert.')).toBeVisible();
+      const post = api.log.find((l) => l.startsWith('POST /api/admin/users/bulk '))!;
+      expect(JSON.parse(post.slice('POST /api/admin/users/bulk '.length, post.indexOf(' -> ')))).toEqual({ ids: [auid(2), auid(3)], action: 'perm', perm: 'cast', value: false });
+      // the new exception shows in the list at once
+      await expect(table(page).getByRole('row', { name: /Ben Test/ }).getByRole('link', { name: /1 Ausnahme/ })).toBeVisible();
+    });
+
+    test('bulk Wie Rolle sends null, Erlauben sends true', async ({ page, api }) => {
+      await page.goto('/admin/users');
+      await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
+      const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
+      // every button of the bulk bar is 44 px with a fine pointer too: one height for the whole row
+      await expect(bar.getByRole('button', { name: 'Richtlinien neu anwenden' })).toBeVisible();
+      const heights = await bar.getByRole('button').evaluateAll((bs) => bs.map((b) => [b.textContent?.trim(), Math.round(b.getBoundingClientRect().height)] as const));
+      expect(heights.length).toBeGreaterThanOrEqual(10);
+      for (const [name, h] of heights) expect(h, name ?? '').toBe(44);
+      await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('party');
+      await bar.getByRole('button', { name: 'Wie Rolle' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();
+      await expect.poll(() => logged(api, /POST \/api\/admin\/users\/bulk .*"perm":"party","value":null/)).toBe(true);
+      await expect(bar).toHaveCount(0); // the selection is cleared after a run
+      await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
+      await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('party');
+      await bar.getByRole('button', { name: 'Erlauben' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();
+      await expect.poll(() => logged(api, /POST \/api\/admin\/users\/bulk .*"perm":"party","value":true/)).toBe(true);
+    });
+
+    test('bulk Erlauben writes like PUT /rights: a value equal to the role is not stored, only real changes count', async ({ page, api }) => {
+      // Anna (Freund) has party switched off as an exception, Ben (Familie) has it on through his role
+      await page.goto('/admin/users');
+      await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
+      await table(page).getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
+      const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
+      await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('party');
+      await bar.getByRole('button', { name: 'Erlauben' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();
+      await expect(toasts(page).getByText('1 Konto geändert.')).toBeVisible();
+      const anna = api.admin.users.find((u) => u.id === auid(2))!, ben = api.admin.users.find((u) => u.id === auid(3))!;
+      expect(anna.perms?.party).toBeUndefined(); // equal to the role: the exception goes, nothing stored
+      expect(ben.perms?.party).toBeUndefined();
+      const entries = api.admin.audit.filter((a) => a.action === 'user.rights');
+      expect(entries.map((a) => [a.target, a.meta])).toEqual([[auid(2), { from: { party: false }, to: { party: true } }]]);
+    });
+
+    test('the buttons wait for a chosen right; an admin in the selection is refused with a clear text', async ({ page, api }) => {
+      await page.goto('/admin/users');
+      api.admin.users.find((u) => u.id === auid(3))!.role = 'admin';
+      await page.reload();
+      await table(page).getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
+      const bar = page.getByRole('region', { name: 'Aktionen für die Auswahl' });
+      await expect(bar.getByRole('button', { name: 'Verbieten' })).toBeDisabled();
+      await bar.getByRole('combobox', { name: 'Recht setzen …' }).selectOption('cast');
+      await bar.getByRole('button', { name: 'Verbieten' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();
+      await expect(toasts(page).getByText(/Admins dürfen immer alles/)).toBeVisible();
+    });
+
+    test('bulk Richtlinien neu anwenden: all done', async ({ page, api }) => {
+      await page.goto('/admin/users');
+      await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
+      await table(page).getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
+      await page.getByRole('region', { name: 'Aktionen für die Auswahl' }).getByRole('button', { name: 'Richtlinien neu anwenden' }).click();
+      const dlg = page.getByRole('alertdialog', { name: 'Richtlinien für 2 Personen neu anwenden?' });
+      await expect(dlg).toContainText('Anna Beispiel, Ben Test');
+      await dlg.getByRole('button', { name: 'Übernehmen' }).click();
+      await expect(toasts(page).getByText('Richtlinien für 2 Konten neu angewendet.')).toBeVisible();
+      await expect.poll(() => logged(api, /POST \/api\/admin\/users\/bulk .*"action":"repair"/)).toBe(true);
+    });
+
+    test('bulk repair shows a partial failure honestly: done and failed', async ({ page, api }) => {
+      api.admin.repairFails.add(auid(3));
+      await page.goto('/admin/users');
+      await table(page).getByRole('checkbox', { name: 'Anna Beispiel auswählen' }).check();
+      await table(page).getByRole('checkbox', { name: 'Ben Test auswählen' }).check();
+      await page.getByRole('region', { name: 'Aktionen für die Auswahl' }).getByRole('button', { name: 'Richtlinien neu anwenden' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Übernehmen' }).click();
+      await expect(toasts(page).getByText('1 aktualisiert, 1 Konto fehlgeschlagen.')).toBeVisible();
+      await expect(toasts(page)).not.toContainText('neu angewendet');
+      // the selection stays: the failed account can be tried again
+      await expect(page.getByRole('region', { name: 'Aktionen für die Auswahl' })).toContainText('2 ausgewählt');
     });
   });
 
