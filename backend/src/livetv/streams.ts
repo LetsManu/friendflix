@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
+import { hashToken } from '../cast.js';
 import { admitConversion, bindConvGrant, dropConvGrant, setLiveSource, type ConvEntry } from '../convbudget.js';
 import { within } from '../convexempt.js';
 import { decrypt } from '../crypto.js';
@@ -13,7 +14,7 @@ import { nowNext, type Prog } from './epg.js';
 import { pushEvent } from './events.js';
 import { syncIngest } from './ownfeeds.js';
 import { channelSet, type LivetvProfile, type LivetvUser } from './rights.js';
-import { liveViewKey } from './tokens.js';
+import { deviceLiveView, liveViewKey } from './tokens.js';
 import type { Mode, StartBody, StreamInput, StreamView } from './wire.js';
 
 /**
@@ -23,6 +24,10 @@ import type { Mode, StartBody, StreamInput, StreamView } from './wire.js';
  * budget slot when the expected mode transcodes (grant bound at once to the key `live:<id>` that the budget's live source lists, F8),
  * `POST /v1/streams`, then the first segment within 15 s, else the stream is stopped and the watch fails (502). `livetvTick` stops a
  * stream 60 s after its last viewer, re-sends the push set when livetv restarted and turns livetv's stream and ingest facts into events.
+ *
+ * A channel switch (Task 32, spec §7.4 "Release on switch", rulings 36–38): when the switching device was the only viewer of its old
+ * channel A and B's start passes only with A left out (the source's connection limit, or the budget with A's transcode slot), A is
+ * stopped at once under the marker `ltv:stopping:<A>` before B's `POST /v1/streams`; a watch of A meanwhile waits for it (≤ 5 s).
  *
  * Nothing here logs or answers a stream URL, a stream id, a passphrase or a stream key (the key goes only to the gateway's authz).
  */
@@ -58,9 +63,24 @@ const errSeenKey = (channelId: string) => `ltv:errseen:${channelId}`;
 const rejectKey = (channelId: string) => `ltv:rejected:${channelId}`;
 const BOOT_KEY = 'ltv:boot';
 const TICK_KEY = 'ltv:tick';
-const joinKey = (channelId: string) => `ltv:join:${channelId}`;
-/** a join that has answered but not yet minted its token (the mint seeds the viewer key): the idle stop leaves the channel alone this long */
+/**
+ * A join that has answered but not yet minted its token (the mint seeds the viewer key): one marker per joining device
+ * (`ltv:join:<channelId>:<sha256(user, device) prefix>`), so a switch release can tell the switching device's own earlier join from
+ * somebody else's. The idle stop and a switch release leave the channel alone while any exists.
+ */
+const joinPrefix = (channelId: string) => `ltv:join:${channelId}:`;
+const joinKey = (channelId: string, who: { userId: string; deviceId: string }) => `${joinPrefix(channelId)}${hashToken(`${who.userId}\n${who.deviceId}`).slice(0, 24)}`;
 const JOIN_MARK_TTL_S = 15;
+/** The watch minted its token (which seeded the viewer key): the device's join marker has done its job and goes (routes.ts). */
+export async function clearJoinMark(ctx: Ctx, channelId: string, who: { userId: string; deviceId: string }): Promise<void> {
+  await ctx.kv.del(joinKey(channelId, who)).catch(() => undefined);
+}
+/** a release on switch is under way (Task 32, ruling 38): set with setnx, deleted on every exit of the release */
+const stoppingKey = (channelId: string) => `ltv:stopping:${channelId}`;
+export const STOPPING_TTL_S = 20;
+/** a watch of a channel that is being released polls this often, at most STOPPING_WAIT_MS, then treats it as not running */
+export const STOPPING_POLL_MS = 200;
+export const STOPPING_WAIT_MS = 5_000;
 const NEG_MS = 2_000;
 /** the budget key of a live channel's conversion: the grant is bound to it and liveConversions lists it (F8) */
 const convKey = (channelId: string) => `live:${channelId}`;
@@ -289,15 +309,25 @@ function inputOf(ctx: Ctx, channelId: string, r: InputRow): StreamInput | null {
 export async function startOrJoin(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: LivetvProfile): Promise<{ streamKey: string; mode: Mode } | WatchError> {
   const unreachable = { status: 502, error: 'channel_unreachable' } as const;
   const until = Date.now() + JOIN_WAIT_MS;
+  /** the release marker outlived its 5-s wait once: from then on the channel counts as not running (normal start path) */
+  let gaveUp = false;
   for (;;) {
+    gaveUp = gaveUp || (await waitStopping(ctx, ch.id));
     const list = await readStreams(ctx);
     if (list === null) return unreachable;
-    const cur = activeOf(list, ch.id);
+    const cur = gaveUp ? undefined : activeOf(list, ch.id);
     if (cur) {
-      await ctx.kv.set(joinKey(ch.id), '1', JOIN_MARK_TTL_S).catch(() => undefined);
+      const mark = joinKey(ch.id, who);
+      await ctx.kv.set(mark, '1', JOIN_MARK_TTL_S).catch(() => undefined);
+      // the join marker first, then a look at the release marker (a release sets its marker, then looks at the join markers): a release
+      // that began meanwhile either sees this join and keeps the stream, or is seen here and waited for. Never a stream being deleted.
+      if (await ctx.kv.get(stoppingKey(ch.id)).catch(() => null)) {
+        if (Date.now() >= until) return unreachable;
+        continue;
+      }
       const joined = await join(ctx, cur);
       // join() may wait for the first segment as long as the marker lives: mark again so the tick sees the fresh viewer
-      await ctx.kv.set(joinKey(ch.id), '1', JOIN_MARK_TTL_S).catch(() => undefined);
+      await ctx.kv.set(mark, '1', JOIN_MARK_TTL_S).catch(() => undefined);
       return joined;
     }
     const token = randomUUID();
@@ -311,6 +341,24 @@ export async function startOrJoin(ctx: Ctx, who: Watcher, ch: EffectiveChannel, 
     // somebody else starts it: wait for that stream and join it (or start it ourselves when that start gave up)
     if (Date.now() >= until) return unreachable;
     await sleep(POLL_MS);
+  }
+}
+
+/**
+ * A release of the channel is under way (`ltv:stopping:<id>`): poll every 200 ms until it is gone, at most 5 s (ruling 38). true = still
+ * marked after 5 s: the caller treats the channel as not running and goes the normal start path.
+ */
+async function waitStopping(ctx: Ctx, channelId: string): Promise<boolean> {
+  const until = Date.now() + STOPPING_WAIT_MS;
+  let told = false;
+  for (;;) {
+    if (!(await ctx.kv.get(stoppingKey(channelId)).catch(() => null))) return false;
+    if (!told) {
+      told = true;
+      __switchHooks.stoppingWait?.(channelId);
+    }
+    if (Date.now() >= until) return true;
+    await sleep(STOPPING_POLL_MS);
   }
 }
 
@@ -338,13 +386,32 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
     if (!receiving) return { status: 409, error: 'not_receiving' };
   }
 
-  // the provider's connection limit (spec §19): the streams of this source that run now
+  // a channel switch (Task 32): this device's view on another running channel A that nobody else watches; A may be released at once
+  // below, but only when one of the two checks passes solely because A is left out
+  const old = await releasableOld(ctx, who, ch, list);
+  /** the refusal B's start gets when A is not released after all */
+  let needs: 'provider_limit' | 'live_full' | null = null;
+  const refusal = async (why: 'provider_limit' | 'live_full', max: number | null): Promise<WatchError> => {
+    const running = await runningList(ctx, user, profile, list);
+    if (why === 'live_full') {
+      await event(ctx, { level: 'warn', code: 'start_refused_full', channelId: ch.id });
+      return { status: 503, error: 'live_full', running };
+    }
+    return { status: 503, error: 'provider_limit', max: max ?? 0, running };
+  };
+
+  // the provider's connection limit (spec §19): the streams of this source that run now (the channel itself never counts against its
+  // own start: after a release marker outlived its wait it may still be listed)
   if (row.max_streams !== null) {
-    const ids = list.filter((s) => s.state !== 'failed' && UUID_RE.test(s.channelId)).map((s) => s.channelId);
+    const ids = list.filter((s) => s.state !== 'failed' && s.channelId !== ch.id && UUID_RE.test(s.channelId)).map((s) => s.channelId);
     const n = ids.length
       ? Number((await ctx.db.query<{ n: string }>('select count(*) as n from livetv_channels where source_id = $1 and id = any($2::uuid[])', [ch.sourceId, ids])).rows[0]?.n ?? 0)
       : 0;
-    if (n >= row.max_streams) return { status: 503, error: 'provider_limit', max: row.max_streams, running: await runningList(ctx, user, profile, list) };
+    if (n >= row.max_streams) {
+      // A is listed and on this source, so it is one of the n: without it the start would pass
+      if (!(old && old.sourceId === ch.sourceId && n - 1 < row.max_streams)) return refusal('provider_limit', row.max_streams);
+      needs = 'provider_limit';
+    }
   }
 
   const input = inputOf(ctx, ch.id, row);
@@ -353,22 +420,40 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
   const key = convKey(ch.id);
   let granted = false;
   if (mode === 'transcode') {
-    const a = await admitConversion(ctx, { kind: 'live', userId: who.userId, hint: key, label: ch.name });
+    // ruling 37: A's slot is left out only when A holds one (mode transcode); whether the admission needed that is decided under the
+    // budget lock in the same count (onlyWithout)
+    const a = await admitConversion(ctx, { kind: 'live', userId: who.userId, hint: key, label: ch.name, ...(old?.mode === 'transcode' ? { exceptLive: old.channelId } : {}) });
     // 'unknown' = the budget lock or the media server's session list did not answer: not a full budget, so no full-event and a retry
     if (!a.ok && a.why === 'unknown') return unreachable;
-    if (!a.ok) {
-      await event(ctx, { level: 'warn', code: 'start_refused_full', channelId: ch.id });
-      return { status: 503, error: 'live_full', running: await runningList(ctx, user, profile, list) };
-    }
+    if (!a.ok) return refusal('live_full', null);
     // F8: the grant's play session is the key liveConversions lists, so the stream counts once whether livetv lists it yet or not
     await bindConvGrant(ctx, key, key, { label: ch.name });
     granted = true;
+    if (a.onlyWithout) needs = needs ?? 'live_full';
   }
   const giveBack = async () => {
     if (!granted) return;
     granted = false;
     await dropConvGrant(ctx, key);
   };
+
+  // B's start needs A's slot: release A now (its marker is held until B is posted, so a watch of A waits for B to be listed and then
+  // meets the normal start path with B counted). Not released (someone watches A after all, or it is already being released):
+  // the refusal the switch would have had.
+  let release: Release | null = null;
+  if (needs && old) {
+    try {
+      await __switchHooks.beforeRelease?.(old.channelId);
+      release = await beginRelease(ctx, { channelId: old.channelId, hash: old.hash, who });
+    } catch (e) {
+      await giveBack();
+      throw e;
+    }
+    if (!release) {
+      await giveBack();
+      return refusal(needs, row.max_streams);
+    }
+  }
 
   try {
     const body: StartBody = {
@@ -404,7 +489,96 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
   } catch (e) {
     await giveBack();
     throw e;
+  } finally {
+    await release?.done();
   }
+}
+
+// ---- release on switch (Task 32) ----
+
+/** Phase 3 (recordings) decides this; in Phase 1 no recording ever uses a channel (ruling 38) */
+export function recordingUses(_channelId: string): boolean {
+  return false;
+}
+
+/**
+ * Ordering hooks for tests only (Review Focus 6): called at fixed points of a switch; a hook may run other viewers' real requests but
+ * never writes a KV key itself. Empty in production.
+ */
+export const __switchHooks: {
+  /** a switch's checks passed only with A left out; A's release is next */
+  beforeRelease?: (channelId: string) => Promise<void>;
+  /** A's `ltv:stopping:` marker is set; its viewers are counted again next */
+  afterMarker?: (channelId: string) => Promise<void>;
+  /** a watch found A's marker and starts waiting */
+  stoppingWait?: (channelId: string) => void;
+} = {};
+
+/**
+ * The old stream a channel switch could release (spec §7.4 condition 1, ruling 36): the device's current live view is on another
+ * channel A that livetv runs, no other token on A was touched within 45 s (casts and admin test previews are tokens too), and no
+ * recording uses A. null = nothing to release. `list`: the stream list the caller already read.
+ */
+export async function releasableOld(
+  ctx: Ctx, who: { userId: string; deviceId: string }, target: EffectiveChannel, list?: readonly StreamView[] | null,
+): Promise<{ channelId: string; sourceId: string; mode: Mode; hash: string } | null> {
+  const v = await deviceLiveView(ctx, who.userId, who.deviceId);
+  if (!v || v.channelId === target.id || !UUID_RE.test(v.channelId)) return null;
+  const s = activeOf(list ?? (await readStreams(ctx)), v.channelId);
+  if (!s || recordingUses(v.channelId)) return null;
+  if (((await viewerCounts(ctx, { exceptHash: v.hash })).get(v.channelId) ?? 0) > 0) return null;
+  const row = (await ctx.db.query<{ source_id: string }>('select source_id from livetv_channels where id = $1', [v.channelId])).rows[0];
+  return row ? { channelId: v.channelId, sourceId: row.source_id, mode: s.mode, hash: v.hash } : null;
+}
+
+/** a release that went through; `done()` removes its marker (the switch calls it once B is posted) */
+interface Release { done(): Promise<void> }
+
+/**
+ * Marks A as stopping (setnx, 20 s; held = another release runs: none), counts its viewers once more without the switching token and
+ * looks for joins that have not minted yet (a viewer who came meanwhile keeps the stream: none), then stops A (404 = already gone),
+ * drops its budget grant and its idle countdown, drops the stream cache and notes `released_on_switch`. The marker goes on every exit
+ * that does not return a Release; a returned Release holds it until `done()`.
+ */
+async function beginRelease(ctx: Ctx, old: { channelId: string; hash: string; who?: { userId: string; deviceId: string } }): Promise<Release | null> {
+  const id = old.channelId;
+  const token = randomUUID();
+  if (!(await ctx.kv.setnx(stoppingKey(id), token, STOPPING_TTL_S).catch(() => false))) return null;
+  const done = async () => { await ctx.kv.delIfEquals(stoppingKey(id), token).catch(() => false); };
+  let ok = false;
+  try {
+    await __switchHooks.afterMarker?.(id);
+    if (((await viewerCounts(ctx, { exceptHash: old.hash })).get(id) ?? 0) > 0 || recordingUses(id)) return null;
+    const own = old.who ? joinKey(id, old.who) : null;
+    if ((await ctx.kv.keys(joinPrefix(id))).some((k) => k !== own)) return null;
+    try {
+      await livetvCall(ctx, 'DELETE', `/v1/streams/${encodeURIComponent(id)}`, undefined, { timeoutMs: STOP_TIMEOUT_MS });
+    } catch (e) {
+      if (!(e instanceof LivetvError)) throw e;
+      if (e.status !== 404) return null; // livetv did not confirm the stop: A may still hold the slot
+    } finally {
+      invalidateLiveConversions();
+    }
+    await dropConvGrant(ctx, convKey(id));
+    await ctx.kv.del(zeroKey(id)).catch(() => undefined);
+    invalidateLiveConversions();
+    await event(ctx, { level: 'info', code: 'released_on_switch', channelId: id });
+    ok = true;
+    return { done };
+  } finally {
+    if (!ok) await done();
+  }
+}
+
+/**
+ * Releases a switch's old stream A at once (spec §7.4, ruling 38): see beginRelease. true = A is stopped (its marker already removed);
+ * false = not released (marker held by another release, or a viewer of A came meanwhile).
+ */
+export async function releaseForSwitch(ctx: Ctx, old: { channelId: string; hash: string; who?: { userId: string; deviceId: string } }): Promise<boolean> {
+  const r = await beginRelease(ctx, old);
+  if (!r) return false;
+  await r.done();
+  return true;
 }
 
 // ---- livetvTick ----
@@ -472,6 +646,7 @@ export async function livetvTick(ctx: Ctx): Promise<void> {
       const id = s.channelId;
       await streamEvents(ctx, s);
       if (await ctx.kv.get(startKey(id))) continue;
+      if (await ctx.kv.get(stoppingKey(id))) continue; // a switch releases it right now (Task 32)
       if ((viewers.get(id) ?? 0) > 0) {
         await ctx.kv.del(zeroKey(id));
         continue;
@@ -487,7 +662,7 @@ export async function livetvTick(ctx: Ctx): Promise<void> {
       const lock = randomUUID();
       if (!(await ctx.kv.setnx(startKey(id), lock, START_LOCK_TTL_S))) continue;
       try {
-        if ((await viewerCounts(ctx)).get(id) || (await ctx.kv.get(joinKey(id)))) {
+        if ((await viewerCounts(ctx)).get(id) || (await ctx.kv.keys(joinPrefix(id))).length || (await ctx.kv.get(stoppingKey(id)))) {
           await ctx.kv.del(zeroKey(id));
           continue;
         }
