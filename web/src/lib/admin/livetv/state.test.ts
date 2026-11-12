@@ -6,7 +6,7 @@ import { enableMode, errorKey, gpuKey, jobRunning, livetvJob, navGuess, navShown
 
 const base = (): LivetvAdminState => ({
   installed: false, reachable: false, version: null, wanted: false, offerHidden: false,
-  updater: { available: true, stack: 'own', job: null, livetv: { state: 'absent', container: null, error: null } },
+  updater: { available: true, stack: 'own', job: null, error: null, livetv: { state: 'absent', container: null, error: null } },
   envLine: 'COMPOSE_PROFILES=livetv', benchmark: null, gpu: { jellyfin: null, livetv: null, advice: null },
 });
 const withUpdater = (s: LivetvAdminState, u: Partial<LivetvAdminState['updater']>): LivetvAdminState => ({ ...s, updater: { ...s.updater, ...u } });
@@ -29,6 +29,10 @@ describe('enableMode', () => {
     // a foreign stack or no usable updater keep their own manual lines
     expect(enableMode(withUpdater(base(), { livetv: null, stack: 'foreign' }))).toBe('portainer');
     expect(enableMode(withUpdater(base(), { livetv: null, available: false, stack: null }))).toBe('env');
+  });
+  it('an updater that refuses the signature or answers garbage is named, not the .env steps (1b review M7)', () => {
+    expect(enableMode(withUpdater(base(), { available: false, stack: null, livetv: null, error: 'unauthorized' }))).toBe('updaterError');
+    expect(enableMode(withUpdater(base(), { available: false, stack: null, livetv: null, error: 'invalid_answer' }))).toBe('updaterError');
   });
   it('no updater, or one that does not know its stack, shows the .env line', () => {
     expect(enableMode(withUpdater(base(), { available: false, stack: null }))).toBe('env');
@@ -113,6 +117,8 @@ describe('errorKey', () => {
     for (const c of ['pull_failed', 'verify_failed', 'restart_failed', 'unhealthy', 'unexpected_image', 'config_mismatch', 'compose_config', 'remove_failed', 'rollback_failed', 'no_updater', 'foreign_stack', 'busy']) expect(errorKey(c)).toBe(c);
     // installs from before Live TV (1b review I3): each its own advice, never the generic line or "unexpected image"
     for (const c of ['updater_outdated', 'compose_outdated', 'network_missing']) expect(errorKey(c)).toBe(c);
+    // M7: codes that used to fall back to "Das hat nicht geklappt."
+    for (const c of ['stop_failed', 'interrupted', 'no_target', 'updater_error', 'not_found', 'unauthorized']) expect(errorKey(c)).toBe(c);
     expect(errorKey('rm -rf')).toBe('generic');
     expect(errorKey(null)).toBe('generic');
     expect(errorKey('weird_new_code')).toBe('generic');

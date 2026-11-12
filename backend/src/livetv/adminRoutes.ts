@@ -75,6 +75,8 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       wanted: ctx.cfg.LIVETV_WANTED === 'true', offerHidden: ctx.cfg.LIVETV_OFFER_HIDDEN === 'true',
       updater: {
         available: status !== null, stack: status?.stack ?? null, job: status?.job ?? null,
+        // an updater that answers but refuses our signature or answers garbage: the page says so instead of the .env steps
+        error: view.present && 'error' in view ? view.error : null,
         // state: absent | disabled | enabled | stop_failed; error: why an update turned it off on its own (null = none); null = an updater from before livetv
         livetv: status?.livetv ? { state: status.livetv.state, container: status.livetv.container, error: status.livetv.error } : null,
       },
@@ -101,7 +103,9 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     };
     // one signed status read per request (1b review M14): startLivetvJob gets this view
     const view = await updaterView(ctx);
-    if (!view.present || !('status' in view)) return refuse(409, 'no_updater', { envLine: ENV_LINE });
+    if (!view.present) return refuse(409, 'no_updater', { envLine: ENV_LINE });
+    // there, but it refuses the signature (an updater with another INTERNAL_SECRET or from before a key change) or answers garbage
+    if (!('status' in view)) return refuse(502, view.error === 'unauthorized' ? 'unauthorized' : 'updater_error');
     const r = await startLivetvJob(ctx, op, actor, view);
     if (r.ok && 'job' in r) {
       await want(op.op === 'enable', actor, log);

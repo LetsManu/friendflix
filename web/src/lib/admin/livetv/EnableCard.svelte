@@ -66,6 +66,8 @@
         <p><Icon name="info" size={18} />{$t('adminLive.offer.updaterOld')}</p>
         <div class="row"><Button variant="secondary" icon="refresh" href="/admin/update">{$t('adminLive.offer.updaterOldGo')}</Button></div>
       </div>
+    {:else if mode === 'updaterError'}
+      <p class="manual" data-mode="updaterError"><Icon name="alert" size={18} />{$t(s.updater.error === 'unauthorized' ? 'adminLive.err.unauthorized' : 'adminLive.err.updater_error')}</p>
     {:else if mode === 'portainer'}
       <p class="manual" data-mode="portainer"><Icon name="info" size={18} />{$t('adminLive.offer.portainer')}</p>
     {:else}

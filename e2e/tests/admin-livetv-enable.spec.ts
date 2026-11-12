@@ -89,6 +89,26 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
     });
   }
 
+  test('an updater that refuses the signature is named, with no .env steps (1b review M7)', async ({ page, api }) => {
+    api.admin.livetv.updaterError = 'unauthorized';
+    await page.goto('/admin/livetv');
+    const c = card(page);
+    await expect(c.locator('[data-mode="updaterError"]')).toContainText('Der Updater lehnt die Signatur ab – Updater aktualisieren oder neu starten');
+    await expect(c.getByText('Von Hand einschalten')).toHaveCount(0);
+    await expect(c.getByRole('button', { name: 'Live-TV aktivieren' })).toHaveCount(0);
+  });
+
+  test('a disable that could not stop the container says so, not "Das hat nicht geklappt." (1b review M7)', async ({ page, api }) => {
+    const lt = api.admin.livetv;
+    lt.installed = true; lt.wanted = true; lt.ltState = 'enabled';
+    lt.outcome = 'failed'; lt.failCode = 'stop_failed';
+    await page.goto('/admin/livetv');
+    await page.getByRole('button', { name: 'Live-TV ausschalten …' }).click();
+    await page.getByRole('dialog', { name: 'Live-TV ausschalten?' }).getByRole('button', { name: 'Ausschalten' }).click();
+    await expect(page.locator('[data-result="failed"]')).toContainText('Der Container ließ sich nicht stoppen.', { timeout: 20_000 });
+    await expect(page.getByText('Das hat nicht geklappt.')).toHaveCount(0);
+  });
+
   test('no updater shows the .env line and copies it', async ({ page, api, context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     api.admin.livetv.updater = false;

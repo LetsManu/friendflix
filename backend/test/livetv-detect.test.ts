@@ -302,6 +302,22 @@ describe('enable / disable', () => {
     expect(await audits('livetv.enable')).toEqual([{ outcome: 'updater_outdated' }]);
   });
 
+  it('an updater that refuses the signature is named as such, never the .env steps; garbage is updater_error (1b review M7)', async () => {
+    const inner = env.ctx.fetchImpl;
+    for (const [answer, code] of [[() => json({ error: 'bad_signature' }, 401), 'unauthorized'], [() => new Response('<html>', { status: 200 }), 'updater_error']] as const) {
+      env.ctx.fetchImpl = (async (i: RequestInfo | URL, init?: RequestInit) => (String(i).includes('updater:7070') ? answer() : inner(i, init))) as typeof fetch;
+      try {
+        await withApp(async (call) => {
+          const r = await call('POST', '/api/admin/livetv/enable');
+          expect([r.statusCode, r.json()], code).toEqual([502, { error: code, wanted: false }]);
+          const st = (await call('GET', '/api/admin/livetv/state')).json();
+          expect(st.updater).toMatchObject({ available: false, error: code === 'unauthorized' ? 'unauthorized' : 'invalid_answer' });
+        });
+      } finally { env.ctx.fetchImpl = inner; }
+    }
+    expect(wanted()).toBe('false');
+  });
+
   it('foreign stack → 409 foreign_stack', async () => {
     fake.stack = 'foreign';
     await withApp(async (call) => {
@@ -393,7 +409,7 @@ describe('GET /api/admin/livetv/state', () => {
       expect(r.headers['cache-control']).toBe('no-store');
       expect(r.json()).toEqual({
         installed: false, reachable: false, version: null, wanted: false, offerHidden: false, benchmark: null,
-        updater: { available: true, stack: 'own', job: null, livetv: { state: 'stop_failed', container: 'running', error: 'unhealthy' } },
+        updater: { available: true, stack: 'own', job: null, error: null, livetv: { state: 'stop_failed', container: 'running', error: 'unhealthy' } },
         envLine: 'COMPOSE_PROFILES=livetv',
         gpu: { jellyfin: null, livetv: null, advice: null },
       });
@@ -408,7 +424,7 @@ describe('GET /api/admin/livetv/state', () => {
     vi.spyOn(env.ctx.jf.admin, 'encoderSettings').mockResolvedValue({ hwAccel: 'qsv' } as never);
     await withApp(async (call) => {
       const j = (await call('GET', '/api/admin/livetv/state')).json();
-      expect(j).toMatchObject({ installed: true, reachable: true, version: '1.0.0', updater: { available: false, stack: null, job: null, livetv: null } });
+      expect(j).toMatchObject({ installed: true, reachable: true, version: '1.0.0', updater: { available: false, stack: null, job: null, error: null, livetv: null } });
       expect(j.gpu).toEqual({ jellyfin: 'qsv', livetv: { driver: 'iHD', devices: 1 }, advice: { level: 'ok', key: 'both', driver: 'iHD' } });
     });
   });

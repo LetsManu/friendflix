@@ -129,6 +129,8 @@ export interface LivetvMock {
   ltError: string | null;
   /** an updater from before livetv: its status carries no livetv (null), POST answers 409 updater_outdated */
   ltOld: boolean;
+  /** an updater that answers but refuses the backend's signature (unauthorized) or garbles (invalid_answer) */
+  updaterError: 'unauthorized' | 'invalid_answer' | null;
   job: any;
   tick: number;
   jobPolls: number;
@@ -300,7 +302,7 @@ const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemI
 
 export function livetvMock(): LivetvMock {
   return {
-    installed: false, wanted: false, offerHidden: false, updater: true, stack: 'own', ltState: 'absent', ltError: null, ltOld: false, job: null, tick: 0, jobPolls: 2, outcome: 'succeeded', failCode: null,
+    installed: false, wanted: false, offerHidden: false, updater: true, stack: 'own', ltState: 'absent', ltError: null, ltOld: false, updaterError: null, job: null, tick: 0, jobPolls: 2, outcome: 'succeeded', failCode: null,
     benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, offLag: 2, lagLeft: 0, lagTo: true, gets: 0, posts: [],
   };
 }
@@ -594,8 +596,9 @@ function livetvState(lt: LivetvMock) {
   return {
     installed: lt.installed, reachable: lt.installed, version: lt.installed ? '1.0.0' : null, wanted: lt.wanted, offerHidden: lt.offerHidden,
     updater: {
-      available: lt.updater, stack: lt.updater ? lt.stack : null, job: lt.updater ? lt.job : null,
-      livetv: lt.updater && !lt.ltOld ? { state: lt.ltState, container: lt.installed ? 'running' : null, error: lt.ltError } : null,
+      available: lt.updater && !lt.updaterError, stack: lt.updater && !lt.updaterError ? lt.stack : null, job: lt.updater && !lt.updaterError ? lt.job : null,
+      error: lt.updater ? lt.updaterError : null,
+      livetv: lt.updater && !lt.ltOld && !lt.updaterError ? { state: lt.ltState, container: lt.installed ? 'running' : null, error: lt.ltError } : null,
     },
     envLine: ENV_LINE, benchmark: lt.installed ? lt.benchmark : null,
     gpu: { jellyfin: lt.installed ? 'qsv' : null, livetv: lt.installed ? { driver: 'iHD', devices: 1 } : null, advice: lt.installed ? lt.advice : null },
@@ -609,6 +612,7 @@ function livetvRoute(lt: LivetvMock, m: string, p: string, body: any, J: Reply):
     const refuse = (status: number, error: string, extra: Record<string, unknown> = {}) => J({ error, ...extra, wanted: lt.wanted }, status);
     if (lt.refuse) { const r = lt.refuse; lt.refuse = null; return refuse(r.status, r.error); }
     if (!lt.updater) return refuse(409, 'no_updater', { envLine: ENV_LINE });
+    if (lt.updaterError) return refuse(502, lt.updaterError === 'unauthorized' ? 'unauthorized' : 'updater_error');
     if (lt.stack === 'foreign') return refuse(409, 'foreign_stack', { envLine: ENV_LINE });
     if (lt.ltOld) return refuse(409, 'updater_outdated');
     if (lt.job?.state === 'running') return refuse(409, 'busy');
