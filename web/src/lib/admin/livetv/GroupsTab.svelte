@@ -55,13 +55,17 @@
   let list: HTMLElement | undefined;
 
   /**
-   * A role PATCH replaces the whole role set, so it is never built from a stale list (ruling R25).
+   * A role PATCH replaces the whole role set, so it is never built from a stale list (rulings R25, R26).
+   *  - ONE write runs at a time in the whole tab (`wbusy`: from the start of the write until its reload is done; every write control is
+   *    disabled meanwhile). `writing`: the write's request is still open.
    *  - `loadSeq` counts the started loads; only the answer of the latest started one is applied (an older one that lands last is dropped).
-   *  - `fresh`: false from the start of any write until a load that started after that write has succeeded (`writeMark` = loads started
-   *    when the write began). While it is false the role chips and matrix cells are disabled and `setRole` refuses.
+   *  - `fresh`: false from the start of a write until a load that started AFTER the write's request settled has been applied (`writeMark` =
+   *    loads started when it settled). A load that was already running then, or that lands while a write is open, never makes it true.
+   *    While it is false the role chips and matrix cells are disabled and `setRole` refuses.
    *  - `reloadFailed`: the last load failed while a list is shown; the slot offers *Neu laden*. `loadsOpen`: loads in flight (busy state).
    */
   let loadSeq = 0, writeMark = 0, loadsOpen = 0;
+  let writing = false, wbusy = false;
   let fresh = false, reloadFailed = false, rolesBusy = false;
 
   async function load() {
@@ -73,15 +77,29 @@
     if (mine !== loadSeq) return; // a newer load was started meanwhile: only its answer counts
     if (ans) {
       data = ans; failed = false; reloadFailed = false;
-      if (mine > writeMark) fresh = true;
+      if (mine > writeMark && !writing) fresh = true;
       // a group that is gone (deleted, merged) is no longer selected
       selected = new Set([...selected].filter((x) => ans!.groups.some((g) => g.id === x)));
     } else if (!data) failed = true; else reloadFailed = true;
   }
-  /** one write: from here on the list is not fresh; the reload follows whether it worked or not (a refused write may have changed things too) */
+  /**
+   * the only way to write: one at a time. From the start the list is not fresh; when the request has settled (worked or not: a refused write
+   * may have changed things too) the mark is set and the reload starts, so only a load that started after the settle makes the list fresh.
+   */
   async function tracked<T>(run: () => Promise<T>): Promise<T> {
-    fresh = false; writeMark = loadSeq;
-    try { return await run(); } finally { await load(); }
+    if (wbusy) throw new Error('another write is running');
+    wbusy = true; writing = true; fresh = false;
+    try { return await run(); } finally {
+      writing = false; writeMark = loadSeq;
+      try { await load(); } finally { wbusy = false; }
+    }
+  }
+  /** one *Neu laden* for whatever failed: the roles, the list, or both */
+  async function reloadAll() {
+    const jobs: Promise<void>[] = [];
+    if (rolesState === 'failed') jobs.push(loadRoles());
+    if (stale) jobs.push(load());
+    await Promise.all(jobs);
   }
   async function loadRoles() {
     rolesBusy = true;
@@ -124,7 +142,7 @@
   /** groups whose role set is being written (all their chips and cells wait) */
   $: roleBusy = new Set(groups.filter((x) => busy.has(`grp:${x.id}:roles`)).map((x) => x.id));
   /** groups whose chips and cells are disabled: the ones being written, and all of them while the list is not known to be fresh */
-  $: roleLocked = fresh ? roleBusy : new Set(groups.map((x) => x.id));
+  $: roleLocked = fresh && !wbusy ? roleBusy : new Set(groups.map((x) => x.id));
   /** the list could not be reloaded after a write: the slot says so and offers *Neu laden* */
   $: stale = reloadFailed && !fresh;
 
@@ -135,6 +153,7 @@
    * busy until the list is fresh again), so whatever the next write builds on is the stored state, never a stale row.
    */
   async function write(key: string, run: () => Promise<unknown>, success: string): Promise<boolean> {
+    if (wbusy) return false;
     const r = await runAction({ key, run: () => tracked(run), success, error: groupErrorOf });
     if (!r.ok && !r.skipped) rev++;
     return r.ok;
@@ -148,7 +167,7 @@
    */
   function setRole(g: GroupView, role: string, on: boolean): Promise<boolean> {
     // the list is not known to be current (a write is running, or its reload failed): `next` would be built from stale roles
-    if (!fresh) return Promise.resolve(false);
+    if (!fresh || wbusy) return Promise.resolve(false);
     return write(`grp:${g.id}:roles`, () => {
       const cur = data?.groups.find((x) => x.id === g.id)?.roles ?? g.roles;
       const next = on ? [...cur.filter((k) => k !== role), role] : cur.filter((k) => k !== role);
@@ -169,11 +188,13 @@
   const here = (e: MouseEvent) => (e.currentTarget instanceof HTMLElement ? e.currentTarget : null);
 
   async function doCreate(name: string) {
+    if (wbusy) return;
     const r = await runAction({ key: 'grp:new', run: () => tracked(() => createGroup({ name })), success: tr('adminLive.grp.created'), error: false });
     if (r.ok) close(); else if (!r.skipped) dialogError = groupErrorOf(r.error);
   }
   async function doRename(g: GroupView, name: string) {
     if (name === g.name) { close(); return; }
+    if (wbusy) return;
     const r = await runAction({ key: `grp:${g.id}`, run: () => tracked(() => patchGroup(g.id, { name })), success: tr('adminLive.grp.renamed'), error: false });
     if (r.ok) close(); else if (!r.skipped) dialogError = groupErrorOf(r.error);
   }
@@ -182,6 +203,7 @@
     if (await write('grp:release', () => releaseGroups(ids, d.roles, d.kidFriendly), tr('adminLive.grp.released'))) { selected = new Set(); close(); }
   }
   async function doMerge(gs: GroupView[], d: { ids: string[]; into: string }) {
+    if (wbusy) return;
     const r = await runAction({ key: 'grp:merge', run: () => tracked(() => mergeGroups(d.ids, d.into)), success: tr('adminLive.grp.merged'), error: false });
     if (r.ok) { selected = new Set(); close(); } else if (!r.skipped) dialogError = groupErrorOf(r.error);
   }
@@ -194,12 +216,12 @@
     if (ok) await write(`grp:${g.id}`, () => deleteGroup(g.id), tr('adminLive.grp.deleted'));
   }
 
-  const items = (g: GroupView, _l: unknown) => [
+  const items = (g: GroupView, _l: unknown, w: boolean) => [
     g.released
-      ? { id: 'unrelease', label: tr('adminLive.grp.unrelease'), icon: 'eye-off', run: () => { void unrelease(g); } }
-      : { id: 'release', label: tr('adminLive.grp.release'), icon: 'eye', run: () => open({ kind: 'release', groups: [g] }, rowMenu(g.id)) },
-    { id: 'rename', label: tr('adminLive.grp.rename'), icon: 'pencil', run: () => open({ kind: 'rename', group: g }, rowMenu(g.id)) },
-    { id: 'delete', label: tr('adminLive.grp.delete'), icon: 'x', danger: true, run: () => { void remove(g); } },
+      ? { id: 'unrelease', label: tr('adminLive.grp.unrelease'), icon: 'eye-off', disabled: w, run: () => { void unrelease(g); } }
+      : { id: 'release', label: tr('adminLive.grp.release'), icon: 'eye', disabled: w, run: () => open({ kind: 'release', groups: [g] }, rowMenu(g.id)) },
+    { id: 'rename', label: tr('adminLive.grp.rename'), icon: 'pencil', disabled: w, run: () => open({ kind: 'rename', group: g }, rowMenu(g.id)) },
+    { id: 'delete', label: tr('adminLive.grp.delete'), icon: 'x', danger: true, disabled: w, run: () => { void remove(g); } },
   ];
   const viewKey = (v: View) => `adminLive.grp.view${v === 'list' ? 'List' : v === 'roles' ? 'Roles' : 'Order'}` as 'adminLive.grp.viewList';
   function viewKeys(e: KeyboardEvent) {
@@ -226,15 +248,18 @@
           <button type="button" role="radio" id="{id}-v-{v}" class="vw" class:on={view === v} aria-checked={view === v} tabindex={view === v ? 0 : -1} on:click={() => (view = v)} on:keydown={viewKeys}>{$t(viewKey(v))}</button>
         {/each}
       </div>
-      <Button icon="plus" on:click={(e) => open({ kind: 'create' }, here(e))}>{$t('adminLive.grp.create')}</Button>
+      <Button icon="plus" disabled={wbusy} on:click={(e) => open({ kind: 'create' }, here(e))}>{$t('adminLive.grp.create')}</Button>
     </div>
 
     <!-- always reserved, with or without a message, so the list below never moves; a retry keeps the message and the view and shows the busy state on the button -->
     <div class="slot">
-      {#if rolesState === 'failed'}
-        <div class="smsg panel" role="alert"><Icon name="alert" size={22} /><p>{$t('adminLive.grp.rolesFailed')}</p><Button variant="secondary" icon="refresh" pending={rolesBusy} on:click={() => void loadRoles()}>{$t('adminLive.grp.retry')}</Button></div>
-      {:else if stale}
-        <div class="smsg panel" role="alert"><Icon name="alert" size={22} /><p>{$t('adminLive.grp.listStale')}</p><Button variant="secondary" icon="refresh" pending={loadsOpen > 0} on:click={() => void load()}>{$t('adminLive.grp.reload')}</Button></div>
+      {#if rolesState === 'failed' || stale}
+        <div class="smsg panel" role="alert"><Icon name="alert" size={22} />
+          <div class="mt">
+            {#if rolesState === 'failed'}<p>{$t('adminLive.grp.rolesFailed')}</p>{/if}
+            {#if stale}<p>{$t('adminLive.grp.listStale')}</p>{/if}
+          </div>
+          <Button variant="secondary" icon="refresh" pending={rolesBusy || loadsOpen > 0} on:click={() => void reloadAll()}>{$t(stale ? 'adminLive.grp.reload' : 'adminLive.grp.retry')}</Button></div>
       {/if}
     </div>
 
@@ -250,8 +275,8 @@
     {#if view === 'list'}
       <div class="bulk" role="group" aria-label={$t('adminLive.grp.bulk')}>
         <span class="count" aria-live="polite">{$t('adminLive.grp.selected', { n: selected.size })}</span>
-        <Button size="sm" variant="secondary" disabled={pickedPending.length === 0 || rolesState !== 'ok'} on:click={(e) => open({ kind: 'release', groups: pickedPending }, here(e))}>{$t('adminLive.grp.release')}</Button>
-        <Button size="sm" variant="secondary" disabled={pickedGroups.length < 2} on:click={(e) => open({ kind: 'merge', groups: pickedGroups }, here(e))}>{$t('adminLive.grp.merge')}</Button>
+        <Button size="sm" variant="secondary" disabled={wbusy || pickedPending.length === 0 || rolesState !== 'ok'} on:click={(e) => open({ kind: 'release', groups: pickedPending }, here(e))}>{$t('adminLive.grp.release')}</Button>
+        <Button size="sm" variant="secondary" disabled={wbusy || pickedGroups.length < 2} on:click={(e) => open({ kind: 'merge', groups: pickedGroups }, here(e))}>{$t('adminLive.grp.merge')}</Button>
       </div>
       {#if shown.length}
         <ul class="list panel" bind:this={list}>
@@ -268,7 +293,7 @@
               </div>
               <div class="ctl">
                 {#if g.released}
-                  {#key rev}<Toggle hideLabel label={$t('adminLive.grp.kidFor', { name: g.name })} checked={g.kidFriendly} pending={busy.has(`grp:${g.id}`)} on:change={(e) => setKid(g, e.detail)} />{/key}
+                  {#key rev}<Toggle hideLabel label={$t('adminLive.grp.kidFor', { name: g.name })} checked={g.kidFriendly} pending={busy.has(`grp:${g.id}`)} disabled={wbusy} on:change={(e) => setKid(g, e.detail)} />{/key}
                   <span class="kidl" aria-hidden="true">{$t('adminLive.grp.kidFriendly')}</span>
                   <div class="chips" role="group" aria-label={$t('adminLive.grp.rolesFor', { name: g.name })}>
                     {#each roles as r (r.key)}
@@ -278,10 +303,10 @@
                     {/each}
                   </div>
                 {:else}
-                  <Button size="sm" variant="secondary" disabled={rolesState !== 'ok'} on:click={(e) => open({ kind: 'release', groups: [g] }, here(e))}>{$t('adminLive.grp.release')}</Button>
+                  <Button size="sm" variant="secondary" disabled={wbusy || rolesState !== 'ok'} on:click={(e) => open({ kind: 'release', groups: [g] }, here(e))}>{$t('adminLive.grp.release')}</Button>
                 {/if}
               </div>
-              <span class="acts"><ActionMenu label={$t('ui.table.actionsFor', { name: g.name })} title={g.name} busy={busy.has(`grp:${g.id}`)} items={items(g, $locale)} /></span>
+              <span class="acts"><ActionMenu label={$t('ui.table.actionsFor', { name: g.name })} title={g.name} busy={busy.has(`grp:${g.id}`)} items={items(g, $locale, wbusy)} /></span>
             </li>
           {/each}
         </ul>
@@ -325,7 +350,7 @@
       </section>
     {:else}
       <p class="hint">{$t('adminLive.grp.orderHint')}</p>
-      <OrderView rows={orderRows} save={(ids) => tracked(() => orderGroups(ids)).then(() => undefined)} />
+      <OrderView rows={orderRows} locked={wbusy} save={(ids) => tracked(() => orderGroups(ids)).then(() => undefined)} />
     {/if}
   </div>
 {/if}
@@ -396,12 +421,13 @@
   /* the slot keeps its height whether a message is in it or not (the message wraps within the same room; on a phone the button goes below the text) */
   .slot { min-height: 4.6rem; }
   .slot .smsg { display: flex; align-items: center; gap: .8rem; margin: 0; padding: .6rem .9rem; min-height: 4.6rem; box-sizing: border-box; }
-  .smsg p { margin: 0; flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; }
+  .smsg .mt { flex: 1 1 0; min-width: 0; }
+  .smsg p { margin: 0; overflow-wrap: anywhere; }
   .smsg :global(svg) { flex: none; }
   @media (max-width: 720px) {
-    .slot, .slot .smsg { min-height: 9.8rem; }
+    .slot, .slot .smsg { min-height: 12rem; }
     .slot .smsg { flex-wrap: wrap; align-content: center; }
-    .smsg p { flex: 1 1 calc(100% - 3rem); }
+    .smsg .mt { flex: 1 1 calc(100% - 3rem); }
     .row { grid-template-columns: auto minmax(0, 1fr) auto; }
     .ctl { grid-column: 2 / -1; justify-content: flex-start; }
     .acts { grid-column: 3; grid-row: 1; }

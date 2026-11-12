@@ -27,6 +27,8 @@
   export let rows: OrderRow[];
   /** stores the new order (required); the caller picks the endpoint */
   export let save: (ids: string[]) => Promise<void>;
+  /** another write of the page runs: the order can neither be changed nor saved meanwhile */
+  export let locked = false;
 
   const busyKey = uid('order');
   let s: DragState = idle([]);
@@ -57,7 +59,9 @@
 
   $: shown = renumber(s.ids, numbers);
   $: dirty = s.ids.join('\n') !== base.join('\n');
-  $: busy = $busyKeys.has(busyKey);
+  $: own = $busyKeys.has(busyKey);
+  /** no change while this save runs or the page has another write open */
+  $: busy = own || locked;
 
   let list: HTMLOListElement;
   const els: Record<string, HTMLLIElement> = {};
@@ -280,9 +284,9 @@
   <p class="sr-only" aria-live="polite">{status}</p>
   <div class="bar">
     <Button variant="ghost" size="sm" disabled={!dirty || busy || s.picked !== null} on:click={discard}>{$t('adminPeople.roles.discard')}</Button>
-    <Button size="sm" pending={busy} disabled={!dirty || s.picked !== null} on:click={commit}>{$t('common.save')}</Button>
+    <Button size="sm" pending={own} disabled={!dirty || busy || s.picked !== null} on:click={commit}>{$t('common.save')}</Button>
   </div>
-  <ol class="list panel" bind:this={list} aria-busy={busy ? 'true' : undefined}>
+  <ol class="list panel" bind:this={list} aria-busy={own ? 'true' : undefined}>
     {#each shown as r (r.id)}
       {@const row = byId.get(r.id)}
       <li class="row" class:lifted={s.picked === r.id} class:follow={mode === 'pointer' && s.picked === r.id} data-id={r.id} bind:this={els[r.id]}>
