@@ -8,13 +8,12 @@ import { accountsWithout } from './rights.js';
  * `party` loses its socket at once
  */
 export const sockets = new Map<string, Set<{ sid: string; close: () => void; forbid: () => void }>>();
-/** Closes the party sockets of these sessions (revokeSessions: device removed/unapproved, account locked, sign-out elsewhere). */
-export function dropPartyPeers(userId: string, sids: Set<string>) {
-  for (const p of [...(sockets.get(userId) ?? [])]) if (sids.has(p.sid)) p.close();
-}
-/** Closes the party sockets of these sessions with 4403 'party_forbidden' (their profile became a kids profile). */
-export function forbidPartyPeers(userId: string, sids: Set<string>) {
-  for (const p of [...(sockets.get(userId) ?? [])]) if (sids.has(p.sid)) p.forbid();
+/**
+ * Closes the party sockets of these sessions: `revoked` (4401; revokeSessions: device removed/unapproved, account locked, sign-out
+ * elsewhere) or `forbidden` (4403 'party_forbidden'; their profile became a kids profile).
+ */
+export function dropPartyPeers(userId: string, sids: Set<string>, mode: 'revoked' | 'forbidden' = 'revoked') {
+  for (const p of [...(sockets.get(userId) ?? [])]) if (sids.has(p.sid)) (mode === 'forbidden' ? p.forbid() : p.close());
 }
 /** Closes every party socket of the account with 4403 'party_forbidden' (the client shows the refusal, not a sign-out). */
 export function dropPartyUser(userId: string) {

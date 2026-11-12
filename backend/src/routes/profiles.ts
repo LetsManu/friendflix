@@ -2,16 +2,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { audit } from '../audit.js';
+import type pg from 'pg';
+import { audit, auditInTx } from '../audit.js';
 import { revokeCasts } from '../cast.js';
 import { secureCookies } from '../config.js';
 import type { Ctx } from '../ctx.js';
 import { hashPin, verifyPin } from '../crypto.js';
-import { MAX_PROFILES, ProfileError, createProfile, deleteProfile, getProfile, listProfiles, publicProfile, setDeviceKids } from '../profiles.js';
+import { MAX_PROFILES, ProfileError, createProfile, deleteProfile, getProfile, listProfiles, lockProfileKids, onConnection, publicProfile, setDeviceKids, type KidsRating } from '../profiles.js';
+import { dropPartyPeers } from '../partySockets.js';
+import { invalidateRights } from '../rights.js';
 import { COOKIE, rand, requireUser, saveSession, type Session } from '../session.js';
 import type { ProfileRow } from '../types.js';
 import { policyChanged } from '../hooks.js';
-import { applyRole } from '../users.js';
+import { accountSerial, applyRole } from '../users.js';
 import { forgetAuth } from './internal.js';
 import { renamePeerSid } from './tv.js';
 
@@ -122,32 +125,70 @@ export function profileRoutes(app: FastifyInstance, ctx: Ctx) {
       if (!ownerActive(req)) return reply.code(403).send({ error: 'owner_required' });
       if (p.is_owner || !p.jellyfin_user_id) return reply.code(400).send({ error: 'owner_not_kids' });
     }
+    if (kidsChange) {
+      const r = await accountSerial(() => kidsWrite(req, p, b));
+      return 'error' in r ? reply.code(r.status).send({ error: r.error }) : r;
+    }
     if (b.name && (await ctx.db.query('select 1 from profiles where user_id=$1 and lower(name)=lower($2) and id<>$3', [req.user!.id, b.name, p.id])).rowCount) {
       return reply.code(409).send({ error: 'name_taken' });
     }
     try {
-      const r = await ctx.db.query(
-        'update profiles set name=coalesce($2,name), avatar=coalesce($3,avatar), kids=coalesce($4,kids), kids_max_rating=coalesce($5,kids_max_rating) where id=$1 returning *',
-        [p.id, b.name ?? null, b.avatar ?? null, kidsChange ? (b.kids ?? null) : null, kidsChange ? (b.maxRating ?? null) : null],
-      );
+      const r = await ctx.db.query('update profiles set name=coalesce($2,name), avatar=coalesce($3,avatar) where id=$1 returning *', [p.id, b.name ?? null, b.avatar ?? null]);
       const u = r.rows[0] as typeof p;
-      if (kidsChange) {
-        // the cap lives in the Jellyfin policy of the profile's user (enforced by Jellyfin for every item, list, search and stream)
-        try {
-          await applyRole(ctx, u.jellyfin_user_id!, req.user!.role, req.user!.disabled, { userId: req.user!.id, hidden: true });
-        } catch {
-          await ctx.db.query('update profiles set kids=$2, kids_max_rating=$3 where id=$1', [p.id, p.kids, p.kids_max_rating]);
-          return reply.code(502).send({ error: 'jellyfin' });
-        }
-        await policyChanged(ctx, u.jellyfin_user_id!); // cached rows / hubs / items of the old policy must not be served again
-        await audit(ctx, req.user!.id, 'profile.kids', p.id, { kids: u.kids, maxRating: u.kids_max_rating });
-      }
       return { profile: { ...publicProfile(u), hasPin: Boolean(u.pin_hash), active: u.id === req.profile?.id } };
     } catch (e) {
       if ((e as { code?: string }).code === '23505') return reply.code(409).send({ error: 'name_taken' });
       throw e;
     }
   });
+
+  /**
+   * The owner's kids switch / cap change (with an optional rename), in accountSerial (ordered with the admin's writes of the account on
+   * this instance) and in one transaction holding the profile's kids lock (every instance) and its row: update, policy re-apply through
+   * that transaction (`applyRole` reads the new kids fields), audit, commit. The media server refusing the policy rolls the transaction
+   * back — only this request's own write, as nobody else can write the row meanwhile — and answers 502 jellyfin.
+   */
+  type KidsWrite = { status: 404 | 409 | 502; error: string } | { profile: ReturnType<typeof publicProfile> & { hasPin: boolean; active: boolean } };
+  const kidsWrite = async (req: FastifyRequest, p0: ProfileRow, b: { name?: string; avatar?: string; kids?: boolean; maxRating?: KidsRating }): Promise<KidsWrite> => {
+    const user = req.user!;
+    const c = await (ctx.db as pg.Pool).connect();
+    let u: ProfileRow;
+    try {
+      await c.query('begin');
+      await lockProfileKids(c, p0.id);
+      const cur = (await c.query<ProfileRow>('select * from profiles where id=$1 and user_id=$2 for update', [p0.id, user.id])).rows[0];
+      if (!cur) { await c.query('rollback'); return { status: 404, error: 'not_found' }; }
+      if (b.name && (await c.query('select 1 from profiles where user_id=$1 and lower(name)=lower($2) and id<>$3', [user.id, b.name, cur.id])).rowCount) {
+        await c.query('rollback');
+        return { status: 409, error: 'name_taken' };
+      }
+      u = (await c.query<ProfileRow>(
+        'update profiles set name=coalesce($2,name), avatar=coalesce($3,avatar), kids=coalesce($4,kids), kids_max_rating=coalesce($5,kids_max_rating) where id=$1 returning *',
+        [cur.id, b.name ?? null, b.avatar ?? null, b.kids ?? null, b.maxRating ?? null])).rows[0]!;
+      // the cap lives in the Jellyfin policy of the profile's user (enforced by Jellyfin for every item, list, search and stream)
+      try {
+        await applyRole(onConnection(ctx, c), u.jellyfin_user_id!, user.role, user.disabled, { userId: user.id, hidden: true });
+      } catch (err) {
+        req.log.warn({ err, profile: cur.id }, 'profile kids change: the media server did not take the policy'); // ids and status only, no secret
+        await c.query('rollback');
+        return { status: 502, error: 'jellyfin' };
+      }
+      await auditInTx({ db: c }, user.id, 'profile.kids', cur.id, { kids: u.kids, maxRating: u.kids_max_rating });
+      await c.query('commit');
+    } catch (e) {
+      await c.query('rollback').catch(() => undefined);
+      if ((e as { code?: string }).code === '23505') return { status: 409, error: 'name_taken' };
+      throw e;
+    } finally {
+      c.release();
+    }
+    invalidateRights(user.id);
+    await policyChanged(ctx, u.jellyfin_user_id!); // cached rows / hubs / items of the old policy must not be served again
+    const sids = await profileSids(ctx, user.id, u.id);
+    if (u.kids) dropPartyPeers(user.id, sids, 'forbidden'); // a kids profile has no watch party: its open sockets close (4403)
+    for (const sid of sids) forgetAuth(sid);
+    return { profile: { ...publicProfile(u), hasPin: Boolean(u.pin_hash), active: u.id === req.profile?.id } };
+  };
 
   /**
    * Checks a PIN. The attempt is counted atomically BEFORE verifying (concurrent guesses cannot race past the limit):

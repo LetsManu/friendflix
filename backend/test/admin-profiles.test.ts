@@ -1,11 +1,28 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encrypt, hashPin, keyFromBase64 } from '../src/crypto.js';
+import { JellyfinClient, JellyfinError } from '../src/jellyfin/client.js';
 import { sockets } from '../src/partySockets.js';
-import { effectiveRights, invalidateRights } from '../src/rights.js';
 import type { ProfileRow } from '../src/types.js';
 import { ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+
+// the side effects of a kids change are counted, their behaviour kept
+vi.mock('../src/rights.js', async (orig) => {
+  const m = await orig<typeof import('../src/rights.js')>();
+  return { ...m, invalidateRights: vi.fn(m.invalidateRights) };
+});
+vi.mock('../src/routes/internal.js', async (orig) => {
+  const m = await orig<typeof import('../src/routes/internal.js')>();
+  return { ...m, forgetAuth: vi.fn(m.forgetAuth) };
+});
+vi.mock('../src/hooks.js', async (orig) => {
+  const m = await orig<typeof import('../src/hooks.js')>();
+  return { ...m, policyChanged: vi.fn(m.policyChanged) };
+});
+const { effectiveRights, invalidateRights } = await import('../src/rights.js');
+const { forgetAuth } = await import('../src/routes/internal.js');
+const { policyChanged } = await import('../src/hooks.js');
 
 // Users & permissions Task 10: admins switch a profile to kids, set its age cap, create kids profiles and delete profiles of an account.
 type Sess = { cookies: Record<string, string>; csrf: string };
@@ -17,7 +34,16 @@ let failDelete = false;
 const ANNA = '0a000000-0000-4000-a000-000000000001';
 const BEN = '0a000000-0000-4000-a000-000000000002';
 const KID = '0a000000-0000-4000-a000-000000000003';
-const JF = { anna: 'anna'.padEnd(32, '0'), ben: 'ben'.padEnd(32, '0'), kid: 'kid'.padEnd(32, '0') };
+/** another account's kids profile, and two profiles of the admin's own account (the owner-side routes act as the admin's owner profile) */
+const OTHER = '0a000000-0000-4000-a000-000000000011';
+const OTHER_KID = '0a000000-0000-4000-a000-000000000012';
+const OWN_BEN = '0a000000-0000-4000-a000-000000000021';
+const OWN_KID = '0a000000-0000-4000-a000-000000000022';
+let adminId = '';
+const JF = {
+  anna: 'anna'.padEnd(32, '0'), ben: 'ben'.padEnd(32, '0'), kid: 'kid'.padEnd(32, '0'), other: 'other'.padEnd(32, '0'), otherKid: 'otherkid'.padEnd(32, '0'),
+  ownBen: 'ownben'.padEnd(32, '0'), ownKid: 'ownkid'.padEnd(32, '0'),
+};
 const UNRATED = ['Movie', 'Series', 'Trailer'];
 const key = keyFromBase64(ENC_KEY);
 
@@ -31,7 +57,13 @@ beforeAll(async () => {
   await env.pool.query(
     "insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values ($1, 'sub-anna', 'Anna Beispiel', 'friend', $2, 'anna', $3)",
     [ANNA, JF.anna, encrypt(key, 'pw')]);
-  await env.pool.query("insert into profiles(id, user_id, name, is_owner, pin_hash) values ($1, $1, 'Anna Beispiel', true, $2)", [ANNA, hashPin('4711')]);
+  // the owner profile has an identity of its own here, so only `is_owner` refuses the kids switch
+  await env.pool.query("insert into profiles(id, user_id, name, is_owner, pin_hash, jellyfin_user_id) values ($1, $1, 'Anna Beispiel', true, $2, $3)", [ANNA, hashPin('4711'), JF.anna]);
+  await env.pool.query(
+    "insert into users(id, authentik_sub, name, role, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc) values ($1, 'sub-other', 'Ben Muster', 'friend', $2, 'other', $3)",
+    [OTHER, JF.other, encrypt(key, 'pw')]);
+  await env.pool.query("insert into profiles(id, user_id, name, is_owner) values ($1, $1, 'Ben Muster', true)", [OTHER]);
+  adminId = (await env.pool.query("select id from users where authentik_sub='sub-admin'")).rows[0].id;
   await env.pool.query("insert into devices(user_id, device_id, label, approved, last_seen) values ($1, 'dev-a', 'Firefox', true, now()), ($1, 'dev-b', 'Safari', true, now())", [ANNA]);
 });
 afterAll(() => env.close());
@@ -41,12 +73,21 @@ beforeEach(async () => {
     `insert into profiles(id, user_id, name, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, kids, kids_max_rating, pin_hash)
      values ($1, $3, 'Ben Muster', $4, 'anna-ben', $6, false, 12, null), ($2, $3, 'Carla Probe', $5, 'anna-carla', $6, true, 6, $7)`,
     [BEN, KID, ANNA, JF.ben, JF.kid, encrypt(key, 'kpw'), hashPin('2468')]);
+  await env.pool.query('delete from profiles where user_id = any($1::uuid[]) and not is_owner', [[OTHER, adminId]]);
+  await env.pool.query(
+    `insert into profiles(id, user_id, name, jellyfin_user_id, jellyfin_username, jellyfin_pw_enc, kids, kids_max_rating)
+     values ($1, $2, 'Carla Probe', $3, 'other-carla', $4, true, 6), ($5, $6, 'Ben Muster', $7, 'admin-ben', $4, false, 12), ($8, $6, 'Carla Probe', $9, 'admin-carla', $4, true, 12)`,
+    [OTHER_KID, OTHER, JF.otherKid, encrypt(key, 'kpw'), OWN_BEN, adminId, JF.ownBen, OWN_KID, JF.ownKid]);
   await env.pool.query('delete from audit_log; delete from account_deletions');
   for (const k of await env.kv.keys('sess:')) {
-    if ((JSON.parse((await env.kv.get(k))!) as { userId: string }).userId === ANNA) await env.kv.del(k);
+    if ((JSON.parse((await env.kv.get(k))!) as { userId: string }).userId !== adminId) await env.kv.del(k);
   }
   sockets.delete(ANNA);
+  sockets.delete(adminId);
   invalidateRights();
+  vi.mocked(invalidateRights).mockClear();
+  vi.mocked(forgetAuth).mockClear();
+  vi.mocked(policyChanged).mockClear();
   env.jfCalls.length = 0;
   failPolicy = '';
   failDelete = false;
@@ -66,14 +107,46 @@ const auditClean = async () => {
   const all = JSON.stringify((await env.pool.query('select meta from audit_log')).rows);
   for (const s of ['Ben', 'Carla', 'Dunmoor', '4711', '2468', '$scrypt', 'pin']) expect(all).not.toContain(s);
 };
-const session = (sid: string, deviceId: string, profileId: string) =>
-  env.kv.set(`sess:${sid}`, JSON.stringify({ userId: ANNA, csrf: 'c', deviceId, deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now(), profileId }), 600);
+const session = (sid: string, deviceId: string, profileId: string, userId = ANNA) =>
+  env.kv.set(`sess:${sid}`, JSON.stringify({ userId, csrf: 'c', deviceId, deviceApproved: true, createdAt: Date.now(), touchedAt: Date.now(), profileId }), 600);
 /** a fake open party socket of a session: records how it was closed */
-const peer = (sid: string, closed: string[]) => {
+const peer = (sid: string, closed: string[], userId = ANNA) => {
   const p = { sid, close: () => closed.push(`${sid}:revoked`), forbid: () => closed.push(`${sid}:forbidden`) };
-  if (!sockets.has(ANNA)) sockets.set(ANNA, new Set());
-  sockets.get(ANNA)!.add(p);
+  if (!sockets.has(userId)) sockets.set(userId, new Set());
+  sockets.get(userId)!.add(p);
 };
+/** the owner-side profile routes, as the admin's own owner profile */
+const ownerPatch = (pid: string, body: object) =>
+  env.app.inject({ method: 'PATCH', url: `/api/profiles/${pid}`, cookies: admin.cookies, headers: { 'x-csrf-token': admin.csrf }, payload: body });
+const adminPatchOwn = (pid: string, body: object) => call('PATCH', `/api/admin/users/${adminId}/profiles/${pid}`, body);
+/** a request that has not answered yet after `ms` */
+const pendingFor = async <T>(p: Promise<T>, ms = 150) => {
+  let done = false;
+  void p.then(() => { done = true; }, () => { done = true; });
+  await new Promise((r) => setTimeout(r, ms));
+  return !done;
+};
+/** holds the per-profile kids lock on a connection of its own until `release()` */
+async function holdProfileLock(pid: string) {
+  const c = await env.pool.connect();
+  await c.query('begin');
+  await c.query("select pg_advisory_xact_lock(hashtext('profile:' || $1::text))", [pid]);
+  return { release: async () => { await c.query('commit'); c.release(); } };
+}
+/** the next setPolicy waits for `open()`, then runs (or fails with `fail`); `reached` resolves once it waits */
+function gateNextPolicy(fail = false) {
+  const orig = JellyfinClient.prototype.setPolicy;
+  let open!: () => void, reached!: () => void;
+  const gate = new Promise<void>((r) => { open = r; });
+  const at = new Promise<void>((r) => { reached = r; });
+  const spy = vi.spyOn(JellyfinClient.prototype, 'setPolicy').mockImplementationOnce(async function (this: JellyfinClient, ...a: Parameters<JellyfinClient['setPolicy']>) {
+    reached();
+    await gate;
+    if (fail) throw new JellyfinError(500, 'Jellyfin POST /Users/x/Policy -> 500');
+    return orig.apply(this, a);
+  });
+  return { open, reached: at, restore: () => spy.mockRestore() };
+}
 
 describe('PATCH /api/admin/users/:id/profiles/:pid (kids)', () => {
   it('switch a profile to kids with cap 6', async () => {
@@ -96,6 +169,10 @@ describe('PATCH /api/admin/users/:id/profiles/:pid (kids)', () => {
     expect(rights.template.maxParentalRating).toBe(6);
     // the open party socket of the session on that profile is refused, the owner's stays
     expect(closed).toEqual(['s-ben:forbidden']);
+    // the cached overrides of the account go, the caches of the old policy go, the gateway forgets the profile's sessions only
+    expect(invalidateRights).toHaveBeenCalledWith(ANNA);
+    expect(policyChanged).toHaveBeenCalledWith(env.ctx, JF.ben);
+    expect(vi.mocked(forgetAuth).mock.calls.map((c) => c[0])).toEqual(['s-ben']);
     expect(await audits('profile.admin_update')).toEqual([{
       actor: expect.any(String), target: ANNA,
       meta: { profile: BEN, from: { kids: false, maxRating: null }, to: { kids: true, maxRating: 6 } },
@@ -257,10 +334,119 @@ describe('DELETE /api/admin/users/:id/profiles/:pid', () => {
     expect(await row(ANNA)).toBeDefined();
     expect((await remove('0a000000-0000-4000-a000-0000000000ff')).statusCode).toBe(404);
     failDelete = true;
-    const f = await remove(BEN);
+    const f = await remove(KID);
     expect(f.statusCode).toBe(502);
     expect(f.json()).toEqual({ error: 'jellyfin' });
-    expect(await row(BEN)).toBeDefined();
+    expect(await row(KID)).toBeDefined();
     expect(await audits('profile.admin_delete')).toEqual([]);
+  });
+});
+
+describe('admin profile writes stay inside the account', () => {
+  it('delete is for kids profiles only', async () => {
+    const r = await remove(BEN);
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toEqual({ error: 'not_kids_profile' });
+    expect(await row(BEN)).toBeDefined();
+    expect(env.jfCalls.filter((c) => c.method === 'DELETE')).toEqual([]);
+    expect(await audits('profile.admin_delete')).toEqual([]);
+  });
+
+  it("another account's profile id answers like an unknown one and nothing is touched", async () => {
+    const unknown = await patch('0a000000-0000-4000-a000-0000000000ff', { kids: false });
+    const p = await patch(OTHER_KID, { kids: false });
+    expect(p.statusCode).toBe(404);
+    expect(p.body).toBe(unknown.body);
+    expect(p.json()).toEqual({ error: 'not_found' });
+    const d = await remove(OTHER_KID);
+    expect(d.statusCode).toBe(404);
+    expect(d.json()).toEqual({ error: 'not_found' });
+    expect(await row(OTHER_KID)).toMatchObject({ user_id: OTHER, kids: true, kids_max_rating: 6 });
+    expect(env.jfCalls.filter((c) => c.path.includes(JF.otherKid))).toEqual([]);
+    expect((await env.pool.query('select 1 from audit_log')).rowCount).toBe(0);
+  });
+
+  it('an unauthenticated PATCH is refused', async () => {
+    const r = await env.app.inject({ method: 'PATCH', url: `/api/admin/users/${ANNA}/profiles/${KID}`, payload: { kids: false } });
+    expect([401, 403]).toContain(r.statusCode);
+    expect(await row(KID)).toMatchObject({ kids: true, kids_max_rating: 6 });
+    expect(env.jfCalls.filter((c) => c.path.endsWith('/Policy'))).toEqual([]);
+  });
+});
+
+describe('owner-side and admin kids writes', () => {
+  it("the owner's kids switch closes the profile's party sockets", async () => {
+    await session('s-ob', 'dev-x', OWN_BEN, adminId);
+    const closed: string[] = [];
+    peer('s-ob', closed, adminId);
+    peer(admin.cookies.ff_sid!, closed, adminId);
+    const r = await ownerPatch(OWN_BEN, { kids: true, maxRating: 6 });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(closed).toEqual(['s-ob:forbidden']);
+    expect(policyOf(JF.ownBen)).toMatchObject({ MaxParentalRating: 6, BlockUnratedItems: UNRATED });
+  });
+
+  it('trace A: owner kids off in flight, admin kids on with cap 6 — the media server ends on the admin cap', async () => {
+    const g = gateNextPolicy();
+    try {
+      const owner = ownerPatch(OWN_KID, { kids: false });
+      await g.reached;
+      const adm = adminPatchOwn(OWN_KID, { kids: true, maxRating: 6 });
+      await pendingFor(adm, 200); // without ordering, the admin write would finish here
+      g.open();
+      expect((await owner).statusCode).toBe(200);
+      expect((await adm).statusCode).toBe(200);
+    } finally {
+      g.restore();
+    }
+    expect(await row(OWN_KID)).toMatchObject({ kids: true, kids_max_rating: 6 });
+    expect(policyOf(JF.ownKid)).toMatchObject({ MaxParentalRating: 6, BlockUnratedItems: UNRATED });
+  });
+
+  it("trace B: the owner's failed cap change never reverts an admin's stricter cap", async () => {
+    const g = gateNextPolicy(true);
+    try {
+      const owner = ownerPatch(OWN_KID, { maxRating: 6 });
+      await g.reached;
+      const adm = adminPatchOwn(OWN_KID, { maxRating: 0 });
+      await pendingFor(adm, 200);
+      g.open();
+      const o = await owner;
+      expect(o.statusCode).toBe(502);
+      expect(o.json()).toEqual({ error: 'jellyfin' });
+      expect((await adm).statusCode).toBe(200);
+    } finally {
+      g.restore();
+    }
+    expect(await row(OWN_KID)).toMatchObject({ kids: true, kids_max_rating: 0 });
+    expect(policyOf(JF.ownKid)).toMatchObject({ MaxParentalRating: 0, BlockUnratedItems: UNRATED });
+    expect((await audits('profile.admin_update')).map((a) => a.meta)).toEqual([{ profile: OWN_KID, from: { kids: true, maxRating: 12 }, to: { kids: true, maxRating: 0 } }]);
+  });
+
+  it('a held profile lock (another instance) holds back the admin kids write', async () => {
+    const lock = await holdProfileLock(KID);
+    const r = patch(KID, { maxRating: 0 });
+    try {
+      expect(await pendingFor(r)).toBe(true);
+      expect(policyOf(JF.kid)).toBeUndefined();
+    } finally {
+      await lock.release();
+    }
+    expect((await r).statusCode).toBe(200);
+    expect(policyOf(JF.kid)).toMatchObject({ MaxParentalRating: 0 });
+  });
+
+  it('a held profile lock (another instance) holds back the owner kids write', async () => {
+    const lock = await holdProfileLock(OWN_KID);
+    const r = ownerPatch(OWN_KID, { maxRating: 0 });
+    try {
+      expect(await pendingFor(r)).toBe(true);
+      expect(policyOf(JF.ownKid)).toBeUndefined();
+    } finally {
+      await lock.release();
+    }
+    expect((await r).statusCode).toBe(200);
+    expect(await row(OWN_KID)).toMatchObject({ kids_max_rating: 0 });
+    expect(policyOf(JF.ownKid)).toMatchObject({ MaxParentalRating: 0 });
   });
 });

@@ -120,6 +120,20 @@ export async function accountJellyfinIds(ctx: Pick<Ctx, 'db'>, userId: string): 
   return r.rows.map((x) => x.id);
 }
 
+/**
+ * Takes the profile's kids lock until the transaction on `c` ends: kids writes (the owner's and an admin's, on every instance) run
+ * read → write → policy re-apply → commit one at a time, so the media server ends on the last committed state.
+ */
+export async function lockProfileKids(c: Pick<pg.PoolClient, 'query'>, profileId: string): Promise<void> {
+  await c.query("select pg_advisory_xact_lock(hashtext('profile:' || $1::text))", [profileId]);
+}
+
+/**
+ * The ctx with its queries on this transaction's connection (a fresh object, so nothing cached per ctx from before the lock is used):
+ * `applyRole` on it reads the not yet committed kids fields of the row.
+ */
+export const onConnection = (ctx: Ctx, c: pg.PoolClient): Ctx => Object.create(ctx, { db: { value: c, enumerable: true } }) as Ctx;
+
 export async function createProfile(ctx: Ctx, user: UserRow, b: { name: string; avatar?: string; pin?: string | null; kids?: boolean; maxRating?: KidsRating }): Promise<ProfileRow> {
   const name = b.name.trim();
   const count = async () => Number((await ctx.db.query<{ n: string }>('select count(*) n from profiles where user_id=$1', [user.id])).rows[0]!.n);

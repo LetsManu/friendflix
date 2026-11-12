@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /** Admin user management: the account list, single and bulk account actions (role, lock, access, sessions), the user detail page, the approval queue, invites. */
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { audit, auditInTx } from '../audit.js';
@@ -13,7 +13,7 @@ import { forgetUserAuth, revokeSessions } from '../devices.js';
 import { userLicenses } from '../downloads.js';
 import { createInvite, deleteAuthentikInvitation } from '../invites.js';
 import { getUserLimits } from '../limits.js';
-import { KIDS_RATINGS, ProfileError, accountJellyfinIds, createProfile, deleteProfile, getProfile, jfUserFor, listProfiles, publicProfile } from '../profiles.js';
+import { KIDS_RATINGS, ProfileError, accountJellyfinIds, createProfile, deleteProfile, getProfile, jfUserFor, listProfiles, lockProfileKids, onConnection, publicProfile } from '../profiles.js';
 import { roleLimitFor } from '../requestlimit.js';
 import { ROLE_KEY_RE, invitableRoles, roleExists } from '../rolecat.js';
 import { effectiveRole } from '../roles.js';
@@ -26,7 +26,7 @@ import type { ProfileRow, UserRow } from '../types.js';
 import { rightsBody, rightsView, writeRights, type RightsBody } from '../userRights.js';
 import { HttpError, accessEnded, accountSerial, applyRole, assertNotLastAdmin, getUserById, getUserBySub, lockUser, provisionUser, setAccessUntil, setRole, unlockUser, type LockReason } from '../users.js';
 import { pendingNoticeKey } from '../pending.js';
-import { dropPartyDenied, forbidPartyPeers } from '../partySockets.js';
+import { dropPartyDenied, dropPartyPeers } from '../partySockets.js';
 import { policyChanged } from '../hooks.js';
 import { forgetAuth } from './internal.js';
 import { dropProfileSessions, profileSids } from './profiles.js';
@@ -229,19 +229,22 @@ const adminKidsProfileBody = z.object({
 }).strict();
 
 /**
- * The admin profile write, run in accountSerial by the caller (it calls nothing that queues there): the row is locked and updated, a
- * kids profile switched off loses its device locks, and one profile.admin_update entry `{ profile, from, to }` holds the changed fields
- * (name / hasPin / kids + maxRating, never a PIN) — all in one transaction. After commit a kids change re-applies the identity's policy
- * (the cap and the unrated block live on the media server; `applyRole` reads the stored kids fields), drops the caches of the old policy,
- * and the open party sockets of the profile's sessions close when it became a kids profile. `policyFailed`: the media server did not take
- * the policy — the stored (FriendFlix) state stays, the repair re-applies it. Errors: 404 not_found, 400 owner_not_kids / not_kids,
- * 409 name_taken.
+ * The admin profile write, run in accountSerial by the caller (it calls nothing that queues there). One transaction holds the profile's
+ * kids lock (`lockProfileKids`, every instance) and its row: the row is updated, a kids profile switched off loses its device locks, a
+ * kids change re-applies the identity's policy through that transaction (`applyRole` reads the new, uncommitted kids fields: the cap and
+ * the unrated block live on the media server), and one profile.admin_update entry `{ profile, from, to }` holds the changed fields
+ * (name / hasPin / kids + maxRating, never a PIN). So an owner's kids write never interleaves between this write and its policy push.
+ * After commit the caches of the old policy go and the open party sockets of the profile's sessions close when it became a kids profile.
+ * `policyFailed`: the media server did not take the policy — the stored (FriendFlix) state is committed anyway, the repair re-applies it.
+ * Errors: 404 not_found, 400 owner_not_kids / not_kids, 409 name_taken.
  */
-async function updateProfile(ctx: Ctx, actor: string, user: UserRow, pid: string, b: z.infer<typeof adminProfileBody>): Promise<{ profile: ProfileRow; policyFailed: boolean }> {
+async function updateProfile(ctx: Ctx, log: FastifyBaseLogger, actor: string, user: UserRow, pid: string, b: z.infer<typeof adminProfileBody>): Promise<{ profile: ProfileRow; policyFailed: boolean }> {
   const c = await (ctx.db as pg.Pool).connect();
   let p: ProfileRow, u: ProfileRow;
+  let policyFailed = false;
   try {
     await c.query('begin');
+    await lockProfileKids(c, pid);
     const cur = (await c.query<ProfileRow>('select * from profiles where id=$1 and user_id=$2 for update', [pid, user.id])).rows[0];
     if (!cur) throw new HttpError(404, 'not_found');
     p = cur;
@@ -266,6 +269,14 @@ async function updateProfile(ctx: Ctx, actor: string, user: UserRow, pid: string
       to.kids = u.kids; to.maxRating = u.kids ? u.kids_max_rating : null;
     }
     if (Object.keys(to).length) await auditInTx({ db: c }, actor, 'profile.admin_update', user.id, { profile: pid, from, to });
+    if (kidsChanged(p, u)) {
+      try {
+        await applyRole(onConnection(ctx, c), u.jellyfin_user_id!, user.role, user.disabled, { userId: user.id, hidden: true });
+      } catch (err) {
+        log.warn({ err, profile: pid }, 'admin kids change: the media server did not take the policy'); // ids and status only, no secret
+        policyFailed = true;
+      }
+    }
     await c.query('commit');
   } catch (e) {
     await c.query('rollback').catch(() => undefined);
@@ -277,10 +288,9 @@ async function updateProfile(ctx: Ctx, actor: string, user: UserRow, pid: string
   if (b.resetPin) await ctx.kv.del(`pinfail:${pid}`);
   if (!kidsChanged(p, u)) return { profile: u, policyFailed: false };
   invalidateRights(user.id);
-  const policyFailed = await applyRole(ctx, u.jellyfin_user_id!, user.role, user.disabled, { userId: user.id, hidden: true }).then(() => false, () => true);
   await policyChanged(ctx, u.jellyfin_user_id!); // cached rows / hubs / items of the old policy must not be served again
   const sids = await profileSids(ctx, user.id, pid);
-  if (u.kids) forbidPartyPeers(user.id, sids); // a kids profile has no watch party: its open sockets close (4403)
+  if (u.kids) dropPartyPeers(user.id, sids, 'forbidden'); // a kids profile has no watch party: its open sockets close (4403)
   for (const sid of sids) forgetAuth(sid);
   return { profile: u, policyFailed };
 }
@@ -653,7 +663,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     return serial(async () => {
       const user = await userOr404(id);
       if (await claimed(id)) return reply.code(409).send({ error: 'deletion_in_progress' });
-      const { profile: u, policyFailed } = await updateProfile(ctx, req.user!.id, user, pid, b);
+      const { profile: u, policyFailed } = await updateProfile(ctx, req.log, req.user!.id, user, pid, b);
       if (policyFailed) return reply.code(502).send({ error: 'jellyfin' });
       return { profile: { ...publicProfile(u), hasPin: Boolean(u.pin_hash) } };
     });
@@ -679,7 +689,7 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
     });
   });
 
-  // deletes a profile other than the owner's like its owner can: media server identity first (502 jellyfin), then the row (list,
+  // deletes a kids profile of the account like its owner can (400 owner_profile / not_kids_profile otherwise): media server identity first (502 jellyfin), then the row (list,
   // history, favourites, progress, hand-off and download rows cascade, device kids locks go); its sessions re-resolve their profile
   app.delete('/api/admin/users/:id/profiles/:pid', admin, async (req, reply) => {
     const { id, pid } = z.object({ id: uuid, pid: uuid }).parse(req.params);
@@ -689,6 +699,8 @@ export function adminUserRoutes(app: FastifyInstance, ctx: Ctx) {
       const p = await getProfile(ctx, id, pid);
       if (!p) return reply.code(404).send({ error: 'not_found' });
       if (p.is_owner) return reply.code(400).send({ error: 'owner_profile' });
+      // grown-up profiles stay the account holder's business (spec §11 decision 7)
+      if (!p.kids) return reply.code(400).send({ error: 'not_kids_profile' });
       try {
         await deleteProfile(ctx, p);
       } catch (e) {
