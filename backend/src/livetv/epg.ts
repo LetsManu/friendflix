@@ -498,6 +498,8 @@ async function importEpg(ctx: Ctx, source: SourceRow, url: string, icons: Map<st
     const c = await pool.connect();
     try {
       await c.query('begin');
+      // serialises swaps of one source even if two runs ever overlap (lock lost): no duplicated guide
+      await c.query('select pg_advisory_xact_lock(hashtext($1))', [`epgswap:${source.id}`]);
       await c.query('delete from livetv_programmes where source_id = $1', [source.id]);
       await c.query(
         `insert into livetv_programmes(source_id, xml_channel, start_at, end_at, title, subtitle, description, categories, episode, series_key,
