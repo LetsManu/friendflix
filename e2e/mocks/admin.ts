@@ -614,7 +614,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       if (m === 'GET') {
         const rows = MATRIX_FIELDS_MOCK.map((f) => rowOf(f.key as string));
         const libs = rows.find((r) => r.key === 'libraries')!.value;
-        const missing = Array.isArray(libs) ? libs.filter((n) => !st.matrix.libraries.some((l) => l.name === n)) : [];
+        const missing = Array.isArray(libs) ? libs.filter((n) => !st.matrix.libraries.some((l) => l.name.toLowerCase() === String(n).toLowerCase())) : [];
         return J({ role: u.role, note: u.note ?? null, rows, profile: null, hardKids: [], missingLibraries: missing });
       }
       if (m === 'PUT') {
@@ -622,15 +622,24 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
         const keys = MATRIX_FIELDS_MOCK.map((f) => f.key as string);
         if (typeof body !== 'object' || Object.keys(body ?? {}).some((k) => k !== 'overrides' && k !== 'note') || Object.keys(o).some((k) => !keys.includes(k))) return J({ error: 'bad_request' }, 400);
         if (body?.note !== undefined && body.note !== null && (typeof body.note !== 'string' || body.note.trim().length > 200)) return J({ error: 'bad_request' }, 400);
+        // the backend resolves library names first (case-insensitive, the server's spelling): 400 unknown_library; then, in the write, the admin lock
+        if (Array.isArray(o.libraries)) {
+          const known = o.libraries.map((n) => st.matrix.libraries.find((l) => l.name.toLowerCase() === String(n).toLowerCase())?.name);
+          if (known.includes(undefined)) return J({ error: 'unknown_library' }, 400);
+          o.libraries = [...new Set(known as string[])];
+        }
         // the admin role's switches are always on: none can be set, a stored one may be cleared (null)
         if (isAdmin && PERM_KEYS_MOCK.some((k) => o[k] !== undefined && o[k] !== null)) return J({ error: 'admin_perms_locked' }, 400);
-        if (Array.isArray(o.libraries) && o.libraries.some((n) => !st.matrix.libraries.some((l) => l.name === n))) return J({ error: 'unknown_library' }, 400);
         const before = Object.fromEntries(keys.map((k) => [k, rowOf(k).value]));
         const store = (k: string, v: unknown) => {
           const perm = PERM_KEYS_MOCK.includes(k), target = perm ? (u.perms ??= {}) : (u.ov ??= {}) as Record<string, unknown>;
           const eff = v === 'unlimited' ? null : v;
-          if (v === null || JSON.stringify(eff) === JSON.stringify(role.values[k])) delete target[k]; else target[k] = v;
+          const lc = (x: unknown) => (Array.isArray(x) ? JSON.stringify([...new Set(x.map((n) => String(n).toLowerCase()))].sort()) : JSON.stringify(x));
+          if (v === null || lc(eff) === lc(role.values[k])) delete target[k]; else target[k] = v;
         };
+        // a switch stored under an earlier role that an admin account clears: audited as `stored` (it decides nothing)
+        const stored: Record<string, { from: unknown; to: unknown }> = {};
+        if (isAdmin) for (const k of PERM_KEYS_MOCK) if (o[k] === null && u.perms?.[k] !== undefined) stored[k] = { from: u.perms[k], to: null };
         for (const [k, v] of Object.entries(o)) if (v !== undefined) store(k, v);
         if (u.perms && !Object.keys(u.perms).length) delete u.perms;
         u.otherOverrides = Object.keys(u.ov ?? {}).length;
@@ -639,13 +648,15 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
         const moved = keys.filter((k) => JSON.stringify(before[k]) !== JSON.stringify(rowOf(k).value));
         const from = Object.fromEntries(moved.map((k) => [k, before[k]])), to = Object.fromEntries(moved.map((k) => [k, rowOf(k).value]));
         const noteChanged = (u.note ?? null) !== noteWas;
-        if (moved.length || noteChanged) log('user.rights', u.id, { from, to, ...(noteChanged ? { note: 'changed' } : {}) }, u.name);
+        if (moved.length || noteChanged || Object.keys(stored).length) log('user.rights', u.id, { from, to, ...(Object.keys(stored).length ? { stored } : {}), ...(noteChanged ? { note: 'changed' } : {}) }, u.name);
         const media = moved.some((k) => MEDIA_KEYS_MOCK.includes(k));
         if (media && st.matrix.policyPartial) return J({ error: 'policy_partial', failed: st.matrix.failed, identities: 2 }, 502);
         return J({ ok: true, reapplied: { identities: media ? 2 : 0, failed: 0 } });
       }
     }
     if (rest === '/repair' && m === 'POST') {
+      // identities that still fail (matrix.policyPartial): a 200 with ok:false, nothing healed
+      if (st.matrix.policyPartial) { log('user.repair', u.id, { failed: st.matrix.failed }, u.name); return J({ ok: false, jellyfin: { identities: 2, failed: st.matrix.failed }, requests: { ok: true, id: 7 } }); }
       st.linkedOk = { jellyfin: st.linkedOk.jellyfin === false ? true : st.linkedOk.jellyfin, requests: true };
       log('user.repair', u.id, {}, u.name);
       return J({ ok: true, jellyfin: { identities: 2, failed: 0 }, requests: { ok: true, id: 7 } });

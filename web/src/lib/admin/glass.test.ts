@@ -490,3 +490,38 @@ describe('role matrix and save bar (rights)', () => {
     expect(read('../../routes/admin/roles/+page.svelte')).toMatch(/\.roles \{ padding-bottom: var\(--savebar-h, 0px\); \}/);
   });
 });
+
+/** The person's Rechte tab (users & permissions spec §8): the muted role value and the three-way switch, and the motion rule */
+describe('person rights tab', () => {
+  const src = read('./user/Rights.svelte');
+  const css = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  /** the track is the darker scrim fill (as the matrix chips): it only adds contrast */
+  const TRACK = 0.25;
+
+  it('animates only transform and opacity (the thumb), nothing else', () => {
+    const t = [...css.matchAll(/transition(?:-property)?\s*:([^;}]*)/g)].map((m) => m[1]!);
+    expect(t.length).toBeGreaterThan(0);
+    for (const v of t) expect(v, v).toMatch(/^\s*(transform|none)\b/);
+    expect(css).not.toMatch(/@keyframes/);
+    expect(css).toMatch(/\.thumb \{[^}]*transform: translateX\(/);
+  });
+
+  it('the role value is the .72 muted text; it keeps 4.5:1 on every glass surface', () => {
+    expect(css).toMatch(/\.role \{[^}]*color: var\(--mut\);/);
+    for (const bg of ON_GLASS) expect(textContrast(bg, MUT), `${bg}`).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('the switch: unselected labels (.72) on the track, the selected one dark on the coral thumb', () => {
+    expect(css).toMatch(/\.seg \{[^}]*color: var\(--mut\);/);
+    expect(css).toMatch(/\.seg\.on \{ color: #1a1a1a; \}/);
+    expect(css).toMatch(/\.thumb \{[^}]*background: var\(--acc\);/);
+    expect(css).toMatch(/\.tri \{[^}]*background: rgba\(var\(--fr-scrim-rgb\), \.25\);/);
+    for (const bg of ON_GLASS) expect(textContrast(over(bg, SCRIM_RGB, TRACK), MUT), `${bg}`).toBeGreaterThanOrEqual(AA);
+    expect(contrast(hex('#1a1a1a'), hex('#ff4f6d'))).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('the source chips are StatusPills (info / muted tones, checked with the pills above); the library error is --err text', () => {
+    expect(src).toContain("tone={chip(row) === 'user' ? 'info' : 'muted'}");
+    expect(css).toMatch(/\.lib-err \{[^}]*color: var\(--err\);/);
+  });
+});

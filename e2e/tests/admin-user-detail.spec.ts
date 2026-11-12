@@ -13,7 +13,7 @@ const menu = async (page: import('@playwright/test').Page) => {
 };
 
 test.describe('admin user detail (desktop)', () => {
-  test.use({ allowedConsole: /status of (404|409|500|501|502)/ });
+  test.use({ allowedConsole: /status of (400|404|409|500|501|502)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
   test('detail shows header and totals', async ({ page }) => {
@@ -120,7 +120,8 @@ test.describe('admin user detail (desktop)', () => {
     // back to the role: null, the exception goes
     await row.getByText('Wie Rolle', { exact: true }).click();
     await saveViaReview(page);
-    await expect(toasts(page).getByText('Rechte von Anna Beispiel gespeichert.').nth(1)).toBeVisible();
+    await expect.poll(() => rightsPuts(api, ANNA).length).toBe(2);
+    await expect(toasts(page).getByText('Rechte von Anna Beispiel gespeichert.').last()).toBeVisible();
     expect(rightsPuts(api, ANNA)[1]).toEqual({ overrides: { cast: null } });
     await expect(row).not.toContainText('Ausnahme');
   });
@@ -167,14 +168,14 @@ test.describe('admin user detail (desktop)', () => {
     await expect(toasts(page).getByText('Rechte von Ben Test gespeichert.')).toBeVisible();
     expect(rightsPuts(api, BEN)).toEqual([{ overrides: {}, note: 'Gast von Oma Inge' }]);
     await page.goto('/admin/users');
-    await page.reload();
     const ben = page.getByRole('row', { name: /Ben Test/ });
-    // the list may still be settling (late data, hydration): a press that gets lost is repeated, an open tooltip is kept
-    const tip = page.getByRole('note');
-    await expect(async () => {
-      if (!(await tip.isVisible())) await ben.getByRole('button', { name: 'Notiz' }).click();
-      await expect(tip).toHaveText('Gast von Oma Inge', { timeout: 1500 });
-    }).toPass();
+    const btn = ben.getByRole('button', { name: 'Notiz' });
+    await expect(btn).toBeVisible();
+    // Ben's row sits at the bottom edge: a click would scroll it into view and the tip closes on that scroll. Scroll first, let it settle, click once.
+    await btn.scrollIntoViewIfNeeded();
+    await expect.poll(async () => { const y = (await btn.boundingBox())?.y; await page.waitForTimeout(100); return y === (await btn.boundingBox())?.y; }).toBe(true);
+    await btn.click();
+    await expect(page.getByRole('note')).toHaveText('Gast von Oma Inge');
   });
 
   test('old ?tab=limits opens Rechte', async ({ page }) => {
@@ -214,6 +215,50 @@ test.describe('admin user detail (desktop)', () => {
     await expect(toasts(page).getByText('Rechte von Anna Beispiel erneut angewendet.')).toBeVisible();
     await expect(saveBar(page)).toHaveCount(0);
     expect(logged(api, new RegExp(`POST /api/admin/users/${ANNA}/repair`))).toBe(true);
+  });
+
+  test('policy_partial: Erneut anwenden that fails again keeps the bar and says how many accounts', async ({ page, api }) => {
+    api.admin.matrix.policyPartial = true;
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    await rightsPanel(page).getByRole('spinbutton', { name: 'Gleichzeitige Streams' }).fill('5');
+    await saveViaReview(page);
+    await expect(saveBar(page)).toContainText('2 Konten konnten nicht aktualisiert werden.');
+    await saveBar(page).getByRole('button', { name: 'Erneut anwenden' }).click();
+    await expect.poll(() => logged(api, new RegExp(`POST /api/admin/users/${ANNA}/repair .*-> 200`))).toBe(true);
+    await expect(saveBar(page)).toContainText('2 Konten konnten nicht aktualisiert werden.');
+    await expect(toasts(page).getByText('erneut angewendet')).toHaveCount(0);
+    await expect(saveBar(page).getByRole('button', { name: 'Erneut anwenden' })).toBeVisible();
+  });
+
+  test('a library the server no longer has: the save says what to do and offers no retry', async ({ page, api }) => {
+    api.admin.users.find((u) => u.id === BEN)!.ov = { libraries: ['Filme', 'Altes Archiv'] };
+    await page.goto(`/admin/users/${BEN}?tab=rights`);
+    const libs = rightsPanel(page).getByRole('listitem').filter({ has: page.getByRole('group', { name: 'Bibliotheken' }) });
+    await libs.getByRole('checkbox', { name: 'Serien' }).check();
+    await saveViaReview(page);
+    await expect(libs.getByRole('alert')).toContainText('Nimm den markierten Eintrag');
+    await expect(saveBar(page).getByRole('button', { name: 'Erneut anwenden' })).toHaveCount(0);
+    // the edit stays staged; taking the library out lets it through and clears the message
+    await libs.getByRole('checkbox', { name: 'Altes Archiv' }).click();
+    await expect(libs.getByRole('alert')).toHaveCount(0);
+    await saveViaReview(page);
+    await expect(toasts(page).getByText('Rechte von Ben Test gespeichert.')).toBeVisible();
+    expect(rightsPuts(api, BEN).at(-1)).toEqual({ overrides: { libraries: ['Filme', 'Serien'] } });
+  });
+
+  test('staged edits: leaving the tab or the page asks first', async ({ page }) => {
+    await page.goto(`/admin/users/${ANNA}?tab=rights`);
+    const row = rowOf(page, 'Auf Fernseher übertragen');
+    await row.getByText('Verbieten', { exact: true }).click();
+    await page.getByRole('tab', { name: 'Profile' }).click();
+    const ask = page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' });
+    await expect(ask).toContainText('ungespeicherte Änderungen an den Rechten von Anna Beispiel');
+    await ask.getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(page).toHaveURL(/\?tab=rights$/);
+    await expect(row.getByRole('radio', { name: 'Verbieten' })).toBeChecked();
+    await page.getByRole('link', { name: /Zurück zur Nutzerliste/ }).click();
+    await page.getByRole('alertdialog', { name: 'Änderungen verwerfen?' }).getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
   });
 
   test('an admin account: switches are locked, numbers stay editable', async ({ page }) => {

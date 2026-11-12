@@ -254,6 +254,8 @@ export default {
     saveBar: { one: '{n} Änderung an den Rechten von {name}', other: '{n} Änderungen an den Rechten von {name}' },
     saved: 'Rechte von {name} gespeichert.',
     reapplied: 'Rechte von {name} erneut angewendet.',
+    unknownLibrary: 'Eine Bibliothek in der Liste gibt es nicht mehr. Nimm den markierten Eintrag „nicht mehr vorhanden“ aus der Liste und speichere noch einmal.',
+    leaveBody: 'Es gibt ungespeicherte Änderungen an den Rechten von {name}. Sie gehen verloren, wenn du die Seite verlässt.',
   },
   roles: {
     intro: 'Was jede Rolle darf. Änderungen gelten erst nach „Speichern“ und werden auch auf bestehende Konten angewendet.',

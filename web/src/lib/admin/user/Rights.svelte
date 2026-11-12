@@ -9,6 +9,7 @@
    * bar offers *Erneut anwenden* (the repair, which applies the policy again). An admin account's switches are locked.
    */
   import { onMount } from 'svelte';
+  import { beforeNavigate, goto } from '$app/navigation';
   import { api, ApiError } from '#lib/api';
   import { cellText, fieldLabel, partialText, visibleFields, type FieldGroup, type MatrixField, type RoleMatrix } from '#lib/admin/rights/model';
   import FieldControl from '#lib/admin/rights/FieldControl.svelte';
@@ -17,6 +18,7 @@
   import { locale, t, tr, trDynamic } from '#lib/i18n';
   import { PERM_KEYS } from '#lib/perms';
   import { errorText } from '#lib/ui/action';
+  import { confirm } from '#lib/ui/confirm';
   import Button from '#lib/ui/Button.svelte';
   import Field from '#lib/ui/Field.svelte';
   import { uid } from '#lib/ui/ids';
@@ -38,6 +40,8 @@
   let staged: Record<string, unknown> = {};
   let note = '';
   let saving = false, barError: string | null = null, partial = false;
+  /** a refused library list (400 unknown_library): shown at the row, not in the bar (a retry would fail the same way) */
+  let libError: string | null = null;
   let reviewing = false, reviewBtn: HTMLElement | null = null;
   let bar: SaveBar | undefined;
 
@@ -69,7 +73,7 @@
 
   $: patch = view ? rightsPatch(view.rows, staged, note, view.note) : null;
   $: changes = patch ? Object.keys(patch.overrides).length + (patch.note !== undefined ? 1 : 0) : 0;
-  $: barText = tr('adminPeople.rights.saveBar', { n: changes, name }) && $locale ? tr('adminPeople.rights.saveBar', { n: changes, name }) : '';
+  $: barText = $t('adminPeople.rights.saveBar', { n: changes, name });
 
   /** the library names the media server no longer has that the (staged) list still holds */
   $: missing = ((): string[] => {
@@ -79,7 +83,7 @@
   })();
 
   const isLocked = (f: MatrixField) => isAdmin && PERMS.has(f.key);
-  const stage = (k: string, v: unknown) => { staged = { ...staged, [k]: v }; };
+  const stage = (k: string, v: unknown) => { if (k === 'libraries') libError = null; staged = { ...staged, [k]: v }; };
   const triValue = (o: Tri): boolean | null => (o === 'role' ? null : o === 'allow');
   const triNow = (row: RightsRow, st: Record<string, unknown>): Tri => (Object.hasOwn(st, row.key) ? (st[row.key] === null ? 'role' : st[row.key] ? 'allow' : 'deny') : triOf(row));
   /** the FieldControl's null = no cap, spelled 'unlimited' in the PUT */
@@ -109,19 +113,24 @@
 
   async function save() {
     if (!patch || saving) return;
-    saving = true; barError = null; partial = false;
+    const sent = patch;
+    saving = true; barError = null; partial = false; libError = null;
     try {
-      await api(`/api/admin/users/${userId}/rights`, { method: 'PUT', body: patch });
+      await api(`/api/admin/users/${userId}/rights`, { method: 'PUT', body: sent });
       saving = false;
       toast.success(tr('adminPeople.rights.saved', { name }));
-      await load();
+      // saved either way: if the reload fails the staged edits must not stay (they would show as unsaved)
+      if (!(await load()) && view) { staged = {}; view = { ...view, note: sent.note !== undefined ? sent.note : view.note }; note = view.note ?? ''; }
     } catch (e) {
       saving = false;
-      if (e instanceof ApiError && e.status === 502 && (e.body as { error?: string } | null)?.error === 'policy_partial') {
+      const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
+      if (e instanceof ApiError && e.status === 502 && code === 'policy_partial') {
         // stored either way: show the stored values, offer the policy again
         partial = true;
         barError = partialText(Number((e.body as { failed?: number }).failed) || 0);
         await load();
+      } else if (e instanceof ApiError && e.status === 400 && code === 'unknown_library') {
+        libError = tr('adminPeople.rights.unknownLibrary');
       } else barError = errorText(e);
     }
     bar?.focus();
@@ -131,16 +140,27 @@
     if (!partial) { await save(); return; }
     saving = true; barError = null;
     try {
-      await api(`/api/admin/users/${userId}/repair`, { method: 'POST' });
-      partial = false;
-      toast.success(tr('adminPeople.rights.reapplied', { name }));
+      // /repair answers 200 with ok:false while identities still fail: a partial repair is not a success
+      const r = await api<{ ok?: boolean; jellyfin?: { failed?: number } }>(`/api/admin/users/${userId}/repair`, { method: 'POST' });
+      if (r?.ok) { partial = false; toast.success(tr('adminPeople.rights.reapplied', { name })); }
+      else { const n = Number(r?.jellyfin?.failed) || 0; barError = n > 0 ? partialText(n) : tr('adminPeople.detail.overview.repairPartial'); }
     } catch (e) {
       barError = errorText(e);
     }
     saving = false;
   }
-  function discard() { staged = {}; note = view?.note ?? ''; barError = null; partial = false; }
+  function discard() { staged = {}; note = view?.note ?? ''; barError = null; partial = false; libError = null; }
   function openReview() { reviewBtn = document.activeElement as HTMLElement | null; reviewing = true; }
+  // staged edits are not lost silently: a tab switch (a goto) or any navigation asks first, as Rollen & Rechte does
+  let leaving = false;
+  beforeNavigate((nav) => {
+    if (leaving || !changes) return;
+    nav.cancel(); // unload: the browser asks itself
+    if (nav.willUnload || !nav.to) return;
+    const to = nav.to.url;
+    void confirm({ title: tr('adminPeople.roles.leaveTitle'), body: tr('adminPeople.rights.leaveBody', { name }), danger: true, confirmLabel: tr('adminPeople.roles.leaveConfirm') })
+      .then((ok) => { if (ok) { leaving = true; void goto(to); } });
+  });
   async function saveReviewed() { reviewing = false; await save(); }
 </script>
 
@@ -180,6 +200,7 @@
                 {/if}
               </div>
               <span class="src"><StatusPill tone={chip(row) === 'user' ? 'info' : 'muted'} label={sourceLabel(chip(row))} icon="" /></span>
+              {#if f.key === 'libraries' && libError}<p class="lib-err" role="alert">{libError}</p>{/if}
               {#if f.key === 'libraries' && missing.length}
                 <ul class="miss">
                   {#each missing as n (n)}<li><span class="mn">{n}</span><StatusPill tone="warn" icon="alert" label={$t('adminPeople.rights.missingLibrary')} /></li>{/each}
@@ -214,19 +235,20 @@
   .row:first-child { border-top: 0; }
   .lab { display: flex; flex-direction: column; min-width: 0; }
   .nm { overflow-wrap: anywhere; }
-  .role { font-size: .82rem; color: var(--hint, var(--mut)); overflow-wrap: anywhere; }
+  .role { font-size: .82rem; color: var(--mut); overflow-wrap: anywhere; }
   .ctl { display: flex; align-items: center; gap: .6rem; min-width: 0; }
   .ctl > :global(.fc) { flex: 1; }
   /* the row's own label names the control: the control's label stays for assistive technology only */
   .ctl :global(.field > label), .ctl :global(legend) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .locked { color: var(--mut); font-size: .9rem; }
   .src { justify-self: end; }
+  .lib-err { grid-column: 1 / -1; margin: 0; color: var(--err); font-weight: 600; font-size: .9rem; }
   .miss { grid-column: 1 / -1; list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem 1rem; }
   .miss li { display: inline-flex; align-items: center; gap: .5rem; }
   .mn { overflow-wrap: anywhere; }
 
   /* three-way switch: native radios (arrow keys), the selection is a thumb that moves by transform only */
-  .tri { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; max-width: 22rem; padding: 3px; border-radius: 12px; background: rgba(255, 255, 255, .08); box-shadow: inset 0 0 0 1px var(--fr-line, var(--line)); }
+  .tri { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; max-width: 22rem; padding: 3px; border-radius: 12px; background: rgba(var(--fr-scrim-rgb), .25); box-shadow: inset 0 0 0 1px var(--fr-line, var(--line)); }
   .thumb { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 3); border-radius: 9px; background: var(--acc); transform: translateX(calc(var(--i, 0) * 100%)); transition: transform 240ms var(--fr-out, ease-out); }
   .seg { position: relative; display: flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; padding: 0 .4rem; text-align: center; cursor: pointer; border-radius: 9px; font-size: .9rem; font-weight: 600; color: var(--mut); }
   .seg > span { position: relative; z-index: 1; overflow-wrap: anywhere; }

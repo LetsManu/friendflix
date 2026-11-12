@@ -252,6 +252,8 @@ const dict: Translation<typeof de> = {
     saveBar: { one: '{n} cambio en los permisos de {name}', many: '{n} cambios en los permisos de {name}', other: '{n} cambios en los permisos de {name}' },
     saved: 'Permisos de {name} guardados.',
     reapplied: 'Permisos de {name} aplicados de nuevo.',
+    unknownLibrary: 'Una biblioteca de la lista ya no existe. Quita de la lista la entrada marcada como «ya no existe» y guarda de nuevo.',
+    leaveBody: 'Hay cambios sin guardar en los permisos de {name}. Se perderán si sales de esta página.',
   },
   roles: {
     intro: 'Lo que puede hacer cada rol. Los cambios solo se aplican tras «Guardar» y también afectan a las cuentas existentes.',

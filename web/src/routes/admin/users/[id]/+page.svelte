@@ -22,7 +22,7 @@
   import Audit from '#lib/admin/user/Audit.svelte';
   import Devices from '#lib/admin/user/Devices.svelte';
   import Downloads from '#lib/admin/user/Downloads.svelte';
-    import Overview from '#lib/admin/user/Overview.svelte';
+  import Overview from '#lib/admin/user/Overview.svelte';
   import Profiles from '#lib/admin/user/Profiles.svelte';
   import Rights from '#lib/admin/user/Rights.svelte';
   import { roleName, type RoleInfo } from '#lib/roles';
@@ -266,7 +266,7 @@
     {:else if tab === 'devices'}<Devices userId={u.id} devices={d.devices} on:changed={load} />
     {:else if tab === 'downloads'}<Downloads licenses={d.licenses} profiles={d.profiles} on:changed={load} />
     {:else if tab === 'activity'}{#key u.id}<Activity userId={u.id} />{/key}
-    {:else if tab === 'rights'}{#key u.id}<Rights userId={u.id} name={u.name} />{/key}
+    {:else if tab === 'rights'}{#key `${u.id}:${u.role}`}<Rights userId={u.id} name={u.name} />{/key}
     {:else if tab === 'audit'}{#key u.id}<Audit userId={u.id} />{/key}
     {:else}<Overview userId={u.id} detail={d} on:changed={load} />{/if}
   </div>

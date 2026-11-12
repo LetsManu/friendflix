@@ -30,6 +30,10 @@ describe('rightsPatch', () => {
     expect(rightsPatch([row('maxHeight', null, null)], { maxHeight: 'unlimited' }, null, null)).toBeNull();
   });
   it('a number differing from the role is sent', () => expect(rightsPatch(rows, { maxStreams: 4 }, null, null)).toEqual({ overrides: { maxStreams: 4 } }));
+  it('a stored exception staged back to the role value goes (null)', () => {
+    expect(rightsPatch(rows, { requestsPerMonth: 3 }, null, null)).toEqual({ overrides: { requestsPerMonth: null } });
+    expect(rightsPatch(rows, { party: true }, null, null)).toEqual({ overrides: { party: null } });
+  });
   it('library lists compare as sets', () => {
     const r = [row('libraries', ['A', 'B'], ['A', 'B'], ['B', 'A'], 'user')];
     expect(rightsPatch(r, { libraries: ['A', 'B'] }, null, null)).toBeNull();

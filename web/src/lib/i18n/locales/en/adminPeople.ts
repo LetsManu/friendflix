@@ -252,6 +252,8 @@ const dict: Translation<typeof de> = {
     saveBar: { one: '{n} change to the rights of {name}', other: '{n} changes to the rights of {name}' },
     saved: 'Rights of {name} saved.',
     reapplied: 'Rights of {name} applied again.',
+    unknownLibrary: 'A library in the list no longer exists. Untick the entry flagged “no longer available” and save again.',
+    leaveBody: 'There are unsaved changes to the rights of {name}. They are lost if you leave this page.',
   },
   roles: {
     intro: 'What each role may do. Changes only apply after “Save” and are also applied to existing accounts.',

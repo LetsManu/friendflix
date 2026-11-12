@@ -252,6 +252,8 @@ const dict: Translation<typeof de> = {
     saveBar: { one: '{name} için {n} hak değişikliği', other: '{name} için {n} hak değişikliği' },
     saved: '{name} için haklar kaydedildi.',
     reapplied: '{name} için haklar yeniden uygulandı.',
+    unknownLibrary: 'Listedeki bir kitaplık artık yok. “artık yok” işaretli girişin işaretini kaldır ve yeniden kaydet.',
+    leaveBody: '{name} için kaydedilmemiş hak değişiklikleri var. Sayfadan ayrılırsan kaybolurlar.',
   },
   roles: {
     intro: 'Her rolün neler yapabileceği. Değişiklikler yalnızca “Kaydet” ile geçerli olur ve mevcut hesaplara da uygulanır.',

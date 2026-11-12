@@ -252,6 +252,8 @@ const dict: Translation<typeof de> = {
     saveBar: { one: '{n} zmiana uprawnień: {name}', few: '{n} zmiany uprawnień: {name}', many: '{n} zmian uprawnień: {name}', other: '{n} zmiany uprawnień: {name}' },
     saved: 'Zapisano uprawnienia: {name}.',
     reapplied: 'Uprawnienia ({name}) zastosowano ponownie.',
+    unknownLibrary: 'Biblioteka z listy już nie istnieje. Odznacz pozycję oznaczoną jako „już niedostępna” i zapisz ponownie.',
+    leaveBody: 'Są niezapisane zmiany uprawnień: {name}. Zostaną utracone po opuszczeniu strony.',
   },
   roles: {
     intro: 'Co może robić każda rola. Zmiany obowiązują dopiero po kliknięciu „Zapisz” i dotyczą też istniejących kont.',

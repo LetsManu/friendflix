@@ -252,6 +252,8 @@ const dict: Translation<typeof de> = {
     saveBar: { one: '{n} modification des droits de {name}', many: '{n} modifications des droits de {name}', other: '{n} modifications des droits de {name}' },
     saved: 'Droits de {name} enregistrés.',
     reapplied: 'Droits de {name} appliqués de nouveau.',
+    unknownLibrary: 'Une bibliothèque de la liste n’existe plus. Décoche l’entrée marquée « n’existe plus » et enregistre de nouveau.',
+    leaveBody: 'Les droits de {name} ont des modifications non enregistrées. Elles seront perdues si tu quittes cette page.',
   },
   roles: {
     intro: "Ce que chaque rôle peut faire. Les modifications ne s'appliquent qu'après « Enregistrer » et valent aussi pour les comptes existants.",

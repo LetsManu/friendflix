@@ -55,7 +55,11 @@ export function rightsPatch(rows: RightsRow[], staged: Record<string, unknown>, 
     if (!Object.hasOwn(staged, r.key)) continue;
     const v = staged[r.key], cur = r.override ?? null;
     if (same(v, cur)) continue;
-    if (v !== null && cur === null && same(effective(v), r.roleValue)) continue;
+    if (v !== null && same(effective(v), r.roleValue)) {
+      // equal to the role's value: no exception; a stored one goes (null)
+      if (cur !== null) overrides[r.key] = null;
+      continue;
+    }
     overrides[r.key] = v;
   }
   const n = (note ?? '').trim(), s = (savedNote ?? '').trim();
