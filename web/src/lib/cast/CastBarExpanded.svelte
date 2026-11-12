@@ -113,7 +113,7 @@
   <div class="head">
     <div class="thumb">{#if thumbs[thI]}<img src={thumbs[thI]} alt="" on:error={() => thI++} />{:else}<span class="ph"><Icon name={s.live ? 'tv' : 'film'} size={28} /></span>{/if}</div>
     <div class="txt">
-      <p class="t1">{#if cp.livePill}<span class="lpill">{$t('live.player.live')}</span>{/if}{line1}</p>
+      <p class="t1">{#if cp.livePill}<span class="lpill">{$t('live.player.live')}</span><span class="sr">{' · '}</span>{/if}{line1}</p>
       <p class="t2" class:split={Boolean(parts)} class:warn={l2.tone === 'warn'} class:error={l2.tone === 'error'}>{#if parts}<span class="pre">{parts.pre}</span><span class="dev">{parts.dev}</span><span class="post" class:fit={parts.post.length > 24}>{parts.post}</span>{#if parts.tail}<span class="tail">{parts.tail}</span>{/if}{:else}{l2.text}{/if}</p>
     </div>
     <button type="button" class="frost-btn round" bind:this={collapseBtn} aria-label={$t('player.castBar.collapse')} title={$t('player.castBar.collapse')} on:click={() => dispatch('collapse', { via: 'button' })}>
@@ -195,6 +195,7 @@
   .t2 { font-size: .88rem; color: rgba(255, 255, 255, .72); }
   .t2.split { display: flex; min-width: 0; }
   /* the LIVE pill (shape and text, not colour alone) and the reserved now / next lines of a live channel */
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .lpill { display: inline-block; margin-right: 8px; padding: 1px 8px 1px 18px; border-radius: 999px; background: var(--acc-fill); color: #fff; font-size: .75rem; font-weight: 800; letter-spacing: .02em; vertical-align: 1px; position: relative; }
   .lpill::before { content: ''; position: absolute; left: 7px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: #fff; }
   .lnow { display: grid; gap: 2px; padding: 6px 0 8px; }

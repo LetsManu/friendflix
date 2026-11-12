@@ -235,6 +235,9 @@ export interface EngineDeps {
 
 /** progress report cadence while the receiver plays */
 export const PROGRESS_MS = 10_000;
+/** a refused live-token renewal is retried after this, doubling each time up to the maximum */
+const RENEW_RETRY_MS = 60_000;
+const RENEW_RETRY_MAX_MS = 600_000;
 /** a cast token is renewed when it expires within this */
 export const RENEW_BEFORE_MS = 10 * 60_000;
 /** the bar stays this long after the title ended */
@@ -296,6 +299,9 @@ interface LiveCast {
   busy: boolean;
   /** since when the receiver plays media that is not this channel (another sender took the TV) */
   foreignAt?: number;
+  /** a refused renewal is retried after this (ms, timers clock) with a growing back-off; `renewFails` counts the refusals in a row */
+  renewAfter?: number;
+  renewFails?: number;
 }
 /** "21:00 Wetter am Hafen" */
 const progLine = (p: Prog): string => `${progClock(p.start)} ${p.title}`;
@@ -493,6 +499,8 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
   /** the live channel on the Chromecast (`loadLive`; never together with `cur`) and the counter that makes an older load stale */
   let lc: LiveCast | null = null;
   let liveSeq = 0;
+  /** the number of Stops: a `loadLive` that a Stop overtook stops the TV again if the receiver took its channel (m1) */
+  let stopCount = 0;
   /** bumped by every switch and by the end of a session: an older async step that sees another value gives up */
   let seq = 0;
   /** this page left a Chromecast cast running (pagehide): the SDK's session end that follows is no stop */
@@ -1628,8 +1636,12 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     l.loop = timers.set(() => {
       if (lc !== l) return;
       if (!l.busy && l.foreignAt !== undefined && timers.now() - l.foreignAt >= ADVANCE_WAIT_MS) { endLive(l, 'the TV plays other media'); return; }
-      if (!l.busy && l.view.state === 'playing' && l.expiresAt - timers.now() < RENEW_BEFORE_MS) {
-        void liveLoad(l.view.itemId, { renew: true }).catch(() => undefined); // refused: the old token plays on, the next round tries again
+      if (!l.busy && l.view.state === 'playing' && l.expiresAt - timers.now() < RENEW_BEFORE_MS && timers.now() >= (l.renewAfter ?? 0)) {
+        // refused: the old token plays on, the next try comes after 60 s, then 120 s, ... (at most 10 min)
+        void liveLoad(l.view.itemId, { renew: true }).catch(() => {
+          l.renewFails = (l.renewFails ?? 0) + 1;
+          l.renewAfter = timers.now() + Math.min(RENEW_RETRY_MAX_MS, RENEW_RETRY_MS * 2 ** (l.renewFails - 1));
+        });
       }
       liveArm(l);
     }, PROGRESS_MS);
@@ -1647,16 +1659,17 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     const load = cast.loadLiveOnCast;
     if (!load) throw new LiveCastError('load_failed');
     const my = ++liveSeq;
+    const stops = stopCount;
     gen++; // a resume / detached reconnect on its way gives up
-    const s = cur;
-    if (s) {
-      // a title on the TV: its stop is reported and its token revoked; the live channel replaces its media in the same TV session
-      const ci = s.ci, stopped = stopReport(s);
-      s.ci = null;
-      end(s, 'a live channel replaces it');
-      if (s.air) dropAir(s.air); else void stopped.then(() => revoke(ci));
-    }
-    dropDetached();
+    return liveLoadRun(channelId, o, load, my, stops);
+  }
+  async function liveLoadRun(channelId: string, o: { order?: string[]; renew?: boolean }, load: NonNullable<typeof cast.loadLiveOnCast>, my: number, stops: number): Promise<void> {
+    /** the load was overtaken: its token goes; when a Stop did it, the TV (which may have taken the channel) is stopped again */
+    const overtaken = (token: string, onTv: boolean): never => {
+      liveRevoke(token);
+      if (onTv && stopCount !== stops) cast.castStop();
+      throw new LiveCastError('superseded');
+    };
     const prev = lc;
     if (prev) { prev.busy = true; if (!o.renew) liveSet(prev, { state: 'connecting', buffering: true }); }
     else void ownLock(true).then(() => { if (!cur && !lc) freeLock(); });
@@ -1673,7 +1686,19 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       keepPrev();
       throw new LiveCastError(ref ? ref.error : 'network', ref ?? undefined);
     }
-    if (my !== liveSeq) { liveRevoke(a.token); throw new LiveCastError('superseded'); }
+    if (my !== liveSeq) overtaken(a.token, false);
+    // the watch went through: only now does the title on the TV end (a refusal leaves it playing), and a detached title's handles go
+    const s = cur;
+    if (s) {
+      // its stop is reported and its token revoked; the live channel replaces its media in the same TV session
+      const ci = s.ci, stopped = stopReport(s);
+      s.ci = null;
+      end(s, 'a live channel replaces it');
+      if (s.air) dropAir(s.air); else void stopped.then(() => revoke(ci));
+    }
+    const d = detached;
+    if (d && d.hint.kind !== 'live') { void revokeId(d.hint.castId); if (d.hint.next) void revokeId(d.hint.next); }
+    dropDetached();
     const origin = deps.origin?.() ?? (typeof location === 'undefined' ? '' : location.origin);
     const url = origin + a.url;
     const ch = a.channel;
@@ -1683,7 +1708,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     log('info', 'load', o.renew ? 'live channel · new token' : 'live channel');
     if (cast.castCustomReceiver?.()) cast.castSendMessage?.(uiMessage()); // the own receiver's channel card and LIVE badge in the viewer's language
     const ok = await load(media);
-    if (my !== liveSeq) { liveRevoke(a.token); throw new LiveCastError('superseded'); }
+    if (my !== liveSeq) overtaken(a.token, true);
     if (!ok) {
       liveRevoke(a.token);
       log('error', 'load', 'the receiver could not load the live channel');
@@ -1700,7 +1725,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     let l: LiveCast;
     if (prev && lc === prev) {
       const old = prev.token;
-      Object.assign(prev, { token: a.token, url, expiresAt: a.expiresAt, order, busy: false, foreignAt: undefined });
+      Object.assign(prev, { token: a.token, url, expiresAt: a.expiresAt, order, busy: false, foreignAt: undefined, renewAfter: undefined, renewFails: 0 });
       l = prev;
       liveSet(l, view);
       if (old !== a.token) liveRevoke(old); // the backend let it go with the new mint already (Task 32); ours to end all the same
@@ -1811,10 +1836,11 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
       seek(s.view.skip.end);
     },
     async stop() {
+      stopCount++;
+      liveSeq++; // a load on its way (also a first one, still at its watch) gives up, revokes what it gets and stops the TV again
       const l = lc;
       if (l) {
         gen++;
-        liveSeq++; // a load on its way gives up (and revokes what it gets)
         endLive(l, 'stopped');
         cast.castStop();
         return;

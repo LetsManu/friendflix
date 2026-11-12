@@ -71,7 +71,7 @@ test('the bar\'s ▲ loads the next channel', async ({ page, api }) => {
   await expect(page).toHaveURL(/\/live(\?|$)/);
   const bar = castBar(page);
   await expect(bar).toBeVisible();
-  await expect(bar.locator('.t1')).toHaveText('LIVE1 Nordlicht TV');
+  await expect(bar.locator('.t1')).toHaveText('LIVE · 1 Nordlicht TV');
   await expect(bar.getByRole('progressbar')).toHaveCount(0);
   await bar.getByRole('button', { name: 'Nächster Sender' }).click();
   // 'Alle' by number: 1 Nordlicht TV → 4 Hafenkanal, with a new token
@@ -80,6 +80,6 @@ test('the bar\'s ▲ loads the next channel', async ({ page, api }) => {
   expect(next).toMatchObject({ contentId: `${new URL(page.url()).origin}/media/l/tok-ch-hafen-cc/index.m3u8`, streamType: 'LIVE', title: 'Hafenkanal', subtitle: 'Wetter am Hafen' });
   expect(api.livetv.watches.slice(-1)).toEqual(['ch-hafen']);
   expect(api.livetv.vias.slice(-1)).toEqual(['chromecast']);
-  await expect(bar.locator('.t1')).toHaveText('LIVE4 Hafenkanal');
+  await expect(bar.locator('.t1')).toHaveText('LIVE · 4 Hafenkanal');
   await expect.poll(() => api.livetv.stops).toContain('tok-ch-nord-cc');
 });

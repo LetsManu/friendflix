@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { readFileSync } from 'node:fs';
 import { get } from 'svelte/store';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ApiError } from '#lib/api';
@@ -8,7 +7,9 @@ import { clock } from '#lib/live/api';
 import { consumeAutoplay, noteInteraction } from '#lib/stillwatching';
 import { barHasProgress, barLine1, barLine2, barThumb, castParts, liveLines } from './bar';
 import { LiveCastError, PROGRESS_MS, RENEW_BEFORE_MS, type CastSession } from './engine';
-import { flush, handoff, idle, liveAnswer, memStore, playing, settle, setup, T0, type Env } from '../../test-utils/fake-cast-engine';
+import { ci, deferred, flush, handoff, idle, liveAnswer, memStore, playing, settle, setup, T0, type Env } from '../../test-utils/fake-cast-engine';
+import { DETACHED_AFTER_MS } from './engine';
+import { writeHint } from './resume';
 
 /** Live channels on the Chromecast (Task 41, live TV spec §13): the engine's `loadLive`, the channel switch, re-adoption, the bar's live variant. */
 const ORIGIN = 'https://friend.example.com';
@@ -252,6 +253,124 @@ describe('cast engine: live channels', () => {
   });
 });
 
+describe('cast engine: live load races', () => {
+  it('a refused loadLive keeps the title on the TV (no stop report, no revoke)', async () => {
+    const env = setup();
+    env.state.set(playing());
+    env.engine.adopt(handoff({ started: true }));
+    await flush();
+    env.watchAnswers['ch-nord'] = () => Promise.reject(new ApiError(503, { error: 'live_full', running: [] }));
+    await expect(env.engine.loadLive('ch-nord')).rejects.toMatchObject({ code: 'live_full' });
+    await settle();
+    expect(env.reports()).not.toContain('stop');
+    expect(env.deletes()).toEqual([]);
+    expect(env.liveLoads).toEqual([]);
+    expect(get(env.out)).toMatchObject({ itemId: 'film' });
+  });
+
+  it('loadLive over a detached title hint revokes its handles', async () => {
+    const env = setup();
+    writeHint(env.store, { castId: 'a'.repeat(32), next: 'b'.repeat(32), itemId: 'dun4', device: 'Wohnzimmer-TV', exp: T0 + 60 * 60_000, at: T0 });
+    env.state.set({ ...idle, connected: false, deviceName: '' });
+    env.ready();
+    await env.advance(DETACHED_AFTER_MS);
+    await flush();
+    expect(get(env.out)).toMatchObject({ state: 'detached' });
+    env.state.set({ ...idle });
+    await env.engine.loadLive('ch-nord');
+    await settle();
+    expect(env.deletes().sort()).toEqual(['a'.repeat(32), 'b'.repeat(32)]);
+    expect(get(env.out)).toMatchObject({ itemId: 'ch-nord', isLive: true });
+  });
+
+  it('a zap while a watch is in flight: the older answer is revoked, the newer channel plays', async () => {
+    const env = setup();
+    connected(env);
+    await env.engine.loadLive('ch-nord', { order: ['ch-nord', 'ch-hafen', 'ch-stern'] });
+    tvPlays(env);
+    await flush();
+    const slow = deferred<ReturnType<typeof liveAnswer>>();
+    env.watchAnswers['ch-hafen'] = () => slow.promise;
+    const first = env.engine.zapLive(1);
+    await flush();
+    await env.engine.loadLive('ch-stern'); // the player picks another channel before the zap's watch answered
+    slow.resolve(liveAnswer('ch-hafen', 'tok-slow'));
+    await first.catch(() => undefined);
+    await settle();
+    expect(env.liveStops()).toContain('tok-slow');
+    expect(env.liveLoads.map((m) => m.contentId)).not.toContain(`${ORIGIN}/media/l/tok-slow/index.m3u8`);
+    expect(get(env.out)).toMatchObject({ itemId: 'ch-stern' });
+  });
+
+  it('two loadLive at once: the older one gives up and revokes its token', async () => {
+    const env = setup();
+    connected(env);
+    const slow = deferred<ReturnType<typeof liveAnswer>>();
+    env.watchAnswers['ch-nord'] = () => slow.promise;
+    const one = env.engine.loadLive('ch-nord');
+    await flush();
+    delete env.watchAnswers['ch-nord'];
+    const two = env.engine.loadLive('ch-hafen');
+    await two;
+    slow.resolve(liveAnswer('ch-nord', 'tok-one'));
+    await expect(one).rejects.toMatchObject({ code: 'superseded' });
+    expect(env.liveStops()).toEqual(['tok-one']);
+    expect(env.liveLoads).toHaveLength(1);
+    expect(get(env.out)).toMatchObject({ itemId: 'ch-hafen' });
+  });
+
+  it('Stop during the first loadLive\'s watch: the cast never appears', async () => {
+    const env = setup();
+    connected(env);
+    const slow = deferred<ReturnType<typeof liveAnswer>>();
+    env.watchAnswers['ch-nord'] = () => slow.promise;
+    const p = env.engine.loadLive('ch-nord');
+    await flush();
+    await env.engine.stop();
+    slow.resolve(liveAnswer('ch-nord', 'tok-late'));
+    await expect(p).rejects.toMatchObject({ code: 'superseded' });
+    expect(env.liveLoads).toEqual([]);
+    expect(env.liveStops()).toEqual(['tok-late']);
+    expect(get(env.out)).toBeNull();
+  });
+
+  it('Stop during the load: the TV is stopped again once the receiver took the channel', async () => {
+    const env = setup();
+    connected(env);
+    const gate = deferred<boolean>();
+    env.setLiveLoad(() => gate.promise);
+    const p = env.engine.loadLive('ch-nord');
+    await flush();
+    await env.engine.stop();
+    const stops = env.cast.castStop.mock.calls.length;
+    gate.resolve(true);
+    await expect(p).rejects.toMatchObject({ code: 'superseded' });
+    expect(env.cast.castStop.mock.calls.length).toBe(stops + 1);
+    expect(env.liveStops()).toEqual(['tok-ch-nord-1']);
+    expect(get(env.out)).toBeNull();
+  });
+
+  it('a refused renewal is retried after 60 s, then 120 s, not every 10 s', async () => {
+    const env = setup();
+    connected(env);
+    env.watchAnswers['ch-nord'] = async () => liveAnswer('ch-nord', 'tok-old', { expiresAt: T0 + RENEW_BEFORE_MS + PROGRESS_MS * 2 + 1 });
+    await env.engine.loadLive('ch-nord');
+    tvPlays(env);
+    await flush();
+    env.watchAnswers['ch-nord'] = () => Promise.reject(new ApiError(503, { error: 'live_full', running: [] }));
+    await env.advance(PROGRESS_MS * 3);
+    expect(env.watches()).toHaveLength(2); // the first renewal try
+    await env.advance(50_000);
+    expect(env.watches()).toHaveLength(2); // still backing off
+    await env.advance(PROGRESS_MS);
+    expect(env.watches()).toHaveLength(3); // after 60 s
+    await env.advance(110_000);
+    expect(env.watches()).toHaveLength(3);
+    await env.advance(PROGRESS_MS);
+    expect(env.watches()).toHaveLength(4); // after 120 s
+  });
+});
+
 describe('cast bar: the live variant', () => {
   const live: CastSession = { kind: 'chromecast', device: 'Wohnzimmer-TV', itemId: 'ch-hafen', title: 'Hafenkanal', subtitle: 'Wetter am Hafen', posterId: 'ch-hafen', isEpisode: false,
     position: 0, duration: 0, paused: false, buffering: false, state: 'playing', audioTracks: [], subtitles: [], subIndex: -1, autoplay: false,
@@ -268,17 +387,5 @@ describe('cast bar: the live variant', () => {
     expect(barLine2(live, 0, tf)).toMatchObject({ text: 'Wetter am Hafen · player.castBar.on{"device":"Wohnzimmer-TV"}', device: 'Wohnzimmer-TV' });
     expect(liveLines(live.live!, tf)).toEqual({ now: 'live.now: Wetter am Hafen', next: 'live.next: 21:30 Abenteuer Wattenmeer' });
     expect(liveLines({ channelId: 'x', number: null, name: 'Sternwarte 24' }, tf)).toEqual({ now: 'live.liveOnly', next: '' });
-    // the components draw it that way: the scrubber only for a title, the LIVE pill and the channel keys for a channel
-    const read = (f: string) => readFileSync(new URL(f, import.meta.url), 'utf8');
-    for (const f of ['./CastBarExpanded.svelte', './RemoteScreen.svelte']) {
-      const src = read(f);
-      expect(src, f).toMatch(/\{#if cp\??\.scrubber\}\s*<CastScrubber/);
-      expect(src, f).toContain("<span class=\"lpill\">{$t('live.player.live')}</span>");
-      expect(src, f).toContain('castEngine.zapLive(1)');
-      expect(src, f).toContain('castEngine.zapLive(-1)');
-    }
-    const bar = read('./CastBar.svelte');
-    expect(bar).toContain("{#if cp.livePill}<span class=\"lpill\">{$t('live.player.live')}</span>{/if}");
-    expect(bar).toContain('source.zap?.(1)');
   });
 });

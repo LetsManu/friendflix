@@ -106,6 +106,8 @@ body.idle .brand { display: grid; }
   display: grid; grid-template-columns: auto 1fr; gap: calc(20 * var(--u)); align-items: center; }
 .lcard .logo, .load.live .art { width: calc(112 * var(--u)); height: calc(112 * var(--u)); }
 .lcard .logo img, .load.live .art img { object-fit: contain; }
+.art.none { display: none; }
+.lcard.nologo { grid-template-columns: 1fr; }
 .lcard h2 { font-size: calc(36 * var(--u)); line-height: 1.15; font-weight: 700; }
 .lcard .line { margin-top: calc(6 * var(--u)); font-size: calc(24 * var(--u)); color: var(--dim); }
 .pause.live .pbar, .pause.live .times { display: none; }

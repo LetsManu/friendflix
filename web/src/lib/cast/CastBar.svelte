@@ -163,7 +163,7 @@
           <img class="thumb" src={thumb.src} alt="" style="aspect-ratio:{thumb.ratio}" />
         {/if}
         <span class="txt" id="castbar-txt">
-          <span class="t1" class:sr={phone && (still || state === 'connecting')}>{#if cp.livePill}<span class="lpill">{$t('live.player.live')}</span>{/if}{title}</span>
+          <span class="t1" class:sr={phone && (still || state === 'connecting')}>{#if cp.livePill}<span class="lpill">{$t('live.player.live')}</span><span class="sr">{' · '}</span>{/if}{title}</span>
           {#key kind}<span class="t2" class:split={Boolean(parts)} class:warn={l2.tone === 'warn'} class:error={l2.tone === 'error'} in:fade={{ duration: fadeMs() }}>{#if parts}<span class="pre">{parts.pre}</span><span class="dev">{parts.dev}</span><span class="post" class:fit={parts.post.length > 24}>{parts.post}</span>{#if parts.tail}<span class="tail">{parts.tail}</span>{/if}{:else}{l2.text}{/if}</span>{/key}
         </span>
       {/snippet}
@@ -192,18 +192,22 @@
         {#if secs !== null}<button type="button" class="tb" aria-label={$t('common.cancel')} title={$t('common.cancel')} on:click={() => castEngine.cancelNext()}><Icon name="x" size={22} /></button>{/if}
         <button type="button" class="tb" aria-label={$t('player.castBar.next', { label: next.label })} title={$t('player.castBar.next', { label: next.label })} on:click={() => source.next()}><Icon name="skip-next" size={24} /></button>
       {:else if live}
+        {#if cp.channelKeys && !phone}
+          <button type="button" class="tb" aria-label={$t('live.player.chDown')} title={$t('live.player.chDown')} on:click={() => source.zap?.(-1)}><Icon name="chevron-down" size={24} /></button>
+        {/if}
         <button type="button" class="tb pp" aria-label={$t(s.paused ? 'player.controls.play' : 'player.controls.pause')} on:click={playPause}>
           <Icon name={s.paused ? 'play' : 'pause'} size={24} />
         </button>
         {#if cp.channelKeys && !phone}
           <button type="button" class="tb" aria-label={$t('live.player.chUp')} title={$t('live.player.chUp')} on:click={() => source.zap?.(1)}><Icon name="chevron-up" size={24} /></button>
-          <button type="button" class="tb" aria-label={$t('live.player.chDown')} title={$t('live.player.chDown')} on:click={() => source.zap?.(-1)}><Icon name="chevron-down" size={24} /></button>
         {/if}
         <!-- the web engine: episodes (not on the phone); the app: only while it has a next episode queued (its Next answers false otherwise) -->
         {#if source.fromApp ? s.upcoming : s.isEpisode && !phone}<button type="button" class="tb" aria-label={$t('player.controls.next')} title={$t('player.controls.next')} on:click={() => source.next()}><Icon name="skip-next" size={24} /></button>{/if}
       {/if}
 
-      {#if phone}
+      {#if s.live && state === 'detached'}
+        <!-- a live cast that is not ours here cannot be ended from here (its token is only on the TV): no Stop -->
+      {:else if phone}
         <button type="button" class="tb stop" aria-label={$t('player.cast.stop')} title={$t('player.cast.stop')} on:click={stop}><Icon name="stop" size={22} /></button>
       {:else}
         <button type="button" class="frost-btn stop" on:click={stop}>{$t('player.cast.stop')}</button>

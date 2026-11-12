@@ -7,9 +7,11 @@
   import type { ErrorData } from 'hls.js';
   import { ApiError, getActiveProfile, getCsrf } from '#lib/api';
   import { castCapableBrowser, castState, initCast, onCastEvent } from '#lib/cast';
+  import { readHint } from '#lib/cast/resume';
   import PlayOnSheet from '#lib/cast/PlayOnSheet.svelte';
   import RemoteScreen from '#lib/cast/RemoteScreen.svelte';
   import { castEngine, castSession, LiveCastError, liveErrText, type CastSession } from '#lib/cast/engine';
+  import { get } from 'svelte/store';
   import { native } from '#lib/native/bridge';
   import { perms } from '#lib/perms';
   import Icon from '#lib/Icon.svelte';
@@ -26,6 +28,7 @@
   import { parseVolume } from '#lib/player/volume';
   import { beat, channels as fetchChannels, clock, nowLines, setLast, stopWatching, watch, type LiveChannel, type LiveList, type Prog, type RunningChannel, type WatchAnswer } from './api';
   import { BANNER_HOLD_MS, bannerVisible } from './banner';
+  import { startsLocally } from './castGate';
   import { atEdge, behind, oldestPoint, restartTarget, resumePoint } from './dvr';
   import { minute } from './fade';
   import { pickHeld, type Held } from './held';
@@ -940,13 +943,25 @@
         if (listOpen) closeList();
         if (panelOpen) panelOpen = false;
       }
-      if (id !== curId) { curId = id; cardId = id; }
-      replaceUrl(id);
+      if (id !== curId) { curId = id; cardId = id; replaceUrl(id); }
       return;
     }
     if (!remoteOn) return;
     remoteOn = false;
-    void start(curId); // the cast ended: the channel plays here again
+    if (!hiding) void start(curId); // the cast ended: the channel plays here again (not while the page unloads: pageshow decides then)
+  }
+  /** pagehide until the next pageshow: the engine's cast ends with the page (the TV keeps playing), so nothing starts here meanwhile */
+  let hiding = false;
+  /**
+   * A local watch next to a live cast that this browser left on the TV would start a second stream: with a live hint the engine first
+   * gets a bounded chance to re-adopt the cast (the player then follows it as its remote); only without one the channel starts here.
+   */
+  async function startGuarded(id: string): Promise<void> {
+    const hasHint = (): boolean => { try { return readHint(localStorage, Date.now())?.kind === 'live'; } catch { return false; } };
+    const g = gen;
+    const local = await startsLocally({ hint: hasHint(), inShell, resume: () => castEngine.resume(), hasLive: () => Boolean(get(castSession)?.live) || remoteOn });
+    if (!local || destroyed || g !== gen) return;
+    void start(id);
   }
   /** AirPlay row (inside the tap): the token URL on the element, then the picker; once it is there the picker alone */
   function airTap(): void {
@@ -1013,6 +1028,7 @@
     } catch { /* the router is not ready yet */ }
   }
   function onPageHide(): void {
+    hiding = true;
     if (startPending) { gen++; clearInterval(beatT); beatT = undefined; } // a late answer of the watch out goes through start()'s stop branch
     const tk = token;
     if (!tk) return;
@@ -1021,7 +1037,8 @@
   }
   /** back from the back/forward cache: the stream was let go at pagehide, so the channel starts again */
   function onPageShow(e: PageTransitionEvent): void {
-    if (e.persisted && !destroyed) void start(curId);
+    hiding = false;
+    if (e.persisted && !destroyed) void startGuarded(curId);
   }
   const onFs = () => { fullscreen = Boolean(document.fullscreenElement); };
 
@@ -1062,7 +1079,7 @@
     void loadList();
     // a live cast runs: this player is its remote (another channel opened now plays on the TV); otherwise the channel plays here
     const tvNow = tvLive?.live;
-    if (!tvNow) void start(channelId);
+    if (!tvNow) void startGuarded(channelId);
     else if (tvNow.channelId !== channelId) void castEngine.loadLive(channelId).catch((e: unknown) => { if (!(e instanceof LiveCastError && e.code === 'superseded')) toast.error(liveErrText(e)); });
     wake();
     root?.focus({ preventScroll: true });

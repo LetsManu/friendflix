@@ -151,6 +151,7 @@ function render() {
     $('load-line').hidden = !v.load.line;
     $('load').classList.toggle('live', Boolean(v.load.live)); // the channel's logo, not a poster
     setArt($('load-art'), poster);
+    $('load-art').parentElement?.classList.toggle('none', Boolean(v.load.live) && !poster); // a channel without a logo: no empty box
   }
 
   // a live channel: the LIVE badge, and its card after the first frame
@@ -161,6 +162,8 @@ function render() {
     setText($('lcard-name'), v.live.card.name);
     setText($('lcard-now'), v.live.card.now);
     setArt($('lcard-img'), poster);
+    $('lcard-img').parentElement?.classList.toggle('none', !poster);
+    $('lcard').classList.toggle('nologo', !poster);
   }
 
   // "Still there?" while the queued episode waits paused

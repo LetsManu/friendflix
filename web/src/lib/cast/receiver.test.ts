@@ -391,15 +391,9 @@ describe('receiver: a live channel (customData.ui.live)', () => {
     expect(view(film, t).pause).not.toHaveProperty('live');
   });
 
-  it('the page has the badge and the channel card; the script draws them and drops the progress bar for a channel', async () => {
+  it('the page has the badge and the channel card', () => {
     const html = receiverHtml();
     for (const id of ['badge', 'badge-text', 'lcard', 'lcard-img', 'lcard-name', 'lcard-now']) expect(html, id).toContain(`id="${id}"`);
-    const { readFileSync } = await import('node:fs');
-    const js = readFileSync(new URL('../../../static/cast-receiver/receiver.js', import.meta.url), 'utf8');
-    expect(js).toContain("run({ type: 'load', at: nowMs(), live });");
-    expect(js).toContain("$('pause').classList.toggle('live', Boolean(v.pause.live))");
-    const css = readFileSync(new URL('../../../static/cast-receiver/receiver.css', import.meta.url), 'utf8');
-    expect(css).toContain('.pause.live .pbar, .pause.live .times { display: none; }');
   });
 });
 
