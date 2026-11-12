@@ -36,7 +36,7 @@ test.describe('Live-TV tab (phone)', () => {
   test('the favourites are a swipeable carousel of 16:9 tiles', async ({ page }) => {
     await page.goto('/live');
     const strip = favs(page).getByRole('list');
-    const tiles = favs(page).getByRole('button');
+    const tiles = favs(page).locator('button.tile');
     await expect(tiles).toHaveCount(3);
     const m = await strip.evaluate((e) => ({ sw: e.scrollWidth, cw: e.clientWidth, snap: getComputedStyle(e).scrollSnapType }));
     expect(m.sw).toBeGreaterThan(m.cw); // more tiles than the width: it scrolls sideways
@@ -56,7 +56,7 @@ test.describe('Live-TV tab (phone)', () => {
       await page.goto('/live');
       const row = await rows(page).filter({ hasText: 'Nordlicht TV' }).locator('.now .tx').evaluate((e) => e.clientWidth);
       expect(row, `row title at ${w}`).toBeGreaterThanOrEqual(rowMin);
-      const tile = await favs(page).getByRole('button').first().locator('.ti').evaluate((e) => e.clientWidth);
+      const tile = await favs(page).locator('button.tile').first().locator('.ti').evaluate((e) => e.clientWidth);
       expect(tile, `tile title at ${w}`).toBeGreaterThanOrEqual(tileMin);
     }
   });

@@ -37,7 +37,7 @@ test.describe('Live TV on a TV', () => {
     await page.goto('/live?tv=1');
     await expect(page.locator('html.tv')).toHaveCount(1);
     await expect(rows(page)).toHaveCount(6);
-    const tile = (await favs(page).getByRole('button').first().boundingBox())!;
+    const tile = (await favs(page).locator('button.tile').first().boundingBox())!;
     expect(Math.round(tile.width)).toBe(360);
     expect(Math.abs(tile.width / tile.height - 16 / 9)).toBeLessThan(0.03);
     const row = (await rows(page).first().boundingBox())!;
@@ -84,7 +84,7 @@ test.describe('Live TV on a TV', () => {
     await expect(focused(page)).toHaveText('Favoriten');
     await page.keyboard.press('ArrowLeft');
     await page.keyboard.press('ArrowUp');
-    await expect(favs(page).getByRole('button').first()).toBeFocused();
+    await expect(favs(page).locator('button.tile').first()).toBeFocused();
     await page.keyboard.press('ArrowDown');
     await expect(chips(page).locator(':focus')).toHaveCount(1); // the chip below the tile
     await page.keyboard.press('ArrowDown');
@@ -129,7 +129,7 @@ test.describe('Live TV on a TV', () => {
     await page.keyboard.press('Enter');
     await expect(focused(page)).toHaveAttribute('aria-pressed', 'true');
     expect(api.livetv.calls).toEqual(['POST /api/livetv/favourites/ch-berg']);
-    await expect(favs(page).getByRole('button')).toHaveCount(4);
+    await expect(favs(page).locator('button.tile')).toHaveCount(4);
     // ◀ goes back to the row, nothing was opened
     await page.keyboard.press('ArrowLeft');
     await expect(focused(page)).toHaveAccessibleName(/^7 Bergblick Sport/);

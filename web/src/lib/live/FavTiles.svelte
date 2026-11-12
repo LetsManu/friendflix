@@ -11,7 +11,8 @@
    * "Läuft gerade bei dir" (spec §11.1 item 1, §11.2): the person's favourites in their own order (at most 12) as 16:9 glass tiles.
    * A preview shows only while the channel is running, else the logo sits centred on the tile's glass. Bottom: number and name,
    * the programme title with the time left right-aligned in a slot reserved for the longest form (tabular figures), and a 3 px
-   * progress line (`scaleX`, minute steps). A tile is one button named like a row. The head leaves a slot for *Ordnen* (Task 38).
+   * progress line (`scaleX`, minute steps). A tile is one button named like a row. The head carries *Ordnen* (Task 38, shown with at least two
+   * favourites; it only says `order`, the page owns the sheet) in the `order` slot, so a page may bring its own button.
    * On a desktop the tiles wrap into rows (at most 12, no sideways scrolling a mouse could not reach); on phones they form a
    * swipeable strip (scroll snap).
    */
@@ -23,9 +24,10 @@
   export let tv = false;
 
   const MAX = 12;
-  const dispatch = createEventDispatcher<{ open: LiveChannel }>();
+  const dispatch = createEventDispatcher<{ open: LiveChannel; order: HTMLElement }>();
 
   $: tiles = channels.slice(0, MAX);
+  $: canOrder = !loading && channels.length >= 2;
   /** the longest time left of the ACTIVE language (long form with the widest digits, the short one, "ending now"): it sizes the reserved slot */
   $: longest = [$t('live.timeLeftLong', { h: 9, m: 59 }), $t('live.timeLeft', { n: 59 }), $t('live.endingNow')].reduce((a, b) => (b.length > a.length ? b : a));
   const text = (c: LiveChannel): string => (c.receiving !== false && c.epg === 'ok' && c.now ? c.now.title : nowLines(c).now);
@@ -35,7 +37,7 @@
   <section class="fav" class:tv aria-labelledby="live-fav-h" aria-busy={loading ? 'true' : undefined}>
     <div class="head">
       <h2 id="live-fav-h">{$t('live.favourites')}</h2>
-      <span class="order"><slot name="order" /></span>
+      <span class="order"><slot name="order">{#if canOrder}<button type="button" class="ordnen frost frost-btn frost-safe" on:click={(e) => dispatch('order', e.currentTarget)}>{$t('live.fav.order')}</button>{/if}</slot></span>
     </div>
     <ul class="strip">
       {#if loading}
@@ -70,6 +72,7 @@
   /* the head always keeps the height of a 44 px button, so *Ordnen* arriving there moves nothing */
   .head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 44px; margin-bottom: .4rem; }
   h2 { margin: 0; font-size: 1.15rem; }
+  .ordnen { min-height: 44px; font-weight: 700; }
   .order { display: inline-flex; align-items: center; min-height: 44px; }
   .strip { display: flex; flex-wrap: wrap; gap: .9rem; margin: 0; padding: 4px 4px 10px; list-style: none; }
   .cell { flex: none; scroll-snap-align: start; --tw: 304px; width: var(--tw); height: calc(var(--tw) * 9 / 16); }
@@ -103,6 +106,11 @@
 
   /* TV: one row of 360 px tiles (1u = 1 px at a 1080p viewport); room around the strip for the focus ring and the 1.08 scale; the caption text is 28 px */
   .tv h2 { font-size: calc(var(--u) * 32); }
+  /* the order button on a TV: a 64 px target (54 px at least), text of 28 px, the focus ring and scale 1.08 like every focus */
+  .tv .head { min-height: calc(var(--u) * 64); }
+  .tv .order { min-height: calc(var(--u) * 64); }
+  .tv .ordnen, .tv .ordnen:hover:not(:disabled), .tv .ordnen:active:not(:disabled) { min-height: 54px; height: calc(var(--u) * 64); padding: 0 calc(var(--u) * 32); font-size: calc(var(--u) * 28); transform: none; transition: none; }
+  .tv .ordnen:focus-visible, .tv .ordnen:focus-visible:hover:not(:disabled) { transform: scale(1.08); z-index: 2; }
   .tv .cell { --tw: calc(var(--u) * 360); }
   .tv .strip { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; scroll-snap-type: none; gap: calc(var(--u) * 28); padding: calc(var(--u) * 24) calc(var(--u) * 28); }
   .tv .strip::-webkit-scrollbar { display: none; }

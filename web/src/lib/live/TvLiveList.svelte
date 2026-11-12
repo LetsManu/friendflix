@@ -46,7 +46,7 @@
   /** the person has no channel at all */
   export let none = false;
 
-  const dispatch = createEventDispatcher<{ open: LiveChannel; star: LiveChannel; select: LiveFilter }>();
+  const dispatch = createEventDispatcher<{ open: LiveChannel; star: LiveChannel; select: LiveFilter; order: HTMLElement }>();
 
   const JUMP = 8;
   let root: HTMLElement;
@@ -276,7 +276,7 @@
 </script>
 
 <div class="tvlive" bind:this={root} on:focusin={onFocusIn} aria-busy={loading ? 'true' : undefined}>
-  <FavTiles tv channels={favs} {now} {loading} on:open={(e) => dispatch('open', e.detail)} />
+  <FavTiles tv channels={favs} {now} {loading} on:open={(e) => dispatch('open', e.detail)} on:order={(e) => dispatch('order', e.detail)} />
   <GroupChips tv {groups} value={filter} {recent} {loading} on:select={(e) => dispatch('select', e.detail)} />
 
   {#if loading}
@@ -285,11 +285,11 @@
     <p class="muted empty" role="status">{$t(empty)}</p>
   {:else}
     <ul class="rows" aria-label={$t('live.player.channelList')}>
-      {#each channels as c (c.id)}
+      {#each channels as c, i (c.id)}
         {@const lines = nowLines(c)}
         {@const running = c.receiving !== false && c.epg === 'ok' && !!c.now}
         <li class="trow" data-id={c.id}>
-          <button type="button" class="main" data-ch={c.id} aria-label={rowName(c, now)} on:click={() => dispatch('open', c)}>
+          <button type="button" class="main" data-ch={c.id} data-autofocus={i === 0 ? '' : undefined} aria-label={rowName(c, now)} on:click={() => dispatch('open', c)}>
             <span class="num" aria-hidden="true">{c.number}</span>
             <span class="logo" aria-hidden="true">{#if c.logo}<img src={c.logo} alt="" width="72" height="72" loading="lazy" decoding="async" use:fadeIn />{/if}</span>
             <span class="txt" aria-hidden="true">
