@@ -7,7 +7,7 @@ import { clock } from '#lib/live/api';
 import { consumeAutoplay, noteInteraction } from '#lib/stillwatching';
 import { barHasProgress, barLine1, barLine2, barThumb, castParts, liveLines } from './bar';
 import { LiveCastError, PROGRESS_MS, RENEW_BEFORE_MS, type CastSession } from './engine';
-import { ci, deferred, flush, handoff, idle, liveAnswer, memStore, playing, settle, setup, T0, type Env } from '../../test-utils/fake-cast-engine';
+import { deferred, flush, handoff, idle, liveAnswer, memStore, playing, settle, setup, T0, type Env } from '../../test-utils/fake-cast-engine';
 import { DETACHED_AFTER_MS } from './engine';
 import { writeHint } from './resume';
 
