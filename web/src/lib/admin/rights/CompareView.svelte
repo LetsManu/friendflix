@@ -16,6 +16,8 @@
 
   export let matrix: RoleMatrix;
   export let stage: Stage = {};
+  /** a save runs: the controls are locked (like the matrix and the cards) */
+  export let disabled = false;
 
   const PERM_SET: ReadonlySet<string> = new Set(PERM_KEYS);
 
@@ -43,7 +45,7 @@
 {#if field}
   {@const f = field}
   <div class="cmp">
-    <Select label={question} {options} bind:value={picked} />
+    <Select label={question} {options} {disabled} bind:value={picked} />
     <ul>
       {#each matrix.roles as r (r.key)}
         {@const n = nameOf(stage, r, $locale)}
@@ -54,7 +56,7 @@
               <span class="lk"><Icon name="lock" size={16} /> {$t('adminPeople.roles.adminLocked')}</span>
             </div>
           {:else}
-            <FieldControl field={f} name={n} value={valueOf(stage, r, f)} libraries={matrix.libraries} on:change={(e) => (stage = stageSet(stage, matrix, r.key, f.key, e.detail))} />
+            <FieldControl field={f} name={n} {disabled} value={valueOf(stage, r, f)} libraries={matrix.libraries} on:change={(e) => (stage = stageSet(stage, matrix, r.key, f.key, e.detail))} />
             <!-- the line is always there: a staged or stored value adds its words without moving the rows -->
             <p class="note" class:on={note(stage, r, f, $locale) !== ''}>{note(stage, r, f, $locale)}</p>
           {/if}

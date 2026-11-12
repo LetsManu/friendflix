@@ -23,6 +23,8 @@
   export let libraries: Array<{ id: string; name: string }> = [];
   /** a name other than the field's (the compare view names each control after its role) */
   export let name: string | undefined = undefined;
+  /** every control locked (a save runs) */
+  export let disabled = false;
 
   const dispatch = createEventDispatcher<{ change: unknown }>();
   const id = uid('fc');
@@ -80,24 +82,24 @@
 
 <div class="fc">
   {#if field.kind === 'bool'}
-    <Toggle {label} checked={Boolean(value)} on:change={(e) => dispatch('change', e.detail)} />
+    <Toggle {label} {disabled} checked={Boolean(value)} on:change={(e) => dispatch('change', e.detail)} />
   {:else if field.kind === 'int'}
-    {#if noCap}<Toggle label={$t('adminPeople.roles.unlimited')} checked={unlimited} on:change={capOff} />{/if}
-    <Field {label} type="number" min={field.min} max={field.max} step={1} value={num} error={err} disabled={noCap && unlimited}
+    {#if noCap}<Toggle label={$t('adminPeople.roles.unlimited')} {disabled} checked={unlimited} on:change={capOff} />{/if}
+    <Field {label} type="number" min={field.min} max={field.max} step={1} value={num} error={err} disabled={disabled || (noCap && unlimited)}
       placeholder={placeholder === undefined || placeholder === null ? '' : String(placeholder)} on:input={typed} />
   {:else if field.kind === 'libraries'}
     <fieldset class="libs">
       <legend>{label}</legend>
-      <label class="chk all"><input type="checkbox" checked={all} disabled={all && !names.length} on:change={allToggled} /><span>{$t('adminPeople.roles.allLibraries')}</span></label>
+      <label class="chk all"><input type="checkbox" checked={all} disabled={disabled || (all && !names.length)} on:change={allToggled} /><span>{$t('adminPeople.roles.allLibraries')}</span></label>
       {#each names as n, i (n)}
-        <label class="chk" for="{id}-{i}"><input id="{id}-{i}" type="checkbox" checked={all || chosen.includes(n)} disabled={all || n === lastOne}
+        <label class="chk" for="{id}-{i}"><input id="{id}-{i}" type="checkbox" checked={all || chosen.includes(n)} disabled={disabled || all || n === lastOne}
           aria-describedby={n === lastOne ? `${id}-min` : undefined} on:change={(e) => libToggled(n, e.currentTarget.checked)} /><span>{n}</span></label>
       {/each}
       <!-- the hint's line is always there (nothing moves when it appears) -->
       <p class="min" id="{id}-min" aria-hidden={lastOne === null ? 'true' : undefined}>{lastOne === null ? '' : $t('adminPeople.roles.libsMin')}</p>
     </fieldset>
   {:else}
-    <Select {label} {options} value={picked} on:change={pick} />
+    <Select {label} {options} {disabled} value={picked} on:change={pick} />
   {/if}
 </div>
 

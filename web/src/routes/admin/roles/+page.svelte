@@ -67,6 +67,12 @@
     const keys = new Set(r.matrix.roles.map((x) => x.key));
     matrix = r.matrix;
     stage = Object.fromEntries(Object.entries(stage).filter(([k]) => keys.has(k)));
+    // a failed write of a role that is gone can never be applied again: it leaves the retry, and the bar's error with it
+    if (failures.some((j) => !keys.has(j.role)) || pending.some((j) => !keys.has(j.role))) {
+      failures = failures.filter((j) => keys.has(j.role));
+      pending = pending.filter((j) => keys.has(j.role));
+      if (!saving) barError = failures.length ? partialText([...new Map(failures.map((f) => [f.role, f.failed])).values()].reduce((a, n) => a + n, 0)) : pending.length ? barError : null;
+    }
   }
 
   // ---- the phone's two views
@@ -236,15 +242,17 @@
     matrix = { ...matrix, roles: next.map((r, position) => ({ ...r, position })) };
     status = tr('adminPeople.roles.movedTo', { name: roleLabel(m!), n: to + 1, total: next.length });
     if (hadFocus) void view?.focusHead(key, 'menu');
-    try {
-      await api('/api/admin/roles/order', { method: 'PUT', body: { keys: next.map((r) => r.key) } });
-    } catch {
-      toast.error(tr('adminPeople.roles.orderFailed'));
-      await refresh().catch(() => undefined); // back to what the server has
-      return;
-    }
-    await refresh().catch(() => undefined); // read back (the optimistic order stays if that fails)
+    // the writes go one after the other (each carries the whole order as it was shown), and the matrix is read back only after the
+    // last one: the optimistic order stays on screen meanwhile, so two quick moves never flicker back and forth
+    movesOpen++;
+    orderQueue = orderQueue.then(async () => {
+      try { await api('/api/admin/roles/order', { method: 'PUT', body: { keys: next.map((r) => r.key) } }); } catch { toast.error(tr('adminPeople.roles.orderFailed')); }
+      if (--movesOpen > 0) return;
+      await refresh().catch(() => undefined); // read back (after a failure: back to what the server has; the optimistic order stays if the read fails)
+    });
+    await orderQueue;
   }
+  let orderQueue: Promise<void> = Promise.resolve(), movesOpen = 0;
 
   let leaving = false;
   beforeNavigate((nav) => {
@@ -286,7 +294,7 @@
     {#if mode === 'roles'}
       <RoleCards bind:this={view} {matrix} bind:stage disabled={saving} {status} on:duplicate={(e) => startDuplicate(e.detail)} on:remove={(e) => void removeRole(e.detail)} on:move={(e) => void moveRole(e.detail)} />
     {:else}
-      <CompareView {matrix} bind:stage />
+      <CompareView {matrix} bind:stage disabled={saving} />
     {/if}
   </div>
 {/if}
