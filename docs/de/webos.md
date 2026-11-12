@@ -18,6 +18,7 @@ Die LG-TV-App ist FriendFlix als App auf einem LG-Smart-TV mit webOS (webOS 22 o
 - [Die 50-Stunden-Sitzung](#die-50-stunden-sitzung)
 - [Die TV-Oberfläche](#die-tv-oberfläche)
 - [Die Fernbedienung](#die-fernbedienung)
+  - [Live-TV-Tasten](#live-tv-tasten)
 - [Was Direct Play abdeckt](#was-direct-play-abdeckt)
 - [Server wechseln](#server-wechseln)
 - [Die Probe und wie du ihre Zeile liest](#die-probe-und-wie-du-ihre-zeile-liest)
@@ -151,6 +152,22 @@ Im Player (außerhalb des Players werden die Tasten ignoriert). Alles geht auch 
 | Info | `Info` | Besetzung kurz zeigen |
 
 **Zurück** (461) funktioniert überall: eine Ebene zurück; im Player blendet es zuerst die Steuerleiste aus und verlässt ihn danach. **Zurück auf der Startseite des TV-Modus öffnet zuerst das Seitenmenü; ein weiteres Zurück beendet die App.** Die Steuerleiste bleibt sichtbar, solange du dich darin bewegst, und verschwindet 5 Sekunden nach der letzten Taste; dabei gibt sie die gewählte Schaltfläche frei, damit das nächste OK immer Wiedergabe/Pause bedeutet. Auch der Zeiger der **Magic Remote** funktioniert: Bewegen blendet die Steuerung ein, Darüberfahren bewegt den Fokusrahmen, ein Klick auf eine Schaltfläche drückt sie, ein Klick aufs Bild startet oder pausiert. Die Pfeiltasten machen von dort weiter, wo der Zeiger war. Die allgemeinen Tasten stehen in [tv-mode.md](../tv-mode.md#bedienung-am-fernseher).
+
+### Live-TV-Tasten
+
+In Live-TV (der Live-Liste und dem Sender-Player) deckt **▲/▼, OK und Zurück alles ab**: ▲/▼ schalten den Sender um, solange die Steuerung ausgeblendet ist, OK zeigt Steuerung und Sender-Banner (es pausiert nie bei ausgeblendeter Steuerung), ein langes OK (0,6 s) öffnet die *Senderliste*. **Auf die Kanal-Tasten (CH +/−) verlässt sich nichts:** LG sagt, dass Web-Apps unter webOS sie nicht bekommen; deshalb verspricht sie kein Bildschirm. Sendet ein Fernseher sie doch als Bild-auf / Bild-ab (Tastencode 33 / 34), wirken sie als Kanal-Tasten (nicht verifiziert, auf einem echten Fernseher prüfen).
+
+| Taste | Code | Im Player | In der Live-Liste |
+|---|---|---|---|
+| ▲ / ▼ | 38 / 40 | Sender hoch / runter (Steuerung ausgeblendet) | eine Zeile hoch / runter |
+| Ziffern | 48-57 | Nummerneingabe, OK schaltet um | Nummerneingabe, OK fokussiert die Zeile |
+| Eine einzelne 0 | 48 | letzter Sender | fokussiert den zuletzt gesehenen Sender |
+| Rot | 403 | letzter Sender | fokussiert den zuletzt gesehenen Sender |
+| Blau | 406 | zurück zu *Live* (zum Live-Rand) | nichts |
+| Info | 457 | Programm-Info | Programm-Info der fokussierten Zeile |
+| Bild auf / Bild ab (nur wenn gesendet) | 33 / 34 | Sender hoch / runter | springt 8 Zeilen |
+
+Filme behalten die Tasten oben: Dort heißt Taste 33 weiterhin nächste Folge. Die Hinweiszeile der Liste nennt "CH ▲▼: 8 Zeilen" erst, nachdem ein Bild-auf / Bild-ab ankam; die Pfeiltasten-Hinweise stehen immer da. Die Farbtasten liegen bei der Magic Remote von 2025 auf dem Feld der Taste **123**.
 
 ## Was Direct Play abdeckt
 

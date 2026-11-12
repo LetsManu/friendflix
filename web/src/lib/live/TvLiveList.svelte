@@ -6,13 +6,13 @@
   import Icon from '#lib/Icon.svelte';
   import { t, type TKey } from '#lib/i18n';
   import { isBackKey } from '#lib/spatial';
-  import { isLgApp } from '#lib/webos/detect';
   import { nowLines, type LiveChannel, type LiveGroup } from './api';
   import { fadeIn } from './fade';
   import FavTiles from './FavTiles.svelte';
   import GroupChips from './GroupChips.svelte';
   import { hintKeys, noteKey, seenKeys, type SeenKey } from './keyhints';
   import { resolveLiveKey } from './livekeys';
+  import { liveRemote, type LiveRemote } from './remotekeys';
   import { createLongOk } from './longok';
   import NumberCard from './NumberCard.svelte';
   import { commitNumber, NUMBER_TIMEOUT_MS, typeDigit, type NumberState } from './numberEntry';
@@ -228,14 +228,16 @@
   function stop(e: Event) { e.preventDefault(); e.stopPropagation(); }
   /** the rail has the focus or a modal is up: the list's shortcuts stay quiet */
   const overShell = (): boolean => !!document.activeElement?.closest('nav.rail') || !!document.querySelector('[aria-modal="true"]');
+  let remote: LiveRemote | null = null;
   function onKeyDown(e: KeyboardEvent) {
     if (!root?.isConnected) return;
-    const s = noteKey(e.key);
+    const key = remote ? remote.keyName(e) : e.key; // a Samsung / LG remote sends many keys as 'Unidentified' + keyCode
+    const s = noteKey(key);
     if (s.size !== seen.size) seen = s;
     if (e.ctrlKey || e.metaKey || e.altKey || e.key.startsWith('Arrow')) return;
     const back = e.key === 'Escape' || isBackKey(e);
     if (info) { // the panel owns Back and Info; OK on its button is left alone, the button's own click closes it
-      if (back || e.key === 'Info') { stop(e); void closeInfo(); }
+      if (back || key === 'Info') { stop(e); void closeInfo(); }
       return;
     }
     if (back) {
@@ -249,7 +251,7 @@
       if (a?.matches('.trow .main[data-ch]')) { e.preventDefault(); pressed = a; longOk.down(e); } // short OK watches, a long OK is the favourite
       return;
     }
-    const act = resolveLiveKey(e, { tv: true, lg: isLgApp(), controlsVisible: false, onBody: false, overlayOpen: false, numberOpen: !!number });
+    const act = resolveLiveKey(remote ? remote.input(e) : e, { tv: true, lg: remote?.lg ?? false, controlsVisible: false, onBody: false, overlayOpen: false, numberOpen: !!number });
     if (!act || overShell()) return; // the rail or a modal owns the keys
     if (act.type === 'digit') { stop(e); digit(act.d); }
     else if (act.type === 'chDown') { stop(e); jump(JUMP); }
@@ -261,6 +263,7 @@
 
   onMount(() => {
     seen = seenKeys();
+    remote = liveRemote(); // Samsung: registers the live keys now that the Live list is open
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('blur', longOk.cancel);

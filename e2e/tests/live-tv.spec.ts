@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Locator, Page } from '@playwright/test';
-import { expect, test } from '../fixtures.js';
+import { expect, test, type MockState } from '../fixtures.js';
 import { ME } from '../mocks/fixtures.js';
 import { mockLivePlayer, opensPlayer } from '../helpers.js';
+import { asLgApp } from '../mocks/webos.js';
 import type { MockChannel } from '../mocks/livetv.js';
 
 // Live TV on a television (Task 37, spec §11.3): the 10-foot list with its favourites row, focusable chips and 96 px rows, the D-pad
@@ -395,5 +396,99 @@ test.describe('admin devices: TV startet mit Live-TV', () => {
     const sw = page.getByRole('switch', { name: 'TV startet mit Live-TV' });
     await sw.click();
     await expect(sw).toHaveAttribute('aria-checked', 'false');
+  });
+});
+
+// Samsung and LG remotes (Task 43, spec §12.3, §14): the keys come with `key: 'Unidentified'` and only a keyCode. Tizen registers its live
+// keys when the Live area opens and maps their codes (`getKey(name).code`); LG has no CH keys in web apps (▲/▼ zap), but maps 457 (Info),
+// the colour keys and, when a TV sends them, PageUp/PageDown (33/34). The hint line names a CH key only after it arrived.
+const MIN = 60_000;
+/** a remote key as the TV sends it: no usable `key`, only the keyCode */
+const press = (page: Page, keyCode: number) =>
+  page.evaluate((keyCode) => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { keyCode, key: 'Unidentified', bubbles: true, cancelable: true } as KeyboardEventInit)); }, keyCode);
+async function armPlayer(page: Page, api: MockState) {
+  api.features = { livetv: true };
+  api.livetv.dvrPlaylist = true;
+  api.livetv.liveStart = Date.now() - 10 * MIN;
+  await page.route('**/api/playback/timing', (r) => r.fulfill({ status: 204 }));
+  api.livetv.timeShift = NOW.getTime() - Date.now();
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.clock.install({ time: NOW });
+}
+const playing = (page: Page) => expect(page.locator('[data-live-state]')).toHaveAttribute('data-live-state', 'playing', { timeout: 15_000 });
+
+test.describe('Samsung remote (Tizen)', () => {
+  test('registers its live keys and ChannelList opens the Senderliste', async ({ page, api }) => {
+    await armPlayer(page, api);
+    await page.addInitScript(() => {
+      const w = window as unknown as { __reg: string[]; tizen: unknown };
+      w.__reg = [];
+      const codes: Record<string, number> = { ChannelUp: 427, ChannelDown: 428, PreviousChannel: 10190, Info: 457, ColorF0Red: 403, ColorF3Blue: 406, ChannelList: 10073 };
+      w.tizen = { tvinputdevice: {
+        registerKey: (n: string) => { w.__reg.push(n); },
+        getKey: (n: string) => ({ code: codes[n] ?? 48 }),
+        getSupportedKeys: () => ['ChannelList'].map((name) => ({ name, code: codes[name] })), // no Guide on this TV
+      } };
+    });
+    await page.goto('/live/watch/ch-kinder?f=all&tv=1&ff_app=tizen');
+    await playing(page);
+    const reg = await page.evaluate(() => (window as unknown as { __reg: string[] }).__reg);
+    expect(reg).toEqual(expect.arrayContaining(['ChannelUp', 'ChannelDown', 'PreviousChannel', 'Info', '0', '9', 'ColorF0Red', 'ColorF3Blue', 'ChannelList']));
+    expect(reg).not.toContain('Guide');
+    await press(page, 10073);
+    const panel = page.getByRole('dialog', { name: 'Senderliste' });
+    await expect(panel).toBeVisible();
+    await expect(focused(page)).toHaveAccessibleName(/^12 Kinderinsel/);
+  });
+});
+
+test.describe('LG remote (webOS)', () => {
+  test.beforeEach(async ({ page, api }) => {
+    await armPlayer(page, api);
+    await page.route('**/api/me', (r) => r.fulfill({ json: { ...ME, tv: true, features: { livetv: true } } }));
+    await page.routeWebSocket(/\/ws\/remote/, () => {});
+    await asLgApp(page);
+  });
+
+  test('▲ switches the channel up without any CH key', async ({ page, api }) => {
+    await page.goto('/live/watch/ch-nord?f=all&tv=1&ff_app=webos');
+    await playing(page);
+    await page.clock.runFor(5200); // the controls hide by themselves, so ▲ zaps instead of moving the focus
+    await expect(page.getByRole('group', { name: 'Wiedergabesteuerung' })).toHaveClass(/\bhide\b/);
+    await page.keyboard.press('ArrowUp');
+    await expect(page.locator('.lbanner')).toContainText('4 Hafenkanal');
+    await expect.poll(() => api.livetv.watches).toEqual(['ch-nord', 'ch-hafen']);
+  });
+
+  test('keyCode 33 also switches up when the TV sends it', async ({ page, api }) => {
+    await page.goto('/live/watch/ch-nord?f=all&tv=1&ff_app=webos');
+    await playing(page);
+    await press(page, 33);
+    await expect(page.locator('.lbanner')).toContainText('4 Hafenkanal');
+    await expect.poll(() => api.livetv.watches).toEqual(['ch-nord', 'ch-hafen']);
+  });
+
+  test('457 opens the info panel', async ({ page }) => {
+    await page.goto('/live/watch/ch-nord?f=all&tv=1&ff_app=webos');
+    await playing(page);
+    await press(page, 457);
+    await expect(page.getByRole('dialog', { name: 'Programm' })).toBeVisible();
+  });
+
+  test('Red jumps to the last channel', async ({ page, api }) => {
+    api.livetv.recent = ['ch-hafen'];
+    await page.goto('/live/watch/ch-nord?f=all&tv=1&ff_app=webos');
+    await playing(page);
+    await press(page, 403);
+    await expect.poll(() => api.livetv.watches).toEqual(['ch-nord', 'ch-hafen']);
+    await expect(page.locator('.lbanner')).toContainText('4 Hafenkanal');
+  });
+
+  test('the list\'s hint line shows no CH hint until a PageUp/PageDown arrived', async ({ page }) => {
+    await page.goto('/live?tv=1&ff_app=webos');
+    await expect(rows(page)).toHaveCount(6);
+    await expect(hint(page)).toHaveText('OK: ansehen · Lang OK: Favorit');
+    await press(page, 33);
+    await expect(hint(page)).toContainText('CH ▲▼: 8 Zeilen');
   });
 });

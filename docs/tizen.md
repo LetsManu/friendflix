@@ -20,6 +20,7 @@ The Samsung TV app is FriendFlix as an app on a Samsung smart TV (Tizen 6.5 or n
 - [Install on the TV](#install-on-the-tv)
 - [First start: the server address](#first-start-the-server-address)
 - [The probe and how to read its line](#the-probe-and-how-to-read-its-line)
+- [Live TV keys](#live-tv-keys)
 - [Updates](#updates)
 - [Troubleshooting](#troubleshooting)
 
@@ -207,6 +208,23 @@ The probe stays a diagnostic tool in the repository and on each release.
 ## HEVC streams and surround sound
 
 The Samsung app uses the same checks as a browser: converted streams carry HEVC or Dolby surround (E-AC-3 / AC-3) only when the TV's streaming engine and its decode check confirm them. Nothing is claimed before that. If a stream with HEVC or surround does not start, the player switches once to a stream the TV plays and remembers it for 30 days. If the soundbar stays silent, turn off the **Surround sound** switch in the player's *Sound* panel. (The probe line above covers AVPlay only and is unchanged.)
+
+## Live TV keys
+
+When the Live area opens (the Live list or a channel), the app registers the keys the Samsung remote needs with `tizen.tvinputdevice.registerKey`, each one on its own, so one refused key never blocks the others: `ChannelUp`, `ChannelDown`, `PreviousChannel` (last channel), `Info`, the digits `0`-`9`, and the Red and Blue keys. **`ChannelList` and `Guide`** are registered only when the TV lists them in `tizen.tvinputdevice.getSupportedKeys()`. The key codes are read from the TV (`getKey(name).code`); the documented values (427, 428, 10190, 457, 403, 406, 10073, 458) are only the fallback. Samsung often sends these keys without a usable key name (`Unidentified`), so the app maps them by code.
+
+Nothing depends on these keys: **▲/▼ zap, OK shows the controls and a long OK opens the channel list** on every remote. The registered keys are shortcuts:
+
+| Key | In the player | In the Live list |
+|---|---|---|
+| CH ▲ / ▼ | next / previous channel | jumps 8 rows |
+| Digits, then OK | switches to that channel number | focuses that channel's row |
+| A lone 0 | last channel | focuses the last watched channel |
+| Previous channel | last channel | focuses the last watched channel |
+| Info | programme info | programme info of the focused row |
+| Channel list, Guide | opens the *Senderliste* panel (the guide grid replaces it later) | nothing |
+
+The list's hint line names a shortcut only after the TV has sent it. Check on a real TV: whether `ChannelList` / `Guide` appear in `getSupportedKeys()` differs by model year.
 
 ## Updates
 
