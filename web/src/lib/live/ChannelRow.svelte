@@ -19,6 +19,8 @@
 
   const dispatch = createEventDispatcher<{ open: LiveChannel; star: LiveChannel }>();
 
+  /** the longer of the two labels in the active language sizes both, so Jetzt / Danach share one reserved column */
+  $: wide = $t('live.now').length >= $t('live.next').length ? $t('live.now') : $t('live.next');
   $: lines = nowLines(channel);
   /** the programme lines carry their labels; the state lines (Live, gap, not receiving) are plain text */
   $: running = channel.receiving !== false && channel.epg === 'ok' && !!channel.now;
@@ -33,8 +35,8 @@
     </span>
     <span class="txt" aria-hidden="true">
       <span class="name">{channel.name}</span>
-      <span class="ln now">{#if running}<i class="lb">{$t('live.now')}</i>{/if}<span class="tx">{lines.now}</span></span>
-      <span class="ln next">{#if running && lines.next}<i class="lb">{$t('live.next')}</i>{/if}{#if lines.next}<span class="tx">{lines.next}</span>{/if}</span>
+      <span class="ln now">{#if running}<i class="lb"><span class="sz" aria-hidden="true">{wide}</span><span>{$t('live.now')}</span></i>{/if}<span class="tx">{lines.now}</span></span>
+      <span class="ln next">{#if running && lines.next}<i class="lb"><span class="sz" aria-hidden="true">{wide}</span><span>{$t('live.next')}</span></i>{/if}{#if lines.next}<span class="tx">{lines.next}</span>{/if}</span>
       <span class="bar"><i style="transform:scaleX({p})"></i></span>
     </span>
   </button>
@@ -63,7 +65,9 @@
   .txt { display: grid; grid-template-rows: 20px 17px 17px 3px; row-gap: 2px; min-width: 0; }
   .name { font-weight: 700; font-size: .98rem; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ln { display: flex; gap: .45rem; min-width: 0; font-size: .84rem; line-height: 17px; color: rgba(255, 255, 255, .78); }
-  .lb { flex: none; width: 5.9em; font-style: normal; font-weight: 600; color: rgba(255, 255, 255, .78); }
+  .lb { flex: none; display: grid; justify-items: start; font-style: normal; font-weight: 600; color: rgba(255, 255, 255, .78); }
+  .lb > span { grid-area: 1 / 1; }
+  .lb .sz { visibility: hidden; height: 0; overflow: hidden; }
   .tx { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
   .bar { align-self: end; height: 3px; border-radius: 2px; overflow: hidden; background: rgba(255, 255, 255, .22); }
   .bar > i { display: block; height: 100%; background: #fff; transform-origin: 0 50%; }

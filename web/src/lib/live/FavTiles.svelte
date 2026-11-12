@@ -24,6 +24,8 @@
   const dispatch = createEventDispatcher<{ open: LiveChannel }>();
 
   $: tiles = channels.slice(0, MAX);
+  /** the longest time left of the ACTIVE language (long form with the widest digits, the short one, "ending now"): it sizes the reserved slot */
+  $: longest = [$t('live.timeLeftLong', { h: 9, m: 59 }), $t('live.timeLeft', { n: 59 }), $t('live.endingNow')].reduce((a, b) => (b.length > a.length ? b : a));
   const text = (c: LiveChannel): string => (c.receiving !== false && c.epg === 'ok' && c.now ? c.now.title : nowLines(c).now);
 </script>
 
@@ -50,7 +52,7 @@
               </span>
               <span class="cap" aria-hidden="true">
                 <span class="l1"><b class="num">{c.number}</b><span class="nm">{c.name}</span></span>
-                <span class="l2"><span class="ti">{text(c)}</span><span class="left">{timeLeftText(left)}</span></span>
+                <span class="l2"><span class="ti">{text(c)}</span><span class="left"><span class="sz" aria-hidden="true">{longest}</span><span class="tl">{timeLeftText(left)}</span></span></span>
                 <span class="bar"><i style="transform:scaleX({c.receiving !== false && c.epg === 'ok' && c.now ? progressAt(c.now, now) : 0})"></i></span>
               </span>
             </button>
@@ -68,7 +70,7 @@
   h2 { margin: 0; font-size: 1.15rem; }
   .order { display: inline-flex; align-items: center; min-height: 44px; }
   .strip { display: flex; flex-wrap: wrap; gap: .9rem; margin: 0; padding: 4px 4px 10px; list-style: none; }
-  .cell { flex: none; scroll-snap-align: start; --tw: 264px; width: var(--tw); height: calc(var(--tw) * 9 / 16); }
+  .cell { flex: none; scroll-snap-align: start; --tw: 304px; width: var(--tw); height: calc(var(--tw) * 9 / 16); }
   /* the global coral button look does not apply: restated, also for hover and press */
   .tile, .tile:hover:not(:disabled), .tile:active:not(:disabled) {
     position: relative; display: block; width: 100%; height: 100%; min-height: 0; padding: 0; margin: 0; overflow: hidden; color: #fff; font: inherit; font-weight: 400; text-align: left; transform: none;
@@ -89,8 +91,11 @@
   .nm { min-width: 0; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .l2 { font-size: .84rem; color: rgba(255, 255, 255, .86); }
   .ti { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  /* the longest form of any language (Polish "jeszcze 12 godz. 59 min"), tabular figures: a changing value never moves its neighbours */
-  .left { flex: none; width: 12.4em; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* the longest form of the active language, tabular figures: a changing value never moves its neighbours */
+  /* the slot is as wide as the longest form of the active language (an invisible sizer in the same grid cell), tabular figures */
+  .left { flex: none; display: grid; justify-items: end; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .left > span { grid-area: 1 / 1; }
+  .sz { visibility: hidden; height: 0; overflow: hidden; }
   .bar { height: 3px; margin-top: 5px; border-radius: 2px; overflow: hidden; background: rgba(255, 255, 255, .28); }
   .bar > i { display: block; height: 100%; background: #fff; transform-origin: 0 50%; }
 

@@ -170,18 +170,25 @@ test.describe('Live-TV tab (desktop)', () => {
     await expect.poll(async () => Math.abs(((await fill.boundingBox())?.x ?? -99) - ((await tab.boundingBox())?.x ?? 99)), { timeout: 5000 }).toBeLessThan(3);
   });
 
-  test('the slots fit the longest words of every language', async ({ page, api }) => {
-    patchChannel(api.livetv, 'ch-nord', { now: progAt('Die Leuchtturmwärter', [19, 0], [22, 0]) });
+  test('the time-left slot is sized for the language and the title keeps its room', async ({ page, api }) => {
     await page.goto('/live');
     const tile = favs(page).getByRole('button', { name: /^1 Nordlicht TV/ });
-    await expect(tile).toContainText('noch 1 Std. 23 Min.'); // the long form
-    // the longest time left (Polish) and the longest label (French) still fit their reserved slots
-    const fits = await page.evaluate(() => {
-      const left = document.querySelector('.cap .left') as HTMLElement, lb = document.querySelector('.row .lb') as HTMLElement;
-      left.textContent = 'jeszcze 12 godz. 59 min'; lb.textContent = 'Maintenant';
-      return [[left.scrollWidth, left.clientWidth], [lb.scrollWidth, lb.clientWidth]];
-    });
-    for (const [scroll, client] of fits as Array<[number, number]>) expect(scroll).toBeLessThanOrEqual(client);
+    await expect(tile).toContainText('noch 23 Min.');
+    const slot = async () => ({ left: await tile.locator('.left').boundingBox(), title: await tile.locator('.ti').boundingBox() });
+    const before = await slot();
+    // German: the slot holds "noch 9 Std. 59 Min." (not a worst case of another language), so the title is whole
+    expect(await tile.locator('.ti').evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);
+    expect(before.title!.width).toBeGreaterThan(130);
+    // the long form (and its wider digits) changes nothing about the slot
+    patchChannel(api.livetv, 'ch-nord', { now: progAt('Die Leuchtturmwärter', [19, 0], [22, 0]) });
+    await page.clock.runFor(31_000);
+    await expect(tile).toContainText('noch 1 Std. 23 Min.');
+    expect(await slot()).toEqual(before);
+    expect(await tile.locator('.left').evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);
+    // the row label column fits both labels and stays put
+    const lbs = await rowOf(page, 'Nordlicht TV').locator('.lb').evaluateAll((l) => l.map((e) => [e.getBoundingClientRect().width, e.scrollWidth <= e.clientWidth + 1]));
+    expect(lbs[0]![0]).toBe(lbs[1]![0]);
+    expect(lbs.every((x) => x[1])).toBe(true);
   });
 
   test('now/next arriving moves nothing', async ({ page, api }) => {

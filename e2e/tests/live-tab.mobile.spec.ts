@@ -49,6 +49,18 @@ test.describe('Live-TV tab (phone)', () => {
     expect(await noHorizontalOverflow(page)).toBe(true);
   });
 
+  test('titles keep their room on a phone (the slots are sized for German, not for every language)', async ({ page }) => {
+    // at 390 px "20:15 Die Leuchtturmwärter" keeps ~20 characters in a row and ~17 in a tile; at 320 px at least ~10
+    for (const [w, rowMin, tileMin] of [[390, 140, 120], [320, 70, 70]] as const) {
+      await page.setViewportSize({ width: w, height: 800 });
+      await page.goto('/live');
+      const row = await rows(page).filter({ hasText: 'Nordlicht TV' }).locator('.now .tx').evaluate((e) => e.clientWidth);
+      expect(row, `row title at ${w}`).toBeGreaterThanOrEqual(rowMin);
+      const tile = await favs(page).getByRole('button').first().locator('.ti').evaluate((e) => e.clientWidth);
+      expect(tile, `tile title at ${w}`).toBeGreaterThanOrEqual(tileMin);
+    }
+  });
+
   test('the chips are sticky under the header and filter', async ({ page }) => {
     await page.goto('/live');
     const bar = page.getByRole('group', { name: 'Sendergruppen' });
