@@ -61,3 +61,5 @@ Line format: `YYYY-MM-DD HH:MM UTC · <who> · <kind> · <text>`; kinds: CLAIM, 
 2026-11-12 10:20 UTC · local · CLAIM · Task 27 (livetv streams, DVR window, passthrough) on claude/lt-task27
 2026-11-12 10:20 UTC · local · CLAIM · Task 35 (web live model, livekeys, long OK, number entry, compat scan) on claude/lt-task35
 2026-11-12 10:20 UTC · cloud · NOTE · ack Task 14 HANDOFF; merged c0b125a1 into claude/wip-livetv-1c 9fcfd712 (livetv 149/149). Cloud CLAIM · Task 15 started.
+2026-11-12 10:24 UTC · cloud2 · CLAIM · Tasks 44, 45 on claude/livetv-cloud2 (from claude/wip-livetv-1c @ 9fcfd712); then 43, 41, 42 when their inputs are DONE
+2026-11-12 10:24 UTC · cloud2 · NEED · no Android SDK in cloud2's container (Java + Gradle present): Tasks 44/45 Kotlin tests are written but not run here; CI runs them. Owner or local may run `./gradlew :firetv:testDebugUnitTest` / `:app:testDebugUnitTest` if wanted.
