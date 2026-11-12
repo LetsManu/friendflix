@@ -6,7 +6,7 @@ Die Android-App ist FriendFlix für die Hosentasche: dieselbe Weboberfläche wie
 
 - **Player:** ein nativer Player (Media3) mit Direktwiedergabe, wenn das Handy die Datei selbst abspielen kann, Bild-im-Bild, Steuerung auf dem Sperrbildschirm und per Bluetooth und auf Wunsch Ton im Hintergrund.
 - **Downloads:** Filme und Folgen laden im Hintergrund, auch bei ausgeschaltetem Bildschirm, aufs Telefon oder auf eine SD-Karte und werden verschlüsselt gespeichert. Ist der Server nicht erreichbar, öffnet die App eine Liste deiner Downloads zum Offline-Schauen.
-- **Chromecast** aus dem nativen Player.
+- **Chromecast** aus dem nativen Player und für Live-Sender aus dem Live-Player der Weboberfläche (wenn dein Server Live-TV hat).
 - **Benachrichtigungen** zu neuen Folgen, Anfragen und deinem Konto, die die App etwa alle 10–20 Minuten selbst abholt (Android kann das weiter verzögern; ohne Push-Dienst von Google).
 
 Alles andere (Stöbern, Profile, Watch-Partys, Anfragen, Einstellungen deines Kontos) ist die Weboberfläche und passt deshalb immer zur Version deines Servers.
@@ -169,6 +169,17 @@ Im nativen Player erscheint das Cast-Symbol, sobald das Handy casten kann: Dein 
 - Downloads werden nie gecastet; beim Abspielen eines Downloads ist das Cast-Symbol ausgeblendet.
 - Ton-, Untertitel- und Qualitätswechsel, Tempo, Untertitelsuche, *Klare Stimmen* und *Nachtmodus* gibt es während des Castings nicht; wähle sie vorher. *Folgen*, *Szenen*, Lesezeichen, der Schlaf-Timer und *Besetzung & Infos* wirken auf den Fernseher ([Player](#player)).
 - Die Cast-Funktion kommt aus Googles Cast SDK, das Googles eigene Cast-Telemetrie mitbringt (sie meldet an Google wie in jeder App mit Google Cast). FriendFlix selbst sendet keine Analysedaten. Auf einem Handy ohne Google-Play-Dienste gibt es kein Cast-Symbol; alles andere funktioniert. Einzelheiten: [security.md, Android app](../security.md#android-app).
+
+### Live-Sender auf dem Fernseher
+
+Hat dein Server Live-TV ([livetv.md](livetv.md)), kann ein Live-Sender aus der Weboberfläche der App auf einen Chromecast gehen (Bridge-Methode `castLive`):
+
+- Die App holt den Stream des Senders selbst bei deinem Server, mit deiner Anmeldung; weder eine Stream-Adresse noch ein Token geht durch die Webseite. Der Fernseher bekommt den Namen des Senders, die laufende Sendung und das Senderlogo. Der eigene Receiver von FriendFlix zeigt seine Senderkarte, der Default Media Receiver seine eigene Ansicht.
+- Ist noch kein Fernseher verbunden, öffnet die App die Cast-Geräteliste; der Sender geht auf den Fernseher, den du innerhalb von etwa 40 Sekunden wählst.
+- Die Cast-Leiste zeigt statt eines Titels den Sender: seinen Namen, die laufende Sendung, *Pause* / *Abspielen* und *Übertragung beenden*. Ein Sender hat keine Position, kein *Weiter* und keine Fernbedienung im nativen Player.
+- Lehnt der Server ab (kein freier Umwandlungsplatz, das Verbindungslimit des Anbieters, dein Stream-Limit, der Sender antwortet nicht, kein Recht auf den Sender), ändert sich am Fernseher nichts; die App erfährt nur „nein“, nie den Grund. Wird der Wechsel auf einen anderen Sender abgelehnt, läuft der bisherige weiter.
+- Ein gecasteter Titel ersetzt den Sender auf dem Fernseher und ein gecasteter Sender einen Titel. *Übertragung beenden*, ein Profilwechsel und das Abmelden beenden auch eine Live-Übertragung. Nach spätestens 12 Stunden endet sie; dann einfach neu starten.
+- Wurde die App geschlossen, läuft der Sender auf dem Fernseher weiter, aber die Leiste kommt für ihn nicht zurück. Eine App-Version ohne `castLive` antwortet „nein“, dann bleibt der Sender in der Weboberfläche auf dem Handy.
 
 ## Fehlersuche
 
@@ -365,6 +376,11 @@ Unit-Tests und der Emulator in der CI decken die Logik ab; diese Punkte brauchen
 68. Handy mit Kabelkopfhörern oder dem Lautsprecher: gleiches Ergebnis, Stereo und kein Schalter.
 69. Handy oder Android-TV-Box an einem HDMI-Receiver oder einer Soundbar, die Dolby kann: Der Schalter *Raumklang* erscheint, der Receiver zeigt 5.1 (Dolby Digital Plus, Dolby Digital oder mehrkanaliges PCM); Schalter aus, der Stream lädt an derselben Stelle mit Stereo neu; wieder an, 5.1 kommt zurück.
 70. Ein HEVC-Titel in einem umgewandelten Stream auf einem Handy mit HEVC-Hardware: Er spielt; „Läuft gerade“ des Admins zeigt den Stream. Auf einem Testserver einen Fehler erzwingen (zum Beispiel den HEVC-Stream blockieren): ein automatischer Ausweichschritt, keine Schleife, und die Wahl wird gemerkt.
+
+**Live-TV** (ein Server mit eingeschaltetem Live-TV)
+71. Ein Sender im Live-Player, kein Fernseher verbunden, casten: Die Cast-Geräteliste öffnet sich; Fernseher wählen: Der Sender läuft dort mit Namen, laufender Sendung und Logo (eigener Receiver: die Senderkarte). Die Cast-Leiste zeigt den Sender; *Pause* / *Abspielen* und *Übertragung beenden* gehen.
+72. Ein abgelehnter Start (zum Beispiel alle Umwandlungsplätze belegt oder ein Anbieter mit einer Verbindung schon besetzt): nichts auf dem Fernseher, kein Absturz, die Weboberfläche bleibt bedienbar. Wechsel auf einen anderen Sender, während einer läuft: Der neue läuft; ein abgelehnter Wechsel lässt den alten auf dem Fernseher.
+73. Ein Film wird gecastet, dann ein Sender: Der Stream des Films endet („Läuft gerade“ beim Admin), der Sender läuft. Profilwechsel oder Abmelden: Der Fernseher stoppt.
 
 ## Selbst bauen
 

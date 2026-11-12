@@ -11,6 +11,7 @@
  * Protocol (JSON strings, both directions):
  *   web -> app   {id, method, args}                  method: capabilities | play | download | downloads | deleteDownload | openSettings
  *                                                    | castState | castControl | sessionChanged (API 2, the app's own Chromecast session)
+ *                                                    | castLive (a live channel on the TV; apps without it answer unknown_method = false)
  *   app -> web   {id, ok:true, result} | {id, ok:false, error}
  *   app -> web   {event, detail}                     unsolicited, no id (download progress ...); re-dispatched as the DOM event
  *                                                    'friendflix-native' with detail = the whole {event, detail} object
@@ -20,6 +21,8 @@
 import { writable } from 'svelte/store';
 
 export const REQUEST_TIMEOUT_MS = 5000;
+/** `castLive` waits for the app's device chooser (up to 40 s) and the channel's first segment (up to 15 s) before it gives up */
+export const CAST_LIVE_TIMEOUT_MS = 60_000;
 export const UA_MARKER = ' FriendFlixAndroid/';
 /** every user agent marker that opts a shell into the bridge (the Android app first, then the Windows app) */
 export const UA_MARKERS = [UA_MARKER, ' FriendFlixDesktop/'] as const;
@@ -31,6 +34,8 @@ export interface NativeCapabilities { api: number; play: boolean; download: bool
 export interface NativeCastSnapshot {
   kind: 'chromecast'; device: string; itemId: string; title: string; subtitle?: string; posterId: string; isEpisode: boolean;
   positionMs: number; durationMs: number; paused: boolean; state: 'connecting' | 'playing' | 'ended'; next?: { itemId: string; label: string };
+  /** a live channel (`castLive`): itemId / posterId = the channel id, title = its name, subtitle = the programme now; no duration */
+  live?: true;
 }
 export type NativeCastAction = 'playPause' | 'next' | 'stop' | 'open';
 export interface NativePlayRequest { itemId: string; profileId: string; startMs?: number; mediaSourceId?: string; audio?: string; subtitle?: string }
@@ -84,13 +89,13 @@ function wire(p: Port) {
 }
 
 type Reply = { ok: boolean; result?: unknown; timeout?: boolean };
-function request(method: string, args: Record<string, unknown> = {}): Promise<Reply> {
+function request(method: string, args: Record<string, unknown> = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Reply> {
   const p = native.available ? port() : undefined;
   if (!p) return Promise.resolve({ ok: false });
   wire(p);
   return new Promise((resolve) => {
     const id = `r${++seq}`;
-    const timer = setTimeout(() => { pending.delete(id); resolve({ ok: false, timeout: true }); }, REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => { pending.delete(id); resolve({ ok: false, timeout: true }); }, timeoutMs);
     pending.set(id, (m) => { clearTimeout(timer); resolve(m); });
     try { p.postMessage(JSON.stringify({ id, method, args })); } catch { clearTimeout(timer); pending.delete(id); resolve({ ok: false }); }
   });
@@ -111,9 +116,10 @@ export function asCastSnapshot(x: unknown): NativeCastSnapshot | null {
   const n = o.next as Record<string, unknown> | undefined;
   const next = n && typeof n === 'object' && typeof n.itemId === 'string' && ID.test(n.itemId) && cut(n.label, 200) !== null ? { next: { itemId: n.itemId, label: cut(n.label, 200)! } } : {};
   const sub = cut(o.subtitle, 500), subtitle = sub ? { subtitle: sub } : {};
+  const live = o.live === true ? { live: true as const } : {};
   return {
     kind: 'chromecast', device, itemId: o.itemId, title, posterId: o.posterId, isEpisode: o.isEpisode === true,
-    positionMs: num(o.positionMs), durationMs: num(o.durationMs), paused: o.paused === true, state: o.state as NativeCastSnapshot['state'], ...subtitle, ...next,
+    positionMs: num(o.positionMs), durationMs: num(o.durationMs), paused: o.paused === true, state: o.state as NativeCastSnapshot['state'], ...subtitle, ...next, ...live,
   };
 }
 
@@ -208,6 +214,13 @@ export const native = {
    *  and token revoke went out, at most about 3 s) or after the request timeout; true = answered */
   async sessionChanged(profileId: string | null): Promise<boolean> {
     const r = await request('sessionChanged', { profileId });
+    return r.ok && r.result === true;
+  },
+  /** a live channel on the TV through the app's own cast: the app asks the server for the stream itself (no token crosses the bridge)
+   *  and opens its device chooser when no TV is connected. true = the channel plays on the TV; false = refused by the server, no TV
+   *  picked, an app without castLive, or no answer within CAST_LIVE_TIMEOUT_MS */
+  async castLive(channelId: string): Promise<boolean> {
+    const r = await request('castLive', { channelId }, CAST_LIVE_TIMEOUT_MS);
     return r.ok && r.result === true;
   },
   openSettings(): void { void request('openSettings'); },

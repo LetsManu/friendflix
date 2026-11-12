@@ -37,16 +37,23 @@ import java.io.IOException
  */
 @OptIn(UnstableApi::class)
 class TokenConverter(private val custom: Boolean) : MediaItemConverter {
-    private class Entry(val info: CastInfo, val subIndex: Int?, val autoplay: Boolean)
+    /** a receiver item as it will be built: its content URL and its builder (a title token's or a live channel's) */
+    private class Entry(val contentUrl: String, val build: () -> MediaQueueItem)
 
     private val entries = LinkedHashMap<String, Entry>()
 
     /** The Media3 item for [info] (its media id is the cast id); [toMediaQueueItem] turns it into the receiver's item. */
-    fun item(info: CastInfo, subIndex: Int?, autoplay: Boolean): MediaItem {
-        entries.remove(info.castId)
-        entries[info.castId] = Entry(info, subIndex, autoplay)
+    fun item(info: CastInfo, subIndex: Int?, autoplay: Boolean): MediaItem =
+        remember(info.castId, info.contentUrl) { queueItem(info, subIndex, autoplay, custom) }
+
+    /** The Media3 item of a live channel (its media id is [LiveCastInfo.handle]); built by [liveQueueItem]. */
+    fun liveItem(info: LiveCastInfo): MediaItem = remember(info.handle, info.contentUrl) { liveQueueItem(info) }
+
+    private fun remember(id: String, url: String, build: () -> MediaQueueItem): MediaItem {
+        entries.remove(id)
+        entries[id] = Entry(url, build)
         while (entries.size > MAX_ENTRIES) entries.remove(entries.keys.first())
-        return MediaItem.Builder().setMediaId(info.castId).setUri(info.contentUrl).setMimeType(MimeTypes.APPLICATION_M3U8).build()
+        return MediaItem.Builder().setMediaId(id).setUri(url).setMimeType(MimeTypes.APPLICATION_M3U8).build()
     }
 
     /** the cast id of a receiver item (null: not one of ours) */
@@ -56,12 +63,12 @@ class TokenConverter(private val custom: Boolean) : MediaItemConverter {
         // network cannot claim another's id through custom data; the custom data only serves a URL without a token
         CastIds.ofContentUrl(media.contentId)?.let { return it }
         val tagged = media.customData?.optJSONObject("ff")?.optString("castId")?.takeIf(CastIds::valid)
-        return tagged ?: entries.entries.firstOrNull { it.value.info.contentUrl == media.contentId }?.key
+        return tagged ?: entries.entries.firstOrNull { it.value.contentUrl == media.contentId }?.key
     }
 
     override fun toMediaQueueItem(mediaItem: MediaItem): MediaQueueItem {
         val e = entries[mediaItem.mediaId] ?: throw IllegalArgumentException("not a cast token item")
-        return queueItem(e.info, e.subIndex, e.autoplay, custom)
+        return e.build()
     }
 
     override fun toMediaItem(mediaQueueItem: MediaQueueItem): MediaItem =
@@ -72,6 +79,26 @@ class TokenConverter(private val custom: Boolean) : MediaItemConverter {
         private const val MAX_ENTRIES = 8
         /** lib/cast.ts QUEUE_PRELOAD_S */
         const val PRELOAD_S = 30.0
+
+        /**
+         * A live channel as web Task 41 `loadLive` loads it: the absolute stream URL as content id, `application/x-mpegURL`, stream
+         * type LIVE (no duration, the receiver starts at the live edge), generic metadata with the channel's name as title, the programme
+         * running now as subtitle and the signed logo URL as image (when there is one), and `customData.ui.live` (FriendFlix's own
+         * receiver shows its channel card; the Default Media Receiver ignores it). The token is in nothing but the URL.
+         */
+        fun liveQueueItem(info: LiveCastInfo): MediaQueueItem {
+            val meta = MediaMetadata(MediaMetadata.MEDIA_TYPE_GENERIC)
+            meta.putString(MediaMetadata.KEY_TITLE, info.name)
+            info.now?.let { meta.putString(MediaMetadata.KEY_SUBTITLE, it) }
+            info.logo?.let { meta.addImage(WebImage(it.toUri())) }
+            val media = MediaInfo.Builder(info.contentUrl)
+                .setStreamType(MediaInfo.STREAM_TYPE_LIVE)
+                .setContentType(LiveCastInfo.CONTENT_TYPE)
+                .setMetadata(meta)
+                .setCustomData(JSONObject().put("ui", JSONObject().put("live", true)))
+                .build()
+            return MediaQueueItem.Builder(media).setAutoplay(true).build()
+        }
 
         fun queueItem(info: CastInfo, subIndex: Int?, autoplay: Boolean, custom: Boolean): MediaQueueItem {
             val meta = MediaMetadata(if (info.seriesName != null) MediaMetadata.MEDIA_TYPE_TV_SHOW else MediaMetadata.MEDIA_TYPE_MOVIE)
@@ -194,6 +221,15 @@ class MediaThreeReceiver(
         idleReason = IdleReason.UNKNOWN
         player.setMediaItems(listOf(converter.item(info, subIndex, autoplay)), 0, info.startTime * 1000)
         player.playWhenReady = autoplay
+        player.prepare()
+    }
+
+    override fun loadLive(info: LiveCastInfo) {
+        lastLoaded = null
+        idleReason = IdleReason.UNKNOWN
+        // reset position: the receiver starts a LIVE stream at its live edge
+        player.setMediaItems(listOf(converter.liveItem(info)), true)
+        player.playWhenReady = true
         player.prepare()
     }
 

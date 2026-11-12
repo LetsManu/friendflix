@@ -9,6 +9,7 @@ import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.media3.common.util.UnstableApi
+import androidx.mediarouter.media.MediaRouteSelector
 import app.friendflix.android.downloads.Downloads
 import app.friendflix.android.offline.Offline
 import app.friendflix.android.player.FlowPrefs
@@ -64,6 +65,9 @@ class CastHubCore(
     private var resumeTried: String? = null
     /** the profile the cast belongs to (null: unknown) */
     private var profile: String? = null
+    /** a live channel waiting for the viewer to pick a TV ([castLive]): its id and answer, and the cancel of its wait */
+    private var pendingLive: Pair<String, (Boolean) -> Unit>? = null
+    private var cancelPick: (() -> Unit)? = null
 
     /** what the attached screen is told; nothing while detached (the cast runs on without it) */
     private val delegate = object : CastHost {
@@ -78,11 +82,15 @@ class CastHubCore(
     }
 
     private val events = object : MediaThreeReceiver.Events {
-        override fun onSessionStarted() { delegate.onDevicePicked() }
+        override fun onSessionStarted() {
+            // the viewer picked a TV for a live channel ([castLive]): the channel goes there, not a player screen's title
+            val p = takeLive()
+            if (p != null) startLive(p.first, p.second) else delegate.onDevicePicked()
+        }
         override fun onSessionEnded() { controller.onSessionEnded(); refresh() }
         override fun onState(st: ReceiverState) {
             controller.onReceiver(st)
-            if (!controller.casting && st.loaded && !st.idle && st.castId != null && st.castId != resumeTried) {
+            if (!controller.active && st.loaded && !st.idle && st.castId != null && st.castId != resumeTried) {
                 resumeTried = st.castId
                 // a lookup that could not be answered (network, server) is tried again later, at most every RESUME_RETRY_MS (rate limit)
                 link.current()?.let { m -> controller.resume(m.castId, m.contentUrl) { schedule(RESUME_RETRY_MS) { resumeTried = null; link.publish() } } }
@@ -126,7 +134,35 @@ class CastHubCore(
     /** A request names the active profile: another one than the cast's ends it (the server revoked the device's casts on the switch). */
     fun noteProfile(id: String) {
         val p = profile
-        if (controller.casting) { if (p != null && p != id) stop() } else profile = id
+        if (controller.active) { if (p != null && p != id) stop() } else profile = id
+    }
+
+    /**
+     * The shell's bridge `castLive` (spec §13): a live channel on the TV. With a connected TV it is loaded at once
+     * ([CastController.startLive]); without one, [pickDevice] shows the device chooser and the channel goes to the TV the viewer
+     * picks (within [PICK_WAIT_MS]). [done] once: true = the channel plays on the TV; false = no chooser, no TV picked in time, or
+     * the watch request was refused. A newer request answers an older waiting one false.
+     */
+    fun castLive(channelId: String, pickDevice: () -> Boolean, done: (Boolean) -> Unit) {
+        takeLive()?.second?.invoke(false)
+        if (link.connected) { startLive(channelId, done); return }
+        if (!pickDevice()) { done(false); return }
+        pendingLive = channelId to done
+        cancelPick = schedule(PICK_WAIT_MS) { takeLive()?.second?.invoke(false) }
+    }
+
+    private fun takeLive(): Pair<String, (Boolean) -> Unit>? {
+        val p = pendingLive ?: return null
+        pendingLive = null
+        cancelPick?.invoke()
+        cancelPick = null
+        return p
+    }
+
+    private fun startLive(channelId: String, done: (Boolean) -> Unit) {
+        still.noteInteraction()
+        controller.startLive(channelId) { ok -> done(ok); refresh() }
+        refresh()
     }
 
     /**
@@ -146,7 +182,7 @@ class CastHubCore(
 
     /** The bar's play / pause (a viewer action). */
     fun playPause() {
-        if (!controller.casting) return
+        if (!controller.active) return
         still.noteInteraction()
         link.togglePause()
     }
@@ -165,9 +201,9 @@ class CastHubCore(
 
     /** [noteProfile], and when that ended the cast the same wait as [stopThen]; else [done] right away. */
     fun noteProfileThen(id: String, done: () -> Unit) {
-        val was = controller.casting
+        val was = controller.active
         noteProfile(id)
-        if (was && !controller.casting) afterReports(done) else done()
+        if (was && !controller.active) afterReports(done) else done()
     }
 
     /**
@@ -190,7 +226,7 @@ class CastHubCore(
 
     private fun refresh() {
         snapshots.value = controller.snapshot(link.deviceName.orEmpty())
-        if (controller.casting) pump()
+        if (controller.active) pump()
     }
 
     private fun pump() {
@@ -198,7 +234,7 @@ class CastHubCore(
         pumping = true
         schedule(POLL_MS) {
             pumping = false
-            if (controller.casting) {
+            if (controller.active) {
                 link.publish()
                 controller.tick()
                 pump()
@@ -213,6 +249,8 @@ class CastHubCore(
         const val RESUME_RETRY_MS = 30_000L
         /** how long an answer waits for the stop report and the revoke of an ended cast to leave */
         const val REPORT_WAIT_MS = 3_000L
+        /** how long a live channel waits for the viewer to pick a TV in the chooser (the web's castLive answer waits as long) */
+        const val PICK_WAIT_MS = 40_000L
     }
 }
 
@@ -229,12 +267,16 @@ object CastHub {
     @Volatile private var core: CastHubCore? = null
     private var starting = false
     @Volatile private var defaults: Pair<FlowPrefs, Long?> = FlowPrefs() to null
+    @Volatile private var castContext: CastContext? = null
 
     /** the cast as the bar shows it (null: none) */
     val state: StateFlow<CastSnapshot?> = snapshots.asStateFlow()
 
     /** the Cast framework is up and the hub runs (false without Google Play services, or before [init] finished) */
     val ready: StateFlow<Boolean> = readyFlow.asStateFlow()
+
+    /** the routes the Cast device chooser offers (the receiver app's); null until [ready] */
+    val routeSelector: MediaRouteSelector? get() = castContext?.mergedSelector
 
     /** the receiver link (the Media3 player the remote controls drive, the device name); null until [ready] */
     val link: MediaThreeReceiver? get() = core?.link as? MediaThreeReceiver
@@ -245,6 +287,7 @@ object CastHub {
         starting = true
         val app = context.applicationContext
         proxy.fallback = { defaultServer(app) }
+        proxy.liveServer = { liveServer(app) }
         try {
             CastContext.getSharedInstance(app, ContextCompat.getMainExecutor(app))
                 .addOnSuccessListener { ctx -> build(app, ctx) }
@@ -285,6 +328,7 @@ object CastHub {
             adoptDefaults = { defaults },
             snapshots = snapshots,
         )
+        castContext = ctx
         readyFlow.value = true
     }
 
@@ -298,6 +342,15 @@ object CastHub {
     fun stop() {
         core?.stop()
         forgetAccount()
+    }
+
+    /**
+     * The shell's bridge `castLive` ([CastHubCore.castLive]): [done] false when the hub is not up (no Google Play services, casting
+     * off in the settings).
+     */
+    fun castLive(channelId: String, pickDevice: () -> Boolean, done: (Boolean) -> Unit) {
+        val c = core ?: return done(false)
+        c.castLive(channelId, pickDevice, done)
     }
 
     /** The bar's next episode ([CastHubCore.next]); false when none runs or none is queued. */
@@ -362,6 +415,19 @@ object CastHub {
         override fun report(kind: app.friendflix.android.player.PlaybackReporter.Kind, body: JSONObject) { real()?.report(kind, body) }
         override fun next(itemId: String) = real()?.next(itemId)
         override fun segments(itemId: String) = real()?.segments(itemId) ?: emptyList()
+
+        /** the live calls go out for the web session's active profile (the last one it named), not a player screen's */
+        @Volatile var liveServer: () -> CastServer? = { null }
+        override fun watchLive(channelId: String) = liveServer()?.watchLive(channelId)
+        override fun stopLive(token: String) { liveServer()?.stopLive(token) }
+    }
+
+    /** The cast calls of the web session's active profile (the last one it named); off the main thread only. */
+    private fun liveServer(app: Context): CastServer? {
+        val profile = Offline.get(app).state.lastProfileId ?: return null
+        val api = runBlocking { Downloads.get(app).api() } ?: return null
+        core?.let { c -> Handler(Looper.getMainLooper()).post { if (!c.controller.casting) c.useProfile(profile) } }
+        return CastServerApi(api, profile, PlayerApi(api, profile))
     }
 
     /** off the main thread only (the settings read suspends) */

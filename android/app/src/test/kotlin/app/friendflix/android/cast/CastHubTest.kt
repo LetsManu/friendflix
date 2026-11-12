@@ -53,6 +53,12 @@ class CastHubTest {
         }
         override fun next(itemId: String): ItemInfo? = ItemInfo("ep2", "Episode", "Second", "Bright Valley", "s1", 1, 2)
         override fun segments(itemId: String): List<Segment> = emptyList()
+        override fun watchLive(channelId: String): LiveCastInfo {
+            calls += "POST /api/livetv/channels/$channelId/watch"
+            val token = "T".repeat(43)
+            return LiveCastInfo(channelId, token, "https://friend.example.com/media/l/$token/index.m3u8", clock + 60_000, "Nordlicht TV", 1, null, null)
+        }
+        override fun stopLive(token: String) { calls += "DELETE /api/livetv/watch" }
     }
 
     private class FakeLink(override val custom: Boolean) : CastLink {
@@ -60,7 +66,9 @@ class CastHubTest {
         var published = 0
         var playing: ReceiverMedia? = null
         val messages = mutableListOf<JSONObject>()
-        override val connected = true
+        override var connected = true
+        val liveLoads = mutableListOf<String>()
+        override fun loadLive(info: LiveCastInfo) { liveLoads += info.channelId }
         override val deviceName: String? = "Wohnzimmer-TV"
         override fun load(info: CastInfo, subIndex: Int?, autoplay: Boolean) {}
         override fun queue(info: CastInfo, autoplay: Boolean) = true
@@ -147,6 +155,43 @@ class CastHubTest {
         assertTrue(stopStart[1], stopStart[1].startsWith("start ep2"))
         assertTrue("the skip is no 'advanced' progress: " + reports, reports.none { it.startsWith("progress ep1") || it == "stop ep1 1800000" })
         assertFalse("the tap is an interaction: the autoplay chain starts over", still.shouldAsk(FlowPrefs()))
+    }
+
+    @Test fun castLiveWithoutATvOpensTheChooserAndPlaysOnThePickedOne() {
+        val h = hub()
+        val host = Host()
+        h.attach(host)
+        link.connected = false
+        var picks = 0
+        val answers = mutableListOf<Boolean>()
+        // no chooser can be shown: false at once
+        h.castLive("nordlicht-tv", { false }) { answers += it }
+        assertEquals(listOf(false), answers)
+        // the chooser opens; the channel waits for the TV the viewer picks, and goes there (not the player screen's title)
+        h.castLive("nordlicht-tv", { picks++; true }) { answers += it }
+        assertEquals(1, picks)
+        assertEquals(1, answers.size)
+        link.connected = true
+        events.onSessionStarted()
+        assertEquals(listOf(false, true), answers)
+        assertEquals(0, host.picked)
+        assertEquals(listOf("nordlicht-tv"), link.liveLoads)
+        assertTrue(h.state.value!!.live)
+        // the bar's play / pause drives the receiver; a profile switch ends the live cast
+        h.playPause()
+        assertEquals(1, link.toggled)
+        h.useProfile("p1")
+        h.noteProfile("p2")
+        assertNull(h.state.value)
+        assertEquals("DELETE /api/livetv/watch", calls.last())
+        // nobody picks a TV in time: false, and a later session start is an ordinary one
+        link.connected = false
+        h.castLive("hafenkanal", { true }) { answers += it }
+        advance(CastHubCore.PICK_WAIT_MS)
+        assertEquals(listOf(false, true, false), answers)
+        events.onSessionStarted()
+        assertEquals(1, host.picked)
+        assertEquals(listOf("nordlicht-tv"), link.liveLoads)
     }
 
     @Test fun nextWithoutAQueuedEpisodeIsRefused() {
