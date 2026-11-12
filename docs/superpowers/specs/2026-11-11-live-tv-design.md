@@ -117,6 +117,32 @@ where they change an earlier decision above, this entry wins:
 
 Later items of the research stay out of Phases 1–3 (§25).
 
+**Programmführer (owner decision, 2026-11-12).** The owner approved all 12 recommendations of the guide research (report of
+2026-11-12 on the programme guides of 19 services; not in the repository) and decided its open questions. All are
+**Phase 2** requirements, written in §17 (G1–G44); this entry wins over earlier guide text:
+
+1. **Data states** shown honestly: loading placeholders per block, "Programmdaten bis {time}", "Programm gerade nicht
+   verfügbar", stale EPG for admins only (§17.4).
+2. **Filters and favourites in the TV guide** too. The guide opens on *Favoriten* if the profile has any, else on the group
+   chosen last; *Alle* is paged by 300 channels and, above 1 000 channels, sits behind the group choice on TV (§17.2).
+3. **Time jumps by remote**: `MediaRewind`/`MediaFastForward` ∓2 h, `ColorF0Red`/`ColorF1Green` ∓24 h, `ColorF2Yellow` =
+   *Jetzt*, always with a button path; desktop `Home`, `Alt+←/→`, `PageUp/Down` (§17.3, §14).
+4. **Mini-guide in the player** is Phase 2 and **extends the §12.2 *Senderliste* panel** (one component, not two) (§17.7).
+5. **Progress and "läuft"** on the running cell, never fill only (§17.1).
+6. **Von Anfang an marker** on cells; past cells use the style "vorbei, nicht abspielbar"; catch-up stays later (§17.1, §25).
+7. **Genre stripe**: 4 px on the left edge, 6 classes (Film, Serie, Sport, Nachrichten, Kinder, Doku) from XMLTV
+   `<category>` by a simple built-in mapping, user switch *Farben im Programmführer* (default on), no stripe without a
+   genre, never colour alone (§17.1).
+8. **Search in the guide header first**: title search over the held 8 days, a result jumps to its cell; global-search hits
+   stay later (§17.5, §25).
+9. **Phone**: a *Raster | Jetzt/Danach* toggle, last choice remembered (§17.6).
+10. **Time-of-day jumps** (*Morgens*, *Mittags*, *Abends*, *20:15*, *Nachts*) next to the day chips (§17.3).
+11. **Performance rules and acceptance numbers** (§17.8).
+12. **Accessibility**: cell focus with roving tabindex, full cell announcements, contrast, reduced motion (§17.9, §21).
+
+Also binding: TV guide text ≥ 28 px at 1080p (title, time, axis) and past cells ≥ 4.5:1 contrast — no `.55` opacity dimming
+of text.
+
 ## Sources this spec is built from
 
 Code as of `main` = 3.3.0: `backend/src/hevcenc.ts` (probe, gate, grants), `media/streamplan.ts` (`applyGate`),
@@ -151,9 +177,10 @@ and `2026-11-11-users-permissions-design.md` (Phase 0).
   stylesheet scan (`web/src/lib/admin/glass.test.ts`) is extended to every new file of this block.
 - **Look:** the existing glass system only (`.frost`, `.frost-safe`, `.frost-btn`, `.frost-pill`, `.frost-tile`,
   `.frost-sheet`, `.frost-dim`, `.panel`, `--fr-*`), the player's existing control bar, the cast bar, chips, tiles and focus
-  rings (TV: `scale(1.08)` + 3 px white ring, one focused element). No Live-TV-specific palette; the only colour cue added is
-  the guide's red *jetzt* line and the red recording dot, both using the existing danger red token `--err`, each also carried
-  by text or shape (never colour alone).
+  rings (TV: `scale(1.08)` + 3 px white ring, one focused element). No Live-TV-specific palette; the only colour cues added are
+  the guide's red *jetzt* line and the red recording dot, both using the existing danger red token `--err`, and (owner
+  decision 2026-11-12, Phase 2) the guide's six genre stripe tokens `--fr-genre-*` (§17.1 G9); each is also carried by
+  text or shape (never colour alone).
 - **i18n:** everything through `#lib/i18n`, seven locales (`de` source, `en` second); copy table in §20.
 - **Remote:** every live feature works with D-pad + OK + Back alone (the Android TV rule, and many remotes send nothing
   else). Channel, digit, colour, Info, `ChannelList` and `Guide` keys and a long OK are shortcuts, never the only way.
@@ -184,8 +211,8 @@ The phase split (each PR leaves the app working; Live TV stays invisible until e
 | | **1c** | Sources, import (M3U/XMLTV) with the group picker and unreleased new groups, numbering policy, logo preference, EPG time offsets, channels (pulled and pushed own feeds, §3.5), groups & rights, logos, admin *Quellen* / *Kanäle* / *Gruppen & Rechte* / *Live-Status*; now/next from XMLTV (automatic matching in four exact passes, §9.4). Migration 48. |
 | | **1d** | Watching: tokens, gateway route, shared streams (incl. SRT push ingest, §3.5), DVR up to 120 min, release on switch, budget admission, the *Live-TV* tab (desktop, phone, kids, TV), live player (info banner, *Von Anfang an*, *Senderliste* panel), favourites in own order, *Zuletzt gesehen*, last channel, Chromecast/AirPlay, *TV startet mit Live-TV*. |
 | | **1e** | Platform keys and shells: Tizen key registration (incl. `ChannelList`/`Guide`), webOS key mapping, Fire TV `FireTvKeys`, Android shell cast bridge `castLive`. |
-| **2** | 2a | EPG admin: *Programmführer* tab (matching with suggestions, unmatched list, manual EPG entries/rules). Migration 49. |
-| | 2b | EPG grid for users (desktop, phone, TV), detail sheet, reminders. |
+| **2** | 2a | EPG admin: *Programmführer* tab (matching with suggestions, unmatched list, manual EPG entries/rules), stale-EPG line in *Quellen* (§17 G29). Migration 49. |
+| | 2b | The guide for users (§17, G1–G44): grid on desktop, phone (with the *Jetzt/Danach* list) and TV, filters incl. TV, paged *Alle*, time chips and remote time jumps, data states, running progress, *Von Anfang an* markers, genre stripe, search in the guide, detail sheet, reminders, the mini-guide as the extended *Senderliste* panel, performance acceptance. |
 | **3** | 3a | Recordings backend + `livetv` recorder + storage modes (incl. the library sub-folder mount, §15.3) + budget reservation + notifications. Migration 50. |
 | | 3b | Recording UI (detail sheet actions, Live-TV row, *Meine Aufnahmen*, admin *Aufnahmen*), player source seam for recordings, casting/hand-off of recordings. |
 | | later | Optional H.265 re-encode of recordings (off by default, quiet hours, budget). |
@@ -1066,13 +1093,14 @@ join, stop, tick), `logos.ts`, `recordings.ts` (Phase 3), `events.ts` (KV ring),
 
 | Route | Answer |
 |---|---|
-| `GET /api/livetv/channels` | `{ groups: [{ id, name }], channels: [{ id, number, name, logo, groupId, running, receiving?: boolean /* push feeds only */, preview?: string, now?: Prog, next?: Prog, favourite }], favourites: string[] /* the person's order */, recent: string[] /* newest first, ≤ 10 */, last: { id, previous } \| null, dvrSeconds }`; `Prog = { title, start, end, subtitle? }` (times with the channel's EPG offset applied); ETag; 30 s client refresh of now/next |
+| `GET /api/livetv/channels` | `{ groups: [{ id, name }], channels: [{ id, number, name, logo, groupId, running, receiving?: boolean /* push feeds only */, epg: 'ok' \| 'gap' \| 'none' /* mapped with data now / mapped without data now / unmapped */, preview?: string, now?: Prog, next?: Prog, favourite }], favourites: string[] /* the person's order */, recent: string[] /* newest first, ≤ 10 */, last: { id, previous } \| null, dvrSeconds }`; `Prog = { title, start, end, subtitle? }` (times with the channel's EPG offset applied); ETag; 30 s client refresh of now/next |
 | `GET /api/livetv/logos/:hash` | image, `cache-control: private, max-age=604800, immutable` |
 | `GET /api/livetv/channels/:id/preview.jpg` | only while running and allowed; `max-age=60` |
 | `POST /api/livetv/channels/:id/watch`, `POST /api/livetv/beat`, `DELETE /api/livetv/watch` | §7.2 |
 | `PUT /api/livetv/favourites` `{ ids }` (the complete order) · `POST/DELETE /api/livetv/favourites/:id` (a new favourite goes last) | per profile |
 | `PUT /api/livetv/last` `{ id }` | records a watch in `livetv_recent` (`at = now()`, rows beyond the newest 10 deleted); *last* = newest, *previous* = second newest |
-| `GET /api/livetv/epg?start=<ISO, 6-h aligned UTC>&group=<id>` (Phase 2) | `{ start, end, programmes: { [channelId]: Prog[] } }`, ETag, server cache 5 min per (block, channel set) |
+| `GET /api/livetv/epg?start=<ISO, 6-h aligned UTC>&filter=<groupId\|fav\|recent\|all>&page=<n>` (Phase 2) | `{ start, end, page, pages, channels: number, rows: string[] /* channel ids of the page, ≤ 300 */, programmes: { [channelId]: GuideProg[] }, until: { [channelId]: string /* end of the last known programme */ }, restart: { [channelId]: string /* oldest buffered time, running channels only */ } }`; `GuideProg = Prog & { id, genre?: 'film' \| 'serie' \| 'sport' \| 'news' \| 'kids' \| 'doku', reminder?: true }`; ETag, server cache 5 min per (block, channel page); ≤ 150 KB (§17 G41) |
+| `GET /api/livetv/epg/search?q=<2–100 chars>` (Phase 2) | `{ results: [{ channelId, number, name, start, end, title, subtitle? }] }` (≤ 50, the profile's channels, yesterday to +7 days, running → upcoming → past; §17 G30–G31) |
 | `GET /api/livetv/programme/:channelId/:start` (Phase 2) | detail incl. description, episode, recording state |
 | `POST/DELETE /api/livetv/reminders` (Phase 2, grown-ups) | |
 | Recording routes (Phase 3, §15.8) | |
@@ -1113,7 +1141,8 @@ entry. All only when `me.features.livetv`.
    Selection slides the pill highlight (`SlidePill`).
 3. **Channel grid**, two columns of rows (each 72 px): number (tabular), 48-px logo tile, name, two text lines **always
    reserved**: *Jetzt* line ("20:15 Die Leuchtturmwärter" + thin progress) and *Danach* line ("21:00 Wetter am Hafen"); without
-   EPG: "Live" and "Kein Programm verfügbar"; a push feed that is not receiving: "Gerade keine Übertragung" (one line, the
+   EPG: "Live" and "Kein Programm verfügbar"; with EPG but no data for now (the provider's data ran out): "Programm gerade
+   nicht verfügbar" (second line reserved; the same honest state as the guide, §17 G28); a push feed that is not receiving: "Gerade keine Übertragung" (one line, the
    second stays reserved). Star button (44 px, `aria-pressed`). Hover/focus: the existing row fill.
 4. **Programmführer** button (Phase 2) in the page head next to the title; **Aufnahmen** row (Phase 3) under the favourites.
 - Loading: skeleton rows of the final height; logos fade in (opacity).
@@ -1199,7 +1228,8 @@ not reuse `Player.svelte`'s item logic (resume, episodes, credits, ABR ladder).
   (§7.4), its picture ends when the new start begins; the banner covers the stage meanwhile.
 - **Info banner** (owner decision 2026-11-12; replaces the 1-s channel card): a glass banner over the lower third of the
   stage (above the control bar when that is visible; it overlays, so nothing moves): logo, number + name, *Jetzt* title +
-  thin progress line + time left, *Danach* ("21:00 Wetter am Hafen"); without EPG "Live" / "Kein Programm verfügbar"; a push
+  thin progress line + time left, *Danach* ("21:00 Wetter am Hafen"); without EPG "Live" / "Kein Programm verfügbar"; data ran out "Programm gerade nicht
+  verfügbar"; a push
   feed that is not sending: "Gerade keine Übertragung". Both programme lines are always reserved. It appears at once on each
   switch press (fade by opacity), shows "Sender wird gestartet …" while starting, stays until the first frame **plus 4 s**,
   then fades out; an error state (§12.5) replaces it. On TV it also appears with the controls on OK (§12.3) and stays while
@@ -1209,7 +1239,9 @@ not reuse `Player.svelte`'s item logic (resume, episodes, credits, ABR ladder).
   and compact rows (number, logo, name, *Jetzt* title with progress), focus and scroll on the playing channel. ▲/▼ move,
   ◀/▶ change the filter chip on TV, OK switches to the focused channel and closes the panel (the banner shows), Back (or
   Escape, or a tap outside) closes it and returns focus to the player with the playing channel; controls stay hidden. On TV
-  the controls' footer line shows "Lang OK: Senderliste" (a D-pad hint, always shown).
+  the controls' footer line shows "Lang OK: Senderliste" (a D-pad hint, always shown). Rows show the same data states as the
+  list (§11.1). **Phase 2 extends this panel into the mini-guide** (§17.7: a *Danach* line per row and *Programmführer* in
+  the foot) — one component; Phase 1 builds it so the row and the foot can take those additions.
 - **Last channel:** the profile's *previous* channel (second newest in `livetv_recent`); key/button jumps there (§12.3), and
   jumping again toggles between the two.
 - A switch into a full budget shows the *alle Plätze belegt* sheet (§12.5) and stays on the current channel.
@@ -1291,6 +1323,16 @@ user).
 | Fire TV | web `LivePlayer` in the shell | `FireTvKeys.kt`: add `KEYCODE_CHANNEL_UP/DOWN` → `ChannelUp/ChannelDown`, `KEYCODE_0..9` → `"0".."9"`, `KEYCODE_LAST_CHANNEL` → `PreviousChannel`, `KEYCODE_INFO` → `Info`, `KEYCODE_GUIDE` → `Guide` (Phase 1: the *Senderliste* panel; Phase 2 opens the grid). Most Fire TV remotes send none of these: ▲/▼, OK and Back cover everything |
 | Android app | web `LivePlayer` inside the shell (hls.js in WebView; films keep the native player) | swipe as phone; cast via `castLive` (§13). A native live mode in `PlayerActivity` is a later option, not in these phases. |
 | Chromecast receiver | own receiver: live card, no progress bar, LIVE badge | `ui.live = true` from the sender |
+
+**Guide keys (Phase 2, owner decision 2026-11-12, §17.3):** while the guide is open, `MediaRewind` / `MediaFastForward` =
+−2 h / +2 h, `ColorF0Red` / `ColorF1Green` = −24 h / +24 h, `ColorF2Yellow` = *Jetzt*, `ChannelUp` / `ChannelDown` = a page
+of rows; each also has a button path (time chips, day chips, *Jetzt*, ◀/▶ along a row). Tizen registers `ColorF1Green`,
+`ColorF2Yellow`, `MediaRewind` and `MediaFastForward` when the guide opens (each in its own try/catch, only when
+`getSupportedKeys()` lists it); webOS delivers the colour keys 403–406 and the media keys (real TVs: rewind 412, fast
+forward 417; the emulator differs) without registration; Fire TV has the media keys but no colour keys, so its users use
+the chips. Desktop: `Home` = *Jetzt*, `Alt+←` / `Alt+→` = ∓1 day, `PageUp` / `PageDown` = a screen of rows. The guide's
+hint line follows the keys-seen rule of §11.3 ("⏪ ⏩: ±2 Std.", "Rot / Grün: ±1 Tag", "Gelb: Jetzt"); Phase 2 adds the
+class `media` (MediaRewind / MediaFastForward) to the keys seen.
 
 ## 15. Recordings (Phase 3)
 
@@ -1434,33 +1476,153 @@ the recipient's own notifications (they chose to record it), never in admin broa
 
 ## 17. Phase 2: the guide (`/live/guide`)
 
-- **Layout:** fixed channel column (desktop 200 px: logo + number + name; phone 112 px: logo + number; TV 280 px) and a time
-  header in half-hour steps (desktop 180 px per 30 min, phone 120 px, TV 240 px at 1080p); rows 64 px (phone 56, TV 96).
-  Programme cells: title (one line, ellipsis), time range (second line when ≥ 120 px wide), past programmes at `.55`
-  opacity, a red dot + "Aufnahme" for planned/running recordings, the running programme with a subtle `--fr-sel` fill.
-  Channels without EPG: one cell across the whole window "Live" / "Kein Programm verfügbar".
-- **Jetzt line:** a 2-px `--err` line with a small "jetzt" label in the header, moved with `translateX` every 30 s.
-- **Head:** day chips (*Gestern*, *Heute*, *Morgen*, then weekday + date up to 7 days ahead), *Jetzt* button (scrolls the grid
-  so now sits at 20 % of the width), group chips, a *Programmführer* title.
-- **Virtualised drawing:** only rows and cells inside the viewport ± one screen are in the DOM (window ~20 channels × 4 h);
-  cells are absolutely positioned by `transform: translate()`; scrolling never re-lays-out, nothing jumps.
-- **Data:** 6-hour blocks aligned to 00/06/12/18 UTC (`GET /api/livetv/epg`), in-memory LRU of 16 blocks per session,
-  prefetch of the neighbour block when the viewport is within 1 h of an edge. All times UTC in transport; labels with
-  `Intl.DateTimeFormat` in the device's time zone; a local day runs from local midnight to midnight (23 or 25 hours on DST
-  days: the axis shows the repeated or skipped hour as it is).
-- **Detail sheet** (glass sheet / TV panel): channel, title, time, episode, description, categories, rating; buttons *Jetzt
-  ansehen* (running only), *Aufnehmen* / *Aufnahme abbrechen*, *Serie aufnehmen* (when a series key exists), *Erinnern* /
-  *Erinnerung entfernen* (future only). Buttons a profile may not use are not rendered.
-- **Navigation:** desktop: wheel/trackpad pans both ways, Shift+wheel horizontal, arrow keys move focus programme to programme
-  (the TV rule), PageUp/PageDown by a screen of rows, Home = *Jetzt*, Enter = details; phone: native two-axis scroll with sticky
-  column and header, tap = details; **TV:** ◀/▶ move to the previous/next programme of the row, ▲/▼ move to the programme in
-  the row above/below that overlaps the **anchor time** (the start of the programme focused before the vertical move, kept
-  while moving vertically), the grid scrolls so the focus stays inside the middle 60 %; OK = details; ChannelUp/Down = a page of
-  rows; Info = details; Guide (Fire TV, Tizen where supported) opens/closes the grid; Back closes the sheet, then the grid.
-  **Focus return** (owner decision 2026-11-12): a grid opened from the player returns to the player on Back, focus on the
-  playing channel; a grid opened from the list returns to the list with focus on the playing (or last watched) channel's
-  row.
-- **Reminders:** `livetv_reminders`, notified 5 min before start; the cell shows a bell icon.
+Phase 2 has no implementation plan yet; this section is its binding requirement list (owner decision *Programmführer*,
+2026-11-12, plus the earlier guide design). One requirement per line, with the exact values; G-numbers are for the plan.
+
+### 17.1 Layout and cells
+
+- **G1 Grid:** fixed channel column (desktop 200 px: logo + number + name; phone 112 px: logo + number, a channel without logo
+  shows its number and name in two lines instead of a monogram; TV 300 px) and a time axis in half-hour steps (desktop
+  180 px per 30 min, phone 120 px, TV 240 px at 1080p); rows 64 px (phone 56, TV 104).
+- **G2 TV text:** on TV at 1080p every guide text is ≥ 28 px: programme title, time line, axis labels, the *jetzt* label,
+  channel names, chips, search results and the detail panel (binding).
+- **G3 Cell content:** title (one line, ellipsis; sticks to the left edge of a cell cut off by the viewport), time line
+  ("20:15–21:00", second line when the cell is ≥ 120 px wide, TV ≥ 200 px), marker icons at the right end of the time line
+  (Von Anfang an, reminder, Phase 3 recording dot + "Aufnahme"), each icon also in the cell's accessible name.
+- **G4 Running cell:** subtle `--fr-sel` fill **plus** a 3-px progress line at the bottom edge (`transform: scaleX`, minute
+  steps, space reserved) **plus** the text "läuft" (wide cells: "läuft · noch 23 Min.") in the time line; never fill only.
+- **G5 Past cells — style "vorbei, nicht abspielbar":** a flat background (`--fr-past`, no glass highlight) and text in a
+  colour with ≥ 4.5:1 contrast on it; **no opacity dimming of text** (the old `.55` is gone); accessible name ends with
+  "vorbei". The style "vorbei, abspielbar" stays reserved for catch-up (§25).
+- **G6 Von Anfang an marker:** a small restart arrow in running cells of channels whose stream is running and whose DVR
+  window reaches back to the programme start (the guide answer's `restart[channelId]`, §10), with EPG; never on other
+  cells; the detail sheet's *Von Anfang an* opens the player at that point (§12.1).
+- **G7 Genre stripe:** a 4-px stripe on the cell's left edge (inside the cell, text padding unchanged, so it moves nothing)
+  in one of 6 classes — Film, Serie, Sport, Nachrichten, Kinder, Doku — kept on running and focused cells; **no stripe when
+  no class matches** (no guessing); never colour alone: the class name is in the detail sheet and the cell's accessible
+  name.
+- **G8 Genre mapping:** built in, no admin UI: each programme's XMLTV `<category>` values, lower-cased, are checked against
+  keyword lists in this class order (first class with a hit wins): Kinder (`kinder`, `kids`, `children`, `zeichentrick`),
+  Sport (`sport`, `fußball`, `fussball`, `football`, `soccer`, `tennis`, `motorsport`), Nachrichten (`nachrichten`, `news`),
+  Doku (`doku`, `dokumentation`, `documentary`, `reportage`), Serie (`serie`, `series`, `sitcom`, `soap`), Film (`film`,
+  `movie`, `spielfilm`); a keyword matches a whole word of the category text.
+- **G9 Genre colours:** tokens `--fr-genre-film #f0a23b`, `--fr-genre-serie #a78bfa`, `--fr-genre-sport #34c77b`,
+  `--fr-genre-news #4ea8f0`, `--fr-genre-kids #f47fb6`, `--fr-genre-doku #e8d44d`; each ≥ 3:1 against the cell backgrounds
+  (glass, `--fr-sel`, `--fr-past`, `--fr-solid`), checked in the glass contrast test.
+- **G10 Colour switch:** *Farben im Programmführer* (default **on**) in the guide's *Ansicht* menu; off = no stripes;
+  remembered per profile on the device (`localStorage['ff-guide-colours:<profileId>']`, try/catch, unreadable = on).
+- **G11 Jetzt line:** a 2-px `--err` line with a "jetzt" label in the axis, moved with `translateX` every 30 s; no
+  transition in calm / reduced motion / TV / kids.
+- **G12 Detail sheet** (glass sheet / TV panel): channel, title, time, time left when running, episode, description,
+  genre class + categories, rating; buttons *Jetzt ansehen* (running), *Von Anfang an* (G6), *Aufnehmen* / *Aufnahme
+  abbrechen* / *Serie aufnehmen* (Phase 3), *Erinnern* / *Erinnerung entfernen* (future only); past programmes show "Vorbei
+  – nicht mehr abspielbar." Buttons a profile may not use are not rendered.
+- **G13 Reminders:** `livetv_reminders`, notified 5 min before start; the cell shows a bell icon.
+
+### 17.2 Head, filters and opening
+
+- **G14 Head rows:** title *Programmführer*, search (G30), filter chips, day chips (*Gestern*, *Heute*, *Morgen*, then weekday +
+  date up to 7 days ahead), time chips (G21), *Jetzt* button, *Ansicht* menu; on TV the head is a focusable stack above the
+  grid, reached with ▲ from the first channel row.
+- **G15 Filter chips on every platform, TV included:** *Favoriten*, *Zuletzt gesehen*, the groups in order, *Alle*.
+- **G16 Opening filter:** *Favoriten* when the profile has favourites; else the group chosen last in the guide on this
+  device (`localStorage['ff-guide-filter:<profileId>']`); else *Alle* (or, on TV above 1 000 channels, the first group).
+- **G17 Alle is paged:** 300 channel rows per page (by number); a focusable boundary row "Weitere Sender (301–600)" /
+  "Vorherige Sender (1–300)" loads the neighbour page and keeps the time position; data is requested per page only.
+- **G18 Alle above 1 000 channels on TV:** not a chip; it is the last entry of the *Gruppe wählen …* menu at the end of the
+  chip row (which lists every group), so nobody lands in a list of 1 000+ channels by accident. Desktop and phone keep
+  the chip (paged, G17).
+- **G19 Filter change:** keeps the time position and puts focus on the first row's programme at the anchor time; rows are
+  replaced, never animated in from elsewhere.
+
+### 17.3 Time navigation and keys
+
+- **G20 Range:** 1 day back to 7 days ahead; jumps beyond the range clamp and do nothing more (no wrap).
+- **G21 Time chips:** *Morgens* 06:00, *Mittags* 12:00, *Abends* 18:00, *20:15*, *Nachts* 23:00 of the selected day; on TV
+  they sit behind a *Zeit* button (one menu level).
+- **G22 Jump behaviour:** a jump keeps the channel rows and the focused row; focus moves to the programme at the target time;
+  the target time label in the axis is highlighted for 1 s (opacity); the grid moves by `transform`, the *Jetzt* line
+  fades in by opacity when it comes into view; nothing else moves.
+- **G23 TV keys (shortcuts; every one also has a button path):** `MediaRewind` / `MediaFastForward` = −2 h / +2 h (button
+  path: ◀/▶ along the row, the time chips); `ColorF0Red` / `ColorF1Green` = −24 h / +24 h (button path: day chips);
+  `ColorF2Yellow` = *Jetzt* (button path: *Jetzt*); `ChannelUp` / `ChannelDown` = a page of rows; ◀/▶ = previous/next
+  programme; ▲/▼ = the anchor-time rule (the start of the programme focused before the vertical move, kept while moving
+  vertically); OK = details; Info = details; Back = closes the sheet, then the grid (focus return G37). The guide owns these
+  keys while it is open (Red is *last channel* only in the player).
+- **G24 Desktop keys:** arrows as on TV, `Home` = *Jetzt*, `Alt+←` / `Alt+→` = −1 / +1 day, `PageUp` / `PageDown` = a screen of
+  rows, Enter = details; wheel/trackpad pans both ways, Shift+wheel horizontal. Phone: native two-axis scroll with sticky
+  column and axis, tap = details, chips for days and times.
+
+### 17.4 Data and data states
+
+- **G25 Data:** 6-hour blocks aligned to 00/06/12/18 UTC from `GET /api/livetv/epg` per channel page (G17), in-memory LRU
+  of 16 blocks per session, prefetch of the neighbour block when the viewport is within 1 h of an edge; times UTC in
+  transport (EPG offsets already applied, §6.1), labels with `Intl.DateTimeFormat`; a local day runs midnight to midnight
+  (23 or 25 h on DST days, the axis shows the repeated or skipped hour as it is).
+- **G26 Loading:** a block not loaded yet shows, per row, placeholder bars of cell height for its 6 h (opacity pulse 1.2 s;
+  static in calm / reduced motion / TV / kids); the real cells replace them in place.
+- **G27 End of data:** after a channel's last known programme, a cell "Programmdaten bis {time}" fills the rest of the
+  visible window (also on later days, which are never just empty).
+- **G28 No data:** a mapped channel without programmes in the window: one cell "Programm gerade nicht verfügbar"; an unmapped
+  channel: "Live" / "Kein Programm verfügbar"; a block that failed to load: "Programm konnte nicht geladen werden ·
+  Erneut laden" (OK/click retries that block).
+- **G29 Admin only:** a source whose EPG last succeeded more than 72 h ago shows "Programmdaten seit {n} Tagen nicht
+  aktualisiert" in its *Quellen* state line; users only ever see G27/G28.
+
+### 17.5 Search in the guide
+
+- **G30 Search:** a search field in the guide head (TV: a *Suchen* button that opens the system keyboard/dictation input);
+  title search over the held 8 days (yesterday to +7 days), case-insensitive substring, ≥ 2 characters, 300 ms debounce,
+  only the profile's channels, at most 50 results; server side a plain `lower(title) like` over the held programmes (no new
+  index), answered in < 300 ms with 300 000 programmes.
+- **G31 Results:** a list under the field, running first, then upcoming by start, then past (newest first): "Die
+  Leuchtturmwärter · Heute 20:15 · 4 Hafenkanal"; none: "Keine Sendung gefunden".
+- **G32 Jump to the cell:** OK/click closes the list, selects the day, scrolls the grid (transform) so the cell's start sits at
+  20 % of the width and focuses the cell; if the channel is not in the current filter, the filter switches to the
+  channel's group (TV above 1 000 channels) or *Alle* (otherwise), on the page that holds it. Global search hits stay
+  §25 (later).
+
+### 17.6 Phone list view
+
+- **G33 Toggle:** segmented *Raster | Jetzt/Danach* in the phone head; default *Raster*; the last choice is remembered per
+  profile on the device (`localStorage['ff-guide-view:<profileId>']`).
+- **G34 List rows** (72 px, both lines always reserved): logo + channel name (name always visible), *Jetzt* title + 3-px
+  progress + "noch 23 Min.", *Danach* "21:00 Wetter am Hafen"; data states of G28; tap = the detail sheet of the running
+  programme. The list shows *now*; day and time chips are hidden in it, filters and search stay.
+
+### 17.7 Mini-guide in the player
+
+- **G35 One component:** the mini-guide is the §12.2 *Senderliste* panel extended in Phase 2, not a second panel: same
+  openings (long OK, `ChannelList`, the button), same filters, same keys; ▲/▼ outside the panel keep zapping.
+- **G36 Phase 2 additions:** each row gains a reserved *Danach* line ("21:00 Wetter am Hafen") under *Jetzt* + progress, and
+  the panel foot gets *Programmführer* (opens the grid at now with focus on the focused channel's running programme). The
+  sound stays with the playing channel; the panel never plays or previews the focused channel. `Guide` opens the grid
+  from Phase 2 (Phase 1: the panel).
+- **G37 Focus return:** a grid opened from the player (or its panel) returns to the player on Back, focus on the playing
+  channel; a grid opened from the list returns to the list with focus on the playing (or last watched) channel's row.
+
+### 17.8 Performance rules and acceptance
+
+- **G38 DOM window:** only rows and cells inside the viewport ± one screen are in the DOM (about 20 channels × 4 h); cells
+  are positioned with `transform: translate()`; scrolling never re-lays-out.
+- **G39 TV scrolling:** on TV the grid layer moves by `transform` (no `scrollIntoView`, no native scroll), so the focus stays
+  inside the middle 60 %; `PageUp`/`PageDown`/`ChannelUp`/`ChannelDown` move a page, never one row.
+- **G40 Updates patch, never rebuild:** a reminder, a new block, a restart-marker change or now/next ticking patches the
+  affected cells in place (keyed by programme); scroll position and focus never move.
+- **G41 Request size:** `GET /api/livetv/epg` returns at most one page (300 channels) × one block; ≤ 150 KB JSON for 300
+  channels × 6 h (fixture check).
+- **G42 Acceptance on Chromium 85 (Tizen 2020 / webOS 6 class, and the e2e fixture with 4× CPU throttling as CI proxy):**
+  opening the guide on *Alle* with 500 channels paints the first cells in < 2 s (backend cache warm); a 60-row page jump
+  renders in < 100 ms; a ±2 h jump within loaded blocks in < 100 ms, with a block fetch in < 1 s; holding ▼ for 5 s never
+  drops the focus ring or leaves blank rows on screen.
+
+### 17.9 Accessibility (adds to §21)
+
+- **G43 Grid semantics:** `role="grid"` with `aria-rowcount`/`aria-colcount`, row headers = channels, **roving tabindex**
+  (exactly one cell tabbable), every cell focusable by keys and announced as "{title}, {channel}, {start} bis
+  {end}{, läuft, noch {n} Min.}{, Von Anfang an möglich}{, Erinnerung}{, {genre}}{, vorbei}".
+- **G44 Contrast and focus:** all cell text ≥ 4.5:1 including past cells (G5); the TV focus style (3-px white ring, one
+  focused element); the jetzt line is `aria-hidden`; reduced motion: no transition on the jetzt line or on jumps.
 
 ## 18. Security & privacy summary
 
@@ -1506,6 +1668,14 @@ the recipient's own notifications (they chose to record it), never in admin broa
 | backend restart | streams keep running in `livetv`; viewers re-beat; tokens in Redis survive; the tick reconciles `GET /v1/streams` with its viewer table and stops orphans after 60 s |
 | `livetv` restart | streams gone; clients get 410 at authz → re-`watch` once automatically |
 | DST change during a recording | times are UTC; the recording runs its real duration |
+| provider EPG covers only 6 h ahead (Phase 2 guide) | after the last programme a cell "Programmdaten bis {time}"; later days show that state, never an empty grid (§17 G27) |
+| a 6-h block fails to load | its cells say "Programm konnte nicht geladen werden · Erneut laden"; OK/click retries only that block; the rest of the grid keeps working (G28) |
+| 1 000+ channels in the profile's set, TV guide | *Alle* only behind *Gruppe wählen …*; opens on *Favoriten* or the last group; pages of 300 elsewhere (G16–G18) |
+| a search hit on a channel outside the current filter | the filter switches to the channel's group (TV, > 1 000 channels) or *Alle* on the right page, then the cell is focused (G32) |
+| categories match two genre classes ("Kinder", "Serie") | the fixed class order decides (Kinder first); no category matches → no stripe (G8) |
+| a TV without colour or media keys (Fire TV, many Samsung remotes) | day chips, time chips and *Jetzt* do the same; no hint names a key the device never sent (G23) |
+| a reminder is set while the grid is scrolled | the cell gains its bell in place; scroll position and focus stay (G40) |
+| media keys while the guide is open over the player | they move the guide (±2 h), never seek the playing stream; Red is −24 h in the guide and *last channel* only in the player (G23) |
 | EPG programme overlaps / gaps | cells drawn as given; overlaps: the later start wins the visible slot, the other is in the detail list |
 | channel hidden while someone watches | token revoked within 2 s (authz memo) → "nicht mehr verfügbar" |
 | role/group right removed while watching | same |
@@ -1554,6 +1724,16 @@ the recipient's own notifications (they chose to record it), never in admin broa
 | `player.serverBusy` / `player.capReason.serverBusy` | The server is busy right now. Try again in a moment. / Server busy | Server gerade ausgelastet. Versuch es gleich noch einmal. / Server ausgelastet |
 | `live.tvHintFav` | Long OK: favourite | Lang OK: Favorit |
 | `live.guide.today` / `yesterday` / `tomorrow` / `nowBtn` / `nowLine` | Today / Yesterday / Tomorrow / Now / now | Heute / Gestern / Morgen / Jetzt / jetzt |
+| `live.guide.search` / `searchEmpty` / `searchHit` | Search programmes / No programme found / {title} · {when} · {number} {name} | Sendung suchen / Keine Sendung gefunden / {title} · {when} · {number} {name} |
+| `live.guide.view` / `viewGrid` / `viewList` / `colours` | View / Grid / Now/Next / Colours in the guide | Ansicht / Raster / Jetzt/Danach / Farben im Programmführer |
+| `live.guide.time` / `morning` / `midday` / `evening` / `night` (the 20:15 chip is a formatted time) | Time / Morning / Midday / Evening / Night | Zeit / Morgens / Mittags / Abends / Nachts |
+| `live.guide.pickGroup` / `pageNext` / `pagePrev` | Choose group… / More channels ({from}–{to}) / Previous channels ({from}–{to}) | Gruppe wählen … / Weitere Sender ({from}–{to}) / Vorherige Sender ({from}–{to}) |
+| `live.guide.until` / `gap` / `loadFailed` / `retry` / `loading` (aria) | Programme data until {time} / Programme not available right now / Programme could not be loaded / Load again / Loading programme data | Programmdaten bis {time} / Programm gerade nicht verfügbar / Programm konnte nicht geladen werden / Erneut laden / Programmdaten werden geladen |
+| `live.guide.running` / `runningLeft` / `restartable` / `past` / `pastSheet` | on now / on now · {n} min left / can start from the beginning / over, not playable / Over – no longer playable. | läuft / läuft · noch {n} Min. / Von Anfang an möglich / vorbei, nicht abspielbar / Vorbei – nicht mehr abspielbar. |
+| `live.guide.genre.film` / `serie` / `sport` / `news` / `kids` / `doku` | Film / Series / Sport / News / Kids / Documentary | Film / Serie / Sport / Nachrichten / Kinder / Doku |
+| `live.guide.hint.media` / `hint.days` / `hint.now` | ⏪ ⏩: ±2 h / Red / Green: ±1 day / Yellow: now | ⏪ ⏩: ±2 Std. / Rot / Grün: ±1 Tag / Gelb: Jetzt |
+| `live.gap` (list, banner, panel; Phase 1) | Programme not available right now | Programm gerade nicht verfügbar |
+| `adminLive.src.epgStale` (Phase 2) | Programme data not updated for {n} days | Programmdaten seit {n} Tagen nicht aktualisiert |
 | `live.guide.watch` / `record` / `cancelRecord` / `recordSeries` / `remind` / `unremind` | Watch now / Record / Cancel recording / Record series / Remind me / Remove reminder | Jetzt ansehen / Aufnehmen / Aufnahme abbrechen / Serie aufnehmen / Erinnern / Erinnerung entfernen |
 | `live.rec.recording` / `keep` / `share` / `shareAccount` / `shareAll` / `toLibrary` | recording / Keep / Share… / With my account / With everyone / Keep in library | läuft / Behalten / Teilen … / Mit meinem Konto / Mit allen / Behalten → in Bibliothek |
 | `live.rec.onlyNew` / `thisChannel` / `allChannels` / `keepMax` | Only new episodes / This channel only / All channels / Keep at most {n} | Nur neue Folgen / Nur dieser Sender / Alle Sender / Höchstens {n} behalten |
@@ -1612,12 +1792,13 @@ the recipient's own notifications (they chose to record it), never in admin broa
   the player; *Von Anfang an* is a normal button, absent (not just hidden) from the accessibility tree while unavailable.
 - Favourites order: the keyboard path and announcements of §9.2 (`live.fav.order*` texts); on TV the move mode announces
   pick, position and drop the same way.
-- Guide: `role="grid"` with `aria-rowcount`/`aria-colcount` for the virtualised grid, row headers = channels, cells name
-  "{title}, {start} bis {end}{, läuft}{, Aufnahme geplant}"; the *jetzt* line is decorative (`aria-hidden`), *Jetzt* button
-  moves focus to the running programme of the first visible row.
+- Guide (Phase 2, §17.9 G43–G44): `role="grid"` with `aria-rowcount`/`aria-colcount` for the virtualised grid, row headers
+  = channels, roving tabindex (one tabbable cell), cells named "{title}, {channel}, {start} bis {end}{, läuft, noch {n}
+  Min.}{, Von Anfang an möglich}{, Erinnerung}{, {genre}}{, vorbei}{, Aufnahme geplant}"; the *jetzt* line is decorative
+  (`aria-hidden`), *Jetzt* moves focus to the running programme of the first visible row; search results are a listbox.
 - Drag-and-drop in the admin has the keyboard alternative of §9.2 with live announcements.
-- Contrast pairs (logo tile glass, `.55` past programmes still ≥ 4.5:1 for their text by raising the text colour, not lowering
-  the background; red dot paired with text) added to the glass tests.
+- Contrast pairs (logo tile glass; past guide cells ≥ 4.5:1 with no opacity dimming of text (owner decision 2026-11-12);
+  genre stripes ≥ 3:1 against every cell background; red dot paired with text) added to the glass tests.
 - TV: focus targets ≥ 54 px, text ≥ 28 px at 1080p, one focused element.
 
 ## 22. Testing
@@ -1657,11 +1838,13 @@ Hosts `iptv.example.com`, `friend.example.com`, `192.0.2.10`. Fixture M3U/XMLTV 
   card and *Neu messen*; Live tab desktop/phone/kids/TV (spatial nav, channel keys, digits); live player pause/rewind/LIVE,
   channel switch with the info banner, *Von Anfang an*, the *Senderliste* panel and focus return on Back, unreachable and
   `live_full` states; the group picker and group release; favourites ordering (drag, keyboard, TV move mode); Chromecast
-  live with the cast SDK fake; guide navigation on desktop and
-  TV; recordings scheduling, conflict warning, *Meine Aufnahmen*, recording playback through the source seam. German UI.
+  live with the cast SDK fake; the guide (Phase 2) on desktop, phone (*Raster* and *Jetzt/Danach*) and TV: filters and
+  the opening rule, paged *Alle*, time chips, remote time jumps, data states, search jumping to a cell, genre switch, the
+  mini-guide panel, a 500-channel fixture under 4× CPU throttling against the §17.8 numbers; recordings scheduling, conflict warning, *Meine Aufnahmen*, recording playback through the source seam. German UI.
 - **On-device checks for the owner** (listed per phase in the plans): Tizen/webOS/Fire TV channel keys and digits (on LG:
   whether CH+/− arrive at all), Tizen `ChannelList`/`Guide`, long OK on each remote, a 120-min buffer rewound 90 min on a TV,
-  zapping between two channels of a 1-connection provider, QSV
+  zapping between two channels of a 1-connection provider, the Phase 2 guide with 500 channels on the household's LG and
+  Samsung (open < 2 s, page jump < 100 ms, colour and media keys), QSV
   transcode of an SRT test feed on the N5095, an OBS push through the opened UDP port (and a refused push with a wrong
   passphrase), a library recording appearing in the Jellyfin library, Chromecast and AirPlay live, 30-min pause on a TV.
 
@@ -1725,19 +1908,39 @@ Hosts `iptv.example.com`, `friend.example.com`, `192.0.2.10`. Fixture M3U/XMLTV 
 22. Zapping inside *Zuletzt gesehen* walks the order the filter had when it was chosen; on TV each drop in the favourites
     move mode saves at once.
 
+Guide decisions made here (Phase 2, within the owner decision *Programmführer*, 2026-11-12):
+
+23. Opening filter when nothing was chosen yet and there are no favourites: *Alle* (≤ 1 000 channels) or the first group (TV,
+    > 1 000). Filter, phone view and the colour switch are remembered per profile on the device (`localStorage`).
+24. *Alle* pages are explicit (300 rows, boundary rows to the neighbour pages); the guide requests data per page.
+25. Time chips: *Morgens* 06:00, *Mittags* 12:00, *Abends* 18:00, *20:15*, *Nachts* 23:00.
+26. Genre mapping: built-in keyword lists, class order Kinder → Sport → Nachrichten → Doku → Serie → Film; the six colour
+    tokens of §17 G9.
+27. Guide search: substring over titles, the profile's channels, yesterday to +7 days, 50 results, running → upcoming →
+    past; a hit outside the current filter switches the filter.
+28. The phone *Jetzt/Danach* view shows *now* only (no day/time chips); a tap opens the running programme's details.
+29. The mini-guide opens like the *Senderliste* panel (long OK, `ChannelList`, button); ▲/▼ outside it keep zapping (the
+    Phase 1 remote decision wins over the research's "▼ opens the mini-guide").
+30. TV guide geometry for 28-px text: rows 104 px, channel column 300 px, 240 px per 30 min.
+31. While the guide is open the media and colour keys move the guide, never the playing stream.
+32. Phase 1 already tells "data ran out" from "no EPG" (`epg: 'gap'`, "Programm gerade nicht verfügbar") in the list, the
+    banner and the panel, so the guide's state is not new to people.
+33. Admin stale-EPG warning after 72 h without a successful EPG refresh.
+
 ## 25. Later (from the 2026-11-12 research, not in Phases 1–3)
 
 Kept as a list so they are not lost; none is planned or binding:
 
 - **Provider catch-up**: read the M3U `catchup*` tags at import and offer *Abspielen* on past guide cells (passthrough, no
-  storage, no budget).
+  storage, no budget); those cells then get the reserved style "vorbei, abspielbar" (§17 G5).
 - **Picture-in-picture**: the browser PiP button on desktop and iPhone Safari (not on TV WebViews).
 - **Sleep timer** on TV: *Ausschalten nach 30 / 60 / 90 Min. / Ende der Sendung*.
-- **EPG search**: *Läuft gerade* / *Demnächst* hits in the global search (Phase 2 or later).
+- **EPG hits in the global search** (*Läuft gerade* / *Demnächst*); the search inside the guide is Phase 2 (§17.5).
 - **Multiview**: not now (each tile is a stream, old TVs cannot decode four); maybe a desktop-only two-up.
 - **Phase 3 recording notes**: the conflict forecast also counts provider connections; *Aufnehmen* in the player starts
   from the buffered programme start; a visible *Konflikt* marker in *Geplant* and the guide; a partial recording schedules
   the next airing.
-- Other research suggestions the owner has not decided (Phase 2 guide paging and *Favoriten zuerst*, genre rows, audio
+- Other research suggestions the owner has not decided (*Jetzt läuft* genre rows on the Live-TV tab, a reminders overview /
+  *Meine Erinnerungen* filter, audio
   tracks, live hand-off, Chromecast programme metadata, a `max_streams` message naming the devices, the error action
   *Zurück zu …*, Magic Remote hover rules, refresh at a fixed time) stay with the research report until decided.
