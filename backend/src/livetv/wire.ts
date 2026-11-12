@@ -105,3 +105,9 @@ export interface IngestState {
   bitrate: number | null;
   rejected1h: number;
 }
+
+/** the `POST /v1/streams` body (spec §3.2; livetv/src/streams.ts `StartBody`); answered `{ streamKey, state }`, idempotent per channel */
+export interface StartBody { channelId: string; input: StreamInput; mode: Mode; encoder: Encoder; dvrSeconds: number /* 0–7200, ruling 47 */; maxBitrate: number }
+
+/** the `POST /v1/benchmark` answer (spec §3.2; livetv/src/routes/benchmark.ts): 20 s of 1080p25 through `encoder`, speed = 20 / wall seconds */
+export interface BenchAnswer { speed: number; encoder: Encoder; seconds: number }

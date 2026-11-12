@@ -286,7 +286,7 @@ describe('settings', () => {
     await detectLivetv(env.ctx, 0);
     const after = await settingsView(env.ctx);
     const group = after.groups.find((g) => g.id === 'livetv');
-    expect(group?.items.map((i) => i.key)).toEqual(['LIVETV_ENCODER', 'LIVETV_SRT_HOST']);
+    expect(group?.items.map((i) => i.key)).toEqual(['LIVETV_ENCODER', 'LIVETV_SRT_HOST', 'LIVETV_DVR_MINUTES', 'LIVETV_MAX_BITRATE']);
     expect(group?.items[0]).toMatchObject({ kind: 'enum', value: 'auto', options: ['auto', 'qsv', 'vaapi', 'nvenc', 'software'] });
     expect(group?.items[1]).toMatchObject({ kind: 'string', set: false, value: null });
     livetvUp = false;

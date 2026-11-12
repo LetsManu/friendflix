@@ -133,6 +133,25 @@ export async function revokeLiveToken(ctx: Ctx, hash: string): Promise<void> {
 }
 
 /**
+ * `DELETE /api/livetv/watch` (spec §7.2): the caller ends its own token. Another account's token, an unknown or malformed one: nothing
+ * happens (the route answers the same either way).
+ */
+export async function endLiveToken(ctx: Ctx, token: string, userId: string): Promise<void> {
+  if (!CAST_TOKEN_RE.test(token)) return;
+  const hash = hashToken(token);
+  const rec = await load(ctx, hash);
+  if (rec && rec.userId === userId) await revokeLiveToken(ctx, hash);
+}
+
+/**
+ * The live records (play sessions) of a device's live tokens that its next watch replaces (mintLiveToken revokes them): the watch route
+ * leaves them out of the `maxStreams` count (spec §7.2). Admin test previews are not replaced by a watch, so they are not among them.
+ */
+export async function deviceLiveSessions(ctx: Ctx, userId: string, deviceId: string): Promise<string[]> {
+  return (await listTokens(ctx, userId)).filter((t) => t.rec.deviceId === deviceId && !t.rec.test).map((t) => livePlaySessionId(t.hash));
+}
+
+/**
  * Revokes the account's tokens, or only those minted on one device; `exceptDevice` spares one device. Called next to revokeCasts
  * (sign-out / revokeSessions, device removal, account lock, profile switch, logout). Returns the count.
  */

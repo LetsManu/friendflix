@@ -45,7 +45,9 @@ async function check(ctx: Ctx, slot: Slot): Promise<LivetvState> {
 /** the state, from the last check when it is younger than `maxAgeMs`; checks run one at a time (callers share the running one) */
 export async function detectLivetv(ctx: Ctx, maxAgeMs = 10_000): Promise<LivetvState> {
   const slot = slotOf(ctx);
-  if (slot.state && Date.now() - slot.state.checkedAt < maxAgeMs) return slot.state;
+  const age = slot.state ? Date.now() - slot.state.checkedAt : -1;
+  // a clock that stepped back (negative age) never keeps an old answer
+  if (slot.state && age >= 0 && age < maxAgeMs) return slot.state;
   slot.flight ??= check(ctx, slot).finally(() => { slot.flight = null; });
   return slot.flight;
 }

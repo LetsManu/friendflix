@@ -16,7 +16,9 @@ import {
 import { invalidateRights } from '../src/rights.js';
 import { invalidateRoles } from '../src/roles.js';
 import { lockUser } from '../src/users.js';
-import { cfg, ENC_KEY, makeEnv, type TestEnv } from './helpers.js';
+import { detectLivetv } from '../src/livetv/detect.js';
+import { invalidateLiveConversions } from '../src/livetv/streams.js';
+import { cfg, ENC_KEY, fakeHttp, makeEnv, type TestEnv } from './helpers.js';
 
 vi.mock('../src/livetv/detect.js', async (orig) => ({
   ...(await orig<typeof import('../src/livetv/detect.js')>()),
@@ -51,6 +53,14 @@ let hafen = '';
 /** channel id -> running stream key (the fake streamKeyFor) */
 const running = new Map<string, string>();
 const deps = { streamKeyFor: async (id: string) => running.get(id) ?? null };
+/** what the route's real streamKeyFor reads: livetv's `GET /v1/streams` (stream keys are 32 hex there) */
+const hexOf = (k: string) => Buffer.from(k).toString('hex').padEnd(32, '0').slice(0, 32);
+const fakeLivetv = () => fakeHttp({
+  'GET /healthz': () => ({ json: { ok: true, api: 1, version: '3.3.0', bootId: '0123456789abcdef' } }),
+  'GET /v1/streams': () => ({ json: [...running].map(([channelId, k]) => ({
+    channelId, streamKey: hexOf(k), mode: 'passthrough', since: 1, state: 'running', bitrate: null, errors: [], lastSegmentAt: 2,
+  })) }),
+});
 const authz = (token: string, ip = IP1) => resolveLiveToken(env.ctx, token, ip, deps);
 const status = async (token: string, ip = IP1) => (await authz(token, ip)).status;
 
@@ -105,6 +115,10 @@ beforeEach(async () => {
   const fresh = (await env.pool.query<{ id: string }>("insert into livetv_groups(id, name, released, position) values (gen_random_uuid(), 'DE | Neu', false, 1) returning id")).rows[0]!.id;
   nord = await channel('Nordlicht TV', news);
   hafen = await channel('Hafenkanal', fresh); // an unreleased group: nobody sees it on the user side (admins included)
+  env.ctx.fetchImpl = fakeLivetv();
+  // the real detection too: the route's livetvCall reads livetv's detected state, which the mocked livetvInstalled does not fill
+  await detectLivetv(env.ctx, 0);
+  invalidateLiveConversions();
   running.clear();
   running.set(nord, 'sk-nordlicht');
   running.set(hafen, 'sk-hafenkanal');
@@ -259,8 +273,15 @@ describe('live tokens', () => {
     expect(await status(token)).toBe(200);
     running.delete(nord);
     expect(await status(token)).toBe(410);
-    // the route's placeholder (Task 31 wires the real streamKeyFor): no stream runs yet, so a valid token answers 410
-    const r = await env.app.inject({ method: 'POST', url: '/internal/authz/live', headers: H, payload: { token: (await mint({ deviceId: 'dev-anna-2' })).token, ip: IP1 } });
+    // the route reads livetv's list (Task 31's streamKeyFor): the stream key while it runs, 410 once livetv no longer lists it
+    const routed = (await mint({ deviceId: 'dev-anna-2' })).token;
+    const viaRoute = () => env.app.inject({ method: 'POST', url: '/internal/authz/live', headers: H, payload: { token: routed, ip: IP1 } });
+    running.set(nord, 'sk-nordlicht');
+    invalidateLiveConversions();
+    expect((await viaRoute()).json()).toEqual({ streamKey: hexOf('sk-nordlicht'), kind: 'live', maxAgeS: 2 });
+    running.delete(nord);
+    invalidateLiveConversions();
+    const r = await viaRoute();
     expect(r.statusCode).toBe(410);
     expect(r.json()).toEqual({ error: 'gone' });
     // a 410 takes no pin: once the stream runs, any address may take the first one
@@ -386,8 +407,8 @@ describe('live tokens', () => {
     try {
       const { token } = await mint();
       const live = (b: unknown, h: Record<string, string> = H) => env.app.inject({ method: 'POST', url: '/internal/authz/live', headers: h, payload: b as object });
-      expect((await live({ token, ip: IP1 })).statusCode).toBe(410); // placeholder streamKeyFor (takes no pin)
-      expect((await live({ token, ip: IP2 })).statusCode).toBe(410);
+      expect((await live({ token, ip: IP1 })).statusCode).toBe(200); // the stream runs in livetv: IP1 pins
+      expect((await live({ token, ip: IP2 })).statusCode).toBe(403);
       expect((await live({ token, ip: IP1 }, { 'x-internal-secret': 'wrong' })).statusCode).toBe(403);
       expect((await live({ token, ip: IP1, extra: 1 })).statusCode).toBe(400); // strict
       expect((await live({ token: `${token}x`, ip: IP1 })).statusCode).toBe(400);

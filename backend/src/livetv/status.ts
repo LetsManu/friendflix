@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { conversionsView, type ConversionsView } from '../convbench.js';
+import { dropConvGrant } from '../convbudget.js';
 import type { Ctx } from '../ctx.js';
 import { CHANNEL_COLUMNS, CHANNEL_FROM } from './channels.js';
 import { LivetvError, livetvCall } from './client.js';
 import { detectLivetv, livetvSystem } from './detect.js';
 import { listEvents, pushEvent, type LiveEvent } from './events.js';
 import { gpuAdvice, type GpuAdvice } from './gpu.js';
+import { invalidateLiveConversions, viewerCounts } from './streams.js';
 import type { IngestState, Mode, StreamView } from './wire.js';
 
 /**
@@ -49,13 +51,8 @@ async function list(ctx: Ctx, path: string): Promise<unknown[]> {
   }
 }
 
-/**
- * Who watches a channel (a count, never who): Task 31 brings the viewer keys; until then nobody is counted. The one place to change
- * when they exist.
- */
-async function viewersOf(_ctx: Ctx, _channelIds: readonly string[]): Promise<Map<string, number>> {
-  return new Map();
-}
+/** Who watches a channel (a count, never who): the live tokens touched within 45 s (livetv/streams.ts viewerCounts) */
+const viewersOf = (ctx: Ctx): Promise<Map<string, number>> => viewerCounts(ctx);
 
 /** the channels' effective names, logo hashes and numbers by id (ids that are not ours are simply absent) */
 async function channelFacts(ctx: Ctx, ids: readonly string[]): Promise<Map<string, { name: string; logoHash: string | null; number: number | null }>> {
@@ -122,7 +119,7 @@ export async function liveStatus(ctx: Ctx, hwAccel: () => Promise<string | null>
   const jellyfin = sys ? await hwAccel() : null;
   const running = parseStreams(rawStreams);
   const feeds = parseIngest(rawIngest);
-  const [facts, viewers] = await Promise.all([channelFacts(ctx, [...running, ...feeds, ...events].map((x) => x.channelId).filter((i): i is string => typeof i === 'string')), viewersOf(ctx, running.map((s) => s.channelId))]);
+  const [facts, viewers] = await Promise.all([channelFacts(ctx, [...running, ...feeds, ...events].map((x) => x.channelId).filter((i): i is string => typeof i === 'string')), viewersOf(ctx)]);
 
   const streams = running.flatMap((s) => {
     const f = facts.get(s.channelId);
@@ -158,6 +155,8 @@ export async function stopStream(ctx: Ctx, channelId: string, log?: { warn(o: ob
   } catch (e) {
     if (!(e instanceof LivetvError && e.status === 404)) throw e;
   }
+  await dropConvGrant(ctx, `live:${channelId}`); // a start's slot still held by its grant goes with the stream
+  invalidateLiveConversions(); // the budget and the gateway's authz stop seeing it at once
   // the stop happened; a failing event ring must not turn it into a 500 without an audit entry
   await pushEvent(ctx, { level: 'info', code: 'stopped_by_admin', channelId }).catch((err: unknown) => log?.warn({ err }, 'livetv stop event not recorded'));
 }

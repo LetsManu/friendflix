@@ -20,6 +20,7 @@ import { detectLivetv, livetvDetectTick, livetvInstalled } from './livetv/detect
 import { livetvEpgPruneTick } from './livetv/epg.js';
 import { livetvIngestTick } from './livetv/ownfeeds.js';
 import { livetvRefreshTick } from './livetv/refresh.js';
+import { livetvTick } from './livetv/streams.js';
 import { hevcTick } from './hevcenc.js';
 import { digestTick } from './digest.js';
 import { expiryTick } from './expiry.js';
@@ -128,6 +129,13 @@ timers.push(setInterval(() => { if (op()) void convBenchTick(ctx).catch(jobFaile
 void detectLivetv(ctx).catch(() => undefined); // the first look at the optional livetv container, so a running one is not mistaken for a new one
 timers.push(setInterval(() => { void livetvDetectTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-detect', 'livetv detection failed')); }, 60_000)); // installed or not: featureFlags, the admin entry, the benchmark after enabling
 timers.push(setInterval(() => { if (op()) void livetvIngestTick(ctx, app.log).catch(jobFailed(ctx, app.log, 'livetv-ingest', 'livetv ingest retry failed')); }, 60_000)); // re-sends the SRT push set after a failed sync (ltv:ingest:dirty), only while livetv is installed
+// stops streams 60 s after their last viewer, re-sends the push set after a livetv restart, notes stream and push events (one runner: KV ltv:tick)
+let livetvTickBusy = false;
+timers.push(setInterval(() => {
+  if (livetvTickBusy || !op() || !livetvInstalled(ctx)) return;
+  livetvTickBusy = true;
+  void livetvTick(ctx).catch(jobFailed(ctx, app.log, 'livetv-tick', 'livetv stream tick failed')).finally(() => { livetvTickBusy = false; });
+}, 15_000));
 let livetvRefreshBusy = false;
 timers.push(setInterval(() => {
   // provider lists due for a refresh (spec §10 jobs); only while livetv is there, else every source would fail and notify the admins
