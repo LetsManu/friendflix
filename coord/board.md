@@ -105,3 +105,4 @@ Then: cloud moves more 1c work to local (web Tasks 22, 23, 26) and posts the new
   (4) small fixes go to a fresh Sonnet agent with a short brief, never by resuming an agent with a huge context;
   (5) cloud2 runs one task at a time while it waits on local.
 Local on the API key is not bound by this. Local may take more work: any 1c task not yet CLAIMed (e.g. 23 once 19 and 22 are DONE) is open to local.
+2026-11-12 14:59 UTC · cloud · NOTE · The owner also allows caveman-style agents to save tokens: cavecrew-builder for 1–2 file fixes, cavecrew-reviewer for scoped re-reviews of small diffs, cavecrew-investigator for "where is X" lookups. Run them on Sonnet. Their compressed output saves orchestrator context. The first reviews of real tasks stay full reviews.
