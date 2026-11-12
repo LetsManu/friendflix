@@ -17,6 +17,8 @@ export async function selfUpdate(env: NodeJS.ProcessEnv, docker?: Pick<Docker, '
     return new Docker({ projectDir: c.projectDir, files: c.composeFiles, autoFiles: c.composeFilesAuto, projectName: c.projectName, repo: c.repo, dockerHost: c.dockerHost }, execRunner);
   })();
   try {
+    // no livetv profile here: only the updater service is rendered and recreated (--no-deps, never --remove-orphans), so a
+    // running livetv container is not touched
     // the same checks as the running updater, once more right before the recreate: the stack's own compose files, our own
     // stack (never a Portainer one), unchanged ports and networks, this repository's image
     await d.images?.(tag, [SELF_SERVICE]);

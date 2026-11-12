@@ -22,6 +22,7 @@ function world(o: { verifyFails?: string; healthyTags?: string[]; pullFails?: bo
     running: async () => (o.running === null ? null : info(o.running ?? shaOf(runningTag))),
     spawnSelfUpdate: async (tag) => { calls.push(`spawn ${tag}`); if (o.spawnFails) throw new StepError('restart_failed'); },
     healthy: async (sha7) => { calls.push(`health ${sha7}`); return (o.healthyTags ?? ['latest', 'nightly', '1.2.3', 'sha-aaaaaaa', 'sha-bbbbbbb']).includes(runningTag) && sha7 === shaOf(runningTag).slice(0, 7); },
+    ownStack: async () => {}, stop: async () => {}, rm: async () => {}, imageRm: async () => {}, volumeRm: async () => {}, livetvContainer: async () => null,
   };
   return { ops, calls };
 }
