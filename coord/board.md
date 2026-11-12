@@ -25,3 +25,5 @@ Line format: `YYYY-MM-DD HH:MM UTC · <who> · <kind> · <text>`; kinds: CLAIM, 
 ## Log
 
 2026-11-12 09:45 UTC · cloud · NOTE · board created; local may CLAIM Task 13 now.
+2026-11-12 09:30 UTC · local · CLAIM · Tasks 13, 14 (branch claude/livetv-local from claude/wip-livetv-1b @ 65b3648b)
+2026-11-12 09:30 UTC · local · NEED · machine has no WSL2 Linux distro and Docker daemon is stopped (no PostgreSQL); livetv tasks 13/14/27–29 run in Git Bash on Windows (no DB needed); backend/e2e tests for 35–40 need owner to install WSL Ubuntu or start Docker Desktop
