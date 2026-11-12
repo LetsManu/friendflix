@@ -56,15 +56,30 @@ export const livetvRunning = (s: LivetvAdminState): boolean => livetvJob(s)?.sta
 /** another updater job (an app update, a rollback) is running: livetv cannot be started or stopped meanwhile */
 export const otherJobRunning = (s: LivetvAdminState): boolean => jobRunning(s) && !livetvRunning(s);
 
-export type Phase = 'area' | 'working' | 'settling' | 'wantedDown' | 'offer';
+export type Phase = 'area' | 'stopping' | 'working' | 'settling' | 'wantedDown' | 'offer';
 /**
- * What the page shows: the area while installed; the job's steps while one runs; "checking" for a moment after a job
- * ended and detection has not caught up (`settling`); "turned on but not running" (wanted, nothing detected); else the offer.
+ * What the page waits for after a livetv job succeeded (detection is cached up to 10 s and the page stops polling with the job):
+ * 'on' after an enable, 'off' after a disable / remove; null = nothing to wait for (another job, a failure, or detection already
+ * agrees). 1b review I4: a disable used to leave "Live-TV läuft." on the page until the next reload.
  */
-export function phase(s: LivetvAdminState, settling: boolean): Phase {
-  if (s.installed) return 'area';
+export type Settle = 'on' | 'off' | null;
+export function settleAfter(j: LivetvJob | null, installed: boolean): Settle {
+  if (!j || j.state !== 'succeeded' || !j.action.startsWith('livetv-')) return null;
+  if (j.action === 'livetv-enable') return installed ? null : 'on';
+  return installed ? 'off' : null;
+}
+/** the wait is over once detection agrees with the job */
+export const settled = (target: Settle, installed: boolean): boolean => target === null || (target === 'on') === installed;
+
+/**
+ * What the page shows: the area while installed; "being turned off" while a finished disable waits for detection (`stopping`,
+ * never "läuft"); the job's steps while one runs; "checking" for a moment after an enable ended and detection has not caught up
+ * (`settling`); "turned on but not running" (wanted, nothing detected); else the offer. `settle`: the wait that is still open.
+ */
+export function phase(s: LivetvAdminState, settle: Settle): Phase {
+  if (s.installed) return settle === 'off' && !jobRunning(s) ? 'stopping' : 'area';
   if (livetvRunning(s)) return 'working';
-  if (settling) return 'settling';
+  if (settle === 'on') return 'settling';
   // the backend keeps `wanted` once it accepted an enable, even when the job then failed or was rolled back: that is not "turned on"
   const j = livetvJob(s);
   const failedEnable = j?.action === 'livetv-enable' && (j.state === 'failed' || j.state === 'rolled_back');
@@ -106,5 +121,5 @@ export function rememberNav(shown: boolean): void {
 
 /** polling every 3 s while a job runs (spec §4.5) */
 export const POLL_MS = 3_000;
-/** how long after a job ended the page keeps asking before it says "turned on but not running" */
+/** how long after a job ended the page keeps asking before it believes detection ("turned on but not running", or still running) */
 export const SETTLE_MS = 30_000;

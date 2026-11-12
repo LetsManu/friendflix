@@ -113,7 +113,7 @@ export interface AdminState {
 }
 /**
  * Admin -> Live-TV (backend/src/livetv/adminRoutes.ts): the state the page polls, enable and disable. An enable job moves one step per
- * GET of the state and, after `jobPolls` of them, ends with `outcome`: succeeded flips `installed` (no reload on the page). A refused
+ * GET of the state and, after `jobPolls` of them, ends with `outcome`: succeeded flips `installed` after the detection lag (no reload on the page). A refused
  * request (no updater, foreign stack, busy, `refuse`) leaves `wanted` as it was.
  */
 export interface LivetvMock {
@@ -141,7 +141,14 @@ export interface LivetvMock {
   failedSources: number;
   /** after a succeeded enable the detection needs this many more GETs of the state before `installed` flips (the page says "wird geprüft") */
   detectLag: number;
+  /**
+   * after a succeeded disable / remove the same for `installed` going false: the real backend's detection is cached, so the job's
+   * end never flips it at once (1b review I4); the page has to keep asking
+   */
+  offLag: number;
   lagLeft: number;
+  /** what `installed` becomes when lagLeft runs out */
+  lagTo: boolean;
   /** GET state calls and the POSTed bodies, in order */
   gets: number;
   posts: Array<{ path: 'enable' | 'disable'; body: any }>;
@@ -294,7 +301,7 @@ const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemI
 export function livetvMock(): LivetvMock {
   return {
     installed: false, wanted: false, offerHidden: false, updater: true, stack: 'own', ltState: 'absent', ltError: null, ltOld: false, job: null, tick: 0, jobPolls: 2, outcome: 'succeeded', failCode: null,
-    benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, lagLeft: 0, gets: 0, posts: [],
+    benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, offLag: 2, lagLeft: 0, lagTo: true, gets: 0, posts: [],
   };
 }
 
@@ -570,13 +577,17 @@ const ENV_LINE = 'COMPOSE_PROFILES=livetv';
 function livetvState(lt: LivetvMock) {
   lt.gets++;
   const install = () => { lt.installed = true; lt.ltState = 'enabled'; lt.ltError = null; };
-  if (lt.lagLeft > 0 && --lt.lagLeft === 0) install();
-  // the job moves one step per poll; its end flips installed (enable, after `detectLag` more polls) or clears it (disable / remove)
+  if (lt.lagLeft > 0 && --lt.lagLeft === 0) { if (lt.lagTo) install(); else lt.installed = false; }
+  // the job moves one step per poll; its end flips installed after `detectLag` (enable) / `offLag` (disable / remove) more polls,
+  // like the backend's cached detection; the updater's own state changes at once
   if (lt.job?.state === 'running' && String(lt.job.action).startsWith('livetv-')) {
     if (advanceLivetvJob(lt.job, lt.tick++, lt.jobPolls, lt.outcome, lt.failCode)) {
       if (lt.job.state === 'succeeded') {
-        if (lt.job.action === 'livetv-enable') { if (lt.detectLag > 0) lt.lagLeft = lt.detectLag; else install(); }
-        else { lt.installed = false; lt.ltState = lt.job.action === 'livetv-remove' ? 'absent' : 'disabled'; lt.ltError = null; }
+        if (lt.job.action === 'livetv-enable') { if (lt.detectLag > 0) { lt.lagLeft = lt.detectLag; lt.lagTo = true; } else install(); }
+        else {
+          lt.ltState = lt.job.action === 'livetv-remove' ? 'absent' : 'disabled'; lt.ltError = null;
+          if (lt.offLag > 0) { lt.lagLeft = lt.offLag; lt.lagTo = false; } else lt.installed = false;
+        }
       } else if (lt.job.action === 'livetv-enable') lt.ltState = 'disabled'; // the backend keeps `wanted` after a failed enable
     }
   }

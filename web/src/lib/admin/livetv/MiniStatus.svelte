@@ -17,6 +17,8 @@
   import { errorKey, gpuKey, jobRunning, livetvJob, livetvRunning, livetvSteps, otherJobRunning, type LivetvAdminState } from './state';
 
   export let s: LivetvAdminState;
+  /** a disable finished and detection has not caught up yet: never "läuft", the page keeps asking (1b review I4) */
+  export let stopping = false;
   /** the dialog grows out of the button that was pressed */
   const dispatch = createEventDispatcher<{ off: HTMLElement | null }>();
 
@@ -31,7 +33,11 @@
 </script>
 
 <AdminCard title={$t('adminLive.mini.title')}>
-  <p class="ok" role="status"><Icon name="check" size={18} />{$t('adminLive.mini.running')}</p>
+  {#if stopping}
+    <div class="prog" aria-live="polite" data-stopping><Progress value={null} label={$t('adminLive.mini.working')} /></div>
+  {:else}
+    <p class="ok" role="status"><Icon name="check" size={18} />{$t('adminLive.mini.running')}</p>
+  {/if}
   <dl class="ver"><div><dt>{$t('adminLive.mini.version')}</dt><dd><code>{s.version ?? '–'}</code></dd></div></dl>
 
   <UpdaterNotes {s} />
@@ -60,7 +66,7 @@
   </div>
 
   <div class="row">
-    <Button variant="secondary" icon="x" disabled={busy} on:click={(e) => dispatch('off', e.currentTarget instanceof HTMLElement ? e.currentTarget : null)}>{$t('adminLive.status.off')}</Button>
+    <Button variant="secondary" icon="x" disabled={busy || stopping} on:click={(e) => dispatch('off', e.currentTarget instanceof HTMLElement ? e.currentTarget : null)}>{$t('adminLive.status.off')}</Button>
     {#if other}<span class="muted small" role="status" data-other-job><Icon name="clock" size={16} /> {$t('adminLive.err.updaterBusy')}</span>{/if}
   </div>
 </AdminCard>

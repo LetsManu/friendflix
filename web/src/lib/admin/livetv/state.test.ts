@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AdminSummary } from '../summary';
-import { enableMode, errorKey, gpuKey, jobRunning, livetvJob, navGuess, navShown, otherJobRunning, phase, rememberNav, type LivetvAdminState } from './state';
+import { enableMode, errorKey, gpuKey, jobRunning, livetvJob, navGuess, navShown, otherJobRunning, phase, rememberNav, settleAfter, settled, type LivetvAdminState } from './state';
 
 const base = (): LivetvAdminState => ({
   installed: false, reachable: false, version: null, wanted: false, offerHidden: false,
@@ -58,23 +58,54 @@ describe('jobRunning / livetvJob', () => {
 });
 
 describe('phase', () => {
-  it('installed wins: the area', () => { expect(phase({ ...base(), installed: true, reachable: true }, false)).toBe('area'); });
+  it('installed wins: the area', () => { expect(phase({ ...base(), installed: true, reachable: true }, null)).toBe('area'); });
   it('a running job is "working", also while installed is still false', () => {
-    expect(phase(withUpdater(base(), { job: job() }), false)).toBe('working');
+    expect(phase(withUpdater(base(), { job: job() }), null)).toBe('working');
   });
   it('wanted but not reachable, no job: the service is down', () => {
-    expect(phase({ ...base(), wanted: true }, false)).toBe('wantedDown');
+    expect(phase({ ...base(), wanted: true }, null)).toBe('wantedDown');
   });
   it('right after a finished job the page waits for the detection instead of claiming the service is down', () => {
-    expect(phase({ ...base(), wanted: true }, true)).toBe('settling');
+    expect(phase({ ...base(), wanted: true }, 'on')).toBe('settling');
   });
   it('a failed or rolled back enable is not "turned on", although the backend keeps wanted', () => {
-    expect(phase(withUpdater({ ...base(), wanted: true }, { job: job({ state: 'rolled_back', error: 'unhealthy' }) }), false)).toBe('offer');
-    expect(phase(withUpdater({ ...base(), wanted: true }, { job: job({ state: 'failed', error: 'pull_failed' }) }), false)).toBe('offer');
+    expect(phase(withUpdater({ ...base(), wanted: true }, { job: job({ state: 'rolled_back', error: 'unhealthy' }) }), null)).toBe('offer');
+    expect(phase(withUpdater({ ...base(), wanted: true }, { job: job({ state: 'failed', error: 'pull_failed' }) }), null)).toBe('offer');
     // an older failed update job says nothing about it
-    expect(phase(withUpdater({ ...base(), wanted: true }, { job: job({ action: 'update', state: 'failed' }) }), false)).toBe('wantedDown');
+    expect(phase(withUpdater({ ...base(), wanted: true }, { job: job({ action: 'update', state: 'failed' }) }), null)).toBe('wantedDown');
   });
-  it('never enabled: the offer', () => { expect(phase(base(), false)).toBe('offer'); });
+  it('never enabled: the offer', () => { expect(phase(base(), null)).toBe('offer'); });
+  it('a finished disable while detection still says installed: "stopping", never the area that says läuft (1b review I4)', () => {
+    const on = { ...base(), installed: true, reachable: true };
+    expect(phase(withUpdater(on, { job: job({ action: 'livetv-disable', state: 'succeeded' }) }), 'off')).toBe('stopping');
+    expect(phase(on, null)).toBe('area');
+    // while a job runs it is that job's view
+    expect(phase(withUpdater(on, { job: job({ action: 'livetv-disable' }) }), 'off')).toBe('area');
+  });
+});
+
+describe('settleAfter / settled (what the page waits for after a job)', () => {
+  const done = (action: string, state = 'succeeded') => job({ action, state, step: null, finishedAt: '2026-11-12T10:00:20Z' });
+  it('an enable waits for installed, a disable or remove for not installed, only when detection does not agree yet', () => {
+    expect(settleAfter(done('livetv-enable'), false)).toBe('on');
+    expect(settleAfter(done('livetv-enable'), true)).toBeNull();
+    expect(settleAfter(done('livetv-disable'), true)).toBe('off');
+    expect(settleAfter(done('livetv-remove'), true)).toBe('off');
+    expect(settleAfter(done('livetv-disable'), false)).toBeNull();
+  });
+  it('a failed job, another job or none: nothing to wait for', () => {
+    expect(settleAfter(done('livetv-disable', 'failed'), true)).toBeNull();
+    expect(settleAfter(done('livetv-enable', 'rolled_back'), false)).toBeNull();
+    expect(settleAfter(done('update'), true)).toBeNull();
+    expect(settleAfter(null, true)).toBeNull();
+  });
+  it('the wait ends when detection agrees', () => {
+    expect(settled('off', true)).toBe(false);
+    expect(settled('off', false)).toBe(true);
+    expect(settled('on', false)).toBe(false);
+    expect(settled('on', true)).toBe(true);
+    expect(settled(null, true)).toBe(true);
+  });
 });
 
 describe('errorKey', () => {
@@ -101,7 +132,7 @@ describe('gpuKey', () => {
 describe('other jobs', () => {
   it('an app update running is not a livetv job: no "working", but it is named', () => {
     const s = withUpdater(base(), { job: job({ action: 'update' }) });
-    expect(phase(s, false)).toBe('offer');
+    expect(phase(s, null)).toBe('offer');
     expect(otherJobRunning(s)).toBe(true);
     expect(otherJobRunning(withUpdater(base(), { job: job() }))).toBe(false);
   });

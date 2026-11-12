@@ -254,6 +254,25 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
       expect(api.admin.livetv.wanted).toBe(false);
     });
 
+    test('after a disable the page waits for detection: "being turned off", never "läuft", then the offer (1b review I4)', async ({ page, api }) => {
+      const lt = api.admin.livetv;
+      lt.offLag = 2; // detection still says installed for two more polls after the job ended
+      await page.goto('/admin/livetv');
+      await page.getByRole('button', { name: 'Live-TV ausschalten …' }).click();
+      await page.getByRole('dialog', { name: 'Live-TV ausschalten?' }).getByRole('button', { name: 'Ausschalten' }).click();
+      // the job ended (updater: disabled) while detection still answers installed: the page keeps asking and says so
+      await expect(page.locator('[data-stopping]')).toBeVisible({ timeout: 20_000 });
+      expect(lt.job.state).toBe('succeeded');
+      expect(lt.installed).toBe(true);
+      await expect(page.getByText('Live-TV läuft.')).toHaveCount(0);
+      await expect(page.getByText('Live-TV wird ausgeschaltet …').first()).toBeVisible();
+      await expect(page.getByRole('region', { name: 'Live-TV (optional)' })).toBeVisible({ timeout: 20_000 });
+      expect(lt.installed).toBe(false);
+      await expect(page.getByText('Live-TV läuft.')).toHaveCount(0);
+      // the nav shows the optional entry again (summary refreshed when installed flipped)
+      await expect(nav(page).getByRole('link', { name: /Live-TV/ })).toContainText('optional');
+    });
+
     test('Escape closes the dialog without sending anything', async ({ page, api }) => {
       await page.goto('/admin/livetv');
       await page.getByRole('button', { name: 'Live-TV ausschalten …' }).click();

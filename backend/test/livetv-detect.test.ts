@@ -20,9 +20,11 @@ const SYSTEM = {
   encoders: ['h264_qsv', 'libx264'], cache: { usedBytes: 0, maxBytes: 1000 }, recordings: null, srt: { ports: [9000] },
 };
 const fake = {
+  /** the job the updater status reports (default none) */
+  job: null as unknown,
   livetv: 'down' as 'down' | 'api1' | 'api2' | 'impostor' | 'wrongProof', stack: undefined as 'own' | 'foreign' | undefined, hasUpdater: true, livetvState: undefined as unknown, status: 200,
   calls: [] as Array<{ method: string; path: string; body: string; sigOk: boolean }>, systemCalls: 0,
-  reset() { Object.assign(this, { livetv: 'down', stack: 'own', hasUpdater: true, livetvState: { state: 'disabled', container: null, error: null }, status: 200, calls: [], systemCalls: 0 }); },
+  reset() { Object.assign(this, { job: null, livetv: 'down', stack: 'own', hasUpdater: true, livetvState: { state: 'disabled', container: null, error: null }, status: 200, calls: [], systemCalls: 0 }); },
 };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
 function sigOk(key: string, label: string, method: string, path: string, body: string, h: Record<string, string>, p: string): boolean {
@@ -51,7 +53,7 @@ const fakeFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<
   const ok = sigOk('x', 'friendflix-updater/v1', method, u.pathname, body, h, 'updater');
   fake.calls.push({ method, path: u.pathname, body, sigOk: ok });
   if (u.pathname === '/v1/status') {
-    return json({ updater: { version: '3.3.0', sha: null }, channel: 'stable', version: null, targetTag: 'latest', current: 'latest', previous: null, busy: false, job: null, log: [], services: [], ...(fake.stack ? { stack: fake.stack } : {}), livetv: fake.livetvState });
+    return json({ updater: { version: '3.3.0', sha: null }, channel: 'stable', version: null, targetTag: 'latest', current: 'latest', previous: null, busy: false, job: fake.job, log: [], services: [], ...(fake.stack ? { stack: fake.stack } : {}), livetv: fake.livetvState });
   }
   if (u.pathname === '/v1/livetv' && method === 'POST') {
     const op = (JSON.parse(body) as { op: string }).op;
@@ -382,6 +384,32 @@ describe('GET /api/admin/livetv/state', () => {
       });
       expect(healthz).not.toHaveBeenCalled(); // the check above is younger than 10 s
       expect(spy.mock.calls.length).toBeLessThanOrEqual(1);
+    } finally { env.ctx.fetchImpl = inner; }
+  });
+
+  it('right after a livetv job ended the state asks detection fresh, so a disable is seen at once (1b review I4)', async () => {
+    fake.livetv = 'api1';
+    await detectLivetv(env.ctx, 0);
+    const healthz = vi.fn();
+    const inner = env.ctx.fetchImpl;
+    env.ctx.fetchImpl = (async (...a: Parameters<typeof fetch>) => { if (new URL(String(a[0])).pathname === '/healthz') healthz(); return inner(...a); }) as typeof fetch;
+    const ended = (action: string, agoMs: number) => ({ id: JOB_ID, action, state: 'succeeded', step: null, from: null, to: 'latest',
+      steps: { pull: 'skipped', verify: 'skipped', restart: 'ok', health: 'skipped', rollback: 'skipped' }, startedAt: new Date(Date.now() - agoMs - 5_000).toISOString(), finishedAt: new Date(Date.now() - agoMs).toISOString(), error: null });
+    try {
+      fake.job = ended('livetv-disable', 2_000);
+      fake.livetv = 'down'; // stopped by the job, the cached answer still says installed
+      await withApp(async (call) => {
+        expect((await call('GET', '/api/admin/livetv/state')).json()).toMatchObject({ installed: false, reachable: false });
+        await call('GET', '/api/admin/livetv/state');
+      });
+      expect(healthz).toHaveBeenCalledTimes(2);
+      // an older job, or an app update's job: the 10 s cache again
+      for (const j of [ended('livetv-disable', 31_000), ended('update', 1_000)]) {
+        fake.job = j;
+        healthz.mockClear();
+        await withApp(async (call) => { for (let i = 0; i < 3; i++) await call('GET', '/api/admin/livetv/state'); });
+        expect(healthz).not.toHaveBeenCalled();
+      }
     } finally { env.ctx.fetchImpl = inner; }
   });
 

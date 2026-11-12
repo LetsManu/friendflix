@@ -14,6 +14,15 @@ const ENV_LINE = 'COMPOSE_PROFILES=livetv';
 const JF_TIMEOUT_MS = 3_000;
 /** spec §4.1: the state is cached 10 s */
 const MEMO_MS = 10_000;
+/** after a livetv job ended, detection is asked fresh for this long (1b review I4: the page settles on what the job did) */
+const FRESH_AFTER_JOB_MS = 30_000;
+
+/** a livetv job of the updater that finished less than FRESH_AFTER_JOB_MS ago: the cached detection may predate its stop / start */
+function justFinished(job: { action: string; state: string; finishedAt: string | null } | null | undefined, now = Date.now()): boolean {
+  if (!job || !job.action.startsWith('livetv-') || job.state === 'running' || !job.finishedAt) return false;
+  const at = Date.parse(job.finishedAt);
+  return Number.isFinite(at) && now - at < FRESH_AFTER_JOB_MS;
+}
 
 const disableBody = z.object({ removeImage: z.boolean(), removeCache: z.boolean() });
 
@@ -54,7 +63,9 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/admin/livetv/state', admin, async (_req, reply) => {
     reply.header('cache-control', 'no-store');
-    const [det, view] = await Promise.all([detectLivetv(ctx, MEMO_MS), updaterView(ctx)]);
+    const view = await updaterView(ctx);
+    const job = view.present && 'status' in view ? view.status.job : null;
+    const det = await detectLivetv(ctx, justFinished(job) ? 0 : MEMO_MS);
     // the media server is asked only when there is something to compare it with
     const jellyfin = det.installed ? await jellyfinHwAccel() : null;
     const status = view.present && 'status' in view ? view.status : null;
