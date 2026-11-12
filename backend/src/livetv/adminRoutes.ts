@@ -1,21 +1,49 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
+import { roleExists } from '../rolecat.js';
 import { requireAdmin } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
-import { detectLivetv, enableBenchmark, livetvSystem } from './detect.js';
+import { detectLivetv, enableBenchmark, livetvInstalled, livetvSystem } from './detect.js';
 import { gpuAdvice } from './gpu.js';
+import { isOwnFeeds } from './channels.js';
+import { refreshRunning, refreshSource } from './refresh.js';
+import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
+import { FeedError, adminChannel, createFeed, deleteFeed, feedCreate, ingestView, reassignPort, regenerateCredentials, syncIngest } from './ownfeeds.js';
+import { SourceRefusal, SourceTestError, createSource, deleteSource, listSources, sourceCreate, sourcePatch, sourceTestBody, testSource, updateSource } from './sources.js';
 
 /** the line for an install without the updater (spec §4.3); the page shows it with the compose commands */
 const ENV_LINE = 'COMPOSE_PROFILES=livetv';
 const JF_TIMEOUT_MS = 3_000;
 /** spec §4.1: the state is cached 10 s */
 const MEMO_MS = 10_000;
+/** the source test's single flight per admin; longer than its slowest call (the EPG count, 120 s) */
+const TEST_LOCK_TTL_S = 150;
 
 const disableBody = z.object({ removeImage: z.boolean(), removeCache: z.boolean() });
+
+// ---- channel groups (spec §9.3) ----
+const id = z.guid();
+const roleKeys = z.array(z.string().min(1).max(64)).max(50);
+const groupName = z.string().trim().min(1).max(40);
+const groupCreate = z.object({ name: groupName, kidFriendly: z.boolean().default(false), roles: roleKeys.default([]), released: z.boolean().default(true) }).strict();
+const groupPatch = z.object({ name: groupName, kidFriendly: z.boolean(), roles: roleKeys, released: z.boolean() }).partial().strict();
+const releaseBody = z.object({ ids: z.array(id).min(1).max(500), roles: roleKeys, kidFriendly: z.boolean() }).strict();
+const orderBody = z.object({ ids: z.array(id).max(5000) }).strict();
+const mergeBody = z.object({ ids: z.array(id).min(1).max(500), into: id }).strict();
+
+type Reply = { code(n: number): { send(b: unknown): unknown } };
+/** Zod safeParse with the fixed refusal `{ error: 'invalid', field }` (the input is never echoed) */
+function parse<T>(schema: z.ZodType<T>, body: unknown, reply: Reply): T | undefined {
+  const p = schema.safeParse(body ?? {});
+  if (p.success) return p.data;
+  reply.code(400).send({ error: 'invalid', field: String(p.error.issues[0]?.path[0] ?? 'body') });
+  return undefined;
+}
 
 /**
  * Admin -> Live-TV, the enable card and the off dialog (spec §4.2-§4.5): the state the page polls (detection, the updater's livetv
@@ -115,5 +143,234 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     if (removeCache && !removeImage) return reply.code(400).send({ error: 'invalid', field: 'removeCache' });
     const actor = req.user!.id;
     return run(removeImage ? { op: 'remove', data: removeCache } : { op: 'disable' }, actor, reply, req.log, 'livetv.disable', { removeImage, removeCache });
+  });
+
+  // ---- Gruppen & Rechte (spec §8, §9.3): every write drops the cached channel sets (groups.ts) and is audited livetv.group.* ----
+
+  /**
+   * the role keys, deduplicated, or a 400 when one is not a role. livetv_group_roles references the roles table, so a role known only
+   * from ROLE_TEMPLATES without a stored row cannot be granted either (the same 400, not a foreign-key 500).
+   */
+  async function knownRoles(roles: readonly string[], reply: Reply): Promise<string[] | undefined> {
+    const keys = [...new Set(roles)];
+    const stored = new Set((await ctx.db.query<{ key: string }>('select key from roles where key = any($1::text[])', [keys])).rows.map((r) => r.key));
+    for (const k of keys) {
+      if (!stored.has(k) || !(await roleExists(ctx, k))) { reply.code(400).send({ error: 'invalid', field: 'roles' }); return undefined; }
+    }
+    return keys;
+  }
+  const groupId = (req: { params: unknown }) => id.safeParse((req.params as { id?: string }).id).data;
+
+  app.get('/api/admin/livetv/groups', admin, async (_req, reply) => {
+    reply.header('cache-control', 'no-store');
+    return listGroups(ctx);
+  });
+
+  // a group the admin creates starts released unless the body says otherwise (spec §8)
+  app.post('/api/admin/livetv/groups', admin, async (req, reply) => {
+    const b = parse(groupCreate, req.body, reply);
+    if (!b) return reply;
+    const roles = await knownRoles(b.roles, reply);
+    if (!roles) return reply;
+    return reply.code(201).send(await createGroup(ctx, req.user!.id, { ...b, roles }));
+  });
+
+  // { released: true } with roles in one call: POST /groups/release; static routes win over /:id
+  app.post('/api/admin/livetv/groups/release', admin, async (req, reply) => {
+    const b = parse(releaseBody, req.body, reply);
+    if (!b) return reply;
+    const roles = await knownRoles(b.roles, reply);
+    if (!roles) return reply;
+    return { released: await releaseGroups(ctx, req.user!.id, b.ids, roles, b.kidFriendly) };
+  });
+
+  app.put('/api/admin/livetv/groups/order', admin, async (req, reply) => {
+    const b = parse(orderBody, req.body, reply);
+    if (!b) return reply;
+    await orderGroups(ctx, req.user!.id, b.ids);
+    return { ok: true };
+  });
+
+  app.post('/api/admin/livetv/groups/merge', admin, async (req, reply) => {
+    const b = parse(mergeBody, req.body, reply);
+    if (!b) return reply;
+    // `into` among `ids` is dropped; with nothing else left the merge would change nothing: refused, not audited
+    const ids = b.ids.filter((g) => g !== b.into);
+    if (!ids.length) return reply.code(400).send({ error: 'invalid', field: 'ids' });
+    if ((await unknownGroups(ctx, ids)).length) return reply.code(400).send({ error: 'invalid', field: 'ids' });
+    const g = await mergeGroups(ctx, req.user!.id, ids, b.into);
+    return g ?? reply.code(404).send({ error: 'not_found' });
+  });
+
+  // partial; { released: false } = Freigabe zurücknehmen (roles kept)
+  app.patch('/api/admin/livetv/groups/:id', admin, async (req, reply) => {
+    const gid = groupId(req);
+    if (!gid) return reply.code(404).send({ error: 'not_found' });
+    const b = parse(groupPatch, req.body, reply);
+    if (!b) return reply;
+    const roles = b.roles === undefined ? undefined : await knownRoles(b.roles, reply);
+    if (b.roles !== undefined && !roles) return reply;
+    const g = await updateGroup(ctx, req.user!.id, gid, { ...b, ...(roles ? { roles } : {}) });
+    return g ?? reply.code(404).send({ error: 'not_found' });
+  });
+
+  app.get('/api/admin/livetv/groups/:id', admin, async (req, reply) => {
+    const gid = groupId(req);
+    const g = gid ? await groupView(ctx, gid) : null;
+    return g ?? reply.code(404).send({ error: 'not_found' });
+  });
+
+  app.delete('/api/admin/livetv/groups/:id', admin, async (req, reply) => {
+    const gid = groupId(req);
+    if (!gid || !(await deleteGroup(ctx, req.user!.id, gid))) return reply.code(404).send({ error: 'not_found' });
+    return { ok: true };
+  });
+
+  // ---- Quellen (spec §9.1): provider URLs are secrets (F13). Bodies carrying them are never logged with an error (app.ts
+  // SENSITIVE_BODY), refusals are fixed codes with the field name, answers carry only the masked hints. ----
+
+  /** a refusal that is not a schema failure keeps its own code: `lan_required`, `refused` (Global Constraint *Errors*) */
+  const refused = (e: unknown, reply: Reply) => {
+    if (e instanceof SourceRefusal) return reply.code(400).send({ error: e.code, field: e.field });
+    throw e;
+  };
+
+  app.get('/api/admin/livetv/sources', admin, async (_req, reply) => {
+    reply.header('cache-control', 'no-store');
+    return listSources(ctx);
+  });
+
+  app.post('/api/admin/livetv/sources', admin, async (req, reply) => {
+    const b = parse(sourceCreate, req.body, reply);
+    if (!b) return reply;
+    try {
+      return reply.code(201).send(await createSource(ctx, req.user!.id, b));
+    } catch (e) { return refused(e, reply); }
+  });
+
+  // Prüfen: asks livetv, never the provider (spec §3.4); a static route, so it wins over /:id. One test per admin at a time (each can
+  // hold a provider download in livetv for up to two minutes): a second one while it runs answers 409 test_running.
+  app.post('/api/admin/livetv/sources/test', admin, async (req, reply) => {
+    const b = parse(sourceTestBody, req.body, reply);
+    if (!b) return reply;
+    reply.header('cache-control', 'no-store');
+    const lock = `ltv:srctest:${req.user!.id}`;
+    const token = randomUUID();
+    if (!(await ctx.kv.setnx(lock, token, TEST_LOCK_TTL_S))) return reply.code(409).send({ error: 'test_running' });
+    try {
+      return await testSource(ctx, b);
+    } catch (e) {
+      if (e instanceof SourceTestError) {
+        if (e.status === 404) return reply.code(404).send({ error: 'not_found' });
+        // livetv itself was not reached: not the provider's fault, so not the 422 of a provider failure
+        if (e.status === null) return reply.code(503).send({ error: 'livetv_unreachable' });
+        return reply.code(422).send({ error: e.code });
+      }
+      return refused(e, reply);
+    } finally {
+      await ctx.kv.delIfEquals(lock, token).catch(() => undefined); // a lost delete only blocks this admin until the ttl ends
+    }
+  });
+
+  app.patch('/api/admin/livetv/sources/:id', admin, async (req, reply) => {
+    const sid = groupId(req);
+    if (!sid) return reply.code(404).send({ error: 'not_found' });
+    const b = parse(sourcePatch, req.body, reply);
+    if (!b) return reply;
+    try {
+      const s = await updateSource(ctx, req.user!.id, sid, b);
+      // switching a source on or off adds or withdraws its push feeds in livetv (Task 20)
+      if (s && b.enabled !== undefined && (await ctx.db.query("select 1 from livetv_channels where source_id = $1 and ingest = 'push' limit 1", [sid])).rowCount) {
+        await syncIngest(ctx, req.log);
+      }
+      return s ?? reply.code(404).send({ error: 'not_found' });
+    } catch (e) { return refused(e, reply); }
+  });
+
+  /**
+   * *Aktualisieren*: starts the refresh and answers 202 `{ started: true }` at once; the page polls `GET /sources` for `state`
+   * (lastRefreshAt, lastError, counts). A refresh already running for the source is not started again (`{ started: false }`; the single
+   * flight in refresh.ts also covers the race). The own-feeds source has no list (409 `no_list`); while livetv is not installed nothing
+   * could be fetched (409 `livetv_off`, nothing recorded on the source).
+   */
+  app.post('/api/admin/livetv/sources/:id/refresh', admin, async (req, reply) => {
+    const sid = groupId(req);
+    const s = sid ? (await ctx.db.query<{ kind: string }>('select kind from livetv_sources where id = $1', [sid])).rows[0] : undefined;
+    if (!sid || !s) return reply.code(404).send({ error: 'not_found' });
+    if (isOwnFeeds(s.kind)) return reply.code(409).send({ error: 'no_list' });
+    if (!livetvInstalled(ctx)) return reply.code(409).send({ error: 'livetv_off' });
+    if (await refreshRunning(ctx, sid)) return reply.code(202).send({ started: false });
+    await audit(ctx, req.user!.id, 'livetv.source.refresh', sid, { fields: [] });
+    const log = req.log;
+    // failures are recorded on the source (fixed code, event, notice); only an unexpected error is logged, by its name only
+    void refreshSource(ctx, sid, 'admin').catch((e: unknown) => { log.warn({ sourceId: sid, error: e instanceof Error ? e.name : 'unknown' }, 'livetv source refresh failed'); });
+    return reply.code(202).send({ started: true });
+  });
+
+  app.delete('/api/admin/livetv/sources/:id', admin, async (req, reply) => {
+    const sid = groupId(req);
+    const r = sid ? await deleteSource(ctx, req.user!.id, sid) : null;
+    if (!r) return reply.code(404).send({ error: 'not_found' });
+    // push feeds went with it (counted in the delete's transaction): livetv must stop accepting their credentials (Task 20)
+    if (r.push) await syncIngest(ctx, req.log);
+    return { channels: r.channels };
+  });
+
+  // ---- Eigene Streams (spec §3.5, §9.1): pull URLs and push credentials are secrets (F13). Bodies are never logged with an error
+  // (app.ts SENSITIVE_BODY), the push credentials are answered once (no-store) and never again: later answers carry port and hint. ----
+
+  const feedRefused = (e: unknown, reply: Reply) => {
+    if (e instanceof FeedError) return reply.code(e.status).send(e.body);
+    throw e;
+  };
+
+  app.post('/api/admin/livetv/channels', admin, async (req, reply) => {
+    const b = parse(feedCreate, req.body, reply);
+    if (!b) return reply;
+    reply.header('cache-control', 'no-store');
+    try {
+      return reply.code(201).send(await createFeed(ctx, req.user!.id, b, req.log));
+    } catch (e) { return feedRefused(e, reply); }
+  });
+
+  // the Eigene Streams card: host, port range and the state of each push feed (never a credential)
+  app.get('/api/admin/livetv/ingest', admin, async (_req, reply) => {
+    reply.header('cache-control', 'no-store');
+    return ingestView(ctx);
+  });
+
+  app.get('/api/admin/livetv/channels/:id', admin, async (req, reply) => {
+    const cid = groupId(req);
+    const c = cid ? await adminChannel(ctx, cid) : null;
+    reply.header('cache-control', 'no-store');
+    return c ?? reply.code(404).send({ error: 'not_found' });
+  });
+
+  // Zugangsdaten neu erzeugen: the same one-time answer with new values
+  app.post('/api/admin/livetv/channels/:id/push-credentials', admin, async (req, reply) => {
+    const cid = groupId(req);
+    if (!cid) return reply.code(404).send({ error: 'not_found' });
+    reply.header('cache-control', 'no-store');
+    try {
+      return await regenerateCredentials(ctx, req.user!.id, cid, req.log);
+    } catch (e) { return feedRefused(e, reply); }
+  });
+
+  // Neuen Port zuweisen (spec §19): a port that left LIVETV_SRT_PORTS; the credentials stay
+  app.post('/api/admin/livetv/channels/:id/push-port', admin, async (req, reply) => {
+    const cid = groupId(req);
+    if (!cid) return reply.code(404).send({ error: 'not_found' });
+    try {
+      return await reassignPort(ctx, req.user!.id, cid, req.log);
+    } catch (e) { return feedRefused(e, reply); }
+  });
+
+  // own feeds only (a provider channel comes back with the next import; it is hidden instead)
+  app.delete('/api/admin/livetv/channels/:id', admin, async (req, reply) => {
+    const cid = groupId(req);
+    if (!cid) return reply.code(404).send({ error: 'not_found' });
+    try {
+      return { ok: true, ...(await deleteFeed(ctx, req.user!.id, cid, req.log)) };
+    } catch (e) { return feedRefused(e, reply); }
   });
 }

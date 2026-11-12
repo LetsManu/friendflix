@@ -4,8 +4,10 @@
   /**
    * Admin → Live-TV. Not installed: only the optional entry (EnableCard: what it is, the button / the .env line / the Portainer line,
    * "Nicht mehr anzeigen"). While a job runs the page shows its steps and asks GET /api/admin/livetv/state every 3 s; when the
-   * container is detected the area appears without a reload. Installed (MiniStatus until the full area of Task 26): version, GPU
-   * advice, the speed measurement's outcome, "Live-TV ausschalten …". The shell and the page's cards own the <h1> / <title>.
+   * container is detected the area appears without a reload. Installed: the area's tabs in the URL (`?tab=`, spec §9; *Quellen* is
+   * the default and has no parameter; on a phone the tabs are a scrolling chip row): *Quellen* (SourcesTab), *Kanäle*, *Gruppen &
+   * Rechte*, *Programmführer* (Tasks 23–26 fill them) and *Live-Status* (MiniStatus until Task 26: version, GPU advice, the speed
+   * measurement's outcome, "Live-TV ausschalten …"). The shell and the page's cards own the <h1> / <title>.
    */
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -18,6 +20,9 @@
   import EnableCard from '#lib/admin/livetv/EnableCard.svelte';
   import MiniStatus from '#lib/admin/livetv/MiniStatus.svelte';
   import OffDialog from '#lib/admin/livetv/OffDialog.svelte';
+  import SourcesTab from '#lib/admin/livetv/SourcesTab.svelte';
+  import { TABS, tabOf, type Tab } from '#lib/admin/livetv/sources';
+  import { pageStore } from '#lib/page';
   import { POLL_MS, SETTLE_MS, enableMode, errorKey, jobRunning, livetvJob, phase, type LivetvAdminState, type LivetvJob } from '#lib/admin/livetv/state';
   import { busyKeys, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
@@ -30,6 +35,17 @@
   let settleUntil = 0, settling = false;
   let timer: ReturnType<typeof setTimeout> | undefined, gone = false;
   let offOpen = false, offTrigger: HTMLElement | null = null;
+
+  const page$ = pageStore();
+  $: tab = tabOf($page$.url.searchParams.get('tab'));
+  const select = (to: Tab) => goto(to === 'sources' ? $page$.url.pathname : `?tab=${to}`, { replaceState: true, reset: false });
+  function tabKey(e: KeyboardEvent) {
+    const i = TABS.indexOf(tab), last = TABS.length - 1;
+    const n = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i + last) % TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? last : -1;
+    if (n < 0) return;
+    e.preventDefault(); void select(TABS[n]!);
+    queueMicrotask(() => { const el = document.getElementById(`ltv-tab-${TABS[n]!}`); el?.focus(); el?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); });
+  }
 
   $: mode = s ? enableMode(s) : 'env';
   $: ph = s ? phase(s, settling) : 'offer';
@@ -101,7 +117,17 @@
     <AdminCard><div class="sk" aria-hidden="true"><Skeleton w="14rem" h="1.6rem" /><Skeleton h="2.8rem" /></div><p class="sr-only" role="status">{$t('ui.table.loading')}</p></AdminCard>
   {/if}
 {:else if ph === 'area'}
-  <MiniStatus {s} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />
+  <div class="tabs" role="tablist" aria-label={$t('adminLive.tabs.label')}>
+    {#each TABS as k (k)}
+      <button type="button" role="tab" id="ltv-tab-{k}" class="tab" class:on={tab === k} aria-selected={tab === k} aria-controls="ltv-panel" tabindex={tab === k ? 0 : -1}
+        on:click={() => select(k)} on:keydown={tabKey}>{$t(`adminLive.tabs.${k}`)}</button>
+    {/each}
+  </div>
+  <div id="ltv-panel" role="tabpanel" aria-labelledby="ltv-tab-{tab}" tabindex="-1">
+    {#if tab === 'sources'}<SourcesTab />
+    {:else if tab === 'status'}<MiniStatus {s} on:off={(e) => { offTrigger = e.detail; offOpen = true; }} />
+    {:else}<AdminCard><p class="soon">{$t('adminLive.tabs.soon')}</p></AdminCard>{/if}
+  </div>
 {:else}
   <EnableCard {s} {mode} phase={ph} {refused} {hideError} pending={$busyKeys.has('livetv:enable')} hiding={$busyKeys.has('livetv:hide')} on:enable={enable} on:hide={hide} />
 {/if}
@@ -112,4 +138,18 @@
   .state { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; min-height: 3rem; }
   .state p { margin: 0; flex: 1 1 14rem; }
   .sk { display: grid; gap: .8rem; min-height: 6rem; }
+  .soon { margin: 0; }
+  #ltv-panel { outline: none; min-width: 0; }
+
+  /* the area's tabs: underlined labels next to the sidebar; on a phone a scrolling row of chips (spec §9) */
+  .tabs { display: flex; gap: .4rem; overflow-x: auto; scrollbar-width: none; margin-bottom: 1rem; border-bottom: 1px solid var(--line); }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: none; min-height: 44px; padding: 0 .9rem; background: transparent; color: var(--mut); border: 0; border-bottom: 2px solid transparent; border-radius: 0; font-weight: 600; white-space: nowrap; }
+  .tab:hover:not(:disabled) { color: var(--fg); background: rgba(255,255,255,.04); }
+  .tab.on { color: var(--fg); border-bottom-color: var(--accent, #fff); }
+  @media (max-width: 720px) {
+    .tabs { border-bottom: 0; gap: .5rem; padding-bottom: 2px; }
+    .tab { border: 1px solid var(--fr-line, rgba(255,255,255,.2)); border-radius: 999px; padding: 0 1rem; background: rgba(255,255,255,.06); color: rgba(255,255,255,.85); }
+    .tab.on { background: #fff; color: #101418; border-color: #fff; }
+  }
 </style>

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { z } from 'zod';
 import { MEDIA_FIELDS, MEDIA_SERVERS } from './media/index.js';
 import { isValidCidr } from './netaddr.js';
@@ -86,6 +87,24 @@ export const publicUrlSchema = z.string().transform((v, ctx) => {
     return z.NEVER;
   }
   return u.origin;
+});
+
+/** one DNS label: letters, digits and inner hyphens, at most 63 characters */
+const HOST_LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
+const HOST_NAME_RE = new RegExp(`^${HOST_LABEL}(?:\\.${HOST_LABEL})*$`);
+/**
+ * A bare host for display (the SRT push hint): a host name (one trailing dot allowed; the last label is never all digits, so `1` or
+ * `999.1.1.1` is no name) or a valid IPv4 literal, lower-cased; an IPv6 literal with or without brackets is kept bracketed, as
+ * `URL.hostname` gives it, never with a zone id (`%eth0`). No scheme, port, userinfo or path (`invalid_host`).
+ */
+const hostSchema = z.string().trim().toLowerCase().transform((v, ctx) => {
+  const bare = v.startsWith('[') && v.endsWith(']') ? v.slice(1, -1) : v;
+  if (!bare.includes('%') && isIP(bare) === 6) return `[${bare}]`;
+  if (bare === v && isIP(v) === 4) return v;
+  const name = v.endsWith('.') ? v.slice(0, -1) : v;
+  if (bare === v && name.length <= 253 && HOST_NAME_RE.test(name) && !/^[0-9]+$/.test(name.slice(name.lastIndexOf('.') + 1))) return v;
+  ctx.addIssue({ code: 'custom', message: 'expected a host name or IP address without scheme or port', params: { code: 'invalid_host' } });
+  return z.NEVER;
 });
 
 /** a RECO_W_* weight: 0 to 10, compose passes '' for an unset variable */
@@ -184,6 +203,10 @@ export const configSchema = z.object({
   LIVETV_OFFER_HIDDEN: z.preprocess(emptyAsUnset, z.enum(['true', 'false']).default('false')),
   /** the admin turned Live TV on (stored by the enable/disable routes, never shown as a setting): the first detection after it starts the benchmark */
   LIVETV_WANTED: z.preprocess(emptyAsUnset, z.enum(['true', 'false']).default('false')),
+  /** Live TV conversions (spec §5.4): auto = Jellyfin's hardware when livetv can use it, else VA-API, NVENC, software; read per stream start */
+  LIVETV_ENCODER: z.preprocess(emptyAsUnset, z.enum(['auto', 'qsv', 'vaapi', 'nvenc', 'software']).default('auto')),
+  /** the host shown in the SRT push setup hint (spec §3.5); unset = the host of PUBLIC_URL, derived when read (livetv/channels.ts srtHost) */
+  LIVETV_SRT_HOST: z.preprocess((v) => (typeof v === 'string' && !v.trim() ? undefined : v), hostSchema.optional()),
   /** automatic updates through the updater: off (default) or once a night at AUTO_UPDATE_TIME (server time zone TZ) */
   AUTO_UPDATE: z.preprocess(emptyAsUnset, z.enum(['off', 'nightly-window']).default('off')),
   AUTO_UPDATE_TIME: z.preprocess(emptyAsUnset, z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/).default('04:00')),

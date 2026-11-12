@@ -34,7 +34,7 @@ test.describe('admin: Live-TV entry (phone, 375 px)', () => {
 
   test('the off dialog fits the phone', async ({ page, api }) => {
     Object.assign(api.admin.livetv, { installed: true, wanted: true, ltState: 'enabled' });
-    await page.goto('/admin/livetv');
+    await page.goto('/admin/livetv?tab=status');
     await page.getByRole('button', { name: 'Live-TV ausschalten …' }).click();
     const dlg = page.getByRole('dialog', { name: 'Live-TV ausschalten?' });
     await expect(dlg).toBeVisible();

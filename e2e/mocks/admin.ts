@@ -143,7 +143,92 @@ export interface LivetvMock {
   /** GET state calls and the POSTed bodies, in order */
   gets: number;
   posts: Array<{ path: 'enable' | 'disable'; body: any }>;
+  /** the installed area's *Quellen* tab (Task 21, built on the contracts of Tasks 15, 16, 20) */
+  area: LivetvAreaMock;
 }
+/** a source as `GET /api/admin/livetv/sources` answers it (backend SourceView, Task 15): never a URL, only `urlHint` / `epgHint` */
+export interface LtvSourceMock {
+  id: string; kind: 'm3u' | 'feeds'; name: string; urlHint: string | null; epgHint: string | null; userAgent: string | null; allowLan: boolean;
+  refresh: '6h' | '12h' | '24h' | 'weekly' | 'manual'; skipGroups: string[]; numbering: 'chno' | 'order'; numberBase: number; logoPref: 'm3u' | 'xmltv';
+  epgShiftMin: number; maxStreams: number | null; enabled: boolean; position: number; channelCount: number; pendingGroups: number;
+  state: {
+    lastRefreshAt: string | null; lastOkAt: string | null; lastError: string | null; counts: { channels: number; added: number; removed: number } | null;
+    epg: { lastRefreshAt: string | null; lastOkAt: string | null; lastError: string | null; programmes: number | null };
+  };
+}
+/**
+ * an own feed (a channel of the `feeds` source): the AdminChannel fields the card reads (plan Task 19, backend ownfeeds.ts); `push` only
+ * on push feeds (`hint` = 'ff-' + 6, no ellipsis; `portInRange` is computed from `ports` when answered); `ingest` = what livetv's
+ * GET /v1/ingest says about a push feed (`pending` = livetv does not know it yet)
+ */
+export interface LtvFeedMock {
+  id: string; sourceId: string; name: string; number: number | null; streamKind: 'hls' | 'ts' | 'srt';
+  push?: { port: number; hint: string };
+  ingest: { state: 'receiving' | 'idle' | 'pending'; rejected1h: number } | null;
+  /** hidden channel: withdrawn from livetv (ingest state `off`, as for a disabled source) */
+  hidden?: boolean;
+}
+export interface LivetvAreaMock {
+  sources: LtvSourceMock[];
+  feeds: LtvFeedMock[];
+  /** LIVETV_SRT_PORTS as livetv's /v1/system reports it, and the host shown to encoders (LIVETV_SRT_HOST) */
+  ports: number[];
+  /** livetv reports its range (false: `GET /ingest` answers `ports: null`, every feed `error`) */
+  portsKnown: boolean;
+  host: string | null;
+  /** the answer of POST /sources/test: the result, or a 422 code */
+  test: { channels: number; groups: Array<{ name: string; channels: number }>; samples: string[]; epgChannels: number | null; epgError: string | null } | { error: string; status?: number };
+  /** the next POST /sources/test answers 409 test_running once (another check of this admin still runs) */
+  testBusy: boolean;
+  /** whether livetv takes the new ingest set on push writes (`synced` of Task 20's answers) */
+  synced: boolean;
+  /** a started refresh finishes after this many GETs of /sources, with this outcome */
+  refreshPolls: number;
+  refreshOutcome: { counts: { channels: number; added: number; removed: number } } | { error: string };
+  refreshing: Record<string, number>;
+  /** livetv's GET /v1/ingest fails: every push feed in range is `error` */
+  ingestFails: boolean;
+  /** every write, in order (method, path, body) */
+  calls: Array<{ m: string; p: string; body: any }>;
+  seq: number;
+}
+const ltvState = (o: Partial<LtvSourceMock['state']> = {}): LtvSourceMock['state'] => ({
+  lastRefreshAt: null, lastOkAt: null, lastError: null, counts: null, epg: { lastRefreshAt: null, lastOkAt: null, lastError: null, programmes: null }, ...o,
+});
+const ltvSource = (o: Partial<LtvSourceMock> & Pick<LtvSourceMock, 'id' | 'kind' | 'name'>): LtvSourceMock => ({
+  urlHint: null, epgHint: null, userAgent: null, allowLan: false, refresh: '24h', skipGroups: [], numbering: 'chno', numberBase: 1, logoPref: 'm3u', epgShiftMin: 0,
+  maxStreams: null, enabled: true, position: 0, channelCount: 0, pendingGroups: 0, state: ltvState(), ...o,
+});
+export function livetvAreaMock(): LivetvAreaMock {
+  const today = (h: number, m: number) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
+  return {
+    sources: [
+      ltvSource({
+        id: 'src-nordlicht', kind: 'm3u', name: 'Nordlicht Paket', urlHint: 'https://iptv.example.com/…', epgHint: 'https://iptv.example.com/…', channelCount: 412, pendingGroups: 2, position: 0,
+        state: ltvState({ lastRefreshAt: today(6, 12), lastOkAt: today(6, 12), counts: { channels: 412, added: 3, removed: 1 }, epg: { lastRefreshAt: today(6, 12), lastOkAt: today(6, 12), lastError: null, programmes: 6812 } }),
+      }),
+      ltvSource({ id: 'src-feeds', kind: 'feeds', name: 'Eigene Streams', refresh: 'manual', channelCount: 2, position: 1 }),
+    ],
+    feeds: [
+      { id: 'ch-hafen', sourceId: 'src-feeds', name: 'Hafenkanal', number: 801, streamKind: 'hls', ingest: null },
+      { id: 'ch-wolkenlos', sourceId: 'src-feeds', name: 'Kanal Wolkenlos', number: 802, streamKind: 'srt', push: { port: 9001, hint: 'ff-QW7RT5' }, ingest: { state: 'receiving', rejected1h: 2 } },
+    ],
+    ports: Array.from({ length: 10 }, (_, i) => 9000 + i),
+    portsKnown: true,
+    host: 'friend.example.com',
+    test: { channels: 412, groups: Array.from({ length: 18 }, (_, i) => ({ name: `Gruppe ${i + 1}`, channels: i < 16 ? 23 : 22 })), samples: ['Nordlicht TV', 'Hafenkanal', 'Bergblick Sport', 'Kinderinsel', 'Sternwarte 24'], epgChannels: 398, epgError: null },
+    refreshPolls: 1,
+    refreshOutcome: { counts: { channels: 415, added: 3, removed: 0 } },
+    refreshing: {},
+    ingestFails: false,
+    testBusy: false,
+    synced: true,
+    calls: [],
+    seq: 0,
+  };
+}
+/** the backend's maskUrl (Task 15): scheme + host + "/…", never a path, query or credentials */
+const maskUrl = (raw: string): string => { const u = new URL(raw); return `${u.protocol}//${u.host}/…`; };
 export interface MatrixMockRole {
   key: string; label: string | null; builtinLabel: boolean; base: 'family' | 'friend' | 'guest' | 'admin'; origin: 'code' | 'env' | 'admin'; invitable: boolean;
   /** false = an env-only role: not in the roles table (the order write ignores its key) */
@@ -292,7 +377,7 @@ const previewItems: PreviewRow[] = Array.from({ length: 60 }, (_, i) => ({ itemI
 export function livetvMock(): LivetvMock {
   return {
     installed: false, wanted: false, offerHidden: false, updater: true, stack: 'own', ltState: 'absent', ltError: null, job: null, tick: 0, jobPolls: 2, outcome: 'succeeded', failCode: null,
-    benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, lagLeft: 0, gets: 0, posts: [],
+    benchmark: null, advice: null, refuse: null, failedSources: 0, detectLag: 0, lagLeft: 0, gets: 0, posts: [], area: livetvAreaMock(),
   };
 }
 
@@ -588,7 +673,7 @@ function livetvState(lt: LivetvMock) {
     gpu: { jellyfin: lt.installed ? 'qsv' : null, livetv: lt.installed ? { driver: 'iHD', devices: 1 } : null, advice: lt.installed ? lt.advice : null },
   };
 }
-function livetvRoute(lt: LivetvMock, m: string, p: string, body: any, J: Reply): Promise<void> | null {
+function livetvRoute(lt: LivetvMock, m: string, p: string, sp: URLSearchParams, body: any, J: Reply): Promise<void> | null {
   if (p === '/api/admin/livetv/state' && m === 'GET') return J(livetvState(lt));
   if ((p === '/api/admin/livetv/enable' || p === '/api/admin/livetv/disable') && m === 'POST') {
     const path = p.endsWith('enable') ? 'enable' : 'disable';
@@ -604,7 +689,146 @@ function livetvRoute(lt: LivetvMock, m: string, p: string, body: any, J: Reply):
     if (path === 'enable') lt.wanted = true; else lt.wanted = false;
     return J({ job: lt.job, wanted: path === 'enable' }, 202);
   }
+  return livetvAreaRoute(lt.area, lt.installed, m, p, sp, body, J);
+}
+
+/**
+ * The *Quellen* tab's routes, as the plan's contracts declare them: sources CRUD + test (Task 15), refresh 202 with the result through
+ * GET (Task 16, spec §10), own feeds with the one-time push answer, ports and ingest state (Task 20).
+ */
+function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: string, sp: URLSearchParams, body: any, J: Reply): Promise<void> | null {
+  let mm: RegExpMatchArray | null;
+  if (m !== 'GET') a.calls.push({ m, p, body });
+  const inRange = (port: number) => !a.portsKnown || a.ports.includes(port);
+  const feedView = (f: LtvFeedMock) => ({
+    id: f.id, name: f.name, number: f.number, groupId: null, sourceId: f.sourceId, streamKind: f.streamKind, ingest: f.push ? 'push' : 'pull',
+    ...(f.push ? { push: { port: f.push.port, hint: f.push.hint, portInRange: inRange(f.push.port) } } : {}),
+  });
+  const httpUrl = (v: unknown) => { try { const u = new URL(String(v)); return u.protocol === 'http:' || u.protocol === 'https:' ? u : null; } catch { return null; } };
+  const nowIso = () => new Date().toISOString();
+  /** `checkSourceUrl` refuses single-label hosts (`http://backend/list`, `localhost`) with `refused` */
+  const singleLabel = (u: URL) => !u.hostname.includes('.') && !u.hostname.includes(':');
+
+  if (p === '/api/admin/livetv/sources' && m === 'GET') {
+    for (const [id, left] of Object.entries(a.refreshing)) {
+      if (left > 1) { a.refreshing[id] = left - 1; continue; }
+      delete a.refreshing[id];
+      const s = a.sources.find((x) => x.id === id);
+      if (!s) continue;
+      const at = nowIso(), o = a.refreshOutcome;
+      if ('error' in o) s.state = { ...s.state, lastRefreshAt: at, lastError: o.error };
+      else { s.state = { ...s.state, lastRefreshAt: at, lastOkAt: at, lastError: null, counts: o.counts }; s.channelCount = o.counts.channels; }
+    }
+    return J(a.sources); // a bare array (backend adminRoutes.ts → listSources)
+  }
+  if (p === '/api/admin/livetv/sources/test' && m === 'POST') {
+    if (a.testBusy) { a.testBusy = false; return J({ error: 'test_running' }, 409); }
+    for (const field of ['url', 'epgUrl'] as const) {
+      if (body?.[field] === undefined || (field === 'epgUrl' && (body.epgUrl === null || body.epgUrl === ''))) continue; // null / '' = no guide
+      const u = httpUrl(body[field]);
+      if (!u) return J({ error: 'invalid', field }, 400);
+      if (singleLabel(u)) return J({ error: 'refused', field }, 400);
+    }
+    if (body?.url === undefined && !body?.sourceId) return J({ error: 'invalid', field: 'url' }, 400);
+    // livetv's refusals answer 422 { error }, an unreached livetv 503 livetv_unreachable (Task 15 as built)
+    return 'error' in a.test ? J({ error: a.test.error }, a.test.status ?? 422) : J(a.test);
+  }
+  if (p === '/api/admin/livetv/sources' && m === 'POST') {
+    const u = httpUrl(body?.url);
+    if (!u) return J({ error: 'invalid', field: 'url' }, 400);
+    if (singleLabel(u)) return J({ error: 'refused', field: 'url' }, 400);
+    if (typeof body?.name !== 'string' || !body.name.trim()) return J({ error: 'invalid', field: 'name' }, 400);
+    const s = ltvSource({
+      id: `src-${++a.seq}`, kind: 'm3u', name: body.name, urlHint: maskUrl(u.href), epgHint: body.epgUrl ? maskUrl(body.epgUrl) : null, userAgent: body.userAgent ?? null,
+      allowLan: Boolean(body.allowLan), refresh: body.refresh ?? '24h', skipGroups: body.skipGroups ?? [], maxStreams: body.maxStreams ?? null, position: a.sources.length,
+    });
+    a.sources.push(s);
+    return J(s, 201);
+  }
+  if ((mm = p.match(/^\/api\/admin\/livetv\/sources\/([^/]+)(\/refresh)?$/))) {
+    const s = a.sources.find((x) => x.id === mm![1]);
+    if (!s) return J({ error: 'not_found' }, 404);
+    if (mm[2] && m === 'POST') {
+      // Task 16 (livetv16 af2c8fc4): own feeds have no list, nothing loads while livetv is not installed, a running one is not restarted
+      if (s.kind === 'feeds') return J({ error: 'no_list' }, 409);
+      if (!installed) return J({ error: 'livetv_off' }, 409);
+      if (a.refreshing[s.id]) return J({ started: false }, 202);
+      a.refreshing[s.id] = a.refreshPolls;
+      return J({ started: true }, 202);
+    }
+    if (!mm[2] && m === 'PATCH') {
+      const b = body ?? {};
+      if (b.url !== undefined) { const u = httpUrl(b.url); if (!u) return J({ error: 'invalid', field: 'url' }, 400); s.urlHint = maskUrl(u.href); }
+      if (b.epgUrl === null || b.epgUrl === '') s.epgHint = null; else if (b.epgUrl !== undefined) s.epgHint = maskUrl(b.epgUrl);
+      for (const k of ['name', 'userAgent', 'allowLan', 'refresh', 'skipGroups', 'numbering', 'numberBase', 'logoPref', 'epgShiftMin', 'maxStreams', 'enabled'] as const) {
+        if (b[k] !== undefined) (s as any)[k] = b[k];
+      }
+      return J(s);
+    }
+    if (!mm[2] && m === 'DELETE') {
+      a.sources = a.sources.filter((x) => x.id !== s.id);
+      return J({ channels: s.channelCount });
+    }
+  }
+  if (p === '/api/admin/livetv/channels' && m === 'GET') {
+    const rows = a.feeds.filter((f) => f.sourceId === sp.get('source'));
+    return J({ channels: rows.map(feedView), total: rows.length });
+  }
+  if (p === '/api/admin/livetv/ingest' && m === 'GET') {
+    // backend ownfeeds.ts ingestView: out of range first, then livetv not reached / range unknown, then livetv's own word
+    const feeds = a.feeds.filter((f) => f.push).map((f) => {
+      const active = !f.hidden && a.sources.find((x) => x.id === f.sourceId)?.enabled !== false;
+      const state = !active ? 'off' : a.portsKnown && !a.ports.includes(f.push!.port) ? 'out_of_range' : a.ingestFails || !a.portsKnown ? 'error' : f.ingest?.state ?? 'pending';
+      return { channelId: f.id, state, rejected1h: a.ingestFails ? 0 : f.ingest?.rejected1h ?? 0 };
+    });
+    const ports = a.portsKnown && a.ports.length ? { from: Math.min(...a.ports), to: Math.max(...a.ports) } : null;
+    return J({ host: a.host, ports, feeds });
+  }
+  if (p === '/api/admin/livetv/groups' && m === 'GET') return J({ groups: [{ id: 'g-regional', name: 'Regional' }, { id: 'g-sport', name: 'Sport' }] });
+  if (p === '/api/admin/livetv/channels' && m === 'POST') {
+    const b = body ?? {};
+    if (typeof b.name !== 'string' || !b.name.trim()) return J({ error: 'invalid', field: 'name' }, 400);
+    let feeds = a.sources.find((x) => x.kind === 'feeds');
+    const port = b.ingest === 'push' ? a.ports.find((pt) => !a.feeds.some((f) => f.push?.port === pt)) : undefined;
+    if (b.ingest === 'push' && port === undefined) return J({ error: 'srt_ports_full', n: a.ports.length }, 409);
+    let found: 'hls' | 'ts' | 'srt' = 'srt';
+    if (b.ingest === 'pull') {
+      let u: URL;
+      try { u = new URL(b.url); if (!['http:', 'https:', 'srt:'].includes(u.protocol)) throw new Error('scheme'); } catch { return J({ error: 'invalid', field: 'url' }, 400); }
+      if (singleLabel(u)) return J({ error: 'refused', field: 'url' }, 400);
+      found = u.protocol === 'srt:' ? 'srt' : /\.ts$/i.test(u.pathname) ? 'ts' : 'hls';
+      if (b.kind !== undefined && (b.kind === 'srt') !== (found === 'srt')) return J({ error: 'invalid', field: 'kind' }, 400);
+    }
+    if (!feeds) { feeds = ltvSource({ id: `src-${++a.seq}`, kind: 'feeds', name: 'Eigene Streams', refresh: 'manual', position: a.sources.length }); a.sources.push(feeds); }
+    const id = `ch-${++a.seq}`;
+    const f: LtvFeedMock = b.ingest === 'push'
+      ? { id, sourceId: feeds.id, name: b.name, number: b.number ?? null, streamKind: 'srt', push: { port: port!, hint: 'ff-AB12CD' }, ingest: { state: 'idle', rejected1h: 0 } }
+      : { id, sourceId: feeds.id, name: b.name, number: b.number ?? null, streamKind: b.kind ?? found, ingest: null };
+    a.feeds.push(f);
+    feeds.channelCount = a.feeds.filter((x) => x.sourceId === feeds!.id).length;
+    return J({ channel: feedView(f), ...(f.push ? { push: pushAnswer(a, f.push.port) } : {}), synced: f.push ? a.synced : true }, 201);
+  }
+  if ((mm = p.match(/^\/api\/admin\/livetv\/channels\/([^/]+)(\/push-credentials|\/push-port)?$/))) {
+    const f = a.feeds.find((x) => x.id === mm![1]);
+    if (!f) return J({ error: 'not_found' }, 404);
+    if (mm[2] === '/push-credentials' && m === 'POST') return f.push ? J({ channel: feedView(f), push: pushAnswer(a, f.push.port), synced: a.synced }) : J({ error: 'not_push' }, 409);
+    if (mm[2] === '/push-port' && m === 'POST') {
+      const port = a.ports.find((pt) => !a.feeds.some((x) => x.push?.port === pt));
+      if (!f.push) return J({ error: 'not_push' }, 409);
+      if (inRange(f.push.port)) return J({ error: 'port_in_range' }, 409); // a working encoder is never cut off
+      if (port === undefined) return J({ error: 'srt_ports_full', n: a.ports.length }, 409);
+      f.push = { ...f.push, port };
+      return J({ port, synced: a.synced });
+    }
+    if (!mm[2] && m === 'DELETE') { a.feeds = a.feeds.filter((x) => x.id !== f.id); return J({ ok: true, synced: f.push ? a.synced : true }); }
+  }
   return null;
+}
+/** the one-time push answer (Task 20): stream id "ff-" + 16 characters, a 32-character passphrase, the full SRT URL */
+function pushAnswer(a: LivetvAreaMock, port: number) {
+  const streamId = 'ff-AB12CDEFGH2345JK', passphrase = 'Zq3xV9mB2nK7pL4wR8tY6uH1jG5fD0sA';
+  // no host (neither LIVETV_SRT_HOST nor PUBLIC_URL known): no URL either
+  return { host: a.host, port, streamId, passphrase, url: a.host ? `srt://${a.host}:${port}?streamid=${streamId}&passphrase=${passphrase}&pbkeylen=32&mode=caller&latency=200000` : null };
 }
 
 export function adminSummary(st: AdminState) {
@@ -644,7 +868,7 @@ export function adminRoute(st: AdminState, m: string, p: string, sp: URLSearchPa
       v2: { impressions: 0, clicks: 0, plays: 0, dismisses: 0, ctr: null, playRate: null },
     },
   });
-  if (p.startsWith('/api/admin/livetv/')) return livetvRoute(st.livetv, m, p, body, J);
+  if (p.startsWith('/api/admin/livetv/')) return livetvRoute(st.livetv, m, p, sp, body, J);
   if (p === '/api/admin/summary') return st.summaryFails ? J({ error: 'boom' }, 500) : J(adminSummary(st));
   if (p === '/api/admin/status') {
     const s = adminSummary(st);

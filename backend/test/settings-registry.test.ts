@@ -21,12 +21,12 @@ const def = (key: string) => {
 describe('key classification', () => {
   it('every key of the config schema is in exactly one of SETTINGS, ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS', () => {
     const keys = Object.keys(configSchema.shape);
-    expect(keys).toHaveLength(106); // + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
+    expect(keys).toHaveLength(108); // + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
     const classes = [SETTINGS.map((s) => s.key), ENV_ONLY_KEYS, BOOTSTRAP_KEYS, BUILD_KEYS];
     for (const k of keys) expect(classes.filter((c) => c.includes(k)), k).toHaveLength(1);
     expect(classes.flat().sort()).toEqual([...keys].sort()); // nothing outside the schema, no duplicates
-    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 22, 4, 76]); // + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
-    expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(75);
+    expect([BOOTSTRAP_KEYS.length, ENV_ONLY_KEYS.length, BUILD_KEYS.length, SETTINGS.length]).toEqual([4, 22, 4, 78]); // + LIVETV_ENCODER, LIVETV_SRT_HOST, + LIVETV_OFFER_HIDDEN, LIVETV_WANTED, + HEVC_STREAMS, SURROUND_AUDIO, PLEX_URL, PLEX_TOKEN, CAST_RECEIVER_APP_ID, UPLOAD_MBPS, CAST_AIRPLAY_CONTINUOUS, CONVERSION_SLOTS, CONVERSION_PRIORITY
+    expect(SETTINGS.filter((s) => s.visible !== false)).toHaveLength(77);
     expect(SETTINGS.filter((s) => s.visible === false).map((s) => s.key)).toEqual(['LIVETV_WANTED']);
   });
   it('each setting parses with the config schema field of the same key', () => {
@@ -97,6 +97,24 @@ describe('key classification', () => {
     expect(def('AUTHENTIK_TOTP_SETUP_FLOW').default).toBe('default-authenticator-totp-setup');
     expect(def('TMDB_API_KEY')).toMatchObject({ group: 'sources', probe: 'tmdb' });
     expect(settingDef('MEDIA_SERVER')).toBeUndefined();
+  });
+  it('livetv group (Live TV Task 12): the encoder choice and the host shown in the push setup hint', () => {
+    expect(SETTINGS.filter((s) => s.group === 'livetv').map((s) => s.key)).toEqual(['LIVETV_ENCODER', 'LIVETV_SRT_HOST']);
+    expect(def('LIVETV_ENCODER')).toMatchObject({ kind: 'enum', apply: 'live', default: 'auto', options: ['auto', 'qsv', 'vaapi', 'nvenc', 'software'] });
+    expect(def('LIVETV_SRT_HOST')).toMatchObject({ kind: 'string', apply: 'live' });
+    expect(def('LIVETV_SRT_HOST').default).toBeUndefined(); // unset = the host of PUBLIC_URL, derived when read (srtHost)
+    expect(loadConfig(BOOT).LIVETV_ENCODER).toBe('auto');
+    expect(loadConfig({ ...BOOT, LIVETV_SRT_HOST: '' }).LIVETV_SRT_HOST).toBeUndefined();
+    expect(parseEnvValue(def('LIVETV_ENCODER'), 'nvenc')).toEqual({ ok: true, value: 'nvenc' });
+    expect(parseEnvValue(def('LIVETV_ENCODER'), 'h264_qsv')).toEqual({ ok: false, code: 'invalid_option' });
+    for (const v of ['srt.example.com', 'srt.example.com.', 'tv-1.example.com', '1tv.example.com', 'xn--bcher-kva.example', 'localhost', '192.0.2.10', '[2001:db8::1]', '[::ffff:192.0.2.10]']) expect(parseEnvValue(def('LIVETV_SRT_HOST'), v), v).toEqual({ ok: true, value: v });
+    expect(parseEnvValue(def('LIVETV_SRT_HOST'), ' SRT.Example.com ')).toEqual({ ok: true, value: 'srt.example.com' });
+    expect(parseEnvValue(def('LIVETV_SRT_HOST'), '2001:db8::1')).toEqual({ ok: true, value: '[2001:db8::1]' });
+    for (const v of ['srt://srt.example.com', 'srt.example.com:9000', 'user@srt.example.com', 'srt.example.com/live', 'a b', '-bad.example.com', 'x'.repeat(254), '[nope]',
+      'srt.example.com..', 'a..b', '999.999.999.999', '256.1.1.1', '01.2.3.4', '192.0.2', '1', 'example.123', 'fe80::1%eth0', '[fe80::1%eth0]', '[192.0.2.10]',
+      '[2001:db8::1]:9000', '192.0.2.10:9000']) {
+      expect(parseEnvValue(def('LIVETV_SRT_HOST'), v), v).toEqual({ ok: false, code: 'invalid_host' });
+    }
   });
   it('UPDATE_CHANNEL: a database setting in group updates, stable by default, stable | nightly | pinned', () => {
     expect(def('UPDATE_CHANNEL')).toMatchObject({ kind: 'enum', group: 'updates', apply: 'live', default: 'stable', options: ['stable', 'nightly', 'pinned'] });

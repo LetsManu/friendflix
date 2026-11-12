@@ -302,7 +302,7 @@ describe('POST /api/admin/users/:id/check with itemId', () => {
   it('an unknown id answers no hits (404 stays "not this account\'s profile")', async () => {
     const r = await checkItem(guest, guest, UNKNOWN_ID);
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toEqual({ hits: [] });
+    expect(r.json()).toEqual({ hits: [], livetv: null });
   });
 
   it('exactly one of itemId and query: both, neither or a malformed id are 400 with field paths only', async () => {
@@ -336,7 +336,7 @@ describe('POST /api/admin/users/:id/check with itemId', () => {
     delete (adm as { findItem?: unknown }).findItem;
     try {
       expect((await checkItem(guest, guest, DUN)).json().hits).toEqual([{ id: DUN, name: 'Dunmoor', year: 2024, type: 'Series', visible: false, why: null, rating: 'FSK-16', library: '' }]);
-      expect((await checkItem(guest, guest, UNKNOWN_ID)).json()).toEqual({ hits: [] });
+      expect((await checkItem(guest, guest, UNKNOWN_ID)).json()).toEqual({ hits: [], livetv: null });
     } finally {
       (adm as { findItem?: unknown }).findItem = find;
     }

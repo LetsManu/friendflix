@@ -16,9 +16,13 @@ let pool: pg.Pool;
 beforeAll(async () => { pool = await resetDb(); });
 afterAll(async () => { await pool.end(); });
 
-/** drops everything migration 47 creates and forgets it ran; `seed` writes old-shape rows before it runs again */
+/**
+ * drops everything migration 47 creates and forgets it ran; `seed` writes old-shape rows before it runs again. Later migrations rerun
+ * too: livetv_group_roles (48) references roles, so it goes first and 48 recreates it.
+ */
 async function rewind(seed?: () => Promise<void>) {
   await pool.query(`
+    drop table if exists livetv_group_roles;
     drop index if exists audit_log_target;
     drop index if exists audit_log_action;
     drop table if exists roles;
@@ -38,8 +42,8 @@ const addUser = async (sub: string, name: string, role: string) =>
   )).rows[0].id as string;
 
 describe('migration 47', () => {
-  it('is the 47th migration', () => {
-    expect(MIGRATIONS.length).toBe(47);
+  it('has migration 47 (later ones append)', () => {
+    expect(MIGRATIONS.length).toBeGreaterThanOrEqual(47); // later migrations append (Live TV 48 pins its own count)
   });
 
   it('seeds the four built-ins', async () => {
@@ -111,7 +115,8 @@ describe('migration 47', () => {
     await pool.query('delete from schema_migrations where version = 47');
     await migrate(pool);
     expect((await pool.query('select count(*)::int n from roles')).rows[0].n).toBe(4);
-    expect((await pool.query('select max(version) v from schema_migrations')).rows[0].v).toBe(47);
+    expect((await pool.query('select count(*)::int n from schema_migrations where version = 47')).rows[0].n).toBe(1);
+    expect((await pool.query('select max(version) v from schema_migrations')).rows[0].v).toBeGreaterThanOrEqual(47); // later migrations follow (F2)
   });
 });
 

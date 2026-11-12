@@ -8,7 +8,7 @@ const settings: Translation<typeof de> = {
   loadFailed: 'Could not load the settings.',
   groups: {
     general: 'General', signin: 'Sign-in', media: 'Media server', requests: 'Requests', notifications: 'Notifications', push: 'Push notifications',
-    sources: 'Data sources', downloads: 'Downloads', playback: 'Playback', recommendations: 'Recommendations', updates: 'Updates', health: 'System health', sessions: 'Sessions', server: 'Server',
+    sources: 'Data sources', downloads: 'Downloads', playback: 'Playback', livetv: 'Live TV', recommendations: 'Recommendations', updates: 'Updates', health: 'System health', sessions: 'Sessions', server: 'Server',
   },
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Changes apply at once, without a restart. Expert tuning (RECO_COEFFS and the item index weights RECO_W_*) is set in .env only.' },
@@ -73,6 +73,7 @@ const settings: Translation<typeof de> = {
     invalid_number: 'Please enter a number.',
     invalid_option: 'Please choose one of the offered values.',
     invalid_cidr: 'Please enter networks like 192.168.0.0/16, separated by commas.',
+    invalid_host: 'Only a host name or IP address, without scheme or port.',
     invalid_json: 'Invalid JSON.',
     too_small: 'The value is too small.',
     too_big: 'The value is too large.',
@@ -105,7 +106,7 @@ const settings: Translation<typeof de> = {
     PLEX_URL: { invalid_url: 'Please enter only the server address: starting with http:// or https://, without user name and password, and nothing after ? or #. The token goes in the Plex token field.' },
   },
   /** option labels of the enum settings (an unset LOGIN_UI is "Automatic") */
-  options: { auto: 'Automatic', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (own taste model)', shadow: 'Shadow (v2 beside v1)' }, UPDATE_CHANNEL: { stable: 'Stable', nightly: 'Nightly', pinned: 'Fixed version' }, AUTO_UPDATE: { off: 'Off', 'nightly-window': 'Nightly window' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatic', off: 'Off' } },
+  options: { auto: 'Automatic', RECO_ENGINE: { v1: 'v1 (Jellyfin)', v2: 'v2 (own taste model)', shadow: 'Shadow (v2 beside v1)' }, UPDATE_CHANNEL: { stable: 'Stable', nightly: 'Nightly', pinned: 'Fixed version' }, AUTO_UPDATE: { off: 'Off', 'nightly-window': 'Nightly window' }, LOGIN_UI: { app: 'FriendFlix', authentik: 'Authentik' }, PASSKEYS_IN_APP: { auto: 'Automatic', off: 'Off' }, LIVETV_ENCODER: { auto: 'Automatic', qsv: 'Intel Quick Sync (QSV)', vaapi: 'VA-API', nvenc: 'NVIDIA NVENC', software: 'Software (processor)' } },
   keys: {
     PUBLIC_URL: { label: 'Public address', help: 'The address everyone uses to reach FriendFlix, e.g. https://friend.example.com. Links, sign-in and streaming are built on it.' },
     WEBHOOK_SECRET: { label: 'Webhook secret', help: 'Shared secret for the webhooks of the media server and the request service.' },
@@ -162,6 +163,8 @@ const settings: Translation<typeof de> = {
     CONVERSION_SLOTS: { label: 'Conversions at once', help: 'How many videos the server may convert at the same time: films & series, Live TV and recordings together. Empty = automatic (FriendFlix measures the server and picks the value). Easier to set under Operations → Playback check.' },
     CONVERSION_PRIORITY: { label: 'Conversion priority', help: 'Who goes first when slots are scarce: films & series, Live TV or equal. With 2 or more slots one stays free for the other side; with "equal" none does.' },
     SURROUND_AUDIO: { label: 'Surround sound', help: 'Devices with 5.1 output (TV apps, Android on a sound system, browsers on a 5.1 output) get the film\'s surround track, or a 5.1 conversion of it. All other devices get stereo. Off = stereo for everyone.' },
+    LIVETV_ENCODER: { label: 'Live TV encoder', help: 'What Live TV uses to convert channels that cannot play as they are. Automatic takes the graphics unit Jellyfin uses when Live TV can reach it, else VA-API, then NVENC, else the processor. Applies from the next channel start.' },
+    LIVETV_SRT_HOST: { label: 'Address for pushed streams', help: 'The server address the setup of pushed streams (SRT) shows: a host name or IP address, without srt:// or a port. Empty = the host of the public address. If the public name runs through a CDN that does not pass UDP (e.g. Cloudflare with the proxy on), enter a DNS-only name or the public IP here.' },
     GITHUB_TOKEN: { label: 'GitHub token', help: 'Optional: higher request limit when looking for new versions.' },
     PORTAINER_WEBHOOK_URL: { label: 'Portainer stack webhook', help: 'Webhook address of the stack for one-click updates. The address itself is the key.' },
     PORTAINER_URL: { label: 'Portainer address', help: 'Instead of the webhook: Portainer address, with API key and stack ID.' },

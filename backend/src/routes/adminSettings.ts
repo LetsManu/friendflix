@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Config } from '../config.js';
 import type { Ctx } from '../ctx.js';
+import { livetvInstalled } from '../livetv/detect.js';
 import { addressOnly } from '../media/address.js';
 import { MEDIA_SERVERS, mediaSettings, mediaSetupKeys } from '../media/index.js';
 import { REAUTH_WINDOW_S, recentlyAuthenticated } from '../reauth.js';
@@ -28,7 +29,7 @@ import { SettingsError } from '../settings/store.js';
  */
 
 export const SETTING_GROUPS: readonly SettingGroup[] = ['general', 'signin', 'media', 'requests', 'notifications', 'push', 'sources',
-  'downloads', 'playback', 'recommendations', 'updates', 'health', 'sessions'];
+  'downloads', 'playback', 'livetv', 'recommendations', 'updates', 'health', 'sessions'];
 
 export interface SettingView {
   key: string;
@@ -113,7 +114,9 @@ export async function settingsView(ctx: Ctx): Promise<{ rev: number; pendingRest
     return view;
   };
   const visible = SETTINGS.filter((d) => d.visible !== false && !otherMediaKind(ctx.cfg, d.key)); // otherMediaKind
+  // the livetv group only while the livetv container is there (ruling 25); its keys still save and import like any other
   const groups: Array<{ id: SettingGroup | 'server'; items: SettingView[] }> = SETTING_GROUPS
+    .filter((id) => id !== 'livetv' || livetvInstalled(ctx))
     .map((id) => ({ id, items: visible.filter((d) => d.group === id).map(item) }))
     .filter((g) => g.items.length);
 
