@@ -30,7 +30,7 @@ docker compose -f compose.prod.yaml -f compose.livetv-gpu.yaml --profile livetv 
 # or: COMPOSE_FILE=compose.prod.yaml:compose.livetv-gpu.yaml in .env
 ```
 
-Without `RENDER_GID` compose stops with *set RENDER_GID*. **NVIDIA (NVENC):** install the NVIDIA Container Toolkit on the host,
+With the GPU overlay in `COMPOSE_FILE`, every compose command needs `RENDER_GID` set, even while the profile is off. Without it compose stops with *set RENDER_GID*. **NVIDIA (NVENC):** install the NVIDIA Container Toolkit on the host,
 then add `-f compose.livetv-nvidia.yaml` (it reserves one GPU with the `gpu` and `video` capabilities).
 
 ## Ports
@@ -40,7 +40,7 @@ on the host address `LIVETV_SRT_BIND` (default `0.0.0.0`; `127.0.0.1` switches p
 service). Open the range on the firewall **only if you push feeds**; pulling lists and streams needs no inbound port. Its API
 (port 8090) is never published. A different range: `LIVETV_SRT_PORTS=9100-9104` in `.env`.
 
-Other settings: `LIVETV_CACHE_MAX_GB` (default 6, the disposable segment cache), `LIVETV_URL` (only if you move the service).
+Other settings: `LIVETV_CACHE_MAX_GB` (default 6, the disposable segment cache), `LIVETV_URL` (only if you move the service), `RECORDINGS_PATH` (host folder for recordings, Phase 3; default the named volume `recordings`; absolute path, writable by uid 10001).
 
 ## Image and reproducible builds (exemption)
 
@@ -50,3 +50,4 @@ The `livetv` image is built, scanned, SBOM'd and cosign-signed like the others, 
 so no pin that stays buildable) and apt/dpkg state is not shown here to be byte-stable, so a rebuild is not promised to give the same
 digest. `scripts/reproduce-image.sh livetv` therefore refuses with a note, and the CI matrix of that job omits it. The signature
 and SBOM of the published image still prove where it came from; its package versions are in the SBOM.
+To lift the exemption: pin or vendor the Jellyfin `.deb` in the build, then show two identical builds with `scripts/reproduce-image.sh livetv`.

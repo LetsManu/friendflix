@@ -264,6 +264,7 @@ A new install needs none of this: the setup wizard and *Admin → Settings* stor
 | `POSTPLAY_ENABLED` | `true` | The post-play screen after a film or the last episode ("You're caught up", suggestions); `false` turns it off for everyone. See [docs/discovery.md](docs/discovery.md). Also editable in *Admin → Settings → Recommendations* (applies at once, no restart); a value set in `.env` wins and locks the field there |
 | `DOWNLOADS_ENABLED` | `true` | Offline downloads; `false` with Plan B |
 | `DOWNLOADS_PATH`, `PREVIEWS_PATH` | named volumes `downloads`, `previews` | Host folder (absolute path, writable by uid 1000) for prepared downloads and preview clips |
+| `RECORDINGS_PATH` | named volume `recordings` | Host folder (absolute path, writable by uid 10001) for Live-TV recordings (Phase 3); only used by the optional `livetv` service ([docs/livetv.md](docs/livetv.md)) |
 | `DOWNLOAD_CACHE_MAX_GB`, `DOWNLOAD_MIN_FREE_GB` | `50`, `2` | Size cap for prepared downloads; minimum free space to keep |
 | `DOWNLOAD_PREP_CONCURRENCY`, `DOWNLOAD_PAUSE_STREAMS` | `1`, `2` | Parallel preparations; pause preparation while this many streams run (`0` = never) |
 | `DOWNLOAD_FILE_TTL_HOURS`, `DOWNLOAD_OFFLINE_GRACE_DAYS`, `DOWNLOAD_CREATE_PER_HOUR` | `48`, `7`, `20` | Cleanup of unused files, offline grace period, licence rate limit |

@@ -30,7 +30,7 @@ docker compose -f compose.prod.yaml -f compose.livetv-gpu.yaml --profile livetv 
 # oder: COMPOSE_FILE=compose.prod.yaml:compose.livetv-gpu.yaml in der .env
 ```
 
-Ohne `RENDER_GID` bricht Compose mit *set RENDER_GID* ab. **NVIDIA (NVENC):** NVIDIA Container Toolkit auf dem Host
+Mit dem GPU-Overlay in `COMPOSE_FILE` braucht jeder Compose-Befehl ein gesetztes `RENDER_GID`, auch bei ausgeschaltetem Profil. Ohne bricht Compose mit *set RENDER_GID* ab. **NVIDIA (NVENC):** NVIDIA Container Toolkit auf dem Host
 installieren, dann `-f compose.livetv-nvidia.yaml` hinzufügen (reserviert eine GPU mit den Fähigkeiten `gpu` und `video`).
 
 ## Ports
@@ -40,7 +40,7 @@ hineinschickst, auf der Host-Adresse `LIVETV_SRT_BIND` (Standard `0.0.0.0`; `127
 zu entfernen). Den Bereich nur in der Firewall öffnen, **wenn du Feeds hineinschickst**; Listen und Streams abzurufen braucht keinen
 eingehenden Port. Die API (Port 8090) wird nie veröffentlicht. Anderer Bereich: `LIVETV_SRT_PORTS=9100-9104` in der `.env`.
 
-Weitere Einstellungen: `LIVETV_CACHE_MAX_GB` (Standard 6, der wegwerfbare Segment-Cache), `LIVETV_URL` (nur wenn du den Dienst verlegst).
+Weitere Einstellungen: `LIVETV_CACHE_MAX_GB` (Standard 6, der wegwerfbare Segment-Cache), `LIVETV_URL` (nur wenn du den Dienst verlegst), `RECORDINGS_PATH` (Host-Ordner für Aufnahmen, Phase 3; Standard das benannte Volume `recordings`; absoluter Pfad, beschreibbar für uid 10001).
 
 ## Image und reproduzierbare Builds (Ausnahme)
 
@@ -50,3 +50,4 @@ ist aber **von der Prüfung `reproducible` ausgenommen** ([reproducible-builds.m
 Pin-Version, die baubar bleibt), und der apt/dpkg-Zustand ist nicht als bytegleich belegt, ein Neubau ergibt also nicht
 zugesichert denselben Digest. `scripts/reproduce-image.sh livetv` lehnt deshalb mit einem Hinweis ab, und die Matrix des CI-Jobs
 enthält es nicht. Signatur und SBOM des veröffentlichten Images belegen weiterhin die Herkunft; die Paketversionen stehen im SBOM.
+Um die Ausnahme aufzuheben: das Jellyfin-`.deb` im Build festschreiben oder mitliefern und dann mit `scripts/reproduce-image.sh livetv` zwei identische Builds zeigen.
