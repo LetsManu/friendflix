@@ -67,9 +67,9 @@ beforeAll(async () => {
   provider = http.createServer((req, res) => {
     const path = (req.url ?? '').split('?')[0]!;
     seen.push({ path, ua: req.headers['user-agent'] });
-    // own, function-valued routes only (the path comes from the request)
-    const h = Object.prototype.hasOwnProperty.call(providerRoutes, path) ? providerRoutes[path] : undefined;
-    if (typeof h === 'function') h(res);
+    // match the request path against the declared routes (no property lookup by a request-controlled name)
+    const h = Object.entries(providerRoutes).find(([p]) => p === path)?.[1];
+    if (h) h(res);
     else { res.statusCode = 404; res.end(); }
   });
   await new Promise<void>((r) => provider.listen(0, '127.0.0.1', r));
