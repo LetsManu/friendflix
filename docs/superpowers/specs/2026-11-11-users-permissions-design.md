@@ -350,6 +350,10 @@ Rollback to 3.3 after Phase 0: works (old columns are current; `roles`, new `use
 3.3). The one caveat: 3.3 does not know admin-created roles (`effectiveRole` answers `undefined`, playback fails for those
 accounts). The release notes say: before rolling back, move accounts of admin-created roles to a built-in role (bulk *Rolle
 ändern*). Built-in and env roles are unaffected.
+Second caveat: values only the new model can hold are ignored by 3.3 (per role: streams, bitrate, age cap, libraries, switches;
+per person: age cap, libraries, transcoding, maxHeight, download, maxBitrate, downloadDays, switches). FriendFlix limits revert
+at once; media-server policies revert at the next 3.3 re-apply, so a tightened age cap or library list loosens without notice.
+The release notes say so.
 
 ## 6. Admin UI
 

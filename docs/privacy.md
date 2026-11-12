@@ -43,7 +43,7 @@ None of this is included in Android cloud backups or device-to-device transfers.
 
 ## Children
 
-The app has no account of its own and collects nothing for its publisher. Kids profiles are set up by the server's operator, who can also check which titles and libraries a profile can see (*Sicht prüfen*); only counts of that check are logged, never titles or search terms, and it may update the profile's last-login time on the media server.
+The app has no account of its own and collects nothing for its publisher. Kids profiles are set up by the server's operator.
 
 ## Changes and contact
 
