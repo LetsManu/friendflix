@@ -22,6 +22,7 @@ Die Oberflächen des Fernsehers und von Tizen Studio stehen hier mit ihren übli
 - [Auf dem Fernseher installieren](#auf-dem-fernseher-installieren)
 - [Erster Start: die Serveradresse](#erster-start-die-serveradresse)
 - [Die Probe und wie du ihre Zeile liest](#die-probe-und-wie-du-ihre-zeile-liest)
+- [Live-TV-Tasten](#live-tv-tasten)
 - [Updates](#updates)
 - [Fehlersuche](#fehlersuche)
 
@@ -209,6 +210,23 @@ Die Probe bleibt als Diagnose-Werkzeug im Repository und an jedem Release.
 ## HEVC-Streams und Raumklang
 
 Die Samsung-App nutzt dieselben Prüfungen wie ein Browser: Umgewandelte Streams enthalten HEVC oder Dolby-Raumklang (E-AC-3 / AC-3) nur, wenn die Streaming-Engine des Fernsehers und ihre Dekodierprüfung sie bestätigen. Vorher wird nichts behauptet. Startet ein Stream mit HEVC oder Raumklang nicht, wechselt der Player einmal zu einem Stream, den der Fernseher abspielt, und merkt sich das 30 Tage. Bleibt die Soundbar stumm, schalte im Bereich **Klang** des Players den Schalter **Raumklang** aus. (Die Probe-Zeile oben betrifft nur AVPlay und bleibt unverändert.)
+
+## Live-TV-Tasten
+
+Sobald der Live-Bereich öffnet (die Live-Liste oder ein Sender), meldet die App die Tasten, die die Samsung-Fernbedienung braucht, mit `tizen.tvinputdevice.registerKey` an, jede für sich, damit eine abgelehnte Taste die anderen nicht blockiert: `ChannelUp`, `ChannelDown`, `PreviousChannel` (letzter Sender), `Info`, die Ziffern `0`-`9` sowie die rote und die blaue Taste. **`ChannelList` und `Guide`** werden nur angemeldet, wenn der Fernseher sie in `tizen.tvinputdevice.getSupportedKeys()` aufführt. Die Tastencodes liest die App vom Fernseher (`getKey(name).code`); die dokumentierten Werte (427, 428, 10190, 457, 403, 406, 10073, 458) sind nur der Ersatz. Samsung sendet diese Tasten oft ohne brauchbaren Tastennamen (`Unidentified`), deshalb ordnet die App sie über den Code zu.
+
+Nichts hängt von diesen Tasten ab: **▲/▼ schaltet um, OK zeigt die Steuerung und ein langes OK öffnet die Senderliste** an jeder Fernbedienung. Die angemeldeten Tasten sind Abkürzungen:
+
+| Taste | Im Player | In der Live-Liste |
+|---|---|---|
+| CH ▲ / ▼ | nächster / vorheriger Sender | springt 8 Zeilen |
+| Ziffern, dann OK | wechselt zu dieser Sendernummer | fokussiert die Zeile dieses Senders |
+| Eine einzelne 0 | letzter Sender | fokussiert den zuletzt gesehenen Sender |
+| Vorheriger Sender | letzter Sender | fokussiert den zuletzt gesehenen Sender |
+| Info | Programm-Info | Programm-Info der fokussierten Zeile |
+| Senderliste, Guide | öffnet die *Senderliste* (das Raster löst sie später ab) | nichts |
+
+Die Hinweiszeile der Liste nennt eine Abkürzung erst, nachdem der Fernseher sie gesendet hat. Auf einem echten Fernseher prüfen: Ob `ChannelList` / `Guide` in `getSupportedKeys()` stehen, hängt vom Modelljahr ab.
 
 ## Updates
 

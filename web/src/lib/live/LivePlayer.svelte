@@ -29,6 +29,7 @@
   import InfoPanel from './InfoPanel.svelte';
   import { hintKeys, noteKey, seenKeys, type SeenKey } from './keyhints';
   import { resolveLiveKey, type LiveKeyAction } from './livekeys';
+  import { liveRemote, type LiveRemote } from './remotekeys';
   import { createLongOk } from './longok';
   import { fromWatchError, lostDelay, nextLost, STALL_LOST_MS, type LiveUi, type LostUi } from './liveState';
   import NumberCard from './NumberCard.svelte';
@@ -667,12 +668,12 @@
   }
   const PANEL_KEYS: Record<string, PanelKey> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'ok' };
   /** the keys while the panel is open (Back has gone to goBack before); Tab and the rest stay with the dialog */
-  function listKey(e: KeyboardEvent): void {
+  function listKey(e: KeyboardEvent, key: string): void {
     const s = pstate, l = list;
     if (!s || !l || e.ctrlKey || e.metaKey || e.altKey) return;
     const stop = () => { e.preventDefault(); e.stopImmediatePropagation(); };
-    if (e.key === 'ChannelList' || e.key === 'Guide') { stop(); closeList(); return; }
-    const k = PANEL_KEYS[e.key];
+    if (key === 'ChannelList' || key === 'Guide') { stop(); closeList(); return; }
+    const k = PANEL_KEYS[key];
     if (!k) return;
     if (k === 'ok') {
       if (e.repeat || okHeld) { stop(); return; } // the OK that opened the panel is still held
@@ -726,13 +727,16 @@
     if (step === 'hideControls') { controls = false; clearTimeout(hideT); root?.focus({ preventScroll: true }); return; }
     leave();
   }
+  let remote: LiveRemote | null = null;
   function onKey(e: KeyboardEvent): void {
     if (destroyed) return;
-    const s = noteKey(e.key);
+    // a TV remote sends many keys as 'Unidentified' + keyCode: the Samsung / LG maps give them their standard names first
+    const key = remote ? remote.keyName(e) : e.key;
+    const s = noteKey(key);
     if (s.size !== seen.size) seen = s;
     const back = e.key === 'Escape' || (tv && isBackKey(e));
     if (back) { e.preventDefault(); e.stopImmediatePropagation(); goBack(); return; }
-    if (listOpen) { listKey(e); return; }
+    if (listOpen) { listKey(e, key); return; }
     if (refusal) return; // the sheet's buttons own the keys
     if (!tv) wake(); else if (controls) wake();
     if (tv && e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && !panelOpen && num === null) {
@@ -745,7 +749,7 @@
       longOk.down(e);
       return;
     }
-    const a = resolveLiveKey(e, { tv, lg: false, controlsVisible: controls, onBody: onBody(), overlayOpen: panelOpen, numberOpen: num !== null });
+    const a = resolveLiveKey(remote ? remote.input(e) : e, { tv, lg: remote?.lg ?? false, controlsVisible: controls, onBody: onBody(), overlayOpen: panelOpen, numberOpen: num !== null });
     if (!a) return;
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -877,6 +881,7 @@
     motion = motionAllowed();
     try { const v = parseVolume(localStorage.getItem('ff_vol')); if (v !== null && video) { volume = v; video.volume = v; } } catch { /* storage blocked */ }
     seen = seenKeys();
+    remote = liveRemote(); // Samsung: registers the live keys now that the player is open
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('blur', onBlur);

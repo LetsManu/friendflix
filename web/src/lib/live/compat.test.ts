@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SELF = 'lib/live/compat.test.ts';
 const DIRS = ['lib/live', 'routes/live'];
-const NAMED = ['lib/player/hls.ts', 'lib/ui/dragOrder.ts', 'lib/webos/keys.ts', 'routes/tv/+page.svelte'];
+const NAMED = ['lib/player/hls.ts', 'lib/tizen/livekeys.ts', 'lib/ui/dragOrder.ts', 'lib/webos/keys.ts', 'routes/tv/+page.svelte'];
 const FORBIDDEN = ['structuredClone(', '.at(', 'Object.hasOwn(', '.findLast(', 'aspect-ratio', 'inset:', ':has(', '@container'];
 
 const rel = (abs: string) => relative(SRC, abs).split(sep).join('/');
