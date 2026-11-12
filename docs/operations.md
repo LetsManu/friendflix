@@ -19,7 +19,7 @@ docker compose logs -f backup                 # eine Zeile pro Lauf: "backup: OK
 ```bash
 ./scripts/backup-bootstrap.sh     # -> backups/friendflix-bootstrap-<UTC-Zeit>.tgz (Modus 0600, gehört dem Aufrufer)
 ```
-Die Datei getrennt von den Dumps aufbewahren (Passwort-Manager als Anhang, anderes Gerät). Andere Projektnamen: `COMPOSE_PROJECT_NAME=<name> ./scripts/backup-bootstrap.sh`; Zielordner `BACKUP_DIR`. Mit `compose.secrets.yaml` kommen `APP_ENC_KEY` und `INTERNAL_SECRET` aus `secrets/`; dann zusätzlich diesen Ordner sichern. Das Volume `bootstrap-gateway` braucht kein Backup (der Dienst `bootstrap` füllt es bei jedem Start neu).
+Die Datei getrennt von den Dumps aufbewahren (Passwort-Manager als Anhang, anderes Gerät). Andere Projektnamen: `COMPOSE_PROJECT_NAME=<name> ./scripts/backup-bootstrap.sh`; Zielordner `BACKUP_DIR`. Mit `compose.secrets.yaml` kommen `APP_ENC_KEY` und `INTERNAL_SECRET` aus `secrets/`; dann zusätzlich diesen Ordner sichern. Die Volumes `bootstrap-gateway` und `bootstrap-livetv` brauchen kein Backup (der Dienst `bootstrap` füllt sie bei jedem Start neu).
 
 **Wiederherstellung** (App gestoppt, damit keine Verbindungen offen sind):
 ```bash
@@ -314,8 +314,32 @@ Optional (Admin → Einstellungen → Wiedergabe, „Upload des Servers (Mbit/s)
 
 Beispiel: 30 Mbit/s Upload → 25,5 Mbit/s Budget. Laufen 8 + 8 + 4 Mbit/s, bleiben 5,5: der nächste Stream startet mit 4 Mbit/s (720p).
 
+## Live-TV (Dienst `livetv`)
+Optional, nur mit dem Compose-Profil `livetv` ([Einrichtung](de/livetv.md), [English](livetv.md)); ohne Profil gibt es den Dienst nicht, und der Name `livetv` löst im internen Netz nicht auf. Bedrohungsmodell: [security.md, The `livetv` container](security.md#the-livetv-container).
+
+- **Ein- und Ausschalten:** *Admin → Live-TV* (über den Updater: ziehen, starten, stoppen, entfernen, auf Wunsch mit dem Cache) oder `COMPOSE_PROFILES=livetv` in der `.env`. Das Backend prüft den Dienst jede Minute (`GET /healthz`); Live-TV gilt als installiert, solange er antwortet. Direkt nach dem Einschalten misst es einmal den Kodierer (Benchmark, siehe *Umwandlungen* unten).
+- **Dienst:** Image `friendflix-livetv` (signiert wie die anderen, aber [von der Prüfung `reproducible` ausgenommen](de/livetv.md#image-und-reproduzierbare-builds-ausnahme)), Healthcheck `GET /healthz` alle 15 s, `restart: unless-stopped`, schreibgeschütztes Root-Dateisystem. Netze `livetv` (intern, mit Backend und Gateway) und `livetv-egress` (nur `livetv`, für die Anbieter). Logs: `docker compose -f compose.prod.yaml logs livetv`; sie nennen Sender nur per ID und enthalten keine Adressen, Stream-Schlüssel, Token oder ffmpeg-Argumente.
+- **Ports:** nur UDP `LIVETV_SRT_PORTS` (Standard 9000–9009, höchstens 100) auf `LIVETV_SRT_BIND` (Standard `127.0.0.1`, also von außen nicht erreichbar), für gesendete SRT-Feeds. Kein TCP, nicht über den Reverse Proxy; die API auf Port 8090 wird nie veröffentlicht. Nur wenn Feeds von außen gesendet werden: `LIVETV_SRT_BIND=0.0.0.0` (oder die LAN-Adresse) setzen und den Bereich im Router weiterleiten; Docker veröffentlicht Ports an ufw und firewalld vorbei, eine Host-Firewall-Regel allein genügt nicht.
+- **Speicher:** das Volume `livetv-cache` (Rückspul-Puffer, Vorschaubilder) ist wegwerfbar und gehört nicht zur Datenbank-Sicherung; sein Limit ist `LIVETV_CACHE_MAX_GB` (Standard 6). Der Puffer eines Senders ist `LIVETV_DVR_MINUTES` (Standard 30, höchstens 120; 120 Minuten bei 6 Mbit/s ≈ 5,4 GB). Ist der Cache voll, verkürzt `livetv` zuerst den längsten Puffer, nie die Live-Kante. Senderlisten, Gruppen, Rechte und Feeds samt verschlüsselten Zugangsdaten liegen in der Datenbank; ohne den `APP_ENC_KEY` aus der Sicherung sind gespeicherte Adressen und Passphrasen nicht lesbar.
+- **Zeitgeber im Backend:** alle 15 s der Stream-Takt (genau ein Läufer, KV-Sperre `ltv:tick`): Sender ohne Zuschauer nach 60 s stoppen, die Feed-Liste neu übertragen, wenn `livetv` neu gestartet ist (andere `bootId`), Ereignisse eintragen; jede Minute die Erkennung und der Wiederholversuch für nicht übertragene Feeds. Nach einem Neustart des Backends laufen Streams in `livetv` weiter; der Takt gleicht sie mit seinen Zuschauern ab und stoppt Verwaiste nach 60 s. Startet `livetv` neu, sind die Streams weg, und die Player holen einmal von selbst ein neues Token. Ein Stream ohne Abruf stoppt in `livetv` zusätzlich nach 180 s von selbst.
+- **Ereignisse** (*Admin → Live-TV → Live-Status → Ereignisse*, die letzten 200, 7 Tage, nur feste Codes und IDs, keine Adressen):
+
+| Code | Text in Live-Status | Bedeutung und Maßnahme |
+|---|---|---|
+| `source_refresh_failed` | Quelle {Name}: Aktualisierung fehlgeschlagen ({Grund}) | Liste oder Programm nicht geladen; Gründe wie Zeitüberschreitung oder Zugang abgelehnt: [Fehlersuche](de/livetv.md#fehlersuche). Nach 3 Fehlern in Folge werden Admins benachrichtigt. |
+| `ingest_sync_pending` | Gesendete Streams werden noch an Live-TV übertragen | Das Backend konnte die Feed-Liste noch nicht an `livetv` senden und wiederholt es jede Minute. Bleibt es: läuft `livetv`? |
+| `stopped_by_admin` | Von einem Admin gestoppt | *Stoppen* in der Tabelle der laufenden Sender; auch *Neu starten* schreibt es, weil es zuerst stoppt. |
+| `start_refused_full` | Start abgelehnt: alle Plätze belegt | Das Umwandlungs-Budget (siehe unten) war voll. Das Limit *Max. gleichzeitige Sender* der Quelle schreibt kein Ereignis; der Zuschauer sieht nur die Meldung „Dein Anbieter erlaubt nur n Sender gleichzeitig“. |
+| `start_failed` | Sender ließ sich nicht starten | `livetv` hat den Start abgelehnt oder es kam binnen 15 s kein Segment: den Sender testen (*Kanäle → Testen*). |
+| `input_lost` / `input_back` | Eingang verloren · {n} s bis zur Wiederverbindung / Eingang wieder da · nach {n} s | Anbieter oder Encoder hingen; `livetv` verbindet mit wachsenden Pausen neu (2, 4, 8, 15, dann alle 30 s). Bei Häufung Anbieter oder Leitung prüfen. |
+| `push_rejected` | Verbindung abgelehnt: falsche Kennung oder Passphrase | Ein Encoder hat falsche Zugangsdaten, oder ein zweiter sendet in einen belegten Feed (höchstens ein Ereignis pro Feed und 10 min). *Zugangsdaten neu erzeugen* und im Encoder eintragen. |
+| `released_on_switch` | Beim Umschalten sofort beendet (Platz oder Verbindung gebraucht) | Informativ: ein Sender wurde beim Umschalten sofort beendet, damit der neue starten konnte. |
+
+- **Gesendete Feeds:** die Tabelle *Gesendete Streams* in *Live-Status* (Zustand *Sendet* oder *Keine Übertragung*, Bitrate, Ablehnungen der letzten Stunde); Zugangsdaten und Adressen erscheinen dort nie.
+- **Kodierer:** Einstellung `LIVETV_ENCODER` (`auto`, `qsv`, `vaapi`, `nvenc`, `software`; wird bei jedem Streamstart gelesen) und GPU-Overlays: [livetv.md, GPU](de/livetv.md#gpu). Nur Streams mit HEVC- oder MPEG-2-Video werden umgewandelt und belegen einen Platz im gemeinsamen Budget; Durchreichen und Umverpacken kosten keinen.
+
 ## Umwandlungen: ein gemeinsames Limit
-Jede laufende Umwandlung des **Videos** belegt einen Platz in einem gemeinsamen Budget, damit der Server bei mehreren Zuschauern nicht in die Knie geht. Es gilt für Filme und Serien im Portal, beim Streamen auf einen Fernseher (Chromecast, AirPlay) und für die Vorbereitung von Downloads; spätere Live-TV-Streams und Aufnahmen kommen in dasselbe Budget.
+Jede laufende Umwandlung des **Videos** belegt einen Platz in einem gemeinsamen Budget, damit der Server bei mehreren Zuschauern nicht in die Knie geht. Es gilt für Filme und Serien im Portal, beim Streamen auf einen Fernseher (Chromecast, AirPlay) und für die Vorbereitung von Downloads; ebenso Live-TV-Sender, die umgewandelt werden müssen (siehe [Live-TV](#live-tv-dienst-livetv)); spätere Aufnahmen kommen in dasselbe Budget.
 
 **Was zählt:** eine Sitzung des Medienservers, die das Bild neu kodiert (von FriendFlix oder einer anderen App, z. B. der Jellyfin-App), dazu Plätze, die in den letzten 30 Sekunden vergeben wurden und die der Server noch nicht listet, und eine Download-Vorbereitung, die umwandelt. **Was nicht zählt:** Direktwiedergabe, Remux (das Bild wird kopiert, nur Ton oder Container ändern sich), reine Ton-Umwandlung, Vorschau-Clips und die Messung selbst. Laufende Umwandlungen werden vom Budget **nie** beendet. Sitzungen anderer Apps zählen mit, können aber nicht abgelehnt werden; dann ist das Limit vorübergehend überschritten und nichts Neues startet, bis wieder Platz ist.
 

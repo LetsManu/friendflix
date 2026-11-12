@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { parseSrtPorts } from './system.js';
 
 export interface LivetvConfig {
   port: number;
-  secret: string;
+  /** the signing key (32 bytes): HMAC-SHA256(INTERNAL_SECRET, 'friendflix-livetv/v1'), written by the `bootstrap` service */
+  key: Buffer;
   /** DVR segments and previews (the `livetv-cache` volume) */
   cacheDir: string;
   /** LIVETV_CACHE_MAX_GB in bytes */
@@ -17,28 +17,28 @@ export interface LivetvConfig {
 }
 
 const GB = 1024 ** 3;
+export const KEY_FILE = '/run/friendflix-livetv/livetv_key';
 
 /**
- * INTERNAL_SECRET: env or INTERNAL_SECRET_FILE, else the copy the `bootstrap` init container writes into the `bootstrap-gateway`
- * volume (compose mounts it read-only at /run/friendflix-gateway; it holds nothing else). Same rule as gateway/src/env.ts,
- * including FF_GATEWAY_BOOTSTRAP_DIR, which only moves it (tests). Error texts never contain the value.
+ * The signing key, never INTERNAL_SECRET itself (spec §3.1 ruling, 1b review I1): the `bootstrap` init container derives
+ * HMAC-SHA256(INTERNAL_SECRET, 'friendflix-livetv/v1') and writes it as 64 hex into the `bootstrap-livetv` volume, which only
+ * livetv mounts (read-only at /run/friendflix-livetv). INTERNAL_SECRET is the key to the backend's /internal/* routes (the media
+ * server token among them); livetv parses provider input with ffmpeg and must not hold it. LIVETV_KEY_FILE only moves the file
+ * (tests). Without the file livetv does not start; error texts name the file, never its content.
  */
-function secret(env: NodeJS.ProcessEnv): string {
-  const f = env.INTERNAL_SECRET_FILE;
-  let v = (f ? readFileSync(f, 'utf8').trim() : env.INTERNAL_SECRET) || '';
-  if (!v) {
-    const file = join(env.FF_GATEWAY_BOOTSTRAP_DIR || '/run/friendflix-gateway', 'internal_secret');
-    try {
-      v = readFileSync(file, 'utf8').replace(/(\r?\n)+$/, ''); // the volume's contract (backend/src/volumeValue.ts): trailing newlines only
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== 'ENOENT') throw new Error(`bootstrap file ${file} is not readable (${code})`, { cause: err });
-    }
-    if (!v) throw new Error(`missing INTERNAL_SECRET (env, INTERNAL_SECRET_FILE or ${file}): start the stack with docker compose up (the bootstrap service creates it)`);
+function key(env: NodeJS.ProcessEnv): Buffer {
+  const file = env.LIVETV_KEY_FILE || KEY_FILE;
+  let raw: string;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') throw new Error(`missing key file ${file}: run docker compose up -d once (the bootstrap service writes it)`, { cause: err });
+    throw new Error(`key file ${file} is not readable (${code})`, { cause: err });
   }
-  // the backend refuses a shorter one too (backend/src/config.ts)
-  if (v.length < 16) throw new Error('INTERNAL_SECRET must be at least 16 characters');
-  return v;
+  const v = raw.replace(/(\r?\n)+$/, ''); // the bootstrap volume's contract (backend/src/volumeValue.ts): trailing newlines only
+  if (!/^[0-9a-f]{64}$/.test(v)) throw new Error(`key file ${file} does not hold a 64-hex key: run docker compose up -d once (the bootstrap service rewrites it)`);
+  return Buffer.from(v, 'hex');
 }
 
 /** Every value is checked here; a wrong one stops the start with a message naming the variable. */
@@ -50,7 +50,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): LivetvConfig {
   if (!(gb > 0 && gb <= 10_000)) throw new Error('LIVETV_CACHE_MAX_GB must be a number of GB above 0 (default 6)');
   return {
     port,
-    secret: secret(env),
+    key: key(env),
     cacheDir: '/cache',
     cacheMaxBytes: Math.floor(gb * GB),
     srtPorts: parseSrtPorts(env.LIVETV_SRT_PORTS),

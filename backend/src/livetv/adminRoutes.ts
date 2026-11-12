@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from 'node:crypto';
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import type { Ctx } from '../ctx.js';
 import { roleExists } from '../rolecat.js';
 import { requireAdmin } from '../session.js';
 import { startLivetvJob, updaterView, type LivetvOp } from '../updater.js';
+import { dropLivetvProof } from './client.js';
 import { detectLivetv, enableBenchmark, livetvInstalled, livetvSystem } from './detect.js';
 import { LivetvError } from './client.js';
 import { gpuAdvice } from './gpu.js';
@@ -16,7 +17,10 @@ import {
   orderBody as channelOrderBody, orderChannels, patchChannel, setLogo, testChannel,
 } from './adminChannels.js';
 import { liveStatus, readHwAccel, stopStream } from './status.js';
-import { isOwnFeeds } from './channels.js';
+import { CHANNEL_SELECT, isOwnFeeds, toEffective, type EffectiveRow } from './channels.js';
+import { isHomeRequest } from '../netaddr.js';
+import { clearJoinMark, startOrJoin } from './streams.js';
+import { liveSidHash, mintLiveToken } from './tokens.js';
 import { epgSummary } from './epg.js';
 import { refreshRunning, refreshSource } from './refresh.js';
 import { createGroup, deleteGroup, groupView, listGroups, mergeGroups, orderGroups, releaseGroups, unknownGroups, updateGroup } from './groups.js';
@@ -33,6 +37,15 @@ const TEST_LOCK_TTL_S = 150;
 const CHANNEL_TEST_LOCK_TTL_S = 360;
 /** a bulk body of 20 000 ids is about 780 KB (the app's default limit is 256 KB) */
 const BULK_BODY_LIMIT = 1024 * 1024;
+/** after a livetv job ended, detection is asked fresh for this long (1b review I4: the page settles on what the job did) */
+const FRESH_AFTER_JOB_MS = 30_000;
+
+/** a livetv job of the updater that finished less than FRESH_AFTER_JOB_MS ago: the cached detection may predate its stop / start */
+function justFinished(job: { action: string; state: string; finishedAt: string | null } | null | undefined, now = Date.now()): boolean {
+  if (!job || !job.action.startsWith('livetv-') || job.state === 'running' || !job.finishedAt) return false;
+  const at = Date.parse(job.finishedAt);
+  return Number.isFinite(at) && now - at < FRESH_AFTER_JOB_MS;
+}
 
 const disableBody = z.object({ removeImage: z.boolean(), removeCache: z.boolean() });
 const startLiveBody = z.object({ startLive: z.boolean() }).strict();
@@ -83,7 +96,9 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/admin/livetv/state', admin, async (_req, reply) => {
     reply.header('cache-control', 'no-store');
-    const [det, view] = await Promise.all([detectLivetv(ctx, MEMO_MS), updaterView(ctx)]);
+    const view = await updaterView(ctx);
+    const job = view.present && 'status' in view ? view.status.job : null;
+    const det = await detectLivetv(ctx, justFinished(job) ? 0 : MEMO_MS);
     // the media server is asked only when there is something to compare it with
     const jellyfin = det.installed ? await jellyfinHwAccel() : null;
     const status = view.present && 'status' in view ? view.status : null;
@@ -93,11 +108,14 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       wanted: ctx.cfg.LIVETV_WANTED === 'true', offerHidden: ctx.cfg.LIVETV_OFFER_HIDDEN === 'true',
       updater: {
         available: status !== null, stack: status?.stack ?? null, job: status?.job ?? null,
+        // an updater that answers but refuses our signature or answers garbage: the page says so instead of the .env steps
+        error: view.present && 'error' in view ? view.error : null,
         // state: absent | disabled | enabled | stop_failed; error: why an update turned it off on its own (null = none); null = an updater from before livetv
         livetv: status?.livetv ? { state: status.livetv.state, container: status.livetv.container, error: status.livetv.error } : null,
       },
       envLine: ENV_LINE,
-      // the measurement started when livetv first appeared after enabling: started, or why it was refused (the admin can press Neu messen)
+      // the measurement launched when livetv first appeared after enabling: started (= launched; its result shows on the conversions
+      // card), or why it was refused (the admin can press Neu messen)
       benchmark: enableBenchmark(ctx),
       gpu: {
         jellyfin,
@@ -116,13 +134,19 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
       await audit(ctx, actor, action, undefined, { ...meta, outcome: error });
       return reply.code(status).send({ error, ...extra, wanted: ctx.cfg.LIVETV_WANTED === 'true' });
     };
+    // one signed status read per request (1b review M14): startLivetvJob gets this view
     const view = await updaterView(ctx);
-    if (!view.present || !('status' in view)) return refuse(409, 'no_updater', { envLine: ENV_LINE });
-    const r = await startLivetvJob(ctx, op, actor);
+    if (!view.present) return refuse(409, 'no_updater', { envLine: ENV_LINE });
+    // there, but it refuses the signature (an updater with another INTERNAL_SECRET or from before a key change) or answers garbage
+    if (!('status' in view)) return refuse(502, view.error === 'unauthorized' ? 'unauthorized' : 'updater_error');
+    const r = await startLivetvJob(ctx, op, actor, view);
     if (r.ok && 'job' in r) {
+      // from now on the name `livetv` may stop resolving to livetv: no signed call on the strength of an earlier proof
+      if (op.op !== 'enable') dropLivetvProof(ctx);
       await want(op.op === 'enable', actor, log);
       await audit(ctx, actor, action, undefined, { ...meta, outcome: 'started' });
-      return reply.code(202).send({ job: r.job, wanted: op.op === 'enable' });
+      // what is stored now, read back: an env-locked or failing store keeps the old value, and the answer must not claim otherwise
+      return reply.code(202).send({ job: r.job, wanted: ctx.cfg.LIVETV_WANTED === 'true' });
     }
     if (r.ok) return refuse(409, 'foreign_stack', { envLine: ENV_LINE }); // a Portainer redeploy is not an enable
     log.warn({ op: op.op, error: r.error }, 'livetv job refused');
@@ -455,12 +479,45 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   // admin only; checks the channel and its source, never the viewing rights or the group's release (F10)
+  /**
+   * The preview of a stream test (Task 42, F10): the channel can start, so it starts (or joins) like a watch and the admin gets a test
+   * token of their own device. Only the channel and its source were checked (testChannel); the viewing rights and the group's release
+   * are not asked, and the test token lets the live authz skip them too. A refusal (budget, provider limit, unreachable, no device) is
+   * no error here: the answer then carries the facts only.
+   */
+  async function testPreview(req: FastifyRequest, id: string): Promise<{ url: string; token: string } | null> {
+    const deviceId = req.session!.deviceId;
+    if (!deviceId || !req.profile) return null;
+    try {
+      const row = (await ctx.db.query<EffectiveRow>(`${CHANNEL_SELECT} where c.id = $1`, [id])).rows[0];
+      if (!row) return null;
+      const ch = toEffective(row); // after the test: it carries the fresh probe, so the expected mode is the tested one
+      const who = { userId: req.user!.id, deviceId, role: req.user!.role };
+      const r = await startOrJoin(ctx, who, ch, { id: req.profile.id, kids: Boolean(req.profile.kids) });
+      if ('status' in r) return null;
+      const minted = await mintLiveToken(ctx, {
+        userId: who.userId, profileId: req.profile.id, deviceId, sidHash: liveSidHash(req.sid!), channelId: ch.id, channelName: ch.name,
+        kind: 'live', via: 'local', remote: !isHomeRequest(req, ctx.cfg.HOME_NETWORKS), test: true,
+      });
+      await clearJoinMark(ctx, ch.id, { userId: who.userId, deviceId });
+      return { url: `/media/l/${minted.token}/index.m3u8`, token: minted.token };
+    } catch (e) {
+      req.log.warn({ err: e instanceof Error ? e.name : 'error' }, 'livetv test preview not started'); // never the token, never a URL
+      return null;
+    }
+  }
+
   app.post('/api/admin/livetv/channels/:id/test', admin, async (req, reply) => {
     const cid = paramId(req);
     if (!cid) return reply.code(404).send({ error: 'not_found' });
     reply.header('cache-control', 'no-store');
     try {
-      return await testLocked(req.user!.id, reply, (signal) => testChannel(ctx, req.user!.id, cid, signal));
+      return await testLocked(req.user!.id, reply, async (signal) => {
+        const facts = await testChannel(ctx, req.user!.id, cid, signal);
+        if (!facts.ok || signal.aborted) return facts;
+        const preview = await testPreview(req, cid);
+        return preview ? { ...facts, preview } : facts;
+      });
     } catch (e) { return channelRefused(e, reply); }
   });
 

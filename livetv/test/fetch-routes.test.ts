@@ -1,17 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { readFileSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import http from 'node:http';
 import { createServer as netServer, type AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { GuardDeps } from '../src/fetch.js';
-import { ReplayCache, deriveKey, sign } from '../src/protocol.js';
+import { ReplayCache, sign } from '../src/protocol.js';
 import { fetchRoutes } from '../src/routes/fetch.js';
 import type { Run } from '../src/run.js';
 import { createApp, start } from '../src/server.js';
 import type { SystemView } from '../src/system.js';
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
+/** what the bootstrap service writes into livetv's key file; livetv itself derives nothing */
+const deriveKey = (secret: string) => createHmac('sha256', secret).update('friendflix-livetv/v1').digest();
 const key = deriveKey('fetch-routes-test-secret-0123');
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
 
@@ -62,7 +67,7 @@ beforeAll(async () => {
   provider = http.createServer((req, res) => {
     const path = (req.url ?? '').split('?')[0]!;
     seen.push({ path, ua: req.headers['user-agent'] });
-    const h = providerRoutes[path];
+    const h = new Map(Object.entries(providerRoutes)).get(path);
     if (h) h(res);
     else { res.statusCode = 404; res.end(); }
   });
@@ -99,6 +104,17 @@ describe('POST /v1/fetch/m3u', () => {
     expect(b.listed).toBe(6);
     expect(b.skipped).toEqual({ vod: 2, invalid: 0, overLimit: 0, groups: 2 });
     expect(seen).toEqual([{ path: '/get.php', ua: 'Nordlicht-Box/2.0' }]);
+  });
+
+  it('a near-max skip list (2 000 names of 200 characters, over 64 KB) is accepted; other routes keep the 64 KB cap', async () => {
+    const skipGroups = Array.from({ length: 2000 }, (_, i) => `${String(i).padStart(4, '0')}${'g'.repeat(196)}`);
+    expect(JSON.stringify({ skipGroups }).length).toBeGreaterThan(400_000);
+    const r = await post('/v1/fetch/m3u', { url: p('/get.php'), allowLan: false, skipGroups });
+    expect(r.status).toBe(200);
+    const over = await post('/v1/fetch/m3u', { url: p('/get.php'), allowLan: false, skipGroups: ['x'.repeat(520 * 1024)] });
+    expect(over.status).toBe(413);
+    const other = await post('/v1/fetch/xmltv', { url: p('/epg.xml.gz'), allowLan: false, channels: ['x'.repeat(70 * 1024)] });
+    expect(other.status).toBe(413);
   });
 
   it('provider and fetch failures are 422 with a fixed code, never the URL', async () => {
@@ -246,9 +262,11 @@ it('no log line names a provider URL, host or credential', () => {
 describe('start', () => {
   it('registers the fetch routes in production', async () => {
     const free = await new Promise<number>((r) => { const s = netServer().listen(0, '127.0.0.1', () => { const n = (s.address() as AddressInfo).port; s.close(() => r(n)); }); });
-    const s = await start({ PORT: String(free), INTERNAL_SECRET: 'start-fetch-secret-0123456789', LIVETV_SRT_PORTS: '9000' }, { log: () => {}, host: '127.0.0.1' });
+    const k = deriveKey('start-fetch-secret-0123456789');
+    const dir = mkdtempSync(join(tmpdir(), 'livetv-fetch-key-'));
+    writeFileSync(join(dir, 'livetv_key'), k.toString('hex'));
+    const s = await start({ PORT: String(free), LIVETV_KEY_FILE: join(dir, 'livetv_key'), LIVETV_SRT_PORTS: '9000' }, { log: () => {}, host: '127.0.0.1' });
     try {
-      const k = deriveKey('start-fetch-secret-0123456789');
       for (const path of ['/v1/fetch/m3u', '/v1/fetch/xmltv', '/v1/fetch/logo', '/v1/probe']) {
         const body = '{}';
         const r = await fetch(`http://127.0.0.1:${free}${path}`, { method: 'POST', body, headers: { ...sign(k, 'POST', path, body), 'content-type': 'application/json' } });

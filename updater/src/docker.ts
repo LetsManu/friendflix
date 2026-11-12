@@ -3,7 +3,7 @@
 import { execFile } from 'node:child_process';
 import { FILE_RE } from './config.js';
 import { FF_SERVICES, LIVETV_SERVICE, SELF_SERVICE, cosignIdentity, expectedImage, imageRepo, isTag, pinnedRef } from './policy.js';
-import { classifyStack, configDrift, type StackInfo, type StackOrigin } from './stack.js';
+import { classifyStack, configDrift, networkName, renderedNetworks, runningNetworks, type StackInfo, type StackOrigin } from './stack.js';
 
 /** The only two programs the updater starts, never through a shell. */
 export type Program = 'docker' | 'cosign';
@@ -39,6 +39,8 @@ export type ImageInfo = { repoDigests: string[]; gitSha: string | null; version:
 export type LivetvContainer = ServiceState & { image: string | null };
 
 const MIN = 60_000;
+/** the services that must sit on the internal `livetv` network for the backend to reach livetv (spec §3.1) */
+const LIVETV_PEERS = ['backend', 'gateway'] as const;
 /** the services `compose ps` reports (anything else in the project, e.g. the database, is left out) */
 const PS_SERVICES: readonly string[] = [...FF_SERVICES, SELF_SERVICE, LIVETV_SERVICE];
 const PROJECT_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
@@ -147,15 +149,23 @@ export class Docker {
     return { livetv: services.includes(LIVETV_SERVICE) };
   }
 
-  /** the image each service would run with `tag`; throws unless every one is exactly ghcr.io/<owner>/<repo>-<image>:<tag> */
-  async images(tag: string, services: readonly string[]): Promise<Record<string, string>> {
-    await this.refreshFiles();
+  /** `compose config --format json` with the livetv profile when `services` names it; compose_config when it fails */
+  private async rendered(tag: string, services: readonly string[]): Promise<{ name?: unknown; networks?: unknown; services?: Record<string, { image?: unknown; environment?: unknown }> }> {
     const r = await this.compose(tag, ['config', '--format', 'json'], MIN, Docker.names(services));
     if (r.code !== 0) throw new StepError('compose_config');
-    let cfg: { services?: Record<string, { image?: unknown; environment?: unknown }> };
-    try { cfg = JSON.parse(r.stdout); } catch { throw new StepError('compose_config'); }
+    try { return JSON.parse(r.stdout); } catch { throw new StepError('compose_config'); }
+  }
+
+  /**
+   * the image each service would run with `tag`; throws unless every one is exactly ghcr.io/<owner>/<repo>-<image>:<tag>.
+   * livetv missing from the files altogether is `compose_outdated` (compose files from before Live TV), not an unexpected image.
+   */
+  async images(tag: string, services: readonly string[]): Promise<Record<string, string>> {
+    await this.refreshFiles();
+    const cfg = await this.rendered(tag, services);
     const out: Record<string, string> = {};
     for (const svc of services) {
+      if (svc === LIVETV_SERVICE && !cfg.services?.[svc]) throw new StepError('compose_outdated', 'livetv no_service');
       const image = cfg.services?.[svc]?.image;
       if (typeof image !== 'string' || image !== expectedImage(this.s.repo, svc, tag)) throw new StepError('unexpected_image');
       out[svc] = image;
@@ -170,14 +180,37 @@ export class Docker {
     // Recreating must not change what the stack publishes or where it is attached: the compose files plus .env the updater sees
     // have to render the same ports and networks as the containers run with now (they differ when the stack was started with
     // other variables, e.g. BIND_ADDR from a shell or a stack manager). Nothing is pulled or restarted otherwise.
+    // Backend and gateway may newly join the internal `livetv` network (compose files refreshed to 1b without `up -d`): the
+    // recreate attaches them, which is what Live TV needs.
     const ps = await this.ps();
     for (const svc of services) {
       const st = ps.find((p) => p.service === svc);
       const now = st ? await this.runningConfig(st.name) : null;
-      const drift = now ? configDrift(cfg, svc, now) : null;
+      const drift = now ? configDrift(cfg, svc, now, (LIVETV_PEERS as readonly string[]).includes(svc) ? [LIVETV_SERVICE] : []) : null;
       if (drift) throw new StepError('config_mismatch', `${svc} ${drift}`);
     }
     return out;
+  }
+
+  /**
+   * Before livetv starts (enable): backend and gateway must already sit on the `livetv` network the files define, else livetv
+   * would run where nobody reaches it. compose_outdated when the files do not put them there (or define no livetv network),
+   * network_missing when the running containers are not attached yet (the files were refreshed without `docker compose up -d`).
+   * A container that cannot be read is not judged here (the health step still tells).
+   */
+  async livetvNetwork(tag: string): Promise<void> {
+    const cfg = await this.rendered(tag, [LIVETV_SERVICE]);
+    const ps = await this.ps();
+    for (const svc of LIVETV_PEERS) {
+      const st = ps.find((p) => p.service === svc);
+      const now = st ? await this.runningConfig(st.name) : null;
+      const project = now?.project ?? null;
+      const net = networkName(cfg, LIVETV_SERVICE, project);
+      const rendered = renderedNetworks(cfg.services?.[svc], cfg.networks, typeof cfg.name === 'string' && cfg.name ? cfg.name : project);
+      if (!net || !(cfg.networks as Record<string, unknown> | undefined)?.[LIVETV_SERVICE] || (rendered && !rendered.includes(net))) throw new StepError('compose_outdated', `${svc} no_livetv_network`);
+      const running = now ? runningNetworks(now.networks) : null;
+      if (running && !running.includes(net)) throw new StepError('network_missing', `${svc} not_attached`);
+    }
   }
 
   /** published ports, networks and compose project of an existing container (any state; null when it cannot be read) */

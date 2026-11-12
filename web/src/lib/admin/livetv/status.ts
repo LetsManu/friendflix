@@ -6,6 +6,7 @@
  * names and numbers only (F13). The event codes are the backend's fixed list; the words come from `adminLive.ev.<code>` (F20).
  */
 import { api } from '#lib/api';
+import { stopWatching } from '#lib/live/api';
 import { fmtNumber, tr, type TKey } from '#lib/i18n';
 import type { ConversionsView } from '../conversions';
 import { sourceError } from './sources';
@@ -83,6 +84,18 @@ export const loadStatus = () => api<LiveStatus>(`${B}/status`);
 export const loadCounts = () => api<EpgCounts>(`${B}/epg/summary`);
 /** *Stoppen* and *Neu starten*: the stream ends; the next watcher starts it again. 503 `livetv_unreachable` when livetv does not answer. */
 export const stopChannel = (channelId: string) => api<{ ok: true }>(`${B}/streams/${encodeURIComponent(channelId)}/stop`, { method: 'POST' });
+/**
+ * The start half of *Neu starten* (Task 42): the stream test of the channel starts it again (admin only, no viewing rights asked, F10);
+ * the test token that comes with it is let go at once, so the stream is then held by whoever watches (or ends after the usual minute).
+ * true = it runs again; false = the test did not start it (budget, provider limit, livetv) or failed.
+ */
+export async function startChannel(channelId: string): Promise<boolean> {
+  try {
+    const a = await api<{ ok: boolean; preview?: { token: string } }>(`${B}/channels/${encodeURIComponent(channelId)}/test`, { method: 'POST' });
+    if (a.preview) await stopWatching(a.preview.token, false).catch(() => undefined);
+    return Boolean(a.preview);
+  } catch { return false; }
+}
 
 const GB = 1024 ** 3;
 const gb = (bytes: number) => fmtNumber(bytes / GB, { maximumFractionDigits: 1 });

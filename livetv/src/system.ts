@@ -11,7 +11,7 @@ export const ENCODERS = ['h264_qsv', 'h264_vaapi', 'h264_nvenc', 'libx264'] as c
 export type Encoder = (typeof ENCODERS)[number];
 
 export interface CpuInfo { model: string; cores: number; loadPct: number }
-export interface GpuInfo { devices: string[]; driver: string | null; readable: boolean; busyPct: number | null }
+export interface GpuInfo { devices: string[]; driver: string | null; readable: boolean; busyPct: number | null; nvidia: boolean }
 /** `GET /v1/system` (spec §3.2) + `srt.ports`; recordings arrive with Phase 3 */
 export interface SystemView {
   cpu: CpuInfo;
@@ -50,11 +50,15 @@ export function cpuInfo(os: OsLike = nodeOs): CpuInfo {
 
 const tryOr = <T>(f: () => T, fallback: T): T => { try { return f(); } catch { return fallback; } };
 
+/** the device node only the NVIDIA container runtime puts into a container (compose.livetv-nvidia.yaml); the host's /proc is no sign */
+export const NVIDIA_CTL = '/dev/nvidiactl';
+
 /**
- * GPU facts for the setup check (spec §4.4): the render nodes in /dev/dri (numeric order) and the facts of ONE chosen node: the
- * first one livetv may open for reading and writing (the render group, RENDER_GID), else the first one. Its kernel driver (sysfs
- * link), else `nvidia` when the NVIDIA driver is visible; whether it is readable; its AMD busy percentage (amdgpu only; Intel and
- * NVIDIA expose none there).
+ * GPU facts for the setup check (spec §4.4), from the device nodes the container really has (1b review I5: `ffmpeg -encoders`
+ * lists what is compiled in, and jellyfin-ffmpeg always has nvenc, qsv and vaapi): the render nodes in /dev/dri (numeric order)
+ * and the facts of ONE chosen node: the first one livetv may open for reading and writing (the render group, RENDER_GID), else
+ * the first one. Its kernel driver (sysfs link), else `nvidia` when /dev/nvidiactl is there; whether it is readable; its AMD busy
+ * percentage (amdgpu only; Intel and NVIDIA expose none there); `nvidia`: /dev/nvidiactl is there (the NVIDIA overlay is on).
  */
 export function gpuInfo(fs: FsLike): GpuInfo {
   const nodes = tryOr(() => fs.readdirSync('/dev/dri'), [] as string[])
@@ -65,19 +69,24 @@ export function gpuInfo(fs: FsLike): GpuInfo {
   const usable = nodes.find(rw);
   const chosen = usable ?? nodes[0];
   const sys = chosen ? `/sys/class/drm/${chosen}/device` : null;
+  const nvidia = tryOr(() => { fs.accessSync(NVIDIA_CTL, constants.F_OK); return true; }, false);
   let driver = sys ? tryOr(() => basename(fs.readlinkSync(`${sys}/driver`)) || null, null) : null;
-  if (!driver && tryOr(() => fs.readFileSync('/proc/driver/nvidia/version', 'utf8').length > 0, false)) driver = 'nvidia';
+  if (!driver && nvidia) driver = 'nvidia';
   let busyPct: number | null = null;
   if (sys && driver === 'amdgpu') {
     const raw = tryOr(() => fs.readFileSync(`${sys}/gpu_busy_percent`, 'utf8').trim(), '');
     busyPct = /^[0-9]{1,3}$/.test(raw) && Number(raw) <= 100 ? Number(raw) : null;
   }
-  return { devices, driver, readable: usable !== undefined, busyPct };
+  return { devices, driver, readable: usable !== undefined, busyPct, nvidia };
 }
 
 const ENCODER_LINE = /^\s*V[A-Z.]{5}\s+([A-Za-z0-9_]+)\s/;
 
-/** The usable H.264 encoders from `ffmpeg -hide_banner -encoders` (compiled in; whether the hardware works shows in the benchmark). */
+/**
+ * The H.264 encoders compiled into ffmpeg (`ffmpeg -hide_banner -encoders`): what livetv could use, never a sign that the hardware is
+ * there (jellyfin-ffmpeg lists nvenc, qsv and vaapi everywhere). Whether a GPU is usable is gpuInfo's device check; whether it works
+ * shows in the benchmark.
+ */
 export async function encoders(run: Run): Promise<Encoder[]> {
   const r = await run('ffmpeg', ['-hide_banner', '-encoders'], { timeoutMs: 10_000 }).catch(() => null);
   if (!r || r.code !== 0) return [];

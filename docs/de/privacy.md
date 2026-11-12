@@ -41,6 +41,18 @@ Nichts davon landet in Android-Cloud-Backups oder in der Übertragung auf ein ne
 - Beim Deinstallieren wird alles gelöscht, was die App auf dem Handy gespeichert hat.
 - Dein Konto auf dem Server und die dort gespeicherten Daten: selbst löschen unter **Mein Bereich → Konto → Konto löschen** oder den Betreiber des Servers bitten. Ablauf und was bleibt: [account-deletion.md](account-deletion.md).
 
+## Live-TV
+
+Dieser Abschnitt gilt, wenn der Server, mit dem du dich verbindest, Live-TV eingeschaltet hat ([livetv.md](livetv.md)). Live-TV ergänzt, was dein FriendFlix-Server über dich speichert, um Folgendes. Verantwortlich dafür ist, wer den Server betreibt; der Herausgeber der App bekommt nichts davon.
+
+- **Zuletzt gesehen:** pro Profil die letzten 10 Sender, die du geöffnet hast, und die Zeit, zu der jeder zuletzt geöffnet wurde. Sonst nichts: keine Dauern, keine Sendungen, kein Wiedergabeverlauf. Bei jedem Öffnen eines Senders werden Sender jenseits der neuesten 10 gelöscht.
+- **Favoriten und letzter Sender:** die Sender, die du mit einem Stern markiert hast, in deiner Reihenfolge, und der Sender, den du zuletzt gesehen hast, pro Profil. Ein Sender, den du nicht mehr sehen darfst, wird darin ausgeblendet, nicht gelöscht.
+- **Während du zuschaust:** Eine Live-Ansicht erscheint wie ein Film in der Liste der laufenden Streams der Administration (Admin → *Betrieb* → *Wiedergabe-Check*), mit Sendername, deinem Kontonamen, deinem Profilnamen und deinem Gerät, bis du aufhörst. Die Live-TV-Statusseite der Administration zählt Zuschauer nur pro Sender und nennt keine Namen. Danach wird sie nicht aufbewahrt. Live-Ansichten zählen außerdem gegen die Zahl gleichzeitiger Streams deines Kontos.
+- **Wiedergabe-Messung:** Die anonyme Messung einer Live-Ansicht enthält nur, wie lange das erste Bild dauerte, und die Art des Geräts, ohne Sender, Konto, Profil oder Gerätenamen.
+- **Dein Datenexport:** Der Export (**Meine Daten herunterladen**) listet pro Profil deine Favoriten in deiner Reihenfolge und *Zuletzt gesehen* mit dem neuesten zuerst, jeweils mit dem Namen des Senders; nie eine Stream-Adresse, einen Anbieter oder ein Passwort.
+- **Löschen:** Favoriten, *Zuletzt gesehen* und der letzte Sender verschwinden mit dem Profil oder dem Konto ([account-deletion.md](account-deletion.md)).
+- **Nicht gespeichert:** Adressen und Passwörter des Anbieters erreichen weder dein Gerät noch die App; den Stream, den du siehst, erreichst du über ein temporäres Token, das nicht protokolliert wird.
+
 ## Kinder
 
 Die App hat kein eigenes Konto und sammelt nichts für ihren Herausgeber. Kinderprofile richtet ein, wer den Server betreibt.

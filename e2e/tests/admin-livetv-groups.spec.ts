@@ -126,6 +126,40 @@ test.describe('admin: Live-TV, Gruppen & Rechte (desktop)', () => {
     await expect(page).toHaveURL(/pending=1/);
   });
 
+  test('a dirty group order asks before the view, an area tab or a link drops it', async ({ page, api }) => {
+    await page.goto('/admin/livetv?tab=groups');
+    await view(page, 'Reihenfolge').click();
+    const list = page.getByRole('list').filter({ has: page.getByRole('button', { name: 'Sport', exact: true }) });
+    const names = () => list.getByRole('listitem').first().textContent();
+    const ask = page.getByRole('alertdialog', { name: 'Reihenfolge verwerfen?' });
+    const first = await names();
+    const grip = list.getByRole('button', { name: 'Sport', exact: true });
+    await grip.focus();
+    await page.keyboard.press('Space');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Space');
+    await expect(page.getByRole('button', { name: 'Speichern' })).toBeEnabled();
+    const moved = await names();
+    // Liste, Nach Rolle (click and arrow key) and an area tab: each asks, and Weiter ordnen keeps everything
+    for (const go of [() => view(page, 'Liste').click(), () => view(page, 'Nach Rolle').click(), () => page.getByRole('tab', { name: 'Quellen' }).click(), async () => { await view(page, 'Reihenfolge').focus(); await page.keyboard.press('ArrowRight'); }]) {
+      await go();
+      await expect(ask).toBeVisible();
+      await ask.getByRole('button', { name: 'Weiter ordnen' }).click();
+      await expect(ask).toHaveCount(0);
+      await expect(view(page, 'Reihenfolge')).toHaveAttribute('aria-checked', 'true');
+      await expect(page.getByRole('tab', { name: 'Gruppen & Rechte' })).toHaveAttribute('aria-selected', 'true');
+      expect(await names()).toBe(moved);
+    }
+    expect(writes(api, 'PUT', /\/groups\/order$/)).toHaveLength(0);
+    // Verwerfen leaves; the order shows the stored one again when it comes back
+    await view(page, 'Liste').click();
+    await ask.getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(rows(page).first()).toBeVisible();
+    await view(page, 'Reihenfolge').click();
+    await expect(ask).toHaveCount(0); // clean again: no question
+    expect(await names()).toBe(first);
+  });
+
   test('drag order of groups saves through PUT /groups/order', async ({ page, api }) => {
     await page.goto('/admin/livetv?tab=groups');
     await view(page, 'Reihenfolge').click();

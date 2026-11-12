@@ -80,6 +80,10 @@ test.describe('admin shell + overview (desktop)', () => {
     await page.goto('/admin');
     const alert = page.getByRole('alert').filter({ hasText: 'Die Übersicht konnte nicht geladen werden.' });
     await expect(alert).toBeVisible();
+    // the Live-TV nav row does not stay a blank placeholder: the last known answer (first visit: shown) puts the real link there
+    const nav = page.getByRole('navigation', { name: 'Admin-Bereiche' });
+    await expect(nav.locator('li.ph')).toHaveCount(0);
+    await expect(nav.getByRole('link', { name: /Live-TV/ })).toBeVisible();
     api.admin.summaryFails = false;
     await alert.getByRole('button', { name: 'Erneut versuchen' }).click();
     await expect(alert).toBeHidden();

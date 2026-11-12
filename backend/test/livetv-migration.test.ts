@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MIGRATIONS, migrate } from '../src/db.js';
 import { CHANNEL_SELECT, srtHost, toEffective, type EffectiveChannel } from '../src/livetv/channels.js';
+import { healthProof, livetvKey } from '../src/livetv/client.js';
 import { detectLivetv } from '../src/livetv/detect.js';
 import { settingsView } from '../src/routes/adminSettings.js';
 import { makeEnv, type TestEnv } from './helpers.js';
@@ -67,7 +68,7 @@ beforeAll(async () => {
         const u = new URL(String(input));
         if (u.host !== 'livetv:8090') return orig(input, init);
         if (!livetvUp) throw new TypeError('fetch failed');
-        if (u.pathname === '/healthz') return new Response(JSON.stringify({ ok: true, api: 1, version: '1.0.0', bootId: '0123456789abcdef' }));
+        if (u.pathname === '/healthz') return new Response(JSON.stringify({ ok: true, api: 1, version: '1.0.0', bootId: '0123456789abcdef', proof: healthProof(livetvKey(c.cfg.INTERNAL_SECRET), u.searchParams.get('n') ?? '') }));
         return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
       }) as typeof fetch;
     },
@@ -76,7 +77,7 @@ beforeAll(async () => {
 afterAll(async () => { await env.close(); });
 
 describe('migration 48', () => {
-  it('is the 48th migration (49 adds the XMLTV staging table; later ones append)', () => {
+  it('is the 48th migration (49 adds the XMLTV staging table, 50 the group indexes; later ones append)', () => {
     expect(MIGRATIONS.length).toBeGreaterThanOrEqual(49);
   });
 

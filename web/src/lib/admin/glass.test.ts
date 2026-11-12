@@ -573,10 +573,12 @@ describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
   const css = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
 
   it('takes the rows and a required save, and knows no endpoint', () => {
-    expect([...src.matchAll(/export let (\w+)/g)].map((m) => m[1])).toEqual(['rows', 'save', 'locked']);
+    expect([...src.matchAll(/export let (\w+)/g)].map((m) => m[1])).toEqual(['rows', 'save', 'locked', 'dirty']); // dirty is the one output (bind:dirty): the shown order is not stored yet
     expect(src).toMatch(/export let save: \(ids: string\[\]\) => Promise<void>;/);
     expect(src).toMatch(/runAction\(\{ key: busyKey, run: \(\) => save\(ids\)/);
-    expect(src.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, '')).not.toMatch(/api\(|fetch\(|\/order/);
+    let code = src, prev: string;
+    do { prev = code; code = code.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, ''); } while (code !== prev); // until stable: no comment survives
+    expect(code).not.toMatch(/api\(|fetch\(|\/order/);
   });
 
   it('animates transform only (the lifted row follows by transform, the others slide by FLIP) and has no keyframes', () => {
@@ -598,6 +600,14 @@ describe('Live-TV order view (Kanäle → Reihenfolge, Task 24)', () => {
     expect(src).toMatch(/<svelte:window[^>]*on:pointermove=\{onMove\} on:pointerup=\{onUp\} on:pointercancel=\{onPointerCancel\}/);
     expect(src).toMatch(/e\.pointerId !== drag\.pointerId/);
     expect(src).toContain('if (e.repeat) return;');
+  });
+
+  it('a mouse move with no button down is a pointer up: a swallowed release never leaves a row stuck lifted', () => {
+    const fn = src.match(/function onMove\(e: PointerEvent\) \{[\s\S]*?\n {2}\}/)![0];
+    expect(fn).toMatch(/e\.pointerType === 'mouse' && e\.buttons === 0/);
+    expect(fn).toMatch(/void onUp\(e\)/);
+    // the check comes before the move is used
+    expect(fn.indexOf('e.buttons === 0')).toBeLessThan(fn.indexOf('drag.y = e.clientY'));
   });
 
   it('calm mode, TV and reduced motion: no transitions at all', () => {
@@ -630,7 +640,9 @@ describe('Favoriten ordnen sheet (Task 38)', () => {
     expect([...src.matchAll(/export let (\w+)/g)].map((m) => m[1])).toEqual(['rows', 'save', 'trigger', 'tv']);
     expect(src).toMatch(/export let save: \(ids: string\[\]\) => Promise<void>;/);
     expect(src).toMatch(/runAction\(\{ key: busyKey, run: \(\) => save\(ids\), success: tr\('common\.saved'\), undo: \{ run: \(\) => save\(prev\) \} \}\)/);
-    expect(src.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, '')).not.toMatch(/api\(|fetch\(|\/api\//);
+    let code = src, prev: string;
+    do { prev = code; code = code.replace(/<!--[\s\S]*?-->|\/\*\*[\s\S]*?\*\//g, ''); } while (code !== prev); // until stable: no comment survives
+    expect(code).not.toMatch(/api\(|fetch\(|\/api\//);
   });
 
   it('animates transform only, has no keyframes, and the lifted row and the FLIP rows move by transform', () => {

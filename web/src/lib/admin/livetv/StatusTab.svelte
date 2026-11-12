@@ -29,12 +29,14 @@
   import JobSteps from '../JobSteps.svelte';
   import { listSources } from './api';
   import { whenText } from './sources';
-  import { STATUS_POLL_MS, bitrateText, cacheLine, eventText, inputText, levelWord, loadStatus, modeText, stopChannel, type EventLevel, type InputState, type LiveEvent, type LiveStatus, type StatusFeed, type StatusStream } from './status';
+  import { STATUS_POLL_MS, bitrateText, cacheLine, eventText, inputText, levelWord, loadStatus, modeText, startChannel, stopChannel, type EventLevel, type InputState, type LiveEvent, type LiveStatus, type StatusFeed, type StatusStream } from './status';
   import UpdaterNotes from './UpdaterNotes.svelte';
   import { errorKey, gpuKey, jobRunning, livetvJob, livetvRunning, livetvSteps, otherJobRunning, type LivetvAdminState } from './state';
   import type { Column } from '#lib/ui/table';
 
   export let s: LivetvAdminState;
+  /** a disable finished and detection has not caught up yet: never "läuft", the page keeps asking (1b review I4) */
+  export let stopping = false;
   /** the dialog grows out of the button that was pressed */
   const dispatch = createEventDispatcher<{ off: HTMLElement | null }>();
 
@@ -93,13 +95,15 @@
       { id: 'restart', label: $t('adminLive.status.restart'), icon: 'refresh', run: () => stop(r, true) },
     ];
   }
-  /** *Stoppen* asks first; *Neu starten* does not (the viewers' players ask for the channel again, which starts it) */
+  /** *Stoppen* asks first; *Neu starten* does not: it stops the stream and starts it again with the stream test (`startChannel`); the viewers' players ask again anyway */
   async function stop(r: StatusStream, restart = false) {
     if (!restart && !(await confirm({ title: tr('adminLive.status.stopTitle', { name: r.name }), body: tr('adminLive.status.stopBody'), danger: true, confirmLabel: tr('adminLive.status.stopConfirm') }))) return;
     const res = await runAction({ key: `ltv-stop:${r.channelId}`, run: () => stopChannel(r.channelId), error: false });
     if (res.skipped || gone) return;
     if (!res.ok) { toast.error(tr('adminLive.status.stopFailed')); return; }
-    toast.success(tr(restart ? 'adminLive.status.restarted' : 'adminLive.status.stopped', { name: r.name }));
+    if (!restart) toast.success(tr('adminLive.status.stopped', { name: r.name }));
+    else if (await startChannel(r.channelId)) toast.success(tr('adminLive.status.restarted', { name: r.name }));
+    else if (!gone) toast.info(tr('adminLive.status.restartLater', { name: r.name }));
     await loadFresh();
   }
 
@@ -221,7 +225,11 @@
   {/if}
 
   <AdminCard title={$t('adminLive.mini.title')}>
-    <p class="ok" role="status"><Icon name="check" size={18} />{$t('adminLive.mini.running')}</p>
+    {#if stopping}
+      <div class="prog" aria-live="polite" data-stopping><Progress value={null} label={$t('adminLive.mini.working')} /></div>
+    {:else}
+      <p class="ok" role="status"><Icon name="check" size={18} />{$t('adminLive.mini.running')}</p>
+    {/if}
     <dl class="ver"><div><dt>{$t('adminLive.mini.version')}</dt><dd><code>{s.version ?? st?.version ?? '–'}</code></dd></div></dl>
 
     <UpdaterNotes {s} />
@@ -250,7 +258,7 @@
     </div>
 
     <div class="row">
-      <Button variant="secondary" icon="x" disabled={busy} on:click={(e) => dispatch('off', e.currentTarget instanceof HTMLElement ? e.currentTarget : null)}>{$t('adminLive.status.off')}</Button>
+      <Button variant="secondary" icon="x" disabled={busy || stopping} on:click={(e) => dispatch('off', e.currentTarget instanceof HTMLElement ? e.currentTarget : null)}>{$t('adminLive.status.off')}</Button>
       {#if other}<span class="muted small" role="status" data-other-job><Icon name="clock" size={16} /> {$t('adminLive.err.updaterBusy')}</span>{/if}
     </div>
   </AdminCard>

@@ -1,8 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { createHmac } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { vi } from 'vitest';
 import type { Store } from '../src/cache.js';
 import { FetchError, type FetchOptions, type GuardedResponse } from '../src/fetch.js';
+
+/** livetv's key as the bootstrap service derives it (livetv only ever reads the result, config.ts): HMAC-SHA256(secret, label) */
+export const deriveKey = (secret: string): Buffer => createHmac('sha256', secret).update('friendflix-livetv/v1').digest();
+
+/** a key file holding deriveKey(secret), for start({ LIVETV_KEY_FILE }) */
+export function keyFile(secret: string): string {
+  const path = join(mkdtempSync(join(tmpdir(), 'livetv-key-')), 'livetv_key');
+  writeFileSync(path, deriveKey(secret).toString('hex'));
+  return path;
+}
 
 /** an in-memory Store: fake-timer tests never wait for real disk I/O */
 export function memoryStore(): { files: Map<string, Buffer>; store: Store } {

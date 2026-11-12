@@ -18,7 +18,7 @@ async function menu(page: Page, channel: string, item: string) {
 
 test.describe('admin: Live-TV, Live-Status (desktop)', () => {
   // a failing stop and a failing summary are mocked 503s: the browser logs them
-  test.use({ allowedConsole: /Failed to load resource: the server responded with a status of 503/ });
+  test.use({ allowedConsole: /Failed to load resource: the server responded with a status of (500|503)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; install(api); });
 
   test('tiles, events and the GPU message', async ({ page, api }) => {
@@ -85,7 +85,7 @@ test.describe('admin: Live-TV, Live-Status (desktop)', () => {
     await expect(idle.locator('[data-feed="idle"]')).toHaveText('Keine Übertragung');
   });
 
-  test('Stoppen confirms, Neu starten does not', async ({ page, api }) => {
+  test('Stoppen confirms, Neu starten stops and starts it again without asking', async ({ page, api }) => {
     await page.goto('/admin/livetv?tab=status');
     const run = card(page, 'Laufende Sender');
     await expect(run.getByRole('row', { name: /Hafenkanal/ })).toBeVisible();
@@ -109,10 +109,19 @@ test.describe('admin: Live-TV, Live-Status (desktop)', () => {
     await expect(stoppedEv).toContainText('Hafenkanal');
     expect(api.admin.livetv.status.stops).toEqual(['ch-hafenkanal']);
 
-    // Neu starten: no question
+    // Neu starten: no question; stop, then the stream test starts it again, and its test token is let go at once
     await menu(page, 'Nordlicht TV', 'Neu starten');
-    await expect(toasts(page).getByText('„Nordlicht TV“ gestoppt – startet beim nächsten Zuschauen neu.')).toBeVisible();
+    await expect(toasts(page).getByText('„Nordlicht TV“ neu gestartet.')).toBeVisible();
     expect(api.admin.livetv.status.stops).toEqual(['ch-hafenkanal', 'ch-nordlicht']);
+    expect(api.admin.livetv.status.starts).toEqual(['ch-nordlicht']);
+    expect(api.livetv.stops).toEqual(['t'.repeat(43)]);
+
+    // a start the test cannot make (budget, provider limit): said so, the stream stays stopped
+    api.admin.livetv.status.streams.push({ channelId: 'ch-nordlicht', name: 'Nordlicht TV', logoHash: null, mode: 'remux', viewers: 0, since: Date.now(), bitrate: null, input: 'ok', reconnects: 0 });
+    api.admin.livetv.status.startRefused = true;
+    await expect(run.getByRole('row', { name: /Nordlicht TV/ })).toBeVisible({ timeout: 10_000 });
+    await menu(page, 'Nordlicht TV', 'Neu starten');
+    await expect(toasts(page).getByText('„Nordlicht TV“ gestoppt, ließ sich aber nicht neu starten. Es startet beim nächsten Zuschauen.')).toBeVisible();
     await expect(run.getByText('Gerade läuft kein Sender.')).toBeVisible();
   });
 

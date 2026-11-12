@@ -284,7 +284,7 @@ test.describe('live player (desktop)', () => {
     await open(page);
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })));
     const stops = () => page.evaluate(() => (window as unknown as { __fetches: Array<{ url: string; method: string; keepalive: boolean; body: string | null }> }).__fetches
-      .filter((f) => f.method === 'DELETE' && f.url.includes('/api/livetv/watch')));
+      .filter((f) => f.method === 'DELETE' && new URL(f.url, 'http://localhost').pathname.startsWith('/api/livetv/watch')));
     await expect.poll(async () => (await stops()).length).toBeGreaterThan(0);
     const [f] = await stops();
     expect(f!.keepalive).toBe(true);

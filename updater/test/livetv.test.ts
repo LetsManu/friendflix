@@ -50,8 +50,10 @@ interface WorldOpts {
   imageTags?: string[];
   /** blocks every `pull` until released */
   gate?: boolean;
-  /** compose files from before livetv: a command naming livetv fails (no such service) */
+  /** compose files from before livetv: a command naming livetv fails (no such service), no livetv network anywhere */
   noLivetvService?: boolean;
+  /** compose files from 1b, but backend and gateway still run as created by the old files (not on the livetv network yet) */
+  notAttached?: boolean;
   /** a one-off `compose run livetv` container listed before the service container */
   oneoff?: boolean;
   /** a local tag a container still uses (image rm refuses it) */
@@ -60,6 +62,8 @@ interface WorldOpts {
   livetvDrift?: boolean;
   /** the compose files resolve livetv to another repository's image */
   livetvEvilImage?: boolean;
+  /** called when `compose stop` runs (before it changes anything) */
+  onStop?: () => void;
 }
 
 /** a fake Docker host: the FriendFlix stack runs, the livetv container as given */
@@ -86,14 +90,17 @@ function world(o: WorldOpts = {}) {
         return ok(rows.map((r) => JSON.stringify(r)).join('\n'));
       }
       case 'config': {
-        // like compose: a service of an inactive profile is not rendered
-        const services: Record<string, { image: string }> = Object.fromEntries([...FF_SERVICES, 'updater'].map((x) => [x, { image: `ghcr.io/letsmanu/friendflix-${IMAGE_OF[x]}:${tag}` }]));
+        // like compose: a service of an inactive profile is not rendered; backend and gateway join `livetv` (files from 1b on)
+        const services: Record<string, { image: string; networks?: Record<string, object> }> = Object.fromEntries([...FF_SERVICES, 'updater'].map((x) => [x, { image: `ghcr.io/letsmanu/friendflix-${IMAGE_OF[x]}:${tag}` }]));
+        for (const x of ['backend', 'gateway']) services[x]!.networks = o.noLivetvService ? { front: {} } : { front: {}, livetv: {} };
         services.postgres = { image: 'postgres:17-alpine' };
         if (profiled && !o.noLivetvService) {
           services.livetv = { image: o.livetvEvilImage ? `ghcr.io/evil/friendflix-livetv:${tag}` : `${LTV}:${tag}` };
           if (o.livetvDrift) Object.assign(services.livetv, { ports: [{ mode: 'ingress', host_ip: '0.0.0.0', target: 9100, published: '9100', protocol: 'udp' }] });
         }
-        return ok(JSON.stringify({ services }));
+        const networks: Record<string, object> = { default: { name: 'friendflix_default' }, front: { name: 'friendflix_front' } };
+        if (!o.noLivetvService) Object.assign(networks, { livetv: { name: 'friendflix_livetv', internal: true }, 'livetv-egress': { name: 'friendflix_livetv-egress' } });
+        return ok(JSON.stringify({ name: 'friendflix', networks, services }));
       }
       case 'pull':
         if (o.gate) await new Promise<void>((r) => { w.waiting = true; w.release = () => { w.waiting = false; r(); }; });
@@ -104,6 +111,7 @@ function world(o: WorldOpts = {}) {
         if (args.includes('backend')) { w.coreSha = shaOf(tag); w.coreTag = tag; }
         return ok();
       case 'stop':
+        o.onStop?.();
         if (w.livetv) w.livetv = { state: 'exited', health: '' };
         return ok();
       case 'rm':
@@ -112,7 +120,11 @@ function world(o: WorldOpts = {}) {
       case 'container inspect': {
         const f = args[3]!, name = args.at(-1)!;
         if (f === '{{json .Config.Labels}}') return ok(JSON.stringify(o.labels ?? LABELS));
-        if (f.includes('PortBindings')) return ok(`{}\t{"friendflix_default":{}}\t${JSON.stringify(o.labels ?? LABELS)}`);
+        if (f.includes('PortBindings')) {
+          const peer = name === 'friendflix-backend-1' || name === 'friendflix-gateway-1';
+          const nets = !peer ? { friendflix_default: {} } : o.noLivetvService || o.notAttached ? { friendflix_front: {} } : { friendflix_front: {}, friendflix_livetv: {} };
+          return ok(`{}\t${JSON.stringify(nets)}\t${JSON.stringify(o.labels ?? LABELS)}`);
+        }
         if (f === '{{.Image}}') return ok(`${name.startsWith('friendflix-livetv-') ? (name.includes('run') ? OTHER_ID : ID) : OTHER_ID}\n`);
         if (f === '{{json .Config.Env}}') return ok('[]');
         return ok();
@@ -740,5 +752,76 @@ describe('livetv inside updates: re-review', () => {
       expect(m.store.state).toMatchObject({ livetv: 'absent', lastJob: { state: 'failed', error: 'foreign_stack' } });
       expect(logged(m, 'livetv runs without being enabled: state set to enabled')).toBe(false);
     }
+  });
+});
+
+describe('enable on an install from before Live TV (1b review I3)', () => {
+  it('compose files without the livetv service: compose_outdated before anything is pulled or started (never unexpected_image)', async () => {
+    const m = make({ noLivetvService: true }, { livetv: 'absent' });
+    m.u.startLivetv({ op: 'enable' });
+    await m.u.idle();
+    expect(m.store.state).toMatchObject({ livetv: 'absent', lastJob: { action: 'livetv-enable', state: 'failed', error: 'compose_outdated',
+      steps: { pull: 'failed', verify: 'skipped', restart: 'skipped', health: 'skipped' } } });
+    expect(changing(m)).toEqual([]);
+    expect(logged(m, 'step pull: compose_outdated (livetv no_service)')).toBe(true);
+  });
+
+  it('new compose files, but backend and gateway not recreated yet: network_missing, nothing pulled or started', async () => {
+    const m = make({ notAttached: true }, { livetv: 'absent' });
+    m.u.startLivetv({ op: 'enable' });
+    await m.u.idle();
+    expect(m.store.state).toMatchObject({ livetv: 'absent', lastJob: { state: 'failed', error: 'network_missing', steps: { pull: 'failed', restart: 'skipped' } } });
+    expect(changing(m)).toEqual([]);
+    expect(logged(m, 'step pull: network_missing (backend not_attached)')).toBe(true);
+    // after `docker compose up -d` (attached): the same enable goes through
+    const ok = make({}, { livetv: 'absent' });
+    ok.u.startLivetv({ op: 'enable' });
+    await ok.u.idle();
+    expect(ok.store.state).toMatchObject({ livetv: 'enabled', lastJob: { state: 'succeeded' } });
+  });
+
+  it('an update on refreshed compose files is not refused for the new livetv network alone: the recreate attaches backend and gateway', async () => {
+    const m = make({ notAttached: true }, { livetv: 'absent' });
+    m.u.start('update');
+    await m.u.idle();
+    expect(m.store.state.lastJob).toMatchObject({ action: 'update', state: 'succeeded', error: null });
+    expect(changing(m)).toContain(`${BASE} --ansi never up -d --no-deps --pull never bootstrap backend gateway web`);
+  });
+
+  it('the drift guard still refuses leaving a network or joining any other than livetv', async () => {
+    const { configDrift } = await import('../src/stack.js');
+    const cfg = (nets: string[]) => ({ name: 'friendflix', networks: { livetv: { name: 'friendflix_livetv' }, front: { name: 'friendflix_front' }, media: { name: 'friendflix_media' } },
+      services: { backend: { networks: Object.fromEntries(nets.map((n) => [n, {}])) } } });
+    const running = (nets: string[]) => ({ ports: {}, networks: Object.fromEntries(nets.map((n) => [`friendflix_${n}`, {}])), project: 'friendflix' });
+    expect(configDrift(cfg(['front', 'livetv']), 'backend', running(['front']), ['livetv'])).toBeNull();
+    expect(configDrift(cfg(['front', 'livetv']), 'backend', running(['front']))).toBe('networks'); // only where allowed
+    expect(configDrift(cfg(['front', 'livetv', 'media']), 'backend', running(['front']), ['livetv'])).toBe('networks');
+    expect(configDrift(cfg(['livetv']), 'backend', running(['front']), ['livetv'])).toBe('networks');
+    expect(configDrift(cfg(['front', 'livetv']), 'backend', running(['front', 'livetv']), ['livetv'])).toBeNull();
+  });
+
+  it('an update with livetv enabled on compose files that lost the service drops livetv as compose_outdated', async () => {
+    const m = make({ noLivetvService: true }, { livetv: 'enabled' });
+    m.u.start('update');
+    await m.u.idle();
+    expect(m.store.state).toMatchObject({ livetvError: 'compose_outdated', lastJob: { action: 'update', state: 'succeeded' } });
+  });
+});
+
+describe('dropLivetv persists first (1b review M13)', () => {
+  it('the reason and stop_failed are stored before the stop runs, so a crash during it neither loses the reason nor re-enables livetv', async () => {
+    const seen: Array<Partial<State>> = [];
+    let m: Made | null = null;
+    m = make({ livetv: { state: 'running', health: 'healthy' }, healthAfterUp: 'unhealthy', onStop: () => { if (m) seen.push({ livetv: m.store.state.livetv, livetvError: m.store.state.livetvError }); } }, { livetv: 'enabled' });
+    m.u.start('update');
+    await m.u.idle();
+    expect(seen[0]).toEqual({ livetv: 'stop_failed', livetvError: 'unhealthy' });
+    expect(m.store.state).toMatchObject({ livetv: 'disabled', livetvError: 'unhealthy', lastJob: { action: 'update', state: 'succeeded' } });
+    // what a restarted updater would find had it died during the stop: the next job stops livetv again, never adopts it
+    const after = make({ livetv: { state: 'running', health: 'healthy' } }, { livetv: 'stop_failed', livetvError: 'unhealthy' });
+    after.u.start('update');
+    await after.u.idle();
+    expect(after.store.state).toMatchObject({ livetv: 'disabled', livetvError: 'unhealthy' });
+    expect(changing(after)).toContain(`${P} stop livetv`);
   });
 });

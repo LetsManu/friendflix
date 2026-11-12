@@ -3,7 +3,8 @@
 import { createServer as netServer, type AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { videoArgs } from '../src/ffmpeg.js';
-import { deriveKey, sign } from '../src/protocol.js';
+import { sign } from '../src/protocol.js';
+import { deriveKey, keyFile } from './streams-helpers.js';
 import { benchmarkRoutes } from '../src/routes/benchmark.js';
 import { TIMEOUT_CODE, type Run, type RunOptions, type RunResult } from '../src/run.js';
 import { start, type Answer, type RouteCall } from '../src/server.js';
@@ -99,7 +100,7 @@ describe('start', () => {
   it('registers POST /v1/benchmark; without ffmpeg no encoder is listed', async () => {
     const free = await new Promise<number>((r) => { const s = netServer().listen(0, '127.0.0.1', () => { const n = (s.address() as AddressInfo).port; s.close(() => r(n)); }); });
     const secret = 'start-bench-secret-0123456789ab';
-    const s = await start({ PORT: String(free), INTERNAL_SECRET: secret, LIVETV_SRT_PORTS: '9000' }, { log: () => {}, host: '127.0.0.1' });
+    const s = await start({ PORT: String(free), LIVETV_KEY_FILE: keyFile(secret), LIVETV_SRT_PORTS: '9000' }, { log: () => {}, host: '127.0.0.1' });
     try {
       const body = JSON.stringify({ encoder: 'libx264' });
       const r = await fetch(`http://127.0.0.1:${free}/v1/benchmark`, {

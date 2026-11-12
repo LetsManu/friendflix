@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { castLookup } from '../src/cast.js';
 import { hashPin, verifyPin } from '../src/crypto.js';
@@ -360,6 +361,22 @@ describe('profiles', () => {
     expect((await env.pool.query('select 1 from profiles where id=$1', [p.id])).rowCount).toBe(0);
     expect((await env.pool.query('select 1 from watchlist where profile_id=$1', [p.id])).rowCount).toBe(0);
     expect((await env.pool.query('select 1 from profile_prefs where profile_id=$1', [p.id])).rowCount).toBe(0);
+  });
+
+  it('delete removes the profile\'s Live-TV favourites and recently watched, and leaves the channel and other profiles\' rows (FK cascade)', async () => {
+    const s = await mk();
+    const p = await mkProfile(s, 'Kind');
+    const uid = await ownerId();
+    const src = randomUUID(), ch = randomUUID();
+    await env.pool.query("insert into livetv_sources(id, kind, name, url_enc) values ($1, 'm3u', 'Nordlicht TV', 'x')", [src]);
+    await env.pool.query("insert into livetv_channels(id, source_id, source_key, stream_url_enc, stream_kind, import_name) values ($1,$2,'k1','x','hls','Hafenkanal')", [ch, src]);
+    await env.pool.query('insert into livetv_favourites(profile_id, channel_id) values ($1,$3), ($2,$3)', [p.id, uid, ch]);
+    await env.pool.query('insert into livetv_recent(profile_id, channel_id) values ($1,$3), ($2,$3)', [p.id, uid, ch]);
+    expect((await call(s, 'DELETE', `/api/profiles/${p.id}`)).statusCode).toBe(200);
+    for (const t of ['livetv_favourites', 'livetv_recent']) {
+      expect((await env.pool.query(`select profile_id from ${t} where channel_id=$1`, [ch])).rows, t).toEqual([{ profile_id: uid }]);
+    }
+    expect((await env.pool.query('select 1 from livetv_channels where id=$1', [ch])).rowCount).toBe(1);
   });
 
   it('delete answers 502 and keeps the profile when Jellyfin refuses', async () => {

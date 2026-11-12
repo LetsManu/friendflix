@@ -5,13 +5,13 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PREVIEW_INTERVAL_MS, Previews, previewArgs } from '../src/preview.js';
-import { ReplayCache, deriveKey, sign } from '../src/protocol.js';
+import { ReplayCache, sign } from '../src/protocol.js';
 import { streamRoutes } from '../src/routes/streams.js';
 import { TIMEOUT_CODE, type Run, type RunOptions, type RunResult } from '../src/run.js';
 import { createApp } from '../src/server.js';
 import { Streams, type Driver, type StartBody } from '../src/streams.js';
 import type { SystemView } from '../src/system.js';
-import { memoryStore } from './streams-helpers.js';
+import { deriveKey, memoryStore } from './streams-helpers.js';
 
 const NOW = Date.parse('2026-11-11T20:15:00.000Z');
 const DIR = '/cache/0123456789abcdef0123456789abcdef';
