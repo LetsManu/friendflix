@@ -92,7 +92,8 @@ function whyHidden(hit: Pick<FoundItem, 'library' | 'rating' | 'age'>, rights: R
   const age = hit.age !== undefined ? hit.age : ageOf(hit.rating);
   const cap = rights.template.maxParentalRating;
   if (age !== null && cap !== null && age > cap) return 'rating';
-  if (age === null && profile.kids) return 'unrated_kids';
+  // an adapter that read no rating at all (null) can say "unrated"; a rating ageOf cannot read (GB-15, 12A) is "cannot tell"
+  if (age === null && profile.kids) return hit.age === null || hit.rating === null ? 'unrated_kids' : null;
   // only an adapter that says it hides unrated titles under any cap (an explicit FoundItem.age null: Plex) can blame the missing rating
   // for a grown-up; on Jellyfin a grown-up's cap never hides unrated titles, and an unreadable rating is "cannot tell"
   if (hit.age === null && cap !== null) return 'unrated';

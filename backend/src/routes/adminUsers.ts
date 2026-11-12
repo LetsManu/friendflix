@@ -134,7 +134,10 @@ export async function bulkUsers(ctx: Ctx, actor: string, b: BulkBody): Promise<{
         if (!(await putRights(ctx, actor, u.id, { overrides: { [b.perm!]: b.value! } })).changed.length) continue;
         break;
       case 'repair':
-        if (!(await repairAccount(ctx, actor, (await getUserById(ctx, u.id))!)).ok) { failed++; continue; }
+        {
+          const fresh = await getUserById(ctx, u.id);
+          if (!fresh || !(await repairAccount(ctx, actor, fresh)).ok) { failed++; continue; } // vanished mid-loop counts as failed
+        }
         break;
     }
     done++;

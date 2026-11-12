@@ -10,6 +10,7 @@ let env: TestEnv;
 let admin: { cookies: Record<string, string>; csrf: string };
 let adminId = '';
 let failPolicyFor = '';
+let onPolicy: (() => void) | null = null;
 const ids: Record<string, string> = {};
 const as = (s: { cookies: Record<string, string>; csrf: string }, method: 'GET' | 'POST' | 'PATCH', url: string, payload?: unknown) =>
   env.app.inject({ method, url, cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, ...(payload === undefined ? {} : { payload: payload as object }) });
@@ -28,7 +29,7 @@ const fakeSession = (userId: string, sid: string) =>
 
 beforeAll(async () => {
   env = await makeEnv({
-    'POST /Users/[^/]+/Policy': (u) => (failPolicyFor && u.pathname.includes(failPolicyFor) ? { status: 500, raw: 'nope' } : { status: 204 }),
+    'POST /Users/[^/]+/Policy': (u) => (onPolicy?.(), failPolicyFor && u.pathname.includes(failPolicyFor) ? { status: 500, raw: 'nope' } : { status: 204 }),
   }, { seerr: { 'GET /api/v1/user': () => ({ json: { results: [], pageInfo: { results: 0 } } }), 'POST /api/v1/user/import-from-jellyfin': () => ({ status: 500, raw: 'nope' }), 'GET /api/v1/user/[0-9]+': (u) => ({ json: { id: Number(u.pathname.split('/').pop()) } }) } });
   admin = await env.login();
   adminId = (await env.pool.query("select id from users where authentik_sub='sub-admin'")).rows[0].id;
@@ -338,6 +339,7 @@ describe('rights filters, columns and bulk rights', () => {
 
   beforeEach(async () => {
     failPolicyFor = '';
+    onPolicy = null;
     await env.pool.query('update users set seerr_user_id = 100 + (random()*1e6)::int where seerr_user_id is null'); // mapped: a repair needs no new Seerr user
     await env.pool.query("update users set role='admin' where authentik_sub = 'sub-admin'"); // the concurrency test above may have demoted it
     await env.pool.query('delete from account_deletions; delete from user_limits; delete from profiles where not is_owner');
@@ -469,6 +471,14 @@ describe('rights filters, columns and bulk rights', () => {
     const r = await bulk({ ids: [ids.anna, ids.ben], action: 'repair' });
     expect([r.statusCode, r.json()]).toEqual([200, { done: 1, failed: 1 }]);
     expect((await audits('user.repair', ids.ben!)).length).toBe(1); // still audited
+  });
+
+  it('bulk repair: an account that vanishes mid-loop counts as failed (no 500)', async () => {
+    const gone = await addUser('gone', 'Gone', 'friend');
+    // the first account's policy push starts the delete; the lookup of the second one follows several round trips later
+    onPolicy = () => { onPolicy = null; void env.pool.query('delete from users where id=$1', [gone]); };
+    const r = await bulk({ ids: [ids.anna, gone], action: 'repair' });
+    expect([r.statusCode, r.json()]).toEqual([200, { done: 1, failed: 1 }]);
   });
 
   it('perm filter: the admin role has every switch on, a stored override does not count', async () => {

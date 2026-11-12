@@ -13,7 +13,10 @@ export const sockets = new Map<string, Set<{ sid: string; close: () => void; for
  * elsewhere) or `forbidden` (4403 'party_forbidden'; their profile became a kids profile).
  */
 export function dropPartyPeers(userId: string, sids: Set<string>, mode: 'revoked' | 'forbidden' = 'revoked') {
-  for (const p of [...(sockets.get(userId) ?? [])]) if (sids.has(p.sid)) (mode === 'forbidden' ? p.forbid() : p.close());
+  for (const p of [...(sockets.get(userId) ?? [])]) if (sids.has(p.sid)) {
+    if (mode === 'forbidden') p.forbid();
+    else p.close();
+  }
 }
 /** Closes every party socket of the account with 4403 'party_forbidden' (the client shows the refusal, not a sign-out). */
 export function dropPartyUser(userId: string) {

@@ -610,4 +610,17 @@ describe('catalogue writes', () => {
     expect(await invitableRoles(env.ctx)).toEqual(want.filter((k) => k !== 'admin'));
     expect((await env.pool.query("select 1 from audit_log where action='role.order'")).rowCount).toBe(1);
   });
+
+  it('order ignores keys that are not in the table and audits nothing when no position changes', async () => {
+    const keys: string[] = (await get()).matrix.roles.map((x: { key: string }) => x.key);
+    const order = (k: unknown) => call(admin, 'PUT', '/api/admin/roles/order', { keys: k });
+    const n = async () => (await env.pool.query("select 1 from audit_log where action='role.order'")).rowCount;
+    expect((await order(keys)).statusCode).toBe(200); // settles the positions
+    const before = await n();
+    expect((await order([...keys, 'Oma'])).statusCode).toBe(200); // env-only key, not in the table: ignored
+    expect((await order(['Oma', ...keys])).statusCode).toBe(200);
+    expect(await n()).toBe(before); // same positions: no entry
+    expect((await order([keys[0], ...keys])).statusCode).toBe(400); // duplicate table key
+    expect((await order(keys.slice(1))).statusCode).toBe(400); // missing table key
+  });
 });

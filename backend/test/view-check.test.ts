@@ -177,6 +177,12 @@ describe('POST /api/admin/users/:id/check (title search as the profile)', () => 
     expect(hit(hits, SALT)).toEqual({ id: SALT, name: 'Saltwater Almanac', year: 2021, type: 'Movie', visible: true, why: null, rating: 'FSK-6', library: 'Kinder' });
   });
 
+  it('a kids profile: a rated title whose rating the app cannot read is hidden with why null, not unrated_kids', async () => {
+    const r = await check(anna, KIDS, 'Almanac 2'); // MA15+: Jellyfin knows it, ageOf does not
+    expect(r.statusCode).toBe(200);
+    expect(hit(r.json().hits, SALT2)).toMatchObject({ visible: false, why: null, rating: 'MA15+' });
+  });
+
   it('without findItems the service user searches and why is null', async () => {
     const adm = env.ctx.jf.admin as MediaAdmin;
     const find = adm.findItems;

@@ -152,9 +152,9 @@ describe('admin audit filters', () => {
 
 describe('admin audit: target and people area', () => {
   beforeAll(async () => {
-    await audit(env.ctx, adminId, 'role.update', 'guest', { from: { requestsPerMonth: 0 }, to: { requestsPerMonth: 5 }, layer: 'role' });
-    await audit(env.ctx, adminId, 'role.update', 'guest', { from: { downloadDays: 0 }, to: { downloadDays: 7 }, layer: 'role' });
-    await audit(env.ctx, adminId, 'role.update', 'family', { from: { remoteCap: 4 }, to: { remoteCap: 8 }, layer: 'role' });
+    await audit(env.ctx, adminId, 'role.update', 'guest', { from: { requestsPerMonth: 0 }, to: { requestsPerMonth: 5 }, layer: { requestsPerMonth: { from: 'default', to: 'role' } } });
+    await audit(env.ctx, adminId, 'role.update', 'guest', { from: { downloadDays: 0 }, to: { downloadDays: 7 }, layer: { downloadDays: { from: 'default', to: 'role' } } });
+    await audit(env.ctx, adminId, 'role.update', 'family', { from: { maxStreams: 4 }, to: { maxStreams: 8 }, layer: { maxStreams: { from: 'default', to: 'role' } } });
     await audit(env.ctx, adminId, 'role.request_limit', 'friend', { from: 1, to: 2 }); // pre-remodel action name
     await audit(env.ctx, adminId, 'settings.update', undefined, { keys: ['X'] });
     await audit(env.ctx, adminId, 'list.feature', ids.anna);

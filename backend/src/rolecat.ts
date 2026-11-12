@@ -246,15 +246,23 @@ export async function deleteRole(ctx: Ctx, actor: string | null, key: string, mo
   }
 }
 
-/** PUT /api/admin/roles/order: `keys` must be a permutation of every catalogue key; position = index. 400 bad_order otherwise. */
+/**
+ * PUT /api/admin/roles/order: `keys` must be a permutation of every catalogue (table) key; position = index. Keys that are not in the
+ * table (env-only templates the list shows too) are ignored. 400 bad_order for a missing or duplicate table key; no update and no
+ * audit entry when no position changes.
+ */
 export async function orderRoles(ctx: Ctx, actor: string | null, keys: string[]): Promise<void> {
   const c = await (ctx.db as pg.Pool).connect();
   try {
     await c.query('begin');
-    const have = (await c.query<{ key: string }>('select key from roles order by key for update')).rows.map((r) => r.key);
-    if (new Set(keys).size !== keys.length || keys.length !== have.length || !keys.every((k) => have.includes(k))) throw new HttpError(400, 'bad_order');
-    await c.query('update roles r set position = o.i - 1 from unnest($1::text[]) with ordinality as o(k, i) where r.key = o.k', [keys]);
-    await auditInTx({ db: c }, actor, 'role.order', undefined, { keys });
+    const rows = (await c.query<{ key: string; position: number }>('select key, position from roles order by key for update')).rows;
+    const have = new Set(rows.map((r) => r.key));
+    const ordered = keys.filter((k) => have.has(k));
+    if (new Set(ordered).size !== ordered.length || ordered.length !== have.size) throw new HttpError(400, 'bad_order');
+    if (rows.some((r) => ordered.indexOf(r.key) !== r.position)) {
+      await c.query('update roles r set position = o.i - 1 from unnest($1::text[]) with ordinality as o(k, i) where r.key = o.k', [ordered]);
+      await auditInTx({ db: c }, actor, 'role.order', undefined, { keys: ordered });
+    }
     await c.query('commit');
   } catch (e) {
     await c.query('rollback').catch(() => undefined);
