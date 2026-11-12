@@ -275,9 +275,25 @@ describe('start and join', () => {
     const r = await startOrJoin(env.ctx, { userId: annaId, deviceId: 'dev-anna-1', role: 'family' }, ch, { id: annaId, kids: false });
     expect(r).toEqual({ status: 502, error: 'channel_unreachable' });
     expect(streamCalls('POST')).toHaveLength(0);
-    expect(await env.kv.get(`conv:grant:live:${id}`)).toBeNull();
+    // the other starter admitted under the same per-channel key: its grant must stay counted
+    expect(await env.kv.get(`conv:grant:live:${id}`)).not.toBeNull();
     spy.mockRestore();
     expect(await env.kv.get(`ltv:start:${id}`)).toBe('another-starter'); // never deleted by the one that lost it
+  });
+
+  it('a start whose lock lapsed with nobody else holding it gives its grant back (review M3)', async () => {
+    const id = await addChannel('Hafenkanal', { kind: 'srt' });
+    const ch = await effective(id);
+    const set = env.kv.set.bind(env.kv);
+    const spy = vi.spyOn(env.kv, 'set').mockImplementation(async (k: string, v: string, ttl?: number) => {
+      await set(k, v, ttl as number);
+      if (k === `conv:grant:live:${id}`) await env.kv.del(`ltv:start:${id}`); // the lock lapsed, nobody took it
+    });
+    const r = await startOrJoin(env.ctx, { userId: annaId, deviceId: 'dev-anna-1', role: 'family' }, ch, { id: annaId, kids: false });
+    spy.mockRestore();
+    expect(r).toEqual({ status: 502, error: 'channel_unreachable' });
+    expect(streamCalls('POST')).toHaveLength(0);
+    expect(await env.kv.get(`conv:grant:live:${id}`)).toBeNull();
   });
 
   it('remux after all releases the slot', async () => {

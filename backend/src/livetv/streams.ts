@@ -295,7 +295,10 @@ export async function startOrJoin(ctx: Ctx, who: Watcher, ch: EffectiveChannel, 
     const cur = activeOf(list, ch.id);
     if (cur) {
       await ctx.kv.set(joinKey(ch.id), '1', JOIN_MARK_TTL_S).catch(() => undefined);
-      return join(ctx, cur);
+      const joined = await join(ctx, cur);
+      // join() may wait for the first segment as long as the marker lives: mark again so the tick sees the fresh viewer
+      await ctx.kv.set(joinKey(ch.id), '1', JOIN_MARK_TTL_S).catch(() => undefined);
+      return joined;
     }
     const token = randomUUID();
     if (await ctx.kv.setnx(startKey(ch.id), token, START_LOCK_TTL_S)) {
@@ -373,7 +376,9 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
     };
     // a slow admission (budget lock, encoder probe) must not let the lock lapse: a second starter would admit too. Lost = somebody else starts it
     if (!(await ctx.kv.refreshIfEquals(startKey(ch.id), lock, START_LOCK_TTL_S).catch(() => false))) {
-      await giveBack();
+      // the grant key is one per channel (F8): when another starter holds the lock now, it admitted under the same key, and
+      // dropping it here would leave its stream uncounted. Only an orphaned grant (nobody holds the lock) is given back.
+      if ((await ctx.kv.get(startKey(ch.id)).catch(() => 'unknown')) === null) await giveBack();
       return unreachable;
     }
     try {
