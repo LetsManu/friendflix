@@ -11,7 +11,8 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
  *   canonical = METHOD "\n" PATH "\n" TS "\n" NONCE "\n" hex(SHA256(body))     (PATH = the request target incl. any query string)
  *   headers   x-ff-livetv-ts (unix ms), x-ff-livetv-nonce (32 hex), x-ff-livetv-signature ("v1=" + hex HMAC(key, canonical))
  *
- * livetv accepts a request only inside a 60 s window around its own clock, never one signed before it started (a replay cache
+ * livetv only ever holds `key` (the bootstrap service derives it, config.ts); it never sees INTERNAL_SECRET and derives nothing.
+ * It accepts a request only inside a 60 s window around its own clock, never one signed before it started (a replay cache
  * cannot outlive the process), and every nonce once.
  */
 export const KEY_LABEL = 'friendflix-livetv/v1';
@@ -23,9 +24,6 @@ const NONCE_RE = /^[0-9a-f]{32}$/;
 const SIG_RE = /^v1=[0-9a-f]{64}$/;
 const TS_RE = /^[0-9]{13}$/;
 
-export function deriveKey(secret: string): Buffer {
-  return createHmac('sha256', secret).update(KEY_LABEL).digest();
-}
 
 export function canonical(method: string, path: string, ts: string, nonce: string, body: string): string {
   return [method.toUpperCase(), path, ts, nonce, createHash('sha256').update(body).digest('hex')].join('\n');

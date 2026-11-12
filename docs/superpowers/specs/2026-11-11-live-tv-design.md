@@ -266,9 +266,8 @@ playback for everyone and should ship and settle on its own), Phase 2 plan, Phas
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    group_add: ["10001"] # reads bootstrap-gateway (internal_secret only)
+    group_add: ["10001"] # reads bootstrap-livetv (livetv_key only; see the ruling below)
     environment:
-      INTERNAL_SECRET: ${INTERNAL_SECRET:-} # unset: the copy in the bootstrap-gateway volume
       LIVETV_CACHE_MAX_GB: ${LIVETV_CACHE_MAX_GB:-6}
       LIVETV_SRT_PORTS: ${LIVETV_SRT_PORTS:-9000-9009}
       TZ: ${TZ:-Europe/Vienna}
@@ -278,11 +277,18 @@ playback for everyone and should ship and settle on its own), Phase 2 plan, Phas
     volumes:
       - livetv-cache:/cache                                   # DVR segments, previews (disposable)
       - ${RECORDINGS_PATH:-recordings}:/recordings             # Phase 3
-      - bootstrap-gateway:/run/friendflix-gateway:ro
+      - bootstrap-livetv:/run/friendflix-livetv:ro
     depends_on:
       bootstrap: { condition: service_completed_successfully }
     networks: [livetv, livetv-egress]
 ```
+
+- **Ruling (1b review): derived key, not the raw secret.** livetv never receives `INTERNAL_SECRET`. The `bootstrap` service
+  writes only `HMAC-SHA256(INTERNAL_SECRET, 'friendflix-livetv/v1')` (64 hex) as `livetv_key` into its own volume
+  `bootstrap-livetv` (root:10001, 0440, rewritten on every start), which only livetv mounts, read-only; the backend derives the
+  same key in memory. Why: `INTERNAL_SECRET` is the key to the backend's `/internal/*` routes (the media server token among
+  them) and the root of the updater key, and livetv parses hostile provider input with ffmpeg; a taken-over livetv must hold
+  nothing but its own key. Without the key file livetv refuses to start.
 
 - Networks (defined always, like `updater`): `livetv` (`internal: true`; backend, gateway and livetv join it) and
   `livetv-egress` (normal bridge; only livetv). Backend and gateway gain `livetv` in their `networks`; the gateway also mounts

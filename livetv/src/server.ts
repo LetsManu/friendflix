@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { log as defaultLog, type Log } from './log.js';
-import { ReplayCache, deriveKey, verify, type Verifier } from './protocol.js';
+import { ReplayCache, verify, type Verifier } from './protocol.js';
 import { createRun } from './run.js';
 import { systemView, type SystemView } from './system.js';
 
@@ -153,7 +153,7 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
 export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log; host?: string } = {}): Promise<Server> {
   const cfg = loadConfig(env);
   const log = o.log ?? defaultLog;
-  const verifier: Verifier = { key: deriveKey(cfg.secret), cache: new ReplayCache(), notBefore: Date.now() };
+  const verifier: Verifier = { key: cfg.key, cache: new ReplayCache(), notBefore: Date.now() };
   const system = systemView({ fs, run: createRun(), cacheDir: cfg.cacheDir, cacheMaxBytes: cfg.cacheMaxBytes, srtPorts: cfg.srtPorts });
   const app = createApp({ verifier, version: cfg.version, bootId: randomBytes(8).toString('hex'), system, warn: log });
   const server = createServer((req, res) => { void app(req, res); });
@@ -161,6 +161,8 @@ export async function start(env: NodeJS.ProcessEnv = process.env, o: { log?: Log
   server.headersTimeout = 5_000;
   await new Promise<void>((resolve) => server.listen(cfg.port, o.host ?? '0.0.0.0', resolve));
   const srt = cfg.srtPorts.length === 1 ? `${cfg.srtPorts[0]}` : `${cfg.srtPorts[0]}-${cfg.srtPorts.at(-1)}`;
+  // never read: livetv signs with its own key only (config.ts). A value here would be the backend's key within reach of ffmpeg.
+  if (env.INTERNAL_SECRET || env.INTERNAL_SECRET_FILE) log('INTERNAL_SECRET is set in the environment of livetv but never used: remove it there');
   log(`listening on :${cfg.port} (api ${API_VERSION}, version ${cfg.version ?? 'dev'}, SRT ports ${srt}, cache ${(cfg.cacheMaxBytes / 1024 ** 3).toFixed(1)} GB)`);
   return server;
 }

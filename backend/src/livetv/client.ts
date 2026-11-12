@@ -6,7 +6,8 @@ import type { Ctx } from '../ctx.js';
 /**
  * Client of the optional livetv container (livetv/, compose profile `livetv`, spec §3.2). Every `/v1/*` request is HMAC-signed
  * with a key derived from INTERNAL_SECRET under its own label (never the updater key): timestamp + nonce, livetv refuses replays
- * and anything outside 60 s. Signing must match livetv/src/protocol.ts byte for byte (test-vectors/livetv-hmac.json). What is
+ * and anything outside 60 s. livetv holds only that derived key (the bootstrap service writes it, backend/src/bootstrap.ts
+ * livetvKeyHex), never INTERNAL_SECRET: a taken-over livetv cannot call the backend's /internal/* routes. Signing must match livetv/src/protocol.ts byte for byte (test-vectors/livetv-hmac.json). What is
  * signed is the request target exactly as fetch sends it: `new URL(path, LIVETV_URL)` pathname + search (percent-encoded, dot
  * segments resolved), never the raw argument. The backend never imports from livetv/ (separate image).
  *

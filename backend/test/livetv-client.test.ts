@@ -3,6 +3,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
+import { livetvKeyHex } from '../src/bootstrap.js';
 import type { Ctx } from '../src/ctx.js';
 import { LivetvError, livetvCall, livetvHealth, livetvKey, livetvStream, signLivetv } from '../src/livetv/client.js';
 
@@ -45,6 +46,12 @@ describe('livetv signing', () => {
     for (const c of vectors.cases) {
       expect(signLivetv(k, c.method, c.path, c.body, c.ts, c.nonce)).toEqual({ 'x-ff-livetv-ts': c.ts, 'x-ff-livetv-nonce': c.nonce, 'x-ff-livetv-signature': c.signature });
     }
+  });
+
+  it('the backend derives the same key the bootstrap service writes for livetv (never the raw secret)', () => {
+    expect(livetvKeyHex(vectors.secret)).toBe(vectors.key);
+    expect(livetvKey(SECRET).toString('hex')).toBe(livetvKeyHex(SECRET));
+    expect(livetvKey(SECRET).equals(Buffer.from(SECRET))).toBe(false);
   });
 
   it('a fresh nonce and the current time by default', () => {

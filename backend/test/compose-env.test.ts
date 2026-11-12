@@ -135,7 +135,18 @@ describe.each(['compose.prod.yaml', 'compose.yaml'])('%s livetv', (file) => {
     expect(b).toContain('friendflix-livetv:');
     expect(b).toContain('livetv-cache:/cache');
     expect(b).toContain('${RECORDINGS_PATH:-recordings}:/recordings');
-    expect(b).toContain('bootstrap-gateway:/run/friendflix-gateway:ro');
+    // its own signing key only (1b review I1): never INTERNAL_SECRET, never the gateway's copy of it
+    expect(b).toContain('bootstrap-livetv:/run/friendflix-livetv:ro');
+    expect(b).not.toMatch(/INTERNAL_SECRET(_FILE)?:/); // no such variable (the comment may name it)
+    expect(b).not.toContain('bootstrap-gateway');
+    expect(b).not.toMatch(/bootstrap:\/run/);
+  });
+
+  it('only the bootstrap service writes the livetv key volume, only livetv reads it', () => {
+    expect(service(src, 'bootstrap')).toContain('bootstrap-livetv:/run/friendflix-livetv\n');
+    const users = src.split(/\n {2}(?=[a-z-]+:\n)/).slice(1).filter((b) => b.includes('bootstrap-livetv:/run')).map((b) => b.split(':')[0]);
+    expect(users.sort()).toEqual(['bootstrap', 'livetv']);
+    expect(src.slice(src.indexOf('\nvolumes:\n'))).toMatch(/^ {2}bootstrap-livetv:/m);
   });
 
   it('defines the networks and volumes always; livetv is internal, only livetv-egress reaches out', () => {

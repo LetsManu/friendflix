@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared by the livetv and backend tests so both ends of the backend -> livetv signing (livetv/src/protocol.ts, backend/src/livetv/client.ts) can never drift apart. key = HMAC-SHA256(secret, 'friendflix-livetv/v1'); signature = 'v1=' + hex HMAC-SHA256(key, METHOD\\nPATH\\nTS\\nNONCE\\nhex(SHA256(body))). Headers x-ff-livetv-ts, x-ff-livetv-nonce, x-ff-livetv-signature. Bodies are fictional.",
+  "_comment": "Shared by the livetv and backend tests so both ends of the backend -> livetv signing (livetv/src/protocol.ts, backend/src/livetv/client.ts) can never drift apart. key = HMAC-SHA256(secret, 'friendflix-livetv/v1'): the backend derives it from INTERNAL_SECRET in memory, the bootstrap service writes it (64 hex) into livetv's key file; livetv holds only key, never secret. signature = 'v1=' + hex HMAC-SHA256(key, METHOD\\nPATH\\nTS\\nNONCE\\nhex(SHA256(body))). Headers x-ff-livetv-ts, x-ff-livetv-nonce, x-ff-livetv-signature. Bodies are fictional, secret and key are test-only values.",
   "secret": "test-internal-secret-livetv-0123456789",
   "key": "1cd764ece826b4219f388117b274348bba1341bfcc0a141706b021173a08e5c9",
   "cases": [

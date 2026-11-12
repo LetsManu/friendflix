@@ -22,7 +22,7 @@ export const FFMPEG_DIR = '/usr/lib/jellyfin-ffmpeg';
 export const TIMEOUT_CODE = -1;
 const STDOUT_MAX = 16 * 1024 * 1024;
 const STDERR_TAIL = 64 * 1024;
-/** what a child sees of the environment: never livetv's own (it holds INTERNAL_SECRET) */
+/** what a child sees of the environment: never livetv's own */
 const CHILD_ENV = { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp' };
 const BINS: Record<Cmd, string> = { ffmpeg: `${FFMPEG_DIR}/ffmpeg`, ffprobe: `${FFMPEG_DIR}/ffprobe` };
 
