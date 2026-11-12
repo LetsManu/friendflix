@@ -490,6 +490,7 @@ const dict: Translation<typeof de> = {
     confirmRevokeTitle: '“{device}” cihazının erişimi kaldırılsın mı?',
     confirmRevokeBody: '{name} bu cihazda oturumu kapatılır ve cihazı yeniden onaylatması gerekir.',
     unknownDevice: 'Bilinmeyen cihaz',
+    startLive: 'TV, canlı TV ile açılır',
     empty: 'Henüz kayıtlı cihaz yok.',
     emptyFiltered: 'Bu filtrelere uyan cihaz yok.',
   },

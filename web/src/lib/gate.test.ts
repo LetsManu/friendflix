@@ -30,8 +30,8 @@ describe('needsProfileGate', () => {
 
 describe('kids profiles', () => {
   it('only kids routes are allowed; everything else goes to the kids home', () => {
-    for (const p of ['/kids', '/kids/search', '/item/abc', '/watch/abc', '/search', '/profiles', '/offline', '/settings', '/welcome']) expect(kidsAllowed(p), p).toBe(true);
-    for (const p of ['/', '/party', '/party/x', '/lists', '/lists/1', '/requests', '/stats', '/digest', '/admin', '/admin/users', '/me', '/watchlist', '/match', '/vote', '/kidsx', '/settingsx', '/settings/devices', '/browse/movies'])
+    for (const p of ['/kids', '/kids/search', '/item/abc', '/watch/abc', '/search', '/profiles', '/offline', '/settings', '/welcome', '/live', '/live/watch/ch-1']) expect(kidsAllowed(p), p).toBe(true);
+    for (const p of ['/', '/party', '/party/x', '/lists', '/lists/1', '/requests', '/stats', '/digest', '/admin', '/admin/users', '/me', '/watchlist', '/match', '/vote', '/kidsx', '/settingsx', '/settings/devices', '/browse/movies', '/liveish'])
       expect(kidsAllowed(p), p).toBe(false);
     expect(kidsRedirect({ kids: true }, '/')).toBe('/kids');
     expect(kidsRedirect({ kids: true }, '/party/abc')).toBe('/kids');

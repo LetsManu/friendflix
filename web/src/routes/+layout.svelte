@@ -816,6 +816,7 @@
       <span class="sp"></span>
       <nav class="knav" aria-label={$t('kids.nav.label')}>
         <a class="kbtn" href="/kids/search" aria-label={$t('kids.nav.search')} aria-current={path.startsWith('/kids/search') ? 'page' : undefined}><Icon name="search" size={26} /></a>
+        {#if $features.livetv}<a class="kbtn" href="/live" aria-label={$t('kids.nav.live')} aria-current={path.startsWith('/live') ? 'page' : undefined}><Icon name="tv" size={26} /></a>{/if}
         <a class="kav" href="/profiles" aria-label={$t('kids.nav.switchProfile', { name: who })}><span class="face" style={faceStyle} aria-hidden="true">{initial(who)}</span></a>
       </nav>
     </header>

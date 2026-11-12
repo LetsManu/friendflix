@@ -11,6 +11,7 @@ const dict: Translation<typeof de> = {
     /** the logo link: starts with its visible text (the wordmark and badge) for voice control */
     homeLink: 'FriendFlix Kids – home',
     search: 'Search',
+    live: 'TV',
     switchProfile: 'Switch profile (current: {name})',
   },
   home: {
