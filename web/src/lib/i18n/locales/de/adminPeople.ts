@@ -423,7 +423,6 @@ export default {
   },
   /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
   sentenceRights: {
-    setBool: '{actor} hat für {target} „{field}“ auf {value} gestellt (vorher: {was})',
     setValue: '{actor} hat für {target} „{field}“ auf {value} gestellt (vorher: {was})',
     pinned: '{actor} hat für {target} „{field}“ einzeln festgelegt: {value} (vorher: {was})',
     unpinned: '{actor} hat für {target} „{field}“ wieder auf die Rolle zurückgestellt: {value} (vorher: {was})',

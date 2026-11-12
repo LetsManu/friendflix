@@ -91,7 +91,6 @@ function rightsSentence(e: AuditInput, actor: string, person: string): { text: s
       return { text: t('moved', { ...p, was, now: layerWord(layer.to) }), chips: [] };
     }
     // a switch says "erlaubt" / "nicht erlaubt" like any value, the label stays quoted: a label can be a predicate ("Darf aufnehmen")
-    if (FIELD_KINDS[k] === 'bool') return { text: t('setBool', { ...p, was }), chips: [] };
     return { text: t('setValue', { ...p, was }), chips: [] };
   }
   return { text: general, chips: [...chips, ...storedChips] };

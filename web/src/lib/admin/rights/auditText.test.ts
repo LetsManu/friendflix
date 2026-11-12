@@ -104,9 +104,6 @@ describe('user.rights sentences (spec 6.6)', () => {
     expect(r({ from: { cast: true }, to: { cast: false } }))
       .toEqual({ text: 'Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ auf nicht erlaubt gestellt (vorher: erlaubt)', chips: [] });
     expect(r({ from: { cast: false }, to: { cast: true } }).text).toBe('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ auf erlaubt gestellt (vorher: nicht erlaubt)');
-    // with the layer that decided before (the layer on a changed value is written by no backend today, the sentence still reads it)
-    expect(r({ from: { cast: true }, to: { cast: false }, layer: { cast: { from: 'role', to: 'user' } } }).text)
-      .toBe('Ben Muster hat für Anna Beispiel „Auf Fernseher übertragen“ auf nicht erlaubt gestellt (vorher: wie Rolle)');
   });
   it('a label that is a predicate never follows a verb: it is quoted in every language, for every switch', async () => {
     const quotes = { de: ['„', '“'], en: ['“', '”'], es: ['«', '»'], fr: ['«\u00a0', '\u00a0»'], it: ['«', '»'], pl: ['„', '”'], tr: ['“', '”'] } as const;

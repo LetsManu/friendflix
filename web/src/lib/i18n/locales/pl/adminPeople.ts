@@ -421,7 +421,6 @@ const dict: Translation<typeof de> = {
   },
   /** Task 22: sentences of `user.rights` entries (meta layer / stored), see web/src/lib/admin/rights/auditText.ts */
   sentenceRights: {
-    setBool: '{actor}: „{field}” dla {target} ustawiono na {value} (wcześniej: {was})',
     setValue: '{actor}: „{field}” dla {target} ustawiono na {value} (wcześniej: {was})',
     pinned: '{actor}: „{field}” dla {target} ustawiono indywidualnie – {value} (wcześniej: {was})',
     unpinned: '{actor}: „{field}” dla {target} przywrócono do roli – {value} (wcześniej: {was})',

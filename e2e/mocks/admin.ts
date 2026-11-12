@@ -532,8 +532,7 @@ function auditList(st: AdminState, sp: URLSearchParams) {
 // ---- Task 22: audit samples of `user.rights` (backend userRights.ts: `{ from, to, layer?, stored?, note? }`) and a role.delete with its label ----
 /**
  * newest first; `user` is the person the entries are about, `actor` the admin. As the backend writes them (rights.ts diffRights): a changed value
- * has no `layer`; `layer` appears only when the value stayed and the deciding layer moved. Sample 9001 carries a layer on a changed value, a
- * shape no backend writes today: it is the brief's "(vorher: wie Rolle)" example, kept to cover the sentence.
+ * has no `layer`; `layer` appears only when the value stayed and the deciding layer moved (sample 9002).
  */
 export function rightsAuditSamples(user: { id: string; name: string }, actor = 'Ben Muster'): AuditRow[] {
   const row = (id: number, minutes: number, action: string, meta: Record<string, unknown>): AuditRow => ({ id, at: new Date(Date.now() - minutes * 60000).toISOString(), action, target: user.id, meta, actor, target_name: user.name });
@@ -542,7 +541,6 @@ export function rightsAuditSamples(user: { id: string; name: string }, actor = '
     row(9004, 1, 'user.rights', { from: {}, to: {}, stored: { cast: { from: true, to: null } } }),
     row(9003, 2, 'user.rights', { from: { requestsPerMonth: 5 }, to: { requestsPerMonth: null } }),
     row(9002, 3, 'user.rights', { from: { cast: true }, to: { cast: true }, layer: { cast: { from: 'role', to: 'user' } } }),
-    row(9001, 4, 'user.rights', { from: { cast: true }, to: { cast: false }, layer: { cast: { from: 'role', to: 'user' } } }),
   ];
 }
 export const roleDeleteSample = (key: string, label: string): AuditRow => ({ id: 9100, at: new Date(Date.now() - 5 * 60000).toISOString(), action: 'role.delete', target: key, meta: { moveTo: null, accounts: 0, invites: 0, label }, actor: 'Ben Muster', target_name: null });
