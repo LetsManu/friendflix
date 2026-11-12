@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- fictional guide for livetv tests -->
+<tv generator-info-name="fixture">
+  <channel id="nordlicht.de">
+    <display-name lang="de">Nordlicht TV</display-name>
+    <display-name>Nordlicht HD</display-name>
+    <icon src="https://iptv.example.com/logo/nordlicht.png"/>
+  </channel>
+  <channel id="hafenkanal.de">
+    <display-name>Hafenkanal</display-name>
+    <icon src="file:///etc/passwd"/>
+  </channel>
+  <channel id="sternwarte24.de">
+    <display-name>Sternwarte 24</display-name>
+  </channel>
+  <programme start="20261111201500 +0100" stop="20261111210000 +0100" channel="nordlicht.de">
+    <title lang="de">Die Leuchtturmwärter</title>
+    <title lang="en">The Lighthouse Keepers</title>
+    <sub-title>Sturm &amp; Stille</sub-title>
+    <desc>Anna Beispiel h&#xFC;tet den Leuchtturm &lt;Nord&gt;.</desc>
+    <category>Serie</category>
+    <category>Drama</category>
+    <episode-num system="xmltv_ns">1.4.0/1</episode-num>
+    <episode-num system="dd_progid">EP01234567.0005</episode-num>
+    <new/>
+    <rating system="FSK"><value>12</value></rating>
+  </programme>
+  <programme start="20261111210000 +0100" stop="20261111211500 +0100" channel="nordlicht.de">
+    <title><![CDATA[Wetter am Hafen]]></title>
+    <episode-num system="onscreen">Folge 7</episode-num>
+    <episode-num system="xmltv_ns">0.6.</episode-num>
+    <previously-shown/>
+  </programme>
+  <programme start="20261111200000 +0000" stop="20261111210000 +0000" channel="hafenkanal.de">
+    <title>Abenteuer Wattenmeer</title>
+    <series-id system="fixture">wattenmeer</series-id>
+  </programme>
+  <programme start="20261201200000 +0000" stop="20261201210000 +0000" channel="hafenkanal.de">
+    <title>Weit in der Zukunft</title>
+  </programme>
+  <programme start="kaputt" stop="20261111210000 +0000" channel="hafenkanal.de">
+    <title>Ohne Zeit</title>
+  </programme>
+  <programme start="20261111220000 +0000" stop="20261111230000 +0000" channel="sternwarte24.de">
+    <title>Sternstunde Physik</title>
+  </programme>
+</tv>
