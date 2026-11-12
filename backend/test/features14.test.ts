@@ -174,6 +174,7 @@ describe('language picker and clip preview', () => {
   it('tracks: one entry per audio language and subtitle language', async () => {
     const r = (await call('GET', `/api/items/${B}/tracks`)).json();
     expect(r.audio).toEqual([{ language: 'ger', title: 'Deutsch (AC3)', isDefault: true }, { language: 'eng', title: 'English (AAC)', isDefault: false }]);
+    expect(r).not.toHaveProperty('indexed'); // the per-stream index list stays on the server (the cast route's)
     // one entry per language (the first track names it); `index` = that language's first text, non-forced track, else its first text
     // track, none for image-only; `forcedIndex` = its first forced text track (continuous AirPlay picks a later episode's subtitle by them)
     expect(r.subtitles).toEqual([

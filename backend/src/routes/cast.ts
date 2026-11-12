@@ -201,8 +201,11 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
         if (!(await tracksOfOk(ctx, req.jfUser!, b.tracksOf, item))) return reply.code(400).send({ error: 'bad_request' });
         if (b.audioIndex !== undefined || b.subtitleIndex !== undefined) {
           const c = choiceOf(await ctx.jf.tracks(req.jfUser!, b.tracksOf), b.audioIndex, b.subtitleIndex);
-          audioIndex = undefined; audioLang = c.audioLang;
-          subtitleIndex = c.sub.lang ? subtitleFor(await ctx.jf.tracks(req.jfUser!, b.itemId), c.sub) : undefined;
+          const own = await ctx.jf.tracks(req.jfUser!, b.itemId);
+          // no track of that language here: the episode's default track, named (unnamed, Jellyfin's HLS would take its first track with channels)
+          const fallback = (own.audio.find((a) => a.isDefault) ?? own.audio[0])?.language;
+          audioIndex = undefined; audioLang = c.audioLang && own.audio.some((a) => a.language === c.audioLang) ? c.audioLang : b.audioIndex !== undefined ? fallback : undefined;
+          subtitleIndex = c.sub.lang ? subtitleFor(own, c.sub) : undefined;
         }
       }
       const startTicks = b.startTicks ?? item.positionTicks;

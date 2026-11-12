@@ -655,12 +655,14 @@ export class JellyfinService implements MediaServer {
       body: JSON.stringify({ DeviceProfile: profile, SubtitleStreamIndex: -1 }),
     });
     if (info.ErrorCode) throw new JellyfinError(403, `playback blocked: ${info.ErrorCode}`);
-    // preferred audio language: our HLS URL carries AudioStreamIndex itself, so a non-default track needs no second PlaybackInfo
+    // preferred audio language: our HLS URL carries AudioStreamIndex itself, so a non-default track needs no second PlaybackInfo. The local
+    // player leaves the default track unnamed (that keeps direct play, which plays the container's default track). A cast is always HLS,
+    // where Jellyfin streams the first track with channels when no index is named, not the IsDefault one (dto.ts sourceFacts): it names it.
     let audioIndex = opts.audioIndex;
     if (audioIndex === undefined && opts.audioLang) {
       const streams: Array<Record<string, any>> = info.MediaSources?.[0]?.MediaStreams ?? [];
       const want = streams.find((s) => s.Type === 'Audio' && s.Language === opts.audioLang);
-      if (want && !want.IsDefault && typeof want.Index === 'number') audioIndex = want.Index;
+      if (want && (opts.cast || !want.IsDefault) && typeof want.Index === 'number') audioIndex = want.Index;
     }
     // the stream plan: HEVC copy / conversion, surround, reasons. A gate is passed only while HEVC_STREAMS > 0 (no gate = conversions off) and is
     // asked only when the plan wants an HEVC conversion; an error from it counts as busy.

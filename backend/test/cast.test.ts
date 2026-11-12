@@ -1173,7 +1173,8 @@ describe('cast: HEVC and surround with FriendFlix\'s own receiver', () => {
     expect(params(base).get('Level')).toBe('41');
     expect(params(base).get('RequireAvc')).toBe('true');
     // (an AirPlay answer also names the episode's own audio tracks and the chosen indices: that is the via, not the caps)
-    const keys = (j: Record<string, unknown>) => Object.keys(j).filter((k) => k !== 'report' && !['audioTracks', 'audioIndex', 'subtitleIndex'].includes(k)).sort();
+    const AIR_KEYS = ['audioTracks', 'audioIndex', 'subtitleIndex'];
+    const keys = (j: Record<string, unknown>, air = false) => Object.keys(j).filter((k) => k !== 'report' && !(air && AIR_KEYS.includes(k))).sort();
     for (const body of [
       { receiver: true, caps: { hevc: false, surround: [] } }, // the receiver confirmed nothing
       { receiver: true, caps: { hevc: 'yes', surround: ['dts'] } }, // malformed: ignored, never an error
@@ -1184,7 +1185,7 @@ describe('cast: HEVC and surround with FriendFlix\'s own receiver', () => {
       const { r, j } = await create(admin, body);
       expect(r.statusCode, JSON.stringify(body)).toBe(200);
       expect(shape(j), JSON.stringify(body)).toBe(shape(base));
-      expect(keys(j), JSON.stringify(body)).toEqual(keys(base));
+      expect(keys(j, body.via === 'airplay'), JSON.stringify(body)).toEqual(keys(base));
       expect(j.hlsSegmentFormat).toBe('ts');
     }
   });

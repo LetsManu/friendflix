@@ -115,6 +115,8 @@ describe('after the Plex block', () => {
 describe('joined AirPlay token', () => {
   const SERIES = 'e'.repeat(32);
   const FILM = 'f'.repeat(32);
+  /** a visible episode of another series */
+  const ELSEWHERE = '8'.repeat(32);
   type Stream = { Index: number; Language?: string; IsDefault?: boolean; IsForced?: boolean; Codec?: string };
   type Ep = {
     id: string; ms: string; ps: string; name: string; season: number; ix: number; rt: number; audio: Stream[]; subs: Stream[];
@@ -152,11 +154,13 @@ describe('joined AirPlay token', () => {
     env = await makeEnv({
       'GET /Users/[^/]+/Items/[^/]+': (u) => {
         if (u.pathname.endsWith(FILM)) return { json: { Id: FILM, Name: 'Film', Type: 'Movie', RunTimeTicks: 5400e7, UserData: {} } };
+        if (u.pathname.endsWith(ELSEWHERE)) return { json: { ...epDto(EPS[0]!), Id: ELSEWHERE, SeriesId: 'd'.repeat(32), SeriesName: 'Another Series' } };
         return { json: epDto(EPS.find((e) => u.pathname.endsWith(e.id)) ?? EPS[0]!) };
       },
       [`GET /Shows/${SERIES}/Episodes`]: (u) => {
         if (episodesThrow) throw new TypeError('fetch failed');
-        const i = EPS.findIndex((e) => e.id === u.searchParams.get('startItemId'));
+        // a start item that is not in the series: the list from its beginning (the adapter must not take that for a match)
+        const i = Math.max(0, EPS.findIndex((e) => e.id === u.searchParams.get('startItemId')));
         return { json: { Items: EPS.slice(i, i + Number(u.searchParams.get('limit') ?? 2)).map(epDto) } };
       },
       'POST /Items/[^/]+/PlaybackInfo': (u) => {
@@ -405,10 +409,11 @@ describe('joined AirPlay token', () => {
       EPS[0]!.audio = [{ Index: 1, Language: 'eng' }, { Index: 2, Language: 'ger' }];
       ({ rec } = await joined({ maxEpisodes: 2 }));
       expect(q(rec.items[1].hlsPath).get('AudioStreamIndex')).toBe('2');
-      // German first: episode 2's default German needs no index
+      // German first: episode 2's default German is named too (without an index Jellyfin streams the first track with channels, not
+      // the IsDefault one: jellyfin/dto.ts sourceFacts)
       EPS[0]!.audio = [{ Index: 1, Language: 'ger' }, { Index: 2, Language: 'eng' }];
       ({ rec } = await joined({ maxEpisodes: 2 }));
-      expect(q(rec.items[1].hlsPath).has('AudioStreamIndex')).toBe(false);
+      expect(q(rec.items[1].hlsPath).get('AudioStreamIndex')).toBe('1');
     } finally { EPS = base(); }
   });
 
@@ -469,18 +474,54 @@ describe('joined AirPlay token', () => {
   });
 
   it('no track of that language in the episode: its default audio, no subtitle (never another language by number)', async () => {
-    // episode 4 has German audio only and no subtitles: episode 3's English audio (5) and German subtitles (4) have no match there
+    try {
+    // episode 4: French first, German its default, no English and no subtitles: episode 3's English audio (5) and German subtitles (4)
+    // have no match there -> its default track, named (Jellyfin would otherwise stream the first one, French)
+    EPS[3]!.audio = [{ Index: 1, Language: 'fre' }, { Index: 2, Language: 'ger', IsDefault: true }];
     const r = await remint({ itemId: EPS[3]!.id, tracksOf: EPS[2]!.id, audioIndex: 5, subtitleIndex: 4 });
     expect(r.statusCode, r.body).toBe(200);
     const j = r.json(), p = q(new URL(j.contentUrl).search);
     expect((await recOf(j)).hlsSub).toBeUndefined();
-    expect(p.has('AudioStreamIndex')).toBe(false);
+    expect(p.get('AudioStreamIndex')).toBe('2');
+    expect(j.audioIndex).toBe(2);
     expect(p.has('SubtitleStreamIndex')).toBe(false);
     expect(j.hlsSub).toBeUndefined();
     expect(j.subtitleIndex).toBeUndefined();
     // the same indices without `tracksOf` would be used as they are (the client's own episode)
     const plain = await remint({ itemId: EPS[2]!.id, audioIndex: 5, subtitleIndex: 4 });
     expect(q(new URL(plain.json().contentUrl).search).get('AudioStreamIndex')).toBe('5');
+    } finally { EPS = base(); }
+  });
+
+  it('an explicit choice that is the episode\'s default track is named in the stream and the answer (it survives the next re-mint)', async () => {
+    try {
+      EPS[1]!.audio = [{ Index: 1, Language: 'ger' }, { Index: 4, Language: 'eng', IsDefault: true }];
+      const r = await remint({ itemId: EPS[1]!.id, tracksOf: EPS[0]!.id, audioIndex: 2 });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(q(new URL(r.json().contentUrl).search).get('AudioStreamIndex')).toBe('4');
+      expect(r.json().audioIndex).toBe(4);
+    } finally { EPS = base(); }
+  });
+
+  it('a forced subtitle choice maps to the episode\'s forced track, a full one to its full track', async () => {
+    try {
+      EPS[0]!.subs = [{ Index: 3, Language: 'ger', IsForced: true }, { Index: 6, Language: 'ger' }];
+      EPS[1]!.subs = [{ Index: 5, Language: 'ger' }, { Index: 8, Language: 'ger', IsForced: true }];
+      const forced = await remint({ itemId: EPS[1]!.id, tracksOf: EPS[0]!.id, subtitleIndex: 3 });
+      expect(forced.json()).toMatchObject({ hlsSub: true, subtitleIndex: 8 });
+      const full = await remint({ itemId: EPS[1]!.id, tracksOf: EPS[0]!.id, subtitleIndex: 6 });
+      expect(full.json()).toMatchObject({ hlsSub: true, subtitleIndex: 5 });
+    } finally { EPS = base(); }
+  });
+
+  it('`tracksOf` two episodes back is accepted, four back is refused', async () => {
+    try {
+      EPS.push({ id: '5'.repeat(32), ms: 'e'.repeat(32), ps: 'ps-high-tide', name: 'High Tide', season: 2, ix: 4, rt: 2000e7, audio: [ger], subs: [] });
+      expect((await remint({ itemId: EPS[2]!.id, tracksOf: EPS[0]!.id, audioIndex: 2 })).statusCode).toBe(200);
+      const far = await remint({ itemId: EPS[4]!.id, tracksOf: EPS[0]!.id, audioIndex: 2 });
+      expect(far.statusCode).toBe(400);
+      expect(far.json()).toEqual({ error: 'bad_request' });
+    } finally { EPS = base(); }
   });
 
   it('`tracksOf` must be an earlier episode of the same series the profile sees, and AirPlay only', async () => {
@@ -488,7 +529,8 @@ describe('joined AirPlay token', () => {
       [{ itemId: EPS[1]!.id, tracksOf: FILM }, 'a film'],
       [{ itemId: EPS[1]!.id, tracksOf: EPS[3]!.id }, 'a later episode'],
       [{ itemId: FILM, tracksOf: EPS[0]!.id }, 'the item is no episode'],
-      [{ itemId: EPS[1]!.id, tracksOf: '9'.repeat(32) }, 'not an episode of this series'],
+      [{ itemId: EPS[1]!.id, tracksOf: '9'.repeat(32) }, 'an id the lookup does not answer for'],
+      [{ itemId: EPS[1]!.id, tracksOf: ELSEWHERE }, 'a visible episode of another series'],
       [{ itemId: EPS[1]!.id, tracksOf: EPS[0]!.id, via: 'chromecast' }, 'Chromecast'],
     ] as const) {
       const r = await remint({ audioIndex: 2, ...body });
