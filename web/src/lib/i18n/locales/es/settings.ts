@@ -13,6 +13,7 @@ const settings: Translation<typeof de> = {
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Los cambios se aplican al instante, sin reiniciar. El ajuste fino para expertos (RECO_COEFFS y los pesos del índice RECO_W_*) solo se define en .env.' },
   serverHelp: 'Valores del entorno del contenedor. Solo lectura; las credenciales nunca se muestran.',
+  roleTemplatesNote: 'Los roles ahora se cambian en Personas → Roles y permisos; los valores del .env siguen aplicándose por debajo.',
   source: { env: 'Del entorno', db: 'Guardado', default: 'Predeterminado', bootstrap: 'Del archivo de arranque', unset: 'Sin definir' },
   locked: 'Viene del entorno (.env) y no se puede cambiar aquí.',
   restart: 'Requiere reinicio',

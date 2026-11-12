@@ -9,12 +9,11 @@ test.describe('admin people (phone)', () => {
   test.use({ allowedConsole: /status of (500|502)/ });
   test.beforeEach(({ api }) => { api.asAdmin = true; });
 
-  for (const [path, h1, probe] of [['users', 'Nutzer', /Anna Beispiel/], ['roles', 'Rollen', null], ['devices', 'Geräte', /Chrome auf Windows/], ['users?tab=invites', 'Nutzer', /Für Annas Bruder/], ['audit', 'Audit-Log', /Emma Schneider gesperrt/]] as const) {
+  for (const [path, h1, probe] of [['users', 'Nutzer', /Anna Beispiel/], ['roles', 'Rollen', /3 Personen/], ['devices', 'Geräte', /Chrome auf Windows/], ['users?tab=invites', 'Nutzer', /Für Annas Bruder/], ['audit', 'Audit-Log', /Emma Schneider gesperrt/]] as const) {
     test(`${path}: cards instead of a table, nothing overflows at 390px`, async ({ page }) => {
       await page.goto(`/admin/${path}`);
       await expect(page.getByRole('heading', { level: 1, name: h1 })).toBeVisible();
       if (probe) await expect(page.getByText(probe).first()).toBeVisible();
-      else await expect(page.getByRole('form', { name: 'Freund' })).toBeVisible();
       await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
       if (SHOTS) {
         await page.waitForTimeout(600);
@@ -70,17 +69,6 @@ test.describe('admin people (phone)', () => {
     await page.goto('/admin/invites');
     await expect(page).toHaveURL(/\/admin\/users\?tab=invites$/);
     await expect(page.getByText('Für Annas Bruder')).toBeVisible();
-  });
-
-  test('roles: editor is usable on the phone', async ({ page, api }) => {
-    await page.goto('/admin/roles');
-    const card = page.getByRole('form', { name: 'Gast' });
-    await card.getByRole('switch', { name: 'Downloads erlauben' }).click();
-    await card.getByRole('spinbutton', { name: 'Gleichzeitige Downloads' }).fill('4');
-    await card.getByRole('button', { name: 'Speichern' }).click();
-    await expect(page.getByRole('region', { name: 'Hinweise' }).getByText('Rolle „Gast“ gespeichert.')).toBeVisible();
-    expect(api.log.some((l) => l.startsWith('PUT /api/admin/roles/guest') && l.includes('"maxDownloads":4'))).toBe(true);
-    await expect.poll(() => noHorizontalOverflow(page)).toBe(true);
   });
 
   test('devices: approve button inside the card', async ({ page, api }) => {

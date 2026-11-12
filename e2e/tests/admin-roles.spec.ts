@@ -680,11 +680,13 @@ test.describe('Rollen & Rechte: toasts and the save bar', () => {
   test('without a bar the toast stands still (cards below 900 px)', async ({ page }) => {
     await page.setViewportSize({ width: 800, height: 900 });
     await page.goto('/admin/roles');
-    const card = page.getByRole('form', { name: 'Freund' });
-    await card.getByRole('switch', { name: 'Umwandeln erlaubt' }).click();
-    await card.getByRole('button', { name: 'Speichern' }).click();
-    const t = toasts(page).getByText('Rolle „Freund“ gespeichert.');
+    await (await menu(page, 'Familie')).getByRole('button', { name: 'Duplizieren' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Rolle „Familie“ duplizieren' });
+    await dlg.getByRole('textbox', { name: 'Name' }).fill('Oma & Opa');
+    await dlg.getByRole('button', { name: 'Anlegen' }).click();
+    const t = toasts(page).getByText('Rolle „Oma & Opa“ angelegt.');
     await expect(t).toBeVisible();
+    await expect(bar(page)).toHaveCount(0);
     const a = await toasts(page).boundingBox();
     await page.waitForTimeout(350);
     expect(await toasts(page).boundingBox()).toEqual(a);

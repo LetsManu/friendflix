@@ -11,6 +11,7 @@ export default {
   /** a group's note under its title (Admin → Settings) */
   groupHelp: { recommendations: 'Änderungen gelten sofort, ohne Neustart. Die Feineinstellung für Fachleute (RECO_COEFFS und die Index-Gewichte RECO_W_*) wird nur in der .env gesetzt.' },
   serverHelp: 'Werte aus der Umgebung des Containers. Nur lesbar; Zugangsdaten werden nie angezeigt.',
+  roleTemplatesNote: 'Rollen lassen sich jetzt unter Personen → Rollen & Rechte ändern; .env-Werte gelten weiter darunter.',
   source: { env: 'Aus der Umgebung', db: 'Gespeichert', default: 'Standard', bootstrap: 'Aus der Startdatei', unset: 'Nicht gesetzt' },
   locked: 'Kommt aus der Umgebung (.env) und lässt sich hier nicht ändern.',
   restart: 'Neustart nötig',

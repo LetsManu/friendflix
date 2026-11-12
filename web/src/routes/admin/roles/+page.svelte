@@ -7,41 +7,31 @@
    * a partial policy failure (502 policy_partial: the values are stored) offers *Erneut anwenden* with the role's last body.
    * The column menus run here: *Duplizieren* (POST, asks for the name), *Löschen* (confirm, or the dialog that moves the people
    * first, from the server's 409 role_in_use), *Nach links/rechts* and the drag handle (PUT /order, applied at once and reloaded).
-   * Narrower screens keep the old card per role (requests / playback / downloads) until the phone cards replace it.
-   * Either way an unsaved-changes guard asks before leaving.
+   * Below 900 px: a card per role (tap: the role sheet, the same menu) and *Vergleich* (one right, every role), switched by a
+   * segmented control; the same staging, save bar and review. An unsaved-changes guard asks before leaving, at any width.
    */
   import { onMount, tick } from 'svelte';
   import { beforeNavigate, goto } from '$app/navigation';
   import { api, ApiError } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import { t, tr } from '#lib/i18n';
-  import { roleName } from '#lib/roles';
-  import { busyKeys, errorText, runAction } from '#lib/ui/action';
+    import { errorText } from '#lib/ui/action';
+  import { SCRIM_BAR } from '#lib/glass/tone';
+  import SlidePill from '#lib/glass/SlidePill.svelte';
   import Button from '#lib/ui/Button.svelte';
   import { confirm } from '#lib/ui/confirm';
-  import Field from '#lib/ui/Field.svelte';
-  import Select from '#lib/ui/Select.svelte';
   import Skeleton from '#lib/ui/Skeleton.svelte';
-  import StatusPill from '#lib/ui/StatusPill.svelte';
   import { toast } from '#lib/ui/toast';
-  import Toggle from '#lib/ui/Toggle.svelte';
+  import CompareView from '#lib/admin/rights/CompareView.svelte';
   import DeleteRoleDialog from '#lib/admin/rights/DeleteRoleDialog.svelte';
   import { partialText, policyLine, reviewLines, roleName as roleLabel, saveBarText, stageBodies, stageCounts, stageSet, type MatrixRole, type RoleMatrix, type Stage } from '#lib/admin/rights/model';
   import NameDialog from '#lib/admin/rights/NameDialog.svelte';
   import ReviewSheet from '#lib/admin/rights/ReviewSheet.svelte';
+  import RoleCards from '#lib/admin/rights/RoleCards.svelte';
   import RoleMatrixView from '#lib/admin/rights/RoleMatrix.svelte';
   import SaveBar from '#lib/admin/rights/SaveBar.svelte';
 
-  interface Form { perMonth: number | null; unlimited: boolean; transcoding: boolean; maxHeight: string; download: boolean; maxDownloads: number | null; dlHeight: string; days: number | null; remoteCap: string }
-  interface Card { role: string; label: string; builtinLabel: boolean; isDefault: boolean; maxBitrate: number; remoteDefault: number; form: Form; base: Form }
-  interface Limit { role: string; label: string; builtinLabel?: boolean; requestsPerMonth: number | null; isDefault: boolean; transcoding: boolean; maxHeight: number | null; download?: boolean; maxDownloads?: number | null; downloadMaxHeight?: number | null; downloadDays?: number | null; maxBitrate: number; remoteMaxBitrate: number; remoteDefault: number; remoteIsDefault: boolean }
-
-  const HEIGHTS = [720, 1080, 1440, 2160];
-  const DL_HEIGHTS = [480, 720, 1080];
-  const REMOTE_CAPS = [2, 4, 8, 12, 20, 40]; // Mbit/s
-  const LIKE_PLAYBACK = 2160; // no extra cap for downloads
-  let cards: Card[] | null = null, error: string | null = null;
-  let matrix: RoleMatrix | null = null;
+  let matrix: RoleMatrix | null = null, error: string | null = null;
 
   /** the matrix from 900 px on (the admin sidebar's breakpoint); below it the cards */
   const WIDE = '(min-width: 900px)';
@@ -54,62 +44,42 @@
     return () => mq.removeEventListener('change', sync);
   });
 
-  const toForm = (l: Limit): Form => ({
-    perMonth: l.requestsPerMonth ?? 2, unlimited: l.requestsPerMonth === null, transcoding: l.transcoding, maxHeight: l.maxHeight ? String(l.maxHeight) : '',
-    download: Boolean(l.download), maxDownloads: l.maxDownloads ?? 0, dlHeight: l.downloadMaxHeight && DL_HEIGHTS.includes(l.downloadMaxHeight) ? String(l.downloadMaxHeight) : '', days: l.downloadDays ?? 30, remoteCap: l.remoteIsDefault ? '' : String(l.remoteMaxBitrate), // '' = the role default
-  });
-  const toCards = (limits: Limit[]): Card[] => limits.map((l) => ({ role: l.role, label: l.label, builtinLabel: Boolean(l.builtinLabel), isDefault: l.isDefault, maxBitrate: l.maxBitrate, remoteDefault: l.remoteDefault, form: toForm(l), base: toForm(l) }));
   async function load() {
     error = null;
     try {
-      const r = await api<{ limits: Limit[]; matrix?: RoleMatrix }>('/api/admin/roles');
-      matrix = r.matrix ?? null;
+      const r = await api<{ matrix?: RoleMatrix }>('/api/admin/roles');
+      if (!r.matrix) throw new Error('no matrix');
+      matrix = r.matrix;
       stage = {};
-      cards = toCards(r.limits);
     } catch { error = tr('adminPeople.loadFailed'); }
   }
   onMount(load);
-  /** the matrix again after a role was created, deleted or moved: staged edits stay (those of a role that is gone drop); the phone cards follow while none is edited */
+  /** the matrix again after a role was created, deleted or moved: staged edits stay (those of a role that is gone drop) */
   async function refresh() {
-    const r = await api<{ limits: Limit[]; matrix?: RoleMatrix }>('/api/admin/roles');
+    const r = await api<{ matrix?: RoleMatrix }>('/api/admin/roles');
     if (!r.matrix) return;
     const keys = new Set(r.matrix.roles.map((x) => x.key));
     matrix = r.matrix;
     stage = Object.fromEntries(Object.entries(stage).filter(([k]) => keys.has(k)));
-    if (!cardsDirty) cards = toCards(r.limits);
   }
 
-  const int = (v: number | null) => Math.round(Number(v));
-  const inRange = (v: number | null, lo: number, hi: number) => v !== null && v !== undefined && Number.isFinite(Number(v)) && int(v) >= lo && int(v) <= hi && String(v) !== '';
-  function errorsOf(f: Form): { perMonth?: string; downloads?: string; days?: string } {
-    const e: { perMonth?: string; downloads?: string; days?: string } = {};
-    if (!f.unlimited && !inRange(f.perMonth, 0, 100)) e.perMonth = tr('adminPeople.roles.errPerMonth');
-    if (f.download && !inRange(f.maxDownloads, 0, 200)) e.downloads = tr('adminPeople.roles.errDownloads');
-    if (f.download && !inRange(f.days, 1, 90)) e.days = tr('adminPeople.roles.errDays');
-    return e;
+  // ---- the phone's two views
+  type View = 'roles' | 'compare';
+  const VIEWS: View[] = ['roles', 'compare'];
+  let mode: View = 'roles', tabsEl: HTMLDivElement | undefined;
+  function tabKey(e: KeyboardEvent) {
+    const i = VIEWS.indexOf(mode), d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    if (e.key !== 'Home' && e.key !== 'End' && !d) return;
+    e.preventDefault();
+    mode = e.key === 'Home' ? VIEWS[0]! : e.key === 'End' ? VIEWS[VIEWS.length - 1]! : VIEWS[(i + d + VIEWS.length) % VIEWS.length]!;
+    void tick().then(() => document.getElementById(`rv-${mode}`)?.focus());
   }
-  /** only the fields that differ from the loaded state (so untouched settings keep their default/override status) */
-  function diff(c: Card): Record<string, unknown> {
-    const f = c.form, b = c.base, body: Record<string, unknown> = {};
-    // 'unlimited' lifts the limit; null would mean "back to the default" (the role API's encoding)
-    if (f.unlimited !== b.unlimited || (!f.unlimited && int(f.perMonth) !== int(b.perMonth))) body.requestsPerMonth = f.unlimited ? 'unlimited' : int(f.perMonth);
-    if (f.transcoding !== b.transcoding) body.transcoding = f.transcoding;
-    if (f.maxHeight !== b.maxHeight) body.maxHeight = f.maxHeight ? Number(f.maxHeight) : 'unlimited';
-    if (f.download !== b.download) body.download = f.download;
-    if (f.download && int(f.maxDownloads) !== int(b.maxDownloads)) body.maxDownloads = int(f.maxDownloads);
-    if (f.dlHeight !== b.dlHeight) body.downloadMaxHeight = f.dlHeight ? Number(f.dlHeight) : LIKE_PLAYBACK;
-    if (f.download && int(f.days) !== int(b.days)) body.downloadDays = int(f.days);
-    if (f.remoteCap !== b.remoteCap) body.remoteMaxBitrate = f.remoteCap ? Number(f.remoteCap) : null; // null = back to the default
-    return body;
-  }
-  const dirty = (c: Card): boolean => Object.keys(diff(c)).length > 0;
-  $: cardsDirty = (cards ?? []).filter(dirty).length;
 
   // ---- the matrix: staged changes, the save bar, the review sheet, the sequential save
   let stage: Stage = {};
   $: counts = matrix ? stageCounts(stage, matrix) : null;
-  $: showMatrix = wide && matrix !== null;
-  $: dirtyCount = showMatrix ? counts?.roles ?? 0 : cardsDirty;
+  /** staged roles, at any width (the guard and the save bar count the same edits) */
+  $: dirtyCount = counts?.roles ?? 0;
   type Body = Record<string, unknown>;
   /** one role write: its body and, for staged values, what was staged when it was built (null: re-sending a stored body) */
   interface Job { role: string; body: Body; fields: Record<string, unknown> | null }
@@ -120,7 +90,7 @@
   let saving = false, progress: string | null = null, barError: string | null = null;
   let reviewing = false, reviewBtn: HTMLElement | null = null;
   let bar: SaveBar | undefined;
-  let view: RoleMatrixView | undefined;
+  let view: RoleMatrixView | RoleCards | undefined;
 
   /** a written role: the values it carried become the loaded ones (set in the role itself now); staged entries equal to them go */
   function stored(j: Job) {
@@ -186,27 +156,6 @@
     bar?.focus();
     await apply();
   }
-
-  async function save(c: Card) {
-    if (Object.keys(errorsOf(c.form)).length) { cards = cards; return; }
-    const body = diff(c);
-    if (!Object.keys(body).length) return;
-    const snapshot = { ...c.form };
-    const res = await runAction({
-      key: `role:${c.role}`,
-      run: () => api(`/api/admin/roles/${encodeURIComponent(c.role)}`, { method: 'PUT', body }),
-      success: tr('adminPeople.roles.saved', { name: name(c) }),
-      error: (e) => (e instanceof ApiError && e.status === 502 ? tr('adminPeople.roles.partial', { name: name(c) }) : errorText(e)),
-    });
-    // 502 = saved, but not every Jellyfin account took the new policy: the settings are stored either way
-    if (res.ok || (res.error instanceof ApiError && res.error.status === 502)) {
-      c.base = snapshot;
-      if ('requestsPerMonth' in body) c.isDefault = false;
-      cards = cards;
-    }
-  }
-  function discard(c: Card) { c.form = { ...c.base }; cards = cards; }
-  const name = (c: Card): string => roleName(c.role, c);
 
   // ---- role menu: duplicate, delete (with a move), order
   let status = '';
@@ -274,7 +223,7 @@
     // only roles with a table row can be ordered, and they stay in front of the env-only ones
     const storedCount = matrix.roles.filter((r) => r.stored).length;
     if (from < 0 || from === to || to < 0 || to >= storedCount || !matrix.roles[from]!.stored) return;
-    const hadFocus = document.querySelector(`th[data-role="${CSS.escape(key)}"]`)?.contains(document.activeElement) ?? false;
+    const hadFocus = document.querySelector(`[data-role="${CSS.escape(key)}"]`)?.contains(document.activeElement) ?? false;
     const next = [...matrix.roles];
     const [m] = next.splice(from, 1);
     next.splice(to, 0, m!);
@@ -301,15 +250,6 @@
       .then((ok) => { if (ok) { leaving = true; void goto(to); } });
   });
 
-  $: heightOptions = [...HEIGHTS.map((h) => ({ value: String(h), label: `${h}p` })), { value: '', label: $t('adminPeople.roles.heightUnlimited') }];
-  /** presets up to the role's own limit (a higher remote cap would have no effect); the stored value stays selectable; '' = role default */
-  const capOptions = (c: Card, cur: string) => {
-    const vals = REMOTE_CAPS.map((m) => m * 1_000_000).filter((v) => v <= c.maxBitrate);
-    if (cur && !vals.includes(Number(cur))) vals.push(Number(cur));
-    const n = String(Math.min(c.remoteDefault, c.maxBitrate) / 1_000_000);
-    return [{ value: '', label: tr('adminPeople.roles.remoteCapDefault', { n }) }, ...vals.sort((x, y) => x - y).map((v) => ({ value: String(v), label: `${v / 1_000_000} Mbit/s` }))];
-  };
-  $: dlOptions = [...DL_HEIGHTS.map((h) => ({ value: String(h), label: `${h}p` })), { value: '', label: $t('adminPeople.roles.likePlayback') }];
 </script>
 
 <div class="roles">
@@ -317,69 +257,36 @@
 
 {#if error}
   <div class="state" role="alert"><Icon name="alert" size={22} /><p>{error}</p><Button variant="secondary" icon="refresh" on:click={load}>{$t('ui.retry')}</Button></div>
-{:else if cards === null && wide}
+{:else if matrix === null && wide}
   <div class="panel loading" aria-busy="true"><Skeleton w="30%" h="1.2rem" /><Skeleton lines={8} /></div>
-{:else if cards === null}
+{:else if matrix === null}
   <div class="grid" aria-busy="true">
     {#each [0, 1, 2] as i (i)}
-      <div class="card panel" aria-hidden="true"><Skeleton w="40%" h="1.2rem" /><Skeleton lines={5} /></div>
+      <div class="card panel" aria-hidden="true"><Skeleton w="40%" h="1.2rem" /><Skeleton lines={3} /></div>
     {/each}
   </div>
-{:else if !cards.length}
+{:else if !matrix.roles.length}
   <div class="state"><p>{$t('adminPeople.roles.empty')}</p></div>
-{:else if showMatrix && matrix}
+{:else if wide}
   <RoleMatrixView bind:this={view} {matrix} bind:stage disabled={saving} {status} on:duplicate={(e) => startDuplicate(e.detail)} on:remove={(e) => void removeRole(e.detail)} on:move={(e) => void moveRole(e.detail)} />
 {:else}
-  <div class="grid">
-    {#each cards as c (c.role)}
-      {@const errs = errorsOf(c.form)}
-      {@const isDirty = dirty(c)}
-      {@const busy = $busyKeys.has(`role:${c.role}`)}
-      <form class="card panel" class:dirty={isDirty} aria-labelledby="role-{c.role}" on:submit|preventDefault={() => save(c)}>
-        <header>
-          <h2 id="role-{c.role}">{name(c)}</h2>
-          {#if isDirty}<StatusPill tone="warn" label={$t('adminPeople.roles.unsaved')} icon="clock" />{/if}
-        </header>
-
-        <section aria-labelledby="g-{c.role}-req">
-          <h3 id="g-{c.role}-req">{$t('adminPeople.roles.requests')}</h3>
-          <Toggle label={$t('adminPeople.roles.unlimited')} bind:checked={c.form.unlimited} on:change={() => (cards = cards)} />
-          {#if !c.form.unlimited}
-            <Field label={$t('adminPeople.roles.perMonth')} type="number" min={0} max={100} step={1} width="8rem" bind:value={c.form.perMonth} error={errs.perMonth ?? ''}
-              hint={c.isDefault ? `${$t('adminPeople.roles.default')} · ${$t('adminPeople.roles.perMonthHint')}` : $t('adminPeople.roles.perMonthHint')} />
-          {/if}
-        </section>
-
-        <section aria-labelledby="g-{c.role}-pb">
-          <h3 id="g-{c.role}-pb">{$t('adminPeople.roles.playback')}</h3>
-          <Toggle label={$t('adminPeople.roles.transcoding')} hint={$t('adminPeople.roles.transcodingHint')} bind:checked={c.form.transcoding} on:change={() => (cards = cards)} />
-          <Select label={$t('adminPeople.roles.maxHeight')} options={heightOptions} bind:value={c.form.maxHeight} hint={$t('adminPeople.roles.heightHint')} />
-          <Select label={$t('adminPeople.roles.remoteCap')} options={capOptions(c, c.base.remoteCap)} bind:value={c.form.remoteCap} hint={$t('adminPeople.roles.remoteCapHint')} />
-        </section>
-
-        <section aria-labelledby="g-{c.role}-dl">
-          <h3 id="g-{c.role}-dl">{$t('adminPeople.roles.downloads')}</h3>
-          <Toggle label={$t('adminPeople.roles.allowDownloads')} hint={$t('adminPeople.roles.allowDownloadsHint')} bind:checked={c.form.download} on:change={() => (cards = cards)} />
-          {#if c.form.download}
-            <div class="two">
-              <Field label={$t('adminPeople.roles.maxDownloads')} type="number" min={0} max={200} step={1} bind:value={c.form.maxDownloads} error={errs.downloads ?? ''} />
-              <Field label={$t('adminPeople.roles.validity')} type="number" min={1} max={90} step={1} bind:value={c.form.days} error={errs.days ?? ''} hint={$t('adminPeople.roles.validityHint')} />
-            </div>
-            <Select label={$t('adminPeople.roles.downloadQuality')} options={dlOptions} bind:value={c.form.dlHeight} />
-          {/if}
-        </section>
-
-        <footer>
-          <Button variant="ghost" disabled={!isDirty || busy} on:click={() => discard(c)}>{$t('adminPeople.roles.discard')}</Button>
-          <Button type="submit" pending={busy} disabled={!isDirty}>{$t('adminPeople.roles.save')}</Button>
-        </footer>
-      </form>
+  <div class="seg frost frost-pill frost-safe" style="--fr-scrim-safe:{SCRIM_BAR}" role="tablist" aria-label={$t('adminPeople.roles.viewLabel')} tabindex="-1" on:keydown={tabKey} bind:this={tabsEl}>
+    {#each VIEWS as v (v)}
+      <button type="button" role="tab" id="rv-{v}" class="tab" class:on={mode === v} aria-selected={mode === v} aria-controls="rv-panel" tabindex={mode === v ? 0 : -1} on:click={() => (mode = v)}>{$t(v === 'roles' ? 'adminPeople.roles.viewRoles' : 'adminPeople.roles.compare')}</button>
     {/each}
+    {#if tabsEl}<SlidePill host={tabsEl} selector={'[role="tab"][aria-selected="true"]'} tone="white" />{/if}
+  </div>
+  <div id="rv-panel" role="tabpanel" aria-labelledby="rv-{mode}">
+    {#if mode === 'roles'}
+      <RoleCards bind:this={view} {matrix} bind:stage disabled={saving} {status} on:duplicate={(e) => startDuplicate(e.detail)} on:remove={(e) => void removeRole(e.detail)} on:move={(e) => void moveRole(e.detail)} />
+    {:else}
+      <CompareView {matrix} bind:stage />
+    {/if}
   </div>
 {/if}
 </div>
 
-{#if showMatrix && counts}
+{#if counts}
   <SaveBar bind:this={bar} count={counts.changes} text={saveBarText(counts)} busy={saving} {progress} error={barError}
     on:discard={discardAll} on:review={openReview} on:retry={retry} />
 {/if}
@@ -401,15 +308,13 @@
   .roles { padding-bottom: var(--savebar-h, 0px); }
   .loading { display: flex; flex-direction: column; gap: 1rem; }
   .intro { color: var(--mut); margin: 0 0 1rem; max-width: 60ch; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; align-items: start; }
+  .grid { display: flex; flex-direction: column; gap: .8rem; }
   .card { margin-bottom: 0; display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
-  .card.dirty { border-color: var(--warn); }
-  header { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
-  h2 { margin: 0; font-size: 1.15rem; }
-  section { border-top: 1px solid var(--line); padding: .8rem 0 0; display: flex; flex-direction: column; gap: .8rem; min-width: 0; }
-  h3 { margin: 0; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--mut); }
-  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: .8rem; }
-  footer { display: flex; justify-content: flex-end; gap: .6rem; flex-wrap: wrap; }
+  /* the phone's segmented control: a glass pill bar, the white pill (SlidePill) glides to the selected view */
+  .seg { display: flex; width: 100%; box-sizing: border-box; gap: 4px; margin: 0 0 1rem; padding: 6px; }
+  .tab { position: relative; z-index: 1; flex: 1 1 0; min-height: 44px; padding: 0 1rem; background: transparent; color: rgba(255, 255, 255, .9); border: 0; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+  .tab:hover:not(:disabled) { background: transparent; color: #fff; }
+  .tab.on, .tab.on:hover:not(:disabled) { color: #111; }
   .state { display: flex; flex-direction: column; align-items: center; gap: .6rem; text-align: center; padding: 2rem 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; color: var(--mut); }
   .state p { margin: 0; }
   .state[role='alert'] { color: var(--fg); }

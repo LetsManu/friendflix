@@ -21,13 +21,15 @@
   /** a number field's hint of the value that applies without one (e.g. the role's value behind a person's override) */
   export let placeholder: unknown = undefined;
   export let libraries: Array<{ id: string; name: string }> = [];
+  /** a name other than the field's (the compare view names each control after its role) */
+  export let name: string | undefined = undefined;
 
   const dispatch = createEventDispatcher<{ change: unknown }>();
   const id = uid('fc');
   /** bitrate presets in Mbit/s (within the field's min / max) */
   const MBIT = [1, 2, 4, 8, 12, 20, 40, 60, 80, 120, 200];
 
-  $: label = $locale && fieldLabel(field.key); // $locale: follows a language switch
+  $: label = name ?? ($locale && fieldLabel(field.key)); // $locale: follows a language switch
 
   // ---- presets (age rating, resolution, bitrate): '' stands for null (no cap)
   const enc = (v: unknown): string => (v === null || v === undefined ? '' : String(v));
