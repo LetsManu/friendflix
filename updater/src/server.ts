@@ -73,7 +73,8 @@ export async function status(d: AppDeps) {
     // redeploys through Portainer when it is set up. stackDir / projectDir (host paths, no secret) let the page name the fix.
     stack: stack?.stack ?? null, stackReason: stack?.reason ?? null, stackDir: stack?.workingDir ?? null, projectDir: stack?.projectDir ?? null,
     // the optional livetv service: what the updater did (enabled / disabled / absent) and whether its container runs
-    livetv: { state: s.livetv, container: livetv },
+    // error: why an update or rollback disabled it on its own (pull_failed / verify_failed / restart_failed / unhealthy)
+    livetv: { state: s.livetv, container: livetv, error: s.livetvError },
   };
 }
 
@@ -98,17 +99,19 @@ export function handler(d: AppDeps) {
       return send(res, 401, { error: auth.error });
     }
     if (r.route === 'status') return send(res, 200, await status(d));
-    if (r.route === 'channel' || r.route === 'livetv') {
+    if (r.route === 'livetv') {
       const parsed = jsonBody(req, body);
       if (!parsed.ok) return send(res, parsed.status, { error: parsed.error });
-      if (r.route === 'livetv') {
-        // exactly {op: 'enable'}, {op: 'disable'} or {op: 'remove', data: boolean}: no image, service, tag or volume can be named
-        const op = parseLivetvBody(parsed.value);
-        if (!op) return send(res, 400, { error: 'invalid_body' });
-        const started = d.updater.startLivetv(op);
-        if (!started.ok) return send(res, started.error === 'busy' ? 409 : 400, { error: started.error });
-        return send(res, 202, { job: started.job });
-      }
+      // exactly {op: 'enable'}, {op: 'disable'} or {op: 'remove', data: boolean}: no image, service, tag or volume can be named
+      const op = parseLivetvBody(parsed.value);
+      if (!op) return send(res, 400, { error: 'invalid_body' });
+      const started = d.updater.startLivetv(op);
+      if (!started.ok) return send(res, started.error === 'busy' ? 409 : 400, { error: started.error });
+      return send(res, 202, { job: started.job });
+    }
+    if (r.route === 'channel') {
+      const parsed = jsonBody(req, body);
+      if (!parsed.ok) return send(res, parsed.status, { error: parsed.error });
       const c = parseChannelBody(parsed.value);
       if (!c) return send(res, 400, { error: 'invalid_body' });
       if (d.updater.busy) return send(res, 409, { error: 'busy' });
@@ -124,9 +127,9 @@ export function handler(d: AppDeps) {
 }
 
 export function healthProbe(docker: Pick<Docker, 'ps'>, url: string, fetchImpl: typeof fetch = fetch): Ops['healthy'] {
-  return async (sha7, services = HEALTH_SERVICES) => {
+  return async (sha7) => {
     const ps = await docker.ps();
-    for (const svc of services) {
+    for (const svc of HEALTH_SERVICES) {
       const st = ps.find((p) => p.service === svc);
       if (!st || st.state !== 'running' || (st.health !== '' && st.health !== 'healthy')) return false;
     }
@@ -172,11 +175,9 @@ export function dockerOps(docker: Docker, healthUrl: string, fetchImpl: typeof f
     images: (t, s) => docker.images(t, s), pull: (t, s) => docker.pull(t, s), verify: (i) => docker.verify(i), up: (t, s) => docker.up(t, s),
     imageInfo: (r) => docker.imageInfo(r), running: (s) => docker.running(s), spawnSelfUpdate: (t) => docker.spawnSelfUpdate(t),
     healthy: healthProbe(docker, healthUrl, fetchImpl), composeFiles: () => docker.files,
+    ownStack: async () => { await docker.refreshFiles(); },
     stop: (s) => docker.stop(s), rm: (s) => docker.rm(s), livetvContainer: () => docker.livetvContainer(),
-    imageRm: async (tag, id) => {
-      await docker.imageRm(docker.livetvImage(tag));
-      if (id) await docker.imageRm(id);
-    },
+    imageRm: (ids) => docker.removeLivetvImages(ids),
     volumeRm: async () => {
       const name = await docker.cacheVolume();
       if (!name) throw new StepError('remove_failed', 'livetv no_project');

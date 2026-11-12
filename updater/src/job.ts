@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomBytes } from 'node:crypto';
 import { StepError, type ImageInfo, type LivetvContainer } from './docker.js';
-import { LIVETV_SERVICE, SELF_SERVICE, SHA_TAG_RE, channelTag, ffServices, healthServices, shaTag, type Channel, type LivetvOp } from './policy.js';
-import type { Job, JobAction, LivetvState, State, StateStore, StepName } from './state.js';
+import { FF_SERVICES, LIVETV_SERVICE, SELF_SERVICE, SHA_TAG_RE, channelTag, shaTag, type Channel, type LivetvOp } from './policy.js';
+import type { Job, JobAction, LivetvError, LivetvState, State, StateStore, StepName } from './state.js';
 
 /** What a job needs from Docker (docker.ts in production, a fake in the tests). */
 export interface Ops {
@@ -14,21 +14,20 @@ export interface Ops {
   imageInfo(ref: string): Promise<ImageInfo | null>;
   running(service: string): Promise<ImageInfo | null>;
   spawnSelfUpdate(tag: string): Promise<void>;
-  /**
-   * one health round: every one of `services` (default: the FriendFlix services) up and healthy where it has a check, the
-   * backend answering with `sha7`
-   */
-  healthy(sha7: string | null, services?: readonly string[]): Promise<boolean>;
+  /** one health round: every FriendFlix service up (and healthy where it has a check), the backend answering with `sha7` */
+  healthy(sha7: string | null): Promise<boolean>;
   /** the compose files the last images() call settled on (file names only; for the job log) */
   composeFiles?(): readonly string[];
+  /** refuses a foreign stack (StepError foreign_stack) and settles on the compose files, like the first step of every job */
+  ownStack(): Promise<void>;
   /** compose stop / rm -f of the livetv service (stop refuses a foreign stack first) */
   stop(services: readonly string[]): Promise<void>;
   rm(services: readonly string[]): Promise<void>;
-  /** removes this repository's livetv image with `tag`, then the image `id` the container ran (livetv's own only) */
-  imageRm(tag: string, id: string | null): Promise<void>;
+  /** removes every local tag of exactly the livetv repository, then these image ids (each only when it is livetv's alone) */
+  imageRm(ids: readonly string[]): Promise<void>;
   /** removes this stack's livetv cache volume (<project>_livetv-cache); never another volume */
   volumeRm(): Promise<void>;
-  /** the livetv container (any state) with its image id; null when there is none */
+  /** the livetv service container (any state, never a one-off) with its image id; null when there is none; throws when Docker does not answer */
   livetvContainer(): Promise<LivetvContainer | null>;
 }
 
@@ -118,7 +117,9 @@ export class Updater {
     return this.snapshot();
   }
 
-  start(action: JobAction): StartResult {
+  /** update, rollback or self-update; the livetv actions go through startLivetv only (never an update) */
+  start(action: 'update' | 'rollback' | 'self-update'): StartResult {
+    if (!['update', 'rollback', 'self-update'].includes(action)) throw new Error('invalid action');
     if (this.current) return { ok: false, error: 'busy' };
     const target = action === 'rollback' ? this.state.previous : channelTag(this.state.channel, this.state.version);
     if (!target) return { ok: false, error: action === 'rollback' ? 'no_previous' : 'no_target' };
@@ -133,8 +134,9 @@ export class Updater {
   }
 
   /**
-   * enable / disable / remove the livetv service. The tag is the build the updater installed last (else the channel's), so
-   * livetv runs the same build as the other services. The state changes only when the job gets that far.
+   * enable / disable / remove the livetv service. `to` starts as the last installed tag (else the channel's); enable replaces it
+   * inside the job with the running backend's sha-<7> tag when known (one Docker round trip, not done before the 202 answer), so
+   * livetv runs exactly the build the other services run. The state changes only when the job gets that far.
    */
   startLivetv(op: LivetvOp): StartResult {
     if (this.current) return { ok: false, error: 'busy' };
@@ -195,7 +197,7 @@ export class Updater {
     return images;
   }
 
-  private async waitHealthy(sha7: string | null, services: readonly string[], ok = () => this.ops.healthy(sha7, services), timeoutMs = this.o.healthTimeoutMs): Promise<boolean> {
+  private async waitHealthy(sha7: string | null, ok = () => this.ops.healthy(sha7), timeoutMs = this.o.healthTimeoutMs): Promise<boolean> {
     const end = this.o.now() + timeoutMs;
     for (;;) {
       if (await ok().catch(() => false)) return true;
@@ -204,25 +206,93 @@ export class Updater {
     }
   }
 
-  /** restart + health of an already verified tag; throws StepError */
+  /**
+   * restart + health of an already verified tag; throws StepError for the FriendFlix services only. `livetv`: its image at `tag`
+   * is verified too; it is started after the core services and, when it fails to start or to get healthy, stopped and disabled
+   * (dropLivetv) while the job goes on: livetv is optional and never fails or rolls back a core update.
+   */
   private async bringUp(job: Job, tag: string, images: Record<string, string>, steps: boolean, livetv: boolean): Promise<string | null> {
     const newSha = (await this.ops.imageInfo(images.backend!))?.gitSha ?? null;
-    const restart = () => this.ops.up(tag, ffServices(livetv));
+    let ltUp = livetv;
+    const restart = async () => {
+      await this.ops.up(tag, FF_SERVICES);
+      if (!livetv) return;
+      try { await this.ops.up(tag, LIVETV); } catch { ltUp = false; await this.dropLivetv('restart_failed', tag); }
+    };
     if (steps) await this.step(job, 'restart', restart); else await restart();
-    const health = async () => { if (!(await this.waitHealthy(newSha ? newSha.slice(0, 7) : null, healthServices(livetv)))) throw new StepError('unhealthy'); };
+    const health = async () => {
+      if (!(await this.waitHealthy(newSha ? newSha.slice(0, 7) : null))) throw new StepError('unhealthy');
+      if (!ltUp) return;
+      if (await this.waitLivetv()) await this.recordLivetvImage();
+      else await this.dropLivetv('unhealthy', tag);
+    };
     if (steps) await this.step(job, 'health', health); else await health();
     return newSha;
   }
 
+  /**
+   * pull + cosign verify of livetv at `tag` on its own (a failure of its pull must not fail the core services' pull); a fixed
+   * error code when its image is missing, does not resolve to this repository's or is not verified, null when it may start
+   */
+  private async prepareLivetv(tag: string): Promise<LivetvError | null> {
+    let image: string;
+    try {
+      image = (await this.ops.images(tag, LIVETV))[LIVETV_SERVICE]!;
+      await this.ops.pull(tag, LIVETV);
+    } catch { return 'pull_failed'; }
+    if (!(await this.ops.verify(image).catch(() => false))) { this.log.add(`signature check failed for ${image}`); return 'verify_failed'; }
+    this.log.add(`signature ok: ${image}`);
+    return null;
+  }
+
+  /**
+   * Ruling (Task 9 review M5, spec §4.2 C3): livetv is optional. An update or rollback whose livetv image is missing or not
+   * verified, or whose livetv does not start or get healthy, stops and removes livetv, persists `disabled` with a fixed error and
+   * one fixed log line, and completes for the core services. An unverified livetv image is never started.
+   */
+  private async dropLivetv(code: LivetvError, tag: string): Promise<void> {
+    try { await this.ops.stop(LIVETV); await this.ops.rm(LIVETV); } catch { this.log.add('livetv could not be stopped'); }
+    this.state.livetv = 'disabled';
+    this.state.livetvError = code;
+    this.persist();
+    this.log.add(`livetv disabled: ${code} at ${tag}`);
+  }
+
+  /** remembers the image id livetv runs (remove deletes it later, also after a disable) */
+  private async recordLivetvImage(): Promise<void> {
+    const image = (await this.ops.livetvContainer().catch(() => null))?.image;
+    if (image) { this.state.livetvImage = image; this.persist(); }
+  }
+
+  /**
+   * Before every job: a livetv container that runs while the state is not `enabled` (a crash between its start and the state
+   * write, or COMPOSE_PROFILES=livetv) is adopted as enabled, so updates keep it on the same build. It only ever started from a
+   * verified image (enable) or by the admin's own compose command. `enabled` without a container is left as it is and logged.
+   */
+  private async reconcileLivetv(): Promise<void> {
+    let c: LivetvContainer | null;
+    try { c = await this.ops.livetvContainer(); } catch { return; }
+    if (c?.state === 'running' && this.state.livetv !== 'enabled') {
+      this.state.livetv = 'enabled';
+      this.state.livetvError = null;
+      if (c.image) this.state.livetvImage = c.image;
+      this.persist();
+      this.log.add('livetv runs without being enabled: state set to enabled');
+    } else if (!c && this.state.livetv === 'enabled') {
+      this.log.add('livetv is enabled but has no container');
+    }
+  }
+
   private async deployJob(job: Job, autoRollback: boolean): Promise<void> {
-    // livetv follows the channel like the other images while it is enabled (no livetv job can change that meanwhile: one job at a time)
-    const livetv = this.state.livetv === 'enabled';
+    await this.reconcileLivetv();
     const before = await this.ops.running('backend').catch(() => null);
     const prevTag = shaTag(before?.gitSha);
     if (prevTag) job.from = prevTag;
     let images: Record<string, string>;
+    let livetv: boolean;
     try {
-      images = await this.prepare(job, job.to, ffServices(livetv));
+      images = await this.prepare(job, job.to, FF_SERVICES);
+      livetv = await this.livetvFor(job.to);
     } catch (e) {
       // nothing was restarted
       return this.finish(job, 'failed', (e as StepError).code);
@@ -240,8 +310,8 @@ export class Updater {
       job.steps.rollback = 'pending';
       try {
         await this.step(job, 'rollback', async () => {
-          const imgs = await this.prepare(null, prevTag, ffServices(livetv));
-          await this.bringUp(job, prevTag, imgs, false, livetv);
+          const imgs = await this.prepare(null, prevTag, FF_SERVICES);
+          await this.bringUp(job, prevTag, imgs, false, await this.livetvFor(prevTag));
         });
         this.state.current = prevTag;
         return this.finish(job, 'rolled_back', code);
@@ -251,18 +321,32 @@ export class Updater {
     }
   }
 
-  /** livetv running, and healthy where it has a check */
-  private async livetvHealthy(): Promise<boolean> {
-    const c = await this.ops.livetvContainer();
-    return c !== null && c.state === 'running' && (c.health === '' || c.health === 'healthy');
+  /** whether livetv goes along with `tag`: only while enabled, and only with its image pulled and verified (else it is dropped) */
+  private async livetvFor(tag: string): Promise<boolean> {
+    if (this.state.livetv !== 'enabled') return false;
+    const code = await this.prepareLivetv(tag);
+    if (code) await this.dropLivetv(code, tag);
+    return code === null;
+  }
+
+  /** livetv running and healthy (where it has a check) within the livetv health timeout */
+  private waitLivetv(): Promise<boolean> {
+    return this.waitHealthy(null, async () => {
+      const c = await this.ops.livetvContainer();
+      return c !== null && c.state === 'running' && (c.health === '' || c.health === 'healthy');
+    }, this.o.livetvHealthTimeoutMs);
   }
 
   /**
-   * enable: pull -> cosign verify -> start (`up -d --no-deps --pull never livetv` with its profile) -> healthy within 2 min, then
-   * state enabled. A start that fails or does not get healthy is stopped and removed again when livetv was not enabled before
-   * (state and containers stay in step); an enabled one (a repair) is left as it is.
+   * enable: the build the backend runs now (its sha-<7> tag; else the last installed tag, else the channel's) -> pull -> cosign
+   * verify -> start (`up -d --no-deps --pull never livetv` with its profile) -> healthy within 2 min, then state enabled. A start
+   * that fails or does not get healthy is stopped and removed again when livetv was not enabled before (the job ends
+   * rolled_back: "start failed, removed again"); an enabled one (a repair) is left as it is.
    */
   private async livetvEnable(job: Job): Promise<void> {
+    await this.reconcileLivetv();
+    const running = shaTag((await this.ops.running('backend').catch(() => null))?.gitSha);
+    if (running && running !== job.to) { job.to = running; this.persist(); this.log.add(`livetv follows the running build ${running}`); }
     const wasEnabled = this.state.livetv === 'enabled';
     try {
       await this.prepare(job, job.to, LIVETV);
@@ -271,9 +355,7 @@ export class Updater {
     }
     try {
       await this.step(job, 'restart', () => this.ops.up(job.to, LIVETV));
-      await this.step(job, 'health', async () => {
-        if (!(await this.waitHealthy(null, LIVETV, () => this.livetvHealthy(), this.o.livetvHealthTimeoutMs))) throw new StepError('health_timeout');
-      });
+      await this.step(job, 'health', async () => { if (!(await this.waitLivetv())) throw new StepError('unhealthy'); });
     } catch (e) {
       const code = (e as StepError).code;
       if (wasEnabled) return this.finish(job, 'failed', code);
@@ -286,26 +368,37 @@ export class Updater {
       }
     }
     this.state.livetv = 'enabled';
+    this.state.livetvError = null;
+    await this.recordLivetvImage();
     return this.finish(job, 'succeeded', null);
   }
 
   /**
-   * disable: compose stop + rm -f livetv -> state disabled. remove: the same, then the livetv image (this tag, and the image the
-   * container ran) and with `data` the cache volume -> state absent. The recordings volume is never named.
+   * disable: compose stop + rm -f livetv -> state disabled. Without a livetv container nothing runs (absent stays absent, also on
+   * compose files from before livetv). remove: the same, then every local tag of the livetv repository, the image id recorded
+   * when it ran and the container's, and with `data` the cache volume -> state absent. The recordings volume is never named.
    */
   private async livetvDisable(job: Job, remove: { data: boolean } | null): Promise<void> {
     try {
       await this.step(job, 'restart', async () => {
-        await this.ops.stop(LIVETV);
-        const image = remove ? (await this.ops.livetvContainer().catch(() => null))?.image ?? null : null;
-        await this.ops.rm(LIVETV);
-        this.state.livetv = 'disabled';
+        await this.ops.ownStack();
+        await this.reconcileLivetv();
+        const c = await this.ops.livetvContainer();
+        if (c) {
+          await this.ops.stop(LIVETV);
+          await this.ops.rm(LIVETV);
+        } else {
+          this.log.add('livetv has no container');
+        }
+        if (c || this.state.livetv === 'enabled') this.state.livetv = 'disabled';
+        this.state.livetvError = null;
         this.persist();
         if (!remove) return;
-        await this.ops.imageRm(job.to, image);
-        this.log.add('livetv image removed');
+        await this.ops.imageRm([...new Set([this.state.livetvImage, c?.image].filter((x): x is string => !!x))]);
+        this.log.add('livetv images removed');
         if (remove.data) { await this.ops.volumeRm(); this.log.add('livetv cache volume removed'); }
         this.state.livetv = 'absent';
+        this.state.livetvImage = null;
       });
       return this.finish(job, 'succeeded', null);
     } catch (e) {
@@ -316,6 +409,7 @@ export class Updater {
   private async selfUpdate(job: Job): Promise<void> {
     job.steps.health = 'skipped';
     try {
+      await this.reconcileLivetv();
       const images = await this.prepare(job, job.to, [SELF_SERVICE]);
       // already on that image (same registry digest): compose would leave this container as it is and no new process would
       // ever finish the job, so there is nothing to restart

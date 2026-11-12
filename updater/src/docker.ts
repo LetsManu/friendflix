@@ -238,6 +238,11 @@ export class Docker {
    * read-only listing); everything but the FriendFlix services, the updater and livetv is dropped here.
    */
   private async psRows(files: readonly string[]): Promise<ServiceState[] | null> {
+    return (await this.psAll(files))?.filter((x) => !x.oneoff).map(({ oneoff: _, ...x }) => x) ?? null;
+  }
+
+  /** every row with whether it is a one-off container (`compose run`, label com.docker.compose.oneoff=True); null when compose fails */
+  private async psAll(files: readonly string[]): Promise<Array<ServiceState & { oneoff: boolean }> | null> {
     const r = await this.compose(undefined, ['ps', '--all', '--format', 'json'], MIN, { files, livetv: true });
     if (r.code !== 0) return null;
     // compose prints one JSON object per line (older versions: one array)
@@ -245,13 +250,18 @@ export class Docker {
     for (const line of r.stdout.split('\n').map((l) => l.trim()).filter(Boolean)) {
       try { const v = JSON.parse(line); rows.push(...(Array.isArray(v) ? v : [v])); } catch { /* ignore */ }
     }
-    return rows.map((x) => ({ service: String(x.Service ?? ''), name: String(x.Name ?? ''), state: String(x.State ?? ''), health: String(x.Health ?? '') }))
+    return rows.map((x) => ({ service: String(x.Service ?? ''), name: String(x.Name ?? ''), state: String(x.State ?? ''), health: String(x.Health ?? ''), oneoff: oneoff(x.Labels) }))
       .filter((x) => PS_SERVICES.includes(x.service));
   }
 
-  /** the livetv container (any state) and the image id it runs; null when there is none */
+  /**
+   * the livetv service container (any state; never a one-off `compose run livetv` container) and the image id it runs; null when
+   * there is none. Throws compose_config when compose cannot list the containers (no answer is not "no container").
+   */
   async livetvContainer(): Promise<LivetvContainer | null> {
-    const st = (await this.ps()).find((p) => p.service === LIVETV_SERVICE);
+    const rows = await this.psRows(this.active);
+    if (rows === null) throw new StepError('compose_config');
+    const st = rows.find((p) => p.service === LIVETV_SERVICE);
     return st ? { ...st, image: await this.containerImage(st.name) } : null;
   }
 
@@ -267,12 +277,32 @@ export class Docker {
   async rm(services: readonly string[]): Promise<void> {
     onlyLivetv(services);
     const r = await this.compose(undefined, ['rm', '-f', ...services], MIN, { livetv: true });
-    if (r.code !== 0) throw new StepError('stop_failed');
+    if (r.code !== 0) throw new StepError('remove_failed');
   }
 
   /** this repository's livetv image with `tag` */
   livetvImage(tag: string): string {
     return expectedImage(this.s.repo, LIVETV_SERVICE, tag);
+  }
+
+  /** ghcr.io/<owner>/<repo>-livetv (no tag) */
+  private livetvRepo(): string {
+    return imageRepo(this.livetvImage('latest'));
+  }
+
+  /** every local tag of exactly the livetv repository (each row checked again: equal repository, never a prefix) */
+  async livetvTags(): Promise<string[]> {
+    const repo = this.livetvRepo();
+    const r = await this.run('docker', ['image', 'ls', '--format', '{{.Repository}}:{{.Tag}}', repo], { env: this.env(), timeoutMs: MIN });
+    if (r.code !== 0) throw new StepError('remove_failed');
+    return [...new Set(r.stdout.split('\n').map((l) => l.trim()).filter((t) => TAG_REF_RE.test(t) && imageRepo(t) === repo))];
+  }
+
+  /** remove: every local livetv tag, then the given image ids (what livetv ran; each removed only when it is livetv's alone) */
+  async removeLivetvImages(ids: readonly string[]): Promise<void> {
+    const tags = await this.livetvTags();
+    if (tags.length) await this.rmImages(tags);
+    for (const id of ids) await this.imageRm(id);
   }
 
   /**
@@ -281,7 +311,7 @@ export class Docker {
    * another repository's tag is left alone). An image that is not there is fine. Never forced: an image a container still uses stays.
    */
   async imageRm(ref: string): Promise<void> {
-    const repo = imageRepo(this.livetvImage('latest'));
+    const repo = this.livetvRepo();
     let refs: string[];
     if (IMAGE_ID_RE.test(ref)) {
       const tags = await this.repoTags(ref);
@@ -291,6 +321,11 @@ export class Docker {
       if (imageRepo(ref) !== repo || !isTag(ref.slice(ref.lastIndexOf(':') + 1))) throw new Error('invalid image');
       refs = [ref];
     }
+    await this.rmImages(refs);
+  }
+
+  /** `docker image rm` (never forced); an image that is not there is fine */
+  private async rmImages(refs: readonly string[]): Promise<void> {
     const r = await this.run('docker', ['image', 'rm', ...refs], { env: this.env(), timeoutMs: 2 * MIN });
     if (r.code !== 0 && !/no such image/i.test(r.stderr)) throw new StepError('remove_failed');
   }
@@ -357,6 +392,12 @@ export class Docker {
       { env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp' }, timeoutMs: 2 * MIN });
     return r.code === 0;
   }
+}
+
+/** compose ps prints Labels as "k=v,k=v" (some versions: a map) */
+function oneoff(labels: unknown): boolean {
+  if (typeof labels === 'string') return /(^|,)com\.docker\.compose\.oneoff=True(,|$)/.test(labels);
+  return !!labels && typeof labels === 'object' && (labels as Record<string, unknown>)['com.docker.compose.oneoff'] === 'True';
 }
 
 /** compose renders `environment` as a map (older versions: a list of KEY=value) */

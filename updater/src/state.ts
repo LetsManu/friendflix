@@ -11,6 +11,9 @@ const JOB_ACTIONS: readonly JobAction[] = ['update', 'rollback', 'self-update', 
 /** the optional livetv service: enabled (the updater started it; it follows every update), disabled (container removed), absent (never enabled or removed with its image) */
 export type LivetvState = 'enabled' | 'disabled' | 'absent';
 const LIVETV_STATES: readonly LivetvState[] = ['enabled', 'disabled', 'absent'];
+/** why an update or rollback disabled livetv on its own (livetv never holds back or rolls back the core services) */
+export type LivetvError = 'pull_failed' | 'verify_failed' | 'restart_failed' | 'unhealthy';
+const LIVETV_ERRORS: readonly LivetvError[] = ['pull_failed', 'verify_failed', 'restart_failed', 'unhealthy'];
 export type JobState = 'running' | 'succeeded' | 'failed' | 'rolled_back';
 
 export interface Job {
@@ -39,10 +42,14 @@ export interface State {
   previous: string | null;
   /** the optional livetv service (spec §4.2) */
   livetv: LivetvState;
+  /** set when a job disabled livetv by itself (its image missing or unverified for the target build, or it did not get healthy) */
+  livetvError: LivetvError | null;
+  /** the image id the livetv container last ran (recorded when it got healthy): `remove` deletes it even after a disable */
+  livetvImage: string | null;
   lastJob: Job | null;
 }
 
-export const DEFAULT_STATE: State = { channel: 'stable', version: null, current: null, previous: null, livetv: 'absent', lastJob: null };
+export const DEFAULT_STATE: State = { channel: 'stable', version: null, current: null, previous: null, livetv: 'absent', livetvError: null, livetvImage: null, lastJob: null };
 
 /** A malformed or tampered file falls back field by field to the defaults: nothing from it reaches compose unchecked. */
 export function sanitize(raw: unknown): State {
@@ -55,6 +62,8 @@ export function sanitize(raw: unknown): State {
     current: isTag(o.current) ? o.current : null,
     previous: typeof o.previous === 'string' && SHA_TAG_RE.test(o.previous) ? o.previous : null,
     livetv: LIVETV_STATES.find((v) => v === o.livetv) ?? 'absent',
+    livetvError: LIVETV_ERRORS.find((v) => v === o.livetvError) ?? null,
+    livetvImage: typeof o.livetvImage === 'string' && /^sha256:[0-9a-f]{64}$/.test(o.livetvImage) ? o.livetvImage : null,
     lastJob: sanitizeJob(o.lastJob),
   };
 }

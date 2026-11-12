@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -10,14 +11,15 @@ import { ReplayCache, deriveKey, sign } from '../src/protocol.js';
 import { dockerOps, handler, livetvView, status } from '../src/server.js';
 import { DEFAULT_STATE, memoryStore, sanitize, type State } from '../src/state.js';
 
-// The optional livetv service (spec §4.2): POST /v1/livetv enable / disable / remove. The tests run the real Updater on the real
-// Docker command lines against a fake Docker host (the Runner), so every assertion is about the exact commands that would run.
+// The optional livetv service (spec §4.2): POST /v1/livetv enable / disable / remove, and livetv inside updates and rollbacks.
+// The tests run the real Updater on the real Docker command lines against a fake Docker host (the Runner), so every assertion is
+// about the exact commands that would run.
 
 type Call = { program: Program; args: string[]; env: Record<string, string> };
 const D = 'sha256:' + 'c'.repeat(64);
 const ID = 'sha256:' + 'e'.repeat(64);
 const OTHER_ID = 'sha256:' + 'f'.repeat(64);
-const SHA = 'b'.repeat(40);
+const A = 'a'.repeat(40), B = 'b'.repeat(40);
 const LTV = 'ghcr.io/letsmanu/friendflix-livetv';
 const LABELS = { 'com.docker.compose.project': 'friendflix', 'com.docker.compose.project.working_dir': '/srv/friendflix',
   'com.docker.compose.project.config_files': '/srv/friendflix/compose.prod.yaml' };
@@ -25,6 +27,8 @@ const PORTAINER = { ...LABELS, 'com.docker.compose.project.working_dir': '/data/
 const cmd = (c: Call) => [c.program, ...c.args].join(' ');
 /** the compose sub-command (after the fixed base arguments) */
 const sub = (c: Call): string => (c.args[0] === 'compose' ? c.args[c.args.indexOf('--ansi') + 2] ?? '' : `${c.args[0]} ${c.args[1]}`);
+/** the commit a tag's images carry: sha-aaaaaaa is build A, everything else build B */
+const shaOf = (tag: string) => (tag === 'sha-aaaaaaa' ? A : B);
 
 interface WorldOpts {
   /** the livetv container as it is before the job */
@@ -33,19 +37,30 @@ interface WorldOpts {
   healthAfterUp?: string;
   verifyFails?: string;
   pullFails?: boolean;
+  /** tags whose livetv image cannot be pulled (a build from before livetv) */
+  livetvPullFails?: string[];
+  /** tags whose core services never get healthy */
+  coreUnhealthy?: string[];
+  /** the commit the running backend carries (null: a dev build without GIT_SHA); default build A */
+  coreSha?: string | null;
   /** compose / docker sub-commands that fail (e.g. 'stop', 'up', 'image rm') */
   fails?: string[];
   labels?: unknown;
-  /** tags of the image the livetv container runs */
+  /** local tags of the image the livetv container runs */
   imageTags?: string[];
   /** blocks every `pull` until released */
   gate?: boolean;
+  /** compose files from before livetv: a command naming livetv fails (no such service) */
+  noLivetvService?: boolean;
+  /** a one-off `compose run livetv` container listed before the service container */
+  oneoff?: boolean;
 }
 
 /** a fake Docker host: the FriendFlix stack runs, the livetv container as given */
 function world(o: WorldOpts = {}) {
   const calls: Call[] = [];
-  const w = { livetv: o.livetv ?? null, imageTags: [...(o.imageTags ?? [`${LTV}:latest`, `${LTV}:sha-aaaaaaa`])], idGone: false, waiting: false, release: () => {} };
+  const w = { livetv: o.livetv ?? null, imageTags: [...(o.imageTags ?? [`${LTV}:latest`, `${LTV}:sha-aaaaaaa`])], idGone: false, waiting: false, release: () => {},
+    coreSha: o.coreSha === undefined ? A : o.coreSha, coreTag: '' };
   const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' });
   const run: Runner = async (program, args, opts) => {
     const c = { program, args: [...args], env: opts.env };
@@ -54,25 +69,30 @@ function world(o: WorldOpts = {}) {
     const s = sub(c);
     if (o.fails?.includes(s)) return { code: 1, stdout: '', stderr: 'Error: token ghp_secret123 denied' };
     const profiled = args.includes('livetv') && args[args.indexOf('livetv') - 1] === '--profile';
+    const tag = opts.env.FF_TAG ?? '';
+    const namesLivetv = args.at(-1) === 'livetv' && args[0] === 'compose';
+    if (o.noLivetvService && namesLivetv) return { code: 1, stdout: '', stderr: 'no such service: livetv' };
     switch (s) {
       case 'ps': {
-        const rows = [...FF_SERVICES, 'updater', 'postgres'].map((x) => ({ Service: x, Name: `friendflix-${x}-1`, State: 'running', Health: x === 'web' || x === 'bootstrap' ? '' : 'healthy' }));
-        if (w.livetv && profiled) rows.push({ Service: 'livetv', Name: 'friendflix-livetv-1', State: w.livetv.state, Health: w.livetv.health });
+        const rows: Array<Record<string, string>> = [...FF_SERVICES, 'updater', 'postgres'].map((x) => ({ Service: x, Name: `friendflix-${x}-1`, State: 'running', Health: x === 'web' || x === 'bootstrap' ? '' : 'healthy', Labels: 'com.docker.compose.oneoff=False' }));
+        if (o.oneoff && profiled) rows.unshift({ Service: 'livetv', Name: 'friendflix-livetv-run-0a1b2c', State: 'running', Health: '', Labels: 'com.docker.compose.project=friendflix,com.docker.compose.oneoff=True' });
+        if (w.livetv && profiled) rows.push({ Service: 'livetv', Name: 'friendflix-livetv-1', State: w.livetv.state, Health: w.livetv.health, Labels: 'com.docker.compose.oneoff=False' });
         return ok(rows.map((r) => JSON.stringify(r)).join('\n'));
       }
       case 'config': {
         // like compose: a service of an inactive profile is not rendered
-        const tag = opts.env.FF_TAG!;
         const services: Record<string, { image: string }> = Object.fromEntries([...FF_SERVICES, 'updater'].map((x) => [x, { image: `ghcr.io/letsmanu/friendflix-${IMAGE_OF[x]}:${tag}` }]));
         services.postgres = { image: 'postgres:17-alpine' };
-        if (profiled) services.livetv = { image: `${LTV}:${tag}` };
+        if (profiled && !o.noLivetvService) services.livetv = { image: `${LTV}:${tag}` };
         return ok(JSON.stringify({ services }));
       }
       case 'pull':
         if (o.gate) await new Promise<void>((r) => { w.waiting = true; w.release = () => { w.waiting = false; r(); }; });
-        return o.pullFails ? { code: 1, stdout: '', stderr: 'denied' } : ok();
+        if (o.pullFails || (namesLivetv && o.livetvPullFails?.includes(tag))) return { code: 1, stdout: '', stderr: 'manifest unknown' };
+        return ok();
       case 'up':
-        if (args.includes('livetv')) w.livetv = { state: 'running', health: o.healthAfterUp ?? 'healthy' };
+        if (namesLivetv) w.livetv = { state: 'running', health: o.healthAfterUp ?? 'healthy' };
+        if (args.includes('backend')) { w.coreSha = shaOf(tag); w.coreTag = tag; }
         return ok();
       case 'stop':
         if (w.livetv) w.livetv = { state: 'exited', health: '' };
@@ -84,16 +104,20 @@ function world(o: WorldOpts = {}) {
         const f = args[3]!, name = args.at(-1)!;
         if (f === '{{json .Config.Labels}}') return ok(JSON.stringify(o.labels ?? LABELS));
         if (f.includes('PortBindings')) return ok(`{}\t{"friendflix_default":{}}\t${JSON.stringify(o.labels ?? LABELS)}`);
-        if (f === '{{.Image}}') return ok(`${name === 'friendflix-livetv-1' ? ID : OTHER_ID}\n`);
+        if (f === '{{.Image}}') return ok(`${name.startsWith('friendflix-livetv-') ? (name.includes('run') ? OTHER_ID : ID) : OTHER_ID}\n`);
         if (f === '{{json .Config.Env}}') return ok('[]');
         return ok();
       }
       case 'image inspect': {
         const ref = args.at(-1)!, f = args[3]!;
         if (f === '{{json .RepoTags}}') return ref === ID && !w.idGone ? ok(JSON.stringify(w.imageTags)) : { code: 1, stdout: '', stderr: 'No such image' };
+        if (ref === OTHER_ID) return ok(`["ghcr.io/letsmanu/friendflix-backend@${D}"]\t[${w.coreSha ? `"GIT_SHA=${w.coreSha}"` : ''}]`);
         const repo = ref === ID ? LTV : ref.slice(0, ref.lastIndexOf(':'));
-        return ok(`["${repo}@${D}"]\t["GIT_SHA=${SHA}","APP_VERSION=1.2.3"]`);
+        return ok(`["${repo}@${D}"]\t["GIT_SHA=${shaOf(ref.slice(ref.lastIndexOf(':') + 1))}","APP_VERSION=1.2.3"]`);
       }
+      case 'image ls':
+        // the CLI filters by repository; a look-alike repository and an untagged row are printed anyway to prove the re-check
+        return ok([...w.imageTags, `${LTV}-extra:latest`, `${LTV}:<none>`].join('\n'));
       case 'image rm': {
         const refs = args.slice(2);
         if (refs.some((r) => !w.imageTags.includes(r) && r !== ID)) return { code: 1, stdout: '', stderr: `Error response from daemon: No such image: ${refs[0]}` };
@@ -101,13 +125,14 @@ function world(o: WorldOpts = {}) {
         if (!w.imageTags.length || refs.includes(ID)) w.idGone = true;
         return ok();
       }
-      case 'volume rm':
-        return ok();
       default:
         return ok();
     }
   };
-  return { calls, w, run };
+  // the backend's /health: the build that runs, unless that tag is one that never gets healthy
+  const health = (async () => (o.coreUnhealthy?.includes(w.coreTag) ? new Response('{}', { status: 503 })
+    : new Response(JSON.stringify({ status: 'ok', version: (w.coreSha ?? '').slice(0, 7) })))) as unknown as typeof fetch;
+  return { calls, w, run, health };
 }
 
 /** lets a gated pull through once a job has reached it */
@@ -115,7 +140,6 @@ async function release(m: { w: { waiting: boolean; release: () => void } }): Pro
   for (let i = 0; i < 200 && !m.w.waiting; i++) await new Promise((r) => setTimeout(r, 5));
   m.w.release();
 }
-const health = (async () => new Response(JSON.stringify({ status: 'ok', version: SHA.slice(0, 7) }))) as unknown as typeof fetch;
 
 function make(o: WorldOpts = {}, init: Partial<State> = {}) {
   const wd = world(o);
@@ -123,12 +147,15 @@ function make(o: WorldOpts = {}, init: Partial<State> = {}) {
   let u: Updater | null = null;
   const docker = new Docker({ projectDir: '/srv/friendflix', files: ['compose.prod.yaml'], repo: 'LetsManu/friendflix', dockerHost: 'tcp://docker-proxy:2375', livetv: () => u?.livetv === 'enabled' }, wd.run);
   const store = memoryStore({ ...DEFAULT_STATE, ...init });
-  u = new Updater(dockerOps(docker, 'http://backend:3000/health', health), store, { healthTimeoutMs: 20_000, healthIntervalMs: 5_000, now: () => t, sleep: async (ms) => { t += ms; } });
+  u = new Updater(dockerOps(docker, 'http://backend:3000/health', wd.health), store, { healthTimeoutMs: 20_000, healthIntervalMs: 5_000, now: () => t, sleep: async (ms) => { t += ms; } });
   return { ...wd, docker, store, u, elapsed: () => t - 1_760_800_000_000 };
 }
 type Made = ReturnType<typeof make>;
 const changing = (m: Made) => m.calls.filter((c) => c.program === 'cosign' || ['pull', 'up', 'stop', 'rm', 'image rm', 'volume rm', 'run'].includes(sub(c))).map(cmd);
 const BASE = 'docker compose --project-directory /srv/friendflix -f /srv/friendflix/compose.prod.yaml --profile updater';
+const P = `${BASE} --profile livetv --ansi never`;
+const COSIGN = 'cosign verify --certificate-identity-regexp ^https://github\\.com/LetsManu/friendflix/\\.github/workflows/publish\\.yml@refs/(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+)$ --certificate-oidc-issuer https://token.actions.githubusercontent.com';
+const logged = (m: Made, line: string) => m.u.log.tail(200).some((l) => l.endsWith(line));
 
 describe('livetv policy', () => {
   it('parseLivetvBody accepts exactly three shapes', () => {
@@ -154,10 +181,12 @@ describe('livetv policy', () => {
   });
 
   it('state file sanitises livetv', () => {
-    expect(DEFAULT_STATE.livetv).toBe('absent');
+    expect(DEFAULT_STATE).toMatchObject({ livetv: 'absent', livetvError: null, livetvImage: null });
     expect(sanitize({ livetv: 'bogus' }).livetv).toBe('absent');
     expect(sanitize({}).livetv).toBe('absent');
     for (const v of ['enabled', 'disabled', 'absent'] as const) expect(sanitize({ livetv: v }).livetv).toBe(v);
+    expect(sanitize({ livetvError: 'unhealthy', livetvImage: ID })).toMatchObject({ livetvError: 'unhealthy', livetvImage: ID });
+    expect(sanitize({ livetvError: 'Bad; id', livetvImage: 'friendflix-backend:latest' })).toMatchObject({ livetvError: null, livetvImage: null });
     const job = (action: string) => ({ id: '0123456789abcdef', action, state: 'succeeded', to: 'latest', steps: {}, startedAt: '2026-11-12T00:00:00.000Z' });
     for (const a of ['livetv-enable', 'livetv-disable', 'livetv-remove']) expect(sanitize({ lastJob: job(a) }).lastJob?.action).toBe(a);
     expect(sanitize({ lastJob: job('livetv-exec') }).lastJob).toBeNull();
@@ -169,27 +198,37 @@ describe('livetv jobs', () => {
   it('enable pulls, verifies and starts livetv with the profile', async () => {
     const m = make();
     const r = m.u.startLivetv({ op: 'enable' });
-    expect(r).toMatchObject({ ok: true, job: { action: 'livetv-enable', state: 'running', to: 'latest', from: null } });
+    expect(r).toMatchObject({ ok: true, job: { action: 'livetv-enable', state: 'running', from: null } });
     expect(m.u.busy).toBe(true);
     await m.u.idle();
+    // the build the backend runs (sha-aaaaaaa), never the channel's moving tag
     expect(changing(m)).toEqual([
-      `${BASE} --profile livetv --ansi never pull --quiet livetv`,
-      `cosign verify --certificate-identity-regexp ^https://github\\.com/LetsManu/friendflix/\\.github/workflows/publish\\.yml@refs/(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+)$ --certificate-oidc-issuer https://token.actions.githubusercontent.com ${LTV}@${D}`,
-      `${BASE} --profile livetv --ansi never up -d --no-deps --pull never livetv`,
+      `${P} pull --quiet livetv`,
+      `${COSIGN} ${LTV}@${D}`,
+      `${P} up -d --no-deps --pull never livetv`,
     ]);
     // the image check ran on the rendered config with the profile (compose leaves livetv out without it)
     expect(m.calls.some((c) => sub(c) === 'config' && cmd(c).includes('--profile livetv'))).toBe(true);
-    for (const c of m.calls.filter((x) => ['pull', 'up', 'config'].includes(sub(x)))) expect(c.env.FF_TAG).toBe('latest');
-    expect(m.store.state.livetv).toBe('enabled');
-    expect(m.store.state.lastJob).toMatchObject({ action: 'livetv-enable', state: 'succeeded', error: null, step: null,
+    for (const c of m.calls.filter((x) => ['pull', 'up', 'config'].includes(sub(x)))) expect(c.env.FF_TAG).toBe('sha-aaaaaaa');
+    expect(m.store.state).toMatchObject({ livetv: 'enabled', livetvError: null, livetvImage: ID });
+    expect(m.store.state.lastJob).toMatchObject({ action: 'livetv-enable', state: 'succeeded', error: null, step: null, to: 'sha-aaaaaaa',
       steps: { pull: 'ok', verify: 'ok', restart: 'ok', health: 'ok', rollback: 'skipped' } });
-    expect(m.u.log.tail().some((l) => l.endsWith('livetv-enable succeeded'))).toBe(true);
-    // the installed FriendFlix build decides the tag (not the channel's moving tag)
-    const p = make({}, { current: 'sha-bbbbbbb' });
-    p.u.startLivetv({ op: 'enable' });
-    await p.u.idle();
-    expect(p.calls.filter((c) => sub(c) === 'pull').map((c) => c.env.FF_TAG)).toEqual(['sha-bbbbbbb']);
-    expect(p.store.state.lastJob?.to).toBe('sha-bbbbbbb');
+    expect(logged(m, 'livetv-enable succeeded')).toBe(true);
+  });
+
+  it('the enable tag: the running backend\'s sha tag, then the last installed tag, then the channel\'s', async () => {
+    const tagOf = async (o: WorldOpts, init: Partial<State>) => {
+      const m = make(o, init);
+      m.u.startLivetv({ op: 'enable' });
+      await m.u.idle();
+      return [m.calls.filter((c) => sub(c) === 'pull').map((c) => c.env.FF_TAG), m.store.state.lastJob?.to];
+    };
+    // installed through the updater as `latest`: a newer `latest` may exist by now, the running build decides
+    expect(await tagOf({}, { current: 'latest' })).toEqual([['sha-aaaaaaa'], 'sha-aaaaaaa']);
+    expect(await tagOf({ coreSha: B }, { current: 'nightly', channel: 'nightly' })).toEqual([['sha-bbbbbbb'], 'sha-bbbbbbb']);
+    // a dev build (no GIT_SHA): the last installed tag, else the channel's
+    expect(await tagOf({ coreSha: null }, { current: 'sha-bbbbbbb' })).toEqual([['sha-bbbbbbb'], 'sha-bbbbbbb']);
+    expect(await tagOf({ coreSha: null }, { current: null })).toEqual([['latest'], 'latest']);
   });
 
   it('a verify failure starts nothing', async () => {
@@ -213,8 +252,8 @@ describe('livetv jobs', () => {
     await m.u.idle();
     expect(m.elapsed()).toBe(120_000);
     expect(m.store.state.livetv).toBe('disabled');
-    expect(m.store.state.lastJob).toMatchObject({ state: 'rolled_back', error: 'health_timeout', steps: { restart: 'ok', health: 'failed', rollback: 'ok' } });
-    expect(changing(m).slice(-2)).toEqual([`${BASE} --profile livetv --ansi never stop livetv`, `${BASE} --profile livetv --ansi never rm -f livetv`]);
+    expect(m.store.state.lastJob).toMatchObject({ state: 'rolled_back', error: 'unhealthy', steps: { restart: 'ok', health: 'failed', rollback: 'ok' } });
+    expect(changing(m).slice(-2)).toEqual([`${P} stop livetv`, `${P} rm -f livetv`]);
     expect(m.w.livetv).toBeNull();
 
     const r = make({ fails: ['up'] });
@@ -232,26 +271,51 @@ describe('livetv jobs', () => {
     const e = make({ livetv: { state: 'running', health: 'healthy' }, healthAfterUp: 'starting' }, { livetv: 'enabled' });
     e.u.startLivetv({ op: 'enable' });
     await e.u.idle();
-    expect(e.store.state).toMatchObject({ livetv: 'enabled', lastJob: { state: 'failed', error: 'health_timeout', steps: { rollback: 'skipped' } } });
+    expect(e.store.state).toMatchObject({ livetv: 'enabled', lastJob: { state: 'failed', error: 'unhealthy', steps: { rollback: 'skipped' } } });
     expect(e.calls.some((c) => sub(c) === 'stop' || sub(c) === 'rm')).toBe(false);
   });
 
   it('disable stops and removes the container', async () => {
-    const m = make({ livetv: { state: 'running', health: 'healthy' } }, { livetv: 'enabled' });
+    const m = make({ livetv: { state: 'running', health: 'healthy' } }, { livetv: 'enabled', livetvError: 'unhealthy' });
     const r = m.u.startLivetv({ op: 'disable' });
     expect(r).toMatchObject({ ok: true, job: { action: 'livetv-disable', steps: { pull: 'skipped', verify: 'skipped', health: 'skipped' } } });
     await m.u.idle();
-    expect(changing(m)).toEqual([`${BASE} --profile livetv --ansi never stop livetv`, `${BASE} --profile livetv --ansi never rm -f livetv`]);
-    expect(m.store.state.livetv).toBe('disabled');
+    expect(changing(m)).toEqual([`${P} stop livetv`, `${P} rm -f livetv`]);
+    expect(m.store.state).toMatchObject({ livetv: 'disabled', livetvError: null });
     expect(m.store.state.lastJob).toMatchObject({ action: 'livetv-disable', state: 'succeeded', steps: { pull: 'skipped', verify: 'skipped', restart: 'ok', health: 'skipped', rollback: 'skipped' } });
     expect(m.w.livetv).toBeNull();
-    // a failing stop: state unchanged, a fixed code
+    // a failing stop: state unchanged, a fixed code; a failing rm -f: remove_failed
     const f = make({ livetv: { state: 'running', health: 'healthy' }, fails: ['stop'] }, { livetv: 'enabled' });
     f.u.startLivetv({ op: 'disable' });
     await f.u.idle();
     expect(f.store.state).toMatchObject({ livetv: 'enabled', lastJob: { state: 'failed', error: 'stop_failed', steps: { restart: 'failed' } } });
     expect(f.calls.some((c) => sub(c) === 'rm')).toBe(false);
     expect(JSON.stringify(f.store.state) + f.u.log.tail().join('\n')).not.toContain('ghp_secret');
+    const g = make({ livetv: { state: 'running', health: 'healthy' }, fails: ['rm'] }, { livetv: 'enabled' });
+    g.u.startLivetv({ op: 'disable' });
+    await g.u.idle();
+    expect(g.store.state).toMatchObject({ livetv: 'enabled', lastJob: { state: 'failed', error: 'remove_failed' } });
+  });
+
+  it('disable without a livetv container is a no-op success (also on compose files from before livetv)', async () => {
+    for (const o of [{}, { noLivetvService: true }]) {
+      const m = make(o, { livetv: 'absent' });
+      m.u.startLivetv({ op: 'disable' });
+      await m.u.idle();
+      expect(changing(m), JSON.stringify(o)).toEqual([]);
+      expect(m.store.state).toMatchObject({ livetv: 'absent', lastJob: { action: 'livetv-disable', state: 'succeeded' } });
+    }
+    // enabled, but the container is gone: disabled
+    const e = make({}, { livetv: 'enabled' });
+    e.u.startLivetv({ op: 'disable' });
+    await e.u.idle();
+    expect(changing(e)).toEqual([]);
+    expect(e.store.state.livetv).toBe('disabled');
+    // Docker does not answer: not taken for "no container"
+    const b = make({ fails: ['ps'] }, { livetv: 'enabled' });
+    b.u.startLivetv({ op: 'disable' });
+    await b.u.idle();
+    expect(b.store.state).toMatchObject({ livetv: 'enabled', lastJob: { state: 'failed', error: 'compose_config' } });
   });
 
   it('remove with data deletes the image and the cache volume, never recordings', async () => {
@@ -259,30 +323,28 @@ describe('livetv jobs', () => {
     m.u.startLivetv({ op: 'remove', data: true });
     await m.u.idle();
     expect(changing(m)).toEqual([
-      `${BASE} --profile livetv --ansi never stop livetv`,
-      `${BASE} --profile livetv --ansi never rm -f livetv`,
-      `docker image rm ${LTV}:latest`,
-      // the image the container ran, by its remaining tags (all of them livetv's)
-      `docker image rm ${LTV}:sha-aaaaaaa`,
+      `${P} stop livetv`,
+      `${P} rm -f livetv`,
+      // every local tag of exactly the livetv repository (not the look-alike friendflix-livetv-extra, not <none>)
+      `docker image rm ${LTV}:latest ${LTV}:sha-aaaaaaa`,
       'docker volume rm friendflix_livetv-cache',
     ]);
     for (const c of m.calls) expect(cmd(c)).not.toContain('recordings');
-    expect(m.store.state.livetv).toBe('absent');
-    expect(m.store.state.lastJob).toMatchObject({ action: 'livetv-remove', state: 'succeeded' });
+    expect(m.store.state).toMatchObject({ livetv: 'absent', livetvImage: null, lastJob: { action: 'livetv-remove', state: 'succeeded' } });
 
     // without data: the cache volume stays
     const k = make({ livetv: { state: 'exited', health: '' } }, { livetv: 'disabled' });
     k.u.startLivetv({ op: 'remove', data: false });
     await k.u.idle();
     expect(k.calls.some((c) => sub(c) === 'volume rm')).toBe(false);
-    expect(k.calls.filter((c) => sub(c) === 'image rm').length).toBeGreaterThan(0);
+    expect(k.calls.filter((c) => sub(c) === 'image rm').map(cmd)).toEqual([`docker image rm ${LTV}:latest ${LTV}:sha-aaaaaaa`]);
     expect(k.store.state.livetv).toBe('absent');
 
-    // an image that also carries another service's tag is never removed by id; a tag that is not there is fine
+    // an image that also carries another repository's tag is never removed by id
     const s = make({ livetv: { state: 'running', health: 'healthy' }, imageTags: ['ghcr.io/letsmanu/friendflix-backend:latest', `${LTV}:sha-aaaaaaa`] }, { livetv: 'enabled' });
     s.u.startLivetv({ op: 'remove', data: false });
     await s.u.idle();
-    expect(s.calls.filter((c) => sub(c) === 'image rm').map(cmd)).toEqual([`docker image rm ${LTV}:latest`]);
+    expect(s.calls.filter((c) => sub(c) === 'image rm').map(cmd)).toEqual([`docker image rm ${LTV}:sha-aaaaaaa`]);
     expect(s.store.state).toMatchObject({ livetv: 'absent', lastJob: { state: 'succeeded' } });
 
     // removal fails: the container is gone (disabled), the job says so
@@ -292,22 +354,42 @@ describe('livetv jobs', () => {
     expect(f.store.state).toMatchObject({ livetv: 'disabled', lastJob: { state: 'failed', error: 'remove_failed' } });
   });
 
-  it('updates include livetv only while enabled', async () => {
+  it('remove after a disable: every livetv tag and the image id recorded when it ran', async () => {
+    const m = make({}, { livetv: 'disabled', livetvImage: ID });
+    m.u.startLivetv({ op: 'remove', data: false });
+    await m.u.idle();
+    expect(changing(m)).toEqual([`docker image rm ${LTV}:latest ${LTV}:sha-aaaaaaa`]);
+    expect(m.w.imageTags).toEqual([]);
+    expect(m.store.state).toMatchObject({ livetv: 'absent', livetvImage: null, lastJob: { state: 'succeeded' } });
+    // its tags moved on (a newer pull): the recorded image is dangling and removed by id
+    const d = make({ imageTags: [] }, { livetv: 'disabled', livetvImage: ID });
+    d.u.startLivetv({ op: 'remove', data: false });
+    await d.u.idle();
+    expect(changing(d)).toEqual([`docker image rm ${ID}`]);
+    // on compose files from before livetv, remove on an absent livetv just finds nothing to delete
+    const a = make({ noLivetvService: true, imageTags: [] }, { livetv: 'absent' });
+    a.u.startLivetv({ op: 'remove', data: true });
+    await a.u.idle();
+    expect(a.store.state).toMatchObject({ livetv: 'absent', lastJob: { state: 'succeeded' } });
+  });
+
+  it('updates include livetv only while enabled, pulled, verified and started on its own', async () => {
     const on = make({ livetv: { state: 'running', health: 'healthy' } }, { livetv: 'enabled' });
     on.u.start('update');
     await on.u.idle();
-    expect(on.store.state.lastJob).toMatchObject({ action: 'update', state: 'succeeded' });
-    const ch = changing(on);
-    expect(ch).toContain(`${BASE} --profile livetv --ansi never pull --quiet bootstrap backend gateway web livetv`);
-    expect(ch).toContain(`${BASE} --profile livetv --ansi never up -d --no-deps --pull never bootstrap backend gateway web livetv`);
-    expect(ch.filter((c) => c.startsWith('cosign')).map((c) => c.split(' ').at(-1))).toEqual(['backend', 'gateway', 'web', 'livetv'].map((s) => `ghcr.io/letsmanu/friendflix-${s}@${D}`));
+    expect(on.store.state.lastJob).toMatchObject({ action: 'update', state: 'succeeded', error: null });
+    expect(changing(on)).toEqual([
+      `${P} pull --quiet bootstrap backend gateway web`,
+      ...['backend', 'gateway', 'web'].map((s) => `${COSIGN} ghcr.io/letsmanu/friendflix-${s}@${D}`),
+      // livetv after the core services are verified, on its own (its failure never fails the core pull)
+      `${P} pull --quiet livetv`,
+      `${COSIGN} ${LTV}@${D}`,
+      `${P} up -d --no-deps --pull never bootstrap backend gateway web`,
+      `${P} up -d --no-deps --pull never livetv`,
+    ]);
     // every compose command adds the profile while enabled
     for (const c of on.calls.filter((x) => x.args[0] === 'compose')) expect(cmd(c), cmd(c)).toContain('--profile updater --profile livetv');
-    // health waits for livetv too
-    const sick = make({ livetv: { state: 'running', health: 'healthy' }, healthAfterUp: 'unhealthy' }, { livetv: 'enabled' });
-    sick.u.start('update');
-    await sick.u.idle();
-    expect(sick.store.state.lastJob).toMatchObject({ state: 'failed', steps: { restart: 'ok', health: 'failed' } });
+    expect(on.store.state).toMatchObject({ livetv: 'enabled', livetvImage: ID });
 
     const off = make({}, { livetv: 'disabled' });
     off.u.start('update');
@@ -316,6 +398,87 @@ describe('livetv jobs', () => {
     expect(changing(off).filter((c) => c.includes('livetv'))).toEqual([]);
     expect(changing(off)).toContain(`${BASE} --ansi never up -d --no-deps --pull never bootstrap backend gateway web`);
     expect(off.calls.filter((c) => sub(c) === 'config').every((c) => !cmd(c).includes('livetv'))).toBe(true);
+  });
+
+  it('an update with an unhealthy livetv completes for the core services and disables livetv', async () => {
+    const m = make({ livetv: { state: 'running', health: 'healthy' }, healthAfterUp: 'unhealthy' }, { livetv: 'enabled' });
+    m.u.start('update');
+    await m.u.idle();
+    expect(m.store.state).toMatchObject({ current: 'latest', previous: 'sha-aaaaaaa', livetv: 'disabled', livetvError: 'unhealthy',
+      lastJob: { action: 'update', state: 'succeeded', error: null, steps: { restart: 'ok', health: 'ok', rollback: 'skipped' } } });
+    expect(changing(m).slice(-2)).toEqual([`${P} stop livetv`, `${P} rm -f livetv`]);
+    expect(m.elapsed()).toBe(120_000); // the core was healthy at once; livetv got its 2 min
+    expect(logged(m, 'livetv disabled: unhealthy at latest')).toBe(true);
+    // a livetv image the new build does not have: livetv is dropped before anything restarts, the core is updated
+    const n = make({ livetv: { state: 'running', health: 'healthy' }, livetvPullFails: ['latest'] }, { livetv: 'enabled' });
+    n.u.start('update');
+    await n.u.idle();
+    expect(n.store.state).toMatchObject({ current: 'latest', livetv: 'disabled', livetvError: 'pull_failed', lastJob: { state: 'succeeded' } });
+    expect(changing(n).some((c) => c.endsWith(`friendflix-livetv@${D}`) || c.endsWith('up -d --no-deps --pull never livetv'))).toBe(false);
+    // a livetv signature failure: never started, dropped
+    const v = make({ livetv: { state: 'running', health: 'healthy' }, verifyFails: 'friendflix-livetv' }, { livetv: 'enabled' });
+    v.u.start('update');
+    await v.u.idle();
+    expect(v.store.state).toMatchObject({ current: 'latest', livetv: 'disabled', livetvError: 'verify_failed', lastJob: { state: 'succeeded' } });
+    expect(changing(v).some((c) => c.endsWith('up -d --no-deps --pull never livetv'))).toBe(false);
+  });
+
+  it('an explicit rollback to a build without a livetv image rolls the core back and disables livetv', async () => {
+    const m = make({ coreSha: B, livetv: { state: 'running', health: 'healthy' }, livetvPullFails: ['sha-aaaaaaa'] }, { livetv: 'enabled', previous: 'sha-aaaaaaa', current: 'latest' });
+    expect(m.u.start('rollback').ok).toBe(true);
+    await m.u.idle();
+    expect(m.store.state).toMatchObject({ current: 'sha-aaaaaaa', livetv: 'disabled', livetvError: 'pull_failed',
+      lastJob: { action: 'rollback', state: 'succeeded', from: 'sha-bbbbbbb', to: 'sha-aaaaaaa' } });
+    const ch = changing(m);
+    expect(ch).toContain(`${BASE} --ansi never up -d --no-deps --pull never bootstrap backend gateway web`);
+    expect(ch.some((c) => c.endsWith('up -d --no-deps --pull never livetv'))).toBe(false);
+    expect(ch.some((c) => c.endsWith(`friendflix-livetv@${D}`))).toBe(false); // no cosign for livetv after its failed pull
+    expect(ch.slice(ch.indexOf(`${P} pull --quiet livetv`) + 1, ch.indexOf(`${P} pull --quiet livetv`) + 3)).toEqual([`${P} stop livetv`, `${P} rm -f livetv`]);
+    expect(logged(m, 'livetv disabled: pull_failed at sha-aaaaaaa')).toBe(true);
+    // an explicit rollback with a livetv image: livetv goes back too
+    const k = make({ coreSha: B, livetv: { state: 'running', health: 'healthy' } }, { livetv: 'enabled', previous: 'sha-aaaaaaa', current: 'latest' });
+    k.u.start('rollback');
+    await k.u.idle();
+    expect(k.store.state).toMatchObject({ current: 'sha-aaaaaaa', livetv: 'enabled', lastJob: { state: 'succeeded' } });
+    expect(changing(k)).toContain(`${P} up -d --no-deps --pull never livetv`);
+    expect(k.calls.filter((c) => sub(c) === 'up').map((c) => c.env.FF_TAG)).toEqual(['sha-aaaaaaa', 'sha-aaaaaaa']);
+  });
+
+  it('the automatic rollback: livetv without an image for the old build, or unhealthy there, is disabled; the core rolls back', async () => {
+    const m = make({ livetv: { state: 'running', health: 'healthy' }, coreUnhealthy: ['latest'], livetvPullFails: ['sha-aaaaaaa'] }, { livetv: 'enabled' });
+    m.u.start('update');
+    await m.u.idle();
+    expect(m.store.state).toMatchObject({ current: 'sha-aaaaaaa', livetv: 'disabled', livetvError: 'pull_failed',
+      lastJob: { action: 'update', state: 'rolled_back', error: 'unhealthy', steps: { health: 'failed', rollback: 'ok' } } });
+    const ch = changing(m);
+    const back = ch.slice(ch.indexOf(`${P} pull --quiet bootstrap backend gateway web`, 1));
+    expect(back.some((c) => c.endsWith('up -d --no-deps --pull never livetv') || c.endsWith(`friendflix-livetv@${D}`))).toBe(false);
+    expect(back).toContain(`${BASE} --ansi never up -d --no-deps --pull never bootstrap backend gateway web`);
+
+    const u = make({ livetv: { state: 'running', health: 'healthy' }, coreUnhealthy: ['latest'], healthAfterUp: 'unhealthy' }, { livetv: 'enabled' });
+    u.u.start('update');
+    await u.u.idle();
+    expect(u.store.state).toMatchObject({ current: 'sha-aaaaaaa', livetv: 'disabled', livetvError: 'unhealthy', lastJob: { state: 'rolled_back', error: 'unhealthy' } });
+  });
+
+  it('a running livetv the state does not know is adopted as enabled before a job; enabled without a container is reported', async () => {
+    const m = make({ livetv: { state: 'running', health: 'healthy' } }, { livetv: 'absent' });
+    m.u.start('update');
+    await m.u.idle();
+    expect(m.store.state).toMatchObject({ livetv: 'enabled', livetvImage: ID, lastJob: { state: 'succeeded' } });
+    expect(changing(m)).toContain(`${P} up -d --no-deps --pull never livetv`);
+    expect(logged(m, 'livetv runs without being enabled: state set to enabled')).toBe(true);
+    // an exited one is not adopted
+    const x = make({ livetv: { state: 'exited', health: '' } }, { livetv: 'disabled' });
+    x.u.start('update');
+    await x.u.idle();
+    expect(x.store.state.livetv).toBe('disabled');
+    // enabled without a container: left as it is, logged
+    const e = make({}, { livetv: 'enabled' });
+    e.u.start('self-update');
+    await e.u.idle();
+    expect(e.store.state.livetv).toBe('enabled');
+    expect(logged(e, 'livetv is enabled but has no container')).toBe(true);
   });
 
   it('foreign stack refused', async () => {
@@ -342,6 +505,9 @@ describe('livetv jobs', () => {
     await m.u.idle();
     expect(m.calls.filter((c) => sub(c) === 'up').length).toBe(2);
     expect(m.store.state.livetv).toBe('enabled');
+    // a livetv action can never run as an update (refused by the type and at run time)
+    // @ts-expect-error start() takes update / rollback / self-update only
+    expect(() => m.u.start('livetv-enable')).toThrow('invalid action');
     // a channel without a target (an impossible state file aside): nothing starts
     const n = make({}, { channel: 'pinned', version: null });
     expect(n.u.startLivetv({ op: 'enable' })).toEqual({ ok: false, error: 'no_target' });
@@ -351,7 +517,8 @@ describe('livetv jobs', () => {
     const job = { id: '0123456789abcdef', action: 'livetv-enable' as const, state: 'running' as const, step: 'health' as const, from: null, to: 'latest', startedAt: new Date().toISOString(), finishedAt: null, error: null,
       steps: { pull: 'ok' as const, verify: 'ok' as const, restart: 'ok' as const, health: 'running' as const, rollback: 'skipped' as const } };
     const s = memoryStore({ ...DEFAULT_STATE, livetv: 'disabled', lastJob: job });
-    new Updater(dockerOps(new Docker({ projectDir: '/srv/friendflix', files: ['compose.prod.yaml'], repo: 'LetsManu/friendflix', dockerHost: 'tcp://docker-proxy:2375' }, world().run), 'http://b/health', health), s);
+    const w = world();
+    new Updater(dockerOps(new Docker({ projectDir: '/srv/friendflix', files: ['compose.prod.yaml'], repo: 'LetsManu/friendflix', dockerHost: 'tcp://docker-proxy:2375' }, w.run), 'http://b/health', w.health), s);
     expect(s.state).toMatchObject({ livetv: 'disabled', lastJob: { state: 'failed', error: 'interrupted' } });
   });
 });
@@ -361,7 +528,7 @@ describe('livetv docker commands', () => {
     const m = make({ livetv: { state: 'running', health: 'healthy' } });
     await expect(m.docker.stop(['backend'])).rejects.toThrow('invalid service');
     await expect(m.docker.rm(['livetv', 'postgres'])).rejects.toThrow('invalid service');
-    for (const bad of ['ghcr.io/letsmanu/friendflix-backend:latest', 'ghcr.io/evil/friendflix-livetv:latest', `${LTV}:latest;id`, 'postgres:17-alpine', `${LTV}@${D}`, 'sha256:abc']) {
+    for (const bad of ['ghcr.io/letsmanu/friendflix-backend:latest', 'ghcr.io/evil/friendflix-livetv:latest', `${LTV}-extra:latest`, `${LTV}:latest;id`, 'postgres:17-alpine', `${LTV}@${D}`, 'sha256:abc']) {
       await expect(m.docker.imageRm(bad), bad).rejects.toThrow('invalid image');
     }
     for (const bad of ['friendflix_recordings', 'friendflix_postgres', 'livetv-cache', '_livetv-cache', 'x/../y_livetv-cache', 'Friendflix_livetv-cache']) {
@@ -369,11 +536,12 @@ describe('livetv docker commands', () => {
     }
     expect(m.calls.filter((c) => ['stop', 'rm', 'image rm', 'volume rm'].includes(sub(c)))).toEqual([]);
     // a volume or image that is not there is fine; anything else is a fixed code
-    const gone = make({ fails: [] });
-    await gone.docker.imageRm(`${LTV}:nightly`);
-    const f = make({ fails: ['image rm', 'volume rm'] });
+    await make().docker.imageRm(`${LTV}:nightly`);
+    const f = make({ fails: ['image rm', 'volume rm', 'image ls'] });
     await expect(f.docker.imageRm(`${LTV}:latest`)).rejects.toEqual(new StepError('remove_failed'));
     await expect(f.docker.volumeRm('friendflix_livetv-cache')).rejects.toEqual(new StepError('remove_failed'));
+    await expect(f.docker.livetvTags()).rejects.toEqual(new StepError('remove_failed'));
+    expect(await make().docker.livetvTags()).toEqual([`${LTV}:latest`, `${LTV}:sha-aaaaaaa`]);
   });
 
   it('the cache volume is named after the stack\'s compose project', async () => {
@@ -383,12 +551,16 @@ describe('livetv docker commands', () => {
     expect(await make({ labels: { ...LABELS, 'com.docker.compose.project': undefined } }).docker.cacheVolume()).toBeNull();
   });
 
-  it('ps lists livetv (with its profile) and nothing outside FriendFlix', async () => {
-    const m = make({ livetv: { state: 'exited', health: '' } });
+  it('ps lists livetv (with its profile) and nothing outside FriendFlix; one-off containers are not the service', async () => {
+    const m = make({ livetv: { state: 'exited', health: '' }, oneoff: true });
     const ps = await m.docker.ps();
     expect(ps.map((p) => p.service)).toEqual(['bootstrap', 'backend', 'gateway', 'web', 'updater', 'livetv']);
     expect(await m.docker.livetvContainer()).toEqual({ service: 'livetv', name: 'friendflix-livetv-1', state: 'exited', health: '', image: ID });
-    expect(await make().docker.livetvContainer()).toBeNull();
+    expect(await make({ oneoff: true }).docker.livetvContainer()).toBeNull();
+    await expect(make({ fails: ['ps'] }).docker.livetvContainer()).rejects.toEqual(new StepError('compose_config'));
+    // compose versions that print Labels as a map
+    const mapped: Runner = async () => ({ code: 0, stderr: '', stdout: JSON.stringify({ Service: 'livetv', Name: 'x', State: 'running', Labels: { 'com.docker.compose.oneoff': 'True' } }) });
+    expect(await new Docker({ projectDir: '/srv/friendflix', files: ['compose.prod.yaml'], repo: 'LetsManu/friendflix', dockerHost: 'tcp://docker-proxy:2375' }, mapped).livetvContainer()).toBeNull();
   });
 });
 
@@ -417,21 +589,24 @@ describe('livetv HTTP API and status', () => {
     expect((await r.json()).job).toMatchObject({ action: 'livetv-enable', state: 'running' });
     expect((await call('POST', '/v1/livetv', '{"op":"disable"}')).status).toBe(409);
     expect((await call('POST', '/v1/update')).status).toBe(409);
+    expect((await call('POST', '/v1/channel', '{"channel":"nightly"}')).status).toBe(409);
     await release(m);
     await m.u.idle();
     const removed = await call('POST', '/v1/livetv', '{"op":"remove","data":true}');
     expect(removed.status).toBe(202);
     await m.u.idle();
     expect(m.store.state.livetv).toBe('absent');
-    const pinned = make({}, { channel: 'pinned', version: null });
-    m = pinned;
+    m = make({}, { channel: 'pinned', version: null });
     expect(await (await call('POST', '/v1/livetv', '{"op":"enable"}')).json()).toEqual({ error: 'no_target' });
+    // the channel route still works on its own
+    expect(await (await call('POST', '/v1/channel', '{"channel":"nightly"}')).json()).toEqual({ channel: 'nightly', version: null, targetTag: 'nightly' });
+    expect((await call('POST', '/v1/channel', '{"channel":"nightly"}', 'text/plain')).status).toBe(415);
   });
 
   it('status reports livetv', async () => {
     m = make({ livetv: { state: 'running', health: 'healthy' } }, { livetv: 'enabled' });
     const b = await (await call('GET', '/v1/status')).json();
-    expect(b.livetv).toEqual({ state: 'enabled', container: 'running' });
+    expect(b.livetv).toEqual({ state: 'enabled', container: 'running', error: null });
     // the view: running, any other state = exited, none = null; a Docker failure = null
     let t = 0;
     const v = (state: string | null) => livetvView({ livetvContainer: async () => (state ? { service: 'livetv', name: 'x', state, health: '', image: null } : null) }, 10_000, () => t);
@@ -447,8 +622,25 @@ describe('livetv HTTP API and status', () => {
     t = 20_000;
     await cached();
     expect(n).toBe(2);
-    // without a probe (older wiring): the state alone
-    const s = await status({ updater: m.u, verifier: { key, cache: new ReplayCache(), notBefore: 0 }, services: async () => [], self: { version: null, sha: null } });
-    expect(s.livetv).toEqual({ state: 'enabled', container: null });
+    // without a probe (older wiring): the state alone; a livetv a job disabled says why
+    const d = make({}, { livetv: 'disabled', livetvError: 'unhealthy' });
+    const s = await status({ updater: d.u, verifier: { key, cache: new ReplayCache(), notBefore: 0 }, services: async () => [], self: { version: null, sha: null } });
+    expect(s.livetv).toEqual({ state: 'disabled', container: null, error: 'unhealthy' });
+  });
+});
+
+describe('livetv in the docs', () => {
+  const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), 'utf8');
+  it('the security docs list all six routes and the livetv deletions; nothing says five actions any more', () => {
+    const sec = read('docs/security.md');
+    const routes = sec.split('\n').find((l) => l.startsWith('- **Fixed actions:**'))!;
+    expect(routes).toContain('six routes');
+    for (const r of ['/v1/status', '/v1/channel', '/v1/update', '/v1/rollback', '/v1/self-update', '/v1/livetv']) expect(routes).toContain(r);
+    expect(sec).toContain('docker image rm');
+    expect(sec).toContain('docker volume rm');
+    expect(sec).toContain('never the recordings');
+    for (const f of ['docs/security.md', 'docs/setup.md', 'backend/src/updater.ts']) expect(read(f), f).not.toMatch(/\bfive (fixed|signed|routes)/i);
+    expect(read('docs/de/setup.md')).not.toMatch(/fünf feste/);
+    expect(read('compose.prod.yaml')).toContain('removal of the\n      # livetv image and its cache volume');
   });
 });

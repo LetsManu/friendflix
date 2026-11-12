@@ -131,9 +131,10 @@ describe('startLivetvJob', () => {
 describe('status: livetv', () => {
   it('parses the livetv field and the three livetv job actions', () => {
     expect(parseStatus({ channel: 'stable' })!.livetv).toBeNull(); // an updater from before livetv
-    expect(parseStatus({ channel: 'stable', livetv: { state: 'enabled', container: 'running' } })!.livetv).toEqual({ state: 'enabled', container: 'running' });
-    expect(parseStatus({ channel: 'stable', livetv: { state: 'disabled', container: null } })!.livetv).toEqual({ state: 'disabled', container: null });
-    expect(parseStatus({ channel: 'stable', livetv: { state: '<b>', container: 'paused' } })!.livetv).toEqual({ state: 'absent', container: null });
+    expect(parseStatus({ channel: 'stable', livetv: { state: 'enabled', container: 'running', error: null } })!.livetv).toEqual({ state: 'enabled', container: 'running', error: null });
+    expect(parseStatus({ channel: 'stable', livetv: { state: 'disabled', container: null, error: 'unhealthy' } })!.livetv).toEqual({ state: 'disabled', container: null, error: 'unhealthy' });
+    for (const e of ['pull_failed', 'verify_failed', 'restart_failed']) expect(parseStatus({ channel: 'stable', livetv: { state: 'disabled', error: e } })!.livetv?.error).toBe(e);
+    expect(parseStatus({ channel: 'stable', livetv: { state: '<b>', container: 'paused', error: 'token ghp_x' } })!.livetv).toEqual({ state: 'absent', container: null, error: null });
     expect(parseStatus({ channel: 'stable', livetv: 'enabled' })!.livetv).toBeNull();
     for (const a of ['livetv-enable', 'livetv-disable', 'livetv-remove']) {
       expect(parseStatus({ channel: 'stable', job: { ...job(a), state: 'failed', error: 'health_timeout' } })!.job).toMatchObject({ action: a, error: 'health_timeout' });
@@ -143,7 +144,7 @@ describe('status: livetv', () => {
   });
 
   it('the admin status passes livetv through', async () => {
-    fake.livetv = { state: 'enabled', container: 'exited' };
-    expect(await updaterView(env.ctx)).toMatchObject({ present: true, status: { livetv: { state: 'enabled', container: 'exited' } } });
+    fake.livetv = { state: 'disabled', container: null, error: 'pull_failed' };
+    expect(await updaterView(env.ctx)).toMatchObject({ present: true, status: { livetv: { state: 'disabled', container: null, error: 'pull_failed' } } });
   });
 });

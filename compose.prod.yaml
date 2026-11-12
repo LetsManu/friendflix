@@ -370,7 +370,8 @@ services:
       PING: 1
       VERSION: 1
       EVENTS: 0
-      # write (POST/DELETE) in the sections above: pull, create/recreate, start/stop/remove of containers. Note: with
+      # write (POST/DELETE) in the sections above: pull, create/recreate, start/stop/remove of containers, and removal of the
+      # livetv image and its cache volume (updater livetv remove). Note: with
       # CONTAINERS + POST the proxy also lets kill/restart/pause through; ALLOW_* only add allows, they never deny.
       POST: 1
       ALLOW_START: 1

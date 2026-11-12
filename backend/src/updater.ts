@@ -7,8 +7,8 @@ import { portainerMode, redeployViaPortainer, updateInfo, type UpdateInfo } from
 
 /**
  * Client of the updater container (updater/, on by default since 2.0, off with compose.no-updater.yaml; docs/security.md "Updater"). The backend never
- * gets the Docker socket: it can only ask the updater for five fixed actions, each request HMAC-signed with a key derived from
- * INTERNAL_SECRET (timestamp + nonce; the updater refuses replays and anything outside 60 s). Signing must match
+ * gets the Docker socket: it can only ask the updater for six fixed actions (status, channel, update, rollback, self-update, and
+ * livetv enable / disable / remove), each request HMAC-signed with a key derived from INTERNAL_SECRET (timestamp + nonce; the updater refuses replays and anything outside 60 s). Signing must match
  * updater/src/protocol.ts byte for byte (test-vectors/updater-hmac.json).
  */
 const KEY_LABEL = 'friendflix-updater/v1';
@@ -22,6 +22,8 @@ export type UpdaterJobAction = UpdateJobAction | 'livetv-enable' | 'livetv-disab
 const JOB_ACTIONS: readonly UpdaterJobAction[] = [...UPDATER_ACTIONS, 'livetv-enable', 'livetv-disable', 'livetv-remove'];
 /** the optional livetv service: the body of POST /v1/livetv (the updater refuses anything else, updater/src/policy.ts parseLivetvBody) */
 export type LivetvOp = { op: 'enable' } | { op: 'disable' } | { op: 'remove'; data: boolean };
+const LIVETV_ERRORS = ['pull_failed', 'verify_failed', 'restart_failed', 'unhealthy'] as const;
+export type LivetvError = (typeof LIVETV_ERRORS)[number];
 const STEP_NAMES = ['pull', 'verify', 'restart', 'health', 'rollback'] as const;
 const STEP_STATES = ['pending', 'running', 'ok', 'failed', 'skipped'] as const;
 const JOB_STATES = ['running', 'succeeded', 'failed', 'rolled_back'] as const;
@@ -58,9 +60,10 @@ export interface UpdaterStatus {
   projectDir: string | null;
   /**
    * the optional livetv service as the updater sees it: enabled (it started it), disabled (container removed), absent (never
-   * enabled, or removed with its image); container running / exited / none. null = an updater from before livetv.
+   * enabled, or removed with its image); container running / exited / none; error: why an update or rollback disabled it on its
+   * own (its image missing or unverified for that build, it did not start or get healthy). null = an updater from before livetv.
    */
-  livetv: { state: 'enabled' | 'disabled' | 'absent'; container: 'running' | 'exited' | null } | null;
+  livetv: { state: 'enabled' | 'disabled' | 'absent'; container: 'running' | 'exited' | null; error: LivetvError | null } | null;
 }
 export type UpdaterView = { present: false } | { present: true; error: 'unauthorized' | 'invalid_answer' } | { present: true; status: UpdaterStatus };
 
@@ -109,7 +112,7 @@ export function parseStatus(raw: unknown): UpdaterStatus | null {
 function parseLivetv(raw: unknown): UpdaterStatus['livetv'] {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const l = raw as Record<string, unknown>;
-  return { state: pick(l.state, ['enabled', 'disabled', 'absent'] as const) ?? 'absent', container: pick(l.container, ['running', 'exited'] as const) };
+  return { state: pick(l.state, ['enabled', 'disabled', 'absent'] as const) ?? 'absent', container: pick(l.container, ['running', 'exited'] as const), error: pick(l.error, LIVETV_ERRORS) };
 }
 
 type Answer = { status: number; json: unknown } | null;
