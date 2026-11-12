@@ -328,7 +328,39 @@ Live TV is optional: the service exists only in the compose profile `livetv`, so
 - **Hardened container:** uid 10001, read-only root file system (writable: `/tmp` as tmpfs, the `livetv-cache` volume, the `recordings` volume), `cap_drop: ALL`, `no-new-privileges`. It reads only `internal_secret` from the `bootstrap-gateway` volume, never the database password or the encryption key.
 - **Networks:** `livetv` is `internal: true` and joined by backend, gateway and livetv only (web is not on it); the API on port 8090 is reachable there and nowhere else. `livetv-egress` is a normal bridge that only livetv joins, for the providers. livetv has no route to the database, Redis, the media server or the updater.
 - **Published ports: UDP only.** The only ports livetv publishes are the UDP range `LIVETV_SRT_PORTS` (default 9000-9009) for pushed SRT feeds, on `LIVETV_SRT_BIND` (default `0.0.0.0`; `127.0.0.1` turns push off from outside). Open them on the firewall only if you push feeds. There is no TCP port and no host-side API.
-- **Signed API:** every `/v1/*` call carries timestamp, nonce and an HMAC from a key derived from `INTERNAL_SECRET`; replays and stale requests are refused. Details of what it fetches and how addresses are guarded follow with the Live-TV tasks.
+- **Signed API:** every `/v1/*` call carries timestamp, nonce and an HMAC from a key derived from `INTERNAL_SECRET`; replays and stale requests are refused (60-second window, nonce). The stream files (`/s/…`) are unsigned but reachable only on the internal network and addressed by a random 128-bit stream key.
+
+### Live TV: provider credentials
+
+The M3U, XMLTV and stream URLs of a source (they often carry the account's user name and password) are encrypted at rest with `APP_ENC_KEY`. The backend decrypts one only in memory, right before a signed request to `livetv`; `livetv` keeps it in memory for the running job and has no database. They never appear in answers (admins see a masked hint such as `https://iptv.example.com/…`), in logs (request logs carry no request bodies, so the source forms never reach them; `livetv` logs name channels by id, scrub URLs from ffmpeg's messages and never log arguments, raw request paths or stream keys), in the audit log (field names only), in metrics, in error messages (fixed codes) or in Diagnose. Clients only ever see `/media/l/<token>/<local file name>`: provider segment URLs exist only inside `livetv`.
+
+### Live TV: watch tokens
+
+`POST /api/livetv/channels/:id/watch` mints a token (32 random bytes, base64url, 43 characters); the server keeps only its SHA-256 in the key-value store, together with the account, profile, device and the one channel it is for.
+
+- **Lifetime:** 90 seconds of sliding idle expiry (refreshed by the player's heartbeat every 20 seconds, paused or playing, and by gateway fetches), absolute cap 12 hours; the client renews before the cap. A viewer counts as present while a token was touched within 45 seconds.
+- **Pinning:** the first client address pins the token. A `local` token re-pins only through a heartbeat of the session that minted it (a phone moving from Wi-Fi to mobile data); Chromecast tokens keep one address, AirPlay tokens two within 120 seconds, like film casts.
+- **Cap:** at most 4 live tokens per account; the oldest is revoked. A device's earlier token is revoked when it switches channel.
+- **Revoked on:** stop, channel switch, logout, profile switch, device removal, account lock, the channel being hidden, the profile losing the group. Rights are re-checked on every authorisation (memoised 2 seconds), so a hidden channel stops within seconds.
+- **Gateway:** the route `/media/l/<token>/<file>` accepts only `index.m3u8`, `init.mp4` / `init-<n>.mp4` and numbered `.ts` / `.m4s` files, matched on the raw path; each request is authorised by the backend (`/internal/authz/live`) and only then proxied to `livetv` under the stream key. Playlists are `no-store`, and every URI in a playlist must be a bare file name. The token never reaches `livetv` or any log, is never kept in browser storage and never appears in metrics or Diagnose.
+- **Admin test preview:** *Kanäle → Testen* mints a token marked `test`. It skips the group and release checks (so new channels can be tried) but is valid only while the current role is admin and the channel exists in an enabled source; it never replaces a person's own live view on that device. A family member's watch of the same channel is still refused.
+
+### Live TV: SSRF and hostile files
+
+`livetv` is the only component that fetches provider addresses and guards them itself (`livetv/src/netguard.ts`); the backend validates scheme and host form again on save and never follows provider URLs.
+
+- **Schemes:** `http`, `https` and `srt` only; at most 3 redirects, each checked again; a redirect to another scheme is refused.
+- **Addresses:** the host is resolved once and every address must be public unicast; the connection goes to the checked address, so DNS rebinding cannot swap it. Always refused: loopback, `0.0.0.0/8`, link-local (`169.254.0.0/16`, `fe80::/10`, which includes cloud metadata), multicast, `100.64.0.0/10`, reserved ranges, the container networks' own subnets and single-label host names such as `backend` or `postgres`. Private ranges (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`) only for a source with *Heimnetz erlauben*.
+- **Limits:** M3U ≤ 50 MB, lines ≤ 8 KB, at most 20 000 live entries kept per source; XMLTV ≤ 300 MB transferred, ≤ 1 GB decompressed with a 20:1 ratio guard, parsed as a stream with DTDs, entities and external references off, at most 300 000 programmes, text fields cut; logos ≤ 512 KB, PNG/JPEG/WebP by magic bytes (SVG refused); passthrough playlists ≤ 2 MB and segments ≤ 50 MB; timeouts: connect 10 s, M3U 60 s, XMLTV 10 minutes.
+- **Isolation:** `livetv` has no route to the database, Redis, the media server or the updater, no Docker socket and no capabilities.
+
+### Live TV: pushed SRT feeds
+
+The UDP range `LIVETV_SRT_PORTS` is the only inbound surface of `livetv`. A connection is accepted only when it names the feed's stream ID **and** knows its passphrase, on the feed's own port; the stream is AES-256 encrypted. Stream ID (`ff-` plus 16 random characters) and passphrase (32 random characters) are generated by the backend, stored encrypted like stream URLs and shown to the admin once. Everything else is rejected in the handshake (an unknown ID, the ID of another port, a wrong passphrase failing the key exchange). One sender per feed: a second caller is refused. An address with 20 refused handshakes within a minute is ignored for ten minutes. Refusals are counted and become at most one *Live-Status* event per feed per 10 minutes, never with the passphrase, stream ID or peer address (none of them is logged). The feed list lives in the backend's database and is sent to `livetv` (memory only) at every change and whenever `livetv` restarts. Pushed data stays inside `livetv`, in a 4-second memory ring per feed, and leaves it only as HLS through the gateway under the same tokens and rights as any channel. Only the UDP range is published and the container has no TCP port; `LIVETV_SRT_BIND=127.0.0.1` closes it to the outside.
+
+### Live TV: viewer data
+
+Per profile the server stores favourites, the last channel and *Zuletzt gesehen* (the last 10 channels with the time each was last opened). A live view shows in the admin's running-streams list while it runs; no durations or programmes are kept. See [privacy.md](privacy.md#live-tv).
 
 ## Continue on another device
 
