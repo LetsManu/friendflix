@@ -68,6 +68,15 @@ describe('phase', () => {
   });
   it('wanted but not reachable, no job: the service is down', () => {
     expect(phase({ ...base(), wanted: true }, null)).toBe('wantedDown');
+    // a Portainer stack with a crashed livetv container: turned on, not running, never the enable offer (bughunt L6)
+    const portainer = withUpdater(base(), { available: false, stack: 'foreign' });
+    expect(phase(withUpdater(portainer, { livetv: { state: 'absent', container: 'exited', error: null } }), null)).toBe('wantedDown');
+    expect(phase(withUpdater(portainer, { livetv: { state: 'absent', container: 'running', error: null } }), null)).toBe('wantedDown');
+    // no livetv container there (or an updater from before livetv): the offer, with the Portainer steps
+    expect(phase(withUpdater(portainer, { livetv: { state: 'absent', container: null, error: null } }), null)).toBe('offer');
+    expect(phase(withUpdater(portainer, { livetv: null }), null)).toBe('offer');
+    // the own stack keeps its rule: a container left over from a disable is not "turned on"
+    expect(phase(withUpdater(base(), { livetv: { state: 'disabled', container: 'exited', error: null } }), null)).toBe('offer');
   });
   it('right after a finished job the page waits for the detection instead of claiming the service is down', () => {
     expect(phase({ ...base(), wanted: true }, 'on')).toBe('settling');

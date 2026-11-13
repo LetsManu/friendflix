@@ -84,7 +84,7 @@ export const settled = (target: Settle, installed: boolean): boolean => target =
 /**
  * What the page shows: the area while installed; "being turned off" while a finished disable waits for detection (`stopping`,
  * never "läuft"); the job's steps while one runs; "checking" for a moment after an enable ended and detection has not caught up
- * (`settling`); "turned on but not running" (wanted, nothing detected); else the offer. `settle`: the wait that is still open.
+ * (`settling`); "turned on but not running" (wanted, or a livetv container in a foreign stack, nothing detected); else the offer. `settle`: the wait that is still open.
  */
 export function phase(s: LivetvAdminState, settle: Settle): Phase {
   if (s.installed) return settle === 'off' && !jobRunning(s) ? 'stopping' : 'area';
@@ -94,8 +94,16 @@ export function phase(s: LivetvAdminState, settle: Settle): Phase {
   const j = livetvJob(s);
   const failedEnable = j?.action === 'livetv-enable' && (j.state === 'failed' || j.state === 'rolled_back');
   if (s.wanted && !failedEnable) return 'wantedDown';
+  if (foreignOn(s)) return 'wantedDown';
   return 'offer';
 }
+
+/**
+ * A foreign (Portainer) stack has a livetv container, so COMPOSE_PROFILES=livetv is set there: Live TV is turned on even though
+ * nothing is detected (it crashed or does not start). The updater only reports such a container, `wanted` is never set for it (that
+ * flag is the own-stack updater's path), so this is how the page knows "eingeschaltet, läuft aber nicht" (bughunt L6).
+ */
+export const foreignOn = (s: LivetvAdminState): boolean => s.updater.stack === 'foreign' && (s.updater.livetv?.container ?? null) !== null;
 
 const ERRORS = ['pull_failed', 'verify_failed', 'restart_failed', 'unhealthy', 'unexpected_image', 'config_mismatch', 'compose_config', 'updater_outdated', 'compose_outdated', 'network_missing', 'stop_failed', 'interrupted', 'no_target', 'updater_error', 'not_found', 'unauthorized', 'remove_failed', 'rollback_failed', 'no_updater', 'foreign_stack', 'busy'] as const;
 export type ErrorKey = (typeof ERRORS)[number] | 'generic';
