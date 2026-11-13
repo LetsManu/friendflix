@@ -45,7 +45,7 @@
   import { commitNumber, NUMBER_TIMEOUT_MS, typeDigit, type NumberState } from './numberEntry';
   import { channelOrder, neighbour, type LiveFilter } from './order';
   import { backStep, openPanel as panelAt, panelFilters, panelKey, type PanelKey, type PanelState } from './panel';
-  import { progressAt, timeLeft, timeLeftText, watchPath } from './progress';
+  import { channelHead, progressAt, timeLeft, timeLeftText, watchPath } from './progress';
   import { createSwitcher } from './switcher';
 
   /**
@@ -164,10 +164,10 @@
   $: tvLive = $castSession && $castSession.live && $castSession.kind === 'chromecast' && $castSession.state !== 'detached' ? $castSession : null;
   $: followCast(tvLive);
   $: castShown = !tv && (inShell || ($perms.cast && ((castCapableBrowser() && ($castState.available || $castState.connected)) || airAvail)));
-  $: castWhat = cur ? `${cur.number} ${cur.name}${prog ? ` · ${prog.title}` : ''}` : '';
+  $: castWhat = cur ? `${channelHead(cur)}${prog ? ` · ${prog.title}` : ''}` : '';
 
   // ---- what is shown ----
-  function shell(id: string, number: number, name: string, logo: string | null, now?: Prog, next?: Prog): LiveChannel {
+  function shell(id: string, number: number | null, name: string, logo: string | null, now?: Prog, next?: Prog): LiveChannel {
     return { id, number, name, logo, groupId: null, running: true, epg: now ? 'ok' : 'none', favourite: false, now, next };
   }
   /** a channel from the list, with the programme of the watch answer when it is the one that plays */
@@ -215,9 +215,10 @@
   }
   function announceText(c: LiveChannel): string {
     const p = c.epg === 'ok' && c.receiving !== false ? c.now : undefined;
-    if (!p) return `${c.number} ${c.name}`;
+    const head = channelHead(c);
+    if (!p) return head;
     const l = timeLeftText(timeLeft(p, new Date()));
-    return l ? $t('live.player.announceLeft', { number: c.number, name: c.name, title: p.title, left: l }) : $t('live.player.announce', { number: c.number, name: c.name, title: p.title });
+    return l ? $t('live.player.announceLeft', { channel: head, title: p.title, left: l }) : $t('live.player.announce', { channel: head, title: p.title });
   }
 
   // ---- zapping ----
@@ -1013,7 +1014,7 @@
 
   // ---- Media Session, URL, page life ----
   function msItem(c: LiveChannel | null) {
-    return { title: c?.now?.title ?? c?.name ?? '', artist: c ? `${c.number} ${c.name}` : '', artworkIds: [] as string[] };
+    return { title: c?.now?.title ?? c?.name ?? '', artist: c ? channelHead(c) : '', artworkIds: [] as string[] };
   }
   const msActions = {
     play: () => { resumeCheck(); void playV(); }, pause: () => pauseV(), seekTo: (s: number) => seekTo(s), seekBy: (d: number) => seekBy(d),
@@ -1130,7 +1131,7 @@
     {#if cur}
       <span class="tlogo" aria-hidden="true">{#if cur.logo}<img src={cur.logo} alt="" width="40" height="40" decoding="async" />{/if}</span>
       <button type="button" class="tinfo" on:click={openPanel}>
-        <span class="tname">{cur.number} {cur.name}</span>
+        <span class="tname">{channelHead(cur)}</span>
         <span class="ttitle">{prog ? prog.title : nowLines(cur).now}</span>
         <span class="ttime">{prog ? `${clock(prog.start)}–${clock(prog.end)}` : ''}</span>
       </button>
@@ -1175,8 +1176,8 @@
       <button type="button" class="ib" bind:this={castBtn} class:on={airMode} aria-haspopup={inShell ? undefined : 'dialog'} aria-expanded={inShell ? undefined : playOnOpen} aria-busy={castBusy}
         aria-label={$t('player.castPicker.open')} title={$t('player.castPicker.open')} on:click={onCastBtn}><Icon name={airMode ? 'airplay' : 'cast'} size={24} /></button>
     {/if}
-    <button type="button" class="ib" aria-label={$t('live.player.chUp')} title={up ? `${up.number} ${up.name}` : undefined} disabled={!up} on:click={() => switcher.press(1)}><Icon name="chevron-up" size={24} /></button>
-    <button type="button" class="ib" aria-label={$t('live.player.chDown')} title={down ? `${down.number} ${down.name}` : undefined} disabled={!down} on:click={() => switcher.press(-1)}><Icon name="chevron-down" size={24} /></button>
+    <button type="button" class="ib" aria-label={$t('live.player.chUp')} title={up ? channelHead(up) : undefined} disabled={!up} on:click={() => switcher.press(1)}><Icon name="chevron-up" size={24} /></button>
+    <button type="button" class="ib" aria-label={$t('live.player.chDown')} title={down ? channelHead(down) : undefined} disabled={!down} on:click={() => switcher.press(-1)}><Icon name="chevron-down" size={24} /></button>
     {#if !phoneUi}
       <button type="button" class="ib" bind:this={listBtn} aria-label={$t('live.player.channelList')} title={$t('live.player.channelList')} aria-haspopup="dialog" aria-expanded={listOpen} on:click={openList}><Icon name="list" size={24} /></button>
     {/if}

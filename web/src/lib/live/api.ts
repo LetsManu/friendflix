@@ -15,7 +15,8 @@ export interface Prog { title: string; start: string; end: string; subtitle?: st
 /** a channel as the person may see it (GET /api/livetv/channels) */
 export interface LiveChannel {
   id: string;
-  number: number;
+  /** null: an own feed created without a number (show the name alone: `channelHead`) */
+  number: number | null;
   name: string;
   logo: string | null;
   groupId: string | null;
@@ -49,7 +50,7 @@ export interface LiveList {
 }
 
 /** a channel that is running now (the "already on, starts at once" list of a full budget) */
-export interface RunningChannel { id: string; number: number; name: string; logo: string | null; now?: Prog }
+export interface RunningChannel { id: string; number: number | null; name: string; logo: string | null; now?: Prog }
 
 export type LiveMode = 'passthrough' | 'remux' | 'transcode';
 
@@ -62,7 +63,7 @@ export interface WatchAnswer {
   mode: LiveMode;
   /** the playlist's segment format (an fMP4 / CMAF passthrough is `fmp4`); absent from an older backend = TS (bughunt M2) */
   segments?: 'ts' | 'fmp4';
-  channel: { id: string; number: number; name: string; logo: string | null };
+  channel: { id: string; number: number | null; name: string; logo: string | null };
   now?: Prog;
   next?: Prog;
 }

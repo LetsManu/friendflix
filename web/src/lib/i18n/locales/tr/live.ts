@@ -21,7 +21,7 @@ const dict: Translation<typeof de> = {
     chUp: 'Sonraki kanal',
     chDown: 'Önceki kanal',
     lastChannel: 'Son kanal',
-    lastChannelTo: '{number} {name} kanalına dön',
+    lastChannelTo: '{channel} kanalına dön',
     starting: 'Kanal başlatılıyor…',
     unreachable: 'Kanala şu an ulaşılamıyor',
     reconnecting: 'Yeniden bağlanılıyor…',
@@ -37,8 +37,8 @@ const dict: Translation<typeof de> = {
     fwd30: '30 saniye ileri',
     liveAria: 'Canlı',
     behindAria: 'Canlı yayının {time} gerisinde',
-    announce: '{number} {name}, {title}',
-    announceLeft: '{number} {name}, {title}, {left}',
+    announce: '{channel}, {title}',
+    announceLeft: '{channel}, {title}, {left}',
   },
   full: {
     title: 'Şu an tüm canlı yayın yerleri dolu',
@@ -53,7 +53,7 @@ const dict: Translation<typeof de> = {
   timeLeftLong: '{h} sa {m} dk kaldı',
   endingNow: 'birazdan bitiyor',
   recentChip: 'Son izlenenler',
-  rowName: '{number} {name}, şimdi: {title}, bitiş {time}',
+  rowName: '{channel}, şimdi: {title}, bitiş {time}',
   groups: 'Kanal grupları',
   empty: 'Senin için henüz kanal açılmadı.',
   emptyFav: 'Henüz favori yok. Bir kanalın yıldızına dokun.',
@@ -61,7 +61,7 @@ const dict: Translation<typeof de> = {
   emptyGroup: 'Bu grupta şu anda kanal yok.',
   loadFailed: 'Kanal listesi yüklenemedi.',
   number: {
-    last: '0 · Son kanal: {number} {name}',
+    last: '0 · Son kanal: {channel}',
     noLast: 'Son kanal yok',
   },
   fav: {

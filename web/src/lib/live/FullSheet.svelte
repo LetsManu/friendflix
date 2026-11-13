@@ -6,6 +6,7 @@
   import { t } from '#lib/i18n';
   import type { RunningChannel } from './api';
   import { fadeIn } from './fade';
+  import { channelHead } from './progress';
 
   /**
    * "Gerade sind alle Live-Plätze belegt" (spec §12.5): the channels that already run start at once, a tap joins one; *Schließen*.
@@ -38,7 +39,7 @@
           <li>
             <button type="button" class="row" aria-label={$t('live.full.join', { name: c.name })} on:click={() => dispatch('join', c)}>
               <span class="lg" aria-hidden="true">{#if c.logo}<img src={c.logo} alt="" width="40" height="40" decoding="async" use:fadeIn />{/if}</span>
-              <span class="nm">{c.number} {c.name}</span>
+              <span class="nm">{channelHead(c)}</span>
               <span class="ti">{c.now?.title ?? ''}</span>
             </button>
           </li>

@@ -34,7 +34,7 @@
   import { uid } from '#lib/ui/ids';
   import { orderChanged, tvOrderKey, type TvOrderKey, type TvOrderResult } from './favOrder';
 
-  interface FavRow { id: string; name: string; number: number; logo: string | null }
+  interface FavRow { id: string; name: string; number: number | null; logo: string | null }
   export let rows: FavRow[];
   /** stores the complete order (required); the caller picks the endpoint and updates its own list */
   export let save: (ids: string[]) => Promise<void>;

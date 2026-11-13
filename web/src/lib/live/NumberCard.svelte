@@ -5,6 +5,7 @@
   import type { LiveChannel } from './api';
   import { fadeIn } from './fade';
   import { NUMBER_MAX_DIGITS } from './numberEntry';
+  import { channelHead } from './progress';
 
   /**
    * The number card (spec §12.4): a small glass card top right showing the typed digits ("1 2 _") and, as soon as the number
@@ -23,7 +24,7 @@
   export let message = '';
 
   $: typed = digits.split('').join(' ') + (digits.length < NUMBER_MAX_DIGITS ? (digits ? ' _' : '_') : '');
-  $: line = message || (zero ? (last ? $t('live.number.last', { number: last.number, name: last.name }) : $t('live.number.noLast')) : '');
+  $: line = message || (zero ? (last ? $t('live.number.last', { channel: channelHead(last) }) : $t('live.number.noLast')) : '');
 </script>
 
 <div class="ncard panel" role="status">
@@ -31,7 +32,7 @@
   <p class="line">
     {#if line}{line}{:else if match}
       <span class="logo" aria-hidden="true">{#if match.logo}<img src={match.logo} alt="" width="40" height="40" decoding="async" use:fadeIn />{/if}</span>
-      <span class="who">{match.number} {match.name}</span>
+      <span class="who">{channelHead(match)}</span>
     {/if}
   </p>
 </div>

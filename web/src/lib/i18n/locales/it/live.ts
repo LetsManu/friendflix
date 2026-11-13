@@ -21,7 +21,7 @@ const dict: Translation<typeof de> = {
     chUp: 'Canale successivo',
     chDown: 'Canale precedente',
     lastChannel: 'Ultimo canale',
-    lastChannelTo: 'Torna a {number} {name}',
+    lastChannelTo: 'Torna a {channel}',
     starting: 'Avvio del canale…',
     unreachable: 'Canale al momento non raggiungibile',
     reconnecting: 'Riconnessione…',
@@ -37,8 +37,8 @@ const dict: Translation<typeof de> = {
     fwd30: 'Avanti di 30 secondi',
     liveAria: 'Diretta',
     behindAria: '{time} dietro la diretta',
-    announce: '{number} {name}, {title}',
-    announceLeft: '{number} {name}, {title}, {left}',
+    announce: '{channel}, {title}',
+    announceLeft: '{channel}, {title}, {left}',
   },
   full: {
     title: 'Al momento tutti i posti live sono occupati',
@@ -53,7 +53,7 @@ const dict: Translation<typeof de> = {
   timeLeftLong: 'ancora {h} h {m} min',
   endingNow: 'sta per finire',
   recentChip: 'Visti di recente',
-  rowName: '{number} {name}, ora: {title}, fino alle {time}',
+  rowName: '{channel}, ora: {title}, fino alle {time}',
   groups: 'Gruppi di canali',
   empty: 'Per ora nessun canale è stato abilitato per te.',
   emptyFav: 'Ancora nessun preferito. Tocca la stella di un canale.',
@@ -61,7 +61,7 @@ const dict: Translation<typeof de> = {
   emptyGroup: 'In questo gruppo al momento non c’è nessun canale.',
   loadFailed: 'Impossibile caricare l’elenco dei canali.',
   number: {
-    last: '0 · Ultimo canale: {number} {name}',
+    last: '0 · Ultimo canale: {channel}',
     noLast: 'Nessun ultimo canale',
   },
   fav: {

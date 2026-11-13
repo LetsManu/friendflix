@@ -21,7 +21,7 @@ const dict: Translation<typeof de> = {
     chUp: 'Chaîne suivante',
     chDown: 'Chaîne précédente',
     lastChannel: 'Dernière chaîne',
-    lastChannelTo: 'Retour à {number} {name}',
+    lastChannelTo: 'Retour à {channel}',
     starting: 'Démarrage de la chaîne…',
     unreachable: 'Chaîne momentanément injoignable',
     reconnecting: 'Reconnexion…',
@@ -37,8 +37,8 @@ const dict: Translation<typeof de> = {
     fwd30: 'Avancer de 30 secondes',
     liveAria: 'En direct',
     behindAria: '{time} de retard sur le direct',
-    announce: '{number} {name}, {title}',
-    announceLeft: '{number} {name}, {title}, {left}',
+    announce: '{channel}, {title}',
+    announceLeft: '{channel}, {title}, {left}',
   },
   full: {
     title: 'Toutes les places en direct sont occupées pour le moment',
@@ -53,7 +53,7 @@ const dict: Translation<typeof de> = {
   timeLeftLong: 'encore {h} h {m} min',
   endingNow: 'se termine',
   recentChip: 'Vues récemment',
-  rowName: '{number} {name}, en ce moment : {title}, jusqu’à {time}',
+  rowName: '{channel}, en ce moment : {title}, jusqu’à {time}',
   groups: 'Groupes de chaînes',
   empty: 'Aucune chaîne n’est encore disponible pour vous.',
   emptyFav: 'Pas encore de favoris. Touchez l’étoile d’une chaîne.',
@@ -61,7 +61,7 @@ const dict: Translation<typeof de> = {
   emptyGroup: 'Aucune chaîne dans ce groupe pour le moment.',
   loadFailed: 'La liste des chaînes n’a pas pu être chargée.',
   number: {
-    last: '0 · Dernière chaîne : {number} {name}',
+    last: '0 · Dernière chaîne : {channel}',
     noLast: 'Pas de dernière chaîne',
   },
   fav: {

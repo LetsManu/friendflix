@@ -19,7 +19,7 @@ export default {
     chUp: 'Nächster Sender',
     chDown: 'Vorheriger Sender',
     lastChannel: 'Letzter Sender',
-    lastChannelTo: 'Zurück zu {number} {name}',
+    lastChannelTo: 'Zurück zu {channel}',
     starting: 'Sender wird gestartet …',
     unreachable: 'Sender gerade nicht erreichbar',
     reconnecting: 'Verbinde neu …',
@@ -35,8 +35,8 @@ export default {
     fwd30: '30 Sekunden vor',
     liveAria: 'Live',
     behindAria: '{time} hinter live',
-    announce: '{number} {name}, {title}',
-    announceLeft: '{number} {name}, {title}, {left}',
+    announce: '{channel}, {title}',
+    announceLeft: '{channel}, {title}, {left}',
   },
   full: {
     title: 'Gerade sind alle Live-Plätze belegt',
@@ -51,7 +51,7 @@ export default {
   timeLeftLong: 'noch {h} Std. {m} Min.',
   endingNow: 'endet gleich',
   recentChip: 'Zuletzt gesehen',
-  rowName: '{number} {name}, jetzt: {title}, bis {time}',
+  rowName: '{channel}, jetzt: {title}, bis {time}',
   groups: 'Sendergruppen',
   empty: 'Für dich sind noch keine Sender freigegeben.',
   emptyFav: 'Noch keine Favoriten. Tippe bei einem Sender auf den Stern.',
@@ -59,7 +59,7 @@ export default {
   emptyGroup: 'In dieser Gruppe ist gerade kein Sender.',
   loadFailed: 'Die Senderliste konnte nicht geladen werden.',
   number: {
-    last: '0 · Letzter Sender: {number} {name}',
+    last: '0 · Letzter Sender: {channel}',
     noLast: 'Kein letzter Sender',
   },
   fav: {

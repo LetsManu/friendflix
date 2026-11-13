@@ -46,5 +46,6 @@ export function commitNumber(s: NumberState, list: LiveChannel[]): { kind: 'chan
   if (s.digits === '0') return { kind: 'last' };
   const { match } = lookup(s.digits, list);
   if (match) return { kind: 'channel', channel: match };
-  return { kind: 'none', text: s.digits ? get(t)('live.player.noChannel', { n: Number(s.digits) }) : '' };
+  // the typed number as a plain string: never grouped by the locale ("1001", not "1.001"; bughunt M3)
+  return { kind: 'none', text: s.digits ? get(t)('live.player.noChannel', { n: String(Number(s.digits)) }) : '' };
 }

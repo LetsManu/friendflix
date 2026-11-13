@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import type { LiveChannel, Prog } from './api';
-import { progressAt, rowName, timeLeft, watchPath } from './progress';
+import { channelHead, progressAt, rowName, timeLeft, watchPath } from './progress';
 
 const at = (h: number, m: number, s = 0) => new Date(2026, 10, 12, h, m, s);
 const prog = (title: string, from: [number, number], to: [number, number]): Prog => ({ title, start: at(...from).toISOString(), end: at(...to).toISOString() });
@@ -66,5 +66,15 @@ describe('rowName (spec §21)', () => {
     expect(rowName({ ...ch, now: undefined, epg: 'none' }, at(20, 30))).toBe('4 Hafenkanal');
     expect(rowName({ ...ch, epg: 'gap', now: undefined }, at(20, 30))).toBe('4 Hafenkanal');
     expect(rowName({ ...ch, receiving: false }, at(20, 30))).toBe('4 Hafenkanal');
+  });
+  it('an own feed without a number is its name alone: no "null", no "{number}" (bughunt M3)', () => {
+    const own: LiveChannel = { ...ch, number: null, name: 'Nordlicht TV' };
+    expect(rowName(own, at(20, 30))).toBe('Nordlicht TV, jetzt: Die Leuchtturmwärter, bis 21:00');
+    expect(rowName({ ...own, now: undefined, epg: 'none' }, at(20, 30))).toBe('Nordlicht TV');
+    expect(channelHead(own)).toBe('Nordlicht TV');
+  });
+  it('a four-digit number is never grouped by the locale ("1001", not "1.001")', () => {
+    expect(rowName({ ...ch, number: 1001 }, at(20, 30))).toBe('1001 Hafenkanal, jetzt: Die Leuchtturmwärter, bis 21:00');
+    expect(channelHead({ number: 1001, name: 'Hafenkanal' })).toBe('1001 Hafenkanal');
   });
 });
