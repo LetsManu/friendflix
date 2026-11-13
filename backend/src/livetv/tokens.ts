@@ -167,6 +167,17 @@ export async function unfetchedLiveSessions(ctx: Ctx, userId: string): Promise<s
 }
 
 /**
+ * The account's running streams for the `maxStreams` limit of VOD and cast playback: the `play:` records plus live tokens minted but
+ * not fetched yet (L1 rest, as the live watch route counts them), each session once.
+ */
+export async function countStreams(ctx: Ctx, userId: string): Promise<number> {
+  const prefix = `play:${userId}:`;
+  const running = new Set((await ctx.kv.keys(prefix)).map((k) => k.slice(prefix.length)));
+  for (const ps of await unfetchedLiveSessions(ctx, userId)) running.add(ps);
+  return running.size;
+}
+
+/**
  * The device's current live view (ruling 36): its newest normal `local` token (local or AirPlay), which the device's next local watch
  * replaces (mintLiveToken). A watch for another channel from this device is a channel switch (Task 32). Admin test previews are not
  * views a watch replaces (R8), and neither is a cast (R14): a Chromecast token is a viewer of its channel, never the device's own view.

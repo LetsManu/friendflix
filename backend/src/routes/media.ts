@@ -7,7 +7,8 @@ import { parseClientCaps } from '../media/clientCaps.js';
 import { MediaError, type CapReason, type ItemDto, type PlaybackDto, type TranscodeReason } from '../media/types.js';
 import type { JfUser, ProfileRow, UserRow } from '../types.js';
 import { methodOf } from '../playstats.js';
-import { clearLive, clearStopped, countLive, getLive, listLive, markStopped, setLive } from '../live.js';
+import { countStreams } from '../livetv/tokens.js';
+import { clearLive, clearStopped, getLive, listLive, markStopped, setLive } from '../live.js';
 import { noteHandoff, selectHandoff, type HandoffVia } from '../handoff.js';
 import { isHomeRequest } from '../netaddr.js';
 import { effectiveLimits } from '../limits.js';
@@ -87,7 +88,7 @@ export async function playbackReport(ctx: Ctx, kind: PlaybackKind, b: PlaybackRe
     // and rebuild the live record without counting against maxStreams.
     if (kind === 'Playing') {
       const role = (await effectiveLimits(ctx, user))!;
-      if ((await countLive(ctx, user.id)) >= role.maxStreams) return { error: 'max_streams', max: role.maxStreams };
+      if ((await countStreams(ctx, user.id)) >= role.maxStreams) return { error: 'max_streams', max: role.maxStreams };
     }
     const item = await ctx.jf.item(who.jfUser, b.itemId); // access check: the user must be able to see the item
     elapsed = false;
@@ -386,7 +387,7 @@ export function mediaRoutes(app: FastifyInstance, ctx: Ctx) {
     }).parse(req.body);
     const clientCaps = parseClientCaps(b.caps);
     const role = (await effectiveLimits(ctx, req.user!))!;
-    if ((await countLive(ctx, req.user!.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
+    if ((await countStreams(ctx, req.user!.id)) >= role.maxStreams) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
     // outside the home networks the role's remote cap applies on top; the viewer may lower the quality, never raise it above the limit
     const remote = !isHomeRequest(req, ctx.cfg.HOME_NETWORKS);
     const ceiling = remote ? remoteBitrateCap(role) : role.maxBitrate; // the quality menu's upper bound (the client's own pick is not a ceiling)
