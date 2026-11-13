@@ -15,7 +15,7 @@ import { nowNext } from './epg.js';
 import { readLogo } from './logos.js';
 import { channelSet } from './rights.js';
 import { clearJoinMark, receivingChannelIds, runningChannelIds, startOrJoin } from './streams.js';
-import { beatLiveToken, deviceLiveSessions, endLiveToken, LIVE_CAP_S, liveSidHash, mintLiveToken, revokeLiveToken } from './tokens.js';
+import { beatLiveToken, deviceLiveSessions, endLiveToken, LIVE_CAP_S, liveSidHash, mintLiveToken, revokeLiveToken, unfetchedLiveSessions } from './tokens.js';
 import { addFavourite, favouriteIds, recentIds, recordRecent, removeFavourite, setFavouriteOrder, RECENT_MAX } from './userdata.js';
 
 /** a logo never changes under its hash (sha256 of the bytes): the browser keeps it a week without asking again */
@@ -108,7 +108,10 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
     const prefix = `play:${u.id}:`;
     const v = b.data.via ?? 'local';
     const own = new Set(await deviceLiveSessions(ctx, u.id, deviceId, v));
-    const counted = (await ctx.kv.keys(prefix)).filter((k) => !own.has(k.slice(prefix.length))).length;
+    // running streams (live records) plus live tokens minted but not fetched yet (review L1), without the view this watch replaces
+    const running = new Set((await ctx.kv.keys(prefix)).map((k) => k.slice(prefix.length)));
+    for (const ps of await unfetchedLiveSessions(ctx, u.id)) running.add(ps);
+    const counted = [...running].filter((ps) => !own.has(ps)).length;
     if (counted >= limits.maxStreams) return reply.code(429).send({ error: 'max_streams', max: limits.maxStreams });
 
     const r = await startOrJoin(ctx, { userId: u.id, deviceId, role: u.role }, ch, profile);
