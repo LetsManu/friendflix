@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import type { FetchOptions, GuardDeps, GuardedResponse } from '../src/fetch.js';
-import { audioFor, ffmpegArgs, scrubLine, videoArgs } from '../src/ffmpeg.js';
+import { SCRUB_MAX_CHARS, audioFor, ffmpegArgs, scrubLine, videoArgs } from '../src/ffmpeg.js';
 import { openInput } from '../src/inputs.js';
-import { createRun } from '../src/run.js';
+import { createRun, stderrLine } from '../src/run.js';
 import { ENCODERS } from '../src/system.js';
 import { fakeFetch, type Served } from './streams-helpers.js';
 
@@ -27,7 +27,7 @@ const carrying = (args: readonly string[]) => args.filter((x) => x.length >= 3 &
 
 type ArgsIn = Parameters<typeof ffmpegArgs>[0];
 const args = (o: Partial<ArgsIn> = {}): string[] =>
-  ffmpegArgs({ mode: 'transcode', input: { kind: 'pipe' }, encoder: 'libx264', audio: 'copy', srcHeight: 1080, dir: DIR, startNumber: 0, ...o });
+  ffmpegArgs({ mode: 'transcode', input: { kind: 'pipe', format: 'mpegts' }, encoder: 'libx264', audio: 'copy', srcHeight: 1080, dir: DIR, startNumber: 0, ...o });
 
 function guard(answer = ['192.0.2.40']): GuardDeps & { lookups: string[] } {
   const lookups: string[] = [];
@@ -86,13 +86,13 @@ describe('ffmpegArgs', () => {
   });
 
   it('remux copies the video; head and segment output are the same as for transcode', () => {
-    const a = ffmpegArgs({ mode: 'remux', input: { kind: 'pipe' }, encoder: 'h264_nvenc', audio: 'copy', srcHeight: 1080, dir: DIR, startNumber: 17 });
+    const a = ffmpegArgs({ mode: 'remux', input: { kind: 'pipe', format: 'mpegts' }, encoder: 'h264_nvenc', audio: 'copy', srcHeight: 1080, dir: DIR, startNumber: 17 });
     expect(a.slice(0, 3)).toEqual(['-hide_banner', '-loglevel', 'error']);
     expect(has(a, ['-c:v', 'copy'])).toBe(true);
     expect(has(a, ['-c:a', 'copy'])).toBe(true);
     for (const x of ['-b:v', '-maxrate', '-bufsize', '-force_key_frames', '-preset', ...ENCODERS]) expect([x, a.includes(x)]).toEqual([x, false]);
     expect(a.slice(-output(17).length)).toEqual(output(17));
-    const aac = ffmpegArgs({ mode: 'remux', input: { kind: 'pipe' }, encoder: 'libx264', audio: 'aac', srcHeight: null, dir: DIR, startNumber: 0 });
+    const aac = ffmpegArgs({ mode: 'remux', input: { kind: 'pipe', format: 'mpegts' }, encoder: 'libx264', audio: 'aac', srcHeight: null, dir: DIR, startNumber: 0 });
     expect(has(aac, ['-c:v', 'copy'])).toBe(true);
     expect(has(aac, ['-c:a', 'aac', '-ac', '2', '-b:a', '160k'])).toBe(true);
   });
@@ -108,13 +108,16 @@ describe('inputs', () => {
     const url = 'http://iptv.example.com/live/anna/geheim/101.ts';
     const { ffInput } = await openInput({ url, kind: 'ts', userAgent: 'Hafenkanal-Box/1.0', allowLan: false }, { guard: guard(), fetch });
     if (ffInput.kind !== 'pipe') throw new Error('an HTTP input must be a pipe');
+    expect(ffInput.format).toBe('mpegts');
     // fetched by livetv (guardedFetch in production), with the source's user agent and LAN rule
     expect(seen.map((s) => [s.url, s.o.userAgent, s.o.allowLan])).toEqual([[url, 'Hafenkanal-Box/1.0', false]]);
     expect(await read(ffInput.stdin, TS.length)).toEqual(TS);
     for (const mode of ['remux', 'transcode'] as const) {
-      const a = ffmpegArgs({ mode, input: { kind: 'pipe' }, encoder: 'libx264', audio: 'copy', srcHeight: 1080, dir: DIR, startNumber: 0 });
+      const a = ffmpegArgs({ mode, input: { kind: 'pipe', format: 'mpegts' }, encoder: 'libx264', audio: 'copy', srcHeight: 1080, dir: DIR, startNumber: 0 });
       expect(has(a, ['-protocol_whitelist', 'pipe'])).toBe(true);
       expect(has(a, ['-i', 'pipe:0'])).toBe(true);
+      // L5: the demuxer is forced, never guessed from the provider's bytes (concat, hls, image2pipe, …)
+      expect(has(a, ['-f', 'mpegts', '-format_whitelist', 'mpegts', '-i', 'pipe:0'])).toBe(true);
       expect(a.indexOf('-protocol_whitelist')).toBeLessThan(a.indexOf('-i'));
       expect(a.join(' ')).not.toMatch(/https?:|iptv\.example\.com|geheim|srt/);
     }
@@ -132,8 +135,27 @@ describe('inputs', () => {
     const ff = fakeFetch(routes);
     const { ffInput } = await openInput({ url: `${base}/103.m3u8`, kind: 'hls', allowLan: false }, { guard: guard(), fetch: ff.fetch });
     if (ffInput.kind !== 'pipe') throw new Error('an HLS input must be a pipe');
+    expect(ffInput.format).toBe('mpegts');
     expect(await read(ffInput.stdin, 376)).toEqual(Buffer.concat([a, b]));
     expect(ff.calls.slice(0, 3).map((c) => c.url)).toEqual([`${base}/103.m3u8`, `${base}/seg/7.ts?token=geheim`, `${base}/seg/8.ts?token=geheim`]);
+  });
+
+  it('L5: an fMP4 HLS input is demuxed as MP4 (init first), never by a guessed format', async () => {
+    const base = 'http://iptv.example.com/live/anna/geheim';
+    const init = Buffer.alloc(100, 9);
+    const seg = Buffer.alloc(200, 3);
+    const routes = new Map<string, Served>([
+      [`${base}/104.m3u8`, ['#EXTM3U', '#EXT-X-TARGETDURATION:4', '#EXT-X-MEDIA-SEQUENCE:1', '#EXT-X-MAP:URI="init-1.mp4"', '#EXTINF:4.000,', 'seg/1.m4s'].join('\n')],
+      [`${base}/init-1.mp4`, init],
+      [`${base}/seg/1.m4s`, seg],
+    ]);
+    const ff = fakeFetch(routes);
+    const { ffInput } = await openInput({ url: `${base}/104.m3u8`, kind: 'hls', allowLan: false }, { guard: guard(), fetch: ff.fetch });
+    if (ffInput.kind !== 'pipe') throw new Error('an HLS input must be a pipe');
+    expect(ffInput.format).toBe('mov');
+    expect(await read(ffInput.stdin, 300)).toEqual(Buffer.concat([init, seg]));
+    const a = ffmpegArgs({ mode: 'remux', input: { kind: 'pipe', format: ffInput.format }, encoder: 'libx264', audio: 'copy', srcHeight: 1080, dir: DIR, startNumber: 0 });
+    expect(has(a, ['-protocol_whitelist', 'pipe', '-f', 'mov', '-format_whitelist', 'mov', '-i', 'pipe:0'])).toBe(true);
   });
 
   it('srt inputs carry the IP literal', async () => {
@@ -177,6 +199,44 @@ describe('scrubLine', () => {
       ["Opening 'srt://192.0.2.40:9000?streamid=ab cd' failed", "Opening '<input>' failed"],
     ];
     for (const [line, want] of table) expect([line, scrubLine(line)]).toEqual([line, want]);
+  });
+
+  /** M1: ffmpeg echoes provider bytes (a concat list's file name, say) on one stderr line of up to 64 KB */
+  const hostile: Array<[string, string]> = [
+    ['concat file name', `Unsafe file name '${'a:'.repeat(30_000)}'`],
+    ['colon run', 'a:'.repeat(30_000)],
+    ['credential names', 'user'.repeat(15_000)],
+    ['credential pairs', 'a='.repeat(30_000)],
+    ['quoted schemes', `'a://"`.repeat(10_000)],
+    ['schemes', 'a+'.repeat(30_000)],
+    ['userinfo', 'a:b'.repeat(20_000)],
+    ['spaced', 'password: a:b '.repeat(4_300)],
+  ];
+  it('a 60 KB hostile line is scrubbed in well under 50 ms (linear), cut to SCRUB_MAX_CHARS', () => {
+    for (const [name, line] of hostile) {
+      expect(line.length).toBeGreaterThan(59_000);
+      const t = performance.now();
+      const out = scrubLine(line);
+      const ms = performance.now() - t;
+      expect([name, ms < 50]).toEqual([name, true]);
+      expect(out.length).toBeLessThanOrEqual(SCRUB_MAX_CHARS + 10);
+      expect(out.endsWith(' …[cut]')).toBe(true);
+      // the whole stderr path of run.ts (arguments, scrub, paths, keys) too
+      const t2 = performance.now();
+      stderrLine(line, ['-i', 'pipe:0', '/cache/0123456789abcdef0123456789abcdef/%d.ts']);
+      expect([name, performance.now() - t2 < 50]).toEqual([name, true]);
+    }
+  });
+  it('a cut line never shows the cut-off start of a secret, and the kept part is still scrubbed', () => {
+    const pad = 'x'.repeat(SCRUB_MAX_CHARS - 12);
+    expect(scrubLine(`${pad} anna:geheimgeheim@192.0.2.10:8080`)).toBe(`${pad} …[cut]`);
+    expect(scrubLine(`${pad} password=geheimgeheim`)).toBe(`${pad} …[cut]`);
+    expect(scrubLine(`Error opening http://iptv.example.com/live/anna/geheim/1.ts password=geheim ${'y'.repeat(3000)}`))
+      .toBe('Error opening <input> password=••• …[cut]');
+    // a line of one word over the limit keeps nothing of it
+    expect(scrubLine(`srt://192.0.2.40:9000?passphrase=${'g'.repeat(3000)}`)).toBe(' …[cut]');
+    // exactly at the limit nothing is cut
+    expect(scrubLine('z'.repeat(SCRUB_MAX_CHARS))).toBe('z'.repeat(SCRUB_MAX_CHARS));
   });
 });
 

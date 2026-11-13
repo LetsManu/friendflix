@@ -3,6 +3,7 @@
 import { FetchError, guardedFetch, type GuardDeps, type GuardedResponse } from './fetch.js';
 import { checkUrl, ipLiteralUrl, resolveChecked } from './netguard.js';
 import { PLAYLIST_TIMEOUT_MS, SEGMENT_TIMEOUT_MS, START_SEGMENTS, parseMedia, type FetchFn } from './passthrough.js';
+import { segmentFormat, type PipeFormat } from './ffmpeg.js';
 import { DEFAULT_MAX_BITRATE, PLAYLIST_MAX_BYTES, SEGMENT_MAX_BYTES, pickVariant, type StreamInput } from './probe.js';
 import type { IngestReader } from './srtingest.js';
 
@@ -13,7 +14,7 @@ import type { IngestReader } from './srtingest.js';
  * checked IP literal. A `{ push }` input (Task 29) is its feed's ring in the ingest hub on stdin, from the oldest of the last 4 s
  * on; a feed that is not receiving fails like an unreachable input (the driver's reconnect waits for it).
  */
-export type FfmpegInput = { kind: 'pipe'; stdin: AsyncIterable<Uint8Array> } | { kind: 'srt'; url: string };
+export type FfmpegInput = { kind: 'pipe'; format: PipeFormat; stdin: AsyncIterable<Uint8Array> } | { kind: 'srt'; url: string };
 export interface OpenedInput {
   ffInput: FfmpegInput;
   /** ends every fetch of this input (an unread body included) */
@@ -132,7 +133,7 @@ function openPush(channelId: string, deps: InputDeps): OpenedInput {
   };
   if (deps.signal?.aborted) close();
   else deps.signal?.addEventListener('abort', close, { once: true });
-  return { ffInput: { kind: 'pipe', stdin: watched({ [Symbol.asyncIterator]: () => it }, STREAM_IDLE_MS, close) }, close };
+  return { ffInput: { kind: 'pipe', format: 'mpegts', stdin: watched({ [Symbol.asyncIterator]: () => it }, STREAM_IDLE_MS, close) }, close };
 }
 
 export async function openInput(input: StreamInput, deps: InputDeps): Promise<OpenedInput> {
@@ -154,7 +155,7 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
   try {
     if (input.kind === 'ts') {
       const res = await get(input.url, Number.MAX_SAFE_INTEGER, FOREVER_MS);
-      return { ffInput: { kind: 'pipe', stdin: watched(res.body, STREAM_IDLE_MS, close) }, close };
+      return { ffInput: { kind: 'pipe', format: 'mpegts', stdin: watched(res.body, STREAM_IDLE_MS, close) }, close };
     }
     // HLS: the master (or media) playlist now, so an unreachable provider fails before ffmpeg starts
     const m = await get(input.url, PLAYLIST_MAX_BYTES, PLAYLIST_TIMEOUT_MS);
@@ -169,8 +170,11 @@ export async function openInput(input: StreamInput, deps: InputDeps): Promise<Op
       base = r.url;
     }
     // throws PlaylistRefused (encrypted, byte ranges) now: the driver fails the stream
-    if (!parseMedia(text)) throw new FetchError('unreachable');
-    return { ffInput: { kind: 'pipe', stdin: hlsBytes({ text, base, url }, get, ac.signal) }, close };
+    const media = parseMedia(text);
+    if (!media) throw new FetchError('unreachable');
+    // the demuxer follows the playlist's segments (L5): fMP4 when they are, MPEG-TS otherwise
+    const format: PipeFormat = media.segments.some((s) => segmentFormat(s.uri, s.map) === 'mov') ? 'mov' : 'mpegts';
+    return { ffInput: { kind: 'pipe', format, stdin: hlsBytes({ text, base, url }, get, ac.signal) }, close };
   } catch (e) {
     close();
     throw e;

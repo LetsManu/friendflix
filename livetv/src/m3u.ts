@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash } from 'node:crypto';
+import { scanAttrs } from './attrlist.js';
 
 /**
  * The M3U reader of `/v1/fetch/m3u` (spec §3.2, §3.4). Provider lists are hostile input: every line is capped at 8 KB (a longer
@@ -121,13 +122,17 @@ export async function* splitLines(bytes: AsyncIterable<Uint8Array>, maxLine = MA
   if (len > 0) yield flush();
 }
 
-/** `key="quoted value"` or `key=unquoted`; names as providers write them (`tvg-id`, `group-title`, `tvg-shift`) */
-const ATTR = /([A-Za-z0-9_-]+)=(?:"([^"]*)"|([^\s,"]*))/g;
+const m3uName = (c: string) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c === '_' || c === '-';
+const m3uBare = (c: string) => c !== ',' && c !== '"' && !/\s/.test(c);
+/**
+ * `key="quoted value"` or `key=unquoted`; names as providers write them (`tvg-id`, `group-title`, `tvg-shift`). Scanned in linear time
+ * (attrlist.ts, M2); lines are at most 8 KB here anyway.
+ */
 function attrs(s: string): Map<string, string> {
   const out = new Map<string, string>();
-  for (const m of s.matchAll(ATTR)) {
-    const k = m[1]!.toLowerCase();
-    if (!out.has(k)) out.set(k, (m[2] ?? m[3] ?? '').trim());
+  for (const a of scanAttrs(s, m3uName, m3uBare)) {
+    const k = a.name.toLowerCase();
+    if (!out.has(k)) out.set(k, a.value.trim());
   }
   return out;
 }

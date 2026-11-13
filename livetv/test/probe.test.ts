@@ -5,7 +5,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GuardDeps } from '../src/fetch.js';
-import { pickVariant, probe, type StreamInput } from '../src/probe.js';
+import { attrList, pickVariant, probe, type StreamInput } from '../src/probe.js';
 import type { Run, RunResult } from '../src/run.js';
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
@@ -77,6 +77,41 @@ describe('pickVariant', () => {
     expect(pickVariant(MEDIA, 10_000_000)).toBeNull();
     expect(pickVariant('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=abc\nx.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1000\n#EXTINF:1\n', 10_000_000)).toBeNull();
   });
+
+  it('M2: a 64 KB #EXT-X-STREAM-INF line is skipped in well under 50 ms; the other variants still count', () => {
+    for (const junk of ['A'.repeat(64 * 1024), 'A-'.repeat(32 * 1024), `BANDWIDTH=${'9'.repeat(64 * 1024)}`, 'X="'.repeat(22_000)]) {
+      const m = `#EXTM3U\n#EXT-X-STREAM-INF:${junk}\nhuge.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2000000,CODECS="avc1.4d401f"\nok.m3u8\n`;
+      const t = performance.now();
+      const v = pickVariant(m, 10_000_000);
+      expect(performance.now() - t).toBeLessThan(50);
+      expect(v).toEqual({ uri: 'ok.m3u8', bandwidth: 2_000_000, codecs: 'avc1.4d401f' });
+    }
+  });
+
+  it('M2: an attribute list just under the cap is scanned in linear time', () => {
+    const near = 'A'.repeat(8 * 1024 - 64);
+    const t = performance.now();
+    for (let i = 0; i < 20; i++) attrList(`BANDWIDTH=1000,${near}`);
+    attrList('A-'.repeat(4000));
+    attrList('A="'.repeat(2700));
+    expect(performance.now() - t).toBeLessThan(50);
+    const m = `#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000,${near}\nnear.m3u8\n`;
+    expect(pickVariant(m, 10_000_000)).toEqual({ uri: 'near.m3u8', bandwidth: 1000, codecs: null });
+  });
+
+  it('attrList finds what the old regex found (same names, values, order)', () => {
+    const old = (s: string) => {
+      const out = new Map<string, string>();
+      for (const m of s.matchAll(/([A-Z0-9-]+)=("[^"]*"|[^,]*)/g)) out.set(m[1]!, m[2]!.replace(/^"|"$/g, ''));
+      return out;
+    };
+    const cases = [
+      'BANDWIDTH=6000000,CODECS="avc1.640028,mp4a.40.2",RESOLUTION=1920x1080',
+      'PROGRAM-ID=1,BANDWIDTH=2000000', 'URI="init.mp4",BYTERANGE="1@0"', 'A=,B="",C="x', 'C="x,D=1', 'x=1,Y=2,aZ=3', 'K==v,L="a"b",M=',
+      'A"B=1,C=2"', '=1,,A=1=2,B', 'TYPE=AUDIO,GROUP-ID="aac",NAME="Deutsch",DEFAULT=YES,URI="a.m3u8"', 'A=1"', 'Q="a"="b"',
+    ];
+    for (const c of cases) expect([c, [...attrList(c)]]).toEqual([c, [...old(c)]]);
+  });
 });
 
 describe('probe', () => {
@@ -97,6 +132,8 @@ describe('probe', () => {
     expect(c.stdin).toBe(seg.length);
     expect(c.args).toContain('pipe:0');
     expect(c.args.join(' ')).toContain('-protocol_whitelist pipe');
+    // L5: TS segments are demuxed as MPEG-TS only, never a format guessed from the provider's bytes
+    expect(c.args.join(' ')).toContain('-f mpegts -format_whitelist mpegts -i pipe:0');
     expect(c.args.some((a) => /http|iptv\.example|geheim/.test(a))).toBe(false);
     expect(c.timeoutMs).toBeLessThanOrEqual(10_000);
   });
@@ -111,6 +148,8 @@ describe('probe', () => {
     const r = await probe({ url: `http://iptv.example.com:${s.port}/m.m3u8`, kind: 'hls', allowLan: false }, { run, guard: guard() });
     expect(r).toEqual({ ok: true, video: { codec: 'hevc', width: 3840, height: 2160, fps: 50 }, audio: { codec: 'eac3', channels: 6 }, needs: 'transcode' });
     expect(run.calls[0]!.stdin).toBe(6000);
+    // L5: fMP4 (init + segment) is demuxed as MP4 only
+    expect(run.calls[0]!.args.join(' ')).toContain('-f mov -format_whitelist mov -i pipe:0');
   });
 
   it('HLS behind a redirect: relative variant and segment URIs resolve against the redirected URL', async () => {

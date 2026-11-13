@@ -8,7 +8,19 @@ import type { Encoder } from './system.js';
  * checked IP literal (`-protocol_whitelist srt,udp`). The output is always `-f segment` MPEG-TS files `<dir>/<n>.ts`, each
  * reported as a CSV line on stdout, so livetv owns the playlist (`SegmentWindow`) for every mode.
  */
-export type FfInput = { kind: 'pipe' } | { kind: 'srt'; url: string };
+export type FfInput = { kind: 'pipe'; format: PipeFormat } | { kind: 'srt'; url: string };
+/**
+ * The demuxer of a pipe input (L5): MPEG-TS (a TS stream, TS-segment HLS, a push feed) or MP4 (fMP4-segment HLS: init + segments).
+ * Always forced (`-f`, and `-format_whitelist` for anything opened from it), never probed from the provider's bytes, so a stream
+ * cannot pick ffmpeg's concat, HLS, image or other long-tail demuxers.
+ */
+export type PipeFormat = 'mpegts' | 'mov';
+/** the input options of a pipe: stdin only, the given demuxer only */
+export const pipeInput = (format: PipeFormat): string[] =>
+  ['-protocol_whitelist', 'pipe', '-f', format, '-format_whitelist', format, '-i', 'pipe:0'];
+/** fMP4 segments (a MAP, or an `.m4s`/`.mp4` path) are demuxed as MP4, everything else as MPEG-TS */
+export const segmentFormat = (uri: string, map: string | null | undefined): PipeFormat =>
+  map || /\.(m4s|mp4)$/i.test(uri.split(/[?#]/)[0]!) ? 'mov' : 'mpegts';
 export interface FfmpegArgsIn {
   mode: 'remux' | 'transcode';
   input: FfInput;
@@ -69,7 +81,7 @@ export function videoArgs(encoder: Encoder, srcHeight: number | null): string[] 
 const audioArgs = (a: 'copy' | 'aac'): string[] => (a === 'copy' ? ['-c:a', 'copy'] : ['-c:a', 'aac', '-ac', '2', '-b:a', '160k']);
 
 export function ffmpegArgs(o: FfmpegArgsIn): string[] {
-  const input = o.input.kind === 'pipe' ? ['-protocol_whitelist', 'pipe', '-i', 'pipe:0'] : ['-protocol_whitelist', 'srt,udp', '-i', o.input.url];
+  const input = o.input.kind === 'pipe' ? pipeInput(o.input.format) : ['-protocol_whitelist', 'srt,udp', '-i', o.input.url];
   const video = o.mode === 'remux' ? ['-c:v', 'copy'] : videoArgs(o.encoder, o.srcHeight);
   return [
     ...HEAD,
@@ -84,17 +96,49 @@ export function ffmpegArgs(o: FfmpegArgsIn): string[] {
   ];
 }
 
+/** scrubLine looks at no more than this many characters of a line; the rest is dropped (`…[cut]`) */
+export const SCRUB_MAX_CHARS = 2048;
+const CUT_MARK = ' …[cut]';
+/** a name that marks a credential (`username`, `passwd`, `X-Api-Key`, `streamid`, …) */
+const CRED_NAME = /user|pass|pwd|secret|auth|token|key|streamid/i;
+
 /**
  * One ffmpeg stderr line as it may be logged (run.ts also replaces the run's data arguments, absolute paths and stream keys):
+ * - only the first SCRUB_MAX_CHARS characters are kept; a longer line also loses its last, possibly cut, word and ends in `…[cut]`;
  * - a URL becomes `<input>`; a quoted one up to its closing quote (an SRT URL may hold a space), else up to the next space;
  * - userinfo without a scheme (`anna:geheim@192.0.2.10`) becomes `•••@`;
  * - the value after a credential-like name (any word containing user, pass, pwd, secret, auth, token, key or streamid, followed
  *   by `=` or `:`) becomes `•••`.
+ * Linear in the line's length (M1: ffmpeg echoes provider bytes): every pattern starts only at the beginning of a run of its first
+ * class (a lookbehind), so no run is scanned from more than one start, and the credential names are checked outside the regex.
  */
 export function scrubLine(line: string): string {
-  return line
-    .replace(/(['"])[a-z][a-z0-9+.-]*:\/\/[^'"]*\1/gi, '$1<input>$1')
-    .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, '<input>')
-    .replace(/[^\s'"@/]+:[^\s'"@/]+@/g, '•••@')
-    .replace(/(\w*(?:user|pass|pwd|secret|auth|token|key|streamid)\w*)(\s*[:=]\s*)[^&\s'"]+/gi, '$1$2•••');
+  let s = line;
+  const cut = s.length > SCRUB_MAX_CHARS;
+  if (cut) {
+    s = s.slice(0, SCRUB_MAX_CHARS);
+    const sp = Math.max(s.lastIndexOf(' '), s.lastIndexOf('\t'));
+    s = sp > 0 ? s.slice(0, sp) : '';
+  }
+  s = s
+    .replace(/(['"])[a-z0-9+.-]+:\/\/[^'"]*\1/gi, '$1<input>$1')
+    .replace(/(?<![a-z0-9+.-])[a-z0-9+.-]+:\/\/\S+/gi, '<input>')
+    .replace(/(?<![^\s'"@/])[^\s'"@/:]+:[^\s'"@/]+@/g, '•••@');
+  return redactCredentials(s) + (cut ? CUT_MARK : '');
+}
+
+/** `name=value` / `name: value` with a credential-like name → `name=•••`; every character is looked at a bounded number of times */
+function redactCredentials(s: string): string {
+  const pair = /(?<!\w)(\w+)(\s*[:=]\s*)/g;
+  const value = /[^&\s'"]+/y;
+  let out = '';
+  let last = 0;
+  for (let m = pair.exec(s); m; m = pair.exec(s)) {
+    if (!CRED_NAME.test(m[1]!)) continue;
+    value.lastIndex = pair.lastIndex;
+    if (!value.exec(s)) continue;
+    out += `${s.slice(last, pair.lastIndex)}•••`;
+    last = pair.lastIndex = value.lastIndex;
+  }
+  return out + s.slice(last);
 }
