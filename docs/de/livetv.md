@@ -34,6 +34,10 @@ Der Dienst hat keinen Docker-Socket, ein schreibgeschütztes Root-Dateisystem un
 erreichen ihn im internen Netz `livetv` unter `LIVETV_URL` (Standard `http://livetv:8090`, braucht keine Einstellung). Details (englisch): [security.md](../security.md#the-livetv-container).
 Der Updater behält die Overlay-Dateien, mit denen du den Stack gestartet hast; ein Overlay in `COMPOSE_FILE` bleibt bei Updates erhalten.
 
+**Reverse Proxy:** Das Token steht in jeder Stream-Adresse (`/media/l/<token>/…`). Den Block `location /media/l/` aus
+`deploy/npm/portal.advanced.conf` im Proxy Host des Portals ergänzen (er schaltet Access- und Error-Log für diese Pfade ab, wie bei
+`/media/c/`), und nie eine `/media/l/…`-Adresse in ein Issue oder einen Chat kopieren.
+
 ## GPU
 
 Ohne Overlay kodiert livetv in Software (libx264). Für Hardware-Kodierung ein Overlay hinzufügen.

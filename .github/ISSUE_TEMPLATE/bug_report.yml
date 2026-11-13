@@ -8,7 +8,7 @@ body:
     attributes:
       value: |
         Thanks for reporting! **Security problems do not belong here** – please follow [SECURITY.md](https://github.com/LetsManu/friendflix/blob/main/SECURITY.md).
-        Never paste passwords, tokens or `/media/c/…` addresses.
+        Never paste passwords, tokens, `/media/c/…` or `/media/l/…` addresses.
   - type: textarea
     id: what
     attributes:

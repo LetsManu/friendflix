@@ -34,6 +34,10 @@ The service has no Docker socket, a read-only root file system and no capabiliti
 internal `livetv` network at `LIVETV_URL` (default `http://livetv:8090`, needs no setting). Details: [security.md](security.md#the-livetv-container).
 The updater keeps the overlay files you started the stack with, so an overlay in `COMPOSE_FILE` stays on updates.
 
+**Reverse proxy:** the watch token is part of every stream address (`/media/l/<token>/…`). Add the `location /media/l/` block from
+`deploy/npm/portal.advanced.conf` to the portal proxy host (it turns off the access and error log for these paths, like `/media/c/`),
+and never paste a `/media/l/…` address into an issue or a chat.
+
 ## GPU
 
 Without an overlay livetv encodes in software (libx264). For hardware encoding add one overlay.
