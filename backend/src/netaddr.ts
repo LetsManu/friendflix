@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
 /** Parses IPv4 / IPv6 (incl. IPv4-mapped ::ffff:a.b.c.d and a zone id) into 16 bytes (IPv4 as ::ffff:a.b.c.d); null = not an address. */
@@ -69,7 +70,7 @@ export function isHomeAddress(ip: string, cidrs: string[]): boolean {
  * documented setups (the reverse proxy on the host, or in a bridge container, reaches the backend on BIND_ADDR). Anything else that connects
  * directly is taken at its socket address, so a spoofed X-Forwarded-For cannot pick another rate-limit bucket. A proxy that reaches the
  * backend from a public address is not supported (docs/setup.md). `req.ip` is then the first address, walking back from the peer, that is not
- * one of these: the client the proxy appended.
+ * one of these: the client the proxy appended. The livetv container is the exception ([setUntrustedPeers]): Fastify gets [trustProxy].
  */
 export const TRUSTED_PROXY_RANGES: readonly string[] = ['loopback', 'linklocal', 'uniquelocal'];
 
@@ -79,9 +80,55 @@ const hdr = (req: AddrReq, k: string) => {
   return typeof v === 'string' ? v : Array.isArray(v) ? v.join(',') : '';
 };
 
-/** true when the direct peer is a proxy we trust: loopback, link-local or private (the same rule as [TRUSTED_PROXY_RANGES]) */
+/**
+ * true when the direct peer is a proxy we trust: loopback, link-local or private (the same rule as [TRUSTED_PROXY_RANGES]), but never one
+ * of the untrusted peers (the livetv container, see [watchUntrustedHost])
+ */
 export function isTrustedPeer(ip: string | undefined): boolean {
-  return !!ip && isHomeAddress(ip, TRUSTED_PEER_CIDRS);
+  return !!ip && !untrustedPeers.has(bareAddress(ip)) && isHomeAddress(ip, TRUSTED_PEER_CIDRS);
+}
+/** Fastify's `trustProxy`: [TRUSTED_PROXY_RANGES] minus the untrusted peers, for every hop (`req.ip`, the rate-limit key) */
+export const trustProxy = (address: string): boolean => isTrustedPeer(address);
+
+/** the plain form of an address for comparison: lower case, no zone id, an IPv4-mapped IPv6 address as its IPv4 address */
+function bareAddress(raw: string): string {
+  let s = raw.trim().toLowerCase();
+  const zone = s.indexOf('%');
+  if (zone >= 0) s = s.slice(0, zone);
+  return /^::ffff:\d{1,3}(\.\d{1,3}){3}$/.test(s) ? s.slice(7) : s;
+}
+const isLoopback = (a: string) => a === '::1' || a.startsWith('127.');
+
+let untrustedPeers: ReadonlySet<string> = new Set();
+/**
+ * Addresses that are never a trusted proxy although they are private (review L3): the livetv container. It reaches the backend over the
+ * internal `livetv` network but never proxies a client, so its X-Forwarded-For must not pick a rate-limit bucket or a home address.
+ * Loopback is never excluded.
+ */
+export function setUntrustedPeers(addrs: Iterable<string>): void {
+  untrustedPeers = new Set([...addrs].map(bareAddress).filter((a) => isIP(a) && !isLoopback(a)));
+}
+
+/**
+ * Keeps the untrusted peers at the addresses of `host` (LIVETV_URL's host: resolved now, then every `intervalMs`). A name that does not
+ * resolve (the livetv profile is off) empties the set; any other lookup failure keeps the last answer. Only a single-label host (a compose
+ * service name such as `livetv`) is followed: a dotted name or an address may be the Docker host, whose bridge address can also be the
+ * reverse proxy's.
+ */
+export function watchUntrustedHost(host: string, o: { lookup?: (host: string) => Promise<string[]>; intervalMs?: number } = {}): { ready: Promise<void>; stop(): void } {
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(host) || /^\d+$/.test(host)) return { ready: Promise.resolve(), stop: () => {} };
+  const lookup = o.lookup ?? (async (h: string) => (await dnsLookup(h, { all: true })).map((r) => r.address));
+  const refresh = async () => {
+    try {
+      setUntrustedPeers(await lookup(host));
+    } catch (e) {
+      if ((e as { code?: string }).code === 'ENOTFOUND') setUntrustedPeers([]);
+    }
+  };
+  const ready = refresh();
+  const t = setInterval(() => void refresh(), o.intervalMs ?? 15_000);
+  t.unref();
+  return { ready, stop: () => clearInterval(t) };
 }
 const TRUSTED_PEER_CIDRS = ['127.0.0.0/8', '::1/128', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', 'fc00::/7', 'fe80::/10'];
 

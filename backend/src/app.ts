@@ -9,7 +9,7 @@ import { buildInfo } from './channel.js';
 import type { Ctx } from './ctx.js';
 import { MIN_ANDROID } from './version.js';
 import { authOrigin } from './oidc.js';
-import { noteUntrustedForwarding, TRUSTED_PROXY_RANGES } from './netaddr.js';
+import { noteUntrustedForwarding, trustProxy } from './netaddr.js';
 import { compressJson } from './compress.js';
 import { newTimingStore, serverTimingHeader, timedDb, timedKv, timingStorage, timingSummary, type TimingStore } from './timing.js';
 import { metricsPlugin } from './metrics.js';
@@ -123,7 +123,7 @@ export function reqSerializer(req: { method?: string; url?: string; host?: strin
 
 export async function buildApp(ctx: Ctx, extra: Extra = {}): Promise<FastifyInstance> {
   const logger = extra.logger ?? (process.env.NODE_ENV !== 'test' ? {} : false);
-  const app = Fastify({ logger: logger && { ...logger, serializers: { req: reqSerializer } }, trustProxy: [...TRUSTED_PROXY_RANGES], bodyLimit: 256 * 1024 });
+  const app = Fastify({ logger: logger && { ...logger, serializers: { req: reqSerializer } }, trustProxy, bodyLimit: 256 * 1024 });
   // Server-Timing: Postgres and Redis calls are booked on the current request (Jellyfin: JellyfinClient). Same objects underneath.
   ctx.db = timedDb(ctx.db);
   ctx.kv = timedKv(ctx.kv);

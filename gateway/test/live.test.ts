@@ -9,7 +9,9 @@ import { createServer, request, type IncomingHttpHeaders, type Server } from 'no
 import type { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { networkInterfaces } from 'node:os';
 import { createGateway } from '../src/gateway.js';
+import { isTrustedPeer, setUntrustedPeers } from '../src/peers.js';
 
 const SECRET = 'internal-secret-for-tests';
 const KEY = '0123456789abcdef0123456789abcdef'; // livetv stream key (STREAM_KEY_RE)
@@ -390,6 +392,40 @@ describe('/media/l/<token>/<file>', () => {
       for (const s of spies) s.mockRestore();
       out.mockRestore();
       err.mockRestore();
+    }
+  });
+});
+
+describe('review L2: forwarding headers count only from a trusted proxy peer', () => {
+  // a non-loopback address of this machine: requests to it arrive from that address, not from 127.0.0.1
+  const lan = Object.values(networkInterfaces()).flat().find((i) => i && !i.internal && i.family === 'IPv4')?.address;
+  afterEach(() => setUntrustedPeers([]));
+
+  it.skipIf(!lan)('a peer that is no trusted proxy (public, or the livetv container) is pinned and limited by its socket address', async () => {
+    const bePort = (be.address() as AddressInfo).port;
+    const g = createGateway({ upstreamUrl: () => null, backendUrl: `http://127.0.0.1:${bePort}`, livetvUrl: `http://127.0.0.1:${lvPort}`, internalSecret: SECRET });
+    const port = await new Promise<number>((r) => g.server.listen(0, lan, () => r((g.server.address() as AddressInfo).port)));
+    const get = (path: string, ip: string) => new Promise<number>((resolve, reject) => {
+      const req = request({ host: lan, port, path, headers: { 'x-real-ip': ip, 'x-forwarded-for': ip } }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode ?? 0)); });
+      req.on('error', reject);
+      req.end();
+    });
+    try {
+      if (isTrustedPeer(lan)) {
+        // a private peer is a proxy: its X-Real-IP names the client …
+        expect(await get(L(T_OK, 'index.m3u8'), '192.0.2.61')).toBe(200);
+        expect(authz.at(-1)!.ip).toBe('192.0.2.61');
+        // … unless it is the livetv container, which never proxies anyone
+        setUntrustedPeers([lan!]);
+      }
+      expect(isTrustedPeer(lan)).toBe(false);
+      expect(await get(L(T_OK, '5.m4s'), '192.0.2.62')).toBe(200);
+      expect(authz.at(-1)!.ip).toBe(lan); // the pin sees the socket address, never the claimed one
+      // rotating the header does not buy a fresh failure bucket
+      for (let i = 0; i < 31; i++) expect(await get(L(`Y${String(i).padStart(2, '0')}`.padEnd(43, 'y'), 'index.m3u8'), `198.51.100.${i + 1}`)).toBe(401);
+      expect(await get(L(T_OK, 'index.m3u8'), '198.51.100.200')).toBe(429);
+    } finally {
+      g.server.close();
     }
   });
 });

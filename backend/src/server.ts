@@ -3,6 +3,7 @@
 import { Redis } from 'ioredis';
 import pg from 'pg';
 import { buildApp } from './app.js';
+import { watchUntrustedHost } from './netaddr.js';
 import { loadConfig, removedEnvNames } from './config.js';
 import { keyFromBase64 } from './crypto.js';
 import { migrate } from './db.js';
@@ -85,6 +86,9 @@ await syncRoles(ctx);
 
 const app = await buildApp(ctx);
 logTo.app = app.log;
+// livetv reaches the backend from a private address but never proxies a client: its X-Forwarded-For is never believed (review L3).
+// Its address is looked up now and every 15 s (the timer does not keep the process alive).
+watchUntrustedHost(URL.canParse(cfg.LIVETV_URL) ? new URL(cfg.LIVETV_URL).hostname : '');
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
 // setting names removed in 2.0 that are still set (names only, never values; the admin banner shows them too, health.ts)
 for (const msg of removedEnvNames()) app.log.warn(msg);
