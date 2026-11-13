@@ -630,24 +630,30 @@ describe('summary and tick', () => {
     expect((await src(due)).last_ok_at).not.toBeNull();
   });
 
-  it('the refresh tick takes due, enabled, automatic sources only', async () => {
+  it('the refresh tick takes due, enabled sources; a manual one only once, when new or marked due (bughunt L1)', async () => {
     const hour = 3600_000;
     const fresh = await addSource({ refresh: '6h', last_refresh_at: new Date(Date.now() - hour) });
     const stale = await addSource({ refresh: '6h', last_refresh_at: new Date(Date.now() - 7 * hour) });
     const marked = await addSource({ refresh: 'weekly', last_refresh_at: null }); // an edit marked it due (Task 15)
-    const manual = await addSource({ refresh: 'manual', last_refresh_at: null });
+    const manual = await addSource({ refresh: 'manual', last_refresh_at: null }); // new (or marked): imported once
+    const manualOld = await addSource({ refresh: 'manual', last_refresh_at: new Date(Date.now() - 400 * 24 * hour) }); // never on a schedule
     const off = await addSource({ refresh: '6h', last_refresh_at: null });
     await setSource(off, 'enabled = false');
     await livetvRefreshTick(env.ctx);
-    expect(m3uCalls()).toHaveLength(2);
+    expect(m3uCalls()).toHaveLength(3);
     expect((await src(stale)).last_ok_at).not.toBeNull();
     expect((await src(marked)).last_ok_at).not.toBeNull();
-    for (const id of [fresh, manual, off]) expect((await src(id)).last_ok_at).toBeNull();
+    expect((await src(manual)).last_ok_at).not.toBeNull();
+    for (const id of [fresh, manualOld, off]) expect((await src(id)).last_ok_at).toBeNull();
+    // the manual source is not taken again: its import set last_refresh_at
+    await env.kv.del('ltv:refresh-tick');
+    await livetvRefreshTick(env.ctx);
+    expect(m3uCalls()).toHaveLength(3);
     // one tick at a time
     await env.kv.set('ltv:refresh-tick', 'other', 60);
     await setSource(fresh, 'last_refresh_at = null');
     await livetvRefreshTick(env.ctx);
-    expect(m3uCalls()).toHaveLength(2);
+    expect(m3uCalls()).toHaveLength(3);
   });
 
   it('a failed source is due again after an hour', async () => {

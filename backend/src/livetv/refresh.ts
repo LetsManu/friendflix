@@ -162,7 +162,7 @@ async function failed(ctx: Ctx, source: SourceRow, code: string, now: Date, rev?
  * never fetched. Provider failures are recorded (see failed) and never thrown; anything else is recorded as `internal` and rethrown.
  */
 export async function refreshSource(ctx: Ctx, id: string, trigger: 'tick' | 'admin'): Promise<void> {
-  void trigger; // both run the same steps; the tick has chosen only due, enabled, automatic sources
+  void trigger; // both run the same steps; the tick has chosen only due, enabled sources (a manual one only when marked due)
   const token = randomBytes(12).toString('hex');
   if (!(await ctx.kv.setnx(lockKey(id), token, LOCK_TTL_S))) return;
   try {
@@ -239,11 +239,13 @@ const epgDue = (s: { epg_last_refresh_at: Date | null; epg_last_error: string | 
 
 /**
  * due: never refreshed (or marked due by an edit, Task 15), or the last attempt is older than the source's interval; after a failed
- * attempt (`last_error` set) older than min(interval, 1 h), so three failures in a row reach the admins within hours, not days
+ * attempt (`last_error` set) older than min(interval, 1 h), so three failures in a row reach the admins within hours, not days.
+ * A source with refresh *Manuell* is never refreshed on a schedule, but it is imported once when it is new or an edit marked it due
+ * (a changed group selection, numbering or URL; bughunt L1): its attempt sets `last_refresh_at` again, so that happens once.
  */
 function due(s: { refresh: Refresh; last_refresh_at: Date | null; last_error: string | null }, now: number): boolean {
-  if (s.refresh === 'manual') return false;
   if (s.last_refresh_at === null) return true;
+  if (s.refresh === 'manual') return false;
   const interval = REFRESH_INTERVAL_MS[s.refresh];
   return now - s.last_refresh_at.getTime() >= (s.last_error === null ? interval : Math.min(interval, RETRY_MS));
 }
@@ -255,8 +257,8 @@ export async function refreshRunning(ctx: Pick<Ctx, 'kv'>, id: string): Promise<
 
 /**
  * Every 5 minutes (server.ts, behind op()): refreshes the enabled provider sources that are due, one after the other. Nothing runs
- * while livetv is not installed (detection), else every source would fail. Sources with refresh 'manual' are refreshed only by the
- * admin. The own-feeds source is skipped first, before the due check (F16): it has no list, so it is never fetched and never fails.
+ * while livetv is not installed (detection), else every source would fail. Sources with refresh 'manual' are refreshed by the
+ * admin, and once by the tick when they are new or an edit marked them due (bughunt L1). The own-feeds source is skipped first, before the due check (F16): it has no list, so it is never fetched and never fails.
  * One tick at a time across processes (`ltv:refresh-tick`, renewed after each source).
  */
 export async function livetvRefreshTick(ctx: Ctx): Promise<void> {

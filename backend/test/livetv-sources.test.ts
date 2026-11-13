@@ -244,6 +244,12 @@ describe('own feeds and import options', () => {
     const same = await call('PATCH', `/api/admin/livetv/sources/${s.id}`, { skipGroups: ['VOD', 'Kinder', 'VOD'] });
     expect(same.json().skipGroups).toEqual(['VOD', 'Kinder']);
     expect(await due()).toBe(false);
+    // another list URL is imported again (bughunt L1); the same URL sent again is no change
+    const stored = (await env.pool.query<{ url_enc: string }>('select url_enc from livetv_sources where id = $1', [s.id])).rows[0]!.url_enc;
+    await call('PATCH', `/api/admin/livetv/sources/${s.id}`, { url: decrypt(env.ctx.encKey, stored) });
+    expect(await due()).toBe(false);
+    await call('PATCH', `/api/admin/livetv/sources/${s.id}`, { url: 'https://iptv.example.com/get.php?username=bert&password=anders&type=m3u_plus' });
+    expect(await due()).toBe(true);
     expect((await call('PATCH', `/api/admin/livetv/sources/${s.id}`, { epgShiftMin: 45 })).json()).toEqual({ error: 'invalid', field: 'epgShiftMin' });
   });
 

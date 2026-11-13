@@ -270,8 +270,8 @@ const sameSet = (a: readonly string[], b: readonly string[]) => {
 /**
  * Changes the fields `patch` names: an absent `url`/`epgUrl` stays as stored, `epgUrl: null` removes it. The stored URLs are checked
  * again against the resulting `allowLan` (turning *LAN erlauben* off under a LAN address is refused). The own-feeds source has no list
- * and no EPG URL (`invalid`). A changed `skipGroups`, `numbering` or `numberBase` marks the source due (`last_refresh_at` cleared), so
- * the next refresh tick re-imports it. A new `url` drops `last_counts.listed`, the shrink guard's reference. null = no such source.
+ * and no EPG URL (`invalid`). A changed `skipGroups`, `numbering`, `numberBase` or `url` marks the source due (`last_refresh_at`
+ * cleared), so the next refresh tick re-imports it (whatever its refresh interval, *Manuell* too). A new `url` drops `last_counts.listed`, the shrink guard's reference. null = no such source.
  */
 export async function updateSource(ctx: WriteCtx, actor: string, id: string, patch: Partial<SourceBody>): Promise<SourceView | null> {
   const found = await write(ctx, async (c) => {
@@ -306,9 +306,11 @@ export async function updateSource(ctx: WriteCtx, actor: string, id: string, pat
     if (patch.epgShiftMin !== undefined) put('epg_shift_min', patch.epgShiftMin);
     if (patch.maxStreams !== undefined) put('max_streams', patch.maxStreams);
     if (patch.enabled !== undefined) put('enabled', patch.enabled);
+    // another list (a new URL) is imported again too (bughunt L1), also for a source with refresh *Manuell*
     const due = (patch.skipGroups !== undefined && !sameSet(patch.skipGroups, s.skip_groups))
       || (patch.numbering !== undefined && patch.numbering !== s.numbering)
-      || (patch.numberBase !== undefined && patch.numberBase !== s.number_base);
+      || (patch.numberBase !== undefined && patch.numberBase !== s.number_base)
+      || (patch.url !== undefined && (s.url_enc === null || decrypt(ctx.encKey, s.url_enc) !== patch.url));
     if (due) set.push('last_refresh_at = null');
     // another list: the 20 % shrink guard must not compare it with the old one (it would refuse a smaller list for ever)
     if (patch.url !== undefined) set.push("last_counts = last_counts - 'listed'");
