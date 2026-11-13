@@ -31,6 +31,15 @@ updates:
     groups:
       desktop-npm:
         patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /webos # the webOS packaging CLI (dev-only, own lockfile, not a workspace)
+    schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
+    rebase-strategy: disabled
+    open-pull-requests-limit: 1
+    groups:
+      webos-npm:
+        patterns: ["*"]
   - package-ecosystem: docker
     directories: [/backend, /gateway, /web, /updater, /livetv]
     schedule: { interval: monthly }
