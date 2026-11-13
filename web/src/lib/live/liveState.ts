@@ -42,8 +42,12 @@ export function nextLost(ui: LostUi, elapsedMs: number): LostUi | { k: 'retry' }
  * A refused `watch` (Task 35's WatchError, F23) as the player's state: 502 channel_unreachable is the input-lost card with
  * reconnects, 404 livetv_off the off message (no retry), every other 403/404 forbidden. Anything unexpected is input lost, so the
  * player keeps trying instead of stopping at an empty screen.
+ *
+ * `again` (bughunt M1): the watch is for the channel that was already playing (the one re-watch after a refused token, a start of
+ * the lost cycle). There `livetv_off` is a livetv that is restarting (detection missed it for a moment), not an admin's decision:
+ * the input-lost cycle with its backoff, which ends at *Erneut versuchen* after two minutes if it really stays off.
  */
-export function fromWatchError(status: number, body: unknown): LiveUi {
+export function fromWatchError(status: number, body: unknown, o: { again?: boolean } = {}): LiveUi {
   const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
   const running = Array.isArray(b.running) ? (b.running as RunningChannel[]) : [];
   const max = typeof b.max === 'number' && Number.isFinite(b.max) ? b.max : 0;
@@ -64,7 +68,8 @@ export function fromWatchError(status: number, body: unknown): LiveUi {
     case 403:
       return { k: 'forbidden' };
     case 404:
-      return b.error === 'livetv_off' ? { k: 'off' } : { k: 'forbidden' };
+      if (b.error === 'livetv_off') return o.again ? { k: 'unreachable', attempt: 0 } : { k: 'off' };
+      return { k: 'forbidden' };
     default:
       break;
   }

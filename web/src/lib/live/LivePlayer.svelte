@@ -284,7 +284,8 @@
     }
     startPending = false;
     if (!r.ok) {
-      const u = fromWatchError(r.error.status, r.error);
+      // the channel that was already playing (the one re-watch, a lost-cycle start): livetv_off there is a restart, not off (bughunt M1)
+      const u = fromWatchError(r.error.status, r.error, { again: cycle || from === id });
       if ((u.k === 'full' || u.k === 'providerLimit') && from && token) {
         // a switch into a full budget: the channel before keeps playing (its stream, its attach id and its handlers stay as
         // they are), the sheet offers what already runs (spec §12.2)

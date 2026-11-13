@@ -86,7 +86,7 @@ beforeEach(async () => {
   setCfg({ UPDATER_URL: 'http://updater:7070' });
   await env.pool.query("delete from audit_log where action like 'livetv.%'");
   await env.ctx.settings.save({ LIVETV_WANTED: 'false', LIVETV_OFFER_HIDDEN: 'false' }, null);
-  await detectLivetv(env.ctx, 0);
+  await detectLivetv(env.ctx, 0, { strict: true });
 });
 
 describe('detection', () => {
@@ -125,6 +125,43 @@ describe('detection', () => {
     } finally { warn.mockRestore(); }
   });
 
+  it('one missed check keeps an installed livetv; the second in a row turns it off (bughunt M1)', async () => {
+    fake.livetv = 'api1';
+    await livetvDetectTick(env.ctx);
+    expect(livetvInstalled(env.ctx)).toBe(true);
+    // a restart between two ticks: the first miss keeps it installed (marked unreachable), version and boot id stay
+    fake.livetv = 'down';
+    await livetvDetectTick(env.ctx);
+    expect(livetvInstalled(env.ctx)).toBe(true);
+    expect(featureFlags(env.ctx).livetv).toBe(true);
+    expect(await detectLivetv(env.ctx)).toMatchObject({ reachable: false, installed: true, version: '1.0.0', bootId: '0123456789abcdef' });
+    // back at the next tick: nothing happened
+    fake.livetv = 'api1';
+    await livetvDetectTick(env.ctx);
+    expect(await detectLivetv(env.ctx)).toMatchObject({ reachable: true, installed: true });
+    // two misses in a row: gone
+    fake.livetv = 'down';
+    await livetvDetectTick(env.ctx);
+    expect(livetvInstalled(env.ctx)).toBe(true);
+    await livetvDetectTick(env.ctx);
+    expect(livetvInstalled(env.ctx)).toBe(false);
+    expect(featureFlags(env.ctx).livetv).toBe(false);
+    // a wrong proof is never tolerated, not even once
+    fake.livetv = 'api1';
+    await livetvDetectTick(env.ctx);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      fake.livetv = 'impostor';
+      await livetvDetectTick(env.ctx);
+      expect(livetvInstalled(env.ctx)).toBe(false);
+    } finally { warn.mockRestore(); }
+    // a strict caller (an updater job just ended) takes the first miss
+    fake.livetv = 'api1';
+    await livetvDetectTick(env.ctx);
+    fake.livetv = 'down';
+    expect(await detectLivetv(env.ctx, 0, { strict: true })).toMatchObject({ installed: false, reachable: false });
+  });
+
   it('answers from the last check within maxAge and runs one check at a time', async () => {
     let n = 0;
     const inner = env.ctx.fetchImpl;
@@ -153,6 +190,7 @@ describe('detection', () => {
     expect(featureFlags(env.ctx).livetv).toBe(true);
     fake.livetv = 'down';
     await livetvDetectTick(env.ctx);
+    await livetvDetectTick(env.ctx); // the second miss in a row (bughunt M1)
     expect(featureFlags(env.ctx).livetv).toBe(false);
   });
 
@@ -169,6 +207,7 @@ describe('detection', () => {
     // gone and back: a new transition
     fake.livetv = 'down';
     await livetvDetectTick(env.ctx);
+    await livetvDetectTick(env.ctx); // the second miss in a row (bughunt M1)
     fake.livetv = 'api1';
     await livetvDetectTick(env.ctx);
     expect(startBenchmark).toHaveBeenCalledTimes(2);
@@ -198,6 +237,7 @@ describe('the benchmark after enabling', () => {
     // a throw is noted too, and the next appearance starts over
     fake.livetv = 'down';
     await livetvDetectTick(env.ctx);
+    await livetvDetectTick(env.ctx); // the second miss in a row (bughunt M1)
     vi.mocked(startBenchmark).mockRejectedValueOnce(new Error('boom'));
     fake.livetv = 'api1';
     await livetvDetectTick(env.ctx);
@@ -205,6 +245,7 @@ describe('the benchmark after enabling', () => {
     vi.mocked(startBenchmark).mockResolvedValue({ ok: true });
     fake.livetv = 'down';
     await livetvDetectTick(env.ctx);
+    await livetvDetectTick(env.ctx); // the second miss in a row (bughunt M1)
     fake.livetv = 'api1';
     await livetvDetectTick(env.ctx);
     await vi.waitFor(() => expect(enableBenchmark(env.ctx)).toBe('started'));
@@ -228,6 +269,7 @@ describe('the benchmark answer belongs to its appearance (1b review M2)', () => 
     expect(startBenchmark).toHaveBeenCalledTimes(1);
     fake.livetv = 'down';
     await livetvDetectTick(env.ctx); // gone (disabled)
+    await livetvDetectTick(env.ctx); // the second miss in a row (bughunt M1)
     answer({ ok: true });
     await new Promise((r) => setTimeout(r, 0));
     expect(enableBenchmark(env.ctx)).toBeNull();

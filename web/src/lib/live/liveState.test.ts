@@ -22,6 +22,13 @@ describe('fromWatchError (every WatchError of Task 35, F23)', () => {
   });
   it('404 livetv_off is the off message (no retry)', () => {
     expect(fromWatchError(404, { error: 'livetv_off' })).toEqual({ k: 'off' });
+    expect(fromWatchError(404, { error: 'livetv_off' }, { again: false })).toEqual({ k: 'off' });
+  });
+  it('404 livetv_off for the channel that was already playing is a transient loss with reconnects (bughunt M1)', () => {
+    expect(fromWatchError(404, { error: 'livetv_off' }, { again: true })).toEqual({ k: 'unreachable', attempt: 0 });
+    // the other refusals mean the same as on a first watch
+    expect(fromWatchError(404, { error: 'not_found' }, { again: true })).toEqual({ k: 'forbidden' });
+    expect(fromWatchError(403, { error: 'forbidden' }, { again: true })).toEqual({ k: 'forbidden' });
   });
   it('409 not_receiving waits for the push feed', () => {
     expect(fromWatchError(409, { error: 'not_receiving' })).toEqual({ k: 'notReceiving' });

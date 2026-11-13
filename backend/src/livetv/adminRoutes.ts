@@ -98,7 +98,8 @@ export function livetvAdminRoutes(app: FastifyInstance, ctx: Ctx) {
     reply.header('cache-control', 'no-store');
     const view = await updaterView(ctx);
     const job = view.present && 'status' in view ? view.status.job : null;
-    const det = await detectLivetv(ctx, justFinished(job) ? 0 : MEMO_MS);
+    // a job that just ended changed the container on purpose: no grace for a missed check (bughunt M1)
+    const det = await detectLivetv(ctx, justFinished(job) ? 0 : MEMO_MS, { strict: justFinished(job) });
     // the media server is asked only when there is something to compare it with
     const jellyfin = det.installed ? await jellyfinHwAccel() : null;
     const status = view.present && 'status' in view ? view.status : null;

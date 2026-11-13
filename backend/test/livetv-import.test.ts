@@ -40,7 +40,7 @@ const livetvFake = () => fakeHttp({
   'POST /v1/fetch/m3u': (...a) => m3u(...a),
   'POST /v1/fetch/logo': (...a) => logo(...a),
 }, calls);
-const setUp = async (v: boolean) => { up = v; await detectLivetv(env.ctx, 0); };
+const setUp = async (v: boolean) => { up = v; await detectLivetv(env.ctx, 0, { strict: true }); };
 const m3uAnswer = (all: M3uEntry[], skip: readonly string[]): FetchM3uAnswer => {
   const groups: Array<{ name: string; channels: number }> = [];
   for (const e of all) {

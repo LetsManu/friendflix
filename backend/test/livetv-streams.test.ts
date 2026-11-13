@@ -417,7 +417,7 @@ describe('start and join', () => {
     expect((await watch(anna, admins, { via: 'teleport' })).statusCode).toBe(400);
     expect((await watch(admin, admins)).statusCode).toBe(200);
     bootId = 'nope';
-    await detectLivetv(env.ctx, 0); // livetv gone
+    await detectLivetv(env.ctx, 0, { strict: true }); // livetv gone (strict: no grace for one missed check, bughunt M1)
     expect((await watch(admin, admins)).json()).toEqual({ error: 'livetv_off' });
   });
 });
