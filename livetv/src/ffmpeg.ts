@@ -10,17 +10,37 @@ import type { Encoder } from './system.js';
  */
 export type FfInput = { kind: 'pipe'; format: PipeFormat } | { kind: 'srt'; url: string };
 /**
- * The demuxer of a pipe input (L5): MPEG-TS (a TS stream, TS-segment HLS, a push feed) or MP4 (fMP4-segment HLS: init + segments).
- * Always forced (`-f`, and `-format_whitelist` for anything opened from it), never probed from the provider's bytes, so a stream
- * cannot pick ffmpeg's concat, HLS, image or other long-tail demuxers.
+ * The demuxer of a pipe input (L5). Always forced (`-f`, and `-format_whitelist` for anything opened from it), never probed from the
+ * provider's bytes, so a stream cannot pick ffmpeg's concat, HLS, image or other long-tail demuxers. It is mapped from what we know:
+ * the kind of input and the path extension (`segmentFormat`, `urlFormat`), a push feed is always `mpegts`.
  */
-export type PipeFormat = 'mpegts' | 'mov';
+export type PipeFormat = 'mpegts' | 'mov' | 'aac' | 'mp3' | 'matroska' | 'flv';
+/** the demuxer names `-format_whitelist` allows for a forced format (matroska's demuxer also answers to webm) */
+const WHITELIST: Record<PipeFormat, string> = { mpegts: 'mpegts', mov: 'mov', aac: 'aac', mp3: 'mp3', matroska: 'matroska,webm', flv: 'flv' };
 /** the input options of a pipe: stdin only, the given demuxer only */
 export const pipeInput = (format: PipeFormat): string[] =>
-  ['-protocol_whitelist', 'pipe', '-f', format, '-format_whitelist', format, '-i', 'pipe:0'];
-/** fMP4 segments (a MAP, or an `.m4s`/`.mp4` path) are demuxed as MP4, everything else as MPEG-TS */
-export const segmentFormat = (uri: string, map: string | null | undefined): PipeFormat =>
-  map || /\.(m4s|mp4)$/i.test(uri.split(/[?#]/)[0]!) ? 'mov' : 'mpegts';
+  ['-protocol_whitelist', 'pipe', '-f', format, '-format_whitelist', WHITELIST[format], '-i', 'pipe:0'];
+const extOf = (uri: string): string => /\.([a-z0-9]+)$/i.exec(uri.split(/[?#]/)[0]!)?.[1]?.toLowerCase() ?? '';
+/**
+ * The format of an HLS playlist, decided by its FIRST segment (one playlist, one demuxer; a mixed playlist follows its first segment):
+ * a MAP or `.m4s`/`.mp4` is fMP4 (`mov`), `.aac` is `aac` (ADTS), `.mp3` is `mp3`, `.ts`, anything else or no extension is `mpegts`.
+ */
+export const segmentFormat = (uri: string, map: string | null | undefined): PipeFormat => {
+  if (map) return 'mov';
+  const e = extOf(uri);
+  return e === 'm4s' || e === 'mp4' ? 'mov' : e === 'aac' ? 'aac' : e === 'mp3' ? 'mp3' : 'mpegts';
+};
+/** the format of a direct (non-HLS, non-SRT) URL by its path extension; anything unknown is MPEG-TS */
+export const urlFormat = (url: string): PipeFormat => {
+  switch (extOf(url)) {
+    case 'aac': return 'aac';
+    case 'mp3': return 'mp3';
+    case 'mp4': case 'm4a': case 'mov': return 'mov';
+    case 'mkv': case 'webm': return 'matroska';
+    case 'flv': return 'flv';
+    default: return 'mpegts';
+  }
+};
 export interface FfmpegArgsIn {
   mode: 'remux' | 'transcode';
   input: FfInput;
@@ -123,7 +143,7 @@ export function scrubLine(line: string): string {
   s = s
     .replace(/(['"])[a-z0-9+.-]+:\/\/[^'"]*\1/gi, '$1<input>$1')
     .replace(/(?<![a-z0-9+.-])[a-z0-9+.-]+:\/\/\S+/gi, '<input>')
-    .replace(/(?<![^\s'"@/])[^\s'"@/:]+:[^\s'"@/]+@/g, '•••@');
+    .replace(/(?<![^\s'"@/]):*[^\s'"@/:]+:[^\s'"@/]+@/g, '•••@');
   return redactCredentials(s) + (cut ? CUT_MARK : '');
 }
 

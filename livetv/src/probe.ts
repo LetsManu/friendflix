@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { ATTR_LINE_MAX, scanAttrs } from './attrlist.js';
-import { pipeInput, segmentFormat, type PipeFormat } from './ffmpeg.js';
+import { pipeInput, segmentFormat, urlFormat, type PipeFormat } from './ffmpeg.js';
 import { FetchError, guardedFetch, type FetchErrorCode, type GuardDeps } from './fetch.js';
 import { checkUrl, ipLiteralUrl, resolveChecked } from './netguard.js';
 import { TIMEOUT_CODE, type Run } from './run.js';
@@ -238,6 +238,7 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
           yield* upTo(segBody, SEGMENT_MAX_BYTES, (e) => { pipeError = e; });
         })();
       } else {
+        format = urlFormat(c.url.pathname);
         const res = await get(c.url.href, Number.MAX_SAFE_INTEGER);
         stdin = upTo(res.body, TS_PROBE_BYTES, (e) => { pipeError = e; });
       }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import type { FetchOptions, GuardDeps, GuardedResponse } from '../src/fetch.js';
-import { SCRUB_MAX_CHARS, audioFor, ffmpegArgs, scrubLine, videoArgs } from '../src/ffmpeg.js';
+import { SCRUB_MAX_CHARS, audioFor, ffmpegArgs, pipeInput, scrubLine, segmentFormat, urlFormat, videoArgs } from '../src/ffmpeg.js';
 import { openInput } from '../src/inputs.js';
 import { createRun, stderrLine } from '../src/run.js';
 import { ENCODERS } from '../src/system.js';
@@ -123,6 +123,23 @@ describe('inputs', () => {
     }
   });
 
+  it('direct URLs and ADTS HLS get the demuxer their extension names', async () => {
+    const fetch = async (url: string): Promise<GuardedResponse> => ({
+      status: 200, url, headers: {},
+      body: (async function* () { yield url.endsWith('.m3u8') ? Buffer.from('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nradio/1.aac\n') : TS; })(),
+    });
+    const fmt = async (url: string, kind: 'ts' | 'hls') => {
+      const { ffInput } = await openInput({ url, kind, allowLan: false }, { guard: guard(), fetch });
+      if (ffInput.kind !== 'pipe') throw new Error('pipe');
+      return ffInput.format;
+    };
+    expect(await fmt('http://iptv.example.com/radio.mp3?x=1', 'ts')).toBe('mp3');
+    expect(await fmt('http://iptv.example.com/film.mkv', 'ts')).toBe('matroska');
+    expect(await fmt('http://iptv.example.com/film.mp4', 'ts')).toBe('mov');
+    expect(await fmt('http://iptv.example.com/live/1', 'ts')).toBe('mpegts');
+    expect(await fmt('http://iptv.example.com/radio.m3u8', 'hls')).toBe('aac');
+  });
+
   it('an HLS input is read by livetv and reaches ffmpeg as one byte stream', async () => {
     const base = 'http://iptv.example.com/live/anna/geheim';
     const a = Buffer.alloc(188, 1);
@@ -176,6 +193,22 @@ describe('inputs', () => {
   });
 });
 
+describe('pipe formats (L5)', () => {
+  it('HLS: the first segment decides', () => {
+    const f = (uri: string, map?: string) => segmentFormat(uri, map);
+    expect([f('a.ts'), f('a.aac'), f('a.mp3'), f('a.m4s'), f('a.mp4?x=1'), f('a'), f('a.bin'), f('a.ts', 'init.mp4')]).toEqual(['mpegts', 'aac', 'mp3', 'mov', 'mov', 'mpegts', 'mpegts', 'mov']);
+  });
+  it('direct URLs by extension', () => {
+    const f = (p: string) => urlFormat(p);
+    expect(['/a.aac', '/a.MP3', '/a.mp4', '/a.m4a', '/a.mov', '/a.mkv', '/a.webm', '/a.flv', '/a.ts', '/live/1', '/a.m3u8'].map(f))
+      .toEqual(['aac', 'mp3', 'mov', 'mov', 'mov', 'matroska', 'matroska', 'flv', 'mpegts', 'mpegts', 'mpegts']);
+  });
+  it('-f and the matching -format_whitelist', () => {
+    for (const [fmt, wl] of [['mpegts', 'mpegts'], ['mov', 'mov'], ['aac', 'aac'], ['mp3', 'mp3'], ['matroska', 'matroska,webm'], ['flv', 'flv']] as const)
+      expect(has(pipeInput(fmt), ['-f', fmt, '-format_whitelist', wl, '-i', 'pipe:0'])).toBe(true);
+  });
+});
+
 describe('scrubLine', () => {
   it('scrubLine table', () => {
     const table: Array<[string, string]> = [
@@ -195,6 +228,9 @@ describe('scrubLine', () => {
       ['X-Api-Key: abc123', 'X-Api-Key: •••'],
       // userinfo without a scheme
       ['Connecting to anna:geheim@192.0.2.10:8080', 'Connecting to •••@192.0.2.10:8080'],
+      // a run that starts with colons
+      ['failed :anna:geheim@192.0.2.10', 'failed •••@192.0.2.10'],
+      ['x ::anna:geheim@h', 'x •••@h'],
       // a quoted URL with a space in it
       ["Opening 'srt://192.0.2.40:9000?streamid=ab cd' failed", "Opening '<input>' failed"],
     ];

@@ -152,6 +152,20 @@ describe('probe', () => {
     expect(run.calls[0]!.args.join(' ')).toContain('-f mov -format_whitelist mov -i pipe:0');
   });
 
+  it('direct URLs and ADTS HLS are probed with the format the run uses', async () => {
+    const s = await serve({
+      '/radio.mp3': (res) => res.end(Buffer.alloc(500)),
+      '/r.m3u8': (res) => res.end('#EXTM3U\n#EXTINF:4,\nseg-1.aac\n'),
+      '/seg-1.aac': (res) => res.end(Buffer.alloc(300)),
+    });
+    const o = { allowLan: false } as const;
+    const run = fakeRun(fixture('ffprobe-h264-aac.json'));
+    await probe({ url: `http://iptv.example.com:${s.port}/radio.mp3`, kind: 'ts', ...o }, { run, guard: guard() });
+    await probe({ url: `http://iptv.example.com:${s.port}/r.m3u8`, kind: 'hls', ...o }, { run, guard: guard() });
+    expect(run.calls[0]!.args.join(' ')).toContain('-f mp3 -format_whitelist mp3 -i pipe:0');
+    expect(run.calls[1]!.args.join(' ')).toContain('-f aac -format_whitelist aac -i pipe:0');
+  });
+
   it('HLS behind a redirect: relative variant and segment URIs resolve against the redirected URL', async () => {
     const s = await serve({
       '/get/nordlicht.m3u8': (res) => { res.writeHead(302, { location: '/cdn/edge7/nordlicht/master.m3u8?sig=abc' }); res.end(); },

@@ -17,6 +17,8 @@ const bound = bindUpstream(upstream, process.env, secret, remote);
 const livetvUrl = optional(process.env, 'LIVETV_URL') ?? 'http://livetv:8090';
 // livetv never proxies a client: its own address is no trusted proxy, whatever X-Real-IP it sends (review L2/L3)
 const livetvPeer = watchUntrustedHost(URL.canParse(livetvUrl) ? new URL(livetvUrl).hostname : '');
+// the first lookup finishes (bounded: a hanging resolver must not block startup) before the first request; the <= 15 s window after a livetv restart (new IP) is accepted
+await Promise.race([livetvPeer.ready, new Promise<void>((r) => setTimeout(r, 3000).unref())]);
 const { server } = createGateway({
   upstream: bound,
   fetchImpl: bound.wrapFetch?.(fetch), // Plex error answers reach clients opaque

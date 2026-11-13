@@ -88,7 +88,9 @@ const app = await buildApp(ctx);
 logTo.app = app.log;
 // livetv reaches the backend from a private address but never proxies a client: its X-Forwarded-For is never believed (review L3).
 // Its address is looked up now and every 15 s (the timer does not keep the process alive).
-watchUntrustedHost(URL.canParse(cfg.LIVETV_URL) ? new URL(cfg.LIVETV_URL).hostname : '');
+const livetvPeer = watchUntrustedHost(URL.canParse(cfg.LIVETV_URL) ? new URL(cfg.LIVETV_URL).hostname : '');
+// the first lookup finishes (bounded: a hanging resolver must not block startup) before the first request; the <= 15 s window after a livetv restart (new IP) is accepted
+await Promise.race([livetvPeer.ready, new Promise<void>((r) => setTimeout(r, 3000).unref())]);
 await app.listen({ port: cfg.PORT, host: '0.0.0.0' });
 // setting names removed in 2.0 that are still set (names only, never values; the admin banner shows them too, health.ts)
 for (const msg of removedEnvNames()) app.log.warn(msg);
