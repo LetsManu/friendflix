@@ -158,7 +158,8 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!b.success) return invalid(reply, b.error);
     const r = await beatLiveToken(ctx, b.data.token, { userId: req.user!.id, sidHash: liveSidHash(req.sid!), ip: clientAddress(req) });
     reply.header('cache-control', 'no-store');
-    if (!r.ok) return reply.code(410).send({ error: 'gone' });
+    // reason 'replaced': another window of the same browser watches now; the player says so instead of taking it back (bughunt L4)
+    if (!r.ok) return reply.code(410).send({ error: 'gone', ...(r.reason ? { reason: r.reason } : {}) });
     return { ok: true, expiresAt: r.expiresAt };
   });
 

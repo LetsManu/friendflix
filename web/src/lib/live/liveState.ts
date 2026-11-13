@@ -17,7 +17,9 @@ export type LiveUi =
   | { k: 'maxStreams'; max: number }
   | { k: 'off' }
   /** an admin stopped it (409 stopped_by_admin): no reconnects by itself, *Erneut versuchen* by hand (bughunt L3) */
-  | { k: 'stopped' };
+  | { k: 'stopped' }
+  /** another window of this browser took the stream over (beat 410 `replaced`): *Hier ansehen* by hand, never by itself (bughunt L4) */
+  | { k: 'elsewhere' };
 
 /** the two input-lost states: the card "Sender gerade nicht erreichbar" + "Verbinde neu …" with its reconnect attempts */
 export type LostUi = Extract<LiveUi, { k: 'lost' } | { k: 'unreachable' }>;
@@ -78,4 +80,14 @@ export function fromWatchError(status: number, body: unknown, o: { again?: boole
       break;
   }
   return { k: 'lost', attempt: 0 };
+}
+
+/**
+ * A beat refused with 410 (bughunt L4): `elsewhere` when a newer watch of the same device replaced the token (another window of this
+ * browser plays now; watching again by itself would take it back and the two windows would replace each other in a loop), else
+ * `gone` (the one new watch).
+ */
+export function fromBeatGone(body: unknown): 'elsewhere' | 'gone' {
+  const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  return b.reason === 'replaced' ? 'elsewhere' : 'gone';
 }

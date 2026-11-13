@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import type { RunningChannel } from './api';
-import { fromWatchError, LOST_GIVE_UP_MS, lostDelay, nextLost, STALL_LOST_MS, type LiveUi } from './liveState';
+import { fromBeatGone, fromWatchError, LOST_GIVE_UP_MS, lostDelay, nextLost, STALL_LOST_MS, type LiveUi } from './liveState';
 
 const at = (h: number, m: number) => new Date(2026, 10, 12, h, m, 0, 0).toISOString();
 const RUNNING: RunningChannel[] = [
@@ -93,5 +93,14 @@ describe('nextLost: the 2-min switch to retry', () => {
     expect(nextLost({ k: 'lost', attempt: 3 }, 119_999)).toEqual({ k: 'lost', attempt: 4 });
     expect(nextLost({ k: 'lost', attempt: 3 }, 120_000)).toEqual({ k: 'retry' });
     expect(nextLost({ k: 'unreachable', attempt: 0 }, 200_000)).toEqual({ k: 'retry' });
+  });
+});
+
+describe('fromBeatGone (bughunt L4)', () => {
+  it('a token another window replaced is elsewhere; any other 410 is gone', () => {
+    expect(fromBeatGone({ error: 'gone', reason: 'replaced' })).toBe('elsewhere');
+    expect(fromBeatGone({ error: 'gone' })).toBe('gone');
+    expect(fromBeatGone(null)).toBe('gone');
+    expect(fromBeatGone('replaced')).toBe('gone');
   });
 });

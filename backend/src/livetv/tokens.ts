@@ -118,16 +118,21 @@ export async function mintLiveToken(ctx: Ctx, rec: Omit<LiveTokenRec, 'exp' | 'c
   await ctx.kv.set(liveViewKey(hash), rec.channelId, VIEW_TTL_S);
   const me = { hash, rec: full };
   for (const t of await listTokens(ctx, rec.userId)) {
-    if (t.hash !== hash && t.rec.deviceId === rec.deviceId && Boolean(t.rec.test) === Boolean(full.test) && viaClass(t.rec.via) === viaClass(full.via) && older(t, me) < 0) await revokeLiveToken(ctx, t.hash);
+    // marked `replaced`: a second window of the same browser took over, and the one before must not take it back (bughunt L4)
+    if (t.hash !== hash && t.rec.deviceId === rec.deviceId && Boolean(t.rec.test) === Boolean(full.test) && viaClass(t.rec.via) === viaClass(full.via) && older(t, me) < 0) await revokeLiveToken(ctx, t.hash, { replacedFor: rec.userId });
   }
   const all = (await listTokens(ctx, rec.userId)).sort(older);
   while (all.length > MAX_LIVE_TOKENS) await revokeLiveToken(ctx, all.shift()!.hash);
   return { token, hash, expiresAt: exp };
 }
 
-/** Revokes one token: the marker first (a concurrent authz answers 410), then its keys and its live record. */
-export async function revokeLiveToken(ctx: Ctx, hash: string): Promise<void> {
-  await ctx.kv.set(goneKey(hash), '1', LIVE_GONE_TTL_S);
+/**
+ * Revokes one token: the marker first (a concurrent authz answers 410), then its keys and its live record. `why`: a newer watch of
+ * the same device and slot replaced it (a zap, or another window of the same browser); the beat says so (bughunt L4).
+ */
+export async function revokeLiveToken(ctx: Ctx, hash: string, why?: { replacedFor: string }): Promise<void> {
+  // the marker of a replaced token names its account: only a beat of that account learns why
+  await ctx.kv.set(goneKey(hash), why ? `replaced:${why.replacedFor}` : '1', LIVE_GONE_TTL_S);
   const rec = await load(ctx, hash);
   for (const k of [dataKey(hash), pinKey(hash), pin2Key(hash), liveViewKey(hash)]) await ctx.kv.del(k);
   rightsMemo.delete(hash);
@@ -244,13 +249,19 @@ export async function revokeLiveTokens(ctx: Ctx, userId: string, deviceId?: stri
 /**
  * The player's heartbeat (every 20 s while open, playing or paused): slides the token's TTL and keeps its viewer key and live record.
  * A `local` token re-pins to `ip` when the beat comes from the session that minted it (Review Focus 4); a beat of any other session
- * only slides. Unknown, expired, revoked, another account's or a token whose rights are refused (same 2 s memo as authz) -> 410.
+ * only slides. Unknown, expired, revoked, another account's or a token whose rights are refused (same 2 s memo as authz) -> 410;
+ * `reason: 'replaced'` when a newer watch of the same device and slot replaced it (bughunt L4).
  */
-export async function beatLiveToken(ctx: Ctx, token: string, who: { userId: string; sidHash: string; ip: string }): Promise<{ ok: true; expiresAt: number } | { ok: false; status: 410 }> {
+export async function beatLiveToken(ctx: Ctx, token: string, who: { userId: string; sidHash: string; ip: string }): Promise<{ ok: true; expiresAt: number } | { ok: false; status: 410; reason?: 'replaced' }> {
   const gone = { ok: false, status: 410 } as const;
   if (!CAST_TOKEN_RE.test(token)) return gone;
   const hash = hashToken(token);
-  if (await ctx.kv.get(goneKey(hash))) return gone;
+  const marker = await ctx.kv.get(goneKey(hash));
+  if (marker) {
+    // replaced by a newer watch of the same device (another window of this browser): the player shows that instead of watching again,
+    // which would replace the other window in turn (bughunt L4). Only the token's own account learns it.
+    return marker === `replaced:${who.userId}` ? { ...gone, reason: 'replaced' } : gone;
+  }
   const rec = await load(ctx, hash);
   const now = Date.now();
   if (!rec || rec.exp <= now || rec.userId !== who.userId) return gone;

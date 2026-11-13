@@ -28,6 +28,8 @@ const dict: Translation<typeof de> = {
     retry: 'Réessayer',
     off: 'La TV en direct est désactivée pour le moment. Un administrateur peut la réactiver.',
     stoppedByAdmin: 'Arrêté par un administrateur. Vous pourrez réessayer dans quelques minutes.',
+    elsewhere: 'En cours de lecture dans une autre fenêtre.',
+    watchHere: 'Regarder ici',
     pauseTooLong: 'La pause a duré plus de {n} minutes ; la lecture reprend au point enregistré le plus ancien.',
     restart: 'Depuis le début',
     channelList: 'Liste des chaînes',

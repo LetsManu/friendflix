@@ -28,6 +28,8 @@ const dict: Translation<typeof de> = {
     retry: 'Tekrar dene',
     off: 'Canlı TV şu an kapalı. Bir yönetici tekrar açabilir.',
     stoppedByAdmin: 'Bir yönetici tarafından durduruldu. Birkaç dakika sonra tekrar deneyebilirsin.',
+    elsewhere: 'Şu an başka bir pencerede oynatılıyor.',
+    watchHere: 'Burada izle',
     pauseTooLong: 'Duraklatma {n} dakikadan uzun sürdü, kayıtlı en eski noktadan devam ediliyor.',
     restart: 'Baştan',
     channelList: 'Kanal listesi',

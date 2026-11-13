@@ -40,7 +40,7 @@
   import { resolveLiveKey, type LiveKeyAction } from './livekeys';
   import { liveRemote, type LiveRemote } from './remotekeys';
   import { createLongOk } from './longok';
-  import { fromWatchError, lostDelay, nextLost, STALL_LOST_MS, type LiveUi, type LostUi } from './liveState';
+  import { fromBeatGone, fromWatchError, lostDelay, nextLost, STALL_LOST_MS, type LiveUi, type LostUi } from './liveState';
   import NumberCard from './NumberCard.svelte';
   import { commitNumber, NUMBER_TIMEOUT_MS, typeDigit, type NumberState } from './numberEntry';
   import { channelOrder, neighbour, type LiveFilter } from './order';
@@ -111,7 +111,7 @@
   type OldestSrc = Parameters<typeof oldestPoint>[0];
   /** a beat's outcome: answered, the token is gone (a new watch was asked for), it failed otherwise, or it outlived its channel */
   type BeatResult = 'ok' | 'gone' | 'failed' | 'stale';
-  const ERROR_KINDS: Array<LiveUi['k']> = ['lost', 'unreachable', 'retry', 'forbidden', 'maxStreams', 'off', 'stopped', 'full', 'providerLimit'];
+  const ERROR_KINDS: Array<LiveUi['k']> = ['lost', 'unreachable', 'retry', 'forbidden', 'maxStreams', 'off', 'stopped', 'elsewhere', 'full', 'providerLimit'];
 
   let root: HTMLDivElement | undefined, stage: HTMLDivElement | undefined, video: HTMLVideoElement | undefined;
   let playBtn: HTMLButtonElement | undefined, backBtn: HTMLButtonElement | undefined, fwdBtn: HTMLButtonElement | undefined, infoBtn: HTMLButtonElement | undefined;
@@ -209,6 +209,7 @@
     switch (u.k) {
       case 'off': return $t('live.player.off');
       case 'stopped': return $t('live.player.stoppedByAdmin');
+      case 'elsewhere': return $t('live.player.elsewhere');
       case 'forbidden': return $t('live.player.notAvailable');
       case 'maxStreams': return $t('player.error.maxStreams', { n: u.max });
       default: return '';
@@ -491,6 +492,8 @@
     } catch (e) {
       if (stale()) return 'stale';
       const st = e instanceof ApiError ? e.status : 0;
+      // another window of this browser took the stream over: say so, never take it back by itself (bughunt L4)
+      if (st === 410 && e instanceof ApiError && fromBeatGone(e.body) === 'elsewhere') { dropStream(); onFail({ k: 'elsewhere' }); return 'gone'; }
       if (st === 410 || st === 403) { rewatchOnce(); return 'gone'; }
       return 'failed';
     }
@@ -1156,6 +1159,7 @@
       <p class="ct">{cardMsg}</p>
       <!-- an admin's stop: never retried by itself (bughunt L3), only by hand -->
       {#if ui.k === 'stopped'}<div class="cbtn"><button type="button" class="frost-btn" on:click={retryNow}>{$t('live.player.retry')}</button></div>{/if}
+      {#if ui.k === 'elsewhere'}<div class="cbtn"><button type="button" class="frost-btn" on:click={retryNow}>{$t('live.player.watchHere')}</button></div>{/if}
     </div>
   {/if}
 

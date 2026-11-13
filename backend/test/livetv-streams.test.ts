@@ -458,6 +458,22 @@ describe('beat and stop watching', () => {
   });
 });
 
+describe('two windows of the same browser (bughunt L4)', () => {
+  it('a newer watch of the same device replaces the older token, and its beat says so (only to its own account)', async () => {
+    const ch = await addChannel('Nordlicht TV');
+    const first = (await watch(anna, ch)).json();
+    const second = (await watch(anna, ch)).json(); // the second tab: same session, same device
+    expect((await call(anna, 'POST', '/api/livetv/beat', { token: second.token })).statusCode).toBe(200);
+    const old = await call(anna, 'POST', '/api/livetv/beat', { token: first.token });
+    expect([old.statusCode, old.json()]).toEqual([410, { error: 'gone', reason: 'replaced' }]);
+    // another account learns nothing about it
+    expect((await call(ben, 'POST', '/api/livetv/beat', { token: first.token })).json()).toEqual({ error: 'gone' });
+    // a token the viewer ended itself is just gone
+    expect((await call(anna, 'DELETE', '/api/livetv/watch', { token: second.token })).statusCode).toBe(204);
+    expect((await call(anna, 'POST', '/api/livetv/beat', { token: second.token })).json()).toEqual({ error: 'gone' });
+  });
+});
+
 describe('livetvTick', () => {
   it('the tick stops 60 s after the last viewer', async () => {
     const ch = await addChannel('Nordlicht TV');
