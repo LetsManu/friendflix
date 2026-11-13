@@ -17,7 +17,7 @@ const dict: Translation<typeof de> = {
     envBody: 'Bu satırı yığınınızın .env dosyasına ekleyin ve yeniden başlatın:',
     envProfilesNote: 'COMPOSE_PROFILES zaten varsa sonuna ,livetv ekleyin.',
     envCommand: 'Ardından yığın klasöründe çalıştırın:',
-    portainer: 'Portainer\'da: yığında COMPOSE_PROFILES=livetv ortam değişkenini ayarlayın ve yeniden dağıtın.',
+    portainer: "Portainer'da: yığında COMPOSE_PROFILES=livetv ortam değişkenini ayarlayın ve \"Re-pull image\" ile yeniden dağıtın. livetv kapsayıcısı görünmezse livetv hizmetindeki profiles: [livetv] satırını silip yeniden dağıtın.",
     persistTip: 'Canlı TV\'nin <kbd>docker compose down</kbd> sonrasında da yeniden başlaması için .env dosyasına COMPOSE_PROFILES=livetv ekleyin.',
     wantedDown: 'Canlı TV açık, ancak hizmet çalışmıyor.',
     restart: 'Yeniden başlat',

@@ -134,7 +134,7 @@ test.describe('admin: Live-TV, enabling and disabling (desktop)', () => {
     api.admin.livetv.stack = 'foreign';
     await page.goto('/admin/livetv?tab=status');
     const c = card(page);
-    await expect(c.getByText('In Portainer: Umgebungsvariable COMPOSE_PROFILES=livetv im Stack setzen und neu bereitstellen.')).toBeVisible();
+    await expect(c.getByText('In Portainer: Umgebungsvariable COMPOSE_PROFILES=livetv im Stack setzen und mit „Re-pull image“ neu bereitstellen. Erscheint kein Container livetv, beim Dienst livetv die Zeile profiles: [livetv] löschen und erneut bereitstellen.')).toBeVisible();
     await expect(c.getByRole('button', { name: 'Live-TV aktivieren' })).toHaveCount(0);
   });
 

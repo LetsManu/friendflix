@@ -15,7 +15,7 @@ export default {
     envBody: 'Füge diese Zeile in die .env deines Stacks ein und starte neu:',
     envProfilesNote: 'Steht dort schon COMPOSE_PROFILES, hänge ,livetv an.',
     envCommand: 'Danach im Stack-Ordner ausführen:',
-    portainer: 'In Portainer: Umgebungsvariable COMPOSE_PROFILES=livetv im Stack setzen und neu bereitstellen.',
+    portainer: 'In Portainer: Umgebungsvariable COMPOSE_PROFILES=livetv im Stack setzen und mit „Re-pull image“ neu bereitstellen. Erscheint kein Container livetv, beim Dienst livetv die Zeile profiles: [livetv] löschen und erneut bereitstellen.',
     persistTip: 'Damit Live-TV auch nach <kbd>docker compose down</kbd> wieder startet, trage COMPOSE_PROFILES=livetv in die .env ein.',
     wantedDown: 'Live-TV ist eingeschaltet, der Dienst läuft aber nicht.',
     restart: 'Wieder starten',

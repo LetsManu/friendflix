@@ -14,6 +14,11 @@ and [troubleshooting](#troubleshooting). *Deutsch: [de/livetv.md](de/livetv.md)*
 - **Through the updater (default stack):** *Admin → Live-TV* → enable. The updater pulls the signed image and starts it.
 - **By hand:** put `COMPOSE_PROFILES=livetv` into `.env` and run `docker compose -f compose.prod.yaml up -d` (or
   `docker compose -f compose.prod.yaml --profile livetv up -d`). Check first: `docker compose -f compose.prod.yaml --profile livetv config -q`.
+- **Portainer stack:** the updater does not change a stack that Portainer manages, so the button cannot turn Live TV on there.
+  In Portainer open the stack, add the environment variable `COMPOSE_PROFILES` = `livetv` and *Update the stack* with
+  *Re-pull image* on. If no `livetv` container appears (some Portainer versions do not pass `COMPOSE_PROFILES` on to compose),
+  delete the line `profiles: [livetv]` under the `livetv` service in the stack editor and update again. To turn it off later,
+  remove the variable (or put the line back) and update the stack.
 
 **On an install from before Live TV** do these once, in this order (the page names the step that is missing):
 

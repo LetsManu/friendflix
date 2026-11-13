@@ -14,6 +14,11 @@ wird nichts geladen oder gestartet und FriendFlix sieht aus wie vorher. Diese Se
 - **Über den Updater (Standard-Stack):** *Admin → Live-TV* → aktivieren. Der Updater lädt das signierte Image und startet es.
 - **Von Hand:** `COMPOSE_PROFILES=livetv` in die `.env` schreiben und `docker compose -f compose.prod.yaml up -d` ausführen
   (oder `docker compose -f compose.prod.yaml --profile livetv up -d`). Vorher prüfen: `docker compose -f compose.prod.yaml --profile livetv config -q`.
+- **Portainer-Stack:** Der Updater ändert keinen Stack, den Portainer verwaltet, daher kann der Schalter Live-TV dort nicht
+  einschalten. In Portainer den Stack öffnen, die Umgebungsvariable `COMPOSE_PROFILES` = `livetv` anlegen und *Update the stack*
+  mit *Re-pull image* ausführen. Erscheint kein Container `livetv` (manche Portainer-Versionen geben `COMPOSE_PROFILES` nicht an
+  Compose weiter), im Stack-Editor beim Dienst `livetv` die Zeile `profiles: [livetv]` löschen und erneut aktualisieren. Zum
+  Ausschalten die Variable wieder entfernen (oder die Zeile zurücksetzen) und den Stack aktualisieren.
 
 **Bei einer Installation von vor Live-TV** einmal in dieser Reihenfolge (die Seite nennt den Schritt, der fehlt):
 
