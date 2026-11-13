@@ -73,6 +73,22 @@ describe('parseM3u', () => {
     expect(r.groups).toEqual([{ name: 'Alle', channels: 20_005 }]);
   });
 
+  it('M2: lists of 8 KB #EXTINF lines parse in linear time (32 lines in well under 50 ms)', async () => {
+    const out = ['#EXTM3U'];
+    for (let i = 0; i < 32; i++) {
+      out.push(`#EXTINF:-1 tvg-id="k${i}" ${'a'.repeat(8_000)},Kanal ${i}`, `http://iptv.example.com/live/${i}.ts`);
+    }
+    out.push(`#EXTINF:-1 ${'b='.repeat(4_000)},Kanal x`, 'http://iptv.example.com/live/x.ts');
+    out.push(`#EXTINF:-1 ${'c="'.repeat(2_600)},Kanal y`, 'http://iptv.example.com/live/y.ts');
+    const text = out.join('\n');
+    const all = [...text.split('\n')];
+    const t = performance.now();
+    const r = await parseM3u((async function* () { yield* all; })(), { max: 20_000 });
+    expect(performance.now() - t).toBeLessThan(50);
+    expect(r.entries).toHaveLength(34);
+    expect(r.entries[0]).toMatchObject({ tvgId: 'k0', name: 'Kanal 0' });
+  });
+
   it('a 9 KB line skips its entry (invalid 1), wherever it is in the entry', async () => {
     const long = 'x'.repeat(9 * 1024);
     const ok = '#EXTINF:-1,Hafenkanal\nhttp://iptv.example.com/live/2.ts\n';

@@ -14,6 +14,11 @@ and [troubleshooting](#troubleshooting). *Deutsch: [de/livetv.md](de/livetv.md)*
 - **Through the updater (default stack):** *Admin → Live-TV* → enable. The updater pulls the signed image and starts it.
 - **By hand:** put `COMPOSE_PROFILES=livetv` into `.env` and run `docker compose -f compose.prod.yaml up -d` (or
   `docker compose -f compose.prod.yaml --profile livetv up -d`). Check first: `docker compose -f compose.prod.yaml --profile livetv config -q`.
+- **Portainer stack:** the updater does not change a stack that Portainer manages, so the button cannot turn Live TV on there.
+  In Portainer open the stack, add the environment variable `COMPOSE_PROFILES` = `livetv` and *Update the stack* with
+  *Re-pull image* on. If no `livetv` container appears (some Portainer versions do not pass `COMPOSE_PROFILES` on to compose),
+  delete the line `profiles: [livetv]` under the `livetv` service in the stack editor and update again. To turn it off later,
+  remove the variable (or put the line back) and update the stack.
 
 **On an install from before Live TV** do these once, in this order (the page names the step that is missing):
 
@@ -28,6 +33,10 @@ and [troubleshooting](#troubleshooting). *Deutsch: [de/livetv.md](de/livetv.md)*
 The service has no Docker socket, a read-only root file system and no capabilities; backend and gateway reach it on the
 internal `livetv` network at `LIVETV_URL` (default `http://livetv:8090`, needs no setting). Details: [security.md](security.md#the-livetv-container).
 The updater keeps the overlay files you started the stack with, so an overlay in `COMPOSE_FILE` stays on updates.
+
+**Reverse proxy:** the watch token is part of every stream address (`/media/l/<token>/…`). Add the `location /media/l/` block from
+`deploy/npm/portal.advanced.conf` to the portal proxy host (it turns off the access and error log for these paths, like `/media/c/`),
+and never paste a `/media/l/…` address into an issue or a chat.
 
 ## GPU
 
@@ -108,6 +117,8 @@ Chromecast and AirPlay play a live channel like a film. The Chromecast bar and r
 ## Pushed streams (SRT)
 
 *Eigene Streams* come in two kinds: FriendFlix **pulls** a URL (HLS, MPEG-TS, or `srt://` in caller mode), or your encoder **pushes** into FriendFlix over SRT (*Encoder sendet an FriendFlix*, for example a channel Nordlicht TV from OBS). Push needs one inbound port per feed.
+
+Supported pulled formats: HLS with MPEG-TS, fMP4 (CMAF) or ADTS `.aac` / `.mp3` segments (radio; the first segment decides, everything else is read as MPEG-TS), and direct URLs by their file extension: `.ts` and anything unknown as MPEG-TS, `.aac`, `.mp3`, `.mp4`/`.m4a`/`.mov`, `.mkv`/`.webm` and `.flv`. The format is never guessed from the stream's bytes, so a direct URL with a misleading extension fails. Pushed feeds are MPEG-TS.
 
 - **Ports.** UDP `LIVETV_SRT_PORTS`, default **9000–9009**: one port per feed, so ten push feeds at most (1 to 100 ports are allowed). **UDP only, no TCP.** `livetv` publishes the range itself; it does **not** go through the reverse proxy, which handles HTTP only. The range is published on `LIVETV_SRT_BIND`, by default `127.0.0.1`, so push works from outside only after you set `0.0.0.0` (or the LAN address) **and** only if you use push feeds; then open or forward the range on the router too (Docker bypasses ufw and firewalld, so a host firewall rule alone does not close it). If the range is full, *Stream hinzufügen* says so: enlarge `LIVETV_SRT_PORTS` in `.env` and run `docker compose … up -d`. A feed whose port left the range after such a change is flagged and can be given a new port.
 - **Host in the hint.** The setup hint names `LIVETV_SRT_HOST` (*Admin → Einstellungen → Live-TV*), by default the host of `PUBLIC_URL`. If that name sits behind a CDN that passes no UDP (an orange-cloud Cloudflare record, say), enter a DNS-only name or the public IP there.

@@ -118,7 +118,7 @@ export function remuxDriver(d: RemuxDeps): Driver {
       }
       const ff = opened.ffInput;
       const args = ffmpegArgs({
-        mode, input: ff.kind === 'pipe' ? { kind: 'pipe' } : { kind: 'srt', url: ff.url }, encoder: ctx.encoder, audio, srcHeight, dir: ctx.dir, startNumber: next,
+        mode, input: ff.kind === 'pipe' ? { kind: 'pipe', format: ff.format } : { kind: 'srt', url: ff.url }, encoder: ctx.encoder, audio, srcHeight, dir: ctx.dir, startNumber: next,
       });
       // this run alone: a stop aborts it, and so does the stall watchdog (the stream then lives on and the loop restarts ffmpeg)
       const runAc = new AbortController();

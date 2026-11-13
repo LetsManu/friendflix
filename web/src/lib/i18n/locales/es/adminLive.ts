@@ -17,7 +17,7 @@ const dict: Translation<typeof de> = {
     envBody: 'Añade esta línea al .env de tu stack y reinicia:',
     envProfilesNote: 'Si ya existe COMPOSE_PROFILES, añade ,livetv al final.',
     envCommand: 'Después ejecuta en la carpeta del stack:',
-    portainer: 'En Portainer: define la variable de entorno COMPOSE_PROFILES=livetv en el stack y vuelve a desplegarlo.',
+    portainer: 'En Portainer: define la variable de entorno COMPOSE_PROFILES=livetv en el stack y vuelve a desplegarlo con «Re-pull image». Si no aparece ningún contenedor livetv, borra la línea profiles: [livetv] del servicio livetv y vuelve a desplegarlo.',
     persistTip: 'Para que la TV en directo vuelva a arrancar tras <kbd>docker compose down</kbd>, añade COMPOSE_PROFILES=livetv al .env.',
     wantedDown: 'La TV en directo está activada, pero el servicio no se está ejecutando.',
     restart: 'Volver a iniciar',

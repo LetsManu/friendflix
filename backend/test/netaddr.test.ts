@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it, vi } from 'vitest';
-import { clientAddress, isHomeAddress, isHomeRequest, isTrustedPeer, isValidCidr, noteUntrustedForwarding, resetUntrustedForwardingNote } from '../src/netaddr.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { clientAddress, isHomeAddress, isHomeRequest, isTrustedPeer, isValidCidr, noteUntrustedForwarding, resetUntrustedForwardingNote, setUntrustedPeers, watchUntrustedHost } from '../src/netaddr.js';
 import { loadConfig } from '../src/config.js';
 
 const HOME = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10'];
@@ -151,5 +151,52 @@ describe('noteUntrustedForwarding', () => {
     noteUntrustedForwarding(req({ 'x-forwarded-for': '198.51.100.8' }, '203.0.113.6'), { warn });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0]![0])).not.toMatch(/\d+\.\d+\.\d+\.\d+/);
+  });
+});
+
+describe('review L3: the livetv container is no trusted proxy', () => {
+  afterEach(() => setUntrustedPeers([]));
+  const build = async () => {
+    const { default: Fastify } = await import('fastify');
+    const { trustProxy } = await import('../src/netaddr.js');
+    const app = Fastify({ trustProxy });
+    app.get('/ip', async (r) => r.ip);
+    return app;
+  };
+  const get = (app: Awaited<ReturnType<typeof build>>, remoteAddress: string, xff: string) =>
+    app.inject({ method: 'GET', url: '/ip', remoteAddress, headers: { 'x-forwarded-for': xff } });
+
+  it("livetv's X-Forwarded-For picks neither a rate-limit bucket (req.ip) nor a home address; other private proxies still work", async () => {
+    const app = await build();
+    expect((await get(app, '172.20.0.4', '203.0.113.9')).body).toBe('203.0.113.9'); // before the lookup: a private peer
+    const w = watchUntrustedHost('livetv', { lookup: async () => ['172.20.0.4'], intervalMs: 60_000 });
+    await w.ready;
+    w.stop();
+    expect((await get(app, '172.20.0.4', '203.0.113.9')).body).toBe('172.20.0.4');
+    expect((await get(app, '::ffff:172.20.0.4', '203.0.113.9')).body).toBe('::ffff:172.20.0.4');
+    expect(isTrustedPeer('172.20.0.4')).toBe(false);
+    const r = req({ 'x-real-ip': '192.168.1.10', 'x-forwarded-for': '192.168.1.10' }, '172.20.0.4');
+    expect(clientAddress(r)).toBe('172.20.0.4');
+    expect(isHomeRequest(r, HOME)).toBe(false);
+    // the reverse proxy (another private address, or loopback) is still believed
+    expect((await get(app, '172.18.0.1', '203.0.113.10')).body).toBe('203.0.113.10');
+    expect((await get(app, '127.0.0.1', '203.0.113.11')).body).toBe('203.0.113.11');
+    await app.close();
+  });
+
+  it('only a compose service name is followed; loopback is never excluded; a vanished name clears the set', async () => {
+    setUntrustedPeers(['127.0.0.1', '::1']);
+    expect(isTrustedPeer('127.0.0.1')).toBe(true);
+    expect(isTrustedPeer('::1')).toBe(true);
+    for (const host of ['livetv.example.com', '192.0.2.10', '']) await watchUntrustedHost(host, { lookup: async () => ['172.20.0.7'] }).ready;
+    expect(isTrustedPeer('172.20.0.7')).toBe(true);
+    const w = watchUntrustedHost('livetv', { lookup: async () => ['172.20.0.7'], intervalMs: 60_000 });
+    await w.ready;
+    w.stop();
+    expect(isTrustedPeer('172.20.0.7')).toBe(false);
+    const gone = watchUntrustedHost('livetv', { lookup: async () => { throw Object.assign(new Error('x'), { code: 'ENOTFOUND' }); }, intervalMs: 60_000 });
+    await gone.ready;
+    gone.stop();
+    expect(isTrustedPeer('172.20.0.7')).toBe(true);
   });
 });

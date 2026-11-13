@@ -9,6 +9,7 @@ import { Readable } from 'node:stream';
 import { jellyfinUpstream, type Upstream } from './upstream/index.js';
 import { hlsAttrs } from './hls.js';
 import { joinPlaylists, joinedMaster, joinedPrefix, readMaster, type PartMaster } from './joined.js';
+import { isTrustedPeer } from './peers.js';
 
 export { hlsAttrs };
 
@@ -192,14 +193,24 @@ export function normalizePath(raw: string, allow: RegExp[] = ALLOWED_PATHS): str
 }
 
 /**
- * Address sent as `ip` to /internal/authz (decides the remote bitrate cap): X-Real-IP, else the LAST X-Forwarded-For entry (clientKey rule).
- * Without a usable forwarding header only a loopback peer is passed on; any other peer (a docker bridge, say) is 'unknown' = remote.
+ * The client a trusted proxy peer names (peers.ts, review L2): X-Real-IP, else the LAST X-Forwarded-For entry (the one the proxy
+ * appended); '' when the peer is not a trusted proxy or neither header carries a value. Headers of any other peer are never believed.
  */
-export function authClientIp(headers: IncomingMessage['headers'], peer: string | undefined): string {
+export function forwardedClient(headers: IncomingMessage['headers'], peer: string | undefined): string {
+  if (!isTrustedPeer(peer)) return '';
   const real = headers['x-real-ip'];
   const xff = headers['x-forwarded-for'];
-  const fwd = (typeof real === 'string' ? real.trim() : '') || (typeof xff === 'string' ? xff : '').split(',').pop()?.trim() || '';
-  if (fwd) return fwd.slice(0, 64);
+  return ((typeof real === 'string' ? real.trim() : '') || (typeof xff === 'string' ? xff : '').split(',').pop()?.trim() || '').slice(0, 64);
+}
+
+/**
+ * Address sent as `ip` to /internal/authz (decides the remote bitrate cap): the client a trusted proxy names (forwardedClient, the
+ * clientKey rule). Otherwise only a loopback peer is passed on; any other peer (a docker bridge, a direct client, livetv) is
+ * 'unknown' = remote.
+ */
+export function authClientIp(headers: IncomingMessage['headers'], peer: string | undefined): string {
+  const fwd = forwardedClient(headers, peer);
+  if (fwd) return fwd;
   return peer && (peer === '::1' || /^(::ffff:)?127\./.test(peer)) ? peer.slice(0, 64) : 'unknown';
 }
 
@@ -732,13 +743,8 @@ export function createGateway(opts: GatewayOptions): { server: Server; metrics: 
 
   // ---- Chromecast: /media/c/<token>/<jellyfin path> (token in the path because the receiver sends no cookies) ----
   const castCount = (k: string) => m.cast.set(k, (m.cast.get(k) ?? 0) + 1);
-  const clientKey = (req: IncomingMessage) => {
-    const real = req.headers['x-real-ip'];
-    if (typeof real === 'string' && real) return real.slice(0, 64);
-    const xff = req.headers['x-forwarded-for'];
-    const last = (typeof xff === 'string' ? xff : '').split(',').pop()?.trim(); // the proxy appends the real peer last
-    return (last || req.socket.remoteAddress || 'unknown').slice(0, 64);
-  };
+  /** the client of a request (token pin, failure limiter): what a trusted proxy names, else the socket address (review L2) */
+  const clientKey = (req: IncomingMessage) => (forwardedClient(req.headers, req.socket.remoteAddress) || req.socket.remoteAddress || 'unknown').slice(0, 64);
   const isBlocked = (ip: string) => (castFails.get(ip)?.blockedUntil ?? 0) > Date.now();
   /** counts DISTINCT failing token hashes per window: one stale/revoked token retried by a receiver is not an attack, guessing is */
   function noteFail(ip: string, tokenHash: string) {

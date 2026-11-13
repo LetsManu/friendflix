@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { ATTR_LINE_MAX, scanAttrs } from './attrlist.js';
+import { pipeInput, segmentFormat, urlFormat, type PipeFormat } from './ffmpeg.js';
 import { FetchError, guardedFetch, type FetchErrorCode, type GuardDeps } from './fetch.js';
 import { checkUrl, ipLiteralUrl, resolveChecked } from './netguard.js';
 import { TIMEOUT_CODE, type Run } from './run.js';
@@ -35,7 +37,8 @@ export const DEFAULT_MAX_BITRATE = 10_000_000;
 /** a push probe reads the ring and then live data for at most this long */
 export const PUSH_PROBE_MS = 4_000;
 
-const PIPE_ARGS = ['-hide_banner', '-v', 'error', '-protocol_whitelist', 'pipe', '-show_streams', '-of', 'json', '-i', 'pipe:0'];
+/** stdin with a forced demuxer (L5: never one ffprobe guesses from the provider's bytes) */
+const pipeArgs = (format: PipeFormat) => ['-hide_banner', '-v', 'error', '-show_streams', '-of', 'json', ...pipeInput(format)];
 const srtArgs = (url: string) => ['-hide_banner', '-v', 'error', '-protocol_whitelist', 'srt,udp', '-show_streams', '-of', 'json', '-i', url];
 
 class ProbeFail extends Error {
@@ -45,10 +48,12 @@ const fail = (error: ProbeError): ProbeResult => ({ ok: false, needs: 'transcode
 const fromFetch = (c: FetchErrorCode): ProbeError =>
   c === 'denied' || c === 'timeout' || c === 'address_refused' ? c : c === 'scheme' || c === 'too_big' ? 'invalid' : 'unreachable';
 
-/** an HLS attribute list (`BANDWIDTH=…,CODECS="a,b"`) */
-function attrList(s: string): Map<string, string> {
+const hlsName = (c: string) => (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c === '-';
+const hlsBare = (c: string) => c !== ',';
+/** an HLS attribute list (`BANDWIDTH=…,CODECS="a,b"`), scanned in linear time (attrlist.ts; the caller caps the line length) */
+export function attrList(s: string): Map<string, string> {
   const out = new Map<string, string>();
-  for (const m of s.matchAll(/([A-Z0-9-]+)=("[^"]*"|[^,]*)/g)) out.set(m[1]!, m[2]!.replace(/^"|"$/g, ''));
+  for (const a of scanAttrs(s, hlsName, hlsBare)) out.set(a.name, a.quoted ? a.value : a.value.replace(/^"|"$/g, ''));
   return out;
 }
 
@@ -60,7 +65,8 @@ export function pickVariant(master: string, maxBitrate: number): { uri: string; 
   const lines = master.split(/\r?\n/).map((l) => l.trim());
   const vars: Array<{ uri: string; bandwidth: number; codecs: string | null }> = [];
   for (let i = 0; i < lines.length; i++) {
-    if (!lines[i]!.startsWith('#EXT-X-STREAM-INF:')) continue;
+    // a variant line longer than ATTR_LINE_MAX is no variant (M2: no provider line is scanned at any length)
+    if (!lines[i]!.startsWith('#EXT-X-STREAM-INF:') || lines[i]!.length > ATTR_LINE_MAX) continue;
     const a = attrList(lines[i]!.slice(18));
     let uri: string | undefined;
     for (let j = i + 1; j < lines.length; j++) {
@@ -180,7 +186,7 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
       opened.push(ring);
       let ringError: unknown;
       const stdin = upTo(during(ring, PUSH_PROBE_MS), TS_PROBE_BYTES, (e) => { ringError = e; });
-      const r = await deps.run('ffprobe', PIPE_ARGS, { timeoutMs: left(), stdin, ...abort });
+      const r = await deps.run('ffprobe', pipeArgs('mpegts'), { timeoutMs: left(), stdin, ...abort });
       if (r.code === TIMEOUT_CODE) return fail('timeout');
       const { video, audio } = streamsOf(r.stdout);
       if (!video) {
@@ -205,6 +211,7 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
         return res;
       };
       let stdin: AsyncIterable<Uint8Array>;
+      let format: PipeFormat = 'mpegts';
       if (input.kind === 'hls') {
         // relative references resolve against the URL a playlist was finally served from (after redirects)
         const master = await get(c.url.href, PLAYLIST_MAX_BYTES);
@@ -221,18 +228,21 @@ export async function probe(input: StreamInput, deps: { run: Run; guard: GuardDe
         const lines = media.split(/\r?\n/).map((l) => l.trim());
         const seg = lines.find((l) => l !== '' && !l.startsWith('#'));
         if (!seg) return fail('invalid');
-        const init = /^#EXT-X-MAP:.*\bURI="([^"]+)"/m.exec(lines.join('\n'))?.[1];
+        const mapLine = lines.find((l) => l.startsWith('#EXT-X-MAP:'));
+        const init = mapLine && mapLine.length <= ATTR_LINE_MAX ? attrList(mapLine.slice(11)).get('URI') || undefined : undefined;
         const initBody = init ? (await get(resolveUri(init, base), SEGMENT_MAX_BYTES)).body : null;
+        format = segmentFormat(seg, init);
         const segBody = (await get(resolveUri(seg, base), SEGMENT_MAX_BYTES)).body;
         stdin = (async function* () {
           if (initBody) yield* upTo(initBody, SEGMENT_MAX_BYTES, (e) => { pipeError = e; });
           yield* upTo(segBody, SEGMENT_MAX_BYTES, (e) => { pipeError = e; });
         })();
       } else {
+        format = urlFormat(c.url.pathname);
         const res = await get(c.url.href, Number.MAX_SAFE_INTEGER);
         stdin = upTo(res.body, TS_PROBE_BYTES, (e) => { pipeError = e; });
       }
-      result = await deps.run('ffprobe', PIPE_ARGS, { timeoutMs: left(), stdin, ...abort });
+      result = await deps.run('ffprobe', pipeArgs(format), { timeoutMs: left(), stdin, ...abort });
     }
     if (result.code === TIMEOUT_CODE) return fail('timeout');
     const { video, audio } = streamsOf(result.stdout);

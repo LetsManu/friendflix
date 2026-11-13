@@ -14,6 +14,11 @@ wird nichts geladen oder gestartet und FriendFlix sieht aus wie vorher. Diese Se
 - **Über den Updater (Standard-Stack):** *Admin → Live-TV* → aktivieren. Der Updater lädt das signierte Image und startet es.
 - **Von Hand:** `COMPOSE_PROFILES=livetv` in die `.env` schreiben und `docker compose -f compose.prod.yaml up -d` ausführen
   (oder `docker compose -f compose.prod.yaml --profile livetv up -d`). Vorher prüfen: `docker compose -f compose.prod.yaml --profile livetv config -q`.
+- **Portainer-Stack:** Der Updater ändert keinen Stack, den Portainer verwaltet, daher kann der Schalter Live-TV dort nicht
+  einschalten. In Portainer den Stack öffnen, die Umgebungsvariable `COMPOSE_PROFILES` = `livetv` anlegen und *Update the stack*
+  mit *Re-pull image* ausführen. Erscheint kein Container `livetv` (manche Portainer-Versionen geben `COMPOSE_PROFILES` nicht an
+  Compose weiter), im Stack-Editor beim Dienst `livetv` die Zeile `profiles: [livetv]` löschen und erneut aktualisieren. Zum
+  Ausschalten die Variable wieder entfernen (oder die Zeile zurücksetzen) und den Stack aktualisieren.
 
 **Bei einer Installation von vor Live-TV** einmal in dieser Reihenfolge (die Seite nennt den Schritt, der fehlt):
 
@@ -28,6 +33,10 @@ wird nichts geladen oder gestartet und FriendFlix sieht aus wie vorher. Diese Se
 Der Dienst hat keinen Docker-Socket, ein schreibgeschütztes Root-Dateisystem und keine Capabilities; Backend und Gateway
 erreichen ihn im internen Netz `livetv` unter `LIVETV_URL` (Standard `http://livetv:8090`, braucht keine Einstellung). Details (englisch): [security.md](../security.md#the-livetv-container).
 Der Updater behält die Overlay-Dateien, mit denen du den Stack gestartet hast; ein Overlay in `COMPOSE_FILE` bleibt bei Updates erhalten.
+
+**Reverse Proxy:** Das Token steht in jeder Stream-Adresse (`/media/l/<token>/…`). Den Block `location /media/l/` aus
+`deploy/npm/portal.advanced.conf` im Proxy Host des Portals ergänzen (er schaltet Access- und Error-Log für diese Pfade ab, wie bei
+`/media/c/`), und nie eine `/media/l/…`-Adresse in ein Issue oder einen Chat kopieren.
 
 ## GPU
 
@@ -108,6 +117,8 @@ Chromecast und AirPlay spielen einen Live-Sender wie einen Film. Leiste und Fern
 ## Gesendete Streams (SRT)
 
 *Eigene Streams* gibt es in zwei Arten: FriendFlix **holt** eine Adresse (HLS, MPEG-TS oder `srt://` im Caller-Modus), oder dein Encoder **sendet** per SRT an FriendFlix (*Encoder sendet an FriendFlix*, zum Beispiel ein Sender Nordlicht TV aus OBS). Senden braucht einen eingehenden Port pro Feed.
+
+Unterstützte Formate beim Holen: HLS mit MPEG-TS-, fMP4- (CMAF) oder ADTS-Segmenten (`.aac` / `.mp3`, Radio; das erste Segment entscheidet, alles andere wird als MPEG-TS gelesen) und direkte Adressen nach ihrer Dateiendung: `.ts` und alles Unbekannte als MPEG-TS, `.aac`, `.mp3`, `.mp4`/`.m4a`/`.mov`, `.mkv`/`.webm` und `.flv`. Das Format wird nie aus den Daten des Streams erraten, eine direkte Adresse mit irreführender Endung schlägt daher fehl. Gesendete Feeds sind MPEG-TS.
 
 - **Ports.** UDP `LIVETV_SRT_PORTS`, Standard **9000–9009**: ein Port pro Feed, also höchstens zehn gesendete Feeds (1 bis 100 Ports sind erlaubt). **Nur UDP, kein TCP.** `livetv` veröffentlicht den Bereich selbst; er läuft **nicht** über den Reverse Proxy, der nur HTTP kann. Der Bereich wird auf `LIVETV_SRT_BIND` veröffentlicht, standardmäßig `127.0.0.1`: Senden von außen geht erst, nachdem du `0.0.0.0` (oder die LAN-Adresse) setzt, **und** nur, wenn du gesendete Feeds nutzt; dann den Bereich auch im Router weiterleiten (Docker umgeht ufw und firewalld, eine Host-Firewall-Regel allein schließt ihn nicht). Ist der Bereich voll, sagt *Stream hinzufügen* das: `LIVETV_SRT_PORTS` in der `.env` vergrößern und `docker compose … up -d` ausführen. Ein Feed, dessen Port nach so einer Änderung nicht mehr im Bereich liegt, wird markiert und kann einen neuen Port bekommen.
 - **Host im Hinweis.** Der Einrichtungshinweis nennt `LIVETV_SRT_HOST` (*Admin → Einstellungen → Live-TV*), standardmäßig den Host von `PUBLIC_URL`. Steht dieser Name hinter einem CDN, das kein UDP durchlässt (zum Beispiel ein Cloudflare-Eintrag mit oranger Wolke), dort einen nur-DNS-Namen oder die öffentliche IP eintragen.

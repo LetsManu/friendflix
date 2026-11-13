@@ -132,6 +132,9 @@ describe.each(['compose.prod.yaml', 'compose.yaml'])('%s livetv', (file) => {
     expect(b).not.toContain('${LIVETV_SRT_BIND:-0.0.0.0}');
     expect(b).toContain('LIVETV_SRT_PORTS: ${LIVETV_SRT_PORTS:-9000-9009}');
     expect(b).toContain('LIVETV_CACHE_MAX_GB: ${LIVETV_CACHE_MAX_GB:-6}');
+    // review L6: livetv is assumed hostile-reachable, so it cannot exhaust the host's processes or memory
+    expect(b).toMatch(/^ {4}pids_limit: \$\{LIVETV_PIDS_LIMIT:-512\}$/m);
+    expect(b).toMatch(/^ {4}mem_limit: \$\{LIVETV_MEM_LIMIT:-4g\}$/m);
     expect(networksOf(b)).toEqual(['livetv', 'livetv-egress']);
     // image: its own, pulled only with the profile; the mounts of spec 3.1
     expect(b).toContain('friendflix-livetv:');

@@ -187,6 +187,7 @@ class CastControllerTest {
 
     @Test fun theControllerLoadsALiveStreamWithTheChannelMetadata() {
         val (r, c) = controller(custom = true)
+        calls.clear() // the local player's own start report is not part of the cast
         var answer: Boolean? = null
         c.startLive("nordlicht-tv") { answer = it }
         assertEquals(true, answer)
@@ -307,6 +308,7 @@ class CastControllerTest {
     @Test fun aLiveAnswerAfterAStopIsRevokedNotLoaded() {
         val r = FakeReceiver(false)
         val c = CastController(server, r, host, still, io = manualIo, main = direct, now = { clock }, schedule = schedule)
+        calls.clear() // the local player's own start report is not part of the cast
         var answer: Boolean? = null
         c.startLive("nordlicht-tv") { answer = it }
         c.stop()
@@ -319,6 +321,7 @@ class CastControllerTest {
     @Test fun aWatchWithoutAnAnswerInTimeAnswersFalseAndItsLateTokenIsRevoked() {
         val r = FakeReceiver(false)
         val c = CastController(server, r, host, still, io = manualIo, main = direct, now = { clock }, schedule = schedule)
+        calls.clear() // the local player's own start report is not part of the cast
         var answers = 0
         var answer: Boolean? = null
         c.startLive("nordlicht-tv") { answer = it; answers++ }

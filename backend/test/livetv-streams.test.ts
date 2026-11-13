@@ -389,6 +389,27 @@ describe('start and join', () => {
     expect((await authz(second.json().token)).statusCode).toBe(200);
   });
 
+  it('max_streams (review L1): tokens minted but not fetched yet count too, so minting first cannot get past the limit', async () => {
+    const a = await addChannel('Nordlicht TV');
+    const b = await addChannel('Hafenkanal');
+    await setLive(env.ctx, { userId: benId, userName: 'Ben Muster', itemId: 'a'.repeat(32), title: 'Dunmoor', positionTicks: 0, isPaused: false, playSessionId: 'ps-film-1', updatedAt: Date.now(), source: 'portal', deviceId: 'tv-elsewhere' });
+    const local = await watch(ben, a); // 1 film + 0 → allowed; nothing fetched yet
+    expect(local.statusCode, local.body).toBe(200);
+    // a cast is another slot (R14): the unfetched local token is a stream already, 1 film + 1 = 2 = maxStreams
+    const cast = await watch(ben, b, { via: 'chromecast' });
+    expect(cast.statusCode).toBe(429);
+    expect(cast.json()).toEqual({ error: 'max_streams', max: 2 });
+    // the same slot is a channel switch: the token it replaces is not counted
+    const sw = await watch(ben, b);
+    expect(sw.statusCode, sw.body).toBe(200);
+    expect((await authz(local.json().token)).statusCode).toBe(410);
+    // once fetched it counts through its live record, exactly once
+    expect((await authz(sw.json().token)).statusCode).toBe(200);
+    expect((await watch(ben, a, { via: 'chromecast' })).statusCode).toBe(429);
+    await env.kv.del(`play:${benId}:ps-film-1`);
+    expect((await watch(ben, a, { via: 'chromecast' })).statusCode).toBe(200);
+  });
+
   it('403 without the right, 404 for livetv off, 400 for a bad body', async () => {
     const admins = await addChannel('Sternwarte 24', { group: hidden });
     expect((await watch(anna, admins)).json()).toEqual({ error: 'forbidden' });

@@ -507,6 +507,7 @@ describe('a push input', () => {
     for (const c of calls) {
       expect(has(c.args, ['-protocol_whitelist', 'pipe'])).toBe(true);
       expect(has(c.args, ['-i', 'pipe:0'])).toBe(true);
+      expect(has(c.args, ['-f', 'mpegts', '-format_whitelist', 'mpegts', '-i', 'pipe:0'])).toBe(true); // L5: a push feed is MPEG-TS only
       expect(c.args.some((a) => /srt:|udp|ff-|:\/\//.test(a))).toBe(false);
       expect(c.stdin).toEqual(RING);
     }

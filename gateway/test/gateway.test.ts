@@ -5,7 +5,8 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { isTrustedPeer, setUntrustedPeers, watchUntrustedHost } from '../src/peers.js';
 import { authClientIp, blocksDirectStream, castHlsSubAllowed, compatPlaylist, createGateway, hlsAttrs, matchDownloadPath, normalizeCastPath, normalizePath, sanitizePlaylist } from '../src/gateway.js';
 import { UPSTREAMS } from '../src/upstream/index.js';
 
@@ -218,6 +219,52 @@ describe('authClientIp', () => {
     expect(authClientIp({}, '192.168.1.5')).toBe('unknown');
     expect(authClientIp({}, undefined)).toBe('unknown');
     expect(authClientIp({ 'x-forwarded-for': ',' }, '172.18.0.2')).toBe('unknown');
+  });
+  it('review L2: forwarding headers of a peer that is no trusted proxy are ignored (a public peer, the livetv container)', () => {
+    const h = { 'x-real-ip': '192.168.1.10', 'x-forwarded-for': '192.168.1.10' };
+    expect(authClientIp(h, '203.0.113.5')).toBe('unknown');
+    expect(authClientIp(h, '2001:db8::5')).toBe('unknown');
+    expect(authClientIp(h, '::ffff:172.18.0.9')).toBe('192.168.1.10');
+    setUntrustedPeers(['172.18.0.9', '127.0.0.1']);
+    try {
+      expect(authClientIp(h, '172.18.0.9')).toBe('unknown');
+      expect(authClientIp(h, '::ffff:172.18.0.9')).toBe('unknown');
+      expect(authClientIp(h, '172.18.0.2')).toBe('192.168.1.10');
+      expect(authClientIp(h, '127.0.0.1')).toBe('192.168.1.10'); // loopback is never excluded
+    } finally {
+      setUntrustedPeers([]);
+    }
+  });
+});
+
+describe('trusted proxy peers (peers.ts)', () => {
+  afterEach(() => setUntrustedPeers([]));
+  it('isTrustedPeer: loopback, private and link-local only', () => {
+    for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1', '10.1.2.3', '172.17.0.1', '192.168.1.2', '169.254.1.1', 'fd12::3', 'fe80::1', 'fe80::1%eth0']) expect(isTrustedPeer(ip), ip).toBe(true);
+    for (const ip of ['203.0.113.5', '100.64.1.2', '172.32.0.1', '2001:db8::1', '', undefined, 'nope']) expect(isTrustedPeer(ip), String(ip)).toBe(false);
+  });
+  it('watchUntrustedHost follows a compose service name only; a vanished name clears the set, other failures keep it', async () => {
+    let answer: string[] | Error = ['172.20.0.4'];
+    const lookup = async () => { if (answer instanceof Error) throw answer; return answer; };
+    const w = watchUntrustedHost('livetv', { lookup, intervalMs: 60_000 });
+    await w.ready;
+    expect(isTrustedPeer('172.20.0.4')).toBe(false);
+    expect(isTrustedPeer('172.20.0.5')).toBe(true);
+    w.stop();
+    answer = Object.assign(new Error('timeout'), { code: 'ETIMEOUT' });
+    const w2 = watchUntrustedHost('livetv', { lookup, intervalMs: 60_000 });
+    await w2.ready;
+    expect(isTrustedPeer('172.20.0.4')).toBe(false); // kept
+    w2.stop();
+    answer = Object.assign(new Error('gone'), { code: 'ENOTFOUND' });
+    const w3 = watchUntrustedHost('livetv', { lookup, intervalMs: 60_000 });
+    await w3.ready;
+    expect(isTrustedPeer('172.20.0.4')).toBe(true);
+    w3.stop();
+    // a dotted name or an address may be the Docker host (also the proxy's bridge address): never followed
+    answer = ['172.20.0.7'];
+    for (const host of ['livetv.example.com', '192.0.2.10', '[::1]']) await watchUntrustedHost(host, { lookup }).ready;
+    expect(isTrustedPeer('172.20.0.7')).toBe(true);
   });
 });
 

@@ -158,6 +158,15 @@ export async function deviceLiveSessions(ctx: Ctx, userId: string, deviceId: str
 }
 
 /**
+ * The live records (play sessions) of the account's minted but never fetched live tokens (no gateway authz yet, so no `play:` record
+ * exists): the watch route counts them toward `maxStreams` too (review L1), else minting several tokens first and fetching them
+ * afterwards would get past the limit. Admin test previews are left out, as before their first fetch.
+ */
+export async function unfetchedLiveSessions(ctx: Ctx, userId: string): Promise<string[]> {
+  return (await listTokens(ctx, userId)).filter((t) => !t.rec.test && t.rec.seen === undefined).map((t) => livePlaySessionId(t.hash));
+}
+
+/**
  * The device's current live view (ruling 36): its newest normal `local` token (local or AirPlay), which the device's next local watch
  * replaces (mintLiveToken). A watch for another channel from this device is a channel switch (Task 32). Admin test previews are not
  * views a watch replaces (R8), and neither is a cast (R14): a Chromecast token is a viewer of its channel, never the device's own view.
