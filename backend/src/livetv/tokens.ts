@@ -188,10 +188,30 @@ export async function deviceLiveView(ctx: Ctx, userId: string, deviceId: string)
   return t ? { hash: t.hash, channelId: t.rec.channelId } : null;
 }
 
-/** how long an admin's *Stoppen* keeps the channel from starting again (the viewers' players meet the error state meanwhile, spec §7.4) */
-export const ADMIN_STOP_TTL_S = 60;
+/**
+ * how long an admin's *Stoppen* keeps the channel from starting again (spec §7.4): longer than a player's reconnect cycle (2 min), so
+ * the viewers' own retries cannot undo it (bughunt L3); their players show "vom Admin gestoppt" (409 `stopped_by_admin`) meanwhile
+ */
+export const ADMIN_STOP_TTL_S = 300;
 /** the marker of an admin stop (`ltv:adminstop:<channelId>`): startOrJoin refuses the channel while it lives; *Neu starten* clears it */
 export const adminStopKey = (channelId: string) => `ltv:adminstop:${channelId}`;
+/**
+ * the marker of an admin stop of one viewer's live stream in *Wiedergabe-Check* (`ltv:adminstopv:<userId>:<deviceId>`, value = the
+ * channel id, ADMIN_STOP_TTL_S): that device's watch of that channel is refused meanwhile (bughunt L2)
+ */
+export const adminStopViewKey = (userId: string, deviceId: string) => `ltv:adminstopv:${userId}:${deviceId}`;
+
+/**
+ * Wiedergabe-Check *Stoppen* on a live row (bughunt L2): revokes the account's token behind the play session (`ltv-<hash>`) and keeps
+ * that device from watching the channel again for ADMIN_STOP_TTL_S. Returns the stopped token's channel, or null (no such token).
+ */
+export async function stopLiveSession(ctx: Ctx, userId: string, playSessionId: string): Promise<{ channelId: string } | null> {
+  const t = (await listTokens(ctx, userId)).find((x) => livePlaySessionId(x.hash) === playSessionId);
+  if (!t) return null;
+  await ctx.kv.set(adminStopViewKey(userId, t.rec.deviceId), t.rec.channelId, ADMIN_STOP_TTL_S);
+  await revokeLiveToken(ctx, t.hash);
+  return { channelId: t.rec.channelId };
+}
 
 /** Revokes every live token on one channel (all accounts, admin test previews included): an admin stopped it. Returns the count. */
 export async function revokeChannelTokens(ctx: Ctx, channelId: string): Promise<number> {

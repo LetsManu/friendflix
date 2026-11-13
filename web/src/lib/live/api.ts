@@ -74,6 +74,8 @@ export type WatchError =
   | { status: 503; error: 'provider_limit'; max: number; running: RunningChannel[] }
   | { status: 502; error: 'channel_unreachable' }
   | { status: 409; error: 'not_receiving' }
+  /** an admin stopped the channel or this viewer's stream a few minutes ago (Live-Status / Wiedergabe-Check *Stoppen*) */
+  | { status: 409; error: 'stopped_by_admin' }
   | { status: 429; error: 'max_streams'; max: number }
   | { status: 403; error: 'forbidden' }
   | { status: 404; error: 'livetv_off' }
@@ -87,7 +89,7 @@ export function watchError(e: ApiError): WatchError | null {
   switch (e.status) {
     case 503: return b.error === 'live_full' ? { status: 503, error: 'live_full', running } : b.error === 'provider_limit' ? { status: 503, error: 'provider_limit', max, running } : null;
     case 502: return b.error === 'channel_unreachable' ? { status: 502, error: 'channel_unreachable' } : null;
-    case 409: return b.error === 'not_receiving' ? { status: 409, error: 'not_receiving' } : null;
+    case 409: return b.error === 'not_receiving' ? { status: 409, error: 'not_receiving' } : b.error === 'stopped_by_admin' ? { status: 409, error: 'stopped_by_admin' } : null;
     case 429: return b.error === 'max_streams' ? { status: 429, error: 'max_streams', max } : null;
     case 403: return { status: 403, error: 'forbidden' };
     case 404: return { status: 404, error: b.error === 'livetv_off' ? 'livetv_off' : 'not_found' };

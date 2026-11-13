@@ -27,6 +27,7 @@ const dict: Translation<typeof de> = {
     reconnecting: 'Łączenie ponownie…',
     retry: 'Spróbuj ponownie',
     off: 'Telewizja na żywo jest teraz wyłączona. Administrator może ją znów włączyć.',
+    stoppedByAdmin: 'Zatrzymane przez administratora. Spróbuj ponownie za kilka minut.',
     pauseTooLong: 'Pauza trwała dłużej niż {n} min, oglądanie jest kontynuowane od najstarszego zapisanego punktu.',
     restart: 'Od początku',
     channelList: 'Lista kanałów',

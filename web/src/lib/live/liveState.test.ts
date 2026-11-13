@@ -33,6 +33,10 @@ describe('fromWatchError (every WatchError of Task 35, F23)', () => {
   it('409 not_receiving waits for the push feed', () => {
     expect(fromWatchError(409, { error: 'not_receiving' })).toEqual({ k: 'notReceiving' });
   });
+  it('409 stopped_by_admin is the stopped card without reconnects, also for the channel that was playing (bughunt L3)', () => {
+    expect(fromWatchError(409, { error: 'stopped_by_admin' })).toEqual({ k: 'stopped' });
+    expect(fromWatchError(409, { error: 'stopped_by_admin' }, { again: true })).toEqual({ k: 'stopped' });
+  });
   it('429 max_streams is the film player\'s max-streams message with its maximum', () => {
     expect(fromWatchError(429, { error: 'max_streams', max: 2 })).toEqual({ k: 'maxStreams', max: 2 });
   });

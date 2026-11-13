@@ -117,7 +117,9 @@ export type WatchError =
   | { status: 503; error: 'live_full'; running: RunningChannel[] }
   | { status: 503; error: 'provider_limit'; max: number; running: RunningChannel[] }
   | { status: 502; error: 'channel_unreachable' }
-  | { status: 409; error: 'not_receiving' };
+  | { status: 409; error: 'not_receiving' }
+  /** an admin stopped the channel (Live-Status) or this viewer's stream (Wiedergabe-Check) a few minutes ago (bughunt L2, L3) */
+  | { status: 409; error: 'stopped_by_admin' };
 /** a stream a watch got: its key, the mode livetv reports and its segment format (TS when livetv does not say yet; bughunt M2) */
 export interface Joined { streamKey: string; mode: Mode; segments: Segments }
 const joined = (v: StreamView): Joined => ({ streamKey: v.streamKey, mode: v.mode, segments: v.segments ?? 'ts' });
@@ -358,8 +360,9 @@ function inputOf(ctx: Ctx, channelId: string, r: InputRow): StreamInput | null {
  */
 export async function startOrJoin(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: LivetvProfile): Promise<Joined | WatchError> {
   const unreachable = { status: 502, error: 'channel_unreachable' } as const;
-  // an admin stopped this channel a moment ago (*Stoppen*): a viewer's player re-watching after its token was revoked must not start it again
-  if (await ctx.kv.get(adminStopKey(ch.id)).catch(() => null)) return unreachable;
+  // an admin stopped this channel a few minutes ago (*Stoppen*): a viewer's player re-watching after its token was revoked must not start
+  // it again, and its reconnect cycle must not either: a code of its own, which the player shows as stopped (bughunt L3)
+  if (await ctx.kv.get(adminStopKey(ch.id)).catch(() => null)) return { status: 409, error: 'stopped_by_admin' };
   const until = Date.now() + JOIN_WAIT_MS;
   /** the release marker outlived its 5-s wait once: from then on the channel counts as not running (normal start path) */
   let gaveUp = false;

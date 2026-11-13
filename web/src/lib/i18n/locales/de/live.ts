@@ -25,6 +25,7 @@ export default {
     reconnecting: 'Verbinde neu …',
     retry: 'Erneut versuchen',
     off: 'Live-TV ist gerade ausgeschaltet. Ein Admin kann es wieder einschalten.',
+    stoppedByAdmin: 'Vom Admin gestoppt. Du kannst es in ein paar Minuten erneut versuchen.',
     pauseTooLong: 'Die Pause war länger als {n} Minuten – es geht am ältesten gespeicherten Punkt weiter.',
     restart: 'Von Anfang an',
     channelList: 'Senderliste',

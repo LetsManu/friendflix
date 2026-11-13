@@ -89,6 +89,8 @@ describe('calls', () => {
     expect(await watch('a')).toEqual({ ok: false, error: { status: 502, error: 'channel_unreachable' } });
     stub(409, { error: 'not_receiving' });
     expect(await watch('a')).toEqual({ ok: false, error: { status: 409, error: 'not_receiving' } });
+    stub(409, { error: 'stopped_by_admin' });
+    expect(await watch('a')).toEqual({ ok: false, error: { status: 409, error: 'stopped_by_admin' } });
     stub(429, { error: 'max_streams', max: 3 });
     expect(await watch('a')).toEqual({ ok: false, error: { status: 429, error: 'max_streams', max: 3 } });
     stub(403, { error: 'forbidden' });

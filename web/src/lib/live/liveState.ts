@@ -15,7 +15,9 @@ export type LiveUi =
   | { k: 'providerLimit'; max: number; running: RunningChannel[] }
   | { k: 'forbidden' }
   | { k: 'maxStreams'; max: number }
-  | { k: 'off' };
+  | { k: 'off' }
+  /** an admin stopped it (409 stopped_by_admin): no reconnects by itself, *Erneut versuchen* by hand (bughunt L3) */
+  | { k: 'stopped' };
 
 /** the two input-lost states: the card "Sender gerade nicht erreichbar" + "Verbinde neu …" with its reconnect attempts */
 export type LostUi = Extract<LiveUi, { k: 'lost' } | { k: 'unreachable' }>;
@@ -40,7 +42,8 @@ export function nextLost(ui: LostUi, elapsedMs: number): LostUi | { k: 'retry' }
 
 /**
  * A refused `watch` (Task 35's WatchError, F23) as the player's state: 502 channel_unreachable is the input-lost card with
- * reconnects, 404 livetv_off the off message (no retry), every other 403/404 forbidden. Anything unexpected is input lost, so the
+ * reconnects, 404 livetv_off the off message (no retry), 409 stopped_by_admin the stopped card (a retry by hand only, so the
+ * player's own reconnects never undo an admin's stop), every other 403/404 forbidden. Anything unexpected is input lost, so the
  * player keeps trying instead of stopping at an empty screen.
  *
  * `again` (bughunt M1): the watch is for the channel that was already playing (the one re-watch after a refused token, a start of
@@ -61,6 +64,7 @@ export function fromWatchError(status: number, body: unknown, o: { again?: boole
       break;
     case 409:
       if (b.error === 'not_receiving') return { k: 'notReceiving' };
+      if (b.error === 'stopped_by_admin') return { k: 'stopped' };
       break;
     case 429:
       if (b.error === 'max_streams') return { k: 'maxStreams', max };

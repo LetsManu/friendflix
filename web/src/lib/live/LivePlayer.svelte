@@ -111,7 +111,7 @@
   type OldestSrc = Parameters<typeof oldestPoint>[0];
   /** a beat's outcome: answered, the token is gone (a new watch was asked for), it failed otherwise, or it outlived its channel */
   type BeatResult = 'ok' | 'gone' | 'failed' | 'stale';
-  const ERROR_KINDS: Array<LiveUi['k']> = ['lost', 'unreachable', 'retry', 'forbidden', 'maxStreams', 'off', 'full', 'providerLimit'];
+  const ERROR_KINDS: Array<LiveUi['k']> = ['lost', 'unreachable', 'retry', 'forbidden', 'maxStreams', 'off', 'stopped', 'full', 'providerLimit'];
 
   let root: HTMLDivElement | undefined, stage: HTMLDivElement | undefined, video: HTMLVideoElement | undefined;
   let playBtn: HTMLButtonElement | undefined, backBtn: HTMLButtonElement | undefined, fwdBtn: HTMLButtonElement | undefined, infoBtn: HTMLButtonElement | undefined;
@@ -208,6 +208,7 @@
   function cardText(u: LiveUi): string {
     switch (u.k) {
       case 'off': return $t('live.player.off');
+      case 'stopped': return $t('live.player.stoppedByAdmin');
       case 'forbidden': return $t('live.player.notAvailable');
       case 'maxStreams': return $t('player.error.maxStreams', { n: u.max });
       default: return '';
@@ -1153,6 +1154,8 @@
   {:else if cardMsg}
     <div class="lcard" class:frost={!still} class:frost-safe={!still} class:solid={still} role="alert">
       <p class="ct">{cardMsg}</p>
+      <!-- an admin's stop: never retried by itself (bughunt L3), only by hand -->
+      {#if ui.k === 'stopped'}<div class="cbtn"><button type="button" class="frost-btn" on:click={retryNow}>{$t('live.player.retry')}</button></div>{/if}
     </div>
   {/if}
 

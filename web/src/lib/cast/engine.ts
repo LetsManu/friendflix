@@ -110,11 +110,11 @@ export interface CastSession {
 }
 export { liveFields, type LiveInfo } from './liveInfo';
 /** a refused or failed `loadLive`: `code` = the watch refusal's error (`live_full`, `provider_limit`, `channel_unreachable`, `not_receiving`,
- *  `max_streams`, `forbidden`, `not_found`, `livetv_off`), else `not_connected` / `load_failed` / `network` / `superseded` (a newer one won) */
+ *  `max_streams`, `forbidden`, `not_found`, `livetv_off`, `stopped_by_admin`), else `not_connected` / `load_failed` / `network` / `superseded` (a newer one won) */
 export class LiveCastError extends Error {
   constructor(readonly code: string, readonly refusal?: WatchError) { super(code); this.name = 'LiveCastError'; }
 }
-/** LivePlayer's existing state copy for a live cast that did not start (no new texts) */
+/** LivePlayer's state copy for a live cast that did not start */
 export function liveErrText(e: unknown): string {
   const c = e instanceof LiveCastError ? e : null;
   const max = c?.refusal && 'max' in c.refusal ? c.refusal.max : 0;
@@ -126,6 +126,7 @@ export function liveErrText(e: unknown): string {
     case 'max_streams': return tr('player.error.maxStreams', { n: max });
     case 'forbidden': case 'not_found': return tr('live.player.notAvailable');
     case 'livetv_off': return tr('live.player.off');
+    case 'stopped_by_admin': return tr('live.player.stoppedByAdmin');
     default: return tr('player.cast.failed');
   }
 }

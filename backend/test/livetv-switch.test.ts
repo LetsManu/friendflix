@@ -561,9 +561,9 @@ describe('admin Stoppen stops a watched channel (final review I1)', () => {
     // every token of the channel is revoked (the gateway answers 410, the player re-watches once)
     expect((await authz(tokenA)).statusCode).toBe(410);
     expect((await authz(cast.json().token)).statusCode).toBe(410);
-    // the re-watch meets the marker: the error state, no new start
+    // the re-watch meets the marker: its own code (the player shows "vom Admin gestoppt", bughunt L3), no new start
     const again = await watch(anna, a);
-    expect([again.statusCode, again.json()]).toEqual([502, { error: 'channel_unreachable' }]);
+    expect([again.statusCode, again.json()]).toEqual([409, { error: 'stopped_by_admin' }]);
     expect(order).toEqual([`POST:${a}`, `DELETE:${a}`]);
     expect(await grants()).toEqual([]);
     // after the marker's TTL a normal watch starts the channel again
@@ -574,12 +574,42 @@ describe('admin Stoppen stops a watched channel (final review I1)', () => {
     expect(order).toEqual([`POST:${a}`, `DELETE:${a}`, `POST:${a}`]);
   });
 
-  it('the marker is short-lived and set only once livetv answered', async () => {
+  it('Wiedergabe-Check Stoppen on a live row stops that viewer: token revoked, re-watch refused (bughunt L2)', async () => {
+    const src = await addSource();
+    const a = await addChannel(src, 'Hafenkanal', 4);
+    const b = await addChannel(src, 'Nordlicht TV', 1);
+    const wa = await watch(anna, a);
+    expect(wa.statusCode, wa.body).toBe(200);
+    const token = wa.json().token as string;
+    expect((await authz(token)).statusCode).toBe(200); // the gateway's first fetch writes the live record
+    const list = await env.app.inject({ method: 'GET', url: '/api/admin/live', cookies: admin.cookies });
+    const row = (list.json().sessions as Array<{ userId: string; playSessionId: string; source: string }>).find((x) => x.source === 'livetv')!;
+    expect(row).toMatchObject({ userId: annaId });
+    const stopped = await call(admin, 'POST', '/api/admin/live/stop', { userId: annaId, playSessionId: row.playSessionId });
+    expect(stopped.statusCode, stopped.body).toBe(200);
+    // the token is gone, the row too
+    expect((await authz(token)).statusCode).toBe(410);
+    const after = await env.app.inject({ method: 'GET', url: '/api/admin/live', cookies: admin.cookies });
+    expect((after.json().sessions as Array<{ source: string }>).filter((x) => x.source === 'livetv')).toEqual([]);
+    // the player's re-watch of that channel is refused with the admin code; another channel still plays
+    const again = await watch(anna, a);
+    expect([again.statusCode, again.json()]).toEqual([409, { error: 'stopped_by_admin' }]);
+    expect((await watch(anna, b)).statusCode).toBe(200);
+    // another viewer of the channel is not affected
+    expect((await watch(carla, a)).statusCode).toBe(200);
+    // after the window the viewer can watch again
+    expect(await env.kv.keys('ltv:adminstopv:')).toHaveLength(1);
+    for (const k of await env.kv.keys('ltv:adminstopv:')) await env.kv.del(k);
+    expect((await watch(anna, a)).statusCode).toBe(200);
+  });
+
+  it('the marker outlives the reconnect cycle (5 min) and is set only once livetv answered', async () => {
     const src = await addSource();
     const a = await addChannel(src, 'Hafenkanal', 4);
     const set = vi.spyOn(env.kv, 'set');
     expect((await stop(a)).statusCode).toBe(200);
-    expect(set.mock.calls.find(([k]) => k === `ltv:adminstop:${a}`)?.[2]).toBe(60);
+    // longer than a player's reconnect cycle (2 min): the viewers' retries cannot undo the stop (bughunt L3)
+    expect(set.mock.calls.find(([k]) => k === `ltv:adminstop:${a}`)?.[2]).toBe(300);
     set.mockRestore();
     await env.kv.del(`ltv:adminstop:${a}`);
     const inner = env.ctx.fetchImpl;

@@ -129,7 +129,7 @@ Supported pulled formats: HLS with MPEG-TS, fMP4 (CMAF) or ADTS `.aac` / `.mp3` 
 
 ## Troubleshooting
 
-*Admin → Live-TV → Live-Status* shows the running channels (mode, viewers, since, bitrate, input state, *Stoppen* and *Neu starten*; *Stoppen* ends the channel for its viewers, who see the error state, and a new watch is refused for 60 seconds), the budget, the cache use and the last 200 events; pushed feeds have their own table (state, bitrate, refusals in the last hour).
+*Admin → Live-TV → Live-Status* shows the running channels (mode, viewers, since, bitrate, input state, *Stoppen* and *Neu starten*; *Stoppen* ends the channel for its viewers, whose players show "Vom Admin gestoppt" instead of reconnecting, and a new watch is refused for 5 minutes unless an admin starts it again with *Neu starten*), the budget, the cache use and the last 200 events; pushed feeds have their own table (state, bitrate, refusals in the last hour). *Stoppen* on a live row in *Betrieb → Wiedergabe-Check* ends that one viewer's stream; that device cannot watch the channel again for 5 minutes.
 
 | What you see | Cause and fix |
 |---|---|

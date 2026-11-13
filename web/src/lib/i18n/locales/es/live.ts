@@ -27,6 +27,7 @@ const dict: Translation<typeof de> = {
     reconnecting: 'Reconectando…',
     retry: 'Reintentar',
     off: 'La TV en directo está desactivada ahora mismo. Un administrador puede volver a activarla.',
+    stoppedByAdmin: 'Detenido por un administrador. Puedes volver a intentarlo en unos minutos.',
     pauseTooLong: 'La pausa duró más de {n} minutos; se continúa desde el punto guardado más antiguo.',
     restart: 'Desde el principio',
     channelList: 'Lista de canales',

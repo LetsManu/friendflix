@@ -27,6 +27,7 @@ const dict: Translation<typeof de> = {
     reconnecting: 'Yeniden bağlanılıyor…',
     retry: 'Tekrar dene',
     off: 'Canlı TV şu an kapalı. Bir yönetici tekrar açabilir.',
+    stoppedByAdmin: 'Bir yönetici tarafından durduruldu. Birkaç dakika sonra tekrar deneyebilirsin.',
     pauseTooLong: 'Duraklatma {n} dakikadan uzun sürdü, kayıtlı en eski noktadan devam ediliyor.',
     restart: 'Baştan',
     channelList: 'Kanal listesi',

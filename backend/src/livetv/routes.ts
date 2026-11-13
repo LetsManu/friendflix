@@ -15,7 +15,7 @@ import { nowNext } from './epg.js';
 import { readLogo } from './logos.js';
 import { channelSet } from './rights.js';
 import { clearJoinMark, receivingChannelIds, runningChannelIds, startOrJoin } from './streams.js';
-import { beatLiveToken, deviceLiveSessions, endLiveToken, LIVE_CAP_S, liveSidHash, mintLiveToken, revokeLiveToken, unfetchedLiveSessions } from './tokens.js';
+import { adminStopViewKey, beatLiveToken, deviceLiveSessions, endLiveToken, LIVE_CAP_S, liveSidHash, mintLiveToken, revokeLiveToken, unfetchedLiveSessions } from './tokens.js';
 import { addFavourite, favouriteIds, recentIds, recordRecent, removeFavourite, setFavouriteOrder, RECENT_MAX } from './userdata.js';
 
 /** a logo never changes under its hash (sha256 of the bytes): the browser keeps it a week without asking again */
@@ -103,6 +103,8 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
     const ch = toEffective(row);
     const deviceId = req.session!.deviceId;
     if (!deviceId) return reply.code(403).send({ error: 'device_pending' });
+    // an admin stopped this device's stream of this channel in Wiedergabe-Check a few minutes ago (bughunt L2)
+    if ((await ctx.kv.get(adminStopViewKey(u.id, deviceId)).catch(() => null)) === ch.id) return reply.code(409).send({ error: 'stopped_by_admin' });
 
     const limits = (await effectiveLimits(ctx, u))!;
     const prefix = `play:${u.id}:`;
