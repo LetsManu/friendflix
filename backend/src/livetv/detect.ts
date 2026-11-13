@@ -44,12 +44,13 @@ export function livetvInstalled(ctx: Ctx): boolean {
   return slots.get(ctx)?.state?.installed === true;
 }
 
-async function check(ctx: Ctx, slot: Slot, strict: boolean): Promise<LivetvState> {
+async function check(ctx: Ctx, slot: Slot, strict: boolean, tick: boolean): Promise<LivetvState> {
   const h = await livetvHealth(ctx);
   // version and boot id only from an answer that proved the key: nothing an impostor says is kept
   const ok = h !== null && h.proof === 'ok';
   const prev = slot.state;
-  slot.misses = h === null ? slot.misses + 1 : 0;
+  // only the 60-s tick counts a further miss: page loads and boot checks a few seconds apart must not use up the grace
+  slot.misses = h === null ? (tick ? slot.misses + 1 : Math.max(slot.misses, 1)) : 0;
   // M1: a single unreachable check keeps an installed livetv (its version and boot id too: no ingest resync for a blip)
   if (h === null && !strict && prev?.installed && slot.misses < DETECT_MISSES_OFF) {
     slot.state = { ...prev, reachable: false, checkedAt: Date.now() };
@@ -75,19 +76,19 @@ async function check(ctx: Ctx, slot: Slot, strict: boolean): Promise<LivetvState
  * the state, from the last check when it is younger than `maxAgeMs`; checks run one at a time (callers share the running one).
  * `strict`: an unreachable livetv counts as gone at the first miss (an updater job just changed the container on purpose).
  */
-export async function detectLivetv(ctx: Ctx, maxAgeMs = 10_000, o: { strict?: boolean } = {}): Promise<LivetvState> {
+export async function detectLivetv(ctx: Ctx, maxAgeMs = 10_000, o: { strict?: boolean; tick?: boolean } = {}): Promise<LivetvState> {
   const slot = slotOf(ctx);
   const age = slot.state ? Date.now() - slot.state.checkedAt : -1;
   // a clock that stepped back (negative age) never keeps an old answer; a strict caller never takes a kept (missed) one
   const kept = slot.state !== null && slot.state.installed && !slot.state.reachable;
   if (slot.state && age >= 0 && age < maxAgeMs && !(o.strict && kept)) return slot.state;
-  slot.flight ??= check(ctx, slot, o.strict === true).finally(() => { slot.flight = null; });
+  slot.flight ??= check(ctx, slot, o.strict === true, o.tick === true).finally(() => { slot.flight = null; });
   return slot.flight;
 }
 
 /** every 60 s (server.ts): a fresh check, which also notices the first appearance after enabling */
 export async function livetvDetectTick(ctx: Ctx): Promise<void> {
-  await detectLivetv(ctx, 0);
+  await detectLivetv(ctx, 0, { tick: true });
 }
 
 const SYSTEM_MEMO_MS = 10_000;
