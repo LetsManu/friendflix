@@ -290,7 +290,8 @@ object CastHub {
     @Volatile private var core: CastHubCore? = null
     private var starting = false
     @Volatile private var defaults: Pair<FlowPrefs, Long?> = FlowPrefs() to null
-    @Volatile private var castContext: CastContext? = null
+    /** only the chooser's selector is kept, never the CastContext itself (it points to a Context: lint StaticFieldLeak) */
+    @Volatile private var selector: MediaRouteSelector? = null
 
     /** the cast as the bar shows it (null: none) */
     val state: StateFlow<CastSnapshot?> = snapshots.asStateFlow()
@@ -299,7 +300,7 @@ object CastHub {
     val ready: StateFlow<Boolean> = readyFlow.asStateFlow()
 
     /** the routes the Cast device chooser offers (the receiver app's); null until [ready] */
-    val routeSelector: MediaRouteSelector? get() = castContext?.mergedSelector
+    val routeSelector: MediaRouteSelector? get() = selector
 
     /** the receiver link (the Media3 player the remote controls drive, the device name); null until [ready] */
     val link: MediaThreeReceiver? get() = core?.link as? MediaThreeReceiver
@@ -351,7 +352,7 @@ object CastHub {
             adoptDefaults = { defaults },
             snapshots = snapshots,
         )
-        castContext = ctx
+        selector = ctx.mergedSelector
         readyFlow.value = true
     }
 
