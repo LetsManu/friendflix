@@ -211,9 +211,9 @@ The phase split (each PR leaves the app working; Live TV stays invisible until e
 | | **1c** | Sources, import (M3U/XMLTV) with the group picker and unreleased new groups, numbering policy, logo preference, EPG time offsets, channels (pulled and pushed own feeds, §3.5), groups & rights, logos, admin *Quellen* / *Kanäle* / *Gruppen & Rechte* / *Live-Status*; now/next from XMLTV (automatic matching in four exact passes, §9.4). Migration 48. |
 | | **1d** | Watching: tokens, gateway route, shared streams (incl. SRT push ingest, §3.5), DVR up to 120 min, release on switch, budget admission, the *Live-TV* tab (desktop, phone, kids, TV), live player (info banner, *Von Anfang an*, *Senderliste* panel), favourites in own order, *Zuletzt gesehen*, last channel, Chromecast/AirPlay, *TV startet mit Live-TV*. |
 | | **1e** | Platform keys and shells: Tizen key registration (incl. `ChannelList`/`Guide`), webOS key mapping, Fire TV `FireTvKeys`, Android shell cast bridge `castLive`. |
-| **2** | 2a | EPG admin: *Programmführer* tab (matching with suggestions, unmatched list, manual EPG entries/rules), stale-EPG line in *Quellen* (§17 G29). Migration 51. |
+| **2** | 2a | EPG admin: *Programmführer* tab (matching with suggestions, unmatched list, manual EPG entries/rules), stale-EPG line in *Quellen* (§17 G29). Migration at the next free index at merge time. |
 | | 2b | The guide for users (§17, G1–G44): grid on desktop, phone (with the *Jetzt/Danach* list) and TV, filters incl. TV, paged *Alle*, time chips and remote time jumps, data states, running progress, *Von Anfang an* markers, genre stripe, search in the guide, detail sheet, reminders, the mini-guide as the extended *Senderliste* panel, performance acceptance. |
-| **3** | 3a | Recordings backend + `livetv` recorder + storage modes (incl. the library sub-folder mount, §15.3) + budget reservation + notifications. Migration 52. |
+| **3** | 3a | Recordings backend + `livetv` recorder + storage modes (incl. the library sub-folder mount, §15.3) + budget reservation + notifications. Migration at the next free index at merge time. |
 | | 3b | Recording UI (detail sheet actions, Live-TV row, *Meine Aufnahmen*, admin *Aufnahmen*), player source seam for recordings, casting/hand-off of recordings. |
 | | later | Optional H.265 re-encode of recordings (off by default, quiet hours, budget). |
 
@@ -745,7 +745,7 @@ value wins; offsets are applied when programmes are read, never stored into them
 different offsets). *Last channel* = the profile's newest `livetv_recent` row, *previous* = the second newest. Duplicate
 effective numbers are allowed but flagged in the admin (number entry picks the channel with the lowest group position).
 
-### 6.2 Migration 51 (Phase 2) — manual EPG and reminders
+### 6.2 Phase 2 migration (next free index at merge time) — manual EPG and reminders
 
 ```sql
 create table livetv_epg_rules (
@@ -776,7 +776,7 @@ create table livetv_reminders (
 );
 ```
 
-### 6.3 Migration 52 (Phase 3) — recordings
+### 6.3 Phase 3 migration (next free index at merge time) — recordings
 
 ```sql
 create table livetv_recording_rules (
@@ -1121,7 +1121,7 @@ join, stop, tick), `logos.ts`, `recordings.ts` (Phase 3), `events.ts` (KV ring),
 guide would run dry), `livetvEpgPrune` daily 04:10 (programmes `end_at < now() − 1 day`, missing channels > 30 days,
 orphaned logos), `livetvReminderTick` 60 s (Phase 2), `convBenchTick` 10 min (one automatic first measurement).
 
-Ruling (1c final review M4/M5): migration 49 is the staging table below and migration 50 adds the group lookup indexes (`livetv_group_map(group_id)`, `livetv_channels(group_override)`); Phase 2 therefore appends 51 and Phase 3 appends 52.
+Ruling (1c final review M4/M5): migration 49 is the staging table below and migration 50 adds the group lookup indexes (`livetv_group_map(group_id)`, `livetv_channels(group_override)`); Phase 2 and Phase 3 append at the next free index at merge time (never a number fixed here; 51 went to Task 39 `playback_timings`).
 
 Ruling (Task 17 review): staging table, swap in one short transaction. The XMLTV import streams its programmes into the unlogged
 table `livetv_programmes_stage` (migration 49: the programme columns plus `run_id uuid not null`, `staged_at`; index on `(run_id)`)
@@ -1875,7 +1875,7 @@ Hosts `iptv.example.com`, `friend.example.com`, `192.0.2.10`. Fixture M3U/XMLTV 
 
 - **Order:** Phase 0 → 1a (budget; release note: "Gleichzeitige Umwandlungen sind jetzt begrenzt – Standard 2 bis zur ersten
   Messung, danach automatisch; Admin → Betrieb → Wiedergabe-Check") → 1b–1e (one release; Live TV invisible until enabled) → 2 → 3.
-- **Migrations:** 46 is the device hand-off plan (builds first); 47 (Phase 0), 48 (1c), 49 (1c, XMLTV staging), 50 (1c, group indexes), 51 (2a), 52 (3a); all additive; Live
+- **Migrations:** 46 is the device hand-off plan (builds first); 47 (Phase 0), 48 (1c), 49 (1c, XMLTV staging), 50 (1c, group indexes), the 2a and 3a migrations take the next free index at merge time; all additive; Live
   TV tables are empty until a source is added.
 - **Defaults:** budget automatic (2 before measuring), priority films; Live TV offered (hideable), not installed; DVR 30 min
   (up to 120); new provider groups hidden and granted to no role until released; numbering from `tvg-chno`; logos from the
