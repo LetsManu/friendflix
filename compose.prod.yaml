@@ -309,6 +309,10 @@ services:
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    # resource limits: a runaway ffmpeg (a demuxer or decompression blow-up, many transcodes) stays inside livetv instead of
+    # starving Postgres, Redis and the backend; raise them in .env for many parallel transcodes
+    pids_limit: ${LIVETV_PIDS_LIMIT:-512}
+    mem_limit: ${LIVETV_MEM_LIMIT:-4g}
     # reads bootstrap-livetv: its own signing key only, never INTERNAL_SECRET (the key to the backend's /internal/* routes)
     group_add: ["10001"]
     environment:
