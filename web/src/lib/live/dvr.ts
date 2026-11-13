@@ -16,12 +16,16 @@ export function atEdge(behindSec: number): boolean {
   return behindSec <= EDGE_SEC;
 }
 
+/** a seek or resume lands this far after the oldest point: the playlist slides, and a target on the edge of the buffer would fall off it */
+export const RESUME_MARGIN_S = 2;
+
 /**
- * After a pause of `pausedSec`: resume no earlier than `at` (the oldest point still in the buffer). `tooLong` = the pause outlasted
- * the buffer, so the paused point is gone and the player says so (toast `live.player.pauseTooLong`, n = dvrSeconds / 60).
+ * After a pause: resume no earlier than `at` (the oldest point still in the buffer). `tooLong` = the paused point is gone from the
+ * buffer (it slid past `currentTime` while paused), so the player says so (toast `live.player.pauseTooLong`, n = dvrSeconds / 60).
+ * Decided by where the viewer is, not by how long the pause was: one already far behind loses the point with a shorter pause.
  */
-export function resumePoint(pausedSec: number, dvrSeconds: number, oldest: number): { at: number; tooLong: boolean } {
-  return { at: oldest, tooLong: pausedSec > dvrSeconds };
+export function resumePoint(currentTime: number, oldest: number): { at: number; tooLong: boolean } {
+  return { at: oldest, tooLong: currentTime < oldest };
 }
 
 /** the oldest point of the buffer: its programme date-time (epoch ms) and its media time (s) */
@@ -54,8 +58,9 @@ export function oldestPoint(src: { hls?: { levels: LevelLike[]; currentLevel: nu
 /** a little before the start: broadcasts rarely begin on the minute (ruling 48) */
 export const RESTART_LEAD_MS = 30_000;
 
-/** Von Anfang an: the media time of max(oldest, start − 30 s); null when the start is older than the buffer or nothing is known */
+/** Von Anfang an: the media time of max(oldest + margin, start − 30 s); null when the start is older than the buffer or nothing is known */
 export function restartTarget(progStart: number, o: Oldest | null): number | null {
   if (!o || !Number.isFinite(progStart) || progStart < o.pdt) return null;
-  return o.time + (Math.max(o.pdt, progStart - RESTART_LEAD_MS) - o.pdt) / 1000;
+  // never exactly the oldest point: the playlist slides under it and hls.js would jump to the live edge (RESUME_MARGIN_S as the resume path)
+  return o.time + Math.max(RESUME_MARGIN_S, (progStart - RESTART_LEAD_MS - o.pdt) / 1000);
 }

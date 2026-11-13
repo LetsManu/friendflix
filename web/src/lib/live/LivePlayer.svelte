@@ -29,7 +29,7 @@
   import { beat, channels as fetchChannels, clock, nowLines, setLast, stopWatching, watch, type LiveChannel, type LiveList, type Prog, type RunningChannel, type WatchAnswer } from './api';
   import { BANNER_HOLD_MS, bannerVisible } from './banner';
   import { startsLocally } from './castGate';
-  import { atEdge, behind, oldestPoint, restartTarget, resumePoint } from './dvr';
+  import { atEdge, behind, oldestPoint, restartTarget, RESUME_MARGIN_S, resumePoint } from './dvr';
   import { minute } from './fade';
   import { pickHeld, type Held } from './held';
   import ChannelPanel from './ChannelPanel.svelte';
@@ -104,7 +104,6 @@
   const SWITCH_DELAY_MS = 400;
   const EDGE_LATENCY_COUNT = 10;
   const SWIPE_PX = 40;
-  const RESUME_MARGIN_S = 2;
   const LIST_REFRESH_MS = 60_000;
   const AIR_OFF_GRACE_MS = 3000;
   type Timer = ReturnType<typeof setTimeout>;
@@ -521,11 +520,11 @@
     pausedWall = null;
     const v = video;
     if (was === null || !v || dvrSeconds <= 0 || firstFrameAt === null) return;
-    const r = resumePoint((Date.now() - was) / 1000, dvrSeconds, oldest());
+    const r = resumePoint(v.currentTime, oldest());
     if (r.tooLong) {
       v.currentTime = r.at + RESUME_MARGIN_S;
       toast.info($t('live.player.pauseTooLong', { n: Math.round(dvrSeconds / 60) }));
-    } else if (v.currentTime < r.at) v.currentTime = r.at + RESUME_MARGIN_S;
+    }
   }
   function togglePlay(): void {
     const v = video;
@@ -556,7 +555,7 @@
     const v = video;
     if (!v || !playingId) return;
     const hi = edge();
-    const target = Math.max(oldest(), Math.min(hi, sec));
+    const target = Math.min(hi, Math.max(oldest() + RESUME_MARGIN_S, sec));
     if (!atEdge(hi - target)) markDeliberate();
     v.currentTime = target;
   }
