@@ -129,7 +129,7 @@ Supported pulled formats: HLS with MPEG-TS, fMP4 (CMAF) or ADTS `.aac` / `.mp3` 
 
 ## Troubleshooting
 
-*Admin → Live-TV → Live-Status* shows the running channels (mode, viewers, since, bitrate, input state, *Stoppen* and *Neu starten*; *Stoppen* ends the channel for its viewers, who see the error state, and a new watch is refused for 60 seconds), the budget, the cache use and the last 200 events; pushed feeds have their own table (state, bitrate, refusals in the last hour).
+*Admin → Live-TV → Live-Status* shows the running channels (mode, viewers, since, bitrate, input state, *Stoppen* and *Neu starten*; *Stoppen* ends the channel for its viewers, whose players show "Vom Admin gestoppt" instead of reconnecting, and a new watch is refused for 5 minutes unless an admin starts it again with *Neu starten*), the budget, the cache use and the last 200 events; pushed feeds have their own table (state, bitrate, refusals in the last hour). *Stoppen* on a live row in *Betrieb → Wiedergabe-Check* ends that one viewer's stream; that device cannot watch the channel again for 5 minutes.
 
 | What you see | Cause and fix |
 |---|---|
@@ -141,7 +141,7 @@ Supported pulled formats: HLS with MPEG-TS, fMP4 (CMAF) or ADTS `.aac` / `.mp3` 
 | A channel has no programme, or the times are off | Check the source's XMLTV URL (matching is exact, see [Sources](#sources)); for hours of difference use *Programm-Zeit verschieben*. |
 | "Sender gerade nicht erreichbar" | The input stalled or the first start took longer than 15 s. The player retries with growing pauses. With a provider that allows one connection set *Max. gleichzeitige Sender*. *Live-Status* lists *Eingang verloren* and *Eingang wieder da*. |
 | "Gerade sind alle Live-Plätze belegt" or "Dein Anbieter erlaubt nur n Sender gleichzeitig" | The conversion budget or the source's limit is reached; the sheet lists channels that start at once ([operations.md](operations.md#umwandlungen-ein-gemeinsames-limit)). |
-| The Live-TV tab is gone | `livetv` is down or off; the tab returns on the next navigation once the container answers. After a `livetv` restart a running player asks for a new token once by itself. |
+| The Live-TV tab is gone | `livetv` is down or off; the tab returns on the next navigation once the container answers. Detection checks every minute and counts Live TV as off only after two missed checks in a row, so a quick `livetv` restart does not hide it. After a `livetv` restart a running player asks for a new token by itself and keeps reconnecting ("Verbinde neu …") for up to two minutes. |
 | A pushed feed never connects | UDP range not open on firewall and router, the host in the hint resolves to a CDN, wrong stream ID or passphrase (event *Verbindung abgelehnt*), or the encoder is not in caller mode with AES-256. Opening TCP ports does not help. |
 | Playback stutters or the CPU is busy | The channel is converted (HEVC or MPEG-2 source). Add a GPU overlay (see [GPU](#gpu)). |
 

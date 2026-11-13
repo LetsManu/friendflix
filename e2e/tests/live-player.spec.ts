@@ -170,7 +170,13 @@ test.describe('live player (desktop)', () => {
     await open(page);
     await showControls(page);
     await bar(page).getByRole('button', { name: 'Pause' }).click();
+    // the toast goes by position (dvr.ts resumePoint): the 60-min buffer must slide past the paused point. The mock playlist follows
+    // the real clock, so it moves on by the same 61 minutes here; its date-times move with it and stay on the page clock
+    const loads = api.livetv.playlistLoads;
+    api.livetv.liveStart! -= 61 * MIN;
+    api.livetv.timeShift += 61 * MIN;
     await page.clock.fastForward('01:01:00'); // 61 minutes ("61:00" is no valid mm:ss)
+    await expect.poll(() => api.livetv.playlistLoads).toBeGreaterThan(loads); // hls.js has the slid playlist
     await showControls(page);
     await bar(page).getByRole('button', { name: 'Abspielen' }).click();
     await expect(page.getByText('Die Pause war länger als 60 Minuten – es geht am ältesten gespeicherten Punkt weiter.')).toBeVisible();

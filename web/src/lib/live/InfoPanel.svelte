@@ -6,7 +6,7 @@
   import { t } from '#lib/i18n';
   import Icon from '#lib/Icon.svelte';
   import { clock, nowLines, type LiveChannel } from './api';
-  import { progressAt, timeLeft, timeLeftText } from './progress';
+  import { channelHead, progressAt, timeLeft, timeLeftText } from './progress';
 
   /**
    * The info panel (spec §12.1): a glass sheet on phones, a side panel on desktop and TV. *Jetzt* (title, time, progress, time left,
@@ -44,7 +44,7 @@
     <button type="button" class="x" aria-label={$t('common.close')} on:click={() => dispatch('close')}><Icon name="x" size={22} /></button>
   </header>
   {#if channel}
-    <p class="who">{channel.number} {channel.name}</p>
+    <p class="who">{channelHead(channel)}</p>
     <div class="blk">
       <h3>{$t('live.now')}</h3>
       {#if prog}
@@ -68,7 +68,7 @@
     {/if}
   {/if}
   {#if last}
-    <button type="button" class="frost-btn act" on:click={() => dispatch('last')}>{$t('live.player.lastChannelTo', { number: last.number, name: last.name })}</button>
+    <button type="button" class="frost-btn act" on:click={() => dispatch('last')}>{$t('live.player.lastChannelTo', { channel: channelHead(last) })}</button>
   {/if}
   {#if listButton}
     <button type="button" class="frost-btn act" on:click={() => dispatch('list')}>{$t('live.player.channelList')}</button>

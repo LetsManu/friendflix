@@ -19,10 +19,22 @@ export interface LivetvState { reachable: boolean; installed: boolean; version: 
  * card, not here), or why it was refused (busy, running, no_user, unsupported) or failed to launch
  */
 export type EnableBenchmark = 'started' | 'busy' | 'running' | 'no_user' | 'unsupported' | 'error';
-/** `appearance` counts the checks that found livetv absent: a benchmark answer belongs to the appearance it was launched in */
-interface Slot { state: LivetvState | null; flight: Promise<LivetvState> | null; bench: EnableBenchmark | null; appearance: number }
+/**
+ * `appearance` counts the checks that found livetv absent: a benchmark answer belongs to the appearance it was launched in.
+ * `misses` counts the checks in a row that did not reach an installed livetv at all (bughunt M1).
+ */
+interface Slot { state: LivetvState | null; flight: Promise<LivetvState> | null; bench: EnableBenchmark | null; appearance: number; misses: number }
 const slots = new WeakMap<object, Slot>();
-const slotOf = (ctx: Ctx): Slot => { let s = slots.get(ctx); if (!s) slots.set(ctx, s = { state: null, flight: null, bench: null, appearance: 0 }); return s; };
+const slotOf = (ctx: Ctx): Slot => { let s = slots.get(ctx); if (!s) slots.set(ctx, s = { state: null, flight: null, bench: null, appearance: 0, misses: 0 }); return s; };
+
+/**
+ * How many checks in a row must miss an installed livetv before it counts as gone (bughunt M1). One missed `/healthz` (a 3-s
+ * timeout, an OOM restart, a recreate during `docker compose up -d`, a busy event loop) keeps the last proven answer, marked
+ * `reachable: false`: the feature, the nav tab and the watch route stay, and a player that re-watches meanwhile meets the lost
+ * cycle (502) instead of `livetv_off`. The second miss in a row, a minute later at the latest (the detection tick), turns it off.
+ * Only an unreachable livetv is tolerated: an answer without a valid proof or with another API number is never installed.
+ */
+export const DETECT_MISSES_OFF = 2;
 
 /** how the benchmark after the last enable went (null: none yet); shown in the admin state */
 export const enableBenchmark = (ctx: Ctx): EnableBenchmark | null => slots.get(ctx)?.bench ?? null;
@@ -32,12 +44,20 @@ export function livetvInstalled(ctx: Ctx): boolean {
   return slots.get(ctx)?.state?.installed === true;
 }
 
-async function check(ctx: Ctx, slot: Slot): Promise<LivetvState> {
+async function check(ctx: Ctx, slot: Slot, strict: boolean, tick: boolean): Promise<LivetvState> {
   const h = await livetvHealth(ctx);
   // version and boot id only from an answer that proved the key: nothing an impostor says is kept
   const ok = h !== null && h.proof === 'ok';
+  const prev = slot.state;
+  // only the 60-s tick counts a further miss: page loads and boot checks a few seconds apart must not use up the grace
+  slot.misses = h === null ? (tick ? slot.misses + 1 : Math.max(slot.misses, 1)) : 0;
+  // M1: a single unreachable check keeps an installed livetv (its version and boot id too: no ingest resync for a blip)
+  if (h === null && !strict && prev?.installed && slot.misses < DETECT_MISSES_OFF) {
+    slot.state = { ...prev, reachable: false, checkedAt: Date.now() };
+    return slot.state;
+  }
   const next: LivetvState = { reachable: h !== null, installed: ok && h.api === 1, version: ok ? h.version : null, bootId: ok ? h.bootId : null, checkedAt: Date.now() };
-  const was = slot.state?.installed; // undefined until the first look: a backend that starts next to a running livetv is not "just enabled"
+  const was = prev?.installed; // undefined until the first look: a backend that starts next to a running livetv is not "just enabled"
   slot.state = next;
   if (!next.installed) { slot.bench = null; slot.appearance++; } // the outcome belongs to this appearance
   // the first look after enabling (spec §5.3): measure the encoder livetv would use; one attempt per appearance
@@ -52,19 +72,23 @@ async function check(ctx: Ctx, slot: Slot): Promise<LivetvState> {
   return next;
 }
 
-/** the state, from the last check when it is younger than `maxAgeMs`; checks run one at a time (callers share the running one) */
-export async function detectLivetv(ctx: Ctx, maxAgeMs = 10_000): Promise<LivetvState> {
+/**
+ * the state, from the last check when it is younger than `maxAgeMs`; checks run one at a time (callers share the running one).
+ * `strict`: an unreachable livetv counts as gone at the first miss (an updater job just changed the container on purpose).
+ */
+export async function detectLivetv(ctx: Ctx, maxAgeMs = 10_000, o: { strict?: boolean; tick?: boolean } = {}): Promise<LivetvState> {
   const slot = slotOf(ctx);
   const age = slot.state ? Date.now() - slot.state.checkedAt : -1;
-  // a clock that stepped back (negative age) never keeps an old answer
-  if (slot.state && age >= 0 && age < maxAgeMs) return slot.state;
-  slot.flight ??= check(ctx, slot).finally(() => { slot.flight = null; });
+  // a clock that stepped back (negative age) never keeps an old answer; a strict caller never takes a kept (missed) one
+  const kept = slot.state !== null && slot.state.installed && !slot.state.reachable;
+  if (slot.state && age >= 0 && age < maxAgeMs && !(o.strict && kept)) return slot.state;
+  slot.flight ??= check(ctx, slot, o.strict === true, o.tick === true).finally(() => { slot.flight = null; });
   return slot.flight;
 }
 
 /** every 60 s (server.ts): a fresh check, which also notices the first appearance after enabling */
 export async function livetvDetectTick(ctx: Ctx): Promise<void> {
-  await detectLivetv(ctx, 0);
+  await detectLivetv(ctx, 0, { tick: true });
 }
 
 const SYSTEM_MEMO_MS = 10_000;

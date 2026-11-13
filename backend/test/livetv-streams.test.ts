@@ -7,6 +7,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildApp } from '../src/app.js';
 import { hashToken } from '../src/cast.js';
 import { __resetConvMemo, admitConversion, countConversions } from '../src/convbudget.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
@@ -16,6 +17,7 @@ import { detectLivetv } from '../src/livetv/detect.js';
 import { resolveEncoder } from '../src/livetv/encoder.js';
 import { listEvents } from '../src/livetv/events.js';
 import { invalidateLivetvRights } from '../src/livetv/rights.js';
+import { WATCH_IP_MAX } from '../src/livetv/routes.js';
 import {
   expectedMode, invalidateLiveConversions, liveConversions, livetvTick, startOrJoin, streamKeyFor, viewerCounts,
 } from '../src/livetv/streams.js';
@@ -55,7 +57,7 @@ let keyN = 0;
 const hexKey = () => (++keyN).toString(16).padStart(32, '0');
 
 const view = (channelId: string, o: Partial<StreamView> = {}): StreamView => ({
-  channelId, streamKey: hexKey(), mode: 'remux', since: Date.now(), state: 'running', bitrate: 4_000_000, errors: [], lastSegmentAt: Date.now(), ...o,
+  channelId, streamKey: hexKey(), mode: 'remux', since: Date.now(), state: 'running', bitrate: 4_000_000, errors: [], lastSegmentAt: Date.now(), segments: 'ts', ...o,
 });
 const system = () => ({
   cpu: { model: 'Testprozessor', cores: 4, loadPct: 10 }, gpu: { devices: ['/dev/dri/renderD128'], driver: 'iHD', readable: true, busyPct: null },
@@ -232,6 +234,22 @@ describe('start and join', () => {
     expect(r.json().mode).toBe('transcode');
     expect(streamCalls('POST')).toHaveLength(0);
     expect(await env.kv.get(`conv:grant:live:${ch}`)).toBeNull();
+  });
+
+  it('the watch answer passes on the segment format livetv reports; TS when it does not say (bughunt M2)', async () => {
+    const cmaf = await addChannel('Nordlicht TV');
+    const ts = await addChannel('Hafenkanal');
+    const old = await addChannel('Sternwarte 24');
+    streams.set(cmaf, view(cmaf, { mode: 'passthrough', segments: 'fmp4' }));
+    streams.set(ts, view(ts, { segments: 'ts' }));
+    const { segments: _gone, ...noField } = view(old); // a livetv from before the field
+    streams.set(old, noField as StreamView);
+    expect((await watch(anna, cmaf)).json()).toMatchObject({ mode: 'passthrough', segments: 'fmp4' });
+    expect((await watch(anna, ts)).json()).toMatchObject({ segments: 'ts' });
+    expect((await watch(anna, old)).json()).toMatchObject({ segments: 'ts' });
+    // a garbled value is not passed on
+    streams.set(cmaf, { ...view(cmaf), segments: 'mp4' as never });
+    expect((await watch(anna, cmaf)).json()).toMatchObject({ segments: 'ts' });
   });
 
   it('full budget → live_full with only channels this profile may see', async () => {
@@ -417,7 +435,7 @@ describe('start and join', () => {
     expect((await watch(anna, admins, { via: 'teleport' })).statusCode).toBe(400);
     expect((await watch(admin, admins)).statusCode).toBe(200);
     bootId = 'nope';
-    await detectLivetv(env.ctx, 0); // livetv gone
+    await detectLivetv(env.ctx, 0, { strict: true }); // livetv gone (strict: no grace for one missed check, bughunt M1)
     expect((await watch(admin, admins)).json()).toEqual({ error: 'livetv_off' });
   });
 });
@@ -439,6 +457,43 @@ describe('beat and stop watching', () => {
     expect(gone.json()).toEqual({ error: 'gone' });
     expect(await env.kv.get(liveViewKey(hashToken(w.token)))).toBeNull();
     expect((await call(anna, 'POST', '/api/livetv/beat', { token: 'x' })).statusCode).toBe(400);
+  });
+});
+
+describe('the watch rate limit (bughunt L5)', () => {
+  it('counts per account and device, not per address; the address has a higher cap of its own', async () => {
+    const app = await buildApp(env.ctx); // its own limiter counters
+    try {
+      const nat = '198.51.100.7'; // a household behind one NAT
+      const w = (s: Sess) => app.inject({ method: 'POST', url: '/api/livetv/channels/00000000-0000-4000-8000-000000000000/watch', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, remoteAddress: nat, payload: {} });
+      for (let i = 0; i < 30; i++) expect((await w(anna)).statusCode).toBe(403);
+      expect((await w(anna)).statusCode).toBe(429);
+      // another account in the same household is not limited by Anna's zapping
+      expect((await w(ben)).statusCode).toBe(403);
+      // the address cap: far above one viewer, still there
+      await env.kv.set(`ltv:watchip:${nat}`, String(WATCH_IP_MAX), 60);
+      const capped = await w(ben);
+      expect([capped.statusCode, capped.json()]).toEqual([429, { error: 'rate_limited' }]);
+    } finally {
+      await app.close();
+      for (const k of await env.kv.keys('ltv:watchip:')) await env.kv.del(k);
+    }
+  });
+});
+
+describe('two windows of the same browser (bughunt L4)', () => {
+  it('a newer watch of the same device replaces the older token, and its beat says so (only to its own account)', async () => {
+    const ch = await addChannel('Nordlicht TV');
+    const first = (await watch(anna, ch)).json();
+    const second = (await watch(anna, ch)).json(); // the second tab: same session, same device
+    expect((await call(anna, 'POST', '/api/livetv/beat', { token: second.token })).statusCode).toBe(200);
+    const old = await call(anna, 'POST', '/api/livetv/beat', { token: first.token });
+    expect([old.statusCode, old.json()]).toEqual([410, { error: 'gone', reason: 'replaced' }]);
+    // another account learns nothing about it
+    expect((await call(ben, 'POST', '/api/livetv/beat', { token: first.token })).json()).toEqual({ error: 'gone' });
+    // a token the viewer ended itself is just gone
+    expect((await call(anna, 'DELETE', '/api/livetv/watch', { token: second.token })).statusCode).toBe(204);
+    expect((await call(anna, 'POST', '/api/livetv/beat', { token: second.token })).json()).toEqual({ error: 'gone' });
   });
 });
 
@@ -576,7 +631,7 @@ describe('the live budget source', () => {
     expect(both![0]).toMatchObject({ kind: 'live', key: `live:${id}`, label: 'Hafenkanal' });
     expect(both![0]!.pending).toBeUndefined();
     streams.get(id)!.lastSegmentAt = Date.now();
-    expect(await p).toEqual({ streamKey: streams.get(id)!.streamKey, mode: 'transcode' });
+    expect(await p).toEqual({ streamKey: streams.get(id)!.streamKey, mode: 'transcode', segments: 'ts' });
     expect(await env.kv.get(`conv:grant:live:${id}`)).not.toBeNull();
     // a film right after the start is admitted: no double count
     expect(await admitConversion(env.ctx, { kind: 'film', userId: benId, hint: 'film-dunmoor' })).toEqual({ ok: true });

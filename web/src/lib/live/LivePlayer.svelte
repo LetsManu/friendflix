@@ -29,7 +29,7 @@
   import { beat, channels as fetchChannels, clock, nowLines, setLast, stopWatching, watch, type LiveChannel, type LiveList, type Prog, type RunningChannel, type WatchAnswer } from './api';
   import { BANNER_HOLD_MS, bannerVisible } from './banner';
   import { startsLocally } from './castGate';
-  import { atEdge, behind, oldestPoint, restartTarget, resumePoint } from './dvr';
+  import { atEdge, behind, oldestPoint, restartTarget, RESUME_MARGIN_S, resumePoint } from './dvr';
   import { minute } from './fade';
   import { pickHeld, type Held } from './held';
   import ChannelPanel from './ChannelPanel.svelte';
@@ -40,12 +40,12 @@
   import { resolveLiveKey, type LiveKeyAction } from './livekeys';
   import { liveRemote, type LiveRemote } from './remotekeys';
   import { createLongOk } from './longok';
-  import { fromWatchError, lostDelay, nextLost, STALL_LOST_MS, type LiveUi, type LostUi } from './liveState';
+  import { fromBeatGone, fromWatchError, lostDelay, nextLost, STALL_LOST_MS, type LiveUi, type LostUi } from './liveState';
   import NumberCard from './NumberCard.svelte';
   import { commitNumber, NUMBER_TIMEOUT_MS, typeDigit, type NumberState } from './numberEntry';
   import { channelOrder, neighbour, type LiveFilter } from './order';
   import { backStep, openPanel as panelAt, panelFilters, panelKey, type PanelKey, type PanelState } from './panel';
-  import { progressAt, timeLeft, timeLeftText, watchPath } from './progress';
+  import { channelHead, progressAt, timeLeft, timeLeftText, watchPath } from './progress';
   import { createSwitcher } from './switcher';
 
   /**
@@ -104,7 +104,6 @@
   const SWITCH_DELAY_MS = 400;
   const EDGE_LATENCY_COUNT = 10;
   const SWIPE_PX = 40;
-  const RESUME_MARGIN_S = 2;
   const LIST_REFRESH_MS = 60_000;
   const AIR_OFF_GRACE_MS = 3000;
   type Timer = ReturnType<typeof setTimeout>;
@@ -112,7 +111,7 @@
   type OldestSrc = Parameters<typeof oldestPoint>[0];
   /** a beat's outcome: answered, the token is gone (a new watch was asked for), it failed otherwise, or it outlived its channel */
   type BeatResult = 'ok' | 'gone' | 'failed' | 'stale';
-  const ERROR_KINDS: Array<LiveUi['k']> = ['lost', 'unreachable', 'retry', 'forbidden', 'maxStreams', 'off', 'full', 'providerLimit'];
+  const ERROR_KINDS: Array<LiveUi['k']> = ['lost', 'unreachable', 'retry', 'forbidden', 'maxStreams', 'off', 'stopped', 'elsewhere', 'full', 'providerLimit'];
 
   let root: HTMLDivElement | undefined, stage: HTMLDivElement | undefined, video: HTMLVideoElement | undefined;
   let playBtn: HTMLButtonElement | undefined, backBtn: HTMLButtonElement | undefined, fwdBtn: HTMLButtonElement | undefined, infoBtn: HTMLButtonElement | undefined;
@@ -165,10 +164,10 @@
   $: tvLive = $castSession && $castSession.live && $castSession.kind === 'chromecast' && $castSession.state !== 'detached' ? $castSession : null;
   $: followCast(tvLive);
   $: castShown = !tv && (inShell || ($perms.cast && ((castCapableBrowser() && ($castState.available || $castState.connected)) || airAvail)));
-  $: castWhat = cur ? `${cur.number} ${cur.name}${prog ? ` · ${prog.title}` : ''}` : '';
+  $: castWhat = cur ? `${channelHead(cur)}${prog ? ` · ${prog.title}` : ''}` : '';
 
   // ---- what is shown ----
-  function shell(id: string, number: number, name: string, logo: string | null, now?: Prog, next?: Prog): LiveChannel {
+  function shell(id: string, number: number | null, name: string, logo: string | null, now?: Prog, next?: Prog): LiveChannel {
     return { id, number, name, logo, groupId: null, running: true, epg: now ? 'ok' : 'none', favourite: false, now, next };
   }
   /** a channel from the list, with the programme of the watch answer when it is the one that plays */
@@ -209,6 +208,8 @@
   function cardText(u: LiveUi): string {
     switch (u.k) {
       case 'off': return $t('live.player.off');
+      case 'stopped': return $t('live.player.stoppedByAdmin');
+      case 'elsewhere': return $t('live.player.elsewhere');
       case 'forbidden': return $t('live.player.notAvailable');
       case 'maxStreams': return $t('player.error.maxStreams', { n: u.max });
       default: return '';
@@ -216,9 +217,10 @@
   }
   function announceText(c: LiveChannel): string {
     const p = c.epg === 'ok' && c.receiving !== false ? c.now : undefined;
-    if (!p) return `${c.number} ${c.name}`;
+    const head = channelHead(c);
+    if (!p) return head;
     const l = timeLeftText(timeLeft(p, new Date()));
-    return l ? $t('live.player.announceLeft', { number: c.number, name: c.name, title: p.title, left: l }) : $t('live.player.announce', { number: c.number, name: c.name, title: p.title });
+    return l ? $t('live.player.announceLeft', { channel: head, title: p.title, left: l }) : $t('live.player.announce', { channel: head, title: p.title });
   }
 
   // ---- zapping ----
@@ -285,7 +287,8 @@
     }
     startPending = false;
     if (!r.ok) {
-      const u = fromWatchError(r.error.status, r.error);
+      // the channel that was already playing (the one re-watch, a lost-cycle start): livetv_off there is a restart, not off (bughunt M1)
+      const u = fromWatchError(r.error.status, r.error, { again: cycle || from === id });
       if ((u.k === 'full' || u.k === 'providerLimit') && from && token) {
         // a switch into a full budget: the channel before keeps playing (its stream, its attach id and its handlers stay as
         // they are), the sheet offers what already runs (spec §12.2)
@@ -489,6 +492,8 @@
     } catch (e) {
       if (stale()) return 'stale';
       const st = e instanceof ApiError ? e.status : 0;
+      // another window of this browser took the stream over: say so, never take it back by itself (bughunt L4)
+      if (st === 410 && e instanceof ApiError && fromBeatGone(e.body) === 'elsewhere') { dropStream(); onFail({ k: 'elsewhere' }); return 'gone'; }
       if (st === 410 || st === 403) { rewatchOnce(); return 'gone'; }
       return 'failed';
     }
@@ -521,11 +526,11 @@
     pausedWall = null;
     const v = video;
     if (was === null || !v || dvrSeconds <= 0 || firstFrameAt === null) return;
-    const r = resumePoint((Date.now() - was) / 1000, dvrSeconds, oldest());
+    const r = resumePoint(v.currentTime, oldest());
     if (r.tooLong) {
       v.currentTime = r.at + RESUME_MARGIN_S;
       toast.info($t('live.player.pauseTooLong', { n: Math.round(dvrSeconds / 60) }));
-    } else if (v.currentTime < r.at) v.currentTime = r.at + RESUME_MARGIN_S;
+    }
   }
   function togglePlay(): void {
     const v = video;
@@ -556,7 +561,7 @@
     const v = video;
     if (!v || !playingId) return;
     const hi = edge();
-    const target = Math.max(oldest(), Math.min(hi, sec));
+    const target = Math.min(hi, Math.max(oldest() + RESUME_MARGIN_S, sec));
     if (!atEdge(hi - target)) markDeliberate();
     v.currentTime = target;
   }
@@ -1013,7 +1018,7 @@
 
   // ---- Media Session, URL, page life ----
   function msItem(c: LiveChannel | null) {
-    return { title: c?.now?.title ?? c?.name ?? '', artist: c ? `${c.number} ${c.name}` : '', artworkIds: [] as string[] };
+    return { title: c?.now?.title ?? c?.name ?? '', artist: c ? channelHead(c) : '', artworkIds: [] as string[] };
   }
   const msActions = {
     play: () => { resumeCheck(); void playV(); }, pause: () => pauseV(), seekTo: (s: number) => seekTo(s), seekBy: (d: number) => seekBy(d),
@@ -1130,7 +1135,7 @@
     {#if cur}
       <span class="tlogo" aria-hidden="true">{#if cur.logo}<img src={cur.logo} alt="" width="40" height="40" decoding="async" />{/if}</span>
       <button type="button" class="tinfo" on:click={openPanel}>
-        <span class="tname">{cur.number} {cur.name}</span>
+        <span class="tname">{channelHead(cur)}</span>
         <span class="ttitle">{prog ? prog.title : nowLines(cur).now}</span>
         <span class="ttime">{prog ? `${clock(prog.start)}–${clock(prog.end)}` : ''}</span>
       </button>
@@ -1152,6 +1157,9 @@
   {:else if cardMsg}
     <div class="lcard" class:frost={!still} class:frost-safe={!still} class:solid={still} role="alert">
       <p class="ct">{cardMsg}</p>
+      <!-- an admin's stop: never retried by itself (bughunt L3), only by hand -->
+      {#if ui.k === 'stopped'}<div class="cbtn"><button type="button" class="frost-btn" on:click={retryNow}>{$t('live.player.retry')}</button></div>{/if}
+      {#if ui.k === 'elsewhere'}<div class="cbtn"><button type="button" class="frost-btn" on:click={retryNow}>{$t('live.player.watchHere')}</button></div>{/if}
     </div>
   {/if}
 
@@ -1175,8 +1183,8 @@
       <button type="button" class="ib" bind:this={castBtn} class:on={airMode} aria-haspopup={inShell ? undefined : 'dialog'} aria-expanded={inShell ? undefined : playOnOpen} aria-busy={castBusy}
         aria-label={$t('player.castPicker.open')} title={$t('player.castPicker.open')} on:click={onCastBtn}><Icon name={airMode ? 'airplay' : 'cast'} size={24} /></button>
     {/if}
-    <button type="button" class="ib" aria-label={$t('live.player.chUp')} title={up ? `${up.number} ${up.name}` : undefined} disabled={!up} on:click={() => switcher.press(1)}><Icon name="chevron-up" size={24} /></button>
-    <button type="button" class="ib" aria-label={$t('live.player.chDown')} title={down ? `${down.number} ${down.name}` : undefined} disabled={!down} on:click={() => switcher.press(-1)}><Icon name="chevron-down" size={24} /></button>
+    <button type="button" class="ib" aria-label={$t('live.player.chUp')} title={up ? channelHead(up) : undefined} disabled={!up} on:click={() => switcher.press(1)}><Icon name="chevron-up" size={24} /></button>
+    <button type="button" class="ib" aria-label={$t('live.player.chDown')} title={down ? channelHead(down) : undefined} disabled={!down} on:click={() => switcher.press(-1)}><Icon name="chevron-down" size={24} /></button>
     {#if !phoneUi}
       <button type="button" class="ib" bind:this={listBtn} aria-label={$t('live.player.channelList')} title={$t('live.player.channelList')} aria-haspopup="dialog" aria-expanded={listOpen} on:click={openList}><Icon name="list" size={24} /></button>
     {/if}

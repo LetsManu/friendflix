@@ -118,16 +118,21 @@ export async function mintLiveToken(ctx: Ctx, rec: Omit<LiveTokenRec, 'exp' | 'c
   await ctx.kv.set(liveViewKey(hash), rec.channelId, VIEW_TTL_S);
   const me = { hash, rec: full };
   for (const t of await listTokens(ctx, rec.userId)) {
-    if (t.hash !== hash && t.rec.deviceId === rec.deviceId && Boolean(t.rec.test) === Boolean(full.test) && viaClass(t.rec.via) === viaClass(full.via) && older(t, me) < 0) await revokeLiveToken(ctx, t.hash);
+    // marked `replaced`: a second window of the same browser took over, and the one before must not take it back (bughunt L4)
+    if (t.hash !== hash && t.rec.deviceId === rec.deviceId && Boolean(t.rec.test) === Boolean(full.test) && viaClass(t.rec.via) === viaClass(full.via) && older(t, me) < 0) await revokeLiveToken(ctx, t.hash, { replacedFor: rec.userId });
   }
   const all = (await listTokens(ctx, rec.userId)).sort(older);
   while (all.length > MAX_LIVE_TOKENS) await revokeLiveToken(ctx, all.shift()!.hash);
   return { token, hash, expiresAt: exp };
 }
 
-/** Revokes one token: the marker first (a concurrent authz answers 410), then its keys and its live record. */
-export async function revokeLiveToken(ctx: Ctx, hash: string): Promise<void> {
-  await ctx.kv.set(goneKey(hash), '1', LIVE_GONE_TTL_S);
+/**
+ * Revokes one token: the marker first (a concurrent authz answers 410), then its keys and its live record. `why`: a newer watch of
+ * the same device and slot replaced it (a zap, or another window of the same browser); the beat says so (bughunt L4).
+ */
+export async function revokeLiveToken(ctx: Ctx, hash: string, why?: { replacedFor: string }): Promise<void> {
+  // the marker of a replaced token names its account: only a beat of that account learns why
+  await ctx.kv.set(goneKey(hash), why ? `replaced:${why.replacedFor}` : '1', LIVE_GONE_TTL_S);
   const rec = await load(ctx, hash);
   for (const k of [dataKey(hash), pinKey(hash), pin2Key(hash), liveViewKey(hash)]) await ctx.kv.del(k);
   rightsMemo.delete(hash);
@@ -167,6 +172,17 @@ export async function unfetchedLiveSessions(ctx: Ctx, userId: string): Promise<s
 }
 
 /**
+ * The account's running streams for the `maxStreams` limit of VOD and cast playback: the `play:` records plus live tokens minted but
+ * not fetched yet (L1 rest, as the live watch route counts them), each session once.
+ */
+export async function countStreams(ctx: Ctx, userId: string): Promise<number> {
+  const prefix = `play:${userId}:`;
+  const running = new Set((await ctx.kv.keys(prefix)).map((k) => k.slice(prefix.length)));
+  for (const ps of await unfetchedLiveSessions(ctx, userId)) running.add(ps);
+  return running.size;
+}
+
+/**
  * The device's current live view (ruling 36): its newest normal `local` token (local or AirPlay), which the device's next local watch
  * replaces (mintLiveToken). A watch for another channel from this device is a channel switch (Task 32). Admin test previews are not
  * views a watch replaces (R8), and neither is a cast (R14): a Chromecast token is a viewer of its channel, never the device's own view.
@@ -177,10 +193,30 @@ export async function deviceLiveView(ctx: Ctx, userId: string, deviceId: string)
   return t ? { hash: t.hash, channelId: t.rec.channelId } : null;
 }
 
-/** how long an admin's *Stoppen* keeps the channel from starting again (the viewers' players meet the error state meanwhile, spec §7.4) */
-export const ADMIN_STOP_TTL_S = 60;
+/**
+ * how long an admin's *Stoppen* keeps the channel from starting again (spec §7.4): longer than a player's reconnect cycle (2 min), so
+ * the viewers' own retries cannot undo it (bughunt L3); their players show "vom Admin gestoppt" (409 `stopped_by_admin`) meanwhile
+ */
+export const ADMIN_STOP_TTL_S = 300;
 /** the marker of an admin stop (`ltv:adminstop:<channelId>`): startOrJoin refuses the channel while it lives; *Neu starten* clears it */
 export const adminStopKey = (channelId: string) => `ltv:adminstop:${channelId}`;
+/**
+ * the marker of an admin stop of one viewer's live stream in *Wiedergabe-Check* (`ltv:adminstopv:<userId>:<deviceId>`, value = the
+ * channel id, ADMIN_STOP_TTL_S): that device's watch of that channel is refused meanwhile (bughunt L2)
+ */
+export const adminStopViewKey = (userId: string, deviceId: string) => `ltv:adminstopv:${userId}:${deviceId}`;
+
+/**
+ * Wiedergabe-Check *Stoppen* on a live row (bughunt L2): revokes the account's token behind the play session (`ltv-<hash>`) and keeps
+ * that device from watching the channel again for ADMIN_STOP_TTL_S. Returns the stopped token's channel, or null (no such token).
+ */
+export async function stopLiveSession(ctx: Ctx, userId: string, playSessionId: string): Promise<{ channelId: string } | null> {
+  const t = (await listTokens(ctx, userId)).find((x) => livePlaySessionId(x.hash) === playSessionId);
+  if (!t) return null;
+  await ctx.kv.set(adminStopViewKey(userId, t.rec.deviceId), t.rec.channelId, ADMIN_STOP_TTL_S);
+  await revokeLiveToken(ctx, t.hash);
+  return { channelId: t.rec.channelId };
+}
 
 /** Revokes every live token on one channel (all accounts, admin test previews included): an admin stopped it. Returns the count. */
 export async function revokeChannelTokens(ctx: Ctx, channelId: string): Promise<number> {
@@ -213,13 +249,19 @@ export async function revokeLiveTokens(ctx: Ctx, userId: string, deviceId?: stri
 /**
  * The player's heartbeat (every 20 s while open, playing or paused): slides the token's TTL and keeps its viewer key and live record.
  * A `local` token re-pins to `ip` when the beat comes from the session that minted it (Review Focus 4); a beat of any other session
- * only slides. Unknown, expired, revoked, another account's or a token whose rights are refused (same 2 s memo as authz) -> 410.
+ * only slides. Unknown, expired, revoked, another account's or a token whose rights are refused (same 2 s memo as authz) -> 410;
+ * `reason: 'replaced'` when a newer watch of the same device and slot replaced it (bughunt L4).
  */
-export async function beatLiveToken(ctx: Ctx, token: string, who: { userId: string; sidHash: string; ip: string }): Promise<{ ok: true; expiresAt: number } | { ok: false; status: 410 }> {
+export async function beatLiveToken(ctx: Ctx, token: string, who: { userId: string; sidHash: string; ip: string }): Promise<{ ok: true; expiresAt: number } | { ok: false; status: 410; reason?: 'replaced' }> {
   const gone = { ok: false, status: 410 } as const;
   if (!CAST_TOKEN_RE.test(token)) return gone;
   const hash = hashToken(token);
-  if (await ctx.kv.get(goneKey(hash))) return gone;
+  const marker = await ctx.kv.get(goneKey(hash));
+  if (marker) {
+    // replaced by a newer watch of the same device (another window of this browser): the player shows that instead of watching again,
+    // which would replace the other window in turn (bughunt L4). Only the token's own account learns it.
+    return marker === `replaced:${who.userId}` ? { ...gone, reason: 'replaced' } : gone;
+  }
   const rec = await load(ctx, hash);
   const now = Date.now();
   if (!rec || rec.exp <= now || rec.userId !== who.userId) return gone;

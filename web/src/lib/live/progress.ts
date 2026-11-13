@@ -47,12 +47,18 @@ export function timeLeftText(left: TimeLeft | null): string {
 /** where a channel plays (the live player page) */
 export const watchPath = (id: string): string => `/live/watch/${encodeURIComponent(id)}`;
 
+/**
+ * A channel's number and name as one head ("4 Hafenkanal"), the name alone for an own feed without a number (bughunt M3). The number
+ * is written as it is, never grouped by the locale ("1001", not "1.001").
+ */
+export const channelHead = (c: { number: number | null; name: string }): string => (c.number !== null ? `${c.number} ${c.name}` : c.name);
+
 /** The one accessible name of a row or tile (spec §21): "{number} {name}, jetzt: {title}, bis {time}"; without a running programme just number and name. */
 export function rowName(c: LiveChannel, now: Date): string {
-  const head = `${c.number} ${c.name}`;
+  const head = channelHead(c);
   const p = c.now;
   if (!p || c.receiving === false || c.epg !== 'ok') return head;
   const s = span(p);
   if (!s || s.end <= now.getTime()) return head;
-  return get(t)('live.rowName', { number: c.number, name: c.name, title: p.title, time: clock(p.end) });
+  return get(t)('live.rowName', { channel: head, title: p.title, time: clock(p.end) });
 }

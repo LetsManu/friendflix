@@ -4,7 +4,7 @@
   import { t } from '#lib/i18n';
   import { nowLines, type LiveChannel } from './api';
   import { fadeIn } from './fade';
-  import { progressAt, timeLeft, timeLeftText } from './progress';
+  import { channelHead, progressAt, timeLeft, timeLeftText } from './progress';
 
   /**
    * The info banner (spec §12.2): a glass banner over the lower third of the stage with logo, number + name, *Jetzt* + thin progress
@@ -33,7 +33,7 @@
 <div class="lbanner" class:frost={!still} class:frost-safe={!still} class:solid={still} class:on={visible} aria-hidden="true">
   <div class="bh">
     <span class="lg">{#if c.logo}<img src={c.logo} alt="" width="44" height="44" decoding="async" use:fadeIn />{/if}</span>
-    <b class="nm">{c.number} {c.name}</b>
+    <b class="nm">{channelHead(c)}</b>
     <span class="st">{starting ? $t('live.player.starting') : ''}</span>
   </div>
   <div class="ln"><span class="k">{$t('live.now')}</span><span class="v">{lines.now}</span><span class="left">{left}</span></div>

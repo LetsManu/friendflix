@@ -8,7 +8,7 @@ import { receiverCaps } from '../media/clientCaps.js';
 import { MediaError, type HevcGate, type ItemDto, type PlaybackDto, type TrackList } from '../media/types.js';
 import { noteHevcFailure } from '../hevcenc.js';
 import { convertsOf, copyFitsCap, filmGate, type FilmGate } from '../filmgate.js';
-import { countLive } from '../live.js';
+import { countStreams } from '../livetv/tokens.js';
 import { clientAddress, isHomeRequest } from '../netaddr.js';
 import { playbackReport } from './media.js';
 import { loadPrefs } from './prefs.js';
@@ -194,7 +194,7 @@ export function castRoutes(app: FastifyInstance, ctx: Ctx) {
     if (pred && b.after !== undefined && b.after !== pred.castId) return reply.code(409).send({ error: 'cast_mismatch' });
     // the queued token is pinned to its predecessor's address at mint: a predecessor nobody fetched yet has none, so nothing is minted
     if (pred && !(await castPinned(ctx, pred.hash))) return reply.code(409).send({ error: 'cast_unpinned' });
-    const live = await countLive(ctx, req.user!.id);
+    const live = await countStreams(ctx, req.user!.id);
     if (live >= role.maxStreams && !(pred && live === role.maxStreams)) return reply.code(429).send({ error: 'max_streams', max: role.maxStreams });
     let started: string | undefined;
     let conv: FilmGate | undefined;

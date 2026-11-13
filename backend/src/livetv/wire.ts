@@ -94,7 +94,14 @@ export interface StreamView {
   bitrate: number | null;
   errors: Array<{ at: number; code: 'input_lost' | 'input_back'; seconds?: number }>;
   lastSegmentAt: number | null;
+  /**
+   * the segment format the playlist serves (bughunt M2): `fmp4` for an fMP4 / CMAF passthrough (`init-<n>.mp4` + `.m4s`), `ts`
+   * otherwise; null until the driver opened the window. A Chromecast sender needs it (CAF assumes TS unless told).
+   */
+  segments: 'ts' | 'fmp4' | null;
 }
+/** the segment format of a live stream (StreamView.segments once known): MPEG-TS, or fMP4 / CMAF (an fMP4 passthrough) */
+export type Segments = NonNullable<StreamView['segments']>;
 
 /** an item of `GET /v1/ingest` (spec §3.2, plan Task 29): one push feed as livetv sees it */
 export interface IngestState {

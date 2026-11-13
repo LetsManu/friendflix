@@ -36,6 +36,12 @@ describe('number entry', () => {
   it('commit: no channel says so (German source text)', () => {
     expect(commitNumber(type(1, 3), list)).toEqual({ kind: 'none', text: 'Kein Sender 13' });
     expect(commitNumber(type(0, 0), list)).toEqual({ kind: 'none', text: 'Kein Sender 0' });
+    // never grouped by the locale (bughunt M3): "1001", not "1.001"
+    expect(commitNumber(type(1, 0, 0, 1), list)).toEqual({ kind: 'none', text: 'Kein Sender 1001' });
+  });
+  it('a channel without a number (an own feed) never matches typed digits', () => {
+    const own = [...list, { ...ch('eigen', 0), number: null }];
+    expect(typeDigit(start, 0, own)).toMatchObject({ zero: true, match: null });
   });
   it('commit: a duplicate goes to the lowest group position', () => {
     expect(commitNumber(type(7), list)).toMatchObject({ kind: 'channel', channel: { id: 'dupA' } });

@@ -17,7 +17,7 @@
   import NumberCard from './NumberCard.svelte';
   import { commitNumber, NUMBER_TIMEOUT_MS, typeDigit, type NumberState } from './numberEntry';
   import type { LiveFilter } from './order';
-  import { progressAt, timeLeft, timeLeftText, rowName } from './progress';
+  import { channelHead, progressAt, timeLeft, timeLeftText, rowName } from './progress';
   import TvHintLine from './TvHintLine.svelte';
 
   /**
@@ -319,7 +319,7 @@
   {@const left = info.receiving !== false && info.epg === 'ok' ? timeLeft(info.now, now) : null}
   <div class="infoback">
     <div class="info panel" role="dialog" aria-modal="true" aria-label={info.name} bind:this={infoEl}>
-      <h2>{info.number} {info.name}</h2>
+      <h2>{channelHead(info)}</h2>
       <p class="il"><b>{$t('live.now')}</b> {lines.now}{#if left} <span class="left">{timeLeftText(left)}</span>{/if}</p>
       <p class="il">{#if lines.next}<b>{$t('live.next')}</b> {lines.next}{/if}</p>
       <button type="button" class="close" on:click={() => void closeInfo()}>{$t('common.close')}</button>

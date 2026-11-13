@@ -8,11 +8,14 @@ export type LiveFilter = 'all' | 'fav' | 'recent' | string;
 /** position of a channel's group; the list position stands in when the channel does not carry one */
 export const groupPosition = (c: LiveChannel, index: number): number => c.groupPos ?? index;
 
+/** a channel without a number (an own feed) sorts after every numbered one, like the backend's list */
+const numKey = (c: LiveChannel): number => c.number ?? Number.MAX_SAFE_INTEGER;
+
 /** by number; two channels with the same number go by their group position (then by list position, so the order is stable) */
 export function byNumber(list: LiveChannel[]): LiveChannel[] {
   return list
     .map((c, i) => ({ c, i, g: groupPosition(c, i) }))
-    .sort((a, b) => a.c.number - b.c.number || a.g - b.g || a.i - b.i)
+    .sort((a, b) => numKey(a.c) - numKey(b.c) || a.g - b.g || a.i - b.i)
     .map((x) => x.c);
 }
 

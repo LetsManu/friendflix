@@ -22,13 +22,16 @@ describe('behind / atEdge', () => {
 });
 
 describe('resumePoint', () => {
-  it('a 40-min pause on a 30-min buffer resumes at the oldest point and says so', () => {
-    expect(resumePoint(40 * 60, 1800, 250)).toEqual({ at: 250, tooLong: true });
+  it('a paused point that slid out of the buffer resumes at the oldest point and says so', () => {
+    expect(resumePoint(100, 250)).toEqual({ at: 250, tooLong: true });
   });
-  it('a pause inside the buffer is not too long', () => {
-    expect(resumePoint(10 * 60, 1800, 250)).toMatchObject({ tooLong: false });
-    expect(resumePoint(1800, 1800, 250)).toMatchObject({ tooLong: false });
-    expect(resumePoint(40 * 60, 7200, 0)).toMatchObject({ tooLong: false });
+  it('a paused point still in the buffer is not too long', () => {
+    expect(resumePoint(300, 250)).toMatchObject({ tooLong: false });
+    expect(resumePoint(250, 250)).toMatchObject({ tooLong: false });
+  });
+  it('a viewer already far behind loses the point with a short pause, no matter how long the pause was', () => {
+    // 25 min behind a 30-min buffer, 10-min pause: the buffer start slid 10 min past the point
+    expect(resumePoint(1800 - 25 * 60, 1800 - 25 * 60 + 600).tooLong).toBe(true);
   });
 });
 
@@ -64,9 +67,11 @@ describe('restartTarget (ruling 48: max(oldest, start − 30 s))', () => {
   it('programme 20:15 with the oldest segment at 20:00:00 / media 100 s → 100 + 870 = 970', () => {
     expect(restartTarget(local(20, 15), o)).toBe(970);
   });
-  it('programme 20:00:10 → clamped to the oldest point (100)', () => {
-    expect(restartTarget(local(20, 0, 10), o)).toBe(100);
-    expect(restartTarget(local(20, 0, 0), o)).toBe(100);
+  it('programme 20:00:10 → clamped to the oldest point plus the 2-s margin (never exactly the oldest)', () => {
+    expect(restartTarget(local(20, 0, 10), o)).toBe(102);
+    expect(restartTarget(local(20, 0, 0), o)).toBe(102);
+    expect(restartTarget(local(20, 0, 31), o)).toBe(102); // start − 30 s is 1 s after the oldest: still inside the margin
+    expect(restartTarget(local(20, 0, 40), o)).toBe(110);
   });
   it('programme 19:59 (older than the buffer) → null', () => {
     expect(restartTarget(local(19, 59), o)).toBeNull();

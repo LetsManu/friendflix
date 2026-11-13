@@ -28,6 +28,7 @@ import { requireAdmin, requireOwner } from '../session.js';
 import { portainerMode, redeployViaPortainer, updateInfo } from '../updates.js';
 import { MAX_FEATURED } from '../lists.js';
 import { livetvInstalled } from '../livetv/detect.js';
+import { stopLiveSession } from '../livetv/tokens.js';
 import { accountSerial, getUserById } from '../users.js';
 import { FALLBACK_LANGUAGE, LANGUAGES, instanceLanguage, isLanguage, roleLabel, setInstanceLanguage } from '../i18n.js';
 
@@ -205,9 +206,15 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const { getLive, clearLive } = await import('../live.js');
     const live = await getLive(ctx, b.userId, b.playSessionId);
     if (!live) return reply.code(404).send({ error: 'not_found' });
-    const user = await getUserById(ctx, b.userId);
-    // ends the server-side transcode, the player then fails and shows its error; a direct-play file cannot be interrupted from here
-    if (user) await ctx.jf.stopEncoding(user, b.playSessionId).catch(() => undefined);
+    if (live.source === 'livetv') {
+      // a live view (bughunt L2): its token goes (the gateway answers 410) and that device's watch of the channel is refused for a
+      // few minutes, so the player's own re-watch cannot undo the stop; the player shows "vom Admin gestoppt"
+      await stopLiveSession(ctx, b.userId, b.playSessionId);
+    } else {
+      const user = await getUserById(ctx, b.userId);
+      // ends the server-side transcode, the player then fails and shows its error; a direct-play file cannot be interrupted from here
+      if (user) await ctx.jf.stopEncoding(user, b.playSessionId).catch(() => undefined);
+    }
     await clearLive(ctx, b.userId, b.playSessionId);
     await audit(ctx, req.user!.id, 'live.stop', b.userId, { title: live.title });
     return { ok: true };

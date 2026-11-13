@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import type { RunningChannel } from './api';
-import { fromWatchError, LOST_GIVE_UP_MS, lostDelay, nextLost, STALL_LOST_MS, type LiveUi } from './liveState';
+import { fromBeatGone, fromWatchError, LOST_GIVE_UP_MS, lostDelay, nextLost, STALL_LOST_MS, type LiveUi } from './liveState';
 
 const at = (h: number, m: number) => new Date(2026, 10, 12, h, m, 0, 0).toISOString();
 const RUNNING: RunningChannel[] = [
@@ -22,9 +22,20 @@ describe('fromWatchError (every WatchError of Task 35, F23)', () => {
   });
   it('404 livetv_off is the off message (no retry)', () => {
     expect(fromWatchError(404, { error: 'livetv_off' })).toEqual({ k: 'off' });
+    expect(fromWatchError(404, { error: 'livetv_off' }, { again: false })).toEqual({ k: 'off' });
+  });
+  it('404 livetv_off for the channel that was already playing is a transient loss with reconnects (bughunt M1)', () => {
+    expect(fromWatchError(404, { error: 'livetv_off' }, { again: true })).toEqual({ k: 'unreachable', attempt: 0 });
+    // the other refusals mean the same as on a first watch
+    expect(fromWatchError(404, { error: 'not_found' }, { again: true })).toEqual({ k: 'forbidden' });
+    expect(fromWatchError(403, { error: 'forbidden' }, { again: true })).toEqual({ k: 'forbidden' });
   });
   it('409 not_receiving waits for the push feed', () => {
     expect(fromWatchError(409, { error: 'not_receiving' })).toEqual({ k: 'notReceiving' });
+  });
+  it('409 stopped_by_admin is the stopped card without reconnects, also for the channel that was playing (bughunt L3)', () => {
+    expect(fromWatchError(409, { error: 'stopped_by_admin' })).toEqual({ k: 'stopped' });
+    expect(fromWatchError(409, { error: 'stopped_by_admin' }, { again: true })).toEqual({ k: 'stopped' });
   });
   it('429 max_streams is the film player\'s max-streams message with its maximum', () => {
     expect(fromWatchError(429, { error: 'max_streams', max: 2 })).toEqual({ k: 'maxStreams', max: 2 });
@@ -82,5 +93,14 @@ describe('nextLost: the 2-min switch to retry', () => {
     expect(nextLost({ k: 'lost', attempt: 3 }, 119_999)).toEqual({ k: 'lost', attempt: 4 });
     expect(nextLost({ k: 'lost', attempt: 3 }, 120_000)).toEqual({ k: 'retry' });
     expect(nextLost({ k: 'unreachable', attempt: 0 }, 200_000)).toEqual({ k: 'retry' });
+  });
+});
+
+describe('fromBeatGone (bughunt L4)', () => {
+  it('a token another window replaced is elsewhere; any other 410 is gone', () => {
+    expect(fromBeatGone({ error: 'gone', reason: 'replaced' })).toBe('elsewhere');
+    expect(fromBeatGone({ error: 'gone' })).toBe('gone');
+    expect(fromBeatGone(null)).toBe('gone');
+    expect(fromBeatGone('replaced')).toBe('gone');
   });
 });

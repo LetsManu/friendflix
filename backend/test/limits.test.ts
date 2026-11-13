@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectiveLimits, getUserLimits, invalidateLimits, setUserLimits } from '../src/limits.js';
 import { listLive, setLive } from '../src/live.js';
+import { mintLiveToken } from '../src/livetv/tokens.js';
 import { forgetAuth } from '../src/routes/internal.js';
 import { effectiveRole } from '../src/roles.js';
 import { applyRole } from '../src/users.js';
@@ -129,6 +130,19 @@ describe('enforcement', () => {
     expect(live).toEqual(['ps-live-1', 'ps-live-2']);
     // a running session keeps reporting progress
     expect((await call(family, 'POST', '/api/playback/progress', { itemId: ID, playSessionId: 'ps-live-1', mediaSourceId: 'ms1', positionTicks: 10_000_000 })).statusCode).toBe(200);
+  });
+
+  it('minted but unfetched live tokens count toward the VOD limit (L1 rest)', async () => {
+    const userId = await uid('Fam');
+    for (const k of await env.kv.keys(`play:${userId}:`)) await env.kv.del(k);
+    await setUserLimits(env.ctx, userId, { ...NONE, maxStreams: 1 });
+    expect((await call(family, 'POST', '/api/playback/info', { itemId: ID })).statusCode).toBe(200);
+    await mintLiveToken(env.ctx, { userId, profileId: userId, deviceId: 'dev-fam-1', sidHash: 'x'.repeat(16), channelId: 'ch-1', channelName: 'Nord', kind: 'live', via: 'local', remote: false });
+    const info = await call(family, 'POST', '/api/playback/info', { itemId: ID });
+    expect(info.statusCode).toBe(429);
+    expect(info.json()).toMatchObject({ error: 'max_streams', max: 1 });
+    const start = await call(family, 'POST', '/api/playback/start', { itemId: ID, playSessionId: 'ps-new-0002', mediaSourceId: 'ms1', positionTicks: 0 });
+    expect(start.statusCode).toBe(429);
   });
 
   it('gateway authz uses the user remote cap', async () => {

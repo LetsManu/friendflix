@@ -15,6 +15,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import com.google.android.gms.cast.HlsSegmentFormat
+import com.google.android.gms.cast.HlsVideoSegmentFormat
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaMetadata
 import com.google.android.gms.cast.MediaQueueItem
@@ -85,7 +86,9 @@ class TokenConverter(private val custom: Boolean) : MediaItemConverter {
          * A live channel as web Task 41 `loadLive` loads it: the absolute stream URL as content id, `application/x-mpegURL`, stream
          * type LIVE (no duration, the receiver starts at the live edge), generic metadata with the channel's name as title, the programme
          * running now as subtitle and the signed logo URL as image (when there is one), and `customData.ui.live` (FriendFlix's own
-         * receiver shows its channel card; the Default Media Receiver ignores it). The token is in nothing but the URL.
+         * receiver shows its channel card; the Default Media Receiver ignores it). The token is in nothing but the URL. An fMP4 / CMAF
+         * stream (the answer's `segments`) carries the fMP4 segment formats, like web `loadLiveOnCast` (the receiver's HLS player
+         * assumes MPEG-TS otherwise; bughunt M2); a TS stream is sent as before, without a format.
          */
         fun liveQueueItem(info: LiveCastInfo): MediaQueueItem {
             val meta = MediaMetadata(MediaMetadata.MEDIA_TYPE_GENERIC)
@@ -97,6 +100,12 @@ class TokenConverter(private val custom: Boolean) : MediaItemConverter {
                 .setContentType(LiveCastInfo.CONTENT_TYPE)
                 .setMetadata(meta)
                 .setCustomData(JSONObject().put("ui", JSONObject().put("live", true)))
+                .apply {
+                    if (info.segments == LiveCastInfo.SEGMENTS_FMP4) {
+                        setHlsSegmentFormat(HlsSegmentFormat.FMP4)
+                        setHlsVideoSegmentFormat(HlsVideoSegmentFormat.FMP4)
+                    }
+                }
                 .build()
             return MediaQueueItem.Builder(media).setAutoplay(true).build()
         }

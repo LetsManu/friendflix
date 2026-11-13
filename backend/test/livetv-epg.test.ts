@@ -632,7 +632,7 @@ describe('the EPG step of the refresh (F16)', () => {
   it("a source with refresh 'manual' still refreshes its EPG every 24 h", async () => {
     guides.set(EPG_A, nordGuide());
     const hour = 3600_000;
-    const id = await addSource({ epg: EPG_A, refresh: 'manual', epgAt: new Date(Date.now() - 25 * hour) });
+    const id = await addSource({ epg: EPG_A, refresh: 'manual', epgAt: new Date(Date.now() - 25 * hour), lastAt: new Date(Date.now() - 48 * hour) }); // imported once already (bughunt L1)
     await addChannel(id, 'Nordlicht TV');
     await addChannel(id, 'Hafenkanal');
     await livetvRefreshTick(env.ctx);

@@ -84,8 +84,25 @@ describe('the streams API', () => {
     const list = await call('GET', '/v1/streams');
     const views = await list.json() as Array<Record<string, unknown>>;
     expect(views).toHaveLength(1);
-    expect(Object.keys(views[0]!).sort()).toEqual(['bitrate', 'channelId', 'errors', 'lastSegmentAt', 'mode', 'since', 'state', 'streamKey']);
-    expect(views[0]).toMatchObject({ channelId: 'ch-nordlicht', streamKey: first.streamKey, mode: 'passthrough', state: 'running', errors: [] });
+    expect(Object.keys(views[0]!).sort()).toEqual(['bitrate', 'channelId', 'errors', 'lastSegmentAt', 'mode', 'segments', 'since', 'state', 'streamKey']);
+    expect(views[0]).toMatchObject({ channelId: 'ch-nordlicht', streamKey: first.streamKey, mode: 'passthrough', state: 'running', errors: [], segments: 'ts' });
+  });
+
+  it('the stream view names the segment format: ts, fmp4 for an fMP4 window, null before the window (bughunt M2)', async () => {
+    let open!: () => void;
+    const opened = new Promise<void>((r) => { open = r; });
+    const fmp4: Driver = async (ctx) => {
+      await opened;
+      ctx.window({ ext: 'm4s', init: true });
+      await ctx.sleep(Number.MAX_SAFE_INTEGER);
+    };
+    const own = new Streams({ root, maxBytes: 1024 ** 3, drivers: { passthrough: fmp4 }, store: memoryStore().store });
+    try {
+      own.start(startBody({ channelId: 'ch-cmaf' }));
+      expect(own.list()[0]!.segments).toBeNull();
+      open();
+      await vi.waitFor(() => expect(own.list()[0]!.segments).toBe('fmp4'));
+    } finally { await own.close(); }
   });
 
   it('a body outside the schema is 400 invalid with the field (dvrSeconds 0–7200)', async () => {

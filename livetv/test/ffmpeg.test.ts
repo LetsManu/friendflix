@@ -182,7 +182,7 @@ describe('inputs', () => {
     expect(ffInput).toEqual({ kind: 'srt', url: SRT_LITERAL });
     expect(g.lookups).toEqual(['iptv.example.com']);
     const a = ffmpegArgs({ mode: 'remux', input: ffInput, encoder: 'libx264', audio: 'copy', srcHeight: 1080, dir: DIR, startNumber: 0 });
-    expect(has(a, ['-protocol_whitelist', 'srt,udp'])).toBe(true);
+    expect(has(a, ['-protocol_whitelist', 'srt,udp', '-f', 'mpegts', '-format_whitelist', 'mpegts', '-i', SRT_LITERAL])).toBe(true);
     expect(has(a, ['-i', SRT_LITERAL])).toBe(true);
     expect(a.indexOf('-protocol_whitelist')).toBeLessThan(a.indexOf('-i'));
     expect(a).not.toContain('pipe:0');

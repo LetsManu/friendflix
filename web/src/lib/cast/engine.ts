@@ -110,11 +110,11 @@ export interface CastSession {
 }
 export { liveFields, type LiveInfo } from './liveInfo';
 /** a refused or failed `loadLive`: `code` = the watch refusal's error (`live_full`, `provider_limit`, `channel_unreachable`, `not_receiving`,
- *  `max_streams`, `forbidden`, `not_found`, `livetv_off`), else `not_connected` / `load_failed` / `network` / `superseded` (a newer one won) */
+ *  `max_streams`, `forbidden`, `not_found`, `livetv_off`, `stopped_by_admin`), else `not_connected` / `load_failed` / `network` / `superseded` (a newer one won) */
 export class LiveCastError extends Error {
   constructor(readonly code: string, readonly refusal?: WatchError) { super(code); this.name = 'LiveCastError'; }
 }
-/** LivePlayer's existing state copy for a live cast that did not start (no new texts) */
+/** LivePlayer's state copy for a live cast that did not start */
 export function liveErrText(e: unknown): string {
   const c = e instanceof LiveCastError ? e : null;
   const max = c?.refusal && 'max' in c.refusal ? c.refusal.max : 0;
@@ -126,6 +126,7 @@ export function liveErrText(e: unknown): string {
     case 'max_streams': return tr('player.error.maxStreams', { n: max });
     case 'forbidden': case 'not_found': return tr('live.player.notAvailable');
     case 'livetv_off': return tr('live.player.off');
+    case 'stopped_by_admin': return tr('live.player.stoppedByAdmin');
     default: return tr('player.cast.failed');
   }
 }
@@ -1706,6 +1707,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     const ch = a.channel;
     // the logo exactly as the answer gives it (for `via: 'chromecast'` the signed absolute URL, or null): never rebuilt or made relative
     const media: LiveCastMedia = { contentId: url, contentType: 'application/x-mpegURL', streamType: 'LIVE',
+      ...(a.segments === 'fmp4' ? { hlsSegmentFormat: 'fmp4' as const } : {}),
       metadata: { title: ch.name, subtitle: a.now?.title ?? '', images: ch.logo ? [ch.logo] : [] }, customData: { ui: { live: true } } };
     log('info', 'load', o.renew ? 'live channel · new token' : 'live channel');
     if (cast.castCustomReceiver?.()) cast.castSendMessage?.(uiMessage()); // the own receiver's channel card and LIVE badge in the viewer's language

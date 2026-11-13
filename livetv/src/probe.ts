@@ -39,7 +39,7 @@ export const PUSH_PROBE_MS = 4_000;
 
 /** stdin with a forced demuxer (L5: never one ffprobe guesses from the provider's bytes) */
 const pipeArgs = (format: PipeFormat) => ['-hide_banner', '-v', 'error', '-show_streams', '-of', 'json', ...pipeInput(format)];
-const srtArgs = (url: string) => ['-hide_banner', '-v', 'error', '-protocol_whitelist', 'srt,udp', '-show_streams', '-of', 'json', '-i', url];
+const srtArgs = (url: string) => ['-hide_banner', '-v', 'error', '-protocol_whitelist', 'srt,udp', '-f', 'mpegts', '-format_whitelist', 'mpegts', '-show_streams', '-of', 'json', '-i', url];
 
 class ProbeFail extends Error {
   constructor(readonly code: ProbeError) { super(code); }

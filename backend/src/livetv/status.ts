@@ -68,8 +68,8 @@ const byNumberThenName = (a: { number: number | null; name: string }, b: { numbe
   (a.number ?? Number.MAX_SAFE_INTEGER) - (b.number ?? Number.MAX_SAFE_INTEGER) || a.name.localeCompare(b.name);
 
 /** `GET /v1/streams`, read defensively: an item that is not a StreamView is dropped, and the stream key is never copied */
-function parseStreams(raw: unknown[]): Array<Omit<StreamView, 'streamKey'>> {
-  const out: Array<Omit<StreamView, 'streamKey'>> = [];
+function parseStreams(raw: unknown[]): Array<Omit<StreamView, 'streamKey' | 'segments'>> {
+  const out: Array<Omit<StreamView, 'streamKey' | 'segments'>> = [];
   for (const x of raw) {
     const o = rec(x);
     if (!o || typeof o.channelId !== 'string' || !MODES.includes(o.mode as string) || !STATES.includes(o.state as string)) continue;
@@ -148,8 +148,8 @@ export async function liveStatus(ctx: Ctx, hwAccel: () => Promise<string | null>
 
 /**
  * *Stoppen* / *Neu starten*: `DELETE /v1/streams/:channelId` (a stream that is not running answers 204 too; a 404 from an older livetv is
- * tolerated), then the channel's live tokens are revoked and `ltv:adminstop:<id>` (60 s) keeps a viewer's re-watch from starting it again
- * (502 `channel_unreachable`); the admin's test start clears it (*Neu starten*). Throws the LivetvError when livetv is not reached; only then nothing is recorded (a failing event push is logged, not thrown). The event says *stopped_by_admin*.
+ * tolerated), then the channel's live tokens are revoked and `ltv:adminstop:<id>` (5 min) keeps a viewer's re-watch and reconnect
+ * cycle from starting it again (409 `stopped_by_admin`, bughunt L3); the admin's test start clears it (*Neu starten*). Throws the LivetvError when livetv is not reached; only then nothing is recorded (a failing event push is logged, not thrown). The event says *stopped_by_admin*.
  */
 export async function stopStream(ctx: Ctx, channelId: string, log?: { warn(o: object, m: string): void }): Promise<void> {
   // the marker first: a viewer's player re-watching meanwhile must not start the channel again (spec §7.4); gone again when livetv was not reached

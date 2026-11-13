@@ -15,7 +15,7 @@ import { nowNext } from './epg.js';
 import { readLogo } from './logos.js';
 import { channelSet } from './rights.js';
 import { clearJoinMark, receivingChannelIds, runningChannelIds, startOrJoin } from './streams.js';
-import { beatLiveToken, deviceLiveSessions, endLiveToken, LIVE_CAP_S, liveSidHash, mintLiveToken, revokeLiveToken, unfetchedLiveSessions } from './tokens.js';
+import { adminStopViewKey, beatLiveToken, deviceLiveSessions, endLiveToken, LIVE_CAP_S, liveSidHash, mintLiveToken, revokeLiveToken, unfetchedLiveSessions } from './tokens.js';
 import { addFavourite, favouriteIds, recentIds, recordRecent, removeFavourite, setFavouriteOrder, RECENT_MAX } from './userdata.js';
 
 /** a logo never changes under its hash (sha256 of the bytes): the browser keeps it a week without asking again */
@@ -62,6 +62,17 @@ const PREVIEW_CACHE = 'private, max-age=60';
 const invalid = (reply: FastifyReply, e: z.ZodError) => reply.code(400).send({ error: 'invalid', field: String(e.issues[0]?.path[0] ?? 'body') });
 
 /**
+ * The watch route's limit (bughunt L5): 30 a minute per account and device (zapping, the not-receiving poll and the lost cycle of
+ * one player stay far below it), counted after the session check (`hook: 'preHandler'`) so the key is known. Two TVs of a household
+ * behind one NAT no longer share it; WATCH_IP_MAX a minute per client address is the cap above that.
+ */
+const WATCH_LIMIT = {
+  max: 30, timeWindow: '1 minute', hook: 'preHandler' as const,
+  keyGenerator: (req: FastifyRequest) => `ltvw:${req.user?.id ?? '-'}:${req.session?.deviceId ?? req.ip}`,
+};
+export const WATCH_IP_MAX = 120;
+
+/**
  * The user side of Live TV (spec §10, `requireUser`; kids profiles allowed unless a route says otherwise): logos (Task 19, plus the signed
  * cast variant), watching, the heartbeat and stopping (Task 31), the channel list with its preview image, ordered favourites, *Zuletzt
  * gesehen* and the last channel (Task 33). Every route answers from the asking profile's own `channelSet`: a channel outside it is never
@@ -89,7 +100,9 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
    * is replaced, not counted), start or join (streams.ts), then a token for `/media/l/<token>/index.m3u8`. The client keeps the last
    * channel itself (`PUT /api/livetv/last`).
    */
-  app.post('/api/livetv/channels/:id/watch', { ...user, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+  app.post('/api/livetv/channels/:id/watch', { ...user, config: { rateLimit: WATCH_LIMIT } }, async (req, reply) => {
+    // the secondary cap per client address (bughunt L5): a household behind one NAT shares it, so it is far above one viewer's need
+    if ((await ctx.kv.incr(`ltv:watchip:${clientAddress(req)}`, 60).catch(() => 0)) > WATCH_IP_MAX) return reply.code(429).send({ error: 'rate_limited' });
     if (!livetvInstalled(ctx)) return reply.code(404).send({ error: 'livetv_off' });
     const b = watchBody.safeParse(req.body ?? {});
     if (!b.success) return invalid(reply, b.error);
@@ -103,6 +116,8 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
     const ch = toEffective(row);
     const deviceId = req.session!.deviceId;
     if (!deviceId) return reply.code(403).send({ error: 'device_pending' });
+    // an admin stopped this device's stream of this channel in Wiedergabe-Check a few minutes ago (bughunt L2)
+    if ((await ctx.kv.get(adminStopViewKey(u.id, deviceId)).catch(() => null)) === ch.id) return reply.code(409).send({ error: 'stopped_by_admin' });
 
     const limits = (await effectiveLimits(ctx, u))!;
     const prefix = `play:${u.id}:`;
@@ -142,6 +157,8 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
       expiresAt: minted.expiresAt,
       dvrSeconds: ctx.cfg.LIVETV_DVR_MINUTES * 60,
       mode: r.mode,
+      // the playlist's segment format: a Chromecast sender sets hlsSegmentFormat from it (bughunt M2)
+      segments: r.segments,
       channel: { id: ch.id, number: ch.number, name: ch.name, logo },
       now: nn?.now ?? null,
       next: nn?.next ?? null,
@@ -154,7 +171,8 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
     if (!b.success) return invalid(reply, b.error);
     const r = await beatLiveToken(ctx, b.data.token, { userId: req.user!.id, sidHash: liveSidHash(req.sid!), ip: clientAddress(req) });
     reply.header('cache-control', 'no-store');
-    if (!r.ok) return reply.code(410).send({ error: 'gone' });
+    // reason 'replaced': another window of the same browser watches now; the player says so instead of taking it back (bughunt L4)
+    if (!r.ok) return reply.code(410).send({ error: 'gone', ...(r.reason ? { reason: r.reason } : {}) });
     return { ok: true, expiresAt: r.expiresAt };
   });
 
