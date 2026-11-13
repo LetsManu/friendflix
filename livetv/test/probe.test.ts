@@ -265,7 +265,7 @@ describe('probe', () => {
     expect(g.lookups).toEqual(['iptv.example.com']);
     const args = run.calls[0]!.args;
     expect(args).toContain('srt://192.0.2.30:9000?streamid=bergblick&passphrase=geheim123456');
-    expect(args.join(' ')).toContain('-protocol_whitelist srt,udp');
+    expect(args.join(' ')).toContain('-protocol_whitelist srt,udp -f mpegts -format_whitelist mpegts');
     expect(args.join(' ')).not.toContain('iptv.example.com');
     expect((await probe({ url: 'srt://iptv.example.com:9000', kind: 'srt', allowLan: false }, { run, guard: guard(['192.168.1.5']) })).error).toBe('address_refused');
     expect((await probe({ url: 'srt://iptv.example.com:9000', kind: 'srt', allowLan: true }, { run, guard: guard(['192.168.1.5']) })).ok).toBe(true);

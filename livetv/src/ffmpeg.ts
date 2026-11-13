@@ -20,6 +20,8 @@ const WHITELIST: Record<PipeFormat, string> = { mpegts: 'mpegts', mov: 'mov', aa
 /** the input options of a pipe: stdin only, the given demuxer only */
 export const pipeInput = (format: PipeFormat): string[] =>
   ['-protocol_whitelist', 'pipe', '-f', format, '-format_whitelist', WHITELIST[format], '-i', 'pipe:0'];
+/** the input options of an SRT caller input: srt/udp only and the demuxer forced to MPEG-TS, as SRT carries (L5 rest) */
+export const SRT_INPUT = ['-protocol_whitelist', 'srt,udp', '-f', 'mpegts', '-format_whitelist', 'mpegts'];
 const extOf = (uri: string): string => /\.([a-z0-9]+)$/i.exec(uri.split(/[?#]/)[0]!)?.[1]?.toLowerCase() ?? '';
 /**
  * The format of an HLS playlist, decided by its FIRST segment (one playlist, one demuxer; a mixed playlist follows its first segment):
@@ -101,7 +103,7 @@ export function videoArgs(encoder: Encoder, srcHeight: number | null): string[] 
 const audioArgs = (a: 'copy' | 'aac'): string[] => (a === 'copy' ? ['-c:a', 'copy'] : ['-c:a', 'aac', '-ac', '2', '-b:a', '160k']);
 
 export function ffmpegArgs(o: FfmpegArgsIn): string[] {
-  const input = o.input.kind === 'pipe' ? pipeInput(o.input.format) : ['-protocol_whitelist', 'srt,udp', '-i', o.input.url];
+  const input = o.input.kind === 'pipe' ? pipeInput(o.input.format) : [...SRT_INPUT, '-i', o.input.url];
   const video = o.mode === 'remux' ? ['-c:v', 'copy'] : videoArgs(o.encoder, o.srcHeight);
   return [
     ...HEAD,
