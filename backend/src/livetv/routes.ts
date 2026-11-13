@@ -142,6 +142,8 @@ export function livetvRoutes(app: FastifyInstance, ctx: Ctx) {
       expiresAt: minted.expiresAt,
       dvrSeconds: ctx.cfg.LIVETV_DVR_MINUTES * 60,
       mode: r.mode,
+      // the playlist's segment format: a Chromecast sender sets hlsSegmentFormat from it (bughunt M2)
+      segments: r.segments,
       channel: { id: ch.id, number: ch.number, name: ch.name, logo },
       now: nn?.now ?? null,
       next: nn?.next ?? null,

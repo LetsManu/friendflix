@@ -1706,6 +1706,7 @@ export function createCastEngine(deps: EngineDeps, out: Writable<CastSession | n
     const ch = a.channel;
     // the logo exactly as the answer gives it (for `via: 'chromecast'` the signed absolute URL, or null): never rebuilt or made relative
     const media: LiveCastMedia = { contentId: url, contentType: 'application/x-mpegURL', streamType: 'LIVE',
+      ...(a.segments === 'fmp4' ? { hlsSegmentFormat: 'fmp4' as const } : {}),
       metadata: { title: ch.name, subtitle: a.now?.title ?? '', images: ch.logo ? [ch.logo] : [] }, customData: { ui: { live: true } } };
     log('info', 'load', o.renew ? 'live channel · new token' : 'live channel');
     if (cast.castCustomReceiver?.()) cast.castSendMessage?.(uiMessage()); // the own receiver's channel card and LIVE badge in the viewer's language

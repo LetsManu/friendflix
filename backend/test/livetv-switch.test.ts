@@ -40,7 +40,7 @@ let order: string[] = [];
 let keyN = 0;
 const hexKey = () => (++keyN).toString(16).padStart(32, '0');
 const view = (channelId: string, o: Partial<StreamView> = {}): StreamView => ({
-  channelId, streamKey: hexKey(), mode: 'remux', since: Date.now(), state: 'running', bitrate: 4_000_000, errors: [], lastSegmentAt: Date.now(), ...o,
+  channelId, streamKey: hexKey(), mode: 'remux', since: Date.now(), state: 'running', bitrate: 4_000_000, errors: [], lastSegmentAt: Date.now(), segments: 'ts', ...o,
 });
 const system = () => ({
   cpu: { model: 'Testprozessor', cores: 4, loadPct: 10 }, gpu: { devices: ['/dev/dri/renderD128'], driver: 'iHD', readable: true, busyPct: null },

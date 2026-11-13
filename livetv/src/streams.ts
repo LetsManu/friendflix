@@ -28,6 +28,11 @@ export interface StreamView {
   bitrate: number | null;
   errors: Array<{ at: number; code: 'input_lost' | 'input_back'; seconds?: number }>;
   lastSegmentAt: number | null;
+  /**
+   * the segment format the playlist serves (bughunt M2): `fmp4` for an fMP4 / CMAF passthrough (`init-<n>.mp4` + `.m4s`), `ts`
+   * otherwise; null until the driver opened the window. A Chromecast sender needs it (CAF assumes TS unless told).
+   */
+  segments: 'ts' | 'fmp4' | null;
 }
 
 export const MODES: readonly Mode[] = ['passthrough', 'remux', 'transcode'];
@@ -169,7 +174,7 @@ export class Streams {
     const streamKey = randomBytes(16).toString('hex');
     const now = this.now();
     const e: Entry = {
-      view: { channelId: b.channelId, streamKey, mode: b.mode, since: now, state: 'starting', bitrate: null, errors: [], lastSegmentAt: null },
+      view: { channelId: b.channelId, streamKey, mode: b.mode, since: now, state: 'starting', bitrate: null, errors: [], lastSegmentAt: null, segments: null },
       dvrSeconds: b.dvrSeconds, dir: join(this.o.root, streamKey), window: null, dropped: [], ac: new AbortController(),
       done: Promise.resolve(), lastTouch: now, timer: null, outageAt: null, attempt: 0, runBreak: true, writing: Promise.resolve(),
     };
@@ -249,6 +254,7 @@ export class Streams {
       channelId: id, dir: e.dir, input: b.input, mode: b.mode, encoder: b.encoder, maxBitrate: b.maxBitrate, signal, store: this.store,
       window: (o) => {
         e.window ??= new SegmentWindow({ dvrSeconds: e.dvrSeconds, ext: o.ext, init: o.init, onDrop: (f) => e.dropped.push(f) });
+        e.view.segments = e.window.ext === 'm4s' ? 'fmp4' : 'ts';
         return e.window;
       },
       segment: async (s) => {

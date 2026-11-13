@@ -94,7 +94,11 @@ export interface StreamView {
   bitrate: number | null;
   errors: Array<{ at: number; code: 'input_lost' | 'input_back'; seconds?: number }>;
   lastSegmentAt: number | null;
+  /** the playlist's segment format (bughunt M2); null = not known yet (or a livetv from before the field) */
+  segments: Segments | null;
 }
+/** the segment format of a live stream: MPEG-TS, or fMP4 / CMAF (an fMP4 passthrough) */
+export type Segments = 'ts' | 'fmp4';
 
 /** an item of `GET /v1/ingest` (spec §3.2, plan Task 29): one push feed as livetv sees it */
 export interface IngestState {

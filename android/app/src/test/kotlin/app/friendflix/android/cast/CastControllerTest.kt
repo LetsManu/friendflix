@@ -14,6 +14,8 @@ import app.friendflix.android.player.ReportSession
 import app.friendflix.android.player.Segment
 import app.friendflix.android.player.StillWatching
 import com.google.android.gms.cast.CastMediaControlIntent
+import com.google.android.gms.cast.HlsSegmentFormat
+import com.google.android.gms.cast.HlsVideoSegmentFormat
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaMetadata
 import mockwebserver3.Dispatcher
@@ -161,10 +163,10 @@ class CastControllerTest {
     )
 
     /** the watch answer as [CastServerApi.watchLive] hands it on: the URL already absolute against the server origin */
-    private fun liveInfo(channelId: String, logo: String? = LIVE_LOGO, now: String? = "Die Leuchtturmwärter") = LiveCastInfo(
+    private fun liveInfo(channelId: String, logo: String? = LIVE_LOGO, now: String? = "Die Leuchtturmwärter", segments: String = LiveCastInfo.SEGMENTS_TS) = LiveCastInfo(
         channelId = channelId, token = tokenOf(channelId), contentUrl = "https://friend.example.com/media/l/${tokenOf(channelId)}/index.m3u8",
         expiresAt = clock + 12 * 60 * 60_000, name = if (channelId == "hafenkanal") "Hafenkanal" else "Nordlicht TV", number = 1, logo = logo,
-        now = now,
+        now = now, segments = segments,
     )
 
     private fun tokenOf(channelId: String) = (channelId.replace("-", "_") + "A".repeat(43)).take(43)
@@ -235,6 +237,27 @@ class CastControllerTest {
         assertEquals("Hafenkanal", bare.getString(MediaMetadata.KEY_TITLE))
         assertTrue(bare.images.isEmpty())
         assertNull(bare.getString(MediaMetadata.KEY_SUBTITLE))
+    }
+
+    @Test fun anFmp4LiveChannelCarriesItsSegmentFormatAndATsOneStaysAsBefore() {
+        // bughunt M2: CAF's HLS player assumes MPEG-TS unless the sender says fMP4
+        val ts = TokenConverter.liveQueueItem(liveInfo("nordlicht-tv")).media!!
+        assertNull(ts.hlsSegmentFormat)
+        assertNull(ts.hlsVideoSegmentFormat)
+        val cmaf = TokenConverter.liveQueueItem(liveInfo("hafenkanal", segments = LiveCastInfo.SEGMENTS_FMP4)).media!!
+        assertEquals(HlsSegmentFormat.FMP4, cmaf.hlsSegmentFormat)
+        assertEquals(HlsVideoSegmentFormat.FMP4, cmaf.hlsVideoSegmentFormat)
+        // the watch answer's `segments` as LiveCastInfo.parse reads it: fmp4, else (ts, missing, anything else) TS
+        val token = tokenOf("hafenkanal")
+        fun answer(segments: String?) = JSONObject()
+            .put("token", token).put("url", "/media/l/$token/index.m3u8").put("expiresAt", clock + 60_000)
+            .put("channel", JSONObject().put("id", "hafenkanal").put("number", 4).put("name", "Hafenkanal").put("logo", JSONObject.NULL))
+            .apply { if (segments != null) put("segments", segments) }
+        val abs = { path: String -> "https://friend.example.com$path" }
+        assertEquals(LiveCastInfo.SEGMENTS_FMP4, LiveCastInfo.parse(answer("fmp4"), abs)!!.segments)
+        assertEquals(LiveCastInfo.SEGMENTS_TS, LiveCastInfo.parse(answer("ts"), abs)!!.segments)
+        assertEquals(LiveCastInfo.SEGMENTS_TS, LiveCastInfo.parse(answer(null), abs)!!.segments)
+        assertEquals(LiveCastInfo.SEGMENTS_TS, LiveCastInfo.parse(answer("mp4"), abs)!!.segments)
     }
 
     @Test fun aRefusedLiveWatchAnswersFalseAndLoadsNothing() {

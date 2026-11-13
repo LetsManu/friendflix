@@ -727,6 +727,25 @@ describe('loadLiveOnCast', () => {
     expect(media.hlsSegmentFormat).toBeUndefined();
     expect('hlsSegmentFormat' in media).toBe(false);
   });
+
+  it('an fMP4 live stream tells the receiver so, like the film path (bughunt M2)', async () => {
+    const sdk = await connectSdk();
+    sdk.context.current = sdk.session;
+    expect(await C.loadLiveOnCast({
+      contentId: 'https://p/media/l/tok/index.m3u8', contentType: 'application/x-mpegURL', streamType: 'LIVE', hlsSegmentFormat: 'fmp4',
+      metadata: { title: 'Ch', subtitle: '', images: [] }, customData: { ui: { live: true } },
+    })).toBe(true);
+    const media = sdk.session.loadMedia.mock.calls[0]![0].args[0];
+    expect([media.hlsSegmentFormat, media.hlsVideoSegmentFormat]).toEqual(['fmp4', 'fmp4']);
+    // with the SDK's own constants
+    Object.assign(sdk.chromeCast.media, { HlsSegmentFormat: { TS: 'ts', FMP4: 'FMP4_SDK' }, HlsVideoSegmentFormat: { FMP4: 'VIDEO_FMP4_SDK' } });
+    await C.loadLiveOnCast({
+      contentId: 'https://p/media/l/tok2/index.m3u8', contentType: 'application/x-mpegURL', streamType: 'LIVE', hlsSegmentFormat: 'fmp4',
+      metadata: { title: 'Ch', subtitle: '', images: [] }, customData: { ui: { live: true } },
+    });
+    const m2 = sdk.session.loadMedia.mock.calls[1]![0].args[0];
+    expect([m2.hlsSegmentFormat, m2.hlsVideoSegmentFormat]).toEqual(['FMP4_SDK', 'VIDEO_FMP4_SDK']);
+  });
 });
 
 describe('resume plumbing', () => {

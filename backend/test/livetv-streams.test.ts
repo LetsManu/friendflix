@@ -55,7 +55,7 @@ let keyN = 0;
 const hexKey = () => (++keyN).toString(16).padStart(32, '0');
 
 const view = (channelId: string, o: Partial<StreamView> = {}): StreamView => ({
-  channelId, streamKey: hexKey(), mode: 'remux', since: Date.now(), state: 'running', bitrate: 4_000_000, errors: [], lastSegmentAt: Date.now(), ...o,
+  channelId, streamKey: hexKey(), mode: 'remux', since: Date.now(), state: 'running', bitrate: 4_000_000, errors: [], lastSegmentAt: Date.now(), segments: 'ts', ...o,
 });
 const system = () => ({
   cpu: { model: 'Testprozessor', cores: 4, loadPct: 10 }, gpu: { devices: ['/dev/dri/renderD128'], driver: 'iHD', readable: true, busyPct: null },
@@ -232,6 +232,22 @@ describe('start and join', () => {
     expect(r.json().mode).toBe('transcode');
     expect(streamCalls('POST')).toHaveLength(0);
     expect(await env.kv.get(`conv:grant:live:${ch}`)).toBeNull();
+  });
+
+  it('the watch answer passes on the segment format livetv reports; TS when it does not say (bughunt M2)', async () => {
+    const cmaf = await addChannel('Nordlicht TV');
+    const ts = await addChannel('Hafenkanal');
+    const old = await addChannel('Sternwarte 24');
+    streams.set(cmaf, view(cmaf, { mode: 'passthrough', segments: 'fmp4' }));
+    streams.set(ts, view(ts, { segments: 'ts' }));
+    const { segments: _gone, ...noField } = view(old); // a livetv from before the field
+    streams.set(old, noField as StreamView);
+    expect((await watch(anna, cmaf)).json()).toMatchObject({ mode: 'passthrough', segments: 'fmp4' });
+    expect((await watch(anna, ts)).json()).toMatchObject({ segments: 'ts' });
+    expect((await watch(anna, old)).json()).toMatchObject({ segments: 'ts' });
+    // a garbled value is not passed on
+    streams.set(cmaf, { ...view(cmaf), segments: 'mp4' as never });
+    expect((await watch(anna, cmaf)).json()).toMatchObject({ segments: 'ts' });
   });
 
   it('full budget → live_full with only channels this profile may see', async () => {
@@ -576,7 +592,7 @@ describe('the live budget source', () => {
     expect(both![0]).toMatchObject({ kind: 'live', key: `live:${id}`, label: 'Hafenkanal' });
     expect(both![0]!.pending).toBeUndefined();
     streams.get(id)!.lastSegmentAt = Date.now();
-    expect(await p).toEqual({ streamKey: streams.get(id)!.streamKey, mode: 'transcode' });
+    expect(await p).toEqual({ streamKey: streams.get(id)!.streamKey, mode: 'transcode', segments: 'ts' });
     expect(await env.kv.get(`conv:grant:live:${id}`)).not.toBeNull();
     // a film right after the start is admitted: no double count
     expect(await admitConversion(env.ctx, { kind: 'film', userId: benId, hint: 'film-dunmoor' })).toEqual({ ok: true });

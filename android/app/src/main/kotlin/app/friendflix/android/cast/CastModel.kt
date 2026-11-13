@@ -79,6 +79,8 @@ class LiveCastInfo(
     val logo: String?,
     /** the title of the programme running now (null: no EPG data) */
     val now: String?,
+    /** the playlist's segment format, [SEGMENTS_TS] or [SEGMENTS_FMP4] (an fMP4 / CMAF passthrough; bughunt M2) */
+    val segments: String = SEGMENTS_TS,
 ) {
     /** the receiver item's media id: `live-` + 24 hex of `sha256(token)` (never a valid castId, so no film lookup is made for it) */
     val handle: String = "live-" + java.security.MessageDigest.getInstance("SHA-256").digest(token.toByteArray(Charsets.UTF_8))
@@ -89,6 +91,9 @@ class LiveCastInfo(
     companion object {
         /** the HLS content type of a live channel (web Task 41 `loadLive`) */
         const val CONTENT_TYPE = "application/x-mpegURL"
+        /** the watch answer's `segments`: MPEG-TS (also when an older backend does not say) or fMP4 */
+        const val SEGMENTS_TS = "ts"
+        const val SEGMENTS_FMP4 = "fmp4"
         private val TOKEN = Regex("^[A-Za-z0-9_-]{16,128}$")
         private val CHANNEL = Regex("^[A-Za-z0-9_-]{1,64}$")
         private const val PATH = "/media/l/"
@@ -109,7 +114,8 @@ class LiveCastInfo(
             // the signed logo URL of the answer, used as it is (the receiver sends no cookie); anything but http(s) is dropped
             val logo = str(ch, "logo")?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
             val now = j.optJSONObject("now")?.let { str(it, "title") }
-            return LiveCastInfo(id, token, url, j.optLong("expiresAt"), name, number, logo, now)
+            val segments = if (str(j, "segments") == SEGMENTS_FMP4) SEGMENTS_FMP4 else SEGMENTS_TS
+            return LiveCastInfo(id, token, url, j.optLong("expiresAt"), name, number, logo, now, segments)
         }
     }
 }

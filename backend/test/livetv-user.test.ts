@@ -37,7 +37,7 @@ const streams = new Map<string, StreamView>();
 let ingest: IngestState[] = [];
 let keyN = 0;
 const view = (channelId: string): StreamView => ({
-  channelId, streamKey: (++keyN).toString(16).padStart(32, '0'), mode: 'remux', since: Date.now(), state: 'running', bitrate: 4_000_000, errors: [], lastSegmentAt: Date.now(),
+  channelId, streamKey: (++keyN).toString(16).padStart(32, '0'), mode: 'remux', since: Date.now(), state: 'running', bitrate: 4_000_000, errors: [], lastSegmentAt: Date.now(), segments: 'ts',
 });
 function fakeLivetv() {
   env.ctx.fetchImpl = fakeHttp({

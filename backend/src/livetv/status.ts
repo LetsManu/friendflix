@@ -68,8 +68,8 @@ const byNumberThenName = (a: { number: number | null; name: string }, b: { numbe
   (a.number ?? Number.MAX_SAFE_INTEGER) - (b.number ?? Number.MAX_SAFE_INTEGER) || a.name.localeCompare(b.name);
 
 /** `GET /v1/streams`, read defensively: an item that is not a StreamView is dropped, and the stream key is never copied */
-function parseStreams(raw: unknown[]): Array<Omit<StreamView, 'streamKey'>> {
-  const out: Array<Omit<StreamView, 'streamKey'>> = [];
+function parseStreams(raw: unknown[]): Array<Omit<StreamView, 'streamKey' | 'segments'>> {
+  const out: Array<Omit<StreamView, 'streamKey' | 'segments'>> = [];
   for (const x of raw) {
     const o = rec(x);
     if (!o || typeof o.channelId !== 'string' || !MODES.includes(o.mode as string) || !STATES.includes(o.state as string)) continue;

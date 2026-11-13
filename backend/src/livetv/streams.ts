@@ -15,7 +15,7 @@ import { pushEvent } from './events.js';
 import { syncIngest } from './ownfeeds.js';
 import { channelSet, type LivetvProfile, type LivetvUser } from './rights.js';
 import { adminStopKey, deviceLiveView, liveViewKey } from './tokens.js';
-import type { Mode, StartBody, StreamInput, StreamView } from './wire.js';
+import type { Mode, Segments, StartBody, StreamInput, StreamView } from './wire.js';
 
 /**
  * The shared live streams as the backend runs them (spec §7.4): one stream per channel in livetv for every viewer. A watch on a running
@@ -118,6 +118,9 @@ export type WatchError =
   | { status: 503; error: 'provider_limit'; max: number; running: RunningChannel[] }
   | { status: 502; error: 'channel_unreachable' }
   | { status: 409; error: 'not_receiving' };
+/** a stream a watch got: its key, the mode livetv reports and its segment format (TS when livetv does not say yet; bughunt M2) */
+export interface Joined { streamKey: string; mode: Mode; segments: Segments }
+const joined = (v: StreamView): Joined => ({ streamKey: v.streamKey, mode: v.mode, segments: v.segments ?? 'ts' });
 /** who watches: the account (its role decides what `running` lists) and the device */
 export interface Watcher { userId: string; deviceId: string; role: string }
 
@@ -140,7 +143,8 @@ function parseStreams(raw: unknown): StreamView[] | null {
       const seconds = num(r.seconds);
       return [{ at, code: r.code as 'input_lost' | 'input_back', ...(seconds !== null ? { seconds } : {}) }];
     }) : [];
-    out.push({ channelId: o.channelId, streamKey: o.streamKey, mode: o.mode as Mode, since, state: o.state as StreamView['state'], bitrate: num(o.bitrate), errors, lastSegmentAt: num(o.lastSegmentAt) });
+    const segments = o.segments === 'fmp4' || o.segments === 'ts' ? o.segments : null;
+    out.push({ channelId: o.channelId, streamKey: o.streamKey, mode: o.mode as Mode, since, state: o.state as StreamView['state'], bitrate: num(o.bitrate), errors, lastSegmentAt: num(o.lastSegmentAt), segments });
   }
   return out;
 }
@@ -352,7 +356,7 @@ function inputOf(ctx: Ctx, channelId: string, r: InputRow): StreamInput | null {
  * slot or a `live_full` (Review Focus 1). The answer's mode is what livetv reports once the first segment exists (its probe at start
  * can downgrade a transcode to remux).
  */
-export async function startOrJoin(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: LivetvProfile): Promise<{ streamKey: string; mode: Mode } | WatchError> {
+export async function startOrJoin(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: LivetvProfile): Promise<Joined | WatchError> {
   const unreachable = { status: 502, error: 'channel_unreachable' } as const;
   // an admin stopped this channel a moment ago (*Stoppen*): a viewer's player re-watching after its token was revoked must not start it again
   if (await ctx.kv.get(adminStopKey(ch.id)).catch(() => null)) return unreachable;
@@ -414,16 +418,16 @@ async function waitStopping(ctx: Ctx, channelId: string): Promise<boolean> {
 }
 
 /** a running stream: its key and mode, once it has a first segment (a stream still starting is waited for, like a start) */
-async function join(ctx: Ctx, v: StreamView): Promise<{ streamKey: string; mode: Mode } | WatchError> {
-  if (v.lastSegmentAt !== null) return { streamKey: v.streamKey, mode: v.mode };
+async function join(ctx: Ctx, v: StreamView): Promise<Joined | WatchError> {
+  if (v.lastSegmentAt !== null) return joined(v);
   const ready = await firstSegment(ctx, v.channelId, FIRST_SEGMENT_MS);
-  if (ready) return { streamKey: ready.streamKey, mode: ready.mode };
+  if (ready) return joined(ready);
   // still no segment: whoever started it decides its fate; a stream that is still listed is joined as it is
   const still = activeOf(await readStreams(ctx), v.channelId);
-  return still ? { streamKey: still.streamKey, mode: still.mode } : { status: 502, error: 'channel_unreachable' };
+  return still ? joined(still) : { status: 502, error: 'channel_unreachable' };
 }
 
-async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: LivetvProfile, list: StreamView[], lock: string): Promise<{ streamKey: string; mode: Mode } | WatchError> {
+async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: LivetvProfile, list: StreamView[], lock: string): Promise<Joined | WatchError> {
   const unreachable = { status: 502, error: 'channel_unreachable' } as const;
   const user = { id: who.userId, role: who.role };
   const row = (await ctx.db.query<InputRow>(
@@ -539,7 +543,7 @@ async function start(ctx: Ctx, who: Watcher, ch: EffectiveChannel, profile: Live
     }
     // livetv's own probe at start decides the real mode (a transcode becomes remux): only a transcode keeps the slot
     if (ready.mode !== 'transcode') await giveBack();
-    return { streamKey: ready.streamKey, mode: ready.mode };
+    return joined(ready);
   } catch (e) {
     await giveBack();
     throw e;

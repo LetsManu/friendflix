@@ -512,6 +512,8 @@ export interface LiveCastMedia {
   contentId: string;
   contentType: 'application/x-mpegURL';
   streamType: 'LIVE';
+  /** only for an fMP4 / CMAF stream (the watch answer's `segments`): the receiver must not expect MPEG-TS segments (bughunt M2) */
+  hlsSegmentFormat?: 'fmp4';
   metadata: { title: string; subtitle: string; images: string[] };
   customData: { ui: { live: true } };
 }
@@ -522,6 +524,11 @@ export async function loadLiveOnCast(l: LiveCastMedia): Promise<boolean> {
   const m = ch.media;
   const media = new m.MediaInfo(l.contentId, l.contentType);
   media.streamType = m.StreamType.LIVE ?? 'LIVE';
+  // fMP4 like the film path (mediaOf); a TS stream stays as it always was (no format set: the receiver's default is TS)
+  if (l.hlsSegmentFormat === 'fmp4') {
+    media.hlsSegmentFormat = m.HlsSegmentFormat.FMP4 ?? 'fmp4';
+    media.hlsVideoSegmentFormat = m.HlsVideoSegmentFormat?.FMP4 ?? 'fmp4';
+  }
   const meta = new (m.GenericMediaMetadata ?? m.MovieMediaMetadata)();
   meta.metadataType = 0; // GENERIC
   meta.title = l.metadata.title;

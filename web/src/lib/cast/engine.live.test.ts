@@ -87,6 +87,17 @@ describe('cast engine: live channels', () => {
     expect(env.liveLoads[1]!.metadata.images).toEqual([]);
   });
 
+  it('an fMP4 channel is loaded with its segment format, a TS one as before (bughunt M2)', async () => {
+    const env = setup();
+    connected(env);
+    env.watchAnswers['ch-nord'] = async () => liveAnswer('ch-nord', 'tok-a', { segments: 'fmp4' });
+    env.watchAnswers['ch-hafen'] = async () => liveAnswer('ch-hafen', 'tok-b', { segments: 'ts' });
+    await env.engine.loadLive('ch-nord');
+    expect(env.liveLoads[0]!.hlsSegmentFormat).toBe('fmp4');
+    await env.engine.loadLive('ch-hafen');
+    expect('hlsSegmentFormat' in env.liveLoads[1]!).toBe(false);
+  });
+
   it('a channel switch mints a new token and loads again', async () => {
     const env = setup();
     connected(env);

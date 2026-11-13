@@ -60,6 +60,8 @@ export interface WatchAnswer {
   expiresAt: number;
   dvrSeconds: number;
   mode: LiveMode;
+  /** the playlist's segment format (an fMP4 / CMAF passthrough is `fmp4`); absent from an older backend = TS (bughunt M2) */
+  segments?: 'ts' | 'fmp4';
   channel: { id: string; number: number; name: string; logo: string | null };
   now?: Prog;
   next?: Prog;
