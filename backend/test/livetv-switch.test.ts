@@ -6,6 +6,7 @@
  * of `/v1/streams`. The ordering hooks (`__switchHooks`) only run real requests of other viewers; they never write a KV key themselves.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildApp } from '../src/app.js';
 import { hashToken } from '../src/cast.js';
 import { __resetConvMemo, countConversions } from '../src/convbudget.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
@@ -138,8 +139,12 @@ beforeAll(async () => {
   ben = await person(benId, 'ben', 'Ben Muster', 'friend');
   carla = await person(carlaId, 'carla', 'Carla Probe', 'family');
 });
-afterAll(() => env.close());
+/** a fresh app per test (its own rate-limit counters: the watch limit is per account and device since bughunt L5, and these tests watch a lot) */
+const apps: Array<TestEnv['app']> = [];
+afterAll(async () => { for (const a of apps) await a.close(); await env.close(); });
 beforeEach(async () => {
+  env.app = await buildApp(env.ctx);
+  apps.push(env.app);
   env.ctx.cfg = { ...cfg };
   __resetConvMemo();
   await env.pool.query('delete from livetv_channels; delete from livetv_group_roles; delete from livetv_group_map; delete from livetv_groups; delete from livetv_sources; delete from livetv_logos');

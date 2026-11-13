@@ -7,6 +7,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildApp } from '../src/app.js';
 import { hashToken } from '../src/cast.js';
 import { __resetConvMemo, admitConversion, countConversions } from '../src/convbudget.js';
 import { encrypt, keyFromBase64 } from '../src/crypto.js';
@@ -16,6 +17,7 @@ import { detectLivetv } from '../src/livetv/detect.js';
 import { resolveEncoder } from '../src/livetv/encoder.js';
 import { listEvents } from '../src/livetv/events.js';
 import { invalidateLivetvRights } from '../src/livetv/rights.js';
+import { WATCH_IP_MAX } from '../src/livetv/routes.js';
 import {
   expectedMode, invalidateLiveConversions, liveConversions, livetvTick, startOrJoin, streamKeyFor, viewerCounts,
 } from '../src/livetv/streams.js';
@@ -455,6 +457,27 @@ describe('beat and stop watching', () => {
     expect(gone.json()).toEqual({ error: 'gone' });
     expect(await env.kv.get(liveViewKey(hashToken(w.token)))).toBeNull();
     expect((await call(anna, 'POST', '/api/livetv/beat', { token: 'x' })).statusCode).toBe(400);
+  });
+});
+
+describe('the watch rate limit (bughunt L5)', () => {
+  it('counts per account and device, not per address; the address has a higher cap of its own', async () => {
+    const app = await buildApp(env.ctx); // its own limiter counters
+    try {
+      const nat = '198.51.100.7'; // a household behind one NAT
+      const w = (s: Sess) => app.inject({ method: 'POST', url: '/api/livetv/channels/00000000-0000-4000-8000-000000000000/watch', cookies: s.cookies, headers: { 'x-csrf-token': s.csrf }, remoteAddress: nat, payload: {} });
+      for (let i = 0; i < 30; i++) expect((await w(anna)).statusCode).toBe(403);
+      expect((await w(anna)).statusCode).toBe(429);
+      // another account in the same household is not limited by Anna's zapping
+      expect((await w(ben)).statusCode).toBe(403);
+      // the address cap: far above one viewer, still there
+      await env.kv.set(`ltv:watchip:${nat}`, String(WATCH_IP_MAX), 60);
+      const capped = await w(ben);
+      expect([capped.statusCode, capped.json()]).toEqual([429, { error: 'rate_limited' }]);
+    } finally {
+      await app.close();
+      for (const k of await env.kv.keys('ltv:watchip:')) await env.kv.del(k);
+    }
   });
 });
 
