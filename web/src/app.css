@@ -123,7 +123,9 @@ label { color: var(--mut); font-size: .9rem; }
 .flex { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; }
 .badge { background: var(--surface-2); border-radius: 99px; padding: .1rem .7rem; font-size: .8rem; color: var(--fg); }
 table { width: 100%; border-collapse: collapse; } td, th { text-align: left; padding: .6rem .6rem; border-bottom: 1px solid var(--line); } th { color: var(--mut); font-weight: 500; font-size: .85rem; }
-.bar { height: 3px; background: #3c4650; border-radius: 2px; overflow: hidden; } .bar > i { display: block; height: 100%; background: var(--acc); }
+/* a thin progress bar (<div class="pbar"><i style="width:…"></i></div>). Not `.bar`: that name is a component's own toolbar in
+   many places, and a global height/overflow on it clipped their buttons (the Live-TV Quellen tab's *Quelle hinzufügen*) */
+.pbar { height: 3px; background: #3c4650; border-radius: 2px; overflow: hidden; } .pbar > i { display: block; height: 100%; background: var(--acc); }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1rem; }
 
 /* poster/landscape grid used by browse/search pages */

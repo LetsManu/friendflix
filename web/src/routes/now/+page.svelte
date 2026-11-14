@@ -16,6 +16,6 @@
   {#each items as i}
     <div class="panel"><div class="flex"><img src={img(i.itemId, 120)} alt="" style="width:60px;border-radius:4px" />
       <div><b>{i.user}</b><br />{i.seriesName ? i.seriesName + ' – ' : ''}{i.title}<br /><span class="muted">{i.isPaused ? $t('social.now.paused') : $t('social.now.playing')}</span></div></div>
-      {#if i.runtimeTicks}<div class="bar" style="margin-top:.6rem"><i style="width:{Math.min(100, (i.positionTicks / i.runtimeTicks) * 100)}%"></i></div>{/if}</div>
+      {#if i.runtimeTicks}<div class="pbar" style="margin-top:.6rem"><i style="width:{Math.min(100, (i.positionTicks / i.runtimeTicks) * 100)}%"></i></div>{/if}</div>
   {/each}
 </div>
