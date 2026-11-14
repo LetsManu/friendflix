@@ -10,7 +10,7 @@ import { decrypt, encrypt, keyFromBase64 } from '../src/crypto.js';
 import { listErrors } from '../src/errorlog.js';
 import { detectLivetv } from '../src/livetv/detect.js';
 import { listEvents } from '../src/livetv/events.js';
-import { importNumber, mergeImport } from '../src/livetv/import.js';
+import { chnoUsable, importNumber, mergeImport } from '../src/livetv/import.js';
 import { livetvRefreshTick, refreshSource } from '../src/livetv/refresh.js';
 import type { SourceRow } from '../src/livetv/sources.js';
 import type { FetchM3uAnswer, M3uEntry } from '../src/livetv/wire.js';
@@ -182,6 +182,9 @@ describe('import merge (spec §10)', () => {
     expect(importNumber({ chno: 7, pos: 0 }, { numbering: 'chno', number_base: 100 })).toBe(7);
     expect(importNumber({ pos: 3 }, { numbering: 'chno', number_base: 100 })).toBe(103);
     expect(importNumber({ chno: 7, pos: 3 }, { numbering: 'order', number_base: 1 })).toBe(4);
+    expect(chnoUsable([{ chno: 1 }, { chno: 2 }, { chno: 3 }, {}])).toBe(true);
+    expect(chnoUsable([{ chno: 1 }, { chno: 1 }, { chno: 1 }, { chno: 1 }])).toBe(false); // every channel tvg-chno="1"
+    expect(chnoUsable([])).toBe(true);
     list = [entry('Nordlicht TV', 'Nachrichten', 0, { chno: 7 }), entry('Hafenkanal', 'Nachrichten', 1), entry('Kanal Wolkenlos', 'Nachrichten', 2),
       entry('Sternwarte 24', 'Nachrichten', 3)];
     const id = await addSource({ numbering: 'chno', number_base: 100 });
@@ -385,6 +388,14 @@ describe('an admin edit while a refresh runs (1c final review I1)', () => {
     expect(s.last_ok_at).not.toBeNull();
     expect(s.last_error).toBeNull();
     expect(s.last_counts).toMatchObject({ channels: 6, listed: 6 });
+  });
+
+  it('a list that gives every channel the same tvg-chno is numbered by its order', async () => {
+    list = ['Nordlicht TV', 'Hafenkanal', 'Kanal Wolkenlos', 'Sternwarte 24'].map((n, i) => entry(n, 'Nachrichten', i, { chno: 1 }));
+    const id = await addSource({ numbering: 'chno', number_base: 1 });
+    await refresh(id);
+    const ch = await byKey(id);
+    expect(['k0', 'k1', 'k2', 'k3'].map((k) => ch.get(k)!.import_number)).toEqual([1, 2, 3, 4]);
   });
 
   it('two imports creating the same new groups in different order do not deadlock', async () => {
