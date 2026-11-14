@@ -84,6 +84,8 @@ function parse(raw: string | null): Rec | null {
   return ok ? (o as unknown as Rec) : null;
 }
 const read = async (ctx: Ctx): Promise<Rec | null> => parse(await ctx.kv.get(REDEPLOY_KEY).catch(() => null));
+/** whether the last redeploy ended refused by Portainer (the stored record only: never judges or stores a phase; the Systemcheck reads it) */
+export const lastRedeployFailed = async (ctx: Ctx): Promise<boolean> => (await read(ctx))?.final === 'failed';
 const write = (ctx: Ctx, r: Rec): Promise<boolean> => ctx.kv.set(REDEPLOY_KEY, JSON.stringify(r), TTL).then(() => true, () => false);
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 

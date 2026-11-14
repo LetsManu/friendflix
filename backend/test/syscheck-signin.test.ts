@@ -122,7 +122,7 @@ describe('a hung Authentik', () => {
     const r = await buildSystemcheck(env.ctx);
     expect(performance.now() - t0).toBeLessThan(8_500);
     expect(r.lines.filter((l) => l.group === 'signin').map((l) => [l.id, l.status, l.cause])).toEqual(signinCheck.ids.map((id: CheckId) => [id, 'unknown', 'check_timeout']));
-    const others = r.lines.filter((l) => l.group !== 'signin');
+    const others = r.lines.filter((l) => l.group === 'core' || l.group === 'media'); // Live TV and updates have lines of their own (Stage 3)
     expect(others.length).toBe(14);
     expect(others.filter((l) => l.status !== 'ok')).toEqual([]);
   }, 15_000);

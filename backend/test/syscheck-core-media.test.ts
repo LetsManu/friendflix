@@ -127,7 +127,7 @@ describe('media lines', () => {
     expect(get(r, 'media.requests')).toMatchObject({ status: 'not_set_up', cause: 'requests_not_set', settingKey: 'REQUESTS_URL' });
     expect(r.counts.problem).toBe(0);
     expect(r.counts.warning).toBe(0);
-    expect(r.lines.filter((l) => l.status === 'not_set_up' && l.group !== 'signin').map((l) => l.id)).toEqual(['media.requests']);
+    expect(r.lines.filter((l) => l.status === 'not_set_up' && (l.group === 'core' || l.group === 'media')).map((l) => l.id)).toEqual(['media.requests']);
   });
 
   it('request service answers 401 → media.requests warning requests_key_invalid settingKey REQUESTS_API_KEY', async () => {
