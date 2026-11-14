@@ -10,7 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { networkInterfaces } from 'node:os';
-import { createGateway } from '../src/gateway.js';
+import { createGateway, liveUrisOk, tagUriValues } from '../src/gateway.js';
 import { isTrustedPeer, setUntrustedPeers } from '../src/peers.js';
 
 const SECRET = 'internal-secret-for-tests';
@@ -427,5 +427,48 @@ describe('review L2: forwarding headers count only from a trusted proxy peer', (
     } finally {
       g.server.close();
     }
+  });
+});
+
+describe('live playlist URI scan (code-scanning #62: linear, no regex backtracking)', () => {
+  it('reads quoted and bare values, any case of the name, blanks around =', () => {
+    expect(tagUriValues('#EXT-X-MAP:URI="init-1.mp4"')).toEqual(['init-1.mp4']);
+    expect(tagUriValues('#EXT-X-MAP:uri = "init-1.mp4",BYTERANGE="10@0"')).toEqual(['init-1.mp4']);
+    expect(tagUriValues('#EXT-X-KEY:METHOD=AES-128,Uri=k.key,IV=0x1')).toEqual(['k.key']);
+    expect(tagUriValues('#EXT-X-MAP:URI\t=　"a",URI=b')).toEqual(['a', 'b']);
+    expect(tagUriValues('#EXT-X-SESSION-DATA:DATA-ID="x",VALUE="URI is a word"')).toEqual([]); // no '=' after the name
+    expect(tagUriValues('#EXTINF:4.000,')).toEqual([]);
+    expect(tagUriValues('#EXT-X-MAP:URI="init-1.mp4')).toEqual(['"init-1.mp4']); // unterminated: the rest of the line, quote kept
+    expect(tagUriValues('#EXT-X-MAP:URI=')).toEqual(['']);
+  });
+
+  it('accepts only bare route file names, in lines and attributes (old semantics kept)', () => {
+    const ok = ['#EXTM3U', '#EXT-X-MAP:URI="init-1.mp4"', '#EXTINF:4.000,', '5.m4s', '#EXT-X-MAP:uri = init-2.mp4', '6.ts', ''].join('\n');
+    expect(liveUrisOk(ok)).toBe(true);
+    for (const bad of [
+      '#EXT-X-MAP:URI="https://evil.example/init-1.mp4"', '#EXT-X-MAP:URI = "//evil/i.mp4"', '#EXT-X-KEY:METHOD=AES-128,uri=https://evil/k',
+      '#EXT-X-MAP:URI="init-1.mp4,x"', '#EXT-X-MAP:URI=""', '#EXT-X-MAP:URI="init-1.mp4', '#EXT-X-MAP:URI=init-1.mp4,URI="../x.ts"',
+      '#EXT-X-MAP:URI ="https://evil"', '#EXT-X-MAP:URI="init-1.mp4"\nhttps://evil.example/6.m4s', '#EXTINF:4,\n../6.m4s', '#EXTINF:4,\n06.ts',
+    ]) expect(liveUrisOk(bad), bad).toBe(false);
+  });
+
+  it('stays linear on long hostile lines (a 2 MB playlist is the cap)', () => {
+    const MB = 1024 * 1024;
+    const lines = [
+      `#X:URI="${'a'.repeat(2 * MB)}`, // unterminated quote
+      `#X:${'URI '.repeat(MB / 2)}`, // the name over and over, never an '='
+      `#X:${'URI='.repeat(MB / 2)}`,
+      `#X:${'URI="'.repeat(MB / 2)}`,
+      `#X:URI=${' '.repeat(2 * MB)}`,
+      `#X:URI${'\t'.repeat(2 * MB)}x`,
+      `#X:${'uRi = "init-1.mp4",'.repeat(MB / 20)}`,
+    ];
+    for (const l of lines) {
+      const t0 = performance.now();
+      liveUrisOk(l);
+      tagUriValues(l);
+      expect(performance.now() - t0, l.slice(0, 12)).toBeLessThan(1500);
+    }
+    expect(liveUrisOk(`#X:${'uRi = "init-1.mp4",'.repeat(MB / 20)}`)).toBe(true);
   });
 });

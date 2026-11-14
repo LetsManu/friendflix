@@ -156,13 +156,51 @@ const LIVE_MEMO_MS = 2_000;
 const LIVE_TYPES: Record<string, string> = { m3u8: 'application/vnd.apple.mpegurl', ts: 'video/mp2t', m4s: 'video/mp4', mp4: 'video/mp4' };
 type LiveAuthz = { streamKey: string } | 401 | 403 | 410;
 
+/** one code unit of JavaScript's `\s` (the blanks the former regex allowed around `=`); a single-character test, never a scan */
+const BLANK = /\s/;
+const isBlank = (t: string, j: number) => BLANK.test(t.charAt(j));
+
+/**
+ * Every `URI=` attribute value of one tag line, in one linear left-to-right pass (no regex, so no backtracking on a hostile
+ * line; code-scanning alert #62). The name matches case-insensitively and anywhere in the line, blanks around `=` are allowed;
+ * a value is either `"…"` (up to the next `"`) or bare (up to the next `,` or `"`). A quoted value without its closing quote
+ * is returned as the rest of the line WITH its opening quote, so a caller that checks every value against a file-name allowlist
+ * refuses it (as the former regex did).
+ */
+export function tagUriValues(t: string): string[] {
+  const out: string[] = [];
+  const n = t.length;
+  let i = 0;
+  while (i + 3 <= n) {
+    // `| 0x20` folds ASCII upper case to lower case and maps no other code unit onto 'u', 'r' or 'i'
+    if ((t.charCodeAt(i) | 0x20) !== 0x75 || (t.charCodeAt(i + 1) | 0x20) !== 0x72 || (t.charCodeAt(i + 2) | 0x20) !== 0x69) { i++; continue; }
+    let j = i + 3;
+    while (j < n && isBlank(t, j)) j++;
+    if (t.charCodeAt(j) !== 0x3d /* = */) { i = j; continue; } // 'uri' cannot overlap itself: resume after it
+    j++;
+    while (j < n && isBlank(t, j)) j++;
+    if (t.charCodeAt(j) === 0x22 /* " */) {
+      const end = t.indexOf('"', j + 1);
+      if (end === -1) { out.push(t.slice(j)); break; } // keeps its opening quote: never a file name
+      out.push(t.slice(j + 1, end));
+      i = end + 1;
+    } else {
+      let k = j;
+      while (k < n && t.charCodeAt(k) !== 0x2c /* , */ && t.charCodeAt(k) !== 0x22) k++;
+      out.push(t.slice(j, k));
+      i = k > j ? k : j + 1;
+    }
+  }
+  return out;
+}
+
 /** true when every URI of a live playlist (lines and `URI="…"` attributes) is a bare file name of the route */
 export function liveUrisOk(text: string): boolean {
   for (const line of text.split(/\r?\n/)) {
     const t = line.trim();
     if (!t) continue;
     if (t.startsWith('#')) {
-      for (const m of t.matchAll(/URI\s*=\s*("?)([^",]*)\1/gi)) if (!LIVE_FILE.test(m[2]!)) return false;
+      for (const v of tagUriValues(t)) if (!LIVE_FILE.test(v)) return false;
       continue;
     }
     if (!LIVE_FILE.test(t)) return false;
