@@ -9,6 +9,10 @@
    * the ends, so nothing moves), plus the menu *Bearbeiten* / *Deaktivieren* / *Löschen*. A guide left without a scope (its last scoped
    * source was deleted; the backend refuses turning it on without a new scope) opens the sheet on *Aktivieren* (`enable`). The page
    * does the writes.
+   *
+   * A file guide (Stage 2) has *Neue Datei hochladen* instead of the interval, and *Jetzt aktualisieren* re-imports its stored file
+   * (disabled before the first file and while it is switched off). While an upload or its import runs, the button that started it
+   * keeps its spinner (`uploading`, then `refreshing`: the page follows the import under the refresh key) and the other one waits.
    */
   import { createEventDispatcher } from 'svelte';
   import Icon from '#lib/Icon.svelte';
@@ -80,7 +84,8 @@
     <div class="row">
       {#if isFile}
         <input type="file" class="pick" accept=".xml,.xml.gz,.gz" bind:this={picker} on:change={picked} tabindex="-1" aria-hidden="true" />
-        <Button variant="secondary" icon="arrow-up" class="rf" pending={uploading} disabled={busy} on:click={() => picker?.click()}>{$t('adminLive.src.guide.newFile')}</Button>
+        <Button variant="secondary" icon="arrow-up" class="rf" pending={uploading} disabled={busy || refreshing} on:click={() => picker?.click()}>{$t('adminLive.src.guide.newFile')}</Button>
+        <Button variant="secondary" icon="refresh" class="rf" pending={refreshing} disabled={!source.fileName || !source.enabled || uploading} on:click={() => dispatch('refresh')}>{$t('adminLive.src.refreshNow')}</Button>
       {:else}
         <div class="iv"><Select label={$t('adminLive.src.interval.label')} value={source.refresh} options={intervals} disabled={busy} on:change={onInterval} /></div>
         <Button variant="secondary" icon="refresh" class="rf" pending={refreshing} disabled={!source.enabled} on:click={() => dispatch('refresh')}>{$t('adminLive.src.refreshNow')}</Button>

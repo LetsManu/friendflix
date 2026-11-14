@@ -229,7 +229,7 @@ export interface LivetvAreaMock {
   /** the raw logo uploads that reached the server */
   logoPuts: Array<{ id: string; type: string; bytes: number }>;
   /** the raw guide-file uploads (PUT /sources/:id/file) that reached the server; `fileAnswer` makes the next one fail (413 too_large, 409 import_running, 400 invalid) */
-  filePuts: Array<{ id: string; type: string; bytes: number; name: string | null }>;
+  filePuts: Array<{ id: string; type: string; bytes: number; name: string | null; query: string }>;
   /** an accepted upload waits here until its simulated import ends (the next `refreshPolls` GETs of /sources); only a good import stores it on the view */
   pendingFile: Record<string, { name: string | null; bytes: number }>;
   fileAnswer: { status: number; error: string } | null;
@@ -955,15 +955,15 @@ function livetvAreaRoute(a: LivetvAreaMock, installed: boolean, m: string, p: st
   if ((mm = p.match(/^\/api\/admin\/livetv\/sources\/([^/]+)\/file$/)) && m === 'PUT') {
     const s = a.sources.find((x) => x.id === mm![1]);
     if (!s) return J({ error: 'not_found' }, 404);
-    const up = body as { contentType: string; bytes: number };
-    a.filePuts.push({ id: s.id, type: up.contentType, bytes: up.bytes, name: sp.get('name') });
+    const up = body as { contentType: string; bytes: number; fileName: string | null; query: string };
+    a.filePuts.push({ id: s.id, type: up.contentType, bytes: up.bytes, name: up.fileName, query: up.query });
     if (!installed) return J({ error: 'livetv_off' }, 409);
     if (a.fileAnswer) { const f = a.fileAnswer; a.fileAnswer = null; return J(f.error === 'invalid' ? { error: f.error, field: 'file' } : { error: f.error }, f.status); }
     if (s.kind !== 'guide' || s.guideProvider !== 'xmltv_file') return J({ error: 'invalid', field: 'id' }, 400);
     if (!['application/octet-stream', 'application/xml', 'text/xml', 'application/gzip', 'application/x-gzip'].includes(up.contentType.split(';')[0]!.trim().toLowerCase())) return J({ error: 'invalid', field: 'file' }, 400);
     if (a.refreshing[s.id]) return J({ error: 'import_running' }, 409);
     // 202 once received; the import runs in the background and its result arrives through GET /sources (name and size only then)
-    a.pendingFile[s.id] = { name: sp.get('name'), bytes: up.bytes };
+    a.pendingFile[s.id] = { name: up.fileName, bytes: up.bytes };
     a.refreshing[s.id] = a.refreshPolls;
     return J({ started: true }, 202);
   }

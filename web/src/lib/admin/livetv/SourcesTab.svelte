@@ -7,7 +7,8 @@
    * exists, *Quelle hinzufügen* (SourceSheet; its kind *Programmführer* opens GuideSheet, *Eigene Streams* opens StreamSheet, which
    * creates the own-feeds source on first use). *Jetzt aktualisieren* posts the refresh (202 `{ started }`; 409 `livetv_off` / `no_list` have their own
    * text) and asks `GET /sources` every REFRESH_POLL_MS until the
-   * source's `lastRefreshAt` moved, then says the outcome in a toast; the button keeps its spinner meanwhile. Deleting names how
+   * source's `lastRefreshAt` moved, then says the outcome in a toast; the button keeps its spinner meanwhile (a file guide's upload is
+   * followed the same way, also when it came from the sheet and the sheet was closed meanwhile). Deleting names how
    * many channels go. Loading keeps the cards' place with skeletons of their height.
    */
   import { onDestroy, onMount } from 'svelte';
@@ -172,6 +173,23 @@
     toast.success(tr('adminLive.src.guide.uploaded'));
     await followImport(s);
   }
+  /**
+   * the GuideSheet's upload: the PUT runs here, not in the sheet, so a sheet closed while it runs (Abbrechen, Escape) does not lose the
+   * outcome: the import is followed all the same, and a refusal the closed sheet can no longer show becomes a toast. The sheet awaits
+   * it (its bar, its error line, *Speichern* uploading again).
+   */
+  async function sheetUpload(s: SourceView, file: File): Promise<void> {
+    const owner = guideSheet;
+    const closed = () => guideSheet !== owner || gone;
+    const r = await runAction({ key: `ltv-src-upload:${s.id}`, run: () => uploadGuideFile(s.id, file), error: false });
+    if (r.skipped) throw new ApiError(409, { error: 'import_running' }); // the card's upload of this guide runs
+    if (!r.ok) {
+      if (closed()) toast.error(fileFailText(r.error));
+      throw r.error;
+    }
+    if (closed()) toast.success(tr('adminLive.src.guide.uploaded'));
+    void followImport(s);
+  }
 
   // ---- the order among the guides: one PATCH with the neighbour's position (the backend swaps the two); shown at once, then the
   // page asks GET /sources for the truth
@@ -228,7 +246,7 @@
   <SourceSheet source={sheet.source} trigger={sheet.trigger} autoTest={sheet.autoTest ?? false} on:close={() => (sheet = null)} on:saved={saved} on:own={() => toOwn(sheet)} on:guide={toGuide} />
 {/if}
 {#if guideSheet}
-  <GuideSheet source={guideSheet.source} sources={sources ?? []} trigger={guideSheet.trigger} enable={guideSheet.enable ?? false} on:close={() => (guideSheet = null)} on:saved={saved} on:created={(e) => replace(e.detail)} on:uploaded={(e) => void followImport(e.detail)} on:list={toList} on:own={() => toOwn(guideSheet)} />
+  <GuideSheet source={guideSheet.source} sources={sources ?? []} trigger={guideSheet.trigger} enable={guideSheet.enable ?? false} on:close={() => (guideSheet = null)} on:saved={saved} on:created={(e) => replace(e.detail)} upload={sheetUpload} on:list={toList} on:own={() => toOwn(guideSheet)} />
 {/if}
 {#if stream}
   <StreamSheet result={stream.result} trigger={stream.trigger} on:close={() => (stream = null)} on:created={streamCreated} />

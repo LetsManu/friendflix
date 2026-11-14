@@ -63,6 +63,7 @@ test.describe('admin: Live-TV, Programmführer (phone, 375 px)', () => {
     await expect(c.locator('[data-file-line]')).toContainText('· 48 MB');
     await fits(c, 'file guide card');
     await fits(c.getByRole('button', { name: 'Neue Datei hochladen' }), 'Neue Datei hochladen', 44);
+    await fits(c.getByRole('button', { name: 'Jetzt aktualisieren' }), 'Jetzt aktualisieren', 44);
     await page.getByRole('button', { name: 'Quelle hinzufügen' }).click();
     await page.getByRole('dialog', { name: 'Quelle hinzufügen' }).getByRole('radio', { name: 'Programmführer', exact: true }).click();
     const dlg = page.getByRole('dialog', { name: 'Programmführer hinzufügen' });

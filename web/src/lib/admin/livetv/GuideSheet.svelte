@@ -15,7 +15,8 @@
    * Stage 2: a new guide chooses *Link* / *Datei*. *Datei* has a file picker (`.xml,.xml.gz,.gz`) with the chosen name and size, no link,
    * no interval and no *Prüfen*; *Speichern* creates the guide, then PUTs the file (an indeterminate bar in a reserved line: fetch has no
    * upload progress). A failed upload keeps the created guide: the sheet stays, the next *Speichern* only uploads again. Editing a file
-   * guide can pick a new file too.
+   * guide can pick a new file too. The PUT itself is the page's (`upload`): closing the sheet while it runs does not lose the import's
+   * outcome, the page still follows it and says how it went.
    */
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import { ApiError } from '#lib/api';
@@ -29,7 +30,7 @@
   import { uid } from '#lib/ui/ids';
   import Select from '#lib/ui/Select.svelte';
   import Toggle from '#lib/ui/Toggle.svelte';
-  import { createFileGuide, createGuide, REFRESHES, testGuide, updateGuide, uploadGuideFile, type GuidePatch, type GuideTest, type Refresh, type SourceView } from './api';
+  import { createFileGuide, createGuide, REFRESHES, testGuide, updateGuide, type GuidePatch, type GuideTest, type Refresh, type SourceView } from './api';
   import { confirmDiscard, guardLeave } from './discard';
   import { SHIFT_MAX, SHIFT_MIN, shiftLabel, stepShift } from './picker';
   import SecretInput from './SecretInput.svelte';
@@ -43,8 +44,10 @@
   export let trigger: HTMLElement | null = null;
   /** opened by *Aktivieren* on a guide left without a scope: saving the new scope turns it on too */
   export let enable = false;
+  /** PUTs a file guide's file (resolves on the 202, rejects with the refusal); the page owns it and follows the import afterwards */
+  export let upload: (s: SourceView, f: File) => Promise<unknown>;
 
-  const dispatch = createEventDispatcher<{ close: void; saved: SourceView; list: void; own: void; created: SourceView; uploaded: SourceView }>();
+  const dispatch = createEventDispatcher<{ close: void; saved: SourceView; list: void; own: void; created: SourceView }>();
   const id = uid('gs');
   const HTTP = ['http:', 'https:'];
   const SAMPLES = 8;
@@ -143,9 +146,8 @@
         made = v;
         dispatch('created', v);
         uploading = true;
-        try { await uploadGuideFile(v.id, file); } finally { uploading = false; }
         // 202: the import runs on the server; the page follows the list and shows name, size and outcome when it is done
-        dispatch('uploaded', v);
+        try { await upload(v, file); } finally { uploading = false; }
       }
       done = true;
       dispatch('saved', v);

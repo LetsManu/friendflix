@@ -184,7 +184,14 @@ export const createFileGuide = (b: FileGuideBody) => api<SourceView>(`${B}/sourc
  * after a good one (the page follows `GET /sources`). Refusals: 413 `too_large` (300 MB), 409 `import_running` / `livetv_off`,
  * 404 `not_found`, 400 `invalid` (field `file`). fetch gives no upload progress, so the pages show an indeterminate bar.
  */
-export const uploadGuideFile = (id: string, file: File) => api<{ started: boolean }>(`${B}/sources/${enc(id)}/file?name=${enc(file.name)}`, { method: 'PUT', raw: new Blob([file], { type: 'application/octet-stream' }) });
+/**
+ * PUT /sources/:id/file: the file's bytes as they are; its name in the header `x-ff-file-name` (percent-encoded UTF-8; a header, not the
+ * query, so it stays out of proxy access logs). 202 `{ started }`; refusals: 400 `invalid` (`field: 'file'`: an empty or broken-off
+ * upload), 404, 409 `import_running` / `livetv_off`, 413 `too_large`.
+ */
+export const uploadGuideFile = (id: string, file: File) => api<{ started: boolean }>(`${B}/sources/${enc(id)}/file`, {
+  method: 'PUT', raw: new Blob([file], { type: 'application/octet-stream' }), headers: { 'x-ff-file-name': encodeURIComponent(file.name) },
+});
 export const updateGuide = (id: string, patch: GuidePatch) => api<SourceView>(`${B}/sources/${enc(id)}`, { method: 'PATCH', body: patch });
 export const testGuide = (b: GuideTestBody) => api<GuideTest>(`${B}/sources/test`, { method: 'POST', body: b });
 export const updateSource = (id: string, patch: SourcePatch) => api<SourceView>(`${B}/sources/${enc(id)}`, { method: 'PATCH', body: patch });
