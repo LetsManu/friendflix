@@ -158,6 +158,7 @@ export default {
     groups: 'Gruppen & Rechte',
     guide: 'Programmführer',
     status: 'Live-Status',
+    settings: 'Einstellungen',
   },
   src: {
     add: 'Quelle hinzufügen',
@@ -666,5 +667,11 @@ export default {
       adminLocked: 'Admin-Konten bekommen keine Gruppen-Ausnahmen: Sie sehen alle freigegebenen Gruppen.',
       notFound: 'Die Gruppe gibt es nicht mehr.',
     },
+  },
+  settingsTab: {
+    loadFailed: 'Live-TV-Einstellungen konnten nicht geladen werden.',
+    ports: 'SRT-Ports',
+    portsValue: 'UDP {range}',
+    hint: 'Ports und Freigabe stehen in der Compose-Datei (LIVETV_SRT_PORTS, LIVETV_SRT_BIND); in Portainer als Umgebungsvariablen des Stacks.',
   },
 } as const;

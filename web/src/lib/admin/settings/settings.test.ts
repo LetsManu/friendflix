@@ -7,12 +7,12 @@ import { describeActivity } from '../activity';
 import { activeItem } from '../nav';
 import { fieldErrors, generate, importEnv, loadSettings, probeFailure, saveSettings, testGroup, type SettingView } from './api';
 import {
-  EXPERIMENTAL_KEYS, changedValues, clearPending, enumOptions, errorText, groupHelp, isChange, keepable, keyHelp, keyLabel, moveHint, probeText, redactedKeys, shownDraft, stashPending, stillRedacted,
+  EXPERIMENTAL_KEYS, changedValues, clearPending, enumOptions, errorText, groupHelp, isChange, keepable, keyHelp, keyLabel, livetvLinkShown, moveHint, pageGroups, probeText, redactedKeys, shownDraft, stashPending, stillRedacted,
   submitValue, takePending,
 } from './form';
 
-/** every visible setting of the registry (spec Part A: 48, plus the nine of phase 3, plus UPDATE_CHANNEL, plus the four recommendation settings, plus the three updater settings, plus the server upload, plus HEVC_STREAMS and SURROUND_AUDIO, plus CONVERSION_SLOTS and CONVERSION_PRIORITY (also edited on Betrieb → Wiedergabe-Check), plus CAST_AIRPLAY_CONTINUOUS, plus LIVETV_OFFER_HIDDEN, plus LIVETV_ENCODER and LIVETV_SRT_HOST (group livetv, listed while Live TV is installed), plus LIVETV_DVR_MINUTES and LIVETV_MAX_BITRATE (Live TV Task 31)) */
-const KEYS = ['PUBLIC_URL', 'WEBHOOK_SECRET', 'API_COMPRESSION', 'OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET', 'ADMIN_GROUP', 'AUTHENTIK_URL',
+/** every visible setting of the registry (spec Part A: 48, plus the nine of phase 3, plus UPDATE_CHANNEL, plus the four recommendation settings, plus the three updater settings, plus the server upload, plus HEVC_STREAMS and SURROUND_AUDIO, plus CONVERSION_SLOTS and CONVERSION_PRIORITY (also edited on Betrieb → Wiedergabe-Check), plus CAST_AIRPLAY_CONTINUOUS, plus LIVETV_OFFER_HIDDEN, plus LIVETV_ENCODER and LIVETV_SRT_HOST (group livetv, now edited in the Live-TV area), plus LIVETV_DVR_MINUTES and LIVETV_MAX_BITRATE (Live TV Task 31)) */
+const PAGE_KEYS = ['PUBLIC_URL', 'WEBHOOK_SECRET', 'API_COMPRESSION', 'OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET', 'ADMIN_GROUP', 'AUTHENTIK_URL',
   'AUTHENTIK_API_TOKEN', 'AUTHENTIK_ENROLL_FLOW', 'AUTHENTIK_RECOVERY_FLOW', 'AUTHENTIK_TOTP_SETUP_FLOW', 'JELLYFIN_URL', 'JELLYFIN_ADMIN_API_KEY', 'REQUESTS_URL',
   'REQUESTS_API_KEY', 'NTFY_URL', 'NTFY_BASE_URL', 'DISCORD_WEBHOOK_URL', 'VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'VAPID_SUBJECT', 'TMDB_API_KEY', 'OMDB_API_KEY',
   'DOWNLOADS_ENABLED', 'DIRECT_PLAY_REQUIRES_DOWNLOAD', 'DOWNLOAD_CACHE_MAX_GB', 'DOWNLOAD_MIN_FREE_GB', 'DOWNLOAD_PREP_CONCURRENCY', 'DOWNLOAD_PAUSE_STREAMS',
@@ -22,7 +22,10 @@ const KEYS = ['PUBLIC_URL', 'WEBHOOK_SECRET', 'API_COMPRESSION', 'OIDC_ISSUER', 
   'HEALTH_DISK_CRIT_PCT', 'HEALTH_DB_WARN_GB', 'SESSION_TTL_SECONDS', 'SESSION_IDLE_SECONDS',
   'LOGIN_UI', 'AUTHENTIK_LOGIN_FLOW', 'AUTHENTIK_INVALIDATION_FLOW', 'PASSKEYS_IN_APP', 'LOGIN_COVER_WALL', 'LIVETV_OFFER_HIDDEN',
   'AUTHENTIK_STATIC_SETUP_FLOW', 'AUTHENTIK_WEBAUTHN_SETUP_FLOW', 'AUTHENTIK_PASSWORD_CHANGE_FLOW', 'AUTHENTIK_EMAIL_CHANGE_FLOW',
-  'RECO_ENGINE', 'RECO_EXPLORE', 'RECO_HALF_LIFE_DAYS', 'POSTPLAY_ENABLED', 'LIVETV_ENCODER', 'LIVETV_SRT_HOST', 'LIVETV_DVR_MINUTES', 'LIVETV_MAX_BITRATE'];
+  'RECO_ENGINE', 'RECO_EXPLORE', 'RECO_HALF_LIFE_DAYS', 'POSTPLAY_ENABLED'];
+/** the four settings of group livetv: edited in Admin → Live-TV → Einstellungen, not on the settings page */
+const LIVETV_KEYS = ['LIVETV_ENCODER', 'LIVETV_SRT_HOST', 'LIVETV_DVR_MINUTES', 'LIVETV_MAX_BITRATE'];
+const KEYS = [...PAGE_KEYS, ...LIVETV_KEYS];
 
 const view = (over: Partial<SettingView> & Pick<SettingView, 'key' | 'kind'>): SettingView => ({
   source: 'db', value: null, set: false, apply: 'live', restartPending: false, invalid: false, envNames: [over.key, `${over.key}_FILE`], updatedAt: null, ...over,
@@ -37,8 +40,27 @@ describe('experimental settings', () => {
   });
 });
 
+describe('placement of the livetv group', () => {
+  const groups = [{ id: 'general' }, { id: 'livetv' }, { id: 'health' }, { id: 'server' }];
+  it('the settings page lists no livetv group; the link shows while the backend lists it (Live TV installed)', () => {
+    expect(pageGroups(groups).map((g) => g.id)).toEqual(['general', 'health']);
+    expect(livetvLinkShown(groups)).toBe(true);
+    expect(livetvLinkShown(groups.filter((g) => g.id !== 'livetv'))).toBe(false);
+  });
+  it('the pointer text is in every language and names Live-TV', async () => {
+    for (const l of ['de', 'en', 'es', 'fr', 'it', 'pl', 'tr']) {
+      await setLocale(l);
+      expect(hasKey('settings.livetvMoved'), l).toBe(true);
+      expect(tr('settings.livetvMoved'), l).not.toMatch(/netflix|seerr/i);
+    }
+    await setLocale('de');
+    expect(tr('settings.livetvMoved')).toBe('Live-TV-Einstellungen findest du jetzt unter Live-TV.');
+  });
+});
+
 describe('settings texts', () => {
   it('every visible setting has a label and a help text; the request service is never named after a product', async () => {
+    expect(PAGE_KEYS).toHaveLength(72);
     expect(KEYS).toHaveLength(76);
     for (const k of KEYS) {
       expect(hasKey(`settings.keys.${k}.label`), k).toBe(true);
