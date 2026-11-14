@@ -159,3 +159,50 @@ test.describe('Systemcheck on Admin → Status', () => {
     expect(html).not.toMatch(/http:\/\/|jellyfin:8096|sekret/);
   });
 });
+
+test.describe('Systemcheck summary on the admin overview', () => {
+  test.beforeEach(({ api }) => { api.asAdmin = true; });
+
+  test('overview shows "2 Probleme" first in the strip and links to /admin/status#systemcheck', async ({ page, api }) => {
+    api.syscheck.result = syscheckTroubled();
+    await page.goto('/admin');
+    const strip = page.getByRole('region', { name: 'Systemzustand' });
+    const item = strip.getByRole('link', { name: /Systemcheck/ });
+    await expect(item).toContainText('2 Probleme');
+    await expect(item.locator('.pill.err svg')).toHaveCount(1);
+    await expect(item).toHaveAttribute('href', '/admin/status#systemcheck');
+    await expect(strip.getByRole('listitem').first()).toContainText('Systemcheck');
+    // never a fresh run from the overview: the cached answer only
+    expect(api.syscheck.calls).toEqual(['']);
+    await item.click();
+    await expect(page).toHaveURL(/\/admin\/status#systemcheck$/);
+    await expect(page.locator('#systemcheck')).toBeInViewport();
+  });
+
+  test('warnings only → "1 Warnung"; only not_set_up lines → "Alles in Ordnung"', async ({ page, api }) => {
+    api.syscheck.result = syscheckWith([{ id: 'media.requests', status: 'warning', cause: 'requests_down', fix: 'requests_down', settingKey: 'REQUESTS_URL' }]);
+    await page.goto('/admin');
+    const item = page.getByRole('region', { name: 'Systemzustand' }).getByRole('link', { name: /Systemcheck/ });
+    await expect(item.locator('.pill.warn')).toHaveText('1 Warnung');
+    api.syscheck.result = syscheckWith([
+      { id: 'media.requests', status: 'not_set_up', cause: 'requests_not_set', fix: 'requests_not_set', settingKey: 'REQUESTS_URL' },
+      { id: 'media.tmdb', status: 'not_set_up', cause: 'source_not_set', fix: 'source_not_set', settingKey: 'TMDB_API_KEY' },
+      { id: 'signin.passkeys', status: 'not_set_up', cause: 'passkeys_off', fix: 'passkeys_off', settingKey: 'PASSKEYS_IN_APP' },
+    ]);
+    await page.reload();
+    await expect(item.locator('.pill.ok')).toHaveText('Alles in Ordnung');
+  });
+
+  test.describe('failing', () => {
+    test.use({ allowedConsole: /status of 500/ });
+    test('systemcheck 500 → muted "unbekannt", the other strip items still render', async ({ page, api }) => {
+      api.syscheck.status = 500;
+      await page.goto('/admin');
+      const strip = page.getByRole('region', { name: 'Systemzustand' });
+      const item = strip.getByRole('link', { name: /Systemcheck/ });
+      await expect(item.locator('.pill.muted')).toHaveText('Unbekannt');
+      await expect(strip.getByRole('link', { name: /Medienserver/ })).toBeVisible();
+      await expect(strip.getByRole('link', { name: /Version/ })).toBeVisible();
+    });
+  });
+});

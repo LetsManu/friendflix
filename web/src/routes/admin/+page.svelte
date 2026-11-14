@@ -1,14 +1,15 @@
 <!-- SPDX-FileCopyrightText: 2026 Manuel Weißböck -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  /** Admin overview: health strip, things waiting for a decision (inline approve/decline), recent activity, counts, storage. */
+  /** Admin overview: health strip (Systemcheck summary first), things waiting for a decision (inline approve/decline), recent activity, counts, storage. */
   import { onMount } from 'svelte';
   import { api } from '#lib/api';
   import Icon from '#lib/Icon.svelte';
   import RecoCard from '#lib/admin/RecoCard.svelte';
-  import { fmtDateTime, fmtNumber, fmtRelative, t, tr } from '#lib/i18n';
+  import { fmtDateTime, fmtNumber, fmtRelative, t, tr, type TFn } from '#lib/i18n';
   import { describeActivity, type AuditEntry } from '#lib/admin/activity';
   import { levelTone, loadHealth, serviceText, type HealthSnapshot, type ServiceId } from '#lib/admin/health';
+  import { loadSystemcheck, summaryOf, type SystemcheckResult } from '#lib/admin/syscheck';
   import { bumpPending, refreshSummary, summary, summaryFailed } from '#lib/admin/summary';
   import { busyKeys, runAction } from '#lib/ui/action';
   import Button from '#lib/ui/Button.svelte';
@@ -32,7 +33,10 @@
   // Block 22: the strip reads the health snapshot (media server, request service, playback check); the summary is the fallback
   let snap: HealthSnapshot | null = null;
   const loadSnap = () => loadHealth().then((h) => (snap = h), () => (snap = null));
-  function loadAll() { void refreshSummary(); void loadReqs(); void loadDevs(); void loadAudit(); void loadUpdate(); void loadSnap(); }
+  // the Systemcheck summary: the cached answer (never a fresh run from here), server counts only; a failure never blocks the strip
+  let syscheck: SystemcheckResult | null | 'err' = null;
+  const loadSyscheck = () => loadSystemcheck().then((r) => (syscheck = r), () => (syscheck = 'err'));
+  function loadAll() { void refreshSummary(); void loadReqs(); void loadDevs(); void loadAudit(); void loadUpdate(); void loadSnap(); void loadSyscheck(); }
   onMount(loadAll);
 
   /** removes a row optimistically; the returned rollback puts the list back */
@@ -79,7 +83,15 @@
     const h = sn?.services.find((x) => x.id === id);
     return h ? svc(label, icon, href, levelTone(h.level), serviceText(h)) : null;
   };
+  /** first strip item: "2 Probleme" / "1 Warnung" / "Alles in Ordnung" (summaryOf follows the language: $t as an argument) */
+  const syscheckItem = (r: SystemcheckResult | null | 'err', tt: TFn): Health => {
+    if (r === null) return null;
+    if (r === 'err') return svc(tt('syscheck.title'), 'activity', '/admin/status#systemcheck', 'muted', tt('admin.dash.state.unknown'));
+    const sum = summaryOf(r.counts ?? {});
+    return svc(tt('syscheck.title'), 'activity', '/admin/status#systemcheck', sum.tone, sum.text);
+  };
   $: health = [
+    syscheckItem(syscheck, $t),
     fromSnap(snap, 'media', $t('admin.dash.svc.jellyfin'), 'film', '/admin/status')
       ?? (s ? svc($t('admin.dash.svc.jellyfin'), 'film', '/admin/status', s.services.jellyfin ? 'ok' : 'err', s.services.jellyfin ? $t('admin.dash.state.ok') : $t('admin.dash.state.down')) : null),
     fromSnap(snap, 'requests', $t('admin.dash.svc.seerr'), 'inbox', '/admin/requests')
