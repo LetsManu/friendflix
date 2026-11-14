@@ -187,6 +187,8 @@ export async function startJob(ctx: Ctx, action: UpdateJobAction, actor: string 
     if (!mode) return { ok: false, status: 409, error: 'foreign_stack' };
     const r = await redeployViaPortainer(ctx, actor, mode, undefined, { updater: pre.status.services.length > 0 });
     if (!r.ok && r.error === 'busy') return { ok: false, status: 409, error: 'busy' };
+    // the redeploy could not be recorded (store busy or down): nothing was sent, try again in a moment
+    if (!r.ok && r.error === 'unavailable') return { ok: false, status: 503, error: 'busy' };
     if (!r.ok) return { ok: false, status: 502, error: r.error, portainer: { status: r.status, step: r.step, ...(r.code ? { code: r.code } : {}) } };
     return { ok: true, portainer: mode };
   }
@@ -297,7 +299,7 @@ export async function autoUpdateTick(ctx: Ctx, now = new Date(), log?: { warn(o:
     const doneKey = `updater:portainer:${target}`;
     if (await ctx.kv.get(doneKey)) return 'done';
     const r = await redeployViaPortainer(ctx, null, mode, info, { updater: v.status.services.length > 0 });
-    if (!r.ok && r.error === 'busy') return 'busy';
+    if (!r.ok && (r.error === 'busy' || r.error === 'unavailable')) return 'busy';
     if (!r.ok) {
       log?.warn({ mode, step: r.step, status: r.status, ...(r.code ? { code: r.code } : {}) }, 'automatic update through Portainer failed');
       return 'failed';

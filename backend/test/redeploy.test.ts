@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Ctx } from '../src/ctx.js';
 import { MemoryKV } from '../src/kv.js';
-import { REDEPLOY_KEY, REDEPLOY_LOCK, REDEPLOY_TIMEOUT_MS, beginRedeploy, claimRedeploy, redeployView, settleRedeploy, type ServiceSeen } from '../src/redeploy.js';
+import { REDEPLOY_KEY, REDEPLOY_LOCK, REDEPLOY_TIMEOUT_MS, abandonRedeploy, beginRedeploy, claimRedeploy, redeployView, settleRedeploy, type ServiceSeen } from '../src/redeploy.js';
 
 // The phase of an update handed to Portainer (redeploy.ts), worked out from what runs afterwards: Portainer gives no progress
 // and recreates this backend halfway through, so the record lives in the kv store and every read judges it again.
@@ -16,7 +16,7 @@ const all = (sha: string, over: Partial<Record<string, ServiceSeen>> = {}) => ['
 async function start(ctx: Ctx, mode: 'api' | 'webhook' = 'api', updater = true, at = T0) {
   const id = (await claimRedeploy(ctx, at))!;
   expect(id).toMatch(/^[0-9a-f]{16}$/);
-  await beginRedeploy(ctx, id, mode, 'latest', updater, at);
+  expect(await beginRedeploy(ctx, id, mode, 'latest', updater, at)).toBe(true);
   return id;
 }
 
@@ -112,5 +112,56 @@ describe('Portainer redeploy phases', () => {
     await kv.set(REDEPLOY_KEY, '{not json', 60);
     expect(await redeployView(ctxOf(OLD, kv), null)).toBeNull();
     expect(await redeployView(ctxOf(), null)).toBeNull();
+  });
+
+  it('the slot: only claimed for two minutes until recorded, then held; a slot left by an ended or timed-out redeploy is taken over', async () => {
+    const kv = new MemoryKV();
+    const ctx = ctxOf(OLD, kv);
+    const now = Date.now();
+    // claimed, never recorded (a crash in between): a short slot that expires on its own
+    const lost = (await claimRedeploy(ctx, now))!;
+    expect(await claimRedeploy(ctx, now)).toBeNull();
+    await abandonRedeploy(ctx, lost); // (stands in for the two minutes passing)
+    const id = await start(ctx, 'api', true, now);
+    expect(await claimRedeploy(ctx, now + 1_000)).toBeNull();
+    // the redeploy ran out of time but nobody stored its end yet, the slot still says so: taken over
+    const next = await claimRedeploy(ctx, now + REDEPLOY_TIMEOUT_MS + 1);
+    expect(next).toMatch(/^[0-9a-f]{16}$/);
+    expect(next).not.toBe(id);
+    expect(await kv.get(REDEPLOY_LOCK)).toBe(next);
+    // an end that was stored but whose release got lost: taken over too; a slot held by someone else (no record of it) is not
+    const kv2 = new MemoryKV();
+    const c2 = ctxOf(OLD, kv2);
+    const id2 = await start(c2, 'api', true, now);
+    await settleRedeploy(c2, id2, { ok: false, error: 'portainer', step: 'redeploy', status: 500 });
+    await kv2.set(REDEPLOY_LOCK, id2, 900);
+    expect(await claimRedeploy(c2, now + 1_000)).toMatch(/^[0-9a-f]{16}$/);
+    await kv2.set(REDEPLOY_LOCK, 'f'.repeat(16), 900);
+    expect(await claimRedeploy(c2, now + 2_000)).toBeNull();
+  });
+
+  it('mutex contention: a redeploy that cannot be recorded is refused (false); a refusal is still recorded after a few tries', async () => {
+    const kv = new MemoryKV();
+    const ctx = ctxOf(OLD, kv);
+    const id = (await claimRedeploy(ctx))!;
+    await kv.set('update:portainer:redeploy:mutex', 'someone-else', 60);
+    expect(await beginRedeploy(ctx, id, 'api', 'latest', true, T0, 50)).toBe(false);
+    expect(await kv.get(REDEPLOY_KEY)).toBeNull();
+    await abandonRedeploy(ctx, id); // what the caller does: the slot is free again
+    await kv.del('update:portainer:redeploy:mutex');
+    const id2 = await start(ctx, 'api', true, Date.now());
+    expect(id2).not.toBe(id);
+    await kv.set('update:portainer:redeploy:mutex', 'someone-else', 60);
+    await settleRedeploy(ctx, id2, { ok: false, error: 'portainer', step: 'redeploy', status: 500 }, Date.now(), 30, 2);
+    expect(JSON.parse((await kv.get(REDEPLOY_KEY))!)).toMatchObject({ id: id2, final: 'failed', status: 500 });
+    expect(await kv.get(REDEPLOY_LOCK)).toBeNull();
+  });
+
+  it('Portainer said done but the updater gives no listing right now: not "unchanged" yet (it may still be recreating)', async () => {
+    const ctx = ctxOf();
+    const id = await start(ctx);
+    await settleRedeploy(ctx, id, { ok: true, sync: true }, T0 + 2_000);
+    expect(await redeployView(ctx, null, T0 + 3_000, BEFORE)).toMatchObject({ phase: 'pulling', running: true });
+    expect(await redeployView(ctx, all('sha-aaaaaaa'), T0 + 4_000, BEFORE)).toMatchObject({ phase: 'unchanged' });
   });
 });

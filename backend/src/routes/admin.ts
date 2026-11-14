@@ -244,6 +244,7 @@ export function adminRoutes(app: FastifyInstance, ctx: Ctx) {
     const v = await updaterView(ctx).catch(() => null);
     const r = await redeployViaPortainer(ctx, req.user!.id, mode, undefined, { updater: Boolean(v && 'status' in v && v.status.services.length) });
     if (!r.ok && r.error === 'busy') return reply.code(409).send({ error: 'busy' });
+    if (!r.ok && r.error === 'unavailable') return reply.code(503).send({ error: 'busy' }); // not recorded: nothing sent
     if (!r.ok) {
       req.log.error({ mode, step: r.step, status: r.status, error: r.error, code: r.code }, 'portainer update failed');
       return reply.code(502).send({ error: r.error, status: r.status, step: r.step, ...(r.code ? { code: r.code } : {}) });

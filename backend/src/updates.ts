@@ -143,21 +143,25 @@ export async function updateInfo(ctx: Ctx, refresh = false): Promise<UpdateInfo>
 
 /**
  * `pending`: Portainer had not answered within the grace window (it goes on; a later answer goes to onLate). `sync`: its API
- * answered once it was done (Portainer before 2.36 redeploys, then answers; later versions answer at once with Status 3,
- * "deploying"); a webhook answer says nothing about that.
+ * answered once it was done (Portainer before 2.36 redeploys, then answers with the stack at Status 1; later versions answer
+ * at once with Status 3, "deploying"); a webhook answer or one without a readable stack says nothing about that. Step `deploy`:
+ * the answer was 2xx but the stack it returned is in error (Status 4).
  */
-export type TriggerResult = { ok: true; mode: 'webhook' | 'api'; pending?: true; sync?: boolean } | { ok: false; status: number | null; error: string; step: 'webhook' | 'stack' | 'stack_file' | 'redeploy'; code?: string };
+export type TriggerResult = { ok: true; mode: 'webhook' | 'api'; pending?: true; sync?: boolean } | { ok: false; status: number | null; error: string; step: 'webhook' | 'stack' | 'stack_file' | 'redeploy' | 'deploy'; code?: string };
 /** Portainer's answer to the final call when it came only after triggerUpdate returned "started" (null status: no answer) */
-export type LateAnswer = { ok: true; sync: boolean } | { ok: false; status: number | null };
+export type LateAnswer = { ok: true; sync: boolean } | { ok: false; status: number | null; deploy?: true };
 /** Portainer's API pulls and recreates before it answers (minutes); the answer is still wanted (redeploy.ts), so it may take this long */
 const REDEPLOY_CALL_MS = 15 * 60_000;
-/** Portainer's stack status "deploying" (portainer.StackStatusDeploying): the redeploy goes on in the background */
-const STACK_DEPLOYING = 3;
-/** whether a 2xx answer of the API's redeploy means "done" (the stack it returns is not still deploying) */
-async function doneAnswer(r: Response, mode: 'webhook' | 'api'): Promise<boolean> {
-  if (mode === 'webhook') { void r.body?.cancel().catch(() => undefined); return false; }
+/** Portainer's stack status (portainer.StackStatus): 1 active, 2 inactive, 3 deploying, 4 error */
+const STACK_ACTIVE = 1, STACK_ERROR = 4;
+/**
+ * What a 2xx answer of the API's redeploy says: done (the stack it returns is active), failed (in error), or wait (deploying,
+ * anything else, no readable body, or a webhook: the phase then follows from what runs)
+ */
+async function answerOf(r: Response, mode: 'webhook' | 'api'): Promise<'done' | 'failed' | 'wait'> {
+  if (mode === 'webhook') { void r.body?.cancel().catch(() => undefined); return 'wait'; }
   const b = (await r.json().catch(() => null)) as { Status?: unknown } | null;
-  return b?.Status !== STACK_DEPLOYING;
+  return b?.Status === STACK_ACTIVE ? 'done' : b?.Status === STACK_ERROR ? 'failed' : 'wait';
 }
 
 /**
@@ -180,7 +184,7 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api', onLate?: 
     const r = await Promise.race([p, new Promise<'pending'>((res) => setTimeout(res, 5000, 'pending').unref())]);
     if (r === 'pending' && onLate) {
       p.then(async (x) => {
-        if (x.ok) onLate({ ok: true, sync: await doneAnswer(x, mode) });
+        if (x.ok) { const a = await answerOf(x, mode); onLate(a === 'failed' ? { ok: false, status: null, deploy: true } : { ok: true, sync: a === 'done' }); }
         else { void x.body?.cancel().catch(() => undefined); onLate({ ok: false, status: x.status }); }
       }, () => onLate({ ok: false, status: null }));
     }
@@ -189,10 +193,11 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api', onLate?: 
   const started = async (r: Response | 'pending'): Promise<TriggerResult> => {
     if (r === 'pending') return { ok: true, mode, pending: true };
     if (!r.ok) { void r.body?.cancel().catch(() => undefined); return fail(r.status, 'portainer', step); }
-    return { ok: true, mode, sync: await doneAnswer(r, mode) };
+    const a = await answerOf(r, mode);
+    return a === 'failed' ? fail(null, 'portainer', 'deploy') : { ok: true, mode, sync: a === 'done' };
   };
-  const fail = (status: number | null, error: string, step: 'webhook' | 'stack' | 'stack_file' | 'redeploy'): TriggerResult => ({ ok: false, status, error, step });
-  let step: 'webhook' | 'stack' | 'stack_file' | 'redeploy' = mode === 'webhook' ? 'webhook' : 'stack';
+  const fail = (status: number | null, error: string, step: 'webhook' | 'stack' | 'stack_file' | 'redeploy' | 'deploy'): TriggerResult => ({ ok: false, status, error, step });
+  let step: 'webhook' | 'stack' | 'stack_file' | 'redeploy' | 'deploy' = mode === 'webhook' ? 'webhook' : 'stack';
   try {
     if (mode === 'webhook') {
       return await started(await send(hookWithTag(ctx.cfg.PORTAINER_WEBHOOK_URL!, tag), { method: 'POST' }));
@@ -215,8 +220,10 @@ export async function triggerUpdate(ctx: Ctx, mode: 'webhook' | 'api', onLate?: 
     if (stack.GitConfig) {
       // a private repository: Portainer clones with what the redeploy sends; authentication on with the stored user name and an
       // empty password keeps the stored credentials (Portainer 2.30 to 2.36 stackGitRedeploy). The password never leaves Portainer.
-      const user = stack.GitConfig.Authentication?.Username;
-      const auth = typeof user === 'string' && user ? { repositoryAuthentication: true, repositoryUsername: user, repositoryPassword: '' } : {};
+      // (a stored user name may be empty, e.g. a token; credentials kept as a Portainer "git credential" are not covered, see
+      // docs/operations.md)
+      const a = stack.GitConfig.Authentication;
+      const auth = a && typeof a === 'object' ? { repositoryAuthentication: true, repositoryUsername: typeof a.Username === 'string' ? a.Username : '', repositoryPassword: '' } : {};
       r = await send(`${base}/api/stacks/${id}/git/redeploy?${eid}`, {
         method: 'PUT', headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify({ repositoryReferenceName: stack.GitConfig.ReferenceName, ...auth, env, prune: false, pullImage: true, repullImageAndRedeploy: true }),
@@ -257,7 +264,12 @@ export async function redeployViaPortainer(ctx: Ctx, actor: string | null, mode:
     await audit(ctx, actor, 'system.update', undefined, {
       from: i.current.sha, to: i.latest?.sha ?? null, fromVersion: i.current.version, toVersion: i.release?.version ?? null, mode, tag: channelTag(ctx.cfg.UPDATE_CHANNEL, ctx.cfg.UPDATE_VERSION), ...auto,
     });
-    await beginRedeploy(ctx, id, mode, channelTag(ctx.cfg.UPDATE_CHANNEL, ctx.cfg.UPDATE_VERSION), opts.updater === true);
+    if (!(await beginRedeploy(ctx, id, mode, channelTag(ctx.cfg.UPDATE_CHANNEL, ctx.cfg.UPDATE_VERSION), opts.updater === true))) {
+      // not recorded (the store or its mutex not available): nothing is sent, the page could not follow it
+      await abandonRedeploy(ctx, id);
+      await audit(ctx, actor, 'system.update_result', undefined, { mode, toVersion: i.release?.version ?? null, ...auto, result: 'failed', error: 'unavailable' });
+      return { ok: false, status: null, error: 'unavailable', step: mode === 'webhook' ? 'webhook' : 'stack' };
+    }
   } catch (e) {
     await abandonRedeploy(ctx, id); // nothing was sent: the slot is free again
     throw e;
@@ -266,9 +278,11 @@ export async function redeployViaPortainer(ctx: Ctx, actor: string | null, mode:
   const late = (a: LateAnswer) => {
     // no answer, or a proxy in front of Portainer giving up (502/503/504, e.g. a 60 s read timeout) is not Portainer's verdict:
     // Portainer goes on, the phase follows from what runs
-    if (!a.ok && (a.status === null || a.status >= 502)) return;
-    void settleRedeploy(ctx, id, a.ok ? { ok: true, sync: a.sync } : { ok: false, error: 'portainer', step: 'redeploy', status: a.status })
-      .then(() => (a.ok ? undefined : audit(ctx, actor, 'system.update_result', undefined, { mode, ...auto, result: 'failed', late: true, error: 'portainer', step: 'redeploy', status: a.status })))
+    // a 2xx whose stack is in error (Status 4) is Portainer's verdict too
+    if (!a.ok && !a.deploy && (a.status === null || a.status >= 502)) return;
+    const step = !a.ok && a.deploy ? 'deploy' : 'redeploy';
+    void settleRedeploy(ctx, id, a.ok ? { ok: true, sync: a.sync } : { ok: false, error: 'portainer', step, status: a.status })
+      .then(() => (a.ok ? undefined : audit(ctx, actor, 'system.update_result', undefined, { mode, ...auto, result: 'failed', late: true, error: 'portainer', step, status: a.status })))
       .catch(() => undefined);
   };
   const r = await triggerUpdate(ctx, mode, late);

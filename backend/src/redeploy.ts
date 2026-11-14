@@ -84,7 +84,7 @@ function parse(raw: string | null): Rec | null {
   return ok ? (o as unknown as Rec) : null;
 }
 const read = async (ctx: Ctx): Promise<Rec | null> => parse(await ctx.kv.get(REDEPLOY_KEY).catch(() => null));
-const write = (ctx: Ctx, r: Rec) => ctx.kv.set(REDEPLOY_KEY, JSON.stringify(r), TTL).catch(() => undefined);
+const write = (ctx: Ctx, r: Rec): Promise<boolean> => ctx.kv.set(REDEPLOY_KEY, JSON.stringify(r), TTL).then(() => true, () => false);
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
 /**
@@ -102,40 +102,61 @@ async function locked<T>(ctx: Ctx, fn: () => Promise<T>, waitMs = 1_000): Promis
 }
 
 const running = (r: Rec | null, now: number) => Boolean(r && !r.final && now - r.startedAt <= REDEPLOY_TIMEOUT_MS);
+/** the slot while it is only claimed (a crash before the record is written frees it soon); held this long once recorded */
+const CLAIM_S = 120;
+const HOLD_S = REDEPLOY_TIMEOUT_MS / 1000 + 60;
 
 /**
- * Takes the single redeploy slot: null (busy) while another redeploy runs or holds the slot. The slot is held until that
- * redeploy ends (releaseRedeploy) and expires on its own a minute after the 15-minute timeout.
+ * Takes the single redeploy slot: null (busy) while another redeploy runs or holds the slot. A claimed slot expires after two
+ * minutes unless beginRedeploy recorded the redeploy (then it is held until the end, at most a minute past the timeout). A slot
+ * left behind by a redeploy that already ended or ran out of time (its end not stored yet, or the release lost) is taken over.
  */
 export async function claimRedeploy(ctx: Ctx, now = Date.now()): Promise<string | null> {
-  if (running(await read(ctx), now)) return null;
+  const r = await read(ctx);
+  if (running(r, now)) return null;
   const id = randomBytes(8).toString('hex');
-  return (await ctx.kv.setnx(REDEPLOY_LOCK, id, REDEPLOY_TIMEOUT_MS / 1000 + 60).catch(() => false)) ? id : null;
+  const take = () => ctx.kv.setnx(REDEPLOY_LOCK, id, CLAIM_S).catch(() => false);
+  if (await take()) return id;
+  const holder = await ctx.kv.get(REDEPLOY_LOCK).catch(() => null);
+  // stale: held by the stored redeploy, which is not running any more (checked above)
+  if (!r || !holder || holder !== r.id || !(await ctx.kv.delIfEquals(REDEPLOY_LOCK, holder).catch(() => false))) return null;
+  return (await take()) ? id : null;
 }
 const release = (ctx: Ctx, id: string) => ctx.kv.delIfEquals(REDEPLOY_LOCK, id).catch(() => undefined);
 
-/** records the redeploy that is about to be handed to Portainer (`id` from claimRedeploy) */
-export async function beginRedeploy(ctx: Ctx, id: string, mode: 'webhook' | 'api', tag: string, updater: boolean, now = Date.now()): Promise<void> {
-  await locked(ctx, () => write(ctx, {
+/**
+ * Records the redeploy that is about to be handed to Portainer (`id` from claimRedeploy) and holds the slot for it. false when
+ * it could not be recorded (the store or its mutex not available): the caller gives the slot back and sends nothing.
+ */
+export async function beginRedeploy(ctx: Ctx, id: string, mode: 'webhook' | 'api', tag: string, updater: boolean, now = Date.now(), waitMs = 3_000): Promise<boolean> {
+  const ok = await locked(ctx, () => write(ctx, {
     v: 1, id, mode, startedAt: now, from: ctx.cfg.GIT_SHA, tag, updater, answer: 'pending', answeredAt: null, sync: false, changed: false,
     error: null, step: null, status: null, code: null, final: null, finishedAt: null, at: null,
-  }), 3_000);
+  }), waitMs);
+  if (!ok) return false;
+  return ctx.kv.refreshIfEquals(REDEPLOY_LOCK, id, HOLD_S).catch(() => false);
 }
 
 /** gives the slot back when nothing was recorded or started (Portainer refused at once is settled instead) */
 export const abandonRedeploy = release;
 
 export type Answer = { ok: true; sync: boolean } | { ok: false; error: string; step: string; status: number | null; code?: string };
-/** Portainer's answer (also a late one, after "started" went out): a refusal ends the redeploy as failed and frees the slot */
-export async function settleRedeploy(ctx: Ctx, id: string, a: Answer, now = Date.now()): Promise<void> {
-  await locked(ctx, async () => {
+/**
+ * Portainer's answer (also a late one, after "started" went out): a refusal ends the redeploy as failed and frees the slot.
+ * Under the mutex, a few tries; then written without it: a lost refusal is worse than a rare overwrite of a stored end.
+ */
+export async function settleRedeploy(ctx: Ctx, id: string, a: Answer, now = Date.now(), waitMs = 1_000, tries = 3): Promise<void> {
+  const apply = async () => {
     const r = await read(ctx);
-    if (!r || r.id !== id || r.answer !== 'pending' || r.final) return;
+    if (!r || r.id !== id || r.answer !== 'pending' || (r.final && !(r.final === 'timeout' && !a.ok))) return true;
     if (a.ok) Object.assign(r, { answer: 'ok', answeredAt: now, sync: a.sync });
-    else Object.assign(r, { answer: 'failed', answeredAt: now, error: a.error, step: a.step, status: a.status, code: a.code ?? null, final: 'failed', finishedAt: now });
+    else Object.assign(r, { answer: 'failed', answeredAt: now, error: a.error, step: a.step, status: a.status, code: a.code ?? null, final: 'failed', finishedAt: now, at: null });
     await write(ctx, r);
     if (r.final) await release(ctx, id);
-  }, 3_000);
+    return true;
+  };
+  for (let i = 0; i < tries; i++) if (await locked(ctx, apply, waitMs)) return;
+  await apply();
 }
 
 const healthy = (s: ServiceSeen) => s.state === 'running' && (s.health === '' || s.health === 'healthy');
@@ -171,7 +192,7 @@ export async function redeployView(ctx: Ctx, services: readonly ServiceSeen[] | 
       }
     } else if (changed) {
       phase = 'recreating';
-    } else if (finished) {
+    } else if (finished && listing !== 'down') {
       // Portainer redeployed and answered, this backend is the same container of the same build and nothing else changed
       phase = 'unchanged';
     }

@@ -288,6 +288,38 @@ describe('admin update', () => {
     expect((await env.app.inject({ url: '/api/admin/updater', cookies: admin.cookies })).json().redeploy).toMatchObject({ phase: 'unchanged', running: false });
   });
 
+  it('api mode, a 2xx without a readable stack waits (no "unchanged" from it); a stack in error (Status 4) is a refusal at step deploy', async () => {
+    const { post, admin } = await setup(api); // PUT answers 204 without a body
+    expect((await post()).statusCode).toBe(202);
+    expect((await env.app.inject({ url: '/api/admin/updater', cookies: admin.cookies })).json().redeploy).toMatchObject({ phase: 'pulling', running: true });
+    await env.close(); seen = [];
+    putAnswer = { Id: 7, Status: 4 };
+    const bad = await setup(api);
+    const r = await bad.post();
+    expect([r.statusCode, r.json()]).toEqual([502, { error: 'portainer', status: null, step: 'deploy' }]);
+    expect((await env.app.inject({ url: '/api/admin/updater', cookies: bad.admin.cookies })).json().redeploy).toMatchObject({ phase: 'failed', step: 'deploy', status: null });
+    expect(await env.kv.get(REDEPLOY_LOCK)).toBeNull();
+  });
+
+  it('a redeploy that cannot be recorded (the store\'s mutex taken) is refused before anything is sent, and the slot is free again', { timeout: 15_000 }, async () => {
+    const { post } = await setup(api);
+    await env.kv.set('update:portainer:redeploy:mutex', 'someone-else', 60);
+    const r = await post();
+    expect([r.statusCode, r.json()]).toEqual([503, { error: 'busy' }]);
+    expect(seen.filter((s) => s.method === 'PUT')).toHaveLength(0);
+    expect(await env.kv.get(REDEPLOY_LOCK)).toBeNull();
+    expect(await env.kv.get(REDEPLOY_KEY)).toBeNull();
+  });
+
+  it('the slot is given back when the update info or the audit throws before anything is sent', async () => {
+    await setup(api);
+    const { redeployViaPortainer } = await import('../src/updates.js');
+    const broken = { get current(): never { throw new Error('boom'); } } as unknown as Parameters<typeof redeployViaPortainer>[3];
+    await expect(redeployViaPortainer(env.ctx, null, 'api', broken)).rejects.toThrow('boom');
+    expect(await env.kv.get(REDEPLOY_LOCK)).toBeNull();
+    expect(seen.filter((s) => host(s.url) === 'portainer.example.com')).toHaveLength(0);
+  });
+
   it('api set up only in part: GET names the missing settings (never a value), POST refuses as not configured', async () => {
     const { post, get } = await setup({ PORTAINER_URL: 'https://portainer.example.com', PORTAINER_API_KEY: KEY });
     const g = await get();
