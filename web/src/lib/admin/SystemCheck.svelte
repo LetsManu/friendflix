@@ -5,7 +5,8 @@
    * The Systemcheck section of Admin → Status (#systemcheck): the time of the check, the counts, "Jetzt prüfen", then the six groups in
    * fixed order with every catalogue line. Self-loading (cached answer on mount and every 30 s while visible); "Jetzt prüfen" asks for a
    * fresh run (6 per minute: a 429 keeps the last list and says so) and reloads the warning banner. The skeleton has the final row count.
-   * `browserLines`: results of the checks only the browser can run (they replace their placeholders).
+   * The four checks only the browser can run (syscheckBrowser.ts) start once there is an answer to read Live TV from (on mount, and again
+   * after Jetzt prüfen); their lines read "wird geprüft…" until they are back and then replace their placeholders.
    * The last answer of this tab is shown at once and revalidated (stale-while-revalidate); `ready` turns true as soon as there is an
    * answer to show (remembered, loaded or failed), so the page can hold what sits below until the list has its final height.
    */
@@ -21,14 +22,16 @@
   import { toast } from '#lib/ui/toast';
   import { refreshBanner } from './banner';
   import CheckLine from './CheckLine.svelte';
+  import { runBrowserChecks, uploadNotSetUp } from './syscheckBrowser';
   import {
     CHECK_GROUPS, CHECK_IDS, cachedSystemcheck, countLines, isNewer, loadSystemcheck, mergeLines, statusIcon, statusTone, summaryOf,
     type CheckGroup, type CheckId, type CheckLine as Line, type CheckStatus, type SystemcheckResult,
   } from './syscheck';
 
-  export let browserLines: Line[] = [];
-  /** the browser checks are running ("wird geprüft…" on their lines) */
-  export let browserRunning = false;
+  /** the browser checks' results, and whether they are running ("wird geprüft…" on their lines) */
+  let browserLines: Line[] = [];
+  let browserRunning = false;
+  let browserRun = 0;
   /** bindable: there is something to show (the list has its final rows); false only during a cold first load */
   export let ready = false;
   const dispatch = createEventDispatcher<{ checked: void }>();
@@ -38,6 +41,28 @@
   let failed = false, checking = false, retrying = false;
   /** what the polite status region says: loading, then the summary after the first answer and after Jetzt prüfen (never on a silent poll) */
   let announce = result ? '' : tr('ui.table.loading');
+
+  /** Live TV from the server's livetv.container line: installed, not (not set up, or down), or not known (no answer yet, not checked) */
+  function livetvOf(r: SystemcheckResult | null): boolean | null {
+    const l = r?.lines.find((x) => x?.id === 'livetv.container');
+    if (!l || l.status === 'unknown') return null;
+    return l.status !== 'not_set_up' && l.status !== 'problem';
+  }
+  /** the browser checks (on mount once an answer is there, and after Jetzt prüfen); a newer run's answer wins */
+  async function runBrowser() {
+    const mine = ++browserRun;
+    browserRunning = true;
+    const lines = await runBrowserChecks({ livetvInstalled: livetvOf(result) }).catch(() => [] as Line[]);
+    if (mine !== browserRun) return;
+    browserLines = lines;
+    browserRunning = false;
+  }
+  let browserStarted = false;
+  function startBrowser() {
+    if (browserStarted) return;
+    browserStarted = true;
+    void runBrowser();
+  }
 
   /** the cached answer; it never replaces a newer one (a poll that started before Jetzt prüfen and answers after it) */
   async function load() {
@@ -52,6 +77,7 @@
       if (failed) announce = tr('syscheck.loadFailed');
     }
     ready = true;
+    startBrowser();
   }
   async function retry() { retrying = true; await load(); retrying = false; }
   /** "Jetzt prüfen": a fresh run on the server (it waits for the slow inputs, bounded there) */
@@ -65,12 +91,14 @@
       toast.success(tr('adminContent.health.checked'));
       void refreshBanner(); // the banner shows the new state now, not after its next 60 s poll
       dispatch('checked');
+      void runBrowser(); // with the fresh Live-TV state
     } catch (e) {
       toast.error(apiCode(e) === 'rate_limited' ? tr('syscheck.rateLimited') : errorText(e));
     }
     checking = false;
   }
   onMount(() => {
+    if (result) startBrowser(); // the remembered answer says enough about Live TV
     void load();
     return poll(load, 30_000);
   });
@@ -81,7 +109,9 @@
   const COUNT_ORDER: CheckStatus[] = ['problem', 'warning', 'ok', 'not_set_up', 'unknown'];
 
   // a failed first load still shows every line ("nicht geprüft"), so the page keeps its shape
-  $: merged = result || failed ? mergeLines(result?.lines ?? [], browserLines) : null;
+  // without Live TV the upload line is decided with the server's answer (nothing is sent), so it never changes height later
+  $: uploadOff = livetvOf(result) === false ? [uploadNotSetUp()] : [];
+  $: merged = result || failed ? mergeLines(result?.lines ?? [], [...uploadOff, ...browserLines]) : null;
   $: lines = merged ? new Map(merged.map((l) => [l.id, l])) : null;
   // the pills count what the list shows: the server's lines, the browser lines and the lines without a result yet ("nicht geprüft");
   // the overview summary reads the server counts only

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, test } from '../fixtures.js';
-import { syscheckHealthy, syscheckOk, syscheckTroubled, syscheckTroubledEncoder, syscheckWith } from '../mocks/syscheck.js';
+import { result, syscheckHealthy, syscheckOk, syscheckTroubled, syscheckTroubledEncoder, syscheckWith } from '../mocks/syscheck.js';
 import { gateSyscheck, listHoldsNothingBelow } from './syscheck-helpers.js';
 
 /** the catalogue in display order (backend/src/syscheck/types.ts CHECK_IDS) */
@@ -20,7 +20,9 @@ test.describe('Systemcheck on Admin → Status', () => {
     api.syscheck.result = syscheckTroubled();
   });
 
-  test('shows six groups and every catalogue line in order', async ({ page }) => {
+  test('shows six groups and every catalogue line in order', async ({ page, api }) => {
+    let release!: () => void;
+    api.syscheck.probes.hold = new Promise((r) => { release = r; }); // the browser checks wait: their lines count as not checked
     await page.goto('/admin/status');
     const sc = page.locator('#systemcheck');
     await expect(sc.getByRole('heading', { level: 2, name: 'Systemcheck' })).toBeVisible();
@@ -37,6 +39,63 @@ test.describe('Systemcheck on Admin → Status', () => {
     // the pills count what the list shows, the lines without a result included
     await expect(sc.locator('.counts')).toContainText('13 nicht geprüft');
     for (const pill of await sc.locator('.pill').all()) await expect(pill.locator('svg')).toHaveCount(1);
+    // once the browser checks are back, three of their four lines are counted (the upload waits for a Live-TV answer)
+    release();
+    await expect(sc.locator('li[data-id="proxy.headers"][data-status="ok"]')).toHaveCount(1);
+    await expect(sc.locator('.counts')).toContainText('10 nicht geprüft');
+  });
+
+  test('browser lines show wird geprüft… then their result', async ({ page, api }) => {
+    let release!: () => void;
+    api.syscheck.probes.hold = new Promise((r) => { release = r; });
+    api.syscheck.result = result([...syscheckOk().lines, { id: 'livetv.container', status: 'ok' }]);
+    await page.goto('/admin/status');
+    const sc = page.locator('#systemcheck');
+    await expect(sc.locator('li[data-id="core.database"] .pill.ok')).toBeVisible();
+    for (const id of ['proxy.websocket', 'proxy.buffering', 'proxy.upload']) await expect(sc.locator(`li[data-id="${id}"]`)).toContainText('wird geprüft…');
+    // the headers are read from the page itself (no probe to hold): it may already be back
+    const before = (await sc.boundingBox())!;
+    release();
+    for (const id of ['proxy.websocket', 'proxy.buffering', 'proxy.upload', 'proxy.headers']) await expect(sc.locator(`li[data-id="${id}"] .pill.ok`)).toHaveText('In Ordnung');
+    await expect(sc).not.toContainText('wird geprüft…');
+    // ok lines are compact rows like the running ones: the list keeps its height
+    expect(Math.abs((await sc.boundingBox())!.height - before.height)).toBeLessThanOrEqual(1);
+    expect(api.syscheck.probes).toMatchObject({ drips: 1, uploads: 1, sockets: 1 });
+  });
+
+  test('without Live TV the upload line is not set up at once and nothing is uploaded', async ({ page, api }) => {
+    api.syscheck.result = result([...syscheckOk().lines, { id: 'livetv.container', status: 'not_set_up', cause: 'livetv_not_set', fix: 'livetv_not_set', href: '/admin/livetv' }]);
+    await page.goto('/admin/status');
+    const up = page.locator('#systemcheck li[data-id="proxy.upload"]');
+    await expect(up.locator('.pill.muted')).toHaveText('Nicht eingerichtet');
+    await expect(up).toContainText('Wird nur mit Live-TV geprüft');
+    await expect(page.locator('#systemcheck li[data-id="proxy.headers"] .pill.ok')).toBeVisible();
+    expect(api.syscheck.probes.uploads).toBe(0);
+  });
+
+  test.describe('upload limit', () => {
+    test.use({ allowedConsole: /status of 413/ });
+    test('a mocked 413 on the probe upload shows the upload warning with the Anleitung link', async ({ page, api }) => {
+      api.syscheck.result = result([...syscheckOk().lines, { id: 'livetv.container', status: 'ok' }]);
+      api.syscheck.probes.uploadStatus = 413;
+      await page.goto('/admin/status');
+      const up = page.locator('#systemcheck li[data-id="proxy.upload"]');
+      await expect(up.locator('.pill.warn')).toHaveText('Warnung');
+      await expect(up).toContainText('Der Proxy lässt nur kleine Uploads durch');
+      await expect(up).toContainText('bis 300 MB');
+      const docs = up.getByRole('link', { name: /Anleitung/ });
+      await expect(docs).toHaveAttribute('href', 'https://github.com/LetsManu/friendflix/blob/main/docs/setup.md#6-nginx-proxy-manager-portal-proxy-host');
+      await expect(docs).toHaveAttribute('target', '_blank');
+      await expect(page.locator('#systemcheck .counts')).toContainText('1 Warnung');
+    });
+  });
+
+  test('a proxy that buffers /media/ shows the buffering warning', async ({ page, api }) => {
+    api.syscheck.probes.dripDelayMs = 1_600; // the whole answer at once, after the pause
+    await page.goto('/admin/status');
+    const buf = page.locator('#systemcheck li[data-id="proxy.buffering"]');
+    await expect(buf.locator('.pill.warn')).toHaveText('Warnung', { timeout: 10_000 });
+    await expect(buf).toContainText('Der Proxy puffert Videos');
   });
 
   test('a problem line shows cause, fix and Zur Einstellung linking to the setting', async ({ page }) => {

@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Manuel Weißböck
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { BrowserContext, Route } from '@playwright/test';
 /**
  * GET /api/admin/systemcheck (backend/src/routes/systemcheck.ts): the Systemcheck answer. The default is a healthy instance with the
  * lines the backend has today (core, sign-in, media); `refreshed` replaces it on ?refresh=1, `refreshStatus` answers a Jetzt prüfen with
  * an error (429 rate_limited), `status` every call.
+ *
+ * The browser checks' probes (web/src/lib/admin/syscheckBrowser.ts) answer as a healthy proxy by default: `/ws/syscheck` says hello,
+ * `/media/probe/drip` sends its 2 KiB (a mock cannot pause inside a body: `dripDelayMs` holds the whole answer, which reads as a proxy that
+ * buffers when it is over 1.2 s), and the upload probe answers `{ probe: 'ok' }` or `uploadStatus` (413 → the proxy's HTML page).
  */
+
 export type Status = 'ok' | 'warning' | 'problem' | 'not_set_up' | 'unknown';
 export interface MockLine {
   id: string; group?: string; status: Status; cause?: string; fix?: string; settingKey?: string; settingGroup?: string; locked?: true;
@@ -21,6 +27,8 @@ export interface SyscheckMock {
   status: number | null;
   /** ?refresh=1 answers this status (429 → rate_limited) */
   refreshStatus: number | null;
+  /** the browser probes */
+  probes: { dripDelayMs: number; drips: number; uploadStatus: number; uploads: number; sockets: number; hold: Promise<void> | null };
 }
 
 /** the server lines of Stage 1 in catalogue order */
@@ -75,7 +83,41 @@ export function syscheckHealthy(at?: string): MockResult {
 }
 
 export function syscheckState(): SyscheckMock {
-  return { result: syscheckOk(), refreshed: null, calls: [], status: null, refreshStatus: null };
+  return { result: syscheckOk(), refreshed: null, calls: [], status: null, refreshStatus: null, probes: { dripDelayMs: 0, drips: 0, uploadStatus: 200, uploads: 0, sockets: 0, hold: null } };
+}
+
+export const PROBE_UPLOAD_PATH = '/api/admin/livetv/sources/00000000-0000-0000-0000-000000000000/file';
+
+/** the gateway's buffering probe (`hold`: a test holds every probe until it lets go, to see "wird geprüft…") */
+export function syscheckDrip(st: SyscheckMock, p: string, route: Route): Promise<void> | null {
+  if (p !== '/media/probe/drip') return null;
+  return (async () => {
+    st.probes.drips++;
+    await st.probes.hold;
+    if (st.probes.dripDelayMs) await new Promise((r) => setTimeout(r, st.probes.dripDelayMs));
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', headers: { 'cache-control': 'no-store' }, body: Buffer.alloc(2048) });
+  })();
+}
+
+/** the backend's upload-limit probe (PUT of the nil source id) */
+export function syscheckUpload(st: SyscheckMock, m: string, p: string, route: Route): Promise<void> | null {
+  if (p !== PROBE_UPLOAD_PATH || m !== 'PUT') return null;
+  return (async () => {
+    st.probes.uploads++;
+    await st.probes.hold;
+    if (st.probes.uploadStatus === 413) return route.fulfill({ status: 413, contentType: 'text/html', body: '<html><body><center><h1>413 Request Entity Too Large</h1></center></body></html>' });
+    return route.fulfill({ status: st.probes.uploadStatus, contentType: 'application/json', body: JSON.stringify(st.probes.uploadStatus === 200 ? { probe: 'ok', bytes: 2097152 } : { error: 'boom' }) });
+  })();
+}
+
+/** the backend's websocket probe: hello, then a normal close */
+export async function syscheckSocket(ctx: BrowserContext, st: SyscheckMock): Promise<void> {
+  await ctx.routeWebSocket(/\/ws\/syscheck$/, async (ws) => {
+    st.probes.sockets++;
+    await st.probes.hold;
+    ws.send('{"ok":true}');
+    await ws.close({ code: 1000 });
+  });
 }
 
 type Reply = (b: unknown, status?: number) => Promise<void>;
