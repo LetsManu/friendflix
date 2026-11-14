@@ -72,7 +72,7 @@
     {#if $tvOnline}
       {#if playing}
         <p class="now"><b>{st?.title ?? $t('player.remote.playback')}</b><span class="muted">{st?.paused ? $t('player.remote.paused') : $t('player.remote.playing')}{st?.duration ? ` · ${fmtClock(st.position ?? 0)} / ${fmtClock(st.duration)}` : ''}</span></p>
-        <div class="bar" aria-hidden="true"><i style="width:{pct}%"></i></div>
+        <div class="pbar" aria-hidden="true"><i style="width:{pct}%"></i></div>
       {:else}<p class="muted">{$t('player.remote.tvHome')}</p>{/if}
     {:else}
       <p class="muted"><Rich key="player.remote.howTo" params={{ host: location.host }} /></p>

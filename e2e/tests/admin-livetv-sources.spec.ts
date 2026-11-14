@@ -45,6 +45,20 @@ test.describe('admin: Live-TV, Quellen (desktop)', () => {
     await expect(page.getByText('Live-TV läuft.')).toBeVisible();
   });
 
+  test('with no source yet, Quelle hinzufügen is a full-size button (a global .bar style once clipped it to a 3-px line)', async ({ page, api }) => {
+    api.admin.livetv.area.sources = [];
+    await page.goto('/admin/livetv');
+    await expect(page.getByText('Noch keine Quelle.', { exact: false })).toBeVisible();
+    const add = page.getByRole('button', { name: 'Quelle hinzufügen' });
+    await expect(add).toBeVisible();
+    const box = await add.boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+    // not clipped by its row: the point in the middle of the button hits the button (a 3-px overflow-hidden row would hide it)
+    expect(await add.evaluate((b) => { const r = b.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!hit && b.contains(hit); })).toBe(true);
+    await add.click();
+    await expect(page.getByRole('dialog', { name: 'Quelle hinzufügen' })).toBeVisible();
+  });
+
   test('add a list source: Prüfen then Speichern', async ({ page, api }) => {
     await page.goto('/admin/livetv');
     await page.getByRole('button', { name: 'Quelle hinzufügen' }).click();
