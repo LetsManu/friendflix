@@ -154,7 +154,7 @@ describe('health probe and service view', () => {
 
   it('service view is cached', async () => {
     let n = 0, t = 0;
-    const d = { ps: async () => { n++; return [{ service: 'backend', name: 'ff-backend-1', state: 'running', health: 'healthy' }]; },
+    const d = { psView: async () => { n++; return [{ service: 'backend', name: 'ff-backend-1', state: 'running', health: 'healthy' }]; },
       containerImage: async () => 'sha256:' + 'e'.repeat(64), imageInfo: async () => ({ repoDigests: [], gitSha: 'c'.repeat(40), version: '1.1.0' }) };
     const view = servicesView(d, 10_000, () => t);
     const v = await view();

@@ -140,12 +140,15 @@ export function healthProbe(docker: Pick<Docker, 'ps'>, url: string, fetchImpl: 
   };
 }
 
-/** what each FriendFlix service runs; cached a few seconds (every status poll would otherwise cost several Docker calls) */
-export function servicesView(docker: Pick<Docker, 'ps' | 'containerImage' | 'imageInfo'>, ttlMs = 10_000, now: () => number = Date.now): () => Promise<ServiceView[]> {
+/**
+ * what each FriendFlix service runs; cached a few seconds (every status poll would otherwise cost several Docker calls). On a
+ * stack whose compose files the updater cannot read (Portainer) from the containers' labels, so the page can follow a redeploy.
+ */
+export function servicesView(docker: Pick<Docker, 'psView' | 'containerImage' | 'imageInfo'>, ttlMs = 10_000, now: () => number = Date.now): () => Promise<ServiceView[]> {
   let cache: { at: number; v: ServiceView[] } | null = null;
   return async () => {
     if (cache && now() - cache.at < ttlMs) return cache.v;
-    const ps: ServiceState[] = await docker.ps();
+    const ps: ServiceState[] = await docker.psView();
     const v = await Promise.all([...FF_SERVICES, SELF_SERVICE].map(async (service) => {
       const st = ps.find((p) => p.service === service);
       const id = st ? await docker.containerImage(st.name) : null;

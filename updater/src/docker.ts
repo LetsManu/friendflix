@@ -94,19 +94,44 @@ export class Docker {
    * Portainer's /data/compose/ counts as Portainer here even when it equals projectDir (the files are not there to read).
    */
   private async originFromLabels(): Promise<(StackOrigin & { labels: Record<string, unknown> | null }) | null> {
-    const self = this.s.self;
-    if (!self || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(self)) return null;
-    const project = (await this.labels(self))?.['com.docker.compose.project'];
-    if (typeof project !== 'string' || !PROJECT_RE.test(project)) return null;
-    const r = await this.run('docker', ['ps', '--all', '--format', '{{.Names}}', '--filter', `label=com.docker.compose.project=${project}`,
-      '--filter', 'label=com.docker.compose.service=backend', '--filter', 'label=com.docker.compose.oneoff=False'], { env: this.env(), timeoutMs: MIN });
-    if (r.code !== 0) return null;
-    const name = r.stdout.split('\n').map((l) => l.trim()).find((l) => /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(l));
+    const name = (await this.labelRows())?.find((r) => r.service === 'backend')?.name;
     const labels = name ? await this.labels(name) : null;
     if (!labels) return null;
     const o = classifyStack(labels, this.s.projectDir);
     if (o.stack === 'own' && o.workingDir && /^\/data\/compose\/[^/]+/.test(o.workingDir)) return { stack: 'foreign', manager: 'portainer', reason: 'portainer', workingDir: o.workingDir, labels };
     return { ...o, labels };
+  }
+
+  /** the compose project on the updater's own container (HOSTNAME); null when it cannot be read */
+  private async ownProject(): Promise<string | null> {
+    const self = this.s.self;
+    if (!self || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(self)) return null;
+    const project = (await this.labels(self))?.['com.docker.compose.project'];
+    return typeof project === 'string' && PROJECT_RE.test(project) ? project : null;
+  }
+
+  /**
+   * The FriendFlix containers of the updater's own compose project from their labels alone (`docker ps`, read-only, no compose
+   * files; never a one-off), with the health docker ps prints in the status. null when Docker or the project cannot be read.
+   */
+  private async labelRows(): Promise<ServiceState[] | null> {
+    const project = await this.ownProject();
+    if (!project) return null;
+    const r = await this.run('docker', ['ps', '--all', '--format', '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.State}}\t{{.Status}}',
+      '--filter', `label=com.docker.compose.project=${project}`, '--filter', 'label=com.docker.compose.oneoff=False'], { env: this.env(), timeoutMs: MIN });
+    if (r.code !== 0) return null;
+    return r.stdout.split('\n').map((l) => l.trim().split('\t')).filter((x) => x.length === 4 && PS_SERVICES.includes(x[0]!) && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(x[1]!))
+      .map(([service, name, state, status]) => ({ service: service!, name: name!, state: /^[a-z]{1,20}$/.test(state!) ? state! : 'unknown',
+        health: /\(healthy\)/.test(status!) ? 'healthy' : /\(unhealthy\)/.test(status!) ? 'unhealthy' : /\(health: starting\)/.test(status!) ? 'starting' : '' }));
+  }
+
+  /**
+   * What runs, for the status page only: `compose ps`, else (the compose files are not readable here, e.g. a Portainer stack)
+   * the containers of the updater's own project by their labels, so the page can follow a redeploy Portainer runs. Jobs never
+   * use this: they work from the compose files or not at all.
+   */
+  async psView(): Promise<ServiceState[]> {
+    return (await this.psRows(this.active)) ?? (await this.labelRows()) ?? [];
   }
 
   /** own / foreign and why, for the status (null = could not tell: compose or Docker did not answer) */

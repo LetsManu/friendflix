@@ -262,7 +262,7 @@ describe('foreign stacks and config drift: refused before anything is pulled or 
     // compose ps fails (no compose.prod.yaml at the project dir); docker ps / inspect still answer through the proxy
     const portainer = (labels: Record<string, string>) => (c: Call): Partial<RunResult> | undefined => {
       if (c.args[0] === 'compose') return { code: 1 };
-      if (c.args[0] === 'ps') return { stdout: 'friendflix-backend-1\n' };
+      if (c.args[0] === 'ps') return { stdout: 'updater\tfriendflix-updater-1\trunning\tUp 2 hours\nbackend\tfriendflix-backend-1\trunning\tUp 2 hours (healthy)\npostgres\tfriendflix-postgres-1\trunning\tUp 2 hours (healthy)\n' };
       if (fmt(c).includes('Config.Labels')) return { stdout: JSON.stringify(c.args.at(-1) === 'a1b2c3d4e5f6' ? { ...labels, 'com.docker.compose.service': 'updater' } : labels) };
       return undefined;
     };
@@ -276,9 +276,12 @@ describe('foreign stacks and config drift: refused before anything is pulled or 
     expect(await f.docker.stackInfo()).toEqual({ stack: 'foreign', reason: 'portainer', workingDir: '/data/compose/12', projectDir: '/project' });
     await expect(f.docker.images('latest', FF)).rejects.toMatchObject({ code: 'foreign_stack' });
     expect(touched(f.calls)).toEqual([]);
-    // only this project's backend container, never a one-off
-    expect(f.calls.find((c) => c.args[0] === 'ps')!.args).toEqual(['ps', '--all', '--format', '{{.Names}}', '--filter', 'label=com.docker.compose.project=friendflix',
-      '--filter', 'label=com.docker.compose.service=backend', '--filter', 'label=com.docker.compose.oneoff=False']);
+    // only this project's containers, never a one-off
+    expect(f.calls.find((c) => c.args[0] === 'ps')!.args).toEqual(['ps', '--all', '--format', '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.State}}\t{{.Status}}',
+      '--filter', 'label=com.docker.compose.project=friendflix', '--filter', 'label=com.docker.compose.oneoff=False']);
+    // the status page sees the services from the labels too (FriendFlix ones only, with docker's health), jobs never do
+    expect(await f.docker.psView()).toEqual([{ service: 'updater', name: 'friendflix-updater-1', state: 'running', health: '' }, { service: 'backend', name: 'friendflix-backend-1', state: 'running', health: 'healthy' }]);
+    expect(await f.docker.ps()).toEqual([]);
     // UPDATER_PROJECT_DIR resolved to Portainer's directory itself (PWD set by Portainer): still Portainer, the files are not there
     const same = withSelf(portainer(P));
     (same.docker as unknown as { s: { projectDir: string } }).s.projectDir = '/data/compose/12';
