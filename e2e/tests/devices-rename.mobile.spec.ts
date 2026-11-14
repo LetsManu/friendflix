@@ -3,6 +3,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from '../fixtures.js';
 import type { MockState } from '../fixtures.js';
+import { addCss } from '../helpers.js';
 
 /** Geräte (/devices) at 390 px: the form overlays its row, nothing moves, the error is in view (spec 2.8) */
 const TV = 'dev-lgtv-000000000003';
@@ -32,7 +33,7 @@ const ys = async (page: Page) => {
 
 /** the bubble ignores pointer events (taps reach the buttons under it), so the probe lets it take them */
 const topmostIsBubble = async (page: Page, bubble: Locator) => {
-  await page.addStyleTag({ content: '.bubble { pointer-events: auto !important; }' });
+  await addCss(page, '.bubble { pointer-events: auto !important; }');
   return bubble.evaluate((el) => {
     const r = el.getBoundingClientRect();
     return !!document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('.bubble');

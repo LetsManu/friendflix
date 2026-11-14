@@ -71,18 +71,12 @@ function rememberCalm(on: boolean) {
 }
 
 /**
- * Calm mode on the document: `html.calm` plus one injected rule that flattens CSS animations/transitions (the same effect
- * as prefers-reduced-motion). Autoplay itself is stopped by `calmMode()` in #lib/preview.
+ * Calm mode on the document: `html.calm`, whose rule in app.css flattens CSS animations/transitions (the same effect as
+ * prefers-reduced-motion). Autoplay itself is stopped by `calmMode()` in #lib/preview.
  */
 function applyCalm(on: boolean) {
   if (typeof document === 'undefined') return;
   document.documentElement.classList.toggle('calm', on);
-  if (on && !document.getElementById('ff-calm-style')) {
-    const st = document.createElement('style');
-    st.id = 'ff-calm-style';
-    st.textContent = 'html.calm *, html.calm *::before, html.calm *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; animation-delay: 0s !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }';
-    document.head.append(st);
-  }
 }
 prefs.subscribe((p) => applyCalm(p.calm === true));
 /** counts saveLanguage calls: a /api/prefs answer that was requested before a language switch must not undo it */

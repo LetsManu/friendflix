@@ -4,6 +4,7 @@ import { episodes } from '../mocks/fixtures.js';
 import { available, castOn, castSessions, fakeCastSdk, mockHls, playOnAirPlay, stubAirPlay, wireless } from '../mocks/cast.js';
 import { mockPlayer, videoReady } from '../mocks/scenes.js';
 import { expect, test } from '../fixtures.js';
+import { addCss } from '../helpers.js';
 import type { Page } from '@playwright/test';
 
 /** Shared setup of the cast remote screen specs (desktop + mobile): the watch page as the TV's remote. */
@@ -186,4 +187,4 @@ export async function leaveRemoteTo(page: Page, path: string) {
 }
 
 /** hides what is fixed on screen (header, tab bar, cast bar, skip link) so an element screenshot has no overlays mid-image */
-export const hideFixed = (page: Page) => page.addStyleTag({ content: 'header, .nav, .tabbar, .castbar, .skip, [data-testid=cast-bar] { visibility: hidden !important; }' });
+export const hideFixed = (page: Page) => addCss(page, 'header, .nav, .tabbar, .castbar, .skip, [data-testid=cast-bar] { visibility: hidden !important; }');

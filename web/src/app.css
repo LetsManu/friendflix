@@ -261,6 +261,9 @@ video { width: 100%; background: #000; }
   .skeleton::after { animation: none; display: none; }
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; transition-delay: 0ms !important; }
 }
+/* calm mode (lib/stores.ts sets html.calm): the same flattening as reduced motion. A stylesheet rule, not an injected <style>: the
+   CSP's style-src-elem allows no inline <style> element */
+html.calm *, html.calm *::before, html.calm *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; animation-delay: 0s !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
 
 html.kids { --tabbar-h: 56px; } /* no tab bar on kids profiles */
 
