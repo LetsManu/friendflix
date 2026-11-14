@@ -265,17 +265,21 @@ describe('POST /v1/parse/xmltv', () => {
 
   it('a body over the cap answers 413', async () => {
     // declared: refused before anything is read
+    let closed = false;
     const declared = await new Promise<{ status: number; body: string }>((resolve, reject) => {
       const head = signHash(key, 'POST', PATH, sha(Buffer.from('x')));
       const r = http.request(base + PATH, { method: 'POST', headers: { ...head, 'content-type': 'application/octet-stream', 'content-length': String(PARSE_TEST_MAX + 70 * 1024) } }, (res) => {
         let body = '';
         res.on('data', (c: Buffer) => { body += c.toString(); });
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+        // the connection is closed, not drained: the rest of the declared body is never read
+        res.on('end', () => r.socket?.once('close', () => { closed = true; resolve({ status: res.statusCode ?? 0, body }); }));
       });
-      r.on('error', reject);
+      r.on('error', () => undefined);
+      r.on('close', () => setTimeout(() => reject(new Error('closed without an answer')), 1000));
       r.write(Buffer.alloc(1024, 0x20));
     });
     expect(declared).toEqual({ status: 413, body: JSON.stringify({ error: 'too_large' }) });
+    expect(closed).toBe(true);
     // not declared (chunked): the stream ends with too_big, never with end
     const big = Buffer.concat([fixture('guide.xml'), Buffer.alloc(PARSE_TEST_MAX + 64 * 1024, 0x20)]);
     const body = Buffer.concat([Buffer.from(`${JSON.stringify(window)}\n`), big]);
@@ -316,6 +320,24 @@ describe('POST /v1/parse/xmltv', () => {
     const noLine = Buffer.from('<tv></tv>');
     const r = await fetch(base + PATH, { method: 'POST', body: noLine, headers: { ...signHash(key, 'POST', PATH, sha(noLine)), 'content-type': 'application/octet-stream' } });
     expect([r.status, await r.json()]).toEqual([400, { error: 'invalid', field: 'head' }]);
+  });
+
+  it('an unsigned streamed body is refused with 401 and its connection closed, never drained', async () => {
+    let sent = 0;
+    const answer = await new Promise<{ status: number; connection?: string; body: string }>((resolve, reject) => {
+      const r = http.request(base + PATH, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'content-length': String(PARSE_TEST_MAX) } }, (res) => {
+        let body = '';
+        res.on('data', (c: Buffer) => { body += c.toString(); });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, connection: res.headers.connection, body }));
+      });
+      r.on('error', () => undefined);
+      r.on('close', () => setTimeout(() => reject(new Error('closed without an answer')), 1000));
+      // a slow sender: a drain would keep reading these; the closed connection ends them
+      const t = setInterval(() => { if (r.destroyed || r.socket?.destroyed) { clearInterval(t); return; } r.write(Buffer.alloc(256, 0x20)); sent += 256; }, 5);
+      r.on('close', () => clearInterval(t));
+    });
+    expect(answer).toEqual({ status: 401, connection: 'close', body: JSON.stringify({ error: 'missing' }) });
+    expect(sent).toBeLessThan(PARSE_TEST_MAX);
   });
 
   it('the bytes must be the signed ones: another body never ends with end; no hash, a wrong one or JSON is refused', async () => {

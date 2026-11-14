@@ -126,10 +126,21 @@ export function logPath(route: Route | undefined, path: string): string {
   return '/' + seg.map((x, i) => (i < keep && /^[a-z0-9-]{1,40}$/.test(x) ? x : '*')).join('/');
 }
 
-/** a refused signature: 401 with the code, logged with method, path (logPath) and code only */
+/**
+ * the answer to a streamed (raw) body that is refused before it is read: `Connection: close`, and the request is destroyed once the
+ * answer is out, so livetv never reads (drains) a body of up to the route's cap it has refused
+ */
+function sendClosing(res: ServerResponse, status: number, body: unknown): void {
+  res.setHeader('connection', 'close');
+  res.once('finish', () => res.req.destroy());
+  send(res, status, body);
+}
+
+/** a refused signature: 401 with the code, logged with method, path (logPath) and code only; a raw body is not read (sendClosing) */
 function refuse(res: ServerResponse, route: Route, method: string, path: string, error: string, warn?: Log): void {
   warn?.(`refused ${method} ${logPath(route, path)}: ${error}`);
-  res.req.resume(); // a body nobody reads (a streamed one) is dropped, so the answer still reaches the caller
+  if (route.rawBody) return sendClosing(res, 401, { error });
+  res.req.resume(); // a JSON body was read already; anything left is dropped, so the answer still reaches the caller
   send(res, 401, { error });
 }
 
@@ -182,13 +193,13 @@ export function createApp(deps: AppDeps): (req: IncomingMessage, res: ServerResp
       let json: unknown = null;
       let bodySha256: string | undefined;
       if (signed && route.rawBody) {
-        if (Number(req.headers['content-length'] ?? 0) > (route.maxBody ?? MAX_BODY)) { req.resume(); return send(res, 413, { error: 'too_large' }); }
+        if (Number(req.headers['content-length'] ?? 0) > (route.maxBody ?? MAX_BODY)) return sendClosing(res, 413, { error: 'too_large' });
         const declared = req.headers[HEADER_BODY_SHA];
         if (declared === undefined) return refuse(res, route, method, path, 'missing', deps.warn);
         if (!isBodySha(declared)) return refuse(res, route, method, path, 'malformed', deps.warn);
         const auth = verify(deps.verifier, { method, path: target, headers: req.headers, bodySha256: declared });
         if (!auth.ok) return refuse(res, route, method, path, auth.error, deps.warn);
-        if (!String(req.headers['content-type'] ?? '').startsWith('application/octet-stream')) { req.resume(); return send(res, 415, { error: 'binary_required' }); }
+        if (!String(req.headers['content-type'] ?? '').startsWith('application/octet-stream')) return sendClosing(res, 415, { error: 'binary_required' });
         bodySha256 = declared;
       } else if (signed) {
         const read = await readBody(req, route.maxBody);
