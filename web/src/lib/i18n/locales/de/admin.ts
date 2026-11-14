@@ -280,6 +280,8 @@ export default {
           unchanged: 'Portainer ist fertig, hat aber nichts neu erstellt: Für {tag} gibt es keine neueren Images, oder der Stack nutzt FF_TAG nicht.',
           failed: 'Portainer hat das Neu-Deployen abgelehnt{detail}. Prüfe den Stack in Portainer und die Portainer-Einstellungen unter Admin → Einstellungen → Updates.',
           timeout: 'In 15 Minuten hat sich nichts geändert ({at}). Prüfe den Stack und seine Logs in Portainer.',
+          unreachable: 'Portainer war nicht erreichbar{code}. Prüfe PORTAINER_URL unter Admin → Einstellungen → Updates: Das Backend muss die Adresse erreichen können.',
+          noTarget: 'Nichts gestartet: Wähle zuerst eine Version für den Kanal „Feste Version“.',
         },
         detail: ' (HTTP {status}, Schritt {step})',
       },

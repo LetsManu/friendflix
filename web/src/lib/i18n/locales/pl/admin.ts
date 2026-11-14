@@ -301,6 +301,8 @@ const pl: Translation<typeof de> = {
           unchanged: 'Portainer skończył, ale niczego nie odtworzył: dla {tag} nie ma nowszych obrazów albo stos nie używa FF_TAG.',
           failed: 'Portainer odrzucił ponowne wdrożenie{detail}. Sprawdź stos w Portainerze i ustawienia Portainera w Admin → Ustawienia → Aktualizacje.',
           timeout: 'Przez 15 minut nic się nie zmieniło ({at}). Sprawdź stos i jego logi w Portainerze.',
+          unreachable: 'Portainer był nieosiągalny{code}. Sprawdź PORTAINER_URL w Admin → Ustawienia → Aktualizacje: backend musi móc połączyć się z tym adresem.',
+          noTarget: 'Nic nie uruchomiono: najpierw wybierz wersję dla kanału „Stała wersja”.',
         },
         detail: ' (HTTP {status}, krok {step})',
       },

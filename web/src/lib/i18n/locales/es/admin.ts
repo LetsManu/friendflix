@@ -281,6 +281,8 @@ const es: Translation<typeof de> = {
           unchanged: 'Portainer terminó, pero no recreó nada: no hay imágenes más nuevas para {tag}, o la pila no usa FF_TAG.',
           failed: 'Portainer rechazó el redespliegue{detail}. Revisa la pila en Portainer y los ajustes de Portainer en Admin → Ajustes → Actualizaciones.',
           timeout: 'No cambió nada en 15 minutos ({at}). Revisa la pila y sus registros en Portainer.',
+          unreachable: 'Portainer no era accesible{code}. Revisa PORTAINER_URL en Admin → Ajustes → Actualizaciones: el backend debe poder alcanzar esa dirección.',
+          noTarget: 'No se inició nada: elige primero una versión para el canal «Versión fija».',
         },
         detail: ' (HTTP {status}, paso {step})',
       },

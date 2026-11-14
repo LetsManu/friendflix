@@ -56,6 +56,7 @@
   /** error text for a failed update request */
   function updateError(e: any): string {
     if (e?.status === 429) return tr('admin.update.tooSoon');
+    if (e?.body?.error === 'busy') return tr('admin.update.updater.error.busy'); // a redeploy is already running
     if (e?.status === 409) return tr('admin.update.notConfigured');
     if (e?.body?.error === 'portainer_unreachable') {
       const code = e.body?.code, h = code ? hint(code) : undefined;

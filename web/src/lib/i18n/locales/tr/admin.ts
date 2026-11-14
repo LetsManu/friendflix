@@ -281,6 +281,8 @@ const tr: Translation<typeof de> = {
           unchanged: 'Portainer bitirdi ama hiçbir şeyi yeniden oluşturmadı: {tag} için daha yeni imaj yok ya da yığın FF_TAG kullanmıyor.',
           failed: 'Portainer yeniden dağıtımı reddetti{detail}. Yığını Portainer’da ve Portainer ayarlarını Admin → Ayarlar → Güncellemeler altında kontrol et.',
           timeout: '15 dakika içinde hiçbir şey değişmedi ({at}). Yığını ve günlüklerini Portainer’da kontrol et.',
+          unreachable: 'Portainer’a ulaşılamadı{code}. Admin → Ayarlar → Güncellemeler altında PORTAINER_URL’i kontrol et: arka uç bu adrese ulaşabilmeli.',
+          noTarget: 'Hiçbir şey başlatılmadı: önce “Sabit sürüm” kanalı için bir sürüm seç.',
         },
         detail: ' (HTTP {status}, adım {step})',
       },

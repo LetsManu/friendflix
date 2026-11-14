@@ -174,7 +174,8 @@
       <div class="prog" aria-live="polite">
         {#if running}
           <Progress value={null} label={$t('admin.update.updater.running', { s: elapsed })} />
-          {#if reconnecting}<p class="muted small" role="status" data-reconnecting><Icon name="refresh" size={16} /> {$t('admin.update.updater.reconnecting')}</p>{/if}
+          <!-- always there while the job runs (only its opacity changes): "reconnecting" never moves the steps below -->
+          <p class="muted small recon" class:on={reconnecting} role="status" aria-hidden={!reconnecting} data-reconnecting={reconnecting ? '' : undefined}><Icon name="refresh" size={16} /> {$t('admin.update.updater.reconnecting')}</p>
         {:else}
           <p class="small"><span class="muted">{$t('admin.update.updater.lastJob')}</span> <time datetime={job.finishedAt ?? job.startedAt}>{fmtDateTime(job.finishedAt ?? job.startedAt)}</time></p>
           <p class="result" class:ok={job.state === 'succeeded'} class:bad={job.state !== 'succeeded'} role={job.state === 'succeeded' ? 'status' : 'alert'} data-result={job.state}>
@@ -230,6 +231,9 @@
   .result.ok :global(svg) { color: var(--ok); } .result.bad :global(svg) { color: var(--err); }
   .small { font-size: .88rem; margin: 0; }
   .err { color: var(--err); }
+  .recon { display: flex; align-items: center; gap: .3rem; opacity: 0; transition: opacity .2s ease; }
+  .recon.on { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .recon { transition: none; } }
   .log { margin-top: 1rem; } .log summary, .self summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
   .log pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; max-height: 16rem; overflow: auto; margin: 0; }
   .auto { margin-top: 1.2rem; border-top: 1px solid var(--line); padding-top: .9rem; display: grid; gap: .6rem; }

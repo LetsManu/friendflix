@@ -163,8 +163,12 @@ test.describe('admin update with the opt-in updater (desktop)', () => {
     await expect(progress.locator('[data-step="recreating"]')).toHaveAttribute('data-state', 'running');
     await expect(progress.locator('[data-count]')).toContainText('1 von 3 Diensten auf dem neuen Build');
     await expect(progress.locator('[data-step="pulling"]')).toHaveAttribute('data-state', 'ok');
+    await expect(progress.getByRole('heading', { name: 'Update über Portainer' })).toBeVisible();
     await expect(card(page).getByRole('button', { name: 'Jetzt aktualisieren' })).toBeDisabled();
+    const before = (await progress.locator('[data-step="pulling"]').boundingBox())!.y;
     await expect(card(page).locator('[data-reconnecting]')).toBeVisible();
+    // "reconnecting" has its line reserved: the steps do not move
+    expect((await progress.locator('[data-step="pulling"]').boundingBox())!.y).toBe(before);
     await expect(card(page).locator('[data-result="done"]')).toContainText('Portainer hat den Stack neu deployt', { timeout: 20_000 });
     await expect(progress.locator('[data-step="health"]')).toHaveAttribute('data-state', 'ok');
     await expect(card(page).locator('[data-reconnecting]')).toHaveCount(0);

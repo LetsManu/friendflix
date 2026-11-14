@@ -281,6 +281,8 @@ const fr: Translation<typeof de> = {
           unchanged: 'Portainer a terminé, mais rien n’a été recréé : il n’y a pas d’images plus récentes pour {tag}, ou la stack n’utilise pas FF_TAG.',
           failed: 'Portainer a refusé le redéploiement{detail}. Vérifie la stack dans Portainer et les réglages Portainer dans Admin → Paramètres → Mises à jour.',
           timeout: 'Rien n’a changé en 15 minutes ({at}). Vérifie la stack et ses journaux dans Portainer.',
+          unreachable: 'Portainer n’était pas joignable{code}. Vérifie PORTAINER_URL dans Admin → Paramètres → Mises à jour : le backend doit pouvoir joindre cette adresse.',
+          noTarget: 'Rien n’a été lancé : choisis d’abord une version pour le canal « Version fixe ».',
         },
         detail: ' (HTTP {status}, étape {step})',
       },

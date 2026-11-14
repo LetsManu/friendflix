@@ -281,6 +281,8 @@ const en: Translation<typeof de> = {
           unchanged: 'Portainer finished, but nothing was recreated: the images for {tag} have nothing newer, or the stack does not use FF_TAG.',
           failed: 'Portainer refused the redeploy{detail}. Check the stack in Portainer and the Portainer settings in Admin → Settings → Updates.',
           timeout: 'Nothing changed within 15 minutes ({at}). Check the stack and its logs in Portainer.',
+          unreachable: 'Portainer was not reachable{code}. Check PORTAINER_URL in Admin → Settings → Updates: it must be an address the backend can reach.',
+          noTarget: 'Nothing was started: choose a version for the “Fixed version” channel first.',
         },
         detail: ' (HTTP {status}, step {step})',
       },

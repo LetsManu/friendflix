@@ -118,6 +118,11 @@ describe('updater panel logic', () => {
     expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer', status: 500, step: 'redeploy' }))).toBe('Portainer refused the redeploy (HTTP 500, step redeploy). Check the stack in Portainer and the Portainer settings in Admin → Settings → Updates.');
     expect(redeployResult(rd({ phase: 'unchanged', running: false, tag: 'nightly' }))).toContain('the images for nightly have nothing newer');
     expect(redeployResult(rd({ phase: 'timeout', running: false, at: 'recreating' }))).toBe('Nothing changed within 15 minutes (Recreate containers). Check the stack and its logs in Portainer.');
+    // not reachable: its own text with the errno code and the hint; a fixed version without a number: its own text
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer_unreachable', code: 'ENOTFOUND', step: 'stack' })))
+      .toBe('Portainer was not reachable (ENOTFOUND: host name cannot be resolved, use the IP instead of nas.local). Check PORTAINER_URL in Admin → Settings → Updates: it must be an address the backend can reach.');
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'portainer_unreachable', code: null }))).toMatch(/^Portainer was not reachable\. /);
+    expect(redeployResult(rd({ phase: 'failed', running: false, error: 'no_target' }))).toBe('Nothing was started: choose a version for the “Fixed version” channel first.');
   });
 
   it('the Portainer API set up only in part: the missing setting is named with where the stack ID is; such a stack counts as Portainer\'s', async () => {

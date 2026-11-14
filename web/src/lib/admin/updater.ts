@@ -77,6 +77,13 @@ export function redeploySteps(r: Pick<Redeploy, 'phase' | 'at'>): Record<Redeplo
 export function redeployResult(r: Redeploy): string {
   const k = 'admin.update.updater.redeploy';
   if (r.phase === 'failed') {
+    if (r.error === 'no_target') return trDynamic(`${k}.result.noTarget`);
+    if (r.error === 'portainer_unreachable') {
+      // the errno code (never the URL), with the same hint as the Portainer card ("host name cannot be resolved", …)
+      const c = r.code && /^[A-Z_]{2,40}$/.test(r.code) ? r.code : null;
+      const hint = c && hasKey(`admin.update.hint.${c}`) ? `: ${trDynamic(`admin.update.hint.${c}`)}` : '';
+      return trDynamic(`${k}.result.unreachable`, { code: c ? ` (${c}${hint})` : '' });
+    }
     const detail = r.status !== null ? trDynamic(`${k}.detail`, { status: String(r.status), step: r.step ?? '?' }) : '';
     return trDynamic(`${k}.result.failed`, { detail });
   }

@@ -281,6 +281,8 @@ const it: Translation<typeof de> = {
           unchanged: 'Portainer ha finito, ma non ha ricreato nulla: per {tag} non ci sono immagini più recenti, oppure lo stack non usa FF_TAG.',
           failed: 'Portainer ha rifiutato il nuovo deploy{detail}. Controlla lo stack in Portainer e le impostazioni di Portainer in Admin → Impostazioni → Aggiornamenti.',
           timeout: 'Nessun cambiamento in 15 minuti ({at}). Controlla lo stack e i suoi log in Portainer.',
+          unreachable: 'Portainer non era raggiungibile{code}. Controlla PORTAINER_URL in Admin → Impostazioni → Aggiornamenti: il backend deve poter raggiungere quell’indirizzo.',
+          noTarget: 'Non è stato avviato nulla: scegli prima una versione per il canale «Versione fissa».',
         },
         detail: ' (HTTP {status}, passo {step})',
       },
